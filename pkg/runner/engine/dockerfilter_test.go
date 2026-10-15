@@ -103,7 +103,7 @@ func TestRefusalsReachTheOutcome(t *testing.T) {
 
 // The socket sits under the runner home, the path runhost shares with the
 // host, not under the installed QuickAgent's run directory, which is too
-// deep for a socket path there (dev's runhost, 2026-09-25).
+// deep for a socket path there.
 func TestTheSocketIsUnderTheRunnerHome(t *testing.T) {
 	if !filterSupported {
 		t.Skip("the filter runs on Linux only")
@@ -159,9 +159,8 @@ func TestALongRunDirectoryFallsBackToAShortSocket(t *testing.T) {
 
 // A run with relays gets two relay networks of its own, made before the
 // gateway and removed after it, and neither takes the host-wide relay lock
-// nor refuses another gateway's relays: runs with relays share a host
-// (agentry-cli#220). The lock is held by "another run" throughout, and the
-// run goes ahead anyway.
+// nor refuses another gateway's relays: runs with relays share a host. The
+// lock is held by "another run" throughout, and the run goes ahead anyway.
 func TestARunWithRelaysHasRelayNetworksOfItsOwn(t *testing.T) {
 	if !filterSupported {
 		t.Skip("the filter runs on Linux only")
@@ -235,10 +234,10 @@ func filterRequest(t *testing.T, sock, method, path string) int {
 	return res.StatusCode
 }
 
-// The agent's own egress counts as relays (agentry-cli#346): a run whose
-// release declares network.egress and no server gets the run's relay
-// networks, and the filter admits the tools server's L7 relay to its hosts
-// on 443 alongside the servers' entries.
+// The agent's own egress counts as relays: a run whose release declares
+// network.egress and no server gets the run's relay networks, and the
+// filter admits the tools server's L7 relay to its hosts on 443 alongside
+// the servers' entries.
 func TestTheAgentsEgressGetsRelays(t *testing.T) {
 	if !filterSupported {
 		t.Skip("the docker filter runs on Linux only")
@@ -267,7 +266,7 @@ func TestTheAgentsEgressGetsRelays(t *testing.T) {
 
 // A gateway that could not start the run's tools server carries on with
 // the declared servers alone; the run fails at the gateway instead of
-// running an agent with none of its tools (agentry-cli#346).
+// running an agent with none of its tools.
 func TestARunWhoseToolsServerDidNotStartFails(t *testing.T) {
 	p, f := fixture(t)
 	happyFake(f)
@@ -302,10 +301,10 @@ func TestARunWhoseToolsServerDidNotStartFails(t *testing.T) {
 	}
 }
 
-// TestTheToolsServerIsGivenItsBoundedTmpfs (agentry-cli#599, #729): the
-// filter is told the tools server's image (the exec image when the plan has
-// one) and mounts its /tmp for every plan and its scratch folder when the
-// plan grants one, each a 256 MiB tmpfs anyone may write.
+// TestTheToolsServerIsGivenItsBoundedTmpfs: the filter is told the tools
+// server's image (the exec image when the plan has one) and mounts its /tmp
+// for every plan and its scratch folder when the plan grants one, each a
+// 256 MiB tmpfs anyone may write.
 func TestTheToolsServerIsGivenItsBoundedTmpfs(t *testing.T) {
 	plan := &spec.Plan{Proxy: spec.ProxySpec{Image: "agentry-runner:test"}}
 	want := "size=268435456,mode=1777"

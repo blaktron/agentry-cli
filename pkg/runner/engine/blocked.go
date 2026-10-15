@@ -1,12 +1,11 @@
 package engine
 
-// A blocked run (agentry-cli#629, plan quickagents-that-run.md M9, D5): a
-// one-shot run of a release whose agent could not do its task ends with
-// the blocked exit class, not ok. The agent says so with end_blocked; the
-// runner also says so on its own evidence, read from the tools server's
-// calls ledger once the agent has ended. The evidence is a fault of the
-// run's machinery, not of the agent, which a hosted run refunds (D5); an
-// agent's own end_blocked is settled like a failed run.
+// A blocked run: a one-shot run of a release whose agent could not do its
+// task ends with the blocked exit class, not ok. The agent says so with
+// end_blocked; the runner also says so on its own evidence, read from the
+// tools server's calls ledger once the agent has ended. The evidence is a
+// fault of the run's machinery, not of the agent, which a hosted run
+// refunds; an agent's own end_blocked is settled like a failed run.
 
 import (
 	"bufio"
@@ -99,7 +98,7 @@ func (t *callTally) add(e toolsrv.CallEntry) {
 // least one: a channel the tools could not open or write. The agent's own
 // mistakes (a name that is not there, a report too large) are not the
 // runner's evidence, or asking for a missing file would earn a run that
-// D5 refunds.
+// refunds.
 func (t callTally) failedOnTheRun() bool { return t.calls > 0 && t.ok == 0 && t.faults > 0 }
 
 // blockedOf reads the calls ledger of a run whose agent ended without a

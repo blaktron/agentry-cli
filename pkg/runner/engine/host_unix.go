@@ -21,7 +21,7 @@ func procStartTime(pid int) (uint64, bool) { return owner.StartTime(pid) }
 //
 // The group is SIGKILLed here because exec's own escalation when WaitDelay
 // expires is os.Process.Kill on the leader's single pid, so a child that
-// ignored SIGTERM survived the run holding the model key (agentry-cli#161).
+// ignored SIGTERM survived the run holding the model key.
 //
 // Signalling a group id is only safe while the id still belongs to us, and
 // Setpgid makes the leader's pid the group's id. cmd.Wait reaps the leader

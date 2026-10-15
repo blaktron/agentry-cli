@@ -18,15 +18,14 @@ func (panicAdapter) Events([]byte) []adapter.Event {
 	panic("adapter mapper exploded")
 }
 
-// TestRunPanicInTheEventStreamTearsDownAndNamesIt (agentry-cli#161): the
-// goroutine that consumes the harness's event stream calls the adapter's
-// mapper and the --events tee writer with nothing guarding them, and a panic
-// in a goroutine takes the whole process down — running none of the defers in
-// Run's own goroutine, which is where teardown lives. That left the agent
-// container holding a valid gateway token, the gateway holding the docker
-// socket, and the run network and secrets.env on disk, bounded by nothing
-// because the turn, cost and wall budgets are all enforced by the process
-// that died.
+// TestRunPanicInTheEventStreamTearsDownAndNamesIt: the goroutine that
+// consumes the harness's event stream calls the adapter's mapper and the
+// --events tee writer with nothing guarding them, and a panic in a goroutine
+// takes the whole process down — running none of the defers in Run's own
+// goroutine, which is where teardown lives. That would leave the agent container
+// holding a valid gateway token, the gateway holding the docker socket, and
+// the run network and secrets.env on disk, bounded by nothing because the
+// turn, cost and wall budgets are all enforced by the process that died.
 //
 // It is a full Run, not a test of consume in isolation: the claim is about
 // what the process does next, and only the real path can show the teardown

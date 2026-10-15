@@ -15,15 +15,13 @@ import (
 
 // redactor masks the values that must never reach a receipt: the run's
 // gateway token, every resolved secret value (the agent's and the declared
-// servers', the same set writeSecretsFile writes) and the model API key
-// (§R11 invariant 7). A session applies it to its transcript and events;
-// a run and a session both apply it to the gateway and proxy logs, the
-// agent's stderr receipt, the result text and the run's error — a
-// declared server that prints its environment on failure would otherwise
-// put a secret into gateway.log and, through the quoted tail, into
-// result.json (agentry-cli#109).
-// A token renewed during the run (plan D24) is added while other
-// goroutines mask, so the values are guarded.
+// servers', the same set writeSecretsFile writes) and the model API key. A
+// session applies it to its transcript and events; a run and a session
+// both apply it to the gateway and proxy logs, the agent's stderr receipt,
+// the result text and the run's error — a declared server that prints its
+// environment on failure would otherwise put a secret into gateway.log
+// and, through the quoted tail, into result.json. A token renewed during
+// the run is added while other goroutines mask, so the values are guarded.
 type redactor struct {
 	mu     sync.RWMutex
 	values []string
@@ -31,12 +29,12 @@ type redactor struct {
 
 // gatewayMask is how docker/mcp-gateway (v0.43.3, pkg/gateway/clientpool.go
 // and pkg/mcp/remote.go maskSecret) lists a secret it injects at a server's
-// start, verbose being its default: "    - NAME: " + the value's first four
+// start, verbose being its default: " - NAME: " + the value's first four
 // characters + "****". Four characters are no whole value, so the redactor
 // masks this form of every value it holds as well, and the line keeps the
-// name and none of the value (agentry-cli#372). A value shorter than
-// redactMinLen is held by neither form, and is named in the receipt instead
-// (withRedactionNote); redactMinLen >= 4 keeps the slice in range.
+// name and none of the value. A value shorter than redactMinLen is held by
+// neither form, and is named in the receipt instead (withRedactionNote);
+// redactMinLen >= 4 keeps the slice in range.
 func gatewayMask(v string) string { return v[:4] + "****" }
 
 // redactMinLen is the shortest value the redactor masks: a shorter one
@@ -93,9 +91,9 @@ func (r *redactor) add(v string) {
 
 // withRedactionNote names, in the receipt's enforced capabilities, every
 // declared secret whose resolved value is too short for the redactor to
-// mask, so the receipt never implies a mask it did not apply
-// (agentry-cli#164). Declared names only: the value is the thing not being
-// masked. secrets is secretValues' map, keyed as the gateway reads it.
+// mask, so the receipt never implies a mask it did not apply. Declared
+// names only: the value is the thing not being masked. secrets is
+// secretValues' map, keyed as the gateway reads it.
 func withRedactionNote(enforced map[string]string, p Params, secrets map[string]string) map[string]string {
 	short := map[string]bool{}
 	check := func(name, key string) {
@@ -126,7 +124,7 @@ func (rd *runDirs) newRedactor(p Params, token string, secrets map[string]string
 	if p.Plan.Harness.Host != nil {
 		vars = append(vars, p.Plan.Harness.Host.Env...)
 	}
-	// A target host's sign-in is the run's own credential too (D19).
+	// A target host's sign-in is the run's own credential too.
 	rd.redact = newRedactor(token, secrets, append(hostSecretValues(vars), hostCredentialValues(p)...))
 	return rd.redact
 }

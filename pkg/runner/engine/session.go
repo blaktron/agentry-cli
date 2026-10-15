@@ -24,12 +24,11 @@ import (
 
 // StartSession does everything Run does up to and including the sandbox,
 // then starts the harness's interactive server on the agent container's
-// attached stdio and returns the session (DR-15, plan §6.3). The plan
-// must be an interactive plan (Mode interactive, Harness.Session set):
-// it is byte-identical to the autonomous plan except the harness argv and
-// that block, so the sandbox — network, proxy, gateway, mounts, secrets —
-// is exactly the autonomous one. The task text, if any, is the opening
-// user turn.
+// attached stdio and returns the session. The plan must be an interactive
+// plan (Mode interactive, Harness.Session set): it is byte-identical to
+// the autonomous plan except the harness argv and that block, so the
+// sandbox — network, proxy, gateway, mounts, secrets — is exactly the
+// autonomous one. The task text, if any, is the opening user turn.
 func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Session, error) {
 	if p.Plan == nil || p.Plan.Mode != "interactive" || p.Plan.Harness.Session == nil {
 		return nil, Classify(ExitCompile, errors.New("not an interactive plan (compile with Mode interactive)"))
@@ -59,7 +58,7 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 			Model:   p.Plan.Harness.Model,
 			Mode:    p.Plan.Mode,
 			// A session's receipt names the pin and the credential kind as a
-			// run's does (I8; missing from sessions until agentry-cli#741).
+			// run's does.
 			ImagePin:       p.Plan.Harness.ImagePin.String(),
 			CredentialKind: credentialKind(p.Plan),
 		},
@@ -75,7 +74,7 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	env.Receipts = receipt.Receipts{Dir: receiptsDir, RunPlanSHA256: planHash}
 
 	// What a run whose process died left behind goes first, before this
-	// run adds its own (agentry-cli#161).
+	// run adds its own.
 	SweepAbandoned(ctx, d, p.Stderr)
 	td := &teardown{d: d, stderr: p.Stderr, runID: runID}
 	s := &liveSession{
@@ -89,10 +88,10 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	fail := func(err error) (session.Session, error) {
 		// Only End closes the events receipt; a start that fails never
 		// reaches it, and on Windows an open receipt cannot be moved or
-		// deleted until the process exits (agentry-cli#459). A harness
-		// that already exited has written its session_end (awaitExit
-		// waits for it); emit writes under s.mu and skips a nil file, so
-		// a later write is dropped, never made to a closed file.
+		// deleted until the process exits. A harness that already exited
+		// has written its session_end (awaitExit waits for it); emit
+		// writes under s.mu and skips a nil file, so a later write is
+		// dropped, never made to a closed file.
 		s.mu.Lock()
 		if s.eventsFile != nil {
 			_ = s.eventsFile.Close()
@@ -143,8 +142,7 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 		return fail(Classify(ExitCLI, fmt.Errorf("the run's tool grant: %w", err)))
 	}
 	// The inputs are decoded before anything starts, and a file added
-	// later before it is announced (plan file-handling.md §5,
-	// agentry-cli#560).
+	// later before it is announced.
 	srcRuns, err := fetchSources(ctx, d, p, rd, td, runID)
 	if err != nil {
 		return fail(err)
@@ -156,11 +154,11 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	s.dec.lines(env.CapabilitiesEnforced)
 	sourceLines(env.CapabilitiesEnforced, srcRuns, s.dec)
 	// The session store: a per-run named volume, labelled like every run
-	// object and removed with it (agentry-cli#90; DR-15 called the
-	// world-writable host directory it replaces "for now"). A fresh
-	// volume is root-owned wherever it is mounted and the harness runs
-	// unprivileged, so the volume is given to the harness image's own
-	// user first — as root, in that image, on no network, once.
+	// object and removed with it, not a host directory the harness
+	// could write to world-wide. A fresh volume is root-owned
+	// wherever it is mounted and the harness runs unprivileged, so the
+	// volume is given to the harness image's own user first — as root,
+	// in that image, on no network, once.
 	if err := d.VolumeCreate(ctx, rd.session, runLabels(runID)); err != nil {
 		return fail(Classify(ExitCLI, fmt.Errorf("create session volume: %w", err)))
 	}
@@ -209,7 +207,7 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	}
 	// The optional secrets it goes without, before any replacer is built:
 	// the System Prompt names them (spec.PHSecretsAbsent), and so does the
-	// receipt (DR-70).
+	// receipt.
 	rd.secretsAbsent = absentSecrets(p.Plan, secrets)
 	env.CapabilitiesEnforced = withAbsentNote(env.CapabilitiesEnforced, rd.secretsAbsent)
 	task, err := readTask(p.Task, rd.receiptsDir)
@@ -223,8 +221,8 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	rep := rd.replacer()
 	s.redact = rd.newRedactor(p, token, secrets)
 	env.CapabilitiesEnforced = withRedactionNote(env.CapabilitiesEnforced, p, secrets)
-	// A session's connections are renewed for as long as it lives (plan
-	// D24); teardown stops the renewer before it deletes their folders.
+	// A session's connections are renewed for as long as it lives;
+	// teardown stops the renewer before it deletes their folders.
 	stopRenewal := renewConnections(ctx, p, rd)
 	td.add(func(context.Context) { stopRenewal() })
 
@@ -238,11 +236,10 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 		return fail(withRefusals(infraErr, rd))
 	}
 	// The driver also permits what the gateway serves beyond the run's own
-	// grant: the declared servers' tools (agentry-cli#578). Still before
-	// any harness starts.
+	// grant: the declared servers' tools. Still before any harness starts.
 	s.granted = permitted(s.granted, served)
 	// Harness files after the infrastructure, as in Run: a host-run harness
-	// needs the published addresses (plan runner-m-r4-adapters §5).
+	// needs the published addresses.
 	rep = rd.replacer()
 	if err := renderPlanFiles(p.Plan, p.PlanDir, rd, nativePath, "harness"); err != nil {
 		return fail(err)
@@ -266,7 +263,7 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 
 // pumpEventHook runs before the pump handles each driver event; nil
 // outside tests, which set it to make the pump lag the driver as a loaded
-// machine does (agentry-cli#204).
+// machine does.
 var pumpEventHook func()
 
 // liveSession is the engine's session.Session.
@@ -311,7 +308,7 @@ type liveSession struct {
 	done     chan struct{} // closed once (ended)
 	pumpDone chan struct{} // closed when pump has drained the driver's events
 	// pumpSync asks the pump to record everything the driver has queued so
-	// far, then close the channel it was sent (agentry-cli#204).
+	// far, then close the channel it was sent.
 	pumpSync chan chan struct{}
 
 	turnMu sync.Mutex // one prompt at a time
@@ -324,11 +321,11 @@ type liveSession struct {
 	// turnMu: a turn emits assistant_turn (or error) while it still holds
 	// turnMu, so a client that adds a file the moment it sees that event
 	// would otherwise find the session busy and its notice would wait for
-	// the next user turn (agentry-cli#487).
+	// the next user turn.
 	inTurn bool
 	// ending is set once End has begun: an input added after it starts no
 	// turn, so nothing can run between End's final-result turn and the end
-	// and replace the result it asked for (agentry-cli#487's review).
+	// and replace the result it asked for.
 	ending bool
 	// pendingNotices are input notices to prepend to the next user turn
 	// because one was in flight when the input arrived.
@@ -353,14 +350,14 @@ type liveSession struct {
 	outOfCredits *adapter.Event
 	// panicErr is set when the pump or the watcher recovered a panic. It is
 	// the session's error whatever reason it then ended with, because that
-	// reason is a side effect of the recovery (agentry-cli#161).
+	// reason is a side effect of the recovery.
 	panicErr     error
 	lastActivity time.Time
 	endOnce      sync.Once
 	// endMu serialises End: a second caller waits for the first and gets
 	// its envelope. Without it two concurrent callers both passed the
-	// envelope check and both closed events (agentry-cli#161; the
-	// desktop's quit mid-run, agentry-desktop#125, is such a caller).
+	// envelope check and both closed events (a desktop quit mid-run is
+	// such a caller).
 	endMu       sync.Mutex
 	envelope    *receipt.Envelope
 	envelopeErr error
@@ -412,7 +409,7 @@ func (s *liveSession) startHarness(ctx context.Context, token string, rep *strin
 		}
 		// The goroutine ends the session right after the exit: wait for
 		// its session_end to reach the events receipt, which the failure
-		// then closes (agentry-cli#459).
+		// then closes.
 		select {
 		case <-s.done:
 		case <-time.After(5 * time.Second):
@@ -476,7 +473,7 @@ func (s *liveSession) launch(again bool) (io.ReadWriteCloser, error) {
 		wait, started, herr := startHostProcess(s.agentCtx, p, s.rd, rep, token, stdinR, stdoutW, stderrFile)
 		if herr != nil {
 			// No harness process, so no goroutine to close the stderr
-			// receipt (agentry-cli#459).
+			// receipt.
 			_ = stderrFile.Close()
 			return nil, herr
 		}
@@ -621,8 +618,8 @@ func (s *liveSession) pump() {
 	// A panic here would take the process down, and the session's teardown
 	// runs only from End — so the sandbox, the gateway holding the docker
 	// socket, the run network and secrets.env would outlive it, bounded by
-	// nothing, since the budgets are applied by the goroutine that died
-	// (agentry-cli#161). Recover, name it, and end the session so End runs.
+	// nothing, since the budgets are applied by the goroutine that died.
+	// Recover, name it, and end the session so End runs.
 	defer func() {
 		if r := recover(); r != nil {
 			s.recordPanic(fmt.Errorf("session event pump panicked: %v", r))
@@ -660,7 +657,7 @@ func (s *liveSession) pump() {
 // queued when it was called. SessionDriver queues all of a turn's events
 // before Prompt returns, so after a turn this puts the turn's tool calls
 // and permission decisions in the log ahead of assistant_turn, and ahead
-// of an End that would otherwise make emit discard them (agentry-cli#204).
+// of an End that would otherwise make emit discard them.
 func (s *liveSession) syncPump() {
 	ack := make(chan struct{})
 	select {
@@ -697,7 +694,7 @@ func (s *liveSession) handle(ev adapter.Event) {
 		s.outTok += ev.OutputTokens
 		s.totTok += ev.TotalTokens
 		s.usageSeen = true
-		// A plan run reports tokens, never dollars (D13).
+		// A plan run reports tokens, never dollars.
 		if ev.CostUSD > s.costUSD && s.p.Plan.Harness.ModelSignIn == nil {
 			s.costUSD = ev.CostUSD
 		}
@@ -757,8 +754,8 @@ func (s *liveSession) handle(ev adapter.Event) {
 
 // recordPanic stores a recovered panic as the session's error and ends the
 // session, so End runs the teardown and names the panic instead of the
-// process dying with the sandbox still up (agentry-cli#161). The first panic
-// is the one kept: whatever follows is its fallout.
+// process dying with the sandbox still up. The first panic is the one kept:
+// whatever follows is its fallout.
 func (s *liveSession) recordPanic(err error) {
 	s.mu.Lock()
 	if s.panicErr == nil {
@@ -768,13 +765,13 @@ func (s *liveSession) recordPanic(err error) {
 	s.endWith(session.EndCancelled)
 }
 
-// watch ends the session on silence (plan §6.7); the wall clock is the
-// agent context's deadline.
+// watch ends the session on silence; the wall clock is the agent
+// context's deadline.
 func (s *liveSession) watch() {
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
 	// As the pump's: a panic here would leave the session's containers up
-	// with nothing left to apply the idle or wall budgets (agentry-cli#161).
+	// with nothing left to apply the idle or wall budgets.
 	defer func() {
 		if r := recover(); r != nil {
 			s.recordPanic(fmt.Errorf("session watcher panicked: %v", r))
@@ -938,7 +935,7 @@ func (s *liveSession) turn(ctx context.Context, text string, synthetic bool) err
 	s.mu.Lock()
 	if res.Text != "" {
 		// The final result is built from this; it is redacted like every
-		// receipt (§R11 invariant 7).
+		// receipt.
 		s.lastText = s.redact.String(res.Text)
 	}
 	s.lastActivity = time.Now()
@@ -947,9 +944,9 @@ func (s *liveSession) turn(ctx context.Context, text string, synthetic bool) err
 	return nil
 }
 
-// AddInput implements session.Session (plan §6.4, §6.10 line 3): only a
-// regular host file, only under the staged inputs directory, agent-side
-// mount unchanged (:ro). The agent hears about it as a user turn.
+// AddInput implements session.Session: only a regular host
+// file, only under the staged inputs directory, agent-side mount
+// unchanged (:ro). The agent hears about it as a user turn.
 func (s *liveSession) AddInput(ctx context.Context, hostPath string) error {
 	if ended, _ := s.Ended(); ended {
 		return session.ErrEnded
@@ -1049,8 +1046,8 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 		_ = s.drv.Close()
 		// The driver's Close ends its event stream; wait for the pump to
 		// process what was still buffered (the last turn's usage, a late
-		// tool call) before the counters are read into the envelope
-		// (agentry-cli#69). Bounded: a wedged pump must not hang End.
+		// tool call) before the counters are read into the envelope.
+		// Bounded: a wedged pump must not hang End.
 		select {
 		case <-s.pumpDone:
 		case <-time.After(10 * time.Second):
@@ -1154,7 +1151,7 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 	if panicErr != nil {
 		// The panic is the error, whatever reason the recovery ended the
 		// session with: that reason is the recovery's own doing, not what
-		// went wrong (agentry-cli#161).
+		// went wrong.
 		outErr = Classify(ExitCLI, panicErr)
 	}
 	if outErr != nil {
@@ -1178,7 +1175,7 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 }
 
 // transcript renders the readable conversation from the (already
-// redacted) event log (plan §6.5).
+// redacted) event log.
 func transcript(env *receipt.Envelope, log []session.Event) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Transcript: %s\n\nrun %s · interactive · %s\n\n", env.Ref, env.RunID, env.Harness.Model)
@@ -1231,17 +1228,16 @@ func hostSecretValues(vars []spec.EnvVar) []string {
 // reported no usage at all. docker-agent 1.150.0 sends its ACP usage_update
 // only for a model whose context window it knows (its models.dev catalogue,
 // or a provider's context_size), so a session on any other model, an
-// operator's own endpoint among them, reports no tokens (agentry-cli#836).
+// operator's own endpoint among them, reports no tokens.
 const tokensUnreportedLine = "the harness reported no token usage on its session stream, so usage.totalTokens is 0 because nothing was reported, not because the session used none"
 
 // withCostBudget adds the receipt's line about the session's cost budget.
 // A cost of 0 is ambiguous: the harness may have reported none, which is
 // not the same as a session that cost nothing. And a ceiling asked for
 // against such a harness could never have fired, so the line says that
-// rather than leaving the control looking enforced (agentry-cli#222).
-// docker-agent sends `used` and no cost on its ACP usage_update (1.128.0
-// and 1.150.0 alike), which makes this the default adapter's normal case,
-// not an edge.
+// rather than leaving the control looking enforced. docker-agent sends
+// `used` and no cost on its ACP usage_update (1.128.0 and 1.150.0 alike),
+// which makes this the default adapter's normal case, not an edge.
 //
 // A copy: enforcedWithPackages hands back the plan's own map when the run
 // resolved no exec packages, and the plan's map is the plan's.

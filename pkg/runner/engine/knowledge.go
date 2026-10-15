@@ -1,12 +1,12 @@
-// Knowledge attached to a run (plan knowledge.md §4.5, agentry-cli#317,
-// DR-38). The compiled plan always mounts one read-only /knowledge volume
-// on the tools container, as it mounts /inputs, and grants no knowledge
-// tool: which packs a run reads is the person's choice at run time, like
-// its input files, so it must not move the plan or its hash. The engine
-// copies each attached pack into the run, verifies the copy against the
-// digest its caller checked, and only then grants the three tools — in the
-// run's own copies of the tools spec and the gateway's allowlist, as it
-// stamps the owner — and names what it mounted in the receipt.
+// Knowledge attached to a run. The compiled plan always mounts one
+// read-only /knowledge volume on the tools container, as it mounts
+// /inputs, and grants no knowledge tool: which packs a run reads is the
+// person's choice at run time, like its input files, so it must not move
+// the plan or its hash. The engine copies each attached pack into the run,
+// verifies the copy against the digest its caller checked, and only then
+// grants the three tools — in the run's own copies of the tools spec and
+// the gateway's allowlist, as it stamps the owner — and names what it
+// mounted in the receipt.
 package engine
 
 import (
@@ -37,10 +37,10 @@ type AttachedPack struct {
 	Pages  int
 	Bytes  int64
 	Scan   knowledge.Scan
-	// Shipped is set for a pack the release ships in its own archive (plan
-	// knowledge.md §4.6): its trust is the release's, the attestation over
-	// the archive and the scan of the version, not its own manifest's scan
-	// record. Nil for a pack the person attaches.
+	// Shipped is set for a pack the release ships in its own archive: its
+	// trust is the release's, the attestation over the archive and the
+	// scan of the version, not its own manifest's scan record. Nil for a
+	// pack the person attaches.
 	Shipped *ShippedFrom
 }
 
@@ -192,8 +192,8 @@ func setAllowlist(path string, tools []string) error {
 // withKnowledge adds the receipt's knowledge line when packs are attached:
 // each pack's mount, digest, size and scan record, and what reaches it —
 // the three tools, and, when the contract declares exec, the declared
-// commands, which run in the same container (plan knowledge.md §4.5). A run
-// with none carries no line.
+// commands, which run in the same container. A run with none carries no
+// line.
 func withKnowledge(enforced map[string]string, packs []AttachedPack, execCommands []string) map[string]string {
 	if len(packs) == 0 {
 		return enforced

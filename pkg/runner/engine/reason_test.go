@@ -13,7 +13,7 @@ import (
 )
 
 // wantReason holds a failed run's envelope to the reason the step that
-// stopped it decided (agentry-cli#628).
+// stopped it decided.
 func wantReason(t *testing.T, env *receipt.Envelope, err error, want *receipt.Reason) {
 	t.Helper()
 	if err == nil || env == nil || env.Status != "error" {

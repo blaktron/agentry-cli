@@ -13,7 +13,7 @@ import (
 
 // tokenAdapter turns "in=<n> out=<n>" into a usage event with that split and
 // "total=<n>" into one that reports context tokens without a split, the two
-// shapes a harness can take (agentry-cli#71).
+// shapes a harness can take.
 type tokenAdapter struct{ adapter.Adapter }
 
 func (tokenAdapter) Events(line []byte) []adapter.Event {
@@ -45,8 +45,8 @@ func (tokenAdapter) Events(line []byte) []adapter.Event {
 
 // The whole point of the callback: a driver learns the run's usage WHILE the
 // run is going, and what it learns last is what the envelope ends up
-// carrying. Before agentry-cli#138 usage reached nobody until the envelope,
-// so nothing could meter a live run.
+// carrying. Without it usage would reach nobody until the envelope, so nothing
+// could meter a live run.
 func TestUsageIsReportedWhileTheRunIsLive(t *testing.T) {
 	var seen []receipt.Usage
 	c := &eventCollector{
@@ -127,9 +127,9 @@ func TestUsageReportingIsOptional(t *testing.T) {
 }
 
 // The consume goroutine enforces --max-turns and --max-cost, and its end is
-// what releases teardown (§R11). A driver's callback that panics must not
-// take either down with it: the run goes on, the meter is switched off, and
-// the failure is remembered rather than read as "no usage".
+// what releases teardown. A driver's callback that panics must not take
+// either down with it: the run goes on, the meter is switched off, and the
+// failure is remembered rather than read as "no usage".
 func TestAPanickingUsageCallbackDoesNotEndTheRun(t *testing.T) {
 	calls := 0
 	c := &eventCollector{

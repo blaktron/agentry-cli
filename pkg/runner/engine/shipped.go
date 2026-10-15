@@ -9,13 +9,12 @@ import (
 	"github.com/blaktron/agentry/pkg/manifest"
 )
 
-// ShippedPacks loads the knowledge packs a release ships (plan
-// knowledge.md §4.6, agentry-cli#320): each knowledge/<name>/ its
-// manifest's knowledge.ships names, from the release's own files in
-// workspaceDir. Those are the files the archive digest and the attestation
-// cover — for a built-in package, its embedded tree, which Materialize
-// holds to its digest (agentry-cli#657) — so what the run mounts is what
-// was verified and never re-fetched. Each pack must load as the CLI's
+// ShippedPacks loads the knowledge packs a release ships: each
+// knowledge/<name>/ its manifest's knowledge.ships names, from the
+// release's own files in workspaceDir. Those are the files the archive
+// digest and the attestation cover — for a built-in package, its embedded
+// tree, which Materialize holds to its digest — so what the run mounts is
+// what was verified and never re-fetched. Each pack must load as the CLI's
 // format and name itself; one that does not is a verification failure,
 // since the registry refuses such a release at submit (V11). release names
 // the release's bytes for the receipt ("archive sha256:…"). The engine
@@ -32,8 +31,8 @@ func ShippedPacks(workspaceDir string, m *manifest.Manifest, release string) ([]
 			return nil, Classify(ExitVerify, fmt.Errorf("the release ships the knowledge pack %s, and its manifest.json names %s", name, p.Manifest.Name))
 		}
 		// A shipped pack is Agentry's to carry, so Agentry's cap holds,
-		// not this computer's (agentry-cli#429): the registry refuses a
-		// larger one at submit (V8), and a local package hears it here.
+		// not this computer's: the registry refuses a larger one at
+		// submit (V8), and a local package hears it here.
 		if p.Manifest.Bytes > knowledge.MaxBytes {
 			return nil, Classify(ExitVerify, fmt.Errorf("the release ships the knowledge pack %s at %d bytes; a shipped pack is at most %s", name, p.Manifest.Bytes, knowledge.FormatCap(knowledge.MaxBytes)))
 		}

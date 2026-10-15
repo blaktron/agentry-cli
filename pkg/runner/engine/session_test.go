@@ -100,8 +100,7 @@ type fakeHarness struct {
 	// usage, when set, is written as one usage_update before the turn's
 	// reply — the wire shape a harness that prices the session sends. Nil
 	// sends none, as docker-agent 1.150.0 does for a model whose context
-	// window it does not know (agentry-cli#836); either way it reports no
-	// cost (agentry-cli#222).
+	// window it does not know; either way it reports no cost.
 	usage map[string]any
 	// bareResult answers a prompt with its stop reason alone, as
 	// docker-agent does: its prompt result never carries usage.
@@ -276,8 +275,8 @@ func kinds(evs []session.Event) map[session.Kind]int {
 	return out
 }
 
-// TestSessionTurnsInputsAndReceipts covers plan §6.10 lines 2-5 in one
-// conversation: turns reach the harness only as session/prompt, an input
+// TestSessionTurnsInputsAndReceipts covers one conversation: turns
+// reach the harness only as session/prompt, an input
 // lands under the staged inputs and is announced, the permission request
 // is denied and logged, and the receipts redact the secret and the key.
 func TestSessionTurnsInputsAndReceipts(t *testing.T) {
@@ -304,7 +303,7 @@ func TestSessionTurnsInputsAndReceipts(t *testing.T) {
 	}
 	<-done
 
-	// Only protocol turns reached the harness (line 2).
+	// Only protocol turns reached the harness.
 	h.mu.Lock()
 	methods := strings.Join(h.methods, " ")
 	denied := h.denied
@@ -315,7 +314,7 @@ func TestSessionTurnsInputsAndReceipts(t *testing.T) {
 	if !denied {
 		t.Error("permission request was not answered with the reject option (line 4)")
 	}
-	// The staged input, and the agent-side mount unchanged (line 3).
+	// The staged input, and the agent-side mount unchanged.
 	staged, err := os.ReadFile(filepath.Join(p.RunRoot, "runs", "5e5510", "inputs", "notes.txt"))
 	if err != nil || string(staged) != "some notes" {
 		t.Errorf("input not staged: %v", err)
@@ -346,7 +345,7 @@ func TestSessionTurnsInputsAndReceipts(t *testing.T) {
 	if !synthetic {
 		t.Error("no synthetic turn announced the input")
 	}
-	// Envelope and receipts (line 5: redaction).
+	// Envelope and receipts (redaction).
 	if env.Status != "ok" || env.Harness.Mode != "interactive" || env.Usage.UserTurns != 1 || env.Usage.Turns != 2 || env.Usage.InputTokens != 20 {
 		t.Errorf("envelope = status %s mode %s usage %+v", env.Status, env.Harness.Mode, env.Usage)
 	}
@@ -399,8 +398,8 @@ func TestSessionTurnsInputsAndReceipts(t *testing.T) {
 
 // TestSessionRecordsTheLastTurnsEventsBeforeEnd: a turn's tool calls and
 // permission decisions reach the log, events.ndjson and the transcript
-// even when the pump lags the driver and End follows the turn at once
-// (agentry-cli#204). The lag is what a loaded runner produced (#172).
+// even when the pump lags the driver and End follows the turn at once.
+// The lag is what a loaded runner produced.
 func TestSessionRecordsTheLastTurnsEventsBeforeEnd(t *testing.T) {
 	pumpEventHook = func() { time.Sleep(20 * time.Millisecond) }
 	t.Cleanup(func() { pumpEventHook = nil })
@@ -443,7 +442,7 @@ func TestSessionRecordsTheLastTurnsEventsBeforeEnd(t *testing.T) {
 	}
 }
 
-// TestSessionBudgetsEndTheSession covers line 6: the user-turn cap and the
+// TestSessionBudgetsEndTheSession: the user-turn cap and the
 // idle timeout end the session with a session_end receipt, never a hang.
 func TestSessionBudgetsEndTheSession(t *testing.T) {
 	t.Run("max user turns", func(t *testing.T) {
@@ -509,9 +508,9 @@ func TestSessionBudgetsEndTheSession(t *testing.T) {
 // TestSessionCostBudgetNeedsACostTheHarnessReports: the ceiling fires on a
 // harness that prices the session, and the receipt says plainly that it
 // could not fire on one that does not. docker-agent sends `used` and no
-// cost on its ACP usage_update, so a costUsd of 0 on the default
-// adapter's interactive runs means "nothing was reported", not "the
-// session was free" (agentry-cli#222).
+// cost on its ACP usage_update, so a costUsd of 0 on the default adapter's
+// interactive runs means "nothing was reported", not "the session was
+// free".
 func TestSessionCostBudgetNeedsACostTheHarnessReports(t *testing.T) {
 	start := func(t *testing.T, ceiling float64, usage map[string]any) (session.Session, func() []session.Event, chan struct{}) {
 		t.Helper()
@@ -576,10 +575,10 @@ func TestSessionCostBudgetNeedsACostTheHarnessReports(t *testing.T) {
 }
 
 // TestASessionWhoseHarnessReportsNoTokensSaysSo: docker-agent 1.150.0 sends
-// its ACP usage_update only for a model whose context window it knows
-// (agentry-cli#836), so a session on any other model reports no tokens at
-// all. Its receipt says the 0 is unreported rather than leaving it to read
-// as a session that used none; a harness that reports keeps no such line.
+// its ACP usage_update only for a model whose context window it knows, so a
+// session on any other model reports no tokens at all. Its receipt says the
+// 0 is unreported rather than leaving it to read as a session that used
+// none; a harness that reports keeps no such line.
 func TestASessionWhoseHarnessReportsNoTokensSaysSo(t *testing.T) {
 	end := func(t *testing.T, usage map[string]any) *receipt.Envelope {
 		t.Helper()
@@ -685,11 +684,10 @@ func TestIntakeStagedAndReceipted(t *testing.T) {
 	}
 }
 
-// TestSessionHandshakeFailureMasksStderr (agentry-cli#109): a harness that
-// dies during the handshake, printing its environment on the way out,
-// leaves neither the error nor the stderr receipt carrying a secret —
-// the failure waits for the process to exit and the receipt to be
-// masked before it returns.
+// TestSessionHandshakeFailureMasksStderr: a harness that dies during the
+// handshake, printing its environment on the way out, leaves neither the
+// error nor the stderr receipt carrying a secret — the failure waits for
+// the process to exit and the receipt to be masked before it returns.
 func TestSessionHandshakeFailureMasksStderr(t *testing.T) {
 	p, f := sessionFixture(t)
 	happyFake(f)
@@ -728,9 +726,8 @@ func TestSessionHandshakeFailureMasksStderr(t *testing.T) {
 		t.Errorf("agent-stderr.log = %q", got)
 	}
 	// Nothing holds the receipts: on Windows an open one could not be
-	// moved or deleted until the process exits (agentry-cli#459). The
-	// events receipt was closed after the harness's session_end, not
-	// before it.
+	// moved or deleted until the process exits. The events receipt was
+	// closed after the harness's session_end, not before it.
 	assertReceiptsReleased(t, p.OutDir, "a session whose handshake failed")
 	if ev, _ := os.ReadFile(filepath.Join(p.OutDir, "receipts", "events.ndjson")); !strings.Contains(string(ev), `"session_end"`) {
 		t.Errorf("events.ndjson lacks the session's end: %q", ev)
@@ -746,7 +743,7 @@ func (failingSessionAdapter) Session(context.Context, io.ReadWriteCloser, adapte
 }
 
 // A driver that cannot be made fails the start with the harness running:
-// its receipts are released once it has exited (agentry-cli#459).
+// its receipts are released once it has exited.
 func TestSessionWhoseDriverCannotBeMadeClosesItsReceipts(t *testing.T) {
 	p, f := sessionFixture(t)
 	happyFake(f)
@@ -764,7 +761,7 @@ func TestSessionWhoseDriverCannotBeMadeClosesItsReceipts(t *testing.T) {
 
 // A host-run harness that cannot be started fails the session before
 // the goroutine that closes its stderr receipt exists: the start's
-// failure closes both receipts itself (agentry-cli#459).
+// failure closes both receipts itself.
 func TestSessionWhoseHostHarnessCannotStartClosesItsReceipts(t *testing.T) {
 	p, f := sessionFixture(t)
 	happyFake(f)
@@ -778,12 +775,12 @@ func TestSessionWhoseHostHarnessCannotStartClosesItsReceipts(t *testing.T) {
 	assertReceiptsReleased(t, p.OutDir, "a session whose harness could not start")
 }
 
-// TestSessionStoreIsARunVolume (agentry-cli#90): an interactive run's
-// session store is a per-run named volume labelled with the run id —
-// created before the harness, given to the harness image's own user by a
-// one-shot as root on no network, mounted at /session without a relabel,
-// removed at teardown after the containers — and no host directory is
-// made for it, world-writable or otherwise.
+// TestSessionStoreIsARunVolume: an interactive run's session store is a
+// per-run named volume labelled with the run id — created before the
+// harness, given to the harness image's own user by a one-shot as root
+// on no network, mounted at /session without a relabel, removed at
+// teardown after the containers — and no host directory is made for it,
+// world-writable or otherwise.
 func TestSessionStoreIsARunVolume(t *testing.T) {
 	s, _, p, f := startFixture(t)
 	if _, err := os.Stat(filepath.Join(p.RunRoot, "runs", "5e5510", "session")); !errors.Is(err, os.ErrNotExist) {
@@ -802,9 +799,9 @@ func TestSessionStoreIsARunVolume(t *testing.T) {
 	if strings.Join(init.Argv, " ") != `-c chown -- "$1" "$2" sh docker-agent /session` {
 		t.Errorf("session-init argv = %q", init.Argv)
 	}
-	// The container posture (agentry-cli#163): the one-shot keeps CHOWN
-	// alone; the session's agent is hardened and read-only like the exec
-	// path's, and the receipt says both.
+	// The container posture: the one-shot keeps CHOWN alone; the
+	// session's agent is hardened and read-only like the exec path's,
+	// and the receipt says both.
 	if strings.Join(init.CapDrop, ",") != "ALL" || strings.Join(init.CapAdd, ",") != "CHOWN" || !init.NoNewPrivileges || init.PidsLimit == 0 || init.Memory == "" {
 		t.Errorf("session-init posture: drop %v add %v nnp %v pids %d memory %q", init.CapDrop, init.CapAdd, init.NoNewPrivileges, init.PidsLimit, init.Memory)
 	}
@@ -858,7 +855,7 @@ func TestSessionStoreIsARunVolume(t *testing.T) {
 // An interactive run's containers that hold the QuickAgent's code — the
 // session store's ownership one-shot on the harness image and the agent
 // — are created under the policy runtime too; the runner's own proxy and
-// gateway are not (DR-23).
+// gateway are not.
 func TestSessionContainersCarryTheRuntime(t *testing.T) {
 	p, f := sessionFixture(t)
 	p.Plan.Docker = &spec.DockerSpec{Runtime: "runsc"}
@@ -894,8 +891,8 @@ func TestSessionContainersCarryTheRuntime(t *testing.T) {
 
 // TestSessionEndIsSafeToCallConcurrently: two callers ending the session at
 // once — the terminal's End and runInteractive's deferred one, or a window
-// closing mid-run (agentry-desktop#125) — both get the one envelope, and
-// neither closes the event stream a second time (agentry-cli#161).
+// closing mid-run — both get the one envelope, and neither closes the event
+// stream a second time.
 func TestSessionEndIsSafeToCallConcurrently(t *testing.T) {
 	s, _, _, _ := startFixture(t)
 	_, done := collect(s)
@@ -923,7 +920,7 @@ func TestSessionEndIsSafeToCallConcurrently(t *testing.T) {
 }
 
 // An interactive session's envelope names the policy file the same way a
-// run's does (agentry-cli#152).
+// run's does.
 func TestSessionEnvelopeNamesThePolicyFile(t *testing.T) {
 	p, f := sessionFixture(t)
 	happyFake(f)
@@ -946,13 +943,13 @@ func TestSessionEnvelopeNamesThePolicyFile(t *testing.T) {
 }
 
 // A file added the moment a turn's assistant_turn event is seen gets its
-// own notice turn (agentry-cli#487). The session protocol's client reacts
-// to that event at once, and a turn used to emit it while still holding the
-// turn lock, so an add in that window found the session "busy" and its
-// notice waited for the next user turn: the add gave input_added and
-// nothing more, and the protocol's events differed from the API's. The
-// test reacts to every assistant_turn from a user turn as that client does,
-// many times, so the window is hit if it is still there.
+// own notice turn. The session protocol's client reacts to that event at
+// once, so a turn must not emit it while still holding the turn lock: an
+// add in that window would find the session "busy" and its notice would
+// wait for the next user turn, giving input_added and nothing more, and
+// the protocol's events would differ from the API's. The test reacts to
+// every assistant_turn from a user turn as that client does, many times,
+// so the window is hit if it is still there.
 func TestAnInputAddedAsATurnEndsGetsItsNoticeTurn(t *testing.T) {
 	ctx := context.Background()
 	const rounds = 200

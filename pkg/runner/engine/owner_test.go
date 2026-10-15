@@ -8,7 +8,7 @@ import (
 )
 
 // stampOwner adds the invoking uid/gid to the per-run tool spec and leaves
-// every compiled field alone (agentry-cli#55).
+// every compiled field alone.
 func TestStampOwner(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "toolspec.json")

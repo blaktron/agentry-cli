@@ -1,10 +1,10 @@
-// Package engine executes a compiled run plan (RUNNER-PLAN §R6): render
-// the plan's placeholder-bearing files into a per-run directory, resolve
-// secrets, stand up the run-scoped network + proxy + gateway + agent
-// containers, stream and budget the harness event stream, collect the
-// result envelope, and tear everything down on every exit path. The
-// engine trusts the plan (compile owns policy) and owns exactly the
-// run-scoped values plans must not contain: paths, tokens, secret values.
+// Package engine executes a compiled run plan: render the plan's
+// placeholder-bearing files into a per-run directory, resolve secrets,
+// stand up the run-scoped network + proxy + gateway + agent containers,
+// stream and budget the harness event stream, collect the result
+// envelope, and tear everything down on every exit path. The engine
+// trusts the plan (compile owns policy) and owns exactly the run-scoped
+// values plans must not contain: paths, tokens, secret values.
 package engine
 
 import (
@@ -35,9 +35,9 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/webscan"
 )
 
-// Exit codes (RUNNER-PLAN §R8). The distinguishable failure classes are
-// the runner's composability contract: a cron job or pipeline branches on
-// these, so each class has exactly one meaning.
+// Exit codes. The distinguishable failure classes are the runner's
+// composability contract: a cron job or pipeline branches on these, so
+// each class has exactly one meaning.
 const (
 	ExitOK  = 0
 	ExitCLI = 1
@@ -53,12 +53,12 @@ const (
 	ExitBudget       = 16
 	ExitOutputSchema = 17
 	// ExitBlocked: the agent could not do the task with what the run had,
-	// by its own end_blocked or by the runner's evidence (blocked.go;
-	// agentry-cli#629). A release's one-shot run alone.
+	// by its own end_blocked or by the runner's evidence (blocked.go). A
+	// release's one-shot run alone.
 	ExitBlocked = 18
 )
 
-// ClassifiedError pairs an error with its §R8 exit class so main can exit
+// ClassifiedError pairs an error with its exit class so main can exit
 // precisely without string-matching.
 type ClassifiedError struct {
 	Code int
@@ -76,7 +76,7 @@ func Classify(code int, err error) *ClassifiedError {
 // Params configures one run.
 type Params struct {
 	// Plan is the verified, compiled plan; PlanDir is where it and its
-	// generated files live (§R6 install layout).
+	// generated files live (install layout).
 	Plan    *spec.Plan
 	PlanDir string
 	// WorkspaceSrc is the pristine verified workspace to copy per run.
@@ -84,59 +84,57 @@ type Params struct {
 	// CheckWorkspace, when set, is handed the run's copy of WorkspaceSrc
 	// before anything reads it, and an error refuses the run with the
 	// verify class: an installed release's copy is held to its integrity
-	// record there (installdir.CheckCopy, agentry-cli#326), so an edit
-	// made to the install after the client's own check does not run.
+	// record there (installdir.CheckCopy), so an edit made to the
+	// install after the client's own check does not run.
 	CheckWorkspace func(copyDir string) error
 	// RunRoot is where runs/<id>/ ephemera live (the install dir).
 	RunRoot string
 	// RunnerHome is the runner home, shared by every client on the host.
 	// A run whose plan needs relays holds its relay lock (RelayLockFile)
-	// for the whole run (agentry-cli#268). Empty takes no lock, leaving
-	// the relay listing as the only check.
+	// for the whole run. Empty takes no lock, leaving the relay listing
+	// as the only check.
 	RunnerHome string
-	// OutDir is the mounted output folder (RQ3), already absolute.
+	// OutDir is the mounted output folder, already absolute.
 	OutDir string
 	// Task is the task input (may be nil for an empty task). An empty
 	// task on the autonomous path sends the agent's own instruction
-	// instead (agentry-cli#449).
+	// instead.
 	Task io.Reader
 	// InputPaths are operator-provided files/directories copied into the
-	// run's read-only inputs channel (RUNNER-PLAN-2 §P4).
+	// run's read-only inputs channel.
 	InputPaths []string
-	// Knowledge are the knowledge packs attached to the run (plan
-	// knowledge.md §4.5): each copied into the run's read-only /knowledge
-	// channel and verified there, the three knowledge tools granted and the
-	// receipt's knowledge line written only when there is one (DR-38).
+	// Knowledge are the knowledge packs attached to the run: each copied
+	// into the run's read-only /knowledge channel and verified there, the
+	// three knowledge tools granted and the receipt's knowledge line
+	// written only when there is one.
 	Knowledge []AttachedPack
-	// Voice is the person's Writing Voice when the run attaches it (plan
-	// writing-voice.md §5): written under the run's /knowledge channel,
-	// voice_read granted and the receipt's voice line written only then.
-	// A built-in's run never carries one (D5).
+	// Voice is the person's Writing Voice when the run attaches it:
+	// written under the run's /knowledge channel, voice_read granted and
+	// the receipt's voice line written only then. A built-in's run never
+	// carries one.
 	Voice *AttachedVoice
 	// ReportTheme is the report design export_pdf lays the run's PDFs out
-	// with, and what chose it (agentry-cli#731, #784): a design document, or
-	// a built-in theme's id; neither is the default, Plain. The type keeps
-	// its v1 name so that a caller passing a built-in's id (the desktop)
-	// still builds. Used only when the plan grants export_pdf.
+	// with, and what chose it: a design document, or a built-in theme's id;
+	// neither is the default, Plain. The type keeps its v1 name so that a
+	// caller passing a built-in's id (the desktop) still builds. Used only
+	// when the plan grants export_pdf.
 	ReportTheme ReportTheme
 	// Decoded, when set, is the decode step the caller ran on the inputs
 	// before this run (pkg/runner/decode); the receipt names it.
 	Decoded *decode.Result
 	// TextInputs says the caller staged only files it made itself (every
 	// built-in: localrun.Run sets it): the engine does not decode them.
-	// Otherwise a run's inputs are decoded before the agent starts (plan
-	// file-handling.md §5, agentry-cli#560).
+	// Otherwise a run's inputs are decoded before the agent starts.
 	TextInputs bool
 	// InputReview, when set, is AI Review of the inputs' text before the
-	// agent starts (review.go; plan file-handling.md §8, agentry-cli#321):
-	// a hosted run's, through the registry with the job's credential. A
-	// flagged input refuses the run, and a session's added file alone.
-	// Nil reviews nothing, as every local run.
+	// agent starts (review.go): a hosted run's, through the registry with
+	// the job's credential. A flagged input refuses the run, and a
+	// session's added file alone. Nil reviews nothing, as every local run.
 	InputReview webscan.Scanner
 	// Hosted says the run is a sandbox host's (its driver marks it: a run
 	// grant, a job's credential, AGENTRY_HOSTED). A hosted run's browser
-	// opens public sites only (plan browser-testing.md D2; agentry-cli#941).
-	// A run with InputReview set is hosted whatever this says.
+	// opens public sites only. A run with InputReview set is hosted whatever
+	// this says.
 	Hosted bool
 	// EndBlocked grants end_blocked and the calls ledger (blocked.go): the
 	// run ends blocked, not ok, when its agent says it could not do the task
@@ -150,9 +148,9 @@ type Params struct {
 	// Review is a review-grant run's key (review.go): required for a plan
 	// with the review grant, refused for any other.
 	Review *ReviewRun
-	// Intake holds the answers to the manifest's up-front questions (plan
-	// §3.5): staged as /inputs/intake.json, file answers staged like inputs,
-	// secret answers already merged into SecretOverrides by the caller.
+	// Intake holds the answers to the manifest's up-front questions: staged
+	// as /inputs/intake.json, file answers staged like inputs, secret
+	// answers already merged into SecretOverrides by the caller.
 	Intake *intake.Answers
 	// Adapter interprets the harness event stream.
 	Adapter adapter.Adapter
@@ -160,41 +158,40 @@ type Params struct {
 	Policy *policy.Policy
 	// PolicyFile names the operator policy file Policy was read from and
 	// how its path was chosen (policy.Resolve); the envelope records it
-	// with the plan's policySha256 as its digest (agentry-cli#152). Nil
-	// leaves the envelope's policy block out.
+	// with the plan's policySha256 as its digest. Nil leaves the
+	// envelope's policy block out.
 	PolicyFile *policy.File
 	// SecretOverrides resolve declared secrets ahead of the policy source
-	// — the QuickAgent's MCP profile rides in here (P2 §P2); the engine
-	// itself stays profile-agnostic.
+	// — the QuickAgent's MCP profile rides in here; the engine itself
+	// stays profile-agnostic.
 	SecretOverrides map[string]string
 	// Connections are the access tokens of the servers that sign in by
 	// OAuth, keyed by spec.MCPServerSpec.ConnectionKey (a remote server's
 	// address, a package server's "pypi:name"): the caller refreshed each
-	// from the person's connection (pkg/runner/connection, agentry-cli#664,
-	// #665). An access token is all a run is given of one; a server with
-	// none here refuses the run.
+	// from the person's connection (pkg/runner/connection). An access token
+	// is all a run is given of one; a server with none here refuses the
+	// run.
 	Connections map[string]ConnectionToken
 	// RenewConnection, when set, is asked for a new access token for a
-	// server (by its ConnectionKey) before the one the run holds expires
-	// (plan mcp-oauth-connections.md D24): the engine rewrites the
-	// server's connection folder with it, which a bridge and a server that
-	// re-reads its token file pick up. Nil leaves each token as given for
-	// the whole run.
+	// server (by its ConnectionKey) before the one the run holds expires:
+	// the engine rewrites the server's connection folder with it, which a
+	// bridge and a server that re-reads its token file pick up. Nil leaves
+	// each token as given for the whole run.
 	RenewConnection func(ctx context.Context, server string) (ConnectionToken, error)
 	// ModelSignIn is what the run is given of the person's model sign-in
 	// when its plan spends one (spec.HarnessSpec.ModelSignIn, signin.go):
 	// an access token alone, or the harness's own config directory. The
 	// run refuses one its plan was not compiled for, and a plan that
 	// spends one refuses to run without it. Never set by a hosted run's
-	// driver (plan model-sign-ins.md D2).
+	// driver.
 	ModelSignIn *ModelSignInGrant
 	// RenewModelSignIn, when set, is asked for a new access token for a
 	// token-file sign-in before the one the run holds expires; the engine
 	// rewrites the token file with it. Nil leaves the token as given.
 	RenewModelSignIn func(ctx context.Context) (ConnectionToken, error)
-	// ServersDir is the signature's installed MCP-server store
-	// (RUNNER-PLAN-3), substituted for the PHServers placeholder.
-	// Required when the plan declares MCP servers; unused otherwise.
+	// ServersDir is the signature's installed MCP-server store,
+	// substituted for the PHServers placeholder. Required when the plan
+	// declares MCP servers; unused otherwise.
 	ServersDir string
 	// Budgets are the effective hard stops (plan defaults merged with
 	// any tighter run flags by the caller).
@@ -203,7 +200,7 @@ type Params struct {
 	Attestation receipt.Attestation
 	// ExecPackages are the catalogued packages' resolved versions the exec
 	// image build recorded ("name-version"); appended to the receipt's
-	// exec line so it names what was installed (agentry-cli#100).
+	// exec line so it names what was installed.
 	ExecPackages []string
 	// KeepRunDir preserves runs/<id>/ for debugging (secrets.env is
 	// still always deleted).
@@ -216,12 +213,12 @@ type Params struct {
 	// OnUsage, when set, is called every time the harness reports usage,
 	// with the run's running totals. It is what lets a driver meter a run
 	// while it is live: the envelope's usage arrives only at the end, so
-	// before this nothing could enforce a token cap during the run
-	// (agentry-cli#138). Called from the stream-consuming goroutine, in
-	// order, and never after the harness stream closes.
+	// without this nothing could enforce a token cap during the run.
+	// Called from the stream-consuming goroutine, in order, and never
+	// after the harness stream closes.
 	//
 	// It MUST NOT BLOCK. That goroutine is also what enforces --max-turns
-	// and --max-cost, and its end is what releases teardown (§R11), so a
+	// and --max-cost, and its end is what releases teardown, so a
 	// callback that waits stops the budgets and leaves containers up. A
 	// callback that panics is caught and switched off rather than allowed
 	// to take the teardown down with it.
@@ -292,28 +289,26 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 		return fail(env, redact, err)
 	}
 	// A target host is reached only as the plan declares it, and never
-	// by a hosted run (agentry-cli#861): refused before anything starts.
+	// by a hosted run: refused before anything starts.
 	if err := checkTargetHosts(p); err != nil {
 		return fail(env, redact, err)
 	}
 	// A browser is given only as the plan declares it, and a hosted run's
-	// only to public sites (agentry-cli#915, #941).
+	// only to public sites.
 	if err := checkBrowser(ctx, p); err != nil {
 		return fail(env, redact, err)
 	}
 	env.CapabilitiesEnforced = withSignInRenewal(env.CapabilitiesEnforced, p)
 
-	// Everything below must tear down whatever it built, success or not
-	// (§R11 invariant 6): td runs in reverse order via defer, then sweeps
-	// anything still carrying this run's label.
-	// What a run whose process died left behind goes first, before this
-	// run adds its own (agentry-cli#161).
+	// Everything below must tear down whatever it built, success or not:
+	// td runs in reverse order via defer, then sweeps anything still
+	// carrying this run's label. What a run whose process died left
+	// behind goes first, before this run adds its own.
 	SweepAbandoned(ctx, d, p.Stderr)
 	td := &teardown{d: d, stderr: p.Stderr, runID: runID}
 	defer func() {
 		td.run()
-		// What teardown could not delete turns the run's outcome
-		// (agentry-cli#422).
+		// What teardown could not delete turns the run's outcome.
 		if err := td.reportLeftFiles(env); err != nil && outErr == nil {
 			outErr = err
 		}
@@ -323,9 +318,8 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	if err != nil {
 		return fail(env, redact, err)
 	}
-	// The input sources are fetched first (plan input-sources.md §5,
-	// agentry-cli#833), then everything is decoded before anything starts
-	// (plan file-handling.md §5, agentry-cli#560).
+	// The input sources are fetched first, then everything is decoded
+	// before anything starts.
 	srcRuns, err := fetchSources(ctx, d, p, rd, td, runID)
 	if err != nil {
 		return fail(env, redact, err)
@@ -355,7 +349,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	}
 	// The optional secrets it goes without, before any replacer is built:
 	// the System Prompt names them (spec.PHSecretsAbsent), and so does the
-	// receipt (DR-70).
+	// receipt.
 	rd.secretsAbsent = absentSecrets(p.Plan, secrets)
 	env.CapabilitiesEnforced = withAbsentNote(env.CapabilitiesEnforced, rd.secretsAbsent)
 	task, err := readTask(p.Task, rd.receiptsDir)
@@ -375,8 +369,8 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	redact = rd.newRedactor(p, token, secrets)
 	env.CapabilitiesEnforced = withRedactionNote(env.CapabilitiesEnforced, p, secrets)
 	// Connections are renewed before they expire for as long as the run
-	// lives (plan D24); teardown stops the renewer before it deletes the
-	// connection folders.
+	// lives; teardown stops the renewer before it deletes the connection
+	// folders.
 	stopRenewal := renewConnections(ctx, p, rd)
 	td.add(func(context.Context) { stopRenewal() })
 
@@ -384,7 +378,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	// A run driven as one session turn may approve the gateway's tools: its
 	// grant, read before any harness starts (a host harness runs as the
 	// person and could rewrite the file), and what the gateway serves beyond
-	// it (the declared servers' tools), as a session's (agentry-cli#578).
+	// it (the declared servers' tools), as a session's.
 	var oneTurnTools []string
 	var served []string
 	var servedInto *[]string
@@ -403,8 +397,8 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 		return fail(env, redact, withRefusals(err, rd))
 	}
 	// Harness files are rendered once the infrastructure is up: a host-run
-	// harness (plan runner-m-r4-adapters §5) needs the published gateway
-	// and proxy addresses, known only now; the replacer learns them too.
+	// harness needs the published gateway and proxy addresses, known only
+	// now; the replacer learns them too.
 	rep = rd.replacer()
 	if err := renderPlanFiles(p.Plan, p.PlanDir, rd, nativePath, "harness"); err != nil {
 		return fail(env, redact, err)
@@ -434,13 +428,13 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	// The gateway's own log (tool-call log included, --log-calls) is
 	// part of the audit trail; collect before teardown kills it.
 	// Collected under a context that survives an interrupt: the receipts
-	// are the point of tearing down cleanly (agentry-cli#124).
+	// are the point of tearing down cleanly.
 	keep := context.WithoutCancel(ctx)
 	if logs, lerr := d.Logs(keep, containerName(runID, "gateway"), 2000); lerr == nil && logs != "" {
 		_ = os.WriteFile(filepath.Join(rd.receiptsDir, "gateway.log"), []byte(redact.String(logs)), 0o644)
 	}
 	// The proxy's decisions (allow/deny per CONNECT) are the evidence of
-	// what left the run (DR-6); collected the same way.
+	// what left the run; collected the same way.
 	if logs, lerr := d.Logs(keep, containerName(runID, "proxy"), 2000); lerr == nil && logs != "" {
 		_ = os.WriteFile(filepath.Join(rd.receiptsDir, "proxy.log"), []byte(redact.String(logs)), 0o644)
 	}
@@ -458,10 +452,9 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	if rd.fetchLedger != "" {
 		rd.redact.File(rd.fetchLedger)
 	}
-	// Each target host's calls, the agent having ended (agentry-cli#861).
+	// Each target host's calls, the agent having ended.
 	copyHostLogs(rd, env)
-	// The browse proxy's decisions and what the browser saved
-	// (agentry-cli#915).
+	// The browse proxy's decisions and what the browser saved.
 	collectBrowseProxyLog(keep, d, rd, env)
 	copyBrowserOut(rd, p.Stderr)
 	writeMeta(rd.receiptsDir, runID, p, start, taskSent)
@@ -523,7 +516,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 // fail stamps the envelope with the classified failure — its text masked
 // by the run's redactor, since a gateway log tail or an agent's stderr
 // tail rides along in it — writes it to the output folder (a failed run
-// still leaves its record, RQ3), and returns.
+// still leaves its record), and returns.
 func fail(env *receipt.Envelope, r *redactor, err error) (*receipt.Envelope, error) {
 	// The reason is read before the redactor, which rebuilds a masked
 	// error without the chain; it holds no value to mask (receipt.Reason).
@@ -558,10 +551,10 @@ type agentOutcome struct {
 }
 
 // startInfra creates the run network and starts proxy + gateway, then
-// health-probes the gateway from inside the network (§R6 execute order).
-// Every failure here is the §R8 gateway/environment class. When served is
-// non-nil (a session's), the probe also lists the tools the gateway serves
-// and startInfra stores them there (agentry-cli#578).
+// health-probes the gateway from inside the network (execute order). Every
+// failure here is the gateway/environment class. When served is non-nil (a
+// session's), the probe also lists the tools the gateway serves and
+// startInfra stores them there.
 func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	td *teardown, runID, token string, rep *strings.Replacer, served *[]string,
 ) error {
@@ -580,7 +573,7 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	gwName := containerName(runID, "gateway")
 	// The gateway's env names host paths (its bind allow-lists) in the
 	// gateway's spelling; its mounts are made by this CLI, in the host's,
-	// and its argv names only paths inside it (agentry-cli#414).
+	// and its argv names only paths inside it.
 	gwEnv, err := rd.gatewayEnv(p.Plan, token)
 	if err != nil {
 		return err
@@ -592,10 +585,10 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		Env:    gwEnv,
 		Mounts: resolveMounts(p.Plan.Gateway.Mounts, rep),
 		// The pinned gateway image declares VOLUME /misc. Left to docker it
-		// is an unlabelled anonymous volume that outlived every run
-		// (agentry-cli#458); mounted here it carries the run's labels, goes
-		// with the container (RemoveForce's -v), and is found by teardown's
-		// and the sweeps' run label if the container went some other way.
+		// is an unlabelled anonymous volume that outlived every run;
+		// mounted here it carries the run's labels, goes with the container
+		// (RemoveForce's -v), and is found by teardown's and the sweeps'
+		// run label if the container went some other way.
 		Volumes: []dockerx.VolumeMount{{Target: gatewayVolumeDir, Labels: labels}},
 		Network: netName,
 		Alias:   spec.GatewayAlias,
@@ -608,13 +601,13 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		// network for docker to resolve the link. So the gateway's
 		// hostname is not its container name: it finds no container,
 		// propagates nothing, and each server sits on exactly the
-		// networks its contract calls for (agentry-cli#105).
+		// networks its contract calls for.
 		Hostname: gatewayHostname(runID),
 		Labels:   labels,
-		// The gateway is the one container that drives the host daemon
-		// (§R4 calls that its documented privilege level, and it is why the
-		// agent container never sees this socket). An SELinux-enabled
-		// daemon would otherwise refuse it the socket outright.
+		// The gateway is the one container that drives the host daemon; that
+		// is its documented privilege level, and it is why the agent container
+		// never sees this socket. An SELinux-enabled daemon would otherwise
+		// refuse it the socket outright.
 		DisableSELinuxLabel: mountsDockerSocket(p.Plan.Gateway.Mounts),
 	}
 	// Its root stays writable: a vendor image, whose writes are its own.
@@ -624,27 +617,26 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	gwSpec = hardened(gwSpec, p.limits())
 	gwSpec.CapAdd = []string{"DAC_READ_SEARCH"}
 	// The gateway's own runtime, a registration that opens the bind-mounted
-	// socket of the run's docker filter (docker.gatewayRuntime,
-	// agentry-cli#337); "" is the daemon's default.
+	// socket of the run's docker filter (docker.gatewayRuntime); "" is the
+	// daemon's default.
 	if gatewaySandboxed(p.Plan) {
 		gwSpec.Runtime = p.Plan.GatewayRuntime()
 	}
 	// A run that will give the gateway relays to start: where the docker
-	// filter runs, the relay networks are its own (agentry-cli#220);
-	// elsewhere it refuses to share the host's one relay network with
-	// another gateway's (relays.go, agentry-cli#108, DR-22) and holds the
-	// runner home's relay lock from the listing to the end of its teardown,
-	// so two such runs starting together cannot both list an empty network
-	// (relaylock.go, agentry-cli#268). Either way the release or removal is
-	// queued before the gateway's teardown, so it runs after the relays
-	// are reaped.
+	// filter runs, the relay networks are its own; elsewhere it refuses to
+	// share the host's one relay network with another gateway's (relays.go)
+	// and holds the runner home's relay lock from the listing to the end of
+	// its teardown, so two such runs starting together cannot both list an
+	// empty network (relaylock.go). Either way the release or removal is
+	// queued before the gateway's teardown, so it runs after the relays are
+	// reaped.
 	switch {
 	case !relaysNeeded(p.Plan):
 	case filterSupported:
 		// The gateway's two fixed relay networks are this run's own, made
 		// here and removed with the run; the filter translates the names
-		// (dockerfilter.go, agentry-cli#220). Runs with relays share a host
-		// without seeing each other's.
+		// (dockerfilter.go). Runs with relays share a host without seeing
+		// each other's.
 		if err := makeRelayNetworks(ctx, d, runID, td); err != nil {
 			return err
 		}
@@ -659,7 +651,7 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		}
 	default:
 		// Without the filter the gateway's relay network is the host's one
-		// fixed network (DR-22): such runs take turns on the host.
+		// fixed network: such runs take turns on the host.
 		release, err := holdRelayLock(p.RunnerHome)
 		if err != nil {
 			return err
@@ -679,9 +671,9 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		}
 	}
 	// The gateway's daemon socket is this run's filter, not the daemon's
-	// (dockerfilter.go, agentry-cli#219). Queued before the gateway's
-	// teardown, so it closes after the gateway has stopped and reaped the
-	// containers it launched through it.
+	// (dockerfilter.go). Queued before the gateway's teardown, so it
+	// closes after the gateway has stopped and reaped the containers it
+	// launched through it.
 	switch {
 	case filterSupported && filterInProcess:
 		filter, sock, err := startDaemonFilter(rd, runID, gwEnv, p.limits(), p.Plan, p.RunnerHome)
@@ -693,7 +685,7 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		gwSpec.Mounts = throughFilter(gwSpec.Mounts, sock)
 	case filterSupported:
 		// Docker Desktop: the same filter, in a container of the run's own
-		// (filtersidecar.go, agentry-cli#322).
+		// (filtersidecar.go).
 		cfg, err := filterConfig(rd, runID, gwEnv, p.limits(), p.Plan)
 		if err != nil {
 			return err
@@ -707,11 +699,10 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	if err := d.RunDetached(ctx, gwSpec); err != nil {
 		return Classify(ExitGateway, fmt.Errorf("start mcp gateway: %w", err))
 	}
-	// Graceful stop first: the gateway reaps its tool-server containers
-	// on SIGTERM; rm -f would orphan them. Its relay sidecars it does not
-	// reap on our stop (Docker 29.7.2, agentry-cli#106), so they are removed
-	// here by the names its log gave them (relays.go), before the log goes
-	// with the container.
+	// Graceful stop first: the gateway reaps its tool-server containers on
+	// SIGTERM; rm -f would orphan them. Its relay sidecars it does not reap
+	// on our stop (Docker 29.7.2), so they are removed here by the names its
+	// log gave them (relays.go), before the log goes with the container.
 	relays := &relayReaper{}
 	if filterSupported {
 		relays.runID = runID
@@ -725,7 +716,7 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 
 	// Health: an authenticated MCP initialize from inside the run
 	// network. A gateway that cannot answer this cannot serve the agent;
-	// abort rather than degrade to tool-less execution (§6.1 annex rule).
+	// abort rather than degrade to tool-less execution.
 	probeName := containerName(runID, "probe")
 	td.add(func(c context.Context) { _ = d.RemoveForce(c, probeName) })
 	probeSpec := dockerx.RunSpec{
@@ -741,7 +732,7 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		AutoRemove: true,
 	}
 	// Under the policy's runtime like the agent and, for the same reason,
-	// given the gateway's address rather than its name (agentry-cli#221).
+	// given the gateway's address rather than its name.
 	if probeSpec.ExtraHosts, err = sandboxHosts(ctx, d, p.Plan, runID); err != nil {
 		return Classify(ExitGateway, err)
 	}
@@ -773,11 +764,11 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	// came up. That is not the run the contract described, so it is the
 	// same failure class as a gateway that never answered. The gateway
 	// launches its servers while loading its configuration, before it
-	// serves the probe, so the log is complete by now.
-	// The tools server is checked the same way, on every run: a gateway
-	// that could not start it (a relay the docker filter refused, say)
-	// carries on with the declared servers alone, and the agent would run
-	// without the tools its contract grants (agentry-cli#346).
+	// serves the probe, so the log is complete by now. The tools server
+	// is checked the same way, on every run: a gateway that could not
+	// start it (a relay the docker filter refused, say) carries on with
+	// the declared servers alone, and the agent would run without the
+	// tools its contract grants.
 	logs, err := d.Logs(ctx, gwName, dockerx.LogsAll)
 	if err != nil {
 		return Classify(ExitGateway, fmt.Errorf("read gateway log to confirm the tools server and declared servers started: %w", err))
@@ -792,7 +783,7 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		return Classify(ExitGateway, withRefusals(err, rd))
 	}
 	// The host link checks each target host's sign-in before it serves:
-	// a refusal stops the run here, with its reason (agentry-cli#861).
+	// a refusal stops the run here, with its reason.
 	if p.Plan.HostLink != nil {
 		if err := checkHostLinkStarted(logs); err != nil {
 			return withRefusals(err, rd)
@@ -804,12 +795,12 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 // startProxy starts the run's llm egress proxy on netName, with its leg
 // out: a run's, and a Copilot model list's (copilotmodels.go).
 func startProxy(ctx context.Context, d dockerx.Client, p Params, rd *runDirs, td *teardown, runID, netName string, labels map[string]string) error {
-	// LLM egress proxy: the agent container's only route out (§R4). It is
-	// also the one run container with a bridge leg, so for a host-run
-	// harness it is the host's door to everything: its own CONNECT port
-	// and a plain TCP forward to the gateway, which never leaves the run
-	// network (a gateway on the bridge makes every MCP server it launches
-	// inherit that mix of networks, which docker refuses; agentry-cli#105).
+	// LLM egress proxy: the agent container's only route out. It is also
+	// the one run container with a bridge leg, so for a host-run harness it
+	// is the host's door to everything: its own CONNECT port and a plain
+	// TCP forward to the gateway, which never leaves the run network (a
+	// gateway on the bridge makes every MCP server it launches inherit that
+	// mix of networks, which docker refuses).
 	proxyName := containerName(runID, "proxy")
 	proxyArgv := []string{"proxy",
 		"--allow", strings.Join(p.Plan.Proxy.Allow, ","),
@@ -833,16 +824,15 @@ func startProxy(ctx context.Context, d dockerx.Client, p Params, rd *runDirs, td
 	}
 	proxySpec = readOnlyRoot(hardened(proxySpec, p.limits()), "/tmp")
 	// The model endpoints at the addresses this machine resolves for them
-	// (modelhosts.go, agentry-cli#592).
+	// (modelhosts.go).
 	rd.modelHosts = modelHostPins(ctx, p.Plan.Proxy.Allow)
 	proxySpec.ExtraHosts = append(proxySpec.ExtraHosts, rd.modelHosts...)
-	// Under the run's runtime where the host's name servers are named
-	// (agentry-cli#337): it reads the run's own resolv.conf, and its egress
-	// leg is a network of the run's own joined at create, since a
-	// sandboxed runtime takes no network connected after start and docker
-	// refuses the default bridge beside the run network at create. A
-	// host-run harness's proxy publishes ports to the host and stays on
-	// the daemon's default, as measured.
+	// Under the run's runtime where the host's name servers are named: it
+	// reads the run's own resolv.conf, and its egress leg is a network of
+	// the run's own joined at create, since a sandboxed runtime takes no
+	// network connected after start and docker refuses the default bridge
+	// beside the run network at create. A host-run harness's proxy
+	// publishes ports to the host and stays on the daemon's default.
 	sandboxed := proxySandboxed(p.Plan)
 	if sandboxed {
 		egress := proxyEgressNetwork(runID)
@@ -864,7 +854,7 @@ func startProxy(ctx context.Context, d dockerx.Client, p Params, rd *runDirs, td
 	// The proxy needs a route to the model endpoint; the run network is
 	// internal by design, so it joins the default bridge as its second
 	// leg (or, sandboxed, took its own egress network at create). The
-	// agent container never does (§R11 invariant 2).
+	// agent container never does.
 	if !sandboxed {
 		if err := d.NetworkConnect(ctx, "bridge", proxyName); err != nil {
 			return Classify(ExitGateway, fmt.Errorf("connect proxy to bridge: %w", err))
@@ -958,8 +948,8 @@ func enforcedWithPackages(enforced map[string]string, packages []string) map[str
 		out["exec"] += "; packages resolved at image build: " + strings.Join(resolved, ", ")
 	}
 	if len(missing) > 0 {
-		// Unsafe Mode's build goes on without what it could not install
-		// (plan unsafe-mode.md D8), and the run without that tool.
+		// Unsafe Mode's build goes on without what it could not
+		// install, and the run without that tool.
 		out["exec"] += "; NOT installed at image build (the commands named are absent from this run unless the base image already carries them): " + strings.Join(missing, "; ")
 	}
 	return out
@@ -1015,7 +1005,7 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	defer func() { _ = eventsFile.Close() }()
 
 	// The stream is consumed as it arrives so --max-turns can stop a
-	// looping agent instead of billing it to completion (§R8 exit 16).
+	// looping agent instead of billing it to completion (exit 16).
 	pr, pw := io.Pipe()
 	collector := &eventCollector{
 		adapter:    p.Adapter,
@@ -1134,15 +1124,15 @@ var (
 	errCostBudget = errors.New("cost budget exceeded")
 	errPlanLimit  = errors.New("plan limit reached")
 	// errOutOfCredits ends a run whose provider said the paying account has
-	// no credits left (agentry-cli#742).
+	// no credits left.
 	errOutOfCredits = errors.New("out of credits")
 	errOrgPolicy    = errors.New("refused by an organization's policy")
 )
 
 // outputSchema loads and compiles the package's output.schema.json for a
-// json-kind plan (DR-8 closed, agentry-cli#11). The bytes are re-hashed
-// against the plan: the plan is what was accepted at install, the
-// workspace is what the run reads, and they must agree.
+// json-kind plan. The bytes are re-hashed against the plan: the
+// plan is what was accepted at install, the workspace is what the run
+// reads, and they must agree.
 func outputSchema(p Params) (*jsonschema.Schema, error) {
 	if p.Plan.Harness.ResultKind != "json" || p.Plan.Output.SchemaFile == "" {
 		return nil, nil
@@ -1161,7 +1151,7 @@ func outputSchema(p Params) (*jsonschema.Schema, error) {
 	return sch, nil
 }
 
-// finalResult applies the §R2 output convention: json-kind results must
+// finalResult applies the output convention: json-kind results must
 // parse AND validate against output.schema.json (exit 17 otherwise, the
 // violation named); text results pass through.
 func finalResult(kind, lastText string, schema *jsonschema.Schema) (json.RawMessage, error) {
@@ -1190,21 +1180,19 @@ func finalResult(kind, lastText string, schema *jsonschema.Schema) (json.RawMess
 }
 
 // errAnswerInReasoning refuses a schema-checked run whose model ended on
-// reasoning (agentry-cli#825). The runner stays strict, as for leaked
-// markup (agentry-cli#354): reasoning is the model's working, not its
-// answer, and docker-agent itself does not use it as the response. The
-// reason is there so the run does not read "not valid JSON" over an empty
-// message.
+// reasoning. The runner stays strict, as for leaked markup: reasoning is
+// the model's working, not its answer, and docker-agent itself does not
+// use it as the response. The reason is there so the run does not read
+// "not valid JSON" over an empty message.
 func errAnswerInReasoning() error {
 	return Classify(ExitOutputSchema, receipt.WithReason(
 		fmt.Errorf("package declares %s but the model sent no final message after its reasoning: an answer written only in the model's reasoning is not taken as the result (raw output preserved in receipts)", compile.OutputSchemaFile),
 		receipt.ReasonAnswerInReasoning, ""))
 }
 
-// JSONResult is the §R2 output convention for a json-kind result, as the
-// run itself applies it: a host post-step that recovers an answer from a
-// message the run refused holds it to exactly this (the Examiner's,
-// agentry-cli#504).
+// JSONResult is the output convention for a json-kind result, as the run
+// itself applies it: a host post-step that recovers an answer from a
+// message the run refused holds it to exactly this (the Examiner's).
 func JSONResult(text string, schema *jsonschema.Schema) (json.RawMessage, error) {
 	return finalResult("json", text, schema)
 }
@@ -1231,25 +1219,25 @@ type eventCollector struct {
 	redact     *redactor
 	maxTurns   int
 	overBudget func()
-	// maxCostUSD > 0 makes the harness's reported running cost a hard
-	// stop (agentry-cli#7, DR-4). docker-agent's usage events carry cost as
-	// a running total, so the collector keeps its high-water mark: a harness
-	// that reported per-call costs would under-enforce, never over-kill.
-	// Tokens are the opposite, and are summed: docker-agent's token_usage
-	// carries that model request's own tokens (fresh plus cached input),
-	// and claude and codex report once per autonomous run (agentry-cli#141;
-	// usage_recorded_test.go pins this against the recorded streams).
+	// maxCostUSD > 0 makes the harness's reported running cost a hard stop.
+	// docker-agent's usage events carry cost as a running total, so the
+	// collector keeps its high-water mark: a harness that reported per-call
+	// costs would under-enforce, never over-kill. Tokens are the opposite,
+	// and are summed: docker-agent's token_usage carries that model
+	// request's own tokens (fresh plus cached input), and claude and codex
+	// report once per autonomous run (usage_recorded_test.go pins this
+	// against the recorded streams).
 	maxCostUSD float64
 	overCost   func()
 	// signIn says the run is paid by a model sign-in: a harness's reported
-	// cost is not the person's to pay, so it is not recorded (D13), and
-	// onPlanLimit ends the run when the harness reports the plan's limit
-	// (I9), keeping its words in planLimit and planResets.
+	// cost is not the person's to pay, so it is not recorded, and
+	// onPlanLimit ends the run when the harness reports the plan's limit,
+	// keeping its words in planLimit and planResets.
 	signIn      bool
 	onPlanLimit func()
 	planLimit   *adapter.Event
 	// onOrgPolicy ends the run when the harness reports that a policy of
-	// the person's organization refused it (D29), keeping the event.
+	// the person's organization refused it, keeping the event.
 	onOrgPolicy func()
 	orgPolicy   *adapter.Event
 	// outOfCredits is the provider's first out-of-credits answer, and
@@ -1262,14 +1250,14 @@ type eventCollector struct {
 	costUSD       float64
 	// curText accumulates the streamed deltas of the assistant message in
 	// progress; lastText is the complete text of the most recent message
-	// (a streaming provider's last delta alone was the result before
-	// agentry-cli#53). A tool call or a usage event ends a message.
+	// (the result is the whole message, not a streaming provider's last
+	// delta). A tool call or a usage event ends a message.
 	curText  strings.Builder
 	lastText string
 	// Since the last tool call, the model reasoned (reasoned) and wrote
 	// answer text (answered). A run that ends having reasoned and not
 	// answered put whatever it meant to answer in its reasoning, which is
-	// never the result (agentry-cli#825); text then reasoning is an answer.
+	// never the result; text then reasoning is an answer.
 	reasoned, answered bool
 	budgetTripped      bool
 	costTripped        bool
@@ -1277,8 +1265,7 @@ type eventCollector struct {
 	// panicErr is set when the consuming goroutine recovered a panic. It is
 	// the run's error: a panic in the adapter's mapper or the tee writer
 	// would otherwise take the process down, and teardown is a defer in
-	// Run's own goroutine, which a dying goroutine never runs
-	// (agentry-cli#161).
+	// Run's own goroutine, which a dying goroutine never runs.
 	panicErr error
 	// totTok accumulates a harness's context-token reports, for the
 	// harnesses that give a total without an input/output split.
@@ -1301,13 +1288,12 @@ type eventCollector struct {
 // container holding a valid gateway token, the gateway holding the docker
 // socket, and the run network and secrets.env on disk — bounded by nothing,
 // since the turn, cost and wall budgets are all enforced by the process that
-// died (agentry-cli#161). So the panic is recovered, recorded as the
-// collector's error, and the pipe is closed with it, which makes the harness's
-// next write fail instead of blocking forever on a reader that is gone.
-// onCancel ends the agent's context for the case where nothing is writing: a
-// docker client blocked reading the attach stream never notices the closed
-// pipe, and without it the run would sit there with its budget goroutine dead
-// and the sandbox up.
+// died. So the panic is recovered, recorded as the collector's error, and the
+// pipe is closed with it, which makes the harness's next write fail instead of
+// blocking forever on a reader that is gone. onCancel ends the agent's context
+// for the case where nothing is writing: a docker client blocked reading the
+// attach stream never notices the closed pipe, and without it the run would
+// sit there with its budget goroutine dead and the sandbox up.
 //
 // Both call sites — the container agent and the host-run harness — go through
 // this, because they are the same shape and hardening one copy of it left the
@@ -1425,10 +1411,10 @@ func (c *eventCollector) record(ev adapter.Event) {
 
 // notifyUsage hands the running totals to the driver's callback without
 // letting the driver end the run. This goroutine enforces the turn and cost
-// budgets and its end releases teardown, so a panicking callback used to
-// mean containers left up; one that panics is reported through the run's
-// own error channel and then switched off, because a callback that failed
-// once will fail on every event.
+// budgets and its end releases teardown, so a panicking callback would
+// leave containers up; one that panics is reported through the run's
+// own error channel and then switched off, because a callback that
+// failed once will fail on every event.
 func (c *eventCollector) notifyUsage() {
 	if c.onUsage == nil {
 		return
@@ -1458,11 +1444,11 @@ func (c *eventCollector) usage() receipt.Usage {
 
 // sandboxHosts pins the run network's two aliases — the gateway and the
 // llm-proxy — into the /etc/hosts of a run container under the plan's
-// runtime, the agent and the gateway's health probe (DR-23,
-// agentry-cli#221): a sandboxed runtime's own network stack does not reach
-// docker's embedded DNS at 127.0.0.11, and those two names are the whole
-// world of both. Without a runtime nothing is pinned and the run is the
-// run it was. Both containers are up before either starts (startInfra).
+// runtime, the agent and the gateway's health probe: a sandboxed runtime's
+// own network stack does not reach docker's embedded DNS at 127.0.0.11,
+// and those two names are the whole world of both. Without a runtime
+// nothing is pinned and the run is the run it was. Both containers are up
+// before either starts (startInfra).
 func sandboxHosts(ctx context.Context, d dockerx.Client, plan *spec.Plan, runID string) ([]string, error) {
 	if plan.Runtime() == "" {
 		return nil, nil

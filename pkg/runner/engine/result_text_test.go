@@ -10,8 +10,8 @@ import (
 
 // The result is the assistant's LAST MESSAGE in full, assembled from the
 // streamed deltas docker-agent emits, not the last delta; reasoning chunks
-// and text before a tool call do not leak into it (agentry-cli#53 — the
-// sequence below is the shape of the first dev-host run's receipt).
+// and text before a tool call do not leak into it (the sequence below is
+// the shape of a real run's receipt).
 func TestCollectorAssemblesStreamedFinalMessage(t *testing.T) {
 	ad, err := adapter.Get("docker-agent")
 	if err != nil {
@@ -54,12 +54,11 @@ func TestCollectorAssemblesStreamedFinalMessage(t *testing.T) {
 	}
 }
 
-// agentry-cli#825: two shapes of production's runtime-smoke on 2026-10-10.
-// Run d31be0ca called its tools, then streamed the answer as reasoning and
-// sent no message; run fecd9e18 reasoned, called nothing, and docker-agent
-// warned that it "produced only reasoning and no reply". Both end on
-// reasoning, both count their tool calls as turns, and neither keeps any of
-// the reasoning as text.
+// Two shapes seen in real runs. One called its tools, then streamed the
+// answer as reasoning and sent no message; the other reasoned, called
+// nothing, and docker-agent warned that it "produced only reasoning and
+// no reply". Both end on reasoning, both count their tool calls as
+// turns, and neither keeps any of the reasoning as text.
 func TestCollectorNotesAnswerInReasoning(t *testing.T) {
 	ad, err := adapter.Get("docker-agent")
 	if err != nil {

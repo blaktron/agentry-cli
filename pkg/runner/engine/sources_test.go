@@ -71,12 +71,12 @@ func withSource(t *testing.T, p *Params, f *dockerx.Fake, files map[string]strin
 	return fg
 }
 
-// TestARepositorySourceIsFetchedBeforeTheDecode pins invariants 1–4 of plan
-// input-sources.md §3 at the engine: the fetch step runs in the files image
-// on a network of its own, behind a proxy to the source's host alone at
-// public addresses, with the token on stdin and nowhere else; its files are
-// staged at /inputs/repo/ and decoded; and the agent, the gateway and the
-// proxy of the run get no token, no source mount and no source network.
+// TestARepositorySourceIsFetchedBeforeTheDecode: the fetch step runs in
+// the files image on a network of its own, behind a proxy to the
+// source's host alone at public addresses, with the token on
+// stdin and nowhere else; its files are staged at /inputs/repo/ and
+// decoded; and the agent, the gateway and the proxy of the run get no
+// token, no source mount and no source network.
 func TestARepositorySourceIsFetchedBeforeTheDecode(t *testing.T) {
 	resetDecodeCalls()
 	p, f := fixture(t)
@@ -184,8 +184,7 @@ func TestARepositorySourceIsFetchedBeforeTheDecode(t *testing.T) {
 }
 
 // TestASourcesExecutableIsMalwareChecked: a repository holding an EICAR
-// executable is refused before the agent starts, as an upload is
-// (invariant 6, D8).
+// executable is refused before the agent starts, as an upload is.
 func TestASourcesExecutableIsMalwareChecked(t *testing.T) {
 	resetDecodeCalls()
 	p, f := fixture(t)
@@ -205,9 +204,9 @@ func TestASourcesExecutableIsMalwareChecked(t *testing.T) {
 }
 
 // TestASourceOverItsCapRefusesTheRun: the fetch step's refusal is the
-// run's, with the count, before anything is staged (invariant 7, D7); the
-// reason names the source and the count in typed fields, against the
-// value of the cap the run fetched with (agentry-cli#884).
+// run's, with the count, before anything is staged; the reason names
+// the source and the count in typed fields, against the value of the
+// cap the run fetched with.
 func TestASourceOverItsCapRefusesTheRun(t *testing.T) {
 	for name, c := range map[string]struct {
 		refusal string
@@ -252,7 +251,7 @@ func TestASourceOverItsCapRefusesTheRun(t *testing.T) {
 
 // TestAFetchStepThatBreaksTheRulesIsNotStaged: a link, a .git folder or
 // counts that are not the report's mean the step is not the one this CLI
-// ships, and nothing of it is staged (invariant 5).
+// ships, and nothing of it is staged.
 func TestAFetchStepThatBreaksTheRulesIsNotStaged(t *testing.T) {
 	for name, edit := range map[string]func(*source.Report, string){
 		"a link": func(_ *source.Report, out string) {
@@ -318,12 +317,11 @@ func TestAFetchFailureSaysWhy(t *testing.T) {
 	assertNoToken(t, p.OutDir)
 }
 
-// TestAHostedRunReviewsASourcesMarkdownAlone pins agentry-cli#872 (plan
-// input-sources.md D7, D9): a hosted run (AI Review of its inputs) fetches
-// a repository with the hosted caps, and AI Review reads its Markdown
-// files (README.md, .markdown, CONTRIBUTING with no extension) and not
-// its code or its other text, which the agent can still read; the
-// receipt's source line says so.
+// TestAHostedRunReviewsASourcesMarkdownAlone pins: a hosted run (AI Review
+// of its inputs) fetches a repository with the hosted caps, and AI Review
+// reads its Markdown files (README.md, .markdown, CONTRIBUTING with no
+// extension) and not its code or its other text, which the agent can still
+// read; the receipt's source line says so.
 func TestAHostedRunReviewsASourcesMarkdownAlone(t *testing.T) {
 	resetDecodeCalls()
 	p, f := fixture(t)
@@ -418,8 +416,8 @@ func TestAHostedRunRefusesASourceTooBigToReview(t *testing.T) {
 	if !errors.As(err, &ce) || ce.Code != ExitPolicy || !strings.Contains(err.Error(), "has 17 Markdown files for AI Review") || !strings.Contains(err.Error(), "refused rather than reviewed in part") {
 		t.Fatalf("err %v", err)
 	}
-	// Typed (agentry-cli#884): the source, its 17 Markdown files, and how
-	// many fit, the ones the sentence does not say are withheld.
+	// Typed: the source, its 17 Markdown files, and how many fit, the
+	// ones the sentence does not say are withheld.
 	m := regexp.MustCompile(`, and (\d+) of them do not fit`).FindStringSubmatch(err.Error())
 	withheld := 0
 	if m != nil {
@@ -504,8 +502,7 @@ func withURLSource(t *testing.T, p *Params, f *dockerx.Fake, name, body string, 
 // TestAURLSourceIsDecodedAsAnUpload: a url source is fetched by the same
 // step, behind a proxy to its host alone with the token on stdin, staged
 // at /inputs/doc/ and decoded as an upload is: its text file goes to the
-// malware check, which the source rule would have left unchecked
-// (agentry-cli#834, D8).
+// malware check, which the source rule would have left unchecked.
 func TestAURLSourceIsDecodedAsAnUpload(t *testing.T) {
 	resetDecodeCalls()
 	p, f := fixture(t)
@@ -625,7 +622,7 @@ func TestAURLFetchStepThatBreaksItsReportIsNotStaged(t *testing.T) {
 }
 
 // A hosted run's url source is fetched within the hosted upload cap and
-// read by AI Review as an upload is (agentry-cli#872, D7, D9).
+// read by AI Review as an upload is.
 func TestAHostedURLSourceHasTheUploadCapAndIsReviewed(t *testing.T) {
 	resetDecodeCalls()
 	p, f := fixture(t)
@@ -651,7 +648,7 @@ func TestAHostedURLSourceHasTheUploadCapAndIsReviewed(t *testing.T) {
 
 // TestTheFetchStepCountsInTheReceiptsWords: the fetch step's words are the
 // receipt's (it cannot import them), so every count it may report survives
-// the reason's Clean with its cap's value (agentry-cli#884).
+// the reason's Clean with its cap's value.
 func TestTheFetchStepCountsInTheReceiptsWords(t *testing.T) {
 	for _, o := range []source.Over{
 		{Cap: source.CapFiles, Of: source.OfFiles}, {Cap: source.CapFiles, Of: source.OfObjects}, {Cap: source.CapFiles, Of: source.OfEntries, More: true},

@@ -21,9 +21,8 @@ import (
 // /var/run/docker.sock can. So it runs in a container of the run's own,
 // the runner image's docker-filter role, which holds the daemon's socket
 // and serves the same package's filter on docker.sock in a volume the
-// gateway mounts at /var/run, where it looks for the daemon
-// (agentry-cli#322). The gateway reaches the daemon only through it, as on
-// Linux.
+// gateway mounts at /var/run, where it looks for the daemon. The gateway
+// reaches the daemon only through it, as on Linux.
 
 // filterInProcess says whether the CLI serves the filter itself (Linux);
 // elsewhere a filter container serves it.

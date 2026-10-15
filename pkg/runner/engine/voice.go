@@ -1,11 +1,10 @@
-// A Writing Voice attached to a run (plan writing-voice.md §5, D4;
-// agentry-cli#531). It rides on knowledge's path (DR-38): the compiled plan
-// already mounts one read-only /knowledge volume on the tools container,
-// so the engine writes the voice's VOICE.md under it, at .voice/ — a name
-// no pack can take, since a pack's name starts with a letter or a digit —
-// and grants voice_read in the run's own copies of the tools spec and the
-// gateway's allowlist. Attaching a voice moves neither the plan nor its
-// hash. The run's copy dies with the knowledge directory at teardown.
+// A Writing Voice attached to a run. It rides on knowledge's path: the
+// compiled plan already mounts one read-only /knowledge volume on the tools
+// container, so the engine writes the voice's VOICE.md under it, at .voice/
+// — a name no pack can take, since a pack's name starts with a letter or a
+// digit — and grants voice_read in the run's own copies of the tools spec
+// and the gateway's allowlist. Attaching a voice moves neither the plan nor
+// its hash. The run's copy dies with the knowledge directory at teardown.
 package engine
 
 import (
@@ -50,9 +49,9 @@ func AttachVoice(text []byte, origin string) (*AttachedVoice, error) {
 	return &AttachedVoice{Text: bytes.Clone(text), Digest: voice.Digest(text), Origin: origin}, nil
 }
 
-// checkVoice refuses a voice on a built-in's run (plan writing-voice.md
-// D5): the Drafter, the Knowledge Creator and the Voice Writer write for
-// the application, never in a person's voice.
+// checkVoice refuses a voice on a built-in's run: the Drafter, the
+// Knowledge Creator and the Voice Writer write for the application,
+// never in a person's voice.
 func checkVoice(p Params) error {
 	if p.Voice != nil && p.Plan.Source == "builtin" {
 		return Classify(ExitCLI, errors.New("a built-in package's run never takes a Writing Voice"))

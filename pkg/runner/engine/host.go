@@ -24,13 +24,13 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
-// Host-run harnesses (plan runner-m-r4-adapters §5, decision D2): the
-// adapter's harness is a process of this user from the person's own
-// installation, not a container. The run's gateway and proxy are published
-// on 127.0.0.1 for it (hostPublish), the harness files are rendered with
-// those addresses, and the process gets a clean environment: the plan's
-// variables, the two addresses, and the host variables the adapter names.
-// Budgets, receipts and exit classification are the container path's.
+// Host-run harnesses: the adapter's harness is a process of
+// this user from the person's own installation, not a container. The run's
+// gateway and proxy are published on 127.0.0.1 for it (hostPublish), the
+// harness files are rendered with those addresses, and the process gets a
+// clean environment: the plan's variables, the two addresses, and the host
+// variables the adapter names. Budgets, receipts and exit classification
+// are the container path's.
 
 // hostPublish publishes a container port on 127.0.0.1 with an ephemeral
 // host port when the plan's harness runs on the host; nil otherwise, so a
@@ -49,10 +49,8 @@ func hostPublish(p Params, containerPort int) []dockerx.PortPublish {
 // binding at creation and only programs it when the container is
 // afterwards connected to the bridge — and that lands a moment after
 // `docker run -d` and `docker network connect` have both returned. Reading
-// the port once therefore fails intermittently (it failed on the gateway
-// back when the gateway published its own port, and, by luck of a faster
-// image, not on the proxy). Nothing here is worth a fixed sleep: poll
-// until the mapping is there.
+// the port once therefore fails intermittently. Nothing here is worth a
+// fixed sleep: poll until the mapping is there.
 func waitPublishedPort(ctx context.Context, d dockerx.Client, name string, containerPort int) (int, error) {
 	deadline := time.Now().Add(publishedPortTimeout)
 	var err error
@@ -136,8 +134,8 @@ var hostOS = runtime.GOOS
 
 // windowsHostEnv are what a Windows program needs to find its profile, its
 // npm shims (%APPDATA%\npm), a temporary directory, the extensions it may
-// run and its shell (agentry-cli#423). Still an allowlist: nothing else in
-// the runner's environment reaches the harness (RUNNER-PLAN §R6).
+// run and its shell. Still an allowlist: nothing else in the runner's
+// environment reaches the harness.
 var windowsHostEnv = []string{"USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP", "PATHEXT", "ComSpec", "SystemRoot"}
 
 // hostInherit is the plan's InheritEnv, with windowsHostEnv added on
@@ -216,7 +214,7 @@ func startHostProcess(ctx context.Context, p Params, rd *runDirs, rep *strings.R
 	if found, err := ancestorFile(dir, hs.RefuseAncestorFiles); err != nil {
 		return nil, hostStart{}, Classify(ExitCLI, err)
 	} else if found != "" {
-		return nil, hostStart{}, Classify(ExitPolicy, fmt.Errorf("harness %s: %s would enter the run as context — the harness reads it from every ancestor of its working directory, and this run has no --bare to skip it; move it, or use an API key (agentry-cli#171)",
+		return nil, hostStart{}, Classify(ExitPolicy, fmt.Errorf("harness %s: %s would enter the run as context — the harness reads it from every ancestor of its working directory, and this run has no --bare to skip it; move it, or use an API key",
 			p.Plan.Harness.Adapter, found))
 	}
 	info := path
@@ -241,10 +239,10 @@ func startHostProcess(ctx context.Context, p Params, rd *runDirs, rep *strings.R
 	cmd := exec.CommandContext(ctx, path, substituteAll(hs.Argv, rep)...)
 	cmd.Env, cmd.Dir = env, dir
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
-	// configProcess replaces SysProcAttr (the process group on unix), so
-	// the window rule, which keeps what it finds, goes after it. Ten seconds
-	// for the harness and its children to answer SIGTERM before the whole
-	// group is SIGKILLed (agentry-cli#161).
+	// configProcess replaces SysProcAttr (the process group on unix), so the
+	// window rule, which keeps what it finds, goes after it. Ten seconds for
+	// the harness and its children to answer SIGTERM before the whole group
+	// is SIGKILLed.
 	waited := configProcess(cmd, 10*time.Second)
 	procx.NoWindow(cmd)
 	if err := cmd.Start(); err != nil {
@@ -254,7 +252,7 @@ func startHostProcess(ctx context.Context, p Params, rd *runDirs, rep *strings.R
 	wait := func() (int, error) {
 		// The leader's pid is the process group's id, and once it is reaped
 		// the kernel may hand that pid to something else: call off any pending
-		// group escalation before that can happen (agentry-cli#161).
+		// group escalation before that can happen.
 		defer waited()
 		err := cmd.Wait()
 		if err == nil {
@@ -298,7 +296,7 @@ func runHostHarness(ctx context.Context, p Params, rd *runDirs, token string, re
 		overBudget: func() { cancelCause(errBudget) },
 		overCost:   func() { cancelCause(errCostBudget) },
 		// A run paid by a sign-in ends on its plan's limit, as in a
-		// container (I9).
+		// container.
 		signIn:         p.Plan.Harness.ModelSignIn != nil,
 		onPlanLimit:    func() { cancelCause(errPlanLimit) },
 		onOrgPolicy:    func() { cancelCause(errOrgPolicy) },
@@ -359,7 +357,7 @@ func runHostHarness(ctx context.Context, p Params, rd *runDirs, token string, re
 	out := agentOutcome{lastText: collector.lastText, answerInReasoning: collector.answerInReasoning(), usage: collector.usage(), hostInfo: info, hostEnv: inherited}
 	switch {
 	// First, as in the container path: a panic that stopped the reader is the
-	// reason anything downstream looks wrong (agentry-cli#161).
+	// reason anything downstream looks wrong.
 	case collector.panicErr != nil:
 		out.err = Classify(ExitCLI, collector.panicErr)
 	case collector.planLimit != nil:

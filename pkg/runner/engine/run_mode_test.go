@@ -9,9 +9,9 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
-// The System Prompt names the run's mode (agentry-cli#717): the compiled
-// text carries spec.PHRunMode, so a release's two plans keep one
-// instruction (DR-15), and the engine fills it in per run.
+// The System Prompt names the run's mode: the compiled text carries
+// spec.PHRunMode, so a release's two plans keep one instruction, and the
+// engine fills it in per run.
 
 // TestARunsSystemPromptSaysItIsAutonomous goes through a whole Run.
 func TestARunsSystemPromptSaysItIsAutonomous(t *testing.T) {

@@ -73,14 +73,12 @@ func (f *fakeReview) seen() []string {
 
 func init() { reviewPace, reviewBackoff = 0, 0 }
 
-// TestAHostedRunsInputsAreReviewedBeforeTheAgent pins plan file-handling.md
-// §8 (agentry-cli#321): with InputReview set, every text the model could
-// read of the inputs goes to AI Review as input_file before the agent
-// starts: a document's decoded text and its original when that is text, a
-// text input as it is, HTML as uploaded and as Markdown, an archive
-// member's text; a binary original,
-// which read_input serves as base64, does not. The receipt says what was
-// read.
+// TestAHostedRunsInputsAreReviewedBeforeTheAgent pins: with InputReview
+// set, every text the model could read of the inputs goes to AI Review as
+// input_file before the agent starts: a document's decoded text and its
+// original when that is text, a text input as it is, HTML as uploaded and
+// as Markdown, an archive member's text; a binary original, which
+// read_input serves as base64, does not. The receipt says what was read.
 func TestAHostedRunsInputsAreReviewedBeforeTheAgent(t *testing.T) {
 	resetDecodeCalls()
 	p, f := fixture(t)
@@ -219,7 +217,7 @@ func TestAnInputAIReviewCannotReadRefusesTheRun(t *testing.T) {
 // A call AI Review could not answer for a moment (a judge error, a
 // timeout, the route unavailable or holding the job to its rate) is asked
 // again before the run is refused, and a run whose call passes the second
-// time runs, its receipt saying so (agentry-cli#806).
+// time runs, its receipt saying so.
 func TestATransientAIReviewFailureIsAskedAgain(t *testing.T) {
 	for _, tc := range []struct {
 		name, failure string
@@ -409,7 +407,7 @@ func TestAFilePastTheReviewsCapIsWithheldUnasked(t *testing.T) {
 // inside a character, each part after the first repeating at least
 // reviewOverlap bytes before its cut; a text that does not fit in what is
 // left of a call fills it; many small texts are packed at most
-// reviewBatchTexts a call (agentry-cli#823).
+// reviewBatchTexts a call.
 func TestTheReviewsCallsFitTheRoute(t *testing.T) {
 	var lines strings.Builder
 	for i := range 20000 {
@@ -525,9 +523,9 @@ func shapes(calls [][]reviewPiece) []string {
 
 // 16 MiB of text, the most AI Review reads of a run, fits in the run's
 // calls with room to name a flagged file, whatever the sizes of its texts:
-// texts just over 32 KiB, which took one call each before
-// agentry-cli#823 (496 calls, past the registry's cap of 400 scans a run,
-// agentry-enterprise#499), fill the calls as long and short ones do.
+// texts just over 32 KiB, which would take one call each if packed alone
+// (496 calls, past the registry's cap of 400 scans a run), fill the calls
+// as long and short ones do.
 func TestSixteenMiBOfTextFitsTheRunsCalls(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -583,7 +581,7 @@ func TestSixteenMiBOfTextFitsTheRunsCalls(t *testing.T) {
 // A file whose texts would take the run's calls past what is left, with
 // room kept to name a flagged file, is withheld unasked, as one past the
 // run's text is: the files that fit are read, and a session's added file
-// past the calls is withheld too (agentry-cli#823).
+// past the calls is withheld too.
 func TestAFilePastTheRunsCallsIsWithheldUnasked(t *testing.T) {
 	rv := &fakeReview{}
 	r := newInputReview(rv)

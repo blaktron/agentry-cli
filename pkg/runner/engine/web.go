@@ -1,11 +1,10 @@
-// The built-in Drafter's web tools at run time (plan builder-rework.md §7.3,
-// D20–D25; agentry-cli#345). The compiled plan grants the tools
-// (spec.CapSummary.WebTools, toolsrv.Web.Enabled); where a run scans and
-// searches is the run's own, since one plan serves a draft made on this
-// computer with the person's keys and one made in Agentry with the job's
-// credential. The engine stamps that half into the run's copy of the tools
-// spec, rebuilds the tools server's line of the gateway allowlist from it,
-// writes the keys into the run's gateway secrets file for the tools
+// The built-in Drafter's web tools at run time. The compiled plan grants
+// the tools (spec.CapSummary.WebTools, toolsrv.Web.Enabled); where a run
+// scans and searches is the run's own, since one plan serves a draft made on
+// this computer with the person's keys and one made in Agentry with the
+// job's credential. The engine stamps that half into the run's copy of the
+// tools spec, rebuilds the tools server's line of the gateway allowlist from
+// it, writes the keys into the run's gateway secrets file for the tools
 // container alone, and counts the tools' ledger into the receipt.
 package engine
 
@@ -232,8 +231,8 @@ func webLine(rec *receipt.Web) string {
 const resolvConfFile = "resolv.conf"
 
 // runResolvers are the name servers of the run's own resolv.conf: the web
-// tools' (agentry-cli#386) or, under a runtime, those of the llm-proxy and
-// the relays (agentry-cli#337). Both are the policy's docker.resolvers.
+// tools' or, under a runtime, those of the llm-proxy and the relays. Both
+// are the policy's docker.resolvers.
 func runResolvers(plan *spec.Plan) []string {
 	if rs := plan.WebResolvers(); len(rs) > 0 {
 		return rs
@@ -243,11 +242,10 @@ func runResolvers(plan *spec.Plan) []string {
 
 // writeResolvConf writes, for a run with name servers in its plan (policy
 // docker.resolvers), the resolv.conf read in place of docker's: the docker
-// filter binds it read-only into the web tools' server (agentry-cli#386)
-// and, under a runtime, into each relay, and the engine into the llm-proxy
-// (agentry-cli#337). A sandboxed runtime does not reach docker's embedded
-// DNS (DR-23). Readable by each of those containers' users; nothing for a
-// run without resolvers.
+// filter binds it read-only into the web tools' server and, under a
+// runtime, into each relay, and the engine into the llm-proxy. A sandboxed
+// runtime does not reach docker's embedded DNS. Readable by each of those
+// containers' users; nothing for a run without resolvers.
 func writeResolvConf(gatewayDir string, plan *spec.Plan) error {
 	rs := runResolvers(plan)
 	if len(rs) == 0 {
@@ -261,5 +259,5 @@ func resolversLine(rs []string) string {
 	if !filterSupported {
 		return "docker.resolvers names " + strings.Join(rs, ", ") + ", which only the per-run docker filter binds into the web tools' server; without it (a platform the filter does not run on) the server keeps docker's DNS"
 	}
-	return "the web tools' server resolves host names through " + strings.Join(rs, ", ") + " (docker.resolvers), from a resolv.conf of the run's own bound read-only in place of docker's, whose embedded DNS a sandboxed runtime does not reach (DR-23)"
+	return "the web tools' server resolves host names through " + strings.Join(rs, ", ") + " (docker.resolvers), from a resolv.conf of the run's own bound read-only in place of docker's, whose embedded DNS a sandboxed runtime does not reach"
 }

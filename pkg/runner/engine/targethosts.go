@@ -19,18 +19,17 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/hostlink"
 )
 
-// Target hosts (agentry-notes plans/runtime-hosts.md §4–§8;
-// agentry-cli#861). The caller readies each target host before the run
-// (targethost.Prepare: its address, its key, its sign-in) and hands it in
-// with the intake answers. The engine refuses a hosted run that would reach
-// one (D11), writes each host's folder for the host link alone, admits its
-// relay to the one address and port, masks its sign-in wherever the run
-// writes (D19), says why when the host link would not start, and keeps each
-// host's call log as a receipt.
+// Target hosts. The caller readies
+// each target host before the run (targethost.Prepare: its address, its
+// key, its sign-in) and hands it in with the intake answers. The engine
+// refuses a hosted run that would reach one, writes each host's folder for
+// the host link alone, admits its relay to the one address and port, masks
+// its sign-in wherever the run writes, says why when the host link would
+// not start, and keeps each host's call log as a receipt.
 
 // HostedTargetHostRefusal is a hosted run's refusal of a release that
-// declares target hosts (plan D11): exit 11, host-refused, hosted. The CLI
-// refuses with it before anything is installed, and the engine again.
+// declares target hosts: exit 11, host-refused, hosted. The CLI refuses
+// with it before anything is installed, and the engine again.
 func HostedTargetHostRefusal(ids []string) error {
 	return Classify(ExitPolicy, receipt.WithReason(
 		errors.New("a hosted run never reaches a target host: this QuickAgent works a machine over SSH, which only a run on your own computer does"),
@@ -38,9 +37,9 @@ func HostedTargetHostRefusal(ids []string) error {
 }
 
 // checkTargetHosts refuses, before anything is made, a run whose plan
-// declares target hosts the run cannot reach as declared: a hosted run
-// (plan D11), and a target host that was not readied (every declared one
-// must be: the host link holds one relay a host).
+// declares target hosts the run cannot reach as declared: a hosted run,
+// and a target host that was not readied (every declared one must be:
+// the host link holds one relay a host).
 func checkTargetHosts(p Params) error {
 	ids := p.Plan.Capabilities.TargetHosts
 	if len(ids) == 0 {
@@ -74,7 +73,7 @@ func checkTargetHosts(p Params) error {
 			return Classify(ExitPolicy, receipt.WithReason(err, receipt.ReasonHostRefused, receipt.HostAddress, id))
 		}
 		// The caller resolved and checked the address; the engine holds
-		// it to the same rule, whoever the caller is (plan D8).
+		// it to the same rule, whoever the caller is.
 		if err := targethost.CheckAddress(h.Address); err != nil {
 			return Classify(ExitPolicy, receipt.WithReason(fmt.Errorf("target host %s: %s is %w", id, h.Address, err), receipt.ReasonHostRefused, receipt.HostAddress, id))
 		}
@@ -111,7 +110,7 @@ var hostLinkUser = func() (string, int, int) {
 
 // hostLinkPasswd is the passwd file bound over the host link's /etc/passwd:
 // the image's own lines, and one for the uid it runs as (ssh refuses a uid
-// it has no entry for, DR-91).
+// it has no entry for).
 func hostLinkPasswd(uid, gid int) []byte {
 	lines := []string{
 		"root:x:0:0:root:/root:/sbin/nologin",
@@ -220,8 +219,7 @@ func writeHostFolder(dir string, h *targethost.Host) error {
 }
 
 // hostCredentialValues are the run's target-host sign-ins in every spelling
-// the host link's scrub masks (hostlink.Spellings), for the run's redactor
-// (D19).
+// the host link's scrub masks (hostlink.Spellings), for the run's redactor.
 func hostCredentialValues(p Params) []string {
 	var out []string
 	for _, h := range targetHostsOf(p) {
@@ -261,8 +259,8 @@ func copyHostLogs(rd *runDirs, env *receipt.Envelope) {
 }
 
 // copyShellTranscripts keeps the transcript of every shell session the
-// host link opened (plan runtime-hosts.md invariant 7, D18), masked by the
-// run's redactor as the call logs are, and counts them by target host.
+// host link opened, masked by the run's redactor as the call logs are, and
+// counts them by target host.
 func copyShellTranscripts(rd *runDirs) map[string]int {
 	counts := map[string]int{}
 	entries, err := os.ReadDir(rd.hostLogDir())
@@ -297,7 +295,7 @@ var hostRefusalRE = regexp.MustCompile(`^- ` + regexp.QuoteMeta(hostlink.ServerN
 // checkHostLinkStarted reads the gateway's startup log for the host link's
 // own refusal, and for the gateway's line that it did not start: a target
 // host that refused the sign-in or offered another key stops the run
-// before the agent starts (plan §8).
+// before the agent starts.
 func checkHostLinkStarted(logs string) error {
 	lines := strings.Split(logs, "\n")
 	for _, line := range lines {

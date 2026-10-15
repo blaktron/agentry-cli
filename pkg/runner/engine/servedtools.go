@@ -1,10 +1,10 @@
-// What a session's driver permits beyond the run's own grant
-// (agentry-cli#578). A declared MCP server's tools are named by the server
-// at run time unless its manifest filters them, and docker-agent asks the
-// client's permission for every tool not marked read-only, so the session
-// asks the gateway what it serves (the probe's --list-tools, from inside
-// the run network) and permits that too. The gateway's allowlist stays the
-// enforcement; the permit only stops refusing what the gateway routes.
+// What a session's driver permits beyond the run's own grant. A declared
+// MCP server's tools are named by the server at run time unless its
+// manifest filters them, and docker-agent asks the client's permission for
+// every tool not marked read-only, so the session asks the gateway what it
+// serves (the probe's --list-tools, from inside the run network) and
+// permits that too. The gateway's allowlist stays the enforcement; the
+// permit only stops refusing what the gateway routes.
 package engine
 
 import (

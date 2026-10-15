@@ -41,13 +41,12 @@ func TestGatewayHostPath(t *testing.T) {
 // with must pass the gateway's own bind check: its allow-lists split on
 // ":" (filepath.SplitList in a Linux container), and each host source must
 // sit under a root, writable ones by exact entry. A C:\ root split at the
-// drive colon failed every run's tools server (agentry-cli#414). The run's
-// own wiring renders the config and the env, so a call site that went
-// back to the native paths fails here too.
+// drive colon failed every run's tools server. The run's own wiring
+// renders the config and the env, so a call site that went back to the
+// native paths fails here too.
 //
 // The workspace binds take the manifest's filesystem shape: a paths write
-// grant binds each path rw, and each needs its own exact entry
-// (agentry-cli#855).
+// grant binds each path rw, and each needs its own exact entry.
 func TestGatewaySeesWindowsPathsItCanCheck(t *testing.T) {
 	shapes := map[string]func(*manifest.Manifest){
 		"whole workspace": nil,
@@ -92,9 +91,9 @@ func gatewaySeesWindowsPaths(t *testing.T, editManifest func(*manifest.Manifest)
 	roots := strings.Split(env["MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS"], ":")
 	writable := strings.Split(env["MCP_GATEWAY_DOCKER_BIND_ALLOW_WRITABLE_PATHS"], ":")
 	for _, r := range append(append([]string{}, roots...), writable...) {
-		// The run's own directories, all C:\ paths, and cfg, which is a
-		// real temporary directory wherever TMPDIR puts it (agentry-cli#442):
-		// the gateway's spelling of it, whatever that is on this host.
+		// The run's own directories, all C:\ paths, and cfg, which is a real
+		// temporary directory wherever TMPDIR puts it: the gateway's spelling
+		// of it, whatever that is on this host.
 		if !strings.HasPrefix(r, "/c/") && r != gatewayPath(rd.cfg) {
 			t.Errorf("gateway root %q is not a /c/ path (roots %q)", r, roots)
 		}
@@ -183,8 +182,8 @@ func underAny(p string, roots []string) bool {
 // A host-run codex reads its config.toml from the run's cfg, and the path
 // of its instruction file is substituted into a TOML basic string. On
 // Windows that path's backslashes are escapes: "C:\Users\…" is an invalid
-// \U escape and codex, run with --strict-config, refuses the file
-// (agentry-cli#420). The rendered string must read back as the path.
+// \U escape and codex, run with --strict-config, refuses the file. The
+// rendered string must read back as the path.
 func TestCodexConfigHoldsAWindowsPathTOMLCanRead(t *testing.T) {
 	m, err := manifest.Parse([]byte(engineManifest))
 	if err != nil {
@@ -292,7 +291,7 @@ func tomlBasicString(v string) (string, error) {
 }
 
 // On Windows a folder the gateway cannot be given as a /<drive>/… path is
-// refused before the run makes anything, naming the folder (agentry-cli#425).
+// refused before the run makes anything, naming the folder.
 func TestGatewayCanMount(t *testing.T) {
 	for _, c := range []struct {
 		path, goos string

@@ -15,11 +15,10 @@ import (
 	"github.com/blaktron/agentry/pkg/manifest"
 )
 
-// Optional secrets (capabilities.optionalSecrets; DR-70, agentry-cli#651,
-// plan optional-secrets.md §5). A run starts without an optional secret it
-// has no value for: the gateway's secrets file holds it empty, the System
-// Prompt and the receipt name it, and a missing required secret is still
-// exit 11, naming only the required ones.
+// Optional secrets (capabilities.optionalSecrets). A run starts without an
+// optional secret it has no value for: the gateway's secrets file holds it
+// empty, the System Prompt and the receipt name it, and a missing required
+// secret is still exit 11, naming only the required ones.
 
 func TestAMissingOptionalSecretStartsTheRun(t *testing.T) {
 	p, f := fixtureEdited(t, nil, func(m *manifest.Manifest) {
@@ -53,9 +52,9 @@ func TestASuppliedOptionalSecretIsNotAbsent(t *testing.T) {
 	}
 }
 
-// TestARequiredSecretStillRefusesBesideAnOptionalOne is runner plan §R4
-// for every secret not marked optional: exit 11, before docker, naming the
-// required secret and not the optional one.
+// TestARequiredSecretStillRefusesBesideAnOptionalOne: the runner's rule for every
+// secret not marked optional: exit 11, before docker, naming the required
+// secret and not the optional one.
 func TestARequiredSecretStillRefusesBesideAnOptionalOne(t *testing.T) {
 	p, f := fixtureEdited(t, nil, func(m *manifest.Manifest) {
 		m.Capabilities.Secrets = append(m.Capabilities.Secrets, "ENGINE_REQUIRED_TOKEN")
@@ -176,7 +175,7 @@ func TestARunsSystemPromptNamesTheSecretItWentWithout(t *testing.T) {
 
 // TestReceiptsRedactASuppliedOptionalSecret runs the receipts' redaction
 // over a secret marked optional and supplied: it is masked like a required
-// one (plan invariant 4).
+// one.
 func TestReceiptsRedactASuppliedOptionalSecret(t *testing.T) {
 	p, f := fixtureEdited(t, nil, func(m *manifest.Manifest) {
 		m.Capabilities.OptionalSecrets = []string{"ENGINE_TEST_TOKEN"}
@@ -185,10 +184,10 @@ func TestReceiptsRedactASuppliedOptionalSecret(t *testing.T) {
 	assertReceiptsRedact(t, p, f)
 }
 
-// TestAPlanWithoutOptionalSecretsIsUnchanged is plan invariant 2: a
-// manifest that marks no secret optional compiles to a plan with no
-// optionalSecrets, no placeholder and no optional sentence, so it is the
-// bytes it was before DR-70 (the compile package's golden files pin those).
+// TestAPlanWithoutOptionalSecretsIsUnchanged: a manifest that marks
+// no secret optional compiles to a plan with no optionalSecrets, no
+// placeholder and no optional sentence, so it is the bytes it was before
+// (the compile package's golden files pin those).
 func TestAPlanWithoutOptionalSecretsIsUnchanged(t *testing.T) {
 	p, _ := fixture(t)
 	raw, err := json.Marshal(p.Plan)
@@ -204,9 +203,9 @@ func TestAPlanWithoutOptionalSecretsIsUnchanged(t *testing.T) {
 	}
 }
 
-// TestASuppliedOptionalSecretIsScopedLikeARequiredOne is plan invariant 4:
-// marking a secret optional changes nothing about where its value goes —
-// never into a container's env or argv.
+// TestASuppliedOptionalSecretIsScopedLikeARequiredOne: marking a secret
+// optional changes nothing about where its value goes — never into a
+// container's env or argv.
 func TestASuppliedOptionalSecretIsScopedLikeARequiredOne(t *testing.T) {
 	p, f := fixtureEdited(t, nil, func(m *manifest.Manifest) {
 		m.Capabilities.OptionalSecrets = []string{"ENGINE_TEST_TOKEN"}

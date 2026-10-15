@@ -23,23 +23,21 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
 
-// inputsDecoder is the decode step on a run's own inputs (plan
-// file-handling.md §5, D2; agentry-cli#560): every run with inputs, from
-// any client, has them decoded before the agent starts, and a session's
-// file added mid-run before it is announced. The originals stay at
-// /inputs; the host writes the index and the decoded texts to the run's
+// inputsDecoder is the decode step on a run's own inputs: every run with
+// inputs, from any client, has them decoded before the agent starts, and a
+// session's file added mid-run before it is announced. The originals stay
+// at /inputs; the host writes the index and the decoded texts to the run's
 // inputs-text directory (toolsrv's layout), copying each text only through
 // decode.Result's checked, capped reads, so nothing the decode container
 // wrote reaches the tools container unchecked. The words the index shows
 // the model come from the decode's fixed vocabulary, never from the
 // report's free text (decode.UnreadReason). A run with no inputs pulls
 // nothing and has no decode line. Every file is checked by ClamAV before
-// any decoder reads it (plan file-handling.md §7; agentry-cli#563): a
-// finding refuses the run before the agent starts, with the policy class,
-// so a hosted run settles nothing (D9), and refuses a session's added file
-// alone. On a hosted run, AI Review then reads every text the model could
-// read of them (review.go; plan file-handling.md §8, agentry-cli#321), and
-// refuses the run, or the added file, on one it flags.
+// any decoder reads it: a finding refuses the run before the agent starts,
+// with the policy class, so a hosted run settles nothing, and refuses a
+// session's added file alone. On a hosted run, AI Review then reads every
+// text the model could read of them (review.go), and refuses the run, or
+// the added file, on one it flags.
 type inputsDecoder struct {
 	d  dockerx.Client
 	p  Params
@@ -47,8 +45,8 @@ type inputsDecoder struct {
 
 	mu  sync.Mutex
 	img *decode.Image
-	// lookup asks Hybrid Analysis about the risky inputs by hash (plan
-	// file-handling.md §7, agentry-cli#564), with the policy's key or none.
+	// lookup asks Hybrid Analysis about the risky inputs by hash, with the
+	// policy's key or none.
 	lookup *hybrid.Client
 	// review is AI Review of the inputs' text, nil on a local run.
 	review *inputReview
@@ -61,7 +59,7 @@ type inputsDecoder struct {
 	refused []string
 	index   toolsrv.InputsIndex
 	// sourceReviewed is how many Markdown files of each source AI Review
-	// read (agentry-cli#872), for its receipt line.
+	// read, for its receipt line.
 	sourceReviewed map[string]int
 }
 
@@ -86,8 +84,8 @@ func decodeInputs(ctx context.Context, d dockerx.Client, p Params, rd *runDirs) 
 	}
 	x := &inputsDecoder{d: d, p: p, rd: rd, review: newInputReview(p.InputReview), index: toolsrv.InputsIndex{Schema: toolsrv.InputsIndexSchema, Files: []toolsrv.InputEntry{}}}
 	if p.Plan != nil {
-		// The release's own default view (agentry-cli#693), which the
-		// tools serve an input in when the model asks for none.
+		// The release's own default view, which the tools serve an
+		// input in when the model asks for none.
 		x.index.DefaultView = p.Plan.InputView
 	}
 	given, err := hasGivenInputs(rd.inputs)
@@ -179,9 +177,9 @@ func (x *inputsDecoder) dropTexts(path string) {
 }
 
 // inputRefused names why an input was refused, in the run's reason; never
-// which input, since its name is the person's (agentry-cli#628). A
-// source's refusals name the source by its question id, the release's
-// own word, and carry their count (receipt.WithCount; agentry-cli#884).
+// which input, since its name is the person's. A source's refusals name
+// the source by its question id, the release's own word, and carry their
+// count (receipt.WithCount).
 func inputRefused(why string, err error) error {
 	return receipt.WithReason(err, receipt.ReasonInputRefused, why)
 }
@@ -236,8 +234,8 @@ func (x *inputsDecoder) decode(ctx context.Context, in string, sources []string)
 		}
 		img.Signatures = ensureSignatures(ctx, home, x.p.Policy.Images.ClamAVSignaturesRef(), x.p.Stderr)
 		// The Hybrid Analysis key, the person's or a sandbox host's: none
-		// asks nothing, and the receipt says so (D8); a keychain the
-		// policy names that cannot be read stops the run, as for judge.
+		// asks nothing, and the receipt says so; a keychain the policy
+		// names that cannot be read stops the run, as for judge.
 		lookup, err := hybridClient(x.p.Policy)
 		if err != nil {
 			return nil, Classify(ExitPolicy, fmt.Errorf("the Hybrid Analysis key: %w", err))
@@ -258,9 +256,9 @@ func (x *inputsDecoder) decode(ctx context.Context, in string, sources []string)
 }
 
 // stageTexts copies each decoded text into inputs-text/text/<path>, and
-// each Markdown view of HTML into inputs-text/converted/<path>
-// (agentry-cli#631), and answers every file's index entry, for commit to
-// publish. The caller holds x.mu.
+// each Markdown view of HTML into inputs-text/converted/<path>, and
+// answers every file's index entry, for commit to publish. The caller
+// holds x.mu.
 func (x *inputsDecoder) stageTexts(res *decode.Result) ([]toolsrv.InputEntry, error) {
 	textRoot, convertedRoot := x.textRoot(), x.convertedRoot()
 	entries := make([]toolsrv.InputEntry, 0, len(res.Report.Files))
@@ -297,8 +295,8 @@ func (x *inputsDecoder) stageTexts(res *decode.Result) ([]toolsrv.InputEntry, er
 		default:
 			e.Unread = decode.UnreadReason(f)
 			// A file as staged that no reader took is still there to read
-			// as uploaded (D3, agentry-cli#631); one ClamAV found, one
-			// refused and one inside a .git folder are not.
+			// as uploaded; one ClamAV found, one refused and one inside
+			// a .git folder are not.
 			e.Original = f.In == "" && f.Outcome == runnerdecode.OutcomeUndecodable &&
 				f.Why != runnerdecode.WhyFound && f.Why != runnerdecode.WhyRepository
 		}
@@ -339,8 +337,8 @@ func (x *inputsDecoder) commit(entries []toolsrv.InputEntry) error {
 
 // add decodes one file a session adds mid-run, from a directory of its
 // own, stages its text, then the original under /inputs, then the index,
-// so the caller announces it only once all three are in place (plan
-// file-handling.md §5, D2). It answers the file's index entry.
+// so the caller announces it only once all three are in place. It
+// answers the file's index entry.
 func (x *inputsDecoder) add(ctx context.Context, base string, data []byte) (toolsrv.InputEntry, error) {
 	x.mu.Lock()
 	defer x.mu.Unlock()
@@ -363,7 +361,7 @@ func (x *inputsDecoder) add(ctx context.Context, base string, data []byte) (tool
 		return toolsrv.InputEntry{}, err
 	}
 	// A finding refuses this file alone: nothing of it is staged, the
-	// agent is not told of it, and the session goes on (D9).
+	// agent is not told of it, and the session goes on.
 	if res.Refused() {
 		x.refused = append(x.refused, res.Refusal())
 		return toolsrv.InputEntry{}, fmt.Errorf("refused: %s; it was not added, and the session goes on without it", res.Refusal())
@@ -453,7 +451,7 @@ func (x *inputsDecoder) line() string {
 		line = strings.Join([]string{x.before.Line(), addedWhen + ": " + x.added.Counts(), x.added.Checks()}, "; ")
 	}
 	// A file refused during the session is named, never dropped in
-	// silence (D9).
+	// silence.
 	if len(x.refused) > 0 {
 		if line != "" {
 			line += "; "

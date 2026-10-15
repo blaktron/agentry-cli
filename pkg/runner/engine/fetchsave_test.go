@@ -13,11 +13,11 @@ import (
 	"github.com/blaktron/agentry/pkg/manifest"
 )
 
-// TestTheReceiptCountsFetchSaves (plan input-sources.md §6,
-// agentry-cli#832): a run whose fetch can save into the scratch folder gets
-// the fetch ledger in its own tools spec, the receipt counts the saves the
-// ledger records, those the agent asked for among them, and a path the
-// agent chose that holds a run secret's value is masked in the ledger.
+// TestTheReceiptCountsFetchSaves: a run whose fetch can save into the
+// scratch folder gets the fetch ledger in its own tools spec, the receipt
+// counts the saves the ledger records, those the agent asked for among
+// them, and a path the agent chose that holds a run secret's value is
+// masked in the ledger.
 func TestTheReceiptCountsFetchSaves(t *testing.T) {
 	p, f := fixture(t)
 	happyFake(f)

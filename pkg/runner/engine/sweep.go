@@ -14,18 +14,17 @@ import (
 )
 
 // SweepAbandoned removes, before a run builds anything, the containers an
-// earlier run on this host left behind when its process died without
-// tearing down — a SIGKILL, an OOM kill, a power cut: the paths no defer and
-// no recover reaches (agentry-cli#161). A container qualifies only when its
-// owner labels prove its creator gone (owner.Dead): created from this
-// process's boot, pid namespace and uid, by a pid that is no longer the
-// process that started it. A sibling run's containers are never touched,
-// however old; nor is anything created before the owner labels existed, by
-// another user, from another pid namespace, or anywhere off Linux (no
-// labels are written there). For each removed run container the run's
-// networks and volumes go too, after the containers: its session volume by
-// name and every volume carrying its run label, the gateway's /misc among
-// them (agentry-cli#458).
+// earlier run on this host left behind when its process died without tearing
+// down — a SIGKILL, an OOM kill, a power cut: the paths no defer and no
+// recover reaches. A container qualifies only when its owner labels prove
+// its creator gone (owner.Dead): created from this process's boot, pid
+// namespace and uid, by a pid that is no longer the process that started it.
+// A sibling run's containers are never touched, however old; nor is anything
+// created before the owner labels existed, by another user, from another pid
+// namespace, or anywhere off Linux (no labels are written there). For each
+// removed run container the run's networks and volumes go too, after the
+// containers: its session volume by name and every volume carrying its run
+// label, the gateway's /misc among them.
 //
 // Best effort and bounded: the sweep never fails a run, and it tells the
 // person what it removed and what it could not. Run and StartSession call
@@ -83,8 +82,8 @@ func SweepAbandoned(ctx context.Context, d dockerx.Client, stderr io.Writer) {
 
 // runVolumes is every volume of run r: its session volume by name, and
 // every volume carrying its run label, which finds the gateway's /misc
-// when its container went without -v (agentry-cli#458). The name stands
-// when docker cannot list.
+// when its container went without -v. The name stands when docker
+// cannot list.
 func runVolumes(ctx context.Context, d dockerx.Client, r string) []string {
 	names := []string{sessionVolumeName(r)}
 	labelled, err := d.VolumesByLabel(ctx, runLabel+"="+r)
@@ -100,10 +99,10 @@ func runVolumes(ctx context.Context, d dockerx.Client, r string) []string {
 }
 
 // runNetworks is every network of run r: those its id names (the run's own,
-// the llm-proxy's egress under a runtime, agentry-cli#337, the web tools',
-// agentry-cli#386, and the relays' pair), and every network carrying its
-// run label, which finds those a step names itself, such as an input
-// source's (agentry-cli#852). The names stand when docker cannot list.
+// the llm-proxy's egress under a runtime, the web tools', and the relays'
+// pair), and every network carrying its run label, which finds those a step
+// names itself, such as an input source's. The names stand when docker
+// cannot list.
 func runNetworks(ctx context.Context, d dockerx.Client, r string) []string {
 	internal, out := relayNetworks(r)
 	names := []string{networkName(r), proxyEgressNetwork(r), webNetwork(r), internal, out}
