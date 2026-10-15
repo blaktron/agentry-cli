@@ -1,6 +1,6 @@
 # CI gate for the CLI: gofmt/vet/lint, tests, build, and dependency hygiene.
 # The server-side e2e round-trip (register, publish, install, verify, yank)
-# lives in the core repository's scripts/acceptance/m3-cli.sh, which
+# lives in the core repository's scripts/acceptance/cli.sh, which
 # resolves and exercises this CLI against a live registry; it does not run
 # here because it needs the server repo. `gitleaks` scans the commits every
 # event brings for secrets. Every job carries the fork guard (below), and
