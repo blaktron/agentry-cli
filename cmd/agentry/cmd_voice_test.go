@@ -131,8 +131,7 @@ func TestVoiceWriteLeavesTheStoreAlone(t *testing.T) {
 	}
 }
 
-// An AI Edit takes samples beside its note, as a sandbox host drives it
-// (plan voice-page-redesign.md D3, agentry-cli#605).
+// An AI Edit takes samples beside its note, as a sandbox host drives it.
 func TestAnEditTakesSamplesBesideItsNote(t *testing.T) {
 	isolateEnv(t)
 	newInstall(t)

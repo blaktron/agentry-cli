@@ -449,10 +449,9 @@ func TestNoKeyValueReachesAnyOutput(t *testing.T) {
 	}
 }
 
-// TestSharedKnowledgeCommands (Knowledge M8, agentry-cli#380): a member
-// lists an organization's shared packs, keeps one, attaches it to a run and
-// exports it only as the registry allows; once removed, the kept copy no
-// longer opens.
+// TestSharedKnowledgeCommands: a member lists an organization's shared
+// packs, keeps one, attaches it to a run and exports it only as the
+// registry allows; once removed, the kept copy no longer opens.
 func TestSharedKnowledgeCommands(t *testing.T) {
 	isolateEnv(t)
 	reg := knowledgetest.NewRegistry(t)
@@ -513,8 +512,7 @@ func TestSharedKnowledgeCommands(t *testing.T) {
 
 // A build's cap: 1 GB by default, 10 MB when a sandbox host asks for
 // Agentry's, nothing past 1 GB; and past 10 MB of documents it says first
-// that the build can take a very long time and the pack stays here
-// (agentry-cli#429).
+// that the build can take a very long time and the pack stays here.
 func TestPackLimit(t *testing.T) {
 	small := filepath.Join(t.TempDir(), "notes.md")
 	if err := os.WriteFile(small, []byte("# notes\n"), 0o644); err != nil {

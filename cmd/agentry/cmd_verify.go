@@ -1,6 +1,6 @@
-// `agentry verify` (§11): download a pinned version, check its sha256 digest
-// against the registry (§9.4 step 3), and verify the DSSE attestation (§8.8)
-// against the signing keys pinned for that registry.
+// `agentry verify`: download a pinned version, check its sha256 digest
+// against the registry, and verify the DSSE attestation against the
+// signing keys pinned for that registry.
 package main
 
 import (
@@ -26,8 +26,8 @@ func newVerifyCmd() *cobra.Command {
 		Use:   "verify <ns/name@version>",
 		Short: "Verify a published version's archive digest and attestation (exit code for CI)",
 		Long: "Resolve an exact version, download its archive, recompute the sha256\n" +
-			"digest, and compare it to the registry's (§9.4). Prints PASS/FAIL and\n" +
-			"exits accordingly, and verifies the DSSE attestation (§8.8) against\n" +
+			"digest, and compare it to the registry's. Prints PASS/FAIL and\n" +
+			"exits accordingly, and verifies the DSSE attestation against\n" +
 			"the registry's signing keys, pinned on first use.\n\n" +
 			"Exit codes. A digest mismatch or a signature that fails to verify\n" +
 			"(\"mismatch\") is always non-zero. An UNVERIFIABLE attestation — the key\n" +
@@ -38,7 +38,7 @@ func newVerifyCmd() *cobra.Command {
 			"--strict makes unverifiable non-zero as well. Use it in CI, where\n" +
 			"\"we could not check\" and \"we checked and it was fine\" must not be the\n" +
 			"same green build. An unsigned version (no attestation published at all)\n" +
-			"is reported and exits 0 in both modes: self-host may run unsigned (§8.8).\n" +
+			"is reported and exits 0 in both modes: self-host may run unsigned.\n" +
 			"An unscanned version — one the registry admitted without a scan, a private\n" +
 			"organization agent its administrator took off the pipeline — is reported\n" +
 			"as its own outcome, \"unscanned, no attestation\", exits 0 by default and\n" +
@@ -98,8 +98,8 @@ func runVerify(cmd *cobra.Command, ref string, strict bool) error {
 	}
 	report.DigestMatch = report.ComputedDigest == report.RegistryDigest
 
-	// Provenance (§8.8): verify the DSSE attestation against the pinned key
-	// set and bind it to the bytes we just downloaded — unless the registry
+	// Provenance: verify the DSSE attestation against the pinned key set
+	// and bind it to the bytes we just downloaded — unless the registry
 	// admitted the version without a scan, which is its own outcome
 	// (unscanned, no attestation) and not a missing signature.
 	att := attestationOf(cmd.Context(), reg, token, res, report.ComputedDigest)
@@ -153,7 +153,7 @@ func runVerify(cmd *cobra.Command, ref string, strict bool) error {
 		return fmt.Errorf("digest mismatch for %s", ref)
 	}
 	// A present-but-invalid attestation is a hard failure; an absent one is
-	// reported and tolerated (self-host may run unsigned, §8.8).
+	// reported and tolerated (self-host may run unsigned).
 	if att.State == "mismatch" {
 		return fmt.Errorf("attestation verification failed for %s: %s", ref, att.Detail)
 	}

@@ -20,7 +20,7 @@ import (
 // meets: a folder has no attestation.
 var errLocalUnsigned = errors.New("a local folder is unsigned by definition; pass --allow-unsigned to install one")
 
-// runLocalInstall is `agentry install --local DIR` (agentry-cli#491): a
+// runLocalInstall is `agentry install --local DIR`: a
 // QuickAgent folder on this machine, never published, installed into the
 // runner home, where it lists with the installed QuickAgents and runs by
 // name. It is unsigned, so the install and every run of it need
@@ -53,7 +53,7 @@ func runLocalInstall(cmd *cobra.Command, dir string, opts installOpts) error {
 	}
 	out, errOut := cmd.OutOrStdout(), cmd.ErrOrStderr()
 	if flags.jsonOut {
-		// §R8: stdout carries the result; the narration moves to stderr.
+		// stdout carries the result; the narration moves to stderr.
 		out = errOut
 	}
 

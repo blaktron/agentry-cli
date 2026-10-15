@@ -31,12 +31,12 @@ func sourceQuickAgent(t *testing.T) string {
 	return dir
 }
 
-// TestASignedOutScheduleSealsItsSourceKey (agentry-cli#854): a schedule
-// that runs while its person is signed out seals the key saved for its
-// input source's host beside the model key, asked for as optional (a host
-// with no saved key seals nothing, and the fetch stays anonymous), and
-// `schedule reseal` seals it again: a key gone from the keychain is gone
-// from the credential.
+// TestASignedOutScheduleSealsItsSourceKey: a schedule that runs while its
+// person is signed out seals the key saved for its input source's host
+// beside the model key, asked for as optional (a host with no saved key
+// seals nothing, and the fetch stays anonymous), and `schedule reseal`
+// seals it again: a key gone from the keychain is gone from the
+// credential.
 func TestASignedOutScheduleSealsItsSourceKey(t *testing.T) {
 	h := newSignedOutHarness(t)
 	account := sources.KeyAccount("github.com")

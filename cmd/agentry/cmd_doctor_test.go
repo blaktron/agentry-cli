@@ -59,9 +59,9 @@ func TestDoctorMachineReady(t *testing.T) {
 	}
 }
 
-// TestDoctorReportsTheExecCatalog (agentry-cli#100): doctor lists the
-// operator's exec catalog — command → package, and the mirror — so an
-// author can see which declared commands this machine will honour.
+// TestDoctorReportsTheExecCatalog: doctor lists the operator's exec
+// catalog — command → package, and the mirror — so an author can see
+// which declared commands this machine will honour.
 func TestDoctorReportsTheExecCatalog(t *testing.T) {
 	policyPath, _ := doctorFixture(t)
 	pol, _, err := policy.Load(policyPath)
@@ -162,10 +162,10 @@ func TestDoctorWithoutPolicy(t *testing.T) {
 	}
 }
 
-// TestDoctorFlagsUncataloguedExecCommand (agentry-cli#100): a local
-// QuickAgent declaring a command the machine's exec catalog does not carry
-// fails the exec check naming the command — what a run would refuse at
-// plan time, said before the run; with the catalog entry it passes.
+// TestDoctorFlagsUncataloguedExecCommand: a local QuickAgent declaring a
+// command the machine's exec catalog does not carry fails the exec check
+// naming the command — what a run would refuse at plan time, said before
+// the run; with the catalog entry it passes.
 func TestDoctorFlagsUncataloguedExecCommand(t *testing.T) {
 	policyPath, _ := doctorFixture(t)
 	fr := newFakeRegistry(t)
@@ -189,7 +189,7 @@ func TestDoctorFlagsUncataloguedExecCommand(t *testing.T) {
 }
 
 // doctor reports the policy's docker.runtime against the daemon's
-// registered runtimes (DR-23): a named failure with the fix when it is
+// registered runtimes: a named failure with the fix when it is
 // missing, ok when it is there, and nothing when the policy sets none.
 func TestDoctorReportsTheDockerRuntime(t *testing.T) {
 	policyPath, fake := doctorFixture(t)
@@ -217,8 +217,8 @@ func TestDoctorReportsTheDockerRuntime(t *testing.T) {
 		t.Fatalf("a registered runtime was not reported ok (%v):\n%s", err, out)
 	}
 
-	// The gateway's runtime is reported by what it runs, not its name
-	// (agentry-cli#396): the same refusal ensure makes, with the fix.
+	// The gateway's runtime is reported by what it runs, not its
+	// name: the same refusal ensure makes, with the fix.
 	pol.Docker.GatewayRuntime = "runsc-uds"
 	if err := policy.Save(policyPath, pol); err != nil {
 		t.Fatal(err)
@@ -238,11 +238,11 @@ func TestDoctorReportsTheDockerRuntime(t *testing.T) {
 	fake.RuntimeTable = nil
 }
 
-// TestDoctorAdapterHarness (agentry-cli#147): --adapter renders the
-// harness probe's facts as checks — the resolved executable and version
-// as ok, the endpoint against model.proxyAllow, and a harness that is not
-// installed as the failure that names the fix. The probe lives in
-// pkg/runner/harnessprobe so the desktop reads the same facts.
+// TestDoctorAdapterHarness: --adapter renders the harness probe's facts
+// as checks — the resolved executable and version as ok, the endpoint
+// against model.proxyAllow, and a harness that is not installed as the
+// failure that names the fix. The probe lives in pkg/runner/harnessprobe
+// so the desktop reads the same facts.
 func TestDoctorAdapterHarness(t *testing.T) {
 	policyPath, _ := doctorFixture(t)
 	fr := newFakeRegistry(t)
@@ -282,8 +282,7 @@ func TestDoctorAdapterHarness(t *testing.T) {
 	}
 
 	// Off PATH but in the native installer's directory (isolateEnv gave
-	// this test its own HOME): found, and the line says where
-	// (agentry-cli#167, #176).
+	// this test its own HOME): found, and the line says where.
 	known := filepath.Join(os.Getenv("HOME"), ".local", "bin", "claude")
 	if err := os.MkdirAll(filepath.Dir(known), 0o755); err != nil {
 		t.Fatal(err)
@@ -342,9 +341,9 @@ func TestDoctorAdapterHarness(t *testing.T) {
 	}
 }
 
-// TestDoctorModelKeyFromTheKeychain (agentry-cli#148): with the variable
-// unset and apiKeySource keyring, doctor asks the keychain — present is
-// ok, absent is the failure that names the fix, unreachable is named.
+// TestDoctorModelKeyFromTheKeychain: with the variable unset and
+// apiKeySource keyring, doctor asks the keychain — present is ok,
+// absent is the failure that names the fix, unreachable is named.
 func TestDoctorModelKeyFromTheKeychain(t *testing.T) {
 	policyPath, _ := doctorFixture(t)
 	fr := newFakeRegistry(t)
@@ -381,8 +380,8 @@ type errStubDoctor string
 
 func (e errStubDoctor) Error() string { return string(e) }
 
-// A policy whose key is a subscription token (agentry-cli#171): doctor
-// says which harness can use it before a run finds out.
+// A policy whose key is a subscription token: doctor says which
+// harness can use it before a run finds out.
 func TestDoctorSaysASubscriptionTokenIsClaudeCodeOnly(t *testing.T) {
 	policyPath, _ := doctorFixture(t)
 	fr := newFakeRegistry(t)
@@ -403,7 +402,7 @@ func TestDoctorSaysASubscriptionTokenIsClaudeCodeOnly(t *testing.T) {
 }
 
 // A custom endpoint over plain http off this machine is a warning, never a
-// failure (agentry-cli#377).
+// failure.
 func TestDoctorWarnsOnAPlainHTTPModelEndpoint(t *testing.T) {
 	policyPath, _ := doctorFixture(t)
 	fr := newFakeRegistry(t)
@@ -426,10 +425,10 @@ func TestDoctorWarnsOnAPlainHTTPModelEndpoint(t *testing.T) {
 	}
 }
 
-// doctor reports each declared server at the gate's rating (agentry-cli#501):
-// a High the gate rates medium is a warning a run proceeds past, one it
-// rates high fails, and a failed lookup whose last-known advisories are
-// below the bar is never reported as "no known advisories".
+// doctor reports each declared server at the gate's rating: a High the
+// gate rates medium is a warning a run proceeds past, one it rates high
+// fails, and a failed lookup whose last-known advisories are below the
+// bar is never reported as "no known advisories".
 func TestDoctorRatesDeclaredServersAsTheGate(t *testing.T) {
 	policyPath, _ := doctorFixture(t)
 	fr := newFakeRegistry(t)
@@ -459,7 +458,7 @@ func TestDoctorRatesDeclaredServersAsTheGate(t *testing.T) {
 
 // A model sign-in is checked in the model sign-in store, never as a key
 // variable: fail until one is kept, ok once it is, naming the vendor and
-// never the account (agentry-cli#738).
+// never the account.
 func TestDoctorChecksAModelSignInInItsStore(t *testing.T) {
 	policyPath, _ := doctorFixture(t)
 	pol := policy.Default()

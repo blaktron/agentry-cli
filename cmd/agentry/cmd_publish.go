@@ -1,9 +1,8 @@
-// `agentry publish` (§11): submit a version and follow the pipeline to a
+// `agentry publish`: submit a version and follow the pipeline to a
 // verdict. --tag submits an existing repo tag (git-tag source); without it
 // the CLI packs the deterministic archive locally and uploads it
-// (cli-upload source, §6.5). Progress arrives over the registry's event
-// stream when it has one (agentry#65), else it is polled every 2s (§11
-// allows "SSE/poll").
+// (cli-upload source). Progress arrives over the registry's event stream
+// when it has one, else it is polled every 2s.
 package main
 
 import (
@@ -24,14 +23,14 @@ import (
 	"github.com/blaktron/agentry/pkg/manifest"
 )
 
-// Publish poll cadence and budget (§11 "SSE/poll").
+// Publish poll cadence and budget.
 const (
 	publishPollInterval = 2 * time.Second
 	publishPollBudget   = 5 * time.Minute
 	// submitAttempts bounds upload retries. Each attempt carries the same
-	// Idempotency-Key (§9.1), so a retry after a transport failure or a 5xx
+	// Idempotency-Key, so a retry after a transport failure or a 5xx
 	// replays the accepted submission instead of colliding on V3 "version
-	// exists" (agentry#22).
+	// exists".
 	submitAttempts = 3
 )
 
@@ -41,7 +40,7 @@ func newPublishCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "publish [dir]",
 		Short: "Submit a version for publication and follow the pipeline to a verdict",
-		Long: "Submit a version for publication (§7 state machine).\n\n" +
+		Long: "Submit a version for publication.\n\n" +
 			"With --tag vX.Y.Z the registry builds the archive from that repo tag\n" +
 			"(git-tag source). Without --tag the CLI packs the deterministic archive\n" +
 			"locally from publish.include and uploads it (cli-upload source); the\n" +
@@ -101,7 +100,7 @@ func runPublish(cmd *cobra.Command, dir, tag string) error {
 }
 
 // submitUpload packs the deterministic archive locally (WalkWorkspace →
-// ResolveInclude → BuildArchive, §6.5) and POSTs it as multipart with the
+// ResolveInclude → BuildArchive) and POSTs it as multipart with the
 // client-computed digest for the server cross-check.
 func submitUpload(ctx context.Context, client *apiclient.ClientWithResponses, out io.Writer, dir string, m *manifest.Manifest) (*apiclient.SubmitVersionResponse, error) {
 	var archive bytes.Buffer
@@ -172,7 +171,7 @@ func submitUpload(ctx context.Context, client *apiclient.ClientWithResponses, ou
 // newIdempotencyKey is one publish invocation's key: random, so two
 // deliberate publishes of the same bytes are not confused, and constant
 // across this invocation's retries, so the server replays rather than
-// re-runs (agentry#22).
+// re-runs.
 func newIdempotencyKey() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
@@ -256,9 +255,9 @@ func verdict(out io.Writer, ns, name string, v *apiclient.AgentVersion) (bool, e
 }
 
 // maxUploadBytes is the most the registry takes through an upload: the
-// edge's request cap on /api/, which the core's own cap matches
-// (agentry#594). A release that ships knowledge packs can pass it; its tag
-// push has no such cap.
+// edge's request cap on /api/, which the core's own cap matches. A
+// release that ships knowledge packs can pass it; its tag push has no
+// such cap.
 const maxUploadBytes = 16 << 20
 
 // shippedPacksIncluded refuses, before anything is uploaded, a release whose

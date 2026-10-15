@@ -240,7 +240,7 @@ func TestDraftReviseRefFetchesTheReleaseHeldToItsDigest(t *testing.T) {
 	}
 }
 
-// TestDraftReviseRegistryFetchesFromItsOwnBase (agentry-cli#550): with
+// TestDraftReviseRegistryFetchesFromItsOwnBase: with
 // --revise-registry, the release is resolved and downloaded under that base
 // (a sandbox host's release prefix), with the run's grant, and nothing of
 // the fetch goes to --registry, which the draft's scans keep.

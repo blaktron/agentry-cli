@@ -1,7 +1,7 @@
-// `agentry info` / `agentry search` (§11, §10.4): the info rendering
-// distinguishes "nothing published" from "the registry could not answer"
-// (the two demand opposite reactions), search forwards its facet filters to
-// the wire, and ns/name queries delegate to info.
+// `agentry info` / `agentry search`: the info rendering distinguishes
+// "nothing published" from "the registry could not answer" (the two demand
+// opposite reactions), search forwards its facet filters to the wire, and
+// ns/name queries delegate to info.
 package main
 
 import (
@@ -133,7 +133,7 @@ func TestSearchForwardsFacetsToTheWire(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Every facet flag must reach the registry as a §10.4 query parameter.
+	// Every facet flag must reach the registry as a query parameter.
 	if len(fr.searchQueries) != 1 {
 		t.Fatalf("search calls = %d", len(fr.searchQueries))
 	}

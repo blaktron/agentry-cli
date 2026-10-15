@@ -117,10 +117,10 @@ func TestParseModes(t *testing.T) {
 	}
 }
 
-// TestCapabilityLinesDeclaredServerEnv (agentry-cli#99): the consent line
-// for a declared server shows its plain env — names and values, sorted —
-// beside its secrets (names only), so what the server will receive is what
-// the person consents to.
+// TestCapabilityLinesDeclaredServerEnv: the consent line for a declared
+// server shows its plain env — names and values, sorted — beside its
+// secrets (names only), so what the server will receive is what the person
+// consents to.
 func TestCapabilityLinesDeclaredServerEnv(t *testing.T) {
 	caps := parseCaps(t, `capabilities:
   mcpServers:
@@ -139,9 +139,9 @@ func TestCapabilityLinesDeclaredServerEnv(t *testing.T) {
 	}
 }
 
-// A remote server's consent line (agentry-cli#663) names its address, that
-// it runs at its vendor, how it is signed in to and what it may be asked;
-// and a release that declares one needs confirmation, as egress does.
+// A remote server's consent line names its address, that it runs at its
+// vendor, how it is signed in to and what it may be asked; and a release
+// that declares one needs confirmation, as egress does.
 func TestCapabilityLinesRemoteServer(t *testing.T) {
 	caps := parseCaps(t, `capabilities:
   secrets: [GITHUB_TOKEN]

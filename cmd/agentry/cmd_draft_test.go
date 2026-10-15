@@ -330,7 +330,7 @@ func TestDraftSearchAndHosted(t *testing.T) {
 		t.Fatalf("%v %+v\n%s", err, (*webs)[0], stderr)
 	}
 
-	// Brave (agentry-cli#369): its own variable, never You.com's.
+	// Brave: its own variable, never You.com's.
 	pol.WebSearch = policy.WebSearchKey{Provider: "brave"}
 	if err := policy.Save(policyPath, pol); err != nil {
 		t.Fatal(err)
@@ -373,8 +373,8 @@ func TestDraftSearchAndHosted(t *testing.T) {
 // TestTheLongTextsComeFromTheReports: a last message with the manifest and
 // the lists takes its instructions and notes from the reports the Drafter
 // wrote, and when AI Review withheld a source its list follows the notes
-// rather than taking their place (agentry-cli#363); with no instructions at
-// all the draft is kept, unrendered, and says why.
+// rather than taking their place; with no instructions at all the draft is
+// kept, unrendered, and says why.
 func TestTheLongTextsComeFromTheReports(t *testing.T) {
 	isolateEnv(t)
 	_, policyPath := isolateRunnerHome(t)
@@ -456,10 +456,10 @@ func wantField(t *testing.T, env map[string]json.RawMessage, key, want string) {
 	}
 }
 
-// TestDraftJSONEnvelope (agentry-cli#384): --output-format json writes the
-// Drafter run's envelope with the draft's report under draft, and narrates
-// the harness's usage on stderr, which a sandbox host settles and stops a
-// hosted draft on; the text form narrates nothing.
+// TestDraftJSONEnvelope: --output-format json writes the Drafter run's
+// envelope with the draft's report under draft, and narrates the harness's
+// usage on stderr, which a sandbox host settles and stops a hosted draft
+// on; the text form narrates nothing.
 func TestDraftJSONEnvelope(t *testing.T) {
 	isolateEnv(t)
 	_, policyPath := isolateRunnerHome(t)
@@ -753,10 +753,10 @@ func readDraft(t *testing.T, out string) (drafter.Draft, validateOutput) {
 var refusedChoice = strings.Replace(goodDraft, `"entrypoints": {"instruction": "AGENT.md"},`,
 	`"entrypoints": {"instruction": "AGENT.md"}, "intake": [{"id": "format", "prompt": "Which format?", "type": "choice"}],`, 1)
 
-// TestACorrectionIsRevalidatedAndNamed (plan builder-simplify.md §5.2 step
-// 1): the Drafter's mechanical slips are corrected before the rules check
-// the draft, so a draft whose only slips are mechanical passes as returned,
-// with no repair turn, and each correction is named in its notes.
+// TestACorrectionIsRevalidatedAndNamed: the Drafter's mechanical slips are
+// corrected before the rules check the draft, so a draft whose only slips are
+// mechanical passes as returned, with no repair turn, and each correction is
+// named in its notes.
 func TestACorrectionIsRevalidatedAndNamed(t *testing.T) {
 	isolateEnv(t)
 	_, policyPath := isolateRunnerHome(t)
@@ -792,11 +792,11 @@ func TestACorrectionIsRevalidatedAndNamed(t *testing.T) {
 	}
 }
 
-// TestARefusedDraftGetsOneRepairTurn (§5.2 step 3): a draft the rules still
-// refuse gets one more Drafter run, without the web tools and with no web
-// keys, whose task is the rules' report and the draft's own manifest and
-// instructions and nothing else; the second answer is kept, with the first
-// answer's lists and notes.
+// TestARefusedDraftGetsOneRepairTurn: a draft the rules still refuse gets
+// one more Drafter run, without the web tools and with no web keys, whose
+// task is the rules' report and the draft's own manifest and instructions
+// and nothing else; the second answer is kept, with the first answer's
+// lists and notes.
 func TestARefusedDraftGetsOneRepairTurn(t *testing.T) {
 	isolateEnv(t)
 	_, policyPath := isolateRunnerHome(t)
@@ -1028,7 +1028,7 @@ func repairedGood(t *testing.T) string {
 // with the person's description and exactly the rendered package's text
 // files, and the verdicts go into draft.json under aiReview.check, the
 // envelope's draft.check and the notes; a release-rubric finding (C3 here)
-// is advisory and does not spend the repair turn (agentry-cli#633).
+// is advisory and does not spend the repair turn.
 func TestTheFinishedDraftIsChecked(t *testing.T) {
 	isolateEnv(t)
 	_, policyPath := isolateRunnerHome(t)
@@ -1254,7 +1254,7 @@ func TestARepairSpentOnAnAnswerThatWasNotADraftIsNotSpentAgain(t *testing.T) {
 // TestADraftIsValidatedUnderValidatesOwnBundle: agentry draft checks its
 // package under the rule bundle agentry validate resolves, so an override
 // that will not load leaves the draft unchecked and saying so, never
-// validated under another bundle (DEV-011).
+// validated under another bundle.
 func TestADraftIsValidatedUnderValidatesOwnBundle(t *testing.T) {
 	isolateEnv(t)
 	_, policyPath := isolateRunnerHome(t)
@@ -1283,7 +1283,7 @@ func knowledgePack(t *testing.T) *knowledge.Pack {
 }
 
 // TestDraftWithKnowledgeScansAnUnscannedPackFirst: `agentry draft
-// --knowledge` with a pack made on a machine (agentry-cli#522, D3, D14):
+// --knowledge` with a pack made on a machine:
 // the person is told it will be scanned first; AI Review reads the
 // description, and only then every file of the pack; the page it flags is
 // not in the pack the Drafter's run is given; the task names the pack; and
@@ -1379,7 +1379,7 @@ func TestDraftWithKnowledgeAndNoJevKey(t *testing.T) {
 
 // TestHostedDraftReadsAgentrysScan: a hosted draft's pack, laid down by the
 // sandbox host from Agentry's store with Agentry's record, is not scanned
-// again; what the record flagged is withheld (D14).
+// again; what the record flagged is withheld.
 func TestHostedDraftReadsAgentrysScan(t *testing.T) {
 	isolateEnv(t)
 	_, policyPath := isolateRunnerHome(t)

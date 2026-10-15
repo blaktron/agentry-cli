@@ -1,9 +1,8 @@
 // `agentry schedule --signed-out`: a schedule that also runs while its
-// person is signed out (plan quickagent-scheduling.md §5a, D17–D19;
-// agentry-cli#749). Linux with Docker Engine only. Linger, turned on once
-// behind a confirm, keeps the person's systemd user manager running after
-// sign-out; the keys a fire reads are sealed into an encrypted systemd
-// credential the unit loads, because the keychain is locked then.
+// person is signed out. Linux with Docker Engine only. Linger, turned on
+// once behind a confirm, keeps the person's systemd user manager running
+// after sign-out; the keys a fire reads are sealed into an encrypted
+// systemd credential the unit loads, because the keychain is locked then.
 package main
 
 import (
@@ -64,18 +63,18 @@ var scheduleSignedIn = func() bool {
 	return err != nil || strings.TrimSpace(string(out)) != "lingering"
 }
 
-// lingerSentence is what the person is told turning linger on does (D17).
+// lingerSentence is what the person is told turning linger on does.
 const lingerSentence = "Agentry's schedules will start when this computer starts, even if you are not signed in"
 
 // signedOutUnsupported is the refusal on a system where a run cannot go
-// on after sign-out (D17).
+// on after sign-out.
 func signedOutUnsupported() error {
 	return engine.Classify(engine.ExitUsage, fmt.Errorf("--signed-out is not available on %s: Docker Desktop stops when you sign out", scheduleGOOS))
 }
 
 // signedOutGaps is every reason sc cannot run while its person is signed
-// out (D17, D18). It is asked once fireGaps found nothing, so the release
-// is installed and the model key is in the keychain.
+// out. It is asked once fireGaps found nothing, so the release is
+// installed and the model key is in the keychain.
 func signedOutGaps(ctx context.Context, sc schedule.Schedule) []string {
 	gaps := signedOutMachineGaps(ctx)
 	if scheduleGOOS != "linux" {
@@ -110,9 +109,9 @@ func signedOutGaps(ctx context.Context, sc schedule.Schedule) []string {
 
 // signedOutKeyGaps is why a model key pol reads from the keychain cannot
 // be spent while its person is signed out, where the fire reads the copy
-// sealed for it and renews nothing (modelsignin.Store.CheckSealed,
-// agentry-cli#811): a connected Hugging Face token, which only a signed-in
-// run renews, or a connected key already past its expiry.
+// sealed for it and renews nothing (modelsignin.Store.CheckSealed): a
+// connected Hugging Face token, which only a signed-in run renews, or a
+// connected key already past its expiry.
 func signedOutKeyGaps(home string, pol *policy.Policy) []string {
 	required, optional := schedule.SealAccounts(pol)
 	s := connectStore(home)
@@ -129,7 +128,7 @@ func signedOutKeyGaps(home string, pol *policy.Policy) []string {
 
 // signedOutMachineGaps is every reason this computer cannot run any
 // schedule while its person is signed out: the system, systemd's version
-// and the Docker engine (D17, D18), whatever the QuickAgent.
+// and the Docker engine, whatever the QuickAgent.
 func signedOutMachineGaps(ctx context.Context) []string {
 	if scheduleGOOS != "linux" {
 		return []string{signedOutUnsupported().Error()}
@@ -151,8 +150,8 @@ func signedOutMachineGaps(ctx context.Context) []string {
 }
 
 // confirmLinger asks the person, once, to let their schedules start with
-// the computer (D17). Linger already on asks nothing; --yes is the
-// confirm given elsewhere (a client that asked it).
+// the computer. Linger already on asks nothing; --yes is the confirm
+// given elsewhere (a client that asked it).
 func confirmLinger(cmd *cobra.Command, yes bool) error {
 	l, err := scheduleLinger()
 	if err != nil {
@@ -207,7 +206,7 @@ func releaseLinger(in io.Reader, errOut io.Writer, store schedule.Store) {
 // from the keychain, the registry token when the keychain holds it (a
 // private release resolves through the registry at every fire), and the
 // key saved for each input source's host when there is one (a private
-// source is fetched at every fire, agentry-cli#854).
+// source is fetched at every fire).
 func sealScheduleKeys(sc schedule.Schedule, path string) error {
 	pf, err := policy.Resolve(sc.Run.Policy)
 	if err != nil {
@@ -239,7 +238,7 @@ func sealScheduleKeys(sc schedule.Schedule, path string) error {
 	for _, h := range hosts {
 		optional = append(optional, sources.KeyAccount(h))
 	}
-	// A target host's sign-in: its runs have no other (agentry-cli#863).
+	// A target host's sign-in: its runs have no other.
 	for _, h := range sc.Run.Hosts {
 		required = append(required, h.Account)
 	}
@@ -348,8 +347,8 @@ type resealReport struct {
 
 // resealSignedOut seals every signed-out schedule's keys again from the
 // keychain, after a key or a sign-in changed (setup, login, logout, and a
-// connect or disconnect since agentry-cli#811). What fails is said, not
-// fatal: the change it follows is already made.
+// connect or disconnect). What fails is said, not fatal: the change it
+// follows is already made.
 func resealSignedOut(errOut io.Writer) {
 	rep, err := resealAll()
 	if err != nil {
@@ -441,7 +440,7 @@ type signedOutAvailability struct {
 	// ModelKey is why a run on the default policy's model key is refused
 	// while signed out, on a computer that can otherwise run one: a
 	// connected Hugging Face token, which only a signed-in run renews, or
-	// a connected key past its expiry (agentry-cli#811).
+	// a connected key past its expiry.
 	ModelKey string `json:"modelKey,omitempty"`
 }
 

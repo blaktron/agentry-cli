@@ -1,9 +1,8 @@
-// `agentry files ensure`: pull the files image this CLI pins, and refresh
-// the ClamAV signatures, ahead of any run (plan file-handling.md D4's
-// addendum, §7; agentry-cli#572, #563). A sandbox host runs it from the
-// runhost image at each update (agentry-web#946), so the first hosted run
-// with inputs downloads neither the decoders nor the signatures inside a
-// paid run. It is the decode step's own pull and refresh, alone.
+// `agentry files ensure`: pull the files image this CLI pins, and refresh the
+// ClamAV signatures, ahead of any run. A sandbox host runs it from the runhost
+// image at each update, so the first hosted run with inputs downloads neither
+// the decoders nor the signatures inside a paid run. It is the decode step's
+// own pull and refresh, alone.
 package main
 
 import (

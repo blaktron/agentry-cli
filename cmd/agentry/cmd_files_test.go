@@ -29,7 +29,7 @@ func fakeFilesDocker(t *testing.T, f *dockerx.Fake) {
 
 // files ensure also refreshes the ClamAV signatures under the runner home
 // and says which it holds; a refresh that fails is said and is not an
-// error, since a run goes on with the signatures it has (agentry-cli#563).
+// error, since a run goes on with the signatures it has.
 func TestFilesEnsureRefreshesTheSignatures(t *testing.T) {
 	isolateEnv(t)
 	home := t.TempDir()
@@ -78,7 +78,7 @@ func pullsOf(f *dockerx.Fake) []string {
 }
 
 // With no policy file anywhere, the CLI's own pin is pulled and nothing is
-// written under the runner home (agentry-cli#572).
+// written under the runner home.
 func TestFilesEnsurePullsTheCLIsPinAndWritesNothing(t *testing.T) {
 	isolateEnv(t)
 	home := t.TempDir()

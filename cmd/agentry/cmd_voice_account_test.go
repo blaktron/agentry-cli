@@ -136,7 +136,7 @@ func TestDownloadKeepsTheAccountsLiveVoice(t *testing.T) {
 		t.Fatalf("the receipt's origin: %q", got)
 	}
 	// Nothing says AI Review passed this computer's copy: the record beside
-	// it is not authenticated (DR-56).
+	// it is not authenticated.
 	for _, said := range []string{m.Origin(), m.Describe(), m.Source.Phrase()} {
 		if strings.Contains(said, "passed") {
 			t.Fatalf("a downloaded voice is described as passed: %q", said)

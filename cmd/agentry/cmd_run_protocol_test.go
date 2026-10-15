@@ -23,9 +23,9 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/session/protocol"
 )
 
-// The command's half of the session protocol (agentry-cli#477): the gates
-// it lifts and keeps, and what it puts on each stream. The protocol over
-// the engine's real session, on all three adapters, is
+// The command's half of the session protocol: the gates it lifts and
+// keeps, and what it puts on each stream. The protocol over the engine's
+// real session, on all three adapters, is
 // pkg/runner/engine/protocol_test.go.
 
 // withProtocolEvents stands in for descriptor 3.
@@ -86,7 +86,7 @@ func TestSessionProtocolGates(t *testing.T) {
 
 // TestSessionProtocolChangesNoPlan: the flag is the driver's, not the
 // plan's — the interactive plan it runs is byte for byte the one a
-// terminal session runs (DR-15's goldens hold the rest).
+// terminal session runs (the golden plans hold the rest).
 func TestSessionProtocolChangesNoPlan(t *testing.T) {
 	isolateEnv(t)
 	_, pol := isolateRunnerHome(t)
@@ -165,7 +165,7 @@ func TestProtocolEventsDescriptor(t *testing.T) {
 			return
 		}
 		fmt.Println("accepted")
-		// A process the CLI starts must not inherit the events (agentry-cli#482).
+		// A process the CLI starts must not inherit the events.
 		out, _ := exec.Command("sh", "-c", `if ( : >&3 ) 2>/dev/null; then echo "grandchild: holds fd 3"; else echo "grandchild: no fd 3"; fi`).Output()
 		fmt.Print(string(out))
 		return

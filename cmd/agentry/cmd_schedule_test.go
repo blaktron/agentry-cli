@@ -484,11 +484,11 @@ func TestRunLocalHonoursPin(t *testing.T) {
 	wantClassified(t, err, engine.ExitVerify)
 }
 
-// D5, the same on every system because fire decides: whatever rings it
-// (a timer at boot, a LaunchAgent at sign-in, a logon trigger), an
-// occurrence missed while the computer was off, asleep or signed out runs
-// once, late, if no later occurrence has fallen due; one whose following
-// occurrence is already due is recorded missed and does not run.
+// The missed-occurrence rule is the same on every system because fire decides:
+// whatever rings it (a timer at boot, a LaunchAgent at sign-in, a logon
+// trigger), an occurrence missed while the computer was off, asleep or signed
+// out runs once, late, if no later occurrence has fallen due; one whose
+// following occurrence is already due is recorded missed and does not run.
 func TestScheduleFireMissedOccurrenceRule(t *testing.T) {
 	cases := []struct {
 		name        string

@@ -1,6 +1,5 @@
-// Sign in with ChatGPT (plan model-sign-ins.md §4.3, D8–D16;
-// agentry-cli#739): `agentry model-signins add chatgpt` and the offer in
-// `agentry setup`. The flow is mcpauth.ChatGPT, the store
+// Sign in with ChatGPT: `agentry model-signins add chatgpt` and the
+// offer in `agentry setup`. The flow is mcpauth.ChatGPT, the store
 // modelsignin.SignInChatGPT; this is the terminal around them.
 package main
 
@@ -173,6 +172,6 @@ func newModelSignInsAddCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&newAccount, "new-account", false, "sign in to another ChatGPT account than the one this computer is registered for")
 	cmd.Flags().BoolVar(&installed, "installed", false, "claude: sign in the Claude Code installed on this computer rather than the Claude Code image")
-	cmd.Flags().BoolVar(&oauthApp, "oauth-app", false, "copilot: sign in through Agentry's OAuth App rather than its GitHub App (the fallback, plan D26)")
+	cmd.Flags().BoolVar(&oauthApp, "oauth-app", false, "copilot: sign in through Agentry's OAuth App rather than its GitHub App (the fallback)")
 	return cmd
 }

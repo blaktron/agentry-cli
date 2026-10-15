@@ -1,8 +1,7 @@
 // `agentry schedule add --check`: everything add decides before it keeps a
-// schedule, with nothing kept, asked or changed (agentry-cli#777). Agentry
-// Desktop's When step keeps Schedule disabled until it says ready (plan
-// quickagent-scheduling.md D8), then makes the schedule with this binary,
-// whose path the system's alarm pins.
+// schedule, with nothing kept, asked or changed. Agentry Desktop's When
+// step keeps Schedule disabled until it says ready, then makes the
+// schedule with this binary, whose path the system's alarm pins.
 package main
 
 import (

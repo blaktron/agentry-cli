@@ -1,8 +1,8 @@
 // `agentry browser ensure`: pull the browser image this CLI pins ahead of
-// any run (plan browser-testing.md §8, M7; agentry-cli#941). A sandbox host
-// runs it from the runhost image as it is set up and at each release roll,
-// as it runs `files ensure`, so no hosted run of a QuickAgent that declares
-// capabilities.browser downloads Chromium inside a paid run.
+// any run. A sandbox host runs it from the runhost image as it is set up
+// and at each release roll, as it runs `files ensure`, so no hosted run of
+// a QuickAgent that declares capabilities.browser downloads Chromium inside
+// a paid run.
 package main
 
 import (

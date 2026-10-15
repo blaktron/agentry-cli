@@ -1,6 +1,6 @@
-// `agentry info` and `agentry search` (§11 discovery). search calls the real
-// full-text endpoint (GET /search, §10.4) with its facet filters; info shows
-// one agent, its latest published version, and its capability contract.
+// `agentry info` and `agentry search` (discovery). search calls the real
+// full-text endpoint (GET /search) with its facet filters; info shows one
+// agent, its latest published version, and its capability contract.
 package main
 
 import (
@@ -29,7 +29,7 @@ func newInfoCmd() *cobra.Command {
 	}
 }
 
-// searchOpts carries the §10.4 facet filters.
+// searchOpts carries the facet filters.
 type searchOpts struct {
 	mode       string
 	capability string
@@ -45,7 +45,7 @@ func newSearchCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "search <query>",
 		Short: "Full-text search over public QuickAgents, with facet filters",
-		Long: "Search public QuickAgents via GET /search (§10.4). A query containing \"/\" is\n" +
+		Long: "Search public QuickAgents via GET /search. A query containing \"/\" is\n" +
 			"treated as ns/name and shows that QuickAgent's info instead.\n\n" +
 			"Facets narrow the result set:\n\n" +
 			"  --mode        autonomous | interactive (a QuickAgent supporting both matches either)\n" +
@@ -71,8 +71,8 @@ func newSearchCmd() *cobra.Command {
 }
 
 // errNoPublishedVersion distinguishes "this agent has nothing published" from
-// "the registry could not answer". Both used to print the same line, which
-// meant a 503 during a release read as an authoring mistake.
+// "the registry could not answer". The two must not print the same line, or a
+// 503 during a release reads as an authoring mistake.
 var errNoPublishedVersion = errors.New("no published version")
 
 // runInfo fetches and renders one agent.

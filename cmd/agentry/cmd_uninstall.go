@@ -1,16 +1,16 @@
 // `agentry uninstall` removes this machine's RUNNER state for a
 // QuickAgent: the verified install cache (workspace + compiled plans)
 // and, BY DEFAULT, its MCP profile — stored keys, identities, and the
-// installed MCP-server store (RUNNER-PLAN-3: remove on uninstall is the
-// default; keeping credentials is the explicit choice). --keep-mcp
+// installed MCP-server store (remove on uninstall is the default;
+// keeping credentials is the explicit choice). --keep-mcp
 // retains the profile directory, which is signature-locked: only a
 // reinstall of the exact same release digest can ever use it again — not
 // another QuickAgent, not another user, not a newer version of this one.
 //
-// The version's OAuth connections go with its profile (plan
-// mcp-oauth-connections.md D17): each is revoked at the vendor where it
-// offers that, and the outcome is recorded; --keep-mcp keeps them, locked
-// to the release they were made for, like the profile.
+// The version's OAuth connections go with its profile: each is revoked at
+// the vendor where it offers that, and the outcome is recorded;
+// --keep-mcp keeps them, locked to the release they were made for, like
+// the profile.
 //
 // Embedded installs (claude-skill / agents-md exports, and the mcp exports
 // of older clients) are separate
@@ -35,7 +35,7 @@ import (
 )
 
 // uninstallOutput is the `uninstall --json` and `uninstall --plan --json`
-// shape (agentry-cli#102): what was — or, with --plan, would be — removed.
+// shape: what was — or, with --plan, would be — removed.
 type uninstallOutput struct {
 	Ref string `json:"ref"`
 	// Plan is true when nothing was touched.
@@ -93,7 +93,7 @@ func runUninstall(cmd *cobra.Command, sel string, keepMCP, plan bool) error {
 	}
 	out := cmd.OutOrStdout()
 	if flags.jsonOut {
-		out = cmd.ErrOrStderr() // §R8: the result on stdout, the narration on stderr
+		out = cmd.ErrOrStderr() // the result on stdout, the narration on stderr
 	}
 	result := uninstallOutput{Ref: sel, Plan: plan, Installs: []string{}, Profiles: []string{}, Connections: []removedConnection{}}
 	verb := "removed"
@@ -130,7 +130,7 @@ func runUninstall(cmd *cobra.Command, sel string, keepMCP, plan bool) error {
 	}
 
 	// 2. The MCP profile(s): keys and the installed server store. Remove
-	// is the default (RUNNER-PLAN-3 decision 2); --keep-mcp preserves
+	// is the default; --keep-mcp preserves
 	// them for a same-digest reinstall and nothing else.
 	profs, err := profile.List(home)
 	if err != nil {
@@ -155,7 +155,7 @@ func runUninstall(cmd *cobra.Command, sel string, keepMCP, plan bool) error {
 		result.Profiles = append(result.Profiles, e.Dir)
 	}
 
-	// 3. The version's OAuth connections (D17): removed with the profile,
+	// 3. The version's OAuth connections: removed with the profile,
 	// each revoked at the vendor where it offers that; kept with it under
 	// --keep-mcp.
 	if conns, err := connection.Open(home, nil).List(); err == nil {

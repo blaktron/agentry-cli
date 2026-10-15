@@ -1,10 +1,9 @@
-// `agentry run` (RUNNER-PLAN §R0): resolve → verify → materialize →
-// compile → enforce → run → receipt, one agent per invocation. First use
-// of a digest IS the install (RQ5): the verified workspace, the compiled
-// plan, and the pulled/built images all persist under ~/.agentry/runner
-// so later runs execute without re-deriving anything. The verify gate is
-// the same one `agentry install` applies — a run is an install that also
-// executes.
+// `agentry run`: resolve → verify → materialize → compile → enforce →
+// run → receipt, one agent per invocation. First use of a digest IS the
+// install: the verified workspace, the compiled plan, and the
+// pulled/built images all persist under ~/.agentry/runner so later runs
+// execute without re-deriving anything. The verify gate is the same one
+// `agentry install` applies — a run is an install that also executes.
 package main
 
 import (
@@ -58,14 +57,14 @@ import (
 
 // runOpts carries the run command's flags.
 type runOpts struct {
-	// consentHome is the real runner home, where a local install lives
-	// (agentry-cli#491); --plan materializes into a temp home, and a
-	// local install is looked up here all the same. Empty: the home.
+	// consentHome is the real runner home, where a local install
+	// lives; --plan materializes into a temp home, and a local install
+	// is looked up here all the same. Empty: the home.
 	consentHome string
 	mode        string
 	intake      []string
 	intakeToken []string
-	// hostFlags are the target hosts' sign-in flags (agentry-cli#861).
+	// hostFlags are the target hosts' sign-in flags.
 	hostFlags    targetHostFlags
 	input        string
 	out          string
@@ -74,7 +73,7 @@ type runOpts struct {
 	// terminal, so the profile setup and the intake do not print it twice.
 	guideShown *bool
 	// progress is where the run has got to, for the envelope of a run that
-	// fails before the engine writes one (agentry-cli#332).
+	// fails before the engine writes one.
 	progress           *runProgress
 	eventsPath         string
 	adapterName        string
@@ -91,10 +90,10 @@ type runOpts struct {
 	prepare            bool
 	dryRun             bool
 	// plan is the consent-free preview a client shows a person before they
-	// consent (agentry-cli#124): resolve, verify, compile, and print what a
-	// run would enforce and what it would ask or refuse — asking nothing,
-	// recording nothing, and materializing into a temp dir rather than the
-	// runner cache. --dry-run keeps its meaning (the plan for a person who
+	// consent: resolve, verify, compile, and print what a run would
+	// enforce and what it would ask or refuse — asking nothing, recording
+	// nothing, and materializing into a temp dir rather than the runner
+	// cache. --dry-run keeps its meaning (the plan for a person who
 	// consented on the terminal).
 	plan         bool
 	keepRunDir   bool
@@ -102,31 +101,28 @@ type runOpts struct {
 	files        []string
 	knowledge    []string
 	// voice and noVoice override the Writing Voice's always-attach flag
-	// for one run; voiceFile attaches a VOICE.md a driver names (plan
-	// writing-voice.md D5, D11).
+	// for one run; voiceFile attaches a VOICE.md a driver names.
 	voice, noVoice bool
 	voiceFile      string
-	// reportTheme is --report-theme (agentry-cli#731), reportDesign
-	// --report-design (agentry-cli#784).
+	// reportTheme is --report-theme, reportDesign --report-design.
 	reportTheme        string
 	reportDesign       string
 	keepProfile        string // "": unset; "true"/"false": the flag decided
 	reconfigureProfile bool
 	// sessionProtocol drives an interactive session from JSON-line commands
-	// on stdin instead of the terminal chat, with its events on descriptor
-	// 3 (agentry-cli#477, hosted sessions plan D4).
+	// on stdin instead of the terminal chat, with its events on descriptor 3.
 	sessionProtocol bool
 	// protocolEvents is descriptor 3, opened once the flag is checked.
 	protocolEvents io.Writer
 	// sessionInputs is the directory the protocol's driver stages the files
 	// it adds in; an add names a file directly in it.
 	sessionInputs string
-	// connectionsFile hands the run access tokens a host already fetched
-	// (agentry-cli#722): the store is not opened and nothing is refreshed.
+	// connectionsFile hands the run access tokens a host already
+	// fetched: the store is not opened and nothing is refreshed.
 	connectionsFile string
 	// reviewInputs is the registry whose AI Review reads the inputs' text
 	// before the agent starts, with the job's credential in $envJobToken
-	// (a hosted run's host; plan file-handling.md §8, agentry-cli#321).
+	// (a hosted run's host).
 	reviewInputs string
 }
 
@@ -136,7 +132,7 @@ func newRunCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "run [ns/name[@range]]",
 		Short: "Verify, install, and execute one QuickAgent in an isolated container",
-		Long: "Run a single-purpose QuickAgent once (RUNNER-PLAN.md):\n\n" +
+		Long: "Run a single-purpose QuickAgent once:\n\n" +
 			"  agentry run ns/name@^1.2 --input task.json --out ./reports\n\n" +
 			"Task input: --input FILE, else piped stdin; with no task (or an empty one) the\n" +
 			"agent is sent its own instruction and runs that. The result goes to stdout\n" +
@@ -245,16 +241,16 @@ func printAdapters(cmd *cobra.Command) error {
 		}
 		_, _ = fmt.Fprintf(out, "%s%s\n", n, suffix)
 	}
-	_, _ = fmt.Fprintln(out, "planned (RUNNER-PLAN M-R4): goose")
+	_, _ = fmt.Fprintln(out, "planned: goose")
 	return nil
 }
 
 // runnerHome is ~/.agentry/runner, or $AGENTRY_RUNNER_HOME (tests and odd
 // deployments) — policy.Home, so the policy's default path and everything
-// else under the home cannot resolve differently (agentry-cli#149).
+// else under the home cannot resolve differently.
 func runnerHome() (string, error) { return policy.Home() }
 
-// runRun executes the whole §R6 lifecycle.
+// runRun executes the whole run lifecycle.
 func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	if (ref == "") == (opts.local == "") {
 		return errors.New("pass exactly one of ns/name[@range] or --local DIR")
@@ -270,8 +266,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		return err
 	}
 	// The report theme is chosen before anything starts, so a name that is
-	// not a theme's refuses here (agentry-cli#731). A preview asks no
-	// account.
+	// not a theme's refuses here. A preview asks no account.
 	cfg, cerr := loadCLIConfig()
 	if cerr != nil {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "agentry: warning: %v; its report settings are not read\n", cerr)
@@ -301,7 +296,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	}
 
 	// The receipt names the policy file and how it was chosen, beside its
-	// digest (agentry-cli#152).
+	// digest.
 	policyFile, err := policy.Resolve(opts.policyPath)
 	if err != nil {
 		return err
@@ -313,15 +308,15 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 
 	opts.progress.at(receipt.StageVerify)
 	// Materialize: verified workspace + install metadata, cached per
-	// digest (§R5 standalone mode). A --plan materializes into a temp
-	// home instead: a preview writes nothing that outlives it, and an
-	// unsigned release is reported rather than refused.
+	// digest. A --plan materializes into a temp home instead: a
+	// preview writes nothing that outlives it, and an unsigned
+	// release is reported rather than refused.
 	var meta *installdir.Meta
 	var installDir string
 	// planRefusals is every refusal the gates before compile would meet —
 	// the attestation and the declared servers' vulnerabilities — for
 	// --plan: the preview exists so the person sees them all before
-	// consenting (agentry-cli#126), not only the first a run stops on.
+	// consenting, not only the first a run stops on.
 	var planRefusals []runPlanRefusal
 	// consentHome is where the consent record lives (the real home); home
 	// itself moves to a temp dir under --plan so every later write — the
@@ -350,7 +345,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		integrity = integrityLocal
 		meta, installDir, err = materializeLocal(cmd, opts.local, home, matOpts.allowUnsigned)
 		// --pin holds a local directory to the digest it had when it was
-		// pinned (a schedule's, agentry-cli#747): an edited directory is
+		// pinned (a schedule's): an edited directory is
 		// another release and does not run in its place.
 		if err == nil && opts.pin != "" && meta.Digest != opts.pin {
 			err = engine.Classify(engine.ExitVerify,
@@ -380,9 +375,9 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	if err != nil {
 		return engine.Classify(engine.ExitCompile, err)
 	}
-	// An install cached before the registry path validated (agentry-cli#158)
-	// is held to the same rules at run; the compiler refuses the mount
-	// shapes on its own besides.
+	// An install cached without validation is held to the same rules
+	// at run; the compiler refuses the mount shapes on its own
+	// besides.
 	if blocking := manifest.Blocking(manifest.Validate(m)); len(blocking) > 0 {
 		msgs := make([]string, 0, len(blocking))
 		for _, e := range blocking {
@@ -402,7 +397,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	shippedSizes := packSizes(shipped)
 	sayKnowledge(cmd.ErrOrStderr(), shipped)
 
-	// The §R5 capability gate: same semantics as install — egress/exec
+	// The capability gate: same semantics as install — egress/exec
 	// (or a widened contract vs the last accepted run) needs consent.
 	mode, err := resolveRunMode(cmd, opts, m)
 	if err != nil {
@@ -461,11 +456,11 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		return engine.Classify(engine.ExitCLI, err)
 	}
 
-	// Declared MCP servers (RUNNER-PLAN-3): resolve the manifest pins —
-	// offline when the signature's store already matches them — so the
-	// compiler can bake the launch specs into the plan. Installation into
-	// the store happens with the image install below; --dry-run stops at
-	// resolution and touches no docker.
+	// Declared MCP servers: resolve the manifest pins — offline when the
+	// signature's store already matches them — so the compiler can bake
+	// the launch specs into the plan. Installation into the store happens
+	// with the image install below; --dry-run stops at resolution and
+	// touches no docker.
 	profDir := profile.Dir(home, meta.Namespace, meta.Name, meta.Version, installdir.DigestSuffix(meta.Digest))
 	serversDir := mcpinstall.StoreDir(profDir)
 	var resolvedServers []mcpinstall.Resolved
@@ -473,10 +468,10 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	var vulnLine string
 	if len(m.Capabilities.MCPServers) > 0 {
 		opts.progress.at(receipt.StageMCPServers)
-		// The registry's vulnerability verdict on each declared server
-		// (agentry#177, DR-16): refused on an advisory the gate rates high
-		// or critical (agentry-cli#501) unless the operator says otherwise; fail-open when the registry
-		// cannot answer. The receipt records the outcome either way.
+		// The registry's vulnerability verdict on each declared server: refused
+		// on an advisory the gate rates high or critical unless the operator
+		// says otherwise; fail-open when the registry cannot answer. The
+		// receipt records the outcome either way.
 		statuses := mcpinstall.CheckVulnerabilities(cmd.Context(), nil, registryURL(), m.Capabilities.MCPServers)
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "declared MCP servers, per the registry: %s\n", mcpinstall.Summary(statuses))
 		var refuseErr error
@@ -496,8 +491,8 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 
 	// The install is checked again before the plan is compiled from it: a
 	// person can sit at the consent prompt for minutes, and a plan compiled
-	// from files edited meanwhile would be kept and reused (agentry-cli#326).
-	// The run's own copy is checked once more by the engine (CheckWorkspace).
+	// from files edited meanwhile would be kept and reused. The run's own
+	// copy is checked once more by the engine (CheckWorkspace).
 	if opts.local == "" && !opts.plan {
 		if err := recheckInstall(installDir, meta); err != nil {
 			return err
@@ -528,25 +523,25 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		return printDryRun(cmd, plan, planDir)
 	}
 
-	// Gateway + harness + runner images: the RQ2/RQ5 install step.
+	// Gateway + harness + runner images: the install step.
 	opts.progress.at(receipt.StageImages)
 	docker := newDockerClient()
 	runnerTag := pol.RunnerImageTag(runnerimage.ContentVersion())
 	// A plan run is refused for a hosted run and with a cost budget
-	// before anything is installed for it (I5, D13).
+	// before anything is installed for it.
 	if err := refuseSignInRun(plan, opts); err != nil {
 		return err
 	}
-	// And so is a target host (agentry-cli#861, plan D11).
+	// And so is a target host.
 	if err := refuseHostedTargetHosts(plan, opts); err != nil {
 		return err
 	}
 	if err := gateway.EnsureInstalledFor(cmd.Context(), docker, pol, runnerTag, homeImageDir(home), cmd.ErrOrStderr(), plan); err != nil {
 		return engine.Classify(engine.ExitGateway, err)
 	}
-	// The per-QuickAgent exec image the plan names (agentry-cli#9, #100):
-	// built with the operator's catalogued packages; the versions it
-	// resolved go into the receipt.
+	// The per-QuickAgent exec image the plan names: built with the
+	// operator's catalogued packages; the versions it resolved go
+	// into the receipt.
 	var execPackages []string
 	if plan.ExecImage != nil {
 		var err error
@@ -556,7 +551,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		}
 	}
 	// The host link's image, so a --prepare leaves nothing to build at
-	// the run (agentry-cli#861); the engine builds it otherwise.
+	// the run; the engine builds it otherwise.
 	if plan.HostLink != nil {
 		hl := targethost.HostLinkImage(runnerTag, plan.HostLink.Base)
 		if _, err := targethost.EnsureImage(cmd.Context(), docker, hl, homeImageDir(home), cmd.ErrOrStderr()); err != nil {
@@ -565,9 +560,8 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	}
 	if len(resolvedServers) > 0 {
 		// A CLI killed mid-install left its builder running under the
-		// same fixed name: sweep what dead runs left before building
-		// (agentry-cli#161). engine.Run sweeps again; the second finds
-		// nothing.
+		// same fixed name: sweep what dead runs left before building.
+		// engine.Run sweeps again; the second finds nothing.
 		engine.SweepAbandoned(cmd.Context(), docker, cmd.ErrOrStderr())
 		opts.progress.at(receipt.StageMCPServers)
 		if err := mcpinstall.EnsureInstalled(cmd.Context(), docker, resolvedServers, serversDir,
@@ -576,19 +570,18 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		}
 	}
 
-	// The QuickAgent's MCP profile (RUNNER-PLAN-2 §P2/§P3): load or, on a
-	// terminal, run guided setup. Part of the install step, so --prepare
-	// includes it; --dry-run (above) never prompts.
+	// The QuickAgent's MCP profile: load or, on a terminal, run guided
+	// setup. Part of the install step, so --prepare includes it;
+	// --dry-run (above) never prompts.
 	opts.progress.at(receipt.StageProfile)
 	prof, profDir, keep, err := ensureProfile(cmd, home, meta, m, pol, opts)
 	if err != nil {
 		return engine.Classify(engine.ExitPolicy, err)
 	}
 
-	// The connections of the remote servers that sign in by OAuth (plan
-	// mcp-oauth-connections.md §6, agentry-cli#664): asked for at Start on
-	// a terminal, refreshed under their locks before the sandbox starts.
-	// --prepare makes them too, as it does the profile.
+	// The connections of the remote servers that sign in by OAuth: asked
+	// for at Start on a terminal, refreshed under their locks before the
+	// sandbox starts. --prepare makes them too, as it does the profile.
 	var conns *runConnections
 	if opts.connectionsFile != "" {
 		conns, err = connectionsFromFile(opts.connectionsFile, m)
@@ -662,7 +655,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	}
 
 	// A driver metering a live run reads the harness's usage two ways, both
-	// beside the envelope rather than instead of it (agentry-cli#138).
+	// beside the envelope rather than instead of it.
 	onUsage := usageReporter(opts.outputFormat, cmd.ErrOrStderr())
 	var eventsOut io.Writer
 	if opts.eventsPath != "" {
@@ -714,7 +707,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		return runErr
 	}
 	// A one-shot run of a release ends blocked, not ok, when its agent
-	// could not do the task (agentry-cli#629).
+	// could not do the task.
 	params.EndBlocked = true
 	env, runErr := engine.Run(cmd.Context(), docker, params)
 	if env != nil {
@@ -727,30 +720,30 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 
 // startSession and runChat are runInteractive's two collaborators, package
 // variables so a test can put a fake session behind a chat that panics or
-// returns early and see teardown still run (agentry-cli#161).
+// returns early and see teardown still run.
 var (
 	startSession = engine.StartSession
 	runChat      = tui.Run
 )
 
 // runInteractive drives an interactive plan: the engine's session behind
-// the terminal chat (plan §6.2, §6.8). The screen is restored before the
-// envelope and receipts are written, so what the user sees last is where
-// the transcript went.
+// the terminal chat. The screen is restored before the envelope and
+// receipts are written, so what the user sees last is where the
+// transcript went.
 func runInteractive(cmd *cobra.Command, docker dockerx.Client, params engine.Params, m *manifest.Manifest, plan *spec.Plan, opts runOpts) error {
 	errOut := cmd.ErrOrStderr()
 	s, err := startSession(cmd.Context(), docker, params)
 	if err != nil {
 		return err
 	}
-	// Teardown on every path (agentry-cli#161): a panic in the terminal chat,
-	// or any return before the explicit End below, would leave the session's
-	// sandbox, the gateway holding the docker socket and the model key running
-	// with nothing left to apply a budget. End is idempotent — a second call
-	// returns the first one's envelope — so the explicit End below still
-	// produces the receipts this function reports. The deferred call gets a
-	// context of its own: on the panic path cmd.Context() may already be
-	// cancelled, and a teardown that cannot run is no teardown.
+	// Teardown on every path: a panic in the terminal chat, or any return
+	// before the explicit End below, would leave the session's sandbox, the
+	// gateway holding the docker socket and the model key running with nothing
+	// left to apply a budget. End is idempotent — a second call returns the
+	// first one's envelope — so the explicit End below still produces the
+	// receipts this function reports. The deferred call gets a context of its
+	// own: on the panic path cmd.Context() may already be cancelled, and a
+	// teardown that cannot run is no teardown.
 	defer func() {
 		endCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
@@ -806,10 +799,10 @@ func runInteractive(cmd *cobra.Command, docker dockerx.Client, params engine.Par
 var serveProtocol = protocol.Serve
 
 // runProtocol drives the session from the commands on stdin, its events on
-// descriptor 3 (agentry-cli#477). stdout gets what any run prints there —
-// the envelope under --output-format json, the result otherwise — and
-// stderr the usage narration a driver meters by, so the host that parses a
-// run's output parses a session's the same way.
+// descriptor 3. stdout gets what any run prints there — the envelope under
+// --output-format json, the result otherwise — and stderr the usage
+// narration a driver meters by, so the host that parses a run's output
+// parses a session's the same way.
 func runProtocol(cmd *cobra.Command, s session.Session, opts runOpts) error {
 	errOut := cmd.ErrOrStderr()
 	env, runErr := serveProtocol(cmd.Context(), s, cmd.InOrStdin(), opts.protocolEvents, protocol.Options{
@@ -856,7 +849,7 @@ func runTask(cmd *cobra.Command, opts runOpts) io.Reader {
 // materializes under the runner home.
 func homeImageDir(home string) string { return filepath.Join(home, "image") }
 
-// taskReader implements the §R2 input precedence: --input file > piped
+// taskReader implements the input precedence: --input file > piped
 // stdin > empty. A TTY stdin is never read — an interactive terminal
 // sitting silent is not a task.
 func taskReader(cmd *cobra.Command, input string) io.Reader {
@@ -915,11 +908,11 @@ func (p *runProgress) enveloped() {
 
 // printFailure prints the envelope of a run that failed before the engine
 // wrote one, under --output-format json: a driver reading stdout gets the
-// exit class and the step it stopped in (agentry-cli#332), not silence.
-// There is no run, so no run id, receipts or output folder; the release
-// and its attestation are there once it was verified. A run interrupted
-// here says so under the cli class, as the engine's does, so a driver
-// records an interruption and not a refusal.
+// exit class and the step it stopped in, not silence. There is no run, so
+// no run id, receipts or output folder; the release and its attestation
+// are there once it was verified. A run interrupted here says so under
+// the cli class, as the engine's does, so a driver records an
+// interruption and not a refusal.
 func printFailure(ctx context.Context, cmd *cobra.Command, p *runProgress, err error) {
 	code := engine.ExitCLI
 	var ce *engine.ClassifiedError
@@ -971,7 +964,7 @@ func recheckInstall(installDir string, meta *installdir.Meta) error {
 
 // installedCopyCheck is the engine's check of a registry release's per-run
 // copy against the install's record; a --local directory has none (it is
-// its own source, agentry-cli#326's one exemption).
+// its own source, the one exemption).
 func installedCopyCheck(opts runOpts, installDir string, meta *installdir.Meta) func(string) error {
 	if opts.local != "" {
 		return nil
@@ -996,7 +989,7 @@ func installedChanges(e *installdir.ChangedError) *receipt.InstalledChanges {
 }
 
 // printEnvelope writes the run result per --output-format. Text mode
-// prints only the agent's result (Unix composition, §R8); the envelope is
+// prints only the agent's result (Unix composition); the envelope is
 // always in the output folder either way.
 func printEnvelope(cmd *cobra.Command, env *receipt.Envelope, format string) {
 	out := cmd.OutOrStdout()
@@ -1019,7 +1012,7 @@ func printEnvelope(cmd *cobra.Command, env *receipt.Envelope, format string) {
 }
 
 // runPlanConsent is what a run's consent gate would say, computed without
-// asking or recording (agentry-cli#124).
+// asking or recording.
 type runPlanConsent struct {
 	Installed         *installPlanPrior `json:"installed,omitempty"`
 	Diff              installed.Diff    `json:"diff"`
@@ -1103,9 +1096,9 @@ func cachedAttestationGate(meta *installdir.Meta, allowUnsigned, allowUnscanned 
 	return nil
 }
 
-// runPlanOutput is the `run --plan --json` shape (agentry-cli#124): the
-// compiled plan — what a run would enforce — and what a run would ask or
-// refuse, with nothing asked or recorded.
+// runPlanOutput is the `run --plan --json` shape: the compiled plan —
+// what a run would enforce — and what a run would ask or refuse, with
+// nothing asked or recorded.
 type runPlanOutput struct {
 	Ref     string   `json:"ref"`
 	Version string   `json:"version"`
@@ -1113,7 +1106,7 @@ type runPlanOutput struct {
 	Mode    string   `json:"mode"`
 	Modes   []string `json:"modes"`
 	Summary string   `json:"summary,omitempty"`
-	// Plan is the compiled plan, canonical (§R4); PlanSha256 its hash.
+	// Plan is the compiled plan, canonical; PlanSha256 its hash.
 	Plan       json.RawMessage `json:"plan"`
 	PlanSha256 string          `json:"planSha256"`
 	// Contract is the manifest's capabilities as canonical JSON; the same
@@ -1126,14 +1119,14 @@ type runPlanOutput struct {
 	KeyID       string `json:"keyId,omitempty"`
 	Signed      bool   `json:"signed"`
 	// Integrity is what a run would find of the release installed in the
-	// runner home (agentry-cli#326): installIntegrity's values. A changed
-	// install is also the first of Refusals.
+	// runner home: installIntegrity's values. A changed install is also
+	// the first of Refusals.
 	Integrity installIntegrity `json:"integrity"`
 	runPlanConsent
 	// Refusals is every refusal the gates before compile would meet, in
 	// the order a run meets them: the attestation, then a declared server
-	// with a known vulnerability (agentry-cli#126). A client that lifts
-	// one with the person's acceptance still meets the others.
+	// with a known vulnerability. A client that lifts one with the
+	// person's acceptance still meets the others.
 	//
 	// Deprecated: Refusal is Refusals[0].Message, kept for clients that
 	// read one refusal.
@@ -1165,7 +1158,7 @@ const (
 )
 
 // installIntegrity is what a run would find of the release installed in
-// the runner home, checked against its integrity record (agentry-cli#326).
+// the runner home, checked against its integrity record.
 type installIntegrity string
 
 const (
@@ -1268,7 +1261,7 @@ func printRunPlan(cmd *cobra.Command, plan *spec.Plan, meta *installdir.Meta, m 
 	return nil
 }
 
-// printDryRun prints the compiled plan (§R4: deterministic, hashable,
+// printDryRun prints the compiled plan (deterministic, hashable,
 // printable) without touching docker.
 func printDryRun(cmd *cobra.Command, plan *spec.Plan, planDir string) error {
 	b, err := plan.MarshalCanonical()
@@ -1280,10 +1273,10 @@ func printDryRun(cmd *cobra.Command, plan *spec.Plan, planDir string) error {
 	return nil
 }
 
-// collectIntake answers the manifest's up-front questions (plan §3.5):
+// collectIntake answers the manifest's up-front questions:
 // --intake presets first, then the terminal when there is one; with no
 // terminal, a secret question the run's profile or secret source already
-// holds is answered from there (fromSource; agentry-cli#402).
+// holds is answered from there (fromSource).
 func collectIntake(cmd *cobra.Command, m *manifest.Manifest, opts runOpts, fromSource func(string) bool) (*intake.Answers, error) {
 	preset, err := intake.ParsePreset(opts.intake)
 	if err != nil {
@@ -1306,8 +1299,8 @@ func collectIntake(cmd *cobra.Command, m *manifest.Manifest, opts runOpts, fromS
 }
 
 // resolveSourceTokens gives each input source the run was given its
-// access token (plan input-sources.md D5): the variable --intake-token
-// names, the key saved for its host, a prompt on a terminal, or none.
+// access token: the variable --intake-token names, the key saved for
+// its host, a prompt on a terminal, or none.
 func resolveSourceTokens(cmd *cobra.Command, answers *intake.Answers, opts runOpts) error {
 	flags, err := sources.ParseTokenFlags(opts.intakeToken)
 	if err != nil {
@@ -1330,12 +1323,12 @@ func resolveSourceTokens(cmd *cobra.Command, answers *intake.Answers, opts runOp
 }
 
 // sayGuide prints the release guide's overview and its list of what to
-// gather (DEV-141, plan guided-runs.md §6) on the terminal, once, before
-// the first question a run asks: the guided profile's keys or the intake.
-// A run that asks nothing prints nothing, and so do a --output-format json
-// run and a run with no terminal, whose callers never reach here. The
-// overview is markdown and is printed as its text behind termtext's gutter,
-// so no line of it can read as the CLI's own (agentry-cli#419).
+// gather on the terminal, once, before the first question a run asks: the
+// guided profile's keys or the intake. A run that asks nothing prints
+// nothing, and so do a --output-format json run and a run with no terminal,
+// whose callers never reach here. The overview is markdown and is printed
+// as its text behind termtext's gutter, so no line of it can read as the
+// CLI's own.
 func sayGuide(w io.Writer, m *manifest.Manifest, opts runOpts) {
 	if (m.Guide == nil && m.Inputs == nil) || opts.outputFormat == "json" || (opts.guideShown != nil && *opts.guideShown) {
 		return
@@ -1366,9 +1359,9 @@ func sayGuide(w io.Writer, m *manifest.Manifest, opts runOpts) {
 }
 
 // inputsLine says what files a release takes and how its agent reads them
-// (the manifest's inputs block, DEV-218, agentry-cli#693), or nothing for a
-// release without the block. Its words are the CLI's own: the block holds
-// only the closed kinds and views, never the author's text.
+// (the manifest's inputs block), or nothing for a release without the
+// block. Its words are the CLI's own: the block holds only the closed
+// kinds and views, never the author's text.
 func inputsLine(m *manifest.Manifest) string {
 	if m.Inputs == nil {
 		return ""
@@ -1394,8 +1387,8 @@ func inputsLine(m *manifest.Manifest) string {
 
 // secretOverrides merges the profile's stored secrets with the intake's
 // secret answers (under their SecretName). answers is nil for a QuickAgent
-// that asks no intake questions — the common case, which used to panic
-// here (agentry-cli#49).
+// that asks no intake questions — the common case, which must not panic
+// here.
 func secretOverrides(profSecrets map[string]string, answers *intake.Answers) map[string]string {
 	overrides := make(map[string]string, len(profSecrets))
 	for k, v := range profSecrets {
@@ -1409,7 +1402,7 @@ func secretOverrides(profSecrets map[string]string, answers *intake.Answers) map
 	return overrides
 }
 
-// resolveRunMode applies the plan's default rule (§6.2): the flag wins; a
+// resolveRunMode applies the default rule: the flag wins; a
 // release with one mode runs in it; one with both is asked on a terminal
 // and runs autonomous otherwise (a --yes or --dry-run run never asks).
 func resolveRunMode(cmd *cobra.Command, opts runOpts, m *manifest.Manifest) (manifest.Mode, error) {
@@ -1461,7 +1454,7 @@ func planHash(plan *spec.Plan) string {
 	return h
 }
 
-// resolveOutDir picks and creates the output folder (RQ3).
+// resolveOutDir picks and creates the output folder.
 func resolveOutDir(flag string, meta *installdir.Meta, runID string) (string, error) {
 	dir := flag
 	if dir == "" {
@@ -1478,17 +1471,17 @@ func resolveOutDir(flag string, meta *installdir.Meta, runID string) (string, er
 }
 
 // materializeRegistry resolves, verifies, and caches a registry release
-// (§R1: the same gate as install — digest, DSSE, --allow-unsigned).
+// (the same gate as install — digest, DSSE, --allow-unsigned).
 func materializeRegistry(cmd *cobra.Command, ref, home string, opts runOpts) (*installdir.Meta, string, error) {
 	parsed, err := manifest.ParseRef(ref)
 	if err != nil {
 		return nil, "", err
 	}
-	// A QuickAgent installed from a local folder (agentry-cli#491) runs from
-	// the runner home, never resolved: no registry holds it. It is held to
-	// its integrity record like an installed release, and it is unsigned,
-	// so every run needs --allow-unsigned. A version range, or a version the
-	// local install is not, resolves through the registry as before.
+	// A QuickAgent installed from a local folder runs from the runner home,
+	// never resolved: no registry holds it. It is held to its integrity
+	// record like an installed release, and it is unsigned, so every run
+	// needs --allow-unsigned. A version range, or a version the local
+	// install is not, resolves through the registry as before.
 	localHome := home
 	if opts.consentHome != "" {
 		localHome = opts.consentHome
@@ -1542,10 +1535,10 @@ func materializeRegistry(cmd *cobra.Command, ref, home string, opts runOpts) (*i
 
 	installDir := installdir.ReleaseDir(home, res.Namespace, res.Name, res.Version, res.Digest)
 	// The installed tree is held to its integrity record before anything
-	// trusts it (agentry-cli#326): a release that changed after it was laid
-	// down is refused here, before anything is fetched; one no record of
-	// this home vouches for (laid down before records existed) is fetched
-	// and verified again below, and replaces what is there.
+	// trusts it: a release that changed after it was laid down is refused
+	// here, before anything is fetched; one no record of this home
+	// vouches for (laid down before records existed) is fetched and
+	// verified again below, and replaces what is there.
 	meta, ierr := installdir.Inspect(installDir, res.Digest)
 	var changed *installdir.ChangedError
 	reExport := ""
@@ -1572,8 +1565,8 @@ func materializeRegistry(cmd *cobra.Command, ref, home string, opts runOpts) (*i
 		}
 		// The cache remembers the verdict, not the consent: an unsigned
 		// release still needs --allow-unsigned on every run, or the gate
-		// would be one-shot per digest (agentry-cli#124), and an
-		// unscanned one --allow-unscanned.
+		// would be one-shot per digest, and an unscanned one
+		// --allow-unscanned.
 		if err := cachedAttestationGate(meta, opts.allowUnsigned, opts.allowUnscanned); err != nil {
 			return nil, "", engine.Classify(engine.ExitVerify, err)
 		}
@@ -1663,7 +1656,7 @@ func narrateCachedConsent(errOut io.Writer, meta *installdir.Meta, plan bool) {
 // into a temp home that outlives nothing.
 func verifyRunAttestation(cmd *cobra.Command, reg, token string, res *apiclient.ResolveResult, archiveDigest string, allowUnsigned, allowUnscanned, plan bool) (receipt.Attestation, error) {
 	att := attestationOf(cmd.Context(), reg, token, res, archiveDigest)
-	// Narration to stderr: run's stdout carries only the result (§R8).
+	// Narration to stderr: run's stdout carries only the result.
 	errOut := cmd.ErrOrStderr()
 	switch att.State {
 	case trust.StateVerified:
@@ -1716,7 +1709,7 @@ func verifyRunAttestation(cmd *cobra.Command, reg, token string, res *apiclient.
 	}
 }
 
-// materializeLocal admits an unpublished package directory (§R5): parse +
+// materializeLocal admits an unpublished package directory: parse +
 // validate the manifest, hash the tree, and cache like a registry install
 // keyed by that hash. Local trees are unsigned by definition, so the same
 // --allow-unsigned decision applies.
@@ -1734,7 +1727,7 @@ func materializeLocal(cmd *cobra.Command, dir, home string, allowUnsigned bool) 
 	}
 	// The record is computed, never taken from a cached install: nothing
 	// on disk can give a directory another attestation state (the
-	// built-in's above all, agentry-cli#318).
+	// built-in's above all).
 	meta, err := localrun.LocalMeta(dir)
 	if err != nil {
 		return nil, "", err
@@ -1746,7 +1739,7 @@ func materializeLocal(cmd *cobra.Command, dir, home string, allowUnsigned bool) 
 	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "local package %s (%s)\n", meta.Ref, installdir.DigestSuffix(meta.Digest))
 	// The directory is the truth and there is no signed release to be
 	// faithful to: a cached copy that changed is replaced from it, never
-	// refused (agentry-cli#326's one exemption).
+	// refused (the one exemption to the integrity check).
 	if err := installdir.Replace(installDir, dir, meta); err != nil {
 		return nil, "", err
 	}
@@ -1755,10 +1748,10 @@ func materializeLocal(cmd *cobra.Command, dir, home string, allowUnsigned bool) 
 
 // confirmRunCapabilities applies the install-time consent semantics to
 // runs, keyed on the runner install dir: first run asks about egress/exec,
-// upgrades ask again only when the contract widened (§R1).
+// upgrades ask again only when the contract widened.
 func confirmRunCapabilities(cmd *cobra.Command, m *manifest.Manifest, meta *installdir.Meta, home string, opts runOpts, mode manifest.Mode, shippedSizes map[string]int64) error {
 	// Everything here narrates to stderr: stdout is the run's result
-	// channel (§R8) and must stay pipeline-clean.
+	// channel and must stay pipeline-clean.
 	out := cmd.ErrOrStderr()
 	_, _ = fmt.Fprintf(out, "%s (%s)\n", meta.Ref, modesLabel(m.SupportedModes()))
 	if m.Summary != "" {
@@ -1769,7 +1762,7 @@ func confirmRunCapabilities(cmd *cobra.Command, m *manifest.Manifest, meta *inst
 		_, _ = fmt.Fprintf(out, "  %s\n", line)
 	}
 	if mode == manifest.ModeInteractive {
-		// Plan §8: the one line the consent screen gains for a session.
+		// The one line the consent screen gains for a session.
 		_, _ = fmt.Fprintln(out, "  interactive: you can talk to this agent and give it files; you cannot give it more access than listed above")
 	}
 	key := installdir.ConsentKey(home, meta.Namespace, meta.Name)
@@ -1782,8 +1775,8 @@ func confirmRunCapabilities(cmd *cobra.Command, m *manifest.Manifest, meta *inst
 	if err := confirmCapabilityChange(cmd, out, &state, key, meta.Version, next, m.Contract(), opts.yes); err != nil {
 		return err
 	}
-	// An install owns the agent's directory (managed, agentry-cli#190) and
-	// a local install its record (agentry-cli#491); Reconsent keeps both.
+	// An install owns the agent's directory (managed) and a local
+	// install its record; Reconsent keeps both.
 	if !state.Reconsent(key, meta.Version, next, meta.Digest) {
 		_, _ = fmt.Fprintf(out, "note: %s/%s's record is its local install; this run's consent is not kept\n", meta.Namespace, meta.Name)
 		return nil
@@ -1798,12 +1791,12 @@ func confirmRunCapabilities(cmd *cobra.Command, m *manifest.Manifest, meta *inst
 // before anything is compiled from it. Warnings (e.g. the V5 "*" egress
 // flag) surface but do not block — same split the registry applies at
 // publish; the RUN-time gate for wildcard egress is the policy check in the
-// compiler (§R4). A blocking error is a compile refusal naming every rule.
-// Both materialize paths call this before caching: a --local tree because
-// nobody else has, and a registry release because the registry's
-// validation is that registry's — a self-hosted one whose rules predate
-// today's, or a compromised one, is exactly the trust the digest check
-// refuses to extend elsewhere (security review 2026-09-20 §4.2).
+// compiler. A blocking error is a compile refusal naming every rule. Both
+// materialize paths call this before caching: a --local tree because nobody
+// else has, and a registry release because the registry's validation is
+// that registry's — a self-hosted one whose rules predate today's, or a
+// compromised one, is exactly the trust the digest check refuses to extend
+// elsewhere.
 func requireValidManifest(cmd *cobra.Command, m *manifest.Manifest, what string) error {
 	errs := manifest.Validate(m)
 	for _, e := range errs {
@@ -1823,9 +1816,9 @@ func requireValidManifest(cmd *cobra.Command, m *manifest.Manifest, what string)
 }
 
 // ensureProfile loads — or, on a terminal, guides the creation of — the
-// QuickAgent's MCP profile for this signature (RUNNER-PLAN-2 §P2/§P3).
-// Returns the profile (nil when none applies), its directory, and the
-// effective keep choice: flag > stored profile > policy default.
+// QuickAgent's MCP profile for this signature. Returns the profile (nil
+// when none applies), its directory, and the effective keep choice:
+// flag > stored profile > policy default.
 func ensureProfile(cmd *cobra.Command, home string, meta *installdir.Meta, m *manifest.Manifest,
 	pol *policy.Policy, opts runOpts,
 ) (*profile.Profile, string, bool, error) {
@@ -1850,15 +1843,15 @@ func ensureProfile(cmd *cobra.Command, home string, meta *installdir.Meta, m *ma
 		return nil, dir, false, fmt.Errorf("--keep-profile %q must be true or false", opts.keepProfile)
 	}
 
-	// The union of agent-level and per-server secret names (RUNNER-PLAN-3):
-	// guided setup collects every key the release's gateway will need.
+	// The union of agent-level and per-server secret names: guided
+	// setup collects every key the release's gateway will need.
 	secrets := allSecretNames(m)
 	needGuided := opts.reconfigureProfile || (prof == nil && len(secrets) > 0)
 	if !needGuided {
 		if prof == nil && keepDecided && keep {
 			// Nothing to collect, but the operator explicitly asked to
-			// keep a profile: record the choice for future schema growth
-			// (P2 §P3).
+			// keep a profile: record the choice for future schema
+			// growth.
 			prof = profile.New(meta.Ref, meta.Digest, true, nil)
 			if err := prof.Save(dir); err != nil {
 				return nil, dir, false, err
@@ -1871,10 +1864,10 @@ func ensureProfile(cmd *cobra.Command, home string, meta *installdir.Meta, m *ma
 		if opts.reconfigureProfile {
 			return nil, dir, false, errors.New("--reconfigure-profile needs an interactive terminal (the desktop app configures profiles as a form)")
 		}
-		// Non-interactive first run: v1 semantics — secrets resolve from
-		// the policy source; no profile is created and nothing degrades
-		// silently (a missing required secret still refuses with exit 11;
-		// an optional one the run goes without is named, DR-70).
+		// Non-interactive first run: secrets resolve from the policy
+		// source; no profile is created and nothing degrades silently (a
+		// missing required secret still refuses with exit 11; an optional
+		// one the run goes without is named).
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
 			"note: no MCP profile for %s and no terminal for guided setup — secrets resolve from the %s source\n",
 			meta.Ref, pol.SecretSource.Mode)
@@ -1912,8 +1905,8 @@ func ensureProfile(cmd *cobra.Command, home string, meta *installdir.Meta, m *ma
 }
 
 // finishProfile applies the completion choice after a run's lifecycle
-// finished, success or failure (P2 §P2): keep → persist + stamp; remove →
-// the profile dies with the run.
+// finished, success or failure: keep → persist + stamp; remove → the
+// profile dies with the run.
 func finishProfile(errOut io.Writer, prof *profile.Profile, dir string, keep bool) {
 	if prof == nil {
 		return
@@ -1932,15 +1925,14 @@ func finishProfile(errOut io.Writer, prof *profile.Profile, dir string, keep boo
 	_, _ = fmt.Fprintln(errOut, "MCP profile removed (run completed with keep-profile=false)")
 }
 
-// runnerCLIVersion feeds the runner image tag derivation (§R7: a new CLI
+// runnerCLIVersion feeds the runner image tag derivation (a new CLI
 // version is what triggers a runner image rebuild).
 
 // inputReview is AI Review of the inputs for --review-inputs: the named
-// registry's model-input scan with the job's credential (plan
-// file-handling.md §8, agentry-cli#321). Nil without the flag: a local run
-// reviews nothing. The registry is named apart from --registry because a
-// private release's run reaches the registry through a prefix
-// (agentry-enterprise#92), and the scan route is at the registry's root.
+// registry's model-input scan with the job's credential. Nil without the
+// flag: a local run reviews nothing. The registry is named apart from
+// --registry because a private release's run reaches the registry through
+// a prefix, and the scan route is at the registry's root.
 func inputReview(registry string) (webscan.Scanner, error) {
 	if registry == "" {
 		return nil, nil

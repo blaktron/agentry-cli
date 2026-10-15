@@ -7,8 +7,8 @@ import (
 	"testing"
 )
 
-// The grant goes to the registry's host and nowhere else (agentry-cli#232):
-// a download from another host (a CDN) and npm never see it.
+// The grant goes to the registry's host and nowhere else: a
+// download from another host (a CDN) and npm never see it.
 func TestRunGrantReachesOnlyTheRegistryHost(t *testing.T) {
 	var mu sync.Mutex
 	seen := map[string]string{}

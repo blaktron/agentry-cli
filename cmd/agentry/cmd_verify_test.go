@@ -1,7 +1,7 @@
-// `agentry verify` (§11): digest PASS/FAIL drives the exit code for CI, a
+// `agentry verify`: digest PASS/FAIL drives the exit code for CI, a
 // present-but-invalid attestation always fails, an absent one is tolerated
-// (§8.8 self-host), and --strict promotes "we could not check" to a failure
-// so it can never impersonate "we checked and it was fine".
+// (self-host), and --strict promotes "we could not check" to a failure so
+// it can never impersonate "we checked and it was fine".
 package main
 
 import (
@@ -27,7 +27,7 @@ func TestVerifyUnsignedPasses(t *testing.T) {
 
 	stdout, _, err := runCLI(t, nil, "--registry", fr.url(), "verify", "acme/demo@1.0.0")
 	if err != nil {
-		t.Fatalf("unsigned verify must exit 0 (§8.8 self-host): %v", err)
+		t.Fatalf("unsigned verify must exit 0 (self-host): %v", err)
 	}
 	for _, want := range []string{"digest: PASS", "attestation:     unsigned"} {
 		if !strings.Contains(stdout, want) {
@@ -60,9 +60,9 @@ func TestVerifyVerifiedAttestation(t *testing.T) {
 	}
 }
 
-// TestVerifyRetiredKeySays (agentry-cli#139): a signature a retired key
-// made verifies as before, and verify says it was a retired key, in the
-// human output and the JSON.
+// TestVerifyRetiredKeySays: a signature a retired key made verifies as
+// before, and verify says it was a retired key, in the human output and
+// the JSON.
 func TestVerifyRetiredKeySays(t *testing.T) {
 	isolateEnv(t)
 	fr := newFakeRegistry(t)
@@ -100,7 +100,7 @@ func TestVerifyRetiredKeySays(t *testing.T) {
 }
 
 // TestVerifyDigestMismatchFails: bytes that hash differently from the
-// registry's claim are the §9.4 hard failure regardless of signatures.
+// registry's claim are a hard failure regardless of signatures.
 func TestVerifyDigestMismatchFails(t *testing.T) {
 	isolateEnv(t)
 	fr := newFakeRegistry(t)

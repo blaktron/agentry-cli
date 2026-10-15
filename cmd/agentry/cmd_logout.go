@@ -42,8 +42,9 @@ func runLogout(cmd *cobra.Command, _ []string) error {
 		if err != nil {
 			return fail("invalid_registry")
 		}
-		// Existing host-keyed credentials can alias multiple URL identities
-		// (#267). Refuse rather than deleting another registry's credential.
+		// Existing host-keyed credentials can alias multiple URL
+		// identities. Refuse rather than deleting another registry's
+		// credential.
 		for _, other := range cfg.Registries {
 			if strings.TrimRight(other.URL, "/") == reg || other.TokenRef == tokenRefFile || other.TokenRef == tokenRefNone {
 				continue

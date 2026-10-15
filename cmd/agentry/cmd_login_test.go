@@ -1,8 +1,8 @@
-// `agentry login` (§11): PAT from stdin, verified against GET /user, stored
-// — here always via the config-file fallback (AGENTRY_NO_KEYRING), because
+// `agentry login`: PAT from stdin, verified against GET /user, stored —
+// here always via the config-file fallback (AGENTRY_NO_KEYRING), because
 // tests must never touch the developer's real OS keychain — and the signing
-// keys pinned at login (§8.8 TOFU). The keychain half of the storage split
-// is keyringSet's error contract, covered below without a keychain.
+// keys pinned at login (TOFU). The keychain half of the storage split is
+// keyringSet's error contract, covered below without a keychain.
 package main
 
 import (
@@ -61,7 +61,7 @@ func TestLoginUnsignedRegistryNote(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// An empty key set is a legitimate self-host configuration (§8.8), so
+	// An empty key set is a legitimate self-host configuration, so
 	// login succeeds and says what that means.
 	if !strings.Contains(stdout, "publishes no signing keys") {
 		t.Errorf("unsigned-registry note = %q", stdout)
@@ -104,10 +104,10 @@ func TestKeyringSetDisabled(t *testing.T) {
 	}
 }
 
-// The browser flow (agentry-cli#5): login starts a loopback listener, hands
-// the authorize URL to the browser, receives a one-time code and exchanges
-// it for the token at the registry — presenting the flow's own state — then
-// stores and verifies it exactly like a pasted PAT.
+// The browser flow: login starts a loopback listener, hands the authorize
+// URL to the browser, receives a one-time code and exchanges it for the
+// token at the registry — presenting the flow's own state — then stores and
+// verifies it exactly like a pasted PAT.
 func TestLoginViaBrowserExchangesCode(t *testing.T) {
 	isolateEnv(t)
 	fr := newFakeRegistry(t)

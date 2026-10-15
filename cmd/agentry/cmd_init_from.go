@@ -1,13 +1,12 @@
-// `agentry init --from` (agentry#71, PLAN §5.6/§11): import wizards that
-// seed a QuickAgent workspace from something that already exists — an
-// Agent Skills SKILL.md (with its sibling files) or an MCP registry
-// server.json — and populate the manifest from what the source states.
-// The capability contract is never guessed: what the source cannot state
-// (egress, secrets, exec, filesystem) is asked on a terminal, with hints
-// found in the source offered as defaults the author confirms, or taken
-// from explicit --egress/--secrets/--exec/--fs-* answers; without either,
-// the wizard refuses rather than writing a "pure text" contract nobody
-// decided on.
+// `agentry init --from`: import wizards that seed a QuickAgent workspace
+// from something that already exists — an Agent Skills SKILL.md (with its
+// sibling files) or an MCP registry server.json — and populate the
+// manifest from what the source states. The capability contract is never
+// guessed: what the source cannot state (egress, secrets, exec,
+// filesystem) is asked on a terminal, with hints found in the source
+// offered as defaults the author confirms, or taken from explicit
+// --egress/--secrets/--exec/--fs-* answers; without either, the wizard
+// refuses rather than writing a "pure text" contract nobody decided on.
 package main
 
 import (
@@ -408,9 +407,9 @@ type serverJSON struct {
 }
 
 // readServerJSON imports a server.json as a skill QuickAgent that declares
-// the published package under capabilities.mcpServers (DEV-060): the
-// registry entry describes an installable server, and a QuickAgent that
-// uses one names it there with an exact pin and its secret names.
+// the published package under capabilities.mcpServers: the registry entry
+// describes an installable server, and a QuickAgent that uses one names it
+// there with an exact pin and its secret names.
 func readServerJSON(path string) (*imported, error) {
 	raw, err := os.ReadFile(path) //nolint:gosec // user-named source
 	if err != nil {

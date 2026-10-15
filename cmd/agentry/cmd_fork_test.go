@@ -1,6 +1,6 @@
-// `agentry fork` (agentry-cli#752): the request it sends, the terms and the
-// typed "yes" before it, --wait over the fork's copy, and every refusal in
-// the site's and the desktop's words.
+// `agentry fork`: the request it sends, the terms and the typed "yes"
+// before it, --wait over the fork's copy, and every refusal in the site's
+// and the desktop's words.
 package main
 
 import (

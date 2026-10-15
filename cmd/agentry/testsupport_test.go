@@ -1,9 +1,9 @@
 // Shared test plumbing for the command layer: a fake registry speaking the
-// exact wire surface the CLI consumes (§9.4 resolve/download, §8.8
-// attestations + signing keys, §10.4 search, §11 yank/login/publish), real
-// tar.zst archives built by the same pkg/archive code the server packs
-// with, and real DSSE envelopes minted with a test ECDSA key so the
-// verified path is proven end to end — not stubbed around.
+// exact wire surface the CLI consumes (resolve/download, attestations +
+// signing keys, search, yank/login/publish), real tar.zst archives built
+// by the same pkg/archive code the server packs with, and real DSSE
+// envelopes minted with a test ECDSA key so the verified path is proven
+// end to end — not stubbed around.
 package main
 
 import (
@@ -92,9 +92,9 @@ func writeTree(t *testing.T, files map[string]string) string {
 }
 
 // buildTestArchive packs files into the same deterministic tar.zst the
-// registry serves (D-15), so digests computed by the code under test are
-// real, not fabricated. files must contain agent.yaml; the include set is
-// the manifest's own publish.include, mirroring what publish ships.
+// registry serves, so digests computed by the code under test are real,
+// not fabricated. files must contain agent.yaml; the include set is the
+// manifest's own publish.include, mirroring what publish ships.
 func buildTestArchive(t *testing.T, files map[string]string) (m *manifest.Manifest, archive []byte, digest string) {
 	t.Helper()
 	dir := writeTree(t, files)
@@ -117,7 +117,7 @@ func buildTestArchive(t *testing.T, files map[string]string) (m *manifest.Manife
 
 // Attestation serving modes for a fake version.
 const (
-	attUnsigned = "unsigned" // 404: the registry published nothing (§8.8 opt-out)
+	attUnsigned = "unsigned" // 404: the registry published nothing (opt-out)
 	attSigned   = "signed"   // a real DSSE envelope over attSubject
 	attError    = "error"    // 500: the check itself cannot run
 )
@@ -135,8 +135,8 @@ type fakeVersion struct {
 	// to prove subject-mismatch aborts).
 	attMode    string
 	attSubject string
-	// unscanned marks a version the registry admitted without a scan
-	// (the core's M21; M22 here): resolve carries scanStatus skipped and no
+	// unscanned marks a version the registry admitted without a scan (the
+	// core's scan-skipped status): resolve carries scanStatus skipped and no
 	// attestationUrl.
 	unscanned bool
 }
@@ -147,8 +147,8 @@ type fakeAgent struct {
 	modes             []string
 	versions          map[string]*fakeVersion
 	latest            string
-	// forkedFrom, forkStates and forkDetail make the agent a fork
-	// (agentry-cli#752): each read answers the next state, the last one
+	// forkedFrom, forkStates and forkDetail make the agent a
+	// fork: each read answers the next state, the last one
 	// standing.
 	forkedFrom map[string]any
 	forkStates []string
@@ -160,18 +160,18 @@ type fakeAgent struct {
 // reasons, install-intent hints, token attachment).
 type fakeRegistry struct {
 	// exchangeSeen records code|state pairs presented to the desktop
-	// exchange endpoint (agentry-cli#5).
+	// exchange endpoint.
 	exchangeSeen []string
 	// bundleTar/bundleVer/bundleDigest serve the rule-bundle endpoints when
-	// set; bundleAttest signs the bundle (agentry-cli#8). bundleBadSig serves
-	// an envelope signed over a different digest.
+	// set; bundleAttest signs the bundle. bundleBadSig serves an envelope
+	// signed over a different digest.
 	bundleTar    []byte
 	bundleVer    string
 	bundleDigest string
 	bundleAttest bool
 	bundleBadSig bool
 	// submitKeys records the Idempotency-Key of every upload attempt;
-	// submitFails makes that many attempts answer 503 first (agentry#22).
+	// submitFails makes that many attempts answer 503 first.
 	submitKeys  []string
 	submitFails int
 	t           *testing.T
@@ -182,7 +182,7 @@ type fakeRegistry struct {
 	keyID  string
 	pubPEM string
 	// keyRetiredAt, when set, advertises the signing key as retired on
-	// that date (agentry#350's status record).
+	// that date.
 	keyRetiredAt string
 
 	// scans answers the MCP-server vulnerability scan by package name
@@ -206,12 +206,12 @@ type fakeRegistry struct {
 	userHandle     string
 	metaMinCLI     string
 	// billing makes /meta list the billing extension and serves the
-	// account route with these numbers (agentry-cli#128).
+	// account route with these numbers.
 	billing        bool
 	billingBalance int64
 	// billingAccountDoc replaces the personal account body, for the
 	// organization's view a member is answered with — memberOf, the
-	// seats and the standing (agentry-cli#145).
+	// seats and the standing.
 	billingAccountDoc map[string]any
 	// orgs and pendingOrg are what GET /user reports of the caller's
 	// memberships: every registry answers them, tiers or none.
@@ -630,7 +630,7 @@ func (fr *fakeRegistry) version(r *http.Request) *fakeVersion {
 
 // resolveDoc renders the ResolveResult wire shape for one version, with a
 // registry-relative archiveUrl (the self-host layout downloadArchive must
-// re-root, §9.4).
+// re-root).
 func (fr *fakeRegistry) resolveDoc(fa *fakeAgent, fv *fakeVersion, version string) map[string]any {
 	raw, err := json.Marshal(fv.manifest)
 	if err != nil {
@@ -718,7 +718,7 @@ func resolveResultOf(t *testing.T, fr *fakeRegistry, ref string) *apiclient.Reso
 
 // fakeProblem is an RFC 9457 body the fake answers a submission with.
 // Members carries the extension members a billing refusal adds — the
-// account whose balance is short, its standing (agentry-cli#145).
+// account whose balance is short, its standing.
 type fakeProblem struct {
 	Status              int
 	Type, Title, Detail string

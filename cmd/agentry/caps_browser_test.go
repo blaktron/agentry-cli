@@ -8,9 +8,9 @@ import (
 	"github.com/blaktron/agentry/pkg/manifest"
 )
 
-// TestTheConsentNamesTheBrowser (agentry-cli#915): the install consent
-// says where a release's browser may go and what it may type, and asks
-// before installing it.
+// TestTheConsentNamesTheBrowser: the install consent says where a
+// release's browser may go and what it may type, and asks before
+// installing it.
 func TestTheConsentNamesTheBrowser(t *testing.T) {
 	c := manifest.Capabilities{Browser: &manifest.Browser{Sites: []string{"site"}, Hosts: []string{"fonts.googleapis.com"}, Secrets: []string{"SITE_PASSWORD"}}}
 	lines := strings.Join(capabilityLines(c), "\n")
