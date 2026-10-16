@@ -28,9 +28,9 @@ func withServers(answer, servers string) string {
 }
 
 const (
-	markitdown = `{"pypi": "markitdown-mcp", "version": "0.0.1a7", "tools": ["convert_to_markdown"]}`
-	fetchSrv   = `{"pypi": "mcp-server-fetch", "version": "2026.8.18", "tools": ["fetch"]}`
-	unlisted   = `{"npm": "unlisted-docs-mcp", "version": "1.0.0", "tools": ["read_doc"]}`
+	gitSrv   = `{"pypi": "mcp-server-git", "version": "2026.8.18", "tools": ["git_status"]}`
+	fetchSrv = `{"pypi": "mcp-server-fetch", "version": "2026.8.18", "tools": ["fetch"]}`
+	unlisted = `{"npm": "unlisted-docs-mcp", "version": "1.0.0", "tools": ["read_doc"]}`
 )
 
 // fakeMeta resolves every pin, with the direct dependencies and install
@@ -55,7 +55,7 @@ func checked(t *testing.T, f *fakeMeta, servers string) *Draft {
 	return d
 }
 
-// A draft pinning markitdown-mcp@0.0.1a7 gets the repair turn with the
+// A draft pinning mcp-server-git@2026.8.18 gets the repair turn with the
 // list's line, and a second answer pinning a server on Runs here instead
 // is kept, its notes saying what admitted it.
 func TestADraftPinningADoesNotRunHereServerGetsTheRepairTurn(t *testing.T) {
@@ -76,11 +76,11 @@ func TestADraftPinningADoesNotRunHereServerGetsTheRepairTurn(t *testing.T) {
 			return &receipt.Envelope{Status: "ok", Result: json.RawMessage(withServers(postRepaired, fetchSrv))}, nil
 		},
 	}
-	d, _, err := p.Run(context.Background(), firstTurn(t, out, withServers(passingDraft, markitdown)), nil)
+	d, _, err := p.Run(context.Background(), firstTurn(t, out, withServers(passingDraft, gitSrv)), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "- capabilities.mcpServers[0]: pypi:markitdown-mcp@0.0.1a7: does not run here: musl-native: it needs a native binary built for glibc"
+	want := "- capabilities.mcpServers[0]: pypi:mcp-server-git@2026.8.18: does not run here: spawns-binary: it runs another program"
 	if len(tasks) != 1 || !strings.Contains(tasks[0], want) {
 		t.Fatalf("the repair task(s) do not carry %q:\n%.1500s", want, strings.Join(tasks, "\n---\n"))
 	}
@@ -99,8 +99,8 @@ func TestTheListCoversAPackagesOtherVersionsByReason(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := l.NotRunHere("pypi", "Markitdown_MCP", "0.0.2"); !ok {
-		t.Fatal("a later markitdown-mcp is not covered: musl-native is the server's design")
+	if _, ok := l.NotRunHere("pypi", "MCP_Server_Git", "2026.9.1"); !ok {
+		t.Fatal("a later mcp-server-git is not covered: spawns-binary is the server's design")
 	}
 	e, ok := l.NotRunHere("pypi", "mcp-server-sqlite", "2025.4.25")
 	if !ok || e.Reason != "broken-upstream" {
@@ -128,14 +128,14 @@ func TestTheListCoversAPackagesOtherVersionsByReason(t *testing.T) {
 // a Runs here pin passes.
 func TestTheListCheckReadsDirectDependencies(t *testing.T) {
 	f := &fakeMeta{deps: map[string][]string{
-		"word-reader-mcp":   {"mcp", "onnxruntime"},
+		"word-reader-mcp":   {"mcp", "gitpython"},
 		"git-notes-mcp":     {"simple-git", "zod"},
 		"mcp-server-fetch":  {"mcp", "httpx"},
 		"unlisted-docs-mcp": {"zod"},
 	}}
 	d := checked(t, f, `{"pypi": "word-reader-mcp", "version": "1.0.0"}, {"npm": "git-notes-mcp", "version": "2.0.0"}, `+fetchSrv+`, `+unlisted)
 	if len(d.serverProblems) != 2 ||
-		!strings.Contains(d.serverProblems[0], "capabilities.mcpServers[0]: pypi:word-reader-mcp@1.0.0: does not run here: musl-native: it depends directly on onnxruntime, which needs a native binary") ||
+		!strings.Contains(d.serverProblems[0], "capabilities.mcpServers[0]: pypi:word-reader-mcp@1.0.0: does not run here: spawns-binary: it depends directly on gitpython, which runs another program") ||
 		!strings.Contains(d.serverProblems[1], "capabilities.mcpServers[1]: npm:git-notes-mcp@2.0.0: does not run here: spawns-binary: it depends directly on simple-git") {
 		t.Fatalf("problems %q", d.serverProblems)
 	}
@@ -146,12 +146,12 @@ func TestTheListCheckReadsDirectDependencies(t *testing.T) {
 	}
 	// A listed dependency holds whatever list the server is on, and a
 	// Runs here version gives no install-script sign.
-	f = &fakeMeta{deps: map[string][]string{"mcp-server-fetch": {"magika"}}, scripts: map[string][]string{"mcp-server-fetch": {"postinstall"}}}
+	f = &fakeMeta{deps: map[string][]string{"mcp-server-fetch": {"gitpython"}}, scripts: map[string][]string{"mcp-server-fetch": {"postinstall"}}}
 	if d := checked(t, f, fetchSrv); len(d.serverProblems) != 1 || len(d.serverSigns) != 0 || len(d.serversAdmitted) != 0 {
 		t.Fatalf("Runs here with a listed dependency: problems %q, signs %q, admitted %q", d.serverProblems, d.serverSigns, d.serversAdmitted)
 	}
 	// A dependency in the other ecosystem is not this one's.
-	f = &fakeMeta{deps: map[string][]string{"unlisted-docs-mcp": {"onnxruntime"}}}
+	f = &fakeMeta{deps: map[string][]string{"unlisted-docs-mcp": {"gitpython"}}}
 	if d := checked(t, f, unlisted); len(d.serverProblems) != 0 {
 		t.Fatalf("an npm server was held to a PyPI dependency: %q", d.serverProblems)
 	}
@@ -178,7 +178,7 @@ func TestAnInstallScriptIsANoteNotARepair(t *testing.T) {
 // keeps its server and adds one Does not run here covers.
 func TestKeepFirstHoldsTheListRule(t *testing.T) {
 	f := &fakeMeta{}
-	first, second := checked(t, f, unlisted), checked(t, f, unlisted+", "+markitdown)
+	first, second := checked(t, f, unlisted), checked(t, f, unlisted+", "+gitSrv)
 	first.Validation, second.Validation = json.RawMessage(`{"passed":true}`), json.RawMessage(`{"passed":true}`)
 	first.Instructions, second.Instructions = "# X\n", "# X\n"
 	broke, dropped := keepFirst(first, second, RepairReport{Flagged: []string{"off_task: it reads no Word file"}})
@@ -193,7 +193,7 @@ func TestKeepFirstHoldsTheListRule(t *testing.T) {
 func TestTheListCheckAddsNoRequest(t *testing.T) {
 	f := &fakeMeta{deps: map[string][]string{"unlisted-docs-mcp": {"zod"}}}
 	p := PostStep{serverChecks: map[string]serverCheck{}, Servers: f.resolve}
-	servers := markitdown + ", " + fetchSrv + ", " + unlisted
+	servers := gitSrv + ", " + fetchSrv + ", " + unlisted
 	p.checkServers(context.Background(), &Draft{Manifest: json.RawMessage(`{"capabilities": {"mcpServers": [` + servers + `]}}`)})
 	if f.calls != 3 {
 		t.Fatalf("%d resolutions for three pins, want one each", f.calls)
@@ -207,12 +207,12 @@ func TestTheListCheckAddsNoRequest(t *testing.T) {
 // A registry that does not answer leaves the list check standing: a pin
 // Does not run here covers needs no metadata.
 func TestTheListCheckNeedsNoRegistry(t *testing.T) {
-	d := &Draft{Manifest: json.RawMessage(`{"capabilities": {"mcpServers": [` + markitdown + `, ` + unlisted + `]}}`)}
+	d := &Draft{Manifest: json.RawMessage(`{"capabilities": {"mcpServers": [` + gitSrv + `, ` + unlisted + `]}}`)}
 	PostStep{serverChecks: map[string]serverCheck{}, Servers: fakeServers(nil)}.checkServers(context.Background(), d)
-	if len(d.serverProblems) != 1 || !strings.Contains(d.serverProblems[0], "markitdown-mcp@0.0.1a7: does not run here") {
+	if len(d.serverProblems) != 1 || !strings.Contains(d.serverProblems[0], "mcp-server-git@2026.8.18: does not run here") {
 		t.Fatalf("problems %q", d.serverProblems)
 	}
-	if strings.Join(d.serversUnchecked, ",") != "pypi:markitdown-mcp@0.0.1a7,npm:unlisted-docs-mcp@1.0.0" {
+	if strings.Join(d.serversUnchecked, ",") != "pypi:mcp-server-git@2026.8.18,npm:unlisted-docs-mcp@1.0.0" {
 		t.Fatalf("unchecked %q", d.serversUnchecked)
 	}
 }

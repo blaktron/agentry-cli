@@ -804,6 +804,41 @@ func TestLoadMovesAFormerDefaultNodeRuntime(t *testing.T) {
 	}
 }
 
+// A policy file written by an earlier CLI names the musl Python runtime of
+// that day; it loads as today's glibc default, so servers whose dependencies
+// publish only manylinux wheels install on machines set up before the move,
+// while any other value, the musl mirror pinned by digest included, is kept.
+func TestLoadMovesAFormerDefaultPythonRuntime(t *testing.T) {
+	for _, c := range []struct{ written, want string }{
+		{"ghcr.io/blaktron/agentry-python-alpine:3.12-alpine", DefaultPythonRuntime},
+		{"ghcr.io/blaktron/agentry-python-alpine:3.12-alpine@sha256:4c47124a8391cb7a9f571164147d154777cf012a4ece5f86097130d7a4478111",
+			"ghcr.io/blaktron/agentry-python-alpine:3.12-alpine@sha256:4c47124a8391cb7a9f571164147d154777cf012a4ece5f86097130d7a4478111"},
+		{"registry.example/python:3.12", "registry.example/python:3.12"},
+	} {
+		path := filepath.Join(t.TempDir(), "policy.yaml")
+		text := strings.Replace(defaultFileText, "pythonRuntime: "+DefaultPythonRuntime, "pythonRuntime: "+c.written, 1)
+		if text == defaultFileText {
+			t.Fatal("the generated text no longer names the default pythonRuntime")
+		}
+		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		p, _, err := Load(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.Images.PythonRuntime != c.want {
+			t.Errorf("pythonRuntime %q loads as %q, want %q", c.written, p.Images.PythonRuntime, c.want)
+		}
+	}
+	if slices.Contains(formerDefaultPythonRuntimes, DefaultPythonRuntime) {
+		t.Fatal("the current default is listed as a former one")
+	}
+	if strings.Contains(DefaultPythonRuntime, "alpine") {
+		t.Fatal("the default Python runtime is musl again: manylinux-only dependencies cannot install on it")
+	}
+}
+
 // A policy file written by an earlier CLI names that day's goBuilder
 // explicitly, the digest-pinned go1.27.1 mirror included; it loads as
 // today's default, so a moved builder reaches machines set up before it,
@@ -841,12 +876,12 @@ func TestLoadMovesAFormerDefaultGoBuilder(t *testing.T) {
 // The runtimes' language versions name the line their images' tags do, so
 // a moved image cannot leave the Drafter checking against the old one.
 func TestTheRuntimeVersionsMatchTheirImages(t *testing.T) {
-	for _, c := range []struct{ image, version, line string }{
-		{DefaultNodeRuntime, DefaultNodeVersion, strings.SplitN(DefaultNodeVersion, ".", 2)[0]},
-		{DefaultPythonRuntime, DefaultPythonVersion, strings.Join(strings.SplitN(DefaultPythonVersion, ".", 3)[:2], ".")},
+	for _, c := range []struct{ image, version, tag string }{
+		{DefaultNodeRuntime, DefaultNodeVersion, strings.SplitN(DefaultNodeVersion, ".", 2)[0] + "-alpine"},
+		{DefaultPythonRuntime, DefaultPythonVersion, strings.Join(strings.SplitN(DefaultPythonVersion, ".", 3)[:2], ".") + "-slim-trixie"},
 	} {
-		if !strings.HasSuffix(c.image, ":"+c.line+"-alpine") {
-			t.Errorf("%s does not run %s (line %s)", c.image, c.version, c.line)
+		if !strings.HasSuffix(c.image, ":"+c.tag) {
+			t.Errorf("%s does not run %s (tag %s)", c.image, c.version, c.tag)
 		}
 	}
 }

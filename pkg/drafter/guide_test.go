@@ -59,7 +59,7 @@ func runtimeFacts() []byte {
 	b.WriteString("## Declared MCP servers\n\n")
 	fmt.Fprintf(&b, "- npm servers install and run on `%s`: Node %s.\n", policy.DefaultNodeRuntime, policy.DefaultNodeVersion)
 	fmt.Fprintf(&b, "- PyPI servers install and run on `%s`: Python %s.\n", policy.DefaultPythonRuntime, policy.DefaultPythonVersion)
-	b.WriteString("- Both images are Alpine Linux, whose C library is musl.\n")
+	b.WriteString("- The npm image is Alpine Linux, whose C library is musl. The PyPI image is Debian, whose C library is glibc, so a package's `manylinux` wheels install.\n")
 	b.WriteString("- npm installs run with `--ignore-scripts`; PyPI installs take wheels only (`--only-binary=:all:`), for the server and every dependency.\n")
 	fmt.Fprintf(&b, "- A QuickAgent declares at most %d MCP servers.\n", manifest.MaxMCPServers)
 	b.WriteString("- A server's declared hosts are reached on TCP port 443 only; with none declared it has no network.\n\n")
@@ -420,7 +420,7 @@ func TestTheDraftingGuideStatesTheRuntime(t *testing.T) {
 		"Node " + policy.DefaultNodeVersion + " or Python " + policy.DefaultPythonVersion,
 		"port 443",
 		"--ignore-scripts",
-		"musllinux",
+		"manylinux",
 		"At most " + numberWord(manifest.MaxMCPServers) + " servers",
 	} {
 		if !strings.Contains(string(page), want) {

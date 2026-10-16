@@ -349,9 +349,9 @@ func TestTheFixtureSet(t *testing.T) {
 		t.Fatalf("%v", got)
 	}
 	m.Capabilities.Network.Egress = manifest.Egress{Hosts: []string{"*"}}
-	m.Capabilities.MCPServers = []manifest.MCPServer{{NPM: "x", Version: "^1.0.0", Secrets: []string{"K"}}, {PyPI: "markitdown-mcp", Version: "0.0.1a7"}}
+	m.Capabilities.MCPServers = []manifest.MCPServer{{NPM: "x", Version: "^1.0.0", Secrets: []string{"K"}}, {PyPI: "mcp-server-git", Version: "2026.8.18"}}
 	got := strings.Join(CheckShape(m, d, Expect{Modes: []string{"interactive"}, Intake: true, MaxServers: 1}), "; ")
-	for _, want := range []string{"modes", "wildcard", "not pinned", "1 keys", "2 MCP servers", "no intake", "pypi:markitdown-mcp@0.0.1a7 is on Does not run here (musl-native)"} {
+	for _, want := range []string{"modes", "wildcard", "not pinned", "1 keys", "2 MCP servers", "no intake", "pypi:mcp-server-git@2026.8.18 is on Does not run here (spawns-binary)"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("shape check missed %q: %s", want, got)
 		}

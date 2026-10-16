@@ -35,11 +35,11 @@ const (
 // not run here, each with the clause the pages give it after "it".
 // NotRunReason reads it.
 var notRunReasons = map[string]string{
-	"musl-native":           "needs a native binary built for glibc, and the runtime images are Alpine (musl)",
+	"musl-native":           "needs a native binary built for glibc, and the Node runtime image is Alpine (musl)",
 	"needs-install-scripts": "needs an install script, and npm installs run with --ignore-scripts",
 	"needs-arguments":       "needs arguments or flags to start, and a server is started with none",
 	"needs-run-files":       "works on local files or folders, and none of the run's files are in its container",
-	"spawns-binary":         "runs another program (a browser, git, a CLI), and its container holds only its runtime and busybox",
+	"spawns-binary":         "runs another program (a browser, git, a CLI), and its container holds only its runtime and a shell",
 	"non-443-port":          "talks to its service on a port other than 443 (a database, a local socket), and declared hosts are reached on 443 only",
 	"remote-only":           "is an HTTP-only server, and a package server must speak stdio (a vendor's own remote server is declared by its address instead)",
 	"oauth-browser":         "signs in through a browser window or a credentials file of its own, and a package server gets only its environment and, with a sign-in the drafting guide lists, a token folder",
