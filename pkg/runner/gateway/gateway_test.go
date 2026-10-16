@@ -119,6 +119,26 @@ func TestEnsureRuntime(t *testing.T) {
 	}
 }
 
+// On podman a policy's runtime is refused before anything is pulled: the
+// gateway's containers go through an API that drops it.
+func TestEnsureRuntimeRefusesARuntimeOnPodman(t *testing.T) {
+	pol := policy.Default()
+	pol.Docker.Runtime = "runsc"
+	f := &dockerx.Fake{RuntimeNames: []string{"crun", "runsc"}, EngineInfo: &dockerx.Engine{Kind: dockerx.KindPodman, Endpoint: "unix:///run/podman/podman.sock"}}
+	err := EnsureInstalled(context.Background(), f, pol, "agentry-runner:test", filepath.Join(t.TempDir(), "image"), os.Stderr, true)
+	if err == nil || !strings.Contains(err.Error(), `docker.runtime "runsc" is not held on podman`) {
+		t.Fatalf("got %v", err)
+	}
+	if ops := strings.Join(f.Ops(), " "); strings.Contains(ops, "Pull:") || strings.Contains(ops, "Build:") {
+		t.Errorf("a refused runtime still pulled or built: %v", f.Ops())
+	}
+	// No runtime asks nothing of the engine.
+	f.EngineErr = errors.New("not asked")
+	if err := EnsureRuntime(context.Background(), f, policy.Default()); err != nil {
+		t.Errorf("an unset runtime: %v", err)
+	}
+}
+
 // TestEnsureInstalledNamesAStaleGoBuilder: a builder older than the runner
 // context's go line refuses inside docker's output; the error names the
 // policy setting to change.

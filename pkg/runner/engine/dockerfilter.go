@@ -21,21 +21,21 @@ import (
 
 // The gateway's daemon socket is a per-run filter. The compiled plan
 // mounts the daemon's socket in the
-// gateway, the privilege documents; on Linux the engine serves a filter
-// in the run's directory and mounts that in its place, so what the
+// gateway, the privilege documents; where the daemon shares this machine's
+// kernel the engine serves a filter in the run's directory, in front of the
+// engine's own socket, and mounts that in its place, so what the
 // gateway can reach is this run's containers, networks and volumes and
 // nothing else on the host (package sockfilter says exactly what
-// passes). Elsewhere (Docker Desktop on macOS and Windows) a host socket
-// cannot be bind-mounted into the daemon's VM, so the same filter runs
-// in a container beside the gateway instead (filtersidecar.go).
+// passes). Where the daemon runs in a VM a host socket cannot be
+// bind-mounted into it, so the same filter runs in a container beside the
+// gateway instead (filtersidecar.go); placement.go decides which.
 
 // dockerFilterLog is the filter's decision log in the receipts.
 const dockerFilterLog = "docker-filter.log"
 
 // filterSupported says whether the gateway reaches the daemon through the
-// filter here: on Linux the CLI serves it (filterInProcess), and on Docker
-// Desktop (macOS, Windows) a container of the run's own does
-// (filtersidecar.go).
+// filter here: the CLI serves it, or a container of the run's own does
+// (placement.go).
 var filterSupported = runtime.GOOS == "linux" || runtime.GOOS == "darwin" || runtime.GOOS == "windows"
 
 // The pinned gateway's two fixed relay network names: the filter gives it
@@ -86,7 +86,7 @@ func filterSocketPath(rd *runDirs, runID, runnerHome string) (string, error) {
 // gateway mounts. The bind roots are the gateway's own resolved lists
 // (MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS and …_WRITABLE_PATHS): the filter
 // enforces for a compromised gateway what the gateway enforces for itself.
-func startDaemonFilter(rd *runDirs, runID string, gwEnv map[string]string, lim policy.Limits, plan *spec.Plan, runnerHome string) (*sockfilter.Filter, string, error) {
+func startDaemonFilter(rd *runDirs, runID string, gwEnv map[string]string, lim policy.Limits, plan *spec.Plan, runnerHome, upstream string) (*sockfilter.Filter, string, error) {
 	cfg, err := filterConfig(rd, runID, gwEnv, lim, plan)
 	if err != nil {
 		return nil, "", err
@@ -109,7 +109,7 @@ func startDaemonFilter(rd *runDirs, runID string, gwEnv map[string]string, lim p
 		return nil, "", Classify(ExitGateway, fmt.Errorf("docker filter log: %w", err))
 	}
 	rd.filterLog = logf
-	cfg.Listen, cfg.Upstream, cfg.Log = sock, DockerSocket, logf
+	cfg.Listen, cfg.Upstream, cfg.Log = sock, upstream, logf
 	f, err := sockfilter.Start(cfg)
 	if err != nil {
 		closeDaemonFilter(rd)
