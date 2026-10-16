@@ -242,6 +242,7 @@ func sweepRunDir(dir string, deadByContainers bool) (bool, []string) {
 		if !deadByContainers {
 			return false, nil
 		}
+		stopLeftPodmanService(dir)
 		return true, removeSensitiveFiles(dir)
 	case err != nil || !fi.Mode().IsRegular():
 		return false, nil
@@ -263,6 +264,7 @@ func sweepRunDir(dir string, deadByContainers bool) (bool, []string) {
 		_ = f.Close()
 		return false, nil
 	}
+	stopLeftPodmanService(dir)
 	left := removeSensitiveFiles(dir)
 	// The lock goes before the directory: on Windows neither can be
 	// deleted while it is open. A run that takes it in between finds the

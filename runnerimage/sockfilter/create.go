@@ -360,6 +360,10 @@ func (f *Filter) containerCreate(ctx context.Context, body []byte) (any, error) 
 	if err != nil {
 		return nil, err
 	}
+	// under is the runtime this container must run under, for the
+	// response's check: what the body asks the daemon for, or, through a
+	// per-run podman service, the service's default for every class.
+	under := ""
 	if relay != "" {
 		if err := f.relayShape(&c, relay); err != nil {
 			return nil, err
@@ -373,17 +377,72 @@ func (f *Filter) containerCreate(ctx context.Context, body []byte) (any, error) 
 			// it starts (a sandbox takes no such network).
 			hc.Binds = append(hc.Binds, f.cfg.RelayResolvConf+":"+resolvConfTarget+":ro")
 			hc.Runtime = f.cfg.Runtime
+			under = f.cfg.Runtime
 		}
-	} else if f.cfg.Runtime != "" {
-		if err := f.pinLinks(ctx, &c); err != nil {
-			return nil, err
+		if f.cfg.Podman {
+			// A rootless engine keeps the kernel's floor on the ports a
+			// plain user may bind, and the relay binds 443 as one: the
+			// floor is lowered for it, as Docker Engine lowers it in every
+			// container. The gateway asked for no sysctl (checkHost).
+			hc.Sysctls = map[string]string{relayPortSysctl: "0"}
 		}
-		hc.Runtime = f.cfg.Runtime
+	} else {
+		if f.cfg.Runtime != "" || f.cfg.Podman {
+			if err := f.pinLinks(ctx, &c); err != nil {
+				return nil, err
+			}
+		}
+		if f.cfg.Runtime != "" {
+			hc.Runtime = f.cfg.Runtime
+			under = f.cfg.Runtime
+		}
+	}
+	if f.cfg.Podman {
+		// podman refuses a link; the hosts entries pinLinks wrote answer
+		// what the link would have.
+		clearLinks(&c)
+		if f.cfg.Runtime != "" {
+			under = f.cfg.Runtime
+		}
+	}
+	if under != "" && f.cfg.SELinuxUnconfined {
+		hc.SecurityOpt = append(hc.SecurityOpt, "label=disable")
+	}
+	if m, ok := ctx.Value(createMetaKey{}).(*createMeta); ok {
+		m.class, m.runtime = classOf(web, tools, browser, relay != ""), under
 	}
 	// A relay and the browser server get no capability back.
 	capabilities(hc, web || tools, relay != "" || browser)
 	c.Labels = f.label(c.Labels)
 	return c, nil
+}
+
+// classOf is a gateway-launched container's class in the receipt's words.
+func classOf(web, tools, browser, relay bool) string {
+	switch {
+	case relay:
+		return "relay"
+	case browser:
+		return "browser server"
+	case web:
+		return "web tools server"
+	case tools:
+		return "tools server"
+	}
+	return "declared MCP server"
+}
+
+// clearLinks removes a body's links, the hosts entries having taken their
+// place.
+func clearLinks(c *containerCreateBody) {
+	c.HostConfig.Links = nil
+	if nc := c.NetworkingConfig; nc != nil {
+		for _, ep := range nc.EndpointsConfig {
+			if ep != nil {
+				ep.Links = nil
+			}
+		}
+	}
 }
 
 // The capabilities a gateway-launched container keeps. The gateway asks for

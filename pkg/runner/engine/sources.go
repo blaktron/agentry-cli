@@ -167,8 +167,8 @@ func fetchSource(ctx context.Context, d dockerx.Client, p Params, rd *runDirs, t
 			{Source: work, Target: "/work", Relabel: true},
 		},
 		// The files belong to the person who ran the command, and the step
-		// runs with no more than they have.
-		User:        sourceUser(),
+		// runs with no more than they have: their ids on this engine.
+		User:        rd.personUser(),
 		Interactive: s.Token != "",
 		AutoRemove:  true,
 		Labels:      labels,
@@ -248,17 +248,6 @@ func overCount(o *source.Over, caps sources.Caps) *receipt.ReasonCount {
 
 // sourceNetworkName is one source's network.
 func sourceNetworkName(runID, id string) string { return "agentry-" + runID + "-src-" + id }
-
-// sourceUser runs the fetch step as the invoking user, so the files are
-// theirs to remove; "" where the platform has no uid (Windows), which
-// leaves the image's own.
-func sourceUser() string {
-	uid, gid := os.Getuid(), os.Getgid()
-	if uid < 0 || gid < 0 {
-		return ""
-	}
-	return fmt.Sprintf("%d:%d", uid, gid)
-}
 
 // readSourceReport reads the step's report from its work folder, a regular
 // file within the bound.

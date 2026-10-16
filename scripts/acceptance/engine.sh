@@ -22,7 +22,18 @@
 # runs in a throwaway runner home and config directory.
 #
 # RUNSC names a gVisor runsc binary for the measurements a sandboxed run
-# needs; without it they are reported as not measured.
+# needs; without it they are reported as not measured. With it, on podman,
+# the script registers runsc and a --host-uds=open wrapper for the test
+# alone (CONTAINERS_CONF_OVERRIDE) and runs a QuickAgent with declared
+# egress and exec under them; on docker it does the same when the daemon
+# registers runsc and runsc-uds. That run's model is a scripted stand-in
+# served from this host (python3), so it needs no key: it asks for the fetch
+# tool once, writes a report, and answers with the page's title. Every
+# container of the run is inspected while it is up, and each must be under
+# the runtime; the report must come out owned by the person.
+#
+# ENGINE_KEEP=1 keeps the work directory (the sandboxed run's receipts and
+# logs among them) for a look after a failure; it is removed otherwise.
 #
 # Each line is PASS, FAIL, GAP (where this engine differs from Docker Engine:
 # the line says whether the client handles it), MEASURED (a fact reported, not
@@ -63,7 +74,9 @@ cleanup() {
   for b in $(comm -13 <(echo "$BUILDERS_BEFORE") <("$C" ps -a --format '{{.Names}}' 2>/dev/null | grep '^buildx_buildkit_' | sort)); do
     "$C" rm -fv "$b" >/dev/null 2>&1; "$C" volume rm -f "${b}_state" >/dev/null 2>&1
   done
-  rm -rf "$WORK" 2>/dev/null || true
+  # ENGINE_KEEP keeps the work directory (the sandboxed run's receipts and
+  # logs among them) for a look after a failure.
+  [ -n "${ENGINE_KEEP:-}" ] && echo "kept: $WORK" || rm -rf "$WORK" 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -154,7 +167,7 @@ cid=$("$C" create $L "$IMG" true) && "$C" cp "$cid:/etc/os-release" - | tar -tf 
 
 # --- Runtimes, uids, builds --------------------------------------------------
 if "$C" run --rm $L --runtime agentry-no-such-runtime "$IMG" true >/dev/null 2>&1; then
-  line GAP "--runtime nosuch" "accepted and run under the default: this API does not apply a named runtime (the runner refuses a policy runtime on podman)"
+  line GAP "--runtime nosuch" "accepted and run under the default: this API does not apply a named runtime (the runner holds a policy runtime on podman through a podman API service of the run's own, and checks each container after create)"
 else
   line PASS "--runtime nosuch" "refused"
 fi
@@ -245,6 +258,143 @@ else
   else
     line FAIL "built-in run (Knowledge Creator)" "exit $rc, engine [$eng], filter refusals ${refused:-no log}, left [$(echo $left)]; $(tail -3 "$WORK/run.log" | tr '\n' ' ')"
   fi
+fi
+
+# --- A sandboxed run ---------------------------------------------------------
+# A QuickAgent with declared egress and exec under the policy's runtime, with
+# a scripted model: every container of the run must be under the runtime (the
+# gateway under its --host-uds=open registration), the relays must have
+# carried the egress, the receipt must say so, and nothing may be left.
+SANDBOX_RT=""; SANDBOX_GW=""; SANDBOX_ENV=(env)
+if [ "$KIND_CLI" = podman ] && [ -n "${RUNSC:-}" ] && [ -x "$RUNSC" ]; then
+  SANDBOX_RT=runsc; SANDBOX_GW=runsc-uds; SANDBOX_ENV=(env CONTAINERS_CONF_OVERRIDE="$WORK/rt/containers.conf")
+elif [ "$KIND_CLI" = docker ] && "$C" info --format '{{json .Runtimes}}' 2>/dev/null | python3 -c 'import json,sys; r=json.load(sys.stdin); sys.exit(0 if "runsc" in r and "runsc-uds" in r else 1)'; then
+  SANDBOX_RT=runsc; SANDBOX_GW=runsc-uds
+fi
+if [ -z "$SANDBOX_RT" ]; then
+  line SKIP "sandboxed run" "no runtime to run under (podman: RUNSC; docker: runsc and runsc-uds registered on the daemon)"
+elif ! command -v python3 >/dev/null; then
+  line SKIP "sandboxed run" "no python3 for the scripted model"
+else
+  # Where a container reaches this host: on a rootless podman the host's
+  # own LAN address is the container namespace's (pasta copies it), so
+  # podman's host.containers.internal entry is used; on docker the LAN
+  # address, which the bridge routes to.
+  LAN=$(ip route get 1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')
+  LAN=${LAN:-$(hostname -I 2>/dev/null | awk '{print $1}')}
+  if [ "$KIND_CLI" = podman ]; then
+    HOSTIP=$("$C" run --rm $L "$IMG" getent hosts host.containers.internal 2>/dev/null | awk '{print $1; exit}')
+    LAN=${HOSTIP:-$LAN}
+  fi
+  PORT=$((20000 + RANDOM % 20000))
+  # The scripted model: OpenAI's chat-completions shape, streamed or not.
+  # The first turn asks for the fetch tool on the declared host; once a tool
+  # result is in the conversation it answers with that result's first line.
+  cat > "$WORK/model.py" <<'PY'
+import json, sys, http.server, time
+PORT = int(sys.argv[1])
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def _json(self, code, body):
+        b = json.dumps(body).encode()
+        self.send_response(code); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
+    def do_GET(self):
+        self._json(200, {"object": "list", "data": [{"id": "stand-in", "object": "model"}]})
+    def do_POST(self):
+        n = int(self.headers.get("Content-Length") or 0)
+        req = json.loads(self.rfile.read(n) or b"{}")
+        msgs = req.get("messages", [])
+        tools = [t.get("function", {}).get("name", "") for t in req.get("tools", [])]
+        fetch = next((t for t in tools if t.endswith("fetch")), "")
+        report = next((t for t in tools if t.endswith("write_report")), "")
+        results = [m for m in msgs if m.get("role") == "tool"]
+        def text_of(m):
+            c = m.get("content")
+            return " ".join(p.get("text", "") for p in c) if isinstance(c, list) else str(c)
+        def call(name, args):
+            return {"role": "assistant", "content": None, "tool_calls": [{"index": 0, "id": "call_%d" % (len(results) + 1), "type": "function", "function": {"name": name, "arguments": json.dumps(args)}}]}, "tool_calls"
+        if not results and fetch:
+            delta, finish = call(fetch, {"url": "https://example.com/"})
+        elif len(results) == 1 and report:
+            page = text_of(results[0])
+            title = next((l.strip() for l in page.splitlines() if "<title>" in l), page[:200])
+            delta, finish = call(report, {"path": "title.md", "content": "# Fetched\n\n" + title + "\n"})
+        else:
+            last = text_of(results[-1]) if results else "no fetch tool offered"
+            delta = {"role": "assistant", "content": "done: " + last[:200]}
+            finish = "stop"
+        with open(sys.argv[2], "a") as f: f.write("tools=%s roles=%s finish=%s\n" % (",".join(tools), ",".join(m.get("role", "") for m in msgs), finish))
+        now = int(time.time())
+        if req.get("stream"):
+            self.send_response(200); self.send_header("Content-Type", "text/event-stream"); self.end_headers()
+            for chunk in ({"id": "c1", "object": "chat.completion.chunk", "created": now, "model": "stand-in", "choices": [{"index": 0, "delta": delta, "finish_reason": None}]},
+                          {"id": "c1", "object": "chat.completion.chunk", "created": now, "model": "stand-in", "choices": [{"index": 0, "delta": {}, "finish_reason": finish}], "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}}):
+                self.wfile.write(("data: " + json.dumps(chunk) + "\n\n").encode())
+            self.wfile.write(b"data: [DONE]\n\n")
+        else:
+            msg = dict(delta); msg.pop("content", None) if delta.get("content") is None else None
+            self._json(200, {"id": "c1", "object": "chat.completion", "created": now, "model": "stand-in", "choices": [{"index": 0, "message": msg, "finish_reason": finish}], "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}})
+http.server.ThreadingHTTPServer(("0.0.0.0", PORT), H).serve_forever()
+PY
+  python3 "$WORK/model.py" "$PORT" "$WORK/model.log" & MODEL_PID=$!
+  trap 'kill $MODEL_PID 2>/dev/null; cleanup' EXIT
+  sleep 1
+  # The upstream name servers, for the classes that resolve names under the
+  # runtime (never a loopback stub, which the containers do not reach).
+  RESOLVER=$( (resolvectl dns 2>/dev/null; grep nameserver /etc/resolv.conf 2>/dev/null) | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | grep -v '^127\.' | head -1)
+  RESOLVER=${RESOLVER:-1.1.1.1}
+  SB="$WORK/sandbox"; mkdir -p "$SB"
+  (
+    export AGENTRY_RUNNER_HOME="$SB/home" AGENTRY_CONFIG_DIR="$SB/config" ENGINE_CHECK_KEY=stand-in
+    "${SANDBOX_ENV[@]}" "$AGENTRY" setup --yes --skip-images --provider custom --model stand-in --base-url "http://$LAN:$PORT/v1" --api-key-env ENGINE_CHECK_KEY --policy "$SB/policy.yaml" >"$SB/setup.log" 2>&1 || { cat "$SB/setup.log"; exit 1; }
+    printf 'docker:\n  runtime: %s\n  gatewayRuntime: %s\n  resolvers: [%s]\n' "$SANDBOX_RT" "$SANDBOX_GW" "$RESOLVER" >> "$SB/policy.yaml"
+    # The images under this engine, and the runner image for this CLI.
+    "${SANDBOX_ENV[@]}" "$AGENTRY" setup --yes --provider custom --model stand-in --base-url "http://$LAN:$PORT/v1" --api-key-env ENGINE_CHECK_KEY --policy "$SB/policy.yaml" >>"$SB/setup.log" 2>&1 || { tail -5 "$SB/setup.log"; exit 1; }
+  ) || line FAIL "sandboxed run: setup" "$(tail -3 "$SB/setup.log" 2>/dev/null | tr '\n' ' ')"
+  if [ -f "$SB/policy.yaml" ] && grep -q "^  runtime: $SANDBOX_RT" "$SB/policy.yaml"; then
+    ( export AGENTRY_RUNNER_HOME="$SB/home" AGENTRY_CONFIG_DIR="$SB/config" ENGINE_CHECK_KEY=stand-in
+      echo "fetch the page and report its title" | "${SANDBOX_ENV[@]}" "$AGENTRY" run --local testdata/runner/sandbox-egress --policy "$SB/policy.yaml" \
+        --allow-unsigned --yes --out "$SB/out" --output-format json --timeout 600 >"$SB/envelope.json" 2>"$SB/run.log" ) &
+    SB_PID=$!
+    # Every container of the run, with the runtime the engine gave it, as
+    # long as the run is up.
+    : > "$SB/runtimes.txt"
+    while kill -0 "$SB_PID" 2>/dev/null; do
+      ids=$("$C" ps -aq --filter label=agentry.run 2>/dev/null)
+      if [ -n "$ids" ]; then
+        if [ "$KIND_CLI" = podman ]; then
+          "${SANDBOX_ENV[@]}" "$C" inspect --format '{{.Name}} {{.OCIRuntime}}' $ids 2>/dev/null >> "$SB/runtimes.txt"
+        else
+          "$C" inspect --format '{{.Name}} {{.HostConfig.Runtime}}' $ids 2>/dev/null >> "$SB/runtimes.txt"
+        fi
+      fi
+      sleep 0.5
+    done
+    wait "$SB_PID"; rc=$?
+    sort -u "$SB/runtimes.txt" | sed 's#^/##' > "$SB/runtimes-seen.txt"
+    seen=$(wc -l < "$SB/runtimes-seen.txt")
+    off=$(awk -v rt="$SANDBOX_RT" -v gw="$SANDBOX_GW" '($1 ~ /-gateway$/ && $2 != gw) || ($1 !~ /-gateway$/ && $2 != rt) {print $1"="$2}' "$SB/runtimes-seen.txt" | tr '\n' ' ')
+    relays=$(grep -c 'docker-mcp-l[47]proxy' "$SB/runtimes-seen.txt")
+    rtline=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["capabilities_enforced"].get("runtime",""))' "$SB/out/result.json" 2>/dev/null)
+    refused=$(grep -c ' refuse ' "$SB/out/receipts/docker-filter.log" 2>/dev/null)
+    verified=$(grep -c ' verified ' "$SB/out/receipts/docker-filter.log" 2>/dev/null)
+    rid=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["runId"])' "$SB/out/result.json" 2>/dev/null)
+    left=$([ -n "$rid" ] && { "$C" ps -a -q --filter "label=agentry.run=$rid"; "$C" volume ls -q --filter "label=agentry.run=$rid"; "$C" network ls --format '{{.Name}}' | grep "^agentry-$rid"; })
+    svc=$(pgrep -f "system service --time=0 unix://.*$rid" 2>/dev/null | tr '\n' ' ')
+    case "$rtline" in *"$SANDBOX_RT: created with"*) rtok=1;; *) rtok=0;; esac
+    # The report the tools server wrote into the output folder is the
+    # person's own: owned by them, so they can remove it (on a rootless
+    # engine any other uid would be a subordinate one).
+    owner=$(stat -c %u "$SB/out/reports/title.md" 2>/dev/null)
+    if [ $rc -eq 0 ] && [ -z "$off" ] && [ "$seen" -ge 5 ] && [ "$relays" -ge 1 ] && [ $rtok = 1 ] && [ "${refused:-1}" = 0 ] && [ -z "$left" ] && [ -z "$svc" ] && [ "$owner" = "$(id -u)" ]; then
+      line PASS "sandboxed run (egress + exec under $SANDBOX_RT)" "exit 0; $seen containers inspected live, every one under $SANDBOX_RT (gateway $SANDBOX_GW), $relays relay(s); filter verified ${verified:-0} create(s), refused nothing; the report is owned by uid $owner; nothing left"
+    else
+      line FAIL "sandboxed run (egress + exec under $SANDBOX_RT)" "exit $rc; off the runtime: [${off:-none}] of $seen seen, relays $relays, receipt names runtime: $rtok, filter refusals ${refused:-no log}, report owner [${owner:-no report}] want $(id -u), left [$(echo $left)], service still up [$svc]; $(tail -3 "$SB/run.log" | tr '\n' ' ')"
+      sed 's/^/  seen: /' "$SB/runtimes-seen.txt"
+    fi
+    grep -q 'finish=stop' "$WORK/model.log" 2>/dev/null && line MEASURED "  the model's tool offer" "$(grep -m1 'finish=tool_calls' "$WORK/model.log" | cut -c1-200)"
+  fi
+  kill "$MODEL_PID" 2>/dev/null
 fi
 
 echo

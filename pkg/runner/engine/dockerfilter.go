@@ -86,11 +86,15 @@ func filterSocketPath(rd *runDirs, runID, runnerHome string) (string, error) {
 // gateway mounts. The bind roots are the gateway's own resolved lists
 // (MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS and …_WRITABLE_PATHS): the filter
 // enforces for a compromised gateway what the gateway enforces for itself.
-func startDaemonFilter(rd *runDirs, runID string, gwEnv map[string]string, lim policy.Limits, plan *spec.Plan, runnerHome, upstream string) (*sockfilter.Filter, string, error) {
-	cfg, err := filterConfig(rd, runID, gwEnv, lim, plan)
+func startDaemonFilter(d dockerx.Client, rd *runDirs, runID string, gwEnv map[string]string, lim policy.Limits, plan *spec.Plan, runnerHome string, place *filterPlacement, upstream string) (*sockfilter.Filter, string, error) {
+	cfg, err := filterConfig(rd, runID, gwEnv, lim, plan, place)
 	if err != nil {
 		return nil, "", err
 	}
+	// The CLI serves this filter and has the engine's CLI at hand: each
+	// container the gateway creates under the run's runtime is checked
+	// natively before the gateway sees it.
+	cfg.Verify = runtimeVerifier(d)
 	sock, err := filterSocketPath(rd, runID, runnerHome)
 	if err != nil {
 		return nil, "", err
@@ -120,10 +124,15 @@ func startDaemonFilter(rd *runDirs, runID string, gwEnv map[string]string, lim p
 
 // filterConfig is the run's filter policy, wherever it is served: in the
 // CLI (startDaemonFilter) or in the filter container (startFilterSidecar).
-func filterConfig(rd *runDirs, runID string, gwEnv map[string]string, lim policy.Limits, plan *spec.Plan) (sockfilter.Config, error) {
+// place is the run's engine and placement; nil is Docker Engine.
+func filterConfig(rd *runDirs, runID string, gwEnv map[string]string, lim policy.Limits, plan *spec.Plan, place *filterPlacement) (sockfilter.Config, error) {
 	mem, err := memoryBytes(lim.Memory)
 	if err != nil {
 		return sockfilter.Config{}, Classify(ExitPolicy, err)
+	}
+	eng := rd.engine
+	if place != nil {
+		eng = place.engine
 	}
 	// The relay networks are the run's own, and exist only for a run
 	// whose servers need relays; the gateway reaches them under the fixed
@@ -182,7 +191,7 @@ func filterConfig(rd *runDirs, runID string, gwEnv map[string]string, lim policy
 		ToolsTmpfs:        toolsTmpfs(plan),
 		ToolsShared:       toolsShared(plan, rd),
 		BrowserImage:      browserImageOf(plan),
-		BrowserUser:       browserUser(),
+		BrowserUser:       rd.personUser(),
 		BrowserTmpfs:      browserTmpfsOf(plan),
 		BrowserNetwork:    browserNetworkOf(plan, runID),
 		BrowserNetworkFor: browserNetworkForOf(plan, runID),
@@ -193,7 +202,42 @@ func filterConfig(rd *runDirs, runID string, gwEnv map[string]string, lim policy
 			Pids:        int64(lim.Pids),
 		},
 		Runtime: plan.Runtime(),
+		// podman's API differs from Docker Engine's where the filter must
+		// follow the engine (sockfilter.Config.Podman), and under a runtime
+		// on an SELinux podman host gVisor refuses a labelled container.
+		Podman:            eng.Kind == dockerx.KindPodman,
+		SELinuxUnconfined: eng.SandboxUnlabelled(plan.Runtime()),
 	}, nil
+}
+
+// runtimeVerifier reads back, from the engine's own CLI, the runtime a
+// container the gateway created was given, and refuses one the engine put
+// under another: the container goes, and the mismatch names the class
+// (sockfilter.Config.Verify). nil for a client that cannot inspect.
+func runtimeVerifier(d dockerx.Client) func(context.Context, string, string, string) error {
+	cr, ok := d.(dockerx.Creator)
+	if !ok {
+		return nil
+	}
+	return func(ctx context.Context, id, class, want string) error {
+		got, err := cr.ContainerRuntime(ctx, id)
+		if err != nil {
+			_ = d.RemoveForce(ctx, id)
+			return fmt.Errorf("read the runtime the %s the gateway launched (%s) was created with: %w", class, shortID(id), err)
+		}
+		if got != want {
+			_ = d.RemoveForce(ctx, id)
+			return &dockerx.RuntimeMismatch{Class: class + " the gateway launched", Name: shortID(id), Want: want, Got: got}
+		}
+		return nil
+	}
+}
+
+func shortID(id string) string {
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
 }
 
 // toolsTmpfs is what the docker filter mounts into the tools server: its
@@ -432,6 +476,15 @@ func withRefusals(err error, rd *runDirs) error {
 		return Classify(ce.Code, fmt.Errorf("%w%s", ce.Err, note))
 	}
 	return fmt.Errorf("%w%s", err, note)
+}
+
+// runtimeMismatch is the first container the gateway created under another
+// runtime than the policy's, as the run's filter refused it, or nil.
+func (rd *runDirs) runtimeMismatch() error {
+	if rd == nil || rd.filter == nil {
+		return nil
+	}
+	return rd.filter.RuntimeMismatch()
 }
 
 // closeDaemonFilter stops the filter after the gateway, and closes its log.

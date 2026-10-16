@@ -1,0 +1,22 @@
+schemaVersion: "2"
+name: sandbox-egress
+namespace: fixtures
+modes: [autonomous]
+version: 1.0.0
+summary: "Declares one egress host and one exec command — the fixture behind the container engine check's sandboxed run"
+license: Apache-2.0
+tags: [fixture]
+
+entrypoints:
+  instruction: SKILL.md
+
+capabilities:
+  network:
+    egress: [example.com]
+  filesystem:
+    read: workspace
+    write: none
+  exec: { commands: [cat] }
+
+publish:
+  include: [agent.yaml, SKILL.md]

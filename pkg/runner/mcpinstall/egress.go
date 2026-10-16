@@ -182,7 +182,7 @@ func startInstallProxy(ctx context.Context, d dockerx.Client, id, storeDir strin
 			return nil, err
 		}
 	}
-	if err := d.RunDetached(ctx, spec); err != nil {
+	if err := dockerx.RunDetachedUnder(ctx, d, spec, "MCP server install proxy"); err != nil {
 		e.stop(ctx, "")
 		return nil, fmt.Errorf("start install proxy: %w", err)
 	}

@@ -589,15 +589,50 @@ func qualifiedRef(ref string) string {
 	return "docker.io/" + ref
 }
 
-// Build implements Client.
+// Build implements Client. The docker CLI pointed at podman's socket is
+// given DOCKER_BUILDKIT=0, so it calls the classic build endpoint podman
+// serves instead of starting a BuildKit builder, which podman's API does
+// not have and which would pull an image nobody asked for. podman's own
+// CLI builds natively.
 func (c *CLI) Build(ctx context.Context, dir, tag string, buildArgs map[string]string) error {
 	args := []string{"build", "-t", tag}
 	for _, k := range sortedKeys(buildArgs) {
 		args = append(args, "--build-arg", k+"="+buildArgs[k])
 	}
 	args = append(args, dir)
-	_, err := c.run(ctx, args...)
-	return err
+	cmd := c.command(ctx, args...)
+	if c.podmanBehindDocker(ctx) {
+		cmd.Env = append(cmd.Env, "DOCKER_BUILDKIT=0")
+	}
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("%s build: %w: %s", c.name(), err, strings.TrimSpace(errb.String()))
+	}
+	return nil
+}
+
+// podmanBehindDocker says the docker CLI is driven and podman answers it:
+// a working route, not the supported one, whose API differs from Docker
+// Engine's where the dialect must follow the engine, not the CLI.
+func (c *CLI) podmanBehindDocker(ctx context.Context) bool {
+	if c.resolve(ctx); c.Podman {
+		return false
+	}
+	e, err := c.Engine(ctx)
+	return err == nil && e.Kind == KindPodman
+}
+
+// volumesByName says whether r.Volumes must be made as named volumes
+// (podmanPrepare): on podman, through either CLI. podman's own run refuses
+// a label on an anonymous volume, and its Docker-compatible API drops it,
+// so an anonymous volume created either way would escape the run's label
+// sweep.
+func (c *CLI) volumesByName(ctx context.Context) bool {
+	if c.resolve(ctx); c.Podman {
+		return true
+	}
+	return c.podmanBehindDocker(ctx)
 }
 
 // NetworkCreate implements Client.
@@ -757,7 +792,7 @@ func (c *CLI) RemoveForce(ctx context.Context, name string) error {
 	if err != nil && isNotFound(err) {
 		err = nil
 	}
-	if err == nil && c.Podman {
+	if err == nil && c.volumesByName(ctx) {
 		// The named volumes podmanPrepare made in place of its anonymous
 		// ones go with it too.
 		vols, lerr := c.VolumesByLabel(ctx, volumeOfLabel+"="+name)
@@ -862,26 +897,26 @@ func (c *CLI) dropVolumes(ctx context.Context, named []namedVolume) {
 	}
 }
 
-// podmanPrepare is what podman's CLI needs before it runs r: r's environment
-// checked, and r.Volumes made. podman's run refuses a label on an anonymous
-// volume, so each becomes a named volume with the same labels (and the
-// container's name, for RemoveForce), made here and returned to be mounted by
-// name in their place: the run's teardown and sweeps find it by its labels
-// either way. The docker CLI takes r as it is: nil.
+// podmanPrepare is what a podman engine needs before it runs r: with
+// podman's own CLI, r's environment checked; on podman through either CLI,
+// r.Volumes made. podman's run refuses a label on an anonymous volume and
+// its Docker-compatible API drops it, so each becomes a named volume with
+// the same labels (and the container's name, for RemoveForce), made here and
+// returned to be mounted by name in their place: the run's teardown and
+// sweeps find it by its labels either way. Docker Engine takes r as it is:
+// nil.
 func (c *CLI) podmanPrepare(ctx context.Context, r RunSpec) ([]namedVolume, error) {
-	c.resolve(ctx)
-	if !c.Podman {
-		return nil, nil
-	}
-	// A variable podman reads as its own configuration cannot reach a
-	// container by name through podman's environment, and its value would
-	// show in a process listing as argv: refused, never sent.
-	for _, k := range sortedKeys(r.Env) {
-		if podmanReads(k) && !clientReads(k) {
-			return nil, fmt.Errorf("%s cannot be given to %s on podman: podman reads a variable of that name as its own configuration", k, r.Name)
+	if c.resolve(ctx); c.Podman {
+		// A variable podman reads as its own configuration cannot reach a
+		// container by name through podman's environment, and its value
+		// would show in a process listing as argv: refused, never sent.
+		for _, k := range sortedKeys(r.Env) {
+			if podmanReads(k) && !clientReads(k) {
+				return nil, fmt.Errorf("%s cannot be given to %s on podman: podman reads a variable of that name as its own configuration", k, r.Name)
+			}
 		}
 	}
-	if len(r.Volumes) == 0 {
+	if len(r.Volumes) == 0 || !c.volumesByName(ctx) {
 		return nil, nil
 	}
 	if r.Name == "" {

@@ -33,6 +33,26 @@ type fakeDaemon struct {
 	mu        sync.Mutex
 	forwarded []string          // "METHOD path" the gateway's requests reached the daemon as
 	bodies    map[string][]byte // the last body each "METHOD path" carried
+	// dropRuntime makes the daemon answer no runtime for the container it
+	// just created, whatever the body asked for.
+	dropRuntime bool
+}
+
+// createdRuntime is the runtime the daemon gave the container it last
+// created: the body's, as Docker Engine applies it, or none.
+func (d *fakeDaemon) createdRuntime() string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.dropRuntime {
+		return ""
+	}
+	var c struct {
+		HostConfig struct {
+			Runtime string `json:"Runtime"`
+		} `json:"HostConfig"`
+	}
+	_ = json.Unmarshal(d.bodies["POST /containers/create"], &c)
+	return c.HostConfig.Runtime
 }
 
 // imageFor is the daemon's image record for a reference or an id: the
@@ -64,6 +84,17 @@ func labelsFor(id, run string) map[string]string {
 	return map[string]string{lbl: run, own: run}
 }
 
+// runtimeOf is the runtime the daemon reports for a container.
+func (d *fakeDaemon) runtimeOf(id string) string {
+	if id == "new" {
+		return d.createdRuntime()
+	}
+	if strings.Contains(id, "runsc") {
+		return "runsc"
+	}
+	return ""
+}
+
 func (d *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p := canonical(r.URL.Path)
 	owner := func(id string) (string, bool) {
@@ -72,6 +103,8 @@ func (d *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return "A", true
 		case strings.HasPrefix(id, "runb"):
 			return "B", true
+		case id == "new":
+			return "A", true // the container the daemon just created for run A
 		case id == intNet, id == ext, id == "extid":
 			return "A", true // the runner's, for run A
 		case strings.HasPrefix(id, "agentry-A-relays"):
@@ -118,9 +151,11 @@ func (d *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"Id": id + "-full", "Image": image, "Config": map[string]any{"Labels": labelsFor(id, run)},
 			"NetworkSettings": map[string]any{"Networks": map[string]any{"agentry-A-relays": map[string]any{"NetworkID": "id-agentry-A-relays", "IPAddress": "10.9.0.5"}}},
-			// A container whose id says so has started, or runs under runsc.
+			// A container whose id says so has started, or runs under runsc;
+			// the one just created runs under what its body asked, or
+			// nothing when the daemon drops it.
 			"State":      map[string]any{"Running": strings.Contains(id, "running")},
-			"HostConfig": map[string]any{"Runtime": map[bool]string{true: "runsc"}[strings.Contains(id, "runsc")]},
+			"HostConfig": map[string]any{"Runtime": d.runtimeOf(id)},
 		})
 		return
 	case strings.HasPrefix(p, "/networks/") && r.Method == http.MethodGet && !gateway:
@@ -1510,5 +1545,186 @@ func TestTheImageLabelMakesNothingOurs(t *testing.T) {
 	}
 	if !f.ours(map[string]string{own: "abcd1234"}) {
 		t.Error("ours: the owner label no longer makes a container the gateway's")
+	}
+}
+
+// On podman the gateway's links become the hosts entries the filter pins
+// and leave the body (podman refuses a link), a relay is given the sysctl
+// that lets it bind 443 as a plain user, and with a runtime every class is
+// held to it through the run's own API service, the relays included.
+func TestOnPodmanLinksBecomeHostsAndRelaysBindTheirPort(t *testing.T) {
+	relays := func(c *Config) {
+		c.SharedNetworks = []string{"agentry-A-relays"}
+		c.EgressNetworks = map[string][]string{"agentry-A-relays-out": {relayPin}}
+		c.NetworkNames = map[string]string{intNet: "agentry-A-relays", ext: "agentry-A-relays-out"}
+		c.Podman = true
+	}
+	g := newRig(t, Limits{}, relays)
+	code, body := g.do(t, "POST", "/containers/create", map[string]any{"HostConfig": map[string]any{"NetworkMode": intNet, "Links": []string{"runa-relay:api.osv.dev"}},
+		"NetworkingConfig": map[string]any{"EndpointsConfig": map[string]any{intNet: map[string]any{"Links": []string{"runa-relay:api.osv.dev"}}}}})
+	if code != http.StatusCreated {
+		t.Fatalf("a linked server on podman: %d %s", code, body)
+	}
+	fwd := g.body("POST /containers/create")
+	hc, _ := fwd["HostConfig"].(map[string]any)
+	hosts, _ := hc["ExtraHosts"].([]any)
+	if hc["Links"] != nil || len(hosts) != 2 || hosts[0] != "api.osv.dev:10.9.0.5" || hc["Runtime"] != nil {
+		t.Errorf("forwarded links %v, hosts %v, runtime %v; want no link, the alias pinned, no runtime", hc["Links"], hc["ExtraHosts"], hc["Runtime"])
+	}
+	if nc, _ := fwd["NetworkingConfig"].(map[string]any); nc != nil {
+		eps, _ := nc["EndpointsConfig"].(map[string]any)
+		for _, ep := range eps {
+			if e, _ := ep.(map[string]any); e["Links"] != nil {
+				t.Errorf("an endpoint kept its links: %v", e["Links"])
+			}
+		}
+	}
+	if code, body := g.do(t, "POST", "/containers/create", map[string]any{"Image": relayPin, "Env": []string{"PROXY_HOSTNAME=api.osv.dev", "PROXY_PORTS=443"}, "HostConfig": map[string]any{"NetworkMode": ext}}); code != http.StatusCreated {
+		t.Fatalf("a relay on podman: %d %s", code, body)
+	}
+	hc, _ = g.body("POST /containers/create")["HostConfig"].(map[string]any)
+	if sys, _ := hc["Sysctls"].(map[string]any); sys[relayPortSysctl] != "0" || hc["Runtime"] != nil {
+		t.Errorf("relay forwarded with sysctls %v, runtime %v; want the port floor at 0 and no runtime", hc["Sysctls"], hc["Runtime"])
+	}
+	// The gateway still may not ask for a sysctl of its own.
+	g.refused(t, "a gateway sysctl", "POST", "/containers/create", map[string]any{"HostConfig": map[string]any{"Sysctls": map[string]string{"net.ipv4.ip_forward": "1"}}}, "HostConfig.Sysctls")
+
+	// Docker Engine: a link stays, and a relay gets no sysctl.
+	d := newRig(t, Limits{}, func(c *Config) { relays(c); c.Podman = false })
+	if code, body := d.do(t, "POST", "/containers/create", map[string]any{"HostConfig": map[string]any{"NetworkMode": intNet, "Links": []string{"runa-relay:api.osv.dev"}}}); code != http.StatusCreated {
+		t.Fatalf("a linked server on docker: %d %s", code, body)
+	}
+	hc, _ = d.body("POST /containers/create")["HostConfig"].(map[string]any)
+	if links, _ := hc["Links"].([]any); len(links) != 1 || hc["ExtraHosts"] != nil {
+		t.Errorf("docker: links %v hosts %v; want the link kept and nothing pinned", hc["Links"], hc["ExtraHosts"])
+	}
+	if code, _ := d.do(t, "POST", "/containers/create", map[string]any{"Image": relayPin, "Env": []string{"PROXY_HOSTNAME=api.osv.dev", "PROXY_PORTS=443"}, "HostConfig": map[string]any{"NetworkMode": ext}}); code != http.StatusCreated {
+		t.Fatal("a relay on docker")
+	}
+	if hc, _ := d.body("POST /containers/create")["HostConfig"].(map[string]any); hc["Sysctls"] != nil {
+		t.Errorf("docker's relay got sysctls %v", hc["Sysctls"])
+	}
+}
+
+// After the engine creates a container that must run under a runtime, the
+// filter reads the runtime back (Config.Verify) before the gateway sees the
+// answer: a mismatch refuses the create, counts, and is kept for the run.
+// On podman every class is verified against the run's runtime, the relays
+// included; on docker a relay without the run's resolvers is not under it
+// and is not verified. A sandboxed container on an SELinux podman host is
+// created with its label disabled.
+func TestACreateIsVerifiedUnderItsRuntime(t *testing.T) {
+	type seen struct{ id, class, runtime string }
+	var mu sync.Mutex
+	var verified []seen
+	var refuse bool
+	verify := func(c *Config) {
+		c.Runtime = "runsc"
+		c.SharedNetworks = []string{"agentry-A-relays"}
+		c.EgressNetworks = map[string][]string{"agentry-A-relays-out": {relayPin}}
+		c.NetworkNames = map[string]string{intNet: "agentry-A-relays", ext: "agentry-A-relays-out"}
+		c.Verify = func(_ context.Context, id, class, runtime string) error {
+			mu.Lock()
+			defer mu.Unlock()
+			verified = append(verified, seen{id, class, runtime})
+			if refuse {
+				return fmt.Errorf("the %s (%s) was created under \"crun\", not the policy's docker.runtime %q", class, id, runtime)
+			}
+			return nil
+		}
+	}
+	relay := map[string]any{"Image": relayPin, "Env": []string{"PROXY_HOSTNAME=api.osv.dev", "PROXY_PORTS=443"}, "HostConfig": map[string]any{"NetworkMode": ext}}
+	server := map[string]any{"HostConfig": map[string]any{"NetworkMode": intNet}}
+
+	g := newRig(t, Limits{}, verify)
+	for _, doc := range []map[string]any{server, relay} {
+		if code, body := g.do(t, "POST", "/containers/create", doc); code != http.StatusCreated {
+			t.Fatalf("%d %s", code, body)
+		}
+	}
+	mu.Lock()
+	if len(verified) != 1 || verified[0] != (seen{"new", "declared MCP server", "runsc"}) {
+		t.Errorf("docker verified %+v; want the server alone, under runsc", verified)
+	}
+	verified = nil
+	mu.Unlock()
+	if err := g.f.RuntimeMismatch(); err != nil {
+		t.Errorf("a faithful engine left a mismatch: %v", err)
+	}
+
+	p := newRig(t, Limits{}, verify, func(c *Config) { c.Podman, c.SELinuxUnconfined = true, true })
+	for _, doc := range []map[string]any{server, relay} {
+		if code, body := p.do(t, "POST", "/containers/create", doc); code != http.StatusCreated {
+			t.Fatalf("%d %s", code, body)
+		}
+		hc, _ := p.body("POST /containers/create")["HostConfig"].(map[string]any)
+		if opts := asList(hc["SecurityOpt"]); !slices.Contains(opts, "label=disable") {
+			t.Errorf("on an SELinux podman host the container keeps its label: %v", opts)
+		}
+	}
+	mu.Lock()
+	if len(verified) != 2 || verified[0] != (seen{"new", "declared MCP server", "runsc"}) || verified[1] != (seen{"new", "relay", "runsc"}) {
+		t.Errorf("podman verified %+v; want the server and the relay, both under runsc", verified)
+	}
+	verified = nil
+	refuse = true
+	mu.Unlock()
+	code, body := p.do(t, "POST", "/containers/create", server)
+	if code != http.StatusForbidden || !strings.Contains(body, "agentry run filter") || !strings.Contains(body, `created under \"crun\"`) {
+		t.Errorf("a mismatch answered %d %s; want 403 naming the runtime", code, body)
+	}
+	if err := p.f.RuntimeMismatch(); err == nil || !strings.Contains(err.Error(), "declared MCP server (new)") {
+		t.Errorf("RuntimeMismatch = %v", err)
+	}
+	if p.f.Refused() != 1 {
+		t.Errorf("refused %d, want the one mismatch", p.f.Refused())
+	}
+
+	// Without a runtime nothing is verified, and the plain rig neither
+	// disables a label nor refuses.
+	mu.Lock()
+	verified, refuse = nil, false
+	mu.Unlock()
+	plain := newRig(t, Limits{}, func(c *Config) { verify(c); c.Runtime = "" })
+	if code, body := plain.do(t, "POST", "/containers/create", server); code != http.StatusCreated {
+		t.Fatalf("%d %s", code, body)
+	}
+	mu.Lock()
+	if len(verified) != 0 {
+		t.Errorf("verified without a runtime: %+v", verified)
+	}
+	mu.Unlock()
+}
+
+// Without a Verify callback (the filter container beside a daemon in a VM)
+// the filter reads a created container's runtime through the daemon's own
+// inspect: a daemon that applied the runtime passes, one that dropped it
+// has the container removed and the create refused.
+func TestWithoutACallbackTheDaemonsInspectVerifiesACreate(t *testing.T) {
+	runtime := func(c *Config) { c.Runtime = "runsc" }
+	server := map[string]any{"HostConfig": map[string]any{"NetworkMode": "none"}}
+	g := newRig(t, Limits{}, runtime)
+	if code, body := g.do(t, "POST", "/containers/create", server); code != http.StatusCreated {
+		t.Fatalf("a daemon that applies the runtime: %d %s", code, body)
+	}
+	if err := g.f.RuntimeMismatch(); err != nil {
+		t.Errorf("mismatch after a faithful daemon: %v", err)
+	}
+	if g.forwarded("DELETE /containers/new") {
+		t.Error("a faithful daemon's container was removed")
+	}
+	d := newRig(t, Limits{}, runtime)
+	d.d.mu.Lock()
+	d.d.dropRuntime = true
+	d.d.mu.Unlock()
+	code, body := d.do(t, "POST", "/containers/create", server)
+	if code != http.StatusForbidden || !strings.Contains(body, "created under") || !strings.Contains(body, "declared MCP server the gateway launched (new)") {
+		t.Errorf("a daemon that drops the runtime: %d %s", code, body)
+	}
+	if !d.forwarded("DELETE /containers/new") {
+		t.Error("the mismatched container was not removed through the daemon")
+	}
+	if err := d.f.RuntimeMismatch(); err == nil || d.f.Refused() != 1 {
+		t.Errorf("mismatch %v, refused %d", err, d.f.Refused())
 	}
 }

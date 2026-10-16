@@ -236,6 +236,15 @@ type Params struct {
 	Events io.Writer
 }
 
+// engine is the run's container engine once placed (placementFor), and
+// Docker Engine on this machine until then.
+func (p Params) engine() dockerx.Engine {
+	if p.place != nil {
+		return p.place.engine
+	}
+	return dockerx.LocalDockerEngine()
+}
+
 // Run executes the plan. The returned envelope is always usable — on
 // failure it carries status "error", the exit class, and whatever was
 // known — and the returned error (nil on success) is already classified.
@@ -311,6 +320,10 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	}
 	p.place = &place
 	env.CapabilitiesEnforced["engine"] = place.line()
+	if p.Plan.Runtime() != "" {
+		// The runtime line follows the engine, known only now.
+		env.CapabilitiesEnforced["runtime"] = runtimeLine(p)
+	}
 	env.CapabilitiesEnforced = withSignInRenewal(env.CapabilitiesEnforced, p)
 
 	// Everything below must tear down whatever it built, success or not:
@@ -500,6 +513,12 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 			env.Result = receipt.TextResult(outcome.lastText)
 			return fail(env, redact, berr)
 		}
+	}
+	// A container the gateway created mid-run under another runtime than
+	// the policy's: refused it, and the run with it.
+	if merr := rd.runtimeMismatch(); merr != nil {
+		env.Result = receipt.TextResult(outcome.lastText)
+		return fail(env, redact, Classify(ExitGateway, merr))
 	}
 
 	env.Stage = receipt.StageOutput
@@ -699,7 +718,24 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	}
 	switch {
 	case filterSupported && place.inProcess:
-		filter, sock, err := startDaemonFilter(rd, runID, gwEnv, p.limits(), p.Plan, p.RunnerHome, place.upstream)
+		upstream := place.upstream
+		if rt := p.Plan.Runtime(); rt != "" && place.engine.Kind == dockerx.KindPodman {
+			// podman's API drops a container's runtime: the gateway's
+			// containers are created through a service of the run's own
+			// whose default runtime is the policy's (podmanservice.go),
+			// which podman's own CLI starts. Queued before the filter's
+			// close, so it stops after the filter that dials it.
+			if place.engine.CLI != dockerx.KindPodman {
+				return Classify(ExitGateway, errors.New("the policy's docker.runtime is held on podman only through podman's own CLI (AGENTRY_ENGINE=podman), which can read a container's runtime back; the docker CLI's route to podman cannot"))
+			}
+			svc, err := startPodmanService(ctx, d, rd, runID, p.RunnerHome, rt)
+			if err != nil {
+				return err
+			}
+			td.add(func(context.Context) { svc.stop() })
+			upstream = svc.socket
+		}
+		filter, sock, err := startDaemonFilter(d, rd, runID, gwEnv, p.limits(), p.Plan, p.RunnerHome, place, upstream)
 		if err != nil {
 			return err
 		}
@@ -708,8 +744,14 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		gwSpec.Mounts = throughFilter(gwSpec.Mounts, sock)
 	case filterSupported:
 		// A daemon in a VM: the same filter, in a container of the run's
-		// own (filtersidecar.go).
-		cfg, err := filterConfig(rd, runID, gwEnv, p.limits(), p.Plan)
+		// own (filtersidecar.go). On podman the API drops a container's
+		// runtime and only the CLI, serving the filter itself, can start
+		// the service that holds it and read each runtime back: a runtime
+		// there is refused rather than left unenforced.
+		if place.engine.Kind == dockerx.KindPodman && p.Plan.Runtime() != "" {
+			return Classify(ExitGateway, fmt.Errorf("the policy's docker.runtime is held on podman only where the CLI serves the run's docker filter (%s): unset %s, or run without docker.runtime", place.reason, EnvDockerFilter))
+		}
+		cfg, err := filterConfig(rd, runID, gwEnv, p.limits(), p.Plan, place)
 		if err != nil {
 			return err
 		}
@@ -719,7 +761,7 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		}
 		gwSpec.Mounts = throughFilterVolume(gwSpec.Mounts, vol)
 	}
-	if err := d.RunDetached(ctx, gwSpec); err != nil {
+	if err := dockerx.RunDetachedUnder(ctx, d, gwSpec, "gateway"); err != nil {
 		return Classify(ExitGateway, fmt.Errorf("start mcp gateway: %w", err))
 	}
 	// Graceful stop first: the gateway reaps its tool-server containers on
@@ -767,13 +809,19 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		probeSpec.Argv = append(probeSpec.Argv, "--list-tools")
 		listing = &listed
 	}
-	code, perr := d.RunForeground(ctx, probeSpec, nil, listing, p.Stderr)
+	code, perr := dockerx.RunForegroundUnder(ctx, d, probeSpec, "gateway's health probe", nil, listing, p.Stderr)
 	if perr != nil || code != 0 {
 		diag := gatewayDiagnostics(ctx, d, gwName)
 		if perr == nil {
 			perr = fmt.Errorf("gateway health probe failed (exit %d)", code)
 		}
 		return Classify(ExitGateway, fmt.Errorf("%w%s", perr, diag))
+	}
+	// A container the gateway created under another runtime than the
+	// policy's was refused it by the filter, and the gateway carried on
+	// without it: the run does not.
+	if err := rd.runtimeMismatch(); err != nil {
+		return Classify(ExitGateway, err)
 	}
 	if served != nil {
 		names, err := parseServedTools(listed.Bytes())
@@ -870,7 +918,7 @@ func startProxy(ctx context.Context, d dockerx.Client, p Params, rd *runDirs, td
 			Source: filepath.Join(rd.cfg, "gateway", resolvConfFile), Target: policy.ResolvConfTarget, ReadOnly: true, Relabel: true,
 		})
 	}
-	if err := d.RunDetached(ctx, proxySpec); err != nil {
+	if err := dockerx.RunDetachedUnder(ctx, d, proxySpec, "llm proxy"); err != nil {
 		return Classify(ExitGateway, fmt.Errorf("start llm proxy: %w", err))
 	}
 	td.add(func(c context.Context) { _ = d.RemoveForce(c, proxyName) })
@@ -1068,7 +1116,7 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		ran := make(chan struct{})
 		go func() {
 			defer close(ran)
-			exit, runErr = d.RunForeground(agentCtx, runSpec, stdinR, stdoutW, stderrFile)
+			exit, runErr = dockerx.RunForegroundUnder(agentCtx, d, runSpec, "agent container", stdinR, stdoutW, stderrFile)
 			_ = stdoutW.Close()
 			_ = stdinR.Close()
 		}()
@@ -1080,7 +1128,7 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		if runSpec.Interactive {
 			stdin = bytes.NewReader(task)
 		}
-		exit, runErr = d.RunForeground(agentCtx, runSpec, stdin, pw, stderrFile)
+		exit, runErr = dockerx.RunForegroundUnder(agentCtx, d, runSpec, "agent container", stdin, pw, stderrFile)
 		_ = pw.Close()
 		<-done
 	}

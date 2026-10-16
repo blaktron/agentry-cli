@@ -131,7 +131,16 @@ type runDirs struct {
 	// (redact.go); set once the token and the secrets are known, nil-safe
 	// before.
 	redact *redactor
+	// engine is the run's container engine (placement.go): whose files a
+	// container's must be is read from it (dockerx.Engine.PersonUser,
+	// PersonIDs: the invoking user's on a rootful engine, root's on a
+	// rootless one).
+	engine dockerx.Engine
 }
+
+// personUser is the --user of a container whose files must be the
+// person's, on this run's engine.
+func (rd *runDirs) personUser() string { return rd.engine.PersonUser() }
 
 // replacer substitutes the placeholders with this run's real values.
 func (rd *runDirs) replacer() *strings.Replacer {
@@ -217,16 +226,17 @@ func (rd *runDirs) replacerWith(hostPath func(string) string) *strings.Replacer 
 		spec.PHRunMode, rd.modeForPrompt(),
 		spec.PHModelSignIn, hostPath(rd.modelSignIn),
 	}
-	// The host link's run-time values: the user it runs as, and each
+	// The host link's run-time values: the user it runs as (the person's
+	// ids on this engine, whose files it reads and copies), and each
 	// target host's relay target.
-	user, _, _ := hostLinkUser()
-	pairs = append(pairs, spec.PHHostLinkUser, user)
+	pairs = append(pairs, spec.PHHostLinkUser, rd.personUser())
 	for _, h := range rd.targets {
 		pairs = append(pairs, spec.PHTargetHost(h.ID), h.RelayHost())
 	}
-	// The browser's: the user it runs as, and the browse proxy its one
-	// relay and --proxy-server name.
-	pairs = append(pairs, spec.PHBrowserUser, browserUser(), spec.PHBrowseProxy, rd.browseProxyName())
+	// The browser's: the user it runs as (the person's, whose output
+	// folder and secrets it holds), and the browse proxy its one relay
+	// and --proxy-server name.
+	pairs = append(pairs, spec.PHBrowserUser, rd.personUser(), spec.PHBrowseProxy, rd.browseProxyName())
 	return strings.NewReplacer(pairs...)
 }
 
@@ -263,6 +273,7 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	// mount — the compiled `--secrets /mcp/secrets.env` argv resolves to
 	// this file and nothing else.
 	rd := runDirsAt(root)
+	rd.engine = p.engine()
 	// The session store is a per-run named volume, not a host directory:
 	// the harness runs unprivileged, and a host directory it could write
 	// was a world-writable one.
@@ -476,7 +487,7 @@ func renderGatewayConfig(p Params, rd *runDirs) error {
 		return err
 	}
 	dir := filepath.Join(rd.cfg, "gateway")
-	if err := stampOwner(filepath.Join(dir, "toolspec.json")); err != nil {
+	if err := stampOwner(filepath.Join(dir, "toolspec.json"), rd); err != nil {
 		return Classify(ExitCLI, fmt.Errorf("stamp owner into toolspec: %w", err))
 	}
 	if filterSupported {
@@ -1367,15 +1378,18 @@ func copyTree(src, dest string) error {
 	})
 }
 
-// stampOwner writes the invoking user's uid/gid into the per-run copy of
-// the tools spec so the tools container — root, writing into bind mounts
-// the user owns — hands back what it creates. The compiled plan is
-// untouched: ownership is a property of the run, not of the install, and
-// the plan hash must not change per user. Hosts without POSIX ids
-// (Getuid() < 0) leave the field out.
-func stampOwner(specPath string) error {
-	uid, gid := os.Getuid(), os.Getgid()
-	if uid < 0 || gid < 0 {
+// stampOwner writes the person's uid/gid, as this run's engine maps them
+// (runDirs.personUID), into the per-run copy of the tools spec so the
+// tools container — root, writing into bind mounts the person owns —
+// hands back what it creates: their own ids on a rootful engine, root's on
+// a rootless one, where the person is the container's root and any other
+// id is a subordinate one they could not remove a file from. The compiled
+// plan is untouched: ownership is a property of the run, not of the
+// install, and the plan hash must not change per user. Hosts without
+// POSIX ids leave the field out.
+func stampOwner(specPath string, rd *runDirs) error {
+	uid, gid, ok := rd.engine.PersonIDs()
+	if !ok {
 		return nil
 	}
 	b, err := os.ReadFile(specPath) //nolint:gosec // our own rendered config

@@ -157,13 +157,13 @@ func TestPodmanEngineAnswersWhenItsSocketPings(t *testing.T) {
 }
 
 func TestPingSocket(t *testing.T) {
-	if err := pingSocket(context.Background(), pingServer(t, http.StatusOK)); err != nil {
+	if err := PingSocket(context.Background(), pingServer(t, http.StatusOK)); err != nil {
 		t.Errorf("a ping answered 200: %v", err)
 	}
-	if err := pingSocket(context.Background(), pingServer(t, http.StatusInternalServerError)); err == nil {
+	if err := PingSocket(context.Background(), pingServer(t, http.StatusInternalServerError)); err == nil {
 		t.Error("a ping answered 500 was taken")
 	}
-	if err := pingSocket(context.Background(), filepath.Join(t.TempDir(), "none.sock")); err == nil {
+	if err := PingSocket(context.Background(), filepath.Join(t.TempDir(), "none.sock")); err == nil {
 		t.Error("a missing socket was taken")
 	}
 }
