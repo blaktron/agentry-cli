@@ -1038,9 +1038,18 @@ func fireEntry(id string) (schedule.Entry, error) {
 	if docker != "" {
 		e.Env = append(e.Env, "AGENTRY_DOCKER="+docker)
 	}
-	// Where the runner home, the CLI's config and the docker daemon are,
-	// when this shell names them: paths and names, never values of keys.
-	for _, k := range []string{"AGENTRY_RUNNER_HOME", "AGENTRY_CONFIG_DIR", "DOCKER_HOST", "DOCKER_CONTEXT"} {
+	if podman := os.Getenv(dockerx.EnvPodman); podman == "" {
+		if p, err := exec.LookPath("podman"); err == nil {
+			if abs, err := filepath.Abs(p); err == nil {
+				e.Env = append(e.Env, dockerx.EnvPodman+"="+abs)
+			}
+		}
+	}
+	// Where the runner home, the CLI's config and the container engine
+	// are, when this shell names them: paths and names, never values of
+	// keys.
+	for _, k := range []string{"AGENTRY_RUNNER_HOME", "AGENTRY_CONFIG_DIR", "DOCKER_HOST", "DOCKER_CONTEXT",
+		dockerx.EnvEngine, dockerx.EnvPodman, engine.EnvDockerFilter} {
 		v := os.Getenv(k)
 		if v == "" || (k == "DOCKER_HOST" && hostCarriesPassword(v)) {
 			// A daemon address with a password (tcp://user:pass@…) stays

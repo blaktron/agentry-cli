@@ -45,7 +45,7 @@ func TestDockerDesktopsFilterRunsInAContainerOfTheRuns(t *testing.T) {
 		WritableRoots: []string{"/c/Users/me/.agentry/runs/R/out"},
 		WebSpec:       `C:\Users\me\.agentry\runs\R\cfg\gateway\toolspec.json`,
 	}
-	vol, err := startFilterSidecar(context.Background(), d, rd, "R", "agentry-runner:test", cfg, policy.Limits{Memory: "2g", CPUs: 1, Pids: 512}, td)
+	vol, err := startFilterSidecar(context.Background(), d, rd, "R", "agentry-runner:test", DockerSocket, cfg, policy.Limits{Memory: "2g", CPUs: 1, Pids: 512}, td)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestAFilterContainerThatNeverServesFailsTheRun(t *testing.T) {
 	was := sidecarReadyWait
 	sidecarReadyWait = 300 * time.Millisecond
 	t.Cleanup(func() { sidecarReadyWait = was })
-	_, err := startFilterSidecar(context.Background(), d, rd, "R", "agentry-runner:test", sockfilter.Config{RunID: "R"}, policy.Limits{Memory: "2g", CPUs: 1, Pids: 512}, td)
+	_, err := startFilterSidecar(context.Background(), d, rd, "R", "agentry-runner:test", DockerSocket, sockfilter.Config{RunID: "R"}, policy.Limits{Memory: "2g", CPUs: 1, Pids: 512}, td)
 	var ce *ClassifiedError
 	if !errors.As(err, &ce) || ce.Code != ExitGateway || !strings.Contains(err.Error(), "unknown field") {
 		t.Fatalf("got %v", err)

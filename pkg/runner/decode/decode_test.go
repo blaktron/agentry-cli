@@ -317,6 +317,26 @@ func TestRunDecodesInAContainerWithNothing(t *testing.T) {
 	}
 }
 
+// On a rootless engine the decoders run as the container's root, which is
+// the person there: their own uid would be a subordinate one that cannot
+// write the run's directory.
+func TestRunDecodesAsRootOnARootlessEngine(t *testing.T) {
+	if os.Getuid() < 0 {
+		t.Skip("no POSIX ids")
+	}
+	in, out := staged(t), t.TempDir()
+	f := &dockerx.Fake{
+		Foreground: map[string]*dockerx.FakeForeground{"agentry-decode-": {Before: playDecode(t, sampleFiles)}},
+		EngineInfo: &dockerx.Engine{Kind: dockerx.KindPodman, Rootless: true, Endpoint: "unix:///run/user/1000/podman/podman.sock"},
+	}
+	if _, err := Run(context.Background(), f, sampleImage, in, out, policy.Limits{}.WithDefaults(), os.Stderr); err != nil {
+		t.Fatal(err)
+	}
+	if r, ok := f.FindRun("agentry-decode-"); !ok || r.User != "0" || !slices.Equal(r.CapDrop, []string{"ALL"}) || !r.NoNewPrivileges {
+		t.Fatalf("the decode container on a rootless engine: %+v", r)
+	}
+}
+
 // sampleSignatures is a bundle as clamdb.Ensure answers it.
 var sampleSignatures = clamdb.DB{
 	Dir: "/home/u/.agentry/runner/clamav/db/84cbc016d58b4b70", Ref: policy.DefaultClamAVSignatures,

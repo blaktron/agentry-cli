@@ -94,6 +94,22 @@ type Fake struct {
 	// container as it starts — how a test makes something happen once the
 	// agent is running, such as a relay the gateway starts late.
 	OnForeground func(r RunSpec)
+	// EngineInfo, when set, is what Engine answers; nil answers
+	// LocalDockerEngine. EngineErr fails Engine.
+	EngineInfo *Engine
+	EngineErr  error
+}
+
+// Engine implements EngineDescriber. It is not recorded: a run reads it before
+// it touches the daemon, and the call sequences tests assert are the daemon's.
+func (f *Fake) Engine(context.Context) (Engine, error) {
+	if f.EngineErr != nil {
+		return Engine{}, f.EngineErr
+	}
+	if f.EngineInfo != nil {
+		return *f.EngineInfo, nil
+	}
+	return LocalDockerEngine(), nil
 }
 
 // FakeForeground scripts one foreground container.

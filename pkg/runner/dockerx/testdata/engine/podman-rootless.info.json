@@ -1,0 +1,46 @@
+{
+  "host": {
+    "arch": "amd64",
+    "hostname": "host-1",
+    "kernel": "7.1.13-200.fc44.x86_64",
+    "distribution": {
+      "distribution": "fedora",
+      "variant": "kde",
+      "version": "44"
+    },
+    "ociRuntime": {
+      "name": "crun",
+      "package": "crun-1.28-1.fc44.x86_64",
+      "path": "/usr/bin/crun",
+      "version": "crun version 1.28\ncommit: 54f16ffbefcd022bf032af768b5c5ce075c18bfc\nrundir: /run/user/1000/crun\nspec: 1.0.0\n+SYSTEMD +SELINUX +APPARMOR +CAP +SECCOMP +EBPF +CRIU +LIBKRUN +WASM:wasmedge +JSON_C"
+    },
+    "remoteSocket": {
+      "path": "/run/user/1000/podman/podman.sock",
+      "exists": true
+    },
+    "security": {
+      "apparmorEnabled": false,
+      "capabilities": "CAP_CHOWN,CAP_DAC_OVERRIDE,CAP_FOWNER,CAP_FSETID,CAP_KILL,CAP_NET_BIND_SERVICE,CAP_SETFCAP,CAP_SETGID,CAP_SETPCAP,CAP_SETUID,CAP_SYS_CHROOT",
+      "rootless": true,
+      "seccompEnabled": true,
+      "seccompProfilePath": "/usr/share/containers/seccomp.json",
+      "selinuxEnabled": true
+    },
+    "os": "linux",
+    "networkBackendInfo": {
+      "backend": "netavark",
+      "defaultNetwork": "podman"
+    }
+  },
+  "version": {
+    "APIVersion": "5.8.4",
+    "Version": "5.8.4",
+    "GoVersion": "go1.26.4-X:nodwarf5",
+    "GitCommit": "5431df23c742e5edea35bef34eed696f4db0106b",
+    "BuiltTime": "Thu Jun 25 20:00:00 2026",
+    "Built": 1782432000,
+    "BuildOrigin": "Fedora Project",
+    "OsArch": "linux/amd64",
+    "Os": "linux"
+  }
+}

@@ -223,6 +223,10 @@ type Params struct {
 	// callback that panics is caught and switched off rather than allowed
 	// to take the teardown down with it.
 	OnUsage func(receipt.Usage)
+	// place is where the run's docker filter runs on its engine, read when
+	// the run starts (placementFor); nil until then.
+	place *filterPlacement
+
 	// Events, when set, receives the harness event stream as JSON lines
 	// while the run is live — the same lines the receipt's events.ndjson
 	// gets, redacted the same way. A driver tails this instead of parsing
@@ -298,6 +302,15 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	if err := checkBrowser(ctx, p); err != nil {
 		return fail(env, redact, err)
 	}
+	// The engine, and where the run's docker filter runs on it, before
+	// anything touches the daemon: an engine the filter cannot be put in
+	// front of is refused here.
+	place, err := placementFor(ctx, d)
+	if err != nil {
+		return fail(env, redact, err)
+	}
+	p.place = &place
+	env.CapabilitiesEnforced["engine"] = place.line()
 	env.CapabilitiesEnforced = withSignInRenewal(env.CapabilitiesEnforced, p)
 
 	// Everything below must tear down whatever it built, success or not:
@@ -604,11 +617,12 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		// networks its contract calls for.
 		Hostname: gatewayHostname(runID),
 		Labels:   labels,
-		// The gateway is the one container that drives the host daemon; that
-		// is its documented privilege level, and it is why the agent container
-		// never sees this socket. An SELinux-enabled daemon would otherwise
-		// refuse it the socket outright.
-		DisableSELinuxLabel: mountsDockerSocket(p.Plan.Gateway.Mounts),
+		// The gateway drives the daemon, through the run's filter where it
+		// runs; that is its documented privilege level, and it is why the
+		// agent container never sees this socket. An SELinux-enabled daemon
+		// would otherwise refuse it the socket outright. The exemption goes
+		// with the role, whatever socket the mount names.
+		DisableSELinuxLabel: true,
 	}
 	// Its root stays writable: a vendor image, whose writes are its own.
 	// It opens the socket as its owner, root, with no capability; reading
@@ -675,9 +689,17 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	// (dockerfilter.go). Queued before the gateway's teardown, so it
 	// closes after the gateway has stopped and reaped the containers it
 	// launched through it.
+	place := p.place
+	if place == nil && filterSupported {
+		pl, err := placementFor(ctx, d)
+		if err != nil {
+			return err
+		}
+		place = &pl
+	}
 	switch {
-	case filterSupported && filterInProcess:
-		filter, sock, err := startDaemonFilter(rd, runID, gwEnv, p.limits(), p.Plan, p.RunnerHome)
+	case filterSupported && place.inProcess:
+		filter, sock, err := startDaemonFilter(rd, runID, gwEnv, p.limits(), p.Plan, p.RunnerHome, place.upstream)
 		if err != nil {
 			return err
 		}
@@ -685,13 +707,13 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		td.add(func(context.Context) { closeDaemonFilter(rd) })
 		gwSpec.Mounts = throughFilter(gwSpec.Mounts, sock)
 	case filterSupported:
-		// Docker Desktop: the same filter, in a container of the run's own
-		// (filtersidecar.go).
+		// A daemon in a VM: the same filter, in a container of the run's
+		// own (filtersidecar.go).
 		cfg, err := filterConfig(rd, runID, gwEnv, p.limits(), p.Plan)
 		if err != nil {
 			return err
 		}
-		vol, err := startFilterSidecar(ctx, d, rd, runID, p.Plan.Proxy.Image, cfg, p.limits(), td)
+		vol, err := startFilterSidecar(ctx, d, rd, runID, p.Plan.Proxy.Image, place.mountSource, cfg, p.limits(), td)
 		if err != nil {
 			return err
 		}

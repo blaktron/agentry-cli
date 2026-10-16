@@ -1058,22 +1058,11 @@ func relabelTargetsFor(rd *runDirs) []relabelTarget {
 }
 
 // DockerSocket is the daemon socket the gateway mounts to launch the tool
-// containers — the one path in a run that belongs to the machine.
-const DockerSocket = "/var/run/docker.sock"
-
-// mountsDockerSocket says whether a container drives the host's docker
-// daemon. Such a container needs SELinux labelling switched off to reach
-// the socket at all, and deriving that from the mounts rather than from a
-// container's name means the exemption follows the privilege wherever it
-// goes instead of being remembered separately.
-func mountsDockerSocket(mounts []spec.Mount) bool {
-	for _, m := range mounts {
-		if m.Source == DockerSocket {
-			return true
-		}
-	}
-	return false
-}
+// containers — the one path in a run that belongs to the machine. It is the
+// compiled plan's name for the daemon's socket on every engine; the run maps
+// it to the engine's own (placement.go), so the plan does not depend on the
+// engine.
+const DockerSocket = dockerx.DefaultSocket
 
 // runScopedMount says whether a plan mount's source is a directory this run
 // made — which is exactly what the run-scoped placeholders name — rather
