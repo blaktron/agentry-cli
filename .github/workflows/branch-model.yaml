@@ -1,0 +1,50 @@
+# main takes pull requests only from dev. Every change lands on dev and is
+# checked there, and main receives it by a pull request from dev. The
+# `branch-model` job is a required check on both branches, so it reports on
+# every pull request: it succeeds into dev, and into main only when the head
+# is this repository's own dev branch (a fork's branch named dev is refused).
+#
+# It runs on pull_request_target, so the workflow file is always the default
+# branch's copy (dev's), whatever the pull request's base, and a pull request
+# cannot edit the check it is judged by. That is also why it may run on a
+# persistent self-hosted runner for a fork's pull request: it checks out
+# nothing, runs no code from the pull request, and its token has no
+# permissions. The branch names are chosen by whoever opens the pull
+# request, so the script reads them from the environment and never has them
+# interpolated into its text. `edited` is among the types because changing a
+# pull request's base branch is an edit, and the check must judge the new
+# base.
+name: branch-model
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited]
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  branch-model:
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 5
+    steps:
+      - name: main takes pull requests only from dev
+        env:
+          BASE: ${{ github.event.pull_request.base.ref }}
+          HEAD: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ "$BASE" != main ]; then
+            echo "Into $BASE: any branch may open it."
+            exit 0
+          fi
+          if [ "$HEAD_REPO" = "$REPO" ] && [ "$HEAD" = dev ]; then
+            echo "Into main from dev: a promotion."
+            exit 0
+          fi
+          echo "::error::main takes pull requests only from $REPO:dev, and this one is from $HEAD_REPO:$HEAD. Open it against dev instead."
+          exit 1
