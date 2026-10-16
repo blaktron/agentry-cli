@@ -37,6 +37,11 @@ const podmanServiceLog = "podman-service.log"
 // podmanServiceWait bounds how long the service may take to answer.
 const podmanServiceWait = 20 * time.Second
 
+// podmanServiceTempPrefix names the directory under the system's temp
+// directory that holds the service's socket when the runner home's path is
+// too long to bind.
+const podmanServiceTempPrefix = "agentry-pm-"
+
 // podmanServiceRecord is the pid file's content.
 type podmanServiceRecord struct {
 	PID    int    `json:"pid"`
@@ -65,7 +70,7 @@ func podmanServiceSocket(rd *runDirs, runID, runnerHome string) (string, error) 
 	}
 	sock := filepath.Join(dir, runID+"-podman.sock")
 	if len(sock) > maxSocketPath {
-		tmp, err := os.MkdirTemp("", "agentry-pm-")
+		tmp, err := os.MkdirTemp("", podmanServiceTempPrefix)
 		if err != nil {
 			return "", Classify(ExitGateway, fmt.Errorf("podman service directory: %w", err))
 		}
@@ -136,9 +141,7 @@ func (s *podmanService) stop() {
 	stopProcess(s.process, s.done)
 	_ = os.Remove(s.socket)
 	_ = os.Remove(s.pidFile)
-	if dir := filepath.Dir(s.socket); filepath.Base(dir) != "s" && strings.HasPrefix(filepath.Base(dir), "agentry-pm-") {
-		_ = os.Remove(dir)
-	}
+	removeServiceTempDir(s.socket)
 	if s.log != nil {
 		_ = s.log.Close()
 	}
@@ -167,12 +170,37 @@ func stopProcess(p *os.Process, done chan error) {
 	}
 }
 
-// stopLeftPodmanService ends the service a run directory's record names
-// when the run that started it is gone (the directory's lock proved it,
-// runlock.go): the process, if it is still the one the record describes
-// (the same start time, so a reused pid is never killed), then its socket
-// and the record. Best effort.
-func stopLeftPodmanService(dir string) {
+// removeServiceTempDir removes the agentry-pm-* directory a service socket
+// was placed in, once the socket is gone; a socket anywhere else has no
+// directory of its own.
+func removeServiceTempDir(socket string) {
+	if dir := filepath.Dir(socket); strings.HasPrefix(filepath.Base(dir), podmanServiceTempPrefix) {
+		_ = os.Remove(dir)
+	}
+}
+
+// StopLeftPodmanService ends the podman API service the run directory
+// dir of run runID names in its record, when the run that started it is
+// gone (the directory's lock proved it, runlock.go), before the directory
+// and the record go. dir is the caller's to trust; the record in it is a
+// file the person can write, and a sweep that signals a process and
+// unlinks a file holds it to the one shape a run's service can have rather
+// than believing it. The socket is removed only at the one path the run
+// gives its service (podmanServiceSocket: under the runner home's s/
+// directory by the run's id, the short path under the system's temp
+// directory, or the run directory's own when there is no runner home). The
+// process is signalled only when its start time is the recorded one (a
+// reused pid is never signalled), its own command line is a podman binary
+// running the `system service` subcommand, and that command line names
+// the run's own socket, so the service of another run is never ended by a
+// record naming its pid. The record always goes. Off Linux no start time or
+// command line can be read, so no process is touched there. Best effort:
+// nothing here fails the sweep. Exported for the desktop app, whose own
+// sweeps reach a dead run's directory the same way.
+func StopLeftPodmanService(dir, runnerHome, runID string) {
+	if runID == "" || runID != filepath.Base(runID) {
+		return
+	}
 	path := filepath.Join(dir, podmanServicePIDFile)
 	b, err := os.ReadFile(path) //nolint:gosec // a fixed name in a run directory
 	if err != nil {
@@ -182,13 +210,79 @@ func stopLeftPodmanService(dir string) {
 	if json.Unmarshal(b, &rec) != nil || rec.PID <= 0 {
 		return
 	}
-	if start, ok := owner.StartTime(rec.PID); ok && start == rec.Start {
-		if p, err := os.FindProcess(rec.PID); err == nil {
-			stopProcess(p, nil)
+	socket := filepath.Clean(rec.Socket)
+	if serviceSocketOfRun(socket, dir, runnerHome, runID) {
+		if start, ok := owner.StartTime(rec.PID); ok && start == rec.Start && isPodmanServiceProcess(rec.PID, socket) {
+			if p, err := os.FindProcess(rec.PID); err == nil {
+				stopProcess(p, nil)
+			}
 		}
-	}
-	if rec.Socket != "" && filepath.IsAbs(rec.Socket) {
-		_ = removal.Remove(rec.Socket, false)
+		_ = removal.Remove(socket, false)
+		removeServiceTempDir(socket)
 	}
 	_ = removal.Remove(path, false)
+}
+
+// isPodmanServiceProcess reads the process's own command line and asks
+// isPodmanServiceArgv. Where the command line cannot be read, no.
+func isPodmanServiceProcess(pid int, socket string) bool {
+	argv, ok := owner.CommandLine(pid)
+	return ok && isPodmanServiceArgv(argv, socket)
+}
+
+// isPodmanServiceArgv says whether a command line is a podman binary
+// running the `system service` subcommand on socket, as
+// dockerx.PodmanServiceCommand spells it: the binary is named podman, or
+// is the one AGENTRY_PODMAN names; after it come only global flags, each
+// `--flag=value` or `--flag value`, then `system service`, then the
+// service's own flags and unix://<socket>. `podman run … system service`
+// is a container's command, not a service, and is not one.
+func isPodmanServiceArgv(argv []string, socket string) bool {
+	if len(argv) == 0 {
+		return false
+	}
+	if filepath.Base(argv[0]) != "podman" {
+		if named := os.Getenv(dockerx.EnvPodman); named == "" || argv[0] != named {
+			return false
+		}
+	}
+	rest := argv[1:]
+	for len(rest) > 0 && strings.HasPrefix(rest[0], "-") {
+		if strings.Contains(rest[0], "=") || len(rest) == 1 {
+			rest = rest[1:]
+			continue
+		}
+		rest = rest[2:]
+	}
+	if len(rest) < 2 || rest[0] != "system" || rest[1] != "service" {
+		return false
+	}
+	want := dockerx.SchemeUnix + "://" + socket
+	for _, a := range rest[2:] {
+		if a == want || (filepath.IsAbs(a) && filepath.Clean(a) == socket) {
+			return true
+		}
+	}
+	return false
+}
+
+// serviceSocketOfRun says whether path, cleaned, is where the run's service
+// puts its socket (podmanServiceSocket): <runner home>/s/<run id>-podman.sock,
+// or, when that is too long to bind, podman.sock in a directory named
+// podmanServiceTempPrefix* under the system's temp directory, or, with no
+// runner home, podman.sock in the run directory itself. Anything else is
+// not removed.
+func serviceSocketOfRun(path, dir, runnerHome, runID string) bool {
+	if path == "" || !filepath.IsAbs(path) || path != filepath.Clean(path) {
+		return false
+	}
+	if runnerHome == "" {
+		return path == filepath.Join(dir, "podman.sock")
+	}
+	if path == filepath.Join(runnerHome, "s", runID+"-podman.sock") {
+		return true
+	}
+	parent, base := filepath.Split(path)
+	parent = filepath.Clean(parent)
+	return base == "podman.sock" && filepath.Dir(parent) == filepath.Clean(os.TempDir()) && strings.HasPrefix(filepath.Base(parent), podmanServiceTempPrefix)
 }

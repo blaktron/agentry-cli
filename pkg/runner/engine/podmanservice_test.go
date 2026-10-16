@@ -201,62 +201,241 @@ func TestARunRefusesAContainerCreatedUnderAnotherRuntime(t *testing.T) {
 }
 
 // A run that died leaves its service's record; the next run's sweep ends
-// the process when it is still the one recorded, never a reused pid, and
-// removes the socket and the record.
+// the process only when it is the one recorded (never a reused pid) and
+// is a podman binary running `system service` by its own command line,
+// removes the socket only at the run's own path, and the record always.
 func TestTheSweepStopsADeadRunsPodmanService(t *testing.T) {
-	dir := t.TempDir()
-	short, err := os.MkdirTemp("", "ps")
-	if err != nil {
+	if _, ok := owner.StartTime(os.Getpid()); !ok {
+		t.Skip("this process cannot read start times")
+	}
+	home := t.TempDir()
+	const runID = "0123456789abcdef"
+	dir := filepath.Join(home, "runs", runID)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(short) })
-	sock := filepath.Join(short, "podman.sock")
-	cmd := fakePodmanService(t, "")("runsc", sock)
-	if err := cmd.Start(); err != nil {
+	if err := os.MkdirAll(filepath.Join(home, "s"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = cmd.Process.Kill(); _, _ = cmd.Process.Wait() })
-	deadline := time.Now().Add(10 * time.Second)
-	for dockerx.PingSocket(context.Background(), sock) != nil {
-		if time.Now().After(deadline) {
-			t.Fatal("the stand-in never answered")
+	// The stand-in is this test binary reached through a link named podman
+	// and given `system service`, since the sweep reads the process's own
+	// command line.
+	podman := filepath.Join(t.TempDir(), "podman")
+	if err := os.Symlink(os.Args[0], podman); err != nil {
+		t.Fatal(err)
+	}
+	sock := filepath.Join(home, "s", runID+"-podman.sock")
+	service := func(argv0 string, args ...string) *exec.Cmd {
+		cmd := exec.Command(argv0, args...) //nolint:gosec // this test binary
+		cmd.Env = append(os.Environ(), fakePodmanServiceEnv+"="+sock)
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
 		}
-		time.Sleep(50 * time.Millisecond)
+		t.Cleanup(func() { _ = cmd.Process.Kill(); _, _ = cmd.Process.Wait() })
+		deadline := time.Now().Add(10 * time.Second)
+		for dockerx.PingSocket(context.Background(), sock) != nil {
+			if time.Now().After(deadline) {
+				t.Fatal("the stand-in never answered")
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		return cmd
 	}
-	start, _ := owner.StartTime(cmd.Process.Pid)
+	record := filepath.Join(dir, podmanServicePIDFile)
 	write := func(rec podmanServiceRecord) {
 		b, _ := json.Marshal(rec)
-		if err := os.WriteFile(filepath.Join(dir, podmanServicePIDFile), b, 0o600); err != nil {
+		if err := os.WriteFile(record, b, 0o600); err != nil {
 			t.Fatal(err)
+		}
+	}
+	gone := func(paths ...string) {
+		t.Helper()
+		for _, p := range paths {
+			if _, err := os.Stat(p); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("%s was kept: %v", p, err)
+			}
+		}
+	}
+	kept := func(p string) {
+		t.Helper()
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("%s was removed: %v", p, err)
 		}
 	}
 	// A record whose start time is another process's: the process is
 	// left alone (a reused pid), the dead run's socket and record go.
-	write(podmanServiceRecord{PID: cmd.Process.Pid, Start: start + 7, Socket: sock})
-	stopLeftPodmanService(dir)
-	if !alive(cmd.Process.Pid) {
+	svc := service(podman, "system", "service", "--time=0", "unix://"+sock)
+	start, _ := owner.StartTime(svc.Process.Pid)
+	write(podmanServiceRecord{PID: svc.Process.Pid, Start: start + 7, Socket: sock})
+	StopLeftPodmanService(dir, home, runID)
+	if !alive(svc.Process.Pid) {
 		t.Fatal("a reused pid was killed")
 	}
-	if _, err := os.Stat(filepath.Join(dir, podmanServicePIDFile)); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("the record of a dead run was kept: %v", err)
+	gone(sock, record)
+	// A record naming a process with the right start time whose command
+	// line is not a podman service: left alone; the record goes.
+	_ = os.Remove(sock)
+	other := service(os.Args[0])
+	start, _ = owner.StartTime(other.Process.Pid)
+	write(podmanServiceRecord{PID: other.Process.Pid, Start: start, Socket: sock})
+	StopLeftPodmanService(dir, home, runID)
+	if !alive(other.Process.Pid) {
+		t.Fatal("a process that is not a podman service was killed")
 	}
-	// The recorded process: ended, with its socket and record.
-	write(podmanServiceRecord{PID: cmd.Process.Pid, Start: start, Socket: sock})
+	gone(record)
+	_ = other.Process.Kill()
+	_, _ = other.Process.Wait()
+	// A record naming a socket anywhere but the run's own path: that file
+	// stays, the record goes. A path that reaches the run's own through a
+	// parent entry is not the run's own either.
+	elsewhere := filepath.Join(t.TempDir(), "podman.sock")
+	if err := os.WriteFile(elsewhere, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	write(podmanServiceRecord{PID: svc.Process.Pid, Start: start + 7, Socket: elsewhere})
+	StopLeftPodmanService(dir, home, runID)
+	kept(elsewhere)
+	gone(record)
+	// A record spelling the run's own path through a parent entry: the
+	// cleaned path, which is the run's own, is what goes, never what a
+	// link along the way would have resolved to.
+	if err := os.WriteFile(sock, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	write(podmanServiceRecord{PID: svc.Process.Pid, Start: start + 7, Socket: home + "/s/x/../" + runID + "-podman.sock"})
+	StopLeftPodmanService(dir, home, runID)
+	gone(sock, record)
+	// A run id that is not a plain name is refused before the record is read.
+	if err := os.WriteFile(sock, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	write(podmanServiceRecord{PID: svc.Process.Pid, Start: start + 7, Socket: sock})
+	StopLeftPodmanService(dir, home, "../"+runID)
+	kept(sock)
+	kept(record)
+	_ = os.Remove(record)
+	// The recorded service: ended, with its socket and record.
+	_ = os.Remove(sock)
+	svc = service(podman, "system", "service", "--time=0", "unix://"+sock)
+	start, _ = owner.StartTime(svc.Process.Pid)
+	write(podmanServiceRecord{PID: svc.Process.Pid, Start: start, Socket: sock})
 	done := make(chan struct{})
-	go func() { _, _ = cmd.Process.Wait(); close(done) }()
-	stopLeftPodmanService(dir)
+	go func() { _, _ = svc.Process.Wait(); close(done) }()
+	StopLeftPodmanService(dir, home, runID)
 	select {
 	case <-done:
 	case <-time.After(10 * time.Second):
 		t.Fatal("the dead run's service was not stopped")
 	}
-	for _, left := range []string{sock, filepath.Join(dir, podmanServicePIDFile)} {
-		if _, err := os.Stat(left); !errors.Is(err, os.ErrNotExist) {
-			t.Errorf("%s left after the sweep: %v", left, err)
+	gone(sock, record)
+	// No record: nothing to do.
+	StopLeftPodmanService(dir, home, runID)
+}
+
+// serviceSocketOfRun admits the paths a run's service can bind and nothing
+// else: under the runner home by the run's id, the short fallback under the
+// system's temp directory, and the run directory's own without a home.
+func TestOnlyTheRunsOwnServiceSocketIsRemoved(t *testing.T) {
+	home := t.TempDir()
+	dir := filepath.Join(home, "runs", "0123456789abcdef")
+	const runID = "0123456789abcdef"
+	tmp := os.TempDir()
+	for path, want := range map[string]bool{
+		filepath.Join(home, "s", runID+"-podman.sock"):              true,
+		filepath.Join(tmp, "agentry-pm-123456", "podman.sock"):      true,
+		filepath.Join(home, "s", "fedcba9876543210-podman.sock"):    false,
+		filepath.Join(home, "s", runID+".sock"):                     false,
+		filepath.Join(tmp, "agentry-pm-123456", "other.sock"):       false,
+		filepath.Join(tmp, "podman.sock"):                           false,
+		filepath.Join(tmp, "agentry-pm-1", "deeper", "podman.sock"): false,
+		filepath.Join(home, "agentry-pm-123456", "podman.sock"):     false,
+		filepath.Join(dir, "podman.sock"):                           false,
+		home + "/s/x/../" + runID + "-podman.sock":                  false,
+		"relative/podman.sock":                                      false,
+		"":                                                          false,
+	} {
+		if got := serviceSocketOfRun(path, dir, home, runID); got != want {
+			t.Errorf("serviceSocketOfRun(%q) = %v, want %v", path, got, want)
 		}
 	}
-	// No record: nothing to do.
-	stopLeftPodmanService(dir)
+	if !serviceSocketOfRun(filepath.Join(dir, "podman.sock"), dir, "", runID) {
+		t.Error("without a runner home the run directory's own podman.sock is the service's")
+	}
+	if serviceSocketOfRun(filepath.Join(home, "s", runID+"-podman.sock"), dir, "", runID) {
+		t.Error("without a runner home nothing under one is the service's")
+	}
+}
+
+// A command line is a podman service's only when a binary named podman
+// runs the `system service` subcommand, after its global flags, on the
+// run's own socket.
+func TestOnlyAPodmanSystemServiceIsSignalled(t *testing.T) {
+	const sock = "/home/p/.agentry/s/0123456789abcdef-podman.sock"
+	t.Setenv(dockerx.EnvPodman, "")
+	for _, tc := range []struct {
+		argv []string
+		want bool
+	}{
+		{[]string{"/usr/bin/podman", "--runtime", "runsc", "system", "service", "--time=0", "unix://" + sock}, true},
+		{[]string{"podman", "--log-level=debug", "system", "service", sock}, true},
+		{[]string{"podman", "system", "service", "--time=0", "unix://" + sock}, true},
+		{[]string{"/usr/bin/podman", "system", "service", "--time=0", "unix:///home/p/.agentry/s/other-podman.sock"}, false},
+		{[]string{"/usr/bin/podman", "system", "service", "--time=0"}, false},
+		{[]string{"/usr/bin/podman", "run", "img", "system", "service", "unix://" + sock}, false},
+		{[]string{"/usr/bin/podman", "exec", "c", "system", "service", "unix://" + sock}, false},
+		{[]string{"/usr/bin/podman", "service", "system", "unix://" + sock}, false},
+		{[]string{"/usr/bin/podman", "system", "prune"}, false},
+		{[]string{"/usr/bin/sleep", "system", "service", "unix://" + sock}, false},
+		{[]string{"/usr/bin/podman-remote", "system", "service", "unix://" + sock}, false},
+		{nil, false},
+	} {
+		if got := isPodmanServiceArgv(tc.argv, sock); got != tc.want {
+			t.Errorf("isPodmanServiceArgv(%q) = %v, want %v", tc.argv, got, tc.want)
+		}
+	}
+	// The binary AGENTRY_PODMAN names is podman whatever it is called.
+	t.Setenv(dockerx.EnvPodman, "/opt/podman/bin/podman5")
+	if !isPodmanServiceArgv([]string{"/opt/podman/bin/podman5", "system", "service", "unix://" + sock}, sock) {
+		t.Error("the named podman binary was not taken for one")
+	}
+	if isPodmanServiceArgv([]string{"/opt/podman/bin/podman6", "system", "service", "unix://" + sock}, sock) {
+		t.Error("a binary neither named podman nor the one AGENTRY_PODMAN names was taken for one")
+	}
+}
+
+// The sweep a run starts with reaches a dead run's service through the
+// runner home, which is not where the run directories live: the socket
+// under the home's s/ directory goes with the record.
+func TestTheRunSweepFindsTheServiceSocketUnderTheRunnerHome(t *testing.T) {
+	if _, ok := owner.StartTime(os.Getpid()); !ok {
+		t.Skip("this process cannot read start times")
+	}
+	home := t.TempDir()
+	root := t.TempDir()
+	const runID = "dead0007"
+	dir := filepath.Join(root, "runs", runID)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, "s"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sock := filepath.Join(home, "s", runID+"-podman.sock")
+	if err := os.WriteFile(sock, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rec, _ := json.Marshal(podmanServiceRecord{PID: os.Getpid(), Start: 1, Socket: sock})
+	if err := os.WriteFile(filepath.Join(dir, podmanServicePIDFile), rec, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// No lock file: the directory is a dead run's only by the container
+	// sweep's word.
+	sweepRunDirs(root, home, map[string]bool{runID: true}, nil)
+	for _, p := range []string{sock, filepath.Join(dir, podmanServicePIDFile)} {
+		if _, err := os.Stat(p); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s was kept: %v", p, err)
+		}
+	}
 }
 
 // On a rootless engine the steps that write the person's files run as the

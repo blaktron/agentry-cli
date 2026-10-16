@@ -125,3 +125,14 @@ func nsInode(kind string) (string, bool) {
 	}
 	return v, true
 }
+
+// CommandLine reads a process's own argv from /proc/<pid>/cmdline. ok is
+// false when the process is gone or the record cannot be read; a sweep
+// that would signal the process treats that as "not the one it expects".
+func CommandLine(pid int) (argv []string, ok bool) {
+	b, err := os.ReadFile(procRoot + "/" + strconv.Itoa(pid) + "/cmdline") //nolint:gosec // an integer pid, never a path from outside
+	if err != nil || len(b) == 0 {
+		return nil, false
+	}
+	return strings.Split(strings.TrimRight(string(b), "\x00"), "\x00"), true
+}
