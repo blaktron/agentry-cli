@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -15,18 +14,14 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/sockfilter"
 )
 
-// Where the daemon runs in a VM (Docker Desktop on macOS and Windows), the
-// gateway's docker filter cannot be a socket the CLI serves: a host socket
-// cannot be bind-mounted into the VM's containers the way the daemon's own
-// /var/run/docker.sock can. So it runs in a container of the run's own,
-// the runner image's docker-filter role, which holds the daemon's socket
-// and serves the same package's filter on docker.sock in a volume the
+// Where the daemon runs in a VM (Docker Desktop, Colima, Lima, a podman
+// machine), the gateway's docker filter cannot be a socket the CLI serves: a
+// host socket cannot be bind-mounted into the VM's containers the way the
+// daemon's own /var/run/docker.sock can. So it runs in a container of the
+// run's own, the runner image's docker-filter role, which holds the daemon's
+// socket and serves the same package's filter on docker.sock in a volume the
 // gateway mounts at /var/run, where it looks for the daemon. The gateway
-// reaches the daemon only through it, as on Linux.
-
-// filterInProcess says whether the CLI serves the filter itself (Linux);
-// elsewhere a filter container serves it.
-var filterInProcess = runtime.GOOS == "linux"
+// reaches the daemon only through it, as where the CLI serves the filter.
 
 const (
 	// sidecarListenDir is where the filter container keeps its socket: the
@@ -45,10 +40,12 @@ var sidecarReadyWait = 60 * time.Second
 func filterVolume(runID string) string { return "agentry-" + runID + "-docker" }
 
 // startFilterSidecar starts the run's filter container and returns the
-// volume holding its socket. cfg is the policy the in-process filter would
-// take, its host paths spelled the gateway's way, which is how the gateway
-// names them in what it asks and where the container sees them.
-func startFilterSidecar(ctx context.Context, d dockerx.Client, rd *runDirs, runID, image string, cfg sockfilter.Config, lim policy.Limits, td *teardown) (string, error) {
+// volume holding its socket. daemonSocket is the daemon's socket as the
+// container mounts it (filterPlacement.mountSource). cfg is the policy the
+// in-process filter would take, its host paths spelled the gateway's way,
+// which is how the gateway names them in what it asks and where the
+// container sees them.
+func startFilterSidecar(ctx context.Context, d dockerx.Client, rd *runDirs, runID, image, daemonSocket string, cfg sockfilter.Config, lim policy.Limits, td *teardown) (string, error) {
 	cfg = sidecarConfigOf(cfg)
 	raw, err := sockfilter.MarshalConfig(cfg)
 	if err != nil {
@@ -66,7 +63,7 @@ func startFilterSidecar(ctx context.Context, d dockerx.Client, rd *runDirs, runI
 	td.add(func(c context.Context) { _ = d.VolumeRemove(c, vol) })
 	name := containerName(runID, "docker-filter")
 	mounts := []dockerx.Mount{
-		{Source: DockerSocket, Target: DockerSocket},
+		{Source: daemonSocket, Target: DockerSocket},
 		{Source: vol, Target: sidecarListenDir},
 		{Source: cfgFile, Target: sidecarConfig, ReadOnly: true},
 		{Source: rd.receiptsDir, Target: sidecarLogDir},
@@ -86,6 +83,10 @@ func startFilterSidecar(ctx context.Context, d dockerx.Client, rd *runDirs, runI
 		// dropped, a read-only root and no network.
 		User:   "0",
 		Mounts: mounts,
+		// It holds the daemon's socket, as the gateway does where the CLI
+		// serves the filter: an SELinux-enabled daemon would refuse it the
+		// socket otherwise. The exemption goes with the role.
+		DisableSELinuxLabel: true,
 	}.WithPosture(lim.Memory, lim.CPUs, lim.Pids)
 	spec.ReadOnly = true
 	td.add(func(c context.Context) {

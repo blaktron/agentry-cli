@@ -333,6 +333,10 @@ func RunSources(ctx context.Context, d dockerx.Client, img Image, in, out string
 		argv = append(argv, "--clamav", clamMount)
 		mounts = append(mounts, dockerx.Mount{Source: img.Signatures.Dir, Target: clamMount, ReadOnly: true, Relabel: true})
 	}
+	user, err := dockerx.PersonUser(ctx, d)
+	if err != nil {
+		return nil, err
+	}
 	r := dockerx.RunSpec{
 		Name:    name,
 		Image:   img.Tag,
@@ -345,7 +349,7 @@ func RunSources(ctx context.Context, d dockerx.Client, img Image, in, out string
 		Mounts:   mounts,
 		// The texts belong to the person who ran the command, and a
 		// decoder runs with no more than they have.
-		User:       invokingUser(),
+		User:       user,
 		AutoRemove: true,
 		Labels:     map[string]string{"agentry.decode": "1"},
 	}.WithPosture(lim.Memory, lim.CPUs, lim.Pids)
@@ -1093,14 +1097,6 @@ func andList(items []string) string {
 		return items[0]
 	}
 	return strings.Join(items[:len(items)-1], ", ") + " and " + items[len(items)-1]
-}
-
-func invokingUser() string {
-	uid, gid := os.Getuid(), os.Getgid()
-	if uid < 0 || gid < 0 {
-		return ""
-	}
-	return fmt.Sprintf("%d:%d", uid, gid)
 }
 
 func tail(s string, n int) string {

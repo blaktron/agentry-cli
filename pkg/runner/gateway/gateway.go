@@ -158,10 +158,17 @@ func EnsureHarnessImage(ctx context.Context, d dockerx.Client, adapterName strin
 // same rule, and by what it runs as well as its name: it must be
 // docker.runtime's binary registered again with --host-uds=open and nothing
 // else, since the receipt says the gateway ran under it. An unset runtime asks
-// nothing.
+// nothing. On podman a runtime is refused outright (PodmanRuntimeRefusal).
 func EnsureRuntime(ctx context.Context, d dockerx.Client, pol *policy.Policy) error {
 	if pol.Docker.Runtime == "" && pol.Docker.GatewayRuntime == "" {
 		return nil
+	}
+	e, err := dockerx.DescribeEngine(ctx, d)
+	if err != nil {
+		return err
+	}
+	if e.Kind == dockerx.KindPodman {
+		return PodmanRuntimeRefusal(pol)
 	}
 	table, err := d.Runtimes(ctx)
 	if err != nil {
@@ -183,6 +190,19 @@ func EnsureRuntime(ctx context.Context, d dockerx.Client, pol *policy.Policy) er
 		}
 	}
 	return nil
+}
+
+// PodmanRuntimeRefusal is why a policy's runtime is refused on podman. The
+// gateway creates the tool and MCP server containers through podman's
+// Docker-compatible API, which takes a container's runtime and drops it: they
+// would run under podman's default while the receipt named the policy's.
+func PodmanRuntimeRefusal(pol *policy.Policy) error {
+	key, want := "docker.runtime", pol.Docker.Runtime
+	if want == "" {
+		key, want = "docker.gatewayRuntime", pol.Docker.GatewayRuntime
+	}
+	return fmt.Errorf("%s %q is not held on podman: the containers the gateway creates go through podman's Docker-compatible API, which does not apply a container's runtime, so they would run under podman's default while the receipt named %q: unset docker.runtime and docker.gatewayRuntime in the policy to run on podman, or run on Docker Engine",
+		key, want, want)
 }
 
 // ExecPackagesFile is where the exec image build records the resolved

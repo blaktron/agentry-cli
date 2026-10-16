@@ -1,7 +1,7 @@
 // `agentry doctor`: the "check my setup" verb the converted agents lost
 // with their doctor.sh. `setup` prepares a machine; `doctor` reports,
 // without changing anything, whether a scheduled `agentry run` would get
-// past its preflight — policy and model, the docker engine and the
+// past its preflight — policy and model, the container engine and the
 // pinned images, the registry, and for a specific ref the verified
 // install, its MCP server store, its profile and every declared secret
 // (the exit-11 refusal, predicted instead of met at 03:00).
@@ -27,6 +27,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
+	"github.com/blaktron/agentry-cli/pkg/runner/gateway"
 	"github.com/blaktron/agentry-cli/pkg/runner/harnessprobe"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
 	"github.com/blaktron/agentry-cli/pkg/runner/localinstall"
@@ -102,8 +103,10 @@ func newDoctorCmd() *cobra.Command {
 		Use:   "doctor [ns/name[@range]]",
 		Short: "Check that this machine (and optionally one QuickAgent) is ready to run",
 		Long: "Report, without changing anything, whether `agentry run` would get past its\n" +
-			"preflight on this machine: the operator policy and model, the docker engine\n" +
-			"and the pinned gateway/harness/runner images, and the registry. With a ref\n" +
+			"preflight on this machine: the operator policy and model, the container engine\n" +
+			"(Docker Engine or podman: its version, its socket, whether it runs rootless,\n" +
+			"and where a run's docker filter would run on it), the pinned\n" +
+			"gateway/harness/runner images, and the registry. With a ref\n" +
 			"(or --local DIR) it also checks that QuickAgent's verified install, its\n" +
 			"declared MCP servers' store, its MCP profile, and that every declared secret\n" +
 			"resolves — the exit-11 refusal a scheduled run would otherwise meet.\n\n" +
@@ -340,11 +343,28 @@ func doctorDocker(ctx context.Context, rep *doctorReport, d dockerx.Client, pol 
 		rep.fail("docker", "%v", err)
 		return
 	}
-	rep.ok("docker", "engine available")
+	// The engine in the receipt's words, or why a run on it is refused:
+	// podman with no API socket answering, an endpoint the run's docker
+	// filter cannot be put in front of.
+	line, err := engine.EngineLine(ctx, d)
+	if err != nil {
+		rep.fail("docker", "%v", err)
+		return
+	}
+	rep.ok("docker", "%s", line)
 	if pol == nil {
 		return
 	}
-	if want := pol.Docker.Runtime; want != "" {
+	onPodman := false
+	if pol.Docker.Runtime != "" || pol.Docker.GatewayRuntime != "" {
+		if e, eerr := dockerx.DescribeEngine(ctx, d); eerr == nil && e.Kind == dockerx.KindPodman {
+			// podman lists every runtime its configuration names, installed
+			// or not, so its table is not consulted: the runtime is refused.
+			rep.fail("docker:runtime", "%v", gateway.PodmanRuntimeRefusal(pol))
+			onPodman = true
+		}
+	}
+	if want := pol.Docker.Runtime; want != "" && !onPodman {
 		// The policy's runtime is enforced, never preferred: a run on a
 		// daemon without it stops at ensure, so doctor says so here,
 		// with the fix.

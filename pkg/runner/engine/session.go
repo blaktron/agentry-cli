@@ -73,6 +73,16 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	receiptsDir := filepath.Join(p.OutDir, "receipts")
 	env.Receipts = receipt.Receipts{Dir: receiptsDir, RunPlanSHA256: planHash}
 
+	// The engine, and where the run's docker filter runs on it, before
+	// anything touches the daemon.
+	place, err := placementFor(ctx, d)
+	if err != nil {
+		_, cerr := fail(env, nil, err)
+		return nil, cerr
+	}
+	p.place = &place
+	env.CapabilitiesEnforced["engine"] = place.line()
+
 	// What a run whose process died left behind goes first, before this
 	// run adds its own.
 	sweepAbandonedRun(ctx, d, p.RunRoot, p.Stderr)

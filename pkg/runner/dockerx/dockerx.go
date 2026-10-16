@@ -12,12 +12,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/procx"
 )
@@ -232,36 +234,73 @@ func mountField(f string) string {
 	return `"` + strings.ReplaceAll(f, `"`, `""`) + `"`
 }
 
-// CLI is the real client.
+// CLI is the real client. It drives the docker CLI, or podman's own (Podman),
+// whose commands take docker's spelling for everything the runner creates and
+// differ only in what they report about the engine.
 type CLI struct {
-	// Bin is the docker binary ("docker" resolved via PATH by default;
-	// AGENTRY_DOCKER overrides for odd installs).
+	// Bin is the client binary ("docker" resolved via PATH by default;
+	// AGENTRY_DOCKER overrides for odd installs, AGENTRY_PODMAN for podman).
 	Bin string
+	// Podman says Bin is podman's own CLI.
+	Podman bool
+
+	// detect says the CLI to drive is still to be found (resolve).
+	detect bool
+	// misnamed is why AGENTRY_ENGINE could not be read; Available and
+	// Engine report it.
+	misnamed error
+	mu       sync.Mutex
+	engine   *Engine
 }
 
-// New returns a CLI client.
+// New returns a CLI client for the engine AGENTRY_ENGINE names, or for the
+// one it finds on first use (resolve).
 func New() *CLI {
-	bin := os.Getenv("AGENTRY_DOCKER")
-	if bin == "" {
-		bin = "docker"
+	switch e := os.Getenv(EnvEngine); strings.ToLower(e) {
+	case KindPodman:
+		return &CLI{Bin: podmanBin(), Podman: true}
+	case KindDocker:
+		return &CLI{Bin: dockerBin()}
+	case "":
+	default:
+		return &CLI{Bin: dockerBin(), misnamed: fmt.Errorf("%s is %q: it takes docker or podman", EnvEngine, e)}
 	}
-	return &CLI{Bin: bin}
+	if os.Getenv("DOCKER_HOST") != "" || os.Getenv("DOCKER_CONTEXT") != "" {
+		return &CLI{Bin: dockerBin()}
+	}
+	return &CLI{Bin: dockerBin(), detect: true}
+}
+
+func dockerBin() string {
+	if b := os.Getenv(EnvDocker); b != "" {
+		return b
+	}
+	return "docker"
+}
+
+// name is the CLI's name in an error.
+func (c *CLI) name() string {
+	if c.Podman {
+		return "podman"
+	}
+	return "docker"
 }
 
 func (c *CLI) command(ctx context.Context, args ...string) *exec.Cmd {
+	c.resolve(ctx)
 	cmd := exec.CommandContext(ctx, c.Bin, args...) //nolint:gosec // fixed binary, structured args
 	cmd.Env = os.Environ()
 	procx.NoWindow(cmd)
 	return cmd
 }
 
-// run executes a docker command, returning stdout and a described error.
+// run executes a client command, returning stdout and a described error.
 func (c *CLI) run(ctx context.Context, args ...string) (string, error) {
 	cmd := c.command(ctx, args...)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	if err := cmd.Run(); err != nil {
-		return out.String(), fmt.Errorf("docker %s: %w: %s", args[0], err, strings.TrimSpace(errb.String()))
+		return out.String(), fmt.Errorf("%s %s: %w: %s", c.name(), args[0], err, strings.TrimSpace(errb.String()))
 	}
 	return out.String(), nil
 }
@@ -274,9 +313,22 @@ func (c *CLI) run(ctx context.Context, args ...string) (string, error) {
 // time a caller allows for an idle engine to wake. Both commands exit non-zero
 // with the daemon's error on stderr when nothing answers; a server version that
 // comes back empty is treated the same way.
+//
+// For podman, whose CLI runs the engine itself, `podman info` is the check.
 func (c *CLI) Available(ctx context.Context) error {
+	if c.misnamed != nil {
+		return c.misnamed
+	}
+	c.resolve(ctx)
 	if _, err := exec.LookPath(c.Bin); err != nil {
-		return fmt.Errorf("docker CLI not found (%s): the runner needs a docker engine — install docker or set AGENTRY_DOCKER", c.Bin)
+		if c.Podman {
+			return fmt.Errorf("podman not found (%s): install podman, or set AGENTRY_PODMAN to its binary", c.Bin)
+		}
+		return fmt.Errorf("docker CLI not found (%s), and no podman answers: the runner needs a container engine — install Docker Engine or podman, or set AGENTRY_DOCKER", c.Bin)
+	}
+	if c.Podman {
+		_, err := c.podmanInfo(ctx)
+		return err
 	}
 	out, err := c.run(ctx, "version", "--format", "{{.Server.Version}}")
 	if err != nil {
@@ -293,6 +345,11 @@ func (c *CLI) Available(ctx context.Context) error {
 // distribution for Docker Engine. A scheduled run that must go on after
 // its person signs out tells the two apart by it.
 func (c *CLI) OperatingSystem(ctx context.Context) (string, error) {
+	c.resolve(ctx)
+	if c.Podman {
+		info, err := c.podmanInfo(ctx)
+		return info.Host.Distribution.Distribution, err
+	}
 	out, err := c.run(ctx, "info", "--format", "{{.OperatingSystem}}")
 	return strings.TrimSpace(out), err
 }
@@ -310,8 +367,18 @@ type Runtime struct {
 const HostUDSOpen = "--host-uds=open"
 
 // Runtimes implements Client from `docker info`: the daemon's runtime
-// table keyed by name. The names are what `--runtime` accepts.
+// table keyed by name. The names are what `--runtime` accepts. podman keeps
+// no table: its answer is its one default runtime.
 func (c *CLI) Runtimes(ctx context.Context) (map[string]Runtime, error) {
+	c.resolve(ctx)
+	if c.Podman {
+		info, err := c.podmanInfo(ctx)
+		if err != nil {
+			return nil, err
+		}
+		rt := info.Host.OCIRuntime
+		return map[string]Runtime{rt.Name: {Path: rt.Path}}, nil
+	}
 	out, err := c.run(ctx, "info", "--format", "{{json .Runtimes}}")
 	if err != nil {
 		return nil, fmt.Errorf("docker daemon not reachable: %w", err)
@@ -399,7 +466,7 @@ func (c *CLI) ContainerIP(ctx context.Context, name, network string) (string, er
 
 // ImageExists implements Client.
 func (c *CLI) ImageExists(ctx context.Context, ref string) (bool, error) {
-	cmd := c.command(ctx, "image", "inspect", "--format", "{{.Id}}", ref)
+	cmd := c.command(ctx, "image", "inspect", "--format", "{{.Id}}", c.imageRef(ref))
 	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
 	err := cmd.Run()
 	if err == nil {
@@ -413,7 +480,19 @@ func (c *CLI) ImageExists(ctx context.Context, ref string) (bool, error) {
 }
 
 // ServerArch implements Client.
+//
+// podman's CLI runs the engine itself and reports it as the client
+// ({{.Client.OsArch}}, "linux/amd64").
 func (c *CLI) ServerArch(ctx context.Context) (string, error) {
+	c.resolve(ctx)
+	if c.Podman {
+		out, err := c.run(ctx, "version", "--format", "{{.Client.OsArch}}")
+		if err != nil {
+			return "", err
+		}
+		_, arch, _ := strings.Cut(strings.TrimSpace(out), "/")
+		return arch, nil
+	}
 	out, err := c.run(ctx, "version", "--format", "{{.Server.Arch}}")
 	if err != nil {
 		return "", fmt.Errorf("docker daemon not reachable: %w", err)
@@ -423,7 +502,7 @@ func (c *CLI) ServerArch(ctx context.Context) (string, error) {
 
 // ImageLabel implements Client.
 func (c *CLI) ImageLabel(ctx context.Context, ref, key string) (string, error) {
-	out, err := c.run(ctx, "image", "inspect", "--format", "{{json .Config.Labels}}", ref)
+	out, err := c.run(ctx, "image", "inspect", "--format", "{{json .Config.Labels}}", c.imageRef(ref))
 	if err != nil {
 		return "", fmt.Errorf("docker image inspect %s: %w", ref, err)
 	}
@@ -439,7 +518,7 @@ func (c *CLI) ImageLabel(ctx context.Context, ref, key string) (string, error) {
 // the path out as a tar stream, `docker rm -fv` the container: -v, since
 // creating it gave each VOLUME the image declares an anonymous volume.
 func (c *CLI) ImageFile(ctx context.Context, ref, path string) ([]byte, error) {
-	id, err := c.run(ctx, "create", ref)
+	id, err := c.run(ctx, "create", c.imageRef(ref))
 	if err != nil {
 		return nil, fmt.Errorf("docker create %s: %w", ref, err)
 	}
@@ -469,10 +548,45 @@ func (c *CLI) ImageFile(ctx context.Context, ref, path string) ([]byte, error) {
 	}
 }
 
-// Pull implements Client.
+// Pull implements Client. podman is given the reference docker would read
+// (qualifiedRef): its own resolution of a short name may ask which registry
+// to use, and a run has no one to answer.
 func (c *CLI) Pull(ctx context.Context, ref string) error {
+	c.resolve(ctx)
+	if c.Podman {
+		ref = qualifiedRef(ref)
+	}
 	_, err := c.run(ctx, "pull", ref)
 	return err
+}
+
+// imageRef is ref as the client must be given it to name the image docker
+// would. podman resolves a short name against its own search list and local
+// store, so a name with a repository but no registry (docker/mcp-gateway) is
+// given Docker Hub's, as docker reads it. A single-component name stays as it
+// is: that is how the runner names the images it builds, which podman keeps
+// under localhost/.
+func (c *CLI) imageRef(ref string) string {
+	if c.resolve(context.Background()); !c.Podman {
+		return ref
+	}
+	if first, _, ok := strings.Cut(ref, "/"); ok && !strings.ContainsAny(first, ".:") && first != "localhost" {
+		return "docker.io/" + ref
+	}
+	return ref
+}
+
+// qualifiedRef is ref as docker reads it: a name with no registry is Docker
+// Hub's, and a single-component one is under library/.
+func qualifiedRef(ref string) string {
+	first, _, hasSlash := strings.Cut(ref, "/")
+	if !hasSlash {
+		return "docker.io/library/" + ref
+	}
+	if strings.ContainsAny(first, ".:") || first == "localhost" {
+		return ref
+	}
+	return "docker.io/" + ref
 }
 
 // Build implements Client.
@@ -500,8 +614,23 @@ func (c *CLI) NetworkCreate(ctx context.Context, name string, internal bool, lab
 	return err
 }
 
-// NetworkConnect implements Client.
+// DefaultBridge is docker's name for its default network, the one a
+// container reaches past the host through.
+const DefaultBridge = "bridge"
+
+// NetworkConnect implements Client. podman's default network has a name of
+// its own ("podman" unless its configuration says otherwise), which podman
+// gives in place of docker's.
 func (c *CLI) NetworkConnect(ctx context.Context, network, container string) error {
+	if c.resolve(ctx); c.Podman && network == DefaultBridge {
+		info, err := c.podmanInfo(ctx)
+		if err != nil {
+			return err
+		}
+		if n := info.Host.NetworkBackendInfo.DefaultNetwork; n != "" {
+			network = n
+		}
+	}
 	_, err := c.run(ctx, "network", "connect", network, container)
 	return err
 }
@@ -567,22 +696,31 @@ func (c *CLI) VolumesByLabel(ctx context.Context, label string) ([]string, error
 
 // RunDetached implements Client.
 func (c *CLI) RunDetached(ctx context.Context, r RunSpec) error {
-	cmd := c.command(ctx, r.args(true)...)
-	cmd.Env = append(cmd.Env, r.envPairs()...)
+	named, err := c.podmanPrepare(ctx, r)
+	if err != nil {
+		return err
+	}
+	cmd := c.command(ctx, c.dialectArgs(true, r, named)...)
+	cmd.Env = append(cmd.Env, r.envPairsFor(c.Podman)...)
 	var errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = io.Discard, &errb
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("docker run %s: %w: %s", r.Name, err, strings.TrimSpace(errb.String()))
+		c.dropVolumes(ctx, named)
+		return fmt.Errorf("%s run %s: %w: %s", c.name(), r.Name, err, strings.TrimSpace(errb.String()))
 	}
 	return nil
 }
 
 // RunForeground implements Client.
 func (c *CLI) RunForeground(ctx context.Context, r RunSpec, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
-	cmd := c.command(ctx, r.args(false)...)
-	cmd.Env = append(cmd.Env, r.envPairs()...)
+	named, err := c.podmanPrepare(ctx, r)
+	if err != nil {
+		return -1, err
+	}
+	cmd := c.command(ctx, c.dialectArgs(false, r, named)...)
+	cmd.Env = append(cmd.Env, r.envPairsFor(c.Podman)...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
-	err := cmd.Run()
+	err = cmd.Run()
 	if err == nil {
 		return 0, nil
 	}
@@ -593,11 +731,11 @@ func (c *CLI) RunForeground(ctx context.Context, r RunSpec, stdin io.Reader, std
 		// own exit; report them as errors so the engine classifies them
 		// as environment (13), not agent (14).
 		if code >= 125 && ctx.Err() == nil {
-			return code, fmt.Errorf("docker run %s failed (exit %d)", r.Name, code)
+			return code, fmt.Errorf("%s run %s failed (exit %d)", c.name(), r.Name, code)
 		}
 		return code, nil
 	}
-	return -1, fmt.Errorf("docker run %s: %w", r.Name, err)
+	return -1, fmt.Errorf("%s run %s: %w", c.name(), r.Name, err)
 }
 
 // Stop implements Client.
@@ -617,7 +755,20 @@ func (c *CLI) RemoveForce(ctx context.Context, name string) error {
 	// anonymous one another container still uses.
 	_, err := c.run(ctx, "rm", "-fv", name)
 	if err != nil && isNotFound(err) {
-		return nil
+		err = nil
+	}
+	if err == nil && c.Podman {
+		// The named volumes podmanPrepare made in place of its anonymous
+		// ones go with it too.
+		vols, lerr := c.VolumesByLabel(ctx, volumeOfLabel+"="+name)
+		if lerr != nil {
+			return lerr
+		}
+		for _, v := range vols {
+			if rerr := c.VolumeRemove(ctx, v); rerr != nil {
+				return rerr
+			}
+		}
 	}
 	return err
 }
@@ -678,6 +829,9 @@ func (c *CLI) Logs(ctx context.Context, name string, tail int) (string, error) {
 	// docker's --tail 0 prints nothing; a non-positive tail here means the
 	// whole log, which a startup check over the gateway's output needs.
 	tailArg := "all"
+	if c.resolve(ctx); c.Podman {
+		tailArg = "-1"
+	}
 	if tail > 0 {
 		tailArg = strconv.Itoa(tail)
 	}
@@ -689,8 +843,82 @@ func (c *CLI) Logs(ctx context.Context, name string, tail int) (string, error) {
 	return string(out), nil
 }
 
+// volumeOfLabel marks a named volume podman's dialect made for a container's
+// anonymous one (podmanPrepare), with the container's name.
+const volumeOfLabel = "agentry.volume-of"
+
+// dialectArgs is r's run argv for the CLI driven, its image named as imageRef
+// names it.
+func (c *CLI) dialectArgs(detach bool, r RunSpec, named []namedVolume) []string {
+	r.Image = c.imageRef(r.Image)
+	return r.argsFor(detach, c.Podman, named)
+}
+
+// dropVolumes removes the named volumes podmanPrepare made for a container
+// that did not start, under a context that survives the caller's.
+func (c *CLI) dropVolumes(ctx context.Context, named []namedVolume) {
+	for _, v := range named {
+		_ = c.VolumeRemove(context.WithoutCancel(ctx), v.Name)
+	}
+}
+
+// podmanPrepare is what podman's CLI needs before it runs r: r's environment
+// checked, and r.Volumes made. podman's run refuses a label on an anonymous
+// volume, so each becomes a named volume with the same labels (and the
+// container's name, for RemoveForce), made here and returned to be mounted by
+// name in their place: the run's teardown and sweeps find it by its labels
+// either way. The docker CLI takes r as it is: nil.
+func (c *CLI) podmanPrepare(ctx context.Context, r RunSpec) ([]namedVolume, error) {
+	c.resolve(ctx)
+	if !c.Podman {
+		return nil, nil
+	}
+	// A variable podman reads as its own configuration cannot reach a
+	// container by name through podman's environment, and its value would
+	// show in a process listing as argv: refused, never sent.
+	for _, k := range sortedKeys(r.Env) {
+		if podmanReads(k) && !clientReads(k) {
+			return nil, fmt.Errorf("%s cannot be given to %s on podman: podman reads a variable of that name as its own configuration", k, r.Name)
+		}
+	}
+	if len(r.Volumes) == 0 {
+		return nil, nil
+	}
+	if r.Name == "" {
+		return nil, errors.New("a container with labelled volumes needs a name on podman")
+	}
+	var named []namedVolume
+	for i, v := range r.Volumes {
+		labels := maps.Clone(v.Labels)
+		if labels == nil {
+			labels = map[string]string{}
+		}
+		labels[volumeOfLabel] = r.Name
+		name := r.Name + "-vol" + strconv.Itoa(i)
+		if err := c.VolumeCreate(ctx, name, labels); err != nil {
+			c.dropVolumes(ctx, named)
+			return nil, fmt.Errorf("the volume of %s at %s: %w", r.Name, v.Target, err)
+		}
+		named = append(named, namedVolume{Name: name, Target: v.Target})
+	}
+	return named, nil
+}
+
+// namedVolume is a named volume mounted at Target.
+type namedVolume struct {
+	Name   string
+	Target string
+}
+
 // args assembles the docker run argv (without env values, see RunSpec.Env).
-func (r RunSpec) args(detach bool) []string {
+func (r RunSpec) args(detach bool) []string { return r.argsFor(detach, false, nil) }
+
+// argsFor assembles the run argv for docker's CLI or podman's, with named
+// mounted in place of r.Volumes (podmanPrepare). The two take the same
+// spelling but for one form: a container on several networks with an alias
+// on the first, which podman writes name:alias=… where docker writes
+// name=…,alias=….
+func (r RunSpec) argsFor(detach, podman bool, named []namedVolume) []string {
 	args := []string{"run"}
 	if detach {
 		args = append(args, "-d")
@@ -724,6 +952,12 @@ func (r RunSpec) args(detach bool) []string {
 		if r.Alias != "" {
 			first += ",alias=" + r.Alias
 		}
+		if podman {
+			first = r.Network
+			if r.Alias != "" {
+				first += ":alias=" + r.Alias
+			}
+		}
 		args = append(args, "--network", first)
 		for _, n := range r.ExtraNetworks {
 			args = append(args, "--network", n)
@@ -748,8 +982,12 @@ func (r RunSpec) args(detach bool) []string {
 		}
 		args = append(args, "-p", pp.HostIP+":"+hp+":"+strconv.Itoa(pp.ContainerPort))
 	}
+	reads := clientReads
+	if podman {
+		reads = podmanReads
+	}
 	for _, k := range sortedKeys(r.Env) {
-		if clientReads(k) {
+		if reads(k) {
 			args = append(args, "-e", k+"="+r.Env[k])
 			continue
 		}
@@ -803,11 +1041,17 @@ func (r RunSpec) args(detach bool) []string {
 		args = append(args, "-v", spec)
 	}
 	for _, v := range r.Volumes {
+		if named != nil {
+			break
+		}
 		fields := []string{"type=volume", mountField("dst=" + v.Target)}
 		for _, k := range sortedKeys(v.Labels) {
 			fields = append(fields, mountField("volume-label="+k+"="+v.Labels[k]))
 		}
 		args = append(args, "--mount", strings.Join(fields, ","))
+	}
+	for _, v := range named {
+		args = append(args, "--mount", strings.Join([]string{"type=volume", mountField("src=" + v.Name), mountField("dst=" + v.Target)}, ","))
 	}
 	args = append(args, r.Image)
 	return append(args, r.Argv...)
@@ -815,10 +1059,17 @@ func (r RunSpec) args(detach bool) []string {
 
 // envPairs renders NAME=value pairs for the docker client's environment,
 // leaving out the names the client reads itself (args carries those).
-func (r RunSpec) envPairs() []string {
+func (r RunSpec) envPairs() []string { return r.envPairsFor(false) }
+
+// envPairsFor is envPairs for docker's CLI or podman's.
+func (r RunSpec) envPairsFor(podman bool) []string {
+	reads := clientReads
+	if podman {
+		reads = podmanReads
+	}
 	pairs := make([]string, 0, len(r.Env))
 	for _, k := range sortedKeys(r.Env) {
-		if clientReads(k) {
+		if reads(k) {
 			continue
 		}
 		pairs = append(pairs, k+"="+r.Env[k])
@@ -841,6 +1092,30 @@ func clientReads(name string) bool {
 		return true
 	}
 	return strings.HasPrefix(u, "DOCKER_")
+}
+
+// podmanReads is clientReads for podman's CLI, which runs the engine in its
+// own process and so reads more of its environment: where it keeps its
+// storage, its configuration and its temporary files (XDG_*, TMPDIR,
+// CONTAINERS_*, STORAGE_*, the registries' credentials) and which service it
+// talks to (CONTAINER_HOST and the like). A container's variable of such a
+// name, set in podman's environment, would reconfigure podman itself; beyond
+// clientReads's own names, podman's dialect refuses one (podmanPrepare).
+func podmanReads(name string) bool {
+	if clientReads(name) {
+		return true
+	}
+	u := strings.ToUpper(name)
+	switch u {
+	case "TMPDIR", "REGISTRY_AUTH_FILE", "NOTIFY_SOCKET", "LISTEN_FDS", "LISTEN_PID", "LISTEN_FDNAMES":
+		return true
+	}
+	for _, p := range []string{"XDG_", "CONTAINERS_", "CONTAINER_", "_CONTAINERS_", "PODMAN_", "STORAGE_", "BUILDAH_", "REGISTRIES_"} {
+		if strings.HasPrefix(u, p) {
+			return true
+		}
+	}
+	return false
 }
 
 func sortedKeys[V any](m map[string]V) []string {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -236,6 +237,73 @@ func TestDoctorReportsTheDockerRuntime(t *testing.T) {
 		t.Fatalf("a runsc-uds that runs runc was not reported:\n%s", out)
 	}
 	fake.RuntimeTable = nil
+}
+
+// TestDoctorNamesTheEngine: the docker check is the engine in the receipt's
+// words, and each engine a run would be refused on is refused by name: no
+// engine at all, podman with no API socket answering, an endpoint the run's
+// docker filter cannot be put in front of, and a policy runtime on podman.
+func TestDoctorNamesTheEngine(t *testing.T) {
+	policyPath, fake := doctorFixture(t)
+	fr := newFakeRegistry(t)
+	fake.EngineInfo = &dockerx.Engine{Kind: dockerx.KindPodman, CLI: "podman", Version: "5.8.4", Rootless: true,
+		Endpoint: "unix:///run/user/1000/podman/podman.sock", DaemonHost: hostnameOf(t), DaemonKernel: dockerx.HostKernel()}
+	out, _, _ := runCLI(t, nil, "doctor", "--registry", fr.url(), "--policy", policyPath)
+	if !strings.Contains(out, "ok    docker") || !strings.Contains(out, "podman 5.8.4, rootless, /run/user/1000/podman/podman.sock, docker filter ") {
+		t.Errorf("the engine line:\n%s", out)
+	}
+
+	fake.EngineInfo = nil
+	fake.EngineErr = errors.New("podman's API socket unix:///run/user/1000/podman/podman.sock does not answer: start it with `systemctl --user enable --now podman.socket`")
+	out, _, _ = runCLI(t, nil, "doctor", "--registry", fr.url(), "--policy", policyPath)
+	if !strings.Contains(out, "FAIL  docker") || !strings.Contains(out, "systemctl --user enable --now podman.socket") {
+		t.Errorf("podman with no socket:\n%s", out)
+	}
+
+	fake.EngineErr = nil
+	fake.EngineInfo = &dockerx.Engine{Kind: dockerx.KindDocker, CLI: "docker", Version: "29.7.2", Endpoint: "tcp://10.0.0.5:2376"}
+	out, _, _ = runCLI(t, nil, "doctor", "--registry", fr.url(), "--policy", policyPath)
+	if !strings.Contains(out, "FAIL  docker") || !strings.Contains(out, "tcp://10.0.0.5:2376 is not a Unix socket on this machine") {
+		t.Errorf("a tcp:// context:\n%s", out)
+	}
+
+	fake.EngineInfo = &dockerx.Engine{Kind: dockerx.KindPodman, CLI: "podman", Version: "5.8.4", Endpoint: "unix:///run/podman/podman.sock"}
+	pol, _, err := policy.Load(policyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pol.Docker.Runtime = "runsc"
+	if err := policy.Save(policyPath, pol); err != nil {
+		t.Fatal(err)
+	}
+	out, _, _ = runCLI(t, nil, "doctor", "--registry", fr.url(), "--policy", policyPath)
+	if !strings.Contains(out, "FAIL  docker:runtime") || !strings.Contains(out, `docker.runtime "runsc" is not held on podman`) || !strings.Contains(out, "ok    image:runner") {
+		t.Errorf("a runtime on podman:\n%s", out)
+	}
+}
+
+// With neither engine on the machine, the real client says so.
+func TestDoctorWithNoEngine(t *testing.T) {
+	policyPath, _ := doctorFixture(t)
+	newDockerClient = func() dockerx.Client { return dockerx.New() }
+	t.Setenv("PATH", t.TempDir())
+	for _, k := range []string{dockerx.EnvEngine, dockerx.EnvDocker, dockerx.EnvPodman, "DOCKER_HOST", "DOCKER_CONTEXT"} {
+		t.Setenv(k, "")
+	}
+	fr := newFakeRegistry(t)
+	out, _, _ := runCLI(t, nil, "doctor", "--registry", fr.url(), "--policy", policyPath)
+	if !strings.Contains(out, "FAIL  docker") || !strings.Contains(out, "no podman answers") || !strings.Contains(out, "install Docker Engine or podman") {
+		t.Errorf("no engine:\n%s", out)
+	}
+}
+
+func hostnameOf(t *testing.T) string {
+	t.Helper()
+	h, err := os.Hostname()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return h
 }
 
 // TestDoctorAdapterHarness: --adapter renders the harness probe's facts
