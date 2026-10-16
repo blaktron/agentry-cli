@@ -375,13 +375,14 @@ func PersonUser(ctx context.Context, d Client) (string, error) {
 	return e.PersonUser(), nil
 }
 
-// PersonUser is PersonUser for an engine already described.
+// PersonUser is PersonUser for an engine already described: the
+// person's own uid:gid, or root on a rootless engine.
 func (e Engine) PersonUser() string {
 	uid, gid, ok := e.PersonIDs()
 	switch {
 	case !ok:
 		return ""
-	case uid == 0 && gid == 0:
+	case e.Rootless:
 		return "0"
 	}
 	return fmt.Sprintf("%d:%d", uid, gid)
