@@ -2,6 +2,7 @@ package dockerx
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -307,7 +308,7 @@ func (c *CLI) podmanEngine(ctx context.Context) (Engine, error) {
 		return Engine{}, errors.New("podman drives a service on another machine (CONTAINER_HOST, a connection, or a podman machine), and the runner drives podman only on this machine: its docker filter needs the service's socket here")
 	}
 	e := parsePodmanEngine(info)
-	if err := pingSocket(ctx, e.SocketPath()); err != nil {
+	if err := PingSocket(ctx, e.SocketPath()); err != nil {
 		how := "systemctl --user enable --now podman.socket"
 		if !e.Rootless {
 			how = "systemctl enable --now podman.socket"
@@ -330,10 +331,10 @@ func parsePodmanEngine(info podmanInfo) Engine {
 	return e
 }
 
-// pingSocket asks the Docker API on a Unix socket for /_ping: an engine is
+// PingSocket asks the Docker API on a Unix socket for /_ping: an engine is
 // known by its answer, never by its socket file, which a stopped service can
 // leave behind.
-func pingSocket(ctx context.Context, path string) error {
+func PingSocket(ctx context.Context, path string) error {
 	if path == "" {
 		return errors.New("no Unix socket")
 	}
@@ -367,18 +368,177 @@ func pingSocket(ctx context.Context, path string) error {
 // person and any other uid is a subordinate one that cannot write their
 // directories. "" leaves the image's own user, on a host without POSIX ids.
 func PersonUser(ctx context.Context, d Client) (string, error) {
-	uid, gid := os.Getuid(), os.Getgid()
-	if uid < 0 || gid < 0 {
-		return "", nil
-	}
 	e, err := DescribeEngine(ctx, d)
 	if err != nil {
 		return "", err
 	}
-	if e.Rootless {
-		return "0", nil
+	return e.PersonUser(), nil
+}
+
+// PersonUser is PersonUser for an engine already described: the
+// person's own uid:gid, or root on a rootless engine.
+func (e Engine) PersonUser() string {
+	uid, gid, ok := e.PersonIDs()
+	switch {
+	case !ok:
+		return ""
+	case e.Rootless:
+		return "0"
 	}
-	return fmt.Sprintf("%d:%d", uid, gid), nil
+	return fmt.Sprintf("%d:%d", uid, gid)
+}
+
+// PersonIDs are the uid and gid that, inside a container on e, are the
+// person who runs the CLI: their own on a rootful engine, root's on a
+// rootless one, where the engine maps the person to the container's root
+// and every other id to a subordinate one. A file a container hands to
+// these ids is the person's to remove. ok is false on a host without POSIX
+// ids.
+func (e Engine) PersonIDs() (uid, gid int, ok bool) {
+	uid, gid = os.Getuid(), os.Getgid()
+	if uid < 0 || gid < 0 {
+		return 0, 0, false
+	}
+	if e.Rootless {
+		return 0, 0, true
+	}
+	return uid, gid, true
+}
+
+// RuntimeChecker verifies one OCI runtime by the name a policy gives it: an
+// optional capability of a Client, asked for with a type assertion. On
+// podman the name is tried (`podman --runtime <name> info`), since podman's
+// configuration lists every runtime it names, installed or not; on docker
+// the daemon's table is read.
+type RuntimeChecker interface {
+	// CheckRuntime is the registration behind name, or why there is none.
+	CheckRuntime(ctx context.Context, name string) (Runtime, error)
+}
+
+// CheckRuntime implements RuntimeChecker.
+func (c *CLI) CheckRuntime(ctx context.Context, name string) (Runtime, error) {
+	c.resolve(ctx)
+	if !c.Podman {
+		table, err := c.Runtimes(ctx)
+		if err != nil {
+			return Runtime{}, err
+		}
+		rt, ok := table[name]
+		if !ok {
+			return Runtime{}, fmt.Errorf("runtime %q is not registered on this docker daemon (it has: %s)", name, strings.Join(SortedRuntimeNames(table), ", "))
+		}
+		return rt, nil
+	}
+	out, err := c.run(ctx, "--runtime", name, "info", "--format", "{{.Host.OCIRuntime.Name}} {{.Host.OCIRuntime.Path}}")
+	if err != nil {
+		return Runtime{}, fmt.Errorf("runtime %q is not registered with podman (%v): name it under [engine.runtimes] in containers.conf", name, err)
+	}
+	got, path, _ := strings.Cut(strings.TrimSpace(out), " ")
+	if got != name || path == "" {
+		return Runtime{}, fmt.Errorf("runtime %q is not registered with podman: `podman --runtime %s info` names %q at %q", name, name, got, path)
+	}
+	return Runtime{Path: path}, nil
+}
+
+// CheckRuntime implements RuntimeChecker for Fake, from its table.
+func (f *Fake) CheckRuntime(ctx context.Context, name string) (Runtime, error) {
+	table, err := f.Runtimes(ctx)
+	if err != nil {
+		return Runtime{}, err
+	}
+	rt, ok := table[name]
+	if !ok {
+		return Runtime{}, fmt.Errorf("runtime %q is not registered (the engine has: %s)", name, strings.Join(SortedRuntimeNames(table), ", "))
+	}
+	return rt, nil
+}
+
+// CheckHostUDSWrapper says why the file podman registers for the gateway's
+// runtime (gateway, at path) is not a wrapper that runs the policy's
+// runtime (registered at runtime) with HostUDSOpen: podman takes a path per
+// runtime name and no arguments, so the gateway's runtime is a script that
+// adds the flag, and the script is read for it. It must name the runtime's
+// own path or the binary that path runs, since docker.runtime is itself a
+// wrapper where the runtime needs a flag of its own (a rootless podman's
+// --ignore-cgroups). A binary cannot be read that way and is refused with
+// the recipe. nil when it is right.
+func CheckHostUDSWrapper(path, runtime, gateway string) error {
+	b, err := readScript(path)
+	if err != nil {
+		return fmt.Errorf("%q is registered at %s, which cannot be read (%v)", gateway, path, err)
+	}
+	if b == nil {
+		return fmt.Errorf("%q is registered at %s, which is not a script: register a wrapper script that runs %s with %s", gateway, path, runtime, HostUDSOpen)
+	}
+	if !bytes.Contains(b, []byte(HostUDSOpen)) {
+		return fmt.Errorf("%q is registered at %s, a script that does not pass %s: the gateway could not open its run's docker filter under it", gateway, path, HostUDSOpen)
+	}
+	if !bytes.Contains(b, []byte(runtime)) && !bytes.Contains(b, []byte(RuntimeBinary(runtime))) {
+		return fmt.Errorf("%q is registered at %s, a script that does not name %s or the binary it runs: it must run the same runtime as docker.runtime", gateway, path, runtime)
+	}
+	return nil
+}
+
+// readScript reads a registered runtime's file when it is a script (a
+// shebang line, within a size a script has); nil for a binary.
+func readScript(path string) ([]byte, error) {
+	b, err := os.ReadFile(path) //nolint:gosec // the path podman registers for the runtime
+	if err != nil {
+		return nil, err
+	}
+	if len(b) > 1<<20 || !bytes.HasPrefix(b, []byte("#!")) {
+		return nil, nil
+	}
+	return b, nil
+}
+
+// RuntimeBinary is the binary a registered runtime runs: the path itself,
+// or, when the path is a wrapper script, the first absolute path in it that
+// names an existing file, which is what such a script execs.
+func RuntimeBinary(path string) string {
+	b, err := readScript(path)
+	if err != nil || b == nil {
+		return path
+	}
+	for _, f := range strings.Fields(string(b)) {
+		f = strings.Trim(f, `"'`)
+		if !strings.HasPrefix(f, "/") {
+			continue
+		}
+		if fi, err := os.Stat(f); err == nil && fi.Mode().IsRegular() {
+			return f
+		}
+	}
+	return path
+}
+
+// PodmanServicer starts a Docker-compatible API service of podman's own
+// whose default runtime is the one named: an optional capability of a
+// Client that drives podman's CLI. Every container created through such a
+// service's socket lands under that runtime, whatever its create body
+// says, which is how a run's gateway puts the containers it launches under
+// the policy's runtime on podman.
+type PodmanServicer interface {
+	// PodmanServiceCommand is the command that serves the API on the Unix
+	// socket at path with runtime as its default, until stopped; it is not
+	// started.
+	PodmanServiceCommand(ctx context.Context, runtime, path string) (*exec.Cmd, error)
+}
+
+// PodmanServiceCommand implements PodmanServicer for podman's own CLI; the
+// docker CLI, which has no such service, refuses.
+func (c *CLI) PodmanServiceCommand(ctx context.Context, runtime, path string) (*exec.Cmd, error) {
+	c.resolve(ctx)
+	if !c.Podman {
+		return nil, errors.New("a per-run podman API service needs podman's own CLI (AGENTRY_ENGINE=podman)")
+	}
+	cmd := exec.CommandContext(ctx, c.Bin, "--runtime", runtime, "system", "service", "--time=0", SchemeUnix+"://"+path) //nolint:gosec // the engine's binary, fixed args
+	cmd.Env = os.Environ()
+	procx.NoWindow(cmd)
+	// A CLI that dies takes its service with it, so a killed run leaves
+	// no API service behind that the next run's sweep would have to find.
+	dieWithParent(cmd)
+	return cmd, nil
 }
 
 // Engine selection. AGENTRY_ENGINE names the CLI to drive ("docker" or

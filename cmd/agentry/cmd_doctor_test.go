@@ -267,18 +267,37 @@ func TestDoctorNamesTheEngine(t *testing.T) {
 		t.Errorf("a tcp:// context:\n%s", out)
 	}
 
+	// On podman a runtime is checked by name, and the gateway's wrapper is
+	// read: an unregistered name fails with the recipe, a registered pair
+	// passes, and the docker CLI's view of podman cannot hold one.
 	fake.EngineInfo = &dockerx.Engine{Kind: dockerx.KindPodman, CLI: "podman", Version: "5.8.4", Endpoint: "unix:///run/podman/podman.sock"}
 	pol, _, err := policy.Load(policyPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	pol.Docker.Runtime = "runsc"
+	pol.Docker.GatewayRuntime = "runsc-uds"
 	if err := policy.Save(policyPath, pol); err != nil {
 		t.Fatal(err)
 	}
+	fake.RuntimeTable = map[string]dockerx.Runtime{"crun": {Path: "/usr/bin/crun"}}
 	out, _, _ = runCLI(t, nil, "doctor", "--registry", fr.url(), "--policy", policyPath)
-	if !strings.Contains(out, "FAIL  docker:runtime") || !strings.Contains(out, `docker.runtime "runsc" is not held on podman`) || !strings.Contains(out, "ok    image:runner") {
-		t.Errorf("a runtime on podman:\n%s", out)
+	if !strings.Contains(out, "FAIL  docker:runtime") || !strings.Contains(out, "[engine.runtimes]") || !strings.Contains(out, "warn  docker:gatewayRuntime") || !strings.Contains(out, "ok    image:runner") {
+		t.Errorf("an unregistered runtime on podman:\n%s", out)
+	}
+	wrapper := filepath.Join(t.TempDir(), "runsc-uds")
+	if err := os.WriteFile(wrapper, []byte("#!/bin/sh\nexec /opt/runsc --ignore-cgroups --host-uds=open \"$@\"\n"), 0o755); err != nil { //nolint:gosec // a test script
+		t.Fatal(err)
+	}
+	fake.RuntimeTable = map[string]dockerx.Runtime{"crun": {Path: "/usr/bin/crun"}, "runsc": {Path: "/opt/runsc"}, "runsc-uds": {Path: wrapper}}
+	out, _, _ = runCLI(t, nil, "doctor", "--registry", fr.url(), "--policy", policyPath)
+	if !strings.Contains(out, "ok    docker:runtime") || !strings.Contains(out, "registered with podman at /opt/runsc") || !strings.Contains(out, "ok    docker:gatewayRuntime") || !strings.Contains(out, "warn  docker:resolvers") {
+		t.Errorf("a registered runtime on podman:\n%s", out)
+	}
+	fake.EngineInfo = &dockerx.Engine{Kind: dockerx.KindPodman, CLI: "docker", Version: "5.8.4", Endpoint: "unix:///run/podman/podman.sock"}
+	out, _, _ = runCLI(t, nil, "doctor", "--registry", fr.url(), "--policy", policyPath)
+	if !strings.Contains(out, "FAIL  docker:runtime") || !strings.Contains(out, "only through podman's own CLI") {
+		t.Errorf("a runtime on podman through the docker CLI:\n%s", out)
 	}
 }
 

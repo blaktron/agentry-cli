@@ -7,9 +7,11 @@ package dockerx
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
+	"os/exec"
 	"slices"
 	"strings"
 	"sync"
@@ -98,6 +100,27 @@ type Fake struct {
 	// LocalDockerEngine. EngineErr fails Engine.
 	EngineInfo *Engine
 	EngineErr  error
+	// DropRuntime makes ContainerRuntime answer DroppedRuntime for every
+	// container, whatever its spec asked for: an engine that takes a
+	// runtime and does not apply it. "" is the engine's default.
+	DropRuntime    bool
+	DroppedRuntime string
+	// PodmanService, when set, answers PodmanServiceCommand (PodmanServicer)
+	// with the command a test wants run as the run's podman API service;
+	// nil says this client has none.
+	PodmanService func(runtime, socket string) *exec.Cmd
+	// created are the specs Create was given, by name, for Start,
+	// StartAttached and ContainerRuntime.
+	created map[string]RunSpec
+}
+
+// PodmanServiceCommand implements PodmanServicer for Fake.
+func (f *Fake) PodmanServiceCommand(_ context.Context, runtime, socket string) (*exec.Cmd, error) {
+	f.record("PodmanServiceCommand", runtime+"@"+socket, RunSpec{})
+	if f.PodmanService == nil {
+		return nil, errors.New("fake docker: no podman API service")
+	}
+	return f.PodmanService(runtime, socket), nil
 }
 
 // Engine implements EngineDescriber. It is not recorded: a run reads it before
@@ -156,12 +179,13 @@ func (f *Fake) Ops() []string {
 	return out
 }
 
-// FindRun returns the first Run* call whose name contains substr.
+// FindRun returns the first Run* or Create call whose name contains
+// substr: a container checked for its runtime is created, then started.
 func (f *Fake) FindRun(substr string) (RunSpec, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for _, c := range f.Calls {
-		if strings.HasPrefix(c.Op, "Run") && strings.Contains(c.Run.Name, substr) {
+		if (strings.HasPrefix(c.Op, "Run") || c.Op == "Create") && strings.Contains(c.Run.Name, substr) {
 			return c.Run, true
 		}
 	}
@@ -341,6 +365,12 @@ func (f *Fake) RunDetached(_ context.Context, r RunSpec) error {
 // RunForeground implements Client.
 func (f *Fake) RunForeground(ctx context.Context, r RunSpec, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
 	f.record("RunForeground", r.Name, r)
+	return f.play(ctx, r, stdin, stdout, stderr)
+}
+
+// play is the scripted behaviour of a foreground container, whether it was
+// run or created and then started.
+func (f *Fake) play(ctx context.Context, r RunSpec, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
 	if f.OnForeground != nil {
 		f.OnForeground(r)
 	}

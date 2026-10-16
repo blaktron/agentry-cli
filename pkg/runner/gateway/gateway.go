@@ -158,7 +158,7 @@ func EnsureHarnessImage(ctx context.Context, d dockerx.Client, adapterName strin
 // same rule, and by what it runs as well as its name: it must be
 // docker.runtime's binary registered again with --host-uds=open and nothing
 // else, since the receipt says the gateway ran under it. An unset runtime asks
-// nothing. On podman a runtime is refused outright (PodmanRuntimeRefusal).
+// nothing. On podman each name is tried (EnsurePodmanRuntime).
 func EnsureRuntime(ctx context.Context, d dockerx.Client, pol *policy.Policy) error {
 	if pol.Docker.Runtime == "" && pol.Docker.GatewayRuntime == "" {
 		return nil
@@ -168,7 +168,7 @@ func EnsureRuntime(ctx context.Context, d dockerx.Client, pol *policy.Policy) er
 		return err
 	}
 	if e.Kind == dockerx.KindPodman {
-		return PodmanRuntimeRefusal(pol)
+		return EnsurePodmanRuntime(ctx, d, e, pol)
 	}
 	table, err := d.Runtimes(ctx)
 	if err != nil {
@@ -192,17 +192,42 @@ func EnsureRuntime(ctx context.Context, d dockerx.Client, pol *policy.Policy) er
 	return nil
 }
 
-// PodmanRuntimeRefusal is why a policy's runtime is refused on podman. The
-// gateway creates the tool and MCP server containers through podman's
-// Docker-compatible API, which takes a container's runtime and drops it: they
-// would run under podman's default while the receipt named the policy's.
-func PodmanRuntimeRefusal(pol *policy.Policy) error {
-	key, want := "docker.runtime", pol.Docker.Runtime
-	if want == "" {
-		key, want = "docker.gatewayRuntime", pol.Docker.GatewayRuntime
+// PodmanRuntimeRecipe is how a runtime is registered with podman: by name,
+// as a path, in the operator's containers.conf. The runtime's own flags go
+// in a wrapper script, since podman passes none; the gateway's wrapper adds
+// --host-uds=open, and a rootless podman needs --ignore-cgroups.
+const PodmanRuntimeRecipe = "register it in containers.conf under [engine.runtimes], the name as a path to a script that runs the runtime binary (rootless podman needs `runsc --ignore-cgroups`), and docker.gatewayRuntime as a second script that adds " + dockerx.HostUDSOpen
+
+// EnsurePodmanRuntime is EnsureRuntime on podman: the policy's runtime, and
+// the gateway's, are each tried by name (`podman --runtime <name> info`),
+// since podman lists every runtime its configuration names, installed or
+// not, and the gateway's registration is read for --host-uds=open and the
+// runtime it runs. The sandbox is held through podman's own CLI alone: the
+// docker CLI's route to podman cannot read a container's runtime back
+// (podman's Docker-compatible API answers "oci" for every container), and a
+// podman service on another machine (a podman machine) is refused by Engine.
+func EnsurePodmanRuntime(ctx context.Context, d dockerx.Client, e dockerx.Engine, pol *policy.Policy) error {
+	if e.CLI != dockerx.KindPodman {
+		return fmt.Errorf("docker.runtime %q is held on podman only through podman's own CLI (AGENTRY_ENGINE=podman), which can read a container's runtime back; the docker CLI's route to podman cannot — or unset docker.runtime and docker.gatewayRuntime to run on podman without a sandbox", pol.Docker.Runtime)
 	}
-	return fmt.Errorf("%s %q is not held on podman: the containers the gateway creates go through podman's Docker-compatible API, which does not apply a container's runtime, so they would run under podman's default while the receipt named %q: unset docker.runtime and docker.gatewayRuntime in the policy to run on podman, or run on Docker Engine",
-		key, want, want)
+	checker, ok := d.(dockerx.RuntimeChecker)
+	if !ok {
+		return fmt.Errorf("docker.runtime %q cannot be checked on this podman client", pol.Docker.Runtime)
+	}
+	rt, err := checker.CheckRuntime(ctx, pol.Docker.Runtime)
+	if err != nil {
+		return fmt.Errorf("docker.runtime %q: %w — %s, or unset docker.runtime in the policy; the runner never falls back to another runtime", pol.Docker.Runtime, err, PodmanRuntimeRecipe)
+	}
+	if gw := pol.Docker.GatewayRuntime; gw != "" {
+		reg, err := checker.CheckRuntime(ctx, gw)
+		if err != nil {
+			return fmt.Errorf("docker.gatewayRuntime %q: %w — %s, or unset docker.gatewayRuntime", gw, err, PodmanRuntimeRecipe)
+		}
+		if err := dockerx.CheckHostUDSWrapper(reg.Path, rt.Path, gw); err != nil {
+			return fmt.Errorf("docker.gatewayRuntime %v — the receipt would claim a sandbox the gateway did not have", err)
+		}
+	}
+	return nil
 }
 
 // ExecPackagesFile is where the exec image build records the resolved

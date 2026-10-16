@@ -431,14 +431,6 @@ func (rd *runDirs) browseProxyPin() map[string]string {
 	return map[string]string{rd.browser.proxy: rd.browser.proxyIP}
 }
 
-// browserUser is the uid:gid the browser server runs as: the invoking
-// user's, as the host link runs, or "" where there is none (Windows),
-// which leaves the image's own.
-func browserUser() string {
-	u, _, _ := hostLinkUser()
-	return u
-}
-
 // collectBrowseProxyLog keeps the browse proxy's decisions as
 // receipts/browser-proxy.log, masked like every receipt, and counts its
 // refusals into the receipt: the page's, and those of Chrome's own

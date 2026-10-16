@@ -44,6 +44,31 @@ func recorded(t *testing.T, record string) []string {
 	return strings.Split(strings.TrimRight(string(b), "\n"), "\n")
 }
 
+// engineAnswers is a stub script's prelude that answers the docker CLI's
+// three engine questions as Docker Engine on this machine would, so a client
+// that asks them once caches the answer; kind names the server's component
+// ("Engine", or "Podman Engine" for podman behind the docker CLI).
+func engineAnswers(kind string) string {
+	return `case "$1 $2" in
+  "context inspect") echo unix:///var/run/docker.sock; exit 0;;
+  "version --format") echo '{"Version":"29.7.2","Components":[{"Name":"` + kind + `","Version":"29.7.2"}]}'; exit 0;;
+  "info --format") case "$3" in *KernelVersion*) echo '{"name":"box","kernel":"7.1","security":[],"os":"Fedora"}'; exit 0;; esac;;
+esac
+`
+}
+
+// ownArgv drops the engine's own questions from the lines the stub saw.
+func ownArgv(lines []string) []string {
+	var out []string
+	for _, l := range lines {
+		if strings.HasPrefix(l, "context inspect ") || strings.HasPrefix(l, "version --format ") || strings.HasPrefix(l, "info --format ") {
+			continue
+		}
+		out = append(out, l)
+	}
+	return out
+}
+
 func TestNewHonorsEnvOverride(t *testing.T) {
 	t.Setenv("AGENTRY_DOCKER", "/opt/odd/docker")
 	if got := New().Bin; got != "/opt/odd/docker" {
@@ -289,14 +314,14 @@ func TestCLIPull(t *testing.T) {
 }
 
 func TestCLIBuildArgOrdering(t *testing.T) {
-	c, record := stub(t, `exit 0`)
+	c, record := stub(t, engineAnswers("Engine")+`exit 0`)
 	err := c.Build(context.Background(), "/ctx/dir", "agentry-runner:test",
 		map[string]string{"GO_IMAGE": "golang:1.27", "BASE": "alpine"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := "build -t agentry-runner:test --build-arg BASE=alpine --build-arg GO_IMAGE=golang:1.27 /ctx/dir"
-	if got := recorded(t, record)[0]; got != want {
+	if got := ownArgv(recorded(t, record))[0]; got != want {
 		t.Errorf("argv = %q\nwant   %q", got, want)
 	}
 }
@@ -474,14 +499,14 @@ func TestCLIRunForeground(t *testing.T) {
 
 func TestCLIStopAndRemoveForce(t *testing.T) {
 	ctx := context.Background()
-	c, record := stub(t, `exit 0`)
+	c, record := stub(t, engineAnswers("Engine")+`exit 0`)
 	if err := c.Stop(ctx, "agentry-x-gateway", 10); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.RemoveForce(ctx, "agentry-x-gateway"); err != nil {
 		t.Fatal(err)
 	}
-	got := recorded(t, record)
+	got := ownArgv(recorded(t, record))
 	want := []string{"stop --timeout 10 agentry-x-gateway", "rm -fv agentry-x-gateway"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("argv lines = %q, want %q", got, want)

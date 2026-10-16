@@ -2,11 +2,13 @@ package sockfilter
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // modifyResponse keeps lists to the run's objects and learns the execs
@@ -17,6 +19,8 @@ func (f *Filter) modifyResponse(res *http.Response) error {
 		return nil
 	}
 	switch {
+	case p == "/containers/create":
+		return f.verifyCreated(res)
 	case p == "/containers/json":
 		return rewriteBody(res, func(body []byte) []byte {
 			return f.keepItems(body, func(item map[string]any) bool { return f.oursAny(item["Labels"]) })
@@ -159,4 +163,80 @@ func rewriteBody(res *http.Response, edit func([]byte) []byte) error {
 	res.Header.Set("Content-Length", fmt.Sprint(len(out)))
 	res.Header.Del("Transfer-Encoding")
 	return nil
+}
+
+// verifyCreated reads a created container's runtime back from the engine
+// (Config.Verify) when the create had to put it under one. A mismatch is
+// kept (RuntimeMismatch), counted and logged as a refusal, and returned,
+// so the gateway's create fails instead of answering with a container the
+// receipt would misname.
+func (f *Filter) verifyCreated(res *http.Response) error {
+	m, _ := res.Request.Context().Value(createMetaKey{}).(*createMeta)
+	if m == nil || m.runtime == "" {
+		return nil
+	}
+	var id string
+	err := rewriteBody(res, func(body []byte) []byte {
+		var c struct {
+			ID string `json:"Id"`
+		}
+		if json.Unmarshal(body, &c) == nil {
+			id = c.ID
+		}
+		return body
+	})
+	if err != nil || id == "" {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	verify := f.cfg.Verify
+	if verify == nil {
+		verify = f.verifyUpstream
+	}
+	if verr := verify(ctx, id, m.class, m.runtime); verr != nil {
+		rr := &runtimeRefusal{err: verr}
+		f.mismatch.CompareAndSwap(nil, rr)
+		f.refused.Add(1)
+		f.logf("refuse POST %s: %s", canonical(res.Request.URL.Path), verr.Error())
+		return rr
+	}
+	f.logf("verified %s %s under %s", m.class, short(id), m.runtime)
+	return nil
+}
+
+// verifyUpstream is the check where no engine CLI is at hand (the filter
+// container beside a daemon in a VM): the daemon's own inspect, which
+// Docker Engine answers with the runtime it applied. A mismatched
+// container is removed through the daemon before the gateway hears of
+// it. podman's Docker-compatible API answers "oci" for every container,
+// so on podman only a native Verify can judge, and a run under a runtime
+// on podman is refused wherever the CLI does not serve the filter.
+func (f *Filter) verifyUpstream(ctx context.Context, id, class, want string) error {
+	var c struct {
+		HostConfig struct {
+			Runtime string `json:"Runtime"`
+		} `json:"HostConfig"`
+	}
+	code, err := f.inspect(ctx, "/containers/"+id+"/json", &c)
+	if err != nil || code != http.StatusOK {
+		return fmt.Errorf("read the runtime the %s the gateway launched (%s) was created with: daemon answered %d: %v", class, short(id), code, err)
+	}
+	if got := c.HostConfig.Runtime; got != want {
+		f.removeUpstream(ctx, id)
+		return fmt.Errorf("the %s the gateway launched (%s) was created under %q, not the policy's docker.runtime %q: the engine did not apply the runtime it was asked for, so the run stops rather than carry a receipt naming a sandbox it did not have", class, short(id), got, want)
+	}
+	return nil
+}
+
+// removeUpstream force-removes a container, with its anonymous volumes,
+// through the daemon.
+func (f *Filter) removeUpstream(ctx context.Context, id string) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, "http://docker/containers/"+id+"?force=1&v=1", nil)
+	if err != nil {
+		return
+	}
+	if res, err := f.upstream.Do(req); err == nil {
+		_ = res.Body.Close()
+	}
 }

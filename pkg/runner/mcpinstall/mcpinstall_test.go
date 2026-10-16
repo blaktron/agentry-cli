@@ -151,11 +151,13 @@ func TestEnsureInstalledRunsBuilderOnceAndReuses(t *testing.T) {
 	} else if own := owner.Labels(); own != nil && run.Labels[owner.LabelPID] != own[owner.LabelPID] {
 		t.Fatalf("installer labels = %v, want this process as owner", run.Labels)
 	}
-	// The store is the user's: the builder runs as the invoking
-	// uid:gid so `rm -rf` of the profile works afterwards, with npm's home
-	// and cache pointed at /tmp, where that user can write in the image.
-	if run, _ := fake.FindRun("agentry-mcpinstall-"); run.User != invokingUser() || run.User == "" {
-		t.Fatalf("installer runs as %q, want the invoking user %q", run.User, invokingUser())
+	// The store is the user's: the builder runs as the person, as the
+	// engine maps them (the invoking uid:gid on this rootful one), so `rm
+	// -rf` of the profile works afterwards, with npm's home and cache
+	// pointed at /tmp, where that user can write in the image.
+	person := dockerx.LocalDockerEngine().PersonUser()
+	if run, _ := fake.FindRun("agentry-mcpinstall-"); run.User != person || run.User == "" {
+		t.Fatalf("installer runs as %q, want the person %q", run.User, person)
 	} else if len(run.Argv) < 3 || run.Argv[0] != "env" || run.Argv[1] != "HOME=/tmp" || run.Argv[2] != "npm_config_cache=/tmp/npm-cache" {
 		t.Fatalf("npm not given a writable HOME and cache: %v", run.Argv)
 	}
@@ -651,7 +653,7 @@ func TestEnsureInstalledPassesTheRuntime(t *testing.T) {
 		if c.Op == "NetworkConnect" {
 			t.Errorf("a connect after start under the runtime: %s", c.Arg)
 		}
-		if c.Op == "RunDetached" && c.Arg == proxy.Name {
+		if (c.Op == "RunDetached" || c.Op == "Start") && c.Arg == proxy.Name {
 			started = true
 		}
 		if c.Op == "NetworkRemove" && c.Arg == proxy.ExtraNetworks[0] && started {

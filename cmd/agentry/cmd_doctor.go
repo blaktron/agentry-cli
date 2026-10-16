@@ -337,6 +337,51 @@ func doctorPolicy(rep *doctorReport, path string) *policy.Policy {
 	return pol
 }
 
+// doctorPodmanRuntime is doctor's docker:runtime and docker:gatewayRuntime
+// on podman, where each name is tried rather than read from a table: podman
+// lists every runtime its configuration names, installed or not. The
+// resolvers check is the same as on docker.
+func doctorPodmanRuntime(ctx context.Context, rep *doctorReport, d dockerx.Client, e dockerx.Engine, pol *policy.Policy) {
+	want := pol.Docker.Runtime
+	if e.CLI != dockerx.KindPodman {
+		rep.fail("docker:runtime", "%v", gateway.EnsurePodmanRuntime(ctx, d, e, pol))
+		return
+	}
+	checker, ok := d.(dockerx.RuntimeChecker)
+	if !ok {
+		rep.fail("docker:runtime", "docker.runtime %q cannot be checked on this podman client", want)
+		return
+	}
+	rt, err := checker.CheckRuntime(ctx, want)
+	if err != nil {
+		rep.fail("docker:runtime", "policy docker.runtime %q: %v — %s, or unset docker.runtime", want, err, gateway.PodmanRuntimeRecipe)
+	} else {
+		rep.ok("docker:runtime", "%s registered with podman at %s (podman --runtime %s info); a run holds it through a podman API service of its own, and every container is checked after create", want, rt.Path, want)
+		if len(pol.Docker.Resolvers) == 0 {
+			rep.warn("docker:resolvers", "policy docker.runtime is %q and docker.resolvers is empty: `agentry draft` will be refused (its web tools cannot reach the engine's DNS under %s), and the llm-proxy and the install proxy stay on podman's default — name the host's upstream name servers in docker.resolvers", want, want)
+		} else {
+			rep.ok("docker:resolvers", "under %s, the Drafter's web tools, the llm-proxy and the install proxy resolve through %s (docker.resolvers)", want, strings.Join(pol.Docker.Resolvers, ", "))
+		}
+	}
+	switch gw := pol.Docker.GatewayRuntime; {
+	case gw == "":
+		rep.warn("docker:gatewayRuntime", "the gateway stays on podman's default: it reaches the run's docker filter through a host Unix socket, which %s opens only with %s — register a second wrapper script under a name of its own and set docker.gatewayRuntime", want, dockerx.HostUDSOpen)
+	case err != nil:
+		rep.warn("docker:gatewayRuntime", "%s not checked: docker.runtime %q is not registered (docker:runtime)", gw, want)
+	default:
+		reg, gerr := checker.CheckRuntime(ctx, gw)
+		if gerr != nil {
+			rep.fail("docker:gatewayRuntime", "policy docker.gatewayRuntime %q: %v — %s, or unset docker.gatewayRuntime", gw, gerr, gateway.PodmanRuntimeRecipe)
+			return
+		}
+		if werr := dockerx.CheckHostUDSWrapper(reg.Path, rt.Path, gw); werr != nil {
+			rep.fail("docker:gatewayRuntime", "policy docker.gatewayRuntime %v — fix the wrapper, or unset docker.gatewayRuntime", werr)
+		} else {
+			rep.ok("docker:gatewayRuntime", "%s registered with podman at %s, a wrapper that runs %s with %s, for the gateway", gw, reg.Path, rt.Path, dockerx.HostUDSOpen)
+		}
+	}
+}
+
 // doctorDocker checks the engine and the images a run would need.
 func doctorDocker(ctx context.Context, rep *doctorReport, d dockerx.Client, pol *policy.Policy, m *manifest.Manifest) {
 	if err := d.Available(ctx); err != nil {
@@ -358,10 +403,8 @@ func doctorDocker(ctx context.Context, rep *doctorReport, d dockerx.Client, pol 
 	onPodman := false
 	if pol.Docker.Runtime != "" || pol.Docker.GatewayRuntime != "" {
 		if e, eerr := dockerx.DescribeEngine(ctx, d); eerr == nil && e.Kind == dockerx.KindPodman {
-			// podman lists every runtime its configuration names, installed
-			// or not, so its table is not consulted: the runtime is refused.
-			rep.fail("docker:runtime", "%v", gateway.PodmanRuntimeRefusal(pol))
 			onPodman = true
+			doctorPodmanRuntime(ctx, rep, d, e, pol)
 		}
 	}
 	if want := pol.Docker.Runtime; want != "" && !onPodman {
