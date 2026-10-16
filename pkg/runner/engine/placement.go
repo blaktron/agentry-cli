@@ -155,9 +155,9 @@ func (p filterPlacement) line() string {
 	return p.engine.Summary() + ", " + ep + ", docker filter " + where + ": " + p.reason
 }
 
-// DescribeEngine is d's engine and where a run's docker filter would run on
-// it, in the receipt's words, or why a run would be refused.
-func DescribeEngine(ctx context.Context, d dockerx.Client) (string, error) {
+// EngineLine is d's engine and where a run's docker filter would run on it,
+// in the receipt's words, or why a run would be refused.
+func EngineLine(ctx context.Context, d dockerx.Client) (string, error) {
 	p, err := placementFor(ctx, d)
 	if err != nil {
 		return "", err

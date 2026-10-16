@@ -346,7 +346,7 @@ func doctorDocker(ctx context.Context, rep *doctorReport, d dockerx.Client, pol 
 	// The engine in the receipt's words, or why a run on it is refused:
 	// podman with no API socket answering, an endpoint the run's docker
 	// filter cannot be put in front of.
-	line, err := engine.DescribeEngine(ctx, d)
+	line, err := engine.EngineLine(ctx, d)
 	if err != nil {
 		rep.fail("docker", "%v", err)
 		return

@@ -314,6 +314,23 @@ func TestBaseRunArgsPinsAndNeverSaysYes(t *testing.T) {
 	}
 }
 
+// A fire drives the engine this shell names: AGENTRY_ENGINE and the binaries
+// travel with it, and so does the docker filter's placement.
+func TestFireEntryCarriesTheEngine(t *testing.T) {
+	t.Setenv("AGENTRY_ENGINE", "podman")
+	t.Setenv("AGENTRY_PODMAN", "/opt/podman/bin/podman")
+	t.Setenv("AGENTRY_DOCKER_FILTER", "sidecar")
+	e, err := fireEntry("abcdefghij")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"AGENTRY_ENGINE=podman", "AGENTRY_PODMAN=/opt/podman/bin/podman", "AGENTRY_DOCKER_FILTER=sidecar"} {
+		if !slices.Contains(e.Env, want) {
+			t.Errorf("entry env %q lacks %q", e.Env, want)
+		}
+	}
+}
+
 // The alarm's entry names paths, never a credential (invariant 7).
 func TestFireEntryCarriesNoCredential(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-should-never-appear")
@@ -330,7 +347,7 @@ func TestFireEntryCarriesNoCredential(t *testing.T) {
 			t.Fatalf("entry env carries a credential: %q", kv)
 		}
 		k, _, _ := strings.Cut(kv, "=")
-		if !slices.Contains([]string{"PATH", "AGENTRY_DOCKER", "AGENTRY_RUNNER_HOME", "AGENTRY_CONFIG_DIR", "DOCKER_HOST", "DOCKER_CONTEXT"}, k) {
+		if !slices.Contains([]string{"PATH", "AGENTRY_DOCKER", "AGENTRY_PODMAN", "AGENTRY_ENGINE", "AGENTRY_DOCKER_FILTER", "AGENTRY_RUNNER_HOME", "AGENTRY_CONFIG_DIR", "DOCKER_HOST", "DOCKER_CONTEXT"}, k) {
 			t.Fatalf("entry env carries %s", k)
 		}
 	}

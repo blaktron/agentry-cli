@@ -212,10 +212,18 @@ func TestNewChoosesTheEngineNamed(t *testing.T) {
 		t.Errorf("no engine named: %+v, want docker until one is found", c)
 	}
 	t.Setenv(EnvDocker, "/opt/odd/docker")
-	if c := New(); c.Podman || c.detect {
-		t.Errorf("a docker binary given: %+v, want it and no detection", c)
+	if c := New(); c.Podman || c.Bin != "/opt/odd/docker" || !c.detect {
+		t.Errorf("a docker binary given: %+v, want it, still to be found against podman", c)
 	}
 	t.Setenv(EnvDocker, "")
+	t.Setenv(EnvEngine, "podmn")
+	if err := New().Available(context.Background()); err == nil || !strings.Contains(err.Error(), `AGENTRY_ENGINE is "podmn": it takes docker or podman`) {
+		t.Errorf("a misnamed engine: %v", err)
+	}
+	if _, err := New().Engine(context.Background()); err == nil {
+		t.Error("a misnamed engine described an engine")
+	}
+	t.Setenv(EnvEngine, "")
 	for _, k := range []string{"DOCKER_HOST", "DOCKER_CONTEXT"} {
 		t.Setenv(k, "x")
 		if c := New(); c.Podman || c.detect {
@@ -278,7 +286,7 @@ func TestQualifiedRef(t *testing.T) {
 // networks, which it writes name:alias=….
 func TestPodmanArgvForSeveralNetworks(t *testing.T) {
 	r := RunSpec{Name: "c", Image: "img", Network: "run", Alias: "proxy", ExtraNetworks: []string{"egress"}}
-	got := r.argsFor(true, true)
+	got := r.argsFor(true, true, nil)
 	if !slices.Contains(got, "run:alias=proxy") || !slices.Contains(got, "egress") || slices.Contains(got, "name=run,alias=proxy") {
 		t.Errorf("podman argv %q", got)
 	}
@@ -296,7 +304,7 @@ func TestPodmanKeepsItsOwnEnvironmentNames(t *testing.T) {
 	if !slices.Equal(pairs, []string{"MODEL_KEY=sekret"}) {
 		t.Errorf("podman's environment pairs %q", pairs)
 	}
-	argv := strings.Join(r.argsFor(true, true), " ")
+	argv := strings.Join(r.argsFor(true, true, nil), " ")
 	for _, want := range []string{"-e XDG_RUNTIME_DIR=/x", "-e TMPDIR=/t", "-e CONTAINERS_CONF=/c", "-e MODEL_KEY "} {
 		if !strings.Contains(argv+" ", want) {
 			t.Errorf("podman argv %q lacks %q", argv, want)
@@ -351,7 +359,7 @@ func TestPodmanMakesLabelledVolumesByName(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Errorf("podman saw\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
-	if r.named != nil || len(r.Volumes) != 1 {
+	if len(r.Volumes) != 1 {
 		t.Error("the caller's spec changed")
 	}
 }
@@ -409,5 +417,68 @@ func TestPodmanConnectsDockersBridgeToItsDefaultNetwork(t *testing.T) {
 	want := []string{"info --format json", "network connect podman proxy", "network connect agentry-R-net proxy"}
 	if !slices.Equal(got, want) {
 		t.Errorf("podman saw %q, want %q", got, want)
+	}
+}
+
+// A container's variable podman would read as its own is refused on podman,
+// never sent: its value would be argv.
+func TestPodmanRefusesAVariableItReadsItself(t *testing.T) {
+	c, record := podmanStub(t, ``)
+	err := c.RunDetached(context.Background(), RunSpec{Name: "c", Image: "img", Env: map[string]string{"CONTAINERS_KEY": "sekret"}})
+	if err == nil || !strings.Contains(err.Error(), "CONTAINERS_KEY cannot be given to c on podman") || strings.Contains(err.Error(), "sekret") {
+		t.Fatalf("got %v", err)
+	}
+	if _, err := os.Stat(record); err == nil {
+		t.Errorf("podman ran: %q", recorded(t, record))
+	}
+	// docker's own names keep their rule on both.
+	if err := c.RunDetached(context.Background(), RunSpec{Name: "c", Image: "img", Env: map[string]string{"HOME": "/root"}}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A container that does not start takes the volumes made for it along.
+func TestPodmanDropsTheVolumesOfARunThatFailed(t *testing.T) {
+	c, record := podmanStub(t, `case "$1" in run) exit 125;; esac`)
+	err := c.RunDetached(context.Background(), RunSpec{Name: "gw", Image: "img", Volumes: []VolumeMount{{Target: "/misc", Labels: map[string]string{"agentry.run": "R"}}}})
+	if err == nil {
+		t.Fatal("a failed run was taken")
+	}
+	got := recorded(t, record)
+	if last := got[len(got)-1]; last != "volume rm -f gw-vol0" {
+		t.Errorf("podman saw %q, want the volume removed last", got)
+	}
+}
+
+// podman is given Docker Hub's name for a short name with a repository, on
+// every command that names an image; the runner's own single-component
+// images stay as they are.
+func TestPodmanNamesImagesAsDockerDoes(t *testing.T) {
+	c, record := podmanStub(t, `case "$1" in create) echo cid;; cp) exit 1;; image) echo '{}';; esac`)
+	_ = c.RunDetached(context.Background(), RunSpec{Name: "a", Image: "docker/mcp-l4proxy@sha256:abc"})
+	_ = c.RunDetached(context.Background(), RunSpec{Name: "b", Image: "agentry-runner:abc"})
+	_, _ = c.ImageExists(context.Background(), "docker/mcp-gateway:v1")
+	_, _ = c.ImageLabel(context.Background(), "ghcr.io/x/y:1", "k")
+	_, _ = c.ImageFile(context.Background(), "mcp/osv:1", "/f")
+	want := []string{
+		"run -d --name a docker.io/docker/mcp-l4proxy@sha256:abc",
+		"run -d --name b agentry-runner:abc",
+		"image inspect --format {{.Id}} docker.io/docker/mcp-gateway:v1",
+		"image inspect --format {{json .Config.Labels}} ghcr.io/x/y:1",
+		"create docker.io/mcp/osv:1",
+	}
+	got := recorded(t, record)
+	for _, w := range want {
+		if !slices.Contains(got, w) {
+			t.Errorf("podman saw %q, lacking %q", got, w)
+		}
+	}
+}
+
+// A podman that drives a service elsewhere is refused by name.
+func TestPodmanRefusesARemoteService(t *testing.T) {
+	c, _ := podmanStub(t, `case "$1" in info) printf '%s' '{"host":{"serviceIsRemote":true,"remoteSocket":{"path":"/run/podman/podman.sock"}},"version":{"Version":"5.8.4"}}';; esac`)
+	if _, err := c.Engine(context.Background()); err == nil || !strings.Contains(err.Error(), "service on another machine") {
+		t.Fatalf("got %v", err)
 	}
 }

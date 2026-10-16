@@ -188,10 +188,6 @@ type RunSpec struct {
 	PidsLimit       int
 	Memory          string
 	CPUs            int
-
-	// named are the named volumes podman's dialect mounts in place of
-	// Volumes (dialectSpec).
-	named []namedVolume
 }
 
 // WithPosture is r with the posture every run container takes: every capability
@@ -250,20 +246,26 @@ type CLI struct {
 
 	// detect says the CLI to drive is still to be found (resolve).
 	detect bool
-	mu     sync.Mutex
-	engine *Engine
+	// misnamed is why AGENTRY_ENGINE could not be read; Available and
+	// Engine report it.
+	misnamed error
+	mu       sync.Mutex
+	engine   *Engine
 }
 
 // New returns a CLI client for the engine AGENTRY_ENGINE names, or for the
 // one it finds on first use (resolve).
 func New() *CLI {
-	switch strings.ToLower(os.Getenv(EnvEngine)) {
+	switch e := os.Getenv(EnvEngine); strings.ToLower(e) {
 	case KindPodman:
 		return &CLI{Bin: podmanBin(), Podman: true}
 	case KindDocker:
 		return &CLI{Bin: dockerBin()}
+	case "":
+	default:
+		return &CLI{Bin: dockerBin(), misnamed: fmt.Errorf("%s is %q: it takes docker or podman", EnvEngine, e)}
 	}
-	if os.Getenv(EnvDocker) != "" || os.Getenv("DOCKER_HOST") != "" || os.Getenv("DOCKER_CONTEXT") != "" {
+	if os.Getenv("DOCKER_HOST") != "" || os.Getenv("DOCKER_CONTEXT") != "" {
 		return &CLI{Bin: dockerBin()}
 	}
 	return &CLI{Bin: dockerBin(), detect: true}
@@ -314,6 +316,9 @@ func (c *CLI) run(ctx context.Context, args ...string) (string, error) {
 //
 // For podman, whose CLI runs the engine itself, `podman info` is the check.
 func (c *CLI) Available(ctx context.Context) error {
+	if c.misnamed != nil {
+		return c.misnamed
+	}
 	c.resolve(ctx)
 	if _, err := exec.LookPath(c.Bin); err != nil {
 		if c.Podman {
@@ -322,10 +327,8 @@ func (c *CLI) Available(ctx context.Context) error {
 		return fmt.Errorf("docker CLI not found (%s), and no podman answers: the runner needs a container engine — install Docker Engine or podman, or set AGENTRY_DOCKER", c.Bin)
 	}
 	if c.Podman {
-		if _, err := c.podmanInfo(ctx); err != nil {
-			return err
-		}
-		return nil
+		_, err := c.podmanInfo(ctx)
+		return err
 	}
 	out, err := c.run(ctx, "version", "--format", "{{.Server.Version}}")
 	if err != nil {
@@ -463,7 +466,7 @@ func (c *CLI) ContainerIP(ctx context.Context, name, network string) (string, er
 
 // ImageExists implements Client.
 func (c *CLI) ImageExists(ctx context.Context, ref string) (bool, error) {
-	cmd := c.command(ctx, "image", "inspect", "--format", "{{.Id}}", ref)
+	cmd := c.command(ctx, "image", "inspect", "--format", "{{.Id}}", c.imageRef(ref))
 	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
 	err := cmd.Run()
 	if err == nil {
@@ -499,7 +502,7 @@ func (c *CLI) ServerArch(ctx context.Context) (string, error) {
 
 // ImageLabel implements Client.
 func (c *CLI) ImageLabel(ctx context.Context, ref, key string) (string, error) {
-	out, err := c.run(ctx, "image", "inspect", "--format", "{{json .Config.Labels}}", ref)
+	out, err := c.run(ctx, "image", "inspect", "--format", "{{json .Config.Labels}}", c.imageRef(ref))
 	if err != nil {
 		return "", fmt.Errorf("docker image inspect %s: %w", ref, err)
 	}
@@ -515,7 +518,7 @@ func (c *CLI) ImageLabel(ctx context.Context, ref, key string) (string, error) {
 // the path out as a tar stream, `docker rm -fv` the container: -v, since
 // creating it gave each VOLUME the image declares an anonymous volume.
 func (c *CLI) ImageFile(ctx context.Context, ref, path string) ([]byte, error) {
-	id, err := c.run(ctx, "create", ref)
+	id, err := c.run(ctx, "create", c.imageRef(ref))
 	if err != nil {
 		return nil, fmt.Errorf("docker create %s: %w", ref, err)
 	}
@@ -555,6 +558,22 @@ func (c *CLI) Pull(ctx context.Context, ref string) error {
 	}
 	_, err := c.run(ctx, "pull", ref)
 	return err
+}
+
+// imageRef is ref as the client must be given it to name the image docker
+// would. podman resolves a short name against its own search list and local
+// store, so a name with a repository but no registry (docker/mcp-gateway) is
+// given Docker Hub's, as docker reads it. A single-component name stays as it
+// is: that is how the runner names the images it builds, which podman keeps
+// under localhost/.
+func (c *CLI) imageRef(ref string) string {
+	if c.resolve(context.Background()); !c.Podman {
+		return ref
+	}
+	if first, _, ok := strings.Cut(ref, "/"); ok && !strings.ContainsAny(first, ".:") && first != "localhost" {
+		return "docker.io/" + ref
+	}
+	return ref
 }
 
 // qualifiedRef is ref as docker reads it: a name with no registry is Docker
@@ -677,15 +696,16 @@ func (c *CLI) VolumesByLabel(ctx context.Context, label string) ([]string, error
 
 // RunDetached implements Client.
 func (c *CLI) RunDetached(ctx context.Context, r RunSpec) error {
-	r, err := c.dialectSpec(ctx, r)
+	named, err := c.podmanPrepare(ctx, r)
 	if err != nil {
 		return err
 	}
-	cmd := c.command(ctx, r.argsFor(true, c.Podman)...)
+	cmd := c.command(ctx, c.dialectArgs(true, r, named)...)
 	cmd.Env = append(cmd.Env, r.envPairsFor(c.Podman)...)
 	var errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = io.Discard, &errb
 	if err := cmd.Run(); err != nil {
+		c.dropVolumes(ctx, named)
 		return fmt.Errorf("%s run %s: %w: %s", c.name(), r.Name, err, strings.TrimSpace(errb.String()))
 	}
 	return nil
@@ -693,11 +713,11 @@ func (c *CLI) RunDetached(ctx context.Context, r RunSpec) error {
 
 // RunForeground implements Client.
 func (c *CLI) RunForeground(ctx context.Context, r RunSpec, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
-	r, err := c.dialectSpec(ctx, r)
+	named, err := c.podmanPrepare(ctx, r)
 	if err != nil {
 		return -1, err
 	}
-	cmd := c.command(ctx, r.argsFor(false, c.Podman)...)
+	cmd := c.command(ctx, c.dialectArgs(false, r, named)...)
 	cmd.Env = append(cmd.Env, r.envPairsFor(c.Podman)...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
 	err = cmd.Run()
@@ -738,7 +758,7 @@ func (c *CLI) RemoveForce(ctx context.Context, name string) error {
 		err = nil
 	}
 	if err == nil && c.Podman {
-		// The named volumes dialectSpec made in place of its anonymous
+		// The named volumes podmanPrepare made in place of its anonymous
 		// ones go with it too.
 		vols, lerr := c.VolumesByLabel(ctx, volumeOfLabel+"="+name)
 		if lerr != nil {
@@ -824,25 +844,51 @@ func (c *CLI) Logs(ctx context.Context, name string, tail int) (string, error) {
 }
 
 // volumeOfLabel marks a named volume podman's dialect made for a container's
-// anonymous one (dialectSpec), with the container's name.
+// anonymous one (podmanPrepare), with the container's name.
 const volumeOfLabel = "agentry.volume-of"
 
-// dialectSpec is r as podman's CLI must be given it. podman's run refuses a
-// label on an anonymous volume, so each of r.Volumes becomes a named volume
-// with the same labels (and the container's name, for RemoveForce), made
-// here and mounted by name: the run's teardown and sweeps find it by its
-// labels either way. The docker CLI takes r as it is.
-func (c *CLI) dialectSpec(ctx context.Context, r RunSpec) (RunSpec, error) {
+// dialectArgs is r's run argv for the CLI driven, its image named as imageRef
+// names it.
+func (c *CLI) dialectArgs(detach bool, r RunSpec, named []namedVolume) []string {
+	r.Image = c.imageRef(r.Image)
+	return r.argsFor(detach, c.Podman, named)
+}
+
+// dropVolumes removes the named volumes podmanPrepare made for a container
+// that did not start, under a context that survives the caller's.
+func (c *CLI) dropVolumes(ctx context.Context, named []namedVolume) {
+	for _, v := range named {
+		_ = c.VolumeRemove(context.WithoutCancel(ctx), v.Name)
+	}
+}
+
+// podmanPrepare is what podman's CLI needs before it runs r: r's environment
+// checked, and r.Volumes made. podman's run refuses a label on an anonymous
+// volume, so each becomes a named volume with the same labels (and the
+// container's name, for RemoveForce), made here and returned to be mounted by
+// name in their place: the run's teardown and sweeps find it by its labels
+// either way. The docker CLI takes r as it is: nil.
+func (c *CLI) podmanPrepare(ctx context.Context, r RunSpec) ([]namedVolume, error) {
 	c.resolve(ctx)
-	if !c.Podman || len(r.Volumes) == 0 {
-		return r, nil
+	if !c.Podman {
+		return nil, nil
+	}
+	// A variable podman reads as its own configuration cannot reach a
+	// container by name through podman's environment, and its value would
+	// show in a process listing as argv: refused, never sent.
+	for _, k := range sortedKeys(r.Env) {
+		if podmanReads(k) && !clientReads(k) {
+			return nil, fmt.Errorf("%s cannot be given to %s on podman: podman reads a variable of that name as its own configuration", k, r.Name)
+		}
+	}
+	if len(r.Volumes) == 0 {
+		return nil, nil
 	}
 	if r.Name == "" {
-		return r, errors.New("podman: a container with labelled volumes needs a name")
+		return nil, errors.New("a container with labelled volumes needs a name on podman")
 	}
-	vols := r.Volumes
-	r.Volumes = nil
-	for i, v := range vols {
+	var named []namedVolume
+	for i, v := range r.Volumes {
 		labels := maps.Clone(v.Labels)
 		if labels == nil {
 			labels = map[string]string{}
@@ -850,11 +896,12 @@ func (c *CLI) dialectSpec(ctx context.Context, r RunSpec) (RunSpec, error) {
 		labels[volumeOfLabel] = r.Name
 		name := r.Name + "-vol" + strconv.Itoa(i)
 		if err := c.VolumeCreate(ctx, name, labels); err != nil {
-			return r, fmt.Errorf("podman volume for %s:%s: %w", r.Name, v.Target, err)
+			c.dropVolumes(ctx, named)
+			return nil, fmt.Errorf("the volume of %s at %s: %w", r.Name, v.Target, err)
 		}
-		r.named = append(r.named, namedVolume{Name: name, Target: v.Target})
+		named = append(named, namedVolume{Name: name, Target: v.Target})
 	}
-	return r, nil
+	return named, nil
 }
 
 // namedVolume is a named volume mounted at Target.
@@ -864,13 +911,14 @@ type namedVolume struct {
 }
 
 // args assembles the docker run argv (without env values, see RunSpec.Env).
-func (r RunSpec) args(detach bool) []string { return r.argsFor(detach, false) }
+func (r RunSpec) args(detach bool) []string { return r.argsFor(detach, false, nil) }
 
-// argsFor assembles the run argv for docker's CLI or podman's. The two take
-// the same spelling but for one form: a container on several networks with an
-// alias on the first, which podman writes name:alias=… where docker writes
+// argsFor assembles the run argv for docker's CLI or podman's, with named
+// mounted in place of r.Volumes (podmanPrepare). The two take the same
+// spelling but for one form: a container on several networks with an alias
+// on the first, which podman writes name:alias=… where docker writes
 // name=…,alias=….
-func (r RunSpec) argsFor(detach, podman bool) []string {
+func (r RunSpec) argsFor(detach, podman bool, named []namedVolume) []string {
 	args := []string{"run"}
 	if detach {
 		args = append(args, "-d")
@@ -993,13 +1041,16 @@ func (r RunSpec) argsFor(detach, podman bool) []string {
 		args = append(args, "-v", spec)
 	}
 	for _, v := range r.Volumes {
+		if named != nil {
+			break
+		}
 		fields := []string{"type=volume", mountField("dst=" + v.Target)}
 		for _, k := range sortedKeys(v.Labels) {
 			fields = append(fields, mountField("volume-label="+k+"="+v.Labels[k]))
 		}
 		args = append(args, "--mount", strings.Join(fields, ","))
 	}
-	for _, v := range r.named {
+	for _, v := range named {
 		args = append(args, "--mount", strings.Join([]string{"type=volume", mountField("src=" + v.Name), mountField("dst=" + v.Target)}, ","))
 	}
 	args = append(args, r.Image)
@@ -1048,7 +1099,8 @@ func clientReads(name string) bool {
 // storage, its configuration and its temporary files (XDG_*, TMPDIR,
 // CONTAINERS_*, STORAGE_*, the registries' credentials) and which service it
 // talks to (CONTAINER_HOST and the like). A container's variable of such a
-// name, set in podman's environment, would reconfigure podman itself.
+// name, set in podman's environment, would reconfigure podman itself; beyond
+// clientReads's own names, podman's dialect refuses one (podmanPrepare).
 func podmanReads(name string) bool {
 	if clientReads(name) {
 		return true

@@ -153,6 +153,9 @@ func HostKernel() string {
 // gateway need, must answer a ping. The answer is kept for the life of the
 // client.
 func (c *CLI) Engine(ctx context.Context) (Engine, error) {
+	if c.misnamed != nil {
+		return Engine{}, c.misnamed
+	}
 	c.resolve(ctx)
 	c.mu.Lock()
 	cached := c.engine
@@ -273,6 +276,7 @@ type podmanInfo struct {
 		Security struct {
 			Rootless bool `json:"rootless"`
 		} `json:"security"`
+		ServiceIsRemote    bool `json:"serviceIsRemote"`
 		NetworkBackendInfo struct {
 			DefaultNetwork string `json:"defaultNetwork"`
 		} `json:"networkBackendInfo"`
@@ -298,6 +302,9 @@ func (c *CLI) podmanEngine(ctx context.Context) (Engine, error) {
 	info, err := c.podmanInfo(ctx)
 	if err != nil {
 		return Engine{}, err
+	}
+	if info.Host.ServiceIsRemote {
+		return Engine{}, errors.New("podman drives a service on another machine (CONTAINER_HOST, a connection, or a podman machine), and the runner drives podman only on this machine: its docker filter needs the service's socket here")
 	}
 	e := parsePodmanEngine(info)
 	if err := pingSocket(ctx, e.SocketPath()); err != nil {
@@ -375,12 +382,12 @@ func PersonUser(ctx context.Context, d Client) (string, error) {
 }
 
 // Engine selection. AGENTRY_ENGINE names the CLI to drive ("docker" or
-// "podman"); AGENTRY_DOCKER and AGENTRY_PODMAN name each binary. With
-// neither engine named nor a docker binary or endpoint given (DOCKER_HOST,
-// DOCKER_CONTEXT), the client finds its engine on first use: the docker CLI
-// when it reaches a daemon, else podman when it is installed and answers,
-// else the docker CLI again, whose error then says what is missing. A miss is
-// not kept, so an engine that starts later is found.
+// "podman"); AGENTRY_DOCKER and AGENTRY_PODMAN name each binary. With no
+// engine named and no docker endpoint given (DOCKER_HOST, DOCKER_CONTEXT),
+// the client finds its engine on first use: the docker CLI when it reaches a
+// daemon, else podman when it is installed and answers, else the docker CLI
+// again, whose error then says what is missing. A miss is not kept, so an
+// engine that starts later is found.
 const (
 	EnvEngine = "AGENTRY_ENGINE"
 	EnvDocker = "AGENTRY_DOCKER"

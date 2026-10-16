@@ -24,9 +24,9 @@
 # RUNSC names a gVisor runsc binary for the measurements a sandboxed run
 # needs; without it they are reported as not measured.
 #
-# Each line is PASS, FAIL, GAP (a difference of this engine's the runner
-# handles, or that is still to close: the line says which), MEASURED (a fact
-# recorded for later work) or SKIP. The exit status is 1 when any line is FAIL.
+# Each line is PASS, FAIL, GAP (where this engine differs from Docker Engine:
+# the line says whether the client handles it), MEASURED (a fact reported, not
+# judged) or SKIP. The exit status is 1 when any line is FAIL.
 set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 1
 
@@ -111,7 +111,7 @@ if [ $? -ne 0 ]; then
 elif [ -n "$("$C" volume ls -q --filter label=ec.anon=1)" ]; then
   line PASS "--mount volume-label (anonymous)" "labelled"
 else
-  line GAP "--mount volume-label (anonymous)" "accepted but the label dropped: a leaked one escapes the label sweep (to close: named labelled volumes)"
+  line GAP "--mount volume-label (anonymous)" "accepted but the label dropped, so a leaked one escapes the label sweep (not handled on this route)"
 fi
 "$C" rm -fv "ec-$$-anon" >/dev/null 2>&1
 
@@ -154,7 +154,7 @@ cid=$("$C" create $L "$IMG" true) && "$C" cp "$cid:/etc/os-release" - | tar -tf 
 
 # --- Runtimes, uids, builds --------------------------------------------------
 if "$C" run --rm $L --runtime agentry-no-such-runtime "$IMG" true >/dev/null 2>&1; then
-  line GAP "--runtime nosuch" "accepted and run under the default: a named runtime is not honoured through this API (to close: a per-run service with the runtime as its default)"
+  line GAP "--runtime nosuch" "accepted and run under the default: this API does not apply a named runtime (the runner refuses a policy runtime on podman)"
 else
   line PASS "--runtime nosuch" "refused"
 fi
