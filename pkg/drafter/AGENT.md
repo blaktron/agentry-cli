@@ -66,7 +66,7 @@ declare `knowledge.accepts` because of it. Two pages you never skip:
   then look it up on `servers/runs-here.md`,
   `servers/does-not-run-here.md` and `servers/sign-ins.md`. Most package
   servers were written for a laptop, and the runner starts one with no
-  arguments, over stdio, on musl, with none of the run's files and only
+  arguments, over stdio, npm ones on musl, with none of the run's files and only
   port 443 to its declared hosts. Give a package an `oauth` block only by
   copying a sign-in `servers/sign-ins.md` lists, exactly.
 - **Before you return, check the manifest against the bounds in

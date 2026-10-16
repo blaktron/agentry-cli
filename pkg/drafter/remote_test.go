@@ -101,8 +101,8 @@ func TestARemoteServerIsNotedWithWhatItsFirstRunAsks(t *testing.T) {
 // list, so a remote server declared first does not send the repair turn to
 // the wrong entry.
 func TestARulesLineNamesAServerByItsOwnIndex(t *testing.T) {
-	d := checked(t, &fakeMeta{}, linearRemote+", "+markitdown)
-	if len(d.serverProblems) != 1 || !strings.HasPrefix(d.serverProblems[0], "capabilities.mcpServers[1]: pypi:markitdown-mcp@0.0.1a7: does not run here") {
+	d := checked(t, &fakeMeta{}, linearRemote+", "+gitSrv)
+	if len(d.serverProblems) != 1 || !strings.HasPrefix(d.serverProblems[0], "capabilities.mcpServers[1]: pypi:mcp-server-git@2026.8.18: does not run here") {
 		t.Fatalf("the line names the manifest's own index: %v", d.serverProblems)
 	}
 }

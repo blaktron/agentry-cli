@@ -66,15 +66,18 @@ const (
 	// Node is 24: servers whose engines.node needs 24 fail every tool
 	// call on 22. The OSV advisory server declares >=24.0.0 in every
 	// version, and 0.1.14 and later do fail on 22 (Promise.try).
-	DefaultNodeRuntime   = "ghcr.io/blaktron/agentry-node-alpine:24-alpine"
-	DefaultPythonRuntime = "ghcr.io/blaktron/agentry-python-alpine:3.12-alpine"
+	DefaultNodeRuntime = "ghcr.io/blaktron/agentry-node-alpine:24-alpine"
+	// Python is Debian's (glibc), not Alpine's (musl): many PyPI packages
+	// publish only manylinux wheels (onnxruntime, scikit-learn on 3.12), and
+	// a server that depends on one cannot resolve on musl at all.
+	DefaultPythonRuntime = "ghcr.io/blaktron/agentry-python-slim:3.12-slim-trixie"
 	// The Node and Python the two default runtimes run, as `node --version`
 	// and `python3 --version` print them in the digests images.tsv pins:
 	// the versions a declared server's own engines.node
 	// or requires_python must admit for its runs to work, which the Drafter
 	// is told and its post-step holds. A test holds each to its image's tag.
 	DefaultNodeVersion   = "24.21.0"
-	DefaultPythonVersion = "3.12.14"
+	DefaultPythonVersion = "3.12.15"
 	// DefaultUnsafeImage is the Unsafe Mode base: Kali with a
 	// command index and an extras list, pinned by digest, amd64 and arm64.
 	// It moves with a CLI release, re-pinned monthly. The index also holds
@@ -890,7 +893,7 @@ func Load(path string) (*Policy, string, error) {
 	if slices.Contains(formerDefaultGoBuilders, p.Images.GoBuilder) {
 		p.Images.GoBuilder = DefaultGoBuilder
 	}
-	if p.Images.PythonRuntime == "" {
+	if p.Images.PythonRuntime == "" || slices.Contains(formerDefaultPythonRuntimes, p.Images.PythonRuntime) {
 		p.Images.PythonRuntime = DefaultPythonRuntime
 	}
 	if p.MCPRegistries.NPM == "" {
@@ -1146,6 +1149,16 @@ var formerDefaultNodeRuntimes = []string{
 	"ghcr.io/blaktron/agentry-node-alpine:22-alpine",
 }
 
+// formerDefaultPythonRuntimes are the values earlier CLIs wrote into every
+// generated policy file as pythonRuntime: our python:3.12-alpine mirror. A
+// file still naming it carries the default of the day it was written, so it
+// loads as the current default (as for nodeRuntime), or the move to a glibc
+// runtime would reach no machine set up before it. Any other value is the
+// operator's and is kept.
+var formerDefaultPythonRuntimes = []string{
+	"ghcr.io/blaktron/agentry-python-alpine:3.12-alpine",
+}
+
 // formerDefaultGoBuilders are the values earlier CLIs wrote into every
 // generated policy file as goBuilder: Docker Hub's golang:1.27-alpine, our
 // 1.27-alpine mirror by tag, and that mirror pinned by digest at go1.27.1. A
@@ -1197,7 +1210,7 @@ images:
   goBuilder: ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:738d1cf061836894ff6bb8c33881080ac66de8cf0586615012a0c8f592649cfa
   # Runtimes for MCP servers a QuickAgent declares (capabilities.mcpServers).
   nodeRuntime: ghcr.io/blaktron/agentry-node-alpine:24-alpine
-  pythonRuntime: ghcr.io/blaktron/agentry-python-alpine:3.12-alpine
+  pythonRuntime: ghcr.io/blaktron/agentry-python-slim:3.12-slim-trixie
   # The base of the desktop's Unsafe Mode exec images: Kali Linux with a
   # command index and an extras list, pinned by digest. Unset, the CLI's
   # pinned default is used, and it moves with the CLI. This key names the

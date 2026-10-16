@@ -65,3 +65,9 @@ The server lists' evidence lines say what was seen and when, instead of naming i
 A draft asked to run a website test suite declared a hosted browser service's remote server with a token, instead of the browser the runner gives. The servers page gains a section on choosing a server or an API that needs a key, an account or a paid plan only when nothing key-free does the task, with the notes saying why; the browser, keys, fetch and review pages say the same and name the hosted browser services, which the check after an answer now sends to a repair turn by package or by address.
 
 - updated: servers/mcp-servers.md, manifest/browser.md, manifest/secrets.md, manifest/egress-and-fetch.md, draft/review.md
+
+## [2026-10-16] update | PyPI servers run on glibc (Drafter 1.15.3)
+
+PyPI servers now install and run on Debian (glibc), Python 3.12.15, so a dependency's `manylinux` wheels install. The servers page says the npm runtime is still musl and the PyPI runtime glibc, and that a PyPI dependency now stops the install only when it publishes no `manylinux` wheel. markitdown-mcp and opensearch-mcp-server-py, and the dependencies onnxruntime, magika and scikit-learn, come off *Does not run here*: each was listed only because musl had no wheel for it. The Python runtime's entry names the new image and what it holds.
+
+- updated: servers/mcp-servers.md (also: what else a runtime holds), sources/servers.yaml, sources/runtime-facts.md, servers/does-not-run-here.md (generated)
