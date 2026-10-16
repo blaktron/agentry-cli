@@ -159,7 +159,7 @@ func TestATargetHostIsReachedThroughTheHostLinkAlone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	user, _, _ := hostLinkUser()
+	user := dockerx.LocalDockerEngine().PersonUser()
 	for _, want := range []string{"203.0.113.4:2222/tcp", hostsDir + ":" + hostlink.HostsMount + ":ro", "user: '" + user + "'"} {
 		if !strings.Contains(string(cat), want) {
 			t.Errorf("the rendered catalog lacks %q:\n%s", want, cat)

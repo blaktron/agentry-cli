@@ -119,22 +119,56 @@ func TestEnsureRuntime(t *testing.T) {
 	}
 }
 
-// On podman a policy's runtime is refused before anything is pulled: the
-// gateway's containers go through an API that drops it.
-func TestEnsureRuntimeRefusesARuntimeOnPodman(t *testing.T) {
+// On podman a policy's runtime is checked by name, before anything is
+// pulled: podman's own CLI must drive it (the docker CLI's view cannot read
+// a container's runtime back), the name must answer, and the gateway's
+// runtime must be a wrapper that adds --host-uds=open to the same runtime.
+func TestEnsureRuntimeOnPodmanChecksEachName(t *testing.T) {
 	pol := policy.Default()
 	pol.Docker.Runtime = "runsc"
-	f := &dockerx.Fake{RuntimeNames: []string{"crun", "runsc"}, EngineInfo: &dockerx.Engine{Kind: dockerx.KindPodman, Endpoint: "unix:///run/podman/podman.sock"}}
-	err := EnsureInstalled(context.Background(), f, pol, "agentry-runner:test", filepath.Join(t.TempDir(), "image"), os.Stderr, true)
-	if err == nil || !strings.Contains(err.Error(), `docker.runtime "runsc" is not held on podman`) {
-		t.Fatalf("got %v", err)
+	viaDocker := &dockerx.Fake{RuntimeNames: []string{"crun", "runsc"}, EngineInfo: &dockerx.Engine{Kind: dockerx.KindPodman, CLI: "docker", Endpoint: "unix:///run/podman/podman.sock"}}
+	err := EnsureInstalled(context.Background(), viaDocker, pol, "agentry-runner:test", filepath.Join(t.TempDir(), "image"), os.Stderr, true)
+	if err == nil || !strings.Contains(err.Error(), "only through podman's own CLI (AGENTRY_ENGINE=podman)") {
+		t.Fatalf("the docker CLI on podman: %v", err)
 	}
-	if ops := strings.Join(f.Ops(), " "); strings.Contains(ops, "Pull:") || strings.Contains(ops, "Build:") {
-		t.Errorf("a refused runtime still pulled or built: %v", f.Ops())
+	if ops := strings.Join(viaDocker.Ops(), " "); strings.Contains(ops, "Pull:") || strings.Contains(ops, "Build:") {
+		t.Errorf("a refused runtime still pulled or built: %v", viaDocker.Ops())
+	}
+	podman := &dockerx.Engine{Kind: dockerx.KindPodman, CLI: "podman", Endpoint: "unix:///run/user/1000/podman/podman.sock", Rootless: true}
+	unregistered := &dockerx.Fake{RuntimeTable: map[string]dockerx.Runtime{"crun": {Path: "/usr/bin/crun"}}, EngineInfo: podman}
+	err = EnsureRuntime(context.Background(), unregistered, pol)
+	if err == nil || !strings.Contains(err.Error(), `docker.runtime "runsc"`) || !strings.Contains(err.Error(), "[engine.runtimes]") || !strings.Contains(err.Error(), "never falls back") {
+		t.Errorf("an unregistered runtime on podman: %v", err)
+	}
+	dir := t.TempDir()
+	wrapper := filepath.Join(dir, "runsc-uds")
+	if err := os.WriteFile(wrapper, []byte("#!/bin/sh\nexec /opt/runsc --ignore-cgroups --host-uds=open \"$@\"\n"), 0o755); err != nil { //nolint:gosec // a test script
+		t.Fatal(err)
+	}
+	registered := &dockerx.Fake{RuntimeTable: map[string]dockerx.Runtime{"crun": {Path: "/usr/bin/crun"}, "runsc": {Path: "/opt/runsc"}, "runsc-uds": {Path: wrapper}}, EngineInfo: podman}
+	if err := EnsureRuntime(context.Background(), registered, pol); err != nil {
+		t.Errorf("a registered runtime on podman was refused: %v", err)
+	}
+	pol.Docker.GatewayRuntime = "runsc-uds"
+	if err := EnsureRuntime(context.Background(), registered, pol); err != nil {
+		t.Errorf("a registered gateway wrapper on podman was refused: %v", err)
+	}
+	plain := filepath.Join(dir, "plain")
+	if err := os.WriteFile(plain, []byte("#!/bin/sh\nexec /opt/runsc --ignore-cgroups \"$@\"\n"), 0o755); err != nil { //nolint:gosec // a test script
+		t.Fatal(err)
+	}
+	registered.RuntimeTable["runsc-uds"] = dockerx.Runtime{Path: plain}
+	err = EnsureRuntime(context.Background(), registered, pol)
+	if err == nil || !strings.Contains(err.Error(), `docker.gatewayRuntime "runsc-uds" is registered at `+plain) || !strings.Contains(err.Error(), "claim a sandbox") {
+		t.Errorf("a wrapper without --host-uds=open: %v", err)
+	}
+	delete(registered.RuntimeTable, "runsc-uds")
+	if err = EnsureRuntime(context.Background(), registered, pol); err == nil || !strings.Contains(err.Error(), `docker.gatewayRuntime "runsc-uds"`) {
+		t.Errorf("an unregistered gateway runtime: %v", err)
 	}
 	// No runtime asks nothing of the engine.
-	f.EngineErr = errors.New("not asked")
-	if err := EnsureRuntime(context.Background(), f, policy.Default()); err != nil {
+	registered.EngineErr = errors.New("not asked")
+	if err := EnsureRuntime(context.Background(), registered, policy.Default()); err != nil {
 		t.Errorf("an unset runtime: %v", err)
 	}
 }

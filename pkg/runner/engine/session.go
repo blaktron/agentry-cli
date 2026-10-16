@@ -82,6 +82,9 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	}
 	p.place = &place
 	env.CapabilitiesEnforced["engine"] = place.line()
+	if p.Plan.Runtime() != "" {
+		env.CapabilitiesEnforced["runtime"] = runtimeLine(p)
+	}
 
 	// What a run whose process died left behind goes first, before this
 	// run adds its own.
@@ -191,7 +194,7 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 			Runtime:    p.Plan.Runtime(),
 		}, p.limits())
 		initSpec.CapAdd = []string{"CHOWN"}
-		code, err := d.RunForeground(ctx, initSpec, nil, io.Discard, p.Stderr)
+		code, err := dockerx.RunForegroundUnder(ctx, d, initSpec, "session store's one-shot", nil, io.Discard, p.Stderr)
 		if err != nil || code != 0 {
 			if err == nil {
 				err = fmt.Errorf("exit %d", code)
@@ -527,7 +530,9 @@ func (s *liveSession) launch(again bool) (io.ReadWriteCloser, error) {
 		if again {
 			_ = s.d.RemoveForce(s.agentCtx, name)
 		}
-		run = func() (int, error) { return s.d.RunForeground(s.agentCtx, runSpec, stdinR, stdoutW, stderrFile) }
+		run = func() (int, error) {
+			return dockerx.RunForegroundUnder(s.agentCtx, s.d, runSpec, "agent container", stdinR, stdoutW, stderrFile)
+		}
 	}
 	exited := make(chan struct{})
 	s.mu.Lock()

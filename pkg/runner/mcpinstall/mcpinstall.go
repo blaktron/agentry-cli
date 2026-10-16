@@ -594,7 +594,12 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 			egress.stop(ctx, "")
 			return installFailed(r, receipt.InstallProxy, fmt.Errorf("install %s: %w", r.ID, err))
 		}
-		code, err := d.RunForeground(ctx, dockerx.RunSpec{
+		user, err := dockerx.PersonUser(ctx, d)
+		if err != nil {
+			egress.stop(ctx, "")
+			return installFailed(r, receipt.InstallProxy, fmt.Errorf("install %s: %w", r.ID, err))
+		}
+		code, err := dockerx.RunForegroundUnder(ctx, d, dockerx.RunSpec{
 			Name:  "agentry-mcpinstall-" + r.ID,
 			Image: image,
 			Argv:  argv,
@@ -602,11 +607,13 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 			// the builders' own fetches honour these, and the network has no
 			// other way off it.
 			Env: egress.env(),
-			// The store is the user's: the builder runs as the invoking uid:gid
-			// so every file it writes is theirs and `rm -rf` of the profile —
-			// what the drift refusal asks for — works. Hosts without POSIX ids
-			// leave it to the image's own user.
-			User: invokingUser(),
+			// The store is the user's: the builder runs as the person, as
+			// this engine maps them (their uid:gid; root on a rootless
+			// engine, where that is the person and any other uid is a
+			// subordinate one), so every file it writes is theirs and `rm
+			// -rf` of the profile — what the drift refusal asks for — works.
+			// Hosts without POSIX ids leave it to the image's own user.
+			User: user,
 			// The install runs under the policy's runtime like every
 			// container of a run; "" is the daemon's default. The
 			// proxy's alias is pinned for it (egress.hosts).
@@ -634,7 +641,7 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 			},
 			// The run's container posture; its root stays
 			// writable, since npm and pip write where they please.
-		}.WithPosture(lim.Memory, lim.CPUs, lim.Pids), nil, logw, logw)
+		}.WithPosture(lim.Memory, lim.CPUs, lim.Pids), "MCP server installer", nil, logw, logw)
 		// The proxy's allow/deny lines are the evidence of what the
 		// install reached; kept beside the record, failed install or not.
 		egress.stop(ctx, filepath.Join(storeDir, r.ID+installProxyLogSuffix))
@@ -676,16 +683,6 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 		}
 	}
 	return nil
-}
-
-// invokingUser is the uid:gid the install container runs as, or "" on a
-// host without POSIX ids (the engine's stampOwner draws the same line).
-func invokingUser() string {
-	uid, gid := os.Getuid(), os.Getgid()
-	if uid < 0 || gid < 0 {
-		return ""
-	}
-	return fmt.Sprintf("%d:%d", uid, gid)
 }
 
 // Specs turns resolutions into the plan's server specs, and each declared

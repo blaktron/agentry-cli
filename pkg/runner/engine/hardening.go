@@ -185,6 +185,18 @@ func runtimeLine(p Params) string {
 	rt := p.Plan.Runtime()
 	servers := spec.HasPackageServers(p.Plan.MCPServers)
 	rs := p.Plan.SandboxResolvers()
+	eng := p.engine()
+	podman := eng.Kind == dockerx.KindPodman
+	// On podman every container the gateway creates goes through an API
+	// service of the run's own with rt as its default (podmanservice.go),
+	// where the CLI serves the filter (a run under a runtime is refused on
+	// podman otherwise), so the relays are under it whether or not the
+	// host's name servers are named.
+	viaService := podman && filterSupported && (p.place == nil || p.place.inProcess)
+	engineCLI := dockerx.KindDocker
+	if podman {
+		engineCLI = dockerx.KindPodman
+	}
 	var under []string
 	if p.Plan.Harness.Host == nil {
 		under = append(under, "the agent container (the QuickAgent's code)")
@@ -199,18 +211,25 @@ func runtimeLine(p Params) string {
 	if proxySandboxed(p.Plan) {
 		under = append(under, "the llm-proxy (on an egress network of the run's own, joined at create)")
 	}
-	line := rt + ": created with docker --runtime " + rt + ": " + strings.Join(under, ", ") +
-		" (each finds the containers it talks to through /etc/hosts, since a sandboxed network stack does not reach docker's embedded DNS)"
+	line := rt + ": created with " + engineCLI + " --runtime " + rt + ", each checked by reading the runtime the engine gave it back before it starts: " + strings.Join(under, ", ") +
+		" (each finds the containers it talks to through /etc/hosts, since a sandboxed network stack does not reach the engine's embedded DNS)"
 	if gatewaySandboxed(p.Plan) {
-		line += "; the gateway is created with docker --runtime " + p.Plan.GatewayRuntime() + " (docker.gatewayRuntime), which opens the bind-mounted socket of the run's docker filter"
+		line += "; the gateway is created with " + engineCLI + " --runtime " + p.Plan.GatewayRuntime() + " (docker.gatewayRuntime), which opens the bind-mounted socket of the run's docker filter"
 	}
 	launched, is, takes := "the tools server", "is", "takes"
 	if servers {
 		launched, is, takes = "the tools server and the declared MCP servers", "are", "take"
 	}
-	if filterSupported {
-		line += "; " + launched + ", which the gateway launches, " + is + " given " + rt + " by the run's docker filter" +
+	switch {
+	case viaService:
+		line += "; " + launched + ", which the gateway launches, " + is + " created through a podman API service of the run's own started with --runtime " + rt +
+			", whose default every container made through it takes, and the run's docker filter reads each one's runtime back natively and refuses a mismatch" +
+			" (a server's relay links become /etc/hosts entries at the relay's address, since podman takes no link)"
+	case filterSupported:
+		line += "; " + launched + ", which the gateway launches, " + is + " given " + rt + " by the run's docker filter, which reads each one's runtime back and refuses a mismatch" +
 			" (a server's relay links pinned into its /etc/hosts at the relay's address)"
+	}
+	if filterSupported {
 		if rs := p.Plan.WebResolvers(); len(rs) > 0 {
 			// The tools server that reaches past the host does so by
 			// name: it resolves through the host's servers.
@@ -233,6 +252,12 @@ func runtimeLine(p Params) string {
 	}
 	if relaysSandboxed(p.Plan) {
 		named = append(named, "the relays (which the filter gives "+rt+")")
+	}
+	if viaService && relaysNeeded(p.Plan) && !relaysSandboxed(p.Plan) {
+		line += "; the relays run under " + rt + " through the run's podman API service too, resolving their declared hosts through podman's own name server on the network, and each is given the sysctl that lets it bind 443 as a plain user (net.ipv4.ip_unprivileged_port_start=0)"
+	}
+	if eng.SandboxUnlabelled(rt) {
+		line += "; on this SELinux host each container under " + rt + " runs with its SELinux label disabled, which gVisor requires under podman: the runtime's isolation stands in for the label's"
 	}
 	if len(named) > 0 {
 		// One class takes the singular, several an "each".
@@ -258,7 +283,7 @@ func runtimeLine(p Params) string {
 		gaps = append(gaps, "the MCP server install proxy (it resolves the registry the same way)")
 	}
 	switch {
-	case !relaysNeeded(p.Plan) || relaysSandboxed(p.Plan):
+	case !relaysNeeded(p.Plan) || relaysSandboxed(p.Plan) || viaService:
 	case len(rs) == 0:
 		gaps = append(gaps, "the relays (each resolves its declared host through docker's embedded DNS, which "+rt+" does not reach)")
 	default:

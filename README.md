@@ -15,7 +15,7 @@ deterministic archives (`pkg/archive`), attestation verification
 ## Prerequisites
 
 - Go, at the version named by the `go` line of `go.mod`.
-- Docker, for `agentry run` with the default container adapter.
+- A container engine for `agentry run` with the default container adapter: Docker Engine, Docker Desktop or podman (podman with gVisor holds the sandbox too). See https://docs.secureagentry.net/runner/#container-engines.
 - `golangci-lint`, optional: `make lint` runs it when it is installed.
 
 ## Build, test, lint

@@ -97,17 +97,6 @@ func targetHostsOf(p Params) []*targethost.Host {
 	return out
 }
 
-// hostLinkUser is the uid:gid the host link runs as: the invoking user's,
-// as the files image runs, or "" where there is none (Windows), which
-// leaves the image's own (10001).
-var hostLinkUser = func() (string, int, int) {
-	uid, gid := os.Getuid(), os.Getgid()
-	if uid < 0 || gid < 0 {
-		return "", -1, -1
-	}
-	return fmt.Sprintf("%d:%d", uid, gid), uid, gid
-}
-
 // hostLinkPasswd is the passwd file bound over the host link's /etc/passwd:
 // the image's own lines, and one for the uid it runs as (ssh refuses a uid
 // it has no entry for).
@@ -168,7 +157,10 @@ func prepareTargetHosts(ctx context.Context, d dockerx.Client, p Params, rd *run
 	// Whatever happens next, the sign-ins die with the run (KeepRunDir
 	// keeps none), and the call logs are kept as receipts.
 	td.add(func(context.Context) { copyHostLogs(rd, env) })
-	_, uid, gid := hostLinkUser()
+	uid, gid, ok := rd.engine.PersonIDs()
+	if !ok {
+		uid, gid = -1, -1
+	}
 	if err := os.WriteFile(filepath.Join(rd.hostsDir(), hostlink.PasswdFile), hostLinkPasswd(uid, gid), 0o644); err != nil { //nolint:gosec // no secret: user names and ids
 		return Classify(ExitCLI, fmt.Errorf("the host link's passwd file: %w", err))
 	}

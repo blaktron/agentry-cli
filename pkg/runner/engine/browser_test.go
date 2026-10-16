@@ -109,7 +109,7 @@ func TestABrowserRunStartsTheBrowseProxyWithItsScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{proxy + ":3128/tcp", "http://" + proxy + ":3128", "user: '" + browserUser() + "'", filepath.Join(runDir, "cfg", spec.BrowserOutDir) + ":/out-browser:rw"} {
+	for _, want := range []string{proxy + ":3128/tcp", "http://" + proxy + ":3128", "user: '" + dockerx.LocalDockerEngine().PersonUser() + "'", filepath.Join(runDir, "cfg", spec.BrowserOutDir) + ":/out-browser:rw"} {
 		if !strings.Contains(string(cat), want) {
 			t.Errorf("the rendered catalog lacks %q", want)
 		}

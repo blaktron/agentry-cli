@@ -32,6 +32,10 @@ func TestMain(m *testing.M) {
 	if root := os.Getenv(holdRunLockEnv); root != "" {
 		os.Exit(playLockedRun(root))
 	}
+	// A stand-in for the run's podman API service (podmanservice_test.go).
+	if sock := os.Getenv(fakePodmanServiceEnv); sock != "" {
+		os.Exit(playPodmanService(sock))
+	}
 	// No test touches DNS: the model hosts resolve nowhere unless a test
 	// says otherwise (modelhosts_test.go).
 	lookupModelHost = func(context.Context, string) ([]net.IP, error) { return nil, errors.New("no DNS in tests") }

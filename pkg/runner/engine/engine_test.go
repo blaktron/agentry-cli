@@ -1015,7 +1015,7 @@ func TestRunUnderAPolicyRuntime(t *testing.T) {
 	if !filterSupported {
 		launched = "the tools server, which the gateway launches, takes the daemon's default: the docker filter that sets the runtime runs on Linux only"
 	}
-	for _, want := range []string{"runsc: created with docker --runtime runsc: the agent container", "the gateway's health probe",
+	for _, want := range []string{"runsc: created with docker --runtime runsc, each checked by reading the runtime the engine gave it back before it starts: the agent container", "the gateway's health probe",
 		launched, "daemon's default runtime", "the llm-proxy (", "the gateway ("} {
 		if !strings.Contains(line, want) {
 			t.Errorf("receipt runtime line lacks %q: %q", want, line)

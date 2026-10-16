@@ -185,9 +185,39 @@ type Config struct {
 	// /etc/hosts entries the filter pins. Empty leaves the daemon's
 	// default. The gateway never chooses a runtime itself.
 	Runtime string
+	// Podman says the upstream is podman's Docker-compatible API, which
+	// differs from Docker Engine's in three ways the filter follows: a
+	// link (HostConfig.Links, an endpoint's) is refused there, so each
+	// becomes the /etc/hosts entries the filter pins under a runtime and
+	// is cleared from the body; a rootless container keeps the kernel's
+	// unprivileged-port floor, so a relay, which binds 443 as a plain
+	// user, is given the sysctl that lowers it to 0 (Docker Engine sets it
+	// in every container); and a create body's runtime is dropped, so with
+	// Runtime set the upstream is an API service of the run's own whose
+	// default runtime is Runtime, and every container created through it,
+	// the relays included, runs under it.
+	Podman bool
+	// SELinuxUnconfined creates every container that runs under Runtime
+	// with its SELinux label disabled: on podman on an SELinux host, gVisor
+	// refuses to start a labelled container. The runtime's own isolation
+	// stands in for the label's.
+	SELinuxUnconfined bool
+	// Verify, when set, is called after the upstream creates a container
+	// that must run under a runtime, with the container's id, its class in
+	// the receipt's words and the runtime it must be under, before the
+	// gateway sees the answer: it reads the runtime back from the engine
+	// natively and returns why the two differ, which refuses the create
+	// to the gateway and is kept as RuntimeMismatch. Nil reads the runtime
+	// through the daemon's own inspect instead (the filter container,
+	// which has no engine CLI; Docker Engine's inspect answers truly).
+	Verify func(ctx context.Context, id, class, runtime string) error `json:"-"`
 	// Log receives one line per request.
 	Log io.Writer `json:"-"`
 }
+
+// relayPortSysctl is the kernel setting that lets a relay bind 443 as a
+// user with no capability on a rootless engine.
+const relayPortSysctl = "net.ipv4.ip_unprivileged_port_start"
 
 // Limits are the resource ceilings for the containers a gateway creates.
 // Zero leaves a resource unbounded.
@@ -219,7 +249,34 @@ type Filter struct {
 	execs   map[string]bool
 	refused atomic.Int64
 	logMu   sync.Mutex
+	// mismatch is the first runtime Verify refused, kept for the run.
+	mismatch atomic.Pointer[runtimeRefusal]
 }
+
+// runtimeRefusal is a create the engine answered but Verify refused: the
+// container was not created under the runtime it had to run under.
+type runtimeRefusal struct{ err error }
+
+func (e *runtimeRefusal) Error() string { return e.err.Error() }
+func (e *runtimeRefusal) Unwrap() error { return e.err }
+
+// RuntimeMismatch is the first container the engine created under another
+// runtime than the one it was asked for, as Verify reported it, or nil.
+// The gateway's create was refused; the run reads this to stop rather than
+// carry on with a receipt that would name a sandbox a container did not
+// have.
+func (f *Filter) RuntimeMismatch() error {
+	if m := f.mismatch.Load(); m != nil {
+		return m.err
+	}
+	return nil
+}
+
+// createMeta is what containerCreate decides for the response's check:
+// the container's class and the runtime it must be under.
+type createMeta struct{ class, runtime string }
+
+type createMetaKey struct{}
 
 // Start serves the filter on cfg.Listen.
 func Start(cfg Config) (*Filter, error) {
@@ -259,6 +316,11 @@ func Start(cfg Config) (*Filter, error) {
 		FlushInterval:  -1, // logs, events, pulls and attach stream
 		ModifyResponse: f.modifyResponse,
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, err error) {
+			var rr *runtimeRefusal
+			if errors.As(err, &rr) {
+				writeJSON(w, http.StatusForbidden, "agentry run filter: "+err.Error())
+				return
+			}
 			http.Error(w, "agentry run filter: daemon: "+err.Error(), http.StatusBadGateway)
 		},
 	}
@@ -304,6 +366,8 @@ func versionOf(p string) string {
 // ServeHTTP decides each request.
 func (f *Filter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p := canonical(r.URL.Path)
+	// A create's class and runtime travel to the response's check.
+	r = r.WithContext(context.WithValue(r.Context(), createMetaKey{}, &createMeta{}))
 	fwd, err := f.decide(r, p)
 	if err != nil {
 		var nf notFound
