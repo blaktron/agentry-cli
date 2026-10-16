@@ -12,3 +12,8 @@ func ownerDead(_ int, _ uint64) bool { return false }
 // say its process is the one that labelled a container, so no container is
 // labelled with an owner and the startup sweep removes nothing here.
 func Identity() (string, bool) { return "", false }
+
+// CommandLine has no portable answer off Linux: ok is always false, so a
+// sweep that holds a recorded process to its command line signals nothing
+// here.
+func CommandLine(_ int) ([]string, bool) { return nil, false }

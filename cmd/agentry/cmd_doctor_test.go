@@ -301,6 +301,99 @@ func TestDoctorNamesTheEngine(t *testing.T) {
 	}
 }
 
+// The docker configuration's credential helpers are held to PATH: a
+// credsStore whose program is missing fails the check, since every pull
+// fails on it; a credHelpers entry's warns for its registry; a present
+// helper and an absent file say nothing; and podman's own CLI, which does
+// not read the file, is not checked.
+func TestDoctorChecksTheCredentialHelpers(t *testing.T) {
+	policyPath, fake := doctorFixture(t)
+	fr := newFakeRegistry(t)
+	cfgDir := filepath.Join(os.Getenv("HOME"), ".docker")
+	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := filepath.Join(cfgDir, "config.json")
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "docker-credential-gcloud"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil { //nolint:gosec // a test stand-in
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	if err := os.WriteFile(cfg, []byte(`{"credsStore":"desktop","credHelpers":{"ghcr.io":"gh","gcr.io":"gcloud"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, _, _ := runCLI(t, nil, "doctor", "--registry", fr.url(), "--policy", policyPath)
+	if !strings.Contains(out, "FAIL  docker:credentials") || !strings.Contains(out, `"desktop" as credsStore, and docker-credential-desktop is not on PATH: the docker CLI fails every image pull`) {
+		t.Errorf("a missing credsStore helper:\n%s", out)
+	}
+	if !strings.Contains(out, "warn  docker:credentials") || !strings.Contains(out, `"gh" for ghcr.io in credHelpers`) {
+		t.Errorf("a missing credHelpers helper:\n%s", out)
+	}
+	if strings.Contains(out, "gcloud") {
+		t.Errorf("a present helper was reported:\n%s", out)
+	}
+	if !strings.Contains(out, "ok    docker") {
+		t.Errorf("the engine itself is fine:\n%s", out)
+	}
+
+	// podman's own CLI: the file is not read.
+	fake.EngineInfo = &dockerx.Engine{Kind: dockerx.KindPodman, CLI: "podman", Version: "5.8.4", Endpoint: "unix:///run/user/1000/podman/podman.sock", DaemonHost: hostnameOf(t), DaemonKernel: dockerx.HostKernel()}
+	out, _, _ = runCLI(t, nil, "doctor", "--registry", fr.url(), "--policy", policyPath)
+	if strings.Contains(out, "docker:credentials") {
+		t.Errorf("podman's own CLI reads no docker configuration:\n%s", out)
+	}
+	fake.EngineInfo = nil
+
+	// Every helper present, or no file: nothing said.
+	if err := os.WriteFile(cfg, []byte(`{"credsStore":"gcloud"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, _, _ = runCLI(t, nil, "doctor", "--registry", fr.url(), "--policy", policyPath)
+	if strings.Contains(out, "docker:credentials") {
+		t.Errorf("every helper present:\n%s", out)
+	}
+	if err := os.Remove(cfg); err != nil {
+		t.Fatal(err)
+	}
+	out, _, _ = runCLI(t, nil, "doctor", "--registry", fr.url(), "--policy", policyPath)
+	if strings.Contains(out, "docker:credentials") {
+		t.Errorf("no configuration file:\n%s", out)
+	}
+}
+
+// When no engine answers, the socket files engines left on this machine
+// with nothing behind them are named, each with the fix; when an engine
+// answers, found or refused, they are not looked for.
+func TestDoctorNamesTheSocketsNothingAnswersOn(t *testing.T) {
+	policyPath, fake := doctorFixture(t)
+	fr := newFakeRegistry(t)
+	t.Setenv("XDG_RUNTIME_DIR", "")
+	left := filepath.Join(os.Getenv("HOME"), ".docker", "desktop", "docker.sock")
+	if err := os.MkdirAll(filepath.Dir(left), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(left, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fake.AvailableErr = errors.New("no container engine answers")
+	out, _, _ := runCLI(t, nil, "doctor", "--registry", fr.url(), "--policy", policyPath)
+	if !strings.Contains(out, "FAIL  docker") || !strings.Contains(out, "warn  docker:socket") || !strings.Contains(out, "Docker Desktop left a socket at "+left+" with nothing answering behind it") || !strings.Contains(out, "start it, or remove the file") {
+		t.Errorf("a socket with nothing behind it:\n%s", out)
+	}
+	// An engine that answers and is refused for what it is: no list.
+	fake.AvailableErr = nil
+	fake.EngineInfo = &dockerx.Engine{Kind: dockerx.KindDocker, CLI: "docker", Version: "29.7.2", Endpoint: "tcp://10.0.0.5:2376"}
+	out, _, _ = runCLI(t, nil, "doctor", "--registry", fr.url(), "--policy", policyPath)
+	if !strings.Contains(out, "FAIL  docker") || strings.Contains(out, "docker:socket") {
+		t.Errorf("a refused engine answers, so no socket is looked for:\n%s", out)
+	}
+	fake.EngineInfo = nil
+	out, _, _ = runCLI(t, nil, "doctor", "--registry", fr.url(), "--policy", policyPath)
+	if strings.Contains(out, "docker:socket") {
+		t.Errorf("the engine answers, so no socket is looked for:\n%s", out)
+	}
+}
+
 // With neither engine on the machine, the real client says so.
 func TestDoctorWithNoEngine(t *testing.T) {
 	policyPath, _ := doctorFixture(t)

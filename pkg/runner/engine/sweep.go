@@ -51,9 +51,9 @@ func SweepAbandoned(ctx context.Context, d dockerx.Client, stderr io.Writer) {
 // are never touched. A run whose containers still stand (the container
 // sweep could not judge their owner) keeps them too: docker refuses to
 // remove a network or a volume a container uses.
-func sweepAbandonedRun(ctx context.Context, d dockerx.Client, runRoot string, stderr io.Writer) {
+func sweepAbandonedRun(ctx context.Context, d dockerx.Client, runRoot, runnerHome string, stderr io.Writer) {
 	byContainers := sweepAbandoned(ctx, d, stderr)
-	swept := sweepRunDirs(runRoot, byContainers, stderr)
+	swept := sweepRunDirs(runRoot, runnerHome, byContainers, stderr)
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	for _, r := range swept {

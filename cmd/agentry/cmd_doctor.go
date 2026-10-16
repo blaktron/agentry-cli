@@ -382,10 +382,42 @@ func doctorPodmanRuntime(ctx context.Context, rep *doctorReport, d dockerx.Clien
 	}
 }
 
+// doctorLeftSockets, when no engine answers, names each socket file an
+// engine left on this machine with nothing behind it: a stopped Docker
+// Desktop, Colima or podman socket is where a person looks for the
+// engine first, and the file alone proves nothing. An engine that answers
+// and is refused for what it is has no need of the list.
+func doctorLeftSockets(ctx context.Context, rep *doctorReport) {
+	for _, s := range dockerx.LeftSockets(ctx, dockerx.HostSockets()) {
+		rep.warn("docker:socket", "%s left a socket at %s with nothing answering behind it (%v): start it, or remove the file", s.Name, s.Path, s.Err)
+	}
+}
+
+// doctorCredentialHelpers reads the docker CLI's configuration for a
+// credential helper it names and PATH lacks: the CLI runs the helper for
+// every pull the entry covers and fails the pull when it is not found, so a
+// credsStore left by a Docker Desktop that is gone fails every pull on the
+// engine that replaced it. podman's own CLI does not read that file, so
+// nothing is checked when it is the engine.
+func doctorCredentialHelpers(ctx context.Context, rep *doctorReport, d dockerx.Client) {
+	if e, err := dockerx.DescribeEngine(ctx, d); err == nil && e.CLI == dockerx.KindPodman {
+		return
+	}
+	for _, g := range dockerx.MissingCredentialHelpers(dockerx.ConfigFile(), nil) {
+		if g.Store {
+			rep.fail("docker:credentials", "%s names the credential helper %q as credsStore, and %s is not on PATH: the docker CLI fails every image pull on it until the entry is removed or the helper installed (a leftover of Docker Desktop, when it is \"desktop\")", g.Config, g.Helper, g.Program)
+			continue
+		}
+		rep.warn("docker:credentials", "%s names the credential helper %q for %s in credHelpers, and %s is not on PATH: the docker CLI fails a pull from %s until the entry is removed or the helper installed", g.Config, g.Helper, g.Registry, g.Program, g.Registry)
+	}
+}
+
 // doctorDocker checks the engine and the images a run would need.
 func doctorDocker(ctx context.Context, rep *doctorReport, d dockerx.Client, pol *policy.Policy, m *manifest.Manifest) {
 	if err := d.Available(ctx); err != nil {
 		rep.fail("docker", "%v", err)
+		doctorLeftSockets(ctx, rep)
+		doctorCredentialHelpers(ctx, rep, d)
 		return
 	}
 	// The engine in the receipt's words, or why a run on it is refused:
@@ -394,9 +426,11 @@ func doctorDocker(ctx context.Context, rep *doctorReport, d dockerx.Client, pol 
 	line, err := engine.EngineLine(ctx, d)
 	if err != nil {
 		rep.fail("docker", "%v", err)
+		doctorCredentialHelpers(ctx, rep, d)
 		return
 	}
 	rep.ok("docker", "%s", line)
+	doctorCredentialHelpers(ctx, rep, d)
 	if pol == nil {
 		return
 	}

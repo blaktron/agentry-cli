@@ -104,7 +104,7 @@ func TestSweepRemovesTheSecretsOfAKilledRunAndNeverALiveOnes(t *testing.T) {
 	rd := runDirsAt(root)
 
 	var out bytes.Buffer
-	sweepRunDirs(home, nil, &out)
+	sweepRunDirs(home, home, nil, &out)
 	if !pathExists(rd.secretsPath) || !pathExists(rd.connections()) || !pathExists(rd.modelSignInDir()) {
 		t.Fatalf("the sweep removed a live run's files: %s", out.String())
 	}
@@ -113,7 +113,7 @@ func TestSweepRemovesTheSecretsOfAKilledRunAndNeverALiveOnes(t *testing.T) {
 	}
 
 	killRun(t, cmd)
-	sweepRunDirs(home, nil, &out)
+	sweepRunDirs(home, home, nil, &out)
 	if pathExists(root) {
 		t.Errorf("the killed run's directory is still there")
 	}
@@ -132,7 +132,7 @@ func TestSweepKeepsAKilledKeptRunsDirectoryButNotItsSecrets(t *testing.T) {
 	killRun(t, startLockedRun(t, root, true))
 	rd := runDirsAt(root)
 
-	sweepRunDirs(home, nil, nil)
+	sweepRunDirs(home, home, nil, nil)
 	for _, gone := range []string{rd.secretsPath, rd.connections(), rd.modelSignInDir(), filepath.Join(root, RunLockFile)} {
 		if pathExists(gone) {
 			t.Errorf("%s survived the sweep of a killed kept run", gone)
@@ -160,7 +160,7 @@ func TestSweepLeavesARunDirectoryItCannotJudge(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(starting, RunLockFile), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	sweepRunDirs(home, map[string]bool{"abcd0003": true}, nil)
+	sweepRunDirs(home, home, map[string]bool{"abcd0003": true}, nil)
 	for _, root := range []string{starting, unknown} {
 		if !pathExists(runDirsAt(root).secretsPath) {
 			t.Errorf("%s: the sweep removed a run's secrets it could not prove dead", root)
@@ -216,7 +216,7 @@ func TestSweepLeavesALiveRunOfThisProcessAlone(t *testing.T) {
 	}
 	defer lock.release(false)
 	writeRunSecrets(root)
-	sweepRunDirs(home, map[string]bool{"live0001": true}, nil)
+	sweepRunDirs(home, home, map[string]bool{"live0001": true}, nil)
 	if !pathExists(runDirsAt(root).secretsPath) {
 		t.Fatal("the sweep removed the secrets of a run this process holds")
 	}
@@ -247,14 +247,14 @@ func TestSweepRetriesAKeptRunsSecretItCouldNotDelete(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(gw, 0o755) })
 	var out bytes.Buffer
-	sweepRunDirs(home, nil, &out)
+	sweepRunDirs(home, home, nil, &out)
 	if !strings.Contains(out.String(), "secrets.env") || !pathExists(filepath.Join(root, RunLockFile)) {
 		t.Fatalf("a secret the sweep could not delete was not named, or its lock went: %q", out.String())
 	}
 	if err := os.Chmod(gw, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	sweepRunDirs(home, nil, nil)
+	sweepRunDirs(home, home, nil, nil)
 	if pathExists(runDirsAt(root).secretsPath) || pathExists(filepath.Join(root, RunLockFile)) {
 		t.Error("the next sweep did not finish the kept run's secrets and lock")
 	}
@@ -306,7 +306,7 @@ func TestRunsInUseNamesTheRunsALiveProcessHolds(t *testing.T) {
 		t.Errorf("RunsInUse = %v, want the two live runs", got)
 	}
 	// Asking takes nothing from the run that holds it.
-	sweepRunDirs(home, nil, nil)
+	sweepRunDirs(home, home, nil, nil)
 	if !pathExists(runDirsAt(own).secretsPath) {
 		t.Error("asking which runs are in use released one")
 	}
@@ -327,7 +327,7 @@ func TestSweepRemovesTheNetworksOfARunKilledBeforeItsContainers(t *testing.T) {
 		{Name: sourceNetworkName("dead0006", "repo"), Labels: labels("dead0006")},
 		{Name: networkName("live0006"), Labels: labels("live0006")},
 	}}
-	sweepAbandonedRun(context.Background(), f, home, nil)
+	sweepAbandonedRun(context.Background(), f, home, home, nil)
 
 	ops := f.Ops()
 	for _, want := range []string{"NetworkRemove:" + networkName("dead0006"), "NetworkRemove:" + sourceNetworkName("dead0006", "repo"), "VolumeRemove:" + sessionVolumeName("dead0006")} {
