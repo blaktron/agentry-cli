@@ -154,7 +154,7 @@ func runDirsAt(root string) *runDirs {
 // names a sensitive file it could not delete. It returns the ids of the
 // runs it swept, every one proven dead: by its free lock and its record, or
 // by deadRuns.
-func sweepRunDirs(runRoot string, deadRuns map[string]bool, stderr io.Writer) []string {
+func sweepRunDirs(runRoot, runnerHome string, deadRuns map[string]bool, stderr io.Writer) []string {
 	if runRoot == "" {
 		return nil
 	}
@@ -174,7 +174,7 @@ func sweepRunDirs(runRoot string, deadRuns map[string]bool, stderr io.Writer) []
 			continue
 		}
 		dir := filepath.Join(runs, e.Name())
-		ok, still := sweepRunDir(dir, deadRuns[e.Name()])
+		ok, still := sweepRunDir(dir, runnerHome, deadRuns[e.Name()])
 		if ok {
 			swept = append(swept, e.Name())
 		}
@@ -234,7 +234,10 @@ func RunsInUse(runRoot string) []string {
 
 // sweepRunDir sweeps one run directory as sweepRunDirs says, reporting
 // whether it was a dead run's and the sensitive paths it could not delete.
-func sweepRunDir(dir string, deadByContainers bool) (bool, []string) {
+// runnerHome is the runner home, under whose s/ directory the run's podman
+// API service, if it had one, put its socket; runRoot, where the run
+// directories live, is another place.
+func sweepRunDir(dir, runnerHome string, deadByContainers bool) (bool, []string) {
 	lockPath := filepath.Join(dir, RunLockFile)
 	fi, err := os.Lstat(lockPath)
 	switch {
@@ -242,7 +245,7 @@ func sweepRunDir(dir string, deadByContainers bool) (bool, []string) {
 		if !deadByContainers {
 			return false, nil
 		}
-		stopLeftPodmanService(dir)
+		StopLeftPodmanService(dir, runnerHome, filepath.Base(dir))
 		return true, removeSensitiveFiles(dir)
 	case err != nil || !fi.Mode().IsRegular():
 		return false, nil
@@ -264,7 +267,7 @@ func sweepRunDir(dir string, deadByContainers bool) (bool, []string) {
 		_ = f.Close()
 		return false, nil
 	}
-	stopLeftPodmanService(dir)
+	StopLeftPodmanService(dir, runnerHome, filepath.Base(dir))
 	left := removeSensitiveFiles(dir)
 	// The lock goes before the directory: on Windows neither can be
 	// deleted while it is open. A run that takes it in between finds the
