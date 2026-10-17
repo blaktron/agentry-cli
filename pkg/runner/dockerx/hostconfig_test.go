@@ -202,6 +202,9 @@ func TestLeftSocketMessage(t *testing.T) {
 
 	backend("containerd")
 	got := left("Rancher Desktop", rd).messageFor("darwin")
+	if want := "Rancher Desktop runs its containerd backend, which serves no Docker API at " + rd + " (no answer: EOF): choose dockerd (moby) under Rancher Desktop's Preferences, Container Engine"; got != want {
+		t.Errorf("containerd: %q, want %q", got, want)
+	}
 	for _, w := range []string{"Rancher Desktop runs its containerd backend, which serves no Docker API", rd, "no answer: EOF", "dockerd (moby)", "Container Engine"} {
 		if !strings.Contains(got, w) {
 			t.Errorf("containerd: %q lacks %q", got, w)
