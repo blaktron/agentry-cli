@@ -97,6 +97,88 @@ type Envelope struct {
 	// file, the declared host it came from, its size and its SHA-256. Absent
 	// for a run that saved none.
 	FetchSaves *FetchSaves `json:"fetchSaves,omitempty"`
+	// Deliverables are the files the run was for: the ones the agent marked, or
+	// else the runner's pick (Deliverables.Files' Marked says which), each by
+	// path under reports/ with the SHA-256 the runner computed once the agent
+	// had ended. Only this block names a deliverable; a client checks a file
+	// against its digest before it copies, opens or sends it. Absent for a run
+	// that failed and for one with nothing to list.
+	Deliverables *Deliverables `json:"deliverables,omitempty"`
+	// Deliveries records each copy of a deliverable the run itself made (a
+	// folder given with --deliver-to), one entry a file. A delivery that failed
+	// is recorded and never changes the run's outcome. Absent when the run
+	// delivered nothing.
+	Deliveries []Delivery `json:"deliveries,omitempty"`
+}
+
+// MaxDeliverables is the most files Deliverables lists.
+const MaxDeliverables = 200
+
+// Deliverables is a run's deliverables.
+type Deliverables struct {
+	Files []Deliverable `json:"files"`
+	// Truncated says the run had more than MaxDeliverables files to list and
+	// the rest are not named.
+	Truncated bool `json:"truncated,omitempty"`
+}
+
+// Deliverable is one file the run was for. Path is relative to the output
+// folder (reports/…). Title is one line of plain text: the agent's, or the
+// file's name. Type is the file name's extension in lower case, without its
+// dot, empty when it has none; it says nothing of the bytes. Marked is false
+// when the runner chose the file because the agent marked none.
+type Deliverable struct {
+	Path   string `json:"path"`
+	Title  string `json:"title"`
+	SHA256 string `json:"sha256"`
+	Bytes  int64  `json:"bytes"`
+	Type   string `json:"type"`
+	Marked bool   `json:"marked"`
+}
+
+// The kinds of destination a Delivery names, and how a delivery ended.
+const (
+	DeliveryKindFolder = "folder"
+
+	DeliveryDelivered = "delivered"
+	// DeliveryRefused: the file was not the one the envelope names, or not a
+	// file a delivery may read or make (a changed file, a path outside
+	// reports/, a link, a type the system acts on when a folder is viewed).
+	// Nothing was left in the destination for it.
+	DeliveryRefused = "refused"
+	// DeliveryFailed: the file could not be written to the destination.
+	DeliveryFailed = "failed"
+)
+
+// The closed reasons a Delivery's Error gives, never a system's own text: a
+// path or a message could name the person's folders or the agent's words.
+const (
+	DeliveryErrChanged     = "changed"
+	DeliveryErrMissing     = "missing"
+	DeliveryErrOutside     = "outside-reports"
+	DeliveryErrLink        = "link"
+	DeliveryErrUnreadable  = "unreadable"
+	DeliveryErrType        = "type"
+	DeliveryErrDestination = "destination"
+	DeliveryErrWrite       = "write"
+	// DeliveryErrNotMarked says a file was written but the system's flag for a
+	// download (Mark-of-the-Web, the quarantine attribute) could not be set on
+	// it, so a client must not open it in one click.
+	DeliveryErrNotMarked = "not-marked"
+)
+
+// Delivery is one file's copy or send to a destination, as
+// receipts/deliveries.ndjson holds it and the envelope repeats it. For a
+// folder, Destination is the folder's absolute path, Object the copy's
+// absolute path and Host empty.
+type Delivery struct {
+	Destination string `json:"destination"`
+	Kind        string `json:"kind"`
+	Host        string `json:"host,omitempty"`
+	Object      string `json:"object,omitempty"`
+	SHA256      string `json:"sha256"`
+	Status      string `json:"status"`
+	Error       string `json:"error,omitempty"`
 }
 
 // FetchSaves is a run's count of the bodies fetch saved.

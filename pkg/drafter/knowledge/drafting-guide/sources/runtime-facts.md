@@ -44,6 +44,7 @@ Generated from the Agentry CLI's code by its tests; do not edit by hand. These a
 ## Reports, PDFs and the scratch folder
 
 - `write_report` writes a text file into `reports/`, which the person receives. It refuses a PDF.
+- `write_report` and `export_pdf` take two optional arguments, `deliverable` (true) and `title` (one line of plain text, at most 120 characters), that mark the file as what the person asked the run for. A run's deliverables are the files it marked. When it marked none, the runner lists the PDFs the run exported, else every file in `reports/` outside `reports/browser/`, else the run's final message, which it writes to `reports/deliverable.md`. A run that fails has none.
 - `export_pdf` turns a Markdown file from `reports/` or the scratch folder, of at most 1024 KiB, into a PDF in `reports/`, rendered by Typst 0.15.1 within 60 seconds, at most 64 MiB. It draws at most 20 local PNG or JPEG images of up to 10 MiB each; any other image is drawn as its alt text. The PDF's look is the person's report theme, which the run cannot choose.
 - The scratch folder, `/scratch`, is the run's own working space through `scratch_write`, `scratch_list`, `scratch_read` and `scratch_search`: empty at the start, at most 256 MiB on Linux, never part of what the person receives, and deleted with the run.
 

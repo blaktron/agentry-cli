@@ -16,11 +16,12 @@ package toolsrv
 // and end_blocked; "8" the scratch folder; "9" export_pdf; "10" the report
 // design, theme document version 2, and export_pdf's form; "11" the result
 // budget (Limits.MaxResultBytes and MaxResultLines); "12" grep and glob
-// (Search). The server
+// (Search); "13" the deliverables ledger and write_report's and export_pdf's
+// deliverable and title. The server
 // refuses other versions, so a stale runner image meets a newer compiler
 // loudly — and the image tag derives from the CLI version, so rebuilds
 // happen on their own at upgrade time.
-const SpecVersion = "12"
+const SpecVersion = "13"
 
 // Spec is the compiled configuration the runner's capability compiler hands
 // to the tools server (written to plan/gateway/toolspec.json, bind-mounted
@@ -114,6 +115,9 @@ type Spec struct {
 	// with the scratch folder; the tools exist only while the run has an
 	// area to search.
 	Search Search `json:"search,omitzero"`
+	// Deliverables is the ledger write_report and export_pdf record the files
+	// the agent marked in (deliverables.go): stamped by the engine.
+	Deliverables Deliverables `json:"deliverables,omitzero"`
 	// Limits bounds tool I/O; zero values take the package defaults.
 	Limits Limits `json:"limits"`
 	// Owner, when set, is the host user who ran the command: every file

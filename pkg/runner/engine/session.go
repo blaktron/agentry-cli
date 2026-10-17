@@ -1116,6 +1116,9 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 	if s.rd.fetchLedger != "" {
 		s.rd.redact.File(s.rd.fetchLedger)
 	}
+	if s.rd.deliverablesLedger != "" {
+		s.rd.redact.File(s.rd.deliverablesLedger)
+	}
 	pdfs := pdfRecord(s.rd)
 	fetchSaves := fetchSavesRecord(s.rd)
 
@@ -1209,6 +1212,12 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 	s.td.run()
 	if err := s.td.reportLeftFiles(env); err != nil && outErr == nil {
 		outErr = err
+	}
+	if outErr == nil && env.Status == "ok" {
+		// A session's last message is a turn of a chat, never a file the
+		// runner writes down: only marked files and the runner's pick of
+		// reports/ are listed, once teardown has stopped the containers.
+		finishDeliverables(env, s.rd, s.p, "")
 	}
 	s.mu.Lock()
 	s.envelope, s.envelopeErr = env, outErr

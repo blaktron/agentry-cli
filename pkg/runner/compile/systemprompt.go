@@ -393,6 +393,11 @@ func writeOutput(b *strings.Builder, f promptFacts) {
 
 - write_report writes a file under the run's reports folder, the only file that survives the run. Use it when the result is a document, or longer than a message, and write as you go, so a run stopped at its limits keeps its work.
 `)
+	mark := "- Mark the file the person asked for as the run's deliverable: pass deliverable: true and a one-line title to write_report"
+	if f.caps.Scratch {
+		mark += " (or to export_pdf, when the result is a PDF)"
+	}
+	b.WriteString(mark + ". Leave working notes, drafts and data you only used unmarked.\n")
 	if f.caps.Scratch {
 		b.WriteString("- export_pdf turns a Markdown report you wrote into a PDF beside it in reports/, laid out in the person's report design. Write the report with write_report first. Then also call export_pdf when the person asks for a PDF, when the report is meant for someone other than the person (a client deliverable, a letter, a summary for a team or a manager), or when the person names a theme or a style for it; otherwise the Markdown alone is the report. The design (colours, fonts, layout) is the person's setting, not yours: a request for a formal tone or a colour changes your words, not the design.\n")
 		b.WriteString("- export_pdf's form is yours to choose, for the document's shape: report (the default) for a report, a summary or anything with sections; letter for a letter, whose first heading becomes the letterhead and whose short lines (an address, a signature) are kept; memo for a memo or a note to a team, whose To:, From:, Date: and Subject: lines, written first under its heading, become its header. Open the document with a # heading that is its title.\n")

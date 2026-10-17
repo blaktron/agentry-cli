@@ -113,6 +113,13 @@ type Params struct {
 	// the receipt's voice line written only then. A built-in's run never
 	// carries one.
 	Voice *AttachedVoice
+	// DeliverTo, when set, is an absolute folder the run copies its
+	// deliverables to once it has succeeded: <DeliverTo>/<QuickAgent>/<date
+	// time> <title or run id>/, each file only after its SHA-256 is shown to be
+	// the one the envelope's deliverables block names. The output folder is
+	// left as it is; the copies are recorded in the envelope's deliveries
+	// block and receipts/deliveries.ndjson. Empty delivers nothing.
+	DeliverTo string
 	// ReportTheme is the report design export_pdf lays the run's PDFs out
 	// with, and what chose it: a design document, or a built-in theme's id;
 	// neither is the default, Plain. The type keeps its v1 name so that a
@@ -346,11 +353,18 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	// behind goes first, before this run adds its own.
 	sweepAbandonedRun(ctx, d, p.RunRoot, p.RunnerHome, p.Stderr)
 	td := &teardown{d: d, stderr: p.Stderr, runID: runID}
+	// finish lists and delivers the run's deliverables once teardown has
+	// stopped every container the run started and found nothing it could not
+	// delete: a run that teardown fails lists and delivers none.
+	var finish func()
 	defer func() {
 		td.run()
 		// What teardown could not delete turns the run's outcome.
 		if err := td.reportLeftFiles(env); err != nil && outErr == nil {
 			outErr = err
+		}
+		if finish != nil && outErr == nil && env.Status == "ok" {
+			finish()
 		}
 	}()
 
@@ -492,6 +506,10 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	if rd.fetchLedger != "" {
 		rd.redact.File(rd.fetchLedger)
 	}
+	// The deliverables ledger holds paths and titles the agent chose.
+	if rd.deliverablesLedger != "" {
+		rd.redact.File(rd.deliverablesLedger)
+	}
 	// Each target host's calls, the agent having ended.
 	copyHostLogs(rd, env)
 	// The browse proxy's decisions and what the browser saved.
@@ -553,6 +571,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	env.Status = "ok"
 	env.ExitCode = ExitOK
 	env.Stage = ""
+	finish = func() { finishDeliverables(env, rd, p, plainResultText(result)) }
 	if err := env.Write(p.OutDir); err != nil {
 		_, _ = fmt.Fprintf(p.Stderr, "warning: %v\n", err)
 	}

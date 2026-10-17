@@ -133,20 +133,24 @@ func validatePDF(spec *Spec) error {
 	return nil
 }
 
-const exportPDFDescription = "Turn a Markdown file you wrote into a PDF in reports/, laid out in the person's report design. source is the Markdown: reports/<path> for one written with write_report, scratch/<path> for one in the scratch folder. path is the PDF under reports/ (default: the source's name with .pdf). form is the document's shape: report (the default; its first heading, when it opens the file, is drawn as the title, and a long titled report gets a cover page), letter (its first heading is the letterhead and each short line is kept, for addresses and a signature) or memo (its first heading is the title, and To:, From:, Cc:, Date:, Subject: or Re: lines opening the body become the memo's header). Images are drawn when they are local PNG or JPEG files, named relative to the Markdown file or as /scratch/…, /inputs/… or /out/reports/…; any other image, a web address included, is drawn as its alt text. You cannot choose the design: its colours, fonts and layout are the person's."
+const exportPDFDescription = "Turn a Markdown file you wrote into a PDF in reports/, laid out in the person's report design. source is the Markdown: reports/<path> for one written with write_report, scratch/<path> for one in the scratch folder. path is the PDF under reports/ (default: the source's name with .pdf). form is the document's shape: report (the default; its first heading, when it opens the file, is drawn as the title, and a long titled report gets a cover page), letter (its first heading is the letterhead and each short line is kept, for addresses and a signature) or memo (its first heading is the title, and To:, From:, Cc:, Date:, Subject: or Re: lines opening the body become the memo's header). Images are drawn when they are local PNG or JPEG files, named relative to the Markdown file or as /scratch/…, /inputs/… or /out/reports/…; any other image, a web address included, is drawn as its alt text. You cannot choose the design: its colours, fonts and layout are the person's. Set deliverable to true, with a title, when the PDF is what the person asked this run for."
 
 func exportPDFSchema() map[string]any {
-	return objSchema(map[string]any{
+	props := map[string]any{
 		"source": strProp("the Markdown file: reports/<path> or scratch/<path>"),
 		"path":   strProp("the PDF's path under reports/, ending in .pdf (default: the source's name with .pdf)"),
 		"form":   map[string]any{"type": "string", "enum": Forms, "description": "the document's shape: report (the default), letter or memo"},
-	}, "source")
+	}
+	for k, v := range deliverableProps() {
+		props[k] = v
+	}
+	return objSchema(props, "source")
 }
 
 // exportPDFArgs are export_pdf's arguments, and nothing else: an argument
 // the model adds for the look ("theme", "accent", "font") is refused, never
 // ignored, so the model learns it cannot choose one.
-var exportPDFArgs = []string{"source", "path", "form"}
+var exportPDFArgs = []string{"source", "path", "form", "deliverable", "title"}
 
 // typstFiles is where the renderer is; a test points it elsewhere.
 type typstFiles struct{ bin, fonts, packages string }
@@ -604,16 +608,22 @@ func (s *server) toolExportPDF(raw json.RawMessage) (string, bool) {
 	}
 	for k := range keys {
 		if !slices.Contains(exportPDFArgs, k) {
-			return fmt.Sprintf("export_pdf: it takes source, path and form, not %q; the PDF's colours, fonts and layout are the person's report design, which you cannot choose", k), true
+			return fmt.Sprintf("export_pdf: it takes source, path, form, deliverable and title, not %q; the PDF's colours, fonts and layout are the person's report design, which you cannot choose", k), true
 		}
 	}
 	var a struct {
-		Source string `json:"source"`
-		Path   string `json:"path"`
-		Form   string `json:"form"`
+		Source      string `json:"source"`
+		Path        string `json:"path"`
+		Form        string `json:"form"`
+		Deliverable *bool  `json:"deliverable"`
+		Title       string `json:"title"`
 	}
 	if err := unmarshalArgs(raw, &a); err != nil {
 		return "export_pdf: " + err.Error(), true
+	}
+	mark, err := parseDeliverableMark(ToolExportPDF, a.Deliverable, a.Title)
+	if err != nil {
+		return err.Error(), true
 	}
 	if a.Source == "" {
 		return "export_pdf: source is required: the Markdown file to export, reports/<path> or scratch/<path>", true
@@ -746,6 +756,11 @@ func (s *server) toolExportPDF(raw json.RawMessage) (string, bool) {
 		s.logf("pdf ledger: %v", err)
 		return s.failed(ToolExportPDF, fmt.Errorf("the PDF was written to reports/%s, but the run could not record it, so it will not be shown as this run's export: %w", out, err))
 	}
+	marked, err := s.markDeliverable(out, mark)
+	if err != nil {
+		s.logf("deliverables ledger: %v", err)
+		return s.failed(ToolExportPDF, fmt.Errorf("the PDF was written to reports/%s, but the run could not record it as a deliverable: %w", out, err))
+	}
 	count := "? pages"
 	if pages == 1 {
 		count = "1 page"
@@ -759,7 +774,7 @@ func (s *server) toolExportPDF(raw json.RawMessage) (string, bool) {
 	case logoErr != nil:
 		withLogo = "; the person's logo could not be drawn, which is their design's to fix, not yours"
 	}
-	answer := fmt.Sprintf("report written: reports/%s (%s, %d KiB; the %s form, in the %s report design%s)", out, count, (len(pdf)+1023)/1024, a.Form, design.Name, withLogo)
+	answer := fmt.Sprintf("report written: reports/%s (%s, %d KiB; the %s form, in the %s report design%s)%s", out, count, (len(pdf)+1023)/1024, a.Form, design.Name, withLogo, marked)
 	if len(skipped) > 0 {
 		answer += "\nDrawn as their alt text, not as images: " + strings.Join(skipped, "; ")
 	}

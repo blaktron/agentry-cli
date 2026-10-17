@@ -197,7 +197,7 @@ func TestTheWebToolsArePromptedOnlyWithTheGrant(t *testing.T) {
 	}
 }
 
-// TestTheSystemPromptStaysWithinItsSize: up to ~12 KB, for the largest
+// TestTheSystemPromptStaysWithinItsSize: up to 12.5 KiB, for the largest
 // composition.
 func TestTheSystemPromptStaysWithinItsSize(t *testing.T) {
 	f := promptFacts{
@@ -210,8 +210,8 @@ func TestTheSystemPromptStaysWithinItsSize(t *testing.T) {
 	f.caps.EgressMode, f.caps.EgressHosts = "hosts", []string{"api.example.com", "api.other.net"}
 	f.caps.FSReadMode, f.caps.FSWriteMode = "workspace", "workspace"
 	f.caps.ExecCommands = []string{"git", "jq", "python3"}
-	if n := len(systemPrompt(f)); n > 12<<10 {
-		t.Errorf("the System Prompt is %d bytes, past its 12 KiB", n)
+	if n := len(systemPrompt(f)); n > 12800 {
+		t.Errorf("the System Prompt is %d bytes, past its 12.5 KiB", n)
 	}
 }
 

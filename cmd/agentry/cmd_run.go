@@ -105,7 +105,9 @@ type runOpts struct {
 	voice, noVoice bool
 	voiceFile      string
 	// reportTheme is --report-theme, reportDesign --report-design.
-	reportTheme        string
+	reportTheme string
+	// deliverTo is --deliver-to, the folder the run copies its deliverables to.
+	deliverTo          string
 	reportDesign       string
 	keepProfile        string // "": unset; "true"/"false": the flag decided
 	reconfigureProfile bool
@@ -219,6 +221,7 @@ func newRunCmd() *cobra.Command {
 	f.BoolVar(&opts.noVoice, "no-voice", false, "do not attach the Writing Voice to this run")
 	f.StringVar(&opts.reportTheme, "report-theme", "", "the built-in report theme this run's PDFs take: "+strings.Join(toolsrv.BuiltinThemes(), " | ")+" (default: your account's report design when signed in, else report.design or report.theme in the config, else plain)")
 	f.StringVar(&opts.reportDesign, "report-design", "", "the report design this run's PDFs take: a FILE holding a report design (theme document version 2); instead of --report-theme")
+	f.StringVar(&opts.deliverTo, "deliver-to", "", "copy the run's deliverables, the files it was for, to FOLDER/<QuickAgent>/<date time> <title>/ once it succeeds (default: deliver.folder in the config, else nowhere); the output folder is left as it is")
 	f.StringVar(&opts.voiceFile, "voice-file", "", "attach the VOICE.md in FILE as the run's Writing Voice (for a driver such as a sandbox host)")
 	f.StringArrayVar(&opts.intake, "intake", nil, "answer an intake question non-interactively: id=value (repeatable; unanswered questions are asked on a terminal); a repository question takes its https address, with #branch, #tag or #commit for another ref; a url question takes one file's https address")
 	f.StringArrayVar(&opts.intakeToken, "intake-token", nil, "the access token for an input source: id=ENV_NAME, the name of an environment variable holding it (repeatable; otherwise the key saved for the source's host in the system keychain, then a prompt on a terminal, then none)")
@@ -276,6 +279,12 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		account = readAccountTheme(registryURL())
 	}
 	reportTheme, err := chooseReportTheme(cmd.Context(), reportFlags{theme: opts.reportTheme, design: opts.reportDesign}, cfg, account, cmd.ErrOrStderr())
+	if err != nil {
+		return err
+	}
+	// Where the run delivers is chosen before anything starts too, so a
+	// relative deliver.folder refuses here.
+	deliverTo, err := chooseDeliverFolder(opts.deliverTo, cfg)
 	if err != nil {
 		return err
 	}
@@ -683,6 +692,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		Knowledge:        attached,
 		Voice:            attachedVoice,
 		ReportTheme:      reportTheme,
+		DeliverTo:        deliverTo,
 		Intake:           answers,
 		Adapter:          ad,
 		Policy:           pol,
@@ -787,6 +797,7 @@ func runInteractive(cmd *cobra.Command, docker dockerx.Client, params engine.Par
 			}
 		}
 		_, _ = fmt.Fprintf(errOut, "transcript, reports and receipts: %s\n", env.OutDir)
+		printDeliverySummary(errOut, env)
 	}
 	if runErr == nil && uiErr != nil {
 		return engine.Classify(engine.ExitCLI, uiErr)
@@ -1009,6 +1020,7 @@ func printEnvelope(cmd *cobra.Command, env *receipt.Envelope, format string) {
 		_, _ = fmt.Fprintln(out, string(env.Result))
 	}
 	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "reports and receipts: %s\n", env.OutDir)
+	printDeliverySummary(cmd.ErrOrStderr(), env)
 }
 
 // runPlanConsent is what a run's consent gate would say, computed without
