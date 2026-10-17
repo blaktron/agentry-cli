@@ -103,6 +103,24 @@ func TestDockerAgentCompileWithSchema(t *testing.T) {
 	}
 }
 
+// A tool call names its tool and id, and the response that answers it is
+// its result: the result's output, failed when the tool said so.
+func TestDockerAgentToolCallsAndResults(t *testing.T) {
+	ad, _ := Get(DefaultName)
+	call := ad.Events([]byte(`{"type":"tool_call","tool_call":{"id":"call_1","function":{"name":"fs_read","arguments":"{}"}}}`))
+	if len(call) != 1 || call[0].Tool != "fs_read" || call[0].Text != "fs_read" || call[0].CallID != "call_1" {
+		t.Errorf("call = %+v", call)
+	}
+	ok := ad.Events([]byte(`{"type":"tool_call_response","tool_call_id":"call_1","tool_definition":{"name":"fs_read"},"response":"the model's copy","result":{"output":"hello"}}`))
+	if len(ok) != 1 || ok[0].Kind != EventToolResult || ok[0].Tool != "fs_read" || ok[0].CallID != "call_1" || ok[0].Failed || ok[0].Text != "hello" {
+		t.Errorf("result = %+v", ok)
+	}
+	failed := ad.Events([]byte(`{"type":"tool_call_response","tool_call_id":"call_2","tool_definition":{"name":"fs_read"},"response":"no such file","result":{"output":"","isError":true}}`))
+	if len(failed) != 1 || !failed[0].Failed || failed[0].Text != "no such file" {
+		t.Errorf("failed result = %+v", failed)
+	}
+}
+
 func TestDockerAgentEvents(t *testing.T) {
 	ad, _ := Get(DefaultName)
 	tests := []struct {
@@ -115,9 +133,9 @@ func TestDockerAgentEvents(t *testing.T) {
 		// The 1.128.0 harness streams a call's arguments as
 		// partial_tool_call chunks and answers it with tool_call_response;
 		// neither is a turn (55 chunks of one write_report call would eat
-		// the budget).
+		// the budget): the response is the call's result.
 		{"partial chunk", `{"type":"partial_tool_call","tool_call":{"id":"call_1","function":{"name":"write_report","arguments":"| 101 |"}}}`, []EventKind{EventOther}},
-		{"tool response", `{"type":"tool_call_response","tool_call_id":"call_1","response":"ok"}`, []EventKind{EventOther}},
+		{"tool response", `{"type":"tool_call_response","tool_call_id":"call_1","response":"ok"}`, []EventKind{EventToolResult}},
 		{"tool confirmation", `{"type":"tool_call_confirmation","tool_call":{"id":"call_1"}}`, []EventKind{EventOther}},
 		{"complete call", `{"type":"tool_call","tool_call":{"id":"call_1","function":{"name":"list_inputs","arguments":"{}"}}}`, []EventKind{EventToolCall}},
 		// The model's reasoning stream is not assistant output.

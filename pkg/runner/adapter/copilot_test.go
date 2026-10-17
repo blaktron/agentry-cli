@@ -404,6 +404,42 @@ func TestACopilotRequestTheDriverDoesNotServeIsRefused(t *testing.T) {
 	}
 }
 
+// A gateway tool's call names its tool and id, and its completion is a
+// result for that call: what it returned, or why it failed.
+func TestACopilotToolCallsResultIsAnEvent(t *testing.T) {
+	k := &tokens{expires: time.Now().Add(8 * time.Hour)}
+	srv := &copilottest.Server{Turn: func(c *copilottest.Conn, _ string) {
+		c.Event("tool.execution_start", map[string]any{"toolCallId": "c1", "toolName": "gateway-fs_read", "mcpServerName": "gateway", "mcpToolName": "fs_read"})
+		c.Event("tool.execution_complete", map[string]any{"toolCallId": "c1", "success": true, "result": map[string]any{"content": "hello from the workspace"}})
+		c.Event("tool.execution_start", map[string]any{"toolCallId": "c2", "toolName": "gateway-fs_read", "mcpServerName": "gateway", "mcpToolName": "fs_read"})
+		c.Event("tool.execution_complete", map[string]any{"toolCallId": "c2", "success": false, "error": map[string]any{"message": "no such file"}})
+		c.Event("session.idle", map[string]any{})
+	}}
+	d := drive(t, srv, adapter.SessionOptions{GatewayTools: []string{"fs_read"}, ModelSignIn: true, SignInToken: k.get})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := d.drv.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.drv.Prompt(ctx, "go"); err != nil {
+		t.Fatalf("turn: %v", err)
+	}
+	evs := d.events()
+	calls, results := ofKind(evs, adapter.EventToolCall), ofKind(evs, adapter.EventToolResult)
+	if len(calls) != 2 || calls[0].Tool != "fs_read" || calls[0].CallID != "c1" || calls[1].CallID != "c2" {
+		t.Fatalf("calls %+v", calls)
+	}
+	if len(results) != 2 {
+		t.Fatalf("results %+v", results)
+	}
+	if r := results[0]; r.CallID != "c1" || r.Failed || r.Text != "hello from the workspace" {
+		t.Errorf("first result %+v", r)
+	}
+	if r := results[1]; r.CallID != "c2" || !r.Failed || r.Text != "no such file" {
+		t.Errorf("second result %+v", r)
+	}
+}
+
 // A tool that is not the gateway's starting at all (a built-in the
 // allowlist should have unloaded) ends the session: the turn fails, the
 // session is aborted, and no turn is taken after it (I1).

@@ -14,7 +14,10 @@ import (
 	"io"
 	"slices"
 	"sort"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
@@ -93,8 +96,15 @@ type EventKind string
 // contracts, so adapters map what they recognize and pass the rest through
 // as Other; receipts keep every raw line regardless.
 const (
-	// EventToolCall counts against --max-turns (exit 16).
+	// EventToolCall counts against --max-turns (exit 16). Text and Tool
+	// both name the tool; CallID is the harness's id for the call.
 	EventToolCall EventKind = "tool_call"
+	// EventToolResult is a tool's answer to a call: CallID names the call
+	// it answers, Tool the tool where the harness says it, Failed whether
+	// the tool reported an error, and Text the text it returned. It is an
+	// observation, never a turn: it counts against no budget and is never
+	// the run's result.
+	EventToolResult EventKind = "tool_result"
 	// EventAssistantText carries assistant output text; the engine keeps
 	// the last one as the result.
 	EventAssistantText EventKind = "assistant_text"
@@ -140,9 +150,19 @@ const (
 // Event is one normalized harness event.
 type Event struct {
 	Kind EventKind
-	// Text is the assistant text (EventAssistantText) or error message
-	// (EventError).
+	// Text is the assistant text (EventAssistantText), the error message
+	// (EventError), the tool's name (EventToolCall) or the text it
+	// returned (EventToolResult).
 	Text string
+	// Tool is the tool's name on EventToolCall, and on EventToolResult
+	// when the harness repeats it with the answer; a harness that does
+	// not leaves the pairing to CallID.
+	Tool string
+	// CallID is the harness's id for a tool call, on EventToolCall and on
+	// the EventToolResult that answers it; "" when the harness gives none.
+	CallID string
+	// Failed marks an EventToolResult whose tool reported an error.
+	Failed bool
 	// Delta marks Text as one streamed chunk of the current assistant
 	// message rather than a whole message: the engine concatenates deltas
 	// until a tool call or usage event ends the message.
@@ -164,6 +184,51 @@ type Event struct {
 	Policy string
 	// Raw is the original line for receipts.
 	Raw json.RawMessage
+}
+
+// ToolExcerptMax is the most bytes of a tool's output a live run's driver
+// is handed (engine.Params.OnEvent). The receipts keep the whole raw line;
+// the live event is for following a run as it happens, where a tool that
+// returns a whole file must not flood the reader.
+const ToolExcerptMax = 2048
+
+// toolExcerptCut marks an excerpt that was cut at ToolExcerptMax.
+const toolExcerptCut = "\n[\u2026 cut]"
+
+// ToolExcerpt is the first ToolExcerptMax bytes of a tool's output, cut at
+// a character boundary and marked as cut when it is longer, with
+// surrounding whitespace trimmed. Cut only text that is already masked:
+// a secret the cut splits no longer matches the value it would be masked
+// by.
+func ToolExcerpt(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= ToolExcerptMax {
+		return s
+	}
+	cut := ToolExcerptMax
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return strings.TrimRightFunc(s[:cut], unicode.IsSpace) + toolExcerptCut
+}
+
+// textBlock is a content block that may carry text, in the shape MCP and
+// the harnesses that follow it share.
+type textBlock struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+// joinText is the text of a list of content blocks, one block per line.
+// Images and other blocks carry no text and are left to the receipts.
+func joinText(blocks []textBlock) string {
+	var parts []string
+	for _, b := range blocks {
+		if b.Type == "text" && b.Text != "" {
+			parts = append(parts, b.Text)
+		}
+	}
+	return strings.Join(parts, "\n")
 }
 
 // Adapter compiles a run plan's harness half and interprets its output.

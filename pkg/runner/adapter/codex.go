@@ -524,14 +524,8 @@ func (c *codexAdapter) Compile(in Input) (Result, error) {
 // codexExecEvent is the part of one `codex exec --json` line this adapter
 // reads. Everything else stays verbatim in the receipts.
 type codexExecEvent struct {
-	Type string `json:"type"`
-	Item struct {
-		Type    string `json:"type"`
-		Text    string `json:"text"`
-		Message string `json:"message"`
-		Tool    string `json:"tool"`
-		Status  string `json:"status"`
-	} `json:"item"`
+	Type  string    `json:"type"`
+	Item  codexItem `json:"item"`
 	Usage struct {
 		InputTokens  int64 `json:"input_tokens"`
 		OutputTokens int64 `json:"output_tokens"`
@@ -540,6 +534,43 @@ type codexExecEvent struct {
 		Message string `json:"message"`
 	} `json:"error"`
 	Message string `json:"message"`
+}
+
+// codexItem is the part of a thread item this adapter reads, from exec's
+// JSONL and the app-server's notifications alike: a message's text, an
+// error's message, an MCP tool call's tool, status, result and error.
+type codexItem struct {
+	ID      string `json:"id"`
+	Type    string `json:"type"`
+	Text    string `json:"text"`
+	Message string `json:"message"`
+	Tool    string `json:"tool"`
+	Server  string `json:"server"`
+	Status  string `json:"status"`
+	// Result and Error are a tool call's, read only for one: they stay raw
+	// so that another item's field of the same name never fails the
+	// whole line's decoding.
+	Result json.RawMessage `json:"result"`
+	Error  json.RawMessage `json:"error"`
+}
+
+// codexToolResultEvent maps a completed MCP tool call, from exec or the
+// app-server: its result's text blocks, or its error's message when it
+// failed.
+func codexToolResultEvent(it codexItem, raw json.RawMessage) Event {
+	var res struct {
+		Content []textBlock `json:"content"`
+	}
+	var cerr struct {
+		Message string `json:"message"`
+	}
+	_ = json.Unmarshal(it.Result, &res)
+	_ = json.Unmarshal(it.Error, &cerr)
+	ev := Event{Kind: EventToolResult, Tool: it.Tool, CallID: it.ID, Failed: it.Status == "failed" || cerr.Message != "", Text: joinText(res.Content), Raw: raw}
+	if ev.Text == "" {
+		ev.Text = cerr.Message
+	}
+	return ev
 }
 
 // Events maps one exec JSONL line to normalized events. Best-effort: the
@@ -561,10 +592,12 @@ func (c *codexAdapter) Events(line []byte) []Event {
 		if ev.Item.Type == "mcp_tool_call" {
 			// One call counted when it begins, so --max-turns stops the
 			// run before the next call executes.
-			return []Event{{Kind: EventToolCall, Text: ev.Item.Tool, Raw: raw}}
+			return []Event{{Kind: EventToolCall, Text: ev.Item.Tool, Tool: ev.Item.Tool, CallID: ev.Item.ID, Raw: raw}}
 		}
 	case "item.completed":
 		switch ev.Item.Type {
+		case "mcp_tool_call":
+			return []Event{codexToolResultEvent(ev.Item, raw)}
 		case "agent_message":
 			if ev.Item.Text != "" {
 				return []Event{{Kind: EventAssistantText, Text: ev.Item.Text, Raw: raw}}

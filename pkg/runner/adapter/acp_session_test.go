@@ -41,7 +41,7 @@ func fakeACP(t *testing.T, in io.Reader, out io.WriteCloser) {
 			// A tool call, two permission requests the client must answer —
 			// a gateway tool (granted) and a tool outside the catalog
 			// (denied) — text chunks, then the turn result with usage.
-			write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "sess-1", "update": map[string]any{"sessionUpdate": "tool_call", "toolCallId": "c1", "title": "fs_list", "status": "pending"}}})
+			write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "sess-1", "update": map[string]any{"sessionUpdate": "tool_call", "toolCallId": "c1", "title": "List files", "name": "fs_list", "status": "pending"}}})
 			ask := func(id int, tool, want string) {
 				write(map[string]any{"jsonrpc": "2.0", "id": id, "method": "session/request_permission", "params": map[string]any{"sessionId": "sess-1", "toolCall": map[string]any{"title": tool, "toolCallId": "c1", "kind": "execute"}, "options": []any{map[string]any{"optionId": "y", "kind": "allow_once"}, map[string]any{"optionId": "ya", "kind": "allow_always"}, map[string]any{"optionId": "n", "kind": "reject_once"}}}})
 				// Wait for the answer before continuing the turn.
@@ -64,7 +64,8 @@ func fakeACP(t *testing.T, in io.Reader, out io.WriteCloser) {
 			}
 			ask(99, "fs_list", "y")
 			ask(98, "shell_exec", "n")
-			write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "sess-1", "update": map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": "c1", "status": "completed"}}})
+			write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "sess-1", "update": map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": "c1", "status": "in_progress"}}})
+			write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "sess-1", "update": map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": "c1", "name": "fs_list", "status": "completed", "content": []any{map[string]any{"type": "content", "content": map[string]any{"type": "text", "text": "notes.txt\t25"}}}}}})
 			write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "sess-1", "update": map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": "Hello, "}}}})
 			write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "sess-1", "update": map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": "world."}}}})
 			// docker-agent's usage: cumulative context tokens, no split.
@@ -124,6 +125,23 @@ func TestACPSessionDrivesOneTurnAndAnswersPermissions(t *testing.T) {
 	}
 	if kinds[EventToolCall] != 1 || kinds[EventPermissionGranted] != 1 || kinds[EventPermissionDenied] != 1 || kinds[EventAssistantText] != 2 || kinds[EventUsage] != 3 {
 		t.Errorf("event kinds = %v", kinds)
+	}
+	// The call names its tool and id; its last update is its result, the
+	// in-progress one before it is not.
+	for _, ev := range events {
+		switch ev.Kind {
+		case EventToolCall:
+			if ev.Tool != "fs_list" || ev.CallID != "c1" || ev.Text != "List files" {
+				t.Errorf("tool call = %+v", ev)
+			}
+		case EventToolResult:
+			if ev.Tool != "fs_list" || ev.CallID != "c1" || ev.Failed || ev.Text != "notes.txt\t25" {
+				t.Errorf("tool result = %+v", ev)
+			}
+		}
+	}
+	if kinds[EventToolResult] != 1 {
+		t.Errorf("tool results = %d, want 1", kinds[EventToolResult])
 	}
 	// The two usage_updates arrive as deltas (1255, then 1465-1255), with
 	// no input/output split; the prompt result's own usage is the third.

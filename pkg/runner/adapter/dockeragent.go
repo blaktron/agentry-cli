@@ -464,8 +464,11 @@ func (d *dockerAgent) Events(line []byte) []Event {
 	var events []Event
 
 	switch {
+	case typ == "tool_call_response":
+		events = append(events, dockerAgentToolResult(obj, raw))
 	case isToolCallStart(typ):
-		events = append(events, Event{Kind: EventToolCall, Raw: raw})
+		id, name := dockerAgentToolCall(obj)
+		events = append(events, Event{Kind: EventToolCall, Text: name, Tool: name, CallID: id, Raw: raw})
 	case strings.Contains(typ, "error"):
 		text := errorText(obj)
 		kind := EventError
@@ -492,6 +495,42 @@ func (d *dockerAgent) Events(line []byte) []Event {
 		events = append(events, Event{Kind: EventOther, Raw: raw})
 	}
 	return events
+}
+
+// dockerAgentToolCall is a tool_call event's call id and tool name: the
+// call's function name, else its tool definition's.
+func dockerAgentToolCall(obj map[string]any) (id, name string) {
+	call, _ := obj["tool_call"].(map[string]any)
+	id, _ = call["id"].(string)
+	fn, _ := call["function"].(map[string]any)
+	name, _ = fn["name"].(string)
+	if name == "" {
+		name = dockerAgentToolName(obj)
+	}
+	return id, name
+}
+
+// dockerAgentToolName is the name in an event's tool definition.
+func dockerAgentToolName(obj map[string]any) string {
+	def, _ := obj["tool_definition"].(map[string]any)
+	name, _ := def["name"].(string)
+	return name
+}
+
+// dockerAgentToolResult maps a tool_call_response: the call it answers,
+// the tool, the result's output (the response the model was given when
+// the result has none) and whether the tool reported an error.
+func dockerAgentToolResult(obj map[string]any, raw json.RawMessage) Event {
+	id, _ := obj["tool_call_id"].(string)
+	out, _ := obj["response"].(string)
+	var failed bool
+	if res, ok := obj["result"].(map[string]any); ok {
+		if s, _ := res["output"].(string); s != "" {
+			out = s
+		}
+		failed, _ = res["isError"].(bool)
+	}
+	return Event{Kind: EventToolResult, Tool: dockerAgentToolName(obj), CallID: id, Failed: failed, Text: out, Raw: raw}
 }
 
 // isToolCallStart is true for the one event that marks a tool call: the

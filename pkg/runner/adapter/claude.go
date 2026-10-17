@@ -390,11 +390,18 @@ type claudeMessage struct {
 	} `json:"rate_limit_info"`
 }
 
-// claudeBlock is one content block of an assistant message.
+// claudeBlock is one content block of a message: an assistant message's
+// text and tool calls, a user message's tool results.
 type claudeBlock struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
 	Name string `json:"name"`
+	// ID is a tool call's; ToolUseID names the call a tool result answers.
+	ID        string `json:"id"`
+	ToolUseID string `json:"tool_use_id"`
+	// Content is a tool result's: a string, or a list of content blocks.
+	Content json.RawMessage `json:"content"`
+	IsError bool            `json:"is_error"`
 }
 
 // Events maps one Claude Code stream-json line to normalized events.
@@ -417,6 +424,10 @@ func (c *claudeAdapter) Events(line []byte) []Event {
 	switch msg.Type {
 	case "assistant":
 		return claudeAssistantEvents(msg, raw)
+	case "user":
+		if results := claudeToolResults(msg, raw); len(results) > 0 {
+			return results
+		}
 	case "result":
 		return claudeResultEvents(msg, raw)
 	case "rate_limit_event":
@@ -476,7 +487,7 @@ func claudeAssistantEvents(msg claudeMessage, raw json.RawMessage) []Event {
 		case "text":
 			text.WriteString(b.Text)
 		case "tool_use", "server_tool_use", "mcp_tool_use":
-			calls = append(calls, Event{Kind: EventToolCall, Text: b.Name, Raw: raw})
+			calls = append(calls, Event{Kind: EventToolCall, Text: b.Name, Tool: b.Name, CallID: b.ID, Raw: raw})
 		}
 		// thinking / redacted_thinking are the model's reasoning: the
 		// receipts keep the raw line, the result must not.
@@ -493,6 +504,38 @@ func claudeAssistantEvents(msg claudeMessage, raw json.RawMessage) []Event {
 		return []Event{{Kind: EventOther, Raw: raw}}
 	}
 	return events
+}
+
+// claudeToolResults is one event per tool result a user message carries:
+// Claude Code hands each tool's answer back to the model that way. The
+// result names its call, not its tool; the call's event names the tool.
+func claudeToolResults(msg claudeMessage, raw json.RawMessage) []Event {
+	var blocks []claudeBlock
+	if len(msg.Message.Content) > 0 {
+		_ = json.Unmarshal(msg.Message.Content, &blocks)
+	}
+	var events []Event
+	for _, b := range blocks {
+		if b.Type != "tool_result" {
+			continue
+		}
+		events = append(events, Event{Kind: EventToolResult, CallID: b.ToolUseID, Failed: b.IsError, Text: claudeContentText(b.Content), Raw: raw})
+	}
+	return events
+}
+
+// claudeContentText is the text of a tool result's content: the string
+// itself, or the text blocks of a list joined.
+func claudeContentText(c json.RawMessage) string {
+	var s string
+	if json.Unmarshal(c, &s) == nil {
+		return s
+	}
+	var blocks []textBlock
+	if json.Unmarshal(c, &blocks) != nil {
+		return ""
+	}
+	return joinText(blocks)
 }
 
 // claudeResultEvents turns the terminating result message into the run's

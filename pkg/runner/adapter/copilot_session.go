@@ -513,6 +513,16 @@ type copilotEvent struct {
 		ToolName      string `json:"toolName"`
 		MCPServerName string `json:"mcpServerName"`
 		MCPToolName   string `json:"mcpToolName"`
+		// tool.execution_start and tool.execution_complete
+		ToolCallID string `json:"toolCallId"`
+		// tool.execution_complete: Result's content is what the tool
+		// returned, Error's message why it failed. Both are read only on
+		// that event, so they stay raw here: another event's field of the
+		// same name must not fail the whole event's decoding. Success is
+		// absent from an event that does not say.
+		Success *bool           `json:"success"`
+		Result  json.RawMessage `json:"result"`
+		Error   json.RawMessage `json:"error"`
 		// session.error
 		ErrorType  string `json:"errorType"`
 		ErrorCode  string `json:"errorCode"`
@@ -551,13 +561,15 @@ func (s *copilotSession) handleNotification(m rpcMessage, frame []byte) {
 		if name == "" {
 			name = ev.Data.ToolName
 		}
-		s.emit(Event{Kind: EventToolCall, Text: name, Raw: raw})
+		s.emit(Event{Kind: EventToolCall, Text: name, Tool: name, CallID: ev.Data.ToolCallID, Raw: raw})
 		if ev.Data.MCPServerName != copilotGatewayServer {
 			// A tool of Copilot CLI's own, or of another server, started:
 			// the allowlist that should have unloaded it did not. The run
 			// is ended rather than trusted further (I1).
 			s.breach("Copilot CLI started a tool that is not the gateway's (" + ev.Data.ToolName + "), which the run's allowlist should have unloaded; the session is ended")
 		}
+	case "tool.execution_complete":
+		s.emit(copilotToolResult(ev, raw))
 	case "assistant.message":
 		if ev.Data.Content == "" {
 			s.emit(Event{Kind: EventOther, Text: ev.Type, Raw: raw})
@@ -589,6 +601,27 @@ func (s *copilotSession) handleNotification(m rpcMessage, frame []byte) {
 	default:
 		s.emit(Event{Kind: EventOther, Text: ev.Type, Raw: raw})
 	}
+}
+
+// copilotToolResult maps a tool.execution_complete: the call it answers,
+// whether it failed (it said so, or it carried an error), and the result's
+// content or, failing that, the error's message. The event does not repeat
+// the tool's name; its call's event carries it.
+func copilotToolResult(ev copilotEvent, raw json.RawMessage) Event {
+	var res struct {
+		Content string `json:"content"`
+	}
+	var cerr struct {
+		Message string `json:"message"`
+	}
+	_ = json.Unmarshal(ev.Data.Result, &res)
+	_ = json.Unmarshal(ev.Data.Error, &cerr)
+	text := res.Content
+	if text == "" {
+		text = cerr.Message
+	}
+	failed := (ev.Data.Success != nil && !*ev.Data.Success) || cerr.Message != ""
+	return Event{Kind: EventToolResult, CallID: ev.Data.ToolCallID, Failed: failed, Text: text, Raw: raw}
 }
 
 // decide answers a permission request: approved once for a gateway tool of
