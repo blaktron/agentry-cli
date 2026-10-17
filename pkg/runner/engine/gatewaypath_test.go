@@ -94,7 +94,7 @@ func gatewaySeesWindowsPaths(t *testing.T, editManifest func(*manifest.Manifest)
 		// The run's own directories, all C:\ paths, and cfg, which is a real
 		// temporary directory wherever TMPDIR puts it: the gateway's spelling
 		// of it, whatever that is on this host.
-		if !strings.HasPrefix(r, "/c/") && r != gatewayPath(rd.cfg) {
+		if !strings.HasPrefix(r, "/c/") && r != rd.gatewayPath(rd.cfg) {
 			t.Errorf("gateway root %q is not a /c/ path (roots %q)", r, roots)
 		}
 	}

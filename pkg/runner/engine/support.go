@@ -136,6 +136,9 @@ type runDirs struct {
 	// PersonIDs: the invoking user's on a rootful engine, root's on a
 	// rootless one).
 	engine dockerx.Engine
+	// driveRoot is where this run's engine finds the Windows drives on its
+	// own socket (driveRootOf).
+	driveRoot string
 }
 
 // personUser is the --user of a container whose files must be the
@@ -151,8 +154,11 @@ func (rd *runDirs) replacer() *strings.Replacer {
 // docker calls and for what a host-run harness reads.
 func nativePath(p string) string { return p }
 
-// gatewayPath spells a host path for the gateway (gatewayHostPath).
-func gatewayPath(p string) string { return gatewayHostPath(p, gatewayOS) }
+// gatewayPath spells a host path for the gateway on this run's engine
+// (gatewayHostPathUnder).
+func (rd *runDirs) gatewayPath(p string) string {
+	return gatewayHostPathUnder(p, gatewayOS, rd.driveRoot)
+}
 
 // gatewayReplacer is replacer for what only the gateway reads — its env
 // and its rendered config files — where each host path is spelled as
@@ -160,7 +166,7 @@ func gatewayPath(p string) string { return gatewayHostPath(p, gatewayOS) }
 // daemon on its socket. The CLI's own docker calls keep replacer's native
 // paths.
 func (rd *runDirs) gatewayReplacer() *strings.Replacer {
-	return rd.replacerWith(gatewayPath)
+	return rd.replacerWith(rd.gatewayPath)
 }
 
 // gatewayCanMount says whether a host folder can be handed to the gateway
@@ -173,7 +179,7 @@ func gatewayCanMount(path, goos string) error {
 		return nil
 	}
 	if strings.HasPrefix(path, `\\`) || strings.HasPrefix(path, "//") {
-		return fmt.Errorf("is a network share or a long-form path, which Docker Desktop cannot give a run's containers; use a folder on a local drive (C:\\…)")
+		return fmt.Errorf("is a network share or a long-form path, which the container engine cannot give a run's containers; use a folder on a local drive (C:\\…)")
 	}
 	if gatewayHostPath(path, goos) == path {
 		return fmt.Errorf("is not on a drive (C:\\…); use a folder on a local drive")
@@ -247,7 +253,28 @@ func (rd *runDirs) replacerWith(hostPath func(string) string) *strings.Replacer 
 // list, and /c/Users/… is the form Docker Desktop's socket takes for a
 // sibling container's bind of a Windows path (docker/for-win#6700).
 // Elsewhere the path is unchanged.
-func gatewayHostPath(p, goos string) string {
+func gatewayHostPath(p, goos string) string { return gatewayHostPathUnder(p, goos, "") }
+
+// wslDriveRoot is where a WSL 2 distribution mounts the Windows drives.
+// Rancher Desktop's dockerd runs in one, and its own socket, which the
+// filter container holds, takes a bind as that distribution names it:
+// /mnt/c/Users/…. Only the named-pipe proxy in front of it rewrites C:\
+// paths, for Windows clients.
+const wslDriveRoot = "/mnt"
+
+// driveRootOf is where the engine's daemon finds the Windows drives on its
+// own socket: under wslDriveRoot for Rancher Desktop's dockerd, at / for
+// Docker Desktop's. It matters only on Windows.
+func driveRootOf(e dockerx.Engine) string {
+	if strings.Contains(e.OS, "Rancher Desktop") {
+		return wslDriveRoot
+	}
+	return ""
+}
+
+// gatewayHostPathUnder is gatewayHostPath with the drives under root: "" is
+// /<drive>/…, wslDriveRoot is /mnt/<drive>/….
+func gatewayHostPathUnder(p, goos, root string) string {
 	if goos != "windows" || len(p) < 2 || p[1] != ':' {
 		return p
 	}
@@ -257,9 +284,9 @@ func gatewayHostPath(p, goos string) string {
 	}
 	rest := strings.Trim(strings.ReplaceAll(p[2:], `\`, "/"), "/")
 	if rest == "" {
-		return "/" + string(drive)
+		return root + "/" + string(drive)
 	}
-	return "/" + string(drive) + "/" + rest
+	return root + "/" + string(drive) + "/" + rest
 }
 
 // prepareRunDirs materializes the per-run tree: a fresh workspace copy
@@ -274,6 +301,7 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	// this file and nothing else.
 	rd := runDirsAt(root)
 	rd.engine = p.engine()
+	rd.driveRoot = driveRootOf(rd.engine)
 	// The session store is a per-run named volume, not a host directory:
 	// the harness runs unprivileged, and a host directory it could write
 	// was a world-writable one.
@@ -483,7 +511,7 @@ func stageIntakeDoc(a *intake.Answers, rd *runDirs) error {
 // paths are spelled its way (gatewayReplacer).
 func renderGatewayConfig(p Params, rd *runDirs) error {
 	gwRep := rd.gatewayReplacer()
-	if err := renderPlanFiles(p.Plan, p.PlanDir, rd, gatewayPath, "gateway"); err != nil {
+	if err := renderPlanFiles(p.Plan, p.PlanDir, rd, rd.gatewayPath, "gateway"); err != nil {
 		return err
 	}
 	dir := filepath.Join(rd.cfg, "gateway")
