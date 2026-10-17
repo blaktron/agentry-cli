@@ -32,6 +32,14 @@ type listedRecord struct {
 	Latest          string `json:"latest,omitempty"`
 	UpdateAvailable bool   `json:"updateAvailable,omitempty"`
 	CheckError      string `json:"checkError,omitempty"`
+	// Under --check: the advisories on the QuickAgent, asked with the
+	// digest of the release held here, so they are answered even when the
+	// QuickAgent has since gone private, been retired or been deleted.
+	// AdvisoriesUnknown says the registry does not know it;
+	// AdvisoriesError why it could not be asked, never read as none.
+	Advisories        []advisoryView `json:"advisories,omitempty"`
+	AdvisoriesUnknown bool           `json:"advisoriesUnknown,omitempty"`
+	AdvisoriesError   string         `json:"advisoriesError,omitempty"`
 }
 
 // listOutput is the `list --json` shape.
@@ -54,11 +62,14 @@ func newListCmd() *cobra.Command {
 			"configured registry only) for the newest version and marks the records an\n" +
 			"`agentry install ns/name` would update — in JSON, latest, updateAvailable and\n" +
 			"checkError per record; a registry that cannot be reached is said on that\n" +
-			"record, and the listing goes on.",
+			"record, and the listing goes on. It also asks for the advisories on each\n" +
+			"QuickAgent, presenting the digest of the release held here, so one that has\n" +
+			"since gone private or been retired still answers them (in JSON, advisories,\n" +
+			"advisoriesUnknown and advisoriesError).",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runList(cmd, check) },
 	}
-	cmd.Flags().BoolVar(&check, "check", false, "ask each record's registry for the newest version and mark the ones with an update available")
+	cmd.Flags().BoolVar(&check, "check", false, "ask each record's registry for the newest version, marking the ones with an update available, and for the advisories on the release held")
 	return cmd
 }
 
@@ -115,6 +126,9 @@ func runList(cmd *cobra.Command, check bool) error {
 		case check && r.Latest != "":
 			mark += "  up to date"
 		}
+		if check && !r.Local() {
+			mark += "  " + advisoriesLine(heldAdvisories{Advisories: r.Advisories, Unknown: r.AdvisoriesUnknown, Err: r.AdvisoriesError})
+		}
 		_, _ = fmt.Fprintf(out, "%s/%s@%s  %s  %s%s\n", r.Namespace, r.Name, r.Version, r.Target, r.Dir, mark)
 	}
 	return nil
@@ -146,8 +160,17 @@ func checkUpdate(cmd *cobra.Command, rec *listedRecord) {
 	client, err := newAPIClientChecked(cmd, reg, token)
 	if err != nil {
 		rec.CheckError = err.Error()
+		rec.AdvisoriesError = err.Error()
 		return
 	}
+	// The advisories first: a QuickAgent that has gone private resolves to
+	// nothing, and its advisories are what its holder most needs to read.
+	digest := ""
+	if home, herr := runnerHome(); herr == nil {
+		digest = heldDigest(home, rec.Namespace, rec.Name, rec.Version)
+	}
+	h := lookupHeldAdvisories(cmd.Context(), client, rec.Namespace, rec.Name, digest)
+	rec.Advisories, rec.AdvisoriesUnknown, rec.AdvisoriesError = h.Advisories, h.Unknown, h.Err
 	res, err := resolveRef(cmd.Context(), client, rec.Namespace+"/"+rec.Name, false)
 	if err != nil {
 		rec.CheckError = err.Error()

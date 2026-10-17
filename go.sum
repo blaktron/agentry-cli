@@ -73,8 +73,8 @@ github.com/aymanbagabas/go-osc52/v2 v2.0.1 h1:HwpRHbFMcZLEVr42D4p7XBqjyuxQH5SMiE
 github.com/aymanbagabas/go-osc52/v2 v2.0.1/go.mod h1:uYgXzlJ7ZpABp8OJ+exZzJJhRNQ2ASbcXHWsFqH8hp8=
 github.com/aymanbagabas/go-udiff v0.3.1 h1:LV+qyBQ2pqe0u42ZsUEtPiCaUoqgA9gYRDs3vj1nolY=
 github.com/aymanbagabas/go-udiff v0.3.1/go.mod h1:G0fsKmG+P6ylD0r6N/KgQD/nWzgfnl8ZBcNLgcbrw8E=
-github.com/blaktron/agentry v0.6.15-dev.99.0.20261015221205-2b59bb8a7d04 h1:z5QNtxWdfxetcHj27bvzkkGL0lySl8zosuhFPjuoSqE=
-github.com/blaktron/agentry v0.6.15-dev.99.0.20261015221205-2b59bb8a7d04/go.mod h1:e6aF5SFXvf93MQjEgxFcneNFlbkr2ZvrzszXBLgKUss=
+github.com/blaktron/agentry v0.6.15-dev.108 h1:Y3summUgexwHy+5lsL4ghYJJNiLANWAZBTvwkdPQczM=
+github.com/blaktron/agentry v0.6.15-dev.108/go.mod h1:e6aF5SFXvf93MQjEgxFcneNFlbkr2ZvrzszXBLgKUss=
 github.com/blang/semver v3.5.1+incompatible h1:cQNTCjp13qL8KC3Nbxr/y2Bqb63oX6wdnnjpJbkM4JQ=
 github.com/blang/semver v3.5.1+incompatible/go.mod h1:kRBLl5iJ+tD4TcOOxsy/0fnwebNt5EWlYSAyrTnjyyk=
 github.com/bmatcuk/doublestar v1.1.1/go.mod h1:UD6OnuiIn0yFxxA2le/rnRU1G4RaI4UvFv1sNto9p6w=
