@@ -206,7 +206,7 @@ func (s LeftSocket) Message() string { return s.messageFor(runtime.GOOS) }
 
 func (s LeftSocket) messageFor(goos string) string {
 	if rancherBackend(goos, s.Path) == "containerd" {
-		return fmt.Sprintf("Rancher Desktop runs its containerd backend, which serves no Docker API (its socket at %s answers nothing: %v): choose dockerd (moby) under Rancher Desktop's Preferences, Container Engine", s.Path, s.Err)
+		return fmt.Sprintf("Rancher Desktop runs its containerd backend, which serves no Docker API at %s (%v): choose dockerd (moby) under Rancher Desktop's Preferences, Container Engine", s.Path, s.Err)
 	}
 	return fmt.Sprintf("%s left a socket at %s with nothing answering behind it (%v): start it, or remove the file", s.Name, s.Path, s.Err)
 }
