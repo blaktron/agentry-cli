@@ -15,7 +15,9 @@
 package toolsrv
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -106,4 +108,39 @@ func allowedByGrant(paths []string, rel string) bool {
 		}
 	}
 	return false
+}
+
+// workspacePath checks a name the model gave a workspace tool, as
+// resolveUnder does, and returns it cleaned and relative to the workspace.
+// The os.Root the tool then opens it through is what holds it beneath the
+// workspace: a link a background process swaps in between this check and
+// the open cannot take the read or the write out of it.
+func (s *server) workspacePath(rel string) (string, error) {
+	if _, err := resolveUnder(s.spec.WorkspaceDir, rel); err != nil {
+		return "", err
+	}
+	return path.Clean(rel), nil
+}
+
+// mkdirsIn makes dir and any missing parent beneath root, each through
+// root, and returns the directories it made, in order. A directory that is
+// there is left as it is.
+func mkdirsIn(root *os.Root, dir string, mode os.FileMode) ([]string, error) {
+	if dir == "." || dir == "" {
+		return nil, nil
+	}
+	var made []string
+	cur := ""
+	for _, part := range strings.Split(dir, "/") {
+		cur = path.Join(cur, part)
+		err := root.Mkdir(cur, mode)
+		switch {
+		case err == nil:
+			made = append(made, cur)
+		case errors.Is(err, fs.ErrExist):
+		default:
+			return made, err
+		}
+	}
+	return made, nil
 }

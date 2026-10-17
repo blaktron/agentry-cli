@@ -25,6 +25,7 @@ import (
 
 	"github.com/blaktron/agentry/pkg/manifest"
 
+	"github.com/blaktron/agentry-cli/pkg/installed"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/gateway"
@@ -684,6 +685,7 @@ func doctorExecCatalog(rep *doctorReport, pol *policy.Policy, m *manifest.Manife
 // doctorAgentState checks the server store, the profile and the secrets
 // for one located QuickAgent.
 func doctorAgentState(rep *doctorReport, home string, pol *policy.Policy, m *manifest.Manifest, meta *installdir.Meta, installDir string) {
+	doctorAdvisories(rep, meta)
 	profDir := profile.Dir(home, meta.Namespace, meta.Name, meta.Version, installdir.DigestSuffix(meta.Digest))
 	if n := len(mcpinstall.Packages(m.Capabilities.MCPServers)); n > 0 {
 		serversDir := mcpinstall.StoreDir(profDir)
@@ -821,4 +823,38 @@ func fixedNote(st mcpinstall.VulnStatus) string {
 		return " (fixed in " + strings.Join(f, ", ") + ")"
 	}
 	return ""
+}
+
+// doctorAdvisories reports the advisories on a registry release this
+// machine holds, asked with its digest: a warning per advisory, and a
+// warning when they could not be checked, which is never read as none. A
+// QuickAgent installed from a folder has no registry to ask.
+func doctorAdvisories(rep *doctorReport, meta *installdir.Meta) {
+	if meta.Source == installed.SourceLocal || meta.Namespace == "" {
+		return
+	}
+	ref := meta.Namespace + "/" + meta.Name + "@" + meta.Version
+	reg := registryURL()
+	token, err := credentialFor(reg)
+	if err != nil {
+		token = ""
+	}
+	client, err := newAPIClient(reg, token)
+	if err != nil {
+		rep.warn("advisories", "%s: advisories could not be checked: %v", ref, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	h := lookupHeldAdvisories(ctx, client, meta.Namespace, meta.Name, meta.Digest)
+	switch {
+	case h.Err != "" || h.Unknown:
+		rep.warn("advisories", "%s: %s", ref, advisoriesLine(h))
+	case len(h.Advisories) == 0:
+		rep.ok("advisories", "%s: no advisories", ref)
+	default:
+		for _, a := range h.Advisories {
+			rep.warn("advisories", "%s: %s advisory: %s (affects %s)", ref, a.Severity, a.Summary, a.Affected)
+		}
+	}
 }
