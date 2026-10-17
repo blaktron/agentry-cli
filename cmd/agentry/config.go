@@ -60,6 +60,8 @@ type cliConfig struct {
 	Registries []registryEntry `yaml:"registries,omitempty"`
 	// Report holds this computer's report settings.
 	Report reportConfig `yaml:"report,omitempty"`
+	// Deliver holds where a run copies its deliverables.
+	Deliver deliverConfig `yaml:"deliver,omitempty"`
 }
 
 // reportConfig is config.yaml's report block.

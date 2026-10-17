@@ -126,7 +126,11 @@ What the guide states is also checked after you answer, whatever you read.
    in Markdown with `write_report`, whose `path` is already inside
    `reports/`, then made a PDF with `export_pdf`, whose `source` adds
    `reports/` to that path;
-   never PDF syntax, a `.pdf` for `write_report`, or HTML to print. Every
+   never PDF syntax, a `.pdf` for `write_report`, or HTML to print. A
+   result that is a file is marked as the run's deliverable: the
+   instructions tell the run to pass `deliverable: true` and a one-line
+   `title` to the `write_report` (or `export_pdf`) call that writes it, and
+   to leave its notes and drafts unmarked. Every
    run also has a scratch folder for notes and working files, which never
    reaches the person. Tool results come a page at a time: a long file is
    read in pages or searched, and a large `fetch` body is saved in the

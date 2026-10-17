@@ -84,6 +84,9 @@ type runDirs struct {
 	pdfTheme  *toolsrv.ThemeStamp
 	// pdfThemeFrom is what chose pdfTheme, for the receipt.
 	pdfThemeFrom ThemeSource
+	// deliverablesLedger is receipts/deliverables.ndjson for a run granted
+	// write_report (deliverables.go), made as webLedger is.
+	deliverablesLedger string
 	// fetchLedger is receipts/fetches.ndjson for a run whose fetch can
 	// save into the scratch folder (fetchsave.go), made as webLedger is.
 	fetchLedger string
@@ -406,6 +409,15 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 		}
 		_ = f.Close()
 	}
+	if slices.Contains(p.Plan.Tools, toolsrv.ToolWriteReport) {
+		rd.deliverablesLedger = filepath.Join(rd.receiptsDir, DeliverablesLedgerFile)
+		_ = os.Remove(rd.deliverablesLedger)
+		f, err := os.OpenFile(rd.deliverablesLedger, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644) //nolint:gosec // appended by the tools container
+		if err != nil {
+			return nil, Classify(ExitCLI, fmt.Errorf("create the deliverables ledger: %w", err))
+		}
+		_ = f.Close()
+	}
 	if savesFetches(p.Plan.Tools) {
 		rd.fetchLedger = filepath.Join(rd.receiptsDir, FetchLedgerFile)
 		_ = os.Remove(rd.fetchLedger)
@@ -542,6 +554,9 @@ func renderGatewayConfig(p Params, rd *runDirs) error {
 	}
 	if err := grantPDF(dir, p.Plan, p.ReportTheme, rd); err != nil {
 		return Classify(ExitCLI, fmt.Errorf("configure export_pdf: %w", err))
+	}
+	if err := grantDeliverables(dir, rd); err != nil {
+		return Classify(ExitCLI, fmt.Errorf("configure the deliverables ledger: %w", err))
 	}
 	if err := grantFetchLedger(dir, rd); err != nil {
 		return Classify(ExitCLI, fmt.Errorf("configure the fetch ledger: %w", err))
@@ -1068,7 +1083,8 @@ func relabelTargets(rd *runDirs) []relabelTarget {
 // relabelTargetsFor adds the ledgers a run has, the only files of the
 // receipts the tools server appends to: the web tools' (web.go), the
 // review's (review.go), the calls ledger (blocked.go), the PDF ledger
-// (pdf.go) and the fetch ledger (fetchsave.go). The receipts folder itself
+// (pdf.go), the fetch ledger (fetchsave.go) and the deliverables ledger
+// (deliverables.go). The receipts folder itself
 // goes first, without its files: a tool container reaches a ledger through
 // it, and a folder that kept its parent's categories refused even that
 // (`mkdir /out/receipts: permission denied`). The other receipts stay as
@@ -1086,6 +1102,9 @@ func relabelTargetsFor(rd *runDirs) []relabelTarget {
 	}
 	if rd.fetchLedger != "" {
 		t = append(t, relabelTarget{rd.fetchLedger, false})
+	}
+	if rd.deliverablesLedger != "" {
+		t = append(t, relabelTarget{rd.deliverablesLedger, false})
 	}
 	if rd.webLedger != "" {
 		t = append(t, relabelTarget{rd.webLedger, false})

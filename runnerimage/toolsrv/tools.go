@@ -174,7 +174,7 @@ func (s *server) buildTools() {
 			add(name, "Ask the Agentry registry: search its published QuickAgents (query), read one QuickAgent's manifest (ref), or read its vulnerability check of an exact MCP server version (ecosystem, package, version). AI Review reads each answer before you do.",
 				registrySearchSchema(), s.toolRegistrySearch)
 		case ToolWriteReport:
-			add(name, "Write a report file under the run's output folder (reports/). This is the only file channel that survives the run; set append to extend an existing report.",
+			add(name, "Write a report file under the run's output folder (reports/). This is the only file channel that survives the run; set append to extend an existing report. Set deliverable to true, with a title, on the file the person asked this run for: the run's results are listed by the files marked.",
 				writeReportSchema(), s.toolWriteReport)
 		case ToolExportPDF:
 			add(name, exportPDFDescription, exportPDFSchema(), s.toolExportPDF)
@@ -309,11 +309,15 @@ func readInputSchema() map[string]any {
 }
 
 func writeReportSchema() map[string]any {
-	return objSchema(map[string]any{
+	props := map[string]any{
 		"path":    strProp("report path relative to the reports/ output folder"),
 		"content": strProp("report content (text)"),
 		"append":  boolProp("append to the report instead of replacing it"),
-	}, "path", "content")
+	}
+	for k, v := range deliverableProps() {
+		props[k] = v
+	}
+	return objSchema(props, "path", "content")
 }
 
 // unmarshalArgs decodes tool arguments leniently: unknown fields are
@@ -1257,15 +1261,21 @@ func base64Page(f *os.File, offset, maxBytes, serverCap int64, b budget, mime, c
 
 func (s *server) toolWriteReport(raw json.RawMessage) (string, bool) {
 	var a struct {
-		Path    string `json:"path"`
-		Content string `json:"content"`
-		Append  bool   `json:"append"`
+		Path        string `json:"path"`
+		Content     string `json:"content"`
+		Append      bool   `json:"append"`
+		Deliverable *bool  `json:"deliverable"`
+		Title       string `json:"title"`
 	}
 	if err := unmarshalArgs(raw, &a); err != nil {
 		return s.failed("write_report", err)
 	}
 	if a.Path == "" {
 		return "write_report: path is required", true
+	}
+	mark, err := parseDeliverableMark("write_report", a.Deliverable, a.Title)
+	if err != nil {
+		return err.Error(), true
 	}
 	if env := s.holdsRunSecret(a.Content); env != "" {
 		return "write_report: the content holds the value of this run's secret " + env + "; write what it is and where it was found, not the value", true
@@ -1315,7 +1325,16 @@ func (s *server) toolWriteReport(raw json.RawMessage) (string, bool) {
 			return s.failed("write_report", err)
 		}
 	}
-	return fmt.Sprintf("report written: reports/%s (%d bytes)", path.Clean(a.Path), len(a.Content)), false
+	rel, relErr := filepath.Rel(root, abs)
+	if relErr != nil {
+		return s.failed("write_report", relErr)
+	}
+	marked, err := s.markDeliverable(filepath.ToSlash(rel), mark)
+	if err != nil {
+		s.logf("deliverables ledger: %v", err)
+		return s.failed("write_report", fmt.Errorf("the report was written to reports/%s, but the run could not record it as a deliverable: %w", path.Clean(a.Path), err))
+	}
+	return fmt.Sprintf("report written: reports/%s (%d bytes)%s", path.Clean(a.Path), len(a.Content), marked), false
 }
 
 // own gives path to the host user when the spec names one.

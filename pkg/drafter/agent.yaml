@@ -1,7 +1,7 @@
 schemaVersion: "2"
 name: drafter
 namespace: agentry
-version: 1.15.3
+version: 1.15.4
 summary: "Drafts a QuickAgent from a description, searching the registry and the web; AI Review reads every result first."
 license: MIT
 authors:

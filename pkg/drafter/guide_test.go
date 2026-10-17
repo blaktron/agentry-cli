@@ -87,6 +87,8 @@ func runtimeFacts() []byte {
 	fmt.Fprintf(&b, "- It saves screenshots and PDFs in `%s/`, and a file name the run gives is resolved inside that folder.\n\n", spec.BrowserReports)
 	b.WriteString("## Reports, PDFs and the scratch folder\n\n")
 	b.WriteString("- `write_report` writes a text file into `reports/`, which the person receives. It refuses a PDF.\n")
+	fmt.Fprintf(&b, "- `write_report` and `export_pdf` take two optional arguments, `deliverable` (true) and `title` (one line of plain text, at most %d characters), that mark the file as what the person asked the run for. A run's deliverables are the files it marked. When it marked none, the runner lists the PDFs the run exported, else every file in `reports/` outside `%s/`, else the run's final message, which it writes to `%s`. A run that fails has none.\n",
+		toolsrv.MaxDeliverableTitleRunes, spec.BrowserReports, engine.DeliverableMessageFile)
 	fmt.Fprintf(&b, "- `export_pdf` turns a Markdown file from `reports/` or the scratch folder, of at most %d KiB, into a PDF in `reports/`, rendered by Typst %s within %d seconds, at most %d MiB. It draws at most %d local PNG or JPEG images of up to %d MiB each; any other image is drawn as its alt text. The PDF's look is the person's report theme, which the run cannot choose.\n",
 		toolsrv.MaxPDFSourceBytes>>10, toolsrv.TypstVersion, int(toolsrv.PDFRenderTimeout.Seconds()), toolsrv.MaxPDFBytes>>20, toolsrv.MaxPDFImages, toolsrv.MaxPDFImageBytes>>20)
 	fmt.Fprintf(&b, "- The scratch folder, `%s`, is the run's own working space through `scratch_write`, `scratch_list`, `scratch_read` and `scratch_search`: empty at the start, at most %d MiB on Linux, never part of what the person receives, and deleted with the run.\n\n", spec.ScratchMount, spec.ToolsTmpfsBytes>>20)
@@ -433,6 +435,31 @@ func TestTheDraftingGuideStatesTheRuntime(t *testing.T) {
 	}
 	if want := "Up to " + numberWord(manifest.MaxMCPServers) + " the manifest declares"; !strings.Contains(string(run), want) {
 		t.Errorf("how a run works does not say %q", want)
+	}
+}
+
+// TestTheDraftingGuideTeachesTheDeliverableMark: the pages a draft is made
+// from say how a run marks the file it was for, with the two arguments and
+// the limit on a title the tools server holds; so does the Drafter's own
+// instruction.
+func TestTheDraftingGuideTeachesTheDeliverableMark(t *testing.T) {
+	title := fmt.Sprintf("at most %d characters", toolsrv.MaxDeliverableTitleRunes)
+	for path, wants := range map[string][]string{
+		guideDir + "/wiki/runtime/how-a-run-works.md": {"`deliverable: true`", "one-line `title`", title, "`write_report`", "`export_pdf`", "When the result is a file"},
+		guideDir + "/wiki/draft/instructions.md":      {"`deliverable: true`", "one-line `title`"},
+		guideDir + "/sources/runtime-facts.md":        {"`deliverable` (true)", title, "reports/deliverable.md"},
+		instructionFile:                               {"`deliverable: true`", "one-line"},
+	} {
+		page, err := fs.ReadFile(FS(), path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := strings.Join(strings.Fields(string(page)), " ")
+		for _, want := range wants {
+			if !strings.Contains(text, want) {
+				t.Errorf("%s does not say %q", path, want)
+			}
+		}
 	}
 }
 

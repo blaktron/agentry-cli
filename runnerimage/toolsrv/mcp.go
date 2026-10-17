@@ -234,6 +234,9 @@ func validateSpec(spec *Spec) error {
 	if err := validatePDF(spec); err != nil {
 		return err
 	}
+	if err := validateDeliverables(spec); err != nil {
+		return err
+	}
 	if err := validateCalls(spec); err != nil {
 		return err
 	}

@@ -167,6 +167,12 @@ answers without a key, a server that needs none. It declares a server or an
 API that needs a key, an account or a paid plan only when nothing key-free
 does the task, and the notes then say why.
 
+Since 1.15.4 the Drafter knows deliverables. A QuickAgent whose result is a
+file tells its run to mark that file with `deliverable: true` and a one-line
+`title` on the `write_report` (or `export_pdf`) call that writes it, and to
+leave notes and drafts unmarked, so the person finds the result among a run's
+files.
+
 The runner attaches the guide to every run of the Drafter, through the same
 knowledge tools, the repair turn included. It is part of this release, so
 the registry scans it with the published release. It is not one of your

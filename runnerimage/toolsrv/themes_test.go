@@ -125,7 +125,7 @@ func TestAHostileDesignNeverReachesTheTemplate(t *testing.T) {
 }
 
 // TestExportPDFTakesAFormAndNothingElse: export_pdf's
-// arguments are source, path and form; a call naming the look is refused,
+// arguments are source, path, form and the two deliverable marks; a call naming the look is refused,
 // not ignored; the render gets the stamped design byte for byte and the
 // form; the ledger records the form.
 func TestExportPDFTakesAFormAndNothingElse(t *testing.T) {
@@ -135,7 +135,7 @@ func TestExportPDFTakesAFormAndNothingElse(t *testing.T) {
 		keys = append(keys, k)
 	}
 	slices.Sort(keys)
-	if !slices.Equal(keys, []string{"form", "path", "source"}) || !slices.Equal(exportPDFArgs, []string{"source", "path", "form"}) {
+	if !slices.Equal(keys, []string{"deliverable", "form", "path", "source", "title"}) || !slices.Equal(exportPDFArgs, []string{"source", "path", "form", "deliverable", "title"}) {
 		t.Fatalf("export_pdf takes %v", keys)
 	}
 	if enum := props["form"].(map[string]any)["enum"]; !slices.Equal(enum.([]string), []string{"report", "letter", "memo"}) {
