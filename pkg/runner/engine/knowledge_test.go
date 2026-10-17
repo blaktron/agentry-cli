@@ -61,7 +61,7 @@ func TestKnowledgeIsNamedInTheReceipt(t *testing.T) {
 	}
 	// In the gateway's spelling of the run's directory: the same bytes on
 	// Linux and macOS, /c/… on Windows.
-	if !strings.Contains(string(catalog), gatewayPath(filepath.Join(runDir, "knowledge"))+":/knowledge:ro") {
+	if !strings.Contains(string(catalog), gatewayHostPath(filepath.Join(runDir, "knowledge"), gatewayOS)+":/knowledge:ro") {
 		t.Fatalf("rendered catalog lacks the ro knowledge mount:\n%s", catalog)
 	}
 	// The grant is the run's: the rendered toolspec names the pack and the

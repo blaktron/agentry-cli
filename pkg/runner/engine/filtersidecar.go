@@ -46,7 +46,7 @@ func filterVolume(runID string) string { return "agentry-" + runID + "-docker" }
 // which is how the gateway names them in what it asks and where the
 // container sees them.
 func startFilterSidecar(ctx context.Context, d dockerx.Client, rd *runDirs, runID, image, daemonSocket string, cfg sockfilter.Config, lim policy.Limits, td *teardown) (string, error) {
-	cfg = sidecarConfigOf(cfg)
+	cfg = sidecarConfigOf(cfg, rd.gatewayPath)
 	raw, err := sockfilter.MarshalConfig(cfg)
 	if err != nil {
 		return "", Classify(ExitGateway, err)
@@ -69,7 +69,7 @@ func startFilterSidecar(ctx context.Context, d dockerx.Client, rd *runDirs, runI
 		{Source: rd.receiptsDir, Target: sidecarLogDir},
 	}
 	for _, root := range sidecarRoots(cfg) {
-		mounts = append(mounts, dockerx.Mount{Source: nativeOfGatewayPath(root, gatewayOS), Target: root, ReadOnly: true})
+		mounts = append(mounts, dockerx.Mount{Source: nativeOfGatewayPathUnder(root, gatewayOS, rd.driveRoot), Target: root, ReadOnly: true})
 	}
 	spec := dockerx.RunSpec{
 		Name:  name,
@@ -111,9 +111,9 @@ func startFilterSidecar(ctx context.Context, d dockerx.Client, rd *runDirs, runI
 }
 
 // sidecarConfigOf spells the host paths of a filter's configuration the
-// gateway's way. The bind roots already are: they come from the gateway's
-// own environment.
-func sidecarConfigOf(cfg sockfilter.Config) sockfilter.Config {
+// gateway's way (gatewayPath). The bind roots already are: they come from
+// the gateway's own environment.
+func sidecarConfigOf(cfg sockfilter.Config, gatewayPath func(string) string) sockfilter.Config {
 	gw := func(p string) string {
 		if p == "" {
 			return ""
@@ -173,12 +173,21 @@ func sidecarRoots(cfg sockfilter.Config) []string {
 // nativeOfGatewayPath is gatewayHostPath's inverse, for a bind the CLI
 // gives the filter container: on Windows /c/Users/… is C:\Users\…;
 // elsewhere a path is spelled one way.
-func nativeOfGatewayPath(p, goos string) string {
-	if goos != "windows" || len(p) < 2 || p[0] != '/' || p[1] < 'a' || p[1] > 'z' || (len(p) > 2 && p[2] != '/') {
+func nativeOfGatewayPath(p, goos string) string { return nativeOfGatewayPathUnder(p, goos, "") }
+
+// nativeOfGatewayPathUnder is gatewayHostPathUnder's inverse: with the
+// drives under root, root/c/Users/… is C:\Users\…; a path not under root
+// is left as it is.
+func nativeOfGatewayPathUnder(p, goos, root string) string {
+	if goos != "windows" || !strings.HasPrefix(p, root) {
 		return p
 	}
-	rest := strings.ReplaceAll(strings.TrimPrefix(p[2:], "/"), "/", `\`)
-	return strings.ToUpper(p[1:2]) + `:\` + rest
+	q := p[len(root):]
+	if len(q) < 2 || q[0] != '/' || q[1] < 'a' || q[1] > 'z' || (len(q) > 2 && q[2] != '/') {
+		return p
+	}
+	rest := strings.ReplaceAll(strings.TrimPrefix(q[2:], "/"), "/", `\`)
+	return strings.ToUpper(q[1:2]) + `:\` + rest
 }
 
 // throughFilterVolume points the gateway's daemon-socket mount at the

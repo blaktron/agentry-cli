@@ -348,7 +348,7 @@ func TestRunKeepRunDirStillDeletesSecrets(t *testing.T) {
 	if strings.Contains(string(b), "@@RUN_") {
 		t.Error("rendered catalog still has placeholders")
 	}
-	if !strings.Contains(string(b), gatewayPath(runDir)) {
+	if !strings.Contains(string(b), gatewayHostPath(runDir, gatewayOS)) {
 		t.Error("rendered catalog lacks the run workspace path")
 	}
 }
@@ -385,7 +385,7 @@ func TestInputsStagedIntoRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(b), gatewayPath(filepath.Join(runDir, "inputs"))+":/inputs:ro") {
+	if !strings.Contains(string(b), gatewayHostPath(filepath.Join(runDir, "inputs"), gatewayOS)+":/inputs:ro") {
 		t.Errorf("rendered catalog lacks the ro inputs mount:\n%s", b)
 	}
 }
