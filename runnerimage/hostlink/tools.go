@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/blaktron/agentry-cli/runnerimage/toolargs"
 )
 
 // The one-shot tools. Every call is its own SSH
@@ -182,13 +184,11 @@ func (s *server) pick(id string) (*host, error) {
 	return h, nil
 }
 
+// decode reads a call's arguments, refusing a field the tool does not
+// take; a value sent in the wrong JSON type, such as "sudo": "true", is
+// taken as the value it meant (toolargs.Decode).
 func decode(args json.RawMessage, v any) error {
-	if len(args) == 0 {
-		args = []byte("{}")
-	}
-	dec := json.NewDecoder(bytes.NewReader(args))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(v); err != nil {
+	if err := toolargs.Decode(args, v, true); err != nil {
 		return fmt.Errorf("arguments: %v", err)
 	}
 	return nil

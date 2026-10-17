@@ -533,6 +533,13 @@ func TestFetch(t *testing.T) {
 		}
 	})
 
+	t.Run("a body sent as an object is sent as its JSON text", func(t *testing.T) {
+		got, isErr := s.toolFetch(rawArgs(t, map[string]any{"url": upstreamA.URL + "/echo", "method": "POST", "body": map[string]any{"q": "ping"}}))
+		if isErr || !strings.Contains(got, `method=POST body={"q":"ping"}`) {
+			t.Fatalf("post = %q (isError %v)", got, isErr)
+		}
+	})
+
 	t.Run("unlisted method refused", func(t *testing.T) {
 		if got, isErr := s.toolFetch(rawArgs(t, map[string]any{"url": upstreamA.URL, "method": "BREW"})); !isErr || !strings.Contains(got, "not allowed") {
 			t.Fatalf("method = %q (isError %v)", got, isErr)
