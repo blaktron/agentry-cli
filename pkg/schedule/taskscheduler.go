@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf16"
+
+	"github.com/blaktron/agentry-cli/pkg/runner/procx"
 )
 
 // taskFolder is the Task Scheduler folder every schedule's task is in.
@@ -67,11 +69,20 @@ func NewTaskScheduler() (*TaskScheduler, error) {
 		Conhost: filepath.Join(sys, "conhost.exe"),
 		Loc:     time.Local,
 		Schtasks: func(args ...string) ([]byte, error) {
-			return exec.Command(filepath.Join(sys, "schtasks.exe"), args...).CombinedOutput()
+			return schtasksCommand(filepath.Join(sys, "schtasks.exe"), args...).CombinedOutput()
 		},
 		Now:  time.Now,
 		Wait: 2 * time.Minute,
 	}, nil
+}
+
+// schtasksCommand is schtasks.exe at path run with args. It opens no
+// console window when the caller is a windowed application, so installing
+// or removing a schedule does not flash a command prompt at the person.
+func schtasksCommand(path string, args ...string) *exec.Cmd {
+	cmd := exec.Command(path, args...) //nolint:gosec // the system's schtasks.exe, arguments this file builds
+	procx.NoWindow(cmd)
+	return cmd
 }
 
 // Name implements Alarm.
