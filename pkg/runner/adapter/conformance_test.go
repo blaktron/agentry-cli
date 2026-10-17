@@ -325,6 +325,7 @@ func conformEvents(t *testing.T, ad Adapter) {
 	}
 	var expect struct {
 		ToolCalls     int  `json:"toolCalls"`
+		ToolResults   int  `json:"toolResults"`
 		AssistantText bool `json:"assistantText"`
 		Usage         bool `json:"usage"`
 	}
@@ -335,13 +336,32 @@ func conformEvents(t *testing.T, ad Adapter) {
 	if err := json.Unmarshal(eb, &expect); err != nil {
 		t.Fatal(err)
 	}
-	var toolCalls int
+	var toolCalls, toolResults int
 	var text, usage bool
+	// calls is each call's tool by its id: a result must answer a call
+	// already seen, and name the same tool when it names one.
+	calls := map[string]string{}
 	for _, line := range bytes.Split(raw, []byte("\n")) {
 		for _, ev := range ad.Events(line) {
 			switch ev.Kind {
 			case EventToolCall:
 				toolCalls++
+				if ev.Tool == "" || ev.CallID == "" {
+					t.Errorf("tool call without its tool or id: %+v", ev)
+				}
+				calls[ev.CallID] = ev.Tool
+			case EventToolResult:
+				toolResults++
+				tool, ok := calls[ev.CallID]
+				switch {
+				case !ok:
+					t.Errorf("tool result %q answers no call seen", ev.CallID)
+				case ev.Tool != "" && ev.Tool != tool:
+					t.Errorf("tool result %q names %q, its call %q", ev.CallID, ev.Tool, tool)
+				}
+				if ev.Text == "" {
+					t.Errorf("tool result %q carries no output", ev.CallID)
+				}
 			case EventAssistantText:
 				text = true
 			case EventUsage:
@@ -352,7 +372,7 @@ func conformEvents(t *testing.T, ad Adapter) {
 			}
 		}
 	}
-	if toolCalls != expect.ToolCalls || text != expect.AssistantText || usage != expect.Usage {
-		t.Errorf("events: toolCalls=%d text=%v usage=%v, want %+v", toolCalls, text, usage, expect)
+	if toolCalls != expect.ToolCalls || toolResults != expect.ToolResults || text != expect.AssistantText || usage != expect.Usage {
+		t.Errorf("events: toolCalls=%d toolResults=%d text=%v usage=%v, want %+v", toolCalls, toolResults, text, usage, expect)
 	}
 }

@@ -723,6 +723,10 @@ func (s *liveSession) handle(ev adapter.Event) {
 		if over {
 			s.endWith(session.EndCostBudget)
 		}
+	case adapter.EventToolResult:
+		// A session's transcript keeps the result's raw line; its text
+		// says only what the event is, never what the tool returned.
+		s.emit(session.Event{Kind: session.KindOther, Text: string(ev.Kind), Raw: ev.Raw})
 	case adapter.EventPermissionGranted:
 		s.emit(session.Event{Kind: session.KindPermissionGranted, Text: ev.Text, Raw: ev.Raw})
 	case adapter.EventPermissionDenied:

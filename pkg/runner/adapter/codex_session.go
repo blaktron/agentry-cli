@@ -399,16 +399,10 @@ func (s *codexSession) signInError(e *codexError, raw json.RawMessage) (Event, b
 // codexNotification is the part of a notification's params this driver
 // reads across the methods it recognizes.
 type codexNotification struct {
-	ThreadID string `json:"threadId"`
-	TurnID   string `json:"turnId"`
-	Item     struct {
-		Type   string `json:"type"`
-		Text   string `json:"text"`
-		Tool   string `json:"tool"`
-		Server string `json:"server"`
-		Status string `json:"status"`
-	} `json:"item"`
-	Turn struct {
+	ThreadID string    `json:"threadId"`
+	TurnID   string    `json:"turnId"`
+	Item     codexItem `json:"item"`
+	Turn     struct {
 		ID     string      `json:"id"`
 		Status string      `json:"status"`
 		Error  *codexError `json:"error"`
@@ -430,11 +424,14 @@ func (s *codexSession) handleNotification(m rpcMessage, line []byte) {
 	switch m.Method {
 	case "item/started":
 		if p.Item.Type == "mcpToolCall" {
-			s.emit(Event{Kind: EventToolCall, Text: p.Item.Tool, Raw: raw})
+			s.emit(Event{Kind: EventToolCall, Text: p.Item.Tool, Tool: p.Item.Tool, CallID: p.Item.ID, Raw: raw})
 			return
 		}
 	case "item/completed":
 		switch p.Item.Type {
+		case "mcpToolCall":
+			s.emit(codexToolResultEvent(p.Item, raw))
+			return
 		case "agentMessage":
 			s.mu.Lock()
 			if s.turn != nil && p.Item.Text != "" {

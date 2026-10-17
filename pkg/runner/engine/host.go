@@ -290,6 +290,8 @@ func runHostHarness(ctx context.Context, p Params, rd *runDirs, token string, re
 		events:     eventsFile,
 		tee:        p.Events,
 		onUsage:    p.OnUsage,
+		onEvent:    p.OnEvent,
+		stderr:     p.Stderr,
 		redact:     rd.redact,
 		maxTurns:   p.Budgets.MaxTurns,
 		maxCostUSD: p.Budgets.MaxCostUSD,

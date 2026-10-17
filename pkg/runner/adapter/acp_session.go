@@ -347,12 +347,16 @@ func (s *acpSession) handleNotification(m rpcMessage, line []byte) {
 	var p struct {
 		Update struct {
 			SessionUpdate string `json:"sessionUpdate"`
-			Content       struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			} `json:"content"`
-			Title  string `json:"title"`
-			Status string `json:"status"`
+			// Content is a message chunk's one content block, or a tool
+			// call update's list of tool call contents.
+			Content json.RawMessage `json:"content"`
+			Title   string          `json:"title"`
+			Status  string          `json:"status"`
+			// ToolCallID names the call a tool_call or tool_call_update is
+			// about; Name is the tool's own name where the harness sends
+			// one beside its display title (docker-agent does).
+			ToolCallID string `json:"toolCallId"`
+			Name       string `json:"name"`
 			// usage_update (docker-agent): cumulative context tokens used
 			// and the context size (0 when the provider does not say).
 			Used int64 `json:"used"`
@@ -396,19 +400,55 @@ func (s *acpSession) handleNotification(m rpcMessage, line []byte) {
 		}
 		s.emit(ev)
 	case "agent_message_chunk":
+		var chunk struct {
+			Text string `json:"text"`
+		}
+		_ = json.Unmarshal(u.Content, &chunk)
 		s.mu.Lock()
 		if s.turn != nil {
-			s.turn.text.WriteString(u.Content.Text)
+			s.turn.text.WriteString(chunk.Text)
 		}
 		s.mu.Unlock()
-		s.emit(Event{Kind: EventAssistantText, Text: u.Content.Text, Raw: rawCopy(line)})
+		s.emit(Event{Kind: EventAssistantText, Text: chunk.Text, Raw: rawCopy(line)})
 	case "tool_call":
 		// One tool call per tool_call update; updates of its status are
 		// observations, so --max-turns counts calls, not progress.
-		s.emit(Event{Kind: EventToolCall, Text: u.Title, Raw: rawCopy(line)})
+		tool := u.Name
+		if tool == "" {
+			tool = u.Title
+		}
+		s.emit(Event{Kind: EventToolCall, Text: u.Title, Tool: tool, CallID: u.ToolCallID, Raw: rawCopy(line)})
+	case "tool_call_update":
+		// A call's last update, completed or failed, is its result; the
+		// ones before it say only that it is under way.
+		if u.Status != "completed" && u.Status != "failed" {
+			s.emit(Event{Kind: EventOther, Text: u.SessionUpdate, Raw: rawCopy(line)})
+			return
+		}
+		s.emit(Event{Kind: EventToolResult, Tool: u.Name, CallID: u.ToolCallID, Failed: u.Status == "failed", Text: acpToolContentText(u.Content), Raw: rawCopy(line)})
 	default:
 		s.emit(Event{Kind: EventOther, Text: u.SessionUpdate, Raw: rawCopy(line)})
 	}
+}
+
+// acpToolContentText is the text of a tool call update's content: each
+// "content" entry's text block, joined. Diffs and terminals carry no text
+// of their own and are left to the receipts.
+func acpToolContentText(raw json.RawMessage) string {
+	var items []struct {
+		Type    string    `json:"type"`
+		Content textBlock `json:"content"`
+	}
+	if json.Unmarshal(raw, &items) != nil {
+		return ""
+	}
+	var blocks []textBlock
+	for _, it := range items {
+		if it.Type == "content" {
+			blocks = append(blocks, it.Content)
+		}
+	}
+	return joinText(blocks)
 }
 
 func (s *acpSession) handleRequest(m rpcMessage, line []byte) {

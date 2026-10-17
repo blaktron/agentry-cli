@@ -317,10 +317,14 @@ func TestCodexEvents(t *testing.T) {
 	if k := kinds(`{"type":"item.started","item":{"id":"item_2","type":"mcp_tool_call","server":"gateway","tool":"write_report","arguments":{},"status":"in_progress"}}`); len(k) != 1 || k[0] != EventToolCall {
 		t.Errorf("a starting MCP call = %v, want one tool_call", k)
 	}
-	if k := kinds(`{"type":"item.completed","item":{"id":"item_2","type":"mcp_tool_call","server":"gateway","tool":"write_report","status":"completed"}}`); len(k) != 1 || k[0] != EventOther {
-		t.Errorf("a completed MCP call = %v, want an observation, not a second count", k)
+	if k := kinds(`{"type":"item.completed","item":{"id":"item_2","type":"mcp_tool_call","server":"gateway","tool":"write_report","status":"completed"}}`); len(k) != 1 || k[0] != EventToolResult {
+		t.Errorf("a completed MCP call = %v, want its result, not a second count", k)
 	}
-	evs := ad.Events([]byte(`{"type":"item.completed","item":{"id":"item_3","type":"agent_message","text":"hello from the workspace"}}`))
+	evs := ad.Events([]byte(`{"type":"item.completed","item":{"id":"item_4","type":"mcp_tool_call","server":"gateway","tool":"fs_read","arguments":{},"result":null,"error":{"message":"no such file"},"status":"failed"}}`))
+	if len(evs) != 1 || evs[0].Kind != EventToolResult || !evs[0].Failed || evs[0].Text != "no such file" || evs[0].Tool != "fs_read" || evs[0].CallID != "item_4" {
+		t.Errorf("a failed MCP call = %+v", evs)
+	}
+	evs = ad.Events([]byte(`{"type":"item.completed","item":{"id":"item_3","type":"agent_message","text":"hello from the workspace"}}`))
 	if len(evs) != 1 || evs[0].Kind != EventAssistantText || evs[0].Text != "hello from the workspace" || evs[0].Delta {
 		t.Errorf("agent message = %+v", evs)
 	}
@@ -392,7 +396,7 @@ func TestCodexSession(t *testing.T) {
 					if m.Result["action"] != "accept" {
 						t.Errorf("gateway approval answered %v, want accept", m.Result)
 					}
-					stdio.say(`{"method":"item/completed","params":{"threadId":"t1","turnId":"u1","item":{"type":"mcpToolCall","id":"c1","server":"gateway","tool":"write_report","status":"completed"}}}`)
+					stdio.say(`{"method":"item/completed","params":{"threadId":"t1","turnId":"u1","item":{"type":"mcpToolCall","id":"c1","server":"gateway","tool":"write_report","status":"completed","result":{"content":[{"type":"text","text":"report written"}],"structuredContent":null},"error":null}}}`)
 					stdio.say(`{"method":"thread/tokenUsage/updated","params":{"threadId":"t1","turnId":"u1","tokenUsage":{"last":{"inputTokens":10,"outputTokens":5},"total":{"inputTokens":10,"outputTokens":5}}}}`)
 					stdio.say(`{"method":"item/completed","params":{"threadId":"t1","turnId":"u1","item":{"type":"agentMessage","id":"m1","text":"DONE"}}}`)
 					stdio.say(`{"method":"turn/completed","params":{"threadId":"t1","turn":{"id":"u1","status":"completed"}}}`)
@@ -423,11 +427,19 @@ func TestCodexSession(t *testing.T) {
 	if err := drv.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	var calls, granted, texts, usage int
+	var calls, results, granted, texts, usage int
 	for _, ev := range <-drained {
 		switch ev.Kind {
 		case EventToolCall:
 			calls++
+			if ev.Tool != "write_report" || ev.CallID != "c1" {
+				t.Errorf("tool call = %+v", ev)
+			}
+		case EventToolResult:
+			results++
+			if ev.Tool != "write_report" || ev.CallID != "c1" || ev.Failed || ev.Text != "report written" {
+				t.Errorf("tool result = %+v", ev)
+			}
 		case EventPermissionGranted:
 			granted++
 		case EventAssistantText:
@@ -436,8 +448,8 @@ func TestCodexSession(t *testing.T) {
 			usage++
 		}
 	}
-	if calls != 1 || granted != 1 || texts != 1 || usage != 1 {
-		t.Errorf("transcript: calls=%d granted=%d texts=%d usage=%d, want 1 each", calls, granted, texts, usage)
+	if calls != 1 || results != 1 || granted != 1 || texts != 1 || usage != 1 {
+		t.Errorf("transcript: calls=%d results=%d granted=%d texts=%d usage=%d, want 1 each", calls, results, granted, texts, usage)
 	}
 }
 

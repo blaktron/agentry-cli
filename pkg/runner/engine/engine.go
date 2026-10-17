@@ -234,6 +234,20 @@ type Params struct {
 	// OnUsage must not: it is written from the same goroutine, on the same
 	// terms as the receipt's own copy.
 	Events io.Writer
+	// OnEvent, when set, receives each normalized harness event of an
+	// autonomous run while it is live, in order: the tool calls, each
+	// tool's result, the assistant's text, the usage and the harness's
+	// errors. An interactive session streams its own events and does not
+	// call it. A tool result whose harness did not repeat the tool's name
+	// carries the name of the call it answers, and its text is cut to
+	// adapter.ToolExcerptMax. The assistant's streamed chunks arrive
+	// joined, one event per message, when the message ends. Every text is
+	// masked with the run's secret values before it is cut, so no part of
+	// one reaches the driver; Raw is left out (Events has the lines). It
+	// is called on the terms of OnUsage: from the stream-consuming
+	// goroutine, never after the harness stream closes, and it MUST NOT
+	// BLOCK; one that panics is switched off and the run goes on.
+	OnEvent func(adapter.Event)
 }
 
 // engine is the run's container engine once placed (placementFor), and
@@ -1083,6 +1097,8 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		events:     eventsFile,
 		tee:        p.Events,
 		onUsage:    p.OnUsage,
+		onEvent:    p.OnEvent,
+		stderr:     p.Stderr,
 		redact:     rd.redact,
 		maxTurns:   p.Budgets.MaxTurns,
 		maxCostUSD: p.Budgets.MaxCostUSD,
@@ -1345,6 +1361,17 @@ type eventCollector struct {
 	// tee receives every raw line beside the receipt's own copy.
 	onUsage func(receipt.Usage)
 	tee     io.Writer
+	// onEvent receives every normalized event, masked (Params.OnEvent).
+	onEvent func(adapter.Event)
+	// toolNames remembers each call's tool by its id, for a result that
+	// does not name it.
+	toolNames map[string]string
+	// liveText joins the assistant's streamed chunks until the message
+	// ends, so that the message is masked whole: a secret split across
+	// two chunks matches in neither.
+	liveText strings.Builder
+	// stderr hears that a panicking onEvent was switched off.
+	stderr io.Writer
 	// usageErr records a callback that panicked, so a driver metering the
 	// run learns its meter is dead instead of reading silence as zero.
 	usageErr error
@@ -1397,6 +1424,7 @@ func (c *eventCollector) consume(r io.Reader) {
 			c.record(ev)
 		}
 	}
+	c.flushLiveText()
 }
 
 // recordRaw keeps one harness line in the events receipt, masked, and
@@ -1415,6 +1443,8 @@ func (c *eventCollector) recordRaw(line []byte) {
 // record applies one normalized event: the turn and cost budgets, the
 // result text, the usage, the harness's error and a plan's limit.
 func (c *eventCollector) record(ev adapter.Event) {
+	ev = c.pair(ev)
+	defer c.notifyEvent(ev)
 	switch ev.Kind {
 	case adapter.EventToolCall:
 		c.curText.Reset() // text before a tool call is its own message
@@ -1497,6 +1527,92 @@ func (c *eventCollector) notifyUsage() {
 		}
 	}()
 	c.onUsage(c.usage())
+}
+
+// pair remembers a tool call's tool by its id and names it on the result
+// that answers it, for the harnesses whose results name only the call.
+func (c *eventCollector) pair(ev adapter.Event) adapter.Event {
+	if ev.CallID == "" {
+		return ev
+	}
+	switch ev.Kind {
+	case adapter.EventToolCall:
+		if ev.Tool != "" {
+			if c.toolNames == nil {
+				c.toolNames = map[string]string{}
+			}
+			c.toolNames[ev.CallID] = ev.Tool
+		}
+	case adapter.EventToolResult:
+		if ev.Tool == "" {
+			ev.Tool = c.toolNames[ev.CallID]
+		}
+		delete(c.toolNames, ev.CallID)
+	}
+	return ev
+}
+
+// notifyEvent hands one event to the driver's callback. A streamed chunk
+// of the assistant's message is held until the message ends, where the
+// result's own text ends it: at a tool call, a tool's result, the usage,
+// a whole message or the harness's error.
+func (c *eventCollector) notifyEvent(ev adapter.Event) {
+	if c.onEvent == nil {
+		return
+	}
+	switch ev.Kind {
+	case adapter.EventAssistantText:
+		if ev.Delta {
+			c.liveText.WriteString(ev.Text)
+			return
+		}
+		c.liveText.Reset()
+	case adapter.EventToolCall, adapter.EventToolResult, adapter.EventUsage, adapter.EventError,
+		adapter.EventPlanLimit, adapter.EventOutOfCredits, adapter.EventOrgPolicy:
+		c.flushLiveText()
+	}
+	c.deliver(ev)
+}
+
+// flushLiveText delivers the message the streamed chunks have built so far
+// as one event. The stream's end calls it too, so the last message is
+// never lost.
+func (c *eventCollector) flushLiveText() {
+	if c.liveText.Len() == 0 {
+		return
+	}
+	text := c.liveText.String()
+	c.liveText.Reset()
+	c.deliver(adapter.Event{Kind: adapter.EventAssistantText, Text: text})
+}
+
+// deliver masks one event, cuts a tool's output, drops the raw line and
+// calls the driver, on the terms of notifyUsage: a callback that panics is
+// switched off, said once on stderr, and never ends the run.
+func (c *eventCollector) deliver(ev adapter.Event) {
+	if c.onEvent == nil {
+		return
+	}
+	ev.Raw = nil
+	ev.Delta = false
+	ev.Text = c.redact.String(ev.Text)
+	if ev.Kind == adapter.EventToolResult {
+		// Masked first: a cut through a secret would leave a prefix no
+		// mask matches.
+		ev.Text = adapter.ToolExcerpt(ev.Text)
+	}
+	ev.Tool = c.redact.String(ev.Tool)
+	ev.CallID = c.redact.String(ev.CallID)
+	ev.Policy = c.redact.String(ev.Policy)
+	defer func() {
+		if r := recover(); r != nil {
+			c.onEvent = nil
+			if c.stderr != nil {
+				_, _ = fmt.Fprintf(c.stderr, "warning: the run's live events stopped: their receiver failed (%s); the run goes on and its receipts keep every event\n", c.redact.String(fmt.Sprint(r)))
+			}
+		}
+	}()
+	c.onEvent(ev)
 }
 
 // answerInReasoning: since the last tool call the model reasoned and wrote
