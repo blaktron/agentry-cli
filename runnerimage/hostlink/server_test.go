@@ -307,6 +307,38 @@ func TestSudoIsFedThePasswordTheAgentNeverSees(t *testing.T) {
 	}
 }
 
+// TestStringifiedArgumentsAreTakenAsTheValueTheyEncode: a model that sends
+// "sudo": "true" or "timeout": "30" gets the call it meant; a string that
+// does not encode the type is refused naming the parameter; an unknown field
+// is still refused.
+func TestStringifiedArgumentsAreTakenAsTheValueTheyEncode(t *testing.T) {
+	fx := newFixture(t, passwordTarget())
+	fx.fake.cmds["sudo"] = fakeResult{stdout: "root\n"}
+	res, _, err := fx.session(t,
+		call(ToolRun, map[string]any{"command": "whoami", "sudo": "true", "timeout": "30"}),
+		call(ToolRun, map[string]any{"command": "whoami", "sudo": "yes"}),
+		call(ToolRun, map[string]any{"command": "whoami", "become": true}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text, isErr, _ := answer(t, res["1"]); isErr || !strings.Contains(text, "root") {
+		t.Fatalf("stringified sudo answered %q", text)
+	}
+	if got := fx.fake.stdins[len(fx.fake.stdins)-1]; got != testSudo+"\n" {
+		t.Errorf("sudo's stdin %q", got)
+	}
+	if text, isErr, _ := answer(t, res["2"]); !isErr || !strings.Contains(text, "sudo") || !strings.Contains(text, `"yes"`) || !strings.Contains(text, "bool") {
+		t.Errorf("an uncoercible string answered %q", text)
+	}
+	if text, isErr, _ := answer(t, res["3"]); !isErr || !strings.Contains(text, "become") {
+		t.Errorf("an unknown field answered %q", text)
+	}
+	logb, _ := os.ReadFile(filepath.Join(fx.logs, LogFile("server")))
+	if !strings.Contains(string(logb), `"command":"whoami","sudo":true`) {
+		t.Errorf("the host's log: %s", logb)
+	}
+}
+
 func TestSudoWithoutAPasswordIsRefused(t *testing.T) {
 	tg := passwordTarget()
 	tg.Sudo = false

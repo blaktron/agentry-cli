@@ -64,7 +64,7 @@ func TestListInputs(t *testing.T) {
 		}
 	})
 	t.Run("garbage arguments", func(t *testing.T) {
-		got, isErr := s.toolListInputs(json.RawMessage(`{"path":42}`))
+		got, isErr := s.toolListInputs(json.RawMessage(`{"path":`))
 		if !isErr || !strings.Contains(got, "invalid arguments") {
 			t.Errorf("(%q, %v)", got, isErr)
 		}
