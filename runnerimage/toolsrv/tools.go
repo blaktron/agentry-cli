@@ -445,16 +445,21 @@ func (s *server) toolFSRead(raw json.RawMessage) (string, bool) {
 	if !allowedByGrant(s.spec.FSRead.Paths, a.Path) {
 		return fmt.Sprintf("fs_read: %q is outside the granted paths", path.Clean(a.Path)), true
 	}
-	abs, err := resolveUnder(s.spec.WorkspaceDir, a.Path)
+	rel, err := s.workspacePath(a.Path)
 	if err != nil {
 		return "fs_read: " + err.Error(), true
 	}
-	f, err := os.Open(abs) //nolint:gosec // resolved under the workspace
+	root, err := os.OpenRoot(s.spec.WorkspaceDir)
+	if err != nil {
+		return "fs_read: " + err.Error(), true
+	}
+	defer func() { _ = root.Close() }()
+	f, err := root.Open(rel)
 	if err != nil {
 		return "fs_read: " + err.Error(), true
 	}
 	defer func() { _ = f.Close() }()
-	return readText(fileTools{ToolFSRead, ToolFSList}, f, path.Clean(a.Path), a.Offset, a.MaxBytes, s.spec.Limits.readCap(), s.spec.Limits.budget())
+	return readText(fileTools{ToolFSRead, ToolFSList}, f, rel, a.Offset, a.MaxBytes, s.spec.Limits.readCap(), s.spec.Limits.budget())
 }
 
 // fileTools names a root's read and list tools, for their messages.
@@ -504,6 +509,11 @@ func (s *server) toolFSList(raw json.RawMessage) (string, bool) {
 		rel = "."
 	}
 	rel = path.Clean(rel)
+	root, err := os.OpenRoot(s.spec.WorkspaceDir)
+	if err != nil {
+		return "fs_list: " + err.Error(), true
+	}
+	defer func() { _ = root.Close() }()
 	if rel == "." && len(s.spec.FSRead.Paths) > 0 {
 		// Paths mode: the workspace root itself is not granted, but the
 		// model still needs a way to discover what is — so listing the
@@ -512,8 +522,8 @@ func (s *server) toolFSList(raw json.RawMessage) (string, bool) {
 		for _, entry := range s.spec.FSRead.Paths {
 			e := path.Clean(entry)
 			line := e
-			if abs, err := resolveUnder(s.spec.WorkspaceDir, e); err == nil {
-				if fi, err := os.Stat(abs); err == nil {
+			if _, err := s.workspacePath(e); err == nil {
+				if fi, err := root.Stat(e); err == nil {
 					if fi.IsDir() {
 						line = e + "/"
 					} else {
@@ -528,11 +538,10 @@ func (s *server) toolFSList(raw json.RawMessage) (string, bool) {
 	if rel != "." && !allowedByGrant(s.spec.FSRead.Paths, rel) {
 		return fmt.Sprintf("fs_list: %q is outside the granted paths", rel), true
 	}
-	abs, err := resolveUnder(s.spec.WorkspaceDir, rel)
-	if err != nil {
+	if _, err := s.workspacePath(rel); err != nil {
 		return "fs_list: " + err.Error(), true
 	}
-	d, err := os.Open(abs) //nolint:gosec // resolved under the workspace
+	d, err := root.Open(rel)
 	if err != nil {
 		return "fs_list: " + err.Error(), true
 	}
@@ -603,19 +612,46 @@ func (s *server) toolFSWrite(raw json.RawMessage) (string, bool) {
 		// than an error the model can react to by splitting the write.
 		return fmt.Sprintf("fs_write: content is %d bytes, over the %d-byte limit — split the write", len(a.Content), limit), true
 	}
-	abs, err := resolveUnder(s.spec.WorkspaceDir, a.Path)
+	rel, err := s.workspacePath(a.Path)
 	if err != nil {
 		return "fs_write: " + err.Error(), true
 	}
-	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+	if err := s.writeWorkspace(rel, a.Content); err != nil {
 		return "fs_write: " + err.Error(), true
 	}
-	s.ownBetween(s.spec.WorkspaceDir, filepath.Dir(abs))
-	if err := os.WriteFile(abs, []byte(a.Content), 0o644); err != nil {
-		return "fs_write: " + err.Error(), true
+	return fmt.Sprintf("wrote %d bytes to %s", len(a.Content), rel), false
+}
+
+// writeWorkspace writes content to rel, a name workspacePath checked,
+// through an os.Root on the workspace: the directories it makes, the file
+// and their owner are all reached through it, so a link swapped in after
+// the check cannot take the write out of the workspace.
+func (s *server) writeWorkspace(rel, content string) error {
+	root, err := os.OpenRoot(s.spec.WorkspaceDir)
+	if err != nil {
+		return err
 	}
-	s.own(abs)
-	return fmt.Sprintf("wrote %d bytes to %s", len(a.Content), path.Clean(a.Path)), false
+	defer func() { _ = root.Close() }()
+	made, err := mkdirsIn(root, path.Dir(rel), 0o755)
+	for _, d := range made {
+		s.ownIn(root, d)
+	}
+	if err != nil {
+		return err
+	}
+	f, err := root.OpenFile(rel, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	_, werr := f.WriteString(content)
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		return werr
+	}
+	s.ownIn(root, rel)
+	return nil
 }
 
 // ---- fetch ----
@@ -958,6 +994,10 @@ func (s *server) toolRunCommand(raw json.RawMessage) (string, bool) {
 	if s.confine.asNobody {
 		runAs(cmd, unprivilegedID)
 	}
+	// Its own process group: whatever the command leaves running is ended
+	// with the call, so nothing it started keeps writing into the run's
+	// directories, or racing the other tools, after it returns.
+	inOwnGroup(cmd)
 	// The command runs in the workspace when the contract mounted one;
 	// exec and filesystem are independent grants, so a QuickAgent that
 	// declares exec and no filesystem access (it works on /inputs) gets a
@@ -977,6 +1017,7 @@ func (s *server) toolRunCommand(raw json.RawMessage) (string, bool) {
 	// Run blocked past the kill; five seconds of grace, then move on.
 	cmd.WaitDelay = 5 * time.Second
 	failed, err := s.confine.run(cmd)
+	_ = killGroup(cmd)
 	if failed != "" {
 		return "run_command: " + failed, true
 	}
@@ -1358,6 +1399,16 @@ func (s *server) own(path string) {
 		return
 	}
 	_ = os.Chown(path, s.spec.Owner.UID, s.spec.Owner.GID)
+}
+
+// ownIn gives rel, beneath root, to the host user when the spec names one,
+// through root, so a link swapped in after the write cannot point the chown
+// elsewhere. Best-effort, as own is.
+func (s *server) ownIn(root *os.Root, rel string) {
+	if s.spec.Owner == nil || rel == "" || rel == "." {
+		return
+	}
+	_ = root.Lchown(rel, s.spec.Owner.UID, s.spec.Owner.GID)
 }
 
 // ownBetween chowns every directory below root down to dir (inclusive) —
