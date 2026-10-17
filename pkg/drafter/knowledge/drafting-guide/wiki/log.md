@@ -71,3 +71,9 @@ A draft asked to run a website test suite declared a hosted browser service's re
 PyPI servers now install and run on Debian (glibc), Python 3.12.15, so a dependency's `manylinux` wheels install. The servers page says the npm runtime is still musl and the PyPI runtime glibc, and that a PyPI dependency now stops the install only when it publishes no `manylinux` wheel. markitdown-mcp and opensearch-mcp-server-py, and the dependencies onnxruntime, magika and scikit-learn, come off *Does not run here*: each was listed only because musl had no wheel for it. The Python runtime's entry names the new image and what it holds.
 
 - updated: servers/mcp-servers.md (also: what else a runtime holds), sources/servers.yaml, sources/runtime-facts.md, servers/does-not-run-here.md (generated)
+
+## [2026-10-17] update | deliverables (Drafter 1.15.4)
+
+A run's deliverables are the files it was for, and it marks them: `deliverable: true` and a one-line `title` on the `write_report` call that writes the file, or on `export_pdf` for a PDF. The how-a-run-works page says so and gains a section on a result that is a file, the instructions page tells a draft's `## Output` to name the file and have the run mark it, and the runtime facts state the two arguments and the runner's pick when a run marks none.
+
+- updated: runtime/how-a-run-works.md, draft/instructions.md, sources/runtime-facts.md

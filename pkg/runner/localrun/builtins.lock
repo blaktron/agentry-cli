@@ -64,3 +64,5 @@ agentry/drafter@1.15.1 sha256:56cf111c92bf0a453f4810cdf25e6adf39bc3b2d2c5826e3c3
 agentry/drafter@1.15.2 sha256:134f2f5b7bb5843106cd856e6e6df1886f81fa24ae99ff8b630f3c9ff5d8c2f4
 # 1.15.3: PyPI servers install and run on a glibc Python (Debian trixie, Python 3.12.15), so dependencies that publish only manylinux wheels install; the drafting guide says so, takes markitdown-mcp, opensearch-mcp-server-py, onnxruntime, magika and scikit-learn off Does not run here, and describes the new runtime.
 agentry/drafter@1.15.3 sha256:af852c93d54985975819a2721d7d94ed3c7655b34b43d63ad73c71318e25383f
+# 1.15.4: the drafting guide and AGENT.md teach deliverables: a QuickAgent whose result is a file tells its run to mark it with deliverable: true and a one-line title on the write_report (or export_pdf) call that writes it, and to leave notes and drafts unmarked; the runtime facts state the two arguments and what the runner lists when a run marks none.
+agentry/drafter@1.15.4 sha256:d73555b693b77e2ceb5a7726dace5e78bea19dc74a36a7a6064cf03e0f688dad

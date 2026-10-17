@@ -27,7 +27,7 @@ Use these six headings, in this order, every time, even when a part is one line:
 - `## Role`: one or two sentences.
 - `## Inputs`: the task, each intake answer and input file by what it means, and what to do when one is missing.
 - `## Steps`: numbered, each one action, with the decision rules for that step: what to check, what to choose, and when to stop. Name the tool a step uses (`read_input`, `fetch`, a server's tool by its exact name, `run_command` with the command).
-- `## Output`: exactly what it returns, and in what format, with a skeleton to copy when the format has parts. A result the person wants as a PDF is written in Markdown with `write_report` and then turned into the PDF with `export_pdf`; the skeleton is the Markdown's (see [How a QuickAgent run works](../runtime/how-a-run-works.md#when-the-result-is-a-pdf)).
+- `## Output`: exactly what it returns, and in what format, with a skeleton to copy when the format has parts. A result the person wants as a PDF is written in Markdown with `write_report` and then turned into the PDF with `export_pdf`; the skeleton is the Markdown's (see [How a QuickAgent run works](../runtime/how-a-run-works.md#when-the-result-is-a-pdf)). A result that is a file is marked as the run's deliverable, with `deliverable: true` and a one-line `title`, on the call that writes it; notes and drafts the run writes along the way are not (see [When the result is a file](../runtime/how-a-run-works.md#when-the-result-is-a-file)).
 - `## Background`: the domain facts the steps rely on: definitions, formats, standards, thresholds, procedures and short worked examples, in your own words.
 - `## Checks`: missing or malformed input, the edge cases, and the checks the result must pass before it is returned.
 
