@@ -225,6 +225,12 @@ type fakeRegistry struct {
 	submitStatus string
 	pollStatuses []string
 	pollReason   string
+	// advisories answers GET /advisories by its affecting ns/name (a name
+	// with no entry is 404); advisoryStatus, when set, answers every lookup
+	// with that status instead. advisoryQueries records each query.
+	advisories      map[string][]map[string]any
+	advisoryStatus  int
+	advisoryQueries []url.Values
 }
 
 // newFakeRegistry starts the fake and wires every route. Unknown agents and
@@ -277,6 +283,24 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 			"periodStart": "2026-09-11T00:00:00Z", "periodEnd": "2026-10-11T00:00:00Z", "tierSince": "2026-09-11T00:00:00Z",
 			"privateAgents": map[string]any{"max": 10, "used": 4}, "upgrade": map[string]any{"available": false},
 		})
+	})
+
+	mux.HandleFunc("GET /api/v1/advisories", func(w http.ResponseWriter, r *http.Request) {
+		fr.mu.Lock()
+		fr.advisoryQueries = append(fr.advisoryQueries, r.URL.Query())
+		status, list, ok := fr.advisoryStatus, fr.advisories[r.URL.Query().Get("affecting")], false
+		if fr.advisories != nil {
+			_, ok = fr.advisories[r.URL.Query().Get("affecting")]
+		}
+		fr.mu.Unlock()
+		switch {
+		case status != 0:
+			writeProblem(w, status, "unavailable", "the advisories could not be read")
+		case !ok:
+			writeProblem(w, http.StatusNotFound, "not found", "no such agent")
+		default:
+			writeJSON(w, http.StatusOK, list)
+		}
 	})
 
 	mux.HandleFunc("GET /api/v1/resolve", func(w http.ResponseWriter, r *http.Request) {
