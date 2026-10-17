@@ -1,0 +1,83 @@
+# The container engine conformance on podman: scripts/acceptance/engine-podman.sh
+# runs scripts/acceptance/engine.sh against a rootless podman of its own,
+# started in a privileged container on the runner host's Docker Engine, with
+# gVisor registered for the sandboxed run. It runs when the engine client,
+# the run engine (the docker filter's placement, its container and the per-run
+# podman service), the gateway, the docker filter or the check itself change,
+# so such a change is checked on podman as well as on the Docker Engine every
+# other job uses. The built-in run needs a model key and is skipped here; the
+# sandboxed run's model is a scripted stand-in.
+#
+# The fork guard, the SHA-pinned actions and the job-scoped module credential
+# are ci.yaml's, for the reasons it states. The privileged container adds no
+# access a job here does not already have through the host's docker socket.
+name: engine
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - pkg/runner/dockerx/**
+      - pkg/runner/engine/**
+      - pkg/runner/gateway/**
+      - runnerimage/sockfilter/**
+      - scripts/acceptance/engine.sh
+      - scripts/acceptance/engine-podman.sh
+      - testdata/runner/sandbox-egress/**
+      - .github/workflows/engine.yaml
+  pull_request:
+    paths:
+      - pkg/runner/dockerx/**
+      - pkg/runner/engine/**
+      - pkg/runner/gateway/**
+      - runnerimage/sockfilter/**
+      - scripts/acceptance/engine.sh
+      - scripts/acceptance/engine-podman.sh
+      - testdata/runner/sandbox-egress/**
+      - .github/workflows/engine.yaml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  podman:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Authenticate for the private blaktron modules (job-scoped)
+        env:
+          AGENTRY_BUILD_TOKEN: ${{ secrets.AGENTRY_BUILD_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "GOPRIVATE=github.com/blaktron/*" >> "$GITHUB_ENV"
+          if [ -n "$AGENTRY_BUILD_TOKEN" ]; then
+            echo "GIT_CONFIG_GLOBAL=$RUNNER_TEMP/gitconfig" >> "$GITHUB_ENV"
+            git config --file "$RUNNER_TEMP/gitconfig" url."https://x-access-token:${AGENTRY_BUILD_TOKEN}@github.com/".insteadOf "https://github.com/"
+          else
+            echo "::warning::AGENTRY_BUILD_TOKEN is not set; the private blaktron modules resolve only from the runner's module cache"
+          fi
+      - name: Build the CLI
+        run: make build
+      - name: Remove the job-scoped git credential
+        if: always()
+        run: rm -f "$RUNNER_TEMP/gitconfig"
+      - name: Engine conformance on rootless podman
+        env:
+          ENGINE_PODMAN_NAME: agentry-engine-podman-${{ github.run_id }}-${{ github.run_attempt }}
+        run: scripts/acceptance/engine-podman.sh
+      # A cancelled job never reaches the script's own cleanup.
+      - name: Remove the podman container
+        if: always()
+        run: docker rm -fv "agentry-engine-podman-${{ github.run_id }}-${{ github.run_attempt }}" >/dev/null 2>&1 || true
