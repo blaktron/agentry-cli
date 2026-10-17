@@ -3,6 +3,7 @@ package dockerx
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -105,16 +106,18 @@ type HostSocket struct {
 // HostSockets lists where each engine puts its socket on this machine:
 // Docker Engine's own and Docker Desktop's, the VM engines' host sockets on
 // macOS (Colima's and Lima's per profile or instance, OrbStack's, Rancher
-// Desktop's dockerd, Podman Desktop's), podman's own on Linux. A path is
-// listed whether or not it exists. Windows engines serve named pipes, which
-// the docker CLI's own context reaches, so nothing is listed there.
+// Desktop's dockerd, each podman machine's), podman's own on Linux. A path
+// is listed whether or not it exists. Windows engines serve named pipes,
+// which the docker CLI's own context reaches, so nothing is listed there.
 func HostSockets() []HostSocket {
 	home, _ := os.UserHomeDir()
-	return hostSocketsFor(runtime.GOOS, home, os.Getenv("XDG_RUNTIME_DIR"))
+	return hostSocketsFor(runtime.GOOS, home, os.Getenv("XDG_RUNTIME_DIR"), os.TempDir())
 }
 
-// hostSocketsFor is HostSockets with its inputs passed in.
-func hostSocketsFor(goos, home, runtimeDir string) []HostSocket {
+// hostSocketsFor is HostSockets with its inputs passed in. tmpDir is the
+// person's temporary directory, where a podman machine on macOS serves its
+// API as podman/<machine>-api.sock.
+func hostSocketsFor(goos, home, runtimeDir, tmpDir string) []HostSocket {
 	under := func(rel string) string {
 		if home == "" {
 			return ""
@@ -139,7 +142,9 @@ func hostSocketsFor(goos, home, runtimeDir string) []HostSocket {
 		for _, s := range perInstanceSockets("Lima", under(".lima"), filepath.Join("sock", "docker.sock")) {
 			add(s.Name, s.Path)
 		}
-		add("Podman Desktop", under(".local/share/containers/podman/machine/podman.sock"))
+		for _, s := range podmanMachineSockets(tmpDir) {
+			add(s.Name, s.Path)
+		}
 	case "linux":
 		add("Docker Engine", DefaultSocket)
 		add("Docker Desktop", under(".docker/desktop/docker.sock"))
@@ -171,11 +176,63 @@ func perInstanceSockets(name, dir, rel string) []HostSocket {
 	return out
 }
 
+// podmanMachineSockets lists the API socket of every podman machine whose
+// files are under tmpDir, sorted by machine name.
+func podmanMachineSockets(tmpDir string) []HostSocket {
+	if tmpDir == "" {
+		return nil
+	}
+	paths, _ := filepath.Glob(filepath.Join(tmpDir, "podman", "*-api.sock"))
+	sort.Strings(paths)
+	out := make([]HostSocket, 0, len(paths))
+	for _, p := range paths {
+		out = append(out, HostSocket{"podman machine", p})
+	}
+	return out
+}
+
 // LeftSocket is a socket file with nothing answering behind it: the engine
 // that put it there has stopped, or was removed and left it.
 type LeftSocket struct {
 	HostSocket
 	Err error
+}
+
+// Message says what the socket is and what to do about it. Rancher
+// Desktop keeps its socket file when it runs its containerd backend, which
+// serves no Docker API, so that one is named from Rancher's own settings
+// rather than taken for a stopped engine.
+func (s LeftSocket) Message() string { return s.messageFor(runtime.GOOS) }
+
+func (s LeftSocket) messageFor(goos string) string {
+	if rancherBackend(goos, s.Path) == "containerd" {
+		return fmt.Sprintf("Rancher Desktop runs its containerd backend, which serves no Docker API at %s (%v): choose dockerd (moby) under Rancher Desktop's Preferences, Container Engine", s.Path, s.Err)
+	}
+	return fmt.Sprintf("%s left a socket at %s with nothing answering behind it (%v): start it, or remove the file", s.Name, s.Path, s.Err)
+}
+
+// rancherBackend is the container engine Rancher Desktop's settings name
+// ("moby" or "containerd") when path is its socket, ~/.rd/docker.sock, on
+// macOS, where its settings are
+// ~/Library/Preferences/rancher-desktop/settings.json; "" otherwise.
+func rancherBackend(goos, path string) string {
+	if goos != "darwin" || filepath.Base(path) != "docker.sock" || filepath.Base(filepath.Dir(path)) != ".rd" {
+		return ""
+	}
+	home := filepath.Dir(filepath.Dir(path))
+	raw, err := os.ReadFile(filepath.Join(home, "Library", "Preferences", "rancher-desktop", "settings.json"))
+	if err != nil {
+		return ""
+	}
+	var cfg struct {
+		ContainerEngine struct {
+			Name string `json:"name"`
+		} `json:"containerEngine"`
+	}
+	if json.Unmarshal(raw, &cfg) != nil {
+		return ""
+	}
+	return cfg.ContainerEngine.Name
 }
 
 // LeftSockets pings each socket of sockets that exists as a file and

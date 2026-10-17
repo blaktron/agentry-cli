@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -92,7 +93,16 @@ func TestHostSocketsPerPlatform(t *testing.T) {
 		}
 		return out
 	}
-	mac := paths(hostSocketsFor("darwin", home, ""))
+	tmp := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmp, "podman"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"podman-machine-default-api.sock", "work-api.sock", "podman-machine-default-gvproxy.sock"} {
+		if err := os.WriteFile(filepath.Join(tmp, "podman", f), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mac := paths(hostSocketsFor("darwin", home, "", tmp))
 	want := []string{
 		"Docker Desktop " + filepath.Join(home, ".docker/run/docker.sock"),
 		"Docker Desktop /var/run/docker.sock",
@@ -101,7 +111,8 @@ func TestHostSocketsPerPlatform(t *testing.T) {
 		"OrbStack " + filepath.Join(home, ".orbstack/run/docker.sock"),
 		"Rancher Desktop " + filepath.Join(home, ".rd/docker.sock"),
 		"Lima " + filepath.Join(home, ".lima/docker/sock/docker.sock"),
-		"Podman Desktop " + filepath.Join(home, ".local/share/containers/podman/machine/podman.sock"),
+		"podman machine " + filepath.Join(tmp, "podman/podman-machine-default-api.sock"),
+		"podman machine " + filepath.Join(tmp, "podman/work-api.sock"),
 	}
 	if len(mac) != len(want) {
 		t.Fatalf("darwin = %q, want %q", mac, want)
@@ -111,7 +122,7 @@ func TestHostSocketsPerPlatform(t *testing.T) {
 			t.Errorf("darwin[%d] = %q, want %q", i, mac[i], want[i])
 		}
 	}
-	linux := paths(hostSocketsFor("linux", home, "/run/user/1000"))
+	linux := paths(hostSocketsFor("linux", home, "/run/user/1000", ""))
 	wantLinux := []string{
 		"Docker Engine /var/run/docker.sock",
 		"Docker Desktop " + filepath.Join(home, ".docker/desktop/docker.sock"),
@@ -126,10 +137,10 @@ func TestHostSocketsPerPlatform(t *testing.T) {
 			t.Errorf("linux[%d] = %q, want %q", i, linux[i], wantLinux[i])
 		}
 	}
-	if got := hostSocketsFor("linux", "", ""); len(got) != 2 {
+	if got := hostSocketsFor("linux", "", "", ""); len(got) != 2 {
 		t.Errorf("linux with no home or runtime dir = %+v, want the two fixed paths", got)
 	}
-	if got := hostSocketsFor("windows", home, ""); got != nil {
+	if got := hostSocketsFor("windows", home, "", ""); got != nil {
 		t.Errorf("windows = %+v, want nothing", got)
 	}
 }
@@ -165,5 +176,63 @@ func TestLeftSocketsAreTheOnesThatDoNotAnswer(t *testing.T) {
 	})
 	if len(got) != 1 || got[0].Name != "Dead" || got[0].Path != dead || got[0].Err == nil {
 		t.Fatalf("left = %+v, want the dead one once", got)
+	}
+}
+
+// A socket an engine left is said with what to do about it: Rancher
+// Desktop's, when its settings name the containerd backend, is that
+// backend, which serves no Docker API; any other is a stopped engine.
+func TestLeftSocketMessage(t *testing.T) {
+	home := t.TempDir()
+	rd := filepath.Join(home, ".rd", "docker.sock")
+	settings := filepath.Join(home, "Library", "Preferences", "rancher-desktop", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settings), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	backend := func(name string) {
+		t.Helper()
+		if err := os.WriteFile(settings, []byte(`{"version":19,"containerEngine":{"name":"`+name+`"}}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	left := func(name, path string) LeftSocket {
+		return LeftSocket{HostSocket: HostSocket{Name: name, Path: path}, Err: errors.New("no answer: EOF")}
+	}
+	stopped := "Rancher Desktop left a socket at " + rd + " with nothing answering behind it (no answer: EOF): start it, or remove the file"
+
+	backend("containerd")
+	got := left("Rancher Desktop", rd).messageFor("darwin")
+	if want := "Rancher Desktop runs its containerd backend, which serves no Docker API at " + rd + " (no answer: EOF): choose dockerd (moby) under Rancher Desktop's Preferences, Container Engine"; got != want {
+		t.Errorf("containerd: %q, want %q", got, want)
+	}
+	for _, w := range []string{"Rancher Desktop runs its containerd backend, which serves no Docker API", rd, "no answer: EOF", "dockerd (moby)", "Container Engine"} {
+		if !strings.Contains(got, w) {
+			t.Errorf("containerd: %q lacks %q", got, w)
+		}
+	}
+	if strings.Contains(got, "start it") {
+		t.Errorf("containerd is running; it is not to be started: %q", got)
+	}
+	if got := left("Rancher Desktop", rd).messageFor("linux"); got != stopped {
+		t.Errorf("no Rancher settings read off macOS: %q", got)
+	}
+	backend("moby")
+	if got := left("Rancher Desktop", rd).messageFor("darwin"); got != stopped {
+		t.Errorf("moby: %q, want %q", got, stopped)
+	}
+	if err := os.WriteFile(settings, []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := left("Rancher Desktop", rd).messageFor("darwin"); got != stopped {
+		t.Errorf("unreadable settings: %q", got)
+	}
+	_ = os.Remove(settings)
+	if got := left("Rancher Desktop", rd).messageFor("darwin"); got != stopped {
+		t.Errorf("no settings: %q", got)
+	}
+	backend("containerd")
+	colima := filepath.Join(home, ".colima", "default", "docker.sock")
+	if got, want := left("Colima", colima).messageFor("darwin"), "Colima left a socket at "+colima+" with nothing answering behind it (no answer: EOF): start it, or remove the file"; got != want {
+		t.Errorf("another engine: %q, want %q", got, want)
 	}
 }

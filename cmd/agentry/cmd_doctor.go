@@ -389,7 +389,7 @@ func doctorPodmanRuntime(ctx context.Context, rep *doctorReport, d dockerx.Clien
 // and is refused for what it is has no need of the list.
 func doctorLeftSockets(ctx context.Context, rep *doctorReport) {
 	for _, s := range dockerx.LeftSockets(ctx, dockerx.HostSockets()) {
-		rep.warn("docker:socket", "%s left a socket at %s with nothing answering behind it (%v): start it, or remove the file", s.Name, s.Path, s.Err)
+		rep.warn("docker:socket", "%s", s.Message())
 	}
 }
 
