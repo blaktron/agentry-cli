@@ -44,6 +44,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/harnessprobe"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelsignin"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/procx"
 	"github.com/blaktron/agentry-cli/pkg/runner/setup"
 )
 
@@ -284,6 +285,17 @@ func (s SignIn) signInImage(ctx context.Context, p Person, pol *policy.Policy) (
 	return Volume, st.label(), nil
 }
 
+// hostCommand is the installed Claude Code exe run with args in the config
+// directory dir, in hostEnv. It opens no console window when the caller is
+// a windowed application (Agentry Desktop on Windows), so a sign-in or a
+// removal does not flash a command prompt at the person.
+func hostCommand(ctx context.Context, exe, dir string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, exe, args...) //nolint:gosec // the installed Claude Code, found as the run finds it
+	cmd.Env = hostEnv(dir)
+	procx.NoWindow(cmd)
+	return cmd
+}
+
 // hostEnv is the installed Claude Code's environment for its sign-in and
 // logout: the person's, without any credential Claude Code would read
 // before its own sign-in, and with its config directory Agentry's own.
@@ -315,13 +327,12 @@ func (s SignIn) signInInstalled(ctx context.Context, p Person, pol *policy.Polic
 	_, _ = fmt.Fprintf(errOut, "%s: the Claude Code installed on this computer signs you in itself and keeps the sign-in in %s (never your own ~/.claude), which Agentry never reads.\n", setup.ClaudeSignInLabel, dir)
 	lctx, cancel := context.WithTimeout(ctx, Timeout)
 	defer cancel()
-	login := exec.CommandContext(lctx, exe, "auth", "login") //nolint:gosec // the installed Claude Code, found as the run finds it
-	login.Env, login.Stdin, login.Stdout, login.Stderr = hostEnv(dir), p.In, errOut, errOut
+	login := hostCommand(lctx, exe, dir, "auth", "login")
+	login.Stdin, login.Stdout, login.Stderr = p.In, errOut, errOut
 	if err := login.Run(); err != nil {
 		return "", "", fmt.Errorf("nothing kept: the sign-in in Claude Code did not complete (%w)", err)
 	}
-	st := exec.CommandContext(ctx, exe, "auth", "status") //nolint:gosec // as above
-	st.Env = hostEnv(dir)
+	st := hostCommand(ctx, exe, dir, "auth", "status")
 	// auth status exits 1 when no one is signed in, with its JSON still
 	// printed: the JSON is the answer, and only no answer is an error.
 	out, serr := st.Output()
@@ -436,8 +447,8 @@ func (s SignIn) End(out io.Writer) func(context.Context, modelsignin.Record) (st
 			}
 			loggedOut := false
 			if exe, _, err := harnessprobe.Find(pol, adapter.ClaudeAdapterName); err == nil {
-				logout := exec.CommandContext(ctx, exe, "auth", "logout") //nolint:gosec // the installed Claude Code
-				logout.Env, logout.Stdout, logout.Stderr = hostEnv(r.HostConfigDir), out, out
+				logout := hostCommand(ctx, exe, r.HostConfigDir, "auth", "logout")
+				logout.Stdout, logout.Stderr = out, out
 				loggedOut = logout.Run() == nil
 			}
 			if !loggedOut {
