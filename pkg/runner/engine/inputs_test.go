@@ -241,7 +241,7 @@ func TestEveryRunsInputsAreDecodedBeforeTheAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(b), gatewayPath(filepath.Join(runDir, "inputs-text"))+":/inputs-text:ro") {
+	if !strings.Contains(string(b), gatewayHostPath(filepath.Join(runDir, "inputs-text"), gatewayOS)+":/inputs-text:ro") {
 		t.Errorf("rendered catalog lacks the ro decoded-inputs mount:\n%s", b)
 	}
 }
