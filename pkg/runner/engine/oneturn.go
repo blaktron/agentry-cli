@@ -58,6 +58,7 @@ func oneTurn(ctx context.Context, p Params, rw io.ReadWriteCloser, task []byte, 
 			}
 			c.record(ev)
 		}
+		c.flushLiveText()
 	}()
 	hs, cancel := context.WithTimeout(ctx, oneTurnHandshake)
 	err = drv.Start(hs)
