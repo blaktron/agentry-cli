@@ -15,6 +15,8 @@
 #                          DOCKER_HOST and DOCKER_CONTEXT as it honours them,
 #                          which may be podman's socket.
 # AGENTRY (default bin/agentry) is the CLI under test.
+# scripts/acceptance/engine-podman.sh runs this script against a rootless
+# podman of its own, in a container on a machine that has only Docker Engine.
 #
 # The built-in run (the Knowledge Creator over one document, no web) needs the
 # model the policy names (AGENTRY_POLICY, default ~/.agentry/runner/policy.yaml)
@@ -189,11 +191,13 @@ fi
 # --- The daemon socket from a container --------------------------------------
 GW=${AGENTRY_GATEWAY_IMAGE:-$(awk '/^ *gateway:/ {print $2; exit}' "${AGENTRY_POLICY:-$HOME/.agentry/runner/policy.yaml}" 2>/dev/null)}
 GW=${GW:-ghcr.io/blaktron/agentry-mcp-gateway:v0.43.3}
+# The gateway image is pulled when the store lacks it, as agentry setup does.
+"$C" image inspect "$GW" >/dev/null 2>&1 || "$C" pull -q "$GW" >/dev/null 2>&1 || true
 if [ -S "$SOCK" ] && "$C" image inspect "$GW" >/dev/null 2>&1; then
   out=$("$C" run --rm $L --security-opt label=disable -v "$SOCK:/var/run/docker.sock" --entrypoint docker "$GW" version --format '{{.Server.Version}}' 2>&1) \
     && line PASS "socket in a container (label=disable)" "the gateway image's docker CLI reaches $out" || line FAIL "socket in a container" "$out"
 else
-  line SKIP "socket in a container" "no socket at $SOCK or no gateway image $GW (agentry setup pulls it)"
+  line SKIP "socket in a container" "no socket at $SOCK, or the gateway image $GW could not be pulled"
 fi
 
 # --- For a sandboxed run: measured, not judged -------------------------------
