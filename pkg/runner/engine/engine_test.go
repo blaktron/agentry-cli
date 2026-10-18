@@ -86,6 +86,10 @@ func fixtureEdited(t *testing.T, edit func(*policy.Policy), editManifest func(*m
 	pol := policy.Default()
 	pol.Images.Runner = "agentry-runner:test"
 	pol.Exec.Packages = map[string]string{"echo": "busybox"} // the fixture declares exec: [echo]
+	// The tests of the malware check take all of it, as a sandbox host
+	// does; the default, off on this computer, has tests of its own.
+	on := true
+	pol.MalwareCheck = &on
 	if edit != nil {
 		edit(pol)
 	}

@@ -32,10 +32,16 @@ import (
 // wrote reaches the tools container unchecked. The words the index shows
 // the model come from the decode's fixed vocabulary, never from the
 // report's free text (decode.UnreadReason). A run with no inputs pulls
-// nothing and has no decode line. Every file is checked by ClamAV before
-// any decoder reads it: a finding refuses the run before the agent starts,
-// with the policy class, so a hosted run settles nothing, and refuses a
-// session's added file alone. On a hosted run, AI Review then reads every
+// nothing and has no decode line. Every input is staged with no execute
+// bit. The malware check reads what checkScope says before any decoder
+// does: every upload and a source's risky files on a sandbox host, or
+// where the policy turns the check on; the executables alone on this
+// computer otherwise, and only for a QuickAgent that declares commands. A
+// finding refuses a run that can execute (canExecute) before the agent
+// starts, with the policy class, so a hosted run settles nothing, and
+// refuses a session's added file alone. A run that runs no commands is
+// given the flagged file anyway: never decoded, readable only as
+// uploaded, named as flagged in the index and the receipt. On a hosted run, AI Review then reads every
 // text the model could read of them (review.go), and refuses the run, or
 // the added file, on one it flags.
 type inputsDecoder struct {
@@ -48,6 +54,8 @@ type inputsDecoder struct {
 	// lookup asks Hybrid Analysis about the risky inputs by hash, with the
 	// policy's key or none.
 	lookup *hybrid.Client
+	// scope is how much the malware check reads (checkScope).
+	scope checkScope
 	// review is AI Review of the inputs' text, nil on a local run.
 	review *inputReview
 	// seq numbers the decode directories under the run root.
@@ -69,9 +77,70 @@ type inputsDecoder struct {
 var (
 	ensureDecode     = decode.Ensure
 	ensureSignatures = clamdb.Ensure
-	runDecode        = decode.RunSources
+	runDecode        = decode.RunWith
 	hybridClient     = hybrid.FromPolicy
 )
+
+// checkScope is how much of a run's inputs the malware check reads.
+type checkScope int
+
+const (
+	// checkAll checks every upload and an input source's executable and
+	// binary risky files, as a sandbox host does.
+	checkAll checkScope = iota
+	// checkExecutables checks the executables alone.
+	checkExecutables
+	// checkOff checks nothing: no signatures are fetched, nothing is
+	// looked up, and the receipt says the check was off.
+	checkOff
+)
+
+// checkOffProblem is the receipt's reason no file was checked.
+const checkOffProblem = "the malware check is off on this computer (the runner policy's malwareCheck), and the QuickAgent runs no commands"
+
+// canExecute says the QuickAgent declares commands, with which its run
+// could run an input.
+func (p Params) canExecute() bool {
+	return p.Plan != nil && (len(p.Plan.Capabilities.ExecCommands) > 0 || p.Plan.ExecImage != nil)
+}
+
+// checkScope is the malware check this run takes: all of it on a sandbox
+// host, whatever the policy says, and where the policy turns it on; on
+// this computer otherwise the executables of a run that can execute, and
+// nothing for one that runs no commands.
+func (p Params) checkScope() checkScope {
+	switch {
+	case p.Hosted || p.Policy.MalwareCheckOn():
+		return checkAll
+	case p.canExecute():
+		return checkExecutables
+	}
+	return checkOff
+}
+
+// clearExecBits takes the execute bits off every regular file staged under
+// dir, so an input nobody meant to run cannot be run as it is.
+func clearExecBits(dir string) error {
+	return filepath.WalkDir(dir, func(p string, e os.DirEntry, err error) error {
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) && p == dir {
+				return filepath.SkipDir
+			}
+			return err
+		}
+		if !e.Type().IsRegular() {
+			return nil
+		}
+		fi, err := e.Info()
+		if err != nil {
+			return err
+		}
+		if m := fi.Mode().Perm(); m&0o111 != 0 {
+			return os.Chmod(p, m&^0o111)
+		}
+		return nil
+	})
+}
 
 // decodeInputs decodes what the run staged under /inputs. It answers nil
 // when the caller decoded the inputs itself or staged only its own files
@@ -79,10 +148,13 @@ var (
 // decoder, which has decoded nothing when nothing was given, so a
 // session's first added file is decoded on its own.
 func decodeInputs(ctx context.Context, d dockerx.Client, p Params, rd *runDirs) (*inputsDecoder, error) {
+	if err := clearExecBits(rd.inputs); err != nil {
+		return nil, Classify(ExitCLI, fmt.Errorf("stage the inputs with no execute bit: %w", err))
+	}
 	if p.Decoded != nil || p.TextInputs {
 		return nil, nil
 	}
-	x := &inputsDecoder{d: d, p: p, rd: rd, review: newInputReview(p.InputReview), index: toolsrv.InputsIndex{Schema: toolsrv.InputsIndexSchema, Files: []toolsrv.InputEntry{}}}
+	x := &inputsDecoder{d: d, p: p, rd: rd, scope: p.checkScope(), review: newInputReview(p.InputReview), index: toolsrv.InputsIndex{Schema: toolsrv.InputsIndexSchema, Files: []toolsrv.InputEntry{}}}
 	if p.Plan != nil {
 		// The release's own default view, which the tools serve an
 		// input in when the model asks for none.
@@ -104,7 +176,7 @@ func decodeInputs(ctx context.Context, d dockerx.Client, p Params, rd *runDirs) 
 	if err != nil {
 		return nil, err
 	}
-	if res.Refused() {
+	if res.Refused() && x.p.canExecute() {
 		return nil, Classify(ExitPolicy, receipt.WithRefusedInputs(inputRefused(receipt.InputMalware, fmt.Errorf("the run was refused before the agent started: %s", res.Refusal())), malwareRefused(res)))
 	}
 	entries, err := x.stageTexts(res)
@@ -241,6 +313,12 @@ func (x *inputsDecoder) decode(ctx context.Context, in string, sources []string)
 		if err != nil {
 			return nil, Classify(ExitGateway, receipt.WithReason(fmt.Errorf("the inputs could not be decoded: %w", err), receipt.ReasonInputsNotDecoded, receipt.DecodeImage))
 		}
+		if x.scope == checkOff {
+			// Nothing is checked, so nothing is fetched or looked up.
+			img.Signatures = clamdb.DB{Problem: checkOffProblem}
+			x.img = &img
+			return x.run(ctx, in, sources)
+		}
 		// With no home to keep it in there is no bundle, and the receipt
 		// says no file was checked (clamdb.Ensure answers ProblemNone).
 		home := x.p.RunnerHome
@@ -257,16 +335,25 @@ func (x *inputsDecoder) decode(ctx context.Context, in string, sources []string)
 		}
 		x.img, x.lookup = &img, lookup
 	}
+	return x.run(ctx, in, sources)
+}
+
+// run is one decode with the image in hand, and the Hybrid Analysis
+// lookup unless the check is off.
+func (x *inputsDecoder) run(ctx context.Context, in string, sources []string) (*decode.Result, error) {
 	out := filepath.Join(x.rd.root, "decode", strconv.Itoa(x.seq))
 	x.seq++
 	if err := os.MkdirAll(out, 0o755); err != nil {
 		return nil, Classify(ExitCLI, fmt.Errorf("make the decode's output directory: %w", err))
 	}
-	res, err := runDecode(ctx, x.d, *x.img, in, out, x.p.limits(), sources, x.p.Stderr)
+	opt := decode.Options{Sources: sources, ExecutablesOnly: x.scope == checkExecutables}
+	res, err := runDecode(ctx, x.d, *x.img, in, out, x.p.limits(), opt, x.p.Stderr)
 	if err != nil {
 		return nil, Classify(ExitGateway, receipt.WithReason(fmt.Errorf("the inputs could not be decoded: %w", err), receipt.ReasonInputsNotDecoded, receipt.DecodeRun))
 	}
-	res.LookUp(ctx, x.lookup)
+	if x.scope != checkOff {
+		res.LookUp(ctx, x.lookup)
+	}
 	return res, nil
 }
 
@@ -277,6 +364,7 @@ func (x *inputsDecoder) decode(ctx context.Context, in string, sources []string)
 func (x *inputsDecoder) stageTexts(res *decode.Result) ([]toolsrv.InputEntry, error) {
 	textRoot, convertedRoot := x.textRoot(), x.convertedRoot()
 	entries := make([]toolsrv.InputEntry, 0, len(res.Report.Files))
+	flags := res.Flags()
 	for _, f := range res.Report.Files {
 		e := toolsrv.InputEntry{Path: f.Path, Type: string(f.Family), InArchive: f.In, MIME: f.MIME}
 		if f.In != "" {
@@ -286,6 +374,20 @@ func (x *inputsDecoder) stageTexts(res *decode.Result) ([]toolsrv.InputEntry, er
 			// res.In is a directory this run staged, never the decode's
 			// output, so its sizes are the inputs' own.
 			e.Bytes = fi.Size()
+		}
+		if flag := flags[f.Path]; flag != "" {
+			// Handed over by a run that runs no commands: no text of it is
+			// staged, and only the file as uploaded, with no execute bit,
+			// can be read; a member stayed in its archive.
+			e.Unread = "flagged: " + flag + "; it was not decoded"
+			if f.In == "" {
+				e.Unread += ", and it can be read only as uploaded (it cannot be executed)"
+				e.Original = true
+			} else {
+				e.Unread += ", and it stayed in " + f.In
+			}
+			entries = append(entries, e)
+			continue
 		}
 		switch {
 		case f.HasText():
@@ -377,7 +479,7 @@ func (x *inputsDecoder) add(ctx context.Context, base string, data []byte) (tool
 	}
 	// A finding refuses this file alone: nothing of it is staged, the
 	// agent is not told of it, and the session goes on.
-	if res.Refused() {
+	if res.Refused() && x.p.canExecute() {
 		x.refused = append(x.refused, res.Refusal())
 		return toolsrv.InputEntry{}, fmt.Errorf("refused: %s; it was not added, and the session goes on without it", res.Refusal())
 	}
@@ -418,6 +520,7 @@ func (x *inputsDecoder) add(ctx context.Context, base string, data []byte) (tool
 // merged adds one decode's files to an account of several.
 func merged(into decode.Result, res *decode.Result) decode.Result {
 	into.Image = res.Image
+	into.ExecutablesOnly = res.ExecutablesOnly
 	into.Sources = append(into.Sources, res.Sources...)
 	into.Report.Files = append(into.Report.Files, res.Report.Files...)
 	if res.Lookups != nil {
@@ -464,6 +567,15 @@ func (x *inputsDecoder) line() string {
 		line = x.added.LineAs(addedWhen)
 	default:
 		line = strings.Join([]string{x.before.Line(), addedWhen + ": " + x.added.Counts(), x.added.Checks()}, "; ")
+	}
+	// A flagged file a run that runs no commands was given is named.
+	for _, h := range []string{x.before.HandedOver(), x.added.HandedOver()} {
+		if h != "" {
+			if line != "" {
+				line += "; "
+			}
+			line += h
+		}
 	}
 	// A file refused during the session is named, never dropped in
 	// silence.
