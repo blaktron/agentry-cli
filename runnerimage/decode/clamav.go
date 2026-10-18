@@ -58,6 +58,9 @@ const (
 	// executable or binary risky type, which only those are checked in a
 	// source (SourceRisky).
 	UncheckedNotRisky Unchecked = "not-risky"
+	// UncheckedNotExecutable: a file that is not an executable, in a decode
+	// that checks only executables (Limits.ExecutablesOnly).
+	UncheckedNotExecutable Unchecked = "not-executable"
 )
 
 // WhyFound: a file clamscan found a signature in is never decoded.

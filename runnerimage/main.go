@@ -297,13 +297,14 @@ func runDecode(args []string) error {
 		return nil
 	})
 	sourceMax := fs.Int("source-max-files", decode.DefaultSourceMaxFiles, "each input source's file cap")
+	execOnly := fs.Bool("executables-only", false, "check only the executables among the files (an archive is still checked whole)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *in == "" || *out == "" {
 		return errors.New("decode: --in and --out are required")
 	}
-	rep, err := decode.Decode(context.Background(), *in, *out, decode.Tools{}, decode.Limits{UnpackDir: *unpack, ClamDB: *clamav, Sources: sources, SourceMaxFiles: *sourceMax})
+	rep, err := decode.Decode(context.Background(), *in, *out, decode.Tools{}, decode.Limits{UnpackDir: *unpack, ClamDB: *clamav, Sources: sources, SourceMaxFiles: *sourceMax, ExecutablesOnly: *execOnly})
 	if err != nil {
 		return err
 	}
