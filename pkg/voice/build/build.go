@@ -186,7 +186,7 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 		// Every sample is checked by ClamAV before it is decoded, and a
 		// finding refuses the build.
 		img.Signatures = ensureSignatures(ctx, o.Home, o.Policy.Images.ClamAVSignaturesRef(), logw)
-		dec, err := decode.Run(ctx, d, img, samplesDir, decodedDir, o.Policy.Docker.Limits.WithDefaults(), logw)
+		dec, err := decode.RunWith(ctx, d, img, samplesDir, decodedDir, o.Policy.Docker.Limits.WithDefaults(), decode.Options{KeepMembers: true}, logw)
 		if err != nil {
 			return nil, engine.Classify(engine.ExitGateway, err)
 		}

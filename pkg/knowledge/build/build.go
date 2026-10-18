@@ -232,7 +232,9 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 	// Every document is checked by ClamAV before it is decoded, and a
 	// finding refuses the build.
 	img.Signatures = ensureSignatures(ctx, o.Home, o.Policy.Images.ClamAVSignaturesRef(), logw)
-	dec, err := decode.Run(ctx, d, img, docsDir, decodedDir, o.Policy.Docker.Limits.WithDefaults(), logw)
+	// A pack keeps every document as given, an archive's members too, so
+	// the decode copies out each member it read.
+	dec, err := decode.RunWith(ctx, d, img, docsDir, decodedDir, o.Policy.Docker.Limits.WithDefaults(), decode.Options{KeepMembers: true}, logw)
 	if err != nil {
 		return nil, engine.Classify(engine.ExitGateway, err)
 	}
@@ -548,6 +550,11 @@ func collect(reports string, dec *decode.Result, docs []decode.Document, applyDi
 		ch.Summary = strings.TrimSpace("The Creator run stopped before it finished (" + runErr.Error() + "); these documents may be only partly compiled, and a further add continues. " + ch.Summary)
 	}
 	for _, doc := range docs {
+		if !dec.Keepable(doc.Name) {
+			// A member that could not be kept as given: it was not
+			// read, and the pack cannot hold it.
+			continue
+		}
 		ch.Documents = append(ch.Documents, doc.Name)
 		src := knowledge.SourcesDir + "/" + doc.Name
 		ch.Write = append(ch.Write, src)

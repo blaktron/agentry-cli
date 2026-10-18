@@ -1,7 +1,11 @@
 package build
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -91,6 +95,9 @@ func playDecode(t *testing.T) func(dockerx.RunSpec) {
 			rel, _ := filepath.Rel(in, p)
 			rel = filepath.ToSlash(rel)
 			switch filepath.Ext(rel) {
+			case ".zip":
+				rep.Files = append(rep.Files, playArchive(t, p, rel, out)...)
+				return nil
 			case ".pdf":
 				writeFile(t, filepath.Join(out, rel+".txt"), "text of "+rel+"\n")
 				rep.Files = append(rep.Files, runnerdecode.File{Path: rel, Family: "pdf", Tool: "pdftotext", Outcome: runnerdecode.OutcomeDecoded, Output: rel + ".txt", Bytes: 20})
@@ -102,11 +109,64 @@ func playDecode(t *testing.T) func(dockerx.RunSpec) {
 			return nil
 		})
 		for i := range rep.Files {
-			rep.Files[i] = check(rep.Files[i])
+			if rep.Files[i].Check == "" {
+				rep.Files[i] = check(rep.Files[i])
+			}
 		}
 		b, _ := json.Marshal(rep)
 		writeFile(t, filepath.Join(out, runnerdecode.ReportFile), string(b))
 	}
+}
+
+// playArchive is the decode container unpacking a zip, as a decode asked to
+// keep members does: the archive unpacked, each .pdf member decoded and
+// each .md member read as text, both with their own bytes kept under
+// originals/, anything else undecodable. Every entry is checked clean.
+func playArchive(t *testing.T, src, rel, out string) []runnerdecode.File {
+	t.Helper()
+	zr, err := zip.OpenReader(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = zr.Close() }()
+	whole, _ := os.ReadFile(src) //nolint:gosec // the test's own staged file
+	files := []runnerdecode.File{{Path: rel, Family: runnerdecode.FamilyArchive, Tool: "agentry-runner", Outcome: runnerdecode.OutcomeUnpacked,
+		Check: runnerdecode.CheckClean, MIME: "application/zip", SHA256: sha256Hex(whole)}}
+	for _, zf := range zr.File {
+		rc, err := zf.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(rc)
+		_ = rc.Close()
+		path := rel + "/" + zf.Name
+		f := runnerdecode.File{Path: path, In: rel, Size: int64(len(body)), Check: runnerdecode.CheckClean, SHA256: sha256Hex(body), MIME: "text/plain"}
+		keep := func() {
+			f.Original = runnerdecode.OriginalsDir + "/" + path
+			writeFile(t, filepath.Join(out, filepath.FromSlash(f.Original)), string(body))
+		}
+		switch filepath.Ext(zf.Name) {
+		case ".pdf":
+			f.Family, f.Tool, f.Outcome, f.Output, f.MIME = "pdf", "pdftotext", runnerdecode.OutcomeDecoded, path+".txt", "application/pdf"
+			writeFile(t, filepath.Join(out, filepath.FromSlash(f.Output)), "text of "+path+"\n")
+			f.Bytes = int64(len("text of " + path + "\n"))
+			keep()
+		case ".md":
+			f.Family, f.Outcome, f.Output = "text", runnerdecode.OutcomeText, path+".txt"
+			writeFile(t, filepath.Join(out, filepath.FromSlash(f.Output)), string(body))
+			f.Bytes = int64(len(body))
+			keep()
+		default:
+			f.Family, f.Outcome, f.Reason, f.MIME = "unknown", runnerdecode.OutcomeUndecodable, "not text", "application/octet-stream"
+		}
+		files = append(files, f)
+	}
+	return files
+}
+
+func sha256Hex(b []byte) string {
+	h := sha256.Sum256(b)
+	return hex.EncodeToString(h[:])
 }
 
 func page(title, cite string) string {
@@ -161,6 +221,66 @@ func writes(outDir string, files map[string]string) func(dockerx.RunSpec) {
 }
 
 const finalMessage = `{"type":"agent_choice","message":{"content":"wrote pages"}}` + "\n" + `{"type":"stream_stopped","usage":{"input_tokens":900,"output_tokens":300}}` + "\n"
+
+// TestABuildReadsAnArchivesMembers: given an archive, the Creator reads
+// each file it holds by its own name, <archive>/<member>; the pack keeps
+// each member as it was given, under sources/<archive>/, with a decoded
+// member's text beside it; pages cite the members and the pack lints
+// clean; a member no decoder reads is listed unread and not kept, and the
+// archive itself is not a document.
+func TestABuildReadsAnArchivesMembers(t *testing.T) {
+	fx := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for name, body := range map[string]string{"reports/outage.pdf": "%PDF outage", "notes/shift.md": "# Shift\n", "tools/run.bin": "\x00\x01"} {
+		w, _ := zw.Create(name)
+		_, _ = w.Write([]byte(body))
+	}
+	_ = zw.Close()
+	writeFile(t, filepath.Join(fx.docs, "docs.zip"), buf.String())
+	fx.opts.Documents = []string{filepath.Join(fx.docs, "docs.zip")}
+	fx.fake.Foreground["-agent"].Before = writes(fx.opts.OutDir, map[string]string{
+		"wiki/topics/outage.md": page("Outage", "docs.zip/reports/outage.pdf"),
+		"wiki/topics/shift.md":  page("Shift", "docs.zip/notes/shift.md"),
+	})
+	res, err := Build(context.Background(), fx.fake, fx.opts)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if strings.Join(res.Documents, ",") != "docs.zip/notes/shift.md,docs.zip/reports/outage.pdf" || strings.Join(res.Skipped, ",") != "docs.zip/tools/run.bin" {
+		t.Fatalf("documents %v skipped %v", res.Documents, res.Skipped)
+	}
+	for rel, want := range map[string]string{
+		"sources/docs.zip/reports/outage.pdf":     "%PDF outage",
+		"sources/docs.zip/reports/outage.pdf.txt": "text of docs.zip/reports/outage.pdf\n",
+		"sources/docs.zip/notes/shift.md":         "# Shift\n",
+	} {
+		got, err := os.ReadFile(filepath.Join(fx.opts.PackDir, filepath.FromSlash(rel)))
+		if err != nil || string(got) != want {
+			t.Errorf("%s = %q (%v), want %q", rel, got, err, want)
+		}
+	}
+	for _, rel := range []string{"sources/docs.zip/tools/run.bin"} {
+		if _, err := os.Stat(filepath.Join(fx.opts.PackDir, filepath.FromSlash(rel))); err == nil {
+			t.Errorf("%s was kept", rel)
+		}
+	}
+	if fi, err := os.Stat(filepath.Join(fx.opts.PackDir, "sources", "docs.zip")); err != nil || !fi.IsDir() {
+		t.Fatalf("sources/docs.zip is not the folder of its members: %v", err)
+	}
+	p, err := knowledge.Load(fx.opts.PackDir)
+	if err != nil {
+		t.Fatalf("the pack does not load: %v", err)
+	}
+	findings, err := knowledge.Lint(fx.opts.PackDir, p.Manifest.Name)
+	if err != nil || len(findings) != 0 {
+		t.Fatalf("the pack does not lint clean: %+v (%v)", findings, err)
+	}
+	dec, ok := fx.fake.FindRun("agentry-decode-")
+	if !ok || !strings.Contains(strings.Join(dec.Argv, " "), "--keep-members") {
+		t.Fatalf("the decode was not asked to keep members: %v", dec.Argv)
+	}
+}
 
 func TestBuildMakesAPackFromDocuments(t *testing.T) {
 	fx := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})

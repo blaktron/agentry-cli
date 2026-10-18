@@ -238,12 +238,15 @@ type ScanRecord struct {
 
 // ScanFile is one file's check as the record states it: its report path,
 // the check, the signature's name when it was found and the name is within
-// the grammar, and why it was not checked.
+// the grammar, why it was not checked, and its content's SHA-256 as the
+// check read it, so a copy kept of it later can be held to the bytes that
+// were checked.
 type ScanFile struct {
 	Path      string    `json:"path"`
 	Check     Check     `json:"check"`
 	Signature string    `json:"signature,omitempty"`
 	Unchecked Unchecked `json:"unchecked,omitempty"`
+	SHA256    string    `json:"sha256,omitempty"`
 }
 
 // RecordOf is the scan record of files as the check left them: checked
@@ -253,7 +256,7 @@ func RecordOf(files []File, checked bool) []byte {
 	rec := ScanRecord{Schema: ScanSchema, Checked: checked, Files: []ScanFile{}}
 	for _, f := range files {
 		if f.Check != "" {
-			rec.Files = append(rec.Files, ScanFile{Path: f.Path, Check: f.Check, Signature: f.Signature, Unchecked: f.Unchecked})
+			rec.Files = append(rec.Files, ScanFile{Path: f.Path, Check: f.Check, Signature: f.Signature, Unchecked: f.Unchecked, SHA256: f.SHA256})
 		}
 	}
 	b, _ := json.Marshal(rec) // strings and a bool: it always marshals

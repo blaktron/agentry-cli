@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/blaktron/agentry-cli/pkg/plainpath"
 
@@ -35,10 +36,14 @@ type Document struct {
 	Unread string `json:"unread,omitempty"`
 }
 
-// archiveNotRead is why a built-in's build lists an archive as unread: it
-// keeps each document as given, and an archive's members never leave the
-// decode container.
-const archiveNotRead = "an archive: this build reads files as given, not what an archive holds"
+// archiveNotRead is why a built-in's build lists an archive as unread when
+// none of the files it holds could be read and kept as given.
+const archiveNotRead = "an archive none of whose files could be read and kept as given"
+
+// memberNotKept is why a member that was read is not: its own bytes could
+// not be kept as they were in the archive (past the cap, or not the bytes
+// the malware check read).
+const memberNotKept = "a file in an archive that could not be kept as it was given"
 
 // Stage lays out what a run reads from this decode, in dst (a directory the
 // caller made): each readable document's text at its Read path, and
@@ -46,9 +51,43 @@ const archiveNotRead = "an archive: this build reads files as given, not what an
 // with why. It returns the documents and the paths to stage under /inputs.
 // Two documents that would be read as one file are refused rather than one
 // hiding the other. Stage is the built-ins' layout (the Knowledge Creator,
-// the Voice Writer), which keep each document as given: an archive is
-// listed as unread and its members are left out.
+// the Voice Writer), which keep each document as given. A decode that kept
+// members (Options.KeepMembers) lists each member of an archive as a
+// document of its own, named <archive>/<member>, and the archive is not a
+// document then, since a file and a folder of its members cannot share a
+// name; a member that was read but could not be kept as given is unread,
+// and an archive none of whose members was kept is listed, unread, as it
+// was given. Without kept members an archive is unread and its members are
+// left out.
 func (r *Result) Stage(givenAs map[string]string, dst string) ([]Document, []string, error) {
+	kept := map[string]bool{} // the archives some member of which is kept
+	if r.KeepMembers {
+		for _, f := range r.Report.Files {
+			if f.In != "" && f.Original != "" {
+				top, _, _ := strings.Cut(f.Path, "/")
+				kept[top] = true
+			}
+		}
+	}
+	listed := func(f runnerdecode.File) bool {
+		top, _, _ := strings.Cut(f.Path, "/")
+		switch {
+		case f.In == "":
+			return f.Outcome != runnerdecode.OutcomeUnpacked || !kept[f.Path]
+		case !kept[top]:
+			return false
+		default:
+			// Within a kept archive: each member but a nested archive,
+			// whose own members are listed.
+			return f.Outcome != runnerdecode.OutcomeUnpacked
+		}
+	}
+	readable := func(f runnerdecode.File) bool {
+		if f.Outcome != runnerdecode.OutcomeText && f.Outcome != runnerdecode.OutcomeDecoded {
+			return false
+		}
+		return f.In == "" || f.Original != ""
+	}
 	claimed := map[string]string{}
 	claim := func(name, by string) error {
 		if prev, dup := claimed[name]; dup && prev != by {
@@ -58,7 +97,7 @@ func (r *Result) Stage(givenAs map[string]string, dst string) ([]Document, []str
 		return nil
 	}
 	for _, f := range r.Report.Files {
-		if f.In != "" {
+		if !listed(f) || !readable(f) {
 			continue
 		}
 		switch f.Outcome {
@@ -75,7 +114,7 @@ func (r *Result) Stage(givenAs map[string]string, dst string) ([]Document, []str
 	}
 	docs := make([]Document, 0, len(r.Report.Files))
 	for _, f := range r.Report.Files {
-		if f.In != "" {
+		if !listed(f) {
 			continue
 		}
 		doc := Document{Name: f.Path, Family: f.Family}
@@ -83,13 +122,15 @@ func (r *Result) Stage(givenAs map[string]string, dst string) ([]Document, []str
 			doc.GivenAs = g
 		}
 		var err error
-		switch f.Outcome {
-		case runnerdecode.OutcomeText:
+		switch {
+		case f.In != "" && (f.Outcome == runnerdecode.OutcomeText || f.Outcome == runnerdecode.OutcomeDecoded) && f.Original == "":
+			doc.Unread = memberNotKept
+		case f.Outcome == runnerdecode.OutcomeText:
 			doc.Read = f.Path
 			err = r.CopyOriginal(f.Path, filepath.Join(dst, filepath.FromSlash(doc.Read)))
-		case runnerdecode.OutcomeUnpacked:
+		case f.Outcome == runnerdecode.OutcomeUnpacked:
 			doc.Unread = archiveNotRead
-		case runnerdecode.OutcomeDecoded:
+		case f.Outcome == runnerdecode.OutcomeDecoded:
 			doc.Read, doc.DecodedBy = f.Output, f.Tool
 			err = r.CopyText(f.Path, filepath.Join(dst, filepath.FromSlash(doc.Read)))
 		default:
@@ -119,6 +160,17 @@ func (r *Result) Stage(givenAs map[string]string, dst string) ([]Document, []str
 	return docs, inputs, nil
 }
 
+// Keepable says whether the document named path can be kept as given:
+// a file as staged, or a member whose original the decode kept.
+func (r *Result) Keepable(path string) bool {
+	for _, f := range r.Report.Files {
+		if f.Path == path {
+			return f.In == "" || f.Original != ""
+		}
+	}
+	return false
+}
+
 // Skipped names the documents Stage listed as unread: the built-ins'
 // account of what a build did not read.
 func Skipped(docs []Document) []string {
@@ -142,8 +194,17 @@ func (r *Result) Readable() []runnerdecode.File {
 	return out
 }
 
-// CopyOriginal copies the document staged at path, as given, to dst.
+// CopyOriginal copies the document at path, as given, to dst: a file as
+// staged, or a member of an archive whose own bytes the decode kept.
 func (r *Result) CopyOriginal(path, dst string) error {
+	for _, f := range r.Report.Files {
+		if f.Path == path && f.In != "" {
+			if f.Original == "" {
+				return fmt.Errorf("%s is in an archive and was not kept as given", path)
+			}
+			return copyOut(r.Out, f.Original, dst, MaxDocumentBytes)
+		}
+	}
 	return copyOut(r.In, path, dst, MaxDocumentBytes)
 }
 
