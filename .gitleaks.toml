@@ -71,3 +71,10 @@ condition = "AND"
 regexTarget = "match"
 paths = ['''^cmd/agentry/cmd_destinations_file_test\.go$''']
 regexes = ['''whsec_ENVsecret0123456789''']
+
+[[allowlists]]
+description = "the fake granted secret the fetch decoding tests hide in an encoded body, to prove the save watch sees the decoded bytes"
+condition = "AND"
+regexTarget = "match"
+paths = ['''^runnerimage/toolsrv/fetchcoding_test\.go$''']
+regexes = ['''split\-enc0ded\-secret\-abcdef\-0123''']

@@ -243,13 +243,17 @@ func (s *server) saveToPath(saveTo string) (string, error) {
 // fetchedTo answers a fetch that named saveTo: the body is streamed into
 // the scratch folder at rel and the answer is what was saved (the status,
 // the headers that say what it is, the bytes written and their SHA-256),
-// never the body. Nothing is left under rel when the save fails.
-func (s *server) fetchedTo(u *url.URL, resp *http.Response, rel string) (string, bool) {
-	n, sum, err := s.saveStream(rel, resp.Body)
+// never the body. body is the response body as decoded, coding the coding
+// it was decoded from or "". Nothing is left under rel when the save
+// fails.
+func (s *server) fetchedTo(u *url.URL, resp *http.Response, body io.Reader, coding, rel string) (string, bool) {
+	n, sum, err := s.saveStream(rel, body)
 	var held errHoldsSecret
 	switch {
 	case errors.As(err, &held):
 		return notSavedForSecret(string(held)), true
+	case errors.Is(err, errDecodedTooLarge):
+		return ToolFetch + ": the response body decodes to more than " + strconv.FormatInt(s.spec.Limits.decodedFetchCap(), 10) + " bytes, so it was not saved; fetch less of it, or ask with the header Accept-Encoding: identity", true
 	case errors.Is(err, syscall.ENOSPC):
 		return didNotFit(err), true
 	case errors.Is(err, errSaveRead):
@@ -268,7 +272,10 @@ func (s *server) fetchedTo(u *url.URL, resp *http.Response, rel string) (string,
 		}
 	}
 	header("content-type", resp.Header.Get("Content-Type"))
-	if resp.ContentLength >= 0 {
+	if coding != "" {
+		// The length on the wire is the encoded body's, not the file's.
+		header("content-encoding", coding+" (decoded: the bytes saved are the decoded body)")
+	} else if resp.ContentLength >= 0 {
 		header("content-length", strconv.FormatInt(resp.ContentLength, 10))
 	}
 	header("etag", resp.Header.Get("ETag"))
