@@ -54,3 +54,13 @@ condition = "AND"
 regexTarget = "match"
 paths = ['''^runnerimage/hostlink/server_test\.go$''']
 regexes = ['''b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW''']
+
+[[allowlists]]
+description = "the fake signing secret the delivery tests plant to prove it reaches the delivery step's stdin and nowhere else"
+condition = "AND"
+regexTarget = "match"
+paths = [
+  '''^pkg/runner/engine/destinations_test\.go$''',
+  '''^runnerimage/send/send_test\.go$''',
+]
+regexes = ['''whsec_PLANTEDsigningSECRET0123456789''']
