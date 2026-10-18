@@ -43,6 +43,11 @@ type Envelope struct {
 	// names it concerns, never text (Reason). Absent on success and on a
 	// failure no step named.
 	Reason *Reason `json:"reason,omitempty"`
+	// RefusedInputs names the inputs an input-refused run was refused for,
+	// in typed fields (RefusedInput), at most MaxRefusedInputs of them;
+	// RefusedInputsMore counts the rest. Absent on every other envelope.
+	RefusedInputs     []RefusedInput `json:"refusedInputs,omitempty"`
+	RefusedInputsMore int            `json:"refusedInputsMore,omitempty"`
 	// RunID names the run (container labels, run dirs).
 	RunID string `json:"runId"`
 	// Ref and Digest identify the exact release that ran.

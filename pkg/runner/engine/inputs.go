@@ -105,7 +105,7 @@ func decodeInputs(ctx context.Context, d dockerx.Client, p Params, rd *runDirs) 
 		return nil, err
 	}
 	if res.Refused() {
-		return nil, Classify(ExitPolicy, inputRefused(receipt.InputMalware, fmt.Errorf("the run was refused before the agent started: %s", res.Refusal())))
+		return nil, Classify(ExitPolicy, receipt.WithRefusedInputs(inputRefused(receipt.InputMalware, fmt.Errorf("the run was refused before the agent started: %s", res.Refusal())), malwareRefused(res)))
 	}
 	entries, err := x.stageTexts(res)
 	if err != nil {
@@ -182,6 +182,21 @@ func (x *inputsDecoder) dropTexts(path string) {
 // count (receipt.WithCount).
 func inputRefused(why string, err error) error {
 	return receipt.WithReason(err, receipt.ReasonInputRefused, why)
+}
+
+// malwareRefused names, in typed fields, each file a decode's checks
+// refused: ClamAV's findings with their signatures, in the report's order,
+// then each file Hybrid Analysis called malicious with its threat score.
+func malwareRefused(res *decode.Result) []receipt.RefusedInput {
+	var out []receipt.RefusedInput
+	for _, f := range res.Found() {
+		out = append(out, receipt.RefusedInput{Path: f.Path, By: receipt.RefusedByClamAV, Signature: f.Signature})
+	}
+	for _, f := range res.Malicious() {
+		l := res.Lookups[f.Path]
+		out = append(out, receipt.RefusedInput{Path: f.Path, By: receipt.RefusedByHybridAnalysis, Verdict: l.VerdictWord(), ThreatScore: l.ThreatScore})
+	}
+	return out
 }
 
 // hasGivenInputs says whether the person gave the run anything: the

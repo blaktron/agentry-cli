@@ -12,6 +12,14 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
+// wantRefused holds a refused run's envelope to the inputs it names.
+func wantRefused(t *testing.T, env *receipt.Envelope, want []receipt.RefusedInput, more int) {
+	t.Helper()
+	if env == nil || !reflect.DeepEqual(env.RefusedInputs, want) || env.RefusedInputsMore != more {
+		t.Fatalf("refused inputs %+v (and %d more), want %+v (and %d more)", env.RefusedInputs, env.RefusedInputsMore, want, more)
+	}
+}
+
 // wantReason holds a failed run's envelope to the reason the step that
 // stopped it decided.
 func wantReason(t *testing.T, env *receipt.Envelope, err error, want *receipt.Reason) {
@@ -36,6 +44,7 @@ func TestAMissingSecretIsNamedInTheReason(t *testing.T) {
 	_ = os.Unsetenv("ENGINE_TEST_TOKEN")
 	env, err := Run(context.Background(), f, p)
 	wantReason(t, env, err, &receipt.Reason{Code: receipt.ReasonSecretMissing, Names: []string{"ENGINE_TEST_TOKEN"}})
+	wantRefused(t, env, nil, 0)
 }
 
 func TestADecodeThatCannotRunSaysSoInTheReason(t *testing.T) {
@@ -51,7 +60,8 @@ func TestADecodeThatCannotRunSaysSoInTheReason(t *testing.T) {
 }
 
 // The reason says malware, and never which file: the name is the
-// person's, and only the error's text, which a host may not keep, has it.
+// person's. The envelope's refusedInputs names it, in typed fields, for a
+// driver that keeps no text.
 func TestMalwareInAnInputIsTheReasonWithNoFileNamed(t *testing.T) {
 	resetDecodeCalls()
 	p, f := fixture(t)
@@ -59,6 +69,27 @@ func TestMalwareInAnInputIsTheReasonWithNoFileNamed(t *testing.T) {
 	p.InputPaths = []string{writeInput(t, t.TempDir(), "eicar.com", "X5O EICAR")}
 	env, err := Run(context.Background(), f, p)
 	wantReason(t, env, err, &receipt.Reason{Code: receipt.ReasonInputRefused, Detail: receipt.InputMalware})
+	wantRefused(t, env, []receipt.RefusedInput{{Path: "eicar.com", By: receipt.RefusedByClamAV, Signature: "Eicar-Test-Signature"}}, 0)
+}
+
+// An envelope names at most five refused inputs and counts the rest, and
+// leaves out a path that carries a value the run masks.
+func TestARefusalNamesFiveInputsAndCountsTheRest(t *testing.T) {
+	const token = "agentry-gateway-token-0123456789"
+	var in []receipt.RefusedInput
+	for _, name := range []string{"a.com", "b.com", "c.com", token + ".com", "d.com", "e.com", "f.com"} {
+		in = append(in, receipt.RefusedInput{Path: name, By: receipt.RefusedByClamAV, Signature: "Eicar-Test-Signature"})
+	}
+	env := &receipt.Envelope{}
+	err := Classify(ExitPolicy, receipt.WithRefusedInputs(inputRefused(receipt.InputMalware, errors.New("refused")), in))
+	_, _ = fail(env, newRedactor(token, nil, nil), err)
+	var paths []string
+	for _, r := range env.RefusedInputs {
+		paths = append(paths, r.Path)
+	}
+	if strings.Join(paths, " ") != "a.com b.com c.com d.com" || env.RefusedInputsMore != 3 {
+		t.Fatalf("named %v and %d more", paths, env.RefusedInputsMore)
+	}
 }
 
 func TestARefusedInputSaysWhyInTheReason(t *testing.T) {

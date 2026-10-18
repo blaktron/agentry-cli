@@ -440,6 +440,24 @@ func TestAnInterruptedRunBeforeTheEngineSaysSo(t *testing.T) {
 	}
 }
 
+// A refusal that reaches the CLI's own envelope names the inputs its error
+// names, and counts one whose path the error does not show (a masked one).
+func TestARefusalBeforeTheEnginesEnvelopeNamesWhatItsErrorNames(t *testing.T) {
+	cmd := &cobra.Command{}
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	err := receipt.WithRefusedInputs(receipt.WithReason(errors.New("the run was refused before the agent started: ClamAV found malware in eicar.com (Eicar-Test-Signature), [redacted]"), receipt.ReasonInputRefused, receipt.InputMalware),
+		[]receipt.RefusedInput{{Path: "eicar.com", By: receipt.RefusedByClamAV, Signature: "Eicar-Test-Signature"}, {Path: "secret-value.com", By: receipt.RefusedByClamAV}})
+	printFailure(context.Background(), cmd, &runProgress{}, engine.Classify(engine.ExitPolicy, err))
+	var env receipt.Envelope
+	if err := json.Unmarshal(out.Bytes(), &env); err != nil {
+		t.Fatalf("not an envelope: %v\n%s", err, out.String())
+	}
+	if len(env.RefusedInputs) != 1 || env.RefusedInputs[0].Path != "eicar.com" || env.RefusedInputsMore != 1 {
+		t.Fatalf("refused inputs %+v and %d more", env.RefusedInputs, env.RefusedInputsMore)
+	}
+}
+
 func TestRunUnknownAdapterIsCLIError(t *testing.T) {
 	isolateEnv(t)
 	_, policyPath := isolateRunnerHome(t)

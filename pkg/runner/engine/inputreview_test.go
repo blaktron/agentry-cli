@@ -172,6 +172,7 @@ func TestAnInputAIReviewFlagsRefusesTheRun(t *testing.T) {
 	}
 	env, err := Run(context.Background(), f, p)
 	wantReason(t, env, err, &receipt.Reason{Code: receipt.ReasonInputRefused, Detail: receipt.InputFlagged})
+	wantRefused(t, env, []receipt.RefusedInput{{Path: "letter.txt", By: receipt.RefusedByAIReview, Flagged: []string{"injection"}}}, 0)
 	var ce *ClassifiedError
 	if !errors.As(err, &ce) || ce.Code != ExitPolicy {
 		t.Fatalf("err %v, want the policy class", err)
@@ -202,6 +203,7 @@ func TestAnInputAIReviewCannotReadRefusesTheRun(t *testing.T) {
 	p.InputPaths = []string{writeInput(t, t.TempDir(), "notes.txt", "clean notes\n")}
 	env, err := Run(context.Background(), f, p)
 	wantReason(t, env, err, &receipt.Reason{Code: receipt.ReasonInputRefused, Detail: receipt.InputNotReviewed})
+	wantRefused(t, env, []receipt.RefusedInput{{Path: "notes.txt", By: receipt.RefusedByAIReview}}, 0)
 	if !strings.Contains(err.Error(), "AI Review could not read notes.txt (could not be scanned (unavailable)), and no text it has not read reaches the agent") {
 		t.Fatalf("err %q", err)
 	}
