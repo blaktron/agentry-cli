@@ -51,7 +51,8 @@ const (
 	JobFile      = "job.json"
 	// BodySchema names the format of the body a webhook receives.
 	BodySchema = "agentry-delivery/v1"
-	// KindWebhook is the one kind this step sends.
+	// KindWebhook is the kind that posts one signed body; KindS3 (s3target.go)
+	// puts each file to a bucket.
 	KindWebhook = "webhook"
 	// DefaultMaxBody is the most a webhook body is: 10 MiB.
 	DefaultMaxBody int64 = 10 << 20
@@ -115,8 +116,16 @@ type Job struct {
 	// JSON a release with an output schema gave, else its text as a JSON string.
 	Result json.RawMessage `json:"result,omitempty"`
 	// MaxBody is the body's cap in bytes; zero is DefaultMaxBody.
-	MaxBody int64  `json:"maxBody,omitempty"`
-	Files   []File `json:"files"`
+	MaxBody int64 `json:"maxBody,omitempty"`
+	// Bucket, Prefix, Region and Endpoint are a bucket destination's fields
+	// (KindS3), URL being empty for it, and MaxObject the most one object is,
+	// zero being DefaultMaxObject.
+	Bucket    string `json:"bucket,omitempty"`
+	Prefix    string `json:"prefix,omitempty"`
+	Region    string `json:"region,omitempty"`
+	Endpoint  string `json:"endpoint,omitempty"`
+	MaxObject int64  `json:"maxObject,omitempty"`
+	Files     []File `json:"files"`
 }
 
 // File is one deliverable of the run.
@@ -135,11 +144,14 @@ type File struct {
 	Omitted string `json:"omitted,omitempty"`
 }
 
-// Credential is what arrives on stdin: the HMAC secret signing the body, and the
-// value of an Authorization header the receiver wants, when it does.
+// Credential is what arrives on stdin: the HMAC secret signing a webhook's body
+// and the value of an Authorization header the receiver wants, when it does; or
+// a bucket's access key id and secret access key.
 type Credential struct {
-	Secret        string `json:"secret"`
-	Authorization string `json:"authorization,omitempty"`
+	Secret          string `json:"secret,omitempty"`
+	Authorization   string `json:"authorization,omitempty"`
+	AccessKeyID     string `json:"accessKeyId,omitempty"`
+	SecretAccessKey string `json:"secretAccessKey,omitempty"`
 }
 
 // Report is what one delivery did, written to ReportFile.
@@ -176,6 +188,8 @@ type Options struct {
 	// Proxy is the CONNECT proxy the POST goes through; nil is a direct
 	// connection (tests only).
 	Proxy *url.URL
+	// Budget bounds a bucket delivery as a whole; zero is the default.
+	Budget time.Duration
 	// Now is the clock the timestamp reads, nil is time.Now.
 	Now func() time.Time
 	// Transport replaces the HTTP transport (tests only).
@@ -214,7 +228,12 @@ func deliver(ctx context.Context, o Options, rep *Report) {
 			rep.Result = reason
 		}
 	}
-	if o.Job.Kind != KindWebhook {
+	switch o.Job.Kind {
+	case KindS3:
+		deliverS3(ctx, o, rep)
+		return
+	case KindWebhook:
+	default:
 		fail(ReasonDestination)
 		return
 	}

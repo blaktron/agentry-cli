@@ -1,6 +1,7 @@
 package destination
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -186,5 +187,156 @@ func TestSaveSecretsRefusesWhatCouldSplitAHeader(t *testing.T) {
 	t.Setenv(modelkey.EnvNoKeyring, "1")
 	if err := SaveSecrets("a", "ok", ""); err == nil {
 		t.Error("credentials were kept with the keychain off")
+	}
+}
+
+// TestABucketIsSavedByNameAndItsKeyPairGoesToTheKeychain: the file holds the
+// bucket's fields and no credential; the key id and the secret access key are
+// two keychain accounts, and a run is given both.
+func TestABucketIsSavedByNameAndItsKeyPairGoesToTheKeychain(t *testing.T) {
+	dir := home(t)
+	kc := fakeKeychain(t)
+	s, _ := Load()
+	d := Destination{Name: "archive", Kind: KindS3, Bucket: "my-reports", Prefix: "agentry/out", Region: "us-east-1", Endpoint: "http://192.168.1.20:9000", OnMyNetwork: true}
+	if err := s.Upsert(d); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveS3Credentials("archive", "AKIAPLANTED0123", "PLANTEDsecretKEY/0123"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Save(); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(filepath.Join(dir, File))
+	for _, v := range []string{"PLANTED"} {
+		if strings.Contains(string(raw), v) {
+			t.Errorf("the file holds a credential: %s", raw)
+		}
+	}
+	if kc[AccessKeyAccount("archive")] != "AKIAPLANTED0123" || kc[SecretAccount("archive")] != "PLANTEDsecretKEY/0123" {
+		t.Errorf("keychain: %v", kc)
+	}
+	back, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := back.Find("archive")
+	if got != d {
+		t.Errorf("round trip: %+v", got)
+	}
+	r, err := Resolve([]string{"archive"})
+	if err != nil || len(r) != 1 || r[0].AccessKeyID != "AKIAPLANTED0123" || r[0].Secret != "PLANTEDsecretKEY/0123" || r[0].Authorization != "" {
+		t.Fatalf("%+v %v", r, err)
+	}
+	if !HasAccessKey("archive") || !HasSecret("archive") || HasAuthorization("archive") {
+		t.Error("Has*")
+	}
+	req, opt := back.SealAccounts("archive")
+	if len(req) != 2 || req[0] != SecretAccount("archive") || req[1] != AccessKeyAccount("archive") || len(opt) != 0 {
+		t.Errorf("seal accounts: %v %v", req, opt)
+	}
+	if w := d.Where(); w != "s3://my-reports/agentry/out at http://192.168.1.20:9000" {
+		t.Errorf("where: %q", w)
+	}
+	// Without the key id a run is refused before it starts.
+	delete(kc, AccessKeyAccount("archive"))
+	if _, err := Resolve([]string{"archive"}); err == nil || !strings.Contains(err.Error(), "access key") {
+		t.Errorf("a bucket without its key id: %v", err)
+	}
+	if err := DeleteSecrets("archive"); err != nil || len(kc) != 0 {
+		t.Errorf("delete: %v %v", err, kc)
+	}
+}
+
+// TestAKindIsHeldToItsOwnFields: a webhook takes no bucket field and a bucket no
+// address; a bucket is held to the step's rule on load too.
+func TestAKindIsHeldToItsOwnFields(t *testing.T) {
+	good := Destination{Name: "b", Kind: KindS3, Bucket: "my-reports", Region: "auto", Endpoint: "https://acct.r2.cloudflarestorage.com"}
+	if err := good.Check(); err != nil {
+		t.Fatal(err)
+	}
+	for name, d := range map[string]Destination{
+		"webhook with bucket":  {Name: "w", Kind: KindWebhook, URL: "https://hooks.example.com/x", Bucket: "my-reports"},
+		"webhook with region":  {Name: "w", Kind: KindWebhook, URL: "https://hooks.example.com/x", Region: "auto"},
+		"bucket with url":      {Name: "b", Kind: KindS3, Bucket: "my-reports", Region: "auto", URL: "https://hooks.example.com/x"},
+		"bucket no region":     {Name: "b", Kind: KindS3, Bucket: "my-reports"},
+		"private endpoint":     {Name: "b", Kind: KindS3, Bucket: "my-reports", Region: "auto", Endpoint: "https://10.0.0.5"},
+		"metadata endpoint":    {Name: "b", Kind: KindS3, Bucket: "my-reports", Region: "auto", Endpoint: "http://169.254.169.254", OnMyNetwork: true},
+		"prefix dot dot":       {Name: "b", Kind: KindS3, Bucket: "my-reports", Region: "auto", Prefix: "../x"},
+		"tick without service": {Name: "b", Kind: KindS3, Bucket: "my-reports", Region: "auto", OnMyNetwork: true},
+		"unknown kind":         {Name: "b", Kind: "ftp"},
+	} {
+		if err := d.Check(); err == nil {
+			t.Errorf("%s was accepted", name)
+		}
+	}
+	dir := home(t)
+	_ = os.WriteFile(filepath.Join(dir, File), []byte("destinations:\n- name: b\n  kind: s3\n  bucket: my-reports\n  region: auto\n  endpoint: https://10.0.0.5\n"), 0o600)
+	if _, err := Load(); err == nil {
+		t.Error("a file that names a private endpoint without the tick was read")
+	}
+}
+
+// TestAWebhookSavedOverABucketKeepsNoKeyId: changing a destination's kind leaves
+// no credential of its previous kind behind.
+func TestAWebhookSavedOverABucketKeepsNoKeyId(t *testing.T) {
+	home(t)
+	kc := fakeKeychain(t)
+	if err := SaveS3Credentials("x", "AKIAPLANTED0123", "secretKEY"); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveSecrets("x", "whsec_NEW", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := kc[AccessKeyAccount("x")]; ok || kc[SecretAccount("x")] != "whsec_NEW" {
+		t.Errorf("keychain: %v", kc)
+	}
+	if err := SaveSecrets("x", "", "Bearer AUTH"); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveS3Credentials("x", "AKIAPLANTED0123", "secretKEY"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := kc[AuthorizationAccount("x")]; ok {
+		t.Errorf("an Authorization value stayed on a bucket: %v", kc)
+	}
+	if err := SaveS3Credentials("x", "A/B", ""); err == nil {
+		t.Error("a key id with a slash was saved")
+	}
+}
+
+// TestAFailedPairWritePutsTheOldPairBack: a keychain that refuses the secret
+// after the key id was written leaves the pair as it was, never one service's id
+// beside another's secret; Restore removes what the snapshot did not hold.
+func TestAFailedPairWritePutsTheOldPairBack(t *testing.T) {
+	home(t)
+	kc := fakeKeychain(t)
+	if err := SaveS3Credentials("x", "OLDID", "OLDSECRET"); err != nil {
+		t.Fatal(err)
+	}
+	set := keyringSet
+	keyringSet = func(service, account, value string) error {
+		if account == SecretAccount("x") {
+			return errors.New("keychain locked")
+		}
+		return set(service, account, value)
+	}
+	if err := SaveS3Credentials("x", "NEWID", "NEWSECRET"); err == nil {
+		t.Fatal("the save did not fail")
+	}
+	if kc[AccessKeyAccount("x")] != "OLDID" || kc[SecretAccount("x")] != "OLDSECRET" {
+		t.Errorf("keychain: %v", kc)
+	}
+	keyringSet = set
+	snap := Snapshot("nobody")
+	if err := SaveS3Credentials("nobody", "ID", "SECRET"); err != nil {
+		t.Fatal(err)
+	}
+	Restore("nobody", snap)
+	if _, ok := kc[AccessKeyAccount("nobody")]; ok {
+		t.Errorf("restore left %v", kc)
+	}
+	if _, ok := kc[SecretAccount("nobody")]; ok {
+		t.Errorf("restore left %v", kc)
 	}
 }

@@ -128,3 +128,21 @@ func TestFromFileRefusesAFileThatIsNotAPlainOneOfTheSize(t *testing.T) {
 		t.Errorf("a file past the cap: %v", err)
 	}
 }
+
+// TestAHostHandsAWebhookNotABucket: a destinations file names webhooks alone; a
+// bucket entry, with or without bucket fields, refuses the whole file.
+func TestAHostHandsAWebhookNotABucket(t *testing.T) {
+	dir := t.TempDir()
+	for name, doc := range map[string]string{
+		"kind s3":      `{"destinations":[{"name":"b","kind":"s3","url":"https://hooks.example.com/x","secretEnv":"AGENTRY_DEST_B"}]}`,
+		"kind s3 bare": `{"destinations":[{"name":"b","kind":"s3","secretEnv":"AGENTRY_DEST_B"}]}`,
+	} {
+		path := filepath.Join(dir, "d.json")
+		if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := FromFile(path, func(string) string { return "s3cret" }); err == nil {
+			t.Errorf("%s: a bucket was taken from a destinations file", name)
+		}
+	}
+}

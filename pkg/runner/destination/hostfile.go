@@ -91,6 +91,9 @@ func FromFile(path string, getenv func(string) string) (dests []Resolved, envNam
 	seen := map[string]bool{}
 	for _, e := range doc.Destinations {
 		d := Destination{Name: e.Name, Kind: e.Kind, URL: e.URL}
+		if e.Kind != KindWebhook {
+			return nil, nil, fmt.Errorf("destination %q: a host hands a run webhooks only", e.Name)
+		}
 		if err := d.Check(); err != nil {
 			return nil, nil, fmt.Errorf("destination %q: %w", e.Name, err)
 		}

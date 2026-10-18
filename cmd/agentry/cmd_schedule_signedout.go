@@ -239,11 +239,19 @@ func sealScheduleKeys(sc schedule.Schedule, path string) error {
 	for _, h := range hosts {
 		optional = append(optional, sources.KeyAccount(h))
 	}
-	// A destination's signing secret, and its Authorization value when it has
-	// one: a signed-out fire sends to it from these alone.
-	for _, d := range sc.Run.Destinations {
-		required = append(required, destination.SecretAccount(d))
-		optional = append(optional, destination.AuthorizationAccount(d))
+	// A destination's credentials (a webhook's signing secret and its
+	// Authorization value when it has one; a bucket's key pair): a signed-out
+	// fire sends to it from these alone.
+	if len(sc.Run.Destinations) > 0 {
+		store, err := destination.Load()
+		if err != nil {
+			return err
+		}
+		for _, d := range sc.Run.Destinations {
+			req, opt := store.SealAccounts(d)
+			required = append(required, req...)
+			optional = append(optional, opt...)
+		}
 	}
 	// A target host's sign-in: its runs have no other.
 	for _, h := range sc.Run.Hosts {
