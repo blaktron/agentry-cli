@@ -499,3 +499,24 @@ func chooseDestinations(names []string, ref string, local bool) (dests []destina
 	}
 	return out, fromDefault, nil
 }
+
+// destinationsFromHostFile reads the destinations a host handed the run in a
+// file and takes each credential's variable out of this process's environment,
+// so that no process started from here on inherits one: the credentials are the
+// delivery step's alone.
+func destinationsFromHostFile(path string) ([]destination.Resolved, error) {
+	dests, names, err := destination.FromFile(path, os.Getenv)
+	if err != nil {
+		return nil, err
+	}
+	for _, n := range names {
+		_ = os.Unsetenv(n)
+	}
+	// And every other variable of the credentials' prefix, named or not.
+	for _, kv := range os.Environ() {
+		if k, _, _ := strings.Cut(kv, "="); strings.HasPrefix(k, "AGENTRY_DEST_") {
+			_ = os.Unsetenv(k)
+		}
+	}
+	return dests, nil
+}

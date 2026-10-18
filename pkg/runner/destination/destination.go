@@ -95,6 +95,9 @@ type Resolved struct {
 	Secret        string `json:"-" yaml:"-"`
 	Authorization string `json:"-" yaml:"-"`
 	AccessKeyID   string `json:"-" yaml:"-"`
+	// Hosted says a driver such as a sandbox host handed the destination in
+	// a destinations file (FromFile), the one way a hosted run has any.
+	Hosted bool `json:"-" yaml:"-"`
 }
 
 // Store is the destinations file as a program reads and writes it.
