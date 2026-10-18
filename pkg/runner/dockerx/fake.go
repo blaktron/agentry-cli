@@ -155,6 +155,10 @@ type FakeForeground struct {
 	// produced — how tests leave files in a mounted directory the way a
 	// real builder would.
 	Before func(r RunSpec)
+	// Print, when set, runs after Before and its answer is written to the
+	// caller's stdout ahead of Stdout: what a container prints of the work
+	// Before played.
+	Print func(r RunSpec) string
 	// Handler, when set, plays the container itself on the attached
 	// streams (an interactive harness for session tests); the scripted
 	// fields above are ignored.
@@ -397,6 +401,9 @@ func (f *Fake) play(ctx context.Context, r RunSpec, stdin io.Reader, stdout, std
 		f.mu.Lock()
 		fg.GotStdin = string(b)
 		f.mu.Unlock()
+	}
+	if fg.Print != nil {
+		_, _ = io.WriteString(stdout, fg.Print(r))
 	}
 	if fg.Stdout != "" {
 		_, _ = io.WriteString(stdout, fg.Stdout)

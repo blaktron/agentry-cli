@@ -340,3 +340,56 @@ func TestInRepository(t *testing.T) {
 		}
 	}
 }
+
+// recordWriter takes the scan record and notes whether any decoder had
+// written a text by then.
+type recordWriter struct {
+	out           string
+	b             []byte
+	textsBeforeIt int
+}
+
+func (w *recordWriter) Write(p []byte) (int, error) {
+	_ = filepath.WalkDir(w.out, func(p string, e os.DirEntry, err error) error {
+		if err == nil && !e.IsDir() && strings.HasSuffix(p, ".txt") {
+			w.textsBeforeIt++
+		}
+		return nil
+	})
+	w.b = append(w.b, p...)
+	return len(p), nil
+}
+
+// TestTheScanRecordIsWrittenBeforeAnyDecoderRuns: the runner states what
+// ClamAV found, one JSON line, once clamscan has answered and before any
+// decoder has written a text, so no decoder a file exploits can change it.
+func TestTheScanRecordIsWrittenBeforeAnyDecoderRuns(t *testing.T) {
+	tools, _ := clamTools(t)
+	in, out := t.TempDir(), t.TempDir()
+	write(t, in, "report.pdf", []byte("%PDF clean"))
+	write(t, in, "eicar.com", []byte("X5O EICAR test"))
+	write(t, in, "bundle.zip", zipOf(t, zipEntry{name: "inner/bad.txt", body: "EICAR inside"}, zipEntry{name: "inner/a.pdf", body: "%PDF member"}))
+	w := &recordWriter{out: out}
+	if _, err := Decode(context.Background(), in, out, tools, Limits{ClamDB: "/clamav", Record: w}); err != nil {
+		t.Fatal(err)
+	}
+	if w.textsBeforeIt != 0 {
+		t.Fatalf("%d texts were written before the scan record", w.textsBeforeIt)
+	}
+	if _, err := os.Stat(filepath.Join(out, "report.pdf.txt")); err != nil {
+		t.Fatalf("the PDF was not decoded after the record: %v", err)
+	}
+	want := `{"schema":"agentry.decode.scan/v1","checked":true,"found":[{"path":"bundle.zip","signature":"Eicar-Test-Signature"},{"path":"bundle.zip/inner/bad.txt","signature":"Eicar-Test-Signature"},{"path":"eicar.com","signature":"Eicar-Test-Signature"}]}` + "\n"
+	if string(w.b) != want {
+		t.Fatalf("the scan record:\n%s\nwant:\n%s", w.b, want)
+	}
+
+	// With no signatures the record says nothing was checked.
+	w = &recordWriter{out: t.TempDir()}
+	if _, err := Decode(context.Background(), in, w.out, tools, Limits{Record: w}); err != nil {
+		t.Fatal(err)
+	}
+	if string(w.b) != `{"schema":"agentry.decode.scan/v1","checked":false,"found":[]}`+"\n" {
+		t.Fatalf("the scan record with no signatures: %s", w.b)
+	}
+}

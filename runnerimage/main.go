@@ -304,7 +304,7 @@ func runDecode(args []string) error {
 	if *in == "" || *out == "" {
 		return errors.New("decode: --in and --out are required")
 	}
-	rep, err := decode.Decode(context.Background(), *in, *out, decode.Tools{}, decode.Limits{UnpackDir: *unpack, ClamDB: *clamav, Sources: sources, SourceMaxFiles: *sourceMax, ExecutablesOnly: *execOnly})
+	rep, err := decode.Decode(context.Background(), *in, *out, decode.Tools{}, decode.Limits{UnpackDir: *unpack, ClamDB: *clamav, Sources: sources, SourceMaxFiles: *sourceMax, ExecutablesOnly: *execOnly, Record: os.Stdout})
 	if err != nil {
 		return err
 	}

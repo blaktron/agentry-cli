@@ -15,6 +15,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -393,14 +394,113 @@ func RunWith(ctx context.Context, d dockerx.Client, img Image, in, out string, l
 	defer cancel()
 	defer func() { _ = d.RemoveForce(context.WithoutCancel(ctx), name) }()
 	var errOut bytes.Buffer
-	code, err := d.RunForeground(ctx, r, nil, io.Discard, io.MultiWriter(stderr, &errOut))
+	scanOut := &cappedBuffer{max: maxScanRecordBytes}
+	code, err := d.RunForeground(ctx, r, nil, scanOut, io.MultiWriter(stderr, &errOut))
 	if err != nil {
 		return nil, fmt.Errorf("the decode container: %w", err)
 	}
 	if code != 0 {
 		return nil, fmt.Errorf("the decode container failed (exit %d): %s", code, strings.TrimSpace(tail(errOut.String(), 400)))
 	}
-	return CheckWith(img, in, out, opt)
+	return CheckRecorded(img, in, out, opt, scanOut.Bytes())
+}
+
+// CheckRecorded is CheckWith held to the scan record the decode wrote to
+// its stdout before any decoder ran (firstScanRecord, applyScan): what Run
+// does after the container, and what a caller that decodes some other way
+// does with that stdout. A decode given signatures must have stated one.
+func CheckRecorded(img Image, in, out string, opt Options, stdout []byte) (*Result, error) {
+	res, err := CheckWith(img, in, out, opt)
+	if err != nil {
+		return nil, err
+	}
+	if img.Signatures.Held() {
+		rec, err := firstScanRecord(stdout)
+		if err != nil {
+			return nil, err
+		}
+		res.applyScan(rec)
+	}
+	return res, nil
+}
+
+// maxScanRecordBytes bounds what the host reads of the decode container's
+// stdout: a scan record that names every file of an input source as found.
+const maxScanRecordBytes = 32 << 20
+
+// cappedBuffer keeps the first max bytes written to it and drops the rest.
+type cappedBuffer struct {
+	buf bytes.Buffer
+	max int
+}
+
+func (c *cappedBuffer) Write(p []byte) (int, error) {
+	if room := c.max - c.buf.Len(); room > 0 {
+		c.buf.Write(p[:min(len(p), room)])
+	}
+	return len(p), nil
+}
+
+func (c *cappedBuffer) Bytes() []byte { return c.buf.Bytes() }
+
+// firstScanRecord is the scan record the runner wrote to its stdout once
+// clamscan had answered and before any decoder started: the first line, and
+// only the first. Whatever followed it was written, if by anyone, after a
+// decoder read a document. A decode given signatures that stated no record
+// before it decoded is refused.
+func firstScanRecord(stdout []byte) (runnerdecode.ScanRecord, error) {
+	var rec runnerdecode.ScanRecord
+	line, _, ok := bytes.Cut(stdout, []byte("\n"))
+	if !ok {
+		return rec, errors.New("the decode stated no malware check before it decoded")
+	}
+	dec := json.NewDecoder(bytes.NewReader(line))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&rec); err != nil {
+		return rec, fmt.Errorf("the decode's malware check: %w", err)
+	}
+	if rec.Schema != runnerdecode.ScanSchema || !rec.Checked {
+		return rec, fmt.Errorf("the decode's malware check is not a check with signatures (schema %q)", rec.Schema)
+	}
+	for _, f := range rec.Found {
+		if !relPath(f.Path) {
+			return rec, fmt.Errorf("the decode's malware check names %q, which is not a document", f.Path)
+		}
+	}
+	return rec, nil
+}
+
+// applyScan holds the report to the scan record: a file the record found is
+// found, refused and never read, whatever the report says of it, with the
+// record's signature; one the report left out is added so. Since the
+// record was stated before any decoder ran, a decoder a file exploited
+// cannot turn another file's finding into a clean check.
+func (r *Result) applyScan(rec runnerdecode.ScanRecord) {
+	at := map[string]int{}
+	for i, f := range r.Report.Files {
+		at[f.Path] = i
+	}
+	added := false
+	for _, found := range rec.Found {
+		sig := found.Signature
+		if !runnerdecode.ValidSignature(sig) {
+			sig = ""
+		}
+		i, ok := at[found.Path]
+		if !ok {
+			r.Report.Files = append(r.Report.Files, runnerdecode.File{Path: found.Path, Family: runnerdecode.FamilyUnknown})
+			i, added = len(r.Report.Files)-1, true
+			at[found.Path] = i
+		}
+		f := &r.Report.Files[i]
+		f.Outcome, f.Why = runnerdecode.OutcomeRefused, runnerdecode.WhyFound
+		f.Check, f.Signature, f.Unchecked = runnerdecode.CheckFound, sig, ""
+		f.Tool, f.Output, f.Bytes = "", "", 0
+		f.Markdown, f.MarkdownBy, f.MarkdownBytes = "", "", 0
+	}
+	if added {
+		sort.Slice(r.Report.Files, func(i, j int) bool { return r.Report.Files[i].Path < r.Report.Files[j].Path })
+	}
 }
 
 // clamMount is where the decode container reads the signatures.

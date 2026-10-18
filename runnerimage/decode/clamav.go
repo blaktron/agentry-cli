@@ -17,6 +17,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"os/exec"
@@ -212,6 +213,49 @@ func (d *decoder) scan(ctx context.Context) {
 			set(t, CheckUnchecked, "", UncheckedFailed)
 		}
 	}
+}
+
+// ScanSchema names the scan record's shape.
+const ScanSchema = "agentry.decode.scan/v1"
+
+// ScanRecord is the malware check's result as the runner states it the
+// moment clamscan has answered and before any decoder starts: whether
+// signatures were mounted, and each file it found. The report written at
+// the end is the work of the same process that then ran the decoders, so a
+// decoder a file exploited could rewrite another file's finding there; the
+// host takes the first record the runner wrote instead, and refuses a file
+// found in it whatever the report says.
+type ScanRecord struct {
+	Schema  string        `json:"schema"`
+	Checked bool          `json:"checked"`
+	Found   []ScanFinding `json:"found"`
+}
+
+// ScanFinding is one file the check found: its report path and the
+// signature's name when it is within the grammar.
+type ScanFinding struct {
+	Path      string `json:"path"`
+	Signature string `json:"signature,omitempty"`
+}
+
+// RecordOf is the scan record of files as the check left them: checked
+// says signatures were mounted. It is one JSON line, as the runner writes
+// it.
+func RecordOf(files []File, checked bool) []byte {
+	rec := ScanRecord{Schema: ScanSchema, Checked: checked, Found: []ScanFinding{}}
+	for _, f := range files {
+		if f.Check == CheckFound {
+			rec.Found = append(rec.Found, ScanFinding{Path: f.Path, Signature: f.Signature})
+		}
+	}
+	b, _ := json.Marshal(rec) // strings and a bool: it always marshals
+	return append(b, '\n')
+}
+
+// record writes the scan record to w.
+func (d *decoder) record(w io.Writer) error {
+	_, err := w.Write(RecordOf(d.files, d.lim.ClamDB != ""))
+	return err
 }
 
 // splitClamLine splits one line of clamscan's answer, "<path>: <result>",
