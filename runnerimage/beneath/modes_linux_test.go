@@ -51,7 +51,7 @@ func followsDirectoryLinks(t *testing.T) bool {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer syscall.Close(dfd)
+	defer func() { _ = syscall.Close(dfd) }()
 	fd, err := syscall.Openat(dfd, "link", syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
 	if err != nil {
 		return false
