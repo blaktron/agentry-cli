@@ -34,6 +34,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -134,6 +135,10 @@ func objectsFor(r deliveryRun, dest destination.Resolved) []string {
 		out[i] = f.Path
 		if keys != nil && keys[i] != "" {
 			out[i] = dest.Bucket + "/" + keys[i]
+		} else if keys != nil {
+			// A path the step will not name stays in the record, but as
+			// text no terminal acts on.
+			out[i] = strconv.QuoteToASCII(f.Path)
 		}
 	}
 	return out

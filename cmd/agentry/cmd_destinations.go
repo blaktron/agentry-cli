@@ -127,7 +127,9 @@ func newDestinationsAddCmd() *cobra.Command {
 				return engine.Classify(engine.ExitCLI, err)
 			}
 			prev, existed := s.Find(name)
-			if secret == "" && (!existed || !destination.HasSecret(name)) {
+			// A secret saved for a bucket is the secret access key, never a
+			// webhook's signing secret.
+			if secret == "" && (!existed || prev.Kind != destination.KindWebhook || !destination.HasSecret(name)) {
 				if !stdinIsTTY(cmd.InOrStdin()) {
 					return usage(errors.New("a destination needs a signing secret: give --secret-env, --secret-stdin or --generate-secret"))
 				}
@@ -158,13 +160,13 @@ func newDestinationsAddCmd() *cobra.Command {
 			if err := s.Upsert(d); err != nil {
 				return usage(err)
 			}
+			before := destination.Snapshot(name)
 			if err := destination.SaveSecrets(name, secret, auth); err != nil {
+				destination.Restore(name, before)
 				return engine.Classify(engine.ExitCLI, err)
 			}
 			if err := s.Save(); err != nil {
-				if !existed {
-					_ = destination.DeleteSecrets(name)
-				}
+				destination.Restore(name, before)
 				return engine.Classify(engine.ExitCLI, err)
 			}
 			// A signed-out schedule's fires read the keys sealed beside them:
@@ -274,13 +276,13 @@ func addBucket(cmd *cobra.Command, name string, b s3Flags, onMyNetwork bool, sec
 	if err := s.Upsert(d); err != nil {
 		return usage(err)
 	}
+	before := destination.Snapshot(name)
 	if err := destination.SaveS3Credentials(name, keyID, secret); err != nil {
+		destination.Restore(name, before)
 		return engine.Classify(engine.ExitCLI, err)
 	}
 	if err := s.Save(); err != nil {
-		if !existed {
-			_ = destination.DeleteSecrets(name)
-		}
+		destination.Restore(name, before)
 		return engine.Classify(engine.ExitCLI, err)
 	}
 	resealSignedOut(cmd.ErrOrStderr())

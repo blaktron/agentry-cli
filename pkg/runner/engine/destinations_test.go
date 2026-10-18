@@ -910,7 +910,18 @@ func TestABucketsReportIsReadAsTheWordOfAProgramThatHeldTheKeys(t *testing.T) {
 func TestAHostileFileNameNamesAnObjectInsideTheRunsFolder(t *testing.T) {
 	r := deliveryRun{RunID: "cafe0000", Files: []receipt.Deliverable{{Path: "reports/a:b*.md"}, {Path: "reports/x/../../y.md"}, {Path: "other/z.md"}}}
 	got := objectsFor(r, bucket("a", destination.Destination{Bucket: "bkt-name", Prefix: "p/q", Region: "auto"}))
-	if got[0] != "bkt-name/p/q/cafe0000/a_b_.md" || got[1] != "reports/x/../../y.md" || got[2] != "other/z.md" {
+	if got[0] != "bkt-name/p/q/cafe0000/a_b_.md" || got[1] != `"reports/x/../../y.md"` || got[2] != `"other/z.md"` {
 		t.Errorf("objects: %v", got)
+	}
+}
+
+// TestAPathTheStepWillNotNameIsRecordedAsQuotedText: a record of a file with no
+// key keeps its path, but as text a terminal acts on nothing in.
+func TestAPathTheStepWillNotNameIsRecordedAsQuotedText(t *testing.T) {
+	r := deliveryRun{RunID: "cafe0000", Files: []receipt.Deliverable{{Path: "reports/a/../b\x1b]0;pwned\x07.md"}, {Path: "reports/x\\y\x1b[2J.md"}}}
+	for _, o := range objectsFor(r, bucket("archive", destination.Destination{Bucket: "my-reports", Region: "eu-west-1"})) {
+		if strings.ContainsAny(o, "\x1b\x07\x00") {
+			t.Errorf("a record's object carries a control character: %q", o)
+		}
 	}
 }

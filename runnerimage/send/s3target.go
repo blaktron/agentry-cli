@@ -157,7 +157,7 @@ func SameService(a, b S3Target) bool {
 // below reports/>, or "" for one it will not name. The agent chose the file's
 // name, so each segment is made plain: a character other than a letter, digit,
 // mark, '.', '_', '-', '(', ')' or a space becomes '_' (a separator, control,
-// format and bidirectional character among them), leading and trailing spaces
+// format, bidirectional and invisible character among them), leading and trailing spaces
 // and dots go, and a segment with nothing left is "deliverable". The key can
 // therefore never leave the prefix and run folder, whatever the path says. Two
 // paths that become one key keep both, the later one as "name (2).ext". A path
@@ -197,6 +197,14 @@ func ObjectKeys(prefix, runID string, paths []string) []string {
 	return keys
 }
 
+// invisible says whether r draws nothing, or only changes how its neighbours
+// do (a joiner, a variation selector, a filler), so that two keys could look
+// the same or blank in a bucket's console.
+func invisible(r rune) bool {
+	return unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Variation_Selector, r) ||
+		unicode.Is(unicode.Other_Default_Ignorable_Code_Point, r) || unicode.Is(unicode.Bidi_Control, r)
+}
+
 // plainSegment makes one path segment of a key from a name the agent chose.
 func plainSegment(s string) string {
 	var b strings.Builder
@@ -204,6 +212,8 @@ func plainSegment(s string) string {
 		switch {
 		case r == ' ' || r == '.' || r == '_' || r == '-' || r == '(' || r == ')':
 			b.WriteRune(r)
+		case invisible(r):
+			b.WriteRune('_')
 		case unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsMark(r):
 			b.WriteRune(r)
 		default:

@@ -14,7 +14,9 @@ import (
 	"maps"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/spf13/cobra"
 
@@ -160,6 +162,17 @@ func destinationSummary(ds []receipt.Delivery) []string {
 	return out
 }
 
+// plainText is s, or s quoted when it holds a control or other character a
+// terminal may act on: a record can carry a path the agent chose.
+func plainText(s string) string {
+	for _, r := range s {
+		if !unicode.IsPrint(r) {
+			return strconv.QuoteToASCII(s)
+		}
+	}
+	return s
+}
+
 func plural(n int, one, many string) string {
 	if n == 1 {
 		return one
@@ -240,11 +253,11 @@ func newDeliverCmd() *cobra.Command {
 					case d.Status == receipt.DeliveryDelivered && d.Kind == receipt.DeliveryKindFolder:
 						_, _ = fmt.Fprintf(out, "copied %s\n", d.Object)
 					case d.Status == receipt.DeliveryDelivered:
-						_, _ = fmt.Fprintf(out, "sent %s to %s\n", d.Object, d.Destination)
+						_, _ = fmt.Fprintf(out, "sent %s to %s\n", plainText(d.Object), d.Destination)
 					case d.Kind == receipt.DeliveryKindFolder:
 						_, _ = fmt.Fprintf(out, "not copied (%s: %s) sha256:%s\n", d.Status, d.Error, d.SHA256)
 					default:
-						_, _ = fmt.Fprintf(out, "not sent to %s (%s: %s) %s\n", d.Destination, d.Status, d.Error, d.Object)
+						_, _ = fmt.Fprintf(out, "not sent to %s (%s: %s) %s\n", d.Destination, d.Status, d.Error, plainText(d.Object))
 					}
 				}
 			}

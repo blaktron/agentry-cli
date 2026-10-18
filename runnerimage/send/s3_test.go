@@ -593,3 +593,45 @@ func TestCheckS3(t *testing.T) {
 		t.Error("SameService")
 	}
 }
+
+// TestAnInvisibleCharacterIsNotKeptInAKey: fillers, joiners and variation
+// selectors would make two keys look alike or blank in a console.
+func TestAnInvisibleCharacterIsNotKeptInAKey(t *testing.T) {
+	for _, r := range []rune{0x3164, 0x115F, 0x1160, 0xFFA0, 0x034F, 0xFE0F, 0x200B, 0x200D, 0x2060} {
+		k := ObjectKeys("", "cafe0000", []string{"reports/a" + string(r) + "b.md"})[0]
+		if k != "cafe0000/a_b.md" {
+			t.Errorf("U+%04X: key %q", r, k)
+		}
+	}
+	if k := ObjectKeys("", "cafe0000", []string{"reports/r\u00e9sum\u00e9 \u65e5\u672c.md"})[0]; !strings.HasSuffix(k, ".md") || strings.Contains(k, "_") {
+		t.Errorf("ordinary letters were changed: %q", k)
+	}
+}
+
+// TestASlowServiceEndsTheDeliveryWithAReport: past the delivery's own budget the
+// files not sent are failed "timeout" and the report is still written, with the
+// file already put told as delivered.
+func TestASlowServiceEndsTheDeliveryWithAReport(t *testing.T) {
+	b, srv := newBucketServer(t)
+	defer srv.Close()
+	b.status = func(n int, _ string) int {
+		if n > 1 {
+			time.Sleep(2 * time.Second)
+		}
+		return http.StatusOK
+	}
+	f := s3Fixture(t, srv.URL)
+	f.job.Files = []File{stage(t, f.staging, "f0", "reports/a.md", "a"), stage(t, f.staging, "f1", "reports/b.md", "b"), stage(t, f.staging, "f2", "reports/c.md", "c")}
+	o := f.s3Options()
+	o.Budget = 300 * time.Millisecond
+	rep, err := Run(context.Background(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Files[0].Status != StatusDelivered || rep.Files[1].Error != ReasonTimeout || rep.Files[2].Error != ReasonTimeout || rep.Status != StatusFailed {
+		t.Errorf("report: %+v", rep)
+	}
+	if _, err := os.Stat(filepath.Join(f.work, ReportFile)); err != nil {
+		t.Errorf("no report written: %v", err)
+	}
+}

@@ -188,6 +188,8 @@ type Options struct {
 	// Proxy is the CONNECT proxy the POST goes through; nil is a direct
 	// connection (tests only).
 	Proxy *url.URL
+	// Budget bounds a bucket delivery as a whole; zero is the default.
+	Budget time.Duration
 	// Now is the clock the timestamp reads, nil is time.Now.
 	Now func() time.Time
 	// Transport replaces the HTTP transport (tests only).

@@ -18,7 +18,13 @@ import (
 )
 
 // s3RequestTimeout bounds one object's PUT: a deliverable can be 64 MiB.
-const s3RequestTimeout = 8 * time.Minute
+// s3Budget bounds the whole delivery, inside the caller's own limit on the
+// step, so that the step still writes its report: a file not sent when it ends
+// is failed with "timeout", and the files sent are told.
+const (
+	s3RequestTimeout = 8 * time.Minute
+	s3Budget         = 10 * time.Minute
+)
 
 // deliverS3 puts each file of the job to the bucket, one request each, signed
 // with the access key (AWS Signature Version 4, the payload hash being the
@@ -72,6 +78,12 @@ func deliverS3(ctx context.Context, o Options, rep *Report) {
 	if o.Now != nil {
 		now = o.Now
 	}
+	budget := s3Budget
+	if o.Budget > 0 {
+		budget = o.Budget
+	}
+	ctx, cancelBudget := context.WithTimeout(ctx, budget)
+	defer cancelBudget()
 	hc := client(o)
 	hc.Timeout = s3RequestTimeout
 	stop := ""

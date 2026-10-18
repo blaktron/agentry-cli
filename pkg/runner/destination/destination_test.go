@@ -1,6 +1,7 @@
 package destination
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -277,7 +278,7 @@ func TestAKindIsHeldToItsOwnFields(t *testing.T) {
 }
 
 // TestAWebhookSavedOverABucketKeepsNoKeyId: changing a destination's kind leaves
-// no credential of the old one behind.
+// no credential of its previous kind behind.
 func TestAWebhookSavedOverABucketKeepsNoKeyId(t *testing.T) {
 	home(t)
 	kc := fakeKeychain(t)
@@ -301,5 +302,41 @@ func TestAWebhookSavedOverABucketKeepsNoKeyId(t *testing.T) {
 	}
 	if err := SaveS3Credentials("x", "A/B", ""); err == nil {
 		t.Error("a key id with a slash was saved")
+	}
+}
+
+// TestAFailedPairWritePutsTheOldPairBack: a keychain that refuses the secret
+// after the key id was written leaves the pair as it was, never one service's id
+// beside another's secret; Restore removes what the snapshot did not hold.
+func TestAFailedPairWritePutsTheOldPairBack(t *testing.T) {
+	home(t)
+	kc := fakeKeychain(t)
+	if err := SaveS3Credentials("x", "OLDID", "OLDSECRET"); err != nil {
+		t.Fatal(err)
+	}
+	set := keyringSet
+	keyringSet = func(service, account, value string) error {
+		if account == SecretAccount("x") {
+			return errors.New("keychain locked")
+		}
+		return set(service, account, value)
+	}
+	if err := SaveS3Credentials("x", "NEWID", "NEWSECRET"); err == nil {
+		t.Fatal("the save did not fail")
+	}
+	if kc[AccessKeyAccount("x")] != "OLDID" || kc[SecretAccount("x")] != "OLDSECRET" {
+		t.Errorf("keychain: %v", kc)
+	}
+	keyringSet = set
+	snap := Snapshot("nobody")
+	if err := SaveS3Credentials("nobody", "ID", "SECRET"); err != nil {
+		t.Fatal(err)
+	}
+	Restore("nobody", snap)
+	if _, ok := kc[AccessKeyAccount("nobody")]; ok {
+		t.Errorf("restore left %v", kc)
+	}
+	if _, ok := kc[SecretAccount("nobody")]; ok {
+		t.Errorf("restore left %v", kc)
 	}
 }

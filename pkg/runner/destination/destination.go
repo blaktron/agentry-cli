@@ -416,6 +416,35 @@ func SaveSecrets(name, secret, authorization string) error {
 	return nil
 }
 
+// Saved is a destination's credentials as they were saved, to put back when a
+// change that wrote some of them cannot be finished.
+type Saved struct {
+	Secret, Authorization, AccessKeyID string
+}
+
+// Snapshot reads the destination's saved credentials.
+func Snapshot(name string) Saved {
+	var sv Saved
+	sv.Secret, sv.Authorization, _ = Secrets(name)
+	sv.AccessKeyID, _ = AccessKeyID(name)
+	return sv
+}
+
+// Restore puts the credentials of a snapshot back, removing any the snapshot did
+// not hold. Best effort: it is for the path of a failed save.
+func Restore(name string, sv Saved) {
+	if modelkey.Disabled() {
+		return
+	}
+	for acct, v := range map[string]string{SecretAccount(name): sv.Secret, AuthorizationAccount(name): sv.Authorization, AccessKeyAccount(name): sv.AccessKeyID} {
+		if v != "" {
+			_ = keyringSet(modelkey.Service, acct, v)
+		} else {
+			_ = keyringDelete(modelkey.Service, acct)
+		}
+	}
+}
+
 // ValidS3Credentials says whether an access key id and a secret access key (an
 // empty one: not given) are values the delivery step can sign with.
 func ValidS3Credentials(accessKeyID, secret string) bool {
@@ -431,6 +460,9 @@ func SaveS3Credentials(name, accessKeyID, secret string) error {
 	if !ValidS3Credentials(accessKeyID, secret) {
 		return errors.New("the access key id or secret access key is not one a request can be signed with")
 	}
+	// Both or neither: a pair of one service's id and another's secret signs
+	// nothing and would be sent to a service that is not either's.
+	before := Snapshot(name)
 	if accessKeyID != "" {
 		if err := keyringSet(modelkey.Service, AccessKeyAccount(name), accessKeyID); err != nil {
 			return fmt.Errorf("save the access key id in the system keychain: %w", err)
@@ -438,6 +470,7 @@ func SaveS3Credentials(name, accessKeyID, secret string) error {
 	}
 	if secret != "" {
 		if err := keyringSet(modelkey.Service, SecretAccount(name), secret); err != nil {
+			Restore(name, before)
 			return fmt.Errorf("save the secret access key in the system keychain: %w", err)
 		}
 	}

@@ -434,3 +434,43 @@ func TestTheRunSaysWhatItPutInEachBucket(t *testing.T) {
 		t.Errorf("a bucket's file is not listed in a body:\n%s", got)
 	}
 }
+
+func TestABucketsSecretIsNeverAWebhooksSigningSecret(t *testing.T) {
+	destinationsEnv(t)
+	t.Setenv("S3_KEY_ID", "AKIAPLANTEDKEYID0123")
+	t.Setenv("S3_SECRET", "PLANTEDsecretACCESSkey/0123456789")
+	if _, _, err := runCLI(t, nil, "destinations", "add", "x", "--bucket", "my-reports", "--region", "eu-west-1", "--access-key-id-env", "S3_KEY_ID", "--secret-env", "S3_SECRET"); err != nil {
+		t.Fatal(err)
+	}
+	// The same name pointed at a webhook, with no secret given, is refused: it
+	// would sign that receiver's bodies with the person's secret access key.
+	_, _, err := runCLI(t, nil, "destinations", "add", "x", "--url", "https://hooks.example.com/hook")
+	wantClassified(t, err, engine.ExitUsage)
+	if s, _ := destination.Load(); len(s.Destinations) != 1 || s.Destinations[0].Kind != destination.KindS3 {
+		t.Errorf("a refused change was saved: %+v", s.Destinations)
+	}
+	// And a webhook saved over a bucket, given its own secret, keeps no key id.
+	t.Setenv("HOOK_SECRET", "whsec_PLANTEDfromTHEenvironment")
+	if _, _, err := runCLI(t, nil, "destinations", "add", "x", "--url", "https://hooks.example.com/hook", "--secret-env", "HOOK_SECRET"); err != nil {
+		t.Fatal(err)
+	}
+	if destination.HasAccessKey("x") {
+		t.Error("a webhook kept a bucket's key id")
+	}
+	if s, _, _ := destination.Secrets("x"); s != "whsec_PLANTEDfromTHEenvironment" {
+		t.Errorf("secret %q", s)
+	}
+	// A webhook saved as a bucket with only a key id is refused: the webhook's
+	// secret is not a secret access key.
+	_, _, err = runCLI(t, nil, "destinations", "add", "x", "--bucket", "my-reports", "--region", "eu-west-1", "--access-key-id-env", "S3_KEY_ID")
+	wantClassified(t, err, engine.ExitUsage)
+}
+
+func TestAPathTheStepWillNotNameReachesTheTerminalQuoted(t *testing.T) {
+	if got := plainText("reports/a.md"); got != "reports/a.md" {
+		t.Errorf("plain: %q", got)
+	}
+	if got := plainText("reports/a\x1b]0;pwned\x07.md"); strings.ContainsAny(got, "\x1b\x07") {
+		t.Errorf("controls: %q", got)
+	}
+}
