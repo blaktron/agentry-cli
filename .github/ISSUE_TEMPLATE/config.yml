@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/blaktron/agentry-cli/blob/dev/SECURITY.md
+    about: Never in a public issue. SECURITY.md has the address and what to include.
+  - name: Using the CLI
+    url: https://docs.secureagentry.net/runner/
+    about: Every command, the runner, the operator policy and exit codes.
