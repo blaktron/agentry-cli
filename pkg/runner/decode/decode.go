@@ -232,6 +232,9 @@ type Result struct {
 	// ExecutablesOnly says the decode checked only the executables
 	// (Options.ExecutablesOnly).
 	ExecutablesOnly bool
+	// KeepMembers says the decode was asked to copy out members'
+	// originals (Options.KeepMembers).
+	KeepMembers bool
 }
 
 // Options are what a decode is asked beyond its inputs: which top-level
@@ -244,6 +247,10 @@ type Options struct {
 	// ExecutablesOnly checks only the executables among every file, and
 	// asks Hybrid Analysis about those alone.
 	ExecutablesOnly bool
+	// KeepMembers has the decode copy out each archive member it read, as
+	// it was in its archive, for a caller that keeps every document as
+	// given (the built-ins' Stage).
+	KeepMembers bool
 }
 
 // LookUp asks Hybrid Analysis about each file of a risky type, archive members
@@ -352,6 +359,9 @@ func RunWith(ctx context.Context, d dockerx.Client, img Image, in, out string, l
 	if opt.ExecutablesOnly {
 		argv = append(argv, "--executables-only")
 	}
+	if opt.KeepMembers {
+		argv = append(argv, "--keep-members")
+	}
 	mounts := []dockerx.Mount{
 		{Source: in, Target: "/in", ReadOnly: true, Relabel: true},
 		{Source: out, Target: "/out", Relabel: true},
@@ -414,6 +424,7 @@ func CheckRecorded(img Image, in, out string, opt Options, stdout []byte) (*Resu
 	if err != nil {
 		return nil, err
 	}
+	digests := map[string]string{}
 	if img.Signatures.Held() {
 		rec, err := firstScanRecord(stdout)
 		if err != nil {
@@ -422,8 +433,72 @@ func CheckRecorded(img Image, in, out string, opt Options, stdout []byte) (*Resu
 		if err := res.applyScan(rec); err != nil {
 			return nil, err
 		}
+		for _, f := range rec.Files {
+			digests[f.Path] = f.SHA256
+		}
+	} else {
+		// With no signatures there is no record to vouch for the bytes: a
+		// kept member is held to the report's own digest, which guards
+		// against a copy that went wrong and not against a decoder a file
+		// exploited, the same trust as the decoded texts.
+		for _, f := range res.Report.Files {
+			digests[f.Path] = f.SHA256
+		}
+	}
+	if err := res.holdOriginals(digests); err != nil {
+		return nil, err
 	}
 	return res, nil
+}
+
+// holdOriginals keeps a member's copied-out original only when its bytes
+// are the ones the check read: their SHA-256 must be the digest stated for
+// the member (the scan record's, stated before any decoder ran, when the
+// decode was given signatures). A copy that is not, or a member found, is
+// not kept, and the member is not kept as given.
+func (r *Result) holdOriginals(digests map[string]string) error {
+	var root *os.Root
+	for i := range r.Report.Files {
+		f := &r.Report.Files[i]
+		if f.Original == "" {
+			continue
+		}
+		if f.Check == runnerdecode.CheckFound || f.Outcome == runnerdecode.OutcomeRefused {
+			f.Original = ""
+			continue
+		}
+		if root == nil {
+			var err error
+			if root, err = os.OpenRoot(r.Out); err != nil {
+				return err
+			}
+			defer func() { _ = root.Close() }()
+		}
+		want := digests[f.Path]
+		got, err := sha256Within(root, f.Original, MaxTextBytes)
+		if err != nil || want == "" || got != want {
+			f.Original = ""
+		}
+	}
+	return nil
+}
+
+// sha256Within is the SHA-256 of a regular file under root within limit.
+func sha256Within(root *os.Root, rel string, limit int64) (string, error) {
+	fi, err := plainpath.File(root, rel)
+	if err != nil || fi.Size() > limit {
+		return "", fmt.Errorf("%s is not a regular file within %d bytes", rel, limit)
+	}
+	in, err := root.Open(filepath.FromSlash(rel))
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = in.Close() }()
+	h := sha256.New()
+	if _, err := io.Copy(h, io.LimitReader(in, limit+1)); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // maxScanRecordBytes bounds what the host reads of the decode container's
@@ -548,7 +623,7 @@ func (r *Result) applyScan(rec runnerdecode.ScanRecord) error {
 // refuseFound makes a file the check found refused and unread: no text, no
 // view, no tool and no other reason.
 func refuseFound(f *runnerdecode.File) {
-	f.Outcome, f.Why, f.Reason = runnerdecode.OutcomeRefused, runnerdecode.WhyFound, ""
+	f.Outcome, f.Why, f.Reason, f.Original = runnerdecode.OutcomeRefused, runnerdecode.WhyFound, "", ""
 	f.Tool, f.Output, f.Bytes = "", "", 0
 	f.Markdown, f.MarkdownBy, f.MarkdownBytes = "", "", 0
 }
@@ -575,7 +650,7 @@ func CheckWith(img Image, in, out string, opt Options) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Result{Report: rep, Image: img, In: in, Out: out, Sources: opt.Sources, ExecutablesOnly: opt.ExecutablesOnly}, nil
+	return &Result{Report: rep, Image: img, In: in, Out: out, Sources: opt.Sources, ExecutablesOnly: opt.ExecutablesOnly, KeepMembers: opt.KeepMembers}, nil
 }
 
 // checkReport reads the report the container wrote and holds it to what
@@ -645,7 +720,7 @@ func checkReport(in, out string, checked bool, opt Options) (runnerdecode.Report
 				return rep, fmt.Errorf("%s names more than %d archive members, past the decode's cap", runnerdecode.ReportFile, limit)
 			}
 		}
-		if err := checkFile(f, byPath, inRoot, outRoot); err != nil {
+		if err := checkFile(f, byPath, inRoot, outRoot, opt); err != nil {
 			return rep, fmt.Errorf("%s: %w", runnerdecode.ReportFile, err)
 		}
 		if err := checkIdentity(&rep.Files[i], inRoot); err != nil {
@@ -681,7 +756,7 @@ func checkReport(in, out string, checked bool, opt Options) (runnerdecode.Report
 // there, a regular file; a member names an archive the report says was
 // unpacked, under that archive's path, no deeper than archives nest; and any
 // text is at exactly <path>.txt, a regular file within the cap.
-func checkFile(f runnerdecode.File, byPath map[string]runnerdecode.File, inRoot, outRoot *os.Root) error {
+func checkFile(f runnerdecode.File, byPath map[string]runnerdecode.File, inRoot, outRoot *os.Root, opt Options) error {
 	if f.In == "" {
 		fi, err := inRoot.Lstat(filepath.FromSlash(f.Path))
 		if err != nil {
@@ -716,6 +791,9 @@ func checkFile(f runnerdecode.File, byPath map[string]runnerdecode.File, inRoot,
 	if err := checkMarkdown(f, outRoot); err != nil {
 		return err
 	}
+	if err := checkOriginal(f, outRoot, opt); err != nil {
+		return err
+	}
 	if !f.HasText() {
 		if f.Output != "" {
 			return fmt.Errorf("%q has no text but names an output", f.Path)
@@ -728,6 +806,27 @@ func checkFile(f runnerdecode.File, byPath map[string]runnerdecode.File, inRoot,
 	ti, err := plainpath.File(outRoot, f.Output)
 	if err != nil || ti.Size() > MaxTextBytes {
 		return fmt.Errorf("the text of %q is not a regular file within %d bytes", f.Path, MaxTextBytes)
+	}
+	return nil
+}
+
+// checkOriginal holds a member's kept original to its rule: only a decode
+// asked to keep members has one, only for a member read as text or
+// decoded, at exactly originals/<path>, a regular file within the
+// document cap. Whose bytes it holds is holdOriginals' to check.
+func checkOriginal(f runnerdecode.File, outRoot *os.Root, opt Options) error {
+	if f.Original == "" {
+		return nil
+	}
+	if !opt.KeepMembers || f.In == "" || (f.Outcome != runnerdecode.OutcomeText && f.Outcome != runnerdecode.OutcomeDecoded) {
+		return fmt.Errorf("%q names a kept original, which only a member read by a decode that keeps members has", f.Path)
+	}
+	if f.Original != runnerdecode.OriginalsDir+"/"+f.Path {
+		return fmt.Errorf("it names an original outside the output root: %q is not %q", f.Original, runnerdecode.OriginalsDir+"/"+f.Path)
+	}
+	fi, err := plainpath.File(outRoot, f.Original)
+	if err != nil || fi.Size() > MaxTextBytes {
+		return fmt.Errorf("the original of %q is not a regular file within %d bytes", f.Path, MaxTextBytes)
 	}
 	return nil
 }
