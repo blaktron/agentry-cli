@@ -19,8 +19,12 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/deliver"
+	"github.com/blaktron/agentry-cli/pkg/runner/destination"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
+	"github.com/blaktron/agentry-cli/pkg/runner/gateway"
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
+	"github.com/blaktron/agentry-cli/runnerimage"
 )
 
 // deliverConfig is config.yaml's deliver block.
@@ -57,8 +61,25 @@ func chooseDeliverFolder(flagValue string, cfg cliConfig) (string, error) {
 	return filepath.Clean(dir), nil
 }
 
-// deliverySummary is what a run says on stderr about the copies it made.
+// deliverySummary is what a run says on stderr about the copies and sends it
+// made.
 func deliverySummary(ds []receipt.Delivery) []string {
+	if len(ds) == 0 {
+		return nil
+	}
+	var folder, hooks []receipt.Delivery
+	for _, d := range ds {
+		if d.Kind == receipt.DeliveryKindWebhook {
+			hooks = append(hooks, d)
+		} else {
+			folder = append(folder, d)
+		}
+	}
+	return append(folderSummary(folder), destinationSummary(hooks)...)
+}
+
+// folderSummary is the lines about the copies made to a folder.
+func folderSummary(ds []receipt.Delivery) []string {
 	if len(ds) == 0 {
 		return nil
 	}
@@ -91,6 +112,48 @@ func deliverySummary(ds []receipt.Delivery) []string {
 	return out
 }
 
+// destinationSummary is the lines about what was sent to each destination, in
+// the order the destinations were first named.
+func destinationSummary(ds []receipt.Delivery) []string {
+	var order []string
+	byName := map[string][]receipt.Delivery{}
+	for _, d := range ds {
+		if _, ok := byName[d.Destination]; !ok {
+			order = append(order, d.Destination)
+		}
+		byName[d.Destination] = append(byName[d.Destination], d)
+	}
+	var out []string
+	for _, name := range order {
+		sent, left := 0, map[string]int{}
+		result := false
+		for _, d := range byName[name] {
+			switch {
+			case d.Status == receipt.DeliveryDelivered && d.Object == "result":
+				result = true
+			case d.Status == receipt.DeliveryDelivered:
+				sent++
+			default:
+				left[d.Error]++
+			}
+		}
+		switch {
+		case sent > 0:
+			out = append(out, fmt.Sprintf("destination %s: %d %s sent", name, sent, plural(sent, "file", "files")))
+		case result:
+			out = append(out, fmt.Sprintf("destination %s: the result sent", name))
+		}
+		for _, reason := range slices.Sorted(maps.Keys(left)) {
+			if reason == receipt.DeliveryErrTooLarge {
+				out = append(out, fmt.Sprintf("destination %s: %d %s listed without content (over the %d MiB body cap)", name, left[reason], plural(left[reason], "file", "files"), engine.MaxWebhookBody>>20))
+				continue
+			}
+			out = append(out, fmt.Sprintf("destination %s: %d not sent (%s); the run itself is unaffected, and receipts/%s says which; agentry deliver RUN-FOLDER --destination %s tries again", name, left[reason], reason, deliver.LedgerFile, name))
+		}
+	}
+	return out
+}
+
 func plural(n int, one, many string) string {
 	if n == 1 {
 		return one
@@ -105,65 +168,121 @@ func printDeliverySummary(w io.Writer, env *receipt.Envelope) {
 }
 
 func newDeliverCmd() *cobra.Command {
-	var to string
+	var (
+		to           string
+		destinations []string
+	)
 	cmd := &cobra.Command{
 		Use:   "deliver RUN-FOLDER",
-		Short: "Copy a finished run's deliverables to a folder",
-		Long: "Copy the deliverables of a run you already made, from its output folder (the one the run\n" +
-			"printed, ./agentry-out/<namespace>-<name>-<run id> by default), to --to FOLDER, or to\n" +
-			"deliver.folder in the config when --to is not given. The run's result.json lists what the\n" +
-			"run was for; each file is copied only after its SHA-256 matches that listing, to\n" +
-			"FOLDER/<QuickAgent>/<date time> <title or run id>/, with a file name made safe for any system\n" +
-			"and ' (2)' after a name that is taken. Nothing is moved, rewritten or deleted: the run folder\n" +
-			"is left as it is, apart from the lines added to its receipts/deliveries.ndjson.\n\n" +
-			"A run that failed lists no deliverables. Exit 1 when any file could not be copied.",
-		Example: "  agentry deliver ./agentry-out/acme-weekly-3f9a1c2e --to ~/Documents/Agentry",
-		Args:    cobra.ExactArgs(1),
+		Short: "Copy a finished run's deliverables to a folder, or send them to a destination",
+		Long: "Deliver a run you already made, from its output folder (the one the run printed,\n" +
+			"./agentry-out/<namespace>-<name>-<run id> by default). The run's result.json lists what the run was for.\n\n" +
+			"With --to FOLDER (or deliver.folder in the config when neither --to nor --destination is given) each file is\n" +
+			"copied only after its SHA-256 matches that listing, to FOLDER/<QuickAgent>/<date time> <title or run id>/, with a\n" +
+			"file name made safe for any system and ' (2)' after a name that is taken.\n\n" +
+			"With --destination NAME (repeatable) the run's result and deliverables are sent again to that saved destination,\n" +
+			"which is how a delivery that failed is retried: the same step as a run's, in a container that reaches the\n" +
+			"destination's host alone. See agentry destinations.\n\n" +
+			"Nothing is moved, rewritten or deleted: the run folder is left as it is, apart from the lines added to its\n" +
+			"receipts/deliveries.ndjson. A run that failed delivers nothing. Exit 1 when any file could not be delivered.",
+		Example: "  agentry deliver ./agentry-out/acme-weekly-3f9a1c2e --to ~/Documents/Agentry\n" +
+			"  agentry deliver ./agentry-out/acme-weekly-3f9a1c2e --destination n8n",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, cerr := loadCLIConfig()
-			if cerr != nil {
-				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "agentry: warning: %v; deliver.folder is not read\n", cerr)
+			var all []receipt.Delivery
+			var firstErr error
+			root := ""
+			if len(destinations) == 0 || to != "" {
+				cfg, cerr := loadCLIConfig()
+				if cerr != nil {
+					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "agentry: warning: %v; deliver.folder is not read\n", cerr)
+				}
+				var err error
+				if root, err = chooseDeliverFolder(to, cfg); err != nil {
+					return err
+				}
+				if root == "" {
+					return engine.Classify(engine.ExitUsage, errors.New("name where to deliver: --to FOLDER, --destination NAME, or deliver.folder in the config"))
+				}
 			}
-			root, err := chooseDeliverFolder(to, cfg)
+			dests, err := destination.Resolve(destinations)
 			if err != nil {
-				return err
+				return engine.Classify(engine.ExitUsage, err)
 			}
-			if root == "" {
-				return engine.Classify(engine.ExitUsage, errors.New("name the folder to copy to: --to FOLDER, or deliver.folder in the config"))
+			if root != "" {
+				ds, err := deliver.Redeliver(args[0], deliver.FolderOptions{Root: root})
+				if err != nil && len(ds) == 0 {
+					return engine.Classify(engine.ExitCLI, err)
+				}
+				all, firstErr = append(all, ds...), err
 			}
-			ds, err := deliver.Redeliver(args[0], deliver.FolderOptions{Root: root})
-			if err != nil && len(ds) == 0 {
-				return engine.Classify(engine.ExitCLI, err)
+			if len(dests) > 0 {
+				ds, err := redeliverToDestinations(cmd, args[0], dests)
+				if err != nil && len(ds) == 0 {
+					return engine.Classify(engine.ExitCLI, err)
+				}
+				all, firstErr = append(all, ds...), errors.Join(firstErr, err)
 			}
 			out := cmd.OutOrStdout()
 			if flags.jsonOut {
-				if jerr := emitJSON(out, map[string]any{"deliveries": ds}); jerr != nil {
+				if jerr := emitJSON(out, map[string]any{"deliveries": all}); jerr != nil {
 					return engine.Classify(engine.ExitCLI, jerr)
 				}
 			} else {
-				for _, d := range ds {
-					if d.Status == receipt.DeliveryDelivered {
+				for _, d := range all {
+					switch {
+					case d.Status == receipt.DeliveryDelivered && d.Kind == receipt.DeliveryKindFolder:
 						_, _ = fmt.Fprintf(out, "copied %s\n", d.Object)
-						continue
+					case d.Status == receipt.DeliveryDelivered:
+						_, _ = fmt.Fprintf(out, "sent %s to %s\n", d.Object, d.Destination)
+					case d.Kind == receipt.DeliveryKindFolder:
+						_, _ = fmt.Fprintf(out, "not copied (%s: %s) sha256:%s\n", d.Status, d.Error, d.SHA256)
+					default:
+						_, _ = fmt.Fprintf(out, "not sent to %s (%s: %s) %s\n", d.Destination, d.Status, d.Error, d.Object)
 					}
-					_, _ = fmt.Fprintf(out, "not copied (%s: %s) sha256:%s\n", d.Status, d.Error, d.SHA256)
 				}
 			}
-			if err != nil {
-				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "agentry: %v\n", err)
+			if firstErr != nil {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "agentry: %v\n", firstErr)
 			}
 			bad := 0
-			for _, d := range ds {
+			for _, d := range all {
 				if d.Status != receipt.DeliveryDelivered {
 					bad++
 				}
 			}
 			if bad > 0 {
-				return engine.Classify(engine.ExitCLI, fmt.Errorf("%d of %d %s could not be copied", bad, len(ds), plural(len(ds), "file", "files")))
+				return engine.Classify(engine.ExitCLI, fmt.Errorf("%d of %d %s could not be delivered", bad, len(all), plural(len(all), "file", "files")))
 			}
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&to, "to", "", "the folder to copy to (default: deliver.folder in the config)")
+	cmd.Flags().StringVar(&to, "to", "", "the folder to copy to (default: deliver.folder in the config, unless --destination is given)")
+	cmd.Flags().StringArrayVar(&destinations, "destination", nil, "send to this saved destination (repeatable)")
 	return cmd
+}
+
+// redeliverToDestinations sends a finished run's folder to the destinations
+// through the delivery step, building the runner image first when this machine
+// has none.
+func redeliverToDestinations(cmd *cobra.Command, runDir string, dests []destination.Resolved) ([]receipt.Delivery, error) {
+	pol, err := filesPolicy("")
+	if err != nil {
+		return nil, err
+	}
+	home, err := policy.Home()
+	if err != nil {
+		return nil, engine.Classify(engine.ExitPolicy, err)
+	}
+	docker := newDockerClient()
+	if err := docker.Available(cmd.Context()); err != nil {
+		return nil, engine.Classify(engine.ExitGateway, err)
+	}
+	runnerTag := pol.RunnerImageTag(runnerimage.ContentVersion())
+	if err := gateway.EnsureRunnerImage(cmd.Context(), docker, pol, runnerTag, homeImageDir(home), cmd.ErrOrStderr()); err != nil {
+		return nil, engine.Classify(engine.ExitGateway, err)
+	}
+	return engine.Redeliver(cmd.Context(), docker, engine.RedeliverParams{
+		RunDir: runDir, Destinations: dests, Policy: pol, RunnerImage: runnerTag, RunRoot: home, Stderr: cmd.ErrOrStderr(),
+	})
 }

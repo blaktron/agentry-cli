@@ -60,6 +60,13 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, pol *policy.Policy,
 		}
 	}
 
+	return EnsureRunnerImage(ctx, d, pol, runnerTag, imageCtxDir, logw)
+}
+
+// EnsureRunnerImage builds the local runner image from the embedded context
+// when it is missing, and does nothing else: no daemon check, no pull. A step
+// that needs only the runner's own binary (a later delivery) calls it alone.
+func EnsureRunnerImage(ctx context.Context, d dockerx.Client, pol *policy.Policy, runnerTag, imageCtxDir string, logw io.Writer) error {
 	ok, err := d.ImageExists(ctx, runnerTag)
 	if err != nil {
 		return err

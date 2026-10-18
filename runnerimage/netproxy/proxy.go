@@ -57,6 +57,14 @@ type Proxy struct {
 	// the address it checked, so a second answer cannot slip in between.
 	// An input source's fetch step runs behind such a proxy.
 	PublicOnly bool
+	// NetworkOK dials a permitted host at a public address or at one the
+	// person's own network may hold (netaddr.Network: private, shared and
+	// loopback space too, link-local never), under the same rule as
+	// PublicOnly otherwise: the name is resolved here, every address it
+	// resolves to must qualify, and the address checked is the one dialled.
+	// A delivery to a destination saved with "On my network" runs behind such
+	// a proxy. It excludes PublicOnly.
+	NetworkOK bool
 	// Scope, where set, makes this a browse proxy (browse.go):
 	// CONNECT and plain http are judged by the scope,
 	// every name is resolved here and only the address checked is
@@ -113,7 +121,7 @@ func (p *Proxy) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		// Plaintext proxying only toward an http model endpoint the
 		// policy names; anything else is refused as before.
-		if r.URL.IsAbs() && r.URL.Scheme == "http" && len(p.PlainHTTP) > 0 && !p.PublicOnly {
+		if r.URL.IsAbs() && r.URL.Scheme == "http" && len(p.PlainHTTP) > 0 && !p.PublicOnly && !p.NetworkOK {
 			p.forwardPlain(w, r)
 			return
 		}
@@ -142,8 +150,8 @@ func (p *Proxy) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		p.logf("deny %s:%s", host, port)
 		http.Error(w, fmt.Sprintf("forbidden: %s:%s is not in the egress allowlist", host, port), http.StatusForbidden)
 		return
-	case p.PublicOnly:
-		ip, err := p.publicAddress(r.Context(), host)
+	case p.PublicOnly || p.NetworkOK:
+		ip, err := p.checkedAddress(r.Context(), host)
 		if err != nil {
 			p.logf("deny %s:%s (%v)", host, port, err)
 			http.Error(w, fmt.Sprintf("forbidden: %s: %v", host, err), http.StatusForbidden)
@@ -338,12 +346,17 @@ type Resolver interface {
 	LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr, error)
 }
 
-// publicAddress resolves host and answers its first address, refusing the
-// host when any address is not public.
-func (p *Proxy) publicAddress(ctx context.Context, host string) (net.IP, error) {
+// checkedAddress resolves host and answers its first address, refusing the
+// host when any address fails the proxy's rule: public for PublicOnly, public
+// or the person's own network for NetworkOK.
+func (p *Proxy) checkedAddress(ctx context.Context, host string) (net.IP, error) {
+	ok, kind := Public, "public"
+	if p.NetworkOK {
+		ok, kind = Network, "public or private-network"
+	}
 	if ip := net.ParseIP(host); ip != nil {
-		if !Public(ip) {
-			return nil, fmt.Errorf("%s is not a public address", ip)
+		if !ok(ip) {
+			return nil, fmt.Errorf("%s is not a %s address", ip, kind)
 		}
 		return ip, nil
 	}
@@ -361,8 +374,8 @@ func (p *Proxy) publicAddress(ctx context.Context, host string) (net.IP, error) 
 		return nil, fmt.Errorf("it resolves to no address")
 	}
 	for _, a := range addrs {
-		if !Public(a.IP) {
-			return nil, fmt.Errorf("it resolves to %s, which is not a public address", a.IP)
+		if !ok(a.IP) {
+			return nil, fmt.Errorf("it resolves to %s, which is not a %s address", a.IP, kind)
 		}
 	}
 	return addrs[0].IP, nil
@@ -373,6 +386,13 @@ func (p *Proxy) publicAddress(ctx context.Context, host string) (net.IP, error) 
 func Public(ip net.IP) bool {
 	a, ok := netip.AddrFromSlice(ip)
 	return ok && netaddr.Public(a)
+}
+
+// Network says whether an address is public or one a person's own network
+// may hold (netaddr.Network).
+func Network(ip net.IP) bool {
+	a, ok := netip.AddrFromSlice(ip)
+	return ok && netaddr.Network(a)
 }
 
 // plainTarget is true for a CONNECT to a plain-http model endpoint the

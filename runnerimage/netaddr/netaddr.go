@@ -23,7 +23,7 @@ var blocked = func() []netip.Prefix {
 		"198.51.100.0/24", "203.0.113.0/24", "224.0.0.0/4", "240.0.0.0/4",
 		// Azure's wireserver and metadata host sits in public space.
 		"168.63.129.16/32",
-		"::/128", "::1/128", "64:ff9b::/96", "64:ff9b:1::/48", "100::/64", "2001::/32", "2001:db8::/32",
+		"::/128", "::1/128", "::/96", "::ffff:0:0:0/96", "64:ff9b::/96", "64:ff9b:1::/48", "100::/64", "2001::/32", "2001:db8::/32",
 		"2002::/16", "fc00::/7", "fe80::/10", "fec0::/10", "ff00::/8",
 	} {
 		out = append(out, netip.MustParsePrefix(p))
@@ -45,3 +45,31 @@ func Public(a netip.Addr) bool {
 	}
 	return true
 }
+
+// Network says whether a is an address a person may have named as their own
+// network: a public one, or one in private space (10/8, 172.16/12, 192.168/16,
+// fc00::/7), shared space (100.64/10, where a tailnet's addresses live) or
+// loopback. It is wider than Public by exactly those ranges. Link-local space
+// stays out (169.254/16 and fe80::/10, where cloud metadata answers), as does
+// everything else Public refuses (unspecified, multicast, documentation,
+// reserved, transition ranges that embed another address, and Azure's
+// wireserver).
+func Network(a netip.Addr) bool {
+	a = a.Unmap()
+	if Public(a) {
+		return true
+	}
+	if !a.IsValid() {
+		return false
+	}
+	if cloudMetadataV6.Contains(a) {
+		return false
+	}
+	return a.IsLoopback() || a.IsPrivate() || sharedSpace.Contains(a)
+}
+
+// cloudMetadataV6 is AWS's IPv6 metadata range, which sits inside the unique
+// local space Network otherwise admits.
+var cloudMetadataV6 = netip.MustParsePrefix("fd00:ec2::/32")
+
+var sharedSpace = netip.MustParsePrefix("100.64.0.0/10")
