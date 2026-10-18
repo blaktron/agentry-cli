@@ -169,6 +169,7 @@ func (p PostStep) Run(ctx context.Context, env *receipt.Envelope, runErr error) 
 	d, env = p.repairAndCheck(ctx, d, env, repairSpent)
 	d.noteExecProblems()
 	d.notePDFProblems()
+	d.noteBrowserBudgetProblems()
 	d.noteServerProblems()
 	return d, env, nil
 }
@@ -418,6 +419,9 @@ func brokeARule(first, second *Draft) bool {
 	if len(pdfProblems(first.Instructions)) == 0 && len(pdfProblems(second.Instructions)) > 0 {
 		return true
 	}
+	if len(browserBudgetProblems(first.Manifest, first.Instructions)) == 0 && len(browserBudgetProblems(second.Manifest, second.Instructions)) > 0 {
+		return true
+	}
 	return len(first.serverProblems) == 0 && len(second.serverProblems) > 0
 }
 
@@ -427,7 +431,8 @@ func (d *Draft) withinCap() bool { return len(d.Instructions) <= MaxInstructionB
 // rulesReport is what the rules said of a draft, one line each, in their
 // own words: validate's report on its package, and the Drafter's cap on its
 // instructions, its rule on exec (execProblems), its rule on PDFs
-// (pdfProblems) and its rule on declared servers' runtimes (checkServers),
+// (pdfProblems), its rules on a browser (browserServerProblems,
+// browserBudgetProblems) and its rule on declared servers' runtimes (checkServers),
 // which validate does not hold. refused is false for a draft
 // both pass, or one whose check could not run for a reason of this
 // computer's rather than the draft's.
@@ -446,6 +451,10 @@ func rulesReport(d *Draft) (lines []string, refused bool) {
 		refused = true
 	}
 	if probs := browserServerProblems(d.Manifest); len(probs) > 0 {
+		lines = append(lines, probs...)
+		refused = true
+	}
+	if probs := browserBudgetProblems(d.Manifest, d.Instructions); len(probs) > 0 {
 		lines = append(lines, probs...)
 		refused = true
 	}
