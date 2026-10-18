@@ -418,7 +418,7 @@ func (r *inputReview) review(ctx context.Context, all []reviewText, added bool) 
 		for i, w := range unread {
 			said[i] = strings.TrimPrefix(w, "it ")
 		}
-		unreadAt := map[int][]string{}
+		unreadAt := make(map[int][]string, len(unread)) // no questions: it was not read
 		for i := range unread {
 			unreadAt[i] = nil
 		}

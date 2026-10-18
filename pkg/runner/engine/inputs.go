@@ -199,25 +199,6 @@ func malwareRefused(res *decode.Result) []receipt.RefusedInput {
 	return out
 }
 
-// refusedInputs is what an envelope names of the inputs err's refusal is
-// for. An entry whose path carries a value the run masks is left out and
-// counted, since a path is shown as it is or not at all.
-func refusedInputs(r *redactor, err error) ([]receipt.RefusedInput, int) {
-	list, more := receipt.RefusedInputsOf(err)
-	out := list[:0:0]
-	for _, in := range list {
-		if r.String(in.Path) != in.Path {
-			more++
-			continue
-		}
-		out = append(out, in)
-	}
-	if len(out) == 0 {
-		out = nil
-	}
-	return out, more
-}
-
 // hasGivenInputs says whether the person gave the run anything: the
 // intake answers the engine writes there are not a reason to decode.
 func hasGivenInputs(dir string) (bool, error) {

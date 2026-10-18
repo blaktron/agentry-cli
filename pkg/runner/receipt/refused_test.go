@@ -24,7 +24,7 @@ func TestARefusedInputIsHeldToItsGrammar(t *testing.T) {
 		{Path: "/etc/passwd", By: RefusedByClamAV},
 		{Path: "a//b", By: RefusedByClamAV},
 		{Path: "line\nbreak", By: RefusedByClamAV},
-		{Path: "rlo‮txt.exe", By: RefusedByClamAV},
+		{Path: "rlo\u202etxt.exe", By: RefusedByClamAV},
 		{Path: strings.Repeat("a", 1025), By: RefusedByClamAV},
 		{Path: "", By: RefusedByClamAV},
 	}
@@ -36,8 +36,10 @@ func TestARefusedInputIsHeldToItsGrammar(t *testing.T) {
 		{Path: "tool.exe", By: RefusedByHybridAnalysis, Verdict: "malicious", ThreatScore: 100},
 		{Path: "score.exe", By: RefusedByHybridAnalysis, Verdict: "malicious"},
 	}
-	if !reflect.DeepEqual(got, want) || more != 2 {
-		t.Fatalf("got %+v and %d more, want %+v and 2 more", got, more, want)
+	// Past the five: letter.docx and notes.txt; failing the grammars:
+	// maybe.exe, x.txt and the seven malformed paths.
+	if !reflect.DeepEqual(got, want) || more != 11 {
+		t.Fatalf("got %+v and %d more, want %+v and 11 more", got, more, want)
 	}
 	got, _ = CleanRefusedInputs(in[6:8])
 	if !reflect.DeepEqual(got, []RefusedInput{{Path: "letter.docx", By: RefusedByAIReview, Flagged: []string{"injection", "off_task"}}, {Path: "notes.txt", By: RefusedByAIReview}}) {

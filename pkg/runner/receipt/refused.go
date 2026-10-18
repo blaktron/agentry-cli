@@ -7,6 +7,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	runnerdecode "github.com/blaktron/agentry-cli/runnerimage/decode"
 )
 
 // RefusedInput is one input a run was refused for, in typed fields: the
@@ -46,9 +48,6 @@ const MaxRefusedInputs = 5
 const maxRefusedPath = 1024
 
 var (
-	// signatureRE is ClamAV's signature grammar, as the decode holds the
-	// names it reports to it.
-	signatureRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$`)
 	// reviewQuestionRE is an AI Review question's word.
 	reviewQuestionRE = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
 )
@@ -61,7 +60,7 @@ func (in RefusedInput) clean() (RefusedInput, bool) {
 	out := RefusedInput{Path: in.Path, By: in.By}
 	switch in.By {
 	case RefusedByClamAV:
-		if signatureRE.MatchString(in.Signature) {
+		if runnerdecode.ValidSignature(in.Signature) {
 			out.Signature = in.Signature
 		}
 	case RefusedByHybridAnalysis:
@@ -136,13 +135,19 @@ func RefusedInputsOf(err error) (inputs []RefusedInput, more int) {
 	return CleanRefusedInputs(re.Inputs)
 }
 
-// CleanRefusedInputs holds a list to the grammars, drops what fails them or
-// repeats an entry, keeps the first MaxRefusedInputs and counts the rest.
+// CleanRefusedInputs holds a list to the grammars, keeps the first
+// MaxRefusedInputs entries that pass them and counts the rest, an entry
+// that fails them included, so a refusal never reads as naming every file
+// it was for. A repeated entry is named once and not counted.
 func CleanRefusedInputs(in []RefusedInput) (out []RefusedInput, more int) {
 	seen := map[[2]string]bool{}
 	for _, i := range in {
 		c, ok := i.clean()
-		if !ok || seen[[2]string{c.Path, c.By}] {
+		if !ok {
+			more++
+			continue
+		}
+		if seen[[2]string{c.Path, c.By}] {
 			continue
 		}
 		seen[[2]string{c.Path, c.By}] = true

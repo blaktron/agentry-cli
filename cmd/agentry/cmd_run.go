@@ -994,7 +994,7 @@ func printFailure(ctx context.Context, cmd *cobra.Command, p *runProgress, err e
 		code = ce.Code
 	}
 	msg, reason := err.Error(), receipt.ReasonOf(err)
-	refused, more := receipt.RefusedInputsOf(err)
+	refused, more := namedInError(msg)(receipt.RefusedInputsOf(err))
 	if ctx.Err() != nil {
 		code, msg, reason, refused, more = engine.ExitCLI, "interrupted", nil, nil, 0
 	}
@@ -1087,6 +1087,24 @@ func printEnvelope(cmd *cobra.Command, env *receipt.Envelope, format string) {
 	}
 	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "reports and receipts: %s\n", env.OutDir)
 	printDeliverySummary(cmd.ErrOrStderr(), env)
+}
+
+// namedInError keeps the refused inputs the error's own text names, and
+// counts the rest. This envelope is built from an error the engine may
+// already have masked: an entry it shows must be one the printed error
+// shows too, so no value the run masks reaches it.
+func namedInError(msg string) func([]receipt.RefusedInput, int) ([]receipt.RefusedInput, int) {
+	return func(list []receipt.RefusedInput, more int) ([]receipt.RefusedInput, int) {
+		var out []receipt.RefusedInput
+		for _, in := range list {
+			if strings.Contains(msg, in.Path) {
+				out = append(out, in)
+			} else {
+				more++
+			}
+		}
+		return out, more
+	}
 }
 
 // runPlanConsent is what a run's consent gate would say, computed without
