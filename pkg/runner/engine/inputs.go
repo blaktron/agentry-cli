@@ -118,9 +118,9 @@ func (p Params) checkScope() checkScope {
 	return checkOff
 }
 
-// stripExec takes the execute bits off every regular file staged under
+// clearExecBits takes the execute bits off every regular file staged under
 // dir, so an input nobody meant to run cannot be run as it is.
-func stripExec(dir string) error {
+func clearExecBits(dir string) error {
 	return filepath.WalkDir(dir, func(p string, e os.DirEntry, err error) error {
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) && p == dir {
@@ -148,7 +148,7 @@ func stripExec(dir string) error {
 // decoder, which has decoded nothing when nothing was given, so a
 // session's first added file is decoded on its own.
 func decodeInputs(ctx context.Context, d dockerx.Client, p Params, rd *runDirs) (*inputsDecoder, error) {
-	if err := stripExec(rd.inputs); err != nil {
+	if err := clearExecBits(rd.inputs); err != nil {
 		return nil, Classify(ExitCLI, fmt.Errorf("stage the inputs with no execute bit: %w", err))
 	}
 	if p.Decoded != nil || p.TextInputs {
