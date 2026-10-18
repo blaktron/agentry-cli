@@ -151,3 +151,87 @@ func TestASourcesArchiveIsCheckedWhole(t *testing.T) {
 		}
 	}
 }
+
+// TestASourceFileIsJudgedByItsFirstBytesToo: a source file whose detected
+// type and name are not on the risky lists, but which opens as an OLE
+// container or a PDF, is checked as the host will hold it to be. An
+// Outlook message is an OLE container detected under a type of its own.
+func TestASourceFileIsJudgedByItsFirstBytesToo(t *testing.T) {
+	tools, _ := clamTools(t)
+	in, out := t.TempDir(), t.TempDir()
+	ole := []byte{0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0, 0, 0, 0}
+	write(t, in, "repo/testdata/message.msg", ole)
+	write(t, in, "repo/notes.txt", []byte("%PDF-1.7 a PDF under a text name"))
+	write(t, in, "repo/main.go", []byte("package main\n"))
+	rep, err := Decode(context.Background(), in, out, tools, Limits{ClamDB: "/clamav", Sources: []string{"repo"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]File{}
+	for _, f := range rep.Files {
+		got[f.Path] = f
+	}
+	for _, p := range []string{"repo/testdata/message.msg", "repo/notes.txt"} {
+		if got[p].Check != CheckClean || got[p].Unchecked != "" {
+			t.Errorf("%s: check %q (%q), want it checked", p, got[p].Check, got[p].Unchecked)
+		}
+	}
+	if got["repo/main.go"].Unchecked != UncheckedNotRisky {
+		t.Errorf("repo/main.go: unchecked %q, want %q", got["repo/main.go"].Unchecked, UncheckedNotRisky)
+	}
+}
+
+// TestBinaryMagic: the first bytes the decoder and the host both hold a
+// source file to.
+func TestBinaryMagic(t *testing.T) {
+	for _, c := range []struct {
+		head string
+		want bool
+	}{
+		{"MZ\x90\x00", true}, {"\x7fELF\x02", true}, {"%PDF-1.7", true}, {"\x00asm\x01", true},
+		{"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1", true}, {"\xca\xfe\xba\xbe", true}, {"\xcf\xfa\xed\xfe", true},
+		{"package main", false}, {"PK\x03\x04", false}, {"", false}, {"M", false},
+	} {
+		if got := BinaryMagic([]byte(c.head)); got != c.want {
+			t.Errorf("%q: %v, want %v", c.head, got, c.want)
+		}
+	}
+}
+
+// TestExecutablesOnlyChecksTheExecutablesAlone: a decode that checks
+// executables alone checks an upload's and a source's executables, by
+// type, name or first bytes, and archives whole; a PDF, an OLE container
+// and text are left unchecked as not executable.
+func TestExecutablesOnlyChecksTheExecutablesAlone(t *testing.T) {
+	tools, _ := clamTools(t)
+	in, out := t.TempDir(), t.TempDir()
+	for name, data := range map[string][]byte{
+		"tool.exe":           []byte("MZ X5O EICAR test"),
+		"report.pdf":         []byte("%PDF clean"),
+		"message.msg":        {0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1},
+		"notes.txt":          []byte("X5O EICAR in a text file"),
+		"repo/lib/libx.so.1": []byte("\x7fELF clean"),
+		"repo/bin/plain":     []byte("\x7fELF no extension"),
+		"repo/main.go":       []byte("package main\n"),
+	} {
+		write(t, in, name, data)
+	}
+	rep, err := Decode(context.Background(), in, out, tools, Limits{ClamDB: "/clamav", Sources: []string{"repo"}, ExecutablesOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]File{}
+	for _, f := range rep.Files {
+		got[f.Path] = f
+	}
+	for p, want := range map[string]Check{"tool.exe": CheckFound, "repo/lib/libx.so.1": CheckClean, "repo/bin/plain": CheckClean} {
+		if got[p].Check != want {
+			t.Errorf("%s: check %q (%q), want %q", p, got[p].Check, got[p].Unchecked, want)
+		}
+	}
+	for _, p := range []string{"report.pdf", "message.msg", "notes.txt", "repo/main.go"} {
+		if got[p].Check != CheckUnchecked || got[p].Unchecked != UncheckedNotExecutable {
+			t.Errorf("%s: check %q (%q), want it unchecked as not executable", p, got[p].Check, got[p].Unchecked)
+		}
+	}
+}

@@ -896,7 +896,7 @@ func TestNotRiskyIsASourcesWordAlone(t *testing.T) {
 	f := func(path, mime string) runnerdecode.File {
 		return runnerdecode.File{Path: path, MIME: mime, Outcome: runnerdecode.OutcomeText, Check: runnerdecode.CheckUnchecked, Unchecked: runnerdecode.UncheckedNotRisky}
 	}
-	if err := checkCheck(f("repo/main.go", "text/plain"), true, src); err != nil {
+	if err := checkCheck(f("repo/main.go", "text/plain"), true, Options{Sources: src}); err != nil {
 		t.Errorf("a source's text file: %v", err)
 	}
 	for name, file := range map[string]runnerdecode.File{
@@ -904,7 +904,7 @@ func TestNotRiskyIsASourcesWordAlone(t *testing.T) {
 		"a source's executable": f("repo/tool.exe", "application/x-dosexec"),
 		"a source's pdf":        f("repo/doc.pdf", "application/pdf"),
 	} {
-		if err := checkCheck(file, true, src); err == nil {
+		if err := checkCheck(file, true, Options{Sources: src}); err == nil {
 			t.Errorf("%s passed as not risky", name)
 		}
 	}
@@ -958,7 +958,53 @@ func TestANotRiskyClaimIsHeldToTheFilesOwnBytes(t *testing.T) {
 	}
 	archive := claim("repo/x.zip")
 	archive.Family = runnerdecode.FamilyArchive
-	if err := checkCheck(archive, true, []string{"repo"}); err == nil {
+	if err := checkCheck(archive, true, Options{Sources: []string{"repo"}}); err == nil {
 		t.Error("a source's archive passed as not risky")
+	}
+}
+
+// TestANotExecutableClaimIsHeldToItsRule: only a decode that checks
+// executables alone may leave a file unchecked as not executable, never
+// an archive or a file named as an executable, and never a file that
+// opens as one; a PDF or an OLE container may be left so.
+func TestANotExecutableClaimIsHeldToItsRule(t *testing.T) {
+	in := t.TempDir()
+	for name, body := range map[string]string{"a.txt": "\x7fELF\x02\x01", "b.txt": "MZ\x90\x00", "c.pdf": "%PDF-1.7", "d.msg": "\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1", "ok.txt": "plain text"} {
+		if err := os.WriteFile(filepath.Join(in, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	root, err := os.OpenRoot(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = root.Close() }()
+	claim := func(p string) runnerdecode.File {
+		return runnerdecode.File{Path: p, MIME: "text/plain", Check: runnerdecode.CheckUnchecked, Unchecked: runnerdecode.UncheckedNotExecutable}
+	}
+	for _, p := range []string{"a.txt", "b.txt"} {
+		if err := checkNotExecutable(claim(p), root); err == nil {
+			t.Errorf("%s: an executable passed as not executable", p)
+		}
+	}
+	for _, p := range []string{"c.pdf", "d.msg", "ok.txt"} {
+		if err := checkNotExecutable(claim(p), root); err != nil {
+			t.Errorf("%s: %v", p, err)
+		}
+	}
+	execOnly := Options{ExecutablesOnly: true}
+	if err := checkCheck(claim("ok.txt"), true, execOnly); err != nil {
+		t.Errorf("a text file in an executables-only decode: %v", err)
+	}
+	if err := checkCheck(claim("ok.txt"), true, Options{}); err == nil {
+		t.Error("a not-executable claim passed in a decode that checks every file")
+	}
+	if err := checkCheck(claim("tool.exe"), true, execOnly); err == nil {
+		t.Error("a file named as an executable passed as not executable")
+	}
+	archive := claim("x.zip")
+	archive.Family = runnerdecode.FamilyArchive
+	if err := checkCheck(archive, true, execOnly); err == nil {
+		t.Error("an archive passed as not executable")
 	}
 }

@@ -12,8 +12,8 @@ package toolsrv
 // A declared command may write the folder too, so what it
 // holds is not the server's: a command can plant a link there, or swap a
 // path for one while a call is under way. Every scratch tool therefore
-// works through an os.Root opened on the folder, which resolves each name
-// beneath it at the moment of use and never outside it, while the server,
+// works through a beneath.Dir opened on the folder, which resolves each
+// name beneath it at the moment of use and never outside it, while the server,
 // root and unconfined, would otherwise follow such a link into the output
 // folder or anywhere else (resolveUnder's check alone is a check before
 // use). The files are made world-writable (scratchFileMode,
@@ -32,6 +32,8 @@ import (
 	"path"
 	"strings"
 	"syscall"
+
+	"github.com/blaktron/agentry-cli/runnerimage/beneath"
 )
 
 const (
@@ -74,7 +76,7 @@ func scratchWriteSchema() map[string]any {
 
 // scratchPath checks a name the model gave a scratch tool, as resolveUnder
 // does for the other roots, and returns it cleaned and relative to the
-// folder; "" is refused unless empty is allowed. The os.Root the tool then
+// folder; "" is refused unless empty is allowed. The beneath.Dir the tool then
 // opens it through is what holds it beneath the folder.
 func (s *server) scratchPath(rel string) (string, error) {
 	if s.spec.ScratchDir == "" {
@@ -86,8 +88,8 @@ func (s *server) scratchPath(rel string) (string, error) {
 	return path.Clean(rel), nil
 }
 
-func (s *server) scratchRoot() (*os.Root, error) {
-	return os.OpenRoot(s.spec.ScratchDir)
+func (s *server) scratchRoot() (*beneath.Dir, error) {
+	return beneath.Open(s.spec.ScratchDir)
 }
 
 func (s *server) toolScratchRead(raw json.RawMessage) (string, bool) {
@@ -118,6 +120,7 @@ func (s *server) toolScratchRead(raw json.RawMessage) (string, bool) {
 		return "scratch_read: " + err.Error(), true
 	}
 	defer func() { _ = root.Close() }()
+	s.checked("scratch")
 	f, err := root.Open(rel)
 	if err != nil {
 		return "scratch_read: " + err.Error(), true
@@ -146,7 +149,7 @@ func (s *server) toolScratchRead(raw json.RawMessage) (string, bool) {
 
 // toolScratchSearch is search_inputs over the scratch folder: the same
 // matching, caps and answers, over every regular text file beneath the path
-// asked, each reached through the folder's os.Root and none by a link.
+// asked, each reached through the folder's beneath.Dir and none by a link.
 func (s *server) toolScratchSearch(raw json.RawMessage) (string, bool) {
 	var a struct {
 		Query      string `json:"query"`
@@ -172,6 +175,7 @@ func (s *server) toolScratchSearch(raw json.RawMessage) (string, bool) {
 		return "scratch_search: " + err.Error(), true
 	}
 	defer func() { _ = root.Close() }()
+	s.checked("scratch")
 	var m matches
 	err = fs.WalkDir(root.FS(), rel, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -203,7 +207,7 @@ func (s *server) toolScratchSearch(raw json.RawMessage) (string, bool) {
 }
 
 // readRootPrefix is readPrefix of a file beneath root.
-func readRootPrefix(root *os.Root, name string, limit int64) ([]byte, error) {
+func readRootPrefix(root *beneath.Dir, name string, limit int64) ([]byte, error) {
 	f, err := root.Open(name)
 	if err != nil {
 		return nil, err
@@ -242,6 +246,7 @@ func (s *server) toolScratchList(raw json.RawMessage) (string, bool) {
 		return "scratch_list: " + err.Error(), true
 	}
 	defer func() { _ = root.Close() }()
+	s.checked("scratch")
 	d, err := root.Open(rel)
 	if err != nil {
 		return "scratch_list: " + err.Error(), true
@@ -280,6 +285,7 @@ func (s *server) toolScratchWrite(raw json.RawMessage) (string, bool) {
 		return s.scratchFailed(err)
 	}
 	defer func() { _ = root.Close() }()
+	s.checked("scratch")
 	if err := mkdirAllIn(root, path.Dir(rel), scratchDirMode); err != nil {
 		return s.scratchFailed(err)
 	}
@@ -322,7 +328,7 @@ func (s *server) scratchFailed(err error) (string, bool) {
 
 // mkdirAllIn makes dir and its missing parents beneath root with mode,
 // past the umask, each through root so that none can be a link out.
-func mkdirAllIn(root *os.Root, dir string, mode os.FileMode) error {
+func mkdirAllIn(root *beneath.Dir, dir string, mode os.FileMode) error {
 	if dir == "." || dir == "" {
 		return nil
 	}

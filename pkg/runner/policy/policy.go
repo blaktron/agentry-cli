@@ -178,6 +178,18 @@ type Policy struct {
 	// $HYBRID_API_KEY from the environment, as a sandbox host hands the
 	// platform's; no key, no lookup, and the receipt says so.
 	HybridAnalysis HybridAnalysisKey `yaml:"hybridAnalysis,omitempty"`
+	// MalwareCheck turns on the malware check of a local run's inputs:
+	// ClamAV, and the Hybrid Analysis lookup when a key is set. Unset or
+	// false, a local run checks only the executables among its inputs, and
+	// only when the QuickAgent declares commands. A sandbox host's runs are
+	// always checked, whatever this says.
+	MalwareCheck *bool `yaml:"malwareCheck,omitempty"`
+}
+
+// MalwareCheckOn says whether the policy turns the whole malware check on
+// for this computer's runs (unset → off).
+func (p *Policy) MalwareCheckOn() bool {
+	return p != nil && p.MalwareCheck != nil && *p.MalwareCheck
 }
 
 // BrowserPolicy is the operator's say over a release's browser. Its own key
@@ -754,6 +766,7 @@ func Default() *Policy {
 		Budgets:      Budgets{TimeoutSeconds: 900, MaxTurns: 100},
 		Sessions:     Sessions{IdleTimeoutSeconds: 900, MaxWallSeconds: 7200, MaxUserTurns: 200},
 		Profiles:     Profiles{KeepByDefault: boolPtr(true)},
+		MalwareCheck: boolPtr(false),
 	}
 }
 
@@ -1380,12 +1393,24 @@ mcpRegistries:
 #   apiKeyEnv: TYPESAFE_API_KEY
 #   apiKeySource: env
 
+# The malware check of this computer's runs: ClamAV against the daily
+# signatures, and the Hybrid Analysis lookup below when a key is set.
+# false (the default): only the executables among a run's inputs are
+# checked, and only when the QuickAgent declares commands that could run
+# them. true: every upload and an input source's executable and binary
+# risky files are checked, as a hosted run's are. Either way a finding
+# refuses the run only when the QuickAgent declares commands; one that
+# runs none is given the flagged file as uploaded, never decoded, with no
+# execute bit, and the receipt names it.
+malwareCheck: false
+
 # hybridAnalysis:
 #   # A Hybrid Analysis (CrowdStrike) key, with which the risky files among
 #   # a run's inputs (executables, scripts, PDF, RTF, legacy and macro
 #   # Office, disk images, CHM, archive members included) are looked up by
-#   # their SHA-256 alone, never uploaded: a malicious verdict refuses the
-#   # run, a suspicious one is noted in the receipt. No key, no lookup. The
+#   # their SHA-256 alone, never uploaded, when the malware check above
+#   # checks them: a malicious verdict is a finding, a suspicious one is
+#   # noted in the receipt. No key, no lookup. The
 #   # key as for judge: the variable (default HYBRID_API_KEY), else, with
 #   # apiKeySource keyring, the OS keychain entry provider:hybrid-analysis.
 #   apiKeyEnv: HYBRID_API_KEY

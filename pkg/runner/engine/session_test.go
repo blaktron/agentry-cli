@@ -68,6 +68,9 @@ func sessionFixtureEdited(t *testing.T, edit func(*manifest.Manifest)) (Params, 
 	pol := policy.Default()
 	pol.Images.Runner = "agentry-runner:test"
 	pol.Exec.Packages = map[string]string{"echo": "busybox"} // the fixture declares exec: [echo]
+	// The malware check whole, as a sandbox host takes it (fixtureEdited).
+	on := true
+	pol.MalwareCheck = &on
 	pol.Sessions = policy.Sessions{IdleTimeoutSeconds: 3600, MaxWallSeconds: 3600, MaxUserTurns: 3}
 	planDir := filepath.Join(installDir, "plan", "interactive")
 	plan, err := compile.Compile(compile.Inputs{
@@ -237,7 +240,13 @@ func (h *fakeHarness) handler(_ context.Context, r dockerx.RunSpec, stdin io.Rea
 
 func startFixture(t *testing.T) (session.Session, *fakeHarness, Params, *dockerx.Fake) {
 	t.Helper()
-	p, f := sessionFixture(t)
+	return startFixtureEdited(t, nil)
+}
+
+// startFixtureEdited is startFixture with the manifest edited first.
+func startFixtureEdited(t *testing.T, edit func(*manifest.Manifest)) (session.Session, *fakeHarness, Params, *dockerx.Fake) {
+	t.Helper()
+	p, f := sessionFixtureEdited(t, edit)
 	happyFake(f)
 	h := &fakeHarness{}
 	f.Foreground["-agent"] = &dockerx.FakeForeground{Handler: h.handler}

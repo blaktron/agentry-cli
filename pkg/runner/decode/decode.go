@@ -228,6 +228,21 @@ type Result struct {
 	// Sources are the top-level folders that are input sources:
 	// their files are held to the source rule.
 	Sources []string
+	// ExecutablesOnly says the decode checked only the executables
+	// (Options.ExecutablesOnly).
+	ExecutablesOnly bool
+}
+
+// Options are what a decode is asked beyond its inputs: which top-level
+// folders are input sources, and whether only executables are checked for
+// malware.
+type Options struct {
+	// Sources are held to the source rule: their own file cap, and only
+	// their executable and binary risky files checked.
+	Sources []string
+	// ExecutablesOnly checks only the executables among every file, and
+	// asks Hybrid Analysis about those alone.
+	ExecutablesOnly bool
 }
 
 // LookUp asks Hybrid Analysis about each file of a risky type, archive members
@@ -264,8 +279,12 @@ func (r *Result) LookUp(ctx context.Context, c *hybrid.Client) {
 
 // risky says whether a file is looked up: an upload of a risky type,
 // or in an input source an executable or binary risky file alone,
-// which is the rule ClamAV followed there.
+// which is the rule ClamAV followed there; in a decode that checked only
+// executables, an executable alone.
 func (r *Result) risky(f runnerdecode.File) bool {
+	if r.ExecutablesOnly {
+		return runnerdecode.ExecutableRisky(f.MIME, f.Path)
+	}
 	if runnerdecode.InSource(f.Path, r.Sources) {
 		return runnerdecode.SourceRisky(f.MIME, f.Path)
 	}
@@ -314,6 +333,12 @@ func Run(ctx context.Context, d dockerx.Client, img Image, in, out string, lim p
 // against its own cap, and only its executable and binary risky files are
 // checked; the report is held to the same rule.
 func RunSources(ctx context.Context, d dockerx.Client, img Image, in, out string, lim policy.Limits, sources []string, stderr io.Writer) (*Result, error) {
+	return RunWith(ctx, d, img, in, out, lim, Options{Sources: sources}, stderr)
+}
+
+// RunWith is Run with its Options.
+func RunWith(ctx context.Context, d dockerx.Client, img Image, in, out string, lim policy.Limits, opt Options, stderr io.Writer) (*Result, error) {
+	sources := opt.Sources
 	suffix := make([]byte, 4)
 	if _, err := rand.Read(suffix); err != nil {
 		return nil, err
@@ -322,6 +347,9 @@ func RunSources(ctx context.Context, d dockerx.Client, img Image, in, out string
 	argv := []string{"decode", "--in", "/in", "--out", "/out", "--unpack", "/unpack"}
 	for _, s := range sources {
 		argv = append(argv, "--source", s)
+	}
+	if opt.ExecutablesOnly {
+		argv = append(argv, "--executables-only")
 	}
 	mounts := []dockerx.Mount{
 		{Source: in, Target: "/in", ReadOnly: true, Relabel: true},
@@ -372,7 +400,7 @@ func RunSources(ctx context.Context, d dockerx.Client, img Image, in, out string
 	if code != 0 {
 		return nil, fmt.Errorf("the decode container failed (exit %d): %s", code, strings.TrimSpace(tail(errOut.String(), 400)))
 	}
-	return CheckSources(img, in, out, sources)
+	return CheckWith(img, in, out, opt)
 }
 
 // clamMount is where the decode container reads the signatures.
@@ -387,11 +415,16 @@ func Check(img Image, in, out string) (*Result, error) {
 
 // CheckSources is Check for a decode over input sources (RunSources).
 func CheckSources(img Image, in, out string, sources []string) (*Result, error) {
-	rep, err := checkReport(in, out, img.Signatures.Held(), sources)
+	return CheckWith(img, in, out, Options{Sources: sources})
+}
+
+// CheckWith is Check for a decode run with these Options (RunWith).
+func CheckWith(img Image, in, out string, opt Options) (*Result, error) {
+	rep, err := checkReport(in, out, img.Signatures.Held(), opt)
 	if err != nil {
 		return nil, err
 	}
-	return &Result{Report: rep, Image: img, In: in, Out: out, Sources: sources}, nil
+	return &Result{Report: rep, Image: img, In: in, Out: out, Sources: opt.Sources, ExecutablesOnly: opt.ExecutablesOnly}, nil
 }
 
 // checkReport reads the report the container wrote and holds it to what
@@ -400,7 +433,8 @@ func CheckSources(img Image, in, out string, sources []string) (*Result, error) 
 // under a cap; and every entry must name a document that was staged, with
 // its text, when there is one, at exactly <path>.txt. checked says the
 // decode was given signatures: without them no file may claim to be checked.
-func checkReport(in, out string, checked bool, sources []string) (runnerdecode.Report, error) {
+func checkReport(in, out string, checked bool, opt Options) (runnerdecode.Report, error) {
+	sources := opt.Sources
 	var rep runnerdecode.Report
 	inRoot, err := os.OpenRoot(in)
 	if err != nil {
@@ -435,7 +469,7 @@ func checkReport(in, out string, checked bool, sources []string) (runnerdecode.R
 		if !knownFamilies[f.Family] || !knownTools[f.Tool] || !knownWhy[f.Why] {
 			return rep, fmt.Errorf("%s: %q has the unknown family %q, tool %q or reason %q", runnerdecode.ReportFile, f.Path, f.Family, f.Tool, f.Why)
 		}
-		if err := checkCheck(f, checked, sources); err != nil {
+		if err := checkCheck(f, checked, opt); err != nil {
 			return rep, fmt.Errorf("%s: %w", runnerdecode.ReportFile, err)
 		}
 		if err := checkRepository(f); err != nil {
@@ -467,6 +501,9 @@ func checkReport(in, out string, checked bool, sources []string) (runnerdecode.R
 			return rep, fmt.Errorf("%s: %w", runnerdecode.ReportFile, err)
 		}
 		if err := checkNotRisky(f, inRoot); err != nil {
+			return rep, fmt.Errorf("%s: %w", runnerdecode.ReportFile, err)
+		}
+		if err := checkNotExecutable(f, inRoot); err != nil {
 			return rep, fmt.Errorf("%s: %w", runnerdecode.ReportFile, err)
 		}
 		if f.In == "" {
@@ -620,7 +657,8 @@ func hashIn(root *os.Root, rel string) (string, error) {
 // (it is shown to the person and, for a session's file, can reach the model),
 // nothing checked when no signatures were given, every file read for the run
 // checked one way or another, and a file found never read.
-func checkCheck(f runnerdecode.File, checked bool, sources []string) error {
+func checkCheck(f runnerdecode.File, checked bool, opt Options) error {
+	sources := opt.Sources
 	switch f.Check {
 	case "":
 		if f.HasText() || f.Outcome == runnerdecode.OutcomeText || f.Outcome == runnerdecode.OutcomeUnpacked {
@@ -643,7 +681,13 @@ func checkCheck(f runnerdecode.File, checked bool, sources []string) error {
 	if f.Unchecked == runnerdecode.UncheckedNotRisky && (!runnerdecode.InSource(f.Path, sources) || f.Family == runnerdecode.FamilyArchive || runnerdecode.SourceRisky(f.MIME, f.Path)) {
 		return fmt.Errorf("%q says it was not checked as not risky, which the source rule does not allow", f.Path)
 	}
-	if !checked && f.Check == runnerdecode.CheckUnchecked && f.Unchecked != runnerdecode.UncheckedNoSignatures && f.Unchecked != runnerdecode.UncheckedNotRisky {
+	// Only a decode that checks executables alone may leave a file
+	// unchecked as not executable, and never an archive or a file whose
+	// type or name is an executable's.
+	if f.Unchecked == runnerdecode.UncheckedNotExecutable && (!opt.ExecutablesOnly || f.Family == runnerdecode.FamilyArchive || runnerdecode.ExecutableRisky(f.MIME, f.Path)) {
+		return fmt.Errorf("%q says it was not checked as not executable, which this decode's rule does not allow", f.Path)
+	}
+	if !checked && f.Check == runnerdecode.CheckUnchecked && f.Unchecked != runnerdecode.UncheckedNoSignatures && f.Unchecked != runnerdecode.UncheckedNotRisky && f.Unchecked != runnerdecode.UncheckedNotExecutable {
 		return fmt.Errorf("%q says ClamAV failed on it, but the decode was given no signatures", f.Path)
 	}
 	if f.Signature != "" && (f.Check != runnerdecode.CheckFound || !runnerdecode.ValidSignature(f.Signature)) {
@@ -675,25 +719,29 @@ func checkNotRisky(f runnerdecode.File, inRoot *os.Root) error {
 	defer func() { _ = file.Close() }()
 	head := make([]byte, 8)
 	n, _ := io.ReadFull(file, head)
-	if binaryMagic(head[:n]) {
+	if runnerdecode.BinaryMagic(head[:n]) {
 		return fmt.Errorf("%q says it was not checked as not risky, but it opens as an executable or binary risky file", f.Path)
 	}
 	return nil
 }
 
-// binaryMagic says whether a file's first bytes are an executable's,
-// a library's, Java's, WebAssembly's, an OLE container's or a PDF's.
-func binaryMagic(b []byte) bool {
-	for _, m := range [][]byte{
-		[]byte("MZ"), []byte("\x7fELF"), []byte("%PDF"), []byte("\x00asm"),
-		{0xfe, 0xed, 0xfa, 0xce}, {0xfe, 0xed, 0xfa, 0xcf}, {0xce, 0xfa, 0xed, 0xfe}, {0xcf, 0xfa, 0xed, 0xfe},
-		{0xca, 0xfe, 0xba, 0xbe}, {0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1},
-	} {
-		if bytes.HasPrefix(b, m) {
-			return true
-		}
+// checkNotExecutable holds a staged file the decode left unchecked as not
+// executable to its own first bytes, as checkNotRisky does a source's.
+func checkNotExecutable(f runnerdecode.File, inRoot *os.Root) error {
+	if f.Unchecked != runnerdecode.UncheckedNotExecutable || f.In != "" {
+		return nil
 	}
-	return false
+	file, err := inRoot.Open(filepath.FromSlash(f.Path))
+	if err != nil {
+		return fmt.Errorf("%q: %w", f.Path, err)
+	}
+	defer func() { _ = file.Close() }()
+	head := make([]byte, 8)
+	n, _ := io.ReadFull(file, head)
+	if runnerdecode.ExecutableMagic(head[:n]) {
+		return fmt.Errorf("%q says it was not checked as not executable, but it opens as an executable", f.Path)
+	}
+	return nil
 }
 
 // checkRepository holds the repository reason to its rule: only a file
@@ -752,6 +800,7 @@ var (
 	}
 	knownUnchecked = map[runnerdecode.Unchecked]bool{
 		runnerdecode.UncheckedNoSignatures: true, runnerdecode.UncheckedTooLarge: true, runnerdecode.UncheckedFailed: true, runnerdecode.UncheckedNotRisky: true,
+		runnerdecode.UncheckedNotExecutable: true,
 	}
 	knownWhy = func() map[runnerdecode.Why]bool {
 		m := map[runnerdecode.Why]bool{"": true}
@@ -890,6 +939,55 @@ func (r *Result) Found() []runnerdecode.File {
 	return out
 }
 
+// Flags is why each flagged file was flagged, by path, in the receipt's
+// words: ClamAV found a signature in it, or Hybrid Analysis's verdict on
+// it is malicious. Empty when none was.
+func (r *Result) Flags() map[string]string {
+	out := map[string]string{}
+	for _, f := range r.Report.Files {
+		if f.Check == runnerdecode.CheckFound {
+			sig := f.Signature
+			if sig == "" {
+				sig = "a signature"
+			}
+			out[f.Path] = "ClamAV found " + sig + " in it"
+			continue
+		}
+		if l, ok := r.Lookups[f.Path]; ok && l.Outcome == hybrid.Refused {
+			s := "Hybrid Analysis's verdict on it is malicious"
+			if l.ThreatScore > 0 {
+				s += fmt.Sprintf(" (threat score %d)", l.ThreatScore)
+			}
+			out[f.Path] = s
+		}
+	}
+	return out
+}
+
+// HandedOver is the receipt's sentence for flagged files a run that runs
+// no commands was given anyway: never decoded, as uploaded and with no
+// execute bit. Empty when none was flagged.
+func (r *Result) HandedOver() string {
+	flags := r.Flags()
+	if len(flags) == 0 {
+		return ""
+	}
+	paths := make([]string, 0, len(flags))
+	for p := range flags {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	parts := make([]string, 0, len(paths))
+	for i, p := range paths {
+		if i == refusalNames {
+			parts = append(parts, fmt.Sprintf("and %d more", len(paths)-refusalNames))
+			break
+		}
+		parts = append(parts, p+" ("+flags[p]+")")
+	}
+	return fmt.Sprintf("%d flagged %s handed to the agent anyway, since the QuickAgent runs no commands: never decoded, readable only as uploaded, with no execute bit: %s", len(paths), plural(len(paths), "file was", "files were"), strings.Join(parts, "; "))
+}
+
 // refusalNames is how many files a refusal names before "and N more"; the
 // receipt's counts carry the rest.
 const refusalNames = 5
@@ -959,7 +1057,10 @@ func (r *Result) Checks() string {
 		return line
 	}
 	lead := "each file read and each archive unpacked was checked"
-	if n := unchecked[runnerdecode.UncheckedNotRisky]; n > 0 {
+	if n := unchecked[runnerdecode.UncheckedNotExecutable]; n > 0 {
+		// The check is off on this computer, and the run runs commands.
+		lead = fmt.Sprintf("only the executables were checked, the malware check being off on this computer for all but the executables of a run that runs commands, and %d %s that %s not executable went unchecked; the rest were checked", n, plural(n, "file", "files"), plural(n, "is", "are"))
+	} else if n := unchecked[runnerdecode.UncheckedNotRisky]; n > 0 {
 		// An input source's files are checked by the source rule.
 		lead = fmt.Sprintf("each file read and each archive unpacked was checked, but for %d %s in an input source that %s not an executable or binary risky type (input sources check only those),", n, plural(n, "file", "files"), plural(n, "is", "are"))
 	}

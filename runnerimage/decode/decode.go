@@ -228,6 +228,10 @@ type Limits struct {
 	Sources []string
 	// SourceMaxFiles is each source's cap (default 20,000).
 	SourceMaxFiles int
+	// ExecutablesOnly checks only the executables among every file, an
+	// upload's and a source's alike (ExecutableRisky); the rest say so
+	// (UncheckedNotExecutable). An archive is still checked whole.
+	ExecutablesOnly bool
 }
 
 func (l Limits) withDefaults() Limits {
@@ -400,13 +404,18 @@ func (d *decoder) take(pool string) bool {
 }
 
 // target makes a file a target of the malware check: every upload, and in
-// an input source only an executable or binary risky file, the rest
-// saying why they were not checked.
+// an input source only an executable or binary risky file, by its type,
+// its name or its first bytes, the rest saying why they were not checked.
+// A decode that checks only executables checks those alone.
 func (d *decoder) target(idx int, src string) {
 	f := &d.files[idx]
 	// An archive is checked whole as before, so what it holds below the
 	// unpacking's depth and caps is not left unread by ClamAV.
-	if InSource(f.Path, d.lim.Sources) && f.Family != FamilyArchive && !SourceRisky(f.MIME, f.Path) {
+	if d.lim.ExecutablesOnly && f.Family != FamilyArchive && !ExecutableRisky(f.MIME, f.Path) && !opensExecutable(src) {
+		f.Check, f.Unchecked = CheckUnchecked, UncheckedNotExecutable
+		return
+	}
+	if InSource(f.Path, d.lim.Sources) && f.Family != FamilyArchive && !SourceRisky(f.MIME, f.Path) && !opensRisky(src) {
 		f.Check, f.Unchecked = CheckUnchecked, UncheckedNotRisky
 		return
 	}

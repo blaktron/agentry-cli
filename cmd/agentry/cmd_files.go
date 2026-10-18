@@ -44,7 +44,7 @@ func newFilesEnsureCmd() *cobra.Command {
 		Short: "Pull the files image and refresh the ClamAV signatures, so no run has to",
 		Long: "Pulls the files image the runner policy names (images.files, else the one this CLI pins), by digest,\n" +
 			"unless it is already on this machine, and prints its reference. A reference not pinned by digest is\n" +
-			"refused. It then refreshes the ClamAV signatures every input is checked against (images.clamavSignatures,\n" +
+			"refused. It then refreshes the ClamAV signatures the malware check reads (images.clamavSignatures,\n" +
 			"else this CLI's default) under the runner home when they were last fetched over a day ago, verifying\n" +
 			"their signature, and says on stderr which it holds; a refresh that fails is said, not an error, since a\n" +
 			"run uses the signatures it has. Nothing is built and no run starts. Without --policy, the policy file\n" +

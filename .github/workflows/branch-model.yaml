@@ -6,14 +6,22 @@
 #
 # It runs on pull_request_target, so the workflow file is always the default
 # branch's copy (dev's), whatever the pull request's base, and a pull request
-# cannot edit the check it is judged by. That is also why it may run on a
-# persistent self-hosted runner for a fork's pull request: it checks out
-# nothing, runs no code from the pull request, and its token has no
-# permissions. The branch names are chosen by whoever opens the pull
-# request, so the script reads them from the environment and never has them
-# interpolated into its text. `edited` is among the types because changing a
-# pull request's base branch is an edit, and the check must judge the new
-# base.
+# cannot edit the check it is judged by. A pull_request_target run starts for
+# a fork's pull request too. The job checks out nothing, runs no code from the
+# pull request, and its token has no permissions, so what it does is safe
+# wherever it runs; the choice of runner is what keeps a stranger from using
+# the self-hosted runners. While the repository is private only people with
+# access to it can open a pull request, and the job runs on a self-hosted
+# runner, which starts whether or not the account has GitHub-hosted minutes
+# for private repositories. Once the repository is public the same
+# expression selects a GitHub-hosted runner, so no pull request from outside
+# starts a job on a self-hosted runner and nothing needs editing at that
+# point. scripts/ci/workflow_guard.py accepts this exact expression, and no
+# other form, for a pull_request_target job without a fork guard. The branch
+# names are chosen by whoever opens the pull request, so the script reads
+# them from the environment and never has them interpolated into its text.
+# `edited` is among the types because changing a pull request's base branch
+# is an edit, and the check must judge the new base.
 name: branch-model
 
 on:
@@ -28,7 +36,7 @@ concurrency:
 
 jobs:
   branch-model:
-    runs-on: [self-hosted, linux, x64]
+    runs-on: ${{ github.event.repository.private && fromJSON('["self-hosted","linux","x64"]') || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
       - name: main takes pull requests only from dev
