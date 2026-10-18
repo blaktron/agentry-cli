@@ -15,6 +15,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -393,22 +394,172 @@ func RunWith(ctx context.Context, d dockerx.Client, img Image, in, out string, l
 	defer cancel()
 	defer func() { _ = d.RemoveForce(context.WithoutCancel(ctx), name) }()
 	var errOut bytes.Buffer
-	code, err := d.RunForeground(ctx, r, nil, io.Discard, io.MultiWriter(stderr, &errOut))
+	scanOut := &cappedBuffer{max: maxScanRecordBytes}
+	code, err := d.RunForeground(ctx, r, nil, scanOut, io.MultiWriter(stderr, &errOut))
 	if err != nil {
 		return nil, fmt.Errorf("the decode container: %w", err)
 	}
 	if code != 0 {
 		return nil, fmt.Errorf("the decode container failed (exit %d): %s", code, strings.TrimSpace(tail(errOut.String(), 400)))
 	}
-	return CheckWith(img, in, out, opt)
+	return CheckRecorded(img, in, out, opt, scanOut.Bytes())
+}
+
+// CheckRecorded is CheckWith held to the scan record the decode wrote to
+// its stdout before any decoder ran (firstScanRecord, applyScan): what Run
+// does after the container, and what a caller that decodes some other way
+// does with that stdout. A decode given signatures must have stated one.
+func CheckRecorded(img Image, in, out string, opt Options, stdout []byte) (*Result, error) {
+	res, err := CheckWith(img, in, out, opt)
+	if err != nil {
+		return nil, err
+	}
+	if img.Signatures.Held() {
+		rec, err := firstScanRecord(stdout)
+		if err != nil {
+			return nil, err
+		}
+		if err := res.applyScan(rec); err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+// maxScanRecordBytes bounds what the host reads of the decode container's
+// stdout: a scan record that names every file of an input source as found.
+const maxScanRecordBytes = 32 << 20
+
+// cappedBuffer keeps the first max bytes written to it and drops the rest.
+type cappedBuffer struct {
+	buf bytes.Buffer
+	max int
+}
+
+func (c *cappedBuffer) Write(p []byte) (int, error) {
+	if room := c.max - c.buf.Len(); room > 0 {
+		c.buf.Write(p[:min(len(p), room)])
+	}
+	return len(p), nil
+}
+
+func (c *cappedBuffer) Bytes() []byte { return c.buf.Bytes() }
+
+// firstScanRecord is the scan record the runner wrote to its stdout once
+// clamscan had answered and before any decoder started: the first line, and
+// only the first. Whatever followed it was written, if by anyone, after a
+// decoder read a document. A decode given signatures that stated no record
+// before it decoded is refused, as is a record outside the check's
+// vocabulary. The record cannot vouch for what ran before the scan: the
+// detectors and the unpackers (ScanRecord says which).
+func firstScanRecord(stdout []byte) (runnerdecode.ScanRecord, error) {
+	var rec runnerdecode.ScanRecord
+	line, _, ok := bytes.Cut(stdout, []byte("\n"))
+	if !ok {
+		return rec, errors.New("the decode stated no malware check before it decoded")
+	}
+	dec := json.NewDecoder(bytes.NewReader(line))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&rec); err != nil {
+		return rec, fmt.Errorf("the decode's malware check: %w", err)
+	}
+	if rec.Schema != runnerdecode.ScanSchema || !rec.Checked {
+		return rec, fmt.Errorf("the decode's malware check is not a check with signatures (schema %q)", rec.Schema)
+	}
+	seen := map[string]bool{}
+	for _, f := range rec.Files {
+		if !relPath(f.Path) || seen[f.Path] {
+			return rec, fmt.Errorf("the decode's malware check names %q, which is not a document once", f.Path)
+		}
+		seen[f.Path] = true
+		switch f.Check {
+		case runnerdecode.CheckClean, runnerdecode.CheckFound:
+			if f.Unchecked != "" {
+				return rec, fmt.Errorf("the decode's malware check says %q of %q with the reason %q", f.Check, f.Path, f.Unchecked)
+			}
+		case runnerdecode.CheckUnchecked:
+			if !knownUnchecked[f.Unchecked] {
+				return rec, fmt.Errorf("the decode's malware check leaves %q unchecked for %q", f.Path, f.Unchecked)
+			}
+		default:
+			return rec, fmt.Errorf("the decode's malware check has the unknown check %q for %q", f.Check, f.Path)
+		}
+	}
+	return rec, nil
+}
+
+// applyScan holds the report to the scan record, which was stated before
+// any decoder ran: every check the report makes must be one the record
+// made, and each file's check, signature and reason are the record's. A
+// file the record found is found whatever the report says, and refused and
+// never read unless it is an archive, whose members answer for themselves;
+// a found file the report left out is added so. A report may be stricter
+// than the record (a file it found that the record passed stays found),
+// never laxer. So a decoder a file exploited cannot turn another file's
+// finding, or its "not checked", into a clean check.
+func (r *Result) applyScan(rec runnerdecode.ScanRecord) error {
+	byPath := make(map[string]runnerdecode.ScanFile, len(rec.Files))
+	for _, f := range rec.Files {
+		byPath[f.Path] = f
+	}
+	inReport := map[string]bool{}
+	for i := range r.Report.Files {
+		f := &r.Report.Files[i]
+		inReport[f.Path] = true
+		sc, ok := byPath[f.Path]
+		if !ok {
+			if f.Check != "" {
+				return fmt.Errorf("%s names a malware check of %q the scan never made", runnerdecode.ReportFile, f.Path)
+			}
+			continue
+		}
+		if f.Check == runnerdecode.CheckFound && sc.Check != runnerdecode.CheckFound {
+			continue
+		}
+		f.Check, f.Unchecked, f.Signature = sc.Check, sc.Unchecked, ""
+		if sc.Check == runnerdecode.CheckFound {
+			if runnerdecode.ValidSignature(sc.Signature) {
+				f.Signature = sc.Signature
+			}
+			if f.Family != runnerdecode.FamilyArchive {
+				refuseFound(f)
+			}
+		}
+	}
+	added := false
+	for _, sc := range rec.Files {
+		if sc.Check != runnerdecode.CheckFound || inReport[sc.Path] {
+			continue
+		}
+		f := runnerdecode.File{Path: sc.Path, Family: runnerdecode.FamilyUnknown, Check: runnerdecode.CheckFound}
+		if runnerdecode.ValidSignature(sc.Signature) {
+			f.Signature = sc.Signature
+		}
+		refuseFound(&f)
+		r.Report.Files = append(r.Report.Files, f)
+		added = true
+	}
+	if added {
+		sort.Slice(r.Report.Files, func(i, j int) bool { return r.Report.Files[i].Path < r.Report.Files[j].Path })
+	}
+	return nil
+}
+
+// refuseFound makes a file the check found refused and unread: no text, no
+// view, no tool and no other reason.
+func refuseFound(f *runnerdecode.File) {
+	f.Outcome, f.Why, f.Reason = runnerdecode.OutcomeRefused, runnerdecode.WhyFound, ""
+	f.Tool, f.Output, f.Bytes = "", "", 0
+	f.Markdown, f.MarkdownBy, f.MarkdownBytes = "", "", 0
 }
 
 // clamMount is where the decode container reads the signatures.
 const clamMount = "/clamav"
 
 // Check reads the report a decode wrote to out and holds it to what was
-// staged under in (checkReport): Run's last step, and the one a caller
-// that decodes some other way must take before it reads a byte of out.
+// staged under in (checkReport). It does not hold the report's malware
+// checks to the scan record the decode stated first: a decode given
+// signatures is read through CheckRecorded, which Run uses.
 func Check(img Image, in, out string) (*Result, error) {
 	return CheckSources(img, in, out, nil)
 }

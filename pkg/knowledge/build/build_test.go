@@ -55,6 +55,15 @@ func mountOf(r dockerx.RunSpec, target string) string {
 	return ""
 }
 
+// printScan is the scan record the decode container prints before it
+// decodes, of the report playDecode wrote.
+func printScan(r dockerx.RunSpec) string {
+	var rep runnerdecode.Report
+	b, _ := os.ReadFile(filepath.Join(mountOf(r, "/out"), runnerdecode.ReportFile))
+	_ = json.Unmarshal(b, &rep)
+	return string(runnerdecode.RecordOf(rep.Files, mountOf(r, "/clamav") != ""))
+}
+
 // playDecode is the decode container: every .pdf becomes its text, every
 // .md passes as text, a .com is malware ClamAV finds, anything else is
 // undecodable. Each file is clean when the signatures are mounted, and
@@ -119,7 +128,7 @@ func newFixture(t *testing.T, agent *dockerx.FakeForeground) *fixture {
 	runnerTag := pol.RunnerImageTag(runnerimage.ContentVersion())
 	f := &dockerx.Fake{
 		Foreground: map[string]*dockerx.FakeForeground{
-			"agentry-decode-": {Before: playDecode(t)},
+			"agentry-decode-": {Before: playDecode(t), Print: printScan},
 			"-probe":          {ExitCode: 0},
 			"-agent":          agent,
 		},

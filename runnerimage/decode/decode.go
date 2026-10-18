@@ -217,6 +217,9 @@ type Limits struct {
 	// MaxUnpackedBytes is what every archive in the decode may unpack in
 	// all, counted as each member streams (default 512 MiB).
 	MaxUnpackedBytes int64
+	// Record, when set, takes the scan record (ScanRecord) once clamscan
+	// has answered and before any decoder starts: the runner's stdout.
+	Record io.Writer
 	// ClamDB is the directory of ClamAV signatures the malware check reads
 	// (the host's bundle, mounted read-only); empty, nothing is checked and
 	// every file says so.
@@ -313,6 +316,11 @@ func Decode(ctx context.Context, in, out string, tools Tools, lim Limits) (Repor
 		return rep, fmt.Errorf("decode: walk %s: %w", in, err)
 	}
 	d.scan(ctx)
+	if lim.Record != nil {
+		if err := d.record(lim.Record); err != nil {
+			return rep, fmt.Errorf("decode: write the scan record: %w", err)
+		}
+	}
 	for _, p := range d.pending {
 		d.decodePending(ctx, p)
 	}

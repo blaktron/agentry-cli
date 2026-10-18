@@ -17,6 +17,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"os/exec"
@@ -212,6 +213,57 @@ func (d *decoder) scan(ctx context.Context) {
 			set(t, CheckUnchecked, "", UncheckedFailed)
 		}
 	}
+}
+
+// ScanSchema names the scan record's shape.
+const ScanSchema = "agentry.decode.scan/v2"
+
+// ScanRecord is the malware check's result as the runner states it the
+// moment clamscan has answered and before any decoder starts: whether
+// signatures were mounted, and every file's check. The report written at the
+// end is the work of the same process that then ran the decoders, so a
+// decoder a file exploited could rewrite another file's check there; the
+// host takes the first record the runner wrote instead, and holds the
+// report to it.
+//
+// What the record cannot vouch for: detection (file, Tika's detector) and
+// the unpackers (the zip and tar readers, bsdtar, bsdcat) read each file
+// before the scan, as the same uid, so a file that exploits one of them
+// could reach the runner's stdout through /proc and write a record first.
+type ScanRecord struct {
+	Schema  string     `json:"schema"`
+	Checked bool       `json:"checked"`
+	Files   []ScanFile `json:"files"`
+}
+
+// ScanFile is one file's check as the record states it: its report path,
+// the check, the signature's name when it was found and the name is within
+// the grammar, and why it was not checked.
+type ScanFile struct {
+	Path      string    `json:"path"`
+	Check     Check     `json:"check"`
+	Signature string    `json:"signature,omitempty"`
+	Unchecked Unchecked `json:"unchecked,omitempty"`
+}
+
+// RecordOf is the scan record of files as the check left them: checked
+// says signatures were mounted. It is one JSON line, as the runner writes
+// it.
+func RecordOf(files []File, checked bool) []byte {
+	rec := ScanRecord{Schema: ScanSchema, Checked: checked, Files: []ScanFile{}}
+	for _, f := range files {
+		if f.Check != "" {
+			rec.Files = append(rec.Files, ScanFile{Path: f.Path, Check: f.Check, Signature: f.Signature, Unchecked: f.Unchecked})
+		}
+	}
+	b, _ := json.Marshal(rec) // strings and a bool: it always marshals
+	return append(b, '\n')
+}
+
+// record writes the scan record to w.
+func (d *decoder) record(w io.Writer) error {
+	_, err := w.Write(RecordOf(d.files, d.lim.ClamDB != ""))
+	return err
 }
 
 // splitClamLine splits one line of clamscan's answer, "<path>: <result>",

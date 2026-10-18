@@ -86,10 +86,11 @@ func init() {
 		if err != nil {
 			return nil, err
 		}
-		if _, err := runnerdecode.Decode(ctx, in, out, tools, runnerdecode.Limits{ClamDB: img.Signatures.Dir, Sources: opt.Sources, ExecutablesOnly: opt.ExecutablesOnly}); err != nil {
+		var record bytes.Buffer
+		if _, err := runnerdecode.Decode(ctx, in, out, tools, runnerdecode.Limits{ClamDB: img.Signatures.Dir, Sources: opt.Sources, ExecutablesOnly: opt.ExecutablesOnly, Record: &record}); err != nil {
 			return nil, err
 		}
-		return decode.CheckWith(img, in, out, opt)
+		return decode.CheckRecorded(img, in, out, opt, record.Bytes())
 	}
 }
 
