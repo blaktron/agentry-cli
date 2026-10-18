@@ -1,6 +1,9 @@
 package decode
 
 import (
+	"bytes"
+	"io"
+	"os"
 	"path"
 	"strings"
 )
@@ -95,4 +98,39 @@ func InSource(rel string, sources []string) bool {
 		}
 	}
 	return false
+}
+
+// riskyMagic are the first bytes of an executable, a library, Java or
+// WebAssembly code, an OLE container or a PDF.
+var riskyMagic = [][]byte{
+	[]byte("MZ"), []byte("\x7fELF"), []byte("%PDF"), []byte("\x00asm"),
+	{0xfe, 0xed, 0xfa, 0xce}, {0xfe, 0xed, 0xfa, 0xcf}, {0xce, 0xfa, 0xed, 0xfe}, {0xcf, 0xfa, 0xed, 0xfe},
+	{0xca, 0xfe, 0xba, 0xbe}, {0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1},
+}
+
+// BinaryMagic says whether a file's first bytes are an executable's, a
+// library's, Java's, WebAssembly's, an OLE container's or a PDF's. A
+// source file that opens so is checked whatever its detected type: an
+// Outlook message is an OLE container under a type of its own, and the
+// host holds a file left unchecked to these same bytes.
+func BinaryMagic(b []byte) bool {
+	for _, m := range riskyMagic {
+		if bytes.HasPrefix(b, m) {
+			return true
+		}
+	}
+	return false
+}
+
+// opensRisky reads a file's first bytes for BinaryMagic. A file that
+// cannot be read is taken as risky, so it is checked.
+func opensRisky(src string) bool {
+	f, err := os.Open(src)
+	if err != nil {
+		return true
+	}
+	defer func() { _ = f.Close() }()
+	head := make([]byte, 8)
+	n, _ := io.ReadFull(f, head)
+	return BinaryMagic(head[:n])
 }

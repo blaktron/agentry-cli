@@ -675,25 +675,10 @@ func checkNotRisky(f runnerdecode.File, inRoot *os.Root) error {
 	defer func() { _ = file.Close() }()
 	head := make([]byte, 8)
 	n, _ := io.ReadFull(file, head)
-	if binaryMagic(head[:n]) {
+	if runnerdecode.BinaryMagic(head[:n]) {
 		return fmt.Errorf("%q says it was not checked as not risky, but it opens as an executable or binary risky file", f.Path)
 	}
 	return nil
-}
-
-// binaryMagic says whether a file's first bytes are an executable's,
-// a library's, Java's, WebAssembly's, an OLE container's or a PDF's.
-func binaryMagic(b []byte) bool {
-	for _, m := range [][]byte{
-		[]byte("MZ"), []byte("\x7fELF"), []byte("%PDF"), []byte("\x00asm"),
-		{0xfe, 0xed, 0xfa, 0xce}, {0xfe, 0xed, 0xfa, 0xcf}, {0xce, 0xfa, 0xed, 0xfe}, {0xcf, 0xfa, 0xed, 0xfe},
-		{0xca, 0xfe, 0xba, 0xbe}, {0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1},
-	} {
-		if bytes.HasPrefix(b, m) {
-			return true
-		}
-	}
-	return false
 }
 
 // checkRepository holds the repository reason to its rule: only a file
