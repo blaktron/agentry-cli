@@ -64,3 +64,10 @@ paths = [
   '''^runnerimage/send/send_test\.go$''',
 ]
 regexes = ['''whsec_PLANTEDsigningSECRET0123456789''']
+
+[[allowlists]]
+description = "the fake signing secret of the destinations file's test, which proves the CLI takes a credential's variable out of its environment once the file is read"
+condition = "AND"
+regexTarget = "match"
+paths = ['''^cmd/agentry/cmd_destinations_file_test\.go$''']
+regexes = ['''whsec_ENVsecret0123456789''']
