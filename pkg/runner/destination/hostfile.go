@@ -139,6 +139,9 @@ func FromFile(path string, getenv func(string) string) (dests []Resolved, envNam
 		}
 		envNames = append(envNames, e.SecretEnv)
 		if d.Kind == KindS3 {
+			if e.AccessKeyIDEnv == e.SecretEnv {
+				return nil, nil, fmt.Errorf("destination %q: accessKeyIdEnv and secretEnv name the same variable", d.Name)
+			}
 			if !envNameRE.MatchString(e.AccessKeyIDEnv) {
 				return nil, nil, fmt.Errorf("destination %q: accessKeyIdEnv names a variable that does not begin with AGENTRY_DEST_", d.Name)
 			}

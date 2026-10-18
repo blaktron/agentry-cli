@@ -221,6 +221,7 @@ func TestFromFileRefusesABucketAHostMustNotDeliverTo(t *testing.T) {
 		}
 	}
 	for name, body := range map[string]string{
+		"one variable for both halves":       `{"destinations":[{"name":"b","kind":"s3","bucket":"my-reports","region":"eu-west-1","secretEnv":"AGENTRY_DEST_SECRET_0","accessKeyIdEnv":"AGENTRY_DEST_SECRET_0"}]}`,
 		"no region at Amazon":                `{"destinations":[{"name":"b","kind":"s3","bucket":"my-reports","secretEnv":"AGENTRY_DEST_SECRET_0","accessKeyIdEnv":"AGENTRY_DEST_KEY_0"}]}`,
 		"no key id variable":                 `{"destinations":[{"name":"b","kind":"s3","bucket":"my-reports","region":"eu-west-1","secretEnv":"AGENTRY_DEST_SECRET_0"}]}`,
 		"a key id variable that is not ours": `{"destinations":[{"name":"b","kind":"s3","bucket":"my-reports","region":"eu-west-1","secretEnv":"AGENTRY_DEST_SECRET_0","accessKeyIdEnv":"HOME"}]}`,
