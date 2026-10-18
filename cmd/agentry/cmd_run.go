@@ -112,6 +112,7 @@ type runOpts struct {
 	// destinations is --destination: the saved destinations the run sends its
 	// result and deliverables to.
 	destinations       []string
+	noDestination      bool
 	reportDesign       string
 	keepProfile        string // "": unset; "true"/"false": the flag decided
 	reconfigureProfile bool
@@ -183,6 +184,9 @@ func newRunCmd() *cobra.Command {
 			if opts.listAdapters {
 				return printAdapters(cmd)
 			}
+			if opts.noDestination && len(opts.destinations) > 0 {
+				return engine.Classify(engine.ExitUsage, errors.New("--no-destination and --destination exclude each other"))
+			}
 			ref := ""
 			if len(args) == 1 {
 				ref = args[0]
@@ -226,6 +230,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&opts.reportTheme, "report-theme", "", "the built-in report theme this run's PDFs take: "+strings.Join(toolsrv.BuiltinThemes(), " | ")+" (default: your account's report design when signed in, else report.design or report.theme in the config, else plain)")
 	f.StringVar(&opts.reportDesign, "report-design", "", "the report design this run's PDFs take: a FILE holding a report design (theme document version 2); instead of --report-theme")
 	f.StringVar(&opts.deliverTo, "deliver-to", "", "copy the run's deliverables, the files it was for, to FOLDER/<QuickAgent>/<date time> <title>/ once it succeeds (default: deliver.folder in the config, else nowhere); the output folder is left as it is")
+	f.BoolVar(&opts.noDestination, "no-destination", false, "send the run's result to no destination, not even the QuickAgent's default set (a schedule's fire passes it when the schedule names none)")
 	f.StringArrayVar(&opts.destinations, "destination", nil, "send the run's result and deliverables to this saved destination once it succeeds (repeatable; default: the QuickAgent's default set, else nowhere); see agentry destinations")
 	f.StringVar(&opts.voiceFile, "voice-file", "", "attach the VOICE.md in FILE as the run's Writing Voice (for a driver such as a sandbox host)")
 	f.StringArrayVar(&opts.intake, "intake", nil, "answer an intake question non-interactively: id=value (repeatable; unanswered questions are asked on a terminal); a repository question takes its https address, with #branch, #tag or #commit for another ref; a url question takes one file's https address")
@@ -541,7 +546,9 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	// too: a name that is not saved, or has no signing secret, refuses here,
 	// and a hosted run's host takes none.
 	var destinations []destination.Resolved
-	if opts.reviewInputs != "" {
+	if opts.noDestination {
+		// Delivers nowhere but the run folder (and --deliver-to).
+	} else if opts.reviewInputs != "" {
 		if len(opts.destinations) > 0 {
 			return engine.Classify(engine.ExitUsage, errors.New("--destination is for a run on this computer: a hosted run's host delivers nowhere"))
 		}

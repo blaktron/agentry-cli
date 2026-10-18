@@ -442,6 +442,11 @@ func scheduleFromFlags(name, out string, spec runSpecFlags, when schedule.Recurr
 	if err := writableDir(outAbs); err != nil {
 		errs = append(errs, fmt.Errorf("--out %s: %w", out, err))
 	}
+	if sc.Run.DeliverTo != "" {
+		if err := writableDir(sc.Run.DeliverTo); err != nil {
+			errs = append(errs, fmt.Errorf("--deliver-to %s: %w", spec.deliverTo, err))
+		}
+	}
 	if sc.Run.Input != "" {
 		if _, err := os.Stat(sc.Run.Input); err != nil {
 			errs = append(errs, fmt.Errorf("--input: %w", err))
@@ -589,8 +594,13 @@ func baseRunArgs(sc schedule.Schedule) []string {
 	if r.DeliverTo != "" {
 		args = append(args, "--deliver-to", r.DeliverTo)
 	}
+	// A schedule pins where its fires send: the names it was given, or none,
+	// never a default set the person makes later.
 	for _, d := range r.Destinations {
 		args = append(args, "--destination", d)
+	}
+	if len(r.Destinations) == 0 {
+		args = append(args, "--no-destination")
 	}
 	for _, i := range r.Intake {
 		args = append(args, "--intake", i)
@@ -1583,6 +1593,11 @@ func newScheduleEditCmd() *cobra.Command {
 				if sc.Run.DeliverTo, err = scheduleDeliverFolder(deliverTo); err != nil {
 					return err
 				}
+				if sc.Run.DeliverTo != "" {
+					if err := writableDir(sc.Run.DeliverTo); err != nil {
+						return fmt.Errorf("--deliver-to %s: %w", deliverTo, err)
+					}
+				}
 			}
 			if f.Changed("destination") {
 				if sc.Run.Destinations, err = scheduleDestinations(destinations); err != nil {
@@ -1630,7 +1645,7 @@ func newScheduleEditCmd() *cobra.Command {
 			// A signed-out fire reads its destinations' credentials from the
 			// keys sealed beside it, so a changed set seals them again before
 			// the change is kept.
-			if destinationsChanged && sc.SignedOut && !turnOn && !reseal {
+			if destinationsChanged && sc.SignedOut && !turnOn && !reseal && !st.Ended {
 				cred, err := store.CredentialPath(sc.ID)
 				if err != nil {
 					return err

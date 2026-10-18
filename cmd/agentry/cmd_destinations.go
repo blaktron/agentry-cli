@@ -137,6 +137,9 @@ func newDestinationsAddCmd() *cobra.Command {
 				}
 				return engine.Classify(engine.ExitCLI, err)
 			}
+			// A signed-out schedule's fires read the keys sealed beside them:
+			// a changed secret reaches them only by sealing again.
+			resealSignedOut(cmd.ErrOrStderr())
 			out := cmd.OutOrStdout()
 			verb := "saved"
 			if existed {
@@ -295,6 +298,7 @@ func newDestinationsRemoveCmd() *cobra.Command {
 			if err := destination.DeleteSecrets(args[0]); err != nil {
 				return engine.Classify(engine.ExitCLI, fmt.Errorf("the destination is removed, but its credentials could not be: %w", err))
 			}
+			resealSignedOut(cmd.ErrOrStderr())
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "removed destination %s\n", args[0])
 			return nil
 		},

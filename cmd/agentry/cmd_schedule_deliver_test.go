@@ -64,8 +64,13 @@ func TestAScheduleKeepsWhereItsRunsDeliver(t *testing.T) {
 	// An old schedule without either behaves as before.
 	old := sc
 	old.Run.DeliverTo, old.Run.Destinations = "", nil
-	if j := strings.Join(baseRunArgs(old), " "); strings.Contains(j, "--deliver-to") || strings.Contains(j, "--destination") {
+	// and names no destination, so a default set the person makes later never
+	// reaches its fires.
+	if j := strings.Join(baseRunArgs(old), " "); strings.Contains(j, "--deliver-to") || strings.Contains(j, "--destination") || !strings.Contains(j, "--no-destination") {
 		t.Errorf("a schedule with no delivery passes %s", j)
+	}
+	if j := strings.Join(baseRunArgs(sc), " "); strings.Contains(j, "--no-destination") {
+		t.Errorf("a schedule with destinations passes %s", j)
 	}
 }
 
@@ -161,5 +166,47 @@ func TestASignedOutScheduleSealsItsDestinationsCredentials(t *testing.T) {
 	}
 	if len(h.sealed) != 1 || !strings.Contains(string(h.sealed[0]), "whsec_scheduled") {
 		t.Errorf("sealed %q", h.sealed)
+	}
+}
+
+// TestAnEndedSignedOutScheduleKeepsNoSealedKeysThroughAnEdit: changing the
+// destinations of a signed-out schedule that has ended seals nothing, so its keys
+// still outlive no schedule that needs them and a later revival seals and probes
+// as a new one does.
+func TestAnEndedSignedOutScheduleKeepsNoSealedKeysThroughAnEdit(t *testing.T) {
+	h := newSignedOutHarness(t)
+	scheduleDestinationsEnv(t)
+	h.collected[destination.SecretAccount("n8n")] = "whsec_scheduled"
+	// The harness answers as a signed-out fire does; the edit is the person's,
+	// signed in, and reads the keychain.
+	t.Setenv(modelkey.EnvCredentialsDirectory, "")
+	sc := schedule.Schedule{Name: "src", Ref: "fixtures/pure-text", Version: "1.0.0", Digest: "sha256:aa", Local: repoPath(t, "testdata/runner/pure-text"),
+		Run:  schedule.RunSpec{OutDir: t.TempDir(), MaxTurns: -1, MaxCost: -1, Policy: h.policy},
+		When: scheduleDeliverWhen, Created: h.now, SignedOut: true}
+	if err := h.store.Create(&sc, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.SaveState(sc.ID, schedule.State{Ended: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runCLI(t, nil, "schedule", "edit", sc.ID, "--destination", "n8n"); err != nil {
+		t.Fatal(err)
+	}
+	if credentialKept(h.store, sc.ID) || len(h.sealed) != 0 {
+		t.Errorf("an ended schedule's edit sealed keys: kept %v, sealed %d", credentialKept(h.store, sc.ID), len(h.sealed))
+	}
+}
+
+// TestARunTakesNoDefaultSetWhenToldNone: --no-destination delivers to no
+// destination whatever default set exists, and does not go with --destination.
+func TestARunTakesNoDefaultSetWhenToldNone(t *testing.T) {
+	isolateEnv(t)
+	scheduleDestinationsEnv(t)
+	if _, _, err := runCLI(t, nil, "destinations", "default", "acme/digest", "n8n"); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := runCLI(t, nil, "run", "acme/digest", "--no-destination", "--destination", "n8n", "--plan")
+	if err == nil || !strings.Contains(err.Error(), "exclude each other") {
+		t.Errorf("both flags: %v", err)
 	}
 }
