@@ -595,7 +595,20 @@ func TestAHostedRunDeliversOnlyToWhatItsHostHandsIt(t *testing.T) {
 			t.Errorf("%s: a delivery step ran", name)
 		}
 	}
+	// A host that marks the run hosted by another signal than AI Review (a run
+	// grant, AGENTRY_HOSTED) is held to the same rule.
 	p, f := fixture(t)
+	happyFake(f)
+	deliveryStepPlays(t, f, delivered)
+	p.Hosted = true
+	p.Destinations = []destination.Resolved{hook("n8n", "https://hooks.example.com/in/abc", false)}
+	if _, err := Run(context.Background(), f, p); err == nil {
+		t.Error("a run marked hosted took a saved destination")
+	}
+	if _, ok := stepRun(f); ok {
+		t.Error("a delivery step ran for a saved destination of a run marked hosted")
+	}
+	p, f = fixture(t)
 	happyFake(f)
 	agentWrites(p, f, map[string]string{"reports/brief.md": "# Brief\n"}, `{"path":"reports/brief.md","title":"The brief","marked":true}`)
 	saw := deliveryStepPlays(t, f, delivered)

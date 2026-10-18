@@ -368,5 +368,11 @@ func destinationsFromHostFile(path string) ([]destination.Resolved, error) {
 	for _, n := range names {
 		_ = os.Unsetenv(n)
 	}
+	// And every other variable of the credentials' prefix, named or not.
+	for _, kv := range os.Environ() {
+		if k, _, _ := strings.Cut(kv, "="); strings.HasPrefix(k, "AGENTRY_DEST_") {
+			_ = os.Unsetenv(k)
+		}
+	}
 	return dests, nil
 }

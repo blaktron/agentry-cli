@@ -335,7 +335,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	// delivers only to the destinations its host handed it in a destinations
 	// file, and never to one on a private network, whatever its caller put in
 	// the parameters.
-	if p.InputReview != nil {
+	if p.Hosted || p.InputReview != nil {
 		for _, d := range p.Destinations {
 			if !d.Hosted || d.OnMyNetwork {
 				return fail(env, redact, Classify(ExitUsage, errors.New("a hosted run delivers only to the destinations its host hands it, at public addresses")))

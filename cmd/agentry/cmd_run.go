@@ -562,7 +562,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		}
 	} else if opts.noDestination {
 		// Delivers nowhere but the run folder (and --deliver-to).
-	} else if opts.reviewInputs != "" {
+	} else if hostedFor(opts) {
 		if len(opts.destinations) > 0 {
 			return engine.Classify(engine.ExitUsage, errors.New("--destination is for a run on this computer: a hosted run's host delivers nowhere"))
 		}

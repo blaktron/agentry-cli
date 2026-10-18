@@ -49,6 +49,11 @@ type fileDoc struct {
 // same name twice refuses the file as a whole; a delivery is never unsigned
 // and never silently goes nowhere. No error carries a credential's value.
 func FromFile(path string, getenv func(string) string) (dests []Resolved, envNames []string, err error) {
+	// A file that is not a regular one is refused before it is opened: opening
+	// a FIFO with no writer would wait for ever.
+	if pi, perr := os.Stat(path); perr == nil && !pi.Mode().IsRegular() {
+		return nil, nil, errors.New("the destinations file is not a regular file")
+	}
 	f, err := os.Open(path) //nolint:gosec // a path the driver named
 	if err != nil {
 		return nil, nil, fmt.Errorf("read the destinations file: %w", err)
@@ -74,7 +79,7 @@ func FromFile(path string, getenv func(string) string) (dests []Resolved, envNam
 	if err := dec.Decode(&doc); err != nil {
 		return nil, nil, errors.New("the destinations file is not a document of the shape this CLI reads")
 	}
-	if dec.More() {
+	if _, terr := dec.Token(); terr != io.EOF {
 		return nil, nil, errors.New("the destinations file holds more than one document")
 	}
 	if len(doc.Destinations) == 0 {

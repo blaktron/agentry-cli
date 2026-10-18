@@ -31,6 +31,7 @@ func TestTheHostFileTakesItsCredentialsOutOfTheEnvironment(t *testing.T) {
 	}
 	t.Setenv("AGENTRY_DEST_SECRET_0", "whsec_ENVsecret0123456789")
 	t.Setenv("AGENTRY_DEST_AUTH_0", "Bearer ENVauthorization0123456789")
+	t.Setenv("AGENTRY_DEST_UNNAMED", "a value no file names")
 	bad := filepath.Join(dir, "bad.json")
 	if err := os.WriteFile(bad, []byte(strings.Replace(body, "https://hooks.example.com/in/abc", "https://10.0.0.5/in/abc", 1)), 0o600); err != nil {
 		t.Fatal(err)
@@ -48,7 +49,7 @@ func TestTheHostFileTakesItsCredentialsOutOfTheEnvironment(t *testing.T) {
 	if len(dests) != 1 || dests[0].Secret != "whsec_ENVsecret0123456789" || dests[0].Authorization != "Bearer ENVauthorization0123456789" || !dests[0].Hosted {
 		t.Errorf("destinations = %+v", dests)
 	}
-	for _, name := range []string{"AGENTRY_DEST_SECRET_0", "AGENTRY_DEST_AUTH_0"} {
+	for _, name := range []string{"AGENTRY_DEST_SECRET_0", "AGENTRY_DEST_AUTH_0", "AGENTRY_DEST_UNNAMED"} {
 		if v, ok := os.LookupEnv(name); ok {
 			t.Errorf("%s is still in the environment (%d bytes)", name, len(v))
 		}
