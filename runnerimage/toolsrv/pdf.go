@@ -17,11 +17,11 @@ package toolsrv
 //     that user is all that holds it.
 //   - Its binary was built without a package downloader, and the
 //     template imports only the vendored cmarker, with raw Typst off.
-//   - Every file the server copies in is opened beneath its folder's
-//     os.Root, and a name with a link anywhere in it is refused; every name
-//     in the render root is made new through an os.Root on it. A declared
-//     command may write the scratch folder and /tmp, and the server is
-//     root.
+//   - Every file the server copies in is opened beneath its folder
+//     through a beneath.Dir, and a name with a link anywhere in it is
+//     refused; every name in the render root is made new through a
+//     beneath.Dir on it. A declared command may write the scratch folder
+//     and /tmp, and the server is root.
 //
 // The result is checked to be a PDF, copied into reports/ and recorded in
 // the PDF ledger with its SHA-256, which the receipt repeats; with
@@ -51,6 +51,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/blaktron/agentry-cli/runnerimage/beneath"
 	"github.com/blaktron/agentry-cli/runnerimage/confine"
 	"github.com/blaktron/agentry-cli/runnerimage/reportdesign"
 )
@@ -283,37 +284,30 @@ func (e errLink) Error() string {
 }
 
 // openNoLinks opens rel beneath root without following a link anywhere in
-// it: each element is looked at, a link is refused, and the file opened is
-// held to be the one looked at. The os.Root keeps the open beneath the
-// folder whatever changes in between.
-func openNoLinks(root *os.Root, rel string) (*os.File, fs.FileInfo, error) {
+// it, the last element included, and returns the regular file it names. The
+// folder holds the open beneath it, and a link is refused by the same call
+// that opens the file, so nothing swapped in between a look and an open can
+// take the read elsewhere.
+func openNoLinks(root *beneath.Dir, rel string) (*os.File, fs.FileInfo, error) {
 	rel = path.Clean(rel)
 	if rel == "." || rel == ".." || strings.HasPrefix(rel, "../") || path.IsAbs(rel) {
 		return nil, nil, fmt.Errorf("%q is not a file beneath its folder", rel)
 	}
-	parts := strings.Split(rel, "/")
-	var last fs.FileInfo
-	for i := range parts {
-		fi, err := root.Lstat(strings.Join(parts[:i+1], "/"))
-		if err != nil {
-			return nil, nil, err
-		}
-		if fi.Mode()&fs.ModeSymlink != 0 {
+	f, err := root.OpenNoLinks(rel)
+	if err != nil {
+		if errors.Is(err, beneath.ErrLink) {
 			return nil, nil, errLink{rel}
 		}
-		last = fi
-	}
-	if !last.Mode().IsRegular() {
-		return nil, nil, fmt.Errorf("%q: %w", rel, errNotRegular)
-	}
-	f, err := root.Open(rel)
-	if err != nil {
 		return nil, nil, err
 	}
 	fi, err := f.Stat()
-	if err != nil || !os.SameFile(fi, last) {
+	if err != nil {
 		_ = f.Close()
-		return nil, nil, fmt.Errorf("%q changed while it was opened", rel)
+		return nil, nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		_ = f.Close()
+		return nil, nil, fmt.Errorf("%q: %w", rel, errNotRegular)
 	}
 	return f, fi, nil
 }
@@ -470,10 +464,10 @@ func (s *server) resolveImage(src string, from pdfRoot, fromDir string) (pdfRoot
 
 // copyImages copies each local PNG or JPEG the Markdown names into the
 // render root's img/, and says what it drew as alt text instead and why.
-func (s *server) copyImages(doc mdDoc, from pdfRoot, fromDir string, renderRoot *os.Root) (map[string]pdfImage, []string, error) {
+func (s *server) copyImages(doc mdDoc, from pdfRoot, fromDir string, renderRoot *beneath.Dir) (map[string]pdfImage, []string, error) {
 	images := map[string]pdfImage{}
 	copied := map[string]pdfImage{} // by folder and path, so a file is copied once
-	opened := map[string]*os.Root{}
+	opened := map[string]*beneath.Dir{}
 	defer func() {
 		for _, r := range opened {
 			_ = r.Close()
@@ -503,12 +497,13 @@ func (s *server) copyImages(doc mdDoc, from pdfRoot, fromDir string, renderRoot 
 			root := opened[r.dir]
 			if root == nil {
 				var err error
-				if root, err = os.OpenRoot(r.dir); err != nil {
+				if root, err = beneath.Open(r.dir); err != nil {
 					why = "its folder could not be opened"
 					continue
 				}
 				opened[r.dir] = root
 			}
+			s.checked(r.name)
 			img, err := copyImage(root, rel, renderRoot, len(copied)+1)
 			var fixable errAgentFixable
 			switch {
@@ -552,7 +547,7 @@ func imageRefusal(err error) string {
 // copyImage copies one image beneath root into the render root as img/<n>,
 // when it is a regular PNG or JPEG of at most MaxPDFImageBytes reached by
 // no link.
-func copyImage(root *os.Root, rel string, renderRoot *os.Root, n int) (pdfImage, error) {
+func copyImage(root *beneath.Dir, rel string, renderRoot *beneath.Dir, n int) (pdfImage, error) {
 	f, fi, err := openNoLinks(root, rel)
 	if err != nil {
 		return pdfImage{}, err
@@ -660,6 +655,7 @@ func (s *server) toolExportPDF(raw json.RawMessage) (string, bool) {
 
 	// 1. The source: a regular file beneath its folder, reached by no
 	// link, at most 1 MiB of UTF-8, holding none of the run's secrets.
+	s.checked(from.name)
 	src, err := readSource(from, rel)
 	if err != nil {
 		return answerFor(err, func(err error) (string, bool) {
@@ -683,7 +679,7 @@ func (s *server) toolExportPDF(raw json.RawMessage) (string, bool) {
 
 	// 2. A fresh render root under /tmp. A declared command may write /tmp
 	// (as root, under Landlock) and may have left a process running there,
-	// so every name in the root is made new through an os.Root opened on
+	// so every name in the root is made new through a beneath.Dir opened on
 	// it: a link planted in it is never followed out of it, and a name
 	// taken first fails the export instead of being reused.
 	renderRoot, err := os.MkdirTemp(os.TempDir(), "agentry-pdf-")
@@ -696,7 +692,7 @@ func (s *server) toolExportPDF(raw json.RawMessage) (string, bool) {
 	if err := os.Chmod(renderRoot, 0o755); err != nil {
 		return s.renderFailed(err)
 	}
-	root, err := os.OpenRoot(renderRoot)
+	root, err := beneath.Open(renderRoot)
 	if err != nil {
 		return s.renderFailed(err)
 	}
@@ -708,6 +704,7 @@ func (s *server) toolExportPDF(raw json.RawMessage) (string, bool) {
 	if err := root.Mkdir("img", 0o755); err != nil {
 		return s.renderFailed(err)
 	}
+	s.checked("render")
 	images, skipped, err := s.copyImages(doc, from, path.Dir(rel), root)
 	if err != nil {
 		return answerFor(err, s.renderFailed)
@@ -803,7 +800,7 @@ func pdfOutPath(asked string, from pdfRoot, rel string) (string, error) {
 }
 
 func readSource(from pdfRoot, rel string) (string, error) {
-	root, err := os.OpenRoot(from.dir)
+	root, err := beneath.Open(from.dir)
 	if err != nil {
 		return "", err
 	}
@@ -943,7 +940,7 @@ func (c renderConfinement) run(cmd *exec.Cmd) (string, error) {
 
 // createIn makes name new beneath root, readable by anyone, and fills it
 // from r; a name that already exists, a link included, is refused.
-func createIn(root *os.Root, name string, r io.Reader) error {
+func createIn(root *beneath.Dir, name string, r io.Reader) error {
 	f, err := root.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
@@ -974,25 +971,26 @@ func checkPDF(b []byte) error {
 	return nil
 }
 
-// writePDF writes the PDF at out beneath reports/, through an os.Root, and
+// writePDF writes the PDF at out beneath reports/, through a beneath.Dir, and
 // gives it and any folder made for it to the host user.
 func (s *server) writePDF(reportsDir, out string, pdf []byte) error {
-	root, err := os.OpenRoot(reportsDir)
+	root, err := beneath.Open(reportsDir)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = root.Close() }()
+	s.checked("reports")
 	if dir := path.Dir(out); dir != "." {
 		if err := mkdirAllIn(root, dir, 0o755); err != nil {
 			return err
 		}
 		s.ownBetween(reportsDir, filepath.Join(reportsDir, filepath.FromSlash(dir)))
 	}
-	if fi, err := root.Lstat(out); err == nil && !fi.Mode().IsRegular() {
-		return fmt.Errorf("reports/%s exists and is not a regular file", out)
-	}
-	f, err := root.OpenFile(out, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	f, err := root.CreateRegular(out, 0o644)
 	if err != nil {
+		if errors.Is(err, beneath.ErrNotRegular) {
+			return fmt.Errorf("reports/%s exists and is not a regular file", out)
+		}
 		return err
 	}
 	_, werr := f.Write(pdf)

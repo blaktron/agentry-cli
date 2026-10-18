@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/blaktron/agentry-cli/runnerimage/beneath"
 	"github.com/blaktron/agentry-cli/runnerimage/confine"
 )
 
@@ -161,7 +162,7 @@ func TestADeclaredCommandMayWriteTheScratchFolder(t *testing.T) {
 
 // TestScratchWritesNeverFollowALinkOut: a declared command may write the
 // scratch folder, so it may plant a link there, or swap a path for one
-// after the name was checked. The scratch tools work through an os.Root,
+// after the name was checked. The scratch tools work through a beneath.Dir,
 // which never resolves outside the folder: a link out to the output folder
 // is refused at the moment of use, so nothing lands in reports/.
 func TestScratchWritesNeverFollowALinkOut(t *testing.T) {
@@ -173,7 +174,7 @@ func TestScratchWritesNeverFollowALinkOut(t *testing.T) {
 	if err := os.Symlink(reports, filepath.Join(spec.ScratchDir, "notes")); err != nil {
 		t.Fatal(err)
 	}
-	root, err := os.OpenRoot(spec.ScratchDir)
+	root, err := beneath.Open(spec.ScratchDir)
 	if err != nil {
 		t.Fatal(err)
 	}
