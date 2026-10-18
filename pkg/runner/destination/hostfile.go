@@ -21,12 +21,20 @@ var envNameRE = regexp.MustCompile(`^AGENTRY_DEST_[A-Z0-9_]{1,100}$`)
 
 // fileEntry is one destination as a destinations file writes it: the
 // non-secret fields, and the names of the variables that hold its credentials.
+// A webhook has a url, a signing secret in secretEnv and optionally an
+// Authorization value; a bucket has bucket, prefix, region and endpoint, its
+// secret access key in secretEnv and its access key id in accessKeyIdEnv.
 // There is no field for On my network: a host reaches public addresses alone.
 type fileEntry struct {
 	Name             string `json:"name"`
 	Kind             string `json:"kind"`
-	URL              string `json:"url"`
+	URL              string `json:"url,omitempty"`
+	Bucket           string `json:"bucket,omitempty"`
+	Prefix           string `json:"prefix,omitempty"`
+	Region           string `json:"region,omitempty"`
+	Endpoint         string `json:"endpoint,omitempty"`
 	SecretEnv        string `json:"secretEnv"`
+	AccessKeyIDEnv   string `json:"accessKeyIdEnv,omitempty"`
 	AuthorizationEnv string `json:"authorizationEnv,omitempty"`
 }
 
@@ -35,9 +43,11 @@ type fileDoc struct {
 }
 
 // FromFile reads the destinations a driver such as a sandbox host hands a run:
-// a JSON document of non-secret fields (name, kind, url) with, for each, the
-// name of the environment variable holding its signing secret and, when the
-// receiver wants one, the one holding its Authorization value. It answers the
+// a JSON document of non-secret fields (name, kind, and a webhook's url or a
+// bucket's bucket, prefix, region and endpoint) with, for each, the name of the
+// environment variable holding its signing secret (a bucket's secret access
+// key) and, when the receiver wants one, the one holding a webhook's
+// Authorization value (a bucket's access key id). It answers the
 // destinations with their credentials read through getenv, and the names of
 // the variables it read, which the caller removes from its own environment so
 // that no process it starts inherits them.
@@ -91,8 +101,27 @@ func FromFile(path string, getenv func(string) string) (dests []Resolved, envNam
 	seen := map[string]bool{}
 	for _, e := range doc.Destinations {
 		d := Destination{Name: e.Name, Kind: e.Kind, URL: e.URL}
-		if e.Kind != KindWebhook {
-			return nil, nil, fmt.Errorf("destination %q: a host hands a run webhooks only", e.Name)
+		switch e.Kind {
+		case KindWebhook:
+			if e.AccessKeyIDEnv != "" {
+				return nil, nil, fmt.Errorf("destination %q: accessKeyIdEnv is for a bucket", e.Name)
+			}
+			if e.Bucket != "" || e.Prefix != "" || e.Region != "" || e.Endpoint != "" {
+				return nil, nil, fmt.Errorf("destination %q: a webhook has an address and no bucket, prefix, region or endpoint", e.Name)
+			}
+		case KindS3:
+			if e.URL != "" {
+				return nil, nil, fmt.Errorf("destination %q: a bucket has an endpoint, not an address of its own", e.Name)
+			}
+			if e.AuthorizationEnv != "" {
+				return nil, nil, fmt.Errorf("destination %q: a bucket is signed with its key pair, not an Authorization value", e.Name)
+			}
+			d = Destination{Name: e.Name, Kind: KindS3, Bucket: e.Bucket, Prefix: e.Prefix, Region: e.Region, Endpoint: e.Endpoint}
+			if d.Region == "" && d.Endpoint != "" {
+				d.Region = "us-east-1"
+			}
+		default:
+			return nil, nil, fmt.Errorf("destination %q: a host hands a run webhooks and buckets only", e.Name)
 		}
 		if err := d.Check(); err != nil {
 			return nil, nil, fmt.Errorf("destination %q: %w", e.Name, err)
@@ -109,6 +138,15 @@ func FromFile(path string, getenv func(string) string) (dests []Resolved, envNam
 			return nil, nil, fmt.Errorf("destination %q: the variable %s holds no signing secret, or one that is not a plain line", d.Name, e.SecretEnv)
 		}
 		envNames = append(envNames, e.SecretEnv)
+		if d.Kind == KindS3 {
+			if !envNameRE.MatchString(e.AccessKeyIDEnv) {
+				return nil, nil, fmt.Errorf("destination %q: accessKeyIdEnv names a variable that does not begin with AGENTRY_DEST_", d.Name)
+			}
+			if r.AccessKeyID = getenv(e.AccessKeyIDEnv); !send.ValidAccessKeyID(r.AccessKeyID) {
+				return nil, nil, fmt.Errorf("destination %q: the variable %s holds no access key id, or one a request cannot be signed with", d.Name, e.AccessKeyIDEnv)
+			}
+			envNames = append(envNames, e.AccessKeyIDEnv)
+		}
 		if e.AuthorizationEnv != "" {
 			if !envNameRE.MatchString(e.AuthorizationEnv) {
 				return nil, nil, fmt.Errorf("destination %q: authorizationEnv names a variable that does not begin with AGENTRY_DEST_", d.Name)
