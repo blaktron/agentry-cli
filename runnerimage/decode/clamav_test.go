@@ -1,7 +1,9 @@
 package decode
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -379,9 +381,24 @@ func TestTheScanRecordIsWrittenBeforeAnyDecoderRuns(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(out, "report.pdf.txt")); err != nil {
 		t.Fatalf("the PDF was not decoded after the record: %v", err)
 	}
-	want := `{"schema":"agentry.decode.scan/v1","checked":true,"found":[{"path":"bundle.zip","signature":"Eicar-Test-Signature"},{"path":"bundle.zip/inner/bad.txt","signature":"Eicar-Test-Signature"},{"path":"eicar.com","signature":"Eicar-Test-Signature"}]}` + "\n"
-	if string(w.b) != want {
-		t.Fatalf("the scan record:\n%s\nwant:\n%s", w.b, want)
+	var rec ScanRecord
+	if err := json.Unmarshal(w.b, &rec); err != nil || rec.Schema != ScanSchema || !rec.Checked || w.b[len(w.b)-1] != '\n' || bytes.Count(w.b, []byte("\n")) != 1 {
+		t.Fatalf("the scan record %s: %v", w.b, err)
+	}
+	checks := map[string]string{}
+	for _, f := range rec.Files {
+		checks[f.Path] = string(f.Check) + " " + f.Signature
+	}
+	for path, want := range map[string]string{
+		"report.pdf": "clean ", "eicar.com": "found Eicar-Test-Signature", "bundle.zip": "found Eicar-Test-Signature",
+		"bundle.zip/inner/bad.txt": "found Eicar-Test-Signature", "bundle.zip/inner/a.pdf": "clean ",
+	} {
+		if checks[path] != want {
+			t.Errorf("the record says %q of %s, want %q", checks[path], path, want)
+		}
+	}
+	if len(rec.Files) != 5 {
+		t.Errorf("the record names %d files, want 5: %s", len(rec.Files), w.b)
 	}
 
 	// With no signatures the record says nothing was checked.
@@ -389,7 +406,7 @@ func TestTheScanRecordIsWrittenBeforeAnyDecoderRuns(t *testing.T) {
 	if _, err := Decode(context.Background(), in, w.out, tools, Limits{Record: w}); err != nil {
 		t.Fatal(err)
 	}
-	if string(w.b) != `{"schema":"agentry.decode.scan/v1","checked":false,"found":[]}`+"\n" {
+	if err := json.Unmarshal(w.b, &rec); err != nil || rec.Checked || len(rec.Files) != 5 || rec.Files[0].Unchecked != UncheckedNoSignatures {
 		t.Fatalf("the scan record with no signatures: %s", w.b)
 	}
 }

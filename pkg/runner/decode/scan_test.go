@@ -37,8 +37,10 @@ func TestAReportsCleanIsRefusedWhenTheScanFoundIt(t *testing.T) {
 		{Path: "eicar.com", Family: "pdf", Tool: "pdftotext", Outcome: runnerdecode.OutcomeDecoded, Output: "eicar.com.txt", Bytes: 20, Check: runnerdecode.CheckClean},
 		{Path: "report.pdf", Family: "pdf", Tool: "pdftotext", Outcome: runnerdecode.OutcomeDecoded, Output: "report.pdf.txt", Bytes: 20, Check: runnerdecode.CheckClean},
 	}
-	record := `{"schema":"agentry.decode.scan/v1","checked":true,"found":[{"path":"eicar.com","signature":"Eicar-Test-Signature"},{"path":"bundle.zip/docs/bad.txt","signature":"Eicar-Test-Signature"}]}` + "\n" +
-		`{"schema":"agentry.decode.scan/v1","checked":true,"found":[]}` + "\n"
+	record := `{"schema":"agentry.decode.scan/v2","checked":true,"files":[{"path":"bundle.zip","check":"found","signature":"Eicar-Test-Signature"},` +
+		`{"path":"bundle.zip/docs/bad.txt","check":"found","signature":"Eicar-Test-Signature"},{"path":"eicar.com","check":"found","signature":"Eicar-Test-Signature"},` +
+		`{"path":"report.pdf","check":"unchecked","unchecked":"too-large"}]}` + "\n" +
+		`{"schema":"agentry.decode.scan/v2","checked":true,"files":[{"path":"bundle.zip","check":"clean"},{"path":"eicar.com","check":"clean"},{"path":"report.pdf","check":"clean"}]}` + "\n"
 	f := &dockerx.Fake{Foreground: map[string]*dockerx.FakeForeground{"agentry-decode-": {Before: playDecode(t, forged), Stdout: record}}}
 	res, err := Run(context.Background(), f, signedImage(), in, t.TempDir(), policy.Limits{}.WithDefaults(), os.Stderr)
 	if err != nil {
@@ -60,6 +62,18 @@ func TestAReportsCleanIsRefusedWhenTheScanFoundIt(t *testing.T) {
 	if _, ok := found["report.pdf"]; ok {
 		t.Fatal("a file the scan did not find was taken as found")
 	}
+	// The archive is found and still unpacked: its members answer for
+	// themselves. The file the scan could not check is not clean.
+	byPath := map[string]runnerdecode.File{}
+	for _, f := range res.Report.Files {
+		byPath[f.Path] = f
+	}
+	if z := byPath["bundle.zip"]; z.Check != runnerdecode.CheckFound || z.Outcome != runnerdecode.OutcomeUnpacked || z.Why != "" {
+		t.Fatalf("the archive: %+v", z)
+	}
+	if p := byPath["report.pdf"]; p.Check != runnerdecode.CheckUnchecked || p.Unchecked != runnerdecode.UncheckedTooLarge {
+		t.Fatalf("a file the scan could not check reads %+v", p)
+	}
 	if err := res.CopyText("eicar.com", filepath.Join(t.TempDir(), "x")); err == nil {
 		t.Fatal("the text of a file the scan found was copied out")
 	}
@@ -72,14 +86,22 @@ func TestAReportsCleanIsRefusedWhenTheScanFoundIt(t *testing.T) {
 // or one that is not a check with signatures, is refused; one given none
 // needs no record.
 func TestADecodeThatStatesNoScanIsRefused(t *testing.T) {
+	v2 := func(files string) string {
+		return `{"schema":"agentry.decode.scan/v2","checked":true,"files":[` + files + `]}` + "\n"
+	}
+	all := `{"path":"blob.bin","check":"clean"},{"path":"deck.pptx","check":"clean"},{"path":"notes.md","check":"clean"},{"path":"report.pdf","check":"clean"}`
 	for name, stdout := range map[string]string{
-		"nothing":            "",
-		"no line end":        `{"schema":"agentry.decode.scan/v1","checked":true,"found":[]}`,
-		"junk first":         "decoded 3 files\n" + `{"schema":"agentry.decode.scan/v1","checked":true,"found":[]}` + "\n",
-		"not checked":        `{"schema":"agentry.decode.scan/v1","checked":false,"found":[]}` + "\n",
-		"another schema":     `{"schema":"agentry.decode.scan/v0","checked":true,"found":[]}` + "\n",
-		"an unknown field":   `{"schema":"agentry.decode.scan/v1","checked":true,"found":[],"clean":["eicar.com"]}` + "\n",
-		"a path that climbs": `{"schema":"agentry.decode.scan/v1","checked":true,"found":[{"path":"../etc/passwd"}]}` + "\n",
+		"nothing":                 "",
+		"no line end":             strings.TrimSuffix(v2(all), "\n"),
+		"junk first":              "decoded 3 files\n" + v2(all),
+		"not checked":             `{"schema":"agentry.decode.scan/v2","checked":false,"files":[]}` + "\n",
+		"another schema":          `{"schema":"agentry.decode.scan/v1","checked":true,"files":[]}` + "\n",
+		"an unknown field":        `{"schema":"agentry.decode.scan/v2","checked":true,"files":[],"clean":["eicar.com"]}` + "\n",
+		"a path that climbs":      v2(all + `,{"path":"../etc/passwd","check":"found"}`),
+		"a path twice":            v2(all + `,{"path":"notes.md","check":"found"}`),
+		"an unknown check":        v2(`{"path":"blob.bin","check":"safe"}`),
+		"an unknown reason":       v2(`{"path":"blob.bin","check":"unchecked","unchecked":"trusted"}`),
+		"a check the scan missed": v2(`{"path":"blob.bin","check":"clean"}`),
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := &dockerx.Fake{Foreground: map[string]*dockerx.FakeForeground{"agentry-decode-": {Before: playDecode(t, sampleFiles), Stdout: stdout}}}
@@ -96,7 +118,8 @@ func TestADecodeThatStatesNoScanIsRefused(t *testing.T) {
 
 // A signature outside the grammar is named as no signature, never shown.
 func TestAScanRecordsSignatureIsHeldToTheGrammar(t *testing.T) {
-	stdout := `{"schema":"agentry.decode.scan/v1","checked":true,"found":[{"path":"blob.bin","signature":"Bad Name; rm -rf /"}]}` + "\n"
+	stdout := `{"schema":"agentry.decode.scan/v2","checked":true,"files":[{"path":"blob.bin","check":"found","signature":"Bad Name; rm -rf /"},` +
+		`{"path":"deck.pptx","check":"clean"},{"path":"notes.md","check":"clean"},{"path":"report.pdf","check":"clean"}]}` + "\n"
 	f := &dockerx.Fake{Foreground: map[string]*dockerx.FakeForeground{"agentry-decode-": {Before: playDecode(t, sampleFiles), Stdout: stdout}}}
 	res, err := Run(context.Background(), f, signedImage(), staged(t), t.TempDir(), policy.Limits{}.WithDefaults(), os.Stderr)
 	if err != nil {
