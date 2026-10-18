@@ -250,8 +250,13 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 	}
 	res.Decoded = dec
 
-	docs, inputs, err := dec.Stage(given, inputsDir)
+	docs, inputs, err := dec.StageWith(given, inputsDir, decode.StageOptions{Members: true, Originals: true, Named: plainPath})
 	if err != nil {
+		return nil, engine.Classify(engine.ExitUsage, err)
+	}
+	// The pack keeps an archive's members, not the archive, so what it
+	// keeps is held to the pack's cap again, before anything runs.
+	if err := keptWithin(dec, docs, limit); err != nil {
 		return nil, engine.Classify(engine.ExitUsage, err)
 	}
 	res.Skipped = decode.Skipped(docs)
@@ -424,6 +429,35 @@ func stageBrief(brief, packDir string, current *knowledge.Pack, given map[string
 	return name, nil
 }
 
+// plainPath says whether every segment of a path is a plain name, one
+// safeName leaves as it is: what a citation can carry.
+func plainPath(p string) bool {
+	for _, seg := range strings.Split(p, "/") {
+		if seg == "" || safeName(seg) != seg {
+			return false
+		}
+	}
+	return true
+}
+
+// keptWithin holds what the pack will keep of the documents read, each as
+// given, to the pack's cap.
+func keptWithin(dec *decode.Result, docs []decode.Document, limit int64) error {
+	var total int64
+	for _, d := range docs {
+		if d.Read == "" {
+			continue
+		}
+		if n, ok := dec.OriginalSize(d.Name); ok {
+			total += n
+		}
+		if total > limit {
+			return fmt.Errorf("document %s brings the documents kept to more than %s, a knowledge pack's cap, its documents included", d.Name, knowledge.FormatCap(limit))
+		}
+	}
+	return nil
+}
+
 func safeName(s string) string {
 	b := []rune(s)
 	for i, r := range b {
@@ -550,11 +584,6 @@ func collect(reports string, dec *decode.Result, docs []decode.Document, applyDi
 		ch.Summary = strings.TrimSpace("The Creator run stopped before it finished (" + runErr.Error() + "); these documents may be only partly compiled, and a further add continues. " + ch.Summary)
 	}
 	for _, doc := range docs {
-		if !dec.Keepable(doc.Name) {
-			// A member that could not be kept as given: it was not
-			// read, and the pack cannot hold it.
-			continue
-		}
 		ch.Documents = append(ch.Documents, doc.Name)
 		src := knowledge.SourcesDir + "/" + doc.Name
 		ch.Write = append(ch.Write, src)

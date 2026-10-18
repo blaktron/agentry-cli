@@ -437,8 +437,10 @@ func CheckRecorded(img Image, in, out string, opt Options, stdout []byte) (*Resu
 			digests[f.Path] = f.SHA256
 		}
 	} else {
-		// With no signatures there is no record to vouch for the bytes:
-		// a kept member is held to the report's own digest.
+		// With no signatures there is no record to vouch for the bytes: a
+		// kept member is held to the report's own digest, which guards
+		// against a copy that went wrong and not against a decoder a file
+		// exploited, the same trust as the decoded texts.
 		for _, f := range res.Report.Files {
 			digests[f.Path] = f.SHA256
 		}
@@ -473,7 +475,7 @@ func (r *Result) holdOriginals(digests map[string]string) error {
 			defer func() { _ = root.Close() }()
 		}
 		want := digests[f.Path]
-		got, err := sha256Within(root, f.Original, MaxDocumentBytes)
+		got, err := sha256Within(root, f.Original, MaxTextBytes)
 		if err != nil || want == "" || got != want {
 			f.Original = ""
 		}
@@ -621,7 +623,7 @@ func (r *Result) applyScan(rec runnerdecode.ScanRecord) error {
 // refuseFound makes a file the check found refused and unread: no text, no
 // view, no tool and no other reason.
 func refuseFound(f *runnerdecode.File) {
-	f.Outcome, f.Why, f.Reason = runnerdecode.OutcomeRefused, runnerdecode.WhyFound, ""
+	f.Outcome, f.Why, f.Reason, f.Original = runnerdecode.OutcomeRefused, runnerdecode.WhyFound, "", ""
 	f.Tool, f.Output, f.Bytes = "", "", 0
 	f.Markdown, f.MarkdownBy, f.MarkdownBytes = "", "", 0
 }
@@ -823,8 +825,8 @@ func checkOriginal(f runnerdecode.File, outRoot *os.Root, opt Options) error {
 		return fmt.Errorf("it names an original outside the output root: %q is not %q", f.Original, runnerdecode.OriginalsDir+"/"+f.Path)
 	}
 	fi, err := plainpath.File(outRoot, f.Original)
-	if err != nil || fi.Size() > MaxDocumentBytes {
-		return fmt.Errorf("the original of %q is not a regular file within %d bytes", f.Path, MaxDocumentBytes)
+	if err != nil || fi.Size() > MaxTextBytes {
+		return fmt.Errorf("the original of %q is not a regular file within %d bytes", f.Path, MaxTextBytes)
 	}
 	return nil
 }

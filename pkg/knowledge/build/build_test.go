@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -96,7 +97,7 @@ func playDecode(t *testing.T) func(dockerx.RunSpec) {
 			rel = filepath.ToSlash(rel)
 			switch filepath.Ext(rel) {
 			case ".zip":
-				rep.Files = append(rep.Files, playArchive(t, p, rel, out)...)
+				rep.Files = append(rep.Files, playArchive(t, p, rel, out, slices.Contains(r.Argv, "--keep-members"))...)
 				return nil
 			case ".pdf":
 				writeFile(t, filepath.Join(out, rel+".txt"), "text of "+rel+"\n")
@@ -119,10 +120,10 @@ func playDecode(t *testing.T) func(dockerx.RunSpec) {
 }
 
 // playArchive is the decode container unpacking a zip, as a decode asked to
-// keep members does: the archive unpacked, each .pdf member decoded and
-// each .md member read as text, both with their own bytes kept under
-// originals/, anything else undecodable. Every entry is checked clean.
-func playArchive(t *testing.T, src, rel, out string) []runnerdecode.File {
+// keep members does (keepMembers): the archive unpacked, each .pdf member
+// decoded and each .md member read as text, both with their own bytes kept
+// under originals/ when asked, anything else undecodable. Every entry is checked clean.
+func playArchive(t *testing.T, src, rel, out string, keepMembers bool) []runnerdecode.File {
 	t.Helper()
 	zr, err := zip.OpenReader(src)
 	if err != nil {
@@ -142,6 +143,9 @@ func playArchive(t *testing.T, src, rel, out string) []runnerdecode.File {
 		path := rel + "/" + zf.Name
 		f := runnerdecode.File{Path: path, In: rel, Size: int64(len(body)), Check: runnerdecode.CheckClean, SHA256: sha256Hex(body), MIME: "text/plain"}
 		keep := func() {
+			if !keepMembers {
+				return
+			}
 			f.Original = runnerdecode.OriginalsDir + "/" + path
 			writeFile(t, filepath.Join(out, filepath.FromSlash(f.Original)), string(body))
 		}
@@ -280,6 +284,51 @@ func TestABuildReadsAnArchivesMembers(t *testing.T) {
 	if !ok || !strings.Contains(strings.Join(dec.Argv, " "), "--keep-members") {
 		t.Fatalf("the decode was not asked to keep members: %v", dec.Argv)
 	}
+}
+
+// A member whose name a citation cannot carry is listed unread, never
+// given to the Creator to cite; and what the pack keeps of an archive's
+// members is held to the pack's cap before anything runs, though the
+// archive as staged was within it.
+func TestABuildHoldsAnArchivesMembersToTheirNamesAndTheCap(t *testing.T) {
+	zipOf := func(files map[string]string) string {
+		var buf bytes.Buffer
+		zw := zip.NewWriter(&buf)
+		for name, body := range files {
+			w, _ := zw.CreateHeader(&zip.FileHeader{Name: name, Method: zip.Deflate})
+			_, _ = w.Write([]byte(body))
+		}
+		_ = zw.Close()
+		return buf.String()
+	}
+	t.Run("a name a citation cannot carry", func(t *testing.T) {
+		fx := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})
+		writeFile(t, filepath.Join(fx.docs, "docs.zip"), zipOf(map[string]string{"Q3 report.md": "# Q3\n", "plan.md": "# Plan\n"}))
+		fx.opts.Documents = []string{filepath.Join(fx.docs, "docs.zip")}
+		fx.fake.Foreground["-agent"].Before = writes(fx.opts.OutDir, map[string]string{"wiki/topics/plan.md": page("Plan", "docs.zip/plan.md")})
+		res, err := Build(context.Background(), fx.fake, fx.opts)
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		if strings.Join(res.Documents, ",") != "docs.zip/plan.md" || strings.Join(res.Skipped, ",") != "docs.zip/Q3 report.md" {
+			t.Fatalf("documents %v skipped %v", res.Documents, res.Skipped)
+		}
+	})
+	t.Run("past the pack's cap once unpacked", func(t *testing.T) {
+		fx := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})
+		big := strings.Repeat("a long line of notes\n", 2000)
+		writeFile(t, filepath.Join(fx.docs, "docs.zip"), zipOf(map[string]string{"a.md": big, "b.md": big}))
+		fx.opts.Documents = []string{filepath.Join(fx.docs, "docs.zip")}
+		fx.opts.MaxBytes = int64(len(big)) + 100
+		_, err := Build(context.Background(), fx.fake, fx.opts)
+		var ce *engine.ClassifiedError
+		if !errors.As(err, &ce) || ce.Code != engine.ExitUsage || !strings.Contains(err.Error(), "a knowledge pack's cap") {
+			t.Fatalf("err %v", err)
+		}
+		if _, ok := fx.fake.FindRun("-agent"); ok {
+			t.Fatal("the Creator ran on documents past the pack's cap")
+		}
+	})
 }
 
 func TestBuildMakesAPackFromDocuments(t *testing.T) {

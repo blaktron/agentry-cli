@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -59,10 +60,10 @@ func mountOf(r dockerx.RunSpec, target string) string {
 }
 
 // playArchive is the decode container unpacking a zip, as a decode asked to
-// keep members does: the archive unpacked, each .pdf member decoded and
-// each .md member read as text, both with their own bytes kept under
-// originals/, anything else undecodable. Every entry is checked clean.
-func playArchive(t *testing.T, src, rel, out string) []runnerdecode.File {
+// keep members does (keepMembers): the archive unpacked, each .pdf member
+// decoded and each .md member read as text, both with their own bytes kept
+// under originals/ when asked, anything else undecodable. Every entry is checked clean.
+func playArchive(t *testing.T, src, rel, out string, keepMembers bool) []runnerdecode.File {
 	t.Helper()
 	zr, err := zip.OpenReader(src)
 	if err != nil {
@@ -82,6 +83,9 @@ func playArchive(t *testing.T, src, rel, out string) []runnerdecode.File {
 		path := rel + "/" + zf.Name
 		f := runnerdecode.File{Path: path, In: rel, Size: int64(len(body)), Check: runnerdecode.CheckClean, SHA256: sha256Hex(body), MIME: "text/plain"}
 		keep := func() {
+			if !keepMembers {
+				return
+			}
 			f.Original = runnerdecode.OriginalsDir + "/" + path
 			writeFile(t, filepath.Join(out, filepath.FromSlash(f.Original)), string(body))
 		}
@@ -146,7 +150,7 @@ func playDecode(t *testing.T) func(dockerx.RunSpec) {
 			rel = filepath.ToSlash(rel)
 			switch filepath.Ext(rel) {
 			case ".zip":
-				rep.Files = append(rep.Files, playArchive(t, p, rel, out)...)
+				rep.Files = append(rep.Files, playArchive(t, p, rel, out, slices.Contains(r.Argv, "--keep-members"))...)
 				return nil
 			case ".pdf":
 				writeFile(t, filepath.Join(out, rel+".txt"), "text of "+rel+"\n")
@@ -250,8 +254,9 @@ func TestACreateReadsTheSamplesInAnArchive(t *testing.T) {
 	if strings.Join(res.Samples, ",") != "samples.zip/essays/one.pdf,samples.zip/posts/two.md" || len(res.Skipped) != 0 {
 		t.Fatalf("samples %v skipped %v", res.Samples, res.Skipped)
 	}
-	if !strings.Contains(strings.Join(mustRun(t, fx.fake).Argv, " "), "--keep-members") {
-		t.Fatal("the decode was not asked to keep members")
+	// It keeps no sample, so the decode keeps no member's own bytes.
+	if strings.Contains(strings.Join(mustRun(t, fx.fake).Argv, " "), "--keep-members") {
+		t.Fatal("the decode was asked to keep members")
 	}
 }
 
