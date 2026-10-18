@@ -474,3 +474,45 @@ func TestAPathTheStepWillNotNameReachesTheTerminalQuoted(t *testing.T) {
 		t.Errorf("controls: %q", got)
 	}
 }
+
+// TestASavedAuthorizationValueIsKeptOnlyForTheSameReceiver: a change of path
+// keeps it; a downgrade to http, the On my network tick, another port or
+// another host drops it and says so on stderr.
+func TestASavedAuthorizationValueIsKeptOnlyForTheSameReceiver(t *testing.T) {
+	destinationsEnv(t)
+	t.Setenv("HOOK_SECRET", "s")
+	t.Setenv("HOOK_AUTH", "Bearer PLANTEDauthorizationVALUE")
+	save := func(args ...string) string {
+		t.Helper()
+		_, errOut, err := runCLI(t, nil, append([]string{"destinations", "add", "n8n"}, args...)...)
+		if err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		return errOut
+	}
+	save("--url", "https://hooks.example.com/a", "--secret-env", "HOOK_SECRET", "--authorization-env", "HOOK_AUTH")
+	if errOut := save("--url", "https://hooks.example.com/b?x=1"); strings.Contains(errOut, "dropped") {
+		t.Errorf("a change of path dropped the value: %q", errOut)
+	}
+	if _, a, _ := destination.Secrets("n8n"); a == "" {
+		t.Fatal("a change of path lost the value")
+	}
+	for name, args := range map[string][]string{
+		"scheme downgrade": {"--url", "http://hooks.example.com/b", "--on-my-network"},
+		"the tick":         {"--url", "https://hooks.example.com/b", "--on-my-network"},
+		"another port":     {"--url", "https://hooks.example.com:8443/b", "--on-my-network"},
+		"another host":     {"--url", "https://other.example.com/b"},
+	} {
+		// Back to the saved receiver, with the value, then the change.
+		save("--url", "https://hooks.example.com/a", "--authorization-env", "HOOK_AUTH")
+		if _, a, _ := destination.Secrets("n8n"); a == "" {
+			t.Fatalf("%s: the value was not saved again", name)
+		}
+		if errOut := save(args...); !strings.Contains(errOut, "dropped") {
+			t.Errorf("%s: stderr %q does not say the value was dropped", name, errOut)
+		}
+		if _, a, _ := destination.Secrets("n8n"); a != "" {
+			t.Errorf("%s: the value was kept", name)
+		}
+	}
+}

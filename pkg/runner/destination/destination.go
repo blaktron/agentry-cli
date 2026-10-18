@@ -205,6 +205,32 @@ func (d Destination) Check() error {
 	return nil
 }
 
+// SameReceiver says two destinations reach the same receiver in the same way, so
+// that a credential saved for the first may be kept for the second. A webhook is
+// the same receiver when the scheme, host and port are the same and so is the
+// *On my network* rule (a change of path or query is not a change of receiver);
+// a bucket when both are Amazon's (an access key reaches every bucket and region
+// of its account) or both name the same endpoint by the same scheme, port and
+// rule. Different kinds, or an address that does not pass its rule, are never
+// the same. Every client that keeps a saved credential across a change asks
+// this one question.
+func (d Destination) SameReceiver(o Destination) bool {
+	if d.Kind != o.Kind {
+		return false
+	}
+	switch d.Kind {
+	case KindWebhook:
+		a, err1 := send.CheckURL(d.URL, d.OnMyNetwork)
+		b, err2 := send.CheckURL(o.URL, o.OnMyNetwork)
+		return err1 == nil && err2 == nil && a.HostPort == b.HostPort && a.URL.Scheme == b.URL.Scheme && d.OnMyNetwork == o.OnMyNetwork
+	case KindS3:
+		a, err1 := send.CheckS3(d.S3Spec())
+		b, err2 := send.CheckS3(o.S3Spec())
+		return err1 == nil && err2 == nil && send.SameService(a, b)
+	}
+	return false
+}
+
 // Save writes the store, atomically and for the person alone.
 func (s Store) Save() error {
 	if err := s.check(); err != nil {
