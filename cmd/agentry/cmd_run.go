@@ -994,8 +994,9 @@ func printFailure(ctx context.Context, cmd *cobra.Command, p *runProgress, err e
 		code = ce.Code
 	}
 	msg, reason := err.Error(), receipt.ReasonOf(err)
+	refused, more := receipt.RefusedInputsOf(err)
 	if ctx.Err() != nil {
-		code, msg, reason = engine.ExitCLI, "interrupted", nil
+		code, msg, reason, refused, more = engine.ExitCLI, "interrupted", nil, nil, 0
 	}
 	env := &receipt.Envelope{
 		Agentry:              receipt.EnvelopeVersion,
@@ -1004,6 +1005,8 @@ func printFailure(ctx context.Context, cmd *cobra.Command, p *runProgress, err e
 		Error:                msg,
 		Stage:                p.stage,
 		Reason:               reason,
+		RefusedInputs:        refused,
+		RefusedInputsMore:    more,
 		Ref:                  p.ref,
 		CapabilitiesEnforced: map[string]string{},
 		Result:               receipt.TextResult(""),

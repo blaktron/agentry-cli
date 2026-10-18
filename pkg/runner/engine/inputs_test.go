@@ -11,7 +11,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -21,6 +23,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/hybrid"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/session"
 	runnerdecode "github.com/blaktron/agentry-cli/runnerimage/decode"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
@@ -694,6 +697,12 @@ func TestAFileClamAVFindsRefusesTheRun(t *testing.T) {
 			if env == nil || env.Status != "error" || env.ExitClass != "policy" {
 				t.Fatalf("envelope %+v", env)
 			}
+			path := strings.TrimSuffix(input.want, " (Eicar-Test-Signature)")
+			if !slices.ContainsFunc(env.RefusedInputs, func(r receipt.RefusedInput) bool {
+				return reflect.DeepEqual(r, receipt.RefusedInput{Path: path, By: receipt.RefusedByClamAV, Signature: "Eicar-Test-Signature"})
+			}) {
+				t.Fatalf("refused inputs %+v do not name %s", env.RefusedInputs, path)
+			}
 			if _, ok := f.FindRun("-agent"); ok {
 				t.Fatal("the agent ran on a run ClamAV refused")
 			}
@@ -823,6 +832,7 @@ func TestAnInputHybridAnalysisCallsMaliciousRefusesTheRun(t *testing.T) {
 	if !strings.Contains(err.Error(), "refused before the agent started: Hybrid Analysis's verdict on tool.exe is malicious (threat score 100)") {
 		t.Fatalf("err %q", err)
 	}
+	wantRefused(t, env, []receipt.RefusedInput{{Path: "tool.exe", By: receipt.RefusedByHybridAnalysis, Verdict: "malicious", ThreatScore: 100}}, 0)
 	if env == nil || env.ExitClass != "policy" {
 		t.Fatalf("envelope %+v", env)
 	}

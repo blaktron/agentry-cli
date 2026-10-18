@@ -606,6 +606,7 @@ func fail(env *receipt.Envelope, r *redactor, err error) (*receipt.Envelope, err
 	// The reason is read before the redactor, which rebuilds a masked
 	// error without the chain; it holds no value to mask (receipt.Reason).
 	env.Reason = receipt.ReasonOf(err)
+	env.RefusedInputs, env.RefusedInputsMore = refusedInputs(r, err)
 	err = r.Err(err)
 	var ce *ClassifiedError
 	if !errors.As(err, &ce) {
