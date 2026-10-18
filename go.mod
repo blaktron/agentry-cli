@@ -9,6 +9,7 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/x/exp/teatest v0.0.0-20260902165432-6f6ad8b37b0a
+	github.com/coder/acp-go-sdk v0.13.5
 	github.com/google/uuid v1.6.0
 	github.com/klauspost/compress v1.19.2
 	github.com/oapi-codegen/runtime v1.7.0

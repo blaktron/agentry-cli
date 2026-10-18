@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -134,6 +135,10 @@ type runOpts struct {
 	// before the agent starts, with the job's credential in $envJobToken
 	// (a hosted run's host).
 	reviewInputs string
+	// acp is set when the run is driven over the Agent Client Protocol
+	// (agentry acp): its task is the client's first prompt, its consent is
+	// asked of the client, and it reports through the connection.
+	acp *acpRun
 }
 
 // newRunCmd builds the run command.
@@ -437,8 +442,9 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	}
 	if mode == manifest.ModeInteractive && !opts.dryRun && !opts.plan {
 		// The terminal rule stands for everything but the session protocol,
-		// whose input is its commands and whose stdout is the envelope's.
-		if !opts.sessionProtocol {
+		// whose input is its commands and whose stdout is the envelope's, and
+		// a run driven over ACP, whose client is the chat.
+		if !opts.sessionProtocol && opts.acp == nil {
 			if !stdinIsTTY(cmd.InOrStdin()) {
 				return engine.Classify(engine.ExitUsage, errors.New("an interactive run needs a terminal on stdin (the chat is the input); pipe a task to --mode autonomous instead, or drive the session with --session-protocol"))
 			}
@@ -468,7 +474,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	opts.progress.at(receipt.StageConsent)
 	if opts.plan {
 		consent = describeRunConsent(m, meta, consentHome)
-	} else if err := confirmRunCapabilities(cmd, m, meta, consentHome, opts, mode, shippedSizes); err != nil {
+	} else if err := confirmRun(cmd, m, meta, consentHome, opts, mode, shippedSizes); err != nil {
 		return engine.Classify(engine.ExitPolicy, err)
 	}
 
@@ -759,6 +765,9 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		OnUsage:          onUsage,
 		Events:           eventsOut,
 	}
+	if opts.acp != nil {
+		params.Task, params.OnEvent = opts.acp.task(mode), opts.acp.host.Event
+	}
 	if mode == manifest.ModeInteractive {
 		runErr := runInteractive(cmd, docker, params, m, plan, opts)
 		finishProfile(cmd.ErrOrStderr(), prof, profDir, keep)
@@ -773,6 +782,9 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		opts.progress.enveloped()
 	}
 	finishProfile(cmd.ErrOrStderr(), prof, profDir, keep)
+	if opts.acp != nil {
+		opts.acp.host.Finish(env, runErr)
+	}
 	return runErr
 }
 
@@ -809,6 +821,9 @@ func runInteractive(cmd *cobra.Command, docker dockerx.Client, params engine.Par
 	}()
 	if opts.sessionProtocol {
 		return runProtocol(cmd, s, opts)
+	}
+	if opts.acp != nil {
+		return runACPSession(cmd, s, opts)
 	}
 	topts := tui.Options{
 		Ref:        plan.Ref,
@@ -898,7 +913,7 @@ func sendsOpeningTurn(input string) bool {
 // runTask is the run's task reader. Under the session protocol stdin is the
 // command stream, never the task: the task comes from --input alone.
 func runTask(cmd *cobra.Command, opts runOpts) io.Reader {
-	if opts.sessionProtocol && opts.input == "" {
+	if (opts.sessionProtocol && opts.input == "") || opts.acp != nil {
 		return nil
 	}
 	return taskReader(cmd, opts.input)
@@ -1479,6 +1494,10 @@ func resolveRunMode(cmd *cobra.Command, opts runOpts, m *manifest.Manifest) (man
 	}
 	if len(modes) == 0 {
 		return manifest.ModeAutonomous, nil // the compiler refuses it with the reason
+	}
+	if opts.acp != nil && slices.Contains(modes, manifest.ModeInteractive) {
+		// A client of the protocol is a chat surface.
+		return manifest.ModeInteractive, nil
 	}
 	if !stdinIsTTY(cmd.InOrStdin()) || opts.yes || opts.dryRun || opts.plan {
 		return manifest.ModeAutonomous, nil

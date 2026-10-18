@@ -182,6 +182,15 @@ var dangerousTypes = map[string]bool{
 	"desktop": true, "webloc": true, "fileloc": true, "appref-ms": true, "glk": true,
 }
 
+// dangerous says whether a file of this path is of a type a file manager acts
+// on, by its name as written and by the name it is given when it is copied:
+// SafeName takes a trailing dot or space off ("x.lnk." is made "x.lnk"), so
+// the extension that counts is the one the copy would have.
+func dangerous(rel string) bool {
+	base := path.Base(rel)
+	return dangerousTypes[extType(base)] || dangerousTypes[extType(SafeName(base))]
+}
+
 // extType is a name's extension in lower case, without its dot.
 func extType(name string) string {
 	return strings.ToLower(strings.TrimPrefix(path.Ext(name), "."))
@@ -197,7 +206,7 @@ func copyOne(src, dest *os.Root, destDir, destination string, f receipt.Delivera
 	if rel == "reports" || !strings.HasPrefix(rel, "reports/") {
 		return refuse(receipt.DeliveryErrOutside)
 	}
-	if dangerousTypes[extType(rel)] {
+	if dangerous(rel) {
 		return refuse(receipt.DeliveryErrType)
 	}
 	in, reason := openNoLinks(src, rel)

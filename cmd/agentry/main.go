@@ -114,6 +114,7 @@ func newRootCmd() *cobra.Command {
 		newFilesCmd(),
 		newBrowserCmd(),
 		newRunCmd(),
+		newACPCmd(),
 		newDeliverCmd(),
 		newDestinationsCmd(),
 		newScheduleCmd(),
