@@ -688,7 +688,8 @@ func (s *server) toolFetch(raw json.RawMessage) (string, bool) {
 		}
 	}
 	client := &http.Client{
-		Timeout: FetchTimeout,
+		Timeout:   FetchTimeout,
+		Transport: fetchTransport(),
 		// Redirects re-run the host gate hop by hop: an allowlisted host
 		// must not be usable as a bounce toward one that is not. This is
 		// the only place redirects are validated (spec.go Fetch comment);
@@ -711,12 +712,19 @@ func (s *server) toolFetch(raw json.RawMessage) (string, bool) {
 		return s.scrubSecrets("fetch: " + err.Error()), true
 	}
 	defer func() { _ = resp.Body.Close() }()
+	// Everything below sees the body as the agent will read it: a host that
+	// sent it encoded is decoded first, so the scrub and the save's checks
+	// find a value inside it.
+	body, coding, err := s.decodedBody(method, resp)
+	if err != nil {
+		return s.scrubSecrets("fetch: " + err.Error()), true
+	}
 	if saveTo != "" {
 		// A 4xx/5xx body is saved too: the answer's status says what it is.
-		return s.fetchedTo(resp.Request.URL, resp, saveTo)
+		return s.fetchedTo(resp.Request.URL, resp, body, coding, saveTo)
 	}
 	limit := s.spec.Limits.fetchCap()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	data, err := io.ReadAll(io.LimitReader(body, limit+1))
 	if err != nil {
 		return s.scrubSecrets("fetch: read response: " + err.Error()), true
 	}
@@ -730,7 +738,20 @@ func (s *server) toolFetch(raw json.RawMessage) (string, bool) {
 		// react; only transport and policy failures are isError above.
 		return s.scrubSecrets(head + string(data)), false
 	}
-	return s.fetchedOverBudget(u, head, data, truncated, resp.ContentLength)
+	length := resp.ContentLength
+	if coding != "" {
+		length = -1 // the length on the wire is the encoded body's
+	}
+	return s.fetchedOverBudget(u, head, data, truncated, length)
+}
+
+// fetchTransport is the default transport without its own decoding of a gzip
+// body: fetch decodes every coding itself (decodedBody), so that a host's
+// header is never hidden from it.
+func fetchTransport() http.RoundTripper {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.DisableCompression = true
+	return t
 }
 
 // fetchHostAllowed is the server-side half of the egress control: exact,
