@@ -385,6 +385,10 @@ type decoder struct {
 	// left to decode once it has, each holding its place in files.
 	targets []scanTarget
 	pending []pendingDecode
+	// afterCheck is called by the unpacker between the check of a member's
+	// name and the folders and file it makes for it, so a test can swap a
+	// folder of the archive's directory for a link in that gap.
+	afterCheck func()
 }
 
 // poolOf is the cap a file counts against: its input source's, by the

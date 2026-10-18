@@ -130,6 +130,34 @@ func (d *Dir) CreateRegular(rel string, perm fs.FileMode) (*os.File, error) {
 	return f, nil
 }
 
+// OpenRegular opens rel for reading and returns the regular file it names. A
+// link as the last element, a directory or a pipe in its place is refused
+// with ErrNotRegular, and a pipe is not waited for. A link to a folder on the
+// way is followed while it stays beneath the Dir. The file returned is the
+// one that was looked at: it is described after it is opened.
+func (d *Dir) OpenRegular(rel string) (*os.File, error) {
+	refused := &fs.PathError{Op: "open", Path: rel, Err: ErrNotRegular}
+	// An os.Root follows a link that stays beneath it whatever the flags
+	// say, so it is looked at first.
+	if l, ok := d.impl.(lstater); ok {
+		if fi, err := l.lstat(rel); err == nil && !fi.Mode().IsRegular() {
+			return nil, refused
+		}
+	}
+	f, err := d.impl.open(rel, os.O_RDONLY|nonBlock|noFollow, 0)
+	if err != nil {
+		if errors.Is(err, syscall.ELOOP) {
+			return nil, refused
+		}
+		return nil, err
+	}
+	if fi, err := f.Stat(); err != nil || !fi.Mode().IsRegular() {
+		_ = f.Close()
+		return nil, refused
+	}
+	return f, nil
+}
+
 // Stat describes rel, following a symlink only while it stays beneath the
 // Dir. It opens the name without blocking, so a pipe is described, not
 // waited for.
@@ -144,6 +172,39 @@ func (d *Dir) Stat(rel string) (fs.FileInfo, error) {
 
 // Mkdir makes the directory rel, whose parent must be beneath the Dir.
 func (d *Dir) Mkdir(rel string, perm fs.FileMode) error { return d.impl.mkdir(rel, perm) }
+
+// MkdirAll makes the directory rel and the ones missing on its way, each
+// through the Dir, so none of them can be made beyond a link that leads out.
+// A directory that is there, or a link to one beneath the Dir, is left as it
+// is; a file in the way is an error.
+func (d *Dir) MkdirAll(rel string, perm fs.FileMode) error {
+	clean := path.Clean(rel)
+	if clean == "." {
+		return nil
+	}
+	if path.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, "../") {
+		return &fs.PathError{Op: "mkdir", Path: rel, Err: ErrEscapes}
+	}
+	cur := ""
+	for _, part := range strings.Split(clean, "/") {
+		cur = path.Join(cur, part)
+		err := d.Mkdir(cur, perm)
+		switch {
+		case err == nil:
+		case !errors.Is(err, fs.ErrExist):
+			return err
+		default:
+			fi, serr := d.Stat(cur)
+			if serr != nil {
+				return serr
+			}
+			if !fi.IsDir() {
+				return &fs.PathError{Op: "mkdir", Path: cur, Err: syscall.ENOTDIR}
+			}
+		}
+	}
+	return nil
+}
 
 // Chmod changes the mode of rel, which must be readable.
 func (d *Dir) Chmod(rel string, mode fs.FileMode) error { return d.impl.chmod(rel, mode) }

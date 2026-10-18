@@ -14,6 +14,14 @@
 // argument. The token is sent to that host alone: as HTTP basic auth to a
 // repository, as a bearer token for a file.
 //
+// The output directory is mounted into that container alone, the container's
+// one process is this package, and this package starts no other. So no
+// process can write the output directory, or swap a folder of it for a link,
+// while a call here writes it, and it is held with os.Root, which refuses a
+// link out of the directory where the runtime applies O_NOFOLLOW to a
+// folder, rather than with beneath.Dir, which guards a directory another
+// process can write.
+//
 // This package is part of the embedded runner-image build context and so
 // imports nothing outside the standard library.
 package source
@@ -284,6 +292,8 @@ func fetchRepository(ctx context.Context, o Options, rep *Report) error {
 		rep.refuse(Over{Cap: CapBytes, Of: OfBytes, Count: pl.bytes}, "the repository holds %s of files at %s, past the %s cap", sizeWords(pl.bytes), want, sizeWords(o.MaxBytes))
 		return nil
 	}
+	// The output directory is this step's alone (see the package comment),
+	// so it is held with os.Root.
 	root, err := os.OpenRoot(o.Out)
 	if err != nil {
 		return fmt.Errorf("the output directory: %w", err)

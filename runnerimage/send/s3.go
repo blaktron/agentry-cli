@@ -70,6 +70,8 @@ func deliverS3(ctx context.Context, o Options, rep *Report) {
 	if maxObject <= 0 {
 		maxObject = DefaultMaxObject
 	}
+	// The staged folder is read-only to this container (see the package
+	// comment in send.go), so it is held with os.Root.
 	root, rerr := os.OpenRoot(o.Staging)
 	if rerr == nil {
 		defer func() { _ = root.Close() }()

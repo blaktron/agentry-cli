@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/blaktron/agentry-cli/runnerimage/beneath"
 )
 
 // archiveTools are fakeTools that also name the archive types and stand in
@@ -450,7 +452,7 @@ type endless struct{}
 func (endless) Read(p []byte) (int, error) { return len(p), nil }
 
 func TestTheBudgetIsCheckedAsTheMemberStreams(t *testing.T) {
-	root, err := os.OpenRoot(t.TempDir())
+	root, err := beneath.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}

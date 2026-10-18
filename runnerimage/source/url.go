@@ -97,6 +97,8 @@ func fetchURL(ctx context.Context, o Options, rep *Report) error {
 		return nil
 	}
 	name := fileName(resp.Header.Get("Content-Disposition"), resp.Request.URL)
+	// The output directory is this step's alone (see the package comment in
+	// source.go), so it is held with os.Root.
 	root, err := os.OpenRoot(o.Out)
 	if err != nil {
 		return fmt.Errorf("the output directory: %w", err)

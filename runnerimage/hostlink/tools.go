@@ -8,15 +8,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
+	"github.com/blaktron/agentry-cli/runnerimage/beneath"
 	"github.com/blaktron/agentry-cli/runnerimage/toolargs"
 )
 
@@ -648,28 +650,48 @@ func filesRel(p string) (string, error) {
 	return p, nil
 }
 
+// sharedFolder opens the shared folder. The tools server's container writes
+// the same folder while the host link copies, and a declared command there
+// can put a link or swap a folder for one at any moment, so every name is
+// resolved from the opened folder in one step that refuses a link leading out
+// of it (beneath.Dir), on a container runtime that follows a link to a
+// folder under O_NOFOLLOW (gVisor) as on any other.
+func (s *server) sharedFolder() (*beneath.Dir, error) {
+	root, err := beneath.Open(s.cfg.FilesDir)
+	if err != nil {
+		return nil, fmt.Errorf("the shared folder %s is not there: %v", FilesPath, err)
+	}
+	return root, nil
+}
+
+// checked is the gap between a name's lexical check and its use.
+func (s *server) checked() {
+	if s.afterCheck != nil {
+		s.afterCheck()
+	}
+}
+
 // copyOut copies a file of the shared folder to the host link's own, held
 // to maxCopyBytes. The folder is the tools server's too, where a declared
-// command can put a link: os.Root never follows one out of it.
+// command can put a link: none is followed out of it, and a link as the file
+// itself is not a file.
 func (s *server) copyOut(rel, local string) (int64, error) {
-	root, err := os.OpenRoot(s.cfg.FilesDir)
+	root, err := s.sharedFolder()
 	if err != nil {
-		return 0, fmt.Errorf("the shared folder %s is not there: %v", FilesPath, err)
+		return 0, err
 	}
 	defer func() { _ = root.Close() }()
-	// A regular file, before it is opened: a FIFO a command left there
-	// would block the open.
-	if fi, err := root.Lstat(filepath.FromSlash(rel)); err != nil || !fi.Mode().IsRegular() {
-		return 0, fmt.Errorf("%s is not a file", path.Join(FilesPath, rel))
-	}
-	src, err := root.Open(filepath.FromSlash(rel))
+	s.checked()
+	// A regular file, found as it is opened: a FIFO a command left there
+	// would block the open, and is not waited for.
+	src, err := root.OpenRegular(rel)
 	if err != nil {
+		if errors.Is(err, beneath.ErrNotRegular) || errors.Is(err, beneath.ErrEscapes) || errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
+			return 0, fmt.Errorf("%s is not a file", path.Join(FilesPath, rel))
+		}
 		return 0, fmt.Errorf("%s: %v", path.Join(FilesPath, rel), err)
 	}
 	defer func() { _ = src.Close() }()
-	if fi, err := src.Stat(); err != nil || !fi.Mode().IsRegular() {
-		return 0, fmt.Errorf("%s is not a file", path.Join(FilesPath, rel))
-	}
 	dst, err := os.OpenFile(local, os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		return 0, err
@@ -688,18 +710,17 @@ func (s *server) copyOut(rel, local string) (int64, error) {
 }
 
 // copyIn copies the host link's file into the shared folder, making the
-// folders on the way, every one through os.Root.
+// folders on the way, every one through the folder's beneath.Dir.
 func (s *server) copyIn(local, rel string) (int64, error) {
-	root, err := os.OpenRoot(s.cfg.FilesDir)
+	root, err := s.sharedFolder()
 	if err != nil {
-		return 0, fmt.Errorf("the shared folder %s is not there: %v", FilesPath, err)
+		return 0, err
 	}
 	defer func() { _ = root.Close() }()
-	dir := path.Dir(rel)
-	if dir != "." {
+	if dir := path.Dir(rel); dir != "." {
 		parts := strings.Split(dir, "/")
 		for i := range parts {
-			if err := root.Mkdir(filepath.FromSlash(path.Join(parts[:i+1]...)), 0o777); err != nil && !errors.Is(err, os.ErrExist) {
+			if err := root.Mkdir(path.Join(parts[:i+1]...), 0o777); err != nil && !errors.Is(err, os.ErrExist) {
 				return 0, err
 			}
 		}
@@ -709,7 +730,8 @@ func (s *server) copyIn(local, rel string) (int64, error) {
 		return 0, err
 	}
 	defer func() { _ = src.Close() }()
-	dst, err := root.OpenFile(filepath.FromSlash(rel), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o666)
+	s.checked()
+	dst, err := root.OpenFile(rel, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o666)
 	if err != nil {
 		return 0, fmt.Errorf("%s: %v", path.Join(FilesPath, rel), err)
 	}
