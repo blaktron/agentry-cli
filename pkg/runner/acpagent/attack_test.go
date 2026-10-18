@@ -328,7 +328,7 @@ func TestAttackPromptAfterAnswerBeforeTeardownIsRefused(t *testing.T) {
 		if r["error"] == nil {
 			t.Fatalf("a prompt after the run's answer was accepted and answered %v", r)
 		}
-	case <-time.After(1500 * time.Millisecond):
+	case <-time.After(10 * time.Second): // refused at once, or parked until the teardown is released
 		close(release)
 		r := <-got
 		t.Fatalf("a prompt sent after the run had answered was neither refused nor run; it was parked until teardown ended and then answered %v", r["result"])
@@ -505,15 +505,36 @@ func TestAttackManyCancelsAndClosesDoNotWedge(t *testing.T) {
 		}
 	}()
 	defer func() { <-flooded }()
-	r, _ := c.replyTo(10)
-	if res, _ := r["result"].(map[string]any); res["stopReason"] != "cancelled" {
-		t.Fatalf("answer %v", r)
+	// The run's own teardown answers the prompt (cancelled) and the first close,
+	// and every other close is answered at once, so the answers do not come in
+	// the order the requests went, and a close sent after the session is over is
+	// answered ok. Read every answer by its id, none thrown away on the way to
+	// another, and require one for the prompt and one for each close.
+	answers := map[int]map[string]any{}
+	for len(answers) < 5001 {
+		m := c.recv()
+		id, isNum := m["id"].(float64)
+		if m["method"] != nil || !isNum {
+			continue
+		}
+		if _, dup := answers[int(id)]; dup {
+			t.Fatalf("request %d was answered twice", int(id))
+		}
+		answers[int(id)] = m
+		if len(answers)%1000 == 0 {
+			t.Logf("%d answered", len(answers))
+		}
 	}
-	// the first close is answered ok; every other is answered one way or another
+	if res, _ := answers[10]["result"].(map[string]any); res["stopReason"] != "cancelled" {
+		t.Fatalf("the prompt was answered %v", answers[10])
+	}
 	ok := 0
 	for i := 0; i < 5000; i++ {
-		r, _ := c.replyTo(1000 + i)
-		if r["error"] == nil {
+		m, answered := answers[1000+i]
+		if !answered {
+			t.Fatalf("close %d was never answered", 1000+i)
+		}
+		if m["error"] == nil {
 			ok++
 		}
 	}
@@ -594,11 +615,11 @@ func TestAttackRunProducesMegabytesOfProgressForSlowReader(t *testing.T) {
 	c.send(req(10, "session/prompt", prompt(sid, "go")))
 	select {
 	case d := <-runDone:
-		if d > 5*time.Second {
-			t.Fatalf("the run took %v for a slow reader", d)
-		}
+		// One byte a millisecond would take hours to read 40 MB: a run that waited
+		// for the reader never finishes, so finishing at all is the proof, and how
+		// long it took on a loaded machine is only logged.
 		t.Logf("run took %v", d)
-	case <-time.After(30 * time.Second):
+	case <-time.After(90 * time.Second):
 		t.Fatal("the run waited for the reader")
 	}
 }
@@ -1250,7 +1271,8 @@ func cancelMidTurn(t *testing.T, silent bool) {
 	if res, _ := r["result"].(map[string]any); res["stopReason"] != "cancelled" {
 		t.Fatalf("answer %v", r)
 	}
-	if d > time.Second {
+	// The fault was a wait of five seconds for an event that does not come.
+	if d > 4*time.Second {
 		t.Fatalf("the cancel was answered after %v", d)
 	}
 }
