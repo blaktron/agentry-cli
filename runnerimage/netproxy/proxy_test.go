@@ -682,3 +682,80 @@ func TestPublicOnlyForwardsNoPlainHTTP(t *testing.T) {
 		t.Errorf("status %d, want 405", resp.StatusCode)
 	}
 }
+
+// connectStatus sends one CONNECT to the proxy and answers the status code and
+// the proxy's log.
+func connectStatus(t *testing.T, p *Proxy, target string) int {
+	t.Helper()
+	srv := httptest.NewServer(p.Handler())
+	defer srv.Close()
+	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	_, _ = fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", target, target)
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp.StatusCode
+}
+
+// TestNetworkOKRefusesWhatIsNotANetworkAddress: a delivery's proxy for a
+// destination on the person's network tunnels to a private, shared or
+// loopback answer but never to link-local space (where cloud metadata
+// answers), and a name that resolves to one such address among others is
+// refused whole.
+func TestNetworkOKRefusesWhatIsNotANetworkAddress(t *testing.T) {
+	for _, answer := range [][]string{{"169.254.169.254"}, {"fe80::1"}, {"8.8.8.8", "169.254.169.254"}, {"0.0.0.0"}, {"224.0.0.1"}, {"::ffff:169.254.169.254"}} {
+		logs := &lockedBuf{}
+		p := &Proxy{Allow: []string{"hook.example:443"}, NetworkOK: true, Resolver: fakeResolver(answer), Logw: logs}
+		if got := connectStatus(t, p, "hook.example:443"); got != http.StatusForbidden {
+			t.Errorf("%v: status %d, want 403", answer, got)
+		}
+		if !strings.Contains(logs.String(), "private-network address") {
+			t.Errorf("%v: the denial does not say why: %s", answer, logs.String())
+		}
+	}
+	echo := startEcho(t)
+	host, port, _ := net.SplitHostPort(echo.Addr().String())
+	for _, answer := range [][]string{{"127.0.0.1"}, {"10.1.2.3", "127.0.0.1"}} {
+		var dialled string
+		p := &Proxy{Allow: []string{"lan.example:" + port}, NetworkOK: true, Resolver: fakeResolver(answer), Logw: &lockedBuf{},
+			dial: func(ctx context.Context, address string) (net.Conn, error) {
+				dialled = address
+				return (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(host, port))
+			}}
+		if got := connectStatus(t, p, "lan.example:"+port); got != http.StatusOK {
+			t.Errorf("%v: status %d, want 200", answer, got)
+		}
+		// The address checked is the one dialled, never the name again.
+		if dialled != net.JoinHostPort(answer[0], port) {
+			t.Errorf("%v: dialled %q", answer, dialled)
+		}
+	}
+	// A host not on the list is refused whatever it resolves to.
+	if got := connectStatus(t, &Proxy{Allow: []string{"lan.example:443"}, NetworkOK: true, Resolver: fakeResolver{"10.0.0.1"}}, "other.example:443"); got != http.StatusForbidden {
+		t.Errorf("an unlisted host: status %d, want 403", got)
+	}
+}
+
+// TestNetworkOKForwardsNoPlainHTTP: like a source's proxy, a delivery's
+// tunnels and forwards no plain request, so the address check is never
+// bypassed.
+func TestNetworkOKForwardsNoPlainHTTP(t *testing.T) {
+	p := &Proxy{Allow: []string{"lan.example:80"}, PlainHTTP: []string{"lan.example:80"}, NetworkOK: true, Resolver: fakeResolver{"10.0.0.1"}}
+	srv := httptest.NewServer(p.Handler())
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	c := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(u)}}
+	resp, err := c.Get("http://lan.example/x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("status %d, want 405", resp.StatusCode)
+	}
+}

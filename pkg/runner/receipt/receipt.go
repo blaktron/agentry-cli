@@ -138,7 +138,8 @@ type Deliverable struct {
 
 // The kinds of destination a Delivery names, and how a delivery ended.
 const (
-	DeliveryKindFolder = "folder"
+	DeliveryKindFolder  = "folder"
+	DeliveryKindWebhook = "webhook"
 
 	DeliveryDelivered = "delivered"
 	// DeliveryRefused: the file was not the one the envelope names, or not a
@@ -165,12 +166,45 @@ const (
 	// download (Mark-of-the-Web, the quarantine attribute) could not be set on
 	// it, so a client must not open it in one click.
 	DeliveryErrNotMarked = "not-marked"
+	// The words a send to a destination adds. TooLarge: a file the webhook's
+	// body had no room for, listed in it with its digest and no content.
+	// Credential: the destination's secret or header value was missing or not
+	// one a request may carry. Address: the destination's host, or the address
+	// it resolves to, is not one the step may reach (private, loopback or
+	// link-local without "On my network", or a name no proxy admits). TLS: the
+	// receiver's certificate was not trusted. Unreachable: nothing answered.
+	// Timeout: the receiver did not finish in time. Redirect: the receiver
+	// answered with a redirect, which is never followed. Status: the receiver
+	// answered with an error status. Step: the delivery step itself failed and
+	// left no report.
+	DeliveryErrTooLarge    = "too-large"
+	DeliveryErrCredential  = "credential"
+	DeliveryErrAddress     = "address"
+	DeliveryErrTLS         = "tls"
+	DeliveryErrUnreachable = "unreachable"
+	DeliveryErrTimeout     = "timeout"
+	DeliveryErrRedirect    = "redirect"
+	DeliveryErrStatus      = "status"
+	DeliveryErrStep        = "step"
 )
+
+// DeliveryErrors is every word a Delivery's Error may be.
+var DeliveryErrors = []string{
+	DeliveryErrChanged, DeliveryErrMissing, DeliveryErrOutside, DeliveryErrLink, DeliveryErrUnreadable, DeliveryErrType,
+	DeliveryErrDestination, DeliveryErrWrite, DeliveryErrNotMarked, DeliveryErrTooLarge, DeliveryErrCredential,
+	DeliveryErrAddress, DeliveryErrTLS, DeliveryErrUnreachable, DeliveryErrTimeout, DeliveryErrRedirect, DeliveryErrStatus,
+	DeliveryErrStep,
+}
 
 // Delivery is one file's copy or send to a destination, as
 // receipts/deliveries.ndjson holds it and the envelope repeats it. For a
 // folder, Destination is the folder's absolute path, Object the copy's
-// absolute path and Host empty.
+// absolute path and Host empty. For a webhook, Destination is the name the
+// person saved it under, Host the host and port reached, and Object the
+// deliverable's path (or "result" for a run that left no file and sent its
+// result alone, whose SHA256 is that of the result as sent, or empty when
+// there was none). OnMyNetwork says the destination was saved with "On my
+// network", so the step was allowed to reach a private-network address.
 type Delivery struct {
 	Destination string `json:"destination"`
 	Kind        string `json:"kind"`
@@ -179,6 +213,7 @@ type Delivery struct {
 	SHA256      string `json:"sha256"`
 	Status      string `json:"status"`
 	Error       string `json:"error,omitempty"`
+	OnMyNetwork bool   `json:"onMyNetwork,omitempty"`
 }
 
 // FetchSaves is a run's count of the bodies fetch saved.

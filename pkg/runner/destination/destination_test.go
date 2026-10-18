@@ -1,0 +1,190 @@
+package destination
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/zalando/go-keyring"
+
+	"github.com/blaktron/agentry-cli/pkg/configdir"
+	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
+)
+
+// fakeKeychain stands in for the system keychain.
+func fakeKeychain(t *testing.T) map[string]string {
+	t.Helper()
+	m := map[string]string{}
+	g, s, d := keyringGet, keyringSet, keyringDelete
+	keyringGet = func(service, account string) (string, error) {
+		if service != modelkey.Service {
+			t.Errorf("service %q", service)
+		}
+		v, ok := m[account]
+		if !ok {
+			return "", keyring.ErrNotFound
+		}
+		return v, nil
+	}
+	keyringSet = func(_, account, value string) error { m[account] = value; return nil }
+	keyringDelete = func(_, account string) error {
+		if _, ok := m[account]; !ok {
+			return keyring.ErrNotFound
+		}
+		delete(m, account)
+		return nil
+	}
+	t.Cleanup(func() { keyringGet, keyringSet, keyringDelete = g, s, d })
+	t.Setenv(modelkey.EnvNoKeyring, "")
+	return m
+}
+
+func home(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv(configdir.EnvVar, dir)
+	return dir
+}
+
+func TestADestinationIsSavedByNameAndItsSecretsGoToTheKeychain(t *testing.T) {
+	dir := home(t)
+	kc := fakeKeychain(t)
+	s, err := Load()
+	if err != nil || len(s.Destinations) != 0 {
+		t.Fatalf("%+v %v", s, err)
+	}
+	if err := s.Upsert(Destination{Name: "n8n", Kind: KindWebhook, URL: "https://hooks.example.com/in/abc?token=URLTOKEN", OnMyNetwork: false}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveSecrets("n8n", "whsec_SECRET", "Bearer AUTHVALUE"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Save(); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, File))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "SECRET") || strings.Contains(string(raw), "AUTHVALUE") {
+		t.Errorf("the file holds a credential: %s", raw)
+	}
+	if fi, _ := os.Stat(filepath.Join(dir, File)); fi.Mode().Perm() != 0o600 && os.PathSeparator == '/' {
+		t.Errorf("the file's mode is %v", fi.Mode().Perm())
+	}
+	if kc[SecretAccount("n8n")] != "whsec_SECRET" || kc[AuthorizationAccount("n8n")] != "Bearer AUTHVALUE" {
+		t.Errorf("keychain: %v", kc)
+	}
+	r, err := Resolve([]string{"n8n", "n8n"})
+	if err != nil || len(r) != 1 || r[0].Secret != "whsec_SECRET" || r[0].Authorization != "Bearer AUTHVALUE" {
+		t.Fatalf("%+v %v", r, err)
+	}
+	// An empty Authorization removes the saved one; an empty secret keeps it.
+	if err := SaveSecrets("n8n", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if kc[SecretAccount("n8n")] != "whsec_SECRET" || kc[AuthorizationAccount("n8n")] != "" {
+		t.Errorf("keychain: %v", kc)
+	}
+	if got := (Destination{Name: "n", Kind: KindWebhook, URL: "https://hooks.example.com/in/abc?token=URLTOKEN"}).Where(); got != "https://hooks.example.com" {
+		t.Errorf("Where: %q", got)
+	}
+}
+
+func TestResolveRefusesAMissingNameAndAMissingSecret(t *testing.T) {
+	home(t)
+	fakeKeychain(t)
+	s, _ := Load()
+	_ = s.Upsert(Destination{Name: "a", Kind: KindWebhook, URL: "https://hooks.example.com/x"})
+	if err := s.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Resolve([]string{"nope"}); err == nil || !strings.Contains(err.Error(), "no destination is saved") {
+		t.Errorf("a name that is not saved: %v", err)
+	}
+	if _, err := Resolve([]string{"a"}); err == nil || !strings.Contains(err.Error(), "no signing secret") {
+		t.Errorf("a destination with no secret: %v", err)
+	}
+	if r, err := Resolve(nil); err != nil || r != nil {
+		t.Errorf("no names is no destinations: %+v %v", r, err)
+	}
+}
+
+func TestADestinationHeldToTheAddressRuleIsNotSavedOrLoaded(t *testing.T) {
+	dir := home(t)
+	for _, d := range []Destination{
+		{Name: "Bad Name", Kind: KindWebhook, URL: "https://hooks.example.com/x"},
+		{Name: "x", Kind: "s3", URL: "https://hooks.example.com/x"},
+		{Name: "x", Kind: KindWebhook, URL: "http://hooks.example.com/x"},
+		{Name: "x", Kind: KindWebhook, URL: "https://10.0.0.5/x"},
+		{Name: "x", Kind: KindWebhook, URL: "https://127.0.0.1:8443/x", OnMyNetwork: true},
+		{Name: "", Kind: KindWebhook, URL: "https://hooks.example.com/x"},
+	} {
+		var s Store
+		if err := s.Upsert(d); err == nil {
+			t.Errorf("%+v was taken", d)
+		}
+	}
+	// A hand-edited file that breaks the rules is refused whole.
+	if err := os.WriteFile(filepath.Join(dir, File), []byte("destinations:\n- name: x\n  kind: webhook\n  url: http://10.0.0.5/x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(); err == nil {
+		t.Error("a file with an http address and no On my network was loaded")
+	}
+	if err := os.WriteFile(filepath.Join(dir, File), []byte("destinations: []\nextra: 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(); err == nil {
+		t.Error("a file with an unknown key was loaded")
+	}
+}
+
+func TestDefaultSetsFollowTheNamesAndTheQuickAgent(t *testing.T) {
+	home(t)
+	var s Store
+	for _, n := range []string{"a", "b"} {
+		if err := s.Upsert(Destination{Name: n, Kind: KindWebhook, URL: "https://hooks.example.com/" + n}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.SetDefault("acme/weekly", []string{"a", "b", "a"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.DefaultsFor("acme/weekly@1.2.3"); len(got) != 2 || got[0] != "a" || got[1] != "b" {
+		t.Errorf("defaults: %v", got)
+	}
+	if s.DefaultsFor("acme/other@1") != nil {
+		t.Error("another QuickAgent has a default set")
+	}
+	if err := s.SetDefault("acme/weekly", []string{"missing"}); err == nil {
+		t.Error("a default naming nothing was taken")
+	}
+	if err := s.SetDefault("not-an-agent", nil); err == nil {
+		t.Error("a bad agent was taken")
+	}
+	s.Delete("a")
+	if got := s.DefaultsFor("acme/weekly"); len(got) != 1 || got[0] != "b" {
+		t.Errorf("after delete: %v", got)
+	}
+	s.Delete("b")
+	if len(s.Defaults) != 0 {
+		t.Errorf("defaults: %v", s.Defaults)
+	}
+	if err := s.Save(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSaveSecretsRefusesWhatCouldSplitAHeader(t *testing.T) {
+	home(t)
+	fakeKeychain(t)
+	if err := SaveSecrets("a", "ok", "Bearer x\r\nX-Evil: 1"); err == nil {
+		t.Error("an Authorization value with a line break was saved")
+	}
+	t.Setenv(modelkey.EnvNoKeyring, "1")
+	if err := SaveSecrets("a", "ok", ""); err == nil {
+		t.Error("credentials were kept with the keychain off")
+	}
+}

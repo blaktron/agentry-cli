@@ -27,6 +27,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/decode"
+	"github.com/blaktron/agentry-cli/pkg/runner/destination"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/intake"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
@@ -120,6 +121,14 @@ type Params struct {
 	// left as it is; the copies are recorded in the envelope's deliveries
 	// block and receipts/deliveries.ndjson. Empty delivers nothing.
 	DeliverTo string
+	// Destinations are the places the person asked the run to send its
+	// result and deliverables to, saved by name with their credentials read
+	// (destination.Resolve). The delivery step runs for each once the run has
+	// succeeded and its containers are gone; a failed delivery is recorded and
+	// never changes the run. Nothing but the person's own choice puts a
+	// destination here: no manifest, plan or QuickAgent names one. Empty runs
+	// no delivery step.
+	Destinations []destination.Resolved
 	// ReportTheme is the report design export_pdf lays the run's PDFs out
 	// with, and what chose it: a design document, or a built-in theme's id;
 	// neither is the default, Plain. The type keeps its v1 name so that a
@@ -321,6 +330,11 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	}
 	if err := checkModelSignIn(p); err != nil {
 		return fail(env, redact, err)
+	}
+	// A destination is the person's on this computer: a hosted run's host
+	// delivers nowhere, whatever its caller put in the parameters.
+	if len(p.Destinations) > 0 && p.InputReview != nil {
+		return fail(env, redact, Classify(ExitUsage, errors.New("a hosted run delivers to no destination")))
 	}
 	// A target host is reached only as the plan declares it, and never
 	// by a hosted run: refused before anything starts.
@@ -571,7 +585,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	env.Status = "ok"
 	env.ExitCode = ExitOK
 	env.Stage = ""
-	finish = func() { finishDeliverables(env, rd, p, plainResultText(result)) }
+	finish = func() { finishDeliverables(ctx, d, env, rd, p, plainResultText(result)) }
 	if err := env.Write(p.OutDir); err != nil {
 		_, _ = fmt.Fprintf(p.Stderr, "warning: %v\n", err)
 	}

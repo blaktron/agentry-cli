@@ -13,6 +13,7 @@ package engine
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,6 +29,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/deliver"
+	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
@@ -355,17 +357,30 @@ func writeMessage(rd *runDirs, text string) (receipt.Deliverable, bool) {
 // digest, and a run teardown fails lists and delivers nothing. It never fails
 // the run: a copy that was refused or failed is a record, nothing more. text
 // is as for deliverablesRecord.
-func finishDeliverables(env *receipt.Envelope, rd *runDirs, p Params, text string) {
+func finishDeliverables(ctx context.Context, d dockerx.Client, env *receipt.Envelope, rd *runDirs, p Params, text string) {
 	env.Deliverables = deliverablesRecord(rd, env.PDFs, text)
-	if env.Deliverables == nil {
+	toDestinations := len(p.Destinations) > 0 && (env.Deliverables != nil || resultToSend(env) != nil)
+	if env.Deliverables == nil && !toDestinations {
 		return
 	}
-	if p.DeliverTo != "" {
+	if env.Deliverables != nil && p.DeliverTo != "" {
 		env.Deliveries = deliver.ToFolder(p.OutDir, env.Deliverables.Files, deliver.FolderOptions{
 			Root:  p.DeliverTo,
 			Agent: deliver.AgentName(p.Plan.Ref),
 			Label: deliver.Label(env.Deliverables.Files, env.RunID),
 		})
+	}
+	if toDestinations {
+		var files []receipt.Deliverable
+		if env.Deliverables != nil {
+			files = env.Deliverables.Files
+		}
+		env.Deliveries = append(env.Deliveries, sendToDestinations(ctx, d, deliveryRun{
+			RunDir: p.OutDir, RunID: env.RunID, Ref: env.Ref, Digest: env.Digest, Result: resultToSend(env), Files: files,
+			Image: p.Plan.Proxy.Image, Limits: p.limits(), Engine: p.engine(), Root: p.RunRoot, Stderr: p.Stderr,
+		}, p.Destinations)...)
+	}
+	if len(env.Deliveries) > 0 {
 		if err := deliver.WriteLedger(p.OutDir, env.Deliveries, false); err != nil {
 			_, _ = fmt.Fprintf(p.Stderr, "warning: the deliveries could not be recorded in receipts/%s: %v\n", deliver.LedgerFile, err)
 		}
