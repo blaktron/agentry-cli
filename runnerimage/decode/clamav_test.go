@@ -410,3 +410,66 @@ func TestTheScanRecordIsWrittenBeforeAnyDecoderRuns(t *testing.T) {
 		t.Fatalf("the scan record with no signatures: %s", w.b)
 	}
 }
+
+// TestADecodeThatKeepsMembersCopiesEachReadMemberAsItWas: asked to keep
+// members, the runner copies each member it read as text or decoded, byte
+// for byte, to originals/<path>, never one it found or could not read and
+// never a file as staged; the record states each member's digest.
+func TestADecodeThatKeepsMembersCopiesEachReadMemberAsItWas(t *testing.T) {
+	tools, _ := clamTools(t)
+	in, out := t.TempDir(), t.TempDir()
+	write(t, in, "notes.md", []byte("# staged\n"))
+	write(t, in, "docs.zip", zipOf(t,
+		zipEntry{name: "a.pdf", body: "%PDF member"},
+		zipEntry{name: "b.md", body: "# member\n"},
+		zipEntry{name: "bad.txt", body: "EICAR inside"},
+		zipEntry{name: "c.bin", body: "\x00\x01\x02"},
+	))
+	w := &recordWriter{out: out}
+	rep, err := Decode(context.Background(), in, out, tools, Limits{ClamDB: "/clamav", KeepMembers: true, Record: w})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]File{}
+	for _, f := range rep.Files {
+		got[f.Path] = f
+	}
+	for path, body := range map[string]string{"docs.zip/a.pdf": "%PDF member", "docs.zip/b.md": "# member\n"} {
+		f := got[path]
+		if f.Original != OriginalsDir+"/"+path {
+			t.Errorf("%s kept at %q", path, f.Original)
+			continue
+		}
+		if b, err := os.ReadFile(filepath.Join(out, filepath.FromSlash(f.Original))); err != nil || string(b) != body {
+			t.Errorf("%s kept as %q (%v)", path, b, err)
+		}
+	}
+	for _, path := range []string{"docs.zip/bad.txt", "docs.zip/c.bin", "notes.md", "docs.zip"} {
+		if got[path].Original != "" {
+			t.Errorf("%s was kept: %+v", path, got[path])
+		}
+	}
+	var rec ScanRecord
+	if err := json.Unmarshal(w.b, &rec); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range rec.Files {
+		if f.Path == "docs.zip/b.md" && f.SHA256 != got["docs.zip/b.md"].SHA256 {
+			t.Errorf("the record's digest of b.md is %q, the report's %q", f.SHA256, got["docs.zip/b.md"].SHA256)
+		}
+	}
+	// Not asked, nothing is kept.
+	out2 := t.TempDir()
+	rep, err = Decode(context.Background(), in, out2, tools, Limits{ClamDB: "/clamav"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range rep.Files {
+		if f.Original != "" {
+			t.Fatalf("%s was kept by a decode not asked to keep members", f.Path)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(out2, OriginalsDir)); err == nil {
+		t.Fatal("a decode not asked to keep members wrote originals")
+	}
+}

@@ -201,7 +201,9 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 			return nil, engine.Classify(engine.ExitPolicy, fmt.Errorf("the build was refused before the agent started: %s", dec.Refusal()))
 		}
 		res.Decoded = dec
-		all, staged, err := dec.Stage(given, inputsDir)
+		// A sample in an archive is read by its text; the Voice Writer
+		// keeps no sample, so their own bytes are not needed.
+		all, staged, err := dec.StageWith(given, inputsDir, decode.StageOptions{Members: true})
 		if err != nil {
 			return nil, engine.Classify(engine.ExitUsage, err)
 		}

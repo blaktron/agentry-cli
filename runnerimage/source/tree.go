@@ -193,7 +193,9 @@ func portableName(name string) bool {
 }
 
 // write writes the plan under root, which must be empty. Every write goes
-// through os.Root, so nothing lands outside it whatever a name says.
+// through os.Root, so nothing lands outside it whatever a name says. No other
+// process writes the directory root holds (see the package comment in
+// source.go).
 func (pl *plan) write(p *pack, root *os.Root) error {
 	for _, d := range pl.dirs {
 		if err := root.Mkdir(d, 0o755); err != nil {

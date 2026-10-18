@@ -104,6 +104,10 @@ type server struct {
 	outputs map[int][]byte
 	calls   int
 	shells  *shells
+	// afterCheck is called by a copy between the lexical check of a name
+	// and the open of the file or the folder it names, so a test can swap a
+	// folder of the shared folder for a link in that gap.
+	afterCheck func()
 }
 
 // maxKeptOutputs is how many host_run outputs are kept for paging.

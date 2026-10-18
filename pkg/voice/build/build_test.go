@@ -1,7 +1,11 @@
 package build
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -10,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -54,6 +59,60 @@ func mountOf(r dockerx.RunSpec, target string) string {
 	return ""
 }
 
+// playArchive is the decode container unpacking a zip, as a decode asked to
+// keep members does (keepMembers): the archive unpacked, each .pdf member
+// decoded and each .md member read as text, both with their own bytes kept
+// under originals/ when asked, anything else undecodable. Every entry is checked clean.
+func playArchive(t *testing.T, src, rel, out string, keepMembers bool) []runnerdecode.File {
+	t.Helper()
+	zr, err := zip.OpenReader(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = zr.Close() }()
+	whole, _ := os.ReadFile(src) //nolint:gosec // the test's own staged file
+	files := []runnerdecode.File{{Path: rel, Family: runnerdecode.FamilyArchive, Tool: "agentry-runner", Outcome: runnerdecode.OutcomeUnpacked,
+		Check: runnerdecode.CheckClean, MIME: "application/zip", SHA256: sha256Hex(whole)}}
+	for _, zf := range zr.File {
+		rc, err := zf.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(rc)
+		_ = rc.Close()
+		path := rel + "/" + zf.Name
+		f := runnerdecode.File{Path: path, In: rel, Size: int64(len(body)), Check: runnerdecode.CheckClean, SHA256: sha256Hex(body), MIME: "text/plain"}
+		keep := func() {
+			if !keepMembers {
+				return
+			}
+			f.Original = runnerdecode.OriginalsDir + "/" + path
+			writeFile(t, filepath.Join(out, filepath.FromSlash(f.Original)), string(body))
+		}
+		switch filepath.Ext(zf.Name) {
+		case ".pdf":
+			f.Family, f.Tool, f.Outcome, f.Output, f.MIME = "pdf", "pdftotext", runnerdecode.OutcomeDecoded, path+".txt", "application/pdf"
+			writeFile(t, filepath.Join(out, filepath.FromSlash(f.Output)), "text of "+path+"\n")
+			f.Bytes = int64(len("text of " + path + "\n"))
+			keep()
+		case ".md":
+			f.Family, f.Outcome, f.Output = "text", runnerdecode.OutcomeText, path+".txt"
+			writeFile(t, filepath.Join(out, filepath.FromSlash(f.Output)), string(body))
+			f.Bytes = int64(len(body))
+			keep()
+		default:
+			f.Family, f.Outcome, f.Reason, f.MIME = "unknown", runnerdecode.OutcomeUndecodable, "not text", "application/octet-stream"
+		}
+		files = append(files, f)
+	}
+	return files
+}
+
+func sha256Hex(b []byte) string {
+	h := sha256.Sum256(b)
+	return hex.EncodeToString(h[:])
+}
+
 // printScan is the scan record the decode container prints before it
 // decodes, of the report playDecode wrote.
 func printScan(r dockerx.RunSpec) string {
@@ -90,6 +149,9 @@ func playDecode(t *testing.T) func(dockerx.RunSpec) {
 			rel, _ := filepath.Rel(in, p)
 			rel = filepath.ToSlash(rel)
 			switch filepath.Ext(rel) {
+			case ".zip":
+				rep.Files = append(rep.Files, playArchive(t, p, rel, out, slices.Contains(r.Argv, "--keep-members"))...)
+				return nil
 			case ".pdf":
 				writeFile(t, filepath.Join(out, rel+".txt"), "text of "+rel+"\n")
 				rep.Files = append(rep.Files, runnerdecode.File{Path: rel, Family: "pdf", Tool: "pdftotext", Outcome: runnerdecode.OutcomeDecoded, Output: rel + ".txt", Bytes: 20})
@@ -101,7 +163,9 @@ func playDecode(t *testing.T) func(dockerx.RunSpec) {
 			return nil
 		})
 		for i := range rep.Files {
-			rep.Files[i] = check(rep.Files[i])
+			if rep.Files[i].Check == "" {
+				rep.Files[i] = check(rep.Files[i])
+			}
 		}
 		b, _ := json.Marshal(rep)
 		writeFile(t, filepath.Join(out, runnerdecode.ReportFile), string(b))
@@ -167,6 +231,42 @@ func newFixture(t *testing.T, job Job, voiceMD string) *fixture {
 		}
 	}
 	return fx
+}
+
+// TestACreateReadsTheSamplesInAnArchive: given an archive of samples, the
+// Voice Writer reads each sample it holds by its own name, and the archive
+// is not a sample of its own.
+func TestACreateReadsTheSamplesInAnArchive(t *testing.T) {
+	fx := newFixture(t, Create, written)
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for name, body := range map[string]string{"essays/one.pdf": "%PDF one", "posts/two.md": "# Two\n\nShort.\n"} {
+		w, _ := zw.Create(name)
+		_, _ = w.Write([]byte(body))
+	}
+	_ = zw.Close()
+	writeFile(t, filepath.Join(fx.samples, "samples.zip"), buf.String())
+	fx.opts.Samples = []string{filepath.Join(fx.samples, "samples.zip")}
+	res, err := Build(context.Background(), fx.fake, fx.opts)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if strings.Join(res.Samples, ",") != "samples.zip/essays/one.pdf,samples.zip/posts/two.md" || len(res.Skipped) != 0 {
+		t.Fatalf("samples %v skipped %v", res.Samples, res.Skipped)
+	}
+	// It keeps no sample, so the decode keeps no member's own bytes.
+	if strings.Contains(strings.Join(mustRun(t, fx.fake).Argv, " "), "--keep-members") {
+		t.Fatal("the decode was asked to keep members")
+	}
+}
+
+func mustRun(t *testing.T, f *dockerx.Fake) dockerx.RunSpec {
+	t.Helper()
+	r, ok := f.FindRun("agentry-decode-")
+	if !ok {
+		t.Fatal("no decode container ran")
+	}
+	return r
 }
 
 func TestCreateWritesAVoiceFromSamples(t *testing.T) {

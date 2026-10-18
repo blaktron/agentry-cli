@@ -177,6 +177,15 @@ func playDecode(t *testing.T, files []runnerdecode.File) func(dockerx.RunSpec) {
 	return func(r dockerx.RunSpec) {
 		out := mountSource(r, "/out")
 		for _, f := range files {
+			if f.Original != "" && !strings.Contains(f.Original, "..") {
+				p := filepath.Join(out, filepath.FromSlash(f.Original))
+				if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+					t.Error(err)
+				}
+				if err := os.WriteFile(p, []byte(originalOf(f.Path)), 0o644); err != nil {
+					t.Error(err)
+				}
+			}
 			for _, rel := range []string{f.Output, f.Markdown} {
 				if rel == "" || strings.Contains(rel, "..") {
 					continue
