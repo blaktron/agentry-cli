@@ -43,8 +43,9 @@ func SweepAbandoned(ctx context.Context, d dockerx.Client, stderr io.Writer) {
 // containers, networks and volumes of runs whose process died
 // (SweepAbandoned), then the files they left in this install's run
 // directories (sweepRunDirs), which also takes the dead runs' ids for a
-// directory that holds no lock file. Last, the networks and volumes of
-// every run whose free lock proved it dead and that the container sweep
+// directory that holds no lock file, and the delivery folders of a process
+// that died in the middle of a delivery (sweepStaleDeliveryFolders). Last,
+// the networks and volumes of every run whose free lock proved it dead and that the container sweep
 // did not already reach: a run killed before any of its containers
 // existed, or whose containers were removed before it died, leaves them
 // with nothing else to name them. Those of a live run, whose lock is held,
@@ -54,6 +55,7 @@ func SweepAbandoned(ctx context.Context, d dockerx.Client, stderr io.Writer) {
 func sweepAbandonedRun(ctx context.Context, d dockerx.Client, runRoot, runnerHome string, stderr io.Writer) {
 	byContainers := sweepAbandoned(ctx, d, stderr)
 	swept := sweepRunDirs(runRoot, runnerHome, byContainers, stderr)
+	sweepStaleDeliveryFolders(runRoot)
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	for _, r := range swept {

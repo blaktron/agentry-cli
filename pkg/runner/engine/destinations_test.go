@@ -658,29 +658,92 @@ func TestAHostedRunDeliversOnlyToWhatItsHostHandsIt(t *testing.T) {
 }
 
 // TestAStaleDeliveryFolderIsSweptAndAFreshOneIsNot: what a process that died in
-// a step left behind goes with the next delivery; a step in flight keeps its.
+// a step left behind goes with the next sweep, whatever its age, and a delivery
+// in flight keeps its folder; a folder with no lock is judged by its age.
 func TestAStaleDeliveryFolderIsSweptAndAFreshOneIsNot(t *testing.T) {
 	root := t.TempDir()
-	stale, fresh, other, notes := filepath.Join(root, "delivery-123456"), filepath.Join(root, "delivery-789"), filepath.Join(root, "runs"), filepath.Join(root, "delivery-notes")
-	for _, d := range []string{stale, fresh, other, notes} {
+	// A killed delivery: its folder is whole, its lock released as the system
+	// does when a process ends, and it is a minute old.
+	killed, err := newDeliveryFolder(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(killed.path, "left.txt"), []byte("staged"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_ = killed.lock.Close()
+	// A delivery in flight, however old its folder looks.
+	live, err := newDeliveryFolder(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer live.remove()
+	longAgo := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(live.path, longAgo, longAgo); err != nil {
+		t.Fatal(err)
+	}
+	// Folders with no lock: an old one made by a CLI that took none, a young
+	// one, and names that are not a delivery's.
+	oldBare, youngBare, other, notes := filepath.Join(root, "delivery-123456"), filepath.Join(root, "delivery-789"), filepath.Join(root, "runs"), filepath.Join(root, "delivery-notes")
+	for _, d := range []string{oldBare, youngBare, other, notes} {
 		if err := os.Mkdir(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
-	old := time.Now().Add(-48 * time.Hour)
-	if err := os.Chtimes(stale, old, old); err != nil {
-		t.Fatal(err)
-	}
-	for _, d := range []string{other, notes} {
-		if err := os.Chtimes(d, old, old); err != nil {
+	for _, d := range []string{oldBare, other, notes} {
+		if err := os.Chtimes(d, longAgo, longAgo); err != nil {
 			t.Fatal(err)
 		}
 	}
 	sweepStaleDeliveryFolders(root)
-	for d, want := range map[string]bool{stale: false, fresh: true, other: true, notes: true} {
+	for d, want := range map[string]bool{killed.path: false, live.path: true, oldBare: false, youngBare: true, other: true, notes: true} {
 		if _, err := os.Stat(d); (err == nil) != want {
 			t.Errorf("%s exists = %v, want %v", filepath.Base(d), err == nil, want)
 		}
+	}
+}
+
+// TestADeliveryFolderIsRemovedWithItsLock: a delivery that ends takes its folder
+// and everything in it.
+func TestADeliveryFolderIsRemovedWithItsLock(t *testing.T) {
+	root := t.TempDir()
+	folder, err := newDeliveryFolder(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(folder.path, "job.json"), []byte("{}"), deliveryFileMode); err != nil {
+		t.Fatal(err)
+	}
+	folder.remove()
+	if left, _ := os.ReadDir(root); len(left) != 0 {
+		t.Errorf("left in the runner home: %v", left)
+	}
+}
+
+// TestARunSweepsWhatAKilledDeliveryLeft: a run of any release, with no
+// destination of its own, removes the folder an earlier delivery's process left
+// when it died, and leaves one in flight alone.
+func TestARunSweepsWhatAKilledDeliveryLeft(t *testing.T) {
+	p, f := fixture(t)
+	happyFake(f)
+	killed, err := newDeliveryFolder(p.RunRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = killed.lock.Close()
+	live, err := newDeliveryFolder(p.RunRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer live.remove()
+	if _, err := Run(context.Background(), f, p); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(killed.path); err == nil {
+		t.Errorf("the killed delivery's folder is still there")
+	}
+	if _, err := os.Stat(live.path); err != nil {
+		t.Errorf("the delivery in flight lost its folder: %v", err)
 	}
 }
 
