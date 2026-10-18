@@ -38,6 +38,7 @@ also needs a container engine: Docker Engine, Docker Desktop or podman.
 | `make lint` | `gofmt -l`, `go vet ./...`, `golangci-lint run ./...` |
 | `make dist` | the five release binaries into `dist/`, unsigned |
 | `make accept-runner` | the runner acceptance scripts in `scripts/acceptance/` |
+| `make workflows-check` | no workflow job that a fork's pull request can start runs on a self-hosted runner without the fork guard (needs python3 with PyYAML) |
 
 `make accept-runner`'s first two scripts need no Docker. The third needs a
 Docker daemon and `ANTHROPIC_API_KEY`, and skips itself without them.
