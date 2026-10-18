@@ -6,6 +6,8 @@
 package origin
 
 import (
+	"errors"
+	"net/http"
 	"net/url"
 	"strings"
 
@@ -61,4 +63,39 @@ func Of(rawURL string) string {
 func Same(a, b string) bool {
 	oa := Of(a)
 	return oa != "" && oa == Of(b)
+}
+
+// maxRedirects is the number of redirects net/http follows when a client
+// sets no policy of its own.
+const maxRedirects = 10
+
+// Guard returns a copy of c that never carries an Authorization header
+// across origins. net/http keeps that header on a redirect to the same
+// host, or to a subdomain of it, whatever the scheme or the port, so a
+// registry's answer pointing at http:// on its own host, at another port
+// or at a sibling subdomain would take a bearer token with it. Guard
+// compares every hop with the origin of the request the caller sent, so a
+// hop back to that origin gets the header again and one away from it does
+// not. A redirect policy c already has still decides whether the redirect
+// is followed; with none, the default limit of ten applies. A nil c is
+// http.DefaultClient.
+func Guard(c *http.Client) *http.Client {
+	if c == nil {
+		c = http.DefaultClient
+	}
+	g := *c
+	decide := c.CheckRedirect
+	g.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) > 0 && !Same(req.URL.String(), via[0].URL.String()) {
+			req.Header.Del("Authorization")
+		}
+		if decide != nil {
+			return decide(req, via)
+		}
+		if len(via) >= maxRedirects {
+			return errors.New("stopped after 10 redirects")
+		}
+		return nil
+	}
+	return &g
 }

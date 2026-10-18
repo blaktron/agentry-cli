@@ -22,6 +22,7 @@ import (
 
 	"github.com/blaktron/agentry/pkg/apiclient"
 
+	"github.com/blaktron/agentry-cli/internal/origin"
 	"github.com/blaktron/agentry-cli/pkg/knowledge/store"
 	"github.com/blaktron/agentry-cli/pkg/voice"
 )
@@ -128,7 +129,7 @@ func New(regURL, token string, hc *http.Client) (*Client, error) {
 		return nil
 	})}
 	if hc != nil {
-		opts = append(opts, apiclient.WithHTTPClient(hc))
+		opts = append(opts, apiclient.WithHTTPClient(origin.Guard(hc)))
 	}
 	api, err := apiclient.NewClientWithResponses(regURL+"/api/v1", opts...)
 	if err != nil {

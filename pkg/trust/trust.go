@@ -466,7 +466,8 @@ func PinAtLoginResult(ctx context.Context, hc *http.Client, registryURL string) 
 // so a verified attestation binds the signature to what is actually on disk.
 // token, when non-empty, is attached as a bearer credential, but only to an
 // attestation URL on the registry's own origin: never to a CDN, another
-// port, or the registry's host over plain http.
+// port, or the registry's host over plain http, and a redirect off that
+// origin drops it too.
 func VerifyAttestation(ctx context.Context, hc *http.Client, registryURL, token, attestationURL, archiveDigest string) AttestationResult {
 	if attestationURL == "" {
 		return AttestationResult{State: StateUnsigned, Detail: "the registry published no attestation for this version"}
@@ -484,7 +485,7 @@ func VerifyAttestation(ctx context.Context, hc *http.Client, registryURL, token,
 	if token != "" && origin.Same(u, registryURL) {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	res, err := orDefault(hc).Do(req)
+	res, err := origin.Guard(orDefault(hc)).Do(req)
 	if err != nil {
 		return AttestationResult{State: StateUnverifiable, Detail: "fetch attestation: " + err.Error()}
 	}
