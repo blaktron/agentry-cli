@@ -239,6 +239,8 @@ func TestADirectorySwappedForALinkOutIsRefusedByEveryCall(t *testing.T) {
 		"Rename into": func(d *Dir) error { return d.Rename("mine.txt", "notes/taken.txt") },
 		"Lchown":      func(d *Dir) error { return d.Lchown("notes/secret.txt", os.Getuid(), os.Getgid()) },
 		"OpenNoLinks": func(d *Dir) error { return closeFile(d.OpenNoLinks("notes/secret.txt")) },
+		"OpenRegular": func(d *Dir) error { return closeFile(d.OpenRegular("notes/secret.txt")) },
+		"MkdirAll":    func(d *Dir) error { return d.MkdirAll("notes/a/b", 0o755) },
 		"FS":          func(d *Dir) error { return closeFile(d.FS().Open("notes/secret.txt")) },
 	}
 	for name, call := range calls {
@@ -506,6 +508,93 @@ func TestCreateRegularMakesAndEmptiesAFileAndRefusesAnythingElse(t *testing.T) {
 			}
 		case <-time.After(5 * time.Second):
 			t.Fatal("CreateRegular waited for a pipe")
+		}
+	})
+}
+
+func TestOpenRegularOpensOnlyARegularFileWithoutWaitingForIt(t *testing.T) {
+	eachMode(t, func(t *testing.T, wantBeneath bool) {
+		r := newRoom(t, wantBeneath)
+		write(t, filepath.Join(r.dir, "real", "x.txt"), "inside")
+		symlink(t, "real", filepath.Join(r.dir, "near"))
+		symlink(t, "x.txt", filepath.Join(r.dir, "real", "last"))
+		symlink(t, filepath.Join(r.outside, "secret.txt"), filepath.Join(r.dir, "out.txt"))
+
+		// A link to a folder on the way is followed while it stays beneath.
+		for _, rel := range []string{"real/x.txt", "near/x.txt"} {
+			f, err := r.d.OpenRegular(rel)
+			if err != nil {
+				t.Fatalf("OpenRegular(%q): %v", rel, err)
+			}
+			b, _ := io.ReadAll(f)
+			_ = f.Close()
+			if string(b) != "inside" {
+				t.Fatalf("OpenRegular(%q) read %q", rel, b)
+			}
+		}
+		// A link as the last element, a folder and a name that is not there
+		// are not regular files; a link out is refused all the same.
+		for _, rel := range []string{"real/last", "out.txt", "real", "near"} {
+			f, err := r.d.OpenRegular(rel)
+			if f != nil {
+				_ = f.Close()
+			}
+			if !errors.Is(err, ErrNotRegular) {
+				t.Errorf("OpenRegular(%q) = %v, want ErrNotRegular", rel, err)
+			}
+		}
+		if _, err := r.d.OpenRegular("missing"); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("OpenRegular(missing) = %v, want not exist", err)
+		}
+		if runtime.GOOS == "windows" || runtime.GOOS == "plan9" {
+			return
+		}
+		if err := mkfifo(filepath.Join(r.dir, "pipe")); err != nil {
+			t.Skipf("no named pipes here: %v", err)
+		}
+		done := make(chan error, 1)
+		go func() {
+			f, err := r.d.OpenRegular("pipe")
+			if f != nil {
+				_ = f.Close()
+			}
+			done <- err
+		}()
+		select {
+		case err := <-done:
+			if !errors.Is(err, ErrNotRegular) {
+				t.Errorf("OpenRegular(pipe) = %v, want ErrNotRegular", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("OpenRegular waited for a pipe")
+		}
+	})
+}
+
+func TestMkdirAllMakesTheMissingFoldersBeneath(t *testing.T) {
+	eachMode(t, func(t *testing.T, wantBeneath bool) {
+		r := newRoom(t, wantBeneath)
+		write(t, filepath.Join(r.dir, "file"), "x")
+		symlink(t, r.outside, filepath.Join(r.dir, "out"))
+		if err := r.d.MkdirAll("a/b/c", 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.d.MkdirAll("a/b", 0o755); err != nil {
+			t.Fatalf("MkdirAll of a folder that is there: %v", err)
+		}
+		if err := r.d.MkdirAll(".", 0o755); err != nil {
+			t.Fatalf("MkdirAll(.): %v", err)
+		}
+		if fi, err := os.Stat(filepath.Join(r.dir, "a", "b", "c")); err != nil || !fi.IsDir() {
+			t.Fatalf("a/b/c = %v, %v", fi, err)
+		}
+		for _, rel := range []string{"file/sub", "file", "out/sub", "../x", "a/../../x", "/tmp/x"} {
+			if err := r.d.MkdirAll(rel, 0o755); err == nil {
+				t.Errorf("MkdirAll(%q) = nil, want an error", rel)
+			}
+		}
+		if got := r.outsideHolds(t); !slices.Equal(got, []string{"secret.txt"}) {
+			t.Fatalf("the folder outside holds %v", got)
 		}
 	})
 }

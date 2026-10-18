@@ -12,6 +12,16 @@
 // small part of the answer and never records it, and reports each file's outcome
 // as one word from a closed list.
 //
+// Nothing else runs in that container and each folder it is given is its own:
+// the staged folder and the job folder are mounted read-only, the work folder
+// is the report's alone, and this package starts no process. So no process can
+// write any of them, swap a folder of them for a link, or put a link in place
+// of a staged file while a call here uses it, and the folders are held with
+// os.Root, which refuses a link out of the folder where the runtime applies
+// O_NOFOLLOW to a folder, rather than with beneath.Dir, which guards a folder
+// another process can write. A staged name is one plain file name with no
+// folder in it, so there is no folder on a staged name's way to swap.
+//
 // This package is part of the embedded runner-image build context and so
 // imports nothing outside the standard library and the runner image's own
 // packages.
@@ -457,6 +467,8 @@ func buildBody(o Options) (out []byte, files []FileResult, resultWord string) {
 		reserve.Omitted = ReasonOutside
 		used += int64(len(marshal(reserve))) + 1
 	}
+	// The staged folder is read-only to this container (see the package
+	// comment), so it is held with os.Root.
 	root, rerr := os.OpenRoot(o.Staging)
 	if rerr == nil {
 		defer func() { _ = root.Close() }()
@@ -684,7 +696,8 @@ func classify(err error) string {
 	return ReasonUnreachable
 }
 
-// writeReport writes the report to Work as a new file.
+// writeReport writes the report to Work as a new file. Work is this step's
+// alone (see the package comment), so it is held with os.Root.
 func writeReport(work string, rep Report) error {
 	root, err := os.OpenRoot(work)
 	if err != nil {
@@ -703,7 +716,9 @@ func writeReport(work string, rep Report) error {
 	return errors.Join(werr, f.Close())
 }
 
-// ReadJob reads the job under dir, a regular file within a bound.
+// ReadJob reads the job under dir, a regular file within a bound. The job
+// folder is read-only to this container (see the package comment), so it is
+// held with os.Root.
 func ReadJob(dir string) (Job, error) {
 	var j Job
 	root, err := os.OpenRoot(dir)

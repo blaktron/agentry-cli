@@ -29,6 +29,8 @@ import (
 	"strings"
 	"syscall"
 	"unicode/utf8"
+
+	"github.com/blaktron/agentry-cli/runnerimage/beneath"
 )
 
 // Why is the closed vocabulary of why an archive or a member was not read
@@ -154,10 +156,15 @@ type member struct {
 }
 
 // unpacker writes one archive's members under its own root, against the
-// decode's shared caps.
+// decode's shared caps. The root is a beneath.Dir: a decompressor or a
+// decoder the archive exploits runs as the same user, in this container, and
+// can swap a folder the unpacker has made for a link while it writes the
+// next member, so every name is resolved from the root in one step that
+// refuses a link leading out of it, on a container runtime that follows a
+// link to a folder under O_NOFOLLOW (gVisor) as on any other.
 type unpacker struct {
 	d       *decoder
-	root    *os.Root
+	root    *beneath.Dir
 	members []member
 	// named finds a member by name: an archive that names a path twice
 	// has neither read, under one entry.
@@ -205,6 +212,7 @@ func (u *unpacker) count() bool {
 // under it, which then conflict.
 func (u *unpacker) dir(name string) {
 	if name != "." {
+		u.d.checked()
 		_ = u.root.MkdirAll(name, 0o755)
 	}
 }
@@ -222,12 +230,14 @@ func (u *unpacker) file(name string, r io.Reader) bool {
 		u.record(member{name: name})
 		return true
 	}
+	u.d.checked()
 	if dir := path.Dir(name); dir != "." {
 		if err := u.root.MkdirAll(dir, 0o755); err != nil {
 			u.record(member{name: name, why: WhyConflict})
 			return true
 		}
 	}
+	u.d.checked()
 	f, err := u.root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		u.record(member{name: name, why: WhyConflict})
@@ -254,6 +264,14 @@ func (u *unpacker) file(name string, r io.Reader) bool {
 	return true
 }
 
+// checked is the gap between a member's name being checked and its folders and
+// file being made.
+func (d *decoder) checked() {
+	if d.afterCheck != nil {
+		d.afterCheck()
+	}
+}
+
 // isNoSpace says the unpack tmpfs is full: the kernel's own bound on what
 // the budget counts.
 func isNoSpace(err error) bool {
@@ -265,7 +283,7 @@ func isNoSpace(err error) bool {
 // archive could be opened at all. A member with an unsafe name refuses the
 // whole archive: no member of it is answered.
 func (d *decoder) unpackInto(ctx context.Context, src, dir, rel string, kind contentKind) ([]member, Why, bool) {
-	root, err := os.OpenRoot(dir)
+	root, err := beneath.Open(dir)
 	if err != nil {
 		return nil, WhyDamaged, false
 	}
