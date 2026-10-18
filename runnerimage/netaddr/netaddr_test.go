@@ -28,3 +28,28 @@ func TestPublic(t *testing.T) {
 		t.Error("the zero address reads as public")
 	}
 }
+
+// TestNetwork holds what a person may name as their own network: the
+// public addresses and the private, shared and loopback ones, and nothing
+// that answers cloud metadata or is not an address a host has.
+func TestNetwork(t *testing.T) {
+	for _, a := range []string{
+		"1.1.1.1", "10.1.2.3", "172.16.5.4", "192.168.1.1", "100.64.0.1", "100.100.100.100", "127.0.0.1", "::1", "fc00::1", "fd12::1",
+		"::ffff:192.168.1.5", "::ffff:127.0.0.1",
+	} {
+		if !Network(netip.MustParseAddr(a)) {
+			t.Errorf("%s reads as outside a person's network", a)
+		}
+	}
+	for _, a := range []string{
+		"169.254.169.254", "169.254.0.1", "fe80::1", "::ffff:169.254.169.254", "0.0.0.0", "::", "224.0.0.1", "ff02::1",
+		"240.0.0.1", "255.255.255.255", "192.0.2.1", "168.63.129.16", "fd00:ec2::254", "64:ff9b::a9fe:a9fe", "2002:a9fe:a9fe::1", "100::1",
+	} {
+		if Network(netip.MustParseAddr(a)) {
+			t.Errorf("%s reads as inside a person's network", a)
+		}
+	}
+	if Network(netip.Addr{}) {
+		t.Error("the zero address reads as a network address")
+	}
+}

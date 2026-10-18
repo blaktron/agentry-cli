@@ -547,3 +547,50 @@ func TestALinkIsNotTheDeliveriesLedger(t *testing.T) {
 		t.Error("the ledger's link let a delivery write result.json")
 	}
 }
+
+// TestStageCopiesOnlyWhatTheEnvelopeNames: a staging folder gets a verified
+// copy of each file that fits, under names of its own, and never a changed file,
+// a link, a path outside reports/ or a file past the size given.
+func TestStageCopiesOnlyWhatTheEnvelopeNames(t *testing.T) {
+	run := t.TempDir()
+	write := func(rel, body string) receipt.Deliverable {
+		t.Helper()
+		full := filepath.Join(run, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		sum := sha256.Sum256([]byte(body))
+		return receipt.Deliverable{Path: rel, SHA256: hex.EncodeToString(sum[:]), Bytes: int64(len(body))}
+	}
+	good := write("reports/a.md", "# a\n")
+	changed := write("reports/b.md", "before")
+	if err := os.WriteFile(filepath.Join(run, "reports/b.md"), []byte("after!"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	big := write("reports/big.bin", strings.Repeat("x", 100))
+	outside := write("notes.md", "n")
+	linked := write("reports/real.md", "real")
+	linked.Path = "reports/link.md"
+	if err := os.Symlink(filepath.Join(run, "reports/real.md"), filepath.Join(run, "reports/link.md")); err != nil {
+		t.Skip("no symlinks here")
+	}
+	missing := receipt.Deliverable{Path: "reports/gone.md", SHA256: good.SHA256, Bytes: 4}
+	dir := t.TempDir()
+	got := Stage(run, []receipt.Deliverable{good, changed, big, outside, linked, missing}, dir, 50)
+	want := []Staged{{Name: "f0000"}, {Reason: receipt.DeliveryErrChanged}, {Reason: receipt.DeliveryErrTooLarge}, {Reason: receipt.DeliveryErrOutside}, {Reason: receipt.DeliveryErrLink}, {Reason: receipt.DeliveryErrMissing}}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("file %d: %+v, want %+v", i, got[i], want[i])
+		}
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 1 || entries[0].Name() != "f0000" {
+		t.Errorf("the staging folder holds %v, want f0000 alone", entries)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "f0000")); string(b) != "# a\n" {
+		t.Errorf("staged bytes: %q", b)
+	}
+}

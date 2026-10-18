@@ -45,3 +45,31 @@ func Public(a netip.Addr) bool {
 	}
 	return true
 }
+
+// Network says whether a is an address a person may have named as their own
+// network: a public one, or one in private space (10/8, 172.16/12, 192.168/16,
+// fc00::/7), shared space (100.64/10, where a tailnet's addresses live) or
+// loopback. It is wider than Public by exactly those ranges. Link-local space
+// stays out (169.254/16 and fe80::/10, where cloud metadata answers), as does
+// everything else Public refuses (unspecified, multicast, documentation,
+// reserved, transition ranges that embed another address, and Azure's
+// wireserver).
+func Network(a netip.Addr) bool {
+	a = a.Unmap()
+	if Public(a) {
+		return true
+	}
+	if !a.IsValid() {
+		return false
+	}
+	if cloudMetadataV6.Contains(a) {
+		return false
+	}
+	return a.IsLoopback() || a.IsPrivate() || sharedSpace.Contains(a)
+}
+
+// cloudMetadataV6 is AWS's IPv6 metadata range, which sits inside the unique
+// local space Network otherwise admits.
+var cloudMetadataV6 = netip.MustParsePrefix("fd00:ec2::/32")
+
+var sharedSpace = netip.MustParsePrefix("100.64.0.0/10")

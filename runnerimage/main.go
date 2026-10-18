@@ -39,6 +39,7 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/minimize"
 	"github.com/blaktron/agentry-cli/runnerimage/netproxy"
 	"github.com/blaktron/agentry-cli/runnerimage/probe"
+	"github.com/blaktron/agentry-cli/runnerimage/send"
 	"github.com/blaktron/agentry-cli/runnerimage/sockfilter"
 	"github.com/blaktron/agentry-cli/runnerimage/source"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
@@ -65,6 +66,11 @@ const usageText = `usage: agentry-runner <mode> [flags]
         (the files container's fetch step) fetch an input source into --out as
         plain files, the report into --work; the access token, when there is
         one, is read from stdin, never from an argument or the environment
+  deliver --job <dir> --staged <dir> --work <dir> --proxy <url>
+        (the delivery step) send a run's deliverables to a destination from the
+        job file in --job, the staged files read-only in --staged, the report
+        into --work; the credential is read from stdin as JSON, never from an
+        argument or the environment
   confine --write <dir> [--write <dir>...] -- <program> [<arg>...]
         (the tools server's) run a declared command, able to write only
         beneath the named directories
@@ -113,6 +119,8 @@ func main() {
 		err = hostlink.Serve(context.Background(), os.Stdin, os.Stdout, os.Stderr, hostlink.DefaultConfig())
 	case "source":
 		err = runSource(os.Args[2:])
+	case "deliver":
+		err = runDeliver(os.Args[2:])
 	case confine.Role:
 		// run_command's trampoline. It never returns,
 		// and the command never runs unconfined.
@@ -231,6 +239,44 @@ func runSource(args []string) error {
 	return nil
 }
 
+// runDeliver is the delivery step: in the runner container, on a network whose
+// only route is --proxy, with the credential on stdin. The report is written to
+// --work whatever happens; the exit is non-zero when the delivery failed or
+// could not be reported.
+func runDeliver(args []string) error {
+	fs := flag.NewFlagSet("deliver", flag.ContinueOnError)
+	jobDir := fs.String("job", "", "the directory holding job.json")
+	staged := fs.String("staged", "", "the directory of staged deliverables (read-only)")
+	work := fs.String("work", "", "the directory delivery.json is written to")
+	proxy := fs.String("proxy", "", "the CONNECT proxy the request goes through")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *jobDir == "" || *staged == "" || *work == "" || *proxy == "" || fs.NArg() != 0 {
+		return errors.New("deliver: --job, --staged, --work and --proxy are required, and nothing else")
+	}
+	pu, err := url.Parse(*proxy)
+	if err != nil || pu.Scheme != "http" || pu.Host == "" {
+		return errors.New("deliver: --proxy must be http://host:port")
+	}
+	cred, err := send.ReadCredential(os.Stdin)
+	if err != nil {
+		return fmt.Errorf("deliver: %w", err)
+	}
+	job, err := send.ReadJob(*jobDir)
+	if err != nil {
+		return fmt.Errorf("deliver: %w", err)
+	}
+	rep, err := send.Run(context.Background(), send.Options{Job: job, Staging: *staged, Work: *work, Cred: cred, Proxy: pu})
+	if err != nil {
+		return errors.New("deliver: the report could not be written")
+	}
+	if rep.Status != send.StatusDelivered {
+		return fmt.Errorf("deliver: the delivery failed (%s)", rep.Error)
+	}
+	return nil
+}
+
 // runDecode turns the documents under --in into text under --out, with the
 // report beside them, after checking each with
 // ClamAV against the signatures under --clamav.
@@ -325,6 +371,7 @@ func runBridge(args []string) error {
 func runProxy(args []string) error {
 	fs := flag.NewFlagSet("proxy", flag.ContinueOnError)
 	allow := fs.String("allow", "", "comma-separated host[:port] CONNECT allowlist")
+	networkOK := fs.Bool("network-ok", false, "dial a permitted host at a public address or one in the person's own network (private, shared, loopback; never link-local), refusing one that resolves to any other (a delivery to a destination on the person's network)")
 	plain := fs.String("plain-http", "", "comma-separated host[:port] plain-http model endpoints; each must also be on --allow")
 	addr := fs.String("addr", ":3128", "listen address")
 	publicOnly := fs.Bool("public-only", false, "dial a permitted host only at a public address, refusing one that resolves to any other (an input source's fetch step)")
@@ -361,8 +408,8 @@ func runProxy(args []string) error {
 		}()
 	}
 	if scope := (netproxy.Scope{Sites: splitList(*sites), Hosts: splitList(*browseHosts), Public: *browsePublic, Private: splitList(*browsePrivate)}); len(scope.Sites)+len(scope.Hosts) > 0 || scope.Public {
-		if *allow != "" || *plain != "" || *publicOnly {
-			fmt.Fprintln(os.Stderr, "agentry-runner proxy: a browse proxy takes no --allow, --plain-http or --public-only")
+		if *allow != "" || *plain != "" || *publicOnly || *networkOK {
+			fmt.Fprintln(os.Stderr, "agentry-runner proxy: a browse proxy takes no --allow, --plain-http, --public-only or --network-ok")
 			os.Exit(2)
 		}
 		if len(scope.Private) > 0 && len(scope.Sites) == 0 {
@@ -383,7 +430,11 @@ func runProxy(args []string) error {
 			plainHosts = append(plainHosts, h)
 		}
 	}
-	p := &netproxy.Proxy{Allow: hosts, PlainHTTP: plainHosts, PublicOnly: *publicOnly, Logw: os.Stderr}
+	if *networkOK && *publicOnly {
+		fmt.Fprintln(os.Stderr, "agentry-runner proxy: --network-ok and --public-only exclude each other")
+		os.Exit(2)
+	}
+	p := &netproxy.Proxy{Allow: hosts, PlainHTTP: plainHosts, PublicOnly: *publicOnly, NetworkOK: *networkOK, Logw: os.Stderr}
 	return p.ListenAndServe(*addr)
 }
 

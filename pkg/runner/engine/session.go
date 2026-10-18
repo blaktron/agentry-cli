@@ -1217,7 +1217,7 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 		// A session's last message is a turn of a chat, never a file the
 		// runner writes down: only marked files and the runner's pick of
 		// reports/ are listed, once teardown has stopped the containers.
-		finishDeliverables(env, s.rd, s.p, "")
+		finishDeliverables(ctx, s.d, env, s.rd, s.p, "")
 	}
 	s.mu.Lock()
 	s.envelope, s.envelopeErr = env, outErr
