@@ -159,7 +159,7 @@ func confirmRun(cmd *cobra.Command, m *manifest.Manifest, meta *installdir.Meta,
 // accepted it and where its output goes.
 func acpConsentText(m *manifest.Manifest, meta *installdir.Meta, home string, opts runOpts, mode manifest.Mode, shippedSizes map[string]int64) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s %s (%s)\n", meta.Ref, meta.Version, mode)
+	fmt.Fprintf(&b, "%s (%s)\n", meta.Ref, mode)
 	if m.Summary != "" {
 		fmt.Fprintf(&b, "%s\n", oneLineText(m.Summary))
 	}

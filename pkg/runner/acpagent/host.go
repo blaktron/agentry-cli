@@ -71,7 +71,7 @@ func (h *Host) Consent(ctx context.Context, c Consent) error {
 			"sessionId": s.sessionID(),
 			"toolCall": map[string]any{
 				"toolCallId": "consent",
-				"title":      oneLine(c.Title),
+				"title":      cleanLine(c.Title),
 				"kind":       "execute",
 				"status":     "pending",
 				"content":    []any{map[string]any{"type": "content", "content": textContent(c.Text)}},
@@ -112,7 +112,7 @@ func (h *Host) Consent(ctx context.Context, c Consent) error {
 }
 
 // Say tells the person something as the agent's message.
-func (h *Host) Say(text string) { h.s.message(text, false) }
+func (h *Host) Say(text string) { h.s.notice(text) }
 
 // Event reports one live event of an autonomous run: a tool call and its
 // result, as the client's tool-call progress. It never blocks.
@@ -134,7 +134,7 @@ func (h *Host) Event(ev adapter.Event) {
 		}
 		u := map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": id, "status": status}
 		if t := strings.TrimSpace(ev.Text); t != "" {
-			u["content"] = []any{map[string]any{"type": "content", "content": textContent(t)}}
+			u["content"] = []any{map[string]any{"type": "content", "content": bodyContent(t)}}
 		}
 		h.s.update(u, true)
 	}
@@ -145,7 +145,7 @@ func toolTitle(tool, text string) string {
 	if t == "" {
 		t = text
 	}
-	t = oneLine(t)
+	t = cleanLine(t)
 	if t == "" {
 		t = "tool call"
 	}
@@ -239,12 +239,12 @@ func (h *Host) turn(ctx context.Context, sess session.Session, fwd *forwarder, t
 	s := h.s
 	fwd.drainTurnEnds()
 	err := sess.Send(ctx, text)
-	if err == nil || !errors.Is(err, session.ErrEnded) {
-		fwd.waitTurnEnd()
-	}
 	s.mu.Lock()
 	cancelled := s.cancelled
 	s.mu.Unlock()
+	if !cancelled && ctx.Err() == nil && (err == nil || !errors.Is(err, session.ErrEnded)) {
+		fwd.waitTurnEnd()
+	}
 	if cancelled || ctx.Err() != nil {
 		// The run was stopped: settle answers the prompt as cancelled.
 		return false
@@ -262,7 +262,7 @@ func (h *Host) turn(ctx context.Context, sess session.Session, fwd *forwarder, t
 		}
 		return false
 	default:
-		s.answerTurnError(codeInternal, oneLine(err.Error()))
+		s.answerTurnError(codeInternal, cleanLine(err.Error()))
 	}
 	return !ended
 }
@@ -321,19 +321,19 @@ func (h *Host) Finish(env *receipt.Envelope, runErr error) {
 	if env != nil {
 		if !interactive {
 			if text := resultText(env.Result); text != "" {
-				s.message(text, false)
+				s.message(capResult(text, env.OutDir), false)
 			}
 		}
 		if env.Deliverables != nil && len(env.Deliverables.Files) > 0 && env.OutDir != "" {
 			blocks, notes := deliverableBlocks(env.OutDir, env.Deliverables)
 			if len(blocks) > 0 {
-				s.update(map[string]any{"sessionUpdate": "agent_message_chunk", "content": textContent(deliverablesHeading(len(blocks)))}, false)
+				s.notice(deliverablesHeading(len(blocks)))
 			}
 			for _, b := range blocks {
 				s.update(map[string]any{"sessionUpdate": "agent_message_chunk", "content": b}, false)
 			}
 			for _, n := range notes {
-				s.message(n, false)
+				s.notice(n)
 			}
 		}
 	}
@@ -341,7 +341,7 @@ func (h *Host) Finish(env *receipt.Envelope, runErr error) {
 		return
 	}
 	if runErr != nil {
-		s.answerTurnError(codeInternal, oneLine(runErr.Error()))
+		s.answerTurnError(codeInternal, cleanLine(runErr.Error()))
 		return
 	}
 	s.answerTurn("end_turn", runMeta(env))
@@ -352,6 +352,19 @@ func deliverablesHeading(n int) string {
 		return "Deliverable:"
 	}
 	return fmt.Sprintf("Deliverables (%d):", n)
+}
+
+// capResult bounds a run's result at InlineTotal bytes, at a character
+// boundary: a frame past the queue's bound would give the whole connection up.
+func capResult(text, outDir string) string {
+	if len(text) <= InlineTotal {
+		return text
+	}
+	cut := InlineTotal
+	for cut > 0 && !isRuneStart(text[cut]) {
+		cut--
+	}
+	return text[:cut] + fmt.Sprintf("\n\n[The result is longer than %d bytes and is cut here; all of it is in result.json in %s.]", InlineTotal, outDir)
 }
 
 // runMeta is what the final answer says of the run beside its stop reason.

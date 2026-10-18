@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"path"
 	"path/filepath"
 	"strings"
 	"unicode/utf8"
@@ -45,11 +46,12 @@ func deliverableBlocks(runDir string, ds *receipt.Deliverables) (blocks []map[st
 	}
 	inlined := 0
 	for _, f := range ds.Files {
-		title := oneLine(strings.TrimSpace(f.Title))
+		title := cleanLine(strings.TrimSpace(f.Title))
 		if title == "" {
-			title = oneLine(filepath.Base(filepath.FromSlash(f.Path)))
+			title = cleanLine(filepath.Base(filepath.FromSlash(f.Path)))
 		}
-		typ := strings.ToLower(f.Type)
+		// The type is the file name's own, never the envelope's word for it.
+		typ := strings.ToLower(strings.TrimPrefix(path.Ext(f.Path), "."))
 		if mime, ok := inlineTypes[typ]; ok && f.Bytes <= InlineEach && inlined+int(f.Bytes) <= InlineTotal {
 			abs, b, err := deliver.Read(runDir, f, InlineEach)
 			if err != nil {
@@ -79,7 +81,7 @@ func deliverableBlocks(runDir string, ds *receipt.Deliverables) (blocks []map[st
 			mime = "application/octet-stream"
 		}
 		blocks = append(blocks, map[string]any{
-			"type": "resource_link", "uri": fileURI(abs), "name": oneLine(filepath.Base(abs)), "title": title,
+			"type": "resource_link", "uri": fileURI(abs), "name": cleanLine(filepath.Base(abs)), "title": title,
 			"mimeType": mime, "size": f.Bytes, "_meta": meta(f),
 		})
 	}
@@ -90,7 +92,7 @@ func deliverableBlocks(runDir string, ds *receipt.Deliverables) (blocks []map[st
 }
 
 func meta(f receipt.Deliverable) map[string]any {
-	return map[string]any{"agentry": map[string]any{"sha256": f.SHA256, "path": oneLine(f.Path), "marked": f.Marked}}
+	return map[string]any{"agentry": map[string]any{"sha256": f.SHA256, "path": cleanLine(f.Path), "marked": f.Marked}}
 }
 
 var reasonWords = map[string]string{

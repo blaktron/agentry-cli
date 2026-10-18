@@ -46,7 +46,7 @@ func verify(runDir string, f receipt.Deliverable, keepUpTo int64) (string, []byt
 	if rel == "reports" || !strings.HasPrefix(rel, "reports/") || path.IsAbs(f.Path) || strings.Contains(f.Path, `\`) {
 		return "", nil, &ReadError{Reason: receipt.DeliveryErrOutside}
 	}
-	if dangerousTypes[extType(rel)] {
+	if dangerous(rel) {
 		return "", nil, &ReadError{Reason: receipt.DeliveryErrType}
 	}
 	if keepUpTo > 0 && f.Bytes > keepUpTo {

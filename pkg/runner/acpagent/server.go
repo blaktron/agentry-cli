@@ -90,6 +90,7 @@ type server struct {
 	turnID      json.RawMessage // the prompt in flight; nil when none
 	closeID     json.RawMessage // a session/close awaiting its answer
 	first       string
+	runStarted  bool        // the run's goroutine exists, and backendDone will close
 	prompts     chan string // later prompts of a live session
 	closeReq    chan struct{}
 	runCancel   context.CancelCauseFunc
@@ -111,12 +112,20 @@ type permReply struct {
 // end, or ends the session and the session's last answer is written. It
 // returns after the run's teardown, which a client going away does not skip.
 func Serve(ctx context.Context, in io.Reader, out io.Writer, info Info, b Backend) error {
+	return serve(ctx, in, out, info, b, nil)
+}
+
+// serve is Serve with a hook on the outbox, for a test to shrink its bounds.
+func serve(ctx context.Context, in io.Reader, out io.Writer, info Info, b Backend, tune func(*outbox)) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	s := &server{
 		info: info, backend: b, out: newOutbox(out), ctx: ctx, cancel: cancel,
 		prompts: make(chan string, 1), closeReq: make(chan struct{}, 1),
 		perms: map[int]chan permReply{}, backendDone: make(chan struct{}), overAt: make(chan struct{}),
+	}
+	if tune != nil {
+		tune(s.out)
 	}
 	readDone := make(chan struct{})
 	go func() {
@@ -136,7 +145,7 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, info Info, b Backen
 	// The client is gone, or the session is over: stop the run if one is
 	// still going, and wait for its teardown.
 	s.mu.Lock()
-	started := s.st >= stStarting
+	started := s.runStarted
 	if s.runCancel != nil {
 		s.runCancel(errClientGone)
 	}
@@ -173,19 +182,19 @@ func (s *server) dispatch(line []byte) {
 		return
 	}
 	if f.JSONRPC != "2.0" {
-		s.errorResponse(f.ID, codeInvalidRequest, `the frame is not JSON-RPC 2.0 ("jsonrpc": "2.0")`)
+		s.errorResponse(f.id(), codeInvalidRequest, `the frame is not JSON-RPC 2.0 ("jsonrpc": "2.0")`)
 		return
 	}
-	if f.ID != nil && len(*f.ID) > maxIDLen {
-		s.errorResponse(nil, codeInvalidRequest, "the request id is too long")
+	if len(f.ID) > 0 && !validID(f.ID) {
+		s.errorResponse(nil, codeInvalidRequest, fmt.Sprintf("an id is a number or a string of valid UTF-8 of at most %d bytes", maxIDLen))
 		return
 	}
 	switch {
-	case f.Method == "" && f.ID != nil:
+	case f.Method == "" && len(f.ID) > 0 && (f.Result != nil || f.Error != nil):
 		s.handleReply(f)
 	case f.Method == "":
-		s.errorResponse(f.ID, codeInvalidRequest, "the frame names no method")
-	case f.ID == nil:
+		s.errorResponse(f.id(), codeInvalidRequest, "the frame names no method, result or error")
+	case len(f.ID) == 0:
 		s.handleNotification(f)
 	default:
 		s.handleRequest(f)
@@ -201,7 +210,7 @@ func (s *server) handleNotification(f frame) {
 }
 
 func (s *server) handleRequest(f frame) {
-	id := *f.ID
+	id := f.ID
 	s.mu.Lock()
 	initialized := s.initialized
 	s.mu.Unlock()
@@ -327,7 +336,7 @@ func promptText(blocks []json.RawMessage) (string, error) {
 		case "text":
 			parts = append(parts, b.Text)
 		case "resource_link":
-			parts = append(parts, fmt.Sprintf("(The client linked %q at %s; this agent cannot open it.)", oneLine(b.Name), oneLine(b.URI)))
+			parts = append(parts, fmt.Sprintf("(The client linked %q at %s; this agent cannot open it.)", cleanLine(b.Name), cleanLine(b.URI)))
 		default:
 			return "", fmt.Errorf("this agent takes text prompts: a %q block is not accepted", safeName(b.Type))
 		}
@@ -337,18 +346,6 @@ func promptText(blocks []json.RawMessage) (string, error) {
 		return "", errors.New("the prompt is empty: it names the task")
 	}
 	return text, nil
-}
-
-func oneLine(s string) string {
-	if len(s) > 200 {
-		s = s[:200]
-	}
-	return strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f {
-			return ' '
-		}
-		return r
-	}, s)
 }
 
 func (s *server) prompt(id json.RawMessage, raw json.RawMessage) {
@@ -380,18 +377,26 @@ func (s *server) prompt(id json.RawMessage, raw json.RawMessage) {
 		s.errorResponse(&id, codeInvalidRequest, "a prompt is in flight: send the next when it is answered")
 		return
 	}
-	s.turnID = id
 	switch s.st {
 	case stIdle:
+		s.turnID = id
 		s.st = stStarting
 		s.first = text
+		s.runStarted = true
 		runCtx, cancel := context.WithCancelCause(s.ctx)
 		s.runCancel = cancel
 		s.mu.Unlock()
 		go s.runBackend(runCtx, text)
-	default: // stLive: Converse is waiting for it
-		s.mu.Unlock()
+	case stLive:
+		// Converse takes it. The queue holds one and none is in flight, so the
+		// send does not wait, and it is made under the lock so that a session
+		// that is closing to prompts either has this one or has refused it.
+		s.turnID = id
 		s.prompts <- text
+		s.mu.Unlock()
+	default: // the run has answered its prompt and is tearing down
+		s.mu.Unlock()
+		s.errorResponse(&id, codeInvalidRequest, "the session has no turn to take this prompt")
 	}
 }
 
@@ -415,7 +420,7 @@ func (s *server) settle(err error) {
 		case cancelled:
 			s.result(&turn, map[string]any{"stopReason": "cancelled"})
 		case errors.Is(err, ErrConsentRefused) || errors.Is(err, ErrConsentUnavailable):
-			s.message(err.Error(), false)
+			s.notice(err.Error())
 			s.result(&turn, map[string]any{"stopReason": "refusal"})
 		case err != nil:
 			s.errorResponse(&turn, codeInternal, err.Error())
@@ -496,7 +501,7 @@ func (s *server) cancelSession(raw json.RawMessage) {
 
 func (s *server) handleReply(f frame) {
 	var n int
-	if err := json.Unmarshal(*f.ID, &n); err != nil {
+	if err := json.Unmarshal(f.ID, &n); err != nil {
 		return // not an id the agent sent
 	}
 	s.mu.Lock()
@@ -567,9 +572,23 @@ func (s *server) update(u map[string]any, droppable bool) {
 	}
 }
 
-func textContent(text string) map[string]any { return map[string]any{"type": "text", "text": text} }
+// textContent is a text content block of text the person decides on.
+func textContent(text string) map[string]any {
+	return map[string]any{"type": "text", "text": cleanText(text)}
+}
 
-// message sends text as the agent's message.
+// bodyContent is a text content block of the agent's own words.
+func bodyContent(text string) map[string]any {
+	return map[string]any{"type": "text", "text": cleanBody(text)}
+}
+
+// message sends the agent's own words (a reply, a run's result).
 func (s *server) message(text string, droppable bool) {
-	s.update(map[string]any{"sessionUpdate": "agent_message_chunk", "content": textContent(text)}, droppable)
+	s.update(map[string]any{"sessionUpdate": "agent_message_chunk", "content": bodyContent(text)}, droppable)
+}
+
+// notice sends text the runner itself says (the plan, a refusal, a file it
+// withheld): cleaned of what could make it read as other than it says.
+func (s *server) notice(text string) {
+	s.update(map[string]any{"sessionUpdate": "agent_message_chunk", "content": textContent(text)}, false)
 }

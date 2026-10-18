@@ -8,6 +8,7 @@ import (
 	"io"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // The bounds the agent side holds the connection to.
@@ -47,12 +48,39 @@ type rpcError struct {
 
 // frame is any inbound JSON-RPC message.
 type frame struct {
-	JSONRPC string           `json:"jsonrpc"`
-	ID      *json.RawMessage `json:"id,omitempty"`
-	Method  string           `json:"method,omitempty"`
-	Params  json.RawMessage  `json:"params,omitempty"`
-	Result  json.RawMessage  `json:"result,omitempty"`
-	Error   *rpcError        `json:"error,omitempty"`
+	JSONRPC string `json:"jsonrpc"`
+	// ID is the id as sent: empty when the frame has none, "null" when it
+	// says null.
+	ID     json.RawMessage `json:"id,omitempty"`
+	Method string          `json:"method,omitempty"`
+	Params json.RawMessage `json:"params,omitempty"`
+	Result json.RawMessage `json:"result,omitempty"`
+	Error  *rpcError       `json:"error,omitempty"`
+}
+
+// id is the frame's id, nil when it has none.
+func (f frame) id() *json.RawMessage {
+	if len(f.ID) == 0 {
+		return nil
+	}
+	r := f.ID
+	return &r
+}
+
+// validID says whether raw is an id the agent echoes: a number, or a string
+// of valid UTF-8, of at most maxIDLen bytes. Null, an object, an array and a
+// boolean are not ids a client of this agent sends.
+func validID(raw json.RawMessage) bool {
+	if len(raw) == 0 || len(raw) > maxIDLen {
+		return false
+	}
+	switch c := raw[0]; {
+	case c == '"':
+		return utf8.Valid(raw)
+	case c == '-' || (c >= '0' && c <= '9'):
+		return true
+	}
+	return false
 }
 
 var errFrameTooLong = errors.New("frame too long")
@@ -113,6 +141,9 @@ func (f *frameReader) next() ([]byte, error) {
 // answers it is owed cannot be queued.
 type outbox struct {
 	w io.Writer
+	// maxBehind and keepHeadroom are MaxBehind and mustKeepHeadroom; a test
+	// sets smaller ones.
+	maxBehind, keepHeadroom int
 
 	mu      sync.Mutex
 	wake    chan struct{}
@@ -125,7 +156,7 @@ type outbox struct {
 }
 
 func newOutbox(w io.Writer) *outbox {
-	o := &outbox{w: w, wake: make(chan struct{}, 1), done: make(chan struct{})}
+	o := &outbox{w: w, maxBehind: MaxBehind, keepHeadroom: mustKeepHeadroom, wake: make(chan struct{}, 1), done: make(chan struct{})}
 	go o.loop()
 	return o
 }
@@ -138,9 +169,9 @@ func (o *outbox) send(b []byte, droppable bool) {
 	if o.dead || o.closed {
 		return
 	}
-	limit := MaxBehind
+	limit := o.maxBehind
 	if !droppable {
-		limit += mustKeepHeadroom
+		limit += o.keepHeadroom
 	}
 	if o.queued+len(b) > limit {
 		if droppable {
