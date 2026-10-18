@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -111,7 +112,10 @@ type runOpts struct {
 	deliverTo string
 	// destinations is --destination: the saved destinations the run sends its
 	// result and deliverables to.
-	destinations       []string
+	destinations []string
+	// destinationsFile is --destinations-file: the destinations a hosted run's
+	// host hands the run, with the variables holding their credentials.
+	destinationsFile   string
 	noDestination      bool
 	reportDesign       string
 	keepProfile        string // "": unset; "true"/"false": the flag decided
@@ -131,6 +135,10 @@ type runOpts struct {
 	// before the agent starts, with the job's credential in $envJobToken
 	// (a hosted run's host).
 	reviewInputs string
+	// acp is set when the run is driven over the Agent Client Protocol
+	// (agentry acp): its task is the client's first prompt, its consent is
+	// asked of the client, and it reports through the connection.
+	acp *acpRun
 }
 
 // newRunCmd builds the run command.
@@ -187,6 +195,9 @@ func newRunCmd() *cobra.Command {
 			if opts.noDestination && len(opts.destinations) > 0 {
 				return engine.Classify(engine.ExitUsage, errors.New("--no-destination and --destination exclude each other"))
 			}
+			if opts.destinationsFile != "" && (opts.noDestination || len(opts.destinations) > 0) {
+				return engine.Classify(engine.ExitUsage, errors.New("--destinations-file excludes --destination and --no-destination: a host hands a run its destinations in the file alone"))
+			}
 			ref := ""
 			if len(args) == 1 {
 				ref = args[0]
@@ -232,6 +243,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&opts.deliverTo, "deliver-to", "", "copy the run's deliverables, the files it was for, to FOLDER/<QuickAgent>/<date time> <title>/ once it succeeds (default: deliver.folder in the config, else nowhere); the output folder is left as it is")
 	f.BoolVar(&opts.noDestination, "no-destination", false, "send the run's result to no destination, not even the QuickAgent's default set (a schedule's fire passes it when the schedule names none)")
 	f.StringArrayVar(&opts.destinations, "destination", nil, "send the run's result and deliverables to this saved destination once it succeeds (repeatable; default: the QuickAgent's default set, else nowhere); see agentry destinations")
+	f.StringVar(&opts.destinationsFile, "destinations-file", "", "send the run's result and deliverables to the destinations in this JSON FILE once it succeeds, each with the names of the variables holding its signing secret and Authorization value, at public addresses on port 443 alone (a hosted run's host)")
 	f.StringVar(&opts.voiceFile, "voice-file", "", "attach the VOICE.md in FILE as the run's Writing Voice (for a driver such as a sandbox host)")
 	f.StringArrayVar(&opts.intake, "intake", nil, "answer an intake question non-interactively: id=value (repeatable; unanswered questions are asked on a terminal); a repository question takes its https address, with #branch, #tag or #commit for another ref; a url question takes one file's https address")
 	f.StringArrayVar(&opts.intakeToken, "intake-token", nil, "the access token for an input source: id=ENV_NAME, the name of an environment variable holding it (repeatable; otherwise the key saved for the source's host in the system keychain, then a prompt on a terminal, then none)")
@@ -430,8 +442,9 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	}
 	if mode == manifest.ModeInteractive && !opts.dryRun && !opts.plan {
 		// The terminal rule stands for everything but the session protocol,
-		// whose input is its commands and whose stdout is the envelope's.
-		if !opts.sessionProtocol {
+		// whose input is its commands and whose stdout is the envelope's, and
+		// a run driven over ACP, whose client is the chat.
+		if !opts.sessionProtocol && opts.acp == nil {
 			if !stdinIsTTY(cmd.InOrStdin()) {
 				return engine.Classify(engine.ExitUsage, errors.New("an interactive run needs a terminal on stdin (the chat is the input); pipe a task to --mode autonomous instead, or drive the session with --session-protocol"))
 			}
@@ -461,7 +474,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	opts.progress.at(receipt.StageConsent)
 	if opts.plan {
 		consent = describeRunConsent(m, meta, consentHome)
-	} else if err := confirmRunCapabilities(cmd, m, meta, consentHome, opts, mode, shippedSizes); err != nil {
+	} else if err := confirmRun(cmd, m, meta, consentHome, opts, mode, shippedSizes); err != nil {
 		return engine.Classify(engine.ExitPolicy, err)
 	}
 
@@ -546,9 +559,16 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	// too: a name that is not saved, or has no signing secret, refuses here,
 	// and a hosted run's host takes none.
 	var destinations []destination.Resolved
-	if opts.noDestination {
+	if opts.destinationsFile != "" {
+		if mode == manifest.ModeInteractive {
+			return engine.Classify(engine.ExitUsage, errors.New("--destinations-file is for an autonomous run: a session delivers nowhere"))
+		}
+		if destinations, err = destinationsFromHostFile(opts.destinationsFile); err != nil {
+			return engine.Classify(engine.ExitUsage, fmt.Errorf("--destinations-file: %w", err))
+		}
+	} else if opts.noDestination {
 		// Delivers nowhere but the run folder (and --deliver-to).
-	} else if opts.reviewInputs != "" {
+	} else if hostedFor(opts) {
 		if len(opts.destinations) > 0 {
 			return engine.Classify(engine.ExitUsage, errors.New("--destination is for a run on this computer: a hosted run's host delivers nowhere"))
 		}
@@ -745,6 +765,9 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		OnUsage:          onUsage,
 		Events:           eventsOut,
 	}
+	if opts.acp != nil {
+		params.Task, params.OnEvent = opts.acp.task(mode), opts.acp.host.Event
+	}
 	if mode == manifest.ModeInteractive {
 		runErr := runInteractive(cmd, docker, params, m, plan, opts)
 		finishProfile(cmd.ErrOrStderr(), prof, profDir, keep)
@@ -759,6 +782,9 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		opts.progress.enveloped()
 	}
 	finishProfile(cmd.ErrOrStderr(), prof, profDir, keep)
+	if opts.acp != nil {
+		opts.acp.host.Finish(env, runErr)
+	}
 	return runErr
 }
 
@@ -795,6 +821,9 @@ func runInteractive(cmd *cobra.Command, docker dockerx.Client, params engine.Par
 	}()
 	if opts.sessionProtocol {
 		return runProtocol(cmd, s, opts)
+	}
+	if opts.acp != nil {
+		return runACPSession(cmd, s, opts)
 	}
 	topts := tui.Options{
 		Ref:        plan.Ref,
@@ -884,7 +913,7 @@ func sendsOpeningTurn(input string) bool {
 // runTask is the run's task reader. Under the session protocol stdin is the
 // command stream, never the task: the task comes from --input alone.
 func runTask(cmd *cobra.Command, opts runOpts) io.Reader {
-	if opts.sessionProtocol && opts.input == "" {
+	if (opts.sessionProtocol && opts.input == "") || opts.acp != nil {
 		return nil
 	}
 	return taskReader(cmd, opts.input)
@@ -1465,6 +1494,10 @@ func resolveRunMode(cmd *cobra.Command, opts runOpts, m *manifest.Manifest) (man
 	}
 	if len(modes) == 0 {
 		return manifest.ModeAutonomous, nil // the compiler refuses it with the reason
+	}
+	if opts.acp != nil && slices.Contains(modes, manifest.ModeInteractive) {
+		// A client of the protocol is a chat surface.
+		return manifest.ModeInteractive, nil
 	}
 	if !stdinIsTTY(cmd.InOrStdin()) || opts.yes || opts.dryRun || opts.plan {
 		return manifest.ModeAutonomous, nil

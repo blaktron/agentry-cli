@@ -32,6 +32,19 @@ type Staged struct {
 // never the one sent, and the step that holds the destination's credential
 // sees no path of the run folder at all.
 func Stage(runDir string, files []receipt.Deliverable, dir string, budget int64) []Staged {
+	return stage(runDir, files, dir, budget, 0, encodedSize)
+}
+
+// StageRaw is Stage for a destination that sends each file as it is (a bucket's
+// object): a file is staged when it is no larger than perFile, and as many as
+// total bytes hold, in order. It makes the same checks and the same copies.
+func StageRaw(runDir string, files []receipt.Deliverable, dir string, perFile, total int64) []Staged {
+	return stage(runDir, files, dir, total, perFile, func(n int64) int64 { return n })
+}
+
+// stage is the copy: cost is what a file of n bytes takes of budget, and perFile
+// (zero: no bound of its own) the most one file may be.
+func stage(runDir string, files []receipt.Deliverable, dir string, budget, perFile int64, cost func(int64) int64) []Staged {
 	out := make([]Staged, len(files))
 	src, err := os.OpenRoot(runDir)
 	if err != nil {
@@ -55,7 +68,7 @@ func Stage(runDir string, files []receipt.Deliverable, dir string, budget int64)
 		case rel == "reports" || !strings.HasPrefix(rel, "reports/") || strings.Contains(rel, "\\"):
 			out[i].Reason = receipt.DeliveryErrOutside
 			continue
-		case f.Bytes < 0 || encodedSize(f.Bytes) > budget:
+		case f.Bytes < 0 || (perFile > 0 && f.Bytes > perFile) || cost(f.Bytes) > budget:
 			out[i].Reason = receipt.DeliveryErrTooLarge
 			continue
 		}
@@ -84,7 +97,7 @@ func Stage(runDir string, files []receipt.Deliverable, dir string, budget int64)
 			out[i].Reason = receipt.DeliveryErrChanged
 		default:
 			out[i].Name = name
-			budget -= encodedSize(f.Bytes)
+			budget -= cost(f.Bytes)
 		}
 	}
 	return out

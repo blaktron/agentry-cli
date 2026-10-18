@@ -15,8 +15,9 @@ import (
 const Gutter = "  | "
 
 // Safe is s as a terminal may show it: every control character but a
-// newline or a tab, every C1 control and every format character (a bidi
-// override, a zero-width space) becomes "?", so the text cannot send escape
+// newline or a tab, every C1 control, every format character (a bidi
+// override, a zero-width space) and the Unicode line and paragraph
+// separators becomes "?", so the text cannot send escape
 // sequences (colours, cursor moves, a window title, a hyperlink) to the
 // terminal it is printed on, or show other than what it says. The core
 // refuses all of these in a guide already; this is the second defence, and
@@ -26,7 +27,7 @@ func Safe(s string) string {
 		if r == '\n' || r == '\t' {
 			return r
 		}
-		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) || unicode.Is(unicode.Cf, r) {
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) || unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Zl, r) || unicode.Is(unicode.Zp, r) {
 			return '?'
 		}
 		return r

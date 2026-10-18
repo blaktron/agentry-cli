@@ -562,19 +562,98 @@ func TestTheReceiptsClosedListsAreTheStepsWords(t *testing.T) {
 	}
 }
 
-// TestAHostedRunDeliversToNoDestination: whatever a caller puts in the
-// parameters, a hosted run's host delivers nowhere.
-func TestAHostedRunDeliversToNoDestination(t *testing.T) {
+// hostedHook is a destination as a host's destinations file hands it.
+func hostedHook(name, url string) destination.Resolved {
+	d := hook(name, url, false)
+	d.Hosted = true
+	return d
+}
+
+// TestAHostedRunDeliversOnlyToWhatItsHostHandsIt: whatever a caller puts in the
+// parameters, a hosted run reaches no destination saved on a computer and none
+// on a private network; the destinations its host handed it are delivered to,
+// at public addresses, with the credential on the step's stdin alone.
+func TestAHostedRunDeliversOnlyToWhatItsHostHandsIt(t *testing.T) {
+	for name, d := range map[string]destination.Resolved{
+		"a saved destination": hook("n8n", "https://hooks.example.com/in/abc", false),
+		"one on the person's network": func() destination.Resolved {
+			h := hostedHook("n8n", "https://hooks.example.com/in/abc")
+			h.OnMyNetwork = true
+			return h
+		}(),
+		"a saved one on a private net": hook("lan", "http://10.0.0.5:5678/hook", true),
+	} {
+		p, f := fixture(t)
+		happyFake(f)
+		deliveryStepPlays(t, f, delivered)
+		p.InputReview = &fakeReview{}
+		p.Destinations = []destination.Resolved{d}
+		if _, err := Run(context.Background(), f, p); err == nil {
+			t.Errorf("%s: a hosted run took it", name)
+		}
+		if _, ok := stepRun(f); ok {
+			t.Errorf("%s: a delivery step ran", name)
+		}
+	}
+	// A host that marks the run hosted by another signal than AI Review (a run
+	// grant, AGENTRY_HOSTED) is held to the same rule.
 	p, f := fixture(t)
 	happyFake(f)
 	deliveryStepPlays(t, f, delivered)
-	p.InputReview = &fakeReview{}
+	p.Hosted = true
 	p.Destinations = []destination.Resolved{hook("n8n", "https://hooks.example.com/in/abc", false)}
 	if _, err := Run(context.Background(), f, p); err == nil {
-		t.Fatal("a hosted run took a destination")
+		t.Error("a run marked hosted took a saved destination")
 	}
 	if _, ok := stepRun(f); ok {
-		t.Error("a delivery step ran")
+		t.Error("a delivery step ran for a saved destination of a run marked hosted")
+	}
+	p, f = fixture(t)
+	happyFake(f)
+	agentWrites(p, f, map[string]string{"reports/brief.md": "# Brief\n"}, `{"path":"reports/brief.md","title":"The brief","marked":true}`)
+	saw := deliveryStepPlays(t, f, delivered)
+	p.InputReview = &fakeReview{}
+	p.Destinations = []destination.Resolved{hostedHook("n8n", "https://hooks.example.com/in/abc")}
+	env, err := Run(context.Background(), f, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	step, ok := stepRun(f)
+	if !ok {
+		t.Fatal("no delivery step ran for a destination its host handed the run")
+	}
+	proxy, ok := proxyRun(f)
+	if !ok {
+		t.Fatal("no delivery proxy ran")
+	}
+	if got := strings.Join(proxy.Argv, " "); !strings.Contains(got, "--public-only") || strings.Contains(got, "--network-ok") || strings.Contains(got, "plain-http") {
+		t.Errorf("the proxy's argv: %s", got)
+	}
+	var cred send.Credential
+	if err := json.Unmarshal([]byte(saw.stdin), &cred); err != nil || cred.Secret != plantedSigningSecret || cred.Authorization != plantedAuthorization {
+		t.Errorf("the step's stdin: %q (%v)", saw.stdin, err)
+	}
+	for _, c := range f.Calls {
+		r := c.Run
+		if strings.Contains(strings.Join(r.Argv, " "), "PLANTED") || strings.Contains(c.Arg, "PLANTED") {
+			t.Errorf("%s %s carries a credential in its argv", c.Op, r.Name)
+		}
+		for k, v := range r.Env {
+			if strings.Contains(v, "PLANTED") {
+				t.Errorf("%s carries a credential in its environment (%s)", r.Name, k)
+			}
+		}
+	}
+	for _, m := range step.Mounts {
+		if strings.HasPrefix(m.Source, p.OutDir) {
+			t.Errorf("the step mounts %s, a folder of the run", m.Source)
+		}
+	}
+	if len(env.Deliveries) != 1 || env.Deliveries[0].Destination != "n8n" || env.Deliveries[0].Status != receipt.DeliveryDelivered || env.Deliveries[0].OnMyNetwork {
+		t.Errorf("deliveries = %+v", env.Deliveries)
+	}
+	if hits := outputHolds(t, p.OutDir, "PLANTED"); len(hits) != 0 {
+		t.Errorf("the credential is in %v", hits)
 	}
 }
 
@@ -667,5 +746,261 @@ func TestARedeliveryOfAnOversizedListingIsRefused(t *testing.T) {
 	f := &dockerx.Fake{}
 	if _, err := Redeliver(context.Background(), f, RedeliverParams{RunDir: dir, Destinations: []destination.Resolved{hook("n8n", "https://hooks.example.com/x", false)}, RunRoot: t.TempDir()}); err == nil {
 		t.Error("an oversized listing was delivered")
+	}
+}
+
+const (
+	plantedAccessKeyID = "AKIAPLANTEDKEYID0123"
+	plantedSecretKey   = "PLANTEDsecretACCESSkey0123456789abcdef"
+)
+
+func bucket(name string, d destination.Destination) destination.Resolved {
+	d.Name, d.Kind = name, destination.KindS3
+	return destination.Resolved{Destination: d, Secret: plantedSecretKey, AccessKeyID: plantedAccessKeyID}
+}
+
+// bucketStepPlays scripts the step for a bucket: every file delivered.
+func bucketDelivered(job send.Job) send.Report {
+	rep := send.Report{Kind: send.KindS3, Host: "x", Status: send.StatusDelivered}
+	for _, f := range job.Files {
+		st := send.FileResult{Path: f.Path, Status: send.StatusDelivered}
+		if f.Omitted != "" {
+			st.Status, st.Error = send.StatusRefused, f.Omitted
+		}
+		rep.Files = append(rep.Files, st)
+	}
+	return rep
+}
+
+// TestABucketGetsAStepOfItsOwnAndItsKeyPairReachesItAlone: the step runs behind
+// a proxy to the bucket's host alone at public addresses, with the key pair on
+// stdin and in no argument, environment, mount, receipt or the run folder; each
+// file is staged as it is, and the record names the object written.
+func TestABucketGetsAStepOfItsOwnAndItsKeyPairReachesItAlone(t *testing.T) {
+	p, f := fixture(t)
+	happyFake(f)
+	agentWrites(p, f, map[string]string{"reports/brief.md": "# Brief\n", "reports/data/t.csv": "a,b\n"},
+		`{"path":"reports/brief.md","marked":true}`, `{"path":"reports/data/t.csv","marked":true}`)
+	saw := deliveryStepPlays(t, f, bucketDelivered)
+	p.Destinations = []destination.Resolved{bucket("archive", destination.Destination{Bucket: "my-reports", Prefix: "agentry/out", Region: "eu-west-1"})}
+	env, err := Run(context.Background(), f, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy, ok := proxyRun(f)
+	if !ok {
+		t.Fatal("no delivery proxy ran")
+	}
+	if got := strings.Join(proxy.Argv, " "); !strings.Contains(got, "--allow my-reports.s3.eu-west-1.amazonaws.com:443") || !strings.Contains(got, "--public-only") || strings.Contains(got, "--network-ok") {
+		t.Errorf("the proxy's argv: %s", got)
+	}
+	var cred send.Credential
+	if err := json.Unmarshal([]byte(saw.stdin), &cred); err != nil || cred.AccessKeyID != plantedAccessKeyID || cred.SecretAccessKey != plantedSecretKey || cred.Secret != "" || cred.Authorization != "" {
+		t.Errorf("the step's stdin: %q (%v)", saw.stdin, err)
+	}
+	for _, c := range f.Calls {
+		r := c.Run
+		if strings.Contains(strings.Join(r.Argv, " "), "PLANTED") || strings.Contains(c.Arg, "PLANTED") {
+			t.Errorf("%s %s carries a credential in its argv", c.Op, r.Name)
+		}
+		for k, v := range r.Env {
+			if strings.Contains(v, "PLANTED") || strings.Contains(os.Getenv(k), "PLANTED") {
+				t.Errorf("%s carries a credential in its environment (%s)", r.Name, k)
+			}
+		}
+		for _, m := range r.Mounts {
+			if strings.Contains(m.Source, "PLANTED") {
+				t.Errorf("%s mounts a path with a credential", r.Name)
+			}
+		}
+	}
+	// What the step was given: no URL, no result, the bucket's fields, the
+	// run's own id, and each file staged as it is.
+	j := saw.job
+	if j.Kind != send.KindS3 || j.URL != "" || j.Bucket != "my-reports" || j.Prefix != "agentry/out" || j.Region != "eu-west-1" || j.Endpoint != "" || j.RunID != env.RunID || j.MaxObject != send.DefaultMaxObject || len(j.Result) != 0 || len(j.Files) != 2 {
+		t.Fatalf("job: %+v", j)
+	}
+	if saw.staged[j.Files[0].Staged] != "# Brief\n" || saw.staged[j.Files[1].Staged] != "a,b\n" {
+		t.Errorf("staged: %v", saw.staged)
+	}
+	if len(env.Deliveries) != 2 {
+		t.Fatalf("deliveries = %+v", env.Deliveries)
+	}
+	for i, want := range []string{"my-reports/agentry/out/" + env.RunID + "/brief.md", "my-reports/agentry/out/" + env.RunID + "/data/t.csv"} {
+		d := env.Deliveries[i]
+		if d.Destination != "archive" || d.Kind != receipt.DeliveryKindS3 || d.Host != "my-reports.s3.eu-west-1.amazonaws.com:443" || d.Object != want || d.Status != receipt.DeliveryDelivered || d.OnMyNetwork {
+			t.Errorf("delivery %d = %+v, want object %s", i, d, want)
+		}
+	}
+	if hits := outputHolds(t, p.OutDir, "PLANTED"); len(hits) != 0 {
+		t.Errorf("the credential is in %v", hits)
+	}
+	if hits := outputHolds(t, p.RunRoot, "PLANTED"); len(hits) != 0 {
+		t.Errorf("the credential is in the runner home: %v", hits)
+	}
+	if left, _ := filepath.Glob(filepath.Join(p.RunRoot, "delivery-*")); len(left) != 0 {
+		t.Errorf("the step's folders remain: %v", left)
+	}
+}
+
+// TestABucketOnMyNetworkWidensTheProxyAndIsRecorded: an endpoint on the person's
+// network is reached by a proxy that admits it (plain http too), path-style, and
+// the record says so.
+func TestABucketOnMyNetworkWidensTheProxyAndIsRecorded(t *testing.T) {
+	p, f := fixture(t)
+	happyFake(f)
+	agentWrites(p, f, map[string]string{"reports/a.md": "a"}, `{"path":"reports/a.md","marked":true}`)
+	saw := deliveryStepPlays(t, f, bucketDelivered)
+	p.Destinations = []destination.Resolved{bucket("minio", destination.Destination{Bucket: "reports", Region: "us-east-1", Endpoint: "http://192.168.1.20:9000", OnMyNetwork: true})}
+	env, err := Run(context.Background(), f, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy, _ := proxyRun(f)
+	got := strings.Join(proxy.Argv, " ")
+	if !strings.Contains(got, "--allow 192.168.1.20:9000") || !strings.Contains(got, "--network-ok") || !strings.Contains(got, "--plain-http 192.168.1.20:9000") || strings.Contains(got, "--public-only") {
+		t.Errorf("the proxy's argv: %s", got)
+	}
+	if saw.job.Endpoint != "http://192.168.1.20:9000" || !saw.job.OnMyNetwork {
+		t.Errorf("job: %+v", saw.job)
+	}
+	if len(env.Deliveries) != 1 || !env.Deliveries[0].OnMyNetwork || env.Deliveries[0].Object != "reports/"+env.RunID+"/a.md" || env.Deliveries[0].Host != "192.168.1.20:9000" {
+		t.Errorf("deliveries = %+v", env.Deliveries)
+	}
+}
+
+// TestABucketThatBreaksTheRulesMakesNoContainer: an endpoint at a private,
+// loopback or metadata address without the tick, plain http, a bad bucket or
+// prefix, or a missing key makes no network, proxy or step, and is one failed
+// record with a closed word.
+func TestABucketThatBreaksTheRulesMakesNoContainer(t *testing.T) {
+	good := destination.Destination{Bucket: "my-reports", Region: "us-east-1", Endpoint: "https://minio.example.com"}
+	mut := func(f func(*destination.Destination)) destination.Resolved {
+		d := good
+		f(&d)
+		return bucket("b", d)
+	}
+	noKey := bucket("b", good)
+	noKey.AccessKeyID = ""
+	splitSecret := bucket("b", good)
+	splitSecret.Secret = "a\nb"
+	for name, want := range map[string]struct {
+		d      destination.Resolved
+		reason string
+	}{
+		"private":   {mut(func(d *destination.Destination) { d.Endpoint = "https://10.0.0.5" }), receipt.DeliveryErrDestination},
+		"metadata":  {mut(func(d *destination.Destination) { d.Endpoint = "http://169.254.169.254"; d.OnMyNetwork = true }), receipt.DeliveryErrDestination},
+		"loopback":  {mut(func(d *destination.Destination) { d.Endpoint = "https://127.0.0.1:9000"; d.OnMyNetwork = true }), receipt.DeliveryErrDestination},
+		"plain":     {mut(func(d *destination.Destination) { d.Endpoint = "http://minio.example.com" }), receipt.DeliveryErrDestination},
+		"path":      {mut(func(d *destination.Destination) { d.Endpoint = "https://minio.example.com/other" }), receipt.DeliveryErrDestination},
+		"bucket":    {mut(func(d *destination.Destination) { d.Bucket = "../x" }), receipt.DeliveryErrDestination},
+		"prefix":    {mut(func(d *destination.Destination) { d.Prefix = "../x" }), receipt.DeliveryErrDestination},
+		"no key id": {noKey, receipt.DeliveryErrCredential},
+		"split":     {splitSecret, receipt.DeliveryErrCredential},
+	} {
+		p, f := fixture(t)
+		happyFake(f)
+		agentWrites(p, f, map[string]string{"reports/a.md": "a"}, `{"path":"reports/a.md","marked":true}`)
+		deliveryStepPlays(t, f, bucketDelivered)
+		p.Destinations = []destination.Resolved{want.d}
+		env, err := Run(context.Background(), f, p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := stepRun(f); ok {
+			t.Errorf("%s: a step ran", name)
+		}
+		if _, ok := proxyRun(f); ok {
+			t.Errorf("%s: a proxy ran", name)
+		}
+		if env.Status != "ok" || len(env.Deliveries) != 1 || env.Deliveries[0].Status != receipt.DeliveryFailed || env.Deliveries[0].Error != want.reason || env.Deliveries[0].Kind != receipt.DeliveryKindS3 {
+			t.Errorf("%s: %s, deliveries %+v", name, env.Status, env.Deliveries)
+		}
+	}
+}
+
+// TestABucketIsSentFilesAloneAndAResultOnlyRunLeavesItNothing: a run with only a
+// structured result makes no step for a bucket and no record.
+func TestABucketIsSentFilesAloneAndAResultOnlyRunLeavesItNothing(t *testing.T) {
+	p, f := fixture(t)
+	if err := os.WriteFile(filepath.Join(p.WorkspaceSrc, compile.OutputSchemaFile), []byte(`{"type":"object","required":["verdict"],"properties":{"verdict":{"type":"string"}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m, err := manifest.Parse([]byte(engineManifest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	planDir := filepath.Join(t.TempDir(), "plan")
+	plan, err := compile.Compile(compile.Inputs{
+		Manifest: m, Digest: "sha256:feedface", Source: "local",
+		WorkspaceDir: p.WorkspaceSrc, Policy: p.Policy, PolicySHA: "sha", RunnerImage: "agentry-runner:test",
+	}, planDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Plan, p.PlanDir = plan, planDir
+	happyFake(f)
+	f.Foreground["-agent"] = &dockerx.FakeForeground{Stdout: `{"type":"agent_choice","message":{"content":"{\"verdict\":\"pass\"}"}}` + "\n"}
+	deliveryStepPlays(t, f, bucketDelivered)
+	p.Destinations = []destination.Resolved{bucket("archive", destination.Destination{Bucket: "my-reports", Region: "us-east-1"})}
+	env, err := Run(context.Background(), f, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := stepRun(f); ok || len(env.Deliveries) != 0 {
+		t.Errorf("a result-only run: step ran %v, deliveries %+v", ok, env.Deliveries)
+	}
+}
+
+// TestABucketsReportIsReadAsTheWordOfAProgramThatHeldTheKeys: a partial report
+// becomes a record per file, each from the closed lists, with free text,
+// an unknown reason and a missing entry all "step".
+func TestABucketsReportIsReadAsTheWordOfAProgramThatHeldTheKeys(t *testing.T) {
+	p, f := fixture(t)
+	happyFake(f)
+	agentWrites(p, f, map[string]string{"reports/a.md": "a", "reports/b.md": "b", "reports/c.md": "c", "reports/d.md": "d"},
+		`{"path":"reports/a.md","marked":true}`, `{"path":"reports/b.md","marked":true}`, `{"path":"reports/c.md","marked":true}`, `{"path":"reports/d.md","marked":true}`)
+	deliveryStepPlays(t, f, func(job send.Job) send.Report {
+		return send.Report{Kind: send.KindS3, Status: send.StatusFailed, Error: send.ReasonReceiverSaid, Files: []send.FileResult{
+			{Path: "reports/a.md", Status: send.StatusDelivered},
+			{Path: "reports/b.md", Status: send.StatusFailed, Error: "service said: PLANTED text"},
+			{Path: "reports/c.md", Status: send.StatusRefused, Error: send.ReasonTooLarge},
+		}}
+	})
+	p.Destinations = []destination.Resolved{bucket("archive", destination.Destination{Bucket: "my-reports", Region: "us-east-1"})}
+	env, err := Run(context.Background(), f, p)
+	if err != nil || len(env.Deliveries) != 4 {
+		t.Fatalf("%v %+v", err, env.Deliveries)
+	}
+	type st struct{ status, reason string }
+	want := []st{{receipt.DeliveryDelivered, ""}, {receipt.DeliveryFailed, receipt.DeliveryErrStep}, {receipt.DeliveryRefused, receipt.DeliveryErrTooLarge}, {receipt.DeliveryFailed, receipt.DeliveryErrStep}}
+	for i, d := range env.Deliveries {
+		if d.Status != want[i].status || d.Error != want[i].reason {
+			t.Errorf("delivery %d = %+v, want %+v", i, d, want[i])
+		}
+	}
+	if env.Status != "ok" {
+		t.Errorf("the run's status is %s", env.Status)
+	}
+}
+
+// TestAHostileFileNameNamesAnObjectInsideTheRunsFolder: the record's object, like
+// the key the step writes, is under <bucket>/<prefix>/<run id>/ whatever the path.
+func TestAHostileFileNameNamesAnObjectInsideTheRunsFolder(t *testing.T) {
+	r := deliveryRun{RunID: "cafe0000", Files: []receipt.Deliverable{{Path: "reports/a:b*.md"}, {Path: "reports/x/../../y.md"}, {Path: "other/z.md"}}}
+	got := objectsFor(r, bucket("a", destination.Destination{Bucket: "bkt-name", Prefix: "p/q", Region: "auto"}))
+	if got[0] != "bkt-name/p/q/cafe0000/a_b_.md" || got[1] != `"reports/x/../../y.md"` || got[2] != `"other/z.md"` {
+		t.Errorf("objects: %v", got)
+	}
+}
+
+// TestAPathTheStepWillNotNameIsRecordedAsQuotedText: a record of a file with no
+// key keeps its path, but as text a terminal acts on nothing in.
+func TestAPathTheStepWillNotNameIsRecordedAsQuotedText(t *testing.T) {
+	r := deliveryRun{RunID: "cafe0000", Files: []receipt.Deliverable{{Path: "reports/a/../b\x1b]0;pwned\x07.md"}, {Path: "reports/x\\y\x1b[2J.md"}}}
+	for _, o := range objectsFor(r, bucket("archive", destination.Destination{Bucket: "my-reports", Region: "eu-west-1"})) {
+		if strings.ContainsAny(o, "\x1b\x07\x00") {
+			t.Errorf("a record's object carries a control character: %q", o)
+		}
 	}
 }

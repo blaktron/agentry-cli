@@ -140,6 +140,7 @@ type Deliverable struct {
 const (
 	DeliveryKindFolder  = "folder"
 	DeliveryKindWebhook = "webhook"
+	DeliveryKindS3      = "s3"
 
 	DeliveryDelivered = "delivered"
 	// DeliveryRefused: the file was not the one the envelope names, or not a
@@ -167,7 +168,8 @@ const (
 	// it, so a client must not open it in one click.
 	DeliveryErrNotMarked = "not-marked"
 	// The words a send to a destination adds. TooLarge: a file the webhook's
-	// body had no room for, listed in it with its digest and no content.
+	// body had no room for, listed in it with its digest and no content, or a
+	// file past what a bucket takes as one object.
 	// Credential: the destination's secret or header value was missing or not
 	// one a request may carry. Address: the destination's host, or the address
 	// it resolves to, is not one the step may reach (private, loopback or
@@ -203,8 +205,10 @@ var DeliveryErrors = []string{
 // person saved it under, Host the host and port reached, and Object the
 // deliverable's path (or "result" for a run that left no file and sent its
 // result alone, whose SHA256 is that of the result as sent, or empty when
-// there was none). OnMyNetwork says the destination was saved with "On my
-// network", so the step was allowed to reach a private-network address.
+// there was none). For a bucket, Host is the service's host and port, and
+// Object the object written, <bucket>/<key>. OnMyNetwork says the destination
+// was saved with "On my network", so the step was allowed to reach a
+// private-network address.
 type Delivery struct {
 	Destination string `json:"destination"`
 	Kind        string `json:"kind"`
