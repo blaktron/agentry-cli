@@ -69,6 +69,15 @@ type RunSpec struct {
 	Adapter  string  `yaml:"adapter,omitempty" json:"adapter,omitempty"`
 	Policy   string  `yaml:"policy,omitempty" json:"policy,omitempty"`
 
+	// DeliverTo is the absolute folder each fire copies its deliverables to,
+	// as `agentry run --deliver-to` does; empty copies nowhere (a fire still
+	// takes deliver.folder from the CLI's config). Destinations are the saved
+	// destinations' names each fire sends its result and deliverables to, as
+	// `agentry run --destination` does. Names, never a credential: those stay
+	// in the keychain, and in the sealed credential of a signed-out schedule.
+	DeliverTo    string   `yaml:"deliverTo,omitempty" json:"deliverTo,omitempty"`
+	Destinations []string `yaml:"destinations,omitempty" json:"destinations,omitempty"`
+
 	// Hosts are the target hosts the schedule was readied for, when it was
 	// made: the answer is in Intake; each keeps where its sign-in is saved
 	// and the host key the person accepted. Never a credential.
