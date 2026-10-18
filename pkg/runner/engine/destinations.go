@@ -24,10 +24,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -43,6 +45,9 @@ import (
 // deliveryTimeout bounds one destination's step: its own request is bounded
 // well inside it.
 const deliveryTimeout = 6 * time.Minute
+
+// deliveryTotalTimeout bounds every destination's step of one delivery together.
+const deliveryTotalTimeout = 12 * time.Minute
 
 // maxDeliveryReport bounds the step's report.
 const maxDeliveryReport = 1 << 20
@@ -78,6 +83,10 @@ type deliveryRun struct {
 // every record, one per file per destination (one for the result alone when
 // the run left no file). It never fails the caller.
 func sendToDestinations(ctx context.Context, d dockerx.Client, r deliveryRun, dests []destination.Resolved) []receipt.Delivery {
+	// Every destination together has a time of its own, so that several slow
+	// receivers cannot hold a finished run's process for the sum of their limits.
+	ctx, cancel := context.WithTimeout(ctx, deliveryTotalTimeout)
+	defer cancel()
 	var out []receipt.Delivery
 	for _, dest := range dests {
 		out = append(out, sendToOne(ctx, d, r, dest)...)
@@ -118,10 +127,13 @@ func sendToOne(ctx context.Context, d dockerx.Client, r deliveryRun, dest destin
 	if err != nil || dest.Kind != destination.KindWebhook {
 		return failed("", receipt.DeliveryErrDestination)
 	}
-	if dest.Secret == "" || strings.ContainsAny(dest.Authorization, "\r\n\x00") {
+	if !send.ValidSecret(dest.Secret) || !send.ValidHeaderValue(dest.Authorization) {
 		return failed(target.HostPort, receipt.DeliveryErrCredential)
 	}
-	if ctx.Err() != nil {
+	if err := ctx.Err(); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return failed(target.HostPort, receipt.DeliveryErrTimeout)
+		}
 		return failed(target.HostPort, receipt.DeliveryErrStep)
 	}
 	sweepStaleDeliveryFolders(r.Root)
@@ -251,6 +263,10 @@ func sendToOne(ctx context.Context, d dockerx.Client, r deliveryRun, dest destin
 // in the middle of leaves its staged copies behind.
 const staleDelivery = 24 * time.Hour
 
+// deliveryFolderName is what os.MkdirTemp makes of "delivery-": the prefix and a
+// decimal number, and nothing else a person might have named a folder.
+var deliveryFolderName = regexp.MustCompile(`^delivery-[0-9]+$`)
+
 // sweepStaleDeliveryFolders removes the delivery folders in root that a process
 // that died left behind. Best effort.
 func sweepStaleDeliveryFolders(root string) {
@@ -259,7 +275,7 @@ func sweepStaleDeliveryFolders(root string) {
 		return
 	}
 	for _, e := range entries {
-		if !e.IsDir() || !strings.HasPrefix(e.Name(), "delivery-") {
+		if !e.IsDir() || !deliveryFolderName.MatchString(e.Name()) {
 			continue
 		}
 		if fi, err := e.Info(); err == nil && time.Since(fi.ModTime()) > staleDelivery {
@@ -332,9 +348,17 @@ func recordsFromReport(r deliveryRun, dest destination.Resolved, host string, re
 		out = append(out, receipt.Delivery{Destination: dest.Name, Kind: receipt.DeliveryKindWebhook, Host: host, Object: f.Path, SHA256: f.SHA256, Status: status, Error: reason, OnMyNetwork: dest.OnMyNetwork})
 	}
 	if len(r.Files) == 0 {
+		// The result was delivered when the POST was and the body held it; a
+		// result the body left out is refused with the reason, and one the POST
+		// did not reach is failed with the POST's.
 		status, reason := closedOutcome(rep.Status, rep.Error)
-		if rep.Result == send.StatusDelivered {
+		switch {
+		case rep.Status == send.StatusDelivered && rep.Result == send.StatusDelivered:
 			status, reason = receipt.DeliveryDelivered, ""
+		case rep.Status == send.StatusDelivered && (rep.Result == send.ReasonTooLarge || rep.Result == send.ReasonUnreadable):
+			status, reason = closedOutcome(receipt.DeliveryRefused, rep.Result)
+		case rep.Status == send.StatusDelivered:
+			status, reason = receipt.DeliveryFailed, receipt.DeliveryErrStep
 		}
 		out = append(out, receipt.Delivery{Destination: dest.Name, Kind: receipt.DeliveryKindWebhook, Host: host, Object: "result", SHA256: resultSum(r.Result), Status: status, Error: reason, OnMyNetwork: dest.OnMyNetwork})
 	}
@@ -413,6 +437,9 @@ func Redeliver(ctx context.Context, d dockerx.Client, p RedeliverParams) ([]rece
 	var files []receipt.Deliverable
 	if env.Deliverables != nil {
 		files = env.Deliverables.Files
+	}
+	if len(files) > receipt.MaxDeliverables {
+		return nil, fmt.Errorf("the run in %s lists more than %d deliverables, which no run's envelope does", p.RunDir, receipt.MaxDeliverables)
 	}
 	if len(files) == 0 && resultSum(env.Result) == "" {
 		return nil, fmt.Errorf("the run in %s lists no deliverables and has no result", p.RunDir)

@@ -39,6 +39,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // The names this package and its caller share.
@@ -229,19 +230,23 @@ func deliver(ctx context.Context, o Options, rep *Report) {
 		return
 	}
 	rep.Host = target.HostPort
-	if o.Cred.Secret == "" || strings.ContainsAny(o.Cred.Authorization, "\r\n\x00") {
+	if !ValidSecret(o.Cred.Secret) || !ValidHeaderValue(o.Cred.Authorization) {
 		fail(ReasonCredential)
 		return
 	}
-	body, files, resultSent := buildBody(o)
+	body, files, resultWord := buildBody(o)
+	if body == nil {
+		// Nothing fits the cap, not even the files' own listing.
+		for i := range rep.Files {
+			rep.Files[i] = FileResult{Path: rep.Files[i].Path, Status: StatusRefused, Error: ReasonTooLarge}
+		}
+		rep.Status, rep.Error, rep.Result = StatusFailed, ReasonTooLarge, ReasonTooLarge
+		return
+	}
 	for i := range rep.Files {
 		rep.Files[i] = files[i]
 	}
-	if resultSent {
-		rep.Result = StatusDelivered
-	} else if len(o.Job.Result) > 0 {
-		rep.Result = ReasonTooLarge
-	}
+	rep.Result = resultWord
 	now := time.Now
 	if o.Now != nil {
 		now = o.Now
@@ -265,12 +270,7 @@ func deliver(ctx context.Context, o Options, rep *Report) {
 	}
 	resp, err := client(o).Do(req)
 	if err != nil {
-		rep.Status, rep.Error = StatusFailed, classify(err)
-		for i := range rep.Files {
-			if rep.Files[i].Status == "" {
-				rep.Files[i].Status, rep.Files[i].Error = StatusFailed, rep.Error
-			}
-		}
+		failSent(rep, classify(err))
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -291,7 +291,8 @@ func deliver(ctx context.Context, o Options, rep *Report) {
 	}
 }
 
-// failSent fails the POST and every file whose content rode in it.
+// failSent fails the POST, every file whose content rode in it, and the result
+// when it did.
 func failSent(rep *Report, reason string) {
 	rep.Status, rep.Error = StatusFailed, reason
 	for i := range rep.Files {
@@ -302,6 +303,24 @@ func failSent(rep *Report, reason string) {
 	if rep.Result == StatusDelivered {
 		rep.Result = reason
 	}
+}
+
+// ValidHeaderValue says whether v can be an HTTP header value as the step
+// sends it: no control character but a tab, and no DEL.
+func ValidHeaderValue(v string) bool {
+	for i := 0; i < len(v); i++ {
+		if c := v[i]; c < 0x20 && c != '\t' || c == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+// ValidSecret says whether s can sign a body: not empty, valid UTF-8 (it
+// crosses a JSON document and a keychain, which would otherwise change it), and
+// a plain line.
+func ValidSecret(s string) bool {
+	return s != "" && utf8.ValidString(s) && !strings.ContainsAny(s, "\r\n\x00")
 }
 
 // Sign is the signature over a body: the hex HMAC-SHA256, keyed by the
@@ -338,76 +357,144 @@ type body struct {
 	Deliverables  []bodyFile      `json:"deliverables"`
 }
 
-// slack is what the size prediction leaves free, so that the body is never
-// over its cap by a miscount of JSON's framing.
-const slack = 1024
+// maxResultDepth bounds the nesting of a result sent: past it a receiver's JSON
+// reader may refuse the whole body.
+const maxResultDepth = 64
 
-// buildBody assembles the body within the cap and reports each file's outcome
-// so far: a file whose content rides in it has none yet (its outcome is the
-// POST's), and one left out has the reason. resultSent says the result is in
-// the body.
-func buildBody(o Options) (out []byte, files []FileResult, resultSent bool) {
+// marshal encodes v as JSON without HTML escaping, so that the text the agent
+// wrote is not made six times as long by '<', '>' and '&'.
+func marshal(v any) []byte {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(v)
+	return bytes.TrimRight(b.Bytes(), "\n")
+}
+
+// jsonDepth is the deepest nesting of arrays and objects in raw, which is valid
+// JSON.
+func jsonDepth(raw []byte) int {
+	depth, deepest := 0, 0
+	inString, escaped := false, false
+	for _, c := range raw {
+		switch {
+		case inString:
+			switch {
+			case escaped:
+				escaped = false
+			case c == '\\':
+				escaped = true
+			case c == '"':
+				inString = false
+			}
+		case c == '"':
+			inString = true
+		case c == '[' || c == '{':
+			depth++
+			deepest = max(deepest, depth)
+		case c == ']' || c == '}':
+			depth--
+		}
+	}
+	return deepest
+}
+
+// contentOverhead is the bytes the key and quotes of a file's content add to
+// its entry: ,"content":"" with the value's own length on top.
+const contentOverhead = len(`,"content":""`)
+
+// buildBody assembles the body within the cap and answers each file's outcome so
+// far (a file whose content rides in it has none yet: its outcome is the POST's;
+// one left out has the reason) and the result's word: "delivered" when it is in
+// the body, else why not. The sizes are exact: the framing, the result, every
+// file's entry, and room kept for the entries after the one being decided, so no
+// choice squeezes a later entry past the cap. A nil body says nothing fits.
+func buildBody(o Options) (out []byte, files []FileResult, resultWord string) {
 	maxBody := o.Job.MaxBody
 	if maxBody <= 0 {
 		maxBody = DefaultMaxBody
 	}
 	b := body{Schema: BodySchema, RunID: o.Job.RunID, Ref: o.Job.Ref, Digest: o.Job.Digest, Result: json.RawMessage("null"), Deliverables: []bodyFile{}}
-	files = make([]FileResult, len(o.Job.Files))
-	// A result is sent when it is JSON and leaves room for the files.
-	if r := bytes.TrimSpace(o.Job.Result); len(r) > 0 && json.Valid(r) {
-		if int64(len(r)) <= maxBody/2 {
-			b.Result, resultSent = json.RawMessage(r), true
-		} else {
-			b.ResultOmitted = ReasonTooLarge
+	// A result is sent when it is JSON, valid UTF-8, not nested past what a
+	// receiver reads, and as it is written (not escaped) leaves room for the files.
+	if r := bytes.TrimSpace(o.Job.Result); len(r) > 0 {
+		switch {
+		case !json.Valid(r) || !utf8.Valid(r) || jsonDepth(r) > maxResultDepth:
+			b.ResultOmitted, resultWord = ReasonUnreadable, ReasonUnreadable
+		case int64(len(marshal(json.RawMessage(r)))) > maxBody/2:
+			b.ResultOmitted, resultWord = ReasonTooLarge, ReasonTooLarge
+		default:
+			b.Result, resultWord = json.RawMessage(r), StatusDelivered
 		}
 	}
-	framing, _ := json.Marshal(b)
-	used := int64(len(framing)) + slack
+	files = make([]FileResult, len(o.Job.Files))
+	entries := make([]bodyFile, len(o.Job.Files))
+	// Room for every entry as if it were left out, with the longest reason.
+	used := int64(len(marshal(b)))
+	for i, f := range o.Job.Files {
+		entries[i] = bodyFile{Path: f.Path, Title: f.Title, SHA256: f.SHA256, Bytes: f.Bytes, Type: f.Type, Marked: f.Marked}
+		files[i].Path = f.Path
+		reserve := entries[i]
+		reserve.Omitted = ReasonOutside
+		used += int64(len(marshal(reserve))) + 1
+	}
 	root, rerr := os.OpenRoot(o.Staging)
 	if rerr == nil {
 		defer func() { _ = root.Close() }()
 	}
+	omit := func(i int, reason string) {
+		entries[i].Omitted = reason
+		files[i].Status, files[i].Error = StatusRefused, reason
+	}
 	for i, f := range o.Job.Files {
-		e := bodyFile{Path: f.Path, Title: f.Title, SHA256: f.SHA256, Bytes: f.Bytes, Type: f.Type, Marked: f.Marked}
-		files[i].Path = f.Path
-		omit := func(reason string) {
-			e.Omitted = reason
-			files[i].Status, files[i].Error = StatusRefused, reason
-		}
-		meta, _ := json.Marshal(e)
+		cost := int64(contentOverhead) + int64(base64.StdEncoding.EncodedLen(int(min(max(f.Bytes, 0), 1<<40))))
 		switch {
 		case !plainReportPath(f.Path):
-			omit(ReasonOutside)
+			omit(i, ReasonOutside)
 		case f.Omitted != "":
-			omit(f.Omitted)
+			omit(i, f.Omitted)
 		case f.Bytes < 0:
-			omit(ReasonUnreadable)
+			omit(i, ReasonUnreadable)
 		case f.Staged == "" || rerr != nil:
-			omit(ReasonMissing)
-		case used+int64(len(meta))+int64(len(`,"content":""`))+int64(base64.StdEncoding.EncodedLen(int(min(f.Bytes, 1<<40))))+1 > maxBody:
-			omit(ReasonTooLarge)
+			omit(i, ReasonMissing)
+		case used+cost > maxBody:
+			omit(i, ReasonTooLarge)
 		default:
 			content, reason := readStaged(root, f)
 			if reason != "" {
-				omit(reason)
-			} else {
-				e.Content = &content
+				omit(i, reason)
+				continue
+			}
+			entries[i].Content = &content
+			used += cost
+		}
+	}
+	// The sum is exact up to JSON's own escaping of what the agent wrote in a
+	// path or a title; if it is still over, the last files' content goes first.
+	for {
+		b.Deliverables = entries
+		out = marshal(b)
+		if int64(len(out)) <= maxBody {
+			return out, files, resultWord
+		}
+		last := -1
+		for i := len(entries) - 1; i >= 0; i-- {
+			if entries[i].Content != nil {
+				last = i
+				break
 			}
 		}
-		m, _ := json.Marshal(e)
-		used += int64(len(m)) + 1
-		b.Deliverables = append(b.Deliverables, e)
+		if last < 0 {
+			return nil, files, resultWord
+		}
+		entries[last].Content = nil
+		omit(last, ReasonTooLarge)
 	}
-	out, _ = json.Marshal(b)
-	return out, files, resultSent
 }
 
 // plainReportPath is true for a path beneath reports/ with no way out of it.
 func plainReportPath(p string) bool {
-	if !strings.HasPrefix(p, "reports/") || path.Clean(p) != p || strings.ContainsAny(p, "\\\x00") {
-		return false
-	}
-	return !strings.Contains(p, "..")
+	return strings.HasPrefix(p, "reports/") && path.Clean(p) == p && !strings.ContainsAny(p, "\\\x00")
 }
 
 // readStaged reads a staged file and answers it base64 encoded, or the reason

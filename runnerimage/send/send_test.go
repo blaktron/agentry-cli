@@ -8,7 +8,9 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
+	"math/rand"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -20,6 +22,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/blaktron/agentry-cli/runnerimage/netproxy"
 )
@@ -503,5 +506,143 @@ func TestSign(t *testing.T) {
 	mac.Write([]byte("1700000000.{\"a\":1}"))
 	if got, want := Sign([]byte("k"), "1700000000", []byte(`{"a":1}`)), hex.EncodeToString(mac.Sum(nil)); got != want {
 		t.Errorf("%s != %s", got, want)
+	}
+}
+
+// TestAResultTheBodyCannotCarryIsLeftOutAndSaid: a result that would pass the cap
+// once escaped is judged by the bytes it is sent as, and one that is not valid
+// UTF-8 or is nested deeper than a receiver reads is left out with its word, so
+// the body is always valid text within its cap.
+func TestAResultTheBodyCannotCarryIsLeftOutAndSaid(t *testing.T) {
+	for name, c := range map[string]struct {
+		result json.RawMessage
+		word   string
+	}{
+		"markup":       {json.RawMessage(`"` + strings.Repeat("<&>", int(DefaultMaxBody/6)-10) + `"`), StatusDelivered},
+		"line breaks":  {json.RawMessage(`"` + strings.Repeat(" ", int(DefaultMaxBody/6)) + `"`), ReasonTooLarge},
+		"not utf-8":    {json.RawMessage("\"a\xff\xfeb\""), ReasonUnreadable},
+		"deep":         {json.RawMessage(strings.Repeat("[", 5000) + strings.Repeat("]", 5000)), ReasonUnreadable},
+		"not json":     {json.RawMessage("{"), ReasonUnreadable},
+		"nesting fine": {json.RawMessage(strings.Repeat("[", 60) + strings.Repeat("]", 60)), StatusDelivered},
+	} {
+		f := newFixture(t, "https://x.example/")
+		f.job.Result = c.result
+		body, _, word := buildBody(f.options())
+		if int64(len(body)) > DefaultMaxBody || !utf8.Valid(body) || !json.Valid(body) {
+			t.Errorf("%s: a body of %d bytes (valid utf-8 %v, json %v)", name, len(body), utf8.Valid(body), json.Valid(body))
+		}
+		if word != c.word {
+			t.Errorf("%s: the result's word is %q, want %q", name, word, c.word)
+		}
+		if c.word != StatusDelivered && !strings.Contains(string(body), `"resultOmitted":"`+c.word+`"`) {
+			t.Errorf("%s: the body does not say why the result is out", name)
+		}
+	}
+}
+
+// TestEntriesAfterABigFileStayWithinTheCap: room is kept for the listing of every
+// later file, so a large file early in the job cannot push the body past its cap.
+func TestEntriesAfterABigFileStayWithinTheCap(t *testing.T) {
+	f := newFixture(t, "https://x.example/")
+	f.job.Files = append(f.job.Files, stage(t, f.staging, "f0000", "reports/big.bin", strings.Repeat("x", 7_800_000)))
+	for i := 1; i < 200; i++ {
+		file := stage(t, f.staging, fmt.Sprintf("f%04d", i), "reports/"+strings.Repeat("p", 100)+fmt.Sprintf("%d.md", i), "later")
+		file.Title = strings.Repeat("t", 120)
+		file.Omitted = ReasonTooLarge
+		f.job.Files = append(f.job.Files, file)
+	}
+	body, _, _ := buildBody(f.options())
+	if int64(len(body)) > DefaultMaxBody {
+		t.Errorf("a body of %d bytes, %d over its cap", len(body), int64(len(body))-DefaultMaxBody)
+	}
+}
+
+// TestTheBodyIsNeverOverItsCap: for many jobs of odd sizes, titles and paths
+// (markup, line separators, astral characters, controls), a body that could fit
+// is within its cap, every file that is not left out carries its content (an empty
+// file's too), and every file left out says why.
+func TestTheBodyIsNeverOverItsCap(t *testing.T) {
+	rng := rand.New(rand.NewSource(7))
+	alphabets := []string{"abc", "<>&", "  ", "é€𝄞", "\x00\x01\"\\"}
+	for it := 0; it < 200; it++ {
+		f := newFixture(t, "https://x.example/")
+		maxBody := int64(2000 + rng.Intn(60000))
+		f.job.MaxBody = maxBody
+		f.job.Result = nil
+		if rng.Intn(2) == 0 {
+			f.job.Result = json.RawMessage(fmt.Sprintf("%q", strings.Repeat("r", rng.Intn(int(maxBody)/2))))
+		}
+		for i := 0; i < rng.Intn(30); i++ {
+			size := rng.Intn(int(maxBody) / 2)
+			if rng.Intn(5) == 0 {
+				size = 0
+			}
+			alpha := []rune(alphabets[rng.Intn(len(alphabets))])
+			var title strings.Builder
+			for j := 0; j < rng.Intn(200); j++ {
+				title.WriteRune(alpha[rng.Intn(len(alpha))])
+			}
+			file := stage(t, f.staging, fmt.Sprintf("f%04d", i), fmt.Sprintf("reports/%s%d.md", strings.Repeat("<", rng.Intn(50)), i), strings.Repeat("x", size))
+			file.Title = title.String()
+			f.job.Files = append(f.job.Files, file)
+		}
+		body, files, _ := buildBody(f.options())
+		if body == nil {
+			continue
+		}
+		if int64(len(body)) > maxBody {
+			t.Fatalf("iteration %d: a body of %d bytes over a cap of %d", it, len(body), maxBody)
+		}
+		var got struct {
+			Deliverables []struct {
+				Content *string `json:"content"`
+				Omitted string  `json:"omitted"`
+			} `json:"deliverables"`
+		}
+		if err := json.Unmarshal(body, &got); err != nil {
+			t.Fatal(err)
+		}
+		for i, d := range got.Deliverables {
+			if (d.Omitted == "") == (d.Content == nil) {
+				t.Errorf("iteration %d file %d: content %v and omitted %q", it, i, d.Content != nil, d.Omitted)
+			}
+			if (d.Omitted == "") != (files[i].Status == "") {
+				t.Errorf("iteration %d file %d: the body and the outcome disagree", it, i)
+			}
+		}
+	}
+}
+
+// TestAPostThatFailedIsNotADeliveredResult: whichever way the POST fails, the
+// result is not recorded as sent.
+func TestAPostThatFailedIsNotADeliveredResult(t *testing.T) {
+	ln, _ := net.Listen("tcp", "127.0.0.1:0")
+	addr := ln.Addr().String()
+	_ = ln.Close()
+	f := newFixture(t, "http://"+addr+"/x")
+	rep, err := Run(context.Background(), f.options())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Status != StatusFailed || rep.Result != ReasonUnreachable {
+		t.Errorf("an unreachable receiver: status %q, result %q", rep.Status, rep.Result)
+	}
+}
+
+// TestACredentialIsOneTheStepCanSend: a secret that is not valid text, and a
+// header value with a control character, are refused before any request.
+func TestACredentialIsOneTheStepCanSend(t *testing.T) {
+	for _, auth := range []string{"Bearer x\r\nX: y", "Bearer x\x7f", "Bearer x\vy", "Bearer x\x00"} {
+		if ValidHeaderValue(auth) {
+			t.Errorf("%q was taken as a header value", auth)
+		}
+	}
+	if !ValidHeaderValue("Bearer a\tb") || !ValidHeaderValue("") {
+		t.Error("a tab, or no value, was refused")
+	}
+	for _, s := range []string{"", "a\xffb", "a\nb"} {
+		if ValidSecret(s) {
+			t.Errorf("%q was taken as a secret", s)
+		}
 	}
 }

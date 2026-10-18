@@ -545,8 +545,18 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		if len(opts.destinations) > 0 {
 			return engine.Classify(engine.ExitUsage, errors.New("--destination is for a run on this computer: a hosted run's host delivers nowhere"))
 		}
-	} else if destinations, err = chooseDestinations(opts.destinations, plan.Ref); err != nil {
-		return err
+	} else {
+		var fromDefault bool
+		if destinations, fromDefault, err = chooseDestinations(opts.destinations, plan.Ref, opts.local != ""); err != nil {
+			return err
+		}
+		if fromDefault {
+			names := make([]string, len(destinations))
+			for i, d := range destinations {
+				names[i] = d.Name
+			}
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "delivering to %s when the run succeeds (the default set you chose for %s)\n", strings.Join(names, ", "), strings.SplitN(plan.Ref, "@", 2)[0])
+		}
 	}
 	// Gateway + harness + runner images: the install step.
 	opts.progress.at(receipt.StageImages)

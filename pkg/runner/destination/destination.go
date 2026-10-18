@@ -336,6 +336,12 @@ func readAccount(account string) (string, error) {
 	return strings.TrimSpace(v), nil
 }
 
+// ValidSecretValues says whether a signing secret (empty: none given) and an
+// Authorization value (empty: none) are values the delivery step can use.
+func ValidSecretValues(secret, authorization string) bool {
+	return (secret == "" || send.ValidSecret(secret)) && send.ValidHeaderValue(authorization)
+}
+
 // SaveSecrets keeps a destination's credentials in the system keychain. An
 // empty authorization removes any saved one, and an empty secret leaves the
 // saved secret as it is.
@@ -343,10 +349,8 @@ func SaveSecrets(name, secret, authorization string) error {
 	if modelkey.Disabled() {
 		return errors.New("the system keychain is off (AGENTRY_NO_KEYRING): a destination's credentials are kept there alone")
 	}
-	for _, v := range []string{secret, authorization} {
-		if strings.ContainsAny(v, "\r\n\x00") {
-			return errors.New("a credential holds a line break or a control character")
-		}
+	if !ValidSecretValues(secret, authorization) {
+		return errors.New("a credential holds a control character or is not valid text")
 	}
 	if secret != "" {
 		if err := keyringSet(modelkey.Service, SecretAccount(name), secret); err != nil {

@@ -23,6 +23,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/runner/destination"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
+	"github.com/blaktron/agentry-cli/runnerimage/send"
 )
 
 func newDestinationsCmd() *cobra.Command {
@@ -95,7 +96,7 @@ func newDestinationsAddCmd() *cobra.Command {
 			if err != nil {
 				return engine.Classify(engine.ExitCLI, err)
 			}
-			_, existed := s.Find(name)
+			prev, existed := s.Find(name)
 			if secret == "" && (!existed || !destination.HasSecret(name)) {
 				if !stdinIsTTY(cmd.InOrStdin()) {
 					return usage(errors.New("a destination needs a signing secret: give --secret-env, --secret-stdin or --generate-secret"))
@@ -105,21 +106,35 @@ func newDestinationsAddCmd() *cobra.Command {
 				}
 			}
 			if existed && authEnv == "" {
-				// A change that names no Authorization value leaves the
-				// saved one as it is.
+				// A change that names no Authorization value leaves the saved
+				// one as it is, unless the address now names another host: a
+				// value saved for one receiver is never sent to another.
 				_, keep, kerr := destination.Secrets(name)
 				if kerr != nil {
 					return engine.Classify(engine.ExitCLI, kerr)
 				}
-				auth = keep
+				if keep != "" && sameHost(prev, d) {
+					auth = keep
+				} else if keep != "" {
+					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "the address names another host, so the saved Authorization value is dropped: give --authorization-env to set one\n")
+				}
+			}
+			if !destination.ValidSecretValues(secret, auth) {
+				return usage(errors.New("a credential holds a control character or is not valid text"))
+			}
+			// The file's rules first, then the keychain, then the file; a
+			// keychain or file write that fails leaves no credential of a
+			// destination that was never saved.
+			if err := s.Upsert(d); err != nil {
+				return usage(err)
 			}
 			if err := destination.SaveSecrets(name, secret, auth); err != nil {
 				return engine.Classify(engine.ExitCLI, err)
 			}
-			if err := s.Upsert(d); err != nil {
-				return usage(err)
-			}
 			if err := s.Save(); err != nil {
+				if !existed {
+					_ = destination.DeleteSecrets(name)
+				}
 				return engine.Classify(engine.ExitCLI, err)
 			}
 			out := cmd.OutOrStdout()
@@ -199,6 +214,13 @@ type destinationRow struct {
 	Secret        bool     `json:"secret"`
 	Authorization bool     `json:"authorization"`
 	DefaultFor    []string `json:"defaultFor"`
+}
+
+// sameHost says two destinations reach the same host and port.
+func sameHost(a, b destination.Destination) bool {
+	ta, err1 := send.CheckURL(a.URL, a.OnMyNetwork)
+	tb, err2 := send.CheckURL(b.URL, b.OnMyNetwork)
+	return err1 == nil && err2 == nil && ta.HostPort == tb.HostPort
 }
 
 func newDestinationsListCmd() *cobra.Command {
@@ -310,18 +332,22 @@ func newDestinationsDefaultCmd() *cobra.Command {
 // chooseDestinations is the destinations a run delivers to: those named by
 // --destination, else the QuickAgent's default set, each read with its
 // credentials. A name that is not saved or has no signing secret refuses the run
-// before it starts.
-func chooseDestinations(names []string, ref string) ([]destination.Resolved, error) {
-	if len(names) == 0 {
+// before it starts. A default set is the person's choice for a QuickAgent from
+// the registry; a folder on disk names itself in its own manifest, so it gets no
+// default set and delivers only where --destination says. The second answer says
+// which names came from a default set.
+func chooseDestinations(names []string, ref string, local bool) (dests []destination.Resolved, fromDefault bool, err error) {
+	if len(names) == 0 && !local {
 		s, err := destination.Load()
 		if err != nil {
-			return nil, engine.Classify(engine.ExitUsage, err)
+			return nil, false, engine.Classify(engine.ExitUsage, err)
 		}
 		names = s.DefaultsFor(ref)
+		fromDefault = len(names) > 0
 	}
 	out, err := destination.Resolve(names)
 	if err != nil {
-		return nil, engine.Classify(engine.ExitUsage, err)
+		return nil, false, engine.Classify(engine.ExitUsage, err)
 	}
-	return out, nil
+	return out, fromDefault, nil
 }

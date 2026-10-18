@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -162,18 +163,26 @@ func TestARunNamesDestinationsThatAreSavedOrItsDefaultSet(t *testing.T) {
 	if _, _, err := runCLI(t, nil, "destinations", "default", "acme/weekly", "b"); err != nil {
 		t.Fatal(err)
 	}
-	got, err := chooseDestinations(nil, "acme/weekly@1.0.0")
-	if err != nil || len(got) != 1 || got[0].Name != "b" {
-		t.Errorf("default set: %+v %v", got, err)
+	got, fromDefault, err := chooseDestinations(nil, "acme/weekly@1.0.0", false)
+	if err != nil || len(got) != 1 || got[0].Name != "b" || !fromDefault {
+		t.Errorf("default set: %+v %v %v", got, fromDefault, err)
 	}
-	got, err = chooseDestinations([]string{"a"}, "acme/weekly@1.0.0")
-	if err != nil || len(got) != 1 || got[0].Name != "a" {
-		t.Errorf("named: %+v %v", got, err)
+	got, fromDefault, err = chooseDestinations([]string{"a"}, "acme/weekly@1.0.0", false)
+	if err != nil || len(got) != 1 || got[0].Name != "a" || fromDefault {
+		t.Errorf("named: %+v %v %v", got, fromDefault, err)
 	}
-	if got, err := chooseDestinations(nil, "acme/other@1"); err != nil || got != nil {
+	if got, _, err := chooseDestinations(nil, "acme/other@1", false); err != nil || got != nil {
 		t.Errorf("a QuickAgent with no set: %+v %v", got, err)
 	}
-	_, err = chooseDestinations([]string{"nope"}, "acme/weekly@1.0.0")
+	// A folder on disk names itself in its own manifest, so it gets no default
+	// set, and a name given for it is used as given.
+	if got, fromDefault, err := chooseDestinations(nil, "acme/weekly@1.0.0", true); err != nil || got != nil || fromDefault {
+		t.Errorf("a local folder took a default set: %+v %v %v", got, fromDefault, err)
+	}
+	if got, _, err := chooseDestinations([]string{"a"}, "acme/weekly@1.0.0", true); err != nil || len(got) != 1 || got[0].Name != "a" {
+		t.Errorf("a local folder with a named destination: %+v %v", got, err)
+	}
+	_, _, err = chooseDestinations([]string{"nope"}, "acme/weekly@1.0.0", false)
 	wantClassified(t, err, engine.ExitUsage)
 	if _, _, err := runCLI(t, nil, "destinations", "default", "acme/weekly", "nope"); err == nil {
 		t.Error("a default naming nothing was taken")
@@ -254,4 +263,52 @@ func TestAgentryDeliverToADestinationRetriesAFailedRun(t *testing.T) {
 	// A destination that is not saved refuses before anything is run.
 	_, _, err = runCLI(t, nil, "deliver", dir, "--destination", "nope")
 	wantClassified(t, err, engine.ExitUsage)
+}
+
+// TestChangingAnAddressToAnotherHostDropsTheSavedAuthorization: an Authorization
+// value saved for one receiver is never sent to another; changing only the path
+// keeps it.
+func TestChangingAnAddressToAnotherHostDropsTheSavedAuthorization(t *testing.T) {
+	destinationsEnv(t)
+	t.Setenv("HOOK_SECRET", "s")
+	t.Setenv("HOOK_AUTH", "Bearer FIRSTHOST")
+	if _, _, err := runCLI(t, nil, "destinations", "add", "n8n", "--url", "https://one.example.com/a", "--secret-env", "HOOK_SECRET", "--authorization-env", "HOOK_AUTH"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runCLI(t, nil, "destinations", "add", "n8n", "--url", "https://one.example.com/b"); err != nil {
+		t.Fatal(err)
+	}
+	if _, a, _ := destination.Secrets("n8n"); a != "Bearer FIRSTHOST" {
+		t.Errorf("a change of path dropped the value: %q", a)
+	}
+	_, errOut, err := runCLI(t, nil, "destinations", "add", "n8n", "--url", "https://two.example.com/b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, a, _ := destination.Secrets("n8n"); a != "" || !strings.Contains(errOut, "Authorization value is dropped") {
+		t.Errorf("a change of host kept the value %q (%s)", a, errOut)
+	}
+}
+
+// TestARefusedSaveLeavesNoCredentialBehind: an address the rules refuse is
+// refused before the keychain is asked, and a full file leaves none of the
+// credentials of the destination it did not save.
+func TestARefusedSaveLeavesNoCredentialBehind(t *testing.T) {
+	destinationsEnv(t)
+	t.Setenv("HOOK_SECRET", "s")
+	s, _ := destination.Load()
+	for i := 0; i < destination.MaxDestinations; i++ {
+		if err := s.Upsert(destination.Destination{Name: fmt.Sprintf("d%02d", i), Kind: destination.KindWebhook, URL: "https://hooks.example.com/x"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runCLI(t, nil, "destinations", "add", "overflow", "--url", "https://hooks.example.com/x", "--secret-env", "HOOK_SECRET"); err == nil {
+		t.Fatal("a destination past the limit was saved")
+	}
+	if destination.HasSecret("overflow") {
+		t.Error("the keychain holds the secret of a destination that was not saved")
+	}
 }

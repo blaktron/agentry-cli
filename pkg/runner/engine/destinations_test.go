@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -581,8 +582,8 @@ func TestAHostedRunDeliversToNoDestination(t *testing.T) {
 // a step left behind goes with the next delivery; a step in flight keeps its.
 func TestAStaleDeliveryFolderIsSweptAndAFreshOneIsNot(t *testing.T) {
 	root := t.TempDir()
-	stale, fresh, other := filepath.Join(root, "delivery-old"), filepath.Join(root, "delivery-new"), filepath.Join(root, "runs")
-	for _, d := range []string{stale, fresh, other} {
+	stale, fresh, other, notes := filepath.Join(root, "delivery-123456"), filepath.Join(root, "delivery-789"), filepath.Join(root, "runs"), filepath.Join(root, "delivery-notes")
+	for _, d := range []string{stale, fresh, other, notes} {
 		if err := os.Mkdir(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -591,13 +592,80 @@ func TestAStaleDeliveryFolderIsSweptAndAFreshOneIsNot(t *testing.T) {
 	if err := os.Chtimes(stale, old, old); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chtimes(other, old, old); err != nil {
-		t.Fatal(err)
+	for _, d := range []string{other, notes} {
+		if err := os.Chtimes(d, old, old); err != nil {
+			t.Fatal(err)
+		}
 	}
 	sweepStaleDeliveryFolders(root)
-	for d, want := range map[string]bool{stale: false, fresh: true, other: true} {
+	for d, want := range map[string]bool{stale: false, fresh: true, other: true, notes: true} {
 		if _, err := os.Stat(d); (err == nil) != want {
 			t.Errorf("%s exists = %v, want %v", filepath.Base(d), err == nil, want)
 		}
+	}
+}
+
+// TestAResultOnlyDeliveryIsRecordedAsTheStepReportsIt: the result is delivered
+// only when the POST was and the body held it; a POST that failed is a failed
+// result whatever the report's result word was, and a result the body left out
+// is refused with the reason.
+func TestAResultOnlyDeliveryIsRecordedAsTheStepReportsIt(t *testing.T) {
+	r := deliveryRun{Result: json.RawMessage(`{"verdict":"pass"}`)}
+	dest := hook("n8n", "https://hooks.example.com/x", false)
+	for name, c := range map[string]struct {
+		rep    send.Report
+		status string
+		reason string
+	}{
+		"delivered":                              {send.Report{Status: send.StatusDelivered, Result: send.StatusDelivered}, receipt.DeliveryDelivered, ""},
+		"unreachable even if the step said sent": {send.Report{Status: send.StatusFailed, Error: send.ReasonUnreachable, Result: send.StatusDelivered}, receipt.DeliveryFailed, receipt.DeliveryErrUnreachable},
+		"address":                                {send.Report{Status: send.StatusFailed, Error: send.ReasonAddress}, receipt.DeliveryFailed, receipt.DeliveryErrAddress},
+		"too large":                              {send.Report{Status: send.StatusDelivered, Result: send.ReasonTooLarge}, receipt.DeliveryRefused, receipt.DeliveryErrTooLarge},
+		"unreadable":                             {send.Report{Status: send.StatusDelivered, Result: send.ReasonUnreadable}, receipt.DeliveryRefused, receipt.DeliveryErrUnreadable},
+		"no word":                                {send.Report{Status: send.StatusDelivered}, receipt.DeliveryFailed, receipt.DeliveryErrStep},
+		"free text":                              {send.Report{Status: send.StatusDelivered, Result: "anything the step says"}, receipt.DeliveryFailed, receipt.DeliveryErrStep},
+	} {
+		c.rep.Schema = send.ReportSchema
+		got := recordsFromReport(r, dest, "hooks.example.com:443", c.rep)
+		if len(got) != 1 || got[0].Object != "result" || got[0].Status != c.status || got[0].Error != c.reason {
+			t.Errorf("%s: %+v, want %s/%s", name, got, c.status, c.reason)
+		}
+	}
+}
+
+// TestSeveralDestinationsShareOneTimeLimit: the destinations of one delivery
+// are held to a time together, and one reached after it is spent is a timeout.
+func TestSeveralDestinationsShareOneTimeLimit(t *testing.T) {
+	p, f := fixture(t)
+	happyFake(f)
+	agentWrites(p, f, map[string]string{"reports/a.md": "a"}, `{"path":"reports/a.md","marked":true}`)
+	deliveryStepPlays(t, f, delivered)
+	r := deliveryRun{RunDir: p.OutDir, RunID: "x", Files: []receipt.Deliverable{{Path: "reports/a.md", SHA256: sha([]byte("a")), Bytes: 1}}, Image: "agentry-runner:test", Root: p.RunRoot, Engine: dockerx.LocalDockerEngine()}
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	got := sendToDestinations(ctx, f, r, []destination.Resolved{hook("a", "https://hooks.example.com/a", false), hook("b", "https://hooks.example.com/b", false)})
+	if len(got) != 2 || got[0].Error != receipt.DeliveryErrTimeout || got[1].Error != receipt.DeliveryErrTimeout {
+		t.Errorf("records: %+v", got)
+	}
+	if _, ok := stepRun(f); ok {
+		t.Error("a step ran after the time was spent")
+	}
+}
+
+// TestARedeliveryOfAnOversizedListingIsRefused: an envelope that lists more
+// files than any run's does is not delivered.
+func TestARedeliveryOfAnOversizedListingIsRefused(t *testing.T) {
+	dir := t.TempDir()
+	env := receipt.Envelope{Agentry: receipt.EnvelopeVersion, Status: "ok", RunID: "r", Ref: "a/b@1", OutDir: dir, Deliverables: &receipt.Deliverables{}}
+	for i := 0; i <= receipt.MaxDeliverables; i++ {
+		env.Deliverables.Files = append(env.Deliverables.Files, receipt.Deliverable{Path: fmt.Sprintf("reports/%d.md", i)})
+	}
+	b, _ := env.Marshal()
+	if err := os.WriteFile(filepath.Join(dir, "result.json"), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f := &dockerx.Fake{}
+	if _, err := Redeliver(context.Background(), f, RedeliverParams{RunDir: dir, Destinations: []destination.Resolved{hook("n8n", "https://hooks.example.com/x", false)}, RunRoot: t.TempDir()}); err == nil {
+		t.Error("an oversized listing was delivered")
 	}
 }

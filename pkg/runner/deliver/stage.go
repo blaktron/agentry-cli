@@ -2,6 +2,7 @@ package deliver
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -19,8 +20,10 @@ type Staged struct {
 	Reason string
 }
 
-// Stage copies each deliverable that is no larger than maxBytes from the run
-// folder into dir (which must exist), under names of the runner's own
+// Stage copies deliverables from the run folder into dir, as many as a body of
+// budget bytes can carry (each file counts as the base64 of its bytes, which is
+// how a webhook sends it), in order, and no more: a file that does not fit in
+// what is left is not staged, whatever follows it. Each copy is made (which must exist), under names of the runner's own
 // (f0000, f0001, …), and answers one Staged per file in order. A file is staged
 // only as a delivery to a folder would copy it: read through no link, from
 // beneath reports/, and shown to be the bytes of the envelope's size and
@@ -28,7 +31,7 @@ type Staged struct {
 // copy, never the run folder, so a file the agent changes after the check is
 // never the one sent, and the step that holds the destination's credential
 // sees no path of the run folder at all.
-func Stage(runDir string, files []receipt.Deliverable, dir string, maxBytes int64) []Staged {
+func Stage(runDir string, files []receipt.Deliverable, dir string, budget int64) []Staged {
 	out := make([]Staged, len(files))
 	src, err := os.OpenRoot(runDir)
 	if err != nil {
@@ -52,7 +55,7 @@ func Stage(runDir string, files []receipt.Deliverable, dir string, maxBytes int6
 		case rel == "reports" || !strings.HasPrefix(rel, "reports/") || strings.Contains(rel, "\\"):
 			out[i].Reason = receipt.DeliveryErrOutside
 			continue
-		case f.Bytes < 0 || f.Bytes > maxBytes:
+		case f.Bytes < 0 || encodedSize(f.Bytes) > budget:
 			out[i].Reason = receipt.DeliveryErrTooLarge
 			continue
 		}
@@ -81,7 +84,16 @@ func Stage(runDir string, files []receipt.Deliverable, dir string, maxBytes int6
 			out[i].Reason = receipt.DeliveryErrChanged
 		default:
 			out[i].Name = name
+			budget -= encodedSize(f.Bytes)
 		}
 	}
 	return out
+}
+
+// encodedSize is what n bytes of a file take in a body: their base64.
+func encodedSize(n int64) int64 {
+	if n > 1<<40 {
+		return n
+	}
+	return int64(base64.StdEncoding.EncodedLen(int(n)))
 }

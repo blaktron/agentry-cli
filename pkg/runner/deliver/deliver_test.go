@@ -594,3 +594,36 @@ func TestStageCopiesOnlyWhatTheEnvelopeNames(t *testing.T) {
 		t.Errorf("staged bytes: %q", b)
 	}
 }
+
+// TestStageStopsAtTheBudget: files are staged in order while their base64 fits
+// the budget of the body they will ride in, and the first one that does not fit
+// is not staged (nor is anything after it that would not fit what is left).
+func TestStageStopsAtTheBudget(t *testing.T) {
+	run := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(run, "reports"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var files []receipt.Deliverable
+	for i := 0; i < 8; i++ {
+		body := strings.Repeat(string(rune('a'+i)), 9000)
+		rel := "reports/f" + string(rune('a'+i)) + ".txt"
+		if err := os.WriteFile(filepath.Join(run, filepath.FromSlash(rel)), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		sum := sha256.Sum256([]byte(body))
+		files = append(files, receipt.Deliverable{Path: rel, SHA256: hex.EncodeToString(sum[:]), Bytes: int64(len(body))})
+	}
+	// 9000 bytes are 12000 in base64: a budget of 40000 takes three.
+	got := Stage(run, files, t.TempDir(), 40000)
+	staged := 0
+	for i, s := range got {
+		if s.Name != "" {
+			staged++
+		} else if s.Reason != receipt.DeliveryErrTooLarge {
+			t.Errorf("file %d: %+v", i, s)
+		}
+	}
+	if staged != 3 || got[3].Name != "" {
+		t.Errorf("%d staged: %+v", staged, got)
+	}
+}
