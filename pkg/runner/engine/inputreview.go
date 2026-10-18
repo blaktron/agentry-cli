@@ -154,6 +154,8 @@ type reviewCounts struct {
 // sentence that names the files.
 type reviewRefusal struct {
 	detail, why string
+	// inputs names the files, typed, for the envelope.
+	inputs []receipt.RefusedInput
 }
 
 // notReviewed is the unread reason list_inputs gives a file withheld past
@@ -410,14 +412,18 @@ func (r *inputReview) review(ctx context.Context, all []reviewText, added bool) 
 		for i, q := range flagged {
 			said[i] = strings.Join(q, ", ")
 		}
-		return withheld, &reviewRefusal{detail: receipt.InputFlagged, why: "AI Review flagged " + namedTexts(texts, said)}, nil
+		return withheld, &reviewRefusal{detail: receipt.InputFlagged, why: "AI Review flagged " + namedTexts(texts, said), inputs: reviewRefused(texts, flagged)}, nil
 	case len(unread) > 0:
 		said := map[int]string{}
 		for i, w := range unread {
 			said[i] = strings.TrimPrefix(w, "it ")
 		}
+		unreadAt := make(map[int][]string, len(unread)) // no questions: it was not read
+		for i := range unread {
+			unreadAt[i] = nil
+		}
 		return withheld, &reviewRefusal{detail: receipt.InputNotReviewed, why: "AI Review could not read " + namedTexts(texts, said) +
-			", and no text it has not read reaches the agent"}, nil
+			", and no text it has not read reaches the agent", inputs: reviewRefused(texts, unreadAt)}, nil
 	case ctx.Err() != nil:
 		return withheld, &reviewRefusal{detail: receipt.InputNotReviewed, why: "the run stopped before AI Review had read its inputs"}, nil
 	}
@@ -667,6 +673,27 @@ func namedTexts(texts []reviewText, said map[int]string) string {
 	return joinNamed(names)
 }
 
+// reviewRefused names the inputs a review refused, typed, in path order,
+// each with the questions its texts failed (none for a file AI Review
+// could not read).
+func reviewRefused(texts []reviewText, at map[int][]string) []receipt.RefusedInput {
+	byPath := map[string][]string{}
+	for i, q := range at {
+		p := texts[i].path
+		byPath[p] = append(byPath[p], q...)
+	}
+	paths := make([]string, 0, len(byPath))
+	for p := range byPath {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	out := make([]receipt.RefusedInput, 0, len(paths))
+	for _, p := range paths {
+		out = append(out, receipt.RefusedInput{Path: p, By: receipt.RefusedByAIReview, Flagged: uniqueSorted(byPath[p])})
+	}
+	return out
+}
+
 // joinNamed joins at most eight names, and counts the rest.
 func joinNamed(names []string) string {
 	const most = 8
@@ -762,5 +789,5 @@ func shortSet(h string) string {
 // agent it never ran (the runs extension settles AI Review's credit alone
 // when the review flagged an input).
 func (rf *reviewRefusal) refusedRun() error {
-	return Classify(ExitPolicy, inputRefused(rf.detail, fmt.Errorf("the run was refused before the agent started: %s", rf.why)))
+	return Classify(ExitPolicy, receipt.WithRefusedInputs(inputRefused(rf.detail, fmt.Errorf("the run was refused before the agent started: %s", rf.why)), rf.inputs))
 }

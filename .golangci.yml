@@ -1,0 +1,6 @@
+version: "2"
+linters:
+  exclusions:
+    paths:
+      # The Brotli decoder is another project's code, kept as released.
+      - runnerimage/brotli

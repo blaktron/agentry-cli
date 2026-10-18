@@ -41,7 +41,7 @@ func TestRunCommandEndsWhatItLeftRunning(t *testing.T) {
 
 // A name the check passed, whose directory a background process then swaps
 // for a link out of the workspace, is not written through the link: the
-// write goes through an os.Root on the workspace.
+// write goes through a beneath.Dir on the workspace.
 func TestAWorkspaceWriteRefusesALinkSwappedInAfterTheCheck(t *testing.T) {
 	spec := baseSpec(t)
 	spec.FSWrite = Access{Enabled: true}

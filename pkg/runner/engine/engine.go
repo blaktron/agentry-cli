@@ -598,6 +598,25 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	return env, nil
 }
 
+// refusedInputs is what an envelope names of the inputs err's refusal is
+// for. An entry whose path carries a value the run masks is left out and
+// counted, since a path is shown as it is or not at all.
+func refusedInputs(r *redactor, err error) ([]receipt.RefusedInput, int) {
+	list, more := receipt.RefusedInputsOf(err)
+	out := list[:0:0]
+	for _, in := range list {
+		if r.String(in.Path) != in.Path {
+			more++
+			continue
+		}
+		out = append(out, in)
+	}
+	if len(out) == 0 {
+		out = nil
+	}
+	return out, more
+}
+
 // fail stamps the envelope with the classified failure — its text masked
 // by the run's redactor, since a gateway log tail or an agent's stderr
 // tail rides along in it — writes it to the output folder (a failed run
@@ -606,6 +625,7 @@ func fail(env *receipt.Envelope, r *redactor, err error) (*receipt.Envelope, err
 	// The reason is read before the redactor, which rebuilds a masked
 	// error without the chain; it holds no value to mask (receipt.Reason).
 	env.Reason = receipt.ReasonOf(err)
+	env.RefusedInputs, env.RefusedInputsMore = refusedInputs(r, err)
 	err = r.Err(err)
 	var ce *ClassifiedError
 	if !errors.As(err, &ce) {

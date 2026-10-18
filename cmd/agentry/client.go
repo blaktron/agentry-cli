@@ -41,7 +41,11 @@ const httpTimeout = 5 * time.Minute
 
 // httpClient is the one client every CLI request goes through. Per-request
 // deadlines still come from the command's context; this is the backstop.
-var httpClient = &http.Client{Timeout: httpTimeout}
+//
+// It never carries an Authorization header off the origin it was sent to,
+// so a redirect cannot take a registry token to another scheme, port or
+// host.
+var httpClient = origin.Guard(&http.Client{Timeout: httpTimeout})
 
 // newAPIClient builds a generated client rooted at {registry}/api/v1,
 // attaching "Authorization: Bearer <token>" when a token is known.
@@ -50,7 +54,7 @@ func newAPIClient(regURL, token string) (*apiclient.ClientWithResponses, error) 
 }
 
 func newAPIClientWithHTTP(regURL, token string, hc *http.Client) (*apiclient.ClientWithResponses, error) {
-	opts := []apiclient.ClientOption{apiclient.WithHTTPClient(hc)}
+	opts := []apiclient.ClientOption{apiclient.WithHTTPClient(origin.Guard(hc))}
 	if token != "" {
 		opts = append(opts, apiclient.WithRequestEditorFn(func(_ context.Context, req *http.Request) error {
 			req.Header.Set("Authorization", "Bearer "+token)
@@ -187,7 +191,9 @@ func downloadArchive(ctx context.Context, regURL, token string, res *apiclient.R
 	if token != "" && origin.Same(archiveURL, regURL) {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	resp, err := httpClient.Do(req)
+	// Guarded here as well as on the shared client, so that whichever client
+	// is in use never takes the token off the registry's origin on a redirect.
+	resp, err := origin.Guard(httpClient).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("download %s: %w", archiveURL, err)
 	}

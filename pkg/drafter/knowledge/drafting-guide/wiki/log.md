@@ -77,3 +77,9 @@ PyPI servers now install and run on Debian (glibc), Python 3.12.15, so a depende
 A run's deliverables are the files it was for, and it marks them: `deliverable: true` and a one-line `title` on the `write_report` call that writes the file, or on `export_pdf` for a PDF. The how-a-run-works page says so and gains a section on a result that is a file, the instructions page tells a draft's `## Output` to name the file and have the run mark it, and the runtime facts state the two arguments and the runner's pick when a run marks none.
 
 - updated: runtime/how-a-run-works.md, draft/instructions.md, sources/runtime-facts.md
+
+## [2026-10-18] ingest | a browser run's budget (Drafter 1.15.5)
+
+A browser page section, Fitting the run's budget, from the first live runs of browser QuickAgents, which ran out of tool calls or time before writing a report: say the budget in the instructions, one `browser_evaluate` per page, every fetch in a page script bounded (a timeout, a few at a time, a cap, no credentials), never the same call five times running, the report written early and rewritten after each step, and only the site opened. The runtime facts gain a run's budget, on the person's computer (100 tool calls, the CLI's default policy, raised from 60 in the same release) and In Agentry by tier (Pro's raised to 100 too), and docker-agent's limit on identical calls; AGENT.md's step 4 names it; the check after a draft sends a page fetch with no timeout, or a key pressed five or more times running, to the repair turn.
+
+- updated: manifest/browser.md, sources/runtime-facts.md

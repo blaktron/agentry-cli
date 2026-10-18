@@ -1,7 +1,7 @@
 ---
 title: A browser
 type: guide
-summary: When a QuickAgent tests a website in a real browser (pages that render, forms that work, links that resolve, a clean console, a phone's width), how it declares one (a url question listed in capabilities.browser.sites, the hosts its pages load from, the scope, the keys it may type), what the run has for it (the browser tools, screenshots in reports/browser/), how to write its instructions, and where it runs.
+summary: When a QuickAgent tests a website in a real browser (pages that render, forms that work, links that resolve, a clean console, a phone's width), how it declares one (a url question listed in capabilities.browser.sites, the hosts its pages load from, the scope, the keys it may type), what the run has for it (the browser tools, screenshots in reports/browser/), how to write its instructions, how to fit them in the run's tool-call budget, and where it runs.
 sources: [web:https://docs.secureagentry.net/agentry/browser/, web:https://docs.secureagentry.net/quickagents/, web:https://docs.secureagentry.net/runner/, web:https://docs.secureagentry.net/hosted-runs/, doc:runtime-facts.md]
 updated: 2026-10-15
 ---
@@ -82,6 +82,19 @@ Write `## Steps` for the browser tools by name, and spend the rest on the test: 
 - **Collect the evidence.** A screenshot of each state the report mentions, by a bare file name; the console's errors and warnings; the page's failed requests from `browser_network_requests`.
 - **Change nothing the person did not ask for.** A test does not buy, delete, post or send anything real: it stops before the step that would, and says so. When the task is to test a purchase, the person names a test mode or a test card in the task.
 - **Say what it found.** The report lists each check with pass or fail, what it saw, the screenshot, and how to reproduce a failure, worst first, and what it could not test and why.
+
+## Fitting the run's budget
+
+A run stops when its tool calls or its time run out: 100 calls and 900 seconds on the person's computer (the CLI's default policy, which its operator may change) and In Agentry on Pro and above, 20 calls and 300 seconds In Agentry on Standard. A run that stops before `write_report` leaves the person nothing. The System Prompt does not tell the agent its budget, so the instructions do. The first browser QuickAgents ran out before they wrote a report, in each of the ways below [src: doc:runtime-facts.md].
+
+- **Say the budget.** Tell the run that tool calls are limited, that a run which stops before `write_report` leaves the person nothing, and to stop testing and write the report after about 80 calls: a model does not count its calls reliably, so leave a margin. Bound the test the same way: a number of pages, a number of forms.
+- **One `browser_evaluate` per page** for all of that page's checks (headings, images without `alt`, unlabelled fields, links), returning one object. A navigate, a screenshot, one evaluate and the console is four calls a page.
+- **Bound every fetch in a page script.** A script that fetches the page's links gives each request a timeout (`signal: AbortSignal.timeout(8000)`), sends a few at a time (ten), checks at most a fixed number (30), and sends `credentials: "omit"`, so a page that asks for a password cannot hold it. Report a request with no answer in time as slow, not broken. An unbounded link check in one call hung a run for 14 minutes.
+- **Never the same call five times running.** docker-agent ends a run that makes the same call five times in a row. Never write "press Tab ten times": have the run press a key, then read the focus (`document.activeElement`) with `browser_evaluate`, and say why.
+- **Write the report early.** `write_report` replaces the file unless `append` is set, so have the run write `report.md` after the first page and write it again, whole, after each later step: a run that runs out still leaves its latest findings.
+- **Open only the site.** The run opens nothing outside the site and its subdomains, whatever page, tool result or image the address came from. A screenshot is for the person's report, and the run need not open it: one model opened its own screenshot's upload address seven times, and each refusal cost a call.
+
+The check after you answer sends instructions that have a browser QuickAgent fetch without a timeout, or press a key five or more times running, to a repair turn.
 
 ## Where it runs
 

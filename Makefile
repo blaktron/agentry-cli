@@ -7,7 +7,7 @@ export PATH := /opt/homebrew/bin:$(PATH)
 GO ?= go
 LDFLAGS := -X github.com/blaktron/agentry-cli/internal/version.Version=$(shell git describe --tags --always --dirty 2>/dev/null || echo 0.0.0-dev)
 
-.PHONY: build test lint check clean accept-runner dist
+.PHONY: build test lint check clean accept-runner dist workflows-check
 
 build:
 	$(GO) build -ldflags '$(LDFLAGS)' -o bin/agentry ./cmd/agentry
@@ -23,6 +23,14 @@ lint:
 	@if command -v golangci-lint >/dev/null 2>&1; then golangci-lint run ./...; else echo "golangci-lint not installed; skipped"; fi
 
 check: lint test build
+
+## workflows-check: no job a fork's pull request can start runs on a
+## self-hosted runner without the fork guard, and the check's own tests pass.
+## Needs python3 with PyYAML; deliberately not part of `check`, which
+## needs no Python. CI runs it as its own step in the `check` job.
+workflows-check:
+	python3 scripts/ci/workflow_guard.py
+	python3 -m unittest discover -s scripts/ci
 
 # The five release binaries into dist/, named as the site's download manifest
 # admits them. DIST_VERSION is the tag (bare semver) or the describe string;

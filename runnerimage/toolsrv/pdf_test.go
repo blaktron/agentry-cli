@@ -411,7 +411,7 @@ func TestASymlinkNeverReachesTheRenderRoot(t *testing.T) {
 // TestARenderRootRaceNeverWritesOutside: a declared
 // command may write /tmp and may leave a process running, so it can plant
 // a link in a render root while an export is under way. The server makes
-// every name there new through an os.Root, so the export fails and
+// every name there new through a beneath.Dir, so the export fails and
 // nothing outside the root is written; the PDF itself comes from Typst's
 // stdout, so there is no file to swap.
 func TestARenderRootRaceNeverWritesOutside(t *testing.T) {

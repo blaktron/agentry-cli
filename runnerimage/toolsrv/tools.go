@@ -33,6 +33,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/blaktron/agentry-cli/runnerimage/beneath"
 	"github.com/blaktron/agentry-cli/runnerimage/toolargs"
 )
 
@@ -381,11 +382,12 @@ func (s *server) toolFSRead(raw json.RawMessage) (string, bool) {
 	if err != nil {
 		return "fs_read: " + err.Error(), true
 	}
-	root, err := os.OpenRoot(s.spec.WorkspaceDir)
+	root, err := beneath.Open(s.spec.WorkspaceDir)
 	if err != nil {
 		return "fs_read: " + err.Error(), true
 	}
 	defer func() { _ = root.Close() }()
+	s.checked("workspace")
 	f, err := root.Open(rel)
 	if err != nil {
 		return "fs_read: " + err.Error(), true
@@ -441,7 +443,7 @@ func (s *server) toolFSList(raw json.RawMessage) (string, bool) {
 		rel = "."
 	}
 	rel = path.Clean(rel)
-	root, err := os.OpenRoot(s.spec.WorkspaceDir)
+	root, err := beneath.Open(s.spec.WorkspaceDir)
 	if err != nil {
 		return "fs_list: " + err.Error(), true
 	}
@@ -473,6 +475,7 @@ func (s *server) toolFSList(raw json.RawMessage) (string, bool) {
 	if _, err := s.workspacePath(rel); err != nil {
 		return "fs_list: " + err.Error(), true
 	}
+	s.checked("workspace")
 	d, err := root.Open(rel)
 	if err != nil {
 		return "fs_list: " + err.Error(), true
@@ -555,15 +558,16 @@ func (s *server) toolFSWrite(raw json.RawMessage) (string, bool) {
 }
 
 // writeWorkspace writes content to rel, a name workspacePath checked,
-// through an os.Root on the workspace: the directories it makes, the file
+// through a beneath.Dir on the workspace: the directories it makes, the file
 // and their owner are all reached through it, so a link swapped in after
 // the check cannot take the write out of the workspace.
 func (s *server) writeWorkspace(rel, content string) error {
-	root, err := os.OpenRoot(s.spec.WorkspaceDir)
+	root, err := beneath.Open(s.spec.WorkspaceDir)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = root.Close() }()
+	s.checked("workspace")
 	made, err := mkdirsIn(root, path.Dir(rel), 0o755)
 	for _, d := range made {
 		s.ownIn(root, d)
@@ -688,7 +692,8 @@ func (s *server) toolFetch(raw json.RawMessage) (string, bool) {
 		}
 	}
 	client := &http.Client{
-		Timeout: FetchTimeout,
+		Timeout:   FetchTimeout,
+		Transport: fetchTransport(),
 		// Redirects re-run the host gate hop by hop: an allowlisted host
 		// must not be usable as a bounce toward one that is not. This is
 		// the only place redirects are validated (spec.go Fetch comment);
@@ -711,12 +716,19 @@ func (s *server) toolFetch(raw json.RawMessage) (string, bool) {
 		return s.scrubSecrets("fetch: " + err.Error()), true
 	}
 	defer func() { _ = resp.Body.Close() }()
+	// Everything below sees the body as the agent will read it: a host that
+	// sent it encoded is decoded first, so the scrub and the save's checks
+	// find a value inside it.
+	body, coding, err := s.decodedBody(method, resp)
+	if err != nil {
+		return s.scrubSecrets("fetch: " + err.Error()), true
+	}
 	if saveTo != "" {
 		// A 4xx/5xx body is saved too: the answer's status says what it is.
-		return s.fetchedTo(resp.Request.URL, resp, saveTo)
+		return s.fetchedTo(resp.Request.URL, resp, body, coding, saveTo)
 	}
 	limit := s.spec.Limits.fetchCap()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	data, err := io.ReadAll(io.LimitReader(body, limit+1))
 	if err != nil {
 		return s.scrubSecrets("fetch: read response: " + err.Error()), true
 	}
@@ -730,7 +742,20 @@ func (s *server) toolFetch(raw json.RawMessage) (string, bool) {
 		// react; only transport and policy failures are isError above.
 		return s.scrubSecrets(head + string(data)), false
 	}
-	return s.fetchedOverBudget(u, head, data, truncated, resp.ContentLength)
+	length := resp.ContentLength
+	if coding != "" {
+		length = -1 // the length on the wire is the encoded body's
+	}
+	return s.fetchedOverBudget(u, head, data, truncated, length)
+}
+
+// fetchTransport is the default transport without its own decoding of a gzip
+// body: fetch decodes every coding itself (decodedBody), so that a host's
+// header is never hidden from it.
+func fetchTransport() http.RoundTripper {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.DisableCompression = true
+	return t
 }
 
 // fetchHostAllowed is the server-side half of the egress control: exact,
@@ -1223,7 +1248,7 @@ func readBase64Page(abs string, offset, maxBytes, serverCap int64, b budget, mim
 }
 
 // base64Page is readBase64Page of a file already open (scratch_read opens
-// its files through the folder's os.Root). contFmt names the call that
+// its files through the folder's beneath.Dir). contFmt names the call that
 // reads on, as pageNote's does ("pass offset %d" when empty).
 func base64Page(f *os.File, offset, maxBytes, serverCap int64, b budget, mime, contFmt string) (string, error) {
 	fi, err := f.Stat()
@@ -1351,7 +1376,7 @@ func (s *server) own(path string) {
 // ownIn gives rel, beneath root, to the host user when the spec names one,
 // through root, so a link swapped in after the write cannot point the chown
 // elsewhere. Best-effort, as own is.
-func (s *server) ownIn(root *os.Root, rel string) {
+func (s *server) ownIn(root *beneath.Dir, rel string) {
 	if s.spec.Owner == nil || rel == "" || rel == "." {
 		return
 	}

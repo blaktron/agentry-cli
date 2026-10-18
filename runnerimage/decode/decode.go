@@ -217,6 +217,9 @@ type Limits struct {
 	// MaxUnpackedBytes is what every archive in the decode may unpack in
 	// all, counted as each member streams (default 512 MiB).
 	MaxUnpackedBytes int64
+	// Record, when set, takes the scan record (ScanRecord) once clamscan
+	// has answered and before any decoder starts: the runner's stdout.
+	Record io.Writer
 	// ClamDB is the directory of ClamAV signatures the malware check reads
 	// (the host's bundle, mounted read-only); empty, nothing is checked and
 	// every file says so.
@@ -228,6 +231,10 @@ type Limits struct {
 	Sources []string
 	// SourceMaxFiles is each source's cap (default 20,000).
 	SourceMaxFiles int
+	// ExecutablesOnly checks only the executables among every file, an
+	// upload's and a source's alike (ExecutableRisky); the rest say so
+	// (UncheckedNotExecutable). An archive is still checked whole.
+	ExecutablesOnly bool
 }
 
 func (l Limits) withDefaults() Limits {
@@ -309,6 +316,11 @@ func Decode(ctx context.Context, in, out string, tools Tools, lim Limits) (Repor
 		return rep, fmt.Errorf("decode: walk %s: %w", in, err)
 	}
 	d.scan(ctx)
+	if lim.Record != nil {
+		if err := d.record(lim.Record); err != nil {
+			return rep, fmt.Errorf("decode: write the scan record: %w", err)
+		}
+	}
 	for _, p := range d.pending {
 		d.decodePending(ctx, p)
 	}
@@ -400,13 +412,18 @@ func (d *decoder) take(pool string) bool {
 }
 
 // target makes a file a target of the malware check: every upload, and in
-// an input source only an executable or binary risky file, the rest
-// saying why they were not checked.
+// an input source only an executable or binary risky file, by its type,
+// its name or its first bytes, the rest saying why they were not checked.
+// A decode that checks only executables checks those alone.
 func (d *decoder) target(idx int, src string) {
 	f := &d.files[idx]
 	// An archive is checked whole as before, so what it holds below the
 	// unpacking's depth and caps is not left unread by ClamAV.
-	if InSource(f.Path, d.lim.Sources) && f.Family != FamilyArchive && !SourceRisky(f.MIME, f.Path) {
+	if d.lim.ExecutablesOnly && f.Family != FamilyArchive && !ExecutableRisky(f.MIME, f.Path) && !opensExecutable(src) {
+		f.Check, f.Unchecked = CheckUnchecked, UncheckedNotExecutable
+		return
+	}
+	if InSource(f.Path, d.lim.Sources) && f.Family != FamilyArchive && !SourceRisky(f.MIME, f.Path) && !opensRisky(src) {
 		f.Check, f.Unchecked = CheckUnchecked, UncheckedNotRisky
 		return
 	}

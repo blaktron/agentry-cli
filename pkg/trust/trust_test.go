@@ -644,6 +644,57 @@ func TestVerifyAttestationTokenOnlyToRegistryOrigin(t *testing.T) {
 	}
 }
 
+// redirectingTransport answers the first request with a redirect to
+// location and every later one 404, keeping what each carried.
+type redirectingTransport struct {
+	location    string
+	urls, auths []string
+}
+
+func (r *redirectingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	r.urls = append(r.urls, req.URL.String())
+	r.auths = append(r.auths, req.Header.Get("Authorization"))
+	resp := &http.Response{StatusCode: http.StatusNotFound, Header: http.Header{}, Body: http.NoBody, Request: req}
+	if len(r.urls) == 1 {
+		resp.StatusCode = http.StatusFound
+		resp.Header.Set("Location", r.location)
+	}
+	return resp, nil
+}
+
+func TestVerifyAttestationTokenStaysOnRegistryOriginAcrossRedirects(t *testing.T) {
+	const registry = "https://reg.example"
+	tests := []struct {
+		name, location string
+		wantToken      bool
+	}{
+		{"same origin", "https://reg.example/att/2", true},
+		{"scheme downgrade on the registry's host", "http://reg.example/att/1", false},
+		{"other port", "https://reg.example:8443/att/1", false},
+		{"other host", "https://cdn.example/att/1", false},
+		{"subdomain of the registry's host", "https://cdn.reg.example/att/1", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rt := &redirectingTransport{location: tc.location}
+			res := VerifyAttestation(context.Background(), &http.Client{Transport: rt}, registry, "tok-123", "/att/1", "sha256:"+testDigestHex)
+			if res.State != StateUnsigned {
+				t.Fatalf("res = %+v, want unsigned from the 404 after the redirect", res)
+			}
+			if len(rt.urls) != 2 || rt.urls[1] != tc.location {
+				t.Fatalf("requested %v, want the redirect to %s followed", rt.urls, tc.location)
+			}
+			want := ""
+			if tc.wantToken {
+				want = "Bearer tok-123"
+			}
+			if rt.auths[0] != "Bearer tok-123" || rt.auths[1] != want {
+				t.Fatalf("Authorization on the two hops = %q, want [\"Bearer tok-123\" %q]", rt.auths, want)
+			}
+		})
+	}
+}
+
 func TestSameKeyIDs(t *testing.T) {
 	a := newSigner(t)
 	b := newSigner(t)

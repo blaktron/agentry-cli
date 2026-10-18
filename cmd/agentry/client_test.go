@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -200,6 +201,85 @@ func TestDownloadArchiveTokenOnlyToRegistryOrigin(t *testing.T) {
 				t.Fatalf("requested %s with Authorization %q, want %s with %q", gotURL, gotAuth, tt.wantURL, want)
 			}
 		})
+	}
+}
+
+func TestDownloadArchiveTokenStaysOnRegistryOriginAcrossRedirects(t *testing.T) {
+	const registry = "https://reg.example"
+	tests := []struct {
+		name, location string
+		wantToken      bool
+	}{
+		{"same origin", "https://reg.example/blob/2", true},
+		{"scheme downgrade on the registry's host", "http://reg.example/blob/1", false},
+		{"other port", "https://reg.example:8443/blob/1", false},
+		{"other host", "https://cdn.example/blob/1", false},
+		{"subdomain of the registry's host", "https://cdn.reg.example/blob/1", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var urls, auths []string
+			prev := httpClient
+			httpClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				urls = append(urls, r.URL.String())
+				auths = append(auths, r.Header.Get("Authorization"))
+				resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("bytes")), Request: r}
+				if len(urls) == 1 {
+					resp.StatusCode = http.StatusFound
+					resp.Header.Set("Location", tt.location)
+				}
+				return resp, nil
+			})}
+			t.Cleanup(func() { httpClient = prev })
+			if _, err := downloadArchive(context.Background(), registry, "agy_tok", &apiclient.ResolveResult{ArchiveUrl: "/blob/1"}); err != nil {
+				t.Fatal(err)
+			}
+			want := ""
+			if tt.wantToken {
+				want = "Bearer agy_tok"
+			}
+			if len(urls) != 2 || urls[1] != tt.location || auths[0] != "Bearer agy_tok" || auths[1] != want {
+				t.Fatalf("requests %v carried Authorization %q, want the redirect to %s followed with %q", urls, auths, tt.location, want)
+			}
+		})
+	}
+}
+
+func TestAPIClientTokenStaysOnRegistryOriginAcrossRedirects(t *testing.T) {
+	for _, location := range []string{"http://reg.example/api/v1/meta", "https://reg.example:8443/api/v1/meta"} {
+		var urls, auths []string
+		hc := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			urls = append(urls, r.URL.String())
+			auths = append(auths, r.Header.Get("Authorization"))
+			resp := &http.Response{StatusCode: http.StatusNotFound, Header: http.Header{}, Body: http.NoBody, Request: r}
+			if len(urls) == 1 {
+				resp.StatusCode = http.StatusFound
+				resp.Header.Set("Location", location)
+			}
+			return resp, nil
+		})}
+		c, err := newAPIClientWithHTTP("https://reg.example", "agy_tok", hc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = c.GetMetaWithResponse(context.Background())
+		if len(urls) != 2 || urls[1] != location || auths[0] != "Bearer agy_tok" || auths[1] != "" {
+			t.Fatalf("requests %v carried Authorization %q, want the redirect to %s followed without the token", urls, auths, location)
+		}
+	}
+}
+
+func TestSharedClientNeverCarriesAuthorizationOffOrigin(t *testing.T) {
+	if httpClient.CheckRedirect == nil {
+		t.Fatal("the shared client has no redirect check, so net/http would keep Authorization across schemes and ports of the same host")
+	}
+	via := &http.Request{URL: &url.URL{Scheme: "https", Host: "reg.example", Path: "/a"}}
+	next := &http.Request{URL: &url.URL{Scheme: "http", Host: "reg.example", Path: "/a"}, Header: http.Header{"Authorization": {"Bearer agy_tok"}}}
+	if err := httpClient.CheckRedirect(next, []*http.Request{via}); err != nil {
+		t.Fatal(err)
+	}
+	if got := next.Header.Get("Authorization"); got != "" {
+		t.Fatalf("Authorization %q survived a scheme downgrade", got)
 	}
 }
 

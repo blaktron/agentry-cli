@@ -27,6 +27,7 @@ make lint     # gofmt -l, go vet ./..., golangci-lint run ./...
 make check    # lint, test and build
 make dist     # the five release binaries into dist/
 make clean    # remove bin/
+make workflows-check  # no fork-reachable workflow job on a self-hosted runner (python3 with PyYAML)
 ```
 
 `make dist` builds `linux/amd64`, `linux/arm64`, `darwin/amd64`,
@@ -52,7 +53,7 @@ daemon and `ANTHROPIC_API_KEY`, and skips itself without them.
 | `pkg/drafter`, `pkg/examiner`, `pkg/knowledge/creator`, `pkg/voice/writer` | The built-in QuickAgents the binary embeds. |
 | `pkg/trust`, `pkg/installed`, `pkg/schedule`, `pkg/tui` and the other `pkg/` packages | Key pinning, the local install store, scheduling, the terminal UI and the helpers around them. |
 | `internal/` | Packages private to the CLI. |
-| `scripts/` | Image verification, pin and lock checks, and acceptance scripts. |
+| `scripts/` | Image verification, pin and lock checks, the workflow fork-guard check, and acceptance scripts. |
 | `testdata/` | QuickAgent fixtures the runner tests use. |
 
 ## Downloads

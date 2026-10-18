@@ -30,7 +30,8 @@ type Staged struct {
 // SHA-256 as they are copied. A destination that sends a file reads the staged
 // copy, never the run folder, so a file the agent changes after the check is
 // never the one sent, and the step that holds the destination's credential
-// sees no path of the run folder at all.
+// sees no path of the run folder at all. The copies are 0600: they are the
+// person's alone.
 func Stage(runDir string, files []receipt.Deliverable, dir string, budget int64) []Staged {
 	return stage(runDir, files, dir, budget, 0, encodedSize)
 }
@@ -78,7 +79,7 @@ func stage(runDir string, files []receipt.Deliverable, dir string, budget, perFi
 			continue
 		}
 		name := fmt.Sprintf("f%04d", i)
-		w, err := dst.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		w, err := dst.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 		if err != nil {
 			_ = in.Close()
 			out[i].Reason = receipt.DeliveryErrWrite

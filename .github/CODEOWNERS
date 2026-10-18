@@ -1,0 +1,13 @@
+# Every path needs a maintainer's review before merge. The paths with a
+# higher bar, the runner, the install and trust path and the built-in
+# QuickAgents (CONTRIBUTING.md, "The rules that matter"), are listed
+# explicitly so the ownership is visible, not implied by the wildcard.
+*                                    @blaktron
+/pkg/runner/                         @blaktron
+/runnerimage/                        @blaktron
+/pkg/trust/                          @blaktron
+/pkg/installed/                      @blaktron
+/pkg/mcpauth/                        @blaktron
+/pkg/runner/localrun/builtins.lock   @blaktron
+/.gitleaks.toml                      @blaktron
+/.github/                            @blaktron

@@ -1,6 +1,9 @@
 package decode
 
 import (
+	"bytes"
+	"io"
+	"os"
 	"path"
 	"strings"
 )
@@ -95,4 +98,116 @@ func InSource(rel string, sources []string) bool {
 		}
 	}
 	return false
+}
+
+// riskyMagic are the first bytes of an executable, a library, Java or
+// WebAssembly code, an OLE container or a PDF.
+var riskyMagic = [][]byte{
+	[]byte("MZ"), []byte("\x7fELF"), []byte("%PDF"), []byte("\x00asm"),
+	{0xfe, 0xed, 0xfa, 0xce}, {0xfe, 0xed, 0xfa, 0xcf}, {0xce, 0xfa, 0xed, 0xfe}, {0xcf, 0xfa, 0xed, 0xfe},
+	{0xca, 0xfe, 0xba, 0xbe}, {0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1},
+}
+
+// BinaryMagic says whether a file's first bytes are an executable's, a
+// library's, Java's, WebAssembly's, an OLE container's or a PDF's. A
+// source file that opens so is checked whatever its detected type: an
+// Outlook message is an OLE container under a type of its own, and the
+// host holds a file left unchecked to these same bytes.
+func BinaryMagic(b []byte) bool {
+	for _, m := range riskyMagic {
+		if bytes.HasPrefix(b, m) {
+			return true
+		}
+	}
+	return false
+}
+
+// opensRisky reads a file's first bytes for BinaryMagic. A file that
+// cannot be read is taken as risky, so it is checked.
+func opensRisky(src string) bool {
+	f, err := os.Open(src)
+	if err != nil {
+		return true
+	}
+	defer func() { _ = f.Close() }()
+	head := make([]byte, 8)
+	n, _ := io.ReadFull(f, head)
+	return BinaryMagic(head[:n])
+}
+
+// executableTypes are the detected types a run that only checks
+// executables checks: PE, ELF and Mach-O executables, libraries and
+// objects, Java and WebAssembly code, and installers and packages. A
+// document, a PDF or an OLE container is not one, however risky its type.
+var executableTypes = map[string]bool{
+	"application/x-dosexec":                         true,
+	"application/vnd.microsoft.portable-executable": true,
+	"application/x-msdownload":                      true,
+	"application/x-ms-dos-executable":               true,
+	"application/x-executable":                      true,
+	"application/x-sharedlib":                       true,
+	"application/x-pie-executable":                  true,
+	"application/x-object":                          true,
+	"application/x-elf":                             true,
+	"application/x-mach-binary":                     true,
+	"application/x-mach-o-executable":               true,
+	"application/x-java-applet":                     true,
+	"application/java-vm":                           true,
+	"application/wasm":                              true,
+	"application/x-msi":                             true,
+	"application/x-ms-installer":                    true,
+	"application/vnd.android.package-archive":       true,
+	"application/java-archive":                      true,
+	"application/x-java-archive":                    true,
+}
+
+// executableNames are the extensions of those types.
+var executableNames = map[string]bool{
+	"exe": true, "dll": true, "scr": true, "sys": true, "so": true, "dylib": true, "msi": true, "apk": true, "jar": true, "class": true, "wasm": true,
+}
+
+// executableMagic are the first bytes of an executable, a library, Java
+// code or WebAssembly.
+var executableMagic = [][]byte{
+	[]byte("MZ"), []byte("\x7fELF"), []byte("\x00asm"),
+	{0xfe, 0xed, 0xfa, 0xce}, {0xfe, 0xed, 0xfa, 0xcf}, {0xce, 0xfa, 0xed, 0xfe}, {0xcf, 0xfa, 0xed, 0xfe},
+	{0xca, 0xfe, 0xba, 0xbe},
+}
+
+// ExecutableRisky says whether a file of this detected type, at this
+// report path, is checked when only executables are.
+func ExecutableRisky(mime, p string) bool {
+	mime, _, _ = strings.Cut(mime, ";")
+	if executableTypes[strings.ToLower(strings.TrimSpace(mime))] {
+		return true
+	}
+	if strings.Contains(strings.ToLower(path.Base(p)), ".so.") {
+		return true
+	}
+	return executableNames[strings.TrimPrefix(path.Ext(strings.ToLower(p)), ".")]
+}
+
+// ExecutableMagic says whether a file's first bytes are an executable's,
+// a library's, Java's or WebAssembly's: the bytes the host holds a file
+// left unchecked as not executable to.
+func ExecutableMagic(b []byte) bool {
+	for _, m := range executableMagic {
+		if bytes.HasPrefix(b, m) {
+			return true
+		}
+	}
+	return false
+}
+
+// opensExecutable reads a file's first bytes for ExecutableMagic. A file
+// that cannot be read is taken as executable, so it is checked.
+func opensExecutable(src string) bool {
+	f, err := os.Open(src)
+	if err != nil {
+		return true
+	}
+	defer func() { _ = f.Close() }()
+	head := make([]byte, 8)
+	n, _ := io.ReadFull(f, head)
+	return ExecutableMagic(head[:n])
 }

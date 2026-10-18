@@ -31,6 +31,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -220,14 +221,15 @@ func sendToOne(ctx context.Context, d dockerx.Client, r deliveryRun, dest destin
 	sweepStaleDeliveryFolders(r.Root)
 	// The step's folders: the staged copies (read-only to the step), the
 	// job (read-only) and the report's (the one place it writes).
-	base, err := os.MkdirTemp(r.Root, "delivery-")
+	folder, err := newDeliveryFolder(r.Root)
 	if err != nil {
 		return failed(target.HostPort, receipt.DeliveryErrStep)
 	}
-	defer func() { _ = os.RemoveAll(base) }()
+	defer folder.remove()
+	base := folder.path
 	staged, jobDir, work := filepath.Join(base, "staged"), filepath.Join(base, "job"), filepath.Join(base, "work")
 	for _, dir := range []string{staged, jobDir, work} {
-		if err := os.Mkdir(dir, 0o755); err != nil {
+		if err := os.Mkdir(dir, deliveryDirMode); err != nil {
 			return failed(target.HostPort, receipt.DeliveryErrStep)
 		}
 	}
@@ -257,7 +259,7 @@ func sendToOne(ctx context.Context, d dockerx.Client, r deliveryRun, dest destin
 		job.Files = append(job.Files, jf)
 	}
 	jb, err := json.Marshal(job)
-	if err != nil || os.WriteFile(filepath.Join(jobDir, send.JobFile), jb, 0o644) != nil { //nolint:gosec // read by the step's container
+	if err != nil || os.WriteFile(filepath.Join(jobDir, send.JobFile), jb, deliveryFileMode) != nil {
 		return failed(target.HostPort, receipt.DeliveryErrStep)
 	}
 	credJSON, err := json.Marshal(cred)
@@ -350,18 +352,83 @@ func sendToOne(ctx context.Context, d dockerx.Client, r deliveryRun, dest destin
 	return recordsFromReport(r, dest, target.HostPort, rep)
 }
 
-// staleDelivery is how old a delivery's folders are when no delivery can still
-// be using them: a step is bounded at deliveryTimeout, and one the process died
-// in the middle of leaves its staged copies behind.
-const staleDelivery = 24 * time.Hour
+// deliveryDirMode and deliveryFileMode are the modes of a delivery's folders and
+// files: the job file holds the destination's address, whose path or query may
+// carry the receiver's own token, and the staged copies are the run's
+// deliverables, so a process that dies in the middle of a step leaves them
+// readable by the person who ran it and no one else. The step runs as that
+// person (dockerx.Engine.PersonUser), or as the container's root, which a
+// rootless engine maps to them. A umask only removes bits from these. Windows
+// has no such modes: the folder there is as private as the runner home it is
+// made in, whose access list it inherits, and the CLI sets none of its own.
+const (
+	deliveryDirMode  os.FileMode = 0o700
+	deliveryFileMode os.FileMode = 0o600
+)
+
+// deliveryLockFile is the lock a delivery holds on its folder for as long as the
+// folder exists, so that a sweep can tell a folder whose process died (the lock
+// is free: the system releases it however the process ends) from a delivery in
+// flight, whatever the folder's age. It is in the folder's top, which no
+// container is given.
+const deliveryLockFile = "delivery.lock"
+
+// deliveryFolder is a delivery's working folder under the runner home and the
+// lock that keeps it from the sweep.
+type deliveryFolder struct {
+	path string
+	lock *os.File
+}
+
+// newDeliveryFolder makes a delivery's folder in root, private to the person
+// (os.MkdirTemp makes it deliveryDirMode), and takes its lock before anything is
+// put in it.
+func newDeliveryFolder(root string) (*deliveryFolder, error) {
+	path, err := os.MkdirTemp(root, "delivery-")
+	if err != nil {
+		return nil, err
+	}
+	lock, err := os.OpenFile(filepath.Join(path, deliveryLockFile), os.O_CREATE|os.O_EXCL|os.O_RDWR, deliveryFileMode)
+	if err != nil {
+		_ = os.RemoveAll(path)
+		return nil, err
+	}
+	if err := tryLockFile(lock); err != nil {
+		_ = lock.Close()
+		_ = os.RemoveAll(path)
+		return nil, err
+	}
+	return &deliveryFolder{path: path, lock: lock}, nil
+}
+
+// remove deletes the folder and lets go of its lock (first: a file held open
+// cannot be deleted on Windows).
+func (f *deliveryFolder) remove() {
+	_ = f.lock.Close()
+	_ = os.RemoveAll(f.path)
+}
+
+// staleDelivery is how old a delivery folder with no lock file is when no
+// delivery can still be using it: every destination's step together is bounded
+// at deliveryTotalTimeout. Such a folder is judged by its age alone: its process
+// may take no lock, or be between making the folder and locking it.
+const staleDelivery = time.Hour
 
 // deliveryFolderName is what os.MkdirTemp makes of "delivery-": the prefix and a
 // decimal number, and nothing else a person might have named a folder.
 var deliveryFolderName = regexp.MustCompile(`^delivery-[0-9]+$`)
 
 // sweepStaleDeliveryFolders removes the delivery folders in root that a process
-// that died left behind. Best effort.
+// that died left behind, at the start of every run and delivery. A folder whose
+// lock is free belongs to a process that is gone and is removed at once; one
+// whose lock is held is in flight and is left alone; one with no lock file is
+// removed once it is older than staleDelivery. Best effort. An empty root is
+// not swept: folders made there are in the system's temporary folder, shared
+// with names that are not the runner's.
 func sweepStaleDeliveryFolders(root string) {
+	if root == "" {
+		return
+	}
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return
@@ -370,8 +437,20 @@ func sweepStaleDeliveryFolders(root string) {
 		if !e.IsDir() || !deliveryFolderName.MatchString(e.Name()) {
 			continue
 		}
-		if fi, err := e.Info(); err == nil && time.Since(fi.ModTime()) > staleDelivery {
-			_ = os.RemoveAll(filepath.Join(root, e.Name()))
+		dir := filepath.Join(root, e.Name())
+		lock, err := os.OpenFile(filepath.Join(dir, deliveryLockFile), os.O_RDWR, 0)
+		switch {
+		case err == nil:
+			if tryLockFile(lock) == nil {
+				_ = lock.Close()
+				_ = os.RemoveAll(dir)
+				continue
+			}
+			_ = lock.Close()
+		case errors.Is(err, fs.ErrNotExist):
+			if fi, err := e.Info(); err == nil && time.Since(fi.ModTime()) > staleDelivery {
+				_ = os.RemoveAll(dir)
+			}
 		}
 	}
 }

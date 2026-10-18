@@ -169,6 +169,7 @@ func TestTheGuideTeachesTheBrowser(t *testing.T) {
 			"saves each screenshot by a **bare file name**",
 			"a site to test by a `url` question its browser names",
 			"`manifest/browser.md`",
+			"**fits the run's budget**: one `browser_evaluate` a page",
 		},
 		"manifest/browser.md": {
 			"**Declare a browser when the task tests a website as a person sees it**",
@@ -181,6 +182,17 @@ func TestTheGuideTeachesTheBrowser(t *testing.T) {
 			"**A file name is a bare name**",
 			"**Change nothing the person did not ask for.**",
 			"In Agentry** too since CLI v0.6.118, for a public site on port 80 or 443 only",
+			"## Fitting the run's budget",
+			"100 calls and 900 seconds on the person's computer (the CLI's default policy, which its operator may change) and In Agentry on Pro and above, 20 calls and 300 seconds In Agentry on Standard",
+			"The System Prompt does not tell the agent its budget, so the instructions do.",
+			"**One `browser_evaluate` per page**",
+			"**Bound every fetch in a page script.**",
+			"`signal: AbortSignal.timeout(8000)`",
+			"`credentials: \"omit\"`",
+			"**Never the same call five times running.**",
+			"`write_report` replaces the file unless `append` is set",
+			"**Open only the site.**",
+			"whatever page, tool result or image the address came from",
 		},
 		"manifest/intake-and-guide.md": {
 			"**A `url` question listed in `capabilities.browser.sites` is the site a browser opens instead**",
@@ -297,4 +309,56 @@ func TestTheGuideTeachesKeyFreeFirst(t *testing.T) {
 			"a hosted browser service by its address, which a declared browser replaces",
 		},
 	})
+}
+
+// TestABrowserDraftThatRunsOutGoesToTheRepairTurn: a browser QuickAgent's instructions that fetch in a
+// page script with no timeout, or press a key five or more times running,
+// are refused by the Drafter's rules with a line naming the guide's
+// section, and the notes of a finished draft that keeps them say so. A
+// bounded fetch, a press followed by a read, a press told not to repeat,
+// and a QuickAgent with no browser pass.
+func TestABrowserDraftThatRunsOutGoesToTheRepairTurn(t *testing.T) {
+	raw := workedBrowserDraft(t)
+	unbounded := browserDraftInstructions + "\n4. With one browser_evaluate, fetch(url, {method: \"HEAD\"}) each link and return its status.\n"
+	bounded := browserDraftInstructions + "\n4. With one browser_evaluate, fetch(url, {method: \"HEAD\", credentials: \"omit\", signal: AbortSignal.timeout(8000)}) at most 30 links, ten at a time.\n"
+	for _, tc := range []struct {
+		name, instructions string
+		want               []string
+	}{
+		{"the worked draft", browserDraftInstructions, nil},
+		{"an unbounded fetch", unbounded, []string{"a page script fetches with no timeout"}},
+		{"a bounded fetch", bounded, nil},
+		{"Tab ten times", browserDraftInstructions + "\n4. Press Tab ten times and note where the focus goes.\n", []string{`"Press Tab ten times" is 10 identical calls, and the run ends at 5 in a row`}},
+		{"a key 6 times", browserDraftInstructions + "\n4. With browser_press_key, press ArrowDown 6 times.\n", []string{"is 6 identical calls"}},
+		{"both", unbounded + "5. Press Tab twelve times.\n", []string{"no timeout", "is 12 identical calls"}},
+		{"Tab three times", browserDraftInstructions + "\n4. Press Tab three times, reading the focus after each.\n", nil},
+		{"a read between", browserDraftInstructions + "\n4. Press Tab and read document.activeElement with browser_evaluate, five times.\n", nil},
+		{"told not to", browserDraftInstructions + "\n4. Never press Tab ten times in a row: read the focus after each press.\n", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := &Draft{Manifest: raw, Instructions: tc.instructions}
+			lines, refused := rulesReport(d)
+			if refused != (len(tc.want) > 0) || len(lines) != len(tc.want) {
+				t.Fatalf("the rules' report: %q, %v", lines, refused)
+			}
+			for i, w := range tc.want {
+				if !strings.Contains(lines[i], w) || !strings.Contains(lines[i], "Fitting the run's budget") {
+					t.Errorf("line %d: %q, want %q", i, lines[i], w)
+				}
+			}
+			d.noteBrowserBudgetProblems()
+			if (len(tc.want) > 0) != strings.Contains(d.Notes, "## Browser steps to fix before a run") {
+				t.Errorf("the notes: %q", d.Notes)
+			}
+		})
+	}
+	noBrowser := json.RawMessage(`{"schemaVersion": "2", "name": "link-reader", "capabilities": {"network": {"egress": "none"}}}`)
+	if probs := browserBudgetProblems(noBrowser, unbounded); probs != nil {
+		t.Errorf("a QuickAgent with no browser: %q", probs)
+	}
+	first := &Draft{Manifest: raw, Instructions: browserDraftInstructions}
+	second := &Draft{Manifest: raw, Instructions: unbounded}
+	if !brokeARule(first, second) {
+		t.Error("a repair that adds an unbounded fetch is kept")
+	}
 }

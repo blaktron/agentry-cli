@@ -1,7 +1,9 @@
 package decode
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -338,5 +340,73 @@ func TestInRepository(t *testing.T) {
 		if got := InRepository(rel); got != want {
 			t.Errorf("InRepository(%q) = %v, want %v", rel, got, want)
 		}
+	}
+}
+
+// recordWriter takes the scan record and notes whether any decoder had
+// written a text by then.
+type recordWriter struct {
+	out           string
+	b             []byte
+	textsBeforeIt int
+}
+
+func (w *recordWriter) Write(p []byte) (int, error) {
+	_ = filepath.WalkDir(w.out, func(p string, e os.DirEntry, err error) error {
+		if err == nil && !e.IsDir() && strings.HasSuffix(p, ".txt") {
+			w.textsBeforeIt++
+		}
+		return nil
+	})
+	w.b = append(w.b, p...)
+	return len(p), nil
+}
+
+// TestTheScanRecordIsWrittenBeforeAnyDecoderRuns: the runner states what
+// ClamAV found, one JSON line, once clamscan has answered and before any
+// decoder has written a text, so no decoder a file exploits can change it.
+func TestTheScanRecordIsWrittenBeforeAnyDecoderRuns(t *testing.T) {
+	tools, _ := clamTools(t)
+	in, out := t.TempDir(), t.TempDir()
+	write(t, in, "report.pdf", []byte("%PDF clean"))
+	write(t, in, "eicar.com", []byte("X5O EICAR test"))
+	write(t, in, "bundle.zip", zipOf(t, zipEntry{name: "inner/bad.txt", body: "EICAR inside"}, zipEntry{name: "inner/a.pdf", body: "%PDF member"}))
+	w := &recordWriter{out: out}
+	if _, err := Decode(context.Background(), in, out, tools, Limits{ClamDB: "/clamav", Record: w}); err != nil {
+		t.Fatal(err)
+	}
+	if w.textsBeforeIt != 0 {
+		t.Fatalf("%d texts were written before the scan record", w.textsBeforeIt)
+	}
+	if _, err := os.Stat(filepath.Join(out, "report.pdf.txt")); err != nil {
+		t.Fatalf("the PDF was not decoded after the record: %v", err)
+	}
+	var rec ScanRecord
+	if err := json.Unmarshal(w.b, &rec); err != nil || rec.Schema != ScanSchema || !rec.Checked || w.b[len(w.b)-1] != '\n' || bytes.Count(w.b, []byte("\n")) != 1 {
+		t.Fatalf("the scan record %s: %v", w.b, err)
+	}
+	checks := map[string]string{}
+	for _, f := range rec.Files {
+		checks[f.Path] = string(f.Check) + " " + f.Signature
+	}
+	for path, want := range map[string]string{
+		"report.pdf": "clean ", "eicar.com": "found Eicar-Test-Signature", "bundle.zip": "found Eicar-Test-Signature",
+		"bundle.zip/inner/bad.txt": "found Eicar-Test-Signature", "bundle.zip/inner/a.pdf": "clean ",
+	} {
+		if checks[path] != want {
+			t.Errorf("the record says %q of %s, want %q", checks[path], path, want)
+		}
+	}
+	if len(rec.Files) != 5 {
+		t.Errorf("the record names %d files, want 5: %s", len(rec.Files), w.b)
+	}
+
+	// With no signatures the record says nothing was checked.
+	w = &recordWriter{out: t.TempDir()}
+	if _, err := Decode(context.Background(), in, w.out, tools, Limits{Record: w}); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(w.b, &rec); err != nil || rec.Checked || len(rec.Files) != 5 || rec.Files[0].Unchecked != UncheckedNoSignatures {
+		t.Fatalf("the scan record with no signatures: %s", w.b)
 	}
 }
