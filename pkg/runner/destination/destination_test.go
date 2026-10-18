@@ -340,3 +340,40 @@ func TestAFailedPairWritePutsTheOldPairBack(t *testing.T) {
 		t.Errorf("restore left %v", kc)
 	}
 }
+
+// TestSameReceiver: a saved credential is kept only across a change that leaves
+// the receiver as it was.
+func TestSameReceiver(t *testing.T) {
+	hook := func(url string, tick bool) Destination {
+		return Destination{Name: "h", Kind: KindWebhook, URL: url, OnMyNetwork: tick}
+	}
+	base := hook("https://hooks.example.com/in/abc?token=1", false)
+	for name, c := range map[string]struct {
+		o    Destination
+		want bool
+	}{
+		"same":                  {hook("https://hooks.example.com/in/abc?token=1", false), true},
+		"another path":          {hook("https://hooks.example.com/other", false), true},
+		"another query":         {hook("https://hooks.example.com/in/abc?token=2", false), true},
+		"an explicit 443":       {hook("https://hooks.example.com:443/in/abc", false), true},
+		"another host":          {hook("https://other.example.com/in/abc", false), false},
+		"scheme downgrade":      {hook("http://hooks.example.com/in/abc", true), false},
+		"the tick":              {hook("https://hooks.example.com/in/abc", true), false},
+		"another port":          {hook("https://hooks.example.com:8443/in/abc", true), false},
+		"an address that fails": {hook("https://10.0.0.5/in/abc", false), false},
+		"a bucket":              {Destination{Name: "h", Kind: KindS3, Bucket: "my-reports", Region: "us-east-1"}, false},
+	} {
+		if got := base.SameReceiver(c.o); got != c.want {
+			t.Errorf("%s: %v, want %v", name, got, c.want)
+		}
+	}
+	lan := hook("http://192.168.1.20:5678/x", true)
+	if lan.SameReceiver(hook("https://192.168.1.20:5678/x", true)) || !lan.SameReceiver(hook("http://192.168.1.20:5678/y", true)) || lan.SameReceiver(hook("http://192.168.1.20:5679/x", true)) {
+		t.Error("a receiver on the person's network")
+	}
+	aws := Destination{Name: "b", Kind: KindS3, Bucket: "one-bucket", Region: "us-east-1"}
+	r2 := Destination{Name: "b", Kind: KindS3, Bucket: "x-bucket", Region: "auto", Endpoint: "https://acct.r2.cloudflarestorage.com"}
+	if !aws.SameReceiver(Destination{Name: "b", Kind: KindS3, Bucket: "two-bucket", Region: "eu-west-1"}) || aws.SameReceiver(r2) || r2.SameReceiver(Destination{Name: "b", Kind: KindS3, Bucket: "x-bucket", Region: "auto", Endpoint: "https://other.r2.cloudflarestorage.com"}) || !r2.SameReceiver(r2) || aws.SameReceiver(base) {
+		t.Error("buckets")
+	}
+}

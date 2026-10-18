@@ -23,7 +23,6 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/runner/destination"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
-	"github.com/blaktron/agentry-cli/runnerimage/send"
 )
 
 func newDestinationsCmd() *cobra.Command {
@@ -66,7 +65,9 @@ func newDestinationsAddCmd() *cobra.Command {
 			"X-Agentry-Timestamp header, a full stop and the raw body>. Give the secret in the environment variable\n" +
 			"--secret-env names, on stdin with --secret-stdin, by typing it when asked on a terminal, or let --generate-secret\n" +
 			"make one and print it once, for you to give the receiver. --authorization-env names a variable holding the value\n" +
-			"of an Authorization header the receiver wants. Saving again without a secret keeps the saved one.\n\n" +
+			"of an Authorization header the receiver wants. Saving again without a secret keeps the saved one; the saved\n" +
+			"Authorization value is kept only while the address reaches the same receiver (the same scheme, host and port,\n" +
+			"and the same On my network rule: a change of path keeps it), and is otherwise dropped.\n\n" +
 			"A bucket (--bucket) takes --region (the signing region: us-east-1, eu-west-1, or auto for R2) and an optional\n" +
 			"--prefix (folder/subfolder, letters, digits, '.', '_' and '-'). Each deliverable is put to\n" +
 			"<bucket>/<prefix>/<run id>/<file> with a signature made from your access key; the file's name is made plain\n" +
@@ -139,16 +140,17 @@ func newDestinationsAddCmd() *cobra.Command {
 			}
 			if existed && authEnv == "" {
 				// A change that names no Authorization value leaves the saved
-				// one as it is, unless the address now names another host: a
+				// one as it is, unless it now reaches another receiver (another
+				// scheme, host or port, or the On my network rule changed): a
 				// value saved for one receiver is never sent to another.
 				_, keep, kerr := destination.Secrets(name)
 				if kerr != nil {
 					return engine.Classify(engine.ExitCLI, kerr)
 				}
-				if keep != "" && sameHost(prev, d) {
+				if keep != "" && prev.SameReceiver(d) {
 					auth = keep
 				} else if keep != "" {
-					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "the address names another host, so the saved Authorization value is dropped: give --authorization-env to set one\n")
+					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "the address now reaches another receiver (its scheme, host, port or the On my network rule changed), so the saved Authorization value is dropped: give --authorization-env to set one\n")
 				}
 			}
 			if !destination.ValidSecretValues(secret, auth) {
@@ -249,7 +251,7 @@ func addBucket(cmd *cobra.Command, name string, b s3Flags, onMyNetwork bool, sec
 	prev, existed := s.Find(name)
 	// A pair saved for one service is kept for a changed one only when it is the
 	// same service: an access key saved for one is never sent to another.
-	keep := existed && prev.Kind == destination.KindS3 && sameService(prev, d)
+	keep := existed && prev.SameReceiver(d)
 	haveKeyID, haveSecret := keep && destination.HasAccessKey(name), keep && destination.HasSecret(name)
 	if existed && !keep && (keyID == "" || secret == "") {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "the destination is now at another service, so its saved credentials are not kept: give the access key id and secret access key\n")
@@ -297,14 +299,6 @@ func addBucket(cmd *cobra.Command, name string, b s3Flags, onMyNetwork bool, sec
 	}
 	_, _ = fmt.Fprintln(out)
 	return nil
-}
-
-// sameService says two bucket destinations are at one service, the rule for
-// keeping a saved credential (send.SameService).
-func sameService(a, b destination.Destination) bool {
-	ta, err1 := send.CheckS3(a.S3Spec())
-	tb, err2 := send.CheckS3(b.S3Spec())
-	return err1 == nil && err2 == nil && send.SameService(ta, tb)
 }
 
 // readDestinationSecret reads the signing secret as the flags say; none when
@@ -358,13 +352,6 @@ type destinationRow struct {
 	AccessKey     bool     `json:"accessKey"`
 	Authorization bool     `json:"authorization"`
 	DefaultFor    []string `json:"defaultFor"`
-}
-
-// sameHost says two destinations reach the same host and port.
-func sameHost(a, b destination.Destination) bool {
-	ta, err1 := send.CheckURL(a.URL, a.OnMyNetwork)
-	tb, err2 := send.CheckURL(b.URL, b.OnMyNetwork)
-	return err1 == nil && err2 == nil && ta.HostPort == tb.HostPort
 }
 
 func newDestinationsListCmd() *cobra.Command {
