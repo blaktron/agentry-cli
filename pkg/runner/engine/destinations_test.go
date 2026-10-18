@@ -562,19 +562,98 @@ func TestTheReceiptsClosedListsAreTheStepsWords(t *testing.T) {
 	}
 }
 
-// TestAHostedRunDeliversToNoDestination: whatever a caller puts in the
-// parameters, a hosted run's host delivers nowhere.
-func TestAHostedRunDeliversToNoDestination(t *testing.T) {
+// hostedHook is a destination as a host's destinations file hands it.
+func hostedHook(name, url string) destination.Resolved {
+	d := hook(name, url, false)
+	d.Hosted = true
+	return d
+}
+
+// TestAHostedRunDeliversOnlyToWhatItsHostHandsIt: whatever a caller puts in the
+// parameters, a hosted run reaches no destination saved on a computer and none
+// on a private network; the destinations its host handed it are delivered to,
+// at public addresses, with the credential on the step's stdin alone.
+func TestAHostedRunDeliversOnlyToWhatItsHostHandsIt(t *testing.T) {
+	for name, d := range map[string]destination.Resolved{
+		"a saved destination": hook("n8n", "https://hooks.example.com/in/abc", false),
+		"one on the person's network": func() destination.Resolved {
+			h := hostedHook("n8n", "https://hooks.example.com/in/abc")
+			h.OnMyNetwork = true
+			return h
+		}(),
+		"a saved one on a private net": hook("lan", "http://10.0.0.5:5678/hook", true),
+	} {
+		p, f := fixture(t)
+		happyFake(f)
+		deliveryStepPlays(t, f, delivered)
+		p.InputReview = &fakeReview{}
+		p.Destinations = []destination.Resolved{d}
+		if _, err := Run(context.Background(), f, p); err == nil {
+			t.Errorf("%s: a hosted run took it", name)
+		}
+		if _, ok := stepRun(f); ok {
+			t.Errorf("%s: a delivery step ran", name)
+		}
+	}
+	// A host that marks the run hosted by another signal than AI Review (a run
+	// grant, AGENTRY_HOSTED) is held to the same rule.
 	p, f := fixture(t)
 	happyFake(f)
 	deliveryStepPlays(t, f, delivered)
-	p.InputReview = &fakeReview{}
+	p.Hosted = true
 	p.Destinations = []destination.Resolved{hook("n8n", "https://hooks.example.com/in/abc", false)}
 	if _, err := Run(context.Background(), f, p); err == nil {
-		t.Fatal("a hosted run took a destination")
+		t.Error("a run marked hosted took a saved destination")
 	}
 	if _, ok := stepRun(f); ok {
-		t.Error("a delivery step ran")
+		t.Error("a delivery step ran for a saved destination of a run marked hosted")
+	}
+	p, f = fixture(t)
+	happyFake(f)
+	agentWrites(p, f, map[string]string{"reports/brief.md": "# Brief\n"}, `{"path":"reports/brief.md","title":"The brief","marked":true}`)
+	saw := deliveryStepPlays(t, f, delivered)
+	p.InputReview = &fakeReview{}
+	p.Destinations = []destination.Resolved{hostedHook("n8n", "https://hooks.example.com/in/abc")}
+	env, err := Run(context.Background(), f, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	step, ok := stepRun(f)
+	if !ok {
+		t.Fatal("no delivery step ran for a destination its host handed the run")
+	}
+	proxy, ok := proxyRun(f)
+	if !ok {
+		t.Fatal("no delivery proxy ran")
+	}
+	if got := strings.Join(proxy.Argv, " "); !strings.Contains(got, "--public-only") || strings.Contains(got, "--network-ok") || strings.Contains(got, "plain-http") {
+		t.Errorf("the proxy's argv: %s", got)
+	}
+	var cred send.Credential
+	if err := json.Unmarshal([]byte(saw.stdin), &cred); err != nil || cred.Secret != plantedSigningSecret || cred.Authorization != plantedAuthorization {
+		t.Errorf("the step's stdin: %q (%v)", saw.stdin, err)
+	}
+	for _, c := range f.Calls {
+		r := c.Run
+		if strings.Contains(strings.Join(r.Argv, " "), "PLANTED") || strings.Contains(c.Arg, "PLANTED") {
+			t.Errorf("%s %s carries a credential in its argv", c.Op, r.Name)
+		}
+		for k, v := range r.Env {
+			if strings.Contains(v, "PLANTED") {
+				t.Errorf("%s carries a credential in its environment (%s)", r.Name, k)
+			}
+		}
+	}
+	for _, m := range step.Mounts {
+		if strings.HasPrefix(m.Source, p.OutDir) {
+			t.Errorf("the step mounts %s, a folder of the run", m.Source)
+		}
+	}
+	if len(env.Deliveries) != 1 || env.Deliveries[0].Destination != "n8n" || env.Deliveries[0].Status != receipt.DeliveryDelivered || env.Deliveries[0].OnMyNetwork {
+		t.Errorf("deliveries = %+v", env.Deliveries)
+	}
+	if hits := outputHolds(t, p.OutDir, "PLANTED"); len(hits) != 0 {
+		t.Errorf("the credential is in %v", hits)
 	}
 }
 

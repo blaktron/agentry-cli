@@ -331,10 +331,16 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	if err := checkModelSignIn(p); err != nil {
 		return fail(env, redact, err)
 	}
-	// A destination is the person's on this computer: a hosted run's host
-	// delivers nowhere, whatever its caller put in the parameters.
-	if len(p.Destinations) > 0 && p.InputReview != nil {
-		return fail(env, redact, Classify(ExitUsage, errors.New("a hosted run delivers to no destination")))
+	// A saved destination is the person's on this computer: a hosted run
+	// delivers only to the destinations its host handed it in a destinations
+	// file, and never to one on a private network, whatever its caller put in
+	// the parameters.
+	if p.Hosted || p.InputReview != nil {
+		for _, d := range p.Destinations {
+			if !d.Hosted || d.OnMyNetwork {
+				return fail(env, redact, Classify(ExitUsage, errors.New("a hosted run delivers only to the destinations its host hands it, at public addresses")))
+			}
+		}
 	}
 	// A target host is reached only as the plan declares it, and never
 	// by a hosted run: refused before anything starts.
