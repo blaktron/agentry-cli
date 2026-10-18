@@ -28,6 +28,7 @@ import (
 
 	"github.com/blaktron/agentry/pkg/manifest"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/destination"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
@@ -191,12 +192,16 @@ func (w *whenFlags) recurrence(start time.Time) (schedule.Recurrence, error) {
 
 // runSpecFlags are the run setup's flags add takes.
 type runSpecFlags struct {
-	input, task, local                          string
-	files, knowledge, intake                    []string
-	voice, noVoice                              bool
-	timeout, maxTurns                           int
-	maxCost                                     float64
-	adapter, policyPath                         string
+	input, task, local       string
+	files, knowledge, intake []string
+	voice, noVoice           bool
+	timeout, maxTurns        int
+	maxCost                  float64
+	adapter, policyPath      string
+	// deliverTo is --deliver-to and destinations --destination: where each
+	// fire sends what it produced.
+	deliverTo                                   string
+	destinations                                []string
 	allowUnsigned, allowUnscanned, allowVulnMCP bool
 	signedOut                                   bool
 	// hosts are the target hosts' sign-in flags, read once at add and
@@ -290,6 +295,8 @@ func newScheduleAddCmd() *cobra.Command {
 	f.Float64Var(&spec.maxCost, "max-cost", -1, "override the policy cost budget in USD (0 = unlimited)")
 	f.StringVar(&spec.adapter, "adapter", "", "harness adapter (default: the run's)")
 	f.StringVar(&spec.policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml)")
+	f.StringVar(&spec.deliverTo, "deliver-to", "", "copy each run's deliverables to FOLDER/<QuickAgent>/<date time> <title>/ (absolute, or beginning with ~; otherwise deliver.folder in the config applies)")
+	f.StringArrayVar(&spec.destinations, "destination", nil, "send each run's result and deliverables to this saved destination (repeatable; see agentry destinations)")
 	f.BoolVar(&spec.allowUnsigned, "allow-unsigned", false, "allow a release with no registry attestation, at every run of this schedule")
 	f.BoolVar(&spec.allowUnscanned, "allow-unscanned", false, "allow a release the registry admitted without a scan, at every run of this schedule")
 	f.BoolVar(&spec.allowVulnMCP, "allow-vulnerable-mcp", false, "allow a declared MCP server the gate rates high or critical, at every run of this schedule")
@@ -412,6 +419,13 @@ func scheduleFromFlags(name, out string, spec runSpecFlags, when schedule.Recurr
 			return sc, err
 		}
 	}
+	var deliverErrs []error
+	if sc.Run.DeliverTo, err = scheduleDeliverFolder(spec.deliverTo); err != nil {
+		deliverErrs = append(deliverErrs, err)
+	}
+	if sc.Run.Destinations, err = scheduleDestinations(spec.destinations); err != nil {
+		deliverErrs = append(deliverErrs, err)
+	}
 	if spec.input != "" {
 		if sc.Run.Input, err = filepath.Abs(expandHome(spec.input)); err != nil {
 			return sc, err
@@ -424,9 +438,14 @@ func scheduleFromFlags(name, out string, spec runSpecFlags, when schedule.Recurr
 	}
 	// What the person can fix comes last, every one of it, with sc whole:
 	// --check reports each and goes on.
-	var errs []error
+	errs := deliverErrs
 	if err := writableDir(outAbs); err != nil {
 		errs = append(errs, fmt.Errorf("--out %s: %w", out, err))
+	}
+	if sc.Run.DeliverTo != "" {
+		if err := writableDir(sc.Run.DeliverTo); err != nil {
+			errs = append(errs, fmt.Errorf("--deliver-to %s: %w", spec.deliverTo, err))
+		}
 	}
 	if sc.Run.Input != "" {
 		if _, err := os.Stat(sc.Run.Input); err != nil {
@@ -571,6 +590,17 @@ func baseRunArgs(sc schedule.Schedule) []string {
 	}
 	for _, k := range r.Knowledge {
 		args = append(args, "--knowledge", k)
+	}
+	if r.DeliverTo != "" {
+		args = append(args, "--deliver-to", r.DeliverTo)
+	}
+	// A schedule pins where its fires send: the names it was given, or none,
+	// never a default set the person makes later.
+	for _, d := range r.Destinations {
+		args = append(args, "--destination", d)
+	}
+	if len(r.Destinations) == 0 {
+		args = append(args, "--no-destination")
 	}
 	for _, i := range r.Intake {
 		args = append(args, "--intake", i)
@@ -1496,19 +1526,22 @@ func newScheduleShowCmd() *cobra.Command {
 
 func newScheduleEditCmd() *cobra.Command {
 	var (
-		when      whenFlags
-		name      string
-		out       string
-		timeout   int
-		maxTurns  int
-		maxCost   float64
-		signedOut bool
-		yes       bool
+		deliverTo    string
+		destinations []string
+		when         whenFlags
+		name         string
+		out          string
+		timeout      int
+		maxTurns     int
+		maxCost      float64
+		signedOut    bool
+		yes          bool
 	)
 	cmd := &cobra.Command{
 		Use:   "edit <id>",
-		Short: "Change a schedule's repeat, name, output folder or limits",
-		Long: "Change when a schedule runs, its name, its output folder or its limits. What\n" +
+		Short: "Change a schedule's repeat, name, output folder, delivery or limits",
+		Long: "Change when a schedule runs, its name, its output folder, where each run's\n" +
+			"deliverables go (--deliver-to, --destination) or its limits. What\n" +
 			"it runs and with which inputs is fixed when it is made: for a new version or\n" +
 			"other inputs, remove it and add a new one.\n\n" +
 			"--signed-out (Linux with Docker Engine) makes it also run while you are\n" +
@@ -1555,6 +1588,23 @@ func newScheduleEditCmd() *cobra.Command {
 				}
 				sc.Run.OutDir = abs
 			}
+			destinationsChanged := false
+			if f.Changed("deliver-to") {
+				if sc.Run.DeliverTo, err = scheduleDeliverFolder(deliverTo); err != nil {
+					return err
+				}
+				if sc.Run.DeliverTo != "" {
+					if err := writableDir(sc.Run.DeliverTo); err != nil {
+						return fmt.Errorf("--deliver-to %s: %w", deliverTo, err)
+					}
+				}
+			}
+			if f.Changed("destination") {
+				if sc.Run.Destinations, err = scheduleDestinations(destinations); err != nil {
+					return err
+				}
+				destinationsChanged = true
+			}
 			if f.Changed("timeout") {
 				sc.Run.Timeout = timeout
 			}
@@ -1591,6 +1641,18 @@ func newScheduleEditCmd() *cobra.Command {
 			}
 			if turnOff {
 				sc.SignedOut = false
+			}
+			// A signed-out fire reads its destinations' credentials from the
+			// keys sealed beside it, so a changed set seals them again before
+			// the change is kept.
+			if destinationsChanged && sc.SignedOut && !turnOn && !reseal && !st.Ended {
+				cred, err := store.CredentialPath(sc.ID)
+				if err != nil {
+					return err
+				}
+				if err := sealScheduleKeys(sc, cred); err != nil {
+					return err
+				}
 			}
 			if err := store.Save(sc); err != nil {
 				if turnOn || reseal {
@@ -1635,6 +1697,8 @@ func newScheduleEditCmd() *cobra.Command {
 	f.IntVar(&timeout, "timeout", 0, "the policy timeout override (seconds; 0 = the policy's)")
 	f.IntVar(&maxTurns, "max-turns", -1, "the tool-call budget override (-1 = the policy's, 0 = unlimited)")
 	f.Float64Var(&maxCost, "max-cost", -1, "the cost budget override in USD (-1 = the policy's, 0 = unlimited)")
+	f.StringVar(&deliverTo, "deliver-to", "", "the folder each run copies its deliverables to (absolute, or beginning with ~); empty stops it")
+	f.StringArrayVar(&destinations, "destination", nil, "the saved destinations each run sends its result and deliverables to, replacing the set (repeatable); one empty value clears it")
 	f.BoolVar(&signedOut, "signed-out", false, "also run while you are signed out (Linux with Docker Engine); =false to run only while signed in")
 	f.BoolVar(&yes, "yes", false, "with --signed-out, confirm turning on linger without the prompt")
 	return cmd
@@ -1841,4 +1905,39 @@ func writableDir(dir string) error {
 	name := f.Name()
 	_ = f.Close()
 	return os.Remove(name)
+}
+
+// scheduleDeliverFolder is the folder a schedule copies each run's deliverables
+// to, from --deliver-to: absolute, or beginning with ~, since a relative one
+// would mean another folder at every fire. Empty is none.
+func scheduleDeliverFolder(v string) (string, error) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return "", nil
+	}
+	dir := expandHome(v)
+	if !filepath.IsAbs(dir) {
+		return "", fmt.Errorf("--deliver-to %q is relative: write an absolute path, or one beginning with ~", v)
+	}
+	return filepath.Clean(dir), nil
+}
+
+// scheduleDestinations are the saved destinations a schedule's fires send to,
+// from --destination: each saved and holding a signing secret, once each. A
+// single empty value is none.
+func scheduleDestinations(names []string) ([]string, error) {
+	var out []string
+	for _, n := range names {
+		n = strings.TrimSpace(n)
+		if n == "" {
+			continue
+		}
+		if !slices.Contains(out, n) {
+			out = append(out, n)
+		}
+	}
+	if _, err := destination.Resolve(out); err != nil {
+		return nil, fmt.Errorf("--destination: %w", err)
+	}
+	return out, nil
 }

@@ -21,6 +21,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/destination"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/intake"
@@ -237,6 +238,12 @@ func sealScheduleKeys(sc schedule.Schedule, path string) error {
 	}
 	for _, h := range hosts {
 		optional = append(optional, sources.KeyAccount(h))
+	}
+	// A destination's signing secret, and its Authorization value when it has
+	// one: a signed-out fire sends to it from these alone.
+	for _, d := range sc.Run.Destinations {
+		required = append(required, destination.SecretAccount(d))
+		optional = append(optional, destination.AuthorizationAccount(d))
 	}
 	// A target host's sign-in: its runs have no other.
 	for _, h := range sc.Run.Hosts {
