@@ -122,6 +122,19 @@ type server struct {
 	// root as soon as it exists: what a declared command racing an export
 	// could do to it.
 	renderRootMade func(dir string)
+	// afterCheck, when a test sets it, is called with the name of a root
+	// ("workspace", "scratch", "reports", "inputs" or "render") between
+	// the check of a name and its use: what a declared command could do to
+	// the folder in that gap.
+	afterCheck func(root string)
+}
+
+// checked marks the gap between the check of a name beneath root and its
+// use (see afterCheck).
+func (s *server) checked(root string) {
+	if s.afterCheck != nil {
+		s.afterCheck(root)
+	}
 }
 
 func newServer(spec *Spec, out, logw io.Writer) (*server, error) {

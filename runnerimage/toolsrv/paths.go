@@ -22,6 +22,8 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+
+	"github.com/blaktron/agentry-cli/runnerimage/beneath"
 )
 
 // resolveUnder joins rel (a slash-separated path from the model) under
@@ -112,7 +114,7 @@ func allowedByGrant(paths []string, rel string) bool {
 
 // workspacePath checks a name the model gave a workspace tool, as
 // resolveUnder does, and returns it cleaned and relative to the workspace.
-// The os.Root the tool then opens it through is what holds it beneath the
+// The beneath.Dir the tool then opens it through is what holds it beneath the
 // workspace: a link a background process swaps in between this check and
 // the open cannot take the read or the write out of it.
 func (s *server) workspacePath(rel string) (string, error) {
@@ -125,7 +127,7 @@ func (s *server) workspacePath(rel string) (string, error) {
 // mkdirsIn makes dir and any missing parent beneath root, each through
 // root, and returns the directories it made, in order. A directory that is
 // there is left as it is.
-func mkdirsIn(root *os.Root, dir string, mode os.FileMode) ([]string, error) {
+func mkdirsIn(root *beneath.Dir, dir string, mode os.FileMode) ([]string, error) {
 	if dir == "." || dir == "" {
 		return nil, nil
 	}

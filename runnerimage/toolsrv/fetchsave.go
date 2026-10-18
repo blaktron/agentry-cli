@@ -8,7 +8,7 @@ package toolsrv
 // than the reply cap, and answered with what was saved, never the body.
 // Either way the host is one of the run's declared egress, every redirect
 // hop is checked as toolFetch checks it, a body holding the value of one of
-// the run's secrets is not kept, the file stays beneath the folder (os.Root)
+// the run's secrets is not kept, the file stays beneath the folder (beneath.Dir)
 // and is never executable, and the save is recorded in the fetch ledger
 // the receipt counts.
 
@@ -101,7 +101,7 @@ func (s *server) fetchedOverBudget(u *url.URL, head string, data []byte, truncat
 const fetchDir = "fetch"
 
 // saveFetched writes a fetched body to fetch/<n>-<name> in the scratch
-// folder, through the folder's os.Root, never over a file already there (a
+// folder, through the folder's beneath.Dir, never over a file already there (a
 // declared command may have put one in the way), and never executable. It
 // returns the file's scratch-relative path.
 func (s *server) saveFetched(u *url.URL, data []byte) (string, error) {
@@ -110,6 +110,7 @@ func (s *server) saveFetched(u *url.URL, data []byte) (string, error) {
 		return "", err
 	}
 	defer func() { _ = root.Close() }()
+	s.checked("scratch")
 	if err := mkdirAllIn(root, fetchDir, scratchDirMode); err != nil {
 		return "", err
 	}
@@ -296,7 +297,7 @@ func (e errHoldsSecret) Error() string { return "the body holds the value of the
 var errSaveRead = errors.New("reading the body failed")
 
 // saveStream writes body to rel in the scratch folder, through the
-// folder's os.Root: first to a new file of its own beside rel, never
+// folder's beneath.Dir: first to a new file of its own beside rel, never
 // executable, then renamed over rel, so a file a declared command left at
 // rel (a link planted after saveToPath's check included) is replaced, never
 // written through, and a save that fails or holds a run secret leaves
@@ -307,6 +308,7 @@ func (s *server) saveStream(rel string, body io.Reader) (int64, string, error) {
 		return 0, "", err
 	}
 	defer func() { _ = root.Close() }()
+	s.checked("scratch")
 	dir := path.Dir(rel)
 	if err := mkdirAllIn(root, dir, scratchDirMode); err != nil {
 		return 0, "", err
