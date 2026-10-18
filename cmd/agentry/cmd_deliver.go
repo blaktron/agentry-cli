@@ -69,7 +69,7 @@ func deliverySummary(ds []receipt.Delivery) []string {
 	}
 	var folder, hooks []receipt.Delivery
 	for _, d := range ds {
-		if d.Kind == receipt.DeliveryKindWebhook {
+		if d.Kind == receipt.DeliveryKindWebhook || d.Kind == receipt.DeliveryKindS3 {
 			hooks = append(hooks, d)
 		} else {
 			folder = append(folder, d)
@@ -117,11 +117,13 @@ func folderSummary(ds []receipt.Delivery) []string {
 func destinationSummary(ds []receipt.Delivery) []string {
 	var order []string
 	byName := map[string][]receipt.Delivery{}
+	bucket := map[string]bool{}
 	for _, d := range ds {
 		if _, ok := byName[d.Destination]; !ok {
 			order = append(order, d.Destination)
 		}
 		byName[d.Destination] = append(byName[d.Destination], d)
+		bucket[d.Destination] = d.Kind == receipt.DeliveryKindS3
 	}
 	var out []string
 	for _, name := range order {
@@ -144,6 +146,10 @@ func destinationSummary(ds []receipt.Delivery) []string {
 			out = append(out, fmt.Sprintf("destination %s: the result sent", name))
 		}
 		for _, reason := range slices.Sorted(maps.Keys(left)) {
+			if reason == receipt.DeliveryErrTooLarge && bucket[name] {
+				out = append(out, fmt.Sprintf("destination %s: %d %s not sent (over the %d MiB an object may be); the run itself is unaffected", name, left[reason], plural(left[reason], "file", "files"), engine.MaxObjectBytes>>20))
+				continue
+			}
 			if reason == receipt.DeliveryErrTooLarge {
 				out = append(out, fmt.Sprintf("destination %s: %d %s listed without content (over the %d MiB body cap)", name, left[reason], plural(left[reason], "file", "files"), engine.MaxWebhookBody>>20))
 				continue

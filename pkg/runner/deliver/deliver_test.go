@@ -627,3 +627,38 @@ func TestStageStopsAtTheBudget(t *testing.T) {
 		t.Errorf("%d staged: %+v", staged, got)
 	}
 }
+
+// TestStageRawStagesFilesAsTheyAreWithinTheirCaps: a file past the one-file cap
+// is never copied, and the rest are staged until the total is used, each one
+// shown to be the bytes of its digest.
+func TestStageRawStagesFilesAsTheyAreWithinTheirCaps(t *testing.T) {
+	run := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(run, "reports"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mk := func(rel string, n int) receipt.Deliverable {
+		body := strings.Repeat("z", n)
+		if err := os.WriteFile(filepath.Join(run, filepath.FromSlash(rel)), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		sum := sha256.Sum256([]byte(body))
+		return receipt.Deliverable{Path: rel, SHA256: hex.EncodeToString(sum[:]), Bytes: int64(n)}
+	}
+	files := []receipt.Deliverable{mk("reports/a.bin", 100), mk("reports/huge.bin", 2001), mk("reports/b.bin", 2000), mk("reports/c.bin", 1500), mk("reports/d.bin", 50)}
+	dir := t.TempDir()
+	got := StageRaw(run, files, dir, 2000, 3500)
+	want := []Staged{{Name: "f0000"}, {Reason: receipt.DeliveryErrTooLarge}, {Name: "f0002"}, {Reason: receipt.DeliveryErrTooLarge}, {Name: "f0004"}}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("file %d: %+v, want %+v", i, got[i], want[i])
+		}
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 3 {
+		t.Errorf("the staging folder holds %v", entries)
+	}
+	// The cap is on the file as it is, not its base64: 2000 bytes fit a 2000 cap.
+	if b, _ := os.ReadFile(filepath.Join(dir, "f0002")); len(b) != 2000 {
+		t.Errorf("staged %d bytes", len(b))
+	}
+}

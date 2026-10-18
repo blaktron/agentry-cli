@@ -4,6 +4,10 @@ package engine
 // removed every container it started, each destination the person gave the run
 // is sent the run's result and its deliverables by a step of its own.
 //
+// A webhook is sent one signed POST of the result and the files; a bucket is sent
+// each file as an object of its own, and nothing else (a run with no file leaves
+// it nothing).
+//
 // The step runs the runner image's `deliver` role in a container that has
 // nothing of the run: it gets copies of the deliverables, staged read-only by the
 // host after each was shown to be the bytes of the digest the run's envelope
@@ -42,12 +46,23 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/send"
 )
 
-// deliveryTimeout bounds one destination's step: its own request is bounded
-// well inside it.
-const deliveryTimeout = 6 * time.Minute
+// deliveryTimeout bounds one webhook's step, and bucketDeliveryTimeout one
+// bucket's, which puts a file at a time: its own requests are bounded well
+// inside them.
+const (
+	deliveryTimeout       = 6 * time.Minute
+	bucketDeliveryTimeout = 12 * time.Minute
+)
 
 // deliveryTotalTimeout bounds every destination's step of one delivery together.
-const deliveryTotalTimeout = 12 * time.Minute
+const deliveryTotalTimeout = 24 * time.Minute
+
+// MaxObjectBytes is the most one object sent to a bucket is.
+const MaxObjectBytes = send.DefaultMaxObject
+
+// MaxBucketStaged is the most bytes of deliverables a bucket's step is given
+// copies of in all; a file past what is left is listed as too large.
+const MaxBucketStaged int64 = 1 << 30
 
 // maxDeliveryReport bounds the step's report.
 const maxDeliveryReport = 1 << 20
@@ -94,17 +109,49 @@ func sendToDestinations(ctx context.Context, d dockerx.Client, r deliveryRun, de
 	return out
 }
 
+// kindOf is the receipt's word for a destination's kind.
+func kindOf(dest destination.Resolved) string {
+	if dest.Kind == destination.KindS3 {
+		return receipt.DeliveryKindS3
+	}
+	return receipt.DeliveryKindWebhook
+}
+
+// objectsFor names, for each deliverable, what a record calls the thing sent:
+// its path for a webhook, and for a bucket the object written, <bucket>/<key>
+// (the path again for one the step will not name).
+func objectsFor(r deliveryRun, dest destination.Resolved) []string {
+	out := make([]string, len(r.Files))
+	var keys []string
+	if dest.Kind == destination.KindS3 {
+		paths := make([]string, len(r.Files))
+		for i, f := range r.Files {
+			paths[i] = f.Path
+		}
+		keys = send.ObjectKeys(dest.Prefix, r.RunID, paths)
+	}
+	for i, f := range r.Files {
+		out[i] = f.Path
+		if keys != nil && keys[i] != "" {
+			out[i] = dest.Bucket + "/" + keys[i]
+		}
+	}
+	return out
+}
+
 // recordsFor is every record of a destination answered one way: a failure
-// before the step could say more.
+// before the step could say more. A bucket is sent files alone, so a run that
+// left none has nothing to record for it.
 func recordsFor(r deliveryRun, dest destination.Resolved, host, status, reason string) []receipt.Delivery {
 	var out []receipt.Delivery
 	rec := func(object, sum string) {
-		out = append(out, receipt.Delivery{Destination: dest.Name, Kind: receipt.DeliveryKindWebhook, Host: host, Object: object, SHA256: sum, Status: status, Error: reason, OnMyNetwork: dest.OnMyNetwork})
+		out = append(out, receipt.Delivery{Destination: dest.Name, Kind: kindOf(dest), Host: host, Object: object, SHA256: sum, Status: status, Error: reason, OnMyNetwork: dest.OnMyNetwork})
 	}
-	for _, f := range r.Files {
-		rec(f.Path, f.SHA256)
+	objects := objectsFor(r, dest)
+	for i, f := range r.Files {
+		rec(objects[i], f.SHA256)
 	}
-	if len(r.Files) == 0 {
+	if len(r.Files) == 0 && dest.Kind != destination.KindS3 {
 		rec("result", resultSum(r.Result))
 	}
 	return out
@@ -123,12 +170,41 @@ func sendToOne(ctx context.Context, d dockerx.Client, r deliveryRun, dest destin
 	failed := func(host, reason string) []receipt.Delivery {
 		return recordsFor(r, dest, host, receipt.DeliveryFailed, reason)
 	}
-	target, err := send.CheckURL(dest.URL, dest.OnMyNetwork)
-	if err != nil || dest.Kind != destination.KindWebhook {
+	// What the kind decides: the host and port the proxy admits, whether it is
+	// plain http, the credential the step is given, and how long it has.
+	var (
+		target  send.Target
+		cred    send.Credential
+		limit   = deliveryTimeout
+		bucketS send.S3Target
+		isS3    = dest.Kind == destination.KindS3
+	)
+	switch dest.Kind {
+	case destination.KindWebhook:
+		var err error
+		if target, err = send.CheckURL(dest.URL, dest.OnMyNetwork); err != nil {
+			return failed("", receipt.DeliveryErrDestination)
+		}
+		if !send.ValidSecret(dest.Secret) || !send.ValidHeaderValue(dest.Authorization) {
+			return failed(target.HostPort, receipt.DeliveryErrCredential)
+		}
+		cred = send.Credential{Secret: dest.Secret, Authorization: dest.Authorization}
+	case destination.KindS3:
+		var err error
+		if bucketS, err = send.CheckS3(dest.S3Spec()); err != nil || !send.ValidRunID(r.RunID) {
+			return failed("", receipt.DeliveryErrDestination)
+		}
+		target = send.Target{HostPort: bucketS.HostPort, Plain: bucketS.Plain}
+		if !send.ValidAccessKeyID(dest.AccessKeyID) || !send.ValidSecret(dest.Secret) {
+			return failed(target.HostPort, receipt.DeliveryErrCredential)
+		}
+		if len(r.Files) == 0 {
+			return nil
+		}
+		cred = send.Credential{AccessKeyID: dest.AccessKeyID, SecretAccessKey: dest.Secret}
+		limit = bucketDeliveryTimeout
+	default:
 		return failed("", receipt.DeliveryErrDestination)
-	}
-	if !send.ValidSecret(dest.Secret) || !send.ValidHeaderValue(dest.Authorization) {
-		return failed(target.HostPort, receipt.DeliveryErrCredential)
 	}
 	if err := ctx.Err(); err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
@@ -150,11 +226,22 @@ func sendToOne(ctx context.Context, d dockerx.Client, r deliveryRun, dest destin
 			return failed(target.HostPort, receipt.DeliveryErrStep)
 		}
 	}
-	job := send.Job{
-		Kind: send.KindWebhook, URL: dest.URL, OnMyNetwork: dest.OnMyNetwork,
-		RunID: r.RunID, Ref: r.Ref, Digest: r.Digest, Result: r.Result, MaxBody: MaxWebhookBody,
+	var job send.Job
+	var stagedFiles []deliver.Staged
+	if isS3 {
+		job = send.Job{
+			Kind: send.KindS3, Bucket: dest.Bucket, Prefix: dest.Prefix, Region: dest.Region, Endpoint: dest.Endpoint, OnMyNetwork: dest.OnMyNetwork,
+			RunID: r.RunID, Ref: r.Ref, Digest: r.Digest, MaxObject: send.DefaultMaxObject,
+		}
+		stagedFiles = deliver.StageRaw(r.RunDir, r.Files, staged, send.DefaultMaxObject, MaxBucketStaged)
+	} else {
+		job = send.Job{
+			Kind: send.KindWebhook, URL: dest.URL, OnMyNetwork: dest.OnMyNetwork,
+			RunID: r.RunID, Ref: r.Ref, Digest: r.Digest, Result: r.Result, MaxBody: MaxWebhookBody,
+		}
+		stagedFiles = deliver.Stage(r.RunDir, r.Files, staged, MaxWebhookBody)
 	}
-	for i, st := range deliver.Stage(r.RunDir, r.Files, staged, MaxWebhookBody) {
+	for i, st := range stagedFiles {
 		f := r.Files[i]
 		jf := send.File{Path: f.Path, Title: f.Title, SHA256: f.SHA256, Bytes: f.Bytes, Type: f.Type, Marked: f.Marked}
 		if st.Name != "" {
@@ -168,7 +255,7 @@ func sendToOne(ctx context.Context, d dockerx.Client, r deliveryRun, dest destin
 	if err != nil || os.WriteFile(filepath.Join(jobDir, send.JobFile), jb, 0o644) != nil { //nolint:gosec // read by the step's container
 		return failed(target.HostPort, receipt.DeliveryErrStep)
 	}
-	cred, err := json.Marshal(send.Credential{Secret: dest.Secret, Authorization: dest.Authorization})
+	credJSON, err := json.Marshal(cred)
 	if err != nil {
 		return failed(target.HostPort, receipt.DeliveryErrStep)
 	}
@@ -236,10 +323,10 @@ func sendToOne(ctx context.Context, d dockerx.Client, r deliveryRun, dest destin
 		Labels:      labels,
 	}
 	stepSpec = readOnlyRoot(hardened(stepSpec, r.Limits), "/tmp:size=64m,mode=1777")
-	sctx, cancel := context.WithTimeout(ctx, deliveryTimeout)
+	sctx, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
 	var errOut bytes.Buffer
-	code, rerr := d.RunForeground(sctx, stepSpec, bytes.NewReader(cred), io.Discard, &limitedBuffer{b: &errOut, n: 4 << 10})
+	code, rerr := d.RunForeground(sctx, stepSpec, bytes.NewReader(credJSON), io.Discard, &limitedBuffer{b: &errOut, n: 4 << 10})
 	// The proxy's decisions are the evidence of what the step reached: host
 	// and port and the verdict, never a credential or a body.
 	if logs, lerr := d.Logs(context.WithoutCancel(ctx), proxyName, 100); lerr == nil && logs != "" {
@@ -296,7 +383,7 @@ func say(w io.Writer, dest destination.Resolved, msg string) {
 // scrubCredential masks the destination's credential from text that may echo
 // it.
 func scrubCredential(s string, dest destination.Resolved) string {
-	for _, v := range []string{dest.Secret, dest.Authorization} {
+	for _, v := range []string{dest.Secret, dest.Authorization, dest.AccessKeyID} {
 		if v != "" {
 			s = strings.ReplaceAll(s, v, "[credential]")
 		}
@@ -339,15 +426,16 @@ func recordsFromReport(r deliveryRun, dest destination.Resolved, host string, re
 		byPath[f.Path] = f
 	}
 	var out []receipt.Delivery
-	for _, f := range r.Files {
+	objects := objectsFor(r, dest)
+	for i, f := range r.Files {
 		fr, ok := byPath[f.Path]
 		status, reason := closedOutcome(fr.Status, fr.Error)
 		if !ok {
 			status, reason = receipt.DeliveryFailed, receipt.DeliveryErrStep
 		}
-		out = append(out, receipt.Delivery{Destination: dest.Name, Kind: receipt.DeliveryKindWebhook, Host: host, Object: f.Path, SHA256: f.SHA256, Status: status, Error: reason, OnMyNetwork: dest.OnMyNetwork})
+		out = append(out, receipt.Delivery{Destination: dest.Name, Kind: kindOf(dest), Host: host, Object: objects[i], SHA256: f.SHA256, Status: status, Error: reason, OnMyNetwork: dest.OnMyNetwork})
 	}
-	if len(r.Files) == 0 {
+	if len(r.Files) == 0 && dest.Kind != destination.KindS3 {
 		// The result was delivered when the POST was and the body held it; a
 		// result the body left out is refused with the reason, and one the POST
 		// did not reach is failed with the POST's.
@@ -360,7 +448,7 @@ func recordsFromReport(r deliveryRun, dest destination.Resolved, host string, re
 		case rep.Status == send.StatusDelivered:
 			status, reason = receipt.DeliveryFailed, receipt.DeliveryErrStep
 		}
-		out = append(out, receipt.Delivery{Destination: dest.Name, Kind: receipt.DeliveryKindWebhook, Host: host, Object: "result", SHA256: resultSum(r.Result), Status: status, Error: reason, OnMyNetwork: dest.OnMyNetwork})
+		out = append(out, receipt.Delivery{Destination: dest.Name, Kind: kindOf(dest), Host: host, Object: "result", SHA256: resultSum(r.Result), Status: status, Error: reason, OnMyNetwork: dest.OnMyNetwork})
 	}
 	return out
 }

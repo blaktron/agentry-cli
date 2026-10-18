@@ -312,3 +312,125 @@ func TestARefusedSaveLeavesNoCredentialBehind(t *testing.T) {
 		t.Error("the keychain holds the secret of a destination that was not saved")
 	}
 }
+
+func TestDestinationsAddSavesABucketAndKeepsItsKeyPairInTheKeychain(t *testing.T) {
+	dir := destinationsEnv(t)
+	t.Setenv("S3_KEY_ID", "AKIAPLANTEDKEYID0123")
+	t.Setenv("S3_SECRET", "PLANTEDsecretACCESSkey/0123456789")
+	out, errOut, err := runCLI(t, nil, "destinations", "add", "archive", "--bucket", "my-reports", "--prefix", "/agentry/out/", "--region", "eu-west-1", "--access-key-id-env", "S3_KEY_ID", "--secret-env", "S3_SECRET")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "saved destination archive: bucket s3://my-reports/agentry/out at https://my-reports.s3.eu-west-1.amazonaws.com:443") || strings.Contains(out+errOut, "PLANTED") {
+		t.Errorf("add: %q %q", out, errOut)
+	}
+	raw, _ := os.ReadFile(filepath.Join(dir, destination.File))
+	if strings.Contains(string(raw), "PLANTED") || !strings.Contains(string(raw), "kind: s3") {
+		t.Errorf("the file: %s", raw)
+	}
+	r, err := destination.Resolve([]string{"archive"})
+	if err != nil || len(r) != 1 || r[0].AccessKeyID != "AKIAPLANTEDKEYID0123" || r[0].Secret != "PLANTEDsecretACCESSkey/0123456789" || r[0].Prefix != "agentry/out" {
+		t.Fatalf("%+v %v", r, err)
+	}
+	// Saved again for another bucket of the same service, with no credentials
+	// given: the pair is kept.
+	if _, _, err := runCLI(t, nil, "destinations", "add", "archive", "--bucket", "other-reports", "--region", "us-east-1"); err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := destination.Resolve([]string{"archive"}); len(r) != 1 || r[0].AccessKeyID == "" || r[0].Bucket != "other-reports" {
+		t.Errorf("a change dropped the pair: %+v", r)
+	}
+	// Moved to another service: the saved pair is not kept for it, and a
+	// change that gives none is refused.
+	_, errOut, err = runCLI(t, nil, "destinations", "add", "archive", "--bucket", "other-reports", "--endpoint", "https://acct.r2.cloudflarestorage.com", "--region", "auto")
+	wantClassified(t, err, engine.ExitUsage)
+	if !strings.Contains(errOut, "another service") {
+		t.Errorf("stderr: %q", errOut)
+	}
+	if r, _ := destination.Resolve([]string{"archive"}); len(r) != 1 || r[0].Endpoint != "" {
+		t.Errorf("a refused change was saved: %+v", r)
+	}
+	// A bucket on the person's network, with the defaults of an endpoint.
+	t.Setenv("MINIO_USER", "minioadmin")
+	t.Setenv("MINIO_PASSWORD", "minio-password-1")
+	if _, _, err := runCLI(t, nil, "destinations", "add", "minio", "--bucket", "reports", "--endpoint", "http://192.168.1.20:9000", "--on-my-network", "--access-key-id-env", "MINIO_USER", "--secret-env", "MINIO_PASSWORD"); err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := destination.Resolve([]string{"minio"}); len(r) != 1 || r[0].Region != "us-east-1" || !r[0].OnMyNetwork {
+		t.Errorf("minio: %+v", r)
+	}
+	out, _, _ = runCLI(t, nil, "destinations", "list")
+	for _, want := range []string{"archive  s3  s3://other-reports at https://other-reports.s3.us-east-1.amazonaws.com:443", "minio  s3  s3://reports at http://192.168.1.20:9000  on my network"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("list lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "PLANTED") || strings.Contains(out, "minio-password") {
+		t.Errorf("list shows a credential:\n%s", out)
+	}
+	out, _, _ = runCLI(t, nil, "destinations", "list", "--json")
+	var got struct{ Destinations []destinationRow }
+	if err := json.Unmarshal([]byte(out), &got); err != nil || len(got.Destinations) != 2 || !got.Destinations[0].AccessKey || !got.Destinations[0].Secret || got.Destinations[0].Kind != "s3" {
+		t.Errorf("json = %s (%v)", out, err)
+	}
+	if _, _, err := runCLI(t, nil, "destinations", "remove", "minio"); err != nil {
+		t.Fatal(err)
+	}
+	if destination.HasAccessKey("minio") || destination.HasSecret("minio") {
+		t.Error("remove left the key pair")
+	}
+}
+
+func TestDestinationsAddRefusesABucketThatBreaksTheRules(t *testing.T) {
+	destinationsEnv(t)
+	t.Setenv("S3_KEY_ID", "AKIAPLANTEDKEYID0123")
+	t.Setenv("S3_SECRET", "secret")
+	creds := []string{"--access-key-id-env", "S3_KEY_ID", "--secret-env", "S3_SECRET"}
+	for _, args := range [][]string{
+		{"b", "--bucket", "my-reports", "--url", "https://hooks.example.com/x"},
+		{"b", "--bucket", "my-reports"},
+		{"b", "--bucket", "my-reports", "--region", "us-east-1", "--prefix", "../x"},
+		{"b", "--bucket", "my-reports", "--region", "us-east-1", "--endpoint", "https://10.0.0.5"},
+		{"b", "--bucket", "my-reports", "--region", "us-east-1", "--endpoint", "http://169.254.169.254", "--on-my-network"},
+		{"b", "--bucket", "my-reports", "--region", "us-east-1", "--endpoint", "https://minio.example.com/b"},
+		{"b", "--bucket", "my-reports", "--region", "us-east-1", "--on-my-network"},
+		{"b", "--bucket", "Bad_Bucket", "--region", "us-east-1"},
+		{"b", "--bucket", "my.reports", "--region", "us-east-1"},
+		{"b", "--bucket", "my-reports", "--region", "us-east-1", "--generate-secret"},
+		{"b", "--bucket", "my-reports", "--region", "us-east-1", "--authorization-env", "S3_SECRET"},
+		{"b", "--bucket", "my-reports", "--region", "us-east-1", "--access-key-id-env", "S3_KEY_ID", "--secret-env", "S3_SECRET", "--secret-stdin"},
+		{"hook", "--url", "https://hooks.example.com/x", "--region", "us-east-1", "--secret-env", "S3_SECRET"},
+		{"b", "--bucket", "my-reports", "--region", "us-east-1", "--access-key-id-env", "S3_KEY_ID"},
+		{"b", "--bucket", "my-reports", "--region", "us-east-1", "--secret-env", "S3_SECRET"},
+	} {
+		a := append([]string{"destinations", "add"}, args...)
+		if !strings.Contains(strings.Join(args, " "), "--access-key-id-env") && !strings.Contains(strings.Join(args, " "), "--secret-env") {
+			a = append(a, creds...)
+		}
+		_, _, err := runCLI(t, nil, a...)
+		if err == nil {
+			t.Errorf("%v was taken", args)
+			continue
+		}
+		wantClassified(t, err, engine.ExitUsage)
+	}
+	if s, _ := destination.Load(); len(s.Destinations) != 0 {
+		t.Errorf("a refused add saved %+v", s.Destinations)
+	}
+}
+
+func TestTheRunSaysWhatItPutInEachBucket(t *testing.T) {
+	got := strings.Join(deliverySummary([]receipt.Delivery{
+		{Destination: "archive", Kind: "s3", Object: "b/run/a.md", Status: receipt.DeliveryDelivered},
+		{Destination: "archive", Kind: "s3", Object: "b/run/big.pdf", Status: receipt.DeliveryRefused, Error: receipt.DeliveryErrTooLarge},
+		{Destination: "archive", Kind: "s3", Object: "b/run/c.md", Status: receipt.DeliveryFailed, Error: receipt.DeliveryErrStatus},
+	}), "\n")
+	for _, want := range []string{"destination archive: 1 file sent", "destination archive: 1 file not sent (over the 64 MiB an object may be)", "destination archive: 1 not sent (status)"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("summary lacks %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "body cap") {
+		t.Errorf("a bucket's file is not listed in a body:\n%s", got)
+	}
+}
