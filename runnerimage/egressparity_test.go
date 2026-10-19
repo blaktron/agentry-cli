@@ -26,20 +26,24 @@ var refusedByTheCore = []string{
 	"::ffff:10.0.0.1", "::ffff:127.0.0.1", "::ffff:169.254.169.254",
 	"2002:7f00:1::1", "2002:a00:1::1", "64:ff9b::a00:1", "64:ff9b::a9fe:a9fe", "64:ff9b:1::1",
 	"::127.0.0.1", "::10.0.0.1",
+	// the special-purpose ranges that are not globally reachable: the IETF
+	// protocol assignments, documentation, the 6to4 relay anycast range,
+	// benchmarking, reserved space, Teredo and the other IPv6 assignments,
+	// the IPv6 documentation, discard and site-local prefixes
+	"192.0.0.8", "192.0.2.1", "192.88.99.1", "198.18.0.1", "198.19.255.255", "198.51.100.7", "203.0.113.9",
+	"240.0.0.1",
+	"2001::1", "2001:db8::1", "100::1", "fec0::1",
 }
 
 // publicToBoth are public addresses both rules admit.
 var publicToBoth = []string{"1.1.1.1", "8.8.8.8", "93.184.216.34", "100.128.0.1", "172.32.0.1", "2606:4700::1111", "::ffff:8.8.8.8"}
 
-// refusedOnlyByTheImage is the stricter side: ranges that are not private but
-// are not for a connection either (documentation, benchmarking, IETF
-// protocol assignments, the 6to4 relay anycast range, reserved space,
-// Azure's wireserver, the IPv6 documentation, Teredo, discard and
-// site-local prefixes). The core's guard admits each; netaddr.Public does not.
+// refusedOnlyByTheImage is the stricter side: addresses the core's guard
+// admits and netaddr.Public refuses. Azure's wireserver is a globally
+// routable address that only means something from inside an Azure VM, so the
+// core's guard, which follows the special-purpose registries, admits it.
 var refusedOnlyByTheImage = []string{
-	"192.0.0.8", "192.0.2.1", "192.88.99.1", "198.18.0.1", "198.19.255.255", "198.51.100.7", "203.0.113.9",
-	"240.0.0.1", "168.63.129.16",
-	"2001::1", "2001:db8::1", "100::1", "fec0::1",
+	"168.63.129.16",
 }
 
 func TestTheImageRuleRefusesWhatTheCoreRefuses(t *testing.T) {
@@ -75,11 +79,17 @@ func TestTheImageRuleIsStricterOnlyWhereListed(t *testing.T) {
 }
 
 // TestNoAddressTheCoreRefusesReachesTheImage sweeps the first two octets of
-// IPv4 space, bare and wrapped in each IPv6 form that embeds one, and
-// requires that nothing the core refuses is public to the image.
+// IPv4 space, bare and wrapped in each IPv6 form that embeds one (mapped,
+// 6to4, NAT64, compatible, IPv4-translated and ISATAP), and requires that
+// nothing the core refuses is public to the image.
 func TestNoAddressTheCoreRefusesReachesTheImage(t *testing.T) {
 	core := egressguard.Guard{}
-	forms := []string{"%[1]s", "::ffff:%[1]s", "2002:%[2]s::1", "64:ff9b::%[1]s", "::%[1]s"}
+	forms := []string{
+		"%[1]s", "::ffff:%[1]s", "2002:%[2]s::1", "64:ff9b::%[1]s", "::%[1]s",
+		// IPv4-translated, and ISATAP identifiers (local and universal) under
+		// a public prefix
+		"::ffff:0:%[1]s", "2606:4700::5efe:%[1]s", "2606:4700::200:5efe:%[1]s",
+	}
 	for a := 0; a < 256; a++ {
 		for b := 0; b < 256; b++ {
 			for _, tail := range [...][2]int{{0, 1}, {255, 254}, {128, 7}} {

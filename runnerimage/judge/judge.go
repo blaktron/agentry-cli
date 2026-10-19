@@ -30,7 +30,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -90,7 +92,37 @@ type Client struct {
 // ErrNoKey is New's answer to a Config with no key.
 var ErrNoKey = errors.New("judge: a Jev key is required")
 
-// New builds a Client, refusing a missing key and an unpinned model.
+// CheckBaseURL reports whether a key may be sent to a base URL. The bearer
+// key rides on every request, so the base must be https; plain http is
+// allowed only to a loopback address (localhost, 127.0.0.0/8 or ::1), where
+// the request never leaves the machine, for a test server. A URL with
+// credentials in it is refused too. An empty base is the default, which is
+// https. The error never repeats the URL, which can carry a secret.
+func CheckBaseURL(base string) error {
+	base = strings.TrimSpace(base)
+	if base == "" {
+		return nil
+	}
+	u, err := url.Parse(base)
+	if err != nil || u.Hostname() == "" {
+		return errors.New("judge: the base URL must be an https URL with a host")
+	}
+	if u.User != nil {
+		return errors.New("judge: the base URL must not carry credentials")
+	}
+	switch u.Scheme {
+	case "https":
+		return nil
+	case "http":
+		if host := u.Hostname(); strings.EqualFold(host, "localhost") || net.ParseIP(host).IsLoopback() {
+			return nil
+		}
+	}
+	return errors.New("judge: the base URL must be https, because the key is sent to it; plain http is allowed only to a loopback address")
+}
+
+// New builds a Client, refusing a missing key, an unpinned model and a
+// base URL the key may not be sent to (CheckBaseURL).
 func New(cfg Config) (*Client, error) {
 	key := strings.TrimSpace(cfg.APIKey)
 	if key == "" {
@@ -102,6 +134,9 @@ func New(cfg Config) (*Client, error) {
 	}
 	if !PinnedModel(model) {
 		return nil, fmt.Errorf("judge: model %q is not a pinned version id; use one such as %s", model, DefaultModel)
+	}
+	if err := CheckBaseURL(cfg.BaseURL); err != nil {
+		return nil, err
 	}
 	base := strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
 	if base == "" {
@@ -223,6 +258,9 @@ func (c *Client) Ask(ctx context.Context, state map[string]string, questions []Q
 		a, ok := resp.Answers[q.ID]
 		if !ok || a.Noul == nil {
 			return nil, Usage{}, fmt.Errorf("judge: typesafe answered without the %s question", q.ID)
+		}
+		if a.Type != "noul" {
+			return nil, Usage{}, fmt.Errorf("judge: typesafe answered the %s question with type %q, not noul", q.ID, a.Type)
 		}
 		if *a.Noul < 0 || *a.Noul > 1 {
 			return nil, Usage{}, fmt.Errorf("judge: typesafe probability %v for %s out of range", *a.Noul, q.ID)

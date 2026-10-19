@@ -3,6 +3,7 @@ package judge
 import (
 	"context"
 	"fmt"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -148,7 +149,7 @@ func (s *VoiceScanner) Scan(ctx context.Context, voice string) VoiceResult {
 		res.Verdict, res.Failure = VerdictNotScanned, FailureTooLarge
 		res.Err = fmt.Errorf("judge: a voice of %d bytes is past the bound %d", len(voice), VoiceMaxBytes)
 		return res
-	case voice == "" || !utf8.ValidString(voice):
+	case strings.TrimSpace(voice) == "" || !utf8.ValidString(voice):
 		res.Verdict, res.Failure = VerdictNotScanned, FailureInvalid
 		res.Err = fmt.Errorf("judge: a voice must be UTF-8 text with something in it")
 		return res

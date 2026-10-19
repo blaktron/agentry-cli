@@ -33,6 +33,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"regexp"
 	"slices"
 	"strings"
@@ -266,15 +267,18 @@ type wireFooter struct {
 var unknownField = regexp.MustCompile(`unknown field "([^"]*)"`)
 
 // Parse reads a design document and validates it: every field present but
-// the optional logo, no other key, no second value after it, at most
+// the optional logo (a "logo": null is no logo, as if the key were left out),
+// no other key, no second value after it, at most
 // MaxDocumentBytes besides the logo's field, and every rule of Validate. A
 // refusal is a *FieldError.
 func Parse(data []byte) (Design, error) {
 	overLimit := func(n int) error {
 		return fieldErr("", "the document is %d bytes without its logo, over the %d-byte limit", n, MaxDocumentBytes)
 	}
-	if len(data) > MaxDocumentBytes+maxLogoField+len(`"logo":{"png":""}`) {
-		return Design{}, overLimit(len(data))
+	// Before reading it: the most a document may be with a logo field of the
+	// largest size, which counts the whole document as sent.
+	if most := MaxDocumentBytes + maxLogoField + len(`"logo":{"png":""}`); len(data) > most {
+		return Design{}, fieldErr("", "the document is %d bytes, over the %d bytes a document may be with its logo", len(data), most)
 	}
 	if !utf8.Valid(data) {
 		return Design{}, fieldErr("", "the document is not UTF-8")
@@ -448,7 +452,7 @@ func (d Design) Validate() error {
 		if d.AccentOnText() {
 			use = "colours text"
 		}
-		return fieldErr("accent", "%s reaches %.2f:1 on white, and an accent that %s needs %.1f:1; the nearest shade that does is %s", d.Accent, ratio, use, need, near)
+		return fieldErr("accent", "%s reaches %.2f:1 on white, and an accent that %s needs %.1f:1; the nearest shade that does is %s", d.Accent, shownRatio(ratio, need), use, need, near)
 	}
 	if err := oneOf("quotes", d.Quotes, QuoteStyles); err != nil {
 		return err
@@ -463,6 +467,22 @@ func (d Design) Validate() error {
 		return checkLogo(d.Logo)
 	}
 	return nil
+}
+
+// shownRatio is the ratio as a refusal prints it, to two places: rounded,
+// unless that rounds up to the line the ratio falls short of, when it is
+// cut instead, so a refusal never reads as a pass.
+func shownRatio(ratio, need float64) float64 {
+	shown := math.Round(ratio*100) / 100
+	if shown < need {
+		return shown
+	}
+	// Cut, and step down once more should the product's rounding in floating
+	// point have carried it onto the line.
+	if shown = math.Floor(ratio*100) / 100; shown >= need {
+		shown -= 0.01
+	}
+	return shown
 }
 
 func roleText(role string) string {
@@ -485,9 +505,10 @@ func oneOf(field, v string, list []string) error {
 }
 
 // checkText holds a free text to one line of plain, printable text: no
-// control characters (a line break among them) and no bidirectional
-// formatting characters, which could make the line read otherwise than it
-// is written.
+// control characters (a line break among them), no format characters (the
+// bidirectional controls, zero-width characters, the soft hyphen and the
+// tag block), which draw nothing or make the line read otherwise than it is
+// written, and no line or paragraph separator.
 func checkText(field, s string, maxRunes int, mayBeEmpty bool) error {
 	if strings.TrimSpace(s) == "" {
 		if mayBeEmpty && s == "" {
@@ -499,8 +520,8 @@ func checkText(field, s string, maxRunes int, mayBeEmpty bool) error {
 		return fieldErr(field, "is %d characters, over the limit of %d", n, maxRunes)
 	}
 	for _, r := range s {
-		if unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) || r == ' ' || r == ' ' {
-			return fieldErr(field, "must be one line of plain text (no control, line-break or bidirectional formatting characters)")
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == 0x2028 || r == 0x2029 {
+			return fieldErr(field, "must be one line of plain text (no control, line-break, bidirectional formatting or other invisible format characters)")
 		}
 	}
 	return nil
