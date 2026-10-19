@@ -905,3 +905,60 @@ func TestHybridAnalysisKey(t *testing.T) {
 		}
 	}
 }
+
+// docker-agent's harness image is one entry of images.harnessImages, as every
+// other adapter's is. The generated file names it there; a file naming the
+// older images.harnessDockerAgent still loads to the same image; naming both
+// is allowed only when they agree; and the entry is a published image, so it
+// carries no artifact.
+func TestTheDockerAgentHarnessIsAHarnessImagesEntry(t *testing.T) {
+	load := func(t *testing.T, text string) (*Policy, error) {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "policy.yaml")
+		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		p, _, err := Load(path)
+		return p, err
+	}
+	entry := "    docker-agent: { ref: " + DefaultHarnessImage + " }\n"
+	if !strings.Contains(defaultFileText, "  harnessImages:\n"+entry) {
+		t.Fatal("the generated file does not name docker-agent's image under harnessImages")
+	}
+	if strings.Contains(defaultFileText, "\n  harnessDockerAgent:") {
+		t.Fatal("the generated file still writes the older key")
+	}
+	p, err := load(t, defaultFileText)
+	if err != nil {
+		t.Fatalf("the generated file: %v", err)
+	}
+	if h, ok := p.Images.HarnessImageFor(DockerAgentAdapter); !ok || h.Ref != DefaultHarnessImage {
+		t.Fatalf("the generated file's docker-agent harness is %q (%v)", h.Ref, ok)
+	}
+	if _, ok := p.Images.HarnessImages[DockerAgentAdapter]; ok {
+		t.Fatal("Load left docker-agent in harnessImages")
+	}
+
+	other := "ghcr.io/example/docker-agent:9@" + testDigest
+	older := strings.Replace(defaultFileText, "  harnessImages:\n"+entry, "  harnessDockerAgent: "+other+"\n", 1)
+	p, err = load(t, older)
+	if err != nil {
+		t.Fatalf("a file naming the older key: %v", err)
+	}
+	if h, _ := p.Images.HarnessImageFor(DockerAgentAdapter); h.Ref != other {
+		t.Fatalf("the older key loads as %q, want %q", h.Ref, other)
+	}
+
+	both := strings.Replace(defaultFileText, "  harnessImages:\n", "  harnessDockerAgent: "+DefaultHarnessImage+"\n  harnessImages:\n", 1)
+	if _, err := load(t, both); err != nil {
+		t.Fatalf("both keys naming the same image: %v", err)
+	}
+	clash := strings.Replace(defaultFileText, "  harnessImages:\n", "  harnessDockerAgent: "+other+"\n  harnessImages:\n", 1)
+	if _, err := load(t, clash); err == nil || !strings.Contains(err.Error(), "name different images") {
+		t.Fatalf("both keys naming different images: %v", err)
+	}
+	artifact := strings.Replace(defaultFileText, entry, "    docker-agent: { ref: "+DefaultHarnessImage+", artifact: "+testDigest+" }\n", 1)
+	if _, err := load(t, artifact); err == nil || !strings.Contains(err.Error(), "published image") {
+		t.Fatalf("an artifact on docker-agent's entry: %v", err)
+	}
+}

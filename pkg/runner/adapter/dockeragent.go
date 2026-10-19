@@ -283,7 +283,7 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 	imageTag, _, _ := strings.Cut(in.HarnessImage, "@")
 	imageTag = strings.TrimPrefix(imageTag, "docker.io/")
 	if imageTag == "docker/docker-agent:1.128.0" || imageTag == "docker/docker-agent:v1.128.0" || imageTag == "ghcr.io/blaktron/agentry-docker-agent:1.128.0" {
-		return Result{}, &Refusal{Reason: fmt.Sprintf("images.harnessDockerAgent %q selects Docker agent 1.128.0, which cannot load config schema %s; update the custom image pin to a compatible image (current default: %s)", in.HarnessImage, HarnessConfigVersion, policy.DefaultHarnessImage)}
+		return Result{}, &Refusal{Reason: fmt.Sprintf("images.harnessImages.docker-agent (or the older images.harnessDockerAgent) %q selects Docker agent 1.128.0, which cannot load config schema %s; update the custom image pin to a compatible image (current default: %s)", in.HarnessImage, HarnessConfigVersion, policy.DefaultHarnessImage)}
 	}
 	provider, err := harnessProvider(in.Model)
 	if err != nil {
