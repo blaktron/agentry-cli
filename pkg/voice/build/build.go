@@ -34,9 +34,11 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
+	"github.com/blaktron/agentry-cli/pkg/runner/sources"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/pkg/voice"
 	"github.com/blaktron/agentry-cli/runnerimage"
+	"github.com/blaktron/agentry-cli/runnerimage/webscan"
 )
 
 // ensureSignatures is clamdb.Ensure, a variable so the tests use a
@@ -91,6 +93,17 @@ type Options struct {
 	// Current is the voice as it stands: required for Improve and Edit,
 	// refused for Create.
 	Current []byte
+	// URLs are web addresses of the person's writing (ParseURLs), fetched
+	// before the run and read by AI Review first: they take Review and
+	// Web, and are refused on a sandbox host.
+	URLs []*sources.Source
+	// Review is AI Review with the person's own key, which reads every
+	// fetched page's text before the run.
+	Review webscan.Scanner
+	// Web is the web tools' configuration with the person's own key, for a
+	// page whose text is drawn by scripts: the Voice Writer reads it with
+	// web_read, held to the addresses given (the build sets Given).
+	Web *engine.WebRun
 	// MaxTextBytes, when set, caps the samples' decoded text the Voice
 	// Writer is given (a hosted build's 1 MB): past it a sample is cut
 	// short or left out, and the task says which.
@@ -126,6 +139,8 @@ type Result struct {
 	// Samples are the samples it was given, by name; Skipped those no
 	// decoder could read; Cut those cut short or left out by MaxTextBytes.
 	Samples, Skipped, Cut []string
+	// Pages are the web addresses it was given, and what became of each.
+	Pages []*Page
 }
 
 // Build runs the Voice Writer for o.Job and returns what it wrote.
@@ -172,16 +187,27 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 		return nil, engine.Classify(engine.ExitGateway, err)
 	}
 
-	var inputs []string
+	var inputs, readPages []string
 	var docs []decode.Document
-	if len(o.Samples) > 0 {
-		given, err := stageSamples(o.Samples, samplesDir)
-		if err != nil {
-			return nil, engine.Classify(engine.ExitUsage, err)
+	if len(o.Samples) > 0 || len(o.URLs) > 0 {
+		given := map[string]string{}
+		if len(o.Samples) > 0 {
+			if given, err = stageSamples(o.Samples, samplesDir); err != nil {
+				return nil, engine.Classify(engine.ExitUsage, err)
+			}
 		}
 		img, err := decode.Ensure(ctx, d, runnerTag, o.Policy, ctxDir, logw)
 		if err != nil {
 			return nil, engine.Classify(engine.ExitGateway, err)
+		}
+		if len(o.URLs) > 0 {
+			fetcher, err := engine.BuildSourceFetcher(ctx, d, runnerTag, img.Tag, o.Policy.Docker.Limits, o.RunID, filepath.Join(work, "sources"), filepath.Join(o.OutDir, "receipts"), logw)
+			if err != nil {
+				return nil, err
+			}
+			if res.Pages, err = fetchPages(ctx, fetcher, o.URLs, samplesDir, given); err != nil {
+				return res, err
+			}
 		}
 		// Every sample is checked by ClamAV before it is decoded, and a
 		// finding refuses the build.
@@ -211,11 +237,30 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 		for _, doc := range all {
 			if doc.Read != "" {
 				docs = append(docs, doc)
-				res.Samples = append(res.Samples, doc.Name)
 			}
 		}
-		if len(docs) == 0 {
-			return res, engine.Classify(engine.ExitUsage, fmt.Errorf("no sample could be read: %s", strings.Join(res.Skipped, ", ")))
+		if len(res.Pages) > 0 {
+			// What a page brought in reaches the Voice Writer only after AI
+			// Review read it, or through web_read, which reads it there.
+			canRender := o.Policy.Docker.Runtime == "" || len(o.Policy.Docker.Resolvers) > 0
+			if docs, readPages, err = reviewPages(ctx, o.Review, dec, docs, res.Pages, inputsDir, canRender); err != nil {
+				return res, err
+			}
+			if staged, err = stagedInputs(inputsDir); err != nil {
+				return res, engine.Classify(engine.ExitCLI, err)
+			}
+		}
+		for _, doc := range docs {
+			res.Samples = append(res.Samples, doc.Name)
+		}
+		if len(docs) == 0 && len(readPages) == 0 {
+			unread := append([]string{}, res.Skipped...)
+			for _, p := range res.Pages {
+				if p.Withheld != "" {
+					unread = append(unread, p.URL+" ("+p.Withheld+")")
+				}
+			}
+			return res, engine.Classify(engine.ExitUsage, fmt.Errorf("no sample could be read: %s", strings.Join(unread, ", ")))
 		}
 		if o.MaxTextBytes > 0 {
 			if res.Cut, err = capText(docs, inputsDir, o.MaxTextBytes); err != nil {
@@ -235,11 +280,23 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 		inputs = append(inputs, dir)
 	}
 
+	// The web tools only for a page drawn by scripts, read with web_read
+	// and held to the addresses given; any other build runs without them.
+	writerPkg, web := localrun.VoiceWriter().WithoutWebTools(), (*engine.WebRun)(nil)
+	if len(readPages) > 0 {
+		w := *o.Web
+		w.Search, w.SearchKey, w.Given = "", "", readPages
+		writerPkg, web = localrun.VoiceWriter(), &w
+	}
+	var enforced map[string]string
+	if res.Decoded != nil {
+		enforced = pageLines(res.Pages, res.Decoded.Report.Files)
+	}
 	env, runErr := localrun.Run{
-		Builtin: localrun.VoiceWriter(), Home: o.Home, Policy: o.Policy, PolicySHA: o.PolicySHA,
-		PolicyFile: o.PolicyFile, Build: o.Build, Task: strings.NewReader(task(o, docs, res.Cut)),
-		Inputs: inputs, Decoded: res.Decoded, OutDir: o.OutDir, Budgets: o.Budgets,
-		RunID: o.RunID, Stderr: logw, OnUsage: o.OnUsage, Hosted: o.Hosted,
+		Builtin: writerPkg, Home: o.Home, Policy: o.Policy, PolicySHA: o.PolicySHA,
+		PolicyFile: o.PolicyFile, Build: o.Build, Task: strings.NewReader(task(o, docs, res.Cut) + pagesTask(res.Pages)),
+		Inputs: inputs, Decoded: res.Decoded, Enforced: enforced, OutDir: o.OutDir, Budgets: o.Budgets,
+		RunID: o.RunID, Stderr: logw, OnUsage: o.OnUsage, Web: web, Hosted: o.Hosted,
 	}.Execute(ctx, d)
 	res.Envelope = env
 
@@ -262,15 +319,15 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 func (o Options) check() error {
 	switch o.Job {
 	case Create:
-		if len(o.Samples) == 0 {
-			return errors.New("a voice is made from samples of your writing: name at least one with --file")
+		if len(o.Samples) == 0 && len(o.URLs) == 0 {
+			return errors.New("a voice is made from samples of your writing: name at least one with --file or --url")
 		}
 		if o.Current != nil {
 			return errors.New("a voice to create has no current voice; improve or edit the one there is")
 		}
 	case Improve:
-		if len(o.Samples) == 0 {
-			return errors.New("improving a voice takes more samples of your writing: name at least one with --file")
+		if len(o.Samples) == 0 && len(o.URLs) == 0 {
+			return errors.New("improving a voice takes more samples of your writing: name at least one with --file or --url")
 		}
 		if o.Current == nil {
 			return errors.New("there is no voice to improve; create one")
@@ -284,6 +341,16 @@ func (o Options) check() error {
 		}
 	default:
 		return fmt.Errorf("unknown Voice Writer job %q", o.Job)
+	}
+	if len(o.URLs) > 0 {
+		switch {
+		case len(o.URLs) > MaxURLs:
+			return fmt.Errorf("a voice takes at most %d web addresses", MaxURLs)
+		case o.Hosted:
+			return ErrHostedAddresses
+		case o.Review == nil || o.Web == nil || o.Web.JevKey == "":
+			return ErrNoReviewKey
+		}
 	}
 	if o.Current != nil {
 		if err := voice.Check(o.Current); err != nil {

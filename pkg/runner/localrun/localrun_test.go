@@ -42,15 +42,15 @@ func TestOnlyTheEmbeddedPackagesRunAsBuiltin(t *testing.T) {
 		for _, b := range Builtins() {
 			refs = append(refs, b.Ref())
 		}
-		if strings.Join(refs, ",") != "agentry/knowledge-creator@1.5.0,agentry/drafter@1.16.0,agentry/voice-writer@1.2.0,agentry/examiner@1.2.0" {
+		if strings.Join(refs, ",") != "agentry/knowledge-creator@1.5.0,agentry/drafter@1.16.0,agentry/voice-writer@1.3.0,agentry/examiner@1.2.0" {
 			t.Fatalf("built-ins %v", refs)
 		}
 	})
-	t.Run("the web tools are the Drafter's and the Creator's, registry_search the Drafter's alone", func(t *testing.T) {
+	t.Run("the web tools are the Drafter's, the Creator's and the Voice Writer's, registry_search the Drafter's alone", func(t *testing.T) {
 		// The Knowledge Creator searches and reads the web too, never the
-		// registry.
+		// registry; the Voice Writer only reads the pages it is given.
 		for _, b := range Builtins() {
-			wantWeb := b.Ref() == Drafter().Ref() || b.Ref() == KnowledgeCreator().Ref()
+			wantWeb := b.Ref() == Drafter().Ref() || b.Ref() == KnowledgeCreator().Ref() || b.Ref() == VoiceWriter().Ref()
 			if b.web != wantWeb {
 				t.Fatalf("%s: web tools %v", b.Ref(), b.web)
 			}
@@ -62,19 +62,24 @@ func TestOnlyTheEmbeddedPackagesRunAsBuiltin(t *testing.T) {
 			if b.searchedOnly != (b.Ref() == KnowledgeCreator().Ref()) {
 				t.Fatalf("%s: searched-only web_read %v", b.Ref(), b.searchedOnly)
 			}
+			// The Voice Writer's model reads a person's pages and nothing
+			// it chooses: its web_read opens only what it was given.
+			if b.givenOnly != (b.Ref() == VoiceWriter().Ref()) {
+				t.Fatalf("%s: given-only web_read %v", b.Ref(), b.givenOnly)
+			}
 		}
 		if (Builtin{}).web || (Builtin{}).registry {
 			t.Fatal("the zero Builtin carries the web tools")
 		}
 		// The Drafter's repair turn, and a build that does not search: the
 		// same package, the grant taken away, registry_search with it.
-		for _, b := range []Builtin{Drafter(), KnowledgeCreator()} {
-			if r := b.WithoutWebTools(); r.web || r.registry || r.searchedOnly || r.Ref() != b.Ref() || !b.web {
+		for _, b := range []Builtin{Drafter(), KnowledgeCreator(), VoiceWriter()} {
+			if r := b.WithoutWebTools(); r.web || r.registry || r.searchedOnly || r.givenOnly || r.render || r.Ref() != b.Ref() || !b.web {
 				t.Fatalf("%s without web tools: %+v", b.Ref(), r)
 			}
 		}
-		if VoiceWriter().WithoutWebTools() != VoiceWriter() {
-			t.Fatal("taking away a grant the Voice Writer never had changed it")
+		if Examiner().WithoutWebTools() != Examiner() {
+			t.Fatal("taking away a grant the Examiner never had changed it")
 		}
 	})
 	t.Run("the review grant is the Examiner's alone", func(t *testing.T) {
@@ -607,12 +612,12 @@ func TestABuiltinsBudgetsOnThisComputer(t *testing.T) {
 	}
 }
 
-// TestARenderIsTheCreatorsAndCanOnlyBeTakenAway: of the built-ins only the
-// Knowledge Creator renders pages, and WithoutWebTools and WithoutRender
-// take the render away.
-func TestARenderIsTheCreatorsAndCanOnlyBeTakenAway(t *testing.T) {
+// TestARenderIsTheCreatorsAndTheVoiceWritersAndCanOnlyBeTakenAway: of the
+// built-ins only the Knowledge Creator and the Voice Writer render pages,
+// and WithoutWebTools and WithoutRender take the render away.
+func TestARenderIsTheCreatorsAndTheVoiceWritersAndCanOnlyBeTakenAway(t *testing.T) {
 	for _, b := range Builtins() {
-		if b.render != (b.name == KnowledgeCreator().name) {
+		if b.render != (b.name == KnowledgeCreator().name || b.name == VoiceWriter().name) {
 			t.Errorf("%s renders %v", b.Ref(), b.render)
 		}
 	}

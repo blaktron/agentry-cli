@@ -9,6 +9,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blaktron/agentry-cli/pkg/drafter"
+	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
+	"github.com/blaktron/agentry-cli/pkg/runner/sources"
+	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
+	"github.com/blaktron/agentry-cli/runnerimage/webscan"
+
 	"github.com/spf13/cobra"
 
 	"github.com/blaktron/agentry-cli/internal/version"
@@ -30,7 +36,10 @@ var voiceNow = time.Now
 
 // voiceOpts are the Voice Writer commands' flags.
 type voiceOpts struct {
-	files      []string
+	files []string
+	// urls are web addresses of the person's writing, read by AI Review
+	// before the run with their own TypeSafe key.
+	urls       []string
 	brief      string
 	current    string
 	write      string
@@ -54,7 +63,8 @@ func newVoiceCmd() *cobra.Command {
 			"you turn that off (`agentry voice attach off`) or say so for one run (--no-voice). It governs how a run\n" +
 			"writes, never what it does.\n\n" +
 			"`create`, `improve` and `edit` run the built-in Voice Writer on this computer, against the model your runner\n" +
-			"policy names: it costs no credits, and nothing it reads or writes is reviewed. `set` keeps your own text.\n" +
+			"policy names: it costs no credits, and nothing it reads or writes is reviewed, but for a page from a web address (--url),\n" +
+			"which AI Review reads first with your own TypeSafe key. `set` keeps your own text.\n" +
 			"The voice is kept sealed on this computer, under a key the registry you are signed in to wraps for your\n" +
 			"account (signed out, this computer's key).\n\n" +
 			"Your Agentry account keeps a voice of its own, for runs In Agentry. The two are never synced on their own:\n" +
@@ -88,6 +98,7 @@ func voiceSampleFlags(cmd *cobra.Command, o *voiceOpts) {
 func voiceSamplesFlags(cmd *cobra.Command, o *voiceOpts, need string) {
 	f := cmd.Flags()
 	f.StringArrayVar(&o.files, "file", nil, "a sample of your writing, or a directory of them (repeatable; "+need+")")
+	f.StringArrayVar(&o.urls, "url", nil, "the https address of a page of your writing, such as a blog post (repeatable, at most 20): fetched first and read by AI Review with your own TypeSafe key, and a page drawn by scripts rendered in a headless browser")
 	f.Int64Var(&o.maxTextBytes, "max-text-bytes", 0, "cap the samples' decoded text the Voice Writer reads, in bytes (0 = no cap)")
 }
 
@@ -172,15 +183,16 @@ func voiceStore(cmd *cobra.Command) (*store.Store, error) { return knowledgeStor
 
 // voiceReport is the json report of a Voice Writer command.
 type voiceReport struct {
-	Job      string   `json:"job"`
-	SHA256   string   `json:"sha256"`
-	Bytes    int      `json:"bytes"`
-	Kept     bool     `json:"kept,omitempty"`
-	Written  string   `json:"written,omitempty"`
-	Samples  []string `json:"samples,omitempty"`
-	Skipped  []string `json:"skipped,omitempty"`
-	Cut      []string `json:"cut,omitempty"`
-	Receipts string   `json:"receipts,omitempty"`
+	Job      string        `json:"job"`
+	SHA256   string        `json:"sha256"`
+	Bytes    int           `json:"bytes"`
+	Kept     bool          `json:"kept,omitempty"`
+	Written  string        `json:"written,omitempty"`
+	Samples  []string      `json:"samples,omitempty"`
+	Skipped  []string      `json:"skipped,omitempty"`
+	Cut      []string      `json:"cut,omitempty"`
+	Pages    []*build.Page `json:"pages,omitempty"`
+	Receipts string        `json:"receipts,omitempty"`
 }
 
 // runVoiceBuild runs the Voice Writer for job and keeps what it wrote on
@@ -222,9 +234,21 @@ func runVoiceBuild(cmd *cobra.Command, job build.Job, o *voiceOpts) error {
 		return engine.Classify(engine.ExitPolicy, err)
 	}
 	o.stage = receipt.StagePrepare
+	urls, err := build.ParseURLs(o.urls)
+	if err != nil {
+		return engine.Classify(engine.ExitUsage, err)
+	}
 	model := strings.TrimSpace(pol.Model.Provider + " " + pol.Model.Name)
+	reviewed := "nothing it reads or writes is reviewed"
+	if len(urls) > 0 {
+		reviewed = "nothing it reads from files, or writes, is reviewed"
+	}
 	_, _ = fmt.Fprintf(errOut, "The Voice Writer runs on this machine against the model your runner policy names (%s).\n"+
-		"It costs no credits, and nothing it reads or writes is reviewed.\n", model)
+		"It costs no credits, and %s.\n", model, reviewed)
+	review, web, err := voicePageReview(pol, urls, errOut)
+	if err != nil {
+		return err
+	}
 
 	runID, err := engine.NewRunID()
 	if err != nil {
@@ -247,7 +271,7 @@ func runVoiceBuild(cmd *cobra.Command, job build.Job, o *voiceOpts) error {
 	}
 	budgets := o.over(localrun.VoiceWriter().LocalBudgets(pol.Budgets))
 	res, err := voiceBuild(cmd.Context(), knowledgeDocker(), build.Options{
-		Job: job, Samples: o.files, Brief: o.brief, Current: current, MaxTextBytes: o.maxTextBytes,
+		Job: job, Samples: o.files, URLs: urls, Review: review, Web: web, Brief: o.brief, Current: current, MaxTextBytes: o.maxTextBytes,
 		Home: home, Policy: pol, PolicySHA: polSHA, PolicyFile: &policyFile, Build: version.Build(),
 		OutDir: outDir, Budgets: &budgets, RunID: runID, Stderr: errOut, OnUsage: o.onUsage, Hosted: hostedProcess(),
 	})
@@ -256,7 +280,12 @@ func runVoiceBuild(cmd *cobra.Command, job build.Job, o *voiceOpts) error {
 		report.Receipts = filepath.Join(outDir, "receipts")
 	}
 	if res != nil {
-		report.Samples, report.Skipped, report.Cut = res.Samples, res.Skipped, res.Cut
+		report.Samples, report.Skipped, report.Cut, report.Pages = res.Samples, res.Skipped, res.Cut, res.Pages
+		for _, p := range res.Pages {
+			if p.Withheld != "" {
+				_, _ = fmt.Fprintf(errOut, "withheld: %s (%s)\n", p.URL, p.Withheld)
+			}
+		}
 		if len(res.Skipped) > 0 {
 			_, _ = fmt.Fprintf(errOut, "not read (no decoder reads them, or the decoder failed): %s\n", strings.Join(res.Skipped, ", "))
 		}
@@ -301,6 +330,34 @@ func runVoiceBuild(cmd *cobra.Command, job build.Job, o *voiceOpts) error {
 		sayVoiceOn(out)
 	}
 	return nil
+}
+
+// voicePageReview is AI Review with the person's own TypeSafe key, and the
+// web_read configuration for a page drawn by scripts, when the build was
+// given web addresses; nil for a build of files alone. Without the key the
+// addresses are refused, and the reason given: every page is read by AI
+// Review before the Voice Writer reads it.
+func voicePageReview(pol *policy.Policy, urls []*sources.Source, errOut io.Writer) (webscan.Scanner, *engine.WebRun, error) {
+	if len(urls) == 0 {
+		return nil, nil, nil
+	}
+	if hostedProcess() {
+		return nil, nil, engine.Classify(engine.ExitUsage, build.ErrHostedAddresses)
+	}
+	jev, err := drafter.JevKey(pol)
+	if err != nil {
+		return nil, nil, err
+	}
+	if jev == "" {
+		return nil, nil, engine.Classify(engine.ExitPolicy, fmt.Errorf("%w ($%s, or the keychain entry %s)", build.ErrNoReviewKey, pol.Judge.KeyEnv(), modelkey.Account(policy.JudgeKeyProvider)))
+	}
+	sc, err := drafter.CoreJev(jev)
+	if err != nil {
+		return nil, nil, engine.Classify(engine.ExitPolicy, err)
+	}
+	_, _ = fmt.Fprintln(errOut, "Each page from a web address is fetched first and read by AI Review with your Jev key; one it flags is withheld. A page drawn\n"+
+		"by scripts is rendered in a headless browser and read by AI Review there.")
+	return sc, &engine.WebRun{Scan: toolsrv.WebScanJev, JevKey: jev}, nil
 }
 
 // voiceAfterRun reports a failure after the Voice Writer ran.

@@ -17,11 +17,12 @@ package toolsrv
 // design, theme document version 2, and export_pdf's form; "11" the result
 // budget (Limits.MaxResultBytes and MaxResultLines); "12" grep and glob
 // (Search); "13" the deliverables ledger and write_report's and export_pdf's
-// deliverable and title; "14" the rendered web_read (Web.Render). The server
+// deliverable and title; "14" the rendered web_read (Web.Render); "15" the
+// given-only web_read (Web.GivenOnly and Web.Given). The server
 // refuses other versions, so a stale runner image meets a newer compiler
 // loudly — and the image tag derives from the CLI version, so rebuilds
 // happen on their own at upgrade time.
-const SpecVersion = "14"
+const SpecVersion = "15"
 
 // Spec is the compiled configuration the runner's capability compiler hands
 // to the tools server (written to plan/gateway/toolspec.json, bind-mounted

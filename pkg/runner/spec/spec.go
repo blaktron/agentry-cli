@@ -387,6 +387,9 @@ type CapSummary struct {
 	// WebSearchedOnly holds web_read to the addresses a web_search of the
 	// run returned: the Knowledge Creator's.
 	WebSearchedOnly bool `json:"webSearchedOnly,omitempty"`
+	// WebGivenOnly holds web_read to the addresses the person gave the run,
+	// with no web_search: the Voice Writer's, reading a person's own pages.
+	WebGivenOnly bool `json:"webGivenOnly,omitempty"`
 	// WebRender lets web_read render a page in a headless browser the
 	// engine runs once a page, behind a proxy that admits public sites
 	// alone, and read the text the page draws: the Knowledge Creator's.

@@ -12,8 +12,10 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/voice"
 	"github.com/blaktron/agentry-cli/pkg/voice/build"
+	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
 
 const (
@@ -221,5 +223,58 @@ func TestARunAttachesTheVoiceByItsFlag(t *testing.T) {
 				t.Fatalf("a linked --voice-file: %v", err)
 			}
 		}
+	})
+}
+
+// TestVoiceFromWebAddresses: --url reaches the build as url sources with AI
+// Review and a web configuration on the person's own TypeSafe key and no
+// search; without the key the addresses are refused, saying why, while
+// files alone need none; and an address that is not https is refused.
+func TestVoiceFromWebAddresses(t *testing.T) {
+	isolateEnv(t)
+	newInstall(t)
+	signOut(t)
+	vc := func(args ...string) (string, string, error) {
+		return runCLI(t, strings.NewReader(""), append([]string{"voice"}, args...)...)
+	}
+	sample := filepath.Join(t.TempDir(), "post.md")
+	if err := os.WriteFile(sample, []byte("Short. Direct.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Run("without the key", func(t *testing.T) {
+		t.Setenv(policy.DefaultJudgeKeyEnv, "")
+		fakeVoiceBuild(t, firstVoice)
+		_, _, err := vc("create", "--url", "https://blog.example.com/post", "--write", filepath.Join(t.TempDir(), "VOICE.md"))
+		wantClassified(t, err, engine.ExitPolicy)
+		if !errors.Is(err, build.ErrNoReviewKey) || !strings.Contains(err.Error(), policy.DefaultJudgeKeyEnv) {
+			t.Fatalf("err = %v", err)
+		}
+		got := fakeVoiceBuild(t, firstVoice)
+		if _, _, err := vc("create", "--file", sample, "--write", filepath.Join(t.TempDir(), "VOICE.md")); err != nil || got.Review != nil || got.Web != nil || len(got.URLs) != 0 {
+			t.Fatalf("files alone: %v %+v", err, got)
+		}
+	})
+	t.Run("with the key", func(t *testing.T) {
+		t.Setenv(policy.DefaultJudgeKeyEnv, testJev)
+		got := fakeVoiceBuild(t, firstVoice)
+		_, stderr, err := vc("create", "--file", sample, "--url", "https://blog.example.com/post", "--url", "https://blog.example.com/other", "--write", filepath.Join(t.TempDir(), "VOICE.md"))
+		if err != nil {
+			t.Fatalf("%v\n%s", err, stderr)
+		}
+		if len(got.URLs) != 2 || got.URLs[0].ID != "url-1" || got.URLs[1].URL != "https://blog.example.com/other" || got.Review == nil {
+			t.Fatalf("options %+v", got)
+		}
+		if w := got.Web; w == nil || w.Scan != toolsrv.WebScanJev || w.JevKey != testJev || w.Search != "" || w.SearchKey != "" {
+			t.Fatalf("web %+v", got.Web)
+		}
+		if !strings.Contains(stderr, "read by AI Review with your Jev key") || strings.Contains(stderr, testJev) {
+			t.Fatalf("stderr:\n%s", stderr)
+		}
+	})
+	t.Run("an address that is not https", func(t *testing.T) {
+		t.Setenv(policy.DefaultJudgeKeyEnv, testJev)
+		fakeVoiceBuild(t, firstVoice)
+		_, _, err := vc("create", "--url", "http://blog.example.com/post", "--write", filepath.Join(t.TempDir(), "VOICE.md"))
+		wantClassified(t, err, engine.ExitUsage)
 	})
 }

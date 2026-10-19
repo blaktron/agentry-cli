@@ -931,3 +931,40 @@ func TestASearchedOnlyRunReadsOnlyWhatItsSearchesReturned(t *testing.T) {
 		t.Fatalf("without the rule: %q", text)
 	}
 }
+
+// TestAGivenOnlyRunReadsOnlyTheAddressesItWasGiven: a run held to the
+// addresses the person gave reads those alone, fragment aside; any other
+// address, on the same site or not, is refused before it is fetched or
+// scanned; and web_read's description says so.
+func TestAGivenOnlyRunReadsOnlyTheAddressesItWasGiven(t *testing.T) {
+	hit := atomic.Int32{}
+	site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hit.Add(1)
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte("my post"))
+	}))
+	defer site.Close()
+	sc := &fakeScanner{verdict: passAll}
+	s, spec := webServer(t, sc, map[string]*httptest.Server{"site.test": site})
+	s.spec.Web.GivenOnly, s.spec.Web.Given = true, []string{"http://site.test/posts/one"}
+	spec.Web.GivenOnly = true
+	if d := newTestServer(t, spec).tools[ToolWebRead].description; !strings.Contains(d, "only an address the task names") {
+		t.Fatalf("web_read's description: %q", d)
+	}
+	if text, isErr := s.toolWebRead(rawArgs(t, map[string]any{"url": "http://site.test/posts/one#top"})); isErr || !strings.HasSuffix(text, "my post") {
+		t.Fatalf("a given address: %q", text)
+	}
+	for _, target := range []string{"http://site.test/posts/two", "http://site.test/posts/one?d=secret", "http://elsewhere.test/posts/one"} {
+		if text, isErr := s.toolWebRead(rawArgs(t, map[string]any{"url": target})); !isErr || !strings.Contains(text, failNotGiven) {
+			t.Fatalf("%s: %q", target, text)
+		}
+	}
+	if hit.Load() != 1 || len(sc.calls()) != 1 {
+		t.Fatalf("%d fetches and %d scans, want the given page's one each", hit.Load(), len(sc.calls()))
+	}
+	for _, e := range ledgerOf(t, spec) {
+		if strings.Contains(e.URL, "secret") {
+			t.Fatalf("the ledger keeps a refused address's query: %+v", e)
+		}
+	}
+}

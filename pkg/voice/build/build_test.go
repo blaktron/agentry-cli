@@ -157,6 +157,8 @@ func playDecode(t *testing.T) func(dockerx.RunSpec) {
 				rep.Files = append(rep.Files, runnerdecode.File{Path: rel, Family: "pdf", Tool: "pdftotext", Outcome: runnerdecode.OutcomeDecoded, Output: rel + ".txt", Bytes: 20})
 			case ".md":
 				rep.Files = append(rep.Files, runnerdecode.File{Path: rel, Family: "text", Outcome: runnerdecode.OutcomeText})
+			case ".html":
+				rep.Files = append(rep.Files, runnerdecode.File{Path: rel, Family: "text", Outcome: runnerdecode.OutcomeText, MIME: "text/html"})
 			default:
 				rep.Files = append(rep.Files, runnerdecode.File{Path: rel, Family: "unknown", Outcome: runnerdecode.OutcomeUndecodable, Reason: "not text"})
 			}
@@ -283,13 +285,15 @@ func TestCreateWritesAVoiceFromSamples(t *testing.T) {
 		t.Fatalf("samples %v skipped %v", res.Samples, res.Skipped)
 	}
 	env := res.Envelope
-	if env.Attestation.State != "builtin" || env.Ref != "agentry/voice-writer@1.2.0" {
+	if env.Attestation.State != "builtin" || env.Ref != "agentry/voice-writer@1.3.0" {
 		t.Fatalf("attestation %+v ref %s", env.Attestation, env.Ref)
 	}
-	for _, line := range []string{"voice", "knowledge"} {
-		if _, ok := env.CapabilitiesEnforced[line]; ok {
-			t.Fatalf("the Voice Writer's own run has a %s line", line)
-		}
+	if _, ok := env.CapabilitiesEnforced["voice"]; ok {
+		t.Fatal("the Voice Writer's own run has a voice line")
+	}
+	// Its one pack is the style guide it ships.
+	if line := env.CapabilitiesEnforced["knowledge"]; !strings.HasPrefix(line, "style-guide shipped with the release") || strings.Count(line, "shipped with the release") != 1 {
+		t.Fatalf("the Voice Writer's knowledge line %q", line)
 	}
 	if !strings.Contains(env.CapabilitiesEnforced["decode"], "1 decoded, 1 read as text, 1 not decoded (blob.bin)") {
 		t.Fatalf("decode line %q", env.CapabilitiesEnforced["decode"])

@@ -235,3 +235,44 @@ func TestTheWebToolsUnderARuntimeNeedTheHostsResolvers(t *testing.T) {
 		t.Fatalf("a run without the web tools: %+v %v", plan.Docker, err)
 	}
 }
+
+// TestTheGivenOnlyReadIsCompiledApart: the given-only web_read (the Voice
+// Writer's) is never granted without the web tools nor beside the
+// searched-only one; it is compiled into the tools spec and said in the
+// enforcement and the System Prompt, which name no web_search for it.
+func TestTheGivenOnlyReadIsCompiledApart(t *testing.T) {
+	compileGiven := func(web, searched bool) (*spec.Plan, error) {
+		t.Helper()
+		m, err := manifest.Parse([]byte(webTextAgent))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ws := t.TempDir()
+		if err := os.WriteFile(filepath.Join(ws, "AGENT.md"), []byte("Write.\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return Compile(Inputs{Manifest: m, Digest: "sha256:x", Source: "builtin", Web: web, WebGivenOnly: true, WebSearchedOnly: searched, WorkspaceDir: ws,
+			Policy: policy.Default(), PolicySHA: "sha", RunnerImage: "agentry-runner:test"}, filepath.Join(t.TempDir(), "plan"))
+	}
+	var refusal *PolicyRefusal
+	if _, err := compileGiven(false, false); !errors.As(err, &refusal) || !strings.Contains(refusal.Reason, "never granted without them") {
+		t.Fatalf("the given-only web_read without the web tools: %v", err)
+	}
+	if _, err := compileGiven(true, true); !errors.As(err, &refusal) || !strings.Contains(refusal.Reason, "never both") {
+		t.Fatalf("both web_read rules: %v", err)
+	}
+	given, err := compileGiven(true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !given.Capabilities.WebGivenOnly || given.Capabilities.WebSearchedOnly {
+		t.Fatalf("given-only: %+v", given.Capabilities)
+	}
+	if e := given.Enforcement["web"]; !strings.Contains(e, toolsrv.ToolWebRead+" alone, opening only an address the person gave the run") || strings.Contains(e, toolsrv.ToolWebSearch) {
+		t.Fatalf("enforcement %q", e)
+	}
+	prompt := systemPrompt(promptFacts{caps: given.Capabilities})
+	if !strings.Contains(prompt, "web_read opens only an address your task names") || !strings.Contains(prompt, "You have no web_search") || strings.Contains(prompt, "Search only for") {
+		t.Fatalf("the System Prompt:\n%s", prompt)
+	}
+}

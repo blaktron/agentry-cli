@@ -135,6 +135,9 @@ type Builtin struct {
 	// returned: the Knowledge Creator's, whose model reads documents no
 	// one scanned.
 	searchedOnly bool
+	// givenOnly holds web_read to the addresses the person gave the run,
+	// with no search: the Voice Writer's, reading a person's own pages.
+	givenOnly bool
 	// render lets web_read render a thin page in a one-shot headless
 	// browser the engine runs: the Knowledge Creator's. Only with web.
 	render bool
@@ -163,9 +166,11 @@ func Drafter() Builtin {
 }
 
 // VoiceWriter is the Voice Writer (pkg/voice/writer), the third built-in
-// package: no web tools.
+// package, granted web_read alone, held to the addresses the person gave
+// and rendering a thin page: a build given no address to read runs it
+// WithoutWebTools.
 func VoiceWriter() Builtin {
-	return Builtin{namespace: writer.Namespace, name: writer.Name, version: writer.Version, fsys: writer.FS(),
+	return Builtin{namespace: writer.Namespace, name: writer.Name, version: writer.Version, fsys: writer.FS(), web: true, givenOnly: true, render: true,
 		localTimeoutFloor: writer.LocalTimeoutFloorSeconds}
 }
 
@@ -180,7 +185,7 @@ func Examiner() Builtin {
 // turn, which reads nothing from the web, and a knowledge build that does not
 // search the web. A grant can only be taken away here, never given.
 func (b Builtin) WithoutWebTools() Builtin {
-	b.web, b.registry, b.searchedOnly, b.render = false, false, false, false
+	b.web, b.registry, b.searchedOnly, b.givenOnly, b.render = false, false, false, false, false
 	return b
 }
 
@@ -343,6 +348,9 @@ type PlanInputs struct {
 	// WebSearchedOnly holds web_read to the run's search results
 	// (compile.Inputs.WebSearchedOnly), likewise.
 	WebSearchedOnly bool
+	// WebGivenOnly holds web_read to the addresses the person gave
+	// (compile.Inputs.WebGivenOnly), likewise.
+	WebGivenOnly bool
 	// WebRender lets web_read render a thin page (compile.Inputs.WebRender).
 	WebRender bool
 	// Review grants the review grant (compile.Inputs.Review), likewise.
@@ -410,6 +418,7 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 			plan.Capabilities.WebTools == in.Web &&
 			plan.Capabilities.RegistrySearch == in.RegistrySearch &&
 			plan.Capabilities.WebSearchedOnly == in.WebSearchedOnly &&
+			plan.Capabilities.WebGivenOnly == in.WebGivenOnly &&
 			plan.Capabilities.WebRender == in.WebRender &&
 			plan.Capabilities.ReviewTools == in.Review &&
 			reflect.DeepEqual(plan.MCPServers, in.Servers) {
@@ -452,7 +461,7 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 		MCPServers:      in.Servers,
 		Web:             in.Web,
 		RegistrySearch:  in.RegistrySearch,
-		WebSearchedOnly: in.WebSearchedOnly, WebRender: in.WebRender,
+		WebSearchedOnly: in.WebSearchedOnly, WebGivenOnly: in.WebGivenOnly, WebRender: in.WebRender,
 		Review:       in.Review,
 		IntegrityKey: key,
 	}, planDir)
@@ -614,7 +623,7 @@ func (r Run) Execute(ctx context.Context, d dockerx.Client) (*receipt.Envelope, 
 		Home: r.Home, Manifest: m, Meta: meta, InstallDir: installDir, WorkspaceDir: workspace,
 		Policy: r.Policy, PolicySHA: r.PolicySHA, Adapter: adapterName, Mode: manifest.ModeAutonomous,
 		CompiledBy: r.Build, Web: r.Builtin.web, RegistrySearch: r.Builtin.registry,
-		WebSearchedOnly: r.Builtin.searchedOnly, WebRender: r.Builtin.render, Review: r.Builtin.review, Log: logw,
+		WebSearchedOnly: r.Builtin.searchedOnly, WebGivenOnly: r.Builtin.givenOnly, WebRender: r.Builtin.render, Review: r.Builtin.review, Log: logw,
 	})
 	if err != nil {
 		return nil, err
