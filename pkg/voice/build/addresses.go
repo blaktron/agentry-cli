@@ -30,7 +30,8 @@ import (
 // post, a newsletter issue, an article. Each address is fetched before the
 // run by the step a run's url input source takes (engine.SourceFetcher),
 // then decoded with the other samples. AI Review reads the text of every
-// fetched page before the run, with the person's own key, and a page it
+// fetched page before the run (the person's own key on this computer, the
+// registry with the job's credential on a sandbox host), and a page it
 // flags or cannot scan is withheld and named. A page whose text is drawn by
 // scripts (thin HTML) is not staged: its address goes to the Voice Writer's
 // web_read, which opens only the addresses given, renders such a page in a
@@ -39,7 +40,9 @@ import (
 // MaxURLs bounds the addresses one build takes.
 const MaxURLs = 20
 
-// ErrNoReviewKey refuses addresses without the person's own TypeSafe key:
+// ErrNoReviewKey refuses addresses with nothing to review them: the
+// person's own TypeSafe key on this computer, the job's credential on a
+// sandbox host:
 // AI Review reads every page before the Voice Writer does.
 var ErrNoReviewKey = errors.New("a sample from a web address is read by AI Review first, which takes your own TypeSafe key, and none was found; give the samples as files, or set the key")
 

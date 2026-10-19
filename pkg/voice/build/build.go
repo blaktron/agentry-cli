@@ -97,10 +97,12 @@ type Options struct {
 	// before the run and read by AI Review first: they take Review and
 	// Web, and are refused on a sandbox host.
 	URLs []*sources.Source
-	// Review is AI Review with the person's own key, which reads every
+	// Review is AI Review (the person's own key on this computer, the
+	// registry's route with the job's credential on a sandbox host), which
+	// reads every
 	// fetched page's text before the run.
 	Review webscan.Scanner
-	// Web is the web tools' configuration with the person's own key, for a
+	// Web is the web tools' configuration with the same scanner, for a
 	// page whose text is drawn by scripts: the Voice Writer reads it with
 	// web_read, held to the addresses given (the build sets Given).
 	Web *engine.WebRun

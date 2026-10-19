@@ -528,3 +528,41 @@ func TestAHostedBuildRendersOnlyWhenItsHostSaysSo(t *testing.T) {
 		})
 	}
 }
+
+// TestAHostedBuildsSourceTokenReachesTheFetchStepAlone: on a sandbox host
+// as on a person's computer, the token a source was given reaches the
+// fetch step's stdin and nothing else the build runs or leaves.
+func TestAHostedBuildsSourceTokenReachesTheFetchStepAlone(t *testing.T) {
+	fx := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})
+	srcs, _ := ParseSources([]string{"https://github.com/o/private"}, nil)
+	srcs[0].Token, srcs[0].TokenFrom = plantedToken, sources.TokenFromBuildFlag
+	fx.opts.Sources, fx.opts.Hosted, fx.opts.MaxBytes = srcs, true, 10<<20
+	fetch := playFetch(t, fx.fake, "repo-github.com-o-private", map[string]string{"README.md": "# r\n"}, nil)
+	fx.fake.Foreground["-agent"].Before = writes(fx.opts.OutDir, map[string]string{"wiki/topics/r.md": page("R", "repo-github.com-o-private/README.md")})
+	if _, err := Build(context.Background(), fx.fake, fx.opts); err != nil {
+		t.Fatal(err)
+	}
+	if fetch.GotStdin != plantedToken+"\n" {
+		t.Fatalf("the token did not reach the fetch step on stdin: %q", fetch.GotStdin)
+	}
+	for _, c := range fx.fake.Calls {
+		if strings.Contains(strings.Join(c.Run.Argv, " "), plantedToken) {
+			t.Errorf("%s carries the token in its argv", c.Run.Name)
+		}
+		for k, v := range c.Run.Env {
+			if strings.Contains(v, plantedToken) {
+				t.Errorf("%s carries the token in its environment (%s)", c.Run.Name, k)
+			}
+		}
+	}
+	for _, dir := range []string{fx.opts.OutDir, fx.opts.PackDir} {
+		_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+			if err == nil && d.Type().IsRegular() {
+				if b, _ := os.ReadFile(path); strings.Contains(string(b), plantedToken) {
+					t.Errorf("%s holds the token", path)
+				}
+			}
+			return nil
+		})
+	}
+}

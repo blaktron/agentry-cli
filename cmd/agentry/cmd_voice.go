@@ -37,7 +37,7 @@ var voiceNow = time.Now
 type voiceOpts struct {
 	files []string
 	// urls are web addresses of the person's writing, read by AI Review
-	// before the run with their own TypeSafe key.
+	// before the run: with their own TypeSafe key on this computer.
 	urls []string
 	// render lets a sandbox host's job render a page drawn by scripts.
 	render     bool
@@ -99,7 +99,7 @@ func voiceSampleFlags(cmd *cobra.Command, o *voiceOpts) {
 func voiceSamplesFlags(cmd *cobra.Command, o *voiceOpts, need string) {
 	f := cmd.Flags()
 	f.StringArrayVar(&o.files, "file", nil, "a sample of your writing, or a directory of them (repeatable; "+need+")")
-	f.StringArrayVar(&o.urls, "url", nil, "the https address of a page of your writing, such as a blog post (repeatable, at most 20): fetched first and read by AI Review with your own TypeSafe key, and a page drawn by scripts rendered in a headless browser")
+	f.StringArrayVar(&o.urls, "url", nil, "the https address of a page of your writing, such as a blog post (repeatable, at most 20): fetched first and read by AI Review (with your own TypeSafe key on this computer), and a page drawn by scripts rendered in a headless browser")
 	f.Int64Var(&o.maxTextBytes, "max-text-bytes", 0, "cap the samples' decoded text the Voice Writer reads, in bytes (0 = no cap)")
 	f.BoolVar(&o.render, "render", false, "on a sandbox host, render a page drawn by scripts (the host dispatched this job as a browser job); on this computer pages are rendered without it")
 }
