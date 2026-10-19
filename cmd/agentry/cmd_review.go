@@ -245,7 +245,7 @@ func printReview(w io.Writer, path string, r *examiner.Report) {
 		say("             %-8s %s %s — %s", strings.ToUpper(f.Severity), f.Scanner, at(f.File, f.Line), safeTerminalText(f.Title, 200))
 	}
 	for _, s := range r.RegistryRules.Servers {
-		say("             server %s: %s", safeTerminalText(s.Ref, 200), s.Status)
+		say("             server %s: %s", safeTerminalText(s.Ref, 200), safeTerminalText(s.Words(), 400))
 	}
 
 	if a := r.AIReview; a.Ran {

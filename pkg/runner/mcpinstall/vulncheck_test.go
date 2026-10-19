@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/blaktron/agentry/pkg/manifest"
 )
@@ -66,10 +67,51 @@ func TestCheckVulnerabilities(t *testing.T) {
 		t.Fatalf("502: %+v", got[4])
 	}
 	s := Summary(got)
-	for _, want := range []string{"npm:minimist@1.2.5 vulnerable (critical: GHSA-xvch-5gv4-984h, GHSA-low)", "server-github@2026.1.2 safe", "never-seen@1.0.0 unknown", "broken@0.1 unreachable (registry answered 502)"} {
+	for _, want := range []string{
+		"npm:minimist@1.2.5 known advisories (critical: GHSA-xvch-5gv4-984h, GHSA-low)",
+		"server-github@2026.1.2 no known advisories (checked 2026-09-06)",
+		"never-seen@1.0.0 not checked: the registry has not scanned this version",
+		"broken@0.1 not checked: no answer from the registry (registry answered 502)",
+	} {
 		if !contains(s, want) {
 			t.Fatalf("summary %q lacks %q", s, want)
 		}
+	}
+	if contains(s, "safe") {
+		t.Fatalf("summary %q shows the registry's word safe", s)
+	}
+}
+
+// A person never reads a status word: "safe" is no known advisories at the
+// registry's check date, and every other word has plain words too. The
+// JSON keeps the wire value.
+func TestVulnStatusWords(t *testing.T) {
+	at := time.Date(2026, 9, 25, 23, 30, 0, 0, time.FixedZone("x", -3*3600))
+	cases := []struct {
+		s    VulnStatus
+		want string
+	}{
+		{VulnStatus{Status: "safe", CheckedAt: at}, "no known advisories (checked 2026-09-26)"},
+		{VulnStatus{Status: "safe"}, "no known advisories"},
+		{VulnStatus{Status: "vulnerable", Advisories: []VulnAdvisory{{ID: "GHSA-1", Severity: "high"}}}, "known advisories"},
+		{VulnStatus{Status: "error", Advisories: []VulnAdvisory{{ID: "GHSA-1", Severity: "high"}}}, "the registry's last lookup failed; it last knew advisories"},
+		{VulnStatus{Status: "error"}, "the registry's last lookup failed; it knows no advisories"},
+		{VulnStatus{Status: "unknown"}, "not checked: the registry has not scanned this version"},
+		{VulnStatus{Status: "unreachable", Err: "dial tcp: refused"}, "not checked: no answer from the registry"},
+		{VulnStatus{Status: StatusRemote}, "not looked up: a remote server is its vendor's running service, not a package version"},
+		{VulnStatus{Status: "fine\x1b[2J"}, `an answer this CLI does not know ("fine\x1b[2J")`},
+	}
+	for _, c := range cases {
+		if got := c.s.Words(); got != c.want {
+			t.Errorf("%q: Words() = %q, want %q", c.s.Status, got, c.want)
+		}
+		if c.s.Status != "safe" && contains(c.s.Words(), "safe") {
+			t.Errorf("%q: Words() = %q says safe", c.s.Status, c.s.Words())
+		}
+	}
+	b, err := json.Marshal(VulnStatus{Ref: "npm:x@1", Status: "safe", CheckedAt: at})
+	if err != nil || !contains(string(b), `"status":"safe"`) {
+		t.Fatalf("the JSON keeps the wire value: %s %v", b, err)
 	}
 }
 
@@ -134,8 +176,8 @@ func TestVulnRefusalReadsTheGatesRating(t *testing.T) {
 	if !legacy.Refuses() || legacy.gateRated() || legacy.Describe(legacy.Refusing()) != "a known high vulnerability (GHSA-old)" {
 		t.Fatalf("a registry without the rating keeps today's rule: %q", legacy.Describe(legacy.Refusing()))
 	}
-	if s := Summary([]VulnStatus{sdk1251, legacy}); !contains(s, "sdk@1.25.1 vulnerable (gate-rated high: GHSA-71 [advisory high, CVSS 7.1; the gate rates it medium], GHSA-87 [advisory high, CVSS 8.7])") ||
-		!contains(s, "npm:y@1 vulnerable (high: GHSA-old)") {
+	if s := Summary([]VulnStatus{sdk1251, legacy}); !contains(s, "sdk@1.25.1 known advisories (gate-rated high: GHSA-71 [advisory high, CVSS 7.1; the gate rates it medium], GHSA-87 [advisory high, CVSS 8.7])") ||
+		!contains(s, "npm:y@1 known advisories (high: GHSA-old)") {
 		t.Fatalf("summary: %q", s)
 	}
 }
@@ -199,7 +241,7 @@ func TestRemoteServerIsNotLookedUp(t *testing.T) {
 	if len(got) != 1 || got[0].Status != StatusRemote || got[0].Ref != "https://mcp.deepwiki.com/mcp" || got[0].Refuses() {
 		t.Fatalf("status = %+v", got)
 	}
-	if s := Summary(got); !strings.Contains(s, "https://mcp.deepwiki.com/mcp remote (not looked up") {
+	if s := Summary(got); !strings.Contains(s, "https://mcp.deepwiki.com/mcp not looked up: a remote server") {
 		t.Fatalf("summary = %q", s)
 	}
 }
