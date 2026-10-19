@@ -20,19 +20,26 @@ import (
 	"io/fs"
 )
 
-//go:embed agent.yaml INSTRUCTION.md output.schema.json README.md LICENSE
+//go:embed agent.yaml INSTRUCTION.md output.schema.json README.md LICENSE knowledge
 var files embed.FS
 
 // FS is the package's tree: agent.yaml, INSTRUCTION.md, output.schema.json,
-// README.md and LICENSE at its root (a public release carries the last two,
-// V7).
+// README.md and LICENSE at its root (a public release carries the last two),
+// and under knowledge/ the pack it ships (GuideName).
 func FS() fs.FS { return files }
+
+// GuideName is the knowledge pack the Examiner ships in its own release, its
+// review guide: what every run has, the contract's lines, what to look for
+// and what the registry checks. The runner gives it to every run of the
+// package (localrun's withShippedPacks). Its manifest.json, index and runner
+// tools are generated (TestTheReviewGuideIsCurrent).
+const GuideName = "review-guide"
 
 // The package's identity, as its manifest declares it.
 const (
 	Namespace = "agentry"
 	Name      = "examiner"
-	Version   = "1.1.0"
+	Version   = "1.2.0"
 )
 
 // LocalTimeoutFloorSeconds is the least a review on this computer is given:

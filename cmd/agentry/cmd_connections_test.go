@@ -7,6 +7,7 @@ package main
 // file.
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -343,6 +344,55 @@ func TestGoogleGetsAgentrysOwnSteps(t *testing.T) {
 	}
 }
 
+// TestTheOwnClientPromptShowsThePublishersHelp: where a vendor needs the
+// person's own client, the publisher's help for the server comes after
+// Agentry's steps, indented and with nothing a terminal may act on; with
+// no help, nothing is added.
+func TestTheOwnClientPromptShowsThePublishersHelp(t *testing.T) {
+	isolateEnv(t)
+	server := "https://mcp.example/mcp"
+	for name, tc := range map[string]struct {
+		help string
+		want []string
+		not  []string
+	}{
+		"with help": {
+			help: "Example → Settings → **Developers** → New app.\n\tPick the desktop kind.\x1b[2J\u202e",
+			want: []string{"The publisher's help for " + server + ":", "  Example → Settings → **Developers** → New app.", "  \tPick the desktop kind."},
+			not:  []string{"\x1b", "\u202e"},
+		},
+		"without help": {not: []string{"The publisher's help"}},
+		"blank help":   {help: " \n\t", not: []string{"The publisher's help"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var stderr bytes.Buffer
+			clients := connection.OpenClients(t.TempDir(), nil)
+			in := bufio.NewReader(strings.NewReader("own-id\nown-secret\n"))
+			if err := askOwnClient(testCmd(&stderr), in, clients, "https://auth.example", server, tc.help); err != nil {
+				t.Fatal(err)
+			}
+			out := stderr.String()
+			steps := strings.Index(out, "Make one in the vendor's developer settings")
+			if steps < 0 {
+				t.Fatalf("Agentry's steps are missing:\n%s", out)
+			}
+			for _, w := range tc.want {
+				if i := strings.Index(out, w); i < steps {
+					t.Errorf("%q is missing or comes before Agentry's steps:\n%s", w, out)
+				}
+			}
+			for _, n := range tc.not {
+				if strings.Contains(out, n) {
+					t.Errorf("the prompt carries %q:\n%s", n, out)
+				}
+			}
+			if strings.Count(out, "The publisher's help") > 1 {
+				t.Errorf("the help is shown more than once:\n%s", out)
+			}
+		})
+	}
+}
+
 // TestAHostedRunTakesItsTokensFromAFile: --connections-file hands the run
 // the access tokens a host was given, keyed as the engine keys them, renews
 // nothing and opens no store; the receipt's line says so.
@@ -480,7 +530,7 @@ func TestConnectingAgainWithTheSameClientRevokesNothing(t *testing.T) {
 	store, clients := connection.Open(home, nil), connection.OpenClients(home, nil)
 	k := connection.Key{Ref: meta.Ref, Digest: meta.Digest, Server: v.ServerURL()}
 	var stderr bytes.Buffer
-	if _, err := consentFor(testCmd(&stderr), store, clients, vendorHTTP(), k, m.Capabilities.MCPServers[0]); err != nil {
+	if _, err := consentFor(testCmd(&stderr), store, clients, vendorHTTP(), k, m.Capabilities.MCPServers[0], ""); err != nil {
 		t.Fatalf("connect again: %v\n%s", err, stderr.String())
 	}
 	if len(v.Revoked) != 0 {
@@ -513,7 +563,7 @@ func TestConnectingAgainWithAnotherClientRevokesTheOld(t *testing.T) {
 	}
 	k := connection.Key{Ref: meta.Ref, Digest: meta.Digest, Server: v.ServerURL()}
 	var stderr bytes.Buffer
-	if _, err := consentFor(testCmd(&stderr), connection.Open(home, nil), clients, vendorHTTP(), k, m.Capabilities.MCPServers[0]); err != nil {
+	if _, err := consentFor(testCmd(&stderr), connection.Open(home, nil), clients, vendorHTTP(), k, m.Capabilities.MCPServers[0], ""); err != nil {
 		t.Fatalf("%v\n%s", err, stderr.String())
 	}
 	if len(v.Revoked) != 1 || !strings.Contains(stderr.String(), "the previous connection was removed (revocation: revoked)") {

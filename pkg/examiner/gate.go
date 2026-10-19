@@ -4,11 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/blaktron/agentry/pkg/gatecases"
 	"github.com/blaktron/agentry/pkg/judge"
-	"github.com/blaktron/agentry/pkg/manifest"
 	"github.com/blaktron/agentry/pkg/ruleset"
 )
 
@@ -172,84 +170,6 @@ func parseReviewMode(raw json.RawMessage) (always bool, when []string, err error
 		return false, nil, fmt.Errorf("requireHumanReview %s is not a form the gate reads", t)
 	}
 	return false, obj.WhenCapabilities, nil
-}
-
-// manifestCaps is the capabilities block of the manifest's canonical JSON,
-// decoded as the core's gate input decodes it.
-type manifestCaps struct {
-	Network struct {
-		Egress manifest.Egress `json:"egress"`
-	} `json:"network"`
-	Filesystem struct {
-		Read  json.RawMessage `json:"read"`
-		Write json.RawMessage `json:"write"`
-	} `json:"filesystem"`
-	Exec    json.RawMessage `json:"exec"`
-	Secrets []string        `json:"secrets"`
-}
-
-func readCaps(manifestJSON []byte) (manifestCaps, bool) {
-	var m struct {
-		Capabilities *manifestCaps `json:"capabilities"`
-	}
-	if err := json.Unmarshal(manifestJSON, &m); err != nil || m.Capabilities == nil {
-		return manifestCaps{}, false
-	}
-	return *m.Capabilities, true
-}
-
-// DeclaredCapabilities are the capability tokens the gate reads from a
-// manifest's canonical JSON: network (a host other than none), fs-read,
-// fs-write, exec and env (a declared secret).
-func DeclaredCapabilities(manifestJSON []byte) []string {
-	c, ok := readCaps(manifestJSON)
-	if !ok {
-		return nil
-	}
-	var out []string
-	for _, h := range c.Network.Egress.Hosts {
-		if h != "none" && h != "" {
-			out = append(out, "network")
-			break
-		}
-	}
-	if notNone(c.Filesystem.Read) {
-		out = append(out, "fs-read")
-	}
-	if notNone(c.Filesystem.Write) {
-		out = append(out, "fs-write")
-	}
-	if notNone(c.Exec) {
-		out = append(out, "exec")
-	}
-	if len(c.Secrets) > 0 {
-		out = append(out, "env")
-	}
-	return out
-}
-
-// notNone says a filesystem or exec value declares more than "none": the
-// string "none" or "" does not, an object or a list does.
-func notNone(raw json.RawMessage) bool {
-	if len(raw) == 0 {
-		return false
-	}
-	var s string
-	if json.Unmarshal(raw, &s) == nil {
-		return s != "none" && s != ""
-	}
-	return true
-}
-
-// WildcardEgress says the manifest's canonical JSON declares "*" egress.
-func WildcardEgress(manifestJSON []byte) bool {
-	c, _ := readCaps(manifestJSON)
-	for _, h := range c.Network.Egress.Hosts {
-		if strings.ToLower(h) == "*" {
-			return true
-		}
-	}
-	return false
 }
 
 // AIReviewFinding is one rubric question's answer as stage S5 rates it,

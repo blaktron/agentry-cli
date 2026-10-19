@@ -292,7 +292,7 @@ func TestWebReadIsGETOnlyWithNoCredential(t *testing.T) {
 		}
 	}
 	// The tool's schema offers the URL alone.
-	props := webReadSchema()["properties"].(map[string]any)
+	props := webReadSchemaFor(false)["properties"].(map[string]any)
 	if len(props) != 1 || props["url"] == nil {
 		t.Fatalf("web_read schema: %v", props)
 	}

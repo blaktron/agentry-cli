@@ -42,7 +42,7 @@ func TestOnlyTheEmbeddedPackagesRunAsBuiltin(t *testing.T) {
 		for _, b := range Builtins() {
 			refs = append(refs, b.Ref())
 		}
-		if strings.Join(refs, ",") != "agentry/knowledge-creator@1.3.0,agentry/drafter@1.16.0,agentry/voice-writer@1.2.0,agentry/examiner@1.1.0" {
+		if strings.Join(refs, ",") != "agentry/knowledge-creator@1.4.0,agentry/drafter@1.16.0,agentry/voice-writer@1.2.0,agentry/examiner@1.2.0" {
 			t.Fatalf("built-ins %v", refs)
 		}
 	})
@@ -124,7 +124,7 @@ func TestOnlyTheEmbeddedPackagesRunAsBuiltin(t *testing.T) {
 		if a.State != trust.StateBuiltin || a.Verified || a.Build != "agentry 9.9.9 (test)" || a.Consent != "" || meta.Source != "builtin" {
 			t.Fatalf("meta %+v", meta)
 		}
-		if meta.Ref != "agentry/knowledge-creator@1.3.0" || !strings.HasPrefix(dir, installdir.AgentDir(home, "agentry", "knowledge-creator")) {
+		if meta.Ref != "agentry/knowledge-creator@1.4.0" || !strings.HasPrefix(dir, installdir.AgentDir(home, "agentry", "knowledge-creator")) {
 			t.Fatalf("ref %s dir %s", meta.Ref, dir)
 		}
 		want, err := os.ReadFile(filepath.Join(dir, "workspace", "INSTRUCTION.md"))
@@ -433,7 +433,7 @@ func TestRunBuiltinRunsTheCreator(t *testing.T) {
 	if env.Status != "ok" || env.Attestation.State != trust.StateBuiltin || env.Attestation.Build != "agentry 9.9.9 (test)" || env.Attestation.Verified {
 		t.Fatalf("envelope %s attestation %+v", env.Status, env.Attestation)
 	}
-	if env.Ref != "agentry/knowledge-creator@1.3.0" {
+	if env.Ref != "agentry/knowledge-creator@1.4.0" {
 		t.Fatalf("ref %s", env.Ref)
 	}
 	if got := env.CapabilitiesEnforced["decode"]; got != dec.Line() {
@@ -604,5 +604,22 @@ func TestABuiltinsBudgetsOnThisComputer(t *testing.T) {
 		if got := tc.builtin.LocalBudgets(tc.policy); got != tc.want {
 			t.Errorf("%s: %+v, want %+v", tc.name, got, tc.want)
 		}
+	}
+}
+
+// TestARenderIsTheCreatorsAndCanOnlyBeTakenAway: of the built-ins only the
+// Knowledge Creator renders pages, and WithoutWebTools and WithoutRender
+// take the render away.
+func TestARenderIsTheCreatorsAndCanOnlyBeTakenAway(t *testing.T) {
+	for _, b := range Builtins() {
+		if b.render != (b.name == KnowledgeCreator().name) {
+			t.Errorf("%s renders %v", b.Ref(), b.render)
+		}
+	}
+	if KnowledgeCreator().WithoutRender().render || KnowledgeCreator().WithoutWebTools().render {
+		t.Fatal("a render survived its removal")
+	}
+	if c := KnowledgeCreator().WithoutRender(); !c.web || !c.searchedOnly {
+		t.Fatal("WithoutRender took the web tools away")
 	}
 }

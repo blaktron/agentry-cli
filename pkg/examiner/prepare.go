@@ -202,6 +202,10 @@ func Prepare(ctx context.Context, dir string, o Options) (*Prepared, error) {
 		}
 	}
 	p.Findings = append(p.Findings, st.unread...)
+	// The scripts stage's check of the instruction against the runner tools
+	// each contract line grants: the core's own table, so a tool the
+	// instruction calls for without its line is the registry's finding here.
+	p.Findings = append(p.Findings, ungrantedToolFindings(m, pkgDir)...)
 
 	p.DeclaredServers = len(m.Capabilities.MCPServers)
 	if servers := m.Capabilities.MCPServers; len(servers) > 0 && o.Registry != "" {

@@ -421,6 +421,9 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	if err := prepareBrowser(ctx, d, p, rd, td, env, secrets); err != nil {
 		return fail(env, redact, err)
 	}
+	if err := prepareRender(ctx, d, p, rd, td, runID, env); err != nil {
+		return fail(env, redact, err)
+	}
 	// The optional secrets it goes without, before any replacer is built:
 	// the System Prompt names them (spec.PHSecretsAbsent), and so does the
 	// receipt.
@@ -535,6 +538,11 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	// The browse proxy's decisions and what the browser saved.
 	collectBrowseProxyLog(keep, d, rd, env)
 	copyBrowserOut(rd, p.Stderr)
+	// The page renderer's count and its proxy's decisions, the agent having
+	// ended.
+	if rd.render != nil {
+		rd.render.close(keep, d, rd, env)
+	}
 	writeMeta(rd.receiptsDir, runID, p, start, taskSent)
 	env.CapabilitiesEnforced["daemon"] = daemonLine(rd)
 	// The agent has ended, so the web ledger is complete.

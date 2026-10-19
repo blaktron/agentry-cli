@@ -63,7 +63,9 @@ type runDirs struct {
 	targets []*targethost.Host
 	// browser is the run's browser once readied (browser.go): the
 	// browse proxy's name and address, its sites.
-	browser     *browserRun
+	browser *browserRun
+	// render is the run's page renderer, once started (render.go).
+	render      *renderRun
 	outDir      string
 	receiptsDir string
 	// webLedger is receipts/web.ndjson for a run with the web tools: made

@@ -279,8 +279,13 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 	// The web tools for this build alone: a build that does not search the
 	// web runs the Creator without them, so its plan grants none.
 	creator := localrun.KnowledgeCreator()
-	if o.Web == nil {
+	switch {
+	case o.Web == nil:
 		creator = creator.WithoutWebTools()
+	case o.Hosted:
+		// A sandbox host does not render pages: a render is a browser of its
+		// own beside the build, which the host's slots do not count.
+		creator = creator.WithoutRender()
 	}
 	env, runErr := localrun.Run{
 		Builtin: creator, Home: o.Home, Policy: o.Policy, PolicySHA: o.PolicySHA,

@@ -77,3 +77,7 @@ agentry/drafter@1.16.0 sha256:a2a6de86a86271c3acb70653bf3b47ffcb5669b10ff3a99cfb
 agentry/voice-writer@1.2.0 sha256:879883ee64f7b9ced07402bb0d252a30779661c2af9b2e3d92ae45ec1665b655
 # 1.1.0: the Examiner keeps a file checklist in the scratch folder; grep and glob search that folder only, never its inputs.
 agentry/examiner@1.1.0 sha256:53516ae2d632fcd09ab815a3a147bcdfeed620561b7ac63a13e18315456edb25
+# 1.2.0: the Examiner reads a manifest as the registry does (the core's derivations of the gate's inputs, a browser on any public site held as "*" egress), checks the instruction against the runner tools each contract line grants, covers every contract line, and ships its review guide.
+agentry/examiner@1.2.0 sha256:8739b4d7ad47f113c4b0d4e032c2c26b85c2e76e11b244d351dabcd1087f7dd2
+# 1.4.0: the Knowledge Creator reads a page drawn by scripts as a headless browser renders it (web_read renders a thin page, or one asked for, still only an address its searches returned and read by AI Review first), and ships its pack-writing guide.
+agentry/knowledge-creator@1.4.0 sha256:87cb35cc9f68f2edfc610d23e537e15ddbbe512762859973c33af2ee6a7b47dc

@@ -41,8 +41,15 @@ QuickAgent:
   reads for secrets, for scripts that reach past the declared capabilities,
   and for text aimed at the examination. Like every run it has a scratch
   folder for its notes, private to the run and deleted with it; its `grep`
-  and `glob` search that folder only, never the QuickAgent's files, which
-  reach its model only after AI Review.
+  and `glob` search that folder and its review guide, never the QuickAgent's
+  files, which reach its model only after AI Review.
+- **Its review guide.** The release ships a knowledge pack,
+  `knowledge/review-guide`: what every run has without a contract line, each
+  line of the contract and what reaching past it looks like, what to look
+  for in each file, and which of the registry's checks run before the
+  Examiner starts. The application attaches it to every review, apart from
+  the QuickAgent under review. Its list of runner tools is generated from
+  the registry's own table.
 - **After the run**, the application writes one report, `report.json`. Its
   findings come in three kinds, each labelled: the registry's rules, AI
   Review (read from the run's own record, not from what the model said),

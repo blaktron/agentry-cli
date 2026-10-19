@@ -7,7 +7,7 @@ export PATH := /opt/homebrew/bin:$(PATH)
 GO ?= go
 LDFLAGS := -X github.com/blaktron/agentry-cli/internal/version.Version=$(shell git describe --tags --always --dirty 2>/dev/null || echo 0.0.0-dev)
 
-.PHONY: build test lint check clean accept-runner dist workflows-check
+.PHONY: build test lint check clean accept-runner dist workflows-check notices notices-check
 
 build:
 	$(GO) build -ldflags '$(LDFLAGS)' -o bin/agentry ./cmd/agentry
@@ -22,7 +22,18 @@ lint:
 	$(GO) vet ./...
 	@if command -v golangci-lint >/dev/null 2>&1; then golangci-lint run ./...; else echo "golangci-lint not installed; skipped"; fi
 
-check: lint test build
+## notices: regenerate THIRD_PARTY_NOTICES, the licence text of every
+## third-party module in the binary, from the module graph.
+notices:
+	GO='$(GO)' scripts/notices/generate.sh
+
+## notices-check: fails when the committed THIRD_PARTY_NOTICES is stale.
+## Reads the Go module cache; modules only some systems compile are
+## downloaded into it on first use.
+notices-check:
+	GO='$(GO)' scripts/notices/check.sh
+
+check: lint test build notices-check
 
 ## workflows-check: no job a fork's pull request can start runs on a
 ## self-hosted runner without the fork guard, and the check's own tests pass.
