@@ -29,11 +29,19 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
+	"github.com/blaktron/agentry-cli/pkg/runner/setup"
+	"github.com/blaktron/agentry-cli/pkg/runner/sources"
+	"github.com/blaktron/agentry/pkg/manifest"
 )
 
 // knowledgeBuildOpts are create's and add's shared flags.
 type knowledgeBuildOpts struct {
 	files []string
+	// repos and urls are the git repositories (URL, with @ref for one
+	// other than the default branch) and the files at web addresses to
+	// ingest beside the files; sourceTokens their access tokens, each
+	// HOST=ENV_NAME.
+	repos, urls, sourceTokens []string
 	// brief and briefFile are the brief, what the pack should cover and for
 	// whom: a build takes documents, a brief, or both.
 	brief, briefFile string
@@ -111,6 +119,9 @@ func newKnowledgeCmd() *cobra.Command {
 func knowledgeBuildFlags(cmd *cobra.Command, o *knowledgeBuildOpts) {
 	f := cmd.Flags()
 	f.StringArrayVar(&o.files, "file", nil, "a document or a directory of documents to ingest (repeatable; documents, a brief, or both)")
+	f.StringArrayVar(&o.repos, "repo", nil, "a git repository to ingest, by its https address, with @BRANCH, @TAG or @COMMIT for a ref other than the default branch (repeatable, at most 10): its text files are read as documents under repo-<host>-<path>/, within 2,000 files a pack holds; nothing inside .git is fetched")
+	f.StringArrayVar(&o.urls, "url", nil, "a file at a web address to ingest, fetched with one https GET and read as a document under its own name (repeatable, at most 20; a page drawn by scripts is read by a build with --web instead)")
+	f.StringArrayVar(&o.sourceTokens, "source-token", nil, "the access token for a repository's or an address's host: HOST=ENV_NAME, the name of an environment variable holding it (repeatable; otherwise the key saved for the host in the system keychain, then a prompt on a terminal, then none)")
 	f.StringVar(&o.brief, "brief", "", "what the pack should cover and for whom, at most 8 KiB, kept in the pack as sources/brief.md")
 	f.StringVar(&o.briefFile, "brief-file", "", "read the brief from this file instead")
 	f.BoolVar(&o.web, "web", false, "let the Creator search the web, AI Review reading every result first (the default for a new pack with no --file; it can raise what a build costs)")
@@ -215,6 +226,10 @@ func runKnowledgeBuild(cmd *cobra.Command, dir, name string, o *knowledgeBuildOp
 	if err != nil {
 		return nil, "", err
 	}
+	srcs, err := o.readSources(cmd)
+	if err != nil {
+		return nil, "", err
+	}
 	searchWeb, err := o.searchWeb(name != "")
 	if err != nil {
 		return nil, "", err
@@ -239,7 +254,7 @@ func runKnowledgeBuild(cmd *cobra.Command, dir, name string, o *knowledgeBuildOp
 	_, _ = fmt.Fprintf(errOut, "The Knowledge Creator runs on this machine against the model your runner policy names (%s).\n"+
 		"It costs no credits, and neither the documents nor the pack it makes are scanned: the pack is recorded\n"+
 		"as \"not scanned\" until a registry scans it.\n", model)
-	if len(o.files) == 0 {
+	if len(o.files) == 0 && len(srcs) == 0 {
 		_, _ = fmt.Fprintln(errOut, "Warning: no documents. Specific documents make the best knowledge. Without them the Creator researches\n"+
 			"the web and its own knowledge, which can be wrong or out of date.")
 	}
@@ -270,7 +285,7 @@ func runKnowledgeBuild(cmd *cobra.Command, dir, name string, o *knowledgeBuildOp
 	budgets := o.over(localrun.KnowledgeCreator().LocalBudgets(pol.Budgets))
 
 	res, err := creatorBuild(cmd.Context(), knowledgeDocker(), build.Options{
-		PackDir: dir, Name: name, Documents: o.files, Brief: brief, Web: web,
+		PackDir: dir, Name: name, Documents: o.files, Brief: brief, Sources: srcs, Web: web,
 		Home: home, Policy: pol, PolicySHA: polSHA, PolicyFile: &policyFile,
 		Build: version.Build(), Now: time.Now(), OutDir: outDir, Budgets: &budgets,
 		RunID: runID, Stderr: errOut, OnUsage: o.onUsage, MaxBytes: limit, Hosted: o.hosted || hostedProcess(),
@@ -309,13 +324,49 @@ func (o *knowledgeBuildOpts) readBrief() (string, error) {
 		}
 		brief = string(b)
 	}
-	if err := build.CheckBrief(o.files, brief); err != nil {
+	if err := build.CheckBrief(o.inputs(), brief); err != nil {
 		if errors.Is(err, build.ErrNothingToBuild) {
-			err = fmt.Errorf("%w: name documents with --file PATH, or say what the pack should cover with --brief", err)
+			err = fmt.Errorf("%w: name documents with --file PATH, a repository with --repo URL or a file's address with --url URL, or say what the pack should cover with --brief", err)
 		}
 		return "", engine.Classify(engine.ExitUsage, err)
 	}
 	return strings.TrimSpace(brief), nil
+}
+
+// inputs are everything the build was given to read: the files, the
+// repositories and the addresses.
+func (o *knowledgeBuildOpts) inputs() []string {
+	return append(append(append([]string{}, o.files...), o.repos...), o.urls...)
+}
+
+// readSources parses --repo and --url and gives each its access token: the
+// variable --source-token names for its host, the key saved for the host,
+// a prompt on a terminal, or none.
+func (o *knowledgeBuildOpts) readSources(cmd *cobra.Command) ([]*sources.Source, error) {
+	flags, err := sources.ParseTokenFlagsFor(sources.BuildTokenFlag, o.sourceTokens)
+	if err != nil {
+		return nil, engine.Classify(engine.ExitUsage, err)
+	}
+	srcs, err := build.ParseSources(o.repos, o.urls)
+	if err != nil {
+		return nil, engine.Classify(engine.ExitUsage, err)
+	}
+	if len(srcs) == 0 {
+		if len(flags) > 0 {
+			return nil, engine.Classify(engine.ExitUsage, errors.New(sources.BuildTokenFlag+" given but the build was given no --repo or --url"))
+		}
+		return nil, nil
+	}
+	var ask sources.TokenAsker
+	if stdinIsTTY(cmd.InOrStdin()) {
+		ask = &setup.TTYPrompter{In: cmd.InOrStdin(), Err: cmd.ErrOrStderr()}
+	}
+	if err := sources.ResolveBuildTokens(srcs, flags, os.Getenv, ask, func(msg string) {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", msg)
+	}); err != nil {
+		return nil, engine.Classify(engine.ExitUsage, err)
+	}
+	return srcs, nil
 }
 
 // searchWeb is the Search the web choice: --web or --no-web, else on for a
@@ -520,16 +571,17 @@ func privateCreatorOut(cmd *cobra.Command, o *knowledgeBuildOpts, scratch string
 // knowledgeBuildReport is create's and add's --json shape: dir for a
 // plain pack directory, kept for a pack kept in the store.
 type knowledgeBuildReport struct {
-	Dir       string              `json:"dir,omitempty"`
-	Kept      *knowledgeEntryJSON `json:"kept,omitempty"`
-	Manifest  knowledge.Manifest  `json:"manifest"`
-	Documents []string            `json:"documents"`
-	Skipped   []string            `json:"skipped,omitempty"`
-	Written   []string            `json:"written"`
-	Dropped   []knowledgeDropJSON `json:"dropped,omitempty"`
-	Receipts  string              `json:"receipts,omitempty"`
-	Decode    string              `json:"decode,omitempty"`
-	Stopped   string              `json:"stopped,omitempty"`
+	Dir       string                `json:"dir,omitempty"`
+	Kept      *knowledgeEntryJSON   `json:"kept,omitempty"`
+	Manifest  knowledge.Manifest    `json:"manifest"`
+	Documents []string              `json:"documents"`
+	Sources   []build.FetchedSource `json:"sources,omitempty"`
+	Skipped   []string              `json:"skipped,omitempty"`
+	Written   []string              `json:"written"`
+	Dropped   []knowledgeDropJSON   `json:"dropped,omitempty"`
+	Receipts  string                `json:"receipts,omitempty"`
+	Decode    string                `json:"decode,omitempty"`
+	Stopped   string                `json:"stopped,omitempty"`
 }
 
 type knowledgeDropJSON struct {
@@ -541,7 +593,7 @@ type knowledgeDropJSON struct {
 // buildReport is what a build made or got to, as --json and the json
 // form's knowledge block state it.
 func buildReport(dir, outDir string, res *build.Result, kept *store.Entry) knowledgeBuildReport {
-	r := knowledgeBuildReport{Dir: dir, Documents: res.Documents, Skipped: res.Skipped}
+	r := knowledgeBuildReport{Dir: dir, Documents: res.Documents, Sources: res.Sources, Skipped: res.Skipped}
 	if res.Applied != nil {
 		r.Manifest, r.Written = res.Applied.Manifest, res.Applied.Written
 		for _, d := range res.Applied.Dropped {
@@ -588,6 +640,9 @@ func printKnowledgeBuild(ctx context.Context, out, errOut io.Writer, dir, outDir
 	_, _ = fmt.Fprintf(out, "knowledge pack %s: %s, %d bytes, %s, %s — %s\n",
 		m.Name, knowledge.CountPages(m.Pages), m.Bytes, m.SHA256, m.Scan.Describe(), where)
 	_, _ = fmt.Fprintf(out, "  documents: %s\n", strings.Join(res.Documents, ", "))
+	for _, s := range res.Sources {
+		_, _ = fmt.Fprintf(out, "  fetched: %s\n", sourceWords(s))
+	}
 	if len(res.Skipped) > 0 {
 		_, _ = fmt.Fprintf(out, "  not read: %s (no decoder reads them, or the decoder failed)\n", strings.Join(res.Skipped, ", "))
 	}
@@ -604,6 +659,19 @@ func printKnowledgeBuild(ctx context.Context, out, errOut io.Writer, dir, outDir
 		_, _ = fmt.Fprintln(out, "  receipts: removed with the Creator run's output, which held the pages in the clear (--out DIR keeps them)")
 	}
 	_, _ = fmt.Fprintf(errOut, "attach it to a run with: agentry run <ref> --knowledge %s\n", attach)
+}
+
+// sourceWords says what a build fetched: a repository with its ref and
+// commit, or a file, each with the document the pack cites it under.
+func sourceWords(s build.FetchedSource) string {
+	if s.Kind == string(manifest.IntakeURL) {
+		return fmt.Sprintf("file %s as %s, %d bytes", s.URL, s.Document, s.Bytes)
+	}
+	at := "its default branch"
+	if s.Ref != "" {
+		at = s.Ref
+	}
+	return fmt.Sprintf("repository %s at %s, commit %s, %d files as %s", s.URL, at, s.Commit, s.Files, s.Document)
 }
 
 // keptPackNamed says whether arg is a pack name the store keeps: a name,

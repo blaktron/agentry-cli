@@ -1,8 +1,8 @@
 {
   "schema": "knowledge/v1",
   "name": "pack-writing-guide",
-  "pages": 5,
-  "bytes": 11990,
-  "sha256": "sha256:dd242da5289f1616025cc83c870ef90e3be290aa9f12717c758eaa082a7626f8",
+  "pages": 6,
+  "bytes": 15173,
+  "sha256": "sha256:776fa0828b9ccd0691c53532989a38a8b43d619be51e13d825f5a5ac1c642119",
   "scan": "not scanned"
 }

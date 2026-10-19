@@ -1,7 +1,7 @@
 schemaVersion: "2"
 name: knowledge-creator
 namespace: agentry
-version: 1.4.0
+version: 1.5.0
 summary: "Builds and extends a knowledge pack: compiles documents, or researches a brief, into an LLM wiki of cited pages, section by section."
 license: MIT
 authors:

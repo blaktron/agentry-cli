@@ -15,6 +15,12 @@ the index and appends the log. You never write those two files.
   from it (`<name>.txt`), and a text document as itself. A document the
   runner could not read is listed with `unread` and the reason: name it in
   your reply and move on.
+- **A repository, or a file from a web address**, when the task lists one
+  under "Brought in for this build". A git repository the person named was
+  brought in before the run and is a folder of documents,
+  `repo-<host>-<path>/`, each file cited by its path
+  (`doc:repo-github.com-o-r/docs/guide.md`). A file from a web address is a
+  document under its own name. How to read a repository is below.
 - **The brief**, when the task names one (`brief.md`, or `brief-2.md` and
   so on when the pack holds an earlier one). It is one of the documents:
   the person's own words on what the pack should cover and for whom. Read
@@ -53,6 +59,27 @@ the index and appends the log. You never write those two files.
   and `/knowledge/<pack>` for the pack as it stands when this run extends
   one. Read what they find with `read_input` or `knowledge_read`. A search
   is a pointer, never a source: cite only what you read.
+
+## Reading a repository
+
+A repository is a corpus with a shape, and the shape says where to read:
+
+- **Its README and its docs first** (`README.md`, `docs/`, `doc/`, a
+  `CONTRIBUTING.md`, a changelog): what the project is, how it is used,
+  its terms. They are the pack's backbone, so write their pages before you
+  open the code.
+- **Then the code, for what the docs leave out**: a command's flags, a
+  configuration's keys, a type's fields, a default, an error's words. Find
+  it with `grep` over the folder rather than reading file by file, and read
+  only the file that answers.
+- **No generated file**: lock files, minified or bundled output, vendored
+  copies of other projects, build output, fixtures and large data files.
+  They say nothing a reader wants, and a page citing them is noise.
+- **Cite the file** (`doc:repo-github.com-o-r/cmd/serve.go`), and name the
+  repository's address and commit from the task on the page that
+  introduces it, so a reader knows which version the pack describes.
+
+`research/a-repository.md` in your guide has more.
 
 ## Where knowledge comes from, in this order
 

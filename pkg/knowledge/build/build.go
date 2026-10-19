@@ -47,6 +47,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
+	"github.com/blaktron/agentry-cli/pkg/runner/sources"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/runnerimage"
 )
@@ -72,6 +73,11 @@ type Options struct {
 	// brief-N.md when the pack holds one already) and read as a document.
 	// A build takes documents, a brief, or both.
 	Brief string
+	// Sources are the repositories and the files at web addresses to
+	// ingest beside the documents (ParseSources), each with its token
+	// resolved (sources.ResolveBuildTokens). They are fetched before the
+	// decode and kept in the pack as documents are.
+	Sources []*sources.Source
 	// Web, when set, grants the Creator web_search and web_read for this
 	// build, every result read by AI Review first (engine.WebRun); nil
 	// runs it without them.
@@ -113,6 +119,9 @@ type Result struct {
 	// Documents are the documents the Creator was given, by the name the
 	// pack cites them under; Skipped are those no decoder could read.
 	Documents, Skipped []string
+	// Sources are the repositories and files the build fetched, each with
+	// what it resolved to; nil when the build was given none.
+	Sources []FetchedSource
 	// RunErr is the Creator run's own failure when the build applied what
 	// it wrote before it stopped (a budget, a timeout); the pack is valid,
 	// and a further build with the same documents continues it.
@@ -154,7 +163,7 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 	}
 	res := &Result{}
 	o.Brief = strings.TrimSpace(o.Brief)
-	if err := CheckBrief(o.Documents, o.Brief); err != nil {
+	if err := CheckBrief(o.Documents, o.Brief); err != nil && (len(o.Sources) == 0 || !errors.Is(err, ErrNothingToBuild)) {
 		return nil, engine.Classify(engine.ExitUsage, err)
 	}
 	var current *knowledge.Pack
@@ -209,15 +218,9 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 	if limit <= 0 {
 		limit = knowledge.MaxBytes
 	}
-	given, err := stageDocuments(o.Documents, docsDir, limit)
+	given, staged, err := stageDocuments(o.Documents, docsDir, limit)
 	if err != nil {
 		return nil, engine.Classify(engine.ExitUsage, err)
-	}
-	brief := ""
-	if o.Brief != "" {
-		if brief, err = stageBrief(o.Brief, o.PackDir, current, given, docsDir); err != nil {
-			return nil, engine.Classify(engine.ExitCLI, err)
-		}
 	}
 
 	runnerTag := o.Policy.RunnerImageTag(runnerimage.ContentVersion())
@@ -229,12 +232,36 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 	if err != nil {
 		return nil, engine.Classify(engine.ExitGateway, err)
 	}
+	// The sources are fetched next, each by the step a run's own takes,
+	// into the documents beside the files given, within the pack's cap.
+	var repoIDs []string
+	if len(o.Sources) > 0 {
+		fetcher, err := fetcherFor(ctx, d, o, runnerTag, img, work, logw)
+		if err != nil {
+			return nil, err
+		}
+		held := 0
+		if current != nil {
+			held = heldFiles(o.PackDir)
+		}
+		if res.Sources, repoIDs, err = fetchSources(ctx, d, o, fetcher, docsDir, given, held, staged, limit); err != nil {
+			return nil, err
+		}
+	}
+	brief := ""
+	if o.Brief != "" {
+		if brief, err = stageBrief(o.Brief, o.PackDir, current, given, docsDir); err != nil {
+			return nil, engine.Classify(engine.ExitCLI, err)
+		}
+	}
 	// Every document is checked by ClamAV before it is decoded, and a
 	// finding refuses the build.
 	img.Signatures = ensureSignatures(ctx, o.Home, o.Policy.Images.ClamAVSignaturesRef(), logw)
 	// A pack keeps every document as given, an archive's members too, so
-	// the decode copies out each member it read.
-	dec, err := decode.RunWith(ctx, d, img, docsDir, decodedDir, o.Policy.Docker.Limits.WithDefaults(), decode.Options{KeepMembers: true}, logw)
+	// the decode copies out each member it read. A repository is held to
+	// the source rule, as a run holds one: its own file cap, and only its
+	// executable and binary risky files sent to the malware check.
+	dec, err := decode.RunWith(ctx, d, img, docsDir, decodedDir, o.Policy.Docker.Limits.WithDefaults(), decode.Options{KeepMembers: true, Sources: repoIDs}, logw)
 	if err != nil {
 		return nil, engine.Classify(engine.ExitGateway, err)
 	}
@@ -258,6 +285,15 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 	// keeps is held to the pack's cap again, before anything runs.
 	if err := keptWithin(dec, docs, limit); err != nil {
 		return nil, engine.Classify(engine.ExitUsage, err)
+	}
+	if len(o.Sources) > 0 {
+		held := 0
+		if current != nil {
+			held = heldFiles(o.PackDir)
+		}
+		if err := keptFilesWithin(held, docs); err != nil {
+			return nil, engine.Classify(engine.ExitUsage, err)
+		}
 	}
 	res.Skipped = decode.Skipped(docs)
 	var readable []decode.Document
@@ -289,8 +325,8 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 	}
 	env, runErr := localrun.Run{
 		Builtin: creator, Home: o.Home, Policy: o.Policy, PolicySHA: o.PolicySHA,
-		PolicyFile: o.PolicyFile, Build: o.Build, Task: strings.NewReader(task(name, current, docs, brief, o.Web != nil, o.Now)),
-		Inputs: inputs, Knowledge: attached, Decoded: dec, OutDir: o.OutDir, Budgets: o.Budgets,
+		PolicyFile: o.PolicyFile, Build: o.Build, Task: strings.NewReader(task(name, current, docs, brief, o.Web != nil, o.Now) + sourcesTask(res.Sources)),
+		Inputs: inputs, Knowledge: attached, Decoded: dec, Enforced: sourceLines(res.Sources, dec), OutDir: o.OutDir, Budgets: o.Budgets,
 		RunID: o.RunID, Stderr: logw, OnUsage: o.OnUsage, Web: o.Web, Hosted: o.Hosted,
 	}.Execute(ctx, d)
 	res.Envelope = env
@@ -325,8 +361,9 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 // stageDocuments copies the documents under dst by names a citation can
 // carry — letters, digits, '.', '-' and '_', anything else a '-' — so
 // "Q3 report.pdf" is cited as doc:Q3-report.pdf; a directory keeps its
-// layout below its own name. Two documents of one name are refused.
-func stageDocuments(paths []string, dst string, limit int64) (map[string]string, error) {
+// layout below its own name. Two documents of one name are refused. It
+// answers the documents by name and the bytes they come to.
+func stageDocuments(paths []string, dst string, limit int64) (map[string]string, int64, error) {
 	out := map[string]string{}
 	// The documents together are held to the pack's cap before anything
 	// runs: they are kept in the pack beside its pages.
@@ -350,24 +387,24 @@ func stageDocuments(paths []string, dst string, limit int64) (map[string]string,
 	for _, p := range paths {
 		abs, err := filepath.Abs(p)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		fi, err := os.Stat(abs)
 		if err != nil {
-			return nil, fmt.Errorf("document %s: %w", p, err)
+			return nil, 0, fmt.Errorf("document %s: %w", p, err)
 		}
 		base := safeName(filepath.Base(abs))
 		if !fi.IsDir() {
 			if err := tooLarge(p, fi.Size()); err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 		}
 		if !fi.IsDir() {
 			if err := add(base, p); err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 			if err := copyFile(abs, filepath.Join(dst, base)); err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 			continue
 		}
@@ -395,13 +432,13 @@ func stageDocuments(paths []string, dst string, limit int64) (map[string]string,
 			return copyFile(q, filepath.Join(dst, filepath.FromSlash(rel)))
 		})
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 	}
 	if len(out) == 0 && len(paths) > 0 {
-		return nil, fmt.Errorf("no document was found in %s", strings.Join(paths, ", "))
+		return nil, 0, fmt.Errorf("no document was found in %s", strings.Join(paths, ", "))
 	}
-	return out, nil
+	return out, total, nil
 }
 
 // stageBrief writes the brief into dst as a text document and adds it to

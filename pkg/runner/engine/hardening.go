@@ -71,7 +71,11 @@ func enforcedAtStart(p Params) map[string]string {
 	e = withKnowledge(e, p.Knowledge, p.Plan.Capabilities.ExecCommands)
 	e = withVoice(e, p.Voice, p.Plan.Capabilities.ExecCommands)
 	e = withReportTheme(e, p.Plan.Tools, p.ReportTheme)
-	return withDecoded(e, p.Decoded)
+	e = withDecoded(e, p.Decoded)
+	for k, v := range p.Enforced {
+		e[k] = v
+	}
+	return e
 }
 
 // launchedLine is the containers line's part for the tool and MCP server

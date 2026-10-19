@@ -53,9 +53,18 @@ one data category, `files`. When Agentry builds a pack:
   network whose one way out admits public sites alone; the model never
   drives that browser, and AI Review reads the rendered text before the
   model does.
+- **A repository or an address**, when the person names one, is fetched
+  before the run by the step a run's input source takes: in the files
+  container, on a network of its own behind a proxy to that host alone, an
+  access token on the step's input and nowhere else. A git repository's
+  files are staged as documents under `repo-<host>-<path>/` (nothing
+  inside `.git` is fetched), a file at an address under its own name;
+  both are decoded as a run's are, counted against the pack's cap and kept
+  in the pack beside the pages. The Knowledge Creator never fetches
+  anything itself.
 - **Its guide.** The release ships a knowledge pack,
   `knowledge/pack-writing-guide`: how a page reads, citing, building from
-  many documents, and researching the web. The application attaches it to
+  many documents, reading a repository, and researching the web. The application attaches it to
   every build, beside the pack a build extends.
 - **After the run**, the application checks every page and drops any that
   break the pack's rules, regenerates the index and appends the log. A pack

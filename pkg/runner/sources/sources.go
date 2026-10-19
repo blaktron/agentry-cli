@@ -86,6 +86,28 @@ type Kind struct {
 	AsUpload bool
 }
 
+// CapsFor is the kind's caps for a local run or, hosted, for a run on a
+// sandbox host shared by every account.
+func (k Kind) CapsFor(hosted bool) Caps {
+	if hosted {
+		return k.HostedCaps
+	}
+	return k.Caps
+}
+
+// Within is the caps held to a caller's own bounds: a knowledge build's
+// pack cap, say, which a source may not pass however large the kind
+// allows. A bound of zero or less leaves that cap as it is.
+func (c Caps) Within(files int, bytes int64) Caps {
+	if files > 0 && files < c.Files {
+		c.Files = files
+	}
+	if bytes > 0 && bytes < c.Bytes {
+		c.Bytes = bytes
+	}
+	return c
+}
+
 // Source is one source a run fetches: a question's answer, parsed.
 type Source struct {
 	// ID is the intake question's id, which names the folder.
@@ -421,7 +443,7 @@ func Line(s Source, f Fetched, checks string) string {
 func tokenWords(s Source) string {
 	switch s.TokenFrom {
 	case TokenFromFlag:
-		return ", with an access token from the environment variable named by --intake-token"
+		return ", with an access token from the environment variable named on the command line"
 	case TokenFromKeychain:
 		return ", with the access token saved in the system keychain for " + s.Host
 	case TokenFromSealed:
