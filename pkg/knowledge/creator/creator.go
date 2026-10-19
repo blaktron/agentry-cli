@@ -38,7 +38,7 @@ const GuideName = "pack-writing-guide"
 const (
 	Namespace = "agentry"
 	Name      = "knowledge-creator"
-	Version   = "1.4.0"
+	Version   = "1.5.0"
 )
 
 // LocalTimeoutFloorSeconds is the least a knowledge build on this computer

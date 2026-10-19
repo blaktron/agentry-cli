@@ -138,6 +138,10 @@ type Params struct {
 	// Decoded, when set, is the decode step the caller ran on the inputs
 	// before this run (pkg/runner/decode); the receipt names it.
 	Decoded *decode.Result
+	// Enforced are receipt lines the caller adds to CapabilitiesEnforced,
+	// keyed as the receipt's: a knowledge build's sources, fetched before
+	// this run by the step a run's own sources take.
+	Enforced map[string]string
 	// TextInputs says the caller staged only files it made itself (every
 	// built-in: localrun.Run sets it): the engine does not decode them.
 	// Otherwise a run's inputs are decoded before the agent starts.

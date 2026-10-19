@@ -81,3 +81,5 @@ agentry/examiner@1.1.0 sha256:53516ae2d632fcd09ab815a3a147bcdfeed620561b7ac63a13
 agentry/examiner@1.2.0 sha256:8739b4d7ad47f113c4b0d4e032c2c26b85c2e76e11b244d351dabcd1087f7dd2
 # 1.4.0: the Knowledge Creator reads a page drawn by scripts as a headless browser renders it (web_read renders a thin page, or one asked for, still only an address its searches returned and read by AI Review first), and ships its pack-writing guide.
 agentry/knowledge-creator@1.4.0 sha256:87cb35cc9f68f2edfc610d23e537e15ddbbe512762859973c33af2ee6a7b47dc
+# 1.5.0: the Knowledge Creator takes a git repository or a file at a web address as a source (fetched before the run by the step a run's input source takes, staged as documents, kept in the pack), and its instruction and guide say how to read a repository.
+agentry/knowledge-creator@1.5.0 sha256:bad2f80de710c57c7266283b352a64efd5b68924a397bcb8ac077ec654fc1a00

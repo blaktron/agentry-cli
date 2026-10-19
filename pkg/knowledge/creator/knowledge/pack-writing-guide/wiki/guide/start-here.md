@@ -15,6 +15,7 @@ Read it at these steps:
 1. **Before the first page**, [How a page reads](../writing/pages.md): one subject a page, the frontmatter, the first paragraph, sections and slugs, links, and how to change a page.
 2. **As you write each claim**, [Citing](../writing/citing.md): the three keys, what each may support, and what to do where sources disagree.
 3. **With many documents or long ones**, [Many documents](../research/many-documents.md): plan in the scratch folder, search before you read, and keep what you will rewrite.
-4. **When the build may search the web**, [Researching the web](../research/the-web.md): the search plan, which sources to trust, and reading a page drawn by scripts.
+4. **When the task lists a repository**, [Reading a repository](../research/a-repository.md): its README and docs first, grep for what they leave out, no generated files, and pages that cite the file and name the commit.
+5. **When the build may search the web**, [Researching the web](../research/the-web.md): the search plan, which sources to trust, and reading a page drawn by scripts.
 
 The pack you build is what another agent will search later to answer questions. Every rule here serves that reader: a page they can find by its title, trust by its citations, and read in a minute [src: web:https://docs.secureagentry.net/knowledge/].

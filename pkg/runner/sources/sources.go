@@ -86,6 +86,28 @@ type Kind struct {
 	AsUpload bool
 }
 
+// CapsFor is the kind's caps for a local run or, hosted, for a run on a
+// sandbox host shared by every account.
+func (k Kind) CapsFor(hosted bool) Caps {
+	if hosted {
+		return k.HostedCaps
+	}
+	return k.Caps
+}
+
+// Within is the caps held to a caller's own bounds: a knowledge build's
+// pack cap, say, which a source may not pass however large the kind
+// allows. A bound of zero or less leaves that cap as it is.
+func (c Caps) Within(files int, bytes int64) Caps {
+	if files > 0 && files < c.Files {
+		c.Files = files
+	}
+	if bytes > 0 && bytes < c.Bytes {
+		c.Bytes = bytes
+	}
+	return c
+}
+
 // Source is one source a run fetches: a question's answer, parsed.
 type Source struct {
 	// ID is the intake question's id, which names the folder.
@@ -108,8 +130,10 @@ type Source struct {
 
 // Where a token came from.
 const (
-	TokenFromFlag     = "flag"
-	TokenFromKeychain = "keychain"
+	TokenFromFlag = "flag"
+	// TokenFromBuildFlag is a knowledge build's --source-token.
+	TokenFromBuildFlag = "source-token"
+	TokenFromKeychain  = "keychain"
 	// TokenFromSealed is the saved key, read from the keys sealed beside
 	// a schedule that runs while its person is signed out.
 	TokenFromSealed = "sealed"
@@ -421,7 +445,9 @@ func Line(s Source, f Fetched, checks string) string {
 func tokenWords(s Source) string {
 	switch s.TokenFrom {
 	case TokenFromFlag:
-		return ", with an access token from the environment variable named by --intake-token"
+		return ", with an access token from the environment variable named by " + TokenFlag
+	case TokenFromBuildFlag:
+		return ", with an access token from the environment variable named by " + BuildTokenFlag
 	case TokenFromKeychain:
 		return ", with the access token saved in the system keychain for " + s.Host
 	case TokenFromSealed:
@@ -490,10 +516,21 @@ func Checks(id string, files []runnerdecode.File) string {
 // was sent to the check as an upload's is; the clause counts those it
 // checked and, apart, those it could not.
 func ChecksAsUpload(id string, files []runnerdecode.File) string {
-	clean, found, other := 0, 0, 0
 	prefix := id + "/"
+	return checksAsUpload(files, func(p string) bool { return strings.HasPrefix(p, prefix) })
+}
+
+// ChecksAsUploadNamed is ChecksAsUpload for a file staged under its own
+// name rather than in a folder of the source's id (a knowledge build's): the
+// file itself and the members of an archive it may be.
+func ChecksAsUploadNamed(name string, files []runnerdecode.File) string {
+	return checksAsUpload(files, func(p string) bool { return p == name || strings.HasPrefix(p, name+"/") })
+}
+
+func checksAsUpload(files []runnerdecode.File, ofSource func(string) bool) string {
+	clean, found, other := 0, 0, 0
 	for _, f := range files {
-		if !strings.HasPrefix(f.Path, prefix) {
+		if !ofSource(f.Path) {
 			continue
 		}
 		switch f.Check {

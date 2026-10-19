@@ -495,7 +495,10 @@ type Run struct {
 	// Decoded is the decode step the caller ran on the inputs, for the
 	// receipt.
 	Decoded *decode.Result
-	OutDir  string
+	// Enforced are receipt lines the caller adds beside the decode's: a
+	// knowledge build's sources.
+	Enforced map[string]string
+	OutDir   string
 	// Budgets, when set, replace the plan's.
 	Budgets *spec.Budgets
 	// Adapter names the harness adapter; empty takes the default.
@@ -646,7 +649,7 @@ func (r Run) Execute(ctx context.Context, d dockerx.Client) (*receipt.Envelope, 
 	}
 	return engine.Run(ctx, d, engine.Params{
 		Plan: plan, PlanDir: planDir, WorkspaceSrc: workspace, RunRoot: installDir, RunnerHome: r.Home,
-		OutDir: r.OutDir, Task: r.Task, InputPaths: r.Inputs, Knowledge: knowledgePacks, Decoded: r.Decoded,
+		OutDir: r.OutDir, Task: r.Task, InputPaths: r.Inputs, Knowledge: knowledgePacks, Decoded: r.Decoded, Enforced: r.Enforced,
 		// A built-in's inputs are staged by its own client: a package to
 		// review or revise, documents it decoded, a voice's texts. None is
 		// a person's file as given, so the run does not decode them again.
