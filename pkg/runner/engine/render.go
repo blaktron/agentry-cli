@@ -82,6 +82,9 @@ type renderRun struct {
 	pages, failed                                          int
 	// inflight are the requests being rendered.
 	inflight map[string]bool
+	// closed closes the renderer once: its watcher stopped, its proxy's
+	// log kept and its count in the receipt.
+	closed sync.Once
 }
 
 func (rd *runDirs) renderDir() string { return filepath.Join(rd.cfg, spec.RenderDir) }
@@ -157,21 +160,27 @@ func prepareRender(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	wctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	r.stop, r.done = cancel, make(chan struct{})
 	go r.watch(wctx, d, p, rd, runID)
-	td.add(func(c context.Context) {
-		r.stop()
-		// The watcher stops between requests; a render in flight ends at
-		// its timeout. Teardown waits no longer than that, whatever the
-		// folder holds.
-		select {
-		case <-r.done:
-		case <-c.Done():
-		case <-time.After(toolsrv.RenderTimeout + 10*time.Second):
-		}
-		collectRenderProxyLog(c, d, r, rd)
-		env.CapabilitiesEnforced["web.render.pages"] = r.line()
-	})
+	rd.render = r
+	td.add(func(c context.Context) { r.close(c, d, rd, env) })
 	env.CapabilitiesEnforced["web.render.image"] = r.image + ", pulled when this machine lacked it"
 	return nil
+}
+
+// close stops the watcher, waiting no longer than a render's timeout
+// (a render in flight ends at its own), keeps the proxy's decisions as a
+// receipt and puts the count in the receipt. Once: the run calls it before
+// the receipt is written, and teardown again in case the run ended early.
+func (r *renderRun) close(ctx context.Context, d dockerx.Client, rd *runDirs, env *receipt.Envelope) {
+	r.closed.Do(func() {
+		r.stop()
+		select {
+		case <-r.done:
+		case <-ctx.Done():
+		case <-time.After(toolsrv.RenderTimeout + 10*time.Second):
+		}
+		collectRenderProxyLog(ctx, d, r, rd)
+		env.CapabilitiesEnforced["web.render.pages"] = r.line()
+	})
 }
 
 // line is the receipt's count of the run's renders.

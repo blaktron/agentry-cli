@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
+	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
 
@@ -130,5 +131,33 @@ func TestTheRendererAnswersARequestFromItsOwnContainer(t *testing.T) {
 	}
 	if !strings.Contains(r.line(), "1 page(s) rendered, 3 render(s) that failed") {
 		t.Fatalf("receipt line %q", r.line())
+	}
+}
+
+// TestTheRendererClosesOnceBeforeTheReceipt: closing the renderer stops its
+// watcher and puts its count in the receipt; the run closes it before the
+// receipt is written and teardown again, which changes nothing.
+func TestTheRendererClosesOnceBeforeTheReceipt(t *testing.T) {
+	stopped := 0
+	r := &renderRun{proxy: "agentry-run1-render-proxy", done: make(chan struct{}), pages: 2, failed: 1}
+	r.stop = func() {
+		stopped++
+		select {
+		case <-r.done:
+		default:
+			close(r.done)
+		}
+	}
+	rd := &runDirs{receiptsDir: t.TempDir()}
+	env := &receipt.Envelope{CapabilitiesEnforced: map[string]string{}}
+	f := &dockerx.Fake{}
+	r.close(context.Background(), f, rd, env)
+	if got := env.CapabilitiesEnforced["web.render.pages"]; !strings.HasPrefix(got, "2 page(s) rendered, 1 render(s) that failed") {
+		t.Fatalf("receipt line %q", got)
+	}
+	r.pages = 5
+	r.close(context.Background(), f, rd, env)
+	if stopped != 1 || !strings.HasPrefix(env.CapabilitiesEnforced["web.render.pages"], "2 page(s)") {
+		t.Fatalf("a second close stopped %d times and wrote %q", stopped, env.CapabilitiesEnforced["web.render.pages"])
 	}
 }
