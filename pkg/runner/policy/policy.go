@@ -129,6 +129,11 @@ type Policy struct {
 	// AllowWildcardEgress gates manifest `network.egress: "*"`.
 	// Default false: a wildcard agent is refused at compile time.
 	AllowWildcardEgress bool `yaml:"allowWildcardEgress"`
+	// AllowPersistentReleases is reserved for running a persistent release
+	// from a source other than a built-in. This version runs such a release
+	// only as a built-in, so a policy that sets the key, either way, is
+	// refused at load rather than read as a switch that does nothing.
+	AllowPersistentReleases *bool `yaml:"allowPersistentReleases,omitempty"`
 	// Browser governs a release's browser (capabilities.browser):
 	// whether one may reach any public site.
 	Browser BrowserPolicy `yaml:"browser,omitempty"`
@@ -958,6 +963,9 @@ func EnsureDefault(path string) (*Policy, string, error) {
 func (p *Policy) Validate() error {
 	if p.PolicyVersion != Version {
 		return fmt.Errorf("policyVersion %q not supported (want %q)", p.PolicyVersion, Version)
+	}
+	if p.AllowPersistentReleases != nil {
+		return errors.New("allowPersistentReleases is reserved: this version runs a persistent release only as a built-in, so a policy may not set it; remove the key")
 	}
 	if p.Images.Gateway == "" || p.Images.HarnessDockerAgent == "" || p.Images.GoBuilder == "" {
 		return errors.New("images.gateway, images.harnessImages.docker-agent, and images.goBuilder are all required")

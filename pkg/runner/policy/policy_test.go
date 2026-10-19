@@ -51,6 +51,26 @@ func TestLoadRejectsUnknownKeys(t *testing.T) {
 	}
 }
 
+// The reserved key is refused by name whichever way it is set, and the
+// policy setup writes never carries it.
+func TestLoadRefusesTheReservedPersistentKey(t *testing.T) {
+	if strings.Contains(defaultFileText, "allowPersistentReleases") {
+		t.Fatal("the default policy names the reserved key")
+	}
+	for _, value := range []string{"true", "false"} {
+		path := filepath.Join(t.TempDir(), "policy.yaml")
+		text := strings.Replace(defaultFileText, "allowWildcardEgress: false",
+			"allowWildcardEgress: false\nallowPersistentReleases: "+value, 1)
+		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, _, err := Load(path)
+		if err == nil || !strings.Contains(err.Error(), "allowPersistentReleases is reserved") {
+			t.Fatalf("allowPersistentReleases: %s: err = %v, want the reserved-key refusal", value, err)
+		}
+	}
+}
+
 func TestValidateTable(t *testing.T) {
 	tests := []struct {
 		name    string

@@ -211,10 +211,13 @@ func (c *copilotImageAdapter) Compile(in Input) (Result, error) {
 		},
 	}
 	sess := &spec.SessionSpec{Transport: copilotTransport, ProtocolVersion: copilotProtocolVersion}
-	if in.Mode == manifest.ModeInteractive {
-		res.Session = sess
-	} else {
+	switch in.Mode {
+	case "", manifest.ModeAutonomous:
 		res.OneTurn = sess
+	case manifest.ModeInteractive:
+		res.Session = sess
+	default:
+		return Result{}, fmt.Errorf("copilot-image adapter: unknown run mode %q", in.Mode)
 	}
 	return res, nil
 }

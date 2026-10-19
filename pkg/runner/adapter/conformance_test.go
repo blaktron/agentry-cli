@@ -376,3 +376,25 @@ func conformEvents(t *testing.T, ad Adapter) {
 		t.Errorf("events: toolCalls=%d toolResults=%d text=%v usage=%v, want %+v", toolCalls, toolResults, text, usage, expect)
 	}
 }
+
+// Every adapter refuses a run mode it has no transport for, rather than
+// running it as one it knows: a mode the manifest gains reaches no harness
+// until an adapter is taught it.
+func TestEveryAdapterRefusesAModeItDoesNotKnow(t *testing.T) {
+	for _, name := range Names() {
+		ad, err := Get(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, mode := range []manifest.Mode{manifest.ModePersistent, "batch"} {
+			in := conformanceInput(mode, false)
+			if kind := signInOnly[name]; kind != "" {
+				in.Model = policy.Model{Provider: policy.SignInProvider(kind), Name: "fixture-model", APIKeyKind: kind}
+			}
+			_, err := ad.Compile(in)
+			if err == nil || !strings.Contains(err.Error(), "run mode") {
+				t.Errorf("%s compiled mode %q: err = %v, want an unknown run mode", name, mode, err)
+			}
+		}
+	}
+}
