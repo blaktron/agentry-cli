@@ -13,6 +13,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -334,6 +335,10 @@ func (o *knowledgeBuildOpts) readBrief() (string, error) {
 	return strings.TrimSpace(brief), nil
 }
 
+// hostCredentialEnv are the variables a sandbox host gives the CLI its
+// own credentials in.
+func hostCredentialEnv() []string { return []string{envJobToken, envRunGrant} }
+
 // inputs are everything the build was given to read: the files, the
 // repositories and the addresses.
 func (o *knowledgeBuildOpts) inputs() []string {
@@ -347,6 +352,13 @@ func (o *knowledgeBuildOpts) readSources(cmd *cobra.Command) ([]*sources.Source,
 	flags, err := sources.ParseBuildTokenFlags(o.sourceTokens)
 	if err != nil {
 		return nil, engine.Classify(engine.ExitUsage, err)
+	}
+	// A sandbox host's own credentials are never a source's token: the
+	// fetch step would send them to the source's host.
+	for host, env := range flags {
+		if slices.Contains(hostCredentialEnv(), env) {
+			return nil, engine.Classify(engine.ExitUsage, fmt.Errorf("%s %s=%s: $%s is this host's own credential, never a source's token", sources.BuildTokenFlag, host, env, env))
+		}
 	}
 	srcs, err := build.ParseSources(o.repos, o.urls)
 	if err != nil {

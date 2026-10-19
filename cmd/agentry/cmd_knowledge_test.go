@@ -458,6 +458,16 @@ func TestKnowledgeBuildSources(t *testing.T) {
 			t.Fatalf("err = %v", err)
 		}
 	})
+	t.Run("a token named by the host's own credential", func(t *testing.T) {
+		t.Setenv(envJobToken, "agyj_the-job")
+		for _, env := range []string{envJobToken, envRunGrant} {
+			_, _, err := create("--repo", "https://github.com/o/r", "--source-token", "github.com="+env)
+			wantClassified(t, err, engine.ExitUsage)
+			if !strings.Contains(err.Error(), "this host's own credential") || strings.Contains(err.Error(), "agyj_the-job") {
+				t.Fatalf("%s: %v", env, err)
+			}
+		}
+	})
 	t.Run("a token with no source", func(t *testing.T) {
 		_, _, err := create("--brief", "x", "--source-token", "github.com=GH_TOKEN_FOR_TEST")
 		wantClassified(t, err, engine.ExitUsage)
