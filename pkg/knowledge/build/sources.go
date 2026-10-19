@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -19,7 +20,6 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/sources"
-	runnerdecode "github.com/blaktron/agentry-cli/runnerimage/decode"
 )
 
 // A build may take a git repository or a file at a web address beside its
@@ -79,29 +79,29 @@ func ParseSources(repos, urls []string) ([]*sources.Source, error) {
 
 // parseRepo reads a repository's address with its ref after @ (or #, as a
 // run's intake answer carries one), and names its id after its host and
-// path: https://github.com/o/r@main is repo-github.com-o-r.
+// path: https://github.com/o/r@main is repo-github.com-o-r. An @ is the ref
+// only in the path, after the host: before it, it would be credentials,
+// which the kind refuses.
 func parseRepo(raw string) (*sources.Source, error) {
 	raw = strings.TrimSpace(raw)
-	addr, ref := raw, ""
-	if i := strings.LastIndex(raw, "@"); i > strings.Index(raw, "://")+3 && !strings.Contains(raw, "#") {
-		// An @ after the scheme and host is the ref, never credentials,
-		// which an address with user information would carry before the
-		// host and which the kind refuses.
-		if h := strings.Index(raw[strings.Index(raw, "://")+3:], "/"); h >= 0 && i > strings.Index(raw, "://")+3+h {
-			addr, ref = raw[:i], raw[i+1:]
+	answer := raw
+	if u, err := url.Parse(raw); err == nil && u.Fragment == "" && !strings.Contains(raw, "#") {
+		if i := strings.LastIndex(u.Path, "@"); i >= 0 {
+			addr := *u
+			addr.Path, addr.RawPath = u.Path[:i], ""
+			answer = addr.String() + "#" + u.Path[i+1:]
 		}
 	}
 	kind, _ := sources.Lookup(manifest.IntakeRepository)
-	answer := addr
-	if ref != "" {
-		answer += "#" + ref
-	}
 	s, err := kind.Parse(answer)
 	if err != nil {
 		return nil, err
 	}
-	p := strings.TrimSuffix(strings.Trim(strings.TrimPrefix(strings.TrimPrefix(s.URL, "https://"), s.Host), "/"), ".git")
-	p = strings.TrimSuffix(p, "/")
+	u, err := url.Parse(s.URL)
+	if err != nil {
+		return nil, err
+	}
+	p := strings.TrimSuffix(strings.Trim(u.Path, "/"), ".git")
 	id := "repo-" + safeName(s.Host)
 	if p != "" {
 		id += "-" + safeName(strings.ReplaceAll(p, "/", "-"))
@@ -114,7 +114,7 @@ func parseRepo(raw string) (*sources.Source, error) {
 // never holds the token.
 type FetchedSource struct {
 	// Kind is repository or url.
-	Kind string `json:"kind"`
+	Kind manifest.IntakeType `json:"kind"`
 	// URL is the address as shown (a query hidden); Ref the ref asked for,
 	// Commit the commit a repository resolved to.
 	URL    string `json:"url"`
@@ -136,6 +136,37 @@ type FetchedSource struct {
 	fetched sources.Fetched
 }
 
+// file says whether it is one file from a web address rather than a
+// repository.
+func (f FetchedSource) file() bool { return f.Kind == manifest.IntakeURL }
+
+// At is the ref a repository was fetched at, in words.
+func (f FetchedSource) At() string {
+	if f.Ref == "" {
+		return "its default branch"
+	}
+	return fmt.Sprintf("%q", f.Ref)
+}
+
+// Words say what a build brought in: a repository with its ref and commit,
+// or a file, each with the document the pack cites it under.
+func (f FetchedSource) Words() string {
+	if f.file() {
+		return fmt.Sprintf("file %s as %s, %d bytes", f.URL, f.Document, f.Bytes)
+	}
+	return fmt.Sprintf("repository %s at %s, commit %s, %d files as %s", f.URL, f.At(), f.Commit, f.Files, f.Document)
+}
+
+// stageState is what the documents already spend of the pack while its
+// sources are fetched: the files the pack holds, the documents staged by
+// name, the bytes they come to, and the pack's cap.
+type stageState struct {
+	held   int
+	given  map[string]string
+	staged int64
+	limit  int64
+}
+
 // PageReserve is the room in a pack's 2,000 files a build keeps for the
 // pages it writes, its index and its log, when it fetches a source: a
 // source is fetched within what is left after it and the documents.
@@ -145,13 +176,13 @@ const PageReserve = 300
 // staged, within the pack's cap: a repository under its id, its files
 // renamed to names a citation carries, and a file under its own name. It
 // answers what it fetched and the ids the decode holds to the source rule.
-// held is the files the pack holds already, when the build extends one.
-func fetchSources(ctx context.Context, d dockerx.Client, o Options, fetcher engine.SourceFetcher, docsDir string, given map[string]string, held int, staged int64, limit int64) ([]FetchedSource, []string, error) {
+func fetchSources(ctx context.Context, o Options, fetcher engine.SourceFetcher, docsDir string, st stageState) ([]FetchedSource, []string, error) {
 	var (
 		out     []FetchedSource
 		repoIDs []string
 	)
-	files := held + len(given)
+	given, staged, limit := st.given, st.staged, st.limit
+	files := st.held + len(given)
 	for _, s := range o.Sources {
 		kind, ok := sources.Lookup(s.Kind)
 		if !ok {
@@ -170,13 +201,16 @@ func fetchSources(ctx context.Context, d dockerx.Client, o Options, fetcher engi
 		if err != nil {
 			return nil, nil, err
 		}
-		fs := FetchedSource{Kind: string(s.Kind), URL: s.Shown(), Ref: s.Ref, Commit: f.Source.Commit, Files: f.Source.Files, Bytes: f.Source.Bytes,
+		got := FetchedSource{Kind: s.Kind, URL: s.Shown(), Ref: s.Ref, Commit: f.Source.Commit, Files: f.Source.Files, Bytes: f.Source.Bytes,
 			LeftOut: f.Source.Skipped, Token: s.TokenFrom, Took: f.Took, src: *s, fetched: f}
 		switch {
 		case kind.AsUpload:
 			// The one file, under its own name, as a document given with
 			// --file would be; the folder the step wrote goes.
 			name := safeName(f.Source.Name)
+			if name == decode.DocumentsFile {
+				return nil, nil, engine.Classify(engine.ExitUsage, fmt.Errorf("%s: a document may not be named %s, the Creator's own list; give a file under another name", s.Shown(), decode.DocumentsFile))
+			}
 			if prev, dup := given[name]; dup {
 				return nil, nil, engine.Classify(engine.ExitUsage, fmt.Errorf("%s and %s would both be the document %s; give one", prev, s.Shown(), name))
 			}
@@ -187,7 +221,7 @@ func fetchSources(ctx context.Context, d dockerx.Client, o Options, fetcher engi
 				return nil, nil, engine.Classify(engine.ExitCLI, fmt.Errorf("stage %s: %w", s.Shown(), err))
 			}
 			given[name] = s.Shown()
-			fs.Document = name
+			got.Document = name
 		default:
 			// A repository's files keep its layout under the id, each
 			// name made one a citation carries.
@@ -195,12 +229,12 @@ func fetchSources(ctx context.Context, d dockerx.Client, o Options, fetcher engi
 				return nil, nil, engine.Classify(engine.ExitUsage, fmt.Errorf("%s %s: %w", kind.Noun, s.Shown(), err))
 			}
 			given[s.ID] = s.Shown()
-			fs.Document = s.ID + "/"
+			got.Document = s.ID + "/"
 			repoIDs = append(repoIDs, s.ID)
 		}
 		files += f.Source.Files
 		staged += f.Source.Bytes
-		out = append(out, fs)
+		out = append(out, got)
 	}
 	return out, repoIDs, nil
 }
@@ -258,45 +292,14 @@ func sourceLines(fetched []FetchedSource, dec *decode.Result) map[string]string 
 	}
 	out := map[string]string{}
 	for _, f := range fetched {
-		var checks string
-		if k, ok := sources.Lookup(f.src.Kind); ok && k.AsUpload {
-			checks = fileChecks(f.Document, dec.Report.Files)
-		} else {
-			checks = sources.Checks(f.src.ID, dec.Report.Files)
+		checks := sources.ChecksFor(f.src, dec.Report.Files)
+		if f.file() {
+			// Staged under its own name, not a folder of its id.
+			checks = sources.ChecksAsUploadNamed(f.Document, dec.Report.Files)
 		}
 		out["source."+strings.TrimSuffix(f.Document, "/")] = sources.Line(f.src, f.fetched, checks)
 	}
 	return out
-}
-
-// fileChecks is the malware-check clause of a file fetched from an address,
-// decoded as an upload is: the file itself, and the members of an archive
-// it may be.
-func fileChecks(name string, files []runnerdecode.File) string {
-	clean, found, other := 0, 0, 0
-	for _, f := range files {
-		if f.Path != name && !strings.HasPrefix(f.Path, name+"/") {
-			continue
-		}
-		switch f.Check {
-		case runnerdecode.CheckClean:
-			clean++
-		case runnerdecode.CheckFound:
-			found++
-		default:
-			other++
-		}
-	}
-	n := clean + found
-	s := fmt.Sprintf("decoded as an upload is: the malware check read %d %s (%d clean", n, plural(n, "file", "files"), clean)
-	if found > 0 {
-		s += fmt.Sprintf(", %d found", found)
-	}
-	s += ")"
-	if other > 0 {
-		s += fmt.Sprintf(", and %d %s not checked", other, plural(other, "was", "were"))
-	}
-	return s
 }
 
 // sourcesTask is the task's paragraph on the sources: what each folder or
@@ -308,16 +311,12 @@ func sourcesTask(fetched []FetchedSource) string {
 	var b strings.Builder
 	b.WriteString("\nBrought in for this build:\n")
 	for _, f := range fetched {
-		if f.Kind == string(manifest.IntakeURL) {
+		if f.file() {
 			fmt.Fprintf(&b, "- %s is the file from %s.\n", f.Document, f.URL)
 			continue
 		}
-		at := "its default branch"
-		if f.Ref != "" {
-			at = fmt.Sprintf("%q", f.Ref)
-		}
 		fmt.Fprintf(&b, "- %s holds the git repository %s at %s (commit %s), %d %s: its README and docs first, then its code for what the docs leave out, and no generated file.\n",
-			f.Document, f.URL, at, f.Commit, f.Files, plural(f.Files, "file", "files"))
+			f.Document, f.URL, f.At(), f.Commit, f.Files, plural(f.Files, "file", "files"))
 	}
 	return b.String()
 }

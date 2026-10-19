@@ -130,8 +130,10 @@ type Source struct {
 
 // Where a token came from.
 const (
-	TokenFromFlag     = "flag"
-	TokenFromKeychain = "keychain"
+	TokenFromFlag = "flag"
+	// TokenFromBuildFlag is a knowledge build's --source-token.
+	TokenFromBuildFlag = "source-token"
+	TokenFromKeychain  = "keychain"
 	// TokenFromSealed is the saved key, read from the keys sealed beside
 	// a schedule that runs while its person is signed out.
 	TokenFromSealed = "sealed"
@@ -443,7 +445,9 @@ func Line(s Source, f Fetched, checks string) string {
 func tokenWords(s Source) string {
 	switch s.TokenFrom {
 	case TokenFromFlag:
-		return ", with an access token from the environment variable named on the command line"
+		return ", with an access token from the environment variable named by " + TokenFlag
+	case TokenFromBuildFlag:
+		return ", with an access token from the environment variable named by " + BuildTokenFlag
 	case TokenFromKeychain:
 		return ", with the access token saved in the system keychain for " + s.Host
 	case TokenFromSealed:
@@ -512,10 +516,21 @@ func Checks(id string, files []runnerdecode.File) string {
 // was sent to the check as an upload's is; the clause counts those it
 // checked and, apart, those it could not.
 func ChecksAsUpload(id string, files []runnerdecode.File) string {
-	clean, found, other := 0, 0, 0
 	prefix := id + "/"
+	return checksAsUpload(files, func(p string) bool { return strings.HasPrefix(p, prefix) })
+}
+
+// ChecksAsUploadNamed is ChecksAsUpload for a file staged under its own
+// name rather than in a folder of the source's id (a knowledge build's): the
+// file itself and the members of an archive it may be.
+func ChecksAsUploadNamed(name string, files []runnerdecode.File) string {
+	return checksAsUpload(files, func(p string) bool { return p == name || strings.HasPrefix(p, name+"/") })
+}
+
+func checksAsUpload(files []runnerdecode.File, ofSource func(string) bool) string {
+	clean, found, other := 0, 0, 0
 	for _, f := range files {
-		if !strings.HasPrefix(f.Path, prefix) {
+		if !ofSource(f.Path) {
 			continue
 		}
 		switch f.Check {

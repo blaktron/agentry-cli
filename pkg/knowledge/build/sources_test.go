@@ -1,6 +1,8 @@
 package build
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -82,6 +84,7 @@ func TestParseSources(t *testing.T) {
 		{"https://user:pw@github.com/o/r"},
 		{"git@github.com:o/r"},
 		{"https://github.com/o/r@bad..ref"},
+		{"https://user@github.com/o/r"},
 	} {
 		if _, err := ParseSources(bad, nil); err == nil {
 			t.Errorf("--repo %v was taken", bad)
@@ -114,7 +117,7 @@ func TestABuildFromARepositoryAndAnAddress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srcs[0].Token, srcs[0].TokenFrom = plantedToken, sources.TokenFromFlag
+	srcs[0].Token, srcs[0].TokenFrom = plantedToken, sources.TokenFromBuildFlag
 	fx.opts.Sources = srcs
 	repo := playFetch(t, fx.fake, "repo-github.com-o-r", map[string]string{
 		"README.md": "# r\n", "docs/guide.md": "# Guide\n", "src/main.go": "package main\n", "notes/Q3 plan.md": "# Plan\n",
@@ -196,7 +199,7 @@ func TestABuildFromARepositoryAndAnAddress(t *testing.T) {
 		t.Fatalf("sources %+v", res.Sources)
 	}
 	r, u := res.Sources[0], res.Sources[1]
-	if r.Kind != "repository" || r.URL != "https://github.com/o/r" || r.Ref != "main" || r.Commit != testCommit || r.Document != "repo-github.com-o-r/" || r.Files != 4 || r.LeftOut[source.SkipLink] != 1 || r.Token != sources.TokenFromFlag {
+	if r.Kind != "repository" || r.URL != "https://github.com/o/r" || r.Ref != "main" || r.Commit != testCommit || r.Document != "repo-github.com-o-r/" || r.Files != 4 || r.LeftOut[source.SkipLink] != 1 || r.Token != sources.TokenFromBuildFlag {
 		t.Errorf("repository %+v", r)
 	}
 	if u.Kind != "url" || u.URL != "https://example.org/spec.pdf" || u.Document != "spec.pdf" || u.Files != 1 || u.Bytes != 9 || u.Token != "" {
@@ -234,7 +237,7 @@ func TestABuildFromARepositoryAndAnAddress(t *testing.T) {
 			t.Errorf("receipt line %s = %q, want %q in it", key, line, want)
 		}
 	}
-	if !strings.Contains(env.CapabilitiesEnforced["source.repo-github.com-o-r"], "with an access token from the environment variable") {
+	if !strings.Contains(env.CapabilitiesEnforced["source.repo-github.com-o-r"], "with an access token from the environment variable named by --source-token") {
 		t.Errorf("the receipt does not say a token was used: %q", env.CapabilitiesEnforced["source.repo-github.com-o-r"])
 	}
 	task, _ := os.ReadFile(filepath.Join(fx.opts.OutDir, "receipts", "task.txt"))
@@ -336,6 +339,146 @@ func TestASourceIsHeldToThePacksCap(t *testing.T) {
 		_, err := Build(context.Background(), fx.fake, fx.opts)
 		if err == nil || !strings.Contains(err.Error(), "would both be the document a-b.md") {
 			t.Fatalf("err = %v", err)
+		}
+	})
+}
+
+// TestABuildReadsAnArchiveFromAnAddress: a file from an address that is an
+// archive has its members read and kept as an archive given with --file
+// has, cited <archive>/<member>, and its receipt line counts the members
+// the malware check read.
+func TestABuildReadsAnArchiveFromAnAddress(t *testing.T) {
+	fx := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})
+	fx.opts.Documents = nil
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for name, body := range map[string]string{"guide/intro.md": "# Intro\n", "spec.pdf": "%PDF spec"} {
+		w, _ := zw.Create(name)
+		_, _ = w.Write([]byte(body))
+	}
+	_ = zw.Close()
+	srcs, err := ParseSources(nil, []string{"https://example.org/docs.zip"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fx.opts.Sources = srcs
+	playFetch(t, fx.fake, "url-1", map[string]string{"docs.zip": buf.String()}, func(rep *source.Report) {
+		*rep = source.Report{Schema: source.Schema, Kind: source.KindURL, Files: 1, Bytes: int64(buf.Len()), Name: "docs.zip"}
+	})
+	fx.fake.Foreground["-agent"].Before = writes(fx.opts.OutDir, map[string]string{
+		"wiki/topics/intro.md": page("Intro", "docs.zip/guide/intro.md"),
+	})
+	res, err := Build(context.Background(), fx.fake, fx.opts)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if got := strings.Join(res.Documents, ","); got != "docs.zip/guide/intro.md,docs.zip/spec.pdf" {
+		t.Fatalf("documents %s", got)
+	}
+	for rel, want := range map[string]string{
+		"sources/docs.zip/guide/intro.md": "# Intro\n",
+		"sources/docs.zip/spec.pdf":       "%PDF spec",
+	} {
+		if got, err := os.ReadFile(filepath.Join(fx.opts.PackDir, filepath.FromSlash(rel))); err != nil || string(got) != want {
+			t.Errorf("%s = %q (%v)", rel, got, err)
+		}
+	}
+	if line := res.Envelope.CapabilitiesEnforced["source.docs.zip"]; !strings.Contains(line, "the malware check read 3 files (3 clean)") {
+		t.Errorf("receipt line %q", line)
+	}
+}
+
+// TestAnAddExtendsAPackWithARepository: an add with a repository counts
+// the files the pack holds already against its 2,000, and keeps the
+// repository beside the documents it had.
+func TestAnAddExtendsAPackWithARepository(t *testing.T) {
+	fx := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})
+	fx.fake.Foreground["-agent"].Before = writes(fx.opts.OutDir, map[string]string{"wiki/topics/runbook.md": page("Runbook", "runbook.md")})
+	if _, err := Build(context.Background(), fx.fake, fx.opts); err != nil {
+		t.Fatal(err)
+	}
+	held := heldFiles(fx.opts.PackDir)
+	fx2 := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})
+	fx2.opts.PackDir, fx2.opts.Name, fx2.opts.Documents = fx.opts.PackDir, "", nil
+	srcs, _ := ParseSources([]string{"https://github.com/o/r"}, nil)
+	fx2.opts.Sources = srcs
+	playFetch(t, fx2.fake, "repo-github.com-o-r", map[string]string{"README.md": "# r\n"}, nil)
+	fx2.fake.Foreground["-agent"].Before = writes(fx2.opts.OutDir, map[string]string{"wiki/topics/r.md": page("R", "repo-github.com-o-r/README.md")})
+	if _, err := Build(context.Background(), fx2.fake, fx2.opts); err != nil {
+		t.Fatal(err)
+	}
+	fetch, _ := fx2.fake.FindRun("-source-repo-github.com-o-r")
+	if want := "--max-files " + strconv.Itoa(2000-PageReserve-held) + " "; !strings.Contains(strings.Join(fetch.Argv, " "), want) {
+		t.Errorf("the fetch's file cap is not what the pack has left (%d held): %s", held, strings.Join(fetch.Argv, " "))
+	}
+	for _, rel := range []string{"sources/runbook.md", "sources/repo-github.com-o-r/README.md"} {
+		if _, err := os.Stat(filepath.Join(fx.opts.PackDir, filepath.FromSlash(rel))); err != nil {
+			t.Errorf("%s: %v", rel, err)
+		}
+	}
+}
+
+// TestASourcesRefusals: a source's malware refuses the build before the
+// Creator runs; a file from an address may not take the documents list's
+// name; a token the fetch step echoes in its failure is scrubbed from the
+// error; and a sandbox host's build refuses sources before any fetch.
+func TestASourcesRefusals(t *testing.T) {
+	t.Run("malware in a repository", func(t *testing.T) {
+		fx := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})
+		srcs, _ := ParseSources([]string{"https://github.com/o/r"}, nil)
+		fx.opts.Sources = srcs
+		playFetch(t, fx.fake, "repo-github.com-o-r", map[string]string{"README.md": "# r\n", "tools/x.com": "X5O!"}, nil)
+		_, err := Build(context.Background(), fx.fake, fx.opts)
+		if err == nil || !strings.Contains(err.Error(), "ClamAV found malware in repo-github.com-o-r/tools/x.com") {
+			t.Fatalf("err = %v", err)
+		}
+		if _, ok := fx.fake.FindRun("-agent"); ok {
+			t.Error("the Creator ran")
+		}
+	})
+	t.Run("a file named documents.json", func(t *testing.T) {
+		fx := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})
+		srcs, _ := ParseSources(nil, []string{"https://example.org/documents.json"})
+		fx.opts.Sources = srcs
+		playFetch(t, fx.fake, "url-1", map[string]string{"documents.json": "{}"}, func(rep *source.Report) {
+			*rep = source.Report{Schema: source.Schema, Kind: source.KindURL, Files: 1, Bytes: 2, Name: "documents.json"}
+		})
+		if _, err := Build(context.Background(), fx.fake, fx.opts); err == nil || !strings.Contains(err.Error(), "may not be named documents.json") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+	t.Run("a token echoed by a failed fetch", func(t *testing.T) {
+		fx := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})
+		srcs, _ := ParseSources([]string{"https://github.com/o/private"}, nil)
+		srcs[0].Token, srcs[0].TokenFrom = plantedToken, sources.TokenFromBuildFlag
+		fx.opts.Sources = srcs
+		fg := playFetch(t, fx.fake, "repo-github.com-o-private", nil, func(rep *source.Report) {
+			rep.Commit, rep.Ref, rep.Protocol = "", "", ""
+			rep.Error = "the host refused " + plantedToken
+		})
+		fg.ExitCode, fg.Stderr = 1, "auth failed for "+plantedToken+"\n"
+		_, err := Build(context.Background(), fx.fake, fx.opts)
+		if err == nil || strings.Contains(err.Error(), plantedToken) || !strings.Contains(err.Error(), "could not be fetched") {
+			t.Fatalf("err = %v", err)
+		}
+		_ = filepath.WalkDir(fx.opts.OutDir, func(path string, d fs.DirEntry, err error) error {
+			if err == nil && d.Type().IsRegular() {
+				if b, _ := os.ReadFile(path); strings.Contains(string(b), plantedToken) {
+					t.Errorf("%s holds the token", path)
+				}
+			}
+			return nil
+		})
+	})
+	t.Run("a sandbox host's build", func(t *testing.T) {
+		fx := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})
+		srcs, _ := ParseSources([]string{"https://github.com/o/r"}, nil)
+		fx.opts.Sources, fx.opts.Hosted = srcs, true
+		if _, err := Build(context.Background(), fx.fake, fx.opts); !errors.Is(err, ErrHostedSources) {
+			t.Fatalf("err = %v", err)
+		}
+		if _, ok := fx.fake.FindRun("-source-"); ok {
+			t.Error("a hosted build fetched a source")
 		}
 	})
 }

@@ -70,45 +70,51 @@ func SaveToken(host, token string) error {
 	return nil
 }
 
-// TokenFlag is the run's flag that names a source's token by its question
-// id; a build names one by its host (BuildTokenFlag).
+// The flags that name a source's token: a run's by its question id, a
+// knowledge build's by its host.
 const (
 	TokenFlag      = "--intake-token"
 	BuildTokenFlag = "--source-token"
 )
 
-// ParseTokenFlags reads --intake-token id=ENV_NAME flags.
-func ParseTokenFlags(flags []string) (map[string]string, error) {
-	return ParseTokenFlagsFor(TokenFlag, flags)
+// tokenFlag is one of those flags: its name, what its key names, and where
+// a token it gave came from.
+type tokenFlag struct {
+	name, key, from string
 }
 
-// ParseTokenFlagsFor reads flag's key=ENV_NAME values: a run's question
-// ids, a build's hosts.
-func ParseTokenFlagsFor(flag string, flags []string) (map[string]string, error) {
+var (
+	runTokenFlag   = tokenFlag{name: TokenFlag, key: "id", from: TokenFromFlag}
+	buildTokenFlag = tokenFlag{name: BuildTokenFlag, key: "HOST", from: TokenFromBuildFlag}
+)
+
+// ParseTokenFlags reads --intake-token id=ENV_NAME flags.
+func ParseTokenFlags(flags []string) (map[string]string, error) {
+	return runTokenFlag.parse(flags)
+}
+
+// ParseBuildTokenFlags reads --source-token HOST=ENV_NAME flags.
+func ParseBuildTokenFlags(flags []string) (map[string]string, error) {
+	return buildTokenFlag.parse(flags)
+}
+
+func (t tokenFlag) parse(flags []string) (map[string]string, error) {
 	out := map[string]string{}
 	for _, f := range flags {
 		id, env, ok := strings.Cut(f, "=")
 		id, env = strings.TrimSpace(id), strings.TrimSpace(env)
 		if !ok || id == "" || env == "" {
-			return nil, fmt.Errorf("%s %q: want %s=ENV_NAME, the name of an environment variable that holds the token", flag, f, keyWord(flag))
+			return nil, fmt.Errorf("%s %q: want %s=ENV_NAME, the name of an environment variable that holds the token", t.name, f, t.key)
 		}
 		if strings.ContainsAny(env, "= ") {
-			return nil, fmt.Errorf("%s %s: %q is not an environment variable's name (the token itself never goes on the command line)", flag, id, env)
+			return nil, fmt.Errorf("%s %s: %q is not an environment variable's name (the token itself never goes on the command line)", t.name, id, env)
 		}
 		if _, dup := out[id]; dup {
-			return nil, fmt.Errorf("%s %s given twice", flag, id)
+			return nil, fmt.Errorf("%s %s given twice", t.name, id)
 		}
 		out[id] = env
 	}
 	return out, nil
-}
-
-// keyWord is what a token flag's key names.
-func keyWord(flag string) string {
-	if flag == BuildTokenFlag {
-		return "HOST"
-	}
-	return "id"
 }
 
 // TokenAsker asks for a token on a terminal and offers to save it.
@@ -130,7 +136,7 @@ func ResolveTokens(srcs []*Source, flags map[string]string, getenv func(string) 
 			return fmt.Errorf("%s %s: the QuickAgent asks for no input source with that id", TokenFlag, id)
 		}
 	}
-	return resolveTokens(TokenFlag, srcs, func(s *Source) (string, bool) { env, ok := flags[s.ID]; return env, ok }, getenv, ask, warn)
+	return resolveTokens(runTokenFlag, srcs, func(s *Source) (string, string, bool) { env, ok := flags[s.ID]; return s.ID, env, ok }, getenv, ask, warn)
 }
 
 // ResolveBuildTokens is ResolveTokens for a build's sources, whose flags
@@ -146,28 +152,26 @@ func ResolveBuildTokens(srcs []*Source, flags map[string]string, getenv func(str
 			return fmt.Errorf("%s %s: no repository or address given is on that host", BuildTokenFlag, host)
 		}
 	}
-	return resolveTokens(BuildTokenFlag, srcs, func(s *Source) (string, bool) {
+	return resolveTokens(buildTokenFlag, srcs, func(s *Source) (string, string, bool) {
 		for host, env := range flags {
 			if strings.EqualFold(host, s.Host) {
-				return env, true
+				return host, env, true
 			}
 		}
-		return "", false
+		return "", "", false
 	}, getenv, ask, warn)
 }
 
-func resolveTokens(flag string, srcs []*Source, flagged func(*Source) (string, bool), getenv func(string) string, ask TokenAsker, warn func(string)) error {
+// resolveTokens fills each source's token: flagged answers the flag's key
+// and variable for a source, when the flag named one.
+func resolveTokens(flag tokenFlag, srcs []*Source, flagged func(*Source) (key, env string, ok bool), getenv func(string) string, ask TokenAsker, warn func(string)) error {
 	for _, s := range srcs {
-		if env, ok := flagged(s); ok {
+		if key, env, ok := flagged(s); ok {
 			v := strings.TrimSpace(getenv(env))
 			if v == "" {
-				key := s.ID
-				if flag == BuildTokenFlag {
-					key = s.Host
-				}
-				return fmt.Errorf("%s %s=%s: the environment variable %s is unset or empty", flag, key, env, env)
+				return fmt.Errorf("%s %s=%s: the environment variable %s is unset or empty", flag.name, key, env, env)
 			}
-			s.Token, s.TokenFrom = v, TokenFromFlag
+			s.Token, s.TokenFrom = v, flag.from
 			continue
 		}
 		saved, from, err := savedToken(s.Host)

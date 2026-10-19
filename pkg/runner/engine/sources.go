@@ -15,18 +15,11 @@ import (
 	runnerdecode "github.com/blaktron/agentry-cli/runnerimage/decode"
 )
 
-// The input sources' fetch step, before the decode. Each source the intake
-// answered is fetched by the runner image's `source` role in the files
-// container (the decode image), on a network of its own whose only route out is
-// a CONNECT proxy to the source's host on port 443, at public addresses alone.
-// The token, when there is one, reaches the step on its stdin: never in an
-// environment, an argument or a file. Then the proxy and the network are
-// removed, the tree the step wrote is held to the source's rules on the host
-// (regular files and folders only, no .git, within the caps, the counts the
-// report gives), and it moves to /inputs/<id>/, where the decode treats it as
-// it treats uploads: a repository with its own cap and malware rule, a url
-// source's one file as an upload. The agent container never sees a token, a
-// source mount of its own or a route to the source's host.
+// A run's input sources are fetched before its decode, each by the shared
+// fetch step (SourceFetcher) into /inputs/<id>/, where the decode treats it
+// as it treats uploads: a repository with its own cap and malware rule, a
+// url source's one file as an upload. The agent container never sees a
+// token, a source mount of its own or a route to the source's host.
 
 // sourceRun is one source fetched: the source, what its step reported, and
 // how long it took.

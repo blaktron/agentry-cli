@@ -20,6 +20,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
+	"github.com/blaktron/agentry-cli/pkg/runner/sources"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
 
@@ -410,6 +411,11 @@ func TestKnowledgeBuildBriefAndWeb(t *testing.T) {
 func TestKnowledgeBuildSources(t *testing.T) {
 	isolateEnv(t)
 	_, policyPath := isolateRunnerHome(t)
+	pol := policy.Default()
+	pol.WebSearch = policy.WebSearchKey{Provider: "brave"}
+	if err := policy.Save(policyPath, pol); err != nil {
+		t.Fatal(err)
+	}
 	env := &receipt.Envelope{Agentry: receipt.EnvelopeVersion, Status: "ok", RunID: "r1", Ref: localrun.KnowledgeCreator().Ref(),
 		Attestation: receipt.Attestation{State: "builtin"}, Result: receipt.TextResult("done")}
 	create := func(args ...string) (build.Options, string, error) {
@@ -431,7 +437,7 @@ func TestKnowledgeBuildSources(t *testing.T) {
 		if len(o.Sources) != 2 || o.Sources[0].ID != "repo-github.com-o-r" || o.Sources[0].Ref != "main" || o.Sources[1].ID != "url-1" {
 			t.Fatalf("sources %+v", o.Sources)
 		}
-		if o.Sources[0].Token != "ghp_build-token" || o.Sources[0].TokenFrom != "flag" || o.Sources[1].Token != "" {
+		if o.Sources[0].Token != "ghp_build-token" || o.Sources[0].TokenFrom != sources.TokenFromBuildFlag || o.Sources[1].Token != "" {
 			t.Fatalf("tokens %+v %+v", o.Sources[0].TokenFrom, o.Sources[1].TokenFrom)
 		}
 		if strings.Contains(stderr, "ghp_build-token") || strings.Contains(stderr, "Warning: no documents") {
@@ -459,11 +465,32 @@ func TestKnowledgeBuildSources(t *testing.T) {
 	t.Run("an address that is not https", func(t *testing.T) {
 		_, _, err := create("--url", "http://example.org/spec.pdf")
 		wantClassified(t, err, engine.ExitUsage)
+		if !strings.Contains(err.Error(), "--url http://example.org/spec.pdf:") {
+			t.Fatalf("err = %v", err)
+		}
 	})
-	t.Run("a repository alone is something to build", func(t *testing.T) {
-		o, _, err := create("--repo", "https://github.com/o/r")
-		if err != nil || len(o.Sources) != 1 || o.Brief != "" || o.Web != nil {
-			t.Fatalf("%v %+v", err, o)
+	t.Run("a repository alone is something to build, and is built without the web", func(t *testing.T) {
+		// A repository is documents: the web stays off unless asked, even
+		// with both keys present.
+		t.Setenv(policy.DefaultJudgeKeyEnv, testJev)
+		t.Setenv(policy.BraveSearchKeyEnv, "brave-person-search-key")
+		o, stderr, err := create("--repo", "https://github.com/o/r")
+		if err != nil || len(o.Sources) != 1 || o.Brief != "" || o.Web != nil || strings.Contains(stderr, "Warning: no documents") {
+			t.Fatalf("%v %+v\n%s", err, o, stderr)
+		}
+		if o, _, err = create("--url", "https://example.org/a.pdf", "--web"); err != nil || o.Web == nil {
+			t.Fatalf("--web with an address: %v %+v", err, o.Web)
+		}
+	})
+	t.Run("the report names each source, never its token", func(t *testing.T) {
+		r := buildReport("/p", "", &build.Result{Sources: []build.FetchedSource{
+			{Kind: "repository", URL: "https://github.com/o/r", Ref: "main", Commit: "0123456789abcdef0123456789abcdef01234567", Document: "repo-github.com-o-r/", Files: 4, Bytes: 32, LeftOut: map[string]int{"link": 1}, Token: sources.TokenFromBuildFlag},
+		}}, nil)
+		b, _ := json.Marshal(r)
+		for _, want := range []string{`"sources":[{"kind":"repository","url":"https://github.com/o/r","ref":"main","commit":"0123456789abcdef0123456789abcdef01234567","document":"repo-github.com-o-r/","files":4,"bytes":32,"leftOut":{"link":1},"token":"source-token"}]`} {
+			if !strings.Contains(string(b), want) {
+				t.Fatalf("report %s lacks %s", b, want)
+			}
 		}
 	})
 }

@@ -31,7 +31,6 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/setup"
 	"github.com/blaktron/agentry-cli/pkg/runner/sources"
-	"github.com/blaktron/agentry/pkg/manifest"
 )
 
 // knowledgeBuildOpts are create's and add's shared flags.
@@ -124,8 +123,8 @@ func knowledgeBuildFlags(cmd *cobra.Command, o *knowledgeBuildOpts) {
 	f.StringArrayVar(&o.sourceTokens, "source-token", nil, "the access token for a repository's or an address's host: HOST=ENV_NAME, the name of an environment variable holding it (repeatable; otherwise the key saved for the host in the system keychain, then a prompt on a terminal, then none)")
 	f.StringVar(&o.brief, "brief", "", "what the pack should cover and for whom, at most 8 KiB, kept in the pack as sources/brief.md")
 	f.StringVar(&o.briefFile, "brief-file", "", "read the brief from this file instead")
-	f.BoolVar(&o.web, "web", false, "let the Creator search the web, AI Review reading every result first (the default for a new pack with no --file; it can raise what a build costs)")
-	f.BoolVar(&o.noWeb, "no-web", false, "build without the web (the default with --file, and for add)")
+	f.BoolVar(&o.web, "web", false, "let the Creator search the web, AI Review reading every result first (the default for a new pack with no --file, --repo or --url; it can raise what a build costs)")
+	f.BoolVar(&o.noWeb, "no-web", false, "build without the web (the default with --file, --repo or --url, and for add)")
 	f.BoolVar(&o.hosted, "hosted", false, "build as a sandbox host does for a build made in Agentry (with --output-format json): the web's scans and searches through the registry with the job's credential in $"+envJobToken)
 	f.StringVar(&o.out, "out", "", "output folder for the Creator run's reports and receipts (default ./agentry-out/agentry-knowledge-creator-<runid>)")
 	f.StringVar(&o.policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml)")
@@ -343,7 +342,7 @@ func (o *knowledgeBuildOpts) inputs() []string {
 // variable --source-token names for its host, the key saved for the host,
 // a prompt on a terminal, or none.
 func (o *knowledgeBuildOpts) readSources(cmd *cobra.Command) ([]*sources.Source, error) {
-	flags, err := sources.ParseTokenFlagsFor(sources.BuildTokenFlag, o.sourceTokens)
+	flags, err := sources.ParseBuildTokenFlags(o.sourceTokens)
 	if err != nil {
 		return nil, engine.Classify(engine.ExitUsage, err)
 	}
@@ -370,7 +369,8 @@ func (o *knowledgeBuildOpts) readSources(cmd *cobra.Command) ([]*sources.Source,
 }
 
 // searchWeb is the Search the web choice: --web or --no-web, else on for a
-// new pack with no documents and off otherwise. A pack being extended holds
+// new pack with no documents (no file, repository or address) and off
+// otherwise. A pack being extended holds
 // documents already, and the web's searches would carry what the Creator
 // read in them to the search provider, which stays off unless asked.
 func (o *knowledgeBuildOpts) searchWeb(creating bool) (bool, error) {
@@ -380,7 +380,7 @@ func (o *knowledgeBuildOpts) searchWeb(creating bool) (bool, error) {
 	case o.web, o.noWeb:
 		return o.web, nil
 	}
-	return creating && len(o.files) == 0, nil
+	return creating && len(o.inputs()) == 0, nil
 }
 
 // knowledgeWeb is a build's web configuration, or nil for a build without
@@ -641,7 +641,7 @@ func printKnowledgeBuild(ctx context.Context, out, errOut io.Writer, dir, outDir
 		m.Name, knowledge.CountPages(m.Pages), m.Bytes, m.SHA256, m.Scan.Describe(), where)
 	_, _ = fmt.Fprintf(out, "  documents: %s\n", strings.Join(res.Documents, ", "))
 	for _, s := range res.Sources {
-		_, _ = fmt.Fprintf(out, "  fetched: %s\n", sourceWords(s))
+		_, _ = fmt.Fprintf(out, "  fetched: %s\n", s.Words())
 	}
 	if len(res.Skipped) > 0 {
 		_, _ = fmt.Fprintf(out, "  not read: %s (no decoder reads them, or the decoder failed)\n", strings.Join(res.Skipped, ", "))
@@ -659,19 +659,6 @@ func printKnowledgeBuild(ctx context.Context, out, errOut io.Writer, dir, outDir
 		_, _ = fmt.Fprintln(out, "  receipts: removed with the Creator run's output, which held the pages in the clear (--out DIR keeps them)")
 	}
 	_, _ = fmt.Fprintf(errOut, "attach it to a run with: agentry run <ref> --knowledge %s\n", attach)
-}
-
-// sourceWords says what a build fetched: a repository with its ref and
-// commit, or a file, each with the document the pack cites it under.
-func sourceWords(s build.FetchedSource) string {
-	if s.Kind == string(manifest.IntakeURL) {
-		return fmt.Sprintf("file %s as %s, %d bytes", s.URL, s.Document, s.Bytes)
-	}
-	at := "its default branch"
-	if s.Ref != "" {
-		at = s.Ref
-	}
-	return fmt.Sprintf("repository %s at %s, commit %s, %d files as %s", s.URL, at, s.Commit, s.Files, s.Document)
 }
 
 // keptPackNamed says whether arg is a pack name the store keeps: a name,

@@ -151,6 +151,11 @@ func CheckBrief(documents []string, brief string) error {
 	return nil
 }
 
+// ErrHostedSources refuses a repository or an address on a sandbox host's
+// build: every input a hosted build reads passes AI Review first, and the
+// fetched files are not reviewed here.
+var ErrHostedSources = errors.New("a build made in Agentry does not take a repository or a web address yet; build it on this computer, or give the files")
+
 // ErrNothingToBuild is CheckBrief's answer for a build given neither
 // documents nor a brief.
 var ErrNothingToBuild = errors.New("a knowledge build needs documents, a brief, or both")
@@ -163,8 +168,17 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 	}
 	res := &Result{}
 	o.Brief = strings.TrimSpace(o.Brief)
-	if err := CheckBrief(o.Documents, o.Brief); err != nil && (len(o.Sources) == 0 || !errors.Is(err, ErrNothingToBuild)) {
+	inputs := append([]string{}, o.Documents...)
+	for _, s := range o.Sources {
+		inputs = append(inputs, s.Shown())
+	}
+	if err := CheckBrief(inputs, o.Brief); err != nil {
 		return nil, engine.Classify(engine.ExitUsage, err)
+	}
+	if o.Hosted && len(o.Sources) > 0 {
+		// A sandbox host's inputs reach the model only after AI Review,
+		// which this build does not yet run over what a source brings in.
+		return nil, engine.Classify(engine.ExitUsage, ErrHostedSources)
 	}
 	var current *knowledge.Pack
 	if _, err := os.Stat(filepath.Join(o.PackDir, knowledge.ManifestFile)); err == nil {
@@ -179,9 +193,9 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 			return nil, engine.Classify(engine.ExitUsage, fmt.Errorf("%s exists and is not a knowledge pack; name a new directory or an existing pack", o.PackDir))
 		}
 	}
-	name := o.Name
+	name, held := o.Name, 0
 	if current != nil {
-		name = current.Manifest.Name
+		name, held = current.Manifest.Name, heldFiles(o.PackDir)
 	}
 
 	// The work directory is under the runner home, not the process's
@@ -240,11 +254,7 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 		if err != nil {
 			return nil, err
 		}
-		held := 0
-		if current != nil {
-			held = heldFiles(o.PackDir)
-		}
-		if res.Sources, repoIDs, err = fetchSources(ctx, d, o, fetcher, docsDir, given, held, staged, limit); err != nil {
+		if res.Sources, repoIDs, err = fetchSources(ctx, o, fetcher, docsDir, stageState{held: held, given: given, staged: staged, limit: limit}); err != nil {
 			return nil, err
 		}
 	}
@@ -287,10 +297,6 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 		return nil, engine.Classify(engine.ExitUsage, err)
 	}
 	if len(o.Sources) > 0 {
-		held := 0
-		if current != nil {
-			held = heldFiles(o.PackDir)
-		}
 		if err := keptFilesWithin(held, docs); err != nil {
 			return nil, engine.Classify(engine.ExitUsage, err)
 		}

@@ -72,8 +72,11 @@ func enforcedAtStart(p Params) map[string]string {
 	e = withVoice(e, p.Voice, p.Plan.Capabilities.ExecCommands)
 	e = withReportTheme(e, p.Plan.Tools, p.ReportTheme)
 	e = withDecoded(e, p.Decoded)
+	// A caller's line never replaces one the engine states itself.
 	for k, v := range p.Enforced {
-		e[k] = v
+		if _, set := e[k]; !set {
+			e[k] = v
+		}
 	}
 	return e
 }
