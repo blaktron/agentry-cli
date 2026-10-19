@@ -1335,12 +1335,26 @@ func (t *teardown) reportLeftFiles(env *receipt.Envelope) error {
 	return Classify(ExitCLI, errors.New(msg))
 }
 
+// The budgets of a teardown. A step that is slow on a busy machine (a
+// gateway's stop can take most of a minute there) must not leave the steps
+// after it, nor the sweep, to run on a context that is already expired, so
+// each step has a budget of its own inside a ceiling for them all, and the
+// sweep has one of its own after that. Variables so a test can shrink them.
+var (
+	teardownStepBudget  = 90 * time.Second
+	teardownStepsBudget = 4 * time.Minute
+	teardownSweepBudget = 60 * time.Second
+)
+
 func (t *teardown) run() {
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
+	deadline := time.Now().Add(teardownStepsBudget)
 	for i := len(t.funcs) - 1; i >= 0; i-- {
+		ctx, cancel := context.WithTimeout(context.Background(), min(teardownStepBudget, time.Until(deadline)))
 		t.funcs[i](ctx)
+		cancel()
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), teardownSweepBudget)
+	defer cancel()
 	if t.runID != "" {
 		if leftover, err := t.d.PSByLabel(ctx, runLabel+"="+t.runID); err == nil {
 			for _, name := range leftover {

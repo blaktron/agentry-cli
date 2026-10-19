@@ -6,7 +6,7 @@ summary: Every page in pack-writing-guide, one line each, by section. Generated;
 
 # pack-writing-guide
 
-5 pages.
+6 pages.
 
 ## Guide
 
@@ -14,6 +14,7 @@ summary: Every page in pack-writing-guide, one line each, by section. Generated;
 
 ## Research
 
+- [Reading a repository](research/a-repository.md) — How to build from a git repository the person named: its README and docs first, then the code for what the docs leave out, found with grep rather than read file by file, no generated files, and pages that cite the file and name the commit.
 - [Many documents](research/many-documents.md) — How to build from many documents or long ones without losing work: a plan in the scratch folder, grep and glob to find what to read, a document at a time with its pages written before the next, and copies of the pages you will rewrite.
 - [Researching the web](research/the-web.md) — How a build that may search the web researches well: a subject list from the brief and the documents, precise queries, primary sources first, reading only searched addresses, pages that scripts draw (web_read renders them), the budgets, and what to do with a withheld result.
 
