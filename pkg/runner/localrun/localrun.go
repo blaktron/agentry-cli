@@ -526,6 +526,9 @@ type Run struct {
 	// never spends a model sign-in, and a plan that names one is
 	// refused.
 	Hosted bool
+	// HostedRender lets a hosted run render pages: its host dispatched it
+	// as a browser job (engine.Params.HostedRender).
+	HostedRender bool
 }
 
 // RepairRun is the Drafter's one repair turn after first (drafter.PostStep):
@@ -667,6 +670,6 @@ func (r Run) Execute(ctx context.Context, d dockerx.Client) (*receipt.Envelope, 
 		Attestation: meta.Attestation, ExecPackages: execPackages, KeepRunDir: r.KeepRunDir,
 		CheckWorkspace: builtinCopyCheck(meta.Digest),
 		RunID:          r.RunID, Stderr: logw, OnUsage: r.OnUsage, Web: r.Web, Review: r.Review,
-		ModelSignIn: signIn, RenewModelSignIn: renewSignIn, Hosted: r.Hosted,
+		ModelSignIn: signIn, RenewModelSignIn: renewSignIn, Hosted: r.Hosted, HostedRender: r.HostedRender,
 	})
 }

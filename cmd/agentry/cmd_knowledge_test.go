@@ -469,6 +469,15 @@ func TestKnowledgeBuildSources(t *testing.T) {
 			t.Fatalf("err = %v", err)
 		}
 	})
+	t.Run("--render reaches the build", func(t *testing.T) {
+		o, _, err := create("--repo", "https://github.com/o/r", "--render")
+		if err != nil || !o.Render {
+			t.Fatalf("%v render %v", err, o.Render)
+		}
+		if o, _, _ = create("--repo", "https://github.com/o/r"); o.Render {
+			t.Fatal("a build rendered unasked")
+		}
+	})
 	t.Run("a repository alone is something to build, and is built without the web", func(t *testing.T) {
 		// A repository is documents: the web stays off unless asked, even
 		// with both keys present.

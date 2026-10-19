@@ -48,11 +48,12 @@ type knowledgeBuildOpts struct {
 	// documents, off with them.
 	web, noWeb bool
 	// hosted is a sandbox host's build: the web's scans and searches go
-	// through the registry with the job's credential.
-	hosted     bool
-	dir        string
-	out        string
-	policyPath string
+	// through the registry with the job's credential. render lets it render
+	// a page drawn by scripts: the host dispatched it as a browser job.
+	hosted, render bool
+	dir            string
+	out            string
+	policyPath     string
 	budgetFlags
 	// maxPackMB caps the pack, documents included, in MiB: 1024 (1 GB,
 	// knowledge.MaxLocalBytes) for a build on this machine; a sandbox host
@@ -125,6 +126,7 @@ func knowledgeBuildFlags(cmd *cobra.Command, o *knowledgeBuildOpts) {
 	f.StringVar(&o.briefFile, "brief-file", "", "read the brief from this file instead")
 	f.BoolVar(&o.web, "web", false, "let the Creator search the web, AI Review reading every result first (the default for a new pack with no --file, --repo or --url; it can raise what a build costs)")
 	f.BoolVar(&o.noWeb, "no-web", false, "build without the web (the default with --file, --repo or --url, and for add)")
+	f.BoolVar(&o.render, "render", false, "on a sandbox host, render a page drawn by scripts that web_read reads (the host dispatched this build as a browser job); on this computer pages are rendered without it")
 	f.BoolVar(&o.hosted, "hosted", false, "build as a sandbox host does for a build made in Agentry (with --output-format json): the web's scans and searches through the registry with the job's credential in $"+envJobToken)
 	f.StringVar(&o.out, "out", "", "output folder for the Creator run's reports and receipts (default ./agentry-out/agentry-knowledge-creator-<runid>)")
 	f.StringVar(&o.policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml)")
@@ -287,7 +289,7 @@ func runKnowledgeBuild(cmd *cobra.Command, dir, name string, o *knowledgeBuildOp
 		PackDir: dir, Name: name, Documents: o.files, Brief: brief, Sources: srcs, Web: web,
 		Home: home, Policy: pol, PolicySHA: polSHA, PolicyFile: &policyFile,
 		Build: version.Build(), Now: time.Now(), OutDir: outDir, Budgets: &budgets,
-		RunID: runID, Stderr: errOut, OnUsage: o.onUsage, MaxBytes: limit, Hosted: o.hosted || hostedProcess(),
+		RunID: runID, Stderr: errOut, OnUsage: o.onUsage, MaxBytes: limit, Hosted: o.hosted || hostedProcess(), Render: o.render,
 	})
 	if err != nil {
 		if res != nil && len(res.Skipped) > 0 {

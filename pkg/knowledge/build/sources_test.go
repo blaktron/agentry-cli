@@ -421,7 +421,7 @@ func TestAnAddExtendsAPackWithARepository(t *testing.T) {
 // TestASourcesRefusals: a source's malware refuses the build before the
 // Creator runs; a file from an address may not take the documents list's
 // name; a token the fetch step echoes in its failure is scrubbed from the
-// error; and a sandbox host's build refuses sources before any fetch.
+// error; and a sandbox host's build fetches at the hosted caps.
 func TestASourcesRefusals(t *testing.T) {
 	t.Run("malware in a repository", func(t *testing.T) {
 		fx := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})
@@ -470,15 +470,61 @@ func TestASourcesRefusals(t *testing.T) {
 			return nil
 		})
 	})
-	t.Run("a sandbox host's build", func(t *testing.T) {
+	t.Run("a sandbox host's build fetches at the hosted caps", func(t *testing.T) {
 		fx := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})
-		srcs, _ := ParseSources([]string{"https://github.com/o/r"}, nil)
-		fx.opts.Sources, fx.opts.Hosted = srcs, true
-		if _, err := Build(context.Background(), fx.fake, fx.opts); !errors.Is(err, ErrHostedSources) {
-			t.Fatalf("err = %v", err)
+		srcs, _ := ParseSources([]string{"https://github.com/o/r"}, []string{"https://example.org/spec.pdf"})
+		fx.opts.Sources, fx.opts.Hosted, fx.opts.MaxBytes = srcs, true, 10<<20
+		playFetch(t, fx.fake, "repo-github.com-o-r", map[string]string{"README.md": "# r\n"}, nil)
+		playFetch(t, fx.fake, "url-1", map[string]string{"spec.pdf": "%PDF spec"}, func(rep *source.Report) {
+			*rep = source.Report{Schema: source.Schema, Kind: source.KindURL, Files: 1, Bytes: 9, Name: "spec.pdf"}
+		})
+		fx.fake.Foreground["-agent"].Before = writes(fx.opts.OutDir, map[string]string{"wiki/topics/r.md": page("R", "repo-github.com-o-r/README.md")})
+		if _, err := Build(context.Background(), fx.fake, fx.opts); err != nil {
+			t.Fatal(err)
 		}
-		if _, ok := fx.fake.FindRun("-source-"); ok {
-			t.Error("a hosted build fetched a source")
+		repo, _ := fx.fake.FindRun("-source-repo-github.com-o-r")
+		file, _ := fx.fake.FindRun("-source-url-1")
+		// 10,000 files and 256 MiB for a repository, each held to the
+		// pack's 10 MB less the documents; 10 MiB for a file, likewise.
+		if a := strings.Join(repo.Argv, " "); !strings.Contains(a, "--max-files 1697 ") || !strings.Contains(a, "--max-bytes "+strconv.Itoa(10<<20-22)) {
+			t.Errorf("the repository's caps: %s", a)
+		}
+		if a := strings.Join(file.Argv, " "); !strings.Contains(a, "--max-files 1 ") {
+			t.Errorf("the file's caps: %s", a)
 		}
 	})
+}
+
+// TestAHostedBuildRendersOnlyWhenItsHostSaysSo: a sandbox host's build that
+// searches the web renders a page drawn by scripts only with Render, its
+// host having dispatched it as a browser job; without it the plan has no
+// render. A build on this computer renders without being asked.
+func TestAHostedBuildRendersOnlyWhenItsHostSaysSo(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		hosted, render bool
+		want           bool
+	}{
+		{"hosted without render", true, false, false},
+		{"hosted with render", true, true, true},
+		{"on this computer", false, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})
+			fx.opts.Documents, fx.opts.Brief = nil, "Cold-chain alarms."
+			fx.opts.Hosted, fx.opts.Render = tc.hosted, tc.render
+			fx.opts.Web = &engine.WebRun{Scan: "jev", JevKey: "not-a-real-jev-key"}
+			if tc.hosted {
+				fx.opts.Web = &engine.WebRun{Scan: "registry", Search: "registry", Registry: "https://registry.example", JobToken: "agyj_not-a-real-token"}
+			}
+			fx.fake.Foreground["-agent"].Before = writes(fx.opts.OutDir, map[string]string{"wiki/topics/cold.md": page("Cold", "brief.md")})
+			res, err := Build(context.Background(), fx.fake, fx.opts)
+			if err != nil {
+				t.Fatalf("Build: %v", err)
+			}
+			if _, got := res.Envelope.CapabilitiesEnforced["web.render"]; got != tc.want {
+				t.Fatalf("web.render in the receipt: %v, want %v", got, tc.want)
+			}
+		})
+	}
 }

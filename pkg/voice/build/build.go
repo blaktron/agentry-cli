@@ -122,8 +122,13 @@ type Options struct {
 	Stderr  io.Writer
 	OnUsage func(receipt.Usage)
 	// Hosted is a sandbox host's build, which never spends a model sign-in
-	// (localrun.Run.Hosted).
+	// (localrun.Run.Hosted). Its pages are read by AI Review through the
+	// registry with the job's credential (Review and Web say so).
 	Hosted bool
+	// Render lets a hosted build render a page drawn by scripts: its host
+	// dispatched it as a browser job. A build on this computer renders
+	// without it.
+	Render bool
 }
 
 // Result is what one build did.
@@ -242,8 +247,7 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 		if len(res.Pages) > 0 {
 			// What a page brought in reaches the Voice Writer only after AI
 			// Review read it, or through web_read, which reads it there.
-			canRender := o.Policy.Docker.Runtime == "" || len(o.Policy.Docker.Resolvers) > 0
-			if docs, readPages, err = reviewPages(ctx, o.Review, dec, all, res.Pages, inputsDir, canRender); err != nil {
+			if docs, readPages, err = reviewPages(ctx, o.Review, dec, all, res.Pages, inputsDir, o.noRender()); err != nil {
 				return res, err
 			}
 			if staged, err = stagedInputs(inputsDir); err != nil {
@@ -296,7 +300,7 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 		Builtin: writerPkg, Home: o.Home, Policy: o.Policy, PolicySHA: o.PolicySHA,
 		PolicyFile: o.PolicyFile, Build: o.Build, Task: strings.NewReader(task(o, docs, res.Cut) + pagesTask(res.Pages)),
 		Inputs: inputs, Decoded: res.Decoded, Enforced: enforced, OutDir: o.OutDir, Budgets: o.Budgets,
-		RunID: o.RunID, Stderr: logw, OnUsage: o.OnUsage, Web: web, Hosted: o.Hosted,
+		RunID: o.RunID, Stderr: logw, OnUsage: o.OnUsage, Web: web, Hosted: o.Hosted, HostedRender: o.Hosted && o.Render,
 	}.Execute(ctx, d)
 	res.Envelope = env
 
@@ -314,6 +318,18 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 		_, _ = fmt.Fprintf(logw, "warning: the Voice Writer stopped before it finished (%v); it had written VOICE.md, which is kept\n", runErr)
 	}
 	return res, nil
+}
+
+// noRender is why this build cannot render a page drawn by scripts, ""
+// when it can.
+func (o Options) noRender() string {
+	switch {
+	case o.Hosted && !o.Render:
+		return "this host was not asked to render pages for this job"
+	case o.Policy.Docker.Runtime != "" && len(o.Policy.Docker.Resolvers) == 0:
+		return "the runner cannot render a page under its runtime without the host's name servers (docker.resolvers)"
+	}
+	return ""
 }
 
 func (o Options) check() error {
@@ -346,9 +362,7 @@ func (o Options) check() error {
 		switch {
 		case len(o.URLs) > MaxURLs:
 			return fmt.Errorf("a voice takes at most %d web addresses", MaxURLs)
-		case o.Hosted:
-			return ErrHostedAddresses
-		case o.Review == nil || o.Web == nil || o.Web.JevKey == "":
+		case o.Review == nil || o.Web == nil || (o.Web.JevKey == "" && o.Web.JobToken == ""):
 			return ErrNoReviewKey
 		}
 	}
