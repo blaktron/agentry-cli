@@ -103,6 +103,8 @@ func TestTheRendererAnswersARequestFromItsOwnContainer(t *testing.T) {
 		t.Fatalf("posture %+v", seen)
 	case len(seen.Mounts) != 0 || len(seen.Volumes) != 0 || len(seen.Env) != 1:
 		t.Fatalf("the renderer is given the run's mounts %v %v or env %v", seen.Mounts, seen.Volumes, seen.Env)
+	case !strings.Contains(seen.Argv[1], "executablePath:process.env.PLAYWRIGHT_MCP_EXECUTABLE_PATH||undefined,"):
+		t.Fatalf("the renderer does not launch the image's own Chromium: %s", seen.Argv[1])
 	case seen.Argv[0] != "-e" || seen.Argv[2] != "--" || seen.Argv[3] != "https://example.com/app" || seen.Argv[4] != "http://"+renderProxyAlias+":3128":
 		t.Fatalf("argv %q", seen.Argv[2:])
 	}
