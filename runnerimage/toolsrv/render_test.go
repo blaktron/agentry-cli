@@ -185,3 +185,36 @@ func TestWebReadOffersRenderOnlyWhereTheRunRenders(t *testing.T) {
 		t.Fatal("render not offered with the renderer")
 	}
 }
+
+// TestAGivenPageThatRendersAwayIsNotRead: in a run held to the addresses
+// it was given, a rendered page that took the browser to another site is
+// refused and its text never scanned, and one that stays on its site is
+// read.
+func TestAGivenPageThatRendersAwayIsNotRead(t *testing.T) {
+	site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(shellPage))
+	}))
+	defer site.Close()
+	sc := &fakeScanner{verdict: passAll}
+	s, _ := webServer(t, sc, map[string]*httptest.Server{"site.test": site})
+	s.spec.Web.GivenOnly, s.spec.Web.Given = true, []string{"http://site.test/away", "http://site.test/post"}
+	s.spec.Web.Render = t.TempDir()
+	fakeRenderer(t, s.spec.Web.Render, func(u string) string {
+		if strings.HasSuffix(u, "/away") {
+			return "https://elsewhere.test/collect\n200\n<html><body><p>elsewhere</p></body></html>"
+		}
+		return "http://www.site.test/post\n200\n<html><body><p>post text</p></body></html>"
+	})
+	if text, isErr := s.toolWebRead(rawArgs(t, map[string]any{"url": "http://site.test/away"})); !isErr || !strings.Contains(text, failRenderAway) {
+		t.Fatalf("a page that left its site: %q", text)
+	}
+	for _, c := range sc.calls() {
+		if strings.Contains(c.text, "elsewhere") {
+			t.Fatal("the other site's text was scanned")
+		}
+	}
+	if text, isErr := s.toolWebRead(rawArgs(t, map[string]any{"url": "http://site.test/post"})); isErr || !strings.Contains(text, "post text") {
+		t.Fatalf("a page that stayed on its site: %q", text)
+	}
+}

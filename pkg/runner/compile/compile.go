@@ -93,6 +93,10 @@ type Inputs struct {
 	// run returned (toolsrv.Web.SearchedOnly): the Knowledge Creator's,
 	// whose model reads documents no one scanned. Only with Web.
 	WebSearchedOnly bool
+	// WebGivenOnly holds web_read to the addresses the person gave the run
+	// (toolsrv.Web.GivenOnly): the Voice Writer's. Never with
+	// WebSearchedOnly.
+	WebGivenOnly bool
 	// WebRender lets web_read render a thin page in a one-shot browser
 	// the engine runs (spec.CapSummary.WebRender): the Knowledge Creator's.
 	// Only with Web.
@@ -169,14 +173,17 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	if err != nil {
 		return nil, err
 	}
-	if (in.RegistrySearch || in.WebSearchedOnly) && !in.Web {
-		return nil, &PolicyRefusal{Reason: toolsrv.ToolRegistrySearch + " and the searched-only web_read are of the web tools, and are never granted without them"}
+	if (in.RegistrySearch || in.WebSearchedOnly || in.WebGivenOnly) && !in.Web {
+		return nil, &PolicyRefusal{Reason: toolsrv.ToolRegistrySearch + ", the searched-only and the given-only web_read are of the web tools, and are never granted without them"}
+	}
+	if in.WebSearchedOnly && in.WebGivenOnly {
+		return nil, &PolicyRefusal{Reason: "web_read is held either to a run's searches or to the addresses it was given, never both"}
 	}
 	if in.Web {
 		if err := checkWebGrant(in, caps); err != nil {
 			return nil, err
 		}
-		caps.WebTools, caps.RegistrySearch, caps.WebSearchedOnly, caps.WebRender = true, in.RegistrySearch, in.WebSearchedOnly, in.WebRender
+		caps.WebTools, caps.RegistrySearch, caps.WebSearchedOnly, caps.WebGivenOnly, caps.WebRender = true, in.RegistrySearch, in.WebSearchedOnly, in.WebGivenOnly, in.WebRender
 	} else if in.WebRender {
 		return nil, &PolicyRefusal{Reason: "a rendered web_read is part of the web tools, and this run has none"}
 	}
@@ -818,7 +825,7 @@ func CompileOutputSchema(raw []byte) (*jsonschema.Schema, error) {
 // any release).
 func checkWebGrant(in Inputs, caps spec.CapSummary) error {
 	if in.Source != "builtin" {
-		return &PolicyRefusal{Reason: fmt.Sprintf("the web tools (%s, %s, %s) are the built-ins' alone, the Drafter's and the Knowledge Creator's; a %s package is never granted them",
+		return &PolicyRefusal{Reason: fmt.Sprintf("the web tools (%s, %s, %s) are the built-ins' alone, the Drafter's, the Knowledge Creator's and the Voice Writer's; a %s package is never granted them",
 			toolsrv.ToolWebSearch, toolsrv.ToolWebRead, toolsrv.ToolRegistrySearch, cmp.Or(in.Source, "release"))}
 	}
 	c := in.Manifest.Capabilities
@@ -892,7 +899,7 @@ func toolSpec(caps spec.CapSummary, secrets []string) *toolsrv.Spec {
 		Exec: toolsrv.Exec{Commands: caps.ExecCommands},
 		// The run's half of Web (where it scans, searches, which registry,
 		// the ledger) is the engine's, stamped per run.
-		Web: toolsrv.Web{Enabled: caps.WebTools, RegistrySearch: caps.RegistrySearch, SearchedOnly: caps.WebSearchedOnly, Render: renderMount(caps)},
+		Web: toolsrv.Web{Enabled: caps.WebTools, RegistrySearch: caps.RegistrySearch, SearchedOnly: caps.WebSearchedOnly, GivenOnly: caps.WebGivenOnly, Render: renderMount(caps)},
 		// The review grant: the run's ledger is the engine's, stamped per
 		// run.
 		Review: toolsrv.Review{Enabled: caps.ReviewTools},
@@ -1654,6 +1661,9 @@ func enforcement(caps spec.CapSummary, secrets, optional []string, extraServers 
 		e["network"] = "no declared egress and no fetch tool; the built-in's web tools alone reach out, from a tools container with no network allowlist of its own, each holding its own bounds (see web)"
 		if caps.WebSearchedOnly {
 			tools += ", " + toolsrv.ToolWebRead + " opening only an address a " + toolsrv.ToolWebSearch + " of this run returned and AI Review passed"
+		}
+		if caps.WebGivenOnly {
+			tools, read = toolsrv.ToolWebRead+" alone, opening only an address the person gave the run (following a redirect that page's own server makes)", "every page"
 		}
 		e["web"] = "the built-in's web tools " + tools +
 			", on the tools container only: " + toolsrv.ToolWebRead + " is GET only, http and https on ports 80 and 443, public addresses only, checked at every connection and redirect hop, no cookie or credential, at most 32 KiB of text a page; " +

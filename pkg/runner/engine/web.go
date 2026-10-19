@@ -45,6 +45,9 @@ type WebRun struct {
 	// MaxPages, MaxSearches and MaxRegistryCalls, when set, bound the run's
 	// calls below the tools' defaults.
 	MaxPages, MaxSearches, MaxRegistryCalls int
+	// Given are the addresses a plan whose web_read is held to them may
+	// read: the person's own, from their command. Set only for such a plan.
+	Given []string
 }
 
 // WebLedgerFile is the web ledger in the receipts directory.
@@ -73,6 +76,12 @@ func checkWeb(p Params) error {
 		}
 	default:
 		return Classify(ExitPolicy, fmt.Errorf("unknown scanner %q", p.Web.Scan))
+	}
+	if len(p.Web.Given) > 0 && !p.Plan.Capabilities.WebGivenOnly {
+		return Classify(ExitCLI, errors.New("this plan's web_read is not held to the addresses it is given, so it cannot be given any"))
+	}
+	if p.Plan.Capabilities.WebGivenOnly && p.Web.Search != "" {
+		return Classify(ExitCLI, errors.New("a plan whose web_read is held to the addresses it was given has no web_search"))
 	}
 	switch p.Web.Search {
 	case "":
@@ -126,6 +135,7 @@ func grantWeb(gatewayDir string, w *WebRun) error {
 	}
 	ts.Web.Scan, ts.Web.Search, ts.Web.Registry = w.Scan, w.Search, w.Registry
 	ts.Web.MaxPages, ts.Web.MaxSearches, ts.Web.MaxRegistryCalls = w.MaxPages, w.MaxSearches, w.MaxRegistryCalls
+	ts.Web.Given = append([]string(nil), w.Given...)
 	ts.Web.Ledger = path.Join(spec.OutMount, "receipts", WebLedgerFile)
 	out, err := json.MarshalIndent(&ts, "", "  ")
 	if err != nil {

@@ -83,3 +83,5 @@ agentry/examiner@1.2.0 sha256:8739b4d7ad47f113c4b0d4e032c2c26b85c2e76e11b244d351
 agentry/knowledge-creator@1.4.0 sha256:87cb35cc9f68f2edfc610d23e537e15ddbbe512762859973c33af2ee6a7b47dc
 # 1.5.0: the Knowledge Creator takes a git repository or a file at a web address as a source (fetched before the run by the step a run's input source takes, staged as documents, kept in the pack), and its instruction and guide say how to read a repository.
 agentry/knowledge-creator@1.5.0 sha256:bad2f80de710c57c7266283b352a64efd5b68924a397bcb8ac077ec654fc1a00
+# 1.3.0: the Voice Writer reads pages from web addresses the person gives (staged after AI Review read them, or, drawn by scripts, with a web_read held to those addresses and rendering), and ships its style guide.
+agentry/voice-writer@1.3.0 sha256:6bc2264bb86cc6538edcb708b190dc8f39e3c7467e48db1caf87e62a51351cfb
