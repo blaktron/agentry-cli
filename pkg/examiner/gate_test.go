@@ -1,6 +1,7 @@
 package examiner
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/blaktron/agentry/pkg/gatecases"
@@ -72,29 +73,23 @@ func TestAIReviewFindingRatesAsS5Does(t *testing.T) {
 	}
 }
 
-// TestDeclaredCapabilitiesReadTheCanonicalJSON: the tokens the gate's
-// requireHumanReview reads, from the form the core reads them in.
-func TestDeclaredCapabilitiesReadTheCanonicalJSON(t *testing.T) {
-	for _, tc := range []struct {
-		json     string
-		want     string
-		wildcard bool
-	}{
-		{`{"capabilities":{"network":{"egress":"none"},"filesystem":{"read":"none","write":"none"},"exec":"none"}}`, "", false},
-		{`{"capabilities":{"network":{"egress":["api.example.com"]},"filesystem":{"read":{"paths":["/a"]},"write":"none"},"exec":{"commands":["git"]},"secrets":["K"]}}`, "network,fs-read,exec,env", false},
-		{`{"capabilities":{"network":{"egress":["*"]},"filesystem":{"write":{"paths":["/o"]}}}}`, "network,fs-write", true},
-		{`not json`, "", false},
-	} {
-		got := DeclaredCapabilities([]byte(tc.json))
-		s := ""
-		for i, c := range got {
-			if i > 0 {
-				s += ","
-			}
-			s += c
-		}
-		if s != tc.want || WildcardEgress([]byte(tc.json)) != tc.wildcard {
-			t.Errorf("%s: %q wildcard %v", tc.json, s, WildcardEgress([]byte(tc.json)))
+// TestTheGateInputsAreTheRegistrysDerivations: the two gate inputs the
+// expected outcome reads from a manifest come from the core's own
+// derivations, so every derivation case the core publishes gives the
+// Examiner the tokens and the flag the registry's gate is given.
+func TestTheGateInputsAreTheRegistrysDerivations(t *testing.T) {
+	table, err := gatecases.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(table.Derivations) == 0 {
+		t.Fatal("the core publishes no derivation cases")
+	}
+	for _, d := range table.Derivations {
+		p := &Prepared{ManifestJSON: d.Manifest, Policy: PolicyUsed{Policy: table.Baseline}}
+		got := gateInputOf(p)
+		if !slices.Equal(got.DeclaredCapabilities, d.Want.DeclaredCapabilities) || got.WildcardEgress != d.Want.UnrestrictedNetwork {
+			t.Errorf("%s: tokens %v flag %v, the registry's are %v %v", d.Name, got.DeclaredCapabilities, got.WildcardEgress, d.Want.DeclaredCapabilities, d.Want.UnrestrictedNetwork)
 		}
 	}
 }

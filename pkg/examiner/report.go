@@ -63,13 +63,14 @@ const Notice = "The registry scans again at Submit. AI Review can answer differe
 // standing to run: every report names them.
 var NotRunHere = []string{
 	"the registry's secrets stage (S2), which scans the files and their history with its own tools",
-	"the registry's scripts stage (S6), which checks each support script against the declared capabilities",
+	"the registry's scripts stage (S6), which checks each support script against the declared capabilities (its check of the instruction against the runner tools each contract line grants runs here)",
 	"the publisher signals (S8): the name against popular QuickAgents, and the account's own record",
 	"the diff against the last published version (S9)",
 	"an organization's policy, which can be stricter than the platform's baseline",
 	"a shipped knowledge pack's secrets scan, URL reputation and AI Review, in the registry's stage for packs (its hidden-content and injection rules run here)",
 	"the text the registry recovers from image metadata, and its comparison of the instruction file's front matter with the manifest",
 	"Submit's own refusals: the policy's blocked capabilities, blocked MCP servers, allowed licences and required evaluations, a quota, two-step sign-in, credits, a version already published",
+	"the refusals a run in Agentry makes when it starts, which Submit does not make: a target host, a browser on any public site where the deployment does not allow one, and a browser's site that is not a public address on port 80 or 443",
 }
 
 // Finding is one finding of any kind.
@@ -475,10 +476,7 @@ func Expect(p *Prepared, ai AIReview) Expected {
 		e.Reason = fmt.Sprintf("Submit would be expected to refuse it before the gate runs: the manifest rules found %d error(s).", errs)
 		return e
 	}
-	in := GateInput{
-		Policy: p.Policy.Policy, WildcardEgress: WildcardEgress(p.ManifestJSON), DeclaredCapabilities: DeclaredCapabilities(p.ManifestJSON),
-		Public: true,
-	}
+	in := gateInputOf(p)
 	for _, f := range p.Findings {
 		in.Findings = append(in.Findings, gatecases.Finding{Scanner: f.Scanner, Severity: f.Severity, Confidence: f.Confidence})
 	}
@@ -629,4 +627,15 @@ func Write(outDir string, r *Report) (string, error) {
 		return "", fmt.Errorf("write %s: %w", ReportFile, err)
 	}
 	return path, nil
+}
+
+// gateInputOf is the gate's input for a prepared package before any finding:
+// the policy found, the package taken as public, and the two inputs the
+// registry derives from the manifest, by the core's own derivations.
+func gateInputOf(p *Prepared) GateInput {
+	return GateInput{
+		Policy: p.Policy.Policy, Public: true,
+		WildcardEgress:       gatecases.UnrestrictedNetwork(p.ManifestJSON),
+		DeclaredCapabilities: gatecases.DeclaredCapabilities(p.ManifestJSON),
+	}
 }

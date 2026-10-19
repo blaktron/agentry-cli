@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/blaktron/agentry-cli/pkg/drafter"
+	"github.com/blaktron/agentry-cli/pkg/examiner"
 	"github.com/blaktron/agentry-cli/pkg/knowledge/knowledgetest"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
@@ -33,8 +34,13 @@ func shippedRun(t *testing.T, r Run) (*receipt.Envelope, []string, error) {
 	if r.OutDir == "" {
 		r.OutDir = t.TempDir()
 	}
-	// The Drafter returns structured output: the least draft its schema takes.
-	reply, _ := json.Marshal(`{"manifest":{"schemaVersion":"2","name":"x","summary":"x","modes":["autonomous"]}}`)
+	// The Drafter and the Examiner return structured output: the least
+	// answer each schema takes.
+	answer := `{"manifest":{"schemaVersion":"2","name":"x","summary":"x","modes":["autonomous"]}}`
+	if r.Builtin.Name() == examiner.Name {
+		answer = `{"summary":"x","findings":[],"notRead":[]}`
+	}
+	reply, _ := json.Marshal(answer)
 	f := &dockerx.Fake{Foreground: map[string]*dockerx.FakeForeground{
 		"-probe": {ExitCode: 0},
 		"-agent": {Stdout: `{"type":"agent_choice","message":{"content":` + string(reply) + `}}` + "\n" +
@@ -101,6 +107,29 @@ func TestEveryDrafterRunGetsItsDraftingGuide(t *testing.T) {
 	}
 	if strings.Join(packs, ",") != drafter.GuideName+",runbooks" {
 		t.Fatalf("packs %v, want the guide then the person's", packs)
+	}
+}
+
+// TestEveryExaminerRunGetsItsReviewGuide: the Examiner's own pack is mounted
+// in its run beside the review grant, and the receipt names it as the
+// built-in's own, with no scan record of its own. The package under review
+// reaches the run only as its inputs.
+func TestEveryExaminerRunGetsItsReviewGuide(t *testing.T) {
+	in := filepath.Join(t.TempDir(), "manifest.json")
+	if err := os.WriteFile(in, []byte(`{"schemaVersion":"2"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env, packs, err := shippedRun(t, Run{Builtin: Examiner(), Home: t.TempDir(), Task: strings.NewReader("Examine."), RunID: "feed0005",
+		Inputs: []string{in}, Review: &engine.ReviewRun{JevKey: "jev-test-key"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(packs) != 1 || packs[0] != examiner.GuideName {
+		t.Fatalf("the Examiner's packs %v, want [%s]", packs, examiner.GuideName)
+	}
+	line := env.CapabilitiesEnforced["knowledge"]
+	if !strings.HasPrefix(line, examiner.GuideName+" shipped with the release (built-in package tree sha256:") || strings.Contains(line, "scan:") {
+		t.Fatalf("knowledge line %q", line)
 	}
 }
 
