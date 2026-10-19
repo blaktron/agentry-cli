@@ -125,6 +125,10 @@ type Inputs struct {
 	Unsafe *unsafeexec.Data
 }
 
+// PersistentOnlyBuiltin is the refusal of a persistent release from any
+// source but a built-in.
+const PersistentOnlyBuiltin = "a persistent release runs only as a built-in in this version"
+
 // PolicyRefusal is a run refused by operator policy — the exit-11 class,
 // distinct from a malformed package (exit 12).
 type PolicyRefusal struct{ Reason string }
@@ -167,6 +171,12 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	if !m.Supports(mode) {
 		return nil, fmt.Errorf("%s/%s@%s does not declare run mode %s (modes: %s) — not runnable this way",
 			m.Namespace, m.Name, m.Version, mode, strings.Join(modeStrings(m.SupportedModes()), ", "))
+	}
+	// A persistent agent's conversation and files outlive the run, which
+	// only the runner's own built-ins are trusted with; the policy cannot
+	// widen that (allowPersistentReleases is reserved and refused at load).
+	if mode == manifest.ModePersistent && in.Source != "builtin" {
+		return nil, &PolicyRefusal{Reason: PersistentOnlyBuiltin}
 	}
 
 	caps, err := summarizeCapabilities(m, in.Policy)
