@@ -283,7 +283,7 @@ func TestCreateWritesAVoiceFromSamples(t *testing.T) {
 		t.Fatalf("samples %v skipped %v", res.Samples, res.Skipped)
 	}
 	env := res.Envelope
-	if env.Attestation.State != "builtin" || env.Ref != "agentry/voice-writer@1.1.0" {
+	if env.Attestation.State != "builtin" || env.Ref != "agentry/voice-writer@1.2.0" {
 		t.Fatalf("attestation %+v ref %s", env.Attestation, env.Ref)
 	}
 	for _, line := range []string{"voice", "knowledge"} {

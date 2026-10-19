@@ -68,3 +68,12 @@ agentry/drafter@1.15.3 sha256:af852c93d54985975819a2721d7d94ed3c7655b34b43d63ad7
 agentry/drafter@1.15.4 sha256:d73555b693b77e2ceb5a7726dace5e78bea19dc74a36a7a6064cf03e0f688dad
 # 1.15.5: the browser page teaches the run's budget (100 tool calls and 900 s locally, the default policy raised from 60 in the same release, and on hosted Pro and above; 20 and 300 s on Standard; not told to the run): one browser_evaluate a page, every page fetch bounded, never the same call five times running, the report written early, only the site opened; the runtime facts state the budgets; the post-step sends a page fetch with no timeout, or a key pressed five or more times running, to the repair turn.
 agentry/drafter@1.15.5 sha256:baef12ebab692ff3d411609a544fc961be61058d2563ea98f4e3c94dcd15d8fc
+# Every built-in gains the run's scratch folder, grep and glob, which every release's run already has; export_pdf stays a release's.
+# 1.3.0: the Knowledge Creator plans in the scratch folder, keeps a copy of a page it will rewrite, and greps its documents and the pack before reading.
+agentry/knowledge-creator@1.3.0 sha256:a33db0c20e32654e4374d01b3fd3b64d278c6b359152f7abec9fb4babc21ec78
+# 1.16.0: the Drafter's tools list names the scratch folder, grep and glob.
+agentry/drafter@1.16.0 sha256:a2a6de86a86271c3acb70653bf3b47ffcb5669b10ff3a99cfb2f987c52d41c1a
+# 1.2.0: the Voice Writer takes notes per sample in the scratch folder and greps the samples before it states a habit.
+agentry/voice-writer@1.2.0 sha256:879883ee64f7b9ced07402bb0d252a30779661c2af9b2e3d92ae45ec1665b655
+# 1.1.0: the Examiner keeps a file checklist in the scratch folder; grep and glob search that folder only, never its inputs.
+agentry/examiner@1.1.0 sha256:53516ae2d632fcd09ab815a3a147bcdfeed620561b7ac63a13e18315456edb25

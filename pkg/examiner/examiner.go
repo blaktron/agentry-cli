@@ -32,7 +32,7 @@ func FS() fs.FS { return files }
 const (
 	Namespace = "agentry"
 	Name      = "examiner"
-	Version   = "1.0.0"
+	Version   = "1.1.0"
 )
 
 // LocalTimeoutFloorSeconds is the least a review on this computer is given:

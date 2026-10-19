@@ -514,6 +514,11 @@ func TestTheInputsAreNotSearchedUnderReview(t *testing.T) {
 	if got, isErr := grepCall(t, s, map[string]any{"pattern": "review", "path": spec.InputsDir}); !isErr || !strings.Contains(got, "not an area this run can search") {
 		t.Errorf("a grep of the inputs under review: (%q, %v)", got, isErr)
 	}
+	for _, dir := range []string{spec.InputsDir, spec.InputsTextDir} {
+		if got, isErr := s.toolGlob(rawArgs(t, map[string]any{"pattern": "**", "path": dir})); !isErr || !strings.Contains(got, "not an area this run can search") {
+			t.Errorf("a glob of %s under review: (%q, %v)", dir, got, isErr)
+		}
+	}
 	if s.callPersonsInput {
 		t.Error("a refused search set the person's-input flag")
 	}

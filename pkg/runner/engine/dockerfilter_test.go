@@ -309,6 +309,10 @@ func TestTheToolsServerIsGivenItsBoundedTmpfs(t *testing.T) {
 	plan := &spec.Plan{Proxy: spec.ProxySpec{Image: "agentry-runner:test"}}
 	want := "size=268435456,mode=1777"
 	if got := toolsTmpfs(plan); len(got) != 1 || got["/tmp"] != want {
+		t.Fatalf("a tools server with no scratch folder gets %v", got)
+	}
+	builtin := &spec.Plan{Proxy: spec.ProxySpec{Image: "agentry-runner:test"}, Capabilities: spec.CapSummary{Scratch: true, ReviewTools: true}}
+	if got := toolsTmpfs(builtin); len(got) != 2 || got["/tmp"] != want || got["/scratch"] != want {
 		t.Fatalf("a built-in's tools server gets %v", got)
 	}
 	if plan.ToolsImage() != "agentry-runner:test" {

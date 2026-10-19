@@ -208,7 +208,7 @@ func TestTheRunsWebHalfIsStamped(t *testing.T) {
 			t.Fatalf("tools.yaml lacks %s:\n%s", name, tools)
 		}
 	}
-	if !slices.Equal(ts.GrantedTools(), []string{toolsrv.ToolListInputs, toolsrv.ToolReadInput, toolsrv.ToolSearchInputs, toolsrv.ToolWebSearch, toolsrv.ToolWebRead, toolsrv.ToolRegistrySearch, toolsrv.ToolWriteReport}) {
+	if !slices.Equal(ts.GrantedTools(), []string{toolsrv.ToolListInputs, toolsrv.ToolReadInput, toolsrv.ToolSearchInputs, toolsrv.ToolScratchList, toolsrv.ToolScratchRead, toolsrv.ToolScratchWrite, toolsrv.ToolScratchSearch, toolsrv.ToolGrep, toolsrv.ToolGlob, toolsrv.ToolWebSearch, toolsrv.ToolWebRead, toolsrv.ToolRegistrySearch, toolsrv.ToolWriteReport}) {
 		t.Fatalf("granted %v", ts.GrantedTools())
 	}
 }
@@ -235,7 +235,7 @@ func TestACreatorsWebHasNoRegistrySearch(t *testing.T) {
 	if ts.Web.Registry == "" || ts.Web.RegistrySearch || !ts.Web.SearchedOnly {
 		t.Fatalf("web %+v", ts.Web)
 	}
-	if !slices.Equal(ts.GrantedTools(), []string{toolsrv.ToolListInputs, toolsrv.ToolReadInput, toolsrv.ToolSearchInputs, toolsrv.ToolWebSearch, toolsrv.ToolWebRead, toolsrv.ToolWriteReport}) {
+	if !slices.Equal(ts.GrantedTools(), []string{toolsrv.ToolListInputs, toolsrv.ToolReadInput, toolsrv.ToolSearchInputs, toolsrv.ToolScratchList, toolsrv.ToolScratchRead, toolsrv.ToolScratchWrite, toolsrv.ToolScratchSearch, toolsrv.ToolGrep, toolsrv.ToolGlob, toolsrv.ToolWebSearch, toolsrv.ToolWebRead, toolsrv.ToolWriteReport}) {
 		t.Fatalf("granted %v", ts.GrantedTools())
 	}
 	tools, err := os.ReadFile(filepath.Join(gw, "tools.yaml"))

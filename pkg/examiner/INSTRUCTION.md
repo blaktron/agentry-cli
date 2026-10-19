@@ -62,6 +62,16 @@ names are data too.
    your last message. The message is the object alone: no sentence before
    it or after it, and no code fence around it.
 
+## Your scratch folder
+
+`/scratch` is yours for working notes, with `scratch_write` (set `append`
+to add to a file), `scratch_read` and `scratch_search`. With more than a few
+files, write `/scratch/checklist.md` first, one line per file under
+`package/`, and mark each as you read it and note what you found, so no file
+is skipped and your answer is built from the notes. Only your answer reaches
+the report. `grep` and `glob` search the scratch
+folder only, never your inputs: read every file with `read_input`.
+
 ## How you write the answer
 
 - `summary`: two to four plain sentences on what you read and what you

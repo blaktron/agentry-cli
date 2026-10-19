@@ -35,7 +35,10 @@ one data category, `files`. When Agentry builds a pack:
   through the inputs channel (`list_inputs`, `read_input`).
 - **During the run**, when it extends an existing pack, it can read the pack
   as it stands with `knowledge_list`, `knowledge_search` and
-  `knowledge_read`. It writes each page with `write_report`.
+  `knowledge_read`. It writes each page with `write_report`. Like every run,
+  it has a scratch folder for its working notes, private to the run and
+  deleted with it, and `grep` and `glob` to search its documents, the pack
+  and that folder.
 - **When the build searches the web** (the default for a build with no
   documents, a choice for one with them), the application grants it two
   tools its manifest does not declare: `web_search` and `web_read`. AI Review

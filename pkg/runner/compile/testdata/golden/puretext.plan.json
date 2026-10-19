@@ -18,7 +18,8 @@
     "egressMode": "none",
     "fsReadMode": "none",
     "fsWriteMode": "none",
-    "scratch": true
+    "scratch": true,
+    "pdf": true
   },
   "tools": [
     "list_inputs",

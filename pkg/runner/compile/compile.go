@@ -180,10 +180,12 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		}
 		caps.ReviewTools = true
 	}
-	// The scratch folder is the runner's grant to every release's run and
-	// session, never a line of the contract; the built-ins keep their own
-	// fixed surfaces.
-	caps.Scratch = in.Source != "builtin"
+	// The scratch folder, with grep and glob, is the runner's grant to every
+	// run and session, a built-in's included, never a line of the contract.
+	// export_pdf is a release's alone: a built-in's output is read by the
+	// application.
+	caps.Scratch = true
+	caps.PDF = in.Source != "builtin"
 	// Target hosts: the host link and its tools. A built-in never declares
 	// one, and the grants that hold a built-in's container to one network
 	// never sit beside it.
@@ -857,10 +859,10 @@ func toolSpec(caps spec.CapSummary, secrets []string) *toolsrv.Spec {
 		// were none.
 		InputsTextDir: spec.InputsTextMount,
 		ScratchDir:    scratchDir(caps),
-		// export_pdf goes with the scratch folder, to every release's run
-		// and session.
-		PDF: toolsrv.PDF{Enabled: caps.Scratch},
-		// grep and glob go with it too.
+		// export_pdf renders from the scratch folder or reports/, for every
+		// release's run and session.
+		PDF: toolsrv.PDF{Enabled: caps.PDF},
+		// grep and glob go with the scratch folder.
 		Search: toolsrv.Search{Enabled: caps.Scratch},
 		FSRead: toolsrv.Access{
 			Enabled: caps.FSReadMode != "none",
@@ -1651,9 +1653,11 @@ func enforcement(caps spec.CapSummary, secrets, optional []string, extraServers 
 		"; write " + fsDesc(caps.FSWriteMode, caps.FSWritePaths) +
 		" — enforced by the tools-container mount table (ro/rw, per-path binds) plus server-side grant checks; " +
 		fmt.Sprintf("the run's docker filter (in the CLI on Linux, in a container of the run's own on Docker Desktop) mounts the tools container's %s as a %d MiB tmpfs and the tools server refuses to serve without it; where no filter runs it is the container's own layer, unbounded", spec.ToolsTmpMount, spec.ToolsTmpfsBytes>>20)
-	if caps.Scratch {
+	if caps.PDF {
 		e["pdf"] = fmt.Sprintf("the runner's grant, not the contract's: %s renders a Markdown file from reports/ or the scratch folder into a PDF in reports/ with Typst %s in the tools container (built without a package downloader), through the runner's confine role: an empty environment, a fresh render root under %s whose every file the tools server makes new, no write of its own (Landlock; the PDF comes back on its stdout), TCP refused where Landlock is ABI 4 or later, %d GiB of address space and %d seconds; as root it runs as a user of its own that owns nothing, and where there is no Landlock that user is all that holds its writes. Only local PNG and JPEG images from reports/, the scratch folder and the inputs are drawn. The theme is the run's, never the model's, and the receipt's pdfs block names it and each PDF's SHA-256; write_report refuses a PDF",
 			toolsrv.ToolExportPDF, toolsrv.TypstVersion, spec.ToolsTmpMount, toolsrv.PDFRenderMemory>>30, int(toolsrv.PDFRenderTimeout.Seconds()))
+	}
+	if caps.Scratch {
 		e["scratch"] = fmt.Sprintf("the runner's grant, not the contract's: %s, %s, %s and %s over the scratch folder %s on the tools container only, empty at the start, never copied to the output folder, and removed with the container; a %d MiB tmpfs the run's docker filter mounts (in the CLI on Linux, in a container of the run's own on Docker Desktop), and where no filter runs a folder in the container's own layer, unbounded",
 			toolsrv.ToolScratchList, toolsrv.ToolScratchRead, toolsrv.ToolScratchWrite, toolsrv.ToolScratchSearch, spec.ScratchMount, spec.ToolsTmpfsBytes>>20)
 		e["search"] = fmt.Sprintf("the runner's grant, not the contract's: %s and %s search and list, one area a call, only what the run's other tools read (its inputs unless under the review grant, attached knowledge packs, the scratch folder, the workspace only as filesystem.read grants it), with ripgrep %s in the tools container (built from pinned source, no PCRE2), through the runner's confine role: an empty environment, a fixed argument list that never asks it to start another program or follow a link, reads held to the searched area and no write of its own (Landlock), TCP refused where Landlock is ABI 4 or later, %d MiB of address space and %d seconds; as root it runs as a user of its own that owns nothing, and where there is no Landlock that user is all that holds it. A search of the inputs answers as the person's own input, as %s does",

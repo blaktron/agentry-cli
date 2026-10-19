@@ -222,7 +222,7 @@ func TestTheReviewLedgerIsStampedAndCounted(t *testing.T) {
 	if !ts.Review.Enabled || ts.Review.Ledger != "/out/receipts/"+ReviewLedgerFile || strings.Contains(string(b), testReviewKey) {
 		t.Fatalf("review %+v", ts.Review)
 	}
-	if !slices.Equal(ts.GrantedTools(), []string{toolsrv.ToolListInputs, toolsrv.ToolReadInput, toolsrv.ToolAIReview, toolsrv.ToolWriteReport}) {
+	if !slices.Equal(ts.GrantedTools(), []string{toolsrv.ToolListInputs, toolsrv.ToolReadInput, toolsrv.ToolAIReview, toolsrv.ToolScratchList, toolsrv.ToolScratchRead, toolsrv.ToolScratchWrite, toolsrv.ToolScratchSearch, toolsrv.ToolGrep, toolsrv.ToolGlob, toolsrv.ToolWriteReport}) {
 		t.Fatalf("granted %v", ts.GrantedTools())
 	}
 	tools, _ := os.ReadFile(filepath.Join(gw, "tools.yaml"))
