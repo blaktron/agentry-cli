@@ -308,6 +308,8 @@ type Plan struct {
 	// Browser is the browser server's image, where the release declares
 	// capabilities.browser: pulled by digest, never built.
 	Browser *BrowserSpec `json:"browser,omitempty"`
+	// Render is the page renderer, for a plan with CapSummary.WebRender.
+	Render *RenderSpec `json:"render,omitempty"`
 	// Harness describes the adapter and the agent container.
 	Harness HarnessSpec `json:"harness"`
 	// Proxy describes the LLM egress proxy sidecar.
@@ -385,6 +387,11 @@ type CapSummary struct {
 	// WebSearchedOnly holds web_read to the addresses a web_search of the
 	// run returned: the Knowledge Creator's.
 	WebSearchedOnly bool `json:"webSearchedOnly,omitempty"`
+	// WebRender lets web_read render a page in a headless browser the
+	// engine runs once a page, behind a proxy that admits public sites
+	// alone, and read the text the page draws: the Knowledge Creator's.
+	// The model never drives that browser. Only with WebTools.
+	WebRender bool `json:"webRender,omitempty"`
 	// ReviewTools is a built-in's review grant (ai_review, and read_input
 	// answering only what AI Review passed). Like WebTools it is never the
 	// manifest's: the compiler sets it for a built-in package the CLI grants it
@@ -423,6 +430,20 @@ type BrowserCap struct {
 type BrowserSpec struct {
 	Image string `json:"image"`
 }
+
+// RenderSpec is a run's page renderer (CapSummary.WebRender): the browser
+// image the engine runs once a page, never a server the model can call.
+type RenderSpec struct {
+	Image string `json:"image"`
+}
+
+// The page renderer's hand-off folder: under the run's cfg on the host,
+// bound read-write into the tools server alone at RenderMount, where
+// web_read leaves a request and the engine its answer.
+const (
+	RenderDir   = "render"
+	RenderMount = "/render"
+)
 
 // The run folders the browser server reads and writes, under the run's cfg.
 const (

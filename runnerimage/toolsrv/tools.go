@@ -170,7 +170,7 @@ func (s *server) buildTools() {
 			if s.spec.Web.SearchedOnly {
 				desc += " It reads only an address one of your web_search results gave, exactly as given."
 			}
-			add(name, desc, webReadSchema(), s.toolWebRead)
+			add(name, desc, webReadSchemaFor(s.spec.Web.Render != ""), s.toolWebRead)
 		case ToolRegistrySearch:
 			add(name, "Ask the Agentry registry: search its published QuickAgents (query), read one QuickAgent's manifest (ref), or read its vulnerability check of an exact MCP server version (ecosystem, package, version). AI Review reads each answer before you do.",
 				registrySearchSchema(), s.toolRegistrySearch)

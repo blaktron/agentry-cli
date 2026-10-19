@@ -62,6 +62,11 @@ type Web struct {
 	// in an address of its choosing; a search result's address is the
 	// search provider's, never the model's.
 	SearchedOnly bool `json:"searchedOnly,omitempty"`
+	// Render is compiled: the folder, in this container, through which
+	// web_read asks the engine to render a page in a headless browser when
+	// its text is thin or the model asks (the Knowledge Creator's). Empty,
+	// no page is rendered.
+	Render string `json:"render,omitempty"`
 	// MaxPages, MaxSearches and MaxRegistryCalls bound one run's calls;
 	// zero takes the defaults.
 	MaxPages         int `json:"maxPages,omitempty"`
@@ -145,6 +150,10 @@ type LedgerEntry struct {
 	// result has a line of its own after it.
 	Search  bool `json:"search,omitempty"`
 	Results int  `json:"results,omitempty"`
+	// Rendered marks a page read from what a headless browser drew; Render
+	// says why one was asked for and not used.
+	Rendered bool   `json:"rendered,omitempty"`
+	Render   string `json:"render,omitempty"`
 	webscan.Result
 }
 
@@ -460,15 +469,22 @@ func withheldText(what, address string, r webscan.Result) string {
 
 // ---- web_read ----
 
-func webReadSchema() map[string]any {
-	return objSchema(map[string]any{
+// webReadSchemaFor is web_read's schema, with the render argument where
+// the run renders pages.
+func webReadSchemaFor(render bool) map[string]any {
+	props := map[string]any{
 		"url": strProp("The http or https address of a public page to read (GET only, ports 80 and 443)."),
-	}, "url")
+	}
+	if render {
+		props["render"] = map[string]any{"type": "boolean", "description": "Read the page as a browser draws it, scripts run: for a page whose text comes from JavaScript. A page whose plain text is thin is rendered without asking."}
+	}
+	return objSchema(props, "url")
 }
 
 func (s *server) toolWebRead(raw json.RawMessage) (string, bool) {
 	var a struct {
-		URL string `json:"url"`
+		URL    string `json:"url"`
+		Render bool   `json:"render"`
 	}
 	if err := unmarshalArgs(raw, &a); err != nil {
 		return "web_read: " + err.Error(), true
@@ -493,7 +509,7 @@ func (s *server) toolWebRead(raw json.RawMessage) (string, bool) {
 		s.record(LedgerEntry{Tool: ToolWebRead, URL: u.String(), Refused: "the run's page budget is spent"})
 		return fmt.Sprintf("web_read: this run's %d pages are spent; finish with what you have", s.spec.Web.maxPages()), true
 	}
-	text, final, err := s.fetchPage(u)
+	pg, err := s.fetchPage(u)
 	if err != nil {
 		// What failed is said to the model in the tools' own words only:
 		// a server's error, header or redirect target is its own text,
@@ -503,8 +519,25 @@ func (s *server) toolWebRead(raw json.RawMessage) (string, bool) {
 		s.record(LedgerEntry{Tool: ToolWebRead, URL: u.String(), Refused: word, Detail: detail(err)})
 		return "web_read: " + word, true
 	}
+	entry := LedgerEntry{Tool: ToolWebRead, Source: webscan.SourcePage}
+	if s.spec.Web.Render != "" && pg.html && (a.Render || pg.textLen < RenderTextMin) {
+		switch rp, why := s.renderPage(u); {
+		case why != "":
+			entry.Render = why
+			pg.answer += notRenderedNote(why)
+		case !s.sameSite(u, rp.final):
+			// The page took the browser to another site, which this run's
+			// searches did not return: its text is not read.
+			s.record(LedgerEntry{Tool: ToolWebRead, URL: hostOf(rp.final), Refused: failRenderAway, Rendered: true})
+			return "web_read: " + failRenderAway, true
+		default:
+			pg, entry.Rendered = rp, true
+		}
+	}
+	text, final := pg.answer, pg.final
 	res := s.scan(webscan.SourcePage, text)
-	s.record(LedgerEntry{Tool: ToolWebRead, Source: webscan.SourcePage, URL: final, Bytes: len(text), Result: res})
+	entry.URL, entry.Bytes, entry.Result = final, len(text), res
+	s.record(entry)
 	if !res.Passed() {
 		// The address the model asked for: a redirect's own target was
 		// part of the text that did not pass.
@@ -585,30 +618,30 @@ func detail(err error) string {
 // fetchPage GETs u and returns what the model would read of it (the
 // address, the status and the page's text, at most PageTextBytes of it) and
 // the final address.
-func (s *server) fetchPage(u *url.URL) (string, string, error) {
+func (s *server) fetchPage(u *url.URL) (page, error) {
 	w := s.web()
 	ctx, cancel := context.WithTimeout(context.Background(), webReadTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
-		return "", "", err
+		return page{}, err
 	}
 	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Accept", "text/html, application/xhtml+xml, text/plain, text/markdown, application/json, application/xml;q=0.9, text/*;q=0.8")
 	resp, err := w.pageClient.Do(req)
 	if err != nil {
-		return "", "", fmt.Errorf("fetch %s: %w", u.Redacted(), unwrapURLError(err))
+		return page{}, fmt.Errorf("fetch %s: %w", u.Redacted(), unwrapURLError(err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	final := resp.Request.URL.String()
 	mt, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	kind := textKind(mt)
 	if kind == "" {
-		return "", "", &notText{mediaType: mt}
+		return page{}, &notText{mediaType: mt}
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxPageRaw))
 	if err != nil {
-		return "", "", fmt.Errorf("read %s: %w", final, unwrapURLError(err))
+		return page{}, fmt.Errorf("read %s: %w", final, unwrapURLError(err))
 	}
 	var text string
 	if kind == "html" {
@@ -616,15 +649,32 @@ func (s *server) fetchPage(u *url.URL) (string, string, error) {
 	} else {
 		text = strings.ToValidUTF8(string(body), "\uFFFD")
 	}
-	// The whole answer, its head and the cut note included, is at most
-	// PageTextBytes: four of the judge's chunks, and within the run's
-	// result budget (page.go), so that the harness never cuts what AI
-	// Review read.
-	head := fmt.Sprintf("URL: %s\nStatus: %s\nContent-Type: %s\n\n", final, resp.Status, mt)
+	answer, err := s.pageAnswer(final, resp.Status, mt, text)
+	if err != nil {
+		return page{}, err
+	}
+	return page{answer: answer, final: final, html: kind == "html", textLen: len(strings.TrimSpace(text))}, nil
+}
+
+// page is a read page: its answer to the model, its final address, whether
+// it is HTML, and how much text it held before the answer's cut.
+type page struct {
+	answer, final string
+	html          bool
+	textLen       int
+}
+
+// pageAnswer is a page's answer: its address, status and type, then its text
+// cut to fit. The whole answer, its head and the cut note included, is at
+// most PageTextBytes: four of the judge's chunks, and within the run's
+// result budget (page.go), so that the harness never cuts what AI Review
+// read.
+func (s *server) pageAnswer(final, status, mt, text string) (string, error) {
+	head := fmt.Sprintf("URL: %s\nStatus: %s\nContent-Type: %s\n\n", final, status, mt)
 	const noteRoom = 64
 	room := PageTextBytes - len(head) - noteRoom
 	if room < 0 {
-		return "", "", errors.New("the page's address and status alone fill a page")
+		return "", errors.New("the page's address and status alone fill a page")
 	}
 	full := len(text)
 	text, cut := cutText(text, room)
@@ -635,7 +685,7 @@ func (s *server) fetchPage(u *url.URL) (string, string, error) {
 	if cut {
 		out += fmt.Sprintf("\n\n[cut at %d of %d bytes of text]", len(text), full)
 	}
-	return out, final, nil
+	return out, nil
 }
 
 // textKind is how a media type is read: "html", "text", or "" for a type

@@ -27,6 +27,13 @@ the index and appends the log. You never write those two files.
   knowledge tools. A new pack has none of them. It starts empty.
 - **The web tools**, `web_search` and `web_read`, only when the task says
   this build may search.
+- **Your guide**, the knowledge pack `pack-writing-guide`, which ships with
+  you and is attached to every build. Read `guide/start-here.md` first with
+  `knowledge_read`: it says which page to read at each step. It is your
+  reference, never part of the pack you build: never cite it, link to it or
+  copy it. When this build extends a pack, two packs are attached, that pack
+  and your guide, so name the pack you mean in `knowledge_list`,
+  `knowledge_search` and `knowledge_read`.
 
 ## Your scratch folder and searching
 
@@ -77,6 +84,13 @@ pages), and each costs time, so plan before you search:
 - Read the pages you will rely on with `web_read`, by the address a search
   result gave, exactly as given: `web_read` opens no other address. A search
   result's snippet is too thin to cite: cite only a page you read.
+- A page whose text is drawn by scripts comes back thin from a plain read.
+  Where this build can render pages, `web_read` has a `render` argument and
+  renders such a page in a headless browser on its own; ask with
+  `render: true` when a page came back as a shell (a title and a menu, no
+  content). AI Review reads the rendered text too, and a page that sends
+  the browser to another site is not read. Where it cannot, search for
+  another source. `research/the-web.md` in your guide has more.
 - A result that AI Review withheld is not to be used. Search again for
   another source.
 - Where sources disagree, say so on the page, cite each, and mark the

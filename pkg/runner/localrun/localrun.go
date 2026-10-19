@@ -135,6 +135,9 @@ type Builtin struct {
 	// returned: the Knowledge Creator's, whose model reads documents no
 	// one scanned.
 	searchedOnly bool
+	// render lets web_read render a thin page in a one-shot headless
+	// browser the engine runs: the Knowledge Creator's. Only with web.
+	render bool
 	// review grants ai_review and scanned reads of the inputs, with the
 	// person's own TypeSafe key (compile.Inputs.Review): the Examiner's
 	// alone.
@@ -145,10 +148,10 @@ type Builtin struct {
 }
 
 // KnowledgeCreator is the Knowledge Creator (pkg/knowledge/creator),
-// granted web_search and web_read: a build that does not search the web runs
-// it WithoutWebTools.
+// granted web_search and web_read, whose web_read renders a thin page: a
+// build that does not search the web runs it WithoutWebTools.
 func KnowledgeCreator() Builtin {
-	return Builtin{namespace: creator.Namespace, name: creator.Name, version: creator.Version, fsys: creator.FS(), web: true, searchedOnly: true,
+	return Builtin{namespace: creator.Namespace, name: creator.Name, version: creator.Version, fsys: creator.FS(), web: true, searchedOnly: true, render: true,
 		localTimeoutFloor: creator.LocalTimeoutFloorSeconds}
 }
 
@@ -177,7 +180,15 @@ func Examiner() Builtin {
 // turn, which reads nothing from the web, and a knowledge build that does not
 // search the web. A grant can only be taken away here, never given.
 func (b Builtin) WithoutWebTools() Builtin {
-	b.web, b.registry, b.searchedOnly = false, false, false
+	b.web, b.registry, b.searchedOnly, b.render = false, false, false, false
+	return b
+}
+
+// WithoutRender is the same package whose web_read never renders a page:
+// a build on a sandbox host, whose slots count no browser beside it. A
+// grant can only be taken away here, never given.
+func (b Builtin) WithoutRender() Builtin {
+	b.render = false
 	return b
 }
 
@@ -332,6 +343,8 @@ type PlanInputs struct {
 	// WebSearchedOnly holds web_read to the run's search results
 	// (compile.Inputs.WebSearchedOnly), likewise.
 	WebSearchedOnly bool
+	// WebRender lets web_read render a thin page (compile.Inputs.WebRender).
+	WebRender bool
 	// Review grants the review grant (compile.Inputs.Review), likewise.
 	Review bool
 	Log    io.Writer
@@ -397,6 +410,7 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 			plan.Capabilities.WebTools == in.Web &&
 			plan.Capabilities.RegistrySearch == in.RegistrySearch &&
 			plan.Capabilities.WebSearchedOnly == in.WebSearchedOnly &&
+			plan.Capabilities.WebRender == in.WebRender &&
 			plan.Capabilities.ReviewTools == in.Review &&
 			reflect.DeepEqual(plan.MCPServers, in.Servers) {
 			switch {
@@ -438,9 +452,9 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 		MCPServers:      in.Servers,
 		Web:             in.Web,
 		RegistrySearch:  in.RegistrySearch,
-		WebSearchedOnly: in.WebSearchedOnly,
-		Review:          in.Review,
-		IntegrityKey:    key,
+		WebSearchedOnly: in.WebSearchedOnly, WebRender: in.WebRender,
+		Review:       in.Review,
+		IntegrityKey: key,
 	}, planDir)
 	if err != nil {
 		var refusal *compile.PolicyRefusal
@@ -597,7 +611,7 @@ func (r Run) Execute(ctx context.Context, d dockerx.Client) (*receipt.Envelope, 
 		Home: r.Home, Manifest: m, Meta: meta, InstallDir: installDir, WorkspaceDir: workspace,
 		Policy: r.Policy, PolicySHA: r.PolicySHA, Adapter: adapterName, Mode: manifest.ModeAutonomous,
 		CompiledBy: r.Build, Web: r.Builtin.web, RegistrySearch: r.Builtin.registry,
-		WebSearchedOnly: r.Builtin.searchedOnly, Review: r.Builtin.review, Log: logw,
+		WebSearchedOnly: r.Builtin.searchedOnly, WebRender: r.Builtin.render, Review: r.Builtin.review, Log: logw,
 	})
 	if err != nil {
 		return nil, err
