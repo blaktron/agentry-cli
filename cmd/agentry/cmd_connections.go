@@ -21,6 +21,7 @@ import (
 	"runtime"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/spf13/cobra"
 
@@ -146,7 +147,7 @@ func ensureConnections(cmd *cobra.Command, home string, meta *installdir.Meta, m
 			if broken != nil {
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "%v\n", broken)
 			}
-			g, cerr := consentFor(cmd, store, clients, httpc, k, srv)
+			g, cerr := consentFor(cmd, store, clients, httpc, k, srv, m.Guide.ServerConnect(srv))
 			if cerr != nil {
 				return nil, engine.Classify(engine.ExitPolicy, cerr)
 			}
@@ -255,9 +256,10 @@ func scopeList(s []string) string {
 // release k names: the vendor's consent screen in the browser, or its
 // address printed and the redirect pasted back. A vendor that needs
 // the person's own client (Google) asks for one first, with Agentry's
-// steps where it has them. The grant is kept, replacing a broken one
-// (whose refresh token is revoked where the vendor offers it).
-func consentFor(cmd *cobra.Command, store *connection.Store, clients *connection.Clients, httpc *http.Client, k connection.Key, srv manifest.MCPServer) (*mcpauth.Grant, error) {
+// steps where it has them and then help, the publisher's words for this
+// server, where the release carries them. The grant is kept, replacing a
+// broken one (whose refresh token is revoked where the vendor offers it).
+func consentFor(cmd *cobra.Command, store *connection.Store, clients *connection.Clients, httpc *http.Client, k connection.Key, srv manifest.MCPServer, help string) (*mcpauth.Grant, error) {
 	errOut := cmd.ErrOrStderr()
 	_, _ = fmt.Fprintf(errOut, "\n%s needs you to sign in to %s.\n", k.Ref, connectionWhat(srv))
 	_, _ = fmt.Fprintln(errOut, "The connection is kept on this machine for this version alone and reused by its later runs; each run is given an access token, never the refresh token or a client secret.")
@@ -269,7 +271,7 @@ func consentFor(cmd *cobra.Command, store *connection.Store, clients *connection
 		g, err := runConsent(cmd, in, httpc, clients, srv)
 		var own *mcpauth.NeedsOwnClientError
 		if errors.As(err, &own) && attempt == 0 {
-			if aerr := askOwnClient(cmd, in, clients, own.Issuer, connectionServer(srv)); aerr != nil {
+			if aerr := askOwnClient(cmd, in, clients, own.Issuer, connectionServer(srv), help); aerr != nil {
 				return nil, aerr
 			}
 			continue
@@ -389,11 +391,15 @@ func readPasted(in *bufio.Reader, out chan<- string, done <-chan struct{}, finis
 
 // askOwnClient asks for the person's own OAuth client for issuer and keeps
 // it for every later consent there, after Agentry's steps for making one
-// where it has written them.
-func askOwnClient(cmd *cobra.Command, in *bufio.Reader, clients *connection.Clients, issuer, server string) error {
+// where it has written them and the publisher's help, when there is any.
+func askOwnClient(cmd *cobra.Command, in *bufio.Reader, clients *connection.Clients, issuer, server, help string) error {
 	errOut := cmd.ErrOrStderr()
 	_, _ = fmt.Fprintf(errOut, "\n%s lets no app register itself, so signing in there needs an OAuth client of your own.\n", issuer)
 	_, _ = fmt.Fprintln(errOut, ownClientSteps(issuer, server))
+	if text := publisherHelp(help); text != "" {
+		_, _ = fmt.Fprintln(errOut, "The publisher's help for "+server+":")
+		_, _ = fmt.Fprintln(errOut, text)
+	}
 	p := &setup.TTYPrompter{In: in, Err: errOut}
 	id, err := p.Ask("Client ID", "")
 	if err != nil {
@@ -411,6 +417,31 @@ func askOwnClient(cmd *cobra.Command, in *bufio.Reader, clients *connection.Clie
 	}
 	_, _ = fmt.Fprintf(errOut, "kept your OAuth client for %s; every QuickAgent you connect there will use it (agentry connections client list)\n", issuer)
 	return nil
+}
+
+// publisherHelp is a release's connect help as the terminal prints it:
+// indented, and without any character a terminal may act on or a reader
+// cannot see (a control other than newline and tab, a format character).
+// The manifest refuses those already; what is printed here does not rest
+// on that alone.
+func publisherHelp(help string) string {
+	help = strings.Map(func(r rune) rune {
+		switch {
+		case r == '\n' || r == '\t':
+			return r
+		case unicode.IsControl(r) || unicode.Is(unicode.Cf, r):
+			return -1
+		}
+		return r
+	}, help)
+	lines := strings.Split(strings.TrimSpace(help), "\n")
+	if len(lines) == 1 && lines[0] == "" {
+		return ""
+	}
+	for i, l := range lines {
+		lines[i] = "  " + strings.TrimRight(l, " \t")
+	}
+	return strings.Join(lines, "\n")
 }
 
 // ownClientSteps are Agentry's steps for making one's own client:
@@ -551,7 +582,7 @@ func newConnectCmd() *cobra.Command {
 					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: connected (issuer %s, since %s); --again replaces it\n", k.Server, c.Issuer, c.CreatedAt)
 					continue
 				}
-				if _, err := consentFor(cmd, store, clients, httpc, k, srv); err != nil {
+				if _, err := consentFor(cmd, store, clients, httpc, k, srv, m.Guide.ServerConnect(srv)); err != nil {
 					return engine.Classify(engine.ExitPolicy, err)
 				}
 			}
