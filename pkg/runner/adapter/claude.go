@@ -519,21 +519,23 @@ func claudeToolResults(msg claudeMessage, raw json.RawMessage) []Event {
 		if b.Type != "tool_result" {
 			continue
 		}
-		events = append(events, Event{Kind: EventToolResult, CallID: b.ToolUseID, Failed: b.IsError, Text: claudeContentText(b.Content), Raw: raw})
+		text, redacted := claudeContent(b.Content)
+		events = append(events, Event{Kind: EventToolResult, CallID: b.ToolUseID, Failed: b.IsError, Text: text, Redacted: redacted, Raw: raw})
 	}
 	return events
 }
 
-// claudeContentText is the text of a tool result's content: the string
-// itself, or the text blocks of a list joined.
-func claudeContentText(c json.RawMessage) string {
+// claudeContent is the text of a tool result's content: the string
+// itself, or the text blocks of a list joined, and whether the list held an
+// embedded resource (joinText).
+func claudeContent(c json.RawMessage) (text string, redacted bool) {
 	var s string
 	if json.Unmarshal(c, &s) == nil {
-		return s
+		return s, false
 	}
 	var blocks []textBlock
 	if json.Unmarshal(c, &blocks) != nil {
-		return ""
+		return "", false
 	}
 	return joinText(blocks)
 }

@@ -556,7 +556,7 @@ type codexItem struct {
 
 // codexToolResultEvent maps a completed MCP tool call, from exec or the
 // app-server: its result's text blocks, or its error's message when it
-// failed.
+// failed, and whether the result held an embedded resource (joinText).
 func codexToolResultEvent(it codexItem, raw json.RawMessage) Event {
 	var res struct {
 		Content []textBlock `json:"content"`
@@ -566,7 +566,8 @@ func codexToolResultEvent(it codexItem, raw json.RawMessage) Event {
 	}
 	_ = json.Unmarshal(it.Result, &res)
 	_ = json.Unmarshal(it.Error, &cerr)
-	ev := Event{Kind: EventToolResult, Tool: it.Tool, CallID: it.ID, Failed: it.Status == "failed" || cerr.Message != "", Text: joinText(res.Content), Raw: raw}
+	text, redacted := joinText(res.Content)
+	ev := Event{Kind: EventToolResult, Tool: it.Tool, CallID: it.ID, Failed: it.Status == "failed" || cerr.Message != "", Text: text, Redacted: redacted, Raw: raw}
 	if ev.Text == "" {
 		ev.Text = cerr.Message
 	}

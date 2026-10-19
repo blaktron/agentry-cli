@@ -425,22 +425,24 @@ func (s *acpSession) handleNotification(m rpcMessage, line []byte) {
 			s.emit(Event{Kind: EventOther, Text: u.SessionUpdate, Raw: rawCopy(line)})
 			return
 		}
-		s.emit(Event{Kind: EventToolResult, Tool: u.Name, CallID: u.ToolCallID, Failed: u.Status == "failed", Text: acpToolContentText(u.Content), Raw: rawCopy(line)})
+		text, redacted := acpToolContent(u.Content)
+		s.emit(Event{Kind: EventToolResult, Tool: u.Name, CallID: u.ToolCallID, Failed: u.Status == "failed", Text: text, Redacted: redacted, Raw: rawCopy(line)})
 	default:
 		s.emit(Event{Kind: EventOther, Text: u.SessionUpdate, Raw: rawCopy(line)})
 	}
 }
 
-// acpToolContentText is the text of a tool call update's content: each
-// "content" entry's text block, joined. Diffs and terminals carry no text
-// of their own and are left to the receipts.
-func acpToolContentText(raw json.RawMessage) string {
+// acpToolContent is the text of a tool call update's content: each
+// "content" entry's text block, joined, and whether an entry was an
+// embedded resource (joinText). Diffs and terminals carry no text of their
+// own and are left to the receipts.
+func acpToolContent(raw json.RawMessage) (text string, redacted bool) {
 	var items []struct {
 		Type    string    `json:"type"`
 		Content textBlock `json:"content"`
 	}
 	if json.Unmarshal(raw, &items) != nil {
-		return ""
+		return "", false
 	}
 	var blocks []textBlock
 	for _, it := range items {
