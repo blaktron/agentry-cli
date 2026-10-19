@@ -232,7 +232,9 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 	// Every document is checked by ClamAV before it is decoded, and a
 	// finding refuses the build.
 	img.Signatures = ensureSignatures(ctx, o.Home, o.Policy.Images.ClamAVSignaturesRef(), logw)
-	dec, err := decode.Run(ctx, d, img, docsDir, decodedDir, o.Policy.Docker.Limits.WithDefaults(), logw)
+	// A pack keeps every document as given, an archive's members too, so
+	// the decode copies out each member it read.
+	dec, err := decode.RunWith(ctx, d, img, docsDir, decodedDir, o.Policy.Docker.Limits.WithDefaults(), decode.Options{KeepMembers: true}, logw)
 	if err != nil {
 		return nil, engine.Classify(engine.ExitGateway, err)
 	}
@@ -248,8 +250,13 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 	}
 	res.Decoded = dec
 
-	docs, inputs, err := dec.Stage(given, inputsDir)
+	docs, inputs, err := dec.StageWith(given, inputsDir, decode.StageOptions{Members: true, Originals: true, Named: plainPath})
 	if err != nil {
+		return nil, engine.Classify(engine.ExitUsage, err)
+	}
+	// The pack keeps an archive's members, not the archive, so what it
+	// keeps is held to the pack's cap again, before anything runs.
+	if err := keptWithin(dec, docs, limit); err != nil {
 		return nil, engine.Classify(engine.ExitUsage, err)
 	}
 	res.Skipped = decode.Skipped(docs)
@@ -420,6 +427,35 @@ func stageBrief(brief, packDir string, current *knowledge.Pack, given map[string
 	}
 	given[name] = "the brief"
 	return name, nil
+}
+
+// plainPath says whether every segment of a path is a plain name, one
+// safeName leaves as it is: what a citation can carry.
+func plainPath(p string) bool {
+	for _, seg := range strings.Split(p, "/") {
+		if seg == "" || safeName(seg) != seg {
+			return false
+		}
+	}
+	return true
+}
+
+// keptWithin holds what the pack will keep of the documents read, each as
+// given, to the pack's cap.
+func keptWithin(dec *decode.Result, docs []decode.Document, limit int64) error {
+	var total int64
+	for _, d := range docs {
+		if d.Read == "" {
+			continue
+		}
+		if n, ok := dec.OriginalSize(d.Name); ok {
+			total += n
+		}
+		if total > limit {
+			return fmt.Errorf("document %s brings the documents kept to more than %s, a knowledge pack's cap, its documents included", d.Name, knowledge.FormatCap(limit))
+		}
+	}
+	return nil
 }
 
 func safeName(s string) string {

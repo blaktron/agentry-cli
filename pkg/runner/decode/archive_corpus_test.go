@@ -245,3 +245,65 @@ func gzipped(t *testing.T, data []byte) []byte {
 	}
 	return buf.Bytes()
 }
+
+// TestKeptMembersForReal: the real decode image, asked to keep members,
+// copies each member it read out byte for byte, the host keeps each copy
+// whose digest the scan record states, and the built-ins' layout lists the
+// members by their own names and not the archive.
+func TestKeptMembersForReal(t *testing.T) {
+	if os.Getenv("AGENTRY_DECODE_E2E") != "1" {
+		t.Skip("set AGENTRY_DECODE_E2E=1 to build the decode image and keep members with the real decoders")
+	}
+	ctx := context.Background()
+	d := dockerx.New()
+	pol := policy.Default()
+	home := t.TempDir()
+	tag := pol.RunnerImageTag(runnerimage.ContentVersion())
+	if err := gateway.EnsureInstalled(ctx, d, pol, tag, filepath.Join(home, "image"), os.Stderr, false); err != nil {
+		t.Fatal(err)
+	}
+	img, err := Ensure(ctx, d, tag, pol, filepath.Join(home, "image"), os.Stderr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img.Signatures = clamdb.Ensure(ctx, home, pol.Images.ClamAVSignaturesRef(), os.Stderr)
+	if img.Signatures.Dir == "" {
+		t.Fatalf("no signatures: %+v", img.Signatures)
+	}
+	corpus := func(name string) []byte {
+		b, err := os.ReadFile(filepath.Join("..", "..", "knowledge", "creator", "testdata", "corpus", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	in, out := t.TempDir(), t.TempDir()
+	members := map[string][]byte{"policy.docx": corpus("policy.docx"), "notes/runbook.md": corpus("runbook.md")}
+	if err := os.WriteFile(filepath.Join(in, "docs.zip"), zipped(t, zipMember{"policy.docx", members["policy.docx"], 0}, zipMember{"notes/runbook.md", members["notes/runbook.md"], 0}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := RunWith(ctx, d, img, in, out, pol.Docker.Limits.WithDefaults(), Options{KeepMembers: true}, os.Stderr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range members {
+		dst := filepath.Join(t.TempDir(), "copy")
+		if err := res.CopyOriginal("docs.zip/"+name, dst); err != nil {
+			t.Fatalf("docs.zip/%s was not kept: %v", name, err)
+		}
+		if got, _ := os.ReadFile(dst); !bytes.Equal(got, want) {
+			t.Fatalf("docs.zip/%s was kept as other bytes", name)
+		}
+	}
+	docs, _, err := res.StageWith(nil, t.TempDir(), StageOptions{Members: true, Originals: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, doc := range docs {
+		names = append(names, doc.Name+"="+doc.Read)
+	}
+	if strings.Join(names, " ") != "docs.zip/notes/runbook.md=docs.zip/notes/runbook.md.txt docs.zip/policy.docx=docs.zip/policy.docx.txt" {
+		t.Fatalf("documents: %v", names)
+	}
+}

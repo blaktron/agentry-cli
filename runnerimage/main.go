@@ -298,13 +298,14 @@ func runDecode(args []string) error {
 	})
 	sourceMax := fs.Int("source-max-files", decode.DefaultSourceMaxFiles, "each input source's file cap")
 	execOnly := fs.Bool("executables-only", false, "check only the executables among the files (an archive is still checked whole)")
+	keepMembers := fs.Bool("keep-members", false, "copy each archive member read as text or decoded, as it was, under originals/ in the output")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *in == "" || *out == "" {
 		return errors.New("decode: --in and --out are required")
 	}
-	rep, err := decode.Decode(context.Background(), *in, *out, decode.Tools{}, decode.Limits{UnpackDir: *unpack, ClamDB: *clamav, Sources: sources, SourceMaxFiles: *sourceMax, ExecutablesOnly: *execOnly, Record: os.Stdout})
+	rep, err := decode.Decode(context.Background(), *in, *out, decode.Tools{}, decode.Limits{UnpackDir: *unpack, ClamDB: *clamav, Sources: sources, SourceMaxFiles: *sourceMax, ExecutablesOnly: *execOnly, KeepMembers: *keepMembers, Record: os.Stdout})
 	if err != nil {
 		return err
 	}

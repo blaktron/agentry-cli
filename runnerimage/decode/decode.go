@@ -113,6 +113,10 @@ type File struct {
 	// In is the archive a member was unpacked from, empty for a file as
 	// staged.
 	In string `json:"in,omitempty"`
+	// Original is where a member's own bytes were copied, relative to the
+	// output root, when the decode was asked to keep members
+	// (Limits.KeepMembers): exactly OriginalsDir/<path>.
+	Original string `json:"original,omitempty"`
 	// Size is a member's unpacked size.
 	Size int64 `json:"size,omitempty"`
 	// Why is why an archive or a member was not read in full, in the
@@ -217,6 +221,11 @@ type Limits struct {
 	// MaxUnpackedBytes is what every archive in the decode may unpack in
 	// all, counted as each member streams (default 512 MiB).
 	MaxUnpackedBytes int64
+	// KeepMembers copies each member that was read as text or decoded, as
+	// it was in its archive, to OriginalsDir/<path> under the output, within
+	// MaxOutputBytes: for a caller that keeps every document as given (the
+	// Knowledge Creator, the Voice Writer).
+	KeepMembers bool
 	// Record, when set, takes the scan record (ScanRecord) once clamscan
 	// has answered and before any decoder starts: the runner's stdout.
 	Record io.Writer
@@ -376,6 +385,10 @@ type decoder struct {
 	// left to decode once it has, each holding its place in files.
 	targets []scanTarget
 	pending []pendingDecode
+	// afterCheck is called by the unpacker between the check of a member's
+	// name and the folders and file it makes for it, so a test can swap a
+	// folder of the archive's directory for a link in that gap.
+	afterCheck func()
 }
 
 // poolOf is the cap a file counts against: its input source's, by the
@@ -499,7 +512,34 @@ func (d *decoder) decodePending(ctx context.Context, p pendingDecode) {
 	}
 	f.Check, f.Signature, f.Unchecked = checked.Check, checked.Signature, checked.Unchecked
 	f.MIME, f.SHA256 = checked.MIME, checked.SHA256
+	if p.in != "" && d.lim.KeepMembers && (f.Outcome == OutcomeText || f.Outcome == OutcomeDecoded) {
+		f.Original = keepOriginal(p.src, p.rel, d.out, d.lim.MaxOutputBytes)
+	}
 	d.files[p.idx] = f
+}
+
+// OriginalsDir is where a decode asked to keep members copies their own
+// bytes, under the output.
+const OriginalsDir = "originals"
+
+// keepOriginal copies a member, as it was in its archive, to
+// OriginalsDir/<rel> under out, and answers that path; "" when it is past
+// limit or cannot be copied, and then the member is not kept.
+func keepOriginal(src, rel, out string, limit int64) string {
+	fi, err := os.Stat(src)
+	if err != nil || !fi.Mode().IsRegular() || fi.Size() > limit {
+		return ""
+	}
+	dstRel := OriginalsDir + "/" + rel
+	dst := filepath.Join(out, filepath.FromSlash(dstRel))
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return ""
+	}
+	if err := copyFile(src, dst); err != nil {
+		_ = os.Remove(dst)
+		return ""
+	}
+	return dstRel
 }
 
 // archive unpacks one archive into a directory of its own, records it and
