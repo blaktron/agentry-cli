@@ -538,6 +538,11 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	// The browse proxy's decisions and what the browser saved.
 	collectBrowseProxyLog(keep, d, rd, env)
 	copyBrowserOut(rd, p.Stderr)
+	// The page renderer's count and its proxy's decisions, the agent having
+	// ended.
+	if rd.render != nil {
+		rd.render.close(keep, d, rd, env)
+	}
 	writeMeta(rd.receiptsDir, runID, p, start, taskSent)
 	env.CapabilitiesEnforced["daemon"] = daemonLine(rd)
 	// The agent has ended, so the web ledger is complete.
