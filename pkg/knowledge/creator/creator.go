@@ -29,7 +29,7 @@ func FS() fs.FS { return files }
 const (
 	Namespace = "agentry"
 	Name      = "knowledge-creator"
-	Version   = "1.2.0"
+	Version   = "1.3.0"
 )
 
 // LocalTimeoutFloorSeconds is the least a knowledge build on this computer

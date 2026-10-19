@@ -32,7 +32,9 @@ one data category, `files`. When Agentry writes a voice:
   is. The Voice Writer runs no decoder itself. It reads the text, and the
   current voice when there is one, through the inputs channel
   (`list_inputs`, `read_input`).
-- **During the run**, it writes `VOICE.md` with `write_report`.
+- **During the run**, it writes `VOICE.md` with `write_report`. Like every
+  run, it has a scratch folder for its notes, private to the run and deleted
+  with it, and `grep` and `glob` to search the samples and that folder.
 - **After the run**, the application checks the file's form (UTF-8 text,
   at most 32 KiB), not what it says, and keeps it as the voice. A voice made on your computer stays
   there and is not reviewed. A voice that reaches your Agentry account is

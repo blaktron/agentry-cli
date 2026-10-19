@@ -39,7 +39,10 @@ QuickAgent:
   `read_input`, and AI Review reads each file first: a file it flags is
   withheld from the Examiner's model, which names it instead. The model
   reads for secrets, for scripts that reach past the declared capabilities,
-  and for text aimed at the examination.
+  and for text aimed at the examination. Like every run it has a scratch
+  folder for its notes, private to the run and deleted with it; its `grep`
+  and `glob` search that folder only, never the QuickAgent's files, which
+  reach its model only after AI Review.
 - **After the run**, the application writes one report, `report.json`. Its
   findings come in three kinds, each labelled: the registry's rules, AI
   Review (read from the run's own record, not from what the model said),

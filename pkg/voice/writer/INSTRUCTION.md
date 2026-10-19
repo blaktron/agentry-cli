@@ -32,6 +32,20 @@ The inputs are read-only. Start with `list_inputs`.
 - **The current voice**, when there is one, is `current/VOICE.md`.
 - **The brief or the note**, when there is one, is in the task.
 
+## Notes as you read
+
+- **Take notes per sample.** `/scratch` is yours for working notes, with
+  `scratch_write` (set `append` to add to a file), `scratch_read` and
+  `scratch_search`. After each sample, append to `/scratch/notes.md` what it
+  shows, by the kinds listed below, with a short quoted phrase where it helps.
+  Write `VOICE.md` from those notes once every sample is read. Nothing in the
+  scratch folder reaches the person.
+- **Check a habit before you state it.** `grep` searches the samples' text
+  under `/inputs` with a regular expression, and `glob` lists them by a path
+  pattern. Before you write that the writer always or never does something
+  (a word, a dash, an opener, a sign-off), grep the samples to see how often
+  it recurs, and say "usually" or "sometimes" where that is what they show.
+
 ## What VOICE.md says
 
 Write it to the model that will use it, in the second person ("Write in

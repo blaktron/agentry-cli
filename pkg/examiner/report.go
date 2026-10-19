@@ -167,6 +167,18 @@ type ServerRecord struct {
 	Status string `json:"status"`
 	// Error says why there is no answer, for status unknown or unreachable.
 	Error string `json:"error,omitempty"`
+	// CheckedAt is when the registry last looked the version up, when it
+	// has.
+	CheckedAt time.Time `json:"checkedAt,omitzero"`
+}
+
+// Words is the record as a person reads it (mcpinstall.VulnStatus.Words).
+func (s ServerRecord) Words() string {
+	w := mcpinstall.VulnStatus{Status: s.Status, CheckedAt: s.CheckedAt}.Words()
+	if s.Error != "" {
+		w += " (" + s.Error + ")"
+	}
+	return w
 }
 
 // AIReview is kind 2: the first answered ai_review call over the staged
@@ -299,7 +311,7 @@ func Finish(p *Prepared, env *receipt.Envelope, runErr error, outDir, ref, build
 	}
 	for _, s := range p.Servers {
 		if unresolved(s) {
-			r.NotRunHere = append(r.NotRunHere, "a current lookup of "+s.Ref+" (the registry's record here: "+s.Status+"): the registry looks it up again at Submit")
+			r.NotRunHere = append(r.NotRunHere, "a current lookup of "+s.Ref+" (the registry's record here: "+s.Words()+"): the registry looks it up again at Submit")
 		}
 	}
 	if serversNotAsked(p) {
@@ -322,7 +334,7 @@ func registryRules(p *Prepared) RegistryRules {
 	}
 	rr.Bundle.Version, rr.Bundle.Source = p.Validation.Bundle.Version, p.Validation.Bundle.Source
 	for _, s := range p.Servers {
-		rr.Servers = append(rr.Servers, ServerRecord{Ref: s.Ref, Status: s.Status, Error: s.Err})
+		rr.Servers = append(rr.Servers, ServerRecord{Ref: s.Ref, Status: s.Status, Error: s.Err, CheckedAt: s.CheckedAt})
 	}
 	return rr
 }

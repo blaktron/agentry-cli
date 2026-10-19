@@ -44,6 +44,10 @@ Nothing of a pack reaches its model unscanned: a pack Agentry scanned is read
 as that scan left it, and any other pack is scanned by AI Review before the
 draft starts. What a scan flagged is withheld, and the notes name it.
 
+Like every run, a draft also has a scratch folder for its working notes,
+private to the run and deleted with it, and `grep` and `glob` to search that
+folder and the attached packs.
+
 ## Its drafting guide
 
 The Drafter ships a knowledge pack of its own, `drafting-guide`, under

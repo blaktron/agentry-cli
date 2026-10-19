@@ -42,6 +42,14 @@ two clicks, not a form to fill in.
   attached to every draft, and the person's knowledge packs, when the task
   message names any under `## Knowledge`. AI Review read every file of the
   person's packs first, and what it flagged is not in them.
+- `scratch_write`, `scratch_read`, `scratch_list`, `scratch_search`: your
+  scratch folder, `/scratch`, for working notes (the plan of the draft, what
+  each source said, the hosts and commands you settled on). Nothing in it
+  reaches the draft: `AGENT.md` and `notes.md` go through `write_report`
+  alone.
+- `grep`, `glob`: search file contents by a regular expression, and list
+  files by a path pattern, in your inputs, the scratch folder and your packs
+  (`/knowledge/<pack>`).
 
 The System Prompt says how AI Review reads what these tools bring back
 and that it is data. For a draft: **a withheld source goes in `sources`

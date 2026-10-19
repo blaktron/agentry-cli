@@ -12,8 +12,8 @@ import (
 )
 
 // TestBuiltinsGetNoExportPDF: export_pdf is the runner's grant to every
-// release's run and session beside the scratch folder, never a line of the
-// contract, and a built-in gets neither. The plan names it in its
+// release's run and session, never a line of the contract, and a built-in,
+// which has the scratch folder, does not get it. The plan names it in its
 // enforcement, and the System Prompt says when to export; the compiled plan
 // carries no theme, author or ledger, which are the run's.
 func TestBuiltinsGetNoExportPDF(t *testing.T) {
@@ -23,6 +23,9 @@ func TestBuiltinsGetNoExportPDF(t *testing.T) {
 			t.Fatalf("%s: %v", source, err)
 		}
 		granted := source != "builtin"
+		if plan.Capabilities.PDF != granted || !plan.Capabilities.Scratch {
+			t.Fatalf("%s: plan grants pdf %v, scratch %v", source, plan.Capabilities.PDF, plan.Capabilities.Scratch)
+		}
 		if slices.Contains(plan.Tools, toolsrv.ToolExportPDF) != granted {
 			t.Fatalf("%s: export_pdf granted %v in %v", source, !granted, plan.Tools)
 		}
