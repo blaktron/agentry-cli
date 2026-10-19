@@ -39,7 +39,7 @@ import (
 // Nothing of the run's is mounted into it, no secret reaches it, and its
 // profile dies with it, so no cookie outlives a page.
 
-// renderScript drives the image's Playwright: open the page (30 seconds for
+// renderScript drives the image's Playwright: open the page (60 seconds for
 // its document), let its scripts settle (6 more for the network to go
 // quiet), and print the address it ended on, its status and the HTML it
 // drew. A page that moved on while its HTML was read is not answered, so
@@ -51,7 +51,7 @@ const renderScript = `const {chromium}=require('/app/node_modules/playwright-cor
   try{
     const ctx=await b.newContext({viewport:{width:1280,height:720},acceptDownloads:false,serviceWorkers:'block'});
     const p=await ctx.newPage();
-    const r=await p.goto(url,{waitUntil:'domcontentloaded',timeout:30000});
+    const r=await p.goto(url,{waitUntil:'domcontentloaded',timeout:60000});
     try{await p.waitForLoadState('networkidle',{timeout:6000});}catch(e){}
     const before=p.url();
     const html=await p.content();
