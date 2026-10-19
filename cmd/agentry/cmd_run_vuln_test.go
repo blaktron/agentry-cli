@@ -27,7 +27,8 @@ func TestVulnerabilityVerdict(t *testing.T) {
 	down := mcpinstall.VulnStatus{Ref: "npm:x@1", Status: "unreachable", Err: "dial tcp: refused"}
 
 	line, err := vulnerabilityVerdict([]mcpinstall.VulnStatus{ok, down}, "https://reg.example", false, false)
-	if err != nil || !strings.Contains(line, "checked against https://reg.example") || !strings.Contains(line, "unreachable (dial tcp: refused)") {
+	if err != nil || !strings.Contains(line, "checked against https://reg.example") || !strings.Contains(line, "pypi:mcp-server-fetch@0.6.2 no known advisories;") ||
+		!strings.Contains(line, "npm:x@1 not checked: no answer from the registry (dial tcp: refused)") {
 		t.Fatalf("clean+unreachable: %q %v", line, err)
 	}
 	_, err = vulnerabilityVerdict([]mcpinstall.VulnStatus{ok, bad}, "https://reg.example", false, false)

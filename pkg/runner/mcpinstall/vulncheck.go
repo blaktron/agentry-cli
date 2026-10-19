@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -260,6 +261,34 @@ func worstRating(advs []VulnAdvisory) string {
 	return worst
 }
 
+// Words is the status as a person reads it. The registry's word "safe"
+// means no known advisories when it last looked, and claims nothing more,
+// so it is never shown as a word; neither is any other status word. The
+// JSON keeps Status, the wire value, unchanged.
+func (s VulnStatus) Words() string {
+	switch s.Status {
+	case "safe":
+		if s.CheckedAt.IsZero() {
+			return "no known advisories"
+		}
+		return "no known advisories (checked " + s.CheckedAt.UTC().Format("2006-01-02") + ")"
+	case "vulnerable":
+		return "known advisories"
+	case "error":
+		if len(s.Advisories) > 0 {
+			return "the registry's last lookup failed; it last knew advisories"
+		}
+		return "the registry's last lookup failed; it knows no advisories"
+	case "unknown":
+		return "not checked: the registry has not scanned this version"
+	case "unreachable":
+		return "not checked: no answer from the registry"
+	case StatusRemote:
+		return "not looked up: a remote server is its vendor's running service, not a package version"
+	}
+	return "an answer this CLI does not know (" + strconv.Quote(s.Status) + ")"
+}
+
 // Summary is the one-line receipt/log form of a check.
 func Summary(statuses []VulnStatus) string {
 	if len(statuses) == 0 {
@@ -267,10 +296,7 @@ func Summary(statuses []VulnStatus) string {
 	}
 	parts := make([]string, 0, len(statuses))
 	for _, s := range statuses {
-		p := s.Ref + " " + s.Status
-		if s.Status == StatusRemote {
-			p += " (not looked up: a remote server is its vendor's running service, not a package version)"
-		}
+		p := s.Ref + " " + s.Words()
 		if s.Status == "vulnerable" || (s.Status == "error" && len(s.Advisories) > 0) {
 			labels := make([]string, 0, len(s.Advisories))
 			for _, a := range s.Advisories {

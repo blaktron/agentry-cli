@@ -480,3 +480,26 @@ func TestServerFindingsRateAsTheGate(t *testing.T) {
 		t.Fatalf("findings: %+v", got)
 	}
 }
+
+// The report's server records keep the registry's wire word and its check
+// date in the JSON; what a person reads is the plain words, never "safe".
+func TestServerRecordsCarryTheCheckDateAndPlainWords(t *testing.T) {
+	at := time.Date(2026, 10, 18, 9, 0, 0, 0, time.UTC)
+	rr := registryRules(&Prepared{Servers: []mcpinstall.VulnStatus{
+		{Ref: "npm:a@1", Status: "safe", CheckedAt: at},
+		{Ref: "npm:b@1", Status: "unreachable", Err: "registry answered 502"},
+	}})
+	if len(rr.Servers) != 2 {
+		t.Fatalf("servers: %+v", rr.Servers)
+	}
+	b, err := json.Marshal(rr.Servers)
+	if err != nil || !strings.Contains(string(b), `"status":"safe","checkedAt":"2026-10-18T09:00:00Z"`) || strings.Count(string(b), "checkedAt") != 1 {
+		t.Fatalf("JSON: %s %v", b, err)
+	}
+	if got, want := rr.Servers[0].Words(), "no known advisories (checked 2026-10-18)"; got != want {
+		t.Fatalf("safe: %q, want %q", got, want)
+	}
+	if got, want := rr.Servers[1].Words(), "not checked: no answer from the registry (registry answered 502)"; got != want {
+		t.Fatalf("unreachable: %q, want %q", got, want)
+	}
+}
