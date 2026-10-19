@@ -29,8 +29,10 @@ import (
 // web_read to take it without rendering it.
 const RenderTextMin = 1024
 
-// RenderTimeout bounds one render, the browser's start included.
-const RenderTimeout = 60 * time.Second
+// RenderTimeout bounds one render, the browser's start included: on a busy
+// machine, under the run's CPU and memory bounds, Chromium alone can take
+// most of a minute to start.
+const RenderTimeout = 120 * time.Second
 
 // The hand-off's file names, by request id.
 const (
