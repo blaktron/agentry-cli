@@ -421,6 +421,9 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	if err := prepareBrowser(ctx, d, p, rd, td, env, secrets); err != nil {
 		return fail(env, redact, err)
 	}
+	if err := prepareRender(ctx, d, p, rd, td, runID, env); err != nil {
+		return fail(env, redact, err)
+	}
 	// The optional secrets it goes without, before any replacer is built:
 	// the System Prompt names them (spec.PHSecretsAbsent), and so does the
 	// receipt.

@@ -11,6 +11,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/drafter"
 	"github.com/blaktron/agentry-cli/pkg/examiner"
+	"github.com/blaktron/agentry-cli/pkg/knowledge/creator"
 	"github.com/blaktron/agentry-cli/pkg/knowledge/knowledgetest"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
@@ -149,15 +150,27 @@ func TestAPersonsPackCannotTakeTheGuidesName(t *testing.T) {
 }
 
 // TestABuiltinThatShipsNothingMountsNoPack: the loader is general, the
-// content the Drafter's; the Knowledge Creator ships nothing and its run
+// content each built-in's own; the Voice Writer ships nothing and its run
 // has no knowledge line.
 func TestABuiltinThatShipsNothingMountsNoPack(t *testing.T) {
-	env, packs, err := shippedRun(t, Run{Builtin: KnowledgeCreator().WithoutWebTools(), Home: t.TempDir(), Task: strings.NewReader("Ingest."), RunID: "feed0004"})
+	env, packs, err := shippedRun(t, Run{Builtin: VoiceWriter(), Home: t.TempDir(), Task: strings.NewReader("Write the voice."), RunID: "feed0004"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(packs) != 0 || env.CapabilitiesEnforced["knowledge"] != "" {
-		t.Fatalf("the Creator's run mounted %v (%q)", packs, env.CapabilitiesEnforced["knowledge"])
+		t.Fatalf("the Voice Writer's run mounted %v (%q)", packs, env.CapabilitiesEnforced["knowledge"])
+	}
+}
+
+// TestEveryCreatorRunGetsItsPackWritingGuide: the Knowledge Creator's own
+// guide is mounted in its run, beside the pack a build extends.
+func TestEveryCreatorRunGetsItsPackWritingGuide(t *testing.T) {
+	_, packs, err := shippedRun(t, Run{Builtin: KnowledgeCreator().WithoutWebTools(), Home: t.TempDir(), Task: strings.NewReader("Ingest."), RunID: "feed0006"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(packs) != 1 || packs[0] != creator.GuideName {
+		t.Fatalf("the Creator's packs %v, want [%s]", packs, creator.GuideName)
 	}
 }
 

@@ -18,6 +18,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blaktron/agentry-cli/pkg/knowledge/creator"
+
 	"github.com/blaktron/agentry-cli/pkg/knowledge"
 	"github.com/blaktron/agentry-cli/pkg/runner/clamdb"
 	"github.com/blaktron/agentry-cli/pkg/runner/decode"
@@ -387,14 +389,15 @@ func TestBuildMakesAPackFromDocuments(t *testing.T) {
 		t.Fatalf("documents %v skipped %v", res.Documents, res.Skipped)
 	}
 	env := res.Envelope
-	if env.Attestation.State != "builtin" || env.Ref != "agentry/knowledge-creator@1.3.0" {
+	if env.Attestation.State != "builtin" || env.Ref != "agentry/knowledge-creator@1.4.0" {
 		t.Fatalf("attestation %+v ref %s", env.Attestation, env.Ref)
 	}
 	if !strings.Contains(env.CapabilitiesEnforced["decode"], "1 decoded, 1 read as text, 1 not decoded (blob.bin)") {
 		t.Fatalf("decode line %q", env.CapabilitiesEnforced["decode"])
 	}
-	if _, ok := env.CapabilitiesEnforced["knowledge"]; ok {
-		t.Fatal("a new pack's build attached a pack")
+	// A new pack's build attaches no pack but the Creator's own guide.
+	if line := env.CapabilitiesEnforced["knowledge"]; !strings.HasPrefix(line, creator.GuideName+" shipped with the release") || strings.Count(line, "shipped with the release") != 1 || strings.Contains(line, "scan:") {
+		t.Fatalf("a new pack's build attached %q", line)
 	}
 	log, _ := os.ReadFile(filepath.Join(fx.opts.PackDir, "wiki", "log.md"))
 	if !strings.Contains(string(log), "## [2026-09-25] ingest | incident-report.pdf, runbook.md") {

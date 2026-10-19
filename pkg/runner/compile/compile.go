@@ -93,6 +93,10 @@ type Inputs struct {
 	// run returned (toolsrv.Web.SearchedOnly): the Knowledge Creator's,
 	// whose model reads documents no one scanned. Only with Web.
 	WebSearchedOnly bool
+	// WebRender lets web_read render a thin page in a one-shot browser
+	// the engine runs (spec.CapSummary.WebRender): the Knowledge Creator's.
+	// Only with Web.
+	WebRender bool
 	// Review grants a built-in the review grant: ai_review and scanned
 	// reads of its inputs, with the person's own TypeSafe key in the tools
 	// container alone, whose network reaches TypeSafe's API and nothing
@@ -172,7 +176,9 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		if err := checkWebGrant(in, caps); err != nil {
 			return nil, err
 		}
-		caps.WebTools, caps.RegistrySearch, caps.WebSearchedOnly = true, in.RegistrySearch, in.WebSearchedOnly
+		caps.WebTools, caps.RegistrySearch, caps.WebSearchedOnly, caps.WebRender = true, in.RegistrySearch, in.WebSearchedOnly, in.WebRender
+	} else if in.WebRender {
+		return nil, &PolicyRefusal{Reason: "a rendered web_read is part of the web tools, and this run has none"}
 	}
 	if in.Review {
 		if err := checkReviewGrant(in, caps); err != nil {
@@ -325,6 +331,10 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		browserSpec = &spec.BrowserSpec{Image: in.Policy.Images.BrowserImage()}
 		files[browserConfigFile] = browser.Config()
 	}
+	var renderSpec *spec.RenderSpec
+	if caps.WebRender {
+		renderSpec = &spec.RenderSpec{Image: in.Policy.Images.BrowserImage()}
+	}
 	if err := renderGatewayFiles(files, tspec, caps, m.Capabilities.Secrets, toolsImage, in.RunnerImage, extraServers, extraEntries, in.MCPServers, hostLink, browserSpec); err != nil {
 		return nil, err
 	}
@@ -398,6 +408,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		ExecImage:    execImage,
 		HostLink:     hostLink,
 		Browser:      browserSpec,
+		Render:       renderSpec,
 		Gateway:      gatewaySpec(in.Policy.Images.Gateway, servers, caps, in.MCPServers),
 		Harness: spec.HarnessSpec{
 			Adapter:     adapterName,
@@ -881,7 +892,7 @@ func toolSpec(caps spec.CapSummary, secrets []string) *toolsrv.Spec {
 		Exec: toolsrv.Exec{Commands: caps.ExecCommands},
 		// The run's half of Web (where it scans, searches, which registry,
 		// the ledger) is the engine's, stamped per run.
-		Web: toolsrv.Web{Enabled: caps.WebTools, RegistrySearch: caps.RegistrySearch, SearchedOnly: caps.WebSearchedOnly},
+		Web: toolsrv.Web{Enabled: caps.WebTools, RegistrySearch: caps.RegistrySearch, SearchedOnly: caps.WebSearchedOnly, Render: renderMount(caps)},
 		// The review grant: the run's ledger is the engine's, stamped per
 		// run.
 		Review: toolsrv.Review{Enabled: caps.ReviewTools},
@@ -951,6 +962,9 @@ func gatewaySpec(image string, servers []string, caps spec.CapSummary, mcpServer
 	}
 	if caps.Browser != nil {
 		writable = append(writable, browserWritable()...)
+	}
+	if caps.WebRender {
+		writable = append(writable, renderFolder())
 	}
 	return spec.GatewaySpec{
 		Image: image,
@@ -1422,6 +1436,10 @@ func catalogEntry(tspec *toolsrv.Spec, caps spec.CapSummary, secrets []string, r
 	if caps.Browser != nil {
 		vols = append(vols, browserOutVolume())
 	}
+	// The page renderer's hand-off folder, read-write.
+	if caps.WebRender {
+		vols = append(vols, renderFolder()+":"+spec.RenderMount+":rw")
+	}
 	e.set("volumes", strListNode(vols))
 
 	if tspec.Fetch.Enabled && !tspec.Fetch.AllowAll {
@@ -1641,6 +1659,9 @@ func enforcement(caps spec.CapSummary, secrets, optional []string, extraServers 
 			", on the tools container only: " + toolsrv.ToolWebRead + " is GET only, http and https on ports 80 and 443, public addresses only, checked at every connection and redirect hop, no cookie or credential, at most 32 KiB of text a page; " +
 			read + " is read by AI Review (Jev) before the model, and one flagged or not scanned is withheld with its address and the reason; " +
 			"the keys (the job's credential, or the person's own Jev and search keys) are injected into the tools container only"
+		if caps.WebRender {
+			e["web.render"] = renderEnforcement
+		}
 	}
 	if caps.ReviewTools {
 		e["network"] = "no declared egress and no fetch tool; the tools container reaches " + toolsrv.ReviewHost + ":443 alone, TypeSafe's API, for the review grant, " +

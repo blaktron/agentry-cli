@@ -18,18 +18,27 @@ import (
 	"io/fs"
 )
 
-//go:embed agent.yaml INSTRUCTION.md README.md LICENSE
+//go:embed agent.yaml INSTRUCTION.md README.md LICENSE knowledge
 var files embed.FS
 
 // FS is the package's tree: agent.yaml, INSTRUCTION.md, README.md and
-// LICENSE at its root (a public release carries the last two, V7).
+// LICENSE at its root (a public release carries the last two), and under
+// knowledge/ the pack it ships (GuideName).
 func FS() fs.FS { return files }
+
+// GuideName is the knowledge pack the Knowledge Creator ships in its own
+// release, its guide to writing a pack: how a page reads, citing, many
+// documents, and researching the web. The runner gives it to every run of
+// the package (localrun's withShippedPacks), beside the pack a build
+// extends; a pack of the same name is refused. Its manifest.json and index
+// are generated (TestThePackWritingGuideIsCurrent).
+const GuideName = "pack-writing-guide"
 
 // The package's identity, as its manifest declares it.
 const (
 	Namespace = "agentry"
 	Name      = "knowledge-creator"
-	Version   = "1.3.0"
+	Version   = "1.4.0"
 )
 
 // LocalTimeoutFloorSeconds is the least a knowledge build on this computer

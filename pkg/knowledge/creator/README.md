@@ -47,7 +47,16 @@ one data category, `files`. When Agentry builds a pack:
   TypeSafe key and a search key; in Agentry the registry searches and scans.
   It cites a page it read as `[src: web:<url>]` and keeps no copy of it, and
   cites what its model knows as `[src: model]`. A brief is kept in the pack
-  as `sources/brief.md`.
+  as `sources/brief.md`. `web_read` opens only an address one of the
+  build's own searches returned. A page whose text is drawn by scripts is
+  rendered in a headless Chromium the application runs once a page, on a
+  network whose one way out admits public sites alone; the model never
+  drives that browser, and AI Review reads the rendered text before the
+  model does.
+- **Its guide.** The release ships a knowledge pack,
+  `knowledge/pack-writing-guide`: how a page reads, citing, building from
+  many documents, and researching the web. The application attaches it to
+  every build, beside the pack a build extends.
 - **After the run**, the application checks every page and drops any that
   break the pack's rules, regenerates the index and appends the log. A pack
   built in Agentry is scanned before it is final.

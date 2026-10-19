@@ -183,11 +183,16 @@ type RunSpec struct {
 	CapDrop         []string
 	CapAdd          []string
 	NoNewPrivileges bool
-	ReadOnly        bool
-	Tmpfs           []string
-	PidsLimit       int
-	Memory          string
-	CPUs            int
+	// SeccompProfile is a seccomp profile file for the container
+	// (`--security-opt seccomp=<file>`): the browser's, which lets
+	// Chromium's own sandbox make its namespaces under runc. Empty keeps
+	// the daemon's default profile.
+	SeccompProfile string
+	ReadOnly       bool
+	Tmpfs          []string
+	PidsLimit      int
+	Memory         string
+	CPUs           int
 }
 
 // WithPosture is r with the posture every run container takes: every capability
@@ -1039,6 +1044,9 @@ func (r RunSpec) argsFor(detach, podman bool, named []namedVolume) []string {
 	}
 	if r.NoNewPrivileges {
 		args = append(args, "--security-opt", "no-new-privileges")
+	}
+	if r.SeccompProfile != "" {
+		args = append(args, "--security-opt", "seccomp="+r.SeccompProfile)
 	}
 	if r.ReadOnly {
 		args = append(args, "--read-only")
