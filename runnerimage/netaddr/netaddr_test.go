@@ -14,12 +14,17 @@ func TestPublic(t *testing.T) {
 		"224.0.0.1", "239.255.255.250", "240.0.0.1", "255.255.255.255", "168.63.129.16",
 		"::", "::1", "::127.0.0.1", "::10.0.0.1", "::8.8.8.8", "::ffff:0:8.8.8.8", "::ffff:127.0.0.1", "::ffff:10.0.0.1", "64:ff9b::a00:1", "64:ff9b:1::1", "100::1", "2001::1", "2001:db8::1",
 		"2002:a00:1::1", "fc00::1", "fd12::1", "fe80::1", "fec0::1", "ff02::1",
+		// ISATAP identifiers under a public prefix that carry a refused IPv4 address
+		"2606:4700::5efe:a00:1", "2606:4700::200:5efe:7f00:1", "2606:4700::5efe:a9fe:a9fe", "2606:4700::200:5efe:6440:1",
 	} {
 		if Public(netip.MustParseAddr(a)) {
 			t.Errorf("%s reads as public", a)
 		}
 	}
-	for _, a := range []string{"1.1.1.1", "8.8.8.8", "93.184.216.34", "100.128.0.1", "172.32.0.1", "168.63.129.17", "2606:4700::1111", "::ffff:8.8.8.8"} {
+	for _, a := range []string{"1.1.1.1", "8.8.8.8", "93.184.216.34", "100.128.0.1", "172.32.0.1", "168.63.129.17", "2606:4700::1111", "::ffff:8.8.8.8",
+		// an ISATAP identifier that carries a public IPv4 address, and a public
+		// address whose identifier only resembles one
+		"2606:4700::5efe:808:808", "2606:4700::200:5efe:101:101", "2606:4700::100:5efe:a00:1"} {
 		if !Public(netip.MustParseAddr(a)) {
 			t.Errorf("%s reads as not public", a)
 		}

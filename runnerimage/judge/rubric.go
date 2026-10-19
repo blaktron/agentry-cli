@@ -348,7 +348,7 @@ func DeclaredCapabilities(manifestJSON []byte, ships []string) string {
 	}
 	out := buf.String()
 	if len(out) > DeclaredCapabilitiesCap {
-		out = out[:DeclaredCapabilitiesCap] + truncatedMark
+		out = out[:runeCut(out, DeclaredCapabilitiesCap)] + truncatedMark
 	}
 	return out
 }

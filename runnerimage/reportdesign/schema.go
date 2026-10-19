@@ -13,7 +13,7 @@ import (
 // The schema says what a document may hold, the families each role takes
 // included. Two rules it cannot say are Validate's alone: the accent's
 // contrast on white (MinContrast), and that a text is one line of plain text
-// (not only spaces, no control or bidirectional formatting characters). Nor
+// (not only spaces, no control, line-break or invisible format characters). Nor
 // can it say what a logo's base64 must hold: a PNG within the pixel bounds.
 func Schema() []byte {
 	str := func(enum []string) map[string]any { return map[string]any{"type": "string", "enum": enum} }

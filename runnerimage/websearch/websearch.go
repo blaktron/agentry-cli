@@ -4,7 +4,11 @@
 // draft uses the same clients with their own key. Every result is scanned
 // as model input before a model reads it (pkg/judge), which is the
 // caller's job, not this package's: here a result is only fetched and
-// bounded.
+// bounded. Both are held to text a reader sees as it is written: no control
+// character and no format character (a bidirectional override, a zero-width
+// character, the soft hyphen, the tag block), which draw nothing or reorder
+// what is drawn. What a result says is the scan's to judge; its shape is
+// Clean's.
 package websearch
 
 import (
@@ -28,8 +32,10 @@ type Result struct {
 type Provider interface {
 	// Name is the provider's short id, as configuration names it.
 	Name() string
-	// Search asks for at most count results for query. An error is the
-	// provider's failure; its text never carries the key.
+	// Search asks for count results for query. A provider returns what its
+	// upstream sends, which may be more than it was asked for, so the bound
+	// on the results a caller uses is Clean's, not the provider's. An error
+	// is the provider's failure; its text never carries the key.
 	Search(ctx context.Context, query string, count int) ([]Result, error)
 }
 
@@ -51,11 +57,22 @@ const (
 // ErrBadQuery is a query that is empty, too long, or not text.
 var ErrBadQuery = errors.New("websearch: the query must be 1 to 400 characters of text")
 
-// CleanQuery trims a query and checks it: 1 to MaxQuery characters of
-// valid UTF-8, with no control characters.
+// CleanQuery drops a query's format characters, trims it and checks it: 1 to
+// MaxQuery characters of valid UTF-8, with no control characters. A format
+// character is dropped, not refused, because some scripts use one in plain
+// writing (a zero-width non-joiner in Persian); a control character is
+// refused.
 func CleanQuery(q string) (string, error) {
-	q = strings.TrimSpace(q)
-	if q == "" || !utf8.ValidString(q) || utf8.RuneCountInString(q) > MaxQuery {
+	if !utf8.ValidString(q) {
+		return "", ErrBadQuery
+	}
+	q = strings.TrimSpace(strings.Map(func(r rune) rune {
+		if unicode.Is(unicode.Cf, r) {
+			return -1
+		}
+		return r
+	}, q))
+	if q == "" || utf8.RuneCountInString(q) > MaxQuery {
 		return "", ErrBadQuery
 	}
 	for _, r := range q {
@@ -80,7 +97,8 @@ func ClampCount(n int) int {
 
 // Clean bounds what a provider returned: an absolute http or https address
 // with a host and no user information, at most maxURL bytes; a title and a
-// snippet of valid UTF-8 with white space folded, cut to their bounds; no
+// snippet of valid UTF-8 with white space folded, control and format
+// characters dropped, cut to their bounds with no space at either end; no
 // address twice; at most count results. A result without a usable address
 // is dropped, since nothing could name it.
 func Clean(rs []Result, count int) []Result {
@@ -124,10 +142,11 @@ func cleanURL(raw string) (string, bool) {
 	return u.String(), true
 }
 
-// cleanText keeps printable text: invalid UTF-8 and control characters
-// go, runs of white space fold to one space, and the text is cut to n
-// characters. What a result says is left to the scan; only its shape is
-// held here.
+// cleanText keeps printable text: invalid UTF-8, control characters and
+// format characters go, runs of white space fold to one space, and the text
+// is cut to n characters, never ending in the space it would have written
+// before the next character. What a result says is left to the scan; only
+// its shape is held here.
 func cleanText(s string, n int) string {
 	s = strings.ToValidUTF8(s, "")
 	var b strings.Builder
@@ -141,16 +160,17 @@ func cleanText(s string, n int) string {
 			space = b.Len() > 0
 			continue
 		}
-		if unicode.IsControl(r) {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
 			continue
 		}
 		if space {
+			// The space is written only with the character it precedes.
+			if count+1 == n {
+				break
+			}
 			b.WriteByte(' ')
 			count++
 			space = false
-			if count == n {
-				break
-			}
 		}
 		b.WriteRune(r)
 		count++
@@ -185,8 +205,6 @@ func (f *Fake) Search(_ context.Context, query string, count int) ([]Result, err
 	if f.Err != nil {
 		return nil, f.Err
 	}
-	if count > len(f.Results) {
-		count = len(f.Results)
-	}
+	count = max(0, min(count, len(f.Results)))
 	return append([]Result(nil), f.Results[:count]...), nil
 }
