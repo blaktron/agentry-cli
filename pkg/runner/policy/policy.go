@@ -444,15 +444,20 @@ func (p *Policy) KeepProfilesByDefault() bool {
 type Images struct {
 	// Gateway is the docker/mcp-gateway image.
 	Gateway string `yaml:"gateway"`
-	// HarnessDockerAgent is the docker-agent harness image. The default is
-	// pinned by digest. Former generated defaults resolve to the current
-	// pin on load so an updated adapter never runs the old default image.
-	// Other values are the operator's and are kept.
-	HarnessDockerAgent string `yaml:"harnessDockerAgent"`
-	// HarnessImages pins the harness image of each other adapter that runs
-	// in a container, by adapter name: by digest when published, by the vendor
-	// artifact's hash when built on this machine, never by a tag. Unset
-	// entries take the CLI's DefaultHarnessImages.
+	// HarnessDockerAgent is the docker-agent harness image, as Load resolves
+	// it. A policy file names it as harnessImages' docker-agent entry; the
+	// older key harnessDockerAgent is still read, and naming both with
+	// different images is refused. The default is pinned by digest. Former
+	// generated defaults resolve to the current pin on load so an updated
+	// adapter never runs the old default image. Other values are the
+	// operator's and are kept.
+	HarnessDockerAgent string `yaml:"harnessDockerAgent,omitempty"`
+	// HarnessImages pins the harness image of each adapter that runs in a
+	// container, by adapter name: by digest when published, by the vendor
+	// artifact's hash when built on this machine, never by a tag (docker-agent
+	// alone may be a tag, for a policy file written before its default was
+	// pinned). Load moves the docker-agent entry to HarnessDockerAgent. Unset
+	// entries take the CLI's defaults.
 	HarnessImages map[string]HarnessImage `yaml:"harnessImages,omitempty"`
 	// GoBuilder builds the local runner image.
 	GoBuilder string `yaml:"goBuilder"`
@@ -898,6 +903,9 @@ func Load(path string) (*Policy, string, error) {
 	// generated default resolves the same way (formerDefaultGoBuilders). The
 	// harness follows too: its config schema moves with the CLI, so keeping a
 	// former default image would fail at config load.
+	if err := p.Images.foldDockerAgent(); err != nil {
+		return nil, "", fmt.Errorf("parse %s: %w", path, err)
+	}
 	if slices.Contains(formerDefaultHarnessImages, p.Images.HarnessDockerAgent) {
 		p.Images.HarnessDockerAgent = DefaultHarnessImage
 	}
@@ -952,11 +960,11 @@ func (p *Policy) Validate() error {
 		return fmt.Errorf("policyVersion %q not supported (want %q)", p.PolicyVersion, Version)
 	}
 	if p.Images.Gateway == "" || p.Images.HarnessDockerAgent == "" || p.Images.GoBuilder == "" {
-		return errors.New("images.gateway, images.harnessDockerAgent, and images.goBuilder are all required")
+		return errors.New("images.gateway, images.harnessImages.docker-agent, and images.goBuilder are all required")
 	}
 	for name, h := range p.Images.HarnessImages {
 		if name == DockerAgentAdapter {
-			return errors.New("images.harnessImages names docker-agent: its image is images.harnessDockerAgent")
+			return errors.New("images.harnessImages names docker-agent after load: Load resolves that entry")
 		}
 		if err := h.validate(name); err != nil {
 			return err
@@ -1140,6 +1148,32 @@ func (p *Policy) RunnerImageTag(version string) string {
 	return "agentry-runner:" + v
 }
 
+// foldDockerAgent resolves the docker-agent harness from harnessImages'
+// docker-agent entry, the key a policy file names it by, or from the older
+// harnessDockerAgent. The entry is a published image, named by ref alone; the
+// two keys may both be present only when they name the same image.
+func (i *Images) foldDockerAgent() error {
+	h, ok := i.HarnessImages[DockerAgentAdapter]
+	if !ok {
+		return nil
+	}
+	if h.Artifact != "" {
+		return errors.New("images.harnessImages.docker-agent is a published image: name it by ref, pinned by digest, with no artifact")
+	}
+	if h.Ref == "" {
+		return errors.New("images.harnessImages.docker-agent has no ref")
+	}
+	if i.HarnessDockerAgent != "" && i.HarnessDockerAgent != h.Ref {
+		return fmt.Errorf("images.harnessImages.docker-agent (%s) and the older images.harnessDockerAgent (%s) name different images: keep one", h.Ref, i.HarnessDockerAgent)
+	}
+	i.HarnessDockerAgent = h.Ref
+	delete(i.HarnessImages, DockerAgentAdapter)
+	if len(i.HarnessImages) == 0 {
+		i.HarnessImages = nil
+	}
+	return nil
+}
+
 // formerDefaultHarnessImages are the exact values earlier CLIs generated.
 // Resolving them at load follows the Node and Go builder rule below: the
 // file and its hash stay unchanged, while a new CLI build recompiles plans.
@@ -1210,17 +1244,19 @@ images:
   # the digest from that repository's images.tsv (repo:tag@sha256:...), or
   # point these at any registry you prefer: a private one, or your own mirror.
   gateway: ghcr.io/blaktron/agentry-mcp-gateway:v0.43.3
-  # The default harness, pinned by digest: the receipt names the digest.
-  harnessDockerAgent: ghcr.io/blaktron/agentry-docker-agent:1.150.0@sha256:27b0accfc83a74b03f30ac695a23878f71383106c9dec4d7808c72a4f13d5ee1
-  # Other adapters' harness images, by adapter name: pinned by digest
-  # (ref: <name>@sha256:...) or, for one built on this machine from its
-  # vendor's artifact, by that artifact's hash (artifact: sha256:<hex>, or
-  # an npm package's integrity, sha512-<base64>). Claude Code's is built
-  # here from the npm packages this CLI pins, and a pin naming a release
-  # it does not carry is refused. Unset, the CLI's pinned defaults are used.
-  # harnessImages:
-  #   codex-image: { ref: ghcr.io/blaktron/agentry-codex:<tag>@sha256:<digest> }
-  #   claude-image: { ref: agentry-claude-code:<version>, artifact: sha512-<integrity> }
+  # The harness image of each adapter that runs in a container, by adapter
+  # name: pinned by digest (ref: <name>@sha256:...) or, for one built on this
+  # machine from its vendor's artifact, by that artifact's hash
+  # (artifact: sha256:<hex>, or an npm package's integrity, sha512-<base64>).
+  # docker-agent is the default harness; the receipt names its digest. Claude
+  # Code's is built here from the npm packages this CLI pins, and a pin naming
+  # a release it does not carry is refused. An adapter left out takes the
+  # CLI's pinned default. (Older files name docker-agent's image as
+  # harnessDockerAgent; that key is still read.)
+  harnessImages:
+    docker-agent: { ref: ghcr.io/blaktron/agentry-docker-agent:1.150.0@sha256:27b0accfc83a74b03f30ac695a23878f71383106c9dec4d7808c72a4f13d5ee1 }
+    # codex-image: { ref: ghcr.io/blaktron/agentry-codex:<tag>@sha256:<digest> }
+    # claude-image: { ref: agentry-claude-code:<version>, artifact: sha512-<integrity> }
   goBuilder: ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:738d1cf061836894ff6bb8c33881080ac66de8cf0586615012a0c8f592649cfa
   # Runtimes for MCP servers a QuickAgent declares (capabilities.mcpServers).
   nodeRuntime: ghcr.io/blaktron/agentry-node-alpine:24-alpine

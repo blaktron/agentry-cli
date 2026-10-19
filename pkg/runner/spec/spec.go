@@ -156,7 +156,7 @@ type ModelSignInSpec struct {
 // ImagePin says how the harness image that ran was pinned:
 // by "digest" (a published image, Value its sha256 digest), "artifact" (an
 // image built on the machine, Value the vendor artifact's sha256) or "tag"
-// (a policy naming images.harnessDockerAgent by tag alone, Value empty).
+// (a policy naming docker-agent's harness image by tag alone, Value empty).
 type ImagePin struct {
 	By    string `json:"by"`
 	Value string `json:"value,omitempty"`
