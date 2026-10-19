@@ -98,13 +98,14 @@ const (
 	// CI holds this pin to that signature (scripts/verify-hostlink-image.sh).
 	DefaultHostlinkImage = "ghcr.io/blaktron/agentry-hostlink:2026.10.11.1@sha256:66f9fc5ce5223278676faad73d9cde005784ea6a35a64258ca47d1c662c0b099"
 	// DefaultBrowserImage is the browser server's image, for a release that
-	// declares capabilities.browser: Microsoft's @playwright/mcp 0.0.83 with
-	// the Chrome for Testing build of the Playwright it pins and a Chrome
-	// policy that turns ECH off, on the ubuntu:noble mirror, amd64 and arm64,
+	// declares capabilities.browser: Microsoft's @playwright/mcp 0.0.83
+	// driving Debian's open-source Chromium (its executable named by the
+	// image's PLAYWRIGHT_MCP_EXECUTABLE_PATH) with a Chromium policy that
+	// turns ECH off, on the debian:trixie-slim mirror, amd64 and arm64,
 	// pinned by digest and pulled. Signed keyless by agentry-dockerimages'
 	// browser workflow, and CI holds this pin to that signature
 	// (scripts/verify-browser-image.sh).
-	DefaultBrowserImage = "ghcr.io/blaktron/agentry-browser:2026.10.13.1@sha256:61bf9d5577ebf0aea1059bab30bd9e06a9c4011ba42792b06bd66f99c41b5af7"
+	DefaultBrowserImage = "ghcr.io/blaktron/agentry-browser:2026.10.19.2@sha256:3d0f3cefb1fbabd7e6a8ece9a1ca56492c54422f4f11e943b479572090813ccc"
 	// DefaultClamAVSignatures is the ClamAV signature bundle the decode step
 	// checks every input against: a tag agentry-dockerimages' clamav-db
 	// workflow moves daily, only ever to a digest it has signed. It is not

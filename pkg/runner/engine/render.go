@@ -39,15 +39,17 @@ import (
 // Nothing of the run's is mounted into it, no secret reaches it, and its
 // profile dies with it, so no cookie outlives a page.
 
-// renderScript drives the image's Playwright: open the page (60 seconds for
-// its document), let its scripts settle (6 more for the network to go
-// quiet), and print the address it ended on, its status and the HTML it
-// drew. A page that moved on while its HTML was read is not answered, so
-// the address always names the page the HTML came from.
+// renderScript drives the image's Playwright on the image's Chromium, the
+// executable its PLAYWRIGHT_MCP_EXECUTABLE_PATH names (left unset,
+// Playwright looks for its own download): open the page (60 seconds for its
+// document), let its scripts settle (6 more for the network to go quiet),
+// and print the address it ended on, its status and the HTML it drew. A
+// page that moved on while its HTML was read is not answered, so the
+// address always names the page the HTML came from.
 const renderScript = `const {chromium}=require('/app/node_modules/playwright-core');
 (async()=>{
   const [url,proxy]=process.argv.slice(1).filter(a=>a!=='--');
-  const b=await chromium.launch({channel:'chromium',headless:true,chromiumSandbox:true,proxy:{server:proxy}});
+  const b=await chromium.launch({channel:'chromium',executablePath:process.env.PLAYWRIGHT_MCP_EXECUTABLE_PATH||undefined,headless:true,chromiumSandbox:true,proxy:{server:proxy}});
   try{
     const ctx=await b.newContext({viewport:{width:1280,height:720},acceptDownloads:false,serviceWorkers:'block'});
     const p=await ctx.newPage();
