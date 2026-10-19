@@ -137,11 +137,12 @@ func TestTheRendererAnswersARequestFromItsOwnContainer(t *testing.T) {
 }
 
 // TestTheRendererClosesOnceBeforeTheReceipt: closing the renderer stops its
-// watcher and puts its count in the receipt; the run closes it before the
-// receipt is written and teardown again, which changes nothing.
+// watcher, puts its count in the receipt and removes its proxy and network;
+// the run closes it before the receipt is written and teardown again, which
+// changes nothing.
 func TestTheRendererClosesOnceBeforeTheReceipt(t *testing.T) {
 	stopped := 0
-	r := &renderRun{proxy: "agentry-run1-render-proxy", done: make(chan struct{}), pages: 2, failed: 1}
+	r := &renderRun{proxy: "agentry-run1-render-proxy", network: "agentry-run1-render", done: make(chan struct{}), pages: 2, failed: 1}
 	r.stop = func() {
 		stopped++
 		select {
@@ -156,6 +157,17 @@ func TestTheRendererClosesOnceBeforeTheReceipt(t *testing.T) {
 	r.close(context.Background(), f, rd, env)
 	if got := env.CapabilitiesEnforced["web.render.pages"]; !strings.HasPrefix(got, "2 page(s) rendered, 1 render(s) that failed") {
 		t.Fatalf("receipt line %q", got)
+	}
+	// The proxy and its network go as the renderer closes, not only in
+	// teardown.
+	var removed []string
+	for _, c := range f.Calls {
+		if c.Op == "RemoveForce" || c.Op == "NetworkRemove" {
+			removed = append(removed, c.Op+" "+c.Arg)
+		}
+	}
+	if strings.Join(removed, ",") != "RemoveForce agentry-run1-render-proxy,NetworkRemove agentry-run1-render" {
+		t.Fatalf("on close: %v", removed)
 	}
 	r.pages = 5
 	r.close(context.Background(), f, rd, env)
