@@ -170,8 +170,11 @@ func prepareRender(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 
 // close stops the watcher, waiting no longer than a render's timeout
 // (a render in flight ends at its own), keeps the proxy's decisions as a
-// receipt and puts the count in the receipt. Once: the run calls it before
-// the receipt is written, and teardown again in case the run ended early.
+// receipt, puts the count in the receipt, and removes the proxy and its
+// network. Once: the run calls it as the agent ends, before the receipt is
+// written and before teardown, whose one bounded budget the gateway's own
+// stop can spend on a busy machine; teardown calls it again, and removes
+// both again, for a run that ended early.
 func (r *renderRun) close(ctx context.Context, d dockerx.Client, rd *runDirs, env *receipt.Envelope) {
 	r.closed.Do(func() {
 		r.stop()
@@ -182,6 +185,8 @@ func (r *renderRun) close(ctx context.Context, d dockerx.Client, rd *runDirs, en
 		}
 		collectRenderProxyLog(ctx, d, r, rd)
 		env.CapabilitiesEnforced["web.render.pages"] = r.line()
+		_ = d.RemoveForce(ctx, r.proxy)
+		_ = d.NetworkRemove(ctx, r.network)
 	})
 }
 
