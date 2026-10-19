@@ -16,6 +16,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/voice"
 	"github.com/blaktron/agentry-cli/pkg/voice/build"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
+	"github.com/blaktron/agentry-cli/runnerimage/webscan"
 )
 
 const (
@@ -269,6 +270,31 @@ func TestVoiceFromWebAddresses(t *testing.T) {
 		}
 		if !strings.Contains(stderr, "read by AI Review with your Jev key") || strings.Contains(stderr, testJev) {
 			t.Fatalf("stderr:\n%s", stderr)
+		}
+	})
+	t.Run("on a sandbox host, through the registry with the job's credential", func(t *testing.T) {
+		t.Setenv(policy.DefaultJudgeKeyEnv, "")
+		t.Setenv(envJobToken, "agyj_the-voice-job")
+		got := fakeVoiceBuild(t, firstVoice)
+		_, stderr, err := vc("create", "--url", "https://blog.example.com/post", "--render", "--write", filepath.Join(t.TempDir(), "VOICE.md"))
+		if err != nil {
+			t.Fatalf("%v\n%s", err, stderr)
+		}
+		if _, ok := got.Review.(*webscan.Registry); !ok || !got.Render {
+			t.Fatalf("review %T render %v", got.Review, got.Render)
+		}
+		if w := got.Web; w == nil || w.Scan != toolsrv.WebScanRegistry || w.JobToken != "agyj_the-voice-job" || w.JevKey != "" || w.Search != "" || w.Registry == "" {
+			t.Fatalf("web %+v", got.Web)
+		}
+		if strings.Contains(stderr, "agyj_the-voice-job") {
+			t.Fatal("the credential on stderr")
+		}
+		t.Setenv(envJobToken, "")
+		t.Setenv(envHosted, "1")
+		_, _, err = vc("create", "--url", "https://blog.example.com/post", "--write", filepath.Join(t.TempDir(), "VOICE.md"))
+		wantClassified(t, err, engine.ExitPolicy)
+		if !strings.Contains(err.Error(), envJobToken) {
+			t.Fatalf("err = %v", err)
 		}
 	})
 	t.Run("an address that is not https", func(t *testing.T) {

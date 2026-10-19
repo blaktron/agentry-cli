@@ -106,6 +106,10 @@ type Options struct {
 	// Hosted is a sandbox host's build, which never spends a model sign-in
 	// (localrun.Run.Hosted).
 	Hosted bool
+	// Render lets a hosted build render a page drawn by scripts: its host
+	// dispatched it as a browser job. A build on this computer renders
+	// without it.
+	Render bool
 }
 
 // Result is what one build did.
@@ -151,11 +155,6 @@ func CheckBrief(documents []string, brief string) error {
 	return nil
 }
 
-// ErrHostedSources refuses a repository or an address on a sandbox host's
-// build: every input a hosted build reads passes AI Review first, and the
-// fetched files are not reviewed here.
-var ErrHostedSources = errors.New("a build made in Agentry does not take a repository or a web address yet; build it on this computer, or give the files")
-
 // ErrNothingToBuild is CheckBrief's answer for a build given neither
 // documents nor a brief.
 var ErrNothingToBuild = errors.New("a knowledge build needs documents, a brief, or both")
@@ -174,11 +173,6 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 	}
 	if err := CheckBrief(inputs, o.Brief); err != nil {
 		return nil, engine.Classify(engine.ExitUsage, err)
-	}
-	if o.Hosted && len(o.Sources) > 0 {
-		// A sandbox host's inputs reach the model only after AI Review,
-		// which this build does not yet run over what a source brings in.
-		return nil, engine.Classify(engine.ExitUsage, ErrHostedSources)
 	}
 	var current *knowledge.Pack
 	if _, err := os.Stat(filepath.Join(o.PackDir, knowledge.ManifestFile)); err == nil {
@@ -324,16 +318,16 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 	switch {
 	case o.Web == nil:
 		creator = creator.WithoutWebTools()
-	case o.Hosted:
-		// A sandbox host does not render pages: a render is a browser of its
-		// own beside the build, which the host's slots do not count.
+	case o.Hosted && !o.Render:
+		// A sandbox host renders only a build it dispatched as a browser
+		// job, whose slots count the renderer beside the build.
 		creator = creator.WithoutRender()
 	}
 	env, runErr := localrun.Run{
 		Builtin: creator, Home: o.Home, Policy: o.Policy, PolicySHA: o.PolicySHA,
 		PolicyFile: o.PolicyFile, Build: o.Build, Task: strings.NewReader(task(name, current, docs, brief, o.Web != nil, o.Now) + sourcesTask(res.Sources)),
 		Inputs: inputs, Knowledge: attached, Decoded: dec, Enforced: sourceLines(res.Sources, dec), OutDir: o.OutDir, Budgets: o.Budgets,
-		RunID: o.RunID, Stderr: logw, OnUsage: o.OnUsage, Web: o.Web, Hosted: o.Hosted,
+		RunID: o.RunID, Stderr: logw, OnUsage: o.OnUsage, Web: o.Web, Hosted: o.Hosted, HostedRender: o.Hosted && o.Render,
 	}.Execute(ctx, d)
 	res.Envelope = env
 

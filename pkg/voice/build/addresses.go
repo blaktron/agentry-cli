@@ -30,7 +30,8 @@ import (
 // post, a newsletter issue, an article. Each address is fetched before the
 // run by the step a run's url input source takes (engine.SourceFetcher),
 // then decoded with the other samples. AI Review reads the text of every
-// fetched page before the run, with the person's own key, and a page it
+// fetched page before the run (the person's own key on this computer, the
+// registry with the job's credential on a sandbox host), and a page it
 // flags or cannot scan is withheld and named. A page whose text is drawn by
 // scripts (thin HTML) is not staged: its address goes to the Voice Writer's
 // web_read, which opens only the addresses given, renders such a page in a
@@ -39,11 +40,9 @@ import (
 // MaxURLs bounds the addresses one build takes.
 const MaxURLs = 20
 
-// ErrHostedAddresses refuses addresses on a sandbox host's build, whose
-// page reads the hosted job does not yet admit.
-var ErrHostedAddresses = errors.New("a Writing Voice made in Agentry does not take web addresses yet; give the samples as files, or make the voice on this computer")
-
-// ErrNoReviewKey refuses addresses without the person's own TypeSafe key:
+// ErrNoReviewKey refuses addresses with nothing to review them: the
+// person's own TypeSafe key on this computer, the job's credential on a
+// sandbox host:
 // AI Review reads every page before the Voice Writer does.
 var ErrNoReviewKey = errors.New("a sample from a web address is read by AI Review first, which takes your own TypeSafe key, and none was found; give the samples as files, or set the key")
 
@@ -138,9 +137,11 @@ func fetchPages(ctx context.Context, fetcher engine.SourceFetcher, srcs []*sourc
 // Review, and one it does not pass is withheld. It rewrites the staged
 // inputs to match: the staged text of a reviewed HTML page becomes the text
 // AI Review read, and a page not staged is dropped from documents.json,
-// which keeps every other entry, an unread one with its reason. It answers
-// the readable documents left and the addresses web_read may open.
-func reviewPages(ctx context.Context, sc webscan.Scanner, dec *decode.Result, all []decode.Document, pages []*Page, inputsDir string, canRender bool) ([]decode.Document, []string, error) {
+// which keeps every other entry, an unread one with its reason. noRender,
+// when set, is why this build cannot render a page drawn by scripts, and
+// such a page is withheld with it. It answers the readable documents left
+// and the addresses web_read may open.
+func reviewPages(ctx context.Context, sc webscan.Scanner, dec *decode.Result, all []decode.Document, pages []*Page, inputsDir string, noRender string) ([]decode.Document, []string, error) {
 	bySample := map[string]*Page{}
 	for _, p := range pages {
 		bySample[p.Sample] = p
@@ -204,8 +205,8 @@ func reviewPages(ctx context.Context, sc webscan.Scanner, dec *decode.Result, al
 					p.Withheld = "its text is drawn by scripts, and an address with a query is never handed to the Voice Writer to read"
 					continue
 				}
-				if !canRender {
-					p.Withheld = "its text is drawn by scripts, and this computer's runner cannot render a page under its runtime without the host's name servers (docker.resolvers)"
+				if noRender != "" {
+					p.Withheld = "its text is drawn by scripts, and " + noRender
 					continue
 				}
 				p.Sample, p.Rendered = "", true
@@ -338,7 +339,7 @@ func pageLines(pages []*Page, files []runnerdecode.File) map[string]string {
 		case p.Rendered:
 			line += "; its text is drawn by scripts, so the Voice Writer reads it with web_read, rendered, AI Review reading it there first"
 		default:
-			line += "; AI Review read its text, with the person's own key, before the run and passed it"
+			line += "; AI Review read its text before the run and passed it"
 		}
 		if len(p.WithheldMembers) > 0 {
 			line += "; withheld from the Voice Writer, of the archive's files: " + strings.Join(p.WithheldMembers, "; ")

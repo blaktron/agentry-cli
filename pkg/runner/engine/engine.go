@@ -156,6 +156,10 @@ type Params struct {
 	// opens public sites only. A run with InputReview set is hosted whatever
 	// this says.
 	Hosted bool
+	// HostedRender lets a sandbox host's run render pages for a rendered
+	// web_read: its driver dispatched it as a browser job, whose slots count
+	// the renderer beside the run. A hosted run without it renders nothing.
+	HostedRender bool
 	// EndBlocked grants end_blocked and the calls ledger (blocked.go): the
 	// run ends blocked, not ok, when its agent says it could not do the task
 	// or the ledger shows the runner's tools failed it. A release's one-shot
