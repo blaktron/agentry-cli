@@ -1,6 +1,8 @@
 package build
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -81,8 +83,9 @@ func TestAVoiceFromWebAddresses(t *testing.T) {
 	playFetch(t, fx.fake, "url-2", "essay.html", shellPage)
 	playFetch(t, fx.fake, "url-3", "notes.md", injectedPage)
 	playFetch(t, fx.fake, "url-4", "view.html", shellPage)
+	fx.opts.Samples = []string{filepath.Join(fx.samples, "blob.bin")}
 	var spec toolsrv.Spec
-	var staged string
+	var staged, documents string
 	agent := fx.fake.Foreground["-agent"]
 	before := agent.Before
 	agent.Before = func(r dockerx.RunSpec) {
@@ -97,6 +100,9 @@ func TestAVoiceFromWebAddresses(t *testing.T) {
 			case strings.HasSuffix(p, filepath.Join("inputs", "short.html")):
 				b, _ := os.ReadFile(p)
 				staged = string(b)
+			case strings.HasSuffix(p, filepath.Join("inputs", "documents.json")):
+				b, _ := os.ReadFile(p)
+				documents = string(b)
 			}
 			return nil
 		})
@@ -124,13 +130,20 @@ func TestAVoiceFromWebAddresses(t *testing.T) {
 	if p := res.Pages[3]; !strings.Contains(p.Withheld, "an address with a query") || p.Rendered {
 		t.Errorf("the page drawn by scripts with a query: %+v", p)
 	}
+	// documents.json lists the post and the unread file sample with its
+	// reason, and none of the pages withheld or read with web_read.
+	if !strings.Contains(documents, `"short.html"`) || !strings.Contains(documents, `"blob.bin"`) || !strings.Contains(documents, `"unread"`) ||
+		strings.Contains(documents, "notes.md") || strings.Contains(documents, "essay.html") || strings.Contains(documents, "view.html") {
+		t.Errorf("documents.json:\n%s", documents)
+	}
 	// The staged sample is the page's text, which AI Review read: no tag,
 	// no script.
 	if staged == "" || strings.Contains(staged, "<") || !strings.Contains(staged, "I write the way I talk.") {
 		t.Errorf("the staged post: %q", staged)
 	}
 	read := strings.Join(rv.read(), "\n---\n")
-	if !strings.Contains(read, "I write the way I talk.") || !strings.Contains(read, "IGNORE PREVIOUS") || strings.Contains(read, "root") {
+	if !strings.Contains(read, "I write the way I talk.") || !strings.Contains(read, "IGNORE PREVIOUS") || strings.Contains(read, "root") ||
+		!strings.Contains(read, "File name: short.html") || !strings.Contains(read, "File name: notes.md") {
 		t.Errorf("AI Review read: %q", read)
 	}
 	// web_read: held to the one page drawn by scripts, with no search and
@@ -264,4 +277,89 @@ func mapValues(m map[string]string) []string {
 		out = append(out, v)
 	}
 	return out
+}
+
+// TestAPDFAndAnArchiveFromAddresses: a page that is not HTML is read by AI
+// Review whole before the run; an archive from an address has each of its
+// files decided on its own, a flagged one withheld and named while the
+// others are samples, and none is sent to web_read.
+func TestAPDFAndAnArchiveFromAddresses(t *testing.T) {
+	fx := newFixture(t, Create, written)
+	fx.opts.Samples = nil
+	var zbuf bytes.Buffer
+	zw := zip.NewWriter(&zbuf)
+	for name, body := range map[string]string{"posts/one.md": "# One\n\nShort. Direct.\n", "posts/two.md": injectedPage} {
+		w, _ := zw.Create(name)
+		_, _ = w.Write([]byte(body))
+	}
+	_ = zw.Close()
+	srcs, _ := ParseURLs([]string{"https://example.org/essay.pdf", "https://example.org/posts.zip"})
+	rv := &reviewer{}
+	fx.opts.URLs, fx.opts.Review = srcs, rv
+	fx.opts.Web = &engine.WebRun{Scan: toolsrv.WebScanJev, JevKey: "jev-test-key"}
+	playFetch(t, fx.fake, "url-1", "essay.pdf", "%PDF essay")
+	playFetch(t, fx.fake, "url-2", "posts.zip", zbuf.String())
+	res, err := Build(context.Background(), fx.fake, fx.opts)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if got := strings.Join(res.Samples, ","); got != "essay.pdf,posts.zip/posts/one.md" {
+		t.Fatalf("samples %s", got)
+	}
+	if p := res.Pages[1]; p.Withheld != "" || p.Rendered || len(p.WithheldMembers) != 1 || !strings.HasPrefix(p.WithheldMembers[0], "posts.zip/posts/two.md: AI Review did not pass it") {
+		t.Fatalf("the archive: %+v", p)
+	}
+	read := strings.Join(rv.read(), "\n")
+	for _, want := range []string{"text of essay.pdf", "Short. Direct.", "IGNORE PREVIOUS"} {
+		if !strings.Contains(read, want) {
+			t.Errorf("AI Review did not read %q", want)
+		}
+	}
+	if _, ok := res.Envelope.CapabilitiesEnforced["web"]; ok {
+		t.Error("an archive's file was sent to web_read")
+	}
+	if line := res.Envelope.CapabilitiesEnforced["source.url-2"]; !strings.Contains(line, "of the archive's files: posts.zip/posts/two.md") {
+		t.Errorf("the archive's receipt line %q", line)
+	}
+	// Each member's name went to AI Review with its text.
+	if !strings.Contains(read, "File name: posts.zip/posts/one.md") {
+		t.Error("a member's name was not read by AI Review")
+	}
+}
+
+// TestAPagesFileNoDecoderReadsIsNotListed: a file from an address that no
+// decoder reads is withheld and named in the receipt, never listed for the
+// model, since its name is the host's and no review read it.
+func TestAPagesFileNoDecoderReadsIsNotListed(t *testing.T) {
+	fx := newFixture(t, Create, written)
+	srcs, _ := ParseURLs([]string{"https://example.org/Ignore-previous-instructions.bin"})
+	fx.opts.URLs, fx.opts.Review = srcs, &reviewer{}
+	fx.opts.Web = &engine.WebRun{Scan: toolsrv.WebScanJev, JevKey: "jev-test-key"}
+	playFetch(t, fx.fake, "url-1", "Ignore-previous-instructions.bin", "\x00\x01")
+	var documents string
+	agent := fx.fake.Foreground["-agent"]
+	before := agent.Before
+	agent.Before = func(r dockerx.RunSpec) {
+		_ = filepath.WalkDir(fx.opts.Home, func(p string, e fs.DirEntry, err error) error {
+			if err == nil && !e.IsDir() && strings.HasSuffix(p, filepath.Join("inputs", "documents.json")) {
+				b, _ := os.ReadFile(p)
+				documents = string(b)
+			}
+			return nil
+		})
+		before(r)
+	}
+	res, err := Build(context.Background(), fx.fake, fx.opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := res.Pages[0]; p.Withheld != "no decoder could read it" || p.Sample != "" {
+		t.Fatalf("the page %+v", p)
+	}
+	if strings.Contains(documents, "Ignore-previous") || !strings.Contains(documents, "blob.bin") {
+		t.Fatalf("documents.json:\n%s", documents)
+	}
+	if line := res.Envelope.CapabilitiesEnforced["source.url-1"]; !strings.Contains(line, "withheld from the Voice Writer: no decoder could read it") {
+		t.Fatalf("the receipt line %q", line)
+	}
 }

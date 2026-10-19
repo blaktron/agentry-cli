@@ -243,7 +243,7 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 			// What a page brought in reaches the Voice Writer only after AI
 			// Review read it, or through web_read, which reads it there.
 			canRender := o.Policy.Docker.Runtime == "" || len(o.Policy.Docker.Resolvers) > 0
-			if docs, readPages, err = reviewPages(ctx, o.Review, dec, docs, res.Pages, inputsDir, canRender); err != nil {
+			if docs, readPages, err = reviewPages(ctx, o.Review, dec, all, res.Pages, inputsDir, canRender); err != nil {
 				return res, err
 			}
 			if staged, err = stagedInputs(inputsDir); err != nil {

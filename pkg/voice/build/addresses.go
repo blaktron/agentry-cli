@@ -85,6 +85,10 @@ type Page struct {
 	// Withheld says why AI Review did not pass its text, or why it could
 	// not be read; the Voice Writer never saw it.
 	Withheld string `json:"withheld,omitempty"`
+	// WithheldMembers are the files of an archive the page was that the
+	// Voice Writer was not given, each with why; the archive's other files
+	// are samples.
+	WithheldMembers []string `json:"withheldMembers,omitempty"`
 	// Bytes is the file fetched.
 	Bytes int64 `json:"bytes"`
 
@@ -93,9 +97,9 @@ type Page struct {
 }
 
 // fetchPages fetches each address into dir, where the samples are staged,
-// under the file's own name, within what the samples' cap leaves. given is
-// the samples staged so far, by name, and grows with each page.
-func fetchPages(ctx context.Context, fetcher engine.SourceFetcher, srcs []*sources.Source, dir string, given map[string]string) ([]*Page, error) {
+// under the file's own name, within what the samples' cap leaves. stagedAs
+// is the samples staged so far, by name, and grows with each page.
+func fetchPages(ctx context.Context, fetcher engine.SourceFetcher, srcs []*sources.Source, dir string, stagedAs map[string]string) ([]*Page, error) {
 	kind, _ := sources.Lookup(manifest.IntakeURL)
 	staged := dirBytes(dir)
 	var pages []*Page
@@ -112,8 +116,8 @@ func fetchPages(ctx context.Context, fetcher engine.SourceFetcher, srcs []*sourc
 		switch {
 		case name == decode.DocumentsFile:
 			return nil, engine.Classify(engine.ExitUsage, fmt.Errorf("%s: a sample may not be named %s; give the page another way", s.Shown(), decode.DocumentsFile))
-		case given[name] != "":
-			return nil, engine.Classify(engine.ExitUsage, fmt.Errorf("%s and %s would both be the sample %s; give one", given[name], s.Shown(), name))
+		case stagedAs[name] != "":
+			return nil, engine.Classify(engine.ExitUsage, fmt.Errorf("%s and %s would both be the sample %s; give one", stagedAs[name], s.Shown(), name))
 		}
 		if err := os.Rename(filepath.Join(dest, f.Source.Name), filepath.Join(dir, name)); err != nil {
 			return nil, engine.Classify(engine.ExitCLI, fmt.Errorf("stage %s: %w", s.Shown(), err))
@@ -121,7 +125,7 @@ func fetchPages(ctx context.Context, fetcher engine.SourceFetcher, srcs []*sourc
 		if err := os.Remove(dest); err != nil {
 			return nil, engine.Classify(engine.ExitCLI, fmt.Errorf("stage %s: %w", s.Shown(), err))
 		}
-		given[name] = s.Shown()
+		stagedAs[name] = s.Shown()
 		staged += f.Source.Bytes
 		pages = append(pages, &Page{URL: s.Shown(), Sample: name, Bytes: f.Source.Bytes, src: *s, fetched: f})
 	}
@@ -133,9 +137,10 @@ func fetchPages(ctx context.Context, fetcher engine.SourceFetcher, srcs []*sourc
 // other page's text, an HTML page's as its text alone, is read by AI
 // Review, and one it does not pass is withheld. It rewrites the staged
 // inputs to match: the staged text of a reviewed HTML page becomes the text
-// AI Review read, and a page not staged is dropped from documents.json. It
-// answers the documents left and the addresses web_read may open.
-func reviewPages(ctx context.Context, sc webscan.Scanner, dec *decode.Result, docs []decode.Document, pages []*Page, inputsDir string, canRender bool) ([]decode.Document, []string, error) {
+// AI Review read, and a page not staged is dropped from documents.json,
+// which keeps every other entry, an unread one with its reason. It answers
+// the readable documents left and the addresses web_read may open.
+func reviewPages(ctx context.Context, sc webscan.Scanner, dec *decode.Result, all []decode.Document, pages []*Page, inputsDir string, canRender bool) ([]decode.Document, []string, error) {
 	bySample := map[string]*Page{}
 	for _, p := range pages {
 		bySample[p.Sample] = p
@@ -145,25 +150,30 @@ func reviewPages(ctx context.Context, sc webscan.Scanner, dec *decode.Result, do
 		mime[f.Path] = f.MIME
 	}
 	var (
-		kept  []decode.Document
-		given []string
+		listed []decode.Document
+		toRead []string
 	)
-	for _, d := range docs {
-		p := bySample[d.Name]
-		if p == nil && !strings.Contains(d.Name, "/") {
-			kept = append(kept, d)
-			continue
+	for _, d := range all {
+		p, member := bySample[d.Name], false
+		if p == nil {
+			// A member of an archive a page was is reviewed as its page
+			// is, and decided on its own: it is staged or dropped, never
+			// read with web_read, which opens the page's address alone.
+			p, member = bySample[strings.SplitN(d.Name, "/", 2)[0]], true
 		}
 		if p == nil {
-			// A member of an archive a page was: reviewed as its page is.
-			if outer := bySample[strings.SplitN(d.Name, "/", 2)[0]]; outer != nil {
-				p = outer
-			} else {
-				kept = append(kept, d)
-				continue
-			}
+			// A file sample: listed as it was.
+			listed = append(listed, d)
+			continue
 		}
 		if d.Read == "" {
+			// A page's file no decoder read is not listed: its name is the
+			// host's or the archive's, which no review read.
+			if member {
+				p.WithheldMembers = append(p.WithheldMembers, d.Name+": no decoder could read it")
+			} else {
+				p.Sample, p.Withheld = "", "no decoder could read it"
+			}
 			continue
 		}
 		staged := filepath.Join(inputsDir, filepath.FromSlash(d.Read))
@@ -173,11 +183,20 @@ func reviewPages(ctx context.Context, sc webscan.Scanner, dec *decode.Result, do
 		}
 		text := string(raw)
 		if isHTML(mime[d.Name], d.Name) {
-			base, _ := url.Parse(p.src.URL)
+			// The address parsed when it was given; links in the page
+			// resolve against it.
+			base, err := url.Parse(p.src.URL)
+			if err != nil {
+				return nil, nil, engine.Classify(engine.ExitCLI, fmt.Errorf("review %s: %w", p.URL, err))
+			}
 			text = strings.TrimSpace(toolsrv.HTMLText(raw, base))
 			if len(text) < toolsrv.RenderTextMin {
 				if err := os.Remove(staged); err != nil {
 					return nil, nil, engine.Classify(engine.ExitCLI, err)
+				}
+				if member {
+					p.WithheldMembers = append(p.WithheldMembers, d.Name+": its text is drawn by scripts, and a file in an archive cannot be rendered")
+					continue
 				}
 				if strings.Contains(p.src.URL, "?") {
 					// A query can carry a signed download's credential, and
@@ -190,13 +209,20 @@ func reviewPages(ctx context.Context, sc webscan.Scanner, dec *decode.Result, do
 					continue
 				}
 				p.Sample, p.Rendered = "", true
-				given = append(given, p.src.URL)
+				toRead = append(toRead, p.src.URL)
 				continue
 			}
 		}
-		if why := reviewText(ctx, sc, text); why != "" {
+		// The file's name is the host's or the archive's, and the model
+		// reads it in the task and documents.json: AI Review reads it with
+		// the text.
+		if why := reviewText(ctx, sc, "File name: "+d.Name+"\n\n"+text); why != "" {
 			if err := os.Remove(staged); err != nil {
 				return nil, nil, engine.Classify(engine.ExitCLI, err)
+			}
+			if member {
+				p.WithheldMembers = append(p.WithheldMembers, d.Name+": "+why)
+				continue
 			}
 			p.Sample, p.Withheld = "", why
 			continue
@@ -204,12 +230,18 @@ func reviewPages(ctx context.Context, sc webscan.Scanner, dec *decode.Result, do
 		if err := os.WriteFile(staged, []byte(text), 0o644); err != nil { //nolint:gosec // an input the run reads
 			return nil, nil, engine.Classify(engine.ExitCLI, err)
 		}
-		kept = append(kept, d)
+		listed = append(listed, d)
 	}
-	if err := rewriteDocuments(inputsDir, kept); err != nil {
+	if err := rewriteDocuments(inputsDir, listed); err != nil {
 		return nil, nil, err
 	}
-	return kept, given, nil
+	var readable []decode.Document
+	for _, d := range listed {
+		if d.Read != "" {
+			readable = append(readable, d)
+		}
+	}
+	return readable, toRead, nil
 }
 
 // reviewText is AI Review's read of a page's text before the run, in
@@ -308,6 +340,9 @@ func pageLines(pages []*Page, files []runnerdecode.File) map[string]string {
 		default:
 			line += "; AI Review read its text, with the person's own key, before the run and passed it"
 		}
+		if len(p.WithheldMembers) > 0 {
+			line += "; withheld from the Voice Writer, of the archive's files: " + strings.Join(p.WithheldMembers, "; ")
+		}
 		out["source."+p.src.ID] = line
 	}
 	return out
@@ -323,6 +358,9 @@ func pagesTask(pages []*Page) string {
 			read = append(read, p.src.URL)
 		case p.Withheld != "":
 			held = append(held, p.URL)
+		}
+		for _, m := range p.WithheldMembers {
+			held = append(held, strings.SplitN(m, ":", 2)[0])
 		}
 	}
 	var b bytes.Buffer

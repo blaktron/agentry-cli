@@ -5,9 +5,9 @@
 // exec and the files data category: the runner decodes the samples before the
 // run (pkg/runner/decode), the agent reads their text and the current voice
 // through the inputs channel, and writes VOICE.md through write_report;
-// pkg/voice/build keeps it. From 1.3.0 a build may give it web addresses of
-// the person's writing: a page whose text was read before the run arrives
-// as a sample, and one drawn by scripts is read with web_read, which the
+// pkg/voice/build keeps it. A build may give it web addresses of the
+// person's writing: a page whose text was read before the run arrives as a
+// sample, and one drawn by scripts is read with web_read, which the
 // application grants it held to those addresses alone (pkg/runner/localrun).
 package writer
 
@@ -20,8 +20,8 @@ import (
 var files embed.FS
 
 // FS is the package's tree: agent.yaml, INSTRUCTION.md, README.md and
-// LICENSE at its root (a public release carries the last two, V7), and
-// under knowledge/ the pack it ships (GuideName).
+// LICENSE at its root (a public release carries the last two), and under
+// knowledge/ the pack it ships (GuideName).
 func FS() fs.FS { return files }
 
 // GuideName is the knowledge pack the Voice Writer ships in its own

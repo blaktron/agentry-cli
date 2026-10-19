@@ -825,7 +825,7 @@ func CompileOutputSchema(raw []byte) (*jsonschema.Schema, error) {
 // any release).
 func checkWebGrant(in Inputs, caps spec.CapSummary) error {
 	if in.Source != "builtin" {
-		return &PolicyRefusal{Reason: fmt.Sprintf("the web tools (%s, %s, %s) are the built-ins' alone, the Drafter's and the Knowledge Creator's; a %s package is never granted them",
+		return &PolicyRefusal{Reason: fmt.Sprintf("the web tools (%s, %s, %s) are the built-ins' alone, the Drafter's, the Knowledge Creator's and the Voice Writer's; a %s package is never granted them",
 			toolsrv.ToolWebSearch, toolsrv.ToolWebRead, toolsrv.ToolRegistrySearch, cmp.Or(in.Source, "release"))}
 	}
 	c := in.Manifest.Capabilities
@@ -1663,7 +1663,7 @@ func enforcement(caps spec.CapSummary, secrets, optional []string, extraServers 
 			tools += ", " + toolsrv.ToolWebRead + " opening only an address a " + toolsrv.ToolWebSearch + " of this run returned and AI Review passed"
 		}
 		if caps.WebGivenOnly {
-			tools, read = toolsrv.ToolWebRead+" alone, opening only an address the person gave the run", "every page"
+			tools, read = toolsrv.ToolWebRead+" alone, opening only an address the person gave the run (following a redirect that page's own server makes)", "every page"
 		}
 		e["web"] = "the built-in's web tools " + tools +
 			", on the tools container only: " + toolsrv.ToolWebRead + " is GET only, http and https on ports 80 and 443, public addresses only, checked at every connection and redirect hop, no cookie or credential, at most 32 KiB of text a page; " +

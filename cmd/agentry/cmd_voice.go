@@ -9,22 +9,21 @@ import (
 	"strings"
 	"time"
 
-	"github.com/blaktron/agentry-cli/pkg/drafter"
-	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
-	"github.com/blaktron/agentry-cli/pkg/runner/sources"
-	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
-	"github.com/blaktron/agentry-cli/runnerimage/webscan"
-
 	"github.com/spf13/cobra"
 
 	"github.com/blaktron/agentry-cli/internal/version"
+	"github.com/blaktron/agentry-cli/pkg/drafter"
 	"github.com/blaktron/agentry-cli/pkg/knowledge/store"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
+	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
+	"github.com/blaktron/agentry-cli/pkg/runner/sources"
 	"github.com/blaktron/agentry-cli/pkg/voice"
 	"github.com/blaktron/agentry-cli/pkg/voice/build"
+	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
+	"github.com/blaktron/agentry-cli/runnerimage/webscan"
 )
 
 // voiceBuild is the build itself (pkg/voice/build); a seam for the
@@ -89,7 +88,7 @@ func voiceRunFlags(cmd *cobra.Command, o *voiceOpts) {
 }
 
 func voiceSampleFlags(cmd *cobra.Command, o *voiceOpts) {
-	voiceSamplesFlags(cmd, o, "required")
+	voiceSamplesFlags(cmd, o, "these or --url are required")
 	cmd.Flags().StringVar(&o.brief, "brief", "", "how you want to sound, in a sentence or two (optional)")
 }
 
@@ -109,11 +108,13 @@ func voiceCurrentFlag(cmd *cobra.Command, o *voiceOpts) {
 func newVoiceCreateCmd() *cobra.Command {
 	var o voiceOpts
 	cmd := &cobra.Command{
-		Use:   "create --file PATH [--file PATH…] [--brief TEXT]",
+		Use:   "create (--file PATH | --url URL)… [--brief TEXT]",
 		Short: "Make your Writing Voice from samples of your writing, with the built-in Voice Writer",
 		Long: "Make a Writing Voice from samples of your own writing: Markdown, text, HTML and the like as they are; PDF,\n" +
 			"DOCX, ODT, EPUB, RTF, PPTX, XLSX and images as the text decoded from them before the run, 10 MB in all. The\n" +
-			"more varied the samples (emails, posts, reports), the better the voice. It replaces the voice kept here.",
+			"more varied the samples (emails, posts, reports), the better the voice. It replaces the voice kept here.\n" +
+			"--url takes the address of a page of your writing, such as a blog post: it is fetched first and AI Review\n" +
+			"reads it with your own TypeSafe key before the Voice Writer does.",
 		Args: cobra.NoArgs,
 		RunE: voiceRunE(&o, func(cmd *cobra.Command, _ []string) error { return runVoiceBuild(cmd, build.Create, &o) }),
 	}
@@ -125,7 +126,7 @@ func newVoiceCreateCmd() *cobra.Command {
 func newVoiceImproveCmd() *cobra.Command {
 	var o voiceOpts
 	cmd := &cobra.Command{
-		Use:   "improve --file PATH [--file PATH…] [--brief TEXT]",
+		Use:   "improve (--file PATH | --url URL)… [--brief TEXT]",
 		Short: "Improve your Writing Voice from more samples, with the built-in Voice Writer",
 		Long:  "Run the Voice Writer again over your voice as it stands, more samples of your writing and an optional brief.",
 		Args:  cobra.NoArgs,
@@ -140,7 +141,7 @@ func newVoiceImproveCmd() *cobra.Command {
 func newVoiceEditCmd() *cobra.Command {
 	var o voiceOpts
 	cmd := &cobra.Command{
-		Use:   "edit --note TEXT [--file PATH…]",
+		Use:   "edit --note TEXT [--file PATH…] [--url URL…]",
 		Short: "Change your Writing Voice by a note, with the built-in Voice Writer (an AI Edit)",
 		Long: "Run the Voice Writer over your voice as it stands with a note saying what should change (\"fewer\n" +
 			"exclamation marks\", \"more formal in reports\"), and optionally more samples of your writing that\n" +
