@@ -398,10 +398,15 @@ type CapSummary struct {
 	// server and the browse proxy that holds its scope.
 	Browser *BrowserCap `json:"browser,omitempty"`
 	// Scratch is the runner's grant of the scratch folder (scratch_list,
-	// scratch_read, scratch_write over ScratchMount) to every
-	// release's run and session. It is never the manifest's: the compiler
-	// sets it for every package but a built-in.
+	// scratch_read, scratch_write over ScratchMount), and of grep and glob, to
+	// every run and session, a built-in package's included. It is never the
+	// manifest's.
 	Scratch bool `json:"scratch,omitempty"`
+	// PDF is the runner's grant of export_pdf to every release's run and
+	// session. It is never the manifest's, and never a built-in's: what a
+	// built-in writes is read by the application, not handed to a person as
+	// a document.
+	PDF bool `json:"pdf,omitempty"`
 }
 
 // BrowserCap is capabilities.browser, normalized: the site questions, the

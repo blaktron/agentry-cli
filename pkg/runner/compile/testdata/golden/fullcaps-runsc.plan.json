@@ -34,7 +34,8 @@
     "dataAccess": [
       "tickets"
     ],
-    "scratch": true
+    "scratch": true,
+    "pdf": true
   },
   "tools": [
     "fs_read",

@@ -187,11 +187,18 @@ You have no shell, filesystem or network of your own. Your tools come only from 
 		fmt.Fprintf(b, "- **Scratch folder.** %s is yours for notes and working files: scratch_write writes there, scratch_list and scratch_read read it back, and scratch_search finds a word or phrase in its text files. scratch_read reads a text file as text and a binary file as pages of base64. It starts empty, is private to this run and is deleted when the run ends, so nothing in it reaches the person: the result goes through write_report.\n", spec.ScratchMount)
 	}
 	if c.Scratch {
+		// Under the review grant the inputs reach the model only through
+		// read_input, after AI Review: grep and glob never search them.
 		areas := spec.InputsMount + ", " + spec.ScratchMount + ", " + spec.KnowledgeMount + "/<pack> while a pack is attached"
+		inputsNote := " A search of your inputs searches each in the view read_input gives it."
+		if c.ReviewTools {
+			areas = spec.ScratchMount + ", " + spec.KnowledgeMount + "/<pack> while a pack is attached"
+			inputsNote = " They never search your inputs: read those with read_input."
+		}
 		if c.FSReadMode != "none" && c.FSReadMode != "" {
 			areas += ", and " + spec.WorkspaceMount
 		}
-		fmt.Fprintf(b, "- **Searching files.** grep searches the contents of files with a regular expression (ripgrep's syntax) and glob lists files by a path pattern, one area at a time, named by its path: %s. Use them to find what to read before reading file by file. A search of your inputs searches each in the view read_input gives it.\n", areas)
+		fmt.Fprintf(b, "- **Searching files.** grep searches the contents of files with a regular expression (ripgrep's syntax) and glob lists files by a path pattern, one area at a time, named by its path: %s. Use them to find what to read before reading file by file.%s\n", areas, inputsNote)
 	}
 	if len(c.ExecCommands) > 0 {
 		fmt.Fprintf(b, "- **Commands.** run_command can call only these commands, each with a time limit and its output capped: %s. Its own description says how they run.\n", strings.Join(c.ExecCommands, ", "))
@@ -335,8 +342,7 @@ func inputsDefault(view string) string {
 // knowledgeSection is the guide to reading a pack's wiki. It names the
 // knowledge tools whether or not a pack is attached, because packs are a
 // run-time fact; the tools themselves exist only while one is. A run that
-// has grep and glob (every release's, not a built-in's) is told it may
-// search a pack with them too.
+// has grep and glob is told it may search a pack with them too.
 func knowledgeSection(search bool) string {
 	reach := "reached only through knowledge_list, knowledge_search and knowledge_read, which exist only while at least one pack is attached"
 	grep := ""
@@ -394,11 +400,11 @@ func writeOutput(b *strings.Builder, f promptFacts) {
 - write_report writes a file under the run's reports folder, the only file that survives the run. Use it when the result is a document, or longer than a message, and write as you go, so a run stopped at its limits keeps its work.
 `)
 	mark := "- Mark the file the person asked for as the run's deliverable: pass deliverable: true and a one-line title to write_report"
-	if f.caps.Scratch {
+	if f.caps.PDF {
 		mark += " (or to export_pdf, when the result is a PDF)"
 	}
 	b.WriteString(mark + ". Leave working notes, drafts and data you only used unmarked.\n")
-	if f.caps.Scratch {
+	if f.caps.PDF {
 		b.WriteString("- export_pdf turns a Markdown report you wrote into a PDF beside it in reports/, laid out in the person's report design. Write the report with write_report first. Then also call export_pdf when the person asks for a PDF, when the report is meant for someone other than the person (a client deliverable, a letter, a summary for a team or a manager), or when the person names a theme or a style for it; otherwise the Markdown alone is the report. The design (colours, fonts, layout) is the person's setting, not yours: a request for a formal tone or a colour changes your words, not the design.\n")
 		b.WriteString("- export_pdf's form is yours to choose, for the document's shape: report (the default) for a report, a summary or anything with sections; letter for a letter, whose first heading becomes the letterhead and whose short lines (an address, a signature) are kept; memo for a memo or a note to a team, whose To:, From:, Date: and Subject: lines, written first under its heading, become its header. Open the document with a # heading that is its title.\n")
 	}
