@@ -3,6 +3,7 @@ package engine
 import (
 	"bytes"
 	"context"
+	"io"
 	"strings"
 	"testing"
 
@@ -158,5 +159,21 @@ func TestALiveRunsLastStreamedMessageArrives(t *testing.T) {
 	}
 	if len(texts) != 1 || texts[0] != "final answer" {
 		t.Errorf("messages %q", texts)
+	}
+}
+
+// A tool result the harness reported as an embedded resource, the person's
+// own input, reaches the driver with no text and marked redacted, so it
+// does not read as a tool that returned nothing.
+func TestALiveToolResultLeftOutIsMarkedRedacted(t *testing.T) {
+	ad, err := adapter.Get(adapter.CodexAdapterName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []adapter.Event
+	c := &eventCollector{adapter: ad, events: io.Discard, onEvent: func(ev adapter.Event) { got = append(got, ev) }}
+	c.consume(strings.NewReader(`{"type":"item.completed","item":{"id":"item_1","type":"mcp_tool_call","server":"gateway","tool":"read_input","status":"completed","result":{"content":[{"type":"resource","resource":{"uri":"agentry://inputs","mimeType":"text/plain","text":"module example.com/m\n"}}]}}}` + "\n"))
+	if len(got) != 1 || got[0].Kind != adapter.EventToolResult || got[0].Tool != "read_input" || got[0].Text != "" || !got[0].Redacted {
+		t.Fatalf("events = %+v, want one read_input result, no text, redacted", got)
 	}
 }

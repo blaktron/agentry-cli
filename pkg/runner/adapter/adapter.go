@@ -163,6 +163,10 @@ type Event struct {
 	CallID string
 	// Failed marks an EventToolResult whose tool reported an error.
 	Failed bool
+	// Redacted marks an EventToolResult whose content held an embedded
+	// resource, which Text leaves out: the tool server answers with one
+	// when the content is the person's own input. The receipts keep it.
+	Redacted bool
 	// Delta marks Text as one streamed chunk of the current assistant
 	// message rather than a whole message: the engine concatenates deltas
 	// until a tool call or usage event ends the message.
@@ -219,16 +223,20 @@ type textBlock struct {
 	Text string `json:"text"`
 }
 
-// joinText is the text of a list of content blocks, one block per line.
-// Images and other blocks carry no text and are left to the receipts.
-func joinText(blocks []textBlock) string {
+// joinText is the text of a list of content blocks, one block per line,
+// and whether one of them was an embedded resource, whose text is left
+// out. Images and other blocks carry no text and are left to the receipts.
+func joinText(blocks []textBlock) (text string, redacted bool) {
 	var parts []string
 	for _, b := range blocks {
-		if b.Type == "text" && b.Text != "" {
+		switch {
+		case b.Type == "text" && b.Text != "":
 			parts = append(parts, b.Text)
+		case b.Type == "resource":
+			redacted = true
 		}
 	}
-	return strings.Join(parts, "\n")
+	return strings.Join(parts, "\n"), redacted
 }
 
 // Adapter compiles a run plan's harness half and interprets its output.
