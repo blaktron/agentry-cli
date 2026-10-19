@@ -212,6 +212,21 @@ jobs:
       - name: The pinned Codex image is signed by the codex workflow on main
         run: ./scripts/verify-codex-image.sh
 
+  # The default harness is the image agentry-dockerimages' docker-agent
+  # workflow built from Docker Agent's pinned upstream commit and signed:
+  # every run of the default adapter pulls it by digest only, so this holds
+  # the pin itself to the signature, on every pull request.
+  harness-image:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: The pinned default harness is signed by the docker-agent workflow on main
+        run: ./scripts/verify-docker-agent-image.sh
+
   # The pinned Typst image is the one agentry-dockerimages' typst workflow
   # signed, and export_pdf renders with it as the tests say. The runner image
   # copies its files by digest, so the pin is held to the signature on every
