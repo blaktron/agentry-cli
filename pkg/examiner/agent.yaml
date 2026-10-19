@@ -1,7 +1,7 @@
 schemaVersion: "2"
 name: examiner
 namespace: agentry
-version: 1.1.0
+version: 1.2.0
 summary: "Reviews a QuickAgent before Submit: asks AI Review as the registry does, and reads its files for secrets and scripts past its contract."
 license: MIT
 authors:
@@ -17,5 +17,8 @@ capabilities:
     write: none
   exec: none
   dataAccess: [files]
+knowledge:
+  ships:
+    - name: review-guide
 publish:
-  include: [agent.yaml, INSTRUCTION.md, output.schema.json, README.md, LICENSE]
+  include: [agent.yaml, INSTRUCTION.md, output.schema.json, README.md, LICENSE, "knowledge/**"]

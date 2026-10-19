@@ -17,6 +17,7 @@ import (
 
 	"github.com/blaktron/agentry/pkg/gatecases"
 	"github.com/blaktron/agentry/pkg/judge"
+	"github.com/blaktron/agentry/pkg/manifest"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/mcpinstall"
@@ -501,5 +502,95 @@ func TestServerRecordsCarryTheCheckDateAndPlainWords(t *testing.T) {
 	}
 	if got, want := rr.Servers[1].Words(), "not checked: no answer from the registry (registry answered 502)"; got != want {
 		t.Fatalf("unreachable: %q, want %q", got, want)
+	}
+}
+
+// TestAnInstructionCallingForUngrantedToolsIsTheRegistrysFinding: an
+// instruction that calls for the browser tools without the browser line gets
+// the scripts stage's finding, high, at the instruction's first call, and the
+// expected outcome is held; the same instruction with the line declared gets
+// none.
+func TestAnInstructionCallingForUngrantedToolsIsTheRegistrysFinding(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.CopyFS(dir, os.DirFS(fixture)); err != nil {
+		t.Fatal(err)
+	}
+	instruction := "# Site check\n\nOpen the site with browser_navigate, then read it with browser_snapshot and write report.md.\n"
+	if err := os.WriteFile(filepath.Join(dir, "AGENT.md"), []byte(instruction), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p, err := Prepare(context.Background(), dir, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Cleanup()
+	var got []Finding
+	for _, f := range p.Findings {
+		if f.Scanner == ScannerUngrantedTool {
+			got = append(got, f)
+		}
+	}
+	if len(got) != 1 || got[0].Severity != "high" || got[0].Confidence != "high" || got[0].File != "AGENT.md" || got[0].Line != 3 ||
+		!strings.Contains(got[0].Title, "capabilities.browser") || !strings.Contains(got[0].Title, "browser_navigate") {
+		t.Fatalf("ungranted-tool findings: %+v", got)
+	}
+	if e := Expect(p, AIReview{Ran: true}); e.Outcome != gatecases.OutcomeNeedsReview {
+		t.Fatalf("expected %q (%s), want held", e.Outcome, e.Reason)
+	}
+
+	manifestPath := filepath.Join(dir, "agent.yaml")
+	m, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withBrowser := strings.Replace(string(m), "  exec: none\n", "  exec: none\n  browser:\n    sites: [site]\n", 1)
+	withBrowser = strings.Replace(withBrowser, "entrypoints:", "intake:\n  - id: site\n    prompt: \"The website (https://…)\"\n    type: url\n    required: true\nentrypoints:", 1)
+	if err := os.WriteFile(manifestPath, []byte(withBrowser), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	q, err := Prepare(context.Background(), dir, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer q.Cleanup()
+	for _, f := range q.Findings {
+		if f.Scanner == ScannerUngrantedTool {
+			t.Fatalf("a declared browser still drew %+v", f)
+		}
+	}
+	if errs := q.Validation.Issues; len(errs) > 0 {
+		for _, is := range errs {
+			if is.Severity == "error" {
+				t.Fatalf("the fixture with a browser line does not validate: %+v", errs)
+			}
+		}
+	}
+}
+
+// TestTheInstructionCheckReadsOnlyTheStagedCopy: an instruction path that
+// climbs out of the package, or a link, is never read by the pre-step's
+// instruction check, wherever it points.
+func TestTheInstructionCheckReadsOnlyTheStagedCopy(t *testing.T) {
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "notes.md"), []byte("Use browser_navigate on the site.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stage := t.TempDir()
+	pkgDir := filepath.Join(stage, "package")
+	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "notes.md"), filepath.Join(pkgDir, "AGENT.md")); err != nil {
+		t.Fatal(err)
+	}
+	rel, err := filepath.Rel(pkgDir, filepath.Join(outside, "notes.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{filepath.ToSlash(rel), "AGENT.md"} {
+		m := &manifest.Manifest{SchemaVersion: "2", Entrypoints: manifest.Entrypoints{Instruction: path}}
+		if got := ungrantedToolFindings(m, pkgDir); len(got) != 0 {
+			t.Errorf("instruction %q outside the staged copy was read: %+v", path, got)
+		}
 	}
 }
