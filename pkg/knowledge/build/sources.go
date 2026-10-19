@@ -2,9 +2,7 @@ package build
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"net/url"
 	"os"
@@ -17,7 +15,6 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/knowledge"
 	"github.com/blaktron/agentry-cli/pkg/runner/decode"
-	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/sources"
 )
@@ -326,27 +323,6 @@ func plural(n int, one, many string) string {
 		return one
 	}
 	return many
-}
-
-// fetcherFor is the build's source fetcher: the runner image's proxy and
-// the files image's source role, the person's user on this engine, the
-// run's id and limits, the work folder's sources/ and the run's receipts.
-func fetcherFor(ctx context.Context, d dockerx.Client, o Options, runnerTag string, img decode.Image, work string, logw io.Writer) (engine.SourceFetcher, error) {
-	user, err := dockerx.PersonUser(ctx, d)
-	if err != nil {
-		return engine.SourceFetcher{}, engine.Classify(engine.ExitGateway, err)
-	}
-	receipts := filepath.Join(o.OutDir, "receipts")
-	if err := os.MkdirAll(receipts, 0o755); err != nil {
-		return engine.SourceFetcher{}, engine.Classify(engine.ExitCLI, err)
-	}
-	if o.RunID == "" {
-		return engine.SourceFetcher{}, engine.Classify(engine.ExitCLI, errors.New("a build with sources needs a run id"))
-	}
-	return engine.SourceFetcher{
-		Docker: d, ProxyImage: runnerTag, FilesImage: img.Tag, Limits: o.Policy.Docker.Limits.WithDefaults(),
-		User: user, RunID: o.RunID, Work: filepath.Join(work, "sources"), Receipts: receipts, Stderr: logw,
-	}, nil
 }
 
 // heldFiles counts the files a pack holds, under wiki/ and sources/: what

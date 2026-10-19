@@ -48,7 +48,7 @@ type RenderRequest struct {
 
 // failRenderAway is web_read's answer when the rendered page ended on
 // another site, one this run's searches did not return.
-const failRenderAway = "the page sent the browser to another site, which this run's searches did not return"
+const failRenderAway = "the page sent the browser to another site, which this run was not given and its searches did not return"
 
 // notRenderedNote ends a plain read whose render was asked for and not
 // used, so the model knows the text may be the page's shell.
@@ -118,12 +118,13 @@ func (s *server) renderedPage(raw []byte) (page, string) {
 }
 
 // sameSite says whether a rendered page may be read where the browser
-// ended, in a run that reads only what its searches returned: on the asked
-// page's own host, with or without "www." (example.com to www.example.com),
-// or at an address a search returned. Any other host, a sibling or a parent
+// ended, in a run that reads only what its searches returned or what it was
+// given: on the asked page's own host, with or without "www." (example.com
+// to www.example.com), or at an address a search returned or the person
+// gave. Any other host, a sibling or a parent
 // on a shared platform included, is another site.
 func (s *server) sameSite(asked *url.URL, final string) bool {
-	if !s.spec.Web.SearchedOnly {
+	if !s.spec.Web.heldToItsAddresses() {
 		return true
 	}
 	f, err := url.Parse(final)
@@ -134,7 +135,7 @@ func (s *server) sameSite(asked *url.URL, final string) bool {
 	if bare(asked.Hostname()) == bare(f.Hostname()) {
 		return true
 	}
-	return s.web().wasFound(f)
+	return s.web().wasFound(f) || s.spec.Web.wasGiven(f)
 }
 
 // hostOf is an address's origin alone, for the ledger.

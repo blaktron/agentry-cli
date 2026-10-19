@@ -1,7 +1,8 @@
 // Package netaddr is the runner's one rule for a public address:
 // the ranges web_read, the input-source proxy and the browse proxy never
 // connect to, among them the 6to4 relay anycast range, Azure's
-// wireserver, the IPv6 discard prefix and site-local space.
+// wireserver, the IPv6 discard prefix and site-local space, and an ISATAP
+// address that carries an IPv4 address that is not public.
 //
 // Part of the embedded runner-image build context: stdlib-only.
 package netaddr
@@ -43,7 +44,26 @@ func Public(a netip.Addr) bool {
 			return false
 		}
 	}
+	// An ISATAP address is an ordinary address under its own /64, whose
+	// interface identifier carries an IPv4 address (RFC 5214): it is public
+	// only when that address is.
+	if v4, ok := isatapIPv4(a); ok {
+		return Public(v4)
+	}
 	return true
+}
+
+// isatapIPv4 returns the IPv4 address an ISATAP interface identifier carries:
+// 0000:5efe or 0200:5efe, then the address, under any prefix.
+func isatapIPv4(a netip.Addr) (netip.Addr, bool) {
+	if !a.Is6() {
+		return netip.Addr{}, false
+	}
+	b := a.As16()
+	if (b[8] == 0x00 || b[8] == 0x02) && b[9] == 0 && b[10] == 0x5e && b[11] == 0xfe {
+		return netip.AddrFrom4([4]byte{b[12], b[13], b[14], b[15]}), true
+	}
+	return netip.Addr{}, false
 }
 
 // Network says whether a is an address a person may have named as their own

@@ -365,3 +365,22 @@ func TestTheWebToolsResolvConf(t *testing.T) {
 		t.Fatalf("the runtime line: %s", rl)
 	}
 }
+
+// TestGivenAddressesAreAGivenOnlyPlansAlone: a run may hand addresses to
+// web_read only when its plan holds web_read to them, and such a plan
+// takes no web_search; both are refused before docker is called.
+func TestGivenAddressesAreAGivenOnlyPlansAlone(t *testing.T) {
+	p, f := webFixture(t)
+	p.Web = &WebRun{Scan: toolsrv.WebScanJev, JevKey: testJevKey, Given: []string{"https://blog.example.com/post"}}
+	_, err := Run(context.Background(), f, p)
+	var ce *ClassifiedError
+	if !errors.As(err, &ce) || !strings.Contains(err.Error(), "not held to the addresses it is given") || len(f.Calls) != 0 {
+		t.Fatalf("addresses for a plan not held to them: %v (%d calls)", err, len(f.Calls))
+	}
+	p, f = webFixture(t)
+	p.Plan.Capabilities.WebGivenOnly = true
+	p.Web = &WebRun{Scan: toolsrv.WebScanJev, JevKey: testJevKey, Search: "brave", SearchKey: "k", Given: []string{"https://blog.example.com/post"}}
+	if _, err := Run(context.Background(), f, p); err == nil || !strings.Contains(err.Error(), "has no web_search") || len(f.Calls) != 0 {
+		t.Fatalf("a given-only plan with a search: %v", err)
+	}
+}

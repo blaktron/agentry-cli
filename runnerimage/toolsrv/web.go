@@ -62,6 +62,14 @@ type Web struct {
 	// in an address of its choosing; a search result's address is the
 	// search provider's, never the model's.
 	SearchedOnly bool `json:"searchedOnly,omitempty"`
+	// GivenOnly is compiled: web_read opens only an address the person gave
+	// the run (Given), and one a page given redirects to on its own site
+	// (the Voice Writer's). As with SearchedOnly, the address a read opens
+	// is never the model's own choosing.
+	GivenOnly bool `json:"givenOnly,omitempty"`
+	// Given is the run's: the addresses a GivenOnly run may read, stamped
+	// by the engine from the person's own command.
+	Given []string `json:"given,omitempty"`
 	// Render is compiled: the folder, in this container, through which
 	// web_read asks the engine to render a page in a headless browser when
 	// its text is thin or the model asks (the Knowledge Creator's). Empty,
@@ -213,6 +221,28 @@ func (w *webState) wasFound(u *url.URL) bool {
 	defer w.mu.Unlock()
 	return ok && w.found[k]
 }
+
+// wasGiven reports whether the person gave the run the address.
+func (w Web) wasGiven(u *url.URL) bool {
+	k, ok := pageKey(u.String())
+	if !ok {
+		return false
+	}
+	for _, g := range w.Given {
+		if gk, gok := pageKey(g); gok && gk == k {
+			return true
+		}
+	}
+	return false
+}
+
+// heldToItsAddresses says whether web_read opens only addresses the run
+// was handed, by its searches or by the person.
+func (w Web) heldToItsAddresses() bool { return w.SearchedOnly || w.GivenOnly }
+
+// failNotGiven is web_read's answer, in a GivenOnly run, for an address
+// the person did not give.
+const failNotGiven = "this run reads only the addresses it was given: read one of them, exactly as the task names it"
 
 // failNotSearched is web_read's answer, in a SearchedOnly run, for an
 // address no search of the run returned.
@@ -504,6 +534,10 @@ func (s *server) toolWebRead(raw json.RawMessage) (string, bool) {
 		// ledger keeps its origin alone.
 		s.record(LedgerEntry{Tool: ToolWebRead, URL: u.Scheme + "://" + u.Host, Refused: failNotSearched})
 		return "web_read: refused: " + failNotSearched, true
+	}
+	if s.spec.Web.GivenOnly && !s.spec.Web.wasGiven(u) {
+		s.record(LedgerEntry{Tool: ToolWebRead, URL: u.Scheme + "://" + u.Host, Refused: failNotGiven})
+		return "web_read: refused: " + failNotGiven, true
 	}
 	if !w.take(&w.pages, s.spec.Web.maxPages()) {
 		s.record(LedgerEntry{Tool: ToolWebRead, URL: u.String(), Refused: "the run's page budget is spent"})

@@ -2,7 +2,9 @@ package judge
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 )
 
 // The draft question set: what AI Review asks about a finished draft
@@ -137,6 +139,11 @@ func (s *DraftScanner) Scan(ctx context.Context, in DraftInput) DraftResult {
 		res.Verdict, res.Failure = VerdictNotScanned, FailureTooLarge
 		res.Err = fmt.Errorf("judge: a draft of %d/%d/%d bytes is past the bounds %d/%d/%d, %d in all", len(in.Description), len(in.ManifestJSON),
 			len(in.Instruction), DraftMaxDescription, DraftMaxManifest, DraftMaxInstruction, DraftMaxState)
+		return res
+	}
+	if strings.TrimSpace(in.Description) == "" && strings.TrimSpace(string(in.ManifestJSON)) == "" && strings.TrimSpace(in.Instruction) == "" {
+		res.Verdict, res.Failure = VerdictNotScanned, FailureInvalid
+		res.Err = errors.New("judge: a draft must have something in it")
 		return res
 	}
 	qs := DraftQuestions()

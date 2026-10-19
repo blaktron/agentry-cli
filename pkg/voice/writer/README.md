@@ -32,6 +32,21 @@ one data category, `files`. When Agentry writes a voice:
   is. The Voice Writer runs no decoder itself. It reads the text, and the
   current voice when there is one, through the inputs channel
   (`list_inputs`, `read_input`).
+- **Pages from web addresses**, when you give some on your computer, are
+  fetched before the run by the step a run's input source takes: in the
+  files container, on a network of its own behind a proxy to that host
+  alone. AI Review reads each page's text, with your own TypeSafe key,
+  before the Voice Writer does, and a page it flags or cannot scan is
+  withheld and named. A page whose text is drawn by scripts is read during
+  the run with `web_read`, which the application grants for that run alone:
+  it opens only the addresses you gave, renders the page in a headless
+  Chromium the application runs once a page, on a network whose one way out
+  admits public sites alone, and has AI Review read the rendered text first.
+  The model never drives that browser and has no `web_search`.
+- **Its guide.** The release ships a knowledge pack,
+  `knowledge/style-guide`: the dimensions of a voice, reading a web page, a
+  worked example, and the questions AI Review asks of a voice. The
+  application attaches it to every run.
 - **During the run**, it writes `VOICE.md` with `write_report`. Like every
   run, it has a scratch folder for its notes, private to the run and deleted
   with it, and `grep` and `glob` to search the samples and that folder.

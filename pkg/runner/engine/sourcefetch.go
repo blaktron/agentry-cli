@@ -58,6 +58,26 @@ type SourceFetcher struct {
 	Network func(string)
 }
 
+// BuildSourceFetcher is a fetcher for a built-in's build on this computer
+// (a knowledge pack, a Writing Voice): the runner image's proxy and the
+// files image's source role, the person's user on this engine, the build's
+// run id, its work folder for the sources' trees and its receipts folder
+// for each proxy's log.
+func BuildSourceFetcher(ctx context.Context, d dockerx.Client, runnerImage, filesImage string, lim policy.Limits, runID, work, receipts string, stderr io.Writer) (SourceFetcher, error) {
+	if runID == "" {
+		return SourceFetcher{}, Classify(ExitCLI, errors.New("a build that fetches a source needs a run id"))
+	}
+	user, err := dockerx.PersonUser(ctx, d)
+	if err != nil {
+		return SourceFetcher{}, Classify(ExitGateway, err)
+	}
+	if err := os.MkdirAll(receipts, 0o755); err != nil {
+		return SourceFetcher{}, Classify(ExitCLI, err)
+	}
+	return SourceFetcher{Docker: d, ProxyImage: runnerImage, FilesImage: filesImage, Limits: lim.WithDefaults(),
+		User: user, RunID: runID, Work: work, Receipts: receipts, Stderr: stderr}, nil
+}
+
 // sourceTimeout bounds one source's fetch step.
 const sourceTimeout = 20 * time.Minute
 

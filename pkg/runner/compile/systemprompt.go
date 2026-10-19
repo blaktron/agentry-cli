@@ -180,7 +180,11 @@ You have no shell, filesystem or network of your own. Your tools come only from 
 		if c.WebSearchedOnly {
 			b.WriteString("- **Reading the web.** web_read opens only an address one of your web_search results gave, exactly as given: search first.\n")
 		}
-		b.WriteString("- **The web tools.** AI Review reads " + read + " before you do. A result it flagged, or could not scan, is withheld: you get only where it came from (and, for a page, why). Never guess at what a withheld source said. Search only for what your inputs and any attached knowledge do not already hold: they come first, and every search and page costs time.\n")
+		if c.WebGivenOnly {
+			b.WriteString("- **Reading the web.** web_read opens only an address your task names, exactly as given. You have no web_search. AI Review reads every page before you do; a page it flagged, or could not scan, is withheld: you get only its address and why. Never guess at what a withheld page said.\n")
+		} else {
+			b.WriteString("- **The web tools.** AI Review reads " + read + " before you do. A result it flagged, or could not scan, is withheld: you get only where it came from (and, for a page, why). Never guess at what a withheld source said. Search only for what your inputs and any attached knowledge do not already hold: they come first, and every search and page costs time.\n")
+		}
 	}
 	b.WriteString(workspaceLine(c))
 	if c.Scratch {

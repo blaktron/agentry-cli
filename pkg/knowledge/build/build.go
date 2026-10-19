@@ -250,7 +250,7 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 	// into the documents beside the files given, within the pack's cap.
 	var repoIDs []string
 	if len(o.Sources) > 0 {
-		fetcher, err := fetcherFor(ctx, d, o, runnerTag, img, work, logw)
+		fetcher, err := engine.BuildSourceFetcher(ctx, d, runnerTag, img.Tag, o.Policy.Docker.Limits, o.RunID, filepath.Join(work, "sources"), filepath.Join(o.OutDir, "receipts"), logw)
 		if err != nil {
 			return nil, err
 		}
