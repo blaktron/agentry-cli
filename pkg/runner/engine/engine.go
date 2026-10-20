@@ -272,6 +272,30 @@ type Params struct {
 	// goroutine, never after the harness stream closes, and it MUST NOT
 	// BLOCK; one that panics is switched off and the run goes on.
 	OnEvent func(adapter.Event)
+	// Persistent makes a session one segment of a persistent agent: the
+	// plan must be persistent, and the session store is the agent's own
+	// volume, which outlives the segment. Nil for every other run.
+	Persistent *PersistentSegment
+}
+
+// PersistentSegment is what a persistent agent's supervisor tells the
+// engine about the segment it starts.
+type PersistentSegment struct {
+	// Agent is the agent's name (its built-in's name).
+	Agent string
+	// Segment numbers this start among the agent's segments, from 1.
+	Segment int
+	// SessionVolume and DataVolume are the agent's two volumes. The session
+	// volume is mounted where the harness keeps its conversation; neither
+	// carries the run's label, so neither the segment's teardown nor a
+	// sweep of a dead run removes it.
+	SessionVolume, DataVolume string
+	// VolumeLabels are the labels the volumes are created with when they
+	// do not exist yet.
+	VolumeLabels map[string]string
+	// ContinueID is the harness's id for the conversation the agent's last
+	// segment was in, to continue; empty starts a new one.
+	ContinueID string
 }
 
 // engine is the run's container engine once placed (placementFor), and

@@ -21,3 +21,9 @@ import "os/exec"
 // is why a caller that replaces SysProcAttr (the engine's configProcess
 // on unix) must call this afterwards.
 func NoWindow(cmd *exec.Cmd) { noWindow(cmd) }
+
+// Detach marks cmd to outlive the terminal that started it: a process that
+// keeps running after its parent returns (a persistent agent's supervisor)
+// is not ended by the terminal's hangup or its Ctrl+C. Attributes the caller
+// already set on cmd.SysProcAttr are kept.
+func Detach(cmd *exec.Cmd) { detach(cmd) }

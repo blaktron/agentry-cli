@@ -290,6 +290,25 @@ type SessionOptions struct {
 	// rendered it, for a driver that hands its harness the instruction
 	// over the session rather than by path.
 	HarnessFile func(name string) ([]byte, error)
+	// ContinueID names a conversation the harness stored in an earlier
+	// process, on the session store the run mounts again: a driver that can
+	// continue one (Continuing) loads it at Start instead of opening a new
+	// one. Empty opens a new conversation.
+	ContinueID string
+}
+
+// Continuing is a SessionDriver that can continue a conversation an earlier
+// harness process stored (SessionOptions.ContinueID). After Start it names
+// the conversation it is in, and says whether that is the one it was asked
+// to continue and, when it is not, why: a harness that could not load it
+// opens a new conversation rather than failing the start.
+type Continuing interface {
+	// ConversationID is the harness's own id for the conversation the
+	// session is in, set by Start.
+	ConversationID() string
+	// Continued reports whether Start continued ContinueID's conversation,
+	// and why not when it did not ("" when none was asked for).
+	Continued() (bool, string)
 }
 
 // SignInToken is a model sign-in's access token as a driver hands it to

@@ -114,6 +114,30 @@ type Envelope struct {
 	// is recorded and never changes the run's outcome. Absent when the run
 	// delivered nothing.
 	Deliveries []Delivery `json:"deliveries,omitempty"`
+	// Persistent is a persistent agent's segment: which agent and which of
+	// its starts this was, whether the conversation continued from the
+	// segment before, and the volumes that hold it between segments. Absent
+	// for every other run.
+	Persistent *Persistent `json:"persistent,omitempty"`
+}
+
+// Persistent is the envelope's record of one segment of a persistent agent.
+type Persistent struct {
+	Agent   string `json:"agent"`
+	Segment int    `json:"segment"`
+	// Resumed says the harness continued the stored conversation; when it
+	// did not, ResumeReason says why (a first segment, a store the harness
+	// could not load, a harness that cannot continue one) and the runner
+	// gave the new conversation the last exchange instead.
+	Resumed      bool              `json:"resumed"`
+	ResumeReason string            `json:"resumeReason,omitempty"`
+	Volumes      PersistentVolumes `json:"volumes"`
+}
+
+// PersistentVolumes names a persistent agent's two volumes.
+type PersistentVolumes struct {
+	Session string `json:"session"`
+	Data    string `json:"data"`
 }
 
 // MaxDeliverables is the most files Deliverables lists.

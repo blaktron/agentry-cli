@@ -139,7 +139,7 @@ func withContainers(enforced map[string]string, p Params) map[string]string {
 		fmt.Sprintf(": all capabilities dropped, no-new-privileges, memory %s, cpus %d, pids %d", lim.Memory, lim.CPUs, lim.Pids) +
 		"; the gateway keeps DAC_READ_SEARCH alone, to read the run's secrets file" +
 		"; read-only root: " + strings.Join(readOnly, ", ")
-	if p.Plan.Mode == "interactive" {
+	if p.Plan.Conversational() {
 		line += "; the session store's one-shot chown keeps CHOWN alone"
 	}
 	browserLine := ""
@@ -207,7 +207,7 @@ func runtimeLine(p Params) string {
 	var under []string
 	if p.Plan.Harness.Host == nil {
 		under = append(under, "the agent container (the QuickAgent's code)")
-		if s := p.Plan.Harness.Session; p.Plan.Mode == "interactive" && s != nil && s.StoreOwner != "" {
+		if s := p.Plan.Harness.Session; p.Plan.Conversational() && s != nil && s.StoreOwner != "" {
 			under = append(under, "the session store's one-shot")
 		}
 	}

@@ -148,6 +148,9 @@ type Builtin struct {
 	// localTimeoutFloor is the least time, in seconds, a run of the package
 	// on this computer is given (LocalBudgets).
 	localTimeoutFloor int
+	// persistent runs the package as a persistent agent (Segment), never as
+	// a run (Execute).
+	persistent bool
 }
 
 // KnowledgeCreator is the Knowledge Creator (pkg/knowledge/creator),
@@ -211,7 +214,9 @@ func (b Builtin) LocalBudgets(p policy.Budgets) spec.Budgets {
 }
 
 // Builtins is every package that may run as builtin.
-func Builtins() []Builtin { return []Builtin{KnowledgeCreator(), Drafter(), VoiceWriter(), Examiner()} }
+func Builtins() []Builtin {
+	return []Builtin{KnowledgeCreator(), Drafter(), VoiceWriter(), Examiner(), Assistant()}
+}
 
 // Ref is the package's ns/name@version.
 func (b Builtin) Ref() string { return fmt.Sprintf("%s/%s@%s", b.namespace, b.name, b.version) }
@@ -591,6 +596,9 @@ func (r Run) Execute(ctx context.Context, d dockerx.Client) (*receipt.Envelope, 
 	logw := r.Stderr
 	if logw == nil {
 		logw = io.Discard
+	}
+	if r.Builtin.persistent {
+		return nil, engine.Classify(engine.ExitPolicy, fmt.Errorf("%s is a persistent agent: start it with agentry agent start", r.Builtin.Ref()))
 	}
 	// A review runs only with the person's key, as a draft does:
 	// refused before anything is laid down, compiled or built.

@@ -37,13 +37,31 @@ import (
 // and the built-in's tree is the embedded one on every run, whatever happened
 // to the installed copy.
 func TestOnlyTheEmbeddedPackagesRunAsBuiltin(t *testing.T) {
-	t.Run("the list is the Creator, the Drafter, the Voice Writer and the Examiner", func(t *testing.T) {
+	t.Run("the list is the Creator, the Drafter, the Voice Writer, the Examiner and the Assistant", func(t *testing.T) {
 		var refs []string
 		for _, b := range Builtins() {
 			refs = append(refs, b.Ref())
 		}
-		if strings.Join(refs, ",") != "agentry/knowledge-creator@1.5.0,agentry/drafter@1.16.0,agentry/voice-writer@1.3.0,agentry/examiner@1.2.0" {
+		if strings.Join(refs, ",") != "agentry/knowledge-creator@1.5.0,agentry/drafter@1.16.0,agentry/voice-writer@1.3.0,agentry/examiner@1.2.0,agentry/assistant@1.0.0" {
 			t.Fatalf("built-ins %v", refs)
+		}
+	})
+	t.Run("only the Assistant runs as a persistent agent, and never as a run", func(t *testing.T) {
+		for _, b := range Builtins() {
+			if b.Persistent() != (b.Ref() == Assistant().Ref()) {
+				t.Fatalf("%s: persistent %v", b.Ref(), b.Persistent())
+			}
+		}
+		if (Builtin{}).Persistent() {
+			t.Fatal("the zero Builtin is persistent")
+		}
+		_, err := Run{Builtin: Assistant()}.Execute(context.Background(), nil)
+		if err == nil || !strings.Contains(err.Error(), "agentry agent start") {
+			t.Fatalf("Execute of the Assistant: err = %v", err)
+		}
+		_, err = Segment{Builtin: Examiner()}.Start(context.Background(), nil)
+		if err == nil || !strings.Contains(err.Error(), "not a persistent agent") {
+			t.Fatalf("a segment of the Examiner: err = %v", err)
 		}
 	})
 	t.Run("the web tools are the Drafter's, the Creator's and the Voice Writer's, registry_search the Drafter's alone", func(t *testing.T) {
