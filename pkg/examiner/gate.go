@@ -62,6 +62,7 @@ var couldNotScan = map[string]bool{
 	"S1/text-scan-truncated": true,
 	"S2/tool-error":          true,
 	"S2/history-error":       true,
+	"S2/history-truncated":   true,
 	"SK/unread-text":         true,
 }
 
