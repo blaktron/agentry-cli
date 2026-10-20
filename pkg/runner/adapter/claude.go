@@ -168,7 +168,10 @@ func claudeMCPJSON(url string) ([]byte, error) {
 // turns as stream-json and stays up until stdin closes. bare is --bare,
 // which reads no OAuth credential, so a run on a subscription token or on
 // Claude Code's own sign-in runs without it.
-func claudeArgv(mode manifest.Mode, instructionPath, mcpPath, model string, bare bool) (argv []string, session *spec.SessionSpec, stdinTask bool, err error) {
+// persist leaves session persistence on, for a persistent agent's segment,
+// whose conversation the next segment continues: Claude Code then writes
+// it under its config directory's projects folder.
+func claudeArgv(mode manifest.Mode, instructionPath, mcpPath, model string, bare, persist bool) (argv []string, session *spec.SessionSpec, stdinTask bool, err error) {
 	argv = []string{"-p"}
 	if bare {
 		argv = append(argv, "--bare")
@@ -184,7 +187,11 @@ func claudeArgv(mode manifest.Mode, instructionPath, mcpPath, model string, bare
 		"--allowedTools", "mcp__"+claudeGatewayServer,
 		"--permission-mode", "dontAsk",
 		"--permission-prompts", "none",
-		"--no-session-persistence",
+	)
+	if !persist {
+		argv = append(argv, "--no-session-persistence")
+	}
+	argv = append(argv,
 		"--disable-slash-commands",
 		"--model", model,
 	)
@@ -269,7 +276,7 @@ func (c *claudeAdapter) Compile(in Input) (Result, error) {
 	// engine refuses such a run over (engine: ancestorFile), and managed
 	// settings, which are the machine administrator's and no flag closes.
 	subscription := kind == policy.KeyKindSubscription
-	argv, session, stdinTask, err := claudeArgv(in.Mode, claudeInstructionFile, claudeMCPFile, model, !subscription && !signIn)
+	argv, session, stdinTask, err := claudeArgv(in.Mode, claudeInstructionFile, claudeMCPFile, model, !subscription && !signIn, false)
 	if err != nil {
 		return Result{}, fmt.Errorf("claude adapter: %w", err)
 	}
@@ -375,6 +382,16 @@ type claudeMessage struct {
 		InputTokens  int64 `json:"input_tokens"`
 		OutputTokens int64 `json:"output_tokens"`
 	} `json:"usage"`
+	// Errors are a failed result's reasons, such as a conversation
+	// --resume could not find.
+	Errors []string `json:"errors"`
+	// Response is a control_response's: the answer to the driver's
+	// initialize request.
+	Response struct {
+		Subtype   string `json:"subtype"`
+		RequestID string `json:"request_id"`
+		Error     string `json:"error"`
+	} `json:"response"`
 	// ToolName appears on the permission-denial system message.
 	ToolName string `json:"tool_name"`
 	// RateLimit is a rate_limit_event's: what Claude Code's sign-in was
@@ -573,15 +590,22 @@ func claudeResultEvents(msg claudeMessage, raw json.RawMessage) []Event {
 // protocol. SessionOptions.GatewayTools is not used: unlike ACP, this
 // harness is not asked per call — the tool allow-list is compiled into the
 // argv and the harness refuses everything else itself.
-func (c *claudeAdapter) Session(_ context.Context, rw io.ReadWriteCloser, _ SessionOptions) (SessionDriver, error) {
+func (c *claudeAdapter) Session(_ context.Context, rw io.ReadWriteCloser, opts SessionOptions) (SessionDriver, error) {
 	if rw == nil {
 		return nil, errors.New("claude session: nil transport")
 	}
 	s := &claudeSession{
-		rw:       rw,
-		ad:       c,
-		events:   make(chan Event, 256),
-		readDone: make(chan struct{}),
+		rw:             rw,
+		ad:             c,
+		events:         make(chan Event, 256),
+		readDone:       make(chan struct{}),
+		continueID:     opts.ContinueID,
+		conversationID: opts.ConversationID,
+	}
+	if s.continueID != "" || s.conversationID != "" {
+		// Made before the reader starts: Claude Code reports a conversation
+		// it cannot load as soon as it starts, before any input.
+		s.starting = make(chan claudeStart, 1)
 	}
 	go s.readLoop()
 	return s, nil

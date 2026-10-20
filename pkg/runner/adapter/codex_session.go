@@ -47,8 +47,15 @@ type codexSession struct {
 	// 429 is then the plan's limit, said once (planLimited).
 	signIn      bool
 	planLimited bool
-	// resumable keeps the thread so Resume can carry it to a new process.
+	// resumable keeps the thread so Resume can carry it to a new process,
+	// or a persistent agent's next segment can continue it.
 	resumable bool
+	// continueID is the stored thread Start continues
+	// (SessionOptions.ContinueID); continued says it did, and notContinued
+	// why not when it could not.
+	continueID   string
+	continued    bool
+	notContinued string
 }
 
 // codexTurn accumulates one Prompt's answer.
@@ -81,9 +88,22 @@ func (s *codexSession) Start(ctx context.Context) error {
 	if err := s.handshake(ctx); err != nil {
 		return err
 	}
-	// A thread the restart route may resume is kept in CODEX_HOME, which is
-	// then the run's own (the session store, the run's folder); otherwise
-	// nothing of the conversation is persisted.
+	if s.continueID != "" {
+		// A thread an earlier process stored is continued; one codex cannot
+		// load leaves a new thread, and the reason, in its place.
+		id, err := s.resumeThread(ctx, s.continueID)
+		if err == nil {
+			s.threadID, s.continued = id, true
+			return nil
+		}
+		if ctx.Err() != nil {
+			return err
+		}
+		s.notContinued = "codex could not resume the stored thread: " + firstLineOf(err.Error())
+	}
+	// A thread the restart route may resume, or a persistent agent's, is
+	// kept in CODEX_HOME, which is then the session store; otherwise nothing
+	// of the conversation is persisted.
 	res, err := s.call(ctx, "thread/start", map[string]any{"ephemeral": !s.resumable})
 	if err != nil {
 		return err
@@ -144,20 +164,33 @@ func (s *codexSession) Resume(ctx context.Context, rw io.ReadWriteCloser) error 
 	if err := s.handshake(ctx); err != nil {
 		return err
 	}
-	res, err := s.call(ctx, "thread/resume", map[string]any{"threadId": s.threadID})
+	_, err := s.resumeThread(ctx, s.threadID)
+	return err
+}
+
+// resumeThread is thread/resume of the thread id, held to answering with
+// that thread.
+func (s *codexSession) resumeThread(ctx context.Context, id string) (string, error) {
+	res, err := s.call(ctx, "thread/resume", map[string]any{"threadId": id})
 	if err != nil {
-		return err
+		return "", err
 	}
 	var tr struct {
 		Thread struct {
 			ID string `json:"id"`
 		} `json:"thread"`
 	}
-	if err := json.Unmarshal(res, &tr); err != nil || tr.Thread.ID != s.threadID {
-		return fmt.Errorf("thread/resume: resumed %q, not the conversation %q", tr.Thread.ID, s.threadID)
+	if err := json.Unmarshal(res, &tr); err != nil || tr.Thread.ID != id {
+		return "", fmt.Errorf("thread/resume: resumed %q, not the conversation %q", tr.Thread.ID, id)
 	}
-	return nil
+	return id, nil
 }
+
+// ConversationID implements Continuing: the thread the session is in.
+func (s *codexSession) ConversationID() string { return s.threadID }
+
+// Continued implements Continuing.
+func (s *codexSession) Continued() (bool, string) { return s.continued, s.notContinued }
 
 // Prompt implements SessionDriver.
 func (s *codexSession) Prompt(ctx context.Context, text string) (*Turn, error) {

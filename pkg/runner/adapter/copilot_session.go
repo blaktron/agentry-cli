@@ -62,9 +62,16 @@ type copilotSession struct {
 	pending map[int]chan rpcMessage
 	turn    *copilotTurn
 
+	// sessionID is the session's id, set again by Start when it resumes a
+	// stored session or falls back to a new one: read it with id().
+	idMu           sync.Mutex
 	sessionID      string
 	registrationID string
-	permit         func(server, tool string) bool
+	// continued says Start resumed SessionOptions.ContinueID's session, and
+	// notContinued why not when Copilot CLI could not.
+	continued    bool
+	notContinued string
+	permit       func(server, tool string) bool
 
 	events    chan Event
 	eventGate eventGate // orders sends against close(events)
@@ -140,15 +147,11 @@ func (s *copilotSession) Start(ctx context.Context) error {
 	if err := s.connect(ctx); err != nil {
 		return err
 	}
-	params, err := s.createParams()
-	if err != nil {
+	if err := s.open(ctx); err != nil {
 		return err
 	}
-	if _, err := s.call(ctx, "session.create", params); err != nil {
-		return s.startError(err)
-	}
 	if _, err := s.call(ctx, "session.options.update", map[string]any{
-		"sessionId": s.sessionID, "skipCustomInstructions": true, "customAgentsLocalOnly": true,
+		"sessionId": s.id(), "skipCustomInstructions": true, "customAgentsLocalOnly": true,
 		"coauthorEnabled": false, "manageScheduleEnabled": false,
 		"installedPlugins": []any{}, "includedBuiltinSkills": []any{},
 	}); err != nil {
@@ -156,6 +159,59 @@ func (s *copilotSession) Start(ctx context.Context) error {
 	}
 	return nil
 }
+
+// open is the session: a stored one resumed with the session's
+// configuration as it is now, so a changed instruction or gateway bearer
+// reaches it as it would a new one; else, or when Copilot CLI cannot resume
+// it, a new one.
+func (s *copilotSession) open(ctx context.Context) error {
+	if id := s.opts.ContinueID; id != "" {
+		s.setID(id)
+		params, err := s.createParams()
+		if err != nil {
+			return err
+		}
+		_, err = s.call(ctx, "session.resume", params)
+		if err == nil {
+			s.continued = true
+			return nil
+		}
+		if ctx.Err() != nil || policyWords(err.Error()) {
+			return s.startError(err)
+		}
+		s.notContinued = "Copilot CLI could not resume the stored session: " + firstLineOf(err.Error())
+		s.setID(uuid.NewString())
+	}
+	params, err := s.createParams()
+	if err != nil {
+		return err
+	}
+	if _, err := s.call(ctx, "session.create", params); err != nil {
+		return s.startError(err)
+	}
+	return nil
+}
+
+// ConversationID implements Continuing: the session's id, which Copilot CLI
+// keeps under COPILOT_HOME.
+func (s *copilotSession) ConversationID() string { return s.id() }
+
+// id is the session's id as it stands.
+func (s *copilotSession) id() string {
+	s.idMu.Lock()
+	defer s.idMu.Unlock()
+	return s.sessionID
+}
+
+// setID changes the session's id, while Start opens it.
+func (s *copilotSession) setID(id string) {
+	s.idMu.Lock()
+	s.sessionID = id
+	s.idMu.Unlock()
+}
+
+// Continued implements Continuing.
+func (s *copilotSession) Continued() (bool, string) { return s.continued, s.notContinued }
 
 // connect is the handshake, held to the protocol this driver speaks.
 func (s *copilotSession) connect(ctx context.Context) error {
@@ -213,7 +269,7 @@ func (s *copilotSession) createParams() (map[string]any, error) {
 	if err := json.Unmarshal(b, &params); err != nil {
 		return nil, err
 	}
-	params["sessionId"] = s.sessionID
+	params["sessionId"] = s.id()
 	params["systemMessage"] = map[string]any{"mode": "replace", "content": string(instruction)}
 	if s.opts.SignInToken != nil {
 		params["gitHubTokenProviderRegistrationId"] = s.registrationID
@@ -275,7 +331,7 @@ func (s *copilotSession) Prompt(ctx context.Context, text string) (*Turn, error)
 		s.turn = nil
 		s.mu.Unlock()
 	}()
-	if _, err := s.call(ctx, "session.send", map[string]any{"sessionId": s.sessionID, "prompt": text}); err != nil {
+	if _, err := s.call(ctx, "session.send", map[string]any{"sessionId": s.id(), "prompt": text}); err != nil {
 		return nil, err
 	}
 	select {
@@ -550,7 +606,7 @@ func (s *copilotSession) handleNotification(m rpcMessage, frame []byte) {
 		SessionID string       `json:"sessionId"`
 		Event     copilotEvent `json:"event"`
 	}
-	if err := json.Unmarshal(m.Params, &n); err != nil || n.SessionID != s.sessionID {
+	if err := json.Unmarshal(m.Params, &n); err != nil || n.SessionID != s.id() {
 		s.emit(Event{Kind: EventOther, Text: m.Method, Raw: raw})
 		return
 	}
@@ -653,7 +709,7 @@ func (s *copilotSession) decide(ev copilotEvent, raw json.RawMessage) {
 		ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
 		defer cancel()
 		_, _ = s.call(ctx, "session.permissions.handlePendingPermissionRequest", map[string]any{
-			"sessionId": s.sessionID, "requestId": d.RequestID, "result": result})
+			"sessionId": s.id(), "requestId": d.RequestID, "result": result})
 	})
 	if granted {
 		s.emit(Event{Kind: EventPermissionGranted, Text: tool, Raw: raw})
@@ -722,7 +778,7 @@ func (s *copilotSession) breach(why string) {
 	s.nextID++
 	id := s.nextID
 	s.mu.Unlock()
-	_ = s.send(map[string]any{"jsonrpc": "2.0", "id": id, "method": "session.abort", "params": map[string]any{"sessionId": s.sessionID}})
+	_ = s.send(map[string]any{"jsonrpc": "2.0", "id": id, "method": "session.abort", "params": map[string]any{"sessionId": s.id()}})
 	s.endTurn(why)
 }
 

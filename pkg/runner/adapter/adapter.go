@@ -58,6 +58,10 @@ type Input struct {
 	// host link's, where the release declares a target host. Empty for
 	// every other plan.
 	UnchangedTools []string
+	// Persistent says the plan is a persistent agent's: its harness keeps
+	// the conversation on the session store, where the agent's next
+	// segment continues it. Mode is then interactive.
+	Persistent bool
 }
 
 // Result is what an adapter compiles.
@@ -295,6 +299,28 @@ type SessionOptions struct {
 	// continue one (Continuing) loads it at Start instead of opening a new
 	// one. Empty opens a new conversation.
 	ContinueID string
+	// ConversationID is the id the engine told the harness to open a new
+	// conversation under, on its command line
+	// (spec.SessionSpec.ConversationArgs); empty when the harness or its
+	// driver chooses the id.
+	ConversationID string
+	// Persistent says the session is a persistent agent's segment: the
+	// conversation is kept on the session store for the agent's next
+	// segment, whether or not this one continued an earlier one.
+	Persistent bool
+}
+
+// NotContinuedError is a driver's Start refused because the harness could
+// not load the conversation it was asked to continue, and ended: the engine
+// starts the harness again on a new conversation. A harness that can open a
+// new conversation itself does so instead and says why (Continuing).
+type NotContinuedError struct {
+	// Reason is the harness's account of why, for the segment's envelope.
+	Reason string
+}
+
+func (e *NotContinuedError) Error() string {
+	return "the harness could not continue the stored conversation: " + e.Reason
 }
 
 // Continuing is a SessionDriver that can continue a conversation an earlier

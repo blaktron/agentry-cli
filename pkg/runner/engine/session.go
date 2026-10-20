@@ -17,6 +17,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/blaktron/agentry/pkg/manifest"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
@@ -343,8 +345,12 @@ type liveSession struct {
 	signInSum  string
 	restarting bool
 	restarts   int
-	eventsFile *os.File
-	stderrPath string
+	// conversationArgs are what the agent's argv gains at each start of a
+	// persistent agent's segment whose harness names its conversation on
+	// its command line (spec.SessionSpec.ConversationArgs).
+	conversationArgs []string
+	eventsFile       *os.File
+	stderrPath       string
 
 	events chan session.Event
 	// eventsMu orders emit's send against End's close(events);
@@ -446,17 +452,38 @@ func (s *liveSession) startHarness(ctx context.Context, token string, rep *strin
 		s.td.add(func(c context.Context) { _ = s.d.RemoveForce(c, name) })
 	}
 
+	restart := p.Plan.Harness.Session.RestartOnRenewal
+	opts := sessionOptions(p, s.rd, token, s.granted)
+	opts.Resumable = restart
+	notContinued := ""
+	if p.Persistent != nil {
+		opts.Persistent, opts.ContinueID = true, p.Persistent.ContinueID
+		// An id that goes on the harness's command line must be one the
+		// engine chose, a UUID: anything else could be read as a flag.
+		if ca := p.Plan.Harness.Session.ConversationArgs; ca != nil && opts.ContinueID != "" && uuid.Validate(opts.ContinueID) != nil {
+			opts.ContinueID, notContinued = "", "the stored conversation's id is not one this harness names a conversation by"
+		}
+		s.nameConversation(&opts)
+	}
+	// A harness told on its command line to continue a conversation it
+	// cannot load ends at once: its exit is the engine's to answer with a
+	// new conversation (relaunch), not the session's end.
+	relaunchable := opts.ContinueID != "" && s.conversationArgs != nil
+	if relaunchable {
+		s.setRestarting(true)
+	}
 	rw, err := s.launch(false)
 	if err != nil {
+		s.setRestarting(false)
 		cancel(err)
 		return err
 	}
-	_, exited := s.harness()
 	// A failure from here on has a harness process running and writing
 	// its stderr receipt; the goroutine launch started masks that receipt
 	// once the process has exited, so the failure waits for it (bounded —
 	// the cancel kills the process) before the receipt is handed over.
 	awaitExit := func() {
+		_, exited := s.harness()
 		select {
 		case <-exited:
 		case <-time.After(15 * time.Second):
@@ -470,14 +497,11 @@ func (s *liveSession) startHarness(ctx context.Context, token string, rep *strin
 		case <-time.After(5 * time.Second):
 		}
 	}
-	restart := p.Plan.Harness.Session.RestartOnRenewal
-	opts := sessionOptions(p, s.rd, token, s.granted)
-	opts.Resumable = restart
-	if p.Persistent != nil {
-		opts.ContinueID = p.Persistent.ContinueID
-	}
 	drv, err := p.Adapter.Session(agentCtx, rw, opts)
 	if err != nil {
+		if relaunchable {
+			s.harnessDone()
+		}
 		cancel(err)
 		awaitExit()
 		return Classify(ExitHarness, fmt.Errorf("interactive session: %w", err))
@@ -485,7 +509,18 @@ func (s *liveSession) startHarness(ctx context.Context, token string, rep *strin
 	s.drv = drv
 	handshake, cancelHS := context.WithTimeout(agentCtx, 120*time.Second)
 	defer cancelHS()
-	if err := drv.Start(handshake); err != nil {
+	err = drv.Start(handshake)
+	var nc *adapter.NotContinuedError
+	if relaunchable && errors.As(err, &nc) {
+		notContinued = nc.Reason
+		drv, err = s.relaunchAnew(handshake, drv, &opts)
+		if drv != nil {
+			s.drv = drv
+		}
+	} else if relaunchable {
+		s.harnessDone()
+	}
+	if err != nil {
 		cancel(err)
 		awaitExit()
 		var refused *adapter.OrgPolicyRefusal
@@ -500,10 +535,82 @@ func (s *liveSession) startHarness(ctx context.Context, token string, rep *strin
 		// The reason can quote the harness's own error: it is masked like
 		// every receipt.
 		id, resumed, reason := conversationOf(drv, p.Plan.Harness.Adapter, p.Persistent.ContinueID)
+		if notContinued != "" {
+			resumed, reason = false, notContinued
+		}
 		s.conversation, s.resumed, s.resumeReason = id, resumed, s.redact.String(reason)
 		s.env.Persistent.Resumed, s.env.Persistent.ResumeReason = s.resumed, s.resumeReason
 	}
 	return nil
+}
+
+// nameConversation sets the flags that tell a harness started on its command
+// line which conversation a persistent agent's segment is in: the stored
+// one to continue, else a new one under an id chosen here, which the driver
+// is given (adapter.SessionOptions.ConversationID).
+func (s *liveSession) nameConversation(opts *adapter.SessionOptions) {
+	ca := s.p.Plan.Harness.Session.ConversationArgs
+	if ca == nil {
+		return
+	}
+	if opts.ContinueID != "" {
+		s.conversationArgs = []string{ca.Continue, opts.ContinueID}
+		return
+	}
+	opts.ConversationID = uuid.NewString()
+	s.conversationArgs = []string{ca.New, opts.ConversationID}
+}
+
+func (s *liveSession) setRestarting(on bool) {
+	s.mu.Lock()
+	s.restarting = on
+	s.mu.Unlock()
+}
+
+// harnessDone ends the hold a relaunchable start put on the harness's exit:
+// an exit that came while it held is the session's end after all. The exit
+// goroutine reads the hold and closes exited under mu, so one of the two
+// ends the session.
+func (s *liveSession) harnessDone() {
+	s.mu.Lock()
+	s.restarting = false
+	exited := s.exited
+	s.mu.Unlock()
+	select {
+	case <-exited:
+		s.endWith(session.EndHarness)
+	default:
+	}
+}
+
+// relaunchAnew starts the harness again on a new conversation after it
+// could not load the stored one and ended (adapter.NotContinuedError): the
+// old process's exit is awaited and its driver closed, and the new one is
+// started with the id of a new conversation.
+func (s *liveSession) relaunchAnew(ctx context.Context, old adapter.SessionDriver, opts *adapter.SessionOptions) (adapter.SessionDriver, error) {
+	_, exited := s.harness()
+	select {
+	case <-exited:
+	case <-ctx.Done():
+		s.harnessDone()
+		return nil, fmt.Errorf("the harness that could not continue the conversation did not end: %w", ctx.Err())
+	}
+	_ = old.Close()
+	opts.ContinueID = ""
+	s.nameConversation(opts)
+	s.setRestarting(false)
+	rw, err := s.launch(true)
+	if err != nil {
+		return nil, err
+	}
+	drv, err := s.p.Adapter.Session(s.agentCtx, rw, *opts)
+	if err != nil {
+		return nil, err
+	}
+	// The new harness gets a handshake's full time of its own.
+	handshake, cancel := context.WithTimeout(s.agentCtx, 120*time.Second)
+	defer cancel()
+	return drv, drv.Start(handshake)
 }
 
 // noStoredConversation is the resume reason of a segment that was given no
@@ -653,7 +760,7 @@ func (s *liveSession) launch(again bool) (io.ReadWriteCloser, error) {
 			Name:        name,
 			Image:       p.Plan.Harness.Agent.Image,
 			Entrypoint:  p.Plan.Harness.Agent.Entrypoint,
-			Argv:        substituteAll(p.Plan.Harness.Agent.Argv, rep),
+			Argv:        append(substituteAll(p.Plan.Harness.Agent.Argv, rep), s.conversationArgs...),
 			Env:         agentEnv,
 			Mounts:      mounts,
 			Network:     networkName(s.runID),
@@ -686,8 +793,8 @@ func (s *liveSession) launch(again bool) (io.ReadWriteCloser, error) {
 			s.harnessErr = rerr.Error()
 		}
 		restarting := s.restarting
-		s.mu.Unlock()
 		close(exited)
+		s.mu.Unlock()
 		if !restarting {
 			s.endWith(session.EndHarness)
 		}

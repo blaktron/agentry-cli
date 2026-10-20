@@ -36,7 +36,25 @@ type claudeSession struct {
 	eventGate eventGate // orders sends against close(events)
 	readDone  chan struct{}
 	closeOnce sync.Once
+
+	// continueID is the stored conversation a persistent agent's segment
+	// continues (--resume), conversationID the new one it opens
+	// (--session-id); continued says Start continued it. starting is
+	// non-nil until Start has its handshake's answer.
+	continueID, conversationID string
+	continued                  bool
+	starting                   chan claudeStart
 }
+
+// claudeStart is how Claude Code answered the driver's initialize request:
+// failed is set when it ended the session instead, with its reasons.
+type claudeStart struct {
+	failed bool
+	reason string
+}
+
+// claudeInitializeID is the request id of the driver's initialize request.
+const claudeInitializeID = "agentry-initialize"
 
 // claudeTurnResult is what the result message of one turn carried.
 type claudeTurnResult struct {
@@ -45,11 +63,92 @@ type claudeTurnResult struct {
 	usage      *TurnUsage
 }
 
-// Start implements SessionDriver. Claude Code's stream-json input has no
-// handshake and prints nothing before the first user turn, so opening the
-// session is the first Prompt; a harness that failed to start surfaces as
-// that Prompt's error or as the process exiting.
-func (s *claudeSession) Start(context.Context) error { return nil }
+// Start implements SessionDriver. Claude Code's stream-json input prints
+// nothing before the first user turn, so a run's session opens with that
+// turn; a harness that failed to start surfaces as its error or as the
+// process exiting. A persistent agent's segment, which names its
+// conversation on the command line, sends Claude Code's initialize control
+// request and waits for the answer: a conversation --resume cannot load
+// ends the process with its reasons before any answer, which is reported as
+// a *NotContinuedError for the engine to start a new one.
+func (s *claudeSession) Start(ctx context.Context) error {
+	if s.starting == nil {
+		return nil
+	}
+	defer func() {
+		s.mu.Lock()
+		s.starting = nil
+		s.mu.Unlock()
+	}()
+	s.mu.Lock()
+	ch := s.starting
+	s.mu.Unlock()
+	// A harness that already ended refuses the write; what it said before
+	// it ended is the answer.
+	sendErr := s.send(map[string]any{
+		"type": "control_request", "request_id": claudeInitializeID,
+		"request": map[string]any{"subtype": "initialize"},
+	})
+	select {
+	case r := <-ch:
+		return s.startAnswer(r)
+	case <-s.readDone:
+		select {
+		case r := <-ch:
+			return s.startAnswer(r)
+		default:
+		}
+		if sendErr != nil {
+			return fmt.Errorf("claude session: send initialize: %w", sendErr)
+		}
+		return errors.New("claude session: the harness ended before it answered the initialize request")
+	case <-ctx.Done():
+		return fmt.Errorf("claude session: initialize: %w", ctx.Err())
+	}
+}
+
+// startAnswer is Start's outcome for Claude Code's answer to initialize.
+func (s *claudeSession) startAnswer(r claudeStart) error {
+	switch {
+	case !r.failed:
+		s.continued = s.continueID != ""
+		return nil
+	case s.continueID != "" && strings.Contains(r.reason, s.continueID):
+		// Claude Code names the conversation it could not load; any other
+		// failure at the start is the start's, not the conversation's.
+		return &NotContinuedError{Reason: "Claude Code could not resume the stored conversation: " + r.reason}
+	}
+	return fmt.Errorf("claude session: Claude Code did not start: %s", r.reason)
+}
+
+// ConversationID implements Continuing: the conversation the segment
+// continued, or the one it opened.
+func (s *claudeSession) ConversationID() string {
+	if s.continued {
+		return s.continueID
+	}
+	return s.conversationID
+}
+
+// Continued implements Continuing. A conversation Claude Code could not
+// load fails Start instead.
+func (s *claudeSession) Continued() (bool, string) { return s.continued, "" }
+
+// started hands Start the answer to its initialize request; false when no
+// Start is waiting for one.
+func (s *claudeSession) started(r claudeStart) bool {
+	s.mu.Lock()
+	ch := s.starting
+	s.mu.Unlock()
+	if ch == nil {
+		return false
+	}
+	select {
+	case ch <- r:
+	default:
+	}
+	return true
+}
 
 // Prompt implements SessionDriver: one user turn in, everything the
 // harness says until its result message out.
@@ -129,7 +228,25 @@ func (s *claudeSession) readLoop() {
 			continue
 		}
 		var msg claudeMessage
-		isResult := json.Unmarshal(line, &msg) == nil && msg.Type == "result"
+		parsed := json.Unmarshal(line, &msg) == nil
+		if parsed && msg.Type == "control_response" {
+			// The answer to the driver's own request, not the harness's
+			// output.
+			if msg.Response.RequestID == claudeInitializeID {
+				s.started(claudeStart{failed: msg.Response.Subtype != "success", reason: msg.Response.Error})
+			}
+			continue
+		}
+		isResult := parsed && msg.Type == "result"
+		if isResult && msg.IsError {
+			// A result before the handshake's answer is Claude Code ending
+			// the session at its start.
+			reason := strings.Join(msg.Errors, "; ")
+			if reason == "" {
+				reason = msg.Result
+			}
+			s.started(claudeStart{failed: true, reason: reason})
+		}
 		for _, ev := range s.ad.Events(line) {
 			if isResult && ev.Kind == EventAssistantText {
 				// The assistant message already carried this text into the
