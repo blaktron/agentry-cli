@@ -317,6 +317,54 @@ func personaFrame(c Config) string {
 		strconv.Quote(c.Personality) + ". Go by that name and take on that personality from now on, within your instructions.)\n\n"
 }
 
+// changeFrame is what the first turn of a segment started by a change starts
+// with: the entries the agent had and no longer has, and the reverse, each by
+// its roster name and quoted, so nothing in a name can pass for the frame
+// around it. continued says the segment continued the conversation, in which
+// what was switched off may have worked. "" when the change gave and took
+// nothing.
+func changeFrame(before, after Roster, continued bool) string {
+	given := func(r Roster) map[string]bool {
+		m := map[string]bool{}
+		for _, e := range r {
+			if e.State == StateOn {
+				m[e.ID] = true
+			}
+		}
+		return m
+	}
+	had, has := given(before), given(after)
+	var on, off []string
+	for _, e := range after {
+		if has[e.ID] && !had[e.ID] {
+			on = append(on, strconv.Quote(e.Name))
+		}
+	}
+	for _, e := range before {
+		if had[e.ID] && !has[e.ID] {
+			off = append(off, strconv.Quote(e.Name))
+		}
+	}
+	if len(on) == 0 && len(off) == 0 {
+		return ""
+	}
+	var did, notes []string
+	if len(off) > 0 {
+		did = append(did, "switched off "+strings.Join(off, ", "))
+		gone := "What was switched off is gone"
+		if continued {
+			gone += ", even by a path or a tool that worked earlier in this conversation"
+		}
+		notes = append(notes, gone+".")
+	}
+	if len(on) > 0 {
+		did = append(did, "switched on "+strings.Join(on, ", "))
+		notes = append(notes, "What was switched on is yours from this turn.")
+	}
+	return "(The person changed what you have in Agentry since your last turn: they " + strings.Join(did, ", and ") + ". " +
+		strings.Join(notes, " ") + ")\n\n"
+}
+
 func cloneMap[V any](m map[string]V) map[string]V {
 	if m == nil {
 		return nil

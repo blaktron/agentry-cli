@@ -81,11 +81,17 @@ type Supervisor struct {
 	// segEnded says the segment in sess has ended, with segEnv and segErr
 	// its end: a stop after a next segment failed to start does not end it
 	// or count it twice.
-	segEnded     bool
-	segEnv       *receipt.Envelope
-	segErr       error
-	pumpDone     chan struct{}
-	carry        string // the last exchange, for the first turn of a conversation that did not continue
+	segEnded bool
+	segEnv   *receipt.Envelope
+	segErr   error
+	pumpDone chan struct{}
+	carry    string // the last exchange, for the first turn of a conversation that did not continue
+	// roster is what the running segment was given, and told what the
+	// agent was last told it has; byChange says a change started the
+	// segment, so its next turn says what changed since told.
+	roster       Roster
+	told         Roster
+	byChange     bool
 	persona      string // personaKey of what the conversation has been given
 	resumed      bool
 	resumeReason string
@@ -148,7 +154,7 @@ func Start(ctx context.Context, opts Options) (*Supervisor, error) {
 		return nil, err
 	}
 	s.seg.Lock()
-	err = s.startSegment(ctx)
+	err = s.startSegment(ctx, false)
 	s.seg.Unlock()
 	if err != nil {
 		s.closeAppLink()
@@ -163,9 +169,9 @@ func Start(ctx context.Context, opts Options) (*Supervisor, error) {
 }
 
 // startSegment starts the agent's next segment from its config as it is,
-// records how its conversation began and starts its pump. The caller holds
-// seg.
-func (s *Supervisor) startSegment(ctx context.Context) error {
+// records how its conversation began and starts its pump; byChange says a
+// change to the agent started it. The caller holds seg.
+func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 	a, home := s.opts.Agent, s.opts.Home
 	name := a.Name
 	cfg, err := LoadConfig(home, name)
@@ -273,6 +279,10 @@ func (s *Supervisor) startSegment(ctx context.Context) error {
 	s.sess, s.runID, s.outDir, s.segment = sess, runID, outDir, segment
 	s.applied, s.grants, s.packsDone, s.ending, s.pumpDone = applied, grantsKey(a, cfg), packsDone, ending, pumpDone
 	s.carry, s.persona, s.resumed, s.resumeReason = carry, persona, resumed, reason
+	s.roster, s.byChange = roster, byChange
+	if !byChange {
+		s.told = roster
+	}
 	s.usage, s.segEnded, s.segEnv, s.segErr = receipt.Usage{}, false, nil, nil
 	s.mu.Unlock()
 	text := "continued the conversation"
@@ -341,8 +351,10 @@ func (s *Supervisor) broadcast(ev session.Event) {
 // roster changed since the segment started, the segment is ended and the
 // next started first, so the turn reaches an agent given the change. The
 // first turn of a conversation that did not continue starts with the last
-// exchange, and a turn after the person named the agent or changed its
-// personality starts with them.
+// exchange; the first turn after a change says what it switched on and off
+// since the agent was last told, since the conversation the agent continues
+// was had with what it had before; and a turn after the person named the
+// agent or changed its personality starts with them.
 func (s *Supervisor) Send(ctx context.Context, text string) error {
 	if !s.turn.TryLock() {
 		return ErrBusy
@@ -362,9 +374,13 @@ func (s *Supervisor) Send(ctx context.Context, text string) error {
 	}
 	s.mu.Lock()
 	sess, carry, given := s.sess, s.carry, s.persona
+	byChange, roster := s.byChange, s.roster
+	frame := carry
+	if byChange {
+		frame += changeFrame(s.told, roster, s.resumed)
+	}
 	s.carry = ""
 	s.mu.Unlock()
-	frame := carry
 	persona := personaKey(cfg)
 	if persona != given {
 		frame += personaFrame(cfg)
@@ -373,6 +389,13 @@ func (s *Supervisor) Send(ctx context.Context, text string) error {
 		err = sess.SendCarrying(ctx, frame, text)
 	} else {
 		err = sess.Send(ctx, text)
+	}
+	if err == nil && byChange {
+		s.mu.Lock()
+		if s.sess == sess {
+			s.told, s.byChange = roster, false
+		}
+		s.mu.Unlock()
 	}
 	if err == nil && persona != given {
 		s.mu.Lock()
@@ -400,7 +423,7 @@ func (s *Supervisor) nextSegment(ctx context.Context) error {
 	s.broadcast(session.Event{Kind: session.KindNotice, Time: time.Now().UTC(), Text: "Applying your change: the agent restarts with it, and the conversation continues"})
 	s.mu.Unlock()
 	_, _ = s.endSegment(ctx, true)
-	if err := s.startSegment(ctx); err != nil {
+	if err := s.startSegment(ctx, true); err != nil {
 		s.mu.Lock()
 		s.broadcast(session.Event{Kind: session.KindError, Time: time.Now().UTC(), Text: "the change could not be applied, so the agent stopped: " + err.Error()})
 		s.mu.Unlock()
