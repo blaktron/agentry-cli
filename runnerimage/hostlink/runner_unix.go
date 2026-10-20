@@ -26,7 +26,9 @@ func execRunner(ctx context.Context, argv, env []string, stdin io.Reader, stdout
 		return exitCode(cmd, err)
 	case <-ctx.Done():
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		<-done
+		// The killed command's exit says nothing the context does not.
+		err := <-done
+		_ = err
 		return -1, ctx.Err()
 	}
 }
