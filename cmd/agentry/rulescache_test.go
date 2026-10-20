@@ -6,12 +6,16 @@
 package main
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -294,5 +298,183 @@ func TestAnOlderCachedBundleYieldsToTheEmbeddedOne(t *testing.T) {
 	b, source, err := loadRulesBundle()
 	if err != nil || source != "embedded" || b.Version() != emb.Version() {
 		t.Fatalf("with a cached 0.0.1 under an embedded %s: %s %q (%v), want the embedded bundle", emb.Version(), b.Version(), source, err)
+	}
+}
+
+// hostileEntry is a bundle entry name that must never put a file outside
+// the folder a bundle is unpacked into.
+type hostileEntry struct {
+	label string // the subtest's name
+	name  string
+	// leaves is true for a name that leaves the folder on every system.
+	// The others leave it, or open something that is not a file in it, only
+	// under Windows path rules: a colon makes a drive-relative path
+	// (C:x.yaml) or names an alternate data stream (a.yaml:stream), and NUL
+	// is a device (Windows 11 opens NUL.yaml as an ordinary file). Elsewhere
+	// they are ordinary file names.
+	leaves bool
+}
+
+func hostileEntries(outside string) []hostileEntry {
+	return []hostileEntry{
+		{"dot-dot", "..", true},
+		{"parent", "../escape.yaml", true},
+		{"absolute", filepath.Join(outside, "absolute.yaml"), true},
+		{"drive-relative", "C:x.yaml", false},
+		{"device", "NUL.yaml", false},
+		{"stream", "a.yaml:stream", false},
+	}
+}
+
+// mustRefuse says whether the writer has to refuse e on this system.
+func (e hostileEntry) mustRefuse() bool {
+	return e.leaves || runtime.GOOS == "windows" && strings.Contains(e.name, ":")
+}
+
+// assertOnlyEntries fails the test unless every entry of dir is in want.
+func assertOnlyEntries(t *testing.T, dir string, want ...string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if !slices.Contains(want, e.Name()) {
+			t.Errorf("%s holds %q, which no accepted write made", dir, e.Name())
+		}
+	}
+}
+
+func TestStagedEntryWriterKeepsEveryNameInsideTheFolder(t *testing.T) {
+	outside := t.TempDir()
+	// A drive-relative name resolves against the working directory, so one
+	// that escaped would land in outside, which is checked below.
+	t.Chdir(outside)
+	staging := filepath.Join(outside, "staging")
+	if err := os.Mkdir(staging, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.OpenRoot(staging)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = root.Close() }()
+	write := stagedEntryWriter(root)
+
+	var written []string
+	for _, e := range hostileEntries(outside) {
+		content := []byte("entry: " + e.label + "\n")
+		err := write(e.name, content)
+		if e.mustRefuse() {
+			if err == nil {
+				t.Errorf("write(%q) succeeded, want a refusal", e.name)
+			}
+			continue
+		}
+		if err != nil {
+			// A system may refuse more than it must; a refusal is never an
+			// escape.
+			t.Logf("write(%q) refused: %v", e.name, err)
+			continue
+		}
+		// Accepted: it must be an ordinary file of that name in the folder.
+		p := filepath.Join(staging, e.name)
+		fi, err := os.Lstat(p)
+		if err != nil || !fi.Mode().IsRegular() {
+			t.Errorf("write(%q) accepted but left no regular file in the folder: %v", e.name, err)
+			continue
+		}
+		if got, err := os.ReadFile(p); err != nil || string(got) != string(content) {
+			t.Errorf("write(%q) read back %q, %v", e.name, got, err)
+		}
+		written = append(written, e.name)
+	}
+
+	assertOnlyEntries(t, outside, "staging")
+	assertOnlyEntries(t, staging, written...)
+}
+
+// hostileBundle is a bundle archive whose first entry carries name.
+func hostileBundle(t *testing.T, name string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	for _, n := range []string{name, "bundle.yaml"} {
+		body := []byte("version: 1.0.0\n")
+		if err := tw.WriteHeader(&tar.Header{Name: n, Mode: 0o600, Size: int64(len(body)), Typeflag: tar.TypeReg}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write(body); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// isolateFetchDirs points the working directory and the temp directory (where
+// the staging folder is made) at empty folders, and returns both.
+func isolateFetchDirs(t *testing.T) (work, tmp string) {
+	t.Helper()
+	work, tmp = t.TempDir(), t.TempDir()
+	t.Chdir(work)
+	t.Setenv("TMPDIR", tmp)
+	t.Setenv("TMP", tmp)
+	t.Setenv("TEMP", tmp)
+	return work, tmp
+}
+
+// A hostile entry name is refused by the archive reader, before any write.
+func TestFetchRulesBundleRefusesHostileEntryNames(t *testing.T) {
+	isolateEnv(t)
+	work, tmp := isolateFetchDirs(t)
+
+	for _, e := range hostileEntries(work) {
+		t.Run(e.label, func(t *testing.T) {
+			srv := bundleServer(t, hostileBundle(t, e.name), "1.0.0", "sha256:"+strings.Repeat("00", 32))
+			_, err := fetchRulesBundle(context.Background(), &strings.Builder{}, srv.URL)
+			if err == nil || !strings.Contains(err.Error(), "bundle archive entry") {
+				t.Errorf("err = %v, want the entry refused", err)
+			}
+			assertOnlyEntries(t, work)
+			assertOnlyEntries(t, tmp)
+			if b, v := newestCachedBundle(); b != nil {
+				t.Errorf("a refused bundle was cached as %q", v)
+			}
+		})
+	}
+}
+
+// A hostile entry name that gets past the archive reader still cannot leave
+// the staging folder: the fetch writes through the staging folder's root.
+func TestFetchRulesBundleStagesThroughTheRoot(t *testing.T) {
+	isolateEnv(t)
+	work, tmp := isolateFetchDirs(t)
+
+	for _, e := range hostileEntries(work) {
+		t.Run(e.label, func(t *testing.T) {
+			// A reader that hands the writer the name unchecked.
+			orig := untarBundle
+			untarBundle = func(_ []byte, write func(string, []byte) error) ([]string, error) {
+				return []string{e.name}, write(e.name, []byte("version: 1.0.0\n"))
+			}
+			t.Cleanup(func() { untarBundle = orig })
+
+			srv := bundleServer(t, nil, "1.0.0", "sha256:"+strings.Repeat("00", 32))
+			_, err := fetchRulesBundle(context.Background(), &strings.Builder{}, srv.URL)
+			if err == nil {
+				t.Fatal("fetch of a bundle with a hostile entry succeeded")
+			}
+			if e.mustRefuse() && !strings.Contains(err.Error(), "stage rule bundle entry") {
+				t.Errorf("err = %v, want the write refused", err)
+			}
+			assertOnlyEntries(t, work)
+			assertOnlyEntries(t, tmp)
+			if b, v := newestCachedBundle(); b != nil {
+				t.Errorf("a refused bundle was cached as %q", v)
+			}
+		})
 	}
 }
