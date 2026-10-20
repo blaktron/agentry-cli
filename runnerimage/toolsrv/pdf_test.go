@@ -40,6 +40,10 @@ var openDir struct {
 	copies map[string]string
 }
 
+// openDirBase is where the shared directory is made: the machine's temp
+// folder as the test binary started, whatever TMPDIR a test sets later.
+var openDirBase = os.TempDir()
+
 // openTempDir is a new directory anyone may enter: under the shared one as
 // root, a t.TempDir otherwise.
 func openTempDir(t *testing.T) string {
@@ -50,7 +54,7 @@ func openTempDir(t *testing.T) string {
 	openDir.Lock()
 	defer openDir.Unlock()
 	if openDir.path == "" {
-		d, err := os.MkdirTemp("", "agentry-toolsrv-test-")
+		d, err := os.MkdirTemp(openDirBase, "agentry-toolsrv-test-")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -212,6 +216,11 @@ func TestExportPDFIsGrantedWithItsFlagAlone(t *testing.T) {
 // Markdown (or at the top of reports/ for a scratch source), its answer
 // names its pages, and the ledger records its path, SHA-256 and pages.
 func TestExportPDFWritesAndRecords(t *testing.T) {
+	// The server's render roots go in a temp folder of this test's own, so
+	// what is left in it is this test's alone; one the renderer's user can
+	// enter, as the machine's temp folder is.
+	tmp := openTempDir(t)
+	t.Setenv("TMPDIR", tmp)
 	spec := pdfSpec(t)
 	s := pdfServer(t, spec, fakeTypst(t, fakePDF))
 	mustWrite(t, filepath.Join(spec.OutDir, "reports", "sub", "summary.md"), []byte("# Summary\n\nText.\n"))
@@ -258,12 +267,8 @@ func TestExportPDFWritesAndRecords(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(spec.OutDir, "reports", "sub", "summary.md")); err != nil {
 		t.Errorf("the Markdown is not kept beside the PDF: %v", err)
 	}
-	if left, _ := filepath.Glob(filepath.Join(os.TempDir(), "agentry-pdf-*")); len(left) > 0 {
-		for _, l := range left {
-			if fi, err := os.Stat(l); err == nil && time.Since(fi.ModTime()) < time.Minute {
-				t.Errorf("a render root was left behind: %s", l)
-			}
-		}
+	if left, _ := filepath.Glob(filepath.Join(tmp, "agentry-pdf-*")); len(left) > 0 {
+		t.Errorf("render roots were left behind: %v", left)
 	}
 }
 
