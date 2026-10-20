@@ -96,6 +96,9 @@ func browserOutVolume() string {
 // browserScope says where the browse proxy lets the browser go, before the
 // run knows the site.
 func browserScope(b *spec.BrowserCap) string {
+	if b.Public && b.Agreed {
+		return "any public site on ports 80 and 443 (the Coding agent's browser, which the person agreed to for this agent)"
+	}
 	if b.Public {
 		return "any public site on ports 80 and 443 (scope: public, allowed by this machine's browser.allowPublicWeb)"
 	}

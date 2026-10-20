@@ -33,6 +33,8 @@ const (
 	Exec = "exec"
 	// UnsafeExec is an Unsafe Mode exec image built on the unsafe base.
 	UnsafeExec = "unsafe-exec"
+	// CoderExec is the Coding agent's exec image built on its toolchain image.
+	CoderExec = "coder-exec"
 	// Decode is the decode step's image built on the files image.
 	Decode = "decode"
 	// HostLink is the host link's image built on the hostlink image.

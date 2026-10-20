@@ -151,7 +151,7 @@ func TestRosterReachesEveryGate(t *testing.T) {
 			cfg.Switches = map[string]bool{EntryShare: tc.share, ServerEntryID(remoteServer): tc.server, "knowledge:notes": tc.packs}
 			RecordConsent(BuildRoster(a, cfg, nil), &cfg)
 			var opened []string
-			g, applied, done, err := Apply(context.Background(), home, a, cfg, BuildRoster(a, cfg, nil), fakePacks(&opened))
+			g, applied, done, err := Apply(context.Background(), home, a, cfg, BuildRoster(a, cfg, nil), fakePacks(&opened), nil)
 			if err != nil {
 				t.Fatal(err)
 			}

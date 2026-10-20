@@ -223,6 +223,16 @@ type Exec struct {
 	// that runs java). The argv[0] allowlist is unchanged: only a declared
 	// command can be called. Off, the PATH is the shim directory alone.
 	ImagePath bool `json:"imagePath,omitempty"`
+	// Any is the Coding agent's run_command: any program the image holds,
+	// named on its PATH or by a path, with no allowlist and no shims, run in
+	// a folder beneath the workspace the call names, as Owner where the spec
+	// names one, held by the same confinement as a declared command. Only a
+	// tools server in the Coding agent's own exec image is given it.
+	Any bool `json:"any,omitempty"`
+	// Home is HOME under Any: a folder beneath the workspace, made when the
+	// server starts, so a command's caches and settings last as long as the
+	// workspace does.
+	Home string `json:"home,omitempty"`
 }
 
 // Limits bounds tool I/O sizes and exec time.
@@ -313,7 +323,7 @@ func (s *Spec) GrantedTools() []string {
 	if s.Fetch.Enabled {
 		names = append(names, ToolFetch)
 	}
-	if len(s.Exec.Commands) > 0 {
+	if len(s.Exec.Commands) > 0 || s.Exec.Any {
 		names = append(names, ToolRunCommand)
 	}
 	if s.InputsDir != "" {

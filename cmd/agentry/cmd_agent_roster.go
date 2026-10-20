@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/crypto/ssh"
 	"gopkg.in/yaml.v3"
 
 	"github.com/blaktron/agentry/pkg/manifest"
@@ -24,6 +25,9 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/mcpinstall"
 	"github.com/blaktron/agentry-cli/pkg/runner/persistent"
+	"github.com/blaktron/agentry-cli/pkg/runner/setup"
+	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	"github.com/blaktron/agentry-cli/pkg/runner/targethost"
 )
 
 // agentConsent asks the person to agree to what a change or a start turns
@@ -152,7 +156,8 @@ func newAgentGrantCmd() *cobra.Command {
 func newAgentConfigureCmd() *cobra.Command {
 	var (
 		name, personalityFile, share, runOnStart, addServer, removeServer, addPack, removePack string
-		yes, allowVulnerable                                                                   bool
+		devHost, devKey, devPassphrase, devPassword, policyPath                                string
+		yes, allowVulnerable, noDevHost                                                        bool
 	)
 	cmd := &cobra.Command{
 		Use:   "configure <name>",
@@ -169,7 +174,12 @@ func newAgentConfigureCmd() *cobra.Command {
 			"  agentry agent configure assistant --name Sandra --personality-file sandra.md\n" +
 			"  agentry agent configure assistant --share ~/Documents/assistant\n" +
 			"  agentry agent configure assistant --knowledge my-notes\n" +
-			"  agentry agent configure assistant --add-server server.yaml",
+			"  agentry agent configure assistant --add-server server.yaml\n\n" +
+			"--dev-host gives the Coding agent a dev server to deploy to over SSH. It is\n" +
+			"readied here: its host key is shown for you to accept, then pinned, and its\n" +
+			"sign-in (--dev-key, --dev-password, or a prompt) is saved in your system\n" +
+			"keychain, where the agent's later starts read it.\n\n" +
+			"  agentry agent configure coder --dev-host deploy@devbox.lan --dev-key ~/.ssh/id_ed25519",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := cliAgent(args[0])
@@ -231,12 +241,43 @@ func newAgentConfigureCmd() *cobra.Command {
 			if removePack != "" {
 				ch.RemoveKnowledge, set = removePack, set+1
 			}
+			if noDevHost {
+				ch.ClearDevHost, set = true, set+1
+			}
+			if devHost != "" {
+				if noDevHost {
+					return engine.Classify(engine.ExitUsage, errors.New("--dev-host and --no-dev-host are each other's opposite"))
+				}
+				if !a.Builtin.Codes() {
+					return engine.Classify(engine.ExitUsage, fmt.Errorf("the %s agent has no dev server: the Coding agent alone is given one", a.Name))
+				}
+				d, err := readyDevHost(cmd, home, policyPath, devHost, devKey, devPassphrase, devPassword)
+				if err != nil {
+					return err
+				}
+				ch.DevHost, set = d, set+1
+			} else if devKey != "" || devPassphrase != "" || devPassword != "" {
+				return engine.Classify(engine.ExitUsage, errors.New("--dev-key, --dev-passphrase and --dev-password go with --dev-host"))
+			}
 			if set == 0 {
 				return engine.Classify(engine.ExitUsage, errors.New("nothing to change: pass one of the flags (agentry agent configure --help)"))
+			}
+			var oldDev *persistent.DevHost
+			if noDevHost {
+				if c, err := persistent.LoadConfig(home, a.Name); err == nil {
+					oldDev = c.DevHost
+				}
 			}
 			r, running, err := configureAgent(cmd, home, a, ch, yes)
 			if err != nil {
 				return err
+			}
+			if oldDev != nil {
+				// A schedule of the same host and account reads the same
+				// keychain entry, so it is left for the person to remove.
+				if da, err := targethost.ParseAnswer(oldDev.Host); err == nil {
+					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "The dev server's sign-in stays in your system keychain (account %s), where a schedule of the same host may read it.\n", da.Account())
+				}
 			}
 			if flags.jsonOut {
 				return emitJSON(cmd.OutOrStdout(), r)
@@ -254,6 +295,12 @@ func newAgentConfigureCmd() *cobra.Command {
 	f.StringVar(&removeServer, "remove-server", "", "the roster id of a server to remove (server:…)")
 	f.StringVar(&addPack, "knowledge", "", "a knowledge pack kept on this computer for it to search")
 	f.StringVar(&removePack, "no-knowledge", "", "a knowledge pack to take away")
+	f.StringVar(&devHost, "dev-host", "", "the Coding agent's dev server, user@host[:port], readied here and kept")
+	f.StringVar(&devKey, "dev-key", "", "sign in to the dev server with this private key FILE (its path is kept in your keychain)")
+	f.StringVar(&devPassphrase, "dev-passphrase", "", "the name of an environment variable holding the key's passphrase")
+	f.StringVar(&devPassword, "dev-password", "", "sign in to the dev server with a password: the name of an environment variable holding it")
+	f.BoolVar(&noDevHost, "no-dev-host", false, "take the Coding agent's dev server away")
+	f.StringVar(&policyPath, "policy", "", "operator policy file whose host lists the dev server is held to (default ~/.agentry/runner/policy.yaml)")
 	f.BoolVar(&yes, "yes", false, "agree to what the change turns on without being asked")
 	f.BoolVar(&allowVulnerable, "allow-vulnerable-mcp", false, "add a server version the registry has a high or critical advisory for")
 	return cmd
@@ -337,4 +384,55 @@ func agentPacks(cmd *cobra.Command) persistent.Packs {
 		}
 		return out, done, nil
 	}
+}
+
+// readyDevHost readies the Coding agent's dev server at the terminal, as a
+// schedule's target host is readied when it is made: the address under the
+// policy's host lists, the host key shown for the person to accept (and
+// kept in Agentry's known hosts), and the sign-in from the flags or a
+// prompt, saved in the keychain where the agent's supervisor reads it. It
+// answers the server as config.yaml keeps it, its key pinned.
+func readyDevHost(cmd *cobra.Command, home, policyPath, host, key, passphrase, password string) (*persistent.DevHost, error) {
+	pol, _, _, err := agentPolicy(policyPath)
+	if err != nil {
+		return nil, err
+	}
+	a, err := targethost.ParseAnswer(host)
+	if err != nil {
+		return nil, engine.Classify(engine.ExitUsage, fmt.Errorf("--dev-host: %w", err))
+	}
+	id := spec.DevHostID
+	with := func(v string) []string {
+		if v == "" {
+			return nil
+		}
+		return []string{id + "=" + v}
+	}
+	if key != "" {
+		if key, err = filepath.Abs(expandHome(key)); err != nil {
+			return nil, engine.Classify(engine.ExitUsage, err)
+		}
+	}
+	flags, err := targethost.ParseFlags(with(key), with(passphrase), with(password), nil)
+	if err != nil {
+		return nil, engine.Classify(engine.ExitUsage, err)
+	}
+	var ask targethost.Asker
+	if stdinIsTTY(cmd.InOrStdin()) {
+		ask = &setup.TTYPrompter{In: cmd.InOrStdin(), Err: cmd.ErrOrStderr()}
+	}
+	say := func(msg string) { _, _ = fmt.Fprintln(cmd.ErrOrStderr(), msg) }
+	ready, err := prepareTargetHost(cmd.Context(), id, a, targethost.Options{
+		Hosts: pol.Hosts, KnownHosts: targethost.DefaultKnownHostsFiles(home), Flags: flags,
+		Getenv: os.Getenv, Ask: ask, Say: say, Keep: true,
+	})
+	if err != nil {
+		var r *targethost.Refusal
+		if errors.As(err, &r) {
+			return nil, engine.Classify(engine.ExitPolicy, err)
+		}
+		return nil, engine.Classify(engine.ExitCLI, err)
+	}
+	say(fmt.Sprintf("dev server: %s at %s, host key %s (%s); its sign-in is saved in your keychain", ready.Answer, ready.Address, ready.HostKey.Fingerprint(), ready.HostKey.From))
+	return &persistent.DevHost{Host: ready.Answer.String(), HostKey: ssh.FingerprintSHA256(ready.HostKey.Key)}, nil
 }

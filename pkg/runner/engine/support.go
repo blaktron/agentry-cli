@@ -107,7 +107,9 @@ type runDirs struct {
 	// has unrestricted egress, and runID names it, for the receipt's
 	// daemon line.
 	web, anyEgress bool
-	runID          string
+	// coderEgress says that egress is the Coding agent's open egress.
+	coderEgress bool
+	runID       string
 	// hostGatewayURL / hostProxyURL are the published 127.0.0.1 addresses
 	// a host-run harness uses; empty for a container harness.
 	hostGatewayURL string
@@ -388,6 +390,7 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 		return nil, err
 	}
 	rd.runID, rd.web, rd.anyEgress = runID, p.Plan.Capabilities.WebTools, p.Plan.Capabilities.EgressMode == "all"
+	rd.coderEgress = p.Plan.Capabilities.Coder != nil && p.Plan.Capabilities.Coder.OpenEgress
 	rd.targets = targetHostsOf(p)
 	if p.Web != nil {
 		// Made here, and only here, as a new regular file: whatever the
