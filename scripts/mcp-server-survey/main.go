@@ -647,12 +647,15 @@ func launch(ctx context.Context, d dockerx.Client, pol *policy.Policy, outDir, s
 		// Keep reading what the gateway writes, or docker blocks on a full
 		// pipe and never exits.
 		go func() { _, _ = io.Copy(io.Discard, stdoutR) }()
+		// Only that the gateway exited matters here, not how.
 		select {
-		case <-done:
+		case err := <-done:
+			_ = err
 		case <-time.After(30 * time.Second):
 			_ = d.Stop(context.Background(), name, 10)
 			select {
-			case <-done:
+			case err := <-done:
+				_ = err
 			case <-time.After(30 * time.Second):
 				_ = d.RemoveForce(context.Background(), name)
 			}

@@ -177,7 +177,8 @@ func (fx *fixture) serveLive(t *testing.T) *liveServer {
 	t.Cleanup(func() {
 		_ = inW.Close()
 		select {
-		case <-ls.done:
+		case err := <-ls.done:
+			_ = err // the host link's own end is not this check's
 		case <-time.After(10 * time.Second):
 			t.Error("the host link did not end when its input closed")
 		}
