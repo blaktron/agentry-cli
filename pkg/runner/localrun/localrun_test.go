@@ -42,7 +42,7 @@ func TestOnlyTheEmbeddedPackagesRunAsBuiltin(t *testing.T) {
 		for _, b := range Builtins() {
 			refs = append(refs, b.Ref())
 		}
-		if strings.Join(refs, ",") != "agentry/knowledge-creator@1.5.0,agentry/drafter@1.16.0,agentry/voice-writer@1.3.0,agentry/examiner@1.2.0,agentry/assistant@1.0.0" {
+		if strings.Join(refs, ",") != "agentry/knowledge-creator@1.5.0,agentry/drafter@1.16.0,agentry/voice-writer@1.3.0,agentry/examiner@1.2.0,agentry/assistant@1.1.0" {
 			t.Fatalf("built-ins %v", refs)
 		}
 	})

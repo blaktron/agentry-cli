@@ -151,6 +151,9 @@ type Builtin struct {
 	// persistent runs the package as a persistent agent (Segment), never as
 	// a run (Execute).
 	persistent bool
+	// checkShare reads a file of the persistent agent's share folder only
+	// once ClamAV has checked it (spec.AgentFiles.CheckShare).
+	checkShare bool
 }
 
 // KnowledgeCreator is the Knowledge Creator (pkg/knowledge/creator),
@@ -360,7 +363,10 @@ type PlanInputs struct {
 	WebRender bool
 	// Review grants the review grant (compile.Inputs.Review), likewise.
 	Review bool
-	Log    io.Writer
+	// AgentFiles grants a persistent built-in its folders
+	// (compile.Inputs.AgentFiles): set by a Segment alone.
+	AgentFiles *spec.AgentFiles
+	Log        io.Writer
 }
 
 // EnsurePlan reuses the installed plan when nothing it depends on changed,
@@ -426,6 +432,7 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 			plan.Capabilities.WebGivenOnly == in.WebGivenOnly &&
 			plan.Capabilities.WebRender == in.WebRender &&
 			plan.Capabilities.ReviewTools == in.Review &&
+			reflect.DeepEqual(plan.Capabilities.AgentFiles, in.AgentFiles) &&
 			reflect.DeepEqual(plan.MCPServers, in.Servers) {
 			switch {
 			case plan.CompiledBy != in.CompiledBy:
@@ -468,6 +475,7 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 		RegistrySearch:  in.RegistrySearch,
 		WebSearchedOnly: in.WebSearchedOnly, WebGivenOnly: in.WebGivenOnly, WebRender: in.WebRender,
 		Review:       in.Review,
+		AgentFiles:   in.AgentFiles,
 		IntegrityKey: key,
 	}, planDir)
 	if err != nil {

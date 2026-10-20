@@ -82,6 +82,7 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 		env.Persistent = &receipt.Persistent{
 			Agent: ps.Agent, Segment: ps.Segment, ResumeReason: notStartedReason,
 			Volumes: receipt.PersistentVolumes{Session: ps.SessionVolume, Data: ps.DataVolume},
+			Share:   ps.Share, Roster: ps.Roster,
 		}
 	}
 	planHash, err := p.Plan.Hash()
@@ -407,6 +408,9 @@ type liveSession struct {
 	envelope    *receipt.Envelope
 	envelopeErr error
 
+	// shares is a persistent agent's check of its share (share.go), made
+	// at the first turn that has something to check.
+	shares *shareChecker
 	// conversation, resumed and resumeReason are a persistent agent's
 	// segment's (Conversation), set once its driver has started.
 	conversation string
@@ -1092,6 +1096,9 @@ func (s *liveSession) turnCarrying(ctx context.Context, carried, text string, sy
 	s.emit(session.Event{Kind: session.KindUserTurn, Text: text, Synthetic: synthetic})
 	turnCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	// A persistent agent's share is checked for what was added to it since
+	// the last turn, before the harness can read it.
+	s.checkShare(turnCtx)
 	if err := s.restartOnRenewal(turnCtx); err != nil {
 		if ended, _ := s.Ended(); ended {
 			return session.ErrEnded

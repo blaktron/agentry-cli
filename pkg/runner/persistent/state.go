@@ -27,6 +27,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/blaktron/agentry/pkg/manifest"
+
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
@@ -45,14 +47,16 @@ type Agent struct {
 	DesktopOnly bool
 	// Builtin is the package it runs; unset for a desktop-only agent.
 	Builtin localrun.Builtin
+	// ShareName is the default share folder's name, under ~/agentry.
+	ShareName string
 }
 
 // Agents are the persistent agents this build knows, in the order they are
 // listed.
 func Agents() []Agent {
 	return []Agent{
-		{Name: "main", Title: "Main", DesktopOnly: true},
-		{Name: localrun.Assistant().Name(), Title: "Assistant", Builtin: localrun.Assistant()},
+		{Name: "main", Title: "Main", DesktopOnly: true, ShareName: "mainshare"},
+		{Name: localrun.Assistant().Name(), Title: "Assistant", Builtin: localrun.Assistant(), ShareName: "assistantshare"},
 	}
 }
 
@@ -101,13 +105,19 @@ const (
 	holderFile     = "owner.json"
 	logFile        = "supervisor.log"
 	segmentsDir    = "segments"
+	// shareVerdictsFile keeps the share's malware verdicts between
+	// segments.
+	shareVerdictsFile = "share-verdicts.json"
 )
 
 // LogPath is where a detached supervisor writes what it prints.
 func LogPath(home, name string) string { return filepath.Join(Dir(home, name), logFile) }
 
-// ConfigVersion is the version of config.yaml this build writes.
-const ConfigVersion = 1
+// ConfigVersion is the version of config.yaml this build writes. Version 2
+// added the share folder, the person's servers and packs, the switches and
+// the consents; a build that reads version 1 alone refuses it rather than
+// drop them on its next save.
+const ConfigVersion = 2
 
 // Config is the agent's config.yaml: what the person chose for it, and the
 // conversation its next segment continues.
@@ -125,6 +135,25 @@ type Config struct {
 	Conversation *Conversation `yaml:"conversation,omitempty" json:"conversation,omitempty"`
 	// Segments counts the segments started.
 	Segments int `yaml:"segments" json:"segments"`
+	// Share is the share folder, absolute; empty is the agent's default,
+	// ~/agentry/<ShareName>.
+	Share string `yaml:"share,omitempty" json:"share,omitempty"`
+	// Servers are the MCP servers the person added, in the manifest's own
+	// shape; each is a roster entry.
+	Servers []manifest.MCPServer `yaml:"servers,omitempty" json:"servers,omitempty"`
+	// Knowledge names the knowledge packs the person added, from the local
+	// store; each is a roster entry.
+	Knowledge []string `yaml:"knowledge,omitempty" json:"knowledge,omitempty"`
+	// Switches are the roster's switches the person set, by entry id; an
+	// entry with none takes its default.
+	Switches map[string]bool `yaml:"switches,omitempty" json:"switches,omitempty"`
+	// Consented records, by entry id, the line the person consented to
+	// when they turned the entry on: turning on an entry whose line differs
+	// from it, or that has none, asks again.
+	Consented map[string]string `yaml:"consented,omitempty" json:"consented,omitempty"`
+	// PersonaGiven is the digest of the name and personality the agent was
+	// last given, so a change reaches it at the next turn.
+	PersonaGiven string `yaml:"personaGiven,omitempty" json:"personaGiven,omitempty"`
 }
 
 // Conversation names a harness's stored conversation: the adapter that
@@ -206,7 +235,7 @@ type Entry struct {
 func kept(k session.Kind) bool {
 	switch k {
 	case session.KindUserTurn, session.KindAssistantTurn, session.KindToolCall, session.KindError,
-		session.KindSessionEnd, session.KindInputAdded, session.KindPermissionDenied:
+		session.KindSessionEnd, session.KindInputAdded, session.KindPermissionDenied, session.KindNotice:
 		return true
 	}
 	return false
@@ -346,7 +375,7 @@ func Reset(ctx context.Context, home, name string, d dockerx.Client) error {
 			return fmt.Errorf("remove the %s agent's volume %s: %w", name, v, err)
 		}
 	}
-	for _, f := range []string{transcriptFile, usageFile} {
+	for _, f := range []string{transcriptFile, usageFile, shareVerdictsFile} {
 		if err := os.Remove(filepath.Join(Dir(home, name), f)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}

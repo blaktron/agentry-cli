@@ -144,6 +144,11 @@ type Config struct {
 	// must name exactly that folder at exactly that target; anything else
 	// at or beneath a tmpfs target is still refused.
 	ToolsShared map[string]string
+	// ToolsVolumes are the named volumes not the run's that the tools
+	// server may mount, by exact name: a persistent agent's data volume,
+	// which outlives every run and so carries no run label. No other
+	// container may mount one.
+	ToolsVolumes []string
 	// BrowserImage names the run's browser server: the
 	// image a create must be of, by id (resolved when first needed, as
 	// ToolsImage is), to be held as the browser class: every capability

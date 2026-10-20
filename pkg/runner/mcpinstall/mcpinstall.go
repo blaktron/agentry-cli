@@ -163,6 +163,43 @@ func Packages(servers []manifest.MCPServer) []manifest.MCPServer {
 	return out
 }
 
+// PackageOf is a package server's package name, npm's or PyPI's.
+func PackageOf(srv manifest.MCPServer) string {
+	if srv.NPM != "" {
+		return srv.NPM
+	}
+	return srv.PyPI
+}
+
+// StoredOrResolved returns the resolutions for every package server among
+// servers. When the store already records a resolution for each pin, those
+// are reused verbatim, with no network, so cached installs run offline;
+// otherwise the registries are consulted (and EnsureInstalled later
+// refuses if a recorded pin disagrees with what came back).
+func StoredOrResolved(ctx context.Context, errOut io.Writer, storeDir string, regs policy.MCPRegistries, servers []manifest.MCPServer) ([]Resolved, error) {
+	declared := Packages(servers)
+	if len(declared) == 0 {
+		return nil, nil
+	}
+	stored := make([]Resolved, 0, len(declared))
+	for _, srv := range declared {
+		meta, err := LoadMeta(storeDir, IDFor(srv))
+		if err != nil {
+			return nil, err
+		}
+		if meta == nil || meta.Package != PackageOf(srv) || meta.Version != srv.Version {
+			stored = nil
+			break
+		}
+		stored = append(stored, *meta)
+	}
+	if len(stored) == len(declared) {
+		return stored, nil
+	}
+	_, _ = fmt.Fprintf(errOut, "resolving %d declared MCP server(s) against the configured registries\n", len(declared))
+	return ResolveAll(ctx, nil, regs, declared)
+}
+
 // ResolveAll resolves every declared server against the configured
 // registries. Pure metadata: no artifacts are fetched and no docker is
 // touched, so --dry-run can afford it.

@@ -173,6 +173,11 @@ func (d *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	case strings.HasPrefix(p, "/volumes/") && r.Method == http.MethodGet && !gateway:
 		id := strings.TrimPrefix(p, "/volumes/")
+		if strings.HasPrefix(id, "agentry-persistent-") {
+			// A persistent agent's volume: no run's label.
+			_ = json.NewEncoder(w).Encode(map[string]any{"Name": id, "Labels": map[string]string{"agentry.persistent": "assistant"}})
+			return
+		}
 		run, ok := owner(id)
 		if !ok {
 			http.NotFound(w, r)
@@ -1727,4 +1732,63 @@ func TestWithoutACallbackTheDaemonsInspectVerifiesACreate(t *testing.T) {
 	if err := d.f.RuntimeMismatch(); err == nil || d.f.Refused() != 1 {
 		t.Errorf("mismatch %v, refused %d", err, d.f.Refused())
 	}
+}
+
+// TestTheToolsServerAloneMountsThePersistentVolume: a volume named in
+// ToolsVolumes, which carries no run's label, is mounted by the tools server
+// and by nothing else; another volume without the run's label is still
+// refused to the tools server, and a named one that does not exist is not
+// made.
+func TestTheToolsServerAloneMountsThePersistentVolume(t *testing.T) {
+	const target = "/etc/agentry/toolspec.json"
+	const data = "agentry-persistent-assistant-data"
+	g := newRig(t, Limits{}, func(c *Config) {
+		c.ToolsImage, c.ToolsCmd = "agentry-runner:test", []string{"tools", "--spec", target}
+		c.ToolsVolumes = []string{data, "agentry-persistent-gone-data"}
+	})
+	create := func(image string, cmd []string, binds ...string) map[string]any {
+		return map[string]any{"Image": image, "Cmd": cmd, "HostConfig": map[string]any{"Binds": binds}}
+	}
+	tools := []string{"tools", "--spec", target}
+	if code, body := g.do(t, "POST", "/containers/create", create("agentry-runner:test", tools, data+":/agent/data:rw")); code != http.StatusCreated {
+		t.Fatalf("the tools server with the agent's data volume: %d %s", code, body)
+	}
+	mount := map[string]any{"Image": "agentry-runner:test", "Cmd": tools, "HostConfig": map[string]any{
+		"Mounts": []any{map[string]any{"Type": "volume", "Source": data, "Target": "/agent/data"}}}}
+	if code, body := g.do(t, "POST", "/containers/create", mount); code != http.StatusCreated {
+		t.Fatalf("the tools server with the volume as a mount: %d %s", code, body)
+	}
+	g.refused(t, "another container with the volume", "POST", "/containers/create",
+		create("node:22", []string{"node", "server.js"}, data+":/data"), "is not this run's")
+	g.refused(t, "the tools server with another persistent volume", "POST", "/containers/create",
+		create("agentry-runner:test", tools, "agentry-persistent-main-data:/agent/data"), "is not this run's")
+	if code, _ := g.do(t, "POST", "/containers/create", create("agentry-runner:test", tools, "missing-volume:/agent/data")); code == http.StatusCreated {
+		t.Fatal("a volume that is not named was admitted")
+	}
+}
+
+// TestTheShareFolderIsBoundAsItselfAlone: a persistent agent's share folder,
+// a writable root of its own, is bound read-write as itself; a folder
+// beneath it, a folder beside it and its parent are refused.
+func TestTheShareFolderIsBoundAsItselfAlone(t *testing.T) {
+	people := t.TempDir()
+	share := filepath.Join(people, "assistantshare")
+	for _, d := range []string{filepath.Join(share, "sub"), filepath.Join(people, "beside")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	g := newRig(t, Limits{}, func(c *Config) {
+		c.BindRoots = append(c.BindRoots, share)
+		c.WritableRoots = append(c.WritableRoots, share)
+	})
+	bind := func(b string) map[string]any {
+		return map[string]any{"HostConfig": map[string]any{"Binds": []string{b}}}
+	}
+	if code, body := g.do(t, "POST", "/containers/create", bind(share+":/agent/share:rw")); code != http.StatusCreated {
+		t.Fatalf("the share itself: %d %s", code, body)
+	}
+	g.refused(t, "a folder beneath the share", "POST", "/containers/create", bind(share+"/sub:/x:rw"), "inside a directory the run writes")
+	g.refused(t, "a folder beside the share", "POST", "/containers/create", bind(filepath.Join(people, "beside")+":/x:rw"), "not one the run lets the gateway write")
+	g.refused(t, "the share's parent", "POST", "/containers/create", bind(people+":/x:ro"), "outside the run's directories")
 }

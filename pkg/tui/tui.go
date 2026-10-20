@@ -299,6 +299,8 @@ func (m *model) apply(ev session.Event) {
 		if ev.CostUSD > m.costUSD {
 			m.costUSD = ev.CostUSD
 		}
+	case session.KindNotice:
+		m.appendLine(m.styles.runner.Render("Runner: " + ev.Text))
 	case session.KindError:
 		m.appendLine(m.styles.warn.Render("harness error: " + ev.Text))
 	case session.KindSessionEnd:

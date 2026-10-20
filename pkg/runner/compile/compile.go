@@ -123,6 +123,13 @@ type Inputs struct {
 	// when the person has turned Unsafe Mode on — and no policy key or CLI
 	// flag sets it. Nil compiles without Unsafe Mode.
 	Unsafe *unsafeexec.Data
+	// AgentFiles grants a persistent built-in its own folders: its data
+	// volume, and the person's share folder when the agent has it on. The
+	// filesystem tools, grep and glob are rooted at spec.AgentRoot then.
+	// Only a persistent plan of a built-in that declares no filesystem
+	// access of its own is granted them; anything else asking is refused by
+	// policy.
+	AgentFiles *spec.AgentFiles
 }
 
 // PersistentOnlyBuiltin is the refusal of a persistent release from any
@@ -182,6 +189,15 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	caps, err := summarizeCapabilities(m, in.Policy)
 	if err != nil {
 		return nil, err
+	}
+	if in.AgentFiles != nil {
+		if mode != manifest.ModePersistent || in.Source != "builtin" {
+			return nil, &PolicyRefusal{Reason: "a persistent agent's share and data folders are granted to a persistent built-in alone"}
+		}
+		if caps.FSReadMode != "none" || caps.FSWriteMode != "none" {
+			return nil, &PolicyRefusal{Reason: "a persistent agent's files are its share and data folders, and it declares no filesystem access of its own beside them"}
+		}
+		caps.AgentFiles = &spec.AgentFiles{Share: in.AgentFiles.Share, CheckShare: in.AgentFiles.Share && in.AgentFiles.CheckShare}
 	}
 	if (in.RegistrySearch || in.WebSearchedOnly || in.WebGivenOnly) && !in.Web {
 		return nil, &PolicyRefusal{Reason: toolsrv.ToolRegistrySearch + ", the searched-only and the given-only web_read are of the web tools, and are never granted without them"}
@@ -466,6 +482,9 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		plan.Enforcement["exec"] = unsafeExecEnforcement(execImage)
 	}
 	plan.Enforcement["toolResults"] = toolResultsEnforcement(adapterName, budget, caps)
+	if a := caps.AgentFiles; a != nil {
+		plan.Enforcement["persistent.files"] = agentFilesEnforcement(a)
+	}
 	if hostLink != nil {
 		plan.Enforcement["targetHosts"] = targetHostsEnforcement(caps.TargetHosts)
 	}
@@ -883,6 +902,34 @@ func checkReviewGrant(in Inputs, caps spec.CapSummary) error {
 // toolSpec compiles the capability summary into the tools-server spec — the
 // single choke point deciding which tools exist.
 func toolSpec(caps spec.CapSummary, secrets []string) *toolsrv.Spec {
+	ts := baseToolSpec(caps, secrets)
+	// A persistent agent's filesystem tools work in its own folders, rooted
+	// at spec.AgentRoot, and nowhere else.
+	if folders := caps.AgentFiles.Folders(); len(folders) > 0 {
+		ts.WorkspaceDir, ts.WorkspaceName = spec.AgentRoot, agentFilesName(caps.AgentFiles)
+		ts.FSRead = toolsrv.Access{Enabled: true, Paths: folders}
+		ts.FSWrite = toolsrv.Access{Enabled: true, Paths: folders}
+		if caps.AgentFiles.CheckShare {
+			ts.ShareChecks = &toolsrv.ShareChecks{Folder: spec.AgentShareDir, File: spec.ShareChecksMount + "/" + spec.ShareChecksFile}
+		}
+	}
+	return ts
+}
+
+// ShareChecksFolder is the run's folder of the share's malware verdicts,
+// under its cfg directory: the engine writes it, the tools server reads it.
+func ShareChecksFolder() string { return spec.PHCfg + "/share-checks" }
+
+// agentFilesName is how the tools' descriptions name a persistent agent's
+// folders.
+func agentFilesName(a *spec.AgentFiles) string {
+	if a.Share {
+		return "your folders: " + spec.AgentShareDir + "/ (the person's share folder) and " + spec.AgentDataDir + "/ (your own)"
+	}
+	return "your own folder " + spec.AgentDataDir + "/"
+}
+
+func baseToolSpec(caps spec.CapSummary, secrets []string) *toolsrv.Spec {
 	return &toolsrv.Spec{
 		SpecVersion:  toolsrv.SpecVersion,
 		WorkspaceDir: spec.WorkspaceMount,
@@ -1015,7 +1062,7 @@ func gatewaySpec(image string, servers []string, caps spec.CapSummary, mcpServer
 			// engine spells these roots /c/… so no drive colon splits them
 			// (gatewayHostPath).
 			{Name: "MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS",
-				Value: strings.Join(bindRoots(withStore), ":")},
+				Value: strings.Join(bindRoots(withStore, caps.AgentFiles), ":")},
 			{Name: "MCP_GATEWAY_DOCKER_BIND_ALLOW_WRITABLE_PATHS",
 				Value: strings.Join(writable, ":")},
 		},
@@ -1213,10 +1260,15 @@ func unsafeExecImageFor(commands []string, runnerImage string, data *unsafeexec.
 // when declared servers exist — each server is launched from a read-only
 // bind of that store, and the gateway refuses a source outside its roots.
 // Left out otherwise so a plan without servers keeps its bytes.
-func bindRoots(withServers bool) []string {
+func bindRoots(withServers bool, agent *spec.AgentFiles) []string {
 	roots := []string{spec.PHWorkspace, spec.PHOut, spec.PHCfg, spec.PHInputs, spec.PHInputsText, spec.PHKnowledge}
 	if withServers {
 		roots = append(roots, spec.PHServers)
+	}
+	// A persistent agent's share folder is a root of its own, exact: the
+	// tools server binds the folder itself and nothing beneath or beside it.
+	if agent != nil && agent.Share {
+		roots = append(roots, spec.PHShare)
 	}
 	return roots
 }
@@ -1451,6 +1503,12 @@ func catalogEntry(tspec *toolsrv.Spec, caps spec.CapSummary, secrets []string, r
 	// the tools only when it attaches one.
 	vols = append(vols, spec.PHKnowledge+":"+spec.KnowledgeMount+":ro")
 	vols = append(vols, spec.PHOut+":"+spec.OutMount+":rw")
+	// The share's malware verdicts, a folder the runner rewrites before
+	// each turn, so the tools server sees each new file (a single-file bind
+	// would keep the first).
+	if a := caps.AgentFiles; a != nil && a.CheckShare {
+		vols = append(vols, ShareChecksFolder()+":"+spec.ShareChecksMount+":ro")
+	}
 	// The folder the host link copies through, inside the agent's scratch
 	// folder: the docker filter admits this one bind beneath the scratch
 	// tmpfs.
@@ -1587,6 +1645,16 @@ func workspaceBinds(caps spec.CapSummary) []workspaceBind {
 
 // workspaceVolumes spells workspaceBinds as the catalog's volumes.
 func workspaceVolumes(caps spec.CapSummary) []string {
+	if a := caps.AgentFiles; a != nil {
+		// A persistent agent's folders in place of the workspace: its data
+		// volume, and the person's share folder, both read-write and never
+		// relabelled (the share is the person's own).
+		vols := []string{spec.PHData + ":" + spec.AgentRoot + "/" + spec.AgentDataDir + ":rw"}
+		if a.Share {
+			vols = append(vols, spec.PHShare+":"+spec.AgentRoot+"/"+spec.AgentShareDir+":rw")
+		}
+		return vols
+	}
 	var vols []string
 	for _, b := range workspaceBinds(caps) {
 		target, mode := spec.WorkspaceMount, ":ro"
@@ -1608,6 +1676,14 @@ func workspaceVolumes(caps spec.CapSummary) []string {
 // docker filter would take for a writable root and refuse every per-path
 // bind inside it.
 func workspaceWritable(caps spec.CapSummary) []string {
+	if a := caps.AgentFiles; a != nil {
+		// The share folder by its exact path; the data volume is a volume,
+		// which the gateway's host-path lists do not govern.
+		if a.Share {
+			return []string{spec.PHShare}
+		}
+		return nil
+	}
 	var out []string
 	for _, b := range workspaceBinds(caps) {
 		if b.rw {
@@ -2056,4 +2132,18 @@ func questionsOf(m *manifest.Manifest, t manifest.IntakeType) []string {
 		}
 	}
 	return out
+}
+
+// agentFilesEnforcement is the receipt's line for a persistent agent's
+// folders.
+func agentFilesEnforcement(a *spec.AgentFiles) string {
+	line := "the agent's data volume, read-write at " + spec.AgentRoot + "/" + spec.AgentDataDir + " in the tools server alone, admitted by the docker filter by its name; fs_list, fs_read, fs_write, grep and glob are rooted at " + spec.AgentRoot
+	if !a.Share {
+		return line + "; no share folder"
+	}
+	line += "; the person's share folder, bound read-write and never relabelled at " + spec.AgentRoot + "/" + spec.AgentShareDir + ", the one host folder the gateway may write besides the output folder, by its exact path"
+	if a.CheckShare {
+		return line + "; a file added there is read only once the runner has checked its bytes with ClamAV, before the next turn: one ClamAV found is never read, and one it could not check (no signatures on this computer, past its limits) is read unchecked; receipts/share-checks.ndjson has each verdict"
+	}
+	return line + ", read as it is"
 }

@@ -25,6 +25,9 @@ import (
 //	{"attach":{}}             every event of the segment from now on, as {"event":…}
 //	{"send":{"text":"…"}}     one turn; refused as busy while another is in flight
 //	{"status":{}}             answered with {"status":…}
+//	{"roster":{}}             answered with {"roster":[…]}
+//	{"change":{…}}            a Change; answered with {"roster":[…]}, or
+//	                          refused with Consent naming what it turns on
 //	{"stop":{}}               ends the segment; answered with {"stopped":…}
 //
 // A refused command is answered with an event of kind error carrying
@@ -35,6 +38,8 @@ type Command struct {
 	Attach *struct{}      `json:"attach,omitempty"`
 	Send   *protocol.Send `json:"send,omitempty"`
 	Status *struct{}      `json:"status,omitempty"`
+	Roster *struct{}      `json:"roster,omitempty"`
+	Change *Change        `json:"change,omitempty"`
 	Stop   *struct{}      `json:"stop,omitempty"`
 }
 
@@ -42,7 +47,11 @@ type Command struct {
 type Reply struct {
 	Event   *protocol.Event `json:"event,omitempty"`
 	Status  *Status         `json:"status,omitempty"`
+	Roster  Roster          `json:"roster,omitempty"`
 	Stopped *Stopped        `json:"stopped,omitempty"`
+	// Consent lists what a refused change would turn on, for the person to
+	// agree to before it is sent again with Consent set.
+	Consent []RosterEntry `json:"consent,omitempty"`
 }
 
 // Stopped is the answer to a stop: where the segment's envelope is and how
@@ -55,8 +64,10 @@ type Stopped struct {
 
 // The refusal classes the owner socket adds to the session protocol's.
 const (
-	RefusedBusy                   = protocol.RefusedBusy
-	RefusedEnded protocol.Refusal = "ended"
+	RefusedBusy                     = protocol.RefusedBusy
+	RefusedEnded   protocol.Refusal = "ended"
+	RefusedChange  protocol.Refusal = "change"
+	RefusedConsent protocol.Refusal = "consent"
 )
 
 // maxSocketPath is below the kernel's limit for a socket's name (108 bytes
@@ -137,7 +148,7 @@ func (s *Supervisor) serveConn(nc net.Conn) {
 		dec := json.NewDecoder(strings.NewReader(sc.Text()))
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&cmd); err != nil || commandsSet(cmd) != 1 {
-			c.refuse(protocol.RefusedMalformed, "a command is one JSON object naming exactly one of attach, send, status or stop")
+			c.refuse(protocol.RefusedMalformed, "a command is one JSON object naming exactly one of attach, send, status, roster, change or stop")
 			continue
 		}
 		switch {
@@ -170,6 +181,19 @@ func (s *Supervisor) serveConn(nc net.Conn) {
 		case cmd.Status != nil:
 			st := s.Status()
 			c.reply(Reply{Status: &st})
+		case cmd.Roster != nil:
+			c.reply(Reply{Roster: s.Roster()})
+		case cmd.Change != nil:
+			r, err := s.Change(*cmd.Change)
+			var ce *ConsentError
+			switch {
+			case errors.As(err, &ce):
+				c.reply(Reply{Consent: ce.Entries, Event: &protocol.Event{Event: session.Event{Kind: session.KindError, Time: time.Now().UTC(), Text: err.Error()}, Refused: RefusedConsent}})
+			case err != nil:
+				c.refuse(RefusedChange, err.Error())
+			default:
+				c.reply(Reply{Roster: r})
+			}
 		case cmd.Stop != nil:
 			env, err := s.Stop(context.Background())
 			c.reply(Reply{Stopped: stoppedOf(env, err)})
@@ -181,7 +205,7 @@ func (s *Supervisor) serveConn(nc net.Conn) {
 // commandsSet is how many commands one line names.
 func commandsSet(c Command) int {
 	n := 0
-	for _, set := range []bool{c.Attach != nil, c.Send != nil, c.Status != nil, c.Stop != nil} {
+	for _, set := range []bool{c.Attach != nil, c.Send != nil, c.Status != nil, c.Roster != nil, c.Change != nil, c.Stop != nil} {
 		if set {
 			n++
 		}
@@ -216,7 +240,8 @@ func dial(ctx context.Context, home, name string) (net.Conn, error) {
 	return c, nil
 }
 
-// request sends one command and reads replies until want takes one.
+// request sends one command and reads replies until want takes one. A
+// refused change that needs the person's consent is a ConsentError.
 func request(ctx context.Context, home, name string, cmd Command, want func(Reply) bool) error {
 	c, err := dial(ctx, home, name)
 	if err != nil {
@@ -236,6 +261,9 @@ func request(ctx context.Context, home, name string, cmd Command, want func(Repl
 		var r Reply
 		if json.Unmarshal(sc.Bytes(), &r) != nil {
 			continue
+		}
+		if r.Event != nil && r.Event.Refused == RefusedConsent {
+			return &ConsentError{Agent: name, Entries: r.Consent}
 		}
 		if r.Event != nil && r.Event.Refused != "" {
 			return errors.New(r.Event.Text)
@@ -261,6 +289,33 @@ func QueryStatus(ctx context.Context, home, name string) (Status, error) {
 		return false
 	})
 	return st, err
+}
+
+// QueryRoster asks the running agent's supervisor for its roster.
+func QueryRoster(ctx context.Context, home, name string) (Roster, error) {
+	var r Roster
+	err := request(ctx, home, name, Command{Roster: &struct{}{}}, func(rep Reply) bool {
+		if rep.Roster != nil {
+			r = rep.Roster
+			return true
+		}
+		return false
+	})
+	return r, err
+}
+
+// RequestChange sends a change to the running agent's supervisor, which
+// writes it, and answers the roster after it.
+func RequestChange(ctx context.Context, home, name string, ch Change) (Roster, error) {
+	var r Roster
+	err := request(ctx, home, name, Command{Change: &ch}, func(rep Reply) bool {
+		if rep.Roster != nil {
+			r = rep.Roster
+			return true
+		}
+		return false
+	})
+	return r, err
 }
 
 // RequestStop asks the running agent's supervisor to stop it, and returns
@@ -426,7 +481,7 @@ func HistoryEvents(entries []Entry) []session.Event {
 	var out []session.Event
 	for _, e := range entries {
 		switch e.Kind {
-		case session.KindUserTurn, session.KindAssistantTurn, session.KindToolCall, session.KindError:
+		case session.KindUserTurn, session.KindAssistantTurn, session.KindToolCall, session.KindError, session.KindNotice:
 			out = append(out, e.Event)
 		}
 	}
