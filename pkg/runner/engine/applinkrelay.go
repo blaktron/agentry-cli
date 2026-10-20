@@ -118,12 +118,12 @@ func startAppLinkRelay(ctx context.Context, d dockerx.Client, p Params, rd *runD
 	b := &appLinkBridge{socket: rd.appLink, out: inW, log: logf}
 	if err := b.start(rctx, outR, relayReadyWait); err != nil {
 		logs, _ := d.Logs(ctx, name, 20)
-		return Classify(ExitGateway, fmt.Errorf("the app link's relay did not start: %w%s", err, tailOf(logs)))
+		return Classify(ExitGateway, fmt.Errorf("the app link's relay did not start: %w%s", err, relayLogTail(logs)))
 	}
 	return nil
 }
 
-func tailOf(logs string) string {
+func relayLogTail(logs string) string {
 	if logs = strings.TrimSpace(logs); logs != "" {
 		return ": " + logs
 	}
@@ -142,7 +142,7 @@ type appLinkBridge struct {
 // output ends.
 func (b *appLinkBridge) start(ctx context.Context, in io.Reader, wait time.Duration) error {
 	sc := bufio.NewScanner(in)
-	sc.Buffer(make([]byte, 64*1024), 4<<20)
+	sc.Buffer(make([]byte, 64*1024), applink.MaxLine)
 	ready := make(chan error, 1)
 	go func() {
 		if !sc.Scan() {
@@ -220,5 +220,5 @@ func appLinkTransportLine(rd *runDirs) string {
 	}
 	return "a relay of the run's own (the runner image, no network) serves the app link's socket in the volume " + rd.appLinkRelay +
 		", and this process carries each tool call from the relay's stdio, over the engine's own attach, to the supervisor's socket " + rd.appLink +
-		"; any other line is refused at the relay's socket. A socket on this computer does not reach the run's containers here: " + rd.appLinkWhy
+		"; any other line is refused at the relay's socket. A socket on this computer does not reach the run's containers here: " + rd.appLinkPlacement
 }

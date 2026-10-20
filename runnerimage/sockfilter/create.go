@@ -523,9 +523,13 @@ func writesHost(hc *hostConfig) bool {
 type mounter struct{ tools, appLink bool }
 
 // isAppLink says whether a create is the run's app link: its one command
-// (Config.AppLinkCmd) in its image (Config.AppLinkImage, by id).
+// (Config.AppLinkCmd) in its image (Config.AppLinkImage, by id), run by the
+// image's own entrypoint.
 func (f *Filter) isAppLink(ctx context.Context, c *containerCreateBody, imageID string) (bool, error) {
 	if f.cfg.AppLinkVolume == "" || f.cfg.AppLinkImage == "" || len(f.cfg.AppLinkCmd) == 0 {
+		return false, nil
+	}
+	if present(c.Entrypoint) || present(c.Shell) {
 		return false, nil
 	}
 	var cmd []string

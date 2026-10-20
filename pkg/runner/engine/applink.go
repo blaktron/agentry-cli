@@ -40,7 +40,7 @@ func prepareAppLink(p Params, rd *runDirs) error {
 	rd.appLink = sock
 	if p.place != nil && !p.place.inProcess {
 		rd.appLinkRelay = appLinkVolume(filepath.Base(rd.root))
-		rd.appLinkWhy = p.place.reason
+		rd.appLinkPlacement = p.place.reason
 	}
 	return nil
 }

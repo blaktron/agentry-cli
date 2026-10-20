@@ -509,8 +509,6 @@ func closeDaemonFilter(rd *runDirs) {
 	}
 }
 
-// toolsVolumes are the volumes not the run's that its tools server may
-// mount: a persistent agent's data volume, by name.
 // appLinkImageOf and appLinkCmdOf name the app link's container for the
 // filter, where its relay volume is the run's (startAppLinkRelay): the
 // runner image and the catalog entry's command.
@@ -528,6 +526,8 @@ func appLinkCmdOf(plan *spec.Plan, rd *runDirs) []string {
 	return compile.AppLinkCommand(plan.Capabilities.AppLink)
 }
 
+// toolsVolumes are the volumes not the run's that its tools server may
+// mount: a persistent agent's data volume, by name.
 func toolsVolumes(rd *runDirs) []string {
 	if rd.data == "" {
 		return nil

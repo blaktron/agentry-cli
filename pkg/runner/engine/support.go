@@ -66,9 +66,9 @@ type runDirs struct {
 	appLink string
 	// appLinkRelay is the run's relay volume, where the engine's daemon runs
 	// in a VM and the app link reaches appLink through the relay; empty where
-	// the app link's container binds appLink itself. appLinkWhy is the
-	// placement's reason, for the receipt.
-	appLinkRelay, appLinkWhy string
+	// the app link's container binds appLink itself. appLinkPlacement is why
+	// the daemon's placement needs the relay, for the receipt.
+	appLinkRelay, appLinkPlacement string
 	// shareKept are the share's verdicts the last segment left
 	// (PersistentSegment.ShareVerdicts), and shareCache where they are kept.
 	shareKept  map[string]toolsrv.ShareVerdict

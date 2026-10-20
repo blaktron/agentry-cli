@@ -97,13 +97,17 @@ func Relay(ctx context.Context, cfg RelayConfig) error {
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	inDone := make(chan error, 1)
-	go func() { inDone <- r.readAnswers(cfg.In) }()
+	inDone := make(chan struct{})
+	go func() {
+		if err := r.readAnswers(cfg.In); err != nil {
+			_, _ = fmt.Fprintf(r.log, "applink relay: reading the CLI's answers: %v\n", err)
+		}
+		close(inDone)
+	}()
 	go func() {
 		select {
 		case <-ctx.Done():
-		case err := <-inDone:
-			_ = err
+		case <-inDone:
 			cancel()
 		}
 		_ = ln.Close()
@@ -168,7 +172,7 @@ func (r *relay) send(f Frame) error {
 // readAnswers hands each answer to the call it names, until in ends.
 func (r *relay) readAnswers(in io.Reader) error {
 	sc := bufio.NewScanner(in)
-	sc.Buffer(make([]byte, 64*1024), maxLine)
+	sc.Buffer(make([]byte, 64*1024), MaxLine)
 	for sc.Scan() {
 		line := bytes.TrimSpace(sc.Bytes())
 		if len(line) == 0 {

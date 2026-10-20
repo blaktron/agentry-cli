@@ -97,7 +97,7 @@ agentry/main@1.0.0 sha256:d05dcda4aea9ad20a4780fefd764689a11befc325ad037e4774fd9
 agentry/coder@1.0.0 sha256:6a898475ac0e342bceceb807fce8dd5a50fc37f22df7b893b1840365e7c94e3b
 # 1.1.0: the Coding agent runs: any program in its toolchain image, open egress, a browser on any public site and a dev server, each a roster entry the person agrees to; its instruction says how it works with them.
 agentry/coder@1.1.0 sha256:8370a99bf6bcc28b0056f9cd0b8f6c1598e928ad5a2fecec727acedf670121b4
-# 1.2.1: its README no longer says it goes without self_configure where the container engine runs in a VM, which it now has there too.
+# 1.2.1: its README says it has self_configure wherever the container engine runs, a VM included.
 agentry/assistant@1.2.1 sha256:50528b9d3bce670a30f71bd02855412fa710d8b6504ad71201b10de192df6e56
-# 1.0.1: its README no longer says it goes without its tools where the container engine runs in a VM.
+# 1.0.1: its README says it has its tools wherever the container engine runs, a VM included.
 agentry/main@1.0.1 sha256:5ed82b1e2da3d95419f385a1f9b89a8f160dfec7fac791f2dd91a785f07d01d8

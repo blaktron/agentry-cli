@@ -142,8 +142,8 @@ type Answer struct {
 // started, and a consent waits for the person.
 var CallTimeout = 30 * time.Minute
 
-// maxLine bounds a line either way.
-const maxLine = 4 << 20
+// MaxLine bounds a line either way, on the socket and on the relay's stdio.
+const MaxLine = 4 << 20
 
 // Serve answers MCP on stdio for set, forwarding each call to socket.
 func Serve(ctx context.Context, in io.Reader, out, logw io.Writer, set, socket string) error {
@@ -152,7 +152,7 @@ func Serve(ctx context.Context, in io.Reader, out, logw io.Writer, set, socket s
 	}
 	s := &server{set: set, socket: socket, out: out, logw: logw}
 	sc := bufio.NewScanner(in)
-	sc.Buffer(make([]byte, 64*1024), maxLine)
+	sc.Buffer(make([]byte, 64*1024), MaxLine)
 	for sc.Scan() {
 		if line := bytes.TrimSpace(sc.Bytes()); len(line) > 0 {
 			s.handleLine(ctx, line)
@@ -258,7 +258,7 @@ func Call(ctx context.Context, socket string, req Request) (Answer, error) {
 		return Answer{}, err
 	}
 	sc := bufio.NewScanner(c)
-	sc.Buffer(make([]byte, 64*1024), maxLine)
+	sc.Buffer(make([]byte, 64*1024), MaxLine)
 	if !sc.Scan() {
 		if err := sc.Err(); err != nil {
 			return Answer{}, err
@@ -275,7 +275,7 @@ func Call(ctx context.Context, socket string, req Request) (Answer, error) {
 // ReadRequest reads one request from a connection, as the supervisor does.
 func ReadRequest(r io.Reader) (Request, error) {
 	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 64*1024), maxLine)
+	sc.Buffer(make([]byte, 64*1024), MaxLine)
 	if !sc.Scan() {
 		if err := sc.Err(); err != nil {
 			return Request{}, err

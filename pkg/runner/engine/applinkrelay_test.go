@@ -89,7 +89,7 @@ func relayRig(t *testing.T) (d *dockerx.Fake, rd *runDirs, td *teardown, sup *fa
 		t.Fatal(err)
 	}
 	rd.appLink = filepath.Join(dir, "sup.sock")
-	rd.appLinkRelay, rd.appLinkWhy = appLinkVolume("R"), "the daemon runs in a VM"
+	rd.appLinkRelay, rd.appLinkPlacement = appLinkVolume("R"), "the daemon runs in a VM"
 	sup = serveFakeSupervisor(t, rd.appLink)
 	relaySock = filepath.Join(dir, "relay.sock")
 	d = &dockerx.Fake{Foreground: map[string]*dockerx.FakeForeground{

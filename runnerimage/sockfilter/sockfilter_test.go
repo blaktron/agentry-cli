@@ -1800,6 +1800,9 @@ func TestTheAppLinkAloneMountsItsRelayVolume(t *testing.T) {
 		create("node:22", app, vol+":/run/agentry:rw"), "is not this run's")
 	g.refused(t, "the app link with another volume", "POST", "/containers/create",
 		create("agentry-runner:test", app, "agentry-persistent-assistant-data:/data"), "is not this run's")
+	entry := create("agentry-runner:test", app, vol+":/run/agentry:rw")
+	entry["Entrypoint"] = []string{"/bin/sh", "-c"}
+	g.refused(t, "the app link's command under another entrypoint", "POST", "/containers/create", entry, "is not this run's")
 }
 
 // TestTheShareFolderIsBoundAsItselfAlone: a persistent agent's share folder,
