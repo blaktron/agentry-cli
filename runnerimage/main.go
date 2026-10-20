@@ -32,6 +32,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/blaktron/agentry-cli/runnerimage/applink"
 	"github.com/blaktron/agentry-cli/runnerimage/bridge"
 	"github.com/blaktron/agentry-cli/runnerimage/confine"
 	"github.com/blaktron/agentry-cli/runnerimage/decode"
@@ -57,6 +58,10 @@ const usageText = `usage: agentry-runner <mode> [flags]
         serve one remote MCP server on stdio, forwarding each message to it
         over streamable HTTP (or HTTP+SSE); the bearer, when there is one,
         is read from --token-file at every request
+  applink --set main|assistant
+        (a persistent agent's app link) serve the set's tools on stdio,
+        forwarding each call to the supervisor's socket at
+        /run/agentry/app.sock; it has no network
   hostlink
         (the host link's container) serve the target-host tools on stdio,
         from /run/agentry/hostspec.json and the run's /run/agentry/hosts;
@@ -112,6 +117,8 @@ func main() {
 		err = runDecode(os.Args[2:])
 	case "bridge":
 		err = runBridge(os.Args[2:])
+	case "applink":
+		err = runAppLink(os.Args[2:])
 	case "hostlink":
 		if len(os.Args) != 2 {
 			usageExit()
@@ -348,6 +355,18 @@ func runTools(args []string) error {
 
 // runBridge serves one remote MCP server on stdio until the gateway closes
 // stdin.
+// runAppLink serves a persistent agent's app link on stdio: the tool set
+// --set names, each call forwarded over the supervisor's socket.
+func runAppLink(args []string) error {
+	fs := flag.NewFlagSet("applink", flag.ContinueOnError)
+	set := fs.String("set", "", "the agent's tool set: "+strings.Join(applink.Sets(), " or "))
+	if err := fs.Parse(args); err != nil || *set == "" || fs.NArg() != 0 {
+		fmt.Fprintln(os.Stderr, "agentry-runner applink: --set is required, and nothing else")
+		os.Exit(2)
+	}
+	return applink.Serve(context.Background(), os.Stdin, os.Stdout, os.Stderr, *set, applink.SocketMount)
+}
+
 func runBridge(args []string) error {
 	fs := flag.NewFlagSet("bridge", flag.ContinueOnError)
 	addr := fs.String("url", "", "the remote MCP server's https address")

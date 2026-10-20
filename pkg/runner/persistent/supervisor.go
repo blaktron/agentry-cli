@@ -44,6 +44,10 @@ type Options struct {
 	// Packs opens the knowledge packs the roster has on, for each segment;
 	// nil refuses a roster with one on.
 	Packs Packs
+	// AppLink answers the agent's app link calls other than self_configure,
+	// which the supervisor answers itself: the desktop's. Nil answers them
+	// as Agentry Desktop's.
+	AppLink AppLinkHandler
 	// StartSegment starts a segment; nil starts it with localrun. Tests
 	// put a session of their own here.
 	StartSegment func(ctx context.Context, seg localrun.Segment) (engine.PersistentSession, error)
@@ -90,7 +94,8 @@ type Supervisor struct {
 	watchers     map[int]chan session.Event
 	nextWatcher  int
 	ln           net.Listener
-	stopped      bool // set under mu once Stop has let the watchers go
+	appLn        net.Listener // the app link's socket, for an agent that has one
+	stopped      bool         // set under mu once Stop has let the watchers go
 
 	done     chan struct{}
 	stopOnce sync.Once
@@ -136,10 +141,15 @@ func Start(ctx context.Context, opts Options) (*Supervisor, error) {
 	if opts.Policy != nil {
 		s.model = opts.Policy.Model.Provider + "/" + opts.Policy.Model.Name
 	}
+	if err := s.listenAppLink(); err != nil {
+		owner.Release()
+		return nil, err
+	}
 	s.seg.Lock()
 	err = s.startSegment(ctx)
 	s.seg.Unlock()
 	if err != nil {
+		s.closeAppLink()
 		owner.Release()
 		return nil, err
 	}
@@ -199,6 +209,9 @@ func (s *Supervisor) startSegment(ctx context.Context) error {
 			ShareVerdicts: filepath.Join(Dir(home, name), shareVerdictsFile),
 		},
 		Grants: grants,
+	}
+	if s.appLn != nil {
+		seg.Grants.AppLink = AppSocketPath(home, name)
 	}
 	start := s.opts.StartSegment
 	if start == nil {
@@ -552,6 +565,9 @@ func (s *Supervisor) Stop(ctx context.Context) (*receipt.Envelope, error) {
 			_ = s.ln.Close()
 			_ = os.Remove(SocketPath(s.opts.Home, s.opts.Agent.Name))
 		}
+		s.mu.Unlock()
+		s.closeAppLink()
+		s.mu.Lock()
 		for id, w := range s.watchers {
 			close(w)
 			delete(s.watchers, id)

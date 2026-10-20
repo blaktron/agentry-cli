@@ -45,7 +45,7 @@ type Agent struct {
 	// DesktopOnly says the agent runs only in Agentry Desktop; the CLI
 	// lists it and refuses to start, chat with or configure it.
 	DesktopOnly bool
-	// Builtin is the package it runs; unset for a desktop-only agent.
+	// Builtin is the package it runs.
 	Builtin localrun.Builtin
 	// ShareName is the default share folder's name, under ~/agentry.
 	ShareName string
@@ -55,7 +55,7 @@ type Agent struct {
 // listed.
 func Agents() []Agent {
 	return []Agent{
-		{Name: "main", Title: "Main", DesktopOnly: true, ShareName: "mainshare"},
+		{Name: localrun.Main().Name(), Title: "Main", DesktopOnly: true, Builtin: localrun.Main(), ShareName: "mainshare"},
 		{Name: localrun.Assistant().Name(), Title: "Assistant", Builtin: localrun.Assistant(), ShareName: "assistantshare"},
 	}
 }

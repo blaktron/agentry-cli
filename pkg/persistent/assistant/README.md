@@ -40,7 +40,9 @@ and `agentry agent show assistant` lists what it has:
   an entry of its roster that you switch on and off. Adding one, or turning
   on one you have not agreed to on this computer, asks you first.
 - **A name and a personality**, when you give them, reach it at its next
-  message.
+  message. On its first conversation it asks you for both, and saves your
+  answer through its one Agentry tool, `self_configure`, which changes its
+  name and personality and nothing else.
 - **Each start is a segment**, with its own receipts and result envelope in
   the agent's folder under the runner home, and the conversation's record
   continues across segments.

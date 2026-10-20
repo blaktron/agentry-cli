@@ -154,6 +154,14 @@ type Builtin struct {
 	// checkShare reads a file of the persistent agent's share folder only
 	// once ClamAV has checked it (spec.AgentFiles.CheckShare).
 	checkShare bool
+	// appLink is the persistent agent's app link tool set
+	// (runnerimage/applink); empty for none. With persistent and
+	// checkShare it is the persistent grant class, which the compiler
+	// accepts for a built-in alone.
+	appLink string
+	// runnable says a persistent built-in runs as an agent in this
+	// version; one that does not is published for reading only.
+	runnable bool
 }
 
 // KnowledgeCreator is the Knowledge Creator (pkg/knowledge/creator),
@@ -218,7 +226,7 @@ func (b Builtin) LocalBudgets(p policy.Budgets) spec.Budgets {
 
 // Builtins is every package that may run as builtin.
 func Builtins() []Builtin {
-	return []Builtin{KnowledgeCreator(), Drafter(), VoiceWriter(), Examiner(), Assistant()}
+	return []Builtin{KnowledgeCreator(), Drafter(), VoiceWriter(), Examiner(), Assistant(), Main(), Coder()}
 }
 
 // Ref is the package's ns/name@version.
@@ -364,8 +372,10 @@ type PlanInputs struct {
 	// Review grants the review grant (compile.Inputs.Review), likewise.
 	Review bool
 	// AgentFiles grants a persistent built-in its folders
-	// (compile.Inputs.AgentFiles): set by a Segment alone.
+	// (compile.Inputs.AgentFiles), and AppLink its app link
+	// (compile.Inputs.AppLink): set by a Segment alone.
 	AgentFiles *spec.AgentFiles
+	AppLink    string
 	Log        io.Writer
 }
 
@@ -433,6 +443,7 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 			plan.Capabilities.WebRender == in.WebRender &&
 			plan.Capabilities.ReviewTools == in.Review &&
 			reflect.DeepEqual(plan.Capabilities.AgentFiles, in.AgentFiles) &&
+			plan.Capabilities.AppLink == in.AppLink &&
 			reflect.DeepEqual(plan.MCPServers, in.Servers) {
 			switch {
 			case plan.CompiledBy != in.CompiledBy:
@@ -476,6 +487,7 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 		WebSearchedOnly: in.WebSearchedOnly, WebGivenOnly: in.WebGivenOnly, WebRender: in.WebRender,
 		Review:       in.Review,
 		AgentFiles:   in.AgentFiles,
+		AppLink:      in.AppLink,
 		IntegrityKey: key,
 	}, planDir)
 	if err != nil {
