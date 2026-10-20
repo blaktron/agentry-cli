@@ -143,9 +143,14 @@ func startAssistant(t *testing.T, home string, st *starter) *Supervisor {
 	return sv
 }
 
+// enable enables the Assistant with its roster agreed to, its share the
+// default under a home folder of the test's own.
 func enable(t *testing.T, home string) {
 	t.Helper()
-	if err := SaveConfig(home, "assistant", Config{Enabled: true}); err != nil {
+	t.Setenv("HOME", t.TempDir())
+	c := Config{Enabled: true}
+	RecordConsent(BuildRoster(assistantAgent(t), c, nil), &c)
+	if err := SaveConfig(home, "assistant", c); err != nil {
 		t.Fatal(err)
 	}
 }

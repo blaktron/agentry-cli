@@ -82,6 +82,7 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 		env.Persistent = &receipt.Persistent{
 			Agent: ps.Agent, Segment: ps.Segment, ResumeReason: notStartedReason,
 			Volumes: receipt.PersistentVolumes{Session: ps.SessionVolume, Data: ps.DataVolume},
+			Share:   ps.Share, Roster: ps.Roster,
 		}
 	}
 	planHash, err := p.Plan.Hash()

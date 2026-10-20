@@ -33,27 +33,7 @@ func ensureServerResolutions(ctx context.Context, errOut io.Writer, serversDir s
 	pol *policy.Policy, m *manifest.Manifest,
 ) ([]mcpinstall.Resolved, error) {
 	// A remote server is neither resolved nor installed.
-	declared := mcpinstall.Packages(m.Capabilities.MCPServers)
-	if len(declared) == 0 {
-		return nil, nil
-	}
-	stored := make([]mcpinstall.Resolved, 0, len(declared))
-	for _, srv := range declared {
-		meta, err := mcpinstall.LoadMeta(serversDir, mcpinstall.IDFor(srv))
-		if err != nil {
-			return nil, err
-		}
-		if meta == nil || meta.Package != srvPackage(srv) || meta.Version != srv.Version {
-			stored = nil
-			break
-		}
-		stored = append(stored, *meta)
-	}
-	if len(stored) == len(declared) && len(declared) > 0 {
-		return stored, nil
-	}
-	_, _ = fmt.Fprintf(errOut, "resolving %d declared MCP server(s) against the configured registries\n", len(declared))
-	return mcpinstall.ResolveAll(ctx, nil, pol.MCPRegistries, declared)
+	return mcpinstall.StoredOrResolved(ctx, errOut, serversDir, pol.MCPRegistries, m.Capabilities.MCPServers)
 }
 
 func srvPackage(srv manifest.MCPServer) string {

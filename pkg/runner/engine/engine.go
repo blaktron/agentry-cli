@@ -300,6 +300,8 @@ type PersistentSegment struct {
 	// tools server mounts read-write and live when its plan mounts a share
 	// (spec.AgentFiles.Share); empty when the agent has its share off.
 	Share string
+	// Roster is the agent's roster for the segment, for its envelope.
+	Roster []receipt.RosterEntry
 }
 
 // engine is the run's container engine once placed (placementFor), and

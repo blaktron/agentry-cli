@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
@@ -40,6 +41,9 @@ type Options struct {
 	Docker dockerx.Client
 	// Stderr gets the segment's progress (image builds, sweeps).
 	Stderr io.Writer
+	// Packs opens the knowledge packs the roster has on, for each segment;
+	// nil refuses a roster with one on.
+	Packs Packs
 	// StartSegment starts a segment; nil starts it with localrun. Tests
 	// put a session of their own here.
 	StartSegment func(ctx context.Context, seg localrun.Segment) (engine.PersistentSession, error)
@@ -49,18 +53,33 @@ type Options struct {
 type Supervisor struct {
 	opts    Options
 	owner   *Owner
-	sess    engine.PersistentSession
-	runID   string
-	outDir  string
-	segment int
 	since   time.Time
 	adapter string
 	model   string
 
 	turn sync.Mutex // one turn at a time; TryLock refuses a second as busy
+	// seg is held while a segment starts, ends or is swapped for the next,
+	// so a stop never meets a segment half made.
+	seg sync.Mutex
 
-	mu           sync.Mutex
+	mu        sync.Mutex
+	sess      engine.PersistentSession
+	runID     string
+	outDir    string
+	segment   int
+	applied   Applied
+	grants    string // grantsKey of the config the segment started with
+	packsDone func()
+	ending    *atomic.Bool // set for the segment being ended to start the next
+	// segEnded says the segment in sess has ended, with segEnv and segErr
+	// its end: a stop after a next segment failed to start does not end it
+	// or count it twice.
+	segEnded     bool
+	segEnv       *receipt.Envelope
+	segErr       error
+	pumpDone     chan struct{}
 	carry        string // the last exchange, for the first turn of a conversation that did not continue
+	persona      string // personaKey of what the conversation has been given
 	resumed      bool
 	resumeReason string
 	busy         bool
@@ -70,7 +89,6 @@ type Supervisor struct {
 	ln           net.Listener
 	stopped      bool // set under mu once Stop has let the watchers go
 
-	pumpDone chan struct{}
 	done     chan struct{}
 	stopOnce sync.Once
 	env      *receipt.Envelope
@@ -80,8 +98,10 @@ type Supervisor struct {
 // Start takes the agent's owner lock and starts a segment: the conversation
 // the last segment was in is continued where the harness can, and otherwise
 // the new conversation's first turn carries the last exchange of the
-// transcript, which the envelope records. It serves the owner socket until
-// Stop, or until the segment ends by itself.
+// transcript, which the envelope records. It refuses an agent whose roster
+// turns on what the person has not agreed to on this computer
+// (ConsentError). It serves the owner socket until Stop, or until the
+// segment ends by itself.
 func Start(ctx context.Context, opts Options) (*Supervisor, error) {
 	a := opts.Agent
 	if a.DesktopOnly && opts.Client != ClientDesktop {
@@ -97,6 +117,9 @@ func Start(ctx context.Context, opts Options) (*Supervisor, error) {
 	if !cfg.Enabled {
 		return nil, fmt.Errorf("the %s agent is not enabled: agentry agent enable %s", a.Name, a.Name)
 	}
+	if pending := Unconsented(BuildRoster(a, cfg, nil), cfg); len(pending) > 0 {
+		return nil, &ConsentError{Agent: a.Name, Entries: pending}
+	}
 	owner, err := Acquire(opts.Home, a.Name, opts.Client)
 	if err != nil {
 		return nil, err
@@ -105,16 +128,18 @@ func Start(ctx context.Context, opts Options) (*Supervisor, error) {
 		opts: opts, owner: owner, since: time.Now().UTC(),
 		adapter:  localrun.ImageAdapter(adapter.DefaultFor(opts.Policy)),
 		watchers: map[int]chan session.Event{},
-		pumpDone: make(chan struct{}), done: make(chan struct{}),
+		done:     make(chan struct{}),
 	}
 	if opts.Policy != nil {
 		s.model = opts.Policy.Model.Provider + "/" + opts.Policy.Model.Name
 	}
-	if err := s.startSegment(ctx, cfg); err != nil {
+	s.seg.Lock()
+	err = s.startSegment(ctx)
+	s.seg.Unlock()
+	if err != nil {
 		owner.Release()
 		return nil, err
 	}
-	go s.pump()
 	if err := s.listen(); err != nil {
 		_, _ = s.Stop(context.WithoutCancel(ctx))
 		return nil, err
@@ -122,12 +147,24 @@ func Start(ctx context.Context, opts Options) (*Supervisor, error) {
 	return s, nil
 }
 
-// startSegment starts the agent's next segment and records how its
-// conversation began.
-func (s *Supervisor) startSegment(ctx context.Context, cfg Config) error {
-	name := s.opts.Agent.Name
+// startSegment starts the agent's next segment from its config as it is,
+// records how its conversation began and starts its pump. The caller holds
+// seg.
+func (s *Supervisor) startSegment(ctx context.Context) error {
+	a, home := s.opts.Agent, s.opts.Home
+	name := a.Name
+	cfg, err := LoadConfig(home, name)
+	if err != nil {
+		return err
+	}
+	roster := BuildRoster(a, cfg, nil)
+	grants, applied, packsDone, err := Apply(ctx, home, a, cfg, roster, s.opts.Packs)
+	if err != nil {
+		return err
+	}
 	runID, err := engine.NewRunID()
 	if err != nil {
+		packsDone()
 		return err
 	}
 	continueID, mismatch := "", ""
@@ -138,19 +175,21 @@ func (s *Supervisor) startSegment(ctx context.Context, cfg Config) error {
 			mismatch = fmt.Sprintf("the conversation was stored by the %s harness, and this segment runs on %s, which cannot read it", c.Adapter, s.adapter)
 		}
 	}
-	s.runID, s.segment = runID, cfg.Segments+1
-	s.outDir = filepath.Join(Dir(s.opts.Home, name), segmentsDir, runID)
-	if err := os.MkdirAll(s.outDir, 0o700); err != nil {
+	segment := cfg.Segments + 1
+	outDir := filepath.Join(Dir(home, name), segmentsDir, runID)
+	if err := os.MkdirAll(outDir, 0o700); err != nil {
+		packsDone()
 		return fmt.Errorf("the segment's folder: %w", err)
 	}
 	seg := localrun.Segment{
-		Builtin: s.opts.Agent.Builtin, Home: s.opts.Home, Policy: s.opts.Policy, PolicySHA: s.opts.PolicySHA,
-		PolicyFile: s.opts.PolicyFile, Build: s.opts.Build, OutDir: s.outDir, RunID: runID, Stderr: s.opts.Stderr,
+		Builtin: a.Builtin, Home: home, Policy: s.opts.Policy, PolicySHA: s.opts.PolicySHA,
+		PolicyFile: s.opts.PolicyFile, Build: s.opts.Build, OutDir: outDir, RunID: runID, Stderr: s.opts.Stderr,
 		Persistent: engine.PersistentSegment{
-			Agent: name, Segment: s.segment,
+			Agent: name, Segment: segment,
 			SessionVolume: SessionVolume(name), DataVolume: DataVolume(name),
-			ContinueID: continueID,
+			ContinueID: continueID, Roster: roster.Receipt(),
 		},
+		Grants: grants,
 	}
 	start := s.opts.StartSegment
 	if start == nil {
@@ -160,53 +199,71 @@ func (s *Supervisor) startSegment(ctx context.Context, cfg Config) error {
 	}
 	sess, err := start(ctx, seg)
 	if err != nil {
+		packsDone()
 		// A start refused before the engine wrote anything leaves no
 		// folder behind; one that wrote its envelope keeps it.
-		_ = os.Remove(s.outDir)
+		_ = os.Remove(outDir)
 		return err
 	}
-	s.sess = sess
 	id, resumed, reason := sess.Conversation()
 	if mismatch != "" {
 		reason = mismatch
 	}
+	carry := ""
 	if !resumed {
 		// Whatever kept the conversation from continuing (a harness that
 		// cannot, a store that would not load, another harness), the new
 		// one is given the last exchange the agent had, if it had one.
-		entries, _ := Transcript(s.opts.Home, name, 400)
+		entries, _ := Transcript(home, name, 400)
 		if u, a, ok := lastExchange(entries); ok {
-			s.carry = carried(u, a)
+			carry = carried(u, a)
 			reason += "; the runner gave the new conversation the last exchange from the transcript"
 		} else if cfg.Segments == 0 {
 			reason = "the agent's first segment"
 		}
 		sess.SetResumeReason(reason)
 	}
-	s.resumed, s.resumeReason = resumed, reason
-	cfg.Segments = s.segment
+	cfg.Segments = segment
 	cfg.Conversation = nil
 	if id != "" {
 		cfg.Conversation = &Conversation{Adapter: s.adapter, ID: id}
 	}
-	if err := SaveConfig(s.opts.Home, name, cfg); err != nil {
+	persona := cfg.PersonaGiven
+	if !resumed {
+		// A new conversation has been given nothing yet.
+		persona = ""
+	}
+	if err := SaveConfig(home, name, cfg); err != nil {
 		_, _ = sess.End(context.WithoutCancel(ctx), false)
+		packsDone()
 		return err
 	}
+	ending := &atomic.Bool{}
+	pumpDone := make(chan struct{})
+	s.mu.Lock()
+	s.sess, s.runID, s.outDir, s.segment = sess, runID, outDir, segment
+	s.applied, s.grants, s.packsDone, s.ending, s.pumpDone = applied, grantsKey(a, cfg), packsDone, ending, pumpDone
+	s.carry, s.persona, s.resumed, s.resumeReason = carry, persona, resumed, reason
+	s.usage, s.segEnded, s.segEnv, s.segErr = receipt.Usage{}, false, nil, nil
+	s.mu.Unlock()
 	text := "continued the conversation"
 	if !resumed {
 		text = reason
 	}
-	_ = appendEntry(s.opts.Home, name, Entry{Segment: s.segment, Run: runID, Resumed: &resumed,
+	_ = appendEntry(home, name, Entry{Segment: segment, Run: runID, Resumed: &resumed,
 		Event: session.Event{Kind: KindSegmentStart, Time: time.Now().UTC(), Text: text}})
+	go s.pump(sess, segment, runID, ending, pumpDone)
 	return nil
 }
 
-// pump records the segment's events in the transcript, hands them to every
-// watcher, and finishes the supervisor when the segment ends.
-func (s *Supervisor) pump() {
-	defer close(s.pumpDone)
-	for ev := range s.sess.Events() {
+// pump records a segment's events in the transcript, hands them to every
+// watcher, and finishes the supervisor when the segment ends by itself. The
+// end of a segment ended to start the next is the transcript's alone: a
+// chat stays attached across it.
+func (s *Supervisor) pump(sess engine.PersistentSession, segment int, runID string, ending *atomic.Bool, done chan struct{}) {
+	defer close(done)
+	for ev := range sess.Events() {
+		swapping := ev.Kind == session.KindSessionEnd && ending.Load()
 		s.mu.Lock()
 		switch ev.Kind {
 		case session.KindUserTurn:
@@ -223,47 +280,177 @@ func (s *Supervisor) pump() {
 			s.usage.OutputTokens += ev.OutputTokens
 			s.usage.TotalTokens += ev.TotalTokens
 		}
-		for id, w := range s.watchers {
-			select {
-			case w <- ev:
-			default:
-				// A watcher that stopped reading is let go; the transcript
-				// and the receipts have every event.
-				close(w)
-				delete(s.watchers, id)
-			}
+		if !swapping {
+			s.broadcast(ev)
 		}
 		s.mu.Unlock()
 		if kept(ev.Kind) {
 			ev.Raw = nil
-			_ = appendEntry(s.opts.Home, s.opts.Agent.Name, Entry{Segment: s.segment, Run: s.runID, Event: ev})
+			_ = appendEntry(s.opts.Home, s.opts.Agent.Name, Entry{Segment: segment, Run: runID, Event: ev})
 		}
-		if ev.Kind == session.KindSessionEnd {
+		if ev.Kind == session.KindSessionEnd && !swapping {
 			go func() { _, _ = s.Stop(context.Background()) }()
 		}
 	}
 }
 
-// Send sends one turn and returns when the agent has answered it. The first
-// turn of a conversation that did not continue starts with the last
-// exchange.
+// broadcast hands ev to every watcher. The caller holds mu.
+func (s *Supervisor) broadcast(ev session.Event) {
+	for id, w := range s.watchers {
+		select {
+		case w <- ev:
+		default:
+			// A watcher that stopped reading is let go; the transcript
+			// and the receipts have every event.
+			close(w)
+			delete(s.watchers, id)
+		}
+	}
+}
+
+// Send sends one turn and returns when the agent has answered it. When the
+// roster changed since the segment started, the segment is ended and the
+// next started first, so the turn reaches an agent given the change. The
+// first turn of a conversation that did not continue starts with the last
+// exchange, and a turn after the person named the agent or changed its
+// personality starts with them.
 func (s *Supervisor) Send(ctx context.Context, text string) error {
 	if !s.turn.TryLock() {
 		return ErrBusy
 	}
 	defer s.turn.Unlock()
+	cfg, err := LoadConfig(s.opts.Home, s.opts.Agent.Name)
+	if err != nil {
+		return err
+	}
 	s.mu.Lock()
-	carry := s.carry
+	stale := grantsKey(s.opts.Agent, cfg) != s.grants
+	s.mu.Unlock()
+	if stale {
+		if err := s.nextSegment(ctx); err != nil {
+			return err
+		}
+	}
+	s.mu.Lock()
+	sess, carry, given := s.sess, s.carry, s.persona
 	s.carry = ""
 	s.mu.Unlock()
-	if carry != "" {
-		return s.sess.SendCarrying(ctx, carry, text)
+	frame := carry
+	persona := personaKey(cfg)
+	if persona != given {
+		frame += personaFrame(cfg)
 	}
-	return s.sess.Send(ctx, text)
+	if frame != "" {
+		err = sess.SendCarrying(ctx, frame, text)
+	} else {
+		err = sess.Send(ctx, text)
+	}
+	if err == nil && persona != given {
+		s.mu.Lock()
+		s.persona = persona
+		s.mu.Unlock()
+		if c, lerr := LoadConfig(s.opts.Home, s.opts.Agent.Name); lerr == nil {
+			c.PersonaGiven = persona
+			_ = SaveConfig(s.opts.Home, s.opts.Agent.Name, c)
+		}
+	}
+	return err
+}
+
+// nextSegment ends the running segment and starts the next from the config
+// as it is now, keeping the watchers attached. A next segment that cannot
+// start stops the agent, saying why. The caller holds turn.
+func (s *Supervisor) nextSegment(ctx context.Context) error {
+	s.seg.Lock()
+	defer s.seg.Unlock()
+	s.mu.Lock()
+	if s.stopped {
+		s.mu.Unlock()
+		return session.ErrEnded
+	}
+	s.broadcast(session.Event{Kind: session.KindNotice, Time: time.Now().UTC(), Text: "Applying your change: the agent restarts with it, and the conversation continues"})
+	s.mu.Unlock()
+	_, _ = s.endSegment(ctx, true)
+	if err := s.startSegment(ctx); err != nil {
+		s.mu.Lock()
+		s.broadcast(session.Event{Kind: session.KindError, Time: time.Now().UTC(), Text: "the change could not be applied, so the agent stopped: " + err.Error()})
+		s.mu.Unlock()
+		go func() { _, _ = s.Stop(context.Background()) }()
+		return err
+	}
+	return nil
+}
+
+// endSegment ends the running segment without a final result, waits for its
+// pump, adds its usage to the agent's and closes its packs; swap says the
+// next segment starts after it. The caller holds seg.
+func (s *Supervisor) endSegment(ctx context.Context, swap bool) (*receipt.Envelope, error) {
+	s.mu.Lock()
+	if s.segEnded {
+		defer s.mu.Unlock()
+		return s.segEnv, s.segErr
+	}
+	sess, ending, pumpDone, packsDone := s.sess, s.ending, s.pumpDone, s.packsDone
+	s.packsDone = nil
+	s.mu.Unlock()
+	// A segment ended to start the next ends out of the chats' sight.
+	ending.Store(swap)
+	env, err := sess.End(ctx, false)
+	select {
+	case <-pumpDone:
+	case <-time.After(10 * time.Second):
+	}
+	if packsDone != nil {
+		packsDone()
+	}
+	if env != nil {
+		u, _ := LoadUsage(s.opts.Home, s.opts.Agent.Name)
+		u.Segments++
+		u.InputTokens += env.Usage.InputTokens
+		u.OutputTokens += env.Usage.OutputTokens
+		u.TotalTokens += env.Usage.TotalTokens
+		u.UserTurns += env.Usage.UserTurns
+		u.ToolCalls += env.Usage.Turns
+		u.Updated = time.Now().UTC()
+		_ = saveUsage(s.opts.Home, s.opts.Agent.Name, u)
+	}
+	s.mu.Lock()
+	s.segEnded, s.segEnv, s.segErr = true, env, err
+	s.mu.Unlock()
+	return env, err
+}
+
+// Change applies a change to the running agent's config, the supervisor
+// alone writing it while it runs. A change to what the segment is given
+// takes effect at the next turn, which starts the next segment; the roster
+// answered shows it pending until then.
+func (s *Supervisor) Change(ch Change) (Roster, error) {
+	a := s.opts.Agent
+	cfg, err := LoadConfig(s.opts.Home, a.Name)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := ApplyChange(s.opts.Home, a, &cfg, ch); err != nil {
+		return nil, err
+	}
+	if err := SaveConfig(s.opts.Home, a.Name, cfg); err != nil {
+		return nil, err
+	}
+	return s.Roster(), nil
+}
+
+// Roster is the running agent's roster: an entry switched since the segment
+// started is pending.
+func (s *Supervisor) Roster() Roster {
+	cfg, _ := LoadConfig(s.opts.Home, s.opts.Agent.Name)
+	s.mu.Lock()
+	applied := s.applied
+	s.mu.Unlock()
+	return BuildRoster(s.opts.Agent, cfg, &applied)
 }
 
 // Subscribe hands every event from now on to a channel, until cancel or the
-// segment's end closes it.
+// agent's end closes it.
 func (s *Supervisor) Subscribe() (<-chan session.Event, func()) {
 	ch := make(chan session.Event, 1024)
 	s.mu.Lock()
@@ -301,6 +488,8 @@ type Status struct {
 	ResumeReason string        `json:"resumeReason,omitempty"`
 	Busy         bool          `json:"busy"`
 	Usage        receipt.Usage `json:"usage"`
+	// Pending says a change waits for the next turn's segment.
+	Pending bool `json:"pending,omitempty"`
 }
 
 // StateRunning is a running agent's state.
@@ -308,12 +497,15 @@ const StateRunning = "running"
 
 // Status is the agent's state now.
 func (s *Supervisor) Status() Status {
+	cfg, _ := LoadConfig(s.opts.Home, s.opts.Agent.Name)
+	pending := grantsKey(s.opts.Agent, cfg)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return Status{
 		Agent: s.opts.Agent.Name, State: StateRunning, Client: s.opts.Client, PID: os.Getpid(), Since: s.since,
 		Segment: s.segment, Run: s.runID, SegmentDir: s.outDir, Adapter: s.adapter, Model: s.model,
 		Resumed: s.resumed, ResumeReason: s.resumeReason, Busy: s.busy, Usage: s.usage,
+		Pending: pending != s.grants,
 	}
 }
 
@@ -327,22 +519,9 @@ func (s *Supervisor) Done() <-chan struct{} { return s.done }
 // itself; every call returns the segment's envelope.
 func (s *Supervisor) Stop(ctx context.Context) (*receipt.Envelope, error) {
 	s.stopOnce.Do(func() {
-		s.env, s.endErr = s.sess.End(ctx, false)
-		select {
-		case <-s.pumpDone:
-		case <-time.After(10 * time.Second):
-		}
-		if s.env != nil {
-			u, _ := LoadUsage(s.opts.Home, s.opts.Agent.Name)
-			u.Segments++
-			u.InputTokens += s.env.Usage.InputTokens
-			u.OutputTokens += s.env.Usage.OutputTokens
-			u.TotalTokens += s.env.Usage.TotalTokens
-			u.UserTurns += s.env.Usage.UserTurns
-			u.ToolCalls += s.env.Usage.Turns
-			u.Updated = time.Now().UTC()
-			_ = saveUsage(s.opts.Home, s.opts.Agent.Name, u)
-		}
+		s.seg.Lock()
+		s.env, s.endErr = s.endSegment(ctx, false)
+		s.seg.Unlock()
 		s.mu.Lock()
 		if s.ln != nil {
 			_ = s.ln.Close()

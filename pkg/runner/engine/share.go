@@ -198,7 +198,7 @@ func (s *liveSession) checkShare(ctx context.Context) {
 	sc := s.shares
 	files, err := walkShare(rd.share)
 	if err != nil {
-		s.emit(session.Event{Kind: session.KindOther, Text: "the share folder could not be read for its check: " + s.redact.String(err.Error())})
+		s.emit(session.Event{Kind: session.KindNotice, Text: "the share folder could not be read for its check: " + s.redact.String(err.Error())})
 		return
 	}
 	present := map[string]bool{}
@@ -230,21 +230,21 @@ func (s *liveSession) checkShare(ctx context.Context) {
 		}
 		return
 	}
-	s.emit(session.Event{Kind: session.KindOther, Text: fmt.Sprintf("checking %d new or changed file(s) in the share for malware", len(todo))})
+	s.emit(session.Event{Kind: session.KindNotice, Text: fmt.Sprintf("checking %d new or changed file(s) in the share for malware", len(todo))})
 	checked, err := s.checkShareFiles(ctx, todo)
 	if err != nil {
-		s.emit(session.Event{Kind: session.KindOther, Text: "the share's new files could not be checked, so they stay unread this turn: " + s.redact.String(err.Error())})
+		s.emit(session.Event{Kind: session.KindNotice, Text: "the share's new files could not be checked, so they stay unread this turn: " + s.redact.String(err.Error())})
 	}
 	for rel, v := range checked {
 		sc.verdicts[rel] = v
 	}
 	if err := writeShareVerdicts(rd.shareChecks, sc.verdicts); err != nil {
-		s.emit(session.Event{Kind: session.KindOther, Text: "the share's verdicts could not be written: " + s.redact.String(err.Error())})
+		s.emit(session.Event{Kind: session.KindNotice, Text: "the share's verdicts could not be written: " + s.redact.String(err.Error())})
 		return
 	}
 	s.logShareChecks(checked)
 	if left > 0 {
-		s.emit(session.Event{Kind: session.KindOther, Text: fmt.Sprintf("%d more file(s) in the share wait for the next turn's check", left)})
+		s.emit(session.Event{Kind: session.KindNotice, Text: fmt.Sprintf("%d more file(s) in the share wait for the next turn's check", left)})
 	}
 }
 
@@ -423,7 +423,7 @@ func (s *liveSession) logShareChecks(checked map[string]toolsrv.ShareVerdict) {
 			_, _ = f.Write(append(line, '\n'))
 		}
 		if v.Verdict == toolsrv.ShareFound {
-			s.emit(session.Event{Kind: session.KindOther, Text: "ClamAV found " + v.Signature + " in share/" + rel + "; it will not be read"})
+			s.emit(session.Event{Kind: session.KindNotice, Text: "ClamAV found " + v.Signature + " in share/" + rel + "; it will not be read"})
 		}
 	}
 }
