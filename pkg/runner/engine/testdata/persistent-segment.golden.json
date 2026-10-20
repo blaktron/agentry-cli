@@ -4,7 +4,7 @@
     "agent": "keeper",
     "segment": 2,
     "resumed": false,
-    "resumeReason": "the agent's first segment: there was no earlier conversation to continue",
+    "resumeReason": "no stored conversation to continue",
     "volumes": {
       "session": "agentry-persistent-keeper-session",
       "data": "agentry-persistent-keeper-data"

@@ -114,11 +114,11 @@ func Start(ctx context.Context, opts Options) (*Supervisor, error) {
 		owner.Release()
 		return nil, err
 	}
+	go s.pump()
 	if err := s.listen(); err != nil {
 		_, _ = s.Stop(context.WithoutCancel(ctx))
 		return nil, err
 	}
-	go s.pump()
 	return s, nil
 }
 
@@ -170,14 +170,17 @@ func (s *Supervisor) startSegment(ctx context.Context, cfg Config) error {
 	if mismatch != "" {
 		reason = mismatch
 	}
-	if !resumed && (continueID != "" || mismatch != "") {
+	if !resumed {
+		// Whatever kept the conversation from continuing (a harness that
+		// cannot, a store that would not load, another harness), the new
+		// one is given the last exchange the agent had, if it had one.
 		entries, _ := Transcript(s.opts.Home, name, 400)
 		if u, a, ok := lastExchange(entries); ok {
 			s.carry = carried(u, a)
 			reason += "; the runner gave the new conversation the last exchange from the transcript"
+		} else if cfg.Segments == 0 {
+			reason = "the agent's first segment"
 		}
-	}
-	if reason != "" {
 		sess.SetResumeReason(reason)
 	}
 	s.resumed, s.resumeReason = resumed, reason
@@ -253,7 +256,10 @@ func (s *Supervisor) Send(ctx context.Context, text string) error {
 	carry := s.carry
 	s.carry = ""
 	s.mu.Unlock()
-	return s.sess.Send(ctx, carry+text)
+	if carry != "" {
+		return s.sess.SendCarrying(ctx, carry, text)
+	}
+	return s.sess.Send(ctx, text)
 }
 
 // Subscribe hands every event from now on to a channel, until cancel or the

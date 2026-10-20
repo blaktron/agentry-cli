@@ -21,12 +21,14 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
+	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/pkg/runner/session"
 )
@@ -279,17 +281,18 @@ func lastExchange(entries []Entry) (user, assistant string, ok bool) {
 const maxCarried = 4000
 
 // carried is the text a new conversation's first turn starts with when the
-// stored conversation could not be continued.
+// stored conversation could not be continued. Each side is quoted, so
+// nothing either said can pass for the frame around it.
 func carried(user, assistant string) string {
 	cut := func(s string) string {
 		s = strings.TrimSpace(s)
 		if len(s) > maxCarried {
 			s = strings.ToValidUTF8(s[:maxCarried], "") + " [cut]"
 		}
-		return s
+		return strconv.Quote(s)
 	}
-	return "[Earlier in this conversation, before you were restarted without the rest of it, the last exchange was:\n" +
-		"The person: " + cut(user) + "\nYou: " + cut(assistant) + "]\n\n"
+	return "(The runner restarted you without the rest of this conversation. The last exchange, each side quoted: the person said " +
+		cut(user) + "; you answered " + cut(assistant) + ".)\n\n"
 }
 
 // Usage is the agent's lifetime usage, summed over its segments' envelopes
@@ -329,12 +332,15 @@ func saveUsage(home, name string, u Usage) error {
 // its transcript, its lifetime usage and the conversation its next segment
 // would continue. The segments' receipts are kept. It refuses a running
 // agent, and holds the agent's lock while it works so none starts meanwhile.
+// The containers of a segment whose supervisor died still hold the session
+// volume, so they are swept first.
 func Reset(ctx context.Context, home, name string, d dockerx.Client) error {
 	owner, err := Acquire(home, name, ClientCLI)
 	if err != nil {
 		return err
 	}
 	defer owner.Release()
+	engine.SweepAbandoned(ctx, d, nil)
 	for _, v := range []string{SessionVolume(name), DataVolume(name)} {
 		if err := d.VolumeRemove(ctx, v); err != nil {
 			return fmt.Errorf("remove the %s agent's volume %s: %w", name, v, err)

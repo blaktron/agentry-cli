@@ -650,11 +650,11 @@ func TestASessionWhoseHarnessReportsNoTokensSaysSo(t *testing.T) {
 	})
 }
 
-// TestStartSessionRefusesAutonomousPlan: the session API only drives an
-// interactive plan.
+// TestStartSessionRefusesAutonomousPlan: the session API only drives a
+// conversational plan, interactive or persistent.
 func TestStartSessionRefusesAutonomousPlan(t *testing.T) {
 	p, f := fixture(t) // autonomous plan
-	if _, err := StartSession(context.Background(), f, p); err == nil || !strings.Contains(err.Error(), "not an interactive plan") {
+	if _, err := StartSession(context.Background(), f, p); err == nil || !strings.Contains(err.Error(), "not a conversational plan") {
 		t.Fatalf("got %v", err)
 	}
 }

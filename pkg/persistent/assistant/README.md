@@ -25,7 +25,7 @@ secret. When the application runs the Assistant:
 
 - **Its conversation is kept** on a volume of the agent's own, which the
   runner keeps between starts and removes only when you reset the agent
-  (`agentry agent reset assistant`). A second volume is kept for its files.
+  (`agentry agent reset assistant`). A second volume is made for its files.
 - **Each start is a segment**, with its own receipts and result envelope in
   the agent's folder under the runner home, and the conversation's record
   continues across segments.

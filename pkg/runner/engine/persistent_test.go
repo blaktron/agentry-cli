@@ -304,3 +304,43 @@ func TestPersistentSegmentReceipts(t *testing.T) {
 		t.Errorf("segment receipts:\n%s\nwant:\n%s", got, want)
 	}
 }
+
+// TestACarriedContextReachesTheHarnessAndNotTheUserTurn: the harness is
+// sent the carried context and the person's text; the user turn records the
+// text alone, and the events receipt records what was carried.
+func TestACarriedContextReachesTheHarnessAndNotTheUserTurn(t *testing.T) {
+	p, f, h := persistentFixture(t, "")
+	var prompts []string
+	h.onPrompt = func(text string) { prompts = append(prompts, text) }
+	s, err := StartSession(context.Background(), f, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	get, done := collect(s)
+	if err := s.(PersistentSession).SendCarrying(context.Background(), "(earlier context)\n\n", "and now?"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.End(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	<-done
+	if len(prompts) != 1 || prompts[0] != "(earlier context)\n\nand now?" {
+		t.Errorf("the harness was sent %q", prompts)
+	}
+	carried := false
+	for _, ev := range get() {
+		if ev.Kind == session.KindUserTurn && ev.Text != "and now?" {
+			t.Errorf("user turn = %q, want the person's text alone", ev.Text)
+		}
+		if ev.Kind == session.KindOther && strings.Contains(ev.Text, "earlier context") {
+			carried = true
+		}
+	}
+	if !carried {
+		t.Error("the carried context is in no event")
+	}
+	md, _ := os.ReadFile(filepath.Join(p.OutDir, "receipts", "transcript.md"))
+	if !strings.Contains(string(md), "## User\n\nand now?\n") {
+		t.Errorf("transcript.md does not show the person's text alone as theirs:\n%s", md)
+	}
+}

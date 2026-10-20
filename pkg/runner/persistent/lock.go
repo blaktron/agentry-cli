@@ -33,11 +33,15 @@ func (e *HeldError) Error() string {
 	if e.Holder == nil {
 		return fmt.Sprintf("the %s agent is already running under another process", e.Agent)
 	}
-	where := "agentry agent start"
-	if e.Holder.Client == ClientDesktop {
-		where = "Agentry Desktop"
+	return fmt.Sprintf("the %s agent is already running under %s (pid %d, since %s)", e.Agent, e.Holder.Where(), e.Holder.PID, e.Holder.Since.Local().Format("2006-01-02 15:04"))
+}
+
+// Where names the holder's client to a person.
+func (h Holder) Where() string {
+	if h.Client == ClientDesktop {
+		return "Agentry Desktop"
 	}
-	return fmt.Sprintf("the %s agent is already running under %s (pid %d, since %s)", e.Agent, where, e.Holder.PID, e.Holder.Since.Local().Format("2006-01-02 15:04"))
+	return "agentry agent start"
 }
 
 // errLockHeld is a lock another open file holds.

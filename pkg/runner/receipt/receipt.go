@@ -134,7 +134,9 @@ type Persistent struct {
 	Volumes      PersistentVolumes `json:"volumes"`
 }
 
-// PersistentVolumes names a persistent agent's two volumes.
+// PersistentVolumes names a persistent agent's two volumes: the harness's
+// conversation store, mounted for every segment, and the one made for the
+// agent's files.
 type PersistentVolumes struct {
 	Session string `json:"session"`
 	Data    string `json:"data"`

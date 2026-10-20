@@ -34,10 +34,11 @@ func newAgentCmd() *cobra.Command {
 		Short: "Start, chat with and stop the persistent agents, which keep their conversation between starts",
 		Long: "A persistent agent is a QuickAgent built into Agentry that the runner keeps\n" +
 			"between your conversations: you start it, chat with it, stop it, and when\n" +
-			"you start it again the conversation continues. Its conversation and its\n" +
-			"files live on two volumes of its own, which stopping it keeps and only\n" +
-			"`agentry agent reset` removes. Each start is a segment, with its own\n" +
-			"receipts and envelope in the agent's folder under the runner home.\n\n" +
+			"you start it again the conversation continues. Its conversation lives on a\n" +
+			"volume of its own, beside a second one made for its files; stopping it\n" +
+			"keeps both and only `agentry agent reset` removes them. Each start is a\n" +
+			"segment, with its own receipts and envelope in the agent's folder under\n" +
+			"the runner home.\n\n" +
 			"An agent runs in the background once started: `agentry agent start` returns\n" +
 			"when it is up, `chat` attaches this terminal to it, and leaving the chat\n" +
 			"leaves it running until `agentry agent stop`. It runs on the harness and\n" +
@@ -170,9 +171,7 @@ func newAgentListCmd() *cobra.Command {
 				state := st.State
 				if st.Holder != nil {
 					since = st.Holder.Since.Local().Format("2006-01-02 15:04")
-					if st.Holder.Client == persistent.ClientDesktop {
-						state += " (Agentry Desktop)"
-					}
+					state += " (" + st.Holder.Where() + ")"
 				}
 				if st.Status != nil {
 					segment = fmt.Sprint(st.Status.Segment)
@@ -239,11 +238,7 @@ func printAgentState(w io.Writer, st agentState) {
 		return
 	}
 	if h := st.Holder; h != nil {
-		where := "agentry agent start"
-		if h.Client == persistent.ClientDesktop {
-			where = "Agentry Desktop"
-		}
-		_, _ = fmt.Fprintf(w, "  run by:     %s (pid %d), since %s\n", where, h.PID, h.Since.Local().Format("2006-01-02 15:04"))
+		_, _ = fmt.Fprintf(w, "  run by:     %s (pid %d), since %s\n", h.Where(), h.PID, h.Since.Local().Format("2006-01-02 15:04"))
 	}
 	if s := st.Status; s != nil {
 		_, _ = fmt.Fprintf(w, "  segment:    %d (run %s), on %s with %s\n", s.Segment, s.Run, s.Adapter, s.Model)
@@ -344,6 +339,7 @@ func startSupervisor(cmd *cobra.Command, home string, a persistent.Agent, policy
 	if err != nil {
 		return engine.Classify(engine.ExitCLI, err)
 	}
+	_ = logf.Chmod(0o600) // a log an earlier start left keeps its mode otherwise
 	argv := []string{"agent", "supervise", a.Name}
 	if policyPath != "" {
 		abs, err := filepath.Abs(policyPath)
@@ -447,21 +443,35 @@ func newAgentSuperviseCmd() *cobra.Command {
 				return err
 			}
 			errOut := cmd.ErrOrStderr()
-			// The segment lives until it is stopped, not until a context of
-			// this command's ends: a signal stops it as a stop command does.
-			sv, err := persistent.Start(context.Background(), persistent.Options{
+			// A signal while the segment starts (a first start builds images)
+			// cancels the start, which tears down what it made; once it runs,
+			// a signal stops it as a stop command does. The segment lives
+			// until then, not until a context of this command's ends.
+			sig := make(chan os.Signal, 1)
+			signal.Notify(sig, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+			defer signal.Stop(sig)
+			startCtx, cancelStart := context.WithCancel(context.Background())
+			starting := make(chan struct{})
+			go func() {
+				select {
+				case s := <-sig:
+					_, _ = fmt.Fprintf(errOut, "%s: the %s agent's start is cancelled\n", s, a.Name)
+					cancelStart()
+				case <-starting:
+				}
+			}()
+			sv, err := persistent.Start(startCtx, persistent.Options{
 				Home: home, Agent: a, Client: persistent.ClientCLI,
 				Policy: pol, PolicySHA: sha, PolicyFile: &file, Build: version.Build(),
 				Docker: dockerx.New(), Stderr: errOut,
 			})
+			close(starting)
 			if err != nil {
+				cancelStart()
 				return err
 			}
 			st := sv.Status()
 			_, _ = fmt.Fprintf(errOut, "supervising the %s agent: segment %d, run %s, pid %d\n", a.Name, st.Segment, st.Run, st.PID)
-			sig := make(chan os.Signal, 1)
-			signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
-			defer signal.Stop(sig)
 			select {
 			case <-sv.Done():
 			case s := <-sig:
@@ -474,7 +484,7 @@ func newAgentSuperviseCmd() *cobra.Command {
 			return err
 		},
 	}
-	cmd.Flags().StringVar(&policyPath, "policy", "", "operator policy file")
+	cmd.Flags().StringVar(&policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml, created on first use)")
 	return cmd
 }
 

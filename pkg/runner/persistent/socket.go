@@ -70,7 +70,12 @@ func (s *Supervisor) listen() error {
 	if len(path) > maxSocketPath {
 		return fmt.Errorf("the %s agent's socket path %s is longer than a socket's name may be; use a shorter runner home", s.opts.Agent.Name, path)
 	}
+	// The folder is the runner's alone before the socket is made in it:
+	// MkdirAll leaves a folder that exists as it is.
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("the %s agent's socket: %w", s.opts.Agent.Name, err)
+	}
+	if err := os.Chmod(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("the %s agent's socket: %w", s.opts.Agent.Name, err)
 	}
 	_ = os.Remove(path)
@@ -131,7 +136,7 @@ func (s *Supervisor) serveConn(nc net.Conn) {
 		var cmd Command
 		dec := json.NewDecoder(strings.NewReader(sc.Text()))
 		dec.DisallowUnknownFields()
-		if err := dec.Decode(&cmd); err != nil || count(cmd) != 1 {
+		if err := dec.Decode(&cmd); err != nil || commandsSet(cmd) != 1 {
 			c.refuse(protocol.RefusedMalformed, "a command is one JSON object naming exactly one of attach, send, status or stop")
 			continue
 		}
@@ -173,7 +178,8 @@ func (s *Supervisor) serveConn(nc net.Conn) {
 	}
 }
 
-func count(c Command) int {
+// commandsSet is how many commands one line names.
+func commandsSet(c Command) int {
 	n := 0
 	for _, set := range []bool{c.Attach != nil, c.Send != nil, c.Status != nil, c.Stop != nil} {
 		if set {

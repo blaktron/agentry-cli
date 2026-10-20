@@ -17,6 +17,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/blaktron/agentry/pkg/manifest"
+
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
@@ -33,11 +35,11 @@ import (
 // autonomous one. The task text, if any, is the opening user turn.
 func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Session, error) {
 	if p.Plan == nil || !p.Plan.Conversational() || p.Plan.Harness.Session == nil {
-		return nil, Classify(ExitCompile, errors.New("not an interactive plan (compile with Mode interactive)"))
+		return nil, Classify(ExitCompile, errors.New("not a conversational plan (compile with Mode interactive, or persistent for a persistent agent)"))
 	}
 	// A persistent plan runs only as a segment of its agent, whose volumes
 	// keep the conversation; a segment is only ever a persistent plan's.
-	if (p.Plan.Mode == "persistent") != (p.Persistent != nil) {
+	if (p.Plan.Mode == string(manifest.ModePersistent)) != (p.Persistent != nil) {
 		return nil, Classify(ExitCompile, errors.New("a persistent plan runs only as a persistent agent's segment, and a segment only from a persistent plan"))
 	}
 	if p.Persistent != nil && (p.Persistent.Agent == "" || p.Persistent.SessionVolume == "" || p.Persistent.DataVolume == "") {
@@ -491,11 +493,18 @@ func (s *liveSession) startHarness(ctx context.Context, token string, rep *strin
 	s.signInSum = s.signInTokenSum()
 	s.lastActivity = time.Now()
 	if p.Persistent != nil {
-		s.conversation, s.resumed, s.resumeReason = conversationOf(drv, p.Plan.Harness.Adapter, p.Persistent.ContinueID)
+		// The reason can quote the harness's own error: it is masked like
+		// every receipt.
+		id, resumed, reason := conversationOf(drv, p.Plan.Harness.Adapter, p.Persistent.ContinueID)
+		s.conversation, s.resumed, s.resumeReason = id, resumed, s.redact.String(reason)
 		s.env.Persistent.Resumed, s.env.Persistent.ResumeReason = s.resumed, s.resumeReason
 	}
 	return nil
 }
+
+// noStoredConversation is the resume reason of a segment that was given no
+// stored conversation to continue.
+const noStoredConversation = "no stored conversation to continue"
 
 // notStartedReason is a segment's resume reason until its harness has
 // started: a segment that fails before then continued nothing.
@@ -507,13 +516,10 @@ const notStartedReason = "the segment ended before its harness started"
 func conversationOf(drv adapter.SessionDriver, adapterName, continueID string) (id string, resumed bool, reason string) {
 	c, ok := drv.(adapter.Continuing)
 	if !ok {
-		if continueID == "" {
-			return "", false, "the agent's first segment: there was no earlier conversation to continue"
-		}
 		return "", false, "the " + adapterName + " adapter does not continue a stored conversation in this version"
 	}
 	if continueID == "" {
-		return c.ConversationID(), false, "the agent's first segment: there was no earlier conversation to continue"
+		return c.ConversationID(), false, noStoredConversation
 	}
 	resumed, reason = c.Continued()
 	return c.ConversationID(), resumed, reason
@@ -528,6 +534,7 @@ func (s *liveSession) Conversation() (id string, resumed bool, reason string) {
 
 // SetResumeReason implements PersistentSession.
 func (s *liveSession) SetResumeReason(reason string) {
+	reason = s.redact.String(reason)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.resumeReason = reason
@@ -548,6 +555,10 @@ type PersistentSession interface {
 	// SetResumeReason replaces the envelope's account of a segment that did
 	// not continue its conversation, with what the supervisor did instead.
 	SetResumeReason(reason string)
+	// SendCarrying is Send with earlier context ahead of the person's text:
+	// the harness is sent both, the user turn records the person's text
+	// alone, and the events receipt records what was carried.
+	SendCarrying(ctx context.Context, carried, text string) error
 }
 
 // PersistentLabel keys a persistent agent's volumes by the agent's name. It
@@ -1034,7 +1045,18 @@ func (s *liveSession) Send(ctx context.Context, text string) error {
 	return s.turn(ctx, text, false)
 }
 
+// SendCarrying implements PersistentSession.
+func (s *liveSession) SendCarrying(ctx context.Context, carried, text string) error {
+	return s.turnCarrying(ctx, carried, text, false)
+}
+
 func (s *liveSession) turn(ctx context.Context, text string, synthetic bool) error {
+	return s.turnCarrying(ctx, "", text, synthetic)
+}
+
+// turnCarrying is one turn whose prompt is carried, then text; the user turn
+// records text, and a carried context is recorded as an event of its own.
+func (s *liveSession) turnCarrying(ctx context.Context, carried, text string, synthetic bool) error {
 	s.turnMu.Lock()
 	defer s.turnMu.Unlock()
 	s.mu.Lock()
@@ -1064,6 +1086,9 @@ func (s *liveSession) turn(ctx context.Context, text string, synthetic bool) err
 	if len(notices) > 0 {
 		text = strings.Join(notices, "\n") + "\n\n" + text
 	}
+	if carried != "" {
+		s.emit(session.Event{Kind: session.KindOther, Text: "carried into this turn: " + carried})
+	}
 	s.emit(session.Event{Kind: session.KindUserTurn, Text: text, Synthetic: synthetic})
 	turnCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -1082,7 +1107,7 @@ func (s *liveSession) turn(ctx context.Context, text string, synthetic bool) err
 		case <-turnCtx.Done():
 		}
 	}()
-	res, err := s.drv.Prompt(turnCtx, text)
+	res, err := s.drv.Prompt(turnCtx, carried+text)
 	s.syncPump()
 	// The turn is over before its last event is seen.
 	s.mu.Lock()
