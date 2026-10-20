@@ -39,10 +39,19 @@ the description before the run starts and checks the finished draft.
 
 When you give a draft your knowledge packs, it also has the three knowledge
 tools every run with a pack has (`knowledge_list`, `knowledge_search`,
-`knowledge_read`). It reads the packs before the web, and never ships them.
-Nothing of a pack reaches its model unscanned: a pack Agentry scanned is read
-as that scan left it, and any other pack is scanned by AI Review before the
-draft starts. What a scan flagged is withheld, and the notes name it.
+`knowledge_read`). It reads the packs before the web. Nothing of a pack
+reaches its model unscanned: a pack Agentry scanned is read as that scan left
+it, and any other pack is scanned by AI Review before the draft starts. What a
+scan flagged is withheld, and the notes name it.
+
+A draft ships only the packs you chose to ship (`agentry draft --ship`). The
+task names them, so the Drafter writes instructions that consult each at
+`/knowledge/<name>`, and the draft's manifest lists exactly those packs: any
+other `knowledge.ships` entry is removed and the notes say so, and a chosen
+pack the Drafter left out is added. The package carries each shipped pack whole,
+under `knowledge/<name>/`, whatever AI Review withheld from the Drafter's copy.
+A shipped pack is part of the release, readable by everyone who can download
+it, and `agentry publish` asks you to confirm each one.
 
 Like every run, a draft also has a scratch folder for its working notes,
 private to the run and deleted with it, and `grep` and `glob` to search that

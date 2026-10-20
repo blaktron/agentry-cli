@@ -260,7 +260,7 @@ func Repaired(first *Draft, env *receipt.Envelope, outDir string, r RepairReport
 	if strings.TrimSpace(d.Instructions) == "" && d.ManifestError == "" {
 		d.ManifestError = "the Drafter wrote no instructions (AGENT.md)"
 	}
-	d.Manifest, d.corrections = Correct(d.Manifest)
+	d.Manifest, d.corrections = Correct(d.Manifest, d.chosenShips...)
 	var s strings.Builder
 	s.WriteString("## Repaired once\n\n" + repairWordsOf[r.by()].repaired + "\n\n")
 	for _, line := range reportLines(append(slices.Clone(r.Rules), r.Flagged...), maxNoteLines, maxNoteLine) {

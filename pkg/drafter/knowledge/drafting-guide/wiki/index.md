@@ -6,7 +6,7 @@ summary: Every page in drafting-guide, one line each, by section. Generated; do 
 
 # drafting-guide
 
-19 pages.
+20 pages.
 
 ## Draft
 
@@ -25,7 +25,8 @@ summary: Every page in drafting-guide, one line each, by section. Generated; do 
 - [Commands](manifest/exec.md) — When a QuickAgent declares commands at all (computation the tools cannot do, never reading its inputs), the base commands every run provides, where a command can write, what a run In Agentry provides, and Unsafe Mode on the desktop.
 - [Input files](manifest/inputs.md) — How the person's files reach a run, a repository or a file at an address that the runner fetches for it, the two views the input tools read them in, the manifest's inputs block that says what a QuickAgent takes and which view it reads first, the cases and what each declares, and how a draft asks for its files.
 - [The intake and the guide](manifest/intake-and-guide.md) — The questions a QuickAgent asks before each run (types, a repository, a file at an address, a site to test and a target host among them, ids, when to ask at all) and the guide a person reads before a run (overview, prepare, files, task, connect), with their bounds and the fields to leave out.
-- [The person's knowledge at run time](manifest/knowledge-accepts.md) — When a QuickAgent asks the person to attach a knowledge pack of their own at run time (knowledge.accepts), how to write its prompt, and what goes into the instructions instead. A draft never ships a pack.
+- [The person's knowledge at run time](manifest/knowledge-accepts.md) — When a QuickAgent asks the person to attach a knowledge pack of their own at run time (knowledge.accepts), how to write its prompt, and what goes into the instructions instead. A draft ships only the packs the person chose to ship.
+- [Writing for a shipped pack](manifest/knowledge-ships.md) — When the person chose to ship a knowledge pack with the QuickAgent, what that changes in the manifest and the notes, and how to write instructions that consult the pack at /knowledge/<name>: when to look, how to cite its pages, and how to read its procedure pages as reference.
 - [The manifest](manifest/manifest.md) — Every field of the manifest a draft returns, what to write in each, and the rules' bounds by value. Check the draft against the bounds before you return it.
 - [Run modes](manifest/run-modes.md) — Autonomous and interactive runs, when a draft adds interactive, what a conversation can and cannot do, and the opening line.
 - [Keys](manifest/secrets.md) — How a QuickAgent declares the keys it needs (its own for fetch, a server's on that server), how to mark each one optional or required, how a run gets them without the model seeing them, and what a run does without an optional one.

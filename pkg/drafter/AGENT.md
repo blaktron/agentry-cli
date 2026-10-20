@@ -89,8 +89,13 @@ What the guide states is also checked after you answer, whatever you read.
    packs: each pack's index, then the pages the task needs, before the web.
    List every page you used in `sources` as `pack:<name>/<page>`
    (`pack:runbooks/topics/rollback.md`), and a source document a page cites
-   as `[src: doc:<file>]` as `pack:<name>/sources/<file>`. Pages:
-   `manifest/knowledge-accepts.md`.
+   as `[src: doc:<file>]` as `pack:<name>/sources/<file>`. When the task also
+   says the person chose to ship a pack with the QuickAgent, every run of it
+   reads that pack at `/knowledge/<name>`: declare it in `knowledge.ships`,
+   add `knowledge/**` to `publish.include`, write the instructions to consult
+   it, and say in one note that it ships. A pack the task does not name as
+   shipped is never shipped. Pages: `manifest/knowledge-accepts.md`,
+   `manifest/knowledge-ships.md`.
 1. **Restate the task and decide.** In a sentence: what the QuickAgent
    does, from what input to what output, and a default for each point the
    description leaves open. Pages: `runtime/how-a-run-works.md`.

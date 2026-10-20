@@ -121,6 +121,13 @@ func personalKey(env, source, provider string) (string, error) {
 // caller renders and checks only a draft whose ManifestError is empty. An
 // answer that is not a draft is exit 17.
 func Finish(env *receipt.Envelope, outDir string, desc webscan.Result, ref, build string) (*Draft, error) {
+	return FinishShipping(env, outDir, desc, ref, build, nil)
+}
+
+// FinishShipping is Finish for a draft whose person chose to ship the packs
+// named in ships: its manifest ships exactly those (Correct), and every
+// repair of it does too.
+func FinishShipping(env *receipt.Envelope, outDir string, desc webscan.Result, ref, build string, ships []string) (*Draft, error) {
 	d, err := Parse(env.Result)
 	if err != nil {
 		return nil, engine.Classify(engine.ExitOutputSchema, err)
@@ -136,7 +143,8 @@ func Finish(env *receipt.Envelope, outDir string, desc webscan.Result, ref, buil
 		d.ManifestError = "the Drafter wrote no instructions (AGENT.md)"
 	}
 	d.ownNotes = d.Notes
-	d.Manifest, d.corrections = Correct(d.Manifest)
+	d.chosenShips = slices.Clone(ships)
+	d.Manifest, d.corrections = Correct(d.Manifest, ships...)
 	d.composeNotes("")
 	return d, nil
 }

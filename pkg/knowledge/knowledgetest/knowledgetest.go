@@ -24,6 +24,13 @@ var DefaultFiles = map[string]string{
 // named name under a temporary directory, and returns it loaded.
 func Make(t testing.TB, name string, files map[string]string) *knowledge.Pack {
 	t.Helper()
+	return MakeCapped(t, name, files, 0)
+}
+
+// MakeCapped is Make for a pack held to maxBytes (a pack kept on this
+// computer may hold more than Agentry keeps); zero is Agentry's cap.
+func MakeCapped(t testing.TB, name string, files map[string]string, maxBytes int64) *knowledge.Pack {
+	t.Helper()
 	if files == nil {
 		files = DefaultFiles
 	}
@@ -48,7 +55,7 @@ func Make(t testing.TB, name string, files map[string]string) *knowledge.Pack {
 		t.Fatal(err)
 	}
 	dir := filepath.Join(t.TempDir(), name)
-	res, err := knowledge.Apply(dir, out, knowledge.ApplyOptions{Name: name, Now: time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC)})
+	res, err := knowledge.Apply(dir, out, knowledge.ApplyOptions{Name: name, Now: time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC), MaxBytes: maxBytes})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -3,7 +3,7 @@ title: Start here
 type: guide
 summary: What this guide is, that it is yours and not the person's, and which page to read at each step of a draft.
 sources: [web:https://docs.secureagentry.net/runner/]
-updated: 2026-10-12
+updated: 2026-10-20
 ---
 
 # Start here
@@ -26,7 +26,7 @@ This is the Drafter's drafting guide, the knowledge pack `drafting-guide`. It sh
 | Testing a website the person names (pages, forms, links, layout) | [A browser](../manifest/browser.md) |
 | Writing the instructions | [Writing the instructions](../draft/instructions.md), and [Worked drafts](../draft/examples.md) for whole examples |
 | Declaring the contract | [The manifest](../manifest/manifest.md), then [Commands](../manifest/exec.md), [Keys](../manifest/secrets.md) and [Input files](../manifest/inputs.md) as the task needs them |
-| Writing the intake and the guide | [The intake and the guide](../manifest/intake-and-guide.md); [Run modes](../manifest/run-modes.md) for a conversation; [The person's knowledge at run time](../manifest/knowledge-accepts.md) when a run needs the person's own pack |
+| Writing the intake and the guide | [The intake and the guide](../manifest/intake-and-guide.md); [Run modes](../manifest/run-modes.md) for a conversation; [The person's knowledge at run time](../manifest/knowledge-accepts.md) when a run needs the person's own pack; [Writing for a shipped pack](../manifest/knowledge-ships.md) when the task says the person chose to ship a pack |
 | Before you return | the bounds on [The manifest](../manifest/manifest.md#the-rules-bounds), and [What checks a draft](../draft/review.md) |
 
 A rule the guide states is also checked after you answer. A draft that breaks one gets one repair turn, and a draft that still breaks it carries a note for the person. Reading the page first is cheaper than the repair [src: web:https://docs.secureagentry.net/runner/].

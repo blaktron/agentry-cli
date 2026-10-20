@@ -10,6 +10,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -37,6 +38,7 @@ const (
 // newPublishCmd builds the publish command.
 func newPublishCmd() *cobra.Command {
 	var tag string
+	var yes bool
 	cmd := &cobra.Command{
 		Use:   "publish [dir]",
 		Short: "Submit a version for publication and follow the pipeline to a verdict",
@@ -47,22 +49,31 @@ func newPublishCmd() *cobra.Command {
 			"server re-validates and re-packs — client packing is never trusted.\n\n" +
 			"Progress streams from the registry (stage by stage) until published, rejected,\n" +
 			"or needs_review; registries without the stream are polled every 2s.\n" +
-			"Exits non-zero on rejection.",
+			"Exits non-zero on rejection.\n\n" +
+			"A release that ships knowledge packs (`agentry knowledge ship`) makes them readable by everyone who can\n" +
+			"download it: anyone, when the QuickAgent is public. The pack stays in that version for good, and retiring\n" +
+			"or deleting the QuickAgent later does not recall copies already downloaded. So publish lists each shipped\n" +
+			"pack with its size and asks you to confirm it, one pack at a time; check that none holds private data\n" +
+			"(names, emails, customer records, internal hostnames, keys). --yes answers for scripts. The upload\n" +
+			"carries the confirmation with each pack's origin, and the registry refuses a release that ships a pack\n" +
+			"without it. A release submitted with --tag is asked the same, and the registry records it as published\n" +
+			"from a tag.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir := "."
 			if len(args) == 1 {
 				dir = args[0]
 			}
-			return runPublish(cmd, dir, tag)
+			return runPublish(cmd, dir, tag, yes)
 		},
 	}
 	cmd.Flags().StringVar(&tag, "tag", "", "existing repo tag vX.Y.Z to submit (git-tag source)")
+	cmd.Flags().BoolVar(&yes, "yes", false, "confirm every knowledge pack the release ships, without asking (scripts)")
 	return cmd
 }
 
 // runPublish submits the version and polls to a verdict.
-func runPublish(cmd *cobra.Command, dir, tag string) error {
+func runPublish(cmd *cobra.Command, dir, tag string, yes bool) error {
 	m, err := readWorkspaceManifest(dir)
 	if err != nil {
 		return err
@@ -84,17 +95,20 @@ func runPublish(cmd *cobra.Command, dir, tag string) error {
 
 	var resp *apiclient.SubmitVersionResponse
 	if tag != "" {
+		if err := confirmTag(cmd, dir, m, client, yes); err != nil {
+			return err
+		}
 		_, _ = fmt.Fprintf(out, "submitting %s/%s tag %s (git-tag source)\n", m.Namespace, m.Name, tag)
 		resp, err = client.SubmitVersionWithResponse(cmd.Context(), m.Namespace, m.Name,
 			apiclient.SubmitVersionJSONRequestBody{Tag: tag})
 	} else {
-		resp, err = submitUpload(cmd.Context(), client, out, dir, m)
+		resp, err = submitUpload(cmd.Context(), client, out, dir, m, publishShipping(cmd, client, dir, m, reg, yes))
 	}
 	if err != nil {
 		return err
 	}
 	if resp.JSON202 == nil {
-		return apiProblem("submit version", resp.StatusCode(), resp.ApplicationproblemJSONDefault, resp.Body)
+		return namePacks(apiProblem("submit version", resp.StatusCode(), resp.ApplicationproblemJSONDefault, resp.Body), resp.Body)
 	}
 	v := resp.JSON202
 	_, _ = fmt.Fprintf(out, "version %s accepted (status %s) — waiting for the pipeline verdict\n", v.Version, v.Status)
@@ -105,7 +119,7 @@ func runPublish(cmd *cobra.Command, dir, tag string) error {
 // submitUpload packs the deterministic archive locally (WalkWorkspace →
 // ResolveInclude → BuildArchive) and POSTs it as multipart with the
 // client-computed digest for the server cross-check.
-func submitUpload(ctx context.Context, client *apiclient.ClientWithResponses, out io.Writer, dir string, m *manifest.Manifest) (*apiclient.SubmitVersionResponse, error) {
+func submitUpload(ctx context.Context, client *apiclient.ClientWithResponses, out io.Writer, dir string, m *manifest.Manifest, confirm confirmShipping) (*apiclient.SubmitVersionResponse, error) {
 	var archive bytes.Buffer
 	info, err := localrun.PackWorkspace(dir, m, &archive)
 	if err != nil {
@@ -113,6 +127,26 @@ func submitUpload(ctx context.Context, client *apiclient.ClientWithResponses, ou
 	}
 	if err := shippedPacksIncluded(m, info.Files); err != nil {
 		return nil, err
+	}
+	if err := stripSidecar(info.Files); err != nil {
+		return nil, err
+	}
+	// The registry takes what the archive packs, whatever the body adds to
+	// it; a release past the cap is refused before anything is asked.
+	if archive.Len() > maxUploadBytes {
+		return nil, uploadTooLarge(archive.Len())
+	}
+	// A release that ships packs is confirmed by the publisher before it is
+	// uploaded, pack by pack.
+	var shipping *shippingPart
+	if packs := m.ShippedPacks(); len(packs) > 0 {
+		if confirm == nil {
+			return nil, errors.New("this release ships knowledge packs and no confirmation was asked for them")
+		}
+		var err error
+		if shipping, err = confirm(packs); err != nil {
+			return nil, err
+		}
 	}
 	_, _ = fmt.Fprintf(out, "submitting %s/%s %s (cli-upload source): %d file(s), %d bytes, %s\n",
 		m.Namespace, m.Name, m.Version, len(info.Files), info.Size, info.Digest)
@@ -129,12 +163,16 @@ func submitUpload(ctx context.Context, client *apiclient.ClientWithResponses, ou
 	if err := mw.WriteField("digest", info.Digest); err != nil {
 		return nil, fmt.Errorf("write digest field: %w", err)
 	}
+	if shipping != nil {
+		if err := shipping.writeTo(mw); err != nil {
+			return nil, err
+		}
+	}
 	if err := mw.Close(); err != nil {
 		return nil, fmt.Errorf("finish multipart body: %w", err)
 	}
 	if body.Len() > maxUploadBytes {
-		return nil, fmt.Errorf("this release's upload is %s compressed; the registry takes at most %s through an upload (the edge's request cap) — publish it from its tag instead: push the tag to the registry's git remote, which publishes it when the agent auto-publishes tags, or push it and run agentry publish --tag vX.Y.Z",
-			byteSize(int64(body.Len())), byteSize(maxUploadBytes))
+		return nil, uploadTooLarge(body.Len())
 	}
 
 	key, err := newIdempotencyKey()
@@ -169,6 +207,12 @@ func submitUpload(ctx context.Context, client *apiclient.ClientWithResponses, ou
 		}
 	}
 	return nil, last
+}
+
+// uploadTooLarge is the refusal of a release past what an upload takes.
+func uploadTooLarge(n int) error {
+	return fmt.Errorf("this release's upload is %s compressed; the registry takes at most %s through an upload (the edge's request cap) — publish it from its tag instead: push the tag to the registry's git remote, which publishes it when the agent auto-publishes tags, or push it and run agentry publish --tag vX.Y.Z",
+		byteSize(int64(n)), byteSize(maxUploadBytes))
 }
 
 // newIdempotencyKey is one publish invocation's key: random, so two

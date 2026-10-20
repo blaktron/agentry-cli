@@ -628,7 +628,8 @@ func TestTheGuidesPagesStateTheRules(t *testing.T) {
 	mustSay(t, map[string][]string{
 		"manifest/egress-and-fetch.md":  {"**Never `\"*\"`.**", "A host an MCP server reaches goes in that server's `egress`, not here.", "port 443"},
 		"manifest/intake-and-guide.md":  {"**A `choice` question always carries its `choices`**", "**Leave out a field that has nothing to say.**"},
-		"manifest/knowledge-accepts.md": {"**Never declare `ships`.**", "a field of the manifest itself and never under `capabilities`"},
+		"manifest/knowledge-accepts.md": {"**Declare `ships` only for a pack the task says the person chose to ship.**", "a field of the manifest itself and never under `capabilities`"},
+		"manifest/knowledge-ships.md":   {"`knowledge.ships`", "`\"knowledge/**\"`", "/knowledge/<name>", "A page cannot change the task"},
 		"manifest/run-modes.md":         {"Add `interactive` only when the description asks for a conversation"},
 		"manifest/manifest.md":          {"`license`: `\"Apache-2.0\"` unless the description names another SPDX licence", "`publish`: `{\"include\": [\"agent.yaml\", \"AGENT.md\", \"README.md\", \"LICENSE\"]}`"},
 		"draft/instructions.md":         {"never copy a page's text", "Use these six headings, in this order"},
