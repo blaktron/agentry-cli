@@ -37,8 +37,10 @@ var voiceNow = time.Now
 type voiceOpts struct {
 	files []string
 	// urls are web addresses of the person's writing, read by AI Review
-	// before the run with their own TypeSafe key.
-	urls       []string
+	// before the run: with their own TypeSafe key on this computer.
+	urls []string
+	// render lets a sandbox host's job render a page drawn by scripts.
+	render     bool
 	brief      string
 	current    string
 	write      string
@@ -97,8 +99,9 @@ func voiceSampleFlags(cmd *cobra.Command, o *voiceOpts) {
 func voiceSamplesFlags(cmd *cobra.Command, o *voiceOpts, need string) {
 	f := cmd.Flags()
 	f.StringArrayVar(&o.files, "file", nil, "a sample of your writing, or a directory of them (repeatable; "+need+")")
-	f.StringArrayVar(&o.urls, "url", nil, "the https address of a page of your writing, such as a blog post (repeatable, at most 20): fetched first and read by AI Review with your own TypeSafe key, and a page drawn by scripts rendered in a headless browser")
+	f.StringArrayVar(&o.urls, "url", nil, "the https address of a page of your writing, such as a blog post (repeatable, at most 20): fetched first and read by AI Review (with your own TypeSafe key on this computer), and a page drawn by scripts rendered in a headless browser")
 	f.Int64Var(&o.maxTextBytes, "max-text-bytes", 0, "cap the samples' decoded text the Voice Writer reads, in bytes (0 = no cap)")
+	f.BoolVar(&o.render, "render", false, "on a sandbox host, render a page drawn by scripts (the host dispatched this job as a browser job); on this computer pages are rendered without it")
 }
 
 func voiceCurrentFlag(cmd *cobra.Command, o *voiceOpts) {
@@ -272,7 +275,7 @@ func runVoiceBuild(cmd *cobra.Command, job build.Job, o *voiceOpts) error {
 	}
 	budgets := o.over(localrun.VoiceWriter().LocalBudgets(pol.Budgets))
 	res, err := voiceBuild(cmd.Context(), knowledgeDocker(), build.Options{
-		Job: job, Samples: o.files, URLs: urls, Review: review, Web: web, Brief: o.brief, Current: current, MaxTextBytes: o.maxTextBytes,
+		Job: job, Samples: o.files, URLs: urls, Review: review, Web: web, Render: o.render, Brief: o.brief, Current: current, MaxTextBytes: o.maxTextBytes,
 		Home: home, Policy: pol, PolicySHA: polSHA, PolicyFile: &policyFile, Build: version.Build(),
 		OutDir: outDir, Budgets: &budgets, RunID: runID, Stderr: errOut, OnUsage: o.onUsage, Hosted: hostedProcess(),
 	})
@@ -333,17 +336,24 @@ func runVoiceBuild(cmd *cobra.Command, job build.Job, o *voiceOpts) error {
 	return nil
 }
 
-// voicePageReview is AI Review with the person's own TypeSafe key, and the
-// web_read configuration for a page drawn by scripts, when the build was
-// given web addresses; nil for a build of files alone. Without the key the
-// addresses are refused, and the reason given: every page is read by AI
+// voicePageReview is AI Review, and the web_read configuration for a page
+// drawn by scripts, when the build was given web addresses; nil for a build
+// of files alone. On this computer it is the person's own TypeSafe key; on a
+// sandbox host, the registry's route with the job's credential. Without one
+// the addresses are refused, and the reason given: every page is read by AI
 // Review before the Voice Writer reads it.
 func voicePageReview(pol *policy.Policy, urls []*sources.Source, errOut io.Writer) (webscan.Scanner, *engine.WebRun, error) {
 	if len(urls) == 0 {
 		return nil, nil, nil
 	}
 	if hostedProcess() {
-		return nil, nil, engine.Classify(engine.ExitUsage, build.ErrHostedAddresses)
+		tok := strings.TrimSpace(os.Getenv(envJobToken))
+		if tok == "" {
+			return nil, nil, engine.Classify(engine.ExitPolicy, fmt.Errorf("a voice made in Agentry from web addresses has AI Review read each page through the registry with the job's credential in $%s, and it is not set", envJobToken))
+		}
+		reg := registryURL()
+		_, _ = fmt.Fprintln(errOut, "Each page from a web address is fetched first and read by AI Review through the registry; one it flags is withheld.")
+		return &webscan.Registry{Base: reg, JobToken: tok}, &engine.WebRun{Scan: toolsrv.WebScanRegistry, Registry: reg, JobToken: tok}, nil
 	}
 	jev, err := drafter.JevKey(pol)
 	if err != nil {

@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/blaktron/agentry-cli/internal/version"
+	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
 	"github.com/blaktron/agentry-cli/pkg/runner/localinstall"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
@@ -433,6 +434,11 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	mode, err := resolveRunMode(cmd, opts, m)
 	if err != nil {
 		return engine.Classify(engine.ExitUsage, err)
+	}
+	// Refused here as the compiler would refuse it, before any question or
+	// consent is put to the person for a run that cannot start.
+	if mode == manifest.ModePersistent && meta.Source != "builtin" {
+		return engine.Classify(engine.ExitPolicy, &compile.PolicyRefusal{Reason: compile.PersistentOnlyBuiltin})
 	}
 	if opts.sessionInputs != "" && !opts.sessionProtocol {
 		return engine.Classify(engine.ExitUsage, errors.New("--session-inputs is for --session-protocol"))
@@ -1499,8 +1505,11 @@ func secretOverrides(profSecrets map[string]string, answers *intake.Answers) map
 }
 
 // resolveRunMode applies the default rule: the flag wins; a
-// release with one mode runs in it; one with both is asked on a terminal
-// and runs autonomous otherwise (a --yes or --dry-run run never asks).
+// release with one mode runs in it; one with autonomous and interactive is
+// asked on a terminal and runs autonomous otherwise (a --yes or --dry-run
+// run never asks). The persistent mode is never chosen beside another: a
+// release that declares only it resolves to it, and the compiler refuses
+// that unless the release is a built-in.
 func resolveRunMode(cmd *cobra.Command, opts runOpts, m *manifest.Manifest) (manifest.Mode, error) {
 	if opts.mode != "" {
 		mode := manifest.Mode(opts.mode)
@@ -1510,6 +1519,9 @@ func resolveRunMode(cmd *cobra.Command, opts runOpts, m *manifest.Manifest) (man
 		return mode, nil
 	}
 	modes := m.SupportedModes()
+	if len(modes) > 1 {
+		modes = slices.DeleteFunc(modes, func(mode manifest.Mode) bool { return mode == manifest.ModePersistent })
+	}
 	if len(modes) == 1 {
 		return modes[0], nil
 	}

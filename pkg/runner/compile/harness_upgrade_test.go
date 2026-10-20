@@ -107,7 +107,7 @@ func TestASavedCustomHarnessPinIsPreserved(t *testing.T) {
 			}, t.TempDir())
 			if c.refused {
 				var refusal *PolicyRefusal
-				if !errors.As(err, &refusal) || !strings.Contains(err.Error(), "images.harnessDockerAgent") || !strings.Contains(err.Error(), "schema 16") || !strings.Contains(err.Error(), "update") {
+				if !errors.As(err, &refusal) || !strings.Contains(err.Error(), "images.harnessImages.docker-agent") || !strings.Contains(err.Error(), "schema 16") || !strings.Contains(err.Error(), "update") {
 					t.Fatalf("known incompatible custom pin must be refused with a remedy, got %v", err)
 				}
 				return

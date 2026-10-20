@@ -168,7 +168,7 @@ func TestAVoiceFromWebAddresses(t *testing.T) {
 	}
 	enforced := res.Envelope.CapabilitiesEnforced
 	for key, want := range map[string]string{
-		"source.url-1": "AI Review read its text, with the person's own key, before the run and passed it",
+		"source.url-1": "AI Review read its text before the run and passed it",
 		"source.url-2": "the Voice Writer reads it with web_read, rendered",
 		"source.url-3": "withheld from the Voice Writer: AI Review did not pass it",
 		"source.url-4": "withheld from the Voice Writer: its text is drawn by scripts, and an address with a query",
@@ -210,8 +210,8 @@ func TestAVoiceFromAPostReadBeforeTheRunHasNoWebTools(t *testing.T) {
 func TestAddressesAreRefusedWithoutTheirReview(t *testing.T) {
 	srcs, _ := ParseURLs([]string{"https://blog.example.com/posts/short"})
 	for name, edit := range map[string]func(*Options){
-		"no key":         func(o *Options) { o.Review, o.Web = nil, nil },
-		"a sandbox host": func(o *Options) { o.Hosted = true },
+		"no key":               func(o *Options) { o.Review, o.Web = nil, nil },
+		"no key or credential": func(o *Options) { o.Web = &engine.WebRun{Scan: toolsrv.WebScanJev} },
 	} {
 		t.Run(name, func(t *testing.T) {
 			fx := newFixture(t, Create, written)
@@ -361,5 +361,38 @@ func TestAPagesFileNoDecoderReadsIsNotListed(t *testing.T) {
 	}
 	if line := res.Envelope.CapabilitiesEnforced["source.url-1"]; !strings.Contains(line, "withheld from the Voice Writer: no decoder could read it") {
 		t.Fatalf("the receipt line %q", line)
+	}
+}
+
+// TestAHostedVoiceReadsPagesThroughItsScannerAndRendersOnlyWhenAsked: on a
+// sandbox host the pages are read by the scanner the host gave (the
+// registry's, with the job's credential) and need no key of the person's;
+// a page drawn by scripts is withheld unless the host dispatched the job
+// as a browser job, and read with web_read when it did.
+func TestAHostedVoiceReadsPagesThroughItsScannerAndRendersOnlyWhenAsked(t *testing.T) {
+	for _, render := range []bool{false, true} {
+		fx := newFixture(t, Create, written)
+		fx.opts.Samples = nil
+		srcs, _ := ParseURLs([]string{"https://blog.example.com/posts/short", "https://app.example.com/essay"})
+		rv := &reviewer{}
+		fx.opts.URLs, fx.opts.Review, fx.opts.Hosted, fx.opts.Render = srcs, rv, true, render
+		fx.opts.Web = &engine.WebRun{Scan: toolsrv.WebScanRegistry, Registry: "https://registry.example", JobToken: "agyj_not-a-real-token"}
+		playFetch(t, fx.fake, "url-1", "short.html", richPage)
+		playFetch(t, fx.fake, "url-2", "essay.html", shellPage)
+		res, err := Build(context.Background(), fx.fake, fx.opts)
+		if err != nil {
+			t.Fatalf("render %v: %v", render, err)
+		}
+		if !strings.Contains(strings.Join(rv.read(), "\n"), "I write the way I talk.") {
+			t.Errorf("render %v: the host's scanner did not read the post", render)
+		}
+		page := res.Pages[1]
+		_, rendered := res.Envelope.CapabilitiesEnforced["web.render"]
+		switch {
+		case !render && (page.Rendered || !strings.Contains(page.Withheld, "this host was not asked to render pages") || rendered):
+			t.Errorf("without render: %+v, web.render %v", page, rendered)
+		case render && (!page.Rendered || page.Withheld != "" || !rendered):
+			t.Errorf("with render: %+v, web.render %v", page, rendered)
+		}
 	}
 }

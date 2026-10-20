@@ -77,7 +77,8 @@ func TestACostBudgetIsRefusedBesideAModelSignIn(t *testing.T) {
 }
 
 // A harness image is pinned by digest or by the artifact it is built
-// from, never by a tag; docker-agent's stays images.harnessDockerAgent.
+// from, never by a tag; docker-agent's entry is resolved by Load, so one
+// left in the map is refused.
 func TestHarnessImagesArePinned(t *testing.T) {
 	for _, c := range []struct {
 		name string

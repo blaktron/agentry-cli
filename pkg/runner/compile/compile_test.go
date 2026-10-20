@@ -876,6 +876,43 @@ func TestCompileRefusesUndeclaredMode(t *testing.T) {
 	}
 }
 
+// TestPersistentReleaseRefusedOutsideBuiltins: a release run in the
+// persistent mode from the registry or a local folder is a policy refusal
+// (exit 11) before anything is written; a built-in passes that gate, and no
+// adapter compiles the mode yet.
+func TestPersistentReleaseRefusedOutsideBuiltins(t *testing.T) {
+	m := parseManifest(t, strings.Replace(pureTextYAML, "modes: [autonomous]", "modes: [autonomous, persistent]", 1))
+	ws := workspaceFor(t, m, nil)
+	in := func(source string) Inputs {
+		return Inputs{
+			Manifest: m, Mode: manifest.ModePersistent, Digest: "sha256:x", Source: source, WorkspaceDir: ws,
+			Policy: testPolicy(), PolicySHA: "s", RunnerImage: "agentry-runner:test",
+		}
+	}
+	for _, source := range []string{"registry", "local", ""} {
+		planDir := t.TempDir()
+		_, err := Compile(in(source), planDir)
+		var refusal *PolicyRefusal
+		if !errors.As(err, &refusal) || refusal.Reason != PersistentOnlyBuiltin {
+			t.Fatalf("source %q: err = %v, want the persistent refusal", source, err)
+		}
+		if entries, _ := os.ReadDir(planDir); len(entries) != 0 {
+			t.Errorf("source %q: the refusal wrote %d entries into the plan dir", source, len(entries))
+		}
+	}
+	_, err := Compile(in("builtin"), t.TempDir())
+	var refusal *PolicyRefusal
+	if err == nil || errors.As(err, &refusal) || !strings.Contains(err.Error(), "run mode") {
+		t.Fatalf("builtin: err = %v, want the adapter's unknown run mode", err)
+	}
+	// The same release runs autonomous from any source.
+	auto := in("registry")
+	auto.Mode = manifest.ModeAutonomous
+	if _, err := Compile(auto, t.TempDir()); err != nil {
+		t.Fatalf("autonomous: %v", err)
+	}
+}
+
 // TestSessionBudgetsFollowPolicyAndManifestHint: the plan's session caps
 // are the operator's, and a manifest may only shorten the idle timeout.
 func TestSessionBudgetsFollowPolicyAndManifestHint(t *testing.T) {

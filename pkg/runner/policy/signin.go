@@ -40,8 +40,8 @@ const (
 )
 
 // DockerAgentAdapter is the default adapter's name, whose image is
-// images.harnessDockerAgent (the adapter package names it too; it imports
-// this one).
+// images.harnessImages.docker-agent (the adapter package names it too; it
+// imports this one).
 const DockerAgentAdapter = "docker-agent"
 
 // The token routes of HarnessPolicy.SignInTokenRoute.
@@ -220,9 +220,9 @@ type HarnessImage struct {
 const (
 	PinDigest   = "digest"
 	PinArtifact = "artifact"
-	// PinTag is a harness image named by tag alone: only
-	// images.harnessDockerAgent may be, for a policy file written before
-	// the default was pinned. The receipt says so.
+	// PinTag is a harness image named by tag alone: only docker-agent's
+	// may be, for a policy file written before the default was pinned. The
+	// receipt says so.
 	PinTag = "tag"
 )
 
@@ -302,9 +302,9 @@ var DefaultHarnessImages = map[string]HarnessImage{
 	"claude-image":  {Ref: "agentry-claude-code:2.1.296", Artifact: "sha512-OX/k/rpcthMqnFKOWcpNcbiLsMKtAjLOpQNJHlYiDCFUznWCIwdRTyl/p9SdHVrsrzZuPMCNqZjnpakIni6upw=="},
 }
 
-// HarnessImageFor is the harness image adapterName runs in: docker-agent's
-// from images.harnessDockerAgent, any other's from images.harnessImages,
-// else the CLI's default. ok is false for an adapter with none (a host
+// HarnessImageFor is the harness image adapterName runs in, from
+// images.harnessImages (docker-agent's as Load resolved it into
+// HarnessDockerAgent), else the CLI's default. ok is false for an adapter with none (a host
 // adapter, which drives the person's own installation).
 func (i Images) HarnessImageFor(adapterName string) (h HarnessImage, ok bool) {
 	if adapterName == DockerAgentAdapter {

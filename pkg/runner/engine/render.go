@@ -100,9 +100,10 @@ func prepareRender(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	if p.Plan.Render == nil || !p.Plan.Capabilities.WebRender {
 		return nil
 	}
-	if p.hosted() {
-		// A sandbox host's slots count no browser beside a build.
-		return Classify(ExitPolicy, errors.New("a run on a sandbox host does not render pages: its plan grants a rendered web_read"))
+	if p.hosted() && !p.HostedRender {
+		// A sandbox host's slots count a browser beside a run only when its
+		// driver dispatched it as a browser job and says so.
+		return Classify(ExitPolicy, errors.New("a run on a sandbox host renders pages only when its host dispatched it as a browser job: its plan grants a rendered web_read"))
 	}
 	if err := os.MkdirAll(rd.renderDir(), 0o700); err != nil {
 		return Classify(ExitCLI, fmt.Errorf("the page renderer's folder: %w", err))
