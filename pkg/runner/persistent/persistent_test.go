@@ -30,6 +30,7 @@ type fakeSegment struct {
 	resumed bool
 	reason  string
 	outDir  string
+	fails   int
 }
 
 func newFakeSegment(seg localrun.Segment, id string, resumed bool, reason string) *fakeSegment {
@@ -47,6 +48,11 @@ func (f *fakeSegment) SendCarrying(_ context.Context, carried, text string) erro
 	if f.ended {
 		f.mu.Unlock()
 		return session.ErrEnded
+	}
+	if f.fails > 0 {
+		f.fails--
+		f.mu.Unlock()
+		return errors.New("the harness failed the turn")
 	}
 	f.sent = append(f.sent, carried+text)
 	f.mu.Unlock()
@@ -117,6 +123,8 @@ type starter struct {
 	resumed  bool
 	reason   string
 	noID     bool
+	// failSends is how many of the next segment's turns fail.
+	failSends int
 }
 
 func (s *starter) start(_ context.Context, seg localrun.Segment) (engine.PersistentSession, error) {
@@ -128,6 +136,7 @@ func (s *starter) start(_ context.Context, seg localrun.Segment) (engine.Persist
 		id = ""
 	}
 	s.last = newFakeSegment(seg, id, s.resumed, s.reason)
+	s.last.fails, s.failSends = s.failSends, 0
 	return s.last, nil
 }
 
