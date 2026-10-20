@@ -189,7 +189,7 @@ func Serve(in io.Reader, out io.Writer, logw io.Writer, spec *Spec) error {
 	// Fail closed when exec is granted: the
 	// protection is what makes exec and secrets safe to grant together.
 	if err := hideEnvironment(); err != nil {
-		if len(spec.Exec.Commands) > 0 {
+		if len(spec.Exec.Commands) > 0 || spec.Exec.Any {
 			return fmt.Errorf("hide the tools server's environment from exec children: %w", err)
 		}
 		_, _ = fmt.Fprintf(logw, "agentry-runner tools: could not mark the process non-dumpable: %v\n", err)

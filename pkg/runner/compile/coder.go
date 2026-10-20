@@ -6,6 +6,7 @@ import (
 
 	"github.com/blaktron/agentry/pkg/manifest"
 
+	"github.com/blaktron/agentry-cli/pkg/persistent/coder"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/runnerimage/hostlink"
 )
@@ -22,6 +23,9 @@ import (
 func coderGrant(in Inputs, caps *spec.CapSummary) error {
 	if in.Mode != manifest.ModePersistent || in.Source != "builtin" {
 		return &PolicyRefusal{Reason: "the Coding agent's grants (any program, open egress, the browser on any public site, a dev server) are a persistent built-in's alone"}
+	}
+	if in.Manifest.Namespace != coder.Namespace || in.Manifest.Name != coder.Name {
+		return &PolicyRefusal{Reason: fmt.Sprintf("the Coding agent's grants are %s/%s's alone", coder.Namespace, coder.Name)}
 	}
 	if in.AgentFiles == nil {
 		return &PolicyRefusal{Reason: "the Coding agent's grants come with its folders, where its programs work"}

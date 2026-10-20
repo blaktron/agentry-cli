@@ -74,7 +74,7 @@ func Prepare(ctx context.Context, id string, a Answer, o Options) (*Host, error)
 	}
 	if got := ssh.FingerprintSHA256(key.Key); o.Pin != "" && got != o.Pin {
 		return nil, refuse(id, RefusedKeyChanged,
-			"%s offers the host key %s (%s), and the schedule was made with %s: the run will not reach it. If the host was reinstalled, make the schedule again",
+			"%s offers the host key %s (%s), and %s was pinned when it was saved (a schedule's, or the Coding agent's dev server): the run will not reach it. If the host was reinstalled, save it again (make the schedule again, or agentry agent configure coder --dev-host)",
 			a.Host, Fingerprint(key.Key), key.From, o.Pin)
 	}
 	if o.Ask != nil {

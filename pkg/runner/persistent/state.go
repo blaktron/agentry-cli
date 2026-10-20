@@ -191,7 +191,12 @@ func LoadConfig(home, name string) (Config, error) {
 
 // SaveConfig writes the agent's config.yaml (0600), replacing it whole.
 func SaveConfig(home, name string, c Config) error {
-	c.Version = ConfigVersion
+	// Version 3 only when the config holds what version 2 lacks, so a
+	// build that reads version 2 still reads every other agent's.
+	c.Version = 2
+	if c.DevHost != nil {
+		c.Version = ConfigVersion
+	}
 	b, err := yaml.Marshal(c)
 	if err != nil {
 		return err

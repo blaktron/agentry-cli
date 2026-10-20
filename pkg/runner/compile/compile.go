@@ -147,8 +147,9 @@ type Inputs struct {
 }
 
 // coderExecTimeoutSeconds bounds one of the Coding agent's programs: a
-// build or a test suite, not a quick command.
-const coderExecTimeoutSeconds = 1800
+// build or a test suite, not a quick command, and short of what a tool call
+// may hold the tools server, which answers one call at a time.
+const coderExecTimeoutSeconds = 600
 
 // PersistentOnlyBuiltin is the refusal of a persistent release from any
 // source but a built-in.

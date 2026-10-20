@@ -24,8 +24,19 @@ import (
 func coderInputs(t *testing.T, g spec.CoderGrant) Inputs {
 	t.Helper()
 	in := persistentInputs(t, &spec.AgentFiles{Share: true})
+	in.Manifest = parseManifest(t, coderYAML(""))
 	in.Coder = &g
 	return in
+}
+
+// coderYAML is the pure-text release as agentry/coder, persistent, with caps
+// as its capabilities block.
+func coderYAML(caps string) string {
+	y := strings.Replace(strings.Replace(pureTextYAML, "modes: [autonomous]", "modes: [persistent]", 1), "name: pure-text\nnamespace: demo", "name: coder\nnamespace: agentry", 1)
+	if caps != "" {
+		y = strings.Replace(y, "publish:", "capabilities:\n"+caps+"publish:", 1)
+	}
+	return y
 }
 
 // compiledCoder compiles in and reads back its tools spec and catalogue.
@@ -125,34 +136,54 @@ func TestTheCodingAgentsGrantReachesEveryGate(t *testing.T) {
 // a manifest that declares egress of its own.
 func TestTheCodingAgentsGrantIsAPersistentBuiltinsAlone(t *testing.T) {
 	all := spec.CoderGrant{Commands: true, OpenEgress: true, Browser: true, DevHost: true}
-	refused := func(name string, in Inputs) {
+	refused := func(name string, in Inputs, why string) {
 		t.Helper()
 		var refusal *PolicyRefusal
-		if _, err := Compile(in, t.TempDir()); !errors.As(err, &refusal) {
-			t.Errorf("%s: err = %v, want a policy refusal", name, err)
+		if _, err := Compile(in, t.TempDir()); !errors.As(err, &refusal) || !strings.Contains(err.Error(), why) {
+			t.Errorf("%s: err = %v, want a policy refusal naming %q", name, err, why)
 		}
 	}
 	for _, source := range []string{"registry", "local"} {
 		in := coderInputs(t, all)
 		in.Source = source
-		refused("from "+source, in)
+		refused("from "+source, in, PersistentOnlyBuiltin)
 	}
 	auto := coderInputs(t, all)
-	auto.Manifest = parseManifest(t, strings.Replace(pureTextYAML, "modes: [autonomous]", "modes: [autonomous, persistent]", 1))
-	auto.Mode = manifest.ModeAutonomous
-	refused("on an autonomous plan", auto)
+	auto.Manifest = parseManifest(t, strings.Replace(coderYAML(""), "modes: [persistent]", "modes: [autonomous, persistent]", 1))
+	auto.Mode, auto.AgentFiles = manifest.ModeAutonomous, nil
+	refused("on an autonomous plan", auto, "persistent built-in's alone")
+	other := coderInputs(t, all)
+	other.Manifest = parseManifest(t, strings.Replace(coderYAML(""), "name: coder", "name: assistant", 1))
+	refused("for another built-in", other, "agentry/coder's alone")
 	noFiles := coderInputs(t, all)
 	noFiles.AgentFiles = nil
-	refused("without its folders", noFiles)
+	refused("without its folders", noFiles, "with its folders")
 	web := coderInputs(t, all)
 	web.Web = true
-	refused("beside the web tools", web)
+	refused("beside the web tools", web, "beside the web tools")
 	review := coderInputs(t, all)
 	review.Review = true
-	refused("beside the review grant", review)
-	egress := coderInputs(t, all)
-	egress.Manifest = parseManifest(t, strings.Replace(strings.Replace(pureTextYAML, "modes: [autonomous]", "modes: [persistent]", 1), "publish:", "capabilities:\n  network:\n    egress: [example.com]\npublish:", 1))
-	refused("beside a manifest's own egress", egress)
+	refused("beside the review grant", review, "beside the web tools or the review grant")
+	for name, caps := range map[string]string{
+		"egress":      "  network:\n    egress: [example.com]\n",
+		"exec":        "  exec:\n    commands: [git]\n",
+		"a browser":   "  browser:\n    scope: public\n",
+		"target host": "  targetHosts: [server]\n",
+	} {
+		in := coderInputs(t, all)
+		in.Manifest = parseManifest(t, coderYAML(caps))
+		refused("beside a manifest's own "+name, in, "replace what a manifest declares")
+	}
+	unpinned := coderInputs(t, all)
+	pol := *unpinned.Policy
+	pol.Images.Coder = "ghcr.io/blaktron/agentry-coder:latest"
+	unpinned.Policy = &pol
+	refused("on a toolchain image not pinned by digest", unpinned, "pinned by digest")
+	gvisor := coderInputs(t, all)
+	pol2 := *gvisor.Policy
+	pol2.Docker.Runtime, pol2.Docker.Resolvers = "runsc", nil
+	gvisor.Policy = &pol2
+	refused("open egress under a runtime with no resolvers", gvisor, "docker.resolvers")
 }
 
 // TestOpenEgressOutsideTheCodingAgentStaysThePolicys: without the grant, a

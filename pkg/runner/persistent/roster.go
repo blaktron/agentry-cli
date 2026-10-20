@@ -165,8 +165,11 @@ func BuildRoster(a Agent, c Config, applied *Applied) Roster {
 		}
 	}
 	for _, k := range c.Knowledge {
-		add(RosterEntry{ID: KnowledgeEntryID(k), Kind: KindKnowledge, Name: k, GrantedBy: GrantedByYou,
-			Line: "Searches your knowledge pack " + k + ", read-only"}, true)
+		line := "Searches your knowledge pack " + k + ", read-only"
+		if a.Builtin.Codes() {
+			line += "; the programs it runs can read the pack too, and with open egress on can send it anywhere"
+		}
+		add(RosterEntry{ID: KnowledgeEntryID(k), Kind: KindKnowledge, Name: k, GrantedBy: GrantedByYou, Line: line}, true)
 	}
 	for _, srv := range c.Servers {
 		e := RosterEntry{ID: ServerEntryID(srv), Kind: KindServer, Name: serverName(srv), GrantedBy: GrantedByYou, Line: serverLine(srv)}

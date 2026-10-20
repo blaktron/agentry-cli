@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path"
@@ -27,19 +28,38 @@ import (
 // its toolchain, never a secret.
 var passedEnv = []string{"GOTOOLCHAIN", "NPM_CONFIG_UPDATE_NOTIFIER"}
 
-// makeExecHome makes Exec.Home, and gives it to the person, so a program run
-// as them can write its caches there. Best-effort: a program that needs it
-// says so itself.
+// makeExecHome makes Exec.Home, and gives it and its parent to the person,
+// so a program run as them can write its caches there. A program of an
+// earlier start may have left a link or a file where HOME goes: it is
+// removed, never followed, and nothing here follows a link, so the chown
+// cannot be pointed elsewhere in the container. Best-effort: a program that
+// needs HOME says so itself.
 func (s *server) makeExecHome() {
 	home := s.spec.Exec.Home
 	if home == "" {
 		return
 	}
-	if err := os.MkdirAll(home, 0o755); err != nil { //nolint:gosec // the agent's own folder
+	if fi, err := os.Lstat(home); err == nil && !fi.IsDir() {
+		if err := os.Remove(home); err != nil {
+			s.logf("run_command: HOME %s is not a folder and could not be removed: %v", home, err)
+			return
+		}
+	}
+	// The parent is the agent's data volume's mount, which no program can
+	// replace; it exists but in a test.
+	if err := os.MkdirAll(filepath.Dir(home), 0o755); err != nil { //nolint:gosec // the agent's own folder
 		s.logf("run_command: make HOME %s: %v", home, err)
 		return
 	}
-	s.ownBetween(s.spec.WorkspaceDir, home)
+	if err := os.Mkdir(home, 0o755); err != nil && !errors.Is(err, fs.ErrExist) { //nolint:gosec // the agent's own folder
+		s.logf("run_command: make HOME %s: %v", home, err)
+		return
+	}
+	if o := s.spec.Owner; o != nil {
+		for _, p := range []string{filepath.Dir(home), home} {
+			_ = os.Lchown(p, o.UID, o.GID)
+		}
+	}
 }
 
 func (s *server) runAnyDescription() string {
@@ -100,7 +120,7 @@ func (s *server) toolRunAny(raw json.RawMessage) (string, bool) {
 	switch {
 	case s.confine.asNobody:
 		runAs(cmd, unprivilegedID)
-	case s.spec.Owner != nil && s.spec.Owner.UID > 0:
+	case s.spec.Owner != nil && s.spec.Owner.UID > 0 && s.spec.Owner.GID > 0:
 		runAsIDs(cmd, uint32(s.spec.Owner.UID), uint32(s.spec.Owner.GID)) //nolint:gosec // ids from the run's own spec, checked positive
 	}
 	inOwnGroup(cmd)

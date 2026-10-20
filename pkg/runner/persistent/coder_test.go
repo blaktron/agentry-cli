@@ -182,3 +182,19 @@ func TestTheDevServerIsSavedPinnedAndReadiedEachSegment(t *testing.T) {
 		t.Error("a dev server that is not there was removed")
 	}
 }
+
+// TestTheCodingAgentsPackLineSaysItsProgramsReadIt: a pack the Coding agent
+// searches is readable by the programs it runs, and its consent sentence
+// says so, as the Assistant's does not need to.
+func TestTheCodingAgentsPackLineSaysItsProgramsReadIt(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	c := Config{Knowledge: []string{"notes"}}
+	e, _ := BuildRoster(coderAgent(t), c, nil).Entry(KnowledgeEntryID("notes"))
+	if !strings.Contains(e.Line, "programs it runs can read the pack") {
+		t.Errorf("the Coding agent's pack line: %q", e.Line)
+	}
+	e, _ = BuildRoster(assistantAgent(t), c, nil).Entry(KnowledgeEntryID("notes"))
+	if strings.Contains(e.Line, "programs") {
+		t.Errorf("the Assistant's pack line: %q", e.Line)
+	}
+}

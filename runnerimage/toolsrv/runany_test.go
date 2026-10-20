@@ -136,3 +136,26 @@ func TestRunAnyIsHeldToItsShape(t *testing.T) {
 		t.Fatalf("the Coding agent's spec: %v", err)
 	}
 }
+
+// TestRunAnyNeverFollowsALinkLeftWhereHomeGoes: a link a program left at
+// HOME is removed and HOME made again, so the server, root, never acts on
+// what the link names.
+func TestRunAnyNeverFollowsALinkLeftWhereHomeGoes(t *testing.T) {
+	spec := anySpec(t)
+	if err := os.MkdirAll(filepath.Dir(spec.Exec.Home), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	elsewhere := t.TempDir()
+	mustWrite(t, filepath.Join(elsewhere, "keep"), []byte("x"))
+	if err := os.Symlink(elsewhere, spec.Exec.Home); err != nil {
+		t.Fatal(err)
+	}
+	newTestServer(t, spec)
+	fi, err := os.Lstat(spec.Exec.Home)
+	if err != nil || !fi.IsDir() || fi.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("HOME after start: %v, %v", fi, err)
+	}
+	if _, err := os.Stat(filepath.Join(elsewhere, "keep")); err != nil {
+		t.Fatalf("what the link named was touched: %v", err)
+	}
+}

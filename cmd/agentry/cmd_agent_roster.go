@@ -262,9 +262,22 @@ func newAgentConfigureCmd() *cobra.Command {
 			if set == 0 {
 				return engine.Classify(engine.ExitUsage, errors.New("nothing to change: pass one of the flags (agentry agent configure --help)"))
 			}
+			var oldDev *persistent.DevHost
+			if noDevHost {
+				if c, err := persistent.LoadConfig(home, a.Name); err == nil {
+					oldDev = c.DevHost
+				}
+			}
 			r, running, err := configureAgent(cmd, home, a, ch, yes)
 			if err != nil {
 				return err
+			}
+			if oldDev != nil {
+				// A schedule of the same host and account reads the same
+				// keychain entry, so it is left for the person to remove.
+				if da, err := targethost.ParseAnswer(oldDev.Host); err == nil {
+					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "The dev server's sign-in stays in your system keychain (account %s), where a schedule of the same host may read it.\n", da.Account())
+				}
 			}
 			if flags.jsonOut {
 				return emitJSON(cmd.OutOrStdout(), r)

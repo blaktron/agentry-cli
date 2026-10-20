@@ -67,7 +67,7 @@ func coderEntries(c Config) []RosterEntry {
 		{ID: EntryCommands, Kind: KindTools, Name: "Programs", GrantedBy: GrantedByBuiltin,
 			Line: "Runs any program it chooses in its toolchain image (build tools, Git, curl, Python 3, Go, Node and npm), in its folders, as you: it builds and runs software, which is riskier than an agent that only reads and writes"},
 		{ID: EntryEgress, Kind: KindTools, Name: "Open egress", GrantedBy: GrantedByBuiltin,
-			Line: "Reaches any address on the internet from its tools and the programs it runs (open egress): package registries, repositories, downloads and any site"},
+			Line: "Reaches any address from its tools and the programs it runs (open egress): the internet, and also your local network and this computer's own services"},
 		{ID: EntryBrowser, Kind: KindTools, Name: "Browser", GrantedBy: GrantedByBuiltin,
 			Line: "Drives a headless browser to any public website, through the runner's browse proxy"},
 	}
