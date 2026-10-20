@@ -154,6 +154,10 @@ func fetchRulesBundle(ctx context.Context, w io.Writer, regURL string) (string, 
 	return semver, nil
 }
 
+// untarBundle reads a rule bundle archive. A variable so a test can hand the
+// writer names the archive reader would refuse.
+var untarBundle = rules.UntarBundle
+
 // untarBundleInto unpacks a rule bundle archive into dir.
 //
 // The archive reader already refuses entry names that are not plain file
@@ -163,14 +167,14 @@ func fetchRulesBundle(ctx context.Context, w io.Writer, regURL string) (string, 
 // resolve anywhere else fails at the write instead of creating a file. That
 // covers an absolute path and ".." on every system, and on Windows a
 // drive-relative name (C:x.yaml), an alternate data stream (a.yaml:s) and a
-// reserved device name.
+// name Windows opens as a device.
 func untarBundleInto(dir string, data []byte) error {
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return fmt.Errorf("open staging dir: %w", err)
 	}
 	defer func() { _ = root.Close() }()
-	_, err = rules.UntarBundle(data, stagedEntryWriter(root))
+	_, err = untarBundle(data, stagedEntryWriter(root))
 	return err
 }
 
