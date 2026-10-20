@@ -525,6 +525,7 @@ func (s *acpSession) handleRequest(m rpcMessage, line []byte) {
 	case "session/request_permission":
 		var p struct {
 			ToolCall struct {
+				Name  string `json:"name"`
 				Title string `json:"title"`
 			} `json:"toolCall"`
 			Options []struct {
@@ -533,14 +534,20 @@ func (s *acpSession) handleRequest(m rpcMessage, line []byte) {
 			} `json:"options"`
 		}
 		_ = json.Unmarshal(m.Params, &p)
-		// docker-agent names the tool in toolCall.title and asks once per
-		// call, whatever the YAML safety mode says. A gateway tool is
+		// docker-agent names the tool in toolCall.name, and in its title
+		// unless the tool carries a display title of its own (a browser's
+		// "Navigate to a URL"); the name is what it calls, so it decides,
+		// and the title only where no name is sent. It asks once per call,
+		// whatever the YAML safety mode says. A gateway tool is
 		// granted — the gateway is the only toolset and the policy bounds
 		// its catalog — with allow_once so every approval is a line in the
 		// transcript; anything else is denied: pick a reject option when
 		// offered, cancel otherwise. Denial is not a control: a tool that
 		// must not run is kept out of the gateway's catalog.
-		tool := p.ToolCall.Title
+		tool := p.ToolCall.Name
+		if tool == "" {
+			tool = p.ToolCall.Title
+		}
 		kind := EventPermissionDenied
 		reply := map[string]any{"outcome": map[string]any{"outcome": "cancelled"}}
 		if s.permit != nil && s.permit(tool) {

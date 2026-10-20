@@ -460,7 +460,37 @@ type CapSummary struct {
 	// supervisor's socket alone. Never the manifest's: the compiler sets it
 	// for a persistent built-in alone.
 	AppLink string `json:"appLink,omitempty"`
+	// Coder is the Coding agent's grant, what its roster has on: any
+	// program in its own exec image, open egress, the browser on any public
+	// site and the person's dev server. Never the manifest's: the compiler
+	// sets it for a persistent built-in the CLI grants it to alone, and the
+	// person's agreement to it for this agent is the gate, not the machine
+	// policy's allowWildcardEgress or browser.allowPublicWeb.
+	Coder *CoderGrant `json:"coder,omitempty"`
 }
+
+// CoderGrant is the Coding agent's grant (CapSummary.Coder), each part
+// one switch of its roster.
+type CoderGrant struct {
+	// Commands: run_command runs any program in the Coding agent's exec
+	// image (ExecImageSpec.Coder), in a folder beneath AgentRoot.
+	Commands bool `json:"commands,omitempty"`
+	// OpenEgress: the tools server, and the programs it runs, reach any
+	// address, from a network of the segment's own.
+	OpenEgress bool `json:"openEgress,omitempty"`
+	// Browser: the browser server, on any public site.
+	Browser bool `json:"browser,omitempty"`
+	// DevHost: the person's dev server, as the target host DevHostID.
+	DevHost bool `json:"devHost,omitempty"`
+}
+
+// DevHostID is the target host id the Coding agent's dev server is readied
+// and reached as.
+const DevHostID = "dev"
+
+// CoderHome is HOME for the programs the Coding agent runs: a hidden folder
+// of its data volume, so their caches and settings last between segments.
+const CoderHome = AgentRoot + "/" + AgentDataDir + "/.home"
 
 // AgentFiles is a persistent agent's folders (CapSummary.AgentFiles).
 type AgentFiles struct {
@@ -495,6 +525,10 @@ type BrowserCap struct {
 	Hosts   []string `json:"hosts,omitempty"`
 	Public  bool     `json:"public,omitempty"`
 	Secrets []string `json:"secrets,omitempty"`
+	// Agreed says the scope is the Coding agent's own, which the person
+	// agreed to for that agent, not a release's declaration that the
+	// machine policy allowed.
+	Agreed bool `json:"agreed,omitempty"`
 }
 
 // BrowserSpec is the browser server's image, a digest-pinned reference.
@@ -1075,6 +1109,10 @@ type ExecImageSpec struct {
 	// Nil for the catalogue's exec image, whose plan bytes it leaves
 	// unchanged.
 	Unsafe *UnsafeExecSpec `json:"unsafe,omitempty"`
+	// Coder is set for the Coding agent's exec image: its toolchain image,
+	// pinned by digest (policy images.coder), with the runner binary
+	// copied in, not minimized, and no command declared or installed.
+	Coder string `json:"coder,omitempty"`
 }
 
 // ExecNotInstalledPrefix marks an entry of an exec image build's result
@@ -1192,6 +1230,15 @@ func UnsafeExecImageTag(runnerImage string, u UnsafeExecSpec, commands, packages
 	sum := sha256.Sum256([]byte("unsafe\x00" + u.Base + "\x00" + runnerImage + "\x00" + strings.Join(sorted, "\x00") +
 		"\x01" + strings.Join(pkgs, "\x00") + "\x01" + strings.Join(extras, "\x00")))
 	return execImageName(runnerImage, "u", sum)
+}
+
+// CoderExecImageTag names the Coding agent's exec image: deterministic in its
+// toolchain image (pinned by digest) and the runner image whose binary it
+// copies, under a "c" tag in the catalogue's exec repository, as Unsafe Mode's
+// is under "u".
+func CoderExecImageTag(runnerImage, base string) string {
+	sum := sha256.Sum256([]byte("coder\x00" + base + "\x00" + runnerImage))
+	return execImageName(runnerImage, "c", sum)
 }
 
 // execImageName is <runner repository>-exec:<runner tag>-<prefix><hash>.

@@ -36,7 +36,7 @@ func TestKeyIsNoneOfTheRunsOwn(t *testing.T) {
 	if Filter != "label=org.agentry.image" {
 		t.Errorf("Filter = %q", Filter)
 	}
-	for _, k := range []string{Runner, Exec, UnsafeExec, Decode, HostLink, ClaudeCode, Copilot} {
+	for _, k := range []string{Runner, Exec, UnsafeExec, CoderExec, Decode, HostLink, ClaudeCode, Copilot} {
 		if strings.ContainsAny(k, " \"=\n") {
 			t.Errorf("kind %q needs quoting in a LABEL", k)
 		}

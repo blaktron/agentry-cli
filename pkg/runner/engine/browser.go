@@ -271,7 +271,10 @@ func browserScopeLine(c *spec.BrowserCap, b *browserRun) string {
 	if len(c.Hosts) > 0 {
 		parts = append(parts, "the hosts "+strings.Join(c.Hosts, ", "))
 	}
-	if c.Public {
+	switch {
+	case c.Public && c.Agreed:
+		parts = append(parts, "any public site on ports 80 and 443 (the Coding agent's browser, which the person agreed to for this agent)")
+	case c.Public:
 		parts = append(parts, "any public site on ports 80 and 443 (the policy's browser.allowPublicWeb)")
 	}
 	return "the browse proxy " + b.proxy + " admits " + strings.Join(parts, "; ") + ", resolving every name itself; nothing else, and no loopback, link-local or metadata address"

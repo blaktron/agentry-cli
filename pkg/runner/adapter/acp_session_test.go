@@ -42,8 +42,12 @@ func fakeACP(t *testing.T, in io.Reader, out io.WriteCloser) {
 			// a gateway tool (granted) and a tool outside the catalog
 			// (denied) — text chunks, then the turn result with usage.
 			write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "sess-1", "update": map[string]any{"sessionUpdate": "tool_call", "toolCallId": "c1", "title": "List files", "name": "fs_list", "status": "pending"}}})
-			ask := func(id int, tool, want string) {
-				write(map[string]any{"jsonrpc": "2.0", "id": id, "method": "session/request_permission", "params": map[string]any{"sessionId": "sess-1", "toolCall": map[string]any{"title": tool, "toolCallId": "c1", "kind": "execute"}, "options": []any{map[string]any{"optionId": "y", "kind": "allow_once"}, map[string]any{"optionId": "ya", "kind": "allow_always"}, map[string]any{"optionId": "n", "kind": "reject_once"}}}})
+			ask := func(id int, tool, want string, name ...string) {
+				call := map[string]any{"title": tool, "toolCallId": "c1", "kind": "execute"}
+				if len(name) > 0 {
+					call["name"] = name[0]
+				}
+				write(map[string]any{"jsonrpc": "2.0", "id": id, "method": "session/request_permission", "params": map[string]any{"sessionId": "sess-1", "toolCall": call, "options": []any{map[string]any{"optionId": "y", "kind": "allow_once"}, map[string]any{"optionId": "ya", "kind": "allow_always"}, map[string]any{"optionId": "n", "kind": "reject_once"}}}})
 				// Wait for the answer before continuing the turn.
 				if !sc.Scan() {
 					return
@@ -64,6 +68,11 @@ func fakeACP(t *testing.T, in io.Reader, out io.WriteCloser) {
 			}
 			ask(99, "fs_list", "y")
 			ask(98, "shell_exec", "n")
+			// A tool with a display title is named by toolCall.name, which
+			// decides: the title can neither refuse a granted tool nor
+			// pass for one.
+			ask(97, "Navigate to a URL", "y", "browser_navigate")
+			ask(96, "fs_list", "n", "shell_exec")
 			write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "sess-1", "update": map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": "c1", "status": "in_progress"}}})
 			write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "sess-1", "update": map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": "c1", "name": "fs_list", "status": "completed", "content": []any{map[string]any{"type": "content", "content": map[string]any{"type": "text", "text": "notes.txt\t25"}}}}}})
 			write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "sess-1", "update": map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": "Hello, "}}}})
@@ -86,7 +95,7 @@ func TestACPSessionDrivesOneTurnAndAnswersPermissions(t *testing.T) {
 	go fakeACP(t, toHarnessR, fromHarnessW)
 
 	ad, _ := Get(DefaultName)
-	drv, err := ad.Session(context.Background(), pipeRW{Reader: fromHarnessR, WriteCloser: toHarnessW}, SessionOptions{GatewayTools: []string{"fs_list", "write_report"}})
+	drv, err := ad.Session(context.Background(), pipeRW{Reader: fromHarnessR, WriteCloser: toHarnessW}, SessionOptions{GatewayTools: []string{"fs_list", "write_report", "browser_navigate"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +132,7 @@ func TestACPSessionDrivesOneTurnAndAnswersPermissions(t *testing.T) {
 	for _, ev := range events {
 		kinds[ev.Kind]++
 	}
-	if kinds[EventToolCall] != 1 || kinds[EventPermissionGranted] != 1 || kinds[EventPermissionDenied] != 1 || kinds[EventAssistantText] != 2 || kinds[EventUsage] != 3 {
+	if kinds[EventToolCall] != 1 || kinds[EventPermissionGranted] != 2 || kinds[EventPermissionDenied] != 2 || kinds[EventAssistantText] != 2 || kinds[EventUsage] != 3 {
 		t.Errorf("event kinds = %v", kinds)
 	}
 	// The call names its tool and id; its last update is its result, the
@@ -158,8 +167,8 @@ func TestACPSessionDrivesOneTurnAndAnswersPermissions(t *testing.T) {
 		t.Errorf("usage_update deltas = %v, want [1255 210]", totals)
 	}
 	for _, ev := range events {
-		if ev.Kind == EventPermissionGranted && ev.Text != "fs_list" {
-			t.Errorf("granted event names %q, want fs_list", ev.Text)
+		if ev.Kind == EventPermissionGranted && ev.Text != "fs_list" && ev.Text != "browser_navigate" {
+			t.Errorf("granted event names %q, want fs_list or browser_navigate", ev.Text)
 		}
 		if ev.Kind == EventPermissionDenied && ev.Text != "shell_exec" {
 			t.Errorf("denied event names %q, want shell_exec", ev.Text)

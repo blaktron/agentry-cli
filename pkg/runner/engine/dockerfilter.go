@@ -431,7 +431,11 @@ func daemonLine(rd *runDirs) string {
 		"every decision is in receipts/" + dockerFilterLog
 	if rd != nil && (rd.web || rd.anyEgress) {
 		why := "the Drafter's web tools"
-		if !rd.web {
+		switch {
+		case rd.web:
+		case rd.coderEgress:
+			why = "the Coding agent's open egress (its roster's egress entry)"
+		default:
 			why = "the tools server's unrestricted egress (manifest \"*\")"
 		}
 		line += "; for " + why + " one more network leaves the host, the run's own " + webNetwork(rd.runID) +

@@ -44,6 +44,9 @@ type Options struct {
 	// Packs opens the knowledge packs the roster has on, for each segment;
 	// nil refuses a roster with one on.
 	Packs Packs
+	// DevHost readies the Coding agent's dev server for each segment; nil
+	// readies it under Home and Policy (ReadyDevHost).
+	DevHost HostReady
 	// AppLink answers the agent's app link calls other than self_configure,
 	// which the supervisor answers itself: the desktop's. Nil answers them
 	// as Agentry Desktop's.
@@ -184,7 +187,11 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 	if pending := Unconsented(roster, cfg); len(pending) > 0 {
 		return &ConsentError{Agent: name, Entries: pending}
 	}
-	grants, applied, packsDone, err := Apply(ctx, home, a, cfg, roster, s.opts.Packs)
+	ready := s.opts.DevHost
+	if ready == nil {
+		ready = ReadyDevHost(home, s.opts.Policy)
+	}
+	grants, applied, packsDone, err := Apply(ctx, home, a, cfg, roster, s.opts.Packs, ready)
 	if err != nil {
 		return err
 	}

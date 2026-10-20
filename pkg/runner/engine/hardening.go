@@ -70,6 +70,14 @@ func enforcedAtStart(p Params) map[string]string {
 	e := withContainers(enforcedWithPackages(p.Plan.Enforcement, p.ExecPackages), p)
 	e = withKnowledge(e, p.Knowledge, p.Plan.Capabilities.ExecCommands)
 	e = withVoice(e, p.Voice, p.Plan.Capabilities.ExecCommands)
+	if c := p.Plan.Capabilities.Coder; c != nil && c.Commands {
+		// The Coding agent's programs are any program, in the same container.
+		for _, k := range []string{"knowledge", "voice"} {
+			if l, ok := e[k]; ok {
+				e[k] = l + "; the Coding agent's programs run in that container and can read it too, and with its open egress on can send it anywhere"
+			}
+		}
+	}
 	e = withReportTheme(e, p.Plan.Tools, p.ReportTheme)
 	e = withDecoded(e, p.Decoded)
 	// A caller's line never replaces one the engine states itself.

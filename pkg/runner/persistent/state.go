@@ -57,6 +57,7 @@ func Agents() []Agent {
 	return []Agent{
 		{Name: localrun.Main().Name(), Title: "Main", DesktopOnly: true, Builtin: localrun.Main(), ShareName: "mainshare"},
 		{Name: localrun.Assistant().Name(), Title: "Assistant", Builtin: localrun.Assistant(), ShareName: "assistantshare"},
+		{Name: localrun.Coder().Name(), Title: "Coding agent", Builtin: localrun.Coder(), ShareName: "codingshare"},
 	}
 }
 
@@ -115,9 +116,10 @@ func LogPath(home, name string) string { return filepath.Join(Dir(home, name), l
 
 // ConfigVersion is the version of config.yaml this build writes. Version 2
 // added the share folder, the person's servers and packs, the switches and
-// the consents; a build that reads version 1 alone refuses it rather than
-// drop them on its next save.
-const ConfigVersion = 2
+// the consents, and version 3 the Coding agent's dev server; a build that
+// reads an older version alone refuses a newer one rather than drop what it
+// does not know on its next save.
+const ConfigVersion = 3
 
 // Config is the agent's config.yaml: what the person chose for it, and the
 // conversation its next segment continues.
@@ -154,6 +156,9 @@ type Config struct {
 	// PersonaGiven is the digest of the name and personality the agent was
 	// last given, so a change reaches it at the next turn.
 	PersonaGiven string `yaml:"personaGiven,omitempty" json:"personaGiven,omitempty"`
+	// DevHost is the Coding agent's dev server, which the person saved; it
+	// is a roster entry.
+	DevHost *DevHost `yaml:"devHost,omitempty" json:"devHost,omitempty"`
 }
 
 // Conversation names a harness's stored conversation: the adapter that
@@ -186,7 +191,12 @@ func LoadConfig(home, name string) (Config, error) {
 
 // SaveConfig writes the agent's config.yaml (0600), replacing it whole.
 func SaveConfig(home, name string, c Config) error {
-	c.Version = ConfigVersion
+	// Version 3 only when the config holds what version 2 lacks, so a
+	// build that reads version 2 still reads every other agent's.
+	c.Version = 2
+	if c.DevHost != nil {
+		c.Version = ConfigVersion
+	}
 	b, err := yaml.Marshal(c)
 	if err != nil {
 		return err

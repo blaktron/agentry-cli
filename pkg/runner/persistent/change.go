@@ -47,6 +47,11 @@ type Change struct {
 	RemoveKnowledge string `json:"removeKnowledge,omitempty"`
 	// Switch turns a roster entry on or off.
 	Switch *Switch `json:"switch,omitempty"`
+	// DevHost saves the Coding agent's dev server, on; ClearDevHost removes
+	// it. Its sign-in is saved in the keychain before, by the client that
+	// asked the person for it.
+	DevHost      *DevHost `json:"devHost,omitempty"`
+	ClearDevHost bool     `json:"clearDevHost,omitempty"`
 	// Consent says the person consented to what this change turns on, as
 	// the lines a ConsentError listed say it.
 	Consent bool `json:"consent,omitempty"`
@@ -182,6 +187,30 @@ func ApplyChange(home string, a Agent, c *Config, ch Change) (restart bool, err 
 		next.Knowledge = slices.Delete(next.Knowledge, i, i+1)
 		delete(next.Switches, KnowledgeEntryID(k))
 		delete(next.Consented, KnowledgeEntryID(k))
+	}
+	if ch.DevHost != nil || ch.ClearDevHost {
+		if !a.Builtin.Codes() {
+			return false, fmt.Errorf("the %s agent has no dev server: the Coding agent alone is given one", a.Name)
+		}
+		if ch.DevHost != nil && ch.ClearDevHost {
+			return false, errors.New("a change saves a dev server or removes it, not both")
+		}
+	}
+	if d := ch.DevHost; d != nil {
+		if err := d.check(); err != nil {
+			return false, err
+		}
+		dh := *d
+		next.DevHost = &dh
+		delete(next.Switches, EntryDevHost)
+	}
+	if ch.ClearDevHost {
+		if next.DevHost == nil {
+			return false, fmt.Errorf("the %s agent has no dev server", a.Name)
+		}
+		next.DevHost = nil
+		delete(next.Switches, EntryDevHost)
+		delete(next.Consented, EntryDevHost)
 	}
 	if sw := ch.Switch; sw != nil {
 		e, ok := BuildRoster(a, next, nil).Entry(sw.ID)

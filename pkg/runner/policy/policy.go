@@ -110,6 +110,14 @@ const (
 	// browser workflow, and CI holds this pin to that signature
 	// (scripts/verify-browser-image.sh).
 	DefaultBrowserImage = "ghcr.io/blaktron/agentry-browser:2026.10.19.2@sha256:3d0f3cefb1fbabd7e6a8ece9a1ca56492c54422f4f11e943b479572090813ccc"
+	// DefaultCoderImage is the Coding agent's toolchain, the base its exec
+	// container is built on: Debian 13's build tools (GCC, Make, CMake,
+	// pkg-config), Git, curl, Python 3 with pip and venv, Go and Node with
+	// npm, amd64 and arm64, uid 10001, no setuid file, no sudo and no SSH
+	// client, pinned by digest and pulled; the CLI copies its runner binary
+	// in. Signed keyless by agentry-dockerimages' coder workflow, and CI
+	// holds this pin to that signature (scripts/verify-coder-image.sh).
+	DefaultCoderImage = "ghcr.io/blaktron/agentry-coder:2026.10.20.1@sha256:50b607f622ec1352a5f6189189c4a805a69823c351ff5bd0aafeaeda29f0b3ba"
 	// DefaultClamAVSignatures is the ClamAV signature bundle the decode step
 	// checks every input against: a tag agentry-dockerimages' clamav-db
 	// workflow moves daily, only ever to a digest it has signed. It is not
@@ -497,6 +505,19 @@ type Images struct {
 	// Browser is the browser server's image, pinned by digest ("" =
 	// DefaultBrowserImage; see BrowserImage).
 	Browser string `yaml:"browser,omitempty"`
+	// Coder is the Coding agent's toolchain image, pinned by digest ("" =
+	// DefaultCoderImage; see CoderImage).
+	Coder string `yaml:"coder,omitempty"`
+}
+
+// CoderImage is the Coding agent's toolchain image this policy names:
+// images.coder, else the CLI's pinned default, resolved at use as
+// BrowserImage is.
+func (i Images) CoderImage() string {
+	if i.Coder != "" {
+		return i.Coder
+	}
+	return DefaultCoderImage
 }
 
 // BrowserImage is the browser server's image this policy names:
@@ -988,6 +1009,9 @@ func (p *Policy) Validate() error {
 	if p.Images.Browser != "" && !PinnedByDigest(p.Images.Browser) {
 		return fmt.Errorf("images.browser %q must be pinned by digest (<name>@sha256:<64 hex>): the browser server's image is pulled by digest only", p.Images.Browser)
 	}
+	if p.Images.Coder != "" && !PinnedByDigest(p.Images.Coder) {
+		return fmt.Errorf("images.coder %q must be pinned by digest (<name>@sha256:<64 hex>): the Coding agent's toolchain image is pulled by digest only", p.Images.Coder)
+	}
 	if p.Images.Hostlink != "" && !PinnedByDigest(p.Images.Hostlink) {
 		return fmt.Errorf("images.hostlink %q must be pinned by digest (<name>@sha256:<64 hex>): the host link's image is pulled by digest only", p.Images.Hostlink)
 	}
@@ -1298,6 +1322,10 @@ images:
   # Playwright MCP server, for a QuickAgent that declares a browser.
   # Pulled by digest; unset, the CLI's pinned default is used.
   # browser: ghcr.io/blaktron/agentry-browser:<tag>@sha256:<digest>
+  # The Coding agent's toolchain image: build tools, Git, Python, Go and
+  # Node, which its commands run in. Pulled by digest; unset, the CLI's
+  # pinned default is used.
+  # coder: ghcr.io/blaktron/agentry-coder:<tag>@sha256:<digest>
 
 model:
   # anthropic | openai | google, or custom for an OpenAI-compatible
