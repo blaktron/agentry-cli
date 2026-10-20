@@ -135,20 +135,6 @@ func (s Segment) Start(ctx context.Context, d dockerx.Client) (engine.Persistent
 	if logw == nil {
 		logw = io.Discard
 	}
-	// A socket on this computer reaches a container only where the
-	// engine's daemon runs here: elsewhere the segment has no app link,
-	// and its receipt says why.
-	var enforced map[string]string
-	if s.Grants.AppLink != "" {
-		ok, why, err := engine.HostSocketsReachContainers(ctx, d)
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			s.Grants.AppLink = ""
-			enforced = map[string]string{"persistent.appLink": "not given: the container engine's daemon runs in a VM (" + why + "), whose containers a socket on this computer does not reach"}
-		}
-	}
 	sp, err := s.Plan(ctx, logw)
 	if err != nil {
 		return nil, err
@@ -187,7 +173,7 @@ func (s Segment) Start(ctx context.Context, d dockerx.Client) (engine.Persistent
 	sess, err := engine.StartSession(ctx, d, engine.Params{
 		Intake: answers,
 		Plan:   plan, PlanDir: planDir, WorkspaceSrc: workspace, RunRoot: installDir, RunnerHome: s.Home,
-		OutDir: s.OutDir, TextInputs: true, Knowledge: s.Grants.Knowledge, ServersDir: s.Grants.ServersDir, Enforced: enforced,
+		OutDir: s.OutDir, TextInputs: true, Knowledge: s.Grants.Knowledge, ServersDir: s.Grants.ServersDir,
 		Adapter: ad, Policy: s.Policy, PolicyFile: s.PolicyFile, Budgets: spec.Budgets{},
 		Attestation: meta.Attestation, ExecPackages: execPackages,
 		CheckWorkspace: builtinCopyCheck(meta.Digest),

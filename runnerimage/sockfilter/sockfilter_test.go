@@ -178,6 +178,12 @@ func (d *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"Name": id, "Labels": map[string]string{"agentry.persistent": "assistant"}})
 			return
 		}
+		if strings.HasSuffix(id, "-applink") {
+			// The app link's relay volume: the run's, made by the CLI, so
+			// it carries the run's label and not the gateway's.
+			_ = json.NewEncoder(w).Encode(map[string]any{"Name": id, "Labels": map[string]string{"agentry.run": "R"}})
+			return
+		}
 		run, ok := owner(id)
 		if !ok {
 			http.NotFound(w, r)
@@ -1765,6 +1771,38 @@ func TestTheToolsServerAloneMountsThePersistentVolume(t *testing.T) {
 	if code, _ := g.do(t, "POST", "/containers/create", create("agentry-runner:test", tools, "missing-volume:/agent/data")); code == http.StatusCreated {
 		t.Fatal("a volume that is not named was admitted")
 	}
+}
+
+// The app link's relay volume, made for the run by the CLI where the daemon
+// runs in a VM, is mounted by the app link's container alone: its command in
+// its image. The same image with another command, the tools server and any
+// other container are refused it, and the app link is refused any other
+// volume that is not the run's.
+func TestTheAppLinkAloneMountsItsRelayVolume(t *testing.T) {
+	const target = "/etc/agentry/toolspec.json"
+	const vol = "agentry-R-applink"
+	g := newRig(t, Limits{}, func(c *Config) {
+		c.ToolsImage, c.ToolsCmd = "agentry-runner:test", []string{"tools", "--spec", target}
+		c.AppLinkVolume, c.AppLinkImage, c.AppLinkCmd = vol, "agentry-runner:test", []string{"applink", "--set", "assistant"}
+	})
+	create := func(image string, cmd []string, binds ...string) map[string]any {
+		return map[string]any{"Image": image, "Cmd": cmd, "HostConfig": map[string]any{"Binds": binds, "NetworkMode": "none"}}
+	}
+	app := []string{"applink", "--set", "assistant"}
+	if code, body := g.do(t, "POST", "/containers/create", create("agentry-runner:test", app, vol+":/run/agentry:rw")); code != http.StatusCreated {
+		t.Fatalf("the app link with its relay volume: %d %s", code, body)
+	}
+	g.refused(t, "the app link's image with another set", "POST", "/containers/create",
+		create("agentry-runner:test", []string{"applink", "--set", "main"}, vol+":/run/agentry:rw"), "is not this run's")
+	g.refused(t, "the tools server with the relay volume", "POST", "/containers/create",
+		create("agentry-runner:test", []string{"tools", "--spec", target}, vol+":/run/agentry:rw"), "is not this run's")
+	g.refused(t, "another image running the app link's command", "POST", "/containers/create",
+		create("node:22", app, vol+":/run/agentry:rw"), "is not this run's")
+	g.refused(t, "the app link with another volume", "POST", "/containers/create",
+		create("agentry-runner:test", app, "agentry-persistent-assistant-data:/data"), "is not this run's")
+	entry := create("agentry-runner:test", app, vol+":/run/agentry:rw")
+	entry["Entrypoint"] = []string{"/bin/sh", "-c"}
+	g.refused(t, "the app link's command under another entrypoint", "POST", "/containers/create", entry, "is not this run's")
 }
 
 // TestTheShareFolderIsBoundAsItselfAlone: a persistent agent's share folder,

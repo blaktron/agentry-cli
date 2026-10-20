@@ -62,6 +62,10 @@ const usageText = `usage: agentry-runner <mode> [flags]
         (a persistent agent's app link) serve the set's tools on stdio,
         forwarding each call to the supervisor's socket at
         /run/agentry/app.sock; it has no network
+  applink-relay [--owner uid:gid]
+        (where the engine's daemon runs in a VM) serve the app link's socket
+        at /run/agentry/app.sock and carry each tool call over stdio to the
+        CLI, which answers it from the supervisor; it has no network
   hostlink
         (the host link's container) serve the target-host tools on stdio,
         from /run/agentry/hostspec.json and the run's /run/agentry/hosts;
@@ -119,6 +123,8 @@ func main() {
 		err = runBridge(os.Args[2:])
 	case "applink":
 		err = runAppLink(os.Args[2:])
+	case "applink-relay":
+		err = runAppLinkRelay(os.Args[2:])
 	case "hostlink":
 		if len(os.Args) != 2 {
 			usageExit()
@@ -363,6 +369,21 @@ func runAppLink(args []string) error {
 		os.Exit(2)
 	}
 	return applink.Serve(context.Background(), os.Stdin, os.Stdout, os.Stderr, *set, applink.SocketMount)
+}
+
+// runAppLinkRelay carries the app link's calls over stdio where the
+// engine's daemon runs in a VM: the socket at --listen, each call a line out
+// and its answer a line in.
+func runAppLinkRelay(args []string) error {
+	fs := flag.NewFlagSet("applink-relay", flag.ContinueOnError)
+	owner := fs.String("owner", "", "the uid:gid the socket is given (the app link's user); unset leaves it the relay's")
+	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
+		fmt.Fprintln(os.Stderr, "agentry-runner applink-relay: takes --owner and nothing else")
+		os.Exit(2)
+	}
+	return applink.Relay(context.Background(), applink.RelayConfig{
+		Listen: applink.SocketMount, Owner: *owner, In: os.Stdin, Out: os.Stdout, Log: os.Stderr,
+	})
 }
 
 // runBridge serves one remote MCP server on stdio until the gateway closes

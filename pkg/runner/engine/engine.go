@@ -888,6 +888,11 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		}
 		gwSpec.Mounts = throughFilterVolume(gwSpec.Mounts, vol)
 	}
+	// Where the daemon runs in a VM, the app link's relay serves its socket
+	// before the gateway starts the app link.
+	if err := startAppLinkRelay(ctx, d, p, rd, td, runID); err != nil {
+		return err
+	}
 	if err := dockerx.RunDetachedUnder(ctx, d, gwSpec, "gateway"); err != nil {
 		return Classify(ExitGateway, fmt.Errorf("start mcp gateway: %w", err))
 	}
