@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -11,9 +12,12 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/blaktron/agentry/pkg/manifest"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
@@ -30,8 +34,16 @@ import (
 // sandbox — network, proxy, gateway, mounts, secrets — is exactly the
 // autonomous one. The task text, if any, is the opening user turn.
 func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Session, error) {
-	if p.Plan == nil || p.Plan.Mode != "interactive" || p.Plan.Harness.Session == nil {
-		return nil, Classify(ExitCompile, errors.New("not an interactive plan (compile with Mode interactive)"))
+	if p.Plan == nil || !p.Plan.Conversational() || p.Plan.Harness.Session == nil {
+		return nil, Classify(ExitCompile, errors.New("not a conversational plan (compile with Mode interactive, or persistent for a persistent agent)"))
+	}
+	// A persistent plan runs only as a segment of its agent, whose volumes
+	// keep the conversation; a segment is only ever a persistent plan's.
+	if (p.Plan.Mode == string(manifest.ModePersistent)) != (p.Persistent != nil) {
+		return nil, Classify(ExitCompile, errors.New("a persistent plan runs only as a persistent agent's segment, and a segment only from a persistent plan"))
+	}
+	if p.Persistent != nil && (p.Persistent.Agent == "" || p.Persistent.SessionVolume == "" || p.Persistent.DataVolume == "") {
+		return nil, Classify(ExitCLI, errors.New("a persistent agent's segment needs its agent's name and volumes"))
 	}
 	if p.Adapter == nil {
 		return nil, Classify(ExitCLI, errors.New("no adapter"))
@@ -65,6 +77,12 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 		Policy: policyRecord(p),
 		Result: receipt.TextResult(""),
 		OutDir: p.OutDir,
+	}
+	if ps := p.Persistent; ps != nil {
+		env.Persistent = &receipt.Persistent{
+			Agent: ps.Agent, Segment: ps.Segment, ResumeReason: notStartedReason,
+			Volumes: receipt.PersistentVolumes{Session: ps.SessionVolume, Data: ps.DataVolume},
+		}
 	}
 	planHash, err := p.Plan.Hash()
 	if err != nil {
@@ -172,10 +190,20 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	// wherever it is mounted and the harness runs unprivileged, so the
 	// volume is given to the harness image's own user first — as root,
 	// in that image, on no network, once.
-	if err := d.VolumeCreate(ctx, rd.session, runLabels(runID)); err != nil {
-		return fail(Classify(ExitCLI, fmt.Errorf("create session volume: %w", err)))
+	if p.Persistent != nil {
+		// A persistent agent's store is its own volume, made at its first
+		// segment and kept: it carries no run label, so neither this
+		// segment's teardown nor the sweep of a dead run removes it.
+		rd.session = p.Persistent.SessionVolume
+		if err := ensurePersistentVolumes(ctx, d, p.Persistent); err != nil {
+			return fail(Classify(ExitCLI, err))
+		}
+	} else {
+		if err := d.VolumeCreate(ctx, rd.session, runLabels(runID)); err != nil {
+			return fail(Classify(ExitCLI, fmt.Errorf("create session volume: %w", err)))
+		}
+		td.add(func(c context.Context) { _ = d.VolumeRemove(c, rd.session) })
 	}
-	td.add(func(c context.Context) { _ = d.VolumeRemove(c, rd.session) })
 	if owner := p.Plan.Harness.Session.StoreOwner; owner != "" {
 		initName := containerName(runID, "session-init")
 		td.add(func(c context.Context) { _ = d.RemoveForce(c, initName) })
@@ -378,6 +406,12 @@ type liveSession struct {
 	endMu       sync.Mutex
 	envelope    *receipt.Envelope
 	envelopeErr error
+
+	// conversation, resumed and resumeReason are a persistent agent's
+	// segment's (Conversation), set once its driver has started.
+	conversation string
+	resumed      bool
+	resumeReason string
 }
 
 // rwPipe joins the harness's stdout (read) and stdin (write) for the adapter.
@@ -435,6 +469,9 @@ func (s *liveSession) startHarness(ctx context.Context, token string, rep *strin
 	restart := p.Plan.Harness.Session.RestartOnRenewal
 	opts := sessionOptions(p, s.rd, token, s.granted)
 	opts.Resumable = restart
+	if p.Persistent != nil {
+		opts.ContinueID = p.Persistent.ContinueID
+	}
 	drv, err := p.Adapter.Session(agentCtx, rw, opts)
 	if err != nil {
 		cancel(err)
@@ -455,6 +492,101 @@ func (s *liveSession) startHarness(ctx context.Context, token string, rep *strin
 	}
 	s.signInSum = s.signInTokenSum()
 	s.lastActivity = time.Now()
+	if p.Persistent != nil {
+		// The reason can quote the harness's own error: it is masked like
+		// every receipt.
+		id, resumed, reason := conversationOf(drv, p.Plan.Harness.Adapter, p.Persistent.ContinueID)
+		s.conversation, s.resumed, s.resumeReason = id, resumed, s.redact.String(reason)
+		s.env.Persistent.Resumed, s.env.Persistent.ResumeReason = s.resumed, s.resumeReason
+	}
+	return nil
+}
+
+// noStoredConversation is the resume reason of a segment that was given no
+// stored conversation to continue.
+const noStoredConversation = "no stored conversation to continue"
+
+// notStartedReason is a segment's resume reason until its harness has
+// started: a segment that fails before then continued nothing.
+const notStartedReason = "the segment ended before its harness started"
+
+// conversationOf is the conversation a persistent agent's segment is in once
+// its driver has started: the harness's id for it, whether it is the one
+// continueID named, and why not when it is not.
+func conversationOf(drv adapter.SessionDriver, adapterName, continueID string) (id string, resumed bool, reason string) {
+	c, ok := drv.(adapter.Continuing)
+	if !ok {
+		return "", false, "the " + adapterName + " adapter does not continue a stored conversation in this version"
+	}
+	if continueID == "" {
+		return c.ConversationID(), false, noStoredConversation
+	}
+	resumed, reason = c.Continued()
+	return c.ConversationID(), resumed, reason
+}
+
+// Conversation implements PersistentSession.
+func (s *liveSession) Conversation() (id string, resumed bool, reason string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.conversation, s.resumed, s.resumeReason
+}
+
+// SetResumeReason implements PersistentSession.
+func (s *liveSession) SetResumeReason(reason string) {
+	reason = s.redact.String(reason)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.resumeReason = reason
+	if s.env.Persistent != nil {
+		s.env.Persistent.ResumeReason = reason
+	}
+}
+
+// PersistentSession is the session a persistent agent's segment returns
+// (StartSession with Params.Persistent).
+type PersistentSession interface {
+	session.Session
+	// Conversation is the harness's id for the conversation the segment
+	// is in, whether it continued the one Params.Persistent.ContinueID
+	// named, and why not when it did not: what the supervisor keeps for the
+	// next segment, and what the envelope's persistent block records.
+	Conversation() (id string, resumed bool, reason string)
+	// SetResumeReason replaces the envelope's account of a segment that did
+	// not continue its conversation, with what the supervisor did instead.
+	SetResumeReason(reason string)
+	// SendCarrying is Send with earlier context ahead of the person's text:
+	// the harness is sent both, the user turn records the person's text
+	// alone, and the events receipt records what was carried.
+	SendCarrying(ctx context.Context, carried, text string) error
+}
+
+// PersistentLabel keys a persistent agent's volumes by the agent's name. It
+// is not the run label: the volumes outlive every segment.
+const PersistentLabel = "agentry.persistent"
+
+// PersistentVolumeLabels are the labels a persistent agent's volumes carry.
+func PersistentVolumeLabels(agent string) map[string]string {
+	return map[string]string{PersistentLabel: agent}
+}
+
+// ensurePersistentVolumes makes the agent's volumes that do not exist yet.
+// An existing one is left as it is: it holds the agent's conversation and
+// files. Listed first because an engine may refuse to create a volume that
+// exists (podman does).
+func ensurePersistentVolumes(ctx context.Context, d dockerx.Client, ps *PersistentSegment) error {
+	have, err := d.VolumesByLabel(ctx, PersistentLabel+"="+ps.Agent)
+	if err != nil {
+		return fmt.Errorf("list the volumes of the persistent agent %s: %w", ps.Agent, err)
+	}
+	for _, name := range []string{ps.SessionVolume, ps.DataVolume} {
+		if slices.Contains(have, name) {
+			continue
+		}
+		if err := d.VolumeCreate(ctx, name, PersistentVolumeLabels(ps.Agent)); err != nil {
+			return fmt.Errorf("create the volume %s of the persistent agent %s: %w", name, ps.Agent, err)
+		}
+	}
 	return nil
 }
 
@@ -913,7 +1045,18 @@ func (s *liveSession) Send(ctx context.Context, text string) error {
 	return s.turn(ctx, text, false)
 }
 
+// SendCarrying implements PersistentSession.
+func (s *liveSession) SendCarrying(ctx context.Context, carried, text string) error {
+	return s.turnCarrying(ctx, carried, text, false)
+}
+
 func (s *liveSession) turn(ctx context.Context, text string, synthetic bool) error {
+	return s.turnCarrying(ctx, "", text, synthetic)
+}
+
+// turnCarrying is one turn whose prompt is carried, then text; the user turn
+// records text, and a carried context is recorded as an event of its own.
+func (s *liveSession) turnCarrying(ctx context.Context, carried, text string, synthetic bool) error {
 	s.turnMu.Lock()
 	defer s.turnMu.Unlock()
 	s.mu.Lock()
@@ -943,6 +1086,9 @@ func (s *liveSession) turn(ctx context.Context, text string, synthetic bool) err
 	if len(notices) > 0 {
 		text = strings.Join(notices, "\n") + "\n\n" + text
 	}
+	if carried != "" {
+		s.emit(session.Event{Kind: session.KindOther, Text: "carried into this turn: " + carried})
+	}
 	s.emit(session.Event{Kind: session.KindUserTurn, Text: text, Synthetic: synthetic})
 	turnCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -961,7 +1107,7 @@ func (s *liveSession) turn(ctx context.Context, text string, synthetic bool) err
 		case <-turnCtx.Done():
 		}
 	}()
-	res, err := s.drv.Prompt(turnCtx, text)
+	res, err := s.drv.Prompt(turnCtx, carried+text)
 	s.syncPump()
 	// The turn is over before its last event is seen.
 	s.mu.Lock()
@@ -1229,7 +1375,8 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 // redacted) event log.
 func transcript(env *receipt.Envelope, log []session.Event) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "# Transcript: %s\n\nrun %s · interactive · %s\n\n", env.Ref, env.RunID, env.Harness.Model)
+	mode := cmp.Or(env.Harness.Mode, "interactive")
+	fmt.Fprintf(&b, "# Transcript: %s\n\nrun %s · %s · %s\n\n", env.Ref, env.RunID, mode, env.Harness.Model)
 	for _, ev := range log {
 		switch ev.Kind {
 		case session.KindUserTurn:

@@ -655,6 +655,14 @@ type DockerSpec struct {
 	Resolvers []string `json:"resolvers,omitempty"`
 }
 
+// Conversational says the plan runs as a conversation the harness serves on
+// its stdio (Harness.Session): an interactive plan, or a persistent one,
+// whose harness half is the interactive one and whose conversation outlives
+// each start of it.
+func (p *Plan) Conversational() bool {
+	return p != nil && (p.Mode == "interactive" || p.Mode == "persistent")
+}
+
 // Runtime is the OCI runtime the plan asks for, or "" for the daemon's
 // default.
 func (p *Plan) Runtime() string {

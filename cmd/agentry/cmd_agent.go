@@ -1,0 +1,656 @@
+// agentry agent: the persistent agents, built-in QuickAgents the runner
+// keeps between conversations (pkg/runner/persistent).
+package main
+
+import (
+	"bufio"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"os/signal"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"text/tabwriter"
+	"time"
+
+	"github.com/spf13/cobra"
+
+	"github.com/blaktron/agentry-cli/internal/version"
+	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
+	"github.com/blaktron/agentry-cli/pkg/runner/engine"
+	"github.com/blaktron/agentry-cli/pkg/runner/persistent"
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/procx"
+	"github.com/blaktron/agentry-cli/pkg/tui"
+)
+
+func newAgentCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "agent",
+		Short: "Start, chat with and stop the persistent agents, which keep their conversation between starts",
+		Long: "A persistent agent is a QuickAgent built into Agentry that the runner keeps\n" +
+			"between your conversations: you start it, chat with it, stop it, and when\n" +
+			"you start it again the conversation continues. Its conversation lives on a\n" +
+			"volume of its own, beside a second one made for its files; stopping it\n" +
+			"keeps both and only `agentry agent reset` removes them. Each start is a\n" +
+			"segment, with its own receipts and envelope in the agent's folder under\n" +
+			"the runner home.\n\n" +
+			"An agent runs in the background once started: `agentry agent start` returns\n" +
+			"when it is up, `chat` attaches this terminal to it, and leaving the chat\n" +
+			"leaves it running until `agentry agent stop`. It runs on the harness and\n" +
+			"model your runner policy names, in a container, without the session caps\n" +
+			"an interactive QuickAgent has. One process runs an agent at a time: this\n" +
+			"CLI or Agentry Desktop, and the other is refused, naming the holder.\n\n" +
+			"Main runs only in Agentry Desktop.\n\n" +
+			"  agentry agent enable assistant\n" +
+			"  agentry agent start assistant\n" +
+			"  agentry agent chat assistant\n" +
+			"  agentry agent stop assistant",
+	}
+	cmd.AddCommand(
+		newAgentListCmd(),
+		newAgentShowCmd(),
+		newAgentStartCmd(),
+		newAgentStopCmd(),
+		newAgentChatCmd(),
+		newAgentEnableCmd(true),
+		newAgentEnableCmd(false),
+		newAgentResetCmd(),
+		newAgentSuperviseCmd(),
+	)
+	return cmd
+}
+
+// agentNamed is the agent an argument names, refused with the usage class.
+func agentNamed(name string) (persistent.Agent, error) {
+	a, err := persistent.Lookup(name)
+	if err != nil {
+		return a, engine.Classify(engine.ExitUsage, err)
+	}
+	return a, nil
+}
+
+// cliAgent is an agent this CLI runs: a desktop-only one is refused.
+func cliAgent(name string) (persistent.Agent, error) {
+	a, err := agentNamed(name)
+	if err != nil {
+		return a, err
+	}
+	if a.DesktopOnly {
+		return a, engine.Classify(engine.ExitUsage, fmt.Errorf("%s %w: open Agentry Desktop to use it", a.Title, persistent.ErrDesktopOnly))
+	}
+	return a, nil
+}
+
+// agentState is how an agent stands now, as list and show print it.
+type agentState struct {
+	Agent       string             `json:"agent"`
+	DisplayName string             `json:"displayName"`
+	State       string             `json:"state"`
+	DesktopOnly bool               `json:"desktopOnly,omitempty"`
+	Holder      *persistent.Holder `json:"holder,omitempty"`
+	Status      *persistent.Status `json:"status,omitempty"`
+	Config      *persistent.Config `json:"config,omitempty"`
+	Usage       *persistent.Usage  `json:"usage,omitempty"`
+	StateDir    string             `json:"stateDir,omitempty"`
+	Volumes     *agentVolumes      `json:"volumes,omitempty"`
+	Transcript  []persistent.Entry `json:"transcript,omitempty"`
+}
+
+type agentVolumes struct {
+	Session string `json:"session"`
+	Data    string `json:"data"`
+}
+
+// The states list prints beside "running".
+const (
+	agentDesktopOnly = "desktop only"
+	agentDisabled    = "disabled"
+	agentStopped     = "stopped"
+)
+
+func readAgentState(ctx context.Context, home string, a persistent.Agent) (agentState, error) {
+	st := agentState{Agent: a.Name, DisplayName: a.Title}
+	if a.DesktopOnly {
+		st.State, st.DesktopOnly = agentDesktopOnly, true
+		return st, nil
+	}
+	cfg, err := persistent.LoadConfig(home, a.Name)
+	if err != nil {
+		return st, err
+	}
+	st.DisplayName = a.DisplayName(cfg)
+	st.Config = &cfg
+	held, holder := persistent.Held(home, a.Name)
+	switch {
+	case held:
+		st.State, st.Holder = persistent.StateRunning, holder
+		qctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		if s, err := persistent.QueryStatus(qctx, home, a.Name); err == nil {
+			st.Status = &s
+		}
+	case cfg.Enabled:
+		st.State = agentStopped
+	default:
+		st.State = agentDisabled
+	}
+	return st, nil
+}
+
+func newAgentListCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List the persistent agents and whether each is running",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			home, err := runnerHome()
+			if err != nil {
+				return err
+			}
+			var all []agentState
+			for _, a := range persistent.Agents() {
+				st, err := readAgentState(cmd.Context(), home, a)
+				if err != nil {
+					return err
+				}
+				st.Config = nil
+				all = append(all, st)
+			}
+			if flags.jsonOut {
+				return emitJSON(cmd.OutOrStdout(), all)
+			}
+			tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+			_, _ = fmt.Fprintln(tw, "NAME\tSTATE\tSINCE\tSEGMENT")
+			for _, st := range all {
+				since, segment := "-", "-"
+				state := st.State
+				if st.Holder != nil {
+					since = st.Holder.Since.Local().Format("2006-01-02 15:04")
+					state += " (" + st.Holder.Where() + ")"
+				}
+				if st.Status != nil {
+					segment = fmt.Sprint(st.Status.Segment)
+				}
+				name := st.Agent
+				if st.DisplayName != "" && !strings.EqualFold(st.DisplayName, st.Agent) {
+					name += " (" + st.DisplayName + ")"
+				}
+				_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", name, state, since, segment)
+			}
+			return tw.Flush()
+		},
+	}
+}
+
+func newAgentShowCmd() *cobra.Command {
+	var lines int
+	cmd := &cobra.Command{
+		Use:   "show <name>",
+		Short: "Show a persistent agent: its state, its segment, its usage and the end of its transcript",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			a, err := agentNamed(args[0])
+			if err != nil {
+				return err
+			}
+			home, err := runnerHome()
+			if err != nil {
+				return err
+			}
+			st, err := readAgentState(cmd.Context(), home, a)
+			if err != nil {
+				return err
+			}
+			if !a.DesktopOnly {
+				u, err := persistent.LoadUsage(home, a.Name)
+				if err != nil {
+					return err
+				}
+				st.Usage = &u
+				st.StateDir = persistent.Dir(home, a.Name)
+				st.Volumes = &agentVolumes{Session: persistent.SessionVolume(a.Name), Data: persistent.DataVolume(a.Name)}
+				if lines > 0 {
+					if st.Transcript, err = persistent.Transcript(home, a.Name, lines); err != nil {
+						return err
+					}
+				}
+			}
+			if flags.jsonOut {
+				return emitJSON(cmd.OutOrStdout(), st)
+			}
+			printAgentState(cmd.OutOrStdout(), st)
+			return nil
+		},
+	}
+	cmd.Flags().IntVar(&lines, "transcript", 0, "also print the last N lines of the agent's transcript")
+	return cmd
+}
+
+func printAgentState(w io.Writer, st agentState) {
+	_, _ = fmt.Fprintf(w, "%s (%s): %s\n", st.DisplayName, st.Agent, st.State)
+	if st.DesktopOnly {
+		_, _ = fmt.Fprintln(w, "It runs only in Agentry Desktop.")
+		return
+	}
+	if h := st.Holder; h != nil {
+		_, _ = fmt.Fprintf(w, "  run by:     %s (pid %d), since %s\n", h.Where(), h.PID, h.Since.Local().Format("2006-01-02 15:04"))
+	}
+	if s := st.Status; s != nil {
+		_, _ = fmt.Fprintf(w, "  segment:    %d (run %s), on %s with %s\n", s.Segment, s.Run, s.Adapter, s.Model)
+		if s.Resumed {
+			_, _ = fmt.Fprintln(w, "  continued:  the conversation of the segment before")
+		} else {
+			_, _ = fmt.Fprintf(w, "  continued:  no: %s\n", s.ResumeReason)
+		}
+		_, _ = fmt.Fprintf(w, "  this segment: %d turn(s), %d tool call(s), %d token(s)\n", s.Usage.UserTurns, s.Usage.Turns, s.Usage.InputTokens+s.Usage.OutputTokens+s.Usage.TotalTokens)
+	}
+	if c := st.Config; c != nil {
+		_, _ = fmt.Fprintf(w, "  enabled:    %t; segments started: %d\n", c.Enabled, c.Segments)
+	}
+	if u := st.Usage; u != nil {
+		_, _ = fmt.Fprintf(w, "  lifetime:   %d segment(s) ended, %d turn(s), %d token(s)\n", u.Segments, u.UserTurns, u.InputTokens+u.OutputTokens+u.TotalTokens)
+	}
+	if v := st.Volumes; v != nil {
+		_, _ = fmt.Fprintf(w, "  volumes:    %s, %s\n", v.Session, v.Data)
+	}
+	if st.StateDir != "" {
+		_, _ = fmt.Fprintf(w, "  folder:     %s\n", st.StateDir)
+	}
+	for _, e := range st.Transcript {
+		text := strings.TrimSpace(e.Text)
+		_, _ = fmt.Fprintf(w, "  [%d] %s: %s\n", e.Segment, e.Kind, safeTerminalText(text, 400))
+	}
+}
+
+// agentPolicy is the runner policy an agent runs under.
+func agentPolicy(path string) (*policy.Policy, string, policy.File, error) {
+	file, err := policy.Resolve(path)
+	if err != nil {
+		return nil, "", file, err
+	}
+	pol, sha, err := policy.EnsureDefault(file.Path)
+	if err != nil {
+		return nil, "", file, engine.Classify(engine.ExitPolicy, err)
+	}
+	return pol, sha, file, nil
+}
+
+// agentStartTimeout bounds how long start waits for the agent to come up:
+// a first start may build the runner's images.
+var agentStartTimeout = 20 * time.Minute
+
+func newAgentStartCmd() *cobra.Command {
+	var policyPath string
+	cmd := &cobra.Command{
+		Use:   "start <name>",
+		Short: "Start a persistent agent in the background; its conversation continues from where it stopped",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			a, err := cliAgent(args[0])
+			if err != nil {
+				return err
+			}
+			home, err := runnerHome()
+			if err != nil {
+				return err
+			}
+			cfg, err := persistent.LoadConfig(home, a.Name)
+			if err != nil {
+				return err
+			}
+			if !cfg.Enabled {
+				return engine.Classify(engine.ExitUsage, fmt.Errorf("the %s agent is not enabled: agentry agent enable %s", a.Name, a.Name))
+			}
+			if held, h := persistent.Held(home, a.Name); held {
+				return engine.Classify(engine.ExitUsage, &persistent.HeldError{Agent: a.Name, Holder: h})
+			}
+			if _, _, _, err := agentPolicy(policyPath); err != nil {
+				return err
+			}
+			if err := dockerx.New().Available(cmd.Context()); err != nil {
+				return engine.Classify(engine.ExitCLI, fmt.Errorf("a persistent agent runs in containers, and the container engine is not available: %w", err))
+			}
+			return startSupervisor(cmd, home, a, policyPath)
+		},
+	}
+	cmd.Flags().StringVar(&policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml, created on first use)")
+	return cmd
+}
+
+// startSupervisor launches `agentry agent supervise` detached, its output in
+// the agent's log, and waits until its socket answers, printing the log as
+// it grows.
+func startSupervisor(cmd *cobra.Command, home string, a persistent.Agent, policyPath string) error {
+	errOut := cmd.ErrOrStderr()
+	exe, err := os.Executable()
+	if err != nil {
+		return engine.Classify(engine.ExitCLI, err)
+	}
+	if err := os.MkdirAll(persistent.Dir(home, a.Name), 0o700); err != nil {
+		return engine.Classify(engine.ExitCLI, err)
+	}
+	logPath := persistent.LogPath(home, a.Name)
+	logf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) //nolint:gosec // the runner home's own file
+	if err != nil {
+		return engine.Classify(engine.ExitCLI, err)
+	}
+	_ = logf.Chmod(0o600) // a log an earlier start left keeps its mode otherwise
+	argv := []string{"agent", "supervise", a.Name}
+	if policyPath != "" {
+		abs, err := filepath.Abs(policyPath)
+		if err != nil {
+			_ = logf.Close()
+			return engine.Classify(engine.ExitUsage, err)
+		}
+		argv = append(argv, "--policy", abs)
+	}
+	child := exec.Command(exe, argv...) //nolint:gosec // this binary, re-run
+	child.Stdout, child.Stderr = logf, logf
+	procx.Detach(child)
+	procx.NoWindow(child)
+	if err := child.Start(); err != nil {
+		_ = logf.Close()
+		return engine.Classify(engine.ExitCLI, fmt.Errorf("start the %s agent's supervisor: %w", a.Name, err))
+	}
+	_ = logf.Close()
+	exited := make(chan error, 1)
+	go func() { exited <- child.Wait() }()
+
+	_, _ = fmt.Fprintf(errOut, "Starting the %s agent (its log: %s)\n", a.Name, logPath)
+	follow := &logFollower{path: logPath, w: errOut}
+	deadline := time.Now().Add(agentStartTimeout)
+	for {
+		follow.flush()
+		qctx, cancel := context.WithTimeout(cmd.Context(), 2*time.Second)
+		st, qerr := persistent.QueryStatus(qctx, home, a.Name)
+		cancel()
+		if qerr == nil {
+			follow.flush()
+			printStarted(cmd.OutOrStdout(), a, st)
+			return nil
+		}
+		select {
+		case err := <-exited:
+			follow.flush()
+			why := "it exited"
+			if err != nil {
+				why = err.Error()
+			}
+			return engine.Classify(engine.ExitCLI, fmt.Errorf("the %s agent did not start (%s); its log is %s", a.Name, why, logPath))
+		case <-cmd.Context().Done():
+			return engine.Classify(engine.ExitCLI, fmt.Errorf("interrupted; the %s agent may still be starting: agentry agent show %s", a.Name, a.Name))
+		case <-time.After(500 * time.Millisecond):
+		}
+		if time.Now().After(deadline) {
+			return engine.Classify(engine.ExitTimeout, fmt.Errorf("the %s agent did not answer within %s; its log is %s", a.Name, agentStartTimeout, logPath))
+		}
+	}
+}
+
+func printStarted(w io.Writer, a persistent.Agent, st persistent.Status) {
+	_, _ = fmt.Fprintf(w, "The %s agent is running: segment %d, on %s with %s.\n", a.Name, st.Segment, st.Adapter, st.Model)
+	if st.Resumed {
+		_, _ = fmt.Fprintln(w, "Its conversation continues from the segment before.")
+	} else {
+		_, _ = fmt.Fprintf(w, "A new conversation: %s.\n", st.ResumeReason)
+	}
+	_, _ = fmt.Fprintf(w, "Chat with it: agentry agent chat %s\nStop it:      agentry agent stop %s\n", a.Name, a.Name)
+}
+
+// logFollower prints what a file gained since the last flush.
+type logFollower struct {
+	path string
+	w    io.Writer
+	off  int64
+}
+
+func (f *logFollower) flush() {
+	fh, err := os.Open(f.path)
+	if err != nil {
+		return
+	}
+	defer func() { _ = fh.Close() }()
+	if _, err := fh.Seek(f.off, io.SeekStart); err != nil {
+		return
+	}
+	n, _ := io.Copy(f.w, fh)
+	f.off += n
+}
+
+func newAgentSuperviseCmd() *cobra.Command {
+	var policyPath string
+	cmd := &cobra.Command{
+		Use:    "supervise <name>",
+		Short:  "Run a persistent agent's supervisor in the foreground (what agentry agent start launches)",
+		Args:   cobra.ExactArgs(1),
+		Hidden: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			a, err := cliAgent(args[0])
+			if err != nil {
+				return err
+			}
+			home, err := runnerHome()
+			if err != nil {
+				return err
+			}
+			pol, sha, file, err := agentPolicy(policyPath)
+			if err != nil {
+				return err
+			}
+			errOut := cmd.ErrOrStderr()
+			// A signal while the segment starts (a first start builds images)
+			// cancels the start, which tears down what it made; once it runs,
+			// a signal stops it as a stop command does. The segment lives
+			// until then, not until a context of this command's ends.
+			sig := make(chan os.Signal, 1)
+			signal.Notify(sig, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+			defer signal.Stop(sig)
+			startCtx, cancelStart := context.WithCancel(context.Background())
+			starting := make(chan struct{})
+			go func() {
+				select {
+				case s := <-sig:
+					_, _ = fmt.Fprintf(errOut, "%s: the %s agent's start is cancelled\n", s, a.Name)
+					cancelStart()
+				case <-starting:
+				}
+			}()
+			sv, err := persistent.Start(startCtx, persistent.Options{
+				Home: home, Agent: a, Client: persistent.ClientCLI,
+				Policy: pol, PolicySHA: sha, PolicyFile: &file, Build: version.Build(),
+				Docker: dockerx.New(), Stderr: errOut,
+			})
+			close(starting)
+			if err != nil {
+				cancelStart()
+				return err
+			}
+			st := sv.Status()
+			_, _ = fmt.Fprintf(errOut, "supervising the %s agent: segment %d, run %s, pid %d\n", a.Name, st.Segment, st.Run, st.PID)
+			select {
+			case <-sv.Done():
+			case s := <-sig:
+				_, _ = fmt.Fprintf(errOut, "%s: stopping the %s agent\n", s, a.Name)
+			}
+			env, err := sv.Stop(context.Background())
+			if env != nil {
+				_, _ = fmt.Fprintf(errOut, "the segment ended (%s); its receipts: %s\n", env.Status, env.OutDir)
+			}
+			return err
+		},
+	}
+	cmd.Flags().StringVar(&policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml, created on first use)")
+	return cmd
+}
+
+func newAgentStopCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "stop <name>",
+		Short: "Stop a persistent agent; its conversation and files are kept for the next start",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			a, err := cliAgent(args[0])
+			if err != nil {
+				return err
+			}
+			home, err := runnerHome()
+			if err != nil {
+				return err
+			}
+			if held, _ := persistent.Held(home, a.Name); !held {
+				return engine.Classify(engine.ExitUsage, fmt.Errorf("the %s agent is not running", a.Name))
+			}
+			ctx, cancel := context.WithTimeout(cmd.Context(), 3*time.Minute)
+			defer cancel()
+			st, err := persistent.RequestStop(ctx, home, a.Name)
+			if err != nil {
+				return engine.Classify(engine.ExitCLI, err)
+			}
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "The %s agent stopped. The segment's envelope: %s\n", a.Name, st.ResultFile)
+			if st.Error != "" {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "the segment ended with an error: %s\n", st.Error)
+			}
+			return nil
+		},
+	}
+}
+
+func newAgentChatCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "chat <name>",
+		Short: "Chat with a running persistent agent; leaving the chat leaves the agent running",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			a, err := cliAgent(args[0])
+			if err != nil {
+				return err
+			}
+			home, err := runnerHome()
+			if err != nil {
+				return err
+			}
+			qctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
+			st, err := persistent.QueryStatus(qctx, home, a.Name)
+			cancel()
+			if err != nil {
+				return engine.Classify(engine.ExitUsage, fmt.Errorf("the %s agent is not running: agentry agent start %s", a.Name, a.Name))
+			}
+			entries, err := persistent.Transcript(home, a.Name, 500)
+			if err != nil {
+				return err
+			}
+			history := persistent.HistoryEvents(entries)
+			s, err := persistent.Attach(cmd.Context(), home, a.Name, history)
+			if err != nil {
+				return engine.Classify(engine.ExitCLI, err)
+			}
+			cfg, _ := persistent.LoadConfig(home, a.Name)
+			_, uiErr := runChat(cmd.Context(), s, tui.Options{
+				Ref:     a.Builtin.Ref() + " · " + a.DisplayName(cfg),
+				Model:   st.Model,
+				HasTask: true,
+			}, cmd.InOrStdin(), cmd.OutOrStdout())
+			_, _ = s.End(context.Background(), false)
+			if ended, reason := s.Ended(); ended && reason != "" && reason != "cancelled" {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "The %s agent's segment ended (%s).\n", a.Name, reason)
+			} else {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "The %s agent keeps running. Stop it: agentry agent stop %s\n", a.Name, a.Name)
+			}
+			if uiErr != nil {
+				return engine.Classify(engine.ExitCLI, uiErr)
+			}
+			return nil
+		},
+	}
+}
+
+func newAgentEnableCmd(on bool) *cobra.Command {
+	use, short := "enable <name>", "Enable a persistent agent, so it can be started"
+	if !on {
+		use, short = "disable <name>", "Disable a persistent agent; its conversation and files are kept"
+	}
+	return &cobra.Command{
+		Use:   use,
+		Short: short,
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			a, err := cliAgent(args[0])
+			if err != nil {
+				return err
+			}
+			home, err := runnerHome()
+			if err != nil {
+				return err
+			}
+			if held, _ := persistent.Held(home, a.Name); held && !on {
+				return engine.Classify(engine.ExitUsage, fmt.Errorf("the %s agent is running: stop it first (agentry agent stop %s)", a.Name, a.Name))
+			}
+			cfg, err := persistent.LoadConfig(home, a.Name)
+			if err != nil {
+				return err
+			}
+			cfg.Enabled = on
+			if err := persistent.SaveConfig(home, a.Name, cfg); err != nil {
+				return err
+			}
+			if on {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "The %s agent is enabled. Start it: agentry agent start %s\n", a.Name, a.Name)
+			} else {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "The %s agent is disabled. Its conversation and files are kept.\n", a.Name)
+			}
+			return nil
+		},
+	}
+}
+
+// agentDocker is the container engine reset removes the volumes from.
+var agentDocker = func() dockerx.Client { return dockerx.New() }
+
+func newAgentResetCmd() *cobra.Command {
+	var confirm string
+	cmd := &cobra.Command{
+		Use:   "reset <name>",
+		Short: "Wipe a persistent agent's conversation and files; its receipts are kept",
+		Long: "Reset removes the agent's two volumes (its conversation and its files) and\n" +
+			"its transcript, so its next start begins a new conversation. The receipts\n" +
+			"of its segments are kept. Type the agent's name when asked, or pass it as\n" +
+			"--confirm when there is no terminal to ask on.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			a, err := cliAgent(args[0])
+			if err != nil {
+				return err
+			}
+			home, err := runnerHome()
+			if err != nil {
+				return err
+			}
+			if held, _ := persistent.Held(home, a.Name); held {
+				return engine.Classify(engine.ExitUsage, fmt.Errorf("the %s agent is running: stop it first (agentry agent stop %s)", a.Name, a.Name))
+			}
+			if confirm == "" {
+				if !stdinIsTTY(cmd.InOrStdin()) {
+					return engine.Classify(engine.ExitUsage, fmt.Errorf("reset asks you to type the agent's name, and there is no terminal: pass --confirm %s", a.Name))
+				}
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "This wipes the %s agent's conversation and files. Type its name (%s) to go on: ", a.Name, a.Name)
+				line, _ := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
+				confirm = strings.TrimSpace(line)
+			}
+			if confirm != a.Name {
+				return engine.Classify(engine.ExitUsage, errors.New("the name did not match; nothing was reset"))
+			}
+			if err := persistent.Reset(cmd.Context(), home, a.Name, agentDocker()); err != nil {
+				return engine.Classify(engine.ExitCLI, err)
+			}
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "The %s agent was reset: its next start begins a new conversation.\n", a.Name)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&confirm, "confirm", "", "the agent's name, to confirm without a terminal")
+	return cmd
+}

@@ -43,6 +43,17 @@ type acpSession struct {
 	// lastUsed is the last cumulative `used` a usage_update carried, so
 	// each update is reported as its delta.
 	lastUsed int64
+
+	// continueID is the conversation Start is asked to load
+	// (SessionOptions.ContinueID); continued says it did, and notContinued
+	// why it did not.
+	continueID   string
+	continued    bool
+	notContinued string
+	// loading is set while session/load replays the stored conversation:
+	// those updates are history the person has already seen, not this
+	// session's events.
+	loading bool
 }
 
 // turnState accumulates one Prompt's answer.
@@ -148,7 +159,9 @@ func (d *dockerAgent) Session(_ context.Context, rw io.ReadWriteCloser, opts Ses
 	for _, t := range opts.GatewayTools {
 		allowed[t] = true
 	}
-	return newACPSession(rw, acpProtocolVersion, func(tool string) bool { return allowed[tool] }), nil
+	s := newACPSession(rw, acpProtocolVersion, func(tool string) bool { return allowed[tool] })
+	s.continueID = opts.ContinueID
+	return s, nil
 }
 
 // Start implements SessionDriver.
@@ -167,13 +180,29 @@ func (s *acpSession) Start(ctx context.Context) error {
 		return err
 	}
 	var init struct {
-		ProtocolVersion int `json:"protocolVersion"`
+		ProtocolVersion   int `json:"protocolVersion"`
+		AgentCapabilities struct {
+			LoadSession bool `json:"loadSession"`
+		} `json:"agentCapabilities"`
 	}
 	if err := json.Unmarshal(res, &init); err != nil {
 		return fmt.Errorf("initialize: decode: %w", err)
 	}
 	if init.ProtocolVersion != s.protocolVersion {
 		return fmt.Errorf("initialize: harness speaks ACP protocol version %d, runner expects %d", init.ProtocolVersion, s.protocolVersion)
+	}
+	if s.continueID != "" {
+		if !init.AgentCapabilities.LoadSession {
+			s.notContinued = "the harness does not offer to load a stored conversation"
+		} else if err := s.load(ctx); err != nil {
+			if ctx.Err() != nil {
+				return err
+			}
+			s.notContinued = "the harness could not load the stored conversation: " + err.Error()
+		} else {
+			s.sessionID, s.continued = s.continueID, true
+			return nil
+		}
 	}
 	res, err = s.call(ctx, "session/new", map[string]any{
 		// The harness's cwd is meaningless inside the sandbox (no
@@ -193,6 +222,33 @@ func (s *acpSession) Start(ctx context.Context) error {
 	s.sessionID = ns.SessionID
 	return nil
 }
+
+// load asks the harness to continue the stored conversation continueID
+// names. The harness replays it as session/update notifications before it
+// answers; those are dropped (loading), so the session's events and receipts
+// hold only what happens from here on.
+func (s *acpSession) load(ctx context.Context) error {
+	s.mu.Lock()
+	s.loading = true
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.loading = false
+		s.mu.Unlock()
+	}()
+	_, err := s.call(ctx, "session/load", map[string]any{
+		"sessionId":  s.continueID,
+		"cwd":        "/tmp",
+		"mcpServers": []any{},
+	})
+	return err
+}
+
+// ConversationID implements Continuing.
+func (s *acpSession) ConversationID() string { return s.sessionID }
+
+// Continued implements Continuing.
+func (s *acpSession) Continued() (bool, string) { return s.continued, s.notContinued }
 
 // Prompt implements SessionDriver.
 func (s *acpSession) Prompt(ctx context.Context, text string) (*Turn, error) {
@@ -375,6 +431,17 @@ func (s *acpSession) handleNotification(m rpcMessage, line []byte) {
 	}
 	_ = json.Unmarshal(m.Params, &p)
 	u := p.Update
+	s.mu.Lock()
+	loading := s.loading
+	if loading && u.SessionUpdate == "usage_update" {
+		// The stored conversation's context, so the first update after it
+		// reports only what this session adds.
+		s.lastUsed = u.Used
+	}
+	s.mu.Unlock()
+	if loading {
+		return
+	}
 	switch u.SessionUpdate {
 	case "usage_update":
 		// `used` is cumulative across the session; report the delta since
