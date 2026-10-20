@@ -42,25 +42,31 @@ func TestOnlyTheEmbeddedPackagesRunAsBuiltin(t *testing.T) {
 		for _, b := range Builtins() {
 			refs = append(refs, b.Ref())
 		}
-		if strings.Join(refs, ",") != "agentry/knowledge-creator@1.5.0,agentry/drafter@1.16.0,agentry/voice-writer@1.3.0,agentry/examiner@1.2.0,agentry/assistant@1.2.0,agentry/main@1.0.0,agentry/coder@1.0.0" {
+		if strings.Join(refs, ",") != "agentry/knowledge-creator@1.5.0,agentry/drafter@1.16.0,agentry/voice-writer@1.3.0,agentry/examiner@1.2.0,agentry/assistant@1.2.0,agentry/main@1.0.0,agentry/coder@1.1.0" {
 			t.Fatalf("built-ins %v", refs)
 		}
 	})
-	t.Run("the Assistant, Main and the Coding agent are persistent, never run as a run, and the Coding agent is not runnable", func(t *testing.T) {
+	t.Run("the Assistant, Main and the Coding agent are persistent and runnable, never run as a run, and the Coding agent alone codes", func(t *testing.T) {
 		persistent := map[string]bool{Assistant().Ref(): true, Main().Ref(): true, Coder().Ref(): true}
 		for _, b := range Builtins() {
 			if b.Persistent() != persistent[b.Ref()] {
 				t.Fatalf("%s: persistent %v", b.Ref(), b.Persistent())
 			}
-			if b.Runnable() != (b.Persistent() && b.Ref() != Coder().Ref()) {
+			if b.Runnable() != b.Persistent() {
 				t.Fatalf("%s: runnable %v", b.Ref(), b.Runnable())
+			}
+			if b.Codes() != (b.Ref() == Coder().Ref()) {
+				t.Fatalf("%s: codes %v", b.Ref(), b.Codes())
 			}
 		}
 		if Assistant().AppLink() != "assistant" || Main().AppLink() != "main" || Coder().AppLink() != "" {
 			t.Fatal("the app links are not the agents' own")
 		}
-		if _, err := (Segment{Builtin: Coder()}).Plan(context.Background(), nil); err == nil {
-			t.Fatal("the Coding agent's segment was planned")
+		if _, err := (Segment{Builtin: Assistant(), Grants: Grants{Coder: &spec.CoderGrant{Commands: true}}}).Plan(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "Coding agent's grants") {
+			t.Fatalf("the Assistant was planned with the Coding agent's grants: %v", err)
+		}
+		if _, err := (Segment{Builtin: Coder(), Grants: Grants{Coder: &spec.CoderGrant{DevHost: true}}}).Plan(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "dev server") {
+			t.Fatalf("the Coding agent was planned with a dev server it was not given: %v", err)
 		}
 		if (Builtin{}).Persistent() {
 			t.Fatal("the zero Builtin is persistent")

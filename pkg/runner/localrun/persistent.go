@@ -17,10 +17,12 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/gateway"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
+	"github.com/blaktron/agentry-cli/pkg/runner/intake"
 	"github.com/blaktron/agentry-cli/pkg/runner/mcpinstall"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelsignin"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	"github.com/blaktron/agentry-cli/pkg/runner/targethost"
 	"github.com/blaktron/agentry-cli/runnerimage"
 	"github.com/blaktron/agentry-cli/runnerimage/applink"
 	"github.com/blaktron/agentry/pkg/manifest"
@@ -42,14 +44,21 @@ func Main() Builtin {
 		persistent: true, runnable: true, checkShare: true, appLink: applink.SetMain}
 }
 
-// Coder is the Coding agent (pkg/persistent/coder), published for reading:
-// it is not runnable, so no segment of it starts.
+// Coder is the Coding agent (pkg/persistent/coder): its programs run in its
+// own toolchain image, it may reach the internet, a browser and the person's
+// dev server, each as its roster has them on, and it reads its share as it
+// is: it builds and runs software.
 func Coder() Builtin {
-	return Builtin{namespace: coder.Namespace, name: coder.Name, version: coder.Version, fsys: coder.FS(), persistent: true}
+	return Builtin{namespace: coder.Namespace, name: coder.Name, version: coder.Version, fsys: coder.FS(),
+		persistent: true, runnable: true, coder: true}
 }
 
 // PersistentBuiltins are the built-ins that run as persistent agents.
-func PersistentBuiltins() []Builtin { return []Builtin{Main(), Assistant()} }
+func PersistentBuiltins() []Builtin { return []Builtin{Main(), Assistant(), Coder()} }
+
+// Codes says the persistent built-in is given the Coding agent's grant
+// (Grants.Coder).
+func (b Builtin) Codes() bool { return b.coder }
 
 // Runnable says a persistent built-in runs as an agent; one that is not is
 // published for reading alone.
@@ -85,6 +94,12 @@ type Grants struct {
 	// AppLink is the socket the supervisor answers the agent's app link on;
 	// empty gives the segment no app link.
 	AppLink string
+	// Coder is what the Coding agent's roster has on of its grant; nil for
+	// any other agent, which is refused it.
+	Coder *spec.CoderGrant
+	// DevHost is the Coding agent's dev server, readied (its address, its
+	// pinned host key, its sign-in): set exactly when Coder.DevHost is.
+	DevHost *targethost.Host
 }
 
 // Segment is one start of a persistent built-in: the session a persistent
@@ -165,8 +180,13 @@ func (s Segment) Start(ctx context.Context, d dockerx.Client) (engine.Persistent
 	}
 	seg := s.Persistent
 	seg.Share, seg.AppLink = s.Grants.Share, s.Grants.AppLink
+	var answers *intake.Answers
+	if h := s.Grants.DevHost; h != nil {
+		answers = &intake.Answers{Hosts: map[string]*targethost.Host{spec.DevHostID: h}}
+	}
 	sess, err := engine.StartSession(ctx, d, engine.Params{
-		Plan: plan, PlanDir: planDir, WorkspaceSrc: workspace, RunRoot: installDir, RunnerHome: s.Home,
+		Intake: answers,
+		Plan:   plan, PlanDir: planDir, WorkspaceSrc: workspace, RunRoot: installDir, RunnerHome: s.Home,
 		OutDir: s.OutDir, TextInputs: true, Knowledge: s.Grants.Knowledge, ServersDir: s.Grants.ServersDir, Enforced: enforced,
 		Adapter: ad, Policy: s.Policy, PolicyFile: s.PolicyFile, Budgets: spec.Budgets{},
 		Attestation: meta.Attestation, ExecPackages: execPackages,
@@ -206,6 +226,23 @@ func (s Segment) appLinkSet() string {
 		return ""
 	}
 	return s.Builtin.appLink
+}
+
+// coderGrant is the Coding agent's grant the segment's plan has: the
+// roster's, for the Coding agent alone, with its dev server readied exactly
+// when the grant names it.
+func (s Segment) coderGrant() (*spec.CoderGrant, error) {
+	g := s.Grants.Coder
+	switch {
+	case g == nil && s.Grants.DevHost == nil:
+		return nil, nil
+	case !s.Builtin.coder:
+		return nil, engine.Classify(engine.ExitPolicy, fmt.Errorf("%s is not given the Coding agent's grants", s.Builtin.Ref()))
+	case g == nil || g.DevHost != (s.Grants.DevHost != nil):
+		return nil, engine.Classify(engine.ExitCLI, errors.New("the Coding agent's dev server is given exactly when its roster has it on, readied"))
+	}
+	out := *g
+	return &out, nil
 }
 
 // agentFiles are the folders the segment's plan mounts: the data volume,
@@ -265,6 +302,10 @@ func (s Segment) Plan(ctx context.Context, logw io.Writer) (*SegmentPlan, error)
 	if !s.Builtin.persistent || !s.Builtin.runnable {
 		return nil, engine.Classify(engine.ExitCLI, fmt.Errorf("%s is not a persistent agent Agentry runs", s.Builtin.Ref()))
 	}
+	coderGrant, err := s.coderGrant()
+	if err != nil {
+		return nil, err
+	}
 	meta, installDir, err := s.Builtin.Materialize(s.Home, s.Build)
 	if err != nil {
 		return nil, engine.Classify(engine.ExitCLI, err)
@@ -294,7 +335,7 @@ func (s Segment) Plan(ctx context.Context, logw io.Writer) (*SegmentPlan, error)
 	plan, planDir, err := EnsurePlan(PlanInputs{
 		Home: s.Home, Manifest: m, Meta: meta, InstallDir: installDir, WorkspaceDir: workspace,
 		Policy: s.Policy, PolicySHA: s.PolicySHA, Adapter: adapterName, Mode: manifest.ModePersistent,
-		Servers: servers, AgentFiles: s.agentFiles(), AppLink: s.appLinkSet(), CompiledBy: s.Build, Log: logw,
+		Servers: servers, AgentFiles: s.agentFiles(), AppLink: s.appLinkSet(), Coder: coderGrant, CompiledBy: s.Build, Log: logw,
 	})
 	if err != nil {
 		return nil, err

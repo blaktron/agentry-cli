@@ -154,9 +154,12 @@ func newServer(spec *Spec, out, logw io.Writer) (*server, error) {
 		tools: map[string]toolDef{},
 		shims: map[string]string{},
 	}
-	if len(spec.Exec.Commands) > 0 {
+	if len(spec.Exec.Commands) > 0 || spec.Exec.Any {
 		s.confine = newConfinement(spec)
 		_, _ = fmt.Fprintln(logw, "agentry-runner tools: run_command: "+s.confine.describe())
+	}
+	if spec.Exec.Any {
+		s.makeExecHome()
 	}
 	if spec.PDF.Enabled {
 		s.typst, s.render, s.pdfTimeout = defaultTypst(), newRenderConfinement(), PDFRenderTimeout
@@ -243,13 +246,20 @@ func validateSpec(spec *Spec) error {
 			return fmt.Errorf("shareChecks %+v must name one of the read grant's folders and an absolute verdicts file", *sc)
 		}
 	}
-	if spec.Web.Enabled && (spec.Fetch.Enabled || len(spec.Exec.Commands) > 0) {
+	if x := spec.Exec; x.Any && (len(x.Commands) > 0 || !x.ImagePath || !filepath.IsAbs(spec.WorkspaceDir) ||
+		(x.Home != "" && (!filepath.IsAbs(x.Home) || filepath.Clean(x.Home) != x.Home || !strings.HasPrefix(x.Home, spec.WorkspaceDir+"/")))) {
+		// Any program runs with the image's PATH and no allowlist, so it
+		// has no declared commands beside it, and its HOME is a folder
+		// beneath the workspace the confinement lets it write.
+		return errors.New("exec.any takes no declared commands, runs with the image's PATH and keeps HOME beneath the workspace")
+	}
+	if spec.Web.Enabled && (spec.Fetch.Enabled || len(spec.Exec.Commands) > 0 || spec.Exec.Any) {
 		// The web tools' container has no network allowlist of its own
 		// (web.go): a fetch grant or a declared command beside them would
 		// reach whatever it liked, bounded by nothing of ours.
 		return errors.New("the web tools are never granted beside fetch or exec")
 	}
-	if spec.Review.Enabled && (spec.Fetch.Enabled || len(spec.Exec.Commands) > 0 || spec.Web.Enabled || spec.InputsDir == "") {
+	if spec.Review.Enabled && (spec.Fetch.Enabled || len(spec.Exec.Commands) > 0 || spec.Exec.Any || spec.Web.Enabled || spec.InputsDir == "") {
 		// The review's container reaches TypeSafe alone (review.go): a
 		// fetch grant, a command or the web tools beside it would reach
 		// further, and without the inputs channel it has nothing to read.

@@ -136,7 +136,19 @@ type Inputs struct {
 	// network, bound to the supervisor's socket alone. Like AgentFiles it is
 	// a persistent built-in's alone, refused to anything else.
 	AppLink string
+	// Coder grants the Coding agent what its roster has on (spec.CoderGrant):
+	// any program in its own exec image, open egress, the browser on any
+	// public site, the person's dev server. Its gate is the person's
+	// agreement for that agent, not the machine policy's
+	// allowWildcardEgress or browser.allowPublicWeb, so like AgentFiles it is
+	// a persistent built-in's alone, beside its folders, and refused to
+	// anything else.
+	Coder *spec.CoderGrant
 }
+
+// coderExecTimeoutSeconds bounds one of the Coding agent's programs: a
+// build or a test suite, not a quick command.
+const coderExecTimeoutSeconds = 1800
 
 // PersistentOnlyBuiltin is the refusal of a persistent release from any
 // source but a built-in.
@@ -214,9 +226,14 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		}
 		caps.AppLink = in.AppLink
 	}
+	if in.Coder != nil {
+		if err := coderGrant(in, &caps); err != nil {
+			return nil, err
+		}
+	}
 	// A persistent agent's grants never sit beside the web tools or the
 	// review grant, whose containers are held to one network each.
-	if (in.AgentFiles != nil || in.AppLink != "") && (in.Web || in.Review) {
+	if (in.AgentFiles != nil || in.AppLink != "" || in.Coder != nil) && (in.Web || in.Review) {
 		return nil, &PolicyRefusal{Reason: "a persistent agent's grants are never given beside the web tools or the review grant"}
 	}
 	if (in.RegistrySearch || in.WebSearchedOnly || in.WebGivenOnly) && !in.Web {
@@ -258,6 +275,14 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	// scope.
 	if caps.Browser, err = browserCap(m.Capabilities.Browser, in); err != nil {
 		return nil, err
+	}
+	if c := caps.Coder; c != nil {
+		if c.DevHost {
+			caps.TargetHosts = []string{spec.DevHostID}
+		}
+		if c.Browser {
+			caps.Browser = &spec.BrowserCap{Public: true, Agreed: true}
+		}
 	}
 	instructionPath, body, err := deriveInstruction(m, in.WorkspaceDir)
 	if err != nil {
@@ -361,11 +386,20 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	} else if execImage, err = execImageFor(caps.ExecCommands, in.RunnerImage, in.Policy.Exec); err != nil {
 		return nil, err
 	}
+	if c := caps.Coder; c != nil && c.Commands {
+		// The Coding agent's programs run in its toolchain image, with no
+		// allowlist: no command is declared, so no catalogue image is made.
+		base := in.Policy.Images.CoderImage()
+		if !policy.PinnedByDigest(base) {
+			return nil, &PolicyRefusal{Reason: fmt.Sprintf("images.coder %q is not pinned by digest", base)}
+		}
+		execImage = &spec.ExecImageSpec{Tag: spec.CoderExecImageTag(in.RunnerImage, base), Coder: base}
+	}
 	if execImage != nil {
 		toolsImage = execImage.Tag
-		// Unsafe Mode's image is not minimized, and a declared command runs
-		// with its PATH.
-		tspec.Exec.ImagePath = execImage.Unsafe != nil
+		// Unsafe Mode's image and the Coding agent's are not minimized, and
+		// a command runs with the image's PATH.
+		tspec.Exec.ImagePath = execImage.Unsafe != nil || execImage.Coder != ""
 	}
 	var hostLink *spec.HostLinkSpec
 	if len(caps.TargetHosts) > 0 {
@@ -505,6 +539,9 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	if execImage != nil && execImage.Unsafe != nil {
 		plan.Enforcement["exec"] = unsafeExecEnforcement(execImage)
 	}
+	if execImage != nil && execImage.Coder != "" {
+		plan.Enforcement["exec"] = coderExecEnforcement(execImage)
+	}
 	plan.Enforcement["toolResults"] = toolResultsEnforcement(adapterName, budget, caps)
 	if a := caps.AgentFiles; a != nil {
 		plan.Enforcement["persistent.files"] = agentFilesEnforcement(a)
@@ -514,6 +551,9 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	}
 	if hostLink != nil {
 		plan.Enforcement["targetHosts"] = targetHostsEnforcement(caps.TargetHosts)
+		if c := caps.Coder; c != nil && c.DevHost {
+			plan.Enforcement["targetHosts"] = devHostEnforcement()
+		}
 	}
 	if caps.Browser != nil {
 		plan.Enforcement["browser"] = browserEnforcement(caps.Browser, in.Policy)
@@ -939,6 +979,10 @@ func toolSpec(caps spec.CapSummary, secrets []string) *toolsrv.Spec {
 		if caps.AgentFiles.CheckShare {
 			ts.ShareChecks = &toolsrv.ShareChecks{Folder: spec.AgentShareDir, File: spec.ShareChecksMount + "/" + spec.ShareChecksFile}
 		}
+	}
+	if c := caps.Coder; c != nil && c.Commands {
+		ts.Exec = toolsrv.Exec{Any: true, Home: spec.CoderHome}
+		ts.Limits.ExecTimeoutSeconds = coderExecTimeoutSeconds
 	}
 	return ts
 }
@@ -1790,6 +1834,10 @@ func enforcement(caps spec.CapSummary, secrets, optional []string, extraServers 
 		e["network"] = "egress pinned to declared hosts via gateway per-server proxies + DNS interception (--block-network) and re-checked per request/redirect hop by the fetch tool: " + strings.Join(caps.EgressHosts, ", ")
 	case "all":
 		e["network"] = "UNRESTRICTED tool-plane egress (manifest \"*\", permitted by operator policy allowWildcardEgress); where the gateway's docker socket is filtered (the daemon line says whether it is), from a network of the run's own that only the tools server joins (its declared commands run there too), else from the daemon's default"
+		if c := caps.Coder; c != nil && c.OpenEgress {
+			e["network"] = "UNRESTRICTED tool-plane egress: the Coding agent's open egress, which the person agreed to for this agent (its roster's egress entry, recorded in this receipt's persistent.roster), not the machine policy's allowWildcardEgress; " +
+				"where the gateway's docker socket is filtered (the daemon line says whether it is), from a network of the segment's own that only the tools server joins (the programs it runs run there too), else from the daemon's default; the agent's own container still reaches only the llm-proxy"
+		}
 	}
 	if caps.WebTools {
 		tools, read := toolsrv.ToolWebSearch+" (only with a search to use) and "+toolsrv.ToolWebRead, "every page and search result"

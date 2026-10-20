@@ -162,6 +162,11 @@ type Builtin struct {
 	// runnable says a persistent built-in runs as an agent; one that does
 	// not is published for reading only.
 	runnable bool
+	// coder is the Coding agent's part of the persistent grant class: any
+	// program in its own exec image, open egress, the browser on any public
+	// site and the person's dev server (compile.Inputs.Coder), each a
+	// switch of its roster, gated by the person's agreement for this agent.
+	coder bool
 }
 
 // KnowledgeCreator is the Knowledge Creator (pkg/knowledge/creator),
@@ -376,7 +381,10 @@ type PlanInputs struct {
 	// (compile.Inputs.AppLink): set by a Segment alone.
 	AgentFiles *spec.AgentFiles
 	AppLink    string
-	Log        io.Writer
+	// Coder grants the Coding agent what its roster has on
+	// (compile.Inputs.Coder): set by a Segment of the Coding agent alone.
+	Coder *spec.CoderGrant
+	Log   io.Writer
 }
 
 // EnsurePlan reuses the installed plan when nothing it depends on changed,
@@ -444,6 +452,7 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 			plan.Capabilities.ReviewTools == in.Review &&
 			reflect.DeepEqual(plan.Capabilities.AgentFiles, in.AgentFiles) &&
 			plan.Capabilities.AppLink == in.AppLink &&
+			reflect.DeepEqual(plan.Capabilities.Coder, in.Coder) &&
 			reflect.DeepEqual(plan.MCPServers, in.Servers) {
 			switch {
 			case plan.CompiledBy != in.CompiledBy:
@@ -488,6 +497,7 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 		Review:       in.Review,
 		AgentFiles:   in.AgentFiles,
 		AppLink:      in.AppLink,
+		Coder:        in.Coder,
 		IntegrityKey: key,
 	}, planDir)
 	if err != nil {

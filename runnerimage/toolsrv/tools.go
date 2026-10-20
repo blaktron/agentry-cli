@@ -140,6 +140,10 @@ func (s *server) buildTools() {
 			add(name, fetchDescription(s.spec.ScratchDir != ""),
 				fetchSchema(s.spec.ScratchDir != ""), s.toolFetch)
 		case ToolRunCommand:
+			if s.spec.Exec.Any {
+				add(name, s.runAnyDescription(), runAnySchema(), s.toolRunAny)
+				continue
+			}
 			add(name, s.runCommandDescription(), runCommandSchema(), s.toolRunCommand)
 		case ToolListInputs:
 			add(name, "List the read-only input files provided for this run, one a line: its path, the type of file it is, its size in bytes, whether it could be read (read, or unread with the reason), the size of its text and the views read_input can read it in. A document, PDF or image was turned into text before the run; code, markup and data are as uploaded. Omit path (or pass \".\") for every input, or pass a directory for what is under it; empty when no inputs were provided. A long listing stops at the result limit and says the offset to continue from.",
@@ -310,6 +314,20 @@ func runCommandSchema() map[string]any {
 		},
 		"stdin":          strProp("text piped to the command's stdin"),
 		"timeoutSeconds": intProp("kill the command after this many seconds; clamped to the server limit"),
+	}, "command")
+}
+
+func runAnySchema() map[string]any {
+	return objSchema(map[string]any{
+		"command": strProp("the program to run: a name on the image's PATH (make, go, npm, python3, git…), or a path to one, absolute or relative to dir"),
+		"args": map[string]any{
+			"type":        "array",
+			"items":       map[string]any{"type": "string"},
+			"description": "the program's arguments, each one argument (no shell: to run a shell line, run bash with -c and the line)",
+		},
+		"dir":            strProp("the folder to run it in, relative to /agent (data/projects/myapp); empty runs it in /agent"),
+		"stdin":          strProp("text piped to the program's stdin"),
+		"timeoutSeconds": intProp("kill the program after this many seconds; clamped to the server limit"),
 	}, "command")
 }
 

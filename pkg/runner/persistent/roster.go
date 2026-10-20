@@ -150,12 +150,20 @@ func BuildRoster(a Agent, c Config, applied *Applied) Roster {
 		r = append(r, e)
 	}
 	shareLine := "Shares the folder " + share + " with you, read and write: you see what it writes there as it writes it"
-	if a.Builtin.ChecksShare() {
+	switch {
+	case a.Builtin.ChecksShare():
 		shareLine += ", and a file you add is checked for malware with ClamAV before it reads it: one ClamAV finds is never read, one it cannot check is read unchecked"
+	case a.Builtin.Codes():
+		shareLine += ", and it reads and runs what you add there as it is, with no malware check"
 	}
 	add(RosterEntry{ID: EntryShare, Kind: KindFiles, Name: "Your share folder", GrantedBy: GrantedByBuiltin, Line: shareLine}, true)
 	add(RosterEntry{ID: EntryData, Kind: KindFiles, Name: "Its own files", GrantedBy: GrantedByBuiltin, Fixed: true,
 		Line: "Keeps its own notes and files on the volume " + DataVolume(a.Name) + ", kept until you reset it"}, true)
+	if a.Builtin.Codes() {
+		for _, e := range coderEntries(c) {
+			add(e, true)
+		}
+	}
 	for _, k := range c.Knowledge {
 		add(RosterEntry{ID: KnowledgeEntryID(k), Kind: KindKnowledge, Name: k, GrantedBy: GrantedByYou,
 			Line: "Searches your knowledge pack " + k + ", read-only"}, true)
@@ -231,11 +239,12 @@ type Applied struct {
 type Packs func(ctx context.Context, names []string) (packs []engine.AttachedPack, done func(), err error)
 
 // Apply turns the roster into what a segment is given: the share folder when
-// it is on, the packs and the servers that are on. It is the one place a
+// it is on, the packs and the servers that are on, and the Coding agent's
+// grant, its dev server readied by ready. It is the one place a
 // switch takes effect, so the tools server's spec, the gateway's allowlist and
 // catalogue, the bind lists and the driver's permit set, all compiled and
 // rendered from what it returns, agree. done closes the packs it opened.
-func Apply(ctx context.Context, home string, a Agent, c Config, r Roster, open Packs) (g localrun.Grants, applied Applied, done func(), err error) {
+func Apply(ctx context.Context, home string, a Agent, c Config, r Roster, open Packs, ready HostReady) (g localrun.Grants, applied Applied, done func(), err error) {
 	done = func() {}
 	on := func(id string) bool {
 		e, ok := r.Entry(id)
@@ -258,6 +267,11 @@ func Apply(ctx context.Context, home string, a Agent, c Config, r Roster, open P
 			return g, applied, done, err
 		}
 		g.Share = dir
+	}
+	if a.Builtin.Codes() {
+		if g.Coder, g.DevHost, err = coderGrant(ctx, c, on, ready); err != nil {
+			return g, applied, done, err
+		}
 	}
 	for _, srv := range c.Servers {
 		if on(ServerEntryID(srv)) {

@@ -336,7 +336,7 @@ func resolveCredential(id string, a Answer, f Flags, getenv func(string) string,
 		if err := keepSignIn(a, c); err != nil {
 			return c, refuse(id, RefusedCredential, "keep the sign-in for %s: %v", a, err)
 		}
-		warn(fmt.Sprintf("target host %s: the sign-in for %s is kept in the system keychain (account %s), where the schedule's runs read it", id, a, a.Account()))
+		warn(fmt.Sprintf("target host %s: the sign-in for %s is kept in the system keychain (account %s), where later runs read it", id, a, a.Account()))
 		return c, nil
 	}
 	if prompted && ask != nil && !modelkey.Disabled() {

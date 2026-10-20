@@ -39,7 +39,8 @@ type Options struct {
 	// changed key does.
 	Pin string
 	// Keep saves the sign-in in the keychain, without asking, wherever it
-	// came from: a schedule's runs read it there.
+	// came from: a schedule's runs, or a persistent agent's segments,
+	// read it there.
 	Keep bool
 }
 

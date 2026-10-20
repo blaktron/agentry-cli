@@ -263,6 +263,9 @@ func EnsureExecImage(ctx context.Context, d dockerx.Client, runnerImage string, 
 	if img.Unsafe != nil {
 		return ensureUnsafeExecImage(ctx, d, runnerImage, img, ctxDir, logw)
 	}
+	if img.Coder != "" {
+		return ensureCoderExecImage(ctx, d, runnerImage, img, ctxDir, logw)
+	}
 	ok, err := d.ImageExists(ctx, img.Tag)
 	if err != nil {
 		return nil, err

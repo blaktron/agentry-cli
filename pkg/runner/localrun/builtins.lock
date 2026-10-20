@@ -95,3 +95,5 @@ agentry/assistant@1.2.0 sha256:7173fb9bd049a727befdee9b0d2eade408f6ee2d512b4dd1a
 agentry/main@1.0.0 sha256:d05dcda4aea9ad20a4780fefd764689a11befc325ad037e4774fd981089a8560
 # The Coding agent, published for reading; Agentry does not run it.
 agentry/coder@1.0.0 sha256:6a898475ac0e342bceceb807fce8dd5a50fc37f22df7b893b1840365e7c94e3b
+# 1.1.0: the Coding agent runs: any program in its toolchain image, open egress, a browser on any public site and a dev server, each a roster entry the person agrees to; its instruction says how it works with them.
+agentry/coder@1.1.0 sha256:8370a99bf6bcc28b0056f9cd0b8f6c1598e928ad5a2fecec727acedf670121b4

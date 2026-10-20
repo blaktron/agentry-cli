@@ -1,7 +1,8 @@
 // Package coder is the Coding agent: the built-in persistent agent for
 // software work, embedded in the CLI. Its manifest declares the persistent
 // run mode alone, no egress, no filesystem, no exec and no secret; what the
-// application gives it is listed in its README.
+// application gives it (its programs, open egress, a browser, a dev server)
+// is listed in its README.
 package coder
 
 import (
@@ -20,5 +21,5 @@ func FS() fs.FS { return files }
 const (
 	Namespace = "agentry"
 	Name      = "coder"
-	Version   = "1.0.0"
+	Version   = "1.1.0"
 )

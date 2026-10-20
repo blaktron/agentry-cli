@@ -50,6 +50,11 @@ func newAgentCmd() *cobra.Command {
 			"roster: `show` lists it, `grant` switches an entry, `configure` adds a server\n" +
 			"or a knowledge pack, names it and gives it a personality. A change reaches a\n" +
 			"running agent at its next turn.\n\n" +
+			"The Coding agent (coder) runs any program in its toolchain image, reaches\n" +
+			"the internet and a browser, and deploys to a dev server you give it\n" +
+			"(`configure coder --dev-host`); each is a roster entry you agree to at its\n" +
+			"first start. It builds and runs software, which is riskier than an agent\n" +
+			"that only reads and writes.\n\n" +
 			"Main runs only in Agentry Desktop.\n\n" +
 			"  agentry agent enable assistant\n" +
 			"  agentry agent start assistant\n" +

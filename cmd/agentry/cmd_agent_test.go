@@ -86,7 +86,8 @@ func TestAgentListShowsEachAgentsState(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &states); err != nil {
 		t.Fatalf("%v in %s", err, out)
 	}
-	if len(states) != 2 || states[1].Agent != "assistant" || states[1].State != agentStopped || !states[0].DesktopOnly {
+	if len(states) != 3 || states[1].Agent != "assistant" || states[1].State != agentStopped || !states[0].DesktopOnly ||
+		states[2].Agent != "coder" || states[2].State != agentDisabled || states[2].DesktopOnly {
 		t.Errorf("states = %+v", states)
 	}
 }
