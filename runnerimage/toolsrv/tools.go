@@ -112,14 +112,14 @@ func (s *server) buildTools() {
 	for _, name := range s.spec.GrantedTools() {
 		switch name {
 		case ToolFSRead:
-			add(name, "Read a file from the agent workspace. Returns the file text, one page at a time: a page that is not the whole file ends with the bytes it holds and the offset to continue from.",
-				fsReadSchema(), s.toolFSRead)
+			add(name, "Read a file from "+s.workspaceName()+". Returns the file text, one page at a time: a page that is not the whole file ends with the bytes it holds and the offset to continue from.",
+				fsReadSchema(s.pathWord()), s.toolFSRead)
 		case ToolFSList:
-			add(name, "List one directory level of the agent workspace: directories as \"name/\", files as \"name<TAB>size\". Omit path (or pass \".\") for the workspace root. A long listing stops at the result limit and says the offset to continue from.",
-				fsListSchema(), s.toolFSList)
+			add(name, "List one directory level of "+s.workspaceName()+": directories as \"name/\", files as \"name<TAB>size\". Omit path (or pass \".\") for its root. A long listing stops at the result limit and says the offset to continue from.",
+				fsListSchema(s.pathWord()), s.toolFSList)
 		case ToolFSWrite:
-			add(name, "Write a file in the agent workspace, creating parent directories. Content larger than the server's byte limit is refused — split large writes.",
-				fsWriteSchema(), s.toolFSWrite)
+			add(name, "Write a file in "+s.workspaceName()+", creating parent directories. Content larger than the server's byte limit is refused — split large writes.",
+				fsWriteSchema(s.pathWord()), s.toolFSWrite)
 		case ToolScratchList:
 			add(name, "List one directory level of this run's scratch folder: directories as \"name/\", files as \"name<TAB>size\". Omit path (or pass \".\") for its root. The folder starts empty. A long listing stops at the result limit and says the offset to continue from.",
 				scratchListSchema(), s.toolScratchList)
@@ -217,17 +217,34 @@ func boolProp(desc string) map[string]any {
 	return map[string]any{"type": "boolean", "description": desc}
 }
 
-func fsReadSchema() map[string]any {
+// workspaceName is how the filesystem tools' descriptions name their root.
+func (s *server) workspaceName() string {
+	if s.spec.WorkspaceName != "" {
+		return s.spec.WorkspaceName
+	}
+	return "the agent workspace"
+}
+
+// pathWord is how the filesystem tools' schemas say what their paths are
+// relative to.
+func (s *server) pathWord() string {
+	if s.spec.WorkspaceName != "" {
+		return "relative to " + s.spec.WorkspaceDir
+	}
+	return "workspace-relative"
+}
+
+func fsReadSchema(rel string) map[string]any {
 	return objSchema(map[string]any{
-		"path":     strProp("workspace-relative slash path of the file"),
+		"path":     strProp(rel + " slash path of the file"),
 		"offset":   intProp("byte offset to start reading from (default 0)"),
 		"maxBytes": intProp("cap on returned bytes; the server limit still applies"),
 	}, "path")
 }
 
-func fsListSchema() map[string]any {
+func fsListSchema(rel string) map[string]any {
 	return objSchema(map[string]any{
-		"path":   strProp("workspace-relative directory to list; empty or \".\" is the workspace root"),
+		"path":   strProp(rel + " directory to list; empty or \".\" is the root"),
 		"offset": offsetEntriesProp(),
 	})
 }
@@ -238,9 +255,9 @@ func offsetEntriesProp() map[string]any {
 	return intProp("number of entries to skip, to read on from where a listing that stopped at the result limit says to continue (default 0)")
 }
 
-func fsWriteSchema() map[string]any {
+func fsWriteSchema(rel string) map[string]any {
 	return objSchema(map[string]any{
-		"path":    strProp("workspace-relative slash path of the file to write"),
+		"path":    strProp(rel + " slash path of the file to write"),
 		"content": strProp("full file content (text)"),
 	}, "path", "content")
 }
@@ -396,6 +413,17 @@ func (s *server) toolFSRead(raw json.RawMessage) (string, bool) {
 		return "fs_read: " + err.Error(), true
 	}
 	defer func() { _ = f.Close() }()
+	if inShare, ok := s.shareRel(rel); ok {
+		if fi, err := f.Stat(); err == nil && fi.Mode().IsRegular() {
+			// The bytes checked are the bytes served: the file is read once,
+			// whole, and a write to it meanwhile does not reach the answer.
+			data, why := s.shareRead(f, inShare)
+			if why != "" {
+				return fmt.Sprintf("fs_read: %s: %s", rel, why), true
+			}
+			return readTextFrom(ToolFSRead, bytes.NewReader(data), int64(len(data)), a.Offset, a.MaxBytes, s.spec.Limits.readCap(), s.spec.Limits.budget())
+		}
+	}
 	return readText(fileTools{ToolFSRead, ToolFSList}, f, rel, a.Offset, a.MaxBytes, s.spec.Limits.readCap(), s.spec.Limits.budget())
 }
 
@@ -415,14 +443,19 @@ func readText(t fileTools, f *os.File, rel string, offset, maxBytes, limit int64
 	if fi.IsDir() {
 		return fmt.Sprintf("%s: %q is a directory (use %s)", tool, rel, t.list), true
 	}
+	return readTextFrom(tool, f, fi.Size(), offset, maxBytes, limit, b)
+}
+
+// readTextFrom is readText's page of r, a file of size bytes.
+func readTextFrom(tool string, r io.ReadSeeker, size, offset, maxBytes, limit int64, b budget) (string, bool) {
 	if maxBytes > 0 && maxBytes < limit {
 		limit = maxBytes
 	}
-	data, err := b.readPage(f, offset, limit, fi.Size())
+	data, err := b.readPage(r, offset, limit, size)
 	if err != nil {
 		return tool + ": " + err.Error(), true
 	}
-	return textPage(data, offset, fi.Size(), "")
+	return textPage(data, offset, size, "")
 }
 
 // ---- fs_list ----
@@ -556,6 +589,9 @@ func (s *server) toolFSWrite(raw json.RawMessage) (string, bool) {
 	}
 	if err := s.writeWorkspace(rel, a.Content); err != nil {
 		return "fs_write: " + err.Error(), true
+	}
+	if inShare, ok := s.shareRel(rel); ok {
+		s.shareWrote(inShare, []byte(a.Content), filepath.Join(s.spec.WorkspaceDir, filepath.FromSlash(rel)))
 	}
 	return fmt.Sprintf("wrote %d bytes to %s", len(a.Content), rel), false
 }

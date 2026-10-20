@@ -2,7 +2,8 @@
 // the person's own assistant, embedded in the CLI and run by the runner as a
 // persistent agent (pkg/runner/persistent). Its manifest declares the
 // persistent run mode alone, no egress, no filesystem, no exec and no secret;
-// the runner keeps its conversation on a volume of its own between segments.
+// the runner keeps its conversation on a volume of its own between segments,
+// and gives it its folders and what its roster has on.
 package assistant
 
 import (
@@ -21,5 +22,5 @@ func FS() fs.FS { return files }
 const (
 	Namespace = "agentry"
 	Name      = "assistant"
-	Version   = "1.0.0"
+	Version   = "1.1.0"
 )

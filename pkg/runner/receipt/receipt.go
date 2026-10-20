@@ -132,6 +132,23 @@ type Persistent struct {
 	Resumed      bool              `json:"resumed"`
 	ResumeReason string            `json:"resumeReason,omitempty"`
 	Volumes      PersistentVolumes `json:"volumes"`
+	// Share is the share folder the segment mounted; empty when the agent
+	// had it off.
+	Share string `json:"share,omitempty"`
+	// Roster is what the agent had for the segment, each entry with its
+	// switch and its consent sentence, as every client shows it.
+	Roster []RosterEntry `json:"roster,omitempty"`
+}
+
+// RosterEntry is one entry of a persistent agent's roster as a segment's
+// envelope records it.
+type RosterEntry struct {
+	ID        string `json:"id"`
+	Kind      string `json:"kind"`
+	Name      string `json:"name"`
+	GrantedBy string `json:"grantedBy"`
+	On        bool   `json:"on"`
+	Line      string `json:"line"`
 }
 
 // PersistentVolumes names a persistent agent's two volumes: the harness's

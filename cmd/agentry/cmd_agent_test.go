@@ -141,3 +141,56 @@ func TestAgentResetNeedsTheName(t *testing.T) {
 		t.Errorf("ops = %s", ops)
 	}
 }
+
+// TestAgentConfigureAndGrantAskForConsent: on a stopped agent, a name is
+// saved as it is, a switch off needs nothing, a switch on that the person
+// has not agreed to is refused without a terminal unless --yes agrees, a
+// start of an agent whose roster is not agreed to is refused the same way,
+// and a share folder the guards refuse is a usage error.
+func TestAgentConfigureAndGrantAskForConsent(t *testing.T) {
+	home := agentHome(t)
+	if _, _, err := runCLI(t, nil, "agent", "enable", "assistant"); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := runCLI(t, nil, "agent", "start", "assistant")
+	if err == nil || !strings.Contains(err.Error(), "--yes") || exitCode(err) != engine.ExitPolicy {
+		t.Fatalf("a start with nothing agreed to: err = %v", err)
+	}
+	if _, _, err := runCLI(t, nil, "agent", "configure", "assistant", "--name", "Sandra"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runCLI(t, nil, "agent", "grant", "assistant", "share", "off"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := persistent.LoadConfig(home, "assistant")
+	if cfg.DisplayName != "Sandra" || cfg.Switches["share"] {
+		t.Fatalf("config = %+v", cfg)
+	}
+	_, _, err = runCLI(t, nil, "agent", "grant", "assistant", "share", "on")
+	if err == nil || !strings.Contains(err.Error(), "--yes") {
+		t.Fatalf("a switch on without agreement: err = %v", err)
+	}
+	if _, _, err := runCLI(t, nil, "agent", "grant", "assistant", "share", "on", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ = persistent.LoadConfig(home, "assistant")
+	if !cfg.Switches["share"] || cfg.Consented["share"] == "" {
+		t.Fatalf("config after agreeing = %+v", cfg)
+	}
+	out, _, err := runCLI(t, nil, "agent", "show", "assistant")
+	if err != nil || !strings.Contains(out, "Sandra") || !strings.Contains(out, "share") || !strings.Contains(out, "data") {
+		t.Fatalf("show: %v\n%s", err, out)
+	}
+	_, _, err = runCLI(t, nil, "agent", "configure", "assistant", "--share", "/etc", "--yes")
+	if err == nil || exitCode(err) != engine.ExitUsage {
+		t.Errorf("a system folder as the share: err = %v", err)
+	}
+	_, _, err = runCLI(t, nil, "agent", "grant", "assistant", "data", "off")
+	if err == nil || !strings.Contains(err.Error(), "always") {
+		t.Errorf("switching off the agent's own files: err = %v", err)
+	}
+	_, _, err = runCLI(t, nil, "agent", "configure", "assistant", "--knowledge", "nope")
+	if err == nil || !strings.Contains(err.Error(), "no pack of that name") {
+		t.Errorf("a pack that is not kept: err = %v", err)
+	}
+}

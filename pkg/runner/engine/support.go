@@ -57,6 +57,14 @@ type runDirs struct {
 	cfg         string // root/cfg — rendered gateway+harness files
 	secretsPath string // root/cfg/gateway/secrets.env (0600, deleted on teardown)
 	serversDir  string // the signature's server store, :ro
+	// share, data and shareChecks are a persistent agent's segment's
+	// (share.go): the person's share folder, the agent's data volume, and
+	// the folder of the share's malware verdicts; empty for any other run.
+	share, data, shareChecks string
+	// shareKept are the share's verdicts the last segment left
+	// (PersistentSegment.ShareVerdicts), and shareCache where they are kept.
+	shareKept  map[string]toolsrv.ShareVerdict
+	shareCache string
 	// targets are the run's target hosts, readied by the caller, in the
 	// plan's order (targethosts.go): the replacer gives each relay its
 	// address and port, and the host link its user.
@@ -229,6 +237,8 @@ func (rd *runDirs) replacerWith(hostPath func(string) string) *strings.Replacer 
 		spec.PHInputsText, hostPath(rd.inputsText),
 		spec.PHKnowledge, hostPath(rd.knowledge),
 		spec.PHSession, rd.session,
+		spec.PHShare, hostPath(rd.share),
+		spec.PHData, rd.data,
 		spec.PHServers, hostPath(rd.serversDir),
 		spec.PHHostGatewayURL, rd.hostGatewayURL,
 		spec.PHHostProxyURL, rd.hostProxyURL,
@@ -369,6 +379,9 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, Classify(ExitCLI, fmt.Errorf("create run dirs: %w", err))
 		}
+	}
+	if err := preparePersistentFolders(p, rd); err != nil {
+		return nil, err
 	}
 	rd.runID, rd.web, rd.anyEgress = runID, p.Plan.Capabilities.WebTools, p.Plan.Capabilities.EgressMode == "all"
 	rd.targets = targetHostsOf(p)

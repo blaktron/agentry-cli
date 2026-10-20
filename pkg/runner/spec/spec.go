@@ -72,6 +72,13 @@ const (
 	// PHSession is the per-run named volume an interactive session's harness
 	// store lives in; mounted only by interactive plans.
 	PHSession = "@@RUN_SESSION@@"
+	// PHShare is the host path of a persistent agent's share folder, the
+	// person's own, mounted read-write and live at AgentRoot/AgentShareDir;
+	// only a persistent plan whose agent has its share names it.
+	PHShare = "@@RUN_SHARE@@"
+	// PHData is a persistent agent's data volume, by name, mounted at
+	// AgentRoot/AgentDataDir; only a persistent plan names it.
+	PHData = "@@RUN_DATA@@"
 	// PHHostGatewayURL / PHHostProxyURL are the published 127.0.0.1 addresses a
 	// host-run harness reaches the gateway and the proxy at; known only once
 	// the run's containers are up, so they are rendered into harness files and
@@ -223,6 +230,24 @@ const (
 	// ToolsTmpMount is the tools container's /tmp, a tmpfs of the same
 	// size: the place a declared command may write.
 	ToolsTmpMount = "/tmp"
+	// AgentRoot is where a persistent agent's tools see its two folders,
+	// AgentShareDir and AgentDataDir beneath it: the filesystem tools,
+	// grep and glob are rooted here in place of the workspace, which a
+	// persistent agent does not have, so one root holds every path they
+	// take.
+	AgentRoot = "/agent"
+	// AgentShareDir is the person's share folder beneath AgentRoot,
+	// read-write and live: what either side writes, the other sees.
+	AgentShareDir = "share"
+	// AgentDataDir is the agent's own folder beneath AgentRoot, its data
+	// volume, kept between its segments.
+	AgentDataDir = "data"
+	// ShareChecksMount is the folder a persistent agent's tools server
+	// reads the share's malware verdicts from, read-only, rewritten by the
+	// runner before each turn (ShareChecksFile).
+	ShareChecksMount = "/run/agentry/share-checks"
+	// ShareChecksFile is the verdicts' file name in that folder.
+	ShareChecksFile = "verdicts.json"
 	// PlanMount is where the agent container sees its harness files.
 	PlanMount = "/plan"
 	// ToolSpecMount is where the tools container sees its spec file.
@@ -417,6 +442,37 @@ type CapSummary struct {
 	// built-in writes is read by the application, not handed to a person as
 	// a document.
 	PDF bool `json:"pdf,omitempty"`
+	// AgentFiles is a persistent agent's grant of its own folders under
+	// AgentRoot: its data volume always, and the person's share folder when
+	// the agent has it on. It is never the manifest's: the compiler sets it
+	// for a persistent built-in alone, and the filesystem tools, grep and
+	// glob are then rooted at AgentRoot in place of the workspace.
+	AgentFiles *AgentFiles `json:"agentFiles,omitempty"`
+}
+
+// AgentFiles is a persistent agent's folders (CapSummary.AgentFiles).
+type AgentFiles struct {
+	// Share says the person's share folder is mounted at
+	// AgentRoot/AgentShareDir.
+	Share bool `json:"share,omitempty"`
+	// CheckShare says a file in the share is read only once ClamAV has
+	// checked it: the runner checks what is new or changed in the share
+	// before each turn and writes the verdicts the tools server reads at
+	// ShareChecksMount, and the tools server refuses a file whose bytes
+	// have no clean verdict. Unset, the share is read as it is.
+	CheckShare bool `json:"checkShare,omitempty"`
+}
+
+// Folders are the folders beneath AgentRoot the agent's tools read and
+// write, in a fixed order.
+func (a *AgentFiles) Folders() []string {
+	if a == nil {
+		return nil
+	}
+	if a.Share {
+		return []string{AgentDataDir, AgentShareDir}
+	}
+	return []string{AgentDataDir}
 }
 
 // BrowserCap is capabilities.browser, normalized: the site questions, the

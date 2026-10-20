@@ -159,12 +159,15 @@ func stopProcess(p *os.Process, done chan error) {
 		_ = p.Kill()
 		return
 	}
+	// Only that the service exited matters here, not how.
 	select {
-	case <-done:
+	case err := <-done:
+		_ = err
 	case <-time.After(5 * time.Second):
 		_ = p.Kill()
 		select {
-		case <-done:
+		case err := <-done:
+			_ = err
 		case <-time.After(5 * time.Second):
 		}
 	}

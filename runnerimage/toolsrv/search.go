@@ -169,7 +169,11 @@ func (s *server) searchAreaNames() string {
 		areas = append(areas, s.spec.ScratchDir+" (the scratch folder)")
 	}
 	if s.spec.FSRead.Enabled && s.spec.WorkspaceDir != "" {
-		areas = append(areas, s.spec.WorkspaceDir+" (the workspace)")
+		name := "the workspace"
+		if s.spec.WorkspaceName != "" {
+			name = s.spec.WorkspaceName
+		}
+		areas = append(areas, s.spec.WorkspaceDir+" ("+name+")")
 	}
 	return strings.Join(areas, ", ")
 }
@@ -177,7 +181,7 @@ func (s *server) searchAreaNames() string {
 func (s *server) grepDescription() string {
 	return "Search the contents of files with a regular expression (ripgrep), in one area at a time: " + s.searchAreaNames() + ". " +
 		`output "files" (the default) lists the files that match, "content" gives each matching line as path:line: text (with context lines as path-line- text), "count" the matching lines per file. ` +
-		"Paths come back as this run sees them; read a file with the area's own tool: read_input with the path after /inputs/, knowledge_read with the path after /knowledge/<pack>/wiki/ (or doc:<the path after sources/>), scratch_read or fs_read with the path after /scratch/ or /workspace/. " +
+		"Paths come back as this run sees them; read a file with the area's own tool: read_input with the path after /inputs/, knowledge_read with the path after /knowledge/<pack>/wiki/ (or doc:<the path after sources/>), scratch_read or fs_read with the path after /scratch/ or " + s.spec.WorkspaceDir + "/. " +
 		"Hidden files and files an ignore file names are searched; .git is not. A long answer pages: pass offset to read on, or narrow path, glob or type."
 }
 
@@ -213,6 +217,24 @@ type searchScope struct {
 	// which is the runner's record of the pack, not a page knowledge_read
 	// opens.
 	hidden map[string]bool
+	// withheld, when set, says a shown path is left out of a grep's
+	// answer: a file in a checked share folder that is not yet checked
+	// (sharecheck.go). withheldN counts the files it left out.
+	withheld  func(shown string) bool
+	withheldN *map[string]bool
+}
+
+// keep says whether an answer shows the path shown, and counts a file a
+// check withheld.
+func (sc searchScope) keep(shown string) bool {
+	if sc.hidden[shown] {
+		return false
+	}
+	if sc.withheld != nil && sc.withheld(shown) {
+		(*sc.withheldN)[shown] = true
+		return false
+	}
+	return true
 }
 
 // scope resolves where a call searches: an area the run has, and a path
@@ -724,6 +746,16 @@ func (s *server) toolGrep(raw json.RawMessage) (string, bool) {
 		}
 	}
 	args = append(args, "-e", a.Pattern)
+	if s.spec.ShareChecks != nil && sc.area == "workspace" {
+		// A file in the share is searched only once checked: the rest are
+		// left out of the answer, and the answer says how many.
+		verdicts, err := s.shareVerdicts()
+		if err != nil {
+			return "grep: " + err.Error(), true
+		}
+		seen := map[string]bool{}
+		sc.withheld, sc.withheldN = s.shareWithheld(verdicts), &seen
+	}
 	r, failed := s.runRipgrep("grep", args, sc)
 	if failed != "" {
 		return failed, true
@@ -735,7 +767,7 @@ func (s *server) toolGrep(raw json.RawMessage) (string, bool) {
 	switch a.Output {
 	case "files":
 		for _, p := range splitNul(r.stdout) {
-			if p = sc.show(p); !sc.hidden[p] {
+			if p = sc.show(p); sc.keep(p) {
 				lines = append(lines, p)
 			}
 		}
@@ -745,7 +777,11 @@ func (s *server) toolGrep(raw json.RawMessage) (string, bool) {
 		lines = contentLines(r.stdout, sc, a.Context > 0)
 	}
 	s.callPersonsInput = sc.personsInput
-	return s.searchAnswer(lines, a.MaxResults, a.Offset, r, "no file in "+sc.area+" matches", "narrow path, glob or type"), false
+	answer := s.searchAnswer(lines, a.MaxResults, a.Offset, r, "no file in "+sc.area+" matches", "narrow path, glob or type")
+	if sc.withheldN != nil && len(*sc.withheldN) > 0 {
+		answer += fmt.Sprintf("\n(matches in %d file(s) of the share were left out: they are not yet checked for malware, or ClamAV found something in them; a file is checked before your next turn)", len(*sc.withheldN))
+	}
+	return answer, false
 }
 
 func (s *server) toolGlob(raw json.RawMessage) (string, bool) {
@@ -878,7 +914,7 @@ func countLines(out []byte, sc searchScope) []string {
 		if !ok {
 			continue
 		}
-		if shown := sc.show(string(p)); !sc.hidden[shown] {
+		if shown := sc.show(string(p)); sc.keep(shown) {
 			lines = append(lines, shown+": "+string(n))
 		}
 	}
@@ -922,7 +958,7 @@ func contentLines(out []byte, sc searchScope, context bool) []string {
 		if ev.Data.Path.Text != nil {
 			p = sc.show(*ev.Data.Path.Text)
 		}
-		if sc.hidden[p] {
+		if !sc.keep(p) {
 			continue
 		}
 		if context && lastPath != "" && (p != lastPath || ev.Data.LineNumber > lastLine+1) {

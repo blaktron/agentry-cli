@@ -19,7 +19,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 )
@@ -108,6 +111,9 @@ type server struct {
 	search        searchConfinement
 	rgBin         string
 	searchTimeout time.Duration
+	// share is what the server remembers of a checked share folder
+	// (sharecheck.go).
+	share shareState
 	// typst, render and pdfTimeout are export_pdf's renderer, how it is
 	// held, and how long a render may take (pdf.go); set when it is
 	// granted, and by a test.
@@ -228,6 +234,14 @@ func validateSpec(spec *Spec) error {
 	}
 	if spec.InputsTextDir != "" && (!filepath.IsAbs(spec.InputsTextDir) || spec.InputsDir == "") {
 		return fmt.Errorf("inputsTextDir %q must be an absolute container path, and only beside the inputs channel", spec.InputsTextDir)
+	}
+	if sc := spec.ShareChecks; sc != nil {
+		// The checked folder is one of the read grant's own folders, named
+		// plainly, and its verdicts are a file by absolute path.
+		if sc.Folder == "" || path.Clean(sc.Folder) != sc.Folder || strings.Contains(sc.Folder, "/") || sc.Folder == "." || sc.Folder == ".." ||
+			!spec.FSRead.Enabled || !slices.Contains(spec.FSRead.Paths, sc.Folder) || !filepath.IsAbs(sc.File) {
+			return fmt.Errorf("shareChecks %+v must name one of the read grant's folders and an absolute verdicts file", *sc)
+		}
 	}
 	if spec.Web.Enabled && (spec.Fetch.Enabled || len(spec.Exec.Commands) > 0) {
 		// The web tools' container has no network allowlist of its own

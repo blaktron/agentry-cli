@@ -46,6 +46,10 @@ const (
 	KindError Kind = "error"
 	// KindOther is anything else the harness said, kept for the record.
 	KindOther Kind = "other"
+	// KindNotice is the runner's word to the person about the session, which
+	// a chat shows them and the harness never sees: a check of a persistent
+	// agent's share folder, a change it is restarting with.
+	KindNotice Kind = "notice"
 )
 
 // Event is one thing that happened in the session.

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -324,7 +325,11 @@ func (f *Filter) containerCreate(ctx context.Context, body []byte) (any, error) 
 	if err := f.checkNetworks(ctx, &c, scope); err != nil {
 		return nil, err
 	}
-	if err := f.checkStorage(ctx, hc); err != nil {
+	tools, err := f.isToolsServer(ctx, &c, imageID)
+	if err != nil {
+		return nil, err
+	}
+	if err := f.checkStorage(ctx, hc, tools); err != nil {
 		return nil, err
 	}
 	web, err := f.webShape(ctx, &c)
@@ -335,10 +340,6 @@ func (f *Filter) containerCreate(ctx context.Context, body []byte) (any, error) 
 		// Added after the storage check: the run's own file, not one the
 		// gateway named.
 		hc.Binds = append(hc.Binds, f.cfg.WebResolvConf+":"+resolvConfTarget+":ro")
-	}
-	tools, err := f.isToolsServer(ctx, &c, imageID)
-	if err != nil {
-		return nil, err
 	}
 	if err := f.toolsTmpfs(ctx, &c, imageID); err != nil {
 		return nil, err
@@ -1132,21 +1133,40 @@ func (f *Filter) checkNetworkList(ctx context.Context, c *containerCreateBody, s
 
 // checkStorage requires every bind and mount to stay in the run: host
 // paths under the gateway's roots, written only under its writable ones,
-// forwarded as resolved; volumes the run's; no driver configuration.
-func (f *Filter) checkStorage(ctx context.Context, hc *hostConfig) error {
+// forwarded as resolved; volumes the run's, or for the tools server one of
+// Config.ToolsVolumes; no driver configuration.
+func (f *Filter) checkStorage(ctx context.Context, hc *hostConfig, tools bool) error {
 	for i, b := range hc.Binds {
-		out, err := f.bind(ctx, b)
+		out, err := f.bind(ctx, b, tools)
 		if err != nil {
 			return err
 		}
 		hc.Binds[i] = out
 	}
 	for i := range hc.Mounts {
-		if err := f.mount(ctx, &hc.Mounts[i]); err != nil {
+		if err := f.mount(ctx, &hc.Mounts[i], tools); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// volume admits a named volume: the run's own, or, for the run's tools
+// server alone, one Config.ToolsVolumes names exactly, which must exist
+// (the daemon would make a missing one, unlabelled, at the create).
+func (f *Filter) volume(ctx context.Context, name string, tools bool) error {
+	if tools && slices.Contains(f.cfg.ToolsVolumes, name) {
+		var v struct{ Name string }
+		code, err := f.inspect(ctx, "/volumes/"+url.PathEscape(name), &v)
+		if err != nil {
+			return err
+		}
+		if code == http.StatusNotFound {
+			return notFound{"volume", name}
+		}
+		return nil
+	}
+	return f.ownVolume(ctx, name)
 }
 
 // bindOptionsAllowed are the options of a "source:target:options" bind
@@ -1157,7 +1177,7 @@ var bindOptionsAllowed = map[string]bool{
 	"consistent": true, "cached": true, "delegated": true,
 }
 
-func (f *Filter) bind(ctx context.Context, b string) (string, error) {
+func (f *Filter) bind(ctx context.Context, b string, tools bool) (string, error) {
 	parts := strings.Split(b, ":")
 	if len(parts) < 2 || len(parts) > 3 || parts[0] == "" {
 		return "", deny("bind %q is not source:target[:options]", b)
@@ -1175,7 +1195,7 @@ func (f *Filter) bind(ctx context.Context, b string) (string, error) {
 		}
 	}
 	if !strings.HasPrefix(src, "/") {
-		return b, f.ownVolume(ctx, src)
+		return b, f.volume(ctx, src, tools)
 	}
 	resolved, err := f.hostPath(src, write)
 	if err != nil {
@@ -1185,7 +1205,7 @@ func (f *Filter) bind(ctx context.Context, b string) (string, error) {
 	return strings.Join(parts, ":"), nil
 }
 
-func (f *Filter) mount(ctx context.Context, m *mount) error {
+func (f *Filter) mount(ctx context.Context, m *mount, tools bool) error {
 	if !empty(m.ImageOptions) || !empty(m.ClusterOptions) {
 		return deny("a %q mount with image or cluster options", m.Type)
 	}
@@ -1203,7 +1223,7 @@ func (f *Filter) mount(ctx context.Context, m *mount) error {
 		if m.Source == "" {
 			return nil // anonymous: created for, and removed with, the container
 		}
-		return f.ownVolume(ctx, m.Source)
+		return f.volume(ctx, m.Source, tools)
 	case "bind":
 		if bo := m.BindOptions; bo != nil {
 			if bo.Propagation != "" && bo.Propagation != "private" && bo.Propagation != "rprivate" {

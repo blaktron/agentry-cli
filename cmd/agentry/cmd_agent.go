@@ -45,6 +45,11 @@ func newAgentCmd() *cobra.Command {
 			"model your runner policy names, in a container, without the session caps\n" +
 			"an interactive QuickAgent has. One process runs an agent at a time: this\n" +
 			"CLI or Agentry Desktop, and the other is refused, naming the holder.\n\n" +
+			"Each agent shares a folder with you, ~/agentry/<agent>share by default, read\n" +
+			"and write, and keeps its own files on its data volume. What it has is its\n" +
+			"roster: `show` lists it, `grant` switches an entry, `configure` adds a server\n" +
+			"or a knowledge pack, names it and gives it a personality. A change reaches a\n" +
+			"running agent at its next turn.\n\n" +
 			"Main runs only in Agentry Desktop.\n\n" +
 			"  agentry agent enable assistant\n" +
 			"  agentry agent start assistant\n" +
@@ -60,6 +65,8 @@ func newAgentCmd() *cobra.Command {
 		newAgentEnableCmd(true),
 		newAgentEnableCmd(false),
 		newAgentResetCmd(),
+		newAgentGrantCmd(),
+		newAgentConfigureCmd(),
 		newAgentSuperviseCmd(),
 	)
 	return cmd
@@ -99,6 +106,8 @@ type agentState struct {
 	StateDir    string             `json:"stateDir,omitempty"`
 	Volumes     *agentVolumes      `json:"volumes,omitempty"`
 	Transcript  []persistent.Entry `json:"transcript,omitempty"`
+	Share       string             `json:"share,omitempty"`
+	Roster      persistent.Roster  `json:"roster,omitempty"`
 }
 
 type agentVolumes struct {
@@ -125,6 +134,8 @@ func readAgentState(ctx context.Context, home string, a persistent.Agent) (agent
 	}
 	st.DisplayName = a.DisplayName(cfg)
 	st.Config = &cfg
+	st.Share, _ = persistent.ShareFolder(a, cfg)
+	st.Roster = persistent.BuildRoster(a, cfg, nil)
 	held, holder := persistent.Held(home, a.Name)
 	switch {
 	case held:
@@ -133,6 +144,9 @@ func readAgentState(ctx context.Context, home string, a persistent.Agent) (agent
 		defer cancel()
 		if s, err := persistent.QueryStatus(qctx, home, a.Name); err == nil {
 			st.Status = &s
+		}
+		if r, err := persistent.QueryRoster(qctx, home, a.Name); err == nil {
+			st.Roster = r
 		}
 	case cfg.Enabled:
 		st.State = agentStopped
@@ -158,7 +172,7 @@ func newAgentListCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				st.Config = nil
+				st.Config, st.Roster = nil, nil
 				all = append(all, st)
 			}
 			if flags.jsonOut {
@@ -251,6 +265,19 @@ func printAgentState(w io.Writer, st agentState) {
 	}
 	if c := st.Config; c != nil {
 		_, _ = fmt.Fprintf(w, "  enabled:    %t; segments started: %d\n", c.Enabled, c.Segments)
+		if c.Personality != "" {
+			_, _ = fmt.Fprintf(w, "  personality: %d bytes, given at its next turn when changed\n", len(c.Personality))
+		}
+	}
+	if st.Share != "" {
+		_, _ = fmt.Fprintf(w, "  share:      %s\n", st.Share)
+	}
+	if s := st.Status; s != nil && s.Pending {
+		_, _ = fmt.Fprintln(w, "  pending:    a change restarts it at its next turn")
+	}
+	if len(st.Roster) > 0 {
+		_, _ = fmt.Fprintln(w, "  roster:")
+		printRoster(w, st.Roster)
 	}
 	if u := st.Usage; u != nil {
 		_, _ = fmt.Fprintf(w, "  lifetime:   %d segment(s) ended, %d turn(s), %d token(s)\n", u.Segments, u.UserTurns, u.InputTokens+u.OutputTokens+u.TotalTokens)
@@ -285,7 +312,10 @@ func agentPolicy(path string) (*policy.Policy, string, policy.File, error) {
 var agentStartTimeout = 20 * time.Minute
 
 func newAgentStartCmd() *cobra.Command {
-	var policyPath string
+	var (
+		policyPath string
+		yes        bool
+	)
 	cmd := &cobra.Command{
 		Use:   "start <name>",
 		Short: "Start a persistent agent in the background; its conversation continues from where it stopped",
@@ -309,6 +339,17 @@ func newAgentStartCmd() *cobra.Command {
 			if held, h := persistent.Held(home, a.Name); held {
 				return engine.Classify(engine.ExitUsage, &persistent.HeldError{Agent: a.Name, Holder: h})
 			}
+			// What the agent is given that the person has not agreed to on
+			// this computer is asked for here, on the terminal: the
+			// supervisor has none, and refuses to start without it.
+			if pending := persistent.Unconsented(persistent.BuildRoster(a, cfg, nil), cfg); len(pending) > 0 {
+				if err := agentConsent(cmd, a, &persistent.ConsentError{Agent: a.Name, Entries: pending}, yes); err != nil {
+					return err
+				}
+				if err := persistent.AgreeToRoster(home, a, persistent.ClientCLI); err != nil {
+					return engine.Classify(engine.ExitCLI, err)
+				}
+			}
 			if _, _, _, err := agentPolicy(policyPath); err != nil {
 				return err
 			}
@@ -319,6 +360,7 @@ func newAgentStartCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml, created on first use)")
+	cmd.Flags().BoolVar(&yes, "yes", false, "agree to what the agent is given for the first time without being asked")
 	return cmd
 }
 
@@ -463,7 +505,7 @@ func newAgentSuperviseCmd() *cobra.Command {
 			sv, err := persistent.Start(startCtx, persistent.Options{
 				Home: home, Agent: a, Client: persistent.ClientCLI,
 				Policy: pol, PolicySHA: sha, PolicyFile: &file, Build: version.Build(),
-				Docker: dockerx.New(), Stderr: errOut,
+				Docker: dockerx.New(), Stderr: errOut, Packs: agentPacks(cmd),
 			})
 			close(starting)
 			if err != nil {
