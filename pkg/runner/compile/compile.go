@@ -415,6 +415,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		Harness:      in.Policy.Harness[adapterName],
 		// The host link's results reach the model as the host printed them.
 		UnchangedTools: unchangedTools(caps),
+		Persistent:     mode == manifest.ModePersistent,
 	})
 	if err != nil {
 		var refusal *adapter.Refusal

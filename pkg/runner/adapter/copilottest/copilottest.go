@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,8 +30,16 @@ type Server struct {
 	// CLI lists it (copilot-sdk go/rpc/zrpc.go Model: id, name, billing,
 	// policy); nil lists none.
 	Models []map[string]any
+	// Stored are the session ids session.resume finds, as a COPILOT_HOME
+	// kept from an earlier process holds them; any other is "not found".
+	Stored []string
+	// ResumeError fails session.resume with this message whatever the id
+	// (an organization's policy).
+	ResumeError string
 
 	mu sync.Mutex
+	// Resume is session.resume's params, as the driver sent them.
+	Resume map[string]any
 	// Create is session.create's params, as the driver sent them.
 	Create map[string]any
 	// Options is session.options.update's params.
@@ -66,6 +75,14 @@ func (s *Server) Snapshot() (create, options map[string]any, tokens []map[string
 		d[k] = v
 	}
 	return s.Create, s.Options, append([]map[string]any(nil), s.Tokens...), d, append([]string(nil), s.Methods...)
+}
+
+// Resumed is session.resume's params, as the driver sent them; nil when it
+// sent none.
+func (s *Server) Resumed() map[string]any {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.Resume
 }
 
 // Serve plays the server on r (the driver's writes) and w (what the driver
@@ -137,6 +154,29 @@ func (c *Conn) handle(id json.RawMessage, method string, params map[string]any) 
 			return
 		}
 		c.reply(id, map[string]any{"sessionId": c.sessionID})
+	case "session.resume":
+		s.mu.Lock()
+		s.Resume = params
+		stored := slices.Contains(s.Stored, fmt.Sprint(params["sessionId"]))
+		s.mu.Unlock()
+		if s.ResumeError != "" {
+			c.fail(id, "Request session.resume failed with message: "+s.ResumeError)
+			return
+		}
+		if !stored {
+			c.fail(id, "Request session.resume failed with message: Session not found: "+fmt.Sprint(params["sessionId"]))
+			return
+		}
+		c.sessionID, _ = params["sessionId"].(string)
+		c.regID, _ = params["gitHubTokenProviderRegistrationId"].(string)
+		if c.regID != "" {
+			if tok := c.AskToken("initial"); tok["error"] != nil {
+				c.fail(id, "Request session.resume failed with message: GitHub token provider failed")
+				return
+			}
+		}
+		c.reply(id, map[string]any{"sessionId": c.sessionID})
+		c.Event("session.resume", map[string]any{"eventCount": 8, "sessionWasActive": false})
 	case "session.options.update":
 		s.mu.Lock()
 		s.Options = params

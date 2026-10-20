@@ -107,11 +107,12 @@ func (c *codexImageAdapter) Compile(in Input) (Result, error) {
 			msi.Env = codexTokenEnv
 		}
 	}
-	// A session on the restart route keeps its conversation in the run's
-	// session store, which CODEX_HOME then is (below).
+	// A session on the restart route, and a persistent agent's, keeps its
+	// conversation in the session store, which CODEX_HOME then is (below).
 	interactive := cc.mode == manifest.ModeInteractive
+	keep := interactive && (restart || in.Persistent)
 	codexHome := codexImageHome
-	if interactive && restart {
+	if keep {
 		codexHome = spec.SessionMount
 	}
 	env = append(env,
@@ -144,10 +145,11 @@ func (c *codexImageAdapter) Compile(in Input) (Result, error) {
 	if interactive {
 		res.Session = codexSessionSpec()
 		res.Session.RestartOnRenewal = restart
-		if restart {
-			// A restart is a new container, whose tmpfs home starts empty:
-			// the conversation thread/resume needs is kept in the run's
-			// session store instead, a volume given to the image's user.
+		if keep {
+			// A restart, and a persistent agent's next segment, is a new
+			// container, whose tmpfs home starts empty: the conversation
+			// thread/resume needs is kept in the session store instead, a
+			// volume given to the image's user.
 			res.Session.Mounts = []spec.Mount{{Source: spec.PHSession, Target: spec.SessionMount}}
 			res.Session.StoreOwner = "codex"
 		}

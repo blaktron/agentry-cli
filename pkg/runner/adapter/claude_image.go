@@ -53,6 +53,13 @@ const (
 	// directory, the sign-in's volume: made by the build for the image's
 	// user.
 	ClaudeImageConfigDir = harnessbuild.ClaudeConfigDir
+	// claudeImageUser is the image's own user, who owns a persistent
+	// agent's session store.
+	claudeImageUser = "node"
+	// claudeProjectsDir is the folder of Claude Code's config directory
+	// where it keeps each conversation's transcript, under the working
+	// directory's name.
+	claudeProjectsDir = "projects"
 )
 
 // claudeImageAdapter implements Adapter for the Claude Code image. It is
@@ -86,9 +93,20 @@ func (c *claudeImageAdapter) Compile(in Input) (Result, error) {
 		return Result{}, fmt.Errorf("claude-image adapter: %w", err)
 	}
 	argv, session, stdinTask, err := claudeArgv(in.Mode,
-		spec.PlanMount+"/"+claudeInstructionFile, spec.PlanMount+"/"+claudeMCPFile, model, false)
+		spec.PlanMount+"/"+claudeInstructionFile, spec.PlanMount+"/"+claudeMCPFile, model, false, in.Persistent)
 	if err != nil {
 		return Result{}, fmt.Errorf("claude-image adapter: %w", err)
+	}
+	if in.Persistent && session != nil {
+		// A persistent agent's conversation is Claude Code's transcript,
+		// which it keeps in its config directory's projects folder. That
+		// folder is the agent's own session store, mounted over the
+		// sign-in's volume there: the sign-in stays where Claude Code
+		// keeps and refreshes it, and one agent's conversation reaches no
+		// other run. Each segment opens or continues it by id.
+		session.Mounts = []spec.Mount{{Source: spec.PHSession, Target: ClaudeImageConfigDir + "/" + claudeProjectsDir}}
+		session.StoreOwner = claudeImageUser
+		session.ConversationArgs = &spec.ConversationArgs{New: "--session-id", Continue: "--resume"}
 	}
 	env := []spec.EnvVar{
 		{Name: spec.GatewayTokenEnv, FromRunToken: true},
