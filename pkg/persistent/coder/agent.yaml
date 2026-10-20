@@ -1,0 +1,20 @@
+schemaVersion: "2"
+name: coder
+namespace: agentry
+version: 1.0.0
+summary: "A coding agent that keeps its projects and conversation between starts, on your computer."
+license: MIT
+authors:
+  - name: Agentry
+modes: [persistent]
+entrypoints:
+  instruction: INSTRUCTION.md
+capabilities:
+  network:
+    egress: none
+  filesystem:
+    read: none
+    write: none
+  exec: none
+publish:
+  include: [agent.yaml, INSTRUCTION.md, README.md, LICENSE]

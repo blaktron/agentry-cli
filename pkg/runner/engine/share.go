@@ -49,6 +49,9 @@ const (
 // preparePersistentFolders holds a segment to its plan's folders, and gives
 // the run's directories the share, the data volume and the verdicts folder.
 func preparePersistentFolders(p Params, rd *runDirs) error {
+	if err := prepareAppLink(p, rd); err != nil {
+		return err
+	}
 	af := p.Plan.Capabilities.AgentFiles
 	if af == nil {
 		if p.Persistent != nil && p.Persistent.Share != "" {

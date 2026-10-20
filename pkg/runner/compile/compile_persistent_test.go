@@ -10,8 +10,10 @@ import (
 	"testing"
 
 	"github.com/blaktron/agentry/pkg/manifest"
+	"gopkg.in/yaml.v3"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	"github.com/blaktron/agentry-cli/runnerimage/applink"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
 
@@ -123,4 +125,89 @@ func TestAgentFilesRefusedOutsideAPersistentBuiltin(t *testing.T) {
 	m := parseManifest(t, strings.Replace(pureTextYAML, "modes: [autonomous]", "modes: [persistent]", 1)+"capabilities:\n  filesystem:\n    read: workspace\n")
 	reading.Manifest, reading.WorkspaceDir = m, workspaceFor(t, m, nil)
 	refused("a built-in that reads its workspace", reading)
+}
+
+// TestTheAppLinkIsAServerWithNoNetworkAndOneBind: a persistent built-in's
+// app link is a catalogue entry of the runner image's applink role for its
+// tool set, with no network, the supervisor's socket as its one bind (a bind
+// root and a writable path of its own, exact), its set alone in the
+// allowlist, and a receipt line.
+func TestTheAppLinkIsAServerWithNoNetworkAndOneBind(t *testing.T) {
+	in := persistentInputs(t, &spec.AgentFiles{Share: true, CheckShare: true})
+	in.AppLink = applink.SetAssistant
+	planDir := t.TempDir()
+	plan, err := Compile(in, planDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cat, err := os.ReadFile(filepath.Join(planDir, "gateway", "catalog.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Registry map[string]map[string]any `yaml:"registry"`
+	}
+	if err := yaml.Unmarshal(cat, &doc); err != nil {
+		t.Fatal(err)
+	}
+	e := doc.Registry[applink.ServerName]
+	if e == nil || e["image"] != "agentry-runner:test" || e["disableNetwork"] != true || e["user"] != spec.PHAppLinkUser || e["allowHosts"] != nil {
+		t.Fatalf("the app link's entry: %v", e)
+	}
+	if vols, _ := e["volumes"].([]any); len(vols) != 1 || vols[0] != spec.PHAppLink+":"+applink.SocketMount+":rw" {
+		t.Errorf("the app link's volumes: %v", e["volumes"])
+	}
+	if cmd, _ := e["command"].([]any); len(cmd) != 3 || cmd[0] != "applink" || cmd[2] != applink.SetAssistant {
+		t.Errorf("the app link's command: %v", e["command"])
+	}
+	roots := strings.Split(gatewayEnv(plan, "MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS"), ":")
+	writable := strings.Split(gatewayEnv(plan, "MCP_GATEWAY_DOCKER_BIND_ALLOW_WRITABLE_PATHS"), ":")
+	if !slices.Contains(roots, spec.PHAppLink) || !slices.Contains(writable, spec.PHAppLink) || !slices.Contains(plan.Gateway.Servers, applink.ServerName) {
+		t.Errorf("roots %v, writable %v, servers %v", roots, writable, plan.Gateway.Servers)
+	}
+	allow, _ := os.ReadFile(filepath.Join(planDir, "gateway", "tools.yaml"))
+	var tools map[string][]string
+	if err := yaml.Unmarshal(allow, &tools); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(tools[applink.ServerName], []string{applink.SelfConfigure}) {
+		t.Errorf("the app link's allowlist: %v", tools[applink.ServerName])
+	}
+	if !strings.Contains(plan.Enforcement["persistent.appLink"], "no network") {
+		t.Errorf("the receipt's line: %q", plan.Enforcement["persistent.appLink"])
+	}
+	if _, err := Compile(func() Inputs { i := persistentInputs(t, nil); i.AppLink = "nobody"; return i }(), t.TempDir()); err == nil {
+		t.Error("an unknown tool set was compiled")
+	}
+}
+
+// TestPersistentGrantsRefusedOutsideBuiltins: the folders and the app link
+// are refused to a release from any source but a built-in, to a plan that is
+// not persistent, and beside the web tools or the review grant.
+func TestPersistentGrantsRefusedOutsideBuiltins(t *testing.T) {
+	refused := func(name string, in Inputs) {
+		t.Helper()
+		var refusal *PolicyRefusal
+		if _, err := Compile(in, t.TempDir()); !errors.As(err, &refusal) {
+			t.Errorf("%s: err = %v, want a policy refusal", name, err)
+		}
+	}
+	for _, source := range []string{"registry", "local"} {
+		in := persistentInputs(t, &spec.AgentFiles{Share: true})
+		in.Source = source
+		refused("the folders from "+source, in)
+		in = persistentInputs(t, nil)
+		in.Source, in.AppLink = source, applink.SetMain
+		refused("the app link from "+source, in)
+	}
+	auto := persistentInputs(t, nil)
+	auto.Manifest = parseManifest(t, strings.Replace(pureTextYAML, "modes: [autonomous]", "modes: [autonomous, persistent]", 1))
+	auto.Mode, auto.AppLink = manifest.ModeAutonomous, applink.SetMain
+	refused("the app link on an autonomous plan", auto)
+	web := persistentInputs(t, &spec.AgentFiles{})
+	web.Web = true
+	refused("the folders beside the web tools", web)
+	review := persistentInputs(t, nil)
+	review.AppLink, review.Review = applink.SetAssistant, true
+	refused("the app link beside the review grant", review)
 }

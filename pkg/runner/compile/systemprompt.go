@@ -7,6 +7,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/browser"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	"github.com/blaktron/agentry-cli/runnerimage/applink"
 	"github.com/blaktron/agentry-cli/runnerimage/hostlink"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 	"github.com/blaktron/agentry/pkg/manifest"
@@ -215,6 +216,12 @@ You have no shell, filesystem or network of your own. Your tools come only from 
 	}
 	writeTargetHosts(b, f.hosts)
 	writeBrowser(b, f.browser)
+	switch c.AppLink {
+	case applink.SetMain:
+		b.WriteString("- **Agentry.** The " + applink.ServerName + " tools reach Agentry itself: finding, installing, running and scheduling QuickAgents, opening Settings for the person and reading the docs. Agentry asks the person before anything that needs their agreement; tell them so, and never claim it was done until the tool says it was.\n")
+	case applink.SetAssistant:
+		b.WriteString("- **Agentry.** " + applink.SelfConfigure + " saves the name and the personality the person gives you, and nothing else.\n")
+	}
 	if len(f.servers) > 0 {
 		fmt.Fprintf(b, "- **MCP servers.** Besides the runner's own tools, the tools of these servers: %s. Each reaches only what was declared for it.\n", strings.Join(f.servers, ", "))
 	}

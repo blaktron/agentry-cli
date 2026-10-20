@@ -61,6 +61,9 @@ type runDirs struct {
 	// (share.go): the person's share folder, the agent's data volume, and
 	// the folder of the share's malware verdicts; empty for any other run.
 	share, data, shareChecks string
+	// appLink is the supervisor's app link socket, for a segment whose plan
+	// has an app link.
+	appLink string
 	// shareKept are the share's verdicts the last segment left
 	// (PersistentSegment.ShareVerdicts), and shareCache where they are kept.
 	shareKept  map[string]toolsrv.ShareVerdict
@@ -239,6 +242,7 @@ func (rd *runDirs) replacerWith(hostPath func(string) string) *strings.Replacer 
 		spec.PHSession, rd.session,
 		spec.PHShare, hostPath(rd.share),
 		spec.PHData, rd.data,
+		spec.PHAppLink, hostPath(rd.appLink),
 		spec.PHServers, hostPath(rd.serversDir),
 		spec.PHHostGatewayURL, rd.hostGatewayURL,
 		spec.PHHostProxyURL, rd.hostProxyURL,
@@ -250,7 +254,7 @@ func (rd *runDirs) replacerWith(hostPath func(string) string) *strings.Replacer 
 	// The host link's run-time values: the user it runs as (the person's
 	// ids on this engine, whose files it reads and copies), and each
 	// target host's relay target.
-	pairs = append(pairs, spec.PHHostLinkUser, rd.personUser())
+	pairs = append(pairs, spec.PHHostLinkUser, rd.personUser(), spec.PHAppLinkUser, rd.personUser())
 	for _, h := range rd.targets {
 		pairs = append(pairs, spec.PHTargetHost(h.ID), h.RelayHost())
 	}

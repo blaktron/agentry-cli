@@ -302,6 +302,10 @@ type PersistentSegment struct {
 	Share string
 	// Roster is the agent's roster for the segment, for its envelope.
 	Roster []receipt.RosterEntry
+	// AppLink is the socket the agent's supervisor answers its app link on,
+	// absolute, which the app link's container binds when the plan has one
+	// (spec.CapSummary.AppLink); empty otherwise.
+	AppLink string
 	// ShareVerdicts is a file of the agent's own the share's verdicts are
 	// kept in between segments, so a file checked in one is not checked
 	// again in the next while it is unchanged; empty keeps none.
