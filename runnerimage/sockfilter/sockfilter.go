@@ -149,6 +149,13 @@ type Config struct {
 	// which outlives every run and so carries no run label. No other
 	// container may mount one.
 	ToolsVolumes []string
+	// AppLinkVolume is the run's app link relay volume, made by the CLI
+	// where the daemon runs in a VM: the app link's container, the one of
+	// AppLinkImage (by id) that runs AppLinkCmd, may mount it by its exact
+	// name, and no other container. Empty admits none.
+	AppLinkVolume string
+	AppLinkImage  string
+	AppLinkCmd    []string
 	// BrowserImage names the run's browser server: the
 	// image a create must be of, by id (resolved when first needed, as
 	// ToolsImage is), to be held as the browser class: every capability

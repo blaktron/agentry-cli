@@ -83,6 +83,12 @@ const (
 	// supervisor answers its app link on, bound into the app link's
 	// container alone; only a plan with an app link names it.
 	PHAppLink = "@@RUN_APPLINK@@"
+	// PHAppLinkMount is the app link container's one mount, source and
+	// target: the supervisor's socket at the socket's path where the
+	// engine's daemon runs on this computer, and the run's relay volume at
+	// the socket's folder where it runs in a VM, chosen at run time so the
+	// plan does not depend on the engine.
+	PHAppLinkMount = "@@RUN_APPLINK_MOUNT@@"
 	// PHAppLinkUser is the user the app link runs as: the invoking uid:gid,
 	// whose socket it connects to, as the host link runs.
 	PHAppLinkUser = "@@RUN_APPLINK_USER@@"

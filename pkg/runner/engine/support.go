@@ -64,6 +64,11 @@ type runDirs struct {
 	// appLink is the supervisor's app link socket, for a segment whose plan
 	// has an app link.
 	appLink string
+	// appLinkRelay is the run's relay volume, where the engine's daemon runs
+	// in a VM and the app link reaches appLink through the relay; empty where
+	// the app link's container binds appLink itself. appLinkWhy is the
+	// placement's reason, for the receipt.
+	appLinkRelay, appLinkWhy string
 	// shareKept are the share's verdicts the last segment left
 	// (PersistentSegment.ShareVerdicts), and shareCache where they are kept.
 	shareKept  map[string]toolsrv.ShareVerdict
@@ -208,7 +213,19 @@ func gatewayCanMount(path, goos string) error {
 // gatewayEnv resolves the gateway container's env: its bind allow-lists
 // name host paths, in the gateway's spelling.
 func (rd *runDirs) gatewayEnv(plan *spec.Plan, token string) (map[string]string, error) {
-	return resolveEnv(plan.Gateway.Env, rd.gatewayReplacer(), token)
+	env, err := resolveEnv(plan.Gateway.Env, rd.gatewayReplacer(), token)
+	if err != nil {
+		return nil, err
+	}
+	// A root a run does not have (the app link's socket, where the relay
+	// carries its calls) renders empty: it is left out of the lists rather
+	// than kept as an empty entry.
+	for _, k := range []string{"MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS", "MCP_GATEWAY_DOCKER_BIND_ALLOW_WRITABLE_PATHS"} {
+		if v, ok := env[k]; ok {
+			env[k] = strings.Join(pathList(v), ":")
+		}
+	}
+	return env, nil
 }
 
 // gatewayOS is the host OS gatewayHostPath spells for; a variable so a
@@ -244,7 +261,8 @@ func (rd *runDirs) replacerWith(hostPath func(string) string) *strings.Replacer 
 		spec.PHSession, rd.session,
 		spec.PHShare, hostPath(rd.share),
 		spec.PHData, rd.data,
-		spec.PHAppLink, hostPath(rd.appLink),
+		spec.PHAppLink, rd.appLinkRoot(hostPath),
+		spec.PHAppLinkMount, rd.appLinkMount(hostPath),
 		spec.PHServers, hostPath(rd.serversDir),
 		spec.PHHostGatewayURL, rd.hostGatewayURL,
 		spec.PHHostProxyURL, rd.hostProxyURL,

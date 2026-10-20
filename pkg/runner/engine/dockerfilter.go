@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
@@ -191,6 +192,9 @@ func filterConfig(rd *runDirs, runID string, gwEnv map[string]string, lim policy
 		ToolsTmpfs:        toolsTmpfs(plan),
 		ToolsShared:       toolsShared(plan, rd),
 		ToolsVolumes:      toolsVolumes(rd),
+		AppLinkVolume:     rd.appLinkRelay,
+		AppLinkImage:      appLinkImageOf(plan, rd),
+		AppLinkCmd:        appLinkCmdOf(plan, rd),
 		BrowserImage:      browserImageOf(plan),
 		BrowserUser:       rd.personUser(),
 		BrowserTmpfs:      browserTmpfsOf(plan),
@@ -507,6 +511,23 @@ func closeDaemonFilter(rd *runDirs) {
 
 // toolsVolumes are the volumes not the run's that its tools server may
 // mount: a persistent agent's data volume, by name.
+// appLinkImageOf and appLinkCmdOf name the app link's container for the
+// filter, where its relay volume is the run's (startAppLinkRelay): the
+// runner image and the catalog entry's command.
+func appLinkImageOf(plan *spec.Plan, rd *runDirs) string {
+	if rd.appLinkRelay == "" {
+		return ""
+	}
+	return plan.Proxy.Image
+}
+
+func appLinkCmdOf(plan *spec.Plan, rd *runDirs) []string {
+	if rd.appLinkRelay == "" {
+		return nil
+	}
+	return compile.AppLinkCommand(plan.Capabilities.AppLink)
+}
+
 func toolsVolumes(rd *runDirs) []string {
 	if rd.data == "" {
 		return nil

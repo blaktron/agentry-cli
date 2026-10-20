@@ -28,8 +28,13 @@ import (
 // ServerName is the app link's name in the gateway's catalog.
 const ServerName = "agentry-applink"
 
-// SocketMount is where the app link finds the supervisor's socket.
-const SocketMount = "/run/agentry/app.sock"
+// SocketMount is where the app link finds the supervisor's socket: the
+// supervisor's own, bound by its exact path, or, where the engine's daemon
+// runs in a VM, the relay's, in a volume mounted at SocketDir.
+const (
+	SocketDir   = "/run/agentry"
+	SocketMount = SocketDir + "/app.sock"
+)
 
 // The tool sets, by the agent they are for.
 const (
