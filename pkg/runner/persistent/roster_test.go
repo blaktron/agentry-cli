@@ -285,7 +285,7 @@ func TestASwitchTakesEffectAtTheNextTurn(t *testing.T) {
 	if len(st.segments) != 2 || st.segments[0].Grants.Share == "" || st.segments[1].Grants.Share != "" {
 		t.Fatalf("segments %d; shares %q then %q", len(st.segments), st.segments[0].Grants.Share, st.segments[1].Grants.Share)
 	}
-	if got := st.last.sentTurns(); len(got) != 1 || got[0] != "second" {
+	if got := st.last.sentTurns(); len(got) != 1 || !strings.HasSuffix(got[0], "second") || !strings.HasPrefix(got[0], "(The person changed what you have") {
 		t.Errorf("the next segment was sent %q", got)
 	}
 	on := func(seg localrun.Segment) bool {
