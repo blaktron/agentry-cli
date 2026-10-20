@@ -79,6 +79,9 @@ const (
 	// (copilot-sdk's sdk-protocol-version.json, 3 in go/v1.0.19; Copilot
 	// CLI 1.0.95 answers connect with 3).
 	copilotProtocolVersion = 3
+	// copilotImageUser is the image's own user, who owns a persistent
+	// agent's session store.
+	copilotImageUser = "copilot"
 )
 
 // copilotArgv is Copilot CLI's server mode, with everything it would do
@@ -203,7 +206,7 @@ func (c *copilotImageAdapter) Compile(in Input) (Result, error) {
 			copilotInstructionFile: []byte(instruction),
 			copilotSessionFile:     append(cfg, '\n'),
 		},
-		Agent:      copilotContainer(in.HarnessImage),
+		Agent:      copilotContainer(in.HarnessImage, copilotHome),
 		Model:      "copilot/" + model,
 		ResultKind: resultKind,
 		ModelSignIn: &spec.ModelSignInSpec{
@@ -216,18 +219,31 @@ func (c *copilotImageAdapter) Compile(in Input) (Result, error) {
 		res.OneTurn = sess
 	case manifest.ModeInteractive:
 		res.Session = sess
+		if in.Persistent {
+			// A persistent agent's conversation outlives its container:
+			// COPILOT_HOME, where Copilot CLI keeps its sessions, is the
+			// agent's session store, a volume given to the image's user,
+			// rather than the tmpfs home.
+			res.Agent = copilotContainer(in.HarnessImage, spec.SessionMount)
+			sess.Mounts = []spec.Mount{{Source: spec.PHSession, Target: spec.SessionMount}}
+			sess.StoreOwner = copilotImageUser
+		}
 	default:
 		return Result{}, fmt.Errorf("copilot-image adapter: unknown run mode %q", in.Mode)
 	}
 	return res, nil
 }
 
-// copilotContainer is Copilot CLI's container in image: a run's, and a
-// model list's (CopilotListContainer).
-func copilotContainer(image string) spec.ContainerSpec {
+// copilotHome is COPILOT_HOME in the tmpfs home, for every run but a
+// persistent agent's.
+const copilotHome = harnessbuild.CopilotHome + "/.copilot"
+
+// copilotContainer is Copilot CLI's container in image, keeping its state in
+// home: a run's, and a model list's (CopilotListContainer).
+func copilotContainer(image, home string) spec.ContainerSpec {
 	env := []spec.EnvVar{
 		{Name: "HOME", Value: harnessbuild.CopilotHome},
-		{Name: "COPILOT_HOME", Value: harnessbuild.CopilotHome + "/.copilot"},
+		{Name: "COPILOT_HOME", Value: home},
 		{Name: "COPILOT_PKG_CACHE_HOME", Value: harnessbuild.CopilotPkgCache},
 		// No keychain to reach, no login shell to copy an environment from,
 		// no update to fetch.

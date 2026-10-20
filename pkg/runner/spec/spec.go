@@ -682,6 +682,20 @@ type SessionSpec struct {
 	// renewed the token since, the engine starts the harness again and the
 	// driver resumes the conversation (policy signInTokenRoute restart).
 	RestartOnRenewal bool `json:"restartOnRenewal,omitempty"`
+	// ConversationArgs, for a harness told its conversation on its command
+	// line, are the flags the engine adds to the agent's argv at each start
+	// of a persistent agent's segment. Nil for a harness that names its
+	// conversation over the session itself, and for every other plan.
+	ConversationArgs *ConversationArgs `json:"conversationArgs,omitempty"`
+}
+
+// ConversationArgs are the two ways a harness started on its command line
+// is told its conversation: each flag is followed by the conversation's id.
+type ConversationArgs struct {
+	// New opens a new conversation under an id the engine chooses.
+	New string `json:"new"`
+	// Continue continues the stored conversation of that id.
+	Continue string `json:"continue"`
 }
 
 // SessionBudgets are the interactive caps: the engine ends the session

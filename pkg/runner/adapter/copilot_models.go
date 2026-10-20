@@ -52,7 +52,9 @@ type copilotListedModel struct {
 // CopilotListContainer is the container a model list runs Copilot CLI in:
 // a run's (the same argv, environment, read-only root and empty home), in
 // image.
-func CopilotListContainer(image string) spec.ContainerSpec { return copilotContainer(image) }
+func CopilotListContainer(image string) spec.ContainerSpec {
+	return copilotContainer(image, copilotHome)
+}
 
 // ListCopilotModels drives Copilot CLI on rw (the list container's stdio)
 // and returns the models the signed-in account's plan offers, in the order
@@ -101,7 +103,7 @@ func (s *copilotSession) listModels(ctx context.Context) ([]CopilotModel, error)
 	if _, err := s.call(ctx, "session.create", params); err != nil {
 		return nil, s.startError(err)
 	}
-	res, err := s.call(ctx, "session.model.list", map[string]any{"sessionId": s.sessionID})
+	res, err := s.call(ctx, "session.model.list", map[string]any{"sessionId": s.id()})
 	if err != nil {
 		return nil, err
 	}
@@ -159,7 +161,7 @@ func (s *copilotSession) listSessionParams() (map[string]any, error) {
 	if err := json.Unmarshal(b, &params); err != nil {
 		return nil, err
 	}
-	params["sessionId"] = s.sessionID
+	params["sessionId"] = s.id()
 	params["gitHubTokenProviderRegistrationId"] = s.registrationID
 	return params, nil
 }
