@@ -88,9 +88,7 @@ func fetchRulesBundle(ctx context.Context, w io.Writer, regURL string) (string, 
 	}
 	defer func() { _ = os.RemoveAll(staging) }()
 
-	if _, err := rules.UntarBundle(data, func(name string, content []byte) error {
-		return os.WriteFile(filepath.Join(staging, name), content, 0o600)
-	}); err != nil {
+	if err := untarBundleInto(staging, data); err != nil {
 		return "", err
 	}
 	bundle, err := rules.LoadBundle(os.DirFS(staging), ".")
@@ -154,6 +152,40 @@ func fetchRulesBundle(ctx context.Context, w io.Writer, regURL string) (string, 
 		_, _ = fmt.Fprintln(w, "rules: pinned by digest only — this registry publishes no bundle signature")
 	}
 	return semver, nil
+}
+
+// untarBundle reads a rule bundle archive. A variable so a test can hand the
+// writer names the archive reader would refuse.
+var untarBundle = rules.UntarBundle
+
+// untarBundleInto unpacks a rule bundle archive into dir.
+//
+// The archive reader already refuses entry names that are not plain file
+// names, but the bytes are untrusted and the digest is only checked after
+// they are on disk, so the write itself must also stay inside dir. Every
+// entry is written through an os.Root opened on dir: a name that would
+// resolve anywhere else fails at the write instead of creating a file. That
+// covers an absolute path and ".." on every system, and on Windows a
+// drive-relative name (C:x.yaml), an alternate data stream (a.yaml:s) and a
+// name Windows opens as a device.
+func untarBundleInto(dir string, data []byte) error {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return fmt.Errorf("open staging dir: %w", err)
+	}
+	defer func() { _ = root.Close() }()
+	_, err = untarBundle(data, stagedEntryWriter(root))
+	return err
+}
+
+// stagedEntryWriter writes one bundle entry beneath root, and nowhere else.
+func stagedEntryWriter(root *os.Root) func(name string, content []byte) error {
+	return func(name string, content []byte) error {
+		if err := root.WriteFile(name, content, 0o600); err != nil {
+			return fmt.Errorf("stage rule bundle entry %q: %w", name, err)
+		}
+		return nil
+	}
 }
 
 // newestCachedBundle returns the highest-semver cached bundle, or "" when the
