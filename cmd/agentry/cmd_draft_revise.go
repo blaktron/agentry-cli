@@ -47,7 +47,7 @@ func checkReviseFlags(args []string, o draftOpts) error {
 		return errors.New("a revision takes no description: what you want changed goes in --instructions-file, the problems you found in --problems-file")
 	case len(o.hints) > 0:
 		return errors.New("a revision takes no hints")
-	case len(o.knowledge) > 0:
+	case len(o.knowledge) > 0 || len(o.ships) > 0:
 		return errors.New("a revision takes no knowledge packs yet")
 	case o.instructionsFile == "" && o.problemsFile == "":
 		return errors.New("a revision takes --instructions-file, --problems-file, or both")

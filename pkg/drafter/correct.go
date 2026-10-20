@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -11,6 +12,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/blaktron/agentry-cli/pkg/knowledge/ship"
 	"github.com/blaktron/agentry/pkg/manifest"
 )
 
@@ -29,14 +31,16 @@ import (
 //     interactive opening, the knowledge prompt): shortened at a word,
 //     ending with "…";
 //   - a knowledge block under capabilities: moved to the top level, where
-//     the manifest takes it; knowledge.ships: removed, since a draft never
-//     ships a pack.
+//     the manifest takes it; knowledge.ships: held to the packs the person
+//     chose to ship (the ships argument, none when it is empty): any other
+//     entry removed, a chosen pack the draft left out added, and
+//     publish.include given the pattern that puts the packs in the archive.
 //
 // The bounds are pkg/manifest's own. It returns what it corrected, one plain
 // sentence each, which Finish names in the draft's notes; the rules then
 // check the corrected manifest as they would any other. A manifest that is
 // not a JSON object is left as it came, for the rules to refuse.
-func Correct(raw json.RawMessage) (json.RawMessage, []string) {
+func Correct(raw json.RawMessage, ships ...string) (json.RawMessage, []string) {
 	var doc yaml.Node
 	if yaml.Unmarshal(raw, &doc) != nil || len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode {
 		return raw, nil
@@ -71,8 +75,8 @@ func Correct(raw json.RawMessage) (json.RawMessage, []string) {
 	}
 	c.dropIfEmpty(root, "interactive", "")
 	c.lift(root, "knowledge")
+	c.ships(root, ships)
 	if k := value(root, "knowledge"); k != nil && k.Kind == yaml.MappingNode {
-		c.noShips(k)
 		if a := value(k, "accepts"); a != nil && a.Kind == yaml.MappingNode {
 			c.shortenAt(a, "prompt", "knowledge.accepts.prompt", manifest.MaxKnowledgePromptChars, false)
 		}
@@ -240,18 +244,117 @@ func (c *corrector) inputs(in *yaml.Node) {
 	c.dropIfEmpty(in, "kinds", "inputs")
 }
 
-// noShips removes knowledge.ships: a draft never ships a pack. The person's
-// own packs stay theirs; a QuickAgent that needs one at run time asks for it
-// with knowledge.accepts, and the person attaches it to the run.
-func (c *corrector) noShips(k *yaml.Node) {
-	for i := 0; i+1 < len(k.Content); i += 2 {
-		if k.Content[i].Value != "ships" {
-			continue
+// ships holds knowledge.ships to the packs the person chose to ship: an
+// entry for any other pack is removed, naming it, since a draft ships only
+// what its person chose; a chosen pack the draft left out is added, and
+// publish.include is given the pattern that puts the shipped packs in the
+// archive. The person's own packs stay theirs: a QuickAgent that needs one
+// at run time asks for it with knowledge.accepts.
+func (c *corrector) ships(root *yaml.Node, chosen []string) {
+	k := value(root, "knowledge")
+	if k == nil {
+		if len(chosen) == 0 {
+			return
 		}
-		k.Content = append(k.Content[:i], k.Content[i+2:]...)
-		c.did = append(c.did, "knowledge.ships was removed: a draft never ships a knowledge pack. "+
-			"A QuickAgent that needs one asks for it with knowledge.accepts, and the person attaches their own when they run it.")
+		k = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+		root.Content = append(root.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "knowledge"}, k)
+	}
+	if k.Kind != yaml.MappingNode {
 		return
+	}
+	list := value(k, "ships")
+	if list != nil && list.Kind == yaml.SequenceNode {
+		kept := list.Content[:0]
+		have := map[string]bool{}
+		for _, it := range list.Content {
+			name := shipEntryName(it)
+			if name != "" && slices.Contains(chosen, name) && !have[name] {
+				have[name] = true
+				kept = append(kept, it)
+				continue
+			}
+			c.did = append(c.did, removedShip(name, chosen))
+		}
+		list.Content = kept
+	} else if list != nil {
+		c.did = append(c.did, removedShip("", chosen))
+		dropKey(k, "ships")
+		list = nil
+	}
+	for _, name := range chosen {
+		if list == nil {
+			list = &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+			k.Content = append(k.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "ships"}, list)
+		}
+		if !slices.ContainsFunc(list.Content, func(it *yaml.Node) bool { return shipEntryName(it) == name }) {
+			list.Content = append(list.Content, &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", Content: []*yaml.Node{
+				{Kind: yaml.ScalarNode, Tag: "!!str", Value: "name"}, {Kind: yaml.ScalarNode, Tag: "!!str", Value: name}}})
+			c.did = append(c.did, fmt.Sprintf("knowledge.ships: %q was added, since you chose to ship it with the QuickAgent.", name))
+		}
+	}
+	if list != nil && len(list.Content) == 0 {
+		dropKey(k, "ships")
+	}
+	if len(chosen) == 0 {
+		return
+	}
+	pub := value(root, "publish")
+	if pub == nil || pub.Kind != yaml.MappingNode {
+		return
+	}
+	inc := value(pub, "include")
+	if inc == nil || inc.Kind != yaml.SequenceNode {
+		return
+	}
+	var patterns []string
+	for _, it := range inc.Content {
+		patterns = append(patterns, it.Value)
+	}
+	for _, name := range chosen {
+		if !ship.Covers(patterns, name) {
+			inc.Content = append(inc.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: ship.IncludeAll})
+			c.did = append(c.did, fmt.Sprintf("publish.include: %s was added, so the shipped pack %q is in the release.", ship.IncludeAll, name))
+			return
+		}
+	}
+}
+
+// removedShip names a knowledge.ships entry the post-step removed.
+func removedShip(name string, chosen []string) string {
+	what := "an entry that names no pack"
+	if name != "" {
+		what = fmt.Sprintf("%q", name)
+	}
+	if len(chosen) == 0 {
+		return fmt.Sprintf("knowledge.ships: %s was removed: a draft ships only the packs its person chose, and none was chosen. "+
+			"A QuickAgent that needs a pack asks for it with knowledge.accepts, and the person attaches their own when they run it.", what)
+	}
+	quoted := make([]string, len(chosen))
+	for i, n := range chosen {
+		quoted[i] = strconv.Quote(n)
+	}
+	return fmt.Sprintf("knowledge.ships: %s was removed: a draft ships only the packs its person chose, and they chose %s.", what, strings.Join(quoted, ", "))
+}
+
+// shipEntryName is the pack a knowledge.ships entry names: "" for an entry
+// that is not an object with a name.
+func shipEntryName(n *yaml.Node) string {
+	if n.Kind != yaml.MappingNode {
+		return ""
+	}
+	if v := value(n, "name"); v != nil && v.Kind == yaml.ScalarNode {
+		return v.Value
+	}
+	return ""
+}
+
+// dropKey removes the entry at key from a mapping.
+func dropKey(m *yaml.Node, key string) {
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			m.Content = slices.Delete(m.Content, i, i+2)
+			return
+		}
 	}
 }
 

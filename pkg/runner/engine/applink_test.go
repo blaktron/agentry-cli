@@ -50,6 +50,18 @@ func TestTheAppLinksSocketIsHeldToThePlan(t *testing.T) {
 			t.Errorf("%s: the run's app link is %q", name, rd.appLink)
 		}
 	}
+	// Where the daemon runs in a VM, the run's relay volume carries the
+	// calls; where it runs here, the socket is bound itself.
+	for inProcess, want := range map[bool]string{true: "", false: "agentry-R-applink"} {
+		rd := runDirsAt(filepath.Join(t.TempDir(), "R"))
+		place := &filterPlacement{inProcess: inProcess, reason: "why"}
+		if err := prepareAppLink(Params{Plan: with, Persistent: &PersistentSegment{AppLink: sock}, place: place}, rd); err != nil {
+			t.Fatal(err)
+		}
+		if rd.appLinkRelay != want || rd.appLink != sock {
+			t.Errorf("in process %v: relay %q, socket %q", inProcess, rd.appLinkRelay, rd.appLink)
+		}
+	}
 	rd := runDirsAt(t.TempDir())
 	rd.appLink = sock
 	if got := rd.replacer().Replace(spec.PHAppLink); got != sock {

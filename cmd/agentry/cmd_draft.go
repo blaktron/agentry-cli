@@ -33,6 +33,7 @@ import (
 	"github.com/blaktron/agentry-cli/internal/version"
 	"github.com/blaktron/agentry-cli/pkg/drafter"
 	"github.com/blaktron/agentry-cli/pkg/knowledge"
+	"github.com/blaktron/agentry-cli/pkg/knowledge/ship"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
@@ -43,6 +44,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/termtext"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 	"github.com/blaktron/agentry-cli/runnerimage/webscan"
+	"github.com/blaktron/agentry/pkg/manifest"
 )
 
 // envJobToken carries a hosted draft's job credential to `agentry draft
@@ -50,8 +52,12 @@ import (
 const envJobToken = "AGENTRY_JOB_TOKEN"
 
 type draftOpts struct {
-	hints           []string
-	knowledge       []string
+	hints     []string
+	knowledge []string
+	ships     []string
+	// namespace is the namespace of the QuickAgent being drafted, for a
+	// shipped organization pack.
+	namespace       string
 	descriptionFile string
 	// A revision: the release, as a package folder on this computer
 	// (revise) or a ref fetched from the registry (reviseRef), and the
@@ -100,7 +106,7 @@ var draftScanner = func(w *engine.WebRun) (webscan.Scanner, error) {
 func newDraftCmd() *cobra.Command {
 	var o draftOpts
 	cmd := &cobra.Command{
-		Use:   `draft ("<description>" [--hint TEXT…] [--knowledge PACK…] | --revise DIR | --revise-ref REF) [--out DIR]`,
+		Use:   `draft ("<description>" [--hint TEXT…] [--knowledge PACK…] [--ship PACK…] | --revise DIR | --revise-ref REF) [--out DIR]`,
 		Short: "Draft a QuickAgent from a description, with the built-in Drafter",
 		Long: "Draft a QuickAgent from a plain description of what it should do. The built-in Drafter searches the\n" +
 			"registry and the web, reads what it finds, and returns a draft: the manifest, the instructions, notes on\n" +
@@ -118,12 +124,23 @@ func newDraftCmd() *cobra.Command {
 			"read, so the description should hold no secret.\n\n" +
 			"--knowledge gives the Drafter your knowledge packs, up to " + knowledge.FormatCap(drafter.MaxKnowledgeBytes) + " in all: it reads them before the web, writes\n" +
 			"what the QuickAgent needs into its instructions, lists the pages it used, and asks for your pack at run time\n" +
-			"(knowledge.accepts) when the QuickAgent needs it; a draft never ships a pack. A pack scanned in Agentry is not\n" +
+			"(knowledge.accepts) when the QuickAgent needs it. A pack scanned in Agentry is not\n" +
 			"scanned again, and what that scan flagged is withheld. Any other pack is scanned first: AI Review reads every\n" +
 			"file of it with your key before the draft starts, which for a large pack takes a while, and what it flags,\n" +
 			"or cannot read, is withheld. The draft's notes name every file withheld. What the Drafter reads in your packs\n" +
 			"can shape its searches and the pages it reads, which go to the search provider and the sites, as the\n" +
 			"description does.\n\n" +
+			"--ship PACK is --knowledge for a pack that also ships with the QuickAgent: every run of it reads the pack at\n" +
+			"/knowledge/PACK, so the Drafter writes the instructions to use it. A draft ships only the packs you name\n" +
+			"with --ship: the manifest lists exactly those, any other pack it listed is removed and the notes say so, and\n" +
+			"the package carries each under knowledge/PACK/, whole, whatever AI Review withheld from the Drafter's copy.\n" +
+			"A shipped pack is part of the release, so everyone who can download the release can read it, and it stays\n" +
+			"in that version for good. Nothing is published here: `agentry publish` asks you to confirm each shipped\n" +
+			"pack, so check that none holds private data (names, emails, customer records, internal hostnames, keys).\n" +
+			"draft.json records the packs under ships, with the stored pack each came from. An organization's shared\n" +
+			"pack kept on this computer ships only with --namespace ORG, for a QuickAgent in ORG's namespace, and only for\n" +
+			"an administrator of ORG; the pack must be as Agentry holds it now. A hosted draft names a pack its host laid\n" +
+			"down with --knowledge by name: --knowledge DIR --ship NAME.\n\n" +
 			"The draft is written to DIR/draft.json, and rendered as a package in DIR/package, checked with the same\n" +
 			"rules as `agentry validate`. Its mechanical slips (a value named twice, an empty part, a list or a line\n" +
 			"past its limit) are corrected first and named in the notes. AI Review then checks the finished package:\n" +
@@ -145,6 +162,9 @@ func newDraftCmd() *cobra.Command {
 	f := cmd.Flags()
 	f.StringArrayVar(&o.knowledge, "knowledge", nil, "a knowledge pack the Drafter reads first: a pack directory, or the name of a pack kept on this computer (repeatable; at most "+
 		strconv.Itoa(drafter.MaxKnowledgePacks)+" packs and "+knowledge.FormatCap(drafter.MaxKnowledgeBytes)+" in all). A pack not scanned in Agentry is scanned first")
+	f.StringArrayVar(&o.ships, "ship", nil, "a knowledge pack to ship with the QuickAgent, which every run of it then reads at /knowledge/NAME: a pack directory, or the name of one of your own packs kept on this computer (repeatable; at most "+
+		strconv.Itoa(ship.MaxPacks)+" packs, each at most "+knowledge.FormatCap(ship.MaxPackBytes)+" and "+strconv.Itoa(ship.MaxPackFiles)+" files). The Drafter reads it as --knowledge does; `agentry publish` asks you to confirm each shipped pack")
+	f.StringVar(&o.namespace, "namespace", "", "the namespace the QuickAgent will be published in, which a shipped organization pack needs: it ships only with a QuickAgent in its organization's own namespace, from the organization's administrators (the manifest's namespace stays draft)")
 	f.StringArrayVar(&o.hints, "hint", nil, "a hint: the services or sites it works with, whether it runs on its own or in a conversation, an example of the output wanted (repeatable)")
 	f.StringVar(&o.descriptionFile, "description-file", "", "read the description from this file instead of the argument")
 	f.StringVar(&o.revise, "revise", "", "revise a release instead of drafting a new QuickAgent: its package folder (agent.yaml and its instruction file); with --instructions-file and/or --problems-file")
@@ -207,6 +227,7 @@ func runDraft(cmd *cobra.Command, args []string, o *draftOpts) error {
 	}
 	var description, task string
 	var packs []drafter.KnowledgeIn
+	var ships []drafter.ShipIn
 	var rev *drafter.Revision
 	if o.revising() {
 		// A revision: the release is laid down in the draft's
@@ -225,17 +246,28 @@ func runDraft(cmd *cobra.Command, args []string, o *draftOpts) error {
 		// The packs are loaded and held to the draft's bounds before
 		// anything is scanned, and the person told which will be scanned
 		// first.
+		// A pack to ship is read while drafting too, so --ship implies
+		// --knowledge for it.
+		packArgs := shipPackArgs(o)
 		var packsDone func()
-		if packs, packsDone, err = draftKnowledge(cmd, o.knowledge, o.hosted); err != nil {
+		var stored []bool
+		if packs, stored, packsDone, err = draftKnowledge(cmd, packArgs, o.hosted); err != nil {
 			return err
 		}
 		defer packsDone()
+		if ships, err = draftShips(cmd, o, packArgs, packs, stored); err != nil {
+			return err
+		}
 		noteKnowledge(cmd, packs, o.hosted)
 		names := make([]string, 0, len(packs))
 		for _, k := range packs {
 			names = append(names, k.Pack.Manifest.Name)
 		}
-		if task, err = drafter.TaskWithKnowledge(description, o.hints, names); err != nil {
+		shipped := make([]string, 0, len(ships))
+		for _, s := range ships {
+			shipped = append(shipped, s.Pack.Manifest.Name)
+		}
+		if task, err = drafter.TaskWithShips(description, o.hints, names, shipped); err != nil {
 			return engine.Classify(engine.ExitUsage, err)
 		}
 	}
@@ -313,7 +345,7 @@ func runDraft(cmd *cobra.Command, args []string, o *draftOpts) error {
 	checker, checkerErr := draftChecker(web)
 	post := drafter.PostStep{
 		OutDir: outDir, Description: description, Task: task, Scan: desc, Ref: localrun.Drafter().Ref(), Build: version.Build(),
-		Budgets: budgets, Checker: checker, CheckerErr: checkerErr, Log: errOut, OnUsage: first.OnUsage, Knowledge: read, Revision: rev,
+		Budgets: budgets, Checker: checker, CheckerErr: checkerErr, Log: errOut, OnUsage: first.OnUsage, Knowledge: read, Ships: ships, Revision: rev,
 		Repair: func(_ context.Context, t drafter.RepairTurn) (*receipt.Envelope, error) {
 			return draftRun(cmd, localrun.RepairRun(first, t))
 		},
@@ -387,6 +419,8 @@ type draftReport struct {
 	Corrections int  `json:"corrections"`
 	Repaired    bool `json:"repaired"`
 	Recovered   bool `json:"recovered,omitempty"`
+	// Ships counts the packs the draft ships (draft.json's ships).
+	Ships int `json:"ships,omitempty"`
 	// Check is AI Review's check of the finished draft as one word: pass,
 	// flagged or not_scanned, unanswered when it has no answer, absent
 	// when the draft could not be rendered to check.
@@ -396,7 +430,7 @@ type draftReport struct {
 func draftReportOf(outDir string, d *drafter.Draft) draftReport {
 	r := draftReport{File: filepath.Join(outDir, "draft.json"), ManifestError: d.ManifestError != "",
 		Matches: len(d.Matches), OpenQuestions: len(d.OpenQuestions), Rendered: isDir(filepath.Join(outDir, "package")),
-		Corrections: len(d.Corrections()), Repaired: d.IsRepaired(), Recovered: d.Recovered}
+		Corrections: len(d.Corrections()), Repaired: d.IsRepaired(), Recovered: d.Recovered, Ships: len(d.Ships)}
 	r.Passed = d.Passed()
 	if a := d.AIReview; a != nil {
 		r.Withheld = len(a.WithheldSources)
@@ -557,6 +591,9 @@ func printDraft(w io.Writer, outDir string, d *drafter.Draft) {
 	}
 	for _, m := range d.Matches {
 		say("  registry:  %s already does some of this: %s", safeTerminalText(m.Ref, 120), safeTerminalText(m.Why, 300))
+	}
+	for _, sp := range d.Ships {
+		say("  ships:     %s, %s, %s: in %s, and readable by everyone who can download the release", sp.Name, knowledge.CountPages(sp.Pages), byteSize(sp.Bytes), filepath.Join(pkg, manifest.KnowledgeDir, sp.Name))
 	}
 	for _, k := range d.Knowledge {
 		how := "scanned in Agentry"

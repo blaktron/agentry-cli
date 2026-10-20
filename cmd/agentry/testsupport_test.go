@@ -174,9 +174,16 @@ type fakeRegistry struct {
 	// submitFails makes that many attempts answer 503 first.
 	submitKeys  []string
 	submitFails int
-	t           *testing.T
-	srv         *httptest.Server
-	agents      map[string]*fakeAgent
+	// submitParts records the form fields of every multipart upload that
+	// was accepted past the fake's failures, and submitTags the JSON body
+	// of every tag submission.
+	submitParts []map[string]fakePart
+	submitTags  []string
+	// agentVisibility is what GET agent answers; "" is public.
+	agentVisibility string
+	t               *testing.T
+	srv             *httptest.Server
+	agents          map[string]*fakeAgent
 
 	signer *ecdsa.PrivateKey
 	keyID  string
@@ -465,6 +472,28 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 			_ = json.NewEncoder(w).Encode(doc)
 			return
 		}
+		if mr, err := r.MultipartReader(); err == nil {
+			parts := map[string]fakePart{}
+			for {
+				part, err := mr.NextPart()
+				if err != nil {
+					break
+				}
+				b, _ := io.ReadAll(part)
+				if part.FileName() != "" {
+					b = nil
+				}
+				parts[part.FormName()] = fakePart{contentType: part.Header.Get("Content-Type"), body: string(b)}
+			}
+			fr.mu.Lock()
+			fr.submitParts = append(fr.submitParts, parts)
+			fr.mu.Unlock()
+		} else {
+			b, _ := io.ReadAll(r.Body)
+			fr.mu.Lock()
+			fr.submitTags = append(fr.submitTags, string(b))
+			fr.mu.Unlock()
+		}
 		writeJSON(w, http.StatusAccepted, fr.versionDoc("0.1.0", fr.submitStatus))
 	})
 
@@ -552,7 +581,7 @@ func (fr *fakeRegistry) url() string { return fr.srv.URL }
 func (fr *fakeRegistry) agentDoc(fa *fakeAgent) map[string]any {
 	doc := map[string]any{
 		"id": "00000000-0000-0000-0000-000000000001", "namespace": fa.ns, "name": fa.name,
-		"modes": fa.modes, "summary": fa.summary, "visibility": "public",
+		"modes": fa.modes, "summary": fa.summary, "visibility": cmpOr(fr.agentVisibility, "public"),
 		"quarantineState": "none", "defaultBranch": "main",
 		"gitHttpUrl": fr.srv.URL + "/git/" + fa.ns + "/" + fa.name + ".git",
 		"createdAt":  "2026-01-02T03:04:05Z",
@@ -743,6 +772,9 @@ func resolveResultOf(t *testing.T, fr *fakeRegistry, ref string) *apiclient.Reso
 	return &res
 }
 
+// fakePart is a form field of an upload the fake received.
+type fakePart struct{ contentType, body string }
+
 // fakeProblem is an RFC 9457 body the fake answers a submission with.
 // Members carries the extension members a billing refusal adds — the
 // account whose balance is short, its standing.
@@ -750,4 +782,12 @@ type fakeProblem struct {
 	Status              int
 	Type, Title, Detail string
 	Members             map[string]any
+}
+
+// cmpOr is a, or b when a is empty.
+func cmpOr(a, b string) string {
+	if a == "" {
+		return b
+	}
+	return a
 }

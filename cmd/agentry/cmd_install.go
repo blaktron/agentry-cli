@@ -953,8 +953,12 @@ func prepareDest(p installPaths) error {
 	return nil
 }
 
-// stdinIsTTY reports whether in is an interactive terminal.
-func stdinIsTTY(in io.Reader) bool {
+// stdinIsTTY reports whether in is an interactive terminal; a seam for
+// tests, which answer the prompts without a terminal.
+var stdinIsTTY = isTerminal
+
+// isTerminal reports whether in is an interactive terminal.
+func isTerminal(in io.Reader) bool {
 	f, ok := in.(*os.File)
 	if !ok {
 		return false

@@ -177,7 +177,7 @@ func publishBuiltin(ctx context.Context, client *apiclient.ClientWithResponses, 
 		return apiProblem("look up "+b.Ref(), vr.StatusCode(), vr.ApplicationproblemJSONDefault, vr.Body)
 	}
 
-	resp, err := submitUpload(ctx, client, out, stage, m)
+	resp, err := submitUpload(ctx, client, out, stage, m, builtinShipping)
 	if err != nil {
 		return err
 	}

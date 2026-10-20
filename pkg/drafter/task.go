@@ -31,6 +31,16 @@ func Task(description string, hints []string) (string, error) {
 // first. The packs themselves reach it only through its knowledge tools,
 // after their scan (ReadyKnowledge).
 func TaskWithKnowledge(description string, hints, packs []string) (string, error) {
+	return TaskWithShips(description, hints, packs, nil)
+}
+
+// TaskWithShips is TaskWithKnowledge for a draft whose person chose to ship
+// some of the packs with the QuickAgent: shipped names the ones that ship,
+// each of which is also in packs. The message tells the Drafter that every
+// run of the QuickAgent reads those at /knowledge/<name>, so it writes the
+// instructions to use them, and that the person chose them, so it declares
+// them in knowledge.ships.
+func TaskWithShips(description string, hints, packs, shipped []string) (string, error) {
 	description = strings.TrimSpace(description)
 	if description == "" {
 		return "", errors.New("describe what the QuickAgent should do")
@@ -55,6 +65,16 @@ func TaskWithKnowledge(description string, hints, packs []string) (string, error
 	if len(packs) > 0 {
 		b.WriteString("\n## Knowledge\n\nThe person attached their knowledge packs to this draft: " + strings.Join(packs, ", ") +
 			". Read them with your knowledge tools before you search the web.\n")
+	}
+	if len(shipped) > 0 {
+		var where []string
+		for _, n := range shipped {
+			where = append(where, "/knowledge/"+n)
+		}
+		b.WriteString("\nThe person chose to ship " + strings.Join(shipped, ", ") + " with the QuickAgent. It is part of the release, so every run of the QuickAgent " +
+			"reads it, read-only, at " + strings.Join(where, ", ") + ". Write the instructions to use it: say when to look in it, what to look for, " +
+			"and that the answer cites the pages it relied on. Declare it under knowledge.ships and put knowledge/** in publish.include. " +
+			"Read the guide's page on writing for a shipped pack (manifest/knowledge-ships.md) first.\n")
 	}
 	task := b.String()
 	if !utf8.ValidString(task) {

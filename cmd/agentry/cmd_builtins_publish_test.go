@@ -37,12 +37,14 @@ type builtinsRegistry struct {
 	marks   []string
 	created []map[string]any
 	uploads []string // the sha256 of each uploaded archive
-	srv     *httptest.Server
+	// acks is the knowledgeShipping part each upload carried, by ns/name.
+	acks map[string]string
+	srv  *httptest.Server
 }
 
 func newBuiltinsRegistry(t *testing.T) *builtinsRegistry {
 	t.Helper()
-	br := &builtinsRegistry{versions: map[string]string{}, agents: map[string]bool{}}
+	br := &builtinsRegistry{versions: map[string]string{}, agents: map[string]bool{}, acks: map[string]string{}}
 	version := func(v, status, digest string) map[string]any {
 		return map[string]any{"id": "00000000-0000-0000-0000-000000000003", "version": v, "status": status,
 			"channel": "stable", "source": "cli-upload", "createdAt": "2026-01-02T03:04:05Z", "archiveDigest": digest}
@@ -129,15 +131,27 @@ func newBuiltinsRegistry(t *testing.T) *builtinsRegistry {
 		if br.review {
 			status = "needs_review"
 		}
-		br.mu.Lock()
-		br.uploads = append(br.uploads, got)
-		br.mu.Unlock()
-		v := ""
+		v, ships := "", []string(nil)
 		for _, b := range localrun.Builtins() {
 			if b.Namespace() == r.PathValue("ns") && b.Name() == r.PathValue("name") {
 				v = b.Version()
+				ships = builtinShips(t, b)
 			}
 		}
+		// The registry refuses a release that ships a pack with no
+		// confirmation of it.
+		ack := r.FormValue("knowledgeShipping")
+		if len(ships) > 0 && ack == "" {
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_ = json.NewEncoder(w).Encode(map[string]any{"type": "knowledge-shipping-unacknowledged", "title": "Shipped knowledge is not confirmed", "status": 422,
+				"detail": "This release ships the pack " + ships[0] + " without confirming it.", "packs": ships})
+			return
+		}
+		br.mu.Lock()
+		br.uploads = append(br.uploads, got)
+		br.acks[r.PathValue("ns")+"/"+r.PathValue("name")] = ack
+		br.mu.Unlock()
 		writeJSON(w, http.StatusAccepted, version(v, status, got))
 	})
 	br.srv = httptest.NewServer(mux)
@@ -154,6 +168,20 @@ func agentDoc(ns, name string, builtin bool) map[string]any {
 		"namespace": ns, "name": name, "modes": []string{"autonomous"},
 		"visibility": "public", "quarantineState": "none", "defaultBranch": "main",
 		"gitHttpUrl": "http://x/git", "createdAt": "2026-01-02T03:04:05Z", "builtin": builtin}
+}
+
+// builtinShips are the packs a built-in's tree ships.
+func builtinShips(t *testing.T, b localrun.Builtin) []string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := b.Stage(dir); err != nil {
+		t.Fatal(err)
+	}
+	m, err := localrun.ManifestFrom(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m.ShippedPacks()
 }
 
 func builtinDigests(t *testing.T) map[string]string {
@@ -196,6 +224,16 @@ func TestBuiltinsPublishUploadsTheEmbeddedBytes(t *testing.T) {
 		}
 		if !strings.Contains(stdout, "published "+b.Ref()) {
 			t.Errorf("no verdict for %s in %q", b.Ref(), stdout)
+		}
+		// A built-in that ships a pack confirms it, with no prompt and no
+		// origin (the packs are the release's own files); one that ships
+		// none sends no confirmation.
+		wantAck := ""
+		if ships := builtinShips(t, b); len(ships) > 0 {
+			wantAck = fmt.Sprintf(`{"packs":[{"name":%q}]}`, ships[0])
+		}
+		if got := br.acks[b.Namespace()+"/"+b.Name()]; got != wantAck {
+			t.Errorf("%s: confirmation %q, want %q", b.Ref(), got, wantAck)
 		}
 		// Created, then marked built-in, so the directory labels it so.
 		key := b.Namespace() + "/" + b.Name()

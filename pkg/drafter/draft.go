@@ -15,6 +15,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/blaktron/agentry-cli/pkg/knowledge"
+	"github.com/blaktron/agentry-cli/pkg/knowledge/ship"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/runnerimage/webscan"
 	"github.com/blaktron/agentry/pkg/manifest"
@@ -43,6 +44,11 @@ type Draft struct {
 	// given, how it was scanned and what of it was withheld (the
 	// post-step's).
 	Knowledge []PackRead `json:"knowledge,omitempty"`
+	// Ships is each pack the person chose to ship with the QuickAgent: the
+	// draft's package carries it under knowledge/<name>/, and the
+	// manifest ships exactly these (the post-step's). A client that
+	// builds the package itself lays these packs from their stores.
+	Ships []ShippedPack `json:"ships,omitempty"`
 	// Revises is the release a revision was drafted from (the post-step's):
 	// its ref and its archive's digest. Absent for a new
 	// QuickAgent.
@@ -66,6 +72,7 @@ type Draft struct {
 	// the post-step's other sections, in the order they were added.
 	ownNotes      string
 	corrections   []string
+	chosenShips   []string
 	extras        []string
 	repaired      bool
 	repairFailure string
@@ -81,6 +88,18 @@ type Draft struct {
 	// Drafter's judgement (checkServers).
 	serverSigns     []string
 	serversAdmitted []string
+}
+
+// ShippedPack is draft.json's record of a pack the draft ships: the pack
+// as the person chose it, and, when it was laid down from a stored pack,
+// the origin the publish confirmation claims.
+type ShippedPack struct {
+	Name   string `json:"name"`
+	Digest string `json:"digest"`
+	Pages  int    `json:"pages"`
+	// Bytes is the pack's tree, as a pack counts its size.
+	Bytes  int64        `json:"bytes"`
+	Origin *ship.Origin `json:"origin,omitempty"`
 }
 
 // Match is a published QuickAgent that does the task, or most of it.

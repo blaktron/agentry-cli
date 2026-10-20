@@ -154,7 +154,7 @@ func TestTheAppLinkIsAServerWithNoNetworkAndOneBind(t *testing.T) {
 	if e == nil || e["image"] != "agentry-runner:test" || e["disableNetwork"] != true || e["user"] != spec.PHAppLinkUser || e["allowHosts"] != nil {
 		t.Fatalf("the app link's entry: %v", e)
 	}
-	if vols, _ := e["volumes"].([]any); len(vols) != 1 || vols[0] != spec.PHAppLink+":"+applink.SocketMount+":rw" {
+	if vols, _ := e["volumes"].([]any); len(vols) != 1 || vols[0] != spec.PHAppLinkMount {
 		t.Errorf("the app link's volumes: %v", e["volumes"])
 	}
 	if cmd, _ := e["command"].([]any); len(cmd) != 3 || cmd[0] != "applink" || cmd[2] != applink.SetAssistant {

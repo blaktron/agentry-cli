@@ -83,3 +83,10 @@ A run's deliverables are the files it was for, and it marks them: `deliverable: 
 A browser page section, Fitting the run's budget, from the first live runs of browser QuickAgents, which ran out of tool calls or time before writing a report: say the budget in the instructions, one `browser_evaluate` per page, every fetch in a page script bounded (a timeout, a few at a time, a cap, no credentials), never the same call five times running, the report written early and rewritten after each step, and only the site opened. The runtime facts gain a run's budget, on the person's computer (100 tool calls, the CLI's default policy, raised from 60 in the same release) and In Agentry by tier (Pro's raised to 100 too), and docker-agent's limit on identical calls; AGENT.md's step 4 names it; the check after a draft sends a page fetch with no timeout, or a key pressed five or more times running, to the repair turn.
 
 - updated: manifest/browser.md, sources/runtime-facts.md
+
+## [2026-10-20] ingest | a shipped pack (Drafter 1.17.0)
+
+A draft ships the packs its person chose to ship, and the task names them. A new page, Writing for a shipped pack, teaches what that changes: declare each pack in `knowledge.ships` and add `knowledge/**` to `publish.include`, write the instructions to say when to look in the pack at `/knowledge/<name>` and what to look for, cite the pages relied on, say what to do when the pack is silent, read a pack's procedure pages as reference that the instructions point to, and add one note that the pack ships. The page on the person's knowledge at run time no longer says a draft never ships a pack: it ships only the packs the task names, and the post-step removes any other entry, adds a chosen one the draft left out, and puts `knowledge/**` in `publish.include`.
+
+- added: manifest/knowledge-ships.md
+- updated: manifest/knowledge-accepts.md, guide/start-here.md

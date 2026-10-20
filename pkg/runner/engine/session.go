@@ -167,6 +167,9 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	if err != nil {
 		return fail(err)
 	}
+	if rd.appLink != "" {
+		env.CapabilitiesEnforced["persistent.appLink.transport"] = appLinkTransportLine(rd)
+	}
 	// The System Prompt tells the model it is in a session (spec.PHRunMode).
 	rd.interactive = true
 	s.rd = rd

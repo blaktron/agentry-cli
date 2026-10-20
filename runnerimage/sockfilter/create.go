@@ -329,7 +329,11 @@ func (f *Filter) containerCreate(ctx context.Context, body []byte) (any, error) 
 	if err != nil {
 		return nil, err
 	}
-	if err := f.checkStorage(ctx, hc, tools); err != nil {
+	appLink, err := f.isAppLink(ctx, &c, imageID)
+	if err != nil {
+		return nil, err
+	}
+	if err := f.checkStorage(ctx, hc, mounter{tools: tools, appLink: appLink}); err != nil {
 		return nil, err
 	}
 	web, err := f.webShape(ctx, &c)
@@ -512,6 +516,31 @@ func writesHost(hc *hostConfig) bool {
 		}
 	}
 	return false
+}
+
+// mounter is which of the run's own containers a create is, for the
+// volumes only it may mount.
+type mounter struct{ tools, appLink bool }
+
+// isAppLink says whether a create is the run's app link: its one command
+// (Config.AppLinkCmd) in its image (Config.AppLinkImage, by id), run by the
+// image's own entrypoint.
+func (f *Filter) isAppLink(ctx context.Context, c *containerCreateBody, imageID string) (bool, error) {
+	if f.cfg.AppLinkVolume == "" || f.cfg.AppLinkImage == "" || len(f.cfg.AppLinkCmd) == 0 {
+		return false, nil
+	}
+	if present(c.Entrypoint) || present(c.Shell) {
+		return false, nil
+	}
+	var cmd []string
+	if !present(c.Cmd) || json.Unmarshal(c.Cmd, &cmd) != nil || !slices.Equal(cmd, f.cfg.AppLinkCmd) {
+		return false, nil
+	}
+	id, err := f.resolveImage(ctx, f.cfg.AppLinkImage)
+	if err != nil {
+		return false, err
+	}
+	return imageID == id, nil
 }
 
 // isToolsServer says whether a create is the run's tools server: its one
@@ -1135,27 +1164,28 @@ func (f *Filter) checkNetworkList(ctx context.Context, c *containerCreateBody, s
 // paths under the gateway's roots, written only under its writable ones,
 // forwarded as resolved; volumes the run's, or for the tools server one of
 // Config.ToolsVolumes; no driver configuration.
-func (f *Filter) checkStorage(ctx context.Context, hc *hostConfig, tools bool) error {
+func (f *Filter) checkStorage(ctx context.Context, hc *hostConfig, who mounter) error {
 	for i, b := range hc.Binds {
-		out, err := f.bind(ctx, b, tools)
+		out, err := f.bind(ctx, b, who)
 		if err != nil {
 			return err
 		}
 		hc.Binds[i] = out
 	}
 	for i := range hc.Mounts {
-		if err := f.mount(ctx, &hc.Mounts[i], tools); err != nil {
+		if err := f.mount(ctx, &hc.Mounts[i], who); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// volume admits a named volume: the run's own, or, for the run's tools
-// server alone, one Config.ToolsVolumes names exactly, which must exist
-// (the daemon would make a missing one, unlabelled, at the create).
-func (f *Filter) volume(ctx context.Context, name string, tools bool) error {
-	if tools && slices.Contains(f.cfg.ToolsVolumes, name) {
+// volume admits a named volume: the run's own; for the run's tools server
+// alone, one Config.ToolsVolumes names exactly; for the app link's
+// container alone, Config.AppLinkVolume. Either must exist (the daemon would
+// make a missing one, unlabelled, at the create).
+func (f *Filter) volume(ctx context.Context, name string, who mounter) error {
+	if who.tools && slices.Contains(f.cfg.ToolsVolumes, name) || who.appLink && name == f.cfg.AppLinkVolume {
 		var v struct{ Name string }
 		code, err := f.inspect(ctx, "/volumes/"+url.PathEscape(name), &v)
 		if err != nil {
@@ -1177,7 +1207,7 @@ var bindOptionsAllowed = map[string]bool{
 	"consistent": true, "cached": true, "delegated": true,
 }
 
-func (f *Filter) bind(ctx context.Context, b string, tools bool) (string, error) {
+func (f *Filter) bind(ctx context.Context, b string, who mounter) (string, error) {
 	parts := strings.Split(b, ":")
 	if len(parts) < 2 || len(parts) > 3 || parts[0] == "" {
 		return "", deny("bind %q is not source:target[:options]", b)
@@ -1195,7 +1225,7 @@ func (f *Filter) bind(ctx context.Context, b string, tools bool) (string, error)
 		}
 	}
 	if !strings.HasPrefix(src, "/") {
-		return b, f.volume(ctx, src, tools)
+		return b, f.volume(ctx, src, who)
 	}
 	resolved, err := f.hostPath(src, write)
 	if err != nil {
@@ -1205,7 +1235,7 @@ func (f *Filter) bind(ctx context.Context, b string, tools bool) (string, error)
 	return strings.Join(parts, ":"), nil
 }
 
-func (f *Filter) mount(ctx context.Context, m *mount, tools bool) error {
+func (f *Filter) mount(ctx context.Context, m *mount, who mounter) error {
 	if !empty(m.ImageOptions) || !empty(m.ClusterOptions) {
 		return deny("a %q mount with image or cluster options", m.Type)
 	}
@@ -1223,7 +1253,7 @@ func (f *Filter) mount(ctx context.Context, m *mount, tools bool) error {
 		if m.Source == "" {
 			return nil // anonymous: created for, and removed with, the container
 		}
-		return f.volume(ctx, m.Source, tools)
+		return f.volume(ctx, m.Source, who)
 	case "bind":
 		if bo := m.BindOptions; bo != nil {
 			if bo.Propagation != "" && bo.Propagation != "private" && bo.Propagation != "rprivate" {
