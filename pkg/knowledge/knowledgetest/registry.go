@@ -130,6 +130,13 @@ func (r *Registry) serve(w http.ResponseWriter, req *http.Request) {
 		problem(w, http.StatusForbidden, "forbidden", "Forbidden", "This token does not carry the knowledge:write scope.")
 		return
 	}
+	if req.Method == http.MethodGet && req.URL.Path == "/api/v1/user" {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"id": "00000000-0000-0000-0000-000000000002", "handle": owner, "displayName": owner,
+			"email": owner + "@example.com", "emailVerified": true, "totpEnabled": false, "createdAt": "2026-01-02T03:04:05Z",
+		})
+		return
+	}
 	if rest, ok := strings.CutPrefix(req.URL.Path, "/api/v1/voice"); ok {
 		r.serveVoice(w, req, owner, rest)
 		return
@@ -380,6 +387,34 @@ func (r *Registry) SeedShared(t testing.TB, org, name string, files map[string]s
 	return id.String()
 }
 
+// ReplaceShared gives org's pack id new content, as an administrator's
+// update does: the pack keeps its id and the tree and digest change.
+func (r *Registry) ReplaceShared(org, id string, files map[string]string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	p := r.org(org).packs[id]
+	if p == nil {
+		return
+	}
+	dir, err := os.MkdirTemp("", "knowledgetest-")
+	if err != nil {
+		return
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+	for rel, body := range files {
+		full := dir + "/" + rel
+		_ = os.MkdirAll(full[:strings.LastIndex(full, "/")], 0o755)
+		_ = os.WriteFile(full, []byte(body), 0o600)
+	}
+	var tree bytes.Buffer
+	d, err := knowledge.WriteTree(dir, &tree)
+	if err != nil {
+		return
+	}
+	p.tree = tree.Bytes()
+	p.api.Digest, p.api.Bytes, p.api.Files = d.SHA256, d.Bytes, d.Files
+}
+
 // SetExportable marks org's pack id exportable by its members, or not.
 func (r *Registry) SetExportable(org, id string, on bool) {
 	r.mu.Lock()
@@ -396,6 +431,19 @@ func orgOwner(org string) string { return "org:" + org }
 
 // serveOrg answers /api/v1/orgs/<org>/knowledge/…, for org's members.
 func (r *Registry) serveOrg(w http.ResponseWriter, req *http.Request, owner, rest string) {
+	if org, ok := strings.CutSuffix(rest, "/members"); ok && req.Method == http.MethodGet {
+		o := r.orgs[org]
+		if o == nil || o.members[owner] == "" {
+			problem(w, http.StatusNotFound, "not-found", "Not found", "")
+			return
+		}
+		out := []map[string]any{}
+		for handle, role := range o.members {
+			out = append(out, map[string]any{"user": map[string]any{"handle": handle, "displayName": handle}, "role": role, "state": "active"})
+		}
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
 	org, path, ok := strings.Cut(rest, "/knowledge")
 	o := r.orgs[org]
 	role := ""

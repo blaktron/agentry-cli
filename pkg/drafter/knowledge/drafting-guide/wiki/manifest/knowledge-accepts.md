@@ -1,9 +1,9 @@
 ---
 title: The person's knowledge at run time
 type: guide
-summary: When a QuickAgent asks the person to attach a knowledge pack of their own at run time (knowledge.accepts), how to write its prompt, and what goes into the instructions instead. A draft never ships a pack.
+summary: When a QuickAgent asks the person to attach a knowledge pack of their own at run time (knowledge.accepts), how to write its prompt, and what goes into the instructions instead. A draft ships only the packs the person chose to ship.
 sources: [web:https://docs.secureagentry.net/quickagents/, web:https://docs.secureagentry.net/knowledge/]
-updated: 2026-10-05
+updated: 2026-10-20
 ---
 
 # The person's knowledge at run time
@@ -27,6 +27,6 @@ Attaching a pack is the person's own grant, as adding a file is, so `accepts` ad
 
 The instructions' `## Steps` then start from the attached knowledge: list the packs, read each one's index, then search and read the pages the task needs, and say what to do when no pack is attached and it was optional.
 
-## Never ships
+## Shipping is the person's choice
 
-**Never declare `ships`.** It would put a pack inside the QuickAgent's own release. A draft never ships a pack, and the person's packs stay theirs. Your drafting guide is not the person's either: it never leads to `knowledge.accepts`, and its pages never go in a draft's `sources`.
+**Declare `ships` only for a pack the task says the person chose to ship.** A pack the person attached to read while you draft stays theirs: it is not shipped, and it does not go in `knowledge.ships`. Your drafting guide is not the person's either: it never leads to `knowledge.accepts`, and its pages never go in a draft's `sources`. For a pack the person did choose to ship, read [Writing for a shipped pack](knowledge-ships.md).

@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/blaktron/agentry-cli/pkg/knowledge"
+	"github.com/blaktron/agentry-cli/pkg/knowledge/ship"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
@@ -71,6 +73,14 @@ type PostStep struct {
 	// file named in its notes. Nil for a draft given none. The repair
 	// turn is given none.
 	Knowledge *KnowledgeRead
+	// Ships are the packs the person chose to ship with the QuickAgent,
+	// as the person's own, whole, unscanned for the draft: the draft's
+	// manifest ships exactly these, the rendered package carries each
+	// under knowledge/<name>/ (and so validate holds it to the rules a
+	// registry applies), and the draft records them in Ships. They are
+	// also among the packs the first turn reads (Knowledge). Nil for a
+	// draft that ships none.
+	Ships []ShipIn
 	// Revision is the release a revision was drafted from and the person's
 	// two texts: the draft records it in Revises and keeps its name, the
 	// first answer and the repair turn's alike. Nil for a new QuickAgent.
@@ -89,6 +99,44 @@ type PostStep struct {
 
 	// serverChecks keeps each pin's resolution for this post-step's run.
 	serverChecks map[string]serverCheck
+}
+
+// ShipIn is one pack the person chose to ship, and where it was laid
+// down from, when it was laid down from a stored pack.
+type ShipIn struct {
+	Pack   *knowledge.Pack
+	Origin *ship.Origin
+}
+
+// shipNames are the packs the person chose to ship, in the order given.
+func (p PostStep) shipNames() []string {
+	out := make([]string, 0, len(p.Ships))
+	for _, s := range p.Ships {
+		out = append(out, s.Pack.Manifest.Name)
+	}
+	return out
+}
+
+// shipRecords are the draft's record of those packs.
+func (p PostStep) shipRecords() []ShippedPack {
+	var out []ShippedPack
+	for _, s := range p.Ships {
+		m := s.Pack.Manifest
+		out = append(out, ShippedPack{Name: m.Name, Digest: m.SHA256, Pages: m.Pages, Bytes: m.Bytes, Origin: s.Origin})
+	}
+	return out
+}
+
+// layShips puts each chosen pack into the rendered package, whole, from
+// the pack the person chose and not from the copy the Drafter read (which
+// has what AI Review withheld cut out of it).
+func (p PostStep) layShips(dir string) error {
+	for _, s := range p.Ships {
+		if _, err := ship.Lay(dir, s.Pack); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // RepairTurn is what the post-step gives the repair turn's run: the task
@@ -133,6 +181,7 @@ func (p PostStep) Run(ctx context.Context, env *receipt.Envelope, runErr error) 
 		}
 		if runErr != nil {
 			u := Unparsed(env, p.OutDir, p.Scan, p.Ref, p.Build, runErr)
+			u.chosenShips = p.shipNames()
 			u.readKnowledge(p.Knowledge)
 			lines, _ := rulesReport(u)
 			d, env = p.repair(ctx, u, env, RepairReport{Rules: lines})
@@ -154,7 +203,7 @@ func (p PostStep) Run(ctx context.Context, env *receipt.Envelope, runErr error) 
 	repairSpent := d != nil
 	if d == nil {
 		var err error
-		if d, err = Finish(env, p.OutDir, p.Scan, p.Ref, p.Build); err != nil {
+		if d, err = FinishShipping(env, p.OutDir, p.Scan, p.Ref, p.Build, p.shipNames()); err != nil {
 			return nil, env, err
 		}
 		d.readKnowledge(p.Knowledge)
@@ -167,6 +216,7 @@ func (p PostStep) Run(ctx context.Context, env *receipt.Envelope, runErr error) 
 		p.checkServers(ctx, d)
 	}
 	d, env = p.repairAndCheck(ctx, d, env, repairSpent)
+	d.Ships = p.shipRecords()
 	d.noteExecProblems()
 	d.notePDFProblems()
 	d.noteBrowserBudgetProblems()
@@ -205,7 +255,15 @@ func (p PostStep) renderAndValidate(d *Draft) (string, json.RawMessage) {
 		if errors.As(err, &pe) {
 			return checkNotRun + err.Error(), nil
 		}
+		if _, statErr := os.Stat(p.pkg()); statErr == nil {
+			if lerr := p.layShips(p.pkg()); lerr != nil {
+				return checkNotRun + lerr.Error(), nil
+			}
+		}
 		return err.Error(), nil
+	}
+	if err := p.layShips(p.pkg()); err != nil {
+		return checkNotRun + err.Error(), nil
 	}
 	report, err := validate.Workspace(p.pkg(), validate.Options{Rules: p.Rules})
 	if err != nil {

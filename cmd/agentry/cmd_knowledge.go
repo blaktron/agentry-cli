@@ -110,10 +110,13 @@ func newKnowledgeCmd() *cobra.Command {
 			"Packs are kept sealed on this computer, each under a key of its own that the registry you are signed in\n" +
 			"to wraps for your account (Agentry holds that key), so the same pack opens on another computer after you\n" +
 			"sign in there. Signed out, this computer's key wraps it instead, until your next sign-in. `upload` keeps a\n" +
-			"copy in Agentry, where it is scanned; `download` brings a copy back.",
+			"copy in Agentry, where it is scanned; `download` brings a copy back.\n\n" +
+			"`ship` lays a pack into a QuickAgent's package so the release carries it and every run reads it at\n" +
+			"/knowledge/NAME. A shipped pack is readable by everyone who can download the release, so `agentry publish`\n" +
+			"asks you to confirm each one.",
 	}
 	cmd.AddCommand(newKnowledgeListCmd(), newKnowledgeCreateCmd(), newKnowledgeAddCmd(), newKnowledgeImportCmd(),
-		newKnowledgeUploadCmd(), newKnowledgeDownloadCmd(), newKnowledgeExportCmd(), newKnowledgeDeleteCmd())
+		newKnowledgeUploadCmd(), newKnowledgeDownloadCmd(), newKnowledgeExportCmd(), newKnowledgeShipCmd(), newKnowledgeDeleteCmd())
 	return cmd
 }
 

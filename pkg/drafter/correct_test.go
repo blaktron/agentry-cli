@@ -120,10 +120,36 @@ func TestShortenAtWord(t *testing.T) {
 	}
 }
 
-// TestADraftNeverShipsAPack: knowledge.ships is removed from a draft and
-// named, what it accepts is kept, and a block left with nothing is
-// removed.
-func TestADraftNeverShipsAPack(t *testing.T) {
+// shippedNames are the names a corrected manifest's knowledge.ships lists
+// and its publish.include patterns.
+func shippedNames(t *testing.T, manifestJSON json.RawMessage) (ships, include []string) {
+	t.Helper()
+	var got struct {
+		Knowledge struct {
+			Ships []struct {
+				Name string `json:"name"`
+			} `json:"ships"`
+		} `json:"knowledge"`
+		Publish struct {
+			Include []string `json:"include"`
+		} `json:"publish"`
+	}
+	if err := json.Unmarshal(manifestJSON, &got); err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range got.Knowledge.Ships {
+		ships = append(ships, s.Name)
+	}
+	return ships, got.Publish.Include
+}
+
+// TestADraftShipsOnlyThePacksItsPersonChose: knowledge.ships is held to the
+// packs the person chose to ship. With none chosen the block's ships are
+// removed and named, what it accepts is kept, and a block left with nothing
+// is removed; an entry for a pack that was not chosen is removed and named
+// beside the ones that were; a chosen pack the draft left out is added, with
+// the pattern that puts the packs in the archive.
+func TestADraftShipsOnlyThePacksItsPersonChose(t *testing.T) {
 	m := `{"schemaVersion":"2","name":"x","knowledge":{"ships":[{"name":"runbooks"}],"accepts":{"prompt":"Your runbooks","required":true}}}`
 	out, did := Correct(json.RawMessage(m))
 	var got struct {
@@ -135,12 +161,73 @@ func TestADraftNeverShipsAPack(t *testing.T) {
 	if _, ok := got.Knowledge["ships"]; ok || string(got.Knowledge["accepts"]) != `{"prompt":"Your runbooks","required":true}` {
 		t.Fatalf("knowledge %s", out)
 	}
-	if len(did) != 1 || !strings.HasPrefix(did[0], "knowledge.ships was removed: a draft never ships a knowledge pack.") {
+	if len(did) != 1 || !strings.HasPrefix(did[0], `knowledge.ships: "runbooks" was removed: a draft ships only the packs its person chose, and none was chosen.`) {
 		t.Fatalf("did %q", did)
 	}
 	out, _ = Correct(json.RawMessage(`{"schemaVersion":"2","name":"x","knowledge":{"ships":[{"name":"runbooks"}]}}`))
 	if strings.Contains(string(out), "knowledge") {
 		t.Fatalf("an empty knowledge block was kept: %s", out)
+	}
+
+	const withInclude = `"publish":{"include":["agent.yaml","AGENT.md"]}`
+	cases := []struct {
+		name, in string
+		chosen   []string
+		ships    []string
+		include  []string
+		did      []string
+	}{
+		{
+			name:   "another pack is removed, the chosen one kept",
+			in:     `{"name":"x","knowledge":{"ships":[{"name":"a"},{"name":"other"}]},"publish":{"include":["agent.yaml","knowledge/**"]}}`,
+			chosen: []string{"a"}, ships: []string{"a"}, include: []string{"agent.yaml", "knowledge/**"},
+			did: []string{`knowledge.ships: "other" was removed: a draft ships only the packs its person chose, and they chose "a".`},
+		},
+		{
+			name:   "a chosen pack the draft left out is added, with the pattern",
+			in:     `{"name":"x","knowledge":{"ships":[{"name":"a"}]},` + withInclude + `}`,
+			chosen: []string{"a", "b"}, ships: []string{"a", "b"}, include: []string{"agent.yaml", "AGENT.md", "knowledge/**"},
+			did: []string{`knowledge.ships: "b" was added, since you chose to ship it with the QuickAgent.`, "publish.include: knowledge/** was added, so the shipped pack \"a\" is in the release."},
+		},
+		{
+			name:   "a draft with no knowledge block gets one",
+			in:     `{"name":"x",` + withInclude + `}`,
+			chosen: []string{"a"}, ships: []string{"a"}, include: []string{"agent.yaml", "AGENT.md", "knowledge/**"},
+			did: []string{`knowledge.ships: "a" was added, since you chose to ship it with the QuickAgent.`, "publish.include: knowledge/** was added, so the shipped pack \"a\" is in the release."},
+		},
+		{
+			name:   "a pattern that already covers the packs is not repeated",
+			in:     `{"name":"x","knowledge":{"ships":[{"name":"a"}]},"publish":{"include":["**"]}}`,
+			chosen: []string{"a"}, ships: []string{"a"}, include: []string{"**"},
+		},
+		{
+			name:   "a pack named twice is kept once",
+			in:     `{"name":"x","knowledge":{"ships":[{"name":"a"},{"name":"a"}]},"publish":{"include":["knowledge/**"]}}`,
+			chosen: []string{"a"}, ships: []string{"a"}, include: []string{"knowledge/**"},
+			did: []string{`knowledge.ships: "a" was removed: a draft ships only the packs its person chose, and they chose "a".`},
+		},
+		{
+			name:   "an entry that names no pack is removed",
+			in:     `{"name":"x","knowledge":{"ships":["a",{"title":"b"}]},"publish":{"include":["knowledge/**"]}}`,
+			chosen: []string{"a"}, ships: []string{"a"}, include: []string{"knowledge/**"},
+			did: []string{
+				`knowledge.ships: an entry that names no pack was removed: a draft ships only the packs its person chose, and they chose "a".`,
+				`knowledge.ships: an entry that names no pack was removed: a draft ships only the packs its person chose, and they chose "a".`,
+				`knowledge.ships: "a" was added, since you chose to ship it with the QuickAgent.`,
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, did := Correct(json.RawMessage(tc.in), tc.chosen...)
+			ships, include := shippedNames(t, out)
+			if !slices.Equal(ships, tc.ships) || !slices.Equal(include, tc.include) {
+				t.Errorf("ships %v include %v, want %v %v: %s", ships, include, tc.ships, tc.include, out)
+			}
+			if !slices.Equal(did, tc.did) {
+				t.Errorf("did %q, want %q", did, tc.did)
+			}
+		})
 	}
 }
 
