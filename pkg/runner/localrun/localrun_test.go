@@ -37,20 +37,30 @@ import (
 // and the built-in's tree is the embedded one on every run, whatever happened
 // to the installed copy.
 func TestOnlyTheEmbeddedPackagesRunAsBuiltin(t *testing.T) {
-	t.Run("the list is the Creator, the Drafter, the Voice Writer, the Examiner and the Assistant", func(t *testing.T) {
+	t.Run("the list is the Creator, the Drafter, the Voice Writer, the Examiner, the Assistant, Main and the Coding agent", func(t *testing.T) {
 		var refs []string
 		for _, b := range Builtins() {
 			refs = append(refs, b.Ref())
 		}
-		if strings.Join(refs, ",") != "agentry/knowledge-creator@1.5.0,agentry/drafter@1.16.0,agentry/voice-writer@1.3.0,agentry/examiner@1.2.0,agentry/assistant@1.1.0" {
+		if strings.Join(refs, ",") != "agentry/knowledge-creator@1.5.0,agentry/drafter@1.16.0,agentry/voice-writer@1.3.0,agentry/examiner@1.2.0,agentry/assistant@1.2.0,agentry/main@1.0.0,agentry/coder@1.0.0" {
 			t.Fatalf("built-ins %v", refs)
 		}
 	})
-	t.Run("only the Assistant runs as a persistent agent, and never as a run", func(t *testing.T) {
+	t.Run("the Assistant, Main and the Coding agent are persistent, never run as a run, and the Coding agent is not runnable", func(t *testing.T) {
+		persistent := map[string]bool{Assistant().Ref(): true, Main().Ref(): true, Coder().Ref(): true}
 		for _, b := range Builtins() {
-			if b.Persistent() != (b.Ref() == Assistant().Ref()) {
+			if b.Persistent() != persistent[b.Ref()] {
 				t.Fatalf("%s: persistent %v", b.Ref(), b.Persistent())
 			}
+			if b.Runnable() != (b.Persistent() && b.Ref() != Coder().Ref()) {
+				t.Fatalf("%s: runnable %v", b.Ref(), b.Runnable())
+			}
+		}
+		if Assistant().AppLink() != "assistant" || Main().AppLink() != "main" || Coder().AppLink() != "" {
+			t.Fatal("the app links are not the agents' own")
+		}
+		if _, err := (Segment{Builtin: Coder()}).Plan(context.Background(), nil); err == nil {
+			t.Fatal("the Coding agent's segment was planned")
 		}
 		if (Builtin{}).Persistent() {
 			t.Fatal("the zero Builtin is persistent")

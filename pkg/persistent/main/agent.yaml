@@ -1,0 +1,22 @@
+schemaVersion: "2"
+name: main
+namespace: agentry
+version: 1.0.0
+summary: "Agentry's own assistant on Home: finds, installs, runs and schedules QuickAgents for you, and helps you with Agentry."
+license: MIT
+authors:
+  - name: Agentry
+modes: [persistent]
+entrypoints:
+  instruction: INSTRUCTION.md
+interactive:
+  opening: "Hi, I'm Main. Ask me to find a QuickAgent, run one on a file in your mainshare folder, or set one to run on a schedule."
+capabilities:
+  network:
+    egress: none
+  filesystem:
+    read: none
+    write: none
+  exec: none
+publish:
+  include: [agent.yaml, INSTRUCTION.md, README.md, LICENSE]

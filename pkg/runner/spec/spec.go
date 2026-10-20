@@ -79,6 +79,13 @@ const (
 	// PHData is a persistent agent's data volume, by name, mounted at
 	// AgentRoot/AgentDataDir; only a persistent plan names it.
 	PHData = "@@RUN_DATA@@"
+	// PHAppLink is the host path of the socket a persistent agent's
+	// supervisor answers its app link on, bound into the app link's
+	// container alone; only a plan with an app link names it.
+	PHAppLink = "@@RUN_APPLINK@@"
+	// PHAppLinkUser is the user the app link runs as: the invoking uid:gid,
+	// whose socket it connects to, as the host link runs.
+	PHAppLinkUser = "@@RUN_APPLINK_USER@@"
 	// PHHostGatewayURL / PHHostProxyURL are the published 127.0.0.1 addresses a
 	// host-run harness reaches the gateway and the proxy at; known only once
 	// the run's containers are up, so they are rendered into harness files and
@@ -448,6 +455,11 @@ type CapSummary struct {
 	// for a persistent built-in alone, and the filesystem tools, grep and
 	// glob are then rooted at AgentRoot in place of the workspace.
 	AgentFiles *AgentFiles `json:"agentFiles,omitempty"`
+	// AppLink is a persistent built-in's app link, by the tool set it lists
+	// (runnerimage/applink): the gateway runs it with no network and the
+	// supervisor's socket alone. Never the manifest's: the compiler sets it
+	// for a persistent built-in alone.
+	AppLink string `json:"appLink,omitempty"`
 }
 
 // AgentFiles is a persistent agent's folders (CapSummary.AgentFiles).

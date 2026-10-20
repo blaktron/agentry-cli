@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/blaktron/agentry-cli/pkg/persistent/assistant"
+	"github.com/blaktron/agentry-cli/pkg/persistent/coder"
+	mainagent "github.com/blaktron/agentry-cli/pkg/persistent/main"
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/connection"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
@@ -20,18 +22,41 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/runnerimage"
+	"github.com/blaktron/agentry-cli/runnerimage/applink"
 	"github.com/blaktron/agentry/pkg/manifest"
 )
 
 // Assistant is the Assistant (pkg/persistent/assistant), the first built-in
 // that runs as a persistent agent. A file in its share is read only once
-// ClamAV has checked it.
+// ClamAV has checked it, and its app link is self_configure alone.
 func Assistant() Builtin {
-	return Builtin{namespace: assistant.Namespace, name: assistant.Name, version: assistant.Version, fsys: assistant.FS(), persistent: true, checkShare: true}
+	return Builtin{namespace: assistant.Namespace, name: assistant.Name, version: assistant.Version, fsys: assistant.FS(),
+		persistent: true, runnable: true, checkShare: true, appLink: applink.SetAssistant}
+}
+
+// Main is Main (pkg/persistent/main), the persistent agent of Agentry
+// Desktop's Home: its app link is the application's own operations, and a
+// file in its share is read only once ClamAV has checked it.
+func Main() Builtin {
+	return Builtin{namespace: mainagent.Namespace, name: mainagent.Name, version: mainagent.Version, fsys: mainagent.FS(),
+		persistent: true, runnable: true, checkShare: true, appLink: applink.SetMain}
+}
+
+// Coder is the Coding agent (pkg/persistent/coder), published for reading:
+// it is not runnable, so no segment of it starts.
+func Coder() Builtin {
+	return Builtin{namespace: coder.Namespace, name: coder.Name, version: coder.Version, fsys: coder.FS(), persistent: true}
 }
 
 // PersistentBuiltins are the built-ins that run as persistent agents.
-func PersistentBuiltins() []Builtin { return []Builtin{Assistant()} }
+func PersistentBuiltins() []Builtin { return []Builtin{Main(), Assistant()} }
+
+// Runnable says a persistent built-in runs as an agent; one that is not is
+// published for reading alone.
+func (b Builtin) Runnable() bool { return b.runnable }
+
+// AppLink is the persistent built-in's app link tool set; empty for none.
+func (b Builtin) AppLink() string { return b.appLink }
 
 // Persistent says the built-in runs as a persistent agent: only a Segment
 // starts it, and Execute refuses it.
@@ -57,6 +82,9 @@ type Grants struct {
 	// ServersDir is the agent's own store a package server is installed
 	// into, as a release's declared server is into its profile's.
 	ServersDir string
+	// AppLink is the socket the supervisor answers the agent's app link on;
+	// empty gives the segment no app link.
+	AppLink string
 }
 
 // Segment is one start of a persistent built-in: the session a persistent
@@ -92,6 +120,20 @@ func (s Segment) Start(ctx context.Context, d dockerx.Client) (engine.Persistent
 	if logw == nil {
 		logw = io.Discard
 	}
+	// A socket on this computer reaches a container only where the
+	// engine's daemon runs here: elsewhere the segment has no app link,
+	// and its receipt says why.
+	var enforced map[string]string
+	if s.Grants.AppLink != "" {
+		ok, why, err := engine.HostSocketsReachContainers(ctx, d)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			s.Grants.AppLink = ""
+			enforced = map[string]string{"persistent.appLink": "not given: the container engine's daemon runs in a VM (" + why + "), whose containers a socket on this computer does not reach"}
+		}
+	}
 	sp, err := s.Plan(ctx, logw)
 	if err != nil {
 		return nil, err
@@ -122,10 +164,10 @@ func (s Segment) Start(ctx context.Context, d dockerx.Client) (engine.Persistent
 		}
 	}
 	seg := s.Persistent
-	seg.Share = s.Grants.Share
+	seg.Share, seg.AppLink = s.Grants.Share, s.Grants.AppLink
 	sess, err := engine.StartSession(ctx, d, engine.Params{
 		Plan: plan, PlanDir: planDir, WorkspaceSrc: workspace, RunRoot: installDir, RunnerHome: s.Home,
-		OutDir: s.OutDir, TextInputs: true, Knowledge: s.Grants.Knowledge, ServersDir: s.Grants.ServersDir,
+		OutDir: s.OutDir, TextInputs: true, Knowledge: s.Grants.Knowledge, ServersDir: s.Grants.ServersDir, Enforced: enforced,
 		Adapter: ad, Policy: s.Policy, PolicyFile: s.PolicyFile, Budgets: spec.Budgets{},
 		Attestation: meta.Attestation, ExecPackages: execPackages,
 		CheckWorkspace: builtinCopyCheck(meta.Digest),
@@ -155,6 +197,15 @@ func ImageAdapter(name string) string {
 		return adapter.CodexImageAdapterName
 	}
 	return name
+}
+
+// appLinkSet is the app link tool set the segment's plan has: the
+// built-in's, when the segment is given a socket for it.
+func (s Segment) appLinkSet() string {
+	if s.Grants.AppLink == "" {
+		return ""
+	}
+	return s.Builtin.appLink
 }
 
 // agentFiles are the folders the segment's plan mounts: the data volume,
@@ -211,8 +262,8 @@ type SegmentPlan struct {
 // touches no container engine; a package server is resolved from the agent's
 // store, or from the registries when the store does not hold its pin.
 func (s Segment) Plan(ctx context.Context, logw io.Writer) (*SegmentPlan, error) {
-	if !s.Builtin.persistent {
-		return nil, engine.Classify(engine.ExitCLI, fmt.Errorf("%s is not a persistent agent", s.Builtin.Ref()))
+	if !s.Builtin.persistent || !s.Builtin.runnable {
+		return nil, engine.Classify(engine.ExitCLI, fmt.Errorf("%s is not a persistent agent Agentry runs", s.Builtin.Ref()))
 	}
 	meta, installDir, err := s.Builtin.Materialize(s.Home, s.Build)
 	if err != nil {
@@ -243,7 +294,7 @@ func (s Segment) Plan(ctx context.Context, logw io.Writer) (*SegmentPlan, error)
 	plan, planDir, err := EnsurePlan(PlanInputs{
 		Home: s.Home, Manifest: m, Meta: meta, InstallDir: installDir, WorkspaceDir: workspace,
 		Policy: s.Policy, PolicySHA: s.PolicySHA, Adapter: adapterName, Mode: manifest.ModePersistent,
-		Servers: servers, AgentFiles: s.agentFiles(), CompiledBy: s.Build, Log: logw,
+		Servers: servers, AgentFiles: s.agentFiles(), AppLink: s.appLinkSet(), CompiledBy: s.Build, Log: logw,
 	})
 	if err != nil {
 		return nil, err
