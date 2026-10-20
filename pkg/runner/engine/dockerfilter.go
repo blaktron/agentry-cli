@@ -190,6 +190,7 @@ func filterConfig(rd *runDirs, runID string, gwEnv map[string]string, lim policy
 		ToolsCmd:          spec.ToolsCmd(),
 		ToolsTmpfs:        toolsTmpfs(plan),
 		ToolsShared:       toolsShared(plan, rd),
+		ToolsVolumes:      toolsVolumes(rd),
 		BrowserImage:      browserImageOf(plan),
 		BrowserUser:       rd.personUser(),
 		BrowserTmpfs:      browserTmpfsOf(plan),
@@ -498,4 +499,13 @@ func closeDaemonFilter(rd *runDirs) {
 	if rd.filterDir != "" {
 		_ = os.RemoveAll(rd.filterDir)
 	}
+}
+
+// toolsVolumes are the volumes not the run's that its tools server may
+// mount: a persistent agent's data volume, by name.
+func toolsVolumes(rd *runDirs) []string {
+	if rd.data == "" {
+		return nil
+	}
+	return []string{rd.data}
 }

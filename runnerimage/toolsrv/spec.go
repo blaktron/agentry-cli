@@ -18,11 +18,12 @@ package toolsrv
 // budget (Limits.MaxResultBytes and MaxResultLines); "12" grep and glob
 // (Search); "13" the deliverables ledger and write_report's and export_pdf's
 // deliverable and title; "14" the rendered web_read (Web.Render); "15" the
-// given-only web_read (Web.GivenOnly and Web.Given). The server
+// given-only web_read (Web.GivenOnly and Web.Given); "16" a persistent
+// agent's folders (WorkspaceName) and the share's checks (ShareChecks). The server
 // refuses other versions, so a stale runner image meets a newer compiler
 // loudly — and the image tag derives from the CLI version, so rebuilds
 // happen on their own at upgrade time.
-const SpecVersion = "15"
+const SpecVersion = "16"
 
 // Spec is the compiled configuration the runner's capability compiler hands
 // to the tools server (written to plan/gateway/toolspec.json, bind-mounted
@@ -41,6 +42,16 @@ type Spec struct {
 	// the gateway's volume spec; the server additionally refuses writes
 	// when FSWrite is disabled, so the two layers agree.
 	WorkspaceDir string `json:"workspaceDir"`
+	// WorkspaceName is how the tools' descriptions name WorkspaceDir when
+	// it is not the workspace (a persistent agent's folders); empty is
+	// "the workspace".
+	WorkspaceName string `json:"workspaceName,omitempty"`
+	// ShareChecks, when set, holds reads of the person's share folder to
+	// ClamAV's verdicts (sharecheck.go): a file beneath Folder is read only
+	// when its bytes have a verdict that is not a finding in File, which
+	// the runner rewrites before each turn. Set for a persistent agent
+	// whose share is checked; unset, the share is read as it is.
+	ShareChecks *ShareChecks `json:"shareChecks,omitempty"`
 	// OutDir is the container path of the run's output folder mount
 	// (conventionally /out). write_report is rooted at OutDir/reports.
 	OutDir string `json:"outDir"`
@@ -130,6 +141,13 @@ type Spec struct {
 	// per-run copy of this file, never into the compiled plan; absent on
 	// hosts without POSIX ids.
 	Owner *Owner `json:"owner,omitempty"`
+}
+
+// ShareChecks is Spec.ShareChecks: the folder beneath WorkspaceDir whose
+// files are checked, and the container path of the verdicts file.
+type ShareChecks struct {
+	Folder string `json:"folder"`
+	File   string `json:"file"`
 }
 
 // KnowledgePack is one pack mounted under KnowledgeDir/<Name>. The name is

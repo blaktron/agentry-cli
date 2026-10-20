@@ -296,6 +296,10 @@ type PersistentSegment struct {
 	// ContinueID is the harness's id for the conversation the agent's last
 	// segment was in, to continue; empty starts a new one.
 	ContinueID string
+	// Share is the person's share folder, absolute, which the segment's
+	// tools server mounts read-write and live when its plan mounts a share
+	// (spec.AgentFiles.Share); empty when the agent has its share off.
+	Share string
 }
 
 // engine is the run's container engine once placed (placementFor), and

@@ -199,7 +199,11 @@ You have no shell, filesystem or network of your own. Your tools come only from 
 			areas = spec.ScratchMount + ", " + spec.KnowledgeMount + "/<pack> while a pack is attached"
 			inputsNote = " They never search your inputs: read those with read_input."
 		}
-		if c.FSReadMode != "none" && c.FSReadMode != "" {
+		if c.AgentFiles != nil {
+			for _, f := range c.AgentFiles.Folders() {
+				areas += ", " + spec.AgentRoot + "/" + f
+			}
+		} else if c.FSReadMode != "none" && c.FSReadMode != "" {
 			areas += ", and " + spec.WorkspaceMount
 		}
 		fmt.Fprintf(b, "- **Searching files.** grep searches the contents of files with a regular expression (ripgrep's syntax) and glob lists files by a path pattern, one area at a time, named by its path: %s. Use them to find what to read before reading file by file.%s\n", areas, inputsNote)
@@ -430,6 +434,9 @@ const workingWellSection = `
 // workspaceLine states the workspace grant, read and write together, so a
 // write-only grant is not told it has no workspace.
 func workspaceLine(c spec.CapSummary) string {
+	if a := c.AgentFiles; a != nil {
+		return agentFilesLine(a)
+	}
 	ws := spec.WorkspaceMount
 	read := map[string]string{
 		"workspace": "fs_list and fs_read read the workspace at " + ws,
@@ -450,4 +457,20 @@ func workspaceLine(c spec.CapSummary) string {
 		return "- **Workspace.** " + write + ". You cannot read workspace files.\n"
 	}
 	return "- **Workspace.** " + read + "; " + write + ".\n"
+}
+
+// agentFilesLine states a persistent agent's folders, which stand in for
+// the workspace: fs_list, fs_read and fs_write take paths beneath
+// spec.AgentRoot, and the two folders are the only ones there.
+func agentFilesLine(a *spec.AgentFiles) string {
+	root, data, share := spec.AgentRoot, spec.AgentDataDir, spec.AgentShareDir
+	line := "- **Your folders.** fs_list, fs_read and fs_write work in " + root + ", with paths that begin with the folder's name. " +
+		data + "/ is your own, kept from one conversation to the next: keep your notes in " + data + "/notes, so you remember what matters even when the conversation is not carried over."
+	if a.Share {
+		line += " " + share + "/ is the person's share folder on their computer: they put files there for you and take what you write there, and they see each change as you make it. Write there only what the person asked for, and never delete their files unless they asked."
+		if a.CheckShare {
+			line += " Each file they add is checked for malware before your next turn: one not yet checked, or found, is refused with the reason; say so rather than guess at it."
+		}
+	}
+	return line + "\n"
 }

@@ -184,7 +184,7 @@
     "gateway/config.yaml": "6ae322f43ef620e4ad682078c22e8a24b8aa6e96de990ad664a91cc53733197c",
     "gateway/registry.yaml": "e5062e24456af9287a9376e986c8b29c6bf9f3802904ce0aa9852244b6ebc11d",
     "gateway/tools.yaml": "46993c9ffdb687abec8b11549c7b0873941f0ec3127425a5e5c5e5cd1978b055",
-    "gateway/toolspec.json": "590f7758b051cc4bdfefbd6e30dd6123a4b1a17bc5b6c84db3ac8221be20847b",
+    "gateway/toolspec.json": "4c179802601ce90afe28f3e9e5c88e5d96f28095c56ca0089f27d3dfdacb16cd",
     "harness/agent.yaml": "dcb299cf1ee8406a1a9d98e9c75d924b3541693dbcd11a0329ac381841c0ef50"
   }
 }
