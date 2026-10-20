@@ -692,7 +692,7 @@ func doctorAgentState(rep *doctorReport, home string, pol *policy.Policy, m *man
 		missing := []string{}
 		for _, srv := range mcpinstall.Packages(m.Capabilities.MCPServers) {
 			sm, err := mcpinstall.LoadMeta(serversDir, mcpinstall.IDFor(srv))
-			if err != nil || sm == nil || sm.Package != srvPackage(srv) || sm.Version != srv.Version {
+			if err != nil || sm == nil || sm.Package != mcpinstall.PackageOf(srv) || sm.Version != srv.Version {
 				missing = append(missing, srv.SourceID()+"@"+srv.Version)
 			}
 		}

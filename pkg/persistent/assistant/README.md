@@ -32,7 +32,10 @@ and `agentry agent show assistant` lists what it has:
 - **A share folder** of yours, `~/agentry/assistantshare` unless you choose
   another, is mounted read and write while it runs: you see what it writes
   there as it writes it. A file you add is checked for malware with ClamAV
-  before it reads it. You can switch the share off.
+  before it reads it, and one ClamAV finds is not read; a file the check
+  cannot read (no signatures on your computer, or past its size limits) is
+  read unchecked, and the segment's receipts say so. You can switch the share
+  off.
 - **What you add**: knowledge packs from your computer and MCP servers, each
   an entry of its roster that you switch on and off. Adding one, or turning
   on one you have not agreed to on this computer, asks you first.

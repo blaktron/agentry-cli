@@ -153,12 +153,12 @@ func ApplyChange(home string, a Agent, c *Config, ch Change) (restart bool, err 
 		delete(next.Switches, id)
 	}
 	if id := ch.RemoveServer; id != "" {
-		if !strings.HasPrefix(id, "server:") {
-			id = "server:" + id
+		if !strings.HasPrefix(id, serverPrefix) {
+			id = serverPrefix + id
 		}
 		i := slices.IndexFunc(next.Servers, func(s manifest.MCPServer) bool { return ServerEntryID(s) == id })
 		if i < 0 {
-			return false, fmt.Errorf("the %s agent has no server %s", a.Name, strings.TrimPrefix(id, "server:"))
+			return false, fmt.Errorf("the %s agent has no server %s", a.Name, strings.TrimPrefix(id, serverPrefix))
 		}
 		next.Servers = slices.Delete(next.Servers, i, i+1)
 		delete(next.Switches, id)
@@ -172,7 +172,7 @@ func ApplyChange(home string, a Agent, c *Config, ch Change) (restart bool, err 
 			return false, fmt.Errorf("the %s agent already searches the pack %s", a.Name, k)
 		}
 		next.Knowledge = append(next.Knowledge, k)
-		delete(next.Switches, "knowledge:"+k)
+		delete(next.Switches, KnowledgeEntryID(k))
 	}
 	if k := ch.RemoveKnowledge; k != "" {
 		i := slices.Index(next.Knowledge, k)
@@ -180,8 +180,8 @@ func ApplyChange(home string, a Agent, c *Config, ch Change) (restart bool, err 
 			return false, fmt.Errorf("the %s agent has no pack %s", a.Name, k)
 		}
 		next.Knowledge = slices.Delete(next.Knowledge, i, i+1)
-		delete(next.Switches, "knowledge:"+k)
-		delete(next.Consented, "knowledge:"+k)
+		delete(next.Switches, KnowledgeEntryID(k))
+		delete(next.Consented, KnowledgeEntryID(k))
 	}
 	if sw := ch.Switch; sw != nil {
 		e, ok := BuildRoster(a, next, nil).Entry(sw.ID)

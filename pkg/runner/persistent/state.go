@@ -105,6 +105,9 @@ const (
 	holderFile     = "owner.json"
 	logFile        = "supervisor.log"
 	segmentsDir    = "segments"
+	// shareVerdictsFile keeps the share's malware verdicts between
+	// segments.
+	shareVerdictsFile = "share-verdicts.json"
 )
 
 // LogPath is where a detached supervisor writes what it prints.
@@ -372,7 +375,7 @@ func Reset(ctx context.Context, home, name string, d dockerx.Client) error {
 			return fmt.Errorf("remove the %s agent's volume %s: %w", name, v, err)
 		}
 	}
-	for _, f := range []string{transcriptFile, usageFile} {
+	for _, f := range []string{transcriptFile, usageFile, shareVerdictsFile} {
 		if err := os.Remove(filepath.Join(Dir(home, name), f)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}

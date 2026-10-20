@@ -1766,3 +1766,29 @@ func TestTheToolsServerAloneMountsThePersistentVolume(t *testing.T) {
 		t.Fatal("a volume that is not named was admitted")
 	}
 }
+
+// TestTheShareFolderIsBoundAsItselfAlone: a persistent agent's share folder,
+// a writable root of its own, is bound read-write as itself; a folder
+// beneath it, a folder beside it and its parent are refused.
+func TestTheShareFolderIsBoundAsItselfAlone(t *testing.T) {
+	people := t.TempDir()
+	share := filepath.Join(people, "assistantshare")
+	for _, d := range []string{filepath.Join(share, "sub"), filepath.Join(people, "beside")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	g := newRig(t, Limits{}, func(c *Config) {
+		c.BindRoots = append(c.BindRoots, share)
+		c.WritableRoots = append(c.WritableRoots, share)
+	})
+	bind := func(b string) map[string]any {
+		return map[string]any{"HostConfig": map[string]any{"Binds": []string{b}}}
+	}
+	if code, body := g.do(t, "POST", "/containers/create", bind(share+":/agent/share:rw")); code != http.StatusCreated {
+		t.Fatalf("the share itself: %d %s", code, body)
+	}
+	g.refused(t, "a folder beneath the share", "POST", "/containers/create", bind(share+"/sub:/x:rw"), "inside a directory the run writes")
+	g.refused(t, "a folder beside the share", "POST", "/containers/create", bind(filepath.Join(people, "beside")+":/x:rw"), "not one the run lets the gateway write")
+	g.refused(t, "the share's parent", "POST", "/containers/create", bind(people+":/x:ro"), "outside the run's directories")
+}

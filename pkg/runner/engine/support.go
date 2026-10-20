@@ -61,6 +61,10 @@ type runDirs struct {
 	// (share.go): the person's share folder, the agent's data volume, and
 	// the folder of the share's malware verdicts; empty for any other run.
 	share, data, shareChecks string
+	// shareKept are the share's verdicts the last segment left
+	// (PersistentSegment.ShareVerdicts), and shareCache where they are kept.
+	shareKept  map[string]toolsrv.ShareVerdict
+	shareCache string
 	// targets are the run's target hosts, readied by the caller, in the
 	// plan's order (targethosts.go): the replacer gives each relay its
 	// address and port, and the host link its user.

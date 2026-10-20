@@ -88,4 +88,4 @@ agentry/voice-writer@1.3.0 sha256:6bc2264bb86cc6538edcb708b190dc8f39e3c7467e48db
 # The Assistant, the first persistent built-in: its conversation is kept between starts (agentry agent).
 agentry/assistant@1.0.0 sha256:30f1ea1b13661d88184dc4954466ade6e569cd80781d3e0128cc6870c56db7f9
 # 1.1.0: the Assistant has its folders, the person's share and its own data, and keeps notes there; its roster's knowledge packs and MCP servers; a name and personality the person gives it.
-agentry/assistant@1.1.0 sha256:a6522ca4c3e18d10de25e8a6984f26659d29b2b9a0e843e1c705572e9837f4ff
+agentry/assistant@1.1.0 sha256:b1281091e9b9cc094c394aab2070553c454c004446d59881aa7c0414d0f94ab7

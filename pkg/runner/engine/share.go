@@ -78,11 +78,58 @@ func preparePersistentFolders(p Params, rd *runDirs) error {
 		if err := os.MkdirAll(rd.shareChecks, 0o755); err != nil {
 			return Classify(ExitCLI, fmt.Errorf("the share's verdicts folder: %w", err))
 		}
-		if err := writeShareVerdicts(rd.shareChecks, map[string]toolsrv.ShareVerdict{}); err != nil {
+		rd.shareCache = p.Persistent.ShareVerdicts
+		rd.shareKept = readShareCache(rd.shareCache, rd.share)
+		if err := writeShareVerdicts(rd.shareChecks, rd.shareKept); err != nil {
 			return Classify(ExitCLI, err)
 		}
 	}
 	return nil
+}
+
+// shareCache is the verdicts kept between segments, for one share folder.
+type shareCache struct {
+	Share string                          `json:"share"`
+	Files map[string]toolsrv.ShareVerdict `json:"files"`
+}
+
+// readShareCache is the verdicts kept for share; none when the file is
+// missing, unreadable or for another folder.
+func readShareCache(path, share string) map[string]toolsrv.ShareVerdict {
+	out := map[string]toolsrv.ShareVerdict{}
+	if path == "" {
+		return out
+	}
+	b, err := os.ReadFile(path) //nolint:gosec // the agent's own state file
+	if err != nil {
+		return out
+	}
+	var c shareCache
+	if json.Unmarshal(b, &c) != nil || c.Share != share {
+		return out
+	}
+	for rel, v := range c.Files {
+		if v.Verdict == toolsrv.ShareClean || v.Verdict == toolsrv.ShareFound || v.Verdict == toolsrv.ShareUnchecked {
+			out[rel] = v
+		}
+	}
+	return out
+}
+
+// keepShareCache writes the verdicts for the next segment (0600).
+func keepShareCache(path, share string, files map[string]toolsrv.ShareVerdict) error {
+	if path == "" {
+		return nil
+	}
+	b, err := json.Marshal(shareCache{Share: share, Files: files})
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // ShareFolderUsable says whether dir can be a share folder as it stands: an
@@ -92,6 +139,10 @@ func preparePersistentFolders(p Params, rd *runDirs) error {
 func ShareFolderUsable(dir string) error {
 	if !filepath.IsAbs(dir) || filepath.Clean(dir) != dir {
 		return fmt.Errorf("the share folder %q is not a clean absolute path", dir)
+	}
+	// The gateway's bind lists are joined with colons.
+	if strings.Contains(strings.TrimPrefix(dir, filepath.VolumeName(dir)), ":") {
+		return fmt.Errorf("the share folder %q has a colon in its path", dir)
 	}
 	fi, err := os.Lstat(dir)
 	if err != nil {
@@ -193,7 +244,10 @@ func (s *liveSession) checkShare(ctx context.Context) {
 		return
 	}
 	if s.shares == nil {
-		s.shares = &shareChecker{verdicts: map[string]toolsrv.ShareVerdict{}}
+		s.shares = &shareChecker{verdicts: rd.shareKept}
+		if s.shares.verdicts == nil {
+			s.shares.verdicts = map[string]toolsrv.ShareVerdict{}
+		}
 	}
 	sc := s.shares
 	files, err := walkShare(rd.share)
@@ -227,6 +281,7 @@ func (s *liveSession) checkShare(ctx context.Context) {
 	if len(todo) == 0 {
 		if gone {
 			_ = writeShareVerdicts(rd.shareChecks, sc.verdicts)
+			_ = keepShareCache(rd.shareCache, rd.share, sc.verdicts)
 		}
 		return
 	}
@@ -235,14 +290,26 @@ func (s *liveSession) checkShare(ctx context.Context) {
 	if err != nil {
 		s.emit(session.Event{Kind: session.KindNotice, Text: "the share's new files could not be checked, so they stay unread this turn: " + s.redact.String(err.Error())})
 	}
+	unchecked := 0
 	for rel, v := range checked {
+		if v.Verdict == "" {
+			delete(checked, rel)
+			continue
+		}
+		if v.Verdict == toolsrv.ShareUnchecked {
+			unchecked++
+		}
 		sc.verdicts[rel] = v
 	}
 	if err := writeShareVerdicts(rd.shareChecks, sc.verdicts); err != nil {
 		s.emit(session.Event{Kind: session.KindNotice, Text: "the share's verdicts could not be written: " + s.redact.String(err.Error())})
 		return
 	}
+	_ = keepShareCache(rd.shareCache, rd.share, sc.verdicts)
 	s.logShareChecks(checked)
+	if unchecked > 0 {
+		s.emit(session.Event{Kind: session.KindNotice, Text: fmt.Sprintf("%d file(s) in the share could not be checked by ClamAV and are read unchecked; receipts/%s says why", unchecked, ShareChecksLog)})
+	}
 	if left > 0 {
 		s.emit(session.Event{Kind: session.KindNotice, Text: fmt.Sprintf("%d more file(s) in the share wait for the next turn's check", left)})
 	}
@@ -339,7 +406,9 @@ func shareVerdictOf(files []runnerdecode.File, sigs clamdb.DB) (verdict, signatu
 			return toolsrv.ShareUnchecked, "", string(f.Unchecked)
 		}
 	}
-	return toolsrv.ShareUnchecked, "", "the check did not answer for it"
+	// The check named no result for the file: it gets no verdict, so it
+	// stays unread and is checked again at the next turn.
+	return "", "", ""
 }
 
 // shareDecodeImage is the decode image with ClamAV's signatures, ensured on

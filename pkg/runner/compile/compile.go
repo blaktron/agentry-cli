@@ -2143,7 +2143,7 @@ func agentFilesEnforcement(a *spec.AgentFiles) string {
 	}
 	line += "; the person's share folder, bound read-write and never relabelled at " + spec.AgentRoot + "/" + spec.AgentShareDir + ", the one host folder the gateway may write besides the output folder, by its exact path"
 	if a.CheckShare {
-		return line + "; a file added there is read only once ClamAV checked its bytes, before the next turn (receipts/share-checks.ndjson)"
+		return line + "; a file added there is read only once the runner has checked its bytes with ClamAV, before the next turn: one ClamAV found is never read, and one it could not check (no signatures on this computer, past its limits) is read unchecked; receipts/share-checks.ndjson has each verdict"
 	}
 	return line + ", read as it is"
 }

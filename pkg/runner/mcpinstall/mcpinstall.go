@@ -163,6 +163,14 @@ func Packages(servers []manifest.MCPServer) []manifest.MCPServer {
 	return out
 }
 
+// PackageOf is a package server's package name, npm's or PyPI's.
+func PackageOf(srv manifest.MCPServer) string {
+	if srv.NPM != "" {
+		return srv.NPM
+	}
+	return srv.PyPI
+}
+
 // StoredOrResolved returns the resolutions for every package server among
 // servers. When the store already records a resolution for each pin, those
 // are reused verbatim, with no network, so cached installs run offline;
@@ -179,11 +187,7 @@ func StoredOrResolved(ctx context.Context, errOut io.Writer, storeDir string, re
 		if err != nil {
 			return nil, err
 		}
-		pkg := srv.NPM
-		if pkg == "" {
-			pkg = srv.PyPI
-		}
-		if meta == nil || meta.Package != pkg || meta.Version != srv.Version {
+		if meta == nil || meta.Package != PackageOf(srv) || meta.Version != srv.Version {
 			stored = nil
 			break
 		}

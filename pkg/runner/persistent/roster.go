@@ -21,6 +21,7 @@ import (
 
 	"github.com/blaktron/agentry/pkg/manifest"
 
+	"github.com/blaktron/agentry-cli/pkg/pathguard"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/pkg/runner/mcpinstall"
@@ -150,13 +151,13 @@ func BuildRoster(a Agent, c Config, applied *Applied) Roster {
 	}
 	shareLine := "Shares the folder " + share + " with you, read and write: you see what it writes there as it writes it"
 	if a.Builtin.ChecksShare() {
-		shareLine += ", and a file you add is checked for malware before it reads it"
+		shareLine += ", and a file you add is checked for malware with ClamAV before it reads it: one ClamAV finds is never read, one it cannot check is read unchecked"
 	}
 	add(RosterEntry{ID: EntryShare, Kind: KindFiles, Name: "Your share folder", GrantedBy: GrantedByBuiltin, Line: shareLine}, true)
 	add(RosterEntry{ID: EntryData, Kind: KindFiles, Name: "Its own files", GrantedBy: GrantedByBuiltin, Fixed: true,
 		Line: "Keeps its own notes and files on the volume " + DataVolume(a.Name) + ", kept until you reset it"}, true)
 	for _, k := range c.Knowledge {
-		add(RosterEntry{ID: "knowledge:" + k, Kind: KindKnowledge, Name: k, GrantedBy: GrantedByYou,
+		add(RosterEntry{ID: KnowledgeEntryID(k), Kind: KindKnowledge, Name: k, GrantedBy: GrantedByYou,
 			Line: "Searches your knowledge pack " + k + ", read-only"}, true)
 	}
 	for _, srv := range c.Servers {
@@ -172,9 +173,18 @@ func BuildRoster(a Agent, c Config, applied *Applied) Roster {
 	return r
 }
 
+// The prefixes of a pack's and a server's roster ids.
+const (
+	knowledgePrefix = "knowledge:"
+	serverPrefix    = "server:"
+)
+
 // ServerEntryID is a server's roster id: its store id, which names its
 // package or its address.
-func ServerEntryID(srv manifest.MCPServer) string { return "server:" + mcpinstall.IDFor(srv) }
+func ServerEntryID(srv manifest.MCPServer) string { return serverPrefix + mcpinstall.IDFor(srv) }
+
+// KnowledgeEntryID is a pack's roster id.
+func KnowledgeEntryID(pack string) string { return knowledgePrefix + pack }
 
 func serverName(srv manifest.MCPServer) string {
 	switch {
@@ -259,7 +269,7 @@ func Apply(ctx context.Context, home string, a Agent, c Config, r Roster, open P
 	}
 	var names []string
 	for _, k := range c.Knowledge {
-		if on("knowledge:" + k) {
+		if on(KnowledgeEntryID(k)) {
 			names = append(names, k)
 		}
 	}
@@ -295,13 +305,30 @@ func ensureShare(a Agent, c Config, dir string) error {
 
 // CheckShareFolder refuses a share folder that would hand the agent more
 // than the person meant: a path that is not absolute and clean, one reached
-// through a link, the runner's own folders or the configuration's, a folder
-// that holds any of them (the home folder, the root), and the system's
-// folders. A folder that does not exist yet passes, beneath a parent that
-// does.
+// through a link, a filesystem root, the home folder or a folder holding it,
+// a hidden folder of the home folder (where keys and settings live) or one
+// beneath it, the runner's own folders or the configuration's, a folder
+// that holds any of them, and the system's folders. A path holding a colon
+// beyond a drive's is refused too: the gateway's bind lists are joined with
+// one. A folder that does not exist yet passes, beneath a parent that does.
 func CheckShareFolder(home, dir string) error {
 	if !filepath.IsAbs(dir) || filepath.Clean(dir) != dir {
 		return fmt.Errorf("the share folder %q is not a clean absolute path", dir)
+	}
+	if strings.Contains(strings.TrimPrefix(dir, filepath.VolumeName(dir)), ":") {
+		return fmt.Errorf("the share folder %q has a colon in its path; choose one without", dir)
+	}
+	userHome, _ := os.UserHomeDir()
+	if userHome != "" {
+		if err := pathguard.RefuseDangerousDir(dir, userHome); err != nil {
+			return fmt.Errorf("the share folder %s is %v; choose a folder of its own", dir, err)
+		}
+		if within(userHome, dir) {
+			rel, _ := filepath.Rel(userHome, dir)
+			if first := strings.SplitN(rel, string(filepath.Separator), 2)[0]; strings.HasPrefix(first, ".") {
+				return fmt.Errorf("the share folder %s is in a hidden folder of your home folder (%s), where keys and settings are kept; choose another", dir, first)
+			}
+		}
 	}
 	resolved, err := resolveExisting(dir)
 	if err != nil {
@@ -313,9 +340,6 @@ func CheckShareFolder(home, dir string) error {
 	guarded := []struct{ what, path string }{{"the runner's folder", home}}
 	if cfg, err := os.UserConfigDir(); err == nil {
 		guarded = append(guarded, struct{ what, path string }{"Agentry's configuration", filepath.Join(cfg, "agentry")})
-	}
-	if userHome, err := os.UserHomeDir(); err == nil {
-		guarded = append(guarded, struct{ what, path string }{"your home folder's own files", filepath.Join(userHome, ".ssh")})
 	}
 	for _, g := range guarded {
 		p := g.path
@@ -337,10 +361,14 @@ func CheckShareFolder(home, dir string) error {
 	return nil
 }
 
-// within says p is root or beneath it.
+// within says p is root or beneath it; without regard to case where the
+// filesystem usually has none.
 func within(root, p string) bool {
 	if root == "" {
 		return false
+	}
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		root, p = strings.ToLower(root), strings.ToLower(p)
 	}
 	rel, err := filepath.Rel(root, p)
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)

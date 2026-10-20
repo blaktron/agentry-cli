@@ -247,7 +247,7 @@ func newAgentConfigureCmd() *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.StringVar(&name, "name", "", "the name the agent goes by (empty clears it)")
-	f.StringVar(&personalityFile, "personality-file", "", "a text file describing the personality you want it to have (at most 32 KiB)")
+	f.StringVar(&personalityFile, "personality-file", "", fmt.Sprintf("a text file describing the personality you want it to have (at most %d KiB)", persistent.MaxPersonalityBytes>>10))
 	f.StringVar(&share, "share", "", "the folder it shares with you, read and write (empty: ~/agentry/<agent>share)")
 	f.StringVar(&runOnStart, "run-on-start", "", "true or false: start it when Agentry Desktop starts")
 	f.StringVar(&addServer, "add-server", "", "a file holding an MCP server to add, in a manifest's shape")

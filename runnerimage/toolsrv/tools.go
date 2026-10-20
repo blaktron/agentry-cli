@@ -415,9 +415,13 @@ func (s *server) toolFSRead(raw json.RawMessage) (string, bool) {
 	defer func() { _ = f.Close() }()
 	if inShare, ok := s.shareRel(rel); ok {
 		if fi, err := f.Stat(); err == nil && fi.Mode().IsRegular() {
-			if why := s.shareRefusal(f, inShare); why != "" {
+			// The bytes checked are the bytes served: the file is read once,
+			// whole, and a write to it meanwhile does not reach the answer.
+			data, why := s.shareRead(f, inShare)
+			if why != "" {
 				return fmt.Sprintf("fs_read: %s: %s", rel, why), true
 			}
+			return readTextFrom(ToolFSRead, bytes.NewReader(data), int64(len(data)), a.Offset, a.MaxBytes, s.spec.Limits.readCap(), s.spec.Limits.budget())
 		}
 	}
 	return readText(fileTools{ToolFSRead, ToolFSList}, f, rel, a.Offset, a.MaxBytes, s.spec.Limits.readCap(), s.spec.Limits.budget())
@@ -439,14 +443,19 @@ func readText(t fileTools, f *os.File, rel string, offset, maxBytes, limit int64
 	if fi.IsDir() {
 		return fmt.Sprintf("%s: %q is a directory (use %s)", tool, rel, t.list), true
 	}
+	return readTextFrom(tool, f, fi.Size(), offset, maxBytes, limit, b)
+}
+
+// readTextFrom is readText's page of r, a file of size bytes.
+func readTextFrom(tool string, r io.ReadSeeker, size, offset, maxBytes, limit int64, b budget) (string, bool) {
 	if maxBytes > 0 && maxBytes < limit {
 		limit = maxBytes
 	}
-	data, err := b.readPage(f, offset, limit, fi.Size())
+	data, err := b.readPage(r, offset, limit, size)
 	if err != nil {
 		return tool + ": " + err.Error(), true
 	}
-	return textPage(data, offset, fi.Size(), "")
+	return textPage(data, offset, size, "")
 }
 
 // ---- fs_list ----

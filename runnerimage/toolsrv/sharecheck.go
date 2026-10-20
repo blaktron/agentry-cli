@@ -110,45 +110,52 @@ func (s *server) shareVerdicts() (ShareVerdicts, error) {
 	return v, nil
 }
 
-// shareRefusal is why an open file in the share may not be read, or "" when
-// it may: its bytes are the ones a verdict that is not a finding is for, or
-// the ones this server wrote.
-func (s *server) shareRefusal(f *os.File, inShare string) string {
-	sum := sha256.New()
-	if _, err := io.Copy(sum, f); err != nil {
-		return "the file could not be read to check it: " + err.Error()
+// maxShareRead is the largest share file fs_read reads, whole, to check it.
+const maxShareRead = 64 << 20
+
+// shareRead reads an open file of the share whole and answers its bytes, or
+// why they may not be read: they are read only when they are the bytes a
+// verdict that is not a finding is for, or the ones this server wrote.
+func (s *server) shareRead(f *os.File, inShare string) ([]byte, string) {
+	data, err := io.ReadAll(io.LimitReader(f, maxShareRead+1))
+	if err != nil {
+		return nil, "the file could not be read to check it: " + err.Error()
 	}
-	if _, err := f.Seek(0, io.SeekStart); err != nil {
-		return "the file could not be read to check it: " + err.Error()
+	if len(data) > maxShareRead {
+		return nil, fmt.Sprintf("the file is larger than the %d MiB a checked read takes", maxShareRead>>20)
 	}
-	digest := hex.EncodeToString(sum.Sum(nil))
+	sum := sha256.Sum256(data)
+	digest := hex.EncodeToString(sum[:])
 	s.share.mu.Lock()
 	mine := s.share.written[digest]
 	s.share.mu.Unlock()
 	if mine {
-		return ""
+		return data, ""
 	}
 	verdicts, err := s.shareVerdicts()
 	if err != nil {
-		return err.Error()
+		return nil, err.Error()
 	}
 	if v, ok := verdicts.Files[inShare]; ok && v.SHA256 == digest {
-		return refusalOf(v)
+		return data, refusalOf(v)
 	}
 	// The same bytes under another name: moved or copied since the check.
 	for _, v := range verdicts.Files {
 		if v.SHA256 == digest {
-			return refusalOf(v)
+			return data, refusalOf(v)
 		}
 	}
-	return "this file has not been checked for malware yet: a file added to the share or changed there is checked before your next turn, so ask again then"
+	return nil, "this file has not been checked for malware yet: a file added to the share or changed there is checked before your next turn, so ask again then"
 }
 
 func refusalOf(v ShareVerdict) string {
-	if v.Verdict == ShareFound {
+	switch v.Verdict {
+	case ShareFound:
 		return "ClamAV found " + v.Signature + " in this file, so it is not read; tell the person"
+	case ShareClean, ShareUnchecked:
+		return ""
 	}
-	return ""
+	return "the runner's verdict on this file is not one this server knows"
 }
 
 // shareWithheld says whether a search may not show the file at abs (a path

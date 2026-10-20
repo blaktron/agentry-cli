@@ -469,7 +469,7 @@ func agentFilesLine(a *spec.AgentFiles) string {
 	if a.Share {
 		line += " " + share + "/ is the person's share folder on their computer: they put files there for you and take what you write there, and they see each change as you make it. Write there only what the person asked for, and never delete their files unless they asked."
 		if a.CheckShare {
-			line += " Each file they add is checked for malware before your next turn: one not yet checked, or found, is refused with the reason; say so rather than guess at it."
+			line += " Each file they add is checked for malware before your next turn: one not yet checked is refused until then, and one ClamAV found is refused with the reason; say so rather than guess at it."
 		}
 	}
 	return line + "\n"

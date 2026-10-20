@@ -36,13 +36,6 @@ func ensureServerResolutions(ctx context.Context, errOut io.Writer, serversDir s
 	return mcpinstall.StoredOrResolved(ctx, errOut, serversDir, pol.MCPRegistries, m.Capabilities.MCPServers)
 }
 
-func srvPackage(srv manifest.MCPServer) string {
-	if srv.NPM != "" {
-		return srv.NPM
-	}
-	return srv.PyPI
-}
-
 // allSecretNames is the union of agent-level and per-server secret names —
 // what guided setup collects and the engine must resolve.
 func allSecretNames(m *manifest.Manifest) []string {

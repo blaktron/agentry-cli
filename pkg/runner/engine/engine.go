@@ -302,6 +302,10 @@ type PersistentSegment struct {
 	Share string
 	// Roster is the agent's roster for the segment, for its envelope.
 	Roster []receipt.RosterEntry
+	// ShareVerdicts is a file of the agent's own the share's verdicts are
+	// kept in between segments, so a file checked in one is not checked
+	// again in the next while it is unchanged; empty keeps none.
+	ShareVerdicts string
 }
 
 // engine is the run's container engine once placed (placementFor), and

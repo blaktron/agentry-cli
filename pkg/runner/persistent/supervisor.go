@@ -58,6 +58,9 @@ type Supervisor struct {
 	model   string
 
 	turn sync.Mutex // one turn at a time; TryLock refuses a second as busy
+	// cfg serialises the supervisor's writes of the agent's config.yaml,
+	// each a read, a change and a write, so none loses another's.
+	cfg sync.Mutex
 	// seg is held while a segment starts, ends or is swapped for the next,
 	// so a stop never meets a segment half made.
 	seg sync.Mutex
@@ -158,6 +161,11 @@ func (s *Supervisor) startSegment(ctx context.Context) error {
 		return err
 	}
 	roster := BuildRoster(a, cfg, nil)
+	// Every segment is held to the person's agreement, not only the first:
+	// a config.yaml changed some other way does not widen the next one.
+	if pending := Unconsented(roster, cfg); len(pending) > 0 {
+		return &ConsentError{Agent: name, Entries: pending}
+	}
 	grants, applied, packsDone, err := Apply(ctx, home, a, cfg, roster, s.opts.Packs)
 	if err != nil {
 		return err
@@ -188,6 +196,7 @@ func (s *Supervisor) startSegment(ctx context.Context) error {
 			Agent: name, Segment: segment,
 			SessionVolume: SessionVolume(name), DataVolume: DataVolume(name),
 			ContinueID: continueID, Roster: roster.Receipt(),
+			ShareVerdicts: filepath.Join(Dir(home, name), shareVerdictsFile),
 		},
 		Grants: grants,
 	}
@@ -223,17 +232,22 @@ func (s *Supervisor) startSegment(ctx context.Context) error {
 		}
 		sess.SetResumeReason(reason)
 	}
-	cfg.Segments = segment
-	cfg.Conversation = nil
-	if id != "" {
-		cfg.Conversation = &Conversation{Adapter: s.adapter, ID: id}
-	}
 	persona := cfg.PersonaGiven
 	if !resumed {
 		// A new conversation has been given nothing yet.
 		persona = ""
 	}
-	if err := SaveConfig(home, name, cfg); err != nil {
+	// Only the segment's own fields are written, onto the config as it is
+	// now: a change made while the segment started is kept, and is pending.
+	if err := s.updateConfig(func(c *Config) error {
+		c.Segments = segment
+		c.Conversation = nil
+		if id != "" {
+			c.Conversation = &Conversation{Adapter: s.adapter, ID: id}
+		}
+		c.PersonaGiven = persona
+		return nil
+	}); err != nil {
 		_, _ = sess.End(context.WithoutCancel(ctx), false)
 		packsDone()
 		return err
@@ -349,10 +363,10 @@ func (s *Supervisor) Send(ctx context.Context, text string) error {
 		s.mu.Lock()
 		s.persona = persona
 		s.mu.Unlock()
-		if c, lerr := LoadConfig(s.opts.Home, s.opts.Agent.Name); lerr == nil {
+		_ = s.updateConfig(func(c *Config) error {
 			c.PersonaGiven = persona
-			_ = SaveConfig(s.opts.Home, s.opts.Agent.Name, c)
-		}
+			return nil
+		})
 	}
 	return err
 }
@@ -425,18 +439,29 @@ func (s *Supervisor) endSegment(ctx context.Context, swap bool) (*receipt.Envelo
 // takes effect at the next turn, which starts the next segment; the roster
 // answered shows it pending until then.
 func (s *Supervisor) Change(ch Change) (Roster, error) {
-	a := s.opts.Agent
-	cfg, err := LoadConfig(s.opts.Home, a.Name)
+	err := s.updateConfig(func(c *Config) error {
+		_, err := ApplyChange(s.opts.Home, s.opts.Agent, c, ch)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
-	if _, err := ApplyChange(s.opts.Home, a, &cfg, ch); err != nil {
-		return nil, err
-	}
-	if err := SaveConfig(s.opts.Home, a.Name, cfg); err != nil {
-		return nil, err
-	}
 	return s.Roster(), nil
+}
+
+// updateConfig reads the agent's config, changes it and writes it, one
+// change at a time.
+func (s *Supervisor) updateConfig(change func(*Config) error) error {
+	s.cfg.Lock()
+	defer s.cfg.Unlock()
+	c, err := LoadConfig(s.opts.Home, s.opts.Agent.Name)
+	if err != nil {
+		return err
+	}
+	if err := change(&c); err != nil {
+		return err
+	}
+	return SaveConfig(s.opts.Home, s.opts.Agent.Name, c)
 }
 
 // Roster is the running agent's roster: an entry switched since the segment

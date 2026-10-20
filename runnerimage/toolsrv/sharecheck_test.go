@@ -75,6 +75,14 @@ func TestShareFileIsReadOnlyOnceChecked(t *testing.T) {
 	if got, isErr := read("share/notes.md"); isErr || !strings.Contains(got, "the person's notes") {
 		t.Fatalf("a clean file: (%q, %v)", got, isErr)
 	}
+	writeVerdicts(t, verdicts, map[string]ShareVerdict{"notes.md": verdictFor(t, notes, ShareUnchecked, "")})
+	if got, isErr := read("share/notes.md"); isErr || !strings.Contains(got, "the person's notes") {
+		t.Fatalf("a file ClamAV could not check is read, as a run's inputs are: (%q, %v)", got, isErr)
+	}
+	writeVerdicts(t, verdicts, map[string]ShareVerdict{"notes.md": verdictFor(t, notes, "maybe", "")})
+	if _, isErr := read("share/notes.md"); !isErr {
+		t.Fatal("a verdict the server does not know was read as clean")
+	}
 	mustWrite(t, notes, []byte("changed since the check\n"))
 	if got, isErr := read("share/notes.md"); !isErr || !strings.Contains(got, "not been checked") {
 		t.Fatalf("a file changed since its check: (%q, %v)", got, isErr)

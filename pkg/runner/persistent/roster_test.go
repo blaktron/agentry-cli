@@ -188,6 +188,22 @@ func TestRosterReachesEveryGate(t *testing.T) {
 			if share != tc.share {
 				t.Errorf("the share in the catalogue and both bind lists: %v, want %v", share, tc.share)
 			}
+			ts, err := os.ReadFile(filepath.Join(sp.Dir, "gateway", "toolspec.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			allow, err := os.ReadFile(filepath.Join(sp.Dir, "gateway", "tools.yaml"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(ts), `"shareChecks"`) != tc.share || strings.Contains(string(ts), `"share"`) != tc.share {
+				t.Errorf("the tools spec's share folder and checks: %s", ts)
+			}
+			for _, tool := range []string{"fs_read", "fs_write", "grep"} {
+				if !strings.Contains(string(allow), tool) || !slices.Contains(plan.Tools, tool) {
+					t.Errorf("%s is not in the allowlist and the plan's tools", tool)
+				}
+			}
 			served := len(plan.MCPServers) == 1 && strings.Contains(string(cat), plan.MCPServers[0].Name+":") && slices.Contains(plan.Gateway.Servers, plan.MCPServers[0].Name)
 			if served != tc.server {
 				t.Errorf("the server in the plan, the catalogue and the gateway's servers: %v, want %v", served, tc.server)
@@ -347,5 +363,44 @@ func TestNameAndPersonalityReachTheNextTurn(t *testing.T) {
 	bad := "two\nlines"
 	if _, err := sv.Change(Change{Name: &bad}); err == nil {
 		t.Error("a name of two lines was accepted")
+	}
+}
+
+// TestEveryNextSegmentIsHeldToConsent: a config changed some other way, to
+// turn on what the person has not agreed to, is refused at the start and at
+// the next segment alike, and the agent stops saying why.
+func TestEveryNextSegmentIsHeldToConsent(t *testing.T) {
+	home := shortHome(t)
+	enable(t, home)
+	c, _ := LoadConfig(home, "assistant")
+	c.Knowledge = []string{"notes"}
+	if err := SaveConfig(home, "assistant", c); err != nil {
+		t.Fatal(err)
+	}
+	var ce *ConsentError
+	if _, err := Start(context.Background(), Options{Home: home, Agent: assistantAgent(t), Client: ClientCLI, Policy: policy.Default(), StartSegment: (&starter{}).start}); !errors.As(err, &ce) {
+		t.Fatalf("start with an unagreed pack: %v", err)
+	}
+	c.Knowledge = nil
+	if err := SaveConfig(home, "assistant", c); err != nil {
+		t.Fatal(err)
+	}
+	st := &starter{resumed: true}
+	sv := startAssistant(t, home, st)
+	c, _ = LoadConfig(home, "assistant")
+	c.Knowledge = []string{"notes"}
+	if err := SaveConfig(home, "assistant", c); err != nil {
+		t.Fatal(err)
+	}
+	if err := sv.Send(context.Background(), "hello"); !errors.As(err, &ce) {
+		t.Fatalf("the next segment with an unagreed pack: %v", err)
+	}
+	select {
+	case <-sv.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("the agent kept running on a refused segment")
+	}
+	if len(st.segments) != 1 {
+		t.Errorf("%d segments started", len(st.segments))
 	}
 }

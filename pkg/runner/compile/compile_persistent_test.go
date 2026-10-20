@@ -97,7 +97,7 @@ func TestAgentFilesRootTheFilesystemTools(t *testing.T) {
 			if (ts.ShareChecks != nil) != checked || strings.Contains(cat, spec.ShareChecksMount) != checked {
 				t.Errorf("share checks %+v, verdicts mounted %v; want %v", ts.ShareChecks, strings.Contains(cat, spec.ShareChecksMount), checked)
 			}
-			if line := plan.Enforcement["persistent.files"]; !strings.Contains(line, "data volume") || strings.Contains(line, "ClamAV") != checked {
+			if line := plan.Enforcement["persistent.files"]; !strings.Contains(line, "data volume") || strings.Contains(line, "ClamAV") != checked || strings.Contains(line, "read unchecked") != checked {
 				t.Errorf("the receipt's line: %q", line)
 			}
 		})

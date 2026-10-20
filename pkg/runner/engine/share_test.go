@@ -124,9 +124,95 @@ func TestShareFolderUsable(t *testing.T) {
 	if err := ShareFolderUsable(dir); err != nil {
 		t.Fatalf("a folder: %v", err)
 	}
-	for _, bad := range []string{link, file, "relative/share", dir + "/../" + filepath.Base(dir), filepath.Join(dir, "missing")} {
+	for _, bad := range []string{link, file, "relative/share", dir + ":/etc", dir + "/../" + filepath.Base(dir), filepath.Join(dir, "missing")} {
 		if err := ShareFolderUsable(bad); err == nil {
 			t.Errorf("%s was accepted", bad)
 		}
 	}
+}
+
+// TestShareVerdictsAreKeptBetweenSegments: a segment starts from the
+// verdicts the last one kept for the same share, so an unchanged file is
+// not checked again; verdicts kept for another folder are not used.
+func TestShareVerdictsAreKeptBetweenSegments(t *testing.T) {
+	s, share := shareSession(t)
+	cache := filepath.Join(t.TempDir(), "share-verdicts.json")
+	s.rd.shareCache = cache
+	if err := os.WriteFile(filepath.Join(share, "notes.md"), []byte("notes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s.checkShare(context.Background())
+	runs := decodeRuns()
+	next, _ := shareSession(t)
+	next.rd.share, next.rd.shareCache = share, cache
+	next.rd.shareKept = readShareCache(cache, share)
+	next.checkShare(context.Background())
+	if decodeRuns() != runs || next.shares.verdicts["notes.md"].Verdict != toolsrv.ShareClean {
+		t.Fatalf("the next segment checked again (%d runs) or lost the verdict: %+v", decodeRuns()-runs, next.shares.verdicts)
+	}
+	if kept := readShareCache(cache, filepath.Join(share, "other")); len(kept) != 0 {
+		t.Fatalf("verdicts kept for another folder were used: %+v", kept)
+	}
+}
+
+// TestShareFilesUncheckedWithoutSignatures: with no signatures on the
+// machine a file's verdict is unchecked, with the reason, and the chat is
+// told it is read unchecked.
+func TestShareFilesUncheckedWithoutSignatures(t *testing.T) {
+	decodeCalls.Lock()
+	signaturesOff = true
+	decodeCalls.Unlock()
+	t.Cleanup(func() {
+		decodeCalls.Lock()
+		signaturesOff = false
+		decodeCalls.Unlock()
+	})
+	s, share := shareSession(t)
+	if err := os.WriteFile(filepath.Join(share, "a.md"), []byte("a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s.checkShare(context.Background())
+	v := readVerdicts(t, s)["a.md"]
+	if v.Verdict != toolsrv.ShareUnchecked || !strings.Contains(v.Reason, "no ClamAV signatures") {
+		t.Fatalf("verdict %+v", v)
+	}
+	told := false
+	for len(s.events) > 0 {
+		ev := <-s.events
+		told = told || ev.Kind == session.KindNotice && strings.Contains(ev.Text, "read unchecked")
+	}
+	if !told {
+		t.Error("the chat was not told the file is read unchecked")
+	}
+}
+
+// TestFilterConfigAdmitsTheSegmentsFolders: a segment's filter admits its
+// data volume to the tools server by name and takes the share as a
+// writable root of its own, from the gateway's lists.
+func TestFilterConfigAdmitsTheSegmentsFolders(t *testing.T) {
+	rd := runDirsAt(t.TempDir())
+	rd.data, rd.share = "agentry-persistent-assistant-data", "/home/p/agentry/assistantshare"
+	env := map[string]string{
+		"MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS":        rd.workspace + ":" + rd.share,
+		"MCP_GATEWAY_DOCKER_BIND_ALLOW_WRITABLE_PATHS": rd.outDir + ":" + rd.share,
+	}
+	cfg, err := filterConfig(rd, "run1", env, policy.Limits{}, &spec.Plan{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.ToolsVolumes) != 1 || cfg.ToolsVolumes[0] != rd.data {
+		t.Errorf("tools volumes %v", cfg.ToolsVolumes)
+	}
+	if !slicesContains(cfg.WritableRoots, rd.share) || !slicesContains(cfg.BindRoots, rd.share) {
+		t.Errorf("roots %v, writable %v", cfg.BindRoots, cfg.WritableRoots)
+	}
+}
+
+func slicesContains(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
 }
