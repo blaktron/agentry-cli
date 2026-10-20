@@ -121,6 +121,9 @@ type fakeHarness struct {
 	answers map[string]string
 	// onPrompt, when set, sees each prompt's text as it arrives.
 	onPrompt func(text string)
+	// loadSession advertises session/load, which replays a stored
+	// conversation and continues it; loadFails answers it with an error.
+	loadSession, loadFails bool
 }
 
 func (h *fakeHarness) handler(_ context.Context, r dockerx.RunSpec, stdin io.Reader, stdout, _ io.Writer) (int, error) {
@@ -151,7 +154,20 @@ func (h *fakeHarness) handler(_ context.Context, r dockerx.RunSpec, stdin io.Rea
 		}
 		switch m.Method {
 		case "initialize":
-			write(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": map[string]any{"protocolVersion": 1}})
+			res := map[string]any{"protocolVersion": 1}
+			if h.loadSession {
+				res["agentCapabilities"] = map[string]any{"loadSession": true}
+			}
+			write(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": res})
+		case "session/load":
+			if h.loadFails {
+				write(map[string]any{"jsonrpc": "2.0", "id": m.ID, "error": map[string]any{"code": -32603, "message": "Internal error", "data": "session not found"}})
+				continue
+			}
+			// The stored conversation, replayed before the answer.
+			write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "s0", "update": map[string]any{"sessionUpdate": "user_message_chunk", "content": map[string]any{"type": "text", "text": "an earlier question"}}}})
+			write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "s0", "update": map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": "an earlier answer"}}}})
+			write(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": map[string]any{}})
 		case "session/new":
 			write(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": map[string]any{"sessionId": "s1"}})
 		case "session/prompt":
@@ -634,11 +650,11 @@ func TestASessionWhoseHarnessReportsNoTokensSaysSo(t *testing.T) {
 	})
 }
 
-// TestStartSessionRefusesAutonomousPlan: the session API only drives an
-// interactive plan.
+// TestStartSessionRefusesAutonomousPlan: the session API only drives a
+// conversational plan, interactive or persistent.
 func TestStartSessionRefusesAutonomousPlan(t *testing.T) {
 	p, f := fixture(t) // autonomous plan
-	if _, err := StartSession(context.Background(), f, p); err == nil || !strings.Contains(err.Error(), "not an interactive plan") {
+	if _, err := StartSession(context.Background(), f, p); err == nil || !strings.Contains(err.Error(), "not a conversational plan") {
 		t.Fatalf("got %v", err)
 	}
 }

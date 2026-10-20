@@ -1,0 +1,22 @@
+schemaVersion: "2"
+name: assistant
+namespace: agentry
+version: 1.0.0
+summary: "A personal assistant that keeps its conversation with you across sessions, on your computer."
+license: MIT
+authors:
+  - name: Agentry
+modes: [persistent]
+entrypoints:
+  instruction: INSTRUCTION.md
+interactive:
+  opening: "Hello again. What can I help you with?"
+capabilities:
+  network:
+    egress: none
+  filesystem:
+    read: none
+    write: none
+  exec: none
+publish:
+  include: [agent.yaml, INSTRUCTION.md, README.md, LICENSE]

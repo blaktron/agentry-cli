@@ -88,6 +88,10 @@ type Fake struct {
 	// NetworkCreate adds one, NetworkRemove takes it away, and
 	// NetworksByLabel lists them as PSLabels lists Containers.
 	Networks []Labeled
+	// Volumes is the docker host's labelled volumes: VolumeCreate with
+	// labels adds one, VolumeRemove takes it away, and VolumesByLabel lists
+	// them beside LeftoverVolumes.
+	Volumes []Labeled
 	// OnDetached, when set, runs with the spec of every detached container
 	// as it starts — how a test gives a container side effects, such as
 	// the relays a gateway creates.
@@ -334,22 +338,40 @@ func (f *Fake) NetworkState() []Labeled {
 	return out
 }
 
-// VolumeCreate implements Client.
-func (f *Fake) VolumeCreate(_ context.Context, name string, _ map[string]string) error {
+// VolumeCreate implements Client. A labelled volume is kept in Volumes.
+func (f *Fake) VolumeCreate(_ context.Context, name string, labels map[string]string) error {
 	f.record("VolumeCreate", name, RunSpec{})
+	if len(labels) > 0 {
+		f.mu.Lock()
+		f.Volumes = append(f.Volumes, Labeled{Name: name, Labels: maps.Clone(labels)})
+		f.mu.Unlock()
+	}
 	return nil
 }
 
 // VolumeRemove implements Client.
 func (f *Fake) VolumeRemove(_ context.Context, name string) error {
 	f.record("VolumeRemove", name, RunSpec{})
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.Volumes = slices.DeleteFunc(f.Volumes, func(v Labeled) bool { return v.Name == name })
 	return nil
 }
 
-// VolumesByLabel implements Client.
+// VolumesByLabel implements Client: LeftoverVolumes, and the Volumes that
+// carry the label.
 func (f *Fake) VolumesByLabel(_ context.Context, label string) ([]string, error) {
 	f.record("VolumesByLabel", label, RunSpec{})
-	return f.LeftoverVolumes, nil
+	k, v, exact := strings.Cut(label, "=")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	names := slices.Clone(f.LeftoverVolumes)
+	for _, vol := range f.Volumes {
+		if got, has := vol.Labels[k]; has && (!exact || got == v) {
+			names = append(names, vol.Name)
+		}
+	}
+	return names, nil
 }
 
 // RunDetached implements Client.

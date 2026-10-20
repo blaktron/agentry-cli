@@ -878,8 +878,8 @@ func TestCompileRefusesUndeclaredMode(t *testing.T) {
 
 // TestPersistentReleaseRefusedOutsideBuiltins: a release run in the
 // persistent mode from the registry or a local folder is a policy refusal
-// (exit 11) before anything is written; a built-in passes that gate, and no
-// adapter compiles the mode yet.
+// (exit 11) before anything is written; a built-in compiles, its harness
+// half the interactive one, with none of the policy's session caps.
 func TestPersistentReleaseRefusedOutsideBuiltins(t *testing.T) {
 	m := parseManifest(t, strings.Replace(pureTextYAML, "modes: [autonomous]", "modes: [autonomous, persistent]", 1))
 	ws := workspaceFor(t, m, nil)
@@ -900,10 +900,12 @@ func TestPersistentReleaseRefusedOutsideBuiltins(t *testing.T) {
 			t.Errorf("source %q: the refusal wrote %d entries into the plan dir", source, len(entries))
 		}
 	}
-	_, err := Compile(in("builtin"), t.TempDir())
-	var refusal *PolicyRefusal
-	if err == nil || errors.As(err, &refusal) || !strings.Contains(err.Error(), "run mode") {
-		t.Fatalf("builtin: err = %v, want the adapter's unknown run mode", err)
+	plan, err := Compile(in("builtin"), t.TempDir())
+	if err != nil {
+		t.Fatalf("builtin: %v", err)
+	}
+	if plan.Mode != "persistent" || plan.Harness.Session == nil || plan.Harness.Session.Budgets != (spec.SessionBudgets{}) {
+		t.Fatalf("builtin: mode %q, session %+v; want persistent, the interactive harness half, no caps", plan.Mode, plan.Harness.Session)
 	}
 	// The same release runs autonomous from any source.
 	auto := in("registry")

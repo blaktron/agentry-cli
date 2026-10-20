@@ -1,0 +1,21 @@
+{
+  "harnessMode": "persistent",
+  "persistent": {
+    "agent": "keeper",
+    "segment": 2,
+    "resumed": false,
+    "resumeReason": "no stored conversation to continue",
+    "volumes": {
+      "session": "agentry-persistent-keeper-session",
+      "data": "agentry-persistent-keeper-data"
+    }
+  },
+  "receipts": [
+    "agent-stderr.log",
+    "deliverables.ndjson",
+    "events.ndjson",
+    "meta.json",
+    "run-plan.json",
+    "transcript.md"
+  ]
+}

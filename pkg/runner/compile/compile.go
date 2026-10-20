@@ -361,8 +361,15 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		return nil, signInRefusal(adapterName, keyKind)
 	}
 	harnessImage, _ := in.Policy.Images.HarnessImageFor(adapterName)
+	// A persistent plan's harness half is the interactive one: the same
+	// server on the agent container's stdio and the same session store, which
+	// the runner keeps between starts instead of removing at the end.
+	harnessMode := mode
+	if mode == manifest.ModePersistent {
+		harnessMode = manifest.ModeInteractive
+	}
 	res, err := ad.Compile(adapter.Input{
-		Mode:         mode,
+		Mode:         harnessMode,
 		Instruction:  instruction,
 		Summary:      m.Summary,
 		Model:        in.Policy.Model,
@@ -386,7 +393,9 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	if err := signInProxy(keyKind, in.Policy.Model.ProxyAllow); err != nil {
 		return nil, err
 	}
-	if res.Session != nil {
+	if res.Session != nil && mode != manifest.ModePersistent {
+		// A persistent agent has no idle, wall or turn cap: the person
+		// stops it.
 		res.Session.Budgets = sessionBudgets(m, in.Policy)
 	}
 	for name, content := range res.Files {

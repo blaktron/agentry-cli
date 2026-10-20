@@ -118,6 +118,7 @@ func newRootCmd() *cobra.Command {
 		newDeliverCmd(),
 		newDestinationsCmd(),
 		newScheduleCmd(),
+		newAgentCmd(),
 		newKnowledgeCmd(),
 		newVoiceCmd(),
 		newReportDesignCmd(),
