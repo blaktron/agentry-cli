@@ -27,8 +27,13 @@ func appLinkEntry(set, runnerImage string) *yaml.Node {
 	return e.node()
 }
 
-// appLinkEnforcement is the receipt's line for the app link.
+// appLinkEnforcement is the receipt's line for the app link: what reaches
+// the socket, and who answers it.
 func appLinkEnforcement(set string) string {
-	return "the app link (" + applink.ServerName + ", the runner image, its own container) has no network and one bind, the supervisor's socket, by its exact path; it lists " +
-		strings.Join(applink.Tools(set), ", ") + " and forwards each call to the application, which answers it with its own operations and its own consent, every call logged in receipts/applink.log; no tool changes what the agent is given"
+	line := "the app link (" + applink.ServerName + ", the runner image, its own container) has no network and one bind, a socket of the agent's supervisor apart from its owner socket, by its exact path, which takes one tool call a connection and nothing else; it lists " +
+		strings.Join(applink.Tools(set), ", ")
+	if set == applink.SetAssistant {
+		return line + ": the supervisor answers " + applink.SelfConfigure + " by saving the agent's name and personality and nothing else; every call is logged in receipts/applink.log"
+	}
+	return line + ": the client that runs the agent answers each call, and a call it does not answer is refused; every call is logged in receipts/applink.log"
 }

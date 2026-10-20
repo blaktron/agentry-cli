@@ -46,7 +46,7 @@ func TestOnlyTheEmbeddedPackagesRunAsBuiltin(t *testing.T) {
 			t.Fatalf("built-ins %v", refs)
 		}
 	})
-	t.Run("the Assistant, Main and the Coding agent are persistent, never run as a run, and the Coding agent does not run yet", func(t *testing.T) {
+	t.Run("the Assistant, Main and the Coding agent are persistent, never run as a run, and the Coding agent is not runnable", func(t *testing.T) {
 		persistent := map[string]bool{Assistant().Ref(): true, Main().Ref(): true, Coder().Ref(): true}
 		for _, b := range Builtins() {
 			if b.Persistent() != persistent[b.Ref()] {

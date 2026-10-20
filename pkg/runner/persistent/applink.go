@@ -20,7 +20,9 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/blaktron/agentry-cli/runnerimage/applink"
@@ -35,8 +37,13 @@ func AppSocketPath(home, name string) string {
 	return filepath.Join(home, "s", "agent-"+name+"-app.sock")
 }
 
-// appLinkLog is the segment's record of its app link's calls.
-const appLinkLog = "applink.log"
+// appLinkLog is the segment's record of its app link's calls, each answer
+// cut at maxLoggedAnswer bytes.
+const (
+	appLinkLog      = "applink.log"
+	maxLoggedAnswer = 4096
+	maxAppLinkCalls = 4
+)
 
 // listenAppLink serves the app link's socket for an agent whose built-in has
 // one: made 0600 before the first segment, so the segment can bind it, and
@@ -63,14 +70,22 @@ func (s *Supervisor) listenAppLink() error {
 	}
 	s.mu.Lock()
 	s.appLn = ln
+	s.appCtx, s.appCancel = context.WithCancel(context.Background())
 	s.mu.Unlock()
+	// A few calls at a time: a harness makes them one by one, and a
+	// flood waits rather than piles up.
+	slots := make(chan struct{}, maxAppLinkCalls)
 	go func() {
 		for {
 			c, err := ln.Accept()
 			if err != nil {
 				return
 			}
-			go s.serveAppLink(c)
+			slots <- struct{}{}
+			go func() {
+				defer func() { <-slots }()
+				s.serveAppLink(c)
+			}()
 		}
 	}()
 	return nil
@@ -85,7 +100,13 @@ func (s *Supervisor) serveAppLink(c net.Conn) {
 		return
 	}
 	_ = c.SetReadDeadline(time.Time{})
-	ctx, cancel := context.WithTimeout(context.Background(), applink.CallTimeout)
+	s.mu.Lock()
+	base := s.appCtx
+	s.mu.Unlock()
+	if base == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(base, applink.CallTimeout)
 	defer cancel()
 	a := s.answerAppLink(ctx, req)
 	s.logAppLink(req, a)
@@ -99,13 +120,8 @@ func (s *Supervisor) serveAppLink(c net.Conn) {
 
 // answerAppLink answers a call of the agent's own tool set.
 func (s *Supervisor) answerAppLink(ctx context.Context, req applink.Request) applink.Answer {
-	set := s.opts.Agent.Builtin.AppLink()
-	known := false
-	for _, t := range applink.Tools(set) {
-		known = known || t == req.Tool
-	}
 	switch {
-	case !known:
+	case !slices.Contains(applink.Tools(s.opts.Agent.Builtin.AppLink()), req.Tool):
 		return applink.Answer{Text: "no such tool: " + req.Tool, IsError: true}
 	case req.Tool == applink.SelfConfigure:
 		return s.selfConfigure(req.Arguments)
@@ -164,8 +180,11 @@ func (s *Supervisor) logAppLink(req applink.Request, a applink.Answer) {
 		Arguments json.RawMessage `json:"arguments,omitempty"`
 		Answer    string          `json:"answer"`
 		IsError   bool            `json:"isError,omitempty"`
-	}{time.Now().UTC(), req.Tool, req.Arguments, a.Text, a.IsError})
+	}{time.Now().UTC(), req.Tool, loggedArguments(req.Arguments), cutText(a.Text, maxLoggedAnswer), a.IsError})
 	if err != nil {
+		return
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return
 	}
 	f, err := os.OpenFile(filepath.Join(dir, appLinkLog), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600) //nolint:gosec // the segment's own receipt
@@ -176,12 +195,34 @@ func (s *Supervisor) logAppLink(req applink.Request, a applink.Answer) {
 	_ = errors.Join(werr, f.Close())
 }
 
+// loggedArguments are a call's arguments as the log keeps them: as they
+// came, or, past maxLoggedAnswer bytes, a string of their cut text.
+func loggedArguments(raw json.RawMessage) json.RawMessage {
+	if len(raw) <= maxLoggedAnswer {
+		return raw
+	}
+	b, _ := json.Marshal(cutText(string(raw), maxLoggedAnswer))
+	return b
+}
+
+// cutText is s cut at max bytes, on a rune boundary, marked as cut.
+func cutText(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return strings.ToValidUTF8(s[:max], "") + " [cut]"
+}
+
 // closeAppLink stops answering the app link and removes its socket.
 func (s *Supervisor) closeAppLink() {
 	s.mu.Lock()
-	ln := s.appLn
-	s.appLn = nil
+	ln, cancel := s.appLn, s.appCancel
+	s.appLn, s.appCancel = nil, nil
 	s.mu.Unlock()
+	if cancel != nil {
+		// A call in flight is told the agent stopped.
+		cancel()
+	}
 	if ln != nil {
 		_ = ln.Close()
 		_ = os.Remove(AppSocketPath(s.opts.Home, s.opts.Agent.Name))

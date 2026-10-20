@@ -42,7 +42,9 @@ and `agentry agent show assistant` lists what it has:
 - **A name and a personality**, when you give them, reach it at its next
   message. On its first conversation it asks you for both, and saves your
   answer through its one Agentry tool, `self_configure`, which changes its
-  name and personality and nothing else.
+  name and personality and nothing else. Where your container engine runs in
+  a VM (Docker Desktop, Colima, a podman machine), Agentry cannot give it that
+  tool, so you set its name and personality in Agentry.
 - **Each start is a segment**, with its own receipts and result envelope in
   the agent's folder under the runner home, and the conversation's record
   continues across segments.

@@ -42,8 +42,8 @@ func Main() Builtin {
 		persistent: true, runnable: true, checkShare: true, appLink: applink.SetMain}
 }
 
-// Coder is the Coding agent (pkg/persistent/coder), published for reading;
-// this version does not run it.
+// Coder is the Coding agent (pkg/persistent/coder), published for reading:
+// it is not runnable, so no segment of it starts.
 func Coder() Builtin {
 	return Builtin{namespace: coder.Namespace, name: coder.Name, version: coder.Version, fsys: coder.FS(), persistent: true}
 }
@@ -51,7 +51,8 @@ func Coder() Builtin {
 // PersistentBuiltins are the built-ins that run as persistent agents.
 func PersistentBuiltins() []Builtin { return []Builtin{Main(), Assistant()} }
 
-// Runnable says a persistent built-in runs as an agent in this version.
+// Runnable says a persistent built-in runs as an agent; one that is not is
+// published for reading alone.
 func (b Builtin) Runnable() bool { return b.runnable }
 
 // AppLink is the persistent built-in's app link tool set; empty for none.
@@ -262,7 +263,7 @@ type SegmentPlan struct {
 // store, or from the registries when the store does not hold its pin.
 func (s Segment) Plan(ctx context.Context, logw io.Writer) (*SegmentPlan, error) {
 	if !s.Builtin.persistent || !s.Builtin.runnable {
-		return nil, engine.Classify(engine.ExitCLI, fmt.Errorf("%s is not a persistent agent this version runs", s.Builtin.Ref()))
+		return nil, engine.Classify(engine.ExitCLI, fmt.Errorf("%s is not a persistent agent Agentry runs", s.Builtin.Ref()))
 	}
 	meta, installDir, err := s.Builtin.Materialize(s.Home, s.Build)
 	if err != nil {

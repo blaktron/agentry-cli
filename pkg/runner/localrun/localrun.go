@@ -159,8 +159,8 @@ type Builtin struct {
 	// checkShare it is the persistent grant class, which the compiler
 	// accepts for a built-in alone.
 	appLink string
-	// runnable says a persistent built-in runs as an agent in this
-	// version; one that does not is published for reading only.
+	// runnable says a persistent built-in runs as an agent; one that does
+	// not is published for reading only.
 	runnable bool
 }
 

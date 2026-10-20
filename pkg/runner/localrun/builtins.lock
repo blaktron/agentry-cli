@@ -90,8 +90,8 @@ agentry/assistant@1.0.0 sha256:30f1ea1b13661d88184dc4954466ade6e569cd80781d3e012
 # 1.1.0: the Assistant has its folders, the person's share and its own data, and keeps notes there; its roster's knowledge packs and MCP servers; a name and personality the person gives it.
 agentry/assistant@1.1.0 sha256:b1281091e9b9cc094c394aab2070553c454c004446d59881aa7c0414d0f94ab7
 # 1.2.0: the Assistant asks for its name and personality on its first conversation and saves them with self_configure, its one Agentry tool.
-agentry/assistant@1.2.0 sha256:0073e099bdc22c7730f01cb5eb956740cacae0087e5f35b8a406713ef797cde9
+agentry/assistant@1.2.0 sha256:7173fb9bd049a727befdee9b0d2eade408f6ee2d512b4dd1a7d5ef1c806ab5e6
 # Main, Agentry Desktop's Home agent: finds, installs, runs and schedules QuickAgents through Agentry's own tools.
-agentry/main@1.0.0 sha256:44610926ed85f2078474bb50f6effb505b6d6028efaa4ec35725ec319a1cccb4
-# The Coding agent, published for reading; this version does not run it.
-agentry/coder@1.0.0 sha256:80f11d31ccb16535e866d3410b5869ab050d5c4dbb5453f1893830af63ec2b64
+agentry/main@1.0.0 sha256:d05dcda4aea9ad20a4780fefd764689a11befc325ad037e4774fd981089a8560
+# The Coding agent, published for reading; Agentry does not run it.
+agentry/coder@1.0.0 sha256:6a898475ac0e342bceceb807fce8dd5a50fc37f22df7b893b1840365e7c94e3b

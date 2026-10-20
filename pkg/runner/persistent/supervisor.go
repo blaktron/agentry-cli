@@ -95,7 +95,9 @@ type Supervisor struct {
 	nextWatcher  int
 	ln           net.Listener
 	appLn        net.Listener // the app link's socket, for an agent that has one
-	stopped      bool         // set under mu once Stop has let the watchers go
+	appCtx       context.Context
+	appCancel    context.CancelFunc
+	stopped      bool // set under mu once Stop has let the watchers go
 
 	done     chan struct{}
 	stopOnce sync.Once
@@ -560,14 +562,13 @@ func (s *Supervisor) Stop(ctx context.Context) (*receipt.Envelope, error) {
 		s.seg.Lock()
 		s.env, s.endErr = s.endSegment(ctx, false)
 		s.seg.Unlock()
+		s.closeAppLink()
 		s.mu.Lock()
 		if s.ln != nil {
 			_ = s.ln.Close()
 			_ = os.Remove(SocketPath(s.opts.Home, s.opts.Agent.Name))
 		}
-		s.mu.Unlock()
-		s.closeAppLink()
-		s.mu.Lock()
+
 		for id, w := range s.watchers {
 			close(w)
 			delete(s.watchers, id)

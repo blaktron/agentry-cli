@@ -17,7 +17,7 @@ refuses to run this release as an ordinary QuickAgent.
 ## What the application gives it
 
 The manifest declares no network access, no file access, no commands and no
-secret. This version of Agentry publishes the Coding agent for reading only:
-the application does not run it, and `agentry agent list` does not offer it.
+secret. The Coding agent is published for reading only: Agentry does not
+run it, and `agentry agent list` does not offer it.
 
 Using Agentry: https://docs.secureagentry.net/

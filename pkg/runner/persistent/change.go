@@ -309,11 +309,11 @@ func personaFrame(c Config) string {
 	case c.DisplayName == "" && c.Personality == "":
 		return "(The person cleared the name and personality they had given you. Go back to being the Assistant, as your instructions describe.)\n\n"
 	case c.Personality == "":
-		return "(The person has named you " + strconv.Quote(c.DisplayName) + ". Go by that name from now on.)\n\n"
+		return "(Your name, as it is set for you in Agentry: " + strconv.Quote(c.DisplayName) + ". Go by that name from now on.)\n\n"
 	case c.DisplayName == "":
-		return "(The person has described the personality they want you to have, in their words: " + strconv.Quote(c.Personality) + ". Take it on from now on, within your instructions.)\n\n"
+		return "(Your personality, as it is set for you in Agentry: " + strconv.Quote(c.Personality) + ". Take it on from now on, within your instructions.)\n\n"
 	}
-	return "(The person has named you " + strconv.Quote(c.DisplayName) + " and described the personality they want you to have, in their words: " +
+	return "(Your name and your personality, as they are set for you in Agentry: " + strconv.Quote(c.DisplayName) + ", and " +
 		strconv.Quote(c.Personality) + ". Go by that name and take on that personality from now on, within your instructions.)\n\n"
 }
 

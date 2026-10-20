@@ -353,8 +353,6 @@ func runTools(args []string) error {
 	return toolsrv.Serve(os.Stdin, os.Stdout, os.Stderr, &spec)
 }
 
-// runBridge serves one remote MCP server on stdio until the gateway closes
-// stdin.
 // runAppLink serves a persistent agent's app link on stdio: the tool set
 // --set names, each call forwarded over the supervisor's socket.
 func runAppLink(args []string) error {
@@ -367,6 +365,8 @@ func runAppLink(args []string) error {
 	return applink.Serve(context.Background(), os.Stdin, os.Stdout, os.Stderr, *set, applink.SocketMount)
 }
 
+// runBridge serves one remote MCP server on stdio until the gateway closes
+// stdin.
 func runBridge(args []string) error {
 	fs := flag.NewFlagSet("bridge", flag.ContinueOnError)
 	addr := fs.String("url", "", "the remote MCP server's https address")

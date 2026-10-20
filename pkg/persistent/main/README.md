@@ -30,7 +30,9 @@ secret. When Agentry Desktop runs Main, it gives it:
   Each call is answered by the application with its own operations, and
   anything that needs your agreement asks you first. None of them changes a
   setting, starts or stops another agent, publishes, signs in or touches a
-  key. The app link has no network of its own.
+  key. The app link has no network of its own. Where your container engine
+  runs in a VM (Docker Desktop, Colima, a podman machine), Agentry cannot
+  give Main these tools, and Main says so.
 - **A share folder**, `~/agentry/mainshare`, mounted read and write, for the
   files you want it to run QuickAgents on; a file you add is checked for
   malware with ClamAV before it reads it.
