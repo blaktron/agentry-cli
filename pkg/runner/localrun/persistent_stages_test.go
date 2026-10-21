@@ -3,9 +3,8 @@ package localrun
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -34,12 +33,7 @@ func TestASegmentStartReportsEachStageOnceInOrder(t *testing.T) {
 			pol.RunnerImageTag(runnerimage.ContentVersion()): true,
 		},
 		Foreground: map[string]*dockerx.FakeForeground{
-			"agentry-mcpinstall-pypi-some-word-server": {Before: func(r dockerx.RunSpec) {
-				builds++
-				if err := os.WriteFile(filepath.Join(r.Mounts[0].Source, "console-scripts"), []byte("word_server\n"), 0o600); err != nil {
-					t.Error(err)
-				}
-			}},
+			"agentry-mcpinstall-pypi-some-word-server": wordServerBuild(t, &builds),
 			"-probe": {Handler: func(_ context.Context, r dockerx.RunSpec, _ io.Reader, stdout, _ io.Writer) (int, error) {
 				if slices.Contains(r.Argv, "--list-tools") {
 					b, _ := json.Marshal(probe.Listing{Tools: []string{}})
@@ -51,7 +45,7 @@ func TestASegmentStartReportsEachStageOnceInOrder(t *testing.T) {
 	}
 	segment := func(n int, onStage func(engine.Stage)) Segment {
 		return Segment{Builtin: Assistant(), Home: home, Policy: pol, PolicySHA: "s", Build: "test",
-			OutDir: t.TempDir(), RunID: "5e9e000" + string(rune('0'+n)), OnStage: onStage,
+			OutDir: t.TempDir(), RunID: fmt.Sprintf("5e9e%04d", n), OnStage: onStage,
 			Persistent: engine.PersistentSegment{Agent: "assistant", Segment: n,
 				SessionVolume: "agentry-persistent-assistant-session", DataVolume: "agentry-persistent-assistant-data"},
 			Grants: Grants{
@@ -83,7 +77,7 @@ func TestASegmentStartReportsEachStageOnceInOrder(t *testing.T) {
 		"mcp-servers/some-word-server: Installing some-word-server",
 		"prepare/: Preparing",
 		"infra/: Starting the gateway",
-		"agent/docker-agent: Starting docker-agent",
+		"agent/: Starting the agent",
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("stages:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))

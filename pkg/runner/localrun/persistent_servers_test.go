@@ -34,12 +34,7 @@ func TestSegmentLaunchesTheConsoleScriptItsFirstInstallFound(t *testing.T) {
 		// from, which the segment's start has built before any install.
 		ExistingImages: map[string]bool{pol.Images.PythonRuntime: true, pol.RunnerImageTag(runnerimage.ContentVersion()): true},
 		Foreground: map[string]*dockerx.FakeForeground{
-			"agentry-mcpinstall-pypi-some-word-server": {Before: func(r dockerx.RunSpec) {
-				builds++
-				if err := os.WriteFile(filepath.Join(r.Mounts[0].Source, "console-scripts"), []byte("word_server\n"), 0o600); err != nil {
-					t.Error(err)
-				}
-			}},
+			"agentry-mcpinstall-pypi-some-word-server": wordServerBuild(t, &builds),
 		},
 	}
 	want := spec.MCPStorePrefix + "/pypi-some-word-server/venv/bin/word_server"
@@ -98,6 +93,17 @@ func wordServerRegistry(t *testing.T) *policy.Policy {
 	pol := policy.Default()
 	pol.MCPRegistries.PyPI = registry.URL
 	return pol
+}
+
+// wordServerBuild plays some-word-server's install, counting the builds:
+// the distribution's one console script is word_server.
+func wordServerBuild(t *testing.T, builds *int) *dockerx.FakeForeground {
+	return &dockerx.FakeForeground{Before: func(r dockerx.RunSpec) {
+		*builds++
+		if err := os.WriteFile(filepath.Join(r.Mounts[0].Source, "console-scripts"), []byte("word_server\n"), 0o600); err != nil {
+			t.Error(err)
+		}
+	}}
 }
 
 // segmentLaunches holds a segment's plan, and the gateway catalog compiled

@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"strings"
 	"sync"
 	"testing"
@@ -38,6 +39,30 @@ func TestStageWords(t *testing.T) {
 // TestANilStageHookDoesNothing: a start with no hook reports to no one.
 func TestANilStageHookDoesNothing(t *testing.T) {
 	ReportStage(nil, Stage{Name: receipt.StageInfra})
+}
+
+// TestAPanickingStageHookCannotSkipTheTeardown: a hook that panics does not
+// unwind the start, so a start that then fails still removes the gateway
+// and the proxy it made.
+func TestAPanickingStageHookCannotSkipTheTeardown(t *testing.T) {
+	p, f, _ := persistentFixture(t, "")
+	p.OnStage = func(Stage) { panic("a client's bug") }
+	delete(f.Foreground, "-agent")
+	if s, err := StartSession(context.Background(), f, p); err == nil {
+		_, _ = s.End(context.Background(), false)
+		t.Fatal("a start whose harness exits at once did not fail")
+	}
+	for _, name := range []string{"gateway", "proxy"} {
+		removed := false
+		for _, op := range f.Ops() {
+			if op == "RemoveForce:"+containerName(p.RunID, name) {
+				removed = true
+			}
+		}
+		if !removed {
+			t.Errorf("the failed start left its %s: %v", name, f.Ops())
+		}
+	}
 }
 
 // stageRecorder records each stage reported, with how many engine
@@ -81,7 +106,7 @@ func TestASegmentStartReportsItsStagesInOrder(t *testing.T) {
 	for _, st := range rec.stages {
 		got = append(got, st.Name+"/"+st.Detail+"/"+st.Subject)
 	}
-	want := []string{"prepare//", "infra//", "agent//docker-agent", "agent/resume/docker-agent"}
+	want := []string{"prepare//", "infra//", "agent//", "agent/resume/"}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Fatalf("stages = %v, want %v", got, want)
 	}

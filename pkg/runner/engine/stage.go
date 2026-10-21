@@ -3,13 +3,13 @@ package engine
 import (
 	"strings"
 
-	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 )
 
 // StageSignIn is the step of a start that readies the model's sign-in: a
-// connected account's token renewed, a subscription's sign-in taken from
-// the store. The other steps reuse the receipt's names (receipt.Stage*).
+// subscription's sign-in (Claude, ChatGPT, Copilot) taken from the store
+// and renewed when it has to be. The other steps reuse the receipt's names
+// (receipt.Stage*).
 const StageSignIn = "sign-in"
 
 // StageDetailResume is the agent step's detail when the harness is
@@ -27,8 +27,10 @@ const StageDetailResume = "resume"
 //	mcp-servers  package servers installed (only when one is not yet)
 //	prepare      the session's folders, volumes and secrets prepared
 //	infra        the proxy, the gateway and the docker filter started
-//	agent        the harness started; then, when it continues the stored
-//	             conversation, agent again with Detail "resume"
+//	agent        the harness started; then, when it is given the stored
+//	             conversation to continue, agent again with Detail
+//	             "resume" while it loads it (one that cannot opens a new
+//	             conversation, and the envelope says why)
 type Stage struct {
 	// Name is the step: one of the receipt's stage names, or StageSignIn.
 	Name string `json:"name"`
@@ -36,8 +38,9 @@ type Stage struct {
 	// continues the stored conversation; empty otherwise.
 	Detail string `json:"detail,omitempty"`
 	// Subject is what the step acts on, for a person: the harness's name
-	// on the agent step ("Claude Code"), the servers being installed on
-	// the mcp-servers step; empty when the step has none.
+	// on the agent step ("Claude Code"; empty for the default harness,
+	// which a person never chooses), the servers being installed on the
+	// mcp-servers step; empty when the step has none.
 	Subject string `json:"subject,omitempty"`
 }
 
@@ -77,22 +80,13 @@ func (s Stage) Words() string {
 }
 
 // ReportStage calls onStage with the stage, when there is a hook; a nil
-// hook does nothing.
+// hook does nothing. A hook that panics is ignored: a start tears down what
+// it made only on its own failure paths, and a client's report must never
+// skip them and leave the gateway or the harness running.
 func ReportStage(onStage func(Stage), st Stage) {
-	if onStage != nil {
-		onStage(st)
+	if onStage == nil {
+		return
 	}
-}
-
-// harnessTitle is the harness an adapter runs, as a person knows it.
-func harnessTitle(adapterName string) string {
-	switch adapterName {
-	case adapter.ClaudeAdapterName, adapter.ClaudeImageAdapterName:
-		return "Claude Code"
-	case adapter.CodexAdapterName, adapter.CodexImageAdapterName:
-		return "Codex"
-	case adapter.CopilotImageAdapterName:
-		return "Copilot CLI"
-	}
-	return adapterName
+	defer func() { _ = recover() }()
+	onStage(st)
 }

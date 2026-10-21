@@ -297,7 +297,7 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	if err := renderPlanFiles(p.Plan, p.PlanDir, rd, nativePath, "harness"); err != nil {
 		return fail(err)
 	}
-	ReportStage(p.OnStage, Stage{Name: receipt.StageAgent, Subject: harnessTitle(p.Plan.Harness.Adapter)})
+	ReportStage(p.OnStage, Stage{Name: receipt.StageAgent, Subject: adapter.HarnessTitle(p.Plan.Harness.Adapter)})
 	if err := s.startHarness(ctx, token, rep); err != nil {
 		return fail(err)
 	}
@@ -517,8 +517,10 @@ func (s *liveSession) startHarness(ctx context.Context, token string, rep *strin
 		return Classify(ExitHarness, fmt.Errorf("interactive session: %w", err))
 	}
 	s.setDriver(drv)
+	// The handshake is where the harness loads the stored conversation,
+	// which can take a while for a long one.
 	if opts.ContinueID != "" {
-		ReportStage(p.OnStage, Stage{Name: receipt.StageAgent, Detail: StageDetailResume, Subject: harnessTitle(p.Plan.Harness.Adapter)})
+		ReportStage(p.OnStage, Stage{Name: receipt.StageAgent, Detail: StageDetailResume, Subject: adapter.HarnessTitle(p.Plan.Harness.Adapter)})
 	}
 	handshake, cancelHS := context.WithTimeout(agentCtx, 120*time.Second)
 	defer cancelHS()
