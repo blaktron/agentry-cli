@@ -123,7 +123,7 @@ func TestAgentStartRefusesASecondOwner(t *testing.T) {
 // TestAgentResetNeedsTheName: without a terminal reset needs --confirm, a
 // wrong name resets nothing, and the right one removes both volumes.
 func TestAgentResetNeedsTheName(t *testing.T) {
-	agentHome(t)
+	home := agentHome(t)
 	f := &dockerx.Fake{}
 	prev := agentDocker
 	agentDocker = func() dockerx.Client { return f }
@@ -140,7 +140,7 @@ func TestAgentResetNeedsTheName(t *testing.T) {
 		t.Fatal(err)
 	}
 	ops := strings.Join(f.Ops(), " ")
-	if !strings.Contains(ops, "VolumeRemove:agentry-persistent-assistant-session") || !strings.Contains(ops, "VolumeRemove:agentry-persistent-assistant-data") {
+	if !strings.Contains(ops, "VolumeRemove:"+persistent.SessionVolumeIn(home, "assistant")) || !strings.Contains(ops, "VolumeRemove:"+persistent.DataVolumeIn(home, "assistant")) {
 		t.Errorf("ops = %s", ops)
 	}
 }

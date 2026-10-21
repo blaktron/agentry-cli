@@ -259,6 +259,14 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 		packsDone()
 		return err
 	}
+	// A home that has already run this agent may have its conversation on
+	// the legacy volumes, which every home could use: the start copies them
+	// into the home's own. A home that has not run it is given none of
+	// another's.
+	var legacySession, legacyData string
+	if cfg.Segments > 0 {
+		legacySession, legacyData = SessionVolume(name), DataVolume(name)
+	}
 	segment := cfg.Segments + 1
 	outDir := filepath.Join(Dir(home, name), segmentsDir, runID)
 	if err := os.MkdirAll(outDir, 0o700); err != nil {
@@ -271,7 +279,8 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 		OnStage: s.opts.OnStage,
 		Persistent: engine.PersistentSegment{
 			Agent: name, Segment: segment,
-			SessionVolume: SessionVolume(name), DataVolume: DataVolume(name),
+			SessionVolume: SessionVolumeIn(home, name), DataVolume: DataVolumeIn(home, name),
+			Home: HomeID(home), LegacySessionVolume: legacySession, LegacyDataVolume: legacyData,
 			ContinueID: continueID, Roster: roster.Receipt(),
 			ShareVerdicts: filepath.Join(Dir(home, name), shareVerdictsFile),
 			ShareText:     filepath.Join(Dir(home, name), shareTextDir),
