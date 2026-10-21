@@ -894,6 +894,40 @@ func TestLoadMovesAFormerDefaultGoBuilder(t *testing.T) {
 	}
 }
 
+// A policy file written by an earlier CLI names that day's docker-agent image
+// under harnessImages, or under the older harnessDockerAgent key; it loads as
+// today's default, so a rebuilt harness reaches machines set up before it,
+// while another digest under the same tag is the operator's and is kept.
+func TestLoadMovesAFormerDefaultHarnessImage(t *testing.T) {
+	const previous = "ghcr.io/blaktron/agentry-docker-agent-src:1.150.0-2026.10.19.2@sha256:6c75cdeb1c060346190dc94112509919e554a9c1393d90cc3e99a637f3428e60"
+	const operators = "ghcr.io/blaktron/agentry-docker-agent-src:1.150.0-2026.10.19.2@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+	entry := "docker-agent: { ref: " + DefaultHarnessImage + " }"
+	for _, c := range []struct{ written, want string }{
+		{"docker-agent: { ref: " + previous + " }", DefaultHarnessImage},
+		{"docker-agent: { ref: ghcr.io/blaktron/agentry-docker-agent:1.150.0@sha256:27b0accfc83a74b03f30ac695a23878f71383106c9dec4d7808c72a4f13d5ee1 }", DefaultHarnessImage},
+		{"docker-agent: { ref: " + operators + " }", operators},
+	} {
+		path := filepath.Join(t.TempDir(), "policy.yaml")
+		text := strings.Replace(defaultFileText, entry, c.written, 1)
+		if text == defaultFileText {
+			t.Fatal("the generated text no longer names the default harness image")
+		}
+		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		p, _, err := Load(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if h, ok := p.Images.HarnessImageFor(DockerAgentAdapter); !ok || h.Ref != c.want {
+			t.Errorf("%s loads as %q, want %q", c.written, h.Ref, c.want)
+		}
+	}
+	if slices.Contains(formerDefaultHarnessImages, DefaultHarnessImage) {
+		t.Fatal("the current default is listed as a former one")
+	}
+}
+
 // The runtimes' language versions name the line their images' tags do, so
 // a moved image cannot leave the Drafter checking against the old one.
 func TestTheRuntimeVersionsMatchTheirImages(t *testing.T) {

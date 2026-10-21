@@ -64,7 +64,7 @@ const (
 	// CI holds this pin to that signature (scripts/verify-docker-agent-image.sh).
 	// It is pinned by digest: the tag is a label, the digest the bytes, and
 	// the receipt names it.
-	DefaultHarnessImage = "ghcr.io/blaktron/agentry-docker-agent-src:1.150.0-2026.10.19.2@sha256:6c75cdeb1c060346190dc94112509919e554a9c1393d90cc3e99a637f3428e60"
+	DefaultHarnessImage = "ghcr.io/blaktron/agentry-docker-agent-src:1.150.0-2026.10.21.3@sha256:e4cfd4d450ae22c6bd70e6b2fa0f98d3e399d206b238044498f9480304ea4e67"
 	DefaultGoBuilder    = "ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd"
 	// Runtime images that install and run declared npm/PyPI MCP servers
 	// Node is 24: servers whose engines.node needs 24 fail every tool
@@ -117,7 +117,7 @@ const (
 	// client, pinned by digest and pulled; the CLI copies its runner binary
 	// in. Signed keyless by agentry-dockerimages' coder workflow, and CI
 	// holds this pin to that signature (scripts/verify-coder-image.sh).
-	DefaultCoderImage = "ghcr.io/blaktron/agentry-coder:2026.10.20.1@sha256:50b607f622ec1352a5f6189189c4a805a69823c351ff5bd0aafeaeda29f0b3ba"
+	DefaultCoderImage = "ghcr.io/blaktron/agentry-coder:2026.10.21.2@sha256:0868c9c51d6d7811d67fd841dc5c8913c15f1ca4ca6417f8f39cd2d991e6a8f8"
 	// DefaultClamAVSignatures is the ClamAV signature bundle the decode step
 	// checks every input against: a tag agentry-dockerimages' clamav-db
 	// workflow moves daily, only ever to a digest it has signed. It is not
@@ -1221,6 +1221,7 @@ var formerDefaultHarnessImages = []string{
 	"ghcr.io/blaktron/agentry-docker-agent:1.128.0",
 	"ghcr.io/blaktron/agentry-docker-agent:1.128.0@sha256:50bef17dfbc43c56f8c7c68eade9fc36cd4de5a2fc7ad0f28e34d0030002d5f1",
 	"ghcr.io/blaktron/agentry-docker-agent:1.150.0@sha256:27b0accfc83a74b03f30ac695a23878f71383106c9dec4d7808c72a4f13d5ee1",
+	"ghcr.io/blaktron/agentry-docker-agent-src:1.150.0-2026.10.19.2@sha256:6c75cdeb1c060346190dc94112509919e554a9c1393d90cc3e99a637f3428e60",
 }
 
 // formerDefaultNodeRuntimes are the values earlier CLIs wrote into every
@@ -1292,7 +1293,7 @@ images:
   # CLI's pinned default. (Older files name docker-agent's image as
   # harnessDockerAgent; that key is still read.)
   harnessImages:
-    docker-agent: { ref: ghcr.io/blaktron/agentry-docker-agent-src:1.150.0-2026.10.19.2@sha256:6c75cdeb1c060346190dc94112509919e554a9c1393d90cc3e99a637f3428e60 }
+    docker-agent: { ref: ghcr.io/blaktron/agentry-docker-agent-src:1.150.0-2026.10.21.3@sha256:e4cfd4d450ae22c6bd70e6b2fa0f98d3e399d206b238044498f9480304ea4e67 }
     # codex-image: { ref: ghcr.io/blaktron/agentry-codex:<tag>@sha256:<digest> }
     # claude-image: { ref: agentry-claude-code:<version>, artifact: sha512-<integrity> }
   goBuilder: ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd
