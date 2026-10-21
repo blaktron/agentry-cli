@@ -341,8 +341,7 @@ func (s *acpSession) call(ctx context.Context, method string, params any) (json.
 	if err := s.send(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params}); err != nil {
 		return nil, fmt.Errorf("%s: %w", method, err)
 	}
-	select {
-	case m, ok := <-ch:
+	answered := func(m rpcMessage, ok bool) (json.RawMessage, error) {
 		if !ok {
 			return nil, fmt.Errorf("%s: harness ended the session before answering", method)
 		}
@@ -350,10 +349,23 @@ func (s *acpSession) call(ctx context.Context, method string, params any) (json.
 			return nil, &harnessRPCError{method: method, rpc: m.Error}
 		}
 		return m.Result, nil
+	}
+	select {
+	case m, ok := <-ch:
+		return answered(m, ok)
 	case <-ctx.Done():
 		return nil, fmt.Errorf("%s: %w", method, ctx.Err())
 	case <-s.readDone:
-		return nil, fmt.Errorf("%s: harness ended the session before answering", method)
+		// A harness that answers and exits at once leaves both the answer
+		// and the end of the stream ready, and select picks between them
+		// at random. The reader hands an answer over before it can see the
+		// end of the stream, so an answer is already waiting if one came.
+		select {
+		case m, ok := <-ch:
+			return answered(m, ok)
+		default:
+			return nil, fmt.Errorf("%s: harness ended the session before answering", method)
+		}
 	}
 }
 

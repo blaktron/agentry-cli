@@ -228,6 +228,54 @@ func TestACPSessionRefusesUnknownRequestsAndReportsProtocolMismatch(t *testing.T
 	}
 }
 
+// lateWriteRW answers the first request it is written, ends the stream, and
+// returns from the write only once the session's reader has seen that end,
+// so the caller finds the answer and the end of the stream both ready.
+type lateWriteRW struct {
+	drv   *acpSession
+	reply *io.PipeReader
+	out   *io.PipeWriter
+}
+
+func (rw *lateWriteRW) Read(p []byte) (int, error) { return rw.reply.Read(p) }
+
+func (rw *lateWriteRW) Write(p []byte) (int, error) {
+	var m rpcMessage
+	if err := json.Unmarshal(p, &m); err != nil {
+		return 0, err
+	}
+	b, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": map[string]any{"ok": true}})
+	if _, err := rw.out.Write(append(b, '\n')); err != nil {
+		return 0, err
+	}
+	_ = rw.out.Close()
+	<-rw.drv.readDone
+	return len(p), nil
+}
+
+func (rw *lateWriteRW) Close() error { _ = rw.out.Close(); return rw.reply.Close() }
+
+// A harness that answers a request and exits at once has answered: the
+// request must return the answer, not report that the harness ended first.
+func TestACPSessionReturnsAnAnswerWrittenBeforeTheStreamEnded(t *testing.T) {
+	for i := 0; i < 64; i++ {
+		r, w := io.Pipe()
+		rw := &lateWriteRW{reply: r, out: w}
+		drv := newACPSession(rw, 1, nil)
+		rw.drv = drv
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		res, err := drv.call(ctx, "initialize", map[string]any{})
+		cancel()
+		if err != nil {
+			t.Fatalf("run %d: an answered request failed: %v", i, err)
+		}
+		if !strings.Contains(string(res), `"ok":true`) {
+			t.Fatalf("run %d: result = %s", i, res)
+		}
+		_ = drv.Close()
+	}
+}
+
 // A harness whose prompt result carries no usage (docker-agent) still
 // yields a turn usage: the sum of the turn's usage_update deltas.
 func TestACPSessionTurnUsageFromUsageUpdates(t *testing.T) {
