@@ -1,4 +1,4 @@
-// Package mainagent is Main: the built-in persistent agent that helps the person
+// Package mainagent is Agentry Helper (agentry/main): the built-in persistent agent that helps the person
 // with Agentry itself, embedded in the CLI and run by Agentry Desktop as a
 // persistent agent (pkg/runner/persistent). Its manifest declares the
 // persistent run mode alone, no egress, no filesystem, no exec and no
@@ -22,5 +22,5 @@ func FS() fs.FS { return files }
 const (
 	Namespace = "agentry"
 	Name      = "main"
-	Version   = "1.0.1"
+	Version   = "1.0.2"
 )

@@ -55,7 +55,7 @@ type Agent struct {
 // listed.
 func Agents() []Agent {
 	return []Agent{
-		{Name: localrun.Main().Name(), Title: "Main", DesktopOnly: true, Builtin: localrun.Main(), ShareName: "mainshare"},
+		{Name: localrun.Main().Name(), Title: "Agentry Helper", DesktopOnly: true, Builtin: localrun.Main(), ShareName: "mainshare"},
 		{Name: localrun.Assistant().Name(), Title: "Assistant", Builtin: localrun.Assistant(), ShareName: "assistantshare"},
 		{Name: localrun.Coder().Name(), Title: "Coding agent", Builtin: localrun.Coder(), ShareName: "codingshare"},
 	}

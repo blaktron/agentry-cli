@@ -1,27 +1,27 @@
-# Main
+# Agentry Helper
 
-Main is Agentry's own assistant. It lives in a card on Home in Agentry
+Agentry Helper is Agentry's own assistant. It lives in a card on Home in Agentry
 Desktop and helps you with Agentry: it finds QuickAgents in the registry,
 installs and runs them on files you put in your mainshare folder, schedules
 them, opens the right part of Settings, and answers from Agentry's docs.
 
 ## This is the package that runs
 
-Main is built into the Agentry CLI and the desktop app, and the desktop runs
+Agentry Helper is built into the Agentry CLI and the desktop app, and the desktop runs
 it from there. This release has the same bytes. The registry built its
 archive from the package the CLI carries, and the archive's digest is the one
 the CLI reports. Run `agentry builtins` to print it and compare it with the
 digest on this page.
 
-Installing this release does not give you Main. A persistent release runs
+Installing this release does not give you Agentry Helper. A persistent release runs
 only as a built-in, so the application runs it, with what is listed below;
-the runner refuses to run this release as an ordinary QuickAgent. Main runs in
+the runner refuses to run this release as an ordinary QuickAgent. Agentry Helper runs in
 Agentry Desktop only.
 
 ## What the application gives it
 
 The manifest declares no network access, no file access, no commands and no
-secret. When Agentry Desktop runs Main, it gives it:
+secret. When Agentry Desktop runs Agentry Helper, it gives it:
 
 - **Agentry's own tools, through the app link**: searching the registry,
   showing, installing and running a QuickAgent, reading a run's result,
