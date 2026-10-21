@@ -36,7 +36,7 @@ func Assistant() Builtin {
 		persistent: true, runnable: true, checkShare: true, appLink: applink.SetAssistant}
 }
 
-// Main is Main (pkg/persistent/main), the persistent agent of Agentry
+// Main is Agentry Helper (pkg/persistent/main), the persistent agent of Agentry
 // Desktop's Home: its app link is the application's own operations, and a
 // file in its share is read only once ClamAV has checked it.
 func Main() Builtin {
@@ -139,7 +139,7 @@ func (s Segment) Start(ctx context.Context, d dockerx.Client) (engine.Persistent
 	if err != nil {
 		return nil, err
 	}
-	plan, planDir, meta, workspace, installDir, resolved, ad := sp.Plan, sp.Dir, sp.meta, sp.workspace, sp.installDir, sp.resolved, sp.adapter
+	plan, meta, workspace, installDir, ad := sp.Plan, sp.meta, sp.workspace, sp.installDir, sp.adapter
 	signIns := modelsignin.Open(s.Home, connection.OSKeychain{})
 	if err := signIns.ReadyForRun(ctx, plan); err != nil {
 		return nil, engine.Classify(engine.ExitPolicy, err)
@@ -159,11 +159,12 @@ func (s Segment) Start(ctx context.Context, d dockerx.Client) (engine.Persistent
 			return nil, engine.Classify(engine.ExitGateway, err)
 		}
 	}
-	if len(resolved) > 0 {
-		if err := mcpinstall.EnsureInstalled(ctx, d, resolved, s.Grants.ServersDir, s.Policy.MCPRegistries, s.Policy.Images, s.Policy.Docker, logw); err != nil {
-			return nil, engine.Classify(engine.ExitGateway, err)
-		}
+	if err := sp.installServers(ctx, d, s.Grants.ServersDir); err != nil {
+		return nil, err
 	}
+	// The install can move the plan to one compiled with the commands it
+	// found (InstallServers).
+	plan, planDir := sp.Plan, sp.Dir
 	seg := s.Persistent
 	seg.Share, seg.AppLink = s.Grants.Share, s.Grants.AppLink
 	var answers *intake.Answers
@@ -277,6 +278,21 @@ type SegmentPlan struct {
 	installDir string
 	resolved   []mcpinstall.Resolved
 	adapter    adapter.Adapter
+	// inputs are what Plan was compiled from: the install compiles it
+	// again from them when it changes a server's command.
+	inputs PlanInputs
+}
+
+// installServers installs the segment's package servers into the agent's
+// store and moves Plan and Dir to the plan compiled with the commands the
+// install found (InstallServers).
+func (sp *SegmentPlan) installServers(ctx context.Context, d dockerx.Client, storeDir string) error {
+	plan, dir, err := InstallServers(ctx, d, sp.inputs, sp.Plan, sp.Dir, sp.resolved, storeDir)
+	if err != nil {
+		return err
+	}
+	sp.Plan, sp.Dir = plan, dir
+	return nil
 }
 
 // Plan materializes the built-in and compiles the segment's plan from it and
@@ -318,16 +334,17 @@ func (s Segment) Plan(ctx context.Context, logw io.Writer) (*SegmentPlan, error)
 	if err != nil {
 		return nil, err
 	}
-	plan, planDir, err := EnsurePlan(PlanInputs{
+	in := PlanInputs{
 		Home: s.Home, Manifest: m, Meta: meta, InstallDir: installDir, WorkspaceDir: workspace,
 		Policy: s.Policy, PolicySHA: s.PolicySHA, Adapter: adapterName, Mode: manifest.ModePersistent,
 		Servers: servers, AgentFiles: s.agentFiles(), AppLink: s.appLinkSet(), Coder: coderGrant, CompiledBy: s.Build, Log: logw,
-	})
+	}
+	plan, planDir, err := EnsurePlan(in)
 	if err != nil {
 		return nil, err
 	}
 	if plan.Harness.Host != nil {
 		return nil, engine.Classify(engine.ExitPolicy, errors.New("a persistent agent runs its harness in a container, and this plan runs it on the host"))
 	}
-	return &SegmentPlan{Plan: plan, Dir: planDir, meta: meta, workspace: workspace, installDir: installDir, resolved: resolved, adapter: ad}, nil
+	return &SegmentPlan{Plan: plan, Dir: planDir, meta: meta, workspace: workspace, installDir: installDir, resolved: resolved, adapter: ad, inputs: in}, nil
 }
