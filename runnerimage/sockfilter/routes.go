@@ -150,6 +150,12 @@ func (f *Filter) containerOp(r *http.Request, id, op string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// A container that binds a folder the run keeps from the gateway is not
+	// read or run in either: exec and archive reach the same files its binds
+	// do, from inside it.
+	if (op == "/exec" || op == "/archive") && f.keepsRootsFromGateway(c) {
+		return "", deny("container %s holds files the run keeps from the gateway; nothing may exec into it or copy to or from it", short(id))
+	}
 	intoRelay := relayForbidden[op] || (op == "/archive" && r.Method == http.MethodPut)
 	if intoRelay {
 		relay, err := f.relayPin(r.Context(), c.imageID)

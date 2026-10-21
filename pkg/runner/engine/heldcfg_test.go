@@ -53,6 +53,12 @@ registry:
     command: [/opt/agentry-mcp/x/venv/bin/word_mcp_server]
     volumes:
       - 'RUN/servers/x:/opt/agentry-mcp/x:ro'
+  mcp-pypi-workspace-mcp:
+    image: python:3.13-slim
+    command: [/opt/agentry-mcp/y/venv/bin/workspace_mcp]
+    volumes:
+      - 'RUN/servers/y:/opt/agentry-mcp/y:ro'
+      - 'CFG/connections/mcp-pypi-workspace-mcp:/run/agentry/connection'
 `
 
 // TestTheCfgFolderIsHeldToTheCatalogsEntries: beneath the run's cfg
@@ -79,6 +85,7 @@ func TestTheCfgFolderIsHeldToTheCatalogsEntries(t *testing.T) {
 	bridge := sockfilter.Holder{Image: "agentry-runner:test", Cmd: []string{"bridge", "--url", "https://mcp.example.org/mcp", "--token-file", "/run/agentry/connection/bearer"}}
 	browser := sockfilter.Holder{Image: "agentry-browser:test", Cmd: []string{"browse", "--proxy", "proxy-1:3128"}}
 	hosts := sockfilter.Holder{Image: "agentry-hostlink:test", Cmd: []string{"hostlink"}}
+	signedIn := sockfilter.Holder{Image: "python:3.13-slim", Cmd: []string{"/opt/agentry-mcp/y/venv/bin/workspace_mcp"}}
 	want := map[string][]sockfilter.Holder{
 		cfg + "/gateway/toolspec.json":  {tools},
 		cfg + "/share-checks":           {tools},
@@ -91,6 +98,8 @@ func TestTheCfgFolderIsHeldToTheCatalogsEntries(t *testing.T) {
 		cfg + "/hosts":                  {hosts},
 		cfg + "/hosts/passwd":           {hosts},
 		cfg + "/hostlog":                {hosts},
+
+		cfg + "/connections/mcp-pypi-workspace-mcp": {signedIn},
 	}
 	if len(held) != len(want) {
 		t.Fatalf("held %d paths, want %d: %v", len(held), len(want), held)
@@ -108,6 +117,37 @@ func TestTheCfgFolderIsHeldToTheCatalogsEntries(t *testing.T) {
 		}
 		if !slices.Contains(roots, h.Root) {
 			t.Errorf("held path %s is not a root %v", h.Root, roots)
+		}
+	}
+	// A holder is given exactly the folders its entry binds, the code
+	// outside cfg included, and the options left out.
+	for _, c := range []struct {
+		root  string
+		image string
+		binds []sockfilter.HolderBind
+	}{
+		{cfg + "/connections/mcp-pypi-workspace-mcp", "python:3.13-slim", []sockfilter.HolderBind{
+			{Source: run + "/servers/y", Target: "/opt/agentry-mcp/y"},
+			{Source: cfg + "/connections/mcp-pypi-workspace-mcp", Target: "/run/agentry/connection"},
+		}},
+		{cfg + "/connections/mcp-remote", "agentry-runner:test", []sockfilter.HolderBind{
+			{Source: cfg + "/connections/mcp-remote", Target: "/run/agentry/connection"},
+		}},
+		{cfg + "/hostlog", "agentry-hostlink:test", []sockfilter.HolderBind{
+			{Source: cfg + "/gateway/hostspec.json", Target: "/etc/agentry/hostspec.json"},
+			{Source: cfg + "/hosts", Target: "/run/agentry/hosts"},
+			{Source: cfg + "/hosts/passwd", Target: "/etc/passwd"},
+			{Source: cfg + "/hostlog", Target: "/run/agentry/hostlog"},
+			{Source: cfg + "/hostfiles", Target: "/run/agentry/hostfiles"},
+		}},
+	} {
+		i := slices.IndexFunc(held, func(h sockfilter.HeldRoot) bool { return h.Root == c.root })
+		if i < 0 {
+			t.Errorf("%s is not held", c.root)
+			continue
+		}
+		if by := held[i].By; len(by) != 1 || by[0].Image != c.image || !slices.Equal(by[0].Binds, c.binds) {
+			t.Errorf("%s is held to %+v, want the binds %v", c.root, by, c.binds)
 		}
 	}
 	for _, p := range []string{cfg, cfg + "/harness", cfg + "/model-signin", cfg + "/gateway", cfg + "/gateway/secrets.env", cfg + "/connections"} {

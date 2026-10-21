@@ -30,6 +30,9 @@ type container struct {
 	// runtime which OCI runtime it was created with (HostConfig.Runtime).
 	running bool
 	runtime string
+	// sources are the host paths the daemon holds for its binds and bind
+	// mounts, as they were created.
+	sources []string
 }
 
 type endpoint struct {
@@ -52,6 +55,8 @@ func (f *Filter) ownContainer(ctx context.Context, id string) (container, error)
 		}
 		HostConfig struct {
 			Runtime string
+			Binds   []string
+			Mounts  []struct{ Type, Source string }
 		}
 	}
 	code, err := f.inspect(ctx, "/containers/"+url.PathEscape(id)+"/json", &c)
@@ -64,7 +69,18 @@ func (f *Filter) ownContainer(ctx context.Context, id string) (container, error)
 	if !f.ours(c.Config.Labels) {
 		return container{}, deny("container %s is not this run's", short(id))
 	}
-	return container{id: c.ID, imageID: c.ImageID, networks: c.NetworkSettings.Networks, running: c.State.Running, runtime: c.HostConfig.Runtime}, nil
+	var sources []string
+	for _, b := range c.HostConfig.Binds {
+		if src, _, _ := strings.Cut(b, ":"); strings.HasPrefix(src, "/") {
+			sources = append(sources, src)
+		}
+	}
+	for _, m := range c.HostConfig.Mounts {
+		if m.Type == "bind" && m.Source != "" {
+			sources = append(sources, m.Source)
+		}
+	}
+	return container{id: c.ID, imageID: c.ImageID, networks: c.NetworkSettings.Networks, running: c.State.Running, runtime: c.HostConfig.Runtime, sources: sources}, nil
 }
 
 // linkedAddress is the address a container of this run's gateway has on

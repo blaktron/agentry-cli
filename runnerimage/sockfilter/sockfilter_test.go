@@ -36,6 +36,9 @@ type fakeDaemon struct {
 	// dropRuntime makes the daemon answer no runtime for the container it
 	// just created, whatever the body asked for.
 	dropRuntime bool
+	// binds are the binds the daemon holds for a container, by id, as its
+	// HostConfig records them.
+	binds map[string][]string
 }
 
 // createdRuntime is the runtime the daemon gave the container it last
@@ -82,6 +85,13 @@ func labelsFor(id, run string) map[string]string {
 		return map[string]string{lbl: run}
 	}
 	return map[string]string{lbl: run, own: run}
+}
+
+// bindsOf are the binds the daemon reports for a container.
+func (d *fakeDaemon) bindsOf(id string) []string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.binds[id]
 }
 
 // runtimeOf is the runtime the daemon reports for a container.
@@ -155,7 +165,7 @@ func (d *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// the one just created runs under what its body asked, or
 			// nothing when the daemon drops it.
 			"State":      map[string]any{"Running": strings.Contains(id, "running")},
-			"HostConfig": map[string]any{"Runtime": d.runtimeOf(id)},
+			"HostConfig": map[string]any{"Runtime": d.runtimeOf(id), "Binds": d.bindsOf(id)},
 		})
 		return
 	case strings.HasPrefix(p, "/networks/") && r.Method == http.MethodGet && !gateway:
@@ -244,7 +254,7 @@ func newRig(t *testing.T, lim Limits, opts ...func(*Config)) *rig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	d := &fakeDaemon{bodies: map[string][]byte{}}
+	d := &fakeDaemon{bodies: map[string][]byte{}, binds: map[string][]string{}}
 	srv := &http.Server{Handler: d} //nolint:gosec // test server
 	go func() { _ = srv.Serve(ln) }()
 	t.Cleanup(func() { _ = srv.Close() })
@@ -1955,8 +1965,8 @@ func TestAHeldRootReachesTheContainersItNamesAlone(t *testing.T) {
 		}
 		c.ToolsImage, c.ToolsCmd = "agentry-runner:test", tools
 		c.HeldRoots = []HeldRoot{
-			{Root: checks, By: []Holder{{Image: "agentry-runner:test", Cmd: tools}}},
-			{Root: conn, By: []Holder{{Image: "agentry-runner:test", Cmd: bridge}}},
+			{Root: checks, By: []Holder{{Image: "agentry-runner:test", Cmd: tools, Binds: []HolderBind{{Source: checks, Target: "/run/agentry/share-checks"}}}}},
+			{Root: conn, By: []Holder{{Image: "agentry-runner:test", Cmd: bridge, Binds: []HolderBind{{Source: conn, Target: "/run/agentry/connection"}}}}},
 		}
 	})
 	create := func(image string, cmd []string, bind string) map[string]any {

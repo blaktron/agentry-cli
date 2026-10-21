@@ -417,6 +417,11 @@ func (f *Filter) containerCreate(ctx context.Context, body []byte) (any, error) 
 	if m, ok := ctx.Value(createMetaKey{}).(*createMeta); ok {
 		m.class, m.runtime = classOf(web, tools, browser, relay != ""), under
 	}
+	// The shapes above name their own refusal of a health check; any other
+	// container's is refused here.
+	if err := noHealthcheck(c.Healthcheck); err != nil {
+		return nil, err
+	}
 	// A relay and the browser server get no capability back.
 	capabilities(hc, web || tools, relay != "" || browser)
 	c.Labels = f.label(c.Labels)
@@ -428,6 +433,29 @@ func (f *Filter) containerCreate(ctx context.Context, body []byte) (any, error) 
 		c.Labels[ToolsLabel] = f.cfg.RunID
 	}
 	return c, nil
+}
+
+// noHealthcheck refuses a health check that runs anything: the daemon runs
+// its command inside the container, with the container's binds, as an exec
+// does. A check that only switches off the image's own ({"Test":["NONE"]})
+// passes.
+func noHealthcheck(raw json.RawMessage) error {
+	if !present(raw) {
+		return nil
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return deny("a health check the filter cannot read: %v", err)
+	}
+	if len(doc) == 1 {
+		for k, v := range doc {
+			var test []string
+			if strings.EqualFold(k, "Test") && json.Unmarshal(v, &test) == nil && len(test) == 1 && test[0] == "NONE" {
+				return nil
+			}
+		}
+	}
+	return deny("a health check: the daemon runs its command inside the container, with the container's folders")
 }
 
 // classOf is a gateway-launched container's class in the receipt's words.
@@ -1268,13 +1296,7 @@ func (f *Filter) bind(ctx context.Context, b string, who mounter) (string, error
 // the root: a folder that holds one would give the container what it
 // holds.
 func (f *Filter) held(ctx context.Context, resolved string, write bool, who mounter) error {
-	touches := func(root string) bool {
-		r, err := filepath.EvalSymlinks(filepath.Clean(root))
-		if err != nil {
-			return false
-		}
-		return within(resolved, r) || within(r, resolved)
-	}
+	touches := func(root string) bool { return touchesRoot(resolved, root) }
 	anyOf := func(roots []string) bool {
 		return slices.ContainsFunc(roots, touches)
 	}
@@ -1303,6 +1325,38 @@ func (f *Filter) held(ctx context.Context, resolved string, write bool, who moun
 	return nil
 }
 
+// touchesRoot says whether a resolved path is at, beneath or above root
+// (with its links followed): a folder that holds a root would give what the
+// root holds.
+func touchesRoot(resolved, root string) bool {
+	r, err := filepath.EvalSymlinks(filepath.Clean(root))
+	if err != nil {
+		return false
+	}
+	return within(resolved, r) || within(r, resolved)
+}
+
+// keepsRootsFromGateway says whether a container of the run binds a path at,
+// beneath or above a root the filter holds to particular containers: a
+// held root, a root only the tools server may bind, or one only an offline
+// container may.
+func (f *Filter) keepsRootsFromGateway(c container) bool {
+	roots := slices.Concat(f.cfg.ToolsOnlyRoots, f.cfg.ToolsWritableRoots, f.cfg.OfflineRoots)
+	for _, h := range f.cfg.HeldRoots {
+		roots = append(roots, h.Root)
+	}
+	for _, src := range c.sources {
+		resolved := src
+		if r, err := filepath.EvalSymlinks(filepath.Clean(src)); err == nil {
+			resolved = r
+		}
+		if slices.ContainsFunc(roots, func(root string) bool { return touchesRoot(resolved, root) }) {
+			return true
+		}
+	}
+	return false
+}
+
 // within says whether path p is root or beneath it.
 func within(p, root string) bool {
 	return p == root || strings.HasPrefix(p, root+string(filepath.Separator))
@@ -1319,6 +1373,8 @@ func (f *Filter) holds(ctx context.Context, who mounter, by []Holder) (bool, err
 	if present(c.Cmd) && json.Unmarshal(c.Cmd, &cmd) != nil {
 		return false, nil
 	}
+	var got []string
+	gotKnown := false
 	for _, h := range by {
 		if !slices.Equal(cmd, h.Cmd) {
 			continue
@@ -1327,11 +1383,96 @@ func (f *Filter) holds(ctx context.Context, who mounter, by []Holder) (bool, err
 		if err != nil {
 			return false, err
 		}
-		if id != "" && id == who.imageID {
+		if id == "" || id != who.imageID {
+			continue
+		}
+		if !gotKnown {
+			if got, err = createdBinds(c); err != nil {
+				return false, nil //nolint:nilerr // a create whose folders cannot be read is not the holder
+			}
+			gotKnown = true
+		}
+		if want := holderBinds(h.Binds); slices.Equal(got, want) {
 			return true, nil
 		}
 	}
 	return false, nil
+}
+
+// bindKey spells one place a container is given something: where it
+// comes from and where it lands. A host folder is its resolved path, as the
+// daemon mounts it; a named volume, an anonymous one and a tmpfs have their
+// own spellings, so none stands in for another.
+func bindKey(source, target string) string {
+	return source + "\x00" + path.Clean(target)
+}
+
+// resolvedSource is a bind source as the daemon mounts it: an absolute path
+// with its links followed, a named volume as its name. A path that cannot be
+// resolved is kept as written, which no resolved source equals.
+func resolvedSource(src string) string {
+	if !strings.HasPrefix(src, "/") {
+		return "volume:" + src
+	}
+	if r, err := filepath.EvalSymlinks(filepath.Clean(src)); err == nil {
+		return r
+	}
+	return filepath.Clean(src)
+}
+
+// createdBinds is everything a create gives its container to mount, sorted
+// and without repeats: its binds, its mounts of every kind, its tmpfs and
+// the volumes its config declares.
+func createdBinds(c *containerCreateBody) ([]string, error) {
+	var keys []string
+	if c.HostConfig != nil {
+		for _, b := range c.HostConfig.Binds {
+			parts := strings.Split(b, ":")
+			if len(parts) < 2 || len(parts) > 3 || parts[0] == "" {
+				return nil, fmt.Errorf("bind %q is not source:target[:options]", b)
+			}
+			keys = append(keys, bindKey(resolvedSource(parts[0]), parts[1]))
+		}
+		for _, m := range c.HostConfig.Mounts {
+			switch m.Type {
+			case "bind", "volume":
+				if m.Source == "" {
+					keys = append(keys, bindKey("anonymous", m.Target))
+				} else {
+					keys = append(keys, bindKey(resolvedSource(m.Source), m.Target))
+				}
+			default:
+				keys = append(keys, bindKey(m.Type, m.Target))
+			}
+		}
+		for target := range c.HostConfig.Tmpfs {
+			keys = append(keys, bindKey("tmpfs", target))
+		}
+	}
+	if present(c.Volumes) {
+		var declared map[string]json.RawMessage
+		if err := json.Unmarshal(c.Volumes, &declared); err != nil {
+			return nil, err
+		}
+		for target := range declared {
+			keys = append(keys, bindKey("anonymous", target))
+		}
+	}
+	return sortedSet(keys), nil
+}
+
+// holderBinds is a holder's binds, spelled as createdBinds spells a create's.
+func holderBinds(binds []HolderBind) []string {
+	keys := make([]string, 0, len(binds))
+	for _, b := range binds {
+		keys = append(keys, bindKey(resolvedSource(b.Source), b.Target))
+	}
+	return sortedSet(keys)
+}
+
+func sortedSet(keys []string) []string {
+	slices.Sort(keys)
+	return slices.Compact(keys)
 }
 
 // holderImage is a holder's image resolved to its id, kept once it

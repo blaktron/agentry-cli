@@ -387,3 +387,22 @@ func TestAgentGrantLetsAServerSeeTheShare(t *testing.T) {
 		t.Fatalf("show --json: %v\n%s", err, js)
 	}
 }
+
+// TestAgentShowHelpNamesEachRosterState holds `agentry agent show --help` to
+// the roster's states, and to the retry of a failed server and the share line.
+func TestAgentShowHelpNamesEachRosterState(t *testing.T) {
+	help := newAgentShowCmd().Long
+	for _, s := range []persistent.EntryState{
+		persistent.StateOn, persistent.StateOff, persistent.StatePending,
+		persistent.StateNeedsSignIn, persistent.StateInstalling, persistent.StateFailed,
+	} {
+		if !strings.Contains(help, "\n  "+string(s)+" ") {
+			t.Errorf("the help does not name the state %q:\n%s", s, help)
+		}
+	}
+	for _, want := range []string{"server:<id> off", "server:<id> on", "<entry>:share", "agentry agent grant --help"} {
+		if !strings.Contains(help, want) {
+			t.Errorf("the help does not say %q:\n%s", want, help)
+		}
+	}
+}
