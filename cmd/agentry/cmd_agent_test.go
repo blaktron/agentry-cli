@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/persistent"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 )
 
 // agentHome isolates the machine state and gives the runner a home short
@@ -282,5 +284,33 @@ func TestAgentConfigurePublishesAPort(t *testing.T) {
 	}
 	if _, _, err := runCLI(t, nil, "agent", "configure", "assistant", "--port", "web=3000", "--yes"); err == nil || !strings.Contains(err.Error(), "Coding agent alone") {
 		t.Errorf("a port for the Assistant: err = %v", err)
+	}
+}
+
+// TestAgentStartPrintsEachStage: the supervisor writes each stage its start
+// reaches to its log as a "stage:" line in the words a person is shown, and
+// agentry agent start's follower prints each as the log grows.
+func TestAgentStartPrintsEachStage(t *testing.T) {
+	logPath := filepath.Join(t.TempDir(), "supervisor.log")
+	logf, err := os.Create(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = logf.Close() }()
+	var shown strings.Builder
+	follow := &logFollower{path: logPath, w: &shown}
+	report := stageLines(logf)
+
+	report(persistent.Stage{Name: receipt.StageImages})
+	follow.flush()
+	if shown.String() != "stage: Getting images ready\n" {
+		t.Fatalf("shown %q after the first stage", shown.String())
+	}
+	report(persistent.Stage{Name: receipt.StageAgent, Subject: "Claude Code"})
+	report(persistent.Stage{Name: receipt.StageAgent, Detail: engine.StageDetailResume})
+	follow.flush()
+	want := "stage: Getting images ready\nstage: Starting Claude Code\nstage: Picking up the conversation\n"
+	if shown.String() != want {
+		t.Fatalf("shown %q, want %q", shown.String(), want)
 	}
 }

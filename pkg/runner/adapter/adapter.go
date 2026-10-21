@@ -498,6 +498,27 @@ func Names() []string {
 // DefaultName is the default adapter.
 const DefaultName = "docker-agent"
 
+// HarnessTitle is the harness an adapter runs, as a person knows it: a host
+// harness's DisplayName, for its image counterpart too, and the Copilot CLI
+// image's; "" for the default harness, which a person never chooses, and
+// for a name this build does not know.
+func HarnessTitle(name string) string {
+	switch name {
+	case ClaudeImageAdapterName:
+		name = ClaudeAdapterName
+	case CodexImageAdapterName:
+		name = CodexAdapterName
+	case CopilotImageAdapterName:
+		return "Copilot CLI"
+	}
+	if a, err := Get(name); err == nil {
+		if h, ok := a.(HostHarness); ok {
+			return h.DisplayName()
+		}
+	}
+	return ""
+}
+
 // DefaultFor is the adapter a run uses when none is named, for a model
 // sign-in docker-agent cannot spend: the Codex image for a ChatGPT plan,
 // the Claude Code image for a Claude subscription, the Copilot CLI image

@@ -22,20 +22,8 @@ import (
 // the plan the segment starts launches the script the install found, and the
 // next start resolves the server from the store and reuses that plan.
 func TestSegmentLaunchesTheConsoleScriptItsFirstInstallFound(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /pypi/some-word-server/1.1.11/json", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"info":{},"urls":[
-		  {"packagetype":"bdist_wheel","filename":"some_word_server-1.1.11-py3-none-any.whl","digests":{"sha256":"cafe"}}]}`))
-	})
-	registry := httptest.NewTLSServer(mux)
-	t.Cleanup(registry.Close)
-	before := http.DefaultTransport
-	http.DefaultTransport = registry.Client().Transport
-	t.Cleanup(func() { http.DefaultTransport = before })
-
 	home, store := t.TempDir(), t.TempDir()
-	pol := policy.Default()
-	pol.MCPRegistries.PyPI = registry.URL
+	pol := wordServerRegistry(t)
 	seg := Segment{Builtin: Assistant(), Home: home, Policy: pol, PolicySHA: "s", Build: "test", Grants: Grants{
 		Servers:    []manifest.MCPServer{{PyPI: "some-word-server", Version: "1.1.11", Tools: []string{"create_document"}}},
 		ServersDir: store,
@@ -46,12 +34,7 @@ func TestSegmentLaunchesTheConsoleScriptItsFirstInstallFound(t *testing.T) {
 		// from, which the segment's start has built before any install.
 		ExistingImages: map[string]bool{pol.Images.PythonRuntime: true, pol.RunnerImageTag(runnerimage.ContentVersion()): true},
 		Foreground: map[string]*dockerx.FakeForeground{
-			"agentry-mcpinstall-pypi-some-word-server": {Before: func(r dockerx.RunSpec) {
-				builds++
-				if err := os.WriteFile(filepath.Join(r.Mounts[0].Source, "console-scripts"), []byte("word_server\n"), 0o600); err != nil {
-					t.Error(err)
-				}
-			}},
+			"agentry-mcpinstall-pypi-some-word-server": wordServerBuild(t, &builds),
 		},
 	}
 	want := spec.MCPStorePrefix + "/pypi-some-word-server/venv/bin/word_server"
@@ -91,6 +74,36 @@ func TestSegmentLaunchesTheConsoleScriptItsFirstInstallFound(t *testing.T) {
 		t.Fatalf("the next start installed again (%d builds): %v", builds, err)
 	}
 	segmentLaunches(t, again, want)
+}
+
+// wordServerRegistry serves PyPI's metadata of some-word-server 1.1.11 for
+// the test and returns the default policy pointed at it.
+func wordServerRegistry(t *testing.T) *policy.Policy {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /pypi/some-word-server/1.1.11/json", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"info":{},"urls":[
+		  {"packagetype":"bdist_wheel","filename":"some_word_server-1.1.11-py3-none-any.whl","digests":{"sha256":"cafe"}}]}`))
+	})
+	registry := httptest.NewTLSServer(mux)
+	t.Cleanup(registry.Close)
+	before := http.DefaultTransport
+	http.DefaultTransport = registry.Client().Transport
+	t.Cleanup(func() { http.DefaultTransport = before })
+	pol := policy.Default()
+	pol.MCPRegistries.PyPI = registry.URL
+	return pol
+}
+
+// wordServerBuild plays some-word-server's install, counting the builds:
+// the distribution's one console script is word_server.
+func wordServerBuild(t *testing.T, builds *int) *dockerx.FakeForeground {
+	return &dockerx.FakeForeground{Before: func(r dockerx.RunSpec) {
+		*builds++
+		if err := os.WriteFile(filepath.Join(r.Mounts[0].Source, "console-scripts"), []byte("word_server\n"), 0o600); err != nil {
+			t.Error(err)
+		}
+	}}
 }
 
 // segmentLaunches holds a segment's plan, and the gateway catalog compiled
