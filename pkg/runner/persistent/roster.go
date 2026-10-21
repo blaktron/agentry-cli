@@ -194,6 +194,12 @@ const (
 // package or its address.
 func ServerEntryID(srv manifest.MCPServer) string { return serverPrefix + mcpinstall.IDFor(srv) }
 
+// serversDir is where the servers the person added to an agent are
+// installed.
+func serversDir(home, name string) string {
+	return mcpinstall.StoreDir(filepath.Join(Dir(home, name), "profile"))
+}
+
 // KnowledgeEntryID is a pack's roster id.
 func KnowledgeEntryID(pack string) string { return knowledgePrefix + pack }
 
@@ -282,7 +288,7 @@ func Apply(ctx context.Context, home string, a Agent, c Config, r Roster, open P
 		}
 	}
 	if len(g.Servers) > 0 {
-		g.ServersDir = mcpinstall.StoreDir(filepath.Join(Dir(home, a.Name), "profile"))
+		g.ServersDir = serversDir(home, a.Name)
 	}
 	var names []string
 	for _, k := range c.Knowledge {
