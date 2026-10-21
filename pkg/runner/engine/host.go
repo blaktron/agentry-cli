@@ -271,15 +271,12 @@ func startHostProcess(ctx context.Context, p Params, rd *runDirs, rep *strings.R
 // collection, budgets and classification, with the process in place of
 // the container.
 func runHostHarness(ctx context.Context, p Params, rd *runDirs, token string, rep *strings.Replacer, task []byte, tools []string) agentOutcome {
-	agentCtx := ctx
-	var cancelTimeout context.CancelFunc
-	if p.Budgets.TimeoutSeconds > 0 {
-		agentCtx, cancelTimeout = context.WithTimeout(agentCtx, time.Duration(p.Budgets.TimeoutSeconds)*time.Second)
-		defer cancelTimeout()
-	}
+	agentCtx, cancelTimeout := rd.harnessContext(ctx, p)
+	defer cancelTimeout()
 	agentCtx, cancelCause := context.WithCancelCause(agentCtx)
 	defer cancelCause(nil)
-	eventsFile, err := os.Create(filepath.Join(rd.receiptsDir, "events.ndjson")) //nolint:gosec // our receipts dir
+	defer func() { rd.harnessStarts++ }()
+	eventsFile, err := rd.harnessReceipt(filepath.Join(rd.receiptsDir, "events.ndjson"))
 	if err != nil {
 		return agentOutcome{err: Classify(ExitCLI, fmt.Errorf("create events receipt: %w", err))}
 	}
@@ -303,9 +300,10 @@ func runHostHarness(ctx context.Context, p Params, rd *runDirs, token string, re
 		onPlanLimit:    func() { cancelCause(errPlanLimit) },
 		onOrgPolicy:    func() { cancelCause(errOrgPolicy) },
 		onOutOfCredits: func() { cancelCause(errOutOfCredits) },
+		base:           rd.harnessUsage,
 	}
 	stderrPath := filepath.Join(rd.receiptsDir, "agent-stderr.log")
-	stderrFile, err := os.Create(stderrPath) //nolint:gosec // our receipts dir
+	stderrFile, err := rd.harnessReceipt(stderrPath)
 	if err != nil {
 		_ = pw.Close()
 		return agentOutcome{err: Classify(ExitCLI, fmt.Errorf("create stderr receipt: %w", err))}
@@ -373,7 +371,7 @@ func runHostHarness(ctx context.Context, p Params, rd *runDirs, token string, re
 	case context.Cause(agentCtx) == errBudget:
 		out.err = Classify(ExitBudget, fmt.Errorf("turn budget exceeded (%d tool calls)", p.Budgets.MaxTurns))
 	case context.Cause(agentCtx) == errCostBudget:
-		out.err = Classify(ExitBudget, fmt.Errorf("cost budget exceeded (harness reported $%.4f, budget $%.2f)", collector.costUSD, p.Budgets.MaxCostUSD))
+		out.err = Classify(ExitBudget, fmt.Errorf("cost budget exceeded (harness reported $%.4f, budget $%.2f)", collector.usage().CostUSD, p.Budgets.MaxCostUSD))
 	case errors.Is(context.Cause(agentCtx), context.DeadlineExceeded):
 		out.err = Classify(ExitTimeout, fmt.Errorf("run timed out after %ds", p.Budgets.TimeoutSeconds))
 	case turnErr != nil:
@@ -386,6 +384,7 @@ func runHostHarness(ctx context.Context, p Params, rd *runDirs, token string, re
 			detail = "\nharness error: " + collector.harnessErrReported + detail
 		}
 		out.err = Classify(ExitHarness, fmt.Errorf("harness exited %d%s", exit, detail))
+		out.atCapacity = exitedAtCapacity(p, collector.harnessErrReported, stderrPath)
 	}
 	return out
 }

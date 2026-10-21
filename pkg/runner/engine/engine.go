@@ -539,12 +539,12 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	oneTurnTools = permitted(oneTurnTools, served)
 
 	env.Stage = receipt.StageAgent
-	var outcome agentOutcome
-	if p.Plan.Harness.Host != nil {
-		outcome = runHostHarness(ctx, p, rd, token, rep, task, oneTurnTools)
-	} else {
-		outcome = runAgent(ctx, d, p, rd, runID, token, rep, task, oneTurnTools)
-	}
+	outcome := retryAtCapacity(ctx, p, rd, func() agentOutcome {
+		if p.Plan.Harness.Host != nil {
+			return runHostHarness(ctx, p, rd, token, rep, task, oneTurnTools)
+		}
+		return runAgent(ctx, d, p, rd, runID, token, rep, task, oneTurnTools)
+	})
 	if outcome.hostInfo != "" {
 		env.Harness.Host = outcome.hostInfo
 	}
@@ -716,6 +716,9 @@ type agentOutcome struct {
 	// ran, for the envelope; hostEnv the host variables it could inherit.
 	hostInfo string
 	hostEnv  []string
+	// atCapacity: the harness exited failing on a capacity answer
+	// (capacity.go).
+	atCapacity bool
 }
 
 // startInfra creates the run network and starts proxy + gateway, then
@@ -1176,14 +1179,11 @@ func gatewayHostname(runID string) string { return "gw-" + runID }
 func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	runID, token string, rep *strings.Replacer, task []byte, tools []string,
 ) agentOutcome {
-	agentCtx := ctx
-	var cancelTimeout context.CancelFunc
-	if p.Budgets.TimeoutSeconds > 0 {
-		agentCtx, cancelTimeout = context.WithTimeout(agentCtx, time.Duration(p.Budgets.TimeoutSeconds)*time.Second)
-		defer cancelTimeout()
-	}
+	agentCtx, cancelTimeout := rd.harnessContext(ctx, p)
+	defer cancelTimeout()
 	agentCtx, cancelCause := context.WithCancelCause(agentCtx)
 	defer cancelCause(nil)
+	defer func() { rd.harnessStarts++ }()
 
 	agentEnv, err := resolveEnv(p.Plan.Harness.Agent.Env, rep, token)
 	if err != nil {
@@ -1210,7 +1210,7 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	}
 	runSpec = hardenedAgent(runSpec, p)
 
-	eventsFile, err := os.Create(filepath.Join(rd.receiptsDir, "events.ndjson")) //nolint:gosec // our receipts dir
+	eventsFile, err := rd.harnessReceipt(filepath.Join(rd.receiptsDir, "events.ndjson"))
 	if err != nil {
 		return agentOutcome{err: Classify(ExitCLI, fmt.Errorf("create events receipt: %w", err))}
 	}
@@ -1241,9 +1241,10 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		},
 		onOrgPolicy:    func() { cancelCause(errOrgPolicy) },
 		onOutOfCredits: func() { cancelCause(errOutOfCredits) },
+		base:           rd.harnessUsage,
 	}
 	stderrPath := filepath.Join(rd.receiptsDir, "agent-stderr.log")
-	stderrFile, err := os.Create(stderrPath) //nolint:gosec // our receipts dir
+	stderrFile, err := rd.harnessReceipt(stderrPath)
 	if err != nil {
 		return agentOutcome{err: Classify(ExitCLI, fmt.Errorf("create stderr receipt: %w", err))}
 	}
@@ -1306,7 +1307,7 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	case context.Cause(agentCtx) == errBudget:
 		out.err = Classify(ExitBudget, fmt.Errorf("turn budget exceeded (%d tool calls)", p.Budgets.MaxTurns))
 	case context.Cause(agentCtx) == errCostBudget:
-		out.err = Classify(ExitBudget, fmt.Errorf("cost budget exceeded (harness reported $%.4f, budget $%.2f)", collector.costUSD, p.Budgets.MaxCostUSD))
+		out.err = Classify(ExitBudget, fmt.Errorf("cost budget exceeded (harness reported $%.4f, budget $%.2f)", collector.usage().CostUSD, p.Budgets.MaxCostUSD))
 	case errors.Is(context.Cause(agentCtx), context.DeadlineExceeded):
 		out.err = Classify(ExitTimeout, fmt.Errorf("run timed out after %ds", p.Budgets.TimeoutSeconds))
 	case turnErr != nil:
@@ -1319,6 +1320,7 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 			detail = "\nharness error: " + collector.harnessErrReported + detail
 		}
 		out.err = Classify(ExitHarness, fmt.Errorf("agent exited %d%s", exit, detail))
+		out.atCapacity = exitedAtCapacity(p, collector.harnessErrReported, stderrPath)
 	}
 	return out
 }
@@ -1502,6 +1504,9 @@ type eventCollector struct {
 	// usageErr records a callback that panicked, so a driver metering the
 	// run learns its meter is dead instead of reading silence as zero.
 	usageErr error
+	// base is the usage of the harness's earlier starts, when it was
+	// started again after a capacity answer (capacity.go).
+	base receipt.Usage
 }
 
 // consumeGuarded runs the collector's consume in its own goroutine and returns
@@ -1605,7 +1610,7 @@ func (c *eventCollector) record(ev adapter.Event) {
 		if ev.CostUSD > c.costUSD && !c.signIn {
 			c.costUSD = ev.CostUSD
 		}
-		if c.maxCostUSD > 0 && c.costUSD > c.maxCostUSD && !c.costTripped && c.overCost != nil {
+		if c.maxCostUSD > 0 && c.base.CostUSD+c.costUSD > c.maxCostUSD && !c.costTripped && c.overCost != nil {
 			c.costTripped = true
 			c.overCost()
 		}
@@ -1747,13 +1752,13 @@ func (c *eventCollector) deliver(ev adapter.Event) {
 func (c *eventCollector) answerInReasoning() bool { return c.reasoned && !c.answered }
 
 func (c *eventCollector) usage() receipt.Usage {
-	return receipt.Usage{
+	return withBase(receipt.Usage{
 		InputTokens:  c.inTok,
 		OutputTokens: c.outTok,
 		TotalTokens:  c.totTok,
 		CostUSD:      c.costUSD,
 		Turns:        c.turns,
-	}
+	}, c.base)
 }
 
 // sandboxHosts pins the run network's two aliases — the gateway and the
