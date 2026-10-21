@@ -55,6 +55,9 @@ func TestCodexCompileGatewayOnly(t *testing.T) {
 		"hooks = false", "memories = false", "web_search = \"disabled\"",
 		// Nothing prompts, nothing phones home.
 		"approval_policy = \"never\"", "sandbox_mode = \"read-only\"", "default_tools_approval_mode = \"approve\"",
+		// Codex's own sandbox is not described to the model: it would
+		// read as the run's files being read-only.
+		"include_permissions_instructions = false", "include_environment_context = false",
 		"[analytics]\nenabled = false", "[otel]\nexporter = \"none\"",
 		// The model endpoint is the policy's, over the only wire API this
 		// release speaks; the key by variable name.
