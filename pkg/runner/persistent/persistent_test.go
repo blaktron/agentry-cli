@@ -3,12 +3,16 @@ package persistent
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/blaktron/agentry/pkg/manifest"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
@@ -429,6 +433,61 @@ func TestResetWipesTheConversationAndKeepsTheReceipts(t *testing.T) {
 	}
 }
 
+// TestResetPutsTheAgentBackToItsDefaults: everything the person chose for
+// the agent goes with its conversation, so its configuration is an enabled
+// one that has never started and has agreed to nothing; its installed
+// servers go, and the files in its share folder stay.
+func TestResetPutsTheAgentBackToItsDefaults(t *testing.T) {
+	home := shortHome(t)
+	enable(t, home)
+	cfg, err := LoadConfig(home, "assistant")
+	if err != nil {
+		t.Fatal(err)
+	}
+	share := filepath.Join(t.TempDir(), "share")
+	if err := os.MkdirAll(share, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	kept := filepath.Join(share, "letter.docx")
+	if err := os.WriteFile(kept, []byte("the person's"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg.RunOnStart, cfg.DisplayName, cfg.Personality, cfg.PersonaGiven = true, "Petunia", "warm", "sha256:x"
+	cfg.Segments, cfg.Share = 4, share
+	cfg.Conversation = &Conversation{Adapter: "codex-image", ID: "c1"}
+	cfg.Servers = []manifest.MCPServer{{PyPI: "office-word-mcp-server", Version: "1.1.11"}}
+	cfg.Knowledge = []string{"pack"}
+	cfg.Switches = map[string]bool{"share": false}
+	cfg.Consented = map[string]string{"share": "Shares the folder"}
+	if err := SaveConfig(home, "assistant", cfg); err != nil {
+		t.Fatal(err)
+	}
+	installed := filepath.Join(serversDir(home, "assistant"), "pypi-office-word-mcp-server")
+	if err := os.MkdirAll(installed, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(installed, "server.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Reset(context.Background(), home, "assistant", &dockerx.Fake{}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadConfig(home, "assistant")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (Config{Version: ConfigVersion, Enabled: true}); !reflect.DeepEqual(got, want) {
+		t.Errorf("config after reset = %+v, want %+v", got, want)
+	}
+	if _, err := os.Stat(serversDir(home, "assistant")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("the installed servers were kept: %v", err)
+	}
+	if b, err := os.ReadFile(kept); err != nil || string(b) != "the person's" {
+		t.Errorf("the share folder's file after reset: %q, %v", b, err)
+	}
+}
+
 // TestASecondChatIsAnsweredBusy: two chats attach to one agent; while the
 // first one's turn is in flight a send from the second is refused busy,
 // which it reads as ErrBusy, and the first turn is answered as usual.
@@ -483,3 +542,19 @@ func (s *starter) lastSegment() *fakeSegment {
 }
 
 func (f *fakeSegment) sentTurnsLen() int { return len(f.sentTurns()) }
+
+// TestResetRefusesAnAgentItDoesNotKnow: a name that is not one of the
+// persistent agents empties no folder.
+func TestResetRefusesAnAgentItDoesNotKnow(t *testing.T) {
+	home := shortHome(t)
+	outside := filepath.Join(home, "profile", "servers")
+	if err := os.MkdirAll(outside, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := Reset(context.Background(), home, "..", &dockerx.Fake{}); err == nil {
+		t.Error("reset of an unknown agent was not refused")
+	}
+	if _, err := os.Stat(outside); err != nil {
+		t.Errorf("a folder outside the agents' was removed: %v", err)
+	}
+}
