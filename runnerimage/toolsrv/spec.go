@@ -233,6 +233,16 @@ type Exec struct {
 	// server starts, so a command's caches and settings last as long as the
 	// workspace does.
 	Home string `json:"home,omitempty"`
+	// Ports under Any are the server's ports the person's computer
+	// publishes, each at its 127.0.0.1 and the same number: run_command's
+	// description names them, so the agent serves where the person looks.
+	Ports []Port `json:"ports,omitempty"`
+}
+
+// Port is one published port.
+type Port struct {
+	Name string `json:"name"`
+	Port int    `json:"port"`
 }
 
 // Limits bounds tool I/O sizes and exec time.
@@ -325,6 +335,9 @@ func (s *Spec) GrantedTools() []string {
 	}
 	if len(s.Exec.Commands) > 0 || s.Exec.Any {
 		names = append(names, ToolRunCommand)
+	}
+	if s.Exec.Any {
+		names = append(names, ToolBackgroundOutput, ToolStopBackground)
 	}
 	if s.InputsDir != "" {
 		names = append(names, ToolListInputs, ToolReadInput)

@@ -198,3 +198,75 @@ func TestTheCodingAgentsPackLineSaysItsProgramsReadIt(t *testing.T) {
 		t.Errorf("the Assistant's pack line: %q", e.Line)
 	}
 }
+
+// TestThePortsArePublishedOnlyWhileTheirEntryIsOn: a port is saved with the
+// person's agreement to a sentence naming its address, reaches the
+// segment's grant while its entry is on and not after it is switched off,
+// is held to its shape, and is taken away with its switch and consent.
+func TestThePortsArePublishedOnlyWhileTheirEntryIsOn(t *testing.T) {
+	home := shortHome(t)
+	t.Setenv("HOME", t.TempDir())
+	a := coderAgent(t)
+	c := Config{Enabled: true}
+	RecordConsent(BuildRoster(a, c, nil), &c)
+
+	for name, bad := range map[string]Port{
+		"privileged":   {Name: "web", Port: 80},
+		"too high":     {Name: "web", Port: 70000},
+		"upper case":   {Name: "Web", Port: 3000},
+		"a space":      {Name: "my web", Port: 3000},
+		"no name":      {Port: 3000},
+		"a long name":  {Name: strings.Repeat("a", 33), Port: 3000},
+		"a dash first": {Name: "-web", Port: 3000},
+	} {
+		p := bad
+		if _, err := ApplyChange(home, a, &c, Change{AddPort: &p, Consent: true}); err == nil {
+			t.Errorf("%s: saved", name)
+		}
+	}
+	web := Port{Name: "web", Port: 3000}
+	var ce *ConsentError
+	if _, err := ApplyChange(home, a, &c, Change{AddPort: &web}); !errors.As(err, &ce) || len(ce.Entries) != 1 || ce.Entries[0].ID != "port:web" ||
+		!strings.Contains(ce.Entries[0].Line, "http://127.0.0.1:3000") {
+		t.Fatalf("a port without agreement: %v", err)
+	}
+	if _, err := ApplyChange(home, a, &c, Change{AddPort: &web, Consent: true}); err != nil {
+		t.Fatal(err)
+	}
+	for name, dup := range map[string]Port{"the name again": {Name: "web", Port: 3001}, "the number again": {Name: "api", Port: 3000}} {
+		p := dup
+		if _, err := ApplyChange(home, a, &c, Change{AddPort: &p, Consent: true}); err == nil {
+			t.Errorf("%s: saved", name)
+		}
+	}
+	e, ok := BuildRoster(a, c, nil).Entry("port:web")
+	if !ok || e.Kind != KindPort || !e.On || e.Name != "Port web (127.0.0.1:3000)" {
+		t.Fatalf("the port's entry: %+v", e)
+	}
+	g, _, _, err := Apply(context.Background(), home, a, c, BuildRoster(a, c, nil), nil, nil)
+	if err != nil || g.Coder == nil || !slices.Equal(g.Coder.Ports, []spec.CoderPort{{Name: "web", Port: 3000}}) {
+		t.Fatalf("with the port on: %+v, %v", g.Coder, err)
+	}
+	if _, err := ApplyChange(home, a, &c, Change{Switch: &Switch{ID: "port:web", On: false}}); err != nil {
+		t.Fatal(err)
+	}
+	if g, _, _, err = Apply(context.Background(), home, a, c, BuildRoster(a, c, nil), nil, nil); err != nil || len(g.Coder.Ports) != 0 {
+		t.Fatalf("with the port off: %+v, %v", g.Coder, err)
+	}
+
+	if err := SaveConfig(home, "coder", c); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := LoadConfig(home, "coder"); err != nil || got.Version != ConfigVersion || !slices.Equal(got.Ports, []Port{web}) {
+		t.Fatalf("saved: %+v, %v", got, err)
+	}
+	if _, err := ApplyChange(home, a, &c, Change{RemovePort: "web"}); err != nil || len(c.Ports) != 0 || c.Consented["port:web"] != "" {
+		t.Fatalf("removing the port: %+v, %v", c, err)
+	}
+	if _, err := ApplyChange(home, a, &c, Change{RemovePort: "web"}); err == nil {
+		t.Error("a port that is not there was removed")
+	}
+	if _, err := ApplyChange(home, assistantAgent(t), &Config{Enabled: true}, Change{AddPort: &web, Consent: true}); err == nil {
+		t.Error("the Assistant was given a port")
+	}
+}

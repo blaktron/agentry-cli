@@ -128,6 +128,9 @@ type server struct {
 	// root as soon as it exists: what a declared command racing an export
 	// could do to it.
 	renderRootMade func(dir string)
+	// bg is the programs run_command started in the background
+	// (background.go).
+	bg background
 	// afterCheck, when a test sets it, is called with the name of a root
 	// ("workspace", "scratch", "reports", "inputs" or "render") between
 	// the check of a name and its use: what a declared command could do to
@@ -199,6 +202,8 @@ func Serve(in io.Reader, out io.Writer, logw io.Writer, spec *Spec) error {
 		return err
 	}
 	s.startCalls()
+	// A program left running in the background ends with the server.
+	defer s.stopAllBackground()
 	sc := bufio.NewScanner(in)
 	sc.Buffer(make([]byte, 64*1024), maxLineBytes)
 	for sc.Scan() {
@@ -210,6 +215,25 @@ func Serve(in io.Reader, out io.Writer, logw io.Writer, spec *Spec) error {
 	}
 	if err := sc.Err(); err != nil {
 		return fmt.Errorf("read mcp stream: %w", err)
+	}
+	return nil
+}
+
+// validatePorts refuses published ports but under Any, and ports that are
+// not each a distinct name and a distinct number from 1024 to 65535.
+func validatePorts(x Exec) error {
+	if len(x.Ports) == 0 {
+		return nil
+	}
+	if !x.Any {
+		return errors.New("exec.ports are the Coding agent's, under exec.any alone")
+	}
+	names, numbers := map[string]bool{}, map[int]bool{}
+	for _, p := range x.Ports {
+		if p.Name == "" || p.Port < 1024 || p.Port > 65535 || names[p.Name] || numbers[p.Port] {
+			return fmt.Errorf("exec.ports: %q on %d is not a distinct name on a distinct port from 1024 to 65535", p.Name, p.Port)
+		}
+		names[p.Name], numbers[p.Port] = true, true
 	}
 	return nil
 }
@@ -252,6 +276,9 @@ func validateSpec(spec *Spec) error {
 		// has no declared commands beside it, and its HOME is a folder
 		// beneath the workspace the confinement lets it write.
 		return errors.New("exec.any takes no declared commands, runs with the image's PATH and keeps HOME beneath the workspace")
+	}
+	if err := validatePorts(spec.Exec); err != nil {
+		return err
 	}
 	if spec.Web.Enabled && (spec.Fetch.Enabled || len(spec.Exec.Commands) > 0 || spec.Exec.Any) {
 		// The web tools' container has no network allowlist of its own

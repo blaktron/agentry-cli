@@ -182,7 +182,7 @@ func newAgentGrantCmd() *cobra.Command {
 func newAgentConfigureCmd() *cobra.Command {
 	var (
 		name, personalityFile, share, runOnStart, addServer, removeServer, addPack, removePack string
-		devHost, devKey, devPassphrase, devPassword, policyPath                                string
+		devHost, devKey, devPassphrase, devPassword, policyPath, addPort, removePort           string
 		yes, allowVulnerable, noDevHost                                                        bool
 	)
 	cmd := &cobra.Command{
@@ -205,7 +205,12 @@ func newAgentConfigureCmd() *cobra.Command {
 			"readied here: its host key is shown for you to accept, then pinned, and its\n" +
 			"sign-in (--dev-key, --dev-password, or a prompt) is saved in your system\n" +
 			"keychain, where the agent's later starts read it.\n\n" +
-			"  agentry agent configure coder --dev-host deploy@devbox.lan --dev-key ~/.ssh/id_ed25519",
+			"  agentry agent configure coder --dev-host deploy@devbox.lan --dev-key ~/.ssh/id_ed25519\n\n" +
+			"--port publishes one of the Coding agent's ports on this computer, at\n" +
+			"127.0.0.1 and the same number, so what it serves from its sandbox (a dev\n" +
+			"server it started) opens in your browser; --no-port takes one away by its\n" +
+			"name. A port is a roster entry, switched with agentry agent grant.\n\n" +
+			"  agentry agent configure coder --port web=3000",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := cliAgent(args[0])
@@ -285,6 +290,17 @@ func newAgentConfigureCmd() *cobra.Command {
 			} else if devKey != "" || devPassphrase != "" || devPassword != "" {
 				return engine.Classify(engine.ExitUsage, errors.New("--dev-key, --dev-passphrase and --dev-password go with --dev-host"))
 			}
+			if addPort != "" {
+				portName, number, ok := strings.Cut(addPort, "=")
+				n, err := strconv.Atoi(number)
+				if !ok || err != nil {
+					return engine.Classify(engine.ExitUsage, fmt.Errorf("--port %q is not name=number (web=3000)", addPort))
+				}
+				ch.AddPort, set = &persistent.Port{Name: portName, Port: n}, set+1
+			}
+			if removePort != "" {
+				ch.RemovePort, set = removePort, set+1
+			}
 			if set == 0 {
 				return engine.Classify(engine.ExitUsage, errors.New("nothing to change: pass one of the flags (agentry agent configure --help)"))
 			}
@@ -321,6 +337,8 @@ func newAgentConfigureCmd() *cobra.Command {
 	f.StringVar(&removeServer, "remove-server", "", "the roster id of a server to remove (server:…)")
 	f.StringVar(&addPack, "knowledge", "", "a knowledge pack kept on this computer for it to search")
 	f.StringVar(&removePack, "no-knowledge", "", "a knowledge pack to take away")
+	f.StringVar(&addPort, "port", "", "publish one of the Coding agent's ports on this computer, as name=number (web=3000)")
+	f.StringVar(&removePort, "no-port", "", "take away the Coding agent's port of this name")
 	f.StringVar(&devHost, "dev-host", "", "the Coding agent's dev server, user@host[:port], readied here and kept")
 	f.StringVar(&devKey, "dev-key", "", "sign in to the dev server with this private key FILE (its path is kept in your keychain)")
 	f.StringVar(&devPassphrase, "dev-passphrase", "", "the name of an environment variable holding the key's passphrase")

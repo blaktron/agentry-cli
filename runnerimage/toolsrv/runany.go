@@ -73,7 +73,24 @@ func (s *server) runAnyDescription() string {
 	}
 	return "Run a program in your toolchain image: a name on its PATH (build tools, git, curl, python3, go, node, npm and what they install) or a path to one, with its arguments, in dir, a folder beneath /agent. There is no shell unless you run one (bash -c)." +
 		home + net + " " + s.confine.describe() +
-		" Returns \"exit code N\" plus combined output; a non-zero exit is a result, not an error."
+		" Returns \"exit code N\" plus combined output; a non-zero exit is a result, not an error." +
+		fmt.Sprintf(" Set background to start a program that keeps running after the call, such as a dev server or a watcher: the call returns after a few seconds with its id (bg1, bg2…) and its first output, and it runs with no time limit until %s or the end of this conversation's segment; read it with %s. At most %d run at once.",
+			ToolStopBackground, ToolBackgroundOutput, maxBackground) +
+		s.portsDescription()
+}
+
+// portsDescription says which of the server's ports the person's computer
+// publishes, and how to serve one.
+func (s *server) portsDescription() string {
+	if len(s.spec.Exec.Ports) == 0 {
+		return " No port of yours is published on the person's computer: they add one in your configuration."
+	}
+	var named []string
+	for _, p := range s.spec.Exec.Ports {
+		named = append(named, fmt.Sprintf("%s on port %d (http://127.0.0.1:%d there)", p.Name, p.Port, p.Port))
+	}
+	return " The person's computer publishes these ports of yours, each at its own 127.0.0.1 and the same number: " + strings.Join(named, ", ") +
+		". A server you start in the background listening on that port, on 127.0.0.1 or 0.0.0.0, answers them there; no other port is published."
 }
 
 func (s *server) toolRunAny(raw json.RawMessage) (string, bool) {
@@ -83,12 +100,16 @@ func (s *server) toolRunAny(raw json.RawMessage) (string, bool) {
 		Dir            string   `json:"dir"`
 		Stdin          string   `json:"stdin"`
 		TimeoutSeconds int      `json:"timeoutSeconds"`
+		Background     bool     `json:"background"`
 	}
 	if err := unmarshalArgs(raw, &a); err != nil {
 		return "run_command: " + err.Error(), true
 	}
 	if a.Command == "" {
 		return "run_command: command is required", true
+	}
+	if a.Background && a.TimeoutSeconds > 0 {
+		return "run_command: a background program has no time limit: set background or timeoutSeconds, not both", true
 	}
 	if s.confine.refused != "" {
 		return "run_command: " + s.confine.refused, true
@@ -109,26 +130,22 @@ func (s *server) toolRunAny(raw json.RawMessage) (string, bool) {
 	if err != nil {
 		return "run_command: " + err.Error(), true
 	}
+	name, argv := s.confine.argv(prog, a.Args)
+	if a.Background {
+		// A context that is never done: the program has no time limit, and
+		// its group is killed by stop_background or the server's end.
+		cmd := exec.CommandContext(context.Background(), name, argv...)
+		s.holdAny(cmd, dir, a.Stdin)
+		return s.startBackground(cmd, strings.Join(append([]string{a.Command}, a.Args...), " "))
+	}
 	limitSec := s.spec.Limits.execTimeoutSec()
 	if a.TimeoutSeconds > 0 && a.TimeoutSeconds < limitSec {
 		limitSec = a.TimeoutSeconds
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(limitSec)*time.Second)
 	defer cancel()
-	name, argv := s.confine.argv(prog, a.Args)
 	cmd := exec.CommandContext(ctx, name, argv...)
-	switch {
-	case s.confine.asNobody:
-		runAs(cmd, unprivilegedID)
-	case s.spec.Owner != nil && s.spec.Owner.UID > 0 && s.spec.Owner.GID > 0:
-		runAsIDs(cmd, uint32(s.spec.Owner.UID), uint32(s.spec.Owner.GID)) //nolint:gosec // ids from the run's own spec, checked positive
-	}
-	inOwnGroup(cmd)
-	cmd.Dir = dir
-	cmd.Env = s.anyEnv()
-	if a.Stdin != "" {
-		cmd.Stdin = strings.NewReader(a.Stdin)
-	}
+	s.holdAny(cmd, dir, a.Stdin)
 	out := &capWriter{max: s.spec.Limits.execOutCap()}
 	cmd.Stdout, cmd.Stderr = out, out
 	cmd.WaitDelay = 5 * time.Second
@@ -149,6 +166,23 @@ func (s *server) toolRunAny(raw json.RawMessage) (string, bool) {
 		return fmt.Sprintf("exit code %d\n%s", exitErr.ExitCode(), text), false
 	default:
 		return "run_command: " + err.Error(), true
+	}
+}
+
+// holdAny sets up a program run under Any: its ids, its own process
+// group, its folder, its environment and its stdin.
+func (s *server) holdAny(cmd *exec.Cmd, dir, stdin string) {
+	switch {
+	case s.confine.asNobody:
+		runAs(cmd, unprivilegedID)
+	case s.spec.Owner != nil && s.spec.Owner.UID > 0 && s.spec.Owner.GID > 0:
+		runAsIDs(cmd, uint32(s.spec.Owner.UID), uint32(s.spec.Owner.GID)) //nolint:gosec // ids from the run's own spec, checked positive
+	}
+	inOwnGroup(cmd)
+	cmd.Dir = dir
+	cmd.Env = s.anyEnv()
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
 	}
 }
 
