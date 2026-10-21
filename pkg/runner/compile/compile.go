@@ -1465,7 +1465,7 @@ func serverShareVolumes(how spec.ServerShare) []string {
 	}
 	return []string{
 		src + ":" + spec.AgentRoot + "/" + spec.AgentShareDir + ":ro",
-		spec.PHShareOut + ":" + spec.AgentRoot + "/" + spec.AgentShareOutDir,
+		spec.PHShareOut + ":" + spec.AgentShareOutPath,
 	}
 }
 
@@ -2360,8 +2360,8 @@ func serverShareEnforcement(servers []spec.MCPServerSpec) string {
 	if len(parts) == 0 {
 		return ""
 	}
-	return strings.Join(parts, "; ") + fmt.Sprintf("; each is a package server with no network, given no write to the share; each saves into the share outbox, writable at %s/%s, a folder of the segment's own and a bind root of its own beside its cfg, which the runner copies into the share after each turn through an os.Root: regular files at its top level alone, never a link, a folder or a file with another link to it, each under a new name (\"<name> (2)\" and so on when the name is taken), never over a file, at most %d files of at most %d MiB each and %d MiB in all a turn, then emptied, each copy a line in receipts/%s; where the share is checked, a copied file is checked at the next turn like any file the person adds; the docker filter lets the tools server alone bind the share writable, and gives the share, its mirror and the outbox to no other container that joins a network",
-		spec.AgentRoot, spec.AgentShareOutDir, spec.ShareOutMaxFiles, spec.ShareOutFileMax>>20, spec.ShareOutTotalMax>>20, "share-checks.ndjson")
+	return strings.Join(parts, "; ") + fmt.Sprintf("; each is a package server with no network, given no write to the share; each saves into the share outbox, writable at %s, a folder of the segment's own and a bind root of its own beside its cfg, which the runner copies into the share after each turn and at the segment's end through an os.Root: regular files at its top level alone, never a link or a folder (nor, where the system counts links, a file with another link to it), each under a new name (\"<name> (2)\" and so on when the name is taken), never over a file, at most %d files of at most %d MiB each and %d MiB in all a turn, then emptied, each copy a line in receipts/%s; where the share is checked, a copied file is checked at the next turn like any file the person adds; the docker filter lets the tools server alone bind the share writable, and gives the share, its mirror and the outbox to no other container that joins a network",
+		spec.AgentShareOutPath, spec.ShareOutMaxFiles, spec.ShareOutFileMax>>20, spec.ShareOutTotalMax>>20, spec.ShareChecksLog)
 }
 
 // agentFilesEnforcement is the receipt's line for a persistent agent's

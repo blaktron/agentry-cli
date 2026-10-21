@@ -269,6 +269,12 @@ const (
 	// file for it, beneath AgentRoot: the share outbox (PHShareOut), which
 	// only those servers mount. The agent's own tools do not see it.
 	AgentShareOutDir = "share-out"
+	// AgentShareOutPath is the share outbox's path in a server's container.
+	AgentShareOutPath = AgentRoot + "/" + AgentShareOutDir
+	// ShareChecksLog is the receipt a persistent agent's segment appends a
+	// line to for each file of the share it checks, and for each entry of
+	// the share outbox it copies or refuses.
+	ShareChecksLog = "share-checks.ndjson"
 	// ShareOutMaxFiles, ShareOutFileMax and ShareOutTotalMax bound what the
 	// runner copies from the share outbox into the share after one turn:
 	// the files, the bytes of each, and the bytes of all of them. What is

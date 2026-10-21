@@ -135,7 +135,7 @@ func printRoster(w io.Writer, r persistent.Roster) {
 		if e.ShareSwitch != "" {
 			sees := "no"
 			if e.Share {
-				sees = "yes, read only, and saves new files into it"
+				sees = "yes, read only, and writes new files into it"
 			}
 			_, _ = fmt.Fprintf(tw, "  \t\t\tsees your share folder: %s (switch %s)\n", sees, e.ShareSwitch)
 		}

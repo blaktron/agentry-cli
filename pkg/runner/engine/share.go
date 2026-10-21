@@ -40,7 +40,7 @@ import (
 
 // ShareChecksLog is the receipt each check of the share appends to: one
 // JSON line a file checked.
-const ShareChecksLog = "share-checks.ndjson"
+const ShareChecksLog = spec.ShareChecksLog
 
 // maxShareCheck bounds one check: the files it takes (the decode step's
 // own cap) and the bytes it copies.

@@ -92,7 +92,9 @@ func (rd *runDirs) shareOutRoot() []string {
 }
 
 // outboxCopy is what became of one entry of the share outbox: copied into
-// the share as Path, or Refused with why. It is a line of the segment's
+// the share as Path, Refused with why and removed, or Kept for the next
+// turn when the copy failed for a reason of the machine's (a full disk, a
+// file it could not open). It is a line of the segment's
 // receipts/share-checks.ndjson.
 type outboxCopy struct {
 	Time time.Time `json:"time"`
@@ -103,35 +105,41 @@ type outboxCopy struct {
 	SHA256  string `json:"sha256,omitempty"`
 	Size    int64  `json:"size,omitempty"`
 	Refused string `json:"refused,omitempty"`
+	Kept    string `json:"kept,omitempty"`
 	// Left is why the entry could not be removed from the outbox.
 	Left string `json:"left,omitempty"`
 }
 
-// errNotOutboxFile refuses an entry that is not a plain file of the outbox:
-// a link, a folder, a device, or a file with another link to it.
-type errNotOutboxFile struct{ why string }
+// outboxRefusal refuses an entry by the outbox's rules: not a plain file of
+// its own, a name the share is not given, or past a cap. A refused entry is
+// removed; any other failure keeps the entry for the next turn.
+type outboxRefusal struct{ why string }
 
-func (e errNotOutboxFile) Error() string { return e.why }
+func (e outboxRefusal) Error() string { return e.why }
 
-// copyShareOut copies the regular files at the top level of outbox into
-// share and empties outbox, answering what became of each entry, by name.
-// Each copy is written under a name share does not hold, created
-// exclusively, so nothing there is ever replaced; past the caps a file is
-// refused. Every entry is removed from the outbox, copied or not.
-func copyShareOut(outbox, share string) ([]outboxCopy, error) {
+// shareOutMaxEntries bounds the entries of the outbox one copy looks at and
+// reports one by one; the rest are removed unread and counted.
+const shareOutMaxEntries = 1000
+
+// copyOutboxInto copies the regular files at the top level of outbox into
+// share and empties outbox, answering what became of each entry it looked
+// at, by name, and how many more it removed unread. Each copy is written
+// under a name share does not hold, created exclusively, so nothing there
+// is ever replaced; past the caps a file is refused.
+func copyOutboxInto(outbox, share string) ([]outboxCopy, int, error) {
 	src, err := os.OpenRoot(outbox)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer func() { _ = src.Close() }()
 	dst, err := os.OpenRoot(share)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer func() { _ = dst.Close() }()
-	entries, err := fs.ReadDir(src.FS(), ".")
+	entries, err := readOutbox(src, shareOutMaxEntries)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	now := time.Now().UTC()
 	var out []outboxCopy
@@ -140,32 +148,85 @@ func copyShareOut(outbox, share string) ([]outboxCopy, error) {
 	for _, de := range entries {
 		name := de.Name()
 		c := outboxCopy{Time: now, Outbox: name}
+		var nameErr error
+		if de.Type().IsRegular() {
+			nameErr = outboxNameError(name)
+		}
 		switch {
 		case de.Type()&fs.ModeSymlink != 0:
 			c.Refused = "a link: only regular files are copied"
 		case de.IsDir():
-			c.Refused = "a folder: only files at the top of " + spec.AgentRoot + "/" + spec.AgentShareOutDir + " are copied"
+			c.Refused = "a folder: only files at the top of " + spec.AgentShareOutPath + " are copied"
 		case !de.Type().IsRegular():
 			c.Refused = "not a regular file"
-		case outboxNameError(name) != nil:
-			c.Refused = outboxNameError(name).Error()
+		case nameErr != nil:
+			c.Refused = nameErr.Error()
 		case files >= shareOutCaps.files:
 			c.Refused = fmt.Sprintf("past the %d files copied a turn", shareOutCaps.files)
 		default:
 			c.Path, c.SHA256, c.Size, err = copyOutboxFile(src, dst, name, shareOutCaps.total-total)
-			if err != nil {
-				c.Path, c.SHA256, c.Size, c.Refused = "", "", 0, err.Error()
-			} else {
+			var refusal outboxRefusal
+			switch {
+			case errors.As(err, &refusal):
+				c.Refused = refusal.why
+			case err != nil:
+				c.Kept = err.Error()
+			default:
 				files++
 				total += c.Size
 			}
 		}
-		if err := src.RemoveAll(name); err != nil {
-			c.Left = err.Error()
+		if c.Kept == "" {
+			if err := src.RemoveAll(name); err != nil {
+				c.Left = err.Error()
+			}
 		}
 		out = append(out, c)
 	}
-	return out, nil
+	return out, removeOutboxRest(src, len(entries)), nil
+}
+
+// readOutbox lists at most n of the outbox's entries, by name.
+func readOutbox(src *os.Root, n int) ([]fs.DirEntry, error) {
+	d, err := src.Open(".")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = d.Close() }()
+	entries, err := d.ReadDir(n)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	slices.SortFunc(entries, func(a, b fs.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
+	return entries, nil
+}
+
+// removeOutboxRest removes, unread, what the outbox holds past the entries
+// a copy looked at, when it looked at a full batch, and answers how many it
+// removed. It stops at a batch it cannot remove any of, so an entry that
+// will not go cannot hold it.
+func removeOutboxRest(src *os.Root, looked int) int {
+	if looked < shareOutMaxEntries {
+		return 0
+	}
+	removed := 0
+	for range 100 {
+		entries, err := readOutbox(src, shareOutMaxEntries)
+		if err != nil || len(entries) == 0 {
+			break
+		}
+		gone := 0
+		for _, de := range entries {
+			if src.RemoveAll(de.Name()) == nil {
+				gone++
+			}
+		}
+		removed += gone
+		if gone == 0 {
+			break
+		}
+	}
+	return removed
 }
 
 // copyOutboxFile copies name, a file of the outbox, into the share under the
@@ -180,10 +241,10 @@ func copyOutboxFile(src, dst *os.Root, name string, room int64) (string, string,
 		return "", "", 0, err
 	}
 	if !fi.Mode().IsRegular() {
-		return "", "", 0, errNotOutboxFile{"not a regular file"}
+		return "", "", 0, outboxRefusal{"not a regular file"}
 	}
 	if outboxLinks(fi) > 1 {
-		return "", "", 0, errNotOutboxFile{"a file with another link to it: only a file of its own is copied"}
+		return "", "", 0, outboxRefusal{"a file with another link to it: only a file of its own is copied"}
 	}
 	if fi.Size() > limit {
 		return "", "", 0, outboxTooLarge(limit)
@@ -196,7 +257,7 @@ func copyOutboxFile(src, dst *os.Root, name string, room int64) (string, string,
 	// The file opened is the one listed: a name swapped for a link or
 	// another file since is refused.
 	if ofi, err := in.Stat(); err != nil || !ofi.Mode().IsRegular() || !os.SameFile(fi, ofi) || outboxLinks(ofi) > 1 {
-		return "", "", 0, errNotOutboxFile{"it changed while it was being copied"}
+		return "", "", 0, outboxRefusal{"it changed while it was being copied"}
 	}
 	as, w, err := createNewShareFile(dst, name)
 	if err != nil {
@@ -220,9 +281,9 @@ func copyOutboxFile(src, dst *os.Root, name string, room int64) (string, string,
 // outboxTooLarge refuses a file past the bytes left to copy.
 func outboxTooLarge(limit int64) error {
 	if limit < shareOutCaps.file {
-		return fmt.Errorf("past the %s copied a turn", mib(shareOutCaps.total))
+		return outboxRefusal{fmt.Sprintf("past the %s copied a turn", mib(shareOutCaps.total))}
 	}
-	return fmt.Errorf("larger than %s", mib(shareOutCaps.file))
+	return outboxRefusal{fmt.Sprintf("larger than %s", mib(shareOutCaps.file))}
 }
 
 // mib spells a cap in MiB, or in bytes below one.
@@ -247,7 +308,7 @@ func createNewShareFile(dst *os.Root, name string) (string, *os.File, error) {
 			return "", nil, err
 		}
 	}
-	return "", nil, fmt.Errorf("the share holds %s and %d more files of that name", name, shareOutNameTries-1)
+	return "", nil, outboxRefusal{fmt.Sprintf("the share holds %s and %d more files of that name", name, shareOutNameTries-1)}
 }
 
 // numberedName is name for n = 1, and name with " (n)" before its extension
@@ -332,10 +393,19 @@ var shareOutHandOver = func(ctx context.Context, d dockerx.Client, p Params, rd 
 	return nil
 }
 
+// shareOutListed bounds the refused entries a copy names to the person and
+// to the agent one by one; the receipt has every line.
+const shareOutListed = 20
+
+// shareOutHandOverTimeout bounds the hand-over's one-shot.
+const shareOutHandOverTimeout = 2 * time.Minute
+
 // copyShareOut copies the share outbox into the share, once a turn is over
 // and at the segment's end: what is copied and what is refused is a line
 // each in receipts/share-checks.ndjson, a notice for the person, and a note
-// carried into the agent's next turn with the names the files took.
+// carried into the agent's next turn with the names the files took. A name
+// that was refused is quoted wherever it is shown, so its characters are
+// never taken for the terminal's or the conversation's own.
 func (s *liveSession) copyShareOut(ctx context.Context) {
 	rd := s.rd
 	if rd == nil || rd.shareOut == "" {
@@ -343,46 +413,75 @@ func (s *liveSession) copyShareOut(ctx context.Context) {
 	}
 	s.outboxMu.Lock()
 	defer s.outboxMu.Unlock()
-	if err := shareOutHandOver(ctx, s.d, s.p, rd); err != nil {
-		s.emit(session.Event{Kind: session.KindNotice, Text: "the share outbox: " + s.redact.String(err.Error())})
-	}
-	copies, err := copyShareOut(rd.shareOut, rd.share)
+	hctx, cancel := context.WithTimeout(ctx, shareOutHandOverTimeout)
+	err := shareOutHandOver(hctx, s.d, s.p, rd)
+	cancel()
 	if err != nil {
-		s.emit(session.Event{Kind: session.KindNotice, Text: "what the MCP servers saved could not be copied into the share: " + s.redact.String(err.Error())})
+		s.sayShareOut("the share outbox: " + err.Error())
+	}
+	copies, more, err := copyOutboxInto(rd.shareOut, rd.share)
+	if err != nil {
+		s.sayShareOut("what the MCP servers saved could not be copied into the share: " + err.Error())
 		return
+	}
+	if more > 0 {
+		copies = append(copies, outboxCopy{Time: time.Now().UTC(), Refused: fmt.Sprintf("%d more entries past the %d a turn looks at, removed unread", more, shareOutMaxEntries)})
 	}
 	if len(copies) == 0 {
 		return
 	}
 	s.logShareOut(copies)
 	var copied, refused []string
-	out := spec.AgentRoot + "/" + spec.AgentShareOutDir + "/"
+	unlisted := 0
 	for _, c := range copies {
-		if c.Refused != "" {
-			refused = append(refused, fmt.Sprintf("%s%s (%s)", out, c.Outbox, c.Refused))
-			s.emit(session.Event{Kind: session.KindNotice, Text: fmt.Sprintf("%s%s, saved by an MCP server, was not copied into the share: %s", out, c.Outbox, c.Refused)})
-			continue
+		switch {
+		case c.Path != "":
+			copied = append(copied, fmt.Sprintf("%s/%s as %s/%s", spec.AgentShareOutPath, c.Outbox, spec.AgentShareDir, c.Path))
+			s.sayShareOut(fmt.Sprintf("an MCP server saved %s/%s", spec.AgentShareDir, c.Path))
+		case len(refused) >= shareOutListed:
+			unlisted++
+		case c.Outbox == "":
+			refused = append(refused, c.Refused)
+			s.sayShareOut("the share outbox: " + c.Refused)
+		case c.Kept != "":
+			refused = append(refused, fmt.Sprintf("%q (kept for the next turn: %s)", c.Outbox, c.Kept))
+			s.sayShareOut(fmt.Sprintf("%q, saved by an MCP server in %s, could not be copied into the share and is kept for the next turn: %s", c.Outbox, spec.AgentShareOutPath, c.Kept))
+		default:
+			refused = append(refused, fmt.Sprintf("%q (%s)", c.Outbox, c.Refused))
+			s.sayShareOut(fmt.Sprintf("%q, saved by an MCP server in %s, was not copied into the share: %s", c.Outbox, spec.AgentShareOutPath, c.Refused))
 		}
-		copied = append(copied, fmt.Sprintf("%s%s as %s/%s", out, c.Outbox, spec.AgentShareDir, c.Path))
-		s.emit(session.Event{Kind: session.KindNotice, Text: fmt.Sprintf("an MCP server saved %s/%s", spec.AgentShareDir, c.Path)})
+		if c.Left != "" && len(refused) < shareOutListed {
+			s.sayShareOut(fmt.Sprintf("%q could not be removed from the share outbox: %s", c.Outbox, c.Left))
+		}
 	}
-	for _, c := range copies {
-		if c.Left != "" {
-			s.emit(session.Event{Kind: session.KindNotice, Text: fmt.Sprintf("%s%s could not be removed from the share outbox: %s", out, c.Outbox, s.redact.String(c.Left))})
-		}
+	if unlisted > 0 {
+		refused = append(refused, fmt.Sprintf("%d more, named in receipts/%s", unlisted, ShareChecksLog))
+		s.sayShareOut(fmt.Sprintf("%d more entries of the share outbox were not copied; receipts/%s names each", unlisted, ShareChecksLog))
 	}
 	var note []string
 	if len(copied) > 0 {
 		note = append(note, "Copied into the share after the last turn: "+strings.Join(copied, "; ")+".")
 	}
 	if len(refused) > 0 {
-		note = append(note, "Not copied into the share, and removed: "+strings.Join(refused, "; ")+".")
+		note = append(note, "Not copied into the share from "+spec.AgentShareOutPath+": "+strings.Join(refused, "; ")+".")
 	}
 	s.mu.Lock()
 	if !s.ending {
-		s.pendingNotices = append(s.pendingNotices, strings.Join(note, " "))
+		s.pendingNotices = append(s.pendingNotices, s.redact.String(strings.Join(note, " ")))
 	}
 	s.mu.Unlock()
+}
+
+// sayShareOut tells the person what the outbox's copy did: in the session,
+// or, once it has ended (the copy at its end), on the segment's stderr.
+func (s *liveSession) sayShareOut(text string) {
+	if ended, _ := s.Ended(); ended {
+		if s.p.Stderr != nil {
+			_, _ = fmt.Fprintln(s.p.Stderr, "note: "+s.redact.String(text))
+		}
+		return
+	}
+	s.emit(session.Event{Kind: session.KindNotice, Text: text})
 }
 
 // logShareOut appends what became of the outbox's entries to the segment's

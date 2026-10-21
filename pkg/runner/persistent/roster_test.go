@@ -301,8 +301,8 @@ func TestRosterReachesEveryGateWithTheServerShare(t *testing.T) {
 
 // TestAReadOnlyAgreementAsksAgainForTheOutbox: an agreement to a server's
 // sentence that it sees the share without saving into it covers the server
-// with its switch off, and not with it on, which now says it writes new
-// files into the share.
+// with its switch off, and not with it on, which says it writes new files
+// into the share.
 func TestAReadOnlyAgreementAsksAgainForTheOutbox(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	home := shortHome(t)
