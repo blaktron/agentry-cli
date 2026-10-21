@@ -31,7 +31,7 @@ const ImageTagPrefix = "agentry-runner"
 // patch (TestContextGoModFollowsTheModule): under the Go images'
 // GOTOOLCHAIN=local, a builder older than it refuses rather than building
 // the runner with an older standard library.
-const contextGoMod = "module github.com/blaktron/agentry-cli\n\ngo 1.27.2\n"
+const contextGoMod = "module github.com/blaktron/agentry-cli\n\ngo 1.27.3\n"
 
 // mainIgnoreTag is the build constraint main.go carries IN THIS REPO,
 // where it keeps package main out of package runnerimage's directory
