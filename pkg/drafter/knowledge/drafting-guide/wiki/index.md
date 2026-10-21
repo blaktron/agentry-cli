@@ -12,7 +12,7 @@ summary: Every page in drafting-guide, one line each, by section. Generated; do 
 
 - [Worked drafts](draft/examples.md) — Five whole drafts, each from a description to the manifest, the shape of its instructions and its notes; one with no tools, one with fetch and a key, one with a declared MCP server, each modelled on one of Agentry's first-party example QuickAgents, one that checks a server the person names (a target host), and one that checks a website the person names in a browser.
 - [Writing the instructions](draft/instructions.md) — How to write the AGENT.md a draft returns, the instruction its QuickAgent's agent follows; the six headings in order, what each holds, how much to write, and what to leave out because the System Prompt already says it.
-- [What checks a draft](draft/review.md) — The checks a draft meets after you answer (the rules, AI Review's check of the finished draft, one repair turn) and the scan that decides whether a submitted QuickAgent publishes, goes to review or is rejected. Today's facts; rewritten when the scan's rules on describing risk change.
+- [What checks a draft](draft/review.md) — The checks a draft meets after you answer (the rules, AI Review's check of the finished draft, one repair turn) and the scan that decides whether a submitted QuickAgent publishes, goes to review or is rejected. A QuickAgent that describes attacks is not held for describing them; what holds is an instruction to use a capability the manifest does not declare, an injection technique, or deceiving the person.
 
 ## Guide
 

@@ -1,14 +1,12 @@
 ---
 title: What checks a draft
 type: guide
-summary: The checks a draft meets after you answer (the rules, AI Review's check of the finished draft, one repair turn) and the scan that decides whether a submitted QuickAgent publishes, goes to review or is rejected. Today's facts; rewritten when the scan's rules on describing risk change.
+summary: The checks a draft meets after you answer (the rules, AI Review's check of the finished draft, one repair turn) and the scan that decides whether a submitted QuickAgent publishes, goes to review or is rejected. A QuickAgent that describes attacks is not held for describing them; what holds is an instruction to use a capability the manifest does not declare, an injection technique, or deceiving the person.
 sources: [web:https://docs.secureagentry.net/trust/, web:https://docs.secureagentry.net/agentry/builder/]
-updated: 2026-10-15
+updated: 2026-10-21
 ---
 
 # What checks a draft
-
-This page states today's checks. It is rewritten when the scan's rules for instructions that describe risk, rather than ask for harm, change.
 
 ## After you answer
 
@@ -26,7 +24,8 @@ The stages that most often hold a draft:
 
 - **Secrets (S2).** A key, a token or a password anywhere in the files, an `env` value included.
 - **Hidden content (S3).** Zero-width or bidirectional characters, HTML comments, encoded blobs. Write plain text.
-- **Injection signatures (S4) and AI Review (S5).** Text that reads as telling the consuming agent to override its instructions, to send data somewhere, to use a capability it was not declared, to deceive the person or to destroy something. Today a QuickAgent whose task is about attacks (a review of prompts, a phishing triage) can be held for review even when its instruction only describes them. Describe such patterns in your own words; never quote a working attack string, a credential pattern or an override phrase.
+- **Injection signatures (S4).** A line that tells the consuming agent to read a secret, send data somewhere or destroy something is rated by what the manifest declares. It holds the version (high) only when the host, the key or the program it names is not declared. A declared internet host, or a declared program that only a run on the person's own computer provides, is medium; a declared key, one of the base commands or a declared server is low. Both publish and are shown on the report. Text that only describes such an action, without telling the agent to take it, is not a hit. The injection techniques themselves still hold the version whatever is declared: an override of the agent's instructions, hidden or encoded text, coercing a tool, or keeping something across runs. So a QuickAgent whose task is about attacks (a review of prompts, a phishing triage) describes them in your own words and never quotes a working override phrase, attack string or credential pattern [src: web:https://docs.secureagentry.net/trust/].
+- **AI Review (S5).** It reads what the instructions tell the agent to do, not what they describe. An instruction that overrides the agent's own, uses a capability the manifest does not declare outside what the QuickAgent says it is for, or deceives the person is a high finding. Sending data out or destroying something is rated medium at most, which publishes and is shown on the report [src: web:https://docs.secureagentry.net/trust/].
 - **Declared MCP servers (S7).** A Critical advisory on a pinned version rejects it, and a High one with a CVSS score of 8.5 or more, or none, sends it to review. Read the registry's check of the version before you pin it [src: web:https://docs.secureagentry.net/trust/].
 - **An undeclared capability (S5, S9).** An instruction that uses a host, a command or a key the manifest does not declare can be read by AI Review as an undeclared capability, which is a high finding. When a later version of the QuickAgent is published, S9 compares it with the one before, and a host its content newly reaches without declaring it is a finding there too (see [Network and fetch](../manifest/egress-and-fetch.md)) [src: web:https://docs.secureagentry.net/trust/].
 

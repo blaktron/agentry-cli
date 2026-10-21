@@ -14,6 +14,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/runnerimage/websearch"
+	"github.com/blaktron/agentry/pkg/manifest"
 )
 
 func TestDefaultFileMatchesDefault(t *testing.T) {
@@ -789,6 +790,18 @@ func TestBaseExecCommands(t *testing.T) {
 	}
 	if b := BaseExecCommands(); !slices.IsSorted(b) || len(slices.Compact(slices.Clone(b))) != len(b) {
 		t.Errorf("BaseExecCommands = %v, want sorted and each once", b)
+	}
+}
+
+// TestBaseExecCommandsAreTheCores: the commands every machine provides are
+// the ones the registry's gate rates as provided to every release
+// (manifest.BaseExecCommands), so a declared command reads the same here
+// and at publish.
+func TestBaseExecCommandsAreTheCores(t *testing.T) {
+	core := slices.Clone(manifest.BaseExecCommands())
+	slices.Sort(core)
+	if got := BaseExecCommands(); !slices.Equal(got, core) {
+		t.Errorf("BaseExecCommands = %v, the core's manifest.BaseExecCommands = %v", got, core)
 	}
 }
 
