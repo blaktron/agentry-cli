@@ -195,3 +195,92 @@ func TestAgentConfigureAndGrantAskForConsent(t *testing.T) {
 		t.Errorf("a pack that is not kept: err = %v", err)
 	}
 }
+
+// TestAgentJSONAgreementIsAskedOfTheProgram: with --json and no --yes, a
+// change that needs agreement prints what to agree to and changes nothing;
+// the same command with --yes then applies it.
+func TestAgentJSONAgreementIsAskedOfTheProgram(t *testing.T) {
+	home := agentHome(t)
+	if _, _, err := runCLI(t, nil, "agent", "enable", "assistant"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runCLI(t, nil, "agent", "grant", "assistant", "share", "off"); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := runCLI(t, nil, "agent", "grant", "assistant", "share", "on", "--json")
+	if err == nil || exitCode(err) != engine.ExitPolicy || !strings.Contains(err.Error(), "--yes") {
+		t.Fatalf("grant --json without --yes: err = %v", err)
+	}
+	var asked struct {
+		Agent          string `json:"agent"`
+		NeedsAgreement []struct {
+			ID   string `json:"id"`
+			Line string `json:"line"`
+		} `json:"needsAgreement"`
+	}
+	if err := json.Unmarshal([]byte(out), &asked); err != nil {
+		t.Fatalf("output is not one JSON object: %v\n%s", err, out)
+	}
+	if asked.Agent != "assistant" || len(asked.NeedsAgreement) != 1 || asked.NeedsAgreement[0].ID != "share" || asked.NeedsAgreement[0].Line == "" {
+		t.Errorf("asked = %+v", asked)
+	}
+	if cfg, _ := persistent.LoadConfig(home, "assistant"); cfg.Switches["share"] {
+		t.Fatal("the switch was turned on without agreement")
+	}
+	if _, _, err := runCLI(t, nil, "agent", "grant", "assistant", "share", "on", "--json", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, _ := persistent.LoadConfig(home, "assistant"); !cfg.Switches["share"] {
+		t.Error("the switch is off after agreeing")
+	}
+}
+
+// TestAgentAttachIsForAProgram: attach speaks JSON only, and needs the agent
+// running.
+func TestAgentAttachIsForAProgram(t *testing.T) {
+	agentHome(t)
+	_, _, err := runCLI(t, nil, "agent", "attach", "assistant")
+	if err == nil || exitCode(err) != engine.ExitUsage || !strings.Contains(err.Error(), "--json") {
+		t.Errorf("attach without --json: err = %v", err)
+	}
+	_, _, err = runCLI(t, nil, "agent", "attach", "assistant", "--json")
+	if err == nil || exitCode(err) != engine.ExitUsage || !strings.Contains(err.Error(), "not running") {
+		t.Errorf("attach to a stopped agent: err = %v", err)
+	}
+	_, _, err = runCLI(t, nil, "agent", "attach", "main", "--json")
+	if err == nil || !strings.Contains(err.Error(), "Agentry Desktop") {
+		t.Errorf("attach to Main: err = %v", err)
+	}
+}
+
+// TestAgentConfigurePublishesAPort: --port name=number saves one of the
+// Coding agent's ports with agreement, --no-port takes it away, and a port
+// that is not name=number, or one for the Assistant, is refused.
+func TestAgentConfigurePublishesAPort(t *testing.T) {
+	home := agentHome(t)
+	for _, bad := range []string{"web", "web=", "web=http", "=3000"} {
+		if _, _, err := runCLI(t, nil, "agent", "configure", "coder", "--port", bad, "--yes"); err == nil || exitCode(err) != engine.ExitUsage {
+			t.Errorf("--port %q: err = %v", bad, err)
+		}
+	}
+	if _, _, err := runCLI(t, nil, "agent", "configure", "coder", "--port", "web=3000", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := persistent.LoadConfig(home, "coder")
+	if len(cfg.Ports) != 1 || cfg.Ports[0] != (persistent.Port{Name: "web", Port: 3000}) || cfg.Consented["port:web"] == "" {
+		t.Fatalf("config = %+v", cfg)
+	}
+	out, _, err := runCLI(t, nil, "agent", "show", "coder")
+	if err != nil || !strings.Contains(out, "port:web") || !strings.Contains(out, "http://127.0.0.1:3000") {
+		t.Fatalf("show: %v\n%s", err, out)
+	}
+	if _, _, err := runCLI(t, nil, "agent", "configure", "coder", "--no-port", "web"); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, _ := persistent.LoadConfig(home, "coder"); len(cfg.Ports) != 0 {
+		t.Fatalf("after --no-port: %+v", cfg)
+	}
+	if _, _, err := runCLI(t, nil, "agent", "configure", "assistant", "--port", "web=3000", "--yes"); err == nil || !strings.Contains(err.Error(), "Coding agent alone") {
+		t.Errorf("a port for the Assistant: err = %v", err)
+	}
+}

@@ -363,6 +363,12 @@ type remote struct {
 	reason   session.EndReason
 	inTurn   bool
 	turnDone chan error
+	// turnText is the turn in flight; turnSeen says its user_turn has come
+	// back (ending in the text: notices the runner adds go before it), so
+	// the next answer is its own and not the end of a turn another chat had
+	// in flight when this one sent.
+	turnText string
+	turnSeen bool
 }
 
 func (r *remote) write(cmd Command) error {
@@ -388,6 +394,12 @@ func (r *remote) read() {
 			continue
 		}
 		ev := rep.Event.Event
+		if rep.Event.Refused == RefusedBusy {
+			// Another chat's turn is in flight: the send is answered busy,
+			// which the chat says in its own words.
+			r.finishTurn(ErrBusy)
+			continue
+		}
 		if rep.Event.Refused != "" {
 			r.finishTurn(errors.New(ev.Text))
 			r.events <- ev
@@ -395,8 +407,19 @@ func (r *remote) read() {
 		}
 		r.events <- ev
 		switch ev.Kind {
+		case session.KindUserTurn:
+			r.mu.Lock()
+			if r.inTurn && !ev.Synthetic && strings.HasSuffix(ev.Text, r.turnText) {
+				r.turnSeen = true
+			}
+			r.mu.Unlock()
 		case session.KindAssistantTurn:
-			r.finishTurn(nil)
+			r.mu.Lock()
+			own := r.turnSeen
+			r.mu.Unlock()
+			if own {
+				r.finishTurn(nil)
+			}
 		case session.KindError:
 			r.finishTurn(errors.New(ev.Text))
 		case session.KindSessionEnd:
@@ -440,7 +463,7 @@ func (r *remote) Send(ctx context.Context, text string) error {
 		r.mu.Unlock()
 		return ErrBusy
 	}
-	r.inTurn = true
+	r.inTurn, r.turnText, r.turnSeen = true, text, false
 	r.mu.Unlock()
 	if err := r.write(Command{Send: &protocol.Send{Text: text}}); err != nil {
 		r.finishTurn(err)

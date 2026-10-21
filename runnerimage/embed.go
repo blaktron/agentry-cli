@@ -16,7 +16,7 @@ import (
 	"strings"
 )
 
-//go:embed Dockerfile main.go applink/*.go brotli/*.go brotli/LICENSE bridge/*.go beneath/*.go sockfilter/*.go sockfilter/*.json sockfilter/chromium-seccomp.LICENSE sockfilter/chromium-seccomp.NOTICE hostlink/*.go toolsrv/*.go toolargs/*.go toolsrv/pdf/* netproxy/*.go minimize/*.go confine/*.go decode/*.go judge/*.go websearch/*.go reportdesign/*.go reportdesign/builtins/*.json webscan/*.go probe/*.go source/*.go netaddr/*.go send/*.go
+//go:embed Dockerfile main.go applink/*.go brotli/*.go brotli/LICENSE bridge/*.go beneath/*.go sockfilter/*.go sockfilter/*.json sockfilter/chromium-seccomp.LICENSE sockfilter/chromium-seccomp.NOTICE hostlink/*.go toolsrv/*.go toolargs/*.go toolsrv/pdf/* netproxy/*.go minimize/*.go portrelay/*.go confine/*.go decode/*.go judge/*.go websearch/*.go reportdesign/*.go reportdesign/builtins/*.json webscan/*.go probe/*.go source/*.go netaddr/*.go send/*.go
 var contextFS embed.FS
 
 // ImageTagPrefix names the locally built runner image; the engine derives
@@ -31,7 +31,7 @@ const ImageTagPrefix = "agentry-runner"
 // patch (TestContextGoModFollowsTheModule): under the Go images'
 // GOTOOLCHAIN=local, a builder older than it refuses rather than building
 // the runner with an older standard library.
-const contextGoMod = "module github.com/blaktron/agentry-cli\n\ngo 1.27.2\n"
+const contextGoMod = "module github.com/blaktron/agentry-cli\n\ngo 1.27.3\n"
 
 // mainIgnoreTag is the build constraint main.go carries IN THIS REPO,
 // where it keeps package main out of package runnerimage's directory

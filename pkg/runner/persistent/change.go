@@ -52,6 +52,10 @@ type Change struct {
 	// asked the person for it.
 	DevHost      *DevHost `json:"devHost,omitempty"`
 	ClearDevHost bool     `json:"clearDevHost,omitempty"`
+	// AddPort publishes one of the Coding agent's ports, on; RemovePort
+	// takes one away by its name.
+	AddPort    *Port  `json:"addPort,omitempty"`
+	RemovePort string `json:"removePort,omitempty"`
 	// Consent says the person consented to what this change turns on, as
 	// the lines a ConsentError listed say it.
 	Consent bool `json:"consent,omitempty"`
@@ -212,6 +216,38 @@ func ApplyChange(home string, a Agent, c *Config, ch Change) (restart bool, err 
 		delete(next.Switches, EntryDevHost)
 		delete(next.Consented, EntryDevHost)
 	}
+	if ch.AddPort != nil || ch.RemovePort != "" {
+		if !a.Builtin.Codes() {
+			return false, fmt.Errorf("the %s agent publishes no ports: the Coding agent alone serves programs", a.Name)
+		}
+	}
+	if p := ch.AddPort; p != nil {
+		if err := p.check(); err != nil {
+			return false, err
+		}
+		for _, q := range next.Ports {
+			switch {
+			case q.Name == p.Name:
+				return false, fmt.Errorf("the %s agent already has a port named %s (%s)", a.Name, q.Name, q.Address())
+			case q.Port == p.Port:
+				return false, fmt.Errorf("the %s agent already publishes port %d, as %s", a.Name, q.Port, q.Name)
+			}
+		}
+		if len(next.Ports) >= MaxPorts {
+			return false, fmt.Errorf("the %s agent publishes at most %d ports", a.Name, MaxPorts)
+		}
+		next.Ports = append(slices.Clone(next.Ports), *p)
+		delete(next.Switches, PortEntryID(p.Name))
+	}
+	if name := ch.RemovePort; name != "" {
+		i := slices.IndexFunc(next.Ports, func(q Port) bool { return q.Name == name })
+		if i < 0 {
+			return false, fmt.Errorf("the %s agent has no port named %s", a.Name, name)
+		}
+		next.Ports = slices.Delete(slices.Clone(next.Ports), i, i+1)
+		delete(next.Switches, PortEntryID(name))
+		delete(next.Consented, PortEntryID(name))
+	}
 	if sw := ch.Switch; sw != nil {
 		e, ok := BuildRoster(a, next, nil).Entry(sw.ID)
 		switch {
@@ -352,6 +388,10 @@ func personaFrame(c Config) string {
 // around it. continued says the segment continued the conversation, in which
 // what was switched off may have worked. "" when the change gave and took
 // nothing.
+// backgroundEnded tells an agent that runs programs what a restart did to
+// the ones it left running: they ran in the segment that ended.
+const backgroundEnded = "Agentry restarted you for it, so every program you started in the background has ended: start again any you still need."
+
 func changeFrame(before, after Roster, continued bool) string {
 	given := func(r Roster) map[string]bool {
 		m := map[string]bool{}
@@ -389,6 +429,9 @@ func changeFrame(before, after Roster, continued bool) string {
 	if len(on) > 0 {
 		did = append(did, "switched on "+strings.Join(on, ", "))
 		notes = append(notes, "What was switched on is yours from this turn.")
+	}
+	if had[EntryCommands] {
+		notes = append(notes, backgroundEnded)
 	}
 	return "(The person changed what you have in Agentry since your last turn: they " + strings.Join(did, ", and ") + ". " +
 		strings.Join(notes, " ") + ")\n\n"

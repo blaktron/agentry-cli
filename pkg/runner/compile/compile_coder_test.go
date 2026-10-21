@@ -198,3 +198,32 @@ func TestOpenEgressOutsideTheCodingAgentStaysThePolicys(t *testing.T) {
 		t.Fatalf("a built-in's own \"*\" under the default policy: %v", err)
 	}
 }
+
+// TestTheCodingAgentsPortsReachTheToolsSpecAndThePlan: published ports are
+// named to the tools server and in the plan's lines while its programs run;
+// without programs nothing serves them, so neither does either.
+func TestTheCodingAgentsPortsReachTheToolsSpecAndThePlan(t *testing.T) {
+	ports := []spec.CoderPort{{Name: "web", Port: 3000}, {Name: "api", Port: 8080}}
+	plan, ts, _ := compiledCoder(t, coderInputs(t, spec.CoderGrant{Commands: true, Ports: ports}))
+	if !slices.Equal(ts.Exec.Ports, []toolsrv.Port{{Name: "web", Port: 3000}, {Name: "api", Port: 8080}}) {
+		t.Errorf("tools spec ports: %+v", ts.Exec.Ports)
+	}
+	if line := plan.Enforcement["persistent.ports"]; !strings.Contains(line, "web on 3000, api on 8080") || !strings.Contains(line, "127.0.0.1") {
+		t.Errorf("ports line: %q", line)
+	}
+	if !slices.Contains(plan.Tools, toolsrv.ToolBackgroundOutput) || !slices.Contains(plan.Tools, toolsrv.ToolStopBackground) {
+		t.Errorf("the background tools are not granted: %v", plan.Tools)
+	}
+	plan, ts, _ = compiledCoder(t, coderInputs(t, spec.CoderGrant{Ports: ports}))
+	if len(ts.Exec.Ports) != 0 || plan.Enforcement["persistent.ports"] != "" {
+		t.Errorf("without programs: ports %+v, line %q", ts.Exec.Ports, plan.Enforcement["persistent.ports"])
+	}
+	for name, bad := range map[string][]spec.CoderPort{
+		"privileged":     {{Name: "web", Port: 22}},
+		"a number twice": {{Name: "web", Port: 3000}, {Name: "api", Port: 3000}},
+	} {
+		if _, err := Compile(coderInputs(t, spec.CoderGrant{Commands: true, Ports: bad}), t.TempDir()); err == nil {
+			t.Errorf("%s: compiled", name)
+		}
+	}
+}

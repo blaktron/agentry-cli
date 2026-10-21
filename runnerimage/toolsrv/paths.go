@@ -9,8 +9,9 @@
 // yet (fs_write targets). The symlink check resolves the deepest EXISTING
 // ancestor of the target, so a link planted inside the workspace cannot
 // alias a lexically clean path back out of it. A link created between
-// check and use is out of scope: the tools container is the only writer
-// during a run and handles calls serially.
+// check and use, by a program running in the background, is caught at use
+// in the folders a program can write: their tools open beneath the root
+// (package beneath). No program writes the other roots.
 
 package toolsrv
 

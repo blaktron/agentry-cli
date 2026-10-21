@@ -22,7 +22,7 @@ import (
 )
 
 // ErrBusy refuses a turn sent while another is in flight.
-var ErrBusy = errors.New("a turn is in flight; send again when its answer arrives")
+var ErrBusy = session.ErrBusy
 
 // ErrDesktopOnly refuses an agent that runs only in Agentry Desktop.
 var ErrDesktopOnly = errors.New("runs only in Agentry Desktop")
@@ -259,6 +259,12 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 			reason = "the agent's first segment"
 		}
 		sess.SetResumeReason(reason)
+	}
+	if a.Builtin.Codes() && cfg.Segments > 0 && !byChange {
+		// The conversation goes on, and the programs it started in the
+		// background did not: they ran in the segment before. A restart
+		// for a change says so in the change's own frame.
+		carry += "(Agentry started you again since your last turn. " + backgroundEnded + ")\n\n"
 	}
 	persona := cfg.PersonaGiven
 	if !resumed {

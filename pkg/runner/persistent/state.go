@@ -116,10 +116,10 @@ func LogPath(home, name string) string { return filepath.Join(Dir(home, name), l
 
 // ConfigVersion is the version of config.yaml this build writes. Version 2
 // added the share folder, the person's servers and packs, the switches and
-// the consents, and version 3 the Coding agent's dev server; a build that
-// reads an older version alone refuses a newer one rather than drop what it
-// does not know on its next save.
-const ConfigVersion = 3
+// the consents, version 3 the Coding agent's dev server and version 4 its
+// published ports; a build that reads an older version alone refuses a newer
+// one rather than drop what it does not know on its next save.
+const ConfigVersion = 4
 
 // Config is the agent's config.yaml: what the person chose for it, and the
 // conversation its next segment continues.
@@ -159,6 +159,9 @@ type Config struct {
 	// DevHost is the Coding agent's dev server, which the person saved; it
 	// is a roster entry.
 	DevHost *DevHost `yaml:"devHost,omitempty" json:"devHost,omitempty"`
+	// Ports are the Coding agent's published ports, which the person
+	// named; each is a roster entry.
+	Ports []Port `yaml:"ports,omitempty" json:"ports,omitempty"`
 }
 
 // Conversation names a harness's stored conversation: the adapter that
@@ -195,6 +198,9 @@ func SaveConfig(home, name string, c Config) error {
 	// build that reads version 2 still reads every other agent's.
 	c.Version = 2
 	if c.DevHost != nil {
+		c.Version = 3
+	}
+	if len(c.Ports) > 0 {
 		c.Version = ConfigVersion
 	}
 	b, err := yaml.Marshal(c)

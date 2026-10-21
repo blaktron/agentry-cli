@@ -39,6 +39,7 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/hostlink"
 	"github.com/blaktron/agentry-cli/runnerimage/minimize"
 	"github.com/blaktron/agentry-cli/runnerimage/netproxy"
+	"github.com/blaktron/agentry-cli/runnerimage/portrelay"
 	"github.com/blaktron/agentry-cli/runnerimage/probe"
 	"github.com/blaktron/agentry-cli/runnerimage/send"
 	"github.com/blaktron/agentry-cli/runnerimage/sockfilter"
@@ -70,6 +71,9 @@ const usageText = `usage: agentry-runner <mode> [flags]
         (the host link's container) serve the target-host tools on stdio,
         from /run/agentry/hostspec.json and the run's /run/agentry/hosts;
         every SSH session is the host link's own, through one relay a host
+  port-relay <port>
+        (the Coding agent's tools server) carry one connection to the
+        container's own 127.0.0.1:<port> over stdio
   source --kind repository|url --url <https address> [--ref <ref>] --out <dir> --work <dir> --proxy <url>
         [--max-files N] [--max-bytes N] [--token-stdin]
         (the files container's fetch step) fetch an input source into --out as
@@ -130,6 +134,15 @@ func main() {
 			usageExit()
 		}
 		err = hostlink.Serve(context.Background(), os.Stdin, os.Stdout, os.Stderr, hostlink.DefaultConfig())
+	case portrelay.Role:
+		// One connection to a published port, carried over stdio.
+		if len(os.Args) != 3 {
+			usageExit()
+		}
+		var port int
+		if port, err = portrelay.ParsePort(os.Args[2]); err == nil {
+			err = portrelay.Pipe(port, os.Stdin, os.Stdout)
+		}
 	case "source":
 		err = runSource(os.Args[2:])
 	case "deliver":
