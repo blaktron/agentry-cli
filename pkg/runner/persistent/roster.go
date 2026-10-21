@@ -233,7 +233,9 @@ func BuildRosterUnder(a Agent, c Config, applied *Applied, malwareCheck bool) Ro
 			if c.Switches[e.ShareSwitch] {
 				e.Share, e.Line = true, seesLine
 			} else {
-				e.alike = []string{seesLine}
+				// So does a sentence that it sees the share without
+				// saving into it.
+				e.alike = []string{seesLine, e.Line + readOnlyShareLine(a)}
 			}
 		}
 		if srv.Auth == manifest.AuthOAuth || srv.OAuth != nil {
@@ -316,10 +318,21 @@ func ServerMaySeeShare(srv manifest.MCPServer) error {
 	return nil
 }
 
-// serverShareLine is what a server's sentence adds when it sees the share:
-// for the Coding agent, whose share is read as it is, that it sees it
-// unchecked.
+// serverShareLine is what a server's sentence adds when it sees the share,
+// and saves new files into it through the share outbox: for the Coding
+// agent, whose share is read as it is, that it sees it unchecked.
 func serverShareLine(a Agent) string {
+	if a.Builtin.Codes() {
+		return ", and sees your share folder (read only, unchecked, and writes new files into it)"
+	}
+	return ", and sees your share folder (read only, and writes new files into it)"
+}
+
+// readOnlyShareLine is what a server's sentence adds for seeing the share
+// without saving into it. An agreement recorded to that sentence covers the
+// server's sentence with the switch off, which says less, and not the one
+// with it on, which says more, so turning the switch on asks again.
+func readOnlyShareLine(a Agent) string {
 	if a.Builtin.Codes() {
 		return ", and sees your share folder (read only, unchecked)"
 	}

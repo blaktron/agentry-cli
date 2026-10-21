@@ -375,11 +375,11 @@ func TestAgentGrantLetsAServerSeeTheShare(t *testing.T) {
 	if _, _, err := runCLI(t, nil, "agent", "grant", "assistant", sw, "on"); err == nil {
 		t.Fatal("the switch was turned on without agreement")
 	}
-	if _, stderr, err := runCLI(t, nil, "agent", "grant", "assistant", sw, "on", "--yes"); err != nil || !strings.Contains(stderr, "and sees your share folder (read only)") {
+	if _, stderr, err := runCLI(t, nil, "agent", "grant", "assistant", sw, "on", "--yes"); err != nil || !strings.Contains(stderr, "and sees your share folder (read only, and writes new files into it)") {
 		t.Fatalf("grant: %v\n%s", err, stderr)
 	}
 	out, _, err = runCLI(t, nil, "agent", "show", "assistant")
-	if err != nil || !strings.Contains(out, "sees your share folder: yes, read only") {
+	if err != nil || !strings.Contains(out, "sees your share folder: yes, read only, and saves new files into it") {
 		t.Fatalf("show after: %v\n%s", err, out)
 	}
 	js, _, err := runCLI(t, nil, "agent", "show", "assistant", "--json")

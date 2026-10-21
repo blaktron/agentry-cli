@@ -94,7 +94,10 @@ func preparePersistentFolders(p Params, rd *runDirs) error {
 			return Classify(ExitCLI, err)
 		}
 	}
-	return prepareShareMirror(p, rd)
+	if err := prepareShareMirror(p, rd); err != nil {
+		return err
+	}
+	return prepareShareOut(p, rd)
 }
 
 // prepareShareMirror holds a segment to its plan's servers that see the

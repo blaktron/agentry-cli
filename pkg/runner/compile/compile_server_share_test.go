@@ -2,6 +2,7 @@ package compile
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -68,9 +69,17 @@ func TestNoServerBindsTheShareWritable(t *testing.T) {
 					}
 				}
 			}
+			// The share is written by the tools server alone; the server
+			// saves into the share outbox, which no other container binds.
+			outbox := spec.PHShareOut + ":" + spec.AgentRoot + "/" + spec.AgentShareOutDir
+			for name, e := range reg {
+				if v := strs(e["volumes"]); slices.Contains(v, outbox) != (name == "mcp-pypi-office-word-mcp-server") {
+					t.Errorf("%s binds %v", name, v)
+				}
+			}
 			writable := strings.Split(gatewayEnv(plan, "MCP_GATEWAY_DOCKER_BIND_ALLOW_WRITABLE_PATHS"), ":")
-			if len(writable) != 2 || writable[0] != spec.PHOut || writable[1] != spec.PHShare {
-				t.Errorf("the writable list is %v, want the output folder and the share alone", writable)
+			if !slices.Equal(writable, []string{spec.PHOut, spec.PHShare, spec.PHShareOut}) {
+				t.Errorf("the writable list is %v, want the output folder, the share and the share outbox alone", writable)
 			}
 			roots := gatewayEnv(plan, "MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS")
 			if !strings.Contains(roots, tc.root) || tc.other != "" && strings.Contains(roots, tc.other) {
@@ -85,7 +94,8 @@ func TestNoServerBindsTheShareWritable(t *testing.T) {
 	in := persistentInputs(t, &spec.AgentFiles{Share: true, CheckShare: true})
 	in.MCPServers = []spec.MCPServerSpec{wordSpec()}
 	plan, _, reg := compiledCoder(t, in)
-	if got := shareVolumes(reg["mcp-pypi-office-word-mcp-server"]); len(got) != 0 || strings.Contains(gatewayEnv(plan, "MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS"), spec.PHShareMirror) {
+	if got := shareVolumes(reg["mcp-pypi-office-word-mcp-server"]); len(got) != 0 || strings.Contains(gatewayEnv(plan, "MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS"), spec.PHShareMirror) ||
+		strings.Contains(gatewayEnv(plan, "MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS"), spec.PHShareOut) || strings.Contains(gatewayEnv(plan, "MCP_GATEWAY_DOCKER_BIND_ALLOW_WRITABLE_PATHS"), spec.PHShareOut) {
 		t.Fatalf("a server the person did not let see the share binds %v", got)
 	}
 	if _, ok := plan.Enforcement["persistent.serverShare"]; ok {
@@ -171,6 +181,9 @@ func TestThePromptSaysWhereAServerSeesTheShare(t *testing.T) {
 	instr := renderedInstruction(t, dir, plan.Harness.Adapter)
 	if !strings.Contains(instr, "mcp-pypi-office-word-mcp-server see the person's share folder, read only") || !strings.Contains(instr, spec.AgentRoot+"/"+spec.AgentShareDir+"/<file>") {
 		t.Fatalf("the System Prompt does not say where the server sees the share:\n%s", instr)
+	}
+	if !strings.Contains(instr, spec.AgentRoot+"/"+spec.AgentShareOutDir+"/<name>") || !strings.Contains(instr, `"<name> (2)"`) || !strings.Contains(instr, "never over a file") {
+		t.Fatalf("the System Prompt does not say where the server saves into the share:\n%s", instr)
 	}
 	in.ShareServers = nil
 	dir = t.TempDir()
