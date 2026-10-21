@@ -364,3 +364,31 @@ func TestAOneTurnRunAtCapacityIsSentAgainBeforeAnyToolCall(t *testing.T) {
 type nopWriteCloser struct{ io.Writer }
 
 func (nopWriteCloser) Close() error { return nil }
+
+// docker-agent spends its own quick retries and then prints the provider's
+// words only as its last stderr line: that too is a capacity answer.
+func TestAHarnessAtCapacityOnItsStderrStartsAgain(t *testing.T) {
+	shortCapacityWait(t)
+	p, f := fixture(t)
+	happyFake(f)
+	var mu sync.Mutex
+	n := 0
+	f.Foreground["-agent"] = &dockerx.FakeForeground{Handler: func(_ context.Context, _ dockerx.RunSpec, _ io.Reader, stdout, stderr io.Writer) (int, error) {
+		mu.Lock()
+		n++
+		first := n == 1
+		mu.Unlock()
+		if first {
+			_, _ = io.WriteString(stderr, "Welcome to docker agent!\n\nError: model failed: error receiving from stream: HTTP 503: Selected model is at capacity. Please try a different model.\n")
+			return 1, nil
+		}
+		_, _ = io.WriteString(stdout, happyStream)
+		return 0, nil
+	}}
+	if _, err := Run(context.Background(), f, p); err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("the harness started %d times, want 2", n)
+	}
+}

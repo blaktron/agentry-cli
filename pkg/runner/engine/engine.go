@@ -1320,7 +1320,7 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 			detail = "\nharness error: " + collector.harnessErrReported + detail
 		}
 		out.err = Classify(ExitHarness, fmt.Errorf("agent exited %d%s", exit, detail))
-		out.atCapacity = exitedAtCapacity(p, collector.harnessErrReported)
+		out.atCapacity = exitedAtCapacity(p, collector.harnessErrReported, stderrPath)
 	}
 	return out
 }

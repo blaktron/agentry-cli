@@ -384,7 +384,7 @@ func runHostHarness(ctx context.Context, p Params, rd *runDirs, token string, re
 			detail = "\nharness error: " + collector.harnessErrReported + detail
 		}
 		out.err = Classify(ExitHarness, fmt.Errorf("harness exited %d%s", exit, detail))
-		out.atCapacity = exitedAtCapacity(p, collector.harnessErrReported)
+		out.atCapacity = exitedAtCapacity(p, collector.harnessErrReported, stderrPath)
 	}
 	return out
 }

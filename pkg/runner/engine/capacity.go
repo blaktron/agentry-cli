@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
@@ -127,11 +128,39 @@ func (rd *runDirs) canRestartAtCapacity(ctx context.Context) bool {
 }
 
 // exitedAtCapacity reports whether an autonomous harness that exited
-// failing did so on a capacity answer: the error it reported says the model
-// is at capacity. A run driven as one session turn has already waited in
-// its session (oneTurn) and is never started again.
-func exitedAtCapacity(p Params, reported string) bool {
-	return p.Plan.Harness.OneTurn == nil && adapter.AtCapacity(reported)
+// failing did so on a capacity answer: the error it reported on its event
+// stream, or the last lines of its stderr, where a harness that has spent
+// its own quick retries prints its fatal error (docker-agent's "Error:
+// model failed: … HTTP 503: …"), say the model is at capacity. A run driven
+// as one session turn has already waited in its session (oneTurn) and is
+// never started again.
+func exitedAtCapacity(p Params, reported, stderrPath string) bool {
+	if p.Plan.Harness.OneTurn != nil {
+		return false
+	}
+	return adapter.AtCapacity(reported) || adapter.AtCapacity(lastLines(stderrPath, capacityStderrLines))
+}
+
+// capacityStderrLines is how many of a harness's last stderr lines are read
+// for its fatal error: the harness's own last words, not its earlier log.
+const capacityStderrLines = 3
+
+// lastLines is the last n non-empty lines of the file at path.
+func lastLines(path string, n int) string {
+	b, err := os.ReadFile(path) //nolint:gosec // our receipts file
+	if err != nil {
+		return ""
+	}
+	var lines []string
+	for _, l := range strings.Split(string(b), "\n") {
+		if strings.TrimSpace(l) != "" {
+			lines = append(lines, l)
+		}
+	}
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // withBase adds the usage of the harness's earlier starts.
