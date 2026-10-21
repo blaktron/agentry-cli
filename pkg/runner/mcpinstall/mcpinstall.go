@@ -643,6 +643,15 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 		}
 		unpacked := newArchiveSink(staging)
 		builder := "agentry-mcpinstall-" + r.ID
+		// The builder writes the server's tree inside the container's own
+		// filesystem, at the prefix the server runs from, and hands it over
+		// as one archive on stdout: no folder of this machine is mounted
+		// into it. Where the engine runs in a VM, a mounted folder is a
+		// file-sharing mount (9p on Windows), through which thousands of
+		// small writes crawl. It runs as the image's own user, who can
+		// create the prefix, as the server itself later runs; the files on
+		// this machine are written by this process, so they are the
+		// person's.
 		code, err := dockerx.RunForegroundUnder(ctx, d, dockerx.RunSpec{
 			Name:  builder,
 			Image: image,
@@ -655,15 +664,6 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 			// Its stdout is the archive: kept in no log, which would hold
 			// a second copy and slow the stream many times over.
 			NoLog: true,
-			// The builder writes the server's tree inside the container's
-			// own filesystem, at the prefix the server runs from, and hands
-			// it over as one archive on stdout: no folder of this machine is
-			// mounted into it. Where the engine runs in a VM, a mounted
-			// folder is a file-sharing mount (9p on Windows), through which
-			// thousands of small writes crawl. So it runs as the image's own
-			// user, who can create the prefix; the files on this machine are
-			// written by this process, so they are the person's.
-			//
 			// The install runs under the policy's runtime like every
 			// container of a run; "" is the daemon's default. The
 			// proxy's alias is pinned for it (egress.hosts).

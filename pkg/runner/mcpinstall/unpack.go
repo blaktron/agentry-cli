@@ -17,13 +17,12 @@ import (
 // archive. Many small writes then stay inside the engine, which matters where
 // the engine runs in a VM and a folder of this machine reaches it through a
 // file-sharing mount (Docker Desktop and Rancher Desktop on Windows, where it
-// is 9p): an install of thousands of files through such a mount took minutes,
-// and the same install inside the VM takes seconds. unpackStore writes the
-// archive into the server's folder here, and the store's digest is taken over
-// what it wrote, as before.
+// is 9p): thousands of small files take minutes through such a mount and
+// seconds inside the VM. unpackStore writes the archive into the server's
+// folder here, and the store's digest is taken over what it wrote.
 
 // Bounds on one server's archive, far above any real install, so a builder
-// that writes without end fills neither the disk nor the CLI's time.
+// that writes without end cannot fill the disk.
 const (
 	maxStoreEntries = 1_000_000
 	maxStoreBytes   = 32 << 30
@@ -39,15 +38,21 @@ const (
 func unpackStore(r io.Reader, dir string) error {
 	root, err := os.OpenRoot(dir)
 	if err != nil {
-		return err
+		return fmt.Errorf("open the folder the server is unpacked into: %w", err)
 	}
 	defer func() { _ = root.Close() }()
-	tr := tar.NewReader(r)
+	end := &endOfStream{r: r}
+	tr := tar.NewReader(end)
 	var entries int
 	var total int64
 	for {
 		h, err := tr.Next()
 		if errors.Is(err, io.EOF) {
+			if end.reached {
+				// The stream ended where an entry would begin, before the
+				// archive's own end: a tree cut short, not a whole one.
+				return errors.New("the builder's archive ends before its end-of-archive marker")
+			}
 			return nil
 		}
 		if err != nil {
@@ -76,18 +81,50 @@ func unpackStore(r io.Reader, dir string) error {
 				return fmt.Errorf("unpack %s: %w", h.Name, err)
 			}
 		default:
-			return fmt.Errorf("unpack %s: an entry of type %q is not a file or a folder, and a server's folder holds nothing else", h.Name, string(h.Typeflag))
+			return fmt.Errorf("unpack %s: it is %s, and a server's folder holds files and folders alone", h.Name, entryKind(h.Typeflag))
 		}
 	}
+}
+
+// entryKind names what an archive entry that is not a file or a folder is.
+func entryKind(t byte) string {
+	switch t {
+	case tar.TypeSymlink:
+		return "a symbolic link"
+	case tar.TypeLink:
+		return "a hard link"
+	case tar.TypeChar, tar.TypeBlock:
+		return "a device"
+	case tar.TypeFifo:
+		return "a FIFO"
+	}
+	return fmt.Sprintf("an entry of tar type %q", string(t))
+}
+
+// endOfStream says whether the stream under a tar reader ran out: the reader
+// reports io.EOF both after the archive's end-of-archive marker and when the
+// stream stops exactly between two entries, and only the second reaches the
+// end of the stream first.
+type endOfStream struct {
+	r       io.Reader
+	reached bool
+}
+
+func (e *endOfStream) Read(p []byte) (int, error) {
+	n, err := e.r.Read(p)
+	if errors.Is(err, io.EOF) {
+		e.reached = true
+	}
+	return n, err
 }
 
 // unpackFile writes one regular file, new, with the archive's executable
 // bits: the store's digest records them, and a launcher needs them. Its
 // modification time is now, not the archive's: setting a time is a second
 // open of each file, which on Windows waits on the virus scanner's check of
-// the file just written (19 ms a file, measured), and nothing in a store
-// reads it (the PyPI builder compiles Python's modules to be loaded without
-// a check against their source's time).
+// the file just written, and nothing in a store reads it (the PyPI builder
+// compiles Python's modules to be loaded without a check against their
+// source's time).
 func unpackFile(root *os.Root, name string, h *tar.Header, body io.Reader) error {
 	if err := root.MkdirAll(path.Dir(name), 0o755); err != nil {
 		return err
@@ -136,8 +173,9 @@ func newArchiveSink(dir string) *archiveSink {
 	go func() {
 		err := unpackStore(pr, dir)
 		// Whatever follows the archive's end (a tar writer pads its last
-		// record), or the rest of a refused one, is read and dropped, so
-		// the builder is never left blocked on a full pipe.
+		// record), or the rest of a refused one, is read and dropped until
+		// the builder exits, so it is never left blocked on a full pipe; the
+		// install's context bounds how long that takes.
 		_, _ = io.Copy(io.Discard, pr)
 		s.done <- err
 	}()

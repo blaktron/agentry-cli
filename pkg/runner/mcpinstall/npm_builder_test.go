@@ -454,3 +454,39 @@ func TestNpmBuilderArchiveHoldsTheTree(t *testing.T) {
 		t.Fatalf("archive holds %v, want every file of %d", got, len(files))
 	}
 }
+
+// A command npm links under a name with a quote in its target still runs
+// that file: the target is quoted for the shell, never read by it.
+func TestNpmBuilderCommandScriptQuotesItsTarget(t *testing.T) {
+	node := hostNode(t)
+	dir := t.TempDir()
+	target := filepath.Join(dir, "node_modules", "it's $(touch pwned)", "cli.js")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("#!/bin/sh\necho ran \"$@\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(dir, "node_modules", ".bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("..", "it's $(touch pwned)", "cli.js"), filepath.Join(bin, "cli")); err != nil {
+		t.Fatal(err)
+	}
+	script := strings.TrimSuffix(strings.TrimSpace(npmBuilder), "main();") + "\nbinScripts(process.argv[1]);\n"
+	if out, err := exec.Command(node, "-e", script, filepath.Join(dir, "node_modules")).CombinedOutput(); err != nil {
+		t.Fatalf("binScripts: %v\n%s", err, out)
+	}
+	if fi, err := os.Lstat(filepath.Join(bin, "cli")); err != nil || !fi.Mode().IsRegular() {
+		t.Fatalf("the link is still a link: %v %v", fi, err)
+	}
+	cmd := exec.Command(filepath.Join(bin, "cli"), "x y")
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil || string(out) != "ran x y\n" {
+		t.Fatalf("the command script ran %q (%v)", out, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "pwned")); err == nil {
+		t.Fatal("the target's name reached a shell")
+	}
+}

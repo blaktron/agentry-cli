@@ -213,6 +213,12 @@ function binScripts(dir) {
 // name or a link target longer than its ustar field, as Go's archive/tar
 // reads it. Folders, regular files with their executable bits, and links,
 // in sorted order, each named relative to the prefix.
+// ustar's type flags for the entries written here.
+const TAR_FILE = "0";
+const TAR_LINK = "2";
+const TAR_FOLDER = "5";
+const TAR_PAX = "x";
+
 function tarHeader(name, type, size, mode, linkname) {
   const h = Buffer.alloc(512);
   const put = (s, off, len) => h.write(s, off, len, "utf8");
@@ -259,7 +265,7 @@ function tarEntry(out, name, type, mode, body, linkname) {
   }
   if (records) {
     const pax = Buffer.from(records, "utf8");
-    out(tarHeader("PaxHeader", "x", pax.length, 0o644, ""));
+    out(tarHeader("PaxHeader", TAR_PAX, pax.length, 0o644, ""));
     out(pax);
     out(padding(pax.length));
   }
@@ -278,12 +284,12 @@ function archive(prefix, out) {
       const full = path.join(prefix, r);
       const st = fs.lstatSync(full);
       if (st.isSymbolicLink()) {
-        tarEntry(out, r, "2", 0o777, null, fs.readlinkSync(full));
+        tarEntry(out, r, TAR_LINK, 0o777, null, fs.readlinkSync(full));
       } else if (st.isDirectory()) {
-        tarEntry(out, r, "5", 0o755, null, "");
+        tarEntry(out, r, TAR_FOLDER, 0o755, null, "");
         walk(r);
       } else if (st.isFile()) {
-        tarEntry(out, r, "0", st.mode & 0o111 ? 0o755 : 0o644, fs.readFileSync(full), "");
+        tarEntry(out, r, TAR_FILE, st.mode & 0o111 ? 0o755 : 0o644, fs.readFileSync(full), "");
       } else {
         console.error(`mcp install: ${r} is neither a file, a folder nor a link; left out`);
       }

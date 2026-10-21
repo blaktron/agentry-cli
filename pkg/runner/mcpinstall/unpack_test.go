@@ -126,8 +126,25 @@ func TestUnpackStoreRefusesWhatIsNotAFileOrAFolderInside(t *testing.T) {
 	}
 }
 
-// An archive that is not one is refused, as is a file cut short.
+// An archive that is not one is refused, as is a file cut short, a stream
+// cut between two entries (before the archive's end-of-archive marker) and
+// an empty stream, which is a builder that wrote no tree.
 func TestUnpackStoreRefusesABrokenArchive(t *testing.T) {
+	two := rawArchive(t, &tar.Header{Name: "a", Typeflag: tar.TypeReg, Size: 512}, &tar.Header{Name: "b", Typeflag: tar.TypeReg, Size: 512})
+	if err := unpackStore(bytes.NewReader(two), t.TempDir()); err != nil {
+		t.Fatalf("a whole archive refused: %v", err)
+	}
+	// Each entry is a 512-byte header and a 512-byte body; the marker
+	// is the last 1024 bytes.
+	if err := unpackStore(bytes.NewReader(two[:1024]), t.TempDir()); err == nil || !strings.Contains(err.Error(), "end-of-archive") {
+		t.Fatalf("a stream cut after its first entry = %v, want refused", err)
+	}
+	if err := unpackStore(bytes.NewReader(two[:2048]), t.TempDir()); err == nil {
+		t.Fatal("a stream cut before its end-of-archive marker was unpacked")
+	}
+	if err := unpackStore(bytes.NewReader(nil), t.TempDir()); err == nil {
+		t.Fatal("an empty stream was unpacked")
+	}
 	if err := unpackStore(strings.NewReader("not a tar archive at all, but long enough to be read as a header block"+strings.Repeat(" ", 512)), t.TempDir()); err == nil {
 		t.Fatal("a stream that is no archive was unpacked")
 	}

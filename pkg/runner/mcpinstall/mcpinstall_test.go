@@ -58,12 +58,23 @@ func httpsRegs(regs policy.MCPRegistries) policy.MCPRegistries {
 }
 
 // withRunner marks the runner image built, as the install step leaves it
-// before any server is installed: the install proxy runs from it.
+// before any server is installed: the install proxy runs from it. A builder
+// the test does not script ends as a real one does, with an archive of its
+// tree on stdout (an empty one).
 func withRunner(f *dockerx.Fake) *dockerx.Fake {
 	if f.ExistingImages == nil {
 		f.ExistingImages = map[string]bool{}
 	}
 	f.ExistingImages[proxyImage(policy.Images{})] = true
+	for name := range f.Foreground {
+		if strings.Contains(name, "agentry-mcpinstall-") {
+			return f
+		}
+	}
+	if f.Foreground == nil {
+		f.Foreground = map[string]*dockerx.FakeForeground{}
+	}
+	f.Foreground["agentry-mcpinstall-"] = &dockerx.FakeForeground{Stdout: string(make([]byte, 1024))}
 	return f
 }
 
