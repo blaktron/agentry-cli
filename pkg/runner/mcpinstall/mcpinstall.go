@@ -581,13 +581,16 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 		}
 
 		hostDir := filepath.Join(storeDir, r.ID)
-		if err := os.MkdirAll(hostDir, 0o700); err != nil {
+		if err := os.MkdirAll(storeDir, 0o700); err != nil {
 			return installFailed(r, receipt.InstallRecord, fmt.Errorf("create server store: %w", err))
 		}
 		_, _ = fmt.Fprintf(logw, "installing mcp server %s@%s (%s) into the signature store\n", r.Package, r.Version, r.Source)
 
 		var argv []string
 		var image string
+		// What the builder reads on stdin: nothing, or for PyPI the
+		// registry's advertised files and digests.
+		var stdin io.Reader
 		switch r.Source {
 		case "npm":
 			image = images.NodeRuntime
@@ -605,9 +608,7 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 			// plus wheels for the dependency closure. A source distribution
 			// would run the package's own build code in the builder — refused
 			// unless policy pypiAllowSourceDists says so.
-			if err := writeArtifactSums(hostDir, r.Artifacts); err != nil {
-				return installFailed(r, receipt.InstallRecord, err)
-			}
+			stdin = strings.NewReader(artifactSums(r.Artifacts))
 			argv = pipArgv(r, regs)
 		default:
 			return fmt.Errorf("unknown server source %q", r.Source)
@@ -631,12 +632,26 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 			egress.stop(ctx, "")
 			return installFailed(r, receipt.InstallProxy, fmt.Errorf("install %s: %w", r.ID, err))
 		}
-		user, err := dockerx.PersonUser(ctx, d)
+		// The builder's archive is unpacked as it arrives, into a folder
+		// beside the server's that takes its place only when the install
+		// succeeded. One a killed install left goes first.
+		removeStaging(storeDir, r.ID)
+		staging, err := os.MkdirTemp(storeDir, stagingPrefix(r.ID))
 		if err != nil {
 			egress.stop(ctx, "")
-			return installFailed(r, receipt.InstallProxy, fmt.Errorf("install %s: %w", r.ID, err))
+			return installFailed(r, receipt.InstallRecord, fmt.Errorf("install %s: %w", r.ID, err))
 		}
+		unpacked := newArchiveSink(staging)
 		builder := "agentry-mcpinstall-" + r.ID
+		// The builder writes the server's tree inside the container's own
+		// filesystem, at the prefix the server runs from, and hands it over
+		// as one archive on stdout: no folder of this machine is mounted
+		// into it. Where the engine runs in a VM, a mounted folder is a
+		// file-sharing mount (9p on Windows), through which thousands of
+		// small writes crawl. It runs as the image's own user, who can
+		// create the prefix, as the server itself later runs; the files on
+		// this machine are written by this process, so they are the
+		// person's.
 		code, err := dockerx.RunForegroundUnder(ctx, d, dockerx.RunSpec{
 			Name:  builder,
 			Image: image,
@@ -644,14 +659,11 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 			// The builder's only route out is the install proxy: npm, pip and
 			// the builders' own fetches honour these, and the network has no
 			// other way off it.
-			Env: egress.env(),
-			// The store is the user's: the builder runs as the person, as
-			// this engine maps them (their uid:gid; root on a rootless
-			// engine, where that is the person and any other uid is a
-			// subordinate one), so every file it writes is theirs and `rm
-			// -rf` of the profile — what the drift refusal asks for — works.
-			// Hosts without POSIX ids leave it to the image's own user.
-			User: user,
+			Env:         egress.env(),
+			Interactive: stdin != nil,
+			// Its stdout is the archive: kept in no log, which would hold
+			// a second copy and slow the stream many times over.
+			NoLog: true,
 			// The install runs under the policy's runtime like every
 			// container of a run; "" is the daemon's default. The
 			// proxy's alias is pinned for it (egress.hosts).
@@ -672,14 +684,10 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 			// mid-install leaves it building with nobody waiting, and the
 			// next run's sweep removes it by its dead owner.
 			Labels: installLabels(r.ID),
-			Mounts: []dockerx.Mount{
-				// The server store is the runner's own directory under the
-				// signature profile, so it may be relabeled.
-				{Source: hostDir, Target: r.prefix(), Relabel: true},
-			},
 			// The run's container posture; its root stays
 			// writable, since npm and pip write where they please.
-		}.WithPosture(lim.Memory, lim.CPUs, lim.Pids), "MCP server installer", nil, logw, logw)
+		}.WithPosture(lim.Memory, lim.CPUs, lim.Pids), "MCP server installer", stdin, unpacked, logw)
+		unpackErr := unpacked.Close()
 		if ctx.Err() != nil {
 			// A cancelled install: the engine's client stopped waiting, and
 			// the builder runs on until its downloads end unless it is
@@ -690,6 +698,15 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 		// The proxy's allow/deny lines are the evidence of what the
 		// install reached; kept beside the record, failed install or not.
 		egress.stop(ctx, filepath.Join(storeDir, r.ID+installProxyLogSuffix))
+		if err == nil && code == 0 && unpackErr != nil {
+			err = fmt.Errorf("the builder's archive was refused: %w", unpackErr)
+		}
+		if err == nil && code == 0 {
+			err = replaceDir(staging, hostDir)
+		}
+		if err != nil || code != 0 {
+			_ = os.RemoveAll(staging)
+		}
 		if err != nil {
 			return installFailed(r, receipt.InstallBuilder, fmt.Errorf("install %s: %w", r.ID, err))
 		}
@@ -706,6 +723,7 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 			return installFailed(r, receipt.InstallBuilder, fmt.Errorf("install %s: builder exited %d (the install proxy's decisions are in %s)", r.ID, code,
 				filepath.Join(storeDir, r.ID+installProxyLogSuffix)))
 		}
+		_, _ = fmt.Fprintf(logw, "mcp server %s@%s: the builder's tree is in the signature store; hashing it\n", r.Package, r.Version)
 		r.InstallEgress = allow
 		if r.Source == "pypi" {
 			if err := adoptConsoleScript(hostDir, r, logw); err != nil {
@@ -802,11 +820,12 @@ func copyEnv(env map[string]string) map[string]string {
 }
 
 // artifactSumsFile is the `sha256sum -c`-shaped list of every artifact the
-// registry advertised for the pinned release, written into the server's
-// store directory (mounted at the prefix) for the builder to check against.
+// registry advertised for the pinned release (artifactSums), which the PyPI
+// builder reads on stdin, checks the downloaded file against, and keeps in
+// the server's tree under this name.
 const artifactSumsFile = "artifacts.sha256"
 
-func writeArtifactSums(hostDir string, artifacts map[string]string) error {
+func artifactSums(artifacts map[string]string) string {
 	names := make([]string, 0, len(artifacts))
 	for n := range artifacts {
 		names = append(names, n)
@@ -816,10 +835,7 @@ func writeArtifactSums(hostDir string, artifacts map[string]string) error {
 	for _, n := range names {
 		b.WriteString(artifacts[n] + "  " + n + "\n")
 	}
-	if err := os.WriteFile(filepath.Join(hostDir, artifactSumsFile), []byte(b.String()), 0o600); err != nil {
-		return fmt.Errorf("write artifact digests: %w", err)
-	}
-	return nil
+	return b.String()
 }
 
 // consoleScriptsFile is where the PyPI builder leaves the console scripts

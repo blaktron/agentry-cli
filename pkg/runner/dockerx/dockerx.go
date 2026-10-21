@@ -162,6 +162,12 @@ type RunSpec struct {
 	// AutoRemove passes --rm; teardown still force-removes by name in
 	// case the client process died before docker could reap.
 	AutoRemove bool
+	// NoLog keeps no log of the container's output (`--log-driver none`):
+	// for a container whose stdout is data its attached caller reads (the
+	// MCP server installer's archive). The engine would otherwise also write
+	// every byte to the container's log, which json-file does as escaped
+	// JSON lines, many times slower than the stream itself.
+	NoLog bool
 	// Publish exposes container ports on the host (-p): only for a
 	// host-run harness, and only on 127.0.0.1 (HostPort 0 = ephemeral).
 	Publish []PortPublish
@@ -968,6 +974,9 @@ func (r RunSpec) argsFor(detach, podman bool, named []namedVolume) []string {
 	}
 	if r.Interactive {
 		args = append(args, "-i")
+	}
+	if r.NoLog {
+		args = append(args, "--log-driver", "none")
 	}
 	if r.Name != "" {
 		args = append(args, "--name", r.Name)

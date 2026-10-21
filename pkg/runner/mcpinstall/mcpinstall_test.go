@@ -58,12 +58,23 @@ func httpsRegs(regs policy.MCPRegistries) policy.MCPRegistries {
 }
 
 // withRunner marks the runner image built, as the install step leaves it
-// before any server is installed: the install proxy runs from it.
+// before any server is installed: the install proxy runs from it. A builder
+// the test does not script ends as a real one does, with an archive of its
+// tree on stdout (an empty one).
 func withRunner(f *dockerx.Fake) *dockerx.Fake {
 	if f.ExistingImages == nil {
 		f.ExistingImages = map[string]bool{}
 	}
 	f.ExistingImages[proxyImage(policy.Images{})] = true
+	for name := range f.Foreground {
+		if strings.Contains(name, "agentry-mcpinstall-") {
+			return f
+		}
+	}
+	if f.Foreground == nil {
+		f.Foreground = map[string]*dockerx.FakeForeground{}
+	}
+	f.Foreground["agentry-mcpinstall-"] = &dockerx.FakeForeground{Stdout: string(make([]byte, 1024))}
 	return f
 }
 
@@ -151,13 +162,13 @@ func TestEnsureInstalledRunsBuilderOnceAndReuses(t *testing.T) {
 	} else if own := owner.Labels(); own != nil && run.Labels[owner.LabelPID] != own[owner.LabelPID] {
 		t.Fatalf("installer labels = %v, want this process as owner", run.Labels)
 	}
-	// The store is the user's: the builder runs as the person, as the
-	// engine maps them (the invoking uid:gid on this rootful one), so `rm
-	// -rf` of the profile works afterwards, with npm's home and cache
-	// pointed at /tmp, where that user can write in the image.
-	person := dockerx.LocalDockerEngine().PersonUser()
-	if run, _ := fake.FindRun("agentry-mcpinstall-"); run.User != person || run.User == "" {
-		t.Fatalf("installer runs as %q, want the person %q", run.User, person)
+	// No folder of this machine is mounted into the builder: it installs
+	// inside its own filesystem and hands the tree over as an archive on
+	// stdout, which this process writes, so the files are the person's. It
+	// runs as the image's own user, with npm's home and cache at /tmp.
+	// Its stdout, the archive, is kept in no log.
+	if run, _ := fake.FindRun("agentry-mcpinstall-"); len(run.Mounts) != 0 || run.User != "" || !run.NoLog {
+		t.Fatalf("installer mounts %v as %q (no log %v), want no mount as the image's user, unlogged", run.Mounts, run.User, run.NoLog)
 	} else if len(run.Argv) < 3 || run.Argv[0] != "env" || run.Argv[1] != "HOME=/tmp" || run.Argv[2] != "npm_config_cache=/tmp/npm-cache" {
 		t.Fatalf("npm not given a writable HOME and cache: %v", run.Argv)
 	}
@@ -219,7 +230,10 @@ func TestEnsureInstalledPyPIVerifiesWheels(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := t.TempDir()
-	fake := &dockerx.Fake{}
+	builder := &dockerx.FakeForeground{Print: func(dockerx.RunSpec) string {
+		return storeArchive(t, archiveFile{"artifacts.sha256", "kept by the builder", 0o644})
+	}}
+	fake := &dockerx.Fake{Foreground: map[string]*dockerx.FakeForeground{"agentry-mcpinstall-pypi-": builder}}
 	withRunner(fake)
 	images := policy.Images{NodeRuntime: "node:test", PythonRuntime: "python:test"}
 	if err := EnsureInstalled(t.Context(), fake, res, store, httpsRegs(regs), images, policy.DockerPolicy{}, io.Discard); err != nil {
@@ -234,9 +248,14 @@ func TestEnsureInstalledPyPIVerifiesWheels(t *testing.T) {
 	if !slices.Equal(run.Argv, want) {
 		t.Errorf("builder argv = %q\nwant %q", run.Argv[3:], want[3:])
 	}
-	sums, err := os.ReadFile(filepath.Join(store, res[0].ID, "artifacts.sha256"))
-	if err != nil {
-		t.Fatal(err)
+	// The advertised files and digests reach the builder on stdin, which
+	// keeps them in the tree it hands back.
+	sums := builder.GotStdin
+	if !run.Interactive {
+		t.Fatal("the PyPI builder's stdin is not attached")
+	}
+	if kept, err := os.ReadFile(filepath.Join(store, res[0].ID, "artifacts.sha256")); err != nil || string(kept) != "kept by the builder" {
+		t.Fatalf("the store is not the builder's tree: %q (%v)", kept, err)
 	}
 	if !strings.Contains(string(sums), "cafe  mcp_server_fetch-0.6.2-py3-none-any.whl") ||
 		!strings.Contains(string(sums), "beef  mcp_server_fetch-0.6.2-cp312-manylinux_x86_64.whl") {
@@ -259,10 +278,8 @@ func TestEnsureInstalledPyPIAdoptsDeclaredConsoleScript(t *testing.T) {
 	fake := &dockerx.Fake{
 		ExistingImages: map[string]bool{"python:test": true, proxyImage(policy.Images{}): true},
 		Foreground: map[string]*dockerx.FakeForeground{
-			"agentry-mcpinstall-pypi-some-tool": {Before: func(r dockerx.RunSpec) {
-				if err := os.WriteFile(filepath.Join(r.Mounts[0].Source, consoleScriptsFile), []byte("some-tool-cli\nsome_tool\n"), 0o600); err != nil {
-					t.Error(err)
-				}
+			"agentry-mcpinstall-pypi-some-tool": {Print: func(dockerx.RunSpec) string {
+				return storeArchive(t, archiveFile{consoleScriptsFile, "some-tool-cli\nsome_tool\n", 0o644})
 			}},
 		},
 	}
@@ -515,14 +532,8 @@ func TestEnsureInstalledRefusesAStoreThatChanged(t *testing.T) {
 	}
 	store := t.TempDir()
 	fake := &dockerx.Fake{Foreground: map[string]*dockerx.FakeForeground{
-		"agentry-mcpinstall-npm-server-x": {Before: func(r dockerx.RunSpec) {
-			bin := filepath.Join(r.Mounts[0].Source, "node_modules", ".bin")
-			if err := os.MkdirAll(bin, 0o755); err != nil {
-				t.Error(err)
-			}
-			if err := os.WriteFile(filepath.Join(bin, "server-x"), []byte("#!/usr/bin/env node\n"), 0o755); err != nil {
-				t.Error(err)
-			}
+		"agentry-mcpinstall-npm-server-x": {Print: func(dockerx.RunSpec) string {
+			return storeArchive(t, archiveFile{"node_modules/.bin/server-x", "#!/usr/bin/env node\n", 0o755})
 		}},
 	}}
 	withRunner(fake)

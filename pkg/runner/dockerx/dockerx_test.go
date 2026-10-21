@@ -133,8 +133,14 @@ func TestRunSpecArgs(t *testing.T) {
 		t.Errorf("foreground args = %q, want %q", got, want)
 	}
 
-	// A container that writes into the user's directory runs as the user
-	// (the MCP server installer).
+	// A container whose stdout is data its caller reads keeps no log of it
+	// (the MCP server installer's archive).
+	unlogged := RunSpec{Name: "n", Image: "i", Interactive: true, NoLog: true}
+	if got, want := unlogged.args(false), []string{"run", "-i", "--log-driver", "none", "--name", "n", "i"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("no-log args = %q, want %q", got, want)
+	}
+
+	// A container that writes into the user's directory runs as the user.
 	asUser := RunSpec{Name: "n", Image: "i", User: "1000:1000"}
 	if got := asUser.args(false); !reflect.DeepEqual(got, []string{"run", "--name", "n", "--user", "1000:1000", "i"}) {
 		t.Errorf("user args = %q", got)
