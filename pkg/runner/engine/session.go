@@ -1245,7 +1245,11 @@ func (s *liveSession) turnCarrying(ctx context.Context, carried, text string, sy
 		case <-turnCtx.Done():
 		}
 	}()
-	res, err := s.drv.Prompt(turnCtx, carried+text)
+	res, err := promptAtCapacity(turnCtx, s.drv, carried+text, func(n int) {
+		// The failed attempt's events go ahead of the notice.
+		s.syncPump()
+		s.emit(session.Event{Kind: session.KindNotice, Text: capacityNotice(n)})
+	})
 	s.syncPump()
 	// The turn is over before its last event is seen.
 	s.mu.Lock()

@@ -61,6 +61,8 @@ type claudeTurnResult struct {
 	stopReason string
 	text       string
 	usage      *TurnUsage
+	// failed is an error result's reason: the turn is not an answer (I9).
+	failed string
 }
 
 // Start implements SessionDriver. Claude Code's stream-json input prints
@@ -178,7 +180,12 @@ func (s *claudeSession) Prompt(ctx context.Context, text string) (*Turn, error) 
 	}
 	select {
 	case r := <-ch:
-		return &Turn{StopReason: r.stopReason, Text: r.text, Usage: r.usage}, nil
+		out := &Turn{StopReason: r.stopReason, Text: r.text, Usage: r.usage}
+		// A turn that ended on an error result is not an answer (I9).
+		if r.failed != "" {
+			return out, fmt.Errorf("claude session: turn failed: %s", firstLineOf(r.failed))
+		}
+		return out, nil
 	case <-ctx.Done():
 		return nil, fmt.Errorf("claude session: %w", ctx.Err())
 	case <-s.readDone:
@@ -238,12 +245,16 @@ func (s *claudeSession) readLoop() {
 			continue
 		}
 		isResult := parsed && msg.Type == "result"
+		reason := ""
 		if isResult && msg.IsError {
 			// A result before the handshake's answer is Claude Code ending
 			// the session at its start.
-			reason := strings.Join(msg.Errors, "; ")
+			reason = strings.Join(msg.Errors, "; ")
 			if reason == "" {
 				reason = msg.Result
+			}
+			if reason == "" {
+				reason = msg.Subtype
 			}
 			s.started(claudeStart{failed: true, reason: reason})
 		}
@@ -261,7 +272,7 @@ func (s *claudeSession) readLoop() {
 		if !isResult {
 			continue
 		}
-		res := claudeTurnResult{stopReason: msg.StopReason, text: msg.Result}
+		res := claudeTurnResult{stopReason: msg.StopReason, text: msg.Result, failed: reason}
 		if res.text == "" {
 			res.text = text.String()
 		}

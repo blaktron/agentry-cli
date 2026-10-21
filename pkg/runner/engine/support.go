@@ -118,6 +118,12 @@ type runDirs struct {
 	// coderEgress says that egress is the Coding agent's open egress.
 	coderEgress bool
 	runID       string
+	// harnessEnds is when the run's timeout ends the harness, set at its
+	// first start; harnessStarts counts its starts and harnessUsage is the
+	// usage of those that failed on a capacity answer (capacity.go).
+	harnessEnds   time.Time
+	harnessStarts int
+	harnessUsage  receipt.Usage
 	// hostGatewayURL / hostProxyURL are the published 127.0.0.1 addresses
 	// a host-run harness uses; empty for a container harness.
 	hostGatewayURL string

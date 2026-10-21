@@ -64,7 +64,7 @@ func oneTurn(ctx context.Context, p Params, rw io.ReadWriteCloser, task []byte, 
 	err = drv.Start(hs)
 	cancel()
 	if err == nil {
-		_, err = drv.Prompt(ctx, string(task))
+		_, err = promptAtCapacity(ctx, drv, string(task), func(n int) { noteCapacity(p.Stderr, n) })
 	}
 	// Ending the session closes the harness's stdin, on which it exits; one
 	// that does not is stopped.
