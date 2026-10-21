@@ -6,6 +6,7 @@ package adapter
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"strconv"
 	"strings"
 	"testing"
@@ -516,3 +517,59 @@ func TestCodexSessionDeclinesForeignApprovals(t *testing.T) {
 }
 
 func itoa(i int) string { return strconv.Itoa(i) }
+
+// newLateCodexSession is a codex session over rw, whose reader's end of
+// stream rw waits for.
+func newLateCodexSession(t *testing.T, rw *lateWriteRW) *codexSession {
+	t.Helper()
+	drv, err := (&codexAdapter{}).Session(context.Background(), rw, SessionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := drv.(*codexSession)
+	rw.ended = s.readDone
+	return s
+}
+
+// A harness that answers a request and exits at once has answered: the
+// request must return the answer, not report that the harness ended first.
+func TestCodexSessionReturnsAnAnswerWrittenBeforeTheStreamEnded(t *testing.T) {
+	for i := 0; i < 64; i++ {
+		r, w := io.Pipe()
+		s := newLateCodexSession(t, &lateWriteRW{reply: r, out: w})
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		res, err := s.call(ctx, "initialize", map[string]any{})
+		cancel()
+		if err != nil {
+			t.Fatalf("run %d: an answered request failed: %v", i, err)
+		}
+		if !strings.Contains(string(res), `"ok":true`) {
+			t.Fatalf("run %d: result = %s", i, res)
+		}
+		_ = s.Close()
+	}
+}
+
+// A turn that completed just before the harness exited is a completed turn.
+func TestCodexSessionReturnsATurnFinishedBeforeTheStreamEnded(t *testing.T) {
+	for i := 0; i < 64; i++ {
+		r, w := io.Pipe()
+		s := newLateCodexSession(t, &lateWriteRW{reply: r, out: w, lines: func(req rpcMessage) []map[string]any {
+			return []map[string]any{
+				{"jsonrpc": "2.0", "id": req.ID, "result": map[string]any{"turn": map[string]any{"id": "u1"}}},
+				{"jsonrpc": "2.0", "method": "turn/completed", "params": map[string]any{"threadId": "t1", "turn": map[string]any{"id": "u1", "status": "completed"}}},
+			}
+		}})
+		s.threadID = "t1"
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		turn, err := s.Prompt(ctx, "hi")
+		cancel()
+		if err != nil {
+			t.Fatalf("run %d: a finished turn failed: %v", i, err)
+		}
+		if turn.StopReason != "completed" {
+			t.Fatalf("run %d: stop reason = %q", i, turn.StopReason)
+		}
+		_ = s.Close()
+	}
+}
