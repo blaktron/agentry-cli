@@ -67,19 +67,19 @@ grep -q '"read_input"' <<<"$OUT"              || fail "tools/list: read_input mi
 grep -q '"fs_write"' <<<"$OUT" && fail "tools/list: undeclared fs_write present"
 grep -q 'workspace note' <<<"$OUT"            || fail "fs_read: content missing"
 LINE4=$(echo "$OUT" | grep '"id":4')
-echo "$LINE4" | grep -q '"isError":true'          || fail "traversal not refused: $LINE4"
+grep -q '"isError":true' <<<"$LINE4"          || fail "traversal not refused: $LINE4"
 [ -f "$WORK/out/reports/r1.md" ]                  || fail "write_report did not land in out/reports"
 grep -q "report body" "$WORK/out/reports/r1.md"   || fail "report content wrong"
 LINE6=$(echo "$OUT" | grep '"id":6')
-echo "$LINE6" | grep -qi 'error'                  || fail "calling an ungranted tool must error: $LINE6"
+grep -qi 'error' <<<"$LINE6"                  || fail "calling an ungranted tool must error: $LINE6"
 grep -q 'brief.txt' <<<"$OUT"                 || fail "list_inputs: provided file missing"
 grep -q 'provided input' <<<"$OUT"            || fail "read_input: content missing"
 LINE9=$(echo "$OUT" | grep '"id":9')
-echo "$LINE9" | grep -q '"isError":true'          || fail "read_input traversal not refused: $LINE9"
+grep -q '"isError":true' <<<"$LINE9"          || fail "read_input traversal not refused: $LINE9"
 # A number sent as a JSON string is the number it encodes.
 LINE10=$(echo "$OUT" | grep '"id":10')
-echo "$LINE10" | grep -q '"isError":true' && fail "stringified maxBytes refused: $LINE10"
-echo "$LINE10" | grep -q 'continue with offset 9]' || fail "stringified maxBytes 9 did not cap the read: $LINE10"
+grep -q '"isError":true' <<<"$LINE10" && fail "stringified maxBytes refused: $LINE10"
+grep -q 'continue with offset 9]' <<<"$LINE10" || fail "stringified maxBytes 9 did not cap the read: $LINE10"
 
 # A catalogued exec command must not read the tools
 # server's environment, which holds every granted secret. The server starts

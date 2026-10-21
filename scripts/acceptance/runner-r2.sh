@@ -96,10 +96,10 @@ done
 if [ -n "$AGENT" ]; then
   RUN_ID=${AGENT#agentry-}; RUN_ID=${RUN_ID%-agent}
   GW="agentry-$RUN_ID-gateway"
-  docker inspect "$GW" --format '{{join .Args " "}}' | grep -q -- '--block-network' || { echo "FAIL: live gateway $GW runs without --block-network"; exit 1; }
+  grep -q -- '--block-network' <<<"$(docker inspect "$GW" --format '{{join .Args " "}}')" || { echo "FAIL: live gateway $GW runs without --block-network"; exit 1; }
   NETS=$(docker inspect "$AGENT" --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}')
   [ "$(echo $NETS | wc -w)" -eq 1 ] || { echo "FAIL: agent container on more than one network: $NETS"; exit 1; }
-  docker network inspect $NETS --format '{{.Internal}}' | grep -qx true || { echo "FAIL: agent network $NETS is not internal"; exit 1; }
+  grep -qx true <<<"$(docker network inspect $NETS --format '{{.Internal}}')" || { echo "FAIL: agent network $NETS is not internal"; exit 1; }
   PORTS=$(docker inspect "$AGENT" --format '{{json .NetworkSettings.Ports}}')
   grep -q 'HostPort' <<<"$PORTS" && { echo "FAIL: agent container publishes a port: $PORTS"; exit 1; }
   # The agent holds the model key under the provider's name by necessity
@@ -107,20 +107,20 @@ if [ -n "$AGENT" ]; then
   # is a registry credential (nothing in pkg/runner reads AGENTRY_TOKEN or
   # SECUREAGENTRY_TOKEN) or the daemon's socket (the gateway alone has one,
   # through the filter).
-  docker inspect "$AGENT" --format '{{join .Config.Env "\n"}}' | grep -qE '^(SECURE)?AGENTRY_TOKEN=' && { echo "FAIL: a registry token is in the agent container's environment"; exit 1; }
-  docker inspect "$AGENT" --format '{{range .Mounts}}{{.Source}} {{end}}' | grep -q 'docker.sock' && { echo "FAIL: the agent container mounts the docker socket"; exit 1; }
+  grep -qE '^(SECURE)?AGENTRY_TOKEN=' <<<"$(docker inspect "$AGENT" --format '{{join .Config.Env "\n"}}')" && { echo "FAIL: a registry token is in the agent container's environment"; exit 1; }
+  grep -q 'docker.sock' <<<"$(docker inspect "$AGENT" --format '{{range .Mounts}}{{.Source}} {{end}}')" && { echo "FAIL: the agent container mounts the docker socket"; exit 1; }
   # The container posture: every capability dropped and
   # no-new-privileges on the agent and the gateway, a read-only root and a
   # pids and memory bound on the agent, and the bounds passed to what the
   # gateway launches.
   for C in "$AGENT" "$GW"; do
-    docker inspect "$C" --format '{{json .HostConfig.CapDrop}}' | grep -q '"ALL"' || { echo "FAIL: $C keeps its capabilities"; exit 1; }
-    docker inspect "$C" --format '{{json .HostConfig.SecurityOpt}}' | grep -q 'no-new-privileges' || { echo "FAIL: $C runs without no-new-privileges"; exit 1; }
+    grep -q '"ALL"' <<<"$(docker inspect "$C" --format '{{json .HostConfig.CapDrop}}')" || { echo "FAIL: $C keeps its capabilities"; exit 1; }
+    grep -q 'no-new-privileges' <<<"$(docker inspect "$C" --format '{{json .HostConfig.SecurityOpt}}')" || { echo "FAIL: $C runs without no-new-privileges"; exit 1; }
   done
-  docker inspect "$AGENT" --format '{{.HostConfig.ReadonlyRootfs}}' | grep -qx true || { echo "FAIL: the agent container's root is writable"; exit 1; }
-  docker inspect "$AGENT" --format '{{.HostConfig.PidsLimit}} {{.HostConfig.Memory}}' | grep -Eq '^[1-9][0-9]* [1-9][0-9]*$' || { echo "FAIL: the agent container has no pids or memory bound"; exit 1; }
-  docker inspect "$GW" --format '{{join .Args " "}}' | grep -Eq -- '--cpus [0-9]+ --memory [0-9]+[mg]' || { echo "FAIL: the gateway does not bound what it launches"; exit 1; }
-  docker inspect "$GW" --format '{{range .Mounts}}{{.Source}} {{end}}' | grep -q '/var/run/docker.sock' && { echo "FAIL: the gateway mounts the daemon's own socket, not the run's filter"; exit 1; }
+  grep -qx true <<<"$(docker inspect "$AGENT" --format '{{.HostConfig.ReadonlyRootfs}}')" || { echo "FAIL: the agent container's root is writable"; exit 1; }
+  grep -Eq '^[1-9][0-9]* [1-9][0-9]*$' <<<"$(docker inspect "$AGENT" --format '{{.HostConfig.PidsLimit}} {{.HostConfig.Memory}}')" || { echo "FAIL: the agent container has no pids or memory bound"; exit 1; }
+  grep -Eq -- '--cpus [0-9]+ --memory [0-9]+[mg]' <<<"$(docker inspect "$GW" --format '{{join .Args " "}}')" || { echo "FAIL: the gateway does not bound what it launches"; exit 1; }
+  grep -q '/var/run/docker.sock' <<<"$(docker inspect "$GW" --format '{{range .Mounts}}{{.Source}} {{end}}')" && { echo "FAIL: the gateway mounts the daemon's own socket, not the run's filter"; exit 1; }
   echo "live containers: gateway --block-network, agent internal-only on $NETS, no published port, no registry token, no socket"
   echo "live posture: agent and gateway drop ALL with no-new-privileges; agent root read-only with pids and memory bounds; gateway passes cpus and memory on; gateway's socket is the run's filter"
 else
@@ -144,7 +144,7 @@ echo "envelope + receipts ok; the docker filter refused nothing"
 # asserted only when the policy made one.
 if [ -f "$POLICY" ] && RUNTIME=$(awk '/^docker:/{d=1; next} d && /^[^ ]/{d=0} d && /^ *runtime:/{print $2; exit}' "$POLICY") && [ -n "$RUNTIME" ]; then
   grep -q "\"runtime\": \"$RUNTIME:" "$OUT/result.json" || { echo "FAIL: policy names docker.runtime $RUNTIME but the receipt does not"; grep '"runtime"' "$OUT/result.json"; exit 1; }
-  grep '"runtime":' "$OUT/result.json" | grep -q "the gateway's health probe" || { echo "FAIL: the receipt's runtime line does not name each class"; grep '"runtime"' "$OUT/result.json"; exit 1; }
+  grep -q "the gateway's health probe" <<<"$(grep '"runtime":' "$OUT/result.json")" || { echo "FAIL: the receipt's runtime line does not name each class"; grep '"runtime"' "$OUT/result.json"; exit 1; }
   echo "docker.runtime $RUNTIME: receipt names it, class by class"
 else
   if grep -q '"runtime":' "$OUT/result.json"; then echo "FAIL: the receipt names a runtime the policy never set"; exit 1; fi
@@ -204,8 +204,8 @@ NETS=$(docker network ls --format '{{.Name}}' | grep '^agentry-' || true)
 [ -z "$NETS" ] || { echo "FAIL: leftover networks: $NETS"; exit 1; }
 VOLS=$(docker volume ls --filter label=agentry.run --format '{{.Name}}')
 [ -z "$VOLS" ] || { echo "FAIL: leftover volumes: $VOLS"; exit 1; }
-find "$AGENTRY_RUNNER_HOME" -name secrets.env | grep -q . && { echo "FAIL: secrets.env survived"; exit 1; }
-find "$AGENTRY_RUNNER_HOME" -type d -name connections -path '*/cfg/*' | grep -q . && { echo "FAIL: a run's connection folders survived"; exit 1; }
+grep -q . <<<"$(find "$AGENTRY_RUNNER_HOME" -name secrets.env)" && { echo "FAIL: secrets.env survived"; exit 1; }
+grep -q . <<<"$(find "$AGENTRY_RUNNER_HOME" -type d -name connections -path '*/cfg/*')" && { echo "FAIL: a run's connection folders survived"; exit 1; }
 # The relay sidecars the gateway started for a declared server are reaped
 # by the names its log gave them: none named in any
 # run's gateway.log receipt may survive. Checked by name, never by label —
@@ -215,7 +215,7 @@ find "$AGENTRY_RUNNER_HOME" -type d -name connections -path '*/cfg/*' | grep -q 
 RELAYS=$(cat "$OUT"/receipts/gateway.log "$EXECOUT"/receipts/gateway.log "$MCPOUT"/receipts/gateway.log "$REMOTEOUT"/receipts/gateway.log 2>/dev/null | grep -oE '^(starting l4 proxy docker-mcp-l4proxy-[^ ]+ for|[[:space:]]+- Starting l7 proxy docker-mcp-l7proxy-[^ ]+ for)' | grep -oE 'docker-mcp-l[47]proxy-[^ ]+' | sort -u || true)
 [ -n "$RELAYS" ] || { echo "FAIL: no relay sidecar named in any gateway.log — the declared-server fixture started none, so the assertion proves nothing"; exit 1; }
 for r in $RELAYS; do
-  docker ps -a --format '{{.Names}}' | grep -qx "$r" && { echo "FAIL: relay sidecar $r survived teardown"; exit 1; }
+  grep -qx "$r" <<<"$(docker ps -a --format '{{.Names}}')" && { echo "FAIL: relay sidecar $r survived teardown"; exit 1; }
 done
 echo "teardown clean ($(echo $RELAYS | wc -w) relay sidecar(s) named and reaped)"
 
