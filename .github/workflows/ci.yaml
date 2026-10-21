@@ -335,7 +335,7 @@ jobs:
           set -euo pipefail
           if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
             range="$PR_BASE..$PR_HEAD"
-          elif [ -n "$PUSH_BEFORE" ] && ! printf '%s' "$PUSH_BEFORE" | grep -qE '^0+$' && git cat-file -e "$PUSH_BEFORE^{commit}" 2>/dev/null; then
+          elif [ -n "$PUSH_BEFORE" ] && ! grep -qE '^0+$' <<<"$PUSH_BEFORE" && git cat-file -e "$PUSH_BEFORE^{commit}" 2>/dev/null; then
             range="$PUSH_BEFORE..$PUSH_AFTER"
           else
             # A push with no usable "before" (a new branch, a force-push over

@@ -151,10 +151,10 @@ case "$inside" in
   *"CapEff: 0000000000000000"*"NoNewPrivs: 1"*root-read-only*tmpfs-writable*bound*volume-writable*) line PASS "posture inside" "$(echo "$inside" | sed -n 6,7p | tr '\n' ' ')" ;;
   *) line FAIL "posture inside" "$(echo "$inside" | tr '\n' ' ')" ;;
 esac
-alias=$("$C" run --rm $L --network "$NET" "$IMG" sh -c 'getent hosts ec-alias && getent hosts ec-a' 2>&1) && line PASS "name and alias DNS (--internal)" "$(echo "$alias" | head -1)" || line FAIL "name and alias DNS (--internal)" "$alias"
+alias=$("$C" run --rm $L --network "$NET" "$IMG" sh -c 'getent hosts ec-alias && getent hosts ec-a' 2>&1) && line PASS "name and alias DNS (--internal)" "$(sed -n 1p <<<"$alias")" || line FAIL "name and alias DNS (--internal)" "$alias"
 "$C" run -d --name "ec-$$-p" $L -p 127.0.0.1::8080 "$IMG" sleep 300 >/dev/null
 port=$("$C" port "ec-$$-p" 8080/tcp 2>&1) && line PASS "port" "$port" || line FAIL "port" "$port"
-lbl=$("$C" ps -a --filter "label=agentry.engine-check=$TAG" --format '{{.Names}}	{{.Label "agentry.engine-check"}}' | sort | head -1) && [ -n "$lbl" ] && line PASS "ps --filter label, {{.Label}}" "$lbl" || line FAIL "ps {{.Label}}" "$lbl"
+lbl=$("$C" ps -a --filter "label=agentry.engine-check=$TAG" --format '{{.Names}}	{{.Label "agentry.engine-check"}}' | sort | sed -n 1p) && [ -n "$lbl" ] && line PASS "ps --filter label, {{.Label}}" "$lbl" || line FAIL "ps {{.Label}}" "$lbl"
 # The llm-proxy starts on the run's internal network and is then connected
 # to the default one, its way out.
 "$C" run -d --name "ec-$$-c" $L --network "$NET" "$IMG" sleep 300 >/dev/null
