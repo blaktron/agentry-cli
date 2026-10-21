@@ -109,6 +109,9 @@ const (
 	// shareVerdictsFile keeps the share's malware verdicts between
 	// segments.
 	shareVerdictsFile = "share-verdicts.json"
+	// shareTextDir keeps the text read out of the share's documents
+	// between segments, by the digest each verdict is for.
+	shareTextDir = "share-text"
 )
 
 // LogPath is where a detached supervisor writes what it prints.
@@ -162,6 +165,22 @@ type Config struct {
 	// Ports are the Coding agent's published ports, which the person
 	// named; each is a roster entry.
 	Ports []Port `yaml:"ports,omitempty" json:"ports,omitempty"`
+	// ServerFailures are the servers the person added whose install failed,
+	// by roster id: each stays failed, left out of every segment, until the
+	// person switches it or removes it. A build that does not know the field
+	// drops it on its next save, and the server is installed again at the
+	// next start, so the field needs no version of its own.
+	ServerFailures map[string]ServerFailure `yaml:"serverFailures,omitempty" json:"serverFailures,omitempty"`
+}
+
+// ServerFailure is why a server the person added could not be installed.
+type ServerFailure struct {
+	// Reason is the install's error and the builder's last lines, cut.
+	Reason string    `yaml:"reason" json:"reason"`
+	At     time.Time `yaml:"at" json:"at"`
+	// Told says the agent was told, at a turn, that it does not have the
+	// server.
+	Told bool `yaml:"told,omitempty" json:"told,omitempty"`
 }
 
 // Conversation names a harness's stored conversation: the adapter that
@@ -403,6 +422,9 @@ func Reset(ctx context.Context, home, name string, d dockerx.Client) error {
 		if err := os.Remove(filepath.Join(Dir(home, name), f)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
+	}
+	if err := os.RemoveAll(filepath.Join(Dir(home, name), shareTextDir)); err != nil {
+		return fmt.Errorf("remove the %s agent's kept share text: %w", name, err)
 	}
 	if err := os.RemoveAll(serversDir(home, name)); err != nil {
 		return fmt.Errorf("remove the %s agent's installed servers: %w", name, err)

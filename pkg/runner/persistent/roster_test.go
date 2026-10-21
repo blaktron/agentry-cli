@@ -404,3 +404,49 @@ func TestEveryNextSegmentIsHeldToConsent(t *testing.T) {
 		t.Errorf("%d segments started", len(st.segments))
 	}
 }
+
+// TestCheckOffAsksNothing: the share's sentence says what the malware-check
+// setting makes true, ClamAV's check with it on and an unchecked read with
+// it off, and changing the setting asks nothing: an agreement to the share
+// under either setting is an agreement to it under the other. The Coding
+// agent's share reads raw whatever the setting.
+func TestCheckOffAsksNothing(t *testing.T) {
+	home := t.TempDir()
+	a := assistantAgent(t)
+	c := Config{Enabled: true}
+	RecordConsent(BuildRosterUnder(a, c, nil, true), &c)
+	off, _ := BuildRosterUnder(a, c, nil, false).Entry(EntryShare)
+	on, _ := BuildRosterUnder(a, c, nil, true).Entry(EntryShare)
+	if !strings.Contains(on.Line, "checked for malware with ClamAV") || strings.Contains(on.Line, "unchecked:") {
+		t.Errorf("the share's sentence with the check on: %q", on.Line)
+	}
+	if !strings.Contains(off.Line, "the malware check is off on this computer") || strings.Contains(off.Line, "checked for malware with ClamAV") {
+		t.Errorf("the share's sentence with the check off: %q", off.Line)
+	}
+	for _, mc := range []bool{false, true} {
+		if pending := Unconsented(BuildRosterUnder(a, c, nil, mc), c); len(pending) > 0 {
+			t.Errorf("check %v asks again: %+v", mc, pending)
+		}
+	}
+	// Agreed with the check off, then turned on: nothing is asked either,
+	// and a change made under the new setting widens nothing.
+	c = Config{Enabled: true}
+	RecordConsent(BuildRosterUnder(a, c, nil, false), &c)
+	if pending := Unconsented(BuildRosterUnder(a, c, nil, true), c); len(pending) > 0 {
+		t.Errorf("turning the check on asks again: %+v", pending)
+	}
+	if _, err := applyChange(home, a, &c, Change{Switch: &Switch{ID: EntryShare, On: true}}, true); err != nil {
+		t.Errorf("a change under the other setting: %v", err)
+	}
+	// A sentence the person never agreed to is still asked about.
+	c.Consented[EntryShare] = "Shares the folder elsewhere"
+	if pending := Unconsented(BuildRosterUnder(a, c, nil, true), c); len(pending) != 1 {
+		t.Errorf("an agreement to another sentence passed: %+v", pending)
+	}
+	coder := coderAgent(t)
+	for _, mc := range []bool{false, true} {
+		if e, _ := BuildRosterUnder(coder, Config{}, nil, mc).Entry(EntryShare); !strings.Contains(e.Line, "with no malware check") {
+			t.Errorf("the Coding agent's share with the check %v: %q", mc, e.Line)
+		}
+	}
+}

@@ -51,6 +51,14 @@ const (
 	// StateNeedsSignIn: a server that signs in by OAuth, which an agent
 	// cannot be given in this version.
 	StateNeedsSignIn EntryState = "needs-sign-in"
+	// StateInstalling: a server that is on and that the agent's store does
+	// not hold yet. It is installed in the background while the agent runs
+	// without it; once installed it is pending, and the next turn's segment
+	// has it.
+	StateInstalling EntryState = "installing"
+	// StateFailed: a server whose install failed (Reason says why). The
+	// agent runs without it until the person switches it off and on.
+	StateFailed EntryState = "failed"
 )
 
 // Who granted an entry.
@@ -81,6 +89,12 @@ type RosterEntry struct {
 	Line string `json:"line"`
 	// Fixed is an entry no switch changes.
 	Fixed bool `json:"fixed,omitempty"`
+	// Reason is why a failed entry failed.
+	Reason string `json:"reason,omitempty"`
+	// alike are the other sentences an agreement to which is an agreement
+	// to this entry: the share's sentence under the other malware-check
+	// setting, which changes what the sentence says and grants nothing.
+	alike []string
 }
 
 // Roster is an agent's entries, in a fixed order: its folders, its packs,
@@ -101,7 +115,11 @@ func (r Roster) Entry(id string) (RosterEntry, bool) {
 func (r Roster) Receipt() []receipt.RosterEntry {
 	out := make([]receipt.RosterEntry, 0, len(r))
 	for _, e := range r {
-		out = append(out, receipt.RosterEntry{ID: e.ID, Kind: string(e.Kind), Name: e.Name, GrantedBy: e.GrantedBy, On: e.On, Line: e.Line})
+		re := receipt.RosterEntry{ID: e.ID, Kind: string(e.Kind), Name: e.Name, GrantedBy: e.GrantedBy, On: e.On, Line: e.Line}
+		if e.State == StateInstalling || e.State == StateFailed {
+			re.State = string(e.State)
+		}
+		out = append(out, re)
 	}
 	return out
 }
@@ -126,10 +144,28 @@ func ShareFolder(a Agent, c Config) (string, error) {
 // when it is missing.
 func isDefaultShare(a Agent, c Config) bool { return c.Share == "" }
 
-// BuildRoster is the agent's roster from its config. applied, when set, is
-// what the running segment was given (Applied): an entry whose switch
-// differs from it is pending.
+// BuildRoster is the agent's roster from its config, its share's sentence
+// saying the malware check is off, as the default policy has it; a client
+// that knows the policy the agent runs under builds it with
+// BuildRosterUnder. applied, when set, is what the running segment was
+// given (Applied): an entry whose switch differs from it is pending.
 func BuildRoster(a Agent, c Config, applied *Applied) Roster {
+	return BuildRosterUnder(a, c, applied, false)
+}
+
+// The share's sentence, by what its check does.
+const (
+	shareLineChecked   = ", and a file you add is checked for malware with ClamAV before it reads it: one ClamAV finds is never read, one it cannot check is read unchecked"
+	shareLineUnchecked = ", and it reads what you add there unchecked: the malware check is off on this computer (malwareCheck in the runner policy), so no file is checked with ClamAV"
+	shareLineCoder     = ", and it reads and runs what you add there as it is, with no malware check"
+)
+
+// BuildRosterUnder is BuildRoster for an agent that runs under a policy
+// whose malware check is malwareCheck: the share's sentence of an agent that
+// checks its share says whether ClamAV checks its files. Changing the
+// setting changes the sentence and asks nothing: an agreement to the share
+// under either setting is an agreement to it under the other (Unconsented).
+func BuildRosterUnder(a Agent, c Config, applied *Applied, malwareCheck bool) Roster {
 	share, err := ShareFolder(a, c)
 	if err != nil {
 		share = "~/agentry/" + a.ShareName
@@ -150,13 +186,18 @@ func BuildRoster(a Agent, c Config, applied *Applied) Roster {
 		r = append(r, e)
 	}
 	shareLine := "Shares the folder " + share + " with you, read and write: you see what it writes there as it writes it"
+	var shareAlike []string
 	switch {
 	case a.Builtin.ChecksShare():
-		shareLine += ", and a file you add is checked for malware with ClamAV before it reads it: one ClamAV finds is never read, one it cannot check is read unchecked"
+		checked, unchecked := shareLine+shareLineChecked, shareLine+shareLineUnchecked
+		shareLine, shareAlike = unchecked, []string{checked}
+		if malwareCheck {
+			shareLine, shareAlike = checked, []string{unchecked}
+		}
 	case a.Builtin.Codes():
-		shareLine += ", and it reads and runs what you add there as it is, with no malware check"
+		shareLine += shareLineCoder
 	}
-	add(RosterEntry{ID: EntryShare, Kind: KindFiles, Name: "Your share folder", GrantedBy: GrantedByBuiltin, Line: shareLine}, true)
+	add(RosterEntry{ID: EntryShare, Kind: KindFiles, Name: "Your share folder", GrantedBy: GrantedByBuiltin, Line: shareLine, alike: shareAlike}, true)
 	add(RosterEntry{ID: EntryData, Kind: KindFiles, Name: "Its own files", GrantedBy: GrantedByBuiltin, Fixed: true,
 		Line: "Keeps its own notes and files on the volume " + DataVolume(a.Name) + ", kept until you reset it"}, true)
 	if a.Builtin.Codes() {
@@ -180,8 +221,43 @@ func BuildRoster(a Agent, c Config, applied *Applied) Roster {
 			continue
 		}
 		add(e, true)
+		if f, ok := c.ServerFailures[e.ID]; ok && r[len(r)-1].On {
+			r[len(r)-1].State, r[len(r)-1].Reason = StateFailed, f.Reason
+		}
 	}
 	return r
+}
+
+// serverReady says a segment may be given srv: its install has not failed,
+// and the agent's store holds its pin with no install writing it. A
+// server that is not ready is left out of the segment, which runs without
+// it.
+func serverReady(home, name string, c Config, srv manifest.MCPServer) bool {
+	if _, failed := c.ServerFailures[ServerEntryID(srv)]; failed {
+		return false
+	}
+	if srv.IsRemote() {
+		return true
+	}
+	dir := serversDir(home, name)
+	return mcpinstall.Installed(dir, srv) && !mcpinstall.Installing(dir, mcpinstall.IDFor(srv))
+}
+
+// leftOut marks each server of r that is on and that a segment was not
+// given (given says which it was): failed with its reason when its install
+// failed, installing otherwise.
+func leftOut(r Roster, c Config, given func(id string) bool) Roster {
+	out := slices.Clone(r)
+	for i, e := range out {
+		if e.Kind != KindServer || !e.On || given(e.ID) {
+			continue
+		}
+		out[i].State = StateInstalling
+		if f, ok := c.ServerFailures[e.ID]; ok {
+			out[i].State, out[i].Reason = StateFailed, f.Reason
+		}
+	}
+	return out
 }
 
 // The prefixes of a pack's and a server's roster ids.
@@ -248,19 +324,28 @@ type Applied struct {
 type Packs func(ctx context.Context, names []string) (packs []engine.AttachedPack, done func(), err error)
 
 // Apply turns the roster into what a segment is given: the share folder when
-// it is on, the packs and the servers that are on, and the Coding agent's
+// it is on, the packs that are on and the servers that are on and ready (a
+// server the agent's store does not hold yet, one being installed and one
+// whose install failed are left out: serverReady), and the Coding agent's
 // grant, its dev server readied by ready. It is the one place a
 // switch takes effect, so the tools server's spec, the gateway's allowlist and
 // catalogue, the bind lists and the driver's permit set, all compiled and
-// rendered from what it returns, agree. done closes the packs it opened.
+// rendered from what it returns, agree. applied names what the segment is
+// given. done closes the packs it opened.
 func Apply(ctx context.Context, home string, a Agent, c Config, r Roster, open Packs, ready HostReady) (g localrun.Grants, applied Applied, done func(), err error) {
 	done = func() {}
 	on := func(id string) bool {
 		e, ok := r.Entry(id)
 		return ok && e.On
 	}
+	left := map[string]bool{}
+	for _, srv := range c.Servers {
+		if id := ServerEntryID(srv); on(id) && !serverReady(home, a.Name, c, srv) {
+			left[id] = true
+		}
+	}
 	for _, e := range r {
-		if e.On {
+		if e.On && !left[e.ID] {
 			applied.On = append(applied.On, e.ID)
 		}
 	}
@@ -283,7 +368,7 @@ func Apply(ctx context.Context, home string, a Agent, c Config, r Roster, open P
 		}
 	}
 	for _, srv := range c.Servers {
-		if on(ServerEntryID(srv)) {
+		if id := ServerEntryID(srv); on(id) && !left[id] {
 			g.Servers = append(g.Servers, srv)
 		}
 	}

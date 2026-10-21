@@ -10,8 +10,15 @@ package toolsrv
 // agent is read as written. fs_read holds the file's SHA-256 to its
 // verdict; grep and glob, which walk many files, hold each file's size and
 // modification time to the ones the runner checked.
+//
+// The check runs the decode step over each file, and the runner keeps the
+// text it read out of a document (a PDF, a Word file, an image by OCR) at
+// ShareTextDir/<SHA-256>.txt beside the verdicts. fs_read serves that text
+// for a document, found by the digest of the bytes it read and checked, so
+// the text it serves is always the text of those bytes.
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -21,6 +28,7 @@ import (
 	"path"
 	"strings"
 	"sync"
+	"unicode/utf8"
 )
 
 // ShareVerdicts is the verdicts file the runner writes (ShareChecks.File).
@@ -32,7 +40,20 @@ type ShareVerdicts struct {
 }
 
 // ShareVerdictsVersion is the verdicts file's version.
-const ShareVerdictsVersion = 1
+const ShareVerdictsVersion = 2
+
+// ShareTextDir is the folder beside the verdicts file that holds the text
+// the decode step read out of each checked document, one file a digest:
+// <SHA-256>.txt.
+const ShareTextDir = "text"
+
+// ShareTextName is the name, in ShareTextDir, of the text kept for the
+// bytes whose SHA-256 is sum.
+func ShareTextName(sum string) string { return sum + ".txt" }
+
+// maxShareText bounds a kept text fs_read serves: the decode step's own
+// cut, with room to spare.
+const maxShareText = 16 << 20
 
 // The verdicts a checked file can have.
 const (
@@ -40,9 +61,10 @@ const (
 	ShareClean = "clean"
 	// ShareFound: ClamAV found Signature in the bytes.
 	ShareFound = "found"
-	// ShareUnchecked: the runner could not check the bytes (Reason says
-	// why: no signatures on the machine, a file larger than the check
-	// takes). Read as it is, as a run's inputs are then.
+	// ShareUnchecked: the runner did not check the bytes with ClamAV
+	// (Reason says why: the malware check is off on this computer, no
+	// signatures on it, a file larger than the check takes). Read as it
+	// is, as a run's inputs are then.
 	ShareUnchecked = "unchecked"
 )
 
@@ -54,6 +76,15 @@ type ShareVerdict struct {
 	Verdict   string `json:"verdict"`
 	Signature string `json:"signature,omitempty"`
 	Reason    string `json:"reason,omitempty"`
+	// Text says the runner kept the text the decode step read out of
+	// these bytes, at ShareTextDir/ShareTextName(SHA256); Tool names the
+	// reader that read it (pdftotext, pandoc, tesseract, agentry-runner,
+	// tika).
+	Text bool   `json:"text,omitempty"`
+	Tool string `json:"tool,omitempty"`
+	// Unread is why no reader could read text out of these bytes, in the
+	// decode step's words; empty when one did, or when the file is text.
+	Unread string `json:"unread,omitempty"`
 }
 
 // shareState is what the server remembers of the share between calls: the
@@ -113,16 +144,17 @@ func (s *server) shareVerdicts() (ShareVerdicts, error) {
 // maxShareRead is the largest share file fs_read reads, whole, to check it.
 const maxShareRead = 64 << 20
 
-// shareRead reads an open file of the share whole and answers its bytes, or
-// why they may not be read: they are read only when they are the bytes a
-// verdict that is not a finding is for, or the ones this server wrote.
-func (s *server) shareRead(f *os.File, inShare string) ([]byte, string) {
+// shareRead reads an open file of the share whole and answers its bytes and
+// the verdict they have, or why they may not be read: they are read only
+// when they are the bytes a verdict that is not a finding is for, or the
+// ones this server wrote (whose verdict is the zero one).
+func (s *server) shareRead(f *os.File, inShare string) ([]byte, ShareVerdict, string) {
 	data, err := io.ReadAll(io.LimitReader(f, maxShareRead+1))
 	if err != nil {
-		return nil, "the file could not be read to check it: " + err.Error()
+		return nil, ShareVerdict{}, "the file could not be read to check it: " + err.Error()
 	}
 	if len(data) > maxShareRead {
-		return nil, fmt.Sprintf("the file is larger than the %d MiB a checked read takes", maxShareRead>>20)
+		return nil, ShareVerdict{}, fmt.Sprintf("the file is larger than the %d MiB a checked read takes", maxShareRead>>20)
 	}
 	sum := sha256.Sum256(data)
 	digest := hex.EncodeToString(sum[:])
@@ -130,22 +162,102 @@ func (s *server) shareRead(f *os.File, inShare string) ([]byte, string) {
 	mine := s.share.written[digest]
 	s.share.mu.Unlock()
 	if mine {
-		return data, ""
+		return data, ShareVerdict{}, ""
 	}
 	verdicts, err := s.shareVerdicts()
 	if err != nil {
-		return nil, err.Error()
+		return nil, ShareVerdict{}, err.Error()
 	}
 	if v, ok := verdicts.Files[inShare]; ok && v.SHA256 == digest {
-		return data, refusalOf(v)
+		return data, v, refusalOf(v)
 	}
 	// The same bytes under another name: moved or copied since the check.
 	for _, v := range verdicts.Files {
 		if v.SHA256 == digest {
-			return data, refusalOf(v)
+			return data, v, refusalOf(v)
 		}
 	}
-	return nil, "this file has not been checked for malware yet: a file added to the share or changed there is checked before your next turn, so ask again then"
+	return nil, ShareVerdict{}, "this file has not been checked yet: a file added to the share or changed there is checked before your next turn, so ask again then"
+}
+
+// shareText opens the text kept for the bytes whose SHA-256 is digest, the
+// digest fs_read computed of the bytes it read: a regular file in the
+// verdicts' text folder, within maxShareText. The folder is the runner's,
+// mounted read-only, and nothing in it is followed through a link.
+func (s *server) shareText(digest string) (*os.File, int64, error) {
+	root, err := os.OpenRoot(path.Join(path.Dir(s.spec.ShareChecks.File), ShareTextDir))
+	if err != nil {
+		return nil, 0, err
+	}
+	defer func() { _ = root.Close() }()
+	name := ShareTextName(digest)
+	fi, err := root.Lstat(name)
+	if err != nil {
+		return nil, 0, err
+	}
+	if !fi.Mode().IsRegular() || fi.Size() > maxShareText {
+		return nil, 0, fmt.Errorf("the text kept for it is not a regular file within %d MiB", maxShareText>>20)
+	}
+	f, err := root.Open(name)
+	if err != nil {
+		return nil, 0, err
+	}
+	return f, fi.Size(), nil
+}
+
+// readerWords names a decode step reader as fs_read's header says it.
+var readerWords = map[string]string{
+	"pdftotext":      "pdftotext",
+	"pandoc":         "pandoc",
+	"tesseract":      "tesseract (OCR)",
+	"agentry-runner": "Agentry's own reader",
+	"tika":           "Apache Tika",
+}
+
+// shareFileRead is fs_read's answer for the checked bytes data of rel, a file
+// of the share whose verdict is v. By default a document is read by the text
+// the runner kept for those bytes, headed with what read it; a file that is
+// text is read as it is; view "original" reads the file itself, a binary one
+// as base64 pages.
+func (s *server) shareFileRead(rel string, data []byte, v ShareVerdict, view string, offset, maxBytes int64) (string, bool) {
+	readCap, bud := s.spec.Limits.readCap(), s.spec.Limits.budget()
+	binary := bytes.IndexByte(data, 0) >= 0 || !utf8.Valid(data)
+	if view == ViewOriginal || (!v.Text && !binary) {
+		if !binary {
+			return readTextFrom(ToolFSRead, bytes.NewReader(data), int64(len(data)), offset, maxBytes, readCap, bud)
+		}
+		head, err := binaryHead(bytes.NewReader(data))
+		if err != nil {
+			return "fs_read: " + err.Error(), true
+		}
+		text, err := base64PageAt(bytes.NewReader(data), int64(len(data)), offset, maxBytes, readCap, bud, head.mime, fmt.Sprintf("pass fs_read path %q, view %q, offset %%d", rel, ViewOriginal))
+		if err != nil {
+			return "fs_read: " + err.Error(), true
+		}
+		return text, false
+	}
+	if !v.Text {
+		if v.Unread != "" {
+			return fmt.Sprintf("fs_read: %s: no text could be read out of this file (%s); view %q reads its bytes as base64", rel, v.Unread, ViewOriginal), true
+		}
+		return fmt.Sprintf("fs_read: %s is a binary file (%d bytes) with no text read out of it; view %q reads its bytes as base64", rel, len(data), ViewOriginal), true
+	}
+	sum := sha256.Sum256(data)
+	f, size, err := s.shareText(hex.EncodeToString(sum[:]))
+	if err != nil {
+		return fmt.Sprintf("fs_read: %s: the text read out of this file is not kept for its bytes as they are now; view %q reads its bytes as base64", rel, ViewOriginal), true
+	}
+	defer func() { _ = f.Close() }()
+	reader := readerWords[v.Tool]
+	if reader == "" {
+		reader = "the decode step"
+	}
+	header := fmt.Sprintf("[%s: the text %s read out of this file (offsets count the text's bytes); view %q reads the file itself]\n", rel, reader, ViewOriginal)
+	page, isErr := readTextFrom(ToolFSRead, f, size, offset, maxBytes, readCap, bud.less(header))
+	if isErr {
+		return page, true
+	}
+	return header + page, false
 }
 
 func refusalOf(v ShareVerdict) string {

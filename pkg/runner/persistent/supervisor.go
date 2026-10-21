@@ -5,12 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/blaktron/agentry/pkg/manifest"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
@@ -44,8 +48,10 @@ type Options struct {
 	// OnStage, when set, is called as each segment's start reaches each of
 	// its steps (Stage; Stage.Words is how a person is shown it): the
 	// agent's first segment, and each a roster change or a restart starts.
-	// It is called on the starting goroutine, so it returns quickly; nil
-	// does nothing.
+	// A server installed in the background while the agent runs is
+	// reported too, as its install begins, on that install's goroutine. It
+	// is called on the reporting goroutine, so it returns quickly; nil does
+	// nothing.
 	OnStage func(Stage)
 	// Packs opens the knowledge packs the roster has on, for each segment;
 	// nil refuses a roster with one on.
@@ -60,6 +66,10 @@ type Options struct {
 	// StartSegment starts a segment; nil starts it with localrun. Tests
 	// put a session of their own here.
 	StartSegment func(ctx context.Context, seg localrun.Segment) (engine.PersistentSession, error)
+	// InstallServer installs a server in the background; nil installs it
+	// with localrun under Docker and Policy. Tests put an install of their
+	// own here.
+	InstallServer InstallServer
 }
 
 // Stage is a step a segment's start has reached (engine.Stage).
@@ -116,6 +126,19 @@ type Supervisor struct {
 	appCtx       context.Context
 	appCancel    context.CancelFunc
 	stopped      bool // set under mu once Stop has let the watchers go
+	// served are the tools the running segment's gateway serves; joined
+	// are the servers whose background install finished since the agent
+	// was last told, and joinTools the tools the segments they joined
+	// brought, which the next turn tells it.
+	served    []string
+	joined    map[string]bool
+	joinTools []string
+	// installs are the background installs under way, by roster id;
+	// bgCtx ends them all at the stop, which waits for installWG.
+	installs  map[string]*bgInstall
+	bgCtx     context.Context
+	bgCancel  context.CancelFunc
+	installWG sync.WaitGroup
 
 	done     chan struct{}
 	stopOnce sync.Once
@@ -145,7 +168,7 @@ func Start(ctx context.Context, opts Options) (*Supervisor, error) {
 	if !cfg.Enabled {
 		return nil, fmt.Errorf("the %s agent is not enabled: agentry agent enable %s", a.Name, a.Name)
 	}
-	if pending := Unconsented(BuildRoster(a, cfg, nil), cfg); len(pending) > 0 {
+	if pending := Unconsented(BuildRosterUnder(a, cfg, nil, opts.Policy.MalwareCheckOn()), cfg); len(pending) > 0 {
 		return nil, &ConsentError{Agent: a.Name, Entries: pending}
 	}
 	owner, err := Acquire(opts.Home, a.Name, opts.Client)
@@ -156,8 +179,10 @@ func Start(ctx context.Context, opts Options) (*Supervisor, error) {
 		opts: opts, owner: owner, since: time.Now().UTC(),
 		adapter:  localrun.ImageAdapter(adapter.DefaultFor(opts.Policy)),
 		watchers: map[int]chan session.Event{},
-		done:     make(chan struct{}),
+		joined:   map[string]bool{}, installs: map[string]*bgInstall{},
+		done: make(chan struct{}),
 	}
+	s.bgCtx, s.bgCancel = context.WithCancel(context.Background())
 	if opts.Policy != nil {
 		s.model = opts.Policy.Model.Provider + "/" + opts.Policy.Model.Name
 	}
@@ -169,6 +194,7 @@ func Start(ctx context.Context, opts Options) (*Supervisor, error) {
 	err = s.startSegment(ctx, false)
 	s.seg.Unlock()
 	if err != nil {
+		s.bgCancel()
 		s.closeAppLink()
 		owner.Release()
 		return nil, err
@@ -177,6 +203,9 @@ func Start(ctx context.Context, opts Options) (*Supervisor, error) {
 		_, _ = s.Stop(context.WithoutCancel(ctx))
 		return nil, err
 	}
+	// The servers the store does not hold were left out of the segment:
+	// they install now, and join at the turn after they are ready.
+	s.startInstalls()
 	return s, nil
 }
 
@@ -190,7 +219,7 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 	if err != nil {
 		return err
 	}
-	roster := BuildRoster(a, cfg, nil)
+	roster := BuildRosterUnder(a, cfg, nil, s.opts.Policy.MalwareCheckOn())
 	// Every segment is held to the person's agreement, not only the first:
 	// a config.yaml changed some other way does not widen the next one.
 	if pending := Unconsented(roster, cfg); len(pending) > 0 {
@@ -204,6 +233,10 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 	if err != nil {
 		return err
 	}
+	// A server Apply left out is not given, and the roster this segment's
+	// envelope records and its frames are told from says so.
+	given := func(id string) bool { return slices.Contains(applied.On, id) }
+	roster = leftOut(roster, cfg, given)
 	runID, err := engine.NewRunID()
 	if err != nil {
 		packsDone()
@@ -232,6 +265,7 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 			SessionVolume: SessionVolume(name), DataVolume: DataVolume(name),
 			ContinueID: continueID, Roster: roster.Receipt(),
 			ShareVerdicts: filepath.Join(Dir(home, name), shareVerdictsFile),
+			ShareText:     filepath.Join(Dir(home, name), shareTextDir),
 		},
 		Grants: grants,
 	}
@@ -298,9 +332,17 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 	}
 	ending := &atomic.Bool{}
 	pumpDone := make(chan struct{})
+	// The segment's key counts the servers it was given, as Apply decided:
+	// one whose install finished since is a change the next turn applies.
+	key := grantsKeyWith(a, cfg, func(srv manifest.MCPServer) bool { return given(ServerEntryID(srv)) })
+	served := servedTools(sess)
 	s.mu.Lock()
+	if byChange && len(s.joined) > 0 {
+		s.joinTools = append(s.joinTools, newTools(s.served, served)...)
+	}
+	s.served = served
 	s.sess, s.runID, s.outDir, s.segment = sess, runID, outDir, segment
-	s.applied, s.grants, s.packsDone, s.ending, s.pumpDone = applied, grantsKey(a, cfg), packsDone, ending, pumpDone
+	s.applied, s.grants, s.packsDone, s.ending, s.pumpDone = applied, key, packsDone, ending, pumpDone
 	s.carry, s.persona, s.resumed, s.resumeReason = carry, persona, resumed, reason
 	s.roster, s.byChange = roster, byChange
 	if !byChange {
@@ -388,22 +430,33 @@ func (s *Supervisor) Send(ctx context.Context, text string) error {
 		return err
 	}
 	s.mu.Lock()
-	stale := grantsKey(s.opts.Agent, cfg) != s.grants
+	stale := grantsKey(s.opts.Home, s.opts.Agent, cfg) != s.grants
 	s.mu.Unlock()
 	if stale {
 		if err := s.nextSegment(ctx); err != nil {
+			return err
+		}
+		if cfg, err = LoadConfig(s.opts.Home, s.opts.Agent.Name); err != nil {
 			return err
 		}
 	}
 	s.mu.Lock()
 	sess, carry, given := s.sess, s.carry, s.persona
 	byChange, roster := s.byChange, s.roster
+	joined := maps.Clone(s.joined)
 	frame := carry
 	if byChange {
-		frame += changeFrame(s.told, roster, s.resumed)
+		change := changeFrame(s.told, roster, s.resumed, joined)
+		restarted := ""
+		if change == "" && hadOn(s.told, EntryCommands) {
+			restarted = backgroundEnded
+		}
+		frame += change + joinFrame(roster, joined, s.joinTools, restarted)
 	}
 	s.carry = ""
 	s.mu.Unlock()
+	failed := failFrame(BuildRoster(s.opts.Agent, cfg, nil), cfg.ServerFailures)
+	frame += failed
 	persona := personaKey(cfg)
 	if persona != given {
 		frame += personaFrame(cfg)
@@ -416,9 +469,25 @@ func (s *Supervisor) Send(ctx context.Context, text string) error {
 	if err == nil && byChange {
 		s.mu.Lock()
 		if s.sess == sess {
-			s.told, s.byChange = roster, false
+			s.told, s.byChange, s.joinTools = roster, false, nil
+			for _, e := range roster {
+				if joined[e.ID] && e.State == StateOn {
+					delete(s.joined, e.ID)
+				}
+			}
 		}
 		s.mu.Unlock()
+	}
+	if err == nil && failed != "" {
+		_ = s.updateConfig(func(c *Config) error {
+			for id, f := range c.ServerFailures {
+				if was, ok := cfg.ServerFailures[id]; ok && was.At.Equal(f.At) {
+					f.Told = true
+					c.ServerFailures[id] = f
+				}
+			}
+			return nil
+		})
 	}
 	if err == nil && persona != given {
 		s.mu.Lock()
@@ -446,7 +515,11 @@ func (s *Supervisor) nextSegment(ctx context.Context) error {
 	s.broadcast(session.Event{Kind: session.KindNotice, Time: time.Now().UTC(), Text: "Applying your change: the agent restarts with it, and the conversation continues"})
 	s.mu.Unlock()
 	_, _ = s.endSegment(ctx, true)
-	if err := s.startSegment(ctx, true); err != nil {
+	err := s.startSegment(ctx, true)
+	if err != nil {
+		err = s.withoutNewServers(ctx, err)
+	}
+	if err != nil {
 		s.mu.Lock()
 		s.broadcast(session.Event{Kind: session.KindError, Time: time.Now().UTC(), Text: "the change could not be applied, so the agent stopped: " + err.Error()})
 		s.mu.Unlock()
@@ -454,6 +527,66 @@ func (s *Supervisor) nextSegment(ctx context.Context) error {
 		return err
 	}
 	return nil
+}
+
+// withoutNewServers starts the next segment again without the servers it
+// was to be given that the running one was not (a server whose install
+// finished, or one the person switched on), when the segment that had them
+// could not start (err): each is failed with that reason, and the agent
+// runs on without them. When that start fails too, the servers were not
+// why, so their failures are taken back and its error is returned. The
+// caller holds seg.
+func (s *Supervisor) withoutNewServers(ctx context.Context, err error) error {
+	a, home := s.opts.Agent, s.opts.Home
+	cfg, lerr := LoadConfig(home, a.Name)
+	if lerr != nil {
+		return err
+	}
+	s.mu.Lock()
+	had, joined := slices.Clone(s.applied.On), maps.Clone(s.joined)
+	s.mu.Unlock()
+	r := BuildRoster(a, cfg, nil)
+	var added []manifest.MCPServer
+	for _, srv := range cfg.Servers {
+		id := ServerEntryID(srv)
+		if e, ok := r.Entry(id); ok && e.On && !slices.Contains(had, id) && serverReady(home, a.Name, cfg, srv) {
+			added = append(added, srv)
+		}
+	}
+	if len(added) == 0 {
+		return err
+	}
+	reason := failureReason("the agent could not start with it: " + err.Error())
+	var failed []manifest.MCPServer
+	for _, srv := range added {
+		if s.recordFailure(ServerEntryID(srv), reason) {
+			failed = append(failed, srv)
+		}
+	}
+	if len(failed) == 0 {
+		return err
+	}
+	again := s.startSegment(ctx, true)
+	if again == nil {
+		for _, srv := range failed {
+			s.notice("The MCP server " + serverName(srv) + " could not start, and the agent keeps running without it: " + reason + ". Switch it off and on to try again.")
+		}
+		return nil
+	}
+	_ = s.updateConfig(func(c *Config) error {
+		for _, srv := range failed {
+			delete(c.ServerFailures, ServerEntryID(srv))
+		}
+		return nil
+	})
+	s.mu.Lock()
+	for _, srv := range failed {
+		if id := ServerEntryID(srv); joined[id] {
+			s.joined[id] = true
+		}
+	}
+	s.mu.Unlock()
+	return again
 }
 
 // endSegment ends the running segment without a final result, waits for its
@@ -501,12 +634,16 @@ func (s *Supervisor) endSegment(ctx context.Context, swap bool) (*receipt.Envelo
 // answered shows it pending until then.
 func (s *Supervisor) Change(ch Change) (Roster, error) {
 	err := s.updateConfig(func(c *Config) error {
-		_, err := ApplyChange(s.opts.Home, s.opts.Agent, c, ch)
+		_, err := applyChange(s.opts.Home, s.opts.Agent, c, ch, s.opts.Policy.MalwareCheckOn())
 		return err
 	})
 	if err != nil {
 		return nil, err
 	}
+	// A server the change switched on that the store does not hold
+	// installs now, and an install whose server it switched off or removed
+	// is cancelled.
+	s.startInstalls()
 	return s.Roster(), nil
 }
 
@@ -532,7 +669,24 @@ func (s *Supervisor) Roster() Roster {
 	s.mu.Lock()
 	applied := s.applied
 	s.mu.Unlock()
-	return BuildRoster(s.opts.Agent, cfg, &applied)
+	r := BuildRosterUnder(s.opts.Agent, cfg, &applied, s.opts.Policy.MalwareCheckOn())
+	// A server that is on and that the segment was not given is being
+	// installed, or is installed and joins at the next turn.
+	installing := s.installing()
+	byID := map[string]manifest.MCPServer{}
+	for _, srv := range cfg.Servers {
+		byID[ServerEntryID(srv)] = srv
+	}
+	for i, e := range r {
+		if e.Kind != KindServer || !e.On || e.State == StateFailed || slices.Contains(applied.On, e.ID) {
+			continue
+		}
+		r[i].State = StatePending
+		if installing[e.ID] || !serverReady(s.opts.Home, s.opts.Agent.Name, cfg, byID[e.ID]) {
+			r[i].State = StateInstalling
+		}
+	}
+	return r
 }
 
 // Subscribe hands every event from now on to a channel, until cancel or the
@@ -584,7 +738,7 @@ const StateRunning = "running"
 // Status is the agent's state now.
 func (s *Supervisor) Status() Status {
 	cfg, _ := LoadConfig(s.opts.Home, s.opts.Agent.Name)
-	pending := grantsKey(s.opts.Agent, cfg)
+	pending := grantsKey(s.opts.Home, s.opts.Agent, cfg)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return Status{
@@ -605,6 +759,10 @@ func (s *Supervisor) Done() <-chan struct{} { return s.done }
 // itself; every call returns the segment's envelope.
 func (s *Supervisor) Stop(ctx context.Context) (*receipt.Envelope, error) {
 	s.stopOnce.Do(func() {
+		// The background installs are cancelled first and take down their
+		// containers while the segment ends; the lock is let go only once
+		// they have, so the next start of the agent finds none of them.
+		s.cancelInstalls()
 		s.seg.Lock()
 		s.env, s.endErr = s.endSegment(ctx, false)
 		s.seg.Unlock()
@@ -621,6 +779,7 @@ func (s *Supervisor) Stop(ctx context.Context) (*receipt.Envelope, error) {
 		}
 		s.stopped = true
 		s.mu.Unlock()
+		s.waitInstalls()
 		s.owner.Release()
 		close(s.done)
 	})

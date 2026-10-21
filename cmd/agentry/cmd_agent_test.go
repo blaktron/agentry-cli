@@ -314,3 +314,40 @@ func TestAgentStartPrintsEachStage(t *testing.T) {
 		t.Fatalf("shown %q, want %q", shown.String(), want)
 	}
 }
+
+// TestAgentShowSaysWhyAServerFailed: a server whose install failed is shown
+// failed, with why, in show and in show --json, and switching it on again
+// clears it for its next install.
+func TestAgentShowSaysWhyAServerFailed(t *testing.T) {
+	home := agentHome(t)
+	if _, _, err := runCLI(t, nil, "agent", "enable", "assistant"); err != nil {
+		t.Fatal(err)
+	}
+	srv := filepath.Join(t.TempDir(), "server.yaml")
+	if err := os.WriteFile(srv, []byte("pypi: office-word-mcp-server\nversion: 1.1.11\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runCLI(t, nil, "agent", "configure", "assistant", "--add-server", srv, "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := persistent.LoadConfig(home, "assistant")
+	id := "server:pypi-office-word-mcp-server"
+	cfg.ServerFailures = map[string]persistent.ServerFailure{id: {Reason: "resolve pypi:office-word-mcp-server@1.1.11: not found in the configured registry"}}
+	if err := persistent.SaveConfig(home, "assistant", cfg); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := runCLI(t, nil, "agent", "show", "assistant")
+	if err != nil || !strings.Contains(out, "failed") || !strings.Contains(out, "why it failed: resolve pypi:office-word-mcp-server@1.1.11: not found") {
+		t.Fatalf("show: %v\n%s", err, out)
+	}
+	js, _, err := runCLI(t, nil, "agent", "show", "assistant", "--json")
+	if err != nil || !strings.Contains(js, `"state":"failed"`) || !strings.Contains(js, `"reason":"resolve pypi:`) {
+		t.Fatalf("show --json: %v\n%s", err, js)
+	}
+	if _, _, err := runCLI(t, nil, "agent", "grant", "assistant", id, "on"); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, _ = persistent.LoadConfig(home, "assistant"); len(cfg.ServerFailures) != 0 {
+		t.Errorf("switching the failed server on kept its failure: %v", cfg.ServerFailures)
+	}
+}

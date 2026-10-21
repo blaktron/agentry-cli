@@ -1,8 +1,8 @@
-// Package storefile holds the file primitives the person's credential
-// stores under the runner home share (pkg/runner/connection,
-// pkg/runner/modelsignin): an exclusive lock file a refresh writes back
-// under, a 0600 write by rename, and a removal that takes a missing file
-// as done.
+// Package storefile holds the file primitives the stores under the runner
+// home share (the credential stores of pkg/runner/connection and
+// pkg/runner/modelsignin, the MCP server store of pkg/runner/mcpinstall): an
+// exclusive lock file a writer holds, waited for or tried, a 0600 write by
+// rename, and a removal that takes a missing file as done.
 package storefile
 
 import (
@@ -70,4 +70,30 @@ func Lock(path, what string) (func(), error) {
 		_ = unlockFile(f)
 		_ = f.Close()
 	}, nil
+}
+
+// errHeld is a lock another open file holds.
+var errHeld = errors.New("lock held")
+
+// TryLock is Lock without waiting: held says another process, or another
+// open file of this one, holds the lock, and nothing is held then.
+func TryLock(path, what string) (unlock func(), held bool, err error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, false, err
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600) //nolint:gosec // a store's own lock file
+	if err != nil {
+		return nil, false, fmt.Errorf("lock %s: %w", what, err)
+	}
+	if err := tryLockFile(f); err != nil {
+		_ = f.Close()
+		if errors.Is(err, errHeld) {
+			return nil, true, nil
+		}
+		return nil, false, fmt.Errorf("lock %s: %w", what, err)
+	}
+	return func() {
+		_ = unlockFile(f)
+		_ = f.Close()
+	}, false, nil
 }

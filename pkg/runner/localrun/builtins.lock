@@ -105,3 +105,5 @@ agentry/main@1.0.1 sha256:5ed82b1e2da3d95419f385a1f9b89a8f160dfec7fac791f2dd91a7
 agentry/drafter@1.17.0 sha256:2863d54a1a6abaa6f46b31f2ad9a0fd0e09a9689e78d91bdcbf106908e5a494e
 # 1.0.2: shown as Agentry Helper: its instruction, opening line and README use the name.
 agentry/main@1.0.2 sha256:9ca9b0ceba18f7f746be77ef47426d2ff01ba794a9c97a3f2aac92b3412db6b0
+# 1.1.1: the Coding agent's README names its published ports and background programs.
+agentry/coder@1.1.1 sha256:a6674b8feb38bc66d5ee4e6be2354e959c579a28283af262600ed655877af25c

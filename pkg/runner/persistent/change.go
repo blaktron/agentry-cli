@@ -25,6 +25,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/knowledge"
 	"github.com/blaktron/agentry-cli/pkg/runner/mcpinstall"
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 )
 
 // Change is one change to an agent's configuration; a field left unset is
@@ -93,11 +94,17 @@ func (e *ConsentError) Error() string {
 func Unconsented(r Roster, c Config) []RosterEntry {
 	var out []RosterEntry
 	for _, e := range r {
-		if e.On && !e.Fixed && c.Consented[e.ID] != e.Line {
+		if e.On && !e.Fixed && !e.agreed(c.Consented[e.ID]) {
 			out = append(out, e)
 		}
 	}
 	return out
+}
+
+// agreed says the person's recorded agreement is an agreement to the entry
+// as it reads now: its sentence, or one alike it.
+func (e RosterEntry) agreed(recorded string) bool {
+	return recorded != "" && (recorded == e.Line || slices.Contains(e.alike, recorded))
 }
 
 // RecordConsent records the person's agreement to every entry that is on.
@@ -116,8 +123,15 @@ func RecordConsent(r Roster, c *Config) {
 // It answers whether the change alters what a segment is given, so a
 // running agent's next turn starts a new segment, and refuses with a
 // ConsentError a change that turns on what the person has not agreed to,
-// unless ch.Consent says they have.
+// unless ch.Consent says they have. The sentences it asks with say the
+// malware check is off, as BuildRoster's do.
 func ApplyChange(home string, a Agent, c *Config, ch Change) (restart bool, err error) {
+	return applyChange(home, a, c, ch, false)
+}
+
+// applyChange is ApplyChange for an agent that runs under a policy whose
+// malware check is malwareCheck (BuildRosterUnder).
+func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) (restart bool, err error) {
 	if a.DesktopOnly {
 		return false, fmt.Errorf("%s %w: its configuration is Agentry Desktop's", a.Title, ErrDesktopOnly)
 	}
@@ -126,6 +140,7 @@ func ApplyChange(home string, a Agent, c *Config, ch Change) (restart bool, err 
 	next.Consented = cloneMap(c.Consented)
 	next.Servers = slices.Clone(c.Servers)
 	next.Knowledge = slices.Clone(c.Knowledge)
+	next.ServerFailures = cloneMap(c.ServerFailures)
 	if ch.Name != nil {
 		name, err := cleanName(*ch.Name)
 		if err != nil {
@@ -160,6 +175,7 @@ func ApplyChange(home string, a Agent, c *Config, ch Change) (restart bool, err 
 		}
 		next.Servers = append(next.Servers, *srv)
 		delete(next.Switches, id)
+		delete(next.ServerFailures, id)
 	}
 	if id := ch.RemoveServer; id != "" {
 		if !strings.HasPrefix(id, serverPrefix) {
@@ -172,6 +188,7 @@ func ApplyChange(home string, a Agent, c *Config, ch Change) (restart bool, err 
 		next.Servers = slices.Delete(next.Servers, i, i+1)
 		delete(next.Switches, id)
 		delete(next.Consented, id)
+		delete(next.ServerFailures, id)
 	}
 	if k := ch.AddKnowledge; k != "" {
 		if err := knowledge.ValidName(k); err != nil {
@@ -249,7 +266,7 @@ func ApplyChange(home string, a Agent, c *Config, ch Change) (restart bool, err 
 		delete(next.Consented, PortEntryID(name))
 	}
 	if sw := ch.Switch; sw != nil {
-		e, ok := BuildRoster(a, next, nil).Entry(sw.ID)
+		e, ok := BuildRosterUnder(a, next, nil, malwareCheck).Entry(sw.ID)
 		switch {
 		case !ok:
 			return false, fmt.Errorf("the %s agent has no entry %q (agentry agent show %s lists them)", a.Name, sw.ID, a.Name)
@@ -262,16 +279,20 @@ func ApplyChange(home string, a Agent, c *Config, ch Change) (restart bool, err 
 			next.Switches = map[string]bool{}
 		}
 		next.Switches[sw.ID] = sw.On
+		// Switching a failed server, off or on, is how the person asks for
+		// its install again: on, it is installed at once while the agent
+		// runs, else at its next start.
+		delete(next.ServerFailures, sw.ID)
 	}
 	// What this change turns on that the person has not agreed to: an entry
 	// that was on and unagreed before, as it read then, is the start's to
 	// ask about, not this change's.
 	before := map[string]bool{}
-	for _, e := range Unconsented(BuildRoster(a, *c, nil), *c) {
+	for _, e := range Unconsented(BuildRosterUnder(a, *c, nil, malwareCheck), *c) {
 		before[e.ID+"\x00"+e.Line] = true
 	}
 	var widened []RosterEntry
-	for _, e := range Unconsented(BuildRoster(a, next, nil), next) {
+	for _, e := range Unconsented(BuildRosterUnder(a, next, nil, malwareCheck), next) {
 		if !before[e.ID+"\x00"+e.Line] {
 			widened = append(widened, e)
 		}
@@ -287,14 +308,22 @@ func ApplyChange(home string, a Agent, c *Config, ch Change) (restart bool, err 
 			next.Consented[e.ID] = e.Line
 		}
 	}
-	restart = grantsKey(a, *c) != grantsKey(a, next)
+	restart = grantsKey(home, a, *c) != grantsKey(home, a, next)
 	*c = next
 	return restart, nil
 }
 
-// grantsKey is what of a configuration a segment is given: two configs with
-// the same key give a segment the same grants.
-func grantsKey(a Agent, c Config) string {
+// grantsKey is what of a configuration a segment is given, under the runner
+// home home: two configs with the same key give a segment the same grants.
+// A server counts once it is ready (serverReady), so a change that adds a
+// server restarts nothing, and the install that makes it ready does.
+func grantsKey(home string, a Agent, c Config) string {
+	return grantsKeyWith(a, c, func(srv manifest.MCPServer) bool { return serverReady(home, a.Name, c, srv) })
+}
+
+// grantsKeyWith is grantsKey with ready saying which servers count: a
+// segment's own key counts the servers it was given.
+func grantsKeyWith(a Agent, c Config, ready func(manifest.MCPServer) bool) string {
 	r := BuildRoster(a, c, nil)
 	type key struct {
 		On        []string
@@ -302,15 +331,19 @@ func grantsKey(a Agent, c Config) string {
 		Servers   []manifest.MCPServer
 		Knowledge []string
 	}
+	counted := map[string]bool{}
+	for _, s := range c.Servers {
+		counted[ServerEntryID(s)] = ready(s)
+	}
 	k := key{}
 	for _, e := range r {
-		if e.On {
+		if e.On && (e.Kind != KindServer || counted[e.ID]) {
 			k.On = append(k.On, e.ID+"="+e.Line)
 		}
 	}
 	k.Share, _ = ShareFolder(a, c)
 	for _, s := range c.Servers {
-		if e, ok := r.Entry(ServerEntryID(s)); ok && e.On {
+		if e, ok := r.Entry(ServerEntryID(s)); ok && e.On && counted[e.ID] {
 			k.Servers = append(k.Servers, s)
 		}
 	}
@@ -382,17 +415,18 @@ func personaFrame(c Config) string {
 		strconv.Quote(c.Personality) + ". Go by that name and take on that personality from now on, within your instructions.)\n\n"
 }
 
+// backgroundEnded tells an agent that runs programs what a restart did to
+// the ones it left running: they ran in the segment that ended.
+const backgroundEnded = "Agentry restarted you for it, so every program you started in the background has ended: start again any you still need."
+
 // changeFrame is what the first turn of a segment started by a change starts
 // with: the entries the agent had and no longer has, and the reverse, each by
 // its roster name and quoted, so nothing in a name can pass for the frame
 // around it. continued says the segment continued the conversation, in which
 // what was switched off may have worked. "" when the change gave and took
-// nothing.
-// backgroundEnded tells an agent that runs programs what a restart did to
-// the ones it left running: they ran in the segment that ended.
-const backgroundEnded = "Agentry restarted you for it, so every program you started in the background has ended: start again any you still need."
-
-func changeFrame(before, after Roster, continued bool) string {
+// nothing. joined are the servers, by roster id, that are on because their
+// install finished: joinFrame tells those, not this frame.
+func changeFrame(before, after Roster, continued bool, joined map[string]bool) string {
 	given := func(r Roster) map[string]bool {
 		m := map[string]bool{}
 		for _, e := range r {
@@ -405,7 +439,7 @@ func changeFrame(before, after Roster, continued bool) string {
 	had, has := given(before), given(after)
 	var on, off []string
 	for _, e := range after {
-		if has[e.ID] && !had[e.ID] {
+		if has[e.ID] && !had[e.ID] && !joined[e.ID] {
 			on = append(on, strconv.Quote(e.Name))
 		}
 	}
@@ -466,13 +500,22 @@ func Configure(ctx context.Context, home string, a Agent, client string, ch Chan
 	if err != nil {
 		return nil, false, err
 	}
-	if _, err := ApplyChange(home, a, &cfg, ch); err != nil {
+	malwareCheck := HomeMalwareCheck(home)
+	if _, err := applyChange(home, a, &cfg, ch, malwareCheck); err != nil {
 		return nil, false, err
 	}
 	if err := SaveConfig(home, a.Name, cfg); err != nil {
 		return nil, false, err
 	}
-	return BuildRoster(a, cfg, nil), false, nil
+	return BuildRosterUnder(a, cfg, nil, malwareCheck), false, nil
+}
+
+// HomeMalwareCheck is the malware-check setting of the policy in the runner
+// home home, for a roster built while the agent is not running; off when
+// that policy is missing or unreadable, as a new one has it.
+func HomeMalwareCheck(home string) bool {
+	pol, _, err := policy.Load(policy.PathIn(home))
+	return err == nil && pol.MalwareCheckOn()
 }
 
 // AgreeToRoster records the person's agreement to everything the agent's

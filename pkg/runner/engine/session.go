@@ -286,7 +286,7 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	}
 	// The driver also permits what the gateway serves beyond the run's own
 	// grant: the declared servers' tools. Still before any harness starts.
-	s.granted = permitted(s.granted, served)
+	s.granted, s.served = permitted(s.granted, served), served
 	// The tools server runs: the Coding agent's ports are published into it.
 	if err := startPortRelays(ctx, d, p, rd, td, runID); err != nil {
 		return fail(err)
@@ -330,6 +330,9 @@ type liveSession struct {
 	// granted is the run's own tool grant, read from its rendered tools
 	// spec after the run-time grants: what the driver permits.
 	granted []string
+	// served are the tools the gateway serves, as its probe listed them
+	// once the infrastructure was up.
+	served []string
 	// dec decodes the inputs, a mid-run file before it is announced; nil
 	// when the caller decoded them or staged its own (every built-in).
 	dec    *inputsDecoder
@@ -650,6 +653,11 @@ func conversationOf(drv adapter.SessionDriver, adapterName, continueID string) (
 	resumed, reason = c.Continued()
 	return c.ConversationID(), resumed, reason
 }
+
+// ServedTools are the tools the session's gateway serves, by name: its own
+// tools server's and every MCP server's in the plan, as the gateway listed
+// them before the harness started.
+func (s *liveSession) ServedTools() []string { return slices.Clone(s.served) }
 
 // Conversation implements PersistentSession.
 func (s *liveSession) Conversation() (id string, resumed bool, reason string) {

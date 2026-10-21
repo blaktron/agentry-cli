@@ -228,11 +228,14 @@ func TestACPSessionRefusesUnknownRequestsAndReportsProtocolMismatch(t *testing.T
 	}
 }
 
-// lateWriteRW answers the first request it is written, ends the stream, and
-// returns from the write only once the session's reader has seen that end,
-// so the caller finds the answer and the end of the stream both ready.
+// lateWriteRW answers the first request it is written (lines names the
+// messages it writes back; by default one result), ends the stream, and
+// returns from the write only once the session's reader has seen that end
+// (ended), so the caller finds the answer and the end of the stream both
+// ready.
 type lateWriteRW struct {
-	drv   *acpSession
+	ended <-chan struct{}
+	lines func(req rpcMessage) []map[string]any
 	reply *io.PipeReader
 	out   *io.PipeWriter
 }
@@ -244,12 +247,18 @@ func (rw *lateWriteRW) Write(p []byte) (int, error) {
 	if err := json.Unmarshal(p, &m); err != nil {
 		return 0, err
 	}
-	b, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": map[string]any{"ok": true}})
-	if _, err := rw.out.Write(append(b, '\n')); err != nil {
-		return 0, err
+	msgs := []map[string]any{{"jsonrpc": "2.0", "id": m.ID, "result": map[string]any{"ok": true}}}
+	if rw.lines != nil {
+		msgs = rw.lines(m)
+	}
+	for _, msg := range msgs {
+		b, _ := json.Marshal(msg)
+		if _, err := rw.out.Write(append(b, '\n')); err != nil {
+			return 0, err
+		}
 	}
 	_ = rw.out.Close()
-	<-rw.drv.readDone
+	<-rw.ended
 	return len(p), nil
 }
 
@@ -262,7 +271,7 @@ func TestACPSessionReturnsAnAnswerWrittenBeforeTheStreamEnded(t *testing.T) {
 		r, w := io.Pipe()
 		rw := &lateWriteRW{reply: r, out: w}
 		drv := newACPSession(rw, 1, nil)
-		rw.drv = drv
+		rw.ended = drv.readDone
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		res, err := drv.call(ctx, "initialize", map[string]any{})
 		cancel()

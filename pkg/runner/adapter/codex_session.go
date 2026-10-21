@@ -226,8 +226,7 @@ func (s *codexSession) Prompt(ctx context.Context, text string) (*Turn, error) {
 	s.mu.Lock()
 	t.turnID = tr.Turn.ID
 	s.mu.Unlock()
-	select {
-	case end := <-t.done:
+	finish := func(end codexTurnEnd) (*Turn, error) {
 		s.mu.Lock()
 		out := &Turn{StopReason: end.status, Text: t.text}
 		if t.inTok > 0 || t.outTok > 0 {
@@ -245,10 +244,24 @@ func (s *codexSession) Prompt(ctx context.Context, text string) (*Turn, error) {
 			return out, fmt.Errorf("codex session: turn %s: %s", end.status, why)
 		}
 		return out, nil
+	}
+	select {
+	case end := <-t.done:
+		return finish(end)
 	case <-ctx.Done():
 		return nil, fmt.Errorf("turn/start: %w", ctx.Err())
 	case <-s.readDone:
-		return nil, errors.New("turn/start: harness ended the session before answering")
+		// A harness that finishes the turn and exits at once leaves both
+		// the turn's end and the end of the stream ready, and select picks
+		// between them at random. The reader hands a turn's end over before
+		// it can see the end of the stream, so a turn that ended is already
+		// waiting.
+		select {
+		case end := <-t.done:
+			return finish(end)
+		default:
+			return nil, errors.New("turn/start: harness ended the session before answering")
+		}
 	}
 }
 
@@ -293,8 +306,7 @@ func (s *codexSession) call(ctx context.Context, method string, params any) (jso
 	if err := s.send(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params}); err != nil {
 		return nil, fmt.Errorf("%s: %w", method, err)
 	}
-	select {
-	case m, ok := <-ch:
+	answered := func(m rpcMessage, ok bool) (json.RawMessage, error) {
 		if !ok {
 			return nil, fmt.Errorf("%s: harness ended the session before answering", method)
 		}
@@ -302,10 +314,23 @@ func (s *codexSession) call(ctx context.Context, method string, params any) (jso
 			return nil, &harnessRPCError{method: method, rpc: m.Error}
 		}
 		return m.Result, nil
+	}
+	select {
+	case m, ok := <-ch:
+		return answered(m, ok)
 	case <-ctx.Done():
 		return nil, fmt.Errorf("%s: %w", method, ctx.Err())
 	case <-s.readDone:
-		return nil, fmt.Errorf("%s: harness ended the session before answering", method)
+		// A harness that answers and exits at once leaves both the answer
+		// and the end of the stream ready, and select picks between them
+		// at random. The reader hands an answer over before it can see the
+		// end of the stream, so an answer is already waiting if one came.
+		select {
+		case m, ok := <-ch:
+			return answered(m, ok)
+		default:
+			return nil, fmt.Errorf("%s: harness ended the session before answering", method)
+		}
 	}
 }
 

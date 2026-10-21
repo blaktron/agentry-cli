@@ -150,7 +150,7 @@ func (s *Supervisor) selfConfigure(raw json.RawMessage) applink.Answer {
 	}
 	var saved Config
 	err := s.updateConfig(func(c *Config) error {
-		if _, err := ApplyChange(s.opts.Home, s.opts.Agent, c, Change{Name: args.Name, Personality: args.Personality}); err != nil {
+		if _, err := applyChange(s.opts.Home, s.opts.Agent, c, Change{Name: args.Name, Personality: args.Personality}, s.opts.Policy.MalwareCheckOn()); err != nil {
 			return err
 		}
 		c.PersonaGiven = personaKey(*c)
