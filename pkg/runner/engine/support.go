@@ -70,9 +70,12 @@ type runDirs struct {
 	// the daemon's placement needs the relay, for the receipt.
 	appLinkRelay, appLinkPlacement string
 	// shareKept are the share's verdicts the last segment left
-	// (PersistentSegment.ShareVerdicts), and shareCache where they are kept.
-	shareKept  map[string]toolsrv.ShareVerdict
-	shareCache string
+	// (PersistentSegment.ShareVerdicts), and shareCache where they are kept;
+	// shareTextKept is the folder the text read out of the share's documents
+	// is kept in between segments (PersistentSegment.ShareText).
+	shareKept     map[string]toolsrv.ShareVerdict
+	shareCache    string
+	shareTextKept string
 	// targets are the run's target hosts, readied by the caller, in the
 	// plan's order (targethosts.go): the replacer gives each relay its
 	// address and port, and the host link its user.

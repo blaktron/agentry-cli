@@ -81,6 +81,10 @@ type RosterEntry struct {
 	Line string `json:"line"`
 	// Fixed is an entry no switch changes.
 	Fixed bool `json:"fixed,omitempty"`
+	// alike are the other sentences an agreement to which is an agreement
+	// to this entry: the share's sentence under the other malware-check
+	// setting, which changes what the sentence says and grants nothing.
+	alike []string
 }
 
 // Roster is an agent's entries, in a fixed order: its folders, its packs,
@@ -126,10 +130,28 @@ func ShareFolder(a Agent, c Config) (string, error) {
 // when it is missing.
 func isDefaultShare(a Agent, c Config) bool { return c.Share == "" }
 
-// BuildRoster is the agent's roster from its config. applied, when set, is
-// what the running segment was given (Applied): an entry whose switch
-// differs from it is pending.
+// BuildRoster is the agent's roster from its config, its share's sentence
+// saying the malware check is off, as the default policy has it; a client
+// that knows the policy the agent runs under builds it with
+// BuildRosterUnder. applied, when set, is what the running segment was
+// given (Applied): an entry whose switch differs from it is pending.
 func BuildRoster(a Agent, c Config, applied *Applied) Roster {
+	return BuildRosterUnder(a, c, applied, false)
+}
+
+// The share's sentence, by what its check does.
+const (
+	shareLineChecked   = ", and a file you add is checked for malware with ClamAV before it reads it: one ClamAV finds is never read, one it cannot check is read unchecked"
+	shareLineUnchecked = ", and it reads what you add there unchecked: the malware check is off on this computer (malwareCheck in the runner policy), so no file is checked with ClamAV"
+	shareLineCoder     = ", and it reads and runs what you add there as it is, with no malware check"
+)
+
+// BuildRosterUnder is BuildRoster for an agent that runs under a policy
+// whose malware check is malwareCheck: the share's sentence of an agent that
+// checks its share says whether ClamAV checks its files. Changing the
+// setting changes the sentence and asks nothing: an agreement to the share
+// under either setting is an agreement to it under the other (Unconsented).
+func BuildRosterUnder(a Agent, c Config, applied *Applied, malwareCheck bool) Roster {
 	share, err := ShareFolder(a, c)
 	if err != nil {
 		share = "~/agentry/" + a.ShareName
@@ -150,13 +172,18 @@ func BuildRoster(a Agent, c Config, applied *Applied) Roster {
 		r = append(r, e)
 	}
 	shareLine := "Shares the folder " + share + " with you, read and write: you see what it writes there as it writes it"
+	var shareAlike []string
 	switch {
 	case a.Builtin.ChecksShare():
-		shareLine += ", and a file you add is checked for malware with ClamAV before it reads it: one ClamAV finds is never read, one it cannot check is read unchecked"
+		checked, unchecked := shareLine+shareLineChecked, shareLine+shareLineUnchecked
+		shareLine, shareAlike = unchecked, []string{checked}
+		if malwareCheck {
+			shareLine, shareAlike = checked, []string{unchecked}
+		}
 	case a.Builtin.Codes():
-		shareLine += ", and it reads and runs what you add there as it is, with no malware check"
+		shareLine += shareLineCoder
 	}
-	add(RosterEntry{ID: EntryShare, Kind: KindFiles, Name: "Your share folder", GrantedBy: GrantedByBuiltin, Line: shareLine}, true)
+	add(RosterEntry{ID: EntryShare, Kind: KindFiles, Name: "Your share folder", GrantedBy: GrantedByBuiltin, Line: shareLine, alike: shareAlike}, true)
 	add(RosterEntry{ID: EntryData, Kind: KindFiles, Name: "Its own files", GrantedBy: GrantedByBuiltin, Fixed: true,
 		Line: "Keeps its own notes and files on the volume " + DataVolume(a.Name) + ", kept until you reset it"}, true)
 	if a.Builtin.Codes() {

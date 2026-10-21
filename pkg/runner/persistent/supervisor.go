@@ -145,7 +145,7 @@ func Start(ctx context.Context, opts Options) (*Supervisor, error) {
 	if !cfg.Enabled {
 		return nil, fmt.Errorf("the %s agent is not enabled: agentry agent enable %s", a.Name, a.Name)
 	}
-	if pending := Unconsented(BuildRoster(a, cfg, nil), cfg); len(pending) > 0 {
+	if pending := Unconsented(BuildRosterUnder(a, cfg, nil, opts.Policy.MalwareCheckOn()), cfg); len(pending) > 0 {
 		return nil, &ConsentError{Agent: a.Name, Entries: pending}
 	}
 	owner, err := Acquire(opts.Home, a.Name, opts.Client)
@@ -190,7 +190,7 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 	if err != nil {
 		return err
 	}
-	roster := BuildRoster(a, cfg, nil)
+	roster := BuildRosterUnder(a, cfg, nil, s.opts.Policy.MalwareCheckOn())
 	// Every segment is held to the person's agreement, not only the first:
 	// a config.yaml changed some other way does not widen the next one.
 	if pending := Unconsented(roster, cfg); len(pending) > 0 {
@@ -232,6 +232,7 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 			SessionVolume: SessionVolume(name), DataVolume: DataVolume(name),
 			ContinueID: continueID, Roster: roster.Receipt(),
 			ShareVerdicts: filepath.Join(Dir(home, name), shareVerdictsFile),
+			ShareText:     filepath.Join(Dir(home, name), shareTextDir),
 		},
 		Grants: grants,
 	}
@@ -501,7 +502,7 @@ func (s *Supervisor) endSegment(ctx context.Context, swap bool) (*receipt.Envelo
 // answered shows it pending until then.
 func (s *Supervisor) Change(ch Change) (Roster, error) {
 	err := s.updateConfig(func(c *Config) error {
-		_, err := ApplyChange(s.opts.Home, s.opts.Agent, c, ch)
+		_, err := applyChange(s.opts.Home, s.opts.Agent, c, ch, s.opts.Policy.MalwareCheckOn())
 		return err
 	})
 	if err != nil {
@@ -532,7 +533,7 @@ func (s *Supervisor) Roster() Roster {
 	s.mu.Lock()
 	applied := s.applied
 	s.mu.Unlock()
-	return BuildRoster(s.opts.Agent, cfg, &applied)
+	return BuildRosterUnder(s.opts.Agent, cfg, &applied, s.opts.Policy.MalwareCheckOn())
 }
 
 // Subscribe hands every event from now on to a channel, until cancel or the

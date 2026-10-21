@@ -143,7 +143,7 @@ func readAgentState(ctx context.Context, home string, a persistent.Agent) (agent
 	st.DisplayName = a.DisplayName(cfg)
 	st.Config = &cfg
 	st.Share, _ = persistent.ShareFolder(a, cfg)
-	st.Roster = persistent.BuildRoster(a, cfg, nil)
+	st.Roster = persistent.BuildRosterUnder(a, cfg, nil, defaultMalwareCheck())
 	held, holder := persistent.Held(home, a.Name)
 	switch {
 	case held:
@@ -315,6 +315,18 @@ func agentPolicy(path string) (*policy.Policy, string, policy.File, error) {
 	return pol, sha, file, nil
 }
 
+// defaultMalwareCheck is the malware-check setting of the runner home's
+// policy, for a roster shown without starting the agent; off when there is
+// no policy yet, as a new one has it.
+func defaultMalwareCheck() bool {
+	file, err := policy.Resolve("")
+	if err != nil {
+		return false
+	}
+	pol, _, err := policy.Load(file.Path)
+	return err == nil && pol.MalwareCheckOn()
+}
+
 // agentStartTimeout bounds how long start waits for the agent to come up:
 // a first start may build the runner's images.
 var agentStartTimeout = 20 * time.Minute
@@ -347,19 +359,20 @@ func newAgentStartCmd() *cobra.Command {
 			if held, h := persistent.Held(home, a.Name); held {
 				return engine.Classify(engine.ExitUsage, &persistent.HeldError{Agent: a.Name, Holder: h})
 			}
+			pol, _, _, err := agentPolicy(policyPath)
+			if err != nil {
+				return err
+			}
 			// What the agent is given that the person has not agreed to on
 			// this computer is asked for here, on the terminal: the
 			// supervisor has none, and refuses to start without it.
-			if pending := persistent.Unconsented(persistent.BuildRoster(a, cfg, nil), cfg); len(pending) > 0 {
+			if pending := persistent.Unconsented(persistent.BuildRosterUnder(a, cfg, nil, pol.MalwareCheckOn()), cfg); len(pending) > 0 {
 				if err := agentConsent(cmd, a, &persistent.ConsentError{Agent: a.Name, Entries: pending}, yes); err != nil {
 					return err
 				}
 				if err := persistent.AgreeToRoster(home, a, persistent.ClientCLI); err != nil {
 					return engine.Classify(engine.ExitCLI, err)
 				}
-			}
-			if _, _, _, err := agentPolicy(policyPath); err != nil {
-				return err
 			}
 			if err := dockerx.New().Available(cmd.Context()); err != nil {
 				return engine.Classify(engine.ExitCLI, fmt.Errorf("a persistent agent runs in containers, and the container engine is not available: %w", err))

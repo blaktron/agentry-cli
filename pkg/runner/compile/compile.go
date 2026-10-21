@@ -216,7 +216,8 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		if caps.FSReadMode != "none" || caps.FSWriteMode != "none" {
 			return nil, &PolicyRefusal{Reason: "a persistent agent's files are its share and data folders, and it declares no filesystem access of its own beside them"}
 		}
-		caps.AgentFiles = &spec.AgentFiles{Share: in.AgentFiles.Share, CheckShare: in.AgentFiles.Share && in.AgentFiles.CheckShare}
+		checked := in.AgentFiles.Share && in.AgentFiles.CheckShare
+		caps.AgentFiles = &spec.AgentFiles{Share: in.AgentFiles.Share, CheckShare: checked, MalwareCheck: checked && in.Policy.MalwareCheckOn()}
 	}
 	if in.AppLink != "" {
 		if mode != manifest.ModePersistent || in.Source != "builtin" {
@@ -373,6 +374,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		inputView:    inputView,
 		review:       in.Review,
 		budget:       budget,
+		persistent:   mode == manifest.ModePersistent,
 	}, body)
 
 	files := map[string][]byte{}
@@ -2241,8 +2243,11 @@ func agentFilesEnforcement(a *spec.AgentFiles) string {
 		return line + "; no share folder"
 	}
 	line += "; the person's share folder, bound read-write and never relabelled at " + spec.AgentRoot + "/" + spec.AgentShareDir + ", the one host folder the gateway may write besides the output folder, by its exact path"
-	if a.CheckShare {
-		return line + "; a file added there is read only once the runner has checked its bytes with ClamAV, before the next turn: one ClamAV found is never read, and one it could not check (no signatures on this computer, past its limits) is read unchecked; receipts/share-checks.ndjson has each verdict"
+	switch {
+	case a.CheckShare && a.MalwareCheck:
+		return line + "; a file added there is read only once the runner has checked its bytes with ClamAV, before the next turn: one ClamAV found is never read, and one it could not check (no signatures on this computer, past its limits) is read unchecked; a document is read by the text the decode step read out of those bytes; receipts/share-checks.ndjson has each verdict"
+	case a.CheckShare:
+		return line + "; a file added there is read only once the runner has read it, before the next turn, without ClamAV: the malware check is off on this computer, so every file is read unchecked; a document is read by the text the decode step read out of its bytes; receipts/share-checks.ndjson has each verdict"
 	}
 	return line + ", read as it is"
 }

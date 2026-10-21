@@ -89,6 +89,10 @@ type promptFacts struct {
 	// budget is the most one tool result holds under the run's harness
 	// (adapter.ResultBudget), which the tools page within.
 	budget adapter.Budget
+	// persistent is a persistent agent's plan, whose inputs folder is
+	// always empty: its files are its folders, so the prompt has no inputs
+	// paragraph.
+	persistent bool
 }
 
 // inputViewOf is the plan's InputView for a manifest: its inputs.view when
@@ -116,7 +120,9 @@ func systemPrompt(f promptFacts) string {
 	b.WriteString(whatYouAreSection)
 	b.WriteString(modeSection)
 	writeEnvironment(&b, f)
-	writeInputs(&b, f)
+	if !f.persistent {
+		writeInputs(&b, f)
+	}
 	b.WriteString(knowledgeSection(f.caps.Scratch))
 	b.WriteString(voiceSection)
 	writeOutput(&b, f)
@@ -501,8 +507,14 @@ func agentFilesLine(a *spec.AgentFiles, commands bool) string {
 		data + "/ is your own, kept from one conversation to the next: keep your notes in " + data + "/notes, so you remember what matters even when the conversation is not carried over."
 	if a.Share {
 		line += " " + share + "/ is the person's share folder on their computer: they put files there for you and take what you write there, and they see each change as you make it. Write there only what the person asked for, and never delete their files unless they asked."
-		if a.CheckShare {
+		switch {
+		case a.CheckShare && a.MalwareCheck:
 			line += " Each file they add is checked for malware before your next turn: one not yet checked is refused until then, and one ClamAV found is refused with the reason; say so rather than guess at it."
+		case a.CheckShare:
+			line += " Each file they add is read before your next turn, and one not yet read is refused until then; the malware check is off on this computer, so nothing there was checked for malware."
+		}
+		if a.CheckShare {
+			line += " fs_read reads a document there by the text read out of it before your turn, headed with what read it: " + toolsrv.ShareFormats + ". Read a document that way and summarise or quote it; view \"original\" reads the file itself. A file nothing could read says why: tell the person rather than guess at it."
 		}
 	}
 	return line + "\n"
