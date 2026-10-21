@@ -47,6 +47,11 @@ import (
 	"time"
 )
 
+// ToolsLabel is the label the filter puts on the run's tools server alone,
+// with the run's id: the runner relays the Coding agent's published ports
+// into the container that carries it.
+const ToolsLabel = "agentry.tools"
+
 // Config says whose objects the filter serves, where, and within what.
 type Config struct {
 	// RunID is the run whose objects the gateway may touch.

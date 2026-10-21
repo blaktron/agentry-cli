@@ -145,6 +145,10 @@ func (s *server) buildTools() {
 				continue
 			}
 			add(name, s.runCommandDescription(), runCommandSchema(), s.toolRunCommand)
+		case ToolBackgroundOutput:
+			add(name, backgroundOutputDescription, backgroundOutputSchema(), s.toolBackgroundOutput)
+		case ToolStopBackground:
+			add(name, stopBackgroundDescription, stopBackgroundSchema(), s.toolStopBackground)
 		case ToolListInputs:
 			add(name, "List the read-only input files provided for this run, one a line: its path, the type of file it is, its size in bytes, whether it could be read (read, or unread with the reason), the size of its text and the views read_input can read it in. A document, PDF or image was turned into text before the run; code, markup and data are as uploaded. Omit path (or pass \".\") for every input, or pass a directory for what is under it; empty when no inputs were provided. A long listing stops at the result limit and says the offset to continue from.",
 				listInputsSchema(), s.toolListInputs)
@@ -328,6 +332,7 @@ func runAnySchema() map[string]any {
 		"dir":            strProp("the folder to run it in, relative to /agent (data/projects/myapp); empty runs it in /agent"),
 		"stdin":          strProp("text piped to the program's stdin"),
 		"timeoutSeconds": intProp("kill the program after this many seconds; clamped to the server limit"),
+		"background":     boolProp("start the program in the background and return after a few seconds with its id: it keeps running (a dev server, a watcher) until stop_background or the segment's end"),
 	}, "command")
 }
 

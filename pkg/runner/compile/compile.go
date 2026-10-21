@@ -550,6 +550,9 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	if caps.AppLink != "" {
 		plan.Enforcement["persistent.appLink"] = appLinkEnforcement(caps.AppLink)
 	}
+	if c := caps.Coder; c != nil && c.Commands && len(c.Ports) > 0 {
+		plan.Enforcement["persistent.ports"] = coderPortsEnforcement(c.Ports)
+	}
 	if hostLink != nil {
 		plan.Enforcement["targetHosts"] = targetHostsEnforcement(caps.TargetHosts)
 		if c := caps.Coder; c != nil && c.DevHost {
@@ -984,6 +987,9 @@ func toolSpec(caps spec.CapSummary, secrets []string) *toolsrv.Spec {
 	if c := caps.Coder; c != nil && c.Commands {
 		ts.Exec = toolsrv.Exec{Any: true, Home: spec.CoderHome}
 		ts.Limits.ExecTimeoutSeconds = coderExecTimeoutSeconds
+		for _, p := range c.Ports {
+			ts.Exec.Ports = append(ts.Exec.Ports, toolsrv.Port{Name: p.Name, Port: p.Port})
+		}
 	}
 	return ts
 }

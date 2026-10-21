@@ -35,6 +35,9 @@ func coderGrant(in Inputs, caps *spec.CapSummary) error {
 		return &PolicyRefusal{Reason: "the Coding agent's grants replace what a manifest declares: it declares no egress, exec, target host or browser of its own"}
 	}
 	g := *in.Coder
+	if err := checkCoderPorts(g.Ports); err != nil {
+		return err
+	}
 	caps.Coder = &g
 	if g.OpenEgress {
 		caps.EgressMode = "all"
@@ -62,4 +65,29 @@ func devHostEnforcement() string {
 	return fmt.Sprintf("the Coding agent's dev server, saved by the person for this agent with its host key pinned and its sign-in in their keychain, readied at each segment's start, is reached as the target host %q only by the host link (%s, its own container) through one relay to the address and port the person's machine resolved; "+
 		"its sign-in is in files bound into the host link alone, and the agent works the host through %s, every call logged; what the host prints reaches the agent unchanged, past the gateway's secret block and the harness's scrub, but for the sign-in",
 		spec.DevHostID, hostlink.ServerName, strings.Join(hostlink.Tools, ", "))
+}
+
+// checkCoderPorts refuses published ports that are not each a distinct name
+// on a distinct port from 1024 to 65535.
+func checkCoderPorts(ports []spec.CoderPort) error {
+	names, numbers := map[string]bool{}, map[int]bool{}
+	for _, p := range ports {
+		if p.Name == "" || p.Port < 1024 || p.Port > 65535 || names[p.Name] || numbers[p.Port] {
+			return &PolicyRefusal{Reason: fmt.Sprintf("the Coding agent's port %q on %d is not a distinct name on a distinct port from 1024 to 65535", p.Name, p.Port)}
+		}
+		names[p.Name], numbers[p.Port] = true, true
+	}
+	return nil
+}
+
+// coderPortsEnforcement is the plan's line for the Coding agent's published
+// ports.
+func coderPortsEnforcement(ports []spec.CoderPort) string {
+	var named []string
+	for _, p := range ports {
+		named = append(named, fmt.Sprintf("%s on %d", p.Name, p.Port))
+	}
+	return "the Coding agent's tools server publishes " + strings.Join(named, ", ") + " on the person's computer, each at 127.0.0.1 and the same number, which the person named for this agent and agreed to (its roster's port entries): " +
+		"the runner listens on this computer's loopback at each port alone and carries each connection into the tools server's own loopback at the same port through the engine's exec, so no port of the container is published by the engine and no other port is reached; " +
+		"a port another program on this computer holds is not published, which the port relay's receipt says"
 }

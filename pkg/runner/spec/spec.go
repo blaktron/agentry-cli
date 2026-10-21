@@ -488,6 +488,15 @@ type CoderGrant struct {
 	Browser bool `json:"browser,omitempty"`
 	// DevHost: the person's dev server, as the target host DevHostID.
 	DevHost bool `json:"devHost,omitempty"`
+	// Ports: the tools server's ports published on the person's computer,
+	// each at 127.0.0.1 and the same number, while its entry is on.
+	Ports []CoderPort `json:"ports,omitempty"`
+}
+
+// CoderPort is one of the Coding agent's published ports.
+type CoderPort struct {
+	Name string `json:"name"`
+	Port int    `json:"port"`
 }
 
 // DevHostID is the target host id the Coding agent's dev server is readied

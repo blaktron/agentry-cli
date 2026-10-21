@@ -419,6 +419,13 @@ func (f *Filter) containerCreate(ctx context.Context, body []byte) (any, error) 
 	// A relay and the browser server get no capability back.
 	capabilities(hc, web || tools, relay != "" || browser)
 	c.Labels = f.label(c.Labels)
+	// Only the run's tools server is marked as it, whatever the gateway
+	// asked: the runner finds the container to relay a published port into
+	// by this label.
+	delete(c.Labels, ToolsLabel)
+	if tools {
+		c.Labels[ToolsLabel] = f.cfg.RunID
+	}
 	return c, nil
 }
 

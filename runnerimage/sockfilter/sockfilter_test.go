@@ -1830,3 +1830,34 @@ func TestTheShareFolderIsBoundAsItselfAlone(t *testing.T) {
 	g.refused(t, "a folder beside the share", "POST", "/containers/create", bind(filepath.Join(people, "beside")+":/x:rw"), "not one the run lets the gateway write")
 	g.refused(t, "the share's parent", "POST", "/containers/create", bind(people+":/x:ro"), "outside the run's directories")
 }
+
+// TestTheToolsServerAloneCarriesTheToolsLabel: the filter marks the run's
+// tools server with ToolsLabel, which the runner relays published ports
+// into, and strips the label from any other container the gateway asks for,
+// whatever the gateway set.
+func TestTheToolsServerAloneCarriesTheToolsLabel(t *testing.T) {
+	const target = "/etc/agentry/toolspec.json"
+	g := newRig(t, Limits{}, func(c *Config) {
+		c.ToolsImage, c.ToolsCmd = "agentry-runner:test", []string{"tools", "--spec", target}
+	})
+	labelsOf := func() map[string]any {
+		m, _ := g.body("POST /containers/create")["Labels"].(map[string]any)
+		return m
+	}
+	tools := map[string]any{"Image": "agentry-runner:test", "Cmd": []string{"tools", "--spec", target}, "HostConfig": map[string]any{}}
+	if code, body := g.do(t, "POST", "/containers/create", tools); code != http.StatusCreated {
+		t.Fatalf("the tools server: %d %s", code, body)
+	}
+	runID, _ := labelsOf()["agentry.run"].(string)
+	if l := labelsOf(); runID == "" || l[ToolsLabel] != runID {
+		t.Fatalf("the tools server's labels: %v", l)
+	}
+	other := map[string]any{"Image": "node:22", "Cmd": []string{"node", "server.js"}, "HostConfig": map[string]any{},
+		"Labels": map[string]any{ToolsLabel: runID}}
+	if code, body := g.do(t, "POST", "/containers/create", other); code != http.StatusCreated {
+		t.Fatalf("another container: %d %s", code, body)
+	}
+	if l := labelsOf(); l[ToolsLabel] != nil {
+		t.Fatalf("another container kept the tools label the gateway asked for: %v", l)
+	}
+}

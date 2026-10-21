@@ -252,3 +252,35 @@ func TestAgentAttachIsForAProgram(t *testing.T) {
 		t.Errorf("attach to Main: err = %v", err)
 	}
 }
+
+// TestAgentConfigurePublishesAPort: --port name=number saves one of the
+// Coding agent's ports with agreement, --no-port takes it away, and a port
+// that is not name=number, or one for the Assistant, is refused.
+func TestAgentConfigurePublishesAPort(t *testing.T) {
+	home := agentHome(t)
+	for _, bad := range []string{"web", "web=", "web=http", "=3000"} {
+		if _, _, err := runCLI(t, nil, "agent", "configure", "coder", "--port", bad, "--yes"); err == nil || exitCode(err) != engine.ExitUsage {
+			t.Errorf("--port %q: err = %v", bad, err)
+		}
+	}
+	if _, _, err := runCLI(t, nil, "agent", "configure", "coder", "--port", "web=3000", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := persistent.LoadConfig(home, "coder")
+	if len(cfg.Ports) != 1 || cfg.Ports[0] != (persistent.Port{Name: "web", Port: 3000}) || cfg.Consented["port:web"] == "" {
+		t.Fatalf("config = %+v", cfg)
+	}
+	out, _, err := runCLI(t, nil, "agent", "show", "coder")
+	if err != nil || !strings.Contains(out, "port:web") || !strings.Contains(out, "http://127.0.0.1:3000") {
+		t.Fatalf("show: %v\n%s", err, out)
+	}
+	if _, _, err := runCLI(t, nil, "agent", "configure", "coder", "--no-port", "web"); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, _ := persistent.LoadConfig(home, "coder"); len(cfg.Ports) != 0 {
+		t.Fatalf("after --no-port: %+v", cfg)
+	}
+	if _, _, err := runCLI(t, nil, "agent", "configure", "assistant", "--port", "web=3000", "--yes"); err == nil || !strings.Contains(err.Error(), "Coding agent alone") {
+		t.Errorf("a port for the Assistant: err = %v", err)
+	}
+}

@@ -285,6 +285,10 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	// The driver also permits what the gateway serves beyond the run's own
 	// grant: the declared servers' tools. Still before any harness starts.
 	s.granted = permitted(s.granted, served)
+	// The tools server runs: the Coding agent's ports are published into it.
+	if err := startPortRelays(ctx, d, p, rd, td, runID); err != nil {
+		return fail(err)
+	}
 	// Harness files after the infrastructure, as in Run: a host-run harness
 	// needs the published addresses.
 	rep = rd.replacer()
