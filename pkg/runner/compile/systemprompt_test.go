@@ -265,6 +265,30 @@ func TestTheWorkspaceLineSaysReadAndWriteTogether(t *testing.T) {
 	}
 }
 
+// TestTheFoldersLineSaysTheyAreWritable: a persistent agent is told its
+// folders are read-write and that its work is written there, with or
+// without the share, so a harness's own read-only sandbox is not taken
+// for them.
+func TestTheFoldersLineSaysTheyAreWritable(t *testing.T) {
+	for _, a := range []spec.AgentFiles{{}, {Share: true}, {Share: true, CheckShare: true}} {
+		for _, commands := range []bool{false, true} {
+			c := spec.CapSummary{AgentFiles: &a}
+			if commands {
+				c.Coder = &spec.CoderGrant{Commands: true}
+			}
+			line := workspaceLine(c)
+			for _, w := range []string{"Read-write, in " + spec.AgentRoot, "fs_write", "describes the harness's own tools, which are off, not these folders", spec.AgentDataDir + "/notes"} {
+				if !strings.Contains(line, w) {
+					t.Errorf("%+v, commands %v: want %q in %q", a, commands, w, line)
+				}
+			}
+			if strings.Contains(line, "run_command") != commands {
+				t.Errorf("%+v, commands %v: run_command named %v in %q", a, commands, !commands, line)
+			}
+		}
+	}
+}
+
 // TestTheIntakeLineFollowsTheManifest: a QuickAgent with intake questions
 // is told where the answers are; one without is not.
 func TestTheIntakeLineFollowsTheManifest(t *testing.T) {

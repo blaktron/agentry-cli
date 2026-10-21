@@ -33,7 +33,9 @@
 //     session, but on the restart token route, whose thread is kept in the
 //     run's own CODEX_HOME so it can be resumed. Codex's own bundled skills are
 //     switched off too ([skills.bundled], [skills].include_instructions), so
-//     the prompt lists none.
+//     the prompt lists none, and so are codex's permissions message and
+//     environment context, which describe its own sandbox, not the run's
+//     grant, and carry the host's working directory and timezone.
 //   - Operator-owned model access. The model endpoint is a provider block
 //     built from the policy: codex speaks the OpenAI Responses API and
 //     nothing else in this release, and the policy's baseUrl, key
@@ -184,6 +186,13 @@ func codexConfig(r codexRender) []byte {
 	// measured), so the two settings work together.
 	b.WriteString("approval_policy = \"never\"\n")
 	b.WriteString("sandbox_mode = \"read-only\"\n")
+	// Codex describes that sandbox to the model twice, in a permissions
+	// message and in the environment context's permission profile. A model
+	// told its sandbox is read-only never calls a granted write tool
+	// (measured on 0.153.4 and 0.162.0), so neither is sent: the system
+	// prompt says what the run may read and write.
+	b.WriteString("include_permissions_instructions = false\n")
+	b.WriteString("include_environment_context = false\n")
 	b.WriteString("web_search = \"disabled\"\n")
 	b.WriteString("\n[features]\n")
 	for _, f := range []string{

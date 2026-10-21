@@ -461,7 +461,7 @@ const workingWellSection = `
 // write-only grant is not told it has no workspace.
 func workspaceLine(c spec.CapSummary) string {
 	if a := c.AgentFiles; a != nil {
-		return agentFilesLine(a)
+		return agentFilesLine(a, c.Coder != nil && c.Coder.Commands)
 	}
 	ws := spec.WorkspaceMount
 	read := map[string]string{
@@ -487,10 +487,17 @@ func workspaceLine(c spec.CapSummary) string {
 
 // agentFilesLine states a persistent agent's folders, which stand in for
 // the workspace: fs_list, fs_read and fs_write take paths beneath
-// spec.AgentRoot, and the two folders are the only ones there.
-func agentFilesLine(a *spec.AgentFiles) string {
+// spec.AgentRoot, and the two folders are the only ones there. It says
+// they are writable in so many words, because a harness may describe its
+// own read-only sandbox to the model, which then writes nothing.
+func agentFilesLine(a *spec.AgentFiles, commands bool) string {
 	root, data, share := spec.AgentRoot, spec.AgentDataDir, spec.AgentShareDir
-	line := "- **Your folders.** fs_list, fs_read and fs_write work in " + root + ", with paths that begin with the folder's name. " +
+	writers := "fs_write creates and changes files in them"
+	if commands {
+		writers = "fs_write and the programs run_command runs create and change files in them"
+	}
+	line := "- **Your folders.** Read-write, in " + root + ": fs_list and fs_read read them, and " + writers + ", with paths that begin with the folder's name. " +
+		"A note that your sandbox or workspace is read-only describes the harness's own tools, which are off, not these folders: write your work here. " +
 		data + "/ is your own, kept from one conversation to the next: keep your notes in " + data + "/notes, so you remember what matters even when the conversation is not carried over."
 	if a.Share {
 		line += " " + share + "/ is the person's share folder on their computer: they put files there for you and take what you write there, and they see each change as you make it. Write there only what the person asked for, and never delete their files unless they asked."
