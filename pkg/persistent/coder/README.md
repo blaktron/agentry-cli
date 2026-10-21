@@ -33,9 +33,11 @@ agree to each part:
 - **Programs.** `run_command` runs any program in its toolchain image
   (`agentry-coder`: GCC, Make, CMake, pkg-config, Git, curl, Python 3 with pip
   and venv, Go and Node with npm), in a folder of its own, as you. A program
-  can write only in its folders and its temporary folder, has a time limit,
-  and its output is capped. No program list applies: this is what lets it
-  build software.
+  can write only in its folders and its temporary folder, and its output is
+  capped. One it runs in the foreground has a time limit; one it starts in the
+  background, such as a dev server, has none and keeps running until it stops
+  it or the segment ends, at most four at a time. No program list applies:
+  this is what lets it build software.
 - **Open egress.** Its tools and the programs it runs reach any address on
   the internet: package registries, repositories and any site. The model
   itself is reached only through the runner's model proxy, as for every run.
@@ -44,6 +46,10 @@ agree to each part:
   --dev-host user@host`): reached over SSH through the runner's host link, as
   the account you sign in with, its host key pinned and its sign-in kept in
   your system keychain.
+- **Ports**, when you add them (`agentry agent configure coder --port
+  web=3000`): what it serves on that port inside its sandbox opens on your
+  computer at `http://127.0.0.1:3000`, while the port and its programs are
+  on. Only you add a port.
 - **Its folders.** Its own data volume, where it keeps its projects and
   notes, kept until you reset it, and a share folder of yours,
   `~/agentry/codingshare` unless you choose another, mounted read and write.
