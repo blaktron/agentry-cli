@@ -37,6 +37,8 @@ type fakeSegment struct {
 	fails   int
 	// hold, when set, keeps each turn in flight until it is closed.
 	hold chan struct{}
+	// served are the tools its gateway serves.
+	served []string
 }
 
 func newFakeSegment(seg localrun.Segment, id string, resumed bool, reason string) *fakeSegment {
@@ -98,6 +100,8 @@ func (f *fakeSegment) Ended() (bool, session.EndReason) {
 
 func (f *fakeSegment) Conversation() (string, bool, string) { return f.id, f.resumed, f.reason }
 
+func (f *fakeSegment) ServedTools() []string { return f.served }
+
 func (f *fakeSegment) SetResumeReason(r string) {
 	f.mu.Lock()
 	f.reason = r
@@ -137,6 +141,8 @@ type starter struct {
 	failSends int
 	// hold is the next segment's hold.
 	hold chan struct{}
+	// served, when set, is the tools each segment's gateway serves.
+	served func(localrun.Segment) []string
 }
 
 func (s *starter) start(_ context.Context, seg localrun.Segment) (engine.PersistentSession, error) {
@@ -150,6 +156,9 @@ func (s *starter) start(_ context.Context, seg localrun.Segment) (engine.Persist
 	s.last = newFakeSegment(seg, id, s.resumed, s.reason)
 	s.last.fails, s.failSends = s.failSends, 0
 	s.last.hold = s.hold
+	if s.served != nil {
+		s.last.served = s.served(seg)
+	}
 	return s.last, nil
 }
 

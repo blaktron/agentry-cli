@@ -149,6 +149,10 @@ type RosterEntry struct {
 	GrantedBy string `json:"grantedBy"`
 	On        bool   `json:"on"`
 	Line      string `json:"line"`
+	// State is set for an entry that is on and that the segment was not
+	// given: "installing" for a server the agent's store does not hold yet,
+	// "failed" for one whose install failed.
+	State string `json:"state,omitempty"`
 }
 
 // PersistentVolumes names a persistent agent's two volumes: the harness's

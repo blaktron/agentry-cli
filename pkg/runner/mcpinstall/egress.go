@@ -12,6 +12,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
@@ -254,11 +255,25 @@ func (e *installEgress) hosts(ctx context.Context, runtime string) ([]string, er
 	return []string{installProxyAlias + ":" + ip}, nil
 }
 
+// teardownBound bounds the engine calls of an install's teardown, which run
+// under a context that survives the install's own.
+const teardownBound = 30 * time.Second
+
+// removeBuilder removes the install's builder container under a context
+// that survives ctx, bounded.
+func removeBuilder(ctx context.Context, d dockerx.Client, name string) {
+	keep, cancel := context.WithTimeout(context.WithoutCancel(ctx), teardownBound)
+	defer cancel()
+	_ = d.RemoveForce(keep, name)
+}
+
 // stop keeps the proxy's decisions at logPath (when given), then removes
 // the proxy and the network. Under a context that survives an interrupt,
-// so an interrupted install still leaves its record and no containers.
+// bounded, so an interrupted install still leaves its record and no
+// containers.
 func (e *installEgress) stop(ctx context.Context, logPath string) {
-	keep := context.WithoutCancel(ctx)
+	keep, cancel := context.WithTimeout(context.WithoutCancel(ctx), teardownBound)
+	defer cancel()
 	if logPath != "" {
 		logs, err := e.d.Logs(keep, e.proxy, installProxyLogLines)
 		if err == nil {

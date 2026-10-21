@@ -140,6 +140,7 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 	next.Consented = cloneMap(c.Consented)
 	next.Servers = slices.Clone(c.Servers)
 	next.Knowledge = slices.Clone(c.Knowledge)
+	next.ServerFailures = cloneMap(c.ServerFailures)
 	if ch.Name != nil {
 		name, err := cleanName(*ch.Name)
 		if err != nil {
@@ -174,6 +175,7 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 		}
 		next.Servers = append(next.Servers, *srv)
 		delete(next.Switches, id)
+		delete(next.ServerFailures, id)
 	}
 	if id := ch.RemoveServer; id != "" {
 		if !strings.HasPrefix(id, serverPrefix) {
@@ -186,6 +188,7 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 		next.Servers = slices.Delete(next.Servers, i, i+1)
 		delete(next.Switches, id)
 		delete(next.Consented, id)
+		delete(next.ServerFailures, id)
 	}
 	if k := ch.AddKnowledge; k != "" {
 		if err := knowledge.ValidName(k); err != nil {
@@ -276,6 +279,10 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 			next.Switches = map[string]bool{}
 		}
 		next.Switches[sw.ID] = sw.On
+		// Switching a failed server, off or on, is how the person asks for
+		// its install again: on, it is installed at once while the agent
+		// runs, else at its next start.
+		delete(next.ServerFailures, sw.ID)
 	}
 	// What this change turns on that the person has not agreed to: an entry
 	// that was on and unagreed before, as it read then, is the start's to
@@ -301,14 +308,22 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 			next.Consented[e.ID] = e.Line
 		}
 	}
-	restart = grantsKey(a, *c) != grantsKey(a, next)
+	restart = grantsKey(home, a, *c) != grantsKey(home, a, next)
 	*c = next
 	return restart, nil
 }
 
-// grantsKey is what of a configuration a segment is given: two configs with
-// the same key give a segment the same grants.
-func grantsKey(a Agent, c Config) string {
+// grantsKey is what of a configuration a segment is given, under the runner
+// home home: two configs with the same key give a segment the same grants.
+// A server counts once it is ready (serverReady), so a change that adds a
+// server restarts nothing, and the install that makes it ready does.
+func grantsKey(home string, a Agent, c Config) string {
+	return grantsKeyWith(a, c, func(srv manifest.MCPServer) bool { return serverReady(home, a.Name, c, srv) })
+}
+
+// grantsKeyWith is grantsKey with ready saying which servers count: a
+// segment's own key counts the servers it was given.
+func grantsKeyWith(a Agent, c Config, ready func(manifest.MCPServer) bool) string {
 	r := BuildRoster(a, c, nil)
 	type key struct {
 		On        []string
@@ -316,15 +331,19 @@ func grantsKey(a Agent, c Config) string {
 		Servers   []manifest.MCPServer
 		Knowledge []string
 	}
+	counted := map[string]bool{}
+	for _, s := range c.Servers {
+		counted[ServerEntryID(s)] = ready(s)
+	}
 	k := key{}
 	for _, e := range r {
-		if e.On {
+		if e.On && (e.Kind != KindServer || counted[e.ID]) {
 			k.On = append(k.On, e.ID+"="+e.Line)
 		}
 	}
 	k.Share, _ = ShareFolder(a, c)
 	for _, s := range c.Servers {
-		if e, ok := r.Entry(ServerEntryID(s)); ok && e.On {
+		if e, ok := r.Entry(ServerEntryID(s)); ok && e.On && counted[e.ID] {
 			k.Servers = append(k.Servers, s)
 		}
 	}
@@ -407,6 +426,13 @@ func personaFrame(c Config) string {
 const backgroundEnded = "Agentry restarted you for it, so every program you started in the background has ended: start again any you still need."
 
 func changeFrame(before, after Roster, continued bool) string {
+	return changeFrameJoined(before, after, continued, nil)
+}
+
+// changeFrameJoined is changeFrame for a segment some of whose servers
+// joined because their install finished (joined, by roster id): those are
+// told apart by joinFrame, not as switched on.
+func changeFrameJoined(before, after Roster, continued bool, joined map[string]bool) string {
 	given := func(r Roster) map[string]bool {
 		m := map[string]bool{}
 		for _, e := range r {
@@ -419,7 +445,7 @@ func changeFrame(before, after Roster, continued bool) string {
 	had, has := given(before), given(after)
 	var on, off []string
 	for _, e := range after {
-		if has[e.ID] && !had[e.ID] {
+		if has[e.ID] && !had[e.ID] && !joined[e.ID] {
 			on = append(on, strconv.Quote(e.Name))
 		}
 	}
@@ -513,4 +539,10 @@ func AgreeToRoster(home string, a Agent, client string) error {
 	}
 	RecordConsent(BuildRoster(a, cfg, nil), &cfg)
 	return SaveConfig(home, a.Name, cfg)
+}
+
+// hadOn says the roster's entry id was given: on, in a segment.
+func hadOn(r Roster, id string) bool {
+	e, ok := r.Entry(id)
+	return ok && e.State == StateOn
 }

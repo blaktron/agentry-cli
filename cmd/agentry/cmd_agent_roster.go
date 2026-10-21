@@ -129,6 +129,9 @@ func printRoster(w io.Writer, r persistent.Roster) {
 			state += " (always)"
 		}
 		_, _ = fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\n", e.ID, state, e.GrantedBy, safeTerminalText(e.Line, 300))
+		if e.State == persistent.StateFailed && e.Reason != "" {
+			_, _ = fmt.Fprintf(tw, "  \t\t\twhy it failed: %s\n", safeTerminalText(e.Reason, 300))
+		}
 	}
 	_ = tw.Flush()
 }
@@ -143,7 +146,8 @@ func newAgentGrantCmd() *cobra.Command {
 			"lists them with their ids. Switching one on that you have not agreed to on this\n" +
 			"computer asks first; --yes agrees without asking. A running agent ends its\n" +
 			"segment at its next turn, starts the next with the change and continues the\n" +
-			"conversation.\n\n" +
+			"conversation. Switching a server whose install failed, off and on, installs\n" +
+			"it again.\n\n" +
 			"  agentry agent grant assistant share off\n" +
 			"  agentry agent grant assistant knowledge:my-notes on",
 		Args: cobra.ExactArgs(3),
@@ -197,6 +201,12 @@ func newAgentConfigureCmd() *cobra.Command {
 			"shape (npm or pypi with a version, or url with auth none or secret; egress,\n" +
 			"tools, secrets and env as a manifest declares them). A server's secrets are\n" +
 			"read from your runner policy's secret source when the agent starts.\n\n" +
+			"A package server (npm or pypi) installs in the background: a running agent\n" +
+			"keeps answering without it, `show` lists it as installing, then pending, and\n" +
+			"it joins at the first turn after it is ready. One whose install fails is\n" +
+			"failed, with why; the agent runs on without it, and switching it off and on\n" +
+			"(agentry agent grant) installs it again. A start leaves out a server not yet\n" +
+			"installed and installs it the same way.\n\n" +
 			"  agentry agent configure assistant --name Sandra --personality-file sandra.md\n" +
 			"  agentry agent configure assistant --share ~/Documents/assistant\n" +
 			"  agentry agent configure assistant --knowledge my-notes\n" +
