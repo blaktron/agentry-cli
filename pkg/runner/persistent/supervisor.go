@@ -22,7 +22,7 @@ import (
 )
 
 // ErrBusy refuses a turn sent while another is in flight.
-var ErrBusy = errors.New("a turn is in flight; send again when its answer arrives")
+var ErrBusy = session.ErrBusy
 
 // ErrDesktopOnly refuses an agent that runs only in Agentry Desktop.
 var ErrDesktopOnly = errors.New("runs only in Agentry Desktop")

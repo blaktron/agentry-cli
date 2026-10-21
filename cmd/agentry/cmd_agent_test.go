@@ -195,3 +195,60 @@ func TestAgentConfigureAndGrantAskForConsent(t *testing.T) {
 		t.Errorf("a pack that is not kept: err = %v", err)
 	}
 }
+
+// TestAgentJSONAgreementIsAskedOfTheProgram: with --json and no --yes, a
+// change that needs agreement prints what to agree to and changes nothing;
+// the same command with --yes then applies it.
+func TestAgentJSONAgreementIsAskedOfTheProgram(t *testing.T) {
+	home := agentHome(t)
+	if _, _, err := runCLI(t, nil, "agent", "enable", "assistant"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runCLI(t, nil, "agent", "grant", "assistant", "share", "off"); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := runCLI(t, nil, "agent", "grant", "assistant", "share", "on", "--json")
+	if err == nil || exitCode(err) != engine.ExitPolicy || !strings.Contains(err.Error(), "--yes") {
+		t.Fatalf("grant --json without --yes: err = %v", err)
+	}
+	var asked struct {
+		Agent          string `json:"agent"`
+		NeedsAgreement []struct {
+			ID   string `json:"id"`
+			Line string `json:"line"`
+		} `json:"needsAgreement"`
+	}
+	if err := json.Unmarshal([]byte(out), &asked); err != nil {
+		t.Fatalf("output is not one JSON object: %v\n%s", err, out)
+	}
+	if asked.Agent != "assistant" || len(asked.NeedsAgreement) != 1 || asked.NeedsAgreement[0].ID != "share" || asked.NeedsAgreement[0].Line == "" {
+		t.Errorf("asked = %+v", asked)
+	}
+	if cfg, _ := persistent.LoadConfig(home, "assistant"); cfg.Switches["share"] {
+		t.Fatal("the switch was turned on without agreement")
+	}
+	if _, _, err := runCLI(t, nil, "agent", "grant", "assistant", "share", "on", "--json", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, _ := persistent.LoadConfig(home, "assistant"); !cfg.Switches["share"] {
+		t.Error("the switch is off after agreeing")
+	}
+}
+
+// TestAgentAttachIsForAProgram: attach speaks JSON only, and needs the agent
+// running.
+func TestAgentAttachIsForAProgram(t *testing.T) {
+	agentHome(t)
+	_, _, err := runCLI(t, nil, "agent", "attach", "assistant")
+	if err == nil || exitCode(err) != engine.ExitUsage || !strings.Contains(err.Error(), "--json") {
+		t.Errorf("attach without --json: err = %v", err)
+	}
+	_, _, err = runCLI(t, nil, "agent", "attach", "assistant", "--json")
+	if err == nil || exitCode(err) != engine.ExitUsage || !strings.Contains(err.Error(), "not running") {
+		t.Errorf("attach to a stopped agent: err = %v", err)
+	}
+	_, _, err = runCLI(t, nil, "agent", "attach", "main", "--json")
+	if err == nil || !strings.Contains(err.Error(), "Agentry Desktop") {
+		t.Errorf("attach to Main: err = %v", err)
+	}
+}

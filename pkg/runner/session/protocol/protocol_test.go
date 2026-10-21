@@ -216,3 +216,42 @@ func TestAnEventLineIsTheSessionEventWithoutRaw(t *testing.T) {
 		t.Errorf("lines = %v", lines)
 	}
 }
+
+// sharedSession is a session another driver holds a turn in: every send is
+// answered busy.
+type sharedSession struct{ *chattySession }
+
+func (s sharedSession) Send(context.Context, string) error { return session.ErrBusy }
+
+// TestASendTheSessionAnswersBusyIsRefusedBusy: a session other drivers
+// share refuses a turn while one of theirs is in flight, and the protocol
+// says so as its own busy refusal, so a driver tells it from a failed turn.
+func TestASendTheSessionAnswersBusyIsRefusedBusy(t *testing.T) {
+	s := sharedSession{newChatty(0)}
+	r, w := io.Pipe()
+	in := strings.NewReader(`{"send":{"text":"one"}}` + "\n")
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = Serve(context.Background(), s, in, w, Options{})
+		_ = w.Close()
+	}()
+	var refused []string
+	sc := bufio.NewScanner(r)
+	for sc.Scan() {
+		var m map[string]any
+		if err := json.Unmarshal(sc.Bytes(), &m); err != nil {
+			t.Fatal(err)
+		}
+		if c, ok := m["refused"].(string); ok {
+			refused = append(refused, c)
+			if m["text"] != session.ErrBusy.Error() {
+				t.Errorf("busy text = %v", m["text"])
+			}
+		}
+	}
+	<-done
+	if strings.Join(refused, " ") != "busy" {
+		t.Errorf("refusals = %v, want one busy", refused)
+	}
+}

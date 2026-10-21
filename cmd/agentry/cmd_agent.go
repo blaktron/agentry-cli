@@ -25,6 +25,8 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/persistent"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/procx"
+	"github.com/blaktron/agentry-cli/pkg/runner/session"
+	"github.com/blaktron/agentry-cli/pkg/runner/session/protocol"
 	"github.com/blaktron/agentry-cli/pkg/tui"
 )
 
@@ -67,6 +69,7 @@ func newAgentCmd() *cobra.Command {
 		newAgentStartCmd(),
 		newAgentStopCmd(),
 		newAgentChatCmd(),
+		newAgentAttachCmd(),
 		newAgentEnableCmd(true),
 		newAgentEnableCmd(false),
 		newAgentResetCmd(),
@@ -610,6 +613,63 @@ func newAgentChatCmd() *cobra.Command {
 			}
 			if uiErr != nil {
 				return engine.Classify(engine.ExitCLI, uiErr)
+			}
+			return nil
+		},
+	}
+}
+
+func newAgentAttachCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "attach <name> --json",
+		Short: "Drive a running persistent agent from a program: JSON-line commands on stdin, its events on descriptor 3",
+		Long: "attach is agent chat for a program. It speaks the session protocol of\n" +
+			"`agentry run --session-protocol`: one JSON command a line on stdin\n" +
+			"({\"send\":{\"text\":\"…\"}} or {\"end\":{\"finish\":false}}), and the agent's\n" +
+			"events as JSON lines on descriptor 3, which the driver opens. A send while\n" +
+			"another chat's turn is in flight is refused as busy. Ending, or the end of\n" +
+			"input, detaches: the agent keeps running. A persistent agent takes no files\n" +
+			"through its chat; put them in its share folder. Descriptor 3 does not exist\n" +
+			"on Windows, so attach is refused there.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !flags.jsonOut {
+				return engine.Classify(engine.ExitUsage, errors.New("attach is for a program, and speaks JSON only: pass --json (a person chats with agentry agent chat)"))
+			}
+			a, err := cliAgent(args[0])
+			if err != nil {
+				return err
+			}
+			home, err := runnerHome()
+			if err != nil {
+				return err
+			}
+			qctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
+			_, err = persistent.QueryStatus(qctx, home, a.Name)
+			cancel()
+			if err != nil {
+				return engine.Classify(engine.ExitUsage, fmt.Errorf("the %s agent is not running: agentry agent start %s", a.Name, a.Name))
+			}
+			w, err := protocolEventsOut()
+			if err != nil {
+				return engine.Classify(engine.ExitUsage, err)
+			}
+			ignoreBrokenPipes()
+			s, err := persistent.Attach(cmd.Context(), home, a.Name, nil)
+			if err != nil {
+				return engine.Classify(engine.ExitCLI, err)
+			}
+			errOut := cmd.ErrOrStderr()
+			_, err = serveProtocol(cmd.Context(), s, cmd.InOrStdin(), w, protocol.Options{
+				OnDropped: func() {
+					_, _ = fmt.Fprintln(errOut, "agent attach: the events reader stopped taking events; the rest are in the agent's transcript")
+				},
+			})
+			if ended, reason := s.Ended(); ended && reason != "" && reason != session.EndCancelled {
+				_, _ = fmt.Fprintf(errOut, "The %s agent's segment ended (%s).\n", a.Name, reason)
+			}
+			if err != nil {
+				return engine.Classify(engine.ExitCLI, err)
 			}
 			return nil
 		},

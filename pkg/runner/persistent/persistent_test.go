@@ -31,6 +31,8 @@ type fakeSegment struct {
 	reason  string
 	outDir  string
 	fails   int
+	// hold, when set, keeps each turn in flight until it is closed.
+	hold chan struct{}
 }
 
 func newFakeSegment(seg localrun.Segment, id string, resumed bool, reason string) *fakeSegment {
@@ -55,8 +57,12 @@ func (f *fakeSegment) SendCarrying(_ context.Context, carried, text string) erro
 		return errors.New("the harness failed the turn")
 	}
 	f.sent = append(f.sent, carried+text)
+	hold := f.hold
 	f.mu.Unlock()
 	f.events <- session.Event{Kind: session.KindUserTurn, Text: text}
+	if hold != nil {
+		<-hold
+	}
 	f.events <- session.Event{Kind: session.KindAssistantTurn, Text: "echo: " + text}
 	return nil
 }
@@ -125,6 +131,8 @@ type starter struct {
 	noID     bool
 	// failSends is how many of the next segment's turns fail.
 	failSends int
+	// hold is the next segment's hold.
+	hold chan struct{}
 }
 
 func (s *starter) start(_ context.Context, seg localrun.Segment) (engine.PersistentSession, error) {
@@ -137,6 +145,7 @@ func (s *starter) start(_ context.Context, seg localrun.Segment) (engine.Persist
 	}
 	s.last = newFakeSegment(seg, id, s.resumed, s.reason)
 	s.last.fails, s.failSends = s.failSends, 0
+	s.last.hold = s.hold
 	return s.last, nil
 }
 
@@ -419,3 +428,58 @@ func TestResetWipesTheConversationAndKeepsTheReceipts(t *testing.T) {
 		t.Errorf("segment folder %s is not under the agent's segments", st.segments[0].OutDir)
 	}
 }
+
+// TestASecondChatIsAnsweredBusy: two chats attach to one agent; while the
+// first one's turn is in flight a send from the second is refused busy,
+// which it reads as ErrBusy, and the first turn is answered as usual.
+func TestASecondChatIsAnsweredBusy(t *testing.T) {
+	home := shortHome(t)
+	enable(t, home)
+	hold := make(chan struct{})
+	st := &starter{hold: hold}
+	sv := startAssistant(t, home, st)
+	defer func() { _, _ = sv.Stop(context.Background()) }()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	first, err := Attach(ctx, home, "assistant", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := Attach(ctx, home, "assistant", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sent := make(chan error, 1)
+	go func() { sent <- first.Send(ctx, "one") }()
+	for st.lastSegment().sentTurnsLen() == 0 {
+		select {
+		case <-ctx.Done():
+			t.Fatal("the first turn never reached the agent")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if err := second.Send(ctx, "two"); !errors.Is(err, session.ErrBusy) {
+		t.Errorf("second chat's send = %v, want busy", err)
+	}
+	close(hold)
+	if err := <-sent; err != nil {
+		t.Errorf("first chat's send = %v", err)
+	}
+	if err := second.Send(ctx, "three"); err != nil {
+		t.Errorf("second chat's send after the turn = %v", err)
+	}
+	if got := st.lastSegment().sentTurns(); len(got) != 2 || got[1] != "three" {
+		t.Errorf("turns the agent took = %q", got)
+	}
+	_, _ = first.End(ctx, false)
+	_, _ = second.End(ctx, false)
+}
+
+func (s *starter) lastSegment() *fakeSegment {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.last
+}
+
+func (f *fakeSegment) sentTurnsLen() int { return len(f.sentTurns()) }

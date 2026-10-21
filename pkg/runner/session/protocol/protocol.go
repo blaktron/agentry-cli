@@ -192,8 +192,12 @@ loop:
 					defer turns.Done()
 					// A turn's failure is the session's to report: it emits
 					// the error event itself, and a turn cut short by the
-					// session's end is not a failure.
-					_ = s.Send(context.Background(), text)
+					// session's end is not a failure. A session other
+					// drivers share answers busy for a turn another one has
+					// in flight, which is this protocol's busy refusal.
+					if err := s.Send(context.Background(), text); errors.Is(err, session.ErrBusy) {
+						sv.refuse(RefusedBusy, err.Error())
+					}
 					sv.settle(seq)
 				}(c.Send.Text)
 			case c.Add != nil:

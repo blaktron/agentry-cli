@@ -115,6 +115,11 @@ const (
 // ErrEnded is returned by Send and AddInput once the session has ended.
 var ErrEnded = errors.New("session has ended")
 
+// ErrBusy is a Send refused because another turn is in flight: a session
+// that more than one driver attaches to answers it rather than queue the
+// turn.
+var ErrBusy = errors.New("a turn is in flight; send again when its answer arrives")
+
 // Session is one interactive run.
 type Session interface {
 	// Events streams everything that happens, in order; closed after End.
