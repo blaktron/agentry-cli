@@ -421,6 +421,9 @@ func startSupervisor(cmd *cobra.Command, home string, a persistent.Agent, policy
 		cancel()
 		if qerr == nil {
 			follow.flush()
+			if flags.jsonOut {
+				return emitJSON(cmd.OutOrStdout(), st)
+			}
 			printStarted(cmd.OutOrStdout(), a, st)
 			return nil
 		}
@@ -560,6 +563,9 @@ func newAgentStopCmd() *cobra.Command {
 			st, err := persistent.RequestStop(ctx, home, a.Name)
 			if err != nil {
 				return engine.Classify(engine.ExitCLI, err)
+			}
+			if flags.jsonOut {
+				return emitJSON(cmd.OutOrStdout(), st)
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "The %s agent stopped. The segment's envelope: %s\n", a.Name, st.ResultFile)
 			if st.Error != "" {
