@@ -200,14 +200,24 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 	if err := os.MkdirAll(workRoot, 0o700); err != nil {
 		return nil, engine.Classify(engine.ExitCLI, err)
 	}
-	work, err := os.MkdirTemp(workRoot, "knowledge-build-")
+	// A build killed before it could delete its work directory leaves the
+	// documents and the pages in the clear there: the directories of builds
+	// that are gone go first.
+	engine.SweepWorkDirs(workRoot, workDirPrefix, workDirGrace, logw)
+	work, err := os.MkdirTemp(workRoot, workDirPrefix)
 	if err != nil {
+		return nil, engine.Classify(engine.ExitCLI, err)
+	}
+	unlock, err := engine.HoldWorkDir(work)
+	if err != nil {
+		_ = removeWork(work, true)
 		return nil, engine.Classify(engine.ExitCLI, err)
 	}
 	// It holds the documents' copies, their decoded text and the pages in
 	// the clear: a delete that fails even after removal's retry (Windows)
 	// is named, never passed over.
 	defer func() {
+		unlock()
 		if err := removeWork(work, true); err != nil {
 			var pe *fs.PathError
 			if errors.As(err, &pe) {
@@ -664,6 +674,14 @@ func ownChanges(root *os.Root) (knowledge.Changes, bool) {
 // removeWork is removal.Remove, a variable so a test can hold the
 // directory the way Docker Desktop can.
 var removeWork = removal.Remove
+
+// workDirPrefix names a build's work directory under the runner home, and
+// workDirGrace is how old a work directory with no lock is before the sweep
+// takes it for a dead build's.
+const (
+	workDirPrefix = "knowledge-build-"
+	workDirGrace  = time.Hour
+)
 
 func writeOut(dst string, b []byte) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
