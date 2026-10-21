@@ -15,12 +15,16 @@ package persistent
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -90,12 +94,67 @@ func Dir(home, name string) string { return filepath.Join(home, "persistent", na
 // short of the kernel's limit for a socket's name.
 func SocketPath(home, name string) string { return filepath.Join(home, "s", "agent-"+name+".sock") }
 
-// SessionVolume and DataVolume are the agent's two volumes: the harness's
-// conversation store, and the agent's own files.
+// HomeID identifies a runner home among the homes that use one container
+// engine: a short hash of its absolute path, links followed. The volumes of
+// the agent a home runs carry it in their names and a label, so two homes
+// (two people on one computer, a scratch home beside the person's own) never
+// share a conversation or a data volume. A home moved to another path is a
+// different home to the engine: its agents start on volumes of their own.
+func HomeID(home string) string {
+	p, err := filepath.Abs(home)
+	if err != nil {
+		p = filepath.Clean(home)
+	}
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		p = r
+	}
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		// These file systems are case-insensitive by default.
+		p = strings.ToLower(p)
+	}
+	sum := sha256.Sum256([]byte(p))
+	return hex.EncodeToString(sum[:])[:10]
+}
+
+// SessionVolumeIn is the agent's volume for the harness's conversation store
+// in the runner home home, and DataVolumeIn the agent's volume for its own
+// files.
+func SessionVolumeIn(home, name string) string {
+	return "agentry-persistent-" + name + "-" + HomeID(home) + "-session"
+}
+
+// DataVolumeIn is the agent's volume for its own files in the runner home
+// home.
+func DataVolumeIn(home, name string) string {
+	return "agentry-persistent-" + name + "-" + HomeID(home) + "-data"
+}
+
+// SessionVolume and DataVolume are the legacy names of the agent's two
+// volumes, by the agent alone: every runner home on one engine could use the
+// same two. A home that has run the agent keeps its conversation by
+// copying them into its own volumes at its next start, and leaves them be.
 func SessionVolume(name string) string { return "agentry-persistent-" + name + "-session" }
 
-// DataVolume is the agent's volume for its own files.
+// DataVolume is the agent's data volume under the earlier name.
 func DataVolume(name string) string { return "agentry-persistent-" + name + "-data" }
+
+// SharedVolumes are the volumes of the agent that exist under the legacy names
+// (SessionVolume, DataVolume), which every runner home on the engine could
+// use. A reset leaves them, as another home may still
+// need them; nothing else removes them. A failed listing answers none.
+func SharedVolumes(ctx context.Context, d dockerx.Client, name string) []string {
+	have, err := d.VolumesByLabel(ctx, engine.PersistentLabel+"="+name)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, v := range []string{SessionVolume(name), DataVolume(name)} {
+		if slices.Contains(have, v) {
+			out = append(out, v)
+		}
+	}
+	return out
+}
 
 // The files of the state folder.
 const (
@@ -434,7 +493,7 @@ func Reset(ctx context.Context, home, name string, d dockerx.Client) error {
 	}
 	defer owner.Release()
 	engine.SweepAbandoned(ctx, d, nil)
-	for _, v := range []string{SessionVolume(name), DataVolume(name)} {
+	for _, v := range []string{SessionVolumeIn(home, name), DataVolumeIn(home, name)} {
 		if err := d.VolumeRemove(ctx, v); err != nil {
 			return fmt.Errorf("remove the %s agent's volume %s: %w", name, v, err)
 		}
