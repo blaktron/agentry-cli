@@ -197,12 +197,19 @@ func filterConfig(rd *runDirs, runID string, gwEnv map[string]string, lim policy
 	if relaysSandboxed(plan) {
 		relayResolv = filepath.Join(rd.cfg, "gateway", resolvConfFile)
 	}
+	// Beneath the run's cfg folder, only what the catalog binds there, and
+	// only into the entries that bind it.
+	bindRoots, writableRoots, heldCfg, err := runCfgBinds(rd,
+		pathList(gwEnv["MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS"]), pathList(gwEnv["MCP_GATEWAY_DOCKER_BIND_ALLOW_WRITABLE_PATHS"]))
+	if err != nil {
+		return sockfilter.Config{}, err
+	}
 	return sockfilter.Config{
 		RunID:         runID,
 		Label:         runLabel,
 		OwnerLabel:    gatewayOwnerLabel,
-		BindRoots:     pathList(gwEnv["MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS"]),
-		WritableRoots: pathList(gwEnv["MCP_GATEWAY_DOCKER_BIND_ALLOW_WRITABLE_PATHS"]),
+		BindRoots:     bindRoots,
+		WritableRoots: writableRoots,
 		// The share folder: written by the tools server alone, and read by
 		// no other container but a server the Coding agent's roster lets
 		// see it. The share, its mirror and the share outbox reach no
@@ -210,6 +217,7 @@ func filterConfig(rd *runDirs, runID string, gwEnv map[string]string, lim policy
 		ToolsWritableRoots: rd.shareRoot(),
 		ToolsOnlyRoots:     toolsOnlyShare(rd, plan),
 		OfflineRoots:       slices.Concat(rd.shareRoot(), rd.mirrorRoot(), rd.shareOutRoot()),
+		HeldRoots:          heldCfg,
 		SharedNetworks:     shared,
 		EgressNetworks:     egress,
 		NetworkNames:       names,
