@@ -209,11 +209,37 @@ func newAgentListCmd() *cobra.Command {
 	}
 }
 
+// agentShowLong is `agentry agent show`'s help: what it prints, and what each
+// state of a roster entry means.
+const agentShowLong = "Shows a persistent agent: whether it runs and which client runs it, its\n" +
+	"segment, its share folder, its roster, its usage, its volumes and its folder.\n\n" +
+	"Each roster entry has a state:\n\n" +
+	"  on             the agent has it\n" +
+	"  off            switched off\n" +
+	"  pending        switched since the running segment started, or a server that\n" +
+	"                 has finished installing: the next turn restarts the agent with\n" +
+	"                 it and continues the conversation\n" +
+	"  needs-sign-in  a server that signs in by OAuth, which an agent cannot be\n" +
+	"                 given in this version\n" +
+	"  installing     a server you added, being installed in the background; the\n" +
+	"                 agent runs without it until it is ready\n" +
+	"  failed         a server whose install failed; the line below it says why.\n" +
+	"                 The agent runs without it. Switch it off and on to install it\n" +
+	"                 again:\n" +
+	"                   agentry agent grant <name> server:<id> off\n" +
+	"                   agentry agent grant <name> server:<id> on\n\n" +
+	"A package server with no network also has a line that says whether it sees\n" +
+	"your share folder, with the id of that switch, <entry>:share (see\n" +
+	"`agentry agent grant --help`).\n\n" +
+	"  agentry agent show assistant\n" +
+	"  agentry agent show assistant --transcript 20"
+
 func newAgentShowCmd() *cobra.Command {
 	var lines int
 	cmd := &cobra.Command{
 		Use:   "show <name>",
 		Short: "Show a persistent agent: its state, its segment, its usage and the end of its transcript",
+		Long:  agentShowLong,
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := agentNamed(args[0])
