@@ -537,22 +537,16 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		}
 	}
 	opts.progress.at(receipt.StageCompile)
-	plan, planDir, err := localrun.EnsurePlan(localrun.PlanInputs{
+	planIn := localrun.PlanInputs{
 		Home: home, Manifest: m, Meta: meta, InstallDir: installDir, WorkspaceDir: workspaceDir,
 		Policy: pol, PolicySHA: polSHA, Adapter: adapterName, Servers: serverSpecs, Mode: mode,
 		CompiledBy: version.Build(), Log: cmd.ErrOrStderr(),
-	})
+	}
+	plan, planDir, err := localrun.EnsurePlan(planIn)
 	if err != nil {
 		return err
 	}
-	if vulnLine != "" {
-		// Run-time evidence on the compiled plan's enforcement record; the
-		// cached plan on disk is untouched (the verdict is per run).
-		if plan.Enforcement == nil {
-			plan.Enforcement = map[string]string{}
-		}
-		plan.Enforcement["mcpServers.vulnerabilities"] = vulnLine
-	}
+	stampVulnerabilities(plan, vulnLine)
 
 	if opts.plan {
 		return printRunPlan(cmd, plan, meta, m, mode, consent, integrity, planRefusals)
@@ -632,9 +626,16 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		// engine.Run sweeps again; the second finds nothing.
 		engine.SweepAbandoned(cmd.Context(), docker, cmd.ErrOrStderr())
 		opts.progress.at(receipt.StageMCPServers)
-		if err := mcpinstall.EnsureInstalled(cmd.Context(), docker, resolvedServers, serversDir,
-			pol.MCPRegistries, pol.Images, pol.Docker, cmd.ErrOrStderr()); err != nil {
-			return engine.Classify(engine.ExitGateway, err)
+		// The plan was compiled from the resolution's guess at each
+		// server's command; the install finds the real one, and the plan
+		// is compiled again when it differs.
+		installed, installedDir, err := localrun.InstallServers(cmd.Context(), docker, planIn, plan, planDir, resolvedServers, serversDir)
+		if err != nil {
+			return err
+		}
+		if installed != plan {
+			plan, planDir = installed, installedDir
+			stampVulnerabilities(plan, vulnLine)
 		}
 	}
 
@@ -1361,6 +1362,19 @@ func printRunPlan(cmd *cobra.Command, plan *spec.Plan, meta *installdir.Meta, m 
 	}
 	_, _ = fmt.Fprintln(w, "nothing asked, nothing recorded (--plan)")
 	return nil
+}
+
+// stampVulnerabilities records the registry's verdict on the declared
+// servers in the plan's enforcement record, for this run alone: the plan on
+// disk is not rewritten.
+func stampVulnerabilities(plan *spec.Plan, line string) {
+	if line == "" {
+		return
+	}
+	if plan.Enforcement == nil {
+		plan.Enforcement = map[string]string{}
+	}
+	plan.Enforcement["mcpServers.vulnerabilities"] = line
 }
 
 // printDryRun prints the compiled plan (deterministic, hashable,

@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 
@@ -34,6 +35,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/gateway"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
+	"github.com/blaktron/agentry-cli/pkg/runner/mcpinstall"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelsignin"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
@@ -508,6 +510,59 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 		return nil, "", engine.Classify(engine.ExitCompile, err)
 	}
 	return plan, planDir, nil
+}
+
+// InstallServers installs the resolved package servers into storeDir and
+// returns the plan to run, compiled from in. A PyPI server's console script
+// is known only once its distribution is installed (the registry's metadata
+// does not name it), so a plan compiled before a server's first install names
+// the resolution's guess at its command. When the install changed what a
+// server launches, the plan is compiled again from the servers as the store
+// now holds them, which is also what the next run resolves from the store, so
+// that run reuses the plan; otherwise plan and planDir themselves are
+// returned, so a caller tells a recompile by the pointer. A failed install is classified as the gateway's (exit 13), a failed
+// compile as EnsurePlan classifies it.
+func InstallServers(ctx context.Context, d dockerx.Client, in PlanInputs, plan *spec.Plan, planDir string,
+	resolved []mcpinstall.Resolved, storeDir string,
+) (*spec.Plan, string, error) {
+	if len(resolved) == 0 {
+		return plan, planDir, nil
+	}
+	logw := in.Log
+	if logw == nil {
+		logw = io.Discard
+	}
+	if err := mcpinstall.EnsureInstalled(ctx, d, resolved, storeDir, in.Policy.MCPRegistries, in.Policy.Images, in.Policy.Docker, logw); err != nil {
+		return nil, "", engine.Classify(engine.ExitGateway, err)
+	}
+	installed := mcpinstall.Specs(resolved, in.Manifest.Capabilities.MCPServers, in.Policy.Images)
+	if reflect.DeepEqual(installed, in.Servers) {
+		return plan, planDir, nil
+	}
+	if changed := launchChanges(in.Servers, installed); changed != "" {
+		_, _ = fmt.Fprintf(logw, "the install found the command an MCP server launches (%s) — compiling the plan again\n", changed)
+	} else {
+		_, _ = fmt.Fprintln(logw, "the installed MCP servers differ from the plan's — compiling the plan again")
+	}
+	in.Servers = installed
+	return EnsurePlan(in)
+}
+
+// launchChanges names each server whose command differs between the plan's
+// specs and the installed ones, with the command it launches now; "" when
+// no command differs.
+func launchChanges(compiled, installed []spec.MCPServerSpec) string {
+	was := make(map[string][]string, len(compiled))
+	for _, s := range compiled {
+		was[s.Name] = s.Command
+	}
+	var out []string
+	for _, s := range installed {
+		if !slices.Equal(was[s.Name], s.Command) {
+			out = append(out, fmt.Sprintf("%s@%s runs %s", s.Package, s.Version, strings.Join(s.Command, " ")))
+		}
+	}
+	return strings.Join(out, ", ")
 }
 
 // PlanVersionOf reads just the planVersion of a stored plan.json, so a
