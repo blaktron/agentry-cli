@@ -245,7 +245,7 @@ func (s *server) shareFileRead(rel string, data []byte, v ShareVerdict, view str
 	sum := sha256.Sum256(data)
 	f, size, err := s.shareText(hex.EncodeToString(sum[:]))
 	if err != nil {
-		return fmt.Sprintf("fs_read: %s: the text read out of this file is not there (%v); view %q reads its bytes as base64", rel, err, ViewOriginal), true
+		return fmt.Sprintf("fs_read: %s: the text read out of this file is not kept for its bytes as they are now; view %q reads its bytes as base64", rel, ViewOriginal), true
 	}
 	defer func() { _ = f.Close() }()
 	reader := readerWords[v.Tool]

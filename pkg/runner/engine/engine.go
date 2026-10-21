@@ -314,10 +314,10 @@ type PersistentSegment struct {
 	// kept in between segments, so a file checked in one is not checked
 	// again in the next while it is unchanged; empty keeps none.
 	ShareVerdicts string
-	// ShareText is a folder of the agent's own the text read out of the
-	// share's documents is kept in between segments, one file a checked
-	// digest, beside ShareVerdicts; empty keeps none, and a document whose
-	// text was not kept is checked again.
+	// ShareText is a folder of the agent's own in which the text read out
+	// of the share's documents is kept between segments, one file for each
+	// checked digest, beside ShareVerdicts. Empty keeps none, and a
+	// document whose text was not kept is checked again.
 	ShareText string
 }
 

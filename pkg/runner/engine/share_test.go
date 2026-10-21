@@ -148,12 +148,12 @@ func TestShareVerdictsAreKeptBetweenSegments(t *testing.T) {
 	runs := decodeRuns()
 	next, _ := shareSession(t)
 	next.rd.share, next.rd.shareCache = share, cache
-	next.rd.shareKept = readShareCache(cache, share)
+	next.rd.shareKept = readShareCache(cache, share, true)
 	next.checkShare(context.Background())
 	if decodeRuns() != runs || next.shares.verdicts["notes.md"].Verdict != toolsrv.ShareClean {
 		t.Fatalf("the next segment checked again (%d runs) or lost the verdict: %+v", decodeRuns()-runs, next.shares.verdicts)
 	}
-	if kept := readShareCache(cache, filepath.Join(share, "other")); len(kept) != 0 {
+	if kept := readShareCache(cache, filepath.Join(share, "other"), true); len(kept) != 0 {
 		t.Fatalf("verdicts kept for another folder were used: %+v", kept)
 	}
 }
@@ -291,7 +291,8 @@ func TestShareCheckKeepsEachDocumentsText(t *testing.T) {
 // TestShareCheckOffDecodesAndMarksUnchecked: with the plan's malware check
 // off the check fetches no signatures and runs no ClamAV, still reads each
 // document's text, and marks every file unchecked with the reason, a file
-// ClamAV would have found among them; the chat is not told each turn.
+// ClamAV would have found among them; the chat is never told a file was
+// checked for malware.
 func TestShareCheckOffDecodesAndMarksUnchecked(t *testing.T) {
 	s, share := shareSession(t)
 	s.p.Plan.Capabilities.AgentFiles.MalwareCheck = false
@@ -335,7 +336,7 @@ func TestKeptShareTextFollowsTheNextSegment(t *testing.T) {
 
 	next, _ := shareSession(t)
 	next.rd.share, next.rd.shareCache, next.rd.shareTextKept = share, cache, s.rd.shareTextKept
-	next.rd.shareKept = readShareCache(cache, share)
+	next.rd.shareKept = readShareCache(cache, share, true)
 	restoreShareText(next.rd)
 	if _, ok := next.rd.shareKept["report.pdf"]; ok {
 		t.Fatal("a kept verdict whose text is gone was kept")
@@ -357,7 +358,36 @@ func TestKeptShareTextFollowsTheNextSegment(t *testing.T) {
 	if err := os.WriteFile(cache, old, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if kept := readShareCache(cache, share); len(kept) != 0 {
+	if kept := readShareCache(cache, share, true); len(kept) != 0 {
 		t.Fatalf("verdicts of an older version were used: %+v", kept)
+	}
+}
+
+// TestTurningTheCheckOnChecksWhatWasReadUnchecked: verdicts kept under one
+// malware-check setting are not used under the other, so a file read
+// unchecked while the check was off is checked with ClamAV, and found,
+// once it is on.
+func TestTurningTheCheckOnChecksWhatWasReadUnchecked(t *testing.T) {
+	s, share := shareSession(t)
+	s.p.Plan.Capabilities.AgentFiles.MalwareCheck = false
+	cache := filepath.Join(t.TempDir(), "share-verdicts.json")
+	s.rd.shareCache = cache
+	writeShare(t, share, "eicar.txt", "X5O EICAR\n")
+	s.checkShare(context.Background())
+	if v := readVerdicts(t, s)["eicar.txt"]; v.Verdict != toolsrv.ShareUnchecked {
+		t.Fatalf("with the check off: %+v", v)
+	}
+	if kept := readShareCache(cache, share, true); len(kept) != 0 {
+		t.Fatalf("verdicts made with the check off were kept for the check on: %+v", kept)
+	}
+	next, _ := shareSession(t)
+	next.rd.share, next.rd.shareCache = share, cache
+	next.rd.shareKept = readShareCache(cache, share, true)
+	next.checkShare(context.Background())
+	if v := readVerdicts(t, next)["eicar.txt"]; v.Verdict != toolsrv.ShareFound {
+		t.Fatalf("with the check turned on: %+v", v)
+	}
+	if kept := readShareCache(cache, share, false); len(kept) != 0 {
+		t.Fatalf("verdicts made with the check on were kept for the check off: %+v", kept)
 	}
 }

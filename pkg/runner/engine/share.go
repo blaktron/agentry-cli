@@ -85,7 +85,7 @@ func preparePersistentFolders(p Params, rd *runDirs) error {
 			return Classify(ExitCLI, fmt.Errorf("the share's verdicts folder: %w", err))
 		}
 		rd.shareCache, rd.shareTextKept = p.Persistent.ShareVerdicts, p.Persistent.ShareText
-		rd.shareKept = readShareCache(rd.shareCache, rd.share)
+		rd.shareKept = readShareCache(rd.shareCache, rd.share, af.MalwareCheck)
 		restoreShareText(rd)
 		if err := writeShareVerdicts(rd.shareChecks, rd.shareKept); err != nil {
 			return Classify(ExitCLI, err)
@@ -96,19 +96,24 @@ func preparePersistentFolders(p Params, rd *runDirs) error {
 
 // shareCache is the verdicts kept between segments, for one share folder.
 type shareCache struct {
-	Version int                             `json:"version"`
-	Share   string                          `json:"share"`
-	Files   map[string]toolsrv.ShareVerdict `json:"files"`
+	Version int    `json:"version"`
+	Share   string `json:"share"`
+	// MalwareCheck is the setting the verdicts were made under.
+	MalwareCheck bool                            `json:"malwareCheck"`
+	Files        map[string]toolsrv.ShareVerdict `json:"files"`
 }
 
-// shareCacheVersion is the kept verdicts' version. Version 2 added the text
-// read out of each document: verdicts kept before it are dropped, so each
-// file is checked, and its text read, once more.
+// shareCacheVersion is the kept verdicts' version: version 2 holds, beside
+// each verdict, whether a text read out of the file is kept. Verdicts kept
+// in another version are dropped, so each file is checked, and its text
+// read, once more.
 const shareCacheVersion = 2
 
-// readShareCache is the verdicts kept for share; none when the file is
-// missing, unreadable, of another version or for another folder.
-func readShareCache(path, share string) map[string]toolsrv.ShareVerdict {
+// readShareCache is the verdicts kept for share under the malware-check
+// setting malwareCheck; none when the file is missing, unreadable, of
+// another version, for another folder or made under the other setting, so
+// a file read unchecked while the check was off is checked once it is on.
+func readShareCache(path, share string, malwareCheck bool) map[string]toolsrv.ShareVerdict {
 	out := map[string]toolsrv.ShareVerdict{}
 	if path == "" {
 		return out
@@ -118,7 +123,7 @@ func readShareCache(path, share string) map[string]toolsrv.ShareVerdict {
 		return out
 	}
 	var c shareCache
-	if json.Unmarshal(b, &c) != nil || c.Version != shareCacheVersion || c.Share != share {
+	if json.Unmarshal(b, &c) != nil || c.Version != shareCacheVersion || c.Share != share || c.MalwareCheck != malwareCheck {
 		return out
 	}
 	for rel, v := range c.Files {
@@ -129,12 +134,13 @@ func readShareCache(path, share string) map[string]toolsrv.ShareVerdict {
 	return out
 }
 
-// keepShareCache writes the verdicts for the next segment (0600).
-func keepShareCache(path, share string, files map[string]toolsrv.ShareVerdict) error {
+// keepShareCache writes the verdicts made under the malware-check setting
+// malwareCheck for the next segment (0600).
+func keepShareCache(path, share string, malwareCheck bool, files map[string]toolsrv.ShareVerdict) error {
 	if path == "" {
 		return nil
 	}
-	b, err := json.Marshal(shareCache{Version: shareCacheVersion, Share: share, Files: files})
+	b, err := json.Marshal(shareCache{Version: shareCacheVersion, Share: share, MalwareCheck: malwareCheck, Files: files})
 	if err != nil {
 		return err
 	}
@@ -294,7 +300,7 @@ func (s *liveSession) checkShare(ctx context.Context) {
 	if len(todo) == 0 {
 		if gone {
 			_ = writeShareVerdicts(rd.shareChecks, sc.verdicts)
-			_ = keepShareCache(rd.shareCache, rd.share, sc.verdicts)
+			_ = keepShareCache(rd.shareCache, rd.share, s.shareMalwareCheck(), sc.verdicts)
 			pruneShareText(rd, sc.verdicts)
 		}
 		return
@@ -323,7 +329,7 @@ func (s *liveSession) checkShare(ctx context.Context) {
 		s.emit(session.Event{Kind: session.KindNotice, Text: "the share's verdicts could not be written: " + s.redact.String(err.Error())})
 		return
 	}
-	_ = keepShareCache(rd.shareCache, rd.share, sc.verdicts)
+	_ = keepShareCache(rd.shareCache, rd.share, s.shareMalwareCheck(), sc.verdicts)
 	pruneShareText(rd, sc.verdicts)
 	s.logShareChecks(checked)
 	if unchecked > 0 && s.shareMalwareCheck() {
@@ -393,9 +399,9 @@ func (s *liveSession) checkShareFiles(ctx context.Context, todo []shareFile) (ma
 			byPath[top] = append(byPath[top], f)
 		}
 	}
-	off := !s.shareMalwareCheck()
+	malwareCheck := s.shareMalwareCheck()
 	for rel, v := range copied {
-		v.Verdict, v.Signature, v.Reason = shareVerdictOf(byPath[rel], img.Signatures, off)
+		v.Verdict, v.Signature, v.Reason = shareVerdictOf(byPath[rel], img.Signatures, malwareCheck)
 		if v.Verdict != "" && v.Verdict != toolsrv.ShareFound {
 			v.Text, v.Tool, v.Unread = keepShareText(rd, res, rel, v.SHA256, byPath[rel])
 		}
@@ -537,8 +543,8 @@ func linkOrCopy(src, dst string) error {
 // anything unpacked from it: found when ClamAV found anything in either,
 // clean when it read the file and found nothing, unchecked otherwise, and
 // unchecked for every file when the malware check is off.
-func shareVerdictOf(files []runnerdecode.File, sigs clamdb.DB, off bool) (verdict, signature, reason string) {
-	if off {
+func shareVerdictOf(files []runnerdecode.File, sigs clamdb.DB, malwareCheck bool) (verdict, signature, reason string) {
+	if !malwareCheck {
 		for _, f := range files {
 			if f.In == "" {
 				return toolsrv.ShareUnchecked, "", shareCheckOff

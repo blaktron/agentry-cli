@@ -143,7 +143,7 @@ func readAgentState(ctx context.Context, home string, a persistent.Agent) (agent
 	st.DisplayName = a.DisplayName(cfg)
 	st.Config = &cfg
 	st.Share, _ = persistent.ShareFolder(a, cfg)
-	st.Roster = persistent.BuildRosterUnder(a, cfg, nil, defaultMalwareCheck())
+	st.Roster = persistent.BuildRosterUnder(a, cfg, nil, persistent.HomeMalwareCheck(home))
 	held, holder := persistent.Held(home, a.Name)
 	switch {
 	case held:
@@ -313,18 +313,6 @@ func agentPolicy(path string) (*policy.Policy, string, policy.File, error) {
 		return nil, "", file, engine.Classify(engine.ExitPolicy, err)
 	}
 	return pol, sha, file, nil
-}
-
-// defaultMalwareCheck is the malware-check setting of the runner home's
-// policy, for a roster shown without starting the agent; off when there is
-// no policy yet, as a new one has it.
-func defaultMalwareCheck() bool {
-	file, err := policy.Resolve("")
-	if err != nil {
-		return false
-	}
-	pol, _, err := policy.Load(file.Path)
-	return err == nil && pol.MalwareCheckOn()
 }
 
 // agentStartTimeout bounds how long start waits for the agent to come up:

@@ -25,6 +25,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/knowledge"
 	"github.com/blaktron/agentry-cli/pkg/runner/mcpinstall"
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 )
 
 // Change is one change to an agent's configuration; a field left unset is
@@ -479,13 +480,22 @@ func Configure(ctx context.Context, home string, a Agent, client string, ch Chan
 	if err != nil {
 		return nil, false, err
 	}
-	if _, err := ApplyChange(home, a, &cfg, ch); err != nil {
+	malwareCheck := HomeMalwareCheck(home)
+	if _, err := applyChange(home, a, &cfg, ch, malwareCheck); err != nil {
 		return nil, false, err
 	}
 	if err := SaveConfig(home, a.Name, cfg); err != nil {
 		return nil, false, err
 	}
-	return BuildRoster(a, cfg, nil), false, nil
+	return BuildRosterUnder(a, cfg, nil, malwareCheck), false, nil
+}
+
+// HomeMalwareCheck is the malware-check setting of the policy in the runner
+// home home, for a roster built while the agent is not running; off when
+// that policy is missing or unreadable, as a new one has it.
+func HomeMalwareCheck(home string) bool {
+	pol, _, err := policy.Load(policy.PathIn(home))
+	return err == nil && pol.MalwareCheckOn()
 }
 
 // AgreeToRoster records the person's agreement to everything the agent's
