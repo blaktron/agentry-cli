@@ -294,9 +294,17 @@ type PersistentSegment struct {
 	// carries the run's label, so neither the segment's teardown nor a
 	// sweep of a dead run removes it.
 	SessionVolume, DataVolume string
-	// VolumeLabels are the labels the volumes are created with when they
-	// do not exist yet.
-	VolumeLabels map[string]string
+	// Home identifies the runner home the agent belongs to: the volumes
+	// carry it in a label, so what lists or removes them acts on this
+	// home's alone.
+	Home string
+	// LegacySessionVolume and LegacyDataVolume, when set, are the volumes
+	// named by the agent alone (legacy names), which every runner home on
+	// the engine could use. Set only for an agent this home has already run:
+	// when one of the agent's volumes does not exist yet and its legacy
+	// volume does, the volume is made as a copy of it, so the conversation
+	// and the files carry over and the legacy volume is left as it is.
+	LegacySessionVolume, LegacyDataVolume string
 	// ContinueID is the harness's id for the conversation the agent's last
 	// segment was in, to continue; empty starts a new one.
 	ContinueID string

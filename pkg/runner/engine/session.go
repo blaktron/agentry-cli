@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"crypto/sha256"
@@ -202,7 +203,7 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 		// segment and kept: it carries no run label, so neither this
 		// segment's teardown nor the sweep of a dead run removes it.
 		rd.session = p.Persistent.SessionVolume
-		if err := ensurePersistentVolumes(ctx, d, p.Persistent); err != nil {
+		if err := ensurePersistentVolumes(ctx, d, p); err != nil {
 			return fail(Classify(ExitCLI, err))
 		}
 	} else {
@@ -699,31 +700,83 @@ type PersistentSession interface {
 	SendCarrying(ctx context.Context, carried, text string) error
 }
 
-// PersistentLabel keys a persistent agent's volumes by the agent's name. It
-// is not the run label: the volumes outlive every segment.
-const PersistentLabel = "agentry.persistent"
+// PersistentLabel keys a persistent agent's volumes by the agent's name, and
+// PersistentHomeLabel by the runner home they belong to. Neither is the run
+// label: the volumes outlive every segment.
+const (
+	PersistentLabel     = "agentry.persistent"
+	PersistentHomeLabel = "agentry.persistent.home"
+)
 
-// PersistentVolumeLabels are the labels a persistent agent's volumes carry.
-func PersistentVolumeLabels(agent string) map[string]string {
-	return map[string]string{PersistentLabel: agent}
+// PersistentVolumeLabels are the labels a persistent agent's volumes carry:
+// the agent's name and the runner home's identity.
+func PersistentVolumeLabels(agent, home string) map[string]string {
+	return map[string]string{PersistentLabel: agent, PersistentHomeLabel: home}
 }
 
 // ensurePersistentVolumes makes the agent's volumes that do not exist yet.
 // An existing one is left as it is: it holds the agent's conversation and
 // files. Listed first because an engine may refuse to create a volume that
-// exists (podman does).
-func ensurePersistentVolumes(ctx context.Context, d dockerx.Client, ps *PersistentSegment) error {
-	have, err := d.VolumesByLabel(ctx, PersistentLabel+"="+ps.Agent)
+// exists (podman does). A volume that does not exist, whose legacy volume
+// does, is made as a copy of it.
+func ensurePersistentVolumes(ctx context.Context, d dockerx.Client, p Params) error {
+	ps := p.Persistent
+	have, err := d.VolumesByLabel(ctx, PersistentHomeLabel+"="+ps.Home)
 	if err != nil {
 		return fmt.Errorf("list the volumes of the persistent agent %s: %w", ps.Agent, err)
 	}
-	for _, name := range []string{ps.SessionVolume, ps.DataVolume} {
-		if slices.Contains(have, name) {
+	legacy, err := d.VolumesByLabel(ctx, PersistentLabel+"="+ps.Agent)
+	if err != nil {
+		return fmt.Errorf("list the volumes of the persistent agent %s: %w", ps.Agent, err)
+	}
+	for _, v := range []struct{ name, old string }{{ps.SessionVolume, ps.LegacySessionVolume}, {ps.DataVolume, ps.LegacyDataVolume}} {
+		if slices.Contains(have, v.name) {
 			continue
 		}
-		if err := d.VolumeCreate(ctx, name, PersistentVolumeLabels(ps.Agent)); err != nil {
-			return fmt.Errorf("create the volume %s of the persistent agent %s: %w", name, ps.Agent, err)
+		if err := d.VolumeCreate(ctx, v.name, PersistentVolumeLabels(ps.Agent, ps.Home)); err != nil {
+			return fmt.Errorf("create the volume %s of the persistent agent %s: %w", v.name, ps.Agent, err)
 		}
+		if v.old == "" || !slices.Contains(legacy, v.old) {
+			continue
+		}
+		if err := copyPersistentVolume(ctx, d, p, v.old, v.name); err != nil {
+			_ = d.VolumeRemove(context.WithoutCancel(ctx), v.name)
+			return fmt.Errorf("carry the volume %s of the persistent agent %s over to %s: %w", v.old, ps.Agent, v.name, err)
+		}
+	}
+	return nil
+}
+
+// copyPersistentVolume copies the files of the volume from into the volume
+// to, which is empty, in a one-shot of the harness image: no network, a
+// read-only root, the old volume read-only, and the capabilities cp -a needs
+// to keep owners, modes and times. The old volume is not changed.
+func copyPersistentVolume(ctx context.Context, d dockerx.Client, p Params, from, to string) error {
+	name := containerName(p.RunID, "volume-copy")
+	s := hardened(dockerx.RunSpec{
+		Name:       name,
+		Image:      p.Plan.Harness.Agent.Image,
+		Entrypoint: "sh",
+		Argv:       []string{"-c", `cp -a /from/. /to/`},
+		User:       "0:0",
+		Network:    "none",
+		Mounts: []dockerx.Mount{
+			{Source: from, Target: "/from", ReadOnly: true},
+			{Source: to, Target: "/to"},
+		},
+		Labels:     runLabels(p.RunID),
+		AutoRemove: true,
+		Runtime:    p.Plan.Runtime(),
+	}, p.limits())
+	s.CapAdd = []string{"CHOWN", "DAC_OVERRIDE", "DAC_READ_SEARCH", "FOWNER"}
+	defer func() { _ = d.RemoveForce(context.WithoutCancel(ctx), name) }()
+	var stderr bytes.Buffer
+	code, err := dockerx.RunForegroundUnder(ctx, d, s, "persistent volume's copy", nil, io.Discard, &stderr)
+	if err != nil {
+		return err
+	}
+	if code != 0 {
+		return fmt.Errorf("the copy exited %d: %s", code, strings.TrimSpace(stderr.String()))
 	}
 	return nil
 }

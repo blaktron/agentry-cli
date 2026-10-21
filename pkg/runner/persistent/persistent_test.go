@@ -329,8 +329,17 @@ func TestNextSegmentContinuesOrCarriesTheLastExchange(t *testing.T) {
 	if seg.Persistent.ContinueID != "conv-1" || seg.Persistent.Segment != 2 {
 		t.Errorf("second segment = %+v, want it to continue conv-1 as segment 2", seg.Persistent)
 	}
-	if seg.Persistent.SessionVolume != SessionVolume("assistant") || seg.Persistent.DataVolume != DataVolume("assistant") {
+	if seg.Persistent.SessionVolume != SessionVolumeIn(home, "assistant") || seg.Persistent.DataVolume != DataVolumeIn(home, "assistant") || seg.Persistent.Home != HomeID(home) {
 		t.Errorf("volumes = %+v", seg.Persistent)
+	}
+	// The first segment of a home that had run the agent before volumes
+	// were its own carries the shared volumes over; a first start of a
+	// home that never ran it names none.
+	if first := st.segments[0].Persistent; first.LegacySessionVolume != "" || first.LegacyDataVolume != "" {
+		t.Errorf("the agent's first segment names legacy volumes: %+v", first)
+	}
+	if seg.Persistent.LegacySessionVolume != SessionVolume("assistant") || seg.Persistent.LegacyDataVolume != DataVolume("assistant") {
+		t.Errorf("the second segment names no legacy volumes: %+v", seg.Persistent)
 	}
 	if !strings.Contains(st.last.reason, "the last exchange from the transcript") {
 		t.Errorf("resume reason = %q", st.last.reason)
@@ -422,7 +431,7 @@ func TestResetWipesTheConversationAndKeepsTheReceipts(t *testing.T) {
 		t.Fatal(err)
 	}
 	ops := strings.Join(f.Ops(), " ")
-	for _, v := range []string{SessionVolume("assistant"), DataVolume("assistant")} {
+	for _, v := range []string{SessionVolumeIn(home, "assistant"), DataVolumeIn(home, "assistant")} {
 		if !strings.Contains(ops, "VolumeRemove:"+v) {
 			t.Errorf("reset did not remove %s: %s", v, ops)
 		}
@@ -565,5 +574,66 @@ func TestResetRefusesAnAgentItDoesNotKnow(t *testing.T) {
 	}
 	if _, err := os.Stat(outside); err != nil {
 		t.Errorf("a folder outside the agents' was removed: %v", err)
+	}
+}
+
+// TestTwoRunnerHomesNeverShareAnAgentsVolumes: two runner homes running the
+// same agent on one engine are given volumes of their own, and a reset in
+// one removes its volumes and leaves the other's.
+func TestTwoRunnerHomesNeverShareAnAgentsVolumes(t *testing.T) {
+	homeA, homeB := shortHome(t), shortHome(t)
+	var starters []*starter
+	for _, h := range []string{homeA, homeB} {
+		enable(t, h)
+		st := &starter{}
+		sv := startAssistant(t, h, st)
+		if err := sv.Send(context.Background(), "hello from "+filepath.Base(h)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := sv.Stop(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		starters = append(starters, st)
+	}
+	a, b := starters[0].segments[0].Persistent, starters[1].segments[0].Persistent
+	if a.Home == b.Home || a.SessionVolume == b.SessionVolume || a.DataVolume == b.DataVolume {
+		t.Fatalf("home A %+v and home B %+v share an identity or a volume", a, b)
+	}
+	if a.SessionVolume != SessionVolumeIn(homeA, "assistant") || b.DataVolume != DataVolumeIn(homeB, "assistant") {
+		t.Errorf("volumes are not named by their home: %+v %+v", a, b)
+	}
+	if HomeID(homeA) != HomeID(homeA+"/../"+filepath.Base(homeA)) {
+		t.Error("one home has two identities")
+	}
+	f := &dockerx.Fake{}
+	if err := Reset(context.Background(), homeA, "assistant", f); err != nil {
+		t.Fatal(err)
+	}
+	ops := strings.Join(f.Ops(), " ")
+	for _, v := range []string{a.SessionVolume, a.DataVolume} {
+		if !strings.Contains(ops, "VolumeRemove:"+v) {
+			t.Errorf("reset in home A did not remove %s: %s", v, ops)
+		}
+	}
+	for _, v := range []string{b.SessionVolume, b.DataVolume, SessionVolume("assistant"), DataVolume("assistant")} {
+		if strings.Contains(ops, v) {
+			t.Errorf("reset in home A touched %s: %s", v, ops)
+		}
+	}
+	if entries, _ := Transcript(homeB, "assistant", 0); len(entries) == 0 {
+		t.Error("reset in home A emptied home B's transcript")
+	}
+}
+
+// TestSharedVolumesAreTheOnesNamedByTheAgentAlone: a reset names the volumes
+// of the earlier naming that still exist, and never a home's own.
+func TestSharedVolumesAreTheOnesNamedByTheAgentAlone(t *testing.T) {
+	home := shortHome(t)
+	f := &dockerx.Fake{}
+	for _, n := range []string{SessionVolume("assistant"), DataVolumeIn(home, "assistant")} {
+		f.Volumes = append(f.Volumes, dockerx.Labeled{Name: n, Labels: map[string]string{"agentry.persistent": "assistant"}})
+	}
+	if got := SharedVolumes(context.Background(), f, "assistant"); len(got) != 1 || got[0] != SessionVolume("assistant") {
+		t.Errorf("shared volumes = %v", got)
 	}
 }

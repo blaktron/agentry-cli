@@ -208,7 +208,7 @@ func BuildRosterUnder(a Agent, c Config, applied *Applied, malwareCheck bool) Ro
 	}
 	add(RosterEntry{ID: EntryShare, Kind: KindFiles, Name: "Your share folder", GrantedBy: GrantedByBuiltin, Line: shareLine, alike: shareAlike}, true)
 	add(RosterEntry{ID: EntryData, Kind: KindFiles, Name: "Its own files", GrantedBy: GrantedByBuiltin, Fixed: true,
-		Line: "Keeps its own notes and files on the volume " + DataVolume(a.Name) + ", kept until you reset it"}, true)
+		Line: "Keeps its own notes and files on a volume of its own, kept until you reset it"}, true)
 	if a.Builtin.Codes() {
 		for _, e := range coderEntries(c) {
 			add(e, true)

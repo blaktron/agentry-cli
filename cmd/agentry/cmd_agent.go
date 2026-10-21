@@ -261,7 +261,7 @@ func newAgentShowCmd() *cobra.Command {
 				}
 				st.Usage = &u
 				st.StateDir = persistent.Dir(home, a.Name)
-				st.Volumes = &agentVolumes{Session: persistent.SessionVolume(a.Name), Data: persistent.DataVolume(a.Name)}
+				st.Volumes = &agentVolumes{Session: persistent.SessionVolumeIn(home, a.Name), Data: persistent.DataVolumeIn(home, a.Name)}
 				if lines > 0 {
 					if st.Transcript, err = persistent.Transcript(home, a.Name, lines); err != nil {
 						return err
@@ -800,10 +800,14 @@ func newAgentResetCmd() *cobra.Command {
 			if confirm != a.Name {
 				return engine.Classify(engine.ExitUsage, errors.New("the name did not match; nothing was reset"))
 			}
-			if err := persistent.Reset(cmd.Context(), home, a.Name, agentDocker()); err != nil {
+			d := agentDocker()
+			if err := persistent.Reset(cmd.Context(), home, a.Name, d); err != nil {
 				return engine.Classify(engine.ExitCLI, err)
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "The %s agent was reset to its defaults: its next start begins a new conversation and asks you again to agree to what it does.\n", a.Name)
+			if shared := persistent.SharedVolumes(cmd.Context(), d, a.Name); len(shared) > 0 {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Volumes from before each runner home had its own still exist on this engine (%s); they may hold the conversation of this or another runner home. Remove them with docker volume rm once no runner home needs them.\n", strings.Join(shared, ", "))
+			}
 			return nil
 		},
 	}
