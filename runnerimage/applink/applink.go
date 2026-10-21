@@ -70,7 +70,7 @@ func boolean(desc string) map[string]any {
 // SelfConfigure is the Assistant's one tool: its own name and personality.
 const SelfConfigure = "self_configure"
 
-// sets are the tools each agent's app link lists. Main's reach the
+// sets are the tools each agent's app link lists. Agentry Helper's (main) reach the
 // application's own operations, each under the application's own consent;
 // none changes a setting's value, starts or stops an agent, publishes, signs
 // in or touches a credential. The Assistant's changes its own name and

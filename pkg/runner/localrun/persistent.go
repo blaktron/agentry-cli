@@ -36,7 +36,7 @@ func Assistant() Builtin {
 		persistent: true, runnable: true, checkShare: true, appLink: applink.SetAssistant}
 }
 
-// Main is Main (pkg/persistent/main), the persistent agent of Agentry
+// Main is Agentry Helper (pkg/persistent/main), the persistent agent of Agentry
 // Desktop's Home: its app link is the application's own operations, and a
 // file in its share is read only once ClamAV has checked it.
 func Main() Builtin {

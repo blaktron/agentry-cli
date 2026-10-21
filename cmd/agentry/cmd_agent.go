@@ -55,7 +55,7 @@ func newAgentCmd() *cobra.Command {
 			"(`configure coder --dev-host`); each is a roster entry you agree to at its\n" +
 			"first start. It builds and runs software, which is riskier than an agent\n" +
 			"that only reads and writes.\n\n" +
-			"Main runs only in Agentry Desktop.\n\n" +
+			"Agentry Helper (main) runs only in Agentry Desktop.\n\n" +
 			"  agentry agent enable assistant\n" +
 			"  agentry agent start assistant\n" +
 			"  agentry agent chat assistant\n" +
