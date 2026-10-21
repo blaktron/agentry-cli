@@ -41,6 +41,12 @@ type Options struct {
 	Docker dockerx.Client
 	// Stderr gets the segment's progress (image builds, sweeps).
 	Stderr io.Writer
+	// OnStage, when set, is called as each segment's start reaches each of
+	// its steps (Stage; Stage.Words is how a person is shown it): the
+	// agent's first segment, and each a roster change or a restart starts.
+	// It is called on the starting goroutine, so it returns quickly; nil
+	// does nothing.
+	OnStage func(Stage)
 	// Packs opens the knowledge packs the roster has on, for each segment;
 	// nil refuses a roster with one on.
 	Packs Packs
@@ -55,6 +61,9 @@ type Options struct {
 	// put a session of their own here.
 	StartSegment func(ctx context.Context, seg localrun.Segment) (engine.PersistentSession, error)
 }
+
+// Stage is a step a segment's start has reached (engine.Stage).
+type Stage = engine.Stage
 
 // Supervisor owns one running agent: its lock, its segment, its socket.
 type Supervisor struct {
@@ -217,6 +226,7 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 	seg := localrun.Segment{
 		Builtin: a.Builtin, Home: home, Policy: s.opts.Policy, PolicySHA: s.opts.PolicySHA,
 		PolicyFile: s.opts.PolicyFile, Build: s.opts.Build, OutDir: outDir, RunID: runID, Stderr: s.opts.Stderr,
+		OnStage: s.opts.OnStage,
 		Persistent: engine.PersistentSegment{
 			Agent: name, Segment: segment,
 			SessionVolume: SessionVolume(name), DataVolume: DataVolume(name),

@@ -373,13 +373,21 @@ func saveUsage(home, name string, u Usage) error {
 	return os.WriteFile(filepath.Join(Dir(home, name), usageFile), append(b, '\n'), 0o600)
 }
 
-// Reset wipes a stopped agent's conversation and files: its two volumes,
-// its transcript, its lifetime usage and the conversation its next segment
-// would continue. The segments' receipts are kept. It refuses a running
-// agent, and holds the agent's lock while it works so none starts meanwhile.
-// The containers of a segment whose supervisor died still hold the session
-// volume, so they are swept first.
+// Reset puts a stopped agent back to its defaults, as it was when first
+// enabled: its two volumes, its transcript, its lifetime usage, its share
+// verdicts and its installed servers are removed, and its configuration
+// keeps only whether it is enabled, so its next start is a first segment
+// that asks its consents again. The segments' receipts and the files in its
+// share folder, which are the person's, are kept; so is a dev server's
+// sign-in in the keychain, where a schedule of the same host may read it.
+// It refuses a running agent, and holds the agent's lock while it works so
+// none starts meanwhile. The containers of a segment whose supervisor died
+// still hold the session volume, so they are swept first.
 func Reset(ctx context.Context, home, name string, d dockerx.Client) error {
+	// Only a known agent's folder is emptied.
+	if _, err := Lookup(name); err != nil {
+		return err
+	}
 	owner, err := Acquire(home, name, ClientCLI)
 	if err != nil {
 		return err
@@ -396,10 +404,12 @@ func Reset(ctx context.Context, home, name string, d dockerx.Client) error {
 			return err
 		}
 	}
+	if err := os.RemoveAll(serversDir(home, name)); err != nil {
+		return fmt.Errorf("remove the %s agent's installed servers: %w", name, err)
+	}
 	cfg, err := LoadConfig(home, name)
 	if err != nil {
 		return err
 	}
-	cfg.Conversation = nil
-	return SaveConfig(home, name, cfg)
+	return SaveConfig(home, name, Config{Version: ConfigVersion, Enabled: cfg.Enabled})
 }

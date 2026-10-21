@@ -21,6 +21,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/mcpinstall"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelsignin"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/pkg/runner/targethost"
 	"github.com/blaktron/agentry-cli/runnerimage"
@@ -117,6 +118,9 @@ type Segment struct {
 	OutDir string
 	RunID  string
 	Stderr io.Writer
+	// OnStage, when set, is called as the start reaches each of its steps
+	// (engine.Stage), here and in the engine; nil does nothing.
+	OnStage func(engine.Stage)
 	// Persistent is the agent's part of the engine's parameters: its name,
 	// the segment's number, its volumes and the conversation to continue.
 	Persistent engine.PersistentSegment
@@ -140,6 +144,9 @@ func (s Segment) Start(ctx context.Context, d dockerx.Client) (engine.Persistent
 		return nil, err
 	}
 	plan, meta, workspace, installDir, ad := sp.Plan, sp.meta, sp.workspace, sp.installDir, sp.adapter
+	if signsIn(plan) {
+		engine.ReportStage(s.OnStage, engine.Stage{Name: engine.StageSignIn})
+	}
 	signIns := modelsignin.Open(s.Home, connection.OSKeychain{})
 	if err := signIns.ReadyForRun(ctx, plan); err != nil {
 		return nil, engine.Classify(engine.ExitPolicy, err)
@@ -150,6 +157,7 @@ func (s Segment) Start(ctx context.Context, d dockerx.Client) (engine.Persistent
 	}
 	runnerTag := s.Policy.RunnerImageTag(runnerimage.ContentVersion())
 	ctxDir := filepath.Join(s.Home, "image")
+	engine.ReportStage(s.OnStage, engine.Stage{Name: receipt.StageImages})
 	if err := gateway.EnsureInstalledFor(ctx, d, s.Policy, runnerTag, ctxDir, logw, plan); err != nil {
 		return nil, engine.Classify(engine.ExitGateway, err)
 	}
@@ -158,6 +166,9 @@ func (s Segment) Start(ctx context.Context, d dockerx.Client) (engine.Persistent
 		if execPackages, err = gateway.EnsureExecImage(ctx, d, runnerTag, *plan.ExecImage, ctxDir, logw); err != nil {
 			return nil, engine.Classify(engine.ExitGateway, err)
 		}
+	}
+	if toInstall := sp.uninstalled(s.Grants.ServersDir); len(toInstall) > 0 {
+		engine.ReportStage(s.OnStage, engine.Stage{Name: receipt.StageMCPServers, Subject: strings.Join(toInstall, ", ")})
 	}
 	if err := sp.installServers(ctx, d, s.Grants.ServersDir); err != nil {
 		return nil, err
@@ -178,7 +189,7 @@ func (s Segment) Start(ctx context.Context, d dockerx.Client) (engine.Persistent
 		Adapter: ad, Policy: s.Policy, PolicyFile: s.PolicyFile, Budgets: spec.Budgets{},
 		Attestation: meta.Attestation, ExecPackages: execPackages,
 		CheckWorkspace: builtinCopyCheck(meta.Digest),
-		RunID:          s.RunID, Stderr: logw,
+		RunID:          s.RunID, Stderr: logw, OnStage: s.OnStage,
 		ModelSignIn: signIn, RenewModelSignIn: renewSignIn,
 		Persistent: &seg,
 	})
@@ -283,6 +294,26 @@ type SegmentPlan struct {
 	inputs PlanInputs
 }
 
+// uninstalled names the segment's package servers the agent's store does
+// not hold yet, which the start installs; a server it holds is reused at
+// once and is not named.
+func (sp *SegmentPlan) uninstalled(storeDir string) []string {
+	var out []string
+	for _, r := range sp.resolved {
+		if storeDir != "" {
+			if prior, err := mcpinstall.LoadMeta(storeDir, r.ID); err == nil && prior != nil {
+				continue
+			}
+		}
+		out = append(out, r.Package)
+	}
+	return out
+}
+
+// signsIn says the plan's model is reached through a subscription's sign-in,
+// which the start takes from the store and readies before the session.
+func signsIn(plan *spec.Plan) bool { return plan.Harness.ModelSignIn != nil }
+
 // installServers installs the segment's package servers into the agent's
 // store and moves Plan and Dir to the plan compiled with the commands the
 // install found (InstallServers).
@@ -304,6 +335,7 @@ func (s Segment) Plan(ctx context.Context, logw io.Writer) (*SegmentPlan, error)
 	if !s.Builtin.persistent || !s.Builtin.runnable {
 		return nil, engine.Classify(engine.ExitCLI, fmt.Errorf("%s is not a persistent agent Agentry runs", s.Builtin.Ref()))
 	}
+	engine.ReportStage(s.OnStage, engine.Stage{Name: receipt.StageCompile})
 	coderGrant, err := s.coderGrant()
 	if err != nil {
 		return nil, err

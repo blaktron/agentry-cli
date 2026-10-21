@@ -475,6 +475,15 @@ func (f *logFollower) flush() {
 	f.off += n
 }
 
+// stageLines writes each stage a segment's start reaches as a "stage:" line
+// of the supervisor's log, in the words a person is shown, which agentry
+// agent start prints as the log grows.
+func stageLines(w io.Writer) func(persistent.Stage) {
+	return func(st persistent.Stage) {
+		_, _ = fmt.Fprintf(w, "stage: %s\n", st.Words())
+	}
+}
+
 func newAgentSuperviseCmd() *cobra.Command {
 	var policyPath string
 	cmd := &cobra.Command{
@@ -517,6 +526,7 @@ func newAgentSuperviseCmd() *cobra.Command {
 				Home: home, Agent: a, Client: persistent.ClientCLI,
 				Policy: pol, PolicySHA: sha, PolicyFile: &file, Build: version.Build(),
 				Docker: dockerx.New(), Stderr: errOut, Packs: agentPacks(cmd),
+				OnStage: stageLines(errOut),
 			})
 			close(starting)
 			if err != nil {
@@ -728,11 +738,17 @@ func newAgentResetCmd() *cobra.Command {
 	var confirm string
 	cmd := &cobra.Command{
 		Use:   "reset <name>",
-		Short: "Wipe a persistent agent's conversation and files; its receipts are kept",
+		Short: "Put a persistent agent back to its defaults; the files in its share folder are kept",
 		Long: "Reset removes the agent's two volumes (its conversation and its files) and\n" +
-			"its transcript, so its next start begins a new conversation. The receipts\n" +
-			"of its segments are kept. Type the agent's name when asked, or pass it as\n" +
-			"--confirm when there is no terminal to ask on.",
+			"its transcript, and everything you chose for it: its name and personality,\n" +
+			"the servers you added and their installed copies, its knowledge packs and\n" +
+			"switches, what you agreed to, its share folder's location, its dev server and\n" +
+			"ports, and whether it starts with Agentry. Its next start begins a new\n" +
+			"conversation and asks you again to agree to what it does.\n\n" +
+			"Kept: whether the agent is on, the receipts of its segments, every file in\n" +
+			"its share folder, your model sign-ins, and a dev server's sign-in in your\n" +
+			"keychain. Type the agent's name when asked, or pass it as --confirm when\n" +
+			"there is no terminal to ask on.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := cliAgent(args[0])
@@ -750,7 +766,7 @@ func newAgentResetCmd() *cobra.Command {
 				if !stdinIsTTY(cmd.InOrStdin()) {
 					return engine.Classify(engine.ExitUsage, fmt.Errorf("reset asks you to type the agent's name, and there is no terminal: pass --confirm %s", a.Name))
 				}
-				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "This wipes the %s agent's conversation and files. Type its name (%s) to go on: ", a.Name, a.Name)
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "This puts the %s agent back to its defaults: it wipes its conversation, its files and everything you chose for it. The files in its share folder are kept. Type its name (%s) to go on: ", a.Name, a.Name)
 				line, _ := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
 				confirm = strings.TrimSpace(line)
 			}
@@ -760,7 +776,7 @@ func newAgentResetCmd() *cobra.Command {
 			if err := persistent.Reset(cmd.Context(), home, a.Name, agentDocker()); err != nil {
 				return engine.Classify(engine.ExitCLI, err)
 			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "The %s agent was reset: its next start begins a new conversation.\n", a.Name)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "The %s agent was reset to its defaults: its next start begins a new conversation and asks you again to agree to what it does.\n", a.Name)
 			return nil
 		},
 	}

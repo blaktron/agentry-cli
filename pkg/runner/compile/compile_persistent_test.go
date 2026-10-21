@@ -72,6 +72,11 @@ func TestAgentFilesRootTheFilesystemTools(t *testing.T) {
 			if ts.WorkspaceDir != spec.AgentRoot || !slices.Equal(ts.FSRead.Paths, folders) || !slices.Equal(ts.FSWrite.Paths, folders) || !ts.FSRead.Enabled || !ts.FSWrite.Enabled {
 				t.Fatalf("tools spec: workspace %q, read %+v, write %+v", ts.WorkspaceDir, ts.FSRead, ts.FSWrite)
 			}
+			// The prompt's claim that the folders are writable is the
+			// grant just checked.
+			if instr := renderedInstruction(t, planDir, plan.Harness.Adapter); !strings.Contains(instr, "**Your folders.** Read-write, in "+spec.AgentRoot) {
+				t.Errorf("the System Prompt does not say the folders are read-write")
+			}
 			granted := ts.GrantedTools()
 			for _, tool := range []string{toolsrv.ToolFSRead, toolsrv.ToolFSList, toolsrv.ToolFSWrite, toolsrv.ToolGrep, toolsrv.ToolGlob} {
 				if !slices.Contains(granted, tool) || !slices.Contains(plan.Tools, tool) {
