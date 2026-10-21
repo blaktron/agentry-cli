@@ -304,7 +304,7 @@ type scriptedDriver struct {
 	events      chan adapter.Event
 }
 
-func (d *scriptedDriver) Start(context.Context) error { return nil }
+func (d *scriptedDriver) Start(context.Context) error  { return nil }
 func (d *scriptedDriver) Events() <-chan adapter.Event { return d.events }
 func (d *scriptedDriver) Close() error                 { close(d.events); return nil }
 func (d *scriptedDriver) Prompt(context.Context, string) (*adapter.Turn, error) {
