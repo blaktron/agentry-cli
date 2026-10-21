@@ -56,12 +56,31 @@ func TestNpmBuilderRunsUnderNode(t *testing.T) {
 	}
 
 	t.Run("installs the pinned tarball when it matches the recorded SRI", func(t *testing.T) {
-		prefix, code, out := build(t, "demo-mcp", sri)
+		prefix := t.TempDir()
+		code, out, archive := runNpmBuilderArchive(t, node, reg, prefix, "demo-mcp", sri)
 		if code != 0 {
 			t.Fatalf("exit %d:\n%s", code, out)
 		}
 		if !installed(prefix) {
-			t.Fatal("the bin was not linked")
+			t.Fatal("the bin was not installed")
+		}
+		// The command npm linked is a script that runs its file by its
+		// absolute path, so the tree holds no link; and stdout is the
+		// archive of the tree alone, which unpacks into a store.
+		unpacked := t.TempDir()
+		if err := unpackStore(bytes.NewReader(archive), unpacked); err != nil {
+			t.Fatalf("the builder's stdout is not an archive the store takes: %v\n%s", err, out)
+		}
+		bin, err := os.Lstat(filepath.Join(unpacked, "node_modules", ".bin", "demo-mcp"))
+		if err != nil || !bin.Mode().IsRegular() || bin.Mode().Perm()&0o111 == 0 {
+			t.Fatalf("the unpacked command is not an executable file: %v %v", bin, err)
+		}
+		script, _ := os.ReadFile(filepath.Join(unpacked, "node_modules", ".bin", "demo-mcp"))
+		if want := "#!/bin/sh\nexec '" + filepath.Join(prefix, "node_modules", "demo-mcp", "cli.js") + "' \"$@\"\n"; string(script) != want {
+			t.Fatalf("command script = %q, want %q", script, want)
+		}
+		if run, err := exec.Command(filepath.Join(prefix, "node_modules", ".bin", "demo-mcp")).CombinedOutput(); err != nil || string(run) != "demo\n" {
+			t.Fatalf("the command script did not run the command: %q %v", run, err)
 		}
 		kept, err := os.ReadFile(filepath.Join(prefix, npmDownloadDir, "demo-mcp-1.0.0.tgz"))
 		if err != nil || !bytes.Equal(kept, tgz) {
@@ -266,8 +285,16 @@ func fakeNPMRegistry(t *testing.T, tarballs map[string][]byte) string {
 
 // runNpmBuilder runs npm_builder.js the way the runtime image does, with
 // the host's node, prefix standing in for the in-container one, and
-// returns its exit code and output.
+// returns its exit code and what it printed on stderr.
 func runNpmBuilder(t *testing.T, node, registry, prefix, pkg, integrity string) (int, string) {
+	t.Helper()
+	code, out, _ := runNpmBuilderArchive(t, node, registry, prefix, pkg, integrity)
+	return code, out
+}
+
+// runNpmBuilderArchive is runNpmBuilder that also returns the builder's
+// stdout, the archive of the tree it installed.
+func runNpmBuilderArchive(t *testing.T, node, registry, prefix, pkg, integrity string) (int, string, []byte) {
 	t.Helper()
 	home := t.TempDir()
 	r := Resolved{Package: pkg, Version: "1.0.0", Integrity: integrity}
@@ -279,16 +306,18 @@ func runNpmBuilder(t *testing.T, node, registry, prefix, pkg, integrity string) 
 	argv[6] = prefix // the in-container prefix, here a host directory
 	cmd := exec.Command(node, argv[4:]...)
 	cmd.Env = append(os.Environ(), "HOME="+home, "npm_config_cache="+filepath.Join(home, "cache"), "npm_config_update_notifier=false")
-	out, err := cmd.CombinedOutput()
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err := cmd.Run()
 	var exit *exec.ExitError
 	switch {
 	case err == nil:
-		return 0, string(out)
+		return 0, stderr.String(), stdout.Bytes()
 	case errors.As(err, &exit):
-		return exit.ExitCode(), string(out)
+		return exit.ExitCode(), stderr.String(), stdout.Bytes()
 	default:
 		t.Fatalf("run builder: %v", err)
-		return 0, ""
+		return 0, "", nil
 	}
 }
 
@@ -360,5 +389,104 @@ func TestEnsureInstalledPassesTheRecordedIntegrityToTheNpmBuilder(t *testing.T) 
 	}
 	if got := a[6:]; got[0] != "/opt/agentry-mcp/npm-server-x" || got[1] != "server-x" || got[2] != "1.0.0" || got[3] != "https://npm.invalid" || got[4] != "sha512-RECORDED" {
 		t.Fatalf("builder values = %q", got)
+	}
+}
+
+// The npm builder's archive writer, run under the host's node on a tree with
+// names past the ustar field's 100 bytes (deep node_modules paths are), a
+// name that is not ASCII, an empty file, executable bits and a large file:
+// Go's reader gets every name, body and bit back.
+func TestNpmBuilderArchiveHoldsTheTree(t *testing.T) {
+	node := hostNode(t)
+	dir := t.TempDir()
+	long := strings.Repeat("deep-folder-name/", 8) + "a-file-whose-path-is-longer-than-a-ustar-name.js"
+	files := map[string]struct {
+		body string
+		mode os.FileMode
+	}{
+		long:               {"module.exports = 1;\n", 0o644},
+		"bin/run":          {"#!/bin/sh\necho run\n", 0o755},
+		"café/ünïcode.txt": {"text\n", 0o644},
+		"empty":            {"", 0o644},
+		"big.bin":          {strings.Repeat("x", 3<<20+17), 0o644},
+	}
+	for name, f := range files {
+		p := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(f.body), f.mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The builder's own functions, without its main.
+	script := strings.TrimSuffix(strings.TrimSpace(npmBuilder), "main();") + "\narchive(process.argv[1], writeAll);\n"
+	cmd := exec.Command(node, "-e", script, dir)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("archive: %v\n%s", err, stderr.String())
+	}
+	tr := tar.NewReader(&stdout)
+	got := map[string]bool{}
+	for {
+		h, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Go cannot read the archive: %v", err)
+		}
+		if h.Typeflag == tar.TypeDir {
+			continue
+		}
+		want, ok := files[h.Name]
+		if !ok {
+			t.Fatalf("unexpected entry %q", h.Name)
+		}
+		body, _ := io.ReadAll(tr)
+		if string(body) != want.body || (h.Mode&0o111 != 0) != (want.mode&0o111 != 0) {
+			t.Fatalf("%s: %d bytes, mode %o; want %d bytes, mode %o", h.Name, len(body), h.Mode, len(want.body), want.mode)
+		}
+		got[h.Name] = true
+	}
+	if len(got) != len(files) {
+		t.Fatalf("archive holds %v, want every file of %d", got, len(files))
+	}
+}
+
+// A command npm links under a name with a quote in its target still runs
+// that file: the target is quoted for the shell, never read by it.
+func TestNpmBuilderCommandScriptQuotesItsTarget(t *testing.T) {
+	node := hostNode(t)
+	dir := t.TempDir()
+	target := filepath.Join(dir, "node_modules", "it's $(touch pwned)", "cli.js")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("#!/bin/sh\necho ran \"$@\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(dir, "node_modules", ".bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("..", "it's $(touch pwned)", "cli.js"), filepath.Join(bin, "cli")); err != nil {
+		t.Fatal(err)
+	}
+	script := strings.TrimSuffix(strings.TrimSpace(npmBuilder), "main();") + "\nbinScripts(process.argv[1]);\n"
+	if out, err := exec.Command(node, "-e", script, filepath.Join(dir, "node_modules")).CombinedOutput(); err != nil {
+		t.Fatalf("binScripts: %v\n%s", err, out)
+	}
+	if fi, err := os.Lstat(filepath.Join(bin, "cli")); err != nil || !fi.Mode().IsRegular() {
+		t.Fatalf("the link is still a link: %v %v", fi, err)
+	}
+	cmd := exec.Command(filepath.Join(bin, "cli"), "x y")
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil || string(out) != "ran x y\n" {
+		t.Fatalf("the command script ran %q (%v)", out, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "pwned")); err == nil {
+		t.Fatal("the target's name reached a shell")
 	}
 }
