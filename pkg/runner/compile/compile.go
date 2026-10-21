@@ -1150,6 +1150,11 @@ func gatewaySpec(image string, servers []string, caps spec.CapSummary, mcpServer
 	if caps.AppLink != "" {
 		writable = append(writable, spec.PHAppLink)
 	}
+	// The share outbox, by its exact path, which the servers that see the
+	// share save into.
+	if spec.SharesAny(mcpServers) {
+		writable = append(writable, spec.PHShareOut)
+	}
 	return spec.GatewaySpec{
 		Image: image,
 		Args: append([]string{
@@ -1394,6 +1399,11 @@ func bindRoots(withServers bool, caps spec.CapSummary, mcpServers []spec.MCPServ
 	if spec.SharesAs(mcpServers, spec.ServerShareMirror) {
 		roots = append(roots, spec.PHShareMirror)
 	}
+	// The share outbox, a root of its own beside the run's cfg rather than
+	// in it, so the docker filter can hold it to containers with no network.
+	if spec.SharesAny(mcpServers) {
+		roots = append(roots, spec.PHShareOut)
+	}
 	// The app link's socket, a root of its own, exact.
 	if caps.AppLink != "" {
 		roots = append(roots, spec.PHAppLink)
@@ -1444,14 +1454,19 @@ func serverShares(in Inputs, mode manifest.Mode, caps spec.CapSummary) ([]spec.M
 	return out, nil
 }
 
-// serverShareVolume is the catalogue's bind of the share for a server that
-// sees it: always read-only, at the path the agent's own tools use.
-func serverShareVolume(how spec.ServerShare) string {
+// serverShareVolumes are the catalogue's binds for a server that sees the
+// share: the share, always read-only, at the path the agent's own tools
+// use, and the share outbox, writable, which the runner copies into the
+// share after each turn under new names only.
+func serverShareVolumes(how spec.ServerShare) []string {
 	src := spec.PHShareMirror
 	if how == spec.ServerShareLive {
 		src = spec.PHShare
 	}
-	return src + ":" + spec.AgentRoot + "/" + spec.AgentShareDir + ":ro"
+	return []string{
+		src + ":" + spec.AgentRoot + "/" + spec.AgentShareDir + ":ro",
+		spec.PHShareOut + ":" + spec.AgentShareOutPath,
+	}
 }
 
 // mcpServerEntry renders one declared MCP server as a gateway catalog
@@ -1469,7 +1484,7 @@ func mcpServerEntry(srv spec.MCPServerSpec) *yaml.Node {
 	e.set("longLived", boolNode(true))
 	volumes := []string{spec.PHServers + "/" + srv.StoreSubdir + ":" + spec.MCPStorePrefix + "/" + srv.StoreSubdir + ":ro"}
 	if srv.Share != "" {
-		volumes = append(volumes, serverShareVolume(srv.Share))
+		volumes = append(volumes, serverShareVolumes(srv.Share)...)
 	}
 	if srv.OAuth != nil && len(srv.OAuth.Files) > 0 {
 		// The token folder of a package server's OAuth sign-in: a folder,
@@ -2345,7 +2360,8 @@ func serverShareEnforcement(servers []spec.MCPServerSpec) string {
 	if len(parts) == 0 {
 		return ""
 	}
-	return strings.Join(parts, "; ") + "; each is a package server with no network, given no write to the share and no capability to write a host folder; the docker filter lets the tools server alone bind the share writable, and gives the share and its mirror to no other container that joins a network"
+	return strings.Join(parts, "; ") + fmt.Sprintf("; each is a package server with no network, given no write to the share; each saves into the share outbox, writable at %s, a folder of the segment's own and a bind root of its own beside its cfg, which the runner copies into the share after each turn and at the segment's end through an os.Root: regular files at its top level alone, never a link or a folder (nor, where the system counts links, a file with another link to it), each under a new name (\"<name> (2)\" and so on when the name is taken), never over a file, at most %d files of at most %d MiB each and %d MiB in all a turn, then emptied, each copy a line in receipts/%s; where the share is checked, a copied file is checked at the next turn like any file the person adds; the docker filter lets the tools server alone bind the share writable, and gives the share, its mirror and the outbox to no other container that joins a network",
+		spec.AgentShareOutPath, spec.ShareOutMaxFiles, spec.ShareOutFileMax>>20, spec.ShareOutTotalMax>>20, spec.ShareChecksLog)
 }
 
 // agentFilesEnforcement is the receipt's line for a persistent agent's

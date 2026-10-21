@@ -79,6 +79,9 @@ type runDirs struct {
 	// shareMirror is the share's mirror the plan's servers see
 	// (mirror.go); nil for a plan with none.
 	shareMirror *shareMirror
+	// shareOut is the share outbox the plan's servers that see the share
+	// save into (outbox.go); "" for a plan with none.
+	shareOut string
 	// targets are the run's target hosts, readied by the caller, in the
 	// plan's order (targethosts.go): the replacer gives each relay its
 	// address and port, and the host link its user.
@@ -273,6 +276,7 @@ func (rd *runDirs) replacerWith(hostPath func(string) string) *strings.Replacer 
 		spec.PHSession, rd.session,
 		spec.PHShare, hostPath(rd.share),
 		spec.PHShareMirror, hostPath(rd.shareMirror.folder()),
+		spec.PHShareOut, hostPath(rd.shareOut),
 		spec.PHData, rd.data,
 		spec.PHAppLink, rd.appLinkRoot(hostPath),
 		spec.PHAppLinkMount, rd.appLinkMount(hostPath),

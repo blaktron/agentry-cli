@@ -205,10 +205,11 @@ func filterConfig(rd *runDirs, runID string, gwEnv map[string]string, lim policy
 		WritableRoots: pathList(gwEnv["MCP_GATEWAY_DOCKER_BIND_ALLOW_WRITABLE_PATHS"]),
 		// The share folder: written by the tools server alone, and read by
 		// no other container but a server the Coding agent's roster lets
-		// see it.
+		// see it. The share, its mirror and the share outbox reach no
+		// container but the tools server that joins a network.
 		ToolsWritableRoots: rd.shareRoot(),
 		ToolsOnlyRoots:     toolsOnlyShare(rd, plan),
-		OfflineRoots:       append(rd.shareRoot(), rd.mirrorRoot()...),
+		OfflineRoots:       slices.Concat(rd.shareRoot(), rd.mirrorRoot(), rd.shareOutRoot()),
 		SharedNetworks:     shared,
 		EgressNetworks:     egress,
 		NetworkNames:       names,

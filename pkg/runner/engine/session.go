@@ -393,12 +393,16 @@ type liveSession struct {
 	// and replace the result it asked for.
 	ending bool
 	// pendingNotices are input notices to prepend to the next user turn
-	// because one was in flight when the input arrived.
+	// because one was in flight when the input arrived, and what the share
+	// outbox's copy after a turn did (copyShareOut).
 	pendingNotices []string
-	userTurns      int
-	toolCalls      int
-	inTok, outTok  int64
-	totTok         int64
+	// outboxMu holds one copy of the share outbox at a time: after a turn,
+	// and at the end.
+	outboxMu      sync.Mutex
+	userTurns     int
+	toolCalls     int
+	inTok, outTok int64
+	totTok        int64
 	// usageSeen says the harness reported usage at least once; without it
 	// the receipt says the session's 0 tokens were never reported.
 	usageSeen  bool
@@ -1276,6 +1280,9 @@ func (s *liveSession) turnCarrying(ctx context.Context, carried, text string, sy
 		return true
 	})
 	s.syncPump()
+	// What the servers that see the share saved during the turn reaches
+	// the share before the turn is over.
+	s.copyShareOut(context.WithoutCancel(ctx))
 	// The turn is over before its last event is seen.
 	s.mu.Lock()
 	s.inTurn = false
@@ -1421,6 +1428,8 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 	copyHostLogs(s.rd, s.env)
 	collectBrowseProxyLog(ctx, s.d, s.rd, s.env)
 	copyBrowserOut(s.rd, s.p.Stderr)
+	// The harness is gone, so the servers save nothing more.
+	s.copyShareOut(context.WithoutCancel(ctx))
 	writeMeta(s.rd.receiptsDir, s.runID, s.p, s.start, "")
 	daemon := daemonLine(s.rd)
 	if s.rd.pdfLedger != "" {

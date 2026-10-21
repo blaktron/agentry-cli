@@ -245,8 +245,10 @@ You have no shell, filesystem or network of your own. Your tools come only from 
 		fmt.Fprintf(b, "- **MCP servers.** Besides the runner's own tools, the tools of these servers: %s. Each reaches only what was declared for it.\n", strings.Join(f.servers, ", "))
 	}
 	if len(f.shareServers) > 0 {
-		fmt.Fprintf(b, "- **Your share for MCP servers.** %s see the person's share folder, read only, at %s/%s. To give one of their tools a file from the share, pass its path there, %s/%s/<file> (for example %s/%s/report.docx), not %s/<file>. %s They cannot write there: to keep what they make, write it with your own tools.\n",
-			strings.Join(f.shareServers, ", "), spec.AgentRoot, spec.AgentShareDir, spec.AgentRoot, spec.AgentShareDir, spec.AgentRoot, spec.AgentShareDir, spec.AgentShareDir, shareServerSees(c))
+		out := spec.AgentShareOutPath
+		fmt.Fprintf(b, "- **Your share for MCP servers.** %s see the person's share folder, read only, at %s/%s. To give one of their tools a file from the share, pass its path there, %s/%s/<file> (for example %s/%s/report.docx), not %s/<file>. %s They cannot write there. To have one of them save a file into the share, give its tool a path in %s, a folder only they see: %s/<name>, not in a folder beneath it. After this turn the runner copies it into %s/ as <name>, or as \"<name> (2)\" and so on when that name is taken, never over a file (at most %d files a turn, %d MiB each and %d MiB in all), and at the next turn you are told the name it took and can read it. To change a file already in the share, write it with your own tools.\n",
+			strings.Join(f.shareServers, ", "), spec.AgentRoot, spec.AgentShareDir, spec.AgentRoot, spec.AgentShareDir, spec.AgentRoot, spec.AgentShareDir, spec.AgentShareDir, shareServerSees(c),
+			out, out, spec.AgentShareDir, spec.ShareOutMaxFiles, spec.ShareOutFileMax>>20, spec.ShareOutTotalMax>>20)
 	}
 	if len(f.secrets) > 0 {
 		fmt.Fprintf(b, "- **Credentials.** This run is granted these secrets, by name: %s. You never see a value.", strings.Join(f.secrets, ", "))

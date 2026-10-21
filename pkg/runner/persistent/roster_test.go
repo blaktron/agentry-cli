@@ -228,9 +228,9 @@ func TestRosterReachesEveryGateWithTheServerShare(t *testing.T) {
 		}
 		// The Assistant's server sees the mirror, the Coding agent's the
 		// folder itself.
-		how, src, line := spec.ServerShareMirror, spec.PHShareMirror, ", and sees your share folder (read only)"
+		how, src, line := spec.ServerShareMirror, spec.PHShareMirror, ", and sees your share folder (read only, and writes new files into it)"
 		if a.Builtin.Codes() {
-			how, src, line = spec.ServerShareLive, spec.PHShare, ", and sees your share folder (read only, unchecked)"
+			how, src, line = spec.ServerShareLive, spec.PHShare, ", and sees your share folder (read only, unchecked, and writes new files into it)"
 		}
 		for _, tc := range []struct {
 			name        string
@@ -271,10 +271,13 @@ func TestRosterReachesEveryGateWithTheServerShare(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				roots := ""
+				roots, writable := "", ""
 				for _, ev := range sp.Plan.Gateway.Env {
-					if ev.Name == "MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS" {
+					switch ev.Name {
+					case "MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS":
 						roots = ev.Value
+					case "MCP_GATEWAY_DOCKER_BIND_ALLOW_WRITABLE_PATHS":
+						writable = ev.Value
 					}
 				}
 				bind := src + ":" + spec.AgentRoot + "/" + spec.AgentShareDir + ":ro"
@@ -282,7 +285,45 @@ func TestRosterReachesEveryGateWithTheServerShare(t *testing.T) {
 					how == spec.ServerShareMirror && strings.Contains(roots, spec.PHShareMirror) != sees {
 					t.Errorf("the share in the catalogue, the bind roots and the plan's server: want %v\n%s\nroots %s", sees, cat, roots)
 				}
+				// The share outbox, the server's one writable folder of the
+				// share's: in its catalogue entry, a bind root and an exact
+				// writable path of the gateway's, and the receipt's line.
+				outbox := spec.PHShareOut + ":" + spec.AgentRoot + "/" + spec.AgentShareOutDir
+				if strings.Contains(string(cat), outbox) != sees || slices.Contains(strings.Split(roots, ":"), spec.PHShareOut) != sees ||
+					slices.Contains(strings.Split(writable, ":"), spec.PHShareOut) != sees ||
+					strings.Contains(sp.Plan.Enforcement["persistent.serverShare"], spec.AgentRoot+"/"+spec.AgentShareOutDir) != sees {
+					t.Errorf("the share outbox: want %v\n%s\nroots %s\nwritable %s\nreceipt %q", sees, cat, roots, writable, sp.Plan.Enforcement["persistent.serverShare"])
+				}
 			})
+		}
+	}
+}
+
+// TestAReadOnlyAgreementAsksAgainForTheOutbox: an agreement to a server's
+// sentence that it sees the share without saving into it covers the server
+// with its switch off, and not with it on, which says it writes new files
+// into the share.
+func TestAReadOnlyAgreementAsksAgainForTheOutbox(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	home := shortHome(t)
+	for _, a := range []Agent{assistantAgent(t), coderAgent(t)} {
+		c := Config{Enabled: true}
+		if _, err := ApplyChange(home, a, &c, Change{AddServer: &wordServer, Consent: true}); err != nil {
+			t.Fatal(err)
+		}
+		c.Consented = map[string]string{EntryShare: c.Consented[EntryShare], ServerEntryID(wordServer): serverLine(wordServer) + readOnlyShareLine(a)}
+		for _, e := range Unconsented(BuildRoster(a, c, nil), c) {
+			if e.ID == ServerEntryID(wordServer) {
+				t.Fatalf("%s: the server with its switch off asks again", a.Name)
+			}
+		}
+		c.Switches = map[string]bool{ServerShareID(wordServer): true}
+		asked := false
+		for _, e := range Unconsented(BuildRoster(a, c, nil), c) {
+			asked = asked || e.ID == ServerEntryID(wordServer) && strings.HasSuffix(e.Line, "and writes new files into it)")
+		}
+		if !asked {
+			t.Fatalf("%s: a server that writes into the share was taken as agreed", a.Name)
 		}
 	}
 }
@@ -349,9 +390,9 @@ func TestServerShareLineIsConsented(t *testing.T) {
 		if !errors.As(err, &ce) || len(ce.Entries) != 1 || ce.Entries[0].ID != ServerEntryID(wordServer) {
 			t.Fatalf("%s: letting the server see the share: %v", a.Name, err)
 		}
-		want := ", and sees your share folder (read only)"
+		want := ", and sees your share folder (read only, and writes new files into it)"
 		if a.Builtin.Codes() {
-			want = ", and sees your share folder (read only, unchecked)"
+			want = ", and sees your share folder (read only, unchecked, and writes new files into it)"
 		}
 		if !strings.HasSuffix(ce.Entries[0].Line, want) {
 			t.Fatalf("%s: the sentence asked for: %q", a.Name, ce.Entries[0].Line)

@@ -135,7 +135,7 @@ func printRoster(w io.Writer, r persistent.Roster) {
 		if e.ShareSwitch != "" {
 			sees := "no"
 			if e.Share {
-				sees = "yes, read only"
+				sees = "yes, read only, and writes new files into it"
 			}
 			_, _ = fmt.Fprintf(tw, "  \t\t\tsees your share folder: %s (switch %s)\n", sees, e.ShareSwitch)
 		}
@@ -160,9 +160,12 @@ func newAgentGrantCmd() *cobra.Command {
 			"tools can open a file you put there. For the Assistant it sees a copy of\n" +
 			"each file the share's check read (one ClamAV found is left out; with the\n" +
 			"malware check off every file is read unchecked); for the Coding agent, the\n" +
-			"folder as it is, unchecked. Off by default; switching it on asks again,\n" +
-			"since the server's sentence changes. A remote server, and one that reaches\n" +
-			"the network, are never given it.\n\n" +
+			"folder as it is, unchecked. The server saves a file for the share into\n" +
+			"/agent/share-out; after each turn the runner copies it into the share as a\n" +
+			"new file, \"<name> (2)\" when the name is taken, never over a file you\n" +
+			"have. Off by default; switching it on asks again, since the server's\n" +
+			"sentence changes. A remote server, and one that reaches the network, are\n" +
+			"never given it.\n\n" +
 			"  agentry agent grant assistant share off\n" +
 			"  agentry agent grant assistant knowledge:my-notes on\n" +
 			"  agentry agent grant assistant server:pypi-office-word-mcp-server:share on",

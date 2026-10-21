@@ -82,6 +82,13 @@ const (
 	// AgentRoot/AgentShareDir into each MCP server the person let see the
 	// share (MCPServerSpec.Share); only such a plan names it.
 	PHShareMirror = "@@RUN_SHARE_MIRROR@@"
+	// PHShareOut is the host path of a segment's share outbox: a folder of
+	// the segment's own, beside its cfg, mounted writable at
+	// AgentRoot/AgentShareOutDir into each MCP server that sees the share
+	// (MCPServerSpec.Share), whose regular files the runner copies into the
+	// share after each turn under new names, never over a file; only such
+	// a plan names it.
+	PHShareOut = "@@RUN_SHARE_OUT@@"
 	// PHData is a persistent agent's data volume, by name, mounted at
 	// AgentRoot/AgentDataDir; only a persistent plan names it.
 	PHData = "@@RUN_DATA@@"
@@ -258,6 +265,23 @@ const (
 	// AgentShareDir is the person's share folder beneath AgentRoot,
 	// read-write and live: what either side writes, the other sees.
 	AgentShareDir = "share"
+	// AgentShareOutDir is where an MCP server that sees the share saves a
+	// file for it, beneath AgentRoot: the share outbox (PHShareOut), which
+	// only those servers mount. The agent's own tools do not see it.
+	AgentShareOutDir = "share-out"
+	// AgentShareOutPath is the share outbox's path in a server's container.
+	AgentShareOutPath = AgentRoot + "/" + AgentShareOutDir
+	// ShareChecksLog is the receipt a persistent agent's segment appends a
+	// line to for each file of the share it checks, and for each entry of
+	// the share outbox it copies or refuses.
+	ShareChecksLog = "share-checks.ndjson"
+	// ShareOutMaxFiles, ShareOutFileMax and ShareOutTotalMax bound what the
+	// runner copies from the share outbox into the share after one turn:
+	// the files, the bytes of each, and the bytes of all of them. What is
+	// past them is not copied, and the outbox is emptied all the same.
+	ShareOutMaxFiles = 100
+	ShareOutFileMax  = 64 << 20
+	ShareOutTotalMax = 256 << 20
 	// AgentDataDir is the agent's own folder beneath AgentRoot, its data
 	// volume, kept between its segments.
 	AgentDataDir = "data"
@@ -997,6 +1021,17 @@ const (
 	// agent, whose share is read as it is.
 	ServerShareLive ServerShare = "live"
 )
+
+// SharesAny reports whether any server sees the share, however: each such
+// server also saves into the share outbox.
+func SharesAny(servers []MCPServerSpec) bool {
+	for _, s := range servers {
+		if s.Share != "" {
+			return true
+		}
+	}
+	return false
+}
 
 // SharesAs reports whether any server sees the share as how.
 func SharesAs(servers []MCPServerSpec, how ServerShare) bool {
