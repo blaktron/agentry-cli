@@ -530,6 +530,53 @@ func TestClaudeSessionEndsWithoutAnAnswer(t *testing.T) {
 	}
 }
 
+// A turn that ends on an error result saying the provider is at capacity
+// fails with the result's words, so the engine can wait it out.
+func TestClaudeSessionErrorResultFailsTheTurn(t *testing.T) {
+	ad, _ := Get(ClaudeAdapterName)
+	stdio := newFakeStdio()
+	drv, err := ad.Session(context.Background(), stdio, SessionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		if !stdio.awaitLine(`"type":"user"`, 5*time.Second) {
+			return
+		}
+		stdio.say(`{"type":"result","subtype":"success","is_error":true,"result":"API Error: Repeated 529 Overloaded errors","usage":{}}`)
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, err = drv.Prompt(ctx, "hello")
+	if err == nil || !AtCapacity(err.Error()) {
+		t.Fatalf("Prompt = %v, want the error result's words", err)
+	}
+	_ = drv.Close()
+}
+
+// Any other error result is the turn's answer, as Claude Code gave it.
+func TestClaudeSessionOtherErrorResultIsTheTurn(t *testing.T) {
+	ad, _ := Get(ClaudeAdapterName)
+	stdio := newFakeStdio()
+	drv, err := ad.Session(context.Background(), stdio, SessionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		if !stdio.awaitLine(`"type":"user"`, 5*time.Second) {
+			return
+		}
+		stdio.say(`{"type":"result","subtype":"error_max_turns","is_error":true,"result":"reached the turn limit","usage":{}}`)
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	turn, err := drv.Prompt(ctx, "hello")
+	if err != nil || turn.Text != "reached the turn limit" {
+		t.Fatalf("Prompt = %+v, %v", turn, err)
+	}
+	_ = drv.Close()
+}
+
 // A subscription OAuth token (policy apiKeyKind subscription) is what
 // Claude Code reads from CLAUDE_CODE_OAUTH_TOKEN — and bare mode does not
 // read that variable, by Anthropic's own documentation — so the plan drops

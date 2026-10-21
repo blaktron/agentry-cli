@@ -1253,7 +1253,28 @@ func (s *liveSession) turnCarrying(ctx context.Context, carried, text string, sy
 		case <-turnCtx.Done():
 		}
 	}()
-	res, err := s.drv.Prompt(turnCtx, carried+text)
+	s.mu.Lock()
+	callsBefore := s.toolCalls
+	s.mu.Unlock()
+	res, err := promptAtCapacity(turnCtx, s.drv, carried+text, func(n int) bool {
+		// The failed attempt's events go ahead of the notice.
+		s.syncPump()
+		s.mu.Lock()
+		called := s.toolCalls != callsBefore
+		s.mu.Unlock()
+		// The session's own wall and idle limits bound the wait as the
+		// run's timeout bounds an autonomous run's.
+		idle := s.budgets.IdleTimeoutSeconds > 0 && time.Duration(s.budgets.IdleTimeoutSeconds)*time.Second <= capacityWait
+		if called || idle || !canWaitAtCapacity(s.agentCtx) {
+			return false
+		}
+		s.emit(session.Event{Kind: session.KindNotice, Text: capacityNotice(n)})
+		// Waiting out the provider is the session at work, not idle.
+		s.mu.Lock()
+		s.lastActivity = time.Now()
+		s.mu.Unlock()
+		return true
+	})
 	s.syncPump()
 	// The turn is over before its last event is seen.
 	s.mu.Lock()
