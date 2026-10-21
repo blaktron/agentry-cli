@@ -33,6 +33,12 @@ import (
 // agentConsent asks the person to agree to what a change or a start turns
 // on, on the terminal, unless yes says they already have.
 func agentConsent(cmd *cobra.Command, a persistent.Agent, ce *persistent.ConsentError, yes bool) error {
+	if flags.jsonOut && !yes {
+		// A program asks the person itself: it is told what to ask, and
+		// nothing changes until it runs the command again with --yes.
+		_ = emitJSON(cmd.OutOrStdout(), agreementNeeded{Agent: a.Name, NeedsAgreement: agreementEntries(ce.Entries)})
+		return engine.Classify(engine.ExitPolicy, errors.New("this needs the person's agreement to what needsAgreement lists: nothing was changed; run it again with --yes once they agree"))
+	}
 	errOut := cmd.ErrOrStderr()
 	_, _ = fmt.Fprintf(errOut, "The %s agent would be given, for the first time on this computer:\n", a.Name)
 	for _, e := range ce.Entries {
@@ -50,6 +56,26 @@ func agentConsent(cmd *cobra.Command, a persistent.Agent, ce *persistent.Consent
 		return engine.Classify(engine.ExitPolicy, errors.New("not agreed to; nothing was changed"))
 	}
 	return nil
+}
+
+// agreementNeeded is what --json prints when a start or a change needs the
+// person's agreement: the entries, each with the sentence to agree to.
+type agreementNeeded struct {
+	Agent          string           `json:"agent"`
+	NeedsAgreement []agreementEntry `json:"needsAgreement"`
+}
+
+type agreementEntry struct {
+	ID   string `json:"id"`
+	Line string `json:"line"`
+}
+
+func agreementEntries(es []persistent.RosterEntry) []agreementEntry {
+	out := make([]agreementEntry, 0, len(es))
+	for _, e := range es {
+		out = append(out, agreementEntry{ID: e.ID, Line: e.Line})
+	}
+	return out
 }
 
 // configureAgent applies a change, asking for the person's agreement when
