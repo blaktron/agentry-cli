@@ -654,12 +654,12 @@ func conversationOf(drv adapter.SessionDriver, adapterName, continueID string) (
 	return c.ConversationID(), resumed, reason
 }
 
-// Conversation implements PersistentSession.
 // ServedTools are the tools the session's gateway serves, by name: its own
 // tools server's and every MCP server's in the plan, as the gateway listed
 // them before the harness started.
 func (s *liveSession) ServedTools() []string { return slices.Clone(s.served) }
 
+// Conversation implements PersistentSession.
 func (s *liveSession) Conversation() (id string, resumed bool, reason string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

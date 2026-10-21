@@ -44,8 +44,9 @@ func LockServer(ctx context.Context, storeDir, id string) (unlock func(), err er
 }
 
 // Installing says another holder has the lock of the server id in the
-// store: an install is writing it. A store that does not exist has no
-// install under way.
+// store: an install is writing it. It tries the lock and lets it go, which
+// leaves the server's lock file in the store. A store that does not exist
+// has no install under way.
 func Installing(storeDir, id string) bool {
 	if _, err := os.Stat(storeDir); errors.Is(err, os.ErrNotExist) {
 		return false

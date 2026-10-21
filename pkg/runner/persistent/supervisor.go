@@ -446,7 +446,7 @@ func (s *Supervisor) Send(ctx context.Context, text string) error {
 	joined := maps.Clone(s.joined)
 	frame := carry
 	if byChange {
-		change := changeFrameJoined(s.told, roster, s.resumed, joined)
+		change := changeFrame(s.told, roster, s.resumed, joined)
 		restarted := ""
 		if change == "" && hadOn(s.told, EntryCommands) {
 			restarted = backgroundEnded
@@ -517,7 +517,7 @@ func (s *Supervisor) nextSegment(ctx context.Context) error {
 	_, _ = s.endSegment(ctx, true)
 	err := s.startSegment(ctx, true)
 	if err != nil {
-		err = s.withoutJoined(ctx, err)
+		err = s.withoutNewServers(ctx, err)
 	}
 	if err != nil {
 		s.mu.Lock()
@@ -529,24 +529,38 @@ func (s *Supervisor) nextSegment(ctx context.Context) error {
 	return nil
 }
 
-// withoutJoined starts the next segment again without the servers that
-// joined since the agent was last told, when the segment that had them
-// could not start (err): each is failed with that reason, and the agent runs
-// on without them. When that start fails too, the servers were not why, so
-// their failures are taken back and its error is returned. The caller holds
-// seg.
-func (s *Supervisor) withoutJoined(ctx context.Context, err error) error {
-	s.mu.Lock()
-	joined := slices.Sorted(maps.Keys(s.joined))
-	s.mu.Unlock()
-	if len(joined) == 0 {
+// withoutNewServers starts the next segment again without the servers it
+// was to be given that the running one was not (a server whose install
+// finished, or one the person switched on), when the segment that had them
+// could not start (err): each is failed with that reason, and the agent
+// runs on without them. When that start fails too, the servers were not
+// why, so their failures are taken back and its error is returned. The
+// caller holds seg.
+func (s *Supervisor) withoutNewServers(ctx context.Context, err error) error {
+	a, home := s.opts.Agent, s.opts.Home
+	cfg, lerr := LoadConfig(home, a.Name)
+	if lerr != nil {
 		return err
 	}
-	reason := cut("it was installed, and the agent could not start with it: "+err.Error(), maxFailureReason)
-	var failed []string
-	for _, id := range joined {
-		if s.recordFailure(id, reason) {
-			failed = append(failed, id)
+	s.mu.Lock()
+	had, joined := slices.Clone(s.applied.On), maps.Clone(s.joined)
+	s.mu.Unlock()
+	r := BuildRoster(a, cfg, nil)
+	var added []manifest.MCPServer
+	for _, srv := range cfg.Servers {
+		id := ServerEntryID(srv)
+		if e, ok := r.Entry(id); ok && e.On && !slices.Contains(had, id) && serverReady(home, a.Name, cfg, srv) {
+			added = append(added, srv)
+		}
+	}
+	if len(added) == 0 {
+		return err
+	}
+	reason := failureReason("the agent could not start with it: " + err.Error())
+	var failed []manifest.MCPServer
+	for _, srv := range added {
+		if s.recordFailure(ServerEntryID(srv), reason) {
+			failed = append(failed, srv)
 		}
 	}
 	if len(failed) == 0 {
@@ -554,21 +568,22 @@ func (s *Supervisor) withoutJoined(ctx context.Context, err error) error {
 	}
 	again := s.startSegment(ctx, true)
 	if again == nil {
-		for _, id := range failed {
-			e, _ := s.Roster().Entry(id)
-			s.notice("The MCP server " + e.Name + " was installed, and the agent could not start with it, so it runs on without it: " + reason)
+		for _, srv := range failed {
+			s.notice("The MCP server " + serverName(srv) + " could not start, and the agent keeps running without it: " + reason + ". Switch it off and on to try again.")
 		}
 		return nil
 	}
 	_ = s.updateConfig(func(c *Config) error {
-		for _, id := range failed {
-			delete(c.ServerFailures, id)
+		for _, srv := range failed {
+			delete(c.ServerFailures, ServerEntryID(srv))
 		}
 		return nil
 	})
 	s.mu.Lock()
-	for _, id := range failed {
-		s.joined[id] = true
+	for _, srv := range failed {
+		if id := ServerEntryID(srv); joined[id] {
+			s.joined[id] = true
+		}
 	}
 	s.mu.Unlock()
 	return again

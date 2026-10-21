@@ -173,6 +173,70 @@ func TestStartSkipsAServerBeingInstalled(t *testing.T) {
 	unlock()
 	waitFor(t, "the install", func() bool { c, _ := in.count(); return c == 1 })
 	waitFor(t, "the server to be ready", func() bool { return entryState(sv, ServerEntryID(wordServer)) == StatePending })
+	if _, err := sv.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	// Installed, and its lock held again (another writer at it): the next
+	// start leaves it out all the same, and installs nothing.
+	unlock, err = mcpinstall.LockServer(t.Context(), store, mcpinstall.IDFor(wordServer))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	st2, in2 := &starter{resumed: true}, newInstaller(t)
+	startWith(t, home, st2, in2)
+	if len(st2.segments[0].Grants.Servers) != 0 {
+		t.Errorf("an installed server whose lock is held was given: %v", st2.segments[0].Grants.Servers)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if calls, _ := in2.count(); calls != 0 {
+		t.Errorf("an installed server was installed again (%d)", calls)
+	}
+}
+
+// TestOnlyAnAgreedServerIsInstalled: a server turned on in config.yaml some
+// other way than a change the person agreed to is never installed, while
+// the agent runs or at a start.
+func TestOnlyAnAgreedServerIsInstalled(t *testing.T) {
+	home := shortHome(t)
+	enable(t, home)
+	st, in := &starter{}, newInstaller(t)
+	sv := startWith(t, home, st, in)
+	c, _ := LoadConfig(home, "assistant")
+	c.Servers = append(c.Servers, wordServer)
+	if err := SaveConfig(home, "assistant", c); err != nil {
+		t.Fatal(err)
+	}
+	name := "Sandra"
+	if _, err := sv.Change(Change{Name: &name}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if calls, _ := in.count(); calls != 0 {
+		t.Errorf("an unagreed server was installed (%d)", calls)
+	}
+	var ce *ConsentError
+	if _, err := sv.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Start(context.Background(), Options{Home: home, Agent: assistantAgent(t), Client: ClientCLI, Policy: policy.Default(),
+		StartSegment: st.start, InstallServer: in.install}); !errors.As(err, &ce) {
+		t.Errorf("a start with an unagreed server: %v", err)
+	}
+}
+
+// TestAFailureReasonIsOnePrintableLine: what a builder or a registry wrote
+// reaches a terminal, a chat and the agent as one line, with no escape and
+// no bidirectional override.
+func TestAFailureReasonIsOnePrintableLine(t *testing.T) {
+	got := failureReason("builder exited 1\n\x1b[31mERROR\x1b[0m: evil\u202Etxt.exe\r\nend")
+	if strings.ContainsAny(got, "\x1b\n\r\u202E") || !strings.Contains(got, "ERROR") || !strings.HasSuffix(got, "end") {
+		t.Errorf("reason %q", got)
+	}
+	if long := failureReason(strings.Repeat("é", 1000)); len(long) > maxFailureReason+len("…") || !strings.HasSuffix(long, "…") {
+		t.Errorf("a long reason is %d bytes", len(long))
+	}
 }
 
 // TestAFinishedInstallJoinsAtTheNextTurn: a server added to a running agent
@@ -287,7 +351,7 @@ func TestAFailedInstallLeavesTheAgentRunning(t *testing.T) {
 	if len(st.segments) != 1 || sv.Status().State != StateRunning {
 		t.Fatalf("a failed install restarted or stopped the agent: segments %d, %+v", len(st.segments), sv.Status())
 	}
-	if len(turns) != 2 || !strings.HasPrefix(turns[0], "(Agentry could not install the MCP server \"pypi:office-word-mcp-server@1.1.11\"") || turns[1] != "and now?" {
+	if len(turns) != 2 || !strings.HasPrefix(turns[0], "(Agentry could not give you the MCP server \"pypi:office-word-mcp-server@1.1.11\" the person added") || turns[1] != "and now?" {
 		t.Errorf("the turns were sent %q: want the failure told once", turns)
 	}
 
@@ -395,8 +459,26 @@ func TestAJoinedServerThatCannotStartIsLeftOut(t *testing.T) {
 	if e.State != StateFailed || !strings.Contains(e.Reason, "Can't start") || sv.Status().State != StateRunning {
 		t.Fatalf("the server is %+v, the agent %+v", e, sv.Status())
 	}
-	if turn := st.last.sentTurns(); len(turn) != 1 || !strings.HasPrefix(turn[0], "(Agentry could not install") || strings.Contains(turn[0], "finished installing") {
+	if turn := st.last.sentTurns(); len(turn) != 1 || !strings.HasPrefix(turn[0], "(Agentry could not give you the MCP server") || strings.Contains(turn[0], "finished installing") {
 		t.Errorf("the turn was sent %q", turn)
+	}
+
+	// Switched off and on to try again: installed already, it is given to
+	// the next segment at once, which cannot start with it either; the
+	// agent runs on without it, failed again.
+	for _, on := range []bool{false, true} {
+		if _, err := sv.Change(Change{Switch: &Switch{ID: ServerEntryID(wordServer), On: on}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := sv.Send(ctx, "and again"); err != nil {
+		t.Fatalf("the turn after the retry: %v", err)
+	}
+	if e, _ := sv.Roster().Entry(ServerEntryID(wordServer)); e.State != StateFailed || sv.Status().State != StateRunning {
+		t.Errorf("after the retry the server is %+v, the agent %+v", e, sv.Status())
+	}
+	if calls, _ := in.count(); calls != 1 {
+		t.Errorf("an installed server was installed again (%d)", calls)
 	}
 }
 

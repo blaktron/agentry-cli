@@ -415,24 +415,18 @@ func personaFrame(c Config) string {
 		strconv.Quote(c.Personality) + ". Go by that name and take on that personality from now on, within your instructions.)\n\n"
 }
 
+// backgroundEnded tells an agent that runs programs what a restart did to
+// the ones it left running: they ran in the segment that ended.
+const backgroundEnded = "Agentry restarted you for it, so every program you started in the background has ended: start again any you still need."
+
 // changeFrame is what the first turn of a segment started by a change starts
 // with: the entries the agent had and no longer has, and the reverse, each by
 // its roster name and quoted, so nothing in a name can pass for the frame
 // around it. continued says the segment continued the conversation, in which
 // what was switched off may have worked. "" when the change gave and took
-// nothing.
-// backgroundEnded tells an agent that runs programs what a restart did to
-// the ones it left running: they ran in the segment that ended.
-const backgroundEnded = "Agentry restarted you for it, so every program you started in the background has ended: start again any you still need."
-
-func changeFrame(before, after Roster, continued bool) string {
-	return changeFrameJoined(before, after, continued, nil)
-}
-
-// changeFrameJoined is changeFrame for a segment some of whose servers
-// joined because their install finished (joined, by roster id): those are
-// told apart by joinFrame, not as switched on.
-func changeFrameJoined(before, after Roster, continued bool, joined map[string]bool) string {
+// nothing. joined are the servers, by roster id, that are on because their
+// install finished: joinFrame tells those, not this frame.
+func changeFrame(before, after Roster, continued bool, joined map[string]bool) string {
 	given := func(r Roster) map[string]bool {
 		m := map[string]bool{}
 		for _, e := range r {
@@ -539,10 +533,4 @@ func AgreeToRoster(home string, a Agent, client string) error {
 	}
 	RecordConsent(BuildRoster(a, cfg, nil), &cfg)
 	return SaveConfig(home, a.Name, cfg)
-}
-
-// hadOn says the roster's entry id was given: on, in a segment.
-func hadOn(r Roster, id string) bool {
-	e, ok := r.Entry(id)
-	return ok && e.State == StateOn
 }

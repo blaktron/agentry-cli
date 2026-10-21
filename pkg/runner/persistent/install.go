@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/blaktron/agentry/pkg/manifest"
@@ -36,14 +37,16 @@ import (
 type InstallServer func(ctx context.Context, srv manifest.MCPServer, storeDir string, logw io.Writer) error
 
 // installWait bounds how long a stop waits for the background installs it
-// cancelled to remove their containers.
-const installWait = time.Minute
+// cancelled to remove their containers: longer than an install's own
+// teardown, whose engine calls are bounded.
+const installWait = 90 * time.Second
 
 // The bounds of what a failure records and what the agent is told of it.
 const (
 	maxFailureReason = 600
 	maxToldReason    = 200
 	tailLines        = 6
+	maxTailBytes     = 8 << 10
 	maxToldTools     = 40
 )
 
@@ -53,10 +56,10 @@ type bgInstall struct {
 }
 
 // startInstalls cancels the installs of the servers the agent no longer has
-// on, then starts one for each server it has on that the store does not
-// hold, whose install has not failed and is not already under way. The
-// installs run until they finish, their server is switched off or removed,
-// or the agent stops.
+// on, then starts one for each server it has on, agreed to as it reads,
+// that the store does not hold, whose install has not failed and is not
+// already under way. The installs run until they finish, their server is
+// switched off or removed, or the agent stops.
 func (s *Supervisor) startInstalls() {
 	a, home := s.opts.Agent, s.opts.Home
 	cfg, err := LoadConfig(home, a.Name)
@@ -64,6 +67,12 @@ func (s *Supervisor) startInstalls() {
 		return
 	}
 	r := BuildRoster(a, cfg, nil)
+	// Only what the person agreed to is installed: an entry turned on some
+	// other way is neither installed nor given to a segment.
+	unagreed := map[string]bool{}
+	for _, e := range Unconsented(r, cfg) {
+		unagreed[e.ID] = true
+	}
 	storeDir := serversDir(home, a.Name)
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -78,11 +87,18 @@ func (s *Supervisor) startInstalls() {
 			delete(s.installs, id)
 		}
 	}
+	// A server switched off or removed after its install finished has not
+	// joined: switched on again, it is a switch like any other.
+	for id := range s.joined {
+		if e, ok := r.Entry(id); !ok || !e.On {
+			delete(s.joined, id)
+		}
+	}
 	for _, srv := range cfg.Servers {
 		id := ServerEntryID(srv)
 		e, ok := r.Entry(id)
 		_, failed := cfg.ServerFailures[id]
-		if !ok || !e.On || failed || srv.IsRemote() || s.installs[id] != nil || mcpinstall.Installed(storeDir, srv) {
+		if !ok || !e.On || unagreed[id] || failed || srv.IsRemote() || s.installs[id] != nil || mcpinstall.Installed(storeDir, srv) {
 			continue
 		}
 		ctx, cancel := context.WithCancel(s.bgCtx)
@@ -124,6 +140,13 @@ func (s *Supervisor) install(ctx context.Context, in *bgInstall, srv manifest.MC
 			}
 		}
 		err = do(ctx, srv, storeDir, io.MultiWriter(logw, tail))
+		if err == nil && ctx.Err() == nil {
+			// Joined before the lock is let go, which is when the server
+			// becomes ready: a turn that restarts for it tells it joined.
+			s.mu.Lock()
+			s.joined[id] = true
+			s.mu.Unlock()
+		}
 		unlock()
 		if err != nil {
 			err = withTail(err, tail)
@@ -134,16 +157,13 @@ func (s *Supervisor) install(ctx context.Context, in *bgInstall, srv manifest.MC
 		return
 	}
 	if err != nil {
-		reason := cut(err.Error(), maxFailureReason)
+		reason := failureReason(err.Error())
 		_, _ = fmt.Fprintf(logw, "the MCP server %s could not be installed: %s\n", name, reason)
 		if s.recordFailure(id, reason) {
 			s.notice("The MCP server " + name + " could not be installed, and the agent keeps running without it: " + reason + ". Switch it off and on to try again.")
 		}
 		return
 	}
-	s.mu.Lock()
-	s.joined[id] = true
-	s.mu.Unlock()
 	_, _ = fmt.Fprintf(logw, "the MCP server %s is installed; it joins at the next turn\n", name)
 	s.notice("The MCP server " + name + " is installed: it joins at your next message")
 }
@@ -265,26 +285,30 @@ func joinFrame(roster Roster, joined map[string]bool, tools []string, restarted 
 }
 
 // failFrame is what a turn starts with when servers the agent has on could
-// not be installed or started and it has not been told: each by its roster
+// not be installed, or could not start and it has not been told: each by its roster
 // name and the first line of why, quoted. "" when there is none.
 func failFrame(roster Roster, failures map[string]ServerFailure) string {
-	var parts []string
+	var names, whys []string
 	for _, e := range roster {
 		f, ok := failures[e.ID]
 		if !ok || f.Told || e.State != StateFailed {
 			continue
 		}
-		why, _, _ := strings.Cut(f.Reason, "\n")
-		parts = append(parts, strconv.Quote(e.Name)+" ("+strconv.Quote(cut(why, maxToldReason))+")")
+		names = append(names, strconv.Quote(e.Name))
+		whys = append(whys, strconv.Quote(cut(f.Reason, maxToldReason)))
 	}
-	if len(parts) == 0 {
+	switch len(names) {
+	case 0:
 		return ""
+	case 1:
+		return "(Agentry could not give you the MCP server " + names[0] + " the person added, so you do not have it. Why: " + whys[0] +
+			". The person sees this in Agentry and can try again.)\n\n"
 	}
-	what, it := "the MCP server "+parts[0], "it"
-	if len(parts) > 1 {
-		what, it = "the MCP servers "+strings.Join(parts, ", "), "them"
+	for i := range whys {
+		whys[i] = names[i] + ": " + whys[i]
 	}
-	return "(Agentry could not install " + what + " the person added, so you do not have " + it + ". The person sees why in Agentry and can try again.)\n\n"
+	return "(Agentry could not give you the MCP servers " + strings.Join(names, ", ") + " the person added, so you do not have them. Why: " +
+		strings.Join(whys, "; ") + ". The person sees this in Agentry and can try again.)\n\n"
 }
 
 // newTools are the names in now that were not in before.
@@ -308,7 +332,7 @@ func (t *lineTail) Write(p []byte) (int, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.buf = append(t.buf, p...)
-	if over := len(t.buf) - 8<<10; over > 0 {
+	if over := len(t.buf) - maxTailBytes; over > 0 {
 		t.buf = t.buf[over:]
 	}
 	return len(p), nil
@@ -337,6 +361,27 @@ func withTail(err error, tail *lineTail) error {
 		return fmt.Errorf("%w; the builder's last lines: %s", err, strings.Join(lines, " | "))
 	}
 	return err
+}
+
+// failureReason is an install's or a start's error as a failure records it:
+// one line of printable text, cut. It comes in part from a package's
+// builder and a registry, so every control and format character (a
+// terminal's escape, a bidirectional override) is replaced before a
+// terminal, a chat or the agent is shown it.
+func failureReason(s string) string {
+	clean := strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return ' '
+		}
+		return r
+	}, strings.ToValidUTF8(s, "?"))
+	return cut(strings.Join(strings.Fields(clean), " "), maxFailureReason)
+}
+
+// hadOn says the roster's entry id was given: on, in a segment.
+func hadOn(r Roster, id string) bool {
+	e, ok := r.Entry(id)
+	return ok && e.State == StateOn
 }
 
 // cut is s at most n bytes long, cut at a rune and marked.
