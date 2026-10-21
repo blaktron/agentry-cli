@@ -211,7 +211,7 @@ func TestTheInputToolsOfferAView(t *testing.T) {
 			t.Errorf("%s offers no view: %v", name, props)
 		}
 	}
-	if props, _ := fsReadSchema("workspace-relative")["properties"].(map[string]any); props["view"] != nil {
+	if props, _ := fsReadSchema("workspace-relative", false)["properties"].(map[string]any); props["view"] != nil {
 		t.Error("fs_read offers a view")
 	}
 }

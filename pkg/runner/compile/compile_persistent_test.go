@@ -216,3 +216,46 @@ func TestPersistentGrantsRefusedOutsideBuiltins(t *testing.T) {
 	review.AppLink, review.Review = applink.SetAssistant, true
 	refused("the app link beside the review grant", review)
 }
+
+// TestAPersistentPlanNamesTheShareFormats: a persistent plan whose share is
+// checked names the documents fs_read reads by their text and has no inputs
+// paragraph, its inputs folder being empty; the malware check follows the
+// policy into the plan, the prompt and the receipt's line.
+func TestAPersistentPlanNamesTheShareFormats(t *testing.T) {
+	for _, on := range []bool{false, true} {
+		in := persistentInputs(t, &spec.AgentFiles{Share: true, CheckShare: true})
+		in.Policy.MalwareCheck = &on
+		planDir := t.TempDir()
+		plan, err := Compile(in, planDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if plan.Capabilities.AgentFiles.MalwareCheck != on {
+			t.Fatalf("check %v: the plan's agent files %+v", on, plan.Capabilities.AgentFiles)
+		}
+		instr := renderedInstruction(t, planDir, plan.Harness.Adapter)
+		if !strings.Contains(instr, toolsrv.ShareFormats) || !strings.Contains(instr, `view "original" reads the file itself`) {
+			t.Errorf("check %v: the prompt does not name the formats", on)
+		}
+		if strings.Contains(instr, "## Your inputs") || strings.Contains(instr, "read_input reads one") {
+			t.Errorf("check %v: a persistent plan's prompt has the inputs paragraph", on)
+		}
+		if got := strings.Contains(instr, "the malware check is off on this computer"); got == on {
+			t.Errorf("check %v: the prompt says the check is off: %v", on, got)
+		}
+		line := plan.Enforcement["persistent.files"]
+		if strings.Contains(line, "checked its bytes with ClamAV") != on || strings.Contains(line, "the malware check is off") == on {
+			t.Errorf("check %v: the receipt's line %q", on, line)
+		}
+	}
+	// A run's plan keeps its inputs paragraph.
+	m := parseManifest(t, pureTextYAML)
+	planDir := t.TempDir()
+	plan, err := Compile(Inputs{Manifest: m, Digest: "sha256:x", WorkspaceDir: workspaceFor(t, m, nil), Policy: testPolicy(), PolicySHA: "s", RunnerImage: "agentry-runner:test"}, planDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if instr := renderedInstruction(t, planDir, plan.Harness.Adapter); !strings.Contains(instr, "## Your inputs") || strings.Contains(instr, toolsrv.ShareFormats) {
+		t.Error("an autonomous run's prompt lost its inputs paragraph or names the share's formats")
+	}
+}

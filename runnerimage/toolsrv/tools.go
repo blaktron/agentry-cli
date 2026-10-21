@@ -112,8 +112,7 @@ func (s *server) buildTools() {
 	for _, name := range s.spec.GrantedTools() {
 		switch name {
 		case ToolFSRead:
-			add(name, "Read a file from "+s.workspaceName()+". Returns the file text, one page at a time: a page that is not the whole file ends with the bytes it holds and the offset to continue from.",
-				fsReadSchema(s.pathWord()), s.toolFSRead)
+			add(name, s.fsReadDescription(), fsReadSchema(s.pathWord(), s.spec.ShareChecks != nil), s.toolFSRead)
 		case ToolFSList:
 			add(name, "List one directory level of "+s.workspaceName()+": directories as \"name/\", files as \"name<TAB>size\". Omit path (or pass \".\") for its root. A long listing stops at the result limit and says the offset to continue from.",
 				fsListSchema(s.pathWord()), s.toolFSList)
@@ -242,12 +241,33 @@ func (s *server) pathWord() string {
 	return "workspace-relative"
 }
 
-func fsReadSchema(rel string) map[string]any {
-	return objSchema(map[string]any{
+// fsReadSchema is fs_read's input; a checked share adds the view a
+// document is read in.
+func fsReadSchema(rel string, views bool) map[string]any {
+	props := map[string]any{
 		"path":     strProp(rel + " slash path of the file"),
 		"offset":   intProp("byte offset to start reading from (default 0)"),
 		"maxBytes": intProp("cap on returned bytes; the server limit still applies"),
-	}, "path")
+	}
+	if views {
+		props["view"] = map[string]any{"type": "string", "enum": []string{ViewText, ViewOriginal},
+			"description": "for a document in the share folder: \"text\" (the default) reads the text read out of it before your turn, \"original\" the file itself, a binary one as base64"}
+	}
+	return objSchema(props, "path")
+}
+
+// ShareFormats names the documents whose text the share's check reads out
+// for fs_read: the decode step's readers.
+const ShareFormats = "PDF, Word (DOCX), OpenDocument text (ODT), RTF, EPUB, Excel (XLSX), OpenDocument spreadsheets (ODS), PowerPoint (PPTX), OpenDocument presentations (ODP), legacy Office (DOC, XLS, PPT), email (EML, MSG, mbox) and images, by OCR"
+
+// fsReadDescription is fs_read's description: a page of text at a time,
+// and, where the share is checked, the documents it reads by their text.
+func (s *server) fsReadDescription() string {
+	desc := "Read a file from " + s.workspaceName() + ". Returns the file text, one page at a time: a page that is not the whole file ends with the bytes it holds and the offset to continue from."
+	if sc := s.spec.ShareChecks; sc != nil {
+		desc += " A document in " + sc.Folder + "/ is read by its text, which was read out of it before your turn and is headed with what read it: " + ShareFormats + ". view \"original\" reads the file itself."
+	}
+	return desc
 }
 
 func fsListSchema(rel string) map[string]any {
@@ -403,12 +423,19 @@ func (s *server) toolFSRead(raw json.RawMessage) (string, bool) {
 		Path     string `json:"path"`
 		Offset   int64  `json:"offset"`
 		MaxBytes int64  `json:"maxBytes"`
+		View     string `json:"view"`
 	}
 	if err := unmarshalArgs(raw, &a); err != nil {
 		return "fs_read: " + err.Error(), true
 	}
 	if a.Path == "" {
 		return "fs_read: path is required", true
+	}
+	if a.View != "" && s.spec.ShareChecks == nil {
+		return "fs_read: view is taken only for the files of a checked share folder", true
+	}
+	if err := validView(a.View); err != nil {
+		return "fs_read: " + err.Error(), true
 	}
 	if a.Offset < 0 {
 		return "fs_read: offset must be >= 0", true
@@ -440,11 +467,11 @@ func (s *server) toolFSRead(raw json.RawMessage) (string, bool) {
 		if fi, err := f.Stat(); err == nil && fi.Mode().IsRegular() {
 			// The bytes checked are the bytes served: the file is read once,
 			// whole, and a write to it meanwhile does not reach the answer.
-			data, why := s.shareRead(f, inShare)
+			data, v, why := s.shareRead(f, inShare)
 			if why != "" {
 				return fmt.Sprintf("fs_read: %s: %s", rel, why), true
 			}
-			return readTextFrom(ToolFSRead, bytes.NewReader(data), int64(len(data)), a.Offset, a.MaxBytes, s.spec.Limits.readCap(), s.spec.Limits.budget())
+			return s.shareFileRead(rel, data, v, a.View, a.Offset, a.MaxBytes)
 		}
 	}
 	return readText(fileTools{ToolFSRead, ToolFSList}, f, rel, a.Offset, a.MaxBytes, s.spec.Limits.readCap(), s.spec.Limits.budget())
@@ -1317,7 +1344,11 @@ func base64Page(f *os.File, offset, maxBytes, serverCap int64, b budget, mime, c
 	if err != nil {
 		return "", err
 	}
-	total := fi.Size()
+	return base64PageAt(f, fi.Size(), offset, maxBytes, serverCap, b, mime, contFmt)
+}
+
+// base64PageAt is base64Page of r, total bytes long.
+func base64PageAt(r io.ReaderAt, total, offset, maxBytes, serverCap int64, b budget, mime, contFmt string) (string, error) {
 	if offset >= total {
 		return fmt.Sprintf("binary file; %d bytes; offset %d is past its end", total, offset), nil
 	}
@@ -1325,7 +1356,7 @@ func base64Page(f *os.File, offset, maxBytes, serverCap int64, b budget, mime, c
 	if maxBytes > 0 && maxBytes < limit {
 		limit = maxBytes
 	}
-	data, err := io.ReadAll(io.NewSectionReader(f, offset, limit))
+	data, err := io.ReadAll(io.NewSectionReader(r, offset, limit))
 	if err != nil {
 		return "", err
 	}

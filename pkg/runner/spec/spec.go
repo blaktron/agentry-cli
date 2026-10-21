@@ -512,12 +512,18 @@ type AgentFiles struct {
 	// Share says the person's share folder is mounted at
 	// AgentRoot/AgentShareDir.
 	Share bool `json:"share,omitempty"`
-	// CheckShare says a file in the share is read only once ClamAV has
-	// checked it: the runner checks what is new or changed in the share
-	// before each turn and writes the verdicts the tools server reads at
-	// ShareChecksMount, and the tools server refuses a file whose bytes
-	// have no clean verdict. Unset, the share is read as it is.
+	// CheckShare says a file in the share is read only once the runner has
+	// checked it: the runner runs what is new or changed in the share
+	// through the decode step before each turn and writes the verdicts, and
+	// the text read out of each document, that the tools server reads at
+	// ShareChecksMount; the tools server refuses a file whose bytes have no
+	// verdict, or one ClamAV found, and serves a document by its text.
+	// Unset, the share is read as it is.
 	CheckShare bool `json:"checkShare,omitempty"`
+	// MalwareCheck says that check runs ClamAV over each file: the policy's
+	// malwareCheck when the plan was compiled. Unset, the check reads the
+	// files without ClamAV and every file is read unchecked.
+	MalwareCheck bool `json:"malwareCheck,omitempty"`
 }
 
 // Folders are the folders beneath AgentRoot the agent's tools read and

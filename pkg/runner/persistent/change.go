@@ -25,6 +25,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/knowledge"
 	"github.com/blaktron/agentry-cli/pkg/runner/mcpinstall"
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 )
 
 // Change is one change to an agent's configuration; a field left unset is
@@ -93,11 +94,17 @@ func (e *ConsentError) Error() string {
 func Unconsented(r Roster, c Config) []RosterEntry {
 	var out []RosterEntry
 	for _, e := range r {
-		if e.On && !e.Fixed && c.Consented[e.ID] != e.Line {
+		if e.On && !e.Fixed && !e.agreed(c.Consented[e.ID]) {
 			out = append(out, e)
 		}
 	}
 	return out
+}
+
+// agreed says the person's recorded agreement is an agreement to the entry
+// as it reads now: its sentence, or one alike it.
+func (e RosterEntry) agreed(recorded string) bool {
+	return recorded != "" && (recorded == e.Line || slices.Contains(e.alike, recorded))
 }
 
 // RecordConsent records the person's agreement to every entry that is on.
@@ -116,8 +123,15 @@ func RecordConsent(r Roster, c *Config) {
 // It answers whether the change alters what a segment is given, so a
 // running agent's next turn starts a new segment, and refuses with a
 // ConsentError a change that turns on what the person has not agreed to,
-// unless ch.Consent says they have.
+// unless ch.Consent says they have. The sentences it asks with say the
+// malware check is off, as BuildRoster's do.
 func ApplyChange(home string, a Agent, c *Config, ch Change) (restart bool, err error) {
+	return applyChange(home, a, c, ch, false)
+}
+
+// applyChange is ApplyChange for an agent that runs under a policy whose
+// malware check is malwareCheck (BuildRosterUnder).
+func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) (restart bool, err error) {
 	if a.DesktopOnly {
 		return false, fmt.Errorf("%s %w: its configuration is Agentry Desktop's", a.Title, ErrDesktopOnly)
 	}
@@ -249,7 +263,7 @@ func ApplyChange(home string, a Agent, c *Config, ch Change) (restart bool, err 
 		delete(next.Consented, PortEntryID(name))
 	}
 	if sw := ch.Switch; sw != nil {
-		e, ok := BuildRoster(a, next, nil).Entry(sw.ID)
+		e, ok := BuildRosterUnder(a, next, nil, malwareCheck).Entry(sw.ID)
 		switch {
 		case !ok:
 			return false, fmt.Errorf("the %s agent has no entry %q (agentry agent show %s lists them)", a.Name, sw.ID, a.Name)
@@ -267,11 +281,11 @@ func ApplyChange(home string, a Agent, c *Config, ch Change) (restart bool, err 
 	// that was on and unagreed before, as it read then, is the start's to
 	// ask about, not this change's.
 	before := map[string]bool{}
-	for _, e := range Unconsented(BuildRoster(a, *c, nil), *c) {
+	for _, e := range Unconsented(BuildRosterUnder(a, *c, nil, malwareCheck), *c) {
 		before[e.ID+"\x00"+e.Line] = true
 	}
 	var widened []RosterEntry
-	for _, e := range Unconsented(BuildRoster(a, next, nil), next) {
+	for _, e := range Unconsented(BuildRosterUnder(a, next, nil, malwareCheck), next) {
 		if !before[e.ID+"\x00"+e.Line] {
 			widened = append(widened, e)
 		}
@@ -466,13 +480,22 @@ func Configure(ctx context.Context, home string, a Agent, client string, ch Chan
 	if err != nil {
 		return nil, false, err
 	}
-	if _, err := ApplyChange(home, a, &cfg, ch); err != nil {
+	malwareCheck := HomeMalwareCheck(home)
+	if _, err := applyChange(home, a, &cfg, ch, malwareCheck); err != nil {
 		return nil, false, err
 	}
 	if err := SaveConfig(home, a.Name, cfg); err != nil {
 		return nil, false, err
 	}
-	return BuildRoster(a, cfg, nil), false, nil
+	return BuildRosterUnder(a, cfg, nil, malwareCheck), false, nil
+}
+
+// HomeMalwareCheck is the malware-check setting of the policy in the runner
+// home home, for a roster built while the agent is not running; off when
+// that policy is missing or unreadable, as a new one has it.
+func HomeMalwareCheck(home string) bool {
+	pol, _, err := policy.Load(policy.PathIn(home))
+	return err == nil && pol.MalwareCheckOn()
 }
 
 // AgreeToRoster records the person's agreement to everything the agent's

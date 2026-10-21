@@ -109,6 +109,9 @@ const (
 	// shareVerdictsFile keeps the share's malware verdicts between
 	// segments.
 	shareVerdictsFile = "share-verdicts.json"
+	// shareTextDir keeps the text read out of the share's documents
+	// between segments, by the digest each verdict is for.
+	shareTextDir = "share-text"
 )
 
 // LogPath is where a detached supervisor writes what it prints.
@@ -403,6 +406,9 @@ func Reset(ctx context.Context, home, name string, d dockerx.Client) error {
 		if err := os.Remove(filepath.Join(Dir(home, name), f)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
+	}
+	if err := os.RemoveAll(filepath.Join(Dir(home, name), shareTextDir)); err != nil {
+		return fmt.Errorf("remove the %s agent's kept share text: %w", name, err)
 	}
 	if err := os.RemoveAll(serversDir(home, name)); err != nil {
 		return fmt.Errorf("remove the %s agent's installed servers: %w", name, err)
