@@ -386,7 +386,34 @@ type PlanInputs struct {
 	// Coder grants the Coding agent what its roster has on
 	// (compile.Inputs.Coder): set by a Segment of the Coding agent alone.
 	Coder *spec.CoderGrant
-	Log   io.Writer
+	// ShareServers are the declared servers, by source id, that see the
+	// agent's share folder (compile.Inputs.ShareServers): set by a Segment
+	// alone.
+	ShareServers []string
+	Log          io.Writer
+}
+
+// sameServers says a plan's servers are the ones given, each seeing the
+// share exactly when shares names it: the compiler marks how it sees it.
+func sameServers(planned, given []spec.MCPServerSpec, shares []string) bool {
+	if len(planned) != len(given) {
+		return false
+	}
+	seen := 0
+	for i := range planned {
+		p := planned[i]
+		if p.Share != "" {
+			if !slices.Contains(shares, p.SourceID()) {
+				return false
+			}
+			seen++
+		}
+		p.Share = ""
+		if !reflect.DeepEqual(p, given[i]) {
+			return false
+		}
+	}
+	return seen == len(shares)
 }
 
 // EnsurePlan reuses the installed plan when nothing it depends on changed,
@@ -455,7 +482,7 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 			reflect.DeepEqual(plan.Capabilities.AgentFiles, in.AgentFiles) &&
 			plan.Capabilities.AppLink == in.AppLink &&
 			reflect.DeepEqual(plan.Capabilities.Coder, in.Coder) &&
-			reflect.DeepEqual(plan.MCPServers, in.Servers) {
+			sameServers(plan.MCPServers, in.Servers, in.ShareServers) {
 			switch {
 			case plan.CompiledBy != in.CompiledBy:
 				// Same schema, another build: the compiler's output may
@@ -500,6 +527,7 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 		AgentFiles:   in.AgentFiles,
 		AppLink:      in.AppLink,
 		Coder:        in.Coder,
+		ShareServers: in.ShareServers,
 		IntegrityKey: key,
 	}, planDir)
 	if err != nil {

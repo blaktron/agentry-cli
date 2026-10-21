@@ -1831,6 +1831,76 @@ func TestTheShareFolderIsBoundAsItselfAlone(t *testing.T) {
 	g.refused(t, "the share's parent", "POST", "/containers/create", bind(people+":/x:ro"), "outside the run's directories")
 }
 
+// TestTheShareIsWrittenByTheToolsServerAlone: the share folder, held to the
+// run's tools server, is bound writable by the tools server alone, by a bind
+// or a mount; another container may bind it read-only only where it is not
+// held to the tools server for reading too (a server the Coding agent's
+// roster lets see it), and never writable.
+func TestTheShareIsWrittenByTheToolsServerAlone(t *testing.T) {
+	const target = "/etc/agentry/toolspec.json"
+	share := filepath.Join(t.TempDir(), "codershare")
+	if err := os.MkdirAll(share, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tools := []string{"tools", "--spec", target}
+	create := func(image string, cmd []string, binds ...string) map[string]any {
+		return map[string]any{"Image": image, "Cmd": cmd, "HostConfig": map[string]any{"Binds": binds}}
+	}
+	mount := func(image string, cmd []string, readOnly bool) map[string]any {
+		return map[string]any{"Image": image, "Cmd": cmd, "HostConfig": map[string]any{
+			"Mounts": []any{map[string]any{"Type": "bind", "Source": share, "Target": "/agent/share", "ReadOnly": readOnly}}}}
+	}
+	server := []string{"/opt/agentry-mcp/x/bin/x"}
+	for _, readable := range []bool{false, true} {
+		g := newRig(t, Limits{}, func(c *Config) {
+			c.ToolsImage, c.ToolsCmd = "agentry-runner:test", tools
+			c.BindRoots = append(c.BindRoots, share)
+			c.WritableRoots = append(c.WritableRoots, share)
+			c.ToolsWritableRoots = []string{share}
+			if !readable {
+				c.ToolsOnlyRoots = []string{share}
+			}
+		})
+		if code, body := g.do(t, "POST", "/containers/create", create("agentry-runner:test", tools, share+":/agent/share:rw")); code != http.StatusCreated {
+			t.Fatalf("the tools server writing the share: %d %s", code, body)
+		}
+		if code, body := g.do(t, "POST", "/containers/create", mount("agentry-runner:test", tools, false)); code != http.StatusCreated {
+			t.Fatalf("the tools server writing the share by a mount: %d %s", code, body)
+		}
+		g.refused(t, "a server writing the share", "POST", "/containers/create", create("python:3.13-slim", server, share+":/agent/share:rw"), "only the run's tools server")
+		g.refused(t, "a server writing the share by a mount", "POST", "/containers/create", mount("python:3.13-slim", server, false), "only the run's tools server")
+		g.refused(t, "the tools server's image under another command", "POST", "/containers/create", create("agentry-runner:test", server, share+":/agent/share"), "only the run's tools server")
+		code, body := g.do(t, "POST", "/containers/create", create("python:3.13-slim", server, share+":/agent/share:ro"))
+		if (code == http.StatusCreated) != readable {
+			t.Fatalf("a server reading the share, readable %v: %d %s", readable, code, body)
+		}
+		entry := create("agentry-runner:test", tools, share+":/agent/share:rw")
+		entry["Entrypoint"] = []string{"/bin/sh", "-c"}
+		g.refused(t, "the tools server's command under another entrypoint", "POST", "/containers/create", entry, "only the run's tools server")
+	}
+}
+
+// TestTheShareReachesOnlyAnOfflineContainer: a root only an offline
+// container may bind (the share and its mirror) is refused to one that
+// joins a network, the run's tools server excepted.
+func TestTheShareReachesOnlyAnOfflineContainer(t *testing.T) {
+	mirror := t.TempDir()
+	f := &Filter{cfg: Config{OfflineRoots: []string{mirror}}}
+	resolved, err := filepath.EvalSymlinks(mirror)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.toolsOnly(resolved, false, mounter{offline: true}); err != nil {
+		t.Errorf("an offline server reading the mirror: %v", err)
+	}
+	if err := f.toolsOnly(filepath.Join(resolved, "a.docx"), false, mounter{}); err == nil {
+		t.Error("a server on a network was given a file of the mirror")
+	}
+	if err := f.toolsOnly(resolved, false, mounter{tools: true}); err != nil {
+		t.Errorf("the tools server: %v", err)
+	}
+}
+
 // TestTheToolsServerAloneCarriesTheToolsLabel: the filter marks the run's
 // tools server with ToolsLabel, which the runner relays published ports
 // into, and strips the label from any other container the gateway asks for,

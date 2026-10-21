@@ -227,3 +227,21 @@ func TestTheCodingAgentIsToldItsBackgroundProgramsEnded(t *testing.T) {
 		t.Error("the Assistant's change frame speaks of background programs")
 	}
 }
+
+// TestTheAgentIsToldAServerSeesTheShare: a server kept across a change that
+// now sees the share, or no longer does, is told in the change's frame.
+func TestTheAgentIsToldAServerSeesTheShare(t *testing.T) {
+	srv := RosterEntry{ID: "server:pypi-office-word-mcp-server", Kind: KindServer, Name: "pypi:office-word-mcp-server@1.1.11", State: StateOn, On: true}
+	sees := srv
+	sees.Share = true
+	before, after := Roster{srv}, Roster{sees}
+	if f := changeFrame(before, after, true, nil); !strings.Contains(f, `switched on "pypi:office-word-mcp-server@1.1.11"'s view of the share folder`) {
+		t.Fatalf("letting a server see the share was told as %q", f)
+	}
+	if f := changeFrame(after, before, true, nil); !strings.Contains(f, `switched off "pypi:office-word-mcp-server@1.1.11"'s view of the share folder`) {
+		t.Fatalf("taking it away was told as %q", f)
+	}
+	if f := changeFrame(after, after, true, nil); f != "" {
+		t.Fatalf("no change was told as %q", f)
+	}
+}

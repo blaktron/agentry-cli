@@ -144,6 +144,13 @@ type Inputs struct {
 	// a persistent built-in's alone, beside its folders, and refused to
 	// anything else.
 	Coder *spec.CoderGrant
+	// ShareServers are the declared MCP servers, by source id
+	// (MCPServerSpec.SourceID), that see a persistent agent's share folder,
+	// read only: the copies the share check passed where the share is
+	// checked, the folder itself for the Coding agent. Only a package
+	// server with no network, of a persistent built-in that has its share,
+	// may be given it; anything else asking is refused by policy.
+	ShareServers []string
 }
 
 // coderExecTimeoutSeconds bounds one of the Coding agent's programs: a
@@ -232,6 +239,9 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		if err := coderGrant(in, &caps); err != nil {
 			return nil, err
 		}
+	}
+	if in.MCPServers, err = serverShares(in, mode, caps); err != nil {
+		return nil, err
 	}
 	// A persistent agent's grants never sit beside the web tools or the
 	// review grant, whose containers are held to one network each.
@@ -362,6 +372,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	inputView := inputViewOf(m)
 	instruction := renderInstruction(promptFacts{
 		caps:         caps,
+		shareServers: shareServerNames(in.MCPServers),
 		secrets:      sortedCopy(m.Capabilities.Secrets),
 		optional:     sortedCopy(m.Capabilities.OptionalSecrets),
 		servers:      declared,
@@ -548,6 +559,9 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	plan.Enforcement["toolResults"] = toolResultsEnforcement(adapterName, budget, caps)
 	if a := caps.AgentFiles; a != nil {
 		plan.Enforcement["persistent.files"] = agentFilesEnforcement(a)
+	}
+	if line := serverShareEnforcement(in.MCPServers); line != "" {
+		plan.Enforcement["persistent.serverShare"] = line
 	}
 	if caps.AppLink != "" {
 		plan.Enforcement["persistent.appLink"] = appLinkEnforcement(caps.AppLink)
@@ -777,6 +791,19 @@ func fsMode(a manifest.FSAccess) (string, []string) {
 	default: // none or undeclared
 		return "none", nil
 	}
+}
+
+// shareServerNames are the declared servers that see the share, by their
+// catalogue names.
+func shareServerNames(declared []spec.MCPServerSpec) []string {
+	var names []string
+	for _, srv := range declared {
+		if srv.Share != "" {
+			names = append(names, srv.Name)
+		}
+	}
+	sort.Strings(names)
+	return names
 }
 
 // mcpServerNames is every MCP server a run has besides the runner's own
@@ -1146,7 +1173,7 @@ func gatewaySpec(image string, servers []string, caps spec.CapSummary, mcpServer
 			// engine spells these roots /c/… so no drive colon splits them
 			// (gatewayHostPath).
 			{Name: "MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS",
-				Value: strings.Join(bindRoots(withStore, caps), ":")},
+				Value: strings.Join(bindRoots(withStore, caps, mcpServers), ":")},
 			{Name: "MCP_GATEWAY_DOCKER_BIND_ALLOW_WRITABLE_PATHS",
 				Value: strings.Join(writable, ":")},
 		},
@@ -1353,7 +1380,7 @@ func unsafeExecImageFor(commands []string, runnerImage string, data *unsafeexec.
 // when declared servers exist — each server is launched from a read-only
 // bind of that store, and the gateway refuses a source outside its roots.
 // Left out otherwise so a plan without servers keeps its bytes.
-func bindRoots(withServers bool, caps spec.CapSummary) []string {
+func bindRoots(withServers bool, caps spec.CapSummary, mcpServers []spec.MCPServerSpec) []string {
 	roots := []string{spec.PHWorkspace, spec.PHOut, spec.PHCfg, spec.PHInputs, spec.PHInputsText, spec.PHKnowledge}
 	if withServers {
 		roots = append(roots, spec.PHServers)
@@ -1363,11 +1390,68 @@ func bindRoots(withServers bool, caps spec.CapSummary) []string {
 	if agent := caps.AgentFiles; agent != nil && agent.Share {
 		roots = append(roots, spec.PHShare)
 	}
+	// The share mirror, read-only, for the servers that see it.
+	if spec.SharesAs(mcpServers, spec.ServerShareMirror) {
+		roots = append(roots, spec.PHShareMirror)
+	}
 	// The app link's socket, a root of its own, exact.
 	if caps.AppLink != "" {
 		roots = append(roots, spec.PHAppLink)
 	}
 	return roots
+}
+
+// serverShares marks the declared servers in.ShareServers names with how
+// each sees the share (MCPServerSpec.Share), on a copy of in.MCPServers.
+// The share reaches a server read only, and only a package server with no
+// network: a remote server is another party's, and one that reaches a host
+// could send the person's files there. Where the share is checked a server
+// sees the mirror of what the check passed, so a file ClamAV found never
+// reaches it; the folder itself is the Coding agent's alone, whose share
+// is read as it is.
+func serverShares(in Inputs, mode manifest.Mode, caps spec.CapSummary) ([]spec.MCPServerSpec, error) {
+	if len(in.ShareServers) == 0 {
+		return in.MCPServers, nil
+	}
+	a := caps.AgentFiles
+	if mode != manifest.ModePersistent || in.Source != "builtin" || a == nil || !a.Share {
+		return nil, &PolicyRefusal{Reason: "the share folder is given to an MCP server only by a persistent built-in that has its share on"}
+	}
+	how := spec.ServerShareMirror
+	if !a.CheckShare {
+		if caps.Coder == nil {
+			return nil, &PolicyRefusal{Reason: "an MCP server sees an unchecked share folder only beside the Coding agent"}
+		}
+		how = spec.ServerShareLive
+	}
+	out := slices.Clone(in.MCPServers)
+	for _, id := range in.ShareServers {
+		i := slices.IndexFunc(out, func(s spec.MCPServerSpec) bool { return s.SourceID() == id })
+		switch {
+		case i < 0:
+			return nil, fmt.Errorf("the share folder is given to %s, which the plan does not declare", id)
+		case out[i].Share != "":
+			return nil, fmt.Errorf("the share folder is given to %s twice", id)
+		case out[i].Remote():
+			return nil, &PolicyRefusal{Reason: fmt.Sprintf("the share folder is never given to the remote MCP server %s", id)}
+		case len(out[i].Egress) > 0:
+			return nil, &PolicyRefusal{Reason: fmt.Sprintf("the share folder is never given to the MCP server %s, which reaches %s: it could send the person's files there", id, strings.Join(out[i].Egress, ", "))}
+		case out[i].OAuth != nil:
+			return nil, &PolicyRefusal{Reason: fmt.Sprintf("the share folder is never given to the MCP server %s, which signs in by OAuth", id)}
+		}
+		out[i].Share = how
+	}
+	return out, nil
+}
+
+// serverShareVolume is the catalogue's bind of the share for a server that
+// sees it: always read-only, at the path the agent's own tools use.
+func serverShareVolume(how spec.ServerShare) string {
+	src := spec.PHShareMirror
+	if how == spec.ServerShareLive {
+		src = spec.PHShare
+	}
+	return src + ":" + spec.AgentRoot + "/" + spec.AgentShareDir + ":ro"
 }
 
 // mcpServerEntry renders one declared MCP server as a gateway catalog
@@ -1384,6 +1468,9 @@ func mcpServerEntry(srv spec.MCPServerSpec) *yaml.Node {
 	e.set("command", strListNode(srv.Command))
 	e.set("longLived", boolNode(true))
 	volumes := []string{spec.PHServers + "/" + srv.StoreSubdir + ":" + spec.MCPStorePrefix + "/" + srv.StoreSubdir + ":ro"}
+	if srv.Share != "" {
+		volumes = append(volumes, serverShareVolume(srv.Share))
+	}
 	if srv.OAuth != nil && len(srv.OAuth.Files) > 0 {
 		// The token folder of a package server's OAuth sign-in: a folder,
 		// never a single-file bind, so the files the runner renews mid-run
@@ -2233,6 +2320,32 @@ func questionsOf(m *manifest.Manifest, t manifest.IntakeType) []string {
 		}
 	}
 	return out
+}
+
+// serverShareEnforcement is the receipt's line for the servers that see a
+// persistent agent's share folder; "" when none does.
+func serverShareEnforcement(servers []spec.MCPServerSpec) string {
+	var mirror, live []string
+	for _, s := range servers {
+		switch s.Share {
+		case spec.ServerShareMirror:
+			mirror = append(mirror, s.Name)
+		case spec.ServerShareLive:
+			live = append(live, s.Name)
+		}
+	}
+	at := spec.AgentRoot + "/" + spec.AgentShareDir
+	var parts []string
+	if len(mirror) > 0 {
+		parts = append(parts, strings.Join(mirror, ", ")+" see the share's mirror, read-only at "+at+": a copy of each share file whose bytes the share check passed (clean, or read unchecked), made before each turn, a file it found left out and a file removed from the share removed; the mirror is a folder of the agent's own, a bind root of its own that no container may write")
+	}
+	if len(live) > 0 {
+		parts = append(parts, strings.Join(live, ", ")+" see the share folder itself, read-only at "+at+", unchecked, as the Coding agent reads it")
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, "; ") + "; each is a package server with no network, given no write to the share and no capability to write a host folder; the docker filter lets the tools server alone bind the share writable, and gives the share and its mirror to no other container that joins a network"
 }
 
 // agentFilesEnforcement is the receipt's line for a persistent agent's

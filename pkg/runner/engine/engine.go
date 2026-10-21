@@ -319,6 +319,13 @@ type PersistentSegment struct {
 	// checked digest, beside ShareVerdicts. Empty keeps none, and a
 	// document whose text was not kept is checked again.
 	ShareText string
+	// ShareMirror is a folder of the agent's own the share's mirror is kept
+	// in, for a plan whose servers see it (spec.ServerShareMirror): before
+	// each turn it is made to hold a copy of each share file whose bytes the
+	// share check passed, and nothing else. The engine keeps its index of
+	// what it copied in ShareMirror + ".json" and stages each copy in
+	// ShareMirror + ".staging", beside it. Empty for any other plan.
+	ShareMirror string
 }
 
 // engine is the run's container engine once placed (placementFor), and

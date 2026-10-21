@@ -333,7 +333,8 @@ func (f *Filter) containerCreate(ctx context.Context, body []byte) (any, error) 
 	if err != nil {
 		return nil, err
 	}
-	if err := f.checkStorage(ctx, hc, mounter{tools: tools, appLink: appLink}); err != nil {
+	offline := hc.NetworkMode == "none" && (c.NetworkingConfig == nil || len(c.NetworkingConfig.EndpointsConfig) == 0)
+	if err := f.checkStorage(ctx, hc, mounter{tools: tools, appLink: appLink, offline: offline}); err != nil {
 		return nil, err
 	}
 	web, err := f.webShape(ctx, &c)
@@ -527,7 +528,11 @@ func writesHost(hc *hostConfig) bool {
 
 // mounter is which of the run's own containers a create is, for the
 // volumes only it may mount.
-type mounter struct{ tools, appLink bool }
+type mounter struct {
+	tools, appLink bool
+	// offline says the container joins no network.
+	offline bool
+}
 
 // isAppLink says whether a create is the run's app link: its one command
 // (Config.AppLinkCmd) in its image (Config.AppLinkImage, by id), run by the
@@ -551,9 +556,14 @@ func (f *Filter) isAppLink(ctx context.Context, c *containerCreateBody, imageID 
 }
 
 // isToolsServer says whether a create is the run's tools server: its one
-// command (Config.ToolsCmd) in its image (Config.ToolsImage, by id).
+// command (Config.ToolsCmd) in its image (Config.ToolsImage, by id), run by
+// the image's own entrypoint, since another entrypoint would take the
+// command for its arguments.
 func (f *Filter) isToolsServer(ctx context.Context, c *containerCreateBody, imageID string) (bool, error) {
 	if f.cfg.ToolsImage == "" || len(f.cfg.ToolsCmd) == 0 {
+		return false, nil
+	}
+	if present(c.Entrypoint) || present(c.Shell) {
 		return false, nil
 	}
 	var cmd []string
@@ -1238,8 +1248,43 @@ func (f *Filter) bind(ctx context.Context, b string, who mounter) (string, error
 	if err != nil {
 		return "", err
 	}
+	if err := f.toolsOnly(resolved, write, who); err != nil {
+		return "", err
+	}
 	parts[0] = resolved
 	return strings.Join(parts, ":"), nil
+}
+
+// toolsOnly refuses a bind of a root the run's tools server alone may bind
+// (Config.ToolsOnlyRoots), or bind writable (Config.ToolsWritableRoots),
+// by any other container, and of one only an offline container may bind
+// (Config.OfflineRoots) by another that joins a network: resolved is the
+// bind's resolved source.
+func (f *Filter) toolsOnly(resolved string, write bool, who mounter) error {
+	if who.tools {
+		return nil
+	}
+	under := func(roots []string) bool {
+		for _, root := range roots {
+			r, err := filepath.EvalSymlinks(filepath.Clean(root))
+			if err != nil {
+				continue
+			}
+			if resolved == r || strings.HasPrefix(resolved, r+string(filepath.Separator)) {
+				return true
+			}
+		}
+		return false
+	}
+	switch {
+	case under(f.cfg.ToolsOnlyRoots):
+		return deny("bind source %s is one only the run's tools server may bind", resolved)
+	case write && under(f.cfg.ToolsWritableRoots):
+		return deny("bind source %s is one only the run's tools server may write", resolved)
+	case !who.offline && under(f.cfg.OfflineRoots):
+		return deny("bind source %s is given only to a container that joins no network", resolved)
+	}
+	return nil
 }
 
 func (f *Filter) mount(ctx context.Context, m *mount, who mounter) error {
@@ -1272,6 +1317,9 @@ func (f *Filter) mount(ctx context.Context, m *mount, who mounter) error {
 		}
 		resolved, err := f.hostPath(m.Source, !m.ReadOnly)
 		if err != nil {
+			return err
+		}
+		if err := f.toolsOnly(resolved, !m.ReadOnly, who); err != nil {
 			return err
 		}
 		m.Source = resolved

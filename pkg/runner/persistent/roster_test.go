@@ -15,6 +15,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/session"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
@@ -209,6 +210,176 @@ func TestRosterReachesEveryGate(t *testing.T) {
 				t.Errorf("the server in the plan, the catalogue and the gateway's servers: %v, want %v", served, tc.server)
 			}
 		})
+	}
+}
+
+// TestRosterReachesEveryGateWithTheServerShare: a server's share switch
+// reaches, by Apply, the server's catalogue entry's volumes, the bind list,
+// the server's consent sentence and the segment's receipt together; with
+// the share off, the server sees nothing whatever its switch says.
+func TestRosterReachesEveryGateWithTheServerShare(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	home := shortHome(t)
+	for _, a := range []Agent{assistantAgent(t), coderAgent(t)} {
+		record(t, serversDir(home, a.Name), wordServer)
+		c := Config{Enabled: true}
+		if _, err := ApplyChange(home, a, &c, Change{AddServer: &wordServer, Consent: true}); err != nil {
+			t.Fatal(err)
+		}
+		// The Assistant's server sees the mirror, the Coding agent's the
+		// folder itself.
+		how, src, line := spec.ServerShareMirror, spec.PHShareMirror, ", and sees your share folder (read only)"
+		if a.Builtin.Codes() {
+			how, src, line = spec.ServerShareLive, spec.PHShare, ", and sees your share folder (read only, unchecked)"
+		}
+		for _, tc := range []struct {
+			name        string
+			share, sees bool
+		}{
+			{"the server sees the share", true, true},
+			{"its switch off", true, false},
+			{"the share off", false, true},
+		} {
+			t.Run(a.Name+": "+tc.name, func(t *testing.T) {
+				cfg := c
+				cfg.Switches = map[string]bool{EntryShare: tc.share, ServerShareID(wordServer): tc.sees}
+				r := BuildRoster(a, cfg, nil)
+				RecordConsent(r, &cfg)
+				e, _ := r.Entry(ServerEntryID(wordServer))
+				if e.Share != tc.sees || strings.HasSuffix(e.Line, line) != tc.sees || e.ShareSwitch != ServerShareID(wordServer) ||
+					!strings.HasSuffix(e.ShareLine, line) || tc.sees && e.ShareLine != e.Line {
+					t.Fatalf("the server's entry %+v", e)
+				}
+				rec := r.Receipt()
+				if i := slices.IndexFunc(rec, func(x receipt.RosterEntry) bool { return x.ID == e.ID }); i < 0 || rec[i].Share != tc.sees || rec[i].Line != e.Line {
+					t.Fatalf("the receipt's roster %+v", rec)
+				}
+				g, _, done, err := Apply(context.Background(), home, a, cfg, r, nil, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer done()
+				sees := tc.share && tc.sees
+				if len(g.Servers) != 1 || (len(g.ShareServers) == 1) != sees {
+					t.Fatalf("grants: servers %v, share servers %v", g.Servers, g.ShareServers)
+				}
+				sp, err := localrun.Segment{Builtin: a.Builtin, Home: home, Policy: policy.Default(), PolicySHA: "s", Build: "test", Grants: g}.Plan(context.Background(), nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				cat, err := os.ReadFile(filepath.Join(sp.Dir, "gateway", "catalog.yaml"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				roots := ""
+				for _, ev := range sp.Plan.Gateway.Env {
+					if ev.Name == "MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS" {
+						roots = ev.Value
+					}
+				}
+				bind := src + ":" + spec.AgentRoot + "/" + spec.AgentShareDir + ":ro"
+				if strings.Contains(string(cat), bind) != sees || (sp.Plan.MCPServers[0].Share == how) != sees ||
+					how == spec.ServerShareMirror && strings.Contains(roots, spec.PHShareMirror) != sees {
+					t.Errorf("the share in the catalogue, the bind roots and the plan's server: want %v\n%s\nroots %s", sees, cat, roots)
+				}
+			})
+		}
+	}
+}
+
+// TestShareRefusedForAServerWithEgress: a server that reaches the network,
+// a remote server and one that signs in by OAuth cannot be switched to see
+// the share, and have no switch for it; switching it off is refused nothing.
+func TestShareRefusedForAServerWithEgress(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	home := shortHome(t)
+	a := assistantAgent(t)
+	egress := manifest.MCPServer{NPM: "@example/fetcher", Version: "1.0.0", Egress: []string{"api.example.com"}}
+	for _, srv := range []manifest.MCPServer{egress, remoteServer} {
+		c := Config{Enabled: true}
+		if _, err := ApplyChange(home, a, &c, Change{AddServer: &srv, Consent: true}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ApplyChange(home, a, &c, Change{Switch: &Switch{ID: ServerShareID(srv), On: true}, Consent: true}); err == nil {
+			t.Errorf("%s was switched to see the share", serverName(srv))
+		}
+		if c.Switches[ServerShareID(srv)] {
+			t.Errorf("a refused switch was kept for %s", serverName(srv))
+		}
+		if e, _ := BuildRoster(a, c, nil).Entry(ServerEntryID(srv)); e.ShareSwitch != "" || e.Share {
+			t.Errorf("%s offers a share switch: %+v", serverName(srv), e)
+		}
+		if _, err := ApplyChange(home, a, &c, Change{Switch: &Switch{ID: ServerShareID(srv), On: false}}); err != nil {
+			t.Errorf("switching it off: %v", err)
+		}
+		// A switch set some other way gives it nothing.
+		c.Switches = map[string]bool{ServerShareID(srv): true}
+		r := BuildRoster(a, c, nil)
+		RecordConsent(r, &c)
+		g, _, done, err := Apply(context.Background(), home, a, c, r, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		done()
+		if len(g.ShareServers) != 0 {
+			t.Errorf("%s was given the share: %v", serverName(srv), g.ShareServers)
+		}
+	}
+	if _, err := ApplyChange(home, a, &Config{}, Change{Switch: &Switch{ID: "server:npm-nothing:share", On: true}}); err == nil {
+		t.Error("a server the agent does not have was switched")
+	}
+}
+
+// TestServerShareLineIsConsented: letting a server see the share changes its
+// sentence, so it asks again, and the sentence says the server sees the
+// share read only (for the Coding agent, unchecked); taking it away asks
+// nothing, and giving it back as agreed asks nothing either. Removing the
+// server takes its switch with it.
+func TestServerShareLineIsConsented(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	home := shortHome(t)
+	for _, a := range []Agent{assistantAgent(t), coderAgent(t)} {
+		c := Config{Enabled: true}
+		if _, err := ApplyChange(home, a, &c, Change{AddServer: &wordServer, Consent: true}); err != nil {
+			t.Fatal(err)
+		}
+		on := Change{Switch: &Switch{ID: ServerShareID(wordServer), On: true}}
+		_, err := ApplyChange(home, a, &c, on)
+		var ce *ConsentError
+		if !errors.As(err, &ce) || len(ce.Entries) != 1 || ce.Entries[0].ID != ServerEntryID(wordServer) {
+			t.Fatalf("%s: letting the server see the share: %v", a.Name, err)
+		}
+		want := ", and sees your share folder (read only)"
+		if a.Builtin.Codes() {
+			want = ", and sees your share folder (read only, unchecked)"
+		}
+		if !strings.HasSuffix(ce.Entries[0].Line, want) {
+			t.Fatalf("%s: the sentence asked for: %q", a.Name, ce.Entries[0].Line)
+		}
+		if c.Switches[ServerShareID(wordServer)] {
+			t.Fatal("a refused switch was kept")
+		}
+		on.Consent = true
+		if _, err := ApplyChange(home, a, &c, on); err != nil || !c.Switches[ServerShareID(wordServer)] || c.Consented[ServerEntryID(wordServer)] != ce.Entries[0].Line {
+			t.Fatalf("agreed: %v, config %+v", err, c)
+		}
+		if _, err := ApplyChange(home, a, &c, Change{Switch: &Switch{ID: ServerShareID(wordServer), On: false}}); err != nil {
+			t.Fatalf("taking it away asked: %v", err)
+		}
+		for _, e := range Unconsented(BuildRoster(a, c, nil), c) {
+			if e.ID == ServerEntryID(wordServer) {
+				t.Fatal("the narrower sentence is not agreed to")
+			}
+		}
+		if _, err := ApplyChange(home, a, &c, Change{Switch: &Switch{ID: ServerShareID(wordServer), On: true}}); err != nil {
+			t.Fatalf("giving it back as agreed asked: %v", err)
+		}
+		if _, err := ApplyChange(home, a, &c, Change{RemoveServer: ServerEntryID(wordServer)}); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := c.Switches[ServerShareID(wordServer)]; ok {
+			t.Error("the removed server's share switch was kept")
+		}
 	}
 }
 

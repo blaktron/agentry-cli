@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/blaktron/agentry-cli/pkg/persistent/assistant"
@@ -89,6 +90,11 @@ type Grants struct {
 	// Servers are the MCP servers the person added and has on, in the
 	// manifest's shape.
 	Servers []manifest.MCPServer
+	// ShareServers are the servers among Servers, by source id
+	// (manifest.MCPServer.SourceID), that the person let see the share
+	// folder: read only, through its mirror where the share is checked.
+	// Only with Share.
+	ShareServers []string
 	// ServersDir is the agent's own store a package server is installed
 	// into, as a release's declared server is into its profile's.
 	ServersDir string
@@ -249,6 +255,15 @@ func (s Segment) agentFiles() *spec.AgentFiles {
 	return &spec.AgentFiles{Share: s.Grants.Share != "", CheckShare: s.Grants.Share != "" && s.Builtin.checkShare}
 }
 
+// shareServers are the servers the segment's plan lets see the share: the
+// roster's, when the share is on.
+func (s Segment) shareServers() []string {
+	if s.Grants.Share == "" || len(s.Grants.ShareServers) == 0 {
+		return nil
+	}
+	return slices.Clone(s.Grants.ShareServers)
+}
+
 // withServers is the built-in's manifest with the servers the person added
 // and has on declared beside its own, so they compile, are consented and
 // are held as a release's declared servers are. The built-in's own files
@@ -390,7 +405,7 @@ func (s Segment) Plan(ctx context.Context, logw io.Writer) (*SegmentPlan, error)
 	in := PlanInputs{
 		Home: s.Home, Manifest: m, Meta: meta, InstallDir: installDir, WorkspaceDir: workspace,
 		Policy: s.Policy, PolicySHA: s.PolicySHA, Adapter: adapterName, Mode: manifest.ModePersistent,
-		Servers: servers, AgentFiles: s.agentFiles(), AppLink: s.appLinkSet(), Coder: coderGrant, CompiledBy: s.Build, Log: logw,
+		Servers: servers, AgentFiles: s.agentFiles(), AppLink: s.appLinkSet(), Coder: coderGrant, ShareServers: s.shareServers(), CompiledBy: s.Build, Log: logw,
 	}
 	plan, planDir, err := EnsurePlan(in)
 	if err != nil {
