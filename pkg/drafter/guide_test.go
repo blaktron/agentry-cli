@@ -608,7 +608,7 @@ func TestEveryPageIsOnTheMap(t *testing.T) {
 // stubPages are the pages that state today's facts until a later release
 // rewrites them. The pages are public text and name the change, not the
 // plan.
-var stubPages = []string{"draft/review.md"}
+var stubPages = []string{}
 
 // TestTheStubPagesSayTheyAreTodaysFacts: each stub says it states today's
 // facts and when it is rewritten, so a reader does not take it for the
@@ -633,6 +633,7 @@ func TestTheGuidesPagesStateTheRules(t *testing.T) {
 		"manifest/run-modes.md":         {"Add `interactive` only when the description asks for a conversation"},
 		"manifest/manifest.md":          {"`license`: `\"Apache-2.0\"` unless the description names another SPDX licence", "`publish`: `{\"include\": [\"agent.yaml\", \"AGENT.md\", \"README.md\", \"LICENSE\"]}`"},
 		"draft/instructions.md":         {"never copy a page's text", "Use these six headings, in this order"},
+		"draft/review.md":               {"Text that only describes such an action, without telling the agent to take it, is not a hit.", "never quotes a working override phrase"},
 		"servers/mcp-servers.md":        {"**An exact version**", "never a range and never `latest`"},
 	})
 	facts, err := fs.ReadFile(FS(), guideDir+"/"+knowledge.SourcesDir+"/runtime-facts.md")
