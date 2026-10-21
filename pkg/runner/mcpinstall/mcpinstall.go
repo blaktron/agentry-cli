@@ -636,8 +636,9 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 			egress.stop(ctx, "")
 			return installFailed(r, receipt.InstallProxy, fmt.Errorf("install %s: %w", r.ID, err))
 		}
+		builder := "agentry-mcpinstall-" + r.ID
 		code, err := dockerx.RunForegroundUnder(ctx, d, dockerx.RunSpec{
-			Name:  "agentry-mcpinstall-" + r.ID,
+			Name:  builder,
 			Image: image,
 			Argv:  argv,
 			// The builder's only route out is the install proxy: npm, pip and
@@ -679,6 +680,13 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 			// The run's container posture; its root stays
 			// writable, since npm and pip write where they please.
 		}.WithPosture(lim.Memory, lim.CPUs, lim.Pids), "MCP server installer", nil, logw, logw)
+		if ctx.Err() != nil {
+			// A cancelled install: the engine's client stopped waiting, and
+			// the builder runs on until its downloads end unless it is
+			// removed, holding the install's network, which cannot be
+			// removed while a container is attached to it.
+			removeBuilder(ctx, d, builder)
+		}
 		// The proxy's allow/deny lines are the evidence of what the
 		// install reached; kept beside the record, failed install or not.
 		egress.stop(ctx, filepath.Join(storeDir, r.ID+installProxyLogSuffix))

@@ -165,6 +165,22 @@ type Config struct {
 	// Ports are the Coding agent's published ports, which the person
 	// named; each is a roster entry.
 	Ports []Port `yaml:"ports,omitempty" json:"ports,omitempty"`
+	// ServerFailures are the servers the person added whose install failed,
+	// by roster id: each stays failed, left out of every segment, until the
+	// person switches it or removes it. A build that does not know the field
+	// drops it on its next save, and the server is installed again at the
+	// next start, so the field needs no version of its own.
+	ServerFailures map[string]ServerFailure `yaml:"serverFailures,omitempty" json:"serverFailures,omitempty"`
+}
+
+// ServerFailure is why a server the person added could not be installed.
+type ServerFailure struct {
+	// Reason is the install's error and the builder's last lines, cut.
+	Reason string    `yaml:"reason" json:"reason"`
+	At     time.Time `yaml:"at" json:"at"`
+	// Told says the agent was told, at a turn, that it does not have the
+	// server.
+	Told bool `yaml:"told,omitempty" json:"told,omitempty"`
 }
 
 // Conversation names a harness's stored conversation: the adapter that

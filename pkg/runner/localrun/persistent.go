@@ -326,6 +326,27 @@ func (sp *SegmentPlan) installServers(ctx context.Context, d dockerx.Client, sto
 	return nil
 }
 
+// InstallServer installs one package server into a persistent agent's store
+// outside any segment's start: resolved from the store when it already holds
+// the pin, else from the policy's registries, then installed as a segment's
+// start installs it (mcpinstall.EnsureInstalled), whose record carries the
+// command the install found for the next segment's plan. The runner image
+// must be built, as a segment's start leaves it; the caller holds the
+// server's store lock.
+func InstallServer(ctx context.Context, d dockerx.Client, pol *policy.Policy, storeDir string, srv manifest.MCPServer, logw io.Writer) error {
+	if logw == nil {
+		logw = io.Discard
+	}
+	resolved, err := mcpinstall.StoredOrResolved(ctx, logw, storeDir, pol.MCPRegistries, []manifest.MCPServer{srv})
+	if err != nil {
+		return engine.Classify(engine.ExitVerify, err)
+	}
+	if err := mcpinstall.EnsureInstalled(ctx, d, resolved, storeDir, pol.MCPRegistries, pol.Images, pol.Docker, logw); err != nil {
+		return engine.Classify(engine.ExitGateway, err)
+	}
+	return nil
+}
+
 // Plan materializes the built-in and compiles the segment's plan from it and
 // the roster's grants: the servers the person has on are declared beside the
 // built-in's own, and its folders are mounted, the share when it is on. It
