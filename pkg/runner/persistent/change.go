@@ -388,6 +388,10 @@ func personaFrame(c Config) string {
 // around it. continued says the segment continued the conversation, in which
 // what was switched off may have worked. "" when the change gave and took
 // nothing.
+// backgroundEnded tells an agent that runs programs what a restart did to
+// the ones it left running: they ran in the segment that ended.
+const backgroundEnded = "Agentry restarted you for it, so every program you started in the background has ended: start again any you still need."
+
 func changeFrame(before, after Roster, continued bool) string {
 	given := func(r Roster) map[string]bool {
 		m := map[string]bool{}
@@ -425,6 +429,9 @@ func changeFrame(before, after Roster, continued bool) string {
 	if len(on) > 0 {
 		did = append(did, "switched on "+strings.Join(on, ", "))
 		notes = append(notes, "What was switched on is yours from this turn.")
+	}
+	if had[EntryCommands] {
+		notes = append(notes, backgroundEnded)
 	}
 	return "(The person changed what you have in Agentry since your last turn: they " + strings.Join(did, ", and ") + ". " +
 		strings.Join(notes, " ") + ")\n\n"

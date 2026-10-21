@@ -6,6 +6,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 )
 
 // TestTheAgentIsToldWhatAChangeGaveAndTookAway: the first turn of a segment
@@ -163,5 +166,64 @@ func TestANewConversationIsNotToldOfEarlierPaths(t *testing.T) {
 	if len(got) != 1 || !strings.Contains(got[0], "last exchange") || !strings.Contains(got[0], `switched off "Your share folder"`) ||
 		strings.Contains(got[0], "earlier in this conversation") {
 		t.Fatalf("a new conversation after a change was sent %q", got)
+	}
+}
+
+// TestTheCodingAgentIsToldItsBackgroundProgramsEnded: the Coding agent runs
+// programs that end with their segment, so the first turn after a restart
+// says so: in the change's frame for a restart a change made, and on its
+// own for a start after a stop; the Assistant, which runs none, is told
+// neither, and a first segment has nothing to be told.
+func TestTheCodingAgentIsToldItsBackgroundProgramsEnded(t *testing.T) {
+	home := shortHome(t)
+	t.Setenv("HOME", t.TempDir())
+	a := coderAgent(t)
+	c := Config{Enabled: true}
+	RecordConsent(BuildRoster(a, c, nil), &c)
+	if err := SaveConfig(home, a.Name, c); err != nil {
+		t.Fatal(err)
+	}
+	start := func(st *starter) *Supervisor {
+		t.Helper()
+		sv, err := Start(context.Background(), Options{Home: home, Agent: a, Client: ClientCLI, Policy: policy.Default(),
+			Docker: &dockerx.Fake{}, StartSegment: st.start})
+		if err != nil {
+			t.Fatalf("start: %v", err)
+		}
+		return sv
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	st := &starter{resumed: true}
+	sv := start(st)
+	if err := sv.Send(ctx, "first"); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.last.sentTurns(); got[0] != "first" {
+		t.Fatalf("a first segment's turn: %q", got)
+	}
+	if _, err := sv.Change(Change{Switch: &Switch{ID: EntryBrowser, On: false}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := sv.Send(ctx, "second"); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.last.sentTurns(); strings.Count(got[0], "background has ended") != 1 || !strings.Contains(got[0], "switched off") {
+		t.Fatalf("after a change: %q", got)
+	}
+	if _, err := sv.Stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+	sv = start(st)
+	defer func() { _, _ = sv.Stop(context.Background()) }()
+	if err := sv.Send(ctx, "third"); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.last.sentTurns(); !strings.HasPrefix(got[0], "(Agentry started you again since your last turn.") || !strings.HasSuffix(got[0], "third") {
+		t.Fatalf("after a stop and a start: %q", got)
+	}
+	if !strings.Contains(changeFrame(BuildRoster(assistantAgent(t), Config{Enabled: true}, nil), nil, true), "switched off") ||
+		strings.Contains(changeFrame(BuildRoster(assistantAgent(t), Config{Enabled: true}, nil), nil, true), "background") {
+		t.Error("the Assistant's change frame speaks of background programs")
 	}
 }
