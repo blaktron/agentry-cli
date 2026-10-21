@@ -250,6 +250,15 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 			mismatch = fmt.Sprintf("the conversation was stored by the %s harness, and this segment runs on %s, which cannot read it", c.Adapter, s.adapter)
 		}
 	}
+	// The share's mirror is kept only while a server of a checked share
+	// sees it: otherwise no copy of the person's files is kept.
+	var mirror string
+	if len(grants.ShareServers) > 0 && a.Builtin.ChecksShare() {
+		mirror = shareMirror(home, name)
+	} else if err := removeShareMirror(home, name); err != nil {
+		packsDone()
+		return err
+	}
 	segment := cfg.Segments + 1
 	outDir := filepath.Join(Dir(home, name), segmentsDir, runID)
 	if err := os.MkdirAll(outDir, 0o700); err != nil {
@@ -266,6 +275,7 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 			ContinueID: continueID, Roster: roster.Receipt(),
 			ShareVerdicts: filepath.Join(Dir(home, name), shareVerdictsFile),
 			ShareText:     filepath.Join(Dir(home, name), shareTextDir),
+			ShareMirror:   mirror,
 		},
 		Grants: grants,
 	}

@@ -123,6 +123,34 @@ func startDaemonFilter(d dockerx.Client, rd *runDirs, runID string, gwEnv map[st
 	return f, sock, nil
 }
 
+// shareRoot is the share folder in the gateway's spelling, as a root: none
+// when the run has no share.
+func (rd *runDirs) shareRoot() []string {
+	if rd.share == "" {
+		return nil
+	}
+	return []string{rd.gatewayPath(rd.share)}
+}
+
+// mirrorRoot is the share's mirror in the gateway's spelling, as a root:
+// none when no server of the run sees it.
+func (rd *runDirs) mirrorRoot() []string {
+	if rd.shareMirror == nil {
+		return nil
+	}
+	return []string{rd.gatewayPath(rd.shareMirror.dir)}
+}
+
+// toolsOnlyShare is the share folder as a root the tools server alone may
+// bind at all: unless a server sees the folder itself, which only the
+// Coding agent's roster gives one.
+func toolsOnlyShare(rd *runDirs, plan *spec.Plan) []string {
+	if spec.SharesAs(plan.MCPServers, spec.ServerShareLive) {
+		return nil
+	}
+	return rd.shareRoot()
+}
+
 // filterConfig is the run's filter policy, wherever it is served: in the
 // CLI (startDaemonFilter) or in the filter container (startFilterSidecar).
 // place is the run's engine and placement; nil is Docker Engine.
@@ -169,38 +197,53 @@ func filterConfig(rd *runDirs, runID string, gwEnv map[string]string, lim policy
 	if relaysSandboxed(plan) {
 		relayResolv = filepath.Join(rd.cfg, "gateway", resolvConfFile)
 	}
+	// Beneath the run's cfg folder, only what the catalog binds there, and
+	// only into the entries that bind it.
+	bindRoots, writableRoots, heldCfg, err := runCfgBinds(rd,
+		pathList(gwEnv["MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS"]), pathList(gwEnv["MCP_GATEWAY_DOCKER_BIND_ALLOW_WRITABLE_PATHS"]))
+	if err != nil {
+		return sockfilter.Config{}, err
+	}
 	return sockfilter.Config{
-		RunID:             runID,
-		Label:             runLabel,
-		OwnerLabel:        gatewayOwnerLabel,
-		BindRoots:         pathList(gwEnv["MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS"]),
-		WritableRoots:     pathList(gwEnv["MCP_GATEWAY_DOCKER_BIND_ALLOW_WRITABLE_PATHS"]),
-		SharedNetworks:    shared,
-		EgressNetworks:    egress,
-		NetworkNames:      names,
-		RelayHosts:        slices.Concat(relayHosts(plan), rd.hostRelays(), rd.browseProxyRelay()),
-		RelayPins:         rd.browseProxyPin(),
-		WebNetwork:        webNet,
-		WebImage:          webImage,
-		WebCmd:            webCmd,
-		WebSpec:           webSpec,
-		WebSpecTarget:     spec.ToolSpecMount,
-		WebResolvConf:     webResolv,
-		RelayResolvConf:   relayResolv,
-		ToolsImage:        plan.ToolsImage(),
-		ToolsCmd:          spec.ToolsCmd(),
-		ToolsTmpfs:        toolsTmpfs(plan),
-		ToolsShared:       toolsShared(plan, rd),
-		ToolsVolumes:      toolsVolumes(rd),
-		AppLinkVolume:     rd.appLinkRelay,
-		AppLinkImage:      appLinkImageOf(plan, rd),
-		AppLinkCmd:        appLinkCmdOf(plan, rd),
-		BrowserImage:      browserImageOf(plan),
-		BrowserUser:       rd.personUser(),
-		BrowserTmpfs:      browserTmpfsOf(plan),
-		BrowserNetwork:    browserNetworkOf(plan, runID),
-		BrowserNetworkFor: browserNetworkForOf(plan, runID),
-		BrowseProxy:       rd.browseProxyName(),
+		RunID:         runID,
+		Label:         runLabel,
+		OwnerLabel:    gatewayOwnerLabel,
+		BindRoots:     bindRoots,
+		WritableRoots: writableRoots,
+		// The share folder: written by the tools server alone, and read by
+		// no other container but a server the Coding agent's roster lets
+		// see it. The share, its mirror and the share outbox reach no
+		// container but the tools server that joins a network.
+		ToolsWritableRoots: rd.shareRoot(),
+		ToolsOnlyRoots:     toolsOnlyShare(rd, plan),
+		OfflineRoots:       slices.Concat(rd.shareRoot(), rd.mirrorRoot(), rd.shareOutRoot()),
+		HeldRoots:          heldCfg,
+		SharedNetworks:     shared,
+		EgressNetworks:     egress,
+		NetworkNames:       names,
+		RelayHosts:         slices.Concat(relayHosts(plan), rd.hostRelays(), rd.browseProxyRelay()),
+		RelayPins:          rd.browseProxyPin(),
+		WebNetwork:         webNet,
+		WebImage:           webImage,
+		WebCmd:             webCmd,
+		WebSpec:            webSpec,
+		WebSpecTarget:      spec.ToolSpecMount,
+		WebResolvConf:      webResolv,
+		RelayResolvConf:    relayResolv,
+		ToolsImage:         plan.ToolsImage(),
+		ToolsCmd:           spec.ToolsCmd(),
+		ToolsTmpfs:         toolsTmpfs(plan),
+		ToolsShared:        toolsShared(plan, rd),
+		ToolsVolumes:       toolsVolumes(rd),
+		AppLinkVolume:      rd.appLinkRelay,
+		AppLinkImage:       appLinkImageOf(plan, rd),
+		AppLinkCmd:         appLinkCmdOf(plan, rd),
+		BrowserImage:       browserImageOf(plan),
+		BrowserUser:        rd.personUser(),
+		BrowserTmpfs:       browserTmpfsOf(plan),
+		BrowserNetwork:     browserNetworkOf(plan, runID),
+		BrowserNetworkFor:  browserNetworkForOf(plan, runID),
+		BrowseProxy:        rd.browseProxyName(),
 		Limits: sockfilter.Limits{
 			MemoryBytes: mem,
 			NanoCPUs:    int64(lim.CPUs) * 1e9,

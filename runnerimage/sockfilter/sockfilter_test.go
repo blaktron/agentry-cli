@@ -1831,6 +1831,76 @@ func TestTheShareFolderIsBoundAsItselfAlone(t *testing.T) {
 	g.refused(t, "the share's parent", "POST", "/containers/create", bind(people+":/x:ro"), "outside the run's directories")
 }
 
+// TestTheShareIsWrittenByTheToolsServerAlone: the share folder, held to the
+// run's tools server, is bound writable by the tools server alone, by a bind
+// or a mount; another container may bind it read-only only where it is not
+// held to the tools server for reading too (a server the Coding agent's
+// roster lets see it), and never writable.
+func TestTheShareIsWrittenByTheToolsServerAlone(t *testing.T) {
+	const target = "/etc/agentry/toolspec.json"
+	share := filepath.Join(t.TempDir(), "codershare")
+	if err := os.MkdirAll(share, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tools := []string{"tools", "--spec", target}
+	create := func(image string, cmd []string, binds ...string) map[string]any {
+		return map[string]any{"Image": image, "Cmd": cmd, "HostConfig": map[string]any{"Binds": binds}}
+	}
+	mount := func(image string, cmd []string, readOnly bool) map[string]any {
+		return map[string]any{"Image": image, "Cmd": cmd, "HostConfig": map[string]any{
+			"Mounts": []any{map[string]any{"Type": "bind", "Source": share, "Target": "/agent/share", "ReadOnly": readOnly}}}}
+	}
+	server := []string{"/opt/agentry-mcp/x/bin/x"}
+	for _, readable := range []bool{false, true} {
+		g := newRig(t, Limits{}, func(c *Config) {
+			c.ToolsImage, c.ToolsCmd = "agentry-runner:test", tools
+			c.BindRoots = append(c.BindRoots, share)
+			c.WritableRoots = append(c.WritableRoots, share)
+			c.ToolsWritableRoots = []string{share}
+			if !readable {
+				c.ToolsOnlyRoots = []string{share}
+			}
+		})
+		if code, body := g.do(t, "POST", "/containers/create", create("agentry-runner:test", tools, share+":/agent/share:rw")); code != http.StatusCreated {
+			t.Fatalf("the tools server writing the share: %d %s", code, body)
+		}
+		if code, body := g.do(t, "POST", "/containers/create", mount("agentry-runner:test", tools, false)); code != http.StatusCreated {
+			t.Fatalf("the tools server writing the share by a mount: %d %s", code, body)
+		}
+		g.refused(t, "a server writing the share", "POST", "/containers/create", create("python:3.13-slim", server, share+":/agent/share:rw"), "only the run's tools server")
+		g.refused(t, "a server writing the share by a mount", "POST", "/containers/create", mount("python:3.13-slim", server, false), "only the run's tools server")
+		g.refused(t, "the tools server's image under another command", "POST", "/containers/create", create("agentry-runner:test", server, share+":/agent/share"), "only the run's tools server")
+		code, body := g.do(t, "POST", "/containers/create", create("python:3.13-slim", server, share+":/agent/share:ro"))
+		if (code == http.StatusCreated) != readable {
+			t.Fatalf("a server reading the share, readable %v: %d %s", readable, code, body)
+		}
+		entry := create("agentry-runner:test", tools, share+":/agent/share:rw")
+		entry["Entrypoint"] = []string{"/bin/sh", "-c"}
+		g.refused(t, "the tools server's command under another entrypoint", "POST", "/containers/create", entry, "only the run's tools server")
+	}
+}
+
+// TestTheShareReachesOnlyAnOfflineContainer: a root only an offline
+// container may bind (the share and its mirror) is refused to one that
+// joins a network, the run's tools server excepted.
+func TestTheShareReachesOnlyAnOfflineContainer(t *testing.T) {
+	mirror := t.TempDir()
+	f := &Filter{cfg: Config{OfflineRoots: []string{mirror}}}
+	resolved, err := filepath.EvalSymlinks(mirror)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.held(context.Background(), resolved, false, mounter{offline: true}); err != nil {
+		t.Errorf("an offline server reading the mirror: %v", err)
+	}
+	if err := f.held(context.Background(), filepath.Join(resolved, "a.docx"), false, mounter{}); err == nil {
+		t.Error("a server on a network was given a file of the mirror")
+	}
+	if err := f.held(context.Background(), resolved, false, mounter{tools: true}); err != nil {
+		t.Errorf("the tools server: %v", err)
+	}
+}
+
 // TestTheToolsServerAloneCarriesTheToolsLabel: the filter marks the run's
 // tools server with ToolsLabel, which the runner relays published ports
 // into, and strips the label from any other container the gateway asks for,
@@ -1859,5 +1929,84 @@ func TestTheToolsServerAloneCarriesTheToolsLabel(t *testing.T) {
 	}
 	if l := labelsOf(); l[ToolsLabel] != nil {
 		t.Fatalf("another container kept the tools label the gateway asked for: %v", l)
+	}
+}
+
+// TestAHeldRootReachesTheContainersItNamesAlone: the share's verdicts and
+// the text read out of its documents, held to the tools server, and a
+// connection's folder, held to its bridge, are refused to a container on a
+// network, as is the folder that holds them both; the tools server still
+// binds the verdicts on a network, and the bridge its folder, while neither
+// binds the other's.
+func TestAHeldRootReachesTheContainersItNamesAlone(t *testing.T) {
+	const target = "/etc/agentry/toolspec.json"
+	tools := []string{"tools", "--spec", target}
+	bridge := []string{"bridge", "--url", "https://mcp.example.org/mcp", "--token-file", "/run/agentry/connection/bearer"}
+	server := []string{"/opt/agentry-mcp/x/bin/x"}
+	var cfg, checks, conn string
+	g := newRig(t, Limits{}, func(c *Config) {
+		cfg = filepath.Join(c.BindRoots[0], "cfg")
+		checks = filepath.Join(cfg, "share-checks")
+		conn = filepath.Join(cfg, "connections", "remote")
+		for _, d := range []string{filepath.Join(checks, "text"), conn} {
+			if err := os.MkdirAll(d, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		c.ToolsImage, c.ToolsCmd = "agentry-runner:test", tools
+		c.HeldRoots = []HeldRoot{
+			{Root: checks, By: []Holder{{Image: "agentry-runner:test", Cmd: tools}}},
+			{Root: conn, By: []Holder{{Image: "agentry-runner:test", Cmd: bridge}}},
+		}
+	})
+	create := func(image string, cmd []string, bind string) map[string]any {
+		return map[string]any{"Image": image, "Cmd": cmd, "HostConfig": map[string]any{
+			"NetworkMode": intNet, "Binds": []string{bind}}}
+	}
+	for _, c := range []struct{ name, bind string }{
+		{"the run's cfg folder", cfg + ":/cfg:ro"},
+		{"the share's verdicts", checks + ":/checks:ro"},
+		{"the text read out of the share's documents", filepath.Join(checks, "text") + ":/text:ro"},
+		{"a connection's folder", conn + ":/conn:ro"},
+		{"the connections' folder", filepath.Dir(conn) + ":/conn:ro"},
+	} {
+		g.refused(t, "a server on a network binding "+c.name, "POST", "/containers/create", create("python:3.13-slim", server, c.bind), "held to the run's container that needs it")
+	}
+	if code, body := g.do(t, "POST", "/containers/create", create("agentry-runner:test", tools, checks+":/run/agentry/share-checks:ro")); code != http.StatusCreated {
+		t.Fatalf("the tools server on a network binding the share's verdicts: %d %s", code, body)
+	}
+	if code, body := g.do(t, "POST", "/containers/create", create("agentry-runner:test", bridge, conn+":/run/agentry/connection:ro")); code != http.StatusCreated {
+		t.Fatalf("the bridge binding its connection's folder: %d %s", code, body)
+	}
+	g.refused(t, "the tools server binding a connection's folder", "POST", "/containers/create", create("agentry-runner:test", tools, conn+":/conn:ro"), "held to the run's container that needs it")
+	g.refused(t, "the bridge binding the share's verdicts", "POST", "/containers/create", create("agentry-runner:test", bridge, checks+":/checks:ro"), "held to the run's container that needs it")
+	g.refused(t, "the tools server binding the run's cfg folder", "POST", "/containers/create", create("agentry-runner:test", tools, cfg+":/cfg:ro"), "held to the run's container that needs it")
+	entry := create("agentry-runner:test", tools, checks+":/checks:ro")
+	entry["Entrypoint"] = []string{"/bin/sh", "-c"}
+	g.refused(t, "the tools server's command under another entrypoint", "POST", "/containers/create", entry, "held to the run's container that needs it")
+	mount := map[string]any{"Image": "python:3.13-slim", "Cmd": server, "HostConfig": map[string]any{"NetworkMode": "none",
+		"Mounts": []any{map[string]any{"Type": "bind", "Source": checks, "Target": "/checks", "ReadOnly": true}}}}
+	g.refused(t, "an offline server mounting the share's verdicts", "POST", "/containers/create", mount, "held to the run's container that needs it")
+}
+
+// TestAFolderAboveAnOfflineRootIsHeldAsTheRoot: a bind of a folder that
+// holds the share's mirror is refused to a container on a network, as the
+// mirror is.
+func TestAFolderAboveAnOfflineRootIsHeldAsTheRoot(t *testing.T) {
+	agent := t.TempDir()
+	mirror := filepath.Join(agent, "share-mirror")
+	if err := os.MkdirAll(mirror, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := filepath.EvalSymlinks(agent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &Filter{cfg: Config{OfflineRoots: []string{mirror}}}
+	if err := f.held(context.Background(), resolved, false, mounter{}); err == nil {
+		t.Error("a server on a network was given the folder that holds the mirror")
+	}
+	if err := f.held(context.Background(), resolved, false, mounter{offline: true}); err != nil {
+		t.Errorf("an offline server: %v", err)
 	}
 }

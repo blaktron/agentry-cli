@@ -150,6 +150,9 @@ func withContainers(enforced map[string]string, p Params) map[string]string {
 	if p.Plan.Conversational() {
 		line += "; the session store's one-shot chown keeps CHOWN alone"
 	}
+	if spec.SharesAny(p.Plan.MCPServers) {
+		line += "; the share outbox's one-shot, run only when a container saved there what the person cannot read or remove, keeps CHOWN, DAC_READ_SEARCH and FOWNER alone, on no network, given the outbox alone, with a read-only root"
+	}
 	browserLine := ""
 	if p.Plan.Browser != nil {
 		// The browser server is one of the gateway's containers, held by

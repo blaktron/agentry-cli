@@ -40,7 +40,7 @@ import (
 
 // ShareChecksLog is the receipt each check of the share appends to: one
 // JSON line a file checked.
-const ShareChecksLog = "share-checks.ndjson"
+const ShareChecksLog = spec.ShareChecksLog
 
 // maxShareCheck bounds one check: the files it takes (the decode step's
 // own cap) and the bytes it copies.
@@ -70,6 +70,9 @@ func preparePersistentFolders(p Params, rd *runDirs) error {
 		return Classify(ExitCompile, errors.New("the segment's share folder and its plan disagree: recompile"))
 	}
 	if !af.Share {
+		if p.Persistent.ShareMirror != "" || spec.SharesAs(p.Plan.MCPServers, spec.ServerShareMirror) || spec.SharesAs(p.Plan.MCPServers, spec.ServerShareLive) {
+			return Classify(ExitCompile, errors.New("the segment's servers are given a share folder its plan does not mount"))
+		}
 		return nil
 	}
 	if err := ShareFolderUsable(p.Persistent.Share); err != nil {
@@ -91,7 +94,56 @@ func preparePersistentFolders(p Params, rd *runDirs) error {
 			return Classify(ExitCLI, err)
 		}
 	}
+	if err := prepareShareMirror(p, rd); err != nil {
+		return err
+	}
+	return prepareShareOut(p, rd)
+}
+
+// prepareShareMirror holds a segment to its plan's servers that see the
+// share: the mirror is given exactly when one sees it, only where the share
+// is checked, and is made to hold what the kept verdicts passed before any
+// server starts; the live share, read-only, only for the Coding agent.
+func prepareShareMirror(p Params, rd *runDirs) error {
+	af := p.Plan.Capabilities.AgentFiles
+	mirror, live := spec.SharesAs(p.Plan.MCPServers, spec.ServerShareMirror), spec.SharesAs(p.Plan.MCPServers, spec.ServerShareLive)
+	switch {
+	case mirror != (p.Persistent.ShareMirror != ""):
+		return Classify(ExitCompile, errors.New("the segment's share mirror and its plan disagree: recompile"))
+	case mirror && !af.CheckShare, live && (af.CheckShare || p.Plan.Capabilities.Coder == nil):
+		return Classify(ExitCompile, errors.New("a server sees the share folder itself only beside the Coding agent, and its mirror only where the share is checked"))
+	case !mirror:
+		return nil
+	}
+	m, err := openShareMirror(p.Persistent.ShareMirror)
+	if err != nil {
+		return Classify(ExitCLI, err)
+	}
+	if err := gatewayCanMount(m.dir, gatewayOS); err != nil {
+		return Classify(ExitCLI, fmt.Errorf("the share mirror %s: %w", m.dir, err))
+	}
+	// The mirror is the runner's own, so it is labelled for the servers'
+	// containers on an SELinux host, the staging folder too, whose label
+	// each copy keeps as it is moved in.
+	stderr := p.Stderr
+	if stderr == nil {
+		stderr = io.Discard
+	}
+	relabelShared(context.Background(), stderr, m.dir)
+	relabelShared(context.Background(), stderr, m.staging)
+	if err := m.sync(rd.share, rd.shareKept); err != nil && p.Stderr != nil {
+		_, _ = fmt.Fprintf(p.Stderr, "note: the share mirror: %v\n", err)
+	}
+	rd.shareMirror = m
 	return nil
+}
+
+// syncShareMirror brings the share mirror to the verdicts, saying in the
+// session what it could not copy.
+func (s *liveSession) syncShareMirror() {
+	if err := s.rd.shareMirror.sync(s.rd.share, s.shares.verdicts); err != nil {
+		s.emit(session.Event{Kind: session.KindNotice, Text: "the share's mirror for the MCP servers could not be brought up to date: " + s.redact.String(err.Error())})
+	}
 }
 
 // shareCache is the verdicts kept between segments, for one share folder.
@@ -302,6 +354,7 @@ func (s *liveSession) checkShare(ctx context.Context) {
 			_ = writeShareVerdicts(rd.shareChecks, sc.verdicts)
 			_ = keepShareCache(rd.shareCache, rd.share, s.shareMalwareCheck(), sc.verdicts)
 			pruneShareText(rd, sc.verdicts)
+			s.syncShareMirror()
 		}
 		return
 	}
@@ -331,6 +384,7 @@ func (s *liveSession) checkShare(ctx context.Context) {
 	}
 	_ = keepShareCache(rd.shareCache, rd.share, s.shareMalwareCheck(), sc.verdicts)
 	pruneShareText(rd, sc.verdicts)
+	s.syncShareMirror()
 	s.logShareChecks(checked)
 	if unchecked > 0 && s.shareMalwareCheck() {
 		s.emit(session.Event{Kind: session.KindNotice, Text: fmt.Sprintf("%d file(s) in the share could not be checked by ClamAV and are read unchecked; receipts/%s says why", unchecked, ShareChecksLog)})
@@ -404,6 +458,14 @@ func (s *liveSession) checkShareFiles(ctx context.Context, todo []shareFile) (ma
 		v.Verdict, v.Signature, v.Reason = shareVerdictOf(byPath[rel], img.Signatures, malwareCheck)
 		if v.Verdict != "" && v.Verdict != toolsrv.ShareFound {
 			v.Text, v.Tool, v.Unread = keepShareText(rd, res, rel, v.SHA256, byPath[rel])
+		}
+		// The servers that see the share get the bytes that were checked,
+		// from the check's own copy, before it is removed.
+		// A copy that fails here is left out of the index, so the sync
+		// after the check copies it from the share, held to the same
+		// digest.
+		if rd.shareMirror != nil && passed(v) {
+			_ = rd.shareMirror.put(rel, filepath.Join(in, filepath.FromSlash(rel)), v.SHA256)
 		}
 		copied[rel] = v
 	}

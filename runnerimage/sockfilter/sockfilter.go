@@ -75,6 +75,27 @@ type Config struct {
 	// two lists, MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS and …_WRITABLE_PATHS).
 	BindRoots     []string
 	WritableRoots []string
+	// ToolsWritableRoots are roots, among WritableRoots, that only the
+	// run's tools server may bind writable, and ToolsOnlyRoots roots that
+	// only it may bind at all: a persistent agent's share folder, which the
+	// tools server writes and an MCP server the person let see it reads
+	// (only beside the Coding agent; elsewhere a server sees its mirror).
+	ToolsWritableRoots []string
+	ToolsOnlyRoots     []string
+	// OfflineRoots are roots any container but the run's tools server may
+	// bind only when it joins no network: a persistent agent's share
+	// folder and its mirror, which an MCP server the person let see the
+	// share reads, so nothing that reaches a host is given them.
+	OfflineRoots []string
+	// HeldRoots are paths, at or beneath BindRoots, that only the
+	// containers each names may bind: the folders and files of the run's
+	// configuration that one server needs and no other may bind (a
+	// connection's token, the target hosts' sign-ins, the browser's
+	// secrets, the share's verdicts and the text read out of its
+	// documents). A bind of a folder that holds one of them, or of a path
+	// beneath one, is held as that path is; so are the roots of the three
+	// lists above.
+	HeldRoots []HeldRoot
 	// SharedNetworks are the networks the runner made for the gateway to
 	// use without the owner label: the run's relay networks. They must
 	// carry Label=RunID; the gateway may not create or remove them.
@@ -232,6 +253,21 @@ type Config struct {
 	Log io.Writer `json:"-"`
 }
 
+// HeldRoot is a path only the containers By name may bind
+// (Config.HeldRoots).
+type HeldRoot struct {
+	Root string
+	By   []Holder
+}
+
+// Holder is one container of the run's: the one of Image (by reference,
+// compared by id) that runs Cmd by the image's own entrypoint. An empty
+// Cmd is the image's own command.
+type Holder struct {
+	Image string
+	Cmd   []string
+}
+
 // relayPortSysctl is the kernel setting that lets a relay bind 443 as a
 // user with no capability on a rootless engine.
 const relayPortSysctl = "net.ipv4.ip_unprivileged_port_start"
@@ -253,7 +289,8 @@ type Filter struct {
 	proxy    *httputil.ReverseProxy
 
 	// webImageID is WebImage resolved on the first check that needs it
-	// (webImage), and kept once it resolved. webMu guards it and
+	// (webImage), and kept once it resolved. webMu guards it,
+	// holderImageIDs and
 	// toolsImageID.
 	webImageID string
 	webMu      sync.Mutex
@@ -261,6 +298,9 @@ type Filter struct {
 	// and browserImageID BrowserImage.
 	toolsImageID   string
 	browserImageID string
+	// holderImageIDs are the held roots' holder images resolved to their
+	// ids, by reference, under webMu.
+	holderImageIDs map[string]string
 
 	mu      sync.Mutex
 	execs   map[string]bool

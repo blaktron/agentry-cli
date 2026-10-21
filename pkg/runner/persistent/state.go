@@ -112,7 +112,28 @@ const (
 	// shareTextDir keeps the text read out of the share's documents
 	// between segments, by the digest each verdict is for.
 	shareTextDir = "share-text"
+	// shareMirrorDir is the share's mirror the MCP servers the person let
+	// see the share mount, with its index and staging folder beside it
+	// (engine.PersistentSegment.ShareMirror).
+	shareMirrorDir = "share-mirror"
 )
+
+// shareMirror is the agent's share mirror folder.
+func shareMirror(home, name string) string { return filepath.Join(Dir(home, name), shareMirrorDir) }
+
+// removeShareMirror removes the share mirror, with what the engine keeps
+// beside it: a segment none of whose servers sees it keeps no copy of the
+// person's files.
+func removeShareMirror(home, name string) error {
+	dir := shareMirror(home, name)
+	staging, index := engine.ShareMirrorBeside(dir)
+	for _, p := range []string{dir, staging, index} {
+		if err := os.RemoveAll(p); err != nil {
+			return fmt.Errorf("remove the %s agent's share mirror: %w", name, err)
+		}
+	}
+	return nil
+}
 
 // LogPath is where a detached supervisor writes what it prints.
 func LogPath(home, name string) string { return filepath.Join(Dir(home, name), logFile) }
@@ -394,7 +415,7 @@ func saveUsage(home, name string, u Usage) error {
 
 // Reset puts a stopped agent back to its defaults, as it was when first
 // enabled: its two volumes, its transcript, its lifetime usage, its share
-// verdicts and its installed servers are removed, and its configuration
+// verdicts, its share mirror and its installed servers are removed, and its configuration
 // keeps only whether it is enabled, so its next start is a first segment
 // that asks its consents again. The segments' receipts and the files in its
 // share folder, which are the person's, are kept; so is a dev server's
@@ -428,6 +449,9 @@ func Reset(ctx context.Context, home, name string, d dockerx.Client) error {
 	}
 	if err := os.RemoveAll(serversDir(home, name)); err != nil {
 		return fmt.Errorf("remove the %s agent's installed servers: %w", name, err)
+	}
+	if err := removeShareMirror(home, name); err != nil {
+		return err
 	}
 	cfg, err := LoadConfig(home, name)
 	if err != nil {

@@ -333,7 +333,8 @@ func (f *Filter) containerCreate(ctx context.Context, body []byte) (any, error) 
 	if err != nil {
 		return nil, err
 	}
-	if err := f.checkStorage(ctx, hc, mounter{tools: tools, appLink: appLink}); err != nil {
+	offline := hc.NetworkMode == "none" && (c.NetworkingConfig == nil || len(c.NetworkingConfig.EndpointsConfig) == 0)
+	if err := f.checkStorage(ctx, hc, mounter{tools: tools, appLink: appLink, offline: offline, create: &c, imageID: imageID}); err != nil {
 		return nil, err
 	}
 	web, err := f.webShape(ctx, &c)
@@ -527,7 +528,15 @@ func writesHost(hc *hostConfig) bool {
 
 // mounter is which of the run's own containers a create is, for the
 // volumes only it may mount.
-type mounter struct{ tools, appLink bool }
+type mounter struct {
+	tools, appLink bool
+	// offline says the container joins no network.
+	offline bool
+	// create and imageID are the create itself and its image's id, which
+	// a held root's holders are matched against (Config.HeldRoots).
+	create  *containerCreateBody
+	imageID string
+}
 
 // isAppLink says whether a create is the run's app link: its one command
 // (Config.AppLinkCmd) in its image (Config.AppLinkImage, by id), run by the
@@ -551,9 +560,14 @@ func (f *Filter) isAppLink(ctx context.Context, c *containerCreateBody, imageID 
 }
 
 // isToolsServer says whether a create is the run's tools server: its one
-// command (Config.ToolsCmd) in its image (Config.ToolsImage, by id).
+// command (Config.ToolsCmd) in its image (Config.ToolsImage, by id), run by
+// the image's own entrypoint, since another entrypoint would take the
+// command for its arguments.
 func (f *Filter) isToolsServer(ctx context.Context, c *containerCreateBody, imageID string) (bool, error) {
 	if f.cfg.ToolsImage == "" || len(f.cfg.ToolsCmd) == 0 {
+		return false, nil
+	}
+	if present(c.Entrypoint) || present(c.Shell) {
 		return false, nil
 	}
 	var cmd []string
@@ -1238,8 +1252,110 @@ func (f *Filter) bind(ctx context.Context, b string, who mounter) (string, error
 	if err != nil {
 		return "", err
 	}
+	if err := f.held(ctx, resolved, write, who); err != nil {
+		return "", err
+	}
 	parts[0] = resolved
 	return strings.Join(parts, ":"), nil
+}
+
+// held refuses a bind of a root the run's tools server alone may bind
+// (Config.ToolsOnlyRoots), or bind writable (Config.ToolsWritableRoots),
+// by any other container; of one only an offline container may bind
+// (Config.OfflineRoots) by another that joins a network; and of a held
+// root (Config.HeldRoots) by a container it does not name. resolved is the
+// bind's resolved source. A source at, beneath or above a root is judged as
+// the root: a folder that holds one would give the container what it
+// holds.
+func (f *Filter) held(ctx context.Context, resolved string, write bool, who mounter) error {
+	touches := func(root string) bool {
+		r, err := filepath.EvalSymlinks(filepath.Clean(root))
+		if err != nil {
+			return false
+		}
+		return within(resolved, r) || within(r, resolved)
+	}
+	anyOf := func(roots []string) bool {
+		return slices.ContainsFunc(roots, touches)
+	}
+	if !who.tools {
+		switch {
+		case anyOf(f.cfg.ToolsOnlyRoots):
+			return deny("bind source %s is one only the run's tools server may bind", resolved)
+		case write && anyOf(f.cfg.ToolsWritableRoots):
+			return deny("bind source %s is one only the run's tools server may write", resolved)
+		case !who.offline && anyOf(f.cfg.OfflineRoots):
+			return deny("bind source %s is given only to a container that joins no network", resolved)
+		}
+	}
+	for _, h := range f.cfg.HeldRoots {
+		if !touches(h.Root) {
+			continue
+		}
+		ok, err := f.holds(ctx, who, h.By)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return deny("bind source %s is held to the run's container that needs it", resolved)
+		}
+	}
+	return nil
+}
+
+// within says whether path p is root or beneath it.
+func within(p, root string) bool {
+	return p == root || strings.HasPrefix(p, root+string(filepath.Separator))
+}
+
+// holds says whether the create who is is one of by: its image, by id, a
+// holder's, run by the image's own entrypoint with that holder's command.
+func (f *Filter) holds(ctx context.Context, who mounter, by []Holder) (bool, error) {
+	c := who.create
+	if c == nil || present(c.Entrypoint) || present(c.Shell) {
+		return false, nil
+	}
+	var cmd []string
+	if present(c.Cmd) && json.Unmarshal(c.Cmd, &cmd) != nil {
+		return false, nil
+	}
+	for _, h := range by {
+		if !slices.Equal(cmd, h.Cmd) {
+			continue
+		}
+		id, err := f.holderImage(ctx, h.Image)
+		if err != nil {
+			return false, err
+		}
+		if id != "" && id == who.imageID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// holderImage is a holder's image resolved to its id, kept once it
+// resolved; "" for an image the daemon does not hold, which no create can
+// be of.
+func (f *Filter) holderImage(ctx context.Context, ref string) (string, error) {
+	f.webMu.Lock()
+	defer f.webMu.Unlock()
+	if id, ok := f.holderImageIDs[ref]; ok {
+		return id, nil
+	}
+	id, err := f.resolveImage(ctx, ref)
+	var nf notFound
+	if errors.As(err, &nf) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if f.holderImageIDs == nil {
+		f.holderImageIDs = map[string]string{}
+	}
+	f.holderImageIDs[ref] = id
+	return id, nil
 }
 
 func (f *Filter) mount(ctx context.Context, m *mount, who mounter) error {
@@ -1272,6 +1388,9 @@ func (f *Filter) mount(ctx context.Context, m *mount, who mounter) error {
 		}
 		resolved, err := f.hostPath(m.Source, !m.ReadOnly)
 		if err != nil {
+			return err
+		}
+		if err := f.held(ctx, resolved, !m.ReadOnly, who); err != nil {
 			return err
 		}
 		m.Source = resolved

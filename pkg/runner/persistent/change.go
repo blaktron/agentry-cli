@@ -175,6 +175,7 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 		}
 		next.Servers = append(next.Servers, *srv)
 		delete(next.Switches, id)
+		delete(next.Switches, id+shareSuffix)
 		delete(next.ServerFailures, id)
 	}
 	if id := ch.RemoveServer; id != "" {
@@ -187,6 +188,7 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 		}
 		next.Servers = slices.Delete(next.Servers, i, i+1)
 		delete(next.Switches, id)
+		delete(next.Switches, id+shareSuffix)
 		delete(next.Consented, id)
 		delete(next.ServerFailures, id)
 	}
@@ -265,7 +267,11 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 		delete(next.Switches, PortEntryID(name))
 		delete(next.Consented, PortEntryID(name))
 	}
-	if sw := ch.Switch; sw != nil {
+	if sw := ch.Switch; sw != nil && strings.HasPrefix(sw.ID, serverPrefix) && strings.HasSuffix(sw.ID, shareSuffix) {
+		if err := switchServerShare(a, &next, *sw); err != nil {
+			return false, err
+		}
+	} else if sw != nil {
 		e, ok := BuildRosterUnder(a, next, nil, malwareCheck).Entry(sw.ID)
 		switch {
 		case !ok:
@@ -311,6 +317,32 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 	restart = grantsKey(home, a, *c) != grantsKey(home, a, next)
 	*c = next
 	return restart, nil
+}
+
+// switchServerShare sets a server's switch that lets it see the share
+// folder: refused for a server the share is never given to
+// (ServerMaySeeShare), and for an agent with no share folder.
+func switchServerShare(a Agent, c *Config, sw Switch) error {
+	id := strings.TrimSuffix(sw.ID, shareSuffix)
+	i := slices.IndexFunc(c.Servers, func(s manifest.MCPServer) bool { return ServerEntryID(s) == id })
+	switch {
+	case i < 0:
+		return fmt.Errorf("the %s agent has no server %s (agentry agent show %s lists them)", a.Name, strings.TrimPrefix(id, serverPrefix), a.Name)
+	case a.ShareName == "":
+		return fmt.Errorf("the %s agent has no share folder", a.Name)
+	}
+	if err := ServerMaySeeShare(c.Servers[i]); err != nil && sw.On {
+		return err
+	}
+	if c.Switches == nil {
+		c.Switches = map[string]bool{}
+	}
+	if sw.On {
+		c.Switches[sw.ID] = true
+	} else {
+		delete(c.Switches, sw.ID)
+	}
+	return nil
 }
 
 // grantsKey is what of a configuration a segment is given, under the runner
@@ -441,6 +473,27 @@ func changeFrame(before, after Roster, continued bool, joined map[string]bool) s
 	for _, e := range after {
 		if has[e.ID] && !had[e.ID] && !joined[e.ID] {
 			on = append(on, strconv.Quote(e.Name))
+		}
+	}
+	// A server kept that now sees the share folder, or no longer does.
+	sees := func(r Roster) map[string]bool {
+		m := map[string]bool{}
+		for _, e := range r {
+			if e.State == StateOn && e.Share {
+				m[e.ID] = true
+			}
+		}
+		return m
+	}
+	saw, seesNow := sees(before), sees(after)
+	for _, e := range after {
+		if !had[e.ID] || !has[e.ID] || saw[e.ID] == seesNow[e.ID] {
+			continue
+		}
+		if seesNow[e.ID] {
+			on = append(on, strconv.Quote(e.Name)+"'s view of the share folder")
+		} else {
+			off = append(off, strconv.Quote(e.Name)+"'s view of the share folder")
 		}
 	}
 	for _, e := range before {
