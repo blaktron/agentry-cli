@@ -413,7 +413,7 @@ func pinFile(registryURL string) (string, error) {
 		if os.IsNotExist(err) {
 			return path, nil
 		}
-		return "", fmt.Errorf("read the pinned keys of an earlier name: %w", err)
+		return "", fmt.Errorf("read the pinned keys under the legacy name: %w", err)
 	}
 	if err := writeNewFile(path, data); err != nil {
 		return "", fmt.Errorf("carry the pinned keys over to %s: %w", filepath.Base(path), err)
