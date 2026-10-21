@@ -47,23 +47,27 @@ func TestPypiBuilderRunsUnderPython(t *testing.T) {
 	idx := httptest.NewServer(mux)
 	t.Cleanup(idx.Close)
 
+	var archive []byte
 	build := func(t *testing.T, pkg string, sums string) (string, int, string) {
 		t.Helper()
-		prefix := t.TempDir()
-		if err := os.WriteFile(filepath.Join(prefix, artifactSumsFile), []byte(sums), 0o600); err != nil {
-			t.Fatal(err)
-		}
+		// The prefix does not exist yet: the builder makes it, as it does
+		// inside the container.
+		prefix := filepath.Join(t.TempDir(), "prefix")
 		r := Resolved{Package: pkg, Version: "1.0.0"}
 		argv := pipArgv(&r, policy.MCPRegistries{PyPI: idx.URL})
 		argv[3] = prefix // the in-container prefix, here a host directory
 		cmd := exec.Command(py, argv[1:]...)
-		out, err := cmd.CombinedOutput()
+		cmd.Stdin = strings.NewReader(sums)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		err := cmd.Run()
+		archive = stdout.Bytes()
 		var exit *exec.ExitError
 		switch {
 		case err == nil:
-			return prefix, 0, string(out)
+			return prefix, 0, stderr.String()
 		case errors.As(err, &exit):
-			return prefix, exit.ExitCode(), string(out)
+			return prefix, exit.ExitCode(), stderr.String()
 		default:
 			t.Fatalf("run builder: %v", err)
 			return "", 0, ""
@@ -74,6 +78,41 @@ func TestPypiBuilderRunsUnderPython(t *testing.T) {
 		prefix, code, out := build(t, "demo-mcp", digest+"  "+name+"\n")
 		if code != 0 {
 			t.Fatalf("exit %d:\n%s", code, out)
+		}
+		// The sums it read on stdin are kept in the tree; the tree holds no
+		// link (the interpreter is a copy, lib64 is gone); and stdout is the
+		// archive of the tree alone, which unpacks into a store.
+		if kept, err := os.ReadFile(filepath.Join(prefix, artifactSumsFile)); err != nil || string(kept) != digest+"  "+name+"\n" {
+			t.Fatalf("artifact sums kept = %q (%v)", kept, err)
+		}
+		unpacked := t.TempDir()
+		if err := unpackStore(bytes.NewReader(archive), unpacked); err != nil {
+			t.Fatalf("the builder's stdout is not an archive the store takes: %v\n%s", err, out)
+		}
+		if fi, err := os.Lstat(filepath.Join(unpacked, "venv", "bin", "python")); err != nil || !fi.Mode().IsRegular() {
+			t.Fatalf("venv/bin/python is not a file of its own: %v %v", fi, err)
+		}
+		if _, err := os.Lstat(filepath.Join(unpacked, "venv", "lib64")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("venv/lib64 is still there: %v", err)
+		}
+		if fi, err := os.Stat(filepath.Join(unpacked, "venv", "bin", "demo-mcp")); err != nil || fi.Mode().Perm()&0o111 == 0 {
+			t.Fatalf("the console script did not keep its executable bits: %v %v", fi, err)
+		}
+		// The package's modules are compiled to load without a check of
+		// their source's time, which the store does not keep: a pyc's
+		// flags word is 1 (hash-based, unchecked).
+		pycs, _ := filepath.Glob(filepath.Join(unpacked, "venv", "lib", "python3*", "site-packages", "demo_mcp", "__pycache__", "*.pyc"))
+		if len(pycs) == 0 {
+			t.Fatal("the package's modules were not compiled")
+		}
+		for _, pyc := range pycs {
+			b, err := os.ReadFile(pyc)
+			if err != nil || len(b) < 8 || b[4] != 1 || b[5] != 0 || b[6] != 0 || b[7] != 0 {
+				t.Fatalf("%s is not an unchecked hash-based pyc: % x (%v)", pyc, b[:min(len(b), 8)], err)
+			}
+		}
+		if got, want := treeListing(t, unpacked), treeListing(t, prefix); got != want {
+			t.Fatalf("the archive does not hold the tree:\n%s\nwant\n%s", got, want)
 		}
 		scripts, err := os.ReadFile(filepath.Join(prefix, consoleScriptsFile))
 		if err != nil || string(scripts) != "demo-mcp\n" {
@@ -103,6 +142,33 @@ func TestPypiBuilderRunsUnderPython(t *testing.T) {
 			t.Fatal("the value reached a shell: the canary exists")
 		}
 	})
+}
+
+// treeListing lists a tree's folders and files with their sizes and
+// executable bits, one per line in walk order.
+func treeListing(t *testing.T, dir string) string {
+	t.Helper()
+	var b strings.Builder
+	err := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(dir, p)
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			fmt.Fprintf(&b, "D %s\n", rel)
+		} else {
+			fmt.Fprintf(&b, "F %s %d %o\n", rel, info.Size(), info.Mode().Perm()&0o111)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b.String()
 }
 
 // demoWheel builds a minimal pure-Python wheel, demo-mcp 1.0.0, with one

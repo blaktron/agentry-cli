@@ -1,6 +1,8 @@
 package main
 
 import (
+	"archive/tar"
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -78,11 +80,9 @@ func TestRunLaunchesTheConsoleScriptItsFirstInstallFound(t *testing.T) {
 
 	builds := 0
 	f := &dockerx.Fake{Foreground: map[string]*dockerx.FakeForeground{
-		"agentry-mcpinstall-pypi-some-word-server": {Before: func(r dockerx.RunSpec) {
+		"agentry-mcpinstall-pypi-some-word-server": {Print: func(dockerx.RunSpec) string {
 			builds++
-			if err := os.WriteFile(filepath.Join(r.Mounts[0].Source, "console-scripts"), []byte("word_server\n"), 0o600); err != nil {
-				t.Error(err)
-			}
+			return consoleScriptsArchive(t)
 		}},
 	}}
 	// The runner image, which the fake daemon does not keep once it is
@@ -155,4 +155,23 @@ func assertLaunches(t *testing.T, planDir, want string) {
 	if !strings.Contains(string(catalog), want) || strings.Contains(string(catalog), "/venv/bin/some-word-server") {
 		t.Fatalf("the gateway catalog does not launch %s:\n%s", want, catalog)
 	}
+}
+
+// consoleScriptsArchive is a PyPI builder's stdout for a server whose one
+// console script is word_server: the tree it installed, as one tar archive.
+func consoleScriptsArchive(t *testing.T) string {
+	t.Helper()
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	body := "word_server\n"
+	if err := tw.WriteHeader(&tar.Header{Name: "console-scripts", Mode: 0o644, Size: int64(len(body)), Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write([]byte(body)); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.String()
 }

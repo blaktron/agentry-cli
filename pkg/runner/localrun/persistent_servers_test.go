@@ -1,6 +1,8 @@
 package localrun
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -98,12 +100,29 @@ func wordServerRegistry(t *testing.T) *policy.Policy {
 // wordServerBuild plays some-word-server's install, counting the builds:
 // the distribution's one console script is word_server.
 func wordServerBuild(t *testing.T, builds *int) *dockerx.FakeForeground {
-	return &dockerx.FakeForeground{Before: func(r dockerx.RunSpec) {
+	return &dockerx.FakeForeground{Print: func(dockerx.RunSpec) string {
 		*builds++
-		if err := os.WriteFile(filepath.Join(r.Mounts[0].Source, "console-scripts"), []byte("word_server\n"), 0o600); err != nil {
-			t.Error(err)
-		}
+		return consoleScriptsArchive(t)
 	}}
+}
+
+// consoleScriptsArchive is a PyPI builder's stdout for a server whose one
+// console script is word_server: the tree it installed, as one tar archive.
+func consoleScriptsArchive(t *testing.T) string {
+	t.Helper()
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	body := "word_server\n"
+	if err := tw.WriteHeader(&tar.Header{Name: "console-scripts", Mode: 0o644, Size: int64(len(body)), Typeflag: tar.TypeReg}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write([]byte(body)); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.String()
 }
 
 // segmentLaunches holds a segment's plan, and the gateway catalog compiled
