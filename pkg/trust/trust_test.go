@@ -228,20 +228,21 @@ func TestPinnedKeysPath(t *testing.T) {
 	cfg := isolatePins(t)
 	tests := []struct {
 		url  string
-		file string
+		file string // the readable part of the name
 	}{
-		{"https://registry.example", "registry.example.yaml"},
-		{"http://registry.example:8443/", "registry.example_8443.yaml"},
-		{"https://reg.example/sub/path/", "reg.example_sub_path.yaml"},
-		{"reg.example", "reg.example.yaml"}, // schemeless stays usable
+		{"https://registry.example", "registry.example-"},
+		{"http://registry.example:8443/", "registry.example_8443-"},
+		{"https://reg.example/sub/path/", "reg.example_sub_path-"},
+		{"reg.example", "reg.example-"}, // schemeless stays usable
 	}
 	for _, tc := range tests {
 		got, err := PinnedKeysPath(tc.url)
 		if err != nil {
 			t.Fatalf("PinnedKeysPath(%q): %v", tc.url, err)
 		}
-		if want := filepath.Join(cfg, "keys", tc.file); got != want {
-			t.Errorf("PinnedKeysPath(%q) = %q, want %q", tc.url, got, want)
+		if dir, name := filepath.Split(got); dir != filepath.Join(cfg, "keys")+string(filepath.Separator) ||
+			!strings.HasPrefix(name, tc.file) || !strings.HasSuffix(name, ".yaml") || len(name) != len(tc.file)+len("0123456789abcdef.yaml") {
+			t.Errorf("PinnedKeysPath(%q) = %q, want a name %q + 16 hex digits + .yaml in %s", tc.url, got, tc.file, cfg)
 		}
 	}
 
@@ -251,6 +252,140 @@ func TestPinnedKeysPath(t *testing.T) {
 	if _, err := PinnedKeysPath("https://x.test"); err == nil {
 		t.Fatal("PinnedKeysPath with no HOME must error")
 	}
+}
+
+// TestPinFilesTellRegistryAddressesApart: addresses the legacy name folded
+// together (a scheme, "/" against "_", ":" against "_") each have a file of
+// their own, while spellings of one address that differ only in the case of
+// the scheme and host, or a trailing slash, share one.
+func TestPinFilesTellRegistryAddressesApart(t *testing.T) {
+	isolatePins(t)
+	distinct := [][]string{
+		{"https://a/x_y", "https://a/x/y"},
+		{"http://h", "https://h"},
+		{"https://h:8080", "https://h_8080"},
+		{"https://h/Path", "https://h/path"},
+		{"https://h", "h"},
+		{"https://a/b", "https://a/b?c"},
+	}
+	for _, pair := range distinct {
+		a, _ := PinnedKeysPath(pair[0])
+		b, _ := PinnedKeysPath(pair[1])
+		if a == b {
+			t.Errorf("%q and %q share the pin file %s", pair[0], pair[1], a)
+		}
+	}
+	// The first three pairs are the ones the legacy name folded together.
+	for _, pair := range distinct[:3] {
+		if legacyPinFileName(pair[0]) != legacyPinFileName(pair[1]) {
+			t.Errorf("%q and %q no longer fold to one legacy name", pair[0], pair[1])
+		}
+	}
+	same := [][]string{
+		{"https://Reg.Example", "https://reg.example/"},
+		{"HTTPS://reg.example/a/", "https://reg.example/a"},
+	}
+	for _, pair := range same {
+		a, _ := PinnedKeysPath(pair[0])
+		b, _ := PinnedKeysPath(pair[1])
+		if a != b {
+			t.Errorf("%q and %q have different pin files %s and %s", pair[0], pair[1], a, b)
+		}
+	}
+	long := "https://reg.example/" + strings.Repeat("a", 300)
+	if name, _ := PinnedKeysPath(long); len(filepath.Base(name)) > 100 {
+		t.Errorf("a long address makes a %d-character file name", len(filepath.Base(name)))
+	}
+}
+
+// writeLegacyPin writes a pin file under the name the legacy form gave
+// registryURL.
+func writeLegacyPin(t *testing.T, cfg, registryURL string, set KeySet) string {
+	t.Helper()
+	path := filepath.Join(cfg, "keys", legacyPinFileName(registryURL))
+	if err := savePinnedFile(path, set); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestLegacyPinsAreCarriedOver: a pin under the legacy name is read through
+// the new name, copied to it (0600) with the legacy file left, never copied
+// over a pin the new name already has, and a pin that differs from what the
+// registry advertises is still reported at login rather than replaced.
+func TestLegacyPinsAreCarriedOver(t *testing.T) {
+	s := newSigner(t)
+	other := newSigner(t)
+	const reg = "https://reg.example/api"
+
+	t.Run("a pin survives the rename", func(t *testing.T) {
+		cfg := isolatePins(t)
+		legacy := writeLegacyPin(t, cfg, reg, s.keySet())
+		got, err := LoadPinned(reg)
+		if err != nil || len(got.Keys) != 1 || got.Keys[0] != s.keySet().Keys[0] {
+			t.Fatalf("LoadPinned = (%+v, %v), want the legacy pin", got, err)
+		}
+		own, _ := PinnedKeysPath(reg)
+		if fi, err := os.Stat(own); err != nil || fi.Mode().Perm() != 0o600 {
+			t.Fatalf("the carried pin file = (%v, %v), want mode 0600", fi, err)
+		}
+		if _, err := os.Stat(legacy); err != nil {
+			t.Errorf("the legacy file was removed: %v", err)
+		}
+		if left, _ := filepath.Glob(filepath.Join(cfg, "keys", ".pin-*")); len(left) != 0 {
+			t.Errorf("temporary files left: %v", left)
+		}
+	})
+
+	t.Run("an address that folded to the same name adopts it too", func(t *testing.T) {
+		cfg := isolatePins(t)
+		writeLegacyPin(t, cfg, "https://a/x_y", s.keySet())
+		for _, u := range []string{"https://a/x_y", "https://a/x/y"} {
+			if got, _ := LoadPinned(u); len(got.Keys) != 1 {
+				t.Errorf("%s lost the pin it shared: %+v", u, got)
+			}
+		}
+	})
+
+	t.Run("the new name's own pin wins", func(t *testing.T) {
+		cfg := isolatePins(t)
+		writeLegacyPin(t, cfg, reg, s.keySet())
+		if err := SavePinned(reg, other.keySet()); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := LoadPinned(reg)
+		if len(got.Keys) != 1 || got.Keys[0] != other.keySet().Keys[0] {
+			t.Fatalf("LoadPinned = %+v, want the new file's pin", got)
+		}
+	})
+
+	t.Run("login keeps the carried pin and reports a changed key", func(t *testing.T) {
+		cfg := isolatePins(t)
+		registry := newRegistry(t, other.keySet(), nil)
+		writeLegacyPin(t, cfg, registry.srv.URL, s.keySet())
+		res := PinAtLoginResult(context.Background(), http.DefaultClient, registry.srv.URL)
+		if res.Status != "mismatch" {
+			t.Fatalf("login = %+v, want a mismatch against the carried pin, not a first-use pin", res)
+		}
+		if !strings.Contains(res.Note, legacyPinFileName(registry.srv.URL)) {
+			t.Errorf("the re-pin advice does not name the legacy file that would be carried over again: %q", res.Note)
+		}
+		got, _ := LoadPinned(registry.srv.URL)
+		if len(got.Keys) != 1 || got.Keys[0] != s.keySet().Keys[0] {
+			t.Errorf("the pin was replaced: %+v", got)
+		}
+	})
+
+	t.Run("an unreadable legacy file is an error, not an empty pin", func(t *testing.T) {
+		cfg := isolatePins(t)
+		legacy := filepath.Join(cfg, "keys", legacyPinFileName(reg))
+		if err := os.MkdirAll(legacy, 0o700); err != nil { // a folder where the file would be
+			t.Fatal(err)
+		}
+		if _, err := LoadPinned(reg); err == nil {
+			t.Fatal("LoadPinned over an unreadable legacy pin must error")
+		}
+	})
 }
 
 func TestPinRoundTrip(t *testing.T) {

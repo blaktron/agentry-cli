@@ -9,6 +9,8 @@ package trust
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -317,23 +319,148 @@ func PinnedKeysPath(registryURL string) (string, error) {
 	return ownPinnedKeysPath(registryURL)
 }
 
+// pinnedFile is PinnedKeysPath with the legacy pins carried over (pinFile).
+func pinnedFile(registryURL string) (string, error) {
+	if pin := os.Getenv(EnvPinRegistry); pin != "" {
+		registryURL = pin
+	}
+	return pinFile(registryURL)
+}
+
 // ownPinnedKeysPath is registryURL's own pin file, whatever the override
-// says: login pins the registry it was pointed at, never another one.
+// says: login pins the registry it was pointed at, never another one. The
+// file's name is injective in the registry's address, scheme included: a
+// readable form of the address for a person looking at the folder, and a
+// digest of the normalised address (scheme and host in lower case, no
+// trailing slash) that tells addresses apart whatever characters the
+// readable form folds together.
 func ownPinnedKeysPath(registryURL string) (string, error) {
 	dir, err := configdir.Dir()
 	if err != nil {
 		return "", err
 	}
+	return filepath.Join(dir, "keys", pinFileName(registryURL)), nil
+}
+
+// normalizeRegistry is the address two spellings of one registry share: the
+// scheme and host in lower case and no trailing slash. The path keeps its
+// case, and a port or a path is never folded away.
+func normalizeRegistry(registryURL string) string {
+	s := strings.TrimRight(strings.TrimSpace(registryURL), "/")
+	scheme, rest, ok := strings.Cut(s, "://")
+	if !ok {
+		return strings.ToLower(s)
+	}
+	host, path, _ := strings.Cut(rest, "/")
+	n := strings.ToLower(scheme) + "://" + strings.ToLower(host)
+	if path != "" {
+		n += "/" + path
+	}
+	return n
+}
+
+// pinFileName is the name of registryURL's pin file.
+func pinFileName(registryURL string) string {
+	n := normalizeRegistry(registryURL)
+	sum := sha256.Sum256([]byte(n))
+	readable := n
+	if _, rest, ok := strings.Cut(n, "://"); ok {
+		readable = rest
+	}
+	readable = strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '.', r == '-':
+			return r
+		}
+		return '_'
+	}, readable)
+	if len(readable) > 48 {
+		readable = readable[:48]
+	}
+	return readable + "-" + hex.EncodeToString(sum[:8]) + ".yaml"
+}
+
+// legacyPinFileName is the name registryURL's pin file had when the scheme
+// was dropped and "/" and ":" were folded into "_", so that different
+// addresses shared one file.
+func legacyPinFileName(registryURL string) string {
 	host := registryURL
 	host = strings.TrimPrefix(strings.TrimPrefix(host, "https://"), "http://")
 	host = strings.ReplaceAll(strings.TrimRight(host, "/"), "/", "_")
 	host = strings.ReplaceAll(host, ":", "_")
-	return filepath.Join(dir, "keys", host+".yaml"), nil
+	return host + ".yaml"
+}
+
+// pinFile is registryURL's own pin file with its pins carried over from the
+// legacy name: when the file does not exist and the legacy file does, the
+// legacy file's pins are copied to it, so no pin is lost to the new name. The
+// legacy file is left in place. It may be the pin of another address that
+// folded to the same name, which then adopts it the same way: a key that
+// differs from the pinned one is reported at login and refused at verify, as
+// for any pin, and a registry is never trusted on first use again for want
+// of a file.
+func pinFile(registryURL string) (string, error) {
+	path, err := ownPinnedKeysPath(registryURL)
+	if err != nil {
+		return "", err
+	}
+	if _, err := os.Stat(path); err == nil || !os.IsNotExist(err) {
+		return path, err
+	}
+	legacy := filepath.Join(filepath.Dir(path), legacyPinFileName(registryURL))
+	data, err := os.ReadFile(legacy) //nolint:gosec // path derives from config dir
+	if err != nil {
+		if os.IsNotExist(err) {
+			return path, nil
+		}
+		return "", fmt.Errorf("read the pinned keys of an earlier name: %w", err)
+	}
+	if err := writeNewFile(path, data); err != nil {
+		return "", fmt.Errorf("carry the pinned keys over to %s: %w", filepath.Base(path), err)
+	}
+	return path, nil
+}
+
+// legacyPinHint names the legacy pin file beside own, when there is one, for
+// a re-pin: it would be carried over again to a pin file that was deleted.
+func legacyPinHint(own, registryURL string) string {
+	legacy := filepath.Join(filepath.Dir(own), legacyPinFileName(registryURL))
+	if _, err := os.Stat(legacy); err != nil {
+		return ""
+	}
+	return " and " + legacy
+}
+
+// writeNewFile creates path (0600) holding data, whole or not at all, and
+// leaves a file that appeared meanwhile as it is.
+func writeNewFile(path string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".pin-*")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(tmp.Name()) }()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp.Name(), 0o600); err != nil {
+		return err
+	}
+	if err := os.Link(tmp.Name(), path); err != nil && !os.IsExist(err) {
+		return err
+	}
+	return nil
 }
 
 // LoadPinned reads the pinned set (empty when nothing is pinned yet).
 func LoadPinned(registryURL string) (KeySet, error) {
-	path, err := PinnedKeysPath(registryURL)
+	path, err := pinnedFile(registryURL)
 	if err != nil {
 		return KeySet{}, err
 	}
@@ -358,7 +485,7 @@ func loadPinnedFile(path string) (KeySet, error) {
 
 // SavePinned writes the pinned set (0600).
 func SavePinned(registryURL string, set KeySet) error {
-	path, err := PinnedKeysPath(registryURL)
+	path, err := pinnedFile(registryURL)
 	if err != nil {
 		return err
 	}
@@ -405,7 +532,7 @@ func PinAtLoginResult(ctx context.Context, hc *http.Client, registryURL string) 
 	// AGENTRY_PIN_REGISTRY names: the override chooses which pins verify,
 	// and must never let a prefix's keys be written into another
 	// registry's pin file.
-	own, err := ownPinnedKeysPath(registryURL)
+	own, err := pinFile(registryURL)
 	if err != nil {
 		return LoginPinResult{"unavailable", "could not read pinned signing keys: " + err.Error()}
 	}
@@ -450,7 +577,7 @@ func PinAtLoginResult(ctx context.Context, hc *http.Client, registryURL string) 
 	// A superset is reported as consistent with a rotation, which is
 	// all the client can tell, and is still not adopted: the new key is
 	// trusted only after a deliberate re-pin.
-	repin := "delete " + own + " and log in again to re-pin deliberately"
+	repin := "delete " + own + legacyPinHint(own, registryURL) + " and log in again to re-pin deliberately"
 	if change.Rotation() {
 		return LoginPinResult{"rotation", "possible key rotation: the registry " + change.String() + " and still advertises every pinned key" + statusNote + ", which is consistent with a key rotation. " +
 			"Verification keeps using the pinned keys, so releases they signed still verify and a release signed only by the new key is refused until you re-pin. " +
