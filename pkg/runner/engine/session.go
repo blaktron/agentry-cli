@@ -163,6 +163,7 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 		return fail(err)
 	}
 	env.CapabilitiesEnforced = withSignInRenewal(env.CapabilitiesEnforced, p)
+	ReportStage(p.OnStage, Stage{Name: receipt.StagePrepare})
 	rd, err := prepareRunDirs(p, runID, td)
 	if err != nil {
 		return fail(err)
@@ -274,6 +275,7 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	td.add(func(context.Context) { stopRenewal() })
 
 	var served []string
+	ReportStage(p.OnStage, Stage{Name: receipt.StageInfra})
 	infraErr := startInfra(ctx, d, p, rd, td, runID, token, rep, &served)
 	if len(rd.modelHosts) > 0 {
 		env.CapabilitiesEnforced["llm-proxy.hosts"] = modelHostsLine(rd.modelHosts)
@@ -295,6 +297,7 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	if err := renderPlanFiles(p.Plan, p.PlanDir, rd, nativePath, "harness"); err != nil {
 		return fail(err)
 	}
+	ReportStage(p.OnStage, Stage{Name: receipt.StageAgent, Subject: harnessTitle(p.Plan.Harness.Adapter)})
 	if err := s.startHarness(ctx, token, rep); err != nil {
 		return fail(err)
 	}
@@ -513,7 +516,10 @@ func (s *liveSession) startHarness(ctx context.Context, token string, rep *strin
 		awaitExit()
 		return Classify(ExitHarness, fmt.Errorf("interactive session: %w", err))
 	}
-	s.drv = drv
+	s.setDriver(drv)
+	if opts.ContinueID != "" {
+		ReportStage(p.OnStage, Stage{Name: receipt.StageAgent, Detail: StageDetailResume, Subject: harnessTitle(p.Plan.Harness.Adapter)})
+	}
 	handshake, cancelHS := context.WithTimeout(agentCtx, 120*time.Second)
 	defer cancelHS()
 	err = drv.Start(handshake)
@@ -522,7 +528,7 @@ func (s *liveSession) startHarness(ctx context.Context, token string, rep *strin
 		notContinued = nc.Reason
 		drv, err = s.relaunchAnew(handshake, drv, &opts)
 		if drv != nil {
-			s.drv = drv
+			s.setDriver(drv)
 		}
 	} else if relaunchable {
 		s.harnessDone()
@@ -1123,17 +1129,26 @@ func (s *liveSession) closeEvents() {
 	}
 }
 
+// setDriver sets the session's driver under mu: a harness that exits while
+// the session starts ends it (endWith) on the goroutine that watched it.
+func (s *liveSession) setDriver(drv adapter.SessionDriver) {
+	s.mu.Lock()
+	s.drv = drv
+	s.mu.Unlock()
+}
+
 // endWith marks the session over for reason (first reason wins), stops
 // the harness, and closes the event stream after the session_end event.
 func (s *liveSession) endWith(reason session.EndReason) {
 	s.endOnce.Do(func() {
 		s.mu.Lock()
 		s.ended, s.reason = true, reason
+		started := s.drv != nil
 		s.mu.Unlock()
 		s.emit(session.Event{Kind: session.KindSessionEnd, Reason: reason})
 		close(s.done)
 		stdin, exited := s.harness()
-		if s.drv != nil {
+		if started {
 			// stdin EOF: the harness exits by itself; the context kill is
 			// the backstop.
 			_ = stdin.Close()

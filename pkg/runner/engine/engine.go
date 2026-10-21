@@ -234,6 +234,10 @@ type Params struct {
 	RunID string
 	// Stderr receives progress and diagnostics.
 	Stderr io.Writer
+	// OnStage, when set, is called as a session's start reaches each of
+	// its steps (Stage), so a client can say what it is doing. Nil does
+	// nothing; a run (Run) reports none.
+	OnStage func(Stage)
 	// OnUsage, when set, is called every time the harness reports usage,
 	// with the run's running totals. It is what lets a driver meter a run
 	// while it is live: the envelope's usage arrives only at the end, so

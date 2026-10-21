@@ -475,6 +475,15 @@ func (f *logFollower) flush() {
 	f.off += n
 }
 
+// stageLines writes each stage a segment's start reaches as a "stage:" line
+// of the supervisor's log, in the words a person is shown, which agentry
+// agent start prints as the log grows.
+func stageLines(w io.Writer) func(persistent.Stage) {
+	return func(st persistent.Stage) {
+		_, _ = fmt.Fprintf(w, "stage: %s\n", st.Words())
+	}
+}
+
 func newAgentSuperviseCmd() *cobra.Command {
 	var policyPath string
 	cmd := &cobra.Command{
@@ -517,6 +526,7 @@ func newAgentSuperviseCmd() *cobra.Command {
 				Home: home, Agent: a, Client: persistent.ClientCLI,
 				Policy: pol, PolicySHA: sha, PolicyFile: &file, Build: version.Build(),
 				Docker: dockerx.New(), Stderr: errOut, Packs: agentPacks(cmd),
+				OnStage: stageLines(errOut),
 			})
 			close(starting)
 			if err != nil {

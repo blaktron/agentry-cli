@@ -22,20 +22,8 @@ import (
 // the plan the segment starts launches the script the install found, and the
 // next start resolves the server from the store and reuses that plan.
 func TestSegmentLaunchesTheConsoleScriptItsFirstInstallFound(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /pypi/some-word-server/1.1.11/json", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"info":{},"urls":[
-		  {"packagetype":"bdist_wheel","filename":"some_word_server-1.1.11-py3-none-any.whl","digests":{"sha256":"cafe"}}]}`))
-	})
-	registry := httptest.NewTLSServer(mux)
-	t.Cleanup(registry.Close)
-	before := http.DefaultTransport
-	http.DefaultTransport = registry.Client().Transport
-	t.Cleanup(func() { http.DefaultTransport = before })
-
 	home, store := t.TempDir(), t.TempDir()
-	pol := policy.Default()
-	pol.MCPRegistries.PyPI = registry.URL
+	pol := wordServerRegistry(t)
 	seg := Segment{Builtin: Assistant(), Home: home, Policy: pol, PolicySHA: "s", Build: "test", Grants: Grants{
 		Servers:    []manifest.MCPServer{{PyPI: "some-word-server", Version: "1.1.11", Tools: []string{"create_document"}}},
 		ServersDir: store,
@@ -91,6 +79,25 @@ func TestSegmentLaunchesTheConsoleScriptItsFirstInstallFound(t *testing.T) {
 		t.Fatalf("the next start installed again (%d builds): %v", builds, err)
 	}
 	segmentLaunches(t, again, want)
+}
+
+// wordServerRegistry serves PyPI's metadata of some-word-server 1.1.11 for
+// the test and returns the default policy pointed at it.
+func wordServerRegistry(t *testing.T) *policy.Policy {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /pypi/some-word-server/1.1.11/json", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"info":{},"urls":[
+		  {"packagetype":"bdist_wheel","filename":"some_word_server-1.1.11-py3-none-any.whl","digests":{"sha256":"cafe"}}]}`))
+	})
+	registry := httptest.NewTLSServer(mux)
+	t.Cleanup(registry.Close)
+	before := http.DefaultTransport
+	http.DefaultTransport = registry.Client().Transport
+	t.Cleanup(func() { http.DefaultTransport = before })
+	pol := policy.Default()
+	pol.MCPRegistries.PyPI = registry.URL
+	return pol
 }
 
 // segmentLaunches holds a segment's plan, and the gateway catalog compiled
