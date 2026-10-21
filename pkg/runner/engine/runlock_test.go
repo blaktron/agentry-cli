@@ -44,6 +44,7 @@ func writeRunSecrets(root string) {
 		rd.secretsPath: "ENGINE_TEST_TOKEN=sekret-value-1234\n",
 		filepath.Join(rd.connections(), "a-server", "me@agentry.invalid.json"): `{"access_token":"at-1234"}`,
 		filepath.Join(rd.modelSignInDir(), "token"):                            "signin-1234",
+		filepath.Join(rd.knowledge, "notes", "pages", "topic.md"):              "# A page of the attached pack, in the clear\n",
 		filepath.Join(rd.workspace, "SKILL.md"):                                "Do the test.\n",
 	} {
 		_ = os.MkdirAll(filepath.Dir(path), 0o700)
@@ -105,7 +106,7 @@ func TestSweepRemovesTheSecretsOfAKilledRunAndNeverALiveOnes(t *testing.T) {
 
 	var out bytes.Buffer
 	sweepRunDirs(home, home, nil, &out)
-	if !pathExists(rd.secretsPath) || !pathExists(rd.connections()) || !pathExists(rd.modelSignInDir()) {
+	if !pathExists(rd.secretsPath) || !pathExists(rd.connections()) || !pathExists(rd.modelSignInDir()) || !pathExists(rd.knowledge) {
 		t.Fatalf("the sweep removed a live run's files: %s", out.String())
 	}
 	if out.Len() != 0 {
@@ -116,6 +117,9 @@ func TestSweepRemovesTheSecretsOfAKilledRunAndNeverALiveOnes(t *testing.T) {
 	sweepRunDirs(home, home, nil, &out)
 	if pathExists(root) {
 		t.Errorf("the killed run's directory is still there")
+	}
+	if pathExists(rd.knowledge) {
+		t.Errorf("the killed run's copy of an attached pack is still there")
 	}
 	if !strings.Contains(out.String(), "dead0001") {
 		t.Errorf("the sweep did not say what it removed: %q", out.String())
@@ -133,7 +137,7 @@ func TestSweepKeepsAKilledKeptRunsDirectoryButNotItsSecrets(t *testing.T) {
 	rd := runDirsAt(root)
 
 	sweepRunDirs(home, home, nil, nil)
-	for _, gone := range []string{rd.secretsPath, rd.connections(), rd.modelSignInDir(), filepath.Join(root, RunLockFile)} {
+	for _, gone := range []string{rd.secretsPath, rd.connections(), rd.modelSignInDir(), rd.knowledge, filepath.Join(root, RunLockFile)} {
 		if pathExists(gone) {
 			t.Errorf("%s survived the sweep of a killed kept run", gone)
 		}

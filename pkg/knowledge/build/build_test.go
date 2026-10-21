@@ -815,6 +815,57 @@ func TestBuildNamesAWorkDirectoryItCouldNotDelete(t *testing.T) {
 	}
 }
 
+// A build killed before it could delete its work directory leaves the
+// documents, their decoded text and the pages in the clear under the runner
+// home: the next build removes the directory of a build that is gone, and
+// leaves one a live build holds.
+func TestABuildRemovesWhatAKilledBuildLeftInItsWorkDirectory(t *testing.T) {
+	fx := newFixture(t, &dockerx.FakeForeground{Stdout: finalMessage})
+	fx.fake.Foreground["-agent"].Before = writes(fx.opts.OutDir, map[string]string{
+		"wiki/topics/power-loss.md": page("Power loss", "incident-report.pdf"),
+	})
+	workRoot := filepath.Join(fx.opts.Home, "work")
+	leave := func(name string) string {
+		dir := filepath.Join(workRoot, name)
+		writeFile(t, filepath.Join(dir, "docs", "incident-report.pdf"), "the document, in the clear")
+		writeFile(t, filepath.Join(dir, "apply", "wiki", "topics", "page.md"), "a page, in the clear")
+		return dir
+	}
+	dead, live := leave("knowledge-build-dead"), leave("knowledge-build-live")
+	// What a killed build leaves: its lock file, held by no one.
+	release, err := engine.HoldWorkDir(dead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	holdLive, err := engine.HoldWorkDir(live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(holdLive)
+
+	var stderr strings.Builder
+	fx.opts.Stderr = &stderr
+	if _, err := Build(context.Background(), fx.fake, fx.opts); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if _, err := os.Stat(dead); err == nil {
+		t.Error("the killed build's work directory survived the next build")
+	}
+	if _, err := os.Stat(live); err != nil {
+		t.Errorf("the next build removed a live build's work directory: %v", err)
+	}
+	if !strings.Contains(stderr.String(), "knowledge-build-dead") {
+		t.Errorf("the build did not say what it removed:\n%s", stderr.String())
+	}
+	entries, _ := os.ReadDir(workRoot)
+	for _, e := range entries {
+		if e.Name() != "knowledge-build-live" {
+			t.Errorf("%s was left in the work folder", e.Name())
+		}
+	}
+}
+
 // A document ClamAV finds refuses the build before the Creator starts,
 // with the policy class, naming it.
 func TestADocumentClamAVFindsRefusesTheBuild(t *testing.T) {
