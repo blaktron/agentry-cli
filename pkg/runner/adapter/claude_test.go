@@ -530,8 +530,8 @@ func TestClaudeSessionEndsWithoutAnAnswer(t *testing.T) {
 	}
 }
 
-// A turn that ends on an error result is not an answer: Prompt fails with
-// the result's words, so the engine can tell a provider at capacity.
+// A turn that ends on an error result saying the provider is at capacity
+// fails with the result's words, so the engine can wait it out.
 func TestClaudeSessionErrorResultFailsTheTurn(t *testing.T) {
 	ad, _ := Get(ClaudeAdapterName)
 	stdio := newFakeStdio()
@@ -550,6 +550,29 @@ func TestClaudeSessionErrorResultFailsTheTurn(t *testing.T) {
 	_, err = drv.Prompt(ctx, "hello")
 	if err == nil || !AtCapacity(err.Error()) {
 		t.Fatalf("Prompt = %v, want the error result's words", err)
+	}
+	_ = drv.Close()
+}
+
+// Any other error result is the turn's answer, as Claude Code gave it.
+func TestClaudeSessionOtherErrorResultIsTheTurn(t *testing.T) {
+	ad, _ := Get(ClaudeAdapterName)
+	stdio := newFakeStdio()
+	drv, err := ad.Session(context.Background(), stdio, SessionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		if !stdio.awaitLine(`"type":"user"`, 5*time.Second) {
+			return
+		}
+		stdio.say(`{"type":"result","subtype":"error_max_turns","is_error":true,"result":"reached the turn limit","usage":{}}`)
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	turn, err := drv.Prompt(ctx, "hello")
+	if err != nil || turn.Text != "reached the turn limit" {
+		t.Fatalf("Prompt = %+v, %v", turn, err)
 	}
 	_ = drv.Close()
 }

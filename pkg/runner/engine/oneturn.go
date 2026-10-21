@@ -41,6 +41,9 @@ func oneTurn(ctx context.Context, p Params, rw io.ReadWriteCloser, task []byte, 
 		return fmt.Errorf("one-turn session: %w", err)
 	}
 	pumped := make(chan struct{})
+	// synced answers the tool calls recorded once every event the driver
+	// had queued when it was asked is recorded (a capacity wait's check).
+	synced := make(chan chan int)
 	go func() {
 		defer close(pumped)
 		defer func() {
@@ -52,19 +55,55 @@ func oneTurn(ctx context.Context, p Params, rw io.ReadWriteCloser, task []byte, 
 				}
 			}
 		}()
-		for ev := range drv.Events() {
+		record := func(ev adapter.Event) {
 			if len(ev.Raw) > 0 {
 				c.recordRaw(ev.Raw)
 			}
 			c.record(ev)
 		}
+		events := drv.Events()
+		for open := true; open; {
+			select {
+			case ev, ok := <-events:
+				if open = ok; ok {
+					record(ev)
+				}
+			case ack := <-synced:
+				for drained := false; !drained && open; {
+					select {
+					case ev, ok := <-events:
+						if open = ok; ok {
+							record(ev)
+						}
+					default:
+						drained = true
+					}
+				}
+				ack <- c.turns
+			}
+		}
 		c.flushLiveText()
 	}()
+	toolCalls := func() (int, bool) {
+		ack := make(chan int, 1)
+		select {
+		case synced <- ack:
+			return <-ack, true
+		case <-pumped:
+			return 0, false
+		}
+	}
 	hs, cancel := context.WithTimeout(ctx, oneTurnHandshake)
 	err = drv.Start(hs)
 	cancel()
 	if err == nil {
-		_, err = promptAtCapacity(ctx, drv, string(task), func(n int) { noteCapacity(p.Stderr, n) })
+		_, err = promptAtCapacity(ctx, drv, string(task), func(n int) bool {
+			if calls, ok := toolCalls(); !ok || calls > 0 {
+				return false
+			}
+			noteCapacity(p.Stderr, n)
+			return true
+		})
 	}
 	// Ending the session closes the harness's stdin, on which it exits; one
 	// that does not is stopped.

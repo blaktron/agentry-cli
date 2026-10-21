@@ -221,3 +221,146 @@ func TestASessionTurnAtCapacityIsSentAgain(t *testing.T) {
 		t.Fatalf("notice %v, answered %v: %+v", notice, answered, get())
 	}
 }
+
+// toolFirstDriver fails its first prompt at capacity after the turn called a
+// tool, and passes every later one to the session it wraps.
+type toolFirstDriver struct {
+	*capacityDriver
+	out chan adapter.Event
+}
+
+func (d *toolFirstDriver) Events() <-chan adapter.Event { return d.out }
+
+func (d *toolFirstDriver) Prompt(ctx context.Context, text string) (*adapter.Turn, error) {
+	d.mu.Lock()
+	first := d.prompts == 0
+	d.mu.Unlock()
+	if first {
+		d.out <- adapter.Event{Kind: adapter.EventToolCall, Text: "fs_write", Tool: "fs_write"}
+	}
+	return d.capacityDriver.Prompt(ctx, text)
+}
+
+type toolFirstAdapter struct {
+	adapter.Adapter
+	drv *toolFirstDriver
+}
+
+func (a *toolFirstAdapter) Session(ctx context.Context, rw io.ReadWriteCloser, o adapter.SessionOptions) (adapter.SessionDriver, error) {
+	d, err := a.Adapter.Session(ctx, rw, o)
+	if err != nil {
+		return nil, err
+	}
+	out := make(chan adapter.Event, 64)
+	go func() {
+		for ev := range d.Events() {
+			out <- ev
+		}
+		close(out)
+	}()
+	a.drv = &toolFirstDriver{capacityDriver: &capacityDriver{SessionDriver: d}, out: out}
+	return a.drv, nil
+}
+
+// A session's turn that called a tool before the capacity answer is not
+// sent again: its tools could act twice. The turn fails with the
+// provider's words.
+func TestASessionTurnAtCapacityAfterAToolCallIsNotSentAgain(t *testing.T) {
+	shortCapacityWait(t)
+	p, f := sessionFixture(t)
+	happyFake(f)
+	ad := &toolFirstAdapter{Adapter: p.Adapter}
+	p.Adapter = ad
+	h := &fakeHarness{}
+	f.Foreground["-agent"] = &dockerx.FakeForeground{Handler: h.handler}
+	s, err := StartSession(context.Background(), f, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	get, done := collect(s)
+	ctx := context.Background()
+	if err := s.Send(ctx, "hello"); err == nil || !strings.Contains(err.Error(), "at capacity") {
+		t.Fatalf("Send = %v, want the provider's words", err)
+	}
+	if ad.drv.prompts != 1 {
+		t.Fatalf("prompted %d times, want 1", ad.drv.prompts)
+	}
+	_, _ = s.End(ctx, true)
+	<-done
+	for _, ev := range get() {
+		if ev.Kind == session.KindNotice && strings.Contains(ev.Text, "at capacity") {
+			t.Fatalf("a wait was announced: %+v", ev)
+		}
+	}
+}
+
+// scriptedDriver is a session whose prompts fail with the errors given, in
+// order, then answer; toolOnFirst records a tool call in the first turn.
+type scriptedDriver struct {
+	fails       []string
+	toolOnFirst bool
+	mu          sync.Mutex
+	prompts     int
+	events      chan adapter.Event
+}
+
+func (d *scriptedDriver) Start(context.Context) error { return nil }
+func (d *scriptedDriver) Events() <-chan adapter.Event { return d.events }
+func (d *scriptedDriver) Close() error                 { close(d.events); return nil }
+func (d *scriptedDriver) Prompt(context.Context, string) (*adapter.Turn, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.prompts++
+	if d.prompts == 1 && d.toolOnFirst {
+		d.events <- adapter.Event{Kind: adapter.EventToolCall, Text: "fs_write", Tool: "fs_write"}
+	}
+	if d.prompts <= len(d.fails) {
+		return nil, errors.New(d.fails[d.prompts-1])
+	}
+	d.events <- adapter.Event{Kind: adapter.EventAssistantText, Text: "done"}
+	return &adapter.Turn{StopReason: "completed", Text: "done"}, nil
+}
+
+type scriptedAdapter struct {
+	adapter.Adapter
+	drv *scriptedDriver
+}
+
+func (a scriptedAdapter) Session(context.Context, io.ReadWriteCloser, adapter.SessionOptions) (adapter.SessionDriver, error) {
+	return a.drv, nil
+}
+
+// A run driven as one turn sends its turn again after a capacity answer
+// while it has called no tool, and not after one.
+func TestAOneTurnRunAtCapacityIsSentAgainBeforeAnyToolCall(t *testing.T) {
+	shortCapacityWait(t)
+	const atCapacity = "codex session: turn failed: Selected model is at capacity. Please try a different model."
+	for _, tc := range []struct {
+		name    string
+		tool    bool
+		prompts int
+		ok      bool
+	}{
+		{"before a tool call", false, 2, true},
+		{"after a tool call", true, 1, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			drv := &scriptedDriver{fails: []string{atCapacity}, toolOnFirst: tc.tool, events: make(chan adapter.Event, 16)}
+			var stderr bytes.Buffer
+			p := Params{Adapter: scriptedAdapter{drv: drv}, Stderr: &stderr}
+			c := &eventCollector{adapter: p.Adapter, events: io.Discard}
+			rw := rwPipe{Reader: strings.NewReader(""), WriteCloser: nopWriteCloser{io.Discard}}
+			err := oneTurn(context.Background(), p, rw, []byte("task"), adapter.SessionOptions{}, c, func(error) {})
+			if (err == nil) != tc.ok || drv.prompts != tc.prompts {
+				t.Fatalf("err %v after %d prompts", err, drv.prompts)
+			}
+			if announced := strings.Contains(stderr.String(), "at capacity"); announced != tc.ok {
+				t.Fatalf("stderr %q", stderr.String())
+			}
+		})
+	}
+}
+
+type nopWriteCloser struct{ io.Writer }
+
+func (nopWriteCloser) Close() error { return nil }

@@ -7,9 +7,10 @@ package engine
 //
 //   - a session's turn (an interactive session, a persistent agent, a run
 //     driven as one turn) is sent again on the same session;
-//   - an autonomous harness that is one process is started again, but only
-//     when it failed before its first tool call: a run whose tools already
-//     acted would act twice.
+//   - an autonomous harness that is one process is started again.
+//
+// Either only when the turn or the run failed before its first tool call:
+// one whose tools already acted could make them act twice.
 //
 // Every wait is announced, at most capacityTries of them for one turn or
 // one run, and none that would end past the run's timeout. When the tries
@@ -59,12 +60,14 @@ func noteCapacity(w io.Writer, n int) {
 }
 
 // promptAtCapacity sends text as a session's turn and sends it again, on
-// the same session, after each capacity answer it can wait out under ctx.
-// notice hears of each wait before it starts.
-func promptAtCapacity(ctx context.Context, drv adapter.SessionDriver, text string, notice func(n int)) (*adapter.Turn, error) {
+// the same session, after each capacity answer it can wait out under ctx
+// that again allows: again(n) is asked before the nth wait, after the failed
+// attempt's events are recorded, and announces the wait when it answers
+// true. It answers false once the turn has called a tool, since sending the
+// turn again could make its tools act twice.
+func promptAtCapacity(ctx context.Context, drv adapter.SessionDriver, text string, again func(n int) bool) (*adapter.Turn, error) {
 	res, err := drv.Prompt(ctx, text)
-	for n := 1; err != nil && n <= capacityTries && adapter.AtCapacity(err.Error()) && canWaitAtCapacity(ctx); n++ {
-		notice(n)
+	for n := 1; err != nil && n <= capacityTries && adapter.AtCapacity(err.Error()) && canWaitAtCapacity(ctx) && again(n); n++ {
 		if sleepCtx(ctx, capacityWait) != nil {
 			break
 		}
@@ -103,7 +106,7 @@ func (rd *runDirs) harnessReceipt(path string) (*os.File, error) {
 // the run's usage, its live meter and its cost budget count every attempt.
 func retryAtCapacity(ctx context.Context, p Params, rd *runDirs, run func() agentOutcome) agentOutcome {
 	out := run()
-	for n := 1; n <= capacityTries && out.atCapacity && out.usage.Turns == 0 && rd.canWaitAtCapacity(ctx); n++ {
+	for n := 1; n <= capacityTries && out.atCapacity && out.usage.Turns == 0 && rd.canRestartAtCapacity(ctx); n++ {
 		noteCapacity(p.Stderr, n)
 		if sleepCtx(ctx, capacityWait) != nil {
 			break
@@ -114,9 +117,9 @@ func retryAtCapacity(ctx context.Context, p Params, rd *runDirs, run func() agen
 	return out
 }
 
-// canWaitAtCapacity is canWaitAtCapacity for a harness started again:
+// canRestartAtCapacity is canWaitAtCapacity for a harness started again:
 // ctx carries no timeout of its own, the run's harness deadline does.
-func (rd *runDirs) canWaitAtCapacity(ctx context.Context) bool {
+func (rd *runDirs) canRestartAtCapacity(ctx context.Context) bool {
 	if !canWaitAtCapacity(ctx) {
 		return false
 	}

@@ -61,7 +61,7 @@ type claudeTurnResult struct {
 	stopReason string
 	text       string
 	usage      *TurnUsage
-	// failed is an error result's reason: the turn is not an answer (I9).
+	// failed is an error result's reason.
 	failed string
 }
 
@@ -181,8 +181,10 @@ func (s *claudeSession) Prompt(ctx context.Context, text string) (*Turn, error) 
 	select {
 	case r := <-ch:
 		out := &Turn{StopReason: r.stopReason, Text: r.text, Usage: r.usage}
-		// A turn that ended on an error result is not an answer (I9).
-		if r.failed != "" {
+		// An error result that is the provider at capacity fails the turn,
+		// so the engine can wait it out and send the turn again; any other
+		// error result is the turn's answer, as Claude Code gave it.
+		if AtCapacity(r.failed) {
 			return out, fmt.Errorf("claude session: turn failed: %s", firstLineOf(r.failed))
 		}
 		return out, nil
@@ -252,9 +254,6 @@ func (s *claudeSession) readLoop() {
 			reason = strings.Join(msg.Errors, "; ")
 			if reason == "" {
 				reason = msg.Result
-			}
-			if reason == "" {
-				reason = msg.Subtype
 			}
 			s.started(claudeStart{failed: true, reason: reason})
 		}
