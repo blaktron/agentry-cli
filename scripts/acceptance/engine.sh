@@ -46,7 +46,11 @@ cd "$(dirname "$0")/../.." || exit 1
 AGENTRY=${AGENTRY:-bin/agentry}
 [ -x "$AGENTRY" ] || make build >/dev/null
 AGENTRY=$(cd "$(dirname "$AGENTRY")" && pwd)/$(basename "$AGENTRY")
-IMG=${ENGINE_PROBE_IMAGE:-docker.io/library/alpine:3.22}
+# The probe image is the project's own copy of alpine 3.22 in GHCR, pinned by
+# digest like the runtime images: an anonymous pull from Docker Hub is rate
+# limited on a shared address, and then every step fails before it tests the
+# engine.
+IMG=${ENGINE_PROBE_IMAGE:-ghcr.io/blaktron/agentry-alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8}
 
 if [ "${AGENTRY_ENGINE:-}" = podman ]; then
   C=${AGENTRY_PODMAN:-podman}
