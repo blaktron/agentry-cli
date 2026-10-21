@@ -58,15 +58,16 @@ func cfgBinds(roots, writable []string, cfg string, catalog []byte) ([]string, [
 	holders := map[string][]sockfilter.Holder{}
 	for _, name := range names {
 		e := doc.Registry[name]
+		// The container the entry makes is given these and no others.
+		h := sockfilter.Holder{Image: e.Image, Cmd: e.Command, Binds: entryBinds(e.Volumes)}
 		for _, v := range e.Volumes {
 			src, _, _ := strings.Cut(v, ":")
 			src = path.Clean(src)
 			if src != cfg && !strings.HasPrefix(src, cfg+"/") {
 				continue
 			}
-			h := sockfilter.Holder{Image: e.Image, Cmd: e.Command}
 			if !slices.ContainsFunc(holders[src], func(o sockfilter.Holder) bool {
-				return o.Image == h.Image && slices.Equal(o.Cmd, h.Cmd)
+				return o.Image == h.Image && slices.Equal(o.Cmd, h.Cmd) && slices.Equal(o.Binds, h.Binds)
 			}) {
 				holders[src] = append(holders[src], h)
 			}
@@ -97,6 +98,26 @@ func cfgBinds(roots, writable []string, cfg string, catalog []byte) ([]string, [
 		write = append(write, w)
 	}
 	return out, write, held, nil
+}
+
+// entryBinds are a catalog entry's volumes as the docker filter compares
+// them with a create: source and target, the options left out. A volume
+// that names no target (an anonymous one) is not a bind of the entry's and
+// is left out; the gateway's own spelling of the rest is kept.
+func entryBinds(volumes []string) []sockfilter.HolderBind {
+	binds := make([]sockfilter.HolderBind, 0, len(volumes))
+	for _, v := range volumes {
+		parts := strings.Split(v, ":")
+		if len(parts) < 2 {
+			continue
+		}
+		src := parts[0]
+		if strings.HasPrefix(src, "/") {
+			src = path.Clean(src)
+		}
+		binds = append(binds, sockfilter.HolderBind{Source: src, Target: path.Clean(parts[1])})
+	}
+	return binds
 }
 
 // runCfgBinds is cfgBinds for this run: its gateway's bind lists and its

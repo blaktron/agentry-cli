@@ -18,6 +18,12 @@
 //     in any case), refused if it holds a field the filter does not know,
 //     checked, and forwarded as the filter re-encoded it, so the daemon
 //     receives exactly what was checked (create.go);
+//   - a folder the run keeps from the gateway (a connection's token, the
+//     hosts' sign-ins, the browser's secrets, the share) is bound only by the
+//     container that needs it, whose image, command and every bind are the
+//     catalog entry's; nothing execs into or copies to or from a container
+//     that binds one, and no create carries a health check, which would run
+//     a command inside it (create.go);
 //   - the network that leaves the host takes only the gateway's relays,
 //     pinned by digest, and nothing may exec into or write to a relay;
 //   - the daemon's version, info and ping, image inspects and pulls by
@@ -261,11 +267,24 @@ type HeldRoot struct {
 }
 
 // Holder is one container of the run's: the one of Image (by reference,
-// compared by id) that runs Cmd by the image's own entrypoint. An empty
-// Cmd is the image's own command.
+// compared by id) that runs Cmd by the image's own entrypoint, with exactly
+// the folders and volumes Binds names. An empty Cmd is the image's own
+// command.
 type Holder struct {
 	Image string
 	Cmd   []string
+	// Binds are everything the container is given: a create that holds one
+	// more, one fewer, or one with another source or target is not the
+	// holder, so its command runs the code its entry names with the files
+	// its entry names, and no other. A source that is not an absolute path
+	// is a named volume.
+	Binds []HolderBind
+}
+
+// HolderBind is one bind of a holder: a host folder or file, or a named
+// volume, at a path in the container.
+type HolderBind struct {
+	Source, Target string
 }
 
 // relayPortSysctl is the kernel setting that lets a relay bind 443 as a
