@@ -91,6 +91,15 @@ type RosterEntry struct {
 	Fixed bool `json:"fixed,omitempty"`
 	// Reason is why a failed entry failed.
 	Reason string `json:"reason,omitempty"`
+	// ShareSwitch is, for a server that may see the agent's share folder
+	// (a package server with no network), the id of its switch for that:
+	// "server:<id>:share". Share says the switch is on: the server sees
+	// the share, read only, while the agent has its share on. ShareLine is
+	// the server's sentence with the switch on, the one turning it on asks
+	// the person to agree to.
+	ShareSwitch string `json:"shareSwitch,omitempty"`
+	Share       bool   `json:"share,omitempty"`
+	ShareLine   string `json:"shareLine,omitempty"`
 	// alike are the other sentences an agreement to which is an agreement
 	// to this entry: the share's sentence under the other malware-check
 	// setting, which changes what the sentence says and grants nothing.
@@ -115,7 +124,7 @@ func (r Roster) Entry(id string) (RosterEntry, bool) {
 func (r Roster) Receipt() []receipt.RosterEntry {
 	out := make([]receipt.RosterEntry, 0, len(r))
 	for _, e := range r {
-		re := receipt.RosterEntry{ID: e.ID, Kind: string(e.Kind), Name: e.Name, GrantedBy: e.GrantedBy, On: e.On, Line: e.Line}
+		re := receipt.RosterEntry{ID: e.ID, Kind: string(e.Kind), Name: e.Name, GrantedBy: e.GrantedBy, On: e.On, Line: e.Line, Share: e.Share}
 		if e.State == StateInstalling || e.State == StateFailed {
 			re.State = string(e.State)
 		}
@@ -214,6 +223,19 @@ func BuildRosterUnder(a Agent, c Config, applied *Applied, malwareCheck bool) Ro
 	}
 	for _, srv := range c.Servers {
 		e := RosterEntry{ID: ServerEntryID(srv), Kind: KindServer, Name: serverName(srv), GrantedBy: GrantedByYou, Line: serverLine(srv)}
+		if ServerMaySeeShare(srv) == nil {
+			// The server's sentence says whether it sees the share, so
+			// letting it asks again; an agreement to the sentence that
+			// says it does is an agreement to the one that says less.
+			e.ShareSwitch = ServerShareID(srv)
+			seesLine := e.Line + serverShareLine(a)
+			e.ShareLine = seesLine
+			if c.Switches[e.ShareSwitch] {
+				e.Share, e.Line = true, seesLine
+			} else {
+				e.alike = []string{seesLine}
+			}
+		}
 		if srv.Auth == manifest.AuthOAuth || srv.OAuth != nil {
 			e.Line += "; it signs in by OAuth, which a persistent agent cannot do in this version"
 			e.On, e.State = false, StateNeedsSignIn
@@ -260,15 +282,49 @@ func leftOut(r Roster, c Config, given func(id string) bool) Roster {
 	return out
 }
 
-// The prefixes of a pack's and a server's roster ids.
+// The prefixes of a pack's and a server's roster ids, and the suffix of a
+// server's share switch.
 const (
 	knowledgePrefix = "knowledge:"
 	serverPrefix    = "server:"
+	shareSuffix     = ":share"
 )
 
 // ServerEntryID is a server's roster id: its store id, which names its
 // package or its address.
 func ServerEntryID(srv manifest.MCPServer) string { return serverPrefix + mcpinstall.IDFor(srv) }
+
+// ServerShareID is the id of a server's switch that lets it see the
+// agent's share folder: its roster id and ":share". It is a switch of the
+// server's entry, not an entry of its own: it changes what the server's
+// sentence says.
+func ServerShareID(srv manifest.MCPServer) string { return ServerEntryID(srv) + shareSuffix }
+
+// ServerMaySeeShare refuses a server the share is never given to: a remote
+// server, which is another party's; a package server that reaches a host,
+// which could send the person's files there; and one that signs in by
+// OAuth, which a persistent agent cannot be given.
+func ServerMaySeeShare(srv manifest.MCPServer) error {
+	switch {
+	case srv.IsRemote():
+		return fmt.Errorf("%s is a remote server, another party's: it is never given your share folder", serverName(srv))
+	case len(srv.Egress) > 0:
+		return fmt.Errorf("%s reaches %s, so it could send your files there: a server that reaches the network is never given your share folder", serverName(srv), strings.Join(srv.Egress, ", "))
+	case srv.Auth == manifest.AuthOAuth || srv.OAuth != nil:
+		return fmt.Errorf("%s signs in by OAuth, which a persistent agent cannot do in this version", serverName(srv))
+	}
+	return nil
+}
+
+// serverShareLine is what a server's sentence adds when it sees the share:
+// for the Coding agent, whose share is read as it is, that it sees it
+// unchecked.
+func serverShareLine(a Agent) string {
+	if a.Builtin.Codes() {
+		return ", and sees your share folder (read only, unchecked)"
+	}
+	return ", and sees your share folder (read only)"
+}
 
 // serversDir is where the servers the person added to an agent are
 // installed.
@@ -370,6 +426,11 @@ func Apply(ctx context.Context, home string, a Agent, c Config, r Roster, open P
 	for _, srv := range c.Servers {
 		if id := ServerEntryID(srv); on(id) && !left[id] {
 			g.Servers = append(g.Servers, srv)
+			// A server sees the share while the agent has it, read only,
+			// and only one the share may be given to.
+			if e, _ := r.Entry(id); e.Share && g.Share != "" && ServerMaySeeShare(srv) == nil {
+				g.ShareServers = append(g.ShareServers, srv.SourceID())
+			}
 		}
 	}
 	if len(g.Servers) > 0 {

@@ -76,6 +76,9 @@ type runDirs struct {
 	shareKept     map[string]toolsrv.ShareVerdict
 	shareCache    string
 	shareTextKept string
+	// shareMirror is the share's mirror the plan's servers see
+	// (mirror.go); nil for a plan with none.
+	shareMirror *shareMirror
 	// targets are the run's target hosts, readied by the caller, in the
 	// plan's order (targethosts.go): the replacer gives each relay its
 	// address and port, and the host link its user.
@@ -269,6 +272,7 @@ func (rd *runDirs) replacerWith(hostPath func(string) string) *strings.Replacer 
 		spec.PHKnowledge, hostPath(rd.knowledge),
 		spec.PHSession, rd.session,
 		spec.PHShare, hostPath(rd.share),
+		spec.PHShareMirror, hostPath(rd.shareMirror.folder()),
 		spec.PHData, rd.data,
 		spec.PHAppLink, rd.appLinkRoot(hostPath),
 		spec.PHAppLinkMount, rd.appLinkMount(hostPath),

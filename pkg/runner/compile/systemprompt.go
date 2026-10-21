@@ -63,7 +63,10 @@ type promptFacts struct {
 	// tools: the QuickAgent's declared servers and the operator's
 	// dataAccess servers.
 	servers []string
-	schema  bool
+	// shareServers are the servers among them that see the persistent
+	// agent's share folder, read only (spec.MCPServerSpec.Share).
+	shareServers []string
+	schema       bool
 	// intake is whether the manifest asks questions before a run, whose
 	// answers the engine stages as /inputs/intake.json.
 	intake bool
@@ -240,6 +243,10 @@ You have no shell, filesystem or network of your own. Your tools come only from 
 	}
 	if len(f.servers) > 0 {
 		fmt.Fprintf(b, "- **MCP servers.** Besides the runner's own tools, the tools of these servers: %s. Each reaches only what was declared for it.\n", strings.Join(f.servers, ", "))
+	}
+	if len(f.shareServers) > 0 {
+		fmt.Fprintf(b, "- **Your share for MCP servers.** %s see the person's share folder, read only, at %s/%s. To give one of their tools a file from the share, pass its path there, %s/%s/<file> (for example %s/%s/report.docx), not %s/<file>. %s They cannot write there: to keep what they make, write it with your own tools.\n",
+			strings.Join(f.shareServers, ", "), spec.AgentRoot, spec.AgentShareDir, spec.AgentRoot, spec.AgentShareDir, spec.AgentRoot, spec.AgentShareDir, spec.AgentShareDir, shareServerSees(c))
 	}
 	if len(f.secrets) > 0 {
 		fmt.Fprintf(b, "- **Credentials.** This run is granted these secrets, by name: %s. You never see a value.", strings.Join(f.secrets, ", "))
@@ -489,6 +496,14 @@ func workspaceLine(c spec.CapSummary) string {
 		return "- **Workspace.** " + write + ". You cannot read workspace files.\n"
 	}
 	return "- **Workspace.** " + read + "; " + write + ".\n"
+}
+
+// shareServerSees says what of the share the servers that see it see.
+func shareServerSees(c spec.CapSummary) string {
+	if a := c.AgentFiles; a != nil && a.CheckShare {
+		return "They see the files the check before this turn passed: a file added since, or one refused to you, is not there for them either."
+	}
+	return "They see it as it is, as you do."
 }
 
 // agentFilesLine states a persistent agent's folders, which stand in for

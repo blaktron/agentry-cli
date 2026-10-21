@@ -76,6 +76,12 @@ const (
 	// person's own, mounted read-write and live at AgentRoot/AgentShareDir;
 	// only a persistent plan whose agent has its share names it.
 	PHShare = "@@RUN_SHARE@@"
+	// PHShareMirror is the host path of a persistent agent's share mirror:
+	// a folder of the agent's own holding a copy of each share file whose
+	// bytes the share check passed, mounted read-only at
+	// AgentRoot/AgentShareDir into each MCP server the person let see the
+	// share (MCPServerSpec.Share); only such a plan names it.
+	PHShareMirror = "@@RUN_SHARE_MIRROR@@"
 	// PHData is a persistent agent's data volume, by name, mounted at
 	// AgentRoot/AgentDataDir; only a persistent plan names it.
 	PHData = "@@RUN_DATA@@"
@@ -970,6 +976,36 @@ type MCPServerSpec struct {
 	// connection's access token into. Nil for a remote server and for a package
 	// server without one.
 	OAuth *OAuthSpec `json:"oauth,omitempty"`
+	// Share is how the server sees a persistent agent's share folder, read
+	// only, at AgentRoot/AgentShareDir: ServerShareMirror, the copies the
+	// share check passed, or ServerShareLive, the folder itself. Empty for
+	// a server that does not see it, which is every server but a package
+	// server the person let see it, with no network.
+	Share ServerShare `json:"share,omitempty"`
+}
+
+// ServerShare is how a server sees a persistent agent's share folder
+// (MCPServerSpec.Share).
+type ServerShare string
+
+// The ways a server sees the share.
+const (
+	// ServerShareMirror: the share mirror (PHShareMirror), for an agent
+	// whose share is checked.
+	ServerShareMirror ServerShare = "mirror"
+	// ServerShareLive: the share folder itself, read only, for the Coding
+	// agent, whose share is read as it is.
+	ServerShareLive ServerShare = "live"
+)
+
+// SharesAs reports whether any server sees the share as how.
+func SharesAs(servers []MCPServerSpec, how ServerShare) bool {
+	for _, s := range servers {
+		if s.Share == how {
+			return true
+		}
+	}
+	return false
 }
 
 // OAuthSpec is a package server's oauth block as the plan carries it: the

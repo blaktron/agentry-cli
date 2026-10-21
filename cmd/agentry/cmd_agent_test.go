@@ -351,3 +351,39 @@ func TestAgentShowSaysWhyAServerFailed(t *testing.T) {
 		t.Errorf("switching the failed server on kept its failure: %v", cfg.ServerFailures)
 	}
 }
+
+// TestAgentGrantLetsAServerSeeTheShare: `agent grant <name> <server>:share on`
+// asks for agreement to the server's new sentence, and `show` then says the
+// server sees the share and names the switch.
+func TestAgentGrantLetsAServerSeeTheShare(t *testing.T) {
+	agentHome(t)
+	if _, _, err := runCLI(t, nil, "agent", "enable", "assistant"); err != nil {
+		t.Fatal(err)
+	}
+	srv := filepath.Join(t.TempDir(), "server.yaml")
+	if err := os.WriteFile(srv, []byte("pypi: office-word-mcp-server\nversion: 1.1.11\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runCLI(t, nil, "agent", "configure", "assistant", "--add-server", srv, "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	const sw = "server:pypi-office-word-mcp-server:share"
+	out, _, err := runCLI(t, nil, "agent", "show", "assistant")
+	if err != nil || !strings.Contains(out, "sees your share folder: no (switch "+sw+")") {
+		t.Fatalf("show before: %v\n%s", err, out)
+	}
+	if _, _, err := runCLI(t, nil, "agent", "grant", "assistant", sw, "on"); err == nil {
+		t.Fatal("the switch was turned on without agreement")
+	}
+	if _, stderr, err := runCLI(t, nil, "agent", "grant", "assistant", sw, "on", "--yes"); err != nil || !strings.Contains(stderr, "and sees your share folder (read only)") {
+		t.Fatalf("grant: %v\n%s", err, stderr)
+	}
+	out, _, err = runCLI(t, nil, "agent", "show", "assistant")
+	if err != nil || !strings.Contains(out, "sees your share folder: yes, read only") {
+		t.Fatalf("show after: %v\n%s", err, out)
+	}
+	js, _, err := runCLI(t, nil, "agent", "show", "assistant", "--json")
+	if err != nil || !strings.Contains(js, `"shareSwitch":"`+sw+`"`) || !strings.Contains(js, `"share":true`) {
+		t.Fatalf("show --json: %v\n%s", err, js)
+	}
+}

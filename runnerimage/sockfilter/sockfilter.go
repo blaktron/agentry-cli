@@ -75,6 +75,18 @@ type Config struct {
 	// two lists, MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS and …_WRITABLE_PATHS).
 	BindRoots     []string
 	WritableRoots []string
+	// ToolsWritableRoots are roots, among WritableRoots, that only the
+	// run's tools server may bind writable, and ToolsOnlyRoots roots that
+	// only it may bind at all: a persistent agent's share folder, which the
+	// tools server writes and an MCP server the person let see it reads
+	// (only beside the Coding agent; elsewhere a server sees its mirror).
+	ToolsWritableRoots []string
+	ToolsOnlyRoots     []string
+	// OfflineRoots are roots any container but the run's tools server may
+	// bind only when it joins no network: a persistent agent's share
+	// folder and its mirror, which an MCP server the person let see the
+	// share reads, so nothing that reaches a host is given them.
+	OfflineRoots []string
 	// SharedNetworks are the networks the runner made for the gateway to
 	// use without the owner label: the run's relay networks. They must
 	// carry Label=RunID; the gateway may not create or remove them.

@@ -154,6 +154,8 @@ type RosterEntry struct {
 	// store does not hold yet, "failed" for one that could not be installed
 	// or started. The plan's servers are what the segment ran.
 	State string `json:"state,omitempty"`
+	// Share says a server's switch to see the agent's share folder is on.
+	Share bool `json:"share,omitempty"`
 }
 
 // PersistentVolumes names a persistent agent's two volumes: the harness's
