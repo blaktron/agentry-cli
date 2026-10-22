@@ -298,7 +298,7 @@ func (h HarnessImage) validate(adapterName string) error {
 // re-records the adapter's conformance before this pin moves.
 var DefaultHarnessImages = map[string]HarnessImage{
 	"copilot-image": {Ref: "agentry-copilot:1.0.95", Artifact: "sha256:fd36c0e57ae6285ccd9cff306fbcdf114343c44f968ff2364fa7fd1a4dc4b7bf"},
-	"codex-image":   {Ref: "ghcr.io/blaktron/agentry-codex:0.162.0-2026.10.09.1@sha256:e6b0c020b797d7941b4365f82e743f190f82342f087621bddf57b087e4d703f9"},
+	"codex-image":   {Ref: "ghcr.io/blaktron/agentry-codex:0.162.0-2026.10.22.2@sha256:020effde1c2c7b5b3aa2b72e6864c1ebb5a64fcb78cc96f9ee2a6f61bc1d0d14"},
 	"claude-image":  {Ref: "agentry-claude-code:2.1.296", Artifact: "sha512-OX/k/rpcthMqnFKOWcpNcbiLsMKtAjLOpQNJHlYiDCFUznWCIwdRTyl/p9SdHVrsrzZuPMCNqZjnpakIni6upw=="},
 }
 

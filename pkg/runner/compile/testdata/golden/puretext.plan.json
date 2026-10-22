@@ -107,7 +107,7 @@
     "adapter": "docker-agent",
     "model": "anthropic/claude-sonnet-4-5",
     "agent": {
-      "image": "ghcr.io/blaktron/agentry-docker-agent-src:1.150.0-2026.10.21.3@sha256:e4cfd4d450ae22c6bd70e6b2fa0f98d3e399d206b238044498f9480304ea4e67",
+      "image": "ghcr.io/blaktron/agentry-docker-agent-src:1.150.0-2026.10.22.4@sha256:8a5e058f2fb1284db5ae5a04fb79fd40bd531ad529d6b4f4e16fdb9f5c3b9a2d",
       "argv": [
         "run",
         "--exec",
@@ -165,7 +165,7 @@
     "resultKind": "text",
     "imagePin": {
       "by": "digest",
-      "value": "sha256:e4cfd4d450ae22c6bd70e6b2fa0f98d3e399d206b238044498f9480304ea4e67"
+      "value": "sha256:8a5e058f2fb1284db5ae5a04fb79fd40bd531ad529d6b4f4e16fdb9f5c3b9a2d"
     }
   },
   "proxy": {
