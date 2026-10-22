@@ -32,7 +32,9 @@ agree to each part:
 
 - **Programs.** `run_command` runs any program in its toolchain image
   (`agentry-coder`: GCC, Make, CMake, pkg-config, Git, curl, Python 3 with pip
-  and venv, Go and Node with npm), in a folder of its own, as you. A program
+  and venv, Go and Node with npm, the git hosts' CLIs `gh`, `glab` and `tea`,
+  and the scanners `osv-scanner` and `gitleaks`), in a folder of its own, as
+  you. A program
   can write only in its folders and its temporary folder, and its output is
   capped. One it runs in the foreground has a time limit; one it starts in the
   background, such as a dev server, has none and keeps running until it stops

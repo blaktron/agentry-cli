@@ -116,11 +116,19 @@ const (
 	// DefaultCoderImage is the Coding agent's toolchain, the base its exec
 	// container is built on: Debian 13's build tools (GCC, Make, CMake,
 	// pkg-config), Git, curl, Python 3 with pip and venv, Go and Node with
-	// npm, amd64 and arm64, uid 10001, no setuid file, no sudo and no SSH
-	// client, pinned by digest and pulled; the CLI copies its runner binary
-	// in. Signed keyless by agentry-dockerimages' coder workflow, and CI
-	// holds this pin to that signature (scripts/verify-coder-image.sh).
-	DefaultCoderImage = "ghcr.io/blaktron/agentry-coder:2026.10.22.3@sha256:e3e55adc4e5c1eb32b8709d769c9bb4de768827740ea148594ecd8ffeb0c21aa"
+	// npm, the git hosts' CLIs (gh, glab, tea) and the scanners osv-scanner
+	// and gitleaks, amd64 and arm64, uid 10001, no setuid file, no sudo and
+	// no SSH client, pinned by digest and pulled; the CLI copies its runner
+	// binary in. Signed keyless by agentry-dockerimages' coder workflow, and
+	// CI holds this pin to that signature (scripts/verify-coder-image.sh).
+	DefaultCoderImage = "ghcr.io/blaktron/agentry-coder:2026.10.22.4@sha256:fbea98861a3c5d74feef462f771f197f01ea2de20fddf2c5611ff1013d961213"
+	// DefaultGogImage is gog, the Google Workspace CLI whose `gog mcp` mode
+	// serves Gmail, Calendar, Drive, Docs and Sheets as MCP tools, read-only
+	// unless started with --allow-write: built from gog's pinned source,
+	// amd64 and arm64, uid 10001, pinned by digest. Signed keyless by
+	// agentry-dockerimages' gog workflow, and CI holds this pin to that
+	// signature (scripts/verify-gog-image.sh).
+	DefaultGogImage = "ghcr.io/blaktron/agentry-gog:0.46.0-2026.10.22.1@sha256:19fa4267487f220604a4ede1f3efdd47c678736ca28de567f5f5b91b180c9b93"
 	// DefaultClamAVSignatures is the ClamAV signature bundle the decode step
 	// checks every input against: a tag agentry-dockerimages' clamav-db
 	// workflow moves daily, only ever to a digest it has signed. It is not
