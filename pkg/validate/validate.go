@@ -9,6 +9,7 @@
 package validate
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/blaktron/agentry/pkg/archive"
+	"github.com/blaktron/agentry/pkg/gatecases"
 	"github.com/blaktron/agentry/pkg/manifest"
 	"github.com/blaktron/agentry/pkg/rules"
 	"github.com/blaktron/agentry/pkg/ruleset"
@@ -214,6 +216,14 @@ func Workspace(dir string, o Options) (Report, error) {
 		return report, err
 	}
 	findings := rules.Scan(bundle, rulesFiles(scanFiles))
+	// S4's hits about a capability (reading a secret, sending data, removing
+	// it) are rated by what the manifest declares, from the same derivation
+	// the registry's gate reads, so a hit shows the severity publishing will
+	// give it. A manifest that cannot be encoded keeps the bundle's rating,
+	// which is never the lower.
+	if mj, err := json.Marshal(m); err == nil {
+		findings = rules.RateByDeclaration(findings, gatecases.Declaration(mj))
+	}
 	sortFindings(findings)
 	report.Bundle.Version, report.Bundle.Source = bundle.Version(), source
 	for _, f := range findings {
