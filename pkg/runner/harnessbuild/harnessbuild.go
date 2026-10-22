@@ -77,7 +77,7 @@ const ClaudeImageAdapter = "claude-image"
 // native packages are the ones installed; the base carries the libstdc++
 // and libgcc they link against, and the Node the wrapper's own install
 // script runs on.
-const ClaudeBase = "ghcr.io/blaktron/agentry-node-alpine:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1"
+const ClaudeBase = "ghcr.io/blaktron/agentry-node-alpine:24-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53"
 
 // ClaudeConfigDir is where the image keeps Claude Code's config directory:
 // made by the build and owned by the image's user, so a docker volume

@@ -42,8 +42,8 @@
 # repointing it means building this context yourself with
 # --build-arg RUNTIME_IMAGE=… and naming the result in the policy's
 # images.runner. Nothing in policy.yaml changes it.
-ARG GO_IMAGE=ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd
-ARG RUNTIME_IMAGE=ghcr.io/blaktron/agentry-alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8
+ARG GO_IMAGE=ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:d530cf60723abf1ffae0cd16bb546b379ec0550d2f3815e5b16ed69dbc00fba4
+ARG RUNTIME_IMAGE=ghcr.io/blaktron/agentry-alpine:3.22@sha256:d406446bc05b82480756ce8f1287964d28768c23955fa9480d2a74a2eae7a654
 # export_pdf's renderer: agentry-dockerimages' files-only image of Typst
 # built from pinned source without its package downloader, the Noto fonts
 # for every script, the report designs' fourteen open-licence families and

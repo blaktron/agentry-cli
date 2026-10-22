@@ -345,6 +345,13 @@ func TestPypiBuilderProgram(t *testing.T) {
 	if strings.Index(pypiBuilder, `run([pip, "install"`) > strings.LastIndex(pypiBuilder, "CONSOLE_SCRIPTS,") {
 		t.Fatal("console scripts must be read after pip install")
 	}
+	// The venv's pip trusts the image's CA bundle, not the one it vendors,
+	// from its first fetch on.
+	swap := strings.Index(pypiBuilder, `shutil.copyfile(SYSTEM_CA_BUNDLE, vendored)`)
+	if !strings.Contains(pypiBuilder, `SYSTEM_CA_BUNDLE = "/etc/ssl/certs/ca-certificates.crt"`) || swap < 0 ||
+		swap < strings.Index(pypiBuilder, `"-m", "venv"`) || swap > strings.Index(pypiBuilder, `run([pip, "download"`) {
+		t.Fatal("the venv's vendored CA bundle must be replaced by the system's before pip fetches")
+	}
 }
 
 // No manifest value reaches a shell: a package name carrying shell syntax is

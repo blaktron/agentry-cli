@@ -50,7 +50,7 @@ AGENTRY=$(cd "$(dirname "$AGENTRY")" && pwd)/$(basename "$AGENTRY")
 # digest like the runtime images: an anonymous pull from Docker Hub is rate
 # limited on a shared address, and then every step fails before it tests the
 # engine.
-IMG=${ENGINE_PROBE_IMAGE:-ghcr.io/blaktron/agentry-alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8}
+IMG=${ENGINE_PROBE_IMAGE:-ghcr.io/blaktron/agentry-alpine:3.22@sha256:d406446bc05b82480756ce8f1287964d28768c23955fa9480d2a74a2eae7a654}
 
 if [ "${AGENTRY_ENGINE:-}" = podman ]; then
   C=${AGENTRY_PODMAN:-podman}

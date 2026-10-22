@@ -117,3 +117,5 @@ agentry/coder@1.2.0 sha256:2b726017fe3a49f72e17ea125d7bbdd33fa324a23e522080a14c4
 agentry/assistant@1.4.0 sha256:efe99d6ca5363b3a48bfed0981b462f5148d8169e879e9503280a011d6db0578
 # 1.18.0: registry_search looks an MCP server up in the registry's MCP server list (mcp_server); the drafting guide's Declared MCP servers says to look a server on neither list up there first and what each status means.
 agentry/drafter@1.18.0 sha256:1acebbf80754f3b5f8c78e2e8e78cad4ee23b9b3cc9f3b161776bb2ec7be5767
+# 1.18.1: the runtime facts and the servers page say npm servers run on Node 24.22.1.
+agentry/drafter@1.18.1 sha256:48e64286030e5f6f2477c27966074cde9c8e5c89bc6758db0f18b01fb5516eed
