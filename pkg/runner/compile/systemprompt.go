@@ -510,18 +510,27 @@ func shareServerSees(c spec.CapSummary) string {
 
 // agentFilesLine states a persistent agent's folders, which stand in for
 // the workspace: fs_list, fs_read and fs_write take paths beneath
-// spec.AgentRoot, and the two folders are the only ones there. It says
-// they are writable in so many words, because a harness may describe its
-// own read-only sandbox to the model, which then writes nothing.
+// spec.AgentRoot, and its folders are the only ones there. It says they
+// are writable in so many words, because a harness may describe its own
+// read-only sandbox to the model, which then writes nothing. An agent with
+// a memory keeps what it remembers there rather than in notes.
 func agentFilesLine(a *spec.AgentFiles, commands bool) string {
-	root, data, share := spec.AgentRoot, spec.AgentDataDir, spec.AgentShareDir
+	root, data, share, memory := spec.AgentRoot, spec.AgentDataDir, spec.AgentShareDir, spec.AgentMemoryDir
 	writers := "fs_write creates and changes files in them"
 	if commands {
 		writers = "fs_write and the programs run_command runs create and change files in them"
 	}
 	line := "- **Your folders.** Read-write, in " + root + ": fs_list and fs_read read them, and " + writers + ", with paths that begin with the folder's name. " +
-		"A note that your sandbox or workspace is read-only describes the harness's own tools, which are off, not these folders: write your work here. " +
-		data + "/ is your own, kept from one conversation to the next: keep your notes in " + data + "/notes, so you remember what matters even when the conversation is not carried over."
+		"A note that your sandbox or workspace is read-only describes the harness's own tools, which are off, not these folders: write your work here. "
+	if a.Memory {
+		line += data + "/ is your own, kept from one conversation to the next, for the files you work on. " +
+			memory + "/ is your memory, kept the same way: read " + memory + "/index.md before you answer anything from memory, and keep it as " + memory + "/SCHEMA.md says, so you remember what matters even when the conversation is not carried over."
+		if a.Share {
+			line += " The share's files are its sources: never change, move or delete one to keep it."
+		}
+	} else {
+		line += data + "/ is your own, kept from one conversation to the next: keep your notes in " + data + "/notes, so you remember what matters even when the conversation is not carried over."
+	}
 	if a.Share {
 		line += " " + share + "/ is the person's share folder on their computer: they put files there for you and take what you write there, and they see each change as you make it. Write there only what the person asked for, and never delete their files unless they asked."
 		switch {

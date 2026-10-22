@@ -28,7 +28,18 @@ and `agentry agent show assistant` lists what it has:
   runner keeps between starts and removes only when you reset the agent
   (`agentry agent reset assistant`).
 - **Its own files** are on a second volume, its data folder, kept the same
-  way: it keeps its notes there.
+  way.
+- **Its memory** is on a third volume, kept the same way: a wiki it writes in
+  `memory/`, with pages on what you tell it and what you share with it, each
+  fact with its source (a file in your share and the date it read it, or what
+  you said and when), an index and a log. It is told never to change your
+  share's files to keep it. When the memory is made, the notes in its data
+  folder's `notes/` are copied into it, and stay where they are. `agentry
+  agent memory export assistant <folder>` copies the memory into a new
+  folder, readable by you alone; a reset removes it.
+- **Three skills** of its own, on unless you switch them off: `memory-ingest`,
+  `memory-query` and `memory-lint`, which say how it adds to its memory,
+  answers from it and checks it.
 - **A share folder** of yours, `~/agentry/assistantshare` unless you choose
   another, is mounted read and write while it runs: you see what it writes
   there as it writes it. A file you add is checked for malware with ClamAV

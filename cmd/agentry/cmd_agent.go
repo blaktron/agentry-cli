@@ -84,6 +84,7 @@ func newAgentCmd() *cobra.Command {
 		newAgentConfigureCmd(),
 		newAgentTasksCmd(),
 		newAgentSkillCmd(),
+		newAgentMemoryCmd(),
 		newAgentSuperviseCmd(),
 	)
 	return cmd
@@ -132,6 +133,7 @@ type agentState struct {
 type agentVolumes struct {
 	Session string `json:"session"`
 	Data    string `json:"data"`
+	Memory  string `json:"memory,omitempty"`
 }
 
 // The states list prints beside "running".
@@ -281,6 +283,9 @@ func newAgentShowCmd() *cobra.Command {
 				st.Usage = &u
 				st.StateDir = persistent.Dir(home, a.Name)
 				st.Volumes = &agentVolumes{Session: persistent.SessionVolumeIn(home, a.Name), Data: persistent.DataVolumeIn(home, a.Name)}
+				if a.Builtin.KeepsMemory() {
+					st.Volumes.Memory = persistent.MemoryVolumeIn(home, a.Name)
+				}
 				if lines > 0 {
 					if st.Transcript, err = persistent.Transcript(home, a.Name, lines); err != nil {
 						return err
@@ -339,7 +344,11 @@ func printAgentState(w io.Writer, st agentState) {
 		_, _ = fmt.Fprintf(w, "  lifetime:   %d segment(s) ended, %d turn(s), %d token(s)\n", u.Segments, u.UserTurns, u.InputTokens+u.OutputTokens+u.TotalTokens)
 	}
 	if v := st.Volumes; v != nil {
-		_, _ = fmt.Fprintf(w, "  volumes:    %s, %s\n", v.Session, v.Data)
+		if v.Memory != "" {
+			_, _ = fmt.Fprintf(w, "  volumes:    %s, %s, %s\n", v.Session, v.Data, v.Memory)
+		} else {
+			_, _ = fmt.Fprintf(w, "  volumes:    %s, %s\n", v.Session, v.Data)
+		}
 	}
 	if st.StateDir != "" {
 		_, _ = fmt.Fprintf(w, "  folder:     %s\n", st.StateDir)
@@ -788,7 +797,8 @@ func newAgentResetCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "reset <name>",
 		Short: "Put a persistent agent back to its defaults; the files in its share folder are kept",
-		Long: "Reset removes the agent's two volumes (its conversation and its files) and\n" +
+		Long: "Reset removes the agent's volumes (its conversation, its files and, for the\n" +
+			"Assistant, its memory: export it first with agentry agent memory export) and\n" +
 			"its transcript, and everything you chose for it: its name and personality,\n" +
 			"the servers you added and their installed copies, its knowledge packs and\n" +
 			"switches, what you agreed to, its share folder's location, its dev server and\n" +
@@ -815,7 +825,11 @@ func newAgentResetCmd() *cobra.Command {
 				if !stdinIsTTY(cmd.InOrStdin()) {
 					return engine.Classify(engine.ExitUsage, fmt.Errorf("reset asks you to type the agent's name, and there is no terminal: pass --confirm %s", a.Name))
 				}
-				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "This puts the %s agent back to its defaults: it wipes its conversation, its files and everything you chose for it. The files in its share folder are kept. Type its name (%s) to go on: ", a.Name, a.Name)
+				wipes := "its conversation, its files"
+				if a.Builtin.KeepsMemory() {
+					wipes += ", its memory"
+				}
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "This puts the %s agent back to its defaults: it wipes %s and everything you chose for it. The files in its share folder are kept. Type its name (%s) to go on: ", a.Name, wipes, a.Name)
 				line, _ := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
 				confirm = strings.TrimSpace(line)
 			}

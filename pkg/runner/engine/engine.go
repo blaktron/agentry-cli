@@ -339,7 +339,37 @@ type PersistentSegment struct {
 	// that has any (spec.AgentFiles.Skills); mounted read-only into the
 	// tools server alone. Empty for any other plan.
 	Skills string
+	// Memory is the agent's memory, for an agent that keeps one
+	// (spec.AgentFiles.Memory); nil for any other agent.
+	Memory *PersistentMemory
 }
+
+// PersistentMemory is a persistent agent's memory volume: made, labelled
+// and kept like its other two, mounted read-write into the tools server
+// alone, and seeded once.
+type PersistentMemory struct {
+	// Volume is the volume's name.
+	Volume string
+	// Seed is what the volume is filled with when it is seeded, by path
+	// beneath it: a file, its folders made for it, or a folder of its own
+	// where the path ends in "/". A file beneath MemoryCarriedDir is
+	// appended to the file of the same path beneath the memory, and only
+	// when Carry was copied in; that folder itself is not kept.
+	Seed map[string][]byte
+	// Carry, when set, is a folder beneath the data volume that the seed
+	// copies to CarryTo beneath the memory when it holds anything: files
+	// and folders, never a link. The data volume's folder is left as it is.
+	Carry, CarryTo string
+	// Seeded says an earlier start seeded the volume. Unset, a volume
+	// that exists is seeded too, unless it already holds the seed's
+	// SCHEMA.md: a start stopped between making the volume and seeding it
+	// leaves it empty.
+	Seeded bool
+}
+
+// MemoryCarriedDir is the folder of PersistentMemory.Seed whose files are
+// appended to the memory's when PersistentMemory.Carry was copied in.
+const MemoryCarriedDir = ".carried"
 
 // engine is the run's container engine once placed (placementFor), and
 // Docker Engine on this machine until then.

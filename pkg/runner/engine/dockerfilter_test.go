@@ -385,3 +385,18 @@ func TestUnrestrictedEgressHasANetworkOfTheRunsOwn(t *testing.T) {
 		t.Errorf("daemon line = %q", line)
 	}
 }
+
+// TestToolsVolumesAreTheAgentsOwn: the volumes the filter lets the tools
+// server mount beside the run's are the segment's data volume and, for an
+// agent that keeps one, its memory volume, by name, and none for a run.
+func TestToolsVolumesAreTheAgentsOwn(t *testing.T) {
+	if got := toolsVolumes(&runDirs{}); len(got) != 0 {
+		t.Errorf("a run's tools volumes: %v", got)
+	}
+	if got := toolsVolumes(&runDirs{data: "d"}); !slices.Equal(got, []string{"d"}) {
+		t.Errorf("a segment's without a memory: %v", got)
+	}
+	if got := toolsVolumes(&runDirs{data: "d", memory: "m"}); !slices.Equal(got, []string{"d", "m"}) {
+		t.Errorf("a segment's with a memory: %v", got)
+	}
+}

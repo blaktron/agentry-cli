@@ -228,7 +228,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		if err != nil {
 			return nil, err
 		}
-		caps.AgentFiles = &spec.AgentFiles{Share: in.AgentFiles.Share, CheckShare: checked, MalwareCheck: checked && in.Policy.MalwareCheckOn(), Skills: skills}
+		caps.AgentFiles = &spec.AgentFiles{Share: in.AgentFiles.Share, CheckShare: checked, MalwareCheck: checked && in.Policy.MalwareCheckOn(), Skills: skills, Memory: in.AgentFiles.Memory}
 	}
 	if in.AppLink != "" {
 		if mode != manifest.ModePersistent || in.Source != "builtin" {
@@ -1034,8 +1034,13 @@ func ShareChecksFolder() string { return spec.PHCfg + "/share-checks" }
 // agentFilesName is how the tools' descriptions name a persistent agent's
 // folders.
 func agentFilesName(a *spec.AgentFiles) string {
-	if a.Share {
+	switch {
+	case a.Share && a.Memory:
+		return "your folders: " + spec.AgentShareDir + "/ (the person's share folder), " + spec.AgentDataDir + "/ (your own) and " + spec.AgentMemoryDir + "/ (your memory)"
+	case a.Share:
 		return "your folders: " + spec.AgentShareDir + "/ (the person's share folder) and " + spec.AgentDataDir + "/ (your own)"
+	case a.Memory:
+		return "your folders: " + spec.AgentDataDir + "/ (your own) and " + spec.AgentMemoryDir + "/ (your memory)"
 	}
 	return "your own folder " + spec.AgentDataDir + "/"
 }
@@ -1860,6 +1865,10 @@ func workspaceVolumes(caps spec.CapSummary) []string {
 		if a.Share {
 			vols = append(vols, spec.PHShare+":"+spec.AgentRoot+"/"+spec.AgentShareDir+":rw")
 		}
+		// Its memory, a volume of its own like its data.
+		if a.Memory {
+			vols = append(vols, spec.PHMemory+":"+spec.AgentRoot+"/"+spec.AgentMemoryDir+":rw")
+		}
 		// Its skills, read-only: the agent reads them and the Coding
 		// agent's programs run their scripts, and neither changes them.
 		if len(a.Skills) > 0 {
@@ -2381,6 +2390,9 @@ func serverShareEnforcement(servers []spec.MCPServerSpec) string {
 // folders.
 func agentFilesEnforcement(a *spec.AgentFiles) string {
 	line := "the agent's data volume, read-write at " + spec.AgentRoot + "/" + spec.AgentDataDir + " in the tools server alone, admitted by the docker filter by its name; fs_list, fs_read, fs_write, grep and glob are rooted at " + spec.AgentRoot
+	if a.Memory {
+		line += "; the agent's memory volume, read-write at " + spec.AgentRoot + "/" + spec.AgentMemoryDir + " in the tools server alone, admitted by the docker filter by its name, and seeded by the runner before the run in a one-shot of the runner image with no network and the data volume read-only"
+	}
 	if !a.Share {
 		return line + "; no share folder"
 	}

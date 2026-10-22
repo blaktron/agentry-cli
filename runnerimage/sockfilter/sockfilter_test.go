@@ -1757,10 +1757,10 @@ func TestWithoutACallbackTheDaemonsInspectVerifiesACreate(t *testing.T) {
 // made.
 func TestTheToolsServerAloneMountsThePersistentVolume(t *testing.T) {
 	const target = "/etc/agentry/toolspec.json"
-	const data = "agentry-persistent-assistant-data"
+	const data, memory = "agentry-persistent-assistant-data", "agentry-persistent-assistant-memory"
 	g := newRig(t, Limits{}, func(c *Config) {
 		c.ToolsImage, c.ToolsCmd = "agentry-runner:test", []string{"tools", "--spec", target}
-		c.ToolsVolumes = []string{data, "agentry-persistent-gone-data"}
+		c.ToolsVolumes = []string{data, memory, "agentry-persistent-gone-data"}
 	})
 	create := func(image string, cmd []string, binds ...string) map[string]any {
 		return map[string]any{"Image": image, "Cmd": cmd, "HostConfig": map[string]any{"Binds": binds}}
@@ -1769,6 +1769,13 @@ func TestTheToolsServerAloneMountsThePersistentVolume(t *testing.T) {
 	if code, body := g.do(t, "POST", "/containers/create", create("agentry-runner:test", tools, data+":/agent/data:rw")); code != http.StatusCreated {
 		t.Fatalf("the tools server with the agent's data volume: %d %s", code, body)
 	}
+	if code, body := g.do(t, "POST", "/containers/create", create("agentry-runner:test", tools, data+":/agent/data:rw", memory+":/agent/memory:rw")); code != http.StatusCreated {
+		t.Fatalf("the tools server with the agent's data and memory volumes: %d %s", code, body)
+	}
+	g.refused(t, "another container with the memory volume", "POST", "/containers/create",
+		create("node:22", []string{"node", "server.js"}, memory+":/memory"), "is not this run's")
+	g.refused(t, "the tools server's image with another command and the memory volume", "POST", "/containers/create",
+		create("agentry-runner:test", []string{"applink", "--set", "assistant"}, memory+":/memory"), "is not this run's")
 	mount := map[string]any{"Image": "agentry-runner:test", "Cmd": tools, "HostConfig": map[string]any{
 		"Mounts": []any{map[string]any{"Type": "volume", "Source": data, "Target": "/agent/data"}}}}
 	if code, body := g.do(t, "POST", "/containers/create", mount); code != http.StatusCreated {

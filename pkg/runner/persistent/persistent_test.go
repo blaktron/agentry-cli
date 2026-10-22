@@ -454,13 +454,16 @@ func TestResetWipesTheConversationAndKeepsTheReceipts(t *testing.T) {
 		t.Fatal(err)
 	}
 	ops := strings.Join(f.Ops(), " ")
-	for _, v := range []string{SessionVolumeIn(home, "assistant"), DataVolumeIn(home, "assistant")} {
+	for _, v := range []string{SessionVolumeIn(home, "assistant"), DataVolumeIn(home, "assistant"), MemoryVolumeIn(home, "assistant")} {
 		if !strings.Contains(ops, "VolumeRemove:"+v) {
 			t.Errorf("reset did not remove %s: %s", v, ops)
 		}
 	}
 	if entries, _ := Transcript(home, "assistant", 0); len(entries) != 0 {
 		t.Errorf("transcript after reset = %d entries", len(entries))
+	}
+	if _, err := os.Stat(filepath.Join(Dir(home, "assistant"), memorySeededFile)); err == nil {
+		t.Error("reset kept the record that the memory was seeded")
 	}
 	cfg, _ := LoadConfig(home, "assistant")
 	if cfg.Conversation != nil || !cfg.Enabled {

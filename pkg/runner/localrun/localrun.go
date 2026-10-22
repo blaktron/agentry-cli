@@ -166,6 +166,10 @@ type Builtin struct {
 	// link. Both are the supervisor's: the plan a segment compiles grants
 	// nothing for them.
 	keepsTime bool
+	// keepsMemory gives the persistent agent a memory volume of its own,
+	// mounted read-write beside its data volume and seeded from its tree's
+	// memory/ folder when it is made (spec.AgentFiles.Memory).
+	keepsMemory bool
 	// runnable says a persistent built-in runs as an agent; one that does
 	// not is published for reading only.
 	runnable bool

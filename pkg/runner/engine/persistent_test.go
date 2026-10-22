@@ -1,9 +1,11 @@
 package engine
 
 import (
+	"archive/tar"
 	"context"
 	"encoding/json"
 	"flag"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -37,6 +39,14 @@ publish:
 // parameters of one segment of it.
 func persistentFixture(t *testing.T, continueID string) (Params, *dockerx.Fake, *fakeHarness) {
 	t.Helper()
+	return persistentFixtureWith(t, continueID, nil)
+}
+
+// persistentFixtureWith is persistentFixture for a built-in granted its
+// folders (compile.Inputs.AgentFiles); a memory among them gives the
+// segment its memory volume and a seed.
+func persistentFixtureWith(t *testing.T, continueID string, files *spec.AgentFiles) (Params, *dockerx.Fake, *fakeHarness) {
+	t.Helper()
 	m, err := manifest.Parse([]byte(persistentManifest))
 	if err != nil {
 		t.Fatal(err)
@@ -55,7 +65,7 @@ func persistentFixture(t *testing.T, continueID string) (Params, *dockerx.Fake, 
 	planDir := filepath.Join(installDir, "plan", "persistent")
 	plan, err := compile.Compile(compile.Inputs{
 		Manifest: m, Mode: manifest.ModePersistent, Digest: "sha256:feedface", Source: "builtin",
-		WorkspaceDir: ws, Policy: pol, PolicySHA: "sha", RunnerImage: "agentry-runner:test",
+		WorkspaceDir: ws, Policy: pol, PolicySHA: "sha", RunnerImage: "agentry-runner:test", AgentFiles: files,
 	}, planDir)
 	if err != nil {
 		t.Fatal(err)
@@ -66,7 +76,7 @@ func persistentFixture(t *testing.T, continueID string) (Params, *dockerx.Fake, 
 	happyFake(f)
 	h := &fakeHarness{loadSession: true}
 	f.Foreground["-agent"] = &dockerx.FakeForeground{Handler: h.handler}
-	return Params{
+	p := Params{
 		Plan: plan, PlanDir: planDir, WorkspaceSrc: ws, RunRoot: installDir, OutDir: t.TempDir(),
 		Adapter: ad, Policy: pol, Attestation: receipt.Attestation{State: "builtin"},
 		Stderr: os.Stderr, RunID: "5e9e0001",
@@ -74,7 +84,13 @@ func persistentFixture(t *testing.T, continueID string) (Params, *dockerx.Fake, 
 			Agent: "keeper", Segment: 2, ContinueID: continueID,
 			SessionVolume: "agentry-persistent-keeper-session", DataVolume: "agentry-persistent-keeper-data",
 		},
-	}, f, h
+	}
+	if files != nil && files.Memory {
+		p.Persistent.Memory = &PersistentMemory{Volume: "agentry-persistent-keeper-memory",
+			Seed:  map[string][]byte{"SCHEMA.md": []byte("# How\n"), "pages/": nil, MemoryCarriedDir + "/log.md": []byte("carried\n")},
+			Carry: "notes", CarryTo: "pages/notes"}
+	}
+	return p, f, h
 }
 
 // TestPersistentPlanHasNoSessionCaps: a persistent plan's harness half is
@@ -134,13 +150,29 @@ func runSegment(t *testing.T, p Params, f *dockerx.Fake) (*receipt.Envelope, []s
 	return env, get(), ps
 }
 
-// TestSweepKeepsPersistentVolumes: a segment makes the agent's two volumes
-// with the agent's label and no run label, mounts the session volume as
-// the harness's store, and neither its teardown nor the sweep of the
-// segment's run once its process has died removes either. A second segment
-// finds them and makes nothing.
+// TestSweepKeepsPersistentVolumes: a segment makes the agent's three
+// volumes (its session, its data and its memory) with the agent's label and
+// no run label, mounts the session volume as the harness's store, seeds the
+// new memory volume once, in a one-shot with no network that reads the data
+// volume read-only, and neither its teardown nor the sweep of the segment's
+// run once its process has died removes any of them. A second segment finds
+// them and makes and seeds nothing.
 func TestSweepKeepsPersistentVolumes(t *testing.T) {
-	p, f, _ := persistentFixture(t, "")
+	p, f, _ := persistentFixtureWith(t, "", &spec.AgentFiles{Memory: true})
+	var seeds []dockerx.RunSpec
+	var seeded []string
+	f.Foreground["-memory-seed"] = &dockerx.FakeForeground{Handler: func(_ context.Context, r dockerx.RunSpec, stdin io.Reader, _, _ io.Writer) (int, error) {
+		seeds = append(seeds, r)
+		tr := tar.NewReader(stdin)
+		for {
+			h, err := tr.Next()
+			if err != nil {
+				break
+			}
+			seeded = append(seeded, h.Name)
+		}
+		return 0, nil
+	}}
 	env, _, _ := runSegment(t, p, f)
 	if env.Status != "ok" {
 		t.Fatalf("envelope %+v", env)
@@ -149,7 +181,7 @@ func TestSweepKeepsPersistentVolumes(t *testing.T) {
 	for _, v := range f.Volumes {
 		vols[v.Name] = v.Labels
 	}
-	for _, name := range []string{p.Persistent.SessionVolume, p.Persistent.DataVolume} {
+	for _, name := range []string{p.Persistent.SessionVolume, p.Persistent.DataVolume, p.Persistent.Memory.Volume} {
 		labels, ok := vols[name]
 		if !ok {
 			t.Errorf("volume %s is gone after the segment: %v", name, f.Ops())
@@ -177,6 +209,23 @@ func TestSweepKeepsPersistentVolumes(t *testing.T) {
 			t.Errorf("the segment made a run's session volume: %v", f.Ops())
 		}
 	}
+	if len(seeds) != 1 {
+		t.Fatalf("the memory volume was seeded %d times", len(seeds))
+	}
+	seed := seeds[0]
+	wantMounts := []dockerx.Mount{{Source: p.Persistent.DataVolume, Target: "/data", ReadOnly: true}, {Source: p.Persistent.Memory.Volume, Target: "/memory"}}
+	if seed.Network != "none" || !slices.Equal(seed.Mounts, wantMounts) || !slices.Equal(seed.CapAdd, []string{"DAC_READ_SEARCH"}) || !seed.Interactive {
+		t.Errorf("the seed's one-shot: network %q mounts %+v caps %v interactive %v", seed.Network, seed.Mounts, seed.CapAdd, seed.Interactive)
+	}
+	if !slices.Equal(seed.Argv[len(seed.Argv)-3:], []string{"notes", "pages/notes", MemoryCarriedDir}) {
+		t.Errorf("the seed's arguments: %v", seed.Argv)
+	}
+	if want := []string{MemoryCarriedDir + "/", MemoryCarriedDir + "/log.md", "SCHEMA.md", "pages/"}; !slices.Equal(seeded, want) {
+		t.Errorf("the seed's archive holds %v, want %v", seeded, want)
+	}
+	if env.Persistent == nil || env.Persistent.Volumes.Memory != p.Persistent.Memory.Volume {
+		t.Errorf("the envelope's volumes: %+v", env.Persistent)
+	}
 
 	// The segment's process died: its containers are swept by run.
 	dead := deadOwner(t)
@@ -187,12 +236,14 @@ func TestSweepKeepsPersistentVolumes(t *testing.T) {
 			t.Errorf("a persistent volume was removed: %s", op)
 		}
 	}
-	if len(f.Volumes) != 2 {
+	if len(f.Volumes) != 3 {
 		t.Errorf("volumes after the sweep = %+v", f.Volumes)
 	}
 
-	// The next segment finds both and makes neither.
-	p2, _, _ := persistentFixture(t, "")
+	// The next segment finds all three, its memory seeded, and makes and
+	// seeds none.
+	p2, _, _ := persistentFixtureWith(t, "", &spec.AgentFiles{Memory: true})
+	p2.Persistent.Memory.Seeded = true
 	p2.RunID = "5e9e0002"
 	before := len(f.Ops())
 	h := &fakeHarness{loadSession: true}
@@ -202,6 +253,28 @@ func TestSweepKeepsPersistentVolumes(t *testing.T) {
 		if strings.HasPrefix(op, "VolumeCreate:agentry-persistent-") {
 			t.Errorf("the second segment made a volume that exists: %s", op)
 		}
+	}
+	if len(seeds) != 1 {
+		t.Errorf("the second segment seeded the memory again")
+	}
+
+	// A memory volume no start recorded seeding (one stopped between
+	// making it and seeding it) is seeded again, and neither made again
+	// nor removed when that seed fails.
+	p3, _, _ := persistentFixtureWith(t, "", &spec.AgentFiles{Memory: true})
+	p3.RunID = "5e9e0003"
+	f.Foreground["-memory-seed"] = &dockerx.FakeForeground{ExitCode: 1, Stderr: "no space left"}
+	before = len(f.Ops())
+	if _, err := StartSession(context.Background(), f, p3); err == nil || !strings.Contains(err.Error(), "seed the memory volume") {
+		t.Fatalf("a failed seed of an existing memory: %v", err)
+	}
+	for _, op := range f.Ops()[before:] {
+		if op == "VolumeCreate:"+p3.Persistent.Memory.Volume || op == "VolumeRemove:"+p3.Persistent.Memory.Volume {
+			t.Errorf("the existing memory volume was made or removed: %s", op)
+		}
+	}
+	if !slices.ContainsFunc(f.Ops()[before:], func(op string) bool { return strings.Contains(op, "-memory-seed") }) {
+		t.Errorf("the unrecorded memory was not seeded: %v", f.Ops()[before:])
 	}
 }
 

@@ -47,7 +47,8 @@ func TestASegmentStartReportsEachStageOnceInOrder(t *testing.T) {
 		return Segment{Builtin: Assistant(), Home: home, Policy: pol, PolicySHA: "s", Build: "test",
 			OutDir: t.TempDir(), RunID: fmt.Sprintf("5e9e%04d", n), OnStage: onStage,
 			Persistent: engine.PersistentSegment{Agent: "assistant", Segment: n,
-				SessionVolume: "agentry-persistent-assistant-session", DataVolume: "agentry-persistent-assistant-data"},
+				SessionVolume: "agentry-persistent-assistant-session", DataVolume: "agentry-persistent-assistant-data",
+				Memory: &engine.PersistentMemory{Volume: "agentry-persistent-assistant-memory"}},
 			Grants: Grants{
 				Servers:    []manifest.MCPServer{{PyPI: "some-word-server", Version: "1.1.11", Tools: []string{"create_document"}}},
 				ServersDir: store,
