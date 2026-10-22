@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -56,7 +57,10 @@ func newAgentTasksCmd() *cobra.Command {
 			if len(args) == 3 {
 				op := persistent.TaskOp{Op: args[1], ID: args[2]}
 				if tasks, _, err = persistent.ChangeTaskOf(ctx, home, a, persistent.ClientCLI, op); err != nil {
-					return engine.Classify(engine.ExitUsage, err)
+					if errors.Is(err, persistent.ErrNoTask) {
+						return engine.Classify(engine.ExitUsage, err)
+					}
+					return err
 				}
 			} else if tasks, _, err = persistent.TasksOf(ctx, home, a); err != nil {
 				return err
@@ -70,7 +74,10 @@ func newAgentTasksCmd() *cobra.Command {
 					Tasks []persistent.Task `json:"tasks"`
 				}{a.Name, tasks})
 			}
-			cfg, _ := persistent.LoadConfig(home, a.Name)
+			cfg, err := persistent.LoadConfig(home, a.Name)
+			if err != nil {
+				return err
+			}
 			e, _ := persistent.BuildRoster(a, cfg, nil).Entry(persistent.EntryHeartbeat)
 			printTasks(cmd.OutOrStdout(), a, tasks, e.On)
 			return nil

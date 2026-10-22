@@ -45,6 +45,7 @@ const (
 	beatFired   = "fired"
 	beatSkipped = "skipped"
 	beatMissed  = "missed"
+	beatFailed  = "failed"
 )
 
 // defaultTick is how often the heartbeat looks.
@@ -61,13 +62,20 @@ func (s *Supervisor) now() time.Time {
 	return time.Now()
 }
 
-// heartbeatOn says the agent's roster has its heartbeat on.
+// heartbeatOn says the agent's roster has its heartbeat on, and the person
+// agreed to it as its sentence reads now. The switch is read at each tick,
+// not at a segment's start, so the agreement is checked here: a config.yaml
+// switched some other way fires nothing.
 func heartbeatOn(a Agent, c Config) bool {
 	if !a.Builtin.KeepsTime() {
 		return false
 	}
-	e, ok := BuildRoster(a, c, nil).Entry(EntryHeartbeat)
-	return ok && e.On
+	r := BuildRoster(a, c, nil)
+	e, ok := r.Entry(EntryHeartbeat)
+	if !ok || !e.On {
+		return false
+	}
+	return !slices.ContainsFunc(Unconsented(r, c), func(u RosterEntry) bool { return u.ID == EntryHeartbeat })
 }
 
 // startHeartbeat names to the agent the tasks that came due while it was
@@ -141,14 +149,16 @@ func (s *Supervisor) noteMissed() {
 		if !ts.Checked.IsZero() && heartbeatOn(s.opts.Agent, cfg) {
 			due := ts.due(ts.Checked, now)
 			for _, t := range ts.Tasks {
-				times := due[t.ID]
-				if len(times) == 0 {
+				d, ok := due[t.ID]
+				if !ok {
 					continue
 				}
-				for _, at := range times {
-					s.logBeat(t, at, beatMissed, "the agent was not running")
+				s.logBeat(beatRecord{task: t, due: d.Last, outcome: beatMissed, reason: "the agent was not running", count: d.Count})
+				when := d.Last.In(zoneOf(t)).Format("Mon 2 Jan 15:04")
+				if d.Count > 1 {
+					when = fmt.Sprintf("%d times, last %s", d.Count, when)
 				}
-				missed = append(missed, strconv.Quote(t.Name)+" (due "+times[len(times)-1].In(zoneOf(t)).Format("Mon 2 Jan 15:04")+")")
+				missed = append(missed, strconv.Quote(t.Name)+" (due "+when+")")
 			}
 		}
 		ts.Checked = now
@@ -177,7 +187,7 @@ func (s *Supervisor) beat(ctx context.Context) {
 		return
 	}
 	on := heartbeatOn(s.opts.Agent, cfg)
-	var due map[string][]time.Time
+	var due map[string]dueTimes
 	var tasks []Task
 	_ = s.updateTasks(func(ts *Tasks) error {
 		from := ts.Checked
@@ -196,21 +206,39 @@ func (s *Supervisor) beat(ctx context.Context) {
 	}
 	var fires []fire
 	for _, t := range tasks {
-		times := due[t.ID]
-		if len(times) == 0 {
+		d, ok := due[t.ID]
+		if !ok {
 			continue
 		}
-		// One turn for a task, at its latest time: the earlier ones came
-		// while a turn before it held the heartbeat.
-		for _, at := range times[:len(times)-1] {
-			s.logBeat(t, at, beatSkipped, "its time came again before its last turn could be sent")
+		// A time that came while the task's own turn before it still ran
+		// is skipped; of the rest, which came while another turn held the
+		// heartbeat, the task fires once, at the latest.
+		s.mu.Lock()
+		ranUntil := s.ranUntil[t.ID]
+		s.mu.Unlock()
+		var waiting []time.Time
+		for _, at := range d.Times {
+			if !at.After(ranUntil) {
+				s.logBeat(beatRecord{task: t, due: at, outcome: beatSkipped, reason: "its turn before was still running"})
+				continue
+			}
+			waiting = append(waiting, at)
 		}
-		fires = append(fires, fire{t, times[len(times)-1]})
+		if extra := d.Count - len(d.Times); extra > 0 {
+			s.logBeat(beatRecord{task: t, due: d.Last, outcome: beatSkipped, reason: "its time came again before its turn could be sent", count: extra})
+		}
+		if len(waiting) == 0 {
+			continue
+		}
+		for _, at := range waiting[:len(waiting)-1] {
+			s.logBeat(beatRecord{task: t, due: at, outcome: beatSkipped, reason: "its time came again before its turn could be sent"})
+		}
+		fires = append(fires, fire{t, waiting[len(waiting)-1]})
 	}
 	slices.SortFunc(fires, func(a, b fire) int { return a.at.Compare(b.at) })
 	for _, f := range fires {
 		if ctx.Err() != nil {
-			s.logBeat(f.t, f.at, beatSkipped, "the agent stopped")
+			s.logBeat(beatRecord{task: f.t, due: f.at, outcome: beatSkipped, reason: "the agent stopped"})
 			continue
 		}
 		s.fireTask(ctx, f.t, f.at)
@@ -220,7 +248,7 @@ func (s *Supervisor) beat(ctx context.Context) {
 // fireTask sends a task's turn once no other turn is in flight.
 func (s *Supervisor) fireTask(ctx context.Context, t Task, at time.Time) {
 	if !s.waitTurn(ctx) {
-		s.logBeat(t, at, beatSkipped, "the agent stopped")
+		s.logBeat(beatRecord{task: t, due: at, outcome: beatSkipped, reason: "the agent stopped"})
 		return
 	}
 	defer s.turn.Unlock()
@@ -244,12 +272,12 @@ func (s *Supervisor) fireTask(ctx context.Context, t Task, at time.Time) {
 		return nil
 	})
 	if refused != "" {
-		s.logBeat(t, at, beatSkipped, refused)
+		s.logBeat(beatRecord{task: t, due: at, outcome: beatSkipped, reason: refused})
 		return
 	}
 	cfg, err := LoadConfig(s.opts.Home, s.opts.Agent.Name)
 	if err != nil || !heartbeatOn(s.opts.Agent, cfg) {
-		s.logBeat(cur, at, beatSkipped, "the heartbeat was switched off")
+		s.logBeat(beatRecord{task: cur, due: at, outcome: beatSkipped, reason: "the heartbeat was switched off"})
 		return
 	}
 	events, unsubscribe := s.Subscribe()
@@ -261,29 +289,32 @@ func (s *Supervisor) fireTask(ctx context.Context, t Task, at time.Time) {
 		at.In(zoneOf(cur)).Format("15:04 Mon 2 Jan") + " " + cur.Zone + ". You registered it; its instruction is the message below. " +
 		"Act on it as you would a request from the person, within your instructions. The person may not be reading: say what you did in your answer.)\n\n"
 	err = s.sendLocked(ctx, frame, "Task: "+cur.Name+"\n\n"+cur.Instruction)
+	ended := s.now()
+	s.mu.Lock()
+	s.ranUntil[cur.ID] = ended
+	turn := s.usage.UserTurns
 	if err != nil {
 		// No user turn came to take the mark: the person's next turn is not
 		// the task's.
-		s.mu.Lock()
 		s.taskTurn = ""
-		s.mu.Unlock()
 	}
+	s.mu.Unlock()
 	answer := lastAnswer(events)
 	result := firstLine(answer)
 	if err != nil {
-		result = "not answered: " + err.Error()
+		result = "the turn failed: " + err.Error()
 	}
 	_ = s.updateTasks(func(ts *Tasks) error {
 		if i := ts.index(cur.ID); i >= 0 {
-			ts.Tasks[i].LastFire, ts.Tasks[i].LastResult = s.now().UTC(), result
+			ts.Tasks[i].LastFire, ts.Tasks[i].LastResult = ended.UTC(), result
 		}
 		return nil
 	})
 	if err != nil {
-		s.logBeat(cur, at, beatSkipped, "the turn failed: "+err.Error())
+		s.logBeat(beatRecord{task: cur, due: at, outcome: beatFailed, reason: err.Error()})
 		return
 	}
-	s.logBeat(cur, at, beatFired, "")
+	s.logBeat(beatRecord{task: cur, due: at, outcome: beatFired, turn: turn})
 	s.notice("Task " + strconv.Quote(cur.Name) + " ran: " + result)
 }
 
@@ -388,8 +419,18 @@ func (s *Supervisor) ChangeTask(op TaskOp) ([]Task, error) {
 	return s.Tasks()
 }
 
+// beatRecord is one line of the heartbeat's receipt: a task's time and what
+// came of it. count is how many times a missed or skipped line stands for;
+// turn is the segment's user turn a fire was.
+type beatRecord struct {
+	task            Task
+	due             time.Time
+	outcome, reason string
+	count, turn     int
+}
+
 // logBeat appends a heartbeat line to the running segment's receipts.
-func (s *Supervisor) logBeat(t Task, due time.Time, outcome, reason string) {
+func (s *Supervisor) logBeat(b beatRecord) {
 	s.mu.Lock()
 	dir, segment, run := filepath.Join(s.outDir, "receipts"), s.segment, s.runID
 	s.mu.Unlock()
@@ -400,9 +441,11 @@ func (s *Supervisor) logBeat(t Task, due time.Time, outcome, reason string) {
 		Due     time.Time `json:"due"`
 		Outcome string    `json:"outcome"`
 		Reason  string    `json:"reason,omitempty"`
+		Count   int       `json:"count,omitempty"`
 		Segment int       `json:"segment"`
+		Turn    int       `json:"turn,omitempty"`
 		Run     string    `json:"run"`
-	}{s.now().UTC(), t.ID, t.Name, due.UTC(), outcome, reason, segment, run})
+	}{s.now().UTC(), b.task.ID, b.task.Name, b.due.UTC(), b.outcome, b.reason, b.count, segment, b.turn, run})
 	if err != nil {
 		return
 	}

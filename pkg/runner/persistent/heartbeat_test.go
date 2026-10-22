@@ -327,7 +327,7 @@ func TestTheTaskLimits(t *testing.T) {
 	ts = Tasks{}
 	for _, bad := range []TaskSpec{
 		{Name: s("x"), Cron: s("0 9 * * *"), Instruction: s(strings.Repeat("a", MaxInstruction+1))},
-		{Name: s("a‮b"), Cron: s("0 9 * * *"), Instruction: s("y")},
+		{Name: s("a\u202eb"), Cron: s("0 9 * * *"), Instruction: s("y")},
 		{Name: s("x"), Cron: s("0 9 * * *"), Instruction: s("y"), Zone: s("Mars/Olympus")},
 		{Name: s("x"), Cron: s("0 0 31 2 *"), Instruction: s("y")},
 		{Name: s(""), Cron: s("0 9 * * *"), Instruction: s("y")},
@@ -391,5 +391,123 @@ func TestTaskToolsRefuseWhatTheyDoNotTake(t *testing.T) {
 	}
 	if ts, _ := sv.Tasks(); len(ts) != 0 {
 		t.Errorf("saved: %+v", ts)
+	}
+}
+
+// TestAHeartbeatNotAgreedToFiresNothing: a heartbeat switched on in
+// config.yaml without the person's agreement fires nothing, though no segment
+// restart would catch it.
+func TestAHeartbeatNotAgreedToFiresNothing(t *testing.T) {
+	home := shortHome(t)
+	enableHeartbeat(t, home, false)
+	c := &clock{t: time.Date(2026, 10, 21, 14, 3, 0, 0, time.UTC)}
+	st := &starter{}
+	sv := startTicking(t, home, st, c)
+	if err := saveTasks(home, "assistant", Tasks{Version: tasksVersion, NextID: 1,
+		Tasks: []Task{{ID: "t1", Name: "Check", Cron: "15 14 * * *", Zone: "UTC", Instruction: "Check in.", State: TaskOn, MadeBy: TaskMadeByAgent}}}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := LoadConfig(home, "assistant")
+	cfg.Switches[EntryHeartbeat] = true
+	if err := SaveConfig(home, "assistant", cfg); err != nil {
+		t.Fatal(err)
+	}
+	c.set(time.Date(2026, 10, 21, 14, 15, 0, 0, time.UTC))
+	time.Sleep(50 * time.Millisecond)
+	if n := len(st.lastSegment().sentTurns()); n != 0 {
+		t.Errorf("a heartbeat nobody agreed to fired %d turns", n)
+	}
+	if a := callTask(t, sv, applink.TaskAdd, `{"name":"x","cron":"0 9 * * *","instruction":"y"}`); !a.IsError {
+		t.Errorf("task_add with a heartbeat nobody agreed to: %+v", a)
+	}
+}
+
+// TestATaskStillRunningSkipsItsNextTime: a time of a task that comes while
+// its own turn before still runs is skipped and recorded, and the task fires
+// again at its time after.
+func TestATaskStillRunningSkipsItsNextTime(t *testing.T) {
+	home := shortHome(t)
+	enableHeartbeat(t, home, true)
+	c := &clock{t: time.Date(2026, 10, 21, 14, 3, 0, 0, time.UTC)}
+	hold := make(chan struct{})
+	st := &starter{hold: hold}
+	sv := startTicking(t, home, st, c)
+	if a := callTask(t, sv, applink.TaskAdd, `{"name":"Sweep","cron":"*/15 * * * *","instruction":"Sweep the share."}`); a.IsError {
+		t.Fatal(a.Text)
+	}
+	seg := st.lastSegment()
+	c.set(time.Date(2026, 10, 21, 14, 15, 0, 0, time.UTC))
+	eventually(t, "the first turn in flight", func() bool { return len(seg.sentTurns()) == 1 })
+	// Its turn runs past 14:30.
+	c.set(time.Date(2026, 10, 21, 14, 31, 0, 0, time.UTC))
+	time.Sleep(30 * time.Millisecond)
+	close(hold)
+	eventually(t, "the skip recorded", func() bool {
+		for _, b := range beats(t, sv) {
+			if b["outcome"] == beatSkipped && strings.HasPrefix(b["due"].(string), "2026-10-21T14:30") {
+				return true
+			}
+		}
+		return false
+	})
+	time.Sleep(50 * time.Millisecond)
+	if n := len(seg.sentTurns()); n != 1 {
+		t.Fatalf("the overrun time fired: %d turns", n)
+	}
+	c.set(time.Date(2026, 10, 21, 14, 45, 0, 0, time.UTC))
+	eventually(t, "the next time fires", func() bool { return len(seg.sentTurns()) == 2 })
+}
+
+// TestOneHeartbeatPerAgent: a second supervisor of the agent is refused, so
+// a task fires once whoever else asks to run it.
+func TestOneHeartbeatPerAgent(t *testing.T) {
+	home := shortHome(t)
+	enableHeartbeat(t, home, true)
+	c := &clock{t: time.Date(2026, 10, 21, 14, 3, 0, 0, time.UTC)}
+	st := &starter{}
+	sv := startTicking(t, home, st, c)
+	if _, err := Start(context.Background(), Options{
+		Home: home, Agent: assistantAgent(t), Client: ClientDesktop, Policy: policy.Default(),
+		Docker: &dockerx.Fake{}, StartSegment: (&starter{}).start, Now: c.now, Tick: 5 * time.Millisecond,
+	}); err == nil {
+		t.Fatal("a second supervisor started")
+	}
+	if a := callTask(t, sv, applink.TaskAdd, `{"name":"Once","cron":"15 14 * * *","instruction":"Once."}`); a.IsError {
+		t.Fatal(a.Text)
+	}
+	c.set(time.Date(2026, 10, 21, 14, 15, 0, 0, time.UTC))
+	seg := st.lastSegment()
+	eventually(t, "the fire", func() bool { return len(seg.sentTurns()) == 1 })
+	time.Sleep(50 * time.Millisecond)
+	fired := 0
+	for _, b := range beats(t, sv) {
+		if b["outcome"] == beatFired {
+			fired++
+		}
+	}
+	if fired != 1 || len(seg.sentTurns()) != 1 {
+		t.Errorf("fired %d times, %d turns", fired, len(seg.sentTurns()))
+	}
+}
+
+// TestAFailedTaskTurnIsRecordedAsFailed: a task's turn the harness fails is
+// a failed line, and the task's result says so.
+func TestAFailedTaskTurnIsRecordedAsFailed(t *testing.T) {
+	home := shortHome(t)
+	enableHeartbeat(t, home, true)
+	c := &clock{t: time.Date(2026, 10, 21, 14, 3, 0, 0, time.UTC)}
+	st := &starter{failSends: 1}
+	sv := startTicking(t, home, st, c)
+	if a := callTask(t, sv, applink.TaskAdd, `{"name":"Check","cron":"15 14 * * *","instruction":"Check in."}`); a.IsError {
+		t.Fatal(a.Text)
+	}
+	c.set(time.Date(2026, 10, 21, 14, 15, 0, 0, time.UTC))
+	eventually(t, "the failed line", func() bool {
+		b := beats(t, sv)
+		return len(b) == 1 && b[0]["outcome"] == beatFailed
+	})
+	ts, _ := sv.Tasks()
+	if !strings.HasPrefix(ts[0].LastResult, "the turn failed: ") {
+		t.Errorf("the result: %q", ts[0].LastResult)
 	}
 }

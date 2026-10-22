@@ -155,6 +155,9 @@ type Supervisor struct {
 	hbDone   chan struct{}
 	missed   string
 	taskTurn string
+	// ranUntil is when each task's last turn ended: a time of the task's
+	// that came before it is skipped.
+	ranUntil map[string]time.Time
 
 	done     chan struct{}
 	stopOnce sync.Once
@@ -195,7 +198,7 @@ func Start(ctx context.Context, opts Options) (*Supervisor, error) {
 		opts: opts, owner: owner, since: time.Now().UTC(),
 		adapter:  localrun.ImageAdapter(adapter.DefaultFor(opts.Policy)),
 		watchers: map[int]chan session.Event{},
-		joined:   map[string]bool{}, installs: map[string]*bgInstall{},
+		joined:   map[string]bool{}, installs: map[string]*bgInstall{}, ranUntil: map[string]time.Time{},
 		done: make(chan struct{}),
 	}
 	s.bgCtx, s.bgCancel = context.WithCancel(context.Background())

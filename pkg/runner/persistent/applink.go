@@ -3,13 +3,14 @@ package persistent
 // The owner side of a persistent agent's app link. The gateway runs the app
 // link (runnerimage/applink) with one bind, a socket of the supervisor's own,
 // apart from the owner socket: it takes tool calls alone, so nothing that
-// reaches it can change the roster, send a turn or stop the agent. The
+// reaches it can change the roster, send a turn now or stop the agent. The
 // supervisor answers self_configure itself, writing the agent's name and
-// personality and nothing else, and hands every other tool to its client's
-// handler (the desktop's, which answers with the application's own
+// personality and nothing else, and the Assistant's task tools, which
+// register the turns its heartbeat sends later at their times, with the
+// roster those times find (heartbeat.go). It hands every other tool to its
+// client's handler (the desktop's, which answers with the application's own
 // operations and consent); without one, the tool is answered as Agentry
-// Desktop's. The Assistant's task tools are the supervisor's too: they
-// register the turns its heartbeat fires (heartbeat.go). Every call and its answer are a line of the segment's
+// Desktop's. Every call and its answer are a line of the segment's
 // receipts/applink.log.
 
 import (

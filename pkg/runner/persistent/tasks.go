@@ -141,6 +141,19 @@ const (
 	TaskOpRemove = "remove"
 )
 
+// ErrNoTask refuses a change to a task the agent does not have.
+var ErrNoTask = errors.New("no such task")
+
+// schedule is a task's cron expression and zone, read.
+func (t Task) schedule() (Cron, *time.Location, error) {
+	cr, err := ParseCron(t.Cron)
+	if err != nil {
+		return Cron{}, nil, err
+	}
+	loc, _, err := location(t.Zone)
+	return cr, loc, err
+}
+
 // location is a task's zone; the host's when it names none.
 func location(zone string) (*time.Location, string, error) {
 	if zone == "" {
@@ -165,7 +178,8 @@ func cleanTaskText(what, s string, max int, multiline bool) (string, error) {
 		return "", fmt.Errorf("a task's %s is at most %d bytes of text", what, max)
 	}
 	for _, r := range s {
-		if unicode.IsControl(r) && !(multiline && (r == '\n' || r == '\t')) || unicode.Is(unicode.Cf, r) {
+		allowed := multiline && (r == '\n' || r == '\t')
+		if unicode.IsControl(r) && !allowed || unicode.Is(unicode.Cf, r) {
 			return "", fmt.Errorf("a task's %s holds a control or formatting character", what)
 		}
 	}
@@ -211,11 +225,7 @@ func (spec TaskSpec) apply(t *Task) error {
 // often than every MinTaskInterval, and all the tasks that are on making no
 // more than MaxTaskFiresPerDay fires in the day after now.
 func checkTimes(ts []Task, t Task, now time.Time) error {
-	cr, err := ParseCron(t.Cron)
-	if err != nil {
-		return err
-	}
-	loc, _, err := location(t.Zone)
+	cr, loc, err := t.schedule()
 	if err != nil {
 		return err
 	}
@@ -230,11 +240,7 @@ func checkTimes(ts []Task, t Task, now time.Time) error {
 		if o.State != TaskOn {
 			continue
 		}
-		c, err := ParseCron(o.Cron)
-		if err != nil {
-			continue
-		}
-		l, _, err := location(o.Zone)
+		c, l, err := o.schedule()
 		if err != nil {
 			continue
 		}
@@ -274,7 +280,7 @@ func (ts *Tasks) AddTask(spec TaskSpec, now time.Time) (Task, error) {
 func (ts *Tasks) UpdateTask(id string, spec TaskSpec, now time.Time) (Task, error) {
 	i := ts.index(id)
 	if i < 0 {
-		return Task{}, fmt.Errorf("there is no task %s (task_list lists them)", id)
+		return Task{}, fmt.Errorf("%w %s (task_list lists them)", ErrNoTask, id)
 	}
 	t := ts.Tasks[i]
 	if err := spec.apply(&t); err != nil {
@@ -292,7 +298,7 @@ func (ts *Tasks) UpdateTask(id string, spec TaskSpec, now time.Time) (Task, erro
 func (ts *Tasks) RemoveTask(id string) (Task, error) {
 	i := ts.index(id)
 	if i < 0 {
-		return Task{}, fmt.Errorf("there is no task %s", id)
+		return Task{}, fmt.Errorf("%w %s", ErrNoTask, id)
 	}
 	t := ts.Tasks[i]
 	ts.Tasks = slices.Delete(ts.Tasks, i, i+1)
@@ -310,7 +316,7 @@ func (ts *Tasks) ApplyOp(op TaskOp, now time.Time) error {
 		_, err := ts.UpdateTask(op.ID, TaskSpec{Paused: &paused}, now)
 		return err
 	}
-	return fmt.Errorf("a task is paused, resumed or removed; %q is none of them", op.Op)
+	return fmt.Errorf("%w: a task is paused, resumed or removed, and %q is none of them", ErrNoTask, op.Op)
 }
 
 func (ts *Tasks) index(id string) int {
@@ -324,11 +330,7 @@ func (ts Tasks) Listed(now time.Time) []Task {
 		if t.State != TaskOn {
 			continue
 		}
-		cr, err := ParseCron(t.Cron)
-		if err != nil {
-			continue
-		}
-		loc, _, err := location(t.Zone)
+		cr, loc, err := t.schedule()
 		if err != nil {
 			continue
 		}
@@ -337,32 +339,40 @@ func (ts Tasks) Listed(now time.Time) []Task {
 	return out
 }
 
+// dueTimes are the times a task came due in a window: the first
+// MaxTaskFiresPerDay+1 of them, how many there were, and the last.
+type dueTimes struct {
+	Times []time.Time
+	Count int
+	Last  time.Time
+}
+
 // due are the times each task that is on came due after from and up to
-// to, by task id, in order.
-func (ts Tasks) due(from, to time.Time) map[string][]time.Time {
-	out := map[string][]time.Time{}
+// to, by task id.
+func (ts Tasks) due(from, to time.Time) map[string]dueTimes {
+	out := map[string]dueTimes{}
 	for _, t := range ts.Tasks {
 		if t.State != TaskOn {
 			continue
 		}
-		cr, err := ParseCron(t.Cron)
+		cr, loc, err := t.schedule()
 		if err != nil {
 			continue
 		}
-		loc, _, err := location(t.Zone)
-		if err != nil {
-			continue
-		}
+		var d dueTimes
 		for at := from; ; {
 			next, err := cr.Next(at, loc)
 			if err != nil || next.After(to) {
 				break
 			}
-			out[t.ID] = append(out[t.ID], next)
-			at = next
-			if len(out[t.ID]) > MaxTaskFiresPerDay {
-				break
+			if len(d.Times) <= MaxTaskFiresPerDay {
+				d.Times = append(d.Times, next)
 			}
+			d.Count++
+			d.Last, at = next, next
+		}
+		if d.Count > 0 {
+			out[t.ID] = d
 		}
 	}
 	return out

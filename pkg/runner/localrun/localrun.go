@@ -163,7 +163,8 @@ type Builtin struct {
 	appLink string
 	// keepsTime tells the persistent agent the time at each turn and gives
 	// it a heartbeat that fires the tasks it registers through its app
-	// link: the supervisor's, never the plan's.
+	// link. Both are the supervisor's: the plan a segment compiles grants
+	// nothing for them.
 	keepsTime bool
 	// runnable says a persistent built-in runs as an agent; one that does
 	// not is published for reading only.
