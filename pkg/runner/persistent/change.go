@@ -57,6 +57,11 @@ type Change struct {
 	// takes one away by its name.
 	AddPort    *Port  `json:"addPort,omitempty"`
 	RemovePort string `json:"removePort,omitempty"`
+	// AddSkill adds a skill InstallSkill kept, on; RemoveSkill takes away
+	// one the person added, by its name. A built-in skill is switched, not
+	// removed.
+	AddSkill    *AddedSkill `json:"addSkill,omitempty"`
+	RemoveSkill string      `json:"removeSkill,omitempty"`
 	// Consent says the person consented to what this change turns on, as
 	// the lines a ConsentError listed say it.
 	Consent bool `json:"consent,omitempty"`
@@ -94,7 +99,7 @@ func (e *ConsentError) Error() string {
 func Unconsented(r Roster, c Config) []RosterEntry {
 	var out []RosterEntry
 	for _, e := range r {
-		if e.On && !e.Fixed && !e.agreed(c.Consented[e.ID]) {
+		if e.On && !e.Fixed && !e.noConsent && !e.agreed(c.Consented[e.ID]) {
 			out = append(out, e)
 		}
 	}
@@ -140,6 +145,7 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 	next.Consented = cloneMap(c.Consented)
 	next.Servers = slices.Clone(c.Servers)
 	next.Knowledge = slices.Clone(c.Knowledge)
+	next.Skills = slices.Clone(c.Skills)
 	next.ServerFailures = cloneMap(c.ServerFailures)
 	if ch.Name != nil {
 		name, err := cleanName(*ch.Name)
@@ -267,6 +273,16 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 		delete(next.Switches, PortEntryID(name))
 		delete(next.Consented, PortEntryID(name))
 	}
+	if s := ch.AddSkill; s != nil {
+		if err := addSkill(home, a, &next, *s); err != nil {
+			return false, err
+		}
+	}
+	if n := ch.RemoveSkill; n != "" {
+		if err := removeSkill(a, &next, n); err != nil {
+			return false, err
+		}
+	}
 	if sw := ch.Switch; sw != nil && strings.HasPrefix(sw.ID, serverPrefix) && strings.HasSuffix(sw.ID, shareSuffix) {
 		if err := switchServerShare(a, &next, *sw); err != nil {
 			return false, err
@@ -362,6 +378,7 @@ func grantsKeyWith(a Agent, c Config, ready func(manifest.MCPServer) bool) strin
 		Share     string
 		Servers   []manifest.MCPServer
 		Knowledge []string
+		Skills    []string
 	}
 	counted := map[string]bool{}
 	for _, s := range c.Servers {
@@ -378,6 +395,13 @@ func grantsKeyWith(a Agent, c Config, ready func(manifest.MCPServer) bool) strin
 		}
 	}
 	k.Share, _ = ShareFolder(a, c)
+	// An added skill counts by its files' digest, so one removed and added
+	// again with other files before a turn restarts the segment.
+	for _, s := range c.Skills {
+		if e, ok := r.Entry(SkillEntryID(s.Name)); ok && e.On {
+			k.Skills = append(k.Skills, s.Name+"="+s.Digest)
+		}
+	}
 	for _, s := range c.Servers {
 		if e, ok := r.Entry(ServerEntryID(s)); ok && e.On && counted[e.ID] {
 			k.Servers = append(k.Servers, s)

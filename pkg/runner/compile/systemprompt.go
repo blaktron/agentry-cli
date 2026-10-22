@@ -214,7 +214,7 @@ You have no shell, filesystem or network of your own. Your tools come only from 
 			inputsNote = " They never search your inputs: read those with read_input."
 		}
 		if c.AgentFiles != nil {
-			for _, f := range c.AgentFiles.Folders() {
+			for _, f := range c.AgentFiles.ReadFolders() {
 				areas += ", " + spec.AgentRoot + "/" + f
 			}
 		} else if c.FSReadMode != "none" && c.FSReadMode != "" {
@@ -534,5 +534,5 @@ func agentFilesLine(a *spec.AgentFiles, commands bool) string {
 			line += " fs_read reads a document there by the text read out of it before your turn, headed with what read it: " + toolsrv.ShareFormats + ". Read a document that way and summarise or quote it; view \"original\" reads the file itself. A file nothing could read says why: tell the person rather than guess at it."
 		}
 	}
-	return line + "\n"
+	return line + "\n" + skillsLine(a.Skills, commands)
 }

@@ -224,7 +224,11 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 			return nil, &PolicyRefusal{Reason: "a persistent agent's files are its share and data folders, and it declares no filesystem access of its own beside them"}
 		}
 		checked := in.AgentFiles.Share && in.AgentFiles.CheckShare
-		caps.AgentFiles = &spec.AgentFiles{Share: in.AgentFiles.Share, CheckShare: checked, MalwareCheck: checked && in.Policy.MalwareCheckOn()}
+		skills, err := checkedSkills(in.AgentFiles.Skills)
+		if err != nil {
+			return nil, err
+		}
+		caps.AgentFiles = &spec.AgentFiles{Share: in.AgentFiles.Share, CheckShare: checked, MalwareCheck: checked && in.Policy.MalwareCheckOn(), Skills: skills}
 	}
 	if in.AppLink != "" {
 		if mode != manifest.ModePersistent || in.Source != "builtin" {
@@ -1007,7 +1011,7 @@ func toolSpec(caps spec.CapSummary, secrets []string) *toolsrv.Spec {
 	// at spec.AgentRoot, and nowhere else.
 	if folders := caps.AgentFiles.Folders(); len(folders) > 0 {
 		ts.WorkspaceDir, ts.WorkspaceName = spec.AgentRoot, agentFilesName(caps.AgentFiles)
-		ts.FSRead = toolsrv.Access{Enabled: true, Paths: folders}
+		ts.FSRead = toolsrv.Access{Enabled: true, Paths: caps.AgentFiles.ReadFolders()}
 		ts.FSWrite = toolsrv.Access{Enabled: true, Paths: folders}
 		if caps.AgentFiles.CheckShare {
 			ts.ShareChecks = &toolsrv.ShareChecks{Folder: spec.AgentShareDir, File: spec.ShareChecksMount + "/" + spec.ShareChecksFile}
@@ -1394,6 +1398,10 @@ func bindRoots(withServers bool, caps spec.CapSummary, mcpServers []spec.MCPServ
 	// tools server binds the folder itself and nothing beneath or beside it.
 	if agent := caps.AgentFiles; agent != nil && agent.Share {
 		roots = append(roots, spec.PHShare)
+	}
+	// The agent's skills, read-only, for its tools server alone.
+	if agent := caps.AgentFiles; agent != nil && len(agent.Skills) > 0 {
+		roots = append(roots, spec.PHSkills)
 	}
 	// The share mirror, read-only, for the servers that see it.
 	if spec.SharesAs(mcpServers, spec.ServerShareMirror) {
@@ -1851,6 +1859,11 @@ func workspaceVolumes(caps spec.CapSummary) []string {
 		vols := []string{spec.PHData + ":" + spec.AgentRoot + "/" + spec.AgentDataDir + ":rw"}
 		if a.Share {
 			vols = append(vols, spec.PHShare+":"+spec.AgentRoot+"/"+spec.AgentShareDir+":rw")
+		}
+		// Its skills, read-only: the agent reads them and the Coding
+		// agent's programs run their scripts, and neither changes them.
+		if len(a.Skills) > 0 {
+			vols = append(vols, spec.PHSkills+":"+spec.AgentRoot+"/"+spec.AgentSkillsDir+":ro")
 		}
 		return vols
 	}

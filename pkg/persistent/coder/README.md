@@ -54,6 +54,12 @@ agree to each part:
   notes, kept until you reset it, and a share folder of yours,
   `~/agentry/codingshare` unless you choose another, mounted read and write.
   What you put in the share is read as it is, with no malware check.
+- **Skills.** Folders of instructions it reads, read-only, in `skills/`:
+  four built in (review a change, test first, audit dependencies, open a
+  pull request), and any you add from a folder or a `.zip` on your computer
+  (`agentry agent skill add coder <path>`). A skill you add is your own:
+  Agentry has not reviewed it, and its scripts run with the agent's
+  programs. Each skill is an entry of its roster.
 - **What you add**: knowledge packs from your computer and MCP servers.
 
 Each part is an entry of its roster that you can switch off, and switching
