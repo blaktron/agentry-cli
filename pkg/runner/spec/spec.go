@@ -97,6 +97,10 @@ const (
 	// PHData is a persistent agent's data volume, by name, mounted at
 	// AgentRoot/AgentDataDir; only a persistent plan names it.
 	PHData = "@@RUN_DATA@@"
+	// PHMemory is a persistent agent's memory volume, by name, mounted at
+	// AgentRoot/AgentMemoryDir; only a persistent plan whose agent keeps a
+	// memory names it.
+	PHMemory = "@@RUN_MEMORY@@"
 	// PHAppLink is the host path of the socket a persistent agent's
 	// supervisor answers its app link on, bound into the app link's
 	// container alone; only a plan with an app link names it.
@@ -261,8 +265,8 @@ const (
 	// ToolsTmpMount is the tools container's /tmp, a tmpfs of the same
 	// size: the place a declared command may write.
 	ToolsTmpMount = "/tmp"
-	// AgentRoot is where a persistent agent's tools see its two folders,
-	// AgentShareDir and AgentDataDir beneath it: the filesystem tools,
+	// AgentRoot is where a persistent agent's tools see its folders,
+	// AgentShareDir, AgentDataDir and AgentMemoryDir beneath it: the filesystem tools,
 	// grep and glob are rooted here in place of the workspace, which a
 	// persistent agent does not have, so one root holds every path they
 	// take.
@@ -293,6 +297,10 @@ const (
 	// AgentSkillsDir is where the agent's skills are beneath AgentRoot,
 	// read-only: one Agent Skills folder (a SKILL.md and what it uses) each.
 	AgentSkillsDir = "skills"
+	// AgentMemoryDir is the agent's memory beneath AgentRoot, a volume of
+	// its own kept between its segments: a wiki the agent writes, with the
+	// share as its sources.
+	AgentMemoryDir = "memory"
 	// ShareChecksMount is the folder a persistent agent's tools server
 	// reads the share's malware verdicts from, read-only, rewritten by the
 	// runner before each turn (ShareChecksFile).
@@ -566,6 +574,9 @@ type AgentFiles struct {
 	// the order the System Prompt lists them; their folders are mounted
 	// read-only at AgentRoot/AgentSkillsDir.
 	Skills []Skill `json:"skills,omitempty"`
+	// Memory says the agent's memory volume is mounted read-write at
+	// AgentRoot/AgentMemoryDir.
+	Memory bool `json:"memory,omitempty"`
 }
 
 // Skill is one skill a persistent agent has: its folder's name beneath
@@ -591,10 +602,14 @@ func (a *AgentFiles) Folders() []string {
 	if a == nil {
 		return nil
 	}
+	f := []string{AgentDataDir}
 	if a.Share {
-		return []string{AgentDataDir, AgentShareDir}
+		f = append(f, AgentShareDir)
 	}
-	return []string{AgentDataDir}
+	if a.Memory {
+		f = append(f, AgentMemoryDir)
+	}
+	return f
 }
 
 // BrowserCap is capabilities.browser, normalized: the site questions, the

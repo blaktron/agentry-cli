@@ -164,6 +164,8 @@ type RosterEntry struct {
 type PersistentVolumes struct {
 	Session string `json:"session"`
 	Data    string `json:"data"`
+	// Memory is the agent's memory volume, for an agent that keeps one.
+	Memory string `json:"memory,omitempty"`
 }
 
 // MaxDeliverables is the most files Deliverables lists.

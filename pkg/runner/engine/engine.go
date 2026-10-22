@@ -339,7 +339,29 @@ type PersistentSegment struct {
 	// that has any (spec.AgentFiles.Skills); mounted read-only into the
 	// tools server alone. Empty for any other plan.
 	Skills string
+	// MemoryVolume is the agent's memory volume, for an agent that keeps
+	// one (spec.AgentFiles.Memory): made, labelled and kept like the other
+	// two, and mounted read-write into the tools server alone. Empty for
+	// any other agent.
+	MemoryVolume string
+	// MemorySeed is what a memory volume is filled with when it is made,
+	// by path beneath it: a file, its folders made for it, or a folder of
+	// its own where the path ends in "/". A file
+	// beneath MemoryCarriedDir is appended to the file of the same path
+	// beneath the memory, and only when MemoryCarry was carried in; that
+	// folder itself is not kept.
+	MemorySeed map[string][]byte
+	// MemoryCarry, when set, is a folder beneath the data volume that a
+	// new memory volume is given a copy of, at MemoryCarryTo beneath it,
+	// when it holds anything: files and folders, never a link. The data
+	// volume's folder is left as it is.
+	MemoryCarry, MemoryCarryTo string
 }
+
+// MemoryCarriedDir is the folder of PersistentSegment.MemorySeed whose files
+// are appended to the memory's when PersistentSegment.MemoryCarry was
+// carried in.
+const MemoryCarriedDir = ".carried"
 
 // engine is the run's container engine once placed (placementFor), and
 // Docker Engine on this machine until then.

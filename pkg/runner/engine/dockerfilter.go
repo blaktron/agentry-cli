@@ -580,10 +580,13 @@ func appLinkCmdOf(plan *spec.Plan, rd *runDirs) []string {
 }
 
 // toolsVolumes are the volumes not the run's that its tools server may
-// mount: a persistent agent's data volume, by name.
+// mount: a persistent agent's data volume and its memory volume, by name.
 func toolsVolumes(rd *runDirs) []string {
-	if rd.data == "" {
-		return nil
+	var out []string
+	for _, v := range []string{rd.data, rd.memory} {
+		if v != "" {
+			out = append(out, v)
+		}
 	}
-	return []string{rd.data}
+	return out
 }

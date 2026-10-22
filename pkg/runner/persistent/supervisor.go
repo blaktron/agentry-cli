@@ -287,6 +287,11 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 	if cfg.Segments > 0 {
 		legacySession, legacyData = SessionVolume(name), DataVolume(name)
 	}
+	memory, memorySeed, notes, notesTo, err := memorySegment(home, a, time.Now())
+	if err != nil {
+		packsDone()
+		return err
+	}
 	segment := cfg.Segments + 1
 	outDir := filepath.Join(Dir(home, name), segmentsDir, runID)
 	if err := os.MkdirAll(outDir, 0o700); err != nil {
@@ -305,6 +310,7 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 			ShareVerdicts: filepath.Join(Dir(home, name), shareVerdictsFile),
 			ShareText:     filepath.Join(Dir(home, name), shareTextDir),
 			ShareMirror:   mirror,
+			MemoryVolume:  memory, MemorySeed: memorySeed, MemoryCarry: notes, MemoryCarryTo: notesTo,
 		},
 		Grants: grants,
 	}

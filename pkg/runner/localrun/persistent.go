@@ -37,10 +37,10 @@ import (
 // that runs as a persistent agent. A file in its share is read only once
 // ClamAV has checked it, its app link is its own name, personality and
 // tasks, and it keeps time: each turn tells it the time, and its heartbeat
-// fires its tasks.
+// fires its tasks. It keeps a memory of its own.
 func Assistant() Builtin {
 	return Builtin{namespace: assistant.Namespace, name: assistant.Name, version: assistant.Version, fsys: assistant.FS(),
-		persistent: true, runnable: true, checkShare: true, appLink: applink.SetAssistant, keepsTime: true}
+		persistent: true, runnable: true, checkShare: true, appLink: applink.SetAssistant, keepsTime: true, keepsMemory: true}
 }
 
 // Main is Agentry Helper (pkg/persistent/main), the persistent agent of Agentry
@@ -125,6 +125,40 @@ func (b Builtin) readSkills() []BuiltinSkill {
 // KeepsTime says the persistent agent is told the time at each turn and
 // keeps a heartbeat that fires the tasks it registers.
 func (b Builtin) KeepsTime() bool { return b.keepsTime }
+
+// KeepsMemory says the persistent agent has a memory volume of its own,
+// mounted read-write at spec.AgentRoot/spec.AgentMemoryDir.
+func (b Builtin) KeepsMemory() bool { return b.keepsMemory }
+
+// memorySeedDir is the folder of a persistent built-in's tree its memory
+// volume is seeded from.
+const memorySeedDir = "memory"
+
+// MemorySeed is what the persistent built-in's memory volume starts with:
+// the files beneath its tree's memory/ folder, by path beneath it; none for
+// a built-in that keeps no memory.
+func (b Builtin) MemorySeed() (map[string][]byte, error) {
+	if !b.keepsMemory {
+		return nil, nil
+	}
+	sub, err := fs.Sub(b.fsys, memorySeedDir)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string][]byte{}
+	err = fs.WalkDir(sub, ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		data, err := fs.ReadFile(sub, p)
+		out[p] = data
+		return err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("the memory seed of %s: %w", b.Ref(), err)
+	}
+	return out, nil
+}
 
 // AppLink is the persistent built-in's app link tool set; empty for none.
 func (b Builtin) AppLink() string { return b.appLink }
@@ -317,7 +351,7 @@ func (s Segment) coderGrant() (*spec.CoderGrant, error) {
 // agentFiles are the folders the segment's plan mounts: the data volume,
 // and the share when the roster has it on.
 func (s Segment) agentFiles() *spec.AgentFiles {
-	return &spec.AgentFiles{Share: s.Grants.Share != "", CheckShare: s.Grants.Share != "" && s.Builtin.checkShare, Skills: s.Grants.Skills}
+	return &spec.AgentFiles{Share: s.Grants.Share != "", CheckShare: s.Grants.Share != "" && s.Builtin.checkShare, Skills: s.Grants.Skills, Memory: s.Builtin.keepsMemory}
 }
 
 // shareServers are the servers the segment's plan lets see the share: the

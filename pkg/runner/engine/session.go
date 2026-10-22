@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"archive/tar"
 	"bytes"
 	"cmp"
 	"context"
@@ -10,8 +11,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -84,7 +87,7 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	if ps := p.Persistent; ps != nil {
 		env.Persistent = &receipt.Persistent{
 			Agent: ps.Agent, Segment: ps.Segment, ResumeReason: notStartedReason,
-			Volumes: receipt.PersistentVolumes{Session: ps.SessionVolume, Data: ps.DataVolume},
+			Volumes: receipt.PersistentVolumes{Session: ps.SessionVolume, Data: ps.DataVolume, Memory: ps.MemoryVolume},
 			Share:   ps.Share, Roster: ps.Roster,
 		}
 	}
@@ -718,7 +721,9 @@ func PersistentVolumeLabels(agent, home string) map[string]string {
 // An existing one is left as it is: it holds the agent's conversation and
 // files. Listed first because an engine may refuse to create a volume that
 // exists (podman does). A volume that does not exist, whose legacy volume
-// does, is made as a copy of it.
+// does, is made as a copy of it. A memory volume, which has no legacy
+// volume, is seeded when it is made (seedMemoryVolume), after the data
+// volume it may carry a folder from.
 func ensurePersistentVolumes(ctx context.Context, d dockerx.Client, p Params) error {
 	ps := p.Persistent
 	have, err := d.VolumesByLabel(ctx, PersistentHomeLabel+"="+ps.Home)
@@ -744,7 +749,128 @@ func ensurePersistentVolumes(ctx context.Context, d dockerx.Client, p Params) er
 			return fmt.Errorf("carry the volume %s of the persistent agent %s over to %s: %w", v.old, ps.Agent, v.name, err)
 		}
 	}
+	if ps.MemoryVolume == "" || slices.Contains(have, ps.MemoryVolume) {
+		return nil
+	}
+	if err := d.VolumeCreate(ctx, ps.MemoryVolume, PersistentVolumeLabels(ps.Agent, ps.Home)); err != nil {
+		return fmt.Errorf("create the volume %s of the persistent agent %s: %w", ps.MemoryVolume, ps.Agent, err)
+	}
+	if err := seedMemoryVolume(ctx, d, p); err != nil {
+		// Removed, so the next start makes and seeds it again.
+		_ = d.VolumeRemove(context.WithoutCancel(ctx), ps.MemoryVolume)
+		return fmt.Errorf("seed the memory volume %s of the persistent agent %s: %w", ps.MemoryVolume, ps.Agent, err)
+	}
 	return nil
+}
+
+// memorySeedScript fills a new memory volume, at /memory, from the archive
+// on its stdin, then, when the data volume's folder $1 is a folder that
+// holds anything, copies it to $2 beneath the memory without following a
+// link and keeps nothing but its files and folders, and appends each file
+// of the carried folder ($3) to the memory's file of the same path. The
+// carried folder is removed either way.
+const memorySeedScript = `set -eu
+cd /memory
+tar -x -f -
+if [ -n "$1" ] && [ -d "/data/$1" ] && [ ! -L "/data/$1" ] && [ -n "$(ls -A "/data/$1")" ]; then
+  mkdir -p "$2"
+  cp -RP "/data/$1/." "$2/"
+  find "$2" ! -type f ! -type d -exec rm -f {} +
+  if [ -d "$3" ]; then
+    (cd "$3" && find . -type f) | while IFS= read -r f; do
+      mkdir -p "$(dirname "$f")"
+      cat "$3/$f" >> "$f"
+    done
+  fi
+fi
+rm -rf "$3"
+`
+
+// seedMemoryVolume fills the agent's new memory volume with its seed
+// (PersistentSegment.MemorySeed), and the copy of its data volume's folder
+// (MemoryCarry), in a one-shot of the runner image: no network, the data
+// volume read-only, the archive on stdin, and DAC_READ_SEARCH alone, so
+// the copy reads every file of the agent's own and owns what it writes.
+func seedMemoryVolume(ctx context.Context, d dockerx.Client, p Params) error {
+	ps := p.Persistent
+	archive, err := memorySeedArchive(ps.MemorySeed)
+	if err != nil {
+		return err
+	}
+	name := containerName(p.RunID, "memory-seed")
+	s := hardened(dockerx.RunSpec{
+		Name:       name,
+		Image:      p.Plan.Proxy.Image,
+		Entrypoint: "sh",
+		Argv:       []string{"-c", memorySeedScript, "sh", ps.MemoryCarry, ps.MemoryCarryTo, MemoryCarriedDir},
+		User:       "0:0",
+		Network:    "none",
+		Mounts: []dockerx.Mount{
+			{Source: ps.DataVolume, Target: "/data", ReadOnly: true},
+			{Source: ps.MemoryVolume, Target: "/memory"},
+		},
+		Labels:     runLabels(p.RunID),
+		AutoRemove: true,
+		Runtime:    p.Plan.Runtime(),
+	}, p.limits())
+	s.Interactive = true
+	s.CapAdd = []string{"DAC_READ_SEARCH"}
+	defer func() { _ = d.RemoveForce(context.WithoutCancel(ctx), name) }()
+	var stderr bytes.Buffer
+	code, err := dockerx.RunForegroundUnder(ctx, d, s, "memory volume's seed", bytes.NewReader(archive), io.Discard, &stderr)
+	if err != nil {
+		return err
+	}
+	if code != 0 {
+		return fmt.Errorf("the seed exited %d: %s", code, strings.TrimSpace(stderr.String()))
+	}
+	return nil
+}
+
+// memorySeedArchive is the seed as a tar archive, in path order: each
+// file or folder with its folders before it, owned by root, the files 0644 and the
+// folders 0755. A path that is not a clean relative one is refused.
+func memorySeedArchive(seed map[string][]byte) ([]byte, error) {
+	paths := slices.Sorted(maps.Keys(seed))
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	made := map[string]bool{}
+	for _, p := range paths {
+		folder := strings.HasSuffix(p, "/")
+		if p = strings.TrimSuffix(p, "/"); !fs.ValidPath(p) || p == "." {
+			return nil, fmt.Errorf("the memory's seed has a path %q that is not a clean relative one", p)
+		}
+		var dirs []string
+		if folder {
+			dirs = append(dirs, p)
+		}
+		for dir := path.Dir(p); dir != "."; dir = path.Dir(dir) {
+			dirs = append(dirs, dir)
+		}
+		slices.Reverse(dirs)
+		for _, dir := range dirs {
+			if made[dir] {
+				continue
+			}
+			made[dir] = true
+			if err := tw.WriteHeader(&tar.Header{Typeflag: tar.TypeDir, Name: dir + "/", Mode: 0o755}); err != nil {
+				return nil, err
+			}
+		}
+		if folder {
+			continue
+		}
+		if err := tw.WriteHeader(&tar.Header{Typeflag: tar.TypeReg, Name: p, Mode: 0o644, Size: int64(len(seed[p]))}); err != nil {
+			return nil, err
+		}
+		if _, err := tw.Write(seed[p]); err != nil {
+			return nil, err
+		}
+	}
+	if err := tw.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 // copyPersistentVolume copies the files of the volume from into the volume

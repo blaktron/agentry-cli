@@ -454,7 +454,7 @@ func TestResetWipesTheConversationAndKeepsTheReceipts(t *testing.T) {
 		t.Fatal(err)
 	}
 	ops := strings.Join(f.Ops(), " ")
-	for _, v := range []string{SessionVolumeIn(home, "assistant"), DataVolumeIn(home, "assistant")} {
+	for _, v := range []string{SessionVolumeIn(home, "assistant"), DataVolumeIn(home, "assistant"), MemoryVolumeIn(home, "assistant")} {
 		if !strings.Contains(ops, "VolumeRemove:"+v) {
 			t.Errorf("reset did not remove %s: %s", v, ops)
 		}
