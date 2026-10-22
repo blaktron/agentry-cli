@@ -369,6 +369,10 @@ func grantsKeyWith(a Agent, c Config, ready func(manifest.MCPServer) bool) strin
 	}
 	k := key{}
 	for _, e := range r {
+		// The heartbeat is read at each tick: switching it restarts nothing.
+		if e.ID == EntryHeartbeat {
+			continue
+		}
 		if e.On && (e.Kind != KindServer || counted[e.ID]) {
 			k.On = append(k.On, e.ID+"="+e.Line)
 		}

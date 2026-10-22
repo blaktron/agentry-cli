@@ -67,14 +67,23 @@ func boolean(desc string) map[string]any {
 	return map[string]any{"type": "boolean", "description": desc}
 }
 
-// SelfConfigure is the Assistant's one tool: its own name and personality.
+// SelfConfigure is the Assistant's tool for its own name and personality.
 const SelfConfigure = "self_configure"
+
+// The Assistant's task tools: the tasks its heartbeat fires, which it
+// registers itself. A task is a turn at a time; it grants nothing.
+const (
+	TaskAdd    = "task_add"
+	TaskList   = "task_list"
+	TaskUpdate = "task_update"
+	TaskRemove = "task_remove"
+)
 
 // sets are the tools each agent's app link lists. Agentry Helper's (main) reach the
 // application's own operations, each under the application's own consent;
 // none changes a setting's value, starts or stops an agent, publishes, signs
 // in or touches a credential. The Assistant's changes its own name and
-// personality and nothing else.
+// personality and its own tasks, and nothing else.
 var sets = map[string][]Tool{
 	SetMain: {
 		{"registry_search", "Search Agentry's registry for QuickAgents by what they do. Returns each match's reference, summary and rating.",
@@ -103,6 +112,24 @@ var sets = map[string][]Tool{
 	SetAssistant: {
 		{SelfConfigure, "Save the name the person gives you and the personality they describe for you. Call it only with what the person asked for; it changes nothing else.",
 			obj(map[string]any{"name": str("the name they want you to go by"), "personality": str("the personality they described, in their words")})},
+		{TaskAdd, "Register a task: an instruction you will be sent as a turn of its own at the times a cron expression names, while you are running. Use it when the person asks you to do something at a time or on a schedule (a reminder, a daily summary), or when you agree to follow something up. At most 25 tasks, none more often than every 15 minutes. Returns the task's id and its next time.",
+			obj(map[string]any{
+				"name":        str("a short name for the task, as the person would call it"),
+				"cron":        str("when it fires: five cron fields, minute hour day-of-month month day-of-week, such as \"0 8 * * 1-5\" for 08:00 on weekdays or \"30 17 21 10 *\" for 17:30 on 21 October"),
+				"zone":        str("the IANA time zone the time is in, such as Europe/Paris; leave it out for this computer's"),
+				"instruction": str("what you are to do when it fires, written to yourself: it is all you are given then"),
+			}, "name", "cron", "instruction")},
+		{TaskList, "List your tasks: each one's id, name, time, zone, state, next time, and when it last fired with the first line of what you answered.", obj(map[string]any{})},
+		{TaskUpdate, "Change one of your tasks: its name, time, zone or instruction, or pause or resume it. Only what you give changes.",
+			obj(map[string]any{
+				"task":        str("the task's id, from task_list"),
+				"name":        str("a new name"),
+				"cron":        str("a new time, as five cron fields"),
+				"zone":        str("a new IANA time zone"),
+				"instruction": str("a new instruction"),
+				"paused":      boolean("true to pause it, false to resume it"),
+			}, "task")},
+		{TaskRemove, "Remove one of your tasks.", obj(map[string]any{"task": str("the task's id, from task_list")}, "task")},
 	},
 }
 

@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"maps"
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -78,8 +80,12 @@ func TestTheAppLinkListsItsSetAndForwardsEachCall(t *testing.T) {
 		t.Fatalf("%d replies", len(replies))
 	}
 	tools := replies[1]["result"].(map[string]any)["tools"].([]any)
-	if len(tools) != 1 || tools[0].(map[string]any)["name"] != SelfConfigure {
-		t.Fatalf("the Assistant's set: %v", tools)
+	var names []string
+	for _, tool := range tools {
+		names = append(names, tool.(map[string]any)["name"].(string))
+	}
+	if !slices.Equal(names, Tools(SetAssistant)) {
+		t.Fatalf("the Assistant's set: %v", names)
 	}
 	text := replies[2]["result"].(map[string]any)["content"].([]any)[0].(map[string]any)["text"]
 	if text != `answered self_configure {"name":"Sandra"}` {
@@ -114,13 +120,23 @@ func TestAppLinkHasNoGrantTool(t *testing.T) {
 			}
 		}
 	}
-	if got := Tools(SetAssistant); len(got) != 1 || got[0] != SelfConfigure {
+	if got := Tools(SetAssistant); !slices.Equal(got, []string{SelfConfigure, TaskAdd, TaskList, TaskUpdate, TaskRemove}) {
 		t.Errorf("the Assistant's set is %v", got)
+	}
+	// Each of the Assistant's tools takes its own name and personality, or a
+	// task's fields, and nothing else.
+	takes := map[string][]string{
+		SelfConfigure: {"name", "personality"},
+		TaskAdd:       {"cron", "instruction", "name", "zone"},
+		TaskList:      nil,
+		TaskUpdate:    {"cron", "instruction", "name", "paused", "task", "zone"},
+		TaskRemove:    {"task"},
 	}
 	for _, tool := range sets[SetAssistant] {
 		props := tool.Schema["properties"].(map[string]any)
-		if len(props) != 2 || props["name"] == nil || props["personality"] == nil || tool.Schema["additionalProperties"] != false {
-			t.Errorf("self_configure takes %v", props)
+		got := slices.Sorted(maps.Keys(props))
+		if !slices.Equal(got, takes[tool.Name]) || tool.Schema["additionalProperties"] != false {
+			t.Errorf("%s takes %v", tool.Name, got)
 		}
 	}
 }

@@ -8,7 +8,8 @@ package persistent
 // personality and nothing else, and hands every other tool to its client's
 // handler (the desktop's, which answers with the application's own
 // operations and consent); without one, the tool is answered as Agentry
-// Desktop's. Every call and its answer are a line of the segment's
+// Desktop's. The Assistant's task tools are the supervisor's too: they
+// register the turns its heartbeat fires (heartbeat.go). Every call and its answer are a line of the segment's
 // receipts/applink.log.
 
 import (
@@ -125,6 +126,8 @@ func (s *Supervisor) answerAppLink(ctx context.Context, req applink.Request) app
 		return applink.Answer{Text: "no such tool: " + req.Tool, IsError: true}
 	case req.Tool == applink.SelfConfigure:
 		return s.selfConfigure(req.Arguments)
+	case isTaskTool(req.Tool):
+		return s.answerTask(req.Arguments, req.Tool)
 	case s.opts.AppLink != nil:
 		return s.opts.AppLink(ctx, req)
 	}
