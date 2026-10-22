@@ -33,10 +33,13 @@ import (
 const (
 	MaxFiles          = 500
 	MaxBytes          = 32 << 20
-	MaxSkillMD        = 256 << 10
 	MaxNameBytes      = 64
 	MaxDescription    = 1024
+	maxSkillMD        = 256 << 10
 	maxEntryNameBytes = 255
+	// maxZipBytes bounds a zip's own size before its directory is read: a
+	// skill's bytes stored as they are, and room for the zip's headers.
+	maxZipBytes = MaxBytes + 8<<20
 )
 
 // File is the skill's instruction file at its folder's root.
@@ -92,11 +95,11 @@ func Parse(b []byte) (Meta, error) {
 	n, _ := fm["name"].(string)
 	d, _ := fm["description"].(string)
 	d = strings.Join(strings.Fields(d), " ")
-	switch {
-	case !NameValid(n):
+	if !NameValid(n) {
 		return Meta{}, fmt.Errorf(File+"'s name %q is not lower-case letters, digits and hyphens of at most %d bytes", n, MaxNameBytes)
-	case DescriptionValid(d) != nil:
-		return Meta{}, fmt.Errorf("%s: %w", File, DescriptionValid(d))
+	}
+	if err := DescriptionValid(d); err != nil {
+		return Meta{}, fmt.Errorf("%s: %w", File, err)
 	}
 	return Meta{Name: n, Description: d}, nil
 }
@@ -143,17 +146,18 @@ func check(fsys fs.FS) error {
 			return fmt.Errorf("the skill holds more than %d files", MaxFiles)
 		case total > MaxBytes:
 			return fmt.Errorf("the skill is larger than %d MiB", MaxBytes>>20)
-		case p == File && info.Size() > MaxSkillMD:
-			return fmt.Errorf("%s is larger than %d KiB", File, MaxSkillMD>>10)
+		case p == File && info.Size() > maxSkillMD:
+			return fmt.Errorf("%s is larger than %d KiB", File, maxSkillMD>>10)
 		}
 		return nil
 	})
 }
 
 // entryName refuses a path inside a skill that is not plain text: a control
-// or formatting character, a backslash, or a part past maxEntryNameBytes.
+// or formatting character, a backslash or a colon (a Windows stream), or a
+// part past maxEntryNameBytes.
 func entryName(p string) error {
-	if !utf8.ValidString(p) || strings.ContainsRune(p, '\\') {
+	if !utf8.ValidString(p) || strings.ContainsAny(p, "\\:") {
 		return fmt.Errorf("the skill holds a file whose name is not plain text: %q", p)
 	}
 	for _, r := range p {
@@ -184,6 +188,7 @@ func CopyTo(fsys fs.FS, dst string) error {
 		return err
 	}
 	defer func() { _ = root.Close() }()
+	var total int64
 	return fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil || p == "." {
 			return err
@@ -208,7 +213,11 @@ func CopyTo(fsys fs.FS, dst string) error {
 		if err != nil {
 			return err
 		}
-		_, cerr := io.Copy(out, io.LimitReader(src, MaxBytes+1))
+		n, cerr := io.Copy(out, io.LimitReader(src, MaxBytes-total+1))
+		total += n
+		if cerr == nil && total > MaxBytes {
+			cerr = fmt.Errorf("the skill is larger than %d MiB", MaxBytes>>20)
+		}
 		return errors.Join(cerr, out.Close())
 	})
 }
@@ -237,7 +246,15 @@ func Stage(src, work string) (string, Meta, error) {
 			_ = os.RemoveAll(dst)
 			return "", Meta{}, err
 		}
-		fsys, given = os.DirFS(src), filepath.Base(src)
+		// Through the folder's root, so a link put in after the check is
+		// not followed out of it.
+		root, err := os.OpenRoot(src)
+		if err != nil {
+			_ = os.RemoveAll(dst)
+			return "", Meta{}, err
+		}
+		defer func() { _ = root.Close() }()
+		fsys, given = root.FS(), filepath.Base(src)
 	case fi.Mode().IsRegular() && strings.EqualFold(filepath.Ext(src), ".zip"):
 		zfs, top, err := openZip(src)
 		if err != nil {
@@ -290,6 +307,11 @@ func noLinks(dir string) error {
 // folders only, each name relative and clean, within the bounds; a zip
 // whose entries are all beneath one folder is that folder, named top.
 func openZip(src string) (fs.FS, string, error) {
+	if fi, err := os.Stat(src); err != nil {
+		return nil, "", err
+	} else if fi.Size() > maxZipBytes {
+		return nil, "", fmt.Errorf("the zip is larger than %d MiB", maxZipBytes>>20)
+	}
 	r, err := zip.OpenReader(src)
 	if err != nil {
 		return nil, "", fmt.Errorf("%s is not a zip: %w", src, err)
@@ -303,7 +325,7 @@ func openZip(src string) (fs.FS, string, error) {
 	total := int64(0)
 	for _, f := range r.File {
 		n := f.Name
-		if strings.HasSuffix(n, "/") && f.FileInfo().IsDir() {
+		if strings.HasSuffix(n, "/") && f.FileInfo().IsDir() || macArchiveNoise(n) {
 			continue
 		}
 		clean := path.Clean(n)
@@ -332,6 +354,15 @@ func openZip(src string) (fs.FS, string, error) {
 		files[n] = b
 		names = append(names, n)
 	}
+	// A name that is a file and a folder at once is refused: the check
+	// and the copy could read it differently.
+	for _, n := range names {
+		for dir := path.Dir(n); dir != "."; dir = path.Dir(dir) {
+			if _, ok := files[dir]; ok {
+				return nil, "", fmt.Errorf("the zip holds %s as a file and as a folder", dir)
+			}
+		}
+	}
 	// One top folder holding everything is the skill's folder.
 	top := ""
 	if len(names) > 0 {
@@ -349,6 +380,12 @@ func openZip(src string) (fs.FS, string, error) {
 		m[rel] = files[n]
 	}
 	return m, top, nil
+}
+
+// macArchiveNoise is what macOS's own zip adds beside the files: the
+// resource-fork folder and Finder's view settings, never part of a skill.
+func macArchiveNoise(n string) bool {
+	return n == "__MACOSX" || strings.HasPrefix(n, "__MACOSX/") || path.Base(n) == ".DS_Store"
 }
 
 // Digest is a digest of the skill folder at dir: each file's path and
@@ -425,21 +462,28 @@ func (f *memFile) Stat() (fs.FileInfo, error) { return memInfo{name: f.name, siz
 func (f *memFile) Read(b []byte) (int, error) { return f.r.Read(b) }
 func (f *memFile) Close() error               { return nil }
 
+// memDir is a folder of a memFS; ReadDir hands out its entries once.
 type memDir struct {
 	name    string
 	entries []fs.DirEntry
-	read    bool
 }
 
 func (d *memDir) Stat() (fs.FileInfo, error) { return memInfo{name: d.name, dir: true}, nil }
 func (d *memDir) Read([]byte) (int, error)   { return 0, errors.New("a folder") }
 func (d *memDir) Close() error               { return nil }
 func (d *memDir) ReadDir(n int) ([]fs.DirEntry, error) {
-	if d.read {
-		return nil, nil
+	if n <= 0 {
+		out := d.entries
+		d.entries = nil
+		return out, nil
 	}
-	d.read = true
-	return d.entries, nil
+	if len(d.entries) == 0 {
+		return nil, io.EOF
+	}
+	k := min(n, len(d.entries))
+	out := d.entries[:k]
+	d.entries = d.entries[k:]
+	return out, nil
 }
 
 type memInfo struct {

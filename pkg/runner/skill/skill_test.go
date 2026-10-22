@@ -199,3 +199,28 @@ func itoa(i int) string {
 	}
 	return itoa(i/10) + digits[i%10:i%10+1]
 }
+
+// TestStageTakesAMacZip: Finder's resource-fork folder and view settings
+// are left out, and a name that is a file and a folder at once is refused.
+func TestStageTakesAMacZip(t *testing.T) {
+	dir := t.TempDir()
+	mac := filepath.Join(dir, "mac.zip")
+	writeZip(t, mac, map[string]string{"release-notes/" + File: goodMD, "release-notes/.DS_Store": "x", "__MACOSX/release-notes/._SKILL.md": "x"})
+	s, m, err := Stage(mac, t.TempDir())
+	if err != nil || m.Name != "release-notes" {
+		t.Fatalf("a Finder zip: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(s, ".DS_Store")); err == nil {
+		t.Error("Finder's view settings were kept")
+	}
+	both := filepath.Join(dir, "both.zip")
+	writeZip(t, both, map[string]string{File: goodMD, "a": "x", "a/b": "y"})
+	if _, _, err := Stage(both, t.TempDir()); err == nil {
+		t.Error("a name that is a file and a folder was taken")
+	}
+	colon := filepath.Join(dir, "colon.zip")
+	writeZip(t, colon, map[string]string{File: goodMD, "notes.md:stream": "x"})
+	if _, _, err := Stage(colon, t.TempDir()); err == nil {
+		t.Error("a name with a colon was taken")
+	}
+}

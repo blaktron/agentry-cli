@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -17,17 +18,18 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/pkg/runner/persistent"
+	"github.com/blaktron/agentry-cli/pkg/runner/skill"
 )
 
-const agentSkillLong = "A skill is a folder of instructions a persistent agent reads when a request\n" +
+var agentSkillLong = "A skill is a folder of instructions a persistent agent reads when a request\n" +
 	"matches it: a SKILL.md (in the Agent Skills format, with a name and a\n" +
 	"description) and the files it uses. The agent has them read-only at\n" +
 	"skills/; the Coding agent can run a skill's scripts with its programs.\n" +
 	"Its built-in skills come with Agentry; you switch one off with\n" +
 	"`agentry agent grant <name> skill:<skill> off`.\n\n" +
 	"You add your own from a folder or a .zip on this computer, and from nowhere\n" +
-	"else: it must hold regular files and folders only (no link), at most 500\n" +
-	"files and 32 MiB, and its folder's name must be the skill's. It is checked\n" +
+	"else: it must hold regular files and folders only (no link), at most " + strconv.Itoa(skill.MaxFiles) + "\n" +
+	"files and " + strconv.Itoa(skill.MaxBytes>>20) + " MiB, and its folder's name must be the skill's. It is checked\n" +
 	"as a file in the share is, with ClamAV when the runner policy's malwareCheck\n" +
 	"is on, and a finding refuses it. Agentry has not reviewed it, and adding it\n" +
 	"asks you first. A running agent takes a change at its next turn.\n\n" +
@@ -101,7 +103,7 @@ func newAgentSkillAddCmd() *cobra.Command {
 			if err != nil {
 				return engine.Classify(engine.ExitUsage, err)
 			}
-			if err := skillSource(src); err != nil {
+			if err := pathExists(src); err != nil {
 				return err
 			}
 			home, err := runnerHome()
@@ -143,7 +145,7 @@ func newAgentSkillAddCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&yes, "yes", false, "agree to what adding the skill gives the agent, without asking")
-	cmd.Flags().StringVar(&policyPath, "policy", "", "the runner policy whose malware check checks the skill (default: the runner home's)")
+	cmd.Flags().StringVar(&policyPath, "policy", "", "operator policy file whose malwareCheck the check follows (default ~/.agentry/runner/policy.yaml, created on first use)")
 	return cmd
 }
 
@@ -183,14 +185,14 @@ func printSkills(w io.Writer, a persistent.Agent, skills persistent.Roster) {
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "SKILL\tSTATE\tBY\tWHAT")
 	for _, e := range skills {
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", e.Name, e.State, e.GrantedBy, safeTerminalText(e.Line, 300))
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", e.Name, e.State, e.GrantedBy, safeTerminalText(e.Line, 800))
 	}
 	_ = tw.Flush()
 }
 
-// skillSource says whether a path names a folder or a file, for the usage
-// error a missing one gets.
-func skillSource(p string) error {
+// pathExists refuses a path that names nothing, as a usage error, before
+// the container engine is reached.
+func pathExists(p string) error {
 	if _, err := os.Stat(p); err != nil {
 		return engine.Classify(engine.ExitUsage, fmt.Errorf("%s: %w", p, err))
 	}

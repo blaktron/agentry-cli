@@ -142,15 +142,29 @@ func stageSkills(home string, a Agent, c Config, on func(id string) bool) ([]spe
 		if !on(SkillEntryID(s.Name)) {
 			continue
 		}
-		src := filepath.Join(AddedSkillsPath(home, a.Name), s.Name)
-		if d, err := skill.Digest(src); err != nil || d != s.Digest {
-			return nil, "", fmt.Errorf("the skill %s you added is not as it was when it was checked: remove it and add it again (agentry agent skill remove %s %s)", s.Name, a.Name, s.Name)
-		}
-		if err := skill.CopyTo(os.DirFS(src), filepath.Join(dir, s.Name)); err != nil {
+		// The copy the segment mounts is the one held to the digest, so no
+		// change between a check and a copy reaches the agent.
+		dst := filepath.Join(dir, s.Name)
+		if err := copyAddedSkill(filepath.Join(AddedSkillsPath(home, a.Name), s.Name), dst); err != nil {
 			return nil, "", fmt.Errorf("the skill %s: %w", s.Name, err)
+		}
+		if d, err := skill.Digest(dst); err != nil || d != s.Digest {
+			_ = os.RemoveAll(dir)
+			return nil, "", fmt.Errorf("the skill %s you added is not as it was when it was checked: remove it and add it again (agentry agent skill remove %s %s)", s.Name, a.Name, s.Name)
 		}
 	}
 	return skills, dir, nil
+}
+
+// copyAddedSkill copies a kept skill through its folder's root, so a link
+// put in it is not followed out.
+func copyAddedSkill(src, dst string) error {
+	root, err := os.OpenRoot(src)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	return skill.CopyTo(root.FS(), dst)
 }
 
 // SkillCheck checks a staged skill's files as the share's are checked; it
@@ -186,13 +200,18 @@ func InstallSkill(ctx context.Context, home string, a Agent, src string, check S
 	if err := skillNameFree(a, cfg, m.Name); err != nil {
 		return AddedSkill{}, err
 	}
+	// The digest kept is of the files the check read: taken before it and
+	// held to after it.
+	digest, err := skill.Digest(staged)
+	if err != nil {
+		return AddedSkill{}, err
+	}
 	clamav, err := check(ctx, staged)
 	if err != nil {
 		return AddedSkill{}, fmt.Errorf("the skill %s was refused: %w", m.Name, err)
 	}
-	digest, err := skill.Digest(staged)
-	if err != nil {
-		return AddedSkill{}, err
+	if after, err := skill.Digest(staged); err != nil || after != digest {
+		return AddedSkill{}, fmt.Errorf("the skill %s changed while it was checked", m.Name)
 	}
 	kept := filepath.Join(AddedSkillsPath(home, a.Name), m.Name)
 	if err := os.MkdirAll(filepath.Dir(kept), 0o700); err != nil {

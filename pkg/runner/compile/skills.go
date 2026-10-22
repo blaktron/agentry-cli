@@ -13,7 +13,7 @@ import (
 const MaxSkills = 100
 
 // checkedSkills holds a persistent agent's skills to the bounds, each name
-// once.
+// once: the plan is held to them whoever made its inputs.
 func checkedSkills(in []spec.Skill) ([]spec.Skill, error) {
 	if len(in) > MaxSkills {
 		return nil, &PolicyRefusal{Reason: fmt.Sprintf("a persistent agent has at most %d skills on", MaxSkills)}

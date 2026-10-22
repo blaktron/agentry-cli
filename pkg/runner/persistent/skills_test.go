@@ -72,11 +72,11 @@ func TestTheCodingAgentHasItsBuiltInSkills(t *testing.T) {
 	}
 }
 
-// TestAnAddedSkillIsCheckedAndAskedFor: the skill is held to the bounds and
+// TestAddedSkillIsCheckedAndConfined: the skill is held to the bounds and
 // checked before it is kept; adding it asks the person, its sentence saying
 // it is theirs and unreviewed; a check's finding refuses it and keeps
 // nothing; a name the agent has already is refused.
-func TestAnAddedSkillIsCheckedAndAskedFor(t *testing.T) {
+func TestAddedSkillIsCheckedAndConfined(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	home := shortHome(t)
 	a := coderAgent(t)
@@ -136,12 +136,12 @@ func TestAnAddedSkillIsCheckedAndAskedFor(t *testing.T) {
 	}
 }
 
-// TestSkillsReachEveryGate: the skills on are in the segment's folder and
+// TestSkillsAreReadOnlyToTheAgent: the skills on are in the segment's folder and
 // nothing else; the plan mounts it read-only into the tools server alone,
 // lists it as a read-only root and in the tools' read paths but not their
 // write paths, and the System Prompt lists each skill with its description
 // quoted; with none on there is no folder and no mount.
-func TestSkillsReachEveryGate(t *testing.T) {
+func TestSkillsAreReadOnlyToTheAgent(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	home := shortHome(t)
 	a := coderAgent(t)
