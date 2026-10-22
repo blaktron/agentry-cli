@@ -61,6 +61,9 @@ func newAgentCmd() *cobra.Command {
 			"instruction it acts on at the times a cron expression names. Its heartbeat\n" +
 			"fires them while it runs, once you switch its heartbeat entry on; `tasks`\n" +
 			"lists them and pauses or removes one.\n\n" +
+			"Each agent reads skills, folders of instructions for kinds of work, at\n" +
+			"skills/: its built-in ones, and your own from a folder or a .zip on this\n" +
+			"computer (`agentry agent skill add`).\n\n" +
 			"Agentry Helper (main) runs only in Agentry Desktop.\n\n" +
 			"  agentry agent enable assistant\n" +
 			"  agentry agent start assistant\n" +
@@ -80,6 +83,7 @@ func newAgentCmd() *cobra.Command {
 		newAgentGrantCmd(),
 		newAgentConfigureCmd(),
 		newAgentTasksCmd(),
+		newAgentSkillCmd(),
 		newAgentSuperviseCmd(),
 	)
 	return cmd

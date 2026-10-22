@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/blaktron/agentry-cli/pkg/persistent/assistant"
 	"github.com/blaktron/agentry-cli/pkg/persistent/coder"
@@ -23,6 +25,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/modelsignin"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
+	"github.com/blaktron/agentry-cli/pkg/runner/skill"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/pkg/runner/targethost"
 	"github.com/blaktron/agentry-cli/runnerimage"
@@ -68,6 +71,57 @@ func (b Builtin) Codes() bool { return b.coder }
 // published for reading alone.
 func (b Builtin) Runnable() bool { return b.runnable }
 
+// BuiltinSkill is one of a persistent built-in's own skills: its meta and
+// its folder in the built-in's tree.
+type BuiltinSkill struct {
+	skill.Meta
+	FS fs.FS
+}
+
+// Skills are the persistent built-in's own skills, each folder beneath its
+// tree's skills/, in name order; none for a built-in without one. A folder
+// that is not a skill fails the build's tests, never a start.
+func (b Builtin) Skills() []BuiltinSkill {
+	if v, ok := builtinSkills.Load(b.Ref()); ok {
+		return v.([]BuiltinSkill)
+	}
+	out := b.readSkills()
+	builtinSkills.Store(b.Ref(), out)
+	return out
+}
+
+// builtinSkills are each built-in's skills by its ref, read once: a roster
+// is built at every turn, and a built-in's tree never changes under its
+// version.
+var builtinSkills sync.Map
+
+func (b Builtin) readSkills() []BuiltinSkill {
+	sub, err := fs.Sub(b.fsys, "skills")
+	if err != nil {
+		return nil
+	}
+	entries, err := fs.ReadDir(sub, ".")
+	if err != nil {
+		return nil
+	}
+	var out []BuiltinSkill
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		dir, err := fs.Sub(sub, e.Name())
+		if err != nil {
+			continue
+		}
+		m, err := skill.Load(dir)
+		if err != nil || m.Name != e.Name() {
+			continue
+		}
+		out = append(out, BuiltinSkill{Meta: m, FS: dir})
+	}
+	return out
+}
+
 // KeepsTime says the persistent agent is told the time at each turn and
 // keeps a heartbeat that fires the tasks it registers.
 func (b Builtin) KeepsTime() bool { return b.keepsTime }
@@ -104,6 +158,11 @@ type Grants struct {
 	// ServersDir is the agent's own store a package server is installed
 	// into, as a release's declared server is into its profile's.
 	ServersDir string
+	// Skills are the skills the roster has on, by name and description,
+	// and SkillsDir the folder holding exactly them, filled by the caller;
+	// both empty for none.
+	Skills    []spec.Skill
+	SkillsDir string
 	// AppLink is the socket the supervisor answers the agent's app link on;
 	// empty gives the segment no app link.
 	AppLink string
@@ -189,7 +248,7 @@ func (s Segment) Start(ctx context.Context, d dockerx.Client) (engine.Persistent
 	// found (InstallServers).
 	plan, planDir := sp.Plan, sp.Dir
 	seg := s.Persistent
-	seg.Share, seg.AppLink = s.Grants.Share, s.Grants.AppLink
+	seg.Share, seg.AppLink, seg.Skills = s.Grants.Share, s.Grants.AppLink, s.Grants.SkillsDir
 	var answers *intake.Answers
 	if h := s.Grants.DevHost; h != nil {
 		answers = &intake.Answers{Hosts: map[string]*targethost.Host{spec.DevHostID: h}}
@@ -258,7 +317,7 @@ func (s Segment) coderGrant() (*spec.CoderGrant, error) {
 // agentFiles are the folders the segment's plan mounts: the data volume,
 // and the share when the roster has it on.
 func (s Segment) agentFiles() *spec.AgentFiles {
-	return &spec.AgentFiles{Share: s.Grants.Share != "", CheckShare: s.Grants.Share != "" && s.Builtin.checkShare}
+	return &spec.AgentFiles{Share: s.Grants.Share != "", CheckShare: s.Grants.Share != "" && s.Builtin.checkShare, Skills: s.Grants.Skills}
 }
 
 // shareServers are the servers the segment's plan lets see the share: the

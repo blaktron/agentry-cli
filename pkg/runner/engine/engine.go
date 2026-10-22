@@ -334,6 +334,11 @@ type PersistentSegment struct {
 	// what it copied in ShareMirror + ".json" and stages each copy in
 	// ShareMirror + ".staging", beside it. Empty for any other plan.
 	ShareMirror string
+	// Skills is the folder of the agent's skills for this segment, which
+	// its supervisor filled with the skills the roster has on, for a plan
+	// that has any (spec.AgentFiles.Skills); mounted read-only into the
+	// tools server alone. Empty for any other plan.
+	Skills string
 }
 
 // engine is the run's container engine once placed (placementFor), and

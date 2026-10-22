@@ -104,6 +104,9 @@ type RosterEntry struct {
 	// to this entry: the share's sentence under the other malware-check
 	// setting, which changes what the sentence says and grants nothing.
 	alike []string
+	// noConsent is an entry the agent comes with that grants nothing (a
+	// built-in skill): on, it asks no agreement.
+	noConsent bool
 }
 
 // Roster is an agent's entries, in a fixed order: its folders, its packs,
@@ -218,6 +221,9 @@ func BuildRosterUnder(a Agent, c Config, applied *Applied, malwareCheck bool) Ro
 		for _, e := range coderEntries(c) {
 			add(e, true)
 		}
+	}
+	for _, e := range skillEntries(a, c) {
+		add(e, true)
 	}
 	for _, k := range c.Knowledge {
 		line := "Searches your knowledge pack " + k + ", read-only"
@@ -453,6 +459,9 @@ func Apply(ctx context.Context, home string, a Agent, c Config, r Roster, open P
 	}
 	if len(g.Servers) > 0 {
 		g.ServersDir = serversDir(home, a.Name)
+	}
+	if g.Skills, g.SkillsDir, err = stageSkills(home, a, c, on); err != nil {
+		return g, applied, done, err
 	}
 	var names []string
 	for _, k := range c.Knowledge {

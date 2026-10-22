@@ -1,7 +1,7 @@
 schemaVersion: "2"
 name: coder
 namespace: agentry
-version: 1.1.1
+version: 1.2.0
 summary: "A coding agent that keeps its projects and conversation between starts, on your computer."
 license: MIT
 authors:
@@ -17,4 +17,4 @@ capabilities:
     write: none
   exec: none
 publish:
-  include: [agent.yaml, INSTRUCTION.md, README.md, LICENSE]
+  include: [agent.yaml, INSTRUCTION.md, README.md, LICENSE, "skills/**"]

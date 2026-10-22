@@ -111,3 +111,5 @@ agentry/main@1.0.2 sha256:9ca9b0ceba18f7f746be77ef47426d2ff01ba794a9c97a3f2aac92
 agentry/coder@1.1.1 sha256:a6674b8feb38bc66d5ee4e6be2354e959c579a28283af262600ed655877af25c
 # 1.3.0: the Assistant keeps time: each message starts with the time, and it registers tasks its heartbeat fires (task_add, task_list, task_update, task_remove).
 agentry/assistant@1.3.0 sha256:258a30e86ac38911b849b4d6b37b4ab6a1f21b997f8d3bd3b5d66b45f2473f06
+# 1.2.0: the Coding agent has four built-in skills (review-change, test-first, dependency-audit, open-pull-request) beneath skills/, and its instruction and README say so.
+agentry/coder@1.2.0 sha256:2b726017fe3a49f72e17ea125d7bbdd33fa324a23e522080a14c40593e7df83f

@@ -66,6 +66,9 @@ func preparePersistentFolders(p Params, rd *runDirs) error {
 		return Classify(ExitCompile, errors.New("a plan with a persistent agent's folders runs only as that agent's segment"))
 	}
 	rd.data = p.Persistent.DataVolume
+	if err := prepareSkills(p, rd); err != nil {
+		return err
+	}
 	if af.Share != (p.Persistent.Share != "") {
 		return Classify(ExitCompile, errors.New("the segment's share folder and its plan disagree: recompile"))
 	}
@@ -98,6 +101,37 @@ func preparePersistentFolders(p Params, rd *runDirs) error {
 		return err
 	}
 	return prepareShareOut(p, rd)
+}
+
+// prepareSkills holds a segment to its plan's skills: the folder is given
+// exactly when the plan has a skill, and is a real folder, not reached
+// through a link, labelled for the tools server on an SELinux host.
+func prepareSkills(p Params, rd *runDirs) error {
+	want := len(p.Plan.Capabilities.AgentFiles.Skills) > 0
+	dir := p.Persistent.Skills
+	switch {
+	case want != (dir != ""):
+		return Classify(ExitCompile, errors.New("the segment's skills and its plan disagree: recompile"))
+	case !want:
+		return nil
+	}
+	if !filepath.IsAbs(dir) || filepath.Clean(dir) != dir {
+		return Classify(ExitCLI, fmt.Errorf("the skills folder %s is not a clean absolute path", dir))
+	}
+	fi, err := os.Lstat(dir)
+	if err != nil || !fi.IsDir() {
+		return Classify(ExitCLI, fmt.Errorf("the skills folder %s is not a folder", dir))
+	}
+	if err := gatewayCanMount(dir, gatewayOS); err != nil {
+		return Classify(ExitCLI, fmt.Errorf("the skills folder %s: %w", dir, err))
+	}
+	stderr := p.Stderr
+	if stderr == nil {
+		stderr = io.Discard
+	}
+	relabelShared(context.Background(), stderr, dir)
+	rd.skills = dir
+	return nil
 }
 
 // prepareShareMirror holds a segment to its plan's servers that see the

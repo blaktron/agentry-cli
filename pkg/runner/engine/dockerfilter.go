@@ -141,6 +141,15 @@ func (rd *runDirs) mirrorRoot() []string {
 	return []string{rd.gatewayPath(rd.shareMirror.dir)}
 }
 
+// skillsRoot is the agent's skills folder in the gateway's spelling, as a
+// root: none when the run has no skills.
+func (rd *runDirs) skillsRoot() []string {
+	if rd.skills == "" {
+		return nil
+	}
+	return []string{rd.gatewayPath(rd.skills)}
+}
+
 // toolsOnlyShare is the share folder as a root the tools server alone may
 // bind at all: unless a server sees the folder itself, which only the
 // Coding agent's roster gives one.
@@ -212,10 +221,11 @@ func filterConfig(rd *runDirs, runID string, gwEnv map[string]string, lim policy
 		WritableRoots: writableRoots,
 		// The share folder: written by the tools server alone, and read by
 		// no other container but a server the Coding agent's roster lets
-		// see it. The share, its mirror and the share outbox reach no
+		// see it; the agent's skills, by the tools server alone. The share,
+		// its mirror and the share outbox reach no
 		// container but the tools server that joins a network.
 		ToolsWritableRoots: rd.shareRoot(),
-		ToolsOnlyRoots:     toolsOnlyShare(rd, plan),
+		ToolsOnlyRoots:     slices.Concat(toolsOnlyShare(rd, plan), rd.skillsRoot()),
 		OfflineRoots:       slices.Concat(rd.shareRoot(), rd.mirrorRoot(), rd.shareOutRoot()),
 		HeldRoots:          heldCfg,
 		SharedNetworks:     shared,
