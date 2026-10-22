@@ -90,3 +90,10 @@ A draft ships the packs its person chose to ship, and the task names them. A new
 
 - added: manifest/knowledge-ships.md
 - updated: manifest/knowledge-accepts.md, guide/start-here.md
+
+## [2026-10-21] ingest | what the scan holds, by declaration (Drafter 1.17.1)
+
+What checks a draft is no longer a page of today's facts awaiting a rewrite: the scan rates S4's hits about secrets, sending data and destroying it by what the manifest declares (high only for an undeclared host, key or program; medium or low for a declared one, which publishes), a line that describes an action without telling the agent to take it is not a hit, and AI Review reads what the instructions tell the agent to do. The injection techniques still hold whatever is declared, so the advice never to quote a working attack string stays.
+
+- updated: draft/review.md, index.md
+

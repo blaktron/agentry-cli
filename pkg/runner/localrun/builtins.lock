@@ -103,6 +103,8 @@ agentry/assistant@1.2.1 sha256:50528b9d3bce670a30f71bd02855412fa710d8b6504ad7120
 agentry/main@1.0.1 sha256:5ed82b1e2da3d95419f385a1f9b89a8f160dfec7fac791f2dd91a785f07d01d8
 # 1.17.0: a draft ships the packs its person chose (agentry draft --ship): the task names them, the drafting guide gains a page on writing for a shipped pack, and the post-step holds knowledge.ships to the chosen packs.
 agentry/drafter@1.17.0 sha256:2863d54a1a6abaa6f46b31f2ad9a0fd0e09a9689e78d91bdcbf106908e5a494e
+# 1.17.1: the drafting guide's What checks a draft says what the scan holds by declaration: describing an attack is not held; an undeclared capability, an injection technique or deceiving the person is.
+agentry/drafter@1.17.1 sha256:0a60a5edb93a08fbc65873e0cb5e02ec21d6763955c7ce31eec36ff1c4617017
 # 1.0.2: shown as Agentry Helper: its instruction, opening line and README use the name.
 agentry/main@1.0.2 sha256:9ca9b0ceba18f7f746be77ef47426d2ff01ba794a9c97a3f2aac92b3412db6b0
 # 1.1.1: the Coding agent's README names its published ports and background programs.
