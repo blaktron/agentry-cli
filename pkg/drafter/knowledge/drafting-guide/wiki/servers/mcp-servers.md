@@ -1,9 +1,9 @@
 ---
 title: Declared MCP servers
 type: guide
-summary: When a server that needs a key or an account is the right one (only when nothing key-free does the task, and never a hosted browser), what a declared MCP server meets in the runner (a package installed, started and reached, or a vendor's remote server reached at its address), what that rules out, how a server signs in, and how to check a server before you pin it. Read it before you declare any server.
+summary: When a server that needs a key or an account is the right one (only when nothing key-free does the task, and never a hosted browser), what a declared MCP server meets in the runner (a package installed, started and reached, or a vendor's remote server reached at its address), what that rules out, how a server signs in, how to look a server up in the registry's MCP server list, and how to check a server before you pin it. Read it before you declare any server.
 sources: [doc:runtime-facts.md, doc:servers.yaml, web:https://docs.secureagentry.net/runner/, web:https://docs.secureagentry.net/quickagents/, web:https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization, web:https://docs.npmjs.com/cli/v11/commands/npm-install, web:https://docs.npmjs.com/cli/v11/configuring-npm/package-json, web:https://pip.pypa.io/en/stable/cli/pip_install/, web:https://peps.python.org/pep-0656/, web:https://packaging.python.org/en/latest/specifications/entry-points/, web:https://modelcontextprotocol.io/specification/2025-06-18/basic/transports]
-updated: 2026-10-15
+updated: 2026-10-22
 ---
 
 # Declared MCP servers
@@ -14,7 +14,7 @@ When a vendor has its own remote server and a package for the same service takes
 
 Most servers published on npm and PyPI were written for a person's laptop. The runner is not one, and a server that works on a laptop can fail here. Some fail at install. Others install, start, list their tools and then fail on every call. Each point below is how the runner works today. Pin a server only when it passes all of them; otherwise use no server, or `fetch` to exact hosts, or ask for the data as an input file.
 
-First look the server up on the two lists, [Runs here](runs-here.md) and [Does not run here](does-not-run-here.md). They hold what a survey of 50 servers saw in the runner on 2026-10-05: which ones started, listed their tools and answered, and why the others failed. Never pin a server on *Does not run here*, or one whose own dependencies include a package listed at that page's end: the check after you answer sends either to a repair turn, and the notes say what admitted each server you keep. A server on *Runs here* still needs what its entry lists (its keys, its hosts, an `env` setting) and tools that fit the task. For a server on neither list, follow [Judging a server on neither list](#judging-a-server-on-neither-list) [src: doc:servers.yaml].
+First look the server up on the two lists, [Runs here](runs-here.md) and [Does not run here](does-not-run-here.md). They hold what a survey of 50 servers saw in the runner on 2026-10-05: which ones started, listed their tools and answered, and why the others failed. Never pin a server on *Does not run here*, or one whose own dependencies include a package listed at that page's end: the check after you answer sends either to a repair turn, and the notes say what admitted each server you keep. A server on *Runs here* still needs what its entry lists (its keys, its hosts, an `env` setting) and tools that fit the task. For a server on neither list, look it up in the registry's MCP server list, then follow [Judging a server on neither list](#judging-a-server-on-neither-list) [src: doc:servers.yaml].
 
 ## A key or an account only when nothing else does the task
 
@@ -94,6 +94,8 @@ Read the version's metadata from its registry (`https://registry.npmjs.org/<pack
 A server that fails any point does not run here. Choose another, or do the task without one. When you are unsure of a point, say so in the notes.
 
 ## Judging a server on neither list
+
+**Look it up first.** `registry_search` with `mcp_server` (a package name such as `@scope/name`, a remote server's `https://` address, or a few words) reads the registry's MCP server list: a later survey of about 60 000 npm packages, PyPI packages and remote addresses from the MCP Registry, Smithery and GLAMA, run with the runner's own install, gateway and remote probe. Each line gives one status with its date. *works*: a package installed, started behind the gateway and listed its tools, or an address listed its tools with no credential. *sign-in*: an address publishes OAuth details the CLI accepts, and nobody signed in. *needs-key*: an address wants a key some other way. *fails*: it did not install, did not start or list a tool, or the address refused or did not answer; the line quotes what was seen. *not-declarable*: an address a manifest cannot declare. That survey declared each server from its catalogue's entry, with no hosts and no settings, so a failure may only mean a host or a setting it needed was missing: read what was seen. Prefer a server the list says works or signs in, at the version it names, and still check it against the points below, because listing tools is not doing the task. The list is evidence from its date, never a reason on its own to drop or keep a server, and a server it never reached may still run. A self-hosted registry may have no list.
 
 The survey of 2026-10-05 found the same few failures again and again. Check for each one before you pin a server that is on neither list [src: doc:servers.yaml]:
 

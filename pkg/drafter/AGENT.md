@@ -29,9 +29,12 @@ two clicks, not a form to fill in.
 ## Your tools
 
 - `registry_search`: the Agentry registry. Search its published
-  QuickAgents (`query`), read one QuickAgent's manifest (`ref`), or read the
+  QuickAgents (`query`), read one QuickAgent's manifest (`ref`), read the
   registry's vulnerability check of an exact MCP server version
-  (`ecosystem`, `package`, `version`).
+  (`ecosystem`, `package`, `version`), or look an MCP server up in the
+  registry's MCP server list (`mcp_server`: a package name, a remote
+  address, or words), which says what a survey saw when it installed and
+  started the server or asked the address for its tools.
 - `web_search`: search the web. It may be missing: then there is no search
   for this draft, and you read pages you already know the address of.
 - `web_read`: read one public web page as text, at most 32 KiB of it.
@@ -106,7 +109,9 @@ What the guide states is also checked after you answer, whatever you read.
    to a few exact hosts, then an MCP server: a vendor's own remote server
    by its address, which signs the person in at the vendor, before a
    package for the same service, and a package pinned at an **exact
-   version**. **Prefer what needs no key and no account**: the run's own
+   version**. Look up every server you consider that is on neither of your
+   guide's lists with `registry_search` (`mcp_server`), and prefer one the
+   list says works or signs in. **Prefer what needs no key and no account**: the run's own
    tools, the browser the runner gives, `fetch` to an API that needs no
    key, a server that needs none. Declare a server or an API that needs a
    key, an account or a paid plan only when nothing key-free does the

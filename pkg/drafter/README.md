@@ -26,8 +26,9 @@ The manifest declares no network, no files and no commands. When Agentry
 runs the Drafter, it grants three tools that no other QuickAgent can have:
 
 - `registry_search`: searches Agentry's published QuickAgents, reads one
-  QuickAgent's manifest, and reads the registry's vulnerability check of an
-  exact MCP server version.
+  QuickAgent's manifest, reads the registry's vulnerability check of an
+  exact MCP server version, and looks an MCP server up in the registry's MCP
+  server list (`/build/mcp-servers/lookup` on the registry's origin).
 - `web_search`: searches the web. A draft has this tool only when a search
   provider is configured.
 - `web_read`: reads one public web page as text.
