@@ -811,6 +811,84 @@ func TestRegistrySearchScansEveryAnswer(t *testing.T) {
 	}
 }
 
+// TestRegistrySearchReadsTheMCPServerList: mcp_server reads the registry
+// site's MCP server list anonymously with GET, says each record's status in
+// the list's own terms with its date, quotes a failure's log only so far,
+// answers a registry with no list without an error, and is scanned like
+// every registry answer.
+func TestRegistrySearchReadsTheMCPServerList(t *testing.T) {
+	var creds atomic.Int32
+	var gotQuery atomic.Value
+	list := true
+	reg := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" || r.Header.Get(webscan.JobTokenHeader) != "" || r.Method != http.MethodGet {
+			creds.Add(1)
+		}
+		if r.URL.Path != "/build/mcp-servers/lookup" || !list {
+			http.NotFound(w, r)
+			return
+		}
+		gotQuery.Store(r.URL.RawQuery)
+		four := 4
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"list":  map[string]any{"count": 2, "tested": map[string]any{"first": "2026-10-09", "last": "2026-10-22"}},
+			"total": 3,
+			"items": []any{
+				map[string]any{"id": "npm:@acme/weather", "kind": "npm", "status": "works", "outcome": "started and listed 4 tools, not called",
+					"tools": []string{"a", "b", "c", "d"}, "toolCount": four, "version": "1.0.2", "runtime": "Node 24.21.0",
+					"secrets": []string{"WEATHER_API_KEY"}, "tested": "2026-10-20"},
+				map[string]any{"id": "remote:https://mcp.example.com/mcp", "kind": "remote", "status": "sign-in", "outcome": "oauth",
+					"observed": "Anonymous initialize answered 401.", "tested": "2026-10-13"},
+				map[string]any{"id": "pypi:weather-mcp", "kind": "pypi", "status": "fails", "outcome": "installed; did not start or list tools",
+					"observed": strings.Repeat("x", 500), "version": "0.3.0", "tested": "2026-10-21"},
+			},
+		})
+	}))
+	defer reg.Close()
+	sc := &fakeScanner{verdict: passAll}
+	s, _ := webServer(t, sc, nil)
+	s.spec.Web.Registry = reg.URL
+
+	text, isErr := s.toolRegistrySearch(rawArgs(t, map[string]any{"mcp_server": " weather "}))
+	if isErr {
+		t.Fatalf("lookup: %q", text)
+	}
+	if q, _ := gotQuery.Load().(string); q != "limit=8&q=weather" {
+		t.Fatalf("query %q", q)
+	}
+	for _, want := range []string{
+		"3 of 3 matching server(s) in the MCP server list (surveyed 2026-10-09 to 2026-10-22",
+		"- npm:@acme/weather@1.0.2: works: installed, started behind the gateway and listed its tools; 4 tool(s): a, b, c, d; on Node 24.21.0; keys it names: WEATHER_API_KEY; tested 2026-10-20",
+		"- remote:https://mcp.example.com/mcp: sign-in: publishes OAuth sign-in details the CLI accepts; nobody signed in",
+		"- pypi:weather-mcp@0.3.0: fails (installed; did not start or list tools); seen: " + strings.Repeat("x", 200) + "; tested 2026-10-21",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %q in:\n%s", want, text)
+		}
+	}
+	if strings.Contains(strings.ToLower(text), "safe") {
+		t.Fatalf("the list never calls a server safe: %q", text)
+	}
+	if calls := sc.calls(); len(calls) != 1 || calls[0].source != webscan.SourceRegistry {
+		t.Fatalf("scans %+v", calls)
+	}
+
+	list = false
+	text, isErr = s.toolRegistrySearch(rawArgs(t, map[string]any{"mcp_server": "weather"}))
+	if isErr || !strings.Contains(text, "This registry publishes no MCP server list") {
+		t.Fatalf("no list: %v %q", isErr, text)
+	}
+	if creds.Load() != 0 {
+		t.Fatal("a credential or a method other than GET reached the registry site")
+	}
+	if _, isErr := s.toolRegistrySearch(rawArgs(t, map[string]any{"mcp_server": "a", "query": "b"})); !isErr {
+		t.Fatal("two questions at once must be refused")
+	}
+	if _, isErr := s.toolRegistrySearch(rawArgs(t, map[string]any{"mcp_server": strings.Repeat("a", 201)})); !isErr {
+		t.Fatal("an over-long lookup must be refused")
+	}
+}
+
 // TestTheWebBudgets: the page budget refuses the call after it, without a
 // fetch.
 func TestTheWebBudgets(t *testing.T) {

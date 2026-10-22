@@ -97,3 +97,8 @@ What checks a draft is no longer a page of today's facts awaiting a rewrite: the
 
 - updated: draft/review.md, index.md
 
+## [2026-10-22] ingest | the registry's MCP server list (Drafter 1.18.0)
+
+`registry_search` reads the registry's MCP server list with `mcp_server`: what a survey of about 60 000 npm packages, PyPI packages and remote addresses saw with the runner's own install, gateway and remote probe. Declared MCP servers says to look a server on neither list up there first, what each status means, and that a failure there may only be a missing host or setting.
+
+- updated: servers/mcp-servers.md
