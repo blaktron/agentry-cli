@@ -9,8 +9,9 @@ license: MIT
 1. **The index and the pages.** List `memory/pages/` with fs_list (and its
    folders). Each page has a line in `memory/index.md`, and each line of the
    index names a page that exists. Add or remove lines to make them agree.
-   The line for `pages/notes/` stays while that folder holds notes still to
-   fold in (memory-ingest).
+   The files in `pages/notes/` are sources, not pages: they have no line of
+   their own, and the index's line for that folder stays while it holds
+   notes still to fold in (memory-ingest). Steps 2 and 4 skip them.
 2. **The frontmatter.** Each page has a title, a type from SCHEMA.md, an
    `updated` date and its sources. Fill in what is missing from the page's
    own lines.

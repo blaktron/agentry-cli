@@ -60,7 +60,7 @@ func preparePersistentFolders(p Params, rd *runDirs) error {
 		if p.Persistent != nil && p.Persistent.Share != "" {
 			return Classify(ExitCompile, errors.New("the segment was given a share folder its plan does not mount"))
 		}
-		if p.Persistent != nil && p.Persistent.MemoryVolume != "" {
+		if p.Persistent != nil && p.Persistent.Memory != nil {
 			return Classify(ExitCompile, errors.New("the segment was given a memory volume its plan does not mount"))
 		}
 		return nil
@@ -69,10 +69,12 @@ func preparePersistentFolders(p Params, rd *runDirs) error {
 		return Classify(ExitCompile, errors.New("a plan with a persistent agent's folders runs only as that agent's segment"))
 	}
 	rd.data = p.Persistent.DataVolume
-	if af.Memory != (p.Persistent.MemoryVolume != "") {
+	if m := p.Persistent.Memory; af.Memory != (m != nil) || m != nil && m.Volume == "" {
 		return Classify(ExitCompile, errors.New("the segment's memory volume and its plan disagree: recompile"))
 	}
-	rd.memory = p.Persistent.MemoryVolume
+	if af.Memory {
+		rd.memory = p.Persistent.Memory.Volume
+	}
 	if err := prepareSkills(p, rd); err != nil {
 		return err
 	}

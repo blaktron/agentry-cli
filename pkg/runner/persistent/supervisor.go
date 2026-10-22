@@ -287,7 +287,7 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 	if cfg.Segments > 0 {
 		legacySession, legacyData = SessionVolume(name), DataVolume(name)
 	}
-	memory, memorySeed, notes, notesTo, err := memorySegment(home, a, time.Now())
+	memory, err := memorySegment(home, a, time.Now())
 	if err != nil {
 		packsDone()
 		return err
@@ -310,7 +310,7 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 			ShareVerdicts: filepath.Join(Dir(home, name), shareVerdictsFile),
 			ShareText:     filepath.Join(Dir(home, name), shareTextDir),
 			ShareMirror:   mirror,
-			MemoryVolume:  memory, MemorySeed: memorySeed, MemoryCarry: notes, MemoryCarryTo: notesTo,
+			Memory:        memory,
 		},
 		Grants: grants,
 	}
@@ -331,6 +331,9 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 		_ = os.Remove(outDir)
 		return err
 	}
+	// Unrecorded, the next start seeds again, which leaves a seeded memory
+	// as it is.
+	_ = memoryStarted(home, name, memory)
 	id, resumed, reason := sess.Conversation()
 	if mismatch != "" {
 		reason = mismatch

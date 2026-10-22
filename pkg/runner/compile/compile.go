@@ -2391,7 +2391,7 @@ func serverShareEnforcement(servers []spec.MCPServerSpec) string {
 func agentFilesEnforcement(a *spec.AgentFiles) string {
 	line := "the agent's data volume, read-write at " + spec.AgentRoot + "/" + spec.AgentDataDir + " in the tools server alone, admitted by the docker filter by its name; fs_list, fs_read, fs_write, grep and glob are rooted at " + spec.AgentRoot
 	if a.Memory {
-		line += "; the agent's memory volume, read-write at " + spec.AgentRoot + "/" + spec.AgentMemoryDir + " in the tools server alone, admitted by the docker filter by its name"
+		line += "; the agent's memory volume, read-write at " + spec.AgentRoot + "/" + spec.AgentMemoryDir + " in the tools server alone, admitted by the docker filter by its name, and seeded by the runner before the run in a one-shot of the runner image with no network and the data volume read-only"
 	}
 	if !a.Share {
 		return line + "; no share folder"

@@ -27,8 +27,8 @@ read it once before your first ingest in a conversation.
    `## [date] ingest | <the source>`, and a sentence on which pages changed.
 6. **Tell the person** in a sentence what you now remember and where.
 
-For the notes in `memory/pages/notes/`, copied from your notes folder
-before the memory existed: fold each into the pages it belongs on, citing it
+For the notes in `memory/pages/notes/`, copied from `data/notes/` when the
+memory was made: fold each into the pages it belongs on, citing it
 as `notes/<file>` and the date it was copied in, then remove its line from
 the index's notes section once nothing in it is left to fold in. Leave the
 copies as they are, and never change `data/notes/`.

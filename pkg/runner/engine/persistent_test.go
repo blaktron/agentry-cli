@@ -86,9 +86,9 @@ func persistentFixtureWith(t *testing.T, continueID string, files *spec.AgentFil
 		},
 	}
 	if files != nil && files.Memory {
-		p.Persistent.MemoryVolume = "agentry-persistent-keeper-memory"
-		p.Persistent.MemorySeed = map[string][]byte{"SCHEMA.md": []byte("# How\n"), "pages/": nil, MemoryCarriedDir + "/log.md": []byte("carried\n")}
-		p.Persistent.MemoryCarry, p.Persistent.MemoryCarryTo = "notes", "pages/notes"
+		p.Persistent.Memory = &PersistentMemory{Volume: "agentry-persistent-keeper-memory",
+			Seed:  map[string][]byte{"SCHEMA.md": []byte("# How\n"), "pages/": nil, MemoryCarriedDir + "/log.md": []byte("carried\n")},
+			Carry: "notes", CarryTo: "pages/notes"}
 	}
 	return p, f, h
 }
@@ -181,7 +181,7 @@ func TestSweepKeepsPersistentVolumes(t *testing.T) {
 	for _, v := range f.Volumes {
 		vols[v.Name] = v.Labels
 	}
-	for _, name := range []string{p.Persistent.SessionVolume, p.Persistent.DataVolume, p.Persistent.MemoryVolume} {
+	for _, name := range []string{p.Persistent.SessionVolume, p.Persistent.DataVolume, p.Persistent.Memory.Volume} {
 		labels, ok := vols[name]
 		if !ok {
 			t.Errorf("volume %s is gone after the segment: %v", name, f.Ops())
@@ -213,7 +213,7 @@ func TestSweepKeepsPersistentVolumes(t *testing.T) {
 		t.Fatalf("the memory volume was seeded %d times", len(seeds))
 	}
 	seed := seeds[0]
-	wantMounts := []dockerx.Mount{{Source: p.Persistent.DataVolume, Target: "/data", ReadOnly: true}, {Source: p.Persistent.MemoryVolume, Target: "/memory"}}
+	wantMounts := []dockerx.Mount{{Source: p.Persistent.DataVolume, Target: "/data", ReadOnly: true}, {Source: p.Persistent.Memory.Volume, Target: "/memory"}}
 	if seed.Network != "none" || !slices.Equal(seed.Mounts, wantMounts) || !slices.Equal(seed.CapAdd, []string{"DAC_READ_SEARCH"}) || !seed.Interactive {
 		t.Errorf("the seed's one-shot: network %q mounts %+v caps %v interactive %v", seed.Network, seed.Mounts, seed.CapAdd, seed.Interactive)
 	}
@@ -223,7 +223,7 @@ func TestSweepKeepsPersistentVolumes(t *testing.T) {
 	if want := []string{MemoryCarriedDir + "/", MemoryCarriedDir + "/log.md", "SCHEMA.md", "pages/"}; !slices.Equal(seeded, want) {
 		t.Errorf("the seed's archive holds %v, want %v", seeded, want)
 	}
-	if env.Persistent == nil || env.Persistent.Volumes.Memory != p.Persistent.MemoryVolume {
+	if env.Persistent == nil || env.Persistent.Volumes.Memory != p.Persistent.Memory.Volume {
 		t.Errorf("the envelope's volumes: %+v", env.Persistent)
 	}
 
@@ -240,8 +240,10 @@ func TestSweepKeepsPersistentVolumes(t *testing.T) {
 		t.Errorf("volumes after the sweep = %+v", f.Volumes)
 	}
 
-	// The next segment finds all three and makes and seeds none.
+	// The next segment finds all three, its memory seeded, and makes and
+	// seeds none.
 	p2, _, _ := persistentFixtureWith(t, "", &spec.AgentFiles{Memory: true})
+	p2.Persistent.Memory.Seeded = true
 	p2.RunID = "5e9e0002"
 	before := len(f.Ops())
 	h := &fakeHarness{loadSession: true}
@@ -254,6 +256,25 @@ func TestSweepKeepsPersistentVolumes(t *testing.T) {
 	}
 	if len(seeds) != 1 {
 		t.Errorf("the second segment seeded the memory again")
+	}
+
+	// A memory volume no start recorded seeding (one stopped between
+	// making it and seeding it) is seeded again, and neither made again
+	// nor removed when that seed fails.
+	p3, _, _ := persistentFixtureWith(t, "", &spec.AgentFiles{Memory: true})
+	p3.RunID = "5e9e0003"
+	f.Foreground["-memory-seed"] = &dockerx.FakeForeground{ExitCode: 1, Stderr: "no space left"}
+	before = len(f.Ops())
+	if _, err := StartSession(context.Background(), f, p3); err == nil || !strings.Contains(err.Error(), "seed the memory volume") {
+		t.Fatalf("a failed seed of an existing memory: %v", err)
+	}
+	for _, op := range f.Ops()[before:] {
+		if op == "VolumeCreate:"+p3.Persistent.Memory.Volume || op == "VolumeRemove:"+p3.Persistent.Memory.Volume {
+			t.Errorf("the existing memory volume was made or removed: %s", op)
+		}
+	}
+	if !slices.ContainsFunc(f.Ops()[before:], func(op string) bool { return strings.Contains(op, "-memory-seed") }) {
+		t.Errorf("the unrecorded memory was not seeded: %v", f.Ops()[before:])
 	}
 }
 

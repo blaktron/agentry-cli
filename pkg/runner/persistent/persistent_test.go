@@ -462,6 +462,9 @@ func TestResetWipesTheConversationAndKeepsTheReceipts(t *testing.T) {
 	if entries, _ := Transcript(home, "assistant", 0); len(entries) != 0 {
 		t.Errorf("transcript after reset = %d entries", len(entries))
 	}
+	if _, err := os.Stat(filepath.Join(Dir(home, "assistant"), memorySeededFile)); err == nil {
+		t.Error("reset kept the record that the memory was seeded")
+	}
 	cfg, _ := LoadConfig(home, "assistant")
 	if cfg.Conversation != nil || !cfg.Enabled {
 		t.Errorf("config after reset = %+v", cfg)

@@ -484,7 +484,7 @@ func saveUsage(home, name string, u Usage) error {
 }
 
 // Reset puts a stopped agent back to its defaults, as it was when first
-// enabled: its volumes (its memory's too), its transcript, its lifetime usage, its share
+// enabled: its volumes, its transcript, its lifetime usage, its share
 // verdicts, its share mirror, its installed servers, its tasks and the
 // skills the person added are removed; its configuration keeps only whether
 // it is enabled, so its built-in skills are on again and its next start is
@@ -511,7 +511,7 @@ func Reset(ctx context.Context, home, name string, d dockerx.Client) error {
 			return fmt.Errorf("remove the %s agent's volume %s: %w", name, v, err)
 		}
 	}
-	for _, f := range []string{transcriptFile, usageFile, shareVerdictsFile, tasksFile} {
+	for _, f := range []string{transcriptFile, usageFile, shareVerdictsFile, tasksFile, memorySeededFile} {
 		if err := os.Remove(filepath.Join(Dir(home, name), f)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}

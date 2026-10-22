@@ -15,6 +15,11 @@ shape.
   rewrite an earlier entry; add one.
 - `pages/` holds the pages, one Markdown file each, named in lower case with
   hyphens (`pages/sam-the-person.md`, `pages/kitchen-renovation.md`).
+- `pages/notes/`, when it exists, holds the notes from your data folder,
+  copied in as they were when the memory was made. They are sources, not
+  pages: they have no frontmatter. Fold each into the pages it belongs on
+  (memory-ingest), cite it as `notes/<file>` and the date it was copied in,
+  and leave the copies as they are.
 
 ## The sources
 

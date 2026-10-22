@@ -29,26 +29,30 @@ func TestTheAssistantsSegmentHasItsMemory(t *testing.T) {
 	if _, err := sv.Stop(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	seg := st.segments[0].Persistent
-	if seg.MemoryVolume != MemoryVolumeIn(home, "assistant") || seg.MemoryCarry != "notes" || seg.MemoryCarryTo != "pages/notes" {
-		t.Fatalf("the segment's memory: %q, carrying %q to %q", seg.MemoryVolume, seg.MemoryCarry, seg.MemoryCarryTo)
+	seg := st.segments[0].Persistent.Memory
+	if seg == nil || seg.Volume != MemoryVolumeIn(home, "assistant") || seg.Carry != "notes" || seg.CarryTo != "pages/notes" || seg.Seeded {
+		t.Fatalf("the segment's memory: %+v", seg)
 	}
 	for _, f := range []string{"SCHEMA.md", "index.md", "log.md", "pages/"} {
-		if _, ok := seg.MemorySeed[f]; !ok {
+		if _, ok := seg.Seed[f]; !ok {
 			t.Errorf("the seed has no %s", f)
 		}
 	}
 	day := time.Now().Format(time.DateOnly)
-	if log := string(seg.MemorySeed["log.md"]); !strings.HasPrefix(log, "# Memory log") || !strings.HasSuffix(log, "## ["+day+"] seed | the memory was made\n") {
+	if log := string(seg.Seed["log.md"]); !strings.HasPrefix(log, "# Memory log") || !strings.HasSuffix(log, "## ["+day+"] seed | the memory was made\n") {
 		t.Errorf("the seed's log: %q", log)
 	}
 	carried := engine.MemoryCarriedDir + "/"
-	if !strings.Contains(string(seg.MemorySeed[carried+"log.md"]), "## ["+day+"] ingest | data/notes/") ||
-		!strings.Contains(string(seg.MemorySeed[carried+"index.md"]), "(pages/notes/)") {
-		t.Errorf("the carried lines: %q, %q", seg.MemorySeed[carried+"log.md"], seg.MemorySeed[carried+"index.md"])
+	if !strings.Contains(string(seg.Seed[carried+"log.md"]), "## ["+day+"] ingest | data/notes/") ||
+		!strings.Contains(string(seg.Seed[carried+"index.md"]), "(pages/notes/)") {
+		t.Errorf("the carried lines: %q, %q", seg.Seed[carried+"log.md"], seg.Seed[carried+"index.md"])
 	}
-	if v, seed, _, _, err := memorySegment(home, coderAgent(t), time.Now()); err != nil || v != "" || seed != nil {
-		t.Errorf("the Coding agent's memory: %q %v %v", v, seed, err)
+	// The start recorded the seed, so the next one does not seed again.
+	if next, err := memorySegment(home, assistantAgent(t), time.Now()); err != nil || !next.Seeded {
+		t.Errorf("the next start's memory: %+v %v", next, err)
+	}
+	if m, err := memorySegment(home, coderAgent(t), time.Now()); err != nil || m != nil {
+		t.Errorf("the Coding agent's memory: %+v %v", m, err)
 	}
 	if _, ok := BuildRoster(coderAgent(t), Config{}, nil).Entry(EntryMemory); ok {
 		t.Error("the Coding agent's roster has a memory entry")
@@ -120,6 +124,11 @@ func TestMemoryExportCopiesIntoANewFolder(t *testing.T) {
 	}
 	if _, err := os.Lstat(filepath.Join(dir, "pages", "passwd")); err == nil {
 		t.Error("the link was written")
+	}
+	for p, want := range map[string]os.FileMode{dir: 0o700 | os.ModeDir, filepath.Join(dir, "pages"): 0o700 | os.ModeDir, filepath.Join(dir, "index.md"): 0o600} {
+		if fi, err := os.Stat(p); err != nil || fi.Mode() != want {
+			t.Errorf("%s: mode %v, want %v (%v)", p, fi.Mode(), want, err)
+		}
 	}
 	run, _ := f.FindRun("-volume-export")
 	if run.Network != "none" || len(run.Mounts) != 1 || run.Mounts[0].Source != MemoryVolumeIn(home, "assistant") || !run.Mounts[0].ReadOnly {

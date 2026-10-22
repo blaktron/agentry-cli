@@ -50,8 +50,8 @@ they start you, it continues where it left off.
   later, add it with memory-ingest. When an answer pulled several pages
   together, file it back as a page. The share's files are the memory's
   sources: read them, and never change, move or delete one to keep the
-  memory. If memory/pages/notes/ holds the notes you kept before you had a
-  memory, fold them in with memory-ingest as they come up.
+  memory. If memory/pages/notes/ holds notes copied from data/notes when the
+  memory was made, fold them in with memory-ingest as they come up.
 - **Knowledge packs.** When the person has given you a knowledge pack, search
   it before answering from memory, and say which page an answer came from.
 - **Tasks.** When the person asks you to do something at a time or on a

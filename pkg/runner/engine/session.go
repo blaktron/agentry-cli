@@ -87,7 +87,7 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	if ps := p.Persistent; ps != nil {
 		env.Persistent = &receipt.Persistent{
 			Agent: ps.Agent, Segment: ps.Segment, ResumeReason: notStartedReason,
-			Volumes: receipt.PersistentVolumes{Session: ps.SessionVolume, Data: ps.DataVolume, Memory: ps.MemoryVolume},
+			Volumes: receipt.PersistentVolumes{Session: ps.SessionVolume, Data: ps.DataVolume, Memory: ps.Memory.VolumeName()},
 			Share:   ps.Share, Roster: ps.Roster,
 		}
 	}
@@ -722,8 +722,8 @@ func PersistentVolumeLabels(agent, home string) map[string]string {
 // files. Listed first because an engine may refuse to create a volume that
 // exists (podman does). A volume that does not exist, whose legacy volume
 // does, is made as a copy of it. A memory volume, which has no legacy
-// volume, is seeded when it is made (seedMemoryVolume), after the data
-// volume it may carry a folder from.
+// volume, is seeded when it is made, or when no start has seeded it yet
+// (seedMemoryVolume), after the data volume it may copy a folder from.
 func ensurePersistentVolumes(ctx context.Context, d dockerx.Client, p Params) error {
 	ps := p.Persistent
 	have, err := d.VolumesByLabel(ctx, PersistentHomeLabel+"="+ps.Home)
@@ -749,28 +749,50 @@ func ensurePersistentVolumes(ctx context.Context, d dockerx.Client, p Params) er
 			return fmt.Errorf("carry the volume %s of the persistent agent %s over to %s: %w", v.old, ps.Agent, v.name, err)
 		}
 	}
-	if ps.MemoryVolume == "" || slices.Contains(have, ps.MemoryVolume) {
+	m := ps.Memory
+	if m == nil {
 		return nil
 	}
-	if err := d.VolumeCreate(ctx, ps.MemoryVolume, PersistentVolumeLabels(ps.Agent, ps.Home)); err != nil {
-		return fmt.Errorf("create the volume %s of the persistent agent %s: %w", ps.MemoryVolume, ps.Agent, err)
+	made := !slices.Contains(have, m.Volume)
+	if !made && m.Seeded {
+		return nil
+	}
+	if made {
+		if err := d.VolumeCreate(ctx, m.Volume, PersistentVolumeLabels(ps.Agent, ps.Home)); err != nil {
+			return fmt.Errorf("create the volume %s of the persistent agent %s: %w", m.Volume, ps.Agent, err)
+		}
 	}
 	if err := seedMemoryVolume(ctx, d, p); err != nil {
-		// Removed, so the next start makes and seeds it again.
-		_ = d.VolumeRemove(context.WithoutCancel(ctx), ps.MemoryVolume)
-		return fmt.Errorf("seed the memory volume %s of the persistent agent %s: %w", ps.MemoryVolume, ps.Agent, err)
+		if made {
+			// Removed, so the next start makes and seeds it again.
+			_ = d.VolumeRemove(context.WithoutCancel(ctx), m.Volume)
+		}
+		return fmt.Errorf("seed the memory volume %s of the persistent agent %s: %w", m.Volume, ps.Agent, err)
 	}
 	return nil
 }
 
-// memorySeedScript fills a new memory volume, at /memory, from the archive
-// on its stdin, then, when the data volume's folder $1 is a folder that
-// holds anything, copies it to $2 beneath the memory without following a
-// link and keeps nothing but its files and folders, and appends each file
-// of the carried folder ($3) to the memory's file of the same path. The
-// carried folder is removed either way.
+// VolumeName is the memory's volume; empty for none.
+func (m *PersistentMemory) VolumeName() string {
+	if m == nil {
+		return ""
+	}
+	return m.Volume
+}
+
+// memorySeedScript fills a memory volume, at /memory, from the archive on
+// its stdin, then, when the data volume's folder $1 is a folder that holds
+// anything, copies it to $2 beneath the memory without following a link
+// and keeps nothing but its files and folders, and appends each file of the
+// carried folder ($3) to the memory's file of the same path. The carried
+// folder is removed either way. A memory that holds SCHEMA.md is seeded
+// already and is left as it is, its archive read and dropped.
 const memorySeedScript = `set -eu
 cd /memory
+if [ -e SCHEMA.md ]; then
+  cat >/dev/null
+  exit 0
+fi
 tar -x -f -
 if [ -n "$1" ] && [ -d "/data/$1" ] && [ ! -L "/data/$1" ] && [ -n "$(ls -A "/data/$1")" ]; then
   mkdir -p "$2"
@@ -786,14 +808,14 @@ fi
 rm -rf "$3"
 `
 
-// seedMemoryVolume fills the agent's new memory volume with its seed
-// (PersistentSegment.MemorySeed), and the copy of its data volume's folder
-// (MemoryCarry), in a one-shot of the runner image: no network, the data
+// seedMemoryVolume fills the agent's memory volume with its seed
+// (PersistentMemory.Seed), and the copy of its data volume's folder
+// (PersistentMemory.Carry), in a one-shot of the runner image: no network, the data
 // volume read-only, the archive on stdin, and DAC_READ_SEARCH alone, so
 // the copy reads every file of the agent's own and owns what it writes.
 func seedMemoryVolume(ctx context.Context, d dockerx.Client, p Params) error {
-	ps := p.Persistent
-	archive, err := memorySeedArchive(ps.MemorySeed)
+	ps, m := p.Persistent, p.Persistent.Memory
+	archive, err := memorySeedArchive(m.Seed)
 	if err != nil {
 		return err
 	}
@@ -802,12 +824,12 @@ func seedMemoryVolume(ctx context.Context, d dockerx.Client, p Params) error {
 		Name:       name,
 		Image:      p.Plan.Proxy.Image,
 		Entrypoint: "sh",
-		Argv:       []string{"-c", memorySeedScript, "sh", ps.MemoryCarry, ps.MemoryCarryTo, MemoryCarriedDir},
+		Argv:       []string{"-c", memorySeedScript, "sh", m.Carry, m.CarryTo, MemoryCarriedDir},
 		User:       "0:0",
 		Network:    "none",
 		Mounts: []dockerx.Mount{
 			{Source: ps.DataVolume, Target: "/data", ReadOnly: true},
-			{Source: ps.MemoryVolume, Target: "/memory"},
+			{Source: m.Volume, Target: "/memory"},
 		},
 		Labels:     runLabels(p.RunID),
 		AutoRemove: true,
