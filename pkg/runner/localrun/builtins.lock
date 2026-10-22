@@ -115,3 +115,5 @@ agentry/assistant@1.3.0 sha256:258a30e86ac38911b849b4d6b37b4ab6a1f21b997f8d3bd3b
 agentry/coder@1.2.0 sha256:2b726017fe3a49f72e17ea125d7bbdd33fa324a23e522080a14c40593e7df83f
 # 1.4.0: the Assistant keeps a memory, a wiki in memory/ on a volume of its own seeded from memory/ (SCHEMA.md, index.md, log.md), with three built-in skills (memory-ingest, memory-query, memory-lint) beneath skills/; its instruction and README say so.
 agentry/assistant@1.4.0 sha256:efe99d6ca5363b3a48bfed0981b462f5148d8169e879e9503280a011d6db0578
+# 1.18.0: registry_search looks an MCP server up in the registry's MCP server list (mcp_server); the drafting guide's Declared MCP servers says to look a server on neither list up there first and what each status means.
+agentry/drafter@1.18.0 sha256:1acebbf80754f3b5f8c78e2e8e78cad4ee23b9b3cc9f3b161776bb2ec7be5767

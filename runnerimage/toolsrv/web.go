@@ -35,6 +35,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -821,6 +822,9 @@ func registrySearchSchema() map[string]any {
 		"ecosystem": strProp("With package and version: an MCP server's ecosystem, npm or pypi."),
 		"package":   strProp("With ecosystem and version: the MCP server's package name."),
 		"version":   strProp("With ecosystem and package: the exact version, to read the registry's vulnerability check of it."),
+		"mcp_server": strProp("Look an MCP server up in the registry's MCP server list: an npm or PyPI package name, " +
+			"an https:// address of a remote server, or words. Says what a survey saw when it installed and started the server, " +
+			"or asked the address for its tools: works, sign-in, needs-key, fails or not-declarable, with the date."),
 	})
 }
 
@@ -831,9 +835,20 @@ func (s *server) toolRegistrySearch(raw json.RawMessage) (string, bool) {
 		Ecosystem string `json:"ecosystem"`
 		Package   string `json:"package"`
 		Version   string `json:"version"`
+		MCPServer string `json:"mcp_server"`
 	}
 	if err := unmarshalArgs(raw, &a); err != nil {
 		return "registry_search: " + err.Error(), true
+	}
+	a.MCPServer = strings.TrimSpace(a.MCPServer)
+	asked := 0
+	for _, v := range []string{a.Query, a.Ref, a.Package, a.MCPServer} {
+		if v != "" {
+			asked++
+		}
+	}
+	if asked > 1 {
+		return "registry_search: give one of query, ref, mcp_server, or ecosystem with package and version", true
 	}
 	var path string
 	q := url.Values{}
@@ -856,8 +871,15 @@ func (s *server) toolRegistrySearch(raw json.RawMessage) (string, bool) {
 		q.Set("ecosystem", a.Ecosystem)
 		q.Set("package", a.Package)
 		q.Set("version", a.Version)
+	case a.MCPServer != "":
+		if len(a.MCPServer) > mcpListQueryMax {
+			return fmt.Sprintf("registry_search: mcp_server is at most %d characters", mcpListQueryMax), true
+		}
+		path = mcpListPath
+		q.Set("q", a.MCPServer)
+		q.Set("limit", strconv.Itoa(mcpListResults))
 	default:
-		return "registry_search: give one of query, ref, or ecosystem with package and version", true
+		return "registry_search: give one of query, ref, mcp_server, or ecosystem with package and version", true
 	}
 	w := s.web()
 	if s.spec.Web.Registry == "" {
@@ -913,6 +935,8 @@ func renderRegistry(path string, status int, body []byte, ref, server string) st
 			return fmt.Sprintf("No published QuickAgent resolves from %q.", ref)
 		case "/api/v1/mcp-servers/scan":
 			return fmt.Sprintf("The registry has no check of %s: no published manifest has declared that version yet.", server)
+		case mcpListPath:
+			return "This registry publishes no MCP server list. Judge the server as one on neither of your guide's lists."
 		}
 	}
 	if status != http.StatusOK {
@@ -994,6 +1018,102 @@ func renderRegistry(path string, status int, body []byte, ref, server string) st
 			}
 			b.WriteByte('\n')
 		}
+	case mcpListPath:
+		return renderMCPList(body)
+	}
+	return b.String()
+}
+
+// The registry site's MCP server list: what a survey saw of each npm
+// package, PyPI package and remote address it reached, installed and
+// started as a run would, or asked for its tools with no credential.
+const (
+	mcpListPath     = "/build/mcp-servers/lookup"
+	mcpListResults  = 8
+	mcpListQueryMax = 200
+	// mcpListObserved bounds what is quoted of a failure's log: the
+	// server's own words, which say why it stopped and nothing more useful
+	// past that.
+	mcpListObserved = 200
+)
+
+// mcpListStatus says each status as the list means it, in a line the
+// model reads before it pins a server.
+var mcpListStatus = map[string]string{
+	"works":          "works: installed, started behind the gateway and listed its tools",
+	"sign-in":        "sign-in: publishes OAuth sign-in details the CLI accepts; nobody signed in, so its tools were not listed",
+	"needs-key":      "needs-key: refused an anonymous request and publishes no OAuth details",
+	"fails":          "fails",
+	"not-declarable": "not-declarable: a manifest cannot declare this address",
+}
+
+func renderMCPList(body []byte) string {
+	var r struct {
+		List struct {
+			Tested struct {
+				First string `json:"first"`
+				Last  string `json:"last"`
+			} `json:"tested"`
+		} `json:"list"`
+		Total int `json:"total"`
+		Items []struct {
+			ID        string   `json:"id"`
+			Kind      string   `json:"kind"`
+			Status    string   `json:"status"`
+			Outcome   string   `json:"outcome"`
+			Observed  string   `json:"observed"`
+			Tools     []string `json:"tools"`
+			ToolCount *int     `json:"toolCount"`
+			Version   string   `json:"version"`
+			Runtime   string   `json:"runtime"`
+			Secrets   []string `json:"secrets"`
+			Tested    string   `json:"tested"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(body, &r); err != nil {
+		return "The registry's answer was not the MCP server list's shape."
+	}
+	var b strings.Builder
+	if len(r.Items) == 0 {
+		fmt.Fprintf(&b, "No server in the MCP server list matches (surveyed %s to %s). A server the survey never reached may still run: judge it as one on neither of your guide's lists.\n", r.List.Tested.First, r.List.Tested.Last)
+		return b.String()
+	}
+	fmt.Fprintf(&b, "%d of %d matching server(s) in the MCP server list (surveyed %s to %s; each line is what was seen on its date, not a promise):\n",
+		len(r.Items), r.Total, r.List.Tested.First, r.List.Tested.Last)
+	for _, it := range r.Items {
+		id := it.ID
+		if it.Version != "" {
+			id += "@" + it.Version
+		}
+		status, ok := mcpListStatus[it.Status]
+		if !ok {
+			status = it.Status
+		}
+		fmt.Fprintf(&b, "- %s: %s", id, status)
+		if it.Status == "fails" {
+			fmt.Fprintf(&b, " (%s)", it.Outcome)
+		}
+		if it.ToolCount != nil && *it.ToolCount > 0 {
+			fmt.Fprintf(&b, "; %d tool(s)", *it.ToolCount)
+			if len(it.Tools) > 0 {
+				tools := it.Tools
+				if len(tools) > 6 {
+					tools = tools[:6]
+				}
+				fmt.Fprintf(&b, ": %s", strings.Join(tools, ", "))
+			}
+		}
+		if it.Runtime != "" {
+			fmt.Fprintf(&b, "; on %s", it.Runtime)
+		}
+		if len(it.Secrets) > 0 {
+			fmt.Fprintf(&b, "; keys it names: %s", strings.Join(it.Secrets, ", "))
+		}
+		if it.Observed != "" && it.Status != "works" {
+			obs, _ := cutText(it.Observed, mcpListObserved)
+			fmt.Fprintf(&b, "; seen: %s", obs)
+		}
+		fmt.Fprintf(&b, "; tested %s\n", it.Tested)
 	}
 	return b.String()
 }
