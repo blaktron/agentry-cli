@@ -18,8 +18,10 @@
 #
 # Exit 3: a file the registry did not advertise; exit 4: a digest mismatch;
 # otherwise pip's own exit code.
+import glob
 import hashlib
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -29,6 +31,7 @@ import tarfile
 # mcpinstall.go (a test holds them together).
 ARTIFACT_SUMS = "artifacts.sha256"
 CONSOLE_SCRIPTS_FILE = "console-scripts"
+SYSTEM_CA_BUNDLE = "/etc/ssl/certs/ca-certificates.crt"
 
 # Run by the venv's own interpreter, where the installed distribution is:
 # the console scripts it declares, one per line.
@@ -103,6 +106,15 @@ def main():
         f.write(sums)
 
     run([sys.executable, "-m", "venv", "--copies", venv])
+    # The venv's pip is the one Python bundles, and it trusts the CA bundle
+    # it vendors on top of the system's, whatever --cert says. That bundle
+    # can be years older than the image's and still hold roots since
+    # withdrawn, so it is replaced by the image's own before pip fetches
+    # anything. Debian and Alpine both keep the system bundle at this path.
+    if os.path.isfile(SYSTEM_CA_BUNDLE):
+        for vendored in glob.glob(os.path.join(venv, "lib", "python*", "site-packages",
+                                               "pip", "_vendor", "certifi", "cacert.pem")):
+            shutil.copyfile(SYSTEM_CA_BUNDLE, vendored)
     lib64 = os.path.join(venv, "lib64")
     if os.path.islink(lib64):
         os.unlink(lib64)

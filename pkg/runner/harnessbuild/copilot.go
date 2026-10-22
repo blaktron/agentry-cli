@@ -35,7 +35,7 @@ const CopilotImageAdapter = "copilot-image"
 // CopilotBase is the image Copilot CLI is installed on: agentry-dockerimages'
 // mirror of alpine:3.22, the runner image's own runtime base, pinned by
 // digest. The musl download needs nothing but musl's libc.
-const CopilotBase = "ghcr.io/blaktron/agentry-alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8"
+const CopilotBase = "ghcr.io/blaktron/agentry-alpine:3.22@sha256:d406446bc05b82480756ce8f1287964d28768c23955fa9480d2a74a2eae7a654"
 
 // CopilotReleases is where GitHub publishes Copilot CLI's release
 // downloads, each under v<version>/.

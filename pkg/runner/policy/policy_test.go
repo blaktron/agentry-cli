@@ -812,8 +812,8 @@ func TestLoadMovesAFormerDefaultNodeRuntime(t *testing.T) {
 	for _, c := range []struct{ written, want string }{
 		{"ghcr.io/blaktron/agentry-node-alpine:22-alpine", DefaultNodeRuntime},
 		{"node:22-alpine", DefaultNodeRuntime},
-		{"ghcr.io/blaktron/agentry-node-alpine:22-alpine@sha256:b6f26b36c8ff49624cfdac716b8ea1138d606df02586a77d364bb5536a634f85",
-			"ghcr.io/blaktron/agentry-node-alpine:22-alpine@sha256:b6f26b36c8ff49624cfdac716b8ea1138d606df02586a77d364bb5536a634f85"},
+		{"ghcr.io/blaktron/agentry-node-alpine:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914",
+			"ghcr.io/blaktron/agentry-node-alpine:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914"},
 		{"registry.example/node:22", "registry.example/node:22"},
 	} {
 		path := filepath.Join(t.TempDir(), "policy.yaml")
@@ -844,8 +844,8 @@ func TestLoadMovesAFormerDefaultNodeRuntime(t *testing.T) {
 func TestLoadMovesAFormerDefaultPythonRuntime(t *testing.T) {
 	for _, c := range []struct{ written, want string }{
 		{"ghcr.io/blaktron/agentry-python-alpine:3.12-alpine", DefaultPythonRuntime},
-		{"ghcr.io/blaktron/agentry-python-alpine:3.12-alpine@sha256:4c47124a8391cb7a9f571164147d154777cf012a4ece5f86097130d7a4478111",
-			"ghcr.io/blaktron/agentry-python-alpine:3.12-alpine@sha256:4c47124a8391cb7a9f571164147d154777cf012a4ece5f86097130d7a4478111"},
+		{"ghcr.io/blaktron/agentry-python-alpine:3.12-alpine@sha256:92abd2ba1bdfb48b1e2ac224b582dd1558d0d4bb11c903b126b5bf9c448fd656",
+			"ghcr.io/blaktron/agentry-python-alpine:3.12-alpine@sha256:92abd2ba1bdfb48b1e2ac224b582dd1558d0d4bb11c903b126b5bf9c448fd656"},
 		{"registry.example/python:3.12", "registry.example/python:3.12"},
 	} {
 		path := filepath.Join(t.TempDir(), "policy.yaml")
@@ -948,7 +948,7 @@ func TestTheRuntimeVersionsMatchTheirImages(t *testing.T) {
 		{DefaultNodeRuntime, DefaultNodeVersion, strings.SplitN(DefaultNodeVersion, ".", 2)[0] + "-alpine"},
 		{DefaultPythonRuntime, DefaultPythonVersion, strings.Join(strings.SplitN(DefaultPythonVersion, ".", 3)[:2], ".") + "-slim-trixie"},
 	} {
-		if !strings.HasSuffix(c.image, ":"+c.tag) {
+		if ref, _, _ := strings.Cut(c.image, "@"); !strings.HasSuffix(ref, ":"+c.tag) {
 			t.Errorf("%s does not run %s (tag %s)", c.image, c.version, c.tag)
 		}
 	}
