@@ -76,7 +76,7 @@ func (s *server) runAnyDescription() string {
 		" Returns \"exit code N\" plus combined output; a non-zero exit is a result, not an error." +
 		fmt.Sprintf(" Set background to start a program that keeps running after the call, such as a dev server or a watcher: the call returns after a few seconds with its id (bg1, bg2…) and its first output, and it runs with no time limit until %s or the end of this conversation's segment; read it with %s. At most %d run at once.",
 			ToolStopBackground, ToolBackgroundOutput, maxBackground) +
-		s.portsDescription()
+		s.portsDescription() + s.accountsDescription()
 }
 
 // portsDescription says which of the server's ports the person's computer
@@ -215,9 +215,9 @@ func lookProgram(command, dir string) (string, error) {
 }
 
 // anyEnv is a program's environment under Any: the image's PATH, HOME in
-// the workspace, a UTF-8 locale, the toolchain's own settings and the
-// person's secrets the spec names, and nothing else of this server's
-// environment.
+// the workspace, a UTF-8 locale, the toolchain's own settings, the
+// person's secrets the spec names and their git host accounts, and nothing
+// else of this server's environment.
 func (s *server) anyEnv() []string {
 	home := s.spec.Exec.Home
 	if home == "" {
@@ -229,10 +229,19 @@ func (s *server) anyEnv() []string {
 			env = append(env, k+"="+v)
 		}
 	}
-	// A secret never takes the place of a variable set above.
+	// A secret never takes the place of a variable set above, and the git
+	// host accounts' configuration and CLI variables come before the stored
+	// secrets: an account's GH_TOKEN is its own, whatever a secret of that
+	// name holds.
 	set := map[string]bool{}
 	for _, kv := range env {
 		set[kv[:strings.IndexByte(kv, '=')]] = true
+	}
+	for _, kv := range s.accountsEnv() {
+		if k := kv[:strings.IndexByte(kv, '=')]; !set[k] {
+			env = append(env, kv)
+			set[k] = true
+		}
 	}
 	for _, k := range s.spec.Exec.SecretEnv {
 		if v, ok := os.LookupEnv(k); ok && v != "" && !set[k] {

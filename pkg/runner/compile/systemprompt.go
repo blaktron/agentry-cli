@@ -227,6 +227,9 @@ You have no shell, filesystem or network of your own. Your tools come only from 
 		if len(co.Secrets) > 0 {
 			fmt.Fprintf(b, "- **Secrets.** The programs you run have the person's secrets %s in their environment. Use them by name ($NAME) in a command, a script or a tool's configuration; never print a value, write it into a file or a commit, or send it anywhere the person did not ask for.\n", strings.Join(sortedCopy(co.Secrets), ", "))
 		}
+		if len(co.Accounts) > 0 {
+			b.WriteString("- **Git host accounts.** " + accountsPrompt(co.Accounts) + "\n")
+		}
 	} else if len(c.ExecCommands) > 0 {
 		fmt.Fprintf(b, "- **Commands.** run_command can call only these commands, each with a time limit and its output capped: %s. Its own description says how they run.\n", strings.Join(c.ExecCommands, ", "))
 	} else {
@@ -547,4 +550,23 @@ func agentFilesLine(a *spec.AgentFiles, commands bool) string {
 		}
 	}
 	return line + "\n" + skillsLine(a.Skills, commands)
+}
+
+// accountsPrompt is the System Prompt's line for the Coding agent's git host
+// accounts: where it signs in, as whom, and how.
+func accountsPrompt(accounts []spec.CoderAccount) string {
+	var named []string
+	own := false
+	for _, a := range accounts {
+		whose := "the person's own account, so act only as they asked"
+		if a.Own {
+			whose, own = "your own account", true
+		}
+		named = append(named, fmt.Sprintf("%s as %s (%s)", a.Host, a.User, whose))
+	}
+	line := "You sign in to " + strings.Join(named, "; ") + ". git over https to those hosts signs in by itself, and gh, glab and tea have the token of their host, so clone, push and open pull requests there with no token in a URL or a command. Never print a token, write it into a file or a commit, or send it anywhere."
+	if own {
+		line += " Your own account reaches only the repositories the person shared with it: if one is out of reach, ask them to add your account as a collaborator rather than looking for another way in."
+	}
+	return line
 }

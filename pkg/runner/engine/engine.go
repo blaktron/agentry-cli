@@ -195,6 +195,10 @@ type Params struct {
 	// has off: a declared secret of one of these names is written empty,
 	// and the policy source is not asked for it.
 	WithheldSecrets []string
+	// AccountTokens are the tokens of the Coding agent's git host accounts
+	// its plan names (spec.CoderGrant.Accounts), by each one's TokenEnv:
+	// the tools container's alone, never a server's.
+	AccountTokens map[string]string
 	// Connections are the access tokens of the servers that sign in by
 	// OAuth, keyed by spec.MCPServerSpec.ConnectionKey (a remote server's
 	// address, a package server's "pypi:name"): the caller refreshed each

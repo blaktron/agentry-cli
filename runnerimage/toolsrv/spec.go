@@ -242,6 +242,28 @@ type Exec struct {
 	// whole value is masked wherever it appears in a result of this
 	// server's tools, and a file a tool writes may not hold one.
 	SecretEnv []string `json:"secretEnv,omitempty"`
+	// Accounts under Any are the person's git host accounts: a program is
+	// given each one's token as git's credential for that host alone and in
+	// the variables its host's CLI reads, and the commit identity in a
+	// repository whose remote is on that host. Each token's variable is
+	// also in SecretEnv, so it is masked as a stored secret is.
+	Accounts []GitAccount `json:"accounts,omitempty"`
+}
+
+// GitAccount is one of the Coding agent's git host accounts.
+type GitAccount struct {
+	// Host is host[:port], in lower case.
+	Host string `json:"host"`
+	// Kind is github, gitlab, gitea or git.
+	Kind string `json:"kind"`
+	// Own says it is the agent's own account rather than the person's.
+	Own   bool   `json:"own,omitempty"`
+	User  string `json:"user"`
+	Name  string `json:"name"`
+	Email string `json:"email"`
+	// TokenEnv is the variable of this server's environment holding the
+	// token.
+	TokenEnv string `json:"tokenEnv"`
 }
 
 // Port is one published port.

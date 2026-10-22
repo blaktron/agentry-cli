@@ -15,17 +15,20 @@ import (
 var storedSecretNameRE = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,63}$`)
 
 // reservedSecretNames are variables the tools server, the programs it runs
-// or the gateway set themselves: a secret by one of these names would change
-// how a program runs or where it connects, not hand it a credential.
+// or the gateway set themselves, the git host accounts' hosts among them: a
+// secret by one of these names would change how a program runs or where it
+// connects, not hand it a credential.
 var reservedSecretNames = []string{
 	"PATH", "HOME", "LANG", "LANGUAGE", "TERM", "TZ", "USER", "LOGNAME", "SHELL", "PWD", "OLDPWD", "HOSTNAME",
 	"TMPDIR", "TMP", "TEMP", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY", "FTP_PROXY",
 	"GOTOOLCHAIN", "NPM_CONFIG_UPDATE_NOTIFIER",
+	"GH_HOST", "GITLAB_HOST", "GITEA_SERVER_URL", "GITEA_SERVER_USER",
 }
 
 // reservedSecretPrefixes begin variables of the same kind: the locale, the
-// dynamic loader, the runner's own keys and the gateway's.
-var reservedSecretPrefixes = []string{"LC_", "LD_", "DYLD_", "AGENTRY_", "MCP_", "DOCKER_", "SSL_CERT_"}
+// dynamic loader, git's own settings, the runner's own keys and the
+// gateway's.
+var reservedSecretPrefixes = []string{"LC_", "LD_", "DYLD_", "GIT_", "AGENTRY_", "MCP_", "DOCKER_", "SSL_CERT_"}
 
 // CheckStoredSecretName refuses a name that is not an environment
 // variable's ([A-Z][A-Z0-9_]{0,63}), or one the runner and the programs it

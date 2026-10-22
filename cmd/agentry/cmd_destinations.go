@@ -331,16 +331,39 @@ func readDestinationSecret(cmd *cobra.Command, env string, stdin, generate bool)
 	return "", false, nil
 }
 
-// askHidden asks for a value on the terminal without echoing it.
+// askHidden asks for a value on the terminal without echoing it. An
+// interrupt (Ctrl-C, which cancels the command's context) ends the read
+// with nothing read and the terminal's echo back on.
 func askHidden(cmd *cobra.Command, prompt string) (string, error) {
 	f, ok := cmd.InOrStdin().(*os.File)
 	if !ok {
 		return "", errors.New("no terminal")
 	}
+	fd := int(f.Fd())
+	state, err := term.GetState(fd)
+	if err != nil {
+		return "", err
+	}
 	_, _ = fmt.Fprint(cmd.ErrOrStderr(), prompt)
-	b, err := term.ReadPassword(int(f.Fd()))
-	_, _ = fmt.Fprintln(cmd.ErrOrStderr())
-	return strings.TrimSpace(string(b)), err
+	type answer struct {
+		b   []byte
+		err error
+	}
+	got := make(chan answer, 1)
+	go func() {
+		b, err := term.ReadPassword(fd)
+		got <- answer{b, err}
+	}()
+	select {
+	case a := <-got:
+		_, _ = fmt.Fprintln(cmd.ErrOrStderr())
+		return strings.TrimSpace(string(a.b)), a.err
+	case <-cmd.Context().Done():
+		// The read is abandoned: the process ends with the command.
+		_ = term.Restore(fd, state)
+		_, _ = fmt.Fprintln(cmd.ErrOrStderr())
+		return "", errors.New("interrupted: nothing was read")
+	}
 }
 
 type destinationRow struct {

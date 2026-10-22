@@ -42,6 +42,9 @@ func coderGrant(in Inputs, caps *spec.CapSummary) error {
 	if err := checkCoderSecrets(g.Secrets, c.Secrets); err != nil {
 		return err
 	}
+	if err := checkCoderAccounts(g); err != nil {
+		return err
+	}
 	caps.Coder = &g
 	if g.OpenEgress {
 		caps.EgressMode = "all"
@@ -102,6 +105,41 @@ func checkCoderSecrets(names, declared []string) error {
 		seen[n] = true
 	}
 	return nil
+}
+
+// checkCoderAccounts refuses git host accounts the Coding agent's programs
+// cannot be given (spec.CheckCoderAccounts), and any without its commands,
+// which are the only way an account is used.
+func checkCoderAccounts(g spec.CoderGrant) error {
+	if len(g.Accounts) == 0 {
+		return nil
+	}
+	if !g.Commands {
+		return &PolicyRefusal{Reason: "the Coding agent's git host accounts are given to the programs it runs, and its commands are off"}
+	}
+	if err := spec.CheckCoderAccounts(g.Accounts); err != nil {
+		return &PolicyRefusal{Reason: err.Error()}
+	}
+	return nil
+}
+
+// coderAccountsEnforcement is the plan's line for the Coding agent's git
+// host accounts.
+func coderAccountsEnforcement(accounts []spec.CoderAccount) string {
+	var named []string
+	for _, a := range accounts {
+		whose := "the person's account"
+		if a.Own {
+			whose = "the agent's own account"
+		}
+		named = append(named, fmt.Sprintf("%s as %s (%s, %s)", a.Host, a.User, whose, a.Kind))
+	}
+	return "the person's git host accounts " + strings.Join(named, ", ") + ", whose tokens they keep in their keychain and agreed to give this agent (its roster's account entries), are given to every program run_command runs: " +
+		"git signs in with a token over https to its own host alone, through a credential helper set as command-scope configuration (GIT_CONFIG_COUNT) that reads it from the program's environment, and commits in a repository whose remote is on that host carry the account's name and email; " +
+		"gh, glab and tea's login are given the token of their kind's host in the variables they read; Agentry writes none of it into HOME, so an account switched off is gone at the next segment, though a program can keep a token itself (a tea login made outside /tmp, a token put in a remote URL or a file); " +
+		"each token comes from the gateway's secrets file, which the engine writes for the segment and removes at its end, the plan holding the hosts and names alone; " +
+		"the tools server masks each whole token wherever it appears in a result of its tools and the engine's redactor in the receipts, the transcript and the events, but what a program prints of one in another form (encoded, or split across two pages of a read) is not masked; " +
+		"a program can read a token and use or send it anywhere it reaches, with whatever that account can do on its host"
 }
 
 // coderSecretsEnforcement is the plan's line for the Coding agent's stored
