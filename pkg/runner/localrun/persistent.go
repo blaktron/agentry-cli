@@ -32,10 +32,12 @@ import (
 
 // Assistant is the Assistant (pkg/persistent/assistant), the first built-in
 // that runs as a persistent agent. A file in its share is read only once
-// ClamAV has checked it, and its app link is self_configure alone.
+// ClamAV has checked it, its app link is its own name, personality and
+// tasks, and it keeps time: each turn tells it the time, and its heartbeat
+// fires its tasks.
 func Assistant() Builtin {
 	return Builtin{namespace: assistant.Namespace, name: assistant.Name, version: assistant.Version, fsys: assistant.FS(),
-		persistent: true, runnable: true, checkShare: true, appLink: applink.SetAssistant}
+		persistent: true, runnable: true, checkShare: true, appLink: applink.SetAssistant, keepsTime: true}
 }
 
 // Main is Agentry Helper (pkg/persistent/main), the persistent agent of Agentry
@@ -65,6 +67,10 @@ func (b Builtin) Codes() bool { return b.coder }
 // Runnable says a persistent built-in runs as an agent; one that is not is
 // published for reading alone.
 func (b Builtin) Runnable() bool { return b.runnable }
+
+// KeepsTime says the persistent agent is told the time at each turn and
+// keeps a heartbeat that fires the tasks it registers.
+func (b Builtin) KeepsTime() bool { return b.keepsTime }
 
 // AppLink is the persistent built-in's app link tool set; empty for none.
 func (b Builtin) AppLink() string { return b.appLink }

@@ -57,6 +57,10 @@ func newAgentCmd() *cobra.Command {
 			"(`configure coder --dev-host`); each is a roster entry you agree to at its\n" +
 			"first start. It builds and runs software, which is riskier than an agent\n" +
 			"that only reads and writes.\n\n" +
+			"The Assistant knows the time at every turn, and registers its own tasks: an\n" +
+			"instruction it acts on at the times a cron expression names. Its heartbeat\n" +
+			"fires them while it runs, once you switch its heartbeat entry on; `tasks`\n" +
+			"lists them and pauses or removes one.\n\n" +
 			"Agentry Helper (main) runs only in Agentry Desktop.\n\n" +
 			"  agentry agent enable assistant\n" +
 			"  agentry agent start assistant\n" +
@@ -75,6 +79,7 @@ func newAgentCmd() *cobra.Command {
 		newAgentResetCmd(),
 		newAgentGrantCmd(),
 		newAgentConfigureCmd(),
+		newAgentTasksCmd(),
 		newAgentSuperviseCmd(),
 	)
 	return cmd
@@ -116,6 +121,8 @@ type agentState struct {
 	Transcript  []persistent.Entry `json:"transcript,omitempty"`
 	Share       string             `json:"share,omitempty"`
 	Roster      persistent.Roster  `json:"roster,omitempty"`
+	// Tasks counts an agent's tasks, for one that keeps time.
+	Tasks *int `json:"tasks,omitempty"`
 }
 
 type agentVolumes struct {
@@ -160,6 +167,14 @@ func readAgentState(ctx context.Context, home string, a persistent.Agent) (agent
 		st.State = agentStopped
 	default:
 		st.State = agentDisabled
+	}
+	if a.Builtin.KeepsTime() {
+		tctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		if ts, _, err := persistent.TasksOf(tctx, home, a); err == nil {
+			n := len(ts)
+			st.Tasks = &n
+		}
 	}
 	return st, nil
 }
@@ -305,6 +320,9 @@ func printAgentState(w io.Writer, st agentState) {
 	}
 	if st.Share != "" {
 		_, _ = fmt.Fprintf(w, "  share:      %s\n", st.Share)
+	}
+	if st.Tasks != nil {
+		_, _ = fmt.Fprintf(w, "  tasks:      %d (agentry agent tasks %s)\n", *st.Tasks, st.Agent)
 	}
 	if s := st.Status; s != nil && s.Pending {
 		_, _ = fmt.Fprintln(w, "  pending:    a change restarts it at its next turn")

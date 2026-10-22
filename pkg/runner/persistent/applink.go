@@ -3,10 +3,12 @@ package persistent
 // The owner side of a persistent agent's app link. The gateway runs the app
 // link (runnerimage/applink) with one bind, a socket of the supervisor's own,
 // apart from the owner socket: it takes tool calls alone, so nothing that
-// reaches it can change the roster, send a turn or stop the agent. The
+// reaches it can change the roster, send a turn now or stop the agent. The
 // supervisor answers self_configure itself, writing the agent's name and
-// personality and nothing else, and hands every other tool to its client's
-// handler (the desktop's, which answers with the application's own
+// personality and nothing else, and the Assistant's task tools, which
+// register the turns its heartbeat sends later at their times, with the
+// roster those times find (heartbeat.go). It hands every other tool to its
+// client's handler (the desktop's, which answers with the application's own
 // operations and consent); without one, the tool is answered as Agentry
 // Desktop's. Every call and its answer are a line of the segment's
 // receipts/applink.log.
@@ -125,6 +127,8 @@ func (s *Supervisor) answerAppLink(ctx context.Context, req applink.Request) app
 		return applink.Answer{Text: "no such tool: " + req.Tool, IsError: true}
 	case req.Tool == applink.SelfConfigure:
 		return s.selfConfigure(req.Arguments)
+	case isTaskTool(req.Tool):
+		return s.answerTask(req.Arguments, req.Tool)
 	case s.opts.AppLink != nil:
 		return s.opts.AppLink(ctx, req)
 	}

@@ -29,6 +29,9 @@ import (
 //	{"change":{…}}            a Change; answered with {"roster":[…]}, or
 //	                          refused with Consent naming what it turns on
 //	{"stop":{}}               ends the segment; answered with {"stopped":…}
+//	{"tasks":{}}              answered with {"tasks":[…]}, each with its next fire
+//	{"task_change":{…}}       a TaskOp (pause, resume, remove); answered with
+//	                          {"tasks":[…]}, or refused
 //
 // A refused command is answered with an event of kind error carrying
 // Refused, as the session protocol answers one.
@@ -41,6 +44,9 @@ type Command struct {
 	Roster *struct{}      `json:"roster,omitempty"`
 	Change *Change        `json:"change,omitempty"`
 	Stop   *struct{}      `json:"stop,omitempty"`
+	Tasks  *struct{}      `json:"tasks,omitempty"`
+	// TaskChange is a person's change to one of the agent's tasks.
+	TaskChange *TaskOp `json:"task_change,omitempty"`
 }
 
 // Reply is one line the supervisor sends.
@@ -49,6 +55,7 @@ type Reply struct {
 	Status  *Status         `json:"status,omitempty"`
 	Roster  Roster          `json:"roster,omitempty"`
 	Stopped *Stopped        `json:"stopped,omitempty"`
+	Tasks   *[]Task         `json:"tasks,omitempty"`
 	// Consent lists what a refused change would turn on, for the person to
 	// agree to before it is sent again with Consent set.
 	Consent []RosterEntry `json:"consent,omitempty"`
@@ -68,6 +75,7 @@ const (
 	RefusedEnded   protocol.Refusal = "ended"
 	RefusedChange  protocol.Refusal = "change"
 	RefusedConsent protocol.Refusal = "consent"
+	RefusedTask    protocol.Refusal = "task"
 )
 
 // maxSocketPath is below the kernel's limit for a socket's name (108 bytes
@@ -148,7 +156,7 @@ func (s *Supervisor) serveConn(nc net.Conn) {
 		dec := json.NewDecoder(strings.NewReader(sc.Text()))
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&cmd); err != nil || commandsSet(cmd) != 1 {
-			c.refuse(protocol.RefusedMalformed, "a command is one JSON object naming exactly one of attach, send, status, roster, change or stop")
+			c.refuse(protocol.RefusedMalformed, "a command is one JSON object naming exactly one of attach, send, status, roster, change, stop, tasks or task_change")
 			continue
 		}
 		switch {
@@ -194,6 +202,20 @@ func (s *Supervisor) serveConn(nc net.Conn) {
 			default:
 				c.reply(Reply{Roster: r})
 			}
+		case cmd.Tasks != nil:
+			ts, err := s.Tasks()
+			if err != nil {
+				c.refuse(RefusedTask, err.Error())
+				continue
+			}
+			c.reply(Reply{Tasks: taskList(ts)})
+		case cmd.TaskChange != nil:
+			ts, err := s.ChangeTask(*cmd.TaskChange)
+			if err != nil {
+				c.refuse(RefusedTask, err.Error())
+				continue
+			}
+			c.reply(Reply{Tasks: taskList(ts)})
 		case cmd.Stop != nil:
 			env, err := s.Stop(context.Background())
 			c.reply(Reply{Stopped: stoppedOf(env, err)})
@@ -205,7 +227,7 @@ func (s *Supervisor) serveConn(nc net.Conn) {
 // commandsSet is how many commands one line names.
 func commandsSet(c Command) int {
 	n := 0
-	for _, set := range []bool{c.Attach != nil, c.Send != nil, c.Status != nil, c.Roster != nil, c.Change != nil, c.Stop != nil} {
+	for _, set := range []bool{c.Attach != nil, c.Send != nil, c.Status != nil, c.Roster != nil, c.Change != nil, c.Stop != nil, c.Tasks != nil, c.TaskChange != nil} {
 		if set {
 			n++
 		}
@@ -316,6 +338,38 @@ func RequestChange(ctx context.Context, home, name string, ch Change) (Roster, e
 		return false
 	})
 	return r, err
+}
+
+// taskList is a reply's tasks, never nil, so an agent with none is
+// answered with an empty list.
+func taskList(ts []Task) *[]Task {
+	if ts == nil {
+		ts = []Task{}
+	}
+	return &ts
+}
+
+// RequestTasks asks the running agent's supervisor for its tasks.
+func RequestTasks(ctx context.Context, home, name string) ([]Task, error) {
+	return requestTasks(ctx, home, name, Command{Tasks: &struct{}{}})
+}
+
+// RequestTaskChange asks the running agent's supervisor to pause, resume or
+// remove one of its tasks.
+func RequestTaskChange(ctx context.Context, home, name string, op TaskOp) ([]Task, error) {
+	return requestTasks(ctx, home, name, Command{TaskChange: &op})
+}
+
+func requestTasks(ctx context.Context, home, name string, cmd Command) ([]Task, error) {
+	var ts []Task
+	err := request(ctx, home, name, cmd, func(r Reply) bool {
+		if r.Tasks != nil {
+			ts = *r.Tasks
+			return true
+		}
+		return false
+	})
+	return ts, err
 }
 
 // RequestStop asks the running agent's supervisor to stop it, and returns

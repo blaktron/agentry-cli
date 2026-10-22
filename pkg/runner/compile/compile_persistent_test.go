@@ -175,7 +175,7 @@ func TestTheAppLinkIsAServerWithNoNetworkAndOneBind(t *testing.T) {
 	if err := yaml.Unmarshal(allow, &tools); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(tools[applink.ServerName], []string{applink.SelfConfigure}) {
+	if !slices.Equal(tools[applink.ServerName], []string{applink.SelfConfigure, applink.TaskAdd, applink.TaskList, applink.TaskUpdate, applink.TaskRemove}) {
 		t.Errorf("the app link's allowlist: %v", tools[applink.ServerName])
 	}
 	if !strings.Contains(plan.Enforcement["persistent.appLink"], "no network") {

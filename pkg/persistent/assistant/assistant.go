@@ -3,7 +3,8 @@
 // persistent agent (pkg/runner/persistent). Its manifest declares the
 // persistent run mode alone, no egress, no filesystem, no exec and no secret;
 // the runner keeps its conversation on a volume of its own between segments,
-// and gives it its folders and what its roster has on.
+// tells it the time at each turn, fires the tasks it registers, and gives it
+// its folders and what its roster has on.
 package assistant
 
 import (
@@ -22,5 +23,5 @@ func FS() fs.FS { return files }
 const (
 	Namespace = "agentry"
 	Name      = "assistant"
-	Version   = "1.2.1"
+	Version   = "1.3.0"
 )

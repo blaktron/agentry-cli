@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -26,9 +27,12 @@ import (
 // sent is what reached the harness; the user_turn event carries the
 // person's text alone, as the engine's does.
 type fakeSegment struct {
-	mu      sync.Mutex
-	events  chan session.Event
+	mu     sync.Mutex
+	events chan session.Event
+	// sent are the turns sent, the time frame an agent that keeps time
+	// opens each with taken off; raw are they as sent.
 	sent    []string
+	raw     []string
 	ended   bool
 	id      string
 	resumed bool
@@ -39,6 +43,9 @@ type fakeSegment struct {
 	hold chan struct{}
 	// served are the tools its gateway serves.
 	served []string
+	// inflight are the turns being sent, which End waits for before it
+	// closes the events.
+	inflight sync.WaitGroup
 }
 
 func newFakeSegment(seg localrun.Segment, id string, resumed bool, reason string) *fakeSegment {
@@ -62,8 +69,11 @@ func (f *fakeSegment) SendCarrying(_ context.Context, carried, text string) erro
 		f.mu.Unlock()
 		return errors.New("the harness failed the turn")
 	}
-	f.sent = append(f.sent, carried+text)
+	f.raw = append(f.raw, carried+text)
+	f.sent = append(f.sent, timeFramed.ReplaceAllString(carried, "")+text)
 	hold := f.hold
+	f.inflight.Add(1)
+	defer f.inflight.Done()
 	f.mu.Unlock()
 	f.events <- session.Event{Kind: session.KindUserTurn, Text: text}
 	if hold != nil {
@@ -71,6 +81,16 @@ func (f *fakeSegment) SendCarrying(_ context.Context, carried, text string) erro
 	}
 	f.events <- session.Event{Kind: session.KindAssistantTurn, Text: "echo: " + text}
 	return nil
+}
+
+// timeFramed is the time frame a turn of an agent that keeps time opens with.
+var timeFramed = regexp.MustCompile(`^\(The time now: [^)]*\)\n\n`)
+
+// rawTurns are the turns as they were sent.
+func (f *fakeSegment) rawTurns() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.raw...)
 }
 
 func (f *fakeSegment) sentTurns() []string {
@@ -83,12 +103,15 @@ func (f *fakeSegment) AddInput(context.Context, string) error { return errors.Ne
 
 func (f *fakeSegment) End(context.Context, bool) (*receipt.Envelope, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	if !f.ended {
 		f.ended = true
+		f.mu.Unlock()
+		f.inflight.Wait()
 		f.events <- session.Event{Kind: session.KindSessionEnd, Reason: session.EndQuit}
 		close(f.events)
+		f.mu.Lock()
 	}
+	defer f.mu.Unlock()
 	return &receipt.Envelope{Status: "ok", OutDir: f.outDir, Usage: receipt.Usage{UserTurns: len(f.sent), TotalTokens: 7}}, nil
 }
 

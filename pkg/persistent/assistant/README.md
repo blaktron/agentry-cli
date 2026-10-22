@@ -41,8 +41,20 @@ and `agentry agent show assistant` lists what it has:
   on one you have not agreed to on this computer, asks you first.
 - **A name and a personality**, when you give them, reach it at its next
   message. On its first conversation it asks you for both, and saves your
-  answer through its one Agentry tool, `self_configure`, which changes its
-  name and personality and nothing else.
+  answer through its Agentry tool `self_configure`, which changes its name
+  and personality and nothing else.
+- **The time**: each message it is sent starts with the time now and your
+  time zone.
+- **Tasks and a heartbeat.** When you ask it to do something at a time, it
+  registers a task through its Agentry tools (`task_add`, `task_list`,
+  `task_update`, `task_remove`): a name, a cron time and an instruction to
+  itself. While it runs and its roster's heartbeat entry is on (off until you
+  switch it on), its heartbeat fires each task as a message of its own at its
+  time, which uses your model plan. A task due while it was stopped does not
+  run: it is told at its next message. At most 25 tasks, none more often
+  than every 15 minutes and 96 fires a day in all. `agentry agent tasks
+  assistant` lists them, and pauses, resumes or removes one. A task gives it
+  nothing it does not already have.
 - **Each start is a segment**, with its own receipts and result envelope in
   the agent's folder under the runner home, and the conversation's record
   continues across segments.

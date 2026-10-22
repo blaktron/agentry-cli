@@ -70,6 +70,11 @@ type Options struct {
 	// with localrun under Docker and Policy. Tests put an install of their
 	// own here.
 	InstallServer InstallServer
+	// Now is the clock the heartbeat and the time frame read; nil is the
+	// computer's. Tick is how often the heartbeat looks; 0 is a minute.
+	// Tests set both.
+	Now  func() time.Time
+	Tick time.Duration
 }
 
 // Stage is a step a segment's start has reached (engine.Stage).
@@ -140,6 +145,20 @@ type Supervisor struct {
 	bgCancel  context.CancelFunc
 	installWG sync.WaitGroup
 
+	// tasksMu serialises the supervisor's writes of the agent's tasks.
+	// hbCancel and hbDone end and wait for the heartbeat; missed names the
+	// tasks that came due while the agent was stopped, for its next turn;
+	// taskTurn is the task whose turn was sent, until its user turn
+	// takes it into the transcript.
+	tasksMu  sync.Mutex
+	hbCancel context.CancelFunc
+	hbDone   chan struct{}
+	missed   string
+	taskTurn string
+	// ranUntil is when each task's last turn ended: a time of the task's
+	// that came before it is skipped.
+	ranUntil map[string]time.Time
+
 	done     chan struct{}
 	stopOnce sync.Once
 	env      *receipt.Envelope
@@ -179,7 +198,7 @@ func Start(ctx context.Context, opts Options) (*Supervisor, error) {
 		opts: opts, owner: owner, since: time.Now().UTC(),
 		adapter:  localrun.ImageAdapter(adapter.DefaultFor(opts.Policy)),
 		watchers: map[int]chan session.Event{},
-		joined:   map[string]bool{}, installs: map[string]*bgInstall{},
+		joined:   map[string]bool{}, installs: map[string]*bgInstall{}, ranUntil: map[string]time.Time{},
 		done: make(chan struct{}),
 	}
 	s.bgCtx, s.bgCancel = context.WithCancel(context.Background())
@@ -206,6 +225,7 @@ func Start(ctx context.Context, opts Options) (*Supervisor, error) {
 	// The servers the store does not hold were left out of the segment:
 	// they install now, and join at the turn after they are ready.
 	s.startInstalls()
+	s.startHeartbeat()
 	return s, nil
 }
 
@@ -387,10 +407,13 @@ func (s *Supervisor) pump(sess engine.PersistentSession, segment int, runID stri
 	defer close(done)
 	for ev := range sess.Events() {
 		swapping := ev.Kind == session.KindSessionEnd && ending.Load()
+		task := ""
 		s.mu.Lock()
 		switch ev.Kind {
 		case session.KindUserTurn:
 			s.busy = true
+			// The heartbeat's turn takes the mark it was sent with.
+			task, s.taskTurn = s.taskTurn, ""
 			if !ev.Synthetic {
 				s.usage.UserTurns++
 			}
@@ -409,7 +432,7 @@ func (s *Supervisor) pump(sess engine.PersistentSession, segment int, runID stri
 		s.mu.Unlock()
 		if kept(ev.Kind) {
 			ev.Raw = nil
-			_ = appendEntry(s.opts.Home, s.opts.Agent.Name, Entry{Segment: segment, Run: runID, Event: ev})
+			_ = appendEntry(s.opts.Home, s.opts.Agent.Name, Entry{Segment: segment, Run: runID, Task: task, Event: ev})
 		}
 		if ev.Kind == session.KindSessionEnd && !swapping {
 			go func() { _, _ = s.Stop(context.Background()) }()
@@ -438,12 +461,20 @@ func (s *Supervisor) broadcast(ev session.Event) {
 // exchange; the first turn after a change says what it switched on and off
 // since the agent was last told, since the conversation the agent continues
 // was had with what it had before; and a turn after the person named the
-// agent or changed its personality starts with them.
+// agent or changed its personality starts with them. An agent that keeps
+// time is told the time at every turn, and, at its first turn after a start,
+// the tasks that came due while it was stopped.
 func (s *Supervisor) Send(ctx context.Context, text string) error {
 	if !s.turn.TryLock() {
 		return ErrBusy
 	}
 	defer s.turn.Unlock()
+	return s.sendLocked(ctx, "", text)
+}
+
+// sendLocked is Send for a caller that holds turn; pre is a frame of the
+// caller's own, last before the text (a task's).
+func (s *Supervisor) sendLocked(ctx context.Context, pre, text string) error {
 	cfg, err := LoadConfig(s.opts.Home, s.opts.Agent.Name)
 	if err != nil {
 		return err
@@ -463,7 +494,12 @@ func (s *Supervisor) Send(ctx context.Context, text string) error {
 	sess, carry, given := s.sess, s.carry, s.persona
 	byChange, roster := s.byChange, s.roster
 	joined := maps.Clone(s.joined)
-	frame := carry
+	missed := s.missed
+	frame := ""
+	if s.opts.Agent.Builtin.KeepsTime() {
+		frame = timeFrame(s.now())
+	}
+	frame += carry + missed
 	if byChange {
 		change := changeFrame(s.told, roster, s.resumed, joined)
 		restarted := ""
@@ -480,6 +516,7 @@ func (s *Supervisor) Send(ctx context.Context, text string) error {
 	if persona != given {
 		frame += personaFrame(cfg)
 	}
+	frame += pre
 	if frame != "" {
 		err = sess.SendCarrying(ctx, frame, text)
 	} else {
@@ -494,6 +531,13 @@ func (s *Supervisor) Send(ctx context.Context, text string) error {
 					delete(s.joined, e.ID)
 				}
 			}
+		}
+		s.mu.Unlock()
+	}
+	if err == nil && missed != "" {
+		s.mu.Lock()
+		if s.missed == missed {
+			s.missed = ""
 		}
 		s.mu.Unlock()
 	}
@@ -781,10 +825,14 @@ func (s *Supervisor) Stop(ctx context.Context) (*receipt.Envelope, error) {
 		// The background installs are cancelled first and take down their
 		// containers while the segment ends; the lock is let go only once
 		// they have, so the next start of the agent finds none of them.
+		// The heartbeat fires nothing more; a task's turn in flight ends
+		// with the segment.
 		s.cancelInstalls()
+		s.cancelHeartbeat()
 		s.seg.Lock()
 		s.env, s.endErr = s.endSegment(ctx, false)
 		s.seg.Unlock()
+		s.stopHeartbeat()
 		s.closeAppLink()
 		s.mu.Lock()
 		if s.ln != nil {

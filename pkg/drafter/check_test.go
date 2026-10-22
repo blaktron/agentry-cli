@@ -78,6 +78,11 @@ func TestCheckPackageSendsWhatS5Reads(t *testing.T) {
 	if want := []string{"AGENT.md", "LICENSE", "README.md", "agent.yaml"}; !slices.Equal(paths, want) || p.Description != "Turn meeting notes into action items." {
 		t.Fatalf("the package: %v %q, want %v", paths, p.Description, want)
 	}
+	for _, n := range []int{20 << 10, 24 << 10} {
+		if q, err := CheckPackage(strings.Repeat("a", n), dir); err != nil || len(q.Description) != n {
+			t.Fatalf("a description of %d bytes: %v", n, err)
+		}
+	}
 	if _, err := CheckPackage(strings.Repeat("a", corejudge.DraftMaxDescription+1), dir); !errors.Is(err, ErrCheckDescriptionTooLong) {
 		t.Fatalf("a description past the bound: %v", err)
 	}

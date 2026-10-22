@@ -161,6 +161,11 @@ type Builtin struct {
 	// checkShare it is the persistent grant class, which the compiler
 	// accepts for a built-in alone.
 	appLink string
+	// keepsTime tells the persistent agent the time at each turn and gives
+	// it a heartbeat that fires the tasks it registers through its app
+	// link. Both are the supervisor's: the plan a segment compiles grants
+	// nothing for them.
+	keepsTime bool
 	// runnable says a persistent built-in runs as an agent; one that does
 	// not is published for reading only.
 	runnable bool
