@@ -224,6 +224,9 @@ You have no shell, filesystem or network of your own. Your tools come only from 
 	}
 	if co := c.Coder; co != nil && co.Commands {
 		fmt.Fprintf(b, "- **Commands.** run_command runs any program in your toolchain image (build tools, git, curl, Python 3, Go, Node and npm, and what they install) in a folder beneath %s, with a time limit and its output capped. You can build, test and run what you write. Its own description says how they run.\n", spec.AgentRoot)
+		if len(co.Secrets) > 0 {
+			fmt.Fprintf(b, "- **Secrets.** The programs you run have the person's secrets %s in their environment. Use them by name ($NAME) in a command, a script or a tool's configuration; never print a value, write it into a file or a commit, or send it anywhere the person did not ask for.\n", strings.Join(sortedCopy(co.Secrets), ", "))
+		}
 	} else if len(c.ExecCommands) > 0 {
 		fmt.Fprintf(b, "- **Commands.** run_command can call only these commands, each with a time limit and its output capped: %s. Its own description says how they run.\n", strings.Join(c.ExecCommands, ", "))
 	} else {

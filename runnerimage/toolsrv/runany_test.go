@@ -159,3 +159,59 @@ func TestRunAnyNeverFollowsALinkLeftWhereHomeGoes(t *testing.T) {
 		t.Fatalf("what the link named was touched: %v", err)
 	}
 }
+
+// TestRunAnyGivesAProgramTheStoredSecretsAndMasksThem: a program is given
+// the person's stored secrets the spec names, and no other variable of the
+// server's; what it prints of a value comes back masked.
+func TestRunAnyGivesAProgramTheStoredSecretsAndMasksThem(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("a program runs confined on Linux alone")
+	}
+	spec := anySpec(t)
+	spec.Exec.SecretEnv = []string{"GITHUB_TOKEN"}
+	spec.FSRead = Access{Enabled: true}
+	s := newTestServer(t, spec)
+	if s.confine.refused != "" {
+		t.Skipf("this machine cannot confine a program: %s", s.confine.refused)
+	}
+	const value = "stored-test-value-0123456789"
+	t.Setenv("GITHUB_TOKEN", value)
+	t.Setenv("AGENTRY_TEST_SERVER_ONLY", "server-only-value")
+	got, isErr := s.toolRunAny(rawArgs(t, map[string]any{"command": "sh", "args": []string{"-c", `test "$GITHUB_TOKEN" = ` + value + ` && echo given; echo "$GITHUB_TOKEN"; env`}}))
+	if isErr || !strings.Contains(got, "given\n") || strings.Contains(got, value) || !strings.Contains(got, "[redacted:GITHUB_TOKEN]") ||
+		strings.Contains(got, "AGENTRY_TEST_SERVER_ONLY") {
+		t.Fatalf("run_command = %q (isError %v)", got, isErr)
+	}
+	// A value a program leaves in a file is masked when another tool
+	// reads it back.
+	if _, isErr := s.toolRunAny(rawArgs(t, map[string]any{"command": "sh", "args": []string{"-c", `echo "token=$GITHUB_TOKEN" > data/left.txt`}})); isErr {
+		t.Fatal("the program did not run")
+	}
+	got, _ = s.callTool(s.tools[ToolFSRead], rawArgs(t, map[string]any{"path": "data/left.txt"}))
+	if strings.Contains(got, value) || !strings.Contains(got, "token=[redacted:GITHUB_TOKEN]") {
+		t.Errorf("fs_read = %q", got)
+	}
+}
+
+// TestRunAnyKeepsItsOwnVariablesOverAStoredSecret: a secret named as a
+// variable the server sets for a program never takes its place.
+func TestRunAnyKeepsItsOwnVariablesOverAStoredSecret(t *testing.T) {
+	spec := anySpec(t)
+	spec.Exec.SecretEnv = []string{"HOME", "OTHER_TOKEN"}
+	s := newTestServer(t, spec)
+	t.Setenv("HOME", "/somewhere/else")
+	t.Setenv("OTHER_TOKEN", "other-value-0123456789")
+	env := s.anyEnv()
+	homes := 0
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "HOME=") {
+			homes++
+			if kv != "HOME="+spec.Exec.Home {
+				t.Errorf("HOME is %q", kv)
+			}
+		}
+	}
+	if homes != 1 || !slices.Contains(env, "OTHER_TOKEN=other-value-0123456789") {
+		t.Errorf("env = %v", env)
+	}
+}

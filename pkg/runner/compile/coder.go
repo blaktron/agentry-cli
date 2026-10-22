@@ -2,6 +2,7 @@ package compile
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/blaktron/agentry/pkg/manifest"
@@ -38,6 +39,9 @@ func coderGrant(in Inputs, caps *spec.CapSummary) error {
 	if err := checkCoderPorts(g.Ports); err != nil {
 		return err
 	}
+	if err := checkCoderSecrets(g.Secrets, c.Secrets); err != nil {
+		return err
+	}
 	caps.Coder = &g
 	if g.OpenEgress {
 		caps.EgressMode = "all"
@@ -54,7 +58,7 @@ func coderGrant(in Inputs, caps *spec.CapSummary) error {
 func coderExecEnforcement(img *spec.ExecImageSpec) string {
 	return fmt.Sprintf("run_command runs any program the agent names, the Coding agent's grant, which the person agreed to for this agent (its roster's commands entry), not a declared allowlist: "+
 		"in the Coding agent's exec image, built on this machine from its toolchain image %s (pinned by digest) with the runner binary copied in, not minimized, the programs found on the image's own PATH; "+
-		"this machine's exec catalogue is not consulted; each program runs in a folder beneath %s, as the person's ids where the engine maps them (as root on a rootless engine, which is the person), with HOME at %s, an environment of PATH, HOME, LANG and the toolchain's settings alone, "+
+		"this machine's exec catalogue is not consulted; each program runs in a folder beneath %s, as the person's ids where the engine maps them (as root on a rootless engine, which is the person), with HOME at %s, an environment of PATH, HOME, LANG, the toolchain's settings and the person's stored secrets its roster has on alone, "+
 		"its writes held by Landlock beneath /tmp, the scratch folder and %s (where there is no Landlock, no program runs), in a process group ended with the call, at most %d seconds and the output cap a call",
 		img.Coder, spec.AgentRoot, spec.CoderHome, spec.AgentRoot, coderExecTimeoutSeconds)
 }
@@ -78,6 +82,35 @@ func checkCoderPorts(ports []spec.CoderPort) error {
 		names[p.Name], numbers[p.Port] = true, true
 	}
 	return nil
+}
+
+// checkCoderSecrets refuses stored secrets' names that are not names a
+// person may store (spec.CheckStoredSecretName), that repeat, or that a
+// manifest's own declared secret names: each is set in the tools
+// container's environment under its name.
+func checkCoderSecrets(names, declared []string) error {
+	seen := map[string]bool{}
+	for _, n := range names {
+		switch {
+		case spec.CheckStoredSecretName(n) != nil:
+			return &PolicyRefusal{Reason: fmt.Sprintf("the Coding agent's stored secret %q: %v", n, spec.CheckStoredSecretName(n))}
+		case seen[n]:
+			return &PolicyRefusal{Reason: fmt.Sprintf("the Coding agent's stored secret %s is given twice", n)}
+		case slices.Contains(declared, n):
+			return &PolicyRefusal{Reason: fmt.Sprintf("the Coding agent's stored secret %s has the name of a secret its manifest declares", n)}
+		}
+		seen[n] = true
+	}
+	return nil
+}
+
+// coderSecretsEnforcement is the plan's line for the Coding agent's stored
+// secrets.
+func coderSecretsEnforcement(names []string) string {
+	return "the person's stored secrets " + strings.Join(names, ", ") + ", which they keep in their keychain for this agent and agreed to give it (its roster's secret entries), are set in the environment of every program run_command runs, " +
+		"from the gateway's secrets file, which the engine writes for the segment and removes at its end; the plan holds their names alone; " +
+		"the tools server masks each whole value wherever it appears in a result of its tools and refuses a file it writes that holds one, the engine's redactor masks each in the receipts, the transcript and the events; " +
+		"a program can read a value and send it anywhere it reaches, and what it prints of one in another form (encoded, or split across two pages of a read) is not masked"
 }
 
 // coderPortsEnforcement is the plan's line for the Coding agent's published

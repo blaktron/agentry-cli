@@ -856,7 +856,16 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode, label func(stri
 func secretValues(p Params) (map[string]string, error) {
 	values := map[string]string{}
 	missingSet := map[string]bool{}
+	withheld := map[string]bool{}
+	for _, name := range p.WithheldSecrets {
+		withheld[name] = true
+	}
 	resolve := func(name string) (string, bool) {
+		// A stored secret the person switched off: written empty, so
+		// what declares it starts and goes without it.
+		if withheld[name] {
+			return "", true
+		}
 		v, ok := p.SecretOverrides[name]
 		if !ok || v == "" {
 			v, ok = lookupSecret(name, p.Policy.SecretSource)
@@ -886,6 +895,19 @@ func secretValues(p Params) (map[string]string, error) {
 	// The review's key (review.go), for the tools container alone.
 	for k, v := range reviewSecrets(p) {
 		values[k] = v
+	}
+	// The Coding agent's stored secrets, for the programs it runs: the
+	// tools container's alone, each from the segment's values and never
+	// the policy source.
+	if c := p.Plan.Capabilities.Coder; c != nil && c.Commands {
+		for _, name := range c.Secrets {
+			v := p.SecretOverrides[name]
+			if v == "" {
+				missingSet[name] = true
+				continue
+			}
+			values[compile.SecretKey(name)] = v
+		}
 	}
 	missing := make([]string, 0, len(missingSet))
 	for name := range missingSet {
@@ -924,6 +946,37 @@ func absentSecrets(plan *spec.Plan, values map[string]string) []string {
 		}
 	})
 	return slices.Sorted(maps.Keys(absent))
+}
+
+// withheldSecrets names the persistent agent's stored secrets that are off
+// and that the plan declares, the release's own or a server's: each was
+// written empty.
+func withheldSecrets(p Params) []string {
+	if len(p.WithheldSecrets) == 0 {
+		return nil
+	}
+	out := map[string]bool{}
+	eachPlanSecret(p.Plan, func(name, _ string) {
+		if slices.Contains(p.WithheldSecrets, name) {
+			out[name] = true
+		}
+	})
+	return slices.Sorted(maps.Keys(out))
+}
+
+// withWithheldNote names, in the receipt's enforced capabilities, the
+// stored secrets the person switched off that a server declares
+// (secrets.withheld). Names only.
+func withWithheldNote(enforced map[string]string, withheld []string) map[string]string {
+	if len(withheld) == 0 {
+		return enforced
+	}
+	out := maps.Clone(enforced)
+	if out == nil {
+		out = map[string]string{}
+	}
+	out["secrets.withheld"] = "stored secrets the person switched off for this agent, written empty into the gateway's secrets file for the containers that declare them, and not read from the policy's secret source: " + strings.Join(withheld, ", ")
+	return out
 }
 
 // withAbsentNote names, in the receipt's enforced capabilities, the

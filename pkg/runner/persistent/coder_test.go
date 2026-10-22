@@ -111,7 +111,7 @@ func TestTheAssistantIsNeverGivenTheCodingAgentsGrants(t *testing.T) {
 	g, _, _, err := Apply(context.Background(), home, a, c, BuildRoster(a, c, nil), nil, func(context.Context, DevHost) (*targethost.Host, error) {
 		t.Error("the Assistant's dev server was readied")
 		return nil, errors.New("no")
-	})
+	}, nil)
 	if err != nil || g.Coder != nil || g.DevHost != nil {
 		t.Errorf("the Assistant's grants: %+v, %v", g, err)
 	}
@@ -156,13 +156,13 @@ func TestTheDevServerIsSavedPinnedAndReadiedEachSegment(t *testing.T) {
 		readied = append(readied, got)
 		return host, nil
 	}
-	g, _, _, err := Apply(context.Background(), home, a, c, BuildRoster(a, c, nil), nil, ready)
+	g, _, _, err := Apply(context.Background(), home, a, c, BuildRoster(a, c, nil), nil, ready, nil)
 	if err != nil || g.Coder == nil || !g.Coder.DevHost || g.DevHost != host || len(readied) != 1 || readied[0] != devServer {
 		t.Fatalf("with the dev server on: grant %+v, host %v, readied %v, %v", g.Coder, g.DevHost, readied, err)
 	}
 	if _, _, _, err := Apply(context.Background(), home, a, c, BuildRoster(a, c, nil), nil, func(context.Context, DevHost) (*targethost.Host, error) {
 		return nil, errors.New("host key changed")
-	}); err == nil || !strings.Contains(err.Error(), "host key changed") {
+	}, nil); err == nil || !strings.Contains(err.Error(), "host key changed") {
 		t.Errorf("a dev server that would not ready: %v", err)
 	}
 
@@ -170,7 +170,7 @@ func TestTheDevServerIsSavedPinnedAndReadiedEachSegment(t *testing.T) {
 		t.Fatal(err)
 	}
 	readied = nil
-	g, _, _, err = Apply(context.Background(), home, a, c, BuildRoster(a, c, nil), nil, ready)
+	g, _, _, err = Apply(context.Background(), home, a, c, BuildRoster(a, c, nil), nil, ready, nil)
 	if err != nil || g.Coder.DevHost || g.DevHost != nil || len(readied) != 0 {
 		t.Fatalf("with the dev server off: %+v, %v, readied %v", g.Coder, err, readied)
 	}
@@ -243,14 +243,14 @@ func TestThePortsArePublishedOnlyWhileTheirEntryIsOn(t *testing.T) {
 	if !ok || e.Kind != KindPort || !e.On || e.Name != "Port web (127.0.0.1:3000)" {
 		t.Fatalf("the port's entry: %+v", e)
 	}
-	g, _, _, err := Apply(context.Background(), home, a, c, BuildRoster(a, c, nil), nil, nil)
+	g, _, _, err := Apply(context.Background(), home, a, c, BuildRoster(a, c, nil), nil, nil, nil)
 	if err != nil || g.Coder == nil || !slices.Equal(g.Coder.Ports, []spec.CoderPort{{Name: "web", Port: 3000}}) {
 		t.Fatalf("with the port on: %+v, %v", g.Coder, err)
 	}
 	if _, err := ApplyChange(home, a, &c, Change{Switch: &Switch{ID: "port:web", On: false}}); err != nil {
 		t.Fatal(err)
 	}
-	if g, _, _, err = Apply(context.Background(), home, a, c, BuildRoster(a, c, nil), nil, nil); err != nil || len(g.Coder.Ports) != 0 {
+	if g, _, _, err = Apply(context.Background(), home, a, c, BuildRoster(a, c, nil), nil, nil, nil); err != nil || len(g.Coder.Ports) != 0 {
 		t.Fatalf("with the port off: %+v, %v", g.Coder, err)
 	}
 

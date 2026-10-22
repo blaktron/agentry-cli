@@ -28,6 +28,7 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -878,11 +879,34 @@ func (s *server) scrubSecrets(text string) string {
 	return text
 }
 
+// scrubStoredSecrets masks the person's stored secrets (Exec.SecretEnv) in
+// text, longest value first, so one that holds another is masked whole.
+func (s *server) scrubStoredSecrets(text string) string {
+	if !s.spec.Exec.Any || len(s.spec.Exec.SecretEnv) == 0 {
+		return text
+	}
+	type secret struct{ env, value string }
+	var vals []secret
+	for _, env := range s.spec.Exec.SecretEnv {
+		if v := os.Getenv(env); v != "" {
+			vals = append(vals, secret{env, v})
+		}
+	}
+	sort.Slice(vals, func(i, j int) bool { return len(vals[i].value) > len(vals[j].value) })
+	for _, v := range vals {
+		text = strings.ReplaceAll(text, v.value, "[redacted:"+v.env+"]")
+	}
+	return text
+}
+
 // grantedSecretEnv names the environment variables that hold this tools
-// server's own secrets: fetch's granted secrets, the web tools' keys and
-// the review key.
+// server's own secrets: fetch's granted secrets, the web tools' keys, the
+// review key and the person's stored secrets its programs are given.
 func (s *server) grantedSecretEnv() []string {
 	envs := append(append([]string(nil), s.spec.Fetch.SecretEnv...), webKeysForScrub(s.spec.Web)...)
+	if s.spec.Exec.Any {
+		envs = append(envs, s.spec.Exec.SecretEnv...)
+	}
 	if s.spec.Review.Enabled {
 		envs = append(envs, ReviewSecretEnv()...)
 	}

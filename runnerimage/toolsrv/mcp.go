@@ -426,12 +426,14 @@ func (s *server) handleToolsCall(req rpcRequest) {
 
 // callTool runs one granted tool and records the call. Every result fits
 // the harness's limit (page.go): the tools that page already do, and this
-// holds the rest, errors included.
+// holds the rest, errors included. The person's stored secrets are masked
+// in every result first, whichever tool read them back: a program can leave
+// one in a file another tool reads.
 func (s *server) callTool(d toolDef, args json.RawMessage) (string, bool) {
 	s.callFault = false
 	text, isErr := d.call(args)
 	s.recordCall(d.name, !isErr)
-	return s.spec.Limits.budget().fitResult(d.name, text), isErr
+	return s.spec.Limits.budget().fitResult(d.name, s.scrubStoredSecrets(text)), isErr
 }
 
 // InputResourceURI names the embedded resource an input tool's answer

@@ -18,6 +18,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -62,6 +63,12 @@ type Change struct {
 	// removed.
 	AddSkill    *AddedSkill `json:"addSkill,omitempty"`
 	RemoveSkill string      `json:"removeSkill,omitempty"`
+	// SetSecret records a secret the person stored, on, its value already
+	// kept in the keychain by the client that asked them for it, or one set
+	// again; RemoveSecret takes one away, by its name. Neither carries a
+	// value.
+	SetSecret    *StoredSecret `json:"setSecret,omitempty"`
+	RemoveSecret string        `json:"removeSecret,omitempty"`
 	// Consent says the person consented to what this change turns on, as
 	// the lines a ConsentError listed say it.
 	Consent bool `json:"consent,omitempty"`
@@ -146,6 +153,7 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 	next.Servers = slices.Clone(c.Servers)
 	next.Knowledge = slices.Clone(c.Knowledge)
 	next.Skills = slices.Clone(c.Skills)
+	next.Secrets = slices.Clone(c.Secrets)
 	next.ServerFailures = cloneMap(c.ServerFailures)
 	if ch.Name != nil {
 		name, err := cleanName(*ch.Name)
@@ -283,6 +291,16 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 			return false, err
 		}
 	}
+	if sec := ch.SetSecret; sec != nil {
+		if err := addSecret(a, &next, *sec); err != nil {
+			return false, err
+		}
+	}
+	if n := ch.RemoveSecret; n != "" {
+		if err := removeSecret(a, &next, n); err != nil {
+			return false, err
+		}
+	}
 	if sw := ch.Switch; sw != nil && strings.HasPrefix(sw.ID, serverPrefix) && strings.HasSuffix(sw.ID, shareSuffix) {
 		if err := switchServerShare(a, &next, *sw); err != nil {
 			return false, err
@@ -379,6 +397,7 @@ func grantsKeyWith(a Agent, c Config, ready func(manifest.MCPServer) bool) strin
 		Servers   []manifest.MCPServer
 		Knowledge []string
 		Skills    []string
+		Secrets   []string
 	}
 	counted := map[string]bool{}
 	for _, s := range c.Servers {
@@ -406,6 +425,13 @@ func grantsKeyWith(a Agent, c Config, ready func(manifest.MCPServer) bool) strin
 		if e, ok := r.Entry(ServerEntryID(s)); ok && e.On && counted[e.ID] {
 			k.Servers = append(k.Servers, s)
 		}
+	}
+	// A stored secret counts on or off, since one that is off is withheld,
+	// and by when its value was set, so setting it again restarts the
+	// segment. Its value is never part of the key.
+	for _, s := range c.Secrets {
+		e, _ := r.Entry(SecretEntryID(s.Name))
+		k.Secrets = append(k.Secrets, fmt.Sprintf("%s=%t@%s", s.Name, e.On, s.Set.UTC().Format(time.RFC3339Nano)))
 	}
 	b, _ := json.Marshal(k)
 	sum := sha256.Sum256(b)

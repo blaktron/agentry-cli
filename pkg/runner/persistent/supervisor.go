@@ -59,6 +59,9 @@ type Options struct {
 	// DevHost readies the Coding agent's dev server for each segment; nil
 	// readies it under Home and Policy (ReadyDevHost).
 	DevHost HostReady
+	// Secrets is where the stored secrets' values are read for each
+	// segment; nil is the keychain (KeychainSecrets).
+	Secrets Secrets
 	// AppLink answers the agent's app link calls other than self_configure,
 	// which the supervisor answers itself: the desktop's. Nil answers them
 	// as Agentry Desktop's.
@@ -249,7 +252,11 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 	if ready == nil {
 		ready = ReadyDevHost(home, s.opts.Policy)
 	}
-	grants, applied, packsDone, err := Apply(ctx, home, a, cfg, roster, s.opts.Packs, ready)
+	keys := s.opts.Secrets
+	if keys == nil {
+		keys = KeychainSecrets{}
+	}
+	grants, applied, packsDone, err := Apply(ctx, home, a, cfg, roster, s.opts.Packs, ready, keys)
 	if err != nil {
 		return err
 	}
