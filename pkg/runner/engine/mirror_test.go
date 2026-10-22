@@ -161,3 +161,26 @@ func TestFilterHoldsTheShareToTheToolsServer(t *testing.T) {
 		}
 	}
 }
+
+// TestFilterHoldsTheSkillsToTheToolsServer: the agent's skills folder is a
+// root the tools server alone may bind, whatever a server sees of the share,
+// and never a writable one.
+func TestFilterHoldsTheSkillsToTheToolsServer(t *testing.T) {
+	rd := runDirsAt(t.TempDir())
+	rd.share = "/home/p/agentry/codershare"
+	rd.skills = "/home/p/.agentry/runner/persistent/coder/skills"
+	env := map[string]string{
+		"MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS":        rd.workspace + ":" + rd.share + ":" + rd.skills,
+		"MCP_GATEWAY_DOCKER_BIND_ALLOW_WRITABLE_PATHS": rd.outDir + ":" + rd.share,
+	}
+	for _, share := range []spec.ServerShare{"", spec.ServerShareLive} {
+		plan := &spec.Plan{MCPServers: []spec.MCPServerSpec{{Name: "mcp-pypi-x", Source: "pypi", Share: share}}}
+		cfg, err := filterConfig(rd, "run1", env, policy.Limits{}, plan, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Contains(cfg.ToolsOnlyRoots, rd.skills) || slices.Contains(cfg.ToolsWritableRoots, rd.skills) || slices.Contains(cfg.WritableRoots, rd.skills) {
+			t.Errorf("share %q: tools-only %v, tools-writable %v, writable %v", share, cfg.ToolsOnlyRoots, cfg.ToolsWritableRoots, cfg.WritableRoots)
+		}
+	}
+}

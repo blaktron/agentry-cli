@@ -10,16 +10,16 @@ import (
 	"io/fs"
 )
 
-//go:embed agent.yaml INSTRUCTION.md README.md LICENSE
+//go:embed agent.yaml INSTRUCTION.md README.md LICENSE skills
 var files embed.FS
 
 // FS is the package's tree: agent.yaml, INSTRUCTION.md, README.md and
-// LICENSE at its root.
+// LICENSE at its root, and its skills, one folder each beneath skills/.
 func FS() fs.FS { return files }
 
 // The package's identity, as its manifest declares it.
 const (
 	Namespace = "agentry"
 	Name      = "coder"
-	Version   = "1.1.1"
+	Version   = "1.2.0"
 )

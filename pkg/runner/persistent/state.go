@@ -199,10 +199,11 @@ func LogPath(home, name string) string { return filepath.Join(Dir(home, name), l
 
 // ConfigVersion is the version of config.yaml this build writes. Version 2
 // added the share folder, the person's servers and packs, the switches and
-// the consents, version 3 the Coding agent's dev server and version 4 its
-// published ports; a build that reads an older version alone refuses a newer
+// the consents, version 3 the Coding agent's dev server, version 4 its
+// published ports and version 5 the skills the person added; a build that
+// reads an older version alone refuses a newer
 // one rather than drop what it does not know on its next save.
-const ConfigVersion = 4
+const ConfigVersion = 5
 
 // Config is the agent's config.yaml: what the person chose for it, and the
 // conversation its next segment continues.
@@ -251,6 +252,9 @@ type Config struct {
 	// drops it on its next save, and the server is installed again at the
 	// next start, so the field needs no version of its own.
 	ServerFailures map[string]ServerFailure `yaml:"serverFailures,omitempty" json:"serverFailures,omitempty"`
+	// Skills are the skills the person added, as they were checked; each is
+	// a roster entry, its files in the agent's skills-added folder.
+	Skills []AddedSkill `yaml:"skills,omitempty" json:"skills,omitempty"`
 }
 
 // ServerFailure is why a server the person added could not be installed.
@@ -300,6 +304,11 @@ func SaveConfig(home, name string, c Config) error {
 		c.Version = 3
 	}
 	if len(c.Ports) > 0 {
+		c.Version = 4
+	}
+	// A build that does not know added skills would drop them at its next
+	// save: it refuses the config instead.
+	if len(c.Skills) > 0 {
 		c.Version = ConfigVersion
 	}
 	b, err := yaml.Marshal(c)
@@ -476,8 +485,10 @@ func saveUsage(home, name string, u Usage) error {
 
 // Reset puts a stopped agent back to its defaults, as it was when first
 // enabled: its two volumes, its transcript, its lifetime usage, its share
-// verdicts, its share mirror and its installed servers are removed, and its configuration
-// keeps only whether it is enabled, so its next start is a first segment
+// verdicts, its share mirror, its installed servers, its tasks and the
+// skills the person added are removed; its configuration keeps only whether
+// it is enabled, so its built-in skills are on again and its next start is
+// a first segment
 // that asks its consents again. The segments' receipts and the files in its
 // share folder, which are the person's, are kept; so is a dev server's
 // sign-in in the keychain, where a schedule of the same host may read it.
@@ -500,7 +511,7 @@ func Reset(ctx context.Context, home, name string, d dockerx.Client) error {
 			return fmt.Errorf("remove the %s agent's volume %s: %w", name, v, err)
 		}
 	}
-	for _, f := range []string{transcriptFile, usageFile, shareVerdictsFile} {
+	for _, f := range []string{transcriptFile, usageFile, shareVerdictsFile, tasksFile} {
 		if err := os.Remove(filepath.Join(Dir(home, name), f)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
@@ -513,6 +524,11 @@ func Reset(ctx context.Context, home, name string, d dockerx.Client) error {
 	}
 	if err := removeShareMirror(home, name); err != nil {
 		return err
+	}
+	for _, dir := range []string{AddedSkillsPath(home, name), skillsPath(home, name)} {
+		if err := os.RemoveAll(dir); err != nil {
+			return fmt.Errorf("remove the %s agent's skills: %w", name, err)
+		}
 	}
 	cfg, err := LoadConfig(home, name)
 	if err != nil {

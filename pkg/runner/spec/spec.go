@@ -89,6 +89,11 @@ const (
 	// share after each turn under new names, never over a file; only such
 	// a plan names it.
 	PHShareOut = "@@RUN_SHARE_OUT@@"
+	// PHSkills is the host path of a persistent agent's skills for one
+	// segment: a folder the supervisor fills with the skills its roster has
+	// on, mounted read-only at AgentRoot/AgentSkillsDir into the tools
+	// server alone; only a persistent plan with a skill on names it.
+	PHSkills = "@@RUN_SKILLS@@"
 	// PHData is a persistent agent's data volume, by name, mounted at
 	// AgentRoot/AgentDataDir; only a persistent plan names it.
 	PHData = "@@RUN_DATA@@"
@@ -285,6 +290,9 @@ const (
 	// AgentDataDir is the agent's own folder beneath AgentRoot, its data
 	// volume, kept between its segments.
 	AgentDataDir = "data"
+	// AgentSkillsDir is where the agent's skills are beneath AgentRoot,
+	// read-only: one Agent Skills folder (a SKILL.md and what it uses) each.
+	AgentSkillsDir = "skills"
 	// ShareChecksMount is the folder a persistent agent's tools server
 	// reads the share's malware verdicts from, read-only, rewritten by the
 	// runner before each turn (ShareChecksFile).
@@ -554,6 +562,27 @@ type AgentFiles struct {
 	// malwareCheck when the plan was compiled. Unset, the check reads the
 	// files without ClamAV and every file is read unchecked.
 	MalwareCheck bool `json:"malwareCheck,omitempty"`
+	// Skills are the skills the agent has on, by name and description, in
+	// the order the System Prompt lists them; their folders are mounted
+	// read-only at AgentRoot/AgentSkillsDir.
+	Skills []Skill `json:"skills,omitempty"`
+}
+
+// Skill is one skill a persistent agent has: its folder's name beneath
+// AgentRoot/AgentSkillsDir and the description its SKILL.md gives.
+type Skill struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+// ReadFolders are the folders beneath AgentRoot the agent's tools read:
+// its folders, and its skills, which are read-only.
+func (a *AgentFiles) ReadFolders() []string {
+	f := a.Folders()
+	if a != nil && len(a.Skills) > 0 {
+		f = append(f, AgentSkillsDir)
+	}
+	return f
 }
 
 // Folders are the folders beneath AgentRoot the agent's tools read and
