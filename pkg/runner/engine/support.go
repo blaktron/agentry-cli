@@ -57,10 +57,11 @@ type runDirs struct {
 	cfg         string // root/cfg — rendered gateway+harness files
 	secretsPath string // root/cfg/gateway/secrets.env (0600, deleted on teardown)
 	serversDir  string // the signature's server store, :ro
-	// share, data and shareChecks are a persistent agent's segment's
-	// (share.go): the person's share folder, the agent's data volume, and
-	// the folder of the share's malware verdicts; empty for any other run.
-	share, data, shareChecks string
+	// share, data, memory and shareChecks are a persistent agent's
+	// segment's (share.go): the person's share folder, the agent's data
+	// volume, its memory volume, and the folder of the share's malware
+	// verdicts; empty for any other run.
+	share, data, memory, shareChecks string
 	// appLink is the supervisor's app link socket, for a segment whose plan
 	// has an app link.
 	appLink string
@@ -282,6 +283,7 @@ func (rd *runDirs) replacerWith(hostPath func(string) string) *strings.Replacer 
 		spec.PHSkills, hostPath(rd.skills),
 		spec.PHShareOut, hostPath(rd.shareOut),
 		spec.PHData, rd.data,
+		spec.PHMemory, rd.memory,
 		spec.PHAppLink, rd.appLinkRoot(hostPath),
 		spec.PHAppLinkMount, rd.appLinkMount(hostPath),
 		spec.PHServers, hostPath(rd.serversDir),

@@ -42,7 +42,7 @@ func skillFolder(t *testing.T, name, md string, extra map[string]string) string 
 func passes(context.Context, string) (bool, error) { return true, nil }
 
 // TestTheCodingAgentHasItsBuiltInSkills: four, on by default, asking no
-// agreement; the Assistant and Main have none of their own.
+// agreement; the Assistant has its three memory skills.
 func TestTheCodingAgentHasItsBuiltInSkills(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	r := BuildRoster(coderAgent(t), Config{}, nil)
@@ -63,12 +63,14 @@ func TestTheCodingAgentHasItsBuiltInSkills(t *testing.T) {
 			t.Errorf("a built-in skill asks for agreement: %s", e.ID)
 		}
 	}
-	for _, a := range []Agent{assistantAgent(t)} {
-		for _, e := range BuildRoster(a, Config{}, nil) {
-			if e.Kind == KindSkill {
-				t.Errorf("%s has %s", a.Name, e.ID)
-			}
+	var assistant []string
+	for _, e := range BuildRoster(assistantAgent(t), Config{}, nil) {
+		if e.Kind == KindSkill {
+			assistant = append(assistant, e.Name)
 		}
+	}
+	if !slices.Equal(assistant, []string{"memory-ingest", "memory-lint", "memory-query"}) {
+		t.Errorf("the Assistant's skills: %v", assistant)
 	}
 }
 

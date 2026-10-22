@@ -39,9 +39,10 @@ func gatewayEnv(p *spec.Plan, name string) string {
 
 // TestAgentFilesRootTheFilesystemTools: a persistent built-in's folders
 // root fs_list, fs_read, fs_write, grep and glob at the agent's root, with
-// its data volume always and the share folder only when it has it on; the
-// share is a bind root and the gateway's one writable folder beside the
-// output folder, and its verdicts are mounted only when it is checked.
+// its data volume always, the share folder only when it has it on and its
+// memory volume only when it keeps one; the share is a bind root and the
+// gateway's one writable folder beside the output folder, the memory is a
+// volume and neither, and the verdicts are mounted only when it is checked.
 func TestAgentFilesRootTheFilesystemTools(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -50,6 +51,8 @@ func TestAgentFilesRootTheFilesystemTools(t *testing.T) {
 		{"data alone", spec.AgentFiles{}},
 		{"the share, read as it is", spec.AgentFiles{Share: true}},
 		{"the share, checked", spec.AgentFiles{Share: true, CheckShare: true}},
+		{"the share, checked, and a memory", spec.AgentFiles{Share: true, CheckShare: true, Memory: true}},
+		{"data and a memory", spec.AgentFiles{Memory: true}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			planDir := t.TempDir()
@@ -69,13 +72,22 @@ func TestAgentFilesRootTheFilesystemTools(t *testing.T) {
 			if tc.files.Share {
 				folders = append(folders, "share")
 			}
+			if tc.files.Memory {
+				folders = append(folders, "memory")
+			}
 			if ts.WorkspaceDir != spec.AgentRoot || !slices.Equal(ts.FSRead.Paths, folders) || !slices.Equal(ts.FSWrite.Paths, folders) || !ts.FSRead.Enabled || !ts.FSWrite.Enabled {
 				t.Fatalf("tools spec: workspace %q, read %+v, write %+v", ts.WorkspaceDir, ts.FSRead, ts.FSWrite)
 			}
 			// The prompt's claim that the folders are writable is the
 			// grant just checked.
-			if instr := renderedInstruction(t, planDir, plan.Harness.Adapter); !strings.Contains(instr, "**Your folders.** Read-write, in "+spec.AgentRoot) {
+			instr := renderedInstruction(t, planDir, plan.Harness.Adapter)
+			if !strings.Contains(instr, "**Your folders.** Read-write, in "+spec.AgentRoot) {
 				t.Errorf("the System Prompt does not say the folders are read-write")
+			}
+			// An agent with a memory keeps what it remembers there, and is
+			// not told to keep notes beside it.
+			if strings.Contains(instr, "read memory/index.md before you answer") != tc.files.Memory || strings.Contains(instr, "data/notes") == tc.files.Memory {
+				t.Errorf("the System Prompt's memory, with a memory %v: %q", tc.files.Memory, instr)
 			}
 			granted := ts.GrantedTools()
 			for _, tool := range []string{toolsrv.ToolFSRead, toolsrv.ToolFSList, toolsrv.ToolFSWrite, toolsrv.ToolGrep, toolsrv.ToolGlob} {
@@ -96,6 +108,12 @@ func TestAgentFilesRootTheFilesystemTools(t *testing.T) {
 			hasShare := strings.Contains(cat, spec.PHShare+":/agent/share:rw")
 			if hasShare != tc.files.Share || slices.Contains(roots, spec.PHShare) != tc.files.Share || slices.Contains(writable, spec.PHShare) != tc.files.Share {
 				t.Errorf("share mounted %v, a bind root %v, writable %v; want %v", hasShare, slices.Contains(roots, spec.PHShare), slices.Contains(writable, spec.PHShare), tc.files.Share)
+			}
+			if hasMemory := strings.Contains(cat, spec.PHMemory+":/agent/memory:rw"); hasMemory != tc.files.Memory || slices.Contains(roots, spec.PHMemory) || slices.Contains(writable, spec.PHMemory) {
+				t.Errorf("memory mounted %v, a bind root %v, writable %v; want mounted %v and neither", hasMemory, slices.Contains(roots, spec.PHMemory), slices.Contains(writable, spec.PHMemory), tc.files.Memory)
+			}
+			if line := plan.Enforcement["persistent.files"]; strings.Contains(line, "memory volume") != tc.files.Memory {
+				t.Errorf("the receipt's line names the memory %v, want %v: %q", !tc.files.Memory, tc.files.Memory, line)
 			}
 			if slices.Contains(writable, spec.PHWorkspace) || strings.Contains(cat, spec.PHWorkspace+":") {
 				t.Error("a persistent agent's tools server is given the workspace")

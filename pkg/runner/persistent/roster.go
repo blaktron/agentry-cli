@@ -214,6 +214,9 @@ func BuildRosterUnder(a Agent, c Config, applied *Applied, malwareCheck bool) Ro
 	add(RosterEntry{ID: EntryShare, Kind: KindFiles, Name: "Your share folder", GrantedBy: GrantedByBuiltin, Line: shareLine, alike: shareAlike}, true)
 	add(RosterEntry{ID: EntryData, Kind: KindFiles, Name: "Its own files", GrantedBy: GrantedByBuiltin, Fixed: true,
 		Line: "Keeps its own notes and files on a volume of its own, kept until you reset it"}, true)
+	if a.Builtin.KeepsMemory() {
+		add(RosterEntry{ID: EntryMemory, Kind: KindMemory, Name: "Its memory", GrantedBy: GrantedByBuiltin, Fixed: true, Line: memoryLine}, true)
+	}
 	if a.Builtin.KeepsTime() {
 		add(RosterEntry{ID: EntryHeartbeat, Kind: KindTasks, Name: "Its heartbeat and tasks", GrantedBy: GrantedByBuiltin, Line: heartbeatLine}, false)
 	}

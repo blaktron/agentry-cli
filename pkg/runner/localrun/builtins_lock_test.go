@@ -129,8 +129,8 @@ func readBuiltinsLock(t *testing.T) map[string]string {
 
 // TestTheBuiltInSkillsAreSkills: each folder beneath a persistent
 // built-in's skills/ is a skill of its own name that the bounds take, so
-// none is left out of a roster for being malformed; only the Coding agent
-// has any.
+// none is left out of a roster for being malformed; the Coding agent and
+// the Assistant have some, Main none.
 func TestTheBuiltInSkillsAreSkills(t *testing.T) {
 	for _, b := range PersistentBuiltins() {
 		sub, err := fs.Sub(b.fsys, "skills")
@@ -141,7 +141,7 @@ func TestTheBuiltInSkillsAreSkills(t *testing.T) {
 		if got := len(b.Skills()); got != len(entries) {
 			t.Errorf("%s: %d of its %d skill folders are skills", b.Ref(), got, len(entries))
 		}
-		if (len(entries) > 0) != b.Codes() {
+		if (len(entries) > 0) != (b.Codes() || b.KeepsMemory()) {
 			t.Errorf("%s has %d skills", b.Ref(), len(entries))
 		}
 	}
