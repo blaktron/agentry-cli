@@ -44,16 +44,18 @@ const VerdictFlagged Verdict = "flagged"
 const FailureTooLarge = "too-large"
 
 // The bounds of a draft scan's state. A draft asked about is one
-// request, under Jev's input window: a description the site admits, a
-// manifest of a few kilobytes, and an instruction of up to 32 KiB,
-// since a drafted instruction carries the domain knowledge a run with
-// no network cannot look up and runs 20–30 KB for a big task. The
-// Drafter holds its own cap at this one. The three together are held to
-// 48 KiB, so no draft request is larger than the window's figure
-// (internal/scan's typesafe InputLimit, 50 KB with the questions around
-// it) for a long instruction to fit.
+// request, under Jev's input window: a description of up to 24 KiB, the
+// most a client accepts for a draft's task, a manifest of a few
+// kilobytes, and an instruction of up to 32 KiB, since a drafted
+// instruction carries the domain knowledge a run with no network cannot
+// look up and runs 20–30 KB for a big task. The Drafter holds its own
+// cap at the instruction's. The three together are held to 48 KiB, so
+// no draft request is larger than the window's figure (internal/scan's
+// typesafe InputLimit, 50 KB with the questions around it) however the
+// parts are split: a long description leaves less for the instruction,
+// and a state past 48 KiB is not scanned and never cut.
 const (
-	DraftMaxDescription = 8 << 10
+	DraftMaxDescription = 24 << 10
 	DraftMaxManifest    = 16 << 10
 	DraftMaxInstruction = 32 << 10
 	DraftMaxState       = 48 << 10

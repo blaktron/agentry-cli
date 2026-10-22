@@ -1202,7 +1202,7 @@ func TestACheckWithNoAnswerIsKeptAndNotRetried(t *testing.T) {
 }
 
 // TestACheckRefusedBeforeItIsSentCountsNone: a description past the check's
-// bound is not sent, and the record says so with no check counted.
+// bound (24 KiB) is not sent, and the record says so with no check counted.
 func TestACheckRefusedBeforeItIsSentCountsNone(t *testing.T) {
 	isolateEnv(t)
 	_, policyPath := isolateRunnerHome(t)
@@ -1210,7 +1210,7 @@ func TestACheckRefusedBeforeItIsSentCountsNone(t *testing.T) {
 	draftSeams(t, webscan.Result{Verdict: webscan.Pass}, goodDraft, draftLedger)
 	checks := draftChecks(t, passCheck())
 	desc := filepath.Join(t.TempDir(), "desc.txt")
-	if err := os.WriteFile(desc, []byte(strings.Repeat("Summarize my meeting notes. ", 400)), 0o600); err != nil {
+	if err := os.WriteFile(desc, []byte(strings.Repeat("Summarize my meeting notes. ", 900)), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	out := filepath.Join(t.TempDir(), "o")
@@ -1218,8 +1218,36 @@ func TestACheckRefusedBeforeItIsSentCountsNone(t *testing.T) {
 		t.Fatalf("%v\n%s", err, stderr)
 	}
 	d, _ := readDraft(t, out)
-	if c := d.AIReview.Check; len(checks.asked) != 0 || c.Checks != 0 || !strings.HasPrefix(c.Unanswered, "the description is longer than the check reads") {
+	if c := d.AIReview.Check; len(checks.asked) != 0 || c.Checks != 0 || !strings.HasPrefix(c.Unanswered, "the description is longer than the check reads (24576 bytes)") {
 		t.Fatalf("%d asked, check %+v", len(checks.asked), c)
+	}
+}
+
+// TestALongDescriptionIsSentToTheCheck: a description of 20 KiB, well past
+// what the check once read and within what a draft accepts, is sent whole
+// with the rendered package, and the check is counted.
+func TestALongDescriptionIsSentToTheCheck(t *testing.T) {
+	isolateEnv(t)
+	_, policyPath := isolateRunnerHome(t)
+	t.Setenv(policy.DefaultJudgeKeyEnv, testJev)
+	draftSeams(t, webscan.Result{Verdict: webscan.Pass}, goodDraft, draftLedger)
+	checks := draftChecks(t, passCheck())
+	long := strings.Repeat("Summarize my meeting notes. ", 20<<10/28)
+	long += strings.Repeat("x", 20<<10-len(long))
+	desc := filepath.Join(t.TempDir(), "desc.txt")
+	if err := os.WriteFile(desc, []byte(long), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(t.TempDir(), "o")
+	if _, stderr, err := runCLI(t, nil, "draft", "--description-file", desc, "--out", out, "--policy", policyPath); err != nil {
+		t.Fatalf("%v\n%s", err, stderr)
+	}
+	d, _ := readDraft(t, out)
+	if len(long) != 20<<10 || len(checks.asked) != 1 || checks.asked[0].Description != long {
+		t.Fatalf("%d asked, a description of %d bytes", len(checks.asked), len(long))
+	}
+	if c := d.AIReview.Check; c == nil || c.Checks != 1 || c.Unanswered != "" {
+		t.Fatalf("the check %+v", c)
 	}
 }
 
