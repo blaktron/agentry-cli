@@ -126,7 +126,7 @@ func newAgentSecretSetCmd() *cobra.Command {
 				return engine.Classify(engine.ExitCLI, err)
 			}
 			existed := slices.ContainsFunc(c.Secrets, func(s persistent.StoredSecret) bool { return s.Name == name })
-			value, err := readSecretValue(cmd, name)
+			value, err := readSecretValue(cmd, "Value of "+name, "the value of "+name)
 			if err != nil {
 				return engine.Classify(engine.ExitUsage, err)
 			}
@@ -186,14 +186,15 @@ func newAgentSecretRemoveCmd() *cobra.Command {
 }
 
 // readSecretValue reads a secret's value: from the terminal without echo
-// when stdin is one, else from stdin, one trailing line break dropped.
-func readSecretValue(cmd *cobra.Command, name string) (string, error) {
+// when stdin is one, asking for it as prompt, else from stdin, one trailing
+// line break dropped. what names it in an error.
+func readSecretValue(cmd *cobra.Command, prompt, what string) (string, error) {
 	in := cmd.InOrStdin()
 	var v string
 	if f, ok := in.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
-		got, err := askHidden(cmd, "Value of "+name+" (not shown): ")
+		got, err := askHidden(cmd, prompt+" (not shown): ")
 		if err != nil {
-			return "", fmt.Errorf("read the value of %s: %w", name, err)
+			return "", fmt.Errorf("read %s: %w", what, err)
 		}
 		v = got
 	} else {
@@ -201,7 +202,7 @@ func readSecretValue(cmd *cobra.Command, name string) (string, error) {
 		// more, so a value past the bound is refused, not cut.
 		b, err := io.ReadAll(io.LimitReader(in, persistent.MaxSecretBytes+3))
 		if err != nil {
-			return "", fmt.Errorf("read the value of %s from stdin: %w", name, err)
+			return "", fmt.Errorf("read %s from stdin: %w", what, err)
 		}
 		v = strings.TrimSuffix(strings.TrimSuffix(string(b), "\n"), "\r")
 	}

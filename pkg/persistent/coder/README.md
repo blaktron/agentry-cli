@@ -62,6 +62,18 @@ agree to each part:
   (`agentry agent skill add coder <path>`). A skill you add is your own:
   Agentry has not reviewed it, and its scripts run with the agent's
   programs. Each skill is an entry of its roster.
+- **Git host accounts**, when you give it one (`agentry agent configure coder
+  --account github.com --own …`): an account on GitHub, GitLab, a Gitea,
+  Forgejo or Codeberg host, or any other git host. Give it an account of its
+  own and share repositories with it: it then reaches only what you share,
+  its commits and pull requests are its own, and taking access away is
+  removing a collaborator. Your own account lets it do whatever the token
+  can. The token stays in your system keychain; its programs sign in with it
+  (Git over https to that host alone, and `gh`, `glab` or `tea`) and can read
+  it, and it commits there as the name and email you give.
+- **Stored secrets**, when you store them (`agentry agent secret set coder
+  NAME`): each in its programs' environment by its name, its value in your
+  system keychain. Its programs can read it and send it anywhere they reach.
 - **What you add**: knowledge packs from your computer and MCP servers.
 
 Each part is an entry of its roster that you can switch off, and switching

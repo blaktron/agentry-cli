@@ -576,6 +576,9 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	if c := caps.Coder; c != nil && c.Commands && len(c.Secrets) > 0 {
 		plan.Enforcement["persistent.secrets"] = coderSecretsEnforcement(c.Secrets)
 	}
+	if c := caps.Coder; c != nil && c.Commands && len(c.Accounts) > 0 {
+		plan.Enforcement["persistent.accounts"] = coderAccountsEnforcement(c.Accounts)
+	}
 	if hostLink != nil {
 		plan.Enforcement["targetHosts"] = targetHostsEnforcement(caps.TargetHosts)
 		if c := caps.Coder; c != nil && c.DevHost {
@@ -1027,6 +1030,12 @@ func toolSpec(caps spec.CapSummary, secrets []string) *toolsrv.Spec {
 			ts.Exec.Ports = append(ts.Exec.Ports, toolsrv.Port{Name: p.Name, Port: p.Port})
 		}
 		ts.Exec.SecretEnv = sortedCopy(c.Secrets)
+		// Each account's token is a secret of the tools container's, masked
+		// as a stored secret is.
+		for _, a := range c.Accounts {
+			ts.Exec.SecretEnv = append(ts.Exec.SecretEnv, a.TokenEnv)
+			ts.Exec.Accounts = append(ts.Exec.Accounts, toolsrv.GitAccount{Host: a.Host, Kind: string(a.Kind), Own: a.Own, User: a.User, Name: a.Name, Email: a.Email, TokenEnv: a.TokenEnv})
+		}
 	}
 	return ts
 }

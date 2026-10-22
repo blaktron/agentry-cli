@@ -220,6 +220,17 @@ type Grants struct {
 	// given an empty value, never one from the policy's secret source.
 	Secrets         map[string]string
 	WithheldSecrets []string
+	// Accounts are the Coding agent's git host accounts the roster has on,
+	// each with its token, given to its programs with its commands on.
+	Accounts []Account
+}
+
+// Account is one of the Coding agent's git host accounts, as a segment is
+// given it: the account (its TokenEnv is the segment's to set) and the
+// token read from the keychain.
+type Account struct {
+	spec.CoderAccount
+	Token string
 }
 
 // Segment is one start of a persistent built-in: the session a persistent
@@ -311,7 +322,8 @@ func (s Segment) Start(ctx context.Context, d dockerx.Client) (engine.Persistent
 		RunID:          s.RunID, Stderr: logw, OnStage: s.OnStage,
 		ModelSignIn: signIn, RenewModelSignIn: renewSignIn,
 		SecretOverrides: maps.Clone(s.Grants.Secrets), WithheldSecrets: slices.Clone(s.Grants.WithheldSecrets),
-		Persistent: &seg,
+		AccountTokens: s.accountTokens(),
+		Persistent:    &seg,
 	})
 	if err != nil {
 		return nil, err
@@ -363,13 +375,45 @@ func (s Segment) coderGrant() (*spec.CoderGrant, error) {
 	// The stored secrets that are on reach its programs by name; their
 	// values are the segment's (Start).
 	out.Secrets = slices.Sorted(maps.Keys(s.Grants.Secrets))
+	// So do the git host accounts, by host, each token under a variable of
+	// its own (accountTokens).
+	out.Accounts = nil
+	for i, a := range s.sortedAccounts() {
+		acct := a.CoderAccount
+		acct.TokenEnv = spec.AccountTokenEnv(i)
+		out.Accounts = append(out.Accounts, acct)
+	}
 	return &out, nil
 }
 
-// checkSecrets refuses stored secrets for a built-in that keeps none.
+// sortedAccounts are the segment's git host accounts by host.
+func (s Segment) sortedAccounts() []Account {
+	out := slices.Clone(s.Grants.Accounts)
+	slices.SortFunc(out, func(a, b Account) int { return strings.Compare(a.Host, b.Host) })
+	return out
+}
+
+// accountTokens are the git host accounts' tokens by the variables
+// coderGrant gave them.
+func (s Segment) accountTokens() map[string]string {
+	if len(s.Grants.Accounts) == 0 {
+		return nil
+	}
+	out := map[string]string{}
+	for i, a := range s.sortedAccounts() {
+		out[spec.AccountTokenEnv(i)] = a.Token
+	}
+	return out
+}
+
+// checkSecrets refuses stored secrets for a built-in that keeps none, and
+// git host accounts for any but the Coding agent with its commands on.
 func (s Segment) checkSecrets() error {
 	if (len(s.Grants.Secrets) > 0 || len(s.Grants.WithheldSecrets) > 0) && !s.Builtin.keepsSecrets {
 		return engine.Classify(engine.ExitPolicy, fmt.Errorf("%s is not given stored secrets", s.Builtin.Ref()))
+	}
+	if len(s.Grants.Accounts) > 0 && (!s.Builtin.coder || s.Grants.Coder == nil || !s.Grants.Coder.Commands) {
+		return engine.Classify(engine.ExitPolicy, fmt.Errorf("%s is not given git host accounts: they are the Coding agent's, for the programs it runs", s.Builtin.Ref()))
 	}
 	return nil
 }

@@ -163,6 +163,7 @@ func newServer(spec *Spec, out, logw io.Writer) (*server, error) {
 	}
 	if spec.Exec.Any {
 		s.makeExecHome()
+		s.writeGitIdentities()
 	}
 	if spec.PDF.Enabled {
 		s.typst, s.render, s.pdfTimeout = defaultTypst(), newRenderConfinement(), PDFRenderTimeout

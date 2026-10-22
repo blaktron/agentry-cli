@@ -24,6 +24,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/mcpinstall"
+	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"github.com/blaktron/agentry-cli/pkg/runner/persistent"
 	"github.com/blaktron/agentry-cli/pkg/runner/setup"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
@@ -215,6 +216,8 @@ func newAgentConfigureCmd() *cobra.Command {
 		name, personalityFile, share, runOnStart, addServer, removeServer, addPack, removePack string
 		devHost, devKey, devPassphrase, devPassword, policyPath, addPort, removePort           string
 		yes, allowVulnerable, noDevHost                                                        bool
+		acct                                                                                   accountFlags
+		noAccount                                                                              string
 	)
 	cmd := &cobra.Command{
 		Use:   "configure <name>",
@@ -249,7 +252,7 @@ func newAgentConfigureCmd() *cobra.Command {
 			"127.0.0.1 and the same number, so what it serves from its sandbox (a dev\n" +
 			"server it started) opens in your browser; --no-port takes one away by its\n" +
 			"name. A port is a roster entry, switched with agentry agent grant.\n\n" +
-			"  agentry agent configure coder --port web=3000",
+			"  agentry agent configure coder --port web=3000\n\n" + agentAccountLong,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := cliAgent(args[0])
@@ -340,8 +343,39 @@ func newAgentConfigureCmd() *cobra.Command {
 			if removePort != "" {
 				ch.RemovePort, set = removePort, set+1
 			}
-			if set == 0 {
+			if noAccount != "" {
+				if acct.given() {
+					return engine.Classify(engine.ExitUsage, errors.New("--no-account takes an account away; the other --account flags set one up"))
+				}
+				ch.RemoveAccount, set = strings.ToLower(strings.TrimSpace(noAccount)), set+1
+			}
+			if acct.host == "" && acct.given() {
+				return engine.Classify(engine.ExitUsage, errors.New("--own, --yours and the --account-* flags go with --account"))
+			}
+			// The account is readied last, after every other flag is
+			// checked, since it asks for its token.
+			var accountToken string
+			var cfgBefore persistent.Config
+			if acct.host != "" || noAccount != "" {
+				if cfgBefore, err = persistent.LoadConfig(home, a.Name); err != nil {
+					return engine.Classify(engine.ExitCLI, err)
+				}
+			}
+			if set == 0 && acct.host == "" {
 				return engine.Classify(engine.ExitUsage, errors.New("nothing to change: pass one of the flags (agentry agent configure --help)"))
+			}
+			if acct.host != "" {
+				g, token, err := readyAccount(cmd, a, cfgBefore, acct)
+				if err != nil {
+					return err
+				}
+				ch.SetAccount, accountToken = &g, token
+			}
+			undoToken := func() {}
+			if g := ch.SetAccount; g != nil {
+				if undoToken, err = keepAccountToken(cfgBefore, *g, accountToken); err != nil {
+					return err
+				}
 			}
 			var oldDev *persistent.DevHost
 			if noDevHost {
@@ -351,8 +385,10 @@ func newAgentConfigureCmd() *cobra.Command {
 			}
 			r, running, err := configureAgent(cmd, home, a, ch, yes)
 			if err != nil {
+				undoToken()
 				return err
 			}
+			dropAccountTokens(cmd, cfgBefore, ch)
 			if oldDev != nil {
 				// A schedule of the same host and account reads the same
 				// keychain entry, so it is left for the person to remove.
@@ -386,7 +422,40 @@ func newAgentConfigureCmd() *cobra.Command {
 	f.StringVar(&policyPath, "policy", "", "operator policy file whose host lists the dev server is held to (default ~/.agentry/runner/policy.yaml)")
 	f.BoolVar(&yes, "yes", false, "agree to what the change turns on without being asked")
 	f.BoolVar(&allowVulnerable, "allow-vulnerable-mcp", false, "add a server version the registry has a high or critical advisory for")
+	f.StringVar(&acct.host, "account", "", "give the Coding agent an account on this git host (github.com, gitlab.com, git.example.com), or set its token again")
+	f.BoolVar(&acct.own, "own", false, "with --account: an account of the agent's own, which you share repositories with (recommended)")
+	f.BoolVar(&acct.yours, "yours", false, "with --account: your own account, which lets the agent do whatever its token can")
+	f.StringVar(&acct.user, "account-user", "", "with --account: the account's user name on the host")
+	f.StringVar(&acct.email, "account-email", "", "with --account: the email its commits carry")
+	f.StringVar(&acct.name, "account-name", "", "with --account: the name its commits carry (default: the user name)")
+	f.StringVar(&acct.kind, "account-kind", "", "with --account: github, gitlab, gitea or git, for a host whose kind is not known")
+	f.StringVar(&noAccount, "no-account", "", "take away the Coding agent's account on this git host, and its token")
 	return cmd
+}
+
+// dropAccountTokens removes from the keychain the tokens a change that
+// succeeded left behind: a removed account's, and an account's earlier
+// user's when its user name changed. The change stands either way, so one
+// that cannot be removed is named for the person to remove.
+func dropAccountTokens(cmd *cobra.Command, before persistent.Config, ch persistent.Change) {
+	var accounts []string
+	if h := ch.RemoveAccount; h != "" {
+		for _, g := range before.Accounts {
+			if g.Host == h {
+				accounts = append(accounts, persistent.AccountKeychainAccount(g.Host, g.User))
+			}
+		}
+	}
+	if g := ch.SetAccount; g != nil {
+		if old := replacedAccountToken(before, *g); old != "" {
+			accounts = append(accounts, old)
+		}
+	}
+	for _, keychainAccount := range accounts {
+		if err := agentSecrets.Delete(keychainAccount); err != nil {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "The token stays in your system keychain (account %s, service %s): %v\n", keychainAccount, modelkey.Service, err)
+		}
+	}
 }
 
 // readBounded reads a file of at most max bytes.
