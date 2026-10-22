@@ -189,7 +189,9 @@ func BuildRosterUnder(a Agent, c Config, applied *Applied, malwareCheck bool) Ro
 		if e.On {
 			e.State = StateOn
 		}
-		if applied != nil && !e.Fixed && slices.Contains(applied.On, e.ID) != e.On {
+		// The heartbeat is read at each tick, not given to a segment: its
+		// switch takes effect at once and is never pending.
+		if applied != nil && !e.Fixed && e.ID != EntryHeartbeat && slices.Contains(applied.On, e.ID) != e.On {
 			e.State = StatePending
 		}
 		r = append(r, e)
@@ -209,6 +211,9 @@ func BuildRosterUnder(a Agent, c Config, applied *Applied, malwareCheck bool) Ro
 	add(RosterEntry{ID: EntryShare, Kind: KindFiles, Name: "Your share folder", GrantedBy: GrantedByBuiltin, Line: shareLine, alike: shareAlike}, true)
 	add(RosterEntry{ID: EntryData, Kind: KindFiles, Name: "Its own files", GrantedBy: GrantedByBuiltin, Fixed: true,
 		Line: "Keeps its own notes and files on a volume of its own, kept until you reset it"}, true)
+	if a.Builtin.KeepsTime() {
+		add(RosterEntry{ID: EntryHeartbeat, Kind: KindTasks, Name: "Its heartbeat and tasks", GrantedBy: GrantedByBuiltin, Line: heartbeatLine}, false)
+	}
 	if a.Builtin.Codes() {
 		for _, e := range coderEntries(c) {
 			add(e, true)

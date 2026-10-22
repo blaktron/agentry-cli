@@ -155,6 +155,9 @@ func newAgentGrantCmd() *cobra.Command {
 			"segment at its next turn, starts the next with the change and continues the\n" +
 			"conversation. Switching a server whose install failed, off and on, installs\n" +
 			"it again.\n\n" +
+			"The Assistant's heartbeat entry, off until you switch it on, fires the tasks\n" +
+			"it registers (`agentry agent tasks assistant`); switching it takes effect at\n" +
+			"once and restarts nothing.\n\n" +
 			"A package server with no network has a second switch, <entry>:share, that\n" +
 			"lets it see the agent's share folder, read only, at /agent/share, so its\n" +
 			"tools can open a file you put there. For the Assistant it sees a copy of\n" +
@@ -167,6 +170,7 @@ func newAgentGrantCmd() *cobra.Command {
 			"sentence changes. A remote server, and one that reaches the network, are\n" +
 			"never given it.\n\n" +
 			"  agentry agent grant assistant share off\n" +
+			"  agentry agent grant assistant heartbeat on\n" +
 			"  agentry agent grant assistant knowledge:my-notes on\n" +
 			"  agentry agent grant assistant server:pypi-office-word-mcp-server:share on",
 		Args: cobra.ExactArgs(3),

@@ -115,7 +115,7 @@ func TestRosterRendersAgree(t *testing.T) {
 			t.Errorf("the consent's %s is not the roster's: %+v vs %+v", e.ID, e, got)
 		}
 	}
-	if len(r) != 2 || r[0].ID != EntryShare || r[1].ID != EntryData || !r[1].Fixed {
+	if len(r) != 3 || r[0].ID != EntryShare || r[1].ID != EntryData || !r[1].Fixed || r[2].ID != EntryHeartbeat || r[2].On {
 		t.Fatalf("the Assistant's own roster: %+v", r)
 	}
 	rec := r2.Receipt()
