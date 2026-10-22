@@ -262,6 +262,7 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	// receipt.
 	rd.secretsAbsent = absentSecrets(p.Plan, secrets)
 	env.CapabilitiesEnforced = withAbsentNote(env.CapabilitiesEnforced, rd.secretsAbsent)
+	env.CapabilitiesEnforced = withWithheldNote(env.CapabilitiesEnforced, withheldSecrets(p))
 	task, err := readTask(p.Task, rd.receiptsDir)
 	if err != nil {
 		return fail(err)

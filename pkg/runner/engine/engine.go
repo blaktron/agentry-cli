@@ -187,8 +187,14 @@ type Params struct {
 	PolicyFile *policy.File
 	// SecretOverrides resolve declared secrets ahead of the policy source
 	// — the QuickAgent's MCP profile rides in here; the engine itself
-	// stays profile-agnostic.
+	// stays profile-agnostic. A persistent agent's stored secrets that are
+	// on ride here too, and are the values of the Coding agent's programs'
+	// secrets (spec.CoderGrant.Secrets).
 	SecretOverrides map[string]string
+	// WithheldSecrets are a persistent agent's stored secrets its roster
+	// has off: a declared secret of one of these names is written empty,
+	// and the policy source is not asked for it.
+	WithheldSecrets []string
 	// Connections are the access tokens of the servers that sign in by
 	// OAuth, keyed by spec.MCPServerSpec.ConnectionKey (a remote server's
 	// address, a package server's "pypi:name"): the caller refreshed each
@@ -534,6 +540,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	// receipt.
 	rd.secretsAbsent = absentSecrets(p.Plan, secrets)
 	env.CapabilitiesEnforced = withAbsentNote(env.CapabilitiesEnforced, rd.secretsAbsent)
+	env.CapabilitiesEnforced = withWithheldNote(env.CapabilitiesEnforced, withheldSecrets(p))
 	task, err := readTask(p.Task, rd.receiptsDir)
 	if err != nil {
 		return fail(env, redact, err)

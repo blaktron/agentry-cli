@@ -228,6 +228,9 @@ func BuildRosterUnder(a Agent, c Config, applied *Applied, malwareCheck bool) Ro
 	for _, e := range skillEntries(a, c) {
 		add(e, true)
 	}
+	for _, e := range secretEntries(a, c) {
+		add(e, true)
+	}
 	for _, k := range c.Knowledge {
 		line := "Searches your knowledge pack " + k + ", read-only"
 		if a.Builtin.Codes() {
@@ -410,12 +413,13 @@ type Packs func(ctx context.Context, names []string) (packs []engine.AttachedPac
 // it is on, the packs that are on and the servers that are on and ready (a
 // server the agent's store does not hold yet, one being installed and one
 // whose install failed are left out: serverReady), and the Coding agent's
-// grant, its dev server readied by ready. It is the one place a
-// switch takes effect, so the tools server's spec, the gateway's allowlist and
-// catalogue, the bind lists and the driver's permit set, all compiled and
+// grant, its dev server readied by ready, and the stored secrets that are
+// on, their values read from keys. It is the one place a switch takes
+// effect, so the tools server's spec, the gateway's allowlist, catalogue and
+// secrets file, the bind lists and the driver's permit set, all compiled and
 // rendered from what it returns, agree. applied names what the segment is
 // given. done closes the packs it opened.
-func Apply(ctx context.Context, home string, a Agent, c Config, r Roster, open Packs, ready HostReady) (g localrun.Grants, applied Applied, done func(), err error) {
+func Apply(ctx context.Context, home string, a Agent, c Config, r Roster, open Packs, ready HostReady, keys Secrets) (g localrun.Grants, applied Applied, done func(), err error) {
 	done = func() {}
 	on := func(id string) bool {
 		e, ok := r.Entry(id)
@@ -450,6 +454,14 @@ func Apply(ctx context.Context, home string, a Agent, c Config, r Roster, open P
 			return g, applied, done, err
 		}
 	}
+	given, withheld := secretGrants(c, on)
+	if len(given) > 0 && keys == nil {
+		return g, applied, done, errors.New("the agent has a stored secret on, and this client cannot read the keychain")
+	}
+	if g.Secrets, err = ReadSecrets(keys, a.Name, given); err != nil {
+		return g, applied, done, err
+	}
+	g.WithheldSecrets = withheld
 	for _, srv := range c.Servers {
 		if id := ServerEntryID(srv); on(id) && !left[id] {
 			g.Servers = append(g.Servers, srv)

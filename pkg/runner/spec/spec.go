@@ -537,6 +537,10 @@ type CoderGrant struct {
 	// Ports: the tools server's ports published on the person's computer,
 	// each at 127.0.0.1 and the same number, while its entry is on.
 	Ports []CoderPort `json:"ports,omitempty"`
+	// Secrets: the names of the person's stored secrets its roster has on,
+	// set in the environment of the programs run_command runs (with
+	// Commands); their values are the segment's, never the plan's.
+	Secrets []string `json:"secrets,omitempty"`
 }
 
 // CoderPort is one of the Coding agent's published ports.

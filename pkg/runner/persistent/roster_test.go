@@ -158,7 +158,7 @@ func TestRosterReachesEveryGate(t *testing.T) {
 			cfg.Switches = map[string]bool{EntryShare: tc.share, ServerEntryID(remoteServer): tc.server, "knowledge:notes": tc.packs}
 			RecordConsent(BuildRoster(a, cfg, nil), &cfg)
 			var opened []string
-			g, applied, done, err := Apply(context.Background(), home, a, cfg, BuildRoster(a, cfg, nil), fakePacks(&opened), nil)
+			g, applied, done, err := Apply(context.Background(), home, a, cfg, BuildRoster(a, cfg, nil), fakePacks(&opened), nil, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -260,7 +260,7 @@ func TestRosterReachesEveryGateWithTheServerShare(t *testing.T) {
 				if i := slices.IndexFunc(rec, func(x receipt.RosterEntry) bool { return x.ID == e.ID }); i < 0 || rec[i].Share != tc.sees || rec[i].Line != e.Line {
 					t.Fatalf("the receipt's roster %+v", rec)
 				}
-				g, _, done, err := Apply(context.Background(), home, a, cfg, r, nil, nil)
+				g, _, done, err := Apply(context.Background(), home, a, cfg, r, nil, nil, nil)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -363,7 +363,7 @@ func TestShareRefusedForAServerWithEgress(t *testing.T) {
 		c.Switches = map[string]bool{ServerShareID(srv): true}
 		r := BuildRoster(a, c, nil)
 		RecordConsent(r, &c)
-		g, _, done, err := Apply(context.Background(), home, a, c, r, nil, nil)
+		g, _, done, err := Apply(context.Background(), home, a, c, r, nil, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
