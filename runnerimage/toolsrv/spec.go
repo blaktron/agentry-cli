@@ -237,6 +237,11 @@ type Exec struct {
 	// publishes, each at its 127.0.0.1 and the same number: run_command's
 	// description names them, so the agent serves where the person looks.
 	Ports []Port `json:"ports,omitempty"`
+	// SecretEnv under Any names variables of this server's environment, the
+	// person's stored secrets, that a program is given as they are. Each
+	// whole value is masked wherever it appears in a result of this
+	// server's tools, and a file a tool writes may not hold one.
+	SecretEnv []string `json:"secretEnv,omitempty"`
 }
 
 // Port is one published port.

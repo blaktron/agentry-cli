@@ -227,3 +227,29 @@ func TestTheCodingAgentsPortsReachTheToolsSpecAndThePlan(t *testing.T) {
 		}
 	}
 }
+
+// TestTheCodersStoredSecretsAreNamesItMayHave: a stored secret's name the
+// person could not store (one the runner or its programs set, or not a
+// variable's), one given twice, and one the manifest declares are refused
+// at compile, whatever wrote the grant.
+func TestTheCodersStoredSecretsAreNamesItMayHave(t *testing.T) {
+	if err := checkCoderSecrets([]string{"GITHUB_TOKEN", "NPM_TOKEN"}, nil); err != nil {
+		t.Fatalf("two plain names: %v", err)
+	}
+	for _, tc := range []struct {
+		names, declared []string
+	}{
+		{[]string{"PATH"}, nil},
+		{[]string{"HTTPS_PROXY"}, nil},
+		{[]string{"LD_PRELOAD"}, nil},
+		{[]string{"AGENTRY_WEB_JEV_KEY"}, nil},
+		{[]string{"lower"}, nil},
+		{[]string{"GITHUB_TOKEN", "GITHUB_TOKEN"}, nil},
+		{[]string{"API_KEY"}, []string{"API_KEY"}},
+	} {
+		var pr *PolicyRefusal
+		if err := checkCoderSecrets(tc.names, tc.declared); !errors.As(err, &pr) {
+			t.Errorf("%v (declared %v): %v", tc.names, tc.declared, err)
+		}
+	}
+}

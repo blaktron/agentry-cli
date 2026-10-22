@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -37,10 +38,11 @@ import (
 // that runs as a persistent agent. A file in its share is read only once
 // ClamAV has checked it, its app link is its own name, personality and
 // tasks, and it keeps time: each turn tells it the time, and its heartbeat
-// fires its tasks. It keeps a memory of its own.
+// fires its tasks. It keeps a memory of its own, and the secrets the person
+// stores for it, which reach the servers that declare them.
 func Assistant() Builtin {
 	return Builtin{namespace: assistant.Namespace, name: assistant.Name, version: assistant.Version, fsys: assistant.FS(),
-		persistent: true, runnable: true, checkShare: true, appLink: applink.SetAssistant, keepsTime: true, keepsMemory: true}
+		persistent: true, runnable: true, checkShare: true, appLink: applink.SetAssistant, keepsTime: true, keepsMemory: true, keepsSecrets: true}
 }
 
 // Main is Agentry Helper (pkg/persistent/main), the persistent agent of Agentry
@@ -54,10 +56,11 @@ func Main() Builtin {
 // Coder is the Coding agent (pkg/persistent/coder): its programs run in its
 // own toolchain image, it may reach the internet, a browser and the person's
 // dev server, each as its roster has them on, and it reads its share as it
-// is: it builds and runs software.
+// is: it builds and runs software. The secrets the person stores for it
+// reach its programs and the servers that declare them.
 func Coder() Builtin {
 	return Builtin{namespace: coder.Namespace, name: coder.Name, version: coder.Version, fsys: coder.FS(),
-		persistent: true, runnable: true, coder: true}
+		persistent: true, runnable: true, coder: true, keepsSecrets: true}
 }
 
 // PersistentBuiltins are the built-ins that run as persistent agents.
@@ -125,6 +128,10 @@ func (b Builtin) readSkills() []BuiltinSkill {
 // KeepsTime says the persistent agent is told the time at each turn and
 // keeps a heartbeat that fires the tasks it registers.
 func (b Builtin) KeepsTime() bool { return b.keepsTime }
+
+// KeepsSecrets says the persistent agent keeps secrets the person stores for
+// it (Grants.Secrets).
+func (b Builtin) KeepsSecrets() bool { return b.keepsSecrets }
 
 // KeepsMemory says the persistent agent has a memory volume of its own,
 // mounted read-write at spec.AgentRoot/spec.AgentMemoryDir.
@@ -206,6 +213,13 @@ type Grants struct {
 	// DevHost is the Coding agent's dev server, readied (its address, its
 	// pinned host key, its sign-in): set exactly when Coder.DevHost is.
 	DevHost *targethost.Host
+	// Secrets are the person's stored secrets the roster has on, by name:
+	// each is given to the servers that declare it and, for the Coding
+	// agent with its commands on, to its programs' environment.
+	// WithheldSecrets are those it has off: a server that declares one is
+	// given an empty value, never one from the policy's secret source.
+	Secrets         map[string]string
+	WithheldSecrets []string
 }
 
 // Segment is one start of a persistent built-in: the session a persistent
@@ -296,6 +310,7 @@ func (s Segment) Start(ctx context.Context, d dockerx.Client) (engine.Persistent
 		CheckWorkspace: builtinCopyCheck(meta.Digest),
 		RunID:          s.RunID, Stderr: logw, OnStage: s.OnStage,
 		ModelSignIn: signIn, RenewModelSignIn: renewSignIn,
+		SecretOverrides: maps.Clone(s.Grants.Secrets), WithheldSecrets: slices.Clone(s.Grants.WithheldSecrets),
 		Persistent: &seg,
 	})
 	if err != nil {
@@ -345,7 +360,18 @@ func (s Segment) coderGrant() (*spec.CoderGrant, error) {
 		return nil, engine.Classify(engine.ExitCLI, errors.New("the Coding agent's dev server is given exactly when its roster has it on, readied"))
 	}
 	out := *g
+	// The stored secrets that are on reach its programs by name; their
+	// values are the segment's (Start).
+	out.Secrets = slices.Sorted(maps.Keys(s.Grants.Secrets))
 	return &out, nil
+}
+
+// checkSecrets refuses stored secrets for a built-in that keeps none.
+func (s Segment) checkSecrets() error {
+	if (len(s.Grants.Secrets) > 0 || len(s.Grants.WithheldSecrets) > 0) && !s.Builtin.keepsSecrets {
+		return engine.Classify(engine.ExitPolicy, fmt.Errorf("%s is not given stored secrets", s.Builtin.Ref()))
+	}
+	return nil
 }
 
 // agentFiles are the folders the segment's plan mounts: the data volume,
@@ -471,6 +497,9 @@ func (s Segment) Plan(ctx context.Context, logw io.Writer) (*SegmentPlan, error)
 		return nil, engine.Classify(engine.ExitCLI, fmt.Errorf("%s is not a persistent agent Agentry runs", s.Builtin.Ref()))
 	}
 	engine.ReportStage(s.OnStage, engine.Stage{Name: receipt.StageCompile})
+	if err := s.checkSecrets(); err != nil {
+		return nil, err
+	}
 	coderGrant, err := s.coderGrant()
 	if err != nil {
 		return nil, err

@@ -215,8 +215,9 @@ func lookProgram(command, dir string) (string, error) {
 }
 
 // anyEnv is a program's environment under Any: the image's PATH, HOME in
-// the workspace, a UTF-8 locale and the toolchain's own settings, and
-// nothing else of this server's environment.
+// the workspace, a UTF-8 locale, the toolchain's own settings and the
+// person's secrets the spec names, and nothing else of this server's
+// environment.
 func (s *server) anyEnv() []string {
 	home := s.spec.Exec.Home
 	if home == "" {
@@ -225,6 +226,16 @@ func (s *server) anyEnv() []string {
 	env := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "LANG=C.UTF-8"}
 	for _, k := range passedEnv {
 		if v, ok := os.LookupEnv(k); ok {
+			env = append(env, k+"="+v)
+		}
+	}
+	// A secret never takes the place of a variable set above.
+	set := map[string]bool{}
+	for _, kv := range env {
+		set[kv[:strings.IndexByte(kv, '=')]] = true
+	}
+	for _, k := range s.spec.Exec.SecretEnv {
+		if v, ok := os.LookupEnv(k); ok && v != "" && !set[k] {
 			env = append(env, k+"="+v)
 		}
 	}

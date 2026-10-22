@@ -573,6 +573,9 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	if c := caps.Coder; c != nil && c.Commands && len(c.Ports) > 0 {
 		plan.Enforcement["persistent.ports"] = coderPortsEnforcement(c.Ports)
 	}
+	if c := caps.Coder; c != nil && c.Commands && len(c.Secrets) > 0 {
+		plan.Enforcement["persistent.secrets"] = coderSecretsEnforcement(c.Secrets)
+	}
 	if hostLink != nil {
 		plan.Enforcement["targetHosts"] = targetHostsEnforcement(caps.TargetHosts)
 		if c := caps.Coder; c != nil && c.DevHost {
@@ -1023,6 +1026,7 @@ func toolSpec(caps spec.CapSummary, secrets []string) *toolsrv.Spec {
 		for _, p := range c.Ports {
 			ts.Exec.Ports = append(ts.Exec.Ports, toolsrv.Port{Name: p.Name, Port: p.Port})
 		}
+		ts.Exec.SecretEnv = sortedCopy(c.Secrets)
 	}
 	return ts
 }
@@ -1774,6 +1778,11 @@ func catalogEntry(tspec *toolsrv.Spec, caps spec.CapSummary, secrets []string, r
 	// The review's key, the person's own, likewise (checkReviewGrant).
 	if tspec.Review.Enabled {
 		secrets = append(append([]string(nil), secrets...), toolsrv.ReviewSecretEnv()...)
+	}
+	// The Coding agent's stored secrets, for the programs it runs: the
+	// tools container's alone (checkCoderSecrets).
+	if tspec.Exec.Any {
+		secrets = append(append([]string(nil), secrets...), tspec.Exec.SecretEnv...)
 	}
 	if len(secrets) > 0 {
 		var entries []*yaml.Node

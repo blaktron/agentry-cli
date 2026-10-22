@@ -158,6 +158,9 @@ func newAgentGrantCmd() *cobra.Command {
 			"The Assistant's heartbeat entry, off until you switch it on, fires the tasks\n" +
 			"it registers (`agentry agent tasks assistant`); switching it takes effect at\n" +
 			"once and restarts nothing.\n\n" +
+			"Each secret you stored is an entry, secret:<NAME> (`agentry agent secret`);\n" +
+			"switched off, it is withheld: a server that declares it is given an empty\n" +
+			"value, and the Coding agent's programs do not have it.\n\n" +
 			"A package server with no network has a second switch, <entry>:share, that\n" +
 			"lets it see the agent's share folder, read only, at /agent/share, so its\n" +
 			"tools can open a file you put there. For the Assistant it sees a copy of\n" +
@@ -172,6 +175,7 @@ func newAgentGrantCmd() *cobra.Command {
 			"  agentry agent grant assistant share off\n" +
 			"  agentry agent grant assistant heartbeat on\n" +
 			"  agentry agent grant assistant knowledge:my-notes on\n" +
+			"  agentry agent grant coder secret:GITHUB_TOKEN off\n" +
 			"  agentry agent grant assistant server:pypi-office-word-mcp-server:share on",
 		Args: cobra.ExactArgs(3),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -222,8 +226,10 @@ func newAgentConfigureCmd() *cobra.Command {
 			"folder, asks for your agreement first; --yes agrees without asking.\n\n" +
 			"--add-server takes a file holding one MCP server in a QuickAgent manifest's\n" +
 			"shape (npm or pypi with a version, or url with auth none or secret; egress,\n" +
-			"tools, secrets and env as a manifest declares them). A server's secrets are\n" +
-			"read from your runner policy's secret source when the agent starts.\n\n" +
+			"tools, secrets and env as a manifest declares them). A secret the server\n" +
+			"declares is given the value of the agent's stored secret of that name\n" +
+			"(`agentry agent secret`), or none while that secret is switched off; without\n" +
+			"one, it is read from your runner policy's secret source when the agent starts.\n\n" +
 			"A package server (npm or pypi) installs in the background: a running agent\n" +
 			"keeps answering without it, `show` lists it as installing, then pending, and\n" +
 			"it joins at the first turn after it is ready. One whose install fails is\n" +

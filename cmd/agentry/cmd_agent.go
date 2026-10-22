@@ -84,6 +84,7 @@ func newAgentCmd() *cobra.Command {
 		newAgentConfigureCmd(),
 		newAgentTasksCmd(),
 		newAgentSkillCmd(),
+		newAgentSecretCmd(),
 		newAgentMemoryCmd(),
 		newAgentSuperviseCmd(),
 	)
@@ -802,7 +803,8 @@ func newAgentResetCmd() *cobra.Command {
 			"its transcript, and everything you chose for it: its name and personality,\n" +
 			"the servers you added and their installed copies, its knowledge packs and\n" +
 			"switches, what you agreed to, its share folder's location, its dev server and\n" +
-			"ports, and whether it starts with Agentry. Its next start begins a new\n" +
+			"ports, the secrets you stored for it (removed from your keychain too), and\n" +
+			"whether it starts with Agentry. Its next start begins a new\n" +
 			"conversation and asks you again to agree to what it does.\n\n" +
 			"Kept: whether the agent is on, the receipts of its segments, every file in\n" +
 			"its share folder, your model sign-ins, and a dev server's sign-in in your\n" +

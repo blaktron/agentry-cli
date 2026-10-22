@@ -200,10 +200,10 @@ func LogPath(home, name string) string { return filepath.Join(Dir(home, name), l
 // ConfigVersion is the version of config.yaml this build writes. Version 2
 // added the share folder, the person's servers and packs, the switches and
 // the consents, version 3 the Coding agent's dev server, version 4 its
-// published ports and version 5 the skills the person added; a build that
-// reads an older version alone refuses a newer
-// one rather than drop what it does not know on its next save.
-const ConfigVersion = 5
+// published ports, version 5 the skills the person added and version 6 the
+// secrets they stored; a build that reads an older version alone refuses a
+// newer one rather than drop what it does not know on its next save.
+const ConfigVersion = 6
 
 // Config is the agent's config.yaml: what the person chose for it, and the
 // conversation its next segment continues.
@@ -255,6 +255,9 @@ type Config struct {
 	// Skills are the skills the person added, as they were checked; each is
 	// a roster entry, its files in the agent's skills-added folder.
 	Skills []AddedSkill `yaml:"skills,omitempty" json:"skills,omitempty"`
+	// Secrets are the secrets the person stored for the agent, by name;
+	// each is a roster entry, its value in the keychain (SecretAccount).
+	Secrets []StoredSecret `yaml:"secrets,omitempty" json:"secrets,omitempty"`
 }
 
 // ServerFailure is why a server the person added could not be installed.
@@ -307,8 +310,11 @@ func SaveConfig(home, name string, c Config) error {
 		c.Version = 4
 	}
 	// A build that does not know added skills would drop them at its next
-	// save: it refuses the config instead.
+	// save: it refuses the config instead. So for stored secrets.
 	if len(c.Skills) > 0 {
+		c.Version = 5
+	}
+	if len(c.Secrets) > 0 {
 		c.Version = ConfigVersion
 	}
 	b, err := yaml.Marshal(c)
@@ -485,8 +491,9 @@ func saveUsage(home, name string, u Usage) error {
 
 // Reset puts a stopped agent back to its defaults, as it was when first
 // enabled: its volumes, its transcript, its lifetime usage, its share
-// verdicts, its share mirror, its installed servers, its tasks and the
-// skills the person added are removed; its configuration keeps only whether
+// verdicts, its share mirror, its installed servers, its tasks, the
+// skills the person added and the secrets they stored, from the keychain
+// too, are removed; its configuration keeps only whether
 // it is enabled, so its built-in skills are on again and its next start is
 // a first segment
 // that asks its consents again. The segments' receipts and the files in its
@@ -534,5 +541,14 @@ func Reset(ctx context.Context, home, name string, d dockerx.Client) error {
 	if err != nil {
 		return err
 	}
+	for _, sec := range cfg.Secrets {
+		if err := resetSecrets.Delete(SecretAccount(name, sec.Name)); err != nil {
+			return fmt.Errorf("remove the %s agent's secret %s: %w", name, sec.Name, err)
+		}
+	}
 	return SaveConfig(home, name, Config{Version: ConfigVersion, Enabled: cfg.Enabled})
 }
+
+// resetSecrets is where Reset removes the stored secrets' values from: the
+// keychain, but in a test.
+var resetSecrets Secrets = KeychainSecrets{}
