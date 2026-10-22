@@ -226,8 +226,10 @@ func newAgentConfigureCmd() *cobra.Command {
 			"folder, asks for your agreement first; --yes agrees without asking.\n\n" +
 			"--add-server takes a file holding one MCP server in a QuickAgent manifest's\n" +
 			"shape (npm or pypi with a version, or url with auth none or secret; egress,\n" +
-			"tools, secrets and env as a manifest declares them). A server's secrets are\n" +
-			"read from your runner policy's secret source when the agent starts.\n\n" +
+			"tools, secrets and env as a manifest declares them). A secret the server\n" +
+			"declares is given the value of the agent's stored secret of that name\n" +
+			"(`agentry agent secret`), or none while that secret is switched off; without\n" +
+			"one, it is read from your runner policy's secret source when the agent starts.\n\n" +
 			"A package server (npm or pypi) installs in the background: a running agent\n" +
 			"keeps answering without it, `show` lists it as installing, then pending, and\n" +
 			"it joins at the first turn after it is ready. One whose install fails is\n" +

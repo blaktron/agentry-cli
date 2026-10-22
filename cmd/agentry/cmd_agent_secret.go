@@ -217,7 +217,7 @@ func readSecretValue(cmd *cobra.Command, name string) (string, error) {
 // printSecrets prints the stored secrets by name, one a line, never a value.
 func printSecrets(w io.Writer, a persistent.Agent, secrets persistent.Roster) {
 	if len(secrets) == 0 {
-		_, _ = fmt.Fprintf(w, "The %s agent keeps no secrets. Store one: agentry agent secret set %s <NAME>\n", a.Name, a.Name)
+		_, _ = fmt.Fprintf(w, "The %s agent has no stored secrets. Store one: agentry agent secret set %s <NAME>\n", a.Name, a.Name)
 		return
 	}
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
