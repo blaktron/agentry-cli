@@ -41,6 +41,10 @@ const GogKeyringSecret = "GOG_KEYRING_PASSWORD"
 // Calendar and Drive (www.googleapis.com), Docs and Sheets.
 var GogEgress = []string{"oauth2.googleapis.com", "gmail.googleapis.com", "www.googleapis.com", "docs.googleapis.com", "sheets.googleapis.com"}
 
+// GogServices are the Google services the sign-in asks for: those gog's MCP
+// mode serves.
+var GogServices = []string{"gmail", "calendar", "drive", "docs", "sheets"}
+
 // ImageServers are the servers the agent comes with that run from an image:
 // Google Workspace through gog's MCP mode, from image (the policy's
 // images.gog), off until the person signs it in with their own Google Cloud
@@ -57,13 +61,14 @@ func ImageServers(image string) []offer.ImageServer {
 		Secrets:      []string{GogKeyringSecret},
 		VolumeTarget: GogHome,
 		Switches: []offer.ImageSwitch{
-			{Key: "writes", Name: "Google Workspace: allow changes", Args: []string{"--allow-write"},
+			{Key: "writes", Name: "Google Workspace: allow changes", Args: []string{"--allow-write"}, SignedFor: true,
 				Line: "Lets Google Workspace (gog) change what your Google account holds: write Docs and Sheets, make Gmail drafts, label, archive, trash and restore mail, while it is on"},
-			{Key: "send", Name: "Google Workspace: allow sending mail", Args: []string{"--allow-gmail-send"}, Requires: "writes",
+			{Key: "send", Name: "Google Workspace: allow sending mail", Args: []string{"--allow-gmail-send"}, Requires: "writes", SignedFor: true,
 				Line: "Lets Google Workspace (gog) send mail and drafts from your Gmail account, while it and its changes are on"},
 		},
-		Note:   "gog's MCP server, signed in with your own Google Cloud client: it reads Gmail, Drive, Docs, Sheets and your Calendar's events, read only unless you allow changes; it serves nothing of Contacts, Tasks, Slides, Forms or Calendar changes",
-		SignIn: "it needs your Google sign-in: agentry agent configure assistant --google-client <client file>, then --google-sign-in <email>",
+		Note:       "gog's MCP server, signed in with your own Google Cloud client: it reads Gmail, Drive, Docs, Sheets and your Calendar's events, read only unless you allow changes; it serves nothing of Contacts, Tasks, Slides, Forms or Calendar changes",
+		SignIn:     "it needs your Google sign-in: agentry agent configure assistant --google-client <client file>, then --google-sign-in <email>",
+		AccountEnv: "GOG_ACCOUNT",
 	}}
 }
 
