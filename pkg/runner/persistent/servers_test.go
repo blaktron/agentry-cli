@@ -373,8 +373,9 @@ func TestRosterReachesEveryGateWithTheDependencyScan(t *testing.T) {
 
 // TestTheCodingAgentSuggestsSemgrep: Semgrep is suggested to the Coding
 // agent alone, as the semgrep package's `semgrep mcp`, reaching
-// semgrep.dev alone with its telemetry off, given no secret and only the
-// tools that scan code passed in the call; its sentence names the args and
+// semgrep.dev alone with its metrics and OpenTelemetry export off, given
+// no secret and only the tools that work on code passed in the call (its
+// plain scan reads files from disk, its rule schema is fetched elsewhere); its sentence names the args and
 // says no rules ship and it never gets the projects. It reads the
 // built-ins' own suggestions, as TestOfferedServerEgressIsDeclared does.
 func TestTheCodingAgentSuggestsSemgrep(t *testing.T) {
@@ -393,10 +394,11 @@ func TestTheCodingAgentSuggestsSemgrep(t *testing.T) {
 		len(srv.Secrets) != 0 || srv.Env["SEMGREP_SEND_METRICS"] != "off" {
 		t.Fatalf("semgrep suggestion = %+v", srv)
 	}
-	for _, tool := range []string{"semgrep_scan_supply_chain", "semgrep_findings"} {
-		if slices.Contains(srv.Tools, tool) {
-			t.Errorf("the suggestion gives %s, which needs files on disk or a Semgrep account", tool)
-		}
+	if !slices.Equal(srv.Tools, []string{"semgrep_scan_with_custom_rule", "get_supported_languages", "get_abstract_syntax_tree"}) {
+		t.Errorf("the suggestion gives %q: only the tools that work on code passed in the call", srv.Tools)
+	}
+	if srv.Env["OTEL_SDK_DISABLED"] != "true" {
+		t.Errorf("its OpenTelemetry export is not switched off: %v", srv.Env)
 	}
 	sg, ok := suggestionFor(coder, srv)
 	if !ok {
