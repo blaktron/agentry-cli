@@ -756,14 +756,15 @@ func (s *Supervisor) Roster() Roster {
 	s.mu.Unlock()
 	r := BuildRosterUnder(s.opts.Agent, cfg, &applied, s.opts.Policy.MalwareCheckOn())
 	// A server that is on and that the segment was not given is being
-	// installed, or is installed and joins at the next turn.
+	// installed, or is installed and joins at the next turn; one that
+	// waits for what the person must set up keeps saying so.
 	installing := s.installing()
 	byID := map[string]manifest.MCPServer{}
 	for _, as := range agentServers(s.opts.Agent, cfg) {
 		byID[as.ID()] = as.Server
 	}
 	for i, e := range r {
-		if e.Kind != KindServer || !e.On || e.State == StateFailed || slices.Contains(applied.On, e.ID) {
+		if e.Kind != KindServer || !e.On || e.State == StateFailed || e.State == StateNeedsSetUp || slices.Contains(applied.On, e.ID) {
 			continue
 		}
 		r[i].State = StatePending

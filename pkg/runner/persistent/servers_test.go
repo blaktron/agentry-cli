@@ -3,6 +3,7 @@ package persistent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -15,6 +16,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/persistent/offer"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
@@ -131,6 +133,52 @@ func TestAnOfferedServerWaitsForItsSecret(t *testing.T) {
 	done()
 	if len(g.Servers) != 1 || g.Servers[0].NPM != "@example/search-mcp" || g.Secrets["SEARCH_KEY"] != key || !slices.Contains(applied.On, id) {
 		t.Fatalf("with its secret it was not given: %+v %v", g.Servers, applied.On)
+	}
+}
+
+// TestARunningAgentsServerWaitingForItsSecretNeedsSetUp: a running agent's
+// roster, and its segment's envelope, say an offered server switched on
+// with no stored secret needs set-up, with what to do, whether or not its
+// package is installed; it is never installing, which nothing would end.
+func TestARunningAgentsServerWaitingForItsSecretNeedsSetUp(t *testing.T) {
+	for _, installed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("installed=%v", installed), func(t *testing.T) {
+			withOffers(t, searchOffer)
+			home := shortHome(t)
+			enable(t, home)
+			a := assistantAgent(t)
+			id := ServerEntryID(searchOffer.Server)
+			c, err := LoadConfig(home, a.Name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := ApplyChange(home, a, &c, Change{Switch: &Switch{ID: id, On: true}, Consent: true}); err != nil {
+				t.Fatal(err)
+			}
+			if err := SaveConfig(home, a.Name, c); err != nil {
+				t.Fatal(err)
+			}
+			if installed {
+				record(t, serversDir(home, a.Name), searchOffer.Server)
+			}
+			st, in := &starter{resumed: true}, newInstaller(t)
+			in.release <- struct{}{}
+			sv := startWith(t, home, st, in)
+			waitFor(t, "any install to finish", func() bool { return !sv.installing()[id] })
+			e, _ := sv.Roster().Entry(id)
+			if e.State != StateNeedsSetUp || !strings.Contains(e.Reason, "agentry agent secret set assistant SEARCH_KEY") {
+				t.Errorf("the running agent's roster: %+v, want needs-set-up with its reason", e)
+			}
+			first := st.segments[0]
+			if len(first.Grants.Servers) != 0 {
+				t.Fatalf("the segment was given %v without its secret", first.Grants.Servers)
+			}
+			if !slices.ContainsFunc(first.Persistent.Roster, func(e receipt.RosterEntry) bool {
+				return e.ID == id && e.State == string(StateNeedsSetUp)
+			}) {
+				t.Errorf("the envelope's roster %+v does not say the server needs set-up", first.Persistent.Roster)
+			}
+		})
 	}
 }
 

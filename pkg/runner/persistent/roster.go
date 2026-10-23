@@ -128,7 +128,7 @@ func (r Roster) Receipt() []receipt.RosterEntry {
 	out := make([]receipt.RosterEntry, 0, len(r))
 	for _, e := range r {
 		re := receipt.RosterEntry{ID: e.ID, Kind: string(e.Kind), Name: e.Name, GrantedBy: e.GrantedBy, On: e.On, Line: e.Line, Share: e.Share}
-		if e.State == StateInstalling || e.State == StateFailed {
+		if e.State == StateInstalling || e.State == StateFailed || e.State == StateNeedsSetUp {
 			re.State = string(e.State)
 		}
 		out = append(out, re)
@@ -320,11 +320,11 @@ func serverReady(home string, a Agent, c Config, srv manifest.MCPServer) bool {
 
 // leftOut marks each server of r that is on and that a segment was not
 // given (given says which it was): failed with its reason when its install
-// failed, installing otherwise.
+// failed, installing otherwise. One that needs set-up keeps saying so.
 func leftOut(r Roster, c Config, given func(id string) bool) Roster {
 	out := slices.Clone(r)
 	for i, e := range out {
-		if e.Kind != KindServer || !e.On || given(e.ID) {
+		if e.Kind != KindServer || !e.On || e.State == StateNeedsSetUp || given(e.ID) {
 			continue
 		}
 		out[i].State = StateInstalling
