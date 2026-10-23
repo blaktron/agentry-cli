@@ -10,6 +10,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
+	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
 
@@ -173,5 +174,41 @@ func TestTheRendererClosesOnceBeforeTheReceipt(t *testing.T) {
 	r.close(context.Background(), f, rd, env)
 	if stopped != 1 || !strings.HasPrefix(env.CapabilitiesEnforced["web.render.pages"], "2 page(s)") {
 		t.Fatalf("a second close stopped %d times and wrote %q", stopped, env.CapabilitiesEnforced["web.render.pages"])
+	}
+}
+
+// TestTheRenderProxyReadsTheMachinesNameServersOnPodman: on podman serving
+// this machine the render proxy, which may open any public host, reads this
+// machine's upstream name servers (or the policy's docker.resolvers) in place
+// of the internal network's, which answers no outside name; on Docker, or
+// on podman in another machine, it keeps the engine's.
+func TestTheRenderProxyReadsTheMachinesNameServersOnPodman(t *testing.T) {
+	withHost(t, hostFacts{goos: "linux", hostname: "box", kernel: "7.1.13"})
+	was := lookupUpstreams
+	lookupUpstreams = func() []string { return []string{"192.168.1.1"} }
+	t.Cleanup(func() { lookupUpstreams = was })
+	podman := func(host string) *dockerx.Engine {
+		return &dockerx.Engine{Kind: dockerx.KindPodman, CLI: "podman", Rootless: true, DaemonHost: host, DaemonKernel: "7.1.13"}
+	}
+	plan := &spec.Plan{}
+	named := &spec.Plan{Docker: &spec.DockerSpec{Resolvers: []string{"9.9.9.9"}}}
+	for _, c := range []struct {
+		name   string
+		engine *dockerx.Engine
+		plan   *spec.Plan
+		want   []string
+	}{
+		{"docker", nil, plan, nil},
+		{"podman here", podman("box"), plan, []string{"192.168.1.1"}},
+		{"podman here, the policy's servers", podman("box"), named, []string{"9.9.9.9"}},
+		{"podman in a VM", podman("podman-machine-default"), plan, nil},
+	} {
+		got := renderProxyResolvers(context.Background(), &dockerx.Fake{EngineInfo: c.engine}, Params{Plan: c.plan})
+		if !slices.Equal(got, c.want) {
+			t.Errorf("%s: %v, want %v", c.name, got, c.want)
+		}
+	}
+	if got := string(renderResolvConfBody([]string{"192.168.1.1", "1.1.1.1"})); !strings.HasSuffix(got, "\nnameserver 192.168.1.1\nnameserver 1.1.1.1\n") {
+		t.Errorf("resolv.conf %q", got)
 	}
 }

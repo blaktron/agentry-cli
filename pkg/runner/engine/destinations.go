@@ -42,6 +42,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/deliver"
 	"github.com/blaktron/agentry-cli/pkg/runner/destination"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
+	"github.com/blaktron/agentry-cli/pkg/runner/hostpin"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
@@ -300,8 +301,11 @@ func sendToOne(ctx context.Context, d dockerx.Client, r deliveryRun, dest destin
 	} else {
 		argv = append(argv, "--public-only")
 	}
+	// The destination's host at the addresses this machine resolves for it,
+	// as the input sources' proxy is given its source's.
 	proxySpec := readOnlyRoot(hardened(dockerx.RunSpec{
 		Name: proxyName, Image: r.Image, Argv: argv, Network: netName, Alias: deliveryProxyAlias, Labels: labels,
+		ExtraHosts: hostpin.Pins(ctx, []string{target.HostPort}, lookupModelHost),
 	}, r.Limits), "/tmp")
 	if err := d.RunDetached(ctx, proxySpec); err != nil {
 		return failed(target.HostPort, receipt.DeliveryErrStep)
