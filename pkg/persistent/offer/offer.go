@@ -50,6 +50,14 @@ type Server struct {
 	Note string
 }
 
+// GitHost is one of the agent's git host accounts as a built-in draws an
+// offer for it: its host (host[:port], lower case) and its kind ("github",
+// "gitlab", "gitea" or "git").
+type GitHost struct {
+	Host string
+	Kind string
+}
+
 // Check refuses a server a built-in may not offer (what a QuickAgent may
 // not declare at all, the manifest's validation refuses):
 //   - a package that reaches any host ("*"), or none it names;

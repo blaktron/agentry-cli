@@ -15,6 +15,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/persistent/offer"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
 // The stand-in offers: a server on by default, one that needs a stored
@@ -34,7 +35,7 @@ var (
 // what it sets up; a test of the offers sets them (withOffers), and
 // TestOfferedServerEgressIsDeclared reads the built-ins' own.
 func TestMain(m *testing.M) {
-	offersOf = func(Agent) []offer.Server { return nil }
+	offersOf = func(Agent, Config) []offer.Server { return nil }
 	suggestionsOf = func(Agent) []offer.Suggestion { return nil }
 	os.Exit(m.Run())
 }
@@ -46,7 +47,7 @@ func withOffers(t *testing.T, offers ...offer.Server) {
 		t.Fatal(err)
 	}
 	old := offersOf
-	offersOf = func(Agent) []offer.Server { return offers }
+	offersOf = func(Agent, Config) []offer.Server { return offers }
 	t.Cleanup(func() { offersOf = old })
 }
 
@@ -219,13 +220,15 @@ func TestAnAccountServerIsSignedInWithItsAccount(t *testing.T) {
 }
 
 // TestOfferedServerEgressIsDeclared: every server a built-in offers reaches
-// the hosts it names and no other, and the offers hold to their own rules.
+// the hosts it names and no other, and the offers hold to their own rules,
+// those drawn for a self-managed GitLab account among them.
 func TestOfferedServerEgressIsDeclared(t *testing.T) {
+	hosts := []offer.GitHost{{Host: "gitlab.example.com", Kind: "gitlab"}, {Host: "github.com", Kind: "github"}}
 	for _, b := range localrun.PersistentBuiltins() {
-		if err := offer.CheckAll(b.OfferedServers(), ServerEntryID); err != nil {
+		if err := offer.CheckAll(b.OfferedServers(hosts), ServerEntryID); err != nil {
 			t.Errorf("%s: %v", b.Ref(), err)
 		}
-		for _, o := range b.OfferedServers() {
+		for _, o := range b.OfferedServers(hosts) {
 			if slices.Contains(o.Server.Egress, "*") {
 				t.Errorf("%s offers %s with open egress", b.Ref(), o.Name)
 			}
@@ -418,5 +421,65 @@ func TestTheCodingAgentSuggestsSemgrep(t *testing.T) {
 		if _, err := Suggested(a, "semgrep"); err == nil {
 			t.Errorf("the %s agent suggests Semgrep", name)
 		}
+	}
+}
+
+// TestASelfManagedGitLabAccountBringsItsServer: an account on a
+// self-managed GitLab offers GitLab's server at that host's /api/v4/mcp,
+// reaching that host alone and signed in with that account's token in a
+// slot of its own, off until switched on; gitlab.com's stays its own, and
+// a host on another port, an internal name or an address brings none.
+func TestASelfManagedGitLabAccountBringsItsServer(t *testing.T) {
+	old := offersOf
+	offersOf = func(a Agent, c Config) []offer.Server { return builtinOffers(a, c) }
+	t.Cleanup(func() { offersOf = old })
+	coder, err := Lookup("coder")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitlab := func(host string) Config {
+		return Config{Accounts: []GitAccount{{Host: host, Kind: spec.GitHostGitLab, User: "agent", Name: "Agent", Email: "agent@example.com"}}}
+	}
+	selfManaged := func(c Config) []offer.Server {
+		var out []offer.Server
+		for _, o := range offersOf(coder, c) {
+			if o.Account != "" && o.Account != "gitlab.com" && o.Account != "github.com" {
+				out = append(out, o)
+			}
+		}
+		return out
+	}
+
+	got := selfManaged(gitlab("gitlab.example.com"))
+	if len(got) != 1 {
+		t.Fatalf("a self-managed GitLab account offers %d servers", len(got))
+	}
+	o := got[0]
+	if o.Server.URL != "https://gitlab.example.com/api/v4/mcp" || o.Server.RemoteHost() != "gitlab.example.com" || o.Account != "gitlab.example.com" || o.On ||
+		!slices.Equal(o.Server.Secrets, []string{offer.AccountSecretPrefix + "GITLAB_SELF"}) {
+		t.Fatalf("offer = %+v", o)
+	}
+	if err := offer.CheckAll(offersOf(coder, gitlab("gitlab.example.com")), ServerEntryID); err != nil {
+		t.Fatalf("the offers do not hold to their rules: %v", err)
+	}
+	c := gitlab("gitlab.example.com")
+	entries := offeredEntries(coder, c, o)
+	if len(entries) != 1 || !strings.Contains(entries[0].Line, "signed in with its gitlab.example.com account's token") || !strings.Contains(entries[0].Line, "GitLab 19.2") {
+		t.Fatalf("entry = %+v", entries)
+	}
+	if set, reason := setUp(coder, Config{}, o); set || !strings.Contains(reason, "--account gitlab.example.com") {
+		t.Fatalf("with no account it is set up (%v, %q)", set, reason)
+	}
+	if got := selfManaged(gitlab("gitlab.example.com:443")); len(got) != 1 || got[0].Server.URL != "https://gitlab.example.com/api/v4/mcp" || got[0].Account != "gitlab.example.com:443" {
+		t.Fatalf("an account on port 443: %+v", got)
+	}
+	for _, host := range []string{"gitlab.com", "gitlab.example.com:8443", "gitlab.internal", "10.0.0.5"} {
+		if got := selfManaged(gitlab(host)); len(got) != 0 {
+			t.Errorf("an account on %s offers %+v", host, got)
+		}
+	}
+	gitea := Config{Accounts: []GitAccount{{Host: "git.example.com", Kind: spec.GitHostGitea, User: "agent", Name: "Agent", Email: "agent@example.com"}}}
+	if got := selfManaged(gitea); len(got) != 0 {
+		t.Errorf("a Gitea account offers %+v", got)
 	}
 }

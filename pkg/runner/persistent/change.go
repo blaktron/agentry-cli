@@ -190,7 +190,7 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 		if err := checkServer(*srv); err != nil {
 			return false, err
 		}
-		if err := checkPersonServer(a, *srv); err != nil {
+		if err := checkPersonServer(a, next, *srv); err != nil {
 			return false, err
 		}
 		id := ServerEntryID(*srv)
@@ -207,7 +207,7 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 			id = serverPrefix + id
 		}
 		i := slices.IndexFunc(next.Servers, func(s manifest.MCPServer) bool { return ServerEntryID(s) == id })
-		if o, ok := offeredServer(a, id); ok && i < 0 {
+		if o, ok := offeredServer(a, next, id); ok && i < 0 {
 			return false, fmt.Errorf("%s comes with the %s agent and cannot be removed: switch it off (agentry agent grant %s %s off)", o.Name, a.Name, a.Name, id)
 		}
 		if i < 0 {

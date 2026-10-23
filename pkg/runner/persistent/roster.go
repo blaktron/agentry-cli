@@ -304,7 +304,7 @@ func serverReady(home string, a Agent, c Config, srv manifest.MCPServer) bool {
 	if _, failed := c.ServerFailures[ServerEntryID(srv)]; failed {
 		return false
 	}
-	if o, ok := offeredServer(a, ServerEntryID(srv)); ok {
+	if o, ok := offeredServer(a, c, ServerEntryID(srv)); ok {
 		if set, _ := setUp(a, c, o); !set {
 			return false
 		}

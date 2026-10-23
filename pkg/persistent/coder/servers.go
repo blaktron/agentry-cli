@@ -1,6 +1,8 @@
 package coder
 
 import (
+	"strings"
+
 	"github.com/blaktron/agentry/pkg/manifest"
 
 	"github.com/blaktron/agentry-cli/pkg/persistent/offer"
@@ -8,14 +10,50 @@ import (
 
 // The account secrets GitHub's and GitLab's servers are signed in with.
 const (
-	githubAccountSecret = offer.AccountSecretPrefix + "GITHUB"
-	gitlabAccountSecret = offer.AccountSecretPrefix + "GITLAB"
+	githubAccountSecret     = offer.AccountSecretPrefix + "GITHUB"
+	gitlabAccountSecret     = offer.AccountSecretPrefix + "GITLAB"
+	gitlabSelfAccountSecret = offer.AccountSecretPrefix + "GITLAB_SELF"
 )
+
+// gitlabCom is GitLab's own hosted service, whose server is offered at a
+// fixed address.
+const gitlabCom = "gitlab.com"
 
 // OfferedServers are the MCP servers the agent comes with, each an entry
 // of its roster: library documentation on by default, and the git hosts'
-// servers and web search off until it has an account or a key.
-func OfferedServers() []offer.Server {
+// servers and web search off until it has an account or a key. An account
+// on a self-managed GitLab adds GitLab's server at that host's address; a
+// host on a port other than 443 has none, since a remote server is reached
+// on 443 alone.
+func OfferedServers(hosts []offer.GitHost) []offer.Server {
+	out := fixedServers()
+	for _, h := range hosts {
+		if h.Kind != "gitlab" || h.Host == gitlabCom {
+			continue
+		}
+		host := strings.TrimSuffix(h.Host, ":443")
+		if strings.Contains(host, ":") {
+			continue
+		}
+		out = append(out, selfManagedGitLab(h.Host, host))
+		break
+	}
+	return out
+}
+
+// selfManagedGitLab is GitLab's server on a self-managed host, signed in
+// with the account on that host (account, as config.yaml names it).
+func selfManagedGitLab(account, host string) offer.Server {
+	return offer.Server{
+		Name:    "GitLab (" + host + ")",
+		Server:  manifest.MCPServer{URL: "https://" + host + "/api/v4/mcp", Auth: manifest.AuthSecret, Secrets: []string{gitlabSelfAccountSecret}},
+		Account: account,
+		Note:    "GitLab's own server on " + host + ", which can read and change what the account's token can: it takes a fine-grained token with the MCP server's Execute permission, and the host answers only from GitLab 19.2 and once an administrator allows MCP access",
+	}
+}
+
+// fixedServers are the servers the agent comes with whatever its accounts.
+func fixedServers() []offer.Server {
 	return []offer.Server{
 		{
 			Name:   "Library docs (Context7)",
