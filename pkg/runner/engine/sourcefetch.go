@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
+	"github.com/blaktron/agentry-cli/pkg/runner/hostpin"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/sources"
@@ -135,13 +136,19 @@ func (f SourceFetcher) Fetch(ctx context.Context, s sources.Source, caps sources
 		f.Later(cleanup)
 	}
 	defer cleanup(context.WithoutCancel(ctx))
+	allow := []string{s.Host + ":443"}
 	proxySpec := dockerx.RunSpec{
 		Name:    proxyName,
 		Image:   f.ProxyImage,
-		Argv:    []string{"proxy", "--allow", s.Host + ":443", "--public-only", "--addr", fmt.Sprintf(":%d", spec.ProxyPort)},
+		Argv:    []string{"proxy", "--allow", strings.Join(allow, ","), "--public-only", "--addr", fmt.Sprintf(":%d", spec.ProxyPort)},
 		Network: netName,
 		Alias:   sourceProxyAlias,
 		Labels:  labels,
+		// The source's host at the addresses this machine resolves for it:
+		// on rootless podman a proxy on an internal network and the default
+		// one is told only the internal network's name server, which
+		// answers no outside name.
+		ExtraHosts: hostpin.Pins(ctx, allow, lookupModelHost),
 	}
 	proxySpec = readOnlyRoot(hardened(proxySpec, f.Limits), "/tmp")
 	if err := d.RunDetached(ctx, proxySpec); err != nil {

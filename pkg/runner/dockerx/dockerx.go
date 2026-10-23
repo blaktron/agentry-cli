@@ -1061,6 +1061,9 @@ func (r RunSpec) argsFor(detach, podman bool, named []namedVolume) []string {
 		args = append(args, "--read-only")
 	}
 	for _, t := range r.Tmpfs {
+		if podman {
+			t = podmanTmpfs(t, r.User)
+		}
 		args = append(args, "--tmpfs", t)
 	}
 	if r.PidsLimit > 0 {
@@ -1107,6 +1110,39 @@ func (r RunSpec) argsFor(detach, podman bool, named []namedVolume) []string {
 	}
 	args = append(args, r.Image)
 	return append(args, r.Argv...)
+}
+
+// podmanTmpfs is a --tmpfs value in podman's spelling. podman's CLI takes no
+// uid= or gid= option and refuses the mount; its U option gives the mount to
+// the container's user, so a mount given to exactly that user (uid and gid as
+// --user names them, both given) is spelled U. Any other is left as it is.
+func podmanTmpfs(t, user string) string {
+	dest, opts, ok := strings.Cut(t, ":")
+	if !ok || user == "" {
+		return t
+	}
+	uid, gid, ok := strings.Cut(user, ":")
+	if !ok {
+		gid = uid
+	}
+	var kept []string
+	var gotUID, gotGID bool
+	for _, o := range strings.Split(opts, ",") {
+		switch {
+		case o == "uid="+uid:
+			gotUID = true
+		case o == "gid="+gid:
+			gotGID = true
+		case strings.HasPrefix(o, "uid=") || strings.HasPrefix(o, "gid="):
+			return t
+		default:
+			kept = append(kept, o)
+		}
+	}
+	if !gotUID || !gotGID {
+		return t
+	}
+	return dest + ":" + strings.Join(append(kept, "U"), ",")
 }
 
 // envPairs renders NAME=value pairs for the docker client's environment,

@@ -12,6 +12,8 @@ package hostpin
 import (
 	"context"
 	"net"
+	"os"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -78,4 +80,50 @@ func AllowHost(entry string) string {
 		entry = h
 	}
 	return strings.ToLower(strings.Trim(entry, "[]"))
+}
+
+// resolvConfs are where this machine names its name servers: the system's
+// file, then systemd-resolved's list of its upstream servers, read where
+// the first names only its local stub.
+var resolvConfs = []string{"/etc/resolv.conf", "/run/systemd/resolve/resolv.conf"}
+
+// maxUpstreams is the most name servers a resolv.conf is read for.
+const maxUpstreams = 3
+
+// Upstreams are this machine's name servers as a container can reach them,
+// for a proxy that may reach any public host, whose names cannot be pinned
+// ahead: the IPv4 servers of the first file of resolvConfs that names any
+// besides loopback ones, at most three, as a resolv.conf reads them. Nil
+// when none does.
+func Upstreams() []string {
+	for _, f := range resolvConfs {
+		b, err := os.ReadFile(f) //nolint:gosec // a fixed system path
+		if err != nil {
+			continue
+		}
+		if rs := nameservers(string(b)); len(rs) > 0 {
+			return rs
+		}
+	}
+	return nil
+}
+
+// nameservers are a resolv.conf's IPv4 name servers that are not loopback
+// or unspecified, at most maxUpstreams.
+func nameservers(conf string) []string {
+	var rs []string
+	for _, line := range strings.Split(conf, "\n") {
+		f := strings.Fields(line)
+		if len(f) < 2 || f[0] != "nameserver" {
+			continue
+		}
+		ip := net.ParseIP(f[1]).To4()
+		if ip == nil || ip.IsLoopback() || ip.IsUnspecified() || slices.Contains(rs, ip.String()) {
+			continue
+		}
+		if rs = append(rs, ip.String()); len(rs) == maxUpstreams {
+			break
+		}
+	}
+	return rs
 }

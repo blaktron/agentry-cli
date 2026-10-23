@@ -20,6 +20,8 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/runner/browser"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
+	"github.com/blaktron/agentry-cli/pkg/runner/hostpin"
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/runnerimage/sockfilter"
@@ -140,6 +142,13 @@ func prepareRender(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		Network: r.network,
 		Alias:   renderProxyAlias,
 		Labels:  labels,
+	}
+	if rs := renderProxyResolvers(ctx, d, p); len(rs) > 0 {
+		conf := filepath.Join(rd.cfg, renderResolvConf)
+		if err := os.WriteFile(conf, renderResolvConfBody(rs), 0o644); err != nil { //nolint:gosec // name servers, no secret
+			return Classify(ExitCLI, fmt.Errorf("the page renderer's proxy's name servers: %w", err))
+		}
+		proxySpec.Mounts = append(proxySpec.Mounts, dockerx.Mount{Source: conf, Target: policy.ResolvConfTarget, ReadOnly: true, Relabel: true})
 	}
 	proxySpec = readOnlyRoot(hardened(proxySpec, p.limits()), "/tmp")
 	td.add(func(c context.Context) { _ = d.RemoveForce(c, r.proxy) })
@@ -379,6 +388,46 @@ func (r *renderRun) render(ctx context.Context, d dockerx.Client, p Params, u, r
 		return nil, fmt.Sprintf("the page answered with status %d", code)
 	}
 	return out.Bytes(), ""
+}
+
+// renderResolvConf is the render proxy's own resolv.conf, under the run's
+// cfg, where renderProxyResolvers names any servers.
+const renderResolvConf = "render-resolv.conf"
+
+// renderProxyResolvers are the name servers the render proxy reads in place
+// of the engine's, nil to keep the engine's. The proxy may open any public
+// host, so its names cannot be pinned ahead as an allowlisted proxy's are,
+// and on podman a container on an internal network and the default one is
+// told only the internal network's name server, which answers no outside
+// name. There it reads the policy's docker.resolvers where they are named
+// and otherwise, with podman serving this machine, the machine's own
+// upstream name servers (hostpin.Upstreams).
+func renderProxyResolvers(ctx context.Context, d dockerx.Client, p Params) []string {
+	e, err := dockerx.DescribeEngine(ctx, d)
+	if err != nil || e.Kind != dockerx.KindPodman {
+		return nil
+	}
+	if p.Plan.Docker != nil && len(p.Plan.Docker.Resolvers) > 0 {
+		return p.Plan.Docker.Resolvers
+	}
+	if !thisHost().servesThisMachine(e) {
+		return nil
+	}
+	return lookupUpstreams()
+}
+
+// lookupUpstreams reads this machine's name servers; a variable so a test
+// can be any machine.
+var lookupUpstreams = hostpin.Upstreams
+
+// renderResolvConfBody is the resolv.conf naming rs.
+func renderResolvConfBody(rs []string) []byte {
+	var b strings.Builder
+	b.WriteString("# The page renderer's proxy's name servers.\n")
+	for _, r := range rs {
+		b.WriteString("nameserver " + r + "\n")
+	}
+	return []byte(b.String())
 }
 
 // renderStatus is the status line of a render's output, 0 when it has none.

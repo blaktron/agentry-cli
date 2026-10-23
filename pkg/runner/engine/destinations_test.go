@@ -1067,3 +1067,33 @@ func TestAPathTheStepWillNotNameIsRecordedAsQuotedText(t *testing.T) {
 		}
 	}
 }
+
+// TestTheDestinationProxyIsGivenItsHostsAddress: a destination's proxy has
+// its host pinned at the address this machine resolves for it, a host on the
+// person's network included, while its allowlist stays the host by name.
+func TestTheDestinationProxyIsGivenItsHostsAddress(t *testing.T) {
+	fakeLookup(t, map[string][]string{"hooks.example.com": {"203.0.113.9"}, "n8n.lan": {"192.168.1.20"}})
+	for _, c := range []struct {
+		url, allow, pin string
+		lan             bool
+	}{
+		{"https://hooks.example.com/in/abc", "hooks.example.com:443", "hooks.example.com:203.0.113.9", false},
+		{"https://n8n.lan:5678/webhook/x", "n8n.lan:5678", "n8n.lan:192.168.1.20", true},
+	} {
+		p, f := fixture(t)
+		happyFake(f)
+		agentWrites(p, f, map[string]string{"reports/a.md": "a"}, `{"path":"reports/a.md","marked":true}`)
+		deliveryStepPlays(t, f, delivered)
+		p.Destinations = []destination.Resolved{hook("d", c.url, c.lan)}
+		if _, err := Run(context.Background(), f, p); err != nil {
+			t.Fatal(err)
+		}
+		proxy, ok := proxyRun(f)
+		if !ok || !slices.Equal(proxy.ExtraHosts, []string{c.pin}) {
+			t.Errorf("%s: the delivery proxy's extra hosts = %v (found %v), want %s", c.url, proxy.ExtraHosts, ok, c.pin)
+		}
+		if !strings.Contains(strings.Join(proxy.Argv, " "), "--allow "+c.allow) {
+			t.Errorf("%s: the allowlist changed with the pin: %v", c.url, proxy.Argv)
+		}
+	}
+}
