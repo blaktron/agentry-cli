@@ -41,5 +41,27 @@ func OfferedServers() []offer.Server {
 }
 
 // SuggestedServers are the MCP servers the agent suggests, which the person
-// adds as their own.
-func SuggestedServers() []offer.Suggestion { return nil }
+// adds as their own: Semgrep, whose rules Agentry may not ship, so it runs
+// under the person's own use of Semgrep's terms. It is a subcommand of the
+// semgrep package's CLI and reaches semgrep.dev alone, its metrics and its
+// OpenTelemetry export switched off (their hosts are refused either way).
+// It joins a network, so it is never given the agent's projects, and it is
+// given only the tools that work on code passed in the call: a scan with a
+// rule the agent writes, the languages, and a syntax tree. Its plain scan
+// and supply-chain scan read files from disk, its rule schema is fetched
+// from a host it does not reach, and its findings need a Semgrep account.
+func SuggestedServers() []offer.Suggestion {
+	return []offer.Suggestion{
+		{
+			Key:  "semgrep",
+			Name: "Code scanning (Semgrep)",
+			Server: manifest.MCPServer{
+				PyPI: "semgrep", Version: "1.182.0", Args: []string{"mcp"},
+				Egress: []string{"semgrep.dev"},
+				Env:    map[string]string{"SEMGREP_SEND_METRICS": "off", "OTEL_SDK_DISABLED": "true"},
+				Tools:  []string{"semgrep_scan_with_custom_rule", "get_supported_languages", "get_abstract_syntax_tree"},
+			},
+			Note: "Agentry ships no Semgrep rules: it scans with the rules the agent writes, under Semgrep's terms, and it is sent the code the agent passes to its tools, never the agent's projects",
+		},
+	}
+}
