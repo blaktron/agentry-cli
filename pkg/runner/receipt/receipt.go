@@ -152,7 +152,9 @@ type RosterEntry struct {
 	// State is set for an entry that is on and that the segment was not
 	// given, and then overrides On: "installing" for a server the agent's
 	// store does not hold yet, "failed" for one that could not be installed
-	// or started. The plan's servers are what the segment ran.
+	// or started, "needs-set-up" for an offered server that waits for a
+	// stored secret or an account. The plan's servers are what the segment
+	// ran.
 	State string `json:"state,omitempty"`
 	// Share says a server's switch to see the agent's share folder is on.
 	Share bool `json:"share,omitempty"`
