@@ -86,7 +86,12 @@ agree to each part:
   read-only unless you also switch on its changes, and GitLab's, each off
   until you give it an account on that host, whose token signs it in; and web
   search with Brave, off until you store your own Brave Search API key for
-  it. Each reaches only its provider's host.
+  it. Each reaches only its provider's host. It also suggests a server you
+  can add as your own: code scanning with Semgrep (the `semgrep` package's
+  `semgrep mcp`), which reaches only `semgrep.dev` and is sent the code the
+  agent passes to its tools, never its projects. Agentry ships no Semgrep
+  rules, and Semgrep's terms apply
+  (`agentry agent configure coder --add-suggested semgrep`).
 - **What you add**: knowledge packs from your computer and MCP servers.
 
 Each part is an entry of its roster that you can switch off, and switching

@@ -370,3 +370,51 @@ func TestRosterReachesEveryGateWithTheDependencyScan(t *testing.T) {
 		})
 	}
 }
+
+// TestTheCodingAgentSuggestsSemgrep: Semgrep is suggested to the Coding
+// agent alone, as the semgrep package's `semgrep mcp`, reaching
+// semgrep.dev alone with its telemetry off, given no secret and only the
+// tools that scan code passed in the call; its sentence names the args and
+// says no rules ship and it never gets the projects. It reads the
+// built-ins' own suggestions, as TestOfferedServerEgressIsDeclared does.
+func TestTheCodingAgentSuggestsSemgrep(t *testing.T) {
+	old := suggestionsOf
+	suggestionsOf = func(a Agent) []offer.Suggestion { return a.Builtin.SuggestedServers() }
+	t.Cleanup(func() { suggestionsOf = old })
+	coder, err := Lookup("coder")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := Suggested(coder, "semgrep")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if srv.PyPI != "semgrep" || !slices.Equal(srv.Args, []string{"mcp"}) || !slices.Equal(srv.Egress, []string{"semgrep.dev"}) ||
+		len(srv.Secrets) != 0 || srv.Env["SEMGREP_SEND_METRICS"] != "off" {
+		t.Fatalf("semgrep suggestion = %+v", srv)
+	}
+	for _, tool := range []string{"semgrep_scan_supply_chain", "semgrep_findings"} {
+		if slices.Contains(srv.Tools, tool) {
+			t.Errorf("the suggestion gives %s, which needs files on disk or a Semgrep account", tool)
+		}
+	}
+	sg, ok := suggestionFor(coder, srv)
+	if !ok {
+		t.Fatal("the added server is not its suggestion")
+	}
+	line := serverLine(srv) + "; " + sg.Note
+	for _, want := range []string{"started with the arguments mcp", "reaching semgrep.dev alone", "Agentry ships no Semgrep rules", "never the agent's projects"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("sentence %q lacks %q", line, want)
+		}
+	}
+	for _, name := range []string{"assistant", "main"} {
+		a, err := Lookup(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Suggested(a, "semgrep"); err == nil {
+			t.Errorf("the %s agent suggests Semgrep", name)
+		}
+	}
+}
