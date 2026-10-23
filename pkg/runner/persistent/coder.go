@@ -14,6 +14,7 @@ import (
 	"os"
 	"regexp"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/osvdb"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/pkg/runner/targethost"
@@ -25,6 +26,8 @@ const (
 	EntryEgress   = "egress"
 	EntryBrowser  = "browser"
 	EntryDevHost  = "devhost"
+	// EntryDependencyScan is dependency_scan, OSV-Scanner offline.
+	EntryDependencyScan = "dependency-scan"
 )
 
 // The kinds of the Coding agent's entries.
@@ -104,6 +107,8 @@ func coderEntries(c Config) []RosterEntry {
 			Line: "Reaches any address from its tools and the programs it runs (open egress): the internet, and also your local network and this computer's own services"},
 		{ID: EntryBrowser, Kind: KindTools, Name: "Browser", GrantedBy: GrantedByBuiltin,
 			Line: "Drives a headless browser to any public website, through the runner's browse proxy"},
+		{ID: EntryDependencyScan, Kind: KindTools, Name: "Dependency scan (OSV-Scanner)", GrantedBy: GrantedByBuiltin,
+			Line: "Scans a project's dependencies for known vulnerabilities with OSV-Scanner, offline, against OSV's databases, which Agentry downloads to this computer once a day from " + osvdb.Host + " (about 300 MB), while its programs are on"},
 	}
 	if d := c.DevHost; d != nil {
 		out = append(out, RosterEntry{ID: EntryDevHost, Kind: KindHost, Name: "Dev server " + d.Host, GrantedBy: GrantedByYou,
@@ -144,6 +149,7 @@ func ReadyDevHost(home string, pol *policy.Policy) HostReady {
 // server readied when it is on.
 func coderGrant(ctx context.Context, c Config, on func(string) bool, ready HostReady) (*spec.CoderGrant, *targethost.Host, error) {
 	g := &spec.CoderGrant{Commands: on(EntryCommands), OpenEgress: on(EntryEgress), Browser: on(EntryBrowser)}
+	g.DependencyScan = g.Commands && on(EntryDependencyScan)
 	for _, p := range c.Ports {
 		if on(PortEntryID(p.Name)) {
 			g.Ports = append(g.Ports, spec.CoderPort{Name: p.Name, Port: p.Port})

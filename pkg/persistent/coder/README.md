@@ -74,6 +74,19 @@ agree to each part:
 - **Stored secrets**, when you store them (`agentry agent secret set coder
   NAME`): each in its programs' environment by its name, its value in your
   system keychain. Its programs can read it and send it anywhere they reach.
+- **A dependency scan**: `dependency_scan` runs OSV-Scanner from its
+  toolchain image, offline, over a project's lockfiles and manifests,
+  against OSV's vulnerability databases, which Agentry downloads to your
+  computer once a day (about 300 MB) and gives it read-only. It never asks
+  OSV's service, and a database it does not have is an error, never "no
+  vulnerabilities". It is an entry of its roster, on while its programs are.
+- **MCP servers it comes with**, each an entry of its roster that you switch
+  on and off: library documentation from Context7
+  (`@upstash/context7-mcp`), on until you switch it off; GitHub's own server,
+  read-only unless you also switch on its changes, and GitLab's, each off
+  until you give it an account on that host, whose token signs it in; and web
+  search with Brave, off until you store your own Brave Search API key for
+  it. Each reaches only its provider's host.
 - **What you add**: knowledge packs from your computer and MCP servers.
 
 Each part is an entry of its roster that you can switch off, and switching

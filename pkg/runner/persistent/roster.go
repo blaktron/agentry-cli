@@ -243,8 +243,30 @@ func BuildRosterUnder(a Agent, c Config, applied *Applied, malwareCheck bool) Ro
 		}
 		add(RosterEntry{ID: KnowledgeEntryID(k), Kind: KindKnowledge, Name: k, GrantedBy: GrantedByYou, Line: line}, true)
 	}
-	for _, srv := range c.Servers {
+	for _, as := range agentServers(a, c) {
+		if o := as.Offered; o != nil {
+			es := offeredEntries(a, c, *o)
+			add(es[0], o.On)
+			if ok, reason := setUp(a, c, *o); !ok && r[len(r)-1].On {
+				r[len(r)-1].State, r[len(r)-1].Reason = StateNeedsSetUp, reason
+			} else if f, ok := c.ServerFailures[es[0].ID]; ok && r[len(r)-1].On {
+				r[len(r)-1].State, r[len(r)-1].Reason = StateFailed, f.Reason
+			}
+			if len(es) > 1 {
+				add(es[1], false)
+			}
+			continue
+		}
+		srv := as.Server
 		e := RosterEntry{ID: ServerEntryID(srv), Kind: KindServer, Name: serverName(srv), GrantedBy: GrantedByYou, Line: serverLine(srv)}
+		// One the agent suggested says, once added, what its suggestion
+		// says of it.
+		if sg, ok := suggestionFor(a, srv); ok {
+			e.Name = sg.Name + " (" + serverName(srv) + ")"
+			if sg.Note != "" {
+				e.Line += "; " + sg.Note
+			}
+		}
 		if ServerMaySeeShare(srv) == nil {
 			// The server's sentence says whether it sees the share, so
 			// letting it asks again; an agreement to the sentence that
@@ -275,13 +297,19 @@ func BuildRosterUnder(a Agent, c Config, applied *Applied, malwareCheck bool) Ro
 }
 
 // serverReady says a segment may be given srv: its install has not failed,
-// and the agent's store holds its pin with no install writing it. A
-// server that is not ready is left out of the segment, which runs without
-// it.
-func serverReady(home, name string, c Config, srv manifest.MCPServer) bool {
+// an offered server has what it needs, and the agent's store holds its pin
+// with no install writing it. A server that is not ready is left out of the
+// segment, which runs without it.
+func serverReady(home string, a Agent, c Config, srv manifest.MCPServer) bool {
 	if _, failed := c.ServerFailures[ServerEntryID(srv)]; failed {
 		return false
 	}
+	if o, ok := offeredServer(a, ServerEntryID(srv)); ok {
+		if set, _ := setUp(a, c, o); !set {
+			return false
+		}
+	}
+	name := a.Name
 	if srv.IsRemote() {
 		return true
 	}
@@ -432,12 +460,19 @@ func Apply(ctx context.Context, home string, a Agent, c Config, r Roster, open P
 		return ok && e.On
 	}
 	left := map[string]bool{}
-	for _, srv := range c.Servers {
-		if id := ServerEntryID(srv); on(id) && !serverReady(home, a.Name, c, srv) {
+	servers := agentServers(a, c)
+	for _, as := range servers {
+		if id := as.ID(); on(id) && !serverReady(home, a, c, as.Server) {
 			left[id] = true
 		}
 	}
 	for _, e := range r {
+		// A server's writes are given with the server alone.
+		if e.Kind == KindServerWrites {
+			if parent := strings.TrimSuffix(e.ID, writesSuffix); !on(parent) || left[parent] {
+				continue
+			}
+		}
 		if e.On && !left[e.ID] {
 			applied.On = append(applied.On, e.ID)
 		}
@@ -478,8 +513,11 @@ func Apply(ctx context.Context, home string, a Agent, c Config, r Roster, open P
 	} else {
 		applied.On = slices.DeleteFunc(applied.On, func(id string) bool { return strings.HasPrefix(id, accountPrefix) })
 	}
-	for _, srv := range c.Servers {
-		if id := ServerEntryID(srv); on(id) && !left[id] {
+	var givenServers []agentServer
+	for _, as := range servers {
+		if id := as.ID(); on(id) && !left[id] {
+			srv := givenServer(c, as)
+			givenServers = append(givenServers, as)
 			g.Servers = append(g.Servers, srv)
 			// A server sees the share while the agent has it, read only,
 			// and only one the share may be given to.
@@ -490,6 +528,9 @@ func Apply(ctx context.Context, home string, a Agent, c Config, r Roster, open P
 	}
 	if len(g.Servers) > 0 {
 		g.ServersDir = serversDir(home, a.Name)
+	}
+	if g.ServerSecrets, err = serverTokens(keys, c, givenServers); err != nil {
+		return g, applied, done, err
 	}
 	if g.Skills, g.SkillsDir, err = stageSkills(home, a, c, on); err != nil {
 		return g, applied, done, err

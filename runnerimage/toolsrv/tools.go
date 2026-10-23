@@ -149,6 +149,8 @@ func (s *server) buildTools() {
 			add(name, backgroundOutputDescription, backgroundOutputSchema(), s.toolBackgroundOutput)
 		case ToolStopBackground:
 			add(name, stopBackgroundDescription, stopBackgroundSchema(), s.toolStopBackground)
+		case ToolDependencyScan:
+			add(name, s.dependencyScanDescription(), dependencyScanSchema(), s.toolDependencyScan)
 		case ToolListInputs:
 			add(name, "List the read-only input files provided for this run, one a line: its path, the type of file it is, its size in bytes, whether it could be read (read, or unread with the reason), the size of its text and the views read_input can read it in. A document, PDF or image was turned into text before the run; code, markup and data are as uploaded. Omit path (or pass \".\") for every input, or pass a directory for what is under it; empty when no inputs were provided. A long listing stops at the result limit and says the offset to continue from.",
 				listInputsSchema(), s.toolListInputs)
