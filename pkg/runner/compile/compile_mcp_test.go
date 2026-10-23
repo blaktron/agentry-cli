@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -422,5 +423,66 @@ func TestDeclaredServerGatewayFilesAreARunsEntries(t *testing.T) {
 	}
 	if _, ok := files["config.yaml"]; !ok {
 		t.Error("no config.yaml")
+	}
+}
+
+// TestCompileRendersDeclaredServerArgs: a declared server's args follow its
+// launchable entry in the catalog's command list, in order and each its own
+// item, so the gateway passes each as one argument; the plan keeps them,
+// and the enforcement line names them as written.
+func TestCompileRendersDeclaredServerArgs(t *testing.T) {
+	srv := githubServerSpec()
+	srv.Args = []string{"mcp", "--toolsets=repos,issues", "--read-only"}
+	planDir := t.TempDir()
+	plan, err := Compile(mcpFixtureInputs(t, []spec.MCPServerSpec{srv}, policy.Default()), planDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(planDir, "gateway", "catalog.yaml")) //nolint:gosec // test plan dir
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Registry map[string]struct {
+			Command []string `yaml:"command"`
+		} `yaml:"registry"`
+	}
+	if err := yaml.Unmarshal(b, &doc); err != nil {
+		t.Fatal(err)
+	}
+	want := append(slices.Clone(srv.Command), srv.Args...)
+	if got := doc.Registry[srv.Name].Command; !slices.Equal(got, want) {
+		t.Fatalf("catalog command = %q, want %q", got, want)
+	}
+	if got := plan.MCPServers[0].Args; !slices.Equal(got, srv.Args) {
+		t.Fatalf("plan args = %q", got)
+	}
+	if enf := plan.Enforcement["mcpServers"]; !strings.Contains(enf, ", args mcp --toolsets=repos,issues --read-only") {
+		t.Fatalf("enforcement must name the args: %q", enf)
+	}
+}
+
+// TestCompileRefusesInterpretedArgs: an argument the gateway would evaluate
+// or the engine would rewrite is refused, as an env value is; an empty one
+// too. A `$` nothing expands is literal and runs.
+func TestCompileRefusesInterpretedArgs(t *testing.T) {
+	for v, want := range map[string]string{
+		"$GITHUB_PAT":       "literal",
+		"--dir=${HOME}":     "literal",
+		"{{config.dir}}":    "literal",
+		"@@RUN_SECRETS@@/x": "@@",
+		"":                  "empty",
+	} {
+		srv := githubServerSpec()
+		srv.Args = []string{"mcp", v}
+		_, err := Compile(mcpFixtureInputs(t, []spec.MCPServerSpec{srv}, policy.Default()), t.TempDir())
+		if err == nil || !strings.Contains(err.Error(), "args[1]") || !strings.Contains(err.Error(), want) {
+			t.Fatalf("argument %q not refused (%s): %v", v, want, err)
+		}
+	}
+	srv := githubServerSpec()
+	srv.Args = []string{"--price=50$", "--note={b}"}
+	if _, err := Compile(mcpFixtureInputs(t, []spec.MCPServerSpec{srv}, policy.Default()), t.TempDir()); err != nil {
+		t.Fatalf("literal args refused: %v", err)
 	}
 }

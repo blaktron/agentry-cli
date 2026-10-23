@@ -767,6 +767,7 @@ func Specs(resolved []Resolved, servers []manifest.MCPServer, images policy.Imag
 			Integrity:   r.Integrity,
 			Image:       r.Image(images),
 			Command:     r.Command(),
+			Args:        append([]string(nil), m.Args...),
 			StoreSubdir: r.ID,
 			Tools:       append([]string(nil), m.Tools...),
 			Egress:      append([]string(nil), m.Egress...),
