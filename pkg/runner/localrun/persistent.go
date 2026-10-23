@@ -278,6 +278,9 @@ type ImageGrant struct {
 	Key      string
 	Switches []string
 	Volume   string
+	// Account is the signed-in account, given to the server in its
+	// AccountEnv.
+	Account string
 }
 
 // imageSpecs are the plan's specs of the image servers the segment is
@@ -296,10 +299,17 @@ func (s Segment) imageSpecs() ([]spec.MCPServerSpec, []string, error) {
 			return nil, nil, fmt.Errorf("the segment is given the image server %s, which %s does not offer", g.Key, s.Builtin.Ref())
 		}
 		o := offered[i]
+		env := maps.Clone(o.Env)
+		if o.AccountEnv != "" && g.Account != "" {
+			if env == nil {
+				env = map[string]string{}
+			}
+			env[o.AccountEnv] = g.Account
+		}
 		specs = append(specs, spec.MCPServerSpec{
 			Name: "mcp-image-" + o.Key, Source: spec.SourceImage, Package: o.Image, Image: o.Image,
 			Command: o.Args(func(key string) bool { return slices.Contains(g.Switches, key) }),
-			Egress:  slices.Clone(o.Egress), Secrets: slices.Clone(o.Secrets), Env: maps.Clone(o.Env),
+			Egress:  slices.Clone(o.Egress), Secrets: slices.Clone(o.Secrets), Env: env,
 			Volumes: []string{g.Volume + ":" + o.VolumeTarget},
 		})
 		volumes = append(volumes, g.Volume)

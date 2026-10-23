@@ -42,6 +42,9 @@ type ImageServer struct {
 	// SignIn is what to do before it can be given: until the person has
 	// signed it in, it waits.
 	SignIn string
+	// AccountEnv is the variable the server is told the signed-in account
+	// in; empty for none.
+	AccountEnv string
 }
 
 // ImageSwitch is one widening of an image server: arguments added to its
@@ -58,6 +61,9 @@ type ImageSwitch struct {
 	// Requires is the key of another switch of the server this one is
 	// given with alone; empty for none.
 	Requires string
+	// SignedFor says the switch is given only when the server's sign-in
+	// asked for what it needs (a scope a read-only sign-in leaves out).
+	SignedFor bool
 }
 
 var imageKeyRE = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)

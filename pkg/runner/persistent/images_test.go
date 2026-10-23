@@ -98,7 +98,7 @@ func TestGoogleWorkspaceIsGivenSignedInWithItsSwitches(t *testing.T) {
 		}
 		return g.ImageServers[0].Switches, applied.On, g.ServerSecrets, g.ImageServers[0].Volume
 	}
-	signedIn := map[string]ImageSignIn{"gog": {Account: "person@example.com", At: time.Now()}}
+	signedIn := map[string]ImageSignIn{"gog": {Account: "person@example.com", At: time.Now(), Granted: []string{"writes", "send"}}}
 
 	if sw, on, slots, _ := apply(Config{Switches: map[string]bool{"server:gog": true, "server:gog:writes": true}}); sw != nil || slices.Contains(on, "server:gog") || slices.Contains(on, "server:gog:writes") || slots[assistant.GogKeyringSecret] != "" {
 		t.Fatalf("not signed in: switches %v applied %v slots %v", sw, on, slots)
@@ -115,6 +115,16 @@ func TestGoogleWorkspaceIsGivenSignedInWithItsSwitches(t *testing.T) {
 	}
 	if sw, on, _, _ := apply(Config{SignIns: signedIn, Switches: map[string]bool{"server:gog:writes": true}}); sw != nil || slices.Contains(on, "server:gog:writes") {
 		t.Fatalf("changes with the server off: switches %v applied %v", sw, on)
+	}
+	// A read-only sign-in asked for no scope that changes need: the
+	// server is given read-only, and its changes wait for a new sign-in.
+	readOnly := map[string]ImageSignIn{"gog": {Account: "person@example.com", At: time.Now()}}
+	ro := Config{SignIns: readOnly, Switches: map[string]bool{"server:gog": true, "server:gog:writes": true}}
+	if sw, on, _, _ := apply(ro); len(sw) != 0 || !slices.Contains(on, "server:gog") || slices.Contains(on, "server:gog:writes") {
+		t.Fatalf("changes on a read-only sign-in: switches %v applied %v", sw, on)
+	}
+	if e, _ := BuildRoster(a, ro, nil).Entry("server:gog:writes"); e.State != StateNeedsSetUp || !strings.Contains(e.Reason, "sign in again") {
+		t.Fatalf("changes on a read-only sign-in: %+v", e)
 	}
 	delete(keys, ImageKeyringAccount("assistant", "gog"))
 	c := Config{SignIns: signedIn, Switches: map[string]bool{"server:gog": true}}
@@ -177,7 +187,7 @@ func TestRosterReachesEveryGateWithGoogleWorkspace(t *testing.T) {
 			t.Errorf("%s asks no agreement", id)
 		}
 	}
-	c := Config{Enabled: true, SignIns: map[string]ImageSignIn{"gog": {Account: "person@example.com", At: time.Now()}}}
+	c := Config{Enabled: true, SignIns: map[string]ImageSignIn{"gog": {Account: "person@example.com", At: time.Now(), Granted: []string{"writes", "send"}}}}
 	for _, id := range []string{"server:gog", "server:gog:writes"} {
 		if _, err := ApplyChange(home, a, &c, Change{Switch: &Switch{ID: id, On: true}, Consent: true}); err != nil {
 			t.Fatal(err)
@@ -206,6 +216,9 @@ func TestRosterReachesEveryGateWithGoogleWorkspace(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join(sp.Dir, "gateway", "catalog.yaml"))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if srv.Env["GOG_ACCOUNT"] != "person@example.com" {
+		t.Errorf("the server is not told its account: %v", srv.Env)
 	}
 	for _, want := range []string{vol + ":" + assistant.GogHome, "gmail.googleapis.com:443/tcp", "--allow-write"} {
 		if !strings.Contains(string(b), want) {

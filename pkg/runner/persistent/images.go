@@ -24,11 +24,23 @@ import (
 // KindServerSwitch is the kind of an image server's widening switch.
 const KindServerSwitch EntryKind = "server-switch"
 
-// ImageSignIn is an image server's finished sign-in: the account it answers
-// as, as the server itself named it, and when.
+// ImageSignIn is an image server's sign-in: when its OAuth client was set,
+// and once signed in the account it answers as, as the server itself named
+// it, when, and the switches whose scopes the sign-in asked for (none for a
+// read-only one). Never a credential.
 type ImageSignIn struct {
-	Account string    `yaml:"account" json:"account"`
-	At      time.Time `yaml:"at" json:"at"`
+	Client  time.Time `yaml:"client,omitempty" json:"client,omitzero"`
+	Account string    `yaml:"account,omitempty" json:"account,omitempty"`
+	At      time.Time `yaml:"at,omitempty" json:"at,omitzero"`
+	Granted []string  `yaml:"granted,omitempty" json:"granted,omitempty"`
+}
+
+// signedIn says the server has finished a sign-in.
+func (s ImageSignIn) signedIn() bool { return s.Account != "" }
+
+// grants says the sign-in asked for what switch needs.
+func (s ImageSignIn) grants(w offer.ImageSwitch) bool {
+	return !w.SignedFor || slices.Contains(s.Granted, w.Key)
 }
 
 // imageServersOf are the agent's image servers: its built-in's, but in a
@@ -82,13 +94,15 @@ func imageEntries(a Agent, c Config, add func(RosterEntry, bool), last func() *R
 	for _, s := range imageServersOf(a) {
 		id := ImageServerEntryID(s.Key)
 		add(RosterEntry{ID: id, Kind: KindServer, Name: s.Name, GrantedBy: GrantedByBuiltin, Line: imageLine(s)}, false)
-		if e := last(); e.On {
-			if _, ok := c.SignIns[s.Key]; !ok {
-				e.State, e.Reason = StateNeedsSetUp, s.SignIn
-			}
+		in := c.SignIns[s.Key]
+		if e := last(); e.On && !in.signedIn() {
+			e.State, e.Reason = StateNeedsSetUp, s.SignIn
 		}
 		for _, w := range s.Switches {
 			add(RosterEntry{ID: ImageSwitchEntryID(s.Key, w.Key), Kind: KindServerSwitch, Name: w.Name, GrantedBy: GrantedByBuiltin, Line: w.Line}, false)
+			if e := last(); e.On && in.signedIn() && !in.grants(w) {
+				e.State, e.Reason = StateNeedsSetUp, "the sign-in asked for no changes: with it on, sign in again ("+s.SignIn[strings.Index(s.SignIn, "agentry"):]+")"
+			}
 		}
 	}
 }
@@ -100,7 +114,8 @@ func imageGrants(home string, a Agent, c Config, on func(id string) bool) (grant
 	left = map[string]bool{}
 	for _, s := range imageServersOf(a) {
 		id := ImageServerEntryID(s.Key)
-		_, signedIn := c.SignIns[s.Key]
+		in := c.SignIns[s.Key]
+		signedIn := in.signedIn()
 		given := on(id) && signedIn
 		if on(id) && !signedIn {
 			left[id] = true
@@ -111,14 +126,14 @@ func imageGrants(home string, a Agent, c Config, on func(id string) bool) (grant
 			if !on(wid) {
 				continue
 			}
-			if !given || w.Requires != "" && !on(ImageSwitchEntryID(s.Key, w.Requires)) {
+			if !given || !in.grants(w) || w.Requires != "" && !slices.Contains(switches, w.Requires) {
 				left[wid] = true
 				continue
 			}
 			switches = append(switches, w.Key)
 		}
 		if given {
-			grants = append(grants, localrun.ImageGrant{Key: s.Key, Switches: switches, Volume: ImageVolumeIn(home, a.Name, s.Key)})
+			grants = append(grants, localrun.ImageGrant{Key: s.Key, Switches: switches, Volume: ImageVolumeIn(home, a.Name, s.Key), Account: in.Account})
 		}
 	}
 	return grants, left
