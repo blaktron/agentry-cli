@@ -357,6 +357,11 @@ type PersistentSegment struct {
 	// Memory is the agent's memory, for an agent that keeps one
 	// (spec.AgentFiles.Memory); nil for any other agent.
 	Memory *PersistentMemory
+	// ServerVolumes are the named volumes of the plan's image servers
+	// (spec.MCPServerSpec.Volumes), made with the agent's labels when they
+	// do not exist and kept between segments, each held by the docker filter
+	// to the server that mounts it.
+	ServerVolumes []string
 }
 
 // PersistentMemory is a persistent agent's memory volume: made, labelled

@@ -293,6 +293,7 @@ func BuildRosterUnder(a Agent, c Config, applied *Applied, malwareCheck bool) Ro
 			r[len(r)-1].State, r[len(r)-1].Reason = StateFailed, f.Reason
 		}
 	}
+	imageEntries(a, c, add, func() *RosterEntry { return &r[len(r)-1] })
 	return r
 }
 
@@ -304,7 +305,7 @@ func serverReady(home string, a Agent, c Config, srv manifest.MCPServer) bool {
 	if _, failed := c.ServerFailures[ServerEntryID(srv)]; failed {
 		return false
 	}
-	if o, ok := offeredServer(a, ServerEntryID(srv)); ok {
+	if o, ok := offeredServer(a, c, ServerEntryID(srv)); ok {
 		if set, _ := setUp(a, c, o); !set {
 			return false
 		}
@@ -469,6 +470,10 @@ func Apply(ctx context.Context, home string, a Agent, c Config, r Roster, open P
 			left[id] = true
 		}
 	}
+	images, imagesLeft := imageGrants(home, a, c, on)
+	for id := range imagesLeft {
+		left[id] = true
+	}
 	for _, e := range r {
 		// A server's writes are given with the server alone.
 		if e.Kind == KindServerWrites {
@@ -534,6 +539,17 @@ func Apply(ctx context.Context, home string, a Agent, c Config, r Roster, open P
 	}
 	if g.ServerSecrets, err = serverTokens(keys, c, givenServers); err != nil {
 		return g, applied, done, err
+	}
+	g.ImageServers = images
+	slots, err := imageSecrets(keys, a, images)
+	if err != nil {
+		return g, applied, done, err
+	}
+	for name, v := range slots {
+		if g.ServerSecrets == nil {
+			g.ServerSecrets = map[string]string{}
+		}
+		g.ServerSecrets[name] = v
 	}
 	if g.Skills, g.SkillsDir, err = stageSkills(home, a, c, on); err != nil {
 		return g, applied, done, err

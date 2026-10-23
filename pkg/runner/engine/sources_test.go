@@ -665,3 +665,24 @@ func TestTheFetchStepCountsInTheReceiptsWords(t *testing.T) {
 		t.Error("a count with no known cap was kept")
 	}
 }
+
+// TestTheSourceProxyIsGivenItsHostsAddress: the input source's proxy has its
+// host pinned at the address this machine resolves for it, since on rootless
+// podman a proxy on an internal network and the default one is told only the
+// internal network's name server. The allowlist is still the host by name.
+func TestTheSourceProxyIsGivenItsHostsAddress(t *testing.T) {
+	fakeLookup(t, map[string][]string{"github.com": {"140.82.112.3", "2606:50c0::1"}})
+	p, f := fixture(t)
+	happyFake(f)
+	withSource(t, &p, f, map[string]string{"README.md": "# r\n"}, nil)
+	if _, err := Run(context.Background(), f, p); err != nil {
+		t.Fatal(err)
+	}
+	proxy, ok := f.FindRun("-source-proxy-repo")
+	if !ok || !slices.Equal(proxy.ExtraHosts, []string{"github.com:140.82.112.3"}) {
+		t.Fatalf("the source proxy's extra hosts = %v (found %v), want github.com's IPv4 address alone", proxy.ExtraHosts, ok)
+	}
+	if !strings.Contains(strings.Join(proxy.Argv, " "), "--allow github.com:443 --public-only") {
+		t.Errorf("the allowlist changed with the pin: %v", proxy.Argv)
+	}
+}

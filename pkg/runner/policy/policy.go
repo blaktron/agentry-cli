@@ -519,6 +519,18 @@ type Images struct {
 	// Coder is the Coding agent's toolchain image, pinned by digest ("" =
 	// DefaultCoderImage; see CoderImage).
 	Coder string `yaml:"coder,omitempty"`
+	// Gog is the Assistant's Google Workspace server's image, pinned by
+	// digest ("" = DefaultGogImage; see GogImage).
+	Gog string `yaml:"gog,omitempty"`
+}
+
+// GogImage is the Google Workspace server's image this policy names:
+// images.gog, else the CLI's pinned default.
+func (i Images) GogImage() string {
+	if i.Gog != "" {
+		return i.Gog
+	}
+	return DefaultGogImage
 }
 
 // CoderImage is the Coding agent's toolchain image this policy names:
@@ -1019,6 +1031,9 @@ func (p *Policy) Validate() error {
 	}
 	if p.Images.Browser != "" && !PinnedByDigest(p.Images.Browser) {
 		return fmt.Errorf("images.browser %q must be pinned by digest (<name>@sha256:<64 hex>): the browser server's image is pulled by digest only", p.Images.Browser)
+	}
+	if p.Images.Gog != "" && !PinnedByDigest(p.Images.Gog) {
+		return fmt.Errorf("images.gog %q must be pinned by digest (<name>@sha256:<64 hex>): the Google Workspace server's image is pulled by digest only", p.Images.Gog)
 	}
 	if p.Images.Coder != "" && !PinnedByDigest(p.Images.Coder) {
 		return fmt.Errorf("images.coder %q must be pinned by digest (<name>@sha256:<64 hex>): the Coding agent's toolchain image is pulled by digest only", p.Images.Coder)

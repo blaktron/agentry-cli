@@ -33,6 +33,8 @@ type container struct {
 	// sources are the host paths the daemon holds for its binds and bind
 	// mounts, as they were created.
 	sources []string
+	// volumes are the named volumes it mounts.
+	volumes []string
 }
 
 type endpoint struct {
@@ -70,17 +72,25 @@ func (f *Filter) ownContainer(ctx context.Context, id string) (container, error)
 		return container{}, deny("container %s is not this run's", short(id))
 	}
 	var sources []string
+	var volumes []string
 	for _, b := range c.HostConfig.Binds {
-		if src, _, _ := strings.Cut(b, ":"); strings.HasPrefix(src, "/") {
+		src, _, _ := strings.Cut(b, ":")
+		switch {
+		case strings.HasPrefix(src, "/"):
 			sources = append(sources, src)
+		case src != "":
+			volumes = append(volumes, src)
 		}
 	}
 	for _, m := range c.HostConfig.Mounts {
-		if m.Type == "bind" && m.Source != "" {
+		switch {
+		case m.Type == "bind" && m.Source != "":
 			sources = append(sources, m.Source)
+		case m.Type == "volume" && m.Source != "":
+			volumes = append(volumes, m.Source)
 		}
 	}
-	return container{id: c.ID, imageID: c.ImageID, networks: c.NetworkSettings.Networks, running: c.State.Running, runtime: c.HostConfig.Runtime, sources: sources}, nil
+	return container{id: c.ID, imageID: c.ImageID, networks: c.NetworkSettings.Networks, running: c.State.Running, runtime: c.HostConfig.Runtime, sources: sources, volumes: volumes}, nil
 }
 
 // linkedAddress is the address a container of this run's gateway has on

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -900,5 +901,40 @@ func TestResolveAllReadsDependenciesFromItsOneRequest(t *testing.T) {
 	}
 	if strings.Contains(string(b), "puppeteer") || strings.Contains(string(b), "postinstall") {
 		t.Fatalf("recorded resolution carries the check's metadata: %s", b)
+	}
+}
+
+// TestTheInstallProxyIsGivenItsHostsAddresses: the install proxy's
+// allowlisted hosts are pinned into its /etc/hosts at the addresses this
+// machine resolves for them, since on rootless podman the proxy is told
+// only its internal network's name server, which answers no outside name.
+// An IP literal, a host that does not resolve here and a loopback answer
+// are left to the container's DNS.
+func TestTheInstallProxyIsGivenItsHostsAddresses(t *testing.T) {
+	old := lookupInstallHost
+	lookupInstallHost = func(_ context.Context, host string) ([]net.IP, error) {
+		switch host {
+		case "registry.npmjs.org":
+			return []net.IP{net.ParseIP("104.16.0.34"), net.ParseIP("2606:4700::6810:22")}, nil
+		case "files.example.com":
+			return []net.IP{net.ParseIP("127.0.0.1")}, nil
+		}
+		return nil, errors.New("no such host")
+	}
+	t.Cleanup(func() { lookupInstallHost = old })
+	images := policy.Images{NodeRuntime: "node:test", PythonRuntime: "python:test"}
+	fake := &dockerx.Fake{ExistingImages: map[string]bool{proxyImage(images): true}}
+	e, err := startInstallProxy(t.Context(), fake, "npm-x", t.TempDir(),
+		[]string{"registry.npmjs.org:443", "files.example.com:443", "unknown.example.com:443", "192.0.2.7:443"}, images, policy.DockerPolicy{}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.stop(t.Context(), "")
+	proxy, ok := fake.FindRun("agentry-mcpproxy-")
+	if !ok || !slices.Equal(proxy.ExtraHosts, []string{"registry.npmjs.org:104.16.0.34"}) {
+		t.Fatalf("install proxy extra hosts = %v (found %v), want the registry's IPv4 address alone", proxy.ExtraHosts, ok)
+	}
+	if !slices.Contains(proxy.Argv, "registry.npmjs.org:443,files.example.com:443,unknown.example.com:443,192.0.2.7:443") {
+		t.Fatalf("the allowlist changed with the pins: %v", proxy.Argv)
 	}
 }

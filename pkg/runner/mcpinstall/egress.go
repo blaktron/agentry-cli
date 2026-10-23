@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
+	"github.com/blaktron/agentry-cli/pkg/runner/hostpin"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/runnerimage"
 )
@@ -52,6 +53,10 @@ func installNetworkName(id string) string { return "agentry-mcpinstall-" + id + 
 // default bridge beside a user-defined network at create.
 func installEgressName(id string) string { return "agentry-mcpinstall-" + id + "-out" }
 func installProxyName(id string) string  { return "agentry-mcpproxy-" + id }
+
+// lookupInstallHost resolves an allowlisted host with this machine's
+// resolver; a var so tests never touch DNS.
+var lookupInstallHost = hostpin.Lookup
 
 // proxyImage is the runner image, whose proxy role is the run's own
 // CONNECT proxy: the tag both clients build from the embedded context,
@@ -177,6 +182,11 @@ func startInstallProxy(ctx context.Context, d dockerx.Client, id, storeDir strin
 		// embedded DNS (as under runsc).
 	}.WithPosture(lim.Memory, lim.CPUs, lim.Pids)
 	spec.ReadOnly, spec.Tmpfs = true, []string{"/tmp"}
+	// The allowlist's hosts at the addresses this machine resolves: on
+	// rootless podman the proxy, on its internal network and the default
+	// one, is told only the internal network's name server, which answers
+	// no outside name, so every install failed with a 502 from the proxy.
+	spec.ExtraHosts = append(spec.ExtraHosts, hostpin.Pins(ctx, allow, lookupInstallHost)...)
 	if docker.SandboxesProxies() {
 		if err := e.sandboxProxy(ctx, id, storeDir, labels, docker, &spec); err != nil {
 			e.stop(ctx, "")

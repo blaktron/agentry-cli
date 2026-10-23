@@ -37,9 +37,13 @@ and `agentry agent show assistant` lists what it has:
   folder's `notes/` are copied into it, and stay where they are. `agentry
   agent memory export assistant <folder>` copies the memory into a new
   folder, readable by you alone; a reset removes it.
-- **Three skills** of its own, on unless you switch them off: `memory-ingest`,
+- **Seven skills** of its own, on unless you switch them off: `memory-ingest`,
   `memory-query` and `memory-lint`, which say how it adds to its memory,
-  answers from it and checks it.
+  answers from it and checks it; `google-workspace-setup`, which walks you
+  through connecting your Google account; and `google-workspace`,
+  `google-inbox-triage` and `google-meeting-prep`, adapted from gog's own
+  skills (MIT, their licence beside them), which say how it uses your Google
+  account safely.
 - **A share folder** of yours, `~/agentry/assistantshare` unless you choose
   another, is mounted read and write while it runs: you see what it writes
   there as it writes it. A file you add is checked for malware with ClamAV
@@ -57,6 +61,14 @@ and `agentry agent show assistant` lists what it has:
   from Open-Meteo, whose free service is for non-commercial use, and maps
   from OpenStreetMap, whose public servers ask for light use
   (`agentry agent configure assistant --add-suggested weather` or `maps`).
+- **Google Workspace** through gog's MCP server, run from the image Agentry
+  pins, off until you switch it on and sign it in with your own Google Cloud
+  OAuth client (`agentry agent configure assistant --google-client <file>`,
+  then `--google-sign-in <email>`): it reads Gmail, Drive, Docs, Sheets and
+  your Calendar's events, read only unless you also switch on its changes,
+  and sends mail only with sending switched on too. It keeps its sign-in on a
+  volume of its own, under a password kept in your system keychain, and
+  reaches Google's hosts alone.
 - **What you add**: knowledge packs from your computer and MCP servers, each
   an entry of its roster that you switch on and off. Adding one, or turning
   on one you have not agreed to on this computer, asks you first.

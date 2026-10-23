@@ -145,3 +145,34 @@ func TestAFailedCopyLeavesNoHalfVolume(t *testing.T) {
 		t.Errorf("volumes %v, want only the shared two", got)
 	}
 }
+
+// TestAnImageServersVolumeIsMadeOnceWithTheAgentsLabels: a segment whose
+// plan has an image server makes that server's volume with the agent's
+// labels when it does not exist, and leaves an existing one as it is: it
+// holds the server's sign-in.
+func TestAnImageServersVolumeIsMadeOnceWithTheAgentsLabels(t *testing.T) {
+	p, f, _ := persistentFixture(t, "")
+	p.Persistent.Home = "aaaa"
+	p.Persistent.SessionVolume = "agentry-persistent-keeper-aaaa-session"
+	p.Persistent.DataVolume = "agentry-persistent-keeper-aaaa-data"
+	p.Persistent.ServerVolumes = []string{"agentry-persistent-keeper-aaaa-gog"}
+	for range 2 {
+		if err := ensurePersistentVolumes(context.Background(), f, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	made := 0
+	for _, op := range f.Ops() {
+		if op == "VolumeCreate:agentry-persistent-keeper-aaaa-gog" {
+			made++
+		}
+	}
+	if made != 1 {
+		t.Fatalf("the server's volume was made %d times", made)
+	}
+	for _, v := range f.Volumes {
+		if v.Name == "agentry-persistent-keeper-aaaa-gog" && (v.Labels[PersistentLabel] != "keeper" || v.Labels[PersistentHomeLabel] != "aaaa") {
+			t.Errorf("the server's volume carries %v", v.Labels)
+		}
+	}
+}

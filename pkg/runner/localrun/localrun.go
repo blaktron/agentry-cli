@@ -553,6 +553,14 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 	return plan, planDir, nil
 }
 
+// installedSpecs are the plan's servers as the store holds them after an
+// install: the package servers' specs from their resolution, then a
+// persistent built-in's image servers as the plan had them, since they are
+// no package and nothing installs them.
+func installedSpecs(resolved []mcpinstall.Resolved, in PlanInputs) []spec.MCPServerSpec {
+	return append(mcpinstall.Specs(resolved, in.Manifest.Capabilities.MCPServers, in.Policy.Images), spec.ImageServers(in.Servers)...)
+}
+
 // InstallServers installs the resolved package servers into storeDir and
 // returns the plan to run, compiled from in. A PyPI server's console script
 // is known only once its distribution is installed (the registry's metadata
@@ -576,7 +584,7 @@ func InstallServers(ctx context.Context, d dockerx.Client, in PlanInputs, plan *
 	if err := mcpinstall.EnsureInstalled(ctx, d, resolved, storeDir, in.Policy.MCPRegistries, in.Policy.Images, in.Policy.Docker, logw); err != nil {
 		return nil, "", engine.Classify(engine.ExitGateway, err)
 	}
-	installed := mcpinstall.Specs(resolved, in.Manifest.Capabilities.MCPServers, in.Policy.Images)
+	installed := installedSpecs(resolved, in)
 	if reflect.DeepEqual(installed, in.Servers) {
 		return plan, planDir, nil
 	}

@@ -295,6 +295,29 @@ func TestPodmanArgvForSeveralNetworks(t *testing.T) {
 	}
 }
 
+// podman's --tmpfs takes no uid= or gid=: a tmpfs given to the container's
+// own user is spelled U there, and docker keeps uid= and gid=. A mount given
+// to anyone else, or naming only one of the two, is left for podman to refuse
+// rather than handed to a user or group it did not name.
+func TestPodmanSpellsATmpfsForTheContainersUserU(t *testing.T) {
+	r := RunSpec{Name: "c", Image: "img", User: "1000:1000", ReadOnly: true,
+		Tmpfs: []string{"/home/b:rw,mode=0700,uid=1000,gid=1000", "/tmp:rw,mode=1777", "/other:rw,uid=0,gid=0", "/half:rw,uid=1000"}}
+	got := r.argsFor(true, true, nil)
+	for _, want := range []string{"/home/b:rw,mode=0700,U", "/tmp:rw,mode=1777", "/other:rw,uid=0,gid=0", "/half:rw,uid=1000"} {
+		if !slices.Contains(got, want) {
+			t.Errorf("podman argv %q lacks %q", got, want)
+		}
+	}
+	if d := r.args(true); !slices.Contains(d, "/home/b:rw,mode=0700,uid=1000,gid=1000") {
+		t.Errorf("docker argv %q", d)
+	}
+	r.User = "0"
+	r.Tmpfs = []string{"/h:rw,uid=0,gid=0"}
+	if got := r.argsFor(true, true, nil); !slices.Contains(got, "/h:rw,U") {
+		t.Errorf("a rootless engine's user 0: %q", got)
+	}
+}
+
 // A container's variable that podman would read as its own configuration
 // travels as argv on podman, as HOME does on docker; any other name travels
 // by name through the client's environment on both.

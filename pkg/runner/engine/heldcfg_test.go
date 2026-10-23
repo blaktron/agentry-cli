@@ -189,3 +189,37 @@ func TestFilterHoldsTheRunsCfgFolder(t *testing.T) {
 		t.Errorf("the share's verdicts are held to %v", cfg.HeldRoots)
 	}
 }
+
+// TestAnImageServersVolumeIsHeldToTheEntryThatMountsIt: the docker filter
+// holds an image server's volume to the catalog entries that mount it, by
+// image, command and exactly their binds, and a volume no entry mounts to
+// none.
+func TestAnImageServersVolumeIsHeldToTheEntryThatMountsIt(t *testing.T) {
+	catalog := []byte(`registry:
+  mcp-image-gog:
+    image: ghcr.io/example/gog:1
+    command: [mcp, --allow-write]
+    volumes:
+      - agentry-persistent-assistant-0123456789-gog:/persist/gogcli
+  agentry-tools:
+    image: agentry-runner:test
+    command: [tools]
+    volumes:
+      - /run/cfg/toolspec.json:/etc/agentry/toolspec.json:ro
+`)
+	held, err := volumeHolders(catalog, []string{"agentry-persistent-assistant-0123456789-gog", "agentry-persistent-assistant-0123456789-unmounted"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(held) != 2 {
+		t.Fatalf("held = %+v", held)
+	}
+	gog := held[0]
+	if gog.Root != "agentry-persistent-assistant-0123456789-gog" || len(gog.By) != 1 || gog.By[0].Image != "ghcr.io/example/gog:1" ||
+		!slices.Equal(gog.By[0].Cmd, []string{"mcp", "--allow-write"}) || len(gog.By[0].Binds) != 1 || gog.By[0].Binds[0].Target != "/persist/gogcli" {
+		t.Fatalf("the gog volume's holders: %+v", gog)
+	}
+	if none := held[1]; len(none.By) != 0 {
+		t.Fatalf("an unmounted volume is held to %+v", none.By)
+	}
+}

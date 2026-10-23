@@ -220,7 +220,7 @@ func newAgentConfigureCmd() *cobra.Command {
 		devHost, devKey, devPassphrase, devPassword, policyPath, addPort, removePort           string
 		yes, allowVulnerable, noDevHost                                                        bool
 		acct                                                                                   accountFlags
-		noAccount, addSuggested                                                                string
+		noAccount, addSuggested, googleClient, googleSignIn                                    string
 	)
 	cmd := &cobra.Command{
 		Use:   "configure <name>",
@@ -260,7 +260,7 @@ func newAgentConfigureCmd() *cobra.Command {
 			"127.0.0.1 and the same number, so what it serves from its sandbox (a dev\n" +
 			"server it started) opens in your browser; --no-port takes one away by its\n" +
 			"name. A port is a roster entry, switched with agentry agent grant.\n\n" +
-			"  agentry agent configure coder --port web=3000\n\n" + agentAccountLong,
+			"  agentry agent configure coder --port web=3000\n\n" + agentAccountLong + agentGoogleLong,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := cliAgent(args[0])
@@ -270,6 +270,12 @@ func newAgentConfigureCmd() *cobra.Command {
 			home, err := runnerHome()
 			if err != nil {
 				return err
+			}
+			if googleClient != "" || googleSignIn != "" {
+				if cmd.Flags().NFlag() > countFlags(cmd, "google-client", "google-sign-in", "policy") {
+					return engine.Classify(engine.ExitUsage, errors.New("--google-client and --google-sign-in go with --policy alone"))
+				}
+				return configureGoogle(cmd, a, home, policyPath, googleClient, googleSignIn)
 			}
 			var ch persistent.Change
 			set := 0
@@ -432,6 +438,8 @@ func newAgentConfigureCmd() *cobra.Command {
 	f.StringVar(&addServer, "add-server", "", "a file holding an MCP server to add, in a manifest's shape")
 	f.StringVar(&removeServer, "remove-server", "", "the roster id of a server to remove (server:…)")
 	f.StringVar(&addSuggested, "add-suggested", "", "add a server the agent suggests, by its key, as your own (agentry agent show lists them)")
+	f.StringVar(&googleClient, "google-client", "", "the Assistant's Google Workspace: your Google Cloud OAuth client's JSON file (a Desktop app client)")
+	f.StringVar(&googleSignIn, "google-sign-in", "", "the Assistant's Google Workspace: sign it in to this Google account, in your browser")
 	f.StringVar(&addPack, "knowledge", "", "a knowledge pack kept on this computer for it to search")
 	f.StringVar(&removePack, "no-knowledge", "", "a knowledge pack to take away")
 	f.StringVar(&addPort, "port", "", "publish one of the Coding agent's ports on this computer, as name=number (web=3000)")
@@ -609,4 +617,15 @@ func readyDevHost(cmd *cobra.Command, home, policyPath, host, key, passphrase, p
 	}
 	say(fmt.Sprintf("dev server: %s at %s, host key %s (%s); its sign-in is saved in your keychain", ready.Answer, ready.Address, ready.HostKey.Fingerprint(), ready.HostKey.From))
 	return &persistent.DevHost{Host: ready.Answer.String(), HostKey: ssh.FingerprintSHA256(ready.HostKey.Key)}, nil
+}
+
+// countFlags counts the named flags the command line set.
+func countFlags(cmd *cobra.Command, names ...string) int {
+	n := 0
+	for _, name := range names {
+		if cmd.Flags().Changed(name) {
+			n++
+		}
+	}
+	return n
 }
