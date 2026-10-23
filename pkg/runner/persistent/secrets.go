@@ -135,9 +135,9 @@ func secretEntries(a Agent, c Config) []RosterEntry {
 // declares it.
 func secretLine(a Agent, c Config, name string) string {
 	var servers []string
-	for _, srv := range c.Servers {
-		if slices.Contains(srv.Secrets, name) {
-			servers = append(servers, serverName(srv))
+	for _, as := range agentServers(a, c) {
+		if slices.Contains(as.Server.Secrets, name) {
+			servers = append(servers, serverName(as.Server))
 		}
 	}
 	line := "Gives your secret " + name

@@ -406,3 +406,34 @@ func TestAgentShowHelpNamesEachRosterState(t *testing.T) {
 		}
 	}
 }
+
+// TestAgentShowListsTheOffersAndAddsASuggestion: show lists the servers
+// the Assistant comes with on its roster, one that needs a key waiting for
+// it, and the servers it suggests; --add-suggested adds one as the
+// person's own, after which it is no longer suggested.
+func TestAgentShowListsTheOffersAndAddsASuggestion(t *testing.T) {
+	agentHome(t)
+	if _, _, err := runCLI(t, nil, "agent", "enable", "assistant"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runCLI(t, nil, "agent", "grant", "assistant", "server:npm-brave-brave-search-mcp-server", "on", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := runCLI(t, nil, "agent", "show", "assistant")
+	for _, want := range []string{"server:npm-cyanheads-wikipedia-mcp-server", "built-in", "needs-set-up", "waiting: it needs your secret BRAVE_API_KEY: agentry agent secret set assistant BRAVE_API_KEY",
+		"suggested servers (agentry agent configure assistant --add-suggested <key>):", "weather\tWeather (Open-Meteo)", "maps\tMaps (OpenStreetMap)"} {
+		if err != nil || !strings.Contains(out, want) {
+			t.Fatalf("show has no %q: %v\n%s", want, err, out)
+		}
+	}
+	if _, _, err := runCLI(t, nil, "agent", "configure", "assistant", "--add-suggested", "weather", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err = runCLI(t, nil, "agent", "show", "assistant")
+	if err != nil || !strings.Contains(out, "server:npm-open-meteo-mcp-server") || strings.Contains(out, "weather\tWeather") || !strings.Contains(out, "for your own use, under its terms") {
+		t.Fatalf("after adding: %v\n%s", err, out)
+	}
+	if _, _, err := runCLI(t, nil, "agent", "configure", "assistant", "--add-suggested", "semgrep", "--yes"); err == nil || exitCode(err) != engine.ExitUsage {
+		t.Errorf("a suggestion the agent does not make: %v", err)
+	}
+}

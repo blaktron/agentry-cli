@@ -35,6 +35,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/browser"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
+	"github.com/blaktron/agentry-cli/pkg/runner/osvdb"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
@@ -579,6 +580,12 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	if c := caps.Coder; c != nil && c.Commands && len(c.Accounts) > 0 {
 		plan.Enforcement["persistent.accounts"] = coderAccountsEnforcement(c.Accounts)
 	}
+	if dependencyScan(caps) {
+		plan.Enforcement["persistent.dependencyScan"] = "dependency_scan runs OSV-Scanner from the Coding agent's toolchain image with --offline, under run_command's confinement, over a folder beneath " + spec.AgentRoot +
+			", against OSV's databases (" + strings.Join(osvdb.Ecosystems, ", ") + ") that the runner downloads to this computer from " + osvdb.Host + " when a day has passed, checking hourly while the agent runs, and mounts read-only into the tools server alone; " +
+			"OSV-Scanner's --offline is what keeps the scan from asking OSV's service, not the network, which is the tools server's (its egress entry); " +
+			"a database it does not have or cannot read fails the call, never answers no vulnerabilities, and a clean answer names the databases' age"
+	}
 	if hostLink != nil {
 		plan.Enforcement["targetHosts"] = targetHostsEnforcement(caps.TargetHosts)
 		if c := caps.Coder; c != nil && c.DevHost {
@@ -1030,6 +1037,9 @@ func toolSpec(caps spec.CapSummary, secrets []string) *toolsrv.Spec {
 			ts.Exec.Ports = append(ts.Exec.Ports, toolsrv.Port{Name: p.Name, Port: p.Port})
 		}
 		ts.Exec.SecretEnv = sortedCopy(c.Secrets)
+		if c.DependencyScan {
+			ts.Exec.DependencyScan = &toolsrv.DependencyScan{DBDir: spec.DependencyDBMount, Ecosystems: osvdb.Ecosystems}
+		}
 		// Each account's token is a secret of the tools container's, masked
 		// as a stored secret is.
 		for _, a := range c.Accounts {
@@ -1038,6 +1048,12 @@ func toolSpec(caps spec.CapSummary, secrets []string) *toolsrv.Spec {
 		}
 	}
 	return ts
+}
+
+// dependencyScan says the plan gives the Coding agent its dependency scan.
+func dependencyScan(caps spec.CapSummary) bool {
+	c := caps.Coder
+	return c != nil && c.Commands && c.DependencyScan
 }
 
 // ShareChecksFolder is the run's folder of the share's malware verdicts,
@@ -1421,6 +1437,10 @@ func bindRoots(withServers bool, caps spec.CapSummary, mcpServers []spec.MCPServ
 	if agent := caps.AgentFiles; agent != nil && len(agent.Skills) > 0 {
 		roots = append(roots, spec.PHSkills)
 	}
+	// The Coding agent's OSV databases, the same way.
+	if dependencyScan(caps) {
+		roots = append(roots, spec.PHDependencyDB)
+	}
 	// The share mirror, read-only, for the servers that see it.
 	if spec.SharesAs(mcpServers, spec.ServerShareMirror) {
 		roots = append(roots, spec.PHShareMirror)
@@ -1733,6 +1753,10 @@ func catalogEntry(tspec *toolsrv.Spec, caps spec.CapSummary, secrets []string, r
 	// would keep the first).
 	if a := caps.AgentFiles; a != nil && a.CheckShare {
 		vols = append(vols, ShareChecksFolder()+":"+spec.ShareChecksMount+":ro")
+	}
+	// OSV's databases for the Coding agent's dependency scan, read-only.
+	if dependencyScan(caps) {
+		vols = append(vols, spec.PHDependencyDB+":"+spec.DependencyDBMount+":ro")
 	}
 	// The folder the host link copies through, inside the agent's scratch
 	// folder: the docker filter admits this one bind beneath the scratch

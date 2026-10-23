@@ -47,6 +47,16 @@ and `agentry agent show assistant` lists what it has:
   cannot read (no signatures on your computer, or past its size limits) is
   read unchecked, and the segment's receipts say so. You can switch the share
   off.
+- **MCP servers it comes with**, each an entry of its roster that you switch
+  on and off: Wikipedia (`@cyanheads/wikipedia-mcp-server`, English
+  Wikipedia alone), on until you switch it off, and web search with Brave
+  (`@brave/brave-search-mcp-server`), off until you store your own Brave
+  Search API key for it (`agentry agent secret set assistant BRAVE_API_KEY`).
+  Each reaches only its provider's host. It also suggests two servers you can
+  add as your own, for your own use under their providers' terms: weather
+  from Open-Meteo, whose free service is for non-commercial use, and maps
+  from OpenStreetMap, whose public servers ask for light use
+  (`agentry agent configure assistant --add-suggested weather` or `maps`).
 - **What you add**: knowledge packs from your computer and MCP servers, each
   an entry of its roster that you switch on and off. Adding one, or turning
   on one you have not agreed to on this computer, asks you first.

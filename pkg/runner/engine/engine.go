@@ -349,6 +349,11 @@ type PersistentSegment struct {
 	// that has any (spec.AgentFiles.Skills); mounted read-only into the
 	// tools server alone. Empty for any other plan.
 	Skills string
+	// DependencyDB is the folder of OSV's databases the Coding agent's
+	// dependency scan reads, kept under the runner home, for a plan that
+	// has the scan (spec.CoderGrant.DependencyScan); mounted read-only into
+	// the tools server alone. Empty for any other plan.
+	DependencyDB string
 	// Memory is the agent's memory, for an agent that keeps one
 	// (spec.AgentFiles.Memory); nil for any other agent.
 	Memory *PersistentMemory

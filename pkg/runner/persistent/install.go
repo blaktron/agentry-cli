@@ -28,6 +28,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/pkg/runner/mcpinstall"
+	"github.com/blaktron/agentry-cli/pkg/runner/osvdb"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/session"
 )
@@ -94,8 +95,8 @@ func (s *Supervisor) startInstalls() {
 			delete(s.joined, id)
 		}
 	}
-	for _, srv := range cfg.Servers {
-		id := ServerEntryID(srv)
+	for _, as := range agentServers(a, cfg) {
+		srv, id := as.Server, as.ID()
 		e, ok := r.Entry(id)
 		_, failed := cfg.ServerFailures[id]
 		if !ok || !e.On || unagreed[id] || failed || srv.IsRemote() || s.installs[id] != nil || mcpinstall.Installed(storeDir, srv) {
@@ -394,3 +395,44 @@ func cut(s string, n int) string {
 	}
 	return s[:n] + "…"
 }
+
+// refreshDependencyDB keeps OSV's databases up to date in the background
+// while the agent runs: it asks at once and then every hour, and an archive
+// is downloaded again once a day has passed (osvdb.Ensure). One refresher
+// at a time, ended by the stop as an install is; the scan reads what is
+// there, each archive replaced only once a new one is whole.
+func (s *Supervisor) refreshDependencyDB() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.osvRefreshing || s.stopped || s.bgCtx.Err() != nil {
+		return
+	}
+	s.osvRefreshing = true
+	s.installWG.Add(1)
+	go func() {
+		defer s.installWG.Done()
+		logw := s.opts.Stderr
+		if logw == nil {
+			logw = io.Discard
+		}
+		defer func() {
+			s.mu.Lock()
+			s.osvRefreshing = false
+			s.mu.Unlock()
+		}()
+		tick := time.NewTicker(dependencyDBCheck)
+		defer tick.Stop()
+		for {
+			osvdb.Ensure(s.bgCtx, s.opts.Home, logw)
+			select {
+			case <-s.bgCtx.Done():
+				return
+			case <-tick.C:
+			}
+		}
+	}()
+}
+
+// dependencyDBCheck is how often a running agent asks whether OSV's
+// databases are due.
+var dependencyDBCheck = time.Hour

@@ -86,6 +86,10 @@ type runDirs struct {
 	// skills is the folder of the agent's skills the tools server mounts
 	// read-only; "" for a plan with none.
 	skills string
+	// dependencyDB is the folder of OSV's databases the tools server
+	// mounts read-only, for a plan whose Coding agent has its dependency
+	// scan.
+	dependencyDB string
 	// targets are the run's target hosts, readied by the caller, in the
 	// plan's order (targethosts.go): the replacer gives each relay its
 	// address and port, and the host link its user.
@@ -281,6 +285,7 @@ func (rd *runDirs) replacerWith(hostPath func(string) string) *strings.Replacer 
 		spec.PHShare, hostPath(rd.share),
 		spec.PHShareMirror, hostPath(rd.shareMirror.folder()),
 		spec.PHSkills, hostPath(rd.skills),
+		spec.PHDependencyDB, hostPath(rd.dependencyDB),
 		spec.PHShareOut, hostPath(rd.shareOut),
 		spec.PHData, rd.data,
 		spec.PHMemory, rd.memory,
