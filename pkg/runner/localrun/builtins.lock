@@ -121,3 +121,5 @@ agentry/drafter@1.18.0 sha256:1acebbf80754f3b5f8c78e2e8e78cad4ee23b9b3cc9f3b1617
 agentry/drafter@1.18.1 sha256:48e64286030e5f6f2477c27966074cde9c8e5c89bc6758db0f18b01fb5516eed
 # 1.2.1: its README names the git hosts' CLIs (gh, glab, tea) and the scanners (osv-scanner, gitleaks) in its toolchain image.
 agentry/coder@1.2.1 sha256:f63b0f18a376c3628fc282901c3bec1b6a70cca41d3516c198a204ef1bb4b752
+# 1.2.2: its README names git host accounts and stored secrets; open-pull-request signs in through an account and names tea.
+agentry/coder@1.2.2 sha256:4f0967f81c273e7f78598c346887eb35edf1072b7943b0a5b7196dafc49a6c4c

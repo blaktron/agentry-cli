@@ -13,13 +13,17 @@ license: MIT
    (look at `git log`). Each message says what changed and why.
 3. **Check before you push**: the project's formatter, linter and tests, and
    the review-change skill.
-4. **Push the branch**: `git push -u origin <short-name>`. If the push is
-   refused for want of a sign-in, stop and tell the person: they give you
-   access to the git host in Agentry; do not ask them for a password or a
-   token in the chat.
+4. **Push the branch**: `git push -u origin <short-name>`, over https. With
+   an account on that host, git signs in by itself: never put a token in a
+   remote URL or a command. If the push is refused for want of a sign-in,
+   stop and tell the person: they give you an account on the git host in
+   Agentry, or share the repository with the account you have; do not ask
+   them for a password or a token in the chat.
 5. **Open the request** with the host's CLI when you have it:
    - GitHub: `gh pr create --base <default> --title "…" --body "…"`
    - GitLab: `glab mr create --target-branch <default> --title "…" --description "…"`
+   - Gitea, Forgejo or Codeberg: `tea pr create --base <default> --title "…" --description "…"`
+     (its login as your tools' description says)
    - otherwise, give the person the branch name and the link the push
      printed.
 6. **The description** says what the change does, why, how it was tested

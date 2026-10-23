@@ -69,6 +69,12 @@ type Change struct {
 	// value.
 	SetSecret    *StoredSecret `json:"setSecret,omitempty"`
 	RemoveSecret string        `json:"removeSecret,omitempty"`
+	// SetAccount records one of the Coding agent's git host accounts, on,
+	// its token already kept in the keychain by the client that asked for
+	// it, or one whose token was set again; RemoveAccount takes one away,
+	// by its host. Neither carries a token.
+	SetAccount    *GitAccount `json:"setAccount,omitempty"`
+	RemoveAccount string      `json:"removeAccount,omitempty"`
 	// Consent says the person consented to what this change turns on, as
 	// the lines a ConsentError listed say it.
 	Consent bool `json:"consent,omitempty"`
@@ -154,6 +160,7 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 	next.Knowledge = slices.Clone(c.Knowledge)
 	next.Skills = slices.Clone(c.Skills)
 	next.Secrets = slices.Clone(c.Secrets)
+	next.Accounts = slices.Clone(c.Accounts)
 	next.ServerFailures = cloneMap(c.ServerFailures)
 	if ch.Name != nil {
 		name, err := cleanName(*ch.Name)
@@ -301,6 +308,16 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 			return false, err
 		}
 	}
+	if acct := ch.SetAccount; acct != nil {
+		if err := addAccount(a, &next, *acct); err != nil {
+			return false, err
+		}
+	}
+	if h := ch.RemoveAccount; h != "" {
+		if _, err := removeAccount(a, &next, h); err != nil {
+			return false, err
+		}
+	}
 	if sw := ch.Switch; sw != nil && strings.HasPrefix(sw.ID, serverPrefix) && strings.HasSuffix(sw.ID, shareSuffix) {
 		if err := switchServerShare(a, &next, *sw); err != nil {
 			return false, err
@@ -398,6 +415,7 @@ func grantsKeyWith(a Agent, c Config, ready func(manifest.MCPServer) bool) strin
 		Knowledge []string
 		Skills    []string
 		Secrets   []string
+		Accounts  []string
 	}
 	counted := map[string]bool{}
 	for _, s := range c.Servers {
@@ -432,6 +450,17 @@ func grantsKeyWith(a Agent, c Config, ready func(manifest.MCPServer) bool) strin
 	for _, s := range c.Secrets {
 		e, _ := r.Entry(SecretEntryID(s.Name))
 		k.Secrets = append(k.Secrets, fmt.Sprintf("%s=%t@%s", s.Name, e.On, s.Set.UTC().Format(time.RFC3339Nano)))
+	}
+	// So for a git host account: on or off, and by everything a program is
+	// given of it and when its token was set. Its token is never part of
+	// the key.
+	for _, g := range c.Accounts {
+		e, _ := r.Entry(AccountEntryID(g.Host))
+		b, _ := json.Marshal(struct {
+			Account GitAccount
+			On      bool
+		}{g, e.On})
+		k.Accounts = append(k.Accounts, string(b))
 	}
 	b, _ := json.Marshal(k)
 	sum := sha256.Sum256(b)

@@ -541,6 +541,10 @@ type CoderGrant struct {
 	// set in the environment of the programs run_command runs (with
 	// Commands); their values are the segment's, never the plan's.
 	Secrets []string `json:"secrets,omitempty"`
+	// Accounts: the person's git host accounts its roster has on, whose
+	// tokens the programs run_command runs sign in with (with Commands);
+	// the tokens are the segment's, never the plan's.
+	Accounts []CoderAccount `json:"accounts,omitempty"`
 }
 
 // CoderPort is one of the Coding agent's published ports.

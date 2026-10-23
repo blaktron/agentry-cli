@@ -908,6 +908,16 @@ func secretValues(p Params) (map[string]string, error) {
 			}
 			values[compile.SecretKey(name)] = v
 		}
+		// Its git host accounts' tokens, the same way, from the segment's
+		// tokens alone.
+		for _, a := range c.Accounts {
+			v := p.AccountTokens[a.TokenEnv]
+			if v == "" {
+				missingSet["the token of the account on "+a.Host] = true
+				continue
+			}
+			values[compile.SecretKey(a.TokenEnv)] = v
+		}
 	}
 	missing := make([]string, 0, len(missingSet))
 	for name := range missingSet {

@@ -253,3 +253,45 @@ func TestTheCodersStoredSecretsAreNamesItMayHave(t *testing.T) {
 		}
 	}
 }
+
+// TestTheCodersAccountsReachTheToolsSpecAndThePlan: a git host account
+// reaches the tools spec (as an account, and its token's variable as a
+// masked secret), the catalogue's secrets, the plan's line and the System
+// Prompt, by host and name; with commands off, or out of shape, it is
+// refused at compile, whatever wrote the grant.
+func TestTheCodersAccountsReachTheToolsSpecAndThePlan(t *testing.T) {
+	acct := spec.CoderAccount{Host: "github.com", Kind: spec.GitHostGitHub, Own: true, User: "coder-bot", Name: "Coder Bot", Email: "bot@example.com", TokenEnv: spec.AccountTokenEnv(0)}
+	plan, ts, reg := compiledCoder(t, coderInputs(t, spec.CoderGrant{Commands: true, Accounts: []spec.CoderAccount{acct}}))
+	if len(ts.Exec.Accounts) != 1 || ts.Exec.Accounts[0].Host != "github.com" || ts.Exec.Accounts[0].TokenEnv != "AGENTRY_ACCOUNT_TOKEN_1" || !ts.Exec.Accounts[0].Own ||
+		!slices.Contains(ts.Exec.SecretEnv, "AGENTRY_ACCOUNT_TOKEN_1") {
+		t.Errorf("tools spec: %+v", ts.Exec)
+	}
+	if b, _ := json.Marshal(reg); !strings.Contains(string(b), "agentry-tools.agentry_account_token_1") {
+		t.Errorf("the catalogue has no secret for the token: %s", b)
+	}
+	if line := plan.Enforcement["persistent.accounts"]; !strings.Contains(line, "github.com as coder-bot (the agent's own account, github)") || !strings.Contains(line, "to its own host alone") {
+		t.Errorf("accounts line: %q", line)
+	}
+	if !strings.Contains(accountsPrompt(plan.Capabilities.Coder.Accounts), "ask them to add your account as a collaborator") {
+		t.Errorf("the prompt: %q", accountsPrompt(plan.Capabilities.Coder.Accounts))
+	}
+	yours := acct
+	yours.Own = false
+	if p := accountsPrompt([]spec.CoderAccount{yours}); !strings.Contains(p, "the person's own account, so act only as they asked") || strings.Contains(p, "collaborator") {
+		t.Errorf("the prompt for the person's account: %q", p)
+	}
+	for name, g := range map[string]spec.CoderGrant{
+		"commands off":          {Accounts: []spec.CoderAccount{acct}},
+		"a host with a path":    {Commands: true, Accounts: []spec.CoderAccount{{Host: "github.com/o", Kind: spec.GitHostGitHub, User: "u", Name: "U", Email: "u@example.com", TokenEnv: spec.AccountTokenEnv(0)}}},
+		"a stored secret's var": {Commands: true, Accounts: []spec.CoderAccount{{Host: "github.com", Kind: spec.GitHostGitHub, User: "u", Name: "U", Email: "u@example.com", TokenEnv: "GITHUB_TOKEN"}}},
+		"two on one host":       {Commands: true, Accounts: []spec.CoderAccount{acct, {Host: "github.com", Kind: spec.GitHostGitHub, User: "v", Name: "V", Email: "v@example.com", TokenEnv: spec.AccountTokenEnv(1)}}},
+		"two GitLab hosts": {Commands: true, Accounts: []spec.CoderAccount{
+			{Host: "gitlab.com", Kind: spec.GitHostGitLab, User: "u", Name: "U", Email: "u@example.com", TokenEnv: spec.AccountTokenEnv(0)},
+			{Host: "gitlab.example.com", Kind: spec.GitHostGitLab, User: "u", Name: "U", Email: "u@example.com", TokenEnv: spec.AccountTokenEnv(1)}}},
+	} {
+		var pr *PolicyRefusal
+		if _, err := Compile(coderInputs(t, g), t.TempDir()); !errors.As(err, &pr) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
