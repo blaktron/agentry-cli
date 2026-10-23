@@ -347,6 +347,9 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		if err := checkLiteralEnv(srv); err != nil {
 			return nil, err
 		}
+		if err := checkLiteralArgs(srv); err != nil {
+			return nil, err
+		}
 		if _, _, err := oauthEnv(srv); err != nil {
 			return nil, err
 		}
@@ -1365,6 +1368,25 @@ func checkLiteralEnv(srv spec.MCPServerSpec) error {
 	return nil
 }
 
+// checkLiteralArgs refuses a declared argument the gateway or the runner
+// would rewrite, as checkLiteralEnv refuses an env value: docker/mcp-gateway
+// evaluates a catalog command's `{{…}}` as a template, and the engine
+// rewrites @@RUN_*@@ placeholders in plan files. An empty argument, which
+// the registry refuses too, would reach the server as a word nobody wrote.
+func checkLiteralArgs(srv spec.MCPServerSpec) error {
+	for i, arg := range srv.Args {
+		switch {
+		case arg == "":
+			return fmt.Errorf("declared MCP server %s: args[%d] is empty; declare a word or leave it out", srv.Ref(), i)
+		case !manifest.LiteralEnvValue(arg):
+			return fmt.Errorf("declared MCP server %s: args[%d] contains $ or {{ }}, which the gateway would interpret; declare a literal argument", srv.Ref(), i)
+		case strings.Contains(arg, "@@"):
+			return fmt.Errorf("declared MCP server %s: args[%d] contains @@, the run placeholder marker; declare a literal argument", srv.Ref(), i)
+		}
+	}
+	return nil
+}
+
 // execImageFor maps the declared commands onto the operator's exec catalog.
 // A command the catalog does not carry is a plan-time refusal — the
 // operator, not the manifest, says which binaries this machine provides —
@@ -1526,7 +1548,7 @@ func mcpServerEntry(srv spec.MCPServerSpec) *yaml.Node {
 	e.set("title", strNode(srv.Package))
 	e.set("type", strNode("server"))
 	e.set("image", strNode(srv.Image))
-	e.set("command", strListNode(srv.Command))
+	e.set("command", strListNode(append(slices.Clone(srv.Command), srv.Args...)))
 	e.set("longLived", boolNode(true))
 	volumes := []string{spec.PHServers + "/" + srv.StoreSubdir + ":" + spec.MCPStorePrefix + "/" + srv.StoreSubdir + ":ro"}
 	if srv.Share != "" {
@@ -2177,6 +2199,11 @@ func enforcement(caps spec.CapSummary, secrets, optional []string, extraServers 
 			d := fmt.Sprintf("%s@%s (%s, %s", srv.Package, srv.Version, srv.Source, egressDesc(srv.Egress))
 			if len(srv.Tools) > 0 {
 				d += ", tools filtered to " + strings.Join(sortedCopy(srv.Tools), "/")
+			}
+			if len(srv.Args) > 0 {
+				// The words themselves: they are the contract's, consented
+				// to as written, and say which command the server is.
+				d += ", args " + strings.Join(srv.Args, " ")
 			}
 			if len(srv.Env) > 0 {
 				// Keys only: a receipt never carries a configured value.

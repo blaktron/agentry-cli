@@ -220,6 +220,22 @@ func TestSpecsCarryManifestFilters(t *testing.T) {
 	}
 }
 
+// TestSpecsCarryManifestArgs: a server's args ride its spec beside the
+// launchable entry, which stays the store's binary alone, and a copy, so a
+// later change to the manifest value is not the plan's.
+func TestSpecsCarryManifestArgs(t *testing.T) {
+	servers := []manifest.MCPServer{{PyPI: "semgrep", Version: "1.182.0", Egress: []string{"semgrep.dev"}, Args: []string{"mcp"}}}
+	res := []Resolved{{Source: "pypi", Package: "semgrep", Version: "1.182.0", ID: "pypi-semgrep", BinName: "semgrep"}}
+	s := Specs(res, servers, policy.Images{NodeRuntime: "node:test", PythonRuntime: "python:test"})[0]
+	if !slices.Equal(s.Args, []string{"mcp"}) || !slices.Equal(s.Command, res[0].Command()) {
+		t.Fatalf("spec command %q args %q", s.Command, s.Args)
+	}
+	servers[0].Args[0] = "changed"
+	if s.Args[0] != "mcp" {
+		t.Fatal("the spec shares the manifest's args")
+	}
+}
+
 // PyPI installs are wheel-only and verify the pinned artifact against the
 // registry's advertised digests before installing; policy
 // can opt back into source distributions.

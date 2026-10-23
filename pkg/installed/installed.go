@@ -124,15 +124,18 @@ type ServerCapsSnapshot struct {
 	Egress  []string `yaml:"egress,omitempty" json:"egress,omitempty"`
 	Secrets []string `yaml:"secrets,omitempty" json:"secrets,omitempty"`
 	Tools   []string `yaml:"tools,omitempty" json:"tools,omitempty"`
+	// Args are the words its command starts with: a change to them starts
+	// a different command, which the diff asks about again.
+	Args []string `yaml:"args,omitempty" json:"args,omitempty"`
 }
 
 func serverCaps(srv manifest.MCPServer) ServerCapsSnapshot {
-	return ServerCapsSnapshot{Egress: slices.Clone(srv.Egress), Secrets: slices.Clone(srv.Secrets), Tools: slices.Clone(srv.Tools)}
+	return ServerCapsSnapshot{Egress: slices.Clone(srv.Egress), Secrets: slices.Clone(srv.Secrets), Tools: slices.Clone(srv.Tools), Args: slices.Clone(srv.Args)}
 }
 
 // grant sets a server's own grants to the recorded ones.
 func (c ServerCapsSnapshot) grant(srv *manifest.MCPServer) {
-	srv.Egress, srv.Secrets, srv.Tools = slices.Clone(c.Egress), slices.Clone(c.Secrets), slices.Clone(c.Tools)
+	srv.Egress, srv.Secrets, srv.Tools, srv.Args = slices.Clone(c.Egress), slices.Clone(c.Secrets), slices.Clone(c.Tools), slices.Clone(c.Args)
 }
 
 // Snapshot flattens a manifest capability block for storage.
@@ -508,8 +511,12 @@ func unrecordedServerLine(id string, own ServerCapsSnapshot) string {
 	if slices.Contains(own.Egress, "*") {
 		egress = "any host (UNRESTRICTED)"
 	}
-	return fmt.Sprintf("asks again for MCP server %s, whose own grants your last consent did not record: network egress to %s; secrets %s; tools %s",
+	line := fmt.Sprintf("asks again for MCP server %s, whose own grants your last consent did not record: network egress to %s; secrets %s; tools %s",
 		id, egress, list(own.Secrets, "none"), list(own.Tools, "every tool it serves"))
+	if len(own.Args) > 0 {
+		line += "; args " + strings.Join(own.Args, " ")
+	}
+	return line
 }
 
 // ArchiveWidenings reports what an archive's own manifest declares beyond the

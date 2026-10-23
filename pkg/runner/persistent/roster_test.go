@@ -668,3 +668,17 @@ func TestCheckOffAsksNothing(t *testing.T) {
 		}
 	}
 }
+
+// TestServerLineNamesItsArgs: a server started with arguments says so in
+// its consent sentence, as written, so changing them is agreed to again;
+// one with none reads as before.
+func TestServerLineNamesItsArgs(t *testing.T) {
+	srv := manifest.MCPServer{PyPI: "semgrep", Version: "1.182.0", Egress: []string{"semgrep.dev"}, Args: []string{"mcp"}}
+	if got, want := serverLine(srv), "Uses the MCP server pypi:semgrep@1.182.0 started with the arguments mcp, all its tools, reaching semgrep.dev alone"; got != want {
+		t.Fatalf("got  %q\nwant %q", got, want)
+	}
+	srv.Args = nil
+	if got := serverLine(srv); strings.Contains(got, "arguments") {
+		t.Fatalf("a server with no args names some: %q", got)
+	}
+}

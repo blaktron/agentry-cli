@@ -412,6 +412,9 @@ func serverName(srv manifest.MCPServer) string {
 // and the secrets it is given.
 func serverLine(srv manifest.MCPServer) string {
 	line := "Uses the MCP server " + serverName(srv)
+	if len(srv.Args) > 0 {
+		line += " started with the arguments " + strings.Join(srv.Args, " ")
+	}
 	if len(srv.Tools) > 0 {
 		line += ", its tools " + strings.Join(srv.Tools, ", ")
 	} else {

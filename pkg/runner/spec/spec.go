@@ -1039,6 +1039,10 @@ type MCPServerSpec struct {
 	// Command is the argv inside the runtime container (store-relative
 	// paths under MCPStorePrefix).
 	Command []string `json:"command"`
+	// Args are the manifest's arguments for the server, appended to
+	// Command in its catalog entry, each one argument as written: the
+	// entry is a list, never a shell line.
+	Args []string `json:"args,omitempty"`
 	// StoreSubdir is the server's directory name under PHServers.
 	StoreSubdir string `json:"storeSubdir"`
 	// Tools optionally restricts the server to these tool names.

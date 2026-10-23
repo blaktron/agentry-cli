@@ -166,3 +166,20 @@ func TestCapabilityLinesRemoteServer(t *testing.T) {
 		t.Error("a remote server must need confirmation")
 	}
 }
+
+// A package server's args are on its consent line as written: they choose
+// the command the server is.
+func TestCapabilityLinesDeclaredServerArgs(t *testing.T) {
+	caps := parseCaps(t, `capabilities:
+  mcpServers:
+    - pypi: semgrep
+      version: 1.182.0
+      args: [mcp]
+      egress: [semgrep.dev]
+`)
+	lines := capabilityLines(caps)
+	want := "mcpServer: pypi:semgrep@1.182.0 (egress: semgrep.dev) (args: mcp)"
+	if lines[len(lines)-1] != want {
+		t.Errorf("got  %q\nwant %q", lines[len(lines)-1], want)
+	}
+}
