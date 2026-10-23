@@ -59,6 +59,11 @@ func capabilityLinesSized(c manifest.Capabilities, sizes map[string]int64) []str
 		if len(srv.Secrets) > 0 {
 			line += " (secrets: " + renderList(srv.Secrets) + ")"
 		}
+		if len(srv.Args) > 0 {
+			// The words the server's command starts with, as written: they
+			// choose what the server is (a subcommand, a read-only switch).
+			line += " (args: " + strings.Join(srv.Args, " ") + ")"
+		}
 		if len(srv.Env) > 0 {
 			// Plain configuration, so the values are shown: they are what
 			// the server receives and what the person consents to.

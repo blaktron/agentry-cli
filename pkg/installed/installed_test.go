@@ -719,3 +719,46 @@ func TestARecordWithoutAServersGrantsAsksOnce(t *testing.T) {
 		t.Fatalf("a remote server read as unrecorded: %+v", d)
 	}
 }
+
+// TestAServersArgsAreInTheSnapshot: the args a consent agreed to are
+// recorded with the server's own grants and read back unchanged, and an
+// update at the same pin that changes them, drops one or adds one asks
+// again. A record that has none of the server's grants names its args in
+// the one line that asks again.
+func TestAServersArgsAreInTheSnapshot(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv(configdir.EnvVar, filepath.Join(home, "config"))
+	consented := Snapshot(osvServerCaps(t, "      egress: [a.example]\n      args: [mcp, --read-only]\n"))
+	if got := consented.MCPServerCaps[osvID].Args; !slices.Equal(got, []string{"mcp", "--read-only"}) {
+		t.Fatalf("snapshot args = %q", got)
+	}
+	key := Key{Registry: "https://reg.example", Namespace: "demo", Name: "w", Target: "runner", Dir: "/x"}
+	var st State
+	st.Upsert(key, "1.0.0", consented, true)
+	if err := Save(st); err != nil {
+		t.Fatal(err)
+	}
+	back, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := back.Find(key)
+	if rec == nil || !DiffCapabilities(rec.Capabilities, consented).Empty() {
+		t.Fatalf("the args did not survive installed.yaml: %+v", rec)
+	}
+	for _, next := range []string{
+		"      egress: [a.example]\n      args: [mcp]\n",
+		"      egress: [a.example]\n      args: [mcp, --read-only, --allow-write]\n",
+		"      egress: [a.example]\n",
+	} {
+		d := DiffCapabilities(rec.Capabilities, Snapshot(osvServerCaps(t, next)))
+		if !d.HasWidened() || !slices.ContainsFunc(d.Widened, func(w string) bool { return strings.Contains(w, "changes args of MCP server "+osvID) }) {
+			t.Fatalf("a change of args to %q was not asked about: %+v", next, d)
+		}
+	}
+	old := CapSnapshot{MCPServers: []string{osvID}}
+	d := DiffCapabilities(old, consented)
+	if len(d.Widened) != 1 || !strings.HasSuffix(d.Widened[0], "; args mcp --read-only") {
+		t.Fatalf("an unrecorded server's line does not name its args: %+v", d)
+	}
+}
