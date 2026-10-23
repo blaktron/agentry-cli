@@ -1112,12 +1112,10 @@ func (r RunSpec) argsFor(detach, podman bool, named []namedVolume) []string {
 	return append(args, r.Argv...)
 }
 
-// envPairs renders NAME=value pairs for the docker client's environment,
-// leaving out the names the client reads itself (args carries those).
 // podmanTmpfs is a --tmpfs value in podman's spelling. podman's CLI takes no
 // uid= or gid= option and refuses the mount; its U option gives the mount to
 // the container's user, so a mount given to exactly that user (uid and gid as
-// --user names them) is spelled U. Any other is left as it is.
+// --user names them, both given) is spelled U. Any other is left as it is.
 func podmanTmpfs(t, user string) string {
 	dest, opts, ok := strings.Cut(t, ":")
 	if !ok || user == "" {
@@ -1141,12 +1139,14 @@ func podmanTmpfs(t, user string) string {
 			kept = append(kept, o)
 		}
 	}
-	if !gotUID && !gotGID {
+	if !gotUID || !gotGID {
 		return t
 	}
 	return dest + ":" + strings.Join(append(kept, "U"), ",")
 }
 
+// envPairs renders NAME=value pairs for the docker client's environment,
+// leaving out the names the client reads itself (args carries those).
 func (r RunSpec) envPairs() []string { return r.envPairsFor(false) }
 
 // envPairsFor is envPairs for docker's CLI or podman's.

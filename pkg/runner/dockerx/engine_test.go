@@ -297,13 +297,13 @@ func TestPodmanArgvForSeveralNetworks(t *testing.T) {
 
 // podman's --tmpfs takes no uid= or gid=: a tmpfs given to the container's
 // own user is spelled U there, and docker keeps uid= and gid=. A mount given
-// to anyone else is left for podman to refuse rather than handed to the
-// wrong user.
+// to anyone else, or naming only one of the two, is left for podman to refuse
+// rather than handed to a user or group it did not name.
 func TestPodmanSpellsATmpfsForTheContainersUserU(t *testing.T) {
 	r := RunSpec{Name: "c", Image: "img", User: "1000:1000", ReadOnly: true,
-		Tmpfs: []string{"/home/b:rw,mode=0700,uid=1000,gid=1000", "/tmp:rw,mode=1777", "/other:rw,uid=0,gid=0"}}
+		Tmpfs: []string{"/home/b:rw,mode=0700,uid=1000,gid=1000", "/tmp:rw,mode=1777", "/other:rw,uid=0,gid=0", "/half:rw,uid=1000"}}
 	got := r.argsFor(true, true, nil)
-	for _, want := range []string{"/home/b:rw,mode=0700,U", "/tmp:rw,mode=1777", "/other:rw,uid=0,gid=0"} {
+	for _, want := range []string{"/home/b:rw,mode=0700,U", "/tmp:rw,mode=1777", "/other:rw,uid=0,gid=0", "/half:rw,uid=1000"} {
 		if !slices.Contains(got, want) {
 			t.Errorf("podman argv %q lacks %q", got, want)
 		}

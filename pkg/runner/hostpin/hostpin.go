@@ -87,6 +87,9 @@ func AllowHost(entry string) string {
 // the first names only its local stub.
 var resolvConfs = []string{"/etc/resolv.conf", "/run/systemd/resolve/resolv.conf"}
 
+// maxUpstreams is the most name servers a resolv.conf is read for.
+const maxUpstreams = 3
+
 // Upstreams are this machine's name servers as a container can reach them,
 // for a proxy that may reach any public host, whose names cannot be pinned
 // ahead: the IPv4 servers of the first file of resolvConfs that names any
@@ -106,7 +109,7 @@ func Upstreams() []string {
 }
 
 // nameservers are a resolv.conf's IPv4 name servers that are not loopback
-// or unspecified, at most three.
+// or unspecified, at most maxUpstreams.
 func nameservers(conf string) []string {
 	var rs []string
 	for _, line := range strings.Split(conf, "\n") {
@@ -118,7 +121,7 @@ func nameservers(conf string) []string {
 		if ip == nil || ip.IsLoopback() || ip.IsUnspecified() || slices.Contains(rs, ip.String()) {
 			continue
 		}
-		if rs = append(rs, ip.String()); len(rs) == 3 {
+		if rs = append(rs, ip.String()); len(rs) == maxUpstreams {
 			break
 		}
 	}

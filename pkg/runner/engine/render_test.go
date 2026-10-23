@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -188,7 +189,7 @@ func TestTheRenderProxyReadsTheMachinesNameServersOnPodman(t *testing.T) {
 	lookupUpstreams = func() []string { return []string{"192.168.1.1"} }
 	t.Cleanup(func() { lookupUpstreams = was })
 	podman := func(host string) *dockerx.Engine {
-		return &dockerx.Engine{Kind: dockerx.KindPodman, CLI: "podman", Rootless: true, DaemonHost: host, DaemonKernel: "7.1.13"}
+		return &dockerx.Engine{Kind: dockerx.KindPodman, CLI: "podman", Rootless: true, Endpoint: "unix:///run/user/1000/podman/podman.sock", DaemonHost: host, DaemonKernel: "7.1.13"}
 	}
 	plan := &spec.Plan{}
 	named := &spec.Plan{Docker: &spec.DockerSpec{Resolvers: []string{"9.9.9.9"}}}
@@ -210,5 +211,33 @@ func TestTheRenderProxyReadsTheMachinesNameServersOnPodman(t *testing.T) {
 	}
 	if got := string(renderResolvConfBody([]string{"192.168.1.1", "1.1.1.1"})); !strings.HasSuffix(got, "\nnameserver 192.168.1.1\nnameserver 1.1.1.1\n") {
 		t.Errorf("resolv.conf %q", got)
+	}
+
+	// The proxy reads the file in place of the engine's, and the renderer
+	// itself is given nothing of it.
+	prev := ensureBrowserImage
+	ensureBrowserImage = func(context.Context, dockerx.Client, string) error { return nil }
+	t.Cleanup(func() { ensureBrowserImage = prev })
+	cfg := t.TempDir()
+	f := &dockerx.Fake{EngineInfo: podman("box")}
+	p := Params{Plan: &spec.Plan{
+		Capabilities: spec.CapSummary{WebTools: true, WebRender: true},
+		Render:       &spec.RenderSpec{Image: "agentry-browser:test"},
+		Proxy:        spec.ProxySpec{Image: "agentry-runner:test"},
+	}, Stderr: io.Discard}
+	rd := &runDirs{cfg: cfg, receiptsDir: t.TempDir()}
+	td := &teardown{d: f, stderr: io.Discard, runID: "run1"}
+	env := &receipt.Envelope{CapabilitiesEnforced: map[string]string{}}
+	if err := prepareRender(context.Background(), f, p, rd, td, "run1", env); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(td.run)
+	proxy, ok := f.FindRun("-render-proxy")
+	conf := filepath.Join(cfg, renderResolvConf)
+	if !ok || !slices.Contains(proxy.Mounts, dockerx.Mount{Source: conf, Target: "/etc/resolv.conf", ReadOnly: true, Relabel: true}) {
+		t.Fatalf("the render proxy's mounts: %+v (found %v)", proxy.Mounts, ok)
+	}
+	if b, err := os.ReadFile(conf); err != nil || !strings.Contains(string(b), "nameserver 192.168.1.1\n") {
+		t.Errorf("the proxy's resolv.conf: %q %v", b, err)
 	}
 }

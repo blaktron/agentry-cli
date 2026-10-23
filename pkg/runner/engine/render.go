@@ -410,8 +410,7 @@ func renderProxyResolvers(ctx context.Context, d dockerx.Client, p Params) []str
 	if p.Plan.Docker != nil && len(p.Plan.Docker.Resolvers) > 0 {
 		return p.Plan.Docker.Resolvers
 	}
-	h := thisHost()
-	if h.goos != "linux" || e.DaemonHost != h.hostname || e.DaemonKernel != h.kernel {
+	if !thisHost().servesThisMachine(e) {
 		return nil
 	}
 	return lookupUpstreams()

@@ -59,6 +59,20 @@ var thisHost = func() hostFacts {
 	return hostFacts{goos: runtime.GOOS, hostname: h, kernel: dockerx.HostKernel(), inContainer: inContainer()}
 }
 
+// sameKernel says the engine's daemon, reached at an endpoint of scheme,
+// runs on this Linux machine's own kernel.
+func (h hostFacts) sameKernel(e dockerx.Engine, scheme string) bool {
+	return h.goos == "linux" && scheme == dockerx.SchemeUnix && h.kernel != "" && e.DaemonKernel == h.kernel
+}
+
+// servesThisMachine says the engine's daemon runs on this machine, as this
+// process sees it from outside any container: on its kernel, at a Unix
+// socket, reporting its hostname.
+func (h hostFacts) servesThisMachine(e dockerx.Engine) bool {
+	scheme, _, err := dockerx.ParseEndpoint(e.Endpoint)
+	return err == nil && !h.inContainer && h.sameKernel(e, scheme) && e.DaemonHost == h.hostname
+}
+
 // inContainer says whether this process runs in a container, by the marker
 // files docker and podman put in every container's root.
 func inContainer() bool {
@@ -90,8 +104,7 @@ func placeFilter(e dockerx.Engine, h hostFacts, override string) (filterPlacemen
 				"point the docker CLI at an engine on this machine (unset DOCKER_HOST, or `docker context use` a local context)", e.Endpoint))
 	}
 	p := filterPlacement{engine: e, upstream: addr, mountSource: DockerSocket}
-	sameKernel := h.kernel != "" && e.DaemonKernel == h.kernel
-	local := h.goos == "linux" && scheme == dockerx.SchemeUnix && sameKernel && (e.DaemonHost == h.hostname || h.inContainer)
+	local := h.sameKernel(e, scheme) && (e.DaemonHost == h.hostname || h.inContainer)
 	if local {
 		p.mountSource = addr
 	}
