@@ -129,6 +129,16 @@ type agentState struct {
 	Roster      persistent.Roster  `json:"roster,omitempty"`
 	// Tasks counts an agent's tasks, for one that keeps time.
 	Tasks *int `json:"tasks,omitempty"`
+	// Suggested are the servers the agent suggests and does not have.
+	Suggested []suggestedServer `json:"suggested,omitempty"`
+}
+
+// suggestedServer is a server an agent suggests, as show lists it.
+type suggestedServer struct {
+	Key  string `json:"key"`
+	Name string `json:"name"`
+	ID   string `json:"id"`
+	Line string `json:"line"`
 }
 
 type agentVolumes struct {
@@ -158,6 +168,9 @@ func readAgentState(ctx context.Context, home string, a persistent.Agent) (agent
 	st.Config = &cfg
 	st.Share, _ = persistent.ShareFolder(a, cfg)
 	st.Roster = persistent.BuildRosterUnder(a, cfg, nil, persistent.HomeMalwareCheck(home))
+	for _, s := range persistent.Suggestions(a, cfg) {
+		st.Suggested = append(st.Suggested, suggestedServer{Key: s.Key, Name: s.Name, ID: persistent.ServerEntryID(s.Server), Line: s.Note})
+	}
 	held, holder := persistent.Held(home, a.Name)
 	switch {
 	case held:
@@ -340,6 +353,12 @@ func printAgentState(w io.Writer, st agentState) {
 	if len(st.Roster) > 0 {
 		_, _ = fmt.Fprintln(w, "  roster:")
 		printRoster(w, st.Roster)
+	}
+	if len(st.Suggested) > 0 {
+		_, _ = fmt.Fprintf(w, "  suggested servers (agentry agent configure %s --add-suggested <key>):\n", st.Agent)
+		for _, s := range st.Suggested {
+			_, _ = fmt.Fprintf(w, "    %s\t%s: %s\n", s.Key, s.Name, safeTerminalText(s.Line, 300))
+		}
 	}
 	if u := st.Usage; u != nil {
 		_, _ = fmt.Fprintf(w, "  lifetime:   %d segment(s) ended, %d turn(s), %d token(s)\n", u.Segments, u.UserTurns, u.InputTokens+u.OutputTokens+u.TotalTokens)

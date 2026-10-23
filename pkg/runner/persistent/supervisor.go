@@ -147,6 +147,9 @@ type Supervisor struct {
 	bgCtx     context.Context
 	bgCancel  context.CancelFunc
 	installWG sync.WaitGroup
+	// osvRefreshing says OSV's databases are being brought up to date for
+	// the Coding agent's dependency scan, in the background like an install.
+	osvRefreshing bool
 
 	// tasksMu serialises the supervisor's writes of the agent's tasks.
 	// hbCancel and hbDone end and wait for the heartbeat; missed names the
@@ -259,6 +262,9 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 	grants, applied, packsDone, err := Apply(ctx, home, a, cfg, roster, s.opts.Packs, ready, keys)
 	if err != nil {
 		return err
+	}
+	if c := grants.Coder; c != nil && c.DependencyScan {
+		s.refreshDependencyDB()
 	}
 	// A server Apply left out is not given, and the roster this segment's
 	// envelope records and its frames are told from says so.
@@ -626,9 +632,9 @@ func (s *Supervisor) withoutNewServers(ctx context.Context, err error) error {
 	s.mu.Unlock()
 	r := BuildRoster(a, cfg, nil)
 	var added []manifest.MCPServer
-	for _, srv := range cfg.Servers {
-		id := ServerEntryID(srv)
-		if e, ok := r.Entry(id); ok && e.On && !slices.Contains(had, id) && serverReady(home, a.Name, cfg, srv) {
+	for _, as := range agentServers(a, cfg) {
+		srv, id := as.Server, as.ID()
+		if e, ok := r.Entry(id); ok && e.On && !slices.Contains(had, id) && serverReady(home, a, cfg, srv) {
 			added = append(added, srv)
 		}
 	}
@@ -753,15 +759,15 @@ func (s *Supervisor) Roster() Roster {
 	// installed, or is installed and joins at the next turn.
 	installing := s.installing()
 	byID := map[string]manifest.MCPServer{}
-	for _, srv := range cfg.Servers {
-		byID[ServerEntryID(srv)] = srv
+	for _, as := range agentServers(s.opts.Agent, cfg) {
+		byID[as.ID()] = as.Server
 	}
 	for i, e := range r {
 		if e.Kind != KindServer || !e.On || e.State == StateFailed || slices.Contains(applied.On, e.ID) {
 			continue
 		}
 		r[i].State = StatePending
-		if installing[e.ID] || !serverReady(s.opts.Home, s.opts.Agent.Name, cfg, byID[e.ID]) {
+		if installing[e.ID] || !serverReady(s.opts.Home, s.opts.Agent, cfg, byID[e.ID]) {
 			r[i].State = StateInstalling
 		}
 	}

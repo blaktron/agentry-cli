@@ -141,6 +141,15 @@ func (rd *runDirs) mirrorRoot() []string {
 	return []string{rd.gatewayPath(rd.shareMirror.dir)}
 }
 
+// dependencyDBRoot is the folder of OSV's databases in the gateway's
+// spelling, as a root: none when the run has no dependency scan.
+func (rd *runDirs) dependencyDBRoot() []string {
+	if rd.dependencyDB == "" {
+		return nil
+	}
+	return []string{rd.gatewayPath(rd.dependencyDB)}
+}
+
 // skillsRoot is the agent's skills folder in the gateway's spelling, as a
 // root: none when the run has no skills.
 func (rd *runDirs) skillsRoot() []string {
@@ -225,7 +234,7 @@ func filterConfig(rd *runDirs, runID string, gwEnv map[string]string, lim policy
 		// its mirror and the share outbox reach no
 		// container but the tools server that joins a network.
 		ToolsWritableRoots: rd.shareRoot(),
-		ToolsOnlyRoots:     slices.Concat(toolsOnlyShare(rd, plan), rd.skillsRoot()),
+		ToolsOnlyRoots:     slices.Concat(toolsOnlyShare(rd, plan), rd.skillsRoot(), rd.dependencyDBRoot()),
 		OfflineRoots:       slices.Concat(rd.shareRoot(), rd.mirrorRoot(), rd.shareOutRoot()),
 		HeldRoots:          heldCfg,
 		SharedNetworks:     shared,

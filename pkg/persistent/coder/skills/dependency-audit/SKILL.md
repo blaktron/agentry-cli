@@ -12,7 +12,9 @@ license: MIT
    (`go.mod`/`go.sum`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`,
    `requirements*.txt`, `poetry.lock`, `Cargo.lock`, `Gemfile.lock` and so on).
 2. Scan them with the tool you have, in this order:
-   - a dependency-scan tool among your tools, if one is offered;
+   - `dependency_scan`, if it is among your tools: OSV-Scanner offline,
+     against OSV's databases on the person's computer. An error from it
+     means the scan is incomplete, not that the project is clean;
    - `osv-scanner scan source -r .` if `osv-scanner` is on your PATH;
    - the ecosystem's own: `npm audit`, `pnpm audit`, `pip-audit`,
      `cargo audit`, `govulncheck ./...`, when installed.

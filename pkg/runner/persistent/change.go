@@ -190,6 +190,9 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 		if err := checkServer(*srv); err != nil {
 			return false, err
 		}
+		if err := checkPersonServer(a, *srv); err != nil {
+			return false, err
+		}
 		id := ServerEntryID(*srv)
 		if slices.ContainsFunc(next.Servers, func(s manifest.MCPServer) bool { return ServerEntryID(s) == id }) {
 			return false, fmt.Errorf("the %s agent already has the server %s; remove it first to change it", a.Name, serverName(*srv))
@@ -204,6 +207,9 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 			id = serverPrefix + id
 		}
 		i := slices.IndexFunc(next.Servers, func(s manifest.MCPServer) bool { return ServerEntryID(s) == id })
+		if o, ok := offeredServer(a, id); ok && i < 0 {
+			return false, fmt.Errorf("%s comes with the %s agent and cannot be removed: switch it off (agentry agent grant %s %s off)", o.Name, a.Name, a.Name, id)
+		}
 		if i < 0 {
 			return false, fmt.Errorf("the %s agent has no server %s", a.Name, strings.TrimPrefix(id, serverPrefix))
 		}
@@ -401,7 +407,7 @@ func switchServerShare(a Agent, c *Config, sw Switch) error {
 // A server counts once it is ready (serverReady), so a change that adds a
 // server restarts nothing, and the install that makes it ready does.
 func grantsKey(home string, a Agent, c Config) string {
-	return grantsKeyWith(a, c, func(srv manifest.MCPServer) bool { return serverReady(home, a.Name, c, srv) })
+	return grantsKeyWith(a, c, func(srv manifest.MCPServer) bool { return serverReady(home, a, c, srv) })
 }
 
 // grantsKeyWith is grantsKey with ready saying which servers count: a
@@ -418,8 +424,9 @@ func grantsKeyWith(a Agent, c Config, ready func(manifest.MCPServer) bool) strin
 		Accounts  []string
 	}
 	counted := map[string]bool{}
-	for _, s := range c.Servers {
-		counted[ServerEntryID(s)] = ready(s)
+	servers := agentServers(a, c)
+	for _, s := range servers {
+		counted[s.ID()] = ready(s.Server)
 	}
 	k := key{}
 	for _, e := range r {
@@ -439,9 +446,9 @@ func grantsKeyWith(a Agent, c Config, ready func(manifest.MCPServer) bool) strin
 			k.Skills = append(k.Skills, s.Name+"="+s.Digest)
 		}
 	}
-	for _, s := range c.Servers {
-		if e, ok := r.Entry(ServerEntryID(s)); ok && e.On && counted[e.ID] {
-			k.Servers = append(k.Servers, s)
+	for _, s := range servers {
+		if e, ok := r.Entry(s.ID()); ok && e.On && counted[e.ID] {
+			k.Servers = append(k.Servers, givenServer(c, s))
 		}
 	}
 	// A stored secret counts on or off, since one that is off is withheld,

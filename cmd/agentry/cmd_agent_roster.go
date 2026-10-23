@@ -133,6 +133,9 @@ func printRoster(w io.Writer, r persistent.Roster) {
 		if e.State == persistent.StateFailed && e.Reason != "" {
 			_, _ = fmt.Fprintf(tw, "  \t\t\twhy it failed: %s\n", safeTerminalText(e.Reason, 300))
 		}
+		if e.State == persistent.StateNeedsSetUp && e.Reason != "" {
+			_, _ = fmt.Fprintf(tw, "  \t\t\twaiting: %s\n", safeTerminalText(e.Reason, 300))
+		}
 		if e.ShareSwitch != "" {
 			sees := "no"
 			if e.Share {
@@ -217,7 +220,7 @@ func newAgentConfigureCmd() *cobra.Command {
 		devHost, devKey, devPassphrase, devPassword, policyPath, addPort, removePort           string
 		yes, allowVulnerable, noDevHost                                                        bool
 		acct                                                                                   accountFlags
-		noAccount                                                                              string
+		noAccount, addSuggested                                                                string
 	)
 	cmd := &cobra.Command{
 		Use:   "configure <name>",
@@ -243,6 +246,11 @@ func newAgentConfigureCmd() *cobra.Command {
 			"  agentry agent configure assistant --share ~/Documents/assistant\n" +
 			"  agentry agent configure assistant --knowledge my-notes\n" +
 			"  agentry agent configure assistant --add-server server.yaml\n\n" +
+			"--add-suggested adds a server the agent suggests (agentry agent show lists\n" +
+			"them) as one of your own, the same way. The servers an agent comes with\n" +
+			"are entries of its roster from the start, switched with agentry agent\n" +
+			"grant; one that needs a key or an account waits, off, until it has one.\n\n" +
+			"  agentry agent configure assistant --add-suggested weather\n\n" +
 			"--dev-host gives the Coding agent a dev server to deploy to over SSH. It is\n" +
 			"readied here: its host key is shown for you to accept, then pinned, and its\n" +
 			"sign-in (--dev-key, --dev-password, or a prompt) is saved in your system\n" +
@@ -296,6 +304,19 @@ func newAgentConfigureCmd() *cobra.Command {
 				srv, err := readServerFile(addServer)
 				if err != nil {
 					return engine.Classify(engine.ExitUsage, fmt.Errorf("--add-server: %w", err))
+				}
+				if err := checkAgentServerAdvisories(cmd, srv, allowVulnerable); err != nil {
+					return err
+				}
+				ch.AddServer, set = &srv, set+1
+			}
+			if addSuggested != "" {
+				if addServer != "" {
+					return engine.Classify(engine.ExitUsage, errors.New("--add-server and --add-suggested each add one server: pass one"))
+				}
+				srv, err := persistent.Suggested(a, addSuggested)
+				if err != nil {
+					return engine.Classify(engine.ExitUsage, fmt.Errorf("--add-suggested: %w", err))
 				}
 				if err := checkAgentServerAdvisories(cmd, srv, allowVulnerable); err != nil {
 					return err
@@ -410,6 +431,7 @@ func newAgentConfigureCmd() *cobra.Command {
 	f.StringVar(&runOnStart, "run-on-start", "", "true or false: start it when Agentry Desktop starts")
 	f.StringVar(&addServer, "add-server", "", "a file holding an MCP server to add, in a manifest's shape")
 	f.StringVar(&removeServer, "remove-server", "", "the roster id of a server to remove (server:…)")
+	f.StringVar(&addSuggested, "add-suggested", "", "add a server the agent suggests, by its key, as your own (agentry agent show lists them)")
 	f.StringVar(&addPack, "knowledge", "", "a knowledge pack kept on this computer for it to search")
 	f.StringVar(&removePack, "no-knowledge", "", "a knowledge pack to take away")
 	f.StringVar(&addPort, "port", "", "publish one of the Coding agent's ports on this computer, as name=number (web=3000)")

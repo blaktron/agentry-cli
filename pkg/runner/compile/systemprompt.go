@@ -230,6 +230,9 @@ You have no shell, filesystem or network of your own. Your tools come only from 
 		if len(co.Accounts) > 0 {
 			b.WriteString("- **Git host accounts.** " + accountsPrompt(co.Accounts) + "\n")
 		}
+		if co.DependencyScan {
+			b.WriteString("- **Dependency scan.** dependency_scan checks a project's dependencies for known vulnerabilities with OSV-Scanner, offline. Use it rather than running osv-scanner yourself, and report what it finds with the fixing versions; an error from it means the scan is incomplete, never that the project is clean.\n")
+		}
 	} else if len(c.ExecCommands) > 0 {
 		fmt.Fprintf(b, "- **Commands.** run_command can call only these commands, each with a time limit and its output capped: %s. Its own description says how they run.\n", strings.Join(c.ExecCommands, ", "))
 	} else {

@@ -248,6 +248,9 @@ type Exec struct {
 	// repository whose remote is on that host. Each token's variable is
 	// also in SecretEnv, so it is masked as a stored secret is.
 	Accounts []GitAccount `json:"accounts,omitempty"`
+	// DependencyScan under Any grants dependency_scan, over OSV's
+	// databases mounted at its DBDir.
+	DependencyScan *DependencyScan `json:"dependencyScan,omitempty"`
 }
 
 // GitAccount is one of the Coding agent's git host accounts.
@@ -365,6 +368,9 @@ func (s *Spec) GrantedTools() []string {
 	}
 	if s.Exec.Any {
 		names = append(names, ToolBackgroundOutput, ToolStopBackground)
+		if s.Exec.DependencyScan != nil && s.Exec.DependencyScan.DBDir != "" {
+			names = append(names, ToolDependencyScan)
+		}
 	}
 	if s.InputsDir != "" {
 		names = append(names, ToolListInputs, ToolReadInput)

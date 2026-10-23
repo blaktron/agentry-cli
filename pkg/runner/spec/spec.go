@@ -94,6 +94,11 @@ const (
 	// on, mounted read-only at AgentRoot/AgentSkillsDir into the tools
 	// server alone; only a persistent plan with a skill on names it.
 	PHSkills = "@@RUN_SKILLS@@"
+	// PHDependencyDB is the host path of OSV's databases the Coding agent's
+	// dependency scan reads, kept under the runner home and mounted
+	// read-only at DependencyDBMount into the tools server alone; only a
+	// plan whose Coding agent has its dependency scan on names it.
+	PHDependencyDB = "@@RUN_DEPENDENCY_DB@@"
 	// PHData is a persistent agent's data volume, by name, mounted at
 	// AgentRoot/AgentDataDir; only a persistent plan names it.
 	PHData = "@@RUN_DATA@@"
@@ -301,6 +306,9 @@ const (
 	// its own kept between its segments: a wiki the agent writes, with the
 	// share as its sources.
 	AgentMemoryDir = "memory"
+	// DependencyDBMount is where the Coding agent's tools server sees
+	// OSV's databases (PHDependencyDB), read-only.
+	DependencyDBMount = "/run/agentry/osv-db"
 	// ShareChecksMount is the folder a persistent agent's tools server
 	// reads the share's malware verdicts from, read-only, rewritten by the
 	// runner before each turn (ShareChecksFile).
@@ -541,6 +549,9 @@ type CoderGrant struct {
 	// set in the environment of the programs run_command runs (with
 	// Commands); their values are the segment's, never the plan's.
 	Secrets []string `json:"secrets,omitempty"`
+	// DependencyScan: dependency_scan, OSV-Scanner offline over OSV's
+	// databases on the person's computer (with Commands).
+	DependencyScan bool `json:"dependencyScan,omitempty"`
 	// Accounts: the person's git host accounts its roster has on, whose
 	// tokens the programs run_command runs sign in with (with Commands);
 	// the tokens are the segment's, never the plan's.

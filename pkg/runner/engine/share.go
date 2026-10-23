@@ -78,6 +78,9 @@ func preparePersistentFolders(p Params, rd *runDirs) error {
 	if err := prepareSkills(p, rd); err != nil {
 		return err
 	}
+	if err := prepareDependencyDB(p, rd); err != nil {
+		return err
+	}
 	if af.Share != (p.Persistent.Share != "") {
 		return Classify(ExitCompile, errors.New("the segment's share folder and its plan disagree: recompile"))
 	}
@@ -110,6 +113,38 @@ func preparePersistentFolders(p Params, rd *runDirs) error {
 		return err
 	}
 	return prepareShareOut(p, rd)
+}
+
+// prepareDependencyDB holds a segment to its plan's dependency scan: OSV's
+// databases are given exactly when the plan scans, as a real folder, not
+// reached through a link, labelled for the tools server on an SELinux host.
+func prepareDependencyDB(p Params, rd *runDirs) error {
+	c := p.Plan.Capabilities.Coder
+	want := c != nil && c.Commands && c.DependencyScan
+	dir := p.Persistent.DependencyDB
+	switch {
+	case want != (dir != ""):
+		return Classify(ExitCompile, errors.New("the segment's dependency databases and its plan disagree: recompile"))
+	case !want:
+		return nil
+	}
+	if !filepath.IsAbs(dir) || filepath.Clean(dir) != dir {
+		return Classify(ExitCLI, fmt.Errorf("the dependency databases' folder %s is not a clean absolute path", dir))
+	}
+	fi, err := os.Lstat(dir)
+	if err != nil || !fi.IsDir() {
+		return Classify(ExitCLI, fmt.Errorf("the dependency databases' folder %s is not a folder", dir))
+	}
+	if err := gatewayCanMount(dir, gatewayOS); err != nil {
+		return Classify(ExitCLI, fmt.Errorf("the dependency databases' folder %s: %w", dir, err))
+	}
+	stderr := p.Stderr
+	if stderr == nil {
+		stderr = io.Discard
+	}
+	relabelShared(context.Background(), stderr, dir)
+	rd.dependencyDB = dir
+	return nil
 }
 
 // prepareSkills holds a segment to its plan's skills: the folder is given

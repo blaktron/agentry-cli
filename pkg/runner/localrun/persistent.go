@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"maps"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/persistent/assistant"
 	"github.com/blaktron/agentry-cli/pkg/persistent/coder"
 	mainagent "github.com/blaktron/agentry-cli/pkg/persistent/main"
+	"github.com/blaktron/agentry-cli/pkg/persistent/offer"
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/connection"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
@@ -24,6 +26,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/intake"
 	"github.com/blaktron/agentry-cli/pkg/runner/mcpinstall"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelsignin"
+	"github.com/blaktron/agentry-cli/pkg/runner/osvdb"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/skill"
@@ -129,6 +132,30 @@ func (b Builtin) readSkills() []BuiltinSkill {
 // keeps a heartbeat that fires the tasks it registers.
 func (b Builtin) KeepsTime() bool { return b.keepsTime }
 
+// OfferedServers are the MCP servers the persistent agent comes with, each
+// an entry of its roster: its package's own (offer.Server).
+func (b Builtin) OfferedServers() []offer.Server {
+	switch {
+	case b.persistent && b.namespace == assistant.Namespace && b.name == assistant.Name:
+		return assistant.OfferedServers()
+	case b.persistent && b.namespace == coder.Namespace && b.name == coder.Name:
+		return coder.OfferedServers()
+	}
+	return nil
+}
+
+// SuggestedServers are the MCP servers the persistent agent suggests: not
+// on its roster until the person adds one as their own.
+func (b Builtin) SuggestedServers() []offer.Suggestion {
+	switch {
+	case b.persistent && b.namespace == assistant.Namespace && b.name == assistant.Name:
+		return assistant.SuggestedServers()
+	case b.persistent && b.namespace == coder.Namespace && b.name == coder.Name:
+		return coder.SuggestedServers()
+	}
+	return nil
+}
+
 // KeepsSecrets says the persistent agent keeps secrets the person stores for
 // it (Grants.Secrets).
 func (b Builtin) KeepsSecrets() bool { return b.keepsSecrets }
@@ -220,6 +247,10 @@ type Grants struct {
 	// given an empty value, never one from the policy's secret source.
 	Secrets         map[string]string
 	WithheldSecrets []string
+	// ServerSecrets fill the secret slots of the offered servers that sign
+	// in with a git host account, by the slot's name: given to those
+	// servers alone, never to the Coding agent's programs.
+	ServerSecrets map[string]string
 	// Accounts are the Coding agent's git host accounts the roster has on,
 	// each with its token, given to its programs with its commands on.
 	Accounts []Account
@@ -308,6 +339,14 @@ func (s Segment) Start(ctx context.Context, d dockerx.Client) (engine.Persistent
 	plan, planDir := sp.Plan, sp.Dir
 	seg := s.Persistent
 	seg.Share, seg.AppLink, seg.Skills = s.Grants.Share, s.Grants.AppLink, s.Grants.SkillsDir
+	// The Coding agent's dependency scan reads OSV's databases under the
+	// runner home, which its supervisor keeps (osvdb.Ensure).
+	if g := s.Grants.Coder; g != nil && g.Commands && g.DependencyScan {
+		seg.DependencyDB = osvdb.Dir(s.Home)
+		if err := os.MkdirAll(seg.DependencyDB, 0o755); err != nil { //nolint:gosec // read by the scan, which runs as the person
+			return nil, engine.Classify(engine.ExitCLI, fmt.Errorf("the dependency databases' folder: %w", err))
+		}
+	}
 	var answers *intake.Answers
 	if h := s.Grants.DevHost; h != nil {
 		answers = &intake.Answers{Hosts: map[string]*targethost.Host{spec.DevHostID: h}}
@@ -321,7 +360,7 @@ func (s Segment) Start(ctx context.Context, d dockerx.Client) (engine.Persistent
 		CheckWorkspace: builtinCopyCheck(meta.Digest),
 		RunID:          s.RunID, Stderr: logw, OnStage: s.OnStage,
 		ModelSignIn: signIn, RenewModelSignIn: renewSignIn,
-		SecretOverrides: maps.Clone(s.Grants.Secrets), WithheldSecrets: slices.Clone(s.Grants.WithheldSecrets),
+		SecretOverrides: s.secretOverrides(), WithheldSecrets: slices.Clone(s.Grants.WithheldSecrets),
 		AccountTokens: s.accountTokens(),
 		Persistent:    &seg,
 	})
@@ -384,6 +423,17 @@ func (s Segment) coderGrant() (*spec.CoderGrant, error) {
 		out.Accounts = append(out.Accounts, acct)
 	}
 	return &out, nil
+}
+
+// secretOverrides are the values of the segment's declared secrets: the
+// stored secrets that are on, and the offered servers' account tokens.
+func (s Segment) secretOverrides() map[string]string {
+	out := maps.Clone(s.Grants.Secrets)
+	if len(s.Grants.ServerSecrets) > 0 && out == nil {
+		out = map[string]string{}
+	}
+	maps.Copy(out, s.Grants.ServerSecrets)
+	return out
 }
 
 // sortedAccounts are the segment's git host accounts by host.

@@ -221,3 +221,42 @@ func TestAnAccountsTokenIsMaskedEverywhere(t *testing.T) {
 		t.Fatalf("the segment wrote %d files", seen)
 	}
 }
+
+// TestADependencyDatabaseIsGivenExactlyWhenThePlanScans: the folder of
+// OSV's databases is mounted for a plan whose Coding agent scans, as a real
+// folder, and refused for one that does not, or given through a link.
+func TestADependencyDatabaseIsGivenExactlyWhenThePlanScans(t *testing.T) {
+	p, _ := fixture(t)
+	p.Persistent = &PersistentSegment{}
+	dir := t.TempDir()
+	scans := &spec.CoderGrant{Commands: true, DependencyScan: true}
+	for name, tc := range map[string]struct {
+		grant  *spec.CoderGrant
+		dir    string
+		wantOK bool
+	}{
+		"a scan with its folder":    {scans, dir, true},
+		"a scan with none":          {scans, "", false},
+		"a folder with no scan":     {&spec.CoderGrant{Commands: true}, dir, false},
+		"neither":                   {nil, "", true},
+		"a relative folder":         {scans, "osv", false},
+		"a file":                    {scans, filepath.Join(dir, "f"), false},
+		"its programs off, no scan": {&spec.CoderGrant{DependencyScan: true}, "", true},
+	} {
+		if name == "a file" {
+			if err := os.WriteFile(tc.dir, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		p.Plan.Capabilities.Coder = tc.grant
+		p.Persistent.DependencyDB = tc.dir
+		rd := &runDirs{}
+		err := prepareDependencyDB(p, rd)
+		if (err == nil) != tc.wantOK {
+			t.Errorf("%s: %v", name, err)
+		}
+		if err == nil && rd.dependencyDB != tc.dir {
+			t.Errorf("%s: mounted %q", name, rd.dependencyDB)
+		}
+	}
+}
