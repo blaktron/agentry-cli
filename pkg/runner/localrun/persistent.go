@@ -133,13 +133,14 @@ func (b Builtin) readSkills() []BuiltinSkill {
 func (b Builtin) KeepsTime() bool { return b.keepsTime }
 
 // OfferedServers are the MCP servers the persistent agent comes with, each
-// an entry of its roster: its package's own (offer.Server).
-func (b Builtin) OfferedServers() []offer.Server {
+// an entry of its roster: its package's own (offer.Server), some drawn for
+// the agent's git host accounts (hosts).
+func (b Builtin) OfferedServers(hosts []offer.GitHost) []offer.Server {
 	switch {
 	case b.persistent && b.namespace == assistant.Namespace && b.name == assistant.Name:
 		return assistant.OfferedServers()
 	case b.persistent && b.namespace == coder.Namespace && b.name == coder.Name:
-		return coder.OfferedServers()
+		return coder.OfferedServers(hosts)
 	}
 	return nil
 }

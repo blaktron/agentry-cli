@@ -43,16 +43,34 @@ type agentServer struct {
 // ID is the server's roster id.
 func (s agentServer) ID() string { return ServerEntryID(s.Server) }
 
-// offersOf are the servers the agent's built-in offers: its own, but in a
-// test.
-var offersOf = func(a Agent) []offer.Server { return a.Builtin.OfferedServers() }
+// offersOf are the servers the agent's built-in offers for its config: its
+// own, but in a test.
+var offersOf = func(a Agent, c Config) []offer.Server { return builtinOffers(a, c) }
+
+// builtinOffers are the built-in's offers for the agent's accounts, less one
+// drawn for an account whose address a QuickAgent could not declare (an
+// address, an internal name): it is never on the roster.
+func builtinOffers(a Agent, c Config) []offer.Server {
+	hosts := make([]offer.GitHost, 0, len(c.Accounts))
+	for _, g := range c.Accounts {
+		hosts = append(hosts, offer.GitHost{Host: g.Host, Kind: string(g.Kind)})
+	}
+	var out []offer.Server
+	for _, o := range a.Builtin.OfferedServers(hosts) {
+		if o.Account != "" && checkServer(o.Server) != nil {
+			continue
+		}
+		out = append(out, o)
+	}
+	return out
+}
 
 // agentServers are the agent's servers: the built-in's offers, then the
 // person's, a person's server that is one of the offers left out.
 func agentServers(a Agent, c Config) []agentServer {
 	var out []agentServer
 	offered := map[string]bool{}
-	for _, o := range offersOf(a) {
+	for _, o := range offersOf(a, c) {
 		out = append(out, agentServer{Server: o.Server, Offered: &o})
 		offered[ServerEntryID(o.Server)] = true
 	}
@@ -64,9 +82,10 @@ func agentServers(a Agent, c Config) []agentServer {
 	return out
 }
 
-// offeredServer is the agent's offered server with roster id id.
-func offeredServer(a Agent, id string) (offer.Server, bool) {
-	for _, o := range offersOf(a) {
+// offeredServer is the agent's offered server with roster id id, for its
+// config c.
+func offeredServer(a Agent, c Config, id string) (offer.Server, bool) {
+	for _, o := range offersOf(a, c) {
 		if ServerEntryID(o.Server) == id {
 			return o, true
 		}
@@ -172,8 +191,8 @@ func serverTokens(keys Secrets, c Config, given []agentServer) (map[string]strin
 // offers, or that declares a secret beginning AGENTRY_: the runner's own
 // names, the offered servers' account slots (offer.AccountSecretPrefix)
 // among them.
-func checkPersonServer(a Agent, srv manifest.MCPServer) error {
-	if o, ok := offeredServer(a, ServerEntryID(srv)); ok {
+func checkPersonServer(a Agent, c Config, srv manifest.MCPServer) error {
+	if o, ok := offeredServer(a, c, ServerEntryID(srv)); ok {
 		return fmt.Errorf("the %s agent comes with %s: switch it on (agentry agent grant %s %s on)", a.Name, o.Name, a.Name, ServerEntryID(srv))
 	}
 	for _, n := range srv.Secrets {

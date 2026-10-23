@@ -83,8 +83,10 @@ agree to each part:
 - **MCP servers it comes with**, each an entry of its roster that you switch
   on and off: library documentation from Context7
   (`@upstash/context7-mcp`), on until you switch it off; GitHub's own server,
-  read-only unless you also switch on its changes, and GitLab's, each off
-  until you give it an account on that host, whose token signs it in; and web
+  read-only unless you also switch on its changes, and GitLab's, for
+  gitlab.com or the self-managed GitLab you give it an account on (from
+  GitLab 19.2, once its administrator allows MCP access), each off until you
+  give it an account on that host, whose token signs it in; and web
   search with Brave, off until you store your own Brave Search API key for
   it. Each reaches only its provider's host. It also suggests a server you
   can add as your own: code scanning with Semgrep (the `semgrep` package's
