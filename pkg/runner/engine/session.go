@@ -251,6 +251,9 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	if err := writeConnectionFiles(p, rd, secrets); err != nil {
 		return fail(err)
 	}
+	if err := ensureImageServers(ctx, d, p); err != nil {
+		return fail(err)
+	}
 	if err := prepareBrowser(ctx, d, p, rd, td, env, secrets); err != nil {
 		return fail(err)
 	}
@@ -748,6 +751,14 @@ func ensurePersistentVolumes(ctx context.Context, d dockerx.Client, p Params) er
 		if err := copyPersistentVolume(ctx, d, p, v.old, v.name); err != nil {
 			_ = d.VolumeRemove(context.WithoutCancel(ctx), v.name)
 			return fmt.Errorf("carry the volume %s of the persistent agent %s over to %s: %w", v.old, ps.Agent, v.name, err)
+		}
+	}
+	for _, v := range ps.ServerVolumes {
+		if slices.Contains(have, v) {
+			continue
+		}
+		if err := d.VolumeCreate(ctx, v, PersistentVolumeLabels(ps.Agent, ps.Home)); err != nil {
+			return fmt.Errorf("create the volume %s of the persistent agent %s: %w", v, ps.Agent, err)
 		}
 	}
 	m := ps.Memory

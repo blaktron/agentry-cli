@@ -222,6 +222,11 @@ func filterConfig(rd *runDirs, runID string, gwEnv map[string]string, lim policy
 	if err != nil {
 		return sockfilter.Config{}, err
 	}
+	// An image server's own volume, into the entry that mounts it alone.
+	heldVolumes, err := runVolumeHolders(rd, plan)
+	if err != nil {
+		return sockfilter.Config{}, err
+	}
 	return sockfilter.Config{
 		RunID:         runID,
 		Label:         runLabel,
@@ -237,6 +242,7 @@ func filterConfig(rd *runDirs, runID string, gwEnv map[string]string, lim policy
 		ToolsOnlyRoots:     slices.Concat(toolsOnlyShare(rd, plan), rd.skillsRoot(), rd.dependencyDBRoot()),
 		OfflineRoots:       slices.Concat(rd.shareRoot(), rd.mirrorRoot(), rd.shareOutRoot()),
 		HeldRoots:          heldCfg,
+		HeldVolumes:        heldVolumes,
 		SharedNetworks:     shared,
 		EgressNetworks:     egress,
 		NetworkNames:       names,

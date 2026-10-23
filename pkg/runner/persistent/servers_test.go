@@ -30,13 +30,14 @@ var (
 		Writes: &manifest.MCPServer{URL: "https://api.githubcopilot.com/mcp/", Auth: manifest.AuthSecret, Secrets: []string{"AGENTRY_GIT_ACCOUNT_GITHUB"}}}
 )
 
-// TestMain gives the package's tests built-ins that offer and suggest no
-// servers, so a test of the roster, the installs or a segment sees only
+// TestMain gives the package's tests built-ins that offer, suggest and run
+// from images no servers, so a test of the roster, the installs or a segment sees only
 // what it sets up; a test of the offers sets them (withOffers), and
 // TestOfferedServerEgressIsDeclared reads the built-ins' own.
 func TestMain(m *testing.M) {
 	offersOf = func(Agent, Config) []offer.Server { return nil }
 	suggestionsOf = func(Agent) []offer.Suggestion { return nil }
+	imageServersOf = func(Agent) []offer.ImageServer { return nil }
 	os.Exit(m.Run())
 }
 

@@ -307,3 +307,119 @@ func TestAPersistentAgentsSkillsAreHeldAndQuoted(t *testing.T) {
 		t.Error("an agent that runs no programs is not told a skill's scripts are not its to run")
 	}
 }
+
+// gogSpec is an image server's spec as a persistent built-in's segment
+// gives it.
+func gogSpec() spec.MCPServerSpec {
+	img := "ghcr.io/example/gog:1@sha256:" + strings.Repeat("a", 64)
+	return spec.MCPServerSpec{
+		Name: "mcp-image-gog", Source: spec.SourceImage, Package: img, Image: img,
+		Command: []string{"mcp", "--allow-write"}, Egress: []string{"oauth2.googleapis.com", "gmail.googleapis.com"},
+		Secrets: []string{"GOG_KEYRING_PASSWORD"}, Env: map[string]string{"GOG_HOME": "/persist/gogcli", "GOG_KEYRING_BACKEND": "file"},
+		Volumes: []string{"agentry-persistent-assistant-0123456789-gog:/persist/gogcli"},
+	}
+}
+
+// TestAnImageServerIsAPersistentBuiltinsAlone: a server run from an image
+// compiles only into a persistent built-in's plan, and is refused from a
+// registry or local release and on an autonomous plan.
+func TestAnImageServerIsAPersistentBuiltinsAlone(t *testing.T) {
+	for _, source := range []string{"registry", "local"} {
+		in := persistentInputs(t, nil)
+		in.Source, in.MCPServers = source, []spec.MCPServerSpec{gogSpec()}
+		var refusal *PolicyRefusal
+		if _, err := Compile(in, t.TempDir()); !errors.As(err, &refusal) {
+			t.Errorf("an image server from %s: err = %v, want a policy refusal", source, err)
+		}
+	}
+	auto := persistentInputs(t, nil)
+	auto.Manifest = parseManifest(t, strings.Replace(pureTextYAML, "modes: [autonomous]", "modes: [autonomous, persistent]", 1))
+	auto.Mode, auto.MCPServers = manifest.ModeAutonomous, []spec.MCPServerSpec{gogSpec()}
+	var refusal *PolicyRefusal
+	if _, err := Compile(auto, t.TempDir()); !errors.As(err, &refusal) {
+		t.Errorf("an image server on an autonomous plan: err = %v", err)
+	}
+}
+
+// TestCompileRendersAnImageServer: an image server is a catalog entry of its
+// pinned image run by its own entrypoint with the offer's command, its
+// named volume, its hosts behind relays, its secret slots scoped to it and
+// its plain env; it needs no server store, and the receipt names it.
+func TestCompileRendersAnImageServer(t *testing.T) {
+	in := persistentInputs(t, nil)
+	srv := gogSpec()
+	in.MCPServers = []spec.MCPServerSpec{srv}
+	planDir := t.TempDir()
+	plan, err := Compile(in, planDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(planDir, "gateway", "catalog.yaml")) //nolint:gosec // test plan dir
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Registry map[string]struct {
+			Image      string   `yaml:"image"`
+			Command    []string `yaml:"command"`
+			Volumes    []string `yaml:"volumes"`
+			AllowHosts []string `yaml:"allowHosts"`
+			Secrets    []struct {
+				Name string `yaml:"name"`
+				Env  string `yaml:"env"`
+			} `yaml:"secrets"`
+			Env []struct {
+				Name  string `yaml:"name"`
+				Value string `yaml:"value"`
+			} `yaml:"env"`
+		} `yaml:"registry"`
+	}
+	if err := yaml.Unmarshal(b, &doc); err != nil {
+		t.Fatal(err)
+	}
+	e, ok := doc.Registry[srv.Name]
+	if !ok || e.Image != srv.Image || !slices.Equal(e.Command, srv.Command) || !slices.Equal(e.Volumes, srv.Volumes) {
+		t.Fatalf("catalog entry = %+v", e)
+	}
+	if !slices.Equal(e.AllowHosts, []string{"gmail.googleapis.com:443/tcp", "oauth2.googleapis.com:443/tcp"}) {
+		t.Fatalf("allowHosts = %v", e.AllowHosts)
+	}
+	if len(e.Secrets) != 1 || e.Secrets[0].Env != "GOG_KEYRING_PASSWORD" || e.Secrets[0].Name != ServerSecretKey(srv.Name, "GOG_KEYRING_PASSWORD") {
+		t.Fatalf("secrets = %+v", e.Secrets)
+	}
+	if len(e.Env) != 2 || e.Env[0].Name != "GOG_HOME" || e.Env[1].Value != "file" {
+		t.Fatalf("env = %+v", e.Env)
+	}
+	if spec.HasPackageServers(plan.MCPServers) || strings.Contains(string(b), spec.PHServers) {
+		t.Fatal("an image server alone asked for the server store")
+	}
+	if line := plan.Enforcement["mcpServers.image"]; !strings.Contains(line, "mcp-image-gog") || !strings.Contains(line, "command mcp --allow-write") ||
+		!strings.Contains(line, "its own volume agentry-persistent-assistant-0123456789-gog") || !strings.Contains(line, "GOG_KEYRING_PASSWORD filled by the runner") {
+		t.Fatalf("receipt line = %q", line)
+	}
+}
+
+// TestCompileRefusesAnImageServerItCannotRender: an image not pinned by
+// digest, a command word the gateway would rewrite, any-host egress, a
+// volume that is a host path, and a package server's fields are refused.
+func TestCompileRefusesAnImageServerItCannotRender(t *testing.T) {
+	for name, mutate := range map[string]func(*spec.MCPServerSpec){
+		"an image by tag":       func(s *spec.MCPServerSpec) { s.Image, s.Package = "ghcr.io/example/gog:1", "ghcr.io/example/gog:1" },
+		"a command with $":      func(s *spec.MCPServerSpec) { s.Command = []string{"mcp", "$HOME"} },
+		"a command with @@":     func(s *spec.MCPServerSpec) { s.Command = []string{"@@RUN_CFG@@"} },
+		"any host":              func(s *spec.MCPServerSpec) { s.Egress = []string{"*"} },
+		"a host path volume":    func(s *spec.MCPServerSpec) { s.Volumes = []string{"/home/person:/persist/gogcli"} },
+		"a relative target":     func(s *spec.MCPServerSpec) { s.Volumes = []string{"vol:persist"} },
+		"a store":               func(s *spec.MCPServerSpec) { s.StoreSubdir = "npm-x" },
+		"no command":            func(s *spec.MCPServerSpec) { s.Command = nil },
+		"an env value with ${}": func(s *spec.MCPServerSpec) { s.Env = map[string]string{"A": "${B}"} },
+	} {
+		srv := gogSpec()
+		mutate(&srv)
+		in := persistentInputs(t, nil)
+		in.MCPServers = []spec.MCPServerSpec{srv}
+		if _, err := Compile(in, t.TempDir()); err == nil {
+			t.Errorf("%s: compiled", name)
+		}
+	}
+}

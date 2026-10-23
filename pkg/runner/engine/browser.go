@@ -189,6 +189,17 @@ var ensureBrowserImage = func(ctx context.Context, d dockerx.Client, ref string)
 	return d.Pull(ctx, ref)
 }
 
+// ensureImageServers pulls each image server's pinned image the machine
+// lacks, by its digest: the gateway starts servers with --pull never.
+func ensureImageServers(ctx context.Context, d dockerx.Client, p Params) error {
+	for _, srv := range spec.ImageServers(p.Plan.MCPServers) {
+		if err := ensureBrowserImage(ctx, d, srv.Image); err != nil {
+			return Classify(ExitGateway, fmt.Errorf("the image of %s, %s: %w", srv.Name, srv.Image, err))
+		}
+	}
+	return nil
+}
+
 // prepareBrowser readies the browser before the infrastructure starts:
 // its image, its folders, its secrets file, and the run's sites, and names
 // what the receipt says of it.

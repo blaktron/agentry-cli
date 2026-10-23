@@ -240,6 +240,11 @@ const (
 	BearerFile      = "bearer"
 )
 
+// SourceImage is an image server's Source: a built-in's server run from an
+// image the CLI pins, its Package and Image the image, no version and no
+// store; its Volumes are named volumes of the agent's that reach it alone.
+const SourceImage = "image"
+
 // SourceURL is a remote server's Source: no package, no version, no image
 // and no store; the compiler runs the runner image's bridge for it.
 const SourceURL = "url"
@@ -1039,6 +1044,10 @@ type MCPServerSpec struct {
 	// Command is the argv inside the runtime container (store-relative
 	// paths under MCPStorePrefix).
 	Command []string `json:"command"`
+	// Volumes are an image server's named volumes, each name:target, which
+	// the docker filter holds to this server's container alone; empty for
+	// any other server.
+	Volumes []string `json:"volumes,omitempty"`
 	// Args are the manifest's arguments for the server, appended to
 	// Command in its catalog entry, each one argument as written: the
 	// entry is a list, never a shell line.
@@ -1145,6 +1154,21 @@ func (s MCPServerSpec) SourceID() string { return s.Source + ":" + s.Package }
 // Remote reports whether the server is declared by address.
 func (s MCPServerSpec) Remote() bool { return s.Source == SourceURL }
 
+// FromImage reports whether the spec is an image server's: a built-in's
+// server run from an image the CLI pins, with no package and no store.
+func (s MCPServerSpec) FromImage() bool { return s.Source == SourceImage }
+
+// ImageServers are the image servers among servers.
+func ImageServers(servers []MCPServerSpec) []MCPServerSpec {
+	var out []MCPServerSpec
+	for _, s := range servers {
+		if s.FromImage() {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 // SendsBearer reports whether the server is a remote one whose bridge
 // sends a bearer from its connection folder: auth: secret (its one secret)
 // or auth: oauth (the connection's access token).
@@ -1175,7 +1199,7 @@ func (s MCPServerSpec) ConnectionKey() string {
 // Ref names the server in messages and receipts: the package pin
 // ("@scope/x@1.2.3"), or a remote server's address.
 func (s MCPServerSpec) Ref() string {
-	if s.Remote() {
+	if s.Remote() || s.FromImage() {
 		return s.Package
 	}
 	return s.Package + "@" + s.Version
@@ -1198,7 +1222,7 @@ func (s MCPServerSpec) RemoteHost() string {
 // installed into the signature's server store.
 func HasPackageServers(servers []MCPServerSpec) bool {
 	for _, s := range servers {
-		if !s.Remote() {
+		if !s.Remote() && !s.FromImage() {
 			return true
 		}
 	}

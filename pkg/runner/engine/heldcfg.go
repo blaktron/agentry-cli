@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/runnerimage/sockfilter"
 )
 
@@ -98,6 +100,63 @@ func cfgBinds(roots, writable []string, cfg string, catalog []byte) ([]string, [
 		write = append(write, w)
 	}
 	return out, write, held, nil
+}
+
+// volumeHolders are the catalog entries that mount each of the named volumes
+// names: the docker filter holds each to them alone. A volume no entry
+// mounts is held to none, so nothing may mount it.
+func volumeHolders(catalog []byte, names []string) ([]sockfilter.HeldRoot, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+	var doc struct {
+		Registry map[string]struct {
+			Image   string   `yaml:"image"`
+			Command []string `yaml:"command"`
+			Volumes []string `yaml:"volumes"`
+		} `yaml:"registry"`
+	}
+	if err := yaml.Unmarshal(catalog, &doc); err != nil {
+		return nil, fmt.Errorf("read the gateway's catalog: %w", err)
+	}
+	entries := slices.Sorted(maps.Keys(doc.Registry))
+	out := make([]sockfilter.HeldRoot, 0, len(names))
+	for _, name := range slices.Sorted(slices.Values(names)) {
+		h := sockfilter.HeldRoot{Root: name, By: []sockfilter.Holder{}}
+		for _, entry := range entries {
+			e := doc.Registry[entry]
+			binds := entryBinds(e.Volumes)
+			if slices.ContainsFunc(binds, func(b sockfilter.HolderBind) bool { return b.Source == name }) {
+				h.By = append(h.By, sockfilter.Holder{Image: e.Image, Cmd: e.Command, Binds: binds})
+			}
+		}
+		out = append(out, h)
+	}
+	return out, nil
+}
+
+// runVolumeHolders is volumeHolders for this run: its rendered catalog and
+// the volumes of its image servers.
+func runVolumeHolders(rd *runDirs, plan *spec.Plan) ([]sockfilter.HeldRoot, error) {
+	var names []string
+	for _, srv := range spec.ImageServers(plan.MCPServers) {
+		for _, v := range srv.Volumes {
+			name, _, _ := strings.Cut(v, ":")
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 || rd.cfg == "" {
+		return nil, nil
+	}
+	catalog, err := os.ReadFile(filepath.Join(rd.cfg, "gateway", "catalog.yaml")) //nolint:gosec // our own rendered config
+	if err != nil {
+		return nil, Classify(ExitGateway, fmt.Errorf("read the gateway's catalog: %w", err))
+	}
+	held, err := volumeHolders(catalog, names)
+	if err != nil {
+		return nil, Classify(ExitGateway, err)
+	}
+	return held, nil
 }
 
 // entryBinds are a catalog entry's volumes as the docker filter compares

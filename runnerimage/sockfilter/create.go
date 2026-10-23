@@ -1231,10 +1231,25 @@ func (f *Filter) checkStorage(ctx context.Context, hc *hostConfig, who mounter) 
 
 // volume admits a named volume: the run's own; for the run's tools server
 // alone, one Config.ToolsVolumes names exactly; for the app link's
-// container alone, Config.AppLinkVolume. Either must exist (the daemon would
-// make a missing one, unlabelled, at the create).
+// container alone, Config.AppLinkVolume; for the containers a held volume
+// names alone, that volume (Config.HeldVolumes). Each must exist (the daemon
+// would make a missing one, unlabelled, at the create).
 func (f *Filter) volume(ctx context.Context, name string, who mounter) error {
-	if who.tools && slices.Contains(f.cfg.ToolsVolumes, name) || who.appLink && name == f.cfg.AppLinkVolume {
+	held := false
+	for _, h := range f.cfg.HeldVolumes {
+		if h.Root != name {
+			continue
+		}
+		ok, err := f.holds(ctx, who, h.By)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return deny("volume %s is held to the run's container that needs it", name)
+		}
+		held = true
+	}
+	if held || who.tools && slices.Contains(f.cfg.ToolsVolumes, name) || who.appLink && name == f.cfg.AppLinkVolume {
 		var v struct{ Name string }
 		code, err := f.inspect(ctx, "/volumes/"+url.PathEscape(name), &v)
 		if err != nil {
@@ -1337,10 +1352,15 @@ func touchesRoot(resolved, root string) bool {
 }
 
 // keepsRootsFromGateway says whether a container of the run binds a path at,
-// beneath or above a root the filter holds to particular containers: a
+// beneath or above a root the filter holds to particular containers (a
 // held root, a root only the tools server may bind, or one only an offline
-// container may.
+// container may), or mounts a held volume.
 func (f *Filter) keepsRootsFromGateway(c container) bool {
+	for _, h := range f.cfg.HeldVolumes {
+		if slices.Contains(c.volumes, h.Root) {
+			return true
+		}
+	}
 	roots := slices.Concat(f.cfg.ToolsOnlyRoots, f.cfg.ToolsWritableRoots, f.cfg.OfflineRoots)
 	for _, h := range f.cfg.HeldRoots {
 		roots = append(roots, h.Root)

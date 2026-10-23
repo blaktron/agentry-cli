@@ -201,10 +201,11 @@ func LogPath(home, name string) string { return filepath.Join(Dir(home, name), l
 // added the share folder, the person's servers and packs, the switches and
 // the consents, version 3 the Coding agent's dev server, version 4 its
 // published ports, version 5 the skills the person added, version 6 the
-// secrets they stored and version 7 the Coding agent's git host accounts; a
+// secrets they stored, version 7 the Coding agent's git host accounts and
+// version 8 the sign-ins of the servers it runs from images; a
 // build that reads an older version alone refuses a newer one rather than
 // drop what it does not know on its next save.
-const ConfigVersion = 7
+const ConfigVersion = 8
 
 // Config is the agent's config.yaml: what the person chose for it, and the
 // conversation its next segment continues.
@@ -262,6 +263,10 @@ type Config struct {
 	// Accounts are the Coding agent's git host accounts, by host; each is a
 	// roster entry, its token in the keychain (AccountKeychainAccount).
 	Accounts []GitAccount `yaml:"accounts,omitempty" json:"accounts,omitempty"`
+	// SignIns are the sign-ins of the agent's image servers, by the
+	// server's key: who the server answers as once its own sign-in
+	// finished, never a credential.
+	SignIns map[string]ImageSignIn `yaml:"signIns,omitempty" json:"signIns,omitempty"`
 }
 
 // ServerFailure is why a server the person added could not be installed.
@@ -521,7 +526,8 @@ func Reset(ctx context.Context, home, name string, d dockerx.Client) error {
 	}
 	defer owner.Release()
 	engine.SweepAbandoned(ctx, d, nil)
-	for _, v := range []string{SessionVolumeIn(home, name), DataVolumeIn(home, name), MemoryVolumeIn(home, name)} {
+	a, _ := Lookup(name)
+	for _, v := range append([]string{SessionVolumeIn(home, name), DataVolumeIn(home, name), MemoryVolumeIn(home, name)}, imageVolumes(home, a)...) {
 		if err := d.VolumeRemove(ctx, v); err != nil {
 			return fmt.Errorf("remove the %s agent's volume %s: %w", name, v, err)
 		}
@@ -557,6 +563,16 @@ func Reset(ctx context.Context, home, name string, d dockerx.Client) error {
 	for _, g := range cfg.Accounts {
 		if err := resetSecrets.Delete(AccountKeychainAccount(g.Host, g.User)); err != nil {
 			return fmt.Errorf("remove the %s agent's token for %s: %w", name, g.Host, err)
+		}
+	}
+	// An image server's keyring password: its volume, which the password
+	// opened, is gone above, so the password goes too.
+	for _, s := range imageServersOf(a) {
+		if len(s.Secrets) == 0 {
+			continue
+		}
+		if err := resetSecrets.Delete(ImageKeyringAccount(name, s.Key)); err != nil {
+			return fmt.Errorf("remove the %s agent's keyring password for %s: %w", name, s.Name, err)
 		}
 	}
 	return SaveConfig(home, name, Config{Version: ConfigVersion, Enabled: cfg.Enabled})
