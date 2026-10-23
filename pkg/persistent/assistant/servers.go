@@ -26,6 +26,47 @@ func OfferedServers() []offer.Server {
 	}
 }
 
+// GogKey is the Google Workspace server's key: its roster entry is
+// server:gog and its volume ends -gog.
+const GogKey = "gog"
+
+// GogHome is where gog keeps its state, its sign-ins and its encrypted
+// keyring, on the server's own volume.
+const GogHome = "/persist/gogcli"
+
+// GogKeyringSecret is the slot gog reads its file keyring's password from.
+const GogKeyringSecret = "GOG_KEYRING_PASSWORD"
+
+// GogEgress are the hosts gog's MCP tools reach: the token endpoint, Gmail,
+// Calendar and Drive (www.googleapis.com), Docs and Sheets.
+var GogEgress = []string{"oauth2.googleapis.com", "gmail.googleapis.com", "www.googleapis.com", "docs.googleapis.com", "sheets.googleapis.com"}
+
+// ImageServers are the servers the agent comes with that run from an image:
+// Google Workspace through gog's MCP mode, from image (the policy's
+// images.gog), off until the person signs it in with their own Google Cloud
+// client. Read-only unless "Allow changes" is on; sending mail is a switch
+// of its own, given only with changes, since gog refuses it alone.
+func ImageServers(image string) []offer.ImageServer {
+	return []offer.ImageServer{{
+		Key:          GogKey,
+		Name:         "Google Workspace (gog)",
+		Image:        image,
+		Command:      []string{"mcp"},
+		Env:          map[string]string{"GOG_HOME": GogHome, "GOG_KEYRING_BACKEND": "file"},
+		Egress:       GogEgress,
+		Secrets:      []string{GogKeyringSecret},
+		VolumeTarget: GogHome,
+		Switches: []offer.ImageSwitch{
+			{Key: "writes", Name: "Google Workspace: allow changes", Args: []string{"--allow-write"},
+				Line: "Lets Google Workspace (gog) change what your Google account holds: write Docs and Sheets, make Gmail drafts, label, archive, trash and restore mail, while it is on"},
+			{Key: "send", Name: "Google Workspace: allow sending mail", Args: []string{"--allow-gmail-send"}, Requires: "writes",
+				Line: "Lets Google Workspace (gog) send mail and drafts from your Gmail account, while it and its changes are on"},
+		},
+		Note:   "gog's MCP server, signed in with your own Google Cloud client: it reads Gmail, Drive, Docs, Sheets and your Calendar's events, read only unless you allow changes; it serves nothing of Contacts, Tasks, Slides, Forms or Calendar changes",
+		SignIn: "it needs your Google sign-in: agentry agent configure assistant --google-client <client file>, then --google-sign-in <email>",
+	}}
+}
+
 // SuggestedServers are the MCP servers the agent suggests, which the person
 // adds as their own: free public services whose terms suit a person's own
 // use, not a product's default for all its users.

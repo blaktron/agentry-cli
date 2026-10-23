@@ -102,6 +102,10 @@ type Config struct {
 	// beneath one, is held as that path is; so are the roots of the three
 	// lists above.
 	HeldRoots []HeldRoot
+	// HeldVolumes are named volumes not the run's that only the containers
+	// By name may mount: a persistent built-in's image server's own volume,
+	// Root its name. Each must exist.
+	HeldVolumes []HeldRoot
 	// SharedNetworks are the networks the runner made for the gateway to
 	// use without the owner label: the run's relay networks. They must
 	// carry Label=RunID; the gateway may not create or remove them.

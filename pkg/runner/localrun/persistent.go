@@ -145,6 +145,16 @@ func (b Builtin) OfferedServers(hosts []offer.GitHost) []offer.Server {
 	return nil
 }
 
+// ImageServers are the servers the persistent agent comes with that run
+// from an image the CLI pins (images, the policy's), each an entry of its
+// roster; a built-in's alone.
+func (b Builtin) ImageServers(images policy.Images) []offer.ImageServer {
+	if b.persistent && b.namespace == assistant.Namespace && b.name == assistant.Name {
+		return assistant.ImageServers(images.GogImage())
+	}
+	return nil
+}
+
 // SuggestedServers are the MCP servers the persistent agent suggests: not
 // on its roster until the person adds one as their own.
 func (b Builtin) SuggestedServers() []offer.Suggestion {
@@ -255,6 +265,46 @@ type Grants struct {
 	// Accounts are the Coding agent's git host accounts the roster has on,
 	// each with its token, given to its programs with its commands on.
 	Accounts []Account
+	// ImageServers are the built-in's image servers the roster has on and
+	// the person signed in, each with the switches it has on and its
+	// volume; their secret slots are among ServerSecrets.
+	ImageServers []ImageGrant
+}
+
+// ImageGrant is one image server a segment is given: the built-in's server
+// by its key (Builtin.ImageServers), the keys of its switches that are on,
+// and the agent's volume it keeps its state on.
+type ImageGrant struct {
+	Key      string
+	Switches []string
+	Volume   string
+}
+
+// imageSpecs are the plan's specs of the image servers the segment is
+// given, from the built-in's servers at the policy's images, and their
+// volumes. A grant naming a server the built-in does not offer is refused.
+func (s Segment) imageSpecs() ([]spec.MCPServerSpec, []string, error) {
+	if len(s.Grants.ImageServers) == 0 {
+		return nil, nil, nil
+	}
+	offered := s.Builtin.ImageServers(s.Policy.Images)
+	var specs []spec.MCPServerSpec
+	var volumes []string
+	for _, g := range s.Grants.ImageServers {
+		i := slices.IndexFunc(offered, func(o offer.ImageServer) bool { return o.Key == g.Key })
+		if i < 0 {
+			return nil, nil, fmt.Errorf("the segment is given the image server %s, which %s does not offer", g.Key, s.Builtin.Ref())
+		}
+		o := offered[i]
+		specs = append(specs, spec.MCPServerSpec{
+			Name: "mcp-image-" + o.Key, Source: spec.SourceImage, Package: o.Image, Image: o.Image,
+			Command: o.Args(func(key string) bool { return slices.Contains(g.Switches, key) }),
+			Egress:  slices.Clone(o.Egress), Secrets: slices.Clone(o.Secrets), Env: maps.Clone(o.Env),
+			Volumes: []string{g.Volume + ":" + o.VolumeTarget},
+		})
+		volumes = append(volumes, g.Volume)
+	}
+	return specs, volumes, nil
 }
 
 // Account is one of the Coding agent's git host accounts, as a segment is
@@ -340,6 +390,9 @@ func (s Segment) Start(ctx context.Context, d dockerx.Client) (engine.Persistent
 	plan, planDir := sp.Plan, sp.Dir
 	seg := s.Persistent
 	seg.Share, seg.AppLink, seg.Skills = s.Grants.Share, s.Grants.AppLink, s.Grants.SkillsDir
+	if _, seg.ServerVolumes, err = s.imageSpecs(); err != nil {
+		return nil, engine.Classify(engine.ExitCLI, err)
+	}
 	// The Coding agent's dependency scan reads OSV's databases under the
 	// runner home, which its supervisor keeps (osvdb.Ensure).
 	if g := s.Grants.Coder; g != nil && g.Commands && g.DependencyScan {
@@ -625,6 +678,11 @@ func (s Segment) Plan(ctx context.Context, logw io.Writer) (*SegmentPlan, error)
 	if err != nil {
 		return nil, err
 	}
+	images, _, err := s.imageSpecs()
+	if err != nil {
+		return nil, engine.Classify(engine.ExitCLI, err)
+	}
+	servers = append(servers, images...)
 	in := PlanInputs{
 		Home: s.Home, Manifest: m, Meta: meta, InstallDir: installDir, WorkspaceDir: workspace,
 		Policy: s.Policy, PolicySHA: s.PolicySHA, Adapter: adapterName, Mode: manifest.ModePersistent,

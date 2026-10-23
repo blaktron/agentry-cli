@@ -231,6 +231,14 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		}
 		caps.AgentFiles = &spec.AgentFiles{Share: in.AgentFiles.Share, CheckShare: checked, MalwareCheck: checked && in.Policy.MalwareCheckOn(), Skills: skills, Memory: in.AgentFiles.Memory}
 	}
+	if len(spec.ImageServers(in.MCPServers)) > 0 && (mode != manifest.ModePersistent || in.Source != "builtin") {
+		return nil, &PolicyRefusal{Reason: "a server run from an image is granted to a persistent built-in alone"}
+	}
+	for _, srv := range spec.ImageServers(in.MCPServers) {
+		if err := checkImageServer(srv); err != nil {
+			return nil, err
+		}
+	}
 	if in.AppLink != "" {
 		if mode != manifest.ModePersistent || in.Source != "builtin" {
 			return nil, &PolicyRefusal{Reason: "the app link is granted to a persistent built-in alone"}
@@ -1254,11 +1262,14 @@ func renderGatewayFiles(files map[string][]byte, tspec *toolsrv.Spec, caps spec.
 		catalog.set(name, &node)
 	}
 	for _, srv := range mcpServers {
-		if srv.Remote() {
+		switch {
+		case srv.Remote():
 			catalog.set(srv.Name, remoteServerEntry(srv, runnerImage))
-			continue
+		case srv.FromImage():
+			catalog.set(srv.Name, imageServerEntry(srv))
+		default:
+			catalog.set(srv.Name, mcpServerEntry(srv))
 		}
-		catalog.set(srv.Name, mcpServerEntry(srv))
 	}
 	if hostLink != nil {
 		catalog.set(hostlink.ServerName, hostLinkEntry(caps.TargetHosts, hostLink.Image))
@@ -1602,6 +1613,84 @@ func mcpServerEntry(srv spec.MCPServerSpec) *yaml.Node {
 			kv := yamlMap{}
 			kv.set("name", strNode(name))
 			kv.set("value", strNode(env[name]))
+			entries = append(entries, kv.node())
+		}
+		e.set("env", seqNode(entries))
+	}
+	return e.node()
+}
+
+// checkImageServer refuses an image server spec the compiler cannot render
+// as a built-in's offer promises: an image not pinned by digest, a command
+// or env the gateway would rewrite, a host it reaches that is any host, or
+// a volume that is not a named volume at an absolute path.
+func checkImageServer(srv spec.MCPServerSpec) error {
+	if !policy.PinnedByDigest(srv.Image) || srv.Package != srv.Image {
+		return fmt.Errorf("the image server %s: its image %q is not pinned by digest", srv.Name, srv.Image)
+	}
+	if len(srv.Command) == 0 || srv.StoreSubdir != "" || srv.OAuth != nil || srv.Share != "" || len(srv.Args) > 0 {
+		return fmt.Errorf("the image server %s is given a command and nothing of a package server's", srv.Name)
+	}
+	for i, arg := range srv.Command {
+		if arg == "" || !manifest.LiteralEnvValue(arg) || strings.Contains(arg, "@@") {
+			return fmt.Errorf("the image server %s: command[%d] is not a literal word", srv.Name, i)
+		}
+	}
+	for _, h := range srv.Egress {
+		if h == "*" || strings.ContainsAny(h, "*/ ") {
+			return fmt.Errorf("the image server %s reaches %q, which is not one host", srv.Name, h)
+		}
+	}
+	for _, v := range srv.Volumes {
+		name, target, ok := strings.Cut(v, ":")
+		if !ok || name == "" || strings.ContainsAny(name, "/.@") || !strings.HasPrefix(target, "/") || strings.Contains(target, ":") {
+			return fmt.Errorf("the image server %s: its volume %q is not a named volume at an absolute path", srv.Name, v)
+		}
+	}
+	return checkLiteralEnv(srv)
+}
+
+// imageServerEntry renders a built-in's image server as a gateway catalog
+// entry: its pinned image run by its own entrypoint with the offer's
+// command, its named volumes (held to this entry's container by the docker
+// filter), its egress allowlist, its secret slots and its plain env, as a
+// package server's.
+func imageServerEntry(srv spec.MCPServerSpec) *yaml.Node {
+	e := yamlMap{}
+	e.set("description", strNode("a built-in's MCP server run from the pinned image "+srv.Image))
+	e.set("title", strNode(srv.Name))
+	e.set("type", strNode("server"))
+	e.set("image", strNode(srv.Image))
+	e.set("command", strListNode(srv.Command))
+	e.set("longLived", boolNode(true))
+	if len(srv.Volumes) > 0 {
+		e.set("volumes", strListNode(srv.Volumes))
+	}
+	if len(srv.Egress) > 0 {
+		hosts := make([]string, 0, len(srv.Egress))
+		for _, h := range sortedCopy(srv.Egress) {
+			hosts = append(hosts, h+":443/tcp")
+		}
+		e.set("allowHosts", strListNode(hosts))
+	} else {
+		e.set("disableNetwork", boolNode(true))
+	}
+	if secretNames := sortedCopy(srv.Secrets); len(secretNames) > 0 {
+		var entries []*yaml.Node
+		for _, name := range secretNames {
+			s := yamlMap{}
+			s.set("name", strNode(ServerSecretKey(srv.Name, name)))
+			s.set("env", strNode(name))
+			entries = append(entries, s.node())
+		}
+		e.set("secrets", seqNode(entries))
+	}
+	if len(srv.Env) > 0 {
+		var entries []*yaml.Node
+		for _, name := range slices.Sorted(maps.Keys(srv.Env)) {
+			kv := yamlMap{}
+			kv.set("name", strNode(name))
+			kv.set("value", strNode(srv.Env[name]))
 			entries = append(entries, kv.node())
 		}
 		e.set("env", seqNode(entries))
@@ -2108,7 +2197,7 @@ func enforcement(caps spec.CapSummary, secrets, optional []string, extraServers 
 			// its bridge alone.
 			remoteSecrets = append(remoteSecrets, srv.Package+": "+strings.Join(sortedCopy(srv.Secrets), ", "))
 		default:
-			serverSecrets = append(serverSecrets, srv.Package+"@"+srv.Version+": "+strings.Join(sortedCopy(srv.Secrets), ", "))
+			serverSecrets = append(serverSecrets, srv.Ref()+": "+strings.Join(sortedCopy(srv.Secrets), ", "))
 		}
 	}
 	serverPart := "each declared server's own, injected only into that server's container via gateway secret scoping: " + strings.Join(serverSecrets, "; ")
@@ -2190,10 +2279,29 @@ func enforcement(caps spec.CapSummary, secrets, optional []string, extraServers 
 	if len(remote) > 0 {
 		e["mcpServers.remote"] = "declared remote servers, run at their vendors and reached through the runner image's bridge, a stdio server the gateway launches like a package server: on the gateway's relay network behind one relay to the address's host, under the run's docker filter and runtime; the gateway dials none of them and keeps no network of its own; what the vendor's server does is not checked here: " + strings.Join(remote, "; ")
 	}
+	if images := spec.ImageServers(mcpServers); len(images) > 0 {
+		var parts []string
+		for _, srv := range images {
+			d := srv.Name + " (" + srv.Image + ", command " + strings.Join(srv.Command, " ") + ", " + egressDesc(srv.Egress)
+			if len(srv.Volumes) > 0 {
+				names := make([]string, 0, len(srv.Volumes))
+				for _, v := range srv.Volumes {
+					name, _, _ := strings.Cut(v, ":")
+					names = append(names, name)
+				}
+				d += ", its own volume " + strings.Join(names, ", ")
+			}
+			if len(srv.Secrets) > 0 {
+				d += ", secret slots " + strings.Join(sortedCopy(srv.Secrets), "/") + " filled by the runner"
+			}
+			parts = append(parts, d+")")
+		}
+		e["mcpServers.image"] = "a persistent built-in's servers run from images the CLI pins, launched by the gateway like a package server, each with a volume of the agent's that the docker filter holds to that server's container alone: " + strings.Join(parts, "; ")
+	}
 	if spec.HasPackageServers(mcpServers) {
 		var parts []string
 		for _, srv := range mcpServers {
-			if srv.Remote() {
+			if srv.Remote() || srv.FromImage() {
 				continue
 			}
 			d := fmt.Sprintf("%s@%s (%s, %s", srv.Package, srv.Version, srv.Source, egressDesc(srv.Egress))

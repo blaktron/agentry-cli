@@ -1790,6 +1790,40 @@ func TestTheToolsServerAloneMountsThePersistentVolume(t *testing.T) {
 	}
 }
 
+// TestAHeldVolumeReachesItsServerAlone: an image server's own volume, which
+// carries no run's label, is mounted by the container its catalog entry
+// makes (its image by id, run by the image's entrypoint with the entry's
+// command and exactly its binds) and by nothing else: not the same image
+// with another command or another entrypoint, not with one bind more, not
+// the tools server, not another server.
+func TestAHeldVolumeReachesItsServerAlone(t *testing.T) {
+	const target = "/etc/agentry/toolspec.json"
+	const vol = "agentry-persistent-assistant-0123456789-gog"
+	gog := []string{"mcp", "--allow-write"}
+	tools := []string{"tools", "--spec", target}
+	g := newRig(t, Limits{}, func(c *Config) {
+		c.ToolsImage, c.ToolsCmd = "agentry-runner:test", tools
+		c.HeldVolumes = []HeldRoot{{Root: vol, By: []Holder{{Image: "ghcr.io/example/gog:1", Cmd: gog, Binds: []HolderBind{{Source: vol, Target: "/persist/gogcli"}}}}}}
+	})
+	create := func(image string, cmd []string, binds ...string) map[string]any {
+		return map[string]any{"Image": image, "Cmd": cmd, "HostConfig": map[string]any{"Binds": binds}}
+	}
+	if code, body := g.do(t, "POST", "/containers/create", create("ghcr.io/example/gog:1", gog, vol+":/persist/gogcli")); code != http.StatusCreated {
+		t.Fatalf("the gog server with its volume: %d %s", code, body)
+	}
+	g.refused(t, "the gog image with another command", "POST", "/containers/create",
+		create("ghcr.io/example/gog:1", []string{"auth", "list"}, vol+":/persist/gogcli"), "held to the run's container that needs it")
+	g.refused(t, "the gog server with one bind more", "POST", "/containers/create",
+		create("ghcr.io/example/gog:1", gog, vol+":/persist/gogcli", vol+":/copy"), "held to the run's container that needs it")
+	g.refused(t, "the tools server with the volume", "POST", "/containers/create",
+		create("agentry-runner:test", tools, vol+":/agent/gog"), "held to the run's container that needs it")
+	g.refused(t, "another server with the volume", "POST", "/containers/create",
+		create("node:22", []string{"node", "server.js"}, vol+":/data"), "held to the run's container that needs it")
+	entry := create("ghcr.io/example/gog:1", gog, vol+":/persist/gogcli")
+	entry["Entrypoint"] = []string{"/bin/sh", "-c"}
+	g.refused(t, "the gog server's command under another entrypoint", "POST", "/containers/create", entry, "held to the run's container that needs it")
+}
+
 // The app link's relay volume, made for the run by the CLI where the daemon
 // runs in a VM, is mounted by the app link's container alone: its command in
 // its image. The same image with another command, the tools server and any

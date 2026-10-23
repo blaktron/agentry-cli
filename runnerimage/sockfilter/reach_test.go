@@ -36,13 +36,18 @@ func newReachRig(t *testing.T) *reachRig {
 			Image: "agentry-runner:test", Cmd: []string{"bridge"},
 			Binds: []HolderBind{{Source: r.conn, Target: "/run/agentry/connection"}},
 		}}}}
+		c.HeldVolumes = []HeldRoot{{Root: "agentry-persistent-assistant-0123456789-gog", By: []Holder{{
+			Image: "ghcr.io/example/gog:1", Cmd: []string{"mcp"},
+			Binds: []HolderBind{{Source: "agentry-persistent-assistant-0123456789-gog", Target: "/persist/gogcli"}},
+		}}}}
 	})
 	return &r
 }
 
 // TestNothingReadsOrRunsInAContainerThatHoldsARoot: a container that binds a
-// held, tools-only or offline root, or a folder above one, takes no exec and
-// no archive in either direction; one that binds none of them still does.
+// held, tools-only or offline root, or a folder above one, or mounts a held
+// volume, takes no exec and no archive in either direction; one that binds
+// none of them still does.
 func TestNothingReadsOrRunsInAContainerThatHoldsARoot(t *testing.T) {
 	g := newReachRig(t)
 	g.d.binds["runa-holds-conn"] = []string{g.conn + ":/run/agentry/connection:ro"}
@@ -51,7 +56,8 @@ func TestNothingReadsOrRunsInAContainerThatHoldsARoot(t *testing.T) {
 	g.d.binds["runa-holds-above"] = []string{filepath.Dir(g.conn) + ":/c:ro"}
 	g.d.binds["runa-holds-mixed"] = []string{g.plain + ":/p:ro", g.mirror + ":/agent/share:ro"}
 	g.d.binds["runa-plain"] = []string{g.plain + ":/p:ro"}
-	for _, id := range []string{"runa-holds-conn", "runa-holds-share", "runa-holds-mirror", "runa-holds-above", "runa-holds-mixed"} {
+	g.d.binds["runa-holds-volume"] = []string{"agentry-persistent-assistant-0123456789-gog:/persist/gogcli"}
+	for _, id := range []string{"runa-holds-conn", "runa-holds-share", "runa-holds-mirror", "runa-holds-above", "runa-holds-mixed", "runa-holds-volume"} {
 		for _, c := range []struct{ method, op string }{
 			{"POST", "/exec"}, {"GET", "/archive?path=/run"}, {"HEAD", "/archive?path=/run"}, {"PUT", "/archive?path=/"},
 		} {
