@@ -137,3 +137,5 @@ agentry/assistant@1.6.0 sha256:74c34c27e5b18c519b66590871f81c5f7be3f3286e86d9f54
 agentry/assistant@1.7.0 sha256:0cca965f8a8adeebf1dafb0b07273933102007c7c50f501639cdae3d0681e160
 # 1.8.0: Microsoft 365 and Outlook.com: the microsoft-365-setup, microsoft-365, microsoft-inbox-triage and microsoft-meeting-prep skills; the README names the server and the mail providers.
 agentry/assistant@1.8.0 sha256:3c43f125e980350d205418178dba81a2a21e97ec74a1756ee828e8c041a3f11a
+# 1.8.1: microsoft-365-setup names the page Microsoft sends a person to enter the code at today.
+agentry/assistant@1.8.1 sha256:87215c384aaf5a1da4402d81b77c396912350ce78745ff184b49df5b345b2710

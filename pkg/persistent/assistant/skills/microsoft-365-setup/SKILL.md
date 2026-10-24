@@ -71,8 +71,8 @@ them this before they start, so they can stop if it is not what they need.
 
        agentry agent configure assistant --microsoft-sign-in <their Microsoft address>
 
-   The terminal shows a code and opens https://microsoft.com/devicelogin;
-   they enter the code there, sign in with that account, and accept the
+   The terminal shows a code and opens Microsoft's sign-in page
+   (https://www.microsoft.com/link); they enter the code there, sign in with that account, and accept the
    permissions. Microsoft may say the app is unverified: it is their own app,
    which Microsoft has not reviewed. The terminal says which account is
    signed in. This asks only for reading unless *Allow changes* is on.
