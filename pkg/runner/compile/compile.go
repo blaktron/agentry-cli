@@ -391,7 +391,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		shareServers: shareServerNames(in.MCPServers),
 		secrets:      sortedCopy(m.Capabilities.Secrets),
 		optional:     sortedCopy(m.Capabilities.OptionalSecrets),
-		servers:      declared,
+		servers:      promptServerNames(extraServers, in.MCPServers),
 		schema:       len(schemaJSON) > 0,
 		intake:       len(m.Intake) > 0,
 		repositories: questionsOf(m, manifest.IntakeRepository),
@@ -836,8 +836,21 @@ func shareServerNames(declared []spec.MCPServerSpec) []string {
 
 // mcpServerNames is every MCP server a run has besides the runner's own
 // tools server: the operator's dataAccess servers and the QuickAgent's
-// declared ones, sorted.
+// declared ones, by their catalogue names, sorted. The gateway enables
+// servers by these names, so nothing may be added to them.
 func mcpServerNames(extra []string, declared []spec.MCPServerSpec) []string {
+	names := append([]string(nil), extra...)
+	for _, srv := range declared {
+		names = append(names, srv.Name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// promptServerNames is mcpServerNames as the System Prompt says them: a
+// signed-in image server's account named beside it, so the agent can say
+// whose mailbox it read.
+func promptServerNames(extra []string, declared []spec.MCPServerSpec) []string {
 	names := append([]string(nil), extra...)
 	for _, srv := range declared {
 		name := srv.Name
