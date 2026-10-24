@@ -45,11 +45,23 @@ func TestAgentConfigureFastmail(t *testing.T) {
 		t.Fatal("a token Fastmail refused was kept")
 	}
 	refuse = false
+	// Unagreed, nothing is kept and Fastmail stays disabled; the agreement
+	// names the server the token goes to.
+	_, asked2, err := runCLI(t, strings.NewReader(token+"\n"), "agent", "configure", "assistant", "--fastmail-token")
+	if err == nil || !strings.Contains(err.Error(), "--yes") || !strings.Contains(asked2, "to the MCP server https://api.fastmail.com/mcp") {
+		t.Fatalf("an unagreed token: %v\n%s", err, asked2)
+	}
+	if cfg, _ := persistent.LoadConfig(home, "assistant"); len(cfg.MailProviders) != 0 || len(cfg.Secrets) != 0 {
+		t.Fatalf("an unagreed token left %+v", cfg)
+	}
+	if _, kept := keys[account]; kept {
+		t.Fatal("an unagreed token was kept")
+	}
 	out, _, err := runCLI(t, strings.NewReader(token+"\n"), "agent", "configure", "assistant", "--fastmail-token", "--yes")
 	if err != nil || strings.Contains(out, token) || !strings.Contains(out, "Fastmail accepted the token") {
 		t.Fatalf("--fastmail-token: %v\n%s", err, out)
 	}
-	if keys[account] != token || !slices.Equal(asked, []string{token, token}) {
+	if keys[account] != token || !slices.Equal(asked, []string{token, token, token}) {
 		t.Fatalf("the keychain holds %q; Fastmail was asked %d times", keys[account], len(asked))
 	}
 	cfg, err := persistent.LoadConfig(home, "assistant")
@@ -57,7 +69,7 @@ func TestAgentConfigureFastmail(t *testing.T) {
 		t.Fatalf("config: %v %+v", err, cfg)
 	}
 	out, _, err = runCLI(t, nil, "agent", "show", "assistant")
-	if err != nil || !strings.Contains(out, "Fastmail: enabled") || strings.Contains(out, token) {
+	if err != nil || !strings.Contains(out, "Fastmail: enabled, set up") || strings.Contains(out, token) {
 		t.Fatalf("show: %v\n%s", err, out)
 	}
 	if _, _, err := runCLI(t, nil, "agent", "configure", "assistant", "--no-fastmail"); err != nil {

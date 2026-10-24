@@ -74,13 +74,26 @@ func configureFastmail(cmd *cobra.Command, a persistent.Agent, home string, on, 
 			_ = agentSecrets.Delete(account)
 		}
 	}
+	// The provider is enabled first, so the agreement asked for names the
+	// server the token goes to; a change refused or failed disables it
+	// again if it was not enabled before.
+	c, err := persistent.LoadConfig(home, a.Name)
+	if err != nil {
+		undo()
+		return engine.Classify(engine.ExitCLI, err)
+	}
+	wasOn := slices.Contains(c.MailProviders, assistant.MailFastmail)
+	if err := persistent.SetMailProvider(home, a, persistent.ClientCLI, assistant.MailFastmail, true); err != nil {
+		undo()
+		return engine.Classify(engine.ExitCLI, err)
+	}
 	r, running, err := configureAgent(cmd, home, a, persistent.Change{SetSecret: &persistent.StoredSecret{Name: assistant.FastmailToken, Set: time.Now().UTC()}}, yes)
 	if err != nil {
 		undo()
+		if !wasOn {
+			_ = persistent.SetMailProvider(home, a, persistent.ClientCLI, assistant.MailFastmail, false)
+		}
 		return err
-	}
-	if err := persistent.SetMailProvider(home, a, persistent.ClientCLI, assistant.MailFastmail, true); err != nil {
-		return engine.Classify(engine.ExitCLI, err)
 	}
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Fastmail accepted the token, and it is kept in your system keychain. Switch the server on with agentry agent grant %s server:url-api-fastmail-com-mcp on, if it is not.\n", a.Name)
 	if r2, err := readAgentState(cmd.Context(), home, a); err == nil {
