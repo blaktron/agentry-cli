@@ -51,9 +51,17 @@ type Server struct {
 	// named Secret, the key the person keeps for that provider's web
 	// search stands in for it, given to this server alone.
 	SearchKey string
+	// SecretFlag, with Secret, is the configure flag that keeps it (with
+	// its own checks), named in place of agentry agent secret set when the
+	// server waits for it.
+	SecretFlag string
 	// Note is what its consent sentence adds after what it reaches: the
 	// provider's terms, what it is sent.
 	Note string
+	// MailProvider is the key of the mail provider it is (MailProvider):
+	// while that provider is disabled it is not on the roster; empty for
+	// a server that is no provider's.
+	MailProvider string
 }
 
 // GitHost is one of the agent's git host accounts as a built-in draws an
@@ -86,6 +94,9 @@ func (s Server) Check() error {
 	}
 	if s.Secret != "" && !slices.Contains(srv.Secrets, s.Secret) {
 		return fmt.Errorf("%s needs the secret %s, which it does not declare", s.Name, s.Secret)
+	}
+	if s.SecretFlag != "" && s.Secret == "" {
+		return fmt.Errorf("%s names a flag for a secret it does not need", s.Name)
 	}
 	if s.SearchKey != "" && s.Secret == "" {
 		return fmt.Errorf("%s stands a search key in for a secret it does not need", s.Name)

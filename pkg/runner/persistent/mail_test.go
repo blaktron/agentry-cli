@@ -15,10 +15,11 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 )
 
-// TestTheAssistantsMailProvidersHoldToTheirRules: Google and Microsoft are
-// the Assistant's providers, gog and ms365 their servers; the Coding agent and Main have none; a
-// provider naming a server not offered, a server two providers name, or a
-// key of the wrong shape is refused.
+// TestTheAssistantsMailProvidersHoldToTheirRules: Google, Microsoft and
+// Fastmail are the Assistant's providers, gog and ms365 the first two's
+// servers; the Coding agent and Main have none; a
+// provider naming a server not offered, a server two providers name, one
+// with no name, or a key of the wrong shape is refused.
 func TestTheAssistantsMailProvidersHoldToTheirRules(t *testing.T) {
 	withImageServers(t)
 	servers := assistant.ImageServers("img", "img")
@@ -29,7 +30,7 @@ func TestTheAssistantsMailProvidersHoldToTheirRules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ps := MailProviders(a, Config{}); len(ps) != 2 || ps[0].Key != "google" || ps[0].Enabled || !slices.Equal(ps[0].Servers, []string{"server:gog"}) || len(ps[0].SetUp) != 1 ||
+	if ps := MailProviders(a, Config{}); len(ps) != 3 || ps[2].Key != "fastmail" || ps[2].Enabled || ps[0].Key != "google" || ps[0].Enabled || !slices.Equal(ps[0].Servers, []string{"server:gog"}) || len(ps[0].SetUp) != 1 ||
 		ps[1].Key != "microsoft" || ps[1].Enabled || !slices.Equal(ps[1].Servers, []string{"server:ms365"}) || len(ps[1].SetUp) != 1 {
 		t.Fatalf("the Assistant's providers: %+v", ps)
 	}
@@ -46,7 +47,7 @@ func TestTheAssistantsMailProvidersHoldToTheirRules(t *testing.T) {
 		{{Key: "google", Name: "Google", ImageServers: []string{"nope"}}},
 		{{Key: "google", Name: "Google", ImageServers: []string{"gog"}}, {Key: "other", Name: "Other", ImageServers: []string{"gog"}}},
 		{{Key: "Google", Name: "Google", ImageServers: []string{"gog"}}},
-		{{Key: "google", Name: "Google"}},
+		{{Key: "google", ImageServers: []string{"gog"}}},
 		{{Key: "google", Name: "Google", ImageServers: []string{"gog"}}, {Key: "google", Name: "Google", ImageServers: []string{"gog"}}},
 	} {
 		if err := offer.CheckMailProviders(bad, servers); err == nil {

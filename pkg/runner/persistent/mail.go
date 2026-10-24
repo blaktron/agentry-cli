@@ -82,19 +82,63 @@ func MailProviders(a Agent, c Config) []MailProviderState {
 				st.SetUp = append(st.SetUp, s.SignIn)
 			}
 		}
+		for _, o := range providerOffers(a, c) {
+			if o.MailProvider != p.Key {
+				continue
+			}
+			st.Servers = append(st.Servers, ServerEntryID(o.Server))
+			if ok, reason := setUp(a, c, o); !ok {
+				st.SetUp = append(st.SetUp, reason)
+			}
+		}
 		out = append(out, st)
 	}
 	return out
 }
 
 // hiddenProvider is the disabled mail provider whose server or switch has
-// the roster id id, if any.
+// the roster id id, if any: an image server's, or an offered server's.
 func hiddenProvider(a Agent, c Config, id string) (offer.MailProvider, bool) {
-	key, _, _ := strings.Cut(strings.TrimPrefix(id, serverPrefix), ":")
-	if !strings.HasPrefix(id, serverPrefix) || imageServerShown(a, c, key) {
+	if !strings.HasPrefix(id, serverPrefix) {
 		return offer.MailProvider{}, false
 	}
-	return mailProviderOf(a, key)
+	key, _, _ := strings.Cut(strings.TrimPrefix(id, serverPrefix), ":")
+	if p, ok := mailProviderOf(a, key); ok && !slices.Contains(c.MailProviders, p.Key) {
+		return p, true
+	}
+	for _, o := range providerOffers(a, c) {
+		if (id == ServerEntryID(o.Server) || id == ServerWritesID(o.Server)) && !slices.Contains(c.MailProviders, o.MailProvider) {
+			return mailProviderByKey(a, o.MailProvider)
+		}
+	}
+	return offer.MailProvider{}, false
+}
+
+// providerOffers are the built-in's offered servers that are a mail
+// provider's, whether or not it is enabled.
+func providerOffers(a Agent, c Config) []offer.Server {
+	all := c
+	all.MailProviders = nil
+	for _, p := range mailProvidersOf(a) {
+		all.MailProviders = append(all.MailProviders, p.Key)
+	}
+	var out []offer.Server
+	for _, o := range offersOf(a, all) {
+		if o.MailProvider != "" {
+			out = append(out, o)
+		}
+	}
+	return out
+}
+
+// mailProviderByKey is the agent's mail provider key.
+func mailProviderByKey(a Agent, key string) (offer.MailProvider, bool) {
+	for _, p := range mailProvidersOf(a) {
+		if p.Key == key {
+			return p, true
+		}
+	}
+	return offer.MailProvider{}, false
 }
 
 // mailProviderKeys names the agent's mail providers, for a refusal.

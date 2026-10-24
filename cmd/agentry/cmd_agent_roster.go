@@ -223,7 +223,7 @@ func newAgentConfigureCmd() *cobra.Command {
 		noAccount, addSuggested, googleClient, googleSignIn                                    string
 		mailOn, mailOff                                                                        []string
 		msClient, msTenant, msSignIn, msSignoff                                                string
-		noMsSignoff                                                                            bool
+		noMsSignoff, fastmailToken, noFastmail                                                 bool
 	)
 	cmd := &cobra.Command{
 		Use:   "configure <name>",
@@ -263,7 +263,7 @@ func newAgentConfigureCmd() *cobra.Command {
 			"127.0.0.1 and the same number, so what it serves from its sandbox (a dev\n" +
 			"server it started) opens in your browser; --no-port takes one away by its\n" +
 			"name. A port is a roster entry, switched with agentry agent grant.\n\n" +
-			"  agentry agent configure coder --port web=3000\n\n" + agentAccountLong + agentMailLong + agentGoogleLong + agentMicrosoftLong,
+			"  agentry agent configure coder --port web=3000\n\n" + agentAccountLong + agentMailLong + agentGoogleLong + agentMicrosoftLong + agentFastmailLong,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := cliAgent(args[0])
@@ -279,6 +279,15 @@ func newAgentConfigureCmd() *cobra.Command {
 					return engine.Classify(engine.ExitUsage, errors.New("--mail-provider and --no-mail-provider go with each other alone"))
 				}
 				return configureMailProviders(cmd, a, home, mailOn, mailOff)
+			}
+			if fastmailToken || noFastmail {
+				if fastmailToken && noFastmail {
+					return engine.Classify(engine.ExitUsage, errors.New("--fastmail-token and --no-fastmail together"))
+				}
+				if cmd.Flags().NFlag() > countFlags(cmd, "fastmail-token", "no-fastmail", "yes") {
+					return engine.Classify(engine.ExitUsage, errors.New("--fastmail-token and --no-fastmail go with --yes alone"))
+				}
+				return configureFastmail(cmd, a, home, fastmailToken, yes)
 			}
 			msFlags := []string{"microsoft-client", "microsoft-tenant", "microsoft-sign-in", "microsoft-signoff", "no-microsoft-signoff"}
 			if countFlags(cmd, msFlags...) > 0 {
@@ -467,13 +476,15 @@ func newAgentConfigureCmd() *cobra.Command {
 	f.StringVar(&addServer, "add-server", "", "a file holding an MCP server to add, in a manifest's shape")
 	f.StringVar(&removeServer, "remove-server", "", "the roster id of a server to remove (server:…)")
 	f.StringVar(&addSuggested, "add-suggested", "", "add a server the agent suggests, by its key, as your own (agentry agent show lists them)")
-	f.StringArrayVar(&mailOn, "mail-provider", nil, "the Assistant: enable this mail provider (google), putting its servers on its roster; repeatable")
+	f.StringArrayVar(&mailOn, "mail-provider", nil, "the Assistant: enable this mail provider (google, microsoft or fastmail), putting its servers on its roster; repeatable")
 	f.StringArrayVar(&mailOff, "no-mail-provider", nil, "the Assistant: disable this mail provider, taking its servers off its roster and keeping its sign-in; repeatable")
 	f.StringVar(&msClient, "microsoft-client", "", "the Assistant's Microsoft 365: your own Entra app's application (client) id")
 	f.StringVar(&msTenant, "microsoft-tenant", "", "with --microsoft-client: consumers, organizations or a tenant id (default: ask Microsoft at the sign-in)")
 	f.StringVar(&msSignIn, "microsoft-sign-in", "", "the Assistant's Microsoft 365: sign it in to this Microsoft account, by a device code")
 	f.StringVar(&msSignoff, "microsoft-signoff", "", "the Assistant's Microsoft 365: a line every mail it sends or drafts ends with")
 	f.BoolVar(&noMsSignoff, "no-microsoft-signoff", false, "the Assistant's Microsoft 365: clear the signoff")
+	f.BoolVar(&fastmailToken, "fastmail-token", false, "the Assistant's Fastmail: keep your Fastmail API token, read without echo or from stdin, once Fastmail accepts it")
+	f.BoolVar(&noFastmail, "no-fastmail", false, "the Assistant's Fastmail: remove its token")
 	f.StringVar(&googleClient, "google-client", "", "the Assistant's Google Workspace: your Google Cloud OAuth client's JSON file (a Desktop app client)")
 	f.StringVar(&googleSignIn, "google-sign-in", "", "the Assistant's Google Workspace: sign it in to this Google account, in your browser")
 	f.StringVar(&addPack, "knowledge", "", "a knowledge pack kept on this computer for it to search")

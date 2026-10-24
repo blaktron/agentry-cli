@@ -26,6 +26,31 @@ func OfferedServers() []offer.Server {
 			Note: "it reads English Wikipedia, whose articles are its editors' and not checked by Agentry",
 		},
 		offer.BraveSearch(),
+		Fastmail(),
+	}
+}
+
+// FastmailToken is the stored secret Fastmail's server is given as its
+// bearer: an API token of the MCP type the person makes in Fastmail's
+// settings.
+const FastmailToken = "FASTMAIL_TOKEN"
+
+// FastmailHost is Fastmail's own MCP server's host.
+const FastmailHost = "api.fastmail.com"
+
+// Fastmail is Fastmail's own remote MCP server, reached with the person's
+// own Fastmail API token: mail, contacts and calendars. The token's scopes,
+// chosen when the person makes it (Read, Make changes, Send), are what it may
+// do; off until the token is stored, and a disabled Fastmail provider is off
+// the roster.
+func Fastmail() offer.Server {
+	return offer.Server{
+		Name:         "Fastmail",
+		Server:       manifest.MCPServer{URL: "https://" + FastmailHost + "/mcp", Auth: manifest.AuthSecret, Secrets: []string{FastmailToken}},
+		Secret:       FastmailToken,
+		SecretFlag:   "fastmail-token",
+		MailProvider: MailFastmail,
+		Note:         "Fastmail's own MCP server, run at Fastmail and reached with your own Fastmail API token: it can read, change or send in your Fastmail account whatever your token allows, so make the token Read only unless you want it to change things",
 	}
 }
 
@@ -169,12 +194,16 @@ const MailGoogle = "google"
 // Outlook.com.
 const MailMicrosoft = "microsoft"
 
+// MailFastmail is the Fastmail mail provider's key: Fastmail's own server.
+const MailFastmail = "fastmail"
+
 // MailProviders are the services whose mail and calendar the agent reaches,
-// each through its own image servers; the person enables the ones they use.
+// each through its own servers; the person enables the ones they use.
 func MailProviders() []offer.MailProvider {
 	return []offer.MailProvider{
 		{Key: MailGoogle, Name: "Google", ImageServers: []string{GogKey}},
 		{Key: MailMicrosoft, Name: "Microsoft", ImageServers: []string{MS365Key}},
+		{Key: MailFastmail, Name: "Fastmail"},
 	}
 }
 
