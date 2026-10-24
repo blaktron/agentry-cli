@@ -29,6 +29,9 @@ func withImageServers(t *testing.T) {
 
 const gogPassword = "keyring-test-value-0123456789"
 
+// googleOn has the Google mail provider enabled, whose server gog is.
+var googleOn = []string{assistant.MailGoogle}
+
 // TestTheAssistantOffersGoogleWorkspace: the Assistant's roster has
 // Google Workspace off by default with its two switches, waits for a
 // sign-in when switched on without one, and its offer holds to the image
@@ -42,7 +45,7 @@ func TestTheAssistantOffersGoogleWorkspace(t *testing.T) {
 	if err := offer.CheckImageServers(a.Builtin.ImageServers(policy.Images{})); err != nil {
 		t.Fatal(err)
 	}
-	r := BuildRoster(a, Config{}, nil)
+	r := BuildRoster(a, Config{MailProviders: googleOn}, nil)
 	for _, id := range []string{"server:gog", "server:gog:writes", "server:gog:send"} {
 		e, ok := r.Entry(id)
 		if !ok || e.On || e.GrantedBy != GrantedByBuiltin {
@@ -55,7 +58,7 @@ func TestTheAssistantOffersGoogleWorkspace(t *testing.T) {
 			t.Errorf("its sentence lacks %q: %s", want, e.Line)
 		}
 	}
-	on := Config{Switches: map[string]bool{"server:gog": true}}
+	on := Config{MailProviders: googleOn, Switches: map[string]bool{"server:gog": true}}
 	if e, _ := BuildRoster(a, on, nil).Entry("server:gog"); e.State != StateNeedsSetUp || !strings.Contains(e.Reason, "--google-sign-in") {
 		t.Fatalf("on with no sign-in: %+v", e)
 	}
@@ -101,26 +104,26 @@ func TestGoogleWorkspaceIsGivenSignedInWithItsSwitches(t *testing.T) {
 	}
 	signedIn := map[string]ImageSignIn{"gog": {Account: "person@example.com", At: time.Now(), Granted: []string{"writes", "send"}}}
 
-	if sw, on, slots, _ := apply(Config{Switches: map[string]bool{"server:gog": true, "server:gog:writes": true}}); sw != nil || slices.Contains(on, "server:gog") || slices.Contains(on, "server:gog:writes") || slots[assistant.GogKeyringSecret] != "" {
+	if sw, on, slots, _ := apply(Config{MailProviders: googleOn, Switches: map[string]bool{"server:gog": true, "server:gog:writes": true}}); sw != nil || slices.Contains(on, "server:gog") || slices.Contains(on, "server:gog:writes") || slots[assistant.GogKeyringSecret] != "" {
 		t.Fatalf("not signed in: switches %v applied %v slots %v", sw, on, slots)
 	}
-	sw, on, slots, vol := apply(Config{SignIns: signedIn, Switches: map[string]bool{"server:gog": true}})
+	sw, on, slots, vol := apply(Config{MailProviders: googleOn, SignIns: signedIn, Switches: map[string]bool{"server:gog": true}})
 	if len(sw) != 0 || !slices.Contains(on, "server:gog") || slots[assistant.GogKeyringSecret] != gogPassword || vol != ImageVolumeIn(home, "assistant", "gog") {
 		t.Fatalf("signed in, read only: switches %v applied %v volume %q", sw, on, vol)
 	}
-	if sw, on, _, _ := apply(Config{SignIns: signedIn, Switches: map[string]bool{"server:gog": true, "server:gog:send": true}}); len(sw) != 0 || slices.Contains(on, "server:gog:send") {
+	if sw, on, _, _ := apply(Config{MailProviders: googleOn, SignIns: signedIn, Switches: map[string]bool{"server:gog": true, "server:gog:send": true}}); len(sw) != 0 || slices.Contains(on, "server:gog:send") {
 		t.Fatalf("sending without changes: switches %v applied %v", sw, on)
 	}
-	if sw, on, _, _ := apply(Config{SignIns: signedIn, Switches: map[string]bool{"server:gog": true, "server:gog:writes": true, "server:gog:send": true}}); !slices.Equal(sw, []string{"writes", "send"}) || !slices.Contains(on, "server:gog:send") {
+	if sw, on, _, _ := apply(Config{MailProviders: googleOn, SignIns: signedIn, Switches: map[string]bool{"server:gog": true, "server:gog:writes": true, "server:gog:send": true}}); !slices.Equal(sw, []string{"writes", "send"}) || !slices.Contains(on, "server:gog:send") {
 		t.Fatalf("changes and sending: switches %v applied %v", sw, on)
 	}
-	if sw, on, _, _ := apply(Config{SignIns: signedIn, Switches: map[string]bool{"server:gog:writes": true}}); sw != nil || slices.Contains(on, "server:gog:writes") {
+	if sw, on, _, _ := apply(Config{MailProviders: googleOn, SignIns: signedIn, Switches: map[string]bool{"server:gog:writes": true}}); sw != nil || slices.Contains(on, "server:gog:writes") {
 		t.Fatalf("changes with the server off: switches %v applied %v", sw, on)
 	}
 	// A read-only sign-in asked for no scope that changes need: the
 	// server is given read-only, and its changes wait for a new sign-in.
 	readOnly := map[string]ImageSignIn{"gog": {Account: "person@example.com", At: time.Now()}}
-	ro := Config{SignIns: readOnly, Switches: map[string]bool{"server:gog": true, "server:gog:writes": true}}
+	ro := Config{MailProviders: googleOn, SignIns: readOnly, Switches: map[string]bool{"server:gog": true, "server:gog:writes": true}}
 	if sw, on, _, _ := apply(ro); len(sw) != 0 || !slices.Contains(on, "server:gog") || slices.Contains(on, "server:gog:writes") {
 		t.Fatalf("changes on a read-only sign-in: switches %v applied %v", sw, on)
 	}
@@ -128,7 +131,7 @@ func TestGoogleWorkspaceIsGivenSignedInWithItsSwitches(t *testing.T) {
 		t.Fatalf("changes on a read-only sign-in: %+v", e)
 	}
 	delete(keys, ImageKeyringAccount("assistant", "gog"))
-	c := Config{SignIns: signedIn, Switches: map[string]bool{"server:gog": true}}
+	c := Config{MailProviders: googleOn, SignIns: signedIn, Switches: map[string]bool{"server:gog": true}}
 	if _, _, _, err := Apply(context.Background(), home, a, c, BuildRoster(a, c, nil), nil, nil, keys); err == nil || !strings.Contains(err.Error(), "sign it in again") {
 		t.Fatalf("a password the keychain lost: %v", err)
 	}
@@ -224,14 +227,14 @@ func TestRosterReachesEveryGateWithGoogleWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fresh := Config{Enabled: true, Switches: map[string]bool{"server:gog": true, "server:gog:writes": true}}
+	fresh := Config{MailProviders: googleOn, Enabled: true, Switches: map[string]bool{"server:gog": true, "server:gog:writes": true}}
 	unagreed := Unconsented(BuildRoster(a, fresh, nil), fresh)
 	for _, id := range []string{"server:gog", "server:gog:writes"} {
 		if !slices.ContainsFunc(unagreed, func(e RosterEntry) bool { return e.ID == id }) {
 			t.Errorf("%s asks no agreement", id)
 		}
 	}
-	c := Config{Enabled: true, SignIns: map[string]ImageSignIn{"gog": {Account: "person@example.com", At: time.Now(), Granted: []string{"writes", "send"}}}}
+	c := Config{MailProviders: googleOn, Enabled: true, SignIns: map[string]ImageSignIn{"gog": {Account: "person@example.com", At: time.Now(), Granted: []string{"writes", "send"}}}}
 	for _, id := range []string{"server:gog", "server:gog:writes"} {
 		if _, err := ApplyChange(home, a, &c, Change{Switch: &Switch{ID: id, On: true}, Consent: true}); err != nil {
 			t.Fatal(err)

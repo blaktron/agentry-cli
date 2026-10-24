@@ -72,6 +72,15 @@ func ImageServers(image string) []offer.ImageServer {
 	}}
 }
 
+// MailGoogle is the Google mail provider's key: gog's Google Workspace.
+const MailGoogle = "google"
+
+// MailProviders are the services whose mail and calendar the agent reaches,
+// each through its own image servers; the person enables the ones they use.
+func MailProviders() []offer.MailProvider {
+	return []offer.MailProvider{{Key: MailGoogle, Name: "Google", ImageServers: []string{GogKey}}}
+}
+
 // SuggestedServers are the MCP servers the agent suggests, which the person
 // adds as their own: free public services whose terms suit a person's own
 // use, not a product's default for all its users.

@@ -157,6 +157,15 @@ func (b Builtin) ImageServers(images policy.Images) []offer.ImageServer {
 	return nil
 }
 
+// MailProviders are the services whose mail and calendar the persistent
+// agent reaches through its image servers; a built-in's alone.
+func (b Builtin) MailProviders() []offer.MailProvider {
+	if b.persistent && b.namespace == assistant.Namespace && b.name == assistant.Name {
+		return assistant.MailProviders()
+	}
+	return nil
+}
+
 // SuggestedServers are the MCP servers the persistent agent suggests: not
 // on its roster until the person adds one as their own.
 func (b Builtin) SuggestedServers() []offer.Suggestion {
@@ -316,7 +325,7 @@ func (s Segment) imageSpecs() ([]spec.MCPServerSpec, []string, error) {
 			Name: "mcp-image-" + o.Key, Source: spec.SourceImage, Package: o.Image, Image: o.Image,
 			Command: o.Args(func(key string) bool { return slices.Contains(g.Switches, key) }),
 			Egress:  slices.Clone(o.Egress), Secrets: slices.Clone(o.Secrets), Env: env,
-			Volumes: []string{g.Volume + ":" + o.VolumeTarget},
+			Volumes: []string{g.Volume + ":" + o.VolumeTarget}, Account: g.Account,
 		})
 		volumes = append(volumes, g.Volume)
 	}

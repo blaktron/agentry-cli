@@ -131,6 +131,9 @@ type agentState struct {
 	Tasks *int `json:"tasks,omitempty"`
 	// Suggested are the servers the agent suggests and does not have.
 	Suggested []suggestedServer `json:"suggested,omitempty"`
+	// MailProviders are the services whose mail the agent can reach, for
+	// one that reaches any.
+	MailProviders []persistent.MailProviderState `json:"mailProviders,omitempty"`
 }
 
 // suggestedServer is a server an agent suggests, as show lists it.
@@ -168,6 +171,7 @@ func readAgentState(ctx context.Context, home string, a persistent.Agent) (agent
 	st.Config = &cfg
 	st.Share, _ = persistent.ShareFolder(a, cfg)
 	st.Roster = persistent.BuildRosterUnder(a, cfg, nil, persistent.HomeMalwareCheck(home))
+	st.MailProviders = persistent.MailProviders(a, cfg)
 	for _, s := range persistent.Suggestions(a, cfg) {
 		st.Suggested = append(st.Suggested, suggestedServer{Key: s.Key, Name: s.Name, ID: persistent.ServerEntryID(s.Server), Line: s.Note})
 	}
@@ -353,6 +357,10 @@ func printAgentState(w io.Writer, st agentState) {
 	if len(st.Roster) > 0 {
 		_, _ = fmt.Fprintln(w, "  roster:")
 		printRoster(w, st.Roster)
+	}
+	if len(st.MailProviders) > 0 {
+		_, _ = fmt.Fprintf(w, "  mail providers (agentry agent configure %s --mail-provider <key>):\n", st.Agent)
+		printMailProviders(w, st.MailProviders)
 	}
 	if len(st.Suggested) > 0 {
 		_, _ = fmt.Fprintf(w, "  suggested servers (agentry agent configure %s --add-suggested <key>):\n", st.Agent)
