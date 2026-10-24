@@ -399,30 +399,33 @@ func TestDockerAgentCompileRefusesASubscriptionToken(t *testing.T) {
 // A Claude model that binds its thinking blocks to the conversation is
 // configured to have the API drop a block whose system prompt or tools have
 // changed since it was made, which a conversation continued into a new
-// segment meets: thinking stays adaptive at the model's default effort and
-// display. Every other model's block is left as the harness's default, and
-// both modes compile the same model block.
+// segment meets, with its thinking display left at its default; no thinking
+// budget is written, so the model's own effort holds. Every other model's
+// block is left as the harness's default, and both modes compile the same
+// model block.
 func TestDockerAgentCompileDropsThinkingBoundToAnEarlierPrompt(t *testing.T) {
 	ad, err := Get(DefaultName)
 	if err != nil {
 		t.Fatal(err)
 	}
 	cases := []struct {
-		provider, model, budget string
+		provider, model string
+		binds           bool
 	}{
-		{"anthropic", "claude-sonnet-5-5", "adaptive/high"},
-		{"anthropic", "claude-opus-5-5", "adaptive/medium"},
-		{"anthropic", "claude-sonnet-5.6", "adaptive/high"},
-		{"anthropic", "claude-opus-6", "adaptive/medium"},
-		{"anthropic", "anthropic.claude-sonnet-5-5@v1", "adaptive/high"},
-		{"anthropic", "claude-sonnet-5", ""},
-		{"anthropic", "claude-opus-5", ""},
-		{"anthropic", "claude-sonnet-4-5", ""},
-		{"anthropic", "claude-sonnet-4-20250514", ""},
-		{"anthropic", "claude-3-7-sonnet-latest", ""},
-		{"anthropic", "claude-haiku-5-5", ""},
-		{"anthropic", "claude-fable-5-1", ""},
-		{"openrouter", "anthropic/claude-sonnet-5-5", ""},
+		{"anthropic", "claude-sonnet-5-5", true},
+		{"anthropic", "claude-opus-5-5", true},
+		{"anthropic", "claude-haiku-5-5", true},
+		{"anthropic", "claude-sonnet-5.6", true},
+		{"anthropic", "claude-opus-6", true},
+		{"anthropic", "anthropic.claude-sonnet-5-5@v1", true},
+		{"anthropic", "claude-sonnet-5", false},
+		{"anthropic", "claude-opus-5", false},
+		{"anthropic", "claude-sonnet-4-5", false},
+		{"anthropic", "claude-haiku-4-5", false},
+		{"anthropic", "claude-sonnet-4-20250514", false},
+		{"anthropic", "claude-3-7-sonnet-latest", false},
+		{"anthropic", "claude-fable-5-1", false},
+		{"openrouter", "anthropic/claude-sonnet-5-5", false},
 	}
 	for _, c := range cases {
 		for _, mode := range []manifest.Mode{manifest.ModeAutonomous, manifest.ModeInteractive} {
@@ -441,12 +444,15 @@ func TestDockerAgentCompileDropsThinkingBoundToAnEarlierPrompt(t *testing.T) {
 			}
 			main := doc.Models["main"]
 			var want map[string]any
-			if c.budget != "" {
+			if c.binds {
 				want = map[string]any{"thinking_prefix_mismatch": "drop_block", "thinking_display": "omitted"}
 			}
 			got, _ := main["provider_opts"].(map[string]any)
-			if budget, _ := main["thinking_budget"].(string); budget != c.budget || !reflect.DeepEqual(got, want) {
-				t.Errorf("%s %s: thinking_budget %q, provider_opts %v; want %q, %v", c.model, mode, main["thinking_budget"], got, c.budget, want)
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("%s %s: provider_opts %v, want %v", c.model, mode, got, want)
+			}
+			if b, ok := main["thinking_budget"]; ok {
+				t.Errorf("%s %s: thinking_budget %v written; the model's own effort is to hold", c.model, mode, b)
 			}
 		}
 	}
