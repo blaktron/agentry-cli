@@ -49,8 +49,9 @@ const (
 var googleClientIDRE = regexp.MustCompile(`^[0-9]+-[a-z0-9]+\.apps\.googleusercontent\.com$`)
 
 // googleEmailRE is an email address gog can sign in with: one @, a dotted
-// domain, no space or control character.
-var googleEmailRE = regexp.MustCompile(`^[^@\s\x00-\x1f\x7f]{1,64}@[a-z0-9.-]{1,189}\.[a-z]{2,63}$`)
+// domain, no space or control character, and a first character that is not
+// "-", so the address is never read as one of gog's options.
+var googleEmailRE = regexp.MustCompile(`^[^@\s\x00-\x1f\x7f-][^@\s\x00-\x1f\x7f]{0,63}@[a-z0-9.-]{1,189}\.[a-z]{2,63}$`)
 
 // CheckGoogleClient refuses a file that is not a Google Cloud OAuth client
 // for a desktop app: a JSON object with an "installed" client naming its id
@@ -94,8 +95,21 @@ type Google struct {
 	Policy      *policy.Policy
 	RunnerImage string
 	Keys        Secrets
+	// Client is who calls, ClientCLI or ClientDesktop (ClientCLI when
+	// unset): the agent's lock names it while the client or the sign-in
+	// holds the agent.
+	Client string
 	// Say is where the steps are narrated.
 	Say io.Writer
+}
+
+// acquire takes the agent's lock in the caller's name.
+func (g Google) acquire() (*Owner, error) {
+	client := g.Client
+	if client == "" {
+		client = ClientCLI
+	}
+	return Acquire(g.Home, g.Agent.Name, client)
 }
 
 func (g Google) say(format string, args ...any) {
@@ -204,7 +218,7 @@ func (g Google) SetClient(ctx context.Context, client []byte) error {
 	if err := CheckGoogleClient(client); err != nil {
 		return err
 	}
-	owner, err := Acquire(g.Home, g.Agent.Name, ClientCLI)
+	owner, err := g.acquire()
 	if err != nil {
 		return err
 	}
@@ -244,7 +258,7 @@ func (g Google) SignIn(ctx context.Context, email string, browse func(string) er
 	if !googleEmailRE.MatchString(email) {
 		return "", fmt.Errorf("%q is not an email address a Google account signs in with", email)
 	}
-	owner, err := Acquire(g.Home, g.Agent.Name, ClientCLI)
+	owner, err := g.acquire()
 	if err != nil {
 		return "", err
 	}
