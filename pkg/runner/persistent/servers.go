@@ -20,6 +20,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/persistent/offer"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 )
 
 // KindServerWrites is the kind of an offered server's writes entry.
@@ -51,7 +52,8 @@ var offersOf = func(a Agent, c Config) []offer.Server { return builtinOffers(a, 
 
 // builtinOffers are the built-in's offers for the agent's accounts, less one
 // drawn for an account whose address a QuickAgent could not declare (an
-// address, an internal name): it is never on the roster.
+// address, an internal name), which is never on the roster, and less a
+// disabled mail provider's.
 func builtinOffers(a Agent, c Config) []offer.Server {
 	hosts := make([]offer.GitHost, 0, len(c.Accounts))
 	for _, g := range c.Accounts {
@@ -60,6 +62,11 @@ func builtinOffers(a Agent, c Config) []offer.Server {
 	var out []offer.Server
 	for _, o := range a.Builtin.OfferedServers(hosts) {
 		if o.Account != "" && checkServer(o.Server) != nil {
+			continue
+		}
+		// A disabled mail provider's server is off the roster, as its image
+		// servers are; the person's token for it is kept.
+		if o.MailProvider != "" && !slices.Contains(c.MailProviders, o.MailProvider) {
 			continue
 		}
 		out = append(out, o)
@@ -120,6 +127,9 @@ func setUp(a Agent, c Config, o offer.Server) (ok bool, reason string) {
 			return true, ""
 		}
 		reason := fmt.Sprintf("it needs your secret %s: agentry agent secret set %s %s", o.Secret, a.Name, o.Secret)
+		if o.SecretFlag != "" {
+			reason = fmt.Sprintf("it needs your %s: agentry agent configure %s --%s", o.Name+" token", a.Name, o.SecretFlag)
+		}
 		if searchKeyStandsIn(c, o) {
 			reason += fmt.Sprintf(", or a %s key for web search (Provider settings, or agentry setup)", policy.WebSearchKey{Provider: o.SearchKey}.ProviderName())
 		}
@@ -288,4 +298,25 @@ func suggestionFor(a Agent, srv manifest.MCPServer) (offer.Suggestion, bool) {
 		}
 	}
 	return offer.Suggestion{}, false
+}
+
+// withServerFix adds to a start that failed because an offered server with
+// a configure flag for its secret did not start (as when its provider
+// refuses the token) the two ways to go on: give the token again, or switch
+// the server off.
+func withServerFix(a Agent, c Config, err error) error {
+	r := receipt.ReasonOf(err)
+	if r == nil || r.Code != receipt.ReasonMCPStartFailed {
+		return err
+	}
+	for _, o := range offersOf(a, c) {
+		// The engine's error names a remote server by its address; the
+		// reason keeps no address among its names.
+		if o.SecretFlag == "" || o.Server.URL == "" || !strings.Contains(err.Error(), "declared MCP server "+o.Server.URL+" did not start") {
+			continue
+		}
+		id := ServerEntryID(o.Server)
+		return fmt.Errorf("%w\n%s did not start: if its token is wrong, expired or revoked, give it again (agentry agent configure %s --%s), or switch it off (agentry agent grant %s %s off)", err, o.Name, a.Name, o.SecretFlag, a.Name, id)
+	}
+	return err
 }

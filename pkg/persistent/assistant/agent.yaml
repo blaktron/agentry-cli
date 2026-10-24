@@ -1,7 +1,7 @@
 schemaVersion: "2"
 name: assistant
 namespace: agentry
-version: 1.8.1
+version: 1.9.0
 summary: "A personal assistant that keeps its conversation with you across sessions, on your computer."
 license: MIT
 authors:

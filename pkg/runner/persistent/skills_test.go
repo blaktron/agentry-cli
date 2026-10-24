@@ -69,7 +69,7 @@ func TestTheCodingAgentHasItsBuiltInSkills(t *testing.T) {
 			assistant = append(assistant, e.Name)
 		}
 	}
-	if !slices.Equal(assistant, []string{"google-inbox-triage", "google-meeting-prep", "google-workspace", "google-workspace-setup", "memory-ingest", "memory-lint", "memory-query", "microsoft-365", "microsoft-365-setup", "microsoft-inbox-triage", "microsoft-meeting-prep"}) {
+	if !slices.Equal(assistant, []string{"fastmail-inbox-triage", "fastmail-setup", "google-inbox-triage", "google-meeting-prep", "google-workspace", "google-workspace-setup", "memory-ingest", "memory-lint", "memory-query", "microsoft-365", "microsoft-365-setup", "microsoft-inbox-triage", "microsoft-meeting-prep"}) {
 		t.Errorf("the Assistant's skills: %v", assistant)
 	}
 }

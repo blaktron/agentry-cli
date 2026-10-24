@@ -65,8 +65,10 @@ func printMailProviders(w io.Writer, ps []persistent.MailProviderState) {
 		switch {
 		case len(p.Accounts) > 0:
 			line += ", signed in as " + safeTerminalText(strings.Join(p.Accounts, ", "), 300)
+		case p.Enabled && len(p.SetUp) == 0:
+			line += ", set up"
 		case p.Enabled:
-			line += ", not signed in"
+			line += ", not set up yet"
 		}
 		_, _ = fmt.Fprintln(w, line)
 	}

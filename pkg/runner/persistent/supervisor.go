@@ -342,7 +342,7 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 		// A start refused before the engine wrote anything leaves no
 		// folder behind; one that wrote its envelope keeps it.
 		_ = os.Remove(outDir)
-		return err
+		return withServerFix(a, cfg, err)
 	}
 	// Unrecorded, the next start seeds again, which leaves a seeded memory
 	// as it is.
