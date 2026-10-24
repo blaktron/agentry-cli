@@ -3,6 +3,7 @@ package compile
 import (
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -421,5 +422,62 @@ func TestCompileRefusesAnImageServerItCannotRender(t *testing.T) {
 		if _, err := Compile(in, t.TempDir()); err == nil {
 			t.Errorf("%s: compiled", name)
 		}
+	}
+}
+
+// TestASignedInImageServerIsEnabledByItsCatalogName: the gateway enables
+// servers by their catalogue names, so a signed-in image server's account
+// is named in the System Prompt and nowhere the gateway reads: every server
+// --servers and registry.yaml name is a catalogue entry.
+func TestASignedInImageServerIsEnabledByItsCatalogName(t *testing.T) {
+	in := persistentInputs(t, nil)
+	srv := gogSpec()
+	srv.Account = "person@example.com"
+	in.MCPServers = []spec.MCPServerSpec{srv}
+	planDir := t.TempDir()
+	plan, err := Compile(in, planDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(planDir, "gateway", "catalog.yaml")) //nolint:gosec // test plan dir
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Registry map[string]any `yaml:"registry"`
+	}
+	if err := yaml.Unmarshal(b, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var flag string
+	for i, a := range plan.Gateway.Args {
+		if a == "--servers" && i+1 < len(plan.Gateway.Args) {
+			flag = plan.Gateway.Args[i+1]
+		}
+	}
+	names := strings.Split(flag, ",")
+	if !slices.Contains(names, srv.Name) || !slices.Contains(plan.Gateway.Servers, srv.Name) {
+		t.Fatalf("the gateway does not enable %s: --servers %q, servers %q", srv.Name, flag, plan.Gateway.Servers)
+	}
+	for _, n := range append(names, plan.Gateway.Servers...) {
+		if _, ok := doc.Registry[n]; !ok {
+			t.Errorf("the gateway is asked to enable %q, which is no catalogue entry", n)
+		}
+	}
+	if strings.Contains(flag, "person@example.com") {
+		t.Errorf("the account reached the gateway's servers: %q", flag)
+	}
+	// The rendered System Prompt, wherever the plan keeps it, still names it.
+	named := false
+	_ = filepath.WalkDir(planDir, func(p string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			if b, err := os.ReadFile(p); err == nil && strings.Contains(string(b), "mcp-image-gog (signed in as person@example.com)") { //nolint:gosec // test plan dir
+				named = true
+			}
+		}
+		return nil
+	})
+	if !named {
+		t.Error("the System Prompt no longer names the account")
 	}
 }
