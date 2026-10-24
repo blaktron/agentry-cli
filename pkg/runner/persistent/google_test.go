@@ -204,6 +204,56 @@ func TestGoogleWorkspaceSignsInInTwoSteps(t *testing.T) {
 	}
 }
 
+// TestGoogleSignInHoldsTheAgentInItsCallersName: while the sign-in waits
+// for the browser, the agent's lock names the client that called it, and
+// the CLI when none is named.
+func TestGoogleSignInHoldsTheAgentInItsCallersName(t *testing.T) {
+	for _, tc := range []struct{ client, want string }{{"", ClientCLI}, {ClientCLI, ClientCLI}, {ClientDesktop, ClientDesktop}} {
+		r := newGoogleRig(t)
+		r.g.Client = tc.client
+		if err := r.g.SetClient(context.Background(), []byte(testGoogleClient)); err != nil {
+			t.Fatal(err)
+		}
+		back := browseBack(t)
+		var held *Holder
+		if _, err := r.g.SignIn(context.Background(), "person@example.com", func(u string) error {
+			_, held = Held(r.g.Home, "assistant")
+			return back(u)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if held == nil || held.Client != tc.want {
+			t.Errorf("client %q: the lock's holder %+v, want %q", tc.client, held, tc.want)
+		}
+		if again, _ := Held(r.g.Home, "assistant"); again {
+			t.Errorf("client %q: the lock was kept after the sign-in", tc.client)
+		}
+	}
+}
+
+// TestASignInAddressIsNeverAnOption: an address whose first character is
+// "-" would read as one of gog's options, so it is refused before gog runs.
+func TestASignInAddressIsNeverAnOption(t *testing.T) {
+	r := newGoogleRig(t)
+	if err := r.g.SetClient(context.Background(), []byte(testGoogleClient)); err != nil {
+		t.Fatal(err)
+	}
+	r.runs = nil
+	for _, email := range []string{"--x=y@a.bc", "-person@example.com", " -person@example.com"} {
+		if _, err := r.g.SignIn(context.Background(), email, browseBack(t)); err == nil || !strings.Contains(err.Error(), "not an email address") {
+			t.Errorf("%q: %v", email, err)
+		}
+	}
+	if len(r.runs) != 0 {
+		t.Fatalf("gog ran %d times for an address that reads as an option", len(r.runs))
+	}
+	for _, email := range []string{"a-b@example.com", "person-@example.com"} {
+		if !googleEmailRE.MatchString(email) {
+			t.Errorf("%q was refused", email)
+		}
+	}
+}
+
 // TestALostKeyringPasswordStartsTheSignInAgain: a volume whose password the
 // keychain no longer has cannot be opened, so it is made again.
 func TestALostKeyringPasswordStartsTheSignInAgain(t *testing.T) {
