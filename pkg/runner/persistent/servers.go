@@ -5,7 +5,8 @@ package persistent
 // person's, granted by the built-in, on by default when it needs nothing the
 // person must give it. One that needs a stored secret or a git host account
 // waits for it: on, it is "needs set-up" and no segment is given it until
-// the secret or the account is there and on. An offered remote that can
+// the secret or the account is there and on, or, for one that names a web
+// search provider, the key the person keeps for that provider's search. An offered remote that can
 // change things has a second entry, its writes, off by default; with it on
 // the segment is given the read-write address.
 
@@ -18,6 +19,7 @@ import (
 	"github.com/blaktron/agentry/pkg/manifest"
 
 	"github.com/blaktron/agentry-cli/pkg/persistent/offer"
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 )
 
 // KindServerWrites is the kind of an offered server's writes entry.
@@ -106,15 +108,22 @@ func switchedOn(c Config, id string, def bool) bool {
 }
 
 // setUp says an offered server has what it needs: its stored secret, kept
-// and on, or an account on its host, kept and on. reason says what to do
-// when it does not.
+// and on, or the search key that stands in for it, or an account on its
+// host, kept and on. reason says what to do when it does not.
 func setUp(a Agent, c Config, o offer.Server) (ok bool, reason string) {
 	switch {
 	case o.Secret != "":
 		if slices.ContainsFunc(c.Secrets, func(s StoredSecret) bool { return s.Name == o.Secret }) && switchedOn(c, SecretEntryID(o.Secret), true) {
 			return true, ""
 		}
-		return false, fmt.Sprintf("it needs your secret %s: agentry agent secret set %s %s", o.Secret, a.Name, o.Secret)
+		if searchKeyStandsIn(c, o) && searchKeyHeld(o.SearchKey) {
+			return true, ""
+		}
+		reason := fmt.Sprintf("it needs your secret %s: agentry agent secret set %s %s", o.Secret, a.Name, o.Secret)
+		if searchKeyStandsIn(c, o) {
+			reason += fmt.Sprintf(", or a %s key for web search (Provider settings, or agentry setup)", policy.WebSearchKey{Provider: o.SearchKey}.ProviderName())
+		}
+		return false, reason
 	case o.Account != "":
 		if slices.ContainsFunc(c.Accounts, func(g GitAccount) bool { return g.Host == o.Account }) && switchedOn(c, AccountEntryID(o.Account), true) {
 			return true, ""
@@ -129,6 +138,18 @@ func setUp(a Agent, c Config, o offer.Server) (ok bool, reason string) {
 func offeredEntries(a Agent, c Config, o offer.Server) []RosterEntry {
 	srv := o.Server
 	line := serverLine(srv)
+	// Before a search key could stand in, the sentence named the stored
+	// secret alone; agreeing to it agreed to the same server, reaching the
+	// same host with the same kind of key.
+	var alike []string
+	if o.SearchKey != "" {
+		before := line
+		if o.Note != "" {
+			before += "; " + o.Note
+		}
+		alike = []string{before}
+		line = strings.Replace(line, ", given your secret "+o.Secret, searchKeyLine(o), 1)
+	}
 	if o.Account != "" {
 		line = strings.Replace(line, ", given your secret "+srv.Secrets[0], ", signed in with its "+o.Account+" account's token", 1)
 		if o.Writes != nil {
@@ -138,7 +159,7 @@ func offeredEntries(a Agent, c Config, o offer.Server) []RosterEntry {
 	if o.Note != "" {
 		line += "; " + o.Note
 	}
-	out := []RosterEntry{{ID: ServerEntryID(srv), Kind: KindServer, Name: o.Name, GrantedBy: GrantedByBuiltin, Line: line}}
+	out := []RosterEntry{{ID: ServerEntryID(srv), Kind: KindServer, Name: o.Name, GrantedBy: GrantedByBuiltin, Line: line, alike: alike}}
 	if o.Writes != nil {
 		out = append(out, RosterEntry{ID: ServerWritesID(srv), Kind: KindServerWrites, Name: o.Name + ": changes", GrantedBy: GrantedByBuiltin,
 			Line: "Lets " + o.Name + " change what its token can change on " + srv.RemoteHost() + " (" + o.Writes.URL + "), while " + o.Name + " is on"})
@@ -183,6 +204,31 @@ func serverTokens(keys Secrets, c Config, given []agentServer) (map[string]strin
 			out = map[string]string{}
 		}
 		out[s.Server.Secrets[0]] = v
+	}
+	return out, nil
+}
+
+// searchKeyTokens are the search keys that stand in for the secrets of the
+// offered servers a segment is given, by the secret each needs: read as the
+// runner policy says, given to that server alone.
+func searchKeyTokens(c Config, given []agentServer) (map[string]string, error) {
+	var out map[string]string
+	for _, s := range given {
+		o := s.Offered
+		if o == nil || !searchKeyStandsIn(c, *o) {
+			continue
+		}
+		v, err := searchKeyValue(o.SearchKey)
+		if err != nil {
+			return nil, fmt.Errorf("%s is given your %s key for web search: %w", o.Name, policy.WebSearchKey{Provider: o.SearchKey}.ProviderName(), err)
+		}
+		if err := CheckSecretValue(v); err != nil {
+			return nil, fmt.Errorf("your %s key for web search: %w", policy.WebSearchKey{Provider: o.SearchKey}.ProviderName(), err)
+		}
+		if out == nil {
+			out = map[string]string{}
+		}
+		out[o.Secret] = v
 	}
 	return out, nil
 }

@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/blaktron/agentry/pkg/manifest"
+	"github.com/blaktron/agentry/pkg/websearch"
 )
 
 // AccountSecretPrefix begins the secret slot an account-bound server is
@@ -45,6 +46,11 @@ type Server struct {
 	// until the agent has an account there and has it on, the server waits
 	// for it.
 	Account string
+	// SearchKey, with Secret, is a web search provider the runner policy
+	// may name (webSearch.provider): while the agent stores no secret
+	// named Secret, the key the person keeps for that provider's web
+	// search stands in for it, given to this server alone.
+	SearchKey string
 	// Note is what its consent sentence adds after what it reaches: the
 	// provider's terms, what it is sent.
 	Note string
@@ -80,6 +86,9 @@ func (s Server) Check() error {
 	}
 	if s.Secret != "" && !slices.Contains(srv.Secrets, s.Secret) {
 		return fmt.Errorf("%s needs the secret %s, which it does not declare", s.Name, s.Secret)
+	}
+	if s.SearchKey != "" && s.Secret == "" {
+		return fmt.Errorf("%s stands a search key in for a secret it does not need", s.Name)
 	}
 	if s.Secret != "" && s.Account != "" {
 		return fmt.Errorf("%s needs a secret or an account, not both", s.Name)
@@ -187,12 +196,14 @@ func (s Suggestion) Check() error {
 }
 
 // BraveSearch is web search with Brave, offered to either agent: off until
-// the person stores their own Brave Search API key for it.
+// the person stores their own Brave Search API key for it, or keeps one for
+// Brave web search on this computer.
 func BraveSearch() Server {
 	return Server{
-		Name:   "Web search (Brave)",
-		Server: manifest.MCPServer{NPM: "@brave/brave-search-mcp-server", Version: "2.1.4", Egress: []string{"api.search.brave.com"}, Secrets: []string{"BRAVE_API_KEY"}},
-		Secret: "BRAVE_API_KEY",
-		Note:   "it sends its searches to Brave with your own Brave Search API key, under Brave's terms for that key",
+		Name:      "Web search (Brave)",
+		Server:    manifest.MCPServer{NPM: "@brave/brave-search-mcp-server", Version: "2.1.4", Egress: []string{"api.search.brave.com"}, Secrets: []string{"BRAVE_API_KEY"}},
+		Secret:    "BRAVE_API_KEY",
+		SearchKey: websearch.BraveName,
+		Note:      "it sends its searches to Brave with your own Brave Search API key, under Brave's terms for that key",
 	}
 }

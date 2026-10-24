@@ -247,10 +247,14 @@ func BuildRosterUnder(a Agent, c Config, applied *Applied, malwareCheck bool) Ro
 		if o := as.Offered; o != nil {
 			es := offeredEntries(a, c, *o)
 			add(es[0], o.On)
-			if ok, reason := setUp(a, c, *o); !ok && r[len(r)-1].On {
-				r[len(r)-1].State, r[len(r)-1].Reason = StateNeedsSetUp, reason
-			} else if f, ok := c.ServerFailures[es[0].ID]; ok && r[len(r)-1].On {
-				r[len(r)-1].State, r[len(r)-1].Reason = StateFailed, f.Reason
+			// Only an entry that is on is asked whether it is set up, which
+			// may read the runner policy and the keychain.
+			if e := &r[len(r)-1]; e.On {
+				if ok, reason := setUp(a, c, *o); !ok {
+					e.State, e.Reason = StateNeedsSetUp, reason
+				} else if f, ok := c.ServerFailures[es[0].ID]; ok {
+					e.State, e.Reason = StateFailed, f.Reason
+				}
 			}
 			if len(es) > 1 {
 				add(es[1], false)
@@ -539,6 +543,16 @@ func Apply(ctx context.Context, home string, a Agent, c Config, r Roster, open P
 	}
 	if g.ServerSecrets, err = serverTokens(keys, c, givenServers); err != nil {
 		return g, applied, done, err
+	}
+	searchKeys, err := searchKeyTokens(c, givenServers)
+	if err != nil {
+		return g, applied, done, err
+	}
+	for name, v := range searchKeys {
+		if g.ServerSecrets == nil {
+			g.ServerSecrets = map[string]string{}
+		}
+		g.ServerSecrets[name] = v
 	}
 	g.ImageServers = images
 	slots, err := imageSecrets(keys, a, images)
