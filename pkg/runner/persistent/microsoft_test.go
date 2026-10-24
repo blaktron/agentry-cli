@@ -131,6 +131,9 @@ func TestMicrosoftsRealmAnswerChoosesTheTenant(t *testing.T) {
 func TestOnlyMicrosoftsDeviceLoginPageIsOpened(t *testing.T) {
 	for page, ok := range map[string]bool{
 		"https://microsoft.com/devicelogin":                          true,
+		"https://www.microsoft.com/link":                             true,
+		"https://microsoft.com/link":                                 true,
+		"https://www.microsoft.com/linkage":                          false,
 		"https://login.microsoftonline.com/common/oauth2/deviceauth": true,
 		"http://microsoft.com/devicelogin":                           false,
 		"https://microsoft.com.example.net/devicelogin":              false,
@@ -152,6 +155,13 @@ func TestOnlyMicrosoftsDeviceLoginPageIsOpened(t *testing.T) {
 	_, _ = io.WriteString(r, "https://microsoft.com/devicelogin and enter the code B2C3D4E5F to authenticate.\n")
 	if !r.shown() || !slices.Equal(opened, []string{"https://microsoft.com/devicelogin"}) || !strings.Contains(strings.Join(said, "\n"), "B2C3D4E5F") {
 		t.Fatalf("relayed %v, opened %v", said, opened)
+	}
+	// The page Microsoft names today.
+	opened = nil
+	now := &deviceCodeRelay{say: func(string, ...any) {}, browse: func(u string) error { opened = append(opened, u); return nil }}
+	_, _ = io.WriteString(now, "To sign in, use a web browser to open the page https://www.microsoft.com/link and enter the code K7XQ2PLMN to authenticate.\n")
+	if !now.shown() || !slices.Equal(opened, []string{"https://www.microsoft.com/link"}) {
+		t.Fatalf("the /link page: opened %v", opened)
 	}
 }
 
