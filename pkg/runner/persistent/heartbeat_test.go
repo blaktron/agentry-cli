@@ -13,6 +13,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/session"
 	"github.com/blaktron/agentry-cli/runnerimage/applink"
 )
 
@@ -132,9 +133,20 @@ func TestATaskFiresATurnAtItsTime(t *testing.T) {
 	if a.IsError || !strings.Contains(a.Text, "t1") || !strings.Contains(a.Text, "next at Wed 21 Oct 2026 14:15") {
 		t.Fatalf("task_add: %+v", a)
 	}
+	events, unsubscribe := sv.Subscribe()
+	defer unsubscribe()
 	c.set(time.Date(2026, 10, 21, 14, 15, 10, 0, time.UTC))
 	seg := st.lastSegment()
 	eventually(t, "the task's turn", func() bool { return len(seg.sentTurns()) == 1 })
+	// A chat watching is handed the turn marked as the task's.
+	select {
+	case ev := <-events:
+		if ev.Kind != session.KindUserTurn || ev.Task != "t1" {
+			t.Errorf("the watcher's first event: %+v", ev)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no event reached the watcher")
+	}
 	turn := seg.rawTurns()[0]
 	for _, want := range []string{"(The time now:", `your task t1, "Stretch", came due at 14:15`, "Task: Stretch\n\nRemind the person to stand up."} {
 		if !strings.Contains(turn, want) {
@@ -161,10 +173,24 @@ func TestATaskFiresATurnAtItsTime(t *testing.T) {
 	if !marked {
 		t.Error("the transcript does not mark the task's turn")
 	}
+	history := HistoryEvents(entries)
+	if len(history) == 0 || history[0].Kind != session.KindUserTurn || history[0].Task != "t1" {
+		t.Errorf("the history does not mark the task's turn: %+v", history)
+	}
 	// The next tick in the same minute fires nothing again.
 	time.Sleep(50 * time.Millisecond)
 	if n := len(seg.sentTurns()); n != 1 {
 		t.Errorf("%d turns", n)
+	}
+	// The person's own turn after it carries no mark.
+	if err := sv.Send(context.Background(), "thanks"); err != nil {
+		t.Fatal(err)
+	}
+	entries, _ = Transcript(home, "assistant", 50)
+	for _, ev := range HistoryEvents(entries) {
+		if ev.Kind == session.KindUserTurn && strings.Contains(ev.Text, "thanks") && ev.Task != "" {
+			t.Errorf("the person's turn is marked as task %q", ev.Task)
+		}
 	}
 }
 

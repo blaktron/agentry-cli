@@ -221,6 +221,7 @@ func newAgentConfigureCmd() *cobra.Command {
 		yes, allowVulnerable, noDevHost                                                        bool
 		acct                                                                                   accountFlags
 		noAccount, addSuggested, googleClient, googleSignIn                                    string
+		mailOn, mailOff                                                                        []string
 	)
 	cmd := &cobra.Command{
 		Use:   "configure <name>",
@@ -260,7 +261,7 @@ func newAgentConfigureCmd() *cobra.Command {
 			"127.0.0.1 and the same number, so what it serves from its sandbox (a dev\n" +
 			"server it started) opens in your browser; --no-port takes one away by its\n" +
 			"name. A port is a roster entry, switched with agentry agent grant.\n\n" +
-			"  agentry agent configure coder --port web=3000\n\n" + agentAccountLong + agentGoogleLong,
+			"  agentry agent configure coder --port web=3000\n\n" + agentAccountLong + agentMailLong + agentGoogleLong,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := cliAgent(args[0])
@@ -270,6 +271,12 @@ func newAgentConfigureCmd() *cobra.Command {
 			home, err := runnerHome()
 			if err != nil {
 				return err
+			}
+			if len(mailOn) > 0 || len(mailOff) > 0 {
+				if cmd.Flags().NFlag() > countFlags(cmd, "mail-provider", "no-mail-provider") {
+					return engine.Classify(engine.ExitUsage, errors.New("--mail-provider and --no-mail-provider go with each other alone"))
+				}
+				return configureMailProviders(cmd, a, home, mailOn, mailOff)
 			}
 			if googleClient != "" || googleSignIn != "" {
 				if cmd.Flags().NFlag() > countFlags(cmd, "google-client", "google-sign-in", "policy") {
@@ -438,6 +445,8 @@ func newAgentConfigureCmd() *cobra.Command {
 	f.StringVar(&addServer, "add-server", "", "a file holding an MCP server to add, in a manifest's shape")
 	f.StringVar(&removeServer, "remove-server", "", "the roster id of a server to remove (server:…)")
 	f.StringVar(&addSuggested, "add-suggested", "", "add a server the agent suggests, by its key, as your own (agentry agent show lists them)")
+	f.StringArrayVar(&mailOn, "mail-provider", nil, "the Assistant: enable this mail provider (google), putting its servers on its roster; repeatable")
+	f.StringArrayVar(&mailOff, "no-mail-provider", nil, "the Assistant: disable this mail provider, taking its servers off its roster and keeping its sign-in; repeatable")
 	f.StringVar(&googleClient, "google-client", "", "the Assistant's Google Workspace: your Google Cloud OAuth client's JSON file (a Desktop app client)")
 	f.StringVar(&googleSignIn, "google-sign-in", "", "the Assistant's Google Workspace: sign it in to this Google account, in your browser")
 	f.StringVar(&addPack, "knowledge", "", "a knowledge pack kept on this computer for it to search")

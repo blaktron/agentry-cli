@@ -332,6 +332,9 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 		e, ok := BuildRosterUnder(a, next, nil, malwareCheck).Entry(sw.ID)
 		switch {
 		case !ok:
+			if p, hidden := hiddenProvider(a, next, sw.ID); hidden {
+				return false, fmt.Errorf("%q is %s's, a mail provider not enabled for the %s agent: enable it first (agentry agent configure %s --mail-provider %s)", sw.ID, p.Name, a.Name, a.Name, p.Key)
+			}
 			return false, fmt.Errorf("the %s agent has no entry %q (agentry agent show %s lists them)", a.Name, sw.ID, a.Name)
 		case e.Fixed:
 			return false, fmt.Errorf("%s is not switched: the %s agent always has it", e.Name, a.Name)

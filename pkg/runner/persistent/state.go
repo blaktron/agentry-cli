@@ -202,10 +202,15 @@ func LogPath(home, name string) string { return filepath.Join(Dir(home, name), l
 // the consents, version 3 the Coding agent's dev server, version 4 its
 // published ports, version 5 the skills the person added, version 6 the
 // secrets they stored, version 7 the Coding agent's git host accounts and
-// version 8 the sign-ins of the servers it runs from images; a
-// build that reads an older version alone refuses a newer one rather than
-// drop what it does not know on its next save.
-const ConfigVersion = 8
+// version 8 the sign-ins of the servers it runs from images and version 9
+// the mail providers the person enabled; a build that reads an older
+// version alone refuses a newer one rather than drop what it does not know
+// on its next save.
+const ConfigVersion = 9
+
+// mailProvidersVersion is the version that added MailProviders: an older
+// configuration with a sign-in is migrated when read (migrateMailProviders).
+const mailProvidersVersion = 9
 
 // Config is the agent's config.yaml: what the person chose for it, and the
 // conversation its next segment continues.
@@ -267,6 +272,10 @@ type Config struct {
 	// server's key: who the server answers as once its own sign-in
 	// finished, never a credential.
 	SignIns map[string]ImageSignIn `yaml:"signIns,omitempty" json:"signIns,omitempty"`
+	// MailProviders are the keys of the mail providers the person enabled
+	// (Builtin.MailProviders): a provider not listed has its servers off
+	// the roster and out of every segment, and keeps its sign-in.
+	MailProviders []string `yaml:"mailProviders,omitempty" json:"mailProviders,omitempty"`
 }
 
 // ServerFailure is why a server the person added could not be installed.
@@ -303,6 +312,11 @@ func LoadConfig(home, name string) (Config, error) {
 	if c.Version > ConfigVersion {
 		return Config{}, fmt.Errorf("the %s agent's configuration is version %d, written by a newer Agentry than this one (version %d): update Agentry", name, c.Version, ConfigVersion)
 	}
+	if c.Version < mailProvidersVersion {
+		if a, err := Lookup(name); err == nil {
+			migrateMailProviders(a, &c)
+		}
+	}
 	c.Version = ConfigVersion
 	return c, nil
 }
@@ -328,6 +342,12 @@ func SaveConfig(home, name string, c Config) error {
 		c.Version = 6
 	}
 	if len(c.Accounts) > 0 {
+		c.Version = 7
+	}
+	// A sign-in is written with the providers' version, enabled or not:
+	// read back, an older version holding one is migrated, and a provider
+	// the person disabled would come back enabled.
+	if len(c.SignIns) > 0 || len(c.MailProviders) > 0 {
 		c.Version = ConfigVersion
 	}
 	b, err := yaml.Marshal(c)
@@ -371,8 +391,6 @@ type Entry struct {
 	session.Event
 	// Resumed is set on a segment_start entry.
 	Resumed *bool `json:"resumed,omitempty"`
-	// Task is, on a user turn the heartbeat sent, the task it was for.
-	Task string `json:"task,omitempty"`
 }
 
 // kept says whether the transcript keeps an event: the conversation and

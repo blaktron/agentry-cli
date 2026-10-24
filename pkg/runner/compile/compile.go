@@ -840,10 +840,30 @@ func shareServerNames(declared []spec.MCPServerSpec) []string {
 func mcpServerNames(extra []string, declared []spec.MCPServerSpec) []string {
 	names := append([]string(nil), extra...)
 	for _, srv := range declared {
-		names = append(names, srv.Name)
+		name := srv.Name
+		if a := srv.Account; promptAccount(a) {
+			name += " (signed in as " + a + ")"
+		}
+		names = append(names, name)
 	}
 	sort.Strings(names)
 	return names
+}
+
+// promptAccount says an image server's account may be named in the System
+// Prompt: an address-like word of at most 254 characters, with no space,
+// quote, bracket or control character, so the name a server reported at its
+// sign-in cannot carry an instruction into the prompt.
+func promptAccount(a string) bool {
+	if a == "" || len(a) > 254 {
+		return false
+	}
+	for _, r := range a {
+		if r <= ' ' || r == 0x7f || strings.ContainsRune("\"'`()[]{}<>", r) || r > 0x7e {
+			return false
+		}
+	}
+	return true
 }
 
 // sessionBudgets applies the operator's caps, with the idle timeout
