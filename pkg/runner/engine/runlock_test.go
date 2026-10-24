@@ -389,3 +389,51 @@ func TestSweepRemovesTheContainersOfARunItsLockProvesDead(t *testing.T) {
 		t.Errorf("the sweep said %q", out.String())
 	}
 }
+
+// TestSweepReachesTheRunsOfEveryInstallInTheRunnerHome: a run that died
+// under an earlier install of the release (a new built-in version installs
+// beside the old one) is swept by a start from the new install: its files,
+// its containers, then its networks. A live run under any other install
+// keeps everything.
+func TestSweepReachesTheRunsOfEveryInstallInTheRunnerHome(t *testing.T) {
+	home := t.TempDir()
+	install := func(name, ver string) string { return filepath.Join(home, "agents", "agentry", name, ver) }
+	oldInstall, newInstall := install("assistant", "1.6.0-aaaaaaaaaaaa"), install("assistant", "1.7.0-bbbbbbbbbbbb")
+	dead := filepath.Join(oldInstall, "runs", "dead0008")
+	killRun(t, startLockedRun(t, dead, false))
+	live := filepath.Join(install("coder", "1.3.0-cccccccccccc"), "runs", "live0008")
+	startLockedRun(t, live, false)
+	if err := os.MkdirAll(filepath.Join(newInstall, "runs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	labels := func(r string) map[string]string { return map[string]string{runLabel: r} }
+	f := &dockerx.Fake{
+		Networks: []dockerx.Labeled{
+			{Name: networkName("dead0008"), Labels: labels("dead0008")},
+			{Name: networkName("live0008"), Labels: labels("live0008")},
+		},
+		ByLabel: map[string][]string{
+			runLabel + "=dead0008": {containerName("dead0008", "gateway")},
+			runLabel + "=live0008": {containerName("live0008", "gateway")},
+		},
+	}
+	sweepAbandonedRun(context.Background(), f, newInstall, home, nil)
+
+	ops := f.Ops()
+	gateway := slices.Index(ops, "RemoveForce:"+containerName("dead0008", "gateway"))
+	network := slices.Index(ops, "NetworkRemove:"+networkName("dead0008"))
+	if gateway < 0 || network < gateway {
+		t.Fatalf("want the earlier install's dead run's container removed, then its network: %v", ops)
+	}
+	if pathExists(dead) {
+		t.Error("the earlier install's dead run directory survived")
+	}
+	if !pathExists(live) {
+		t.Error("another install's live run directory was removed")
+	}
+	for _, op := range ops {
+		if strings.Contains(op, "live0008") && !strings.HasPrefix(op, "PSByLabel:") && !strings.HasPrefix(op, "NetworksByLabel:") {
+			t.Errorf("the sweep touched a live run: %s", op)
+		}
+	}
+}

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -42,8 +44,9 @@ func SweepAbandoned(ctx context.Context, d dockerx.Client, stderr io.Writer) {
 
 // sweepAbandonedRun is the sweep a run or a session starts with: the
 // containers, networks and volumes of runs whose process died
-// (SweepAbandoned), then the files they left in this install's run
-// directories (sweepRunDirs), which also takes the dead runs' ids for a
+// (SweepAbandoned), then the files they left in the run directories of this
+// install and of every other install in the runner home (sweepRunDirs over
+// runRoots), which also takes the dead runs' ids for a
 // directory that holds no lock file, and the delivery folders of a process
 // that died in the middle of a delivery (sweepStaleDeliveryFolders). Last,
 // the containers, networks and volumes of every run whose free lock proved
@@ -58,7 +61,10 @@ func SweepAbandoned(ctx context.Context, d dockerx.Client, stderr io.Writer) {
 // touched.
 func sweepAbandonedRun(ctx context.Context, d dockerx.Client, runRoot, runnerHome string, stderr io.Writer) {
 	byContainers := sweepAbandoned(ctx, d, stderr)
-	swept := sweepRunDirs(runRoot, runnerHome, byContainers, stderr)
+	var swept []string
+	for _, root := range runRoots(runRoot, runnerHome) {
+		swept = append(swept, sweepRunDirs(root, runnerHome, byContainers, stderr)...)
+	}
 	sweepStaleDeliveryFolders(runRoot)
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -84,6 +90,37 @@ func sweepAbandonedRun(ctx context.Context, d dockerx.Client, runRoot, runnerHom
 		sort.Strings(failed)
 		_, _ = fmt.Fprintf(stderr, "warning: could not remove %d container(s) a run whose process had died left behind: %s (docker rm -fv <name>)\n", len(failed), strings.Join(failed, ", "))
 	}
+}
+
+// runRoots are the run roots a start sweeps: its own, then every other
+// install's under the runner home (<runnerHome>/agents/<namespace>/<name>/
+// <version>), since a new version of a release installs beside the old one
+// and a run that died under the old one is named nowhere else. Each run in
+// them is still judged by its own lock. Only real directories count: a link
+// standing in an install's or its runs' place is not followed.
+func runRoots(runRoot, runnerHome string) []string {
+	roots := []string{runRoot}
+	if runnerHome == "" {
+		return roots
+	}
+	matches, err := filepath.Glob(filepath.Join(runnerHome, "agents", "*", "*", "*", "runs"))
+	if err != nil {
+		return roots
+	}
+	for _, runs := range matches {
+		root := filepath.Dir(runs)
+		if root == filepath.Clean(runRoot) || !realDir(runs) || !realDir(root) || !realDir(filepath.Dir(root)) || !realDir(filepath.Dir(filepath.Dir(root))) {
+			continue
+		}
+		roots = append(roots, root)
+	}
+	return roots
+}
+
+// realDir says p is a directory and not a link to one.
+func realDir(p string) bool {
+	fi, err := os.Lstat(p)
+	return err == nil && fi.IsDir()
 }
 
 // removeRunContainers removes every container carrying run r's label, for a
