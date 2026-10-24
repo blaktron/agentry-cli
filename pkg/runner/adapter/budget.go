@@ -20,7 +20,7 @@ var resultBudgets = map[string]Budget{
 	// docker-agent's always-on limit_large_tool_results hook: an MCP result
 	// over 50 KiB or 2,000 lines is replaced by its last 50 KiB. Measured
 	// on 1.150.0, whose history bounding (bound_tool_messages.go) cuts at
-	// the same 50 KiB.
+	// the same 50 KiB; 1.152.0 keeps both limits.
 	DefaultName: {Bytes: toolsrv.DefaultMaxResultBytes, Lines: toolsrv.DefaultMaxResultLines},
 	// Claude Code 2.1.296 saves a tool result over 50,000 characters (UTF-16
 	// code units, never more than its UTF-8 bytes) to a file the agent has no

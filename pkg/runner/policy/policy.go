@@ -64,7 +64,7 @@ const (
 	// CI holds this pin to that signature (scripts/verify-docker-agent-image.sh).
 	// It is pinned by digest: the tag is a label, the digest the bytes, and
 	// the receipt names it.
-	DefaultHarnessImage = "ghcr.io/blaktron/agentry-docker-agent-src:1.150.0-2026.10.22.4@sha256:8a5e058f2fb1284db5ae5a04fb79fd40bd531ad529d6b4f4e16fdb9f5c3b9a2d"
+	DefaultHarnessImage = "ghcr.io/blaktron/agentry-docker-agent-src:1.152.0-2026.10.24.5@sha256:e8604adf8659b1b92b55b6442930cca1168db7c49ad79e17546e2c940a8d723c"
 	DefaultGoBuilder    = "ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:d530cf60723abf1ffae0cd16bb546b379ec0550d2f3815e5b16ed69dbc00fba4"
 	// Runtime images that install and run declared npm/PyPI MCP servers
 	// Node is 24: servers whose engines.node needs 24 fail every tool
@@ -1249,6 +1249,7 @@ var formerDefaultHarnessImages = []string{
 	"ghcr.io/blaktron/agentry-docker-agent:1.150.0@sha256:27b0accfc83a74b03f30ac695a23878f71383106c9dec4d7808c72a4f13d5ee1",
 	"ghcr.io/blaktron/agentry-docker-agent-src:1.150.0-2026.10.19.2@sha256:6c75cdeb1c060346190dc94112509919e554a9c1393d90cc3e99a637f3428e60",
 	"ghcr.io/blaktron/agentry-docker-agent-src:1.150.0-2026.10.21.3@sha256:e4cfd4d450ae22c6bd70e6b2fa0f98d3e399d206b238044498f9480304ea4e67",
+	"ghcr.io/blaktron/agentry-docker-agent-src:1.150.0-2026.10.22.4@sha256:8a5e058f2fb1284db5ae5a04fb79fd40bd531ad529d6b4f4e16fdb9f5c3b9a2d",
 }
 
 // formerDefaultNodeRuntimes are the values earlier CLIs wrote into every
@@ -1325,7 +1326,7 @@ images:
   # CLI's pinned default. (Older files name docker-agent's image as
   # harnessDockerAgent; that key is still read.)
   harnessImages:
-    docker-agent: { ref: ghcr.io/blaktron/agentry-docker-agent-src:1.150.0-2026.10.22.4@sha256:8a5e058f2fb1284db5ae5a04fb79fd40bd531ad529d6b4f4e16fdb9f5c3b9a2d }
+    docker-agent: { ref: ghcr.io/blaktron/agentry-docker-agent-src:1.152.0-2026.10.24.5@sha256:e8604adf8659b1b92b55b6442930cca1168db7c49ad79e17546e2c940a8d723c }
     # codex-image: { ref: ghcr.io/blaktron/agentry-codex:<tag>@sha256:<digest> }
     # claude-image: { ref: agentry-claude-code:<version>, artifact: sha512-<integrity> }
   goBuilder: ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:d530cf60723abf1ffae0cd16bb546b379ec0550d2f3815e5b16ed69dbc00fba4

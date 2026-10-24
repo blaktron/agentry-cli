@@ -76,6 +76,20 @@ and `agentry agent show assistant` lists what it has:
   message. On its first conversation it asks you for both, and saves your
   answer through its Agentry tool `self_configure`, which changes its name
   and personality and nothing else.
+- **Agentry Helper's tools**, in Agentry Desktop: the same Agentry tools
+  Agentry Helper has, so the Assistant can do anything the Helper can.
+  `registry_search` and `quickagent_show` find a QuickAgent and say what it
+  may reach, `quickagent_install` installs one, `quickagent_run` runs an
+  installed one on files from its share folder and `run_result` reads the
+  outcome, `installed_list` lists what is installed, `schedule_add`,
+  `schedule_list`, `schedule_pause` and `schedule_remove` keep scheduled
+  runs, `settings_open` opens a section of Settings for you, and `docs_read`
+  reads a page of Agentry's documentation. The desktop asks you first, in a
+  dialog that names the Assistant, before an install, a QuickAgent's first
+  run for it, a schedule and a schedule's removal, and a No does nothing.
+  None of these tools changes a setting, starts or stops an agent, signs in,
+  publishes or touches a key. Run from the CLI, these tools answer that only
+  Agentry Desktop answers them.
 - **The time**: each message it is sent starts with the time now and your
   time zone.
 - **Tasks and a heartbeat.** When you ask it to do something at a time, it

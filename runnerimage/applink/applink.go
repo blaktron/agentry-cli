@@ -79,58 +79,66 @@ const (
 	TaskRemove = "task_remove"
 )
 
-// sets are the tools each agent's app link lists. Agentry Helper's (main) reach the
-// application's own operations, each under the application's own consent;
-// none changes a setting's value, starts or stops an agent, publishes, signs
-// in or touches a credential. The Assistant's changes its own name and
+// helperTools are Agentry Helper's tools, which reach the application's own
+// operations, each under the application's own consent; none changes a
+// setting's value, starts or stops an agent, publishes, signs in or touches
+// a credential.
+var helperTools = []Tool{
+	{"registry_search", "Search Agentry's registry for QuickAgents by what they do. Returns each match's reference, summary and rating.",
+		obj(map[string]any{"query": str("what the QuickAgent should do, in a few words")}, "query")},
+	{"quickagent_show", "Show one QuickAgent: what it does, what it may reach, its versions and its security report.",
+		obj(map[string]any{"ref": str("its reference, namespace/name or namespace/name@version")}, "ref")},
+	{"quickagent_install", "Install a QuickAgent on this computer. The person is asked in Agentry first, and nothing is installed unless they agree.",
+		obj(map[string]any{"ref": str("its reference")}, "ref")},
+	{"quickagent_run", "Run an installed QuickAgent on this computer, on files from the share folder. The person is asked in Agentry before its first run; the run is an ordinary run, listed in Recent runs, and this returns its id.",
+		obj(map[string]any{"ref": str("its reference"), "task": str("what to ask it to do"), "files": strs("paths of files in the share folder to give it, as share/…")}, "ref")},
+	{"run_result", "Read a run's outcome: its status, its result and where its files are.",
+		obj(map[string]any{"run": str("the run id quickagent_run returned")}, "run")},
+	{"installed_list", "List the QuickAgents installed on this computer.", obj(map[string]any{})},
+	{"schedule_add", "Schedule an installed QuickAgent to run on its own. The person is asked in Agentry first.",
+		obj(map[string]any{"ref": str("its reference"), "when": str("when it runs, as Agentry's schedule takes it (\"every weekday at 09:00\")"), "task": str("what to ask it to do")}, "ref", "when")},
+	{"schedule_list", "List the scheduled runs.", obj(map[string]any{})},
+	{"schedule_pause", "Pause or resume a scheduled run.",
+		obj(map[string]any{"schedule": str("the schedule's id"), "paused": boolean("true to pause, false to resume")}, "schedule", "paused")},
+	{"schedule_remove", "Remove a scheduled run. The person is asked in Agentry first.",
+		obj(map[string]any{"schedule": str("the schedule's id")}, "schedule")},
+	{"settings_open", "Open a section of Agentry's Settings for the person. It changes nothing: the person does.",
+		obj(map[string]any{"section": str("the section, as Settings names it")}, "section")},
+	{"docs_read", "Read a page of Agentry's documentation, as text.",
+		obj(map[string]any{"page": str("the page's path on docs.secureagentry.net, such as /desktop/")}, "page")},
+}
+
+// assistantTools are the Assistant's own tools: they change its own name and
 // personality and its own tasks, and nothing else.
+var assistantTools = []Tool{
+	{SelfConfigure, "Save the name the person gives you and the personality they describe for you. Call it only with what the person asked for; it changes nothing else.",
+		obj(map[string]any{"name": str("the name they want you to go by"), "personality": str("the personality they described, in their words")})},
+	{TaskAdd, "Register a task: an instruction you will be sent as a turn of its own at the times a cron expression names, while you are running. Use it when the person asks you to do something at a time or on a schedule (a reminder, a daily summary), or when you agree to follow something up. At most 25 tasks, none more often than every 15 minutes. Returns the task's id and its next time.",
+		obj(map[string]any{
+			"name":        str("a short name for the task, as the person would call it"),
+			"cron":        str("when it fires: five cron fields, minute hour day-of-month month day-of-week, such as \"0 8 * * 1-5\" for 08:00 on weekdays or \"30 17 21 10 *\" for 17:30 on 21 October"),
+			"zone":        str("the IANA time zone the time is in, such as Europe/Paris; leave it out for this computer's"),
+			"instruction": str("what you are to do when it fires, written to yourself: it is all you are given then"),
+		}, "name", "cron", "instruction")},
+	{TaskList, "List your tasks: each one's id, name, time, zone, state, next time, and when it last fired with the first line of what you answered.", obj(map[string]any{})},
+	{TaskUpdate, "Change one of your tasks: its name, time, zone or instruction, or pause or resume it. Only what you give changes.",
+		obj(map[string]any{
+			"task":        str("the task's id, from task_list"),
+			"name":        str("a new name"),
+			"cron":        str("a new time, as five cron fields"),
+			"zone":        str("a new IANA time zone"),
+			"instruction": str("a new instruction"),
+			"paused":      boolean("true to pause it, false to resume it"),
+		}, "task")},
+	{TaskRemove, "Remove one of your tasks.", obj(map[string]any{"task": str("the task's id, from task_list")}, "task")},
+}
+
+// sets are the tools each agent's app link lists. Agentry Helper's (main)
+// are the helper tools. The Assistant's are its own and every one of
+// Agentry Helper's, so it can do whatever the Helper can.
 var sets = map[string][]Tool{
-	SetMain: {
-		{"registry_search", "Search Agentry's registry for QuickAgents by what they do. Returns each match's reference, summary and rating.",
-			obj(map[string]any{"query": str("what the QuickAgent should do, in a few words")}, "query")},
-		{"quickagent_show", "Show one QuickAgent: what it does, what it may reach, its versions and its security report.",
-			obj(map[string]any{"ref": str("its reference, namespace/name or namespace/name@version")}, "ref")},
-		{"quickagent_install", "Install a QuickAgent on this computer. The person is asked in Agentry first, and nothing is installed unless they agree.",
-			obj(map[string]any{"ref": str("its reference")}, "ref")},
-		{"quickagent_run", "Run an installed QuickAgent on this computer, on files from the share folder. The person is asked in Agentry before its first run; the run is an ordinary run, listed in Recent runs, and this returns its id.",
-			obj(map[string]any{"ref": str("its reference"), "task": str("what to ask it to do"), "files": strs("paths of files in the share folder to give it, as share/…")}, "ref")},
-		{"run_result", "Read a run's outcome: its status, its result and where its files are.",
-			obj(map[string]any{"run": str("the run id quickagent_run returned")}, "run")},
-		{"installed_list", "List the QuickAgents installed on this computer.", obj(map[string]any{})},
-		{"schedule_add", "Schedule an installed QuickAgent to run on its own. The person is asked in Agentry first.",
-			obj(map[string]any{"ref": str("its reference"), "when": str("when it runs, as Agentry's schedule takes it (\"every weekday at 09:00\")"), "task": str("what to ask it to do")}, "ref", "when")},
-		{"schedule_list", "List the scheduled runs.", obj(map[string]any{})},
-		{"schedule_pause", "Pause or resume a scheduled run.",
-			obj(map[string]any{"schedule": str("the schedule's id"), "paused": boolean("true to pause, false to resume")}, "schedule", "paused")},
-		{"schedule_remove", "Remove a scheduled run. The person is asked in Agentry first.",
-			obj(map[string]any{"schedule": str("the schedule's id")}, "schedule")},
-		{"settings_open", "Open a section of Agentry's Settings for the person. It changes nothing: the person does.",
-			obj(map[string]any{"section": str("the section, as Settings names it")}, "section")},
-		{"docs_read", "Read a page of Agentry's documentation, as text.",
-			obj(map[string]any{"page": str("the page's path on docs.secureagentry.net, such as /desktop/")}, "page")},
-	},
-	SetAssistant: {
-		{SelfConfigure, "Save the name the person gives you and the personality they describe for you. Call it only with what the person asked for; it changes nothing else.",
-			obj(map[string]any{"name": str("the name they want you to go by"), "personality": str("the personality they described, in their words")})},
-		{TaskAdd, "Register a task: an instruction you will be sent as a turn of its own at the times a cron expression names, while you are running. Use it when the person asks you to do something at a time or on a schedule (a reminder, a daily summary), or when you agree to follow something up. At most 25 tasks, none more often than every 15 minutes. Returns the task's id and its next time.",
-			obj(map[string]any{
-				"name":        str("a short name for the task, as the person would call it"),
-				"cron":        str("when it fires: five cron fields, minute hour day-of-month month day-of-week, such as \"0 8 * * 1-5\" for 08:00 on weekdays or \"30 17 21 10 *\" for 17:30 on 21 October"),
-				"zone":        str("the IANA time zone the time is in, such as Europe/Paris; leave it out for this computer's"),
-				"instruction": str("what you are to do when it fires, written to yourself: it is all you are given then"),
-			}, "name", "cron", "instruction")},
-		{TaskList, "List your tasks: each one's id, name, time, zone, state, next time, and when it last fired with the first line of what you answered.", obj(map[string]any{})},
-		{TaskUpdate, "Change one of your tasks: its name, time, zone or instruction, or pause or resume it. Only what you give changes.",
-			obj(map[string]any{
-				"task":        str("the task's id, from task_list"),
-				"name":        str("a new name"),
-				"cron":        str("a new time, as five cron fields"),
-				"zone":        str("a new IANA time zone"),
-				"instruction": str("a new instruction"),
-				"paused":      boolean("true to pause it, false to resume it"),
-			}, "task")},
-		{TaskRemove, "Remove one of your tasks.", obj(map[string]any{"task": str("the task's id, from task_list")}, "task")},
-	},
+	SetMain:      helperTools,
+	SetAssistant: slices.Concat(assistantTools, helperTools),
 }
 
 // Sets are the tool sets there are.

@@ -29,12 +29,12 @@ func init() { Register(&dockerAgent{}) }
 const harnessSafety = "autonomous"
 
 // acpProtocolVersion is the Agent Client Protocol version negotiated with
-// serve acp (docker-agent 1.128.0 and 1.150.0 answer protocolVersion 1).
+// serve acp (docker-agent 1.128.0, 1.150.0 and 1.152.0 answer protocolVersion 1).
 const acpProtocolVersion = 1
 
 // HarnessConfigVersion is the docker-agent config schema version the
 // adapter writes (`version:` in agent.yaml). It belongs to the pinned
-// harness image (policy.DefaultHarnessImage, 1.150.0 ships schema 16).
+// harness image (policy.DefaultHarnessImage, 1.152.0 ships schema 16).
 const HarnessConfigVersion = "16"
 
 // dockerAgent implements Adapter for docker/docker-agent.
@@ -83,6 +83,86 @@ type modelYAML struct {
 	Model    string `yaml:"model"`
 	// BaseURL points OpenAI-compatible providers at custom endpoints.
 	BaseURL string `yaml:"base_url,omitempty"`
+	// ProviderOpts is set for the Claude models whose thinking blocks are
+	// bound to the conversation (thinkingBinding).
+	ProviderOpts *anthropicOptsYAML `yaml:"provider_opts,omitempty"`
+}
+
+// anthropicOptsYAML is the part of docker-agent's provider_opts for its
+// anthropic client that the runner writes.
+type anthropicOptsYAML struct {
+	ThinkingPrefixMismatch string `yaml:"thinking_prefix_mismatch"`
+	ThinkingDisplay        string `yaml:"thinking_display"`
+}
+
+// thinkingBinding is the provider_opts for a Claude model that signs each
+// thinking block against the system prompt and tool list it was made under,
+// and refuses a request that replays one after either changed. A persistent
+// agent's conversation is carried into segments whose prompt and tools can
+// differ (a server switched on, a new frame), so the harness is told to have
+// the API drop such a block instead (prefix_mismatch_behavior drop_block):
+// the turn goes on without that earlier reasoning.
+//
+// The pinned docker-agent knows these models: given the option, it sends
+// adaptive thinking at the model's own default effort with the binding. The
+// display is kept at the models' own default (omitted); docker-agent would
+// otherwise ask for summaries. Fable and Mythos 5.1 are left to
+// docker-agent's defaults.
+func thinkingBinding(provider, model string) *anthropicOptsYAML {
+	if provider != policy.ProviderAnthropic {
+		return nil
+	}
+	family, version, ok := claudeVersion(model)
+	if !ok || version < 505 {
+		return nil
+	}
+	switch family {
+	case "opus", "sonnet", "haiku":
+		return &anthropicOptsYAML{ThinkingPrefixMismatch: "drop_block", ThinkingDisplay: "omitted"}
+	}
+	return nil
+}
+
+// claudeVersion reads a Claude model id (claude-sonnet-5-5, claude-opus-5,
+// anthropic.claude-opus-5-5@v1, a/claude-sonnet-5.5) as its family and its
+// version, major*100+minor.
+func claudeVersion(model string) (family string, version int, ok bool) {
+	m := strings.ToLower(strings.TrimSpace(model))
+	m = m[strings.LastIndexByte(m, '/')+1:]
+	if _, after, found := strings.Cut(m, "anthropic."); found {
+		m = after
+	}
+	m, _, _ = strings.Cut(m, "@")
+	rest, found := strings.CutPrefix(m, "claude-")
+	if !found {
+		return "", 0, false
+	}
+	family, rest, _ = strings.Cut(rest, "-")
+	major, n := leadingNumber(rest)
+	if n == 0 {
+		return "", 0, false
+	}
+	minor := 0
+	if rest = rest[n:]; rest != "" && (rest[0] == '-' || rest[0] == '.') {
+		// A dated snapshot (claude-sonnet-4-20250514) has no minor version.
+		if v, w := leadingNumber(rest[1:]); w > 0 {
+			minor = v
+		}
+	}
+	return family, major*100 + minor, true
+}
+
+// leadingNumber is the number s starts with, at most two digits, and how
+// many bytes it took.
+func leadingNumber(s string) (n, width int) {
+	for width < len(s) && width < 3 && s[width] >= '0' && s[width] <= '9' {
+		n = n*10 + int(s[width]-'0')
+		width++
+	}
+	if width > 2 {
+		return 0, 0
+	}
+	return n, width
 }
 
 // customProvider is the policy's name for an OpenAI-compatible endpoint of
@@ -312,13 +392,14 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 		// parses a document with the strict schema of the version it names
 		// and upgrades afterwards, so an old number selects an old schema —
 		// "2" has no allow_private_ips and the harness refused every plan.
-		// Bump together with policy.DefaultHarnessImage (1.150.0 → 16).
+		// Bump together with policy.DefaultHarnessImage (1.152.0 → 16).
 		Version: HarnessConfigVersion,
 		Models: map[string]modelYAML{
 			"main": {
-				Provider: provider,
-				Model:    in.Model.Name,
-				BaseURL:  in.Model.BaseURL,
+				Provider:     provider,
+				Model:        in.Model.Name,
+				BaseURL:      in.Model.BaseURL,
+				ProviderOpts: thinkingBinding(provider, in.Model.Name),
 			},
 		},
 		Agents: map[string]agntYAML{

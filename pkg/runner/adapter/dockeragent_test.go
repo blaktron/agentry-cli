@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry/pkg/manifest"
@@ -390,6 +392,68 @@ func TestDockerAgentCompileRefusesASubscriptionToken(t *testing.T) {
 	for _, e := range res.Agent.Env {
 		if e.FromHostEnv != "" && e.ExpectedKind != nil {
 			t.Errorf("openai's key carries an expectation: %+v", e)
+		}
+	}
+}
+
+// A Claude model that binds its thinking blocks to the conversation is
+// configured to have the API drop a block whose system prompt or tools have
+// changed since it was made, which a conversation continued into a new
+// segment meets, with its thinking display left at its default; no thinking
+// budget is written, so the model's own effort holds. Every other model's
+// block is left as the harness's default, and both modes compile the same
+// model block.
+func TestDockerAgentCompileDropsThinkingBoundToAnEarlierPrompt(t *testing.T) {
+	ad, err := Get(DefaultName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		provider, model string
+		binds           bool
+	}{
+		{"anthropic", "claude-sonnet-5-5", true},
+		{"anthropic", "claude-opus-5-5", true},
+		{"anthropic", "claude-haiku-5-5", true},
+		{"anthropic", "claude-sonnet-5.6", true},
+		{"anthropic", "claude-opus-6", true},
+		{"anthropic", "anthropic.claude-sonnet-5-5@v1", true},
+		{"anthropic", "claude-sonnet-5", false},
+		{"anthropic", "claude-opus-5", false},
+		{"anthropic", "claude-sonnet-4-5", false},
+		{"anthropic", "claude-haiku-4-5", false},
+		{"anthropic", "claude-sonnet-4-20250514", false},
+		{"anthropic", "claude-3-7-sonnet-latest", false},
+		{"anthropic", "claude-fable-5-1", false},
+		{"openrouter", "anthropic/claude-sonnet-5-5", false},
+	}
+	for _, c := range cases {
+		for _, mode := range []manifest.Mode{manifest.ModeAutonomous, manifest.ModeInteractive} {
+			in := testInput()
+			in.Mode = mode
+			in.Model = policy.Model{Provider: c.provider, Name: c.model, APIKeyEnv: "MODEL_KEY", ProxyAllow: []string{"x:443"}}
+			res, err := ad.Compile(in)
+			if err != nil {
+				t.Fatalf("%s %s: %v", c.model, mode, err)
+			}
+			var doc struct {
+				Models map[string]map[string]any `yaml:"models"`
+			}
+			if err := yaml.Unmarshal(res.Files["agent.yaml"], &doc); err != nil {
+				t.Fatal(err)
+			}
+			main := doc.Models["main"]
+			var want map[string]any
+			if c.binds {
+				want = map[string]any{"thinking_prefix_mismatch": "drop_block", "thinking_display": "omitted"}
+			}
+			got, _ := main["provider_opts"].(map[string]any)
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("%s %s: provider_opts %v, want %v", c.model, mode, got, want)
+			}
+			if b, ok := main["thinking_budget"]; ok {
+				t.Errorf("%s %s: thinking_budget %v written; the model's own effort is to hold", c.model, mode, b)
+			}
 		}
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -74,7 +75,7 @@ func TestTheAppLinkListsItsSetAndForwardsEachCall(t *testing.T) {
 		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}`,
 		`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`,
 		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"self_configure","arguments":{"name":"Sandra"}}}`,
-		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"quickagent_run","arguments":{"ref":"x/y"}}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"agent_stop","arguments":{"agent":"assistant"}}}`,
 	)
 	if len(replies) != 4 {
 		t.Fatalf("%d replies", len(replies))
@@ -121,11 +122,12 @@ func TestAppLinkHasNoGrantTool(t *testing.T) {
 			}
 		}
 	}
-	if got := Tools(SetAssistant); !slices.Equal(got, []string{SelfConfigure, TaskAdd, TaskList, TaskUpdate, TaskRemove}) {
+	own := []string{SelfConfigure, TaskAdd, TaskList, TaskUpdate, TaskRemove}
+	if got := Tools(SetAssistant); !slices.Equal(got, append(own, Tools(SetMain)...)) {
 		t.Errorf("the Assistant's set is %v", got)
 	}
-	// Each of the Assistant's tools takes its own name and personality, or a
-	// task's fields, and nothing else.
+	// Each of the Assistant's own tools takes its own name and personality,
+	// or a task's fields, and nothing else.
 	takes := map[string][]string{
 		SelfConfigure: {"name", "personality"},
 		TaskAdd:       {"cron", "instruction", "name", "zone"},
@@ -133,11 +135,37 @@ func TestAppLinkHasNoGrantTool(t *testing.T) {
 		TaskUpdate:    {"cron", "instruction", "name", "paused", "task", "zone"},
 		TaskRemove:    {"task"},
 	}
-	for _, tool := range sets[SetAssistant] {
+	for _, tool := range assistantTools {
 		props := tool.Schema["properties"].(map[string]any)
 		got := slices.Sorted(maps.Keys(props))
 		if !slices.Equal(got, takes[tool.Name]) || tool.Schema["additionalProperties"] != false {
 			t.Errorf("%s takes %v", tool.Name, got)
+		}
+	}
+}
+
+// TestTheAssistantHasEveryHelperTool: the Assistant's set holds each of
+// Agentry Helper's tools with the same description and schema, so it can do
+// whatever the Helper can, and no tool is listed twice.
+func TestTheAssistantHasEveryHelperTool(t *testing.T) {
+	byName := map[string]Tool{}
+	for _, tool := range sets[SetAssistant] {
+		if _, dup := byName[tool.Name]; dup {
+			t.Errorf("the Assistant's set lists %s twice", tool.Name)
+		}
+		byName[tool.Name] = tool
+	}
+	if len(sets[SetMain]) == 0 {
+		t.Fatal("Agentry Helper's set is empty")
+	}
+	for _, want := range sets[SetMain] {
+		got, ok := byName[want.Name]
+		if !ok {
+			t.Errorf("the Assistant's set lacks %s", want.Name)
+			continue
+		}
+		if got.Description != want.Description || !reflect.DeepEqual(got.Schema, want.Schema) {
+			t.Errorf("the Assistant's %s differs from Agentry Helper's", want.Name)
 		}
 	}
 }

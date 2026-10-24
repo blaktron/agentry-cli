@@ -174,6 +174,10 @@ type Builtin struct {
 	// mounted read-write beside its data volume and seeded from its tree's
 	// memory/ folder when it is made (spec.AgentFiles.Memory).
 	keepsMemory bool
+	// resetsInParts gives the persistent agent Reset history and Reset
+	// agent beside its Reset: the first keeps every choice the person made,
+	// the second keeps the secrets and sign-ins they gave it.
+	resetsInParts bool
 	// runnable says a persistent built-in runs as an agent; one that does
 	// not is published for reading only.
 	runnable bool
