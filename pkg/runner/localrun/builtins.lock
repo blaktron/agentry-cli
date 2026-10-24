@@ -133,3 +133,5 @@ agentry/coder@1.3.1 sha256:9aabac9e59e6ee27c1e17f1f3086ee2544362ca8367d75fcdde56
 agentry/coder@1.3.2 sha256:c7464badb25eec2a179e052947ddb444b2a9c24569323063dc973f0dadbb0ae7
 # 1.6.0: Google Workspace's four skills (three adapted from gog's) and the README names the server.
 agentry/assistant@1.6.0 sha256:74c34c27e5b18c519b66590871f81c5f7be3f3286e86d9f54107a5ddb22710d5
+# 1.7.0: Agentry Helper's tools beside its own; the instruction and README say what they do and that Agentry Desktop answers them.
+agentry/assistant@1.7.0 sha256:0cca965f8a8adeebf1dafb0b07273933102007c7c50f501639cdae3d0681e160

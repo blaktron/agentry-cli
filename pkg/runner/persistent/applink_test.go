@@ -64,7 +64,7 @@ func TestSelfConfigureWritesNameAndPersonalityOnly(t *testing.T) {
 	if sent := st.last.sentTurns(); len(sent) != 1 || sent[0] != "hello" {
 		t.Errorf("the name it saved itself was given to it again: %q", sent)
 	}
-	if a := call(t, home, "assistant", "quickagent_run", `{"ref":"x/y"}`); !a.IsError {
+	if a := call(t, home, "assistant", "agent_stop", `{"agent":"assistant"}`); !a.IsError {
 		t.Errorf("a tool outside the Assistant's set was answered: %+v", a)
 	}
 	log, err := os.ReadFile(filepath.Join(st.segments[0].OutDir, "receipts", appLinkLog))
@@ -115,5 +115,47 @@ func TestMainsToolsAreTheDesktopsToAnswer(t *testing.T) {
 	}
 	if got := call(t, home, "main", applink.SelfConfigure, `{"name":"x"}`); !got.IsError {
 		t.Errorf("self_configure, not Main's, was answered: %+v", got)
+	}
+}
+
+// TestTheAssistantsHelperToolsGoToItsClient: the Assistant's set holds
+// Agentry Helper's tools, which its supervisor hands to its client's handler,
+// as Main's does; self_configure is still the supervisor's own. Run from the
+// CLI with no handler, a Helper tool is answered as Agentry Desktop's.
+func TestTheAssistantsHelperToolsGoToItsClient(t *testing.T) {
+	home := shortHome(t)
+	enable(t, home)
+	var asked []applink.Request
+	st := &starter{resumed: true}
+	sv, err := Start(context.Background(), Options{
+		Home: home, Agent: assistantAgent(t), Client: ClientDesktop, Policy: policy.Default(), Docker: &dockerx.Fake{}, StartSegment: st.start,
+		AppLink: func(_ context.Context, req applink.Request) applink.Answer {
+			asked = append(asked, req)
+			return applink.Answer{Text: "answered " + req.Tool}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range applink.Tools(applink.SetMain) {
+		if got := call(t, home, "assistant", tool, `{}`); got.IsError || got.Text != "answered "+tool {
+			t.Errorf("%s: %+v", tool, got)
+		}
+	}
+	if len(asked) != len(applink.Tools(applink.SetMain)) {
+		t.Errorf("the handler was asked %d times", len(asked))
+	}
+	if got := call(t, home, "assistant", applink.SelfConfigure, `{"name":"Sandra"}`); got.IsError || len(asked) != len(applink.Tools(applink.SetMain)) {
+		t.Errorf("self_configure went to the handler: %+v", got)
+	}
+	if _, err := sv.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	cli := startAssistant(t, home, &starter{resumed: true})
+	defer func() { _, _ = cli.Stop(context.Background()) }()
+	got := call(t, home, "assistant", "registry_search", `{"query":"summarise PDFs"}`)
+	if !got.IsError || !strings.Contains(got.Text, "Agentry Desktop") {
+		t.Errorf("registry_search with no handler: %+v", got)
 	}
 }

@@ -38,7 +38,7 @@ func appLinkEnforcement(set string) string {
 	line := "the app link (" + applink.ServerName + ", the runner image, its own container) has no network and one mount, through which it reaches a socket of the agent's supervisor apart from its owner socket, which takes one tool call a connection and nothing else (persistent.appLink.transport says how); it lists " +
 		strings.Join(applink.Tools(set), ", ")
 	if set == applink.SetAssistant {
-		return line + ": the supervisor answers " + applink.SelfConfigure + " by saving the agent's name and personality and nothing else; every call is logged in receipts/applink.log"
+		return line + ": the supervisor answers " + applink.SelfConfigure + " by saving the agent's name and personality and nothing else, and the task tools by keeping the agent's own tasks; the client that runs the agent answers each other call, and a call it does not answer is refused; every call is logged in receipts/applink.log"
 	}
 	return line + ": the client that runs the agent answers each call, and a call it does not answer is refused; every call is logged in receipts/applink.log"
 }
