@@ -101,7 +101,9 @@ func deviceLoginPage(page string) bool {
 	}
 	switch u.Host {
 	case "microsoft.com", "www.microsoft.com":
-		return u.Path == "/devicelogin"
+		// /link is where Microsoft's device-code answer sends a person
+		// today; /devicelogin is where it used to, and still redirects.
+		return u.Path == "/link" || u.Path == "/devicelogin"
 	case "login.microsoftonline.com", "login.microsoft.com":
 		return true
 	}
