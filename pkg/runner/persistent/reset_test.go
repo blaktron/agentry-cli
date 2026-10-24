@@ -243,7 +243,7 @@ func TestResetAllStillRemovesTheCredentials(t *testing.T) {
 	if err := Reset(context.Background(), home, "assistant", d); err != nil {
 		t.Fatal(err)
 	}
-	want := append(historyVolumes(home), ImageVolumeIn(home, "assistant", "gog"))
+	want := append(historyVolumes(home), ImageVolumeIn(home, "assistant", "gog"), ImageVolumeIn(home, "assistant", "ms365"))
 	slices.Sort(want)
 	if got := removedVolumes(d); !reflect.DeepEqual(got, want) {
 		t.Errorf("volumes removed = %v, want %v", got, want)

@@ -35,6 +35,9 @@ type ImageOneShot struct {
 	ProxyImage string
 	Runtime    string
 	Limits     policy.Limits
+	// Stdout, when set, is also given the command's stdout as it comes, for
+	// a step that must show something while it runs (a sign-in's code).
+	Stdout io.Writer
 }
 
 // imageOneShotProxyAlias is the proxy's name on the one-shot's network.
@@ -97,7 +100,11 @@ func RunImageOneShot(ctx context.Context, d dockerx.Client, o ImageOneShot) (std
 	}
 	s = readOnlyRoot(hardened(s, o.Limits.WithDefaults()), "/tmp:size=16m,mode=1777")
 	var out, errOut bytes.Buffer
-	code, err = dockerx.RunForegroundUnder(ctx, d, s, "image one-shot", o.Stdin, &out, &errOut)
+	var w io.Writer = &out
+	if o.Stdout != nil {
+		w = io.MultiWriter(&out, o.Stdout)
+	}
+	code, err = dockerx.RunForegroundUnder(ctx, d, s, "image one-shot", o.Stdin, w, &errOut)
 	return out.String(), errOut.String(), code, err
 }
 

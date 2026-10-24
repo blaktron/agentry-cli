@@ -129,6 +129,16 @@ const (
 	// agentry-dockerimages' gog workflow, and CI holds this pin to that
 	// signature (scripts/verify-gog-image.sh).
 	DefaultGogImage = "ghcr.io/blaktron/agentry-gog:0.46.0-2026.10.22.1@sha256:19fa4267487f220604a4ede1f3efdd47c678736ca28de567f5f5b91b180c9b93"
+	// DefaultMS365Image is Softeria's ms-365-mcp-server, the Microsoft 365
+	// and Outlook.com MCP server: mail, calendar, contacts and OneDrive over
+	// stdio, the tools each switch allows named by --enabled-tools, its token
+	// cache sealed by the image's own keeper under a key the runner gives
+	// it, its account tools left out of stdio mode: built from its pinned
+	// source with Microsoft Graph's OpenAPI documents pinned, amd64 and
+	// arm64, uid 10001, pinned by digest. Signed keyless by
+	// agentry-dockerimages' ms365 workflow, and CI holds this pin to that
+	// signature (scripts/verify-ms365-image.sh).
+	DefaultMS365Image = "ghcr.io/blaktron/agentry-ms365:0.171.0-2026.10.24.1@sha256:8d7e2b0e6947467443a100b35d9fc46fdf67b79a1070f4ff9622c6ee3aff36e4"
 	// DefaultClamAVSignatures is the ClamAV signature bundle the decode step
 	// checks every input against: a tag agentry-dockerimages' clamav-db
 	// workflow moves daily, only ever to a digest it has signed. It is not
@@ -522,6 +532,18 @@ type Images struct {
 	// Gog is the Assistant's Google Workspace server's image, pinned by
 	// digest ("" = DefaultGogImage; see GogImage).
 	Gog string `yaml:"gog,omitempty"`
+	// MS365 is the Assistant's Microsoft 365 server's image, pinned by
+	// digest ("" = DefaultMS365Image; see MS365Image).
+	MS365 string `yaml:"ms365,omitempty"`
+}
+
+// MS365Image is the Microsoft 365 server's image this policy names:
+// images.ms365, else the CLI's pinned default.
+func (i Images) MS365Image() string {
+	if i.MS365 != "" {
+		return i.MS365
+	}
+	return DefaultMS365Image
 }
 
 // GogImage is the Google Workspace server's image this policy names:
@@ -1034,6 +1056,9 @@ func (p *Policy) Validate() error {
 	}
 	if p.Images.Gog != "" && !PinnedByDigest(p.Images.Gog) {
 		return fmt.Errorf("images.gog %q must be pinned by digest (<name>@sha256:<64 hex>): the Google Workspace server's image is pulled by digest only", p.Images.Gog)
+	}
+	if p.Images.MS365 != "" && !PinnedByDigest(p.Images.MS365) {
+		return fmt.Errorf("images.ms365 %q must be pinned by digest (<name>@sha256:<64 hex>): the Microsoft 365 server's image is pulled by digest only", p.Images.MS365)
 	}
 	if p.Images.Coder != "" && !PinnedByDigest(p.Images.Coder) {
 		return fmt.Errorf("images.coder %q must be pinned by digest (<name>@sha256:<64 hex>): the Coding agent's toolchain image is pulled by digest only", p.Images.Coder)
