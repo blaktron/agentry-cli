@@ -40,6 +40,8 @@ func TestMain(m *testing.M) {
 	offersOf = func(Agent, Config) []offer.Server { return nil }
 	suggestionsOf = func(Agent) []offer.Suggestion { return nil }
 	imageServersOf = func(Agent) []offer.ImageServer { return nil }
+	searchKeyHeld = func(string) bool { return false }
+	searchKeyValue = func(string) (string, error) { return "", nil }
 	os.Exit(m.Run())
 }
 
