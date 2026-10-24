@@ -429,14 +429,14 @@ func (s *Supervisor) pump(sess engine.PersistentSession, segment int, runID stri
 	defer close(done)
 	for ev := range sess.Events() {
 		swapping := ev.Kind == session.KindSessionEnd && ending.Load()
-		task := ""
 		s.mu.Lock()
 		switch ev.Kind {
 		case session.KindUserTurn:
 			s.busy = true
-			// The heartbeat's turn takes the mark it was sent with.
-			task, s.taskTurn = s.taskTurn, ""
 			if !ev.Synthetic {
+				// The heartbeat's turn takes the mark it was sent with, on
+				// the event every watcher is handed and the transcript keeps.
+				ev.Task, s.taskTurn = s.taskTurn, ""
 				s.usage.UserTurns++
 			}
 		case session.KindAssistantTurn, session.KindError, session.KindSessionEnd:
@@ -454,7 +454,7 @@ func (s *Supervisor) pump(sess engine.PersistentSession, segment int, runID stri
 		s.mu.Unlock()
 		if kept(ev.Kind) {
 			ev.Raw = nil
-			_ = appendEntry(s.opts.Home, s.opts.Agent.Name, Entry{Segment: segment, Run: runID, Task: task, Event: ev})
+			_ = appendEntry(s.opts.Home, s.opts.Agent.Name, Entry{Segment: segment, Run: runID, Event: ev})
 		}
 		if ev.Kind == session.KindSessionEnd && !swapping {
 			go func() { _, _ = s.Stop(context.Background()) }()

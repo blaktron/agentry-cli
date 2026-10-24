@@ -138,3 +138,43 @@ func TestChatQuitWithoutFinish(t *testing.T) {
 		t.Errorf("status = %q", final.statusLine())
 	}
 }
+
+// TestATaskTurnIsOneLineNotThePersonsMessage: a turn a persistent agent's
+// heartbeat sent is drawn as one line naming its task, without its
+// instruction, and is not counted as the person's turn.
+func TestATaskTurnIsOneLineNotThePersonsMessage(t *testing.T) {
+	fs := newFakeSession()
+	tm := teatest.NewTestModel(t, newModel(fs, testOpts()), teatest.WithInitialTermSize(100, 30))
+	waitFor(t, tm, "Commands:")
+	fs.events <- session.Event{Kind: session.KindUserTurn, Task: "t1", Text: "Task: Stretch\n\nRemind the person to stand up."}
+	fs.events <- session.Event{Kind: session.KindAssistantTurn, Text: "Time to stand up."}
+	waitFor(t, tm, "Agent: Time to stand up.")
+	tm.Type("/quit")
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	final := tm.FinalModel(t, teatest.WithFinalTimeout(5*time.Second)).(model)
+	transcript := strings.Join(final.lines, "\n")
+	if !strings.Contains(transcript, `Task "Stretch" ran on its own`) {
+		t.Errorf("no task line:\n%s", transcript)
+	}
+	for _, not := range []string{"You:", "Remind the person"} {
+		if strings.Contains(transcript, not) {
+			t.Errorf("the task's turn shows %q:\n%s", not, transcript)
+		}
+	}
+	if final.userTurns != 0 {
+		t.Errorf("the task's turn counted as the person's: %d", final.userTurns)
+	}
+}
+
+func TestTaskLine(t *testing.T) {
+	for in, want := range map[string]string{
+		"Task: Morning brief\n\nSummarise the share.":  `Task "Morning brief" ran on its own`,
+		"(a file was added)\nTask: Check\n\nCheck in.": `Task "Check" ran on its own`,
+		"no name here":          "A task ran on its own",
+		"Task: \"quoted\"\n\nx": `Task "\"quoted\"" ran on its own`,
+	} {
+		if got := TaskLine(in); got != want {
+			t.Errorf("TaskLine(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

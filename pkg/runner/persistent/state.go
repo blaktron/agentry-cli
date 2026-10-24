@@ -371,8 +371,6 @@ type Entry struct {
 	session.Event
 	// Resumed is set on a segment_start entry.
 	Resumed *bool `json:"resumed,omitempty"`
-	// Task is, on a user turn the heartbeat sent, the task it was for.
-	Task string `json:"task,omitempty"`
 }
 
 // kept says whether the transcript keeps an event: the conversation and
