@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry/pkg/manifest"
@@ -390,6 +392,62 @@ func TestDockerAgentCompileRefusesASubscriptionToken(t *testing.T) {
 	for _, e := range res.Agent.Env {
 		if e.FromHostEnv != "" && e.ExpectedKind != nil {
 			t.Errorf("openai's key carries an expectation: %+v", e)
+		}
+	}
+}
+
+// A Claude model that binds its thinking blocks to the conversation is
+// configured to have the API drop a block whose system prompt or tools have
+// changed since it was made, which a conversation continued into a new
+// segment meets: thinking stays adaptive at the model's default effort and
+// display. Every other model's block is left as the harness's default, and
+// both modes compile the same model block.
+func TestDockerAgentCompileDropsThinkingBoundToAnEarlierPrompt(t *testing.T) {
+	ad, err := Get(DefaultName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		provider, model, budget string
+	}{
+		{"anthropic", "claude-sonnet-5-5", "adaptive/high"},
+		{"anthropic", "claude-opus-5-5", "adaptive/medium"},
+		{"anthropic", "claude-sonnet-5.6", "adaptive/high"},
+		{"anthropic", "claude-opus-6", "adaptive/medium"},
+		{"anthropic", "anthropic.claude-sonnet-5-5@v1", "adaptive/high"},
+		{"anthropic", "claude-sonnet-5", ""},
+		{"anthropic", "claude-opus-5", ""},
+		{"anthropic", "claude-sonnet-4-5", ""},
+		{"anthropic", "claude-sonnet-4-20250514", ""},
+		{"anthropic", "claude-3-7-sonnet-latest", ""},
+		{"anthropic", "claude-haiku-5-5", ""},
+		{"anthropic", "claude-fable-5-1", ""},
+		{"openrouter", "anthropic/claude-sonnet-5-5", ""},
+	}
+	for _, c := range cases {
+		for _, mode := range []manifest.Mode{manifest.ModeAutonomous, manifest.ModeInteractive} {
+			in := testInput()
+			in.Mode = mode
+			in.Model = policy.Model{Provider: c.provider, Name: c.model, APIKeyEnv: "MODEL_KEY", ProxyAllow: []string{"x:443"}}
+			res, err := ad.Compile(in)
+			if err != nil {
+				t.Fatalf("%s %s: %v", c.model, mode, err)
+			}
+			var doc struct {
+				Models map[string]map[string]any `yaml:"models"`
+			}
+			if err := yaml.Unmarshal(res.Files["agent.yaml"], &doc); err != nil {
+				t.Fatal(err)
+			}
+			main := doc.Models["main"]
+			var want map[string]any
+			if c.budget != "" {
+				want = map[string]any{"thinking_prefix_mismatch": "drop_block", "thinking_display": "omitted"}
+			}
+			got, _ := main["provider_opts"].(map[string]any)
+			if budget, _ := main["thinking_budget"].(string); budget != c.budget || !reflect.DeepEqual(got, want) {
+				t.Errorf("%s %s: thinking_budget %q, provider_opts %v; want %q, %v", c.model, mode, main["thinking_budget"], got, c.budget, want)
+			}
 		}
 	}
 }

@@ -83,6 +83,94 @@ type modelYAML struct {
 	Model    string `yaml:"model"`
 	// BaseURL points OpenAI-compatible providers at custom endpoints.
 	BaseURL string `yaml:"base_url,omitempty"`
+	// ThinkingBudget and ProviderOpts are set for the Claude models whose
+	// thinking blocks are bound to the conversation (thinkingBinding).
+	ThinkingBudget string             `yaml:"thinking_budget,omitempty"`
+	ProviderOpts   *anthropicOptsYAML `yaml:"provider_opts,omitempty"`
+}
+
+// anthropicOptsYAML is the part of docker-agent's provider_opts for its
+// anthropic client that the runner writes.
+type anthropicOptsYAML struct {
+	ThinkingPrefixMismatch string `yaml:"thinking_prefix_mismatch"`
+	ThinkingDisplay        string `yaml:"thinking_display"`
+}
+
+// thinkingBinding is the model block for a Claude model that signs each
+// thinking block against the system prompt and tool list it was made under,
+// and refuses a request that replays one after either changed. A persistent
+// agent's conversation is carried into segments whose prompt and tools can
+// differ (a server switched on, a new frame), so the harness is told to have
+// the API drop such a block instead (prefix_mismatch_behavior drop_block):
+// the turn goes on without that earlier reasoning.
+//
+// docker-agent sends the binding only inside an explicit thinking config,
+// and writes one for these models only when the config sets a budget. The
+// budget written is adaptive thinking at the effort these models default to
+// (medium on Opus 5.5, high on Sonnet 5.5) and the display they default to
+// (omitted), so the request is otherwise the one the API would assume. Fable and Mythos 5.1 get the binding from docker-agent
+// itself. Haiku 5.5 is left out: docker-agent turns an adaptive budget into
+// a token budget for Haiku, which that model refuses.
+func thinkingBinding(provider, model string) (budget string, opts *anthropicOptsYAML) {
+	if provider != policy.ProviderAnthropic {
+		return "", nil
+	}
+	family, version, ok := claudeVersion(model)
+	if !ok || version < 505 {
+		return "", nil
+	}
+	var effort string
+	switch family {
+	case "opus":
+		effort = "medium"
+	case "sonnet":
+		effort = "high"
+	default:
+		return "", nil
+	}
+	return "adaptive/" + effort, &anthropicOptsYAML{ThinkingPrefixMismatch: "drop_block", ThinkingDisplay: "omitted"}
+}
+
+// claudeVersion reads a Claude model id (claude-sonnet-5-5, claude-opus-5,
+// anthropic.claude-opus-5-5@v1, a/claude-sonnet-5.5) as its family and its
+// version, major*100+minor.
+func claudeVersion(model string) (family string, version int, ok bool) {
+	m := strings.ToLower(strings.TrimSpace(model))
+	m = m[strings.LastIndexByte(m, '/')+1:]
+	if _, after, found := strings.Cut(m, "anthropic."); found {
+		m = after
+	}
+	m, _, _ = strings.Cut(m, "@")
+	rest, found := strings.CutPrefix(m, "claude-")
+	if !found {
+		return "", 0, false
+	}
+	family, rest, _ = strings.Cut(rest, "-")
+	major, n := leadingNumber(rest)
+	if n == 0 {
+		return "", 0, false
+	}
+	minor := 0
+	if rest = rest[n:]; rest != "" && (rest[0] == '-' || rest[0] == '.') {
+		// A dated snapshot (claude-sonnet-4-20250514) has no minor version.
+		if v, w := leadingNumber(rest[1:]); w > 0 {
+			minor = v
+		}
+	}
+	return family, major*100 + minor, true
+}
+
+// leadingNumber is the number s starts with, at most two digits, and how
+// many bytes it took.
+func leadingNumber(s string) (n, width int) {
+	for width < len(s) && width < 3 && s[width] >= '0' && s[width] <= '9' {
+		n = n*10 + int(s[width]-'0')
+		width++
+	}
+	if width > 2 {
+		return 0, 0
+	}
+	return n, width
 }
 
 // customProvider is the policy's name for an OpenAI-compatible endpoint of
@@ -306,6 +394,7 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 	// the engine before exit (the harness-native structured_output block is
 	// not emitted). The wording is shared with every other adapter.
 	instruction, resultKind := schemaInstruction(in.Instruction, in.SchemaJSON)
+	budget, opts := thinkingBinding(provider, in.Model.Name)
 
 	doc := agentYAML{
 		// The config schema version of the pinned harness: docker-agent
@@ -316,9 +405,11 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 		Version: HarnessConfigVersion,
 		Models: map[string]modelYAML{
 			"main": {
-				Provider: provider,
-				Model:    in.Model.Name,
-				BaseURL:  in.Model.BaseURL,
+				Provider:       provider,
+				Model:          in.Model.Name,
+				BaseURL:        in.Model.BaseURL,
+				ThinkingBudget: budget,
+				ProviderOpts:   opts,
 			},
 		},
 		Agents: map[string]agntYAML{
