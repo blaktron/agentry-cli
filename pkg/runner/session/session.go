@@ -61,6 +61,10 @@ type Event struct {
 	Text string `json:"text,omitempty"`
 	// Synthetic marks a user turn the runner composed (an input notice).
 	Synthetic bool `json:"synthetic,omitempty"`
+	// Task is, on a user turn a persistent agent's heartbeat sent, the id
+	// of the task it was for: the turn is the agent's own, not the
+	// person's, and a chat draws it as such.
+	Task string `json:"task,omitempty"`
 	// StopReason is the harness's reason for ending an assistant turn.
 	StopReason string `json:"stopReason,omitempty"`
 	// Path and Digest describe an added input (agent-side path).

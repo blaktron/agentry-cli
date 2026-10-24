@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
@@ -268,14 +269,31 @@ func (m model) submit(text string) (tea.Model, tea.Cmd) {
 	return m, func() tea.Msg { return turnDoneMsg{err: s.Send(context.Background(), text)} }
 }
 
+// TaskLine is the one line a chat shows for a turn a persistent agent's
+// heartbeat sent: the task's name, from the turn's "Task: <name>" line,
+// and that it ran on its own.
+func TaskLine(text string) string {
+	for _, l := range strings.Split(text, "\n") {
+		if name, ok := strings.CutPrefix(l, "Task: "); ok && strings.TrimSpace(name) != "" {
+			return "Task " + strconv.Quote(strings.TrimSpace(name)) + " ran on its own"
+		}
+	}
+	return "A task ran on its own"
+}
+
 // apply renders one session event into the transcript.
 func (m *model) apply(ev session.Event) {
 	switch ev.Kind {
 	case session.KindUserTurn:
 		m.flushStreaming()
-		if ev.Synthetic {
+		switch {
+		case ev.Synthetic:
 			m.appendLine(m.styles.runner.Render("Runner: " + ev.Text))
-		} else {
+		case ev.Task != "":
+			// A persistent agent's own task: one line naming it, never the
+			// person's words.
+			m.appendLine(m.styles.runner.Render(TaskLine(ev.Text)))
+		default:
 			m.userTurns++
 			m.appendLine(m.styles.user.Render("You: ") + ev.Text)
 		}
