@@ -516,9 +516,48 @@ func saveUsage(home, name string, u Usage) error {
 // segment whose supervisor died still hold the session volume, so they are
 // swept first.
 func Reset(ctx context.Context, home, name string, d dockerx.Client) error {
+	return reset(ctx, home, name, d, resetAll)
+}
+
+// ResetHistory removes what a stopped agent did and keeps what the person
+// chose: its conversation, files and memory volumes, its transcript, tasks,
+// share verdicts, share text and share mirror go; its configuration, its
+// consents, its installed servers and added skills, its secrets and
+// sign-ins (their keychain entries and volumes) and its usage stay. Its
+// next start is a new conversation that asks nothing again. Only an agent
+// that resets in parts has it.
+func ResetHistory(ctx context.Context, home, name string, d dockerx.Client) error {
+	return reset(ctx, home, name, d, resetHistory)
+}
+
+// ResetAgent puts a stopped agent's choices back to their defaults and
+// removes its history, as Reset does, but keeps the credentials the person
+// gave it: its stored secrets, its git host accounts and its image servers'
+// sign-ins stay, with their keychain entries and volumes, switched off and
+// not agreed to, so turning one on asks again and needs no new set-up. Its
+// share folder's location and its usage stay too. Only an agent that resets
+// in parts has it.
+func ResetAgent(ctx context.Context, home, name string, d dockerx.Client) error {
+	return reset(ctx, home, name, d, resetAgent)
+}
+
+// resetKind is how much a reset removes.
+type resetKind int
+
+const (
+	resetAll resetKind = iota
+	resetHistory
+	resetAgent
+)
+
+func reset(ctx context.Context, home, name string, d dockerx.Client, kind resetKind) error {
 	// Only a known agent's folder is emptied.
-	if _, err := Lookup(name); err != nil {
+	a, err := Lookup(name)
+	if err != nil {
 		return err
+	}
+	if kind != resetAll && !a.Builtin.ResetsInParts() {
+		return fmt.Errorf("the %s agent has one Reset; Reset history and Reset agent are the Assistant's", name)
 	}
 	owner, err := Acquire(home, name, ClientCLI)
 	if err != nil {
@@ -526,13 +565,31 @@ func Reset(ctx context.Context, home, name string, d dockerx.Client) error {
 	}
 	defer owner.Release()
 	engine.SweepAbandoned(ctx, d, nil)
-	a, _ := Lookup(name)
-	for _, v := range append([]string{SessionVolumeIn(home, name), DataVolumeIn(home, name), MemoryVolumeIn(home, name)}, imageVolumes(home, a)...) {
+	cfg, err := LoadConfig(home, name)
+	if err != nil {
+		return err
+	}
+	// The next start must be a first segment whatever is removed below: one
+	// that went on counting would take the legacy volumes' conversation
+	// back in, so a reset stopped half way still begins a new one.
+	cfg.Segments, cfg.Conversation, cfg.PersonaGiven = 0, nil, ""
+	if err := SaveConfig(home, name, cfg); err != nil {
+		return err
+	}
+	volumes := []string{SessionVolumeIn(home, name), DataVolumeIn(home, name), MemoryVolumeIn(home, name)}
+	if kind == resetAll {
+		volumes = append(volumes, imageVolumes(home, a)...)
+	}
+	for _, v := range volumes {
 		if err := d.VolumeRemove(ctx, v); err != nil {
 			return fmt.Errorf("remove the %s agent's volume %s: %w", name, v, err)
 		}
 	}
-	for _, f := range []string{transcriptFile, usageFile, shareVerdictsFile, tasksFile, memorySeededFile} {
+	files := []string{transcriptFile, shareVerdictsFile, tasksFile, memorySeededFile}
+	if kind == resetAll {
+		files = append(files, usageFile)
+	}
+	for _, f := range files {
 		if err := os.Remove(filepath.Join(Dir(home, name), f)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
@@ -540,20 +597,22 @@ func Reset(ctx context.Context, home, name string, d dockerx.Client) error {
 	if err := os.RemoveAll(filepath.Join(Dir(home, name), shareTextDir)); err != nil {
 		return fmt.Errorf("remove the %s agent's kept share text: %w", name, err)
 	}
-	if err := os.RemoveAll(serversDir(home, name)); err != nil {
-		return fmt.Errorf("remove the %s agent's installed servers: %w", name, err)
-	}
 	if err := removeShareMirror(home, name); err != nil {
 		return err
+	}
+	if kind == resetHistory {
+		return nil
+	}
+	if err := os.RemoveAll(serversDir(home, name)); err != nil {
+		return fmt.Errorf("remove the %s agent's installed servers: %w", name, err)
 	}
 	for _, dir := range []string{AddedSkillsPath(home, name), skillsPath(home, name)} {
 		if err := os.RemoveAll(dir); err != nil {
 			return fmt.Errorf("remove the %s agent's skills: %w", name, err)
 		}
 	}
-	cfg, err := LoadConfig(home, name)
-	if err != nil {
-		return err
+	if kind == resetAgent {
+		return SaveConfig(home, name, keptCredentials(cfg))
 	}
 	for _, sec := range cfg.Secrets {
 		if err := resetSecrets.Delete(SecretAccount(name, sec.Name)); err != nil {
@@ -576,6 +635,26 @@ func Reset(ctx context.Context, home, name string, d dockerx.Client) error {
 		}
 	}
 	return SaveConfig(home, name, Config{Version: ConfigVersion, Enabled: cfg.Enabled})
+}
+
+// keptCredentials is the configuration Reset agent leaves: the defaults,
+// with whether the agent is enabled, its share folder's location, and the
+// credentials the person gave it. A stored secret or an account, on by
+// default once stored, is switched off; an image server is off until
+// switched on. None is agreed to, so turning one on asks again.
+func keptCredentials(cfg Config) Config {
+	out := Config{Version: ConfigVersion, Enabled: cfg.Enabled, Share: cfg.Share, Secrets: cfg.Secrets, Accounts: cfg.Accounts, SignIns: cfg.SignIns}
+	off := map[string]bool{}
+	for _, sec := range cfg.Secrets {
+		off[SecretEntryID(sec.Name)] = false
+	}
+	for _, g := range cfg.Accounts {
+		off[AccountEntryID(g.Host)] = false
+	}
+	if len(off) > 0 {
+		out.Switches = off
+	}
+	return out
 }
 
 // resetSecrets is where Reset removes the stored secrets' values from: the

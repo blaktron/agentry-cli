@@ -812,8 +812,41 @@ func newAgentEnableCmd(on bool) *cobra.Command {
 // agentDocker is the container engine reset removes the volumes from.
 var agentDocker = func() dockerx.Client { return dockerx.New() }
 
+// agentReset is one of the resets agentry agent reset runs: what its prompt
+// says (the agent's name, then what it wipes), what it says when done (the
+// agent's name), and the reset.
+type agentReset struct {
+	prompt, done string
+	reset        func(context.Context, string, string, dockerx.Client) error
+}
+
+const (
+	resetAll = iota
+	resetHistory
+	resetKeepCredentials
+)
+
+var agentResets = [...]agentReset{
+	resetAll: {
+		prompt: "This puts the %s agent back to its defaults: it wipes %s and everything you chose for it, with the secrets and sign-ins you gave it.",
+		done:   "The %s agent was reset to its defaults: its next start begins a new conversation and asks you again to agree to what it does.",
+		reset:  persistent.Reset,
+	},
+	resetHistory: {
+		prompt: "This wipes the %s agent's history: %s, its transcript and tasks. It keeps everything you chose and agreed to, its secrets and its sign-ins.",
+		done:   "The %s agent's history was wiped: its next start begins a new conversation, with everything you chose and agreed to.",
+		reset:  persistent.ResetHistory,
+	},
+	resetKeepCredentials: {
+		prompt: "This puts the %s agent back to its defaults: it wipes %s and everything you chose for it. It keeps the secrets you stored and the sign-ins of its servers, switched off.",
+		done:   "The %s agent was reset to its defaults, its secrets and sign-ins kept and switched off: its next start begins a new conversation and asks you again to agree to what it does.",
+		reset:  persistent.ResetAgent,
+	},
+}
+
 func newAgentResetCmd() *cobra.Command {
 	var confirm string
+	var history, keepCredentials bool
 	cmd := &cobra.Command{
 		Use:   "reset <name>",
 		Short: "Put a persistent agent back to its defaults; the files in its share folder are kept",
@@ -822,18 +855,43 @@ func newAgentResetCmd() *cobra.Command {
 			"its transcript, and everything you chose for it: its name and personality,\n" +
 			"the servers you added and their installed copies, its knowledge packs and\n" +
 			"switches, what you agreed to, its share folder's location, its dev server and\n" +
-			"ports, the secrets you stored for it (removed from your keychain too), and\n" +
-			"whether it starts with Agentry. Its next start begins a new\n" +
+			"ports, the secrets you stored for it (removed from your keychain too), its\n" +
+			"sign-ins, and whether it starts with Agentry. Its next start begins a new\n" +
 			"conversation and asks you again to agree to what it does.\n\n" +
-			"Kept: whether the agent is on, the receipts of its segments, every file in\n" +
-			"its share folder, your model sign-ins, and a dev server's sign-in in your\n" +
-			"keychain. Type the agent's name when asked, or pass it as --confirm when\n" +
-			"there is no terminal to ask on.",
+			"The Assistant has two smaller resets:\n" +
+			"  --history           removes its conversation, transcript, tasks, memory and\n" +
+			"                      files, and what it read from its share folder; it keeps\n" +
+			"                      everything you chose and agreed to, its secrets and its\n" +
+			"                      sign-ins.\n" +
+			"  --keep-credentials  removes all that and puts everything you chose back to\n" +
+			"                      its default, but keeps the secrets you stored and the\n" +
+			"                      sign-ins of its servers (Google Workspace's included),\n" +
+			"                      switched off: turning one on asks you again and needs no\n" +
+			"                      new sign-in. Its share folder's location stays.\n" +
+			"Both keep its usage. A kept secret goes with agentry agent secret remove, and\n" +
+			"every kept credential with a reset without either flag.\n\n" +
+			"Kept by every reset: whether the agent is on, the receipts of its segments,\n" +
+			"every file in its share folder, your model sign-ins, and a dev server's\n" +
+			"sign-in in your keychain. Type the agent's name when asked, or pass it as\n" +
+			"--confirm when there is no terminal to ask on.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, err := cliAgent(args[0])
 			if err != nil {
 				return err
+			}
+			if history && keepCredentials {
+				return engine.Classify(engine.ExitUsage, errors.New("--history and --keep-credentials are two different resets: choose one"))
+			}
+			if (history || keepCredentials) && !a.Builtin.ResetsInParts() {
+				return engine.Classify(engine.ExitUsage, fmt.Errorf("the %s agent has one reset: --history and --keep-credentials are the Assistant's", a.Name))
+			}
+			r := agentResets[resetAll]
+			switch {
+			case history:
+				r = agentResets[resetHistory]
+			case keepCredentials:
+				r = agentResets[resetKeepCredentials]
 			}
 			home, err := runnerHome()
 			if err != nil {
@@ -850,7 +908,11 @@ func newAgentResetCmd() *cobra.Command {
 				if a.Builtin.KeepsMemory() {
 					wipes += ", its memory"
 				}
-				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "This puts the %s agent back to its defaults: it wipes %s and everything you chose for it. The files in its share folder are kept. Type its name (%s) to go on: ", a.Name, wipes, a.Name)
+				export := ""
+				if a.Builtin.KeepsMemory() {
+					export = fmt.Sprintf(" To keep its memory, export it first: agentry agent memory export %s <folder>.", a.Name)
+				}
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "%s The files in its share folder are kept.%s Type its name (%s) to go on: ", fmt.Sprintf(r.prompt, a.Name, wipes), export, a.Name)
 				line, _ := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
 				confirm = strings.TrimSpace(line)
 			}
@@ -858,10 +920,10 @@ func newAgentResetCmd() *cobra.Command {
 				return engine.Classify(engine.ExitUsage, errors.New("the name did not match; nothing was reset"))
 			}
 			d := agentDocker()
-			if err := persistent.Reset(cmd.Context(), home, a.Name, d); err != nil {
+			if err := r.reset(cmd.Context(), home, a.Name, d); err != nil {
 				return engine.Classify(engine.ExitCLI, err)
 			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "The %s agent was reset to its defaults: its next start begins a new conversation and asks you again to agree to what it does.\n", a.Name)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), r.done+"\n", a.Name)
 			if shared := persistent.SharedVolumes(cmd.Context(), d, a.Name); len(shared) > 0 {
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Volumes from before each runner home had its own still exist on this engine (%s); they may hold the conversation of this or another runner home. Remove them with docker volume rm once no runner home needs them.\n", strings.Join(shared, ", "))
 			}
@@ -869,5 +931,7 @@ func newAgentResetCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&confirm, "confirm", "", "the agent's name, to confirm without a terminal")
+	cmd.Flags().BoolVar(&history, "history", false, "the Assistant: wipe its history alone, keeping everything you chose, its secrets and its sign-ins")
+	cmd.Flags().BoolVar(&keepCredentials, "keep-credentials", false, "the Assistant: put it back to its defaults, keeping the secrets you stored and its servers' sign-ins, switched off")
 	return cmd
 }

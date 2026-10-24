@@ -42,10 +42,12 @@ import (
 // ClamAV has checked it, its app link is its own name, personality and
 // tasks, and it keeps time: each turn tells it the time, and its heartbeat
 // fires its tasks. It keeps a memory of its own, and the secrets the person
-// stores for it, which reach the servers that declare them.
+// stores for it, which reach the servers that declare them. It resets in
+// parts: its history alone, or everything but the credentials it was given.
 func Assistant() Builtin {
 	return Builtin{namespace: assistant.Namespace, name: assistant.Name, version: assistant.Version, fsys: assistant.FS(),
-		persistent: true, runnable: true, checkShare: true, appLink: applink.SetAssistant, keepsTime: true, keepsMemory: true, keepsSecrets: true}
+		persistent: true, runnable: true, checkShare: true, appLink: applink.SetAssistant, keepsTime: true, keepsMemory: true, keepsSecrets: true,
+		resetsInParts: true}
 }
 
 // Main is Agentry Helper (pkg/persistent/main), the persistent agent of Agentry
@@ -174,6 +176,10 @@ func (b Builtin) KeepsSecrets() bool { return b.keepsSecrets }
 // KeepsMemory says the persistent agent has a memory volume of its own,
 // mounted read-write at spec.AgentRoot/spec.AgentMemoryDir.
 func (b Builtin) KeepsMemory() bool { return b.keepsMemory }
+
+// ResetsInParts says the persistent agent has Reset history and Reset
+// agent beside its Reset.
+func (b Builtin) ResetsInParts() bool { return b.resetsInParts }
 
 // memorySeedDir is the folder of a persistent built-in's tree its memory
 // volume is seeded from.

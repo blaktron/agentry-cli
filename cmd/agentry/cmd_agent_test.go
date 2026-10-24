@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -142,6 +143,66 @@ func TestAgentResetNeedsTheName(t *testing.T) {
 	ops := strings.Join(f.Ops(), " ")
 	if !strings.Contains(ops, "VolumeRemove:"+persistent.SessionVolumeIn(home, "assistant")) || !strings.Contains(ops, "VolumeRemove:"+persistent.DataVolumeIn(home, "assistant")) {
 		t.Errorf("ops = %s", ops)
+	}
+}
+
+// TestAgentResetInParts: --history and --keep-credentials are the
+// Assistant's, each refused for another agent and together; the prompt
+// says what each removes and keeps; --history keeps the configuration and
+// --keep-credentials keeps the stored secret, switched off.
+func TestAgentResetInParts(t *testing.T) {
+	home := agentHome(t)
+	f := &dockerx.Fake{}
+	prev := agentDocker
+	agentDocker = func() dockerx.Client { return f }
+	t.Cleanup(func() { agentDocker = prev })
+	prevTTY := stdinIsTTY
+	stdinIsTTY = func(io.Reader) bool { return true }
+	t.Cleanup(func() { stdinIsTTY = prevTTY })
+	if _, _, err := runCLI(t, nil, "agent", "enable", "assistant"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runCLI(t, nil, "agent", "configure", "assistant", "--name", "Sandra"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := persistent.LoadConfig(home, "assistant")
+	cfg.Secrets = []persistent.StoredSecret{{Name: "GITHUB_TOKEN"}}
+	cfg.Switches = map[string]bool{persistent.SecretEntryID("GITHUB_TOKEN"): true}
+	if err := persistent.SaveConfig(home, "assistant", cfg); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"agent", "reset", "assistant", "--history", "--keep-credentials", "--confirm", "assistant"},
+		{"agent", "reset", "coder", "--history", "--confirm", "coder"},
+		{"agent", "reset", "main", "--keep-credentials", "--confirm", "main"},
+	} {
+		if _, _, err := runCLI(t, nil, args...); err == nil || exitCode(err) != engine.ExitUsage {
+			t.Errorf("%v: err = %v, want a usage refusal", args, err)
+		}
+	}
+	if len(f.Ops()) != 0 {
+		t.Fatalf("a refused reset reached the engine: %v", f.Ops())
+	}
+	_, stderr, err := runCLI(t, strings.NewReader("nope\n"), "agent", "reset", "assistant", "--history")
+	if err == nil || !strings.Contains(stderr, "keeps everything you chose") {
+		t.Errorf("--history's prompt: %q, err %v", stderr, err)
+	}
+	if _, _, err := runCLI(t, nil, "agent", "reset", "assistant", "--history", "--confirm", "assistant"); err != nil {
+		t.Fatal(err)
+	}
+	if after, _ := persistent.LoadConfig(home, "assistant"); after.DisplayName != "Sandra" || len(after.Secrets) != 1 {
+		t.Errorf("after --history: %+v", after)
+	}
+	_, stderr, err = runCLI(t, strings.NewReader("nope\n"), "agent", "reset", "assistant", "--keep-credentials")
+	if err == nil || !strings.Contains(stderr, "keeps the secrets you stored and the sign-ins") {
+		t.Errorf("--keep-credentials' prompt: %q, err %v", stderr, err)
+	}
+	if _, _, err := runCLI(t, nil, "agent", "reset", "assistant", "--keep-credentials", "--confirm", "assistant"); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := persistent.LoadConfig(home, "assistant")
+	if after.DisplayName != "" || len(after.Secrets) != 1 || after.Switches[persistent.SecretEntryID("GITHUB_TOKEN")] {
+		t.Errorf("after --keep-credentials: %+v", after)
 	}
 }
 
