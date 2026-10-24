@@ -1082,6 +1082,11 @@ type MCPServerSpec struct {
 	// a server that does not see it, which is every server but a package
 	// server the person let see it, with no network.
 	Share ServerShare `json:"share,omitempty"`
+	// Account is the account an image server is signed in as, as the
+	// server named it at its sign-in: the System Prompt names it, so the
+	// agent can say whose mailbox or calendar it read. Empty for every
+	// other server.
+	Account string `json:"account,omitempty"`
 }
 
 // ServerShare is how a server sees a persistent agent's share folder

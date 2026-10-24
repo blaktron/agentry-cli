@@ -244,7 +244,16 @@ func (g Google) SetClient(ctx context.Context, client []byte) error {
 		c.SignIns = map[string]ImageSignIn{}
 	}
 	c.SignIns[s.Key] = in
+	g.enableProvider(&c, s.Key)
 	return SaveConfig(g.Home, g.Agent.Name, c)
+}
+
+// enableProvider enables the mail provider of the server key in c, if it
+// is disabled: setting it up is the person's choice of it.
+func (g Google) enableProvider(c *Config, key string) {
+	if p, ok := mailProviderOf(g.Agent, key); ok && enableMailProvider(c, p.Key) {
+		g.say("%s is now one of the %s agent's mail providers (agentry agent configure %s --no-mail-provider %s takes it off its roster).", p.Name, g.Agent.Name, g.Agent.Name, p.Key)
+	}
 }
 
 // SignIn signs Google Workspace in to email with gog's two-step remote
@@ -366,6 +375,7 @@ func (g Google) SignIn(ctx context.Context, email string, browse func(string) er
 		c.SignIns = map[string]ImageSignIn{}
 	}
 	c.SignIns[s.Key] = ImageSignIn{Client: in.Client, Account: account, At: time.Now().UTC(), Granted: granted}
+	g.enableProvider(&c, s.Key)
 	if err := SaveConfig(g.Home, g.Agent.Name, c); err != nil {
 		return "", err
 	}

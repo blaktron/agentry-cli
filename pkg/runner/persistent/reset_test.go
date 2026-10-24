@@ -208,7 +208,14 @@ func TestResetAgentKeepsTheCredentialsSwitchedOff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := BuildRoster(a, after, nil)
+	// Its mail providers are disabled, so gog is off the roster until
+	// Google is enabled again, with its kept sign-in.
+	if _, ok := BuildRoster(a, after, nil).Entry("server:gog"); ok {
+		t.Error("gog is on the roster after Reset agent, with Google disabled")
+	}
+	enabled := after
+	enabled.MailProviders = []string{"google"}
+	r := BuildRoster(a, enabled, nil)
 	for _, id := range []string{SecretEntryID("GITHUB_TOKEN"), "server:gog", "server:gog:writes"} {
 		e, ok := r.Entry(id)
 		if !ok {

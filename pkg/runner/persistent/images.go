@@ -89,9 +89,13 @@ func imageLine(s offer.ImageServer) string {
 
 // imageEntries are the roster's entries of the agent's image servers: each
 // server, off by default and waiting for its sign-in when on without one,
-// then its switches, off by default.
+// then its switches, off by default. A disabled mail provider's servers
+// have none.
 func imageEntries(a Agent, c Config, add func(RosterEntry, bool), last func() *RosterEntry) {
 	for _, s := range imageServersOf(a) {
+		if !imageServerShown(a, c, s.Key) {
+			continue
+		}
 		id := ImageServerEntryID(s.Key)
 		add(RosterEntry{ID: id, Kind: KindServer, Name: s.Name, GrantedBy: GrantedByBuiltin, Line: imageLine(s)}, false)
 		in := c.SignIns[s.Key]
@@ -107,12 +111,16 @@ func imageEntries(a Agent, c Config, add func(RosterEntry, bool), last func() *R
 	}
 }
 
-// imageGrants are the image servers a segment is given (on, and signed in),
-// each with the switches it has on, and the entries that are on but not
-// given, by id, which Apply leaves out of what it names as applied.
+// imageGrants are the image servers a segment is given (on, signed in,
+// and not a disabled mail provider's), each with the switches it has on,
+// and the entries that are on but not given, by id, which Apply leaves out
+// of what it names as applied.
 func imageGrants(home string, a Agent, c Config, on func(id string) bool) (grants []localrun.ImageGrant, left map[string]bool) {
 	left = map[string]bool{}
 	for _, s := range imageServersOf(a) {
+		if !imageServerShown(a, c, s.Key) {
+			continue
+		}
 		id := ImageServerEntryID(s.Key)
 		in := c.SignIns[s.Key]
 		signedIn := in.signedIn()

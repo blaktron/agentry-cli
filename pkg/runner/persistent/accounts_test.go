@@ -53,7 +53,7 @@ func TestAGitHostAccountIsAnEntryWhoseTokenStaysInTheKeychain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(b), "coder-bot") || strings.Contains(string(b), ghToken) || readVersion(t, home, a.Name) != ConfigVersion {
+	if !strings.Contains(string(b), "coder-bot") || strings.Contains(string(b), ghToken) || readVersion(t, home, a.Name) != 7 {
 		t.Fatalf("config.yaml:\n%s", b)
 	}
 	// The person's own account says so, and asks again.
