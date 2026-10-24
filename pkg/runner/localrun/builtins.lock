@@ -135,3 +135,5 @@ agentry/coder@1.3.2 sha256:c7464badb25eec2a179e052947ddb444b2a9c24569323063dc973
 agentry/assistant@1.6.0 sha256:74c34c27e5b18c519b66590871f81c5f7be3f3286e86d9f54107a5ddb22710d5
 # 1.7.0: Agentry Helper's tools beside its own; the instruction and README say what they do and that Agentry Desktop answers them.
 agentry/assistant@1.7.0 sha256:0cca965f8a8adeebf1dafb0b07273933102007c7c50f501639cdae3d0681e160
+# 1.8.0: Microsoft 365 and Outlook.com: the microsoft-365-setup, microsoft-365, microsoft-inbox-triage and microsoft-meeting-prep skills; the README names the server and the mail providers.
+agentry/assistant@1.8.0 sha256:3c43f125e980350d205418178dba81a2a21e97ec74a1756ee828e8c041a3f11a

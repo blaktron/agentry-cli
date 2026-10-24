@@ -33,6 +33,14 @@ type ImageSignIn struct {
 	Account string    `yaml:"account,omitempty" json:"account,omitempty"`
 	At      time.Time `yaml:"at,omitempty" json:"at,omitzero"`
 	Granted []string  `yaml:"granted,omitempty" json:"granted,omitempty"`
+	// ClientID and Tenant are a server's OAuth client and its sign-in's
+	// tenant, for a server told them (offer.ImageServer.ClientEnv and
+	// TenantEnv): an id, never a secret.
+	ClientID string `yaml:"clientID,omitempty" json:"clientID,omitempty"`
+	Tenant   string `yaml:"tenant,omitempty" json:"tenant,omitempty"`
+	// Signoff is what the person asked mail the server sends or drafts to
+	// end with, for a server that takes one; empty for none.
+	Signoff string `yaml:"signoff,omitempty" json:"signoff,omitempty"`
 }
 
 // signedIn says the server has finished a sign-in.
@@ -141,10 +149,35 @@ func imageGrants(home string, a Agent, c Config, on func(id string) bool) (grant
 			switches = append(switches, w.Key)
 		}
 		if given {
-			grants = append(grants, localrun.ImageGrant{Key: s.Key, Switches: switches, Volume: ImageVolumeIn(home, a.Name, s.Key), Account: in.Account})
+			grants = append(grants, localrun.ImageGrant{Key: s.Key, Switches: switches, Volume: ImageVolumeIn(home, a.Name, s.Key), Account: in.Account,
+				Env: signInEnv(s, in), Args: signoffArgs(s, in)})
 		}
 	}
 	return grants, left
+}
+
+// signInEnv is what a server is told of its sign-in in its environment:
+// the client and the tenant, for a server that takes them.
+func signInEnv(s offer.ImageServer, in ImageSignIn) map[string]string {
+	env := map[string]string{}
+	if s.ClientEnv != "" && in.ClientID != "" {
+		env[s.ClientEnv] = in.ClientID
+	}
+	if s.TenantEnv != "" && in.Tenant != "" {
+		env[s.TenantEnv] = in.Tenant
+	}
+	if len(env) == 0 {
+		return nil
+	}
+	return env
+}
+
+// signoffArgs are the arguments that give a server the person's signoff.
+func signoffArgs(s offer.ImageServer, in ImageSignIn) []string {
+	if s.SignoffArg == "" || in.Signoff == "" {
+		return nil
+	}
+	return []string{s.SignoffArg, in.Signoff}
 }
 
 // imageSecrets are the secret slots of the image servers a segment is

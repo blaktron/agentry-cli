@@ -37,13 +37,16 @@ and `agentry agent show assistant` lists what it has:
   folder's `notes/` are copied into it, and stay where they are. `agentry
   agent memory export assistant <folder>` copies the memory into a new
   folder, readable by you alone; a reset removes it.
-- **Seven skills** of its own, on unless you switch them off: `memory-ingest`,
+- **Eleven skills** of its own, on unless you switch them off: `memory-ingest`,
   `memory-query` and `memory-lint`, which say how it adds to its memory,
   answers from it and checks it; `google-workspace-setup`, which walks you
-  through connecting your Google account; and `google-workspace`,
+  through connecting your Google account; `google-workspace`,
   `google-inbox-triage` and `google-meeting-prep`, adapted from gog's own
   skills (MIT, their licence beside them), which say how it uses your Google
-  account safely.
+  account safely; `microsoft-365-setup`, which walks you through connecting
+  your Microsoft account with an Entra app of your own; and `microsoft-365`,
+  `microsoft-inbox-triage` and `microsoft-meeting-prep`, which say how it
+  uses your Microsoft account safely.
 - **A share folder** of yours, `~/agentry/assistantshare` unless you choose
   another, is mounted read and write while it runs: you see what it writes
   there as it writes it. A file you add is checked for malware with ClamAV
@@ -69,6 +72,17 @@ and `agentry agent show assistant` lists what it has:
   and sends mail only with sending switched on too. It keeps its sign-in on a
   volume of its own, under a password kept in your system keychain, and
   reaches Google's hosts alone.
+- **Microsoft 365 and Outlook.com** through Softeria's MCP server, run from
+  the image Agentry pins, off until you switch it on and sign it in with your
+  own Entra app (`agentry agent configure assistant --microsoft-client <id>`,
+  then `--microsoft-sign-in <email>`, by a device code): it reads your mail,
+  calendar, contacts and OneDrive, read only unless you also switch on its
+  changes, and sends mail only with sending switched on too. It keeps its
+  sign-in on a volume of its own, sealed under a key kept in your system
+  keychain, and reaches Microsoft's sign-in and Graph hosts alone.
+- **Mail providers**: Google and Microsoft are each enabled or disabled
+  (`agentry agent configure assistant --mail-provider <key>`); only an
+  enabled one's server is on its roster, and setting one up enables it.
 - **What you add**: knowledge packs from your computer and MCP servers, each
   an entry of its roster that you switch on and off. Adding one, or turning
   on one you have not agreed to on this computer, asks you first.

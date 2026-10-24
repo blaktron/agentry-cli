@@ -152,7 +152,7 @@ func (b Builtin) OfferedServers(hosts []offer.GitHost) []offer.Server {
 // roster; a built-in's alone.
 func (b Builtin) ImageServers(images policy.Images) []offer.ImageServer {
 	if b.persistent && b.namespace == assistant.Namespace && b.name == assistant.Name {
-		return assistant.ImageServers(images.GogImage())
+		return assistant.ImageServers(images.GogImage(), images.MS365Image())
 	}
 	return nil
 }
@@ -296,6 +296,11 @@ type ImageGrant struct {
 	// Account is the signed-in account, given to the server in its
 	// AccountEnv.
 	Account string
+	// Env is what the server is told of its sign-in (its client and
+	// tenant), beside its plain env; Args are added after its command (the
+	// person's signoff). Neither holds a secret.
+	Env  map[string]string
+	Args []string
 }
 
 // imageSpecs are the plan's specs of the image servers the segment is
@@ -315,15 +320,19 @@ func (s Segment) imageSpecs() ([]spec.MCPServerSpec, []string, error) {
 		}
 		o := offered[i]
 		env := maps.Clone(o.Env)
+		if env == nil {
+			env = map[string]string{}
+		}
 		if o.AccountEnv != "" && g.Account != "" {
-			if env == nil {
-				env = map[string]string{}
-			}
 			env[o.AccountEnv] = g.Account
+		}
+		maps.Copy(env, g.Env)
+		if len(env) == 0 {
+			env = nil
 		}
 		specs = append(specs, spec.MCPServerSpec{
 			Name: "mcp-image-" + o.Key, Source: spec.SourceImage, Package: o.Image, Image: o.Image,
-			Command: o.Args(func(key string) bool { return slices.Contains(g.Switches, key) }),
+			Command: append(o.Args(func(key string) bool { return slices.Contains(g.Switches, key) }), g.Args...),
 			Egress:  slices.Clone(o.Egress), Secrets: slices.Clone(o.Secrets), Env: env,
 			Volumes: []string{g.Volume + ":" + o.VolumeTarget}, Account: g.Account,
 		})

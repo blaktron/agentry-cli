@@ -45,6 +45,20 @@ type ImageServer struct {
 	// AccountEnv is the variable the server is told the signed-in account
 	// in; empty for none.
 	AccountEnv string
+	// Profiles, when set, are the arguments the server is given after its
+	// command for each combination of switches on, keyed by the switches'
+	// keys in their order joined with "+" ("" for none on), in place of
+	// each switch adding its own: for a server whose wider grant is a
+	// different argument rather than one more. Every combination the
+	// switches' requirements allow has one.
+	Profiles map[string][]string
+	// ClientEnv and TenantEnv are the variables the server is told the
+	// person's own OAuth client and its sign-in's tenant in, as the sign-in
+	// recorded them; empty for none.
+	ClientEnv, TenantEnv string
+	// SignoffArg is the argument the server is given the person's signoff
+	// for sent mail with, when they set one; empty for a server with none.
+	SignoffArg string
 }
 
 // ImageSwitch is one widening of an image server: arguments added to its
@@ -82,7 +96,7 @@ func (s ImageServer) Check() error {
 	if !imageRefRE.MatchString(s.Image) {
 		return fmt.Errorf("%s: its image %q is not pinned by digest", s.Name, s.Image)
 	}
-	if len(s.Command) == 0 {
+	if len(s.Command) == 0 && s.Profiles == nil {
 		return fmt.Errorf("%s names no command", s.Name)
 	}
 	if len(s.Egress) == 0 {
@@ -102,7 +116,7 @@ func (s ImageServer) Check() error {
 	}
 	keys := map[string]bool{}
 	for _, w := range s.Switches {
-		if !imageKeyRE.MatchString(w.Key) || w.Name == "" || w.Line == "" || len(w.Args) == 0 || keys[w.Key] {
+		if !imageKeyRE.MatchString(w.Key) || w.Name == "" || w.Line == "" || len(w.Args) == 0 && s.Profiles == nil || keys[w.Key] {
 			return fmt.Errorf("%s: its switch %q is not one (a key, a name, a sentence and the arguments it adds, once each)", s.Name, w.Key)
 		}
 		keys[w.Key] = true
@@ -112,18 +126,69 @@ func (s ImageServer) Check() error {
 			return fmt.Errorf("%s: its switch %s requires %q, which it does not have", s.Name, w.Key, w.Requires)
 		}
 	}
+	if s.Profiles != nil {
+		want := map[string]bool{}
+		for _, on := range s.combinations() {
+			want[profileKey(on)] = true
+			if _, ok := s.Profiles[profileKey(on)]; !ok {
+				return fmt.Errorf("%s has no arguments for the switches %q", s.Name, profileKey(on))
+			}
+		}
+		for k := range s.Profiles {
+			if !want[k] {
+				return fmt.Errorf("%s has arguments for %q, which its switches cannot be", s.Name, k)
+			}
+		}
+	}
 	return nil
 }
 
+// combinations are the sets of the server's switches that can be on
+// together, each in the switches' order: every subset in which a switch's
+// requirement is on with it.
+func (s ImageServer) combinations() [][]string {
+	index := map[string]int{}
+	for i, w := range s.Switches {
+		index[w.Key] = i
+	}
+	var out [][]string
+	for mask := 0; mask < 1<<len(s.Switches); mask++ {
+		var on []string
+		for i, w := range s.Switches {
+			if mask&(1<<i) == 0 {
+				continue
+			}
+			if r, ok := index[w.Requires]; w.Requires != "" && (!ok || mask&(1<<r) == 0) {
+				on = nil
+				break
+			}
+			on = append(on, w.Key)
+		}
+		if on != nil || mask == 0 {
+			out = append(out, on)
+		}
+	}
+	return out
+}
+
+// profileKey is the Profiles key of the switches on.
+func profileKey(on []string) string { return strings.Join(on, "+") }
+
 // Args is the server's command with the arguments of the switches on (by
-// key) added, in the switches' order; a switch whose requirement is off is
+// key) added, in the switches' order, or, for a server with Profiles, with
+// the arguments of that combination; a switch whose requirement is off is
 // left out.
 func (s ImageServer) Args(on func(key string) bool) []string {
 	out := slices.Clone(s.Command)
+	var given []string
 	for _, w := range s.Switches {
 		if on(w.Key) && (w.Requires == "" || on(w.Requires)) {
 			out = append(out, w.Args...)
+			given = append(given, w.Key)
 		}
+	}
+	if s.Profiles != nil {
+		return slices.Concat(s.Command, s.Profiles[profileKey(given)])
 	}
 	return out
 }

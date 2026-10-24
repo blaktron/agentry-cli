@@ -15,13 +15,13 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 )
 
-// TestTheAssistantsMailProvidersHoldToTheirRules: Google is the Assistant's
-// one provider, gog its server; the Coding agent and Main have none; a
+// TestTheAssistantsMailProvidersHoldToTheirRules: Google and Microsoft are
+// the Assistant's providers, gog and ms365 their servers; the Coding agent and Main have none; a
 // provider naming a server not offered, a server two providers name, or a
 // key of the wrong shape is refused.
 func TestTheAssistantsMailProvidersHoldToTheirRules(t *testing.T) {
 	withImageServers(t)
-	servers := assistant.ImageServers("img")
+	servers := assistant.ImageServers("img", "img")
 	if err := offer.CheckMailProviders(assistant.MailProviders(), servers); err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,8 @@ func TestTheAssistantsMailProvidersHoldToTheirRules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ps := MailProviders(a, Config{}); len(ps) != 1 || ps[0].Key != "google" || ps[0].Enabled || !slices.Equal(ps[0].Servers, []string{"server:gog"}) || len(ps[0].SetUp) != 1 {
+	if ps := MailProviders(a, Config{}); len(ps) != 2 || ps[0].Key != "google" || ps[0].Enabled || !slices.Equal(ps[0].Servers, []string{"server:gog"}) || len(ps[0].SetUp) != 1 ||
+		ps[1].Key != "microsoft" || ps[1].Enabled || !slices.Equal(ps[1].Servers, []string{"server:ms365"}) || len(ps[1].SetUp) != 1 {
 		t.Fatalf("the Assistant's providers: %+v", ps)
 	}
 	for _, name := range []string{"coder", "main"} {
