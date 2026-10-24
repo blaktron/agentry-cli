@@ -348,3 +348,44 @@ func TestSweepRemovesTheNetworksOfARunKilledBeforeItsContainers(t *testing.T) {
 		t.Errorf("networks left = %v, want the live run's only", got)
 	}
 }
+
+// TestSweepRemovesTheContainersOfARunItsLockProvesDead: where no owner
+// labels judge a container (off Linux), a run killed with its containers
+// standing leaves them holding its networks. Its free lock proves it dead,
+// so the next run's sweep removes the containers carrying its run label,
+// the gateway's helpers among them, and only then its networks. A live
+// run's containers stay.
+func TestSweepRemovesTheContainersOfARunItsLockProvesDead(t *testing.T) {
+	home := t.TempDir()
+	killRun(t, startLockedRun(t, filepath.Join(home, "runs", "dead0007"), false))
+	startLockedRun(t, filepath.Join(home, "runs", "live0007"), false)
+	labels := func(r string) map[string]string { return map[string]string{runLabel: r} }
+	f := &dockerx.Fake{
+		Networks: []dockerx.Labeled{
+			{Name: networkName("dead0007"), Labels: labels("dead0007")},
+			{Name: networkName("live0007"), Labels: labels("live0007")},
+		},
+		ByLabel: map[string][]string{
+			runLabel + "=dead0007": {containerName("dead0007", "gateway"), "docker-mcp-l4proxy-dead"},
+			runLabel + "=live0007": {containerName("live0007", "gateway")},
+		},
+	}
+	var out strings.Builder
+	sweepAbandonedRun(context.Background(), f, home, home, &out)
+
+	ops := f.Ops()
+	gateway := slices.Index(ops, "RemoveForce:"+containerName("dead0007", "gateway"))
+	helper := slices.Index(ops, "RemoveForce:docker-mcp-l4proxy-dead")
+	network := slices.Index(ops, "NetworkRemove:"+networkName("dead0007"))
+	if gateway < 0 || helper < 0 || network < 0 || network < gateway || network < helper {
+		t.Fatalf("want the dead run's containers removed, then its network: %v", ops)
+	}
+	for _, op := range ops {
+		if strings.Contains(op, "live0007") && !strings.HasPrefix(op, "PSByLabel:") && !strings.HasPrefix(op, "NetworksByLabel:") {
+			t.Errorf("the sweep touched a live run: %s", op)
+		}
+	}
+	if !strings.Contains(out.String(), "removed 2 container(s) of 1 run(s) whose process had died: dead0007") {
+		t.Errorf("the sweep said %q", out.String())
+	}
+}
