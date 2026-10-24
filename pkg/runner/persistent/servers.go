@@ -20,6 +20,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/persistent/offer"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 )
 
 // KindServerWrites is the kind of an offered server's writes entry.
@@ -297,4 +298,25 @@ func suggestionFor(a Agent, srv manifest.MCPServer) (offer.Suggestion, bool) {
 		}
 	}
 	return offer.Suggestion{}, false
+}
+
+// withServerFix adds to a start that failed because an offered server with
+// a configure flag for its secret did not start (as when its provider
+// refuses the token) the two ways to go on: give the token again, or switch
+// the server off.
+func withServerFix(a Agent, c Config, err error) error {
+	r := receipt.ReasonOf(err)
+	if r == nil || r.Code != receipt.ReasonMCPStartFailed {
+		return err
+	}
+	for _, o := range offersOf(a, c) {
+		// The engine's error names a remote server by its address; the
+		// reason keeps no address among its names.
+		if o.SecretFlag == "" || o.Server.URL == "" || !strings.Contains(err.Error(), "declared MCP server "+o.Server.URL+" did not start") {
+			continue
+		}
+		id := ServerEntryID(o.Server)
+		return fmt.Errorf("%w\n%s did not start: if its token is wrong, expired or revoked, give it again (agentry agent configure %s --%s), or switch it off (agentry agent grant %s %s off)", err, o.Name, a.Name, o.SecretFlag, a.Name, id)
+	}
+	return err
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/persistent/assistant"
 	"github.com/blaktron/agentry-cli/pkg/persistent/offer"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
+	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 )
 
 // TestFastmailIsAskedAboutTheToken: the token goes as the bearer of an MCP
@@ -187,5 +188,30 @@ func TestResetKeepsOrRemovesTheFastmailToken(t *testing.T) {
 	}
 	if _, kept := keys[account]; kept {
 		t.Error("Reset kept the Fastmail token in the keychain")
+	}
+}
+
+// TestAFastmailThatDidNotStartNamesTheFix: a start that failed because
+// Fastmail's server did not start (its token refused) says to give the
+// token again or switch the server off; another server's failure, or
+// another failure, is left as it is.
+func TestAFastmailThatDidNotStartNamesTheFix(t *testing.T) {
+	withBuiltinOffers(t)
+	a, err := Lookup("assistant")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := Config{MailProviders: []string{assistant.MailFastmail}}
+	failed := func(ref string) error {
+		return receipt.WithReason(errors.New("declared MCP server "+ref+" did not start; the gateway said: > Can't start …"), receipt.ReasonMCPStartFailed, "")
+	}
+	got := withServerFix(a, c, failed(assistant.Fastmail().Server.URL))
+	if !strings.Contains(got.Error(), "agentry agent configure assistant --fastmail-token") || !strings.Contains(got.Error(), "agentry agent grant assistant server:url-api-fastmail-com-mcp off") || receipt.ReasonOf(got) == nil {
+		t.Errorf("Fastmail's: %v", got)
+	}
+	for _, other := range []error{failed("@brave/brave-search-mcp-server@2.0.0"), errors.New("another failure")} {
+		if got := withServerFix(a, c, other); got != other {
+			t.Errorf("%v became %v", other, got)
+		}
 	}
 }
