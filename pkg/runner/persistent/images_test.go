@@ -2,6 +2,7 @@ package persistent
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -163,6 +164,49 @@ func TestResetRemovesGoogleWorkspace(t *testing.T) {
 	}
 	if after, err := LoadConfig(home, a.Name); err != nil || len(after.SignIns) != 0 {
 		t.Errorf("after Reset: %+v, %v", after, err)
+	}
+}
+
+// noKeychain is a keychain that is not there: every call fails as the
+// Secret Service's absence does on a Linux host with none.
+type noKeychain struct{}
+
+func (noKeychain) Get(string) (string, error) { return "", errNoSecretService }
+func (noKeychain) Set(string, string) error   { return errNoSecretService }
+func (noKeychain) Delete(string) error        { return errNoSecretService }
+
+var errNoSecretService = errors.New("remove the secret from the system keychain: The name is not activatable")
+
+// TestResetFinishesWithNoKeychain: on a machine with no keychain, Reset of
+// an Assistant whose Google Workspace was never set up finishes and
+// rewrites the configuration; one whose set-up the configuration records
+// stops on the password it could not remove.
+func TestResetFinishesWithNoKeychain(t *testing.T) {
+	withImageServers(t)
+	home := shortHome(t)
+	a, err := Lookup("assistant")
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := resetSecrets
+	resetSecrets = noKeychain{}
+	t.Cleanup(func() { resetSecrets = old })
+	if err := SaveConfig(home, a.Name, Config{Enabled: true, Share: "/srv/share", Switches: map[string]bool{"server:gog": true}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Reset(context.Background(), home, a.Name, &dockerx.Fake{}); err != nil {
+		t.Fatalf("Reset with no keychain: %v", err)
+	}
+	after, err := LoadConfig(home, a.Name)
+	if err != nil || !after.Enabled || after.Share != "" || len(after.Switches) != 0 {
+		t.Fatalf("the configuration after Reset: %+v, %v", after, err)
+	}
+
+	if err := SaveConfig(home, a.Name, Config{Enabled: true, SignIns: map[string]ImageSignIn{"gog": {Account: "person@example.com"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Reset(context.Background(), home, a.Name, &dockerx.Fake{}); err == nil || !strings.Contains(err.Error(), "keyring password for") {
+		t.Fatalf("Reset of a signed-in server with no keychain: %v", err)
 	}
 }
 

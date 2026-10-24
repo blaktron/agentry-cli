@@ -625,12 +625,18 @@ func reset(ctx context.Context, home, name string, d dockerx.Client, kind resetK
 		}
 	}
 	// An image server's keyring password: its volume, which the password
-	// opened, is gone above, so the password goes too.
+	// opened, is gone above, so the password goes too. One the
+	// configuration records a set-up for must leave the keychain. One it
+	// records none for was never used, but a set-up that failed after
+	// making it may have left it, so it is removed if the keychain can be
+	// reached: on a machine with no keychain there is nothing to remove,
+	// and the reset still finishes.
 	for _, s := range imageServersOf(a) {
 		if len(s.Secrets) == 0 {
 			continue
 		}
-		if err := resetSecrets.Delete(ImageKeyringAccount(name, s.Key)); err != nil {
+		err := resetSecrets.Delete(ImageKeyringAccount(name, s.Key))
+		if _, set := cfg.SignIns[s.Key]; err != nil && set {
 			return fmt.Errorf("remove the %s agent's keyring password for %s: %w", name, s.Name, err)
 		}
 	}
