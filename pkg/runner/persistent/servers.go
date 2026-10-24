@@ -51,7 +51,8 @@ var offersOf = func(a Agent, c Config) []offer.Server { return builtinOffers(a, 
 
 // builtinOffers are the built-in's offers for the agent's accounts, less one
 // drawn for an account whose address a QuickAgent could not declare (an
-// address, an internal name): it is never on the roster.
+// address, an internal name), which is never on the roster, and less a
+// disabled mail provider's.
 func builtinOffers(a Agent, c Config) []offer.Server {
 	hosts := make([]offer.GitHost, 0, len(c.Accounts))
 	for _, g := range c.Accounts {
@@ -60,6 +61,11 @@ func builtinOffers(a Agent, c Config) []offer.Server {
 	var out []offer.Server
 	for _, o := range a.Builtin.OfferedServers(hosts) {
 		if o.Account != "" && checkServer(o.Server) != nil {
+			continue
+		}
+		// A disabled mail provider's server is off the roster, as its image
+		// servers are; the person's token for it is kept.
+		if o.MailProvider != "" && !slices.Contains(c.MailProviders, o.MailProvider) {
 			continue
 		}
 		out = append(out, o)
@@ -120,6 +126,9 @@ func setUp(a Agent, c Config, o offer.Server) (ok bool, reason string) {
 			return true, ""
 		}
 		reason := fmt.Sprintf("it needs your secret %s: agentry agent secret set %s %s", o.Secret, a.Name, o.Secret)
+		if o.SecretFlag != "" {
+			reason = fmt.Sprintf("it needs your %s: agentry agent configure %s --%s", o.Name+" token", a.Name, o.SecretFlag)
+		}
 		if searchKeyStandsIn(c, o) {
 			reason += fmt.Sprintf(", or a %s key for web search (Provider settings, or agentry setup)", policy.WebSearchKey{Provider: o.SearchKey}.ProviderName())
 		}

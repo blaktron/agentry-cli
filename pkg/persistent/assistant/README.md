@@ -37,16 +37,17 @@ and `agentry agent show assistant` lists what it has:
   folder's `notes/` are copied into it, and stay where they are. `agentry
   agent memory export assistant <folder>` copies the memory into a new
   folder, readable by you alone; a reset removes it.
-- **Eleven skills** of its own, on unless you switch them off: `memory-ingest`,
+- **Thirteen skills** of its own, on unless you switch them off: `memory-ingest`,
   `memory-query` and `memory-lint`, which say how it adds to its memory,
   answers from it and checks it; `google-workspace-setup`, which walks you
   through connecting your Google account; `google-workspace`,
   `google-inbox-triage` and `google-meeting-prep`, adapted from gog's own
   skills (MIT, their licence beside them), which say how it uses your Google
   account safely; `microsoft-365-setup`, which walks you through connecting
-  your Microsoft account with an Entra app of your own; and `microsoft-365`,
+  your Microsoft account with an Entra app of your own; `microsoft-365`,
   `microsoft-inbox-triage` and `microsoft-meeting-prep`, which say how it
-  uses your Microsoft account safely.
+  uses your Microsoft account safely; and `fastmail-setup` and
+  `fastmail-inbox-triage`, for your Fastmail account.
 - **A share folder** of yours, `~/agentry/assistantshare` unless you choose
   another, is mounted read and write while it runs: you see what it writes
   there as it writes it. A file you add is checked for malware with ClamAV
@@ -80,7 +81,13 @@ and `agentry agent show assistant` lists what it has:
   changes, and sends mail only with sending switched on too. It keeps its
   sign-in on a volume of its own, sealed under a key kept in your system
   keychain, and reaches Microsoft's sign-in and Graph hosts alone.
-- **Mail providers**: Google and Microsoft are each enabled or disabled
+- **Fastmail** through Fastmail's own MCP server, run at Fastmail and
+  reached at `api.fastmail.com` alone, off until you give it your own
+  Fastmail API token of the MCP type (`agentry agent configure assistant
+  --fastmail-token`), which is kept in your system keychain once Fastmail
+  accepts it: it can read, change or send in your account whatever your token
+  allows, so make the token Read only unless you want changes.
+- **Mail providers**: Google, Microsoft and Fastmail are each enabled or disabled
   (`agentry agent configure assistant --mail-provider <key>`); only an
   enabled one's server is on its roster, and setting one up enables it.
 - **What you add**: knowledge packs from your computer and MCP servers, each
