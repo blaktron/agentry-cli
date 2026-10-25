@@ -703,6 +703,11 @@ func (s *copilotSession) decide(ev copilotEvent, raw json.RawMessage) {
 	}
 	pr := d.PermissionRequest
 	tool := pr.ToolName
+	if pr.ServerName == copilotGatewayServer {
+		// Copilot CLI names an MCP tool with its server's prefix
+		// ("gateway-fs_read"); the grant holds the gateway's own names.
+		tool = strings.TrimPrefix(tool, copilotGatewayServer+"-")
+	}
 	if tool == "" {
 		tool = pr.Kind
 	}
@@ -712,7 +717,7 @@ func (s *copilotSession) decide(ev copilotEvent, raw json.RawMessage) {
 	case pr.Kind == "mcp" && pr.ManagedApprovalRequired:
 		s.refuse(Event{Kind: EventOrgPolicy, Policy: receipt.OrgPolicyManagedApproval,
 			Text: "the organization's managed settings require a person to approve " + tool, Raw: raw})
-	case pr.Kind == "mcp" && s.permit(pr.ServerName, pr.ToolName):
+	case pr.Kind == "mcp" && s.permit(pr.ServerName, tool):
 		result, granted = map[string]any{"kind": "approve-once"}, true
 	}
 	s.workers.Go(func() {

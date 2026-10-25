@@ -299,6 +299,44 @@ func TestACopilotSessionIsHandedItsTokenThroughTheCallback(t *testing.T) {
 	}
 }
 
+// Copilot CLI asks for a gateway tool by its prefixed name: a tool of the
+// grant is approved however it is named, and the gateway's prefix opens
+// nothing else, not a tool outside the grant, another server's tool, or a
+// name that only ends like one of the grant's.
+func TestACopilotPermissionNamesTheToolWithItsServer(t *testing.T) {
+	srv := &copilottest.Server{Turn: func(c *copilottest.Conn, _ string) {
+		c.ToolCall("prefixed", "fs_read")
+		c.AskPermission("bare", map[string]any{"kind": "mcp", "serverName": "gateway", "toolName": "fs_read"})
+		c.ToolCall("outside", "fs_write")
+		c.AskPermission("other-server", map[string]any{"kind": "mcp", "serverName": "github", "toolName": "github-fs_read"})
+		c.AskPermission("other-prefix", map[string]any{"kind": "mcp", "serverName": "gateway", "toolName": "github-fs_read"})
+		c.AskPermission("not-mcp", map[string]any{"kind": "shell", "serverName": "gateway", "toolName": "gateway-fs_read"})
+		c.Event("assistant.message", map[string]any{"messageId": "a1", "content": "DONE"})
+		c.Event("session.idle", map[string]any{})
+	}}
+	k := &tokens{expires: time.Now().Add(8 * time.Hour)}
+	d := drive(t, srv, adapter.SessionOptions{GatewayTools: []string{"fs_read"}, ModelSignIn: true, SignInToken: k.get})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := d.drv.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.drv.Prompt(ctx, "go"); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, decisions, _ := srv.Snapshot()
+	want := map[string]string{"p-prefixed": "approve-once", "bare": "approve-once", "p-outside": "reject",
+		"other-server": "reject", "other-prefix": "reject", "not-mcp": "reject"}
+	for id, kind := range want {
+		if decisions[id]["kind"] != kind {
+			t.Errorf("%s: %v, want %s", id, decisions[id], kind)
+		}
+	}
+	if g := ofKind(d.events(), adapter.EventPermissionGranted); len(g) != 2 || g[0].Text != "fs_read" || g[1].Text != "fs_read" {
+		t.Errorf("granted %v", g)
+	}
+}
+
 // A run's token source that fails refuses the callback, and with no sign-in
 // at all the session is never created: Copilot CLI never falls back to an
 // ambient login.
