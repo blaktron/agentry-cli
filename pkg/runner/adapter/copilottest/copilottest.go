@@ -278,12 +278,14 @@ func (c *Conn) AskPermission(requestID string, request map[string]any) map[strin
 	return <-ch
 }
 
-// ToolCall plays a gateway tool call: its start, the approval asked, and
-// its completion when approved. It returns the decision's kind.
+// ToolCall plays a gateway tool call as Copilot CLI 1.0.95 makes it: its
+// start, the approval asked, and its completion when approved. The
+// permission request names the tool with its server's prefix
+// ("gateway-fs_read"). It returns the decision's kind.
 func (c *Conn) ToolCall(callID, tool string) string {
 	c.Event("tool.execution_start", map[string]any{"toolCallId": callID, "toolName": "gateway-" + tool,
 		"mcpServerName": "gateway", "mcpToolName": tool, "arguments": map[string]any{}})
-	d := c.AskPermission("p-"+callID, map[string]any{"kind": "mcp", "serverName": "gateway", "toolName": tool,
+	d := c.AskPermission("p-"+callID, map[string]any{"kind": "mcp", "serverName": "gateway", "toolName": "gateway-" + tool,
 		"toolTitle": tool, "readOnly": false, "toolCallId": callID})
 	kind, _ := d["kind"].(string)
 	c.Event("tool.execution_complete", map[string]any{"toolCallId": callID, "success": kind == "approve-once"})
