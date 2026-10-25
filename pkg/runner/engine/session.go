@@ -413,8 +413,13 @@ type liveSession struct {
 	totTok        int64
 	// usageSeen says the harness reported usage at least once; without it
 	// the receipt says the session's 0 tokens were never reported.
-	usageSeen  bool
+	usageSeen bool
+	// costUSD is the session's cost, the high-water mark of what the
+	// harness reported over costBase: a new conversation's harness counts
+	// its running cost from nothing, and costBase holds what the
+	// conversations before it spent.
 	costUSD    float64
+	costBase   float64
 	lastText   string
 	harnessErr string
 	// planLimit is the harness's first plan-limit event (EndPlanLimit).
@@ -687,6 +692,54 @@ func (s *liveSession) SetResumeReason(reason string) {
 	if s.env.Persistent != nil {
 		s.env.Persistent.ResumeReason = reason
 	}
+}
+
+// ErrNoNewConversation is a NewConversation refused because the segment's
+// harness cannot start a new conversation while it runs: a new segment is
+// the way to one.
+var ErrNoNewConversation = errors.New("the harness cannot start a new conversation while it runs")
+
+// NewConversation implements ConversationRenewer: between turns, the running
+// harness starts a new conversation and the segment is in it from then on.
+// The conversation it leaves stays on the session store. The new one has
+// carried nothing over, so its first turn's frame is the caller's to give.
+func (s *liveSession) NewConversation(ctx context.Context, reason string) (string, error) {
+	s.turnMu.Lock()
+	defer s.turnMu.Unlock()
+	s.mu.Lock()
+	ended, drv := s.ended, s.drv
+	s.mu.Unlock()
+	if ended {
+		return "", session.ErrEnded
+	}
+	r, ok := drv.(adapter.Renewing)
+	if !ok || s.p.Persistent == nil {
+		return "", ErrNoNewConversation
+	}
+	id, err := r.NewConversation(ctx)
+	if err != nil {
+		return "", err
+	}
+	reason = s.redact.String(reason)
+	s.mu.Lock()
+	s.conversation, s.resumed, s.resumeReason = id, false, reason
+	// The new conversation's harness reports its running cost from
+	// nothing: what the one it left spent is kept under it.
+	s.costBase = s.costUSD
+	if s.env.Persistent != nil {
+		s.env.Persistent.NewConversations = append(s.env.Persistent.NewConversations,
+			receipt.NewConversation{ID: id, At: time.Now().UTC(), Reason: reason})
+	}
+	s.mu.Unlock()
+	s.emit(session.Event{Kind: session.KindOther, Text: "a new conversation in the running harness: " + reason})
+	return id, nil
+}
+
+// ConversationRenewer is a PersistentSession that can start a new
+// conversation in its running harness (liveSession's, where the adapter's
+// driver is adapter.Renewing; ErrNoNewConversation otherwise).
+type ConversationRenewer interface {
+	NewConversation(ctx context.Context, reason string) (string, error)
 }
 
 // PersistentSession is the session a persistent agent's segment returns
@@ -1197,8 +1250,8 @@ func (s *liveSession) handle(ev adapter.Event) {
 		s.totTok += ev.TotalTokens
 		s.usageSeen = true
 		// A plan run reports tokens, never dollars.
-		if ev.CostUSD > s.costUSD && s.p.Plan.Harness.ModelSignIn == nil {
-			s.costUSD = ev.CostUSD
+		if c := s.costBase + ev.CostUSD; c > s.costUSD && s.p.Plan.Harness.ModelSignIn == nil {
+			s.costUSD = c
 		}
 		over := s.p.Budgets.MaxCostUSD > 0 && s.costUSD > s.p.Budgets.MaxCostUSD
 		s.mu.Unlock()

@@ -382,6 +382,10 @@ func SaveConfig(home, name string, c Config) error {
 // whether the conversation continued and, when it did not, why.
 const KindSegmentStart session.Kind = "segment_start"
 
+// KindConversationStart is the transcript's mark of a new conversation the
+// running segment's harness started (a compaction's): Text says why.
+const KindConversationStart session.Kind = "conversation_start"
+
 // Entry is one line of the agent's transcript.ndjson: a session event of a
 // segment, as the engine emitted it (redacted), without the harness's raw
 // message.

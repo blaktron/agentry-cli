@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -182,9 +183,35 @@ type starter struct {
 	// answer, context and limit are each segment's (fakeSegment).
 	answer         func(text string) string
 	context, limit int64
+	// renew makes each segment one whose harness can start a new
+	// conversation while it runs, failing with renewErr when set.
+	renew    bool
+	renewErr error
+	// bound ends each segment when the context it was started with is
+	// done, as the engine's session does.
+	bound bool
 }
 
-func (s *starter) start(_ context.Context, seg localrun.Segment) (engine.PersistentSession, error) {
+// renewingSegment is a fakeSegment whose harness can start a new
+// conversation while it runs (engine.ConversationRenewer).
+type renewingSegment struct {
+	*fakeSegment
+	err     error
+	renewed int
+}
+
+func (r *renewingSegment) NewConversation(_ context.Context, reason string) (string, error) {
+	if r.err != nil {
+		return "", r.err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.renewed++
+	r.id, r.resumed, r.reason = "conv-renewed-"+strconv.Itoa(r.renewed), false, reason
+	return r.id, nil
+}
+
+func (s *starter) start(ctx context.Context, seg localrun.Segment) (engine.PersistentSession, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.segments = append(s.segments, seg)
@@ -199,6 +226,16 @@ func (s *starter) start(_ context.Context, seg localrun.Segment) (engine.Persist
 		s.last.served = s.served(seg)
 	}
 	s.last.answer, s.last.context, s.last.limit = s.answer, s.context, s.limit
+	if s.bound {
+		seg := s.last
+		go func() {
+			<-ctx.Done()
+			_, _ = seg.End(context.Background(), false)
+		}()
+	}
+	if s.renew {
+		return &renewingSegment{fakeSegment: s.last, err: s.renewErr}, nil
+	}
 	return s.last, nil
 }
 

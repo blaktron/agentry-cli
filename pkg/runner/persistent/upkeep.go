@@ -88,6 +88,9 @@ type upkeepState struct {
 	Upkeeps []time.Time `json:"upkeeps,omitempty"`
 	// RetryAfter holds an idle or in-use compaction back after one failed.
 	RetryAfter time.Time `json:"retryAfter,omitzero"`
+	// Handoff is the handoff a compaction's new conversation opens with,
+	// kept until a turn has carried it to the agent.
+	Handoff string `json:"handoff,omitempty"`
 }
 
 func loadUpkeep(home, name string) upkeepState {
@@ -209,6 +212,10 @@ type Compacted struct {
 	HandoffBytes int `json:"handoffBytes,omitempty"`
 	// HandoffCut says the handoff was longer than its bound and was cut.
 	HandoffCut bool `json:"handoffCut,omitempty"`
+	// Swap is how the new conversation started (SwapInSegment,
+	// SwapSegment), and SwapMillis how long that took.
+	Swap       string `json:"swap,omitempty"`
+	SwapMillis int64  `json:"swapMillis,omitempty"`
 }
 
 // ErrNoMemory refuses a compaction of an agent that keeps no memory.
@@ -302,7 +309,16 @@ func (s *Supervisor) compactLocked(ctx context.Context, trigger string) (Compact
 		return out, nil
 	}
 	out.HandoffBytes, out.HandoffCut = len(handoff), strings.HasSuffix(handoff, handoffCutMark)
-	if err := s.swapConversation(ctx, handoff); err != nil {
+	swap, took, err := s.swapConversation(ctx, handoff)
+	out.Swap, out.SwapMillis = swap, took.Milliseconds()
+	var unstored *unstoredError
+	switch {
+	case errors.As(err, &unstored):
+		// The agent is in the new conversation; only the record of it for
+		// the next start failed.
+		out.Reason = err.Error()
+		s.notice("A fresh conversation started, but " + err.Error())
+	case err != nil:
 		out.Reason = "the new conversation could not start: " + err.Error()
 		s.logUpkeep(outDir, out, oldConv, "")
 		s.notice("The memory was saved, but the fresh conversation could not start: " + err.Error())
@@ -315,8 +331,9 @@ func (s *Supervisor) compactLocked(ctx context.Context, trigger string) (Compact
 	_ = saveUpkeep(home, name, s.upkeep)
 	newOut := s.outDir
 	s.mu.Unlock()
-	// The ended segment's receipts are closed with its envelope: the
-	// record of the swap is the new segment's first.
+	// After a segment restart the ended segment's receipts are closed
+	// with its envelope, and the record of the swap is the new segment's
+	// first.
 	s.logUpkeep(newOut, out, oldConv, s.conversationID())
 	s.notice("Compacted: what the conversation produced is in the memory, and a fresh conversation opens with the handoff")
 	return out, nil
@@ -395,19 +412,136 @@ func handoffCarried(h string) string {
 		"Read memory/index.md and the pages it names before you answer from what came before. The handoff: " + strconv.Quote(h) + ")\n\n"
 }
 
-// swapConversation ends the running segment and starts the next in a new
-// conversation that opens with the handoff. The caller holds turn.
-func (s *Supervisor) swapConversation(ctx context.Context, handoff string) error {
+// How a compaction swapped the conversation, as its record says it.
+const (
+	// SwapInSegment: the running harness started the new conversation.
+	SwapInSegment = "in-segment"
+	// SwapSegment: the segment ended and the next started in a new
+	// conversation.
+	SwapSegment = "segment"
+)
+
+// compactionReason is why a compacted conversation is not the one before.
+const compactionReason = "a compaction: the new conversation opens with the agent's handoff"
+
+// swapConversation moves the agent to a new conversation that opens with the
+// handoff: inside the running segment where its harness can start one, and
+// otherwise by ending the segment and starting the next with no
+// conversation to continue. It says which, and how long that swap took (a
+// fallback's restart alone). An *unstoredError says the in-segment swap
+// happened and only its record for the next start failed. The caller holds
+// turn.
+func (s *Supervisor) swapConversation(ctx context.Context, handoff string) (string, time.Duration, error) {
+	start := time.Now()
+	err := s.swapInSegment(ctx, handoff)
+	var unstored *unstoredError
+	switch {
+	case err == nil, errors.As(err, &unstored):
+		return SwapInSegment, time.Since(start), err
+	case !errors.Is(err, engine.ErrNoNewConversation):
+		// The harness could not start one: the segment restart can.
+		s.notice("The running agent could not start a fresh conversation, so it restarts in one: " + err.Error())
+	}
+	start = time.Now()
+	if err := s.setPendingHandoff(handoff); err != nil {
+		return SwapSegment, 0, err
+	}
 	if err := s.updateConfig(func(c *Config) error {
 		c.Conversation = nil
 		return nil
 	}); err != nil {
+		return SwapSegment, 0, err
+	}
+	err = s.nextSegmentFor(ctx, "Starting a fresh conversation that opens with the handoff")
+	return SwapSegment, time.Since(start), err
+}
+
+// newConversationWait bounds the running harness's start of a new
+// conversation, which the person's waiting message waits for.
+const newConversationWait = time.Minute
+
+// unstoredError is an in-segment swap whose new conversation started and
+// could not be recorded as the agent's for its next start.
+type unstoredError struct{ err error }
+
+func (e *unstoredError) Error() string {
+	return "it could not be recorded for the next start: " + e.err.Error()
+}
+
+func (e *unstoredError) Unwrap() error { return e.err }
+
+// swapInSegment starts the new conversation in the running segment's
+// harness, records it as the agent's conversation, and has the next turn
+// open with the handoff. engine.ErrNoNewConversation when the harness
+// cannot; any other error before the harness started one leaves the
+// conversation as it was, and one after is an *unstoredError.
+func (s *Supervisor) swapInSegment(ctx context.Context, handoff string) error {
+	s.mu.Lock()
+	sess := s.sess
+	s.mu.Unlock()
+	r, ok := sess.(engine.ConversationRenewer)
+	if !ok {
+		return engine.ErrNoNewConversation
+	}
+	// The handoff is kept before the harness moves: once it has, the new
+	// conversation must open with it, even after a stop.
+	if err := s.setPendingHandoff(handoff); err != nil {
+		return err
+	}
+	nctx, cancel := context.WithTimeout(ctx, newConversationWait)
+	id, err := r.NewConversation(nctx, compactionReason)
+	cancel()
+	if err != nil {
+		_ = s.setPendingHandoff("")
 		return err
 	}
 	s.mu.Lock()
-	s.handoff = handoff
+	s.carry, s.carryHandoff, s.persona, s.resumed, s.resumeReason = handoffCarried(handoff), handoff, "", false, compactionReason
+	segment, runID := s.segment, s.runID
 	s.mu.Unlock()
-	return s.nextSegmentFor(ctx, "Starting a fresh conversation that opens with the handoff")
+	resumed := false
+	_ = appendEntry(s.opts.Home, s.opts.Agent.Name, Entry{Segment: segment, Run: runID, Resumed: &resumed,
+		Event: session.Event{Kind: KindConversationStart, Time: time.Now().UTC(), Text: compactionReason}})
+	if err := s.updateConfig(func(c *Config) error {
+		c.Conversation = &Conversation{Adapter: s.adapter, ID: id}
+		// A new conversation has been given nothing yet.
+		c.PersonaGiven = ""
+		return nil
+	}); err != nil {
+		return &unstoredError{err: err}
+	}
+	return nil
+}
+
+// setPendingHandoff keeps the handoff a new conversation is to open with in
+// upkeep.json ("" takes it off).
+func (s *Supervisor) setPendingHandoff(h string) error {
+	s.mu.Lock()
+	s.upkeep.Handoff = h
+	u := s.upkeep
+	s.mu.Unlock()
+	s.upkeepSave.Lock()
+	defer s.upkeepSave.Unlock()
+	return saveUpkeep(s.opts.Home, s.opts.Agent.Name, u)
+}
+
+// handoffSent settles the handoff a turn of sess carried: delivered, it is
+// no longer pending; not, the segment's next turn carries it again.
+func (s *Supervisor) handoffSent(sess engine.PersistentSession, h string, delivered bool) {
+	if delivered {
+		s.mu.Lock()
+		pending := s.upkeep.Handoff == h
+		s.mu.Unlock()
+		if pending {
+			_ = s.setPendingHandoff("")
+		}
+		return
+	}
+	s.mu.Lock()
+	if s.sess == sess && s.carryHandoff == "" && s.upkeep.Handoff == h {
+		s.carry, s.carryHandoff = handoffCarried(h)+s.carry, h
+	}
+	s.mu.Unlock()
 }
 
 // factCountWait bounds each fact count, so the counts before and after an
@@ -500,6 +634,8 @@ type upkeepRecord struct {
 	FactsAfter      int       `json:"factsAfter"`
 	HandoffBytes    int       `json:"handoffBytes,omitempty"`
 	HandoffCut      bool      `json:"handoffCut,omitempty"`
+	Swap            string    `json:"swap,omitempty"`
+	SwapMillis      int64     `json:"swapMillis,omitempty"`
 }
 
 // logUpkeep appends a compaction's line to the receipts of the segment it
@@ -514,7 +650,8 @@ func (s *Supervisor) logUpkeep(outDir string, c Compacted, oldConv, newConv stri
 	}
 	b, err := json.Marshal(upkeepRecord{Time: s.now().UTC(), Trigger: c.Trigger, Swapped: c.Swapped, Reason: c.Reason,
 		ContextTokens: c.ContextTokens, OldConversation: oldConv, NewConversation: newConv, Turn: c.Turn,
-		FactsBefore: c.FactsBefore, FactsAfter: c.FactsAfter, HandoffBytes: c.HandoffBytes, HandoffCut: c.HandoffCut})
+		FactsBefore: c.FactsBefore, FactsAfter: c.FactsAfter, HandoffBytes: c.HandoffBytes, HandoffCut: c.HandoffCut,
+		Swap: c.Swap, SwapMillis: c.SwapMillis})
 	if err != nil {
 		return
 	}
