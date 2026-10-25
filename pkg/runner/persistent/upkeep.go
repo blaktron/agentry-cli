@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -812,8 +813,9 @@ func memoryStatOf(r io.Reader) (int, string, error) {
 // maxCountedPage bounds a file the memory's count and digest read.
 const maxCountedPage = 16 << 20
 
-// upkeepRecord is one line of receipts/upkeep.ndjson.
-type upkeepRecord struct {
+// UpkeepRecord is one line of receipts/upkeep.ndjson: a compaction, or a
+// consolidation (Trigger UpkeepConsolidate), whether it ran or why not.
+type UpkeepRecord struct {
 	Time            time.Time `json:"time"`
 	Trigger         string    `json:"trigger"`
 	Swapped         bool      `json:"swapped"`
@@ -840,7 +842,7 @@ func (s *Supervisor) logUpkeep(outDir string, c Compacted, oldConv, newConv stri
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return
 	}
-	b, err := json.Marshal(upkeepRecord{Time: s.now().UTC(), Trigger: c.Trigger, Swapped: c.Swapped, Reason: c.Reason,
+	b, err := json.Marshal(UpkeepRecord{Time: s.now().UTC(), Trigger: c.Trigger, Swapped: c.Swapped, Reason: c.Reason,
 		ContextTokens: c.ContextTokens, OldConversation: oldConv, NewConversation: newConv, Turn: c.Turn,
 		FactsBefore: c.FactsBefore, FactsAfter: c.FactsAfter, HandoffBytes: c.HandoffBytes, HandoffCut: c.HandoffCut,
 		Swap: c.Swap, SwapMillis: c.SwapMillis})
@@ -878,4 +880,43 @@ func (s *Supervisor) memoryFrameLocked(person bool) string {
 		return memoryFrame
 	}
 	return ""
+}
+
+// LastUpkeep is the agent's newest compaction record and its newest
+// consolidation record, across its segments' receipts; nil where there is
+// none. A line that does not parse is skipped.
+func LastUpkeep(home, name string) (compaction, consolidation *UpkeepRecord, err error) {
+	paths, err := filepath.Glob(filepath.Join(Dir(home, name), segmentsDir, "*", "receipts", upkeepLog))
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, path := range paths {
+		f, err := os.Open(path) //nolint:gosec // the agent's own receipts
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			return nil, nil, err
+		}
+		sc := bufio.NewScanner(f)
+		sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+		for sc.Scan() {
+			var r UpkeepRecord
+			if json.Unmarshal(sc.Bytes(), &r) != nil || r.Time.IsZero() {
+				continue
+			}
+			last := &compaction
+			if r.Trigger == UpkeepConsolidate {
+				last = &consolidation
+			}
+			if *last == nil || r.Time.After((*last).Time) {
+				*last = &r
+			}
+		}
+		err = errors.Join(sc.Err(), f.Close())
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	return compaction, consolidation, nil
 }

@@ -51,17 +51,17 @@ func startUpkeeper(t *testing.T, home string, st *starter, now func() time.Time)
 }
 
 // upkeepLines are the compaction records in a segment's receipts.
-func upkeepLines(t *testing.T, outDir string) []upkeepRecord {
+func upkeepLines(t *testing.T, outDir string) []UpkeepRecord {
 	t.Helper()
 	f, err := os.Open(filepath.Join(outDir, "receipts", upkeepLog))
 	if err != nil {
 		return nil
 	}
 	defer func() { _ = f.Close() }()
-	var out []upkeepRecord
+	var out []UpkeepRecord
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
-		var r upkeepRecord
+		var r UpkeepRecord
 		if err := json.Unmarshal(sc.Bytes(), &r); err != nil {
 			t.Fatalf("an upkeep line is not JSON: %q", sc.Text())
 		}
