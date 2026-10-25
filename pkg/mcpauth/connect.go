@@ -190,7 +190,7 @@ func clientWords(c Client) string {
 	case ClientCIMD:
 		return "Agentry Desktop (" + c.ID + ")"
 	case ClientAgentry:
-		return "Agentry's own app (" + c.ID + ")"
+		return "the app your Agentry registry names for this vendor (" + c.ID + ")"
 	default:
 		return "Agentry Desktop, registered with the vendor for this connection"
 	}

@@ -27,6 +27,10 @@ const PublicClientsTTL = 24 * time.Hour
 // not answer delays a sign-in by seconds, not minutes.
 const publicClientsTimeout = 10 * time.Second
 
+// publicClientsRetry is how long a registry that could not be asked is
+// left alone, so a registry that is down does not delay every sign-in.
+const publicClientsRetry = 10 * time.Minute
+
 // PublicClients is the client ids of Agentry's own public clients, which
 // the registry serves for its connectors (GET /api/v1/connectors). A
 // sign-in uses one only for a server the connector catalogue this build
@@ -53,8 +57,10 @@ func OpenPublicClients(home, registry string, c *http.Client) *PublicClients {
 
 // keptPublicClients is the file kept for one registry.
 type keptPublicClients struct {
-	Registry      string            `json:"registry"`
-	FetchedAt     time.Time         `json:"fetchedAt"`
+	Registry  string    `json:"registry"`
+	FetchedAt time.Time `json:"fetchedAt"`
+	// TriedAt is the last time the registry could not be asked.
+	TriedAt       time.Time         `json:"triedAt,omitempty"`
 	PublicClients map[string]string `json:"publicClients"`
 }
 
@@ -77,18 +83,22 @@ func (p *PublicClients) ForServer(ctx context.Context, server manifest.MCPServer
 // one, else the kept one however old, else none.
 func (p *PublicClients) ids(ctx context.Context) map[string]string {
 	kept, _ := p.load()
-	if kept != nil && p.now().Sub(kept.FetchedAt) < PublicClientsTTL {
+	now := p.now()
+	fresh := func(at time.Time, d time.Duration) bool { return !at.After(now) && now.Sub(at) < d }
+	if kept != nil && (fresh(kept.FetchedAt, PublicClientsTTL) || fresh(kept.TriedAt, publicClientsRetry)) {
 		return kept.PublicClients
 	}
-	fresh, err := p.fetch(ctx)
+	got, err := p.fetch(ctx)
 	if err != nil {
-		if kept != nil {
-			return kept.PublicClients
+		if kept == nil {
+			kept = &keptPublicClients{Registry: p.registry}
 		}
-		return nil
+		kept.TriedAt = now.UTC()
+		_ = p.save(kept)
+		return kept.PublicClients
 	}
-	_ = p.save(&keptPublicClients{Registry: p.registry, FetchedAt: p.now().UTC(), PublicClients: fresh})
-	return fresh
+	_ = p.save(&keptPublicClients{Registry: p.registry, FetchedAt: now.UTC(), PublicClients: got})
+	return got
 }
 
 func (p *PublicClients) path() string {
@@ -115,6 +125,7 @@ func (p *PublicClients) load() (*keptPublicClients, error) {
 	if err := json.Unmarshal(b, &k); err != nil || k.Registry != p.registry {
 		return nil, fmt.Errorf("the kept public client ids are not this registry's")
 	}
+	k.PublicClients = p.taken(k.PublicClients)
 	return &k, nil
 }
 
@@ -126,14 +137,48 @@ func (p *PublicClients) save(k *keptPublicClients) error {
 	return storefile.WriteAtomic(p.path(), append(b, '\n'))
 }
 
-// publicClientRE is a client id as vendors issue them: one word, at most
-// 256 characters.
-var publicClientRE = regexp.MustCompile(`^[A-Za-z0-9._~:/@+=-]{1,256}$`)
+// publicClientRE is a public client id as vendors issue them (a GUID at
+// Microsoft): letters, digits, dots, hyphens and underscores, at most 256.
+// It is narrower than what the registry's configuration accepts, and
+// refuses a URL, which a vendor taking client metadata documents would
+// read as one.
+var publicClientRE = regexp.MustCompile(`^[A-Za-z0-9._-]{1,256}$`)
+
+// taken is ids reduced to those for a connector this build's catalogue
+// knows as a public client, each in a client id's shape.
+func (p *PublicClients) taken(ids map[string]string) map[string]string {
+	out := map[string]string{}
+	for id, client := range ids {
+		k, ok := p.catalogue.Lookup(id)
+		if ok && k.HasPublicClient() && publicClientRE.MatchString(client) {
+			out[id] = client
+		}
+	}
+	return out
+}
+
+// askable reports whether the registry's address may be asked for client
+// ids: https, or plain http to the loopback (a registry run on this
+// machine), so no one on the network between can name the client.
+func askable(registry string) bool {
+	u, err := url.Parse(registry)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	if u.Scheme == "https" {
+		return true
+	}
+	h := u.Hostname()
+	return u.Scheme == "http" && (h == "localhost" || h == "127.0.0.1" || h == "::1")
+}
 
 // fetch asks the registry, without a credential, for its connectors' public
 // client ids. An id is taken only for a connector this build's catalogue
 // knows as a public client, and only in a client id's shape.
 func (p *PublicClients) fetch(ctx context.Context) (map[string]string, error) {
+	if !askable(p.registry) {
+		return nil, fmt.Errorf("the registry %s is not reached over https, so its client ids are not taken", p.registry)
+	}
 	ctx, cancel := context.WithTimeout(ctx, publicClientsTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.registry+"/api/v1/connectors", nil)
@@ -158,12 +203,9 @@ func (p *PublicClients) fetch(ctx context.Context) (map[string]string, error) {
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&doc); err != nil {
 		return nil, fmt.Errorf("read the registry's connectors: %w", err)
 	}
-	out := map[string]string{}
+	ids := map[string]string{}
 	for _, c := range doc.Connectors {
-		k, ok := p.catalogue.Lookup(c.ID)
-		if ok && k.HasPublicClient() && publicClientRE.MatchString(c.PublicClientID) {
-			out[c.ID] = c.PublicClientID
-		}
+		ids[c.ID] = c.PublicClientID
 	}
-	return out, nil
+	return p.taken(ids), nil
 }

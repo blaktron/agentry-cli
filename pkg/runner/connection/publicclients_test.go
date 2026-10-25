@@ -168,6 +168,28 @@ func TestTheKeptAnswerIsRenewedDailyAndUsedOffline(t *testing.T) {
 	}
 }
 
+// A registry that could not be asked is left alone for a while, so it does
+// not delay every sign-in, and asked again after.
+func TestARegistryThatIsDownIsNotAskedAtEverySignIn(t *testing.T) {
+	reg := newFakeRegistry(t, map[string]string{"id": "example-mail", "publicClientId": "pub-1"})
+	reg.down.Store(true)
+	now := time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)
+	p := testPublicClients(t, t.TempDir(), reg.srv.URL, &now)
+	for range 3 {
+		if got := p.ForServer(context.Background(), mail(), issuer); got != "" {
+			t.Fatalf("down: %q", got)
+		}
+	}
+	if reg.asks.Load() != 1 {
+		t.Fatalf("asked %d times while down, want once", reg.asks.Load())
+	}
+	reg.down.Store(false)
+	now = now.Add(publicClientsRetry + time.Second)
+	if got := p.ForServer(context.Background(), mail(), issuer); got != "pub-1" || reg.asks.Load() != 2 {
+		t.Fatalf("after the wait: %q, asked %d", got, reg.asks.Load())
+	}
+}
+
 // One registry's kept answer is never another's.
 func TestTheKeptAnswerBelongsToItsRegistry(t *testing.T) {
 	home := t.TempDir()
@@ -180,6 +202,39 @@ func TestTheKeptAnswerBelongsToItsRegistry(t *testing.T) {
 	}
 	if got := testPublicClients(t, home, b.srv.URL, &now).ForServer(context.Background(), mail(), issuer); got != "" {
 		t.Fatalf("b read a's answer: %q", got)
+	}
+}
+
+// A registry reached over plain http anywhere but the loopback is not
+// asked, and an id shaped as a URL is not taken; a kept answer is held to
+// the same rules, and one dated in the future is not fresh.
+func TestOnlyAnHTTPSRegistryNamesTheClient(t *testing.T) {
+	for addr, want := range map[string]bool{
+		"https://secureagentry.net": true, "http://127.0.0.1:8080": true, "http://localhost:8080": true,
+		"http://[::1]:8080": true, "http://registry.example.com": false, "ftp://x.example": false, "": false,
+	} {
+		if askable(addr) != want {
+			t.Errorf("%q: askable %v, want %v", addr, !want, want)
+		}
+	}
+	reg := newFakeRegistry(t, map[string]string{"id": "example-mail", "publicClientId": "https://evil.example/client.json"})
+	now := time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)
+	home := t.TempDir()
+	p := testPublicClients(t, home, reg.srv.URL, &now)
+	if got := p.ForServer(context.Background(), mail(), issuer); got != "" {
+		t.Fatalf("a URL-shaped id was taken: %q", got)
+	}
+	planted := &keptPublicClients{Registry: reg.srv.URL, FetchedAt: now.Add(48 * time.Hour), PublicClients: map[string]string{"example-mail": "pub-planted", "example-files": "conf"}}
+	if err := p.save(planted); err != nil {
+		t.Fatal(err)
+	}
+	kept, err := p.load()
+	if err != nil || len(kept.PublicClients) != 1 {
+		t.Fatalf("a kept confidential connector's id survived the load: %+v %v", kept, err)
+	}
+	reg.answer = []map[string]string{{"id": "example-mail", "publicClientId": "pub-real"}}
+	if got := p.ForServer(context.Background(), mail(), issuer); got != "pub-real" {
+		t.Fatalf("an answer dated in the future was used as fresh: %q", got)
 	}
 }
 
