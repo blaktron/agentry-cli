@@ -86,23 +86,24 @@ conversation carries on when they start you again.
 
 1. **Stop you**: the **Stop** button at the top of your page. The set-up is
    refused while you run.
-2. **Open the set-up**: **Configure**, then the **Mail and calendar**
+2. **Switch Microsoft on**: **Configure**, then the **Mail and calendar**
    section. If there is no *Microsoft 365 and Outlook.com* card there,
-   **Add a provider** and choose Microsoft. On the card, the **⋯** menu,
-   then **Set up**.
-3. **The app**: they paste the Application (client) ID into **Application
+   **Add a provider**, then **Add Microsoft**. A click on the card switches
+   it on and asks them to agree; it then reads *Needs setting up*.
+3. **Open the set-up**: on the card, the **⋯** menu, then **Set up**. (The
+   menu offers Set up only once the card is on.)
+4. **The app**: they paste the Application (client) ID into **Application
    (client) ID**. Under **Account kind** they choose *A personal account*,
    *A work or school account*, or, for an app limited to their organization,
    *One organization (its tenant id)* and paste the Directory (tenant) ID.
    Then **Keep the app**.
-4. **Sign in**: their Microsoft address in **Your Microsoft account**, then
+5. **Sign in**: their Microsoft address in **Your Microsoft account**, then
    **Sign in with Microsoft**. The panel shows a code and their browser opens
    Microsoft's page (https://www.microsoft.com/link). They enter the code
    there, sign in with that account and accept the permissions. Microsoft may
    say the app is unverified: it is their own app, which Microsoft has not
    reviewed. The panel then says which account is signed in.
-5. **Switch it on**: a click on the *Microsoft 365 and Outlook.com* card,
-   which asks them to agree, then **Start** at the top of your page.
+6. **Start you again**: **Start** at the top of your page.
 
 ### In a terminal
 
