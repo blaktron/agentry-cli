@@ -3,6 +3,7 @@ package localrun
 import (
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/blaktron/agentry/pkg/manifest"
@@ -52,5 +53,24 @@ func TestASegmentGivesItsImageServersFromThePolicysImage(t *testing.T) {
 	s.Grants.ImageServers[0].Key = "other"
 	if _, _, err := s.imageSpecs(); err == nil {
 		t.Fatal("a server the built-in does not offer was given")
+	}
+}
+
+// A server signed in with Agentry's own app is given only at the build's own
+// image: a policy naming another image refuses the segment, saying why.
+func TestASignInWithAgentrysAppIsGivenOnlyToTheBuildsImage(t *testing.T) {
+	b := Assistant()
+	pol := policy.Default()
+	s := Segment{Builtin: b, Policy: pol, Grants: Grants{ImageServers: []ImageGrant{{Key: "ms365", Volume: "vol-ms365", AgentryApp: true}}}}
+	if specs, _, err := s.imageSpecs(); err != nil || len(specs) != 1 || specs[0].Image != policy.DefaultMS365Image {
+		t.Fatalf("at the build's image: %+v, %v", specs, err)
+	}
+	pol.Images.MS365 = "ghcr.io/example/ms365:1@sha256:" + "c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5"
+	if _, _, err := s.imageSpecs(); err == nil || !strings.Contains(err.Error(), "Agentry's own app") {
+		t.Fatalf("at another image: %v", err)
+	}
+	s.Grants.ImageServers[0].AgentryApp = false
+	if _, _, err := s.imageSpecs(); err != nil {
+		t.Fatalf("a sign-in with the person's own client at another image: %v", err)
 	}
 }

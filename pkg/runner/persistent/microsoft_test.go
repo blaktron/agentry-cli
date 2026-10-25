@@ -435,3 +435,113 @@ func TestTheServersAccountListIsRead(t *testing.T) {
 		}
 	}
 }
+
+const testAgentryApp = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+
+// With no Entra client of the person's kept, the sign-in uses Agentry's own
+// Microsoft app as the registry serves it, says so, and records that the
+// sign-in was made with it; the run is then given that client.
+func TestMicrosoftSignsInWithAgentrysAppWhenNoClientIsKept(t *testing.T) {
+	r := newMicrosoftRig(t)
+	asked := 0
+	r.m.AgentryClient = func(context.Context) string { asked++; return strings.ToUpper(testAgentryApp) }
+	var told strings.Builder
+	r.m.Say = &told
+	if _, err := r.m.SignIn(context.Background(), "person@outlook.com", nil); err != nil {
+		t.Fatal(err)
+	}
+	login := r.runs[0]
+	if asked != 1 || login.Env["MS365_MCP_CLIENT_ID"] != testAgentryApp || r.runs[len(r.runs)-1].Env["MS365_MCP_CLIENT_ID"] != testAgentryApp {
+		t.Fatalf("asked %d, sign-in env %v", asked, login.Env)
+	}
+	if !strings.Contains(told.String(), "Agentry's own Microsoft app ("+testAgentryApp+")") {
+		t.Errorf("told %q", told.String())
+	}
+	c, err := LoadConfig(r.m.Home, "assistant")
+	in := c.SignIns["ms365"]
+	if err != nil || in.ClientID != "" || in.SignedInWith != testAgentryApp || !in.AgentryApp {
+		t.Fatalf("the record: %+v, %v", in, err)
+	}
+	s := imageServersOf(r.m.Agent)[slices.IndexFunc(imageServersOf(r.m.Agent), func(s offer.ImageServer) bool { return s.Key == "ms365" })]
+	if env := signInEnv(s, in); env["MS365_MCP_CLIENT_ID"] != testAgentryApp {
+		t.Fatalf("the run's env: %v", env)
+	}
+}
+
+// A volume that has held a sign-in made with Agentry's app stays marked
+// after a later sign-in with the person's own client, and after a sign-in
+// with Agentry's app that failed once Microsoft had answered.
+func TestAVolumeThatHeldAgentrysAppStaysMarked(t *testing.T) {
+	r := newMicrosoftRig(t)
+	r.m.AgentryClient = func(context.Context) string { return testAgentryApp }
+	r.accounts = `{"accounts":[]}`
+	if _, err := r.m.SignIn(context.Background(), "person@outlook.com", nil); err == nil {
+		t.Fatal("a sign-in whose account list is empty was recorded")
+	}
+	c, _ := LoadConfig(r.m.Home, "assistant")
+	if !c.SignIns["ms365"].AgentryApp {
+		t.Fatal("a failed sign-in with Agentry's app left the volume unmarked")
+	}
+	r.accounts = `{"accounts":[{"id":"h1","username":"person@outlook.com","name":"Person","selected":true}]}`
+	if err := r.m.SetClient(testEntraClient, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.m.SignIn(context.Background(), "person@outlook.com", nil); err != nil {
+		t.Fatal(err)
+	}
+	c, _ = LoadConfig(r.m.Home, "assistant")
+	if in := c.SignIns["ms365"]; in.SignedInWith != testEntraClient || !in.AgentryApp {
+		t.Fatalf("after the person's own client: %+v", in)
+	}
+}
+
+// The person's own client, where kept, is used before Agentry's app, which
+// is then not asked for; a sign-in made with it records no Agentry app.
+func TestMicrosoftsOwnClientComesBeforeAgentrysApp(t *testing.T) {
+	r := newMicrosoftRig(t)
+	r.m.AgentryClient = func(context.Context) string { t.Fatal("Agentry's app was asked for"); return "" }
+	if err := r.m.SetClient(testEntraClient, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.m.SignIn(context.Background(), "person@outlook.com", nil); err != nil {
+		t.Fatal(err)
+	}
+	c, _ := LoadConfig(r.m.Home, "assistant")
+	if in := c.SignIns["ms365"]; in.SignedInWith != testEntraClient || in.AgentryApp || r.runs[0].Env["MS365_MCP_CLIENT_ID"] != testEntraClient {
+		t.Fatalf("the record: %+v", in)
+	}
+}
+
+// Agentry's app is not used for an image the policy names instead of the
+// build's own, nor when the registry serves none or serves an id that is
+// not an Entra client; the sign-in then asks for the person's own client.
+func TestAgentrysMicrosoftAppGoesOnlyToTheBuildsImage(t *testing.T) {
+	for name, set := range map[string]func(r *microsoftRig){
+		"another image": func(r *microsoftRig) {
+			r.m.AgentryClient = func(context.Context) string { return testAgentryApp }
+			r.m.Policy.Images.MS365 = "ghcr.io/example/ms365@sha256:" + strings.Repeat("0", 64)
+		},
+		"none served": func(r *microsoftRig) { r.m.AgentryClient = func(context.Context) string { return "" } },
+		"no lookup":   func(r *microsoftRig) {},
+		"Softeria's":  func(r *microsoftRig) { r.m.AgentryClient = func(context.Context) string { return softeriaClients[0] } },
+	} {
+		r := newMicrosoftRig(t)
+		set(r)
+		_, err := r.m.SignIn(context.Background(), "person@outlook.com", nil)
+		if err == nil || len(r.runs) != 0 {
+			t.Errorf("%s: signed in (%v, %d one-shots)", name, err, len(r.runs))
+		}
+	}
+}
+
+// A record with no SignedInWith gives the server its ClientID; one with it
+// gives that client.
+func TestASignInRecordedEarlierKeepsItsClient(t *testing.T) {
+	s := offer.ImageServer{Key: "ms365", ClientEnv: "MS365_MCP_CLIENT_ID", TenantEnv: "MS365_MCP_TENANT_ID"}
+	if env := signInEnv(s, ImageSignIn{ClientID: testEntraClient, Tenant: TenantConsumers}); env["MS365_MCP_CLIENT_ID"] != testEntraClient {
+		t.Fatalf("env %v", env)
+	}
+	if env := signInEnv(s, ImageSignIn{ClientID: testEntraClient, SignedInWith: testAgentryApp}); env["MS365_MCP_CLIENT_ID"] != testAgentryApp {
+		t.Fatalf("the client signed in with did not win: %v", env)
+	}
+}
