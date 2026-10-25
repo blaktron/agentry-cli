@@ -165,9 +165,9 @@ type Supervisor struct {
 	hbDone   chan struct{}
 	missed   string
 	taskTurn string
-	// taskText and upkeepText are the texts the task's and the upkeep's
-	// turns were sent with: a turn of the person's still on its way through
-	// the events when one is sent never takes its mark.
+	// taskText is the text the task's turn was sent with, as upkeepText is
+	// the upkeep's: a turn of the person's still on its way through the
+	// events when one is sent never takes its mark.
 	taskText string
 	// ranUntil is when each task's last turn ended: a time of the task's
 	// that came before it is skipped.
@@ -181,6 +181,7 @@ type Supervisor struct {
 	// with.
 	upkeep      upkeepState
 	upkeepDirty bool
+	upkeepSave  sync.Mutex // one write of upkeep.json at a time
 	upkeeping   bool
 	upkeepTurn  bool
 	handoff     string
@@ -552,10 +553,11 @@ func (s *Supervisor) Send(ctx context.Context, text string) error {
 		}
 	}
 	defer s.turn.Unlock()
-	if s.inUseDue() {
-		// The last turn filled most of the model's window: the
-		// conversation is compacted before the person's next message.
-		_, _ = s.compactLocked(ctx, UpkeepInUse)
+	if trigger := s.upkeepDue(); trigger != "" {
+		// The last turn filled most of the model's window, or the person
+		// comes back to a large conversation the heartbeat has not yet
+		// compacted (a start): it is compacted before their message.
+		_, _ = s.compactLocked(ctx, trigger)
 	}
 	return s.sendLocked(ctx, "", text)
 }
@@ -563,12 +565,25 @@ func (s *Supervisor) Send(ctx context.Context, text string) error {
 // inUseDue says an in-use compaction is due, for an agent that keeps a
 // memory.
 func (s *Supervisor) inUseDue() bool {
+	return s.upkeepDue() == UpkeepInUse
+}
+
+// upkeepDue is the compaction due now, if any, for an agent that keeps a
+// memory: in use first, then idle.
+func (s *Supervisor) upkeepDue() string {
 	if !s.opts.Agent.Builtin.KeepsMemory() {
-		return false
+		return ""
 	}
+	now := s.now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.upkeep.inUseDue()
+	switch {
+	case s.upkeep.inUseDue(now):
+		return UpkeepInUse
+	case s.upkeep.idleDue(now):
+		return UpkeepIdle
+	}
+	return ""
 }
 
 // sendLocked is Send for a caller that holds turn; pre is a frame of the

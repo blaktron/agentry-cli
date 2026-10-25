@@ -164,7 +164,7 @@ func (s *Supervisor) serveConn(nc net.Conn) {
 		dec := json.NewDecoder(strings.NewReader(sc.Text()))
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&cmd); err != nil || commandsSet(cmd) != 1 {
-			c.refuse(protocol.RefusedMalformed, "a command is one JSON object naming exactly one of attach, send, status, roster, change, stop, tasks or task_change")
+			c.refuse(protocol.RefusedMalformed, "a command is one JSON object naming exactly one of attach, send, status, roster, change, stop, tasks, task_change or compact")
 			continue
 		}
 		switch {
@@ -219,13 +219,15 @@ func (s *Supervisor) serveConn(nc net.Conn) {
 			c.reply(Reply{Tasks: taskList(ts)})
 		case cmd.Compact != nil:
 			// An upkeep turn takes minutes: the answer comes when it is
-			// done, and the connection reads on meanwhile.
+			// done, and the connection reads on meanwhile. The compaction
+			// is the agent's, not the connection's, so a client that goes
+			// away does not cut it short.
 			go func() {
 				out, err := s.Compact(context.Background())
 				switch {
 				case errors.Is(err, ErrBusy):
 					c.refuse(RefusedBusy, "a turn is in flight; compact once it ends")
-				case err != nil && !out.Swapped && out.Trigger == "":
+				case errors.Is(err, ErrNoMemory):
 					c.refuse(RefusedCompact, err.Error())
 				default:
 					c.reply(Reply{Compacted: &out})
@@ -249,7 +251,7 @@ func (s *Supervisor) serveConn(nc net.Conn) {
 // commandsSet is how many commands one line names.
 func commandsSet(c Command) int {
 	n := 0
-	for _, set := range []bool{c.Attach != nil, c.Send != nil, c.Status != nil, c.Roster != nil, c.Change != nil, c.Stop != nil, c.Tasks != nil, c.TaskChange != nil} {
+	for _, set := range []bool{c.Attach != nil, c.Send != nil, c.Status != nil, c.Roster != nil, c.Change != nil, c.Stop != nil, c.Tasks != nil, c.TaskChange != nil, c.Compact != nil} {
 		if set {
 			n++
 		}

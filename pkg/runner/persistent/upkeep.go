@@ -49,6 +49,10 @@ const (
 	upkeepTurnCap = 5 * time.Minute
 	// maxHandoff bounds the handoff a new conversation opens with.
 	maxHandoff = 4096
+	// upkeepRetry is how long an idle or in-use compaction that failed
+	// waits before it is tried again, so a failing one does not spend the
+	// day's upkeep turns a minute apart.
+	upkeepRetry = time.Hour
 )
 
 // The triggers a compaction records.
@@ -82,6 +86,8 @@ type upkeepState struct {
 	LastCompaction time.Time `json:"lastCompaction,omitzero"`
 	// Upkeeps are the upkeep turns sent, for the daily cap.
 	Upkeeps []time.Time `json:"upkeeps,omitempty"`
+	// RetryAfter holds an idle or in-use compaction back after one failed.
+	RetryAfter time.Time `json:"retryAfter,omitzero"`
 }
 
 func loadUpkeep(home, name string) upkeepState {
@@ -120,13 +126,13 @@ func (u upkeepState) upkeepsToday(now time.Time) int {
 
 // inUseDue says the conversation's latest turn filled the share of the
 // model's window an in-use compaction waits for.
-func (u upkeepState) inUseDue() bool {
-	return u.ContextLimit > 0 && float64(u.ContextTokens) >= upkeepInUseShare*float64(u.ContextLimit)
+func (u upkeepState) inUseDue(now time.Time) bool {
+	return !now.Before(u.RetryAfter) && u.ContextLimit > 0 && float64(u.ContextTokens) >= upkeepInUseShare*float64(u.ContextLimit)
 }
 
 // idleDue says an idle compaction is due at now.
 func (u upkeepState) idleDue(now time.Time) bool {
-	return u.TurnsSince > 0 && !u.LastPersonTurn.IsZero() && now.Sub(u.LastPersonTurn) >= upkeepIdle &&
+	return !now.Before(u.RetryAfter) && u.TurnsSince > 0 && !u.LastPersonTurn.IsZero() && now.Sub(u.LastPersonTurn) >= upkeepIdle &&
 		u.ContextTokens >= upkeepIdleFloor
 }
 
@@ -158,8 +164,14 @@ func (s *Supervisor) noteUpkeepEvent(ev session.Event) {
 		}
 	case session.KindAssistantTurn:
 		if s.upkeepDirty {
-			_ = saveUpkeep(s.opts.Home, s.opts.Agent.Name, s.upkeep)
+			// Saved off the events' lock, which every watcher waits on.
+			u := s.upkeep
 			s.upkeepDirty = false
+			go func() {
+				s.upkeepSave.Lock()
+				defer s.upkeepSave.Unlock()
+				_ = saveUpkeep(s.opts.Home, s.opts.Agent.Name, u)
+			}()
 		}
 	}
 }
@@ -170,16 +182,8 @@ func (s *Supervisor) upkeepTick(ctx context.Context) {
 	if !s.opts.Agent.Builtin.KeepsMemory() {
 		return
 	}
-	s.mu.Lock()
-	u := s.upkeep
-	s.mu.Unlock()
-	trigger := ""
-	switch {
-	case u.inUseDue():
-		trigger = UpkeepInUse
-	case u.idleDue(s.now()):
-		trigger = UpkeepIdle
-	default:
+	trigger := s.upkeepDue()
+	if trigger == "" {
 		return
 	}
 	if !s.turn.TryLock() {
@@ -198,9 +202,13 @@ type Compacted struct {
 	// Reason is why nothing was swapped.
 	Reason        string `json:"reason,omitempty"`
 	ContextTokens int64  `json:"contextTokens,omitempty"`
-	FactsBefore   int    `json:"factsBefore"`
-	FactsAfter    int    `json:"factsAfter"`
-	HandoffBytes  int    `json:"handoffBytes,omitempty"`
+	// Turn is the upkeep turn's number among the segment's user turns.
+	Turn         int `json:"turn,omitempty"`
+	FactsBefore  int `json:"factsBefore"`
+	FactsAfter   int `json:"factsAfter"`
+	HandoffBytes int `json:"handoffBytes,omitempty"`
+	// HandoffCut says the handoff was longer than its bound and was cut.
+	HandoffCut bool `json:"handoffCut,omitempty"`
 }
 
 // ErrNoMemory refuses a compaction of an agent that keeps no memory.
@@ -242,10 +250,11 @@ func (s *Supervisor) compactLocked(ctx context.Context, trigger string) (Compact
 		out.Reason = fmt.Sprintf("%d upkeep turns in the last day, the most there may be", maxUpkeepsPerDay)
 		s.logUpkeep(outDir, out, "", "")
 		if trigger != UpkeepManual {
-			// An automatic trigger that cannot run waits for the next
-			// conversation rather than asking again every minute.
+			// An automatic trigger that cannot run waits rather than asking
+			// again every minute or before every message.
 			s.mu.Lock()
-			s.upkeep.TurnsSince, s.upkeep.ContextTokens = 0, 0
+			s.upkeep.RetryAfter = now.Add(upkeepRetry).UTC()
+			_ = saveUpkeep(home, name, s.upkeep)
 			s.mu.Unlock()
 		}
 		return out, nil
@@ -269,6 +278,9 @@ func (s *Supervisor) compactLocked(ctx context.Context, trigger string) (Compact
 	cancel()
 	answer := lastAnswer(events, func(ev session.Event) bool { return ev.Upkeep })
 	unsubscribe()
+	s.mu.Lock()
+	out.Turn = s.usage.UserTurns
+	s.mu.Unlock()
 	oldConv := s.conversationID()
 	handoff, bad := parseHandoff(answer)
 	switch {
@@ -279,14 +291,21 @@ func (s *Supervisor) compactLocked(ctx context.Context, trigger string) (Compact
 	}
 	out.FactsAfter = s.countFacts(ctx)
 	if out.Reason != "" {
+		if trigger != UpkeepManual {
+			s.mu.Lock()
+			s.upkeep.RetryAfter = s.now().Add(upkeepRetry).UTC()
+			_ = saveUpkeep(home, name, s.upkeep)
+			s.mu.Unlock()
+		}
 		s.logUpkeep(outDir, out, oldConv, "")
 		s.notice("The memory upkeep did not finish, so the conversation goes on as it was: " + out.Reason)
 		return out, nil
 	}
-	out.HandoffBytes = len(handoff)
+	out.HandoffBytes, out.HandoffCut = len(handoff), strings.HasSuffix(handoff, handoffCutMark)
 	if err := s.swapConversation(ctx, handoff); err != nil {
 		out.Reason = "the new conversation could not start: " + err.Error()
 		s.logUpkeep(outDir, out, oldConv, "")
+		s.notice("The memory was saved, but the fresh conversation could not start: " + err.Error())
 		return out, err
 	}
 	out.Swapped = true
@@ -294,8 +313,11 @@ func (s *Supervisor) compactLocked(ctx context.Context, trigger string) (Compact
 	s.upkeep.LastCompaction = s.now().UTC()
 	s.upkeep.TurnsSince, s.upkeep.ContextTokens = 0, 0
 	_ = saveUpkeep(home, name, s.upkeep)
+	newOut := s.outDir
 	s.mu.Unlock()
-	s.logUpkeep(outDir, out, oldConv, s.conversationID())
+	// The ended segment's receipts are closed with its envelope: the
+	// record of the swap is the new segment's first.
+	s.logUpkeep(newOut, out, oldConv, s.conversationID())
 	s.notice("Compacted: what the conversation produced is in the memory, and a fresh conversation opens with the handoff")
 	return out, nil
 }
@@ -322,6 +344,9 @@ func (s *Supervisor) conversationID() string {
 	id, _, _ := sess.Conversation()
 	return id
 }
+
+// handoffCutMark ends a handoff cut at its bound.
+const handoffCutMark = " [cut]"
 
 // handoffKeys are the lines a handoff is made of.
 var handoffKeys = []string{"owed:", "ctx:", "tried:", "open:", "pages:"}
@@ -356,13 +381,15 @@ func parseHandoff(answer string) (string, string) {
 	}
 	h := strings.TrimSpace(answer[start:])
 	if len(h) > maxHandoff {
-		h = strings.ToValidUTF8(h[:maxHandoff], "") + " [cut]"
+		h = strings.ToValidUTF8(h[:maxHandoff], "") + handoffCutMark
 	}
 	return h, ""
 }
 
 // handoffCarried is the text a compacted conversation's first turn starts
-// with. The handoff is quoted, so nothing in it can pass for the frame.
+// with. The handoff is quoted, so it cannot close this frame and open one
+// that passes for Agentry's; what it says is still the agent's own words
+// from the last conversation, which the agent may act on.
 func handoffCarried(h string) string {
 	return "(Agentry compacted your conversation: what it produced is in your memory, and this is the handoff you wrote, quoted. " +
 		"Read memory/index.md and the pages it names before you answer from what came before. The handoff: " + strconv.Quote(h) + ")\n\n"
@@ -383,6 +410,10 @@ func (s *Supervisor) swapConversation(ctx context.Context, handoff string) error
 	return s.nextSegmentFor(ctx, "Starting a fresh conversation that opens with the handoff")
 }
 
+// factCountWait bounds each fact count, so the counts before and after an
+// upkeep turn keep a waiting message within its bound.
+const factCountWait = 20 * time.Second
+
 // factLine is a fact line of the memory's schema, current or superseded.
 var factLine = regexp.MustCompile(`^~?F[0-9]+ `)
 
@@ -398,7 +429,7 @@ func (s *Supervisor) countFacts(ctx context.Context) int {
 	volume := MemoryVolumeIn(s.opts.Home, s.opts.Agent.Name)
 	pr, pw := io.Pipe()
 	done := make(chan error, 1)
-	cctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	cctx, cancel := context.WithTimeout(ctx, factCountWait)
 	defer cancel()
 	go func() {
 		image := s.opts.Policy.RunnerImageTag(runnerimage.ContentVersion())
@@ -434,15 +465,26 @@ func countFactLines(r io.Reader) (int, error) {
 		if h.Typeflag != tar.TypeReg || !strings.HasPrefix(name, "pages/") || strings.HasPrefix(name, "pages/notes/") || !strings.HasSuffix(name, ".md") {
 			continue
 		}
-		sc := bufio.NewScanner(io.LimitReader(tr, 16<<20))
+		if h.Size > maxCountedPage {
+			return 0, fmt.Errorf("the page %s is %d bytes, too large to count", name, h.Size)
+		}
+		sc := bufio.NewScanner(tr)
 		sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
 		for sc.Scan() {
 			if factLine.Match(sc.Bytes()) {
 				n++
 			}
 		}
+		if err := sc.Err(); err != nil {
+			// A count that skipped part of a page would understate what
+			// the memory holds: none is better.
+			return 0, fmt.Errorf("count the facts of %s: %w", name, err)
+		}
 	}
 }
+
+// maxCountedPage bounds a page the fact count reads.
+const maxCountedPage = 16 << 20
 
 // upkeepRecord is one line of receipts/upkeep.ndjson.
 type upkeepRecord struct {
@@ -453,9 +495,11 @@ type upkeepRecord struct {
 	ContextTokens   int64     `json:"contextTokens,omitempty"`
 	OldConversation string    `json:"oldConversation,omitempty"`
 	NewConversation string    `json:"newConversation,omitempty"`
+	Turn            int       `json:"turn,omitempty"`
 	FactsBefore     int       `json:"factsBefore"`
 	FactsAfter      int       `json:"factsAfter"`
 	HandoffBytes    int       `json:"handoffBytes,omitempty"`
+	HandoffCut      bool      `json:"handoffCut,omitempty"`
 }
 
 // logUpkeep appends a compaction's line to the receipts of the segment it
@@ -469,8 +513,8 @@ func (s *Supervisor) logUpkeep(outDir string, c Compacted, oldConv, newConv stri
 		return
 	}
 	b, err := json.Marshal(upkeepRecord{Time: s.now().UTC(), Trigger: c.Trigger, Swapped: c.Swapped, Reason: c.Reason,
-		ContextTokens: c.ContextTokens, OldConversation: oldConv, NewConversation: newConv,
-		FactsBefore: c.FactsBefore, FactsAfter: c.FactsAfter, HandoffBytes: c.HandoffBytes})
+		ContextTokens: c.ContextTokens, OldConversation: oldConv, NewConversation: newConv, Turn: c.Turn,
+		FactsBefore: c.FactsBefore, FactsAfter: c.FactsAfter, HandoffBytes: c.HandoffBytes, HandoffCut: c.HandoffCut})
 	if err != nil {
 		return
 	}

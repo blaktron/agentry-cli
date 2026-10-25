@@ -56,7 +56,7 @@ func upkeepLines(t *testing.T, outDir string) []upkeepRecord {
 	if err != nil {
 		return nil
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	var out []upkeepRecord
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
@@ -105,8 +105,8 @@ func TestACompactionOpensANewConversationWithTheHandoff(t *testing.T) {
 	if !strings.Contains(st.last.reason, "a compaction") {
 		t.Errorf("the new segment's reason = %q", st.last.reason)
 	}
-	recs := upkeepLines(t, st.segments[0].OutDir)
-	if len(recs) != 1 || !recs[0].Swapped || recs[0].FactsBefore != 11 || recs[0].FactsAfter != 12 || recs[0].OldConversation != "conv-1" || recs[0].HandoffBytes == 0 {
+	recs := upkeepLines(t, st.segments[1].OutDir)
+	if len(recs) != 1 || !recs[0].Swapped || recs[0].Turn != 2 || recs[0].FactsBefore != 11 || recs[0].FactsAfter != 12 || recs[0].OldConversation != "conv-1" || recs[0].HandoffBytes == 0 {
 		t.Fatalf("the receipt = %+v", recs)
 	}
 	var upkeepTurns, personTurns int
@@ -317,7 +317,7 @@ func TestParseHandoff(t *testing.T) {
 		t.Errorf("empty = %q", r)
 	}
 	h, _ := parseHandoff("open: " + strings.Repeat("x", 2*maxHandoff))
-	if len(h) > maxHandoff+len(" [cut]") || !strings.HasSuffix(h, "[cut]") {
+	if len(h) > maxHandoff+len(handoffCutMark) || !strings.HasSuffix(h, handoffCutMark) {
 		t.Errorf("an over-long handoff = %d bytes", len(h))
 	}
 }
@@ -338,5 +338,95 @@ func TestCountFactLines(t *testing.T) {
 	n, err := countFactLines(&buf)
 	if err != nil || n != 3 {
 		t.Errorf("count = %d, %v; want 3", n, err)
+	}
+}
+
+// TestAFailedAutomaticCompactionWaitsBeforeTryingAgain: an in-use
+// compaction whose upkeep turn gives no handoff is not tried again before
+// every message, but an hour later.
+func TestAFailedAutomaticCompactionWaitsBeforeTryingAgain(t *testing.T) {
+	home := shortHome(t)
+	enable(t, home)
+	st := &starter{answer: func(text string) string { return "nothing to hand over" }, context: 800_000, limit: 1_000_000}
+	sv := startUpkeeper(t, home, st, nil)
+	if err := sv.Send(context.Background(), "a long question"); err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(2 * time.Second); !sv.inUseDue() && time.Now().Before(deadline); {
+		time.Sleep(5 * time.Millisecond)
+	}
+	for _, msg := range []string{"one", "two"} {
+		if err := sv.Send(context.Background(), msg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var upkeeps int
+	for _, r := range st.last.rawTurns() {
+		if strings.HasSuffix(r, upkeepText) {
+			upkeeps++
+		}
+	}
+	if upkeeps != 1 {
+		t.Fatalf("upkeep turns = %d, want the one that failed and no retry within the hour", upkeeps)
+	}
+	if u := loadUpkeep(home, "assistant"); u.RetryAfter.Before(time.Now().Add(50 * time.Minute)) {
+		t.Errorf("retry after = %v", u.RetryAfter)
+	}
+}
+
+// TestAPersonComingBackToALargeConversationGetsACompactedOne: a message
+// sent after two hours away, to a conversation of 100,000 tokens or more,
+// waits for a compaction rather than going to the stale conversation, as
+// at a start before the heartbeat's first tick.
+func TestAPersonComingBackToALargeConversationGetsACompactedOne(t *testing.T) {
+	home := shortHome(t)
+	enable(t, home)
+	if err := saveUpkeep(home, "assistant", upkeepState{LastPersonTurn: time.Now().Add(-3 * time.Hour), ContextTokens: 150_000, TurnsSince: 2}); err != nil {
+		t.Fatal(err)
+	}
+	st := &starter{answer: aHandoff, resumed: true}
+	sv := startUpkeeper(t, home, st, nil)
+	// The start continued the stored conversation; the compaction's
+	// segment starts a new one.
+	st.mu.Lock()
+	st.resumed = false
+	st.mu.Unlock()
+	if err := sv.Send(context.Background(), "I'm back"); err != nil {
+		t.Fatal(err)
+	}
+	if len(st.segments) != 2 {
+		t.Fatalf("segments = %d, want the compaction's second", len(st.segments))
+	}
+	if sent := st.last.sentTurns(); len(sent) != 1 || !strings.HasSuffix(sent[0], "I'm back") || !strings.Contains(sent[0], "compacted your conversation") {
+		t.Fatalf("the message = %q", sent)
+	}
+}
+
+// TestCompactOverTheOwnerSocket: agentry agent compact's request reaches
+// the supervisor and is answered with what the compaction did.
+func TestCompactOverTheOwnerSocket(t *testing.T) {
+	home := shortHome(t)
+	enable(t, home)
+	st := &starter{answer: aHandoff}
+	startUpkeeper(t, home, st, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, err := RequestCompact(ctx, home, "assistant")
+	if err != nil || !out.Swapped || out.Trigger != UpkeepManual {
+		t.Fatalf("compact over the socket = %+v, %v", out, err)
+	}
+}
+
+// TestAFactCountThatCannotReadAPageIsNone: a page the count cannot read
+// whole makes the count unknown rather than low.
+func TestAFactCountThatCannotReadAPageIsNone(t *testing.T) {
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	body := "F1 " + strings.Repeat("x", 2<<20) + "\n"
+	_ = tw.WriteHeader(&tar.Header{Typeflag: tar.TypeReg, Name: "./pages/a.md", Mode: 0o644, Size: int64(len(body))})
+	_, _ = tw.Write([]byte(body))
+	_ = tw.Close()
+	if n, err := countFactLines(&buf); err == nil {
+		t.Errorf("a page with a line too long to read was counted: %d", n)
 	}
 }

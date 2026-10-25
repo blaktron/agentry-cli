@@ -24,7 +24,7 @@ const agentCompactLong = "Compacts a running persistent agent's conversation now
 	"The Assistant also compacts on its own: when you have sent nothing for two\n" +
 	"hours and its conversation holds 100,000 tokens or more, and when a turn has\n" +
 	"filled three quarters of the model's context window. At most 12 upkeep turns\n" +
-	"run in a day. Each compaction is a line of the segment's\n" +
+	"run in a day, this command's included. Each compaction is a line of the segment's\n" +
 	"receipts/upkeep.ndjson.\n\n" +
 	"  agentry agent compact assistant"
 
@@ -62,10 +62,16 @@ func newAgentCompactCmd() *cobra.Command {
 				return err
 			}
 			if flags.jsonOut {
-				return emitJSON(cmd.OutOrStdout(), struct {
+				if err := emitJSON(cmd.OutOrStdout(), struct {
 					Agent     string               `json:"agent"`
 					Compacted persistent.Compacted `json:"compacted"`
-				}{a.Name, out})
+				}{a.Name, out}); err != nil {
+					return err
+				}
+				if !out.Swapped {
+					return engine.Classify(engine.ExitCLI, errors.New("the compaction did not finish: "+out.Reason))
+				}
+				return nil
 			}
 			if !out.Swapped {
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Nothing was compacted: %s. The conversation goes on as it was.\n", out.Reason)
