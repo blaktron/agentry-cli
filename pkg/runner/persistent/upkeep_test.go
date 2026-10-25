@@ -51,17 +51,17 @@ func startUpkeeper(t *testing.T, home string, st *starter, now func() time.Time)
 }
 
 // upkeepLines are the compaction records in a segment's receipts.
-func upkeepLines(t *testing.T, outDir string) []upkeepRecord {
+func upkeepLines(t *testing.T, outDir string) []UpkeepRecord {
 	t.Helper()
 	f, err := os.Open(filepath.Join(outDir, "receipts", upkeepLog))
 	if err != nil {
 		return nil
 	}
 	defer func() { _ = f.Close() }()
-	var out []upkeepRecord
+	var out []UpkeepRecord
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
-		var r upkeepRecord
+		var r UpkeepRecord
 		if err := json.Unmarshal(sc.Bytes(), &r); err != nil {
 			t.Fatalf("an upkeep line is not JSON: %q", sc.Text())
 		}
@@ -612,4 +612,34 @@ func TestTheHandoffWaitsForTheTurnThatCarriesIt(t *testing.T) {
 			t.Fatalf("the first turn after the start = %q", sent)
 		}
 	})
+}
+
+// TestLastUpkeepIsTheNewestOfEachKind: the newest compaction and the newest
+// consolidation across the segments, the later of two at one time; a
+// line, a file or a folder that cannot be read is skipped, not an error.
+func TestLastUpkeepIsTheNewestOfEachKind(t *testing.T) {
+	home := shortHome(t)
+	if c, k := LastUpkeep(home, "assistant"); c != nil || k != nil {
+		t.Fatalf("an agent with no segments: %+v %+v", c, k)
+	}
+	write := func(segment, body string) {
+		t.Helper()
+		dir := filepath.Join(Dir(home, "assistant"), segmentsDir, segment, "receipts")
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, upkeepLog), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("a1", `{"time":"2026-10-25T09:00:00Z","trigger":"idle","swapped":true}`+"\n"+strings.Repeat("x", 2<<20)+"\n")
+	write("a2", `{"time":"2026-10-25T09:00:00Z","trigger":"manual","swapped":true}`+"\n"+
+		`{"time":"2026-10-25T08:00:00Z","trigger":"consolidate"}`+"\n"+`{"trigger":"manual"}`+"\n")
+	if err := os.MkdirAll(filepath.Join(Dir(home, "assistant"), segmentsDir, "a3", "receipts", upkeepLog), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	c, k := LastUpkeep(home, "assistant")
+	if c == nil || c.Trigger != UpkeepManual || k == nil || k.Trigger != UpkeepConsolidate {
+		t.Errorf("LastUpkeep = %+v, %+v", c, k)
+	}
 }

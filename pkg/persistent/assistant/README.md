@@ -38,7 +38,10 @@ and `agentry agent show assistant` lists what it has:
   tokens or more, or three quarters of the model's context window in use), it
   saves the conversation to its memory and goes on in a fresh conversation
   that opens with a short handoff it wrote; `agentry agent compact assistant`
-  does it at once. Agentry reminds it to read its memory at the first message
+  does it at once. Once a day, after two hours with nothing from you, it
+  tidies its memory if it changed (duplicates merged, long pages split, the
+  index kept short), as one of the same upkeep turns. Agentry reminds it to
+  read its memory at the first message
   of each new conversation and when you come back after half an hour. Its
   Agentry tool `recall` searches the conversations it had before, compacted
   ones included, as the transcript on your computer keeps them (your messages,
