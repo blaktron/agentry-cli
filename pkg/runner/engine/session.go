@@ -1498,7 +1498,9 @@ func (s *liveSession) turnCarrying(ctx context.Context, carried, text string, sy
 		s.mu.Unlock()
 	}()
 	if len(notices) > 0 {
-		text = strings.Join(notices, "\n") + "\n\n" + text
+		// The runner's notices go to the harness ahead of the turn, and the
+		// user turn records the person's text alone.
+		carried = strings.Join(notices, "\n") + "\n\n" + carried
 	}
 	if carried != "" {
 		s.emit(session.Event{Kind: session.KindOther, Text: "carried into this turn: " + carried})

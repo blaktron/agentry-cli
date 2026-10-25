@@ -107,7 +107,7 @@ func TestEveryTurnIsToldTheTime(t *testing.T) {
 		t.Fatal(err)
 	}
 	sent := st.lastSegment().rawTurns()
-	if len(sent) != 1 || sent[0] != "(The time now: Wednesday 21 October 2026, 14:03, UTC.)\n\nhello" {
+	if len(sent) != 1 || sent[0] != "(The time now: Wednesday 21 October 2026, 14:03, UTC.)\n\n"+memoryFrame+"hello" {
 		t.Errorf("the turn sent: %q", sent)
 	}
 	for _, a := range Agents() {

@@ -150,7 +150,7 @@ func (s *Supervisor) noteUpkeepEvent(ev session.Event) {
 		if ev.Synthetic {
 			return
 		}
-		if ev.Task == "" && !ev.Upkeep {
+		if ev.Task == "" && !ev.Upkeep && ev.Time.After(s.upkeep.LastPersonTurn) {
 			s.upkeep.LastPersonTurn = ev.Time
 		}
 		if !ev.Upkeep {
@@ -409,7 +409,7 @@ func parseHandoff(answer string) (string, string) {
 // from the last conversation, which the agent may act on.
 func handoffCarried(h string) string {
 	return "(Agentry compacted your conversation: what it produced is in your memory, and this is the handoff you wrote, quoted. " +
-		"Read memory/index.md and the pages it names before you answer from what came before. The handoff: " + strconv.Quote(h) + ")\n\n"
+		"The handoff: " + strconv.Quote(h) + ")\n\n"
 }
 
 // How a compaction swapped the conversation, as its record says it.
@@ -497,6 +497,7 @@ func (s *Supervisor) swapInSegment(ctx context.Context, handoff string) error {
 	}
 	s.mu.Lock()
 	s.carry, s.carryHandoff, s.persona, s.resumed, s.resumeReason = handoffCarried(handoff), handoff, "", false, compactionReason
+	s.memoryFrameDue = true
 	segment, runID := s.segment, s.runID
 	s.mu.Unlock()
 	resumed := false
@@ -663,4 +664,27 @@ func (s *Supervisor) logUpkeep(outDir string, c Compacted, oldConv, newConv stri
 	w := bufio.NewWriter(f)
 	_, _ = w.Write(append(b, '\n'))
 	_ = w.Flush()
+}
+
+// memoryQuiet is how long the person has sent nothing before their next turn
+// is taken for a new topic and opens with the memory frame.
+const memoryQuiet = 30 * time.Minute
+
+// memoryFrame reminds an agent that keeps a memory to read it: Agentry cannot
+// tell when the topic changes, only when the conversation is new or the
+// person comes back after a while.
+const memoryFrame = "(Agentry: this may be a new topic. Read memory/index.md and the pages it names before you answer.)\n\n"
+
+// memoryFrameLocked is the memory frame when the turn about to be sent is a
+// new conversation's first, or the person's first after memoryQuiet with
+// none; person says the turn is theirs. The caller holds mu.
+func (s *Supervisor) memoryFrameLocked(person bool) string {
+	if !s.opts.Agent.Builtin.KeepsMemory() {
+		return ""
+	}
+	last := s.upkeep.LastPersonTurn
+	if s.memoryFrameDue || s.carryHandoff != "" || (person && !last.IsZero() && s.now().Sub(last) >= memoryQuiet) {
+		return memoryFrame
+	}
+	return ""
 }
