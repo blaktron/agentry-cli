@@ -77,12 +77,14 @@ and `agentry agent show assistant` lists what it has:
   (`agentry agent configure assistant --add-suggested weather` or `maps`).
 - **Google Workspace** through gog's MCP server, run from the image Agentry
   pins, off until you switch it on and sign it in with your own Google Cloud
-  OAuth client (`agentry agent configure assistant --google-client <file>`,
-  then `--google-sign-in <email>`): it reads Gmail, Drive, Docs, Sheets and
-  your Calendar's events, read only unless you also switch on its changes,
-  and sends mail only with sending switched on too. It keeps its sign-in on a
-  volume of its own, under a password kept in your system keychain, and
-  reaches Google's hosts alone.
+  OAuth client (in Agentry Desktop, the Google card's Set up in its
+  Configuration's Mail and calendar; in a terminal, `agentry agent configure
+  assistant --google-client <file>`, then `--google-sign-in <email>`); the
+  `google-workspace-setup` skill walks you through it. It reads Gmail, Drive,
+  Docs, Sheets and your Calendar's events, read only unless you also switch
+  on its changes, and sends mail only with sending switched on too. It keeps
+  its sign-in on a volume of its own, under a password kept in your system
+  keychain, and reaches Google's hosts alone.
 - **Microsoft 365 and Outlook.com** through Softeria's MCP server, run from
   the image Agentry pins, off until you switch it on and sign it in with your
   own Entra app (in Agentry Desktop, the Microsoft card's Set up in its
@@ -92,13 +94,15 @@ and `agentry agent show assistant` lists what it has:
   approve the app first, and the `microsoft-365-setup` skill writes that
   request with you. It reads your mail, calendar, contacts and OneDrive, read
   only unless you also switch on its changes, and sends mail only with
-  sending switched on too. It keeps its
-  sign-in on a volume of its own, sealed under a key kept in your system
-  keychain, and reaches Microsoft's sign-in and Graph hosts alone.
+  sending switched on too. It keeps its sign-in on a volume of its own,
+  sealed under a key kept in your system keychain, and reaches Microsoft's
+  sign-in and Graph hosts alone.
 - **Fastmail** through Fastmail's own MCP server, run at Fastmail and
   reached at `api.fastmail.com` alone, off until you give it your own
-  Fastmail API token of the MCP type (`agentry agent configure assistant
-  --fastmail-token`), which is kept in your system keychain once Fastmail
+  Fastmail API token of the MCP type (in Agentry Desktop, the Fastmail card's
+  Set up in its Configuration's Mail and calendar; in a terminal, `agentry
+  agent configure assistant --fastmail-token`), which is kept in your system
+  keychain once Fastmail
   accepts it: it can read, change or send in your account whatever your token
   allows, so make the token Read only unless you want changes.
 - **Mail providers**: Google, Microsoft and Fastmail are each enabled or disabled
