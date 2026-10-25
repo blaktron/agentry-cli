@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -583,5 +584,88 @@ func TestACPSessionAPromptErrorCarriesTheHarnessesWords(t *testing.T) {
 				t.Errorf("out of credits %v, want %v (events %+v)", credits, c.outOfCredits, evs)
 			}
 		})
+	}
+}
+
+// TestACPSessionStartsANewConversationInTheRunningHarness: NewConversation is
+// session/new on the same harness; the next prompt goes to the new session,
+// and its usage counts from nothing rather than from the old session's size.
+func TestACPSessionStartsANewConversationInTheRunningHarness(t *testing.T) {
+	toHarnessR, toHarnessW := io.Pipe()
+	fromHarnessR, fromHarnessW := io.Pipe()
+	prompted := make(chan string, 4)
+	go func() {
+		defer func() { _ = fromHarnessW.Close() }()
+		sc := bufio.NewScanner(toHarnessR)
+		write := func(v any) {
+			b, _ := json.Marshal(v)
+			_, _ = fromHarnessW.Write(append(b, '\n'))
+		}
+		sessions := 0
+		for sc.Scan() {
+			var m rpcMessage
+			_ = json.Unmarshal(sc.Bytes(), &m)
+			switch m.Method {
+			case "initialize":
+				write(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": map[string]any{"protocolVersion": 1}})
+			case "session/new":
+				sessions++
+				write(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": map[string]any{"sessionId": "sess-" + strconv.Itoa(sessions)}})
+			case "session/prompt":
+				var p struct {
+					SessionID string `json:"sessionId"`
+				}
+				_ = json.Unmarshal(m.Params, &p)
+				prompted <- p.SessionID
+				used := 90_000
+				if p.SessionID != "sess-1" {
+					used = 3_000
+				}
+				write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": p.SessionID, "update": map[string]any{"sessionUpdate": "usage_update", "used": used, "size": 200_000}}})
+				write(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": map[string]any{"stopReason": "end_turn"}})
+			}
+		}
+	}()
+	ad, _ := Get(DefaultName)
+	drv, err := ad.Session(context.Background(), pipeRW{Reader: fromHarnessR, WriteCloser: toHarnessW}, SessionOptions{Persistent: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var usage []Event
+	collected := make(chan struct{})
+	go func() {
+		for ev := range drv.Events() {
+			if ev.Kind == EventUsage {
+				usage = append(usage, ev)
+			}
+		}
+		close(collected)
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := drv.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := drv.Prompt(ctx, "one"); err != nil {
+		t.Fatal(err)
+	}
+	r, ok := drv.(Renewing)
+	if !ok {
+		t.Fatal("the docker-agent driver cannot start a new conversation")
+	}
+	id, err := r.NewConversation(ctx)
+	if err != nil || id != "sess-2" || drv.(Continuing).ConversationID() != "sess-2" {
+		t.Fatalf("NewConversation = %q, %v; in %q", id, err, drv.(Continuing).ConversationID())
+	}
+	if _, err := drv.Prompt(ctx, "two"); err != nil {
+		t.Fatal(err)
+	}
+	if a, b := <-prompted, <-prompted; a != "sess-1" || b != "sess-2" {
+		t.Errorf("prompted %s then %s", a, b)
+	}
+	_ = drv.Close()
+	<-collected
+	if len(usage) != 2 || usage[1].ContextTokens != 3_000 || usage[1].TotalTokens != 3_000 {
+		t.Errorf("usage = %+v", usage)
 	}
 }

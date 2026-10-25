@@ -344,6 +344,15 @@ type Continuing interface {
 	Continued() (bool, string)
 }
 
+// Renewing is a Continuing driver that can start a new conversation in the
+// running harness, between turns, without the harness or its servers
+// starting again. NewConversation returns the new conversation's id; the
+// session is in it from then on, and the one it leaves stays stored. On an
+// error the session is still in the conversation it was in.
+type Renewing interface {
+	NewConversation(ctx context.Context) (string, error)
+}
+
 // SignInToken is a model sign-in's access token as a driver hands it to
 // its harness, and when it expires. Never a refresh token (I3).
 type SignInToken struct {

@@ -204,23 +204,50 @@ func (s *acpSession) Start(ctx context.Context) error {
 			return nil
 		}
 	}
-	res, err = s.call(ctx, "session/new", map[string]any{
+	id, err := s.newSession(ctx)
+	if err != nil {
+		return err
+	}
+	s.sessionID = id
+	return nil
+}
+
+// newSession is session/new: a new conversation, whose id it returns.
+func (s *acpSession) newSession(ctx context.Context) (string, error) {
+	res, err := s.call(ctx, "session/new", map[string]any{
 		// The harness's cwd is meaningless inside the sandbox (no
 		// workspace mount, no filesystem tools); the toolset is the plan's.
 		"cwd":        "/tmp",
 		"mcpServers": []any{},
 	})
 	if err != nil {
-		return err
+		return "", err
 	}
 	var ns struct {
 		SessionID string `json:"sessionId"`
 	}
 	if err := json.Unmarshal(res, &ns); err != nil || ns.SessionID == "" {
-		return fmt.Errorf("session/new: no session id in %s", string(res))
+		return "", fmt.Errorf("session/new: no session id in %s", string(res))
 	}
-	s.sessionID = ns.SessionID
-	return nil
+	return ns.SessionID, nil
+}
+
+// NewConversation implements Renewing: session/new on the running harness.
+// The new session's usage counts from nothing, so the next update's `used`
+// is its whole size.
+func (s *acpSession) NewConversation(ctx context.Context) (string, error) {
+	if s.sessionID == "" {
+		return "", errors.New("session not started")
+	}
+	id, err := s.newSession(ctx)
+	if err != nil {
+		return "", err
+	}
+	s.mu.Lock()
+	s.sessionID, s.lastUsed = id, 0
+	s.continued, s.notContinued = false, ""
+	s.mu.Unlock()
+	return id, nil
 }
 
 // load asks the harness to continue the stored conversation continueID

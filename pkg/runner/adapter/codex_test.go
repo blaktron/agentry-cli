@@ -576,3 +576,88 @@ func TestCodexSessionReturnsATurnFinishedBeforeTheStreamEnded(t *testing.T) {
 		_ = s.Close()
 	}
 }
+
+// TestCodexSessionStartsANewThreadInTheRunningAppServer: NewConversation is
+// thread/start on the same app-server, kept like the first (a persistent
+// agent's is not ephemeral), and the next turn goes to the new thread.
+func TestCodexSessionStartsANewThreadInTheRunningAppServer(t *testing.T) {
+	ad, _ := Get(CodexAdapterName)
+	stdio := newFakeStdio()
+	drv, err := ad.Session(context.Background(), stdio, SessionOptions{Persistent: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	turnsTo := make(chan string, 2)
+	go func() {
+		threads := 0
+		for line := range stdio.lines {
+			var m struct {
+				ID     *int           `json:"id"`
+				Method string         `json:"method"`
+				Params map[string]any `json:"params"`
+			}
+			if json.Unmarshal(line, &m) != nil {
+				continue
+			}
+			switch m.Method {
+			case "initialize":
+				stdio.say(`{"id":` + itoa(*m.ID) + `,"result":{"userAgent":"codex"}}`)
+			case "thread/start":
+				threads++
+				if m.Params["ephemeral"] != false {
+					t.Errorf("a persistent agent's thread/start is ephemeral: %v", m.Params)
+				}
+				stdio.say(`{"id":` + itoa(*m.ID) + `,"result":{"thread":{"id":"t` + itoa(threads) + `"}}}`)
+			case "turn/start":
+				thread, _ := m.Params["threadId"].(string)
+				turnsTo <- thread
+				stdio.say(`{"id":` + itoa(*m.ID) + `,"result":{"turn":{"id":"u1","status":"inProgress"}}}`)
+				stdio.say(`{"method":"item/completed","params":{"threadId":"` + thread + `","turnId":"u1","item":{"type":"agentMessage","id":"m1","text":"ok"}}}`)
+				stdio.say(`{"method":"turn/completed","params":{"threadId":"` + thread + `","turn":{"id":"u1","status":"completed"}}}`)
+			}
+		}
+	}()
+	go func() {
+		for range drv.Events() {
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := drv.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if _, err := drv.Prompt(ctx, "one"); err != nil {
+		t.Fatal(err)
+	}
+	id, err := drv.(Renewing).NewConversation(ctx)
+	if err != nil || id != "t2" || drv.(Continuing).ConversationID() != "t2" {
+		t.Fatalf("NewConversation = %q, %v", id, err)
+	}
+	if _, err := drv.Prompt(ctx, "two"); err != nil {
+		t.Fatal(err)
+	}
+	if a, b := <-turnsTo, <-turnsTo; a != "t1" || b != "t2" {
+		t.Errorf("turns went to %s then %s", a, b)
+	}
+	_ = drv.Close()
+}
+
+// TestOnlyTheDriversThatCanStartANewConversationSayTheyCan: Claude Code and
+// Copilot CLI have no way checked to start one in a running harness, so a
+// compaction restarts their segment.
+func TestOnlyTheDriversThatCanStartANewConversationSayTheyCan(t *testing.T) {
+	for _, name := range []string{ClaudeImageAdapterName, CopilotImageAdapterName} {
+		ad, err := Get(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		drv, err := ad.Session(context.Background(), newFakeStdio(), SessionOptions{Persistent: true, HarnessFile: func(string) ([]byte, error) { return []byte("{}"), nil }})
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if _, ok := drv.(Renewing); ok {
+			t.Errorf("the %s driver says it can start a new conversation in a running harness", name)
+		}
+		_ = drv.Close()
+	}
+}
