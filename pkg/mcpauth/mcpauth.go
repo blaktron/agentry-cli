@@ -317,7 +317,8 @@ func getJSON(ctx context.Context, c *http.Client, u string, into any) error {
 type Client struct {
 	ID     string `json:"clientId"`
 	Secret string `json:"-"`
-	// Kind is how it was obtained: ClientOwn, ClientCIMD or ClientDCR.
+	// Kind is how it was obtained: ClientOwn, ClientCIMD, ClientDCR or
+	// ClientAgentry.
 	Kind string `json:"kind"`
 	// AuthMethod is how it authenticates at the token endpoint: AuthNone,
 	// AuthSecretBasic or AuthSecretPost.
@@ -336,6 +337,9 @@ const (
 	ClientOwn  = "own"  // the person's own, made at the vendor
 	ClientCIMD = "cimd" // Agentry's Client ID Metadata Document
 	ClientDCR  = "dcr"  // dynamically registered for this connection
+	// ClientAgentry is Agentry's own public client for a connector Agentry
+	// vetted, its id served by the registry; it has no secret.
+	ClientAgentry = "agentry"
 )
 
 // Token is a token endpoint's answer.
