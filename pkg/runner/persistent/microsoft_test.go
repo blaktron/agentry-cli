@@ -184,7 +184,7 @@ func newMicrosoftRig(t *testing.T) *microsoftRig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := &microsoftRig{keys: fakeSecrets{}, accounts: `[{"id":"h1","username":"Person@Outlook.com","name":"Person","selected":true}]`,
+	r := &microsoftRig{keys: fakeSecrets{}, accounts: `{"accounts":[{"id":"h1","username":"Person@Outlook.com","name":"Person","selected":true}]}`,
 		loginOut: "\nTo sign in, use a web browser to open the page https://microsoft.com/devicelogin and enter the code ABCD12345 to authenticate.\n\n{\"success\":false}\n"}
 	r.f = &dockerx.Fake{Foreground: map[string]*dockerx.FakeForeground{"image-oneshot": {Handler: func(_ context.Context, s dockerx.RunSpec, _ io.Reader, stdout, stderr io.Writer) (int, error) {
 		r.runs = append(r.runs, s)
@@ -277,11 +277,11 @@ func TestAMicrosoftSignInIsRecordedOnlyWhenItHolds(t *testing.T) {
 	if err := r.m.SetClient(testEntraClient, TenantOrganizations); err != nil {
 		t.Fatal(err)
 	}
-	r.accounts = `[{"username":"someone.else@contoso.com"}]`
+	r.accounts = `{"accounts":[{"username":"someone.else@contoso.com"}]}`
 	if _, err := r.m.SignIn(context.Background(), "person@contoso.com", nil); err == nil || !strings.Contains(err.Error(), "someone.else@contoso.com") {
 		t.Errorf("another account: %v", err)
 	}
-	r.accounts = `[]`
+	r.accounts = `{"accounts":[]}`
 	if _, err := r.m.SignIn(context.Background(), "person@contoso.com", nil); err == nil || !strings.Contains(err.Error(), "holds no account") {
 		t.Errorf("no account: %v", err)
 	}
@@ -413,5 +413,25 @@ func TestTheSegmentPlanRunsMicrosoft365(t *testing.T) {
 	}
 	if strings.Contains(string(b), "c2VhbGluZy1rZXk=") {
 		t.Error("the cache key is in the catalogue")
+	}
+}
+
+// TestTheServersAccountListIsRead: the server answers --list-accounts with
+// an object holding the list, after whatever it printed before; a bare list
+// is read too, and an answer with no list is refused.
+func TestTheServersAccountListIsRead(t *testing.T) {
+	for _, list := range []string{
+		`{"accounts":[{"id":"h1","username":"Person@Contoso.com","name":"Person","selected":true}]}`,
+		"starting\n" + `{"accounts":[{"username":"other@contoso.com"},{"username":"person@contoso.com"}]}` + "\n\n",
+		`[{"username":"person@contoso.com"}]`,
+	} {
+		if account, err := ms365Account(list, "person@contoso.com"); err != nil || account != "person@contoso.com" {
+			t.Errorf("%q: %q, %v", list, account, err)
+		}
+	}
+	for _, list := range []string{`{"message":"Logged out successfully"}`, `{"accounts":{}}`, `not json`, ``} {
+		if _, err := ms365Account(list, "person@contoso.com"); err == nil || !strings.Contains(err.Error(), "read the server's accounts") {
+			t.Errorf("%q was taken: %v", list, err)
+		}
 	}
 }
