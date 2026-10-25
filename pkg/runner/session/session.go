@@ -65,6 +65,10 @@ type Event struct {
 	// of the task it was for: the turn is the agent's own, not the
 	// person's, and a chat draws it as such.
 	Task string `json:"task,omitempty"`
+	// Upkeep marks, on a user turn, a persistent agent's memory upkeep:
+	// the turn is the runner's, sent before its conversation is
+	// compacted, and a chat draws it as such.
+	Upkeep bool `json:"upkeep,omitempty"`
 	// StopReason is the harness's reason for ending an assistant turn.
 	StopReason string `json:"stopReason,omitempty"`
 	// Path and Digest describe an added input (agent-side path).
@@ -79,6 +83,11 @@ type Event struct {
 	// split (docker-agent's usage_update; the per-update delta).
 	TotalTokens int64   `json:"totalTokens,omitempty"`
 	CostUSD     float64 `json:"costUsd,omitempty"`
+	// ContextTokens and ContextLimit are, on a usage event, the
+	// conversation's size after the harness's latest request and the
+	// model's window, where the harness says them; zero is unknown.
+	ContextTokens int64 `json:"contextTokens,omitempty"`
+	ContextLimit  int64 `json:"contextLimit,omitempty"`
 	// Raw is the harness's own message, when there was one.
 	Raw json.RawMessage `json:"raw,omitempty"`
 }

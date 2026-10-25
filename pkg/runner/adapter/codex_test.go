@@ -401,7 +401,7 @@ func TestCodexSession(t *testing.T) {
 						t.Errorf("gateway approval answered %v, want accept", m.Result)
 					}
 					stdio.say(`{"method":"item/completed","params":{"threadId":"t1","turnId":"u1","item":{"type":"mcpToolCall","id":"c1","server":"gateway","tool":"write_report","status":"completed","result":{"content":[{"type":"text","text":"report written"}],"structuredContent":null},"error":null}}}`)
-					stdio.say(`{"method":"thread/tokenUsage/updated","params":{"threadId":"t1","turnId":"u1","tokenUsage":{"last":{"inputTokens":10,"outputTokens":5},"total":{"inputTokens":10,"outputTokens":5}}}}`)
+					stdio.say(`{"method":"thread/tokenUsage/updated","params":{"threadId":"t1","turnId":"u1","tokenUsage":{"last":{"inputTokens":10,"outputTokens":5,"totalTokens":15},"total":{"inputTokens":10,"outputTokens":5},"modelContextWindow":272000}}}`)
 					stdio.say(`{"method":"item/completed","params":{"threadId":"t1","turnId":"u1","item":{"type":"agentMessage","id":"m1","text":"DONE"}}}`)
 					stdio.say(`{"method":"turn/completed","params":{"threadId":"t1","turn":{"id":"u1","status":"completed"}}}`)
 				}
@@ -450,6 +450,9 @@ func TestCodexSession(t *testing.T) {
 			texts++
 		case EventUsage:
 			usage++
+			if ev.ContextTokens != 15 || ev.ContextLimit != 272000 {
+				t.Errorf("usage context = %d of %d, want 15 of 272000", ev.ContextTokens, ev.ContextLimit)
+			}
 		}
 	}
 	if calls != 1 || results != 1 || granted != 1 || texts != 1 || usage != 1 {

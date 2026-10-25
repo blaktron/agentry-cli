@@ -469,7 +469,9 @@ func (s *acpSession) handleNotification(m rpcMessage, line []byte) {
 			s.turn.totalTokens += delta
 		}
 		s.mu.Unlock()
-		ev := Event{Kind: EventUsage, TotalTokens: delta, Raw: rawCopy(line)}
+		// `used` is also the conversation's size now, and `size` the
+		// model's window when the provider says it.
+		ev := Event{Kind: EventUsage, TotalTokens: delta, ContextTokens: u.Used, ContextLimit: u.Size, Raw: rawCopy(line)}
 		// The engine keeps the high-water mark of a reported cost, so a
 		// harness whose figure is per step rather than running
 		// under-enforces and never over-kills. An amount in another

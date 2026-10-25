@@ -372,7 +372,19 @@ type claudeMessage struct {
 		// block array, other message types carry other shapes, and a
 		// shape we do not know must not fail the line.
 		Content json.RawMessage `json:"content"`
+		// Usage is an assistant message's own request: what it sent,
+		// cached tokens apart, is the conversation's size then.
+		Usage struct {
+			InputTokens         int64 `json:"input_tokens"`
+			CacheReadTokens     int64 `json:"cache_read_input_tokens"`
+			CacheCreationTokens int64 `json:"cache_creation_input_tokens"`
+		} `json:"usage"`
 	} `json:"message"`
+	// ModelUsage is a result message's per-model account, with each
+	// model's context window.
+	ModelUsage map[string]struct {
+		ContextWindow int64 `json:"contextWindow"`
+	} `json:"modelUsage"`
 	// Result is the final answer text on a result message.
 	Result       string  `json:"result"`
 	IsError      bool    `json:"is_error"`

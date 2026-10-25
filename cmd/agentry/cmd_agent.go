@@ -83,6 +83,7 @@ func newAgentCmd() *cobra.Command {
 		newAgentGrantCmd(),
 		newAgentConfigureCmd(),
 		newAgentTasksCmd(),
+		newAgentCompactCmd(),
 		newAgentSkillCmd(),
 		newAgentSecretCmd(),
 		newAgentMemoryCmd(),

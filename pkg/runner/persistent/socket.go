@@ -32,6 +32,9 @@ import (
 //	{"tasks":{}}              answered with {"tasks":[…]}, each with its next fire
 //	{"task_change":{…}}       a TaskOp (pause, resume, remove); answered with
 //	                          {"tasks":[…]}, or refused
+//	{"compact":{}}            memory upkeep now, then a new conversation that
+//	                          opens with the handoff; answered with
+//	                          {"compacted":…} when it is done, or refused
 //
 // A refused command is answered with an event of kind error carrying
 // Refused, as the session protocol answers one.
@@ -47,6 +50,8 @@ type Command struct {
 	Tasks  *struct{}      `json:"tasks,omitempty"`
 	// TaskChange is a person's change to one of the agent's tasks.
 	TaskChange *TaskOp `json:"task_change,omitempty"`
+	// Compact asks for memory upkeep and a compaction now.
+	Compact *struct{} `json:"compact,omitempty"`
 }
 
 // Reply is one line the supervisor sends.
@@ -56,6 +61,8 @@ type Reply struct {
 	Roster  Roster          `json:"roster,omitempty"`
 	Stopped *Stopped        `json:"stopped,omitempty"`
 	Tasks   *[]Task         `json:"tasks,omitempty"`
+	// Compacted answers a compact: what the compaction did.
+	Compacted *Compacted `json:"compacted,omitempty"`
 	// Consent lists what a refused change would turn on, for the person to
 	// agree to before it is sent again with Consent set.
 	Consent []RosterEntry `json:"consent,omitempty"`
@@ -76,6 +83,7 @@ const (
 	RefusedChange  protocol.Refusal = "change"
 	RefusedConsent protocol.Refusal = "consent"
 	RefusedTask    protocol.Refusal = "task"
+	RefusedCompact protocol.Refusal = "compact"
 )
 
 // maxSocketPath is below the kernel's limit for a socket's name (108 bytes
@@ -156,7 +164,7 @@ func (s *Supervisor) serveConn(nc net.Conn) {
 		dec := json.NewDecoder(strings.NewReader(sc.Text()))
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&cmd); err != nil || commandsSet(cmd) != 1 {
-			c.refuse(protocol.RefusedMalformed, "a command is one JSON object naming exactly one of attach, send, status, roster, change, stop, tasks or task_change")
+			c.refuse(protocol.RefusedMalformed, "a command is one JSON object naming exactly one of attach, send, status, roster, change, stop, tasks, task_change or compact")
 			continue
 		}
 		switch {
@@ -209,6 +217,22 @@ func (s *Supervisor) serveConn(nc net.Conn) {
 				continue
 			}
 			c.reply(Reply{Tasks: taskList(ts)})
+		case cmd.Compact != nil:
+			// An upkeep turn takes minutes: the answer comes when it is
+			// done, and the connection reads on meanwhile. The compaction
+			// is the agent's, not the connection's, so a client that goes
+			// away does not cut it short.
+			go func() {
+				out, err := s.Compact(context.Background())
+				switch {
+				case errors.Is(err, ErrBusy):
+					c.refuse(RefusedBusy, "a turn is in flight; compact once it ends")
+				case errors.Is(err, ErrNoMemory):
+					c.refuse(RefusedCompact, err.Error())
+				default:
+					c.reply(Reply{Compacted: &out})
+				}
+			}()
 		case cmd.TaskChange != nil:
 			ts, err := s.ChangeTask(*cmd.TaskChange)
 			if err != nil {
@@ -227,7 +251,7 @@ func (s *Supervisor) serveConn(nc net.Conn) {
 // commandsSet is how many commands one line names.
 func commandsSet(c Command) int {
 	n := 0
-	for _, set := range []bool{c.Attach != nil, c.Send != nil, c.Status != nil, c.Roster != nil, c.Change != nil, c.Stop != nil, c.Tasks != nil, c.TaskChange != nil} {
+	for _, set := range []bool{c.Attach != nil, c.Send != nil, c.Status != nil, c.Roster != nil, c.Change != nil, c.Stop != nil, c.Tasks != nil, c.TaskChange != nil, c.Compact != nil} {
 		if set {
 			n++
 		}
@@ -370,6 +394,21 @@ func requestTasks(ctx context.Context, home, name string, cmd Command) ([]Task, 
 		return false
 	})
 	return ts, err
+}
+
+// RequestCompact asks the running agent's supervisor for memory upkeep and a
+// compaction now, and returns once it is done: an upkeep turn takes minutes,
+// so ctx should allow for it.
+func RequestCompact(ctx context.Context, home, name string) (Compacted, error) {
+	var out Compacted
+	err := request(ctx, home, name, Command{Compact: &struct{}{}}, func(r Reply) bool {
+		if r.Compacted != nil {
+			out = *r.Compacted
+			return true
+		}
+		return false
+	})
+	return out, err
 }
 
 // RequestStop asks the running agent's supervisor to stop it, and returns

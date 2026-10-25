@@ -185,6 +185,13 @@ type Event struct {
 	// delta since the previous update. Input and output stay zero then —
 	// unknown, not guessed.
 	TotalTokens int64
+	// ContextTokens and ContextLimit are set on EventUsage by a harness
+	// that says how large the conversation now is: the latest model
+	// request's input, cached tokens included, and the model's window as
+	// the harness knows it. Zero is unknown. A persistent agent compacts
+	// its conversation by them.
+	ContextTokens int64
+	ContextLimit  int64
 	// ResetsAt is set on EventPlanLimit when the harness said when the
 	// plan's limit lifts.
 	ResetsAt time.Time

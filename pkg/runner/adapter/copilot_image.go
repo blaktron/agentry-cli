@@ -133,6 +133,18 @@ type copilotSessionConfig struct {
 	Memory                             copilotEnabled              `json:"memory"`
 	ToolSearch                         copilotEnabled              `json:"toolSearch"`
 	Streaming                          bool                        `json:"streaming"`
+	InfiniteSessions                   copilotInfiniteSessions     `json:"infiniteSessions"`
+}
+
+// copilotInfiniteSessions is when Copilot compacts a session's context
+// itself (copilot-sdk InfiniteSessionConfig). A persistent agent compacts
+// its own conversation at three quarters of the model's window, so
+// Copilot's background compaction waits until 0.90, past it, rather than
+// its default 0.80.
+type copilotInfiniteSessions struct {
+	Enabled                       bool    `json:"enabled"`
+	BackgroundCompactionThreshold float64 `json:"backgroundCompactionThreshold"`
+	BufferExhaustionThreshold     float64 `json:"bufferExhaustionThreshold"`
 }
 
 type copilotEnabled struct {
@@ -197,6 +209,7 @@ func (c *copilotImageAdapter) Compile(in Input) (Result, error) {
 		EmbeddingCacheStorage:  "in-memory",
 		MCPOAuthTokenStorage:   "in-memory",
 		EnvValueMode:           "direct",
+		InfiniteSessions:       copilotInfiniteSessions{Enabled: true, BackgroundCompactionThreshold: 0.90, BufferExhaustionThreshold: 0.95},
 	}, "", "  ")
 	if err != nil {
 		return Result{}, err
