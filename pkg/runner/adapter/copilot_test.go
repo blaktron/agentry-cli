@@ -81,6 +81,11 @@ func TestTheCopilotImageCompilesASignInRun(t *testing.T) {
 			cfg["enableSkills"] != false || cfg["model"] != "auto" || !slices.Equal(anyStrings(cfg["availableTools"]), []string{"mcp:*"}) {
 			t.Fatalf("session.json %s", res.Files["session.json"])
 		}
+		// Copilot's own compaction waits until past the three quarters of
+		// the window at which a persistent agent compacts its conversation.
+		if inf, _ := cfg["infiniteSessions"].(map[string]any); inf["enabled"] != true || inf["backgroundCompactionThreshold"] != 0.9 || inf["bufferExhaustionThreshold"] != 0.95 {
+			t.Fatalf("session.json's infiniteSessions %v", cfg["infiniteSessions"])
+		}
 		servers, _ := cfg["mcpServers"].(map[string]any)
 		gw, _ := servers["gateway"].(map[string]any)
 		if len(servers) != 1 || gw["url"] != "http://gateway:8811/mcp" || gw["headers"] != nil {

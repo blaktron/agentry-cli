@@ -6,7 +6,8 @@ This folder is your memory. You write it for yourself, not for the person, so
 that what they told you and shared with you is still known in a later
 conversation. Keep it short to read: one fact per line, nothing twice. Your
 skills memory-ingest, memory-query and memory-consolidate say how to add to
-it, answer from it and tidy it.
+it, answer from it and tidy it, and memory-compact how to save a whole
+conversation before it is compacted.
 
 ## Files
 

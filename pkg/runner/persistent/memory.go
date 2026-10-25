@@ -35,7 +35,7 @@ const EntryMemory = "memory"
 const KindMemory EntryKind = "memory"
 
 // memoryLine is the memory entry's sentence.
-const memoryLine = "Keeps a memory of what you tell it and what you share with it, as pages it writes on a volume of its own, kept until you reset it; you can export it to a folder"
+const memoryLine = "Keeps a memory of what you tell it and what you share with it, as pages it writes on a volume of its own, kept until you reset it; you can export it to a folder. When its conversation grows large it saves it to the memory and starts a fresh one, in turns of its own that use your model plan, at most 12 a day"
 
 // MemoryVolumeIn is the agent's memory volume in the runner home home.
 func MemoryVolumeIn(home, name string) string {

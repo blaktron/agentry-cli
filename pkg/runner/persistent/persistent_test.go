@@ -46,6 +46,10 @@ type fakeSegment struct {
 	// inflight are the turns being sent, which End waits for before it
 	// closes the events.
 	inflight sync.WaitGroup
+	// answer, when set, is the agent's answer to a turn's text; context
+	// and limit, when set, are the context size each turn reports.
+	answer         func(text string) string
+	context, limit int64
 }
 
 func newFakeSegment(seg localrun.Segment, id string, resumed bool, reason string) *fakeSegment {
@@ -79,7 +83,16 @@ func (f *fakeSegment) SendCarrying(_ context.Context, carried, text string) erro
 	if hold != nil {
 		<-hold
 	}
-	f.events <- session.Event{Kind: session.KindAssistantTurn, Text: "echo: " + text}
+	f.mu.Lock()
+	answer, ctxTokens, limit := "echo: "+text, f.context, f.limit
+	if f.answer != nil {
+		answer = f.answer(text)
+	}
+	f.mu.Unlock()
+	if ctxTokens > 0 {
+		f.events <- session.Event{Kind: session.KindUsage, ContextTokens: ctxTokens, ContextLimit: limit}
+	}
+	f.events <- session.Event{Kind: session.KindAssistantTurn, Text: answer}
 	return nil
 }
 
@@ -166,6 +179,9 @@ type starter struct {
 	hold chan struct{}
 	// served, when set, is the tools each segment's gateway serves.
 	served func(localrun.Segment) []string
+	// answer, context and limit are each segment's (fakeSegment).
+	answer         func(text string) string
+	context, limit int64
 }
 
 func (s *starter) start(_ context.Context, seg localrun.Segment) (engine.PersistentSession, error) {
@@ -182,6 +198,7 @@ func (s *starter) start(_ context.Context, seg localrun.Segment) (engine.Persist
 	if s.served != nil {
 		s.last.served = s.served(seg)
 	}
+	s.last.answer, s.last.context, s.last.limit = s.answer, s.context, s.limit
 	return s.last, nil
 }
 

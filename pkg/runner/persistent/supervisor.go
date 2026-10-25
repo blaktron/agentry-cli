@@ -78,6 +78,10 @@ type Options struct {
 	// Tests set both.
 	Now  func() time.Time
 	Tick time.Duration
+	// CountFacts counts the fact lines of the agent's memory for a
+	// compaction's record; nil reads the memory volume with a one-shot.
+	// Tests put a count of their own here.
+	CountFacts func(context.Context) int
 }
 
 // Stage is a step a segment's start has reached (engine.Stage).
@@ -161,9 +165,25 @@ type Supervisor struct {
 	hbDone   chan struct{}
 	missed   string
 	taskTurn string
+	// taskText and upkeepText are the texts the task's and the upkeep's
+	// turns were sent with: a turn of the person's still on its way through
+	// the events when one is sent never takes its mark.
+	taskText string
 	// ranUntil is when each task's last turn ended: a time of the task's
 	// that came before it is skipped.
 	ranUntil map[string]time.Time
+
+	// upkeep is what memory upkeep decides by (upkeep.json), and
+	// upkeepDirty says it changed since last saved. upkeeping is set while
+	// an upkeep turn runs, so a person's message waits for it, and
+	// upkeepTurn until its user turn takes the mark into the transcript.
+	// handoff is the handoff the next segment's new conversation opens
+	// with.
+	upkeep      upkeepState
+	upkeepDirty bool
+	upkeeping   bool
+	upkeepTurn  bool
+	handoff     string
 
 	done     chan struct{}
 	stopOnce sync.Once
@@ -210,6 +230,9 @@ func Start(ctx context.Context, opts Options) (*Supervisor, error) {
 	s.bgCtx, s.bgCancel = context.WithCancel(context.Background())
 	if opts.Policy != nil {
 		s.model = opts.Policy.Model.Provider + "/" + opts.Policy.Model.Name
+	}
+	if a.Builtin.KeepsMemory() {
+		s.upkeep = loadUpkeep(opts.Home, a.Name)
 	}
 	if err := s.listenAppLink(); err != nil {
 		owner.Release()
@@ -352,7 +375,17 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 		reason = mismatch
 	}
 	carry := ""
-	if !resumed {
+	s.mu.Lock()
+	handoff := s.handoff
+	s.handoff = ""
+	s.mu.Unlock()
+	if !resumed && handoff != "" {
+		// A compaction ended the conversation: the new one opens with the
+		// handoff the agent wrote for it.
+		carry = handoffCarried(handoff)
+		reason = "a compaction: the new conversation opens with the agent's handoff"
+		sess.SetResumeReason(reason)
+	} else if !resumed {
 		// Whatever kept the conversation from continuing (a harness that
 		// cannot, a store that would not load, another harness), the new
 		// one is given the last exchange the agent had, if it had one.
@@ -405,6 +438,12 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 	s.sess, s.runID, s.outDir, s.segment = sess, runID, outDir, segment
 	s.applied, s.grants, s.packsDone, s.ending, s.pumpDone = applied, key, packsDone, ending, pumpDone
 	s.carry, s.persona, s.resumed, s.resumeReason = carry, persona, resumed, reason
+	if !resumed {
+		// A new conversation: what upkeep knew of the last one is gone with
+		// it.
+		s.upkeep.ContextTokens, s.upkeep.TurnsSince = 0, 0
+		s.upkeepDirty = true
+	}
 	s.roster, s.byChange = roster, byChange
 	if !byChange {
 		s.told = roster
@@ -436,7 +475,13 @@ func (s *Supervisor) pump(sess engine.PersistentSession, segment int, runID stri
 			if !ev.Synthetic {
 				// The heartbeat's turn takes the mark it was sent with, on
 				// the event every watcher is handed and the transcript keeps.
-				ev.Task, s.taskTurn = s.taskTurn, ""
+				if s.taskTurn != "" && ev.Text == s.taskText {
+					ev.Task, s.taskTurn = s.taskTurn, ""
+				}
+				// An upkeep turn is the runner's, and says so likewise.
+				if s.upkeepTurn && ev.Text == upkeepText {
+					ev.Upkeep, s.upkeepTurn = true, false
+				}
 				s.usage.UserTurns++
 			}
 		case session.KindAssistantTurn, session.KindError, session.KindSessionEnd:
@@ -448,6 +493,7 @@ func (s *Supervisor) pump(sess engine.PersistentSession, segment int, runID stri
 			s.usage.OutputTokens += ev.OutputTokens
 			s.usage.TotalTokens += ev.TotalTokens
 		}
+		s.noteUpkeepEvent(ev)
 		if !swapping {
 			s.broadcast(ev)
 		}
@@ -488,10 +534,41 @@ func (s *Supervisor) broadcast(ev session.Event) {
 // the tasks that came due while it was stopped.
 func (s *Supervisor) Send(ctx context.Context, text string) error {
 	if !s.turn.TryLock() {
-		return ErrBusy
+		s.mu.Lock()
+		upkeeping := s.upkeeping
+		s.mu.Unlock()
+		if !upkeeping {
+			return ErrBusy
+		}
+		// A message that arrives during memory upkeep waits for it, at
+		// most as long as an upkeep turn may run, and goes to the new
+		// conversation.
+		s.notice("Saving to memory first; your message follows")
+		wctx, cancel := context.WithTimeout(ctx, upkeepTurnCap+time.Minute)
+		ok := s.waitTurn(wctx)
+		cancel()
+		if !ok {
+			return ErrBusy
+		}
 	}
 	defer s.turn.Unlock()
+	if s.inUseDue() {
+		// The last turn filled most of the model's window: the
+		// conversation is compacted before the person's next message.
+		_, _ = s.compactLocked(ctx, UpkeepInUse)
+	}
 	return s.sendLocked(ctx, "", text)
+}
+
+// inUseDue says an in-use compaction is due, for an agent that keeps a
+// memory.
+func (s *Supervisor) inUseDue() bool {
+	if !s.opts.Agent.Builtin.KeepsMemory() {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.upkeep.inUseDue()
 }
 
 // sendLocked is Send for a caller that holds turn; pre is a frame of the
@@ -590,6 +667,11 @@ func (s *Supervisor) sendLocked(ctx context.Context, pre, text string) error {
 // as it is now, keeping the watchers attached. A next segment that cannot
 // start stops the agent, saying why. The caller holds turn.
 func (s *Supervisor) nextSegment(ctx context.Context) error {
+	return s.nextSegmentFor(ctx, "Applying your change: the agent restarts with it, and the conversation continues")
+}
+
+// nextSegmentFor is nextSegment, telling the watchers why in notice.
+func (s *Supervisor) nextSegmentFor(ctx context.Context, notice string) error {
 	s.seg.Lock()
 	defer s.seg.Unlock()
 	s.mu.Lock()
@@ -597,7 +679,7 @@ func (s *Supervisor) nextSegment(ctx context.Context) error {
 		s.mu.Unlock()
 		return session.ErrEnded
 	}
-	s.broadcast(session.Event{Kind: session.KindNotice, Time: time.Now().UTC(), Text: "Applying your change: the agent restarts with it, and the conversation continues"})
+	s.broadcast(session.Event{Kind: session.KindNotice, Time: time.Now().UTC(), Text: notice})
 	s.mu.Unlock()
 	_, _ = s.endSegment(ctx, true)
 	err := s.startSegment(ctx, true)
