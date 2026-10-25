@@ -57,6 +57,10 @@ const (
 	memoryPages = "pages/"
 )
 
+// memoryLogTime is the form of a log line's date and time, as the memory's
+// schema writes it.
+const memoryLogTime = "2006-01-02T15:04"
+
 // memorySeededFile, in the agent's state folder, names the memory volume a
 // start seeded, so a later start seeds it only if it did not.
 const memorySeededFile = "memory-seeded"
@@ -74,13 +78,13 @@ func memorySegment(home string, a Agent, on time.Time) (*engine.PersistentMemory
 	}
 	volume := MemoryVolumeIn(home, a.Name)
 	kept, _ := os.ReadFile(filepath.Join(Dir(home, a.Name), memorySeededFile))
-	day := on.Format(time.DateOnly)
+	day, at := on.Format(time.DateOnly), on.Format(memoryLogTime)
 	seed := maps.Clone(tree)
 	seed[memoryPages] = nil
-	seed[memoryLog] = append(seed[memoryLog], []byte("\n## ["+day+"] seed | the memory was made\n")...)
+	seed[memoryLog] = append(seed[memoryLog], []byte(at+" seed agentry memory\n")...)
 	carried := engine.MemoryCarriedDir + "/"
-	seed[carried+memoryLog] = []byte("\n## [" + day + "] ingest | data/" + notesFolder + "/: the notes from your data folder, copied as they were into " + notesInMemory + "/\n")
-	seed[carried+memoryIndex] = []byte("\n## Notes from your data folder\n\n- [" + notesInMemory + "/](" + notesInMemory + "/): the notes from data/" + notesFolder + "/, copied in on " + day + " as sources, not pages; fold each into a page when it comes up, citing it\n")
+	seed[carried+memoryLog] = []byte(at + " ingest data/" + notesFolder + "/ " + notesFolder + "/ copied into " + notesInMemory + "/ as sources\n")
+	seed[carried+memoryIndex] = []byte(notesFolder + "/|src|the notes from data/" + notesFolder + "/, copied into " + notesInMemory + "/ on " + day + " as sources: fold each into pages\n")
 	return &engine.PersistentMemory{Volume: volume, Seed: seed, Carry: notesFolder, CarryTo: notesInMemory,
 		Seeded: strings.TrimSpace(string(kept)) == volume}, nil
 }
