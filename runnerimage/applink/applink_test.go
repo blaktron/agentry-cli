@@ -123,7 +123,8 @@ func TestAppLinkHasNoGrantTool(t *testing.T) {
 		}
 	}
 	own := []string{SelfConfigure, TaskAdd, TaskList, TaskUpdate, TaskRemove}
-	if got := Tools(SetAssistant); !slices.Equal(got, append(own, Tools(SetMain)...)) {
+	meetings := []string{MeetingArm, MeetingList, MeetingCancel}
+	if got := Tools(SetAssistant); !slices.Equal(got, slices.Concat(own, Tools(SetMain), meetings)) {
 		t.Errorf("the Assistant's set is %v", got)
 	}
 	// Each of the Assistant's own tools takes its own name and personality,

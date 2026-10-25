@@ -161,7 +161,10 @@ func newAgentGrantCmd() *cobra.Command {
 			"it again.\n\n" +
 			"The Assistant's heartbeat entry, off until you switch it on, fires the tasks\n" +
 			"it registers (`agentry agent tasks assistant`); switching it takes effect at\n" +
-			"once and restarts nothing.\n\n" +
+			"once and restarts nothing. Its meetings entry, also off until you switch it\n" +
+			"on and only with the heartbeat on, lets it arm Agentry Desktop to record the\n" +
+			"calls of meetings on your calendar that you asked it to record; it is read\n" +
+			"at each call and restarts nothing either.\n\n" +
 			"Each secret you stored is an entry, secret:<NAME> (`agentry agent secret`);\n" +
 			"switched off, it is withheld: a server that declares it is given an empty\n" +
 			"value, and the Coding agent's programs do not have it.\n\n" +
@@ -178,6 +181,7 @@ func newAgentGrantCmd() *cobra.Command {
 			"never given it.\n\n" +
 			"  agentry agent grant assistant share off\n" +
 			"  agentry agent grant assistant heartbeat on\n" +
+			"  agentry agent grant assistant meetings on\n" +
 			"  agentry agent grant assistant knowledge:my-notes on\n" +
 			"  agentry agent grant coder secret:GITHUB_TOKEN off\n" +
 			"  agentry agent grant assistant server:pypi-office-word-mcp-server:share on",

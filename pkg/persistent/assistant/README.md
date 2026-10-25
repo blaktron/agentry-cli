@@ -43,10 +43,13 @@ and `agentry agent show assistant` lists what it has:
   into it, and stay where they are. `agentry agent memory export assistant
   <folder>` copies the memory into a new folder, readable by you alone; a
   reset removes it.
-- **Fourteen skills** of its own, on unless you switch them off:
+- **Fifteen skills** of its own, on unless you switch them off:
   `memory-ingest`, `memory-query`, `memory-consolidate` and `memory-compact`,
   which say how it adds to its memory, answers from it, tidies it and saves a
-  whole conversation before it is compacted; `google-workspace-setup`, which
+  whole conversation before it is compacted; `meeting-notes`, which says how
+  it summarises a meeting Agentry Desktop recorded and transcribed, each point
+  with its time in the transcript, saves the summary beside it, files the
+  meeting in its memory, and arms the recordings you ask it for; `google-workspace-setup`, which
   walks you through connecting your Google account; `google-workspace`,
   `google-inbox-triage` and `google-meeting-prep`, adapted from gog's own
   skills (MIT, their licence beside them), which say how it uses your Google
@@ -122,6 +125,16 @@ and `agentry agent show assistant` lists what it has:
   None of these tools changes a setting, starts or stops an agent, signs in,
   publishes or touches a key. Run from the CLI, these tools answer that only
   Agentry Desktop answers them.
+- **Meeting recordings**, in Agentry Desktop with its Meeting notes on: when
+  its roster's meetings entry is on (off until you switch it on, and only
+  with its heartbeat on), its Agentry tools `meeting_arm`, `meeting_list` and
+  `meeting_cancel` arm Agentry Desktop to record a call during a meeting on
+  your calendar that you asked it to record. A window opens 5 minutes before
+  the meeting and closes 15 minutes after it, records only a call the desktop
+  detects inside it, and is refused when it would open more than an hour
+  ahead, so the Assistant arms each meeting from a task in the hour before it.
+  Each armed window shows in Agentry, where you can cancel it. Off, or run
+  from the CLI, these tools record nothing.
 - **The time**: each message it is sent starts with the time now and your
   time zone.
 - **Tasks and a heartbeat.** When you ask it to do something at a time, it

@@ -134,11 +134,13 @@ var assistantTools = []Tool{
 }
 
 // sets are the tools each agent's app link lists. Agentry Helper's (main)
-// are the helper tools. The Assistant's are its own and every one of
-// Agentry Helper's, so it can do whatever the Helper can.
+// are the helper tools. The Assistant's are its own, every one of Agentry
+// Helper's, so it can do whatever the Helper can, and the meeting tools,
+// which its supervisor answers only while the person lets it set up
+// meeting recordings.
 var sets = map[string][]Tool{
 	SetMain:      helperTools,
-	SetAssistant: slices.Concat(assistantTools, helperTools),
+	SetAssistant: slices.Concat(assistantTools, helperTools, meetingTools),
 }
 
 // Sets are the tool sets there are.

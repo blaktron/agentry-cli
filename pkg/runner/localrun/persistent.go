@@ -44,10 +44,11 @@ import (
 // fires its tasks. It keeps a memory of its own, and the secrets the person
 // stores for it, which reach the servers that declare them. It resets in
 // parts: its history alone, or everything but the credentials it was given.
+// It may arm meeting recordings, once the person lets it.
 func Assistant() Builtin {
 	return Builtin{namespace: assistant.Namespace, name: assistant.Name, version: assistant.Version, fsys: assistant.FS(),
 		persistent: true, runnable: true, checkShare: true, appLink: applink.SetAssistant, keepsTime: true, keepsMemory: true, keepsSecrets: true,
-		resetsInParts: true}
+		resetsInParts: true, armsMeetings: true}
 }
 
 // Main is Agentry Helper (pkg/persistent/main), the persistent agent of Agentry
@@ -133,6 +134,11 @@ func (b Builtin) readSkills() []BuiltinSkill {
 // KeepsTime says the persistent agent is told the time at each turn and
 // keeps a heartbeat that fires the tasks it registers.
 func (b Builtin) KeepsTime() bool { return b.keepsTime }
+
+// ArmsMeetings says the persistent agent's app link has the meeting tools,
+// through which it arms Agentry Desktop to record a meeting, and its roster
+// the switch that lets it.
+func (b Builtin) ArmsMeetings() bool { return b.armsMeetings }
 
 // OfferedServers are the MCP servers the persistent agent comes with, each
 // an entry of its roster: its package's own (offer.Server), some drawn for

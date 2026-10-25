@@ -7,7 +7,9 @@ package persistent
 // supervisor answers self_configure itself, writing the agent's name and
 // personality and nothing else, and the Assistant's task tools, which
 // register the turns its heartbeat sends later at their times, with the
-// roster those times find (heartbeat.go). It hands every other tool to its
+// roster those times find (heartbeat.go). It refuses the meeting tools
+// unless the person lets the agent set up meeting recordings, and a
+// meeting_arm outside its rules (meetings.go). It hands every other tool to its
 // client's handler (the desktop's, which answers with the application's own
 // operations and consent); without one, the tool is answered as Agentry
 // Desktop's. Every call and its answer are a line of the segment's
@@ -129,6 +131,13 @@ func (s *Supervisor) answerAppLink(ctx context.Context, req applink.Request) app
 		return s.selfConfigure(req.Arguments)
 	case isTaskTool(req.Tool):
 		return s.answerTask(req.Arguments, req.Tool)
+	case applink.IsMeetingTool(req.Tool):
+		if a, refused := s.refuseMeeting(req); refused {
+			return a
+		}
+		if s.opts.AppLink != nil {
+			return s.opts.AppLink(ctx, req)
+		}
 	case s.opts.AppLink != nil:
 		return s.opts.AppLink(ctx, req)
 	}
