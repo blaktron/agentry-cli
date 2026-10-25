@@ -21,7 +21,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -884,19 +883,18 @@ func (s *Supervisor) memoryFrameLocked(person bool) string {
 
 // LastUpkeep is the agent's newest compaction record and its newest
 // consolidation record, across its segments' receipts; nil where there is
-// none. A line that does not parse is skipped.
-func LastUpkeep(home, name string) (compaction, consolidation *UpkeepRecord, err error) {
-	paths, err := filepath.Glob(filepath.Join(Dir(home, name), segmentsDir, "*", "receipts", upkeepLog))
-	if err != nil {
-		return nil, nil, err
-	}
-	for _, path := range paths {
-		f, err := os.Open(path) //nolint:gosec // the agent's own receipts
+// none. What cannot be read (a file, a line) is skipped: the records are a
+// report, and a damaged one hides nothing else.
+func LastUpkeep(home, name string) (compaction, consolidation *UpkeepRecord) {
+	dir := filepath.Join(Dir(home, name), segmentsDir)
+	segments, _ := os.ReadDir(dir)
+	for _, seg := range segments {
+		if !seg.IsDir() {
+			continue
+		}
+		f, err := os.Open(filepath.Join(dir, seg.Name(), "receipts", upkeepLog)) //nolint:gosec // the agent's own receipts
 		if err != nil {
-			if errors.Is(err, fs.ErrNotExist) {
-				continue
-			}
-			return nil, nil, err
+			continue
 		}
 		sc := bufio.NewScanner(f)
 		sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
@@ -909,14 +907,11 @@ func LastUpkeep(home, name string) (compaction, consolidation *UpkeepRecord, err
 			if r.Trigger == UpkeepConsolidate {
 				last = &consolidation
 			}
-			if *last == nil || r.Time.After((*last).Time) {
+			if *last == nil || !r.Time.Before((*last).Time) {
 				*last = &r
 			}
 		}
-		err = errors.Join(sc.Err(), f.Close())
-		if err != nil {
-			return nil, nil, err
-		}
+		_ = f.Close()
 	}
-	return compaction, consolidation, nil
+	return compaction, consolidation
 }

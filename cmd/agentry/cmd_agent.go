@@ -311,9 +311,7 @@ func newAgentShowCmd() *cobra.Command {
 				st.Volumes = &agentVolumes{Session: persistent.SessionVolumeIn(home, a.Name), Data: persistent.DataVolumeIn(home, a.Name)}
 				if a.Builtin.KeepsMemory() {
 					st.Volumes.Memory = persistent.MemoryVolumeIn(home, a.Name)
-					if st.LastCompaction, st.LastConsolidation, err = persistent.LastUpkeep(home, a.Name); err != nil {
-						return err
-					}
+					st.LastCompaction, st.LastConsolidation = persistent.LastUpkeep(home, a.Name)
 				}
 				if lines > 0 {
 					if st.Transcript, err = persistent.Transcript(home, a.Name, lines); err != nil {
