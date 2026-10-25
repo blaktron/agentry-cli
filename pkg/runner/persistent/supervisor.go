@@ -185,6 +185,9 @@ type Supervisor struct {
 	upkeeping    bool
 	upkeepTurn   bool
 	carryHandoff string
+	// memoryFrameDue says the conversation is new and has not yet been
+	// sent the memory frame.
+	memoryFrameDue bool
 
 	done     chan struct{}
 	stopOnce sync.Once
@@ -445,9 +448,10 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 	s.carryHandoff = handoff
 	if !resumed {
 		// A new conversation: what upkeep knew of the last one is gone with
-		// it.
+		// it, and it is reminded of its memory at its first turn.
 		s.upkeep.ContextTokens, s.upkeep.TurnsSince = 0, 0
 		s.upkeepDirty = true
+		s.memoryFrameDue = a.Builtin.KeepsMemory()
 	}
 	s.roster, s.byChange = roster, byChange
 	if !byChange {
@@ -617,7 +621,10 @@ func (s *Supervisor) sendLocked(ctx context.Context, pre, text string) error {
 	if s.opts.Agent.Builtin.KeepsTime() {
 		frame = timeFrame(s.now())
 	}
-	frame += carry + missed
+	frame += carry
+	person := pre == ""
+	reminded := s.memoryFrameLocked(person)
+	frame += reminded + missed
 	if byChange {
 		change := changeFrame(s.told, roster, s.resumed, joined)
 		restarted := ""
@@ -637,6 +644,7 @@ func (s *Supervisor) sendLocked(ctx context.Context, pre, text string) error {
 		frame += personaFrame(cfg)
 	}
 	frame += pre
+	sentAt := s.now()
 	if frame != "" {
 		err = sess.SendCarrying(ctx, frame, text)
 	} else {
@@ -644,6 +652,18 @@ func (s *Supervisor) sendLocked(ctx context.Context, pre, text string) error {
 	}
 	if handoff != "" {
 		s.handoffSent(sess, handoff, err == nil)
+	}
+	if reminded != "" || person {
+		s.mu.Lock()
+		if s.sess == sess && reminded != "" {
+			// A turn that failed leaves the reminder for the next.
+			s.memoryFrameDue = err != nil
+		}
+		if err == nil && person && s.opts.Agent.Builtin.KeepsMemory() && sentAt.After(s.upkeep.LastPersonTurn) {
+			// The person's turn, on the clock upkeep decides by.
+			s.upkeep.LastPersonTurn, s.upkeepDirty = sentAt, true
+		}
+		s.mu.Unlock()
 	}
 	if err == nil && byChange {
 		s.mu.Lock()

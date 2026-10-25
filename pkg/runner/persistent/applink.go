@@ -131,6 +131,8 @@ func (s *Supervisor) answerAppLink(ctx context.Context, req applink.Request) app
 		return s.selfConfigure(req.Arguments)
 	case isTaskTool(req.Tool):
 		return s.answerTask(req.Arguments, req.Tool)
+	case req.Tool == applink.Recall:
+		return s.answerRecall(ctx, req.Arguments)
 	case applink.IsMeetingTool(req.Tool):
 		if a, refused := s.refuseMeeting(req); refused {
 			return a
