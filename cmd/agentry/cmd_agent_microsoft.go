@@ -19,7 +19,10 @@ const agentMicrosoftLong = "\n\n--microsoft-client gives the Assistant's Microso
 	"your own Entra app: its application (client) id, of an app registered as a\n" +
 	"public client (\"Mobile and desktop applications\", Allow public client flows)\n" +
 	"with the delegated Microsoft Graph permissions the server asks for. The\n" +
-	"Assistant's microsoft-365-setup skill walks you through it.\n" +
+	"Assistant's microsoft-365-setup skill walks you through it, and writes the\n" +
+	"request a work or school account's administrator usually has to approve.\n" +
+	"In Agentry Desktop the same set-up is the Microsoft card's Set up, under\n" +
+	"Mail and calendar in the Assistant's Configuration.\n" +
 	"--microsoft-tenant names the tenant to sign in on: consumers for a personal\n" +
 	"account (Outlook.com, Hotmail, Live), organizations for a work or school\n" +
 	"one, or your organization's tenant id; without it, Microsoft is asked which\n" +
