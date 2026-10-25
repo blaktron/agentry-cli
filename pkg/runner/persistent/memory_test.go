@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -38,13 +39,19 @@ func TestTheAssistantsSegmentHasItsMemory(t *testing.T) {
 			t.Errorf("the seed has no %s", f)
 		}
 	}
-	day := time.Now().Format(time.DateOnly)
-	if log := string(seg.Seed["log.md"]); !strings.HasPrefix(log, "# Memory log") || !strings.HasSuffix(log, "## ["+day+"] seed | the memory was made\n") {
+	if schema := string(seg.Seed["SCHEMA.md"]); !strings.HasPrefix(schema, "schema: 2 ") {
+		t.Errorf("the seed's schema is not schema 2: %.40q", schema)
+	}
+	if index := string(seg.Seed["index.md"]); !strings.HasPrefix(index, "# index:") || strings.Count(index, "\n") != 1 {
+		t.Errorf("the seed's index is not an empty schema-2 index: %q", index)
+	}
+	logLine := regexp.MustCompile(`\n\d{4}-\d\d-\d\dT\d\d:\d\d seed agentry memory\n$`)
+	if log := string(seg.Seed["log.md"]); !strings.HasPrefix(log, "# log:") || !logLine.MatchString(log) {
 		t.Errorf("the seed's log: %q", log)
 	}
 	carried := engine.MemoryCarriedDir + "/"
-	if !strings.Contains(string(seg.Seed[carried+"log.md"]), "## ["+day+"] ingest | data/notes/") ||
-		!strings.Contains(string(seg.Seed[carried+"index.md"]), "(pages/notes/)") {
+	if !regexp.MustCompile(`^\d{4}-\d\d-\d\dT\d\d:\d\d ingest data/notes/ notes/ copied into pages/notes/ as sources\n$`).MatchString(string(seg.Seed[carried+"log.md"])) ||
+		!strings.HasPrefix(string(seg.Seed[carried+"index.md"]), "notes/|src|") {
 		t.Errorf("the carried lines: %q, %q", seg.Seed[carried+"log.md"], seg.Seed[carried+"index.md"])
 	}
 	// The start recorded the seed, so the next one does not seed again.

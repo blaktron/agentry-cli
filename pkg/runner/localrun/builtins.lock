@@ -141,3 +141,5 @@ agentry/assistant@1.8.0 sha256:3c43f125e980350d205418178dba81a2a21e97ec74a1756ee
 agentry/assistant@1.8.1 sha256:87215c384aaf5a1da4402d81b77c396912350ce78745ff184b49df5b345b2710
 # 1.9.0: Fastmail through Fastmail's own MCP server on the person's API token: the fastmail-setup and fastmail-inbox-triage skills; the README names the server and the third mail provider.
 agentry/assistant@1.9.0 sha256:c95080b71d73dab2ace0211c8aa2b89173a4801dfa26093bde74fc7eeb2efd6a
+# 1.10.0: memory schema 2, written for the model: one fact per line as a sentence with its source, trust and supersession, a slug|type|gist index, keywords on each page; the memory-ingest, memory-query and memory-consolidate skills; the instruction reads memory at every topic and ingests when one ends.
+agentry/assistant@1.10.0 sha256:8867b462f205b4a0b6db14a231b6c5a7fc9cfb1c8f5fa0a0427289d6f56cd73c
