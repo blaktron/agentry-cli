@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
 
 	"github.com/blaktron/agentry-cli/pkg/persistent/assistant"
+	"github.com/blaktron/agentry-cli/pkg/runner/connection"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/gateway"
 	"github.com/blaktron/agentry-cli/pkg/runner/persistent"
@@ -31,6 +33,9 @@ const agentMicrosoftLong = "\n\n--microsoft-client gives the Assistant's Microso
 	"waits up to 15 minutes. The sign-in reaches Microsoft's sign-in host alone,\n" +
 	"asks only for reading unless \"allow changes\" is on, and is kept sealed on\n" +
 	"the server's volume under a key in your system keychain.\n" +
+	"Without --microsoft-client, the sign-in uses Agentry's own Microsoft app\n" +
+	"where your Agentry registry offers one, and only with Agentry's image of the\n" +
+	"server; your own app, once given, comes first.\n" +
 	"--microsoft-signoff sets a line every mail it sends or drafts ends with, and\n" +
 	"--no-microsoft-signoff clears it. All are refused while the agent runs;\n" +
 	"switch the server on with agentry agent grant assistant server:ms365 on.\n\n" +
@@ -50,7 +55,11 @@ func configureMicrosoft(cmd *cobra.Command, a persistent.Agent, home, policyPath
 	if err != nil {
 		return err
 	}
-	m := persistent.Microsoft{Home: home, Agent: a, Policy: pol, Keys: persistent.KeychainSecrets{}, Say: cmd.ErrOrStderr()}
+	m := persistent.Microsoft{Home: home, Agent: a, Policy: pol, Keys: persistent.KeychainSecrets{}, Say: cmd.ErrOrStderr(),
+		AgentryClient: func(ctx context.Context) string {
+			return connection.OpenPublicClients(home, registryURL(), httpClient).ForConnector(ctx, persistent.MicrosoftConnector)
+		},
+	}
 	if clientID != "" {
 		if err := m.SetClient(clientID, tenant); err != nil {
 			return engine.Classify(engine.ExitUsage, fmt.Errorf("--microsoft-client: %w", err))

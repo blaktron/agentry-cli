@@ -45,6 +45,10 @@ const (
 	maxSignoff = 200
 )
 
+// MicrosoftConnector is the id of the connector catalogue's entry whose
+// public client is Agentry's own Microsoft app, which the registry serves.
+const MicrosoftConnector = "microsoft-365"
+
 // The tenants a sign-in is made on: personal Microsoft accounts
 // (Outlook.com, Hotmail, Live) on consumers, work and school accounts on
 // organizations; a tenant's own id names one organization.
@@ -163,6 +167,11 @@ type Microsoft struct {
 	Client string
 	// Say is where the steps, the code among them, are told.
 	Say io.Writer
+	// AgentryClient is the client id of Agentry's own Microsoft app, as
+	// the registry serves it, or "" for none. A sign-in uses it where the
+	// person kept no Entra client of their own and the server is the
+	// build's own image of it.
+	AgentryClient func(ctx context.Context) string
 }
 
 func (m Microsoft) acquire() (*Owner, error) {
@@ -337,10 +346,8 @@ func (m Microsoft) SignIn(ctx context.Context, email string, browse func(string)
 		return "", err
 	}
 	in := c.SignIns[s.Key]
-	if in.ClientID == "" {
-		return "", fmt.Errorf("the Microsoft 365 server has no Entra client yet: agentry agent configure %s --microsoft-client <client id>", m.Agent.Name)
-	}
-	if err := CheckMicrosoftClient(in.ClientID); err != nil {
+	client, agentryApp, err := m.signInClient(ctx, s, in)
+	if err != nil {
 		return "", err
 	}
 	tenant := in.Tenant
@@ -360,7 +367,7 @@ func (m Microsoft) SignIn(ctx context.Context, email string, browse func(string)
 		return "", err
 	}
 	env := map[string]string{
-		s.ClientEnv: in.ClientID, s.TenantEnv: tenant, assistant.MS365CacheKey: key,
+		s.ClientEnv: client, s.TenantEnv: tenant, assistant.MS365CacheKey: key,
 		// The one-shot reaches the sign-in host through a CONNECT proxy
 		// named in HTTPS_PROXY, which Node follows only when told to.
 		"NODE_USE_ENV_PROXY": "1",
@@ -390,7 +397,7 @@ func (m Microsoft) SignIn(ctx context.Context, email string, browse func(string)
 
 	out, stderr, code, err := engine.RunImageOneShot(ctx, m.Docker, engine.ImageOneShot{
 		Image: s.Image, Argv: slices.Concat([]string{"--list-accounts"}, args), Volume: volume, Target: s.VolumeTarget,
-		Env:     map[string]string{s.ClientEnv: in.ClientID, s.TenantEnv: tenant, assistant.MS365CacheKey: key},
+		Env:     map[string]string{s.ClientEnv: client, s.TenantEnv: tenant, assistant.MS365CacheKey: key},
 		Runtime: m.Policy.Docker.Runtime, Limits: m.Policy.Docker.Limits,
 	})
 	if err != nil {
@@ -405,10 +412,43 @@ func (m Microsoft) SignIn(ctx context.Context, email string, browse func(string)
 	}
 	if err := m.record(s.Key, func(r *ImageSignIn) {
 		r.Account, r.At, r.Granted, r.Tenant = account, time.Now().UTC(), granted, tenant
+		r.SignedInWith, r.AgentryApp = client, agentryApp
 	}); err != nil {
 		return "", err
 	}
 	return account, nil
+}
+
+// signInClient is the client a sign-in is made with: the person's own Entra
+// client where they kept one; else Agentry's own app, where the registry
+// serves its id and the server is the build's own image (a token minted
+// under Agentry's app goes to no image Agentry did not build); else none,
+// which is refused with the way to give one.
+func (m Microsoft) signInClient(ctx context.Context, s offer.ImageServer, in ImageSignIn) (client string, agentryApp bool, err error) {
+	if in.ClientID != "" {
+		return in.ClientID, false, CheckMicrosoftClient(in.ClientID)
+	}
+	if m.AgentryClient != nil && s.Image == buildImage(m.Agent, s.Key) {
+		if id := strings.ToLower(strings.TrimSpace(m.AgentryClient(ctx))); id != "" {
+			if err := CheckMicrosoftClient(id); err != nil {
+				return "", false, fmt.Errorf("the registry's Microsoft app: %w", err)
+			}
+			m.say("Signing in with Agentry's own Microsoft app (%s), as your Agentry registry names it.", id)
+			return id, true, nil
+		}
+	}
+	return "", false, fmt.Errorf("the Microsoft 365 server has no Entra client yet: agentry agent configure %s --microsoft-client <client id>", m.Agent.Name)
+}
+
+// buildImage is the image the build offers for an agent's image server, the
+// one a policy that names none runs.
+func buildImage(a Agent, key string) string {
+	for _, o := range a.Builtin.ImageServers(policy.Images{}) {
+		if o.Key == key {
+			return o.Image
+		}
+	}
+	return ""
 }
 
 // ms365Account is the account of the server's account list that is email;
