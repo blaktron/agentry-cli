@@ -29,24 +29,25 @@ and `agentry agent show assistant` lists what it has:
   (`agentry agent reset assistant`).
 - **Its own files** are on a second volume, its data folder, kept the same
   way.
-- **Its memory** is on a third volume, kept the same way: a wiki it writes in
-  `memory/`, with pages on what you tell it and what you share with it, each
-  fact with its source (a file in your share and the date it read it, or what
-  you said and when), an index and a log. It is told never to change your
-  share's files to keep it. When the memory is made, the notes in its data
-  folder's `notes/` are copied into it, and stay where they are. `agentry
-  agent memory export assistant <folder>` copies the memory into a new
-  folder, readable by you alone; a reset removes it.
-- **Thirteen skills** of its own, on unless you switch them off: `memory-ingest`,
-  `memory-query` and `memory-lint`, which say how it adds to its memory,
-  answers from it and checks it; `google-workspace-setup`, which walks you
-  through connecting your Google account; `google-workspace`,
+- **Its memory** is on a third volume, kept the same way: pages it writes in
+  `memory/` for itself to read, on what you tell it and what you share with
+  it, one fact per line with its source (a file in your share and the date it
+  read it, or what you said and when), an index and a log. It reads its memory
+  at the start of each topic and adds to it when a topic ends. It is told
+  never to change your share's files to keep it. When the memory is made, the
+  notes in its data folder's `notes/` are copied into it, and stay where they
+  are. `agentry agent memory export assistant <folder>` copies the memory into
+  a new folder, readable by you alone; a reset removes it.
+- **Thirteen skills** of its own, on unless you switch them off:
+  `memory-ingest`, `memory-query` and `memory-consolidate`, which say how it
+  adds to its memory, answers from it and tidies it; `google-workspace-setup`,
+  which walks you through connecting your Google account; `google-workspace`,
   `google-inbox-triage` and `google-meeting-prep`, adapted from gog's own
   skills (MIT, their licence beside them), which say how it uses your Google
   account safely; `microsoft-365-setup`, which walks you through connecting
   your Microsoft account with an Entra app of your own; `microsoft-365`,
-  `microsoft-inbox-triage` and `microsoft-meeting-prep`, which say how it
-  uses your Microsoft account safely; and `fastmail-setup` and
+  `microsoft-inbox-triage` and `microsoft-meeting-prep`, which say how it uses
+  your Microsoft account safely; and `fastmail-setup` and
   `fastmail-inbox-triage`, for your Fastmail account.
 - **A share folder** of yours, `~/agentry/assistantshare` unless you choose
   another, is mounted read and write while it runs: you see what it writes
