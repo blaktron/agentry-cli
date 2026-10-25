@@ -88,6 +88,9 @@ type upkeepState struct {
 	Upkeeps []time.Time `json:"upkeeps,omitempty"`
 	// RetryAfter holds an idle or in-use compaction back after one failed.
 	RetryAfter time.Time `json:"retryAfter,omitzero"`
+	// Handoff is the handoff a compaction's new conversation opens with,
+	// kept until a turn has carried it to the agent.
+	Handoff string `json:"handoff,omitempty"`
 }
 
 func loadUpkeep(home, name string) upkeepState {
@@ -308,7 +311,14 @@ func (s *Supervisor) compactLocked(ctx context.Context, trigger string) (Compact
 	out.HandoffBytes, out.HandoffCut = len(handoff), strings.HasSuffix(handoff, handoffCutMark)
 	swap, took, err := s.swapConversation(ctx, handoff)
 	out.Swap, out.SwapMillis = swap, took.Milliseconds()
-	if err != nil {
+	var unstored *unstoredError
+	switch {
+	case errors.As(err, &unstored):
+		// The agent is in the new conversation; only the record of it for
+		// the next start failed.
+		out.Reason = err.Error()
+		s.notice("A fresh conversation started, but " + err.Error())
+	case err != nil:
 		out.Reason = "the new conversation could not start: " + err.Error()
 		s.logUpkeep(outDir, out, oldConv, "")
 		s.notice("The memory was saved, but the fresh conversation could not start: " + err.Error())
@@ -417,34 +427,54 @@ const compactionReason = "a compaction: the new conversation opens with the agen
 // swapConversation moves the agent to a new conversation that opens with the
 // handoff: inside the running segment where its harness can start one, and
 // otherwise by ending the segment and starting the next with no
-// conversation to continue. It says which, and how long the swap took. The
-// caller holds turn.
+// conversation to continue. It says which, and how long that swap took (a
+// fallback's restart alone). An *unstoredError says the in-segment swap
+// happened and only its record for the next start failed. The caller holds
+// turn.
 func (s *Supervisor) swapConversation(ctx context.Context, handoff string) (string, time.Duration, error) {
 	start := time.Now()
-	if err := s.swapInSegment(ctx, handoff); err == nil {
-		return SwapInSegment, time.Since(start), nil
-	} else if !errors.Is(err, engine.ErrNoNewConversation) {
+	err := s.swapInSegment(ctx, handoff)
+	var unstored *unstoredError
+	switch {
+	case err == nil, errors.As(err, &unstored):
+		return SwapInSegment, time.Since(start), err
+	case !errors.Is(err, engine.ErrNoNewConversation):
 		// The harness could not start one: the segment restart can.
 		s.notice("The running agent could not start a fresh conversation, so it restarts in one: " + err.Error())
 	}
 	start = time.Now()
+	if err := s.setPendingHandoff(handoff); err != nil {
+		return SwapSegment, 0, err
+	}
 	if err := s.updateConfig(func(c *Config) error {
 		c.Conversation = nil
 		return nil
 	}); err != nil {
 		return SwapSegment, 0, err
 	}
-	s.mu.Lock()
-	s.handoff = handoff
-	s.mu.Unlock()
-	err := s.nextSegmentFor(ctx, "Starting a fresh conversation that opens with the handoff")
+	err = s.nextSegmentFor(ctx, "Starting a fresh conversation that opens with the handoff")
 	return SwapSegment, time.Since(start), err
 }
 
+// newConversationWait bounds the running harness's start of a new
+// conversation, which the person's waiting message waits for.
+const newConversationWait = time.Minute
+
+// unstoredError is an in-segment swap whose new conversation started and
+// could not be recorded as the agent's for its next start.
+type unstoredError struct{ err error }
+
+func (e *unstoredError) Error() string {
+	return "it could not be recorded for the next start: " + e.err.Error()
+}
+
+func (e *unstoredError) Unwrap() error { return e.err }
+
 // swapInSegment starts the new conversation in the running segment's
-// harness, recording it as the agent's conversation, and has the next turn
+// harness, records it as the agent's conversation, and has the next turn
 // open with the handoff. engine.ErrNoNewConversation when the harness
-// cannot; on any error the conversation is the one it was.
+// cannot; any other error before the harness started one leaves the
+// conversation as it was, and one after is an *unstoredError.
 func (s *Supervisor) swapInSegment(ctx context.Context, handoff string) error {
 	s.mu.Lock()
 	sess := s.sess
@@ -453,26 +483,65 @@ func (s *Supervisor) swapInSegment(ctx context.Context, handoff string) error {
 	if !ok {
 		return engine.ErrNoNewConversation
 	}
-	id, err := r.NewConversation(ctx, compactionReason)
-	if err != nil {
+	// The handoff is kept before the harness moves: once it has, the new
+	// conversation must open with it, even after a stop.
+	if err := s.setPendingHandoff(handoff); err != nil {
 		return err
 	}
+	nctx, cancel := context.WithTimeout(ctx, newConversationWait)
+	id, err := r.NewConversation(nctx, compactionReason)
+	cancel()
+	if err != nil {
+		_ = s.setPendingHandoff("")
+		return err
+	}
+	s.mu.Lock()
+	s.carry, s.carryHandoff, s.persona, s.resumed, s.resumeReason = handoffCarried(handoff), handoff, "", false, compactionReason
+	segment, runID := s.segment, s.runID
+	s.mu.Unlock()
+	resumed := false
+	_ = appendEntry(s.opts.Home, s.opts.Agent.Name, Entry{Segment: segment, Run: runID, Resumed: &resumed,
+		Event: session.Event{Kind: KindConversationStart, Time: time.Now().UTC(), Text: compactionReason}})
 	if err := s.updateConfig(func(c *Config) error {
 		c.Conversation = &Conversation{Adapter: s.adapter, ID: id}
 		// A new conversation has been given nothing yet.
 		c.PersonaGiven = ""
 		return nil
 	}); err != nil {
-		return err
+		return &unstoredError{err: err}
+	}
+	return nil
+}
+
+// setPendingHandoff keeps the handoff a new conversation is to open with in
+// upkeep.json ("" takes it off).
+func (s *Supervisor) setPendingHandoff(h string) error {
+	s.mu.Lock()
+	s.upkeep.Handoff = h
+	u := s.upkeep
+	s.mu.Unlock()
+	s.upkeepSave.Lock()
+	defer s.upkeepSave.Unlock()
+	return saveUpkeep(s.opts.Home, s.opts.Agent.Name, u)
+}
+
+// handoffSent settles the handoff a turn of sess carried: delivered, it is
+// no longer pending; not, the segment's next turn carries it again.
+func (s *Supervisor) handoffSent(sess engine.PersistentSession, h string, delivered bool) {
+	if delivered {
+		s.mu.Lock()
+		pending := s.upkeep.Handoff == h
+		s.mu.Unlock()
+		if pending {
+			_ = s.setPendingHandoff("")
+		}
+		return
 	}
 	s.mu.Lock()
-	s.carry, s.persona, s.resumed, s.resumeReason = handoffCarried(handoff), "", false, compactionReason
-	segment, runID := s.segment, s.runID
+	if s.sess == sess && s.carryHandoff == "" && s.upkeep.Handoff == h {
+		s.carry, s.carryHandoff = handoffCarried(h)+s.carry, h
+	}
 	s.mu.Unlock()
-	resumed := false
-	_ = appendEntry(s.opts.Home, s.opts.Agent.Name, Entry{Segment: segment, Run: runID, Resumed: &resumed,
-		Event: session.Event{Kind: KindConversationStart, Time: time.Now().UTC(), Text: compactionReason}})
-	return nil
 }
 
 // factCountWait bounds each fact count, so the counts before and after an

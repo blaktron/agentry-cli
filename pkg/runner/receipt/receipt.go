@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // EnvelopeVersion is the result envelope schema id.
@@ -129,15 +130,26 @@ type Persistent struct {
 	// did not, ResumeReason says why (a first segment, a store the harness
 	// could not load, a harness that cannot continue one) and the runner
 	// gave the new conversation the last exchange instead.
-	Resumed      bool              `json:"resumed"`
-	ResumeReason string            `json:"resumeReason,omitempty"`
-	Volumes      PersistentVolumes `json:"volumes"`
+	Resumed      bool   `json:"resumed"`
+	ResumeReason string `json:"resumeReason,omitempty"`
+	// NewConversations are the conversations the segment's running harness
+	// started after the one Resumed describes, in order, each with why.
+	NewConversations []NewConversation `json:"newConversations,omitempty"`
+	Volumes          PersistentVolumes `json:"volumes"`
 	// Share is the share folder the segment mounted; empty when the agent
 	// had it off.
 	Share string `json:"share,omitempty"`
 	// Roster is what the agent had for the segment, each entry with its
 	// switch and its consent sentence, as every client shows it.
 	Roster []RosterEntry `json:"roster,omitempty"`
+}
+
+// NewConversation is a conversation a persistent agent's segment started in
+// its running harness.
+type NewConversation struct {
+	ID     string    `json:"id"`
+	At     time.Time `json:"at"`
+	Reason string    `json:"reason"`
 }
 
 // RosterEntry is one entry of a persistent agent's roster as a segment's

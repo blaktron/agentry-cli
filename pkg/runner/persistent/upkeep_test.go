@@ -542,3 +542,74 @@ func TestASegmentTheUpkeepTurnRestartedOutlivesTheTurn(t *testing.T) {
 		})
 	}
 }
+
+// TestTheHandoffWaitsForTheTurnThatCarriesIt: after an in-segment swap the
+// handoff is kept until a turn has carried it, through a segment restarted
+// for a change before that turn and through a stop and a start; once carried
+// it is not carried again.
+func TestTheHandoffWaitsForTheTurnThatCarriesIt(t *testing.T) {
+	quoted := strconv.Quote("owed: book the chalet by 1 December\nctx: no meetings before 9:30\ntried: the dealer's form failed twice\nopen: the car\npages: car-budget")
+	t.Run("a change", func(t *testing.T) {
+		home := shortHome(t)
+		enable(t, home)
+		st := &starter{answer: aHandoff, renew: true}
+		sv := startUpkeeper(t, home, st, nil)
+		if err := sv.Send(context.Background(), "hello"); err != nil {
+			t.Fatal(err)
+		}
+		if out, err := sv.Compact(context.Background()); err != nil || out.Swap != SwapInSegment {
+			t.Fatalf("compact = %+v, %v", out, err)
+		}
+		if _, err := sv.Change(Change{Switch: &Switch{ID: EntryShare, On: false}}); err != nil {
+			t.Fatal(err)
+		}
+		if err := sv.Send(context.Background(), "what is open?"); err != nil {
+			t.Fatal(err)
+		}
+		if len(st.segments) != 2 || st.segments[1].Persistent.ContinueID != "conv-renewed-1" {
+			t.Fatalf("segments = %d", len(st.segments))
+		}
+		sent := st.last.sentTurns()
+		if len(sent) != 1 || strings.Count(sent[0], quoted) != 1 || !strings.HasSuffix(sent[0], "what is open?") {
+			t.Fatalf("the first turn after the change = %q", sent)
+		}
+		if err := sv.Send(context.Background(), "and now?"); err != nil {
+			t.Fatal(err)
+		}
+		if sent := st.last.sentTurns(); strings.Contains(sent[1], quoted) {
+			t.Errorf("the handoff was carried twice: %q", sent[1])
+		}
+		if u := loadUpkeep(home, "assistant"); u.Handoff != "" {
+			t.Errorf("a carried handoff is still pending: %q", u.Handoff)
+		}
+	})
+	t.Run("a stop", func(t *testing.T) {
+		home := shortHome(t)
+		enable(t, home)
+		st := &starter{answer: aHandoff, renew: true}
+		sv := startUpkeeper(t, home, st, nil)
+		if err := sv.Send(context.Background(), "hello"); err != nil {
+			t.Fatal(err)
+		}
+		if out, err := sv.Compact(context.Background()); err != nil || out.Swap != SwapInSegment {
+			t.Fatalf("compact = %+v, %v", out, err)
+		}
+		if _, err := sv.Stop(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if u := loadUpkeep(home, "assistant"); u.Handoff == "" {
+			t.Fatal("the handoff was not kept across the stop")
+		}
+		st2 := &starter{answer: aHandoff, resumed: true}
+		sv2 := startUpkeeper(t, home, st2, nil)
+		if got := st2.segments[0].Persistent.ContinueID; got != "conv-renewed-1" {
+			t.Fatalf("the start continues %q, not the compacted conversation", got)
+		}
+		if err := sv2.Send(context.Background(), "what is open?"); err != nil {
+			t.Fatal(err)
+		}
+		if sent := st2.last.sentTurns(); len(sent) != 1 || strings.Count(sent[0], quoted) != 1 {
+			t.Fatalf("the first turn after the start = %q", sent)
+		}
+	})
+}

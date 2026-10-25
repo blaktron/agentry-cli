@@ -473,6 +473,9 @@ func TestASegmentStartsANewConversationInItsRunningHarness(t *testing.T) {
 	if agents != 1 {
 		t.Errorf("%d agent containers started, want the one: %v", agents, f.Ops())
 	}
+	if nc := env.Persistent.NewConversations; len(nc) != 1 || nc[0].ID != id || nc[0].Reason != "a compaction" || nc[0].At.IsZero() {
+		t.Errorf("the envelope's new conversations = %+v", nc)
+	}
 	if env.Usage.CostUSD != 0.5 {
 		t.Errorf("the segment's cost = %v, want both conversations' 0.5", env.Usage.CostUSD)
 	}

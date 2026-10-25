@@ -177,14 +177,14 @@ type Supervisor struct {
 	// upkeepDirty says it changed since last saved. upkeeping is set while
 	// an upkeep turn runs, so a person's message waits for it, and
 	// upkeepTurn until its user turn takes the mark into the transcript.
-	// handoff is the handoff the next segment's new conversation opens
-	// with.
-	upkeep      upkeepState
-	upkeepDirty bool
-	upkeepSave  sync.Mutex // one write of upkeep.json at a time
-	upkeeping   bool
-	upkeepTurn  bool
-	handoff     string
+	// carryHandoff is the handoff carry holds, so the turn that sends it
+	// takes it off upkeep.json's pending handoff.
+	upkeep       upkeepState
+	upkeepDirty  bool
+	upkeepSave   sync.Mutex // one write of upkeep.json at a time
+	upkeeping    bool
+	upkeepTurn   bool
+	carryHandoff string
 
 	done     chan struct{}
 	stopOnce sync.Once
@@ -377,15 +377,18 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 	}
 	carry := ""
 	s.mu.Lock()
-	handoff := s.handoff
-	s.handoff = ""
+	handoff := s.upkeep.Handoff
 	s.mu.Unlock()
-	if !resumed && handoff != "" {
-		// A compaction ended the conversation: the new one opens with the
-		// handoff the agent wrote for it.
+	if handoff != "" {
+		// A compaction's new conversation opens with the handoff the agent
+		// wrote for it, until a turn has carried it: this segment may be
+		// the new conversation's first, or one that continues it before
+		// its first turn (a change applied, a start after a stop).
 		carry = handoffCarried(handoff)
-		reason = "a compaction: the new conversation opens with the agent's handoff"
-		sess.SetResumeReason(reason)
+		if !resumed {
+			reason = compactionReason
+			sess.SetResumeReason(reason)
+		}
 	} else if !resumed {
 		// Whatever kept the conversation from continuing (a harness that
 		// cannot, a store that would not load, another harness), the new
@@ -439,6 +442,7 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 	s.sess, s.runID, s.outDir, s.segment = sess, runID, outDir, segment
 	s.applied, s.grants, s.packsDone, s.ending, s.pumpDone = applied, key, packsDone, ending, pumpDone
 	s.carry, s.persona, s.resumed, s.resumeReason = carry, persona, resumed, reason
+	s.carryHandoff = handoff
 	if !resumed {
 		// A new conversation: what upkeep knew of the last one is gone with
 		// it.
@@ -623,6 +627,8 @@ func (s *Supervisor) sendLocked(ctx context.Context, pre, text string) error {
 		frame += change + joinFrame(roster, joined, s.joinTools, restarted)
 	}
 	s.carry = ""
+	handoff := s.carryHandoff
+	s.carryHandoff = ""
 	s.mu.Unlock()
 	failed := failFrame(BuildRoster(s.opts.Agent, cfg, nil), cfg.ServerFailures)
 	frame += failed
@@ -635,6 +641,9 @@ func (s *Supervisor) sendLocked(ctx context.Context, pre, text string) error {
 		err = sess.SendCarrying(ctx, frame, text)
 	} else {
 		err = sess.Send(ctx, text)
+	}
+	if handoff != "" {
+		s.handoffSent(sess, handoff, err == nil)
 	}
 	if err == nil && byChange {
 		s.mu.Lock()

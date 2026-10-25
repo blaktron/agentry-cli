@@ -726,6 +726,10 @@ func (s *liveSession) NewConversation(ctx context.Context, reason string) (strin
 	// The new conversation's harness reports its running cost from
 	// nothing: what the one it left spent is kept under it.
 	s.costBase = s.costUSD
+	if s.env.Persistent != nil {
+		s.env.Persistent.NewConversations = append(s.env.Persistent.NewConversations,
+			receipt.NewConversation{ID: id, At: time.Now().UTC(), Reason: reason})
+	}
 	s.mu.Unlock()
 	s.emit(session.Event{Kind: session.KindOther, Text: "a new conversation in the running harness: " + reason})
 	return id, nil
