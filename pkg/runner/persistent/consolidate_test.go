@@ -113,10 +113,10 @@ func TestTheMemoryIsConsolidatedOnceADayAtIdle(t *testing.T) {
 		t.Fatal("no record of the consolidation")
 	}
 	recs := upkeepLines(t, st.segments[0].OutDir)
-	if r := recs[0]; r.Trigger != UpkeepConsolidate || r.Swapped || r.Reason != "" || r.FactsBefore != 38 {
+	if r := recs[0]; r.Trigger != UpkeepConsolidate || r.Swapped || r.Reason != "" || r.FactsBefore != 38 || r.FactsAfter != 38 {
 		t.Errorf("the record = %+v", r)
 	}
-	if u := loadUpkeep(home, "assistant"); u.LastConsolidation.IsZero() || u.Changes != 0 || u.MemoryDigest != "sha256:b" || len(u.Upkeeps) != 1 {
+	if u := loadUpkeep(home, "assistant"); u.LastConsolidation.IsZero() || u.MemoryWrites != 0 || u.MemoryDigest != "sha256:b" || len(u.Upkeeps) != 1 {
 		t.Errorf("upkeep.json = %+v", u)
 	}
 
@@ -131,11 +131,65 @@ func TestTheMemoryIsConsolidatedOnceADayAtIdle(t *testing.T) {
 	}
 	// A day later, with the memory as the last run left it: nothing to do.
 	c.set(c.now().Add(24 * time.Hour))
-	if !waitUntil(func() bool { return loadUpkeep(home, "assistant").Changes == 0 }) {
+	if !waitUntil(func() bool { return loadUpkeep(home, "assistant").MemoryWrites == 0 }) {
 		t.Fatal("an unchanged memory was not looked at")
 	}
 	if n := consolidations(st); n != 1 {
 		t.Errorf("an unchanged memory was consolidated: %d", n)
+	}
+	waitUntil(func() bool { return len(upkeepLines(t, st.segments[0].OutDir)) == 2 })
+	if recs := upkeepLines(t, st.segments[0].OutDir); len(recs) != 2 || !strings.Contains(recs[1].Reason, "has not changed") || recs[1].Turn != 0 {
+		t.Errorf("the skipped run's record = %+v", recs)
+	}
+}
+
+// TestAMessageDuringAConsolidationWaitsForIt: the person's message sent
+// while the consolidation's turn runs waits for it, told why, and is
+// answered after it.
+func TestAMessageDuringAConsolidationWaitsForIt(t *testing.T) {
+	home := shortHome(t)
+	enableHeartbeat(t, home, false)
+	c := &clock{t: time.Date(2026, 10, 21, 9, 0, 0, 0, time.UTC)}
+	m := &memoryStub{facts: 10, digest: "sha256:e"}
+	st := &starter{resumed: true}
+	sv := startConsolidating(t, home, st, c, m)
+	if err := sv.Send(context.Background(), "hello"); err != nil {
+		t.Fatal(err)
+	}
+	events, unsubscribe := sv.Subscribe()
+	defer unsubscribe()
+	hold := make(chan struct{})
+	seg := st.lastSegment()
+	seg.mu.Lock()
+	seg.hold = hold
+	seg.mu.Unlock()
+	c.set(c.now().Add(2*time.Hour + time.Minute))
+	if !waitUntil(func() bool { return consolidations(st) == 1 }) {
+		t.Fatal("no consolidation")
+	}
+	sent := make(chan error, 1)
+	go func() { sent <- sv.Send(context.Background(), "I'm back") }()
+	told := false
+	for deadline := time.After(2 * time.Second); !told; {
+		select {
+		case ev := <-events:
+			told = ev.Text == "Tidying the memory first; your message follows"
+		case <-deadline:
+			t.Fatal("the waiting message was not told why")
+		}
+	}
+	select {
+	case err := <-sent:
+		t.Fatalf("the message did not wait: %v", err)
+	default:
+	}
+	close(hold)
+	if err := <-sent; err != nil {
+		t.Fatalf("the message after the consolidation: %v", err)
+	}
+	raw := seg.rawTurns()
+	if last := raw[len(raw)-1]; !strings.HasSuffix(last, "I'm back") || !strings.HasSuffix(raw[len(raw)-2], consolidateText) {
+		t.Errorf("the turns = %q", raw[len(raw)-2:])
 	}
 }
 
@@ -147,7 +201,7 @@ func TestAConsolidationFollowsAnIdleCompaction(t *testing.T) {
 	enableHeartbeat(t, home, false)
 	c := &clock{t: time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)}
 	if err := saveUpkeep(home, "assistant", upkeepState{LastPersonTurn: c.now().Add(-3 * time.Hour), ContextTokens: 150_000,
-		ContextLimit: 1_000_000, TurnsSince: 4, Changes: 4}); err != nil {
+		ContextLimit: 1_000_000, TurnsSince: 4, MemoryWrites: 4}); err != nil {
 		t.Fatal(err)
 	}
 	m := &memoryStub{facts: 20, digest: "sha256:c"}
@@ -187,7 +241,7 @@ func TestAConsolidationKeepsTheDailyCap(t *testing.T) {
 	for i := range maxUpkeepsPerDay {
 		spent = append(spent, c.now().Add(-time.Duration(i+1)*time.Hour))
 	}
-	if err := saveUpkeep(home, "assistant", upkeepState{LastPersonTurn: c.now().Add(-3 * time.Hour), Changes: 1, Upkeeps: spent}); err != nil {
+	if err := saveUpkeep(home, "assistant", upkeepState{LastPersonTurn: c.now().Add(-3 * time.Hour), MemoryWrites: 1, Upkeeps: spent}); err != nil {
 		t.Fatal(err)
 	}
 	st := &starter{resumed: true}
@@ -195,7 +249,7 @@ func TestAConsolidationKeepsTheDailyCap(t *testing.T) {
 	if !waitUntil(func() bool { return len(upkeepLines(t, st.segments[0].OutDir)) == 1 }) {
 		t.Fatal("no record of the held-back consolidation")
 	}
-	if r := upkeepLines(t, st.segments[0].OutDir)[0]; r.Trigger != UpkeepConsolidate || !strings.Contains(r.Reason, "the most there may be") {
+	if r := upkeepLines(t, st.segments[0].OutDir)[0]; r.Trigger != UpkeepConsolidate || !strings.Contains(r.Reason, "kept for compactions") {
 		t.Errorf("the record = %+v", r)
 	}
 	if n := consolidations(st); n != 0 {

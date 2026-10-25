@@ -177,17 +177,22 @@ type Supervisor struct {
 	ranUntil map[string]time.Time
 
 	// upkeep is what memory upkeep decides by (upkeep.json), and
-	// upkeepDirty says it changed since last saved. upkeeping is set while
-	// an upkeep turn runs, so a person's message waits for it, and
-	// upkeepTurn until its user turn takes the mark into the transcript.
+	// upkeepDirty says it changed since last saved. upkeeping is above
+	// zero while upkeep runs, so a person's message waits for it, and
+	// upkeepTurn until its user turn, the one sent with upkeepMark, takes
+	// the mark into the transcript.
 	// carryHandoff is the handoff carry holds, so the turn that sends it
 	// takes it off upkeep.json's pending handoff.
-	upkeep       upkeepState
-	upkeepDirty  bool
-	upkeepSave   sync.Mutex // one write of upkeep.json at a time
-	upkeeping    bool
+	upkeep      upkeepState
+	upkeepDirty bool
+	upkeepSave  sync.Mutex // one write of upkeep.json at a time
+	upkeeping   int
+	// upkeepWait is what a person's message is told while it waits for
+	// the upkeep; waiting counts the messages waiting.
+	upkeepWait   string
+	waiting      int
 	upkeepTurn   bool
-	upkeepText   string
+	upkeepMark   string
 	carryHandoff string
 	// memoryFrameDue says the conversation is new and has not yet been
 	// sent the memory frame.
@@ -492,7 +497,7 @@ func (s *Supervisor) pump(sess engine.PersistentSession, segment int, runID stri
 					ev.Task, s.taskTurn = s.taskTurn, ""
 				}
 				// An upkeep turn is the runner's, and says so likewise.
-				if s.upkeepTurn && ev.Text == s.upkeepText {
+				if s.upkeepTurn && ev.Text == s.upkeepMark {
 					ev.Upkeep, s.upkeepTurn = true, false
 				}
 				s.usage.UserTurns++
@@ -548,18 +553,24 @@ func (s *Supervisor) broadcast(ev session.Event) {
 func (s *Supervisor) Send(ctx context.Context, text string) error {
 	if !s.turn.TryLock() {
 		s.mu.Lock()
-		upkeeping := s.upkeeping
+		upkeeping, wait := s.upkeeping > 0, s.upkeepWait
+		if upkeeping {
+			s.waiting++
+		}
 		s.mu.Unlock()
 		if !upkeeping {
 			return ErrBusy
 		}
 		// A message that arrives during memory upkeep waits for it, at
 		// most as long as an upkeep turn may run, and goes to the new
-		// conversation.
-		s.notice("Saving to memory first; your message follows")
+		// conversation; upkeep that has not started yet waits for it.
+		s.notice(wait)
 		wctx, cancel := context.WithTimeout(ctx, upkeepTurnCap+time.Minute)
 		ok := s.waitTurn(wctx)
 		cancel()
+		s.mu.Lock()
+		s.waiting--
+		s.mu.Unlock()
 		if !ok {
 			return ErrBusy
 		}
