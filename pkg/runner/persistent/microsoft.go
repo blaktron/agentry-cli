@@ -366,6 +366,13 @@ func (m Microsoft) SignIn(ctx context.Context, email string, browse func(string)
 	if err != nil {
 		return "", err
 	}
+	if agentryApp {
+		// Recorded before the login, so a sign-in that fails after
+		// Microsoft issued its tokens still marks the volume.
+		if err := m.record(s.Key, func(r *ImageSignIn) { r.AgentryApp = true }); err != nil {
+			return "", err
+		}
+	}
 	env := map[string]string{
 		s.ClientEnv: client, s.TenantEnv: tenant, assistant.MS365CacheKey: key,
 		// The one-shot reaches the sign-in host through a CONNECT proxy
@@ -412,7 +419,8 @@ func (m Microsoft) SignIn(ctx context.Context, email string, browse func(string)
 	}
 	if err := m.record(s.Key, func(r *ImageSignIn) {
 		r.Account, r.At, r.Granted, r.Tenant = account, time.Now().UTC(), granted, tenant
-		r.SignedInWith, r.AgentryApp = client, agentryApp
+		r.SignedInWith = client
+		r.AgentryApp = r.AgentryApp || agentryApp
 	}); err != nil {
 		return "", err
 	}

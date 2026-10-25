@@ -468,6 +468,33 @@ func TestMicrosoftSignsInWithAgentrysAppWhenNoClientIsKept(t *testing.T) {
 	}
 }
 
+// A volume that has held a sign-in made with Agentry's app stays marked
+// after a later sign-in with the person's own client, and after a sign-in
+// with Agentry's app that failed once Microsoft had answered.
+func TestAVolumeThatHeldAgentrysAppStaysMarked(t *testing.T) {
+	r := newMicrosoftRig(t)
+	r.m.AgentryClient = func(context.Context) string { return testAgentryApp }
+	r.accounts = `{"accounts":[]}`
+	if _, err := r.m.SignIn(context.Background(), "person@outlook.com", nil); err == nil {
+		t.Fatal("a sign-in whose account list is empty was recorded")
+	}
+	c, _ := LoadConfig(r.m.Home, "assistant")
+	if !c.SignIns["ms365"].AgentryApp {
+		t.Fatal("a failed sign-in with Agentry's app left the volume unmarked")
+	}
+	r.accounts = `{"accounts":[{"id":"h1","username":"person@outlook.com","name":"Person","selected":true}]}`
+	if err := r.m.SetClient(testEntraClient, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.m.SignIn(context.Background(), "person@outlook.com", nil); err != nil {
+		t.Fatal(err)
+	}
+	c, _ = LoadConfig(r.m.Home, "assistant")
+	if in := c.SignIns["ms365"]; in.SignedInWith != testEntraClient || !in.AgentryApp {
+		t.Fatalf("after the person's own client: %+v", in)
+	}
+}
+
 // The person's own client, where kept, is used before Agentry's app, which
 // is then not asked for; a sign-in made with it records no Agentry app.
 func TestMicrosoftsOwnClientComesBeforeAgentrysApp(t *testing.T) {
@@ -507,8 +534,8 @@ func TestAgentrysMicrosoftAppGoesOnlyToTheBuildsImage(t *testing.T) {
 	}
 }
 
-// A sign-in recorded before the client it was made with was kept is given
-// its ClientID, as before.
+// A record with no SignedInWith gives the server its ClientID; one with it
+// gives that client.
 func TestASignInRecordedEarlierKeepsItsClient(t *testing.T) {
 	s := offer.ImageServer{Key: "ms365", ClientEnv: "MS365_MCP_CLIENT_ID", TenantEnv: "MS365_MCP_TENANT_ID"}
 	if env := signInEnv(s, ImageSignIn{ClientID: testEntraClient, Tenant: TenantConsumers}); env["MS365_MCP_CLIENT_ID"] != testEntraClient {

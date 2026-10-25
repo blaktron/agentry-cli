@@ -40,11 +40,13 @@ type ImageSignIn struct {
 	Tenant   string `yaml:"tenant,omitempty" json:"tenant,omitempty"`
 	// SignedInWith is the client the sign-in was made with, which the
 	// server refreshes as: ClientID, or Agentry's own app where the
-	// person kept none (AgentryApp); empty for a sign-in recorded before
-	// it was kept, which was made with ClientID.
+	// person kept none. Empty, the server is given ClientID.
 	SignedInWith string `yaml:"signedInWith,omitempty" json:"signedInWith,omitempty"`
-	// AgentryApp says the sign-in was made with Agentry's own app, which
-	// is given only to the build's own image of the server.
+	// AgentryApp says the server's volume has held a sign-in made with
+	// Agentry's own app. It is set before that sign-in starts and stays
+	// set while the volume does, whatever client signs in later, since
+	// the volume may still hold its tokens: the server is then given only
+	// at the build's own image.
 	AgentryApp bool `yaml:"agentryApp,omitempty" json:"agentryApp,omitempty"`
 	// Signoff is what the person asked mail the server sends or drafts to
 	// end with, for a server that takes one; empty for none.
