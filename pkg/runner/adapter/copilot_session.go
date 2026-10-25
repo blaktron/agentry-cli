@@ -565,6 +565,10 @@ type copilotEvent struct {
 		// assistant.usage
 		InputTokens  int64 `json:"inputTokens"`
 		OutputTokens int64 `json:"outputTokens"`
+		// session.usage_info: the conversation's size and the model's
+		// window.
+		CurrentTokens int64 `json:"currentTokens"`
+		TokenLimit    int64 `json:"tokenLimit"`
 		// tool.execution_start
 		ToolName      string `json:"toolName"`
 		MCPServerName string `json:"mcpServerName"`
@@ -645,6 +649,12 @@ func (s *copilotSession) handleNotification(m rpcMessage, frame []byte) {
 		}
 		s.mu.Unlock()
 		s.emit(Event{Kind: EventUsage, InputTokens: ev.Data.InputTokens, OutputTokens: ev.Data.OutputTokens, Raw: raw})
+	case "session.usage_info":
+		if ev.Data.CurrentTokens <= 0 {
+			s.emit(Event{Kind: EventOther, Text: ev.Type, Raw: raw})
+			return
+		}
+		s.emit(Event{Kind: EventUsage, ContextTokens: ev.Data.CurrentTokens, ContextLimit: ev.Data.TokenLimit, Raw: raw})
 	case "permission.requested":
 		s.decide(ev, raw)
 	case "session.error":

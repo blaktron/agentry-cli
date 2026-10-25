@@ -81,10 +81,13 @@ func heartbeatOn(a Agent, c Config) bool {
 // startHeartbeat names to the agent the tasks that came due while it was
 // stopped, then ticks until Stop.
 func (s *Supervisor) startHeartbeat() {
-	if !s.opts.Agent.Builtin.KeepsTime() {
+	keepsTime, keepsMemory := s.opts.Agent.Builtin.KeepsTime(), s.opts.Agent.Builtin.KeepsMemory()
+	if !keepsTime && !keepsMemory {
 		return
 	}
-	s.noteMissed()
+	if keepsTime {
+		s.noteMissed()
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	tick := s.opts.Tick
 	if tick <= 0 {
@@ -103,7 +106,10 @@ func (s *Supervisor) startHeartbeat() {
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				s.beat(ctx)
+				if keepsTime {
+					s.beat(ctx)
+				}
+				s.upkeepTick(ctx)
 			}
 		}
 	}()
@@ -282,13 +288,14 @@ func (s *Supervisor) fireTask(ctx context.Context, t Task, at time.Time) {
 	}
 	events, unsubscribe := s.Subscribe()
 	defer unsubscribe()
+	text := "Task: " + cur.Name + "\n\n" + cur.Instruction
 	s.mu.Lock()
-	s.taskTurn = cur.ID
+	s.taskTurn, s.taskText = cur.ID, text
 	s.mu.Unlock()
 	frame := "(Agentry's heartbeat: your task " + cur.ID + ", " + strconv.Quote(cur.Name) + ", came due at " +
 		at.In(zoneOf(cur)).Format("15:04 Mon 2 Jan") + " " + cur.Zone + ". You registered it; its instruction is the message below. " +
 		"Act on it as you would a request from the person, within your instructions. The person may not be reading: say what you did in your answer.)\n\n"
-	err = s.sendLocked(ctx, frame, "Task: "+cur.Name+"\n\n"+cur.Instruction)
+	err = s.sendLocked(ctx, frame, text)
 	ended := s.now()
 	s.mu.Lock()
 	s.ranUntil[cur.ID] = ended
@@ -299,7 +306,7 @@ func (s *Supervisor) fireTask(ctx context.Context, t Task, at time.Time) {
 		s.taskTurn = ""
 	}
 	s.mu.Unlock()
-	answer := lastAnswer(events)
+	answer := lastAnswer(events, func(ev session.Event) bool { return ev.Task == cur.ID })
 	result := firstLine(answer)
 	if err != nil {
 		result = "the turn failed: " + err.Error()
@@ -337,9 +344,10 @@ func (s *Supervisor) waitTurn(ctx context.Context) bool {
 // reaches the watchers after the turn returns.
 const answerWait = 2 * time.Second
 
-// lastAnswer is the text of the assistant turn that answered the task: the
-// first among the events once the task's own user turn has come.
-func lastAnswer(events <-chan session.Event) string {
+// lastAnswer is the text of the assistant turn that answered a turn the
+// supervisor sent (a task's, an upkeep): the first among the events once the
+// user turn ours says is that turn has come.
+func lastAnswer(events <-chan session.Event, ours func(session.Event) bool) string {
 	seen := false
 	timeout := time.After(answerWait)
 	for {
@@ -350,7 +358,9 @@ func lastAnswer(events <-chan session.Event) string {
 			}
 			switch {
 			case ev.Kind == session.KindUserTurn:
-				seen = true
+				// A turn before this one may still be on its way to the
+				// watchers: only the turn that was sent counts.
+				seen = ours(ev)
 			case seen && ev.Kind == session.KindAssistantTurn:
 				return ev.Text
 			case seen && ev.Kind == session.KindError:

@@ -33,15 +33,21 @@ and `agentry agent show assistant` lists what it has:
   `memory/` for itself to read, on what you tell it and what you share with
   it, one fact per line with its source (a file in your share and the date it
   read it, or what you said and when), an index and a log. It reads its memory
-  at the start of each topic and adds to it when a topic ends. It is told
-  never to change your share's files to keep it. When the memory is made, the
-  notes in its data folder's `notes/` are copied into it, and stay where they
-  are. `agentry agent memory export assistant <folder>` copies the memory into
-  a new folder, readable by you alone; a reset removes it.
-- **Thirteen skills** of its own, on unless you switch them off:
-  `memory-ingest`, `memory-query` and `memory-consolidate`, which say how it
-  adds to its memory, answers from it and tidies it; `google-workspace-setup`,
-  which walks you through connecting your Google account; `google-workspace`,
+  at the start of each topic and adds to it when a topic ends. When its
+  conversation has grown large (two hours with nothing from you and 100,000
+  tokens or more, or three quarters of the model's context window in use), it
+  saves the conversation to its memory and goes on in a fresh conversation
+  that opens with a short handoff it wrote; `agentry agent compact assistant`
+  does it at once. It is told never to change your share's files to keep it.
+  When the memory is made, the notes in its data folder's `notes/` are copied
+  into it, and stay where they are. `agentry agent memory export assistant
+  <folder>` copies the memory into a new folder, readable by you alone; a
+  reset removes it.
+- **Fourteen skills** of its own, on unless you switch them off:
+  `memory-ingest`, `memory-query`, `memory-consolidate` and `memory-compact`,
+  which say how it adds to its memory, answers from it, tidies it and saves a
+  whole conversation before it is compacted; `google-workspace-setup`, which
+  walks you through connecting your Google account; `google-workspace`,
   `google-inbox-triage` and `google-meeting-prep`, adapted from gog's own
   skills (MIT, their licence beside them), which say how it uses your Google
   account safely; `microsoft-365-setup`, which walks you through connecting

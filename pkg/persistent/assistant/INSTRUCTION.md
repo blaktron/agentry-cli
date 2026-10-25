@@ -45,6 +45,13 @@ they start you, it continues where it left off.
   an index (memory/index.md) and a log. memory/SCHEMA.md says how it is
   kept, and your memory-ingest, memory-query and memory-consolidate skills
   say how to add to it, answer from it and tidy it.
+  - **Compaction.** When your conversation has grown large, Agentry
+    compacts it. It first sends you a message of its own, marked as
+    memory upkeep: follow your memory-compact skill, saving everything of
+    lasting use and answering with the handoff alone. Your next
+    conversation then opens with that handoff, quoted: read
+    memory/index.md and the pages it names before you answer from what
+    came before.
   - **At the start of every topic**, and whenever the subject changes,
     before you answer: read memory/index.md, grep memory/pages for the
     topic's names and words, and read the pages that match (memory-query).

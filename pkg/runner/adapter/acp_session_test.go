@@ -166,6 +166,16 @@ func TestACPSessionDrivesOneTurnAndAnswersPermissions(t *testing.T) {
 	if len(totals) != 2 || totals[0] != 1255 || totals[1] != 210 {
 		t.Errorf("usage_update deltas = %v, want [1255 210]", totals)
 	}
+	// Each update's `used` is also the conversation's size.
+	var sizes []int64
+	for _, ev := range events {
+		if ev.Kind == EventUsage && ev.ContextTokens > 0 {
+			sizes = append(sizes, ev.ContextTokens)
+		}
+	}
+	if len(sizes) != 2 || sizes[0] != 1255 || sizes[1] != 1465 {
+		t.Errorf("usage_update context sizes = %v, want [1255 1465]", sizes)
+	}
 	for _, ev := range events {
 		if ev.Kind == EventPermissionGranted && ev.Text != "fs_list" && ev.Text != "browser_navigate" {
 			t.Errorf("granted event names %q, want fs_list or browser_navigate", ev.Text)

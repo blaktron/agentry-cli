@@ -81,6 +81,11 @@ func TestTheCopilotImageCompilesASignInRun(t *testing.T) {
 			cfg["enableSkills"] != false || cfg["model"] != "auto" || !slices.Equal(anyStrings(cfg["availableTools"]), []string{"mcp:*"}) {
 			t.Fatalf("session.json %s", res.Files["session.json"])
 		}
+		// Copilot's own compaction waits until past the three quarters of
+		// the window at which a persistent agent compacts its conversation.
+		if inf, _ := cfg["infiniteSessions"].(map[string]any); inf["enabled"] != true || inf["backgroundCompactionThreshold"] != 0.9 || inf["bufferExhaustionThreshold"] != 0.95 {
+			t.Fatalf("session.json's infiniteSessions %v", cfg["infiniteSessions"])
+		}
 		servers, _ := cfg["mcpServers"].(map[string]any)
 		gw, _ := servers["gateway"].(map[string]any)
 		if len(servers) != 1 || gw["url"] != "http://gateway:8811/mcp" || gw["headers"] != nil {
@@ -234,6 +239,7 @@ func TestACopilotSessionIsHandedItsTokenThroughTheCallback(t *testing.T) {
 		c.ToolCall("c1", "write_report")
 		c.ToolCall("c2", "delete_everything")
 		c.Event("assistant.usage", map[string]any{"model": "claude-sonnet-5.5", "inputTokens": 10, "outputTokens": 5, "cacheReadTokens": 3})
+		c.Event("session.usage_info", map[string]any{"currentTokens": 4200, "tokenLimit": 200000, "messagesLength": 3})
 		c.Event("assistant.message", map[string]any{"messageId": "a1", "content": "DONE"})
 		c.Event("session.idle", map[string]any{})
 	}}
@@ -280,7 +286,8 @@ func TestACopilotSessionIsHandedItsTokenThroughTheCallback(t *testing.T) {
 	if calls := ofKind(evs, adapter.EventToolCall); len(calls) != 2 || calls[0].Text != "write_report" {
 		t.Fatalf("tool calls %v", calls)
 	}
-	if u := ofKind(evs, adapter.EventUsage); len(u) != 1 || u[0].InputTokens != 10 || u[0].OutputTokens != 5 || u[0].CostUSD != 0 {
+	if u := ofKind(evs, adapter.EventUsage); len(u) != 2 || u[0].InputTokens != 10 || u[0].OutputTokens != 5 || u[0].CostUSD != 0 ||
+		u[1].ContextTokens != 4200 || u[1].ContextLimit != 200000 || u[1].InputTokens != 0 {
 		t.Fatalf("usage %v", u)
 	}
 	for _, ev := range evs {

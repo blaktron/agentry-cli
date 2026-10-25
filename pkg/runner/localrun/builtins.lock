@@ -145,3 +145,5 @@ agentry/assistant@1.9.0 sha256:c95080b71d73dab2ace0211c8aa2b89173a4801dfa26093bd
 agentry/assistant@1.10.0 sha256:8867b462f205b4a0b6db14a231b6c5a7fc9cfb1c8f5fa0a0427289d6f56cd73c
 # 1.10.1: microsoft-365-setup gives Agentry Desktop's steps first and the terminal's as the fallback, says a work or school account usually needs its administrator's approval and writes that request; the README says the same.
 agentry/assistant@1.10.1 sha256:6004c809b266164902746ad18619db4705007dfe623566160b1b2cfa49fd47c4
+# 1.11.0: the memory-compact skill, which saves a whole conversation to memory before it is compacted and answers with the handoff; the instruction says what a compaction is.
+agentry/assistant@1.11.0 sha256:9b21d86553bf817605fb109047099c1bebd65e18731da88e4d06cf0a96e0f9bb

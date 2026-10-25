@@ -469,7 +469,11 @@ type codexNotification struct {
 		Last struct {
 			InputTokens  int64 `json:"inputTokens"`
 			OutputTokens int64 `json:"outputTokens"`
+			// TotalTokens is what codex counts as in the context window
+			// after this call.
+			TotalTokens int64 `json:"totalTokens"`
 		} `json:"last"`
+		ModelContextWindow int64 `json:"modelContextWindow"`
 	} `json:"tokenUsage"`
 	Message string      `json:"message"`
 	Error   *codexError `json:"error"`
@@ -513,7 +517,8 @@ func (s *codexSession) handleNotification(m rpcMessage, line []byte) {
 			s.turn.outTok += p.TokenUsage.Last.OutputTokens
 		}
 		s.mu.Unlock()
-		s.emit(Event{Kind: EventUsage, InputTokens: p.TokenUsage.Last.InputTokens, OutputTokens: p.TokenUsage.Last.OutputTokens, Raw: raw})
+		s.emit(Event{Kind: EventUsage, InputTokens: p.TokenUsage.Last.InputTokens, OutputTokens: p.TokenUsage.Last.OutputTokens,
+			ContextTokens: p.TokenUsage.Last.TotalTokens, ContextLimit: p.TokenUsage.ModelContextWindow, Raw: raw})
 		return
 	case "turn/completed":
 		// A failed turn's error is the plan's limit when it is a 429 on a
