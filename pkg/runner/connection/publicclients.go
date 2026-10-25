@@ -79,6 +79,19 @@ func (p *PublicClients) ForServer(ctx context.Context, server manifest.MCPServer
 	return p.ids(ctx)[k.ID]
 }
 
+// ForConnector is the client id the registry serves for the connector id,
+// or "", without matching a declared server: for a server Agentry itself
+// built and offers (an agent's own image), whose caller vouches for it.
+func (p *PublicClients) ForConnector(ctx context.Context, id string) string {
+	if p == nil {
+		return ""
+	}
+	if k, ok := p.catalogue.Lookup(id); !ok || !k.HasPublicClient() {
+		return ""
+	}
+	return p.ids(ctx)[id]
+}
+
 // ids is the registry's answer: the kept one while it is fresh, else a new
 // one, else the kept one however old, else none.
 func (p *PublicClients) ids(ctx context.Context) map[string]string {

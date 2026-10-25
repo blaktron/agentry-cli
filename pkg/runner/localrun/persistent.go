@@ -307,6 +307,9 @@ type ImageGrant struct {
 	// person's signoff). Neither holds a secret.
 	Env  map[string]string
 	Args []string
+	// AgentryApp says the server was signed in with Agentry's own app,
+	// which is given only to the build's own image of the server.
+	AgentryApp bool
 }
 
 // imageSpecs are the plan's specs of the image servers the segment is
@@ -317,6 +320,7 @@ func (s Segment) imageSpecs() ([]spec.MCPServerSpec, []string, error) {
 		return nil, nil, nil
 	}
 	offered := s.Builtin.ImageServers(s.Policy.Images)
+	builds := s.Builtin.ImageServers(policy.Images{})
 	var specs []spec.MCPServerSpec
 	var volumes []string
 	for _, g := range s.Grants.ImageServers {
@@ -325,6 +329,14 @@ func (s Segment) imageSpecs() ([]spec.MCPServerSpec, []string, error) {
 			return nil, nil, fmt.Errorf("the segment is given the image server %s, which %s does not offer", g.Key, s.Builtin.Ref())
 		}
 		o := offered[i]
+		if g.AgentryApp {
+			// A sign-in made with Agentry's own app reaches only the
+			// server Agentry built: an image the policy names instead
+			// would be handed a token minted under Agentry's app.
+			if b := slices.IndexFunc(builds, func(o offer.ImageServer) bool { return o.Key == g.Key }); b < 0 || builds[b].Image != o.Image {
+				return nil, nil, fmt.Errorf("the %s server was signed in with Agentry's own app, which is given only to Agentry's image of it, and the policy names %s instead: sign it in again with your own client, or use Agentry's image", o.Name, o.Image)
+			}
+		}
 		env := maps.Clone(o.Env)
 		if env == nil {
 			env = map[string]string{}

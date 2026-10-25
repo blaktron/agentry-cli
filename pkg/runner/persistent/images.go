@@ -38,6 +38,16 @@ type ImageSignIn struct {
 	// TenantEnv): an id, never a secret.
 	ClientID string `yaml:"clientID,omitempty" json:"clientID,omitempty"`
 	Tenant   string `yaml:"tenant,omitempty" json:"tenant,omitempty"`
+	// SignedInWith is the client the sign-in was made with, which the
+	// server refreshes as: ClientID, or Agentry's own app where the
+	// person kept none. Empty, the server is given ClientID.
+	SignedInWith string `yaml:"signedInWith,omitempty" json:"signedInWith,omitempty"`
+	// AgentryApp says the server's volume has held a sign-in made with
+	// Agentry's own app. It is set before that sign-in starts and stays
+	// set while the volume does, whatever client signs in later, since
+	// the volume may still hold its tokens: the server is then given only
+	// at the build's own image.
+	AgentryApp bool `yaml:"agentryApp,omitempty" json:"agentryApp,omitempty"`
 	// Signoff is what the person asked mail the server sends or drafts to
 	// end with, for a server that takes one; empty for none.
 	Signoff string `yaml:"signoff,omitempty" json:"signoff,omitempty"`
@@ -150,7 +160,7 @@ func imageGrants(home string, a Agent, c Config, on func(id string) bool) (grant
 		}
 		if given {
 			grants = append(grants, localrun.ImageGrant{Key: s.Key, Switches: switches, Volume: ImageVolumeIn(home, a.Name, s.Key), Account: in.Account,
-				Env: signInEnv(s, in), Args: signoffArgs(s, in)})
+				Env: signInEnv(s, in), Args: signoffArgs(s, in), AgentryApp: in.AgentryApp})
 		}
 	}
 	return grants, left
@@ -160,8 +170,12 @@ func imageGrants(home string, a Agent, c Config, on func(id string) bool) (grant
 // the client and the tenant, for a server that takes them.
 func signInEnv(s offer.ImageServer, in ImageSignIn) map[string]string {
 	env := map[string]string{}
-	if s.ClientEnv != "" && in.ClientID != "" {
-		env[s.ClientEnv] = in.ClientID
+	client := in.SignedInWith
+	if client == "" {
+		client = in.ClientID
+	}
+	if s.ClientEnv != "" && client != "" {
+		env[s.ClientEnv] = client
 	}
 	if s.TenantEnv != "" && in.Tenant != "" {
 		env[s.TenantEnv] = in.Tenant
