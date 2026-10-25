@@ -147,7 +147,7 @@ func ensureConnections(cmd *cobra.Command, home string, meta *installdir.Meta, m
 			if broken != nil {
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "%v\n", broken)
 			}
-			g, cerr := consentFor(cmd, store, clients, httpc, k, srv, m.Guide.ServerConnect(srv))
+			g, cerr := consentFor(cmd, store, clients, connection.OpenPublicClients(home, registryURL(), httpClient), httpc, k, srv, m.Guide.ServerConnect(srv))
 			if cerr != nil {
 				return nil, engine.Classify(engine.ExitPolicy, cerr)
 			}
@@ -259,7 +259,7 @@ func scopeList(s []string) string {
 // steps where it has them and then help, the publisher's words for this
 // server, where the release carries them. The grant is kept, replacing a
 // broken one (whose refresh token is revoked where the vendor offers it).
-func consentFor(cmd *cobra.Command, store *connection.Store, clients *connection.Clients, httpc *http.Client, k connection.Key, srv manifest.MCPServer, help string) (*mcpauth.Grant, error) {
+func consentFor(cmd *cobra.Command, store *connection.Store, clients *connection.Clients, public *connection.PublicClients, httpc *http.Client, k connection.Key, srv manifest.MCPServer, help string) (*mcpauth.Grant, error) {
 	errOut := cmd.ErrOrStderr()
 	_, _ = fmt.Fprintf(errOut, "\n%s needs you to sign in to %s.\n", k.Ref, connectionWhat(srv))
 	_, _ = fmt.Fprintln(errOut, "The connection is kept on this machine for this version alone and reused by its later runs; each run is given an access token, never the refresh token or a client secret.")
@@ -268,7 +268,7 @@ func consentFor(cmd *cobra.Command, store *connection.Store, clients *connection
 	}
 	in := bufio.NewReader(cmd.InOrStdin())
 	for attempt := 0; ; attempt++ {
-		g, err := runConsent(cmd, in, httpc, clients, srv)
+		g, err := runConsent(cmd, in, httpc, clients, public, srv)
 		var own *mcpauth.NeedsOwnClientError
 		if errors.As(err, &own) && attempt == 0 {
 			if aerr := askOwnClient(cmd, in, clients, own.Issuer, connectionServer(srv), help); aerr != nil {
@@ -305,11 +305,12 @@ func consentFor(cmd *cobra.Command, store *connection.Store, clients *connection
 // listener, or, where the browser is elsewhere, its address is pasted at
 // the prompt; stdin is read only once the address is shown, and the line
 // being read is finished before returning, so nothing typed later is lost.
-func runConsent(cmd *cobra.Command, in *bufio.Reader, httpc *http.Client, clients *connection.Clients, srv manifest.MCPServer) (*mcpauth.Grant, error) {
+func runConsent(cmd *cobra.Command, in *bufio.Reader, httpc *http.Client, clients *connection.Clients, public *connection.PublicClients, srv manifest.MCPServer) (*mcpauth.Grant, error) {
 	bc := newBrowserConsent(cmd, in, "Approve it in your browser:")
 	c := mcpauth.Consent{
 		HTTP: httpc, ServerURL: srv.URL, Scopes: connectionScopes(srv),
-		OwnClient: clients.Get, CIMDURL: nativeCIMD,
+		AgentryClient: func(ctx context.Context, issuer string) string { return public.ForServer(ctx, srv, issuer) },
+		OwnClient:     clients.Get, CIMDURL: nativeCIMD,
 		Pasted: bc.pasted, Say: bc.say, Present: bc.present,
 	}
 	if !srv.IsRemote() {
@@ -582,7 +583,7 @@ func newConnectCmd() *cobra.Command {
 					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: connected (issuer %s, since %s); --again replaces it\n", k.Server, c.Issuer, c.CreatedAt)
 					continue
 				}
-				if _, err := consentFor(cmd, store, clients, httpc, k, srv, m.Guide.ServerConnect(srv)); err != nil {
+				if _, err := consentFor(cmd, store, clients, connection.OpenPublicClients(home, registryURL(), httpClient), httpc, k, srv, m.Guide.ServerConnect(srv)); err != nil {
 					return engine.Classify(engine.ExitPolicy, err)
 				}
 			}
