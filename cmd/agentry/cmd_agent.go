@@ -135,6 +135,10 @@ type agentState struct {
 	// MailProviders are the services whose mail the agent can reach, for
 	// one that reaches any.
 	MailProviders []persistent.MailProviderState `json:"mailProviders,omitempty"`
+	// LastCompaction and LastConsolidation are the newest records of the
+	// agent's memory upkeep, for one that keeps a memory.
+	LastCompaction    *persistent.UpkeepRecord `json:"lastCompaction,omitempty"`
+	LastConsolidation *persistent.UpkeepRecord `json:"lastConsolidation,omitempty"`
 }
 
 // suggestedServer is a server an agent suggests, as show lists it.
@@ -271,6 +275,9 @@ const agentShowLong = "Shows a persistent agent: whether it runs and which clien
 	"A package server with no network also has a line that says whether it sees\n" +
 	"your share folder, with the id of that switch, <entry>:share (see\n" +
 	"`agentry agent grant --help`).\n\n" +
+	"For an agent that keeps a memory, \"compacted\" names its last compaction\n" +
+	"(when, why, and whether a fresh conversation started) and \"tidied\" its\n" +
+	"last daily consolidation of the memory.\n\n" +
 	"  agentry agent show assistant\n" +
 	"  agentry agent show assistant --transcript 20"
 
@@ -304,6 +311,7 @@ func newAgentShowCmd() *cobra.Command {
 				st.Volumes = &agentVolumes{Session: persistent.SessionVolumeIn(home, a.Name), Data: persistent.DataVolumeIn(home, a.Name)}
 				if a.Builtin.KeepsMemory() {
 					st.Volumes.Memory = persistent.MemoryVolumeIn(home, a.Name)
+					st.LastCompaction, st.LastConsolidation = persistent.LastUpkeep(home, a.Name)
 				}
 				if lines > 0 {
 					if st.Transcript, err = persistent.Transcript(home, a.Name, lines); err != nil {
@@ -351,6 +359,12 @@ func printAgentState(w io.Writer, st agentState) {
 	}
 	if st.Tasks != nil {
 		_, _ = fmt.Fprintf(w, "  tasks:      %d (agentry agent tasks %s)\n", *st.Tasks, st.Agent)
+	}
+	if r := st.LastCompaction; r != nil {
+		_, _ = fmt.Fprintf(w, "  compacted:  %s\n", upkeepLine(*r))
+	}
+	if r := st.LastConsolidation; r != nil {
+		_, _ = fmt.Fprintf(w, "  tidied:     %s\n", upkeepLine(*r))
 	}
 	if s := st.Status; s != nil && s.Pending {
 		_, _ = fmt.Fprintln(w, "  pending:    a change restarts it at its next turn")
@@ -943,4 +957,24 @@ func newAgentResetCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&history, "history", false, "the Assistant: wipe its history alone, keeping everything you chose, its secrets and its sign-ins")
 	cmd.Flags().BoolVar(&keepCredentials, "keep-credentials", false, "the Assistant: put it back to its defaults, keeping the secrets you stored and its servers' sign-ins, switched off")
 	return cmd
+}
+
+// upkeepLine is one upkeep record as show prints it: when, why, and what
+// came of it.
+func upkeepLine(r persistent.UpkeepRecord) string {
+	at := r.Time.Local().Format("2006-01-02 15:04")
+	switch {
+	case r.Trigger == persistent.UpkeepConsolidate && r.Reason == "":
+		return fmt.Sprintf("%s; %d fact lines before, %d after", at, r.FactsBefore, r.FactsAfter)
+	case r.Swapped:
+		how := "a new segment"
+		if r.Swap == persistent.SwapInSegment {
+			how = "the running segment"
+		}
+		return fmt.Sprintf("%s (%s), a fresh conversation in %s; %d fact lines before, %d after", at, r.Trigger, how, r.FactsBefore, r.FactsAfter)
+	case r.Trigger == persistent.UpkeepConsolidate:
+		return fmt.Sprintf("%s, not done: %s", at, r.Reason)
+	default:
+		return fmt.Sprintf("%s (%s), not done: %s", at, r.Trigger, r.Reason)
+	}
 }

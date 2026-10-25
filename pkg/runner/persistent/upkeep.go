@@ -812,8 +812,9 @@ func memoryStatOf(r io.Reader) (int, string, error) {
 // maxCountedPage bounds a file the memory's count and digest read.
 const maxCountedPage = 16 << 20
 
-// upkeepRecord is one line of receipts/upkeep.ndjson.
-type upkeepRecord struct {
+// UpkeepRecord is one line of receipts/upkeep.ndjson: a compaction, or a
+// consolidation (Trigger UpkeepConsolidate), whether it ran or why not.
+type UpkeepRecord struct {
 	Time            time.Time `json:"time"`
 	Trigger         string    `json:"trigger"`
 	Swapped         bool      `json:"swapped"`
@@ -840,7 +841,7 @@ func (s *Supervisor) logUpkeep(outDir string, c Compacted, oldConv, newConv stri
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return
 	}
-	b, err := json.Marshal(upkeepRecord{Time: s.now().UTC(), Trigger: c.Trigger, Swapped: c.Swapped, Reason: c.Reason,
+	b, err := json.Marshal(UpkeepRecord{Time: s.now().UTC(), Trigger: c.Trigger, Swapped: c.Swapped, Reason: c.Reason,
 		ContextTokens: c.ContextTokens, OldConversation: oldConv, NewConversation: newConv, Turn: c.Turn,
 		FactsBefore: c.FactsBefore, FactsAfter: c.FactsAfter, HandoffBytes: c.HandoffBytes, HandoffCut: c.HandoffCut,
 		Swap: c.Swap, SwapMillis: c.SwapMillis})
@@ -878,4 +879,39 @@ func (s *Supervisor) memoryFrameLocked(person bool) string {
 		return memoryFrame
 	}
 	return ""
+}
+
+// LastUpkeep is the agent's newest compaction record and its newest
+// consolidation record, across its segments' receipts; nil where there is
+// none. What cannot be read (a file, a line) is skipped: the records are a
+// report, and a damaged one hides nothing else.
+func LastUpkeep(home, name string) (compaction, consolidation *UpkeepRecord) {
+	dir := filepath.Join(Dir(home, name), segmentsDir)
+	segments, _ := os.ReadDir(dir)
+	for _, seg := range segments {
+		if !seg.IsDir() {
+			continue
+		}
+		f, err := os.Open(filepath.Join(dir, seg.Name(), "receipts", upkeepLog)) //nolint:gosec // the agent's own receipts
+		if err != nil {
+			continue
+		}
+		sc := bufio.NewScanner(f)
+		sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+		for sc.Scan() {
+			var r UpkeepRecord
+			if json.Unmarshal(sc.Bytes(), &r) != nil || r.Time.IsZero() {
+				continue
+			}
+			last := &compaction
+			if r.Trigger == UpkeepConsolidate {
+				last = &consolidation
+			}
+			if *last == nil || !r.Time.Before((*last).Time) {
+				*last = &r
+			}
+		}
+		_ = f.Close()
+	}
+	return compaction, consolidation
 }

@@ -498,3 +498,58 @@ func TestAgentShowListsTheOffersAndAddsASuggestion(t *testing.T) {
 		t.Errorf("a suggestion the agent does not make: %v", err)
 	}
 }
+
+// TestAgentShowNamesTheLastUpkeep: show names the Assistant's newest
+// compaction and consolidation, from its segments' receipts, in text and
+// in --json; an agent with none shows neither.
+func TestAgentShowNamesTheLastUpkeep(t *testing.T) {
+	home := agentHome(t)
+	if _, _, err := runCLI(t, nil, "agent", "enable", "assistant"); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := runCLI(t, nil, "agent", "show", "assistant")
+	if err != nil || strings.Contains(out, "compacted:") || strings.Contains(out, "tidied:") {
+		t.Fatalf("show with no upkeep: %v\n%s", err, out)
+	}
+	write := func(segment string, lines ...string) {
+		t.Helper()
+		dir := filepath.Join(persistent.Dir(home, "assistant"), "segments", segment, "receipts")
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "upkeep.ndjson"), []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("aaaa0001", `{"time":"2026-10-24T10:00:00Z","trigger":"idle","swapped":true,"factsBefore":3,"factsAfter":9,"swap":"segment"}`)
+	write("aaaa0002",
+		`{"time":"2026-10-25T09:00:00Z","trigger":"manual","swapped":true,"factsBefore":9,"factsAfter":14,"swap":"in-segment"}`,
+		`{"time":"2026-10-25T12:00:00Z","trigger":"consolidate","swapped":false,"factsBefore":14,"factsAfter":13}`,
+		`not json`)
+	out, _, err = runCLI(t, nil, "agent", "show", "assistant")
+	if err != nil || !strings.Contains(out, "(manual), a fresh conversation in the running segment; 9 fact lines before, 14 after") ||
+		!strings.Contains(out, "tidied:") || !strings.Contains(out, "14 fact lines before, 13 after") {
+		t.Fatalf("show: %v\n%s", err, out)
+	}
+	js, _, err := runCLI(t, nil, "agent", "show", "assistant", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var st struct {
+		LastCompaction    *persistent.UpkeepRecord `json:"lastCompaction"`
+		LastConsolidation *persistent.UpkeepRecord `json:"lastConsolidation"`
+	}
+	if err := json.Unmarshal([]byte(js), &st); err != nil {
+		t.Fatal(err)
+	}
+	if c := st.LastCompaction; c == nil || c.Trigger != persistent.UpkeepManual || c.Swap != persistent.SwapInSegment || c.FactsAfter != 14 {
+		t.Errorf("lastCompaction = %+v", c)
+	}
+	if c := st.LastConsolidation; c == nil || c.Trigger != persistent.UpkeepConsolidate || c.FactsAfter != 13 {
+		t.Errorf("lastConsolidation = %+v", c)
+	}
+	write("aaaa0003", `{"time":"2026-10-25T13:00:00Z","trigger":"idle","swapped":false,"reason":"the upkeep turn gave no answer","factsBefore":14,"factsAfter":14}`)
+	if out, _, _ = runCLI(t, nil, "agent", "show", "assistant"); !strings.Contains(out, "(idle), not done: the upkeep turn gave no answer") {
+		t.Errorf("a compaction that did not finish:\n%s", out)
+	}
+}
