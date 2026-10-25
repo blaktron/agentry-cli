@@ -82,6 +82,9 @@ type Options struct {
 	// compaction's record; nil reads the memory volume with a one-shot.
 	// Tests put a count of their own here.
 	CountFacts func(context.Context) int
+	// MemoryDigest, with CountFacts, is the digest of the agent's memory a
+	// consolidation tells a changed memory by.
+	MemoryDigest func(context.Context) string
 }
 
 // Stage is a step a segment's start has reached (engine.Stage).
@@ -184,6 +187,7 @@ type Supervisor struct {
 	upkeepSave   sync.Mutex // one write of upkeep.json at a time
 	upkeeping    bool
 	upkeepTurn   bool
+	upkeepText   string
 	carryHandoff string
 	// memoryFrameDue says the conversation is new and has not yet been
 	// sent the memory frame.
@@ -488,7 +492,7 @@ func (s *Supervisor) pump(sess engine.PersistentSession, segment int, runID stri
 					ev.Task, s.taskTurn = s.taskTurn, ""
 				}
 				// An upkeep turn is the runner's, and says so likewise.
-				if s.upkeepTurn && ev.Text == upkeepText {
+				if s.upkeepTurn && ev.Text == s.upkeepText {
 					ev.Upkeep, s.upkeepTurn = true, false
 				}
 				s.usage.UserTurns++

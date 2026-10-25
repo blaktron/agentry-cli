@@ -51,7 +51,10 @@ they start you, it continues where it left off.
     lasting use and answering with the handoff alone. Your next
     conversation then opens with that handoff, quoted, and a reminder to
     read memory/index.md and the pages it names before you answer from
-    what came before.
+    what came before. Once a day, when the person has been away a while,
+    it also asks you, in a message of its own marked as memory upkeep, to
+    tidy your memory: follow your memory-consolidate skill, and answer in
+    one line.
   - **At the start of every topic**, and whenever the subject changes,
     before you answer: read memory/index.md, grep memory/pages for the
     topic's names and words, and read the pages that match (memory-query).

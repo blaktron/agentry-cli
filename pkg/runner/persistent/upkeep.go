@@ -15,6 +15,8 @@ import (
 	"archive/tar"
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -55,12 +57,18 @@ const (
 	upkeepRetry = time.Hour
 )
 
-// The triggers a compaction records.
+// The triggers a compaction records, and a consolidation's.
 const (
 	UpkeepIdle   = "idle"
 	UpkeepInUse  = "in-use"
 	UpkeepManual = "manual"
+	// UpkeepConsolidate is the daily tidy of the memory, which swaps
+	// nothing.
+	UpkeepConsolidate = "consolidate"
 )
+
+// consolidateEvery is how long a consolidation waits after the last.
+const consolidateEvery = 24 * time.Hour
 
 // upkeepFile, in the agent's state folder, keeps what upkeep decides by
 // across segments and restarts.
@@ -91,6 +99,15 @@ type upkeepState struct {
 	// Handoff is the handoff a compaction's new conversation opens with,
 	// kept until a turn has carried it to the agent.
 	Handoff string `json:"handoff,omitempty"`
+	// LastConsolidation is when the memory was last consolidated, and
+	// MemoryDigest the memory's digest after it. Changes counts the turns,
+	// the agent's or an upkeep's, that may have written the memory since;
+	// none, and nothing is looked at. ConsolidateAfter holds a
+	// consolidation back after one could not run.
+	LastConsolidation time.Time `json:"lastConsolidation,omitzero"`
+	MemoryDigest      string    `json:"memoryDigest,omitempty"`
+	Changes           int       `json:"changes,omitempty"`
+	ConsolidateAfter  time.Time `json:"consolidateAfter,omitzero"`
 }
 
 func loadUpkeep(home, name string) upkeepState {
@@ -139,6 +156,14 @@ func (u upkeepState) idleDue(now time.Time) bool {
 		u.ContextTokens >= upkeepIdleFloor
 }
 
+// consolidationDue says the memory's daily consolidation is due at now: the
+// person has sent nothing for upkeepIdle, a day has passed since the last,
+// and a turn since may have changed the memory.
+func (u upkeepState) consolidationDue(now time.Time) bool {
+	return u.Changes > 0 && !now.Before(u.ConsolidateAfter) && !u.LastPersonTurn.IsZero() &&
+		now.Sub(u.LastPersonTurn) >= upkeepIdle && (u.LastConsolidation.IsZero() || now.Sub(u.LastConsolidation) >= consolidateEvery)
+}
+
 // noteUpkeepEvent keeps what a segment's event tells upkeep. The caller
 // holds mu, and a user turn carries the marks it was sent with.
 func (s *Supervisor) noteUpkeepEvent(ev session.Event) {
@@ -155,6 +180,7 @@ func (s *Supervisor) noteUpkeepEvent(ev session.Event) {
 		}
 		if !ev.Upkeep {
 			s.upkeep.TurnsSince++
+			s.upkeep.Changes++
 		}
 		s.upkeepDirty = true
 	case session.KindUsage:
@@ -167,26 +193,31 @@ func (s *Supervisor) noteUpkeepEvent(ev session.Event) {
 		}
 	case session.KindAssistantTurn:
 		if s.upkeepDirty {
-			// Saved off the events' lock, which every watcher waits on.
-			u := s.upkeep
+			// Saved off the events' lock, which every watcher waits on, as
+			// it stands when the save runs, so an older state never lands
+			// after a newer one.
 			s.upkeepDirty = false
 			go func() {
 				s.upkeepSave.Lock()
 				defer s.upkeepSave.Unlock()
+				s.mu.Lock()
+				u := s.upkeep
+				s.mu.Unlock()
 				_ = saveUpkeep(s.opts.Home, s.opts.Agent.Name, u)
 			}()
 		}
 	}
 }
 
-// upkeepTick compacts the conversation when an idle or an in-use
-// compaction is due, from the heartbeat's ticker.
+// upkeepTick, from the heartbeat's ticker, compacts the conversation when an
+// idle or an in-use compaction is due, then consolidates the memory when
+// that is due: after an idle compaction, its turn comes first.
 func (s *Supervisor) upkeepTick(ctx context.Context) {
 	if !s.opts.Agent.Builtin.KeepsMemory() {
 		return
 	}
 	trigger := s.upkeepDue()
-	if trigger == "" {
+	if trigger == "" && !s.consolidationDue() {
 		return
 	}
 	if !s.turn.TryLock() {
@@ -194,7 +225,95 @@ func (s *Supervisor) upkeepTick(ctx context.Context) {
 		return
 	}
 	defer s.turn.Unlock()
-	_, _ = s.compactLocked(ctx, trigger)
+	if trigger != "" {
+		_, _ = s.compactLocked(ctx, trigger)
+	}
+	if s.consolidationDue() {
+		s.consolidateLocked(ctx)
+	}
+}
+
+func (s *Supervisor) consolidationDue() bool {
+	now := s.now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.upkeep.consolidationDue(now)
+}
+
+// consolidateFrame opens the consolidation's upkeep turn.
+const consolidateFrame = "(Agentry: memory upkeep. Follow your memory-consolidate skill now: tidy your memory so it stays short to read and right, " +
+	"without losing a current fact, log it, and answer in one line with what you changed. The conversation goes on after it. " +
+	"This is not a message from the person.)\n\n"
+
+// consolidateText is the consolidation's message.
+const consolidateText = "Upkeep: consolidate your memory (memory-consolidate)."
+
+// consolidateLocked runs the memory's daily consolidation: an upkeep turn
+// in the conversation as it is, which swaps nothing. A memory unchanged
+// since the last run is left alone. The caller holds turn.
+func (s *Supervisor) consolidateLocked(ctx context.Context) {
+	home, name := s.opts.Home, s.opts.Agent.Name
+	now := s.now()
+	s.mu.Lock()
+	u := s.upkeep
+	outDir := s.outDir
+	s.mu.Unlock()
+	out := Compacted{Trigger: UpkeepConsolidate}
+	holdBack := func(reason string) {
+		out.Reason = reason
+		s.mu.Lock()
+		s.upkeep.ConsolidateAfter = s.now().Add(upkeepRetry).UTC()
+		_ = saveUpkeep(home, name, s.upkeep)
+		s.mu.Unlock()
+		s.logUpkeep(outDir, out, "", "")
+	}
+	if u.upkeepsToday(now) >= maxUpkeepsPerDay {
+		holdBack(fmt.Sprintf("%d upkeep turns in the last day, the most there may be", maxUpkeepsPerDay))
+		return
+	}
+	before, digest := s.memoryStat(ctx)
+	if digest != "" && digest == u.MemoryDigest {
+		// Nothing was written since the last run: nothing to tidy.
+		s.mu.Lock()
+		s.upkeep.Changes = 0
+		_ = saveUpkeep(home, name, s.upkeep)
+		s.mu.Unlock()
+		return
+	}
+	s.mu.Lock()
+	s.upkeep.Upkeeps = append(pruneDay(s.upkeep.Upkeeps, now), now.UTC())
+	s.upkeeping, s.upkeepTurn, s.upkeepText = true, true, consolidateText
+	_ = saveUpkeep(home, name, s.upkeep)
+	s.mu.Unlock()
+	defer func() {
+		// The upkeep turn's mark is the pump's to take, as a task's is:
+		// its event may reach the pump after the turn has returned.
+		s.mu.Lock()
+		s.upkeeping = false
+		s.mu.Unlock()
+	}()
+	s.notice("Tidying the memory")
+	out.FactsBefore = before
+	tctx, cancel := context.WithTimeout(ctx, upkeepTurnCap)
+	err := s.sendLocked(tctx, consolidateFrame, consolidateText)
+	cancel()
+	s.mu.Lock()
+	out.Turn = s.usage.UserTurns
+	s.mu.Unlock()
+	after, afterDigest := s.memoryStat(ctx)
+	out.FactsAfter = after
+	if err != nil {
+		holdBack("the upkeep turn failed: " + err.Error())
+		s.notice("The memory's tidy did not finish: " + out.Reason)
+		return
+	}
+	s.mu.Lock()
+	s.upkeep.LastConsolidation = s.now().UTC()
+	s.upkeep.MemoryDigest, s.upkeep.Changes = afterDigest, 0
+	_ = saveUpkeep(home, name, s.upkeep)
+	s.mu.Unlock()
+	s.logUpkeep(outDir, out, "", "")
+	s.notice(fmt.Sprintf("Tidied the memory: %d fact lines before, %d after", before, after))
 }
 
 // Compacted is what a compaction did, as the owner socket answers it.
@@ -268,12 +387,14 @@ func (s *Supervisor) compactLocked(ctx context.Context, trigger string) (Compact
 	}
 	s.mu.Lock()
 	s.upkeep.Upkeeps = append(pruneDay(s.upkeep.Upkeeps, now), now.UTC())
-	s.upkeeping, s.upkeepTurn = true, true
+	s.upkeeping, s.upkeepTurn, s.upkeepText = true, true, upkeepText
 	_ = saveUpkeep(home, name, s.upkeep)
 	s.mu.Unlock()
 	defer func() {
+		// The upkeep turn's mark is the pump's to take, as a task's is:
+		// its event may reach the pump after the turn has returned.
 		s.mu.Lock()
-		s.upkeeping, s.upkeepTurn = false, false
+		s.upkeeping = false
 		s.mu.Unlock()
 	}()
 	s.notice("Saving to memory before a fresh conversation")
@@ -287,6 +408,8 @@ func (s *Supervisor) compactLocked(ctx context.Context, trigger string) (Compact
 	unsubscribe()
 	s.mu.Lock()
 	out.Turn = s.usage.UserTurns
+	// The upkeep turn wrote the memory, or may have.
+	s.upkeep.Changes++
 	s.mu.Unlock()
 	oldConv := s.conversationID()
 	handoff, bad := parseHandoff(answer)
@@ -555,11 +678,23 @@ var factLine = regexp.MustCompile(`^~?F[0-9]+ `)
 // countFacts counts the fact lines of the memory's pages, read by a one-shot
 // as the export reads them; -1 when it could not be read.
 func (s *Supervisor) countFacts(ctx context.Context) int {
+	n, _ := s.memoryStat(ctx)
+	return n
+}
+
+// memoryStat is the count of the memory's fact lines and a digest of every
+// file it holds, read by a one-shot as the export reads them: -1 and "" when
+// it could not be read.
+func (s *Supervisor) memoryStat(ctx context.Context) (int, string) {
 	if s.opts.CountFacts != nil {
-		return s.opts.CountFacts(ctx)
+		digest := ""
+		if s.opts.MemoryDigest != nil {
+			digest = s.opts.MemoryDigest(ctx)
+		}
+		return s.opts.CountFacts(ctx), digest
 	}
 	if s.opts.Docker == nil || s.opts.Policy == nil {
-		return -1
+		return -1, ""
 	}
 	volume := MemoryVolumeIn(s.opts.Home, s.opts.Agent.Name)
 	pr, pw := io.Pipe()
@@ -572,38 +707,55 @@ func (s *Supervisor) countFacts(ctx context.Context) int {
 		_ = pw.CloseWithError(err)
 		done <- err
 	}()
-	n, err := countFactLines(pr)
+	n, digest, err := memoryStatOf(pr)
 	_ = pr.CloseWithError(err)
 	if runErr := <-done; err == nil {
 		err = runErr
 	}
 	if err != nil {
-		return -1
+		return -1, ""
 	}
-	return n
+	return n, digest
 }
 
-// countFactLines counts the fact lines of the pages in a tar of the memory;
-// the notes copied in are sources, not pages, and are left out.
+// countFactLines counts the fact lines of the pages in a tar of the memory.
 func countFactLines(r io.Reader) (int, error) {
+	n, _, err := memoryStatOf(r)
+	return n, err
+}
+
+// memoryStatOf reads a tar of the memory: the fact lines of its pages,
+// where the notes copied in are sources, not pages, and are left out; and a
+// digest of every regular file's name and bytes, which changes whenever the
+// memory does.
+func memoryStatOf(r io.Reader) (int, string, error) {
 	tr := tar.NewReader(r)
+	sum := sha256.New()
 	n := 0
 	for {
 		h, err := tr.Next()
 		if errors.Is(err, io.EOF) {
-			return n, nil
+			return n, "sha256:" + hex.EncodeToString(sum.Sum(nil)), nil
 		}
 		if err != nil {
-			return 0, err
+			return 0, "", err
 		}
 		name := strings.TrimPrefix(h.Name, "./")
-		if h.Typeflag != tar.TypeReg || !strings.HasPrefix(name, "pages/") || strings.HasPrefix(name, "pages/notes/") || !strings.HasSuffix(name, ".md") {
+		if h.Typeflag != tar.TypeReg {
 			continue
 		}
 		if h.Size > maxCountedPage {
-			return 0, fmt.Errorf("the page %s is %d bytes, too large to count", name, h.Size)
+			return 0, "", fmt.Errorf("the file %s is %d bytes, too large to read", name, h.Size)
 		}
-		sc := bufio.NewScanner(tr)
+		_, _ = fmt.Fprintf(sum, "%s\x00%d\x00", name, h.Size)
+		body := io.TeeReader(tr, sum)
+		if !strings.HasPrefix(name, "pages/") || strings.HasPrefix(name, "pages/notes/") || !strings.HasSuffix(name, ".md") {
+			if _, err := io.Copy(io.Discard, body); err != nil {
+				return 0, "", err
+			}
+			continue
+		}
+		sc := bufio.NewScanner(body)
 		sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
 		for sc.Scan() {
 			if factLine.Match(sc.Bytes()) {
@@ -613,12 +765,12 @@ func countFactLines(r io.Reader) (int, error) {
 		if err := sc.Err(); err != nil {
 			// A count that skipped part of a page would understate what
 			// the memory holds: none is better.
-			return 0, fmt.Errorf("count the facts of %s: %w", name, err)
+			return 0, "", fmt.Errorf("count the facts of %s: %w", name, err)
 		}
 	}
 }
 
-// maxCountedPage bounds a page the fact count reads.
+// maxCountedPage bounds a file the memory's count and digest read.
 const maxCountedPage = 16 << 20
 
 // upkeepRecord is one line of receipts/upkeep.ndjson.
