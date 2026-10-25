@@ -55,6 +55,11 @@ type Consent struct {
 	ServerURL string
 	Issuer    string
 	Scopes    []string
+	// AgentryClient is the client id of Agentry's own public client for a
+	// sign-in at issuer, where the server is one Agentry vetted for its
+	// connector and the registry serves that connector's id; "" for none.
+	// It comes first, before the person's own client.
+	AgentryClient func(ctx context.Context, issuer string) string
 	// OwnClient is the person's own client for an issuer, or nil for none.
 	OwnClient func(issuer string) (*Client, error)
 	// CIMDURL is Agentry's client metadata document; "" leaves it out.
@@ -184,6 +189,8 @@ func clientWords(c Client) string {
 		return "your own OAuth client " + c.ID
 	case ClientCIMD:
 		return "Agentry Desktop (" + c.ID + ")"
+	case ClientAgentry:
+		return "Agentry's own app (" + c.ID + ")"
 	default:
 		return "Agentry Desktop, registered with the vendor for this connection"
 	}
@@ -203,11 +210,17 @@ func (c Consent) say(s string) {
 	}
 }
 
-// pickClient is the client a sign-in presents: the person's own for
-// this issuer where they keep one, else Agentry's CIMD where the vendor
-// takes one and the document is served, else a dynamic registration,
-// else the person must make their own.
+// pickClient is the client a sign-in presents: Agentry's own public
+// client where the server is one Agentry vetted and the registry serves
+// its id, else the person's own for this issuer where they keep one, else
+// Agentry's CIMD where the vendor takes one and the document is served,
+// else a dynamic registration, else the person must make their own.
 func (c Consent) pickClient(ctx context.Context, md ServerMetadata, redirectURI string) (Client, error) {
+	if c.AgentryClient != nil {
+		if id := c.AgentryClient(ctx, md.Issuer); id != "" {
+			return Client{ID: id, Kind: ClientAgentry, AuthMethod: AuthNone}, nil
+		}
+	}
 	if c.OwnClient != nil {
 		own, err := c.OwnClient(md.Issuer)
 		if err != nil {

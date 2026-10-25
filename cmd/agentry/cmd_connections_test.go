@@ -530,7 +530,7 @@ func TestConnectingAgainWithTheSameClientRevokesNothing(t *testing.T) {
 	store, clients := connection.Open(home, nil), connection.OpenClients(home, nil)
 	k := connection.Key{Ref: meta.Ref, Digest: meta.Digest, Server: v.ServerURL()}
 	var stderr bytes.Buffer
-	if _, err := consentFor(testCmd(&stderr), store, clients, vendorHTTP(), k, m.Capabilities.MCPServers[0], ""); err != nil {
+	if _, err := consentFor(testCmd(&stderr), store, clients, nil, vendorHTTP(), k, m.Capabilities.MCPServers[0], ""); err != nil {
 		t.Fatalf("connect again: %v\n%s", err, stderr.String())
 	}
 	if len(v.Revoked) != 0 {
@@ -563,7 +563,7 @@ func TestConnectingAgainWithAnotherClientRevokesTheOld(t *testing.T) {
 	}
 	k := connection.Key{Ref: meta.Ref, Digest: meta.Digest, Server: v.ServerURL()}
 	var stderr bytes.Buffer
-	if _, err := consentFor(testCmd(&stderr), connection.Open(home, nil), clients, vendorHTTP(), k, m.Capabilities.MCPServers[0], ""); err != nil {
+	if _, err := consentFor(testCmd(&stderr), connection.Open(home, nil), clients, nil, vendorHTTP(), k, m.Capabilities.MCPServers[0], ""); err != nil {
 		t.Fatalf("%v\n%s", err, stderr.String())
 	}
 	if len(v.Revoked) != 1 || !strings.Contains(stderr.String(), "the previous connection was removed (revocation: revoked)") {

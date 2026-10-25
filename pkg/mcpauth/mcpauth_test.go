@@ -87,6 +87,53 @@ func TestOwnClientComesFirstAndAuthenticates(t *testing.T) {
 	}
 }
 
+// Agentry's own public client, where the caller has one for the issuer,
+// comes before the person's own client and signs in with no secret.
+func TestAgentrysOwnClientComesFirstAndHasNoSecret(t *testing.T) {
+	v := mcpauthtest.New(t)
+	v.AddClient("agentry-public-id", "")
+	v.AddClient("mine", "my-secret")
+	c := consent(v)
+	c.AgentryClient = func(_ context.Context, issuer string) string {
+		if issuer != v.URL {
+			t.Fatalf("Agentry's client asked for %q", issuer)
+		}
+		return "agentry-public-id"
+	}
+	c.OwnClient = func(string) (*mcpauth.Client, error) {
+		return &mcpauth.Client{ID: "mine", Secret: "my-secret"}, nil
+	}
+	g, err := c.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.Client.Kind != mcpauth.ClientAgentry || g.Client.ID != "agentry-public-id" || g.Client.AuthMethod != "none" || g.Client.Secret != "" {
+		t.Fatalf("client = %+v", g.Client)
+	}
+	last := v.Requests[len(v.Requests)-1]
+	if last.Get("client_secret") != "" || last.Get("client_id") != "agentry-public-id" || last.Get("code_verifier") == "" {
+		t.Fatalf("exchange form = %v", last)
+	}
+}
+
+// With no Agentry client for the issuer, the order goes on as before.
+func TestNoAgentryClientLeavesThePersonsOwnFirst(t *testing.T) {
+	v := mcpauthtest.New(t)
+	v.AddClient("mine", "my-secret")
+	c := consent(v)
+	c.AgentryClient = func(context.Context, string) string { return "" }
+	c.OwnClient = func(string) (*mcpauth.Client, error) {
+		return &mcpauth.Client{ID: "mine", Secret: "my-secret"}, nil
+	}
+	g, err := c.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.Client.Kind != mcpauth.ClientOwn || g.Client.ID != "mine" {
+		t.Fatalf("client = %+v", g.Client)
+	}
+}
+
 func TestNoClientMeansTheirOwn(t *testing.T) {
 	v := mcpauthtest.New(t) // no DCR, no CIMD: Google's shape
 	_, err := consent(v).Run(context.Background())
