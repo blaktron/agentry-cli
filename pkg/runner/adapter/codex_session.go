@@ -104,9 +104,19 @@ func (s *codexSession) Start(ctx context.Context) error {
 	// A thread the restart route may resume, or a persistent agent's, is
 	// kept in CODEX_HOME, which is then the session store; otherwise nothing
 	// of the conversation is persisted.
-	res, err := s.call(ctx, "thread/start", map[string]any{"ephemeral": !s.resumable})
+	id, err := s.startThread(ctx)
 	if err != nil {
 		return err
+	}
+	s.threadID = id
+	return nil
+}
+
+// startThread is thread/start: a new thread, whose id it returns.
+func (s *codexSession) startThread(ctx context.Context) (string, error) {
+	res, err := s.call(ctx, "thread/start", map[string]any{"ephemeral": !s.resumable})
+	if err != nil {
+		return "", err
 	}
 	var ts struct {
 		Thread struct {
@@ -114,10 +124,23 @@ func (s *codexSession) Start(ctx context.Context) error {
 		} `json:"thread"`
 	}
 	if err := json.Unmarshal(res, &ts); err != nil || ts.Thread.ID == "" {
-		return fmt.Errorf("thread/start: no thread id in %s", string(res))
+		return "", fmt.Errorf("thread/start: no thread id in %s", string(res))
 	}
-	s.threadID = ts.Thread.ID
-	return nil
+	return ts.Thread.ID, nil
+}
+
+// NewConversation implements Renewing: thread/start on the running
+// app-server, between turns. The thread it leaves stays in CODEX_HOME.
+func (s *codexSession) NewConversation(ctx context.Context) (string, error) {
+	if s.threadID == "" {
+		return "", errors.New("codex session: not started")
+	}
+	id, err := s.startThread(ctx)
+	if err != nil {
+		return "", err
+	}
+	s.threadID, s.continued, s.notContinued = id, false, ""
+	return id, nil
 }
 
 // handshake is initialize and initialized. The name is the request

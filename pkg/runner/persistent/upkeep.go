@@ -209,6 +209,10 @@ type Compacted struct {
 	HandoffBytes int `json:"handoffBytes,omitempty"`
 	// HandoffCut says the handoff was longer than its bound and was cut.
 	HandoffCut bool `json:"handoffCut,omitempty"`
+	// Swap is how the new conversation started (SwapInSegment,
+	// SwapSegment), and SwapMillis how long that took.
+	Swap       string `json:"swap,omitempty"`
+	SwapMillis int64  `json:"swapMillis,omitempty"`
 }
 
 // ErrNoMemory refuses a compaction of an agent that keeps no memory.
@@ -302,7 +306,9 @@ func (s *Supervisor) compactLocked(ctx context.Context, trigger string) (Compact
 		return out, nil
 	}
 	out.HandoffBytes, out.HandoffCut = len(handoff), strings.HasSuffix(handoff, handoffCutMark)
-	if err := s.swapConversation(ctx, handoff); err != nil {
+	swap, took, err := s.swapConversation(ctx, handoff)
+	out.Swap, out.SwapMillis = swap, took.Milliseconds()
+	if err != nil {
 		out.Reason = "the new conversation could not start: " + err.Error()
 		s.logUpkeep(outDir, out, oldConv, "")
 		s.notice("The memory was saved, but the fresh conversation could not start: " + err.Error())
@@ -315,8 +321,9 @@ func (s *Supervisor) compactLocked(ctx context.Context, trigger string) (Compact
 	_ = saveUpkeep(home, name, s.upkeep)
 	newOut := s.outDir
 	s.mu.Unlock()
-	// The ended segment's receipts are closed with its envelope: the
-	// record of the swap is the new segment's first.
+	// After a segment restart the ended segment's receipts are closed
+	// with its envelope, and the record of the swap is the new segment's
+	// first.
 	s.logUpkeep(newOut, out, oldConv, s.conversationID())
 	s.notice("Compacted: what the conversation produced is in the memory, and a fresh conversation opens with the handoff")
 	return out, nil
@@ -395,19 +402,77 @@ func handoffCarried(h string) string {
 		"Read memory/index.md and the pages it names before you answer from what came before. The handoff: " + strconv.Quote(h) + ")\n\n"
 }
 
-// swapConversation ends the running segment and starts the next in a new
-// conversation that opens with the handoff. The caller holds turn.
-func (s *Supervisor) swapConversation(ctx context.Context, handoff string) error {
+// How a compaction swapped the conversation, as its record says it.
+const (
+	// SwapInSegment: the running harness started the new conversation.
+	SwapInSegment = "in-segment"
+	// SwapSegment: the segment ended and the next started in a new
+	// conversation.
+	SwapSegment = "segment"
+)
+
+// compactionReason is why a compacted conversation is not the one before.
+const compactionReason = "a compaction: the new conversation opens with the agent's handoff"
+
+// swapConversation moves the agent to a new conversation that opens with the
+// handoff: inside the running segment where its harness can start one, and
+// otherwise by ending the segment and starting the next with no
+// conversation to continue. It says which, and how long the swap took. The
+// caller holds turn.
+func (s *Supervisor) swapConversation(ctx context.Context, handoff string) (string, time.Duration, error) {
+	start := time.Now()
+	if err := s.swapInSegment(ctx, handoff); err == nil {
+		return SwapInSegment, time.Since(start), nil
+	} else if !errors.Is(err, engine.ErrNoNewConversation) {
+		// The harness could not start one: the segment restart can.
+		s.notice("The running agent could not start a fresh conversation, so it restarts in one: " + err.Error())
+	}
+	start = time.Now()
 	if err := s.updateConfig(func(c *Config) error {
 		c.Conversation = nil
+		return nil
+	}); err != nil {
+		return SwapSegment, 0, err
+	}
+	s.mu.Lock()
+	s.handoff = handoff
+	s.mu.Unlock()
+	err := s.nextSegmentFor(ctx, "Starting a fresh conversation that opens with the handoff")
+	return SwapSegment, time.Since(start), err
+}
+
+// swapInSegment starts the new conversation in the running segment's
+// harness, recording it as the agent's conversation, and has the next turn
+// open with the handoff. engine.ErrNoNewConversation when the harness
+// cannot; on any error the conversation is the one it was.
+func (s *Supervisor) swapInSegment(ctx context.Context, handoff string) error {
+	s.mu.Lock()
+	sess := s.sess
+	s.mu.Unlock()
+	r, ok := sess.(engine.ConversationRenewer)
+	if !ok {
+		return engine.ErrNoNewConversation
+	}
+	id, err := r.NewConversation(ctx, compactionReason)
+	if err != nil {
+		return err
+	}
+	if err := s.updateConfig(func(c *Config) error {
+		c.Conversation = &Conversation{Adapter: s.adapter, ID: id}
+		// A new conversation has been given nothing yet.
+		c.PersonaGiven = ""
 		return nil
 	}); err != nil {
 		return err
 	}
 	s.mu.Lock()
-	s.handoff = handoff
+	s.carry, s.persona, s.resumed, s.resumeReason = handoffCarried(handoff), "", false, compactionReason
+	segment, runID := s.segment, s.runID
 	s.mu.Unlock()
-	return s.nextSegmentFor(ctx, "Starting a fresh conversation that opens with the handoff")
+	resumed := false
+	_ = appendEntry(s.opts.Home, s.opts.Agent.Name, Entry{Segment: segment, Run: runID, Resumed: &resumed,
+		Event: session.Event{Kind: KindConversationStart, Time: time.Now().UTC(), Text: compactionReason}})
+	return nil
 }
 
 // factCountWait bounds each fact count, so the counts before and after an
@@ -500,6 +565,8 @@ type upkeepRecord struct {
 	FactsAfter      int       `json:"factsAfter"`
 	HandoffBytes    int       `json:"handoffBytes,omitempty"`
 	HandoffCut      bool      `json:"handoffCut,omitempty"`
+	Swap            string    `json:"swap,omitempty"`
+	SwapMillis      int64     `json:"swapMillis,omitempty"`
 }
 
 // logUpkeep appends a compaction's line to the receipts of the segment it
@@ -514,7 +581,8 @@ func (s *Supervisor) logUpkeep(outDir string, c Compacted, oldConv, newConv stri
 	}
 	b, err := json.Marshal(upkeepRecord{Time: s.now().UTC(), Trigger: c.Trigger, Swapped: c.Swapped, Reason: c.Reason,
 		ContextTokens: c.ContextTokens, OldConversation: oldConv, NewConversation: newConv, Turn: c.Turn,
-		FactsBefore: c.FactsBefore, FactsAfter: c.FactsAfter, HandoffBytes: c.HandoffBytes, HandoffCut: c.HandoffCut})
+		FactsBefore: c.FactsBefore, FactsAfter: c.FactsAfter, HandoffBytes: c.HandoffBytes, HandoffCut: c.HandoffCut,
+		Swap: c.Swap, SwapMillis: c.SwapMillis})
 	if err != nil {
 		return
 	}

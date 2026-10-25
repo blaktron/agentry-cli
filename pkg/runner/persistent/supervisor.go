@@ -697,9 +697,13 @@ func (s *Supervisor) nextSegmentFor(ctx context.Context, notice string) error {
 	s.broadcast(session.Event{Kind: session.KindNotice, Time: time.Now().UTC(), Text: notice})
 	s.mu.Unlock()
 	_, _ = s.endSegment(ctx, true)
-	err := s.startSegment(ctx, true)
+	// The next segment runs until it is ended, not until the caller's
+	// context is done: a turn's own deadline (an upkeep turn's cap) would
+	// otherwise end the segment the turn restarted, and the agent with it.
+	sctx := context.WithoutCancel(ctx)
+	err := s.startSegment(sctx, true)
 	if err != nil {
-		err = s.withoutNewServers(ctx, err)
+		err = s.withoutNewServers(sctx, err)
 	}
 	if err != nil {
 		s.mu.Lock()

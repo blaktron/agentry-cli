@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -106,7 +107,7 @@ func TestACompactionOpensANewConversationWithTheHandoff(t *testing.T) {
 		t.Errorf("the new segment's reason = %q", st.last.reason)
 	}
 	recs := upkeepLines(t, st.segments[1].OutDir)
-	if len(recs) != 1 || !recs[0].Swapped || recs[0].Turn != 2 || recs[0].FactsBefore != 11 || recs[0].FactsAfter != 12 || recs[0].OldConversation != "conv-1" || recs[0].HandoffBytes == 0 {
+	if len(recs) != 1 || !recs[0].Swapped || recs[0].Swap != SwapSegment || recs[0].Turn != 2 || recs[0].FactsBefore != 11 || recs[0].FactsAfter != 12 || recs[0].OldConversation != "conv-1" || recs[0].HandoffBytes == 0 {
 		t.Fatalf("the receipt = %+v", recs)
 	}
 	var upkeepTurns, personTurns int
@@ -428,5 +429,116 @@ func TestAFactCountThatCannotReadAPageIsNone(t *testing.T) {
 	_ = tw.Close()
 	if n, err := countFactLines(&buf); err == nil {
 		t.Errorf("a page with a line too long to read was counted: %d", n)
+	}
+}
+
+// TestACompactionStaysInTheSegmentWhereTheHarnessCan: a harness that can
+// start a new conversation while it runs is asked to, so the segment goes on;
+// the new conversation is the agent's stored one, its first turn opens with
+// the handoff, quoted, and the record and the transcript say how it swapped.
+func TestACompactionStaysInTheSegmentWhereTheHarnessCan(t *testing.T) {
+	home := shortHome(t)
+	enable(t, home)
+	st := &starter{answer: aHandoff, renew: true}
+	sv := startUpkeeper(t, home, st, nil)
+	if err := sv.Send(context.Background(), "the car budget is 72,000 CAD"); err != nil {
+		t.Fatal(err)
+	}
+	out, err := sv.Compact(context.Background())
+	if err != nil || !out.Swapped || out.Swap != SwapInSegment {
+		t.Fatalf("compact = %+v, %v", out, err)
+	}
+	if len(st.segments) != 1 {
+		t.Fatalf("%d segments started, want the one", len(st.segments))
+	}
+	cfg, err := LoadConfig(home, "assistant")
+	if err != nil || cfg.Conversation == nil || cfg.Conversation.ID != "conv-renewed-1" || cfg.PersonaGiven != "" {
+		t.Fatalf("the stored conversation = %+v, %v", cfg.Conversation, err)
+	}
+	if err := sv.Send(context.Background(), "what is open?"); err != nil {
+		t.Fatal(err)
+	}
+	sent := st.last.sentTurns()
+	if len(sent) != 3 || !strings.Contains(sent[2], "Agentry compacted your conversation") ||
+		!strings.Contains(sent[2], strconv.Quote("owed: book the chalet by 1 December\nctx: no meetings before 9:30\ntried: the dealer's form failed twice\nopen: the car\npages: car-budget")) ||
+		!strings.HasSuffix(sent[2], "what is open?") {
+		t.Fatalf("the new conversation's first turn = %q", sent)
+	}
+	if err := sv.Send(context.Background(), "and now?"); err != nil {
+		t.Fatal(err)
+	}
+	if sent := st.last.sentTurns(); strings.Contains(sent[3], "Agentry compacted") {
+		t.Errorf("the handoff was carried twice: %q", sent[3])
+	}
+	recs := upkeepLines(t, st.segments[0].OutDir)
+	if len(recs) != 1 || !recs[0].Swapped || recs[0].Swap != SwapInSegment || recs[0].OldConversation != "conv-1" || recs[0].NewConversation != "conv-renewed-1" {
+		t.Fatalf("the receipt = %+v", recs)
+	}
+	entries, _ := Transcript(home, "assistant", 0)
+	var marks int
+	for _, e := range entries {
+		if e.Kind == KindConversationStart && strings.Contains(e.Text, "a compaction") && e.Segment == 1 {
+			marks++
+		}
+	}
+	if marks != 1 {
+		t.Errorf("the transcript marks %d new conversations, want 1", marks)
+	}
+}
+
+// TestACompactionRestartsTheSegmentWhereTheHarnessCannotStartOne: a harness
+// that fails to start a new conversation leaves the segment restart to do it,
+// and the record says so.
+func TestACompactionRestartsTheSegmentWhereTheHarnessCannotStartOne(t *testing.T) {
+	home := shortHome(t)
+	enable(t, home)
+	st := &starter{answer: aHandoff, renew: true, renewErr: errors.New("session/new: harness error -32603")}
+	sv := startUpkeeper(t, home, st, nil)
+	if err := sv.Send(context.Background(), "hello"); err != nil {
+		t.Fatal(err)
+	}
+	out, err := sv.Compact(context.Background())
+	if err != nil || !out.Swapped || out.Swap != SwapSegment {
+		t.Fatalf("compact = %+v, %v", out, err)
+	}
+	if len(st.segments) != 2 || st.segments[1].Persistent.ContinueID != "" {
+		t.Fatalf("segments = %d, the next continuing %q", len(st.segments), st.segments[len(st.segments)-1].Persistent.ContinueID)
+	}
+	if recs := upkeepLines(t, st.segments[1].OutDir); len(recs) != 1 || recs[0].Swap != SwapSegment {
+		t.Fatalf("the receipt = %+v", recs)
+	}
+}
+
+// TestASegmentTheUpkeepTurnRestartedOutlivesTheTurn: a change pending when
+// the upkeep turn is sent restarts the segment for that turn; the segment
+// runs on after the turn's own deadline is done, so the agent keeps running
+// through the compaction, whichever way it swaps.
+func TestASegmentTheUpkeepTurnRestartedOutlivesTheTurn(t *testing.T) {
+	for _, renew := range []bool{false, true} {
+		t.Run(map[bool]string{false: "segment", true: "in-segment"}[renew], func(t *testing.T) {
+			home := shortHome(t)
+			enable(t, home)
+			st := &starter{answer: aHandoff, renew: renew, bound: true}
+			sv := startUpkeeper(t, home, st, nil)
+			if err := sv.Send(context.Background(), "hello"); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := sv.Change(Change{Switch: &Switch{ID: EntryShare, On: false}}); err != nil {
+				t.Fatal(err)
+			}
+			out, err := sv.Compact(context.Background())
+			if err != nil || !out.Swapped {
+				t.Fatalf("compact = %+v, %v", out, err)
+			}
+			time.Sleep(50 * time.Millisecond)
+			select {
+			case <-sv.Done():
+				t.Fatal("the agent stopped after its compaction")
+			default:
+			}
+			if err := sv.Send(context.Background(), "still there?"); err != nil {
+				t.Fatalf("a turn after the compaction: %v", err)
+			}
+		})
 	}
 }

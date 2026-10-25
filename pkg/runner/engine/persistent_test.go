@@ -417,3 +417,63 @@ func TestACarriedContextReachesTheHarnessAndNotTheUserTurn(t *testing.T) {
 		t.Errorf("transcript.md does not show the person's text alone as theirs:\n%s", md)
 	}
 }
+
+// TestASegmentStartsANewConversationInItsRunningHarness: NewConversation asks
+// the running harness for a new session between turns, with no second
+// harness started; the segment names the conversation it is now in and why,
+// and the cost the conversation it left spent is kept under the new one's.
+func TestASegmentStartsANewConversationInItsRunningHarness(t *testing.T) {
+	p, f, h := persistentFixture(t, "")
+	p.Policy.Sessions.MaxUserTurns = 0
+	h.usage = map[string]any{"used": 2000, "size": 200000, "cost": map[string]any{"amount": 0.25, "currency": "USD"}}
+	s, err := StartSession(context.Background(), f, p)
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	_, done := collect(s)
+	if err := s.Send(context.Background(), "one"); err != nil {
+		t.Fatal(err)
+	}
+	r, ok := s.(ConversationRenewer)
+	if !ok {
+		t.Fatal("a segment's session cannot start a new conversation")
+	}
+	id, err := r.NewConversation(context.Background(), "a compaction")
+	if err != nil || id == "" {
+		t.Fatalf("NewConversation = %q, %v", id, err)
+	}
+	if got, resumed, reason := s.(PersistentSession).Conversation(); got != id || resumed || reason != "a compaction" {
+		t.Errorf("Conversation = %q %v %q", got, resumed, reason)
+	}
+	if err := s.Send(context.Background(), "two"); err != nil {
+		t.Fatal(err)
+	}
+	env, err := s.End(context.Background(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-done
+	news := 0
+	h.mu.Lock()
+	for _, m := range h.methods {
+		if m == "session/new" {
+			news++
+		}
+	}
+	h.mu.Unlock()
+	if news != 2 {
+		t.Errorf("session/new was asked %d times, want 2", news)
+	}
+	agents := 0
+	for _, op := range f.Ops() {
+		if strings.HasPrefix(op, "RunForeground:") && strings.HasSuffix(op, "-agent") {
+			agents++
+		}
+	}
+	if agents != 1 {
+		t.Errorf("%d agent containers started, want the one: %v", agents, f.Ops())
+	}
+	if env.Usage.CostUSD != 0.5 {
+		t.Errorf("the segment's cost = %v, want both conversations' 0.5", env.Usage.CostUSD)
+	}
+}
