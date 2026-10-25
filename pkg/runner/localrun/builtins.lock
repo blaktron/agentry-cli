@@ -149,3 +149,5 @@ agentry/assistant@1.10.1 sha256:6004c809b266164902746ad18619db4705007dfe62356616
 agentry/assistant@1.11.0 sha256:9b21d86553bf817605fb109047099c1bebd65e18731da88e4d06cf0a96e0f9bb
 # 1.11.1: microsoft-365-setup gives Agentry Desktop's steps in the app's order: the Microsoft card is switched on first, and its Set up follows.
 agentry/assistant@1.11.1 sha256:73e713afcb466a7f75372ded5a9067c96bda22245588ca87db9d2771d8177ca0
+# 1.12.0, over 1.11.1: the meeting-notes skill, which summarises a meeting transcript from share/meetings/ from verbatim evidence with a time on every line, saves the summary beside it, files an ev page and per pages, and arms the recordings the person asked for within the hour before each; the instruction and README name the meeting tools and their switch.
+agentry/assistant@1.12.0 sha256:d14ff9b8d5450b03365686a14dc541987e57236adab7f2b24cbef515dc437169

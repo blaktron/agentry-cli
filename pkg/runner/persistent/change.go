@@ -329,7 +329,9 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 			return false, err
 		}
 	} else if sw != nil {
-		e, ok := BuildRosterUnder(a, next, nil, malwareCheck).Entry(sw.ID)
+		r := BuildRosterUnder(a, next, nil, malwareCheck)
+		e, ok := r.Entry(sw.ID)
+		hb, _ := r.Entry(EntryHeartbeat)
 		switch {
 		case !ok:
 			if p, hidden := hiddenProvider(a, next, sw.ID); hidden {
@@ -340,6 +342,8 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 			return false, fmt.Errorf("%s is not switched: the %s agent always has it", e.Name, a.Name)
 		case e.State == StateNeedsSignIn && sw.On:
 			return false, fmt.Errorf("%s signs in by OAuth, which a persistent agent cannot do in this version", e.Name)
+		case sw.ID == EntryMeetings && sw.On && !hb.On:
+			return false, fmt.Errorf("%s needs the %s agent's heartbeat, which arms each recording close to its meeting: switch it on first (agentry agent grant %s %s on)", e.Name, a.Name, a.Name, EntryHeartbeat)
 		}
 		if next.Switches == nil {
 			next.Switches = map[string]bool{}
@@ -433,8 +437,9 @@ func grantsKeyWith(a Agent, c Config, ready func(manifest.MCPServer) bool) strin
 	}
 	k := key{}
 	for _, e := range r {
-		// The heartbeat is read at each tick: switching it restarts nothing.
-		if e.ID == EntryHeartbeat {
+		// The heartbeat and the meetings switch are read when they are used:
+		// switching them restarts nothing.
+		if readAtUse(e.ID) {
 			continue
 		}
 		if e.On && (e.Kind != KindServer || counted[e.ID]) {
