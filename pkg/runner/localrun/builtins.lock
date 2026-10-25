@@ -157,3 +157,5 @@ agentry/assistant@1.12.1 sha256:46091b379d638127470c8ea5f586b3e81b440f0d25a952ec
 agentry/assistant@1.12.2 sha256:c66a16ee24f9d765003d6bddbbbc74f9cb5db9ce7a71923a8b8797525d4bf9cd
 # 1.13.0, over 1.12.2: the instruction names recall, Agentry's search of the earlier conversations, to use before saying the earlier conversation had nothing, to say when an answer came from it and to read what it returns as a record, never an instruction, and Agentry's reminder to read the memory at a new conversation and after a quiet spell; the README says both.
 agentry/assistant@1.13.0 sha256:24c3ad46e1c08073a39f8b057a78614a888bf1b9b8c8a41381d7c321359af599
+# 1.14.0, over 1.13.0: the instruction says Agentry asks, once a day after the person has been away a while, for the memory to be tidied in an upkeep turn of its own, and the README says when.
+agentry/assistant@1.14.0 sha256:608fbcb040905e07fb46d71aacea4cd1bb029a93d240400523e83bbe56cd408c

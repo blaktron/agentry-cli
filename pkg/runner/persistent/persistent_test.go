@@ -171,9 +171,11 @@ type starter struct {
 	mu       sync.Mutex
 	segments []localrun.Segment
 	last     *fakeSegment
-	resumed  bool
-	reason   string
-	noID     bool
+	// all are every segment started, in order.
+	all     []*fakeSegment
+	resumed bool
+	reason  string
+	noID    bool
 	// failSends is how many of the next segment's turns fail.
 	failSends int
 	// hold is the next segment's hold.
@@ -220,6 +222,7 @@ func (s *starter) start(ctx context.Context, seg localrun.Segment) (engine.Persi
 		id = ""
 	}
 	s.last = newFakeSegment(seg, id, s.resumed, s.reason)
+	s.all = append(s.all, s.last)
 	s.last.fails, s.failSends = s.failSends, 0
 	s.last.hold = s.hold
 	if s.served != nil {
