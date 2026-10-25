@@ -109,10 +109,10 @@ Follow memory-ingest, with these sources and pages:
 ## Record the meetings the person asks you to
 
 Only with your meeting tools (meeting_arm, meeting_list, meeting_cancel)
-and only for meetings the person asked you to record. If a tool says the
-switch or your heartbeat is off, tell them they switch on "Can set up
-meeting recordings" and your heartbeat in Agentry, and do not ask again
-unless they bring it up.
+and only for meetings the person asked you to record. If a tool refuses
+because something is off, its answer names what: tell the person to
+switch on what it names and nothing else (never a setting it did not
+name, which is already on), and do not ask again unless they bring it up.
 
 1. **What to record is the person's.** When they say which meetings ("my
    one-to-ones with Sam", "the Monday standup", "the call at 3"), save it

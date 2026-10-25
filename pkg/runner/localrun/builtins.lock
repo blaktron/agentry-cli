@@ -151,3 +151,5 @@ agentry/assistant@1.11.0 sha256:9b21d86553bf817605fb109047099c1bebd65e18731da88e
 agentry/assistant@1.11.1 sha256:73e713afcb466a7f75372ded5a9067c96bda22245588ca87db9d2771d8177ca0
 # 1.12.0, over 1.11.1: the meeting-notes skill, which summarises a meeting transcript from share/meetings/ from verbatim evidence with a time on every line, saves the summary beside it, files an ev page and per pages, and arms the recordings the person asked for within the hour before each; the instruction and README name the meeting tools and their switch.
 agentry/assistant@1.12.0 sha256:d14ff9b8d5450b03365686a14dc541987e57236adab7f2b24cbef515dc437169
+# 1.12.1: the meeting-notes skill tells the person to switch on only what a refused meeting tool's answer names, never a setting that is already on.
+agentry/assistant@1.12.1 sha256:46091b379d638127470c8ea5f586b3e81b440f0d25a952ecec893304a97e0834
