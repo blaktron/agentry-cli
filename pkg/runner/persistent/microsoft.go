@@ -415,10 +415,8 @@ func (m Microsoft) SignIn(ctx context.Context, email string, browse func(string)
 // a list that does not name it is an error, so a sign-in is recorded only
 // once the server holds it.
 func ms365Account(list, email string) (string, error) {
-	var accounts []struct {
-		Username string `json:"username"`
-	}
-	if err := json.Unmarshal([]byte(strings.TrimSpace(lastLine(list))), &accounts); err != nil {
+	accounts, err := ms365Accounts(lastLine(list))
+	if err != nil {
 		return "", fmt.Errorf("read the server's accounts: %w", err)
 	}
 	for _, a := range accounts {
@@ -430,6 +428,34 @@ func ms365Account(list, email string) (string, error) {
 		return "", fmt.Errorf("the sign-in at Microsoft was made as %s, not %s: sign in again with the account you named", accounts[0].Username, email)
 	}
 	return "", errors.New("the Microsoft 365 server holds no account after the sign-in")
+}
+
+// ms365ListedAccount is one account of the server's account list.
+type ms365ListedAccount struct {
+	Username string `json:"username"`
+}
+
+// ms365Accounts reads the server's --list-accounts answer, an object whose
+// accounts field is the list; a bare list is read too.
+func ms365Accounts(line string) ([]ms365ListedAccount, error) {
+	line = strings.TrimSpace(line)
+	if strings.HasPrefix(line, "[") {
+		var accounts []ms365ListedAccount
+		if err := json.Unmarshal([]byte(line), &accounts); err != nil {
+			return nil, err
+		}
+		return accounts, nil
+	}
+	var answer struct {
+		Accounts *[]ms365ListedAccount `json:"accounts"`
+	}
+	if err := json.Unmarshal([]byte(line), &answer); err != nil {
+		return nil, err
+	}
+	if answer.Accounts == nil {
+		return nil, errors.New("the answer holds no account list")
+	}
+	return *answer.Accounts, nil
 }
 
 // lastLine is s's last non-empty line, where the server prints its answer.

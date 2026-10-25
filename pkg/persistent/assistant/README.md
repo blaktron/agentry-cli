@@ -76,10 +76,14 @@ and `agentry agent show assistant` lists what it has:
   reaches Google's hosts alone.
 - **Microsoft 365 and Outlook.com** through Softeria's MCP server, run from
   the image Agentry pins, off until you switch it on and sign it in with your
-  own Entra app (`agentry agent configure assistant --microsoft-client <id>`,
-  then `--microsoft-sign-in <email>`, by a device code): it reads your mail,
-  calendar, contacts and OneDrive, read only unless you also switch on its
-  changes, and sends mail only with sending switched on too. It keeps its
+  own Entra app (in Agentry Desktop, the Microsoft card's Set up in its
+  Configuration's Mail and calendar; in a terminal, `agentry agent configure
+  assistant --microsoft-client <id>`, then `--microsoft-sign-in <email>`), by
+  a device code. A work or school account usually needs its administrator to
+  approve the app first, and the `microsoft-365-setup` skill writes that
+  request with you. It reads your mail, calendar, contacts and OneDrive, read
+  only unless you also switch on its changes, and sends mail only with
+  sending switched on too. It keeps its
   sign-in on a volume of its own, sealed under a key kept in your system
   keychain, and reaches Microsoft's sign-in and Graph hosts alone.
 - **Fastmail** through Fastmail's own MCP server, run at Fastmail and
