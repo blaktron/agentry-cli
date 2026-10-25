@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -308,13 +309,22 @@ func stubCmd(t *testing.T) *cobra.Command {
 	return cmd
 }
 
+// freshMinVersionGate gives the test a min-version gate that has not run yet,
+// and leaves a fresh one behind it, so the once-per-process guard holds no
+// state across tests or across repetitions of the same test.
+func freshMinVersionGate(t *testing.T) {
+	t.Helper()
+	checkedMinVersion = sync.Once{}
+	t.Cleanup(func() { checkedMinVersion = sync.Once{} })
+}
+
 // TestNewAPIClientCheckedGate: the once-per-process min-version check runs
 // through newAPIClientChecked. This is deliberately the ONLY test that runs
-// the gate un-skipped (every other test sets AGENTRY_SKIP_VERSION_CHECK),
-// because the sync.Once makes a second un-skipped run a silent no-op.
+// the gate un-skipped (every other test sets AGENTRY_SKIP_VERSION_CHECK).
 func TestNewAPIClientCheckedGate(t *testing.T) {
 	isolateEnv(t)
 	t.Setenv(envSkipVersionCheck, "")
+	freshMinVersionGate(t)
 	fr := newFakeRegistry(t)
 	fr.metaMinCLI = "99.0.0" // a full major beyond 0.0.0-dev: refuse
 
