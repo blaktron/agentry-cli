@@ -231,6 +231,9 @@ func (s *claudeSession) readLoop() {
 	sc := bufio.NewScanner(s.rw)
 	sc.Buffer(make([]byte, 0, 64*1024), 16<<20)
 	var text strings.Builder
+	// ctxSize is the latest assistant message's request size, which the
+	// turn's usage event reports as the conversation's size.
+	var ctxSize int64
 	for sc.Scan() {
 		line := sc.Bytes()
 		if len(bytes.TrimSpace(line)) == 0 {
@@ -245,6 +248,11 @@ func (s *claudeSession) readLoop() {
 				s.started(claudeStart{failed: msg.Response.Subtype != "success", reason: msg.Response.Error})
 			}
 			continue
+		}
+		if parsed && msg.Type == "assistant" {
+			if u := msg.Message.Usage; u.InputTokens+u.CacheReadTokens+u.CacheCreationTokens > 0 {
+				ctxSize = u.InputTokens + u.CacheReadTokens + u.CacheCreationTokens
+			}
 		}
 		isResult := parsed && msg.Type == "result"
 		reason := ""
@@ -265,6 +273,12 @@ func (s *claudeSession) readLoop() {
 			}
 			if ev.Kind == EventAssistantText {
 				text.WriteString(ev.Text)
+			}
+			if isResult && ev.Kind == EventUsage {
+				ev.ContextTokens = ctxSize
+				for _, m := range msg.ModelUsage {
+					ev.ContextLimit = max(ev.ContextLimit, m.ContextWindow)
+				}
 			}
 			s.emit(ev)
 		}

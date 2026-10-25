@@ -234,6 +234,7 @@ func TestACopilotSessionIsHandedItsTokenThroughTheCallback(t *testing.T) {
 		c.ToolCall("c1", "write_report")
 		c.ToolCall("c2", "delete_everything")
 		c.Event("assistant.usage", map[string]any{"model": "claude-sonnet-5.5", "inputTokens": 10, "outputTokens": 5, "cacheReadTokens": 3})
+		c.Event("session.usage_info", map[string]any{"currentTokens": 4200, "tokenLimit": 200000, "messagesLength": 3})
 		c.Event("assistant.message", map[string]any{"messageId": "a1", "content": "DONE"})
 		c.Event("session.idle", map[string]any{})
 	}}
@@ -280,7 +281,8 @@ func TestACopilotSessionIsHandedItsTokenThroughTheCallback(t *testing.T) {
 	if calls := ofKind(evs, adapter.EventToolCall); len(calls) != 2 || calls[0].Text != "write_report" {
 		t.Fatalf("tool calls %v", calls)
 	}
-	if u := ofKind(evs, adapter.EventUsage); len(u) != 1 || u[0].InputTokens != 10 || u[0].OutputTokens != 5 || u[0].CostUSD != 0 {
+	if u := ofKind(evs, adapter.EventUsage); len(u) != 2 || u[0].InputTokens != 10 || u[0].OutputTokens != 5 || u[0].CostUSD != 0 ||
+		u[1].ContextTokens != 4200 || u[1].ContextLimit != 200000 || u[1].InputTokens != 0 {
 		t.Fatalf("usage %v", u)
 	}
 	for _, ev := range evs {

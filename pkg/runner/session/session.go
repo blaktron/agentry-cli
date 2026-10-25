@@ -79,6 +79,11 @@ type Event struct {
 	// split (docker-agent's usage_update; the per-update delta).
 	TotalTokens int64   `json:"totalTokens,omitempty"`
 	CostUSD     float64 `json:"costUsd,omitempty"`
+	// ContextTokens and ContextLimit are, on a usage event, the
+	// conversation's size after the harness's latest request and the
+	// model's window, where the harness says them; zero is unknown.
+	ContextTokens int64 `json:"contextTokens,omitempty"`
+	ContextLimit  int64 `json:"contextLimit,omitempty"`
 	// Raw is the harness's own message, when there was one.
 	Raw json.RawMessage `json:"raw,omitempty"`
 }

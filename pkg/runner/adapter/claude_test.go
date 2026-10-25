@@ -453,8 +453,8 @@ func TestClaudeSessionTurn(t *testing.T) {
 		stdio.say(`{"type":"system","subtype":"init","tools":["mcp__gateway__fs_read"]}`)
 		stdio.say(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"mcp__gateway__fs_read"}]}}`)
 		stdio.say(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":[]}]}}`)
-		stdio.say(`{"type":"assistant","message":{"content":[{"type":"text","text":"the note said hello"}]}}`)
-		stdio.say(`{"type":"result","subtype":"success","result":"the note said hello","stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":5}}`)
+		stdio.say(`{"type":"assistant","message":{"content":[{"type":"text","text":"the note said hello"}],"usage":{"input_tokens":12,"cache_read_input_tokens":40000,"cache_creation_input_tokens":300}}}`)
+		stdio.say(`{"type":"result","subtype":"success","result":"the note said hello","stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":5},"modelUsage":{"claude-sonnet-5-5":{"contextWindow":1000000}}}`)
 	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -508,6 +508,12 @@ func TestClaudeSessionTurn(t *testing.T) {
 			texts++
 		case EventToolCall:
 			calls++
+		case EventUsage:
+			// The conversation's size is the last assistant message's
+			// request, cached tokens included; the window is the model's.
+			if ev.ContextTokens != 40312 || ev.ContextLimit != 1000000 {
+				t.Errorf("usage context = %d of %d, want 40312 of 1000000", ev.ContextTokens, ev.ContextLimit)
+			}
 		}
 	}
 	if texts != 1 || calls != 1 {
