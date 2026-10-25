@@ -25,13 +25,21 @@ const holdRunLockEnv = "AGENTRY_TEST_HOLD_RUN_LOCK"
 // is the variable's value, its run id the directory's name, and a second
 // variable says whether the run keeps its directory.
 func playLockedRun(root string) int {
-	if _, err := holdRunLock(root, filepath.Base(root), os.Getenv(holdRunLockEnv+"_KEEP") != ""); err != nil {
+	lock, err := holdRunLock(root, filepath.Base(root), os.Getenv(holdRunLockEnv+"_KEEP") != "")
+	if err != nil {
 		_, _ = os.Stderr.WriteString(err.Error() + "\n")
 		return 2
 	}
 	writeRunSecrets(root)
+	// The lock is held as a run holds it, referenced for the run's life: an
+	// unreferenced lock's file is closed by its finalizer at a collection,
+	// which lets the lock go. A collection before "ready" proves it holds.
+	runtime.GC()
+	runtime.GC()
+	time.Sleep(20 * time.Millisecond)
 	_, _ = os.Stdout.WriteString("ready\n")
 	time.Sleep(time.Hour)
+	runtime.KeepAlive(lock)
 	return 1
 }
 
