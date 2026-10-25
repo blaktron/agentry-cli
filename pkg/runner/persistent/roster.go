@@ -192,9 +192,10 @@ func BuildRosterUnder(a Agent, c Config, applied *Applied, malwareCheck bool) Ro
 		if e.On {
 			e.State = StateOn
 		}
-		// The heartbeat is read at each tick, not given to a segment: its
-		// switch takes effect at once and is never pending.
-		if applied != nil && !e.Fixed && e.ID != EntryHeartbeat && slices.Contains(applied.On, e.ID) != e.On {
+		// The heartbeat and the meetings switch are read when they are used,
+		// not given to a segment: they take effect at once and are never
+		// pending.
+		if applied != nil && !e.Fixed && !readAtUse(e.ID) && slices.Contains(applied.On, e.ID) != e.On {
 			e.State = StatePending
 		}
 		r = append(r, e)
@@ -219,6 +220,9 @@ func BuildRosterUnder(a Agent, c Config, applied *Applied, malwareCheck bool) Ro
 	}
 	if a.Builtin.KeepsTime() {
 		add(RosterEntry{ID: EntryHeartbeat, Kind: KindTasks, Name: "Its heartbeat and tasks", GrantedBy: GrantedByBuiltin, Line: heartbeatLine}, false)
+	}
+	if a.Builtin.ArmsMeetings() {
+		add(RosterEntry{ID: EntryMeetings, Kind: KindMeetings, Name: meetingsName, GrantedBy: GrantedByBuiltin, Line: meetingsLine}, false)
 	}
 	if a.Builtin.Codes() {
 		for _, e := range coderEntries(c) {
