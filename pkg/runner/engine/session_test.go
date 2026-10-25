@@ -1049,3 +1049,56 @@ func TestAnInputAddedAsATurnEndsGetsItsNoticeTurn(t *testing.T) {
 		t.Fatalf("an add after End: %v, want ErrEnded", err)
 	}
 }
+
+// TestANoticeIsCarriedNotPutInThePersonsTurn: a notice that waited for the
+// next turn (an input added while a turn was in flight) reaches the harness
+// ahead of that turn, and the turn's user_turn event holds the person's text
+// alone; the notice is recorded as carried.
+func TestANoticeIsCarriedNotPutInThePersonsTurn(t *testing.T) {
+	ctx := context.Background()
+	arrived, release := make(chan string, 2), make(chan struct{}, 2)
+	s, _, _ := startAdapterSession(t, ctx, adapter.DefaultName, func(p *Params, h *fakeHarness) {
+		h.onPrompt = func(text string) { arrived <- text; <-release }
+	})
+	get, done := collect(s)
+	sent := make(chan error, 1)
+	go func() { sent <- s.Send(ctx, "first") }()
+	first := <-arrived
+	path := filepath.Join(t.TempDir(), "notes.txt")
+	if err := os.WriteFile(path, []byte("notes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// The first turn is in flight, so the notice waits for the next.
+	if err := s.AddInput(ctx, path); err != nil {
+		t.Fatal(err)
+	}
+	release <- struct{}{}
+	if err := <-sent; err != nil {
+		t.Fatal(err)
+	}
+	release <- struct{}{}
+	if err := s.Send(ctx, "second"); err != nil {
+		t.Fatal(err)
+	}
+	second := <-arrived
+	if _, err := s.End(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	<-done
+	var turns []string
+	carried := false
+	for _, ev := range get() {
+		if ev.Kind == session.KindUserTurn && !ev.Synthetic {
+			turns = append(turns, ev.Text)
+		}
+		if ev.Kind == session.KindOther && strings.Contains(ev.Text, "carried into this turn") && strings.Contains(ev.Text, "notes.txt") {
+			carried = true
+		}
+	}
+	if !slices.Equal(turns, []string{"first", "second"}) || !carried {
+		t.Errorf("the person's turns %q, the notice carried %v", turns, carried)
+	}
+	if strings.Contains(first, "notes.txt") || !strings.Contains(second, "notes.txt") || !strings.HasSuffix(second, "second") {
+		t.Errorf("the harness was sent %q then %q", first, second)
+	}
+}

@@ -622,8 +622,9 @@ func (s *Supervisor) sendLocked(ctx context.Context, pre, text string) error {
 		frame = timeFrame(s.now())
 	}
 	frame += carry
-	memoryFrame := s.memoryFrameLocked(pre == "")
-	frame += memoryFrame + missed
+	person := pre == ""
+	reminded := s.memoryFrameLocked(person)
+	frame += reminded + missed
 	if byChange {
 		change := changeFrame(s.told, roster, s.resumed, joined)
 		restarted := ""
@@ -643,6 +644,7 @@ func (s *Supervisor) sendLocked(ctx context.Context, pre, text string) error {
 		frame += personaFrame(cfg)
 	}
 	frame += pre
+	sentAt := s.now()
 	if frame != "" {
 		err = sess.SendCarrying(ctx, frame, text)
 	} else {
@@ -651,17 +653,15 @@ func (s *Supervisor) sendLocked(ctx context.Context, pre, text string) error {
 	if handoff != "" {
 		s.handoffSent(sess, handoff, err == nil)
 	}
-	if err == nil && (memoryFrame != "" || pre == "") {
+	if reminded != "" || person {
 		s.mu.Lock()
-		if s.sess == sess && memoryFrame != "" {
-			s.memoryFrameDue = false
+		if s.sess == sess && reminded != "" {
+			// A turn that failed leaves the reminder for the next.
+			s.memoryFrameDue = err != nil
 		}
-		if pre == "" && s.opts.Agent.Builtin.KeepsMemory() {
-			// The person's turn, on the clock upkeep decides by; its event
-			// may follow with a later time of its own.
-			if at := s.now(); at.After(s.upkeep.LastPersonTurn) {
-				s.upkeep.LastPersonTurn = at
-			}
+		if err == nil && person && s.opts.Agent.Builtin.KeepsMemory() && sentAt.After(s.upkeep.LastPersonTurn) {
+			// The person's turn, on the clock upkeep decides by.
+			s.upkeep.LastPersonTurn, s.upkeepDirty = sentAt, true
 		}
 		s.mu.Unlock()
 	}
