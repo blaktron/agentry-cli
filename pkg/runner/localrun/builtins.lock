@@ -155,3 +155,5 @@ agentry/assistant@1.12.0 sha256:d14ff9b8d5450b03365686a14dc541987e57236adab7f2b2
 agentry/assistant@1.12.1 sha256:46091b379d638127470c8ea5f586b3e81b440f0d25a952ecec893304a97e0834
 # 1.12.2: google-workspace-setup and fastmail-setup give Agentry Desktop's steps first, in the app's order, and the terminal's as the fallback; the README names the desktop's set-ups.
 agentry/assistant@1.12.2 sha256:c66a16ee24f9d765003d6bddbbbc74f9cb5db9ce7a71923a8b8797525d4bf9cd
+# 1.13.0, over 1.12.2: the instruction names recall, Agentry's search of the earlier conversations, to use before saying the earlier conversation had nothing and to say when an answer came from it, and Agentry's reminder to read the memory at a new conversation and after a quiet spell; the README says both.
+agentry/assistant@1.13.0 sha256:f8ad0c54ce7c52c1f907186bfc678d349b1d6bc5898a5604195b822df0c644ac

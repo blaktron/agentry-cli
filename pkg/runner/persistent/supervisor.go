@@ -185,6 +185,9 @@ type Supervisor struct {
 	upkeeping    bool
 	upkeepTurn   bool
 	carryHandoff string
+	// memoryFrameDue says the conversation is new and has not yet been
+	// sent the memory frame.
+	memoryFrameDue bool
 
 	done     chan struct{}
 	stopOnce sync.Once
@@ -445,9 +448,10 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 	s.carryHandoff = handoff
 	if !resumed {
 		// A new conversation: what upkeep knew of the last one is gone with
-		// it.
+		// it, and it is reminded of its memory at its first turn.
 		s.upkeep.ContextTokens, s.upkeep.TurnsSince = 0, 0
 		s.upkeepDirty = true
+		s.memoryFrameDue = a.Builtin.KeepsMemory()
 	}
 	s.roster, s.byChange = roster, byChange
 	if !byChange {
@@ -617,7 +621,9 @@ func (s *Supervisor) sendLocked(ctx context.Context, pre, text string) error {
 	if s.opts.Agent.Builtin.KeepsTime() {
 		frame = timeFrame(s.now())
 	}
-	frame += carry + missed
+	frame += carry
+	memoryFrame := s.memoryFrameLocked(pre == "")
+	frame += memoryFrame + missed
 	if byChange {
 		change := changeFrame(s.told, roster, s.resumed, joined)
 		restarted := ""
@@ -644,6 +650,20 @@ func (s *Supervisor) sendLocked(ctx context.Context, pre, text string) error {
 	}
 	if handoff != "" {
 		s.handoffSent(sess, handoff, err == nil)
+	}
+	if err == nil && (memoryFrame != "" || pre == "") {
+		s.mu.Lock()
+		if s.sess == sess && memoryFrame != "" {
+			s.memoryFrameDue = false
+		}
+		if pre == "" && s.opts.Agent.Builtin.KeepsMemory() {
+			// The person's turn, on the clock upkeep decides by; its event
+			// may follow with a later time of its own.
+			if at := s.now(); at.After(s.upkeep.LastPersonTurn) {
+				s.upkeep.LastPersonTurn = at
+			}
+		}
+		s.mu.Unlock()
 	}
 	if err == nil && byChange {
 		s.mu.Lock()

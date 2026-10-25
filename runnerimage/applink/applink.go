@@ -67,8 +67,19 @@ func boolean(desc string) map[string]any {
 	return map[string]any{"type": "boolean", "description": desc}
 }
 
+func integer(desc string, min, max int) map[string]any {
+	return map[string]any{"type": "integer", "minimum": min, "maximum": max, "description": desc}
+}
+
 // SelfConfigure is the Assistant's tool for its own name and personality.
 const SelfConfigure = "self_configure"
+
+// Recall is the Assistant's search of its own earlier conversations: it
+// reads what was said, and changes nothing.
+const Recall = "recall"
+
+// RecallMaxLimit bounds the turns one recall answers with.
+const RecallMaxLimit = 20
 
 // The Assistant's task tools: the tasks its heartbeat fires, which it
 // registers itself. A task is a turn at a time; it grants nothing.
@@ -131,6 +142,13 @@ var assistantTools = []Tool{
 			"paused":      boolean("true to pause it, false to resume it"),
 		}, "task")},
 	{TaskRemove, "Remove one of your tasks.", obj(map[string]any{"task": str("the task's id, from task_list")}, "task")},
+	{Recall, "Search what you and the person said in your earlier conversations, including the ones your memory was compacted from: the person's messages, your answers and your tasks' turns, never tool results. Returns the matching turns, newest first, each with its date, who said it, its segment and turn, and at most 600 characters around the match. Use it when your memory has nothing on something the person says you discussed, before you say there was nothing, and say that the answer came from the earlier conversation.",
+		obj(map[string]any{
+			"query": str("the words to look for: every word must appear in a turn, in any case"),
+			"from":  str("only turns on or after this date, YYYY-MM-DD"),
+			"to":    str("only turns on or before this date, YYYY-MM-DD"),
+			"limit": integer("at most this many turns (10 when left out)", 1, RecallMaxLimit),
+		}, "query")},
 }
 
 // sets are the tools each agent's app link lists. Agentry Helper's (main)

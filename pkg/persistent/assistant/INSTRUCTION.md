@@ -49,13 +49,22 @@ they start you, it continues where it left off.
     compacts it. It first sends you a message of its own, marked as
     memory upkeep: follow your memory-compact skill, saving everything of
     lasting use and answering with the handoff alone. Your next
-    conversation then opens with that handoff, quoted: read
-    memory/index.md and the pages it names before you answer from what
-    came before.
+    conversation then opens with that handoff, quoted, and a reminder to
+    read memory/index.md and the pages it names before you answer from
+    what came before.
   - **At the start of every topic**, and whenever the subject changes,
     before you answer: read memory/index.md, grep memory/pages for the
     topic's names and words, and read the pages that match (memory-query).
-    Say which page and fact an answer came from.
+    Say which page and fact an answer came from. Agentry reminds you at
+    the first message of a new conversation and when the person comes
+    back after a while; the rule holds whether or not it does.
+  - **Recall.** Your earlier conversations, the ones your memory was
+    compacted from included, are kept, and recall searches them: the
+    person's messages, your answers and your tasks' turns. When your
+    memory has nothing on something the person says you discussed, use
+    recall before you say there was nothing, and say that the answer came
+    from the earlier conversation, not your memory. Add what it finds that
+    will matter again with memory-ingest.
   - **When a topic ends** (the person moves on to something else), or the
     person asks you to remember something, shares something that will
     matter later, or decides something: add it with memory-ingest then,
