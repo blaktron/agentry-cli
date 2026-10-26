@@ -19,11 +19,12 @@ package toolsrv
 // (Search); "13" the deliverables ledger and write_report's and export_pdf's
 // deliverable and title; "14" the rendered web_read (Web.Render); "15" the
 // given-only web_read (Web.GivenOnly and Web.Given); "16" a persistent
-// agent's folders (WorkspaceName) and the share's checks (ShareChecks). The server
+// agent's folders (WorkspaceName) and the share's checks (ShareChecks); "17"
+// the calendar feeds (Calendar). The server
 // refuses other versions, so a stale runner image meets a newer compiler
 // loudly — and the image tag derives from the CLI version, so rebuilds
 // happen on their own at upgrade time.
-const SpecVersion = "16"
+const SpecVersion = "17"
 
 // Spec is the compiled configuration the runner's capability compiler hands
 // to the tools server (written to plan/gateway/toolspec.json, bind-mounted
@@ -127,6 +128,11 @@ type Spec struct {
 	// with the scratch folder; the tools exist only while the run has an
 	// area to search.
 	Search Search `json:"search,omitzero"`
+	// Calendar grants a persistent Assistant's calendar feeds and their
+	// tools (calendar.go): each feed's address is a variable of this
+	// server's environment, masked in every result, and the gateway lets
+	// the container reach the feeds' hosts alone.
+	Calendar Calendar `json:"calendar,omitzero"`
 	// Deliverables is the ledger write_report and export_pdf record the files
 	// the agent marked in (deliverables.go): stamped by the engine.
 	Deliverables Deliverables `json:"deliverables,omitzero"`
@@ -400,6 +406,9 @@ func (s *Spec) GrantedTools() []string {
 		if s.Web.RegistrySearch && s.Web.Registry != "" {
 			names = append(names, ToolRegistrySearch)
 		}
+	}
+	if s.Calendar.enabled() {
+		names = append(names, ToolCalendarFeeds, ToolCalendarEvents, ToolCalendarFreeTime)
 	}
 	names = append(names, ToolWriteReport)
 	if s.PDF.Enabled {
