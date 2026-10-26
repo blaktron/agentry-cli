@@ -508,8 +508,15 @@ func (s *codexSession) handleNotification(m rpcMessage, line []byte) {
 	raw := rawCopy(line)
 	switch m.Method {
 	case "item/started":
-		if p.Item.Type == "mcpToolCall" {
+		switch p.Item.Type {
+		case "mcpToolCall":
 			s.emit(Event{Kind: EventToolCall, Text: p.Item.Tool, Tool: p.Item.Tool, CallID: p.Item.ID, Raw: raw})
+			return
+		case "contextCompaction":
+			// codex is compacting the thread itself: the size known before
+			// is no longer true. Before the item completes it recounts the
+			// thread and reports the size after as a token usage update.
+			s.emit(Event{Kind: EventUsage, ContextCompacted: true, Raw: raw})
 			return
 		}
 	case "item/completed":

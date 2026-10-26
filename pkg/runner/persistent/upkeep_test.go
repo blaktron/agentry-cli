@@ -272,6 +272,53 @@ func TestInUseCompactionComesBeforeTheNextMessage(t *testing.T) {
 	}
 }
 
+// TestAHarnessCompactionIsNotCompactedAgain: a turn that filled most of the
+// window and was then compacted by the harness itself, after its last
+// usage report, leaves the size the harness gave after it, or none when it
+// gave none; the person's next message goes to the same conversation with
+// no upkeep turn before it.
+func TestAHarnessCompactionIsNotCompactedAgain(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		after int64
+	}{{"size said", 26_532}, {"size not said", 0}} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := shortHome(t)
+			enable(t, home)
+			st := &starter{answer: aHandoff, context: 112_872, limit: 128_000, compacts: true, compactedTo: tc.after}
+			sv := startUpkeeper(t, home, st, nil)
+			if err := sv.Send(context.Background(), "a long question"); err != nil {
+				t.Fatal(err)
+			}
+			for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+				sv.mu.Lock()
+				cur, done := sv.upkeep.ContextTokens, sv.upkeep.TurnsSince > 0 && !sv.busy
+				sv.mu.Unlock()
+				if done && cur == tc.after {
+					break
+				}
+			}
+			sv.mu.Lock()
+			got := sv.upkeep.ContextTokens
+			sv.mu.Unlock()
+			if got != tc.after || sv.inUseDue() {
+				t.Fatalf("context tokens = %d (in use due %v), want %d", got, sv.inUseDue(), tc.after)
+			}
+			if err := sv.Send(context.Background(), "the next one"); err != nil {
+				t.Fatal(err)
+			}
+			if len(st.segments) != 1 {
+				t.Fatalf("segments = %d: the conversation was compacted again", len(st.segments))
+			}
+			for _, r := range st.last.rawTurns() {
+				if strings.HasSuffix(r, upkeepText) {
+					t.Fatalf("an upkeep turn was sent: %q", st.last.rawTurns())
+				}
+			}
+		})
+	}
+}
+
 // TestUpkeepDailyCap: no more than twelve upkeep turns run in a day.
 func TestUpkeepDailyCap(t *testing.T) {
 	home := shortHome(t)

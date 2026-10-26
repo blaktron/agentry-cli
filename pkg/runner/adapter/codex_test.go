@@ -460,6 +460,74 @@ func TestCodexSession(t *testing.T) {
 	}
 }
 
+// codex compacting a thread itself, inside a contextCompaction item, makes
+// the size known before unknown when the item starts; the recount codex
+// reports before the item completes is then the size, so a size from
+// before the compaction never outlives it. The shapes are codex 0.162.0's.
+func TestCodexSessionForgetsTheSizeACompactionChanged(t *testing.T) {
+	ad, _ := Get(CodexAdapterName)
+	stdio := newFakeStdio()
+	drv, err := ad.Session(context.Background(), stdio, SessionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		for line := range stdio.lines {
+			var m struct {
+				ID     *int   `json:"id"`
+				Method string `json:"method"`
+			}
+			if json.Unmarshal(line, &m) != nil {
+				continue
+			}
+			switch m.Method {
+			case "initialize":
+				stdio.say(`{"id":` + itoa(*m.ID) + `,"result":{"userAgent":"codex"}}`)
+			case "thread/start":
+				stdio.say(`{"id":` + itoa(*m.ID) + `,"result":{"thread":{"id":"t1"},"approvalPolicy":"on-request"}}`)
+			case "turn/start":
+				stdio.say(`{"id":` + itoa(*m.ID) + `,"result":{"turn":{"id":"u1","status":"inProgress"}}}`)
+				stdio.say(`{"method":"thread/tokenUsage/updated","params":{"threadId":"t1","turnId":"u1","tokenUsage":{"last":{"inputTokens":239000,"outputTokens":1000,"totalTokens":240000},"total":{"inputTokens":239000,"outputTokens":1000},"modelContextWindow":258400}}}`)
+				stdio.say(`{"method":"item/started","params":{"threadId":"t1","turnId":"u1","item":{"type":"contextCompaction","id":"k1"}}}`)
+				stdio.say(`{"method":"thread/tokenUsage/updated","params":{"threadId":"t1","turnId":"u1","tokenUsage":{"last":{"inputTokens":0,"outputTokens":0,"totalTokens":31000},"total":{"inputTokens":239000,"outputTokens":1000},"modelContextWindow":258400}}}`)
+				stdio.say(`{"method":"item/completed","params":{"threadId":"t1","turnId":"u1","item":{"type":"contextCompaction","id":"k1"}}}`)
+				stdio.say(`{"method":"item/completed","params":{"threadId":"t1","turnId":"u1","item":{"type":"agentMessage","id":"m1","text":"DONE"}}}`)
+				stdio.say(`{"method":"turn/completed","params":{"threadId":"t1","turn":{"id":"u1","status":"completed"}}}`)
+			}
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := drv.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if _, err := drv.Prompt(ctx, "go on"); err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+	drained := make(chan []Event, 1)
+	go func() {
+		var evs []Event
+		for ev := range drv.Events() {
+			evs = append(evs, ev)
+		}
+		drained <- evs
+	}()
+	if err := drv.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	var usage []Event
+	for _, ev := range <-drained {
+		if ev.Kind == EventUsage {
+			usage = append(usage, ev)
+		}
+	}
+	if len(usage) != 3 || usage[0].ContextTokens != 240000 || usage[0].ContextCompacted ||
+		!usage[1].ContextCompacted || usage[1].ContextTokens != 0 ||
+		usage[2].ContextTokens != 31000 || usage[2].ContextLimit != 258400 || usage[2].ContextCompacted {
+		t.Fatalf("usage = %+v", usage)
+	}
+}
+
 func TestCodexSessionDeclinesForeignApprovals(t *testing.T) {
 	ad, _ := Get(CodexAdapterName)
 	stdio := newFakeStdio()

@@ -192,6 +192,11 @@ type Event struct {
 	// its conversation by them.
 	ContextTokens int64
 	ContextLimit  int64
+	// ContextCompacted is set on EventUsage when the harness has just
+	// compacted the conversation itself: ContextTokens is then its size
+	// after, and zero says the harness did not tell it, so the size known
+	// before is no longer true either.
+	ContextCompacted bool
 	// ResetsAt is set on EventPlanLimit when the harness said when the
 	// plan's limit lifts.
 	ResetsAt time.Time
