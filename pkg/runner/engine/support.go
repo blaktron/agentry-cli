@@ -924,6 +924,18 @@ func secretValues(p Params) (map[string]string, error) {
 			values[compile.SecretKey(a.TokenEnv)] = v
 		}
 	}
+	// The calendar feeds' addresses, the same way, from the segment's
+	// addresses alone.
+	if g := p.Plan.Capabilities.Calendar; g != nil {
+		for _, f := range g.Feeds {
+			v := p.CalendarURLs[f.URLEnv]
+			if v == "" {
+				missingSet["the address of the calendar feed "+f.Name] = true
+				continue
+			}
+			values[compile.SecretKey(f.URLEnv)] = v
+		}
+	}
 	missing := make([]string, 0, len(missingSet))
 	for name := range missingSet {
 		missing = append(missing, name)

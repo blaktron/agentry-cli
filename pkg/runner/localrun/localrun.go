@@ -178,6 +178,10 @@ type Builtin struct {
 	// and the roster's switch for them; the supervisor answers them only
 	// while that switch and the heartbeat are on.
 	armsMeetings bool
+	// readsCalendars lets the person give the persistent agent calendar
+	// feeds: each a roster entry, its address in the keychain, read by the
+	// tools server's calendar tools while it is on (Grants.CalendarFeeds).
+	readsCalendars bool
 	// resetsInParts gives the persistent agent Reset history and Reset
 	// agent beside its Reset: the first keeps every choice the person made,
 	// the second keeps the secrets and sign-ins they gave it.
@@ -407,6 +411,9 @@ type PlanInputs struct {
 	// Coder grants the Coding agent what its roster has on
 	// (compile.Inputs.Coder): set by a Segment of the Coding agent alone.
 	Coder *spec.CoderGrant
+	// Calendar grants the Assistant its calendar feeds
+	// (compile.Inputs.Calendar): set by a Segment of the Assistant alone.
+	Calendar *spec.CalendarGrant
 	// ShareServers are the declared servers, by source id, that see the
 	// agent's share folder (compile.Inputs.ShareServers): set by a Segment
 	// alone.
@@ -503,6 +510,7 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 			reflect.DeepEqual(plan.Capabilities.AgentFiles, in.AgentFiles) &&
 			plan.Capabilities.AppLink == in.AppLink &&
 			reflect.DeepEqual(plan.Capabilities.Coder, in.Coder) &&
+			reflect.DeepEqual(plan.Capabilities.Calendar, in.Calendar) &&
 			sameServers(plan.MCPServers, in.Servers, in.ShareServers) {
 			switch {
 			case plan.CompiledBy != in.CompiledBy:
@@ -548,6 +556,7 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 		AgentFiles:   in.AgentFiles,
 		AppLink:      in.AppLink,
 		Coder:        in.Coder,
+		Calendar:     in.Calendar,
 		ShareServers: in.ShareServers,
 		IntegrityKey: key,
 	}, planDir)
