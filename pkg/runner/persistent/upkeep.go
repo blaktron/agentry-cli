@@ -369,6 +369,8 @@ type Compacted struct {
 	HandoffBytes int `json:"handoffBytes,omitempty"`
 	// HandoffCut says the handoff was longer than its bound and was cut.
 	HandoffCut bool `json:"handoffCut,omitempty"`
+	// HandoffForm is the handoff's form (HandoffKeyed, HandoffProse).
+	HandoffForm string `json:"handoffForm,omitempty"`
 	// Swap is how the new conversation started (SwapInSegment,
 	// SwapSegment), and SwapMillis how long that took.
 	Swap       string `json:"swap,omitempty"`
@@ -430,7 +432,8 @@ func (s *Supervisor) compactLocked(ctx context.Context, trigger string) (Compact
 	s.mu.Unlock()
 	defer s.beginUpkeep("Saving to memory first; your message follows")()
 	s.notice("Saving to memory before a fresh conversation")
-	out.FactsBefore = s.countFacts(ctx)
+	var digestBefore string
+	out.FactsBefore, digestBefore = s.memoryStat(ctx)
 
 	events, unsubscribe := s.Subscribe()
 	tctx, cancel := context.WithTimeout(ctx, upkeepTurnCap)
@@ -445,14 +448,20 @@ func (s *Supervisor) compactLocked(ctx context.Context, trigger string) (Compact
 	s.upkeep.MemoryWrites++
 	s.mu.Unlock()
 	oldConv := s.conversationID()
-	handoff, bad := parseHandoff(answer)
+	handoff, form, bad := parseHandoff(answer)
+	var digestAfter string
+	out.FactsAfter, digestAfter = s.memoryStat(ctx)
 	switch {
 	case err != nil:
 		out.Reason = "the upkeep turn failed: " + err.Error()
 	case bad != "":
 		out.Reason = bad
+	case form == HandoffProse && digestBefore != "" && digestBefore == digestAfter:
+		// A keyed handoff says the agent followed memory-compact; prose
+		// does not, and with the memory unchanged nothing shows the
+		// conversation was saved before it is left behind.
+		out.Reason = "the upkeep turn's answer was not a handoff, and the memory did not change"
 	}
-	out.FactsAfter = s.countFacts(ctx)
 	if out.Reason != "" {
 		if trigger != UpkeepManual {
 			s.mu.Lock()
@@ -464,7 +473,7 @@ func (s *Supervisor) compactLocked(ctx context.Context, trigger string) (Compact
 		s.notice("The memory upkeep did not finish, so the conversation goes on as it was: " + out.Reason)
 		return out, nil
 	}
-	out.HandoffBytes, out.HandoffCut = len(handoff), strings.HasSuffix(handoff, handoffCutMark)
+	out.HandoffBytes, out.HandoffCut, out.HandoffForm = len(handoff), strings.HasSuffix(handoff, handoffCutMark), form
 	swap, took, err := s.swapConversation(ctx, handoff)
 	out.Swap, out.SwapMillis = swap, took.Milliseconds()
 	var unstored *unstoredError
@@ -524,10 +533,22 @@ const handoffCutMark = " [cut]"
 // handoffKeys are the lines a handoff is made of.
 var handoffKeys = []string{"owed:", "ctx:", "tried:", "open:", "pages:"}
 
+// The forms of a handoff, as its record says them.
+const (
+	// HandoffKeyed: the answer held the handoff's key lines, and the
+	// handoff is the text from the first of them on.
+	HandoffKeyed = "keyed"
+	// HandoffProse: the answer held none, and the handoff is the whole
+	// answer. Some models write the handoff as a paragraph; it still says
+	// what the conversation left open.
+	HandoffProse = "prose"
+)
+
 // parseHandoff takes the handoff from an upkeep turn's answer: the text from
-// its first handoff line on, at most maxHandoff bytes. The reason is set when
-// the answer holds none.
-func parseHandoff(answer string) (string, string) {
+// its first handoff line on, or the whole answer when it has none, at most
+// maxHandoff bytes, and which form it was in. The reason is set when there is
+// no answer.
+func parseHandoff(answer string) (handoff, form, reason string) {
 	answer = strings.TrimSpace(answer)
 	start := -1
 	for _, k := range handoffKeys {
@@ -546,17 +567,18 @@ func parseHandoff(answer string) (string, string) {
 			i = at + len(k)
 		}
 	}
-	if start < 0 {
-		if answer == "" {
-			return "", "the upkeep turn gave no answer"
-		}
-		return "", "the upkeep turn's answer was not a handoff"
+	if answer == "" {
+		return "", "", "the upkeep turn gave no answer"
 	}
-	h := strings.TrimSpace(answer[start:])
+	form = HandoffProse
+	if start >= 0 {
+		answer, form = answer[start:], HandoffKeyed
+	}
+	h := strings.TrimSpace(answer)
 	if len(h) > maxHandoff {
 		h = strings.ToValidUTF8(h[:maxHandoff], "") + handoffCutMark
 	}
-	return h, ""
+	return h, form, ""
 }
 
 // handoffCarried is the text a compacted conversation's first turn starts
@@ -708,13 +730,6 @@ const factCountWait = 20 * time.Second
 // factLine is a fact line of the memory's schema, current or superseded.
 var factLine = regexp.MustCompile(`^~?F[0-9]+ `)
 
-// countFacts counts the fact lines of the memory's pages, read by a one-shot
-// as the export reads them; -1 when it could not be read.
-func (s *Supervisor) countFacts(ctx context.Context) int {
-	n, _ := s.memoryStat(ctx)
-	return n
-}
-
 // memoryStat is the count of the memory's fact lines and a digest of every
 // file it holds, read by a one-shot as the export reads them: -1 and "" when
 // it could not be read.
@@ -827,6 +842,7 @@ type UpkeepRecord struct {
 	FactsAfter      int       `json:"factsAfter"`
 	HandoffBytes    int       `json:"handoffBytes,omitempty"`
 	HandoffCut      bool      `json:"handoffCut,omitempty"`
+	HandoffForm     string    `json:"handoffForm,omitempty"`
 	Swap            string    `json:"swap,omitempty"`
 	SwapMillis      int64     `json:"swapMillis,omitempty"`
 }
@@ -844,7 +860,7 @@ func (s *Supervisor) logUpkeep(outDir string, c Compacted, oldConv, newConv stri
 	b, err := json.Marshal(UpkeepRecord{Time: s.now().UTC(), Trigger: c.Trigger, Swapped: c.Swapped, Reason: c.Reason,
 		ContextTokens: c.ContextTokens, OldConversation: oldConv, NewConversation: newConv, Turn: c.Turn,
 		FactsBefore: c.FactsBefore, FactsAfter: c.FactsAfter, HandoffBytes: c.HandoffBytes, HandoffCut: c.HandoffCut,
-		Swap: c.Swap, SwapMillis: c.SwapMillis})
+		HandoffForm: c.HandoffForm, Swap: c.Swap, SwapMillis: c.SwapMillis})
 	if err != nil {
 		return
 	}
