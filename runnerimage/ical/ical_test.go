@@ -387,10 +387,90 @@ END:VCALENDAR`)
 	}()
 	select {
 	case ex := <-done:
-		if len(ex.Occurrences) != 0 {
-			t.Errorf("occurrences = %v", starts(ex))
+		// DTSTART is an instance, whatever the rule says after it.
+		if got := starts(ex); len(got) != 1 || got[0] != "2026-01-01 10:00 UTC Never" {
+			t.Errorf("occurrences = %v", got)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Expand did not return")
+	}
+}
+
+func TestDTSTARTIsTheFirstInstanceAndCounts(t *testing.T) {
+	utc := time.UTC
+	// 26 October 2026 is a Monday; the rule names Tuesdays and Thursdays.
+	c := parse(t, `BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:1
+SUMMARY:Class
+DTSTART:20261026T180000Z
+RRULE:FREQ=WEEKLY;BYDAY=TU,TH;COUNT=3
+END:VEVENT
+END:VCALENDAR`)
+	ex := c.Expand(time.Date(2026, 10, 1, 0, 0, 0, 0, utc), time.Date(2026, 12, 1, 0, 0, 0, 0, utc), utc)
+	wantStarts(t, ex, "2026-10-26 18:00 UTC Class", "2026-10-27 18:00 UTC Class", "2026-10-29 18:00 UTC Class")
+}
+
+func TestADateExceptionOnATimedSeries(t *testing.T) {
+	ny := mustLoc(t, "America/New_York")
+	c := parse(t, `BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:1
+SUMMARY:Sync
+DTSTART;TZID=America/New_York:20261026T090000
+DURATION:PT30M
+RRULE:FREQ=DAILY;COUNT=4
+EXDATE;VALUE=DATE:20261027
+END:VEVENT
+BEGIN:VEVENT
+UID:1
+RECURRENCE-ID;VALUE=DATE:20261028
+SUMMARY:Sync (late)
+DTSTART;TZID=America/New_York:20261028T170000
+DURATION:PT30M
+END:VEVENT
+END:VCALENDAR`)
+	ex := c.Expand(time.Date(2026, 10, 26, 0, 0, 0, 0, ny), time.Date(2026, 10, 31, 0, 0, 0, 0, ny), ny)
+	wantStarts(t, ex, "2026-10-26 09:00 EDT Sync", "2026-10-28 17:00 EDT Sync (late)", "2026-10-29 09:00 EDT Sync")
+}
+
+func TestAnUnsupportedRulePartIsSaid(t *testing.T) {
+	utc := time.UTC
+	c := parse(t, `BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:1
+SUMMARY:Week 20
+DTSTART:20260511T100000Z
+RRULE:FREQ=YEARLY;BYWEEKNO=20;BYDAY=MO
+END:VEVENT
+END:VCALENDAR`)
+	ex := c.Expand(time.Date(2026, 1, 1, 0, 0, 0, 0, utc), time.Date(2028, 1, 1, 0, 0, 0, 0, utc), utc)
+	if len(ex.Occurrences) != 1 || len(ex.Notes) != 1 || !strings.Contains(ex.Notes[0], "BYWEEKNO") {
+		t.Errorf("occurrences %v, notes %q", starts(ex), ex.Notes)
+	}
+}
+
+func TestAVFreeBusyFeedIsBusyTime(t *testing.T) {
+	utc := time.UTC
+	c := parse(t, `BEGIN:VCALENDAR
+BEGIN:VFREEBUSY
+DTSTART:20261027T000000Z
+DTEND:20261028T000000Z
+FREEBUSY;FBTYPE=BUSY:20261027T100000Z/20261027T110000Z,20261027T130000Z/PT30M
+FREEBUSY;FBTYPE=FREE:20261027T150000Z/20261027T160000Z
+FREEBUSY:20261027T160000Z/20261027T163000Z
+END:VFREEBUSY
+END:VCALENDAR`)
+	if !c.BusyOnly() {
+		t.Error("BusyOnly = false for a VFREEBUSY feed")
+	}
+	ex := c.Expand(time.Date(2026, 10, 27, 0, 0, 0, 0, utc), time.Date(2026, 10, 28, 0, 0, 0, 0, utc), utc)
+	wantStarts(t, ex, "2026-10-27 10:00 UTC Busy", "2026-10-27 13:00 UTC Busy", "2026-10-27 16:00 UTC Busy")
+	if ex.Occurrences[1].End.Sub(ex.Occurrences[1].Start) != 30*time.Minute || !ex.Occurrences[0].Busy {
+		t.Errorf("occurrences %+v", ex.Occurrences)
+	}
+	empty := parse(t, "BEGIN:VCALENDAR\nBEGIN:VFREEBUSY\nEND:VFREEBUSY\nEND:VCALENDAR")
+	if !empty.BusyOnly() {
+		t.Error("an empty VFREEBUSY feed is not free/busy only")
 	}
 }

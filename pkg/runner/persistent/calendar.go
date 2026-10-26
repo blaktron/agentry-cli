@@ -58,20 +58,7 @@ func CalendarKeychainAccount(agent, name string) string {
 }
 
 // CalendarService names the service a feed's host belongs to, or "".
-func CalendarService(host string) string {
-	h := strings.ToLower(host)
-	switch {
-	case h == "calendar.google.com" || h == "www.google.com":
-		return "Google Calendar"
-	case h == "outlook.office365.com" || h == "outlook.office.com" || h == "outlook.live.com":
-		return "Outlook"
-	case strings.HasSuffix(h, ".icloud.com"):
-		return "iCloud"
-	case strings.HasSuffix(h, ".fastmail.com"):
-		return "Fastmail"
-	}
-	return ""
-}
+func CalendarService(host string) string { return toolsrv.CalendarService(host) }
 
 // from is how a sentence names where the feed comes from.
 func (f CalendarFeed) from() string {

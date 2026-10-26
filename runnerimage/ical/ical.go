@@ -43,6 +43,9 @@ type Calendar struct {
 	Events []Event
 
 	zones map[string]*vtimezone
+	// freeBusy says the feed holds VFREEBUSY blocks, read as events titled
+	// Busy.
+	freeBusy bool
 }
 
 // Event is one VEVENT.
@@ -251,6 +254,8 @@ func parseLines(lines []string) (*Calendar, error) {
 				ev = &Event{}
 			case comp == "VTIMEZONE" && len(stack) == 2:
 				tz = &vtimezone{}
+			case comp == "VFREEBUSY" && len(stack) == 2:
+				cal.freeBusy = true
 			case (comp == "STANDARD" || comp == "DAYLIGHT") && tz != nil:
 				obs = &observance{daylight: comp == "DAYLIGHT"}
 			}
@@ -284,6 +289,10 @@ func parseLines(lines []string) (*Calendar, error) {
 		switch {
 		case ev != nil && len(stack) == 2:
 			setEventProperty(ev, p)
+		case len(stack) == 2 && stack[1] == "VFREEBUSY" && p.Name == "FREEBUSY":
+			if err := cal.addFreeBusy(p); err != nil {
+				return nil, err
+			}
 		case obs != nil:
 			setObservanceProperty(obs, p)
 		case tz != nil:
@@ -490,4 +499,41 @@ func parseDuration(v string) (time.Duration, error) {
 		d = -d
 	}
 	return d, nil
+}
+
+// addFreeBusy reads a FREEBUSY property's periods (start/end or
+// start/duration, in UTC) as events titled Busy; a FREE period is not one.
+func (c *Calendar) addFreeBusy(p property) error {
+	if t := strings.ToUpper(p.Params["FBTYPE"]); t == "FREE" {
+		return nil
+	}
+	for _, period := range strings.Split(p.Value, ",") {
+		a, b, ok := strings.Cut(strings.TrimSpace(period), "/")
+		if !ok {
+			continue
+		}
+		start, err := parseDateTimeValue(a, nil)
+		if err != nil || start.DateOnly {
+			continue
+		}
+		ev := Event{UID: fmt.Sprintf("freebusy-%d", len(c.Events)+1), Summary: "Busy", Start: start}
+		if strings.HasPrefix(strings.ToUpper(b), "P") || strings.HasPrefix(b, "+P") {
+			d, err := parseDuration(b)
+			if err != nil {
+				continue
+			}
+			ev.Duration, ev.hasDur = d, true
+		} else {
+			end, err := parseDateTimeValue(b, nil)
+			if err != nil {
+				continue
+			}
+			ev.End = &end
+		}
+		if len(c.Events) >= MaxEvents {
+			return fmt.Errorf("the feed holds more than %d events", MaxEvents)
+		}
+		c.Events = append(c.Events, ev)
+	}
+	return nil
 }

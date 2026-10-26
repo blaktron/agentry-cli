@@ -199,6 +199,11 @@ func key(t time.Time, allDay bool) string {
 	return t.UTC().Format(time.RFC3339)
 }
 
+// civilKey is a value's date, as key writes one.
+func civilKey(dt dateTime) string {
+	return fmt.Sprintf("%04d-%02d-%02d", dt.Y, dt.Mo, dt.D)
+}
+
 func (r resolver) expandMaster(e Event, ovs []Event, from, to time.Time) []Occurrence {
 	if e.Status == "CANCELLED" {
 		return nil
@@ -217,11 +222,22 @@ func (r resolver) expandMaster(e Event, ovs []Event, from, to time.Time) []Occur
 	// when they still overlap it.
 	stop := to
 
-	excluded := map[string]bool{}
+	// An exception names an instance by its start; one written as a date on
+	// a series of timed instances names every instance that day, in the
+	// series' own zone.
+	excluded, excludedDays := map[string]bool{}, map[string]bool{}
 	for _, x := range e.ExDates {
-		excluded[key(r.at(x), allDay || x.DateOnly)] = true
+		if x.DateOnly && !allDay {
+			excludedDays[civilKey(x)] = true
+			continue
+		}
+		excluded[key(r.at(x), allDay)] = true
 	}
 	for _, o := range ovs {
+		if o.RecurrenceID.DateOnly && !allDay {
+			excludedDays[civilKey(*o.RecurrenceID)] = true
+			continue
+		}
 		excluded[key(r.at(*o.RecurrenceID), allDay)] = true
 	}
 
@@ -240,10 +256,12 @@ func (r resolver) expandMaster(e Event, ovs []Event, from, to time.Time) []Occur
 				}
 				until = &u
 			}
-			rule.starts(start, start.Location(), until, stop, func(t time.Time) bool {
+			if rule.starts(start, start.Location(), until, stop, func(t time.Time) bool {
 				starts = append(starts, t)
 				return true
-			})
+			}) {
+				r.note(fmt.Sprintf("%q repeats from so long ago that its later instances were not worked out", e.Summary))
+			}
 		}
 	} else {
 		starts = append(starts, start)
@@ -260,7 +278,7 @@ func (r resolver) expandMaster(e Event, ovs []Event, from, to time.Time) []Occur
 	seen := map[string]bool{}
 	for _, t := range starts {
 		k := key(t, allDay)
-		if excluded[k] || seen[k] {
+		if excluded[k] || seen[k] || excludedDays[t.Format("2006-01-02")] {
 			continue
 		}
 		seen[k] = true
@@ -280,11 +298,12 @@ var busyOnlySummaries = map[string]bool{
 	"out of office": true, "working elsewhere": true, "busy (tentative)": true,
 }
 
-// BusyOnly says the feed was published as free/busy only: it has events,
-// and none has a title of its own, a location or a description.
+// BusyOnly says the feed was published as free/busy only: VFREEBUSY
+// blocks, or events none of which has a title of its own, a location or a
+// description.
 func (c *Calendar) BusyOnly() bool {
 	if len(c.Events) == 0 {
-		return false
+		return c.freeBusy
 	}
 	for _, e := range c.Events {
 		if !busyOnlySummaries[strings.ToLower(strings.TrimSpace(e.Summary))] || e.Location != "" || e.Description != "" {

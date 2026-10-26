@@ -83,7 +83,7 @@ func TestCalendarEventsAnswersWithoutTheAddress(t *testing.T) {
 	if isErr {
 		t.Fatalf("calendar_events failed: %s", text)
 	}
-	for _, want := range []string{"Feed Work: fetched Tue 27 Oct 08:00", "Times are in Europe/London.", "Thu 29 Oct 2026",
+	for _, want := range []string{"Feed Work: fetched Tue 27 Oct 08:00 (just now)", "Times are in Europe/London.", "Thu 29 Oct 2026",
 		"- 09:30–09:45 Stand-up [repeats]", "- 10:00–11:00 Dentist", "Where: High Street", "[redacted:AGENTRY_CALENDAR_FEED_1]"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("answer lacks %q:\n%s", want, text)
@@ -97,7 +97,7 @@ func TestCalendarEventsAnswersWithoutTheAddress(t *testing.T) {
 		t.Errorf("second call: error %v, fetches %d", isErr, ft.calls)
 	}
 	feeds, _ := call(t, s, ToolCalendarFeeds, map[string]any{})
-	if !strings.Contains(feeds, `- Work (Google Calendar): last fetched Tue 27 Oct 08:00, the calendar "Person"`) || strings.Contains(feeds, "private-") {
+	if !strings.Contains(feeds, `- Work (Google Calendar): last fetched Tue 27 Oct 08:00 (just now), the calendar "Person"`) || strings.Contains(feeds, "private-") {
 		t.Errorf("calendar_feeds:\n%s", feeds)
 	}
 	calendarNow = func() time.Time { return time.Date(2026, 10, 27, 8, 6, 0, 0, time.UTC) }
@@ -185,6 +185,7 @@ func TestValidateSpecCalendar(t *testing.T) {
 	}{
 		{Calendar{Feeds: []CalendarFeed{feed}, TimeZone: "Europe/Oslo"}, ""},
 		{Calendar{Feeds: []CalendarFeed{{Name: "", Host: feed.Host, URLEnv: feed.URLEnv}}}, "name"},
+		{Calendar{Feeds: []CalendarFeed{{Name: "a\nb", Host: feed.Host, URLEnv: feed.URLEnv}}}, "printable"},
 		{Calendar{Feeds: []CalendarFeed{{Name: "W", Host: "calendar.google.com:8443", URLEnv: feed.URLEnv}}}, "not a host name"},
 		{Calendar{Feeds: []CalendarFeed{{Name: "W", Host: feed.Host, URLEnv: "PATH"}}}, "not a calendar feed variable"},
 		{Calendar{Feeds: []CalendarFeed{feed, {Name: "work", Host: feed.Host, URLEnv: "AGENTRY_CALENDAR_FEED_2"}}}, "named twice"},

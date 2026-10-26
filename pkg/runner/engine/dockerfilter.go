@@ -374,8 +374,7 @@ const gatewayOwnerLabel = "agentry.gateway.run"
 // RelayHosts): the run's declared servers' egress entries, the agent's own
 // egress hosts on 443, the port the compiler gives the tools server's
 // fetch, the review grant's TypeSafe API on 443, and the calendar feeds'
-// hosts on 443. Empty when nothing
-// declares egress, which admits no relay.
+// hosts on 443. Empty when nothing declares egress, which admits no relay.
 func relayHosts(plan *spec.Plan) []string {
 	var hosts []string
 	for _, srv := range plan.MCPServers {

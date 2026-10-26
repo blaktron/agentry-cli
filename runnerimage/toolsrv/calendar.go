@@ -22,6 +22,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/blaktron/agentry-cli/runnerimage/ical"
 )
@@ -50,6 +52,8 @@ const (
 	maxCalendarNotes = 600
 	// MaxCalendarFeeds is the most feeds a spec may name.
 	MaxCalendarFeeds = 20
+	// maxCalendarFeedName bounds a feed's name, in bytes.
+	maxCalendarFeedName = 64
 )
 
 // Calendar is the calendar feeds' grant: the feeds a persistent Assistant
@@ -98,8 +102,9 @@ func validateCalendar(spec *Spec) error {
 	for _, f := range c.Feeds {
 		key := strings.ToLower(f.Name)
 		switch {
-		case strings.TrimSpace(f.Name) == "" || len(f.Name) > 64:
-			return fmt.Errorf("calendar: feed name %q must be 1 to 64 bytes", f.Name)
+		case strings.TrimSpace(f.Name) != f.Name || f.Name == "" || len(f.Name) > maxCalendarFeedName || !utf8.ValidString(f.Name) ||
+			strings.ContainsFunc(f.Name, func(r rune) bool { return unicode.IsControl(r) || unicode.Is(unicode.Cf, r) }):
+			return fmt.Errorf("calendar: feed name %q is not 1 to %d bytes of printable text", f.Name, maxCalendarFeedName)
 		case !calendarFeedHostRE.MatchString(f.Host) || strings.Trim(f.Host[strings.LastIndexByte(f.Host, '.')+1:], "0123456789") == "":
 			return fmt.Errorf("calendar: feed %q: host %q is not a host name", f.Name, f.Host)
 		case !calendarFeedEnvRE.MatchString(f.URLEnv):
@@ -235,8 +240,9 @@ func (s *server) fetchCalendar(f CalendarFeed) (*ical.Calendar, time.Time, error
 	return cal, at, nil
 }
 
-// calendarService names the service a feed's host belongs to, or "".
-func calendarService(host string) string {
+// CalendarService names the service a calendar feed's host belongs to, or
+// "".
+func CalendarService(host string) string {
 	h := strings.ToLower(host)
 	switch {
 	case h == "calendar.google.com" || h == "www.google.com":
@@ -363,6 +369,18 @@ func (s *server) readFeeds(feeds []CalendarFeed, from, to time.Time, loc *time.L
 	return out
 }
 
+// fetchedAt says when a feed was fetched, and how long ago.
+func fetchedAt(at time.Time, loc *time.Location) string {
+	ago := calendarNow().Sub(at).Round(time.Minute)
+	switch {
+	case ago < time.Minute:
+		return at.In(loc).Format("Mon 2 Jan 15:04") + " (just now)"
+	case ago == time.Minute:
+		return at.In(loc).Format("Mon 2 Jan 15:04") + " (1 minute ago)"
+	}
+	return fmt.Sprintf("%s (%d minutes ago)", at.In(loc).Format("Mon 2 Jan 15:04"), int(ago/time.Minute))
+}
+
 // feedsHeader says when each feed was fetched, which could not be read, and
 // what was read inexactly.
 func feedsHeader(reads []feedRead, loc *time.Location) (string, bool) {
@@ -374,7 +392,7 @@ func feedsHeader(reads []feedRead, loc *time.Location) (string, bool) {
 			continue
 		}
 		ok = true
-		fmt.Fprintf(&b, "Feed %s: fetched %s", r.feed.Name, r.at.In(loc).Format("Mon 2 Jan 15:04"))
+		fmt.Fprintf(&b, "Feed %s: fetched %s", r.feed.Name, fetchedAt(r.at, loc))
 		if r.busyOnly {
 			b.WriteString("; it is published as free/busy only, so its events have no titles or details")
 		}
@@ -398,13 +416,13 @@ func (s *server) toolCalendarFeeds(raw json.RawMessage) (string, bool) {
 	defer s.calendars.mu.Unlock()
 	for _, f := range s.spec.Calendar.Feeds {
 		fmt.Fprintf(&b, "- %s", f.Name)
-		if svc := calendarService(f.Host); svc != "" {
+		if svc := CalendarService(f.Host); svc != "" {
 			fmt.Fprintf(&b, " (%s)", svc)
 		} else {
 			fmt.Fprintf(&b, " (from %s)", f.Host)
 		}
 		if e, ok := s.calendars.entries[f.Name]; ok {
-			fmt.Fprintf(&b, ": last fetched %s", e.at.In(loc).Format("Mon 2 Jan 15:04"))
+			fmt.Fprintf(&b, ": last fetched %s", fetchedAt(e.at, loc))
 			if e.cal.Name != "" {
 				fmt.Fprintf(&b, ", the calendar %q", e.cal.Name)
 			}

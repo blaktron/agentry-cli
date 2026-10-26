@@ -20,10 +20,10 @@ package toolsrv
 // deliverable and title; "14" the rendered web_read (Web.Render); "15" the
 // given-only web_read (Web.GivenOnly and Web.Given); "16" a persistent
 // agent's folders (WorkspaceName) and the share's checks (ShareChecks); "17"
-// the calendar feeds (Calendar). The server
-// refuses other versions, so a stale runner image meets a newer compiler
-// loudly — and the image tag derives from the CLI version, so rebuilds
-// happen on their own at upgrade time.
+// the calendar feeds (Calendar). The server refuses other versions, so a
+// stale runner image meets a newer compiler loudly — and the image tag
+// derives from the CLI version, so rebuilds happen on their own at upgrade
+// time.
 const SpecVersion = "17"
 
 // Spec is the compiled configuration the runner's capability compiler hands

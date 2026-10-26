@@ -97,6 +97,8 @@ func parseRRule(s string) (*rrule, error) {
 			r.byHour, err = intList(v, 0, 23)
 		case "BYMINUTE":
 			r.byMinute, err = intList(v, 0, 59)
+		case "BYWEEKNO", "BYSECOND":
+			return nil, fmt.Errorf("RRULE %s is not supported", k)
 		case "WKST":
 			wd, ok := weekdays[v]
 			if !ok {
@@ -161,10 +163,12 @@ func daysInYear(y int) int {
 }
 
 // starts walks the rule from dtstart (a wall clock in loc), calling emit
-// with each instance's start in order, dtstart first, until emit returns
-// false, the rule's COUNT or UNTIL ends it, or an instance starts at or
-// after stop.
-func (r *rrule) starts(dtstart time.Time, loc *time.Location, until *time.Time, stop time.Time, emit func(time.Time) bool) {
+// with each instance's start in order until emit returns false, the rule's
+// COUNT or UNTIL ends it, or an instance starts at or after stop. DTSTART is
+// always the first instance and counts toward COUNT, whether or not the rule
+// would have produced it, as calendar services read a series. It reports
+// whether the walk gave up at maxPeriods before reaching stop.
+func (r *rrule) starts(dtstart time.Time, loc *time.Location, until *time.Time, stop time.Time, emit func(time.Time) bool) (exhausted bool) {
 	first := civil{dtstart.Year(), int(dtstart.Month()), dtstart.Day()}
 	h0, mi0, s0 := dtstart.Clock()
 	hours := r.byHour
@@ -176,9 +180,19 @@ func (r *rrule) starts(dtstart time.Time, loc *time.Location, until *time.Time, 
 		minutes = []int{mi0}
 	}
 	emitted := 0
+	if !dtstart.Before(stop) {
+		return false
+	}
+	if !emit(dtstart) {
+		return false
+	}
+	emitted++
+	if r.count == 1 {
+		return false
+	}
 	for p := 0; p < maxPeriods; p++ {
 		if periodStart(r, first, p).y > stop.Year()+1 {
-			return
+			return false
 		}
 		days := r.periodDays(first, p)
 		var set []time.Time
@@ -195,24 +209,25 @@ func (r *rrule) starts(dtstart time.Time, loc *time.Location, until *time.Time, 
 			set = setPos(set, r.bySetPos)
 		}
 		for _, t := range set {
-			if t.Before(dtstart) {
+			if !t.After(dtstart) {
 				continue
 			}
 			if until != nil && t.After(*until) {
-				return
+				return false
 			}
 			if !t.Before(stop) {
-				return
+				return false
 			}
 			if !emit(t) {
-				return
+				return false
 			}
 			emitted++
 			if r.count > 0 && emitted >= r.count {
-				return
+				return false
 			}
 		}
 	}
+	return true
 }
 
 func setPos(set []time.Time, pos []int) []time.Time {
