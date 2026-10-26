@@ -51,6 +51,11 @@ type fakeSegment struct {
 	// and limit, when set, are the context size each turn reports.
 	answer         func(text string) string
 	context, limit int64
+	// compacts, when set, has the harness compact the conversation itself
+	// after each turn's usage, reporting compactedTo as its size after
+	// (zero: not said).
+	compacts    bool
+	compactedTo int64
 }
 
 func newFakeSegment(seg localrun.Segment, id string, resumed bool, reason string) *fakeSegment {
@@ -85,13 +90,16 @@ func (f *fakeSegment) SendCarrying(_ context.Context, carried, text string) erro
 		<-hold
 	}
 	f.mu.Lock()
-	answer, ctxTokens, limit := "echo: "+text, f.context, f.limit
+	answer, ctxTokens, limit, compacts, compactedTo := "echo: "+text, f.context, f.limit, f.compacts, f.compactedTo
 	if f.answer != nil {
 		answer = f.answer(text)
 	}
 	f.mu.Unlock()
 	if ctxTokens > 0 {
 		f.events <- session.Event{Kind: session.KindUsage, ContextTokens: ctxTokens, ContextLimit: limit}
+	}
+	if compacts {
+		f.events <- session.Event{Kind: session.KindUsage, ContextTokens: compactedTo, ContextCompacted: true}
 	}
 	f.events <- session.Event{Kind: session.KindAssistantTurn, Text: answer}
 	return nil
@@ -182,9 +190,12 @@ type starter struct {
 	hold chan struct{}
 	// served, when set, is the tools each segment's gateway serves.
 	served func(localrun.Segment) []string
-	// answer, context and limit are each segment's (fakeSegment).
+	// answer, context, limit, compacts and compactedTo are each
+	// segment's (fakeSegment).
 	answer         func(text string) string
 	context, limit int64
+	compacts       bool
+	compactedTo    int64
 	// renew makes each segment one whose harness can start a new
 	// conversation while it runs, failing with renewErr when set.
 	renew    bool
@@ -229,6 +240,7 @@ func (s *starter) start(ctx context.Context, seg localrun.Segment) (engine.Persi
 		s.last.served = s.served(seg)
 	}
 	s.last.answer, s.last.context, s.last.limit = s.answer, s.context, s.limit
+	s.last.compacts, s.last.compactedTo = s.compacts, s.compactedTo
 	if s.bound {
 		seg := s.last
 		go func() {

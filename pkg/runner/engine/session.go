@@ -1256,7 +1256,7 @@ func (s *liveSession) handle(ev adapter.Event) {
 		over := s.p.Budgets.MaxCostUSD > 0 && s.costUSD > s.p.Budgets.MaxCostUSD
 		s.mu.Unlock()
 		s.emit(session.Event{Kind: session.KindUsage, InputTokens: ev.InputTokens, OutputTokens: ev.OutputTokens, TotalTokens: ev.TotalTokens, CostUSD: ev.CostUSD,
-			ContextTokens: ev.ContextTokens, ContextLimit: ev.ContextLimit, Raw: ev.Raw})
+			ContextTokens: ev.ContextTokens, ContextLimit: ev.ContextLimit, ContextCompacted: ev.ContextCompacted, Raw: ev.Raw})
 		if over {
 			s.endWith(session.EndCostBudget)
 		}

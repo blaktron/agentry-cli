@@ -566,15 +566,21 @@ type copilotEvent struct {
 		InputTokens  int64 `json:"inputTokens"`
 		OutputTokens int64 `json:"outputTokens"`
 		// session.usage_info: the conversation's size and the model's
-		// window.
+		// window. session.compaction_complete: the window it compacted
+		// for, too.
 		CurrentTokens int64 `json:"currentTokens"`
 		TokenLimit    int64 `json:"tokenLimit"`
+		// session.compaction_complete: the conversation's size after,
+		// read when Success says it compacted.
+		PostCompactionTokens int64 `json:"postCompactionTokens"`
 		// tool.execution_start
 		ToolName      string `json:"toolName"`
 		MCPServerName string `json:"mcpServerName"`
 		MCPToolName   string `json:"mcpToolName"`
 		// tool.execution_start and tool.execution_complete
 		ToolCallID string `json:"toolCallId"`
+		// tool.execution_complete and session.compaction_complete: Success
+		// says whether it worked.
 		// tool.execution_complete: Result's content is what the tool
 		// returned, Error's message why it failed. Both are read only on
 		// that event, so they stay raw here: another event's field of the
@@ -655,6 +661,15 @@ func (s *copilotSession) handleNotification(m rpcMessage, frame []byte) {
 			return
 		}
 		s.emit(Event{Kind: EventUsage, ContextTokens: ev.Data.CurrentTokens, ContextLimit: ev.Data.TokenLimit, Raw: raw})
+	case "session.compaction_complete":
+		// Copilot CLI compacted the conversation itself, and may send no
+		// usage_info after it before the turn ends: its size after is the
+		// conversation's size now. A failed compaction changed nothing.
+		if ev.Data.Success == nil || !*ev.Data.Success {
+			s.emit(Event{Kind: EventOther, Text: ev.Type, Raw: raw})
+			return
+		}
+		s.emit(Event{Kind: EventUsage, ContextTokens: ev.Data.PostCompactionTokens, ContextLimit: ev.Data.TokenLimit, ContextCompacted: true, Raw: raw})
 	case "permission.requested":
 		s.decide(ev, raw)
 	case "session.error":

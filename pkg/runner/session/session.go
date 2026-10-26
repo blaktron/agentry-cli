@@ -88,6 +88,10 @@ type Event struct {
 	// model's window, where the harness says them; zero is unknown.
 	ContextTokens int64 `json:"contextTokens,omitempty"`
 	ContextLimit  int64 `json:"contextLimit,omitempty"`
+	// ContextCompacted says, on a usage event, that the harness has just
+	// compacted the conversation itself; ContextTokens is then its size
+	// after, zero when the harness did not say.
+	ContextCompacted bool `json:"contextCompacted,omitempty"`
 	// Raw is the harness's own message, when there was one.
 	Raw json.RawMessage `json:"raw,omitempty"`
 }

@@ -254,6 +254,10 @@ func (s *claudeSession) readLoop() {
 				ctxSize = u.InputTokens + u.CacheReadTokens + u.CacheCreationTokens
 			}
 		}
+		if parsed && msg.Type == "system" && msg.Subtype == "compact_boundary" {
+			// The request before the compaction no longer says the size.
+			ctxSize = msg.CompactMetadata.PostTokens
+		}
 		isResult := parsed && msg.Type == "result"
 		reason := ""
 		if isResult && msg.IsError {
