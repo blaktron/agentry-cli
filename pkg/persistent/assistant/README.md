@@ -51,7 +51,7 @@ and `agentry agent show assistant` lists what it has:
   into it, and stay where they are. `agentry agent memory export assistant
   <folder>` copies the memory into a new folder, readable by you alone; a
   reset removes it.
-- **Fifteen skills** of its own, on unless you switch them off:
+- **Seventeen skills** of its own, on unless you switch them off:
   `memory-ingest`, `memory-query`, `memory-consolidate` and `memory-compact`,
   which say how it adds to its memory, answers from it, tidies it and saves a
   whole conversation before it is compacted; `meeting-notes`, which says how
@@ -64,8 +64,10 @@ and `agentry agent show assistant` lists what it has:
   account safely; `microsoft-365-setup`, which walks you through connecting
   your Microsoft account with an Entra app of your own; `microsoft-365`,
   `microsoft-inbox-triage` and `microsoft-meeting-prep`, which say how it uses
-  your Microsoft account safely; and `fastmail-setup` and
-  `fastmail-inbox-triage`, for your Fastmail account.
+  your Microsoft account safely; `fastmail-setup` and
+  `fastmail-inbox-triage`, for your Fastmail account; and
+  `calendar-feeds-setup` and `calendar-feeds`, which walk you through giving
+  it a calendar by its iCal address and say how it reads one.
 - **A share folder** of yours, `~/agentry/assistantshare` unless you choose
   another, is mounted read and write while it runs: you see what it writes
   there as it writes it. A file you add is checked for malware with ClamAV
@@ -116,6 +118,17 @@ and `agentry agent show assistant` lists what it has:
 - **Mail providers**: Google, Microsoft and Fastmail are each enabled or disabled
   (`agentry agent configure assistant --mail-provider <key>`); only an
   enabled one's server is on its roster, and setting one up enables it.
+- **Calendar feeds**: any calendar you give it by its iCal (ICS) address,
+  under a name you choose (`agentry agent configure assistant --calendar-feed
+  <name>`, the address read without echo): Google Calendar's secret address,
+  the ICS link Outlook gives a published calendar, an iCloud public calendar
+  or another service's. Each is an entry of its roster, on once you agree.
+  Its tools `calendar_events`, `calendar_free_time` and `calendar_feeds` read
+  them read only, in your time zone, fetching each from its own host alone
+  and at most every five minutes; it never changes your calendar, and
+  proposes an event as an `.ics` file in your share folder for you to open.
+  The address is kept in your system keychain and given to its tools server
+  alone: the agent is never shown it.
 - **What you add**: knowledge packs from your computer and MCP servers, each
   an entry of its roster that you switch on and off. Adding one, or turning
   on one you have not agreed to on this computer, asks you first.

@@ -532,6 +532,11 @@ type CapSummary struct {
 	// person's agreement to it for this agent is the gate, not the machine
 	// policy's allowWildcardEgress or browser.allowPublicWeb.
 	Coder *CoderGrant `json:"coder,omitempty"`
+	// Calendar is a persistent Assistant's calendar feeds, what its roster
+	// has on: the tools server is given each feed's address and reaches the
+	// feeds' hosts on 443 alone. Never the manifest's: the compiler sets it
+	// for a persistent built-in the CLI grants it to alone.
+	Calendar *CalendarGrant `json:"calendar,omitempty"`
 }
 
 // CoderGrant is the Coding agent's grant (CapSummary.Coder), each part

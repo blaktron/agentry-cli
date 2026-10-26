@@ -187,6 +187,12 @@ func (s *server) buildTools() {
 		case ToolRegistrySearch:
 			add(name, "Ask the Agentry registry: search its published QuickAgents (query), read one QuickAgent's manifest (ref), or read its vulnerability check of an exact MCP server version (ecosystem, package, version). AI Review reads each answer before you do.",
 				registrySearchSchema(), s.toolRegistrySearch)
+		case ToolCalendarFeeds:
+			add(name, calendarFeedsDescription(), objSchema(map[string]any{}), s.toolCalendarFeeds)
+		case ToolCalendarEvents:
+			add(name, calendarEventsDescription(), calendarEventsSchema(), s.toolCalendarEvents)
+		case ToolCalendarFreeTime:
+			add(name, calendarFreeTimeDescription(), calendarFreeTimeSchema(), s.toolCalendarFreeTime)
 		case ToolWriteReport:
 			add(name, "Write a report file under the run's output folder (reports/). This is the only file channel that survives the run; set append to extend an existing report. Set deliverable to true, with a title, on the file the person asked this run for: the run's results are listed by the files marked.",
 				writeReportSchema(), s.toolWriteReport)
@@ -881,15 +887,21 @@ func (s *server) scrubSecrets(text string) string {
 	return text
 }
 
-// scrubStoredSecrets masks the person's stored secrets (Exec.SecretEnv) in
-// text, longest value first, so one that holds another is masked whole.
+// scrubStoredSecrets masks the person's stored secrets (Exec.SecretEnv) and
+// calendar feed addresses in text, longest value first, so one that holds
+// another is masked whole.
 func (s *server) scrubStoredSecrets(text string) string {
-	if !s.spec.Exec.Any || len(s.spec.Exec.SecretEnv) == 0 {
+	var envs []string
+	if s.spec.Exec.Any {
+		envs = append(envs, s.spec.Exec.SecretEnv...)
+	}
+	envs = append(envs, s.spec.Calendar.urlEnvs()...)
+	if len(envs) == 0 {
 		return text
 	}
 	type secret struct{ env, value string }
 	var vals []secret
-	for _, env := range s.spec.Exec.SecretEnv {
+	for _, env := range envs {
 		if v := os.Getenv(env); v != "" {
 			vals = append(vals, secret{env, v})
 		}
@@ -912,7 +924,7 @@ func (s *server) grantedSecretEnv() []string {
 	if s.spec.Review.Enabled {
 		envs = append(envs, ReviewSecretEnv()...)
 	}
-	return envs
+	return append(envs, s.spec.Calendar.urlEnvs()...)
 }
 
 // holdsRunSecret names the first of this server's own secrets whose value

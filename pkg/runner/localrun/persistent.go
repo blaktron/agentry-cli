@@ -44,11 +44,12 @@ import (
 // fires its tasks. It keeps a memory of its own, and the secrets the person
 // stores for it, which reach the servers that declare them. It resets in
 // parts: its history alone, or everything but the credentials it was given.
-// It may arm meeting recordings, once the person lets it.
+// It may arm meeting recordings, once the person lets it, and reads the
+// calendar feeds the person gives it.
 func Assistant() Builtin {
 	return Builtin{namespace: assistant.Namespace, name: assistant.Name, version: assistant.Version, fsys: assistant.FS(),
 		persistent: true, runnable: true, checkShare: true, appLink: applink.SetAssistant, keepsTime: true, keepsMemory: true, keepsSecrets: true,
-		resetsInParts: true, armsMeetings: true}
+		resetsInParts: true, armsMeetings: true, readsCalendars: true}
 }
 
 // Main is Agentry Helper (pkg/persistent/main), the persistent agent of Agentry
@@ -188,6 +189,10 @@ func (b Builtin) SuggestedServers() []offer.Suggestion {
 // it (Grants.Secrets).
 func (b Builtin) KeepsSecrets() bool { return b.keepsSecrets }
 
+// ReadsCalendars says the persistent agent reads the calendar feeds the
+// person gives it (Grants.CalendarFeeds).
+func (b Builtin) ReadsCalendars() bool { return b.readsCalendars }
+
 // KeepsMemory says the persistent agent has a memory volume of its own,
 // mounted read-write at spec.AgentRoot/spec.AgentMemoryDir.
 func (b Builtin) KeepsMemory() bool { return b.keepsMemory }
@@ -290,6 +295,17 @@ type Grants struct {
 	// the person signed in, each with the switches it has on and its
 	// volume; their secret slots are among ServerSecrets.
 	ImageServers []ImageGrant
+	// CalendarFeeds are the Assistant's calendar feeds the roster has on,
+	// each with its address, given to its tools server alone; CalendarZone
+	// is the person's IANA zone, in which the calendar tools answer.
+	CalendarFeeds []CalendarFeed
+	CalendarZone  string
+}
+
+// CalendarFeed is one of the Assistant's calendar feeds, as a segment is
+// given it: its name and host, and the address read from the keychain.
+type CalendarFeed struct {
+	Name, Host, URL string
 }
 
 // ImageGrant is one image server a segment is given: the built-in's server
@@ -467,8 +483,8 @@ func (s Segment) Start(ctx context.Context, d dockerx.Client) (engine.Persistent
 		RunID:          s.RunID, Stderr: logw, OnStage: s.OnStage,
 		ModelSignIn: signIn, RenewModelSignIn: renewSignIn,
 		SecretOverrides: s.secretOverrides(), WithheldSecrets: slices.Clone(s.Grants.WithheldSecrets),
-		AccountTokens: s.accountTokens(),
-		Persistent:    &seg,
+		AccountTokens: s.accountTokens(), CalendarURLs: s.calendarURLs(),
+		Persistent: &seg,
 	})
 	if err != nil {
 		return nil, err
@@ -558,6 +574,46 @@ func (s Segment) accountTokens() map[string]string {
 	out := map[string]string{}
 	for i, a := range s.sortedAccounts() {
 		out[spec.AccountTokenEnv(i)] = a.Token
+	}
+	return out
+}
+
+// sortedCalendarFeeds are the segment's calendar feeds by name.
+func (s Segment) sortedCalendarFeeds() []CalendarFeed {
+	out := slices.Clone(s.Grants.CalendarFeeds)
+	slices.SortFunc(out, func(a, b CalendarFeed) int { return strings.Compare(a.Name, b.Name) })
+	return out
+}
+
+// calendarGrant is the Assistant's calendar grant the segment's plan has:
+// its feeds by name, each address under a variable of its own
+// (calendarURLs), and the person's zone.
+func (s Segment) calendarGrant() (*spec.CalendarGrant, error) {
+	if len(s.Grants.CalendarFeeds) == 0 {
+		return nil, nil
+	}
+	if !s.Builtin.readsCalendars {
+		return nil, engine.Classify(engine.ExitPolicy, fmt.Errorf("%s is not given calendar feeds: they are the Assistant's", s.Builtin.Ref()))
+	}
+	g := &spec.CalendarGrant{TimeZone: s.Grants.CalendarZone}
+	for i, f := range s.sortedCalendarFeeds() {
+		g.Feeds = append(g.Feeds, spec.CalendarFeed{Name: f.Name, Host: f.Host, URLEnv: spec.CalendarFeedEnv(i)})
+	}
+	if err := spec.CheckCalendarGrant(g); err != nil {
+		return nil, engine.Classify(engine.ExitPolicy, err)
+	}
+	return g, nil
+}
+
+// calendarURLs are the calendar feeds' addresses by the variables
+// calendarGrant gave them.
+func (s Segment) calendarURLs() map[string]string {
+	if len(s.Grants.CalendarFeeds) == 0 {
+		return nil
+	}
+	out := map[string]string{}
+	for i, f := range s.sortedCalendarFeeds() {
+		out[spec.CalendarFeedEnv(i)] = f.URL
 	}
 	return out
 }
@@ -704,6 +760,10 @@ func (s Segment) Plan(ctx context.Context, logw io.Writer) (*SegmentPlan, error)
 	if err != nil {
 		return nil, err
 	}
+	calendarGrant, err := s.calendarGrant()
+	if err != nil {
+		return nil, err
+	}
 	meta, installDir, err := s.Builtin.Materialize(s.Home, s.Build)
 	if err != nil {
 		return nil, engine.Classify(engine.ExitCLI, err)
@@ -738,7 +798,7 @@ func (s Segment) Plan(ctx context.Context, logw io.Writer) (*SegmentPlan, error)
 	in := PlanInputs{
 		Home: s.Home, Manifest: m, Meta: meta, InstallDir: installDir, WorkspaceDir: workspace,
 		Policy: s.Policy, PolicySHA: s.PolicySHA, Adapter: adapterName, Mode: manifest.ModePersistent,
-		Servers: servers, AgentFiles: s.agentFiles(), AppLink: s.appLinkSet(), Coder: coderGrant, ShareServers: s.shareServers(), CompiledBy: s.Build, Log: logw,
+		Servers: servers, AgentFiles: s.agentFiles(), AppLink: s.appLinkSet(), Coder: coderGrant, Calendar: calendarGrant, ShareServers: s.shareServers(), CompiledBy: s.Build, Log: logw,
 	}
 	plan, planDir, err := EnsurePlan(in)
 	if err != nil {

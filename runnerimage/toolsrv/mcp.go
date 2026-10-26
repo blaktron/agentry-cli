@@ -86,6 +86,8 @@ type server struct {
 	// shims maps a declared command to its shim symlink; a declared
 	// command absent from the image is absent here (tools.go).
 	shims map[string]string
+	// calendars holds each calendar feed's last fetch (calendar.go).
+	calendars calendarCache
 	// confine is how a declared command is held to the places it may
 	// write (confinement.go); set when exec is granted.
 	confine confinement
@@ -308,7 +310,10 @@ func validateSpec(spec *Spec) error {
 	if err := validateFetchLedger(spec); err != nil {
 		return err
 	}
-	return validateVoice(spec)
+	if err := validateVoice(spec); err != nil {
+		return err
+	}
+	return validateCalendar(spec)
 }
 
 // handleLine dispatches one message. Malformed traffic never kills the

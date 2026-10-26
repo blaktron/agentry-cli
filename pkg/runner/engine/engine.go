@@ -199,6 +199,10 @@ type Params struct {
 	// its plan names (spec.CoderGrant.Accounts), by each one's TokenEnv:
 	// the tools container's alone, never a server's.
 	AccountTokens map[string]string
+	// CalendarURLs are the addresses of the Assistant's calendar feeds its
+	// plan names (spec.CalendarGrant.Feeds), by each one's URLEnv: the
+	// segment's, read from the keychain, for the tools container alone.
+	CalendarURLs map[string]string
 	// Connections are the access tokens of the servers that sign in by
 	// OAuth, keyed by spec.MCPServerSpec.ConnectionKey (a remote server's
 	// address, a package server's "pypi:name"): the caller refreshed each

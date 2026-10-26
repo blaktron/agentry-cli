@@ -65,7 +65,7 @@ func TestTheInstructionAndREADMESayWhatMeetingsAre(t *testing.T) {
 		}
 	}
 	readme := read(t, "README.md")
-	for _, want := range []string{"Fifteen skills", "`meeting-notes`", "`meeting_arm`", "meetings entry is on", "more than an hour\n  ahead"} {
+	for _, want := range []string{"Seventeen skills", "`meeting-notes`", "`meeting_arm`", "meetings entry is on", "more than an hour\n  ahead"} {
 		if !strings.Contains(readme, want) {
 			t.Errorf("README.md lacks %q", want)
 		}

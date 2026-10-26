@@ -135,6 +135,9 @@ type agentState struct {
 	// MailProviders are the services whose mail the agent can reach, for
 	// one that reaches any.
 	MailProviders []persistent.MailProviderState `json:"mailProviders,omitempty"`
+	// CalendarFeeds are the calendars the agent reads, by name, never with
+	// their addresses.
+	CalendarFeeds []persistent.CalendarFeedState `json:"calendarFeeds,omitempty"`
 	// LastCompaction and LastConsolidation are the newest records of the
 	// agent's memory upkeep, for one that keeps a memory.
 	LastCompaction    *persistent.UpkeepRecord `json:"lastCompaction,omitempty"`
@@ -177,6 +180,7 @@ func readAgentState(ctx context.Context, home string, a persistent.Agent) (agent
 	st.Share, _ = persistent.ShareFolder(a, cfg)
 	st.Roster = persistent.BuildRosterUnder(a, cfg, nil, persistent.HomeMalwareCheck(home))
 	st.MailProviders = persistent.MailProviders(a, cfg)
+	st.CalendarFeeds = persistent.CalendarFeeds(a, cfg)
 	for _, s := range persistent.Suggestions(a, cfg) {
 		st.Suggested = append(st.Suggested, suggestedServer{Key: s.Key, Name: s.Name, ID: persistent.ServerEntryID(s.Server), Line: s.Note})
 	}
@@ -376,6 +380,20 @@ func printAgentState(w io.Writer, st agentState) {
 	if len(st.MailProviders) > 0 {
 		_, _ = fmt.Fprintf(w, "  mail providers (agentry agent configure %s --mail-provider <key>):\n", st.Agent)
 		printMailProviders(w, st.MailProviders)
+	}
+	if len(st.CalendarFeeds) > 0 {
+		_, _ = fmt.Fprintf(w, "  calendar feeds (agentry agent configure %s --calendar-feed <name>):\n", st.Agent)
+		for _, f := range st.CalendarFeeds {
+			from := f.Host
+			if f.Service != "" {
+				from = f.Service + ", " + f.Host
+			}
+			state := "off"
+			if f.On {
+				state = "on"
+			}
+			_, _ = fmt.Fprintf(w, "    %s\t%s (%s): %s, address set %s\n", safeTerminalText(f.Name, 80), f.Entry, from, state, f.Set.Local().Format("2 Jan 2006 15:04"))
+		}
 	}
 	if len(st.Suggested) > 0 {
 		_, _ = fmt.Fprintf(w, "  suggested servers (agentry agent configure %s --add-suggested <key>):\n", st.Agent)
