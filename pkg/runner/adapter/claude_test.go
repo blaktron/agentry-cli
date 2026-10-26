@@ -521,6 +521,67 @@ func TestClaudeSessionTurn(t *testing.T) {
 	}
 }
 
+// A compact_boundary is Claude Code compacting the conversation itself: it
+// reports the size after where the message says it (post_tokens) and an
+// unknown one where it does not, and the turn's result reports that size
+// rather than the request before the compaction.
+func TestClaudeSessionReportsTheSizeAfterACompaction(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		metadata string
+		after    int64
+	}{
+		{"size said", `{"trigger":"auto","pre_tokens":150300,"post_tokens":20400}`, 20400},
+		{"size not said", `{"trigger":"auto","pre_tokens":150300}`, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ad, _ := Get(ClaudeAdapterName)
+			stdio := newFakeStdio()
+			drv, err := ad.Session(context.Background(), stdio, SessionOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := drv.Start(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			go func() {
+				if !stdio.awaitLine(`"type":"user"`, 5*time.Second) {
+					return
+				}
+				stdio.say(`{"type":"assistant","message":{"content":[{"type":"text","text":"working"}],"usage":{"input_tokens":12,"cache_read_input_tokens":150000,"cache_creation_input_tokens":300}}}`)
+				stdio.say(`{"type":"system","subtype":"compact_boundary","session_id":"s1","compact_metadata":` + tc.metadata + `}`)
+				stdio.say(`{"type":"result","subtype":"success","result":"working","stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":5},"modelUsage":{"claude-sonnet-5-5":{"contextWindow":200000}}}`)
+			}()
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if _, err := drv.Prompt(ctx, "go on"); err != nil {
+				t.Fatalf("Prompt: %v", err)
+			}
+			drained := make(chan []Event, 1)
+			go func() {
+				var evs []Event
+				for ev := range drv.Events() {
+					evs = append(evs, ev)
+				}
+				drained <- evs
+			}()
+			if err := drv.Close(); err != nil {
+				t.Fatalf("Close: %v", err)
+			}
+			var usage []Event
+			for _, ev := range <-drained {
+				if ev.Kind == EventUsage {
+					usage = append(usage, ev)
+				}
+			}
+			if len(usage) != 2 || !usage[0].ContextCompacted || usage[0].ContextTokens != tc.after ||
+				usage[1].ContextCompacted || usage[1].ContextTokens != tc.after || usage[1].ContextLimit != 200000 {
+				t.Fatalf("usage = %+v", usage)
+			}
+		})
+	}
+}
+
 func TestClaudeSessionEndsWithoutAnAnswer(t *testing.T) {
 	ad, _ := Get(ClaudeAdapterName)
 	stdio := newFakeStdio()

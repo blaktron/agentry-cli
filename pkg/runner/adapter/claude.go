@@ -406,6 +406,12 @@ type claudeMessage struct {
 	} `json:"response"`
 	// ToolName appears on the permission-denial system message.
 	ToolName string `json:"tool_name"`
+	// CompactMetadata is a compact_boundary's: Claude Code compacted the
+	// conversation itself, and newer versions say its size after.
+	CompactMetadata struct {
+		Trigger    string `json:"trigger"`
+		PostTokens int64  `json:"post_tokens"`
+	} `json:"compact_metadata"`
 	// RateLimit is a rate_limit_event's: what Claude Code's sign-in was
 	// told of the plan's usage limits (Anthropic's SDKRateLimitEvent).
 	RateLimit struct {
@@ -473,6 +479,11 @@ func (c *claudeAdapter) Events(line []byte) []Event {
 			// not happen — the catalog is the whole tool surface — so it
 			// is worth a transcript line when it does.
 			return []Event{{Kind: EventPermissionDenied, Text: msg.ToolName, Raw: raw}}
+		case "compact_boundary":
+			// Claude Code compacted the conversation itself: the size it
+			// says after, when it says one, is the conversation's size
+			// now, and no usage may follow before the turn ends.
+			return []Event{{Kind: EventUsage, ContextTokens: msg.CompactMetadata.PostTokens, ContextCompacted: true, Raw: raw}}
 		}
 		return []Event{{Kind: EventOther, Text: msg.Subtype, Raw: raw}}
 	}

@@ -216,7 +216,10 @@ func (s *Supervisor) noteUpkeepEvent(ev session.Event) {
 		}
 		s.upkeepDirty = true
 	case session.KindUsage:
-		if ev.ContextTokens > 0 {
+		if ev.ContextTokens > 0 || ev.ContextCompacted {
+			// After the harness's own compaction the size it reports is
+			// the new one, and an unknown one is taken as zero: the size
+			// before it would compact a conversation already made small.
 			s.upkeep.ContextTokens = ev.ContextTokens
 			if ev.ContextLimit > 0 {
 				s.upkeep.ContextLimit = ev.ContextLimit

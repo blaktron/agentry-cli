@@ -222,6 +222,37 @@ func ofKind(evs []adapter.Event, kind adapter.EventKind) []adapter.Event {
 	return out
 }
 
+// A compaction Copilot CLI runs itself, after the turn's last usage_info, is
+// reported as the conversation's size after it, with the window it
+// compacted for; a compaction that failed reports nothing. The shapes are
+// Copilot CLI 1.0.95's.
+func TestACopilotCompactionReportsTheSizeAfter(t *testing.T) {
+	k := &tokens{expires: time.Now().Add(8 * time.Hour)}
+	srv := &copilottest.Server{Turn: func(c *copilottest.Conn, prompt string) {
+		c.Event("session.usage_info", map[string]any{"currentTokens": 112872, "tokenLimit": 128000, "messagesLength": 40})
+		c.Event("session.compaction_start", map[string]any{"currentTokens": 116942, "tokenLimit": 128000, "trigger": "threshold"})
+		c.Event("session.compaction_complete", map[string]any{"success": false, "error": "the summary call failed", "tokenLimit": 128000})
+		c.Event("session.compaction_complete", map[string]any{"success": true, "preCompactionTokens": 116942, "postCompactionTokens": 26532,
+			"tokensRemoved": 86344, "tokenLimit": 128000, "trigger": "threshold"})
+		c.Event("assistant.message", map[string]any{"messageId": "a1", "content": "DONE"})
+		c.Event("session.idle", map[string]any{})
+	}}
+	d := drive(t, srv, adapter.SessionOptions{ModelSignIn: true, SignInToken: k.get})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := d.drv.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.drv.Prompt(ctx, "go"); err != nil {
+		t.Fatal(err)
+	}
+	u := ofKind(d.events(), adapter.EventUsage)
+	if len(u) != 2 || u[0].ContextTokens != 112872 || u[0].ContextCompacted ||
+		u[1].ContextTokens != 26532 || u[1].ContextLimit != 128000 || !u[1].ContextCompacted || u[1].InputTokens != 0 || u[1].TotalTokens != 0 {
+		t.Fatalf("usage %+v", u)
+	}
+}
+
 // The session hands Copilot CLI the run's token through its callback at
 // session.create and a renewed one when it asks for a refresh, the gateway
 // its bearer in the session alone, and the run's instruction as the whole
