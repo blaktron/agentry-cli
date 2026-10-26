@@ -75,6 +75,13 @@ type Change struct {
 	// by its host. Neither carries a token.
 	SetAccount    *GitAccount `json:"setAccount,omitempty"`
 	RemoveAccount string      `json:"removeAccount,omitempty"`
+	// SetCalendarFeed records one of the Assistant's calendar feeds, on,
+	// its address already kept in the keychain by the client that asked for
+	// it (CalendarKeychainAccount), or one whose address was set again;
+	// RemoveCalendarFeed takes one away, by its name. Neither carries an
+	// address.
+	SetCalendarFeed    *CalendarFeed `json:"setCalendarFeed,omitempty"`
+	RemoveCalendarFeed string        `json:"removeCalendarFeed,omitempty"`
 	// Consent says the person consented to what this change turns on, as
 	// the lines a ConsentError listed say it.
 	Consent bool `json:"consent,omitempty"`
@@ -161,6 +168,7 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 	next.Skills = slices.Clone(c.Skills)
 	next.Secrets = slices.Clone(c.Secrets)
 	next.Accounts = slices.Clone(c.Accounts)
+	next.CalendarFeeds = slices.Clone(c.CalendarFeeds)
 	next.ServerFailures = cloneMap(c.ServerFailures)
 	if ch.Name != nil {
 		name, err := cleanName(*ch.Name)
@@ -324,6 +332,16 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 			return false, err
 		}
 	}
+	if f := ch.SetCalendarFeed; f != nil {
+		if err := addCalendarFeed(a, &next, *f); err != nil {
+			return false, err
+		}
+	}
+	if n := ch.RemoveCalendarFeed; n != "" {
+		if _, err := removeCalendarFeed(a, &next, n); err != nil {
+			return false, err
+		}
+	}
 	if sw := ch.Switch; sw != nil && strings.HasPrefix(sw.ID, serverPrefix) && strings.HasSuffix(sw.ID, shareSuffix) {
 		if err := switchServerShare(a, &next, *sw); err != nil {
 			return false, err
@@ -429,6 +447,7 @@ func grantsKeyWith(a Agent, c Config, ready func(manifest.MCPServer) bool) strin
 		Skills    []string
 		Secrets   []string
 		Accounts  []string
+		Calendars []string
 	}
 	counted := map[string]bool{}
 	servers := agentServers(a, c)
@@ -476,6 +495,12 @@ func grantsKeyWith(a Agent, c Config, ready func(manifest.MCPServer) bool) strin
 			On      bool
 		}{g, e.On})
 		k.Accounts = append(k.Accounts, string(b))
+	}
+	// So for a calendar feed: on or off, its host, and when its address was
+	// set. Its address is never part of the key.
+	for _, f := range c.CalendarFeeds {
+		e, _ := r.Entry(CalendarEntryID(f.Name))
+		k.Calendars = append(k.Calendars, fmt.Sprintf("%s@%s=%t@%s", f.Name, f.Host, e.On, f.Set.UTC().Format(time.RFC3339Nano)))
 	}
 	b, _ := json.Marshal(k)
 	sum := sha256.Sum256(b)

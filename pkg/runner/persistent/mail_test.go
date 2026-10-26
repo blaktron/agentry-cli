@@ -103,7 +103,7 @@ func TestAConfigurationFromBeforeMailProvidersIsMigrated(t *testing.T) {
 		if err != nil || !slices.Equal(again.MailProviders, tc.want) {
 			t.Errorf("%s, saved: providers %v, %v", tc.name, again.MailProviders, err)
 		}
-		if v := readVersion(t, home, "assistant"); len(c.SignIns) > 0 && v != ConfigVersion {
+		if v := readVersion(t, home, "assistant"); len(c.SignIns) > 0 && v != mailProvidersVersion {
 			t.Errorf("%s: a sign-in saved at version %d", tc.name, v)
 		}
 	}

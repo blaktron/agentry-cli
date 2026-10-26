@@ -100,7 +100,7 @@ func validateCalendar(spec *Spec) error {
 		switch {
 		case strings.TrimSpace(f.Name) == "" || len(f.Name) > 64:
 			return fmt.Errorf("calendar: feed name %q must be 1 to 64 bytes", f.Name)
-		case !calendarFeedHostRE.MatchString(f.Host):
+		case !calendarFeedHostRE.MatchString(f.Host) || strings.Trim(f.Host[strings.LastIndexByte(f.Host, '.')+1:], "0123456789") == "":
 			return fmt.Errorf("calendar: feed %q: host %q is not a host name", f.Name, f.Host)
 		case !calendarFeedEnvRE.MatchString(f.URLEnv):
 			return fmt.Errorf("calendar: feed %q: urlEnv %q is not a calendar feed variable", f.Name, f.URLEnv)

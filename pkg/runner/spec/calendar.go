@@ -58,6 +58,16 @@ var (
 	calendarEnvRE  = regexp.MustCompile(`^AGENTRY_CALENDAR_FEED_[1-9][0-9]?$`)
 )
 
+// calendarHost says host is a host name in lower case: labels of letters,
+// digits and hyphens, the last not all digits, so no address is one.
+func calendarHost(host string) bool {
+	if !calendarHostRE.MatchString(host) {
+		return false
+	}
+	tld := host[strings.LastIndexByte(host, '.')+1:]
+	return strings.Trim(tld, "0123456789") != ""
+}
+
 // CheckCalendarFeedName holds a feed's name to printable text the person
 // can tell apart: 1 to 64 bytes, no control or formatting character, no
 // line break, and none of the characters a roster id or a list would read
@@ -116,7 +126,7 @@ func CalendarFeedAddress(raw string) (string, string, error) {
 		return "", "", errors.New("the calendar feed's address names a port: only the https port, 443, is reached")
 	}
 	host := strings.ToLower(u.Hostname())
-	if !calendarHostRE.MatchString(host) {
+	if !calendarHost(host) {
 		return "", "", errors.New("the calendar feed's address does not name a host by its name")
 	}
 	u.Host = host
@@ -141,7 +151,7 @@ func CheckCalendarGrant(g *CalendarGrant) error {
 		if err := CheckCalendarFeedName(f.Name); err != nil {
 			return err
 		}
-		if !calendarHostRE.MatchString(f.Host) {
+		if !calendarHost(f.Host) {
 			return fmt.Errorf("calendar feed %q: %q is not a host name", f.Name, f.Host)
 		}
 		if !calendarEnvRE.MatchString(f.URLEnv) {
