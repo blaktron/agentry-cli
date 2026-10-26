@@ -46,7 +46,7 @@ func TestCheckCalendarFeedName(t *testing.T) {
 			t.Errorf("%q: %v", ok, err)
 		}
 	}
-	for _, bad := range []string{"", " Work", "a:b", "a,b", "a\nb", "a‮b", strings.Repeat("a", 65), `a"b`} {
+	for _, bad := range []string{"", " Work", "a:b", "a,b", "a\nb", "a\u202eb", strings.Repeat("a", 65), `a"b`} {
 		if err := CheckCalendarFeedName(bad); err == nil {
 			t.Errorf("%q was accepted", bad)
 		}
