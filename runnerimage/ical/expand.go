@@ -59,7 +59,8 @@ func (c *Calendar) Expand(from, to time.Time, loc *time.Location) Expansion {
 			}
 		}
 	}
-	r := resolver{cal: c, loc: loc, floating: floating, note: note}
+	work := MaxWork
+	r := resolver{cal: c, loc: loc, floating: floating, note: note, work: &work}
 
 	overrides := map[string][]Event{}
 	for _, e := range c.Events {
@@ -100,6 +101,8 @@ type resolver struct {
 	loc      *time.Location
 	floating *time.Location
 	note     func(string)
+	// work is what the expansion may still do (MaxWork).
+	work *int
 }
 
 // at is a value's instant: UTC, in its TZID's zone, or floating.
@@ -256,11 +259,21 @@ func (r resolver) expandMaster(e Event, ovs []Event, from, to time.Time) []Occur
 				}
 				until = &u
 			}
-			if rule.starts(start, start.Location(), until, stop, func(t time.Time) bool {
+			// An instance that starts before from overlaps it only when it
+			// is no longer than the series' instances.
+			span := dur
+			if allDay {
+				span = time.Duration(days+1) * 24 * time.Hour
+			}
+			if rule.starts(start, start.Location(), until, from.Add(-span), stop, r.work, func(t time.Time) bool {
 				starts = append(starts, t)
 				return true
 			}) {
-				r.note(fmt.Sprintf("%q repeats from so long ago that its later instances were not worked out", e.Summary))
+				if *r.work < 0 {
+					r.note("the feed's repeating events are too many to work out in full: some instances are left out")
+				} else {
+					r.note(fmt.Sprintf("%q repeats by a rule whose instances could not all be worked out: some are left out", e.Summary))
+				}
 			}
 		}
 	} else {

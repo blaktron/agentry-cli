@@ -42,7 +42,8 @@ type Calendar struct {
 	// instances they override, in feed order.
 	Events []Event
 
-	zones map[string]*vtimezone
+	zones    map[string]*vtimezone
+	resolved map[string]resolvedZone
 	// freeBusy says the feed holds VFREEBUSY blocks, read as events titled
 	// Busy.
 	freeBusy bool
@@ -120,20 +121,29 @@ func unfold(r io.Reader) ([]string, error) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64<<10), MaxLineBytes)
 	var lines []string
+	var cur strings.Builder
+	have := false
 	for sc.Scan() {
 		l := strings.TrimRight(sc.Text(), "\r")
 		if l == "" {
 			continue
 		}
-		if (l[0] == ' ' || l[0] == '\t') && len(lines) > 0 {
-			last := len(lines) - 1
-			if len(lines[last])+len(l) > MaxLineBytes {
+		if (l[0] == ' ' || l[0] == '\t') && have {
+			if cur.Len()+len(l) > MaxLineBytes {
 				return nil, fmt.Errorf("a content line is longer than %d bytes", MaxLineBytes)
 			}
-			lines[last] += l[1:]
+			cur.WriteString(l[1:])
 			continue
 		}
-		lines = append(lines, l)
+		if have {
+			lines = append(lines, cur.String())
+			cur.Reset()
+		}
+		cur.WriteString(l)
+		have = true
+	}
+	if have {
+		lines = append(lines, cur.String())
 	}
 	if err := sc.Err(); err != nil {
 		if errors.Is(err, bufio.ErrTooLong) {
@@ -263,7 +273,7 @@ func parseLines(lines []string) (*Calendar, error) {
 		case "END":
 			comp := strings.ToUpper(strings.TrimSpace(p.Value))
 			if len(stack) == 0 || stack[len(stack)-1] != comp {
-				return nil, fmt.Errorf("END:%s does not close BEGIN:%s", comp, last(stack))
+				return nil, fmt.Errorf("END:%.40q does not close BEGIN:%.40q", comp, last(stack))
 			}
 			stack = stack[:len(stack)-1]
 			switch {

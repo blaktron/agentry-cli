@@ -80,6 +80,28 @@ func (c *Calendar) location(tzid string, fallback *time.Location) (*time.Locatio
 	if tzid == "" {
 		return fallback, zoneUnknown
 	}
+	if z, ok := c.resolved[tzid]; ok {
+		if z.how == zoneUnknown {
+			return fallback, zoneUnknown
+		}
+		return z.loc, z.how
+	}
+	loc, how := c.resolve(tzid, fallback)
+	if c.resolved == nil {
+		c.resolved = map[string]resolvedZone{}
+	}
+	c.resolved[tzid] = resolvedZone{loc, how}
+	return loc, how
+}
+
+// resolvedZone is a TZID as location understood it, kept so each is worked
+// out once.
+type resolvedZone struct {
+	loc *time.Location
+	how zoneResolution
+}
+
+func (c *Calendar) resolve(tzid string, fallback *time.Location) (*time.Location, zoneResolution) {
 	if loc, ok := ianaLocation(tzid); ok {
 		return loc, zoneExact
 	}

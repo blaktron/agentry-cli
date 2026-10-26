@@ -2,6 +2,8 @@ package ical
 
 import (
 	"errors"
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -472,5 +474,67 @@ END:VCALENDAR`)
 	empty := parse(t, "BEGIN:VCALENDAR\nBEGIN:VFREEBUSY\nEND:VFREEBUSY\nEND:VCALENDAR")
 	if !empty.BusyOnly() {
 		t.Error("an empty VFREEBUSY feed is not free/busy only")
+	}
+}
+
+// TestAHostileFeedCostsABoundedTime: rules and lines built to exhaust the
+// reader are read within the work bound, with a note, and quickly.
+func TestAHostileFeedCostsABoundedTime(t *testing.T) {
+	utc := time.UTC
+	hours := strings.TrimSuffix(strings.Repeat("0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,", 2000), ",")
+	minutes := strings.TrimSuffix(strings.Repeat("0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,", 500), ",")
+	var b strings.Builder
+	b.WriteString("BEGIN:VCALENDAR\r\n")
+	// Every minute of every day of the year, from year 1.
+	fmt.Fprintf(&b, "BEGIN:VEVENT\r\nUID:a\r\nSUMMARY:Flood\r\nDTSTART:00010101T000000Z\r\nRRULE:FREQ=YEARLY;BYMONTH=1,2,3,4,5,6,7,8,9,10,11,12;BYMONTHDAY=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31;BYHOUR=%s;BYMINUTE=%s\r\nEND:VEVENT\r\n", hours, minutes)
+	// Many daily series from year 1, with a COUNT none of them reaches.
+	for i := 0; i < 2000; i++ {
+		fmt.Fprintf(&b, "BEGIN:VEVENT\r\nUID:d%d\r\nSUMMARY:Old\r\nDTSTART;TZID=Custom:00010101T090000\r\nRRULE:FREQ=DAILY;COUNT=100000000\r\nEND:VEVENT\r\n", i)
+	}
+	b.WriteString("BEGIN:VTIMEZONE\r\nTZID:Custom\r\nBEGIN:STANDARD\r\nTZOFFSETTO:+0100\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\n")
+	// A line folded into one-byte pieces.
+	b.WriteString("X-PAD:a\r\n" + strings.Repeat(" b\r\n", 200000))
+	b.WriteString("END:VCALENDAR\r\n")
+	start := time.Now()
+	c, err := Parse(strings.NewReader(b.String()), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ex := c.Expand(time.Date(2026, 10, 27, 0, 0, 0, 0, utc), time.Date(2026, 10, 28, 0, 0, 0, 0, utc), utc)
+	if d := time.Since(start); d > 20*time.Second {
+		t.Errorf("the hostile feed took %v", d)
+	}
+	if !slices.ContainsFunc(ex.Notes, func(n string) bool { return strings.Contains(n, "too many to work out") }) {
+		t.Errorf("notes = %q", ex.Notes)
+	}
+}
+
+// TestASeriesFromLongAgoReachesTheWindow: a series with no COUNT that began
+// centuries ago is walked from near the window, not from its start.
+func TestASeriesFromLongAgoReachesTheWindow(t *testing.T) {
+	utc := time.UTC
+	c := parse(t, `BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:1
+SUMMARY:Bells
+DTSTART:14000101T120000Z
+DURATION:PT1H
+RRULE:FREQ=DAILY
+END:VEVENT
+BEGIN:VEVENT
+UID:2
+SUMMARY:Fortnightly
+DTSTART:19000102T080000Z
+RRULE:FREQ=WEEKLY;INTERVAL=2
+END:VEVENT
+END:VCALENDAR`)
+	ex := c.Expand(time.Date(2026, 10, 27, 0, 0, 0, 0, utc), time.Date(2026, 10, 29, 0, 0, 0, 0, utc), utc)
+	// 2 January 1900 is a Tuesday; 27 October 2026 is a Tuesday 46319
+	// days on, an odd week, and 3 November an even one.
+	wantStarts(t, ex, "2026-10-27 12:00 UTC Bells", "2026-10-28 12:00 UTC Bells")
+	ex = c.Expand(time.Date(2026, 11, 3, 0, 0, 0, 0, utc), time.Date(2026, 11, 4, 0, 0, 0, 0, utc), utc)
+	wantStarts(t, ex, "2026-11-03 08:00 UTC Fortnightly", "2026-11-03 12:00 UTC Bells")
+	if len(ex.Notes) != 0 {
+		t.Errorf("notes = %q", ex.Notes)
 	}
 }

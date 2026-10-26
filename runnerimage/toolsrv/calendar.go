@@ -105,7 +105,8 @@ func validateCalendar(spec *Spec) error {
 		case strings.TrimSpace(f.Name) != f.Name || f.Name == "" || len(f.Name) > maxCalendarFeedName || !utf8.ValidString(f.Name) ||
 			strings.ContainsFunc(f.Name, func(r rune) bool { return unicode.IsControl(r) || unicode.Is(unicode.Cf, r) }):
 			return fmt.Errorf("calendar: feed name %q is not 1 to %d bytes of printable text", f.Name, maxCalendarFeedName)
-		case !calendarFeedHostRE.MatchString(f.Host) || strings.Trim(f.Host[strings.LastIndexByte(f.Host, '.')+1:], "0123456789") == "":
+		case !calendarFeedHostRE.MatchString(f.Host) || strings.Trim(f.Host[strings.LastIndexByte(f.Host, '.')+1:], "0123456789") == "" ||
+			strings.HasSuffix(f.Host, ".localhost"):
 			return fmt.Errorf("calendar: feed %q: host %q is not a host name", f.Name, f.Host)
 		case !calendarFeedEnvRE.MatchString(f.URLEnv):
 			return fmt.Errorf("calendar: feed %q: urlEnv %q is not a calendar feed variable", f.Name, f.URLEnv)

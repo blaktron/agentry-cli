@@ -59,9 +59,10 @@ var (
 )
 
 // calendarHost says host is a host name in lower case: labels of letters,
-// digits and hyphens, the last not all digits, so no address is one.
+// digits and hyphens, the last not all digits, so no address is one, and no
+// name of the loopback (RFC 6761), which in a container is the container.
 func calendarHost(host string) bool {
-	if !calendarHostRE.MatchString(host) {
+	if !calendarHostRE.MatchString(host) || strings.HasSuffix(host, ".localhost") {
 		return false
 	}
 	tld := host[strings.LastIndexByte(host, '.')+1:]

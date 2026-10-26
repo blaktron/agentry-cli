@@ -12,6 +12,12 @@ import (
 // rule is walked through, so a rule that never yields cannot spin.
 const maxPeriods = 200000
 
+// MaxWork bounds what one expansion of a feed may do, counted in periods
+// walked and candidate instances made across all its series, so a feed
+// whose rules are hostile or enormous costs a bounded time and memory; what
+// is past it is left out, with a note.
+const MaxWork = 4_000_000
+
 // rrule is a parsed RRULE.
 type rrule struct {
 	freq       string
@@ -129,7 +135,8 @@ func intList(v string, lo, hi int) ([]int, error) {
 		}
 		out = append(out, n)
 	}
-	return out, nil
+	slices.Sort(out)
+	return slices.Compact(out), nil
 }
 
 // civil is a calendar date.
@@ -166,9 +173,12 @@ func daysInYear(y int) int {
 // with each instance's start in order until emit returns false, the rule's
 // COUNT or UNTIL ends it, or an instance starts at or after stop. DTSTART is
 // always the first instance and counts toward COUNT, whether or not the rule
-// would have produced it, as calendar services read a series. It reports
-// whether the walk gave up at maxPeriods before reaching stop.
-func (r *rrule) starts(dtstart time.Time, loc *time.Location, until *time.Time, stop time.Time, emit func(time.Time) bool) (exhausted bool) {
+// would have produced it, as calendar services read a series. A rule with
+// no COUNT skips the periods that end before from, which no instance there
+// can reach. Each period walked and each candidate made spends one of
+// *work; it reports whether the walk gave up, at maxPeriods or with *work
+// spent, before reaching stop.
+func (r *rrule) starts(dtstart time.Time, loc *time.Location, until *time.Time, from, stop time.Time, work *int, emit func(time.Time) bool) (exhausted bool) {
 	first := civil{dtstart.Year(), int(dtstart.Month()), dtstart.Day()}
 	h0, mi0, s0 := dtstart.Clock()
 	hours := r.byHour
@@ -190,11 +200,19 @@ func (r *rrule) starts(dtstart time.Time, loc *time.Location, until *time.Time, 
 	if r.count == 1 {
 		return false
 	}
-	for p := 0; p < maxPeriods; p++ {
+	p0 := 0
+	if r.count == 0 {
+		p0 = r.periodsBefore(first, civil{from.Year(), int(from.Month()), from.Day()})
+	}
+	for p := p0; p < p0+maxPeriods; p++ {
 		if periodStart(r, first, p).y > stop.Year()+1 {
 			return false
 		}
 		days := r.periodDays(first, p)
+		*work -= 1 + len(days)*len(hours)*len(minutes)
+		if *work < 0 {
+			return true
+		}
 		var set []time.Time
 		for _, d := range days {
 			for _, h := range hours {
@@ -228,6 +246,30 @@ func (r *rrule) starts(dtstart time.Time, loc *time.Location, until *time.Time, 
 		}
 	}
 	return true
+}
+
+// periodsBefore is how many whole periods of the rule, from first's, end
+// before day, less one to be sure: the walk may start there.
+func (r *rrule) periodsBefore(first, day civil) int {
+	if !first.less(day) {
+		return 0
+	}
+	days := int(time.Date(day.y, time.Month(day.m), day.d, 12, 0, 0, 0, time.UTC).Sub(time.Date(first.y, time.Month(first.m), first.d, 12, 0, 0, 0, time.UTC)).Hours() / 24)
+	var n int
+	switch r.freq {
+	case "DAILY":
+		n = days / r.interval
+	case "WEEKLY":
+		n = days / 7 / r.interval
+	case "MONTHLY":
+		n = ((day.y-first.y)*12 + day.m - first.m) / r.interval
+	default:
+		n = (day.y - first.y) / r.interval
+	}
+	if n -= 2; n < 0 {
+		return 0
+	}
+	return n
 }
 
 func setPos(set []time.Time, pos []int) []time.Time {

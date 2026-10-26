@@ -26,6 +26,7 @@ func TestCalendarFeedAddress(t *testing.T) {
 		"https://10.0.0.1/x.ics":              "by its name",
 		"https://[::1]/x.ics":                 "by its name",
 		"https://localhost/x.ics":             "by its name",
+		"https://cal.localhost/x.ics":         "by its name",
 		"https://calendar.example/x y.ics":    "a space or a control",
 		"https://calendar.example/" + strings.Repeat("a", MaxCalendarFeedURL): "longer than",
 	} {
