@@ -16,7 +16,7 @@ const maxPeriods = 200000
 // walked and candidate instances made across all its series, so a feed
 // whose rules are hostile or enormous costs a bounded time and memory; what
 // is past it is left out, with a note.
-const MaxWork = 4_000_000
+const MaxWork = 1_000_000
 
 // rrule is a parsed RRULE.
 type rrule struct {

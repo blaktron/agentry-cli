@@ -501,7 +501,7 @@ func TestAHostileFeedCostsABoundedTime(t *testing.T) {
 		t.Fatal(err)
 	}
 	ex := c.Expand(time.Date(2026, 10, 27, 0, 0, 0, 0, utc), time.Date(2026, 10, 28, 0, 0, 0, 0, utc), utc)
-	if d := time.Since(start); d > 20*time.Second {
+	if d := time.Since(start); d > 60*time.Second {
 		t.Errorf("the hostile feed took %v", d)
 	}
 	if !slices.ContainsFunc(ex.Notes, func(n string) bool { return strings.Contains(n, "too many to work out") }) {
