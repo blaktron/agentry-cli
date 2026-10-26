@@ -159,3 +159,5 @@ agentry/assistant@1.12.2 sha256:c66a16ee24f9d765003d6bddbbbc74f9cb5db9ce7a71923a
 agentry/assistant@1.13.0 sha256:24c3ad46e1c08073a39f8b057a78614a888bf1b9b8c8a41381d7c321359af599
 # 1.14.0, over 1.13.0: the instruction says Agentry asks, once a day after the person has been away a while, for the memory to be tidied in an upkeep turn of its own, and the README says when.
 agentry/assistant@1.14.0 sha256:608fbcb040905e07fb46d71aacea4cd1bb029a93d240400523e83bbe56cd408c
+# 1.15.0, over 1.14.0: the skills calendar-feeds-setup, which walks the person through giving it a calendar by its iCal (ICS) address with no sign-in, and calendar-feeds, which says how it reads the feeds read only, how current they are and how it proposes an event as an .ics file; the instruction names both, and the README says what a calendar feed is.
+agentry/assistant@1.15.0 sha256:c01c67ec7e62e66043ead821a90b6d2dc1aa1b663ee1750864e7ec88e6c3b6ab
