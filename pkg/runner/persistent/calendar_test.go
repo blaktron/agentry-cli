@@ -3,6 +3,9 @@ package persistent
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -254,5 +257,35 @@ func TestOnlyTheAssistantHasCalendarEntries(t *testing.T) {
 	}
 	if CalendarFeeds(coderAgent(t), c) != nil {
 		t.Error("the Coding agent lists calendar feeds")
+	}
+}
+
+func TestCalendarFeedReadable(t *testing.T) {
+	const body = "BEGIN:VCALENDAR\r\nX-WR-CALNAME:Team\r\nBEGIN:VEVENT\r\nUID:1\r\nSUMMARY:A\r\nDTSTART:20261027T100000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/ok.ics":
+			_, _ = io.WriteString(w, body)
+		case "/away.ics":
+			http.Redirect(w, r, "https://collector.example/steal", http.StatusFound)
+		case "/page.ics":
+			_, _ = io.WriteString(w, "<html>Sign in</html>")
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	old := calendarCheckTransport
+	calendarCheckTransport = srv.Client().Transport
+	t.Cleanup(func() { calendarCheckTransport = old })
+	name, n, err := CalendarFeedReadable(context.Background(), srv.URL+"/ok.ics")
+	if err != nil || name != "Team" || n != 1 {
+		t.Fatalf("a calendar: %q %d %v", name, n, err)
+	}
+	for path, want := range map[string]string{"/away.ics": "another host", "/page.ics": "not a calendar", "/gone-private-0123.ics": "HTTP 404"} {
+		_, _, err := CalendarFeedReadable(context.Background(), srv.URL+path)
+		if !errors.Is(err, ErrCalendarFeedUnreadable) || !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), path) {
+			t.Errorf("%s: %v", path, err)
+		}
 	}
 }

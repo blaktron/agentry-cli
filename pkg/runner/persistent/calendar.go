@@ -216,6 +216,10 @@ func CalendarFeeds(a Agent, c Config) []CalendarFeedState {
 // something that is not a calendar this build can read, or not at all.
 var ErrCalendarFeedUnreadable = errors.New("the calendar feed could not be read")
 
+// calendarCheckTransport is CalendarFeedReadable's transport: the default,
+// but in a test.
+var calendarCheckTransport http.RoundTripper
+
 // CalendarFeedReadable fetches a calendar feed's address once, as the tools
 // server would, and reads it: it is how an address is checked before it is
 // kept. It returns the calendar's own name, when it gives one, and its
@@ -229,6 +233,7 @@ var CalendarFeedReadable = func(ctx context.Context, address string) (string, in
 	ctx, cancel := context.WithTimeout(ctx, toolsrv.CalendarFetchTimeout)
 	defer cancel()
 	client := &http.Client{
+		Transport: calendarCheckTransport,
 		CheckRedirect: func(r *http.Request, via []*http.Request) error {
 			if len(via) >= 5 {
 				return errors.New("stopped after 5 redirects")
