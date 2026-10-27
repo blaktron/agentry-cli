@@ -21,6 +21,6 @@ func TestSkillsLineNamesTheFolderAsFSReadTakesIt(t *testing.T) {
 		t.Errorf("skills line %q names the folder by its full path too", line)
 	}
 	if skillsLine(nil, false) != "" {
-		t.Error("no skills on still writes a skills line")
+		t.Error("a skills line is written with no skill on")
 	}
 }

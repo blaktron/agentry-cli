@@ -170,7 +170,7 @@ func TestWorkspaceToolsTakeFullPaths(t *testing.T) {
 	}{
 		{"a full path outside the grant", func() (string, bool) {
 			return s.toolFSRead(rawArgs(t, map[string]any{"path": full + "/other.txt"}))
-		}, []string{`"other.txt" is outside the granted paths, which are data, skills, relative to ` + full}},
+		}, []string{`"other.txt" is outside the granted paths, which are data, skills, relative to ` + full + `: give a path that begins with one of them, such as data/…`}},
 		{"a full path that climbs out", func() (string, bool) {
 			return s.toolFSRead(rawArgs(t, map[string]any{"path": full + "/skills/../../outside.txt"}))
 		}, []string{"outside the granted paths", "relative to " + full}},

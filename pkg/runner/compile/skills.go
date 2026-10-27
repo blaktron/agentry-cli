@@ -35,9 +35,9 @@ func checkedSkills(in []spec.Skill) ([]spec.Skill, error) {
 
 // skillsLine is the System Prompt's line on a persistent agent's skills:
 // each by name with its description quoted, so nothing in a description can
-// pass for the line around it. It names the folder by the path fs_read
-// takes, beginning with the folder's name, as the folders line does. commands says the agent runs programs, and so
-// a skill's scripts.
+// pass for the line around it. commands says the agent runs programs, and so
+// a skill's scripts. It names the folder by the path fs_read takes, beginning
+// with the folder's name, as agentFilesLine names the agent's other folders.
 func skillsLine(skills []spec.Skill, commands bool) string {
 	if len(skills) == 0 {
 		return ""
