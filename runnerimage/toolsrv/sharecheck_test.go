@@ -89,6 +89,29 @@ func TestShareFileIsReadOnlyOnceChecked(t *testing.T) {
 	}
 }
 
+// TestShareFileByItsFullPathIsChecked: a file in a checked share named by
+// its full path is held to the same check as by its relative one.
+func TestShareFileByItsFullPathIsChecked(t *testing.T) {
+	spec, verdicts := shareSpec(t)
+	s := newTestServer(t, spec)
+	full := filepath.ToSlash(spec.WorkspaceDir)
+	notes := filepath.Join(spec.WorkspaceDir, "share", "notes.md")
+	mustWrite(t, notes, []byte("the person's notes\n"))
+	for _, p := range []string{full + "/share/notes.md", full + "//share/./notes.md", full + "/data/../share/notes.md"} {
+		if got, isErr := s.toolFSRead(rawArgs(t, map[string]any{"path": p})); !isErr || !strings.Contains(got, "not been checked yet") {
+			t.Fatalf("an unchecked file by %q: (%q, %v)", p, got, isErr)
+		}
+	}
+	writeVerdicts(t, verdicts, map[string]ShareVerdict{"notes.md": verdictFor(t, notes, ShareFound, "Eicar-Signature")})
+	if got, isErr := s.toolFSRead(rawArgs(t, map[string]any{"path": full + "/share/notes.md"})); !isErr || !strings.Contains(got, "ClamAV found Eicar-Signature") {
+		t.Fatalf("a file ClamAV found, by its full path: (%q, %v)", got, isErr)
+	}
+	writeVerdicts(t, verdicts, map[string]ShareVerdict{"notes.md": verdictFor(t, notes, ShareClean, "")})
+	if got, isErr := s.toolFSRead(rawArgs(t, map[string]any{"path": full + "/share/notes.md"})); isErr || !strings.Contains(got, "the person's notes") {
+		t.Fatalf("a clean file, by its full path: (%q, %v)", got, isErr)
+	}
+}
+
 // TestShareFileTheAgentWroteIsRead: what fs_write wrote in the share is
 // read back before the runner's next check, and the same bytes under a
 // checked name elsewhere in the share pass by their digest.
