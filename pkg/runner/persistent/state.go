@@ -202,11 +202,12 @@ func LogPath(home, name string) string { return filepath.Join(Dir(home, name), l
 // the consents, version 3 the Coding agent's dev server, version 4 its
 // published ports, version 5 the skills the person added, version 6 the
 // secrets they stored, version 7 the Coding agent's git host accounts and
-// version 8 the sign-ins of the servers it runs from images and version 9
-// the mail providers the person enabled; a build that reads an older
+// version 8 the sign-ins of the servers it runs from images, version 9
+// the mail providers the person enabled and version 10 the Assistant's
+// calendar feeds; a build that reads an older
 // version alone refuses a newer one rather than drop what it does not know
 // on its next save.
-const ConfigVersion = 9
+const ConfigVersion = 10
 
 // mailProvidersVersion is the version that added MailProviders: an older
 // configuration with a sign-in is migrated when read (migrateMailProviders).
@@ -276,6 +277,9 @@ type Config struct {
 	// (Builtin.MailProviders): a provider not listed has its servers off
 	// the roster and out of every segment, and keeps its sign-in.
 	MailProviders []string `yaml:"mailProviders,omitempty" json:"mailProviders,omitempty"`
+	// CalendarFeeds are the Assistant's calendar feeds, by name; each is a
+	// roster entry, its address in the keychain (CalendarKeychainAccount).
+	CalendarFeeds []CalendarFeed `yaml:"calendarFeeds,omitempty" json:"calendarFeeds,omitempty"`
 }
 
 // ServerFailure is why a server the person added could not be installed.
@@ -348,7 +352,10 @@ func SaveConfig(home, name string, c Config) error {
 	// read back, an older version holding one is migrated, and a provider
 	// the person disabled would come back enabled.
 	if len(c.SignIns) > 0 || len(c.MailProviders) > 0 {
-		c.Version = ConfigVersion
+		c.Version = mailProvidersVersion
+	}
+	if len(c.CalendarFeeds) > 0 {
+		c.Version = calendarFeedsVersion
 	}
 	b, err := yaml.Marshal(c)
 	if err != nil {
@@ -646,6 +653,11 @@ func reset(ctx context.Context, home, name string, d dockerx.Client, kind resetK
 			return fmt.Errorf("remove the %s agent's token for %s: %w", name, g.Host, err)
 		}
 	}
+	for _, f := range cfg.CalendarFeeds {
+		if err := resetSecrets.Delete(CalendarKeychainAccount(name, f.Name)); err != nil {
+			return fmt.Errorf("remove the %s agent's calendar feed %s: %w", name, f.Name, err)
+		}
+	}
 	// An image server's keyring password: its volume, which the password
 	// opened, is gone above, so the password goes too. One the
 	// configuration records a set-up for must leave the keychain. One it
@@ -671,8 +683,11 @@ func reset(ctx context.Context, home, name string, d dockerx.Client, kind resetK
 // default once stored, is switched off; an image server is off until
 // switched on. None is agreed to, so turning one on asks again.
 func keptCredentials(cfg Config) Config {
-	out := Config{Version: ConfigVersion, Enabled: cfg.Enabled, Share: cfg.Share, Secrets: cfg.Secrets, Accounts: cfg.Accounts, SignIns: cfg.SignIns}
+	out := Config{Version: ConfigVersion, Enabled: cfg.Enabled, Share: cfg.Share, Secrets: cfg.Secrets, Accounts: cfg.Accounts, SignIns: cfg.SignIns, CalendarFeeds: cfg.CalendarFeeds}
 	off := map[string]bool{}
+	for _, f := range cfg.CalendarFeeds {
+		off[CalendarEntryID(f.Name)] = false
+	}
 	for _, sec := range cfg.Secrets {
 		off[SecretEntryID(sec.Name)] = false
 	}

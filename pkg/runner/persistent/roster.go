@@ -240,6 +240,11 @@ func BuildRosterUnder(a Agent, c Config, applied *Applied, malwareCheck bool) Ro
 			add(e, true)
 		}
 	}
+	if a.Builtin.ReadsCalendars() {
+		for _, e := range calendarEntries(c) {
+			add(e, true)
+		}
+	}
 	for _, k := range c.Knowledge {
 		line := "Searches your knowledge pack " + k + ", read-only"
 		if a.Builtin.Codes() {
@@ -528,6 +533,16 @@ func Apply(ctx context.Context, home string, a Agent, c Config, r Roster, open P
 		}
 	} else {
 		applied.On = slices.DeleteFunc(applied.On, func(id string) bool { return strings.HasPrefix(id, accountPrefix) })
+	}
+	// The calendar feeds that are on reach the tools server's calendar
+	// tools, each with its address, read in the person's zone.
+	if a.Builtin.ReadsCalendars() {
+		if g.CalendarFeeds, err = readCalendarFeeds(keys, a, c, on); err != nil {
+			return g, applied, done, err
+		}
+		if len(g.CalendarFeeds) > 0 {
+			g.CalendarZone = calendarZone()
+		}
 	}
 	var givenServers []agentServer
 	for _, as := range servers {

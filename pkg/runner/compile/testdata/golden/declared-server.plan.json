@@ -212,7 +212,7 @@
     "gateway/config.yaml": "6ae322f43ef620e4ad682078c22e8a24b8aa6e96de990ad664a91cc53733197c",
     "gateway/registry.yaml": "cc21e4caab49d9b939989a497d4e1bf65dfcb9251550d5d95fd925fa82296a20",
     "gateway/tools.yaml": "ded9eb65de2f82ea7d0288fd548283e55f2a92b3c133f04f7714be847bcbbf04",
-    "gateway/toolspec.json": "4c179802601ce90afe28f3e9e5c88e5d96f28095c56ca0089f27d3dfdacb16cd",
+    "gateway/toolspec.json": "e91a45051c6b6f65e2795ed740c1168b8dd12624e56c7623cf43dbc5e209803f",
     "harness/agent.yaml": "eb37f877c7755192408d8c69be1fdc454e17758afeb337dfeb2b5e7ec436a10b"
   }
 }

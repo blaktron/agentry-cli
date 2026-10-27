@@ -145,6 +145,13 @@ type Inputs struct {
 	// a persistent built-in's alone, beside its folders, and refused to
 	// anything else.
 	Coder *spec.CoderGrant
+	// Calendar grants a persistent Assistant the calendar feeds its roster
+	// has on (spec.CalendarGrant): the calendar tools, each feed's address
+	// in the tools container alone, whose network reaches the feeds' hosts
+	// on 443 and nothing else. A persistent built-in's alone, beside its
+	// folders, which declares no egress of its own; refused to anything
+	// else.
+	Calendar *spec.CalendarGrant
 	// ShareServers are the declared MCP servers, by source id
 	// (MCPServerSpec.SourceID), that see a persistent agent's share folder,
 	// read only: the copies the share check passed where the share is
@@ -253,12 +260,17 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 			return nil, err
 		}
 	}
+	if in.Calendar != nil {
+		if err := calendarGrant(in, mode, &caps); err != nil {
+			return nil, err
+		}
+	}
 	if in.MCPServers, err = serverShares(in, mode, caps); err != nil {
 		return nil, err
 	}
 	// A persistent agent's grants never sit beside the web tools or the
 	// review grant, whose containers are held to one network each.
-	if (in.AgentFiles != nil || in.AppLink != "" || in.Coder != nil) && (in.Web || in.Review) {
+	if (in.AgentFiles != nil || in.AppLink != "" || in.Coder != nil || in.Calendar != nil) && (in.Web || in.Review) {
 		return nil, &PolicyRefusal{Reason: "a persistent agent's grants are never given beside the web tools or the review grant"}
 	}
 	if (in.RegistrySearch || in.WebSearchedOnly || in.WebGivenOnly) && !in.Web {
@@ -590,6 +602,9 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	}
 	if c := caps.Coder; c != nil && c.Commands && len(c.Accounts) > 0 {
 		plan.Enforcement["persistent.accounts"] = coderAccountsEnforcement(c.Accounts)
+	}
+	if caps.Calendar != nil {
+		plan.Enforcement["persistent.calendar"] = calendarEnforcement(caps.Calendar)
 	}
 	if dependencyScan(caps) {
 		plan.Enforcement["persistent.dependencyScan"] = "dependency_scan runs OSV-Scanner from the Coding agent's toolchain image with --offline, under run_command's confinement, over a folder beneath " + spec.AgentRoot +
@@ -1089,6 +1104,12 @@ func toolSpec(caps spec.CapSummary, secrets []string) *toolsrv.Spec {
 		for _, a := range c.Accounts {
 			ts.Exec.SecretEnv = append(ts.Exec.SecretEnv, a.TokenEnv)
 			ts.Exec.Accounts = append(ts.Exec.Accounts, toolsrv.GitAccount{Host: a.Host, Kind: string(a.Kind), Own: a.Own, User: a.User, Name: a.Name, Email: a.Email, TokenEnv: a.TokenEnv})
+		}
+	}
+	if g := caps.Calendar; g != nil {
+		ts.Calendar = toolsrv.Calendar{TimeZone: g.TimeZone}
+		for _, f := range g.Feeds {
+			ts.Calendar.Feeds = append(ts.Calendar.Feeds, toolsrv.CalendarFeed{Name: f.Name, Host: f.Host, URLEnv: f.URLEnv})
 		}
 	}
 	return ts
@@ -1937,6 +1958,16 @@ func catalogEntry(tspec *toolsrv.Spec, caps spec.CapSummary, secrets []string, r
 		// same gateway proxy a declared host is reached by: the judge's
 		// client reads the proxy variable the gateway sets.
 		e.set("allowHosts", strListNode([]string{toolsrv.ReviewHost + ":443"}))
+	} else if g := caps.Calendar; g != nil {
+		// The calendar feeds reach their own hosts and nothing else, by the
+		// same gateway proxy; the tools server re-checks each fetch and
+		// every redirect against its feed's host (calendarGrant leaves no
+		// other egress beside them).
+		var hosts []string
+		for _, h := range g.Hosts() {
+			hosts = append(hosts, h+":443")
+		}
+		e.set("allowHosts", strListNode(hosts))
 	} else if !tspec.Fetch.Enabled && !tspec.Web.Enabled {
 		e.set("disableNetwork", boolNode(true))
 	}
@@ -1960,6 +1991,10 @@ func catalogEntry(tspec *toolsrv.Spec, caps spec.CapSummary, secrets []string, r
 	// tools container's alone (checkCoderSecrets).
 	if tspec.Exec.Any {
 		secrets = append(append([]string(nil), secrets...), tspec.Exec.SecretEnv...)
+	}
+	// The calendar feeds' addresses, likewise (calendarGrant).
+	for _, f := range tspec.Calendar.Feeds {
+		secrets = append(append([]string(nil), secrets...), f.URLEnv)
 	}
 	if len(secrets) > 0 {
 		var entries []*yaml.Node
@@ -2185,6 +2220,10 @@ func enforcement(caps spec.CapSummary, secrets, optional []string, extraServers 
 		e["review"] = "the built-in's review grant, on the tools container only: " + toolsrv.ToolAIReview + " asks AI Review's release rubric (the six questions stage S5 asks) over the package in the run's inputs and answers with scores and file names, never the package's text; " +
 			toolsrv.ToolReadInput + " answers a file only after AI Review's model-input questions passed it, and one flagged or not scanned is withheld with its path and the reason; " +
 			"the person's own TypeSafe key is injected into the tools container only"
+	}
+	if g := caps.Calendar; g != nil {
+		e["network"] = "no declared egress and no fetch tool; the tools container reaches " + strings.Join(g.Hosts(), ":443, ") + ":443 alone, the hosts of the person's calendar feeds, for the calendar tools, " +
+			"through the gateway's per-server proxy and DNS interception (--block-network), the tools server re-checking each fetch and redirect against its feed's host (see persistent.calendar)"
 	}
 	e["filesystem"] = "read " + fsDesc(caps.FSReadMode, caps.FSReadPaths) +
 		"; write " + fsDesc(caps.FSWriteMode, caps.FSWritePaths) +

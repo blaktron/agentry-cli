@@ -373,8 +373,8 @@ const gatewayOwnerLabel = "agentry.gateway.run"
 // relayHosts are where a relay may be pointed (sockfilter.Config.
 // RelayHosts): the run's declared servers' egress entries, the agent's own
 // egress hosts on 443, the port the compiler gives the tools server's
-// fetch, and the review grant's TypeSafe API on 443. Empty when nothing
-// declares egress, which admits no relay.
+// fetch, the review grant's TypeSafe API on 443, and the calendar feeds'
+// hosts on 443. Empty when nothing declares egress, which admits no relay.
 func relayHosts(plan *spec.Plan) []string {
 	var hosts []string
 	for _, srv := range plan.MCPServers {
@@ -395,6 +395,11 @@ func relayHosts(plan *spec.Plan) []string {
 	// server as its allowHosts.
 	if plan.Capabilities.ReviewTools {
 		hosts = append(hosts, toolsrv.ReviewHost+":443")
+	}
+	// The calendar feeds' hosts, which the compiler gives the tools server
+	// as its allowHosts.
+	for _, h := range plan.Capabilities.Calendar.Hosts() {
+		hosts = append(hosts, h+":443")
 	}
 	return hosts
 }
