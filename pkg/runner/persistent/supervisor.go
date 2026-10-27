@@ -185,7 +185,7 @@ type Supervisor struct {
 	// takes it off upkeep.json's pending handoff.
 	upkeep      upkeepState
 	upkeepDirty bool
-	upkeepSave  sync.Mutex // one write of upkeep.json at a time
+	upkeepSave  sync.Mutex // one write of upkeep.json at a time, taken before mu
 	upkeeping   int
 	// upkeepWait is what a person's message is told while it waits for
 	// the upkeep; waiting counts the messages waiting.

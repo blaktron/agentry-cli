@@ -152,6 +152,9 @@ func loadUpkeep(home, name string) upkeepState {
 	return u
 }
 
+// saveUpkeep writes upkeep.json through one fixed temporary file, so two
+// writes must never run at once: a supervisor writes only through
+// changeUpkeep.
 func saveUpkeep(home, name string, u upkeepState) error {
 	b, err := json.MarshalIndent(u, "", "  ")
 	if err != nil {
@@ -227,18 +230,9 @@ func (s *Supervisor) noteUpkeepEvent(ev session.Event) {
 		}
 	case session.KindAssistantTurn:
 		if s.upkeepDirty {
-			// Saved off the events' lock, which every watcher waits on, as
-			// it stands when the save runs, so an older state never lands
-			// after a newer one.
+			// Saved off the events' lock, which every watcher waits on.
 			s.upkeepDirty = false
-			go func() {
-				s.upkeepSave.Lock()
-				defer s.upkeepSave.Unlock()
-				s.mu.Lock()
-				u := s.upkeep
-				s.mu.Unlock()
-				_ = saveUpkeep(s.opts.Home, s.opts.Agent.Name, u)
-			}()
+			go func() { _ = s.changeUpkeep(nil) }()
 		}
 	}
 }
@@ -292,7 +286,6 @@ const consolidateText = "Upkeep: consolidate your memory (memory-consolidate)."
 // since the last run is left alone, and a person's message waiting puts it
 // off to a later idle. The caller holds turn.
 func (s *Supervisor) consolidateLocked(ctx context.Context) {
-	home, name := s.opts.Home, s.opts.Agent.Name
 	now := s.now()
 	defer s.beginUpkeep("Tidying the memory first; your message follows")()
 	s.mu.Lock()
@@ -306,10 +299,7 @@ func (s *Supervisor) consolidateLocked(ctx context.Context) {
 	out := Compacted{Trigger: UpkeepConsolidate}
 	holdBack := func(reason string) {
 		out.Reason = reason
-		s.mu.Lock()
-		s.upkeep.ConsolidateAfter = s.now().Add(upkeepRetry).UTC()
-		_ = saveUpkeep(home, name, s.upkeep)
-		s.mu.Unlock()
+		_ = s.changeUpkeep(func(st *upkeepState) { st.ConsolidateAfter = s.now().Add(upkeepRetry).UTC() })
 		s.logUpkeep(outDir, out, "", "")
 	}
 	if u.upkeepsToday(now) >= maxUpkeepsPerDay-keptForCompaction {
@@ -320,18 +310,14 @@ func (s *Supervisor) consolidateLocked(ctx context.Context) {
 	if digest != "" && digest == u.MemoryDigest {
 		// Nothing was written since the last run: nothing to tidy.
 		out.Reason, out.FactsBefore, out.FactsAfter = "the memory has not changed since it was last consolidated", before, before
-		s.mu.Lock()
-		s.upkeep.MemoryWrites = 0
-		_ = saveUpkeep(home, name, s.upkeep)
-		s.mu.Unlock()
+		_ = s.changeUpkeep(func(st *upkeepState) { st.MemoryWrites = 0 })
 		s.logUpkeep(outDir, out, "", "")
 		return
 	}
-	s.mu.Lock()
-	s.upkeep.Upkeeps = append(pruneDay(s.upkeep.Upkeeps, now), now.UTC())
-	s.upkeepTurn, s.upkeepMark = true, consolidateText
-	_ = saveUpkeep(home, name, s.upkeep)
-	s.mu.Unlock()
+	_ = s.changeUpkeep(func(st *upkeepState) {
+		st.Upkeeps = append(pruneDay(st.Upkeeps, now), now.UTC())
+		s.upkeepTurn, s.upkeepMark = true, consolidateText
+	})
 	s.notice("Tidying the memory")
 	out.FactsBefore = before
 	tctx, cancel := context.WithTimeout(ctx, upkeepTurnCap)
@@ -348,11 +334,10 @@ func (s *Supervisor) consolidateLocked(ctx context.Context) {
 		s.notice("The memory's tidy did not finish: " + out.Reason)
 		return
 	}
-	s.mu.Lock()
-	s.upkeep.LastConsolidation = s.now().UTC()
-	s.upkeep.MemoryDigest, s.upkeep.MemoryWrites = afterDigest, 0
-	_ = saveUpkeep(home, name, s.upkeep)
-	s.mu.Unlock()
+	_ = s.changeUpkeep(func(st *upkeepState) {
+		st.LastConsolidation = s.now().UTC()
+		st.MemoryDigest, st.MemoryWrites = afterDigest, 0
+	})
 	s.logUpkeep(outDir, out, "", "")
 	s.notice(fmt.Sprintf("Tidied the memory: %d fact lines before, %d after", before, after))
 }
@@ -456,7 +441,6 @@ func (s *Supervisor) upkeepWords() upkeepWords {
 // compactLocked runs one compaction: the upkeep turn, the handoff and the
 // swap. The caller holds turn.
 func (s *Supervisor) compactLocked(ctx context.Context, trigger string) (Compacted, error) {
-	home, name := s.opts.Home, s.opts.Agent.Name
 	now := s.now()
 	s.mu.Lock()
 	u := s.upkeep
@@ -469,19 +453,15 @@ func (s *Supervisor) compactLocked(ctx context.Context, trigger string) (Compact
 		if trigger != UpkeepManual {
 			// An automatic trigger that cannot run waits rather than asking
 			// again every minute or before every message.
-			s.mu.Lock()
-			s.upkeep.RetryAfter = now.Add(upkeepRetry).UTC()
-			_ = saveUpkeep(home, name, s.upkeep)
-			s.mu.Unlock()
+			_ = s.changeUpkeep(func(st *upkeepState) { st.RetryAfter = now.Add(upkeepRetry).UTC() })
 		}
 		return out, nil
 	}
 	memory, words := s.keepsMemory(), s.upkeepWords()
-	s.mu.Lock()
-	s.upkeep.Upkeeps = append(pruneDay(s.upkeep.Upkeeps, now), now.UTC())
-	s.upkeepTurn, s.upkeepMark = true, words.text
-	_ = saveUpkeep(home, name, s.upkeep)
-	s.mu.Unlock()
+	_ = s.changeUpkeep(func(st *upkeepState) {
+		st.Upkeeps = append(pruneDay(st.Upkeeps, now), now.UTC())
+		s.upkeepTurn, s.upkeepMark = true, words.text
+	})
 	defer s.beginUpkeep(words.wait)()
 	s.notice(words.start)
 	var digestBefore string
@@ -525,10 +505,7 @@ func (s *Supervisor) compactLocked(ctx context.Context, trigger string) (Compact
 	}
 	if out.Reason != "" {
 		if trigger != UpkeepManual {
-			s.mu.Lock()
-			s.upkeep.RetryAfter = s.now().Add(upkeepRetry).UTC()
-			_ = saveUpkeep(home, name, s.upkeep)
-			s.mu.Unlock()
+			_ = s.changeUpkeep(func(st *upkeepState) { st.RetryAfter = s.now().Add(upkeepRetry).UTC() })
 		}
 		s.logUpkeep(outDir, out, oldConv, "")
 		s.notice("The upkeep did not finish, so the conversation goes on as it was: " + out.Reason)
@@ -551,12 +528,12 @@ func (s *Supervisor) compactLocked(ctx context.Context, trigger string) (Compact
 		return out, err
 	}
 	out.Swapped = true
-	s.mu.Lock()
-	s.upkeep.LastCompaction = s.now().UTC()
-	s.upkeep.TurnsSince, s.upkeep.ContextTokens = 0, 0
-	_ = saveUpkeep(home, name, s.upkeep)
-	newOut := s.outDir
-	s.mu.Unlock()
+	var newOut string
+	_ = s.changeUpkeep(func(st *upkeepState) {
+		st.LastCompaction = s.now().UTC()
+		st.TurnsSince, st.ContextTokens = 0, 0
+		newOut = s.outDir
+	})
 	// After a segment restart the ended segment's receipts are closed
 	// with its envelope, and the record of the swap is the new segment's
 	// first.
@@ -761,12 +738,24 @@ func (s *Supervisor) swapInSegment(ctx context.Context, handoff string) error {
 // setPendingHandoff keeps the handoff a new conversation is to open with in
 // upkeep.json ("" takes it off).
 func (s *Supervisor) setPendingHandoff(h string) error {
-	s.mu.Lock()
-	s.upkeep.Handoff = h
-	u := s.upkeep
-	s.mu.Unlock()
+	return s.changeUpkeep(func(st *upkeepState) { st.Handoff = h })
+}
+
+// changeUpkeep applies change (nil: none) to the upkeep state and saves it.
+// Every write of upkeep.json goes through here: the state is copied while
+// upkeepSave is held, so the writes land in the order their copies were taken
+// and the last one on disk carries every change made before it. change runs
+// under mu, so it may set other fields mu guards, and must not take mu or
+// upkeepSave itself; upkeepSave is always taken before mu.
+func (s *Supervisor) changeUpkeep(change func(st *upkeepState)) error {
 	s.upkeepSave.Lock()
 	defer s.upkeepSave.Unlock()
+	s.mu.Lock()
+	if change != nil {
+		change(&s.upkeep)
+	}
+	u := s.upkeep
+	s.mu.Unlock()
 	return saveUpkeep(s.opts.Home, s.opts.Agent.Name, u)
 }
 
@@ -774,12 +763,11 @@ func (s *Supervisor) setPendingHandoff(h string) error {
 // no longer pending; not, the segment's next turn carries it again.
 func (s *Supervisor) handoffSent(sess engine.PersistentSession, h string, delivered bool) {
 	if delivered {
-		s.mu.Lock()
-		pending := s.upkeep.Handoff == h
-		s.mu.Unlock()
-		if pending {
-			_ = s.setPendingHandoff("")
-		}
+		_ = s.changeUpkeep(func(st *upkeepState) {
+			if st.Handoff == h {
+				st.Handoff = ""
+			}
+		})
 		return
 	}
 	s.mu.Lock()
