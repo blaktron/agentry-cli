@@ -480,7 +480,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	if mode == manifest.ModePersistent {
 		harnessMode = manifest.ModeInteractive
 	}
-	res, err := ad.Compile(adapter.Input{
+	harnessIn := adapter.Input{
 		Mode:         harnessMode,
 		Instruction:  instruction,
 		Summary:      m.Summary,
@@ -492,7 +492,16 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		// The host link's results reach the model as the host printed them.
 		UnchangedTools: unchangedTools(caps),
 		Persistent:     mode == manifest.ModePersistent,
-	})
+	}
+	res, err := ad.Compile(harnessIn)
+	// A harness in a container is given a model endpoint on this computer's
+	// loopback under the alias (loopback.go); a harness that runs on this
+	// computer reaches its loopback itself.
+	if aliased := withLoopbackAlias(in.Policy); err == nil && res.Host == nil && aliased != in.Policy {
+		in.Policy = aliased
+		harnessIn.Model, harnessIn.Harness = aliased.Model, aliased.Harness[adapterName]
+		res, err = ad.Compile(harnessIn)
+	}
 	if err != nil {
 		var refusal *adapter.Refusal
 		if errors.As(err, &refusal) {

@@ -285,8 +285,8 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	var served []string
 	ReportStage(p.OnStage, Stage{Name: receipt.StageInfra})
 	infraErr := startInfra(ctx, d, p, rd, td, runID, token, rep, &served)
-	if len(rd.modelHosts) > 0 {
-		env.CapabilitiesEnforced["llm-proxy.hosts"] = modelHostsLine(rd.modelHosts)
+	if line := modelHostsLine(rd.modelHosts); line != "" {
+		env.CapabilitiesEnforced["llm-proxy.hosts"] = line
 	}
 	if infraErr != nil {
 		env.CapabilitiesEnforced["daemon"] = daemonLine(rd)

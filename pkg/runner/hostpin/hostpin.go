@@ -11,6 +11,7 @@ package hostpin
 
 import (
 	"context"
+	"errors"
 	"net"
 	"os"
 	"slices"
@@ -41,35 +42,130 @@ func Lookup(ctx context.Context, host string) ([]net.IP, error) {
 
 // Pins answers the proxy's --add-host entries ("name:ip") for the
 // allowlist's hosts, resolved with lookup. Only IPv4 answers are pinned,
-// since a proxy's network may have no IPv6 route; IP literals, names that
-// do not resolve here, and loopback or unspecified answers (which inside a
-// container would name the container itself) are left to the container's
-// DNS.
+// since a proxy's network may have no IPv6 route; IP literals, the
+// engines' own names, names that do not resolve here, and loopback or
+// unspecified answers (which inside a container would name the container
+// itself) are left to the container's DNS.
 func Pins(ctx context.Context, allow []string, lookup func(context.Context, string) ([]net.IP, error)) []string {
+	return ResolveModelHosts(ctx, allow, lookup, "", false).Pins
+}
+
+// HostGateway is the address an --add-host entry gives a name that means
+// this computer. Docker and podman put the address a container reaches the
+// engine's host at in its place; on Docker Desktop that address also
+// reaches services the host has bound to its loopback.
+const HostGateway = "host-gateway"
+
+// LoopbackAlias is the name a plan gives a model endpoint on this
+// computer's loopback when its harness runs in a container, where
+// "localhost" would name the container and is never proxied. It is under
+// .internal, which no public name uses, and only a local run pins it.
+const LoopbackAlias = "agentry-host.internal"
+
+// ModelHosts is what ResolveModelHosts found for a model allowlist.
+type ModelHosts struct {
+	// Pins are the proxy's --add-host entries: "name:ip" for an endpoint
+	// elsewhere, "name:host-gateway" for one on this computer.
+	Pins []string
+	// Gateway are the hosts of Pins that name this computer.
+	Gateway []string
+	// Unresolved are the hosts this machine's resolver says do not exist,
+	// so that the proxy can say so in plain words when one is dialled.
+	Unresolved []string
+}
+
+// ResolveModelHosts resolves a model allowlist's hosts with lookup, as
+// Pins does, and, for a run on this computer (local), pins every host
+// that means this computer to HostGateway: localhost and *.localhost, a
+// name with a loopback answer (a Mac answers its own .local name with
+// 127.0.0.1 beside its LAN address, and many Linux hosts map their own
+// name to 127.0.1.1), and the machine's own name (hostname, its first
+// label, or that label with .local) when the lookup fails. Inside the
+// proxy's container a loopback address names the container itself, so
+// such an endpoint would otherwise be unreachable. A run whose caller says
+// it is not local (a hosted run's) never reaches its host this way. A name the lookup reports as not
+// existing (not one that timed out) is Unresolved. IP literals and the
+// engines' own names (host.docker.internal, host.containers.internal) are
+// left to the container.
+func ResolveModelHosts(ctx context.Context, allow []string, lookup func(context.Context, string) ([]net.IP, error), hostname string, local bool) ModelHosts {
+	var out ModelHosts
 	seen := map[string]bool{}
-	var pins []string
 	for _, entry := range allow {
 		host := AllowHost(entry)
-		if host == "" || seen[host] || net.ParseIP(host) != nil {
+		if host == "" || seen[host] || net.ParseIP(host) != nil || engineName(host) || (host == LoopbackAlias && !local) {
 			continue
 		}
 		seen[host] = true
-		ips, err := lookup(ctx, host)
-		if err != nil {
+		if local && (isLocalhost(host) || host == LoopbackAlias) {
+			out.Gateway = append(out.Gateway, host)
 			continue
 		}
-		done := map[string]bool{}
-		for _, ip := range ips {
-			v4 := ip.To4()
-			if v4 == nil || v4.IsLoopback() || v4.IsUnspecified() || done[v4.String()] {
-				continue
-			}
-			done[v4.String()] = true
-			pins = append(pins, host+":"+v4.String())
+		ips, err := lookup(ctx, host)
+		switch {
+		case err != nil && local && namesThisComputer(host, hostname):
+			out.Gateway = append(out.Gateway, host)
+		case err != nil && unresolvable(host, err):
+			out.Unresolved = append(out.Unresolved, host)
+		case err != nil:
+		case local && slices.ContainsFunc(ips, net.IP.IsLoopback):
+			out.Gateway = append(out.Gateway, host)
+		default:
+			out.Pins = append(out.Pins, addressPins(host, ips)...)
 		}
 	}
-	sort.Strings(pins)
+	for _, host := range out.Gateway {
+		out.Pins = append(out.Pins, host+":"+HostGateway)
+	}
+	sort.Strings(out.Pins)
+	sort.Strings(out.Gateway)
+	sort.Strings(out.Unresolved)
+	return out
+}
+
+// addressPins are host's "name:ip" entries for its usable IPv4 answers.
+func addressPins(host string, ips []net.IP) []string {
+	var pins []string
+	done := map[string]bool{}
+	for _, ip := range ips {
+		v4 := ip.To4()
+		if v4 == nil || v4.IsLoopback() || v4.IsUnspecified() || done[v4.String()] {
+			continue
+		}
+		done[v4.String()] = true
+		pins = append(pins, host+":"+v4.String())
+	}
 	return pins
+}
+
+// isLocalhost is true for localhost and the names under it (RFC 6761).
+func isLocalhost(host string) bool {
+	return host == "localhost" || strings.HasSuffix(host, ".localhost")
+}
+
+// engineName is true for the names a container engine answers itself.
+func engineName(host string) bool {
+	return host == "host.containers.internal" || strings.HasSuffix(host, ".docker.internal")
+}
+
+// namesThisComputer is true when host is hostname, its first label, or
+// that label with .local, the name a Mac or an Avahi host answers to.
+func namesThisComputer(host, hostname string) bool {
+	hostname = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(hostname)), ".")
+	if hostname == "" {
+		return false
+	}
+	label, _, _ := strings.Cut(hostname, ".")
+	return host == hostname || host == label || host == label+".local"
+}
+
+// unresolvable is true when a failed lookup of host means the proxy's
+// container cannot resolve it either: the resolver answered that the name
+// does not exist, or host is a .local name, which only multicast DNS on
+// this machine answers (a missing one times out or fails rather than
+// being reported missing) and a container engine's DNS never does.
+func unresolvable(host string, err error) bool {
+	var dnsErr *net.DNSError
+	return strings.HasSuffix(host, ".local") || (errors.As(err, &dnsErr) && dnsErr.IsNotFound)
 }
 
 // AllowHost is the host of an allowlist entry (host, host:port or

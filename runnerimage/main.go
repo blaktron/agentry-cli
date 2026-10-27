@@ -428,6 +428,7 @@ func runProxy(args []string) error {
 	allow := fs.String("allow", "", "comma-separated host[:port] CONNECT allowlist")
 	networkOK := fs.Bool("network-ok", false, "dial a permitted host at a public address or one in the person's own network (private, shared, loopback; never link-local), refusing one that resolves to any other (a delivery to a destination on the person's network)")
 	plain := fs.String("plain-http", "", "comma-separated host[:port] plain-http model endpoints; each must also be on --allow")
+	unresolved := fs.String("unresolved", "", "comma-separated allowed hosts the machine that started the proxy could not resolve; a failed lookup of one is answered in plain words")
 	addr := fs.String("addr", ":3128", "listen address")
 	publicOnly := fs.Bool("public-only", false, "dial a permitted host only at a public address, refusing one that resolves to any other (an input source's fetch step)")
 	// The browse proxy's scope: any of these makes the
@@ -489,7 +490,7 @@ func runProxy(args []string) error {
 		fmt.Fprintln(os.Stderr, "agentry-runner proxy: --network-ok and --public-only exclude each other")
 		os.Exit(2)
 	}
-	p := &netproxy.Proxy{Allow: hosts, PlainHTTP: plainHosts, PublicOnly: *publicOnly, NetworkOK: *networkOK, Logw: os.Stderr}
+	p := &netproxy.Proxy{Allow: hosts, PlainHTTP: plainHosts, Unresolved: splitList(*unresolved), PublicOnly: *publicOnly, NetworkOK: *networkOK, Logw: os.Stderr}
 	return p.ListenAndServe(*addr)
 }
 

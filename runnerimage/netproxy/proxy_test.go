@@ -759,3 +759,82 @@ func TestNetworkOKForwardsNoPlainHTTP(t *testing.T) {
 		t.Errorf("status %d, want 405", resp.StatusCode)
 	}
 }
+
+// noSuchHost stands in for a dial whose name does not resolve.
+func noSuchHost(_ context.Context, address string) (net.Conn, error) {
+	host, _, _ := net.SplitHostPort(address)
+	return nil, &net.OpError{Op: "dial", Net: "tcp", Err: &net.DNSError{Err: "no such host", Name: host, IsNotFound: true}}
+}
+
+// A tunnel to a host the machine that started the proxy could not resolve
+// either is refused with a sentence the client reports, since a client
+// sees a refused tunnel's status line and nothing else.
+func TestConnectToAnUnresolvedHostSaysSoPlainly(t *testing.T) {
+	logs := &lockedBuf{}
+	addr := startProxy(t, &Proxy{Allow: []string{"gone.invalid:443", "other.invalid:443"}, Unresolved: []string{"gone.invalid"}, Logw: logs, dial: noSuchHost})
+	_, err := plainClient(t, addr).Get("https://GONE.invalid/v1/models")
+	want := "the model endpoint's host gone.invalid does not resolve: check the endpoint's address in the model settings"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("err = %v, want it to say %q", err, want)
+	}
+	if !strings.Contains(logs.String(), "unresolved GONE.invalid:443") {
+		t.Errorf("no decision line: %q", logs.String())
+	}
+	// A host the machine resolved gets the plain 502.
+	_, _, status := dialProxy(t, addr, http.MethodConnect, "other.invalid:443", "other.invalid:443")
+	if status != "HTTP/1.1 502 Bad Gateway" {
+		t.Errorf("status = %q, want the plain 502", status)
+	}
+}
+
+// A plain-http request to an unresolved host gets the same sentence in the
+// 502's body, which the harness quotes.
+func TestPlainHTTPToAnUnresolvedHostSaysSoPlainly(t *testing.T) {
+	target := "gone.invalid:8000"
+	addr := startProxy(t, &Proxy{Allow: []string{target}, PlainHTTP: []string{target}, Unresolved: []string{"gone.invalid"}})
+	resp, err := plainClient(t, addr).Get("http://" + target + "/v1/models")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusBadGateway || !strings.Contains(string(body), "gone.invalid does not resolve: check") {
+		t.Fatalf("status %d body %q", resp.StatusCode, body)
+	}
+}
+
+// Any other dial failure of an unresolved host keeps the dial's own error.
+func TestUnresolvedMessageOnlyForALookupFailure(t *testing.T) {
+	p := &Proxy{Unresolved: []string{"gone.invalid"}}
+	if got := p.unresolvedMessage("gone.invalid", &net.OpError{Op: "dial", Err: fmt.Errorf("connection refused")}); got != "" {
+		t.Errorf("a refused connection: %q", got)
+	}
+	if got := p.unresolvedMessage("elsewhere.invalid", &net.DNSError{IsNotFound: true}); got != "" {
+		t.Errorf("a host not on the list: %q", got)
+	}
+}
+
+// The status line written by hand carries no control character, whatever
+// the allowlist entry held.
+func TestFailConnectDropsControlCharacters(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		failConnect(w, "gone.invalid\r\nX-Injected: 1")
+	}))
+	t.Cleanup(srv.Close)
+	addr := strings.TrimPrefix(srv.URL, "http://")
+	c, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+	_, _ = fmt.Fprintf(c, "GET / HTTP/1.1\r\nHost: %s\r\n\r\n", addr)
+	raw, _ := io.ReadAll(c)
+	status, headers, _ := strings.Cut(string(raw), "\r\n")
+	if status != "HTTP/1.1 502 gone.invalidX-Injected: 1" {
+		t.Errorf("status line = %q", status)
+	}
+	if strings.Contains(headers, "\r\nX-Injected") || strings.HasPrefix(headers, "X-Injected") {
+		t.Errorf("a header was injected: %q", raw)
+	}
+}
