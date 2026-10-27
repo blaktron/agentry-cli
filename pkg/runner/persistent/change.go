@@ -496,11 +496,12 @@ func grantsKeyWith(a Agent, c Config, ready func(manifest.MCPServer) bool) strin
 		}{g, e.On})
 		k.Accounts = append(k.Accounts, string(b))
 	}
-	// So for a calendar feed: on or off, its host, and when its address was
-	// set. Its address is never part of the key.
+	// So for a calendar feed: on or off, its host, when its address was set
+	// and whether it is signed in. Its address and sign-in are never part of
+	// the key.
 	for _, f := range c.CalendarFeeds {
 		e, _ := r.Entry(CalendarEntryID(f.Name))
-		k.Calendars = append(k.Calendars, fmt.Sprintf("%s@%s=%t@%s", f.Name, f.Host, e.On, f.Set.UTC().Format(time.RFC3339Nano)))
+		k.Calendars = append(k.Calendars, fmt.Sprintf("%s@%s=%t@%s/%t", f.Name, f.Host, e.On, f.Set.UTC().Format(time.RFC3339Nano), f.SignedIn))
 	}
 	b, _ := json.Marshal(k)
 	sum := sha256.Sum256(b)

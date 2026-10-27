@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
 
 // redactor masks the values that must never reach a receipt: the run's
@@ -125,8 +126,26 @@ func (rd *runDirs) newRedactor(p Params, token string, secrets map[string]string
 		vars = append(vars, p.Plan.Harness.Host.Env...)
 	}
 	// A target host's sign-in is the run's own credential too.
-	rd.redact = newRedactor(token, secrets, append(hostSecretValues(vars), hostCredentialValues(p)...))
+	extra := append(hostSecretValues(vars), hostCredentialValues(p)...)
+	rd.redact = newRedactor(token, secrets, append(extra, calendarSessionValues(p)...))
 	return rd.redact
+}
+
+// calendarSessionValues are the cookie values of the calendar feeds'
+// browser sign-ins, each masked on its own as well as the sign-in whole, so
+// a cookie quoted outside the sign-in's own text is masked too.
+func calendarSessionValues(p Params) []string {
+	g := p.Plan.Capabilities.Calendar
+	if g == nil {
+		return nil
+	}
+	var out []string
+	for _, f := range g.Feeds {
+		if f.SessionEnv != "" {
+			out = append(out, toolsrv.CalendarSessionValues(p.CalendarURLs[f.SessionEnv])...)
+		}
+	}
+	return out
 }
 
 // String masks every known value in s.

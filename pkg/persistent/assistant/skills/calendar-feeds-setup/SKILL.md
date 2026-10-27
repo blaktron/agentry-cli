@@ -1,6 +1,6 @@
 ---
 name: calendar-feeds-setup
-description: Walk the person through giving you a calendar to read by its iCal (ICS) address, from Google Calendar, Outlook (Microsoft 365 or Outlook.com), iCloud or another calendar service, with no sign-in. Use when the person asks you to look at their calendar and you have no calendar feed for it, or a calendar tool says a feed could not be read.
+description: Walk the person through giving you a calendar to read by its iCal (ICS) address, from Google Calendar (a Google Workspace calendar too, signed in through a browser window when its secret address is turned off), Outlook (Microsoft 365 or Outlook.com), iCloud or another calendar service. Use when the person asks you to look at their calendar and you have no calendar feed for it, or a calendar tool says a feed could not be read.
 license: MIT
 ---
 
@@ -42,9 +42,20 @@ Ask which service the calendar is in, then give that service's steps.
 - **Google Calendar** (on a computer, in a browser): *Settings* (the gear),
   then under *Settings for my calendars* the calendar, then *Integrate
   calendar*, and copy **Secret address in iCal format**. Use the secret
-  address, not the public one, unless the calendar is meant to be public. A
-  work or school account may not show it: their administrator can turn it
-  off. *Reset* beside it makes a new address and stops the old one.
+  address, not the public one, unless the calendar is meant to be public.
+  *Reset* beside it makes a new address and stops the old one.
+- **Google Workspace with no secret address** (a work or school account whose
+  administrator turned secret addresses off): they copy **Public address in
+  iCal format** from the same *Integrate calendar* section instead. While the
+  calendar is not public, that address answers only someone signed in to an
+  account that can see the calendar, so it is given **with a sign-in**
+  (below): Agentry opens a browser window at the address, they sign in to
+  Google there, and Agentry keeps that window's cookies for the calendar's
+  site. Those cookies are their Google sign-in to that site, not a key to one
+  calendar, so say so plainly: Agentry keeps them in the keychain and sends
+  them to `calendar.google.com` alone, and you are never shown them.
+  Google may end the sign-in after a while (days or weeks, as the
+  organisation's settings say); they then sign in again.
 - **Outlook** (Microsoft 365 or Outlook.com, in Outlook on the web):
   *Settings*, then *Calendar*, then *Shared calendars*. Under *Publish a
   calendar*, they choose the calendar and **Can view all details** (or *Can
@@ -107,6 +118,22 @@ to agree to give it to you. Then:
 
     agentry agent start assistant
 
+For a calendar that needs a sign-in (Google Workspace with no secret
+address), they add `--calendar-sign-in`:
+
+    agentry agent configure assistant --calendar-feed Work --calendar-sign-in
+
+They paste the address as before. A browser window opens at it (Chrome,
+Edge, Chromium or Brave, in a profile of its own that Agentry removes
+afterwards, so their everyday browser is not touched). They sign in to the
+Google account that can see the calendar; the window closes by itself once
+Agentry can read the calendar, and Agentry keeps the address and that
+window's sign-in in their system keychain. The sign-in is sent to the
+calendar's own host and nowhere else, and you are never shown it. To sign
+in again later, they run the same command and press Enter at the address,
+which keeps the one they gave. In Agentry Desktop, the same is **Sign in in
+a browser window** where the form or the feed's card offers it.
+
 A name given again replaces that calendar's address. To take a calendar away:
 `agentry agent configure assistant --no-calendar-feed Work`. To keep it but
 stop you reading it for a while: `agentry agent grant assistant calendar:Work
@@ -122,6 +149,18 @@ off` (and `on` again).
   again under the same name.
 - "is not a calendar": they copied the HTML link or a page's address, not the
   ICS one.
+- "asks for a sign-in" (it names `accounts.google.com`): the address answers
+  only a signed-in browser, as a Google Workspace calendar's public address
+  does. They give it with a sign-in (`--calendar-sign-in`, or **Sign in in a
+  browser window** in Agentry Desktop).
+- "its sign-in has ended", in your tools: Google ended the sign-in kept for
+  that feed. They sign in again (the same command, Enter at the address).
+- The browser window stays open after they signed in: the account they
+  signed in to cannot see that calendar, or the address is another
+  calendar's. They close the window, which keeps nothing, and check both.
+- "no Chrome, Edge, Chromium or Brave was found": the sign-in needs one of
+  them installed. One installed somewhere else is named by setting
+  `AGENTRY_BROWSER` to its program before the command.
 - Your calendar tools are missing: no feed is on. Their cards in **Mail and
   calendar**, or `agentry agent show assistant`, list the calendar feeds and
   whether each is on.

@@ -189,6 +189,12 @@ func newAgentSecretRemoveCmd() *cobra.Command {
 // when stdin is one, asking for it as prompt, else from stdin, one trailing
 // line break dropped. what names it in an error.
 func readSecretValue(cmd *cobra.Command, prompt, what string) (string, error) {
+	return readSecretInput(cmd, prompt, what, false)
+}
+
+// readSecretInput is readSecretValue, taking an empty value as "" when
+// empty is allowed.
+func readSecretInput(cmd *cobra.Command, prompt, what string, empty bool) (string, error) {
 	in := cmd.InOrStdin()
 	var v string
 	if f, ok := in.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
@@ -207,6 +213,9 @@ func readSecretValue(cmd *cobra.Command, prompt, what string) (string, error) {
 		v = strings.TrimSuffix(strings.TrimSuffix(string(b), "\n"), "\r")
 	}
 	if v == "" {
+		if empty {
+			return "", nil
+		}
 		return "", errors.New("the value is empty: nothing was stored")
 	}
 	if err := persistent.CheckSecretValue(v); err != nil {

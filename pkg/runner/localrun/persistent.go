@@ -303,9 +303,12 @@ type Grants struct {
 }
 
 // CalendarFeed is one of the Assistant's calendar feeds, as a segment is
-// given it: its name and host, and the address read from the keychain.
+// given it: its name and host, and the address read from the keychain, with
+// its browser sign-in when it has one.
 type CalendarFeed struct {
 	Name, Host, URL string
+	// Session is the feed's browser sign-in, or empty.
+	Session string
 }
 
 // ImageGrant is one image server a segment is given: the built-in's server
@@ -597,7 +600,11 @@ func (s Segment) calendarGrant() (*spec.CalendarGrant, error) {
 	}
 	g := &spec.CalendarGrant{TimeZone: s.Grants.CalendarZone}
 	for i, f := range s.sortedCalendarFeeds() {
-		g.Feeds = append(g.Feeds, spec.CalendarFeed{Name: f.Name, Host: f.Host, URLEnv: spec.CalendarFeedEnv(i)})
+		feed := spec.CalendarFeed{Name: f.Name, Host: f.Host, URLEnv: spec.CalendarFeedEnv(i)}
+		if f.Session != "" {
+			feed.SessionEnv = spec.CalendarSessionEnv(i)
+		}
+		g.Feeds = append(g.Feeds, feed)
 	}
 	if err := spec.CheckCalendarGrant(g); err != nil {
 		return nil, engine.Classify(engine.ExitPolicy, err)
@@ -605,8 +612,8 @@ func (s Segment) calendarGrant() (*spec.CalendarGrant, error) {
 	return g, nil
 }
 
-// calendarURLs are the calendar feeds' addresses by the variables
-// calendarGrant gave them.
+// calendarURLs are the calendar feeds' addresses and browser sign-ins by
+// the variables calendarGrant gave them.
 func (s Segment) calendarURLs() map[string]string {
 	if len(s.Grants.CalendarFeeds) == 0 {
 		return nil
@@ -614,6 +621,9 @@ func (s Segment) calendarURLs() map[string]string {
 	out := map[string]string{}
 	for i, f := range s.sortedCalendarFeeds() {
 		out[spec.CalendarFeedEnv(i)] = f.URL
+		if f.Session != "" {
+			out[spec.CalendarSessionEnv(i)] = f.Session
+		}
 	}
 	return out
 }
