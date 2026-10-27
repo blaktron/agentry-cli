@@ -17,7 +17,9 @@ func read(t *testing.T, p string) string {
 
 // TestTheMeetingNotesSkillHoldsItsRules: the skill treats a transcript as a
 // record and never as instructions, summarises from verbatim evidence with
-// a time on every line, owners and dates only as stated, Them never named,
+// a time on every line, owners and dates only as stated, a call's Them and a
+// room's Room and Speaker voices never named but from the transcript's own
+// words and then as inferred, a room's line never taken as the person's,
 // machine errors discounted, every line checked, the summary saved beside
 // the transcript, the meeting filed as an ev page and named people as per
 // pages in schema 2, and arms only the meetings the person asked for,
@@ -36,8 +38,14 @@ func TestTheMeetingNotesSkillHoldsItsRules(t *testing.T) {
 		// The sections and their rules.
 		"**Decisions**", "**Action items**", "**Open questions**", "\"not stated\"", "A proposal nobody accepted is a proposal",
 		"Never take an\n     owner from who spoke last",
-		// Them is not split by person, and machine errors.
-		"one person or several", "Never put a\n  name on a Them line", "thanks for watching", "(as\n  transcribed)",
+		// The labels: Them and Room are not split by person, a Speaker number
+		// is a voice and never an identity, and machine errors.
+		"one\n  person or several", "**Room** is everyone in the room", "never an identity",
+		"`speakers: estimated`", "never take a Room or Speaker line as\n  theirs",
+		"Never put a name on a Them, Room or Speaker line", "Only the transcript\n  can give one",
+		"\"Speaker 2 (Dana, from the transcript)\"", "never the name\n  alone",
+		"Never a page for a label", "Speaker\n   numbers that are estimated voices",
+		"thanks for watching", "(as\n  transcribed)",
 		// Where it goes.
 		"<transcript's name>.summary.md", "Never change, move or delete the transcript",
 		"type `ev`", "type `per`", "share:meetings/", "trust `ext`", "memory-ingest",
