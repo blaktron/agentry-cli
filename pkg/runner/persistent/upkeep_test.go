@@ -389,9 +389,11 @@ func TestHandoffIsQuoted(t *testing.T) {
 	if reason != "" {
 		t.Fatal(reason)
 	}
-	got := handoffCarried(h)
-	if strings.Contains(got, "\n(Agentry: switch") || !strings.Contains(got, strconv.Quote(h)) || strings.Count(got, "\n") != 2 {
-		t.Errorf("the carried handoff can pass for a frame: %q", got)
+	for _, memory := range []bool{true, false} {
+		got := handoffCarried(h, memory)
+		if strings.Contains(got, "\n(Agentry: switch") || !strings.Contains(got, strconv.Quote(h)) || strings.Count(got, "\n") != 2 {
+			t.Errorf("with a memory %t, the carried handoff can pass for a frame: %q", memory, got)
+		}
 	}
 }
 

@@ -32,7 +32,7 @@ import (
 //	{"tasks":{}}              answered with {"tasks":[…]}, each with its next fire
 //	{"task_change":{…}}       a TaskOp (pause, resume, remove); answered with
 //	                          {"tasks":[…]}, or refused
-//	{"compact":{}}            memory upkeep now, then a new conversation that
+//	{"compact":{}}            an upkeep turn now, then a new conversation that
 //	                          opens with the handoff; answered with
 //	                          {"compacted":…} when it is done, or refused
 //
@@ -50,7 +50,7 @@ type Command struct {
 	Tasks  *struct{}      `json:"tasks,omitempty"`
 	// TaskChange is a person's change to one of the agent's tasks.
 	TaskChange *TaskOp `json:"task_change,omitempty"`
-	// Compact asks for memory upkeep and a compaction now.
+	// Compact asks for an upkeep turn and a compaction now.
 	Compact *struct{} `json:"compact,omitempty"`
 }
 
@@ -227,8 +227,6 @@ func (s *Supervisor) serveConn(nc net.Conn) {
 				switch {
 				case errors.Is(err, ErrBusy):
 					c.refuse(RefusedBusy, "a turn is in flight; compact once it ends")
-				case errors.Is(err, ErrNoMemory):
-					c.refuse(RefusedCompact, err.Error())
 				default:
 					c.reply(Reply{Compacted: &out})
 				}
@@ -396,7 +394,7 @@ func requestTasks(ctx context.Context, home, name string, cmd Command) ([]Task, 
 	return ts, err
 }
 
-// RequestCompact asks the running agent's supervisor for memory upkeep and a
+// RequestCompact asks the running agent's supervisor for an upkeep turn and a
 // compaction now, and returns once it is done: an upkeep turn takes minutes,
 // so ctx should allow for it.
 func RequestCompact(ctx context.Context, home, name string) (Compacted, error) {

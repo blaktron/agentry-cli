@@ -65,9 +65,9 @@ type Event struct {
 	// of the task it was for: the turn is the agent's own, not the
 	// person's, and a chat draws it as such.
 	Task string `json:"task,omitempty"`
-	// Upkeep marks, on a user turn, a persistent agent's memory upkeep:
-	// the turn is the runner's, sent before its conversation is
-	// compacted, and a chat draws it as such.
+	// Upkeep marks, on a user turn, a persistent agent's upkeep: the turn
+	// is the runner's, sent before its conversation is compacted or its
+	// memory is tidied, and a chat draws it as such.
 	Upkeep bool `json:"upkeep,omitempty"`
 	// StopReason is the harness's reason for ending an assistant turn.
 	StopReason string `json:"stopReason,omitempty"`
