@@ -55,8 +55,10 @@ and `agentry agent show assistant` lists what it has:
   `memory-ingest`, `memory-query`, `memory-consolidate` and `memory-compact`,
   which say how it adds to its memory, answers from it, tidies it and saves a
   whole conversation before it is compacted; `meeting-notes`, which says how
-  it summarises a meeting Agentry Desktop recorded and transcribed, each point
-  with its time in the transcript, saves the summary beside it, files the
+  it summarises a meeting Agentry Desktop recorded and transcribed (a call,
+  or a meeting held in the room, whose voices it never names unless the
+  transcript does), each point with its time in the transcript, saves the
+  summary beside it, files the
   meeting in its memory, and arms the recordings you ask it for; `google-workspace-setup`, which
   walks you through connecting your Google account; `google-workspace`,
   `google-inbox-triage` and `google-meeting-prep`, adapted from gog's own
