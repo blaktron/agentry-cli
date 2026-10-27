@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -467,6 +468,77 @@ func TestAFailedAutomaticCompactionWaitsBeforeTryingAgain(t *testing.T) {
 	}
 	if u := loadUpkeep(home, "assistant"); u.RetryAfter.Before(time.Now().Add(50 * time.Minute)) {
 		t.Errorf("retry after = %v", u.RetryAfter)
+	}
+}
+
+// TestAnUpkeepChangeLandsAfterAWriteInFlight: a change made while another
+// write of upkeep.json is in flight, with a copy taken before the change,
+// waits for it and lands after it, so the older copy cannot overwrite it.
+func TestAnUpkeepChangeLandsAfterAWriteInFlight(t *testing.T) {
+	home := shortHome(t)
+	if err := os.MkdirAll(Dir(home, "assistant"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	s := &Supervisor{opts: Options{Home: home, Agent: Agent{Name: "assistant"}}}
+	retry := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+	s.upkeepSave.Lock()
+	stale := s.upkeep
+	done := make(chan error, 1)
+	go func() { done <- s.changeUpkeep(func(u *upkeepState) { u.RetryAfter = retry }) }()
+	select {
+	case err := <-done:
+		t.Fatalf("the change was saved while another write was in flight (err %v)", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if err := saveUpkeep(home, "assistant", stale); err != nil {
+		t.Fatal(err)
+	}
+	s.upkeepSave.Unlock()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if u := loadUpkeep(home, "assistant"); !u.RetryAfter.Equal(retry) {
+		t.Errorf("retry after = %v, want %v", u.RetryAfter, retry)
+	}
+}
+
+// TestNoUpkeepWriteDropsAnother: the saves after each turn run beside the
+// writes of a compaction, a consolidation and a handoff; whatever order they
+// land in, upkeep.json ends holding every change.
+func TestNoUpkeepWriteDropsAnother(t *testing.T) {
+	home := shortHome(t)
+	if err := os.MkdirAll(Dir(home, "assistant"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	s := &Supervisor{opts: Options{Home: home, Agent: Agent{Name: "assistant"}}}
+	const writes = 40
+	retry := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+	var wg sync.WaitGroup
+	for i := range writes {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_ = s.changeUpkeep(nil)
+		}()
+		go func() {
+			defer wg.Done()
+			_ = s.changeUpkeep(func(u *upkeepState) {
+				u.Upkeeps = append(u.Upkeeps, time.Unix(int64(i), 0).UTC())
+				if i == writes/2 {
+					u.RetryAfter = retry
+				}
+			})
+		}()
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		_ = s.setPendingHandoff("owed: the report")
+	}()
+	wg.Wait()
+	u := loadUpkeep(home, "assistant")
+	if len(u.Upkeeps) != writes || !u.RetryAfter.Equal(retry) || u.Handoff != "owed: the report" {
+		t.Errorf("upkeep.json = %d upkeeps, retry after %v, handoff %q; want %d, %v and the handoff", len(u.Upkeeps), u.RetryAfter, u.Handoff, writes, retry)
 	}
 }
 
