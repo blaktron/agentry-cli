@@ -906,7 +906,23 @@ func (s *server) scrubStoredSecrets(text string) string {
 			vals = append(vals, secret{env, v})
 		}
 	}
-	sort.Slice(vals, func(i, j int) bool { return len(vals[i].value) > len(vals[j].value) })
+	// Each cookie of a calendar feed's browser sign-in is masked on its
+	// own too, after the sign-in whole.
+	for _, f := range s.spec.Calendar.Feeds {
+		if f.SessionEnv == "" {
+			continue
+		}
+		cookies, err := ParseCalendarSession(os.Getenv(f.SessionEnv))
+		if err != nil {
+			continue
+		}
+		for _, c := range cookies {
+			if len(c.Value) >= 8 {
+				vals = append(vals, secret{f.SessionEnv, c.Value})
+			}
+		}
+	}
+	sort.SliceStable(vals, func(i, j int) bool { return len(vals[i].value) > len(vals[j].value) })
 	for _, v := range vals {
 		text = strings.ReplaceAll(text, v.value, "[redacted:"+v.env+"]")
 	}
@@ -936,6 +952,18 @@ func (s *server) holdsRunSecret(content string) string {
 	for _, env := range s.grantedSecretEnv() {
 		if v := os.Getenv(env); v != "" && strings.Contains(content, v) {
 			return env
+		}
+	}
+	// A cookie of a calendar feed's browser sign-in, on its own.
+	for _, f := range s.spec.Calendar.Feeds {
+		if f.SessionEnv == "" {
+			continue
+		}
+		cookies, _ := ParseCalendarSession(os.Getenv(f.SessionEnv))
+		for _, c := range cookies {
+			if len(c.Value) >= 16 && strings.Contains(content, c.Value) {
+				return f.SessionEnv
+			}
 		}
 	}
 	return ""

@@ -925,8 +925,8 @@ func secretValues(p Params) (map[string]string, error) {
 			values[compile.SecretKey(a.TokenEnv)] = v
 		}
 	}
-	// The calendar feeds' addresses, the same way, from the segment's
-	// addresses alone.
+	// The calendar feeds' addresses and browser sign-ins, the same way,
+	// from the segment's alone.
 	if g := p.Plan.Capabilities.Calendar; g != nil {
 		for _, f := range g.Feeds {
 			v := p.CalendarURLs[f.URLEnv]
@@ -935,6 +935,14 @@ func secretValues(p Params) (map[string]string, error) {
 				continue
 			}
 			values[compile.SecretKey(f.URLEnv)] = v
+			if f.SessionEnv != "" {
+				sv := p.CalendarURLs[f.SessionEnv]
+				if sv == "" {
+					missingSet["the sign-in of the calendar feed "+f.Name] = true
+					continue
+				}
+				values[compile.SecretKey(f.SessionEnv)] = sv
+			}
 		}
 	}
 	missing := make([]string, 0, len(missingSet))

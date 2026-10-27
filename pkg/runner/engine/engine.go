@@ -200,8 +200,9 @@ type Params struct {
 	// the tools container's alone, never a server's.
 	AccountTokens map[string]string
 	// CalendarURLs are the addresses of the Assistant's calendar feeds its
-	// plan names (spec.CalendarGrant.Feeds), by each one's URLEnv: the
-	// segment's, read from the keychain, for the tools container alone.
+	// plan names (spec.CalendarGrant.Feeds), by each one's URLEnv, and the
+	// browser sign-ins of those that have one, by each one's SessionEnv:
+	// the segment's, read from the keychain, for the tools container alone.
 	CalendarURLs map[string]string
 	// Connections are the access tokens of the servers that sign in by
 	// OAuth, keyed by spec.MCPServerSpec.ConnectionKey (a remote server's

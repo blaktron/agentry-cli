@@ -8,18 +8,29 @@ package persistent
 // set. While the entry is on, the segment gives the address to the tools
 // server's calendar tools alone, which fetch it from that host and no other
 // (spec.CalendarGrant); the agent names the feed and is never shown it.
+//
+// Some addresses answer only a signed-in browser: a Google Workspace
+// calendar whose secret address its administrator turned off redirects to
+// Google's sign-in page. Such a feed is signed in through a browser window
+// (SignInCalendarFeed), and the cookies that browser would send to the
+// feed's host are kept in the keychain beside the address, under
+// calendar-session:<agent>:<name>:<n>, split so each entry fits a Windows
+// credential. The tools server sends them to that host alone.
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/blaktron/agentry-cli/pkg/browsersignin"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/pkg/schedule"
@@ -34,8 +45,12 @@ const KindCalendar EntryKind = "calendar"
 const calendarPrefix = "calendar:"
 
 // calendarFeedsVersion is the version of config.yaml that added
-// CalendarFeeds.
-const calendarFeedsVersion = 10
+// CalendarFeeds, and calendarSignInsVersion the one that added their
+// SignedIn.
+const (
+	calendarFeedsVersion   = 10
+	calendarSignInsVersion = 11
+)
 
 // CalendarFeed is one of the Assistant's calendar feeds, as config.yaml
 // keeps it.
@@ -46,6 +61,9 @@ type CalendarFeed struct {
 	// Set is when the address was last set, so setting it again reaches the
 	// next turn.
 	Set time.Time `yaml:"set" json:"set"`
+	// SignedIn says a browser sign-in is kept for the feed in the keychain
+	// (CalendarSessionAccount).
+	SignedIn bool `yaml:"signedIn,omitempty" json:"signedIn,omitempty"`
 }
 
 // CalendarEntryID is a calendar feed's roster id.
@@ -55,6 +73,85 @@ func CalendarEntryID(name string) string { return calendarPrefix + name }
 // is kept under.
 func CalendarKeychainAccount(agent, name string) string {
 	return "calendar-feed:" + agent + ":" + name
+}
+
+// CalendarSessionAccount is the keychain account of the n-th part (from 1)
+// of a calendar feed's browser sign-in.
+func CalendarSessionAccount(agent, name string, n int) string {
+	return "calendar-session:" + agent + ":" + name + ":" + strconv.Itoa(n)
+}
+
+// calendarSessionPart is the most one keychain entry of a sign-in holds,
+// under the 2,560 bytes a Windows credential holds; calendarSessionParts
+// is the most entries one takes.
+const (
+	calendarSessionPart  = 2000
+	calendarSessionParts = 8
+)
+
+// KeepCalendarSession keeps a feed's browser sign-in (a Cookie header) in
+// the keychain, in as many parts as it needs, and removes any part a
+// longer one before it left.
+func KeepCalendarSession(keys Secrets, agent, name, session string) error {
+	if err := CheckSecretValue(session); err != nil {
+		return fmt.Errorf("the sign-in cannot be kept in the keychain: %w", err)
+	}
+	if len(session) > calendarSessionPart*calendarSessionParts {
+		return fmt.Errorf("the sign-in is longer than the %d KB kept for one", calendarSessionPart*calendarSessionParts/1000)
+	}
+	n := 0
+	for rest := session; rest != ""; {
+		part := rest[:min(len(rest), calendarSessionPart)]
+		rest = rest[len(part):]
+		n++
+		if err := keys.Set(CalendarSessionAccount(agent, name, n), part); err != nil {
+			return err
+		}
+	}
+	for i := n + 1; i <= calendarSessionParts; i++ {
+		if err := keys.Delete(CalendarSessionAccount(agent, name, i)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// CalendarSession reads a feed's browser sign-in back from the keychain.
+func CalendarSession(keys Secrets, agent, name string) (string, error) {
+	var b strings.Builder
+	for i := 1; i <= calendarSessionParts; i++ {
+		v, err := keys.Get(CalendarSessionAccount(agent, name, i))
+		if err != nil {
+			if i == 1 {
+				return "", err
+			}
+			break
+		}
+		b.WriteString(v)
+		if len(v) < calendarSessionPart {
+			break
+		}
+	}
+	return b.String(), nil
+}
+
+// ForgetCalendarSession removes a feed's browser sign-in from the keychain.
+func ForgetCalendarSession(keys Secrets, agent, name string) error {
+	for i := 1; i <= calendarSessionParts; i++ {
+		if err := keys.Delete(CalendarSessionAccount(agent, name, i)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ForgetCalendarFeed removes a feed's address and its browser sign-in from
+// the keychain.
+func ForgetCalendarFeed(keys Secrets, agent, name string) error {
+	if err := keys.Delete(CalendarKeychainAccount(agent, name)); err != nil {
+		return err
+	}
+	return ForgetCalendarSession(keys, agent, name)
 }
 
 // CalendarService names the service a feed's host belongs to, or "".
@@ -80,6 +177,12 @@ func calendarEntries(c Config) []RosterEntry {
 // calendarLine is a calendar feed's consent sentence: what the agent reads,
 // and where the address is.
 func calendarLine(f CalendarFeed) string {
+	if f.SignedIn {
+		return "Reads your calendar feed " + f.Name + " from " + f.from() + ", read only: the titles, times, places, people and notes of the events it publishes, " +
+			"which it can tell you, keep in its memory and use in what it writes; its tools fetch the feed from " + f.Host + " alone, " +
+			"signed in as you with the browser sign-in you made for this feed, which they send to " + f.Host + " and nowhere else; " +
+			"the address and the sign-in stay in your keychain: the agent is never shown them"
+	}
 	return "Reads your calendar feed " + f.Name + " from " + f.from() + ", read only: the titles, times, places, people and notes of the events it publishes, " +
 		"which it can tell you, keep in its memory and use in what it writes; its tools fetch the feed from " + f.Host + " alone, " +
 		"and the address stays in your keychain: the agent is never shown it"
@@ -157,7 +260,19 @@ func readCalendarFeeds(keys Secrets, a Agent, c Config, on func(string) bool) ([
 		if err != nil || host != f.Host {
 			return nil, fmt.Errorf("the %s agent's calendar feed %s in the keychain is not an address on %s (%s)", a.Name, f.Name, f.Host, again)
 		}
-		out = append(out, localrun.CalendarFeed{Name: f.Name, Host: f.Host, URL: addr})
+		feed := localrun.CalendarFeed{Name: f.Name, Host: f.Host, URL: addr}
+		if f.SignedIn {
+			signIn := fmt.Sprintf("sign in again: agentry agent configure %s --calendar-feed %q --calendar-sign-in", a.Name, f.Name)
+			session, err := CalendarSession(keys, a.Name, f.Name)
+			if err != nil {
+				return nil, fmt.Errorf("the %s agent's calendar feed %s: its sign-in: %w (%s)", a.Name, f.Name, err, signIn)
+			}
+			if err := CheckSecretValue(session); err != nil {
+				return nil, fmt.Errorf("the %s agent's calendar feed %s: its sign-in in the keychain: %w (%s)", a.Name, f.Name, err, signIn)
+			}
+			feed.Session = session
+		}
+		out = append(out, feed)
 	}
 	return out, nil
 }
@@ -181,6 +296,8 @@ type CalendarFeedState struct {
 	Service string    `json:"service,omitempty"`
 	On      bool      `json:"on"`
 	Set     time.Time `json:"set"`
+	// SignedIn says a browser sign-in is kept for the feed.
+	SignedIn bool `json:"signedIn,omitempty"`
 	// Entry is the feed's roster id.
 	Entry string `json:"entry"`
 }
@@ -194,7 +311,7 @@ func CalendarFeeds(a Agent, c Config) []CalendarFeedState {
 	out := make([]CalendarFeedState, 0, len(c.CalendarFeeds))
 	for _, f := range c.CalendarFeeds {
 		e, _ := r.Entry(CalendarEntryID(f.Name))
-		out = append(out, CalendarFeedState{Name: f.Name, Host: f.Host, Service: CalendarService(f.Host), On: e.On, Set: f.Set, Entry: e.ID})
+		out = append(out, CalendarFeedState{Name: f.Name, Host: f.Host, Service: CalendarService(f.Host), On: e.On, Set: f.Set, SignedIn: f.SignedIn, Entry: e.ID})
 	}
 	return out
 }
@@ -202,6 +319,11 @@ func CalendarFeeds(a Agent, c Config) []CalendarFeedState {
 // ErrCalendarFeedUnreadable says a calendar feed's address answered with
 // something that is not a calendar this build can read, or not at all.
 var ErrCalendarFeedUnreadable = errors.New("the calendar feed could not be read")
+
+// ErrCalendarFeedSignIn says a calendar feed's address sent the fetch to a
+// sign-in page: it answers a signed-in browser alone, and is read after a
+// browser sign-in (SignInCalendarFeed). It wraps ErrCalendarFeedUnreadable.
+var ErrCalendarFeedSignIn = fmt.Errorf("%w: it asks for a sign-in", ErrCalendarFeedUnreadable)
 
 // calendarCheckTransport is CalendarFeedReadable's transport: the default,
 // but in a test.
@@ -212,6 +334,28 @@ var calendarCheckTransport http.RoundTripper
 // kept. It returns the calendar's own name, when it gives one, and its
 // events' count. No error repeats the address. A test replaces it.
 var CalendarFeedReadable = func(ctx context.Context, address string) (string, int, error) {
+	return CalendarFeedReadableWith(ctx, address, "")
+}
+
+// CalendarFeedReadableWith is CalendarFeedReadable, sending a browser
+// sign-in (SignInCalendarFeed's session, or empty for none) with the fetch.
+// A redirect to a sign-in page is ErrCalendarFeedSignIn. No error repeats
+// the address or the sign-in.
+func CalendarFeedReadableWith(ctx context.Context, address, session string) (string, int, error) {
+	header := ""
+	if session != "" {
+		h, err := toolsrv.CalendarSessionHeader(session)
+		if err != nil {
+			return "", 0, fmt.Errorf("%w: its sign-in: %v", ErrCalendarFeedUnreadable, err)
+		}
+		header = h
+	}
+	return calendarFeedReadable(ctx, address, header)
+}
+
+// calendarFeedReadable fetches and reads address, sending header as its
+// Cookie header when it is set.
+func calendarFeedReadable(ctx context.Context, address, header string) (string, int, error) {
 	u, err := url.Parse(address)
 	if err != nil {
 		return "", 0, fmt.Errorf("%w: its address is not a web address", ErrCalendarFeedUnreadable)
@@ -226,6 +370,9 @@ var CalendarFeedReadable = func(ctx context.Context, address string) (string, in
 				return errors.New("stopped after 5 redirects")
 			}
 			if r.URL.Scheme != "https" || !strings.EqualFold(r.URL.Hostname(), host) || (r.URL.Port() != "" && r.URL.Port() != "443") {
+				if toolsrv.CalendarSignInHost(r.URL.Hostname()) {
+					return fmt.Errorf("%w at %s", ErrCalendarFeedSignIn, r.URL.Hostname())
+				}
 				return fmt.Errorf("it redirected to %s, another host, which the Assistant would refuse", r.URL.Hostname())
 			}
 			return nil
@@ -236,11 +383,17 @@ var CalendarFeedReadable = func(ctx context.Context, address string) (string, in
 		return "", 0, fmt.Errorf("%w: its address could not be requested", ErrCalendarFeedUnreadable)
 	}
 	req.Header.Set("Accept", "text/calendar, */*;q=0.5")
+	if header != "" {
+		req.Header.Set("Cookie", header)
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		var ue *url.Error
 		if errors.As(err, &ue) {
 			err = ue.Err
+		}
+		if errors.Is(err, ErrCalendarFeedSignIn) {
+			return "", 0, err
 		}
 		return "", 0, fmt.Errorf("%w: the fetch from %s failed: %v", ErrCalendarFeedUnreadable, host, err)
 	}
@@ -254,4 +407,54 @@ var CalendarFeedReadable = func(ctx context.Context, address string) (string, in
 		return "", 0, fmt.Errorf("%w: what %s answered is not a calendar: %v", ErrCalendarFeedUnreadable, host, err)
 	}
 	return cal.Name, len(cal.Events), nil
+}
+
+// CalendarSignInTimeout bounds a browser sign-in.
+const CalendarSignInTimeout = 10 * time.Minute
+
+// calendarSignIn is SignInCalendarFeed's browser: the real one, but in a
+// test.
+var calendarSignIn = browsersignin.Run
+
+// SignInCalendarFeed opens a browser window at a calendar feed's address,
+// where the person signs in to the account the calendar belongs to, and
+// returns the browser's sign-in (the cookies it sends to the address, as
+// KeepCalendarSession keeps them) once the address answers with a
+// calendar, with that calendar's name and events' count. progress, when
+// set, is told what it waits for. No error repeats the address or the
+// sign-in.
+func SignInCalendarFeed(ctx context.Context, address string, progress func(string)) (session, calName string, events int, err error) {
+	ctx, cancel := context.WithTimeout(ctx, CalendarSignInTimeout)
+	defer cancel()
+	var lastErr error
+	cookies, err := calendarSignIn(ctx, browsersignin.Options{
+		URL:      address,
+		Progress: progress,
+		Ready: func(ctx context.Context, header string) (bool, error) {
+			n, c, err := calendarFeedReadable(ctx, address, header)
+			if err != nil {
+				// Still signing in, or signed in to an account that cannot
+				// read this calendar: the window stays open.
+				lastErr = err
+				return false, nil
+			}
+			calName, events = n, c
+			return true, nil
+		},
+	})
+	if err != nil {
+		if errors.Is(err, browsersignin.ErrClosed) && lastErr != nil && !errors.Is(lastErr, ErrCalendarFeedSignIn) {
+			return "", "", 0, fmt.Errorf("%w; signed in, the calendar still could not be read: %v", err, lastErr)
+		}
+		return "", "", 0, err
+	}
+	kept := make([]toolsrv.CalendarSessionCookie, 0, len(cookies))
+	for _, c := range cookies {
+		kept = append(kept, toolsrv.CalendarSessionCookie{Name: c.Name, Value: c.Value, Domain: c.Domain, Path: c.Path})
+	}
+	b, err := json.Marshal(kept)
+	if err != nil {
+		return "", "", 0, err
+	}
+	return string(b), calName, events, nil
 }

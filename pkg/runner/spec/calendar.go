@@ -47,15 +47,24 @@ type CalendarFeed struct {
 	// URLEnv is the variable of the tools server's environment that holds
 	// the address (CalendarFeedEnv).
 	URLEnv string `json:"urlEnv"`
+	// SessionEnv, for a feed signed in through a browser, is the variable
+	// that holds the sign-in's cookies (CalendarSessionEnv), which the tools
+	// server sends to Host alone.
+	SessionEnv string `json:"sessionEnv,omitempty"`
 }
 
 // CalendarFeedEnv is the tools server's variable for the i-th feed's
 // address (from 0). Its prefix is one a stored secret may not take.
 func CalendarFeedEnv(i int) string { return "AGENTRY_CALENDAR_FEED_" + strconv.Itoa(i+1) }
 
+// CalendarSessionEnv is the tools server's variable for the i-th feed's
+// browser sign-in (from 0).
+func CalendarSessionEnv(i int) string { return "AGENTRY_CALENDAR_SESSION_" + strconv.Itoa(i+1) }
+
 var (
-	calendarHostRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$`)
-	calendarEnvRE  = regexp.MustCompile(`^AGENTRY_CALENDAR_FEED_[1-9][0-9]?$`)
+	calendarSessionEnvRE = regexp.MustCompile(`^AGENTRY_CALENDAR_SESSION_[1-9][0-9]?$`)
+	calendarHostRE       = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$`)
+	calendarEnvRE        = regexp.MustCompile(`^AGENTRY_CALENDAR_FEED_[1-9][0-9]?$`)
 )
 
 // calendarHost says host is a host name in lower case: labels of letters,
@@ -158,11 +167,17 @@ func CheckCalendarGrant(g *CalendarGrant) error {
 		if !calendarEnvRE.MatchString(f.URLEnv) {
 			return fmt.Errorf("calendar feed %q: %q is not a calendar feed variable", f.Name, f.URLEnv)
 		}
+		if f.SessionEnv != "" && !calendarSessionEnvRE.MatchString(f.SessionEnv) {
+			return fmt.Errorf("calendar feed %q: %q is not a calendar sign-in variable", f.Name, f.SessionEnv)
+		}
 		key := strings.ToLower(f.Name)
-		if names[key] || envs[f.URLEnv] {
+		if names[key] || envs[f.URLEnv] || (f.SessionEnv != "" && envs[f.SessionEnv]) {
 			return fmt.Errorf("calendar feed %q is named twice", f.Name)
 		}
 		names[key], envs[f.URLEnv] = true, true
+		if f.SessionEnv != "" {
+			envs[f.SessionEnv] = true
+		}
 	}
 	return nil
 }

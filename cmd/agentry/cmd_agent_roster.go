@@ -229,6 +229,7 @@ func newAgentConfigureCmd() *cobra.Command {
 		msClient, msTenant, msSignIn, msSignoff                                                string
 		noMsSignoff, fastmailToken, noFastmail                                                 bool
 		calendarFeed, noCalendarFeed                                                           string
+		calendarSignIn                                                                         bool
 	)
 	cmd := &cobra.Command{
 		Use:   "configure <name>",
@@ -294,17 +295,20 @@ func newAgentConfigureCmd() *cobra.Command {
 				}
 				return configureFastmail(cmd, a, home, fastmailToken, yes)
 			}
-			if calendarFeed != "" || noCalendarFeed != "" {
+			if calendarFeed != "" || noCalendarFeed != "" || calendarSignIn {
 				if calendarFeed != "" && noCalendarFeed != "" {
 					return engine.Classify(engine.ExitUsage, errors.New("--calendar-feed and --no-calendar-feed together"))
 				}
-				if cmd.Flags().NFlag() > countFlags(cmd, "calendar-feed", "no-calendar-feed", "yes") {
-					return engine.Classify(engine.ExitUsage, errors.New("--calendar-feed and --no-calendar-feed go with --yes alone"))
+				if cmd.Flags().NFlag() > countFlags(cmd, "calendar-feed", "no-calendar-feed", "calendar-sign-in", "yes") {
+					return engine.Classify(engine.ExitUsage, errors.New("--calendar-feed and --no-calendar-feed go with --calendar-sign-in and --yes alone"))
+				}
+				if calendarSignIn && calendarFeed == "" {
+					return engine.Classify(engine.ExitUsage, errors.New("--calendar-sign-in goes with --calendar-feed <name>"))
 				}
 				if calendarFeed != "" {
-					return configureCalendarFeed(cmd, a, home, calendarFeed, true, yes)
+					return configureCalendarFeed(cmd, a, home, calendarFeed, true, calendarSignIn, yes)
 				}
-				return configureCalendarFeed(cmd, a, home, noCalendarFeed, false, yes)
+				return configureCalendarFeed(cmd, a, home, noCalendarFeed, false, false, yes)
 			}
 			msFlags := []string{"microsoft-client", "microsoft-tenant", "microsoft-sign-in", "microsoft-signoff", "no-microsoft-signoff"}
 			if countFlags(cmd, msFlags...) > 0 {
@@ -504,6 +508,7 @@ func newAgentConfigureCmd() *cobra.Command {
 	f.BoolVar(&noFastmail, "no-fastmail", false, "the Assistant's Fastmail: remove its token")
 	f.StringVar(&calendarFeed, "calendar-feed", "", "the Assistant: keep a calendar's iCal (ICS) address under this name, read without echo or from stdin, once it is read")
 	f.StringVar(&noCalendarFeed, "no-calendar-feed", "", "the Assistant: remove the calendar feed of this name and its address")
+	f.BoolVar(&calendarSignIn, "calendar-sign-in", false, "with --calendar-feed: sign in through a browser window to a calendar whose address asks for a sign-in (such as a Google Workspace calendar); an empty address keeps the feed's own")
 	f.StringVar(&googleClient, "google-client", "", "the Assistant's Google Workspace: your Google Cloud OAuth client's JSON file (a Desktop app client)")
 	f.StringVar(&googleSignIn, "google-sign-in", "", "the Assistant's Google Workspace: sign it in to this Google account, in your browser")
 	f.StringVar(&addPack, "knowledge", "", "a knowledge pack kept on this computer for it to search")

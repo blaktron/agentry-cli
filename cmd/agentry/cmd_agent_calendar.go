@@ -27,11 +27,26 @@ const agentCalendarLong = "\n\n--calendar-feed <name> gives the Assistant a cale
 	"name again sets its address again; --no-calendar-feed <name> removes it. Both\n" +
 	"are refused while the agent runs. A feed is a roster entry, switched with\n" +
 	"agentry agent grant assistant calendar:<name> on|off.\n\n" +
-	"  agentry agent configure assistant --calendar-feed Work < work-address.txt"
+	"Some addresses answer only a signed-in browser: a Google Workspace calendar\n" +
+	"whose administrator turned off secret addresses gives only its \"Public address\n" +
+	"in iCal format\", which sends a fetch to Google's sign-in page. Add\n" +
+	"--calendar-sign-in: a browser window (Chrome, Edge, Chromium or Brave, in a\n" +
+	"profile of its own that is removed afterwards) opens at the address, you sign\n" +
+	"in, and the cookies that browser sends to the calendar's host are kept in your\n" +
+	"keychain beside the address, sent to that host alone. The service may end the\n" +
+	"sign-in after a while; run the same command again, pressing Enter at the\n" +
+	"address to keep it, to sign in again.\n\n" +
+	"  agentry agent configure assistant --calendar-feed Work < work-address.txt\n" +
+	"  agentry agent configure assistant --calendar-feed Work --calendar-sign-in"
+
+// signInCalendarFeed is the browser sign-in: the real one, but in a test.
+var signInCalendarFeed = persistent.SignInCalendarFeed
 
 // configureCalendarFeed keeps a calendar feed's address under name (on), or
-// removes the feed (off).
-func configureCalendarFeed(cmd *cobra.Command, a persistent.Agent, home, name string, on, yes bool) error {
+// removes the feed (off). With signIn, the feed is read after a sign-in in
+// a browser window, which is kept beside the address; an empty address
+// then keeps the feed's own.
+func configureCalendarFeed(cmd *cobra.Command, a persistent.Agent, home, name string, on, signIn, yes bool) error {
 	if !a.Builtin.ReadsCalendars() {
 		return engine.Classify(engine.ExitUsage, fmt.Errorf("the %s agent has no calendar feeds: the Assistant alone reads them", a.Name))
 	}
@@ -42,14 +57,14 @@ func configureCalendarFeed(cmd *cobra.Command, a persistent.Agent, home, name st
 	if err != nil {
 		return engine.Classify(engine.ExitCLI, err)
 	}
-	if !on {
-		var feed *persistent.CalendarFeed
-		for _, f := range c.CalendarFeeds {
-			if strings.EqualFold(f.Name, name) {
-				feed = &f
-				break
-			}
+	var feed *persistent.CalendarFeed
+	for _, f := range c.CalendarFeeds {
+		if strings.EqualFold(f.Name, name) {
+			feed = &f
+			break
 		}
+	}
+	if !on {
 		if feed == nil {
 			return engine.Classify(engine.ExitUsage, fmt.Errorf("the %s agent has no calendar feed %q", a.Name, name))
 		}
@@ -57,7 +72,7 @@ func configureCalendarFeed(cmd *cobra.Command, a persistent.Agent, home, name st
 		if err != nil {
 			return err
 		}
-		if err := agentSecrets.Delete(persistent.CalendarKeychainAccount(a.Name, feed.Name)); err != nil {
+		if err := persistent.ForgetCalendarFeed(agentSecrets, a.Name, feed.Name); err != nil {
 			return engine.Classify(engine.ExitCLI, err)
 		}
 		printChanged(cmd.OutOrStdout(), a, r, running)
@@ -67,47 +82,85 @@ func configureCalendarFeed(cmd *cobra.Command, a persistent.Agent, home, name st
 		return engine.Classify(engine.ExitUsage, err)
 	}
 	// A name set again keeps the one it was first given.
-	for _, f := range c.CalendarFeeds {
-		if strings.EqualFold(f.Name, name) {
-			name = f.Name
-		}
+	if feed != nil {
+		name = feed.Name
 	}
-	raw, err := readSecretValue(cmd, "Calendar feed address (iCal / ICS)", "the calendar feed's address")
-	if err != nil {
+	account := persistent.CalendarKeychainAccount(a.Name, name)
+	var raw string
+	if signIn && feed != nil {
+		if raw, err = readSecretInput(cmd, "Calendar feed address (iCal / ICS; Enter keeps "+name+"'s own)", "the calendar feed's address", true); err != nil {
+			return engine.Classify(engine.ExitUsage, err)
+		}
+		if raw == "" {
+			if raw, err = agentSecrets.Get(account); err != nil {
+				return engine.Classify(engine.ExitUsage, fmt.Errorf("the address of %s could not be read from your keychain (%v): give it again", name, err))
+			}
+		}
+	} else if raw, err = readSecretValue(cmd, "Calendar feed address (iCal / ICS)", "the calendar feed's address"); err != nil {
 		return engine.Classify(engine.ExitUsage, err)
 	}
 	address, host, err := spec.CalendarFeedAddress(raw)
 	if err != nil {
 		return engine.Classify(engine.ExitUsage, err)
 	}
-	calName, events, err := persistent.CalendarFeedReadable(cmd.Context(), address)
-	if err != nil {
+	var session, calName string
+	var events int
+	if signIn {
+		progress := func(s string) { _, _ = fmt.Fprintln(cmd.ErrOrStderr(), s) }
+		session, calName, events, err = signInCalendarFeed(cmd.Context(), address, progress)
+		if err != nil {
+			return engine.Classify(engine.ExitUsage, fmt.Errorf("the browser sign-in for %s: %w", name, err))
+		}
+	} else if calName, events, err = persistent.CalendarFeedReadable(cmd.Context(), address); err != nil {
+		if errors.Is(err, persistent.ErrCalendarFeedSignIn) {
+			return engine.Classify(engine.ExitUsage, fmt.Errorf("%w: sign in through a browser window with agentry agent configure %s --calendar-feed %q --calendar-sign-in", err, a.Name, name))
+		}
 		if errors.Is(err, persistent.ErrCalendarFeedUnreadable) {
 			return engine.Classify(engine.ExitUsage, err)
 		}
 		return engine.Classify(engine.ExitCLI, err)
 	}
-	account := persistent.CalendarKeychainAccount(a.Name, name)
 	previous, _ := agentSecrets.Get(account)
-	if err := agentSecrets.Set(account, address); err != nil {
-		return engine.Classify(engine.ExitCLI, err)
+	previousSession := ""
+	if feed != nil && feed.SignedIn {
+		previousSession, _ = persistent.CalendarSession(agentSecrets, a.Name, name)
 	}
-	r, running, err := configureAgent(cmd, home, a, persistent.Change{SetCalendarFeed: &persistent.CalendarFeed{Name: name, Host: host, Set: time.Now().UTC()}}, yes)
-	if err != nil {
+	restore := func() {
 		if previous != "" {
 			_ = agentSecrets.Set(account, previous)
 		} else {
 			_ = agentSecrets.Delete(account)
 		}
+		if previousSession != "" {
+			_ = persistent.KeepCalendarSession(agentSecrets, a.Name, name, previousSession)
+		} else {
+			_ = persistent.ForgetCalendarSession(agentSecrets, a.Name, name)
+		}
+	}
+	if err := agentSecrets.Set(account, address); err != nil {
+		return engine.Classify(engine.ExitCLI, err)
+	}
+	if signIn {
+		err = persistent.KeepCalendarSession(agentSecrets, a.Name, name, session)
+	} else {
+		err = persistent.ForgetCalendarSession(agentSecrets, a.Name, name)
+	}
+	if err != nil {
+		restore()
+		return engine.Classify(engine.ExitCLI, err)
+	}
+	r, running, err := configureAgent(cmd, home, a, persistent.Change{SetCalendarFeed: &persistent.CalendarFeed{Name: name, Host: host, Set: time.Now().UTC(), SignedIn: signIn}}, yes)
+	if err != nil {
+		restore()
 		return err
 	}
-	printCalendarRead(cmd.OutOrStdout(), name, host, calName, events)
+	printCalendarRead(cmd.OutOrStdout(), name, host, calName, events, signIn)
 	printChanged(cmd.OutOrStdout(), a, r, running)
 	return nil
 }
 
 // printCalendarRead says what the check read of the feed.
-func printCalendarRead(w io.Writer, name, host, calName string, events int) {
+func printCalendarRead(w io.Writer, name, host, calName string, events int, signedIn bool) {
 	from := host
 	if s := persistent.CalendarService(host); s != "" {
 		from = s
@@ -115,6 +168,11 @@ func printCalendarRead(w io.Writer, name, host, calName string, events int) {
 	what := "a calendar"
 	if calName != "" {
 		what = fmt.Sprintf("the calendar %q", calName)
+	}
+	if signedIn {
+		_, _ = fmt.Fprintf(w, "Signed in and read %s from %s (%d events), and kept its address and the browser's sign-in in your system keychain as the feed %s. "+
+			"The sign-in is sent to %s alone. If %s ends it later, the Assistant says so: sign in again with --calendar-sign-in.\n", what, from, events, name, host, from)
+		return
 	}
 	_, _ = fmt.Fprintf(w, "Read %s from %s (%d events), and kept its address in your system keychain as the feed %s.\n", what, from, events, name)
 }

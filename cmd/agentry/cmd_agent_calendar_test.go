@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -103,5 +104,106 @@ func TestAgentConfigureCalendarFeed(t *testing.T) {
 		if _, _, err := runCLI(t, strings.NewReader(given+"\n"), append([]string{"agent", "configure"}, args...)...); err == nil || exitCode(err) != engine.ExitUsage {
 			t.Errorf("%v: %v", args, err)
 		}
+	}
+}
+
+// TestAgentConfigureCalendarFeedSignIn: an address that asks for a sign-in
+// names --calendar-sign-in and keeps nothing; with it, the browser's
+// sign-in is kept beside the address and the feed recorded signed in;
+// given again with an empty address, the feed keeps its address and takes
+// the new sign-in; given again without the flag, the sign-in goes; a
+// closed window keeps nothing; --no-calendar-feed removes the sign-in too.
+func TestAgentConfigureCalendarFeedSignIn(t *testing.T) {
+	home := agentHome(t)
+	keys := memSecrets{}
+	old := agentSecrets
+	agentSecrets = keys
+	t.Cleanup(func() { agentSecrets = old })
+	readable, signIn := persistent.CalendarFeedReadable, signInCalendarFeed
+	t.Cleanup(func() { persistent.CalendarFeedReadable, signInCalendarFeed = readable, signIn })
+	persistent.CalendarFeedReadable = func(context.Context, string) (string, int, error) {
+		return "", 0, fmt.Errorf("%w at accounts.google.com", persistent.ErrCalendarFeedSignIn)
+	}
+	const session = `[{"n":"SID","v":"browser-session-0123456789","d":".google.com","p":"/"}]`
+	var opened []string
+	closed := false
+	signInCalendarFeed = func(_ context.Context, address string, progress func(string)) (string, string, int, error) {
+		opened = append(opened, address)
+		progress("Sign in in the browser window that opened.")
+		if closed {
+			return "", "", 0, errors.New("the browser window was closed before the sign-in was done")
+		}
+		return session, "Team", 7, nil
+	}
+	const address = "https://calendar.google.com/calendar/ical/team%40example.com/public/basic.ics"
+	account := persistent.CalendarKeychainAccount("assistant", "Work")
+	part := persistent.CalendarSessionAccount("assistant", "Work", 1)
+
+	_, _, err := runCLI(t, strings.NewReader(address+"\n"), "agent", "configure", "assistant", "--calendar-feed", "Work", "--yes")
+	if err == nil || exitCode(err) != engine.ExitUsage || !strings.Contains(err.Error(), `--calendar-feed "Work" --calendar-sign-in`) || strings.Contains(err.Error(), "team%40") {
+		t.Fatalf("a feed that asks for a sign-in: %v", err)
+	}
+	if len(keys) != 0 {
+		t.Fatalf("kept %v", keys)
+	}
+	out, errOut, err := runCLI(t, strings.NewReader(address+"\n"), "agent", "configure", "assistant", "--calendar-feed", "Work", "--calendar-sign-in", "--yes")
+	if err != nil || !strings.Contains(out, `Signed in and read the calendar "Team"`) || !strings.Contains(errOut, "browser window") || strings.Contains(out+errOut, "browser-session") {
+		t.Fatalf("--calendar-sign-in: %v\n%s\n%s", err, out, errOut)
+	}
+	if keys[account] != address || keys[part] != session || len(opened) != 1 || opened[0] != address {
+		t.Fatalf("keys %v, opened %v", keys, opened)
+	}
+	cfg, _ := persistent.LoadConfig(home, "assistant")
+	if len(cfg.CalendarFeeds) != 1 || !cfg.CalendarFeeds[0].SignedIn {
+		t.Fatalf("config %+v", cfg.CalendarFeeds)
+	}
+	// Signed in again with an empty address: the feed's own is opened.
+	if _, _, err := runCLI(t, strings.NewReader("\n"), "agent", "configure", "assistant", "--calendar-feed", "work", "--calendar-sign-in", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if len(opened) != 2 || opened[1] != address || keys[account] != address {
+		t.Fatalf("signed in again: opened %v, keys %v", opened, keys)
+	}
+	// A closed window keeps what was there.
+	closed = true
+	if _, _, err := runCLI(t, strings.NewReader("\n"), "agent", "configure", "assistant", "--calendar-feed", "Work", "--calendar-sign-in", "--yes"); err == nil || exitCode(err) != engine.ExitUsage {
+		t.Fatalf("a closed window: %v", err)
+	}
+	if keys[part] != session {
+		t.Fatalf("a closed window changed the sign-in: %v", keys)
+	}
+	// Set again without a sign-in, to an address that reads: the sign-in
+	// goes.
+	persistent.CalendarFeedReadable = func(context.Context, string) (string, int, error) { return "", 3, nil }
+	if _, _, err := runCLI(t, strings.NewReader(address+"\n"), "agent", "configure", "assistant", "--calendar-feed", "Work", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if _, has := keys[part]; has {
+		t.Fatal("a feed set without a sign-in kept the old one")
+	}
+	if cfg, _ := persistent.LoadConfig(home, "assistant"); cfg.CalendarFeeds[0].SignedIn {
+		t.Fatal("the feed is still recorded signed in")
+	}
+	closed = false
+	if _, _, err := runCLI(t, strings.NewReader(address+"\n"), "agent", "configure", "assistant", "--calendar-feed", "Work", "--calendar-sign-in", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runCLI(t, nil, "agent", "configure", "assistant", "--no-calendar-feed", "Work"); err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 0 {
+		t.Fatalf("--no-calendar-feed left %v", keys)
+	}
+	for _, args := range [][]string{
+		{"--calendar-sign-in"},
+		{"--no-calendar-feed", "Work", "--calendar-sign-in"},
+	} {
+		if _, _, err := runCLI(t, nil, append([]string{"agent", "configure", "assistant"}, args...)...); err == nil || exitCode(err) != engine.ExitUsage {
+			t.Errorf("%v: %v", args, err)
+		}
+	}
+	// A new feed needs its address, sign-in or not.
+	if _, _, err := runCLI(t, strings.NewReader("\n"), "agent", "configure", "assistant", "--calendar-feed", "Home", "--calendar-sign-in", "--yes"); err == nil || exitCode(err) != engine.ExitUsage {
+		t.Errorf("a new feed with no address: %v", err)
 	}
 }

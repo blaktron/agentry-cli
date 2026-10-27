@@ -9,12 +9,20 @@ package toolsrv
 // reaches the feed's own host on 443 and nothing else, through the gateway's
 // proxy, which allows those hosts alone; a redirect to another host is
 // refused. A feed is read only: nothing here writes to a calendar.
+//
+// A feed whose address answers only a signed-in browser has a browser
+// sign-in (CalendarFeed.SessionEnv): the cookies that browser sent to the
+// feed's host, sent with every fetch from that host and to no other host,
+// masked like the address. A cookie the host renews is kept for the rest
+// of the session. When the host sends the fetch to a sign-in page, the
+// sign-in has ended, and the answer says to sign in again.
 
 import (
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"os"
 	"regexp"
@@ -65,27 +73,33 @@ type Calendar struct {
 }
 
 // CalendarFeed is one feed: the name the person gave it, the host its
-// address names, and the variable of this server's environment that holds
-// the address.
+// address names, the variable of this server's environment that holds the
+// address and, for a feed signed in through a browser, the one that holds
+// the sign-in's Cookie header.
 type CalendarFeed struct {
-	Name   string `json:"name"`
-	Host   string `json:"host"`
-	URLEnv string `json:"urlEnv"`
+	Name       string `json:"name"`
+	Host       string `json:"host"`
+	URLEnv     string `json:"urlEnv"`
+	SessionEnv string `json:"sessionEnv,omitempty"`
 }
 
 var (
-	calendarFeedEnvRE  = regexp.MustCompile(`^AGENTRY_CALENDAR_FEED_[1-9][0-9]?$`)
-	calendarFeedHostRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$`)
+	calendarFeedEnvRE    = regexp.MustCompile(`^AGENTRY_CALENDAR_FEED_[1-9][0-9]?$`)
+	calendarSessionEnvRE = regexp.MustCompile(`^AGENTRY_CALENDAR_SESSION_[1-9][0-9]?$`)
+	calendarFeedHostRE   = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$`)
 )
 
 // enabled says the grant names a feed.
 func (c Calendar) enabled() bool { return len(c.Feeds) > 0 }
 
-// urlEnvs are the variables holding the feeds' addresses.
+// urlEnvs are the variables holding the feeds' addresses and sign-ins.
 func (c Calendar) urlEnvs() []string {
 	out := make([]string, 0, len(c.Feeds))
 	for _, f := range c.Feeds {
 		out = append(out, f.URLEnv)
+		if f.SessionEnv != "" {
+			out = append(out, f.SessionEnv)
+		}
 	}
 	return out
 }
@@ -110,12 +124,17 @@ func validateCalendar(spec *Spec) error {
 			return fmt.Errorf("calendar: feed %q: host %q is not a host name", f.Name, f.Host)
 		case !calendarFeedEnvRE.MatchString(f.URLEnv):
 			return fmt.Errorf("calendar: feed %q: urlEnv %q is not a calendar feed variable", f.Name, f.URLEnv)
+		case f.SessionEnv != "" && !calendarSessionEnvRE.MatchString(f.SessionEnv):
+			return fmt.Errorf("calendar: feed %q: sessionEnv %q is not a calendar sign-in variable", f.Name, f.SessionEnv)
 		case names[key]:
 			return fmt.Errorf("calendar: feed %q is named twice", f.Name)
-		case envs[f.URLEnv]:
-			return fmt.Errorf("calendar: urlEnv %q is used twice", f.URLEnv)
+		case envs[f.URLEnv] || (f.SessionEnv != "" && envs[f.SessionEnv]):
+			return fmt.Errorf("calendar: feed %q: a variable is used twice", f.Name)
 		}
 		names[key], envs[f.URLEnv] = true, true
+		if f.SessionEnv != "" {
+			envs[f.SessionEnv] = true
+		}
 	}
 	if c.TimeZone != "" {
 		if _, err := time.LoadLocation(c.TimeZone); err != nil || c.TimeZone == "Local" {
@@ -125,10 +144,13 @@ func validateCalendar(spec *Spec) error {
 	return nil
 }
 
-// calendarCache holds each feed's last fetch for CalendarCacheFor.
+// calendarCache holds each feed's last fetch for CalendarCacheFor, and the
+// cookies of each feed signed in through a browser, renewed as its host
+// renews them.
 type calendarCache struct {
 	mu      sync.Mutex
 	entries map[string]calendarEntry
+	jars    map[string]http.CookieJar
 }
 
 type calendarEntry struct {
@@ -193,14 +215,24 @@ func (s *server) fetchCalendar(f CalendarFeed) (*ical.Calendar, time.Time, error
 	if err != nil || u.Scheme != "https" || !strings.EqualFold(u.Hostname(), f.Host) || (u.Port() != "" && u.Port() != "443") {
 		return nil, time.Time{}, errors.New("its address is not an https address on " + f.Host + "; set it again in the Assistant's configuration")
 	}
+	jar, err := s.calendarJar(f, u)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	signIn := false
 	client := &http.Client{
 		Timeout:   CalendarFetchTimeout,
 		Transport: calendarTransport(),
+		Jar:       jar,
 		CheckRedirect: func(r *http.Request, via []*http.Request) error {
 			if len(via) >= 5 {
 				return errors.New("stopped after 5 redirects")
 			}
 			if r.URL.Scheme != "https" || !strings.EqualFold(r.URL.Hostname(), f.Host) || (r.URL.Port() != "" && r.URL.Port() != "443") {
+				if CalendarSignInHost(r.URL.Hostname()) {
+					signIn = true
+					return http.ErrUseLastResponse
+				}
 				return fmt.Errorf("it redirected to %s, another host, which is refused", r.URL.Hostname())
 			}
 			return nil
@@ -221,6 +253,10 @@ func (s *server) fetchCalendar(f CalendarFeed) (*ical.Calendar, time.Time, error
 	}
 	defer func() { _ = resp.Body.Close() }()
 	switch {
+	case signIn && f.SessionEnv != "":
+		return nil, time.Time{}, errors.New("its sign-in has ended (" + f.Host + " sent the fetch to a sign-in page): the person signs in again, in Agentry Desktop with Sign in again on the feed's card, or with agentry agent configure assistant --calendar-feed \"" + f.Name + "\" --calendar-sign-in")
+	case signIn:
+		return nil, time.Time{}, errors.New(f.Host + " asks for a sign-in to read it: the person signs in for this feed, in Agentry Desktop with Sign in on the feed's card, or with agentry agent configure assistant --calendar-feed \"" + f.Name + "\" --calendar-sign-in")
 	case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone ||
 		resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
 		return nil, time.Time{}, fmt.Errorf("%s answered HTTP %d: the address may have been reset or unpublished; the person can publish it again and set it in the Assistant's configuration", f.Host, resp.StatusCode)
@@ -239,6 +275,96 @@ func (s *server) fetchCalendar(f CalendarFeed) (*ical.Calendar, time.Time, error
 	s.calendars.entries[f.Name] = calendarEntry{cal: cal, at: at}
 	s.calendars.mu.Unlock()
 	return cal, at, nil
+}
+
+// calendarJar is the cookie jar a feed signed in through a browser is
+// fetched with, made from its sign-in on its first fetch and kept, so a
+// cookie the host renews is sent from then on; nil for a feed with no
+// sign-in. The jar is given the feed's own address alone, and the client
+// follows no redirect to another host, so its cookies reach that host and
+// no other.
+func (s *server) calendarJar(f CalendarFeed, u *url.URL) (http.CookieJar, error) {
+	if f.SessionEnv == "" {
+		return nil, nil
+	}
+	s.calendars.mu.Lock()
+	defer s.calendars.mu.Unlock()
+	if j, ok := s.calendars.jars[f.Name]; ok {
+		return j, nil
+	}
+	cookies, err := ParseCalendarSession(os.Getenv(f.SessionEnv))
+	if err != nil {
+		return nil, errors.New("its sign-in is missing or could not be read in this session; sign in again in the Assistant's configuration")
+	}
+	j, err := cookiejar.New(nil)
+	if err != nil {
+		return nil, err
+	}
+	j.SetCookies(&url.URL{Scheme: "https", Host: u.Hostname(), Path: "/"}, cookies)
+	if s.calendars.jars == nil {
+		s.calendars.jars = map[string]http.CookieJar{}
+	}
+	s.calendars.jars[f.Name] = j
+	return j, nil
+}
+
+// CalendarSessionCookie is one cookie of a feed's browser sign-in, as it is
+// kept: a JSON list of them is the sign-in (CalendarFeed.SessionEnv).
+type CalendarSessionCookie struct {
+	Name   string `json:"n"`
+	Value  string `json:"v"`
+	Domain string `json:"d,omitempty"`
+	Path   string `json:"p,omitempty"`
+}
+
+// ParseCalendarSession reads a feed's browser sign-in as the cookies to
+// fetch it with, each with the domain and path it was set for, so the one
+// a host renews replaces it. Secure is set on every one: the feed is
+// fetched by https alone.
+func ParseCalendarSession(session string) ([]*http.Cookie, error) {
+	var kept []CalendarSessionCookie
+	if err := json.Unmarshal([]byte(session), &kept); err != nil {
+		return nil, errors.New("the sign-in is not a list of cookies")
+	}
+	if len(kept) == 0 {
+		return nil, errors.New("the sign-in holds no cookie")
+	}
+	out := make([]*http.Cookie, 0, len(kept))
+	for _, k := range kept {
+		c := &http.Cookie{Name: k.Name, Value: k.Value, Domain: k.Domain, Path: k.Path, Secure: true}
+		if c.Path == "" {
+			c.Path = "/"
+		}
+		if err := c.Valid(); err != nil {
+			return nil, fmt.Errorf("a cookie of the sign-in is not valid: %v", err)
+		}
+		out = append(out, c)
+	}
+	return out, nil
+}
+
+// CalendarSessionHeader is the Cookie header a feed's browser sign-in
+// sends: every cookie it holds, by name and value.
+func CalendarSessionHeader(session string) (string, error) {
+	cookies, err := ParseCalendarSession(session)
+	if err != nil {
+		return "", err
+	}
+	parts := make([]string, 0, len(cookies))
+	for _, c := range cookies {
+		parts = append(parts, c.Name+"="+c.Value)
+	}
+	return strings.Join(parts, "; "), nil
+}
+
+// CalendarSignInHost says host is a sign-in page a calendar's address
+// sends a fetch to when it answers a signed-in browser alone.
+func CalendarSignInHost(host string) bool {
+	switch strings.ToLower(host) {
+	case "accounts.google.com", "login.microsoftonline.com", "login.live.com", "idmsa.apple.com", "appleid.apple.com":
+		return true
+	}
+	return false
 }
 
 // CalendarService names the service a calendar feed's host belongs to, or

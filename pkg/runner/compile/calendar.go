@@ -50,11 +50,18 @@ func calendarGrant(in Inputs, mode manifest.Mode, caps *spec.CapSummary) error {
 // calendarEnforcement is the plan's line for the calendar feeds.
 func calendarEnforcement(g *spec.CalendarGrant) string {
 	var named []string
+	signedIn := false
 	for _, f := range g.Feeds {
 		named = append(named, fmt.Sprintf("%s (%s)", f.Name, f.Host))
+		signedIn = signedIn || f.SessionEnv != ""
+	}
+	signIn := ""
+	if signedIn {
+		signIn = "a feed signed in through a browser has that sign-in's cookies from the gateway's secrets file too, which the tools server sends to that feed's host alone and masks like the address; "
 	}
 	return "the person's calendar feeds " + strings.Join(named, ", ") + ", whose addresses they keep in their keychain and agreed to give this agent (its roster's calendar entries), are read by the tools server's calendar tools, read only: " +
 		"each address comes from the gateway's secrets file, which the engine writes for the segment and removes at its end, into the tools container alone, the plan holding the names and hosts alone; " +
 		"the tools container's network reaches the feeds' hosts on 443 through the gateway's proxy and nothing else, and the tools server fetches a feed by https from its own host, refusing a redirect to any other; " +
+		signIn +
 		"the model names a feed and is never given its address, which is masked in every tool result and refused in a file the agent writes"
 }

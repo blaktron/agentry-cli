@@ -124,8 +124,13 @@ and `agentry agent show assistant` lists what it has:
   `agentry agent configure assistant --calendar-feed <name>`, the address
   read without echo); the `calendar-feeds-setup` skill walks you through it.
   It takes Google Calendar's secret address, the ICS link Outlook gives a
-  published calendar, an iCloud public calendar or another service's. Each
-  is an entry of its roster, on once you agree.
+  published calendar, an iCloud public calendar or another service's. An
+  address that answers only a signed-in browser, such as a Google Workspace
+  calendar's public address while its secret one is turned off, is given
+  with `--calendar-sign-in`: a browser window opens at it, you sign in, and
+  that window's sign-in is kept in your keychain beside the address, sent to
+  the calendar's host alone. Each feed is an entry of its roster, on once
+  you agree.
   Its tools `calendar_events`, `calendar_free_time` and `calendar_feeds` read
   them read only, in your time zone, fetching each from its own host alone
   and at most every five minutes; it never changes your calendar, and

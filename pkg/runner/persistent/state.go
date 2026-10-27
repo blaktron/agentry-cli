@@ -203,11 +203,12 @@ func LogPath(home, name string) string { return filepath.Join(Dir(home, name), l
 // published ports, version 5 the skills the person added, version 6 the
 // secrets they stored, version 7 the Coding agent's git host accounts and
 // version 8 the sign-ins of the servers it runs from images, version 9
-// the mail providers the person enabled and version 10 the Assistant's
-// calendar feeds; a build that reads an older
+// the mail providers the person enabled, version 10 the Assistant's
+// calendar feeds and version 11 their browser sign-ins; a build that reads
+// an older
 // version alone refuses a newer one rather than drop what it does not know
 // on its next save.
-const ConfigVersion = 10
+const ConfigVersion = 11
 
 // mailProvidersVersion is the version that added MailProviders: an older
 // configuration with a sign-in is migrated when read (migrateMailProviders).
@@ -356,6 +357,9 @@ func SaveConfig(home, name string, c Config) error {
 	}
 	if len(c.CalendarFeeds) > 0 {
 		c.Version = calendarFeedsVersion
+	}
+	if slices.ContainsFunc(c.CalendarFeeds, func(f CalendarFeed) bool { return f.SignedIn }) {
+		c.Version = calendarSignInsVersion
 	}
 	b, err := yaml.Marshal(c)
 	if err != nil {
@@ -654,7 +658,7 @@ func reset(ctx context.Context, home, name string, d dockerx.Client, kind resetK
 		}
 	}
 	for _, f := range cfg.CalendarFeeds {
-		if err := resetSecrets.Delete(CalendarKeychainAccount(name, f.Name)); err != nil {
+		if err := ForgetCalendarFeed(resetSecrets, name, f.Name); err != nil {
 			return fmt.Errorf("remove the %s agent's calendar feed %s: %w", name, f.Name, err)
 		}
 	}
