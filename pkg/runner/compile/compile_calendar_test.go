@@ -135,3 +135,48 @@ func TestNoFeedsNoNetwork(t *testing.T) {
 		t.Errorf("with no feed:\n%s\n%v", cat, plan.Tools)
 	}
 }
+
+// TestASignedInFeedCompilesItsSignInForTheToolsContainer: a feed signed in
+// through a browser gives the tools container its sign-in as a secret of
+// its own beside the address, the tools spec names the variable alone, and
+// the plan's line says where the sign-in goes.
+func TestASignedInFeedCompilesItsSignInForTheToolsContainer(t *testing.T) {
+	g := twoFeeds()
+	g.Feeds[1].SessionEnv = spec.CalendarSessionEnv(1)
+	planDir := t.TempDir()
+	plan, err := Compile(assistantInputs(t, g), planDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cat, err := os.ReadFile(filepath.Join(planDir, "gateway", "catalog.yaml")) //nolint:gosec // test plan dir
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env := spec.CalendarSessionEnv(1); !strings.Contains(string(cat), "env: "+env) || !strings.Contains(string(cat), SecretKey(env)) {
+		t.Errorf("the tools container is not given the sign-in:\n%s", cat)
+	}
+	if strings.Contains(string(cat), spec.CalendarSessionEnv(0)) {
+		t.Errorf("a feed with no sign-in was given one:\n%s", cat)
+	}
+	b, err := os.ReadFile(filepath.Join(planDir, "gateway", "toolspec.json")) //nolint:gosec // test plan dir
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ts toolsrv.Spec
+	if err := json.Unmarshal(b, &ts); err != nil {
+		t.Fatal(err)
+	}
+	if ts.Calendar.Feeds[1].SessionEnv != "AGENTRY_CALENDAR_SESSION_2" || ts.Calendar.Feeds[0].SessionEnv != "" {
+		t.Errorf("tools spec calendar: %+v", ts.Calendar)
+	}
+	if line := plan.Enforcement["persistent.calendar"]; !strings.Contains(line, "sign-in's cookies") || !strings.Contains(line, "that feed's host alone") {
+		t.Errorf("persistent.calendar: %q", line)
+	}
+	if line := plan.Enforcement["network"]; !strings.Contains(line, "p01-caldav.icloud.com:443, calendar.google.com:443 alone") {
+		t.Errorf("network: %q", line)
+	}
+	g.Feeds[1].SessionEnv = "AGENTRY_CALENDAR_FEED_9"
+	if _, err := Compile(assistantInputs(t, g), t.TempDir()); err == nil {
+		t.Error("a sign-in under a feed's variable compiled")
+	}
+}

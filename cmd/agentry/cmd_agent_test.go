@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
@@ -551,5 +552,20 @@ func TestAgentShowNamesTheLastUpkeep(t *testing.T) {
 	write("aaaa0003", `{"time":"2026-10-25T13:00:00Z","trigger":"idle","swapped":false,"reason":"the upkeep turn gave no answer","factsBefore":14,"factsAfter":14}`)
 	if out, _, _ = runCLI(t, nil, "agent", "show", "assistant"); !strings.Contains(out, "(idle), not done: the upkeep turn gave no answer") {
 		t.Errorf("a compaction that did not finish:\n%s", out)
+	}
+}
+
+// TestUpkeepLineLeavesOutFactsNotCounted: a compaction's line names the
+// memory's fact lines only when they were counted; an agent that keeps no
+// memory, or a memory that could not be read, has none to name.
+func TestUpkeepLineLeavesOutFactsNotCounted(t *testing.T) {
+	at := time.Date(2026, 10, 27, 9, 30, 0, 0, time.Local)
+	counted := upkeepLine(persistent.UpkeepRecord{Time: at, Trigger: persistent.UpkeepManual, Swapped: true, Swap: persistent.SwapInSegment, FactsBefore: 3, FactsAfter: 5})
+	if counted != "2026-10-27 09:30 (manual), a fresh conversation in the running segment; 3 fact lines before, 5 after" {
+		t.Errorf("counted: %q", counted)
+	}
+	none := upkeepLine(persistent.UpkeepRecord{Time: at, Trigger: persistent.UpkeepIdle, Swapped: true, Swap: persistent.SwapSegment, FactsBefore: -1, FactsAfter: -1})
+	if none != "2026-10-27 09:30 (idle), a fresh conversation in a new segment" {
+		t.Errorf("not counted: %q", none)
 	}
 }

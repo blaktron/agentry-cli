@@ -131,6 +131,92 @@ func TestFSRead(t *testing.T) {
 	})
 }
 
+// The System Prompt shows an agent's folders by their full paths, so the
+// workspace tools take a path beneath the workspace in either form, held to
+// the same grant, and a refusal names the form that works.
+func TestWorkspaceToolsTakeFullPaths(t *testing.T) {
+	spec := baseSpec(t)
+	spec.FSRead = Access{Enabled: true, Paths: []string{"data", "skills"}}
+	spec.FSWrite = Access{Enabled: true, Paths: []string{"data"}}
+	ws := spec.WorkspaceDir
+	full := filepath.ToSlash(ws)
+	mustWrite(t, filepath.Join(ws, "skills", "notes", "SKILL.md"), []byte("# Notes"))
+	mustWrite(t, filepath.Join(ws, "other.txt"), []byte("no"))
+	mustWrite(t, filepath.Join(filepath.Dir(ws), "outside.txt"), []byte("no"))
+	s := newTestServer(t, spec)
+
+	for _, p := range []string{"skills/notes/SKILL.md", full + "/skills/notes/SKILL.md", full + "//skills/./notes/SKILL.md"} {
+		if got, isErr := s.toolFSRead(rawArgs(t, map[string]any{"path": p})); isErr || got != "# Notes" {
+			t.Errorf("fs_read %q = %q (isError %v), want the file", p, got, isErr)
+		}
+	}
+	if got, isErr := s.toolFSList(rawArgs(t, map[string]any{"path": full + "/skills"})); isErr || !strings.Contains(got, "notes/") {
+		t.Errorf("fs_list of the full path = %q (isError %v)", got, isErr)
+	}
+	if got, isErr := s.toolFSList(rawArgs(t, map[string]any{"path": full})); isErr || !strings.Contains(got, "skills/") || strings.Contains(got, "other.txt") {
+		t.Errorf("fs_list of the workspace by its full path = %q (isError %v), want the granted folders alone", got, isErr)
+	}
+	if got, isErr := s.toolFSWrite(rawArgs(t, map[string]any{"path": full + "/data/out.txt", "content": "ok"})); isErr {
+		t.Fatalf("fs_write of a full path = %q", got)
+	}
+	if b, err := os.ReadFile(filepath.Join(ws, "data", "out.txt")); err != nil || string(b) != "ok" {
+		t.Fatalf("written file = %q, %v", b, err)
+	}
+
+	refusals := []struct {
+		name string
+		call func() (string, bool)
+		want []string
+	}{
+		{"a full path outside the grant", func() (string, bool) {
+			return s.toolFSRead(rawArgs(t, map[string]any{"path": full + "/other.txt"}))
+		}, []string{`"other.txt" is outside the granted paths, which are data, skills, relative to ` + full + `: give a path that begins with one of them, such as data/…`}},
+		{"a full path that climbs out", func() (string, bool) {
+			return s.toolFSRead(rawArgs(t, map[string]any{"path": full + "/skills/../../outside.txt"}))
+		}, []string{"outside the granted paths", "relative to " + full}},
+		{"an absolute path elsewhere", func() (string, bool) {
+			return s.toolFSRead(rawArgs(t, map[string]any{"path": "/etc/passwd"}))
+		}, []string{"outside the granted paths, which are data, skills"}},
+		{"a write beside the grant", func() (string, bool) {
+			return s.toolFSWrite(rawArgs(t, map[string]any{"path": full + "/skills/x.md", "content": "a"}))
+		}, []string{`"skills/x.md" is outside the granted paths, which are data, relative to ` + full}},
+		{"a prefix that is not the folder", func() (string, bool) {
+			return s.toolFSRead(rawArgs(t, map[string]any{"path": full + "x/skills/notes/SKILL.md"}))
+		}, []string{"outside the granted paths"}},
+	}
+	for _, tc := range refusals {
+		got, isErr := tc.call()
+		if !isErr {
+			t.Errorf("%s: answered %q, want a refusal", tc.name, got)
+			continue
+		}
+		for _, w := range tc.want {
+			if !strings.Contains(got, w) {
+				t.Errorf("%s: refusal %q does not contain %q", tc.name, got, w)
+			}
+		}
+	}
+
+	t.Run("whole-workspace grant", func(t *testing.T) {
+		wspec := baseSpec(t)
+		wspec.FSRead = Access{Enabled: true}
+		mustWrite(t, filepath.Join(wspec.WorkspaceDir, "a.txt"), []byte("a"))
+		mustWrite(t, filepath.Join(filepath.Dir(wspec.WorkspaceDir), "outside.txt"), []byte("no"))
+		w := newTestServer(t, wspec)
+		wfull := filepath.ToSlash(wspec.WorkspaceDir)
+		if got, isErr := w.toolFSRead(rawArgs(t, map[string]any{"path": wfull + "/a.txt"})); isErr || got != "a" {
+			t.Errorf("fs_read of a full path = %q (isError %v)", got, isErr)
+		}
+		got, isErr := w.toolFSRead(rawArgs(t, map[string]any{"path": filepath.ToSlash(filepath.Join(filepath.Dir(wspec.WorkspaceDir), "outside.txt"))}))
+		if !isErr || !strings.Contains(got, "is not in "+wfull+"; give the path relative to it") {
+			t.Errorf("fs_read of a path outside the workspace = %q (isError %v)", got, isErr)
+		}
+		if got, isErr := w.toolFSRead(rawArgs(t, map[string]any{"path": wfull + "/../outside.txt"})); !isErr || got == "no" {
+			t.Errorf("fs_read climbing out of the workspace = %q (isError %v)", got, isErr)
+		}
+	})
+}
+
 // ---- fs_list ----
 
 func TestFSList(t *testing.T) {

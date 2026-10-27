@@ -454,8 +454,9 @@ func (s *server) toolFSRead(raw json.RawMessage) (string, bool) {
 	if !s.spec.FSRead.Enabled {
 		return "fs_read: filesystem read is not granted", true
 	}
+	a.Path = s.workspaceRel(a.Path)
 	if !allowedByGrant(s.spec.FSRead.Paths, a.Path) {
-		return fmt.Sprintf("fs_read: %q is outside the granted paths", path.Clean(a.Path)), true
+		return s.outsideGrant(ToolFSRead, s.spec.FSRead.Paths, a.Path), true
 	}
 	rel, err := s.workspacePath(a.Path)
 	if err != nil {
@@ -537,7 +538,7 @@ func (s *server) toolFSList(raw json.RawMessage) (string, bool) {
 	if rel == "" {
 		rel = "."
 	}
-	rel = path.Clean(rel)
+	rel = path.Clean(s.workspaceRel(rel))
 	root, err := beneath.Open(s.spec.WorkspaceDir)
 	if err != nil {
 		return "fs_list: " + err.Error(), true
@@ -565,7 +566,7 @@ func (s *server) toolFSList(raw json.RawMessage) (string, bool) {
 		return s.spec.Limits.budget().listPage("", lines, a.Offset, ""), false
 	}
 	if rel != "." && !allowedByGrant(s.spec.FSRead.Paths, rel) {
-		return fmt.Sprintf("fs_list: %q is outside the granted paths", rel), true
+		return s.outsideGrant(ToolFSList, s.spec.FSRead.Paths, rel), true
 	}
 	if _, err := s.workspacePath(rel); err != nil {
 		return "fs_list: " + err.Error(), true
@@ -634,8 +635,9 @@ func (s *server) toolFSWrite(raw json.RawMessage) (string, bool) {
 	if !s.spec.FSWrite.Enabled {
 		return "fs_write: filesystem write is not granted", true
 	}
+	a.Path = s.workspaceRel(a.Path)
 	if !allowedByGrant(s.spec.FSWrite.Paths, a.Path) {
-		return fmt.Sprintf("fs_write: %q is outside the granted paths", path.Clean(a.Path)), true
+		return s.outsideGrant(ToolFSWrite, s.spec.FSWrite.Paths, a.Path), true
 	}
 	if limit := s.spec.Limits.writeCap(); int64(len(a.Content)) > limit {
 		// Refuse rather than truncate: a silently clipped file is worse
@@ -906,7 +908,16 @@ func (s *server) scrubStoredSecrets(text string) string {
 			vals = append(vals, secret{env, v})
 		}
 	}
-	sort.Slice(vals, func(i, j int) bool { return len(vals[i].value) > len(vals[j].value) })
+	// Each cookie of a calendar feed's browser sign-in is masked on its
+	// own too, after the sign-in whole.
+	for _, f := range s.spec.Calendar.Feeds {
+		if f.SessionEnv != "" {
+			for _, v := range CalendarSessionValues(os.Getenv(f.SessionEnv)) {
+				vals = append(vals, secret{f.SessionEnv, v})
+			}
+		}
+	}
+	sort.SliceStable(vals, func(i, j int) bool { return len(vals[i].value) > len(vals[j].value) })
 	for _, v := range vals {
 		text = strings.ReplaceAll(text, v.value, "[redacted:"+v.env+"]")
 	}
@@ -936,6 +947,17 @@ func (s *server) holdsRunSecret(content string) string {
 	for _, env := range s.grantedSecretEnv() {
 		if v := os.Getenv(env); v != "" && strings.Contains(content, v) {
 			return env
+		}
+	}
+	// A cookie of a calendar feed's browser sign-in, on its own.
+	for _, f := range s.spec.Calendar.Feeds {
+		if f.SessionEnv == "" {
+			continue
+		}
+		for _, v := range CalendarSessionValues(os.Getenv(f.SessionEnv)) {
+			if strings.Contains(content, v) {
+				return f.SessionEnv
+			}
 		}
 	}
 	return ""

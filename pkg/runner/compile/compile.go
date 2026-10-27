@@ -1118,7 +1118,7 @@ func toolSpec(caps spec.CapSummary, secrets []string) *toolsrv.Spec {
 	if g := caps.Calendar; g != nil {
 		ts.Calendar = toolsrv.Calendar{TimeZone: g.TimeZone}
 		for _, f := range g.Feeds {
-			ts.Calendar.Feeds = append(ts.Calendar.Feeds, toolsrv.CalendarFeed{Name: f.Name, Host: f.Host, URLEnv: f.URLEnv})
+			ts.Calendar.Feeds = append(ts.Calendar.Feeds, toolsrv.CalendarFeed{Name: f.Name, Host: f.Host, URLEnv: f.URLEnv, SessionEnv: f.SessionEnv})
 		}
 	}
 	return ts
@@ -2001,9 +2001,13 @@ func catalogEntry(tspec *toolsrv.Spec, caps spec.CapSummary, secrets []string, r
 	if tspec.Exec.Any {
 		secrets = append(append([]string(nil), secrets...), tspec.Exec.SecretEnv...)
 	}
-	// The calendar feeds' addresses, likewise (calendarGrant).
+	// The calendar feeds' addresses and browser sign-ins, likewise
+	// (calendarGrant).
 	for _, f := range tspec.Calendar.Feeds {
 		secrets = append(append([]string(nil), secrets...), f.URLEnv)
+		if f.SessionEnv != "" {
+			secrets = append(secrets, f.SessionEnv)
+		}
 	}
 	if len(secrets) > 0 {
 		var entries []*yaml.Node

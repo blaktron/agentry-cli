@@ -1,4 +1,4 @@
-// agentry agent compact: memory upkeep now, then a new conversation that
+// agentry agent compact: an upkeep turn now, then a new conversation that
 // opens with the agent's handoff (pkg/runner/persistent).
 package main
 
@@ -15,23 +15,24 @@ import (
 )
 
 const agentCompactLong = "Compacts a running persistent agent's conversation now, whatever its size.\n" +
-	"The agent is sent an upkeep turn: it saves what the conversation produced to\n" +
-	"its memory and writes a short handoff. Then a new conversation starts that\n" +
-	"opens with the handoff, so the agent goes on with a small context and its\n" +
-	"memory. An upkeep turn uses your model plan and can take a few minutes; a\n" +
-	"message sent meanwhile waits for it. If the upkeep turn fails, nothing is\n" +
-	"swapped and the conversation goes on as it was.\n\n" +
-	"The Assistant also compacts on its own: when you have sent nothing for two\n" +
+	"The agent is sent an upkeep turn: it writes a short handoff, and an agent that\n" +
+	"keeps a memory, the Assistant, first saves what the conversation produced to\n" +
+	"it. Then a new conversation starts that opens with the handoff, so the agent\n" +
+	"goes on with a small context. An upkeep turn uses your model plan and can take\n" +
+	"a few minutes; a message sent meanwhile waits for it. If the upkeep turn\n" +
+	"fails, nothing is swapped and the conversation goes on as it was.\n\n" +
+	"Every agent also compacts on its own: when you have sent nothing for two\n" +
 	"hours and its conversation holds 100,000 tokens or more, and when a turn has\n" +
 	"filled three quarters of the model's context window. At most 12 upkeep turns\n" +
 	"run in a day, this command's included. Each compaction is a line of the segment's\n" +
 	"receipts/upkeep.ndjson.\n\n" +
-	"  agentry agent compact assistant"
+	"  agentry agent compact assistant\n" +
+	"  agentry agent compact coder"
 
 func newAgentCompactCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "compact <name>",
-		Short: "Save a running agent's conversation to its memory and start a fresh one",
+		Short: "Compact a running agent's conversation into a handoff and start a fresh one",
 		Long:  agentCompactLong,
 		Args: func(_ *cobra.Command, args []string) error {
 			if len(args) != 1 {
@@ -43,9 +44,6 @@ func newAgentCompactCmd() *cobra.Command {
 			a, err := cliAgent(args[0])
 			if err != nil {
 				return err
-			}
-			if !a.Builtin.KeepsMemory() {
-				return engine.Classify(engine.ExitUsage, fmt.Errorf("the %s agent keeps no memory to compact into", a.Name))
 			}
 			home, err := runnerHome()
 			if err != nil {
@@ -76,6 +74,10 @@ func newAgentCompactCmd() *cobra.Command {
 			if !out.Swapped {
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Nothing was compacted: %s. The conversation goes on as it was.\n", out.Reason)
 				return engine.Classify(engine.ExitCLI, errors.New("the compaction did not finish"))
+			}
+			if !a.Builtin.KeepsMemory() {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Compacted: a fresh conversation opens with a %d-byte handoff.\n", out.HandoffBytes)
+				return nil
 			}
 			facts := "the memory's fact lines could not be counted"
 			if out.FactsBefore >= 0 && out.FactsAfter >= 0 {

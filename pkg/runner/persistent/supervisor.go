@@ -176,7 +176,7 @@ type Supervisor struct {
 	// that came before it is skipped.
 	ranUntil map[string]time.Time
 
-	// upkeep is what memory upkeep decides by (upkeep.json), and
+	// upkeep is what upkeep decides by (upkeep.json), and
 	// upkeepDirty says it changed since last saved. upkeeping is above
 	// zero while upkeep runs, so a person's message waits for it, and
 	// upkeepTurn until its user turn, the one sent with upkeepMark, takes
@@ -244,9 +244,7 @@ func Start(ctx context.Context, opts Options) (*Supervisor, error) {
 	if opts.Policy != nil {
 		s.model = opts.Policy.Model.Provider + "/" + opts.Policy.Model.Name
 	}
-	if a.Builtin.KeepsMemory() {
-		s.upkeep = loadUpkeep(opts.Home, a.Name)
-	}
+	s.upkeep = loadUpkeep(opts.Home, a.Name)
 	if err := s.listenAppLink(); err != nil {
 		owner.Release()
 		return nil, err
@@ -396,7 +394,7 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 		// wrote for it, until a turn has carried it: this segment may be
 		// the new conversation's first, or one that continues it before
 		// its first turn (a change applied, a start after a stop).
-		carry = handoffCarried(handoff)
+		carry = handoffCarried(handoff, s.keepsMemory())
 		if !resumed {
 			reason = compactionReason
 			sess.SetResumeReason(reason)
@@ -561,7 +559,7 @@ func (s *Supervisor) Send(ctx context.Context, text string) error {
 		if !upkeeping {
 			return ErrBusy
 		}
-		// A message that arrives during memory upkeep waits for it, at
+		// A message that arrives during upkeep waits for it, at
 		// most as long as an upkeep turn may run, and goes to the new
 		// conversation; upkeep that has not started yet waits for it.
 		s.notice(wait)
@@ -585,18 +583,13 @@ func (s *Supervisor) Send(ctx context.Context, text string) error {
 	return s.sendLocked(ctx, "", text)
 }
 
-// inUseDue says an in-use compaction is due, for an agent that keeps a
-// memory.
+// inUseDue says an in-use compaction is due.
 func (s *Supervisor) inUseDue() bool {
 	return s.upkeepDue() == UpkeepInUse
 }
 
-// upkeepDue is the compaction due now, if any, for an agent that keeps a
-// memory: in use first, then idle.
+// upkeepDue is the compaction due now, if any: in use first, then idle.
 func (s *Supervisor) upkeepDue() string {
-	if !s.opts.Agent.Builtin.KeepsMemory() {
-		return ""
-	}
 	now := s.now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -674,7 +667,7 @@ func (s *Supervisor) sendLocked(ctx context.Context, pre, text string) error {
 			// A turn that failed leaves the reminder for the next.
 			s.memoryFrameDue = err != nil
 		}
-		if err == nil && person && s.opts.Agent.Builtin.KeepsMemory() && sentAt.After(s.upkeep.LastPersonTurn) {
+		if err == nil && person && sentAt.After(s.upkeep.LastPersonTurn) {
 			// The person's turn, on the clock upkeep decides by.
 			s.upkeep.LastPersonTurn, s.upkeepDirty = sentAt, true
 		}
