@@ -119,10 +119,13 @@ and `agentry agent show assistant` lists what it has:
   (`agentry agent configure assistant --mail-provider <key>`); only an
   enabled one's server is on its roster, and setting one up enables it.
 - **Calendar feeds**: any calendar you give it by its iCal (ICS) address,
-  under a name you choose (`agentry agent configure assistant --calendar-feed
-  <name>`, the address read without echo): Google Calendar's secret address,
-  the ICS link Outlook gives a published calendar, an iCloud public calendar
-  or another service's. Each is an entry of its roster, on once you agree.
+  under a name you choose (in Agentry Desktop 0.6.176 or later, Add a
+  calendar feed in its Configuration's Mail and calendar; in a terminal,
+  `agentry agent configure assistant --calendar-feed <name>`, the address
+  read without echo); the `calendar-feeds-setup` skill walks you through it.
+  It takes Google Calendar's secret address, the ICS link Outlook gives a
+  published calendar, an iCloud public calendar or another service's. Each
+  is an entry of its roster, on once you agree.
   Its tools `calendar_events`, `calendar_free_time` and `calendar_feeds` read
   them read only, in your time zone, fetching each from its own host alone
   and at most every five minutes; it never changes your calendar, and

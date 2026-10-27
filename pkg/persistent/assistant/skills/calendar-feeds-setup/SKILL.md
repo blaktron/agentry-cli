@@ -66,12 +66,36 @@ read: most services give the same address with `https://`.
 
 ## Give the address to Agentry
 
-Give all the steps before they stop you, because you cannot answer while you
-are stopped; your conversation carries on when they start you again.
+Most people use Agentry Desktop: give these steps first. Give all of them
+before they stop you, because you cannot answer while you are stopped; your
+conversation carries on when they start you again.
 
-Agentry Desktop will have a card for calendar feeds in your configuration;
-until their version shows one, the steps are commands in a terminal on this
-computer:
+### In Agentry Desktop
+
+Agentry Desktop 0.6.176 or later has these; an older version has no card for
+calendar feeds, so they use a terminal instead, or update the app.
+
+1. **Stop you**: the **Stop** button at the top of your page.
+2. **Open the form**: **Configure**, then the **Mail and calendar** section,
+   then **Add a calendar feed**.
+3. **The feed**: a **Name** they choose, such as *Work* or *Family*, and the
+   address pasted into **Address** (it is not shown), then **Read and keep
+   the feed**. Agentry reads the calendar once to check it; an address that
+   does not read as a calendar is not kept, and the reason is shown at the top
+   of the Configure window. Then it asks them to agree to give it to you, and
+   keeps the address in their system keychain.
+4. **Start you again**: **Start** at the top of your page.
+
+Each feed then has a card in **Mail and calendar**, with when its address was
+checked. A click on the card switches it off and on. Its **⋯** menu has
+**Rename** and **Remove**; both, and adding a feed, need you stopped. The same
+name given again in **Add a calendar feed** replaces that calendar's address,
+after asking.
+
+### In a terminal
+
+If they do not use Agentry Desktop, or its version has no card, the same
+steps are commands in a terminal on this computer:
 
     agentry agent stop assistant
     agentry agent configure assistant --calendar-feed Work
@@ -98,7 +122,8 @@ off` (and `on` again).
   again under the same name.
 - "is not a calendar": they copied the HTML link or a page's address, not the
   ICS one.
-- Your calendar tools are missing: no feed is on. `agentry agent show
-  assistant` lists the calendar feeds and whether each is on.
+- Your calendar tools are missing: no feed is on. Their cards in **Mail and
+  calendar**, or `agentry agent show assistant`, list the calendar feeds and
+  whether each is on.
 - An event they just made is not there: the service has not refreshed its
   published copy yet. It usually arrives within the hour.

@@ -161,3 +161,5 @@ agentry/assistant@1.13.0 sha256:24c3ad46e1c08073a39f8b057a78614a888bf1b9b8c8a413
 agentry/assistant@1.14.0 sha256:608fbcb040905e07fb46d71aacea4cd1bb029a93d240400523e83bbe56cd408c
 # 1.15.0, over 1.14.0: the skills calendar-feeds-setup, which walks the person through giving it a calendar by its iCal (ICS) address with no sign-in, and calendar-feeds, which says how it reads the feeds read only, how current they are and how it proposes an event as an .ics file; the instruction names both, and the README says what a calendar feed is.
 agentry/assistant@1.15.0 sha256:c01c67ec7e62e66043ead821a90b6d2dc1aa1b663ee1750864e7ec88e6c3b6ab
+# 1.15.1, over 1.15.0: calendar-feeds-setup gives Agentry Desktop's Add a calendar feed steps first and the terminal's after, and the README names the desktop's card.
+agentry/assistant@1.15.1 sha256:d3d8d8882f61e1623e1c09b307acc2880955b2bfca00affe69ce15eef617fe86
