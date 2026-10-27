@@ -128,8 +128,9 @@ and `agentry agent show assistant` lists what it has:
   address that answers only a signed-in browser, such as a Google Workspace
   calendar's public address while its secret one is turned off, is given
   with `--calendar-sign-in`: a browser window opens at it, you sign in, and
-  that window's sign-in is kept in your keychain beside the address, sent to
-  the calendar's host alone. Each feed is an entry of its roster, on once
+  the cookies that window sends to the calendar's site (your sign-in to that
+  site, not a key to one calendar) are kept in your keychain beside the
+  address, sent to that site alone. Each feed is an entry of its roster, on once
   you agree.
   Its tools `calendar_events`, `calendar_free_time` and `calendar_feeds` read
   them read only, in your time zone, fetching each from its own host alone

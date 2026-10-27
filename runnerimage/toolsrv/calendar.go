@@ -75,7 +75,7 @@ type Calendar struct {
 // CalendarFeed is one feed: the name the person gave it, the host its
 // address names, the variable of this server's environment that holds the
 // address and, for a feed signed in through a browser, the one that holds
-// the sign-in's Cookie header.
+// the sign-in's cookies (ParseCalendarSession).
 type CalendarFeed struct {
 	Name       string `json:"name"`
 	Host       string `json:"host"`
@@ -254,9 +254,9 @@ func (s *server) fetchCalendar(f CalendarFeed) (*ical.Calendar, time.Time, error
 	defer func() { _ = resp.Body.Close() }()
 	switch {
 	case signIn && f.SessionEnv != "":
-		return nil, time.Time{}, errors.New("its sign-in has ended (" + f.Host + " sent the fetch to a sign-in page): the person signs in again, in Agentry Desktop with Sign in again on the feed's card, or with agentry agent configure assistant --calendar-feed \"" + f.Name + "\" --calendar-sign-in")
+		return nil, time.Time{}, errors.New("its sign-in has ended (" + f.Host + " sent the fetch to a sign-in page): the person signs in again with agentry agent configure assistant --calendar-feed \"" + f.Name + "\" --calendar-sign-in, pressing Enter at the address to keep it")
 	case signIn:
-		return nil, time.Time{}, errors.New(f.Host + " asks for a sign-in to read it: the person signs in for this feed, in Agentry Desktop with Sign in on the feed's card, or with agentry agent configure assistant --calendar-feed \"" + f.Name + "\" --calendar-sign-in")
+		return nil, time.Time{}, errors.New(f.Host + " asks for a sign-in to read it: the person gives the feed with a sign-in, agentry agent configure assistant --calendar-feed \"" + f.Name + "\" --calendar-sign-in")
 	case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone ||
 		resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
 		return nil, time.Time{}, fmt.Errorf("%s answered HTTP %d: the address may have been reset or unpublished; the person can publish it again and set it in the Assistant's configuration", f.Host, resp.StatusCode)
@@ -324,7 +324,7 @@ type CalendarSessionCookie struct {
 func ParseCalendarSession(session string) ([]*http.Cookie, error) {
 	var kept []CalendarSessionCookie
 	if err := json.Unmarshal([]byte(session), &kept); err != nil {
-		return nil, errors.New("the sign-in is not a list of cookies")
+		return nil, errors.New("the sign-in kept for it could not be read")
 	}
 	if len(kept) == 0 {
 		return nil, errors.New("the sign-in holds no cookie")
@@ -341,6 +341,28 @@ func ParseCalendarSession(session string) ([]*http.Cookie, error) {
 		out = append(out, c)
 	}
 	return out, nil
+}
+
+// calendarCookieMin is the shortest cookie value masked on its own: a
+// shorter one is a flag or a counter, and masking it would garble text
+// that happens to hold it.
+const calendarCookieMin = 16
+
+// CalendarSessionValues are the cookie values of a feed's browser sign-in
+// long enough to mask on their own, beside the sign-in whole; none for a
+// sign-in that cannot be read.
+func CalendarSessionValues(session string) []string {
+	cookies, err := ParseCalendarSession(session)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, c := range cookies {
+		if len(c.Value) >= calendarCookieMin {
+			out = append(out, c.Value)
+		}
+	}
+	return out
 }
 
 // CalendarSessionHeader is the Cookie header a feed's browser sign-in

@@ -909,16 +909,9 @@ func (s *server) scrubStoredSecrets(text string) string {
 	// Each cookie of a calendar feed's browser sign-in is masked on its
 	// own too, after the sign-in whole.
 	for _, f := range s.spec.Calendar.Feeds {
-		if f.SessionEnv == "" {
-			continue
-		}
-		cookies, err := ParseCalendarSession(os.Getenv(f.SessionEnv))
-		if err != nil {
-			continue
-		}
-		for _, c := range cookies {
-			if len(c.Value) >= 8 {
-				vals = append(vals, secret{f.SessionEnv, c.Value})
+		if f.SessionEnv != "" {
+			for _, v := range CalendarSessionValues(os.Getenv(f.SessionEnv)) {
+				vals = append(vals, secret{f.SessionEnv, v})
 			}
 		}
 	}
@@ -959,9 +952,8 @@ func (s *server) holdsRunSecret(content string) string {
 		if f.SessionEnv == "" {
 			continue
 		}
-		cookies, _ := ParseCalendarSession(os.Getenv(f.SessionEnv))
-		for _, c := range cookies {
-			if len(c.Value) >= 16 && strings.Contains(content, c.Value) {
+		for _, v := range CalendarSessionValues(os.Getenv(f.SessionEnv)) {
+			if strings.Contains(content, v) {
 				return f.SessionEnv
 			}
 		}

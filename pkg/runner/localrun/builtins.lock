@@ -164,4 +164,4 @@ agentry/assistant@1.15.0 sha256:c01c67ec7e62e66043ead821a90b6d2dc1aa1b663ee17508
 # 1.15.1, over 1.15.0: calendar-feeds-setup gives Agentry Desktop's Add a calendar feed steps first and the terminal's after, and the README names the desktop's card.
 agentry/assistant@1.15.1 sha256:d3d8d8882f61e1623e1c09b307acc2880955b2bfca00affe69ce15eef617fe86
 # 1.15.2, over 1.15.1: calendar-feeds-setup walks the person through a Google Workspace calendar whose secret address is turned off, given by its public address with a browser sign-in (--calendar-sign-in, or Sign in in a browser window in Agentry Desktop), and through a sign-in that has ended; the README says what the sign-in keeps.
-agentry/assistant@1.15.2 sha256:c9ee306cdf1b21ce19576e70a7b16393ed54ab1731716fdb472c0ccdec744aec
+agentry/assistant@1.15.2 sha256:486cbbf8ff873d5326caed8a0167581084b08ddb59fbdc278dcb03419c337731

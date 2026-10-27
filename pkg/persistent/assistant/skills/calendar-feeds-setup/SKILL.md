@@ -50,7 +50,10 @@ Ask which service the calendar is in, then give that service's steps.
   calendar is not public, that address answers only someone signed in to an
   account that can see the calendar, so it is given **with a sign-in**
   (below): Agentry opens a browser window at the address, they sign in to
-  Google there, and Agentry keeps that window's sign-in for this feed alone.
+  Google there, and Agentry keeps that window's cookies for the calendar's
+  site. Those cookies are their Google sign-in to that site, not a key to one
+  calendar, so say so plainly: Agentry keeps them in the keychain and sends
+  them to `calendar.google.com` alone, and you are never shown them.
   Google may end the sign-in after a while (days or weeks, as the
   organisation's settings say); they then sign in again.
 - **Outlook** (Microsoft 365 or Outlook.com, in Outlook on the web):
@@ -156,7 +159,8 @@ off` (and `on` again).
   signed in to cannot see that calendar, or the address is another
   calendar's. They close the window, which keeps nothing, and check both.
 - "no Chrome, Edge, Chromium or Brave was found": the sign-in needs one of
-  them installed.
+  them installed. One installed somewhere else is named by setting
+  `AGENTRY_BROWSER` to its program before the command.
 - Your calendar tools are missing: no feed is on. Their cards in **Mail and
   calendar**, or `agentry agent show assistant`, list the calendar feeds and
   whether each is on.

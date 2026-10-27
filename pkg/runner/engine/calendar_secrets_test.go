@@ -97,3 +97,36 @@ func TestAFeedsAddressIsMaskedEverywhere(t *testing.T) {
 		t.Fatalf("the segment wrote %d files", seen)
 	}
 }
+
+// A browser sign-in's cookie, which no output may hold.
+const sessionCookie = "signed-in-2718281828459045"
+
+// TestASignInReachesTheToolsContainerAloneAndIsMasked: a signed-in feed's
+// sign-in is written under its own key from the segment's values alone, a
+// feed whose sign-in is missing refuses the segment by name, and the
+// redactor masks the sign-in whole and each of its cookies.
+func TestASignInReachesTheToolsContainerAloneAndIsMasked(t *testing.T) {
+	p, _ := fixture(t)
+	withFeed(&p)
+	session := `[{"n":"SID","v":"` + sessionCookie + `","d":".google.com","p":"/"}]`
+	p.Plan.Capabilities.Calendar.Feeds[0].SessionEnv = spec.CalendarSessionEnv(0)
+	p.CalendarURLs[spec.CalendarSessionEnv(0)] = session
+	values, err := secretValues(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if values[compile.SecretKey(spec.CalendarSessionEnv(0))] != session {
+		t.Fatalf("values = %v", values)
+	}
+	rd := &runDirs{}
+	r := rd.newRedactor(p, "", values)
+	for _, text := range []string{"cookie " + sessionCookie, "whole " + session} {
+		if got := r.String(text); strings.Contains(got, sessionCookie) {
+			t.Errorf("masked %q to %q", text, got)
+		}
+	}
+	delete(p.CalendarURLs, spec.CalendarSessionEnv(0))
+	if _, err := secretValues(p); err == nil || !strings.Contains(err.Error(), "the sign-in of the calendar feed Work") {
+		t.Fatalf("a feed with no sign-in: %v", err)
+	}
+}

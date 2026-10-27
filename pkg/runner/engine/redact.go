@@ -141,15 +141,8 @@ func calendarSessionValues(p Params) []string {
 	}
 	var out []string
 	for _, f := range g.Feeds {
-		if f.SessionEnv == "" {
-			continue
-		}
-		cookies, err := toolsrv.ParseCalendarSession(p.CalendarURLs[f.SessionEnv])
-		if err != nil {
-			continue
-		}
-		for _, c := range cookies {
-			out = append(out, c.Value)
+		if f.SessionEnv != "" {
+			out = append(out, toolsrv.CalendarSessionValues(p.CalendarURLs[f.SessionEnv])...)
 		}
 	}
 	return out

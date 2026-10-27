@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/url"
 	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -37,6 +38,7 @@ func TestMain(m *testing.M) {
 func fakeBrowser(mode string) {
 	if f := os.Getenv(fakeArgsEnv); f != "" {
 		_ = os.WriteFile(f, []byte(strings.Join(os.Args[1:], "\n")), 0o600)
+		_ = os.WriteFile(f+".env", []byte(strings.Join(os.Environ(), "\n")), 0o600)
 	}
 	in, out := os.NewFile(3, "in"), os.NewFile(4, "out")
 	r := bufio.NewReader(in)
@@ -110,16 +112,25 @@ func fakeOptions(t *testing.T, mode string, ready func(context.Context, string) 
 	args := t.TempDir() + "/args"
 	t.Setenv(fakeBrowserEnv, mode)
 	t.Setenv(fakeArgsEnv, args)
-	old := PollEvery
-	PollEvery = 10 * time.Millisecond
-	t.Cleanup(func() { PollEvery = old })
+	old, oldRetry := PollEvery, RetryEvery
+	PollEvery, RetryEvery = 10*time.Millisecond, 30*time.Millisecond
+	t.Cleanup(func() { PollEvery, RetryEvery = old, oldRetry })
 	return Options{URL: "https://calendar.example.com/feed/basic.ics", Browser: exe, Ready: ready}, args
 }
 
 func TestRunReturnsTheCookiesOnceTheAddressAnswers(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "model-key-0123456789")
+	t.Setenv("XAUTHORITY", "/run/user/1000/xauth")
 	var headers []string
+	failedOnce := false
 	o, args := fakeOptions(t, "signs-in", func(_ context.Context, h string) (bool, error) {
 		headers = append(headers, h)
+		if strings.Contains(h, "SID=") && !failedOnce {
+			// A fetch that fails for a moment is tried again with the
+			// same cookies.
+			failedOnce = true
+			return false, nil
+		}
 		return strings.Contains(h, "SID="), nil
 	})
 	got, err := Run(context.Background(), o)
@@ -144,6 +155,13 @@ func TestRunReturnsTheCookiesOnceTheAddressAnswers(t *testing.T) {
 	}
 	if strings.Contains(cmdline, "calendar.example.com") || strings.Contains(cmdline, "--remote-debugging-port") {
 		t.Errorf("the address or a debugging port is on the command line:\n%s", cmdline)
+	}
+	env, err := os.ReadFile(args + ".env")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(env), "model-key-0123") || !strings.Contains(string(env), "XAUTHORITY=") {
+		t.Errorf("the browser's environment:\n%s", env)
 	}
 	// The profile is removed afterwards.
 	for _, line := range strings.Split(cmdline, "\n") {
@@ -241,5 +259,38 @@ func TestFindHonoursTheVariable(t *testing.T) {
 		if len(candidates(goos)) == 0 && goos != "windows" {
 			t.Errorf("%s has no candidates", goos)
 		}
+	}
+}
+
+func TestCredentialName(t *testing.T) {
+	for name, want := range map[string]bool{
+		"ANTHROPIC_API_KEY": true, "AGENTRY_TOKEN": true, "GITHUB_TOKEN": true, "MY_SERVICE_SECRET": true, "AWS_PROFILE": true, "NPM_AUTH_KEY": true, "NPM_CONFIG__AUTH": true,
+		"AGENTRY_BROWSER": false, "XAUTHORITY": false, "DISPLAY": false, "HOME": false, "PATH": false, "DBUS_SESSION_BUS_ADDRESS": false, "LOCALAPPDATA": false,
+	} {
+		if got := credentialName(name); got != want {
+			t.Errorf("credentialName(%s) = %v", name, got)
+		}
+	}
+}
+
+func TestAKilledRunsProfileIsRemovedByTheNext(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	stale, fresh := filepath.Join(tmp, profilePrefix+"stale"), filepath.Join(tmp, profilePrefix+"fresh")
+	for _, d := range []string{stale, fresh} {
+		if err := os.Mkdir(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := time.Now().Add(-2 * staleProfile)
+	if err := os.Chtimes(stale, old, old); err != nil {
+		t.Fatal(err)
+	}
+	removeStaleProfiles()
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Error("a stale profile was left")
+	}
+	if _, err := os.Stat(fresh); err != nil {
+		t.Error("another sign-in's profile was removed")
 	}
 }

@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 )
@@ -89,7 +91,7 @@ func (b *browser) read(out io.Reader) {
 	b.mu.Lock()
 	b.readErr = err
 	for id, ch := range b.waiting {
-		ch <- reply{Err: fmt.Errorf("the browser's pipe closed: %w", err)}
+		ch <- reply{Err: fmt.Errorf("the browser stopped answering: %w", err)}
 		delete(b.waiting, id)
 	}
 	b.mu.Unlock()
@@ -102,7 +104,7 @@ func readMessage(r *bufio.Reader) ([]byte, error) {
 		chunk, err := r.ReadSlice(0)
 		msg = append(msg, chunk...)
 		if len(msg) > maxMessage {
-			return nil, errors.New("a message from the browser is too long")
+			return nil, errors.New("the browser answered with more than it should")
 		}
 		if err == nil {
 			return msg[:len(msg)-1], nil
@@ -120,7 +122,7 @@ func (b *browser) call(ctx context.Context, method string, params any) (json.Raw
 	if b.readErr != nil {
 		err := b.readErr
 		b.mu.Unlock()
-		return nil, fmt.Errorf("the browser's pipe closed: %w", err)
+		return nil, fmt.Errorf("the browser stopped answering: %w", err)
 	}
 	b.nextID++
 	id := b.nextID
@@ -234,6 +236,38 @@ func (b *browser) close() {
 		_ = b.cmd.Process.Kill()
 		<-b.exited
 	}
+}
+
+// browserEnv is the environment the browser is started with: this
+// process's, less every variable whose name says it holds a credential, so
+// a model key or a token the person exported does not reach a third-party
+// program.
+func browserEnv() []string {
+	var out []string
+	for _, kv := range os.Environ() {
+		name, _, _ := strings.Cut(kv, "=")
+		if !credentialName(name) {
+			out = append(out, kv)
+		}
+	}
+	return out
+}
+
+// credentialName says an environment variable's name is one a credential
+// is kept under.
+func credentialName(name string) bool {
+	n := strings.ToUpper(name)
+	for _, p := range []string{"AGENTRY_", "ANTHROPIC_", "OPENAI_", "GEMINI_", "GH_", "GITHUB_", "AWS_", "AZURE_"} {
+		if strings.HasPrefix(n, p) && n != "AGENTRY_BROWSER" {
+			return true
+		}
+	}
+	for _, s := range []string{"TOKEN", "SECRET", "PASSWORD", "PASSWD", "API_KEY", "APIKEY", "ACCESS_KEY", "CREDENTIAL", "PRIVATE_KEY", "AUTH_KEY", "_AUTH"} {
+		if strings.Contains(n, s) {
+			return true
+		}
+	}
+	return false
 }
 
 // flags are the browser's command line but for the pipe's: a profile of

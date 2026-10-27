@@ -24,13 +24,27 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 )
 
-// PollEvery is how often the browser's cookies are read.
-var PollEvery = 2 * time.Second
+// PollEvery is how often the browser's cookies are read; RetryEvery is how
+// often a set of cookies Ready did not accept is tried again while it stays
+// the same, so a fetch that failed for a moment does not hold the sign-in
+// until it ends.
+var (
+	PollEvery  = 2 * time.Second
+	RetryEvery = 15 * time.Second
+)
+
+// profilePrefix begins a sign-in profile's folder name; staleProfile is how
+// old one is when a run that was killed left it behind.
+const (
+	profilePrefix = "agentry-sign-in-"
+	staleProfile  = time.Hour
+)
 
 // Cookie is one cookie as the browser keeps it.
 type Cookie struct {
@@ -80,7 +94,8 @@ func Run(ctx context.Context, o Options) ([]Cookie, error) {
 			return nil, err
 		}
 	}
-	profile, err := os.MkdirTemp("", "agentry-sign-in-")
+	removeStaleProfiles()
+	profile, err := os.MkdirTemp("", profilePrefix)
 	if err != nil {
 		return nil, fmt.Errorf("make the browser's profile: %w", err)
 	}
@@ -102,7 +117,7 @@ func Run(ctx context.Context, o Options) ([]Cookie, error) {
 
 	tick := time.NewTicker(PollEvery)
 	defer tick.Stop()
-	last := ""
+	last, lastTry := "", time.Time{}
 	for {
 		select {
 		case <-ctx.Done():
@@ -127,10 +142,10 @@ func Run(ctx context.Context, o Options) ([]Cookie, error) {
 		}
 		match := Match(cookies, u)
 		header := Header(match)
-		if header == "" || header == last {
+		if header == "" || (header == last && time.Since(lastTry) < RetryEvery) {
 			continue
 		}
-		last = header
+		last, lastTry = header, time.Now()
 		ok, err := o.Ready(ctx, header)
 		if err != nil {
 			return nil, err
@@ -145,6 +160,17 @@ func Run(ctx context.Context, o Options) ([]Cookie, error) {
 func progress(o Options, s string) {
 	if o.Progress != nil {
 		o.Progress(s)
+	}
+}
+
+// removeStaleProfiles removes sign-in profiles a run that was killed left
+// in the temporary folder, each holding the cookies of a sign-in.
+func removeStaleProfiles() {
+	dirs, _ := filepath.Glob(filepath.Join(os.TempDir(), profilePrefix+"*"))
+	for _, d := range dirs {
+		if st, err := os.Lstat(d); err == nil && st.IsDir() && time.Since(st.ModTime()) > staleProfile {
+			_ = os.RemoveAll(d)
+		}
 	}
 }
 

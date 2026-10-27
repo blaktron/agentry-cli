@@ -38,6 +38,7 @@ func start(program string, args []string) (*browser, error) {
 	pipes := fmt.Sprintf("--remote-debugging-io-pipes=%d,%d", uintptr(rh), uintptr(wh))
 	cmd := exec.Command(program, append([]string{"--remote-debugging-pipe", pipes}, args...)...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{AdditionalInheritedHandles: []syscall.Handle{rh, wh}}
+	cmd.Env = browserEnv()
 	if err := cmd.Start(); err != nil {
 		closeAll()
 		return nil, fmt.Errorf("start the browser %s: %w", program, err)

@@ -89,8 +89,8 @@ const (
 	calendarSessionParts = 8
 )
 
-// KeepCalendarSession keeps a feed's browser sign-in (a Cookie header) in
-// the keychain, in as many parts as it needs, and removes any part a
+// KeepCalendarSession keeps a feed's browser sign-in (SignInCalendarFeed's
+// session, a list of cookies) in the keychain, in as many parts as it needs, and removes any part a
 // longer one before it left.
 func KeepCalendarSession(keys Secrets, agent, name, session string) error {
 	if err := CheckSecretValue(session); err != nil {
@@ -177,15 +177,13 @@ func calendarEntries(c Config) []RosterEntry {
 // calendarLine is a calendar feed's consent sentence: what the agent reads,
 // and where the address is.
 func calendarLine(f CalendarFeed) string {
+	kept := "and the address stays in your keychain: the agent is never shown it"
 	if f.SignedIn {
-		return "Reads your calendar feed " + f.Name + " from " + f.from() + ", read only: the titles, times, places, people and notes of the events it publishes, " +
-			"which it can tell you, keep in its memory and use in what it writes; its tools fetch the feed from " + f.Host + " alone, " +
-			"signed in as you with the browser sign-in you made for this feed, which they send to " + f.Host + " and nowhere else; " +
-			"the address and the sign-in stay in your keychain: the agent is never shown them"
+		kept = "signed in as you: with the cookies of your sign-in to " + f.Host + " that the browser window kept, which are your account's sign-in to that site, not a grant for this calendar alone, " +
+			"and which its tools send to " + f.Host + " and nowhere else; the address and the cookies stay in your keychain: the agent is never shown them"
 	}
 	return "Reads your calendar feed " + f.Name + " from " + f.from() + ", read only: the titles, times, places, people and notes of the events it publishes, " +
-		"which it can tell you, keep in its memory and use in what it writes; its tools fetch the feed from " + f.Host + " alone, " +
-		"and the address stays in your keychain: the agent is never shown it"
+		"which it can tell you, keep in its memory and use in what it writes; its tools fetch the feed from " + f.Host + " alone, " + kept
 }
 
 // findCalendarFeed is the index of the feed named name in feeds, case not

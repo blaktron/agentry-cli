@@ -23,6 +23,7 @@ func start(program string, args []string) (*browser, error) {
 	}
 	cmd := exec.Command(program, append([]string{"--remote-debugging-pipe"}, args...)...)
 	cmd.ExtraFiles = []*os.File{toBrowserR, fromBrowserW}
+	cmd.Env = browserEnv()
 	if err := cmd.Start(); err != nil {
 		for _, f := range []*os.File{toBrowserR, toBrowserW, fromBrowserR, fromBrowserW} {
 			_ = f.Close()
