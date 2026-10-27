@@ -596,8 +596,8 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 		servedInto = &served
 	}
 	err = startInfra(ctx, d, p, rd, td, runID, token, rep, servedInto)
-	if len(rd.modelHosts) > 0 {
-		env.CapabilitiesEnforced["llm-proxy.hosts"] = modelHostsLine(rd.modelHosts)
+	if line := modelHostsLine(rd.modelHosts); line != "" {
+		env.CapabilitiesEnforced["llm-proxy.hosts"] = line
 	}
 	if err != nil {
 		env.CapabilitiesEnforced["daemon"] = daemonLine(rd)
@@ -1098,6 +1098,12 @@ func startProxy(ctx context.Context, d dockerx.Client, p Params, rd *runDirs, td
 	if len(p.Plan.Proxy.PlainHTTP) > 0 {
 		proxyArgv = append(proxyArgv, "--plain-http", strings.Join(p.Plan.Proxy.PlainHTTP, ","))
 	}
+	// The model endpoints at the addresses this machine resolves for them,
+	// and those it cannot resolve (modelhosts.go).
+	rd.modelHosts = modelHosts(ctx, p.Plan.Proxy.Allow, !p.hosted())
+	if len(rd.modelHosts.Unresolved) > 0 {
+		proxyArgv = append(proxyArgv, "--unresolved", strings.Join(rd.modelHosts.Unresolved, ","))
+	}
 	proxyPublish := hostPublish(p, spec.ProxyPort)
 	if p.Plan.Harness.Host != nil {
 		proxyArgv = append(proxyArgv, "--forward", fmt.Sprintf(":%d=%s:%d", spec.GatewayPort, spec.GatewayAlias, spec.GatewayPort))
@@ -1113,10 +1119,7 @@ func startProxy(ctx context.Context, d dockerx.Client, p Params, rd *runDirs, td
 		Publish: proxyPublish,
 	}
 	proxySpec = readOnlyRoot(hardened(proxySpec, p.limits()), "/tmp")
-	// The model endpoints at the addresses this machine resolves for them
-	// (modelhosts.go).
-	rd.modelHosts = modelHostPins(ctx, p.Plan.Proxy.Allow)
-	proxySpec.ExtraHosts = append(proxySpec.ExtraHosts, rd.modelHosts...)
+	proxySpec.ExtraHosts = append(proxySpec.ExtraHosts, rd.modelHosts.Pins...)
 	// Under the run's runtime where the host's name servers are named: it
 	// reads the run's own resolv.conf, and its egress leg is a network of
 	// the run's own joined at create, since a sandboxed runtime takes no
