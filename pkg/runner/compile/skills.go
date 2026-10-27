@@ -35,7 +35,8 @@ func checkedSkills(in []spec.Skill) ([]spec.Skill, error) {
 
 // skillsLine is the System Prompt's line on a persistent agent's skills:
 // each by name with its description quoted, so nothing in a description can
-// pass for the line around it. commands says the agent runs programs, and so
+// pass for the line around it. It names the folder by the path fs_read
+// takes, beginning with the folder's name, as the folders line does. commands says the agent runs programs, and so
 // a skill's scripts.
 func skillsLine(skills []spec.Skill, commands bool) string {
 	if len(skills) == 0 {
@@ -43,7 +44,7 @@ func skillsLine(skills []spec.Skill, commands bool) string {
 	}
 	dir := spec.AgentSkillsDir
 	b := new(strings.Builder)
-	b.WriteString("- **Your skills.** Read-only, in " + spec.AgentRoot + "/" + dir + ": each is a folder of instructions for one kind of work. " +
+	b.WriteString("- **Your skills.** Read-only, in " + dir + "/ among your folders: each is a folder of instructions for one kind of work. " +
 		"When a request matches a skill's description, read " + dir + "/<name>/SKILL.md with fs_read before you start, and follow it; read the other files it names when it says to. ")
 	if commands {
 		b.WriteString("Its scripts run with run_command, from where they are. ")

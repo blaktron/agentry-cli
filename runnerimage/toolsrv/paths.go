@@ -119,10 +119,44 @@ func allowedByGrant(paths []string, rel string) bool {
 // workspace: a link a background process swaps in between this check and
 // the open cannot take the read or the write out of it.
 func (s *server) workspacePath(rel string) (string, error) {
+	if path.IsAbs(rel) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("path %q is not in %s; give the path relative to it", rel, s.workspaceRoot())
+	}
 	if _, err := resolveUnder(s.spec.WorkspaceDir, rel); err != nil {
 		return "", err
 	}
 	return path.Clean(rel), nil
+}
+
+// workspaceRel is a path the model gave a workspace tool, in the form the
+// tools take: relative to the workspace. The System Prompt and the search
+// tools show the workspace's folders by their full paths, so a path beneath
+// the workspace given in full is the same path relative to it, and the
+// workspace itself is ".". Any other path is returned as given, for the
+// grant and workspacePath to judge: nothing is reached that the relative
+// form would not reach.
+func (s *server) workspaceRel(p string) string {
+	if !filepath.IsAbs(s.spec.WorkspaceDir) {
+		return p
+	}
+	root := path.Clean(filepath.ToSlash(s.spec.WorkspaceDir))
+	clean := path.Clean(p)
+	if clean == root {
+		return "."
+	}
+	if rel, ok := strings.CutPrefix(clean, root+"/"); ok {
+		return rel
+	}
+	return p
+}
+
+// workspaceRoot is the workspace's path as the model sees it.
+func (s *server) workspaceRoot() string { return filepath.ToSlash(s.spec.WorkspaceDir) }
+
+// outsideGrant is a workspace tool's refusal of a path its grant does not
+// cover, naming the paths it does, so the model can retry with one of them.
+func (s *server) outsideGrant(tool string, granted []string, rel string) string {
+	return fmt.Sprintf("%s: %q is outside the granted paths, which are %s, relative to %s", tool, path.Clean(rel), strings.Join(granted, ", "), s.workspaceRoot())
 }
 
 // mkdirsIn makes dir and any missing parent beneath root, each through
