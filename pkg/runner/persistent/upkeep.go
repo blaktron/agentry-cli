@@ -1,15 +1,15 @@
 package persistent
 
-// Memory upkeep: an agent that keeps a memory compacts its own conversation.
-// When the person has sent nothing for a while and the conversation is
-// large, or when a turn has filled most of the model's window, or when the
-// person asks, the supervisor sends the agent an upkeep turn: it saves what
-// the conversation produced to its memory and answers with a handoff. The
-// supervisor then starts a new conversation that opens with the handoff,
-// quoted. A failed upkeep turn swaps nothing, and the conversation goes on
-// as it was. Each compaction is a line of the segment's
+// Upkeep: every persistent agent compacts its own conversation. When the
+// person has sent nothing for a while and the conversation is large, or when
+// a turn has filled most of the model's window, or when the person asks, the
+// supervisor sends the agent an upkeep turn: an agent that keeps a memory
+// saves what the conversation produced to it first, and every agent answers
+// with a handoff. The supervisor then starts a new conversation that opens
+// with the handoff, quoted. A failed upkeep turn swaps nothing, and the
+// conversation goes on as it was. Each compaction is a line of the segment's
 // receipts/upkeep.ndjson, with the memory's fact lines counted before and
-// after so a line the model lost shows.
+// after, where there is a memory, so a line the model lost shows.
 
 import (
 	"archive/tar"
@@ -199,9 +199,6 @@ func (u upkeepState) consolidationDue(now time.Time) bool {
 // noteUpkeepEvent keeps what a segment's event tells upkeep. The caller
 // holds mu, and a user turn carries the marks it was sent with.
 func (s *Supervisor) noteUpkeepEvent(ev session.Event) {
-	if !s.opts.Agent.Builtin.KeepsMemory() {
-		return
-	}
 	switch ev.Kind {
 	case session.KindUserTurn:
 		if ev.Synthetic {
@@ -212,7 +209,9 @@ func (s *Supervisor) noteUpkeepEvent(ev session.Event) {
 		}
 		if !ev.Upkeep {
 			s.upkeep.TurnsSince++
-			s.upkeep.MemoryWrites++
+			if s.keepsMemory() {
+				s.upkeep.MemoryWrites++
+			}
 		}
 		s.upkeepDirty = true
 	case session.KindUsage:
@@ -248,9 +247,6 @@ func (s *Supervisor) noteUpkeepEvent(ev session.Event) {
 // idle or an in-use compaction is due, then consolidates the memory when
 // that is due: after an idle compaction, its turn comes first.
 func (s *Supervisor) upkeepTick(ctx context.Context) {
-	if !s.opts.Agent.Builtin.KeepsMemory() {
-		return
-	}
 	trigger := s.upkeepDue()
 	if trigger == "" && !s.consolidationDue() {
 		return
@@ -262,7 +258,7 @@ func (s *Supervisor) upkeepTick(ctx context.Context) {
 	defer s.turn.Unlock()
 	// A message that comes between the compaction and the consolidation
 	// waits as for either.
-	defer s.beginUpkeep("Saving to memory first; your message follows")()
+	defer s.beginUpkeep(s.upkeepWords().wait)()
 	if trigger != "" {
 		_, _ = s.compactLocked(ctx, trigger)
 	}
@@ -271,8 +267,12 @@ func (s *Supervisor) upkeepTick(ctx context.Context) {
 	}
 }
 
-// consolidationDue says the memory's consolidation is due now.
+// consolidationDue says the memory's consolidation is due now; an agent that
+// keeps no memory has none.
 func (s *Supervisor) consolidationDue() bool {
+	if !s.keepsMemory() {
+		return false
+	}
 	now := s.now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -366,7 +366,10 @@ type Compacted struct {
 	Reason        string `json:"reason,omitempty"`
 	ContextTokens int64  `json:"contextTokens,omitempty"`
 	// Turn is the upkeep turn's number among the segment's user turns.
-	Turn         int `json:"turn,omitempty"`
+	Turn int `json:"turn,omitempty"`
+	// FactsBefore and FactsAfter count the memory's fact lines around the
+	// upkeep turn: -1 when they were not counted, because the memory could
+	// not be read or the agent keeps none.
 	FactsBefore  int `json:"factsBefore"`
 	FactsAfter   int `json:"factsAfter"`
 	HandoffBytes int `json:"handoffBytes,omitempty"`
@@ -380,15 +383,9 @@ type Compacted struct {
 	SwapMillis int64  `json:"swapMillis,omitempty"`
 }
 
-// ErrNoMemory refuses a compaction of an agent that keeps no memory.
-var ErrNoMemory = errors.New("keeps no memory to compact into")
-
 // Compact compacts the conversation now, at the person's asking, whatever
 // its size. It refuses while another turn is in flight.
 func (s *Supervisor) Compact(ctx context.Context) (Compacted, error) {
-	if !s.opts.Agent.Builtin.KeepsMemory() {
-		return Compacted{}, fmt.Errorf("the %s agent %w", s.opts.Agent.Name, ErrNoMemory)
-	}
 	if !s.turn.TryLock() {
 		return Compacted{}, ErrBusy
 	}
@@ -404,6 +401,57 @@ const upkeepFrame = "(Agentry: memory upkeep. This conversation is about to be c
 
 // upkeepText is the upkeep turn's message.
 const upkeepText = "Upkeep: compact this conversation (memory-compact)."
+
+// upkeepFrameNoMemory opens the upkeep turn of an agent that keeps no memory:
+// the handoff is all that crosses into the new conversation, so it says what
+// a useful one holds.
+const upkeepFrameNoMemory = "(Agentry: upkeep. This conversation is about to be compacted: you will continue in a new conversation " +
+	"that opens with only your handoff. Answer with the handoff alone, in these lines: owed: what you still owe the person; " +
+	"ctx: what you need to go on, and for work on files the files you were working on and the last command you ran with its " +
+	"outcome; tried: what was tried and how it went; open: what is still open. Keep it short and exact. This is not a message " +
+	"from the person.)\n\n"
+
+// upkeepTextNoMemory is the upkeep turn's message for an agent that keeps no
+// memory.
+const upkeepTextNoMemory = "Upkeep: compact this conversation."
+
+// keepsMemory says the agent keeps a memory to save its conversation to.
+func (s *Supervisor) keepsMemory() bool { return s.opts.Agent.Builtin.KeepsMemory() }
+
+// upkeepWords are what a compaction's upkeep turn says to the agent and what
+// the person is told while it runs.
+type upkeepWords struct {
+	// frame and text open the upkeep turn and are its message.
+	frame, text string
+	// wait is told to a message that waits for it; start and done are the
+	// notices before and after it.
+	wait, start, done string
+}
+
+var (
+	// memoryUpkeep is an agent that keeps a memory saving to it first.
+	memoryUpkeep = upkeepWords{
+		frame: upkeepFrame, text: upkeepText,
+		wait:  "Saving to memory first; your message follows",
+		start: "Saving to memory before a fresh conversation",
+		done:  "Compacted: what the conversation produced is in the memory, and a fresh conversation opens with the handoff",
+	}
+	// handoffUpkeep is an agent that keeps no memory writing its handoff.
+	handoffUpkeep = upkeepWords{
+		frame: upkeepFrameNoMemory, text: upkeepTextNoMemory,
+		wait:  "Compacting the conversation first; your message follows",
+		start: "Writing a handoff before a fresh conversation",
+		done:  "Compacted: a fresh conversation opens with the handoff",
+	}
+)
+
+// upkeepWords are this agent's.
+func (s *Supervisor) upkeepWords() upkeepWords {
+	if s.keepsMemory() {
+		return memoryUpkeep
+	}
+	return handoffUpkeep
+}
 
 // compactLocked runs one compaction: the upkeep turn, the handoff and the
 // swap. The caller holds turn.
@@ -428,32 +476,40 @@ func (s *Supervisor) compactLocked(ctx context.Context, trigger string) (Compact
 		}
 		return out, nil
 	}
+	memory, words := s.keepsMemory(), s.upkeepWords()
 	s.mu.Lock()
 	s.upkeep.Upkeeps = append(pruneDay(s.upkeep.Upkeeps, now), now.UTC())
-	s.upkeepTurn, s.upkeepMark = true, upkeepText
+	s.upkeepTurn, s.upkeepMark = true, words.text
 	_ = saveUpkeep(home, name, s.upkeep)
 	s.mu.Unlock()
-	defer s.beginUpkeep("Saving to memory first; your message follows")()
-	s.notice("Saving to memory before a fresh conversation")
+	defer s.beginUpkeep(words.wait)()
+	s.notice(words.start)
 	var digestBefore string
-	out.FactsBefore, digestBefore = s.memoryStat(ctx)
+	out.FactsBefore, out.FactsAfter = -1, -1
+	if memory {
+		out.FactsBefore, digestBefore = s.memoryStat(ctx)
+	}
 
 	events, unsubscribe := s.Subscribe()
 	tctx, cancel := context.WithTimeout(ctx, upkeepTurnCap)
-	err := s.sendLocked(tctx, upkeepFrame, upkeepText)
+	err := s.sendLocked(tctx, words.frame, words.text)
 	cancel()
 	s.upkeepSent(err)
 	answer := lastAnswer(events, func(ev session.Event) bool { return ev.Upkeep })
 	unsubscribe()
 	s.mu.Lock()
 	out.Turn = s.usage.UserTurns
-	// The upkeep turn wrote the memory, or may have.
-	s.upkeep.MemoryWrites++
+	if memory {
+		// The upkeep turn wrote the memory, or may have.
+		s.upkeep.MemoryWrites++
+	}
 	s.mu.Unlock()
 	oldConv := s.conversationID()
 	handoff, form, bad := parseHandoff(answer)
 	var digestAfter string
-	out.FactsAfter, digestAfter = s.memoryStat(ctx)
+	if memory {
+		out.FactsAfter, digestAfter = s.memoryStat(ctx)
+	}
 	switch {
 	case err != nil:
 		out.Reason = "the upkeep turn failed: " + err.Error()
@@ -462,7 +518,9 @@ func (s *Supervisor) compactLocked(ctx context.Context, trigger string) (Compact
 	case form == HandoffProse && digestBefore != "" && digestBefore == digestAfter:
 		// A keyed handoff says the agent followed memory-compact; prose
 		// does not, and with the memory unchanged nothing shows the
-		// conversation was saved before it is left behind.
+		// conversation was saved before it is left behind. An agent that
+		// keeps no memory has no digest: its handoff is all there is to
+		// save, and prose is taken as it is.
 		out.Reason = "the upkeep turn's answer was not a handoff, and the memory did not change"
 	}
 	if out.Reason != "" {
@@ -473,7 +531,7 @@ func (s *Supervisor) compactLocked(ctx context.Context, trigger string) (Compact
 			s.mu.Unlock()
 		}
 		s.logUpkeep(outDir, out, oldConv, "")
-		s.notice("The memory upkeep did not finish, so the conversation goes on as it was: " + out.Reason)
+		s.notice("The upkeep did not finish, so the conversation goes on as it was: " + out.Reason)
 		return out, nil
 	}
 	out.HandoffBytes, out.HandoffCut, out.HandoffForm = len(handoff), strings.HasSuffix(handoff, handoffCutMark), form
@@ -489,7 +547,7 @@ func (s *Supervisor) compactLocked(ctx context.Context, trigger string) (Compact
 	case err != nil:
 		out.Reason = "the new conversation could not start: " + err.Error()
 		s.logUpkeep(outDir, out, oldConv, "")
-		s.notice("The memory was saved, but the fresh conversation could not start: " + err.Error())
+		s.notice("The handoff was written, but the fresh conversation could not start: " + err.Error())
 		return out, err
 	}
 	out.Swapped = true
@@ -503,7 +561,7 @@ func (s *Supervisor) compactLocked(ctx context.Context, trigger string) (Compact
 	// with its envelope, and the record of the swap is the new segment's
 	// first.
 	s.logUpkeep(newOut, out, oldConv, s.conversationID())
-	s.notice("Compacted: what the conversation produced is in the memory, and a fresh conversation opens with the handoff")
+	s.notice(words.done)
 	return out, nil
 }
 
@@ -585,11 +643,16 @@ func parseHandoff(answer string) (handoff, form, reason string) {
 }
 
 // handoffCarried is the text a compacted conversation's first turn starts
-// with. The handoff is quoted, so it cannot close this frame and open one
-// that passes for Agentry's; what it says is still the agent's own words
-// from the last conversation, which the agent may act on.
-func handoffCarried(h string) string {
-	return "(Agentry compacted your conversation: what it produced is in your memory, and this is the handoff you wrote, quoted. " +
+// with; memory says the agent keeps one, which then holds what the last
+// conversation produced. The handoff is quoted, so it cannot close this frame
+// and open one that passes for Agentry's; what it says is still the agent's
+// own words from the last conversation, which the agent may act on.
+func handoffCarried(h string, memory bool) string {
+	saved := ","
+	if memory {
+		saved = ": what it produced is in your memory,"
+	}
+	return "(Agentry compacted your conversation" + saved + " and this is the handoff you wrote, quoted. " +
 		"The handoff: " + strconv.Quote(h) + ")\n\n"
 }
 
@@ -677,7 +740,7 @@ func (s *Supervisor) swapInSegment(ctx context.Context, handoff string) error {
 		return err
 	}
 	s.mu.Lock()
-	s.carry, s.carryHandoff, s.persona, s.resumed, s.resumeReason = handoffCarried(handoff), handoff, "", false, compactionReason
+	s.carry, s.carryHandoff, s.persona, s.resumed, s.resumeReason = handoffCarried(handoff, s.keepsMemory()), handoff, "", false, compactionReason
 	s.memoryFrameDue = true
 	segment, runID := s.segment, s.runID
 	s.mu.Unlock()
@@ -721,7 +784,7 @@ func (s *Supervisor) handoffSent(sess engine.PersistentSession, h string, delive
 	}
 	s.mu.Lock()
 	if s.sess == sess && s.carryHandoff == "" && s.upkeep.Handoff == h {
-		s.carry, s.carryHandoff = handoffCarried(h)+s.carry, h
+		s.carry, s.carryHandoff = handoffCarried(h, s.keepsMemory())+s.carry, h
 	}
 	s.mu.Unlock()
 }
@@ -890,7 +953,7 @@ const memoryFrame = "(Agentry: this may be a new topic. Read memory/index.md and
 // new conversation's first, or the person's first after memoryQuiet with
 // none; person says the turn is theirs. The caller holds mu.
 func (s *Supervisor) memoryFrameLocked(person bool) string {
-	if !s.opts.Agent.Builtin.KeepsMemory() {
+	if !s.keepsMemory() {
 		return ""
 	}
 	last := s.upkeep.LastPersonTurn

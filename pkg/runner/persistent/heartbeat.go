@@ -79,12 +79,10 @@ func heartbeatOn(a Agent, c Config) bool {
 }
 
 // startHeartbeat names to the agent the tasks that came due while it was
-// stopped, then ticks until Stop.
+// stopped, then ticks until Stop: tasks for an agent that keeps time, and
+// upkeep for every agent.
 func (s *Supervisor) startHeartbeat() {
-	keepsTime, keepsMemory := s.opts.Agent.Builtin.KeepsTime(), s.opts.Agent.Builtin.KeepsMemory()
-	if !keepsTime && !keepsMemory {
-		return
-	}
+	keepsTime := s.opts.Agent.Builtin.KeepsTime()
 	if keepsTime {
 		s.noteMissed()
 	}
