@@ -23,6 +23,7 @@ package netproxy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -70,6 +71,11 @@ type Proxy struct {
 	// every name is resolved here and only the address checked is
 	// dialled, and Allow, PlainHTTP and PublicOnly are not read.
 	Scope *Scope
+	// Unresolved lists the allowed hosts that the machine which started the
+	// proxy could not resolve either. A dial that fails to resolve one is
+	// answered with a plain sentence saying so, instead of the resolver's
+	// error from inside the container.
+	Unresolved []string
 	// Resolver answers PublicOnly's and Scope's lookups; nil is the system's.
 	Resolver Resolver
 	// Logw receives one line per decision (CONNECT, and plain http as
@@ -162,6 +168,11 @@ func (p *Proxy) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	p.logf("allow %s:%s", host, port)
 	upstream, err := p.dialUpstream(r.Context(), net.JoinHostPort(dialHost, port))
 	if err != nil {
+		if msg := p.unresolvedMessage(host, err); msg != "" {
+			p.logf("unresolved %s:%s", host, port)
+			failConnect(w, msg)
+			return
+		}
 		http.Error(w, fmt.Sprintf("bad gateway: dial %s: %v", target, err), http.StatusBadGateway)
 		return
 	}
@@ -287,6 +298,11 @@ func (p *Proxy) relayPlain(w http.ResponseWriter, r *http.Request, t *http.Trans
 	dropHopHeaders(out.Header)
 	resp, err := t.RoundTrip(out)
 	if err != nil {
+		if msg := p.unresolvedMessage(host, err); msg != "" {
+			p.logf("unresolved http %s:%s", host, port)
+			http.Error(w, "bad gateway: "+msg, http.StatusBadGateway)
+			return
+		}
 		http.Error(w, fmt.Sprintf("bad gateway: http://%s:%s: %v", host, port, err), http.StatusBadGateway)
 		return
 	}
@@ -449,6 +465,48 @@ func splitEntry(entry, defPort string) (host, port string) {
 		return h, p
 	}
 	return entry, defPort
+}
+
+// unresolvedMessage is the plain answer to a dial of host that failed to
+// resolve when host is one of Unresolved; "" for any other failure.
+func (p *Proxy) unresolvedMessage(host string, err error) string {
+	var dnsErr *net.DNSError
+	if !errors.As(err, &dnsErr) {
+		return ""
+	}
+	for _, u := range p.Unresolved {
+		if strings.EqualFold(u, host) {
+			return fmt.Sprintf("the model endpoint's host %s does not resolve: check the endpoint's address in the model settings", u)
+		}
+	}
+	return ""
+}
+
+// failConnect answers a CONNECT with 502 and msg as the status line's
+// reason as well as the body: an HTTP client reports a refused tunnel by
+// its status line alone, so the sentence would otherwise never reach the
+// person. msg is built from an allowlist entry, never from the request,
+// and any control character in it is dropped before it is written.
+func failConnect(w http.ResponseWriter, msg string) {
+	msg = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, msg)
+	hj, ok := w.(http.Hijacker)
+	if !ok {
+		http.Error(w, "bad gateway: "+msg, http.StatusBadGateway)
+		return
+	}
+	conn, bufrw, err := hj.Hijack()
+	if err != nil {
+		return
+	}
+	defer func() { _ = conn.Close() }()
+	body := "bad gateway: " + msg + "\n"
+	_, _ = fmt.Fprintf(bufrw, "HTTP/1.1 502 %s\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s", msg, len(body), body)
+	_ = bufrw.Flush()
 }
 
 // logf serializes decision lines: handlers run concurrently and receipts

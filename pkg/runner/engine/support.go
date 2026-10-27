@@ -32,6 +32,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
+	"github.com/blaktron/agentry-cli/pkg/runner/hostpin"
 	"github.com/blaktron/agentry-cli/pkg/runner/intake"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"github.com/blaktron/agentry-cli/pkg/runner/owner"
@@ -160,9 +161,9 @@ type runDirs struct {
 	// session's driver for its token (spec.ModelSignInCallback); nil
 	// otherwise.
 	signInTokens *signInTokens
-	// modelHosts are the llm-proxy's pinned model endpoints ("name:ip",
-	// modelhosts.go), for the receipt.
-	modelHosts []string
+	// modelHosts are the llm-proxy's pinned and unresolved model
+	// endpoints (modelhosts.go), for the receipt.
+	modelHosts hostpin.ModelHosts
 	// filter is the gateway's per-run docker socket (dockerfilter.go),
 	// and filterLog its decision log; nil until the gateway is about to
 	// start.
