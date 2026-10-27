@@ -8,6 +8,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -499,6 +502,44 @@ func TestAnUpkeepChangeLandsAfterAWriteInFlight(t *testing.T) {
 	}
 	if u := loadUpkeep(home, "assistant"); !u.RetryAfter.Equal(retry) {
 		t.Errorf("retry after = %v, want %v", u.RetryAfter, retry)
+	}
+}
+
+// TestOnlyChangeUpkeepWritesTheUpkeepFile: in the supervisor's own code,
+// upkeep.json is written by changeUpkeep alone, so no write can skip the
+// order it keeps.
+func TestOnlyChangeUpkeepWritesTheUpkeepFile(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fset := token.NewFileSet()
+	var callers []string
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, f, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, d := range file.Decls {
+			fn, ok := d.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				if call, ok := n.(*ast.CallExpr); ok {
+					if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "saveUpkeep" {
+						callers = append(callers, fn.Name.Name)
+					}
+				}
+				return true
+			})
+		}
+	}
+	if len(callers) != 1 || callers[0] != "changeUpkeep" {
+		t.Errorf("saveUpkeep is called from %v, want changeUpkeep alone", callers)
 	}
 }
 
