@@ -362,6 +362,15 @@ type Renewing interface {
 	NewConversation(ctx context.Context) (string, error)
 }
 
+// Compacting is a Continuing driver whose harness can compact the
+// conversation it is in, between turns, without a turn of the agent's:
+// CompactConversation asks the harness to summarise the history in place and
+// returns when it has. On an error the conversation is as it was, or the
+// harness's own compaction state says otherwise in the events.
+type Compacting interface {
+	CompactConversation(ctx context.Context) error
+}
+
 // SignInToken is a model sign-in's access token as a driver hands it to
 // its harness, and when it expires. Never a refresh token (I3).
 type SignInToken struct {

@@ -36,6 +36,9 @@ type Server struct {
 	// ResumeError fails session.resume with this message whatever the id
 	// (an organization's policy).
 	ResumeError string
+	// Compact is session.history.compact's result; nil answers the method
+	// as unhandled, as a release that does not serve it would.
+	Compact map[string]any
 
 	mu sync.Mutex
 	// Resume is session.resume's params, as the driver sent them.
@@ -205,6 +208,16 @@ func (c *Conn) handle(id json.RawMessage, method string, params map[string]any) 
 		}
 		c.Event("assistant.message", map[string]any{"messageId": "a1", "content": "Hello."})
 		c.Event("session.idle", map[string]any{})
+	case "session.history.compact":
+		if s.Compact == nil {
+			c.fail(id, "Unhandled method "+method)
+			return
+		}
+		if params["sessionId"] != c.sessionID {
+			c.fail(id, "Session not found")
+			return
+		}
+		c.reply(id, s.Compact)
 	case "session.permissions.handlePendingPermissionRequest":
 		reqID, _ := params["requestId"].(string)
 		result, _ := params["result"].(map[string]any)

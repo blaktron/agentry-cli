@@ -24,8 +24,8 @@ func TestColdAfterTable(t *testing.T) {
 		{CopilotImageAdapterName, "", time.Hour},
 		{"some-future-harness", policy.ProviderAnthropic, time.Hour},
 	} {
-		if got := coldAfterFor(c.adapter, c.provider); got != c.want {
-			t.Errorf("coldAfterFor(%q, %q) = %v, want %v", c.adapter, c.provider, got, c.want)
+		if got := ColdAfter(c.adapter, c.provider); got != c.want {
+			t.Errorf("ColdAfter(%q, %q) = %v, want %v", c.adapter, c.provider, got, c.want)
 		}
 	}
 }

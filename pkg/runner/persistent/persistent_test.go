@@ -200,6 +200,12 @@ type starter struct {
 	// conversation while it runs, failing with renewErr when set.
 	renew    bool
 	renewErr error
+	// compactor makes each segment one whose harness can compact its
+	// conversation in place, failing with compactErr when set; compacting
+	// is the last such segment.
+	compactor  bool
+	compactErr error
+	compacting *compactingSegment
 	// bound ends each segment when the context it was started with is
 	// done, as the engine's session does.
 	bound bool
@@ -251,7 +257,35 @@ func (s *starter) start(ctx context.Context, seg localrun.Segment) (engine.Persi
 	if s.renew {
 		return &renewingSegment{fakeSegment: s.last, err: s.renewErr}, nil
 	}
+	if s.compactor {
+		s.compacting = &compactingSegment{fakeSegment: s.last, err: s.compactErr}
+		return s.compacting, nil
+	}
 	return s.last, nil
+}
+
+// compactingSegment is a fakeSegment whose harness can compact its
+// conversation in place (engine.ConversationCompactor).
+type compactingSegment struct {
+	*fakeSegment
+	err       error
+	compacted int
+}
+
+func (c *compactingSegment) CanCompact() bool { return true }
+
+// CompactConversation compacts in place, reporting the size after as the
+// harness does, at a tenth of the size before.
+func (c *compactingSegment) CompactConversation(context.Context) error {
+	c.mu.Lock()
+	if c.err != nil {
+		c.mu.Unlock()
+		return c.err
+	}
+	c.compacted++
+	c.mu.Unlock()
+	c.events <- session.Event{Kind: session.KindUsage, ContextTokens: 5_000, ContextCompacted: true}
+	return nil
 }
 
 func startAssistant(t *testing.T, home string, st *starter) *Supervisor {

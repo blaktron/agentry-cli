@@ -729,3 +729,86 @@ func TestOnlyTheDriversThatCanStartANewConversationSayTheyCan(t *testing.T) {
 		_ = drv.Close()
 	}
 }
+
+// TestCodexSessionCompactsTheThreadInPlace: CompactConversation is
+// thread/compact/start on the running thread, and returns once codex has
+// finished the compaction's own turn; a failed one is an error.
+func TestCodexSessionCompactsTheThreadInPlace(t *testing.T) {
+	for _, status := range []string{"completed", "failed"} {
+		t.Run(status, func(t *testing.T) {
+			ad, _ := Get(CodexAdapterName)
+			stdio := newFakeStdio()
+			drv, err := ad.Session(context.Background(), stdio, SessionOptions{Persistent: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			compacted := make(chan string, 1)
+			go func() {
+				for line := range stdio.lines {
+					var m struct {
+						ID     *int           `json:"id"`
+						Method string         `json:"method"`
+						Params map[string]any `json:"params"`
+					}
+					if json.Unmarshal(line, &m) != nil {
+						continue
+					}
+					switch m.Method {
+					case "initialize":
+						stdio.say(`{"id":` + itoa(*m.ID) + `,"result":{"userAgent":"codex"}}`)
+					case "thread/start":
+						stdio.say(`{"id":` + itoa(*m.ID) + `,"result":{"thread":{"id":"t1"}}}`)
+					case "thread/compact/start":
+						thread, _ := m.Params["threadId"].(string)
+						compacted <- thread
+						stdio.say(`{"id":` + itoa(*m.ID) + `,"result":{}}`)
+						stdio.say(`{"method":"item/started","params":{"threadId":"t1","turnId":"c1","item":{"type":"contextCompaction","id":"x1"}}}`)
+						stdio.say(`{"method":"turn/completed","params":{"threadId":"t1","turn":{"id":"c1","status":"` + status + `"}}}`)
+					}
+				}
+			}()
+			sawCompacted := make(chan bool, 1)
+			go func() {
+				seen := false
+				for ev := range drv.Events() {
+					seen = seen || (ev.Kind == EventUsage && ev.ContextCompacted)
+				}
+				sawCompacted <- seen
+			}()
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := drv.Start(ctx); err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			err = drv.(Compacting).CompactConversation(ctx)
+			if status == "completed" && err != nil || status != "completed" && err == nil {
+				t.Fatalf("CompactConversation = %v, codex said %s", err, status)
+			}
+			if got := <-compacted; got != "t1" {
+				t.Errorf("compacted thread %q", got)
+			}
+			_ = drv.Close()
+			if !<-sawCompacted {
+				t.Error("the compaction's start was not reported as a usage event")
+			}
+		})
+	}
+}
+
+// TestClaudeCodeCannotCompactOnRequest: Claude Code has no compaction call
+// checked under the runner's flags, so a cold-cache compaction writes a
+// handoff and starts a new conversation instead.
+func TestClaudeCodeCannotCompactOnRequest(t *testing.T) {
+	ad, err := Get(ClaudeImageAdapterName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	drv, err := ad.Session(context.Background(), newFakeStdio(), SessionOptions{Persistent: true, HarnessFile: func(string) ([]byte, error) { return []byte("{}"), nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := drv.(Compacting); ok {
+		t.Error("the Claude Code driver says it can compact on request")
+	}
+	_ = drv.Close()
+}

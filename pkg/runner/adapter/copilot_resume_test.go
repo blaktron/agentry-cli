@@ -126,3 +126,33 @@ func TestACopilotResumeRefusedByPolicyIsNamed(t *testing.T) {
 }
 
 func first(b bool, _ string) bool { return b }
+
+// A Copilot session compacts its history in place on request
+// (session.history.compact) and says when Copilot CLI did not, or does not
+// serve the call.
+func TestACopilotSessionCompactsOnRequest(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		compact map[string]any
+		ok      bool
+	}{
+		{"compacted", map[string]any{"success": true, "tokensRemoved": 41000, "messagesRemoved": 12}, true},
+		{"not compacted", map[string]any{"success": false, "tokensRemoved": 0, "messagesRemoved": 0}, false},
+		{"not served", nil, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			k := &tokens{expires: time.Now().Add(8 * time.Hour)}
+			srv := &copilottest.Server{Compact: c.compact}
+			d := drive(t, srv, adapter.SessionOptions{GatewayTools: []string{"write_report"}, ModelSignIn: true, SignInToken: k.get, Persistent: true})
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := d.drv.Start(ctx); err != nil {
+				t.Fatal(err)
+			}
+			err := d.drv.(adapter.Compacting).CompactConversation(ctx)
+			if (err == nil) != c.ok {
+				t.Fatalf("CompactConversation = %v", err)
+			}
+		})
+	}
+}
