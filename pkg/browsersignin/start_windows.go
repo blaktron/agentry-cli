@@ -6,8 +6,25 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 	"syscall"
 )
+
+// createNoWindow keeps taskkill from opening a console window.
+const createNoWindow = 0x08000000
+
+// quit asks the browser to quit by closing its windows, as taskkill does
+// without /F, so it writes its cookies first.
+func quit(cmd *exec.Cmd) error {
+	taskkill := "taskkill"
+	if root := os.Getenv("SystemRoot"); root != "" {
+		taskkill = filepath.Join(root, "System32", "taskkill.exe")
+	}
+	c := exec.Command(taskkill, "/PID", strconv.Itoa(cmd.Process.Pid))
+	c.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: createNoWindow}
+	return c.Run()
+}
 
 // start runs the browser with its DevTools pipe on two inherited handles,
 // named on its command line by --remote-debugging-io-pipes (read, then

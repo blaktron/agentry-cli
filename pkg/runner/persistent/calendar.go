@@ -415,10 +415,10 @@ const CalendarSignInTimeout = 10 * time.Minute
 var calendarSignIn = browsersignin.Run
 
 // SignInCalendarFeed opens a browser window at a calendar feed's address,
-// where the person signs in to the account the calendar belongs to, and
-// returns the browser's sign-in (the cookies it sends to the address, as
-// KeepCalendarSession keeps them) once the address answers with a
-// calendar, with that calendar's name and events' count. progress, when
+// where the person signs in to the account the calendar belongs to, and,
+// once the window has closed, returns the browser's sign-in (the cookies it
+// sends to the address, as KeepCalendarSession keeps them) if the address
+// answers with a calendar, with that calendar's name and events' count. progress, when
 // set, is told what it waits for. No error repeats the address or the
 // sign-in.
 func SignInCalendarFeed(ctx context.Context, address string, progress func(string)) (session, calName string, events int, err error) {
@@ -431,8 +431,8 @@ func SignInCalendarFeed(ctx context.Context, address string, progress func(strin
 		Ready: func(ctx context.Context, header string) (bool, error) {
 			n, c, err := calendarFeedReadable(ctx, address, header)
 			if err != nil {
-				// Still signing in, or signed in to an account that cannot
-				// read this calendar: the window stays open.
+				// Not signed in, or signed in to an account that cannot
+				// read this calendar.
 				lastErr = err
 				return false, nil
 			}
