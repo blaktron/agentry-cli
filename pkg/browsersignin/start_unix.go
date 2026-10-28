@@ -6,7 +6,14 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"syscall"
 )
+
+// quit asks the browser to quit as it does when its last window closes,
+// writing its cookies first.
+func quit(cmd *exec.Cmd) error {
+	return cmd.Process.Signal(syscall.SIGTERM)
+}
 
 // start runs the browser with its DevTools pipe on file descriptors 3 (it
 // reads) and 4 (it writes), which --remote-debugging-pipe uses.

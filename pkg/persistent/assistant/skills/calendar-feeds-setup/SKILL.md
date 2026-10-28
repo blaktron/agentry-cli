@@ -125,10 +125,13 @@ address), they add `--calendar-sign-in`:
 
 They paste the address as before. A browser window opens at it (Chrome,
 Edge, Chromium or Brave, in a profile of its own that Agentry removes
-afterwards, so their everyday browser is not touched). They sign in to the
-Google account that can see the calendar; the window closes by itself once
-Agentry can read the calendar, and Agentry keeps the address and that
-window's sign-in in their system keychain. The sign-in is sent to the
+afterwards, so their everyday browser is not touched; Agentry does not
+control the window while they sign in). They sign in to the Google account
+that can see the calendar. The window closes by itself once the calendar
+downloads in it; if it does not, they close it (on a Mac, quit the browser
+with Command-Q) once signed in. Agentry then reads the sign-in, checks the
+calendar with it, and keeps the address and that window's sign-in in their
+system keychain. The sign-in is sent to the
 calendar's own host and nowhere else, and you are never shown it. To sign
 in again later, they run the same command and press Enter at the address,
 which keeps the one they gave. In Agentry Desktop, the same is **Sign in in
@@ -155,9 +158,12 @@ off` (and `on` again).
   browser window** in Agentry Desktop).
 - "its sign-in has ended", in your tools: Google ended the sign-in kept for
   that feed. They sign in again (the same command, Enter at the address).
-- The browser window stays open after they signed in: the account they
-  signed in to cannot see that calendar, or the address is another
-  calendar's. They close the window, which keeps nothing, and check both.
+- "signed in, the calendar still could not be read" after they closed the
+  window: the account they signed in to cannot see that calendar, or the
+  address is another calendar's. Nothing was kept; they check both and sign
+  in again.
+- "the browser window was closed before the sign-in was done": they closed
+  it before signing in. Nothing was kept.
 - "no Chrome, Edge, Chromium or Brave was found": the sign-in needs one of
   them installed. One installed somewhere else is named by setting
   `AGENTRY_BROWSER` to its program before the command.

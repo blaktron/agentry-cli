@@ -31,12 +31,14 @@ const agentCalendarLong = "\n\n--calendar-feed <name> gives the Assistant a cale
 	"whose administrator turned off secret addresses gives only its \"Public address\n" +
 	"in iCal format\", which sends a fetch to Google's sign-in page. Add\n" +
 	"--calendar-sign-in: a browser window (Chrome, Edge, Chromium or Brave, in a\n" +
-	"profile of its own that is removed afterwards) opens at the address, you sign\n" +
-	"in, and the cookies that browser sends to the calendar's host are kept in your\n" +
-	"keychain beside the address, sent to that host alone. Set AGENTRY_BROWSER to a\n" +
-	"Chromium-family browser's program to use another. The service may end the\n" +
-	"sign-in after a while; run the same command again, pressing Enter at the\n" +
-	"address to keep it, to sign in again.\n\n" +
+	"profile of its own that is removed afterwards) opens at the address and you\n" +
+	"sign in. Agentry does not control the window while you do. It closes by itself\n" +
+	"once the calendar downloads; otherwise close it (on macOS, quit the browser)\n" +
+	"when you are signed in. The cookies that browser sends to the calendar's host\n" +
+	"are then kept in your keychain beside the address, sent to that host alone.\n" +
+	"Set AGENTRY_BROWSER to a Chromium-family browser's program to use another.\n" +
+	"The service may end the sign-in after a while; run the same command again,\n" +
+	"pressing Enter at the address to keep it, to sign in again.\n\n" +
 	"  agentry agent configure assistant --calendar-feed Work < work-address.txt\n" +
 	"  agentry agent configure assistant --calendar-feed Work --calendar-sign-in"
 

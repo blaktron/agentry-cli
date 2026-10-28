@@ -7,14 +7,26 @@
 // The browser is a Chromium-family one installed on this computer (Chrome,
 // Edge, Chromium or Brave), started in a fresh profile of its own that is
 // removed afterwards, so nothing of the person's everyday browser is read
-// or changed. It is driven over a pipe the process inherits (Chrome's
+// or changed. It is started twice.
+//
+// The window the person signs in is an ordinary browser that nothing
+// controls. A browser driven over DevTools is marked as automated
+// (navigator.webdriver is true in every page), and a sign-in page such as
+// Google's refuses it. The window opens a page written in the profile that
+// sends it on to the address, so the address is on no command line, and
+// the profile's download folder is inside the profile, so an address that
+// answers with a file leaves it nowhere else. The window ends when the
+// person closes it, or, once a download lands in that folder (the address
+// answered with its file), when it is asked to quit.
+//
+// The same profile is then opened again, headless, its last session
+// restored so that cookies kept until the browser closes are read too. It
+// is driven over a pipe the process inherits (Chrome's
 // --remote-debugging-pipe, or --remote-debugging-io-pipes on Windows),
-// never a debugging port another program could reach, and its downloads
-// are denied, so an address that answers with a file does not leave the
-// file on disk. While the window is open the browser's cookies for the
-// address are read every PollEvery; each new set is handed to the caller's
-// Ready, which says whether the address now answers as wanted. The first
-// set Ready accepts is returned and the browser is closed.
+// never a debugging port another program could reach, with its downloads
+// denied. The browser's cookies for the address are read and the browser
+// closed, and the caller's Ready says whether the address answers as wanted
+// with them.
 package browsersignin
 
 import (
@@ -30,13 +42,15 @@ import (
 	"time"
 )
 
-// PollEvery is how often the browser's cookies are read; RetryEvery is how
-// often a set of cookies Ready did not accept is tried again while it stays
-// the same, so a fetch that failed for a moment does not hold the sign-in
-// until it ends.
+// PollEvery is how often the window's download folder is looked at;
+// QuitWait is how long a window asked to quit has before it is killed;
+// ReadyTries is how many times Ready is asked, ReadyEvery apart, so a fetch
+// that failed for a moment does not lose the sign-in.
 var (
-	PollEvery  = 2 * time.Second
-	RetryEvery = 15 * time.Second
+	PollEvery  = time.Second
+	QuitWait   = 15 * time.Second
+	ReadyTries = 3
+	ReadyEvery = 2 * time.Second
 )
 
 // profilePrefix begins a sign-in profile's folder name; staleProfile is how
@@ -64,8 +78,8 @@ type Options struct {
 	// are read.
 	URL string
 	// Ready says whether the address answers as wanted when fetched with
-	// the Cookie header given. An error stops the sign-in; false keeps the
-	// window open.
+	// the Cookie header given. An error stops the sign-in at once; false
+	// ends it with ErrClosed once Ready has been asked ReadyTries times.
 	Ready func(ctx context.Context, header string) (bool, error)
 	// Browser is the browser's program; empty finds one (Find).
 	Browser string
@@ -73,13 +87,22 @@ type Options struct {
 	Progress func(string)
 }
 
-// ErrClosed says the person closed the browser window before the sign-in
-// was done.
+// ErrClosed says the browser window ended without a sign-in that Ready
+// accepts.
 var ErrClosed = errors.New("the browser window was closed before the sign-in was done")
 
-// Run opens the browser at o.URL and waits, until ctx ends, for a set of
-// cookies o.Ready accepts, which it returns: those the browser sends to
-// o.URL (Match).
+// ErrNotQuit says the window, asked to quit once the address's download
+// landed, had to be killed, and no sign-in was found in what it left.
+var ErrNotQuit = errors.New("the browser did not quit when asked, so its sign-in could not be read: sign in again, and close the window yourself once signed in")
+
+// notInTime is the error for a sign-in that ctx ended.
+func notInTime(ctx context.Context) error {
+	return fmt.Errorf("the sign-in was not done in time: %w", ctx.Err())
+}
+
+// Run opens a browser window at o.URL and waits, until ctx ends, for it to
+// close; then it returns the cookies the browser sends to o.URL (Match),
+// once o.Ready accepts them.
 func Run(ctx context.Context, o Options) ([]Cookie, error) {
 	u, err := url.Parse(o.URL)
 	if err != nil || u.Scheme != "https" || u.Hostname() == "" {
@@ -101,60 +124,78 @@ func Run(ctx context.Context, o Options) ([]Cookie, error) {
 	}
 	defer removeProfile(profile)
 
-	b, err := start(program, flags(profile))
+	opener, err := prepareProfile(profile, o.URL)
 	if err != nil {
 		return nil, err
 	}
-	defer b.close()
-
-	if _, err := b.call(ctx, "Browser.setDownloadBehavior", map[string]any{"behavior": "deny"}); err != nil {
-		return nil, fmt.Errorf("the browser did not answer: %w", err)
+	w, err := startWindow(program, append(flags(profile), "--new-window", opener))
+	if err != nil {
+		return nil, err
 	}
-	if err := b.open(ctx, o.URL); err != nil {
-		return nil, fmt.Errorf("the browser did not open the address: %w", err)
+	progress(o, signInHint)
+	killed, err := w.wait(ctx, filepath.Join(profile, downloadsDir))
+	if err != nil {
+		return nil, err
 	}
-	progress(o, "Sign in in the browser window that opened. It closes by itself once the calendar can be read.")
 
-	tick := time.NewTicker(PollEvery)
-	defer tick.Stop()
-	last, lastTry := "", time.Time{}
-	for {
-		select {
-		case <-ctx.Done():
-			return nil, fmt.Errorf("the sign-in was not done in time: %w", ctx.Err())
-		case <-b.exited:
-			return nil, ErrClosed
-		case <-tick.C:
+	progress(o, "Reading the sign-in from the browser.")
+	cookies, err := readCookies(ctx, program, profile)
+	if err != nil {
+		return nil, err
+	}
+	match := Match(cookies, u)
+	header := Header(match)
+	if header == "" {
+		if killed {
+			return nil, ErrNotQuit
 		}
-		open, err := b.pageOpen(ctx)
-		if err != nil {
-			if b.hasExited() {
-				return nil, ErrClosed
+		return nil, ErrClosed
+	}
+	for try := 0; try < ReadyTries; try++ {
+		if try > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, notInTime(ctx)
+			case <-time.After(ReadyEvery):
 			}
-			return nil, fmt.Errorf("the browser did not answer: %w", err)
 		}
-		if !open {
-			return nil, ErrClosed
-		}
-		cookies, err := b.cookies(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("the browser did not answer: %w", err)
-		}
-		match := Match(cookies, u)
-		header := Header(match)
-		if header == "" || (header == last && time.Since(lastTry) < RetryEvery) {
-			continue
-		}
-		last, lastTry = header, time.Now()
 		ok, err := o.Ready(ctx, header)
 		if err != nil {
 			return nil, err
 		}
 		if ok {
-			_, _ = b.call(ctx, "Browser.close", nil)
 			return match, nil
 		}
 	}
+	return nil, ErrClosed
+}
+
+// readCookies opens the profile again, headless and over the DevTools
+// pipe, and returns every cookie it holds. The last session is restored, or
+// the cookies kept only until the browser closed would be gone.
+func readCookies(ctx context.Context, program, profile string) ([]Cookie, error) {
+	b, err := start(program, append(flags(profile), "--headless=new", "--restore-last-session", "about:blank"))
+	if err != nil {
+		return nil, err
+	}
+	defer b.close()
+	if _, err := b.call(ctx, "Browser.setDownloadBehavior", map[string]any{"behavior": "deny"}); err != nil {
+		return nil, readErr(ctx, err)
+	}
+	cookies, err := b.cookies(ctx)
+	if err != nil {
+		return nil, readErr(ctx, err)
+	}
+	return cookies, nil
+}
+
+// readErr is the error for a read the browser did not answer, or that ctx
+// ended.
+func readErr(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return notInTime(ctx)
+	}
+	return fmt.Errorf("the browser did not answer: %w", err)
 }
 
 func progress(o Options, s string) {

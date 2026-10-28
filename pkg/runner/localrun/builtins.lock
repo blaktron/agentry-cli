@@ -169,3 +169,5 @@ agentry/assistant@1.15.2 sha256:486cbbf8ff873d5326caed8a0167581084b08ddb59fbdc27
 agentry/assistant@1.15.3 sha256:c4bb112ce314ee35dfdaefe4d1d958c3e51e794659991eea653ac6b12f53fd9b
 # 1.15.4, over 1.15.3: meeting-notes reads the count as the desktop's transcript writes it, speaker_count: estimated or given (speakers: is the list of labels), and diarization: done, off, unavailable or failed, with every line Room and the transcript's reason when not done; diarizer: names what told the voices apart.
 agentry/assistant@1.15.4 sha256:9064af821a4556b294c62c959286768be9e8cf296baf75f74a323b30ec5af814
+# 1.15.5, over 1.15.4: calendar-feeds-setup says Agentry does not control the sign-in window, which closes by itself once the calendar downloads and is otherwise closed by the person (the browser quit on a Mac), and what the two ways a sign-in ends without one say.
+agentry/assistant@1.15.5 sha256:1e997c55567962920a06b433c607c5cb42c740fe1868f5bacba8bc0b40fc79c8

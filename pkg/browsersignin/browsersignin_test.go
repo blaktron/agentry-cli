@@ -7,42 +7,135 @@ import (
 	"errors"
 	"net/url"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
 
-// The test binary is the browser too: run with fakeBrowserEnv set, it
-// speaks the DevTools pipe on descriptors 3 and 4 as the variable's mode
-// says, and writes its command line to the file fakeArgsEnv names.
+// The test binary is the browser too, run with fakeBrowserEnv set. Started
+// without --remote-debugging-pipe it is the sign-in window, which acts as
+// the variable's mode says; started with it, it is the headless read and
+// speaks the DevTools pipe on descriptors 3 and 4, answering with the
+// cookies the window left in its profile. Each start writes its command
+// line to the file fakeArgsEnv names, the read's with ".read" appended.
 const (
 	fakeBrowserEnv = "BROWSERSIGNIN_FAKE_BROWSER"
 	fakeArgsEnv    = "BROWSERSIGNIN_FAKE_ARGS"
+	fakeCookies    = "fake-cookies.json"
 )
 
 func TestMain(m *testing.M) {
 	if mode := os.Getenv(fakeBrowserEnv); mode != "" {
-		fakeBrowser(mode)
+		if slices.Contains(os.Args[1:], "--remote-debugging-pipe") {
+			fakeRead(mode)
+		} else {
+			fakeWindow(mode)
+		}
 		os.Exit(0)
 	}
 	os.Exit(m.Run())
 }
 
-// fakeBrowser answers the commands Run sends. In mode "signs-in" the
-// profile has a stranger's cookie at first, then the sign-in's after the
-// second read; in "closes" the window is gone after the address opens; in
-// "downloads" the download behaviour is refused.
-func fakeBrowser(mode string) {
+// signedIn are the cookies a sign-in leaves: the account's, the calendar
+// host's, and one kept only until the browser closes.
+var signedIn = []Cookie{
+	{Name: "SID", Value: "signed-in-0123456789", Domain: ".example.com", Path: "/", Secure: true},
+	{Name: "OSID", Value: "calendar-0123456789", Domain: "calendar.example.com", Path: "/", Secure: true},
+	{Name: "SESSION", Value: "until-closed-0123456789", Domain: "calendar.example.com", Path: "/feed", Secure: true},
+}
+
+func fakeArg(prefix string) string {
+	for _, a := range os.Args[1:] {
+		if v, ok := strings.CutPrefix(a, prefix); ok {
+			return v
+		}
+	}
+	return ""
+}
+
+func writeFakeArgs(suffix string) {
 	if f := os.Getenv(fakeArgsEnv); f != "" {
-		_ = os.WriteFile(f, []byte(strings.Join(os.Args[1:], "\n")), 0o600)
-		_ = os.WriteFile(f+".env", []byte(strings.Join(os.Environ(), "\n")), 0o600)
+		_ = os.WriteFile(f+suffix, []byte(strings.Join(os.Args[1:], "\n")), 0o600)
+		_ = os.WriteFile(f+suffix+".env", []byte(strings.Join(os.Environ(), "\n")), 0o600)
+	}
+}
+
+// fakeWindow is the sign-in window. In mode "signs-in" the person signs in
+// and the address's download lands, and it waits to be asked to quit; in
+// "ignores-quit" the download lands but the window never writes its cookies
+// and is not asked to quit by a signal it heeds; in "signs-in-shown" and
+// "read-hangs" the address is shown, not downloaded, and the person closes
+// the window; in "closes" the person closes it without signing in; in
+// "waits" nothing happens until it is killed.
+func fakeWindow(mode string) {
+	writeFakeArgs("")
+	profile := fakeArg("--user-data-dir=")
+	opener := os.Args[len(os.Args)-1]
+	page, _ := os.ReadFile(opener)
+	if f := os.Getenv(fakeArgsEnv); f != "" {
+		_ = os.WriteFile(f+".page", page, 0o600)
+	}
+	var prefs struct {
+		Download struct {
+			Dir    string `json:"default_directory"`
+			Prompt bool   `json:"prompt_for_download"`
+		} `json:"download"`
+	}
+	b, _ := os.ReadFile(filepath.Join(profile, "Default", "Preferences"))
+	_ = json.Unmarshal(b, &prefs)
+	signIn := func() {
+		b, _ := json.Marshal(signedIn)
+		_ = os.WriteFile(filepath.Join(profile, fakeCookies), b, 0o600)
+	}
+	switch mode {
+	case "signs-in":
+		quit := make(chan os.Signal, 1)
+		signal.Notify(quit, syscall.SIGTERM)
+		signIn()
+		_ = os.WriteFile(filepath.Join(prefs.Download.Dir, "Unconfirmed 1.crdownload"), []byte("BEGIN:VCAL"), 0o600)
+		time.Sleep(50 * time.Millisecond)
+		_ = os.Rename(filepath.Join(prefs.Download.Dir, "Unconfirmed 1.crdownload"), filepath.Join(prefs.Download.Dir, "basic.ics"))
+		<-quit
+		if f := os.Getenv(fakeArgsEnv); f != "" {
+			_ = os.WriteFile(f+".quit", nil, 0o600)
+			if _, err := os.Stat(filepath.Join(prefs.Download.Dir, "basic.ics")); err == nil {
+				_ = os.WriteFile(f+".left", nil, 0o600)
+			}
+		}
+	case "ignores-quit":
+		signal.Ignore(syscall.SIGTERM)
+		_ = os.WriteFile(filepath.Join(prefs.Download.Dir, "basic.ics"), []byte("BEGIN:VCALENDAR"), 0o600)
+		select {}
+	case "signs-in-shown", "read-hangs":
+		signIn()
+		time.Sleep(100 * time.Millisecond)
+	case "closes":
+	case "waits":
+		select {}
+	}
+}
+
+// fakeRead answers the commands the headless read sends; in mode
+// "downloads" it refuses to deny downloads, and in "read-hangs" it never
+// answers.
+func fakeRead(mode string) {
+	writeFakeArgs(".read")
+	if mode == "read-hangs" {
+		select {}
+	}
+	cookies := []Cookie{{Name: "stranger", Value: "x", Domain: "other.example", Path: "/"}}
+	if b, err := os.ReadFile(filepath.Join(fakeArg("--user-data-dir="), fakeCookies)); err == nil {
+		var kept []Cookie
+		_ = json.Unmarshal(b, &kept)
+		cookies = append(cookies, kept...)
 	}
 	in, out := os.NewFile(3, "in"), os.NewFile(4, "out")
 	r := bufio.NewReader(in)
-	reads, opened := 0, false
 	for {
 		msg, err := r.ReadBytes(0)
 		if err != nil {
@@ -61,26 +154,7 @@ func fakeBrowser(mode string) {
 			if mode == "downloads" || m.Params["behavior"] != "deny" {
 				fail = "refused"
 			}
-		case "Target.getTargets":
-			pages := []any{map[string]any{"targetId": "blank", "type": "page"}}
-			if opened {
-				pages = []any{map[string]any{"targetId": "feed", "type": "page"}, map[string]any{"targetId": "w", "type": "service_worker"}}
-				if mode == "closes" {
-					pages = pages[1:]
-				}
-			}
-			result = map[string]any{"targetInfos": pages}
-		case "Target.createTarget":
-			opened = m.Params["url"] == "https://calendar.example.com/feed/basic.ics"
-			result = map[string]any{"targetId": "feed"}
 		case "Storage.getCookies":
-			reads++
-			cookies := []Cookie{{Name: "stranger", Value: "x", Domain: "other.example", Path: "/"}}
-			if reads >= 2 {
-				cookies = append(cookies,
-					Cookie{Name: "SID", Value: "signed-in-0123456789", Domain: ".example.com", Path: "/", Secure: true},
-					Cookie{Name: "OSID", Value: "calendar-0123456789", Domain: "calendar.example.com", Path: "/", Secure: true})
-			}
 			result = map[string]any{"cookies": cookies}
 		case "Browser.close":
 			b, _ := json.Marshal(map[string]any{"id": m.ID, "result": result})
@@ -91,7 +165,7 @@ func fakeBrowser(mode string) {
 		if fail != "" {
 			b, _ = json.Marshal(map[string]any{"id": m.ID, "error": map[string]any{"message": fail}})
 		} else {
-			// An event first, which Run must pass over.
+			// An event first, which the read must pass over.
 			ev, _ := json.Marshal(map[string]any{"method": "Target.targetInfoChanged", "params": map[string]any{}})
 			_, _ = out.Write(append(ev, 0))
 			b, _ = json.Marshal(map[string]any{"id": m.ID, "result": result})
@@ -100,10 +174,12 @@ func fakeBrowser(mode string) {
 	}
 }
 
+const fakeFeed = "https://calendar.example.com/feed/basic.ics?a=1&b=<x>"
+
 func fakeOptions(t *testing.T, mode string, ready func(context.Context, string) (bool, error)) (Options, string) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
-		t.Skip("the fake browser reads descriptors 3 and 4")
+		t.Skip("the fake browser reads descriptors 3 and 4 and is asked to quit by a signal")
 	}
 	exe, err := os.Executable()
 	if err != nil {
@@ -112,59 +188,89 @@ func fakeOptions(t *testing.T, mode string, ready func(context.Context, string) 
 	args := t.TempDir() + "/args"
 	t.Setenv(fakeBrowserEnv, mode)
 	t.Setenv(fakeArgsEnv, args)
-	old, oldRetry := PollEvery, RetryEvery
-	PollEvery, RetryEvery = 10*time.Millisecond, 30*time.Millisecond
-	t.Cleanup(func() { PollEvery, RetryEvery = old, oldRetry })
-	return Options{URL: "https://calendar.example.com/feed/basic.ics", Browser: exe, Ready: ready}, args
+	old, oldQuit, oldReady := PollEvery, QuitWait, ReadyEvery
+	PollEvery, QuitWait, ReadyEvery = 10*time.Millisecond, 5*time.Second, 10*time.Millisecond
+	t.Cleanup(func() { PollEvery, QuitWait, ReadyEvery = old, oldQuit, oldReady })
+	return Options{URL: fakeFeed, Browser: exe, Ready: ready}, args
 }
 
-func TestRunReturnsTheCookiesOnceTheAddressAnswers(t *testing.T) {
+func readArgs(t *testing.T, file string) string {
+	t.Helper()
+	b, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+func TestRunReadsTheSignInOnceTheDownloadLands(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "model-key-0123456789")
 	t.Setenv("XAUTHORITY", "/run/user/1000/xauth")
 	var headers []string
-	failedOnce := false
 	o, args := fakeOptions(t, "signs-in", func(_ context.Context, h string) (bool, error) {
 		headers = append(headers, h)
-		if strings.Contains(h, "SID=") && !failedOnce {
-			// A fetch that fails for a moment is tried again with the
-			// same cookies.
-			failedOnce = true
-			return false, nil
-		}
-		return strings.Contains(h, "SID="), nil
+		// A fetch that fails for a moment is tried again.
+		return len(headers) > 1, nil
 	})
+	var told []string
+	o.Progress = func(s string) { told = append(told, s) }
 	got, err := Run(context.Background(), o)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if h := Header(got); h != "SID=signed-in-0123456789; OSID=calendar-0123456789" && h != "OSID=calendar-0123456789; SID=signed-in-0123456789" {
-		t.Errorf("cookies %+v", got)
+	if h := Header(got); h != "SESSION=until-closed-0123456789; SID=signed-in-0123456789; OSID=calendar-0123456789" {
+		t.Errorf("cookies %q", h)
 	}
-	if slices.ContainsFunc(headers, func(h string) bool { return strings.Contains(h, "stranger") }) {
-		t.Errorf("another site's cookie was sent: %v", headers)
+	if len(headers) != 2 || strings.Contains(headers[0], "stranger") {
+		t.Errorf("Ready was asked %q", headers)
 	}
-	b, err := os.ReadFile(args)
-	if err != nil {
-		t.Fatal(err)
+	if _, err := os.Stat(args + ".quit"); err != nil {
+		t.Error("the window was not asked to quit once the download landed")
 	}
-	cmdline := string(b)
-	for _, want := range []string{"--remote-debugging-pipe", "--user-data-dir=", "--no-first-run", "about:blank"} {
-		if !strings.Contains(cmdline, want) {
-			t.Errorf("the command line lacks %s:\n%s", want, cmdline)
+	if _, err := os.Stat(args + ".left"); err == nil {
+		t.Error("the download was still there when the window was asked to quit")
+	}
+	if len(told) == 0 || !strings.Contains(told[0], "closes by itself") {
+		t.Errorf("progress %q", told)
+	}
+
+	window, read := readArgs(t, args), readArgs(t, args+".read")
+	for _, want := range []string{"--user-data-dir=", "--no-first-run", "--password-store=basic", "--new-window", openerPage} {
+		if !strings.Contains(window, want) {
+			t.Errorf("the window's command line lacks %s:\n%s", want, window)
 		}
 	}
-	if strings.Contains(cmdline, "calendar.example.com") || strings.Contains(cmdline, "--remote-debugging-port") {
-		t.Errorf("the address or a debugging port is on the command line:\n%s", cmdline)
+	if strings.Contains(window, "--remote-debugging") || strings.Contains(window, "--headless") {
+		t.Errorf("the window is controlled:\n%s", window)
 	}
-	env, err := os.ReadFile(args + ".env")
-	if err != nil {
-		t.Fatal(err)
+	for _, want := range []string{"--remote-debugging-pipe", "--headless=new", "--restore-last-session", "about:blank"} {
+		if !strings.Contains(read, want) {
+			t.Errorf("the read's command line lacks %s:\n%s", want, read)
+		}
 	}
-	if strings.Contains(string(env), "model-key-0123") || !strings.Contains(string(env), "XAUTHORITY=") {
-		t.Errorf("the browser's environment:\n%s", env)
+	if strings.Contains(read, "--remote-debugging-port") {
+		t.Errorf("the read listens on a port:\n%s", read)
 	}
-	// The profile is removed afterwards.
-	for _, line := range strings.Split(cmdline, "\n") {
+	if strings.Contains(window+read, "calendar.example.com") {
+		t.Errorf("the address is on a command line:\n%s\n%s", window, read)
+	}
+
+	// The opener page sends the window on to the address, which cannot
+	// end its script.
+	page := readArgs(t, args+".page")
+	target, _ := json.Marshal(fakeFeed)
+	if !strings.Contains(page, "location.replace("+string(target)+")") || strings.Contains(page, "<x>") {
+		t.Errorf("the opener page:\n%s", page)
+	}
+
+	for _, f := range []string{args + ".env", args + ".read.env"} {
+		env := readArgs(t, f)
+		if strings.Contains(env, "model-key-0123") || !strings.Contains(env, "XAUTHORITY=") {
+			t.Errorf("the browser's environment:\n%s", env)
+		}
+	}
+	// The profile, its download and the opener page are removed afterwards.
+	for _, line := range strings.Split(window, "\n") {
 		if dir, ok := strings.CutPrefix(line, "--user-data-dir="); ok {
 			if _, err := os.Stat(dir); !os.IsNotExist(err) {
 				t.Errorf("the profile %s is left: %v", dir, err)
@@ -173,10 +279,38 @@ func TestRunReturnsTheCookiesOnceTheAddressAnswers(t *testing.T) {
 	}
 }
 
-func TestRunStopsWhenTheWindowCloses(t *testing.T) {
-	o, _ := fakeOptions(t, "closes", func(context.Context, string) (bool, error) { return false, nil })
+func TestRunReadsTheSignInWhenThePersonClosesTheWindow(t *testing.T) {
+	o, args := fakeOptions(t, "signs-in-shown", func(_ context.Context, h string) (bool, error) {
+		return strings.Contains(h, "SID="), nil
+	})
+	got, err := Run(context.Background(), o)
+	if err != nil || len(got) != 3 {
+		t.Fatalf("Run = %+v, %v", got, err)
+	}
+	if _, err := os.Stat(args + ".quit"); err == nil {
+		t.Error("a window with no download was asked to quit")
+	}
+}
+
+func TestRunStopsWhenTheWindowClosesWithoutASignIn(t *testing.T) {
+	asked := false
+	o, _ := fakeOptions(t, "closes", func(context.Context, string) (bool, error) { asked = true; return true, nil })
 	if _, err := Run(context.Background(), o); !errors.Is(err, ErrClosed) {
 		t.Fatalf("Run = %v", err)
+	}
+	if asked {
+		t.Error("Ready was asked with no cookie for the address")
+	}
+}
+
+func TestRunStopsWhenTheSignInCannotReadTheAddress(t *testing.T) {
+	asked := 0
+	o, _ := fakeOptions(t, "signs-in-shown", func(context.Context, string) (bool, error) { asked++; return false, nil })
+	if _, err := Run(context.Background(), o); !errors.Is(err, ErrClosed) {
+		t.Fatalf("Run = %v", err)
+	}
+	if asked != ReadyTries {
+		t.Errorf("Ready was asked %d times", asked)
 	}
 }
 
@@ -188,19 +322,39 @@ func TestRunStopsOnReadyError(t *testing.T) {
 	}
 }
 
-func TestRunNeedsDownloadsDenied(t *testing.T) {
+func TestRunNeedsDownloadsDeniedInTheRead(t *testing.T) {
 	o, _ := fakeOptions(t, "downloads", func(context.Context, string) (bool, error) { return true, nil })
 	if _, err := Run(context.Background(), o); err == nil || !strings.Contains(err.Error(), "refused") {
 		t.Fatalf("Run = %v", err)
 	}
 }
 
+func TestRunSaysSoWhenTheWindowDidNotQuit(t *testing.T) {
+	o, _ := fakeOptions(t, "ignores-quit", func(context.Context, string) (bool, error) { return true, nil })
+	QuitWait = 100 * time.Millisecond
+	if _, err := Run(context.Background(), o); !errors.Is(err, ErrNotQuit) {
+		t.Fatalf("Run = %v", err)
+	}
+}
+
+func TestRunEndsWithTheContextWhileReading(t *testing.T) {
+	o, _ := fakeOptions(t, "read-hangs", func(context.Context, string) (bool, error) { return true, nil })
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	if _, err := Run(ctx, o); !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "not done in time") {
+		t.Fatalf("Run = %v", err)
+	}
+}
+
 func TestRunEndsWithTheContext(t *testing.T) {
-	o, _ := fakeOptions(t, "signs-in", func(context.Context, string) (bool, error) { return false, nil })
-	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	o, args := fakeOptions(t, "waits", func(context.Context, string) (bool, error) { return true, nil })
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 	if _, err := Run(ctx, o); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Run = %v", err)
+	}
+	if _, err := os.Stat(args + ".read"); err == nil {
+		t.Error("the profile was read after the sign-in was given up")
 	}
 }
 
