@@ -54,35 +54,37 @@ func startWindow(program string, args []string) (*window, error) {
 }
 
 // wait returns once the window has ended: closed by the person, or asked to
-// quit once a download has landed in downloads. When ctx ends first the
+// quit once a download has landed in downloads, which is removed at once.
+// killed says a window asked to quit did not within QuitWait and was
+// killed, so it may not have written its cookies. When ctx ends first the
 // browser is killed.
-func (w *window) wait(ctx context.Context, downloads string) error {
+func (w *window) wait(ctx context.Context, downloads string) (killed bool, err error) {
 	tick := time.NewTicker(PollEvery)
 	defer tick.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			w.kill()
-			return fmt.Errorf("the sign-in was not done in time: %w", ctx.Err())
+			return false, notInTime(ctx)
 		case <-w.exited:
-			return nil
+			return false, nil
 		case <-tick.C:
 		}
-		if !downloaded(downloads) {
+		if !removeDownloads(downloads) {
 			continue
 		}
-		// Asked to quit, the browser writes its cookies first; killed, it
-		// may not, which the read that follows finds.
+		// Asked to quit, the browser writes its cookies first.
 		_ = quit(w.cmd)
 		select {
 		case <-w.exited:
+			return false, nil
 		case <-time.After(QuitWait):
 			w.kill()
+			return true, nil
 		case <-ctx.Done():
 			w.kill()
-			return fmt.Errorf("the sign-in was not done in time: %w", ctx.Err())
+			return false, notInTime(ctx)
 		}
-		return nil
 	}
 }
 
@@ -91,33 +93,39 @@ func (w *window) kill() {
 	<-w.exited
 }
 
-// downloaded says a download has finished in dir: a file there that is not
-// one the browser is still writing.
-func downloaded(dir string) bool {
+// removeDownloads removes every finished download in dir, a file there
+// that is not one the browser is still writing, so the calendar it holds
+// is not left behind by a run that is killed, and says whether there was
+// one.
+func removeDownloads(dir string) bool {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return false
 	}
+	found := false
 	for _, e := range entries {
 		if e.Type().IsRegular() && !strings.HasSuffix(e.Name(), ".crdownload") {
-			return true
+			_ = os.Remove(filepath.Join(dir, e.Name()))
+			found = true
 		}
 	}
-	return false
+	return found
 }
 
 // prepareProfile writes what the window starts with into the profile: its
 // preferences, which put downloads in the profile's own folder without
 // asking, and the page that sends the window on to address, whose path it
 // returns. The profile folder is the person's alone (os.MkdirTemp makes it
-// 0700), so the address is kept from other users as a command line is not.
+// 0700 on Unix; on Windows it is in the person's own temporary folder), so
+// other users cannot read the address there as they can a command line.
 func prepareProfile(profile, address string) (string, error) {
+	fail := func(err error) (string, error) { return "", fmt.Errorf("make the browser's profile: %w", err) }
 	downloads := filepath.Join(profile, downloadsDir)
 	if err := os.MkdirAll(downloads, 0o700); err != nil {
-		return "", fmt.Errorf("make the browser's profile: %w", err)
+		return fail(err)
 	}
 	if err := os.MkdirAll(filepath.Join(profile, "Default"), 0o700); err != nil {
-		return "", fmt.Errorf("make the browser's profile: %w", err)
+		return fail(err)
 	}
 	prefs, err := json.Marshal(map[string]any{
 		"download": map[string]any{"default_directory": downloads, "prompt_for_download": false, "directory_upgrade": true},
@@ -127,7 +135,7 @@ func prepareProfile(profile, address string) (string, error) {
 		return "", err
 	}
 	if err := os.WriteFile(filepath.Join(profile, "Default", "Preferences"), prefs, 0o600); err != nil {
-		return "", fmt.Errorf("make the browser's profile: %w", err)
+		return fail(err)
 	}
 	// json.Marshal escapes <, > and &, so the address cannot end the script.
 	target, err := json.Marshal(address)
@@ -139,7 +147,7 @@ func prepareProfile(profile, address string) (string, error) {
 		"<p><a href=\"" + html.EscapeString(address) + "\">Continue to the sign-in</a></p>\n"
 	opener := filepath.Join(profile, openerPage)
 	if err := os.WriteFile(opener, []byte(page), 0o600); err != nil {
-		return "", fmt.Errorf("make the browser's profile: %w", err)
+		return fail(err)
 	}
 	return opener, nil
 }

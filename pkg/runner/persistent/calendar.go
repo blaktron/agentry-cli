@@ -418,9 +418,9 @@ var calendarSignIn = browsersignin.Run
 // where the person signs in to the account the calendar belongs to, and,
 // once the window has closed, returns the browser's sign-in (the cookies it
 // sends to the address, as KeepCalendarSession keeps them) if the address
-// answers with a calendar, with that calendar's name and events' count. progress, when
-// set, is told what it waits for. No error repeats the address or the
-// sign-in.
+// answers with a calendar, with that calendar's name and events' count.
+// progress, when set, is told what it waits for. No error repeats the
+// address or the sign-in.
 func SignInCalendarFeed(ctx context.Context, address string, progress func(string)) (session, calName string, events int, err error) {
 	ctx, cancel := context.WithTimeout(ctx, CalendarSignInTimeout)
 	defer cancel()

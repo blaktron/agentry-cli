@@ -82,7 +82,7 @@ func TestTheCalendarSetupSkillSaysHowTheSignInEnds(t *testing.T) {
 		}
 	}
 	if strings.Contains(s, "stays open after they signed in") {
-		t.Error("the skill still says the window stays open for an account that cannot read the calendar")
+		t.Error("the skill says the window stays open for an account that cannot read the calendar")
 	}
 }
 

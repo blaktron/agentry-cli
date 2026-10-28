@@ -67,9 +67,11 @@ func writeFakeArgs(suffix string) {
 
 // fakeWindow is the sign-in window. In mode "signs-in" the person signs in
 // and the address's download lands, and it waits to be asked to quit; in
-// "signs-in-shown" the address is shown, not downloaded, and the person
-// closes the window; in "closes" the person closes it without signing in;
-// in "waits" nothing happens until it is killed.
+// "ignores-quit" the download lands but the window never writes its cookies
+// and is not asked to quit by a signal it heeds; in "signs-in-shown" and
+// "read-hangs" the address is shown, not downloaded, and the person closes
+// the window; in "closes" the person closes it without signing in; in
+// "waits" nothing happens until it is killed.
 func fakeWindow(mode string) {
 	writeFakeArgs("")
 	profile := fakeArg("--user-data-dir=")
@@ -101,8 +103,15 @@ func fakeWindow(mode string) {
 		<-quit
 		if f := os.Getenv(fakeArgsEnv); f != "" {
 			_ = os.WriteFile(f+".quit", nil, 0o600)
+			if _, err := os.Stat(filepath.Join(prefs.Download.Dir, "basic.ics")); err == nil {
+				_ = os.WriteFile(f+".left", nil, 0o600)
+			}
 		}
-	case "signs-in-shown":
+	case "ignores-quit":
+		signal.Ignore(syscall.SIGTERM)
+		_ = os.WriteFile(filepath.Join(prefs.Download.Dir, "basic.ics"), []byte("BEGIN:VCALENDAR"), 0o600)
+		select {}
+	case "signs-in-shown", "read-hangs":
 		signIn()
 		time.Sleep(100 * time.Millisecond)
 	case "closes":
@@ -112,9 +121,13 @@ func fakeWindow(mode string) {
 }
 
 // fakeRead answers the commands the headless read sends; in mode
-// "downloads" it refuses to deny downloads.
+// "downloads" it refuses to deny downloads, and in "read-hangs" it never
+// answers.
 func fakeRead(mode string) {
 	writeFakeArgs(".read")
+	if mode == "read-hangs" {
+		select {}
+	}
 	cookies := []Cookie{{Name: "stranger", Value: "x", Domain: "other.example", Path: "/"}}
 	if b, err := os.ReadFile(filepath.Join(fakeArg("--user-data-dir="), fakeCookies)); err == nil {
 		var kept []Cookie
@@ -175,9 +188,9 @@ func fakeOptions(t *testing.T, mode string, ready func(context.Context, string) 
 	args := t.TempDir() + "/args"
 	t.Setenv(fakeBrowserEnv, mode)
 	t.Setenv(fakeArgsEnv, args)
-	old, oldQuit := PollEvery, QuitWait
-	PollEvery, QuitWait = 10*time.Millisecond, 5*time.Second
-	t.Cleanup(func() { PollEvery, QuitWait = old, oldQuit })
+	old, oldQuit, oldReady := PollEvery, QuitWait, ReadyEvery
+	PollEvery, QuitWait, ReadyEvery = 10*time.Millisecond, 5*time.Second, 10*time.Millisecond
+	t.Cleanup(func() { PollEvery, QuitWait, ReadyEvery = old, oldQuit, oldReady })
 	return Options{URL: fakeFeed, Browser: exe, Ready: ready}, args
 }
 
@@ -213,6 +226,9 @@ func TestRunReadsTheSignInOnceTheDownloadLands(t *testing.T) {
 	}
 	if _, err := os.Stat(args + ".quit"); err != nil {
 		t.Error("the window was not asked to quit once the download landed")
+	}
+	if _, err := os.Stat(args + ".left"); err == nil {
+		t.Error("the download was still there when the window was asked to quit")
 	}
 	if len(told) == 0 || !strings.Contains(told[0], "closes by itself") {
 		t.Errorf("progress %q", told)
@@ -309,6 +325,23 @@ func TestRunStopsOnReadyError(t *testing.T) {
 func TestRunNeedsDownloadsDeniedInTheRead(t *testing.T) {
 	o, _ := fakeOptions(t, "downloads", func(context.Context, string) (bool, error) { return true, nil })
 	if _, err := Run(context.Background(), o); err == nil || !strings.Contains(err.Error(), "refused") {
+		t.Fatalf("Run = %v", err)
+	}
+}
+
+func TestRunSaysSoWhenTheWindowDidNotQuit(t *testing.T) {
+	o, _ := fakeOptions(t, "ignores-quit", func(context.Context, string) (bool, error) { return true, nil })
+	QuitWait = 100 * time.Millisecond
+	if _, err := Run(context.Background(), o); !errors.Is(err, ErrNotQuit) {
+		t.Fatalf("Run = %v", err)
+	}
+}
+
+func TestRunEndsWithTheContextWhileReading(t *testing.T) {
+	o, _ := fakeOptions(t, "read-hangs", func(context.Context, string) (bool, error) { return true, nil })
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	if _, err := Run(ctx, o); !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "not done in time") {
 		t.Fatalf("Run = %v", err)
 	}
 }

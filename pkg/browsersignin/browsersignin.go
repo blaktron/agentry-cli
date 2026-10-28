@@ -44,12 +44,13 @@ import (
 
 // PollEvery is how often the window's download folder is looked at;
 // QuitWait is how long a window asked to quit has before it is killed;
-// ReadyTries is how many times Ready is asked, PollEvery apart, so a fetch
+// ReadyTries is how many times Ready is asked, ReadyEvery apart, so a fetch
 // that failed for a moment does not lose the sign-in.
 var (
 	PollEvery  = time.Second
 	QuitWait   = 15 * time.Second
 	ReadyTries = 3
+	ReadyEvery = 2 * time.Second
 )
 
 // profilePrefix begins a sign-in profile's folder name; staleProfile is how
@@ -90,6 +91,15 @@ type Options struct {
 // accepts.
 var ErrClosed = errors.New("the browser window was closed before the sign-in was done")
 
+// ErrNotQuit says the window, asked to quit once the address's download
+// landed, had to be killed, and no sign-in was found in what it left.
+var ErrNotQuit = errors.New("the browser did not quit when asked, so its sign-in could not be read: sign in again, and close the window yourself once signed in")
+
+// notInTime is the error for a sign-in that ctx ended.
+func notInTime(ctx context.Context) error {
+	return fmt.Errorf("the sign-in was not done in time: %w", ctx.Err())
+}
+
 // Run opens a browser window at o.URL and waits, until ctx ends, for it to
 // close; then it returns the cookies the browser sends to o.URL (Match),
 // once o.Ready accepts them.
@@ -123,7 +133,8 @@ func Run(ctx context.Context, o Options) ([]Cookie, error) {
 		return nil, err
 	}
 	progress(o, signInHint)
-	if err := w.wait(ctx, filepath.Join(profile, downloadsDir)); err != nil {
+	killed, err := w.wait(ctx, filepath.Join(profile, downloadsDir))
+	if err != nil {
 		return nil, err
 	}
 
@@ -135,14 +146,17 @@ func Run(ctx context.Context, o Options) ([]Cookie, error) {
 	match := Match(cookies, u)
 	header := Header(match)
 	if header == "" {
+		if killed {
+			return nil, ErrNotQuit
+		}
 		return nil, ErrClosed
 	}
 	for try := 0; try < ReadyTries; try++ {
 		if try > 0 {
 			select {
 			case <-ctx.Done():
-				return nil, fmt.Errorf("the sign-in was not done in time: %w", ctx.Err())
-			case <-time.After(PollEvery):
+				return nil, notInTime(ctx)
+			case <-time.After(ReadyEvery):
 			}
 		}
 		ok, err := o.Ready(ctx, header)
@@ -166,13 +180,22 @@ func readCookies(ctx context.Context, program, profile string) ([]Cookie, error)
 	}
 	defer b.close()
 	if _, err := b.call(ctx, "Browser.setDownloadBehavior", map[string]any{"behavior": "deny"}); err != nil {
-		return nil, fmt.Errorf("the browser did not answer: %w", err)
+		return nil, readErr(ctx, err)
 	}
 	cookies, err := b.cookies(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("the browser did not answer: %w", err)
+		return nil, readErr(ctx, err)
 	}
 	return cookies, nil
+}
+
+// readErr is the error for a read the browser did not answer, or that ctx
+// ended.
+func readErr(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return notInTime(ctx)
+	}
+	return fmt.Errorf("the browser did not answer: %w", err)
 }
 
 func progress(o Options, s string) {
