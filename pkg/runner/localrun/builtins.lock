@@ -167,3 +167,5 @@ agentry/assistant@1.15.1 sha256:d3d8d8882f61e1623e1c09b307acc2880955b2bfca00affe
 agentry/assistant@1.15.2 sha256:486cbbf8ff873d5326caed8a0167581084b08ddb59fbdc278dcb03419c337731
 # 1.15.3, over 1.15.2: meeting-notes reads a meeting held in the room (setting: in-room): Room is everyone in the room, Speaker 1, 2, … are voices as Agentry Desktop's clustering heard them and never identities (speakers: estimated or given); a Them, Room or Speaker line is named only from the transcript's own words and then as inferred, a room's line is never taken as the person's, and no memory page is made for a label; the README says so.
 agentry/assistant@1.15.3 sha256:c4bb112ce314ee35dfdaefe4d1d958c3e51e794659991eea653ac6b12f53fd9b
+# 1.15.4, over 1.15.3: meeting-notes reads the count as the desktop's transcript writes it, speaker_count: estimated or given (speakers: is the list of labels), and diarization: done, off, unavailable or failed, with every line Room and the transcript's reason when not done; diarizer: names what told the voices apart.
+agentry/assistant@1.15.4 sha256:9064af821a4556b294c62c959286768be9e8cf296baf75f74a323b30ec5af814

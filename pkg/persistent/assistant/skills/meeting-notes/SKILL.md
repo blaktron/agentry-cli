@@ -32,11 +32,16 @@ recording. The labels say where a line came from, never who said it:
   person. **Speaker 1**, **Speaker 2**, … are voices as Agentry's speaker
   clustering heard them: the same number is the same voice within this one
   transcript, numbered by who spoke first, and never an identity. One
-  person may appear under two numbers, or two people under one, and
-  `speakers: estimated` says the count was guessed, `speakers: given` that
-  the person said how many were there. The person is one of the voices in
-  the room, which one is unknown: never take a Room or Speaker line as
-  theirs.
+  person may appear under two numbers, or two people under one.
+  `speaker_count: estimated` says the count was guessed, `speaker_count:
+  given` that the person said how many were there; `speakers:` is the list of
+  labels. `diarization: done` means the voices were told apart and the
+  lines carry Speaker numbers. With `off`, `unavailable` or `failed`
+  every line is Room, and the paragraphs above the transcript say why:
+  give the reason when you say the Room lines are not split by person.
+  `diarizer:` names what told the voices apart. The person is one of the
+  voices in the room, which one is unknown: never take a Room or Speaker
+  line as theirs.
 - **Names.** Never put a name on a Them, Room or Speaker line from the
   calendar, the participants, the voice or a guess. Only the transcript
   can give one: a line where a speaker says their own name, or a reply
