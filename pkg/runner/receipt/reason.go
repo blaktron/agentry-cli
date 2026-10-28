@@ -176,6 +176,12 @@ const (
 	// it (output; exit 17). Reasoning is never taken as
 	// the result; the events receipt keeps it.
 	ReasonAnswerInReasoning ReasonCode = "answer-in-reasoning"
+	// ReasonToolCallAsText: the model's final message is a tool call
+	// written in its own markup, which its provider did not parse into a
+	// call, so the harness ended the run on it (output; exit 14). The
+	// message is never taken as a text result; it stays the run's result
+	// and in the receipts.
+	ReasonToolCallAsText ReasonCode = "tool-call-as-text"
 	// ReasonHostRefused: a target host the person named was not reached
 	// (prepare or infra). Names: the host questions' ids; Detail: why (Host*).
 	// Never the host's name or address: those are the person's.
@@ -326,6 +332,7 @@ var reasonCodes = map[ReasonCode]struct {
 	ReasonOrgPolicy:         {details: []string{OrgPolicyClient, OrgPolicyManagedApproval}},
 	ReasonOutOfCredits:      {},
 	ReasonAnswerInReasoning: {},
+	ReasonToolCallAsText:    {},
 	ReasonHostRefused: {names: namesQuestion, details: []string{
 		HostAddress, HostKeyUnknown, HostKeyChanged, HostAuth, HostCredential, HostUnreachable, HostHosted,
 	}},

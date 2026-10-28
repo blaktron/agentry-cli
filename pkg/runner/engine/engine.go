@@ -718,6 +718,10 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 		env.Result = receipt.TextResult(outcome.lastText)
 		return fail(env, redact, serr)
 	}
+	if p.Plan.Harness.ResultKind != "json" && toolCallAsText(outcome.lastText) {
+		env.Result = receipt.TextResult(outcome.lastText)
+		return fail(env, redact, errToolCallAsText())
+	}
 	result, rerr := finalResult(p.Plan.Harness.ResultKind, outcome.lastText, schema)
 	if rerr != nil {
 		env.Result = receipt.TextResult(outcome.lastText)
