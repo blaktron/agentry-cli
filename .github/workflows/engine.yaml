@@ -56,23 +56,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - name: Authenticate for the private blaktron modules (job-scoped)
-        env:
-          AGENTRY_BUILD_TOKEN: ${{ secrets.AGENTRY_BUILD_TOKEN }}
-        run: |
-          set -euo pipefail
-          echo "GOPRIVATE=github.com/blaktron/*" >> "$GITHUB_ENV"
-          if [ -n "$AGENTRY_BUILD_TOKEN" ]; then
-            echo "GIT_CONFIG_GLOBAL=$RUNNER_TEMP/gitconfig" >> "$GITHUB_ENV"
-            git config --file "$RUNNER_TEMP/gitconfig" url."https://x-access-token:${AGENTRY_BUILD_TOKEN}@github.com/".insteadOf "https://github.com/"
-          else
-            echo "::warning::AGENTRY_BUILD_TOKEN is not set; the private blaktron modules resolve only from the runner's module cache"
-          fi
       - name: Build the CLI
         run: make build
-      - name: Remove the job-scoped git credential
-        if: always()
-        run: rm -f "$RUNNER_TEMP/gitconfig"
       - name: Engine conformance on rootless podman
         env:
           ENGINE_PODMAN_NAME: agentry-engine-podman-${{ github.run_id }}-${{ github.run_attempt }}
