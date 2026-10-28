@@ -100,6 +100,10 @@ func Args(proxy string, secrets bool) []string {
 	a := []string{
 		"--headless", "--isolated", "--browser", "chromium",
 		"--caps", "testing,pdf",
+		// No generated Playwright code after each action's result: the
+		// agent never needs it, and it would sit in every browser result
+		// the conversation keeps.
+		"--codegen", "none",
 		"--proxy-server", "http://" + proxy + ":" + strconv.Itoa(ProxyPort),
 		"--output-dir", OutMount,
 		"--viewport-size", Viewport,

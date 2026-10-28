@@ -24,7 +24,7 @@ func TestToolsIsAnAllowlistAndLosesEvaluateWithSecrets(t *testing.T) {
 
 func TestArgs(t *testing.T) {
 	a := strings.Join(Args("proxy-x", false), " ")
-	for _, want := range []string{"--headless", "--isolated", "--browser chromium", "--caps testing,pdf", "--proxy-server http://proxy-x:3128", "--output-dir /out-browser", "--config " + ConfigMount} {
+	for _, want := range []string{"--headless", "--isolated", "--browser chromium", "--caps testing,pdf", "--codegen none", "--proxy-server http://proxy-x:3128", "--output-dir /out-browser", "--config " + ConfigMount} {
 		if !strings.Contains(a, want) {
 			t.Errorf("args %q lack %q", a, want)
 		}
