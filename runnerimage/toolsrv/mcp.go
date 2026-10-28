@@ -99,6 +99,10 @@ type server struct {
 	// (review.go); a test may set it first.
 	reviewOnce  sync.Once
 	reviewState *reviewState
+	// reads is the current turn's re-read log (reread.go), and callStubbed
+	// says the call being handled was answered with its stub.
+	reads       rereadLog
+	callStubbed bool
 	// callFault says the call being handled failed on the run's own
 	// machinery (calls.go): set by failed, read and cleared by recordCall.
 	callFault bool
@@ -421,7 +425,7 @@ func (s *server) handleToolsCall(req rpcRequest) {
 	s.callPersonsInput = false
 	text, isErr := s.callTool(d, p.Arguments)
 	content := map[string]any{"type": "text", "text": text}
-	if (d.personsInput || s.callPersonsInput) && !isErr {
+	if (d.personsInput || s.callPersonsInput) && !isErr && !s.callStubbed {
 		content = inputResult(text)
 	}
 	s.writeResult(req.ID, map[string]any{
@@ -436,10 +440,14 @@ func (s *server) handleToolsCall(req rpcRequest) {
 // in every result first, whichever tool read them back: a program can leave
 // one in a file another tool reads.
 func (s *server) callTool(d toolDef, args json.RawMessage) (string, bool) {
-	s.callFault = false
+	s.callFault, s.callStubbed = false, false
 	text, isErr := d.call(args)
 	s.recordCall(d.name, !isErr)
-	return s.spec.Limits.budget().fitResult(d.name, s.scrubStoredSecrets(text)), isErr
+	text = s.spec.Limits.budget().fitResult(d.name, s.scrubStoredSecrets(text))
+	if !isErr {
+		text, s.callStubbed = s.reread(d.name, args, text)
+	}
+	return text, isErr
 }
 
 // InputResourceURI names the embedded resource an input tool's answer

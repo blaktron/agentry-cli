@@ -63,6 +63,9 @@ type runDirs struct {
 	// volume, its memory volume, and the folder of the share's malware
 	// verdicts; empty for any other run.
 	share, data, memory, shareChecks string
+	// turns is the folder of the run's turn count (spec.TurnsFile), which
+	// the tools server's re-read stub reads.
+	turns string
 	// appLink is the supervisor's app link socket, for a segment whose plan
 	// has an app link.
 	appLink string
@@ -428,10 +431,14 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	// inputs/, inputs-text/ and knowledge/ exist even when empty: the
 	// compiled catalog always mounts them :ro, and an absent bind source
 	// would fail the tools container.
-	for _, dir := range []string{rd.workspace, rd.inputs, rd.inputsText, rd.knowledge, filepath.Join(rd.cfg, "gateway"), filepath.Join(p.OutDir, "reports"), rd.receiptsDir} {
+	rd.turns = filepath.Join(rd.cfg, "turns")
+	for _, dir := range []string{rd.workspace, rd.inputs, rd.inputsText, rd.knowledge, filepath.Join(rd.cfg, "gateway"), filepath.Join(p.OutDir, "reports"), rd.receiptsDir, rd.turns} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, Classify(ExitCLI, fmt.Errorf("create run dirs: %w", err))
 		}
+	}
+	if err := writeTurn(rd.turns, 0); err != nil {
+		return nil, Classify(ExitCLI, err)
 	}
 	if err := preparePersistentFolders(p, rd); err != nil {
 		return nil, err
