@@ -36,6 +36,11 @@ type coldKey struct{ adapter, provider string }
 // shorter row.
 const coldAfterLong = 60 * time.Minute
 
+// ColdCompactionFloor is the smallest conversation, in tokens, a cold-cache
+// compaction compacts: below it the history costs too little to be worth a
+// compaction's own request.
+const ColdCompactionFloor = 40_000
+
 // What a cold-cache clear keeps whole.
 const (
 	// coldKeepTurns is how many turns before the current one keep their
@@ -46,10 +51,10 @@ const (
 	coldKeepBrowser = 2
 )
 
-// coldAfterFor is how long after a model response the adapter named name, on
+// ColdAfter is how long after a model response the adapter named name, on
 // provider (the policy's name), takes its prompt cache as expired: the
 // adapter's row for that provider, else its row for any, else the longest.
-func coldAfterFor(name, provider string) time.Duration {
+func ColdAfter(name, provider string) time.Duration {
 	if d, ok := coldAfter[coldKey{name, provider}]; ok {
 		return d
 	}
@@ -76,7 +81,7 @@ type coldCacheClearYAML struct {
 // run is one turn and never reaches it.
 func coldCacheClear(provider string, browserTools []string) *coldCacheClearYAML {
 	return &coldCacheClearYAML{
-		After:        durationYAML(coldAfterFor(DefaultName, provider)),
+		After:        durationYAML(ColdAfter(DefaultName, provider)),
 		KeepTurns:    coldKeepTurns,
 		KeepBrowser:  coldKeepBrowser,
 		BrowserTools: browserTools,

@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/session"
@@ -849,5 +850,253 @@ func TestLastUpkeepIsTheNewestOfEachKind(t *testing.T) {
 	c, k := LastUpkeep(home, "assistant")
 	if c == nil || c.Trigger != UpkeepManual || k == nil || k.Trigger != UpkeepConsolidate {
 		t.Errorf("LastUpkeep = %+v, %+v", c, k)
+	}
+}
+
+// coldState is a conversation of 50,000 tokens whose last answer came two
+// hours ago, past every harness's prompt cache.
+func coldState() upkeepState {
+	return upkeepState{LastResponse: time.Now().Add(-2 * time.Hour), ContextTokens: 50_000, ContextLimit: 1_000_000, TurnsSince: 2}
+}
+
+// startCold starts the Assistant on the harness named adapterName with
+// upkeep.json holding u.
+func startCold(t *testing.T, st *starter, adapterName string, u upkeepState) (string, *Supervisor) {
+	t.Helper()
+	home := shortHome(t)
+	enable(t, home)
+	if err := saveUpkeep(home, "assistant", u); err != nil {
+		t.Fatal(err)
+	}
+	// The stored conversation continues, so what upkeep knew of it holds.
+	st.resumed = true
+	sv := startUpkeeper(t, home, st, time.Now)
+	sv.mu.Lock()
+	sv.adapter = adapterName
+	sv.mu.Unlock()
+	return home, sv
+}
+
+// upkeepTurns counts the upkeep turns every segment was sent.
+func upkeepTurns(st *starter) int {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	n := 0
+	for _, seg := range st.all {
+		for _, r := range seg.rawTurns() {
+			if strings.HasSuffix(r, upkeepText) || strings.HasSuffix(r, upkeepTextNoMemory) {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// TestAColdCacheCompactionRunsInTheHarnessBeforeTheMessage: a person who
+// comes back after the harness's prompt cache has expired, to a
+// conversation over the floor, has the running harness compact it in place
+// first, with no upkeep turn and no new conversation; the message follows.
+func TestAColdCacheCompactionRunsInTheHarnessBeforeTheMessage(t *testing.T) {
+	for _, name := range []string{adapter.CodexImageAdapterName, adapter.CopilotImageAdapterName} {
+		t.Run(name, func(t *testing.T) {
+			st := &starter{answer: aHandoff, compactor: true}
+			home, sv := startCold(t, st, name, coldState())
+			if err := sv.Send(context.Background(), "back after lunch"); err != nil {
+				t.Fatal(err)
+			}
+			if st.compacting.compacted != 1 || upkeepTurns(st) != 0 || len(st.all) != 1 {
+				t.Fatalf("compacted %d, upkeep turns %d, segments %d; want the harness's own compaction alone", st.compacting.compacted, upkeepTurns(st), len(st.all))
+			}
+			if raw := st.last.rawTurns(); !strings.HasSuffix(raw[len(raw)-1], "back after lunch") {
+				t.Fatalf("the message did not follow: %q", raw)
+			}
+			u := loadUpkeep(home, "assistant")
+			if u.LastCompaction.IsZero() || len(u.Upkeeps) != 1 {
+				t.Errorf("upkeep.json = %+v", u)
+			}
+			c, _ := LastUpkeep(home, "assistant")
+			if c == nil || c.Trigger != UpkeepCold || c.Swap != SwapInPlace || c.Swapped || c.Reason != "" {
+				t.Errorf("record = %+v", c)
+			}
+		})
+	}
+}
+
+// TestAColdCacheCompactionWaitsForItsMoment: no compaction while the cache
+// is warm, below the floor, with no turn since the last compaction, or on
+// docker-agent, whose harness clears old results itself.
+func TestAColdCacheCompactionWaitsForItsMoment(t *testing.T) {
+	warm := coldState()
+	warm.LastResponse = time.Now().Add(-50 * time.Minute)
+	small := coldState()
+	small.ContextTokens = adapter.ColdCompactionFloor - 1
+	fresh := coldState()
+	fresh.TurnsSince = 0
+	for _, tc := range []struct {
+		name, adapter string
+		u             upkeepState
+	}{
+		{"warm", adapter.CodexImageAdapterName, warm},
+		{"below the floor", adapter.CodexImageAdapterName, small},
+		{"no turn since", adapter.CodexImageAdapterName, fresh},
+		{"docker-agent", adapter.DefaultName, coldState()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := &starter{answer: aHandoff, compactor: true}
+			_, sv := startCold(t, st, tc.adapter, tc.u)
+			if err := sv.Send(context.Background(), "hello"); err != nil {
+				t.Fatal(err)
+			}
+			if st.compacting.compacted != 0 || upkeepTurns(st) != 0 {
+				t.Fatalf("compacted %d, upkeep turns %d; want none", st.compacting.compacted, upkeepTurns(st))
+			}
+		})
+	}
+}
+
+// TestAColdCacheCompactionFallsBackToTheUpkeepTurn: a harness that cannot
+// compact on request (Claude Code) gets the upkeep turn and a new
+// conversation that opens with the handoff.
+func TestAColdCacheCompactionFallsBackToTheUpkeepTurn(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		st   *starter
+	}{
+		{"claude-image", &starter{answer: aHandoff}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home, sv := startCold(t, tc.st, adapter.ClaudeImageAdapterName, coldState())
+			if err := sv.Send(context.Background(), "back after lunch"); err != nil {
+				t.Fatal(err)
+			}
+			if upkeepTurns(tc.st) != 1 {
+				t.Fatalf("upkeep turns = %d, want 1", upkeepTurns(tc.st))
+			}
+			c, _ := LastUpkeep(home, "assistant")
+			if c == nil || c.Trigger != UpkeepCold || !c.Swapped {
+				t.Errorf("record = %+v", c)
+			}
+			st := tc.st
+			st.mu.Lock()
+			last := st.all[len(st.all)-1]
+			st.mu.Unlock()
+			if raw := last.rawTurns(); !strings.HasSuffix(raw[len(raw)-1], "back after lunch") || !strings.Contains(raw[len(raw)-1], "compacted your conversation") {
+				t.Fatalf("the message did not open the new conversation with the handoff: %q", raw)
+			}
+		})
+	}
+}
+
+// TestAColdCacheCompactionKeepsTheDailyCap: with the day's upkeep turns all
+// spent, the harness is not asked either, and the trigger waits an hour.
+func TestAColdCacheCompactionKeepsTheDailyCap(t *testing.T) {
+	u := coldState()
+	for range maxUpkeepsPerDay {
+		u.Upkeeps = append(u.Upkeeps, time.Now().Add(-time.Hour))
+	}
+	st := &starter{answer: aHandoff, compactor: true}
+	home, sv := startCold(t, st, adapter.CodexImageAdapterName, u)
+	if err := sv.Send(context.Background(), "hello"); err != nil {
+		t.Fatal(err)
+	}
+	if st.compacting.compacted != 0 || upkeepTurns(st) != 0 {
+		t.Fatalf("compacted %d, upkeep turns %d; want none", st.compacting.compacted, upkeepTurns(st))
+	}
+	if got := loadUpkeep(home, "assistant").RetryAfter; got.Before(time.Now().Add(50 * time.Minute)) {
+		t.Errorf("retry after = %v", got)
+	}
+}
+
+// TestColdDue: the rule alone.
+func TestColdDue(t *testing.T) {
+	now := time.Now()
+	u := upkeepState{LastResponse: now.Add(-61 * time.Minute), ContextTokens: 40_000, TurnsSince: 1}
+	if !u.coldDue(now, time.Hour) {
+		t.Error("not due past the hour at the floor")
+	}
+	if u.coldDue(now, 2*time.Hour) {
+		t.Error("due within the cache's life")
+	}
+	u.RetryAfter = now.Add(time.Minute)
+	if u.coldDue(now, time.Hour) {
+		t.Error("due before the retry time")
+	}
+	if (upkeepState{ContextTokens: 90_000, TurnsSince: 3}).coldDue(now, time.Minute) {
+		t.Error("due with no answer yet")
+	}
+}
+
+// TestAnAnswerMarksTheLastResponse: every answered turn moves LastResponse,
+// which is what the cache's age is counted from.
+func TestAnAnswerMarksTheLastResponse(t *testing.T) {
+	home := shortHome(t)
+	enable(t, home)
+	st := &starter{answer: aHandoff}
+	sv := startUpkeeper(t, home, st, time.Now)
+	before := time.Now()
+	if err := sv.Send(context.Background(), "hello"); err != nil {
+		t.Fatal(err)
+	}
+	var got time.Time
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		sv.mu.Lock()
+		got = sv.upkeep.LastResponse
+		sv.mu.Unlock()
+		if !got.IsZero() {
+			break
+		}
+	}
+	if got.Before(before) {
+		t.Errorf("last response = %v, before the turn at %v", got, before)
+	}
+}
+
+// TestAFailedHarnessCompactionWaitsAnHour: a harness whose own compaction
+// fails leaves the conversation as it was and the message goes on; the
+// trigger waits an hour, as any failed automatic upkeep does, and the
+// attempt counts toward the day's.
+func TestAFailedHarnessCompactionWaitsAnHour(t *testing.T) {
+	st := &starter{answer: aHandoff, compactor: true, compactErr: errors.New("compaction refused")}
+	home, sv := startCold(t, st, adapter.CodexImageAdapterName, coldState())
+	if err := sv.Send(context.Background(), "back after lunch"); err != nil {
+		t.Fatal(err)
+	}
+	if upkeepTurns(st) != 0 || len(st.all) != 1 {
+		t.Fatalf("upkeep turns %d, segments %d; want the conversation as it was", upkeepTurns(st), len(st.all))
+	}
+	u := loadUpkeep(home, "assistant")
+	if u.RetryAfter.Before(time.Now().Add(50*time.Minute)) || len(u.Upkeeps) != 1 || !u.LastCompaction.IsZero() {
+		t.Errorf("upkeep.json = %+v", u)
+	}
+	if c, _ := LastUpkeep(home, "assistant"); c == nil || c.Trigger != UpkeepCold || !strings.Contains(c.Reason, "compaction refused") {
+		t.Errorf("record = %+v", c)
+	}
+}
+
+// TestAColdCacheCompactionAtTheFloorTakesTheSizeAfter: a conversation of
+// exactly the floor is compacted, and upkeep takes the size the harness
+// reports after it.
+func TestAColdCacheCompactionAtTheFloorTakesTheSizeAfter(t *testing.T) {
+	u := coldState()
+	u.ContextTokens = adapter.ColdCompactionFloor
+	st := &starter{answer: aHandoff, compactor: true}
+	_, sv := startCold(t, st, adapter.CopilotImageAdapterName, u)
+	if err := sv.Send(context.Background(), "hello"); err != nil {
+		t.Fatal(err)
+	}
+	if st.compacting.compacted != 1 {
+		t.Fatalf("compacted %d, want 1", st.compacting.compacted)
+	}
+	var got int64
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		sv.mu.Lock()
+		got = sv.upkeep.ContextTokens
+		sv.mu.Unlock()
+		if got == 5_000 {
+			break
+		}
+	}
+	if got != 5_000 {
+		t.Errorf("context after = %d, want the harness's 5,000", got)
 	}
 }

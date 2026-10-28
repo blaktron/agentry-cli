@@ -735,6 +735,50 @@ func (s *liveSession) NewConversation(ctx context.Context, reason string) (strin
 	return id, nil
 }
 
+// ErrNoCompaction is a CompactConversation refused because the segment's
+// harness cannot compact its conversation on request.
+var ErrNoCompaction = errors.New("the harness cannot compact its conversation on request")
+
+// CompactConversation implements ConversationCompactor: between turns, the
+// running harness compacts the conversation it is in, which stays the same
+// conversation. Its usage events carry the size after.
+func (s *liveSession) CompactConversation(ctx context.Context) error {
+	s.turnMu.Lock()
+	defer s.turnMu.Unlock()
+	s.mu.Lock()
+	ended, drv := s.ended, s.drv
+	s.mu.Unlock()
+	if ended {
+		return session.ErrEnded
+	}
+	c, ok := drv.(adapter.Compacting)
+	if !ok || s.p.Persistent == nil {
+		return ErrNoCompaction
+	}
+	if err := c.CompactConversation(ctx); err != nil {
+		return err
+	}
+	s.emit(session.Event{Kind: session.KindOther, Text: "the running harness compacted the conversation"})
+	return nil
+}
+
+// CanCompact says the segment's harness can compact its conversation on
+// request (CompactConversation).
+func (s *liveSession) CanCompact() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.drv.(adapter.Compacting)
+	return ok && s.p.Persistent != nil
+}
+
+// ConversationCompactor is a PersistentSession whose harness may compact its
+// conversation in place (liveSession's, where the adapter's driver is
+// adapter.Compacting; ErrNoCompaction otherwise). CanCompact says which.
+type ConversationCompactor interface {
+	CanCompact() bool
+	CompactConversation(ctx context.Context) error
+}
+
 // ConversationRenewer is a PersistentSession that can start a new
 // conversation in its running harness (liveSession's, where the adapter's
 // driver is adapter.Renewing; ErrNoNewConversation otherwise).

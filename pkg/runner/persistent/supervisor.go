@@ -579,6 +579,11 @@ func (s *Supervisor) Send(ctx context.Context, text string) error {
 		// comes back to a large conversation the heartbeat has not yet
 		// compacted (a start): it is compacted before their message.
 		_, _ = s.compactLocked(ctx, trigger)
+	} else if s.coldDue() {
+		// The person comes back after the harness's prompt cache has
+		// expired: their message re-sends the whole history uncached, so
+		// it is compacted first, when that costs least.
+		_, _ = s.coldCompactLocked(ctx)
 	}
 	return s.sendLocked(ctx, "", text)
 }
