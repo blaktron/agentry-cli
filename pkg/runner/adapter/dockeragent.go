@@ -234,6 +234,9 @@ type agntYAML struct {
 	// person's inputs reach the model unchanged.
 	RedactSecrets *bool      `yaml:"redact_secrets,omitempty"`
 	Hooks         *hooksYAML `yaml:"hooks,omitempty"`
+	// ColdCacheClear clears old tool results after the prompt cache has
+	// expired (coldCacheClear).
+	ColdCacheClear *coldCacheClearYAML `yaml:"cold_cache_clear,omitempty"`
 }
 
 // hooksYAML is the part of docker-agent's hooks block the runner writes.
@@ -423,8 +426,9 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 					// without this docker-agent's SSRF guard refuses it.
 					AllowPrivateIPs: true,
 				}},
-				RedactSecrets: &redactFlagOff,
-				Hooks:         redactSecretsHooks(in.UnchangedTools...),
+				RedactSecrets:  &redactFlagOff,
+				Hooks:          redactSecretsHooks(in.UnchangedTools...),
+				ColdCacheClear: coldCacheClear(in.Model.Provider, in.BrowserTools),
 			},
 		},
 	}

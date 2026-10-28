@@ -228,3 +228,46 @@ func TestABuiltinIsNeverGrantedABrowser(t *testing.T) {
 		t.Fatalf("a built-in with a browser compiled: %v", err)
 	}
 }
+
+// TestTheColdCacheClearNamesTheBrowsersTools: a plan with a browser gives the
+// harness's cold-cache clear the tools the gateway passes for it, so only the
+// newest of their results stay whole; without browser_evaluate when the line
+// types secrets.
+func TestTheColdCacheClearNamesTheBrowsersTools(t *testing.T) {
+	for _, c := range []struct {
+		name     string
+		manifest string
+		secrets  bool
+	}{
+		{"browser", browserManifest, false},
+		{"browser typing secrets", withBrowserSecrets(browserManifest), true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			planDir := t.TempDir()
+			if _, err := Compile(hostInputs(t, c.manifest), planDir); err != nil {
+				t.Fatal(err)
+			}
+			b, err := os.ReadFile(filepath.Join(planDir, "harness", "agent.yaml")) //nolint:gosec // test plan dir
+			if err != nil {
+				t.Fatal(err)
+			}
+			var doc struct {
+				Agents map[string]struct {
+					ColdCacheClear struct {
+						BrowserTools []string `yaml:"browser_tools"`
+					} `yaml:"cold_cache_clear"`
+				} `yaml:"agents"`
+			}
+			if err := yaml.Unmarshal(b, &doc); err != nil {
+				t.Fatal(err)
+			}
+			got := doc.Agents["root"].ColdCacheClear.BrowserTools
+			if want := browser.Tools(c.secrets); !slices.Equal(got, want) {
+				t.Errorf("cold_cache_clear.browser_tools = %v, want %v", got, want)
+			}
+			if want := gatewayTools(t, planDir)[browser.ServerName]; !slices.Equal(got, want) {
+				t.Errorf("cold_cache_clear.browser_tools = %v, the gateway passes %v", got, want)
+			}
+		})
+	}
+}

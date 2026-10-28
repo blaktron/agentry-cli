@@ -58,6 +58,10 @@ type Input struct {
 	// host link's, where the release declares a target host. Empty for
 	// every other plan.
 	UnchangedTools []string
+	// BrowserTools are the browser server's tools when the plan has one: a
+	// harness that keeps only the newest of their results reads them here.
+	// Empty without a browser.
+	BrowserTools []string
 	// Persistent says the plan is a persistent agent's: its harness keeps
 	// the conversation on the session store, where the agent's next
 	// segment continues it. Mode is then interactive.

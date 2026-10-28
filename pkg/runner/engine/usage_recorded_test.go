@@ -58,13 +58,14 @@ func num(m map[string]any, path ...string) int64 {
 }
 
 // docker-agent's token_usage.usage.input_tokens is the input of THAT model
-// request — fresh plus cached — not a running total across requests, so
-// the receipt sums it. The recording proves it event by event:
-// usage.input_tokens = last_message.input_tokens +
-// last_message.cached_input_tokens and usage.output_tokens =
-// last_message.output_tokens. A running total could not satisfy that past
-// the first event (the second would be the sum of the first two). The
-// values only look monotonic because the conversation's context grows.
+// request — fresh, read from the cache and written to it — not a running
+// total across requests, so the receipt sums it. The recording proves it
+// event by event: usage.input_tokens = last_message.input_tokens +
+// last_message.cached_input_tokens + last_message.cached_write_tokens and
+// usage.output_tokens = last_message.output_tokens. A running total could
+// not satisfy that past the first event (the second would be the sum of the
+// first two). The values only look monotonic because the conversation's
+// context grows.
 // Cost is the one field docker-agent reports as a running total, which is
 // why the collector keeps its high-water mark instead.
 func TestDockerAgentRecordedUsageIsPerRequestAndSummed(t *testing.T) {
@@ -72,7 +73,8 @@ func TestDockerAgentRecordedUsageIsPerRequestAndSummed(t *testing.T) {
 	var in, out int64
 	for i, l := range lines {
 		ui, uo := num(l, "usage", "input_tokens"), num(l, "usage", "output_tokens")
-		lmIn, lmCached, lmOut := num(l, "usage", "last_message", "input_tokens"), num(l, "usage", "last_message", "cached_input_tokens"), num(l, "usage", "last_message", "output_tokens")
+		lmIn, lmOut := num(l, "usage", "last_message", "input_tokens"), num(l, "usage", "last_message", "output_tokens")
+		lmCached := num(l, "usage", "last_message", "cached_input_tokens") + num(l, "usage", "last_message", "cached_write_tokens")
 		if ui != lmIn+lmCached || uo != lmOut {
 			t.Errorf("token_usage %d: usage in/out %d/%d, last_message in+cached/out %d/%d: the per-request identity does not hold, so the summing below is wrong", i+1, ui, uo, lmIn+lmCached, lmOut)
 		}

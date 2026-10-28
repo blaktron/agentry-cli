@@ -140,7 +140,7 @@
     "adapter": "docker-agent",
     "model": "anthropic/claude-sonnet-4-5",
     "agent": {
-      "image": "ghcr.io/blaktron/agentry-docker-agent-src:1.152.0-2026.10.24.5@sha256:e8604adf8659b1b92b55b6442930cca1168db7c49ad79e17546e2c940a8d723c",
+      "image": "ghcr.io/blaktron/agentry-docker-agent-src:1.152.0-2026.10.27.6@sha256:c6a3c74513b9ff274b3826bd0d673f14879c8ce589f5c7a8b5a9731b02cb56da",
       "argv": [
         "serve",
         "acp",
@@ -213,7 +213,7 @@
     },
     "imagePin": {
       "by": "digest",
-      "value": "sha256:e8604adf8659b1b92b55b6442930cca1168db7c49ad79e17546e2c940a8d723c"
+      "value": "sha256:c6a3c74513b9ff274b3826bd0d673f14879c8ce589f5c7a8b5a9731b02cb56da"
     }
   },
   "proxy": {
@@ -236,6 +236,6 @@
     "gateway/registry.yaml": "e5062e24456af9287a9376e986c8b29c6bf9f3802904ce0aa9852244b6ebc11d",
     "gateway/tools.yaml": "255a810dbbe8c2afb8db71aa982c97201466805000241edaf935404dfe1649a9",
     "gateway/toolspec.json": "3b157c1ccc055b08c365834a7b11eae92496c8eeb2a5ea7d96129999430b8dec",
-    "harness/agent.yaml": "fa06bfdfe564a16e66c1327038424970d472da5f75faf54fa4e07b8c15b129f6"
+    "harness/agent.yaml": "2e09a5d4eaf68957da9a0ef72e0147c289fc392922a2aa70e0214b4c490ca97b"
   }
 }

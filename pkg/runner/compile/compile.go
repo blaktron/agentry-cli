@@ -491,6 +491,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		Harness:      in.Policy.Harness[adapterName],
 		// The host link's results reach the model as the host printed them.
 		UnchangedTools: unchangedTools(caps),
+		BrowserTools:   browserTools(caps),
 		Persistent:     mode == manifest.ModePersistent,
 	}
 	res, err := ad.Compile(harnessIn)
@@ -1398,7 +1399,7 @@ func renderGatewayFiles(files map[string][]byte, tspec *toolsrv.Spec, caps spec.
 	// The browser's filter is an allowlist, without browser_evaluate where
 	// the line declares secrets.
 	if browserSpec != nil {
-		tools.set(browser.ServerName, strListNode(browser.Tools(len(caps.Browser.Secrets) > 0)))
+		tools.set(browser.ServerName, strListNode(browserTools(caps)))
 	}
 	if caps.AppLink != "" {
 		tools.set(applink.ServerName, strListNode(applink.Tools(caps.AppLink)))
@@ -2666,4 +2667,13 @@ func agentFilesEnforcement(a *spec.AgentFiles) string {
 		return line + "; a file added there is read only once the runner has read it, before the next turn, without ClamAV: the malware check is off on this computer, so every file is read unchecked; a document is read by the text the decode step read out of its bytes; receipts/share-checks.ndjson has each verdict"
 	}
 	return line + ", read as it is"
+}
+
+// browserTools are the browser server's tools the gateway passes, when the
+// plan has a browser.
+func browserTools(caps spec.CapSummary) []string {
+	if caps.Browser == nil {
+		return nil
+	}
+	return browser.Tools(len(caps.Browser.Secrets) > 0)
 }
