@@ -1,8 +1,6 @@
 # agentry CLI (Agentry). Depends on the core module
-# github.com/blaktron/agentry. While that module is not publicly fetchable,
-# builders need
-#   export GOPRIVATE=github.com/blaktron/*
-# and git credentials for github.com/blaktron.
+# github.com/blaktron/agentry, which resolves through the Go module proxy
+# like any other dependency.
 export PATH := /opt/homebrew/bin:$(PATH)
 GO ?= go
 LDFLAGS := -X github.com/blaktron/agentry-cli/internal/version.Version=$(shell git describe --tags --always --dirty 2>/dev/null || echo 0.0.0-dev)
