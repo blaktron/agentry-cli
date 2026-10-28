@@ -102,13 +102,13 @@ Modules (104)
   go.opentelemetry.io/otel/metric v1.46.0  Apache-2.0 AND BSD-3-Clause
   go.opentelemetry.io/otel/trace v1.46.0  Apache-2.0 AND BSD-3-Clause
   go.yaml.in/yaml/v3 v3.0.5  Apache-2.0 AND MIT
-  golang.org/x/crypto v0.57.0  BSD-3-Clause
+  golang.org/x/crypto v0.58.0  BSD-3-Clause
   golang.org/x/mod v0.41.0  BSD-3-Clause
-  golang.org/x/net v0.60.0  BSD-3-Clause
-  golang.org/x/sync v0.23.0  BSD-3-Clause
-  golang.org/x/sys v0.48.0  BSD-3-Clause
-  golang.org/x/term v0.46.0  BSD-3-Clause
-  golang.org/x/text v0.42.0  BSD-3-Clause
+  golang.org/x/net v0.62.0  BSD-3-Clause
+  golang.org/x/sync v0.24.0  BSD-3-Clause
+  golang.org/x/sys v0.49.0  BSD-3-Clause
+  golang.org/x/term v0.47.0  BSD-3-Clause
+  golang.org/x/text v0.43.0  BSD-3-Clause
   google.golang.org/genproto/googleapis/api v0.0.0-20260819154853-08b0e4226688  Apache-2.0
   google.golang.org/genproto/googleapis/rpc v0.0.0-20260819154853-08b0e4226688  Apache-2.0
   google.golang.org/grpc v1.83.2  Apache-2.0
@@ -11661,7 +11661,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 ================================================================================
-golang.org/x/crypto v0.57.0
+golang.org/x/crypto v0.58.0
 Licence: BSD-3-Clause
 
 --- LICENSE
@@ -11779,7 +11779,7 @@ rights granted to you under this License for this implementation of Go
 shall terminate as of the date such litigation is filed.
 
 ================================================================================
-golang.org/x/net v0.60.0
+golang.org/x/net v0.62.0
 Licence: BSD-3-Clause
 
 --- LICENSE
@@ -11838,7 +11838,7 @@ rights granted to you under this License for this implementation of Go
 shall terminate as of the date such litigation is filed.
 
 ================================================================================
-golang.org/x/sync v0.23.0
+golang.org/x/sync v0.24.0
 Licence: BSD-3-Clause
 
 --- LICENSE
@@ -11897,7 +11897,7 @@ rights granted to you under this License for this implementation of Go
 shall terminate as of the date such litigation is filed.
 
 ================================================================================
-golang.org/x/sys v0.48.0
+golang.org/x/sys v0.49.0
 Licence: BSD-3-Clause
 
 --- LICENSE
@@ -11956,7 +11956,7 @@ rights granted to you under this License for this implementation of Go
 shall terminate as of the date such litigation is filed.
 
 ================================================================================
-golang.org/x/term v0.46.0
+golang.org/x/term v0.47.0
 Licence: BSD-3-Clause
 
 --- LICENSE
@@ -12015,7 +12015,7 @@ rights granted to you under this License for this implementation of Go
 shall terminate as of the date such litigation is filed.
 
 ================================================================================
-golang.org/x/text v0.42.0
+golang.org/x/text v0.43.0
 Licence: BSD-3-Clause
 
 --- LICENSE
