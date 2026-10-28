@@ -28,6 +28,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/session"
 	"github.com/blaktron/agentry-cli/runnerimage"
@@ -62,6 +63,10 @@ const (
 	UpkeepIdle   = "idle"
 	UpkeepInUse  = "in-use"
 	UpkeepManual = "manual"
+	// UpkeepCold compacts before a person's message that comes after the
+	// harness's prompt cache has expired, when the history is re-sent
+	// uncached anyway.
+	UpkeepCold = "cold"
 	// UpkeepConsolidate is the daily tidy of the memory, which swaps
 	// nothing.
 	UpkeepConsolidate = "consolidate"
@@ -115,6 +120,9 @@ type upkeepState struct {
 	// LastPersonTurn is when the person last sent a turn; a task's or an
 	// upkeep turn is not theirs.
 	LastPersonTurn time.Time `json:"lastPersonTurn,omitzero"`
+	// LastResponse is when the agent last answered a turn of any kind: the
+	// harness's prompt cache is warm until its lifetime after it.
+	LastResponse time.Time `json:"lastResponse,omitzero"`
 	// ContextTokens and ContextLimit are the conversation's size after its
 	// latest turn and the model's window, as the harness said them.
 	ContextTokens int64 `json:"contextTokens,omitempty"`
@@ -191,6 +199,15 @@ func (u upkeepState) idleDue(now time.Time) bool {
 		u.ContextTokens >= upkeepIdleFloor
 }
 
+// coldDue says a cold-cache compaction is due at now, for a harness whose
+// prompt cache lives after: the last answer is older than that, the
+// conversation is at least the floor, and a turn has passed since it was last
+// compacted.
+func (u upkeepState) coldDue(now time.Time, after time.Duration) bool {
+	return !now.Before(u.RetryAfter) && u.TurnsSince > 0 && !u.LastResponse.IsZero() && now.Sub(u.LastResponse) > after &&
+		u.ContextTokens >= adapter.ColdCompactionFloor
+}
+
 // consolidationDue says the memory's daily consolidation is due at now: the
 // person has sent nothing for upkeepIdle, a day has passed since the last,
 // and a turn since may have changed the memory.
@@ -229,11 +246,11 @@ func (s *Supervisor) noteUpkeepEvent(ev session.Event) {
 			s.upkeepDirty = true
 		}
 	case session.KindAssistantTurn:
-		if s.upkeepDirty {
-			// Saved off the events' lock, which every watcher waits on.
-			s.upkeepDirty = false
-			go func() { _ = s.changeUpkeep(nil) }()
-		}
+		// The answer is when the harness's prompt cache was last warm, and
+		// is saved with whatever else changed since the last save: off the
+		// events' lock, which every watcher waits on.
+		s.upkeep.LastResponse, s.upkeepDirty = s.now().UTC(), false
+		go func() { _ = s.changeUpkeep(nil) }()
 	}
 }
 
@@ -542,6 +559,78 @@ func (s *Supervisor) compactLocked(ctx context.Context, trigger string) (Compact
 	return out, nil
 }
 
+// coldDue says a cold-cache compaction is due before the person's next
+// message: on a harness the supervisor cannot clear old tool results on
+// (every one but docker-agent, whose harness clears them itself), once its
+// prompt cache has expired.
+func (s *Supervisor) coldDue() bool {
+	if s.adapter == adapter.DefaultName {
+		return false
+	}
+	provider := ""
+	if s.opts.Policy != nil {
+		provider = s.opts.Policy.Model.Provider
+	}
+	after := adapter.ColdAfter(s.adapter, provider)
+	now := s.now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.upkeep.coldDue(now, after)
+}
+
+// coldWords are what the person is told while a cold-cache compaction the
+// harness runs itself is under way.
+var coldWords = upkeepWords{
+	wait:  "Compacting the conversation after the pause; your message follows",
+	start: "Compacting the conversation after the pause, in the running harness",
+	done:  "Compacted: the harness summarised the conversation in place",
+}
+
+// coldCompactLocked runs a cold-cache compaction: the running harness
+// compacts the conversation in place where it can (codex, Copilot CLI), and
+// otherwise the upkeep turn and a new conversation do. A harness compaction
+// that fails waits an hour, as a failed automatic upkeep does, rather than
+// falling back in the same wait: the person's message waits for one upkeep's
+// bound at most. The caller holds turn.
+func (s *Supervisor) coldCompactLocked(ctx context.Context) (Compacted, error) {
+	s.mu.Lock()
+	sess, u, outDir := s.sess, s.upkeep, s.outDir
+	s.mu.Unlock()
+	c, ok := sess.(engine.ConversationCompactor)
+	now := s.now()
+	if !ok || !c.CanCompact() || u.upkeepsToday(now) >= maxUpkeepsPerDay {
+		// compactLocked keeps the daily cap and the hour's wait itself.
+		return s.compactLocked(ctx, UpkeepCold)
+	}
+	out := Compacted{Trigger: UpkeepCold, ContextTokens: u.ContextTokens, FactsBefore: -1, FactsAfter: -1, Swap: SwapInPlace}
+	defer s.beginUpkeep(coldWords.wait)()
+	s.notice(coldWords.start)
+	start := time.Now()
+	tctx, cancel := context.WithTimeout(ctx, upkeepTurnCap)
+	err := c.CompactConversation(tctx)
+	cancel()
+	out.SwapMillis = time.Since(start).Milliseconds()
+	conv := s.conversationID()
+	_ = s.changeUpkeep(func(st *upkeepState) {
+		st.Upkeeps = append(pruneDay(st.Upkeeps, now), now.UTC())
+		if err != nil {
+			st.RetryAfter = s.now().Add(upkeepRetry).UTC()
+			return
+		}
+		st.LastCompaction = s.now().UTC()
+		st.TurnsSince = 0
+	})
+	if err != nil {
+		out.Reason = "the harness's own compaction failed: " + err.Error()
+		s.logUpkeep(outDir, out, conv, conv)
+		s.notice("The harness could not compact the conversation, so it goes on as it was: " + err.Error())
+		return out, nil
+	}
+	s.logUpkeep(outDir, out, conv, conv)
+	s.notice(coldWords.done)
+	return out, nil
+}
+
 func pruneDay(ts []time.Time, now time.Time) []time.Time {
 	var out []time.Time
 	for _, t := range ts {
@@ -640,6 +729,10 @@ const (
 	// SwapSegment: the segment ended and the next started in a new
 	// conversation.
 	SwapSegment = "segment"
+	// SwapInPlace: the running harness compacted the conversation in
+	// place, which stays the same conversation (the record's Swapped is
+	// false).
+	SwapInPlace = "in-place"
 )
 
 // compactionReason is why a compacted conversation is not the one before.

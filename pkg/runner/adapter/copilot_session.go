@@ -356,6 +356,27 @@ func (s *copilotSession) Prompt(ctx context.Context, text string) (*Turn, error)
 	}
 }
 
+// CompactConversation implements Compacting: session.history.compact, the
+// SDK's compaction of the session's history in place, between turns. It
+// answers when the compaction is done, and says whether it succeeded;
+// session.compaction_complete carries the size after to the events.
+func (s *copilotSession) CompactConversation(ctx context.Context) error {
+	if s.id() == "" {
+		return errors.New("copilot session: not started")
+	}
+	res, err := s.call(ctx, "session.history.compact", map[string]any{"sessionId": s.id(), "trigger": "manual"})
+	if err != nil {
+		return err
+	}
+	var r struct {
+		Success bool `json:"success"`
+	}
+	if err := json.Unmarshal(res, &r); err != nil || !r.Success {
+		return errors.New("copilot session: Copilot CLI did not complete the compaction")
+	}
+	return nil
+}
+
 // Events implements SessionDriver.
 func (s *copilotSession) Events() <-chan Event { return s.events }
 

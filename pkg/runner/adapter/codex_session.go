@@ -143,6 +143,44 @@ func (s *codexSession) NewConversation(ctx context.Context) (string, error) {
 	return id, nil
 }
 
+// CompactConversation implements Compacting: thread/compact/start on the
+// running app-server, between turns. codex compacts the thread as a turn of
+// its own (a contextCompaction item, then turn/completed), which this waits
+// for.
+func (s *codexSession) CompactConversation(ctx context.Context) error {
+	if s.threadID == "" {
+		return errors.New("codex session: not started")
+	}
+	t := &codexTurn{done: make(chan codexTurnEnd, 1)}
+	s.mu.Lock()
+	if s.turn != nil {
+		s.mu.Unlock()
+		return errors.New("codex session: a turn is already in flight")
+	}
+	s.turn = t
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.turn = nil
+		s.mu.Unlock()
+	}()
+	if _, err := s.call(ctx, "thread/compact/start", map[string]any{"threadId": s.threadID}); err != nil {
+		return err
+	}
+	end, err := s.waitTurn(ctx, t, "thread/compact/start")
+	if err != nil {
+		return err
+	}
+	if end.status != "completed" {
+		why := firstLineOf(end.err)
+		if why == "" {
+			why = "codex gave no reason"
+		}
+		return fmt.Errorf("codex session: compaction %s: %s", end.status, why)
+	}
+	return nil
+}
+
 // handshake is initialize and initialized. The name is the request
 // originator codex sends; OpenAI's plan usage asks that it match the app's
 // registered name (agent_name_hint), and it is the same for a key run.
@@ -268,11 +306,20 @@ func (s *codexSession) Prompt(ctx context.Context, text string) (*Turn, error) {
 		}
 		return out, nil
 	}
+	end, err := s.waitTurn(ctx, t, "turn/start")
+	if err != nil {
+		return nil, err
+	}
+	return finish(end)
+}
+
+// waitTurn waits for t's turn/completed, the turn method started.
+func (s *codexSession) waitTurn(ctx context.Context, t *codexTurn, method string) (codexTurnEnd, error) {
 	select {
 	case end := <-t.done:
-		return finish(end)
+		return end, nil
 	case <-ctx.Done():
-		return nil, fmt.Errorf("turn/start: %w", ctx.Err())
+		return codexTurnEnd{}, fmt.Errorf("%s: %w", method, ctx.Err())
 	case <-s.readDone:
 		// A harness that finishes the turn and exits at once leaves both
 		// the turn's end and the end of the stream ready, and select picks
@@ -281,9 +328,9 @@ func (s *codexSession) Prompt(ctx context.Context, text string) (*Turn, error) {
 		// waiting.
 		select {
 		case end := <-t.done:
-			return finish(end)
+			return end, nil
 		default:
-			return nil, errors.New("turn/start: harness ended the session before answering")
+			return codexTurnEnd{}, fmt.Errorf("%s: harness ended the session before answering", method)
 		}
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"io"
 	"os"
@@ -479,4 +480,34 @@ func TestASegmentStartsANewConversationInItsRunningHarness(t *testing.T) {
 	if env.Usage.CostUSD != 0.5 {
 		t.Errorf("the segment's cost = %v, want both conversations' 0.5", env.Usage.CostUSD)
 	}
+}
+
+// TestASegmentWhoseHarnessCannotCompactSaysSo: docker-agent's driver has no
+// compaction on request (its harness clears old results itself), so the
+// segment refuses with ErrNoCompaction and its conversation is unchanged.
+func TestASegmentWhoseHarnessCannotCompactSaysSo(t *testing.T) {
+	p, f, _ := persistentFixture(t, "")
+	s, err := StartSession(context.Background(), f, p)
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	_, done := collect(s)
+	if err := s.Send(context.Background(), "one"); err != nil {
+		t.Fatal(err)
+	}
+	before, _, _ := s.(PersistentSession).Conversation()
+	c, ok := s.(ConversationCompactor)
+	if !ok {
+		t.Fatal("a segment's session has no compaction call")
+	}
+	if err := c.CompactConversation(context.Background()); !errors.Is(err, ErrNoCompaction) {
+		t.Fatalf("CompactConversation = %v, want ErrNoCompaction", err)
+	}
+	if after, _, _ := s.(PersistentSession).Conversation(); after != before {
+		t.Errorf("conversation %q became %q", before, after)
+	}
+	if _, err := s.End(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	<-done
 }
