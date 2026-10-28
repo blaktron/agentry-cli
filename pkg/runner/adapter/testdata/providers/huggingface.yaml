@@ -31,3 +31,7 @@ agents:
           hooks:
             - type: builtin
               command: redact_secrets
+    cold_cache_clear:
+      after: 1h
+      keep_turns: 2
+      keep_browser: 2
