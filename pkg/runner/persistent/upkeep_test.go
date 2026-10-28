@@ -1100,3 +1100,103 @@ func TestAColdCacheCompactionAtTheFloorTakesTheSizeAfter(t *testing.T) {
 		t.Errorf("context after = %d, want the harness's 5,000", got)
 	}
 }
+
+// turnsSinceBecomes waits for the supervisor's turn count to reach want and
+// fails with the count it holds when it does not.
+func turnsSinceBecomes(t *testing.T, sv *Supervisor, want int) {
+	t.Helper()
+	var got int
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		sv.mu.Lock()
+		got = sv.upkeep.TurnsSince
+		sv.mu.Unlock()
+		if got == want {
+			return
+		}
+	}
+	t.Fatalf("turns since the last compaction = %d, want %d", got, want)
+}
+
+// goneCold puts the conversation back past the prompt cache's life and over
+// the floor, leaving the turn count as it is.
+func goneCold(sv *Supervisor) {
+	sv.mu.Lock()
+	sv.upkeep.LastResponse = time.Now().Add(-2 * time.Hour)
+	sv.upkeep.ContextTokens = 50_000
+	sv.mu.Unlock()
+}
+
+// TestTheTurnCountAtACompaction: a compaction, in the harness or by the
+// upkeep turn and a new conversation, starts the count again, and the
+// person's message that follows is its first turn; the upkeep turn itself
+// is not one. A failed compaction leaves the count as it was.
+func TestTheTurnCountAtACompaction(t *testing.T) {
+	for _, tc := range []struct {
+		name, adapter string
+		st            *starter
+		want          int
+	}{
+		{"in the harness", adapter.CodexImageAdapterName, &starter{answer: aHandoff, compactor: true}, 1},
+		{"by the upkeep turn", adapter.ClaudeImageAdapterName, &starter{answer: aHandoff}, 1},
+		{"failed in the harness", adapter.CopilotImageAdapterName, &starter{answer: aHandoff, compactor: true, compactErr: errors.New("compaction refused")}, coldState().TurnsSince + 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home, sv := startCold(t, tc.st, tc.adapter, coldState())
+			if err := sv.Send(context.Background(), "back after lunch"); err != nil {
+				t.Fatal(err)
+			}
+			turnsSinceBecomes(t, sv, tc.want)
+			for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+				if loadUpkeep(home, "assistant").TurnsSince == tc.want {
+					return
+				}
+			}
+			t.Errorf("upkeep.json's turns since = %d, want %d", loadUpkeep(home, "assistant").TurnsSince, tc.want)
+		})
+	}
+}
+
+// TestAColdPauseRightAfterACompactionWaitsForATurn: a conversation compacted
+// on request and left to go cold is not compacted again before the person's
+// next message, which is the first turn since; after that turn, the next
+// cold pause compacts it.
+func TestAColdPauseRightAfterACompactionWaitsForATurn(t *testing.T) {
+	st := &starter{answer: aHandoff}
+	_, sv := startCold(t, st, adapter.ClaudeImageAdapterName, coldState())
+	sv.mu.Lock()
+	sv.upkeep.LastResponse = time.Time{}
+	sv.mu.Unlock()
+	if c, err := sv.Compact(context.Background()); err != nil || !c.Swapped {
+		t.Fatalf("compact = %+v, %v", c, err)
+	}
+	turnsSinceBecomes(t, sv, 0)
+	// The upkeep turn's answer is taken before the cache is made cold, so
+	// only the turn count can hold the compaction back.
+	for deadline := time.Now().Add(2 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		sv.mu.Lock()
+		answered := !sv.upkeep.LastResponse.IsZero()
+		sv.mu.Unlock()
+		if answered {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the upkeep turn's answer was never taken")
+		}
+	}
+	goneCold(sv)
+	if err := sv.Send(context.Background(), "back after lunch"); err != nil {
+		t.Fatal(err)
+	}
+	if n := upkeepTurns(st); n != 1 {
+		t.Fatalf("upkeep turns = %d, want the requested one alone", n)
+	}
+	turnsSinceBecomes(t, sv, 1)
+	goneCold(sv)
+	if err := sv.Send(context.Background(), "back after dinner"); err != nil {
+		t.Fatal(err)
+	}
+	if n := upkeepTurns(st); n != 2 {
+		t.Fatalf("upkeep turns = %d, want a cold-cache compaction after the turn", n)
+	}
+	turnsSinceBecomes(t, sv, 1)
+}
