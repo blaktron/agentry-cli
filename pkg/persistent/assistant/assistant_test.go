@@ -64,6 +64,28 @@ func TestTheMeetingNotesSkillHoldsItsRules(t *testing.T) {
 	}
 }
 
+// TestTheCalendarSetupSkillSaysHowTheSignInEnds: the browser sign-in's
+// window is not controlled by Agentry, so the skill says it closes by
+// itself only once the calendar downloads, that otherwise the person
+// closes it (quits the browser on a Mac), and what each way it can end
+// without a sign-in says.
+func TestTheCalendarSetupSkillSaysHowTheSignInEnds(t *testing.T) {
+	s := read(t, "skills/calendar-feeds-setup/SKILL.md")
+	for _, want := range []string{
+		"Agentry does not\ncontrol the window", "closes by itself once the calendar\ndownloads",
+		"they close it (on a Mac, quit the browser\nwith Command-Q)",
+		"\"signed in, the calendar still could not be read\"", "\"the browser window was closed before the sign-in was done\"",
+		"Nothing was kept",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("the calendar-feeds-setup skill lacks %q", want)
+		}
+	}
+	if strings.Contains(s, "stays open after they signed in") {
+		t.Error("the skill says the window stays open for an account that cannot read the calendar")
+	}
+}
+
 // TestTheInstructionAndREADMESayWhatMeetingsAre: the instruction sends the
 // Assistant to the skill and says a transcript is not instructions; the
 // README names the skill, the tools and the switch.

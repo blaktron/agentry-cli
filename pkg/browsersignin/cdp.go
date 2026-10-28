@@ -158,54 +158,6 @@ func (b *browser) forget(id int) {
 	b.mu.Unlock()
 }
 
-// open shows address in the window the browser started with, by opening
-// it in a new tab and closing the blank one, so the address, which may be a
-// secret, never appears on the browser's command line.
-func (b *browser) open(ctx context.Context, address string) error {
-	blank, err := b.pages(ctx)
-	if err != nil {
-		return err
-	}
-	if _, err := b.call(ctx, "Target.createTarget", map[string]any{"url": address}); err != nil {
-		return err
-	}
-	for _, id := range blank {
-		_, _ = b.call(ctx, "Target.closeTarget", map[string]any{"targetId": id})
-	}
-	return nil
-}
-
-// pages are the ids of the browser's pages.
-func (b *browser) pages(ctx context.Context) ([]string, error) {
-	raw, err := b.call(ctx, "Target.getTargets", nil)
-	if err != nil {
-		return nil, err
-	}
-	var r struct {
-		TargetInfos []struct {
-			ID   string `json:"targetId"`
-			Type string `json:"type"`
-		} `json:"targetInfos"`
-	}
-	if err := json.Unmarshal(raw, &r); err != nil {
-		return nil, err
-	}
-	var out []string
-	for _, t := range r.TargetInfos {
-		if t.Type == "page" {
-			out = append(out, t.ID)
-		}
-	}
-	return out, nil
-}
-
-// pageOpen says a window still shows a page: closing the last one ends the
-// sign-in.
-func (b *browser) pageOpen(ctx context.Context) (bool, error) {
-	ids, err := b.pages(ctx)
-	return len(ids) > 0, err
-}
-
 // cookies are every cookie the browser's profile holds.
 func (b *browser) cookies(ctx context.Context) ([]Cookie, error) {
 	raw, err := b.call(ctx, "Storage.getCookies", map[string]any{})
@@ -270,11 +222,10 @@ func credentialName(name string) bool {
 	return false
 }
 
-// flags are the browser's command line but for the pipe's: a profile of
-// its own with no first-run pages, no sync and no prompt for the system
-// keychain (the profile is removed afterwards), and Google's device-bound
-// sessions off, which would tie the sign-in's cookies to this browser
-// alone.
+// flags are the command line both starts share: a profile of its own with
+// no first-run pages, no sync and no prompt for the system keychain (the
+// profile is removed afterwards), and Google's device-bound sessions off,
+// which would tie the sign-in's cookies to this browser alone.
 func flags(profile string) []string {
 	return []string{
 		"--user-data-dir=" + profile,
@@ -284,7 +235,5 @@ func flags(profile string) []string {
 		"--password-store=basic",
 		"--use-mock-keychain",
 		"--disable-features=EnableBoundSessionCredentials",
-		"--new-window",
-		"about:blank",
 	}
 }
