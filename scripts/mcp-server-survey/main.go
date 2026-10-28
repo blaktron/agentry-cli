@@ -122,7 +122,7 @@ type callResult struct {
 
 func main() {
 	list := flag.String("list", "list.yaml", "the servers to survey")
-	out := flag.String("out", ".", "where results, logs and server stores go (run from ~/scratch, never a worktree)")
+	out := flag.String("out", ".", "where results, logs and server stores go: a directory outside any git work tree")
 	only := flag.String("only", "", "survey only the entries whose package is in this comma-separated list")
 	flag.Parse()
 	if err := run(*list, *out, *only); err != nil {
@@ -157,10 +157,10 @@ func run(listPath, outDir, only string) error {
 	if err != nil {
 		return err
 	}
-	// Its server stores and logs are scratch, never a checkout's content
+	// Its server stores and logs are throwaway, never a checkout's content
 	// (README, "Running it").
 	if inside, _ := exec.CommandContext(context.Background(), "git", "-C", outDir, "rev-parse", "--is-inside-work-tree").Output(); strings.TrimSpace(string(inside)) == "true" { //nolint:gosec // a fixed command
-		return fmt.Errorf("%s is inside a git work tree; run the survey from ~/scratch", outDir)
+		return fmt.Errorf("%s is inside a git work tree; give -out a directory outside any work tree", outDir)
 	}
 	for _, sub := range []string{"store", "logs", "gateway"} {
 		if err := os.MkdirAll(filepath.Join(outDir, sub), 0o700); err != nil {
