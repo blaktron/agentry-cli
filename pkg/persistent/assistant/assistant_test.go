@@ -41,7 +41,9 @@ func TestTheMeetingNotesSkillHoldsItsRules(t *testing.T) {
 		// The labels: Them and Room are not split by person, a Speaker number
 		// is a voice and never an identity, and machine errors.
 		"one\n  person or several", "**Room** is everyone in the room", "never an identity",
-		"`speakers: estimated`", "never take a Room or Speaker line as\n  theirs",
+		"`speaker_count: estimated`", "`speaker_count:\n  given`", "`speakers:` is the list of\n  labels",
+		"`diarization: done`", "`off`, `unavailable` or `failed`", "every line is Room", "say why", "give the reason", "`diarizer:`",
+		"never take a Room or Speaker\n  line as theirs",
 		"Never put a name on a Them, Room or Speaker line", "Only the transcript\n  can give one",
 		"\"Speaker 2 (Dana, from the transcript)\"", "never the name\n  alone",
 		"Never a page for a label", "Speaker\n   numbers that are estimated voices",
