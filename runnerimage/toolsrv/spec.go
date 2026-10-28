@@ -53,6 +53,10 @@ type Spec struct {
 	// the runner rewrites before each turn. Set for a persistent agent
 	// whose share is checked; unset, the share is read as it is.
 	ShareChecks *ShareChecks `json:"shareChecks,omitempty"`
+	// TurnFile holds the run's turn count, which the runner rewrites at
+	// each turn's start and each compaction; a change starts a new read log
+	// (reread.go). Empty: the run is one turn.
+	TurnFile string `json:"turnFile,omitempty"`
 	// OutDir is the container path of the run's output folder mount
 	// (conventionally /out). write_report is rooted at OutDir/reports.
 	OutDir string `json:"outDir"`

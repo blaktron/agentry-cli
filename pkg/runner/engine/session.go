@@ -406,8 +406,10 @@ type liveSession struct {
 	pendingNotices []string
 	// outboxMu holds one copy of the share outbox at a time: after a turn,
 	// and at the end.
-	outboxMu      sync.Mutex
-	userTurns     int
+	outboxMu  sync.Mutex
+	userTurns int
+	// turnCount is the run's turn count the tools server reads (nextTurn).
+	turnCount     int
 	toolCalls     int
 	inTok, outTok int64
 	totTok        int64
@@ -720,6 +722,7 @@ func (s *liveSession) NewConversation(ctx context.Context, reason string) (strin
 	if err != nil {
 		return "", err
 	}
+	s.nextTurn()
 	reason = s.redact.String(reason)
 	s.mu.Lock()
 	s.conversation, s.resumed, s.resumeReason = id, false, reason
@@ -758,6 +761,7 @@ func (s *liveSession) CompactConversation(ctx context.Context) error {
 	if err := c.CompactConversation(ctx); err != nil {
 		return err
 	}
+	s.nextTurn()
 	s.emit(session.Event{Kind: session.KindOther, Text: "the running harness compacted the conversation"})
 	return nil
 }
@@ -1299,6 +1303,11 @@ func (s *liveSession) handle(ev adapter.Event) {
 		}
 		over := s.p.Budgets.MaxCostUSD > 0 && s.costUSD > s.p.Budgets.MaxCostUSD
 		s.mu.Unlock()
+		if ev.ContextCompacted {
+			// The harness compacted the conversation itself: what was read
+			// before may be gone from the history.
+			s.nextTurn()
+		}
 		s.emit(session.Event{Kind: session.KindUsage, InputTokens: ev.InputTokens, OutputTokens: ev.OutputTokens, TotalTokens: ev.TotalTokens, CostUSD: ev.CostUSD,
 			ContextTokens: ev.ContextTokens, ContextLimit: ev.ContextLimit, ContextCompacted: ev.ContextCompacted, Raw: ev.Raw})
 		if over {
@@ -1517,6 +1526,13 @@ func (s *liveSession) turn(ctx context.Context, text string, synthetic bool) err
 func (s *liveSession) turnCarrying(ctx context.Context, carried, text string, synthetic bool) error {
 	s.turnMu.Lock()
 	defer s.turnMu.Unlock()
+	s.mu.Lock()
+	ended := s.ended
+	s.mu.Unlock()
+	if ended {
+		return session.ErrEnded
+	}
+	s.nextTurn()
 	s.mu.Lock()
 	if s.ended {
 		s.mu.Unlock()

@@ -166,7 +166,7 @@ func writeEnvironment(b *strings.Builder, f promptFacts) {
 
 You have no shell, filesystem or network of your own. Your tools come only from the run's MCP gateway, which runs them in sandboxed containers, and its tool list is the whole of what you can do.
 `)
-	fmt.Fprintf(b, "\nA tool result holds at most %s, so a larger file comes a page at a time: each page ends with a line giving the bytes it holds and the offset to continue from, and you read on by passing that offset. A listing or a search that stops at that size says what it left out and how to read on or narrow it.\n", budgetWords(f.budget))
+	fmt.Fprintf(b, "\nA tool result holds at most %s, so a larger file comes a page at a time: each page ends with a line giving the bytes it holds and the offset to continue from, and you read on by passing that offset. A listing or a search that stops at that size says what it left out and how to read on or narrow it. Reading the same page of a file again in one turn, when the file has not changed, is answered \"unchanged since your earlier call in this turn\": your earlier result still holds it, and fresh: true serves the page again.\n", budgetWords(f.budget))
 	c := f.caps
 	switch c.EgressMode {
 	case "hosts":

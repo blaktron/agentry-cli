@@ -322,6 +322,13 @@ const (
 	ShareChecksFile = "verdicts.json"
 	// PlanMount is where the agent container sees its harness files.
 	PlanMount = "/plan"
+	// TurnsMount is the folder the tools server reads the run's turn count
+	// from (TurnsFile). The runner rewrites it at each turn's start and each
+	// compaction, and the re-read stub stands only for a read answered
+	// earlier in the same turn.
+	TurnsMount = "/run/agentry/turns"
+	// TurnsFile is the turn count's file name in that folder.
+	TurnsFile = "turn"
 	// ToolSpecMount is where the tools container sees its spec file.
 	ToolSpecMount = "/etc/agentry/toolspec.json"
 	// GatewayAlias and GatewayPort locate the MCP gateway on the run

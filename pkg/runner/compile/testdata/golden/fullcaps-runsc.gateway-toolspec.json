@@ -1,6 +1,7 @@
 {
   "specVersion": "17",
   "workspaceDir": "/workspace",
+  "turnFile": "/run/agentry/turns/turn",
   "outDir": "/out",
   "inputsDir": "/inputs",
   "inputsTextDir": "/inputs-text",

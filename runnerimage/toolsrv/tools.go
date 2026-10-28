@@ -97,6 +97,9 @@ type toolDef struct {
 // (an undeclared capability's tool is absent, not refusing).
 func (s *server) buildTools() {
 	add := func(name, desc string, schema map[string]any, call func(json.RawMessage) (string, bool)) {
+		if props, ok := schema["properties"].(map[string]any); ok && rereadTools[name] {
+			props["fresh"] = freshProp()
+		}
 		s.order = append(s.order, name)
 		s.tools[name] = toolDef{name: name, description: desc, schema: schema, call: call}
 	}
