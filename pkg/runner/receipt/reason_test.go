@@ -172,7 +172,7 @@ func TestReasonCodesAreTheClosedList(t *testing.T) {
 	want := []ReasonCode{
 		ReasonAgentBlocked, ReasonAnswerInReasoning, ReasonExecNotProvided, ReasonHostRefused, ReasonInputRefused, ReasonInputsNotDecoded, ReasonMCPInstallFailed,
 		ReasonMCPNotResolved, ReasonMCPRuntimeExcluded, ReasonMCPStartFailed, ReasonMCPVulnerable,
-		ReasonOrgPolicy, ReasonOutOfCredits, ReasonPlanLimit, ReasonRunnerBlocked, ReasonSecretMissing, ReasonSignInMissing,
+		ReasonOrgPolicy, ReasonOutOfCredits, ReasonPlanLimit, ReasonRunnerBlocked, ReasonSecretMissing, ReasonSignInMissing, ReasonToolCallAsText,
 	}
 	if got := ReasonCodes(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("ReasonCodes() = %v, want %v", got, want)

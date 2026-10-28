@@ -187,11 +187,59 @@ func TestFetchEdges(t *testing.T) {
 			t.Errorf("(%q, %v)", got, isErr)
 		}
 	})
-	t.Run("auth requires env name", func(t *testing.T) {
-		s := newTestServer(t, fetchSpecFor(t, srv, "API_TOKEN"))
-		got, isErr := s.toolFetch(rawArgs(t, map[string]any{"url": srv.URL, "auth": map[string]any{}}))
-		if !isErr || !strings.Contains(got, "auth.env is required") {
+	t.Run("an empty auth is no credentials", func(t *testing.T) {
+		var sawAuth []string
+		handler = func(w http.ResponseWriter, r *http.Request) {
+			sawAuth = append(sawAuth, r.Header.Get("Authorization"))
+			_, _ = w.Write([]byte("ok"))
+		}
+		for _, secrets := range [][]string{nil, {"API_TOKEN"}} {
+			s := newTestServer(t, fetchSpecFor(t, srv, secrets...))
+			for _, auth := range []map[string]any{{}, {"env": ""}, {"env": "", "scheme": "bearer"}, {"env": "", "scheme": "", "header": ""}} {
+				got, isErr := s.toolFetch(rawArgs(t, map[string]any{"url": srv.URL, "auth": auth}))
+				if isErr || !strings.Contains(got, "ok") {
+					t.Errorf("secrets %v, auth %v: (%q, %v)", secrets, auth, got, isErr)
+				}
+			}
+		}
+		for _, a := range sawAuth {
+			if a != "" {
+				t.Errorf("Authorization sent: %q", a)
+			}
+		}
+	})
+	t.Run("auth that asks for a header requires env name", func(t *testing.T) {
+		s := newTestServer(t, fetchSpecFor(t, srv, "API_TOKEN", "OTHER_TOKEN"))
+		for _, auth := range []map[string]any{{"scheme": "header", "header": "X-Api-Key"}, {"header": "X-Api-Key"}, {"scheme": "header"}} {
+			got, isErr := s.toolFetch(rawArgs(t, map[string]any{"url": srv.URL, "auth": auth}))
+			if !isErr || !strings.Contains(got, "auth.env is required") || !strings.Contains(got, "API_TOKEN, OTHER_TOKEN") {
+				t.Errorf("auth %v: (%q, %v)", auth, got, isErr)
+			}
+		}
+		s = newTestServer(t, fetchSpecFor(t, srv))
+		got, isErr := s.toolFetch(rawArgs(t, map[string]any{"url": srv.URL, "auth": map[string]any{"scheme": "header", "header": "X-Api-Key"}}))
+		if !isErr || !strings.Contains(got, "grants fetch no secret") {
 			t.Errorf("(%q, %v)", got, isErr)
+		}
+	})
+	t.Run("a credential header without a granted secret", func(t *testing.T) {
+		s := newTestServer(t, fetchSpecFor(t, srv))
+		got, isErr := s.toolFetch(rawArgs(t, map[string]any{"url": srv.URL, "headers": map[string]string{"Authorization": "x"}}))
+		if !isErr || !strings.Contains(got, "grants fetch no secret") || strings.Contains(got, "auth parameter") {
+			t.Errorf("(%q, %v)", got, isErr)
+		}
+	})
+	t.Run("auth is offered only with a granted secret", func(t *testing.T) {
+		for _, secrets := range [][]string{nil, {"API_TOKEN"}} {
+			s := newTestServer(t, fetchSpecFor(t, srv, secrets...))
+			d, ok := s.tools[ToolFetch]
+			if !ok {
+				t.Fatal("fetch is not granted")
+			}
+			_, offered := d.schema["properties"].(map[string]any)["auth"]
+			if offered != (len(secrets) > 0) || strings.Contains(d.description, "auth parameter") != offered {
+				t.Errorf("secrets %v: auth offered %v, description %q", secrets, offered, d.description)
+			}
 		}
 	})
 	t.Run("auth secret unset", func(t *testing.T) {
