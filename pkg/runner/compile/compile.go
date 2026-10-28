@@ -1089,6 +1089,7 @@ func checkReviewGrant(in Inputs, caps spec.CapSummary) error {
 // single choke point deciding which tools exist.
 func toolSpec(caps spec.CapSummary, secrets []string) *toolsrv.Spec {
 	ts := baseToolSpec(caps, secrets)
+	ts.TurnFile = spec.TurnsMount + "/" + spec.TurnsFile
 	// A persistent agent's filesystem tools work in its own folders, rooted
 	// at spec.AgentRoot, and nowhere else.
 	if folders := caps.AgentFiles.Folders(); len(folders) > 0 {
@@ -1134,6 +1135,9 @@ func dependencyScan(caps spec.CapSummary) bool {
 // ShareChecksFolder is the run's folder of the share's malware verdicts,
 // under its cfg directory: the engine writes it, the tools server reads it.
 func ShareChecksFolder() string { return spec.PHCfg + "/share-checks" }
+
+// TurnsFolder is the run's turn count folder, under its rendered config.
+func TurnsFolder() string { return spec.PHCfg + "/turns" }
 
 // agentFilesName is how the tools' descriptions name a persistent agent's
 // folders.
@@ -1922,6 +1926,9 @@ func catalogEntry(tspec *toolsrv.Spec, caps spec.CapSummary, secrets []string, r
 	// attached, so an attachment never moves the plan; the engine grants
 	// the tools only when it attaches one.
 	vols = append(vols, spec.PHKnowledge+":"+spec.KnowledgeMount+":ro")
+	// The run's turn count, a folder the runner rewrites at each turn's
+	// start, so the tools server sees each new file.
+	vols = append(vols, TurnsFolder()+":"+spec.TurnsMount+":ro")
 	vols = append(vols, spec.PHOut+":"+spec.OutMount+":rw")
 	// The share's malware verdicts, a folder the runner rewrites before
 	// each turn, so the tools server sees each new file (a single-file bind

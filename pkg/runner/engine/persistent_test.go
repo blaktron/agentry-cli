@@ -511,3 +511,42 @@ func TestASegmentWhoseHarnessCannotCompactSaysSo(t *testing.T) {
 	}
 	<-done
 }
+
+// TestTheTurnCountMovesAtEachTurnAndNewConversation: the run's turn count,
+// which the tools server's re-read stub reads, starts at 0 and moves on at
+// every turn's start and at a new conversation.
+func TestTheTurnCountMovesAtEachTurnAndNewConversation(t *testing.T) {
+	p, f, _ := persistentFixture(t, "")
+	s, err := StartSession(context.Background(), f, p)
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	_, done := collect(s)
+	ls := s.(*liveSession)
+	count := func() string {
+		b, err := os.ReadFile(filepath.Join(ls.rd.turns, spec.TurnsFile))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.TrimSpace(string(b))
+	}
+	if got := count(); got != "0" {
+		t.Fatalf("at the start the count = %q, want 0", got)
+	}
+	if err := s.Send(context.Background(), "one"); err != nil {
+		t.Fatal(err)
+	}
+	if got := count(); got != "1" {
+		t.Fatalf("after a turn the count = %q, want 1", got)
+	}
+	if _, err := s.(ConversationRenewer).NewConversation(context.Background(), "a compaction"); err != nil {
+		t.Fatal(err)
+	}
+	if got := count(); got != "2" {
+		t.Fatalf("after a new conversation the count = %q, want 2", got)
+	}
+	if _, err := s.End(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	<-done
+}
