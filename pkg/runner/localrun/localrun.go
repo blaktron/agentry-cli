@@ -696,7 +696,9 @@ type Run struct {
 // RepairRun is the Drafter's one repair turn after first (drafter.PostStep):
 // the same package without its web tools and with no web configuration, so it
 // holds no key and reads nothing from the web, given the turn's task, folder,
-// budgets, run id and usage reporter. It is given none of the person's packs;
+// budgets, run id and usage reporter. It pays for its model as the first run
+// does: the same credits client, for a policy that pays with Agentry credits.
+// It is given none of the person's packs;
 // the pack the Drafter ships reaches it as it reaches every run of the package
 // (withShippedPacks). Both clients run the turn this way.
 func RepairRun(first Run, t drafter.RepairTurn) Run {
@@ -704,7 +706,7 @@ func RepairRun(first Run, t drafter.RepairTurn) Run {
 	return Run{
 		Builtin: first.Builtin.WithoutWebTools(), Home: first.Home, Policy: first.Policy, PolicySHA: first.PolicySHA,
 		PolicyFile: first.PolicyFile, Build: first.Build, Task: strings.NewReader(t.Task), OutDir: t.OutDir, Budgets: &budgets,
-		Adapter: first.Adapter, RunID: t.RunID, Stderr: first.Stderr, OnUsage: t.OnUsage,
+		Adapter: first.Adapter, RunID: t.RunID, Stderr: first.Stderr, OnUsage: t.OnUsage, Credits: first.Credits,
 	}
 }
 
