@@ -17,6 +17,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
+	"github.com/blaktron/agentry-cli/pkg/runner/inference"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
@@ -528,6 +529,16 @@ func TestTheCreatorsWebRunsOnlyWithItsScanner(t *testing.T) {
 	env, _, err = run(KnowledgeCreator().WithoutWebTools(), nil, "c0de0003")
 	if err != nil || env.CapabilitiesEnforced["web"] != "" {
 		t.Fatalf("the Creator without the web: %v %v", err, env.CapabilitiesEnforced)
+	}
+}
+
+// A Drafter paid with Agentry credits pays for its repair turn the same
+// way: the repair run carries the first run's credits client.
+func TestTheRepairRunPaysWithTheFirstRunsCredits(t *testing.T) {
+	c := inference.New("https://registry.example", func() (string, error) { return "agy_x", nil }, nil)
+	first := Run{Builtin: Drafter(), Policy: policy.Default(), Credits: c}
+	if r := RepairRun(first, drafter.RepairTurn{Task: "fix"}); r.Credits != c {
+		t.Fatalf("the repair run's credits client is %v, want the first run's", r.Credits)
 	}
 }
 
