@@ -31,6 +31,10 @@ const (
 	ProviderOpenAI  = "openai"
 	ProviderCopilot = "copilot"
 
+	// ProviderVultr is Vultr Serverless Inference, an OpenAI-compatible
+	// endpoint paid by a key from the person's Vultr account.
+	ProviderVultr = "vultr"
+
 	// The providers whose account a person may connect:
 	// each is paid by an ordinary API key (or, Hugging Face, an inference
 	// token), pasted or minted by a connect.

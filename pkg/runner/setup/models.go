@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -25,11 +26,15 @@ type Catalog struct {
 	Warning  string
 }
 
-// Model is one listed model: the id a policy names, and the name a
-// person reads where the provider gives one.
+// Model is one listed model: the id a policy names, the name a person
+// reads where the provider gives one, and its price where the provider
+// lists one, in US dollars a million tokens ("0.10"; "" where none is
+// given).
 type Model struct {
 	ID          string
 	DisplayName string
+	InputUSD    string
+	OutputUSD   string
 }
 
 // anthropicVersion is the API version header every Anthropic request
@@ -154,6 +159,8 @@ func modelsEndpoint(provider, baseURL string) (string, *pager, error) {
 		return d.ModelsURL, anthropicPager(d.KeyHeader), nil
 	case "google":
 		return d.ModelsURL, googlePager(d.KeyHeader), nil
+	case policy.ProviderVultr:
+		return d.ModelsURL, vultrPager(d.KeyHeader), nil
 	default:
 		return d.ModelsURL, openAIPager(d.KeyHeader), nil
 	}
@@ -369,4 +376,80 @@ func withoutKey(err error, key string) error {
 		return errors.New(strings.ReplaceAll(s, key, "<key>"))
 	}
 	return err
+}
+
+// vultrPager: Vultr's data[] with each model's input and output
+// modalities, one page. Vultr lists rerankers, embeddings, speech, image
+// and video models and a classifier that takes no tools on the same
+// endpoint, and only a text model that takes tools can run an agent, so
+// those are the models it keeps, with their prices.
+func vultrPager(keyHeader string) *pager {
+	return &pager{
+		url:  func(endpoint, _ string) string { return endpoint },
+		auth: func(req *http.Request, key string) { setKey(req, keyHeader, key) },
+		decode: func(body []byte) ([]Model, string, error) {
+			var page struct {
+				Data []struct {
+					ID               string          `json:"id"`
+					Name             string          `json:"name"`
+					InputModalities  []vultrModality `json:"input_modalities"`
+					OutputModalities []vultrModality `json:"output_modalities"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(body, &page); err != nil {
+				return nil, "", errNotAListing(err)
+			}
+			var out []Model
+			for _, m := range page.Data {
+				text, ok := vultrText(m.OutputModalities)
+				if !ok || text.SupportedParameters["tools"] == nil || m.ID == "" {
+					continue
+				}
+				lm := Model{ID: m.ID, OutputUSD: text.perMillion()}
+				if m.Name != m.ID {
+					lm.DisplayName = m.Name
+				}
+				if in, ok := vultrText(m.InputModalities); ok {
+					lm.InputUSD = in.perMillion()
+				}
+				out = append(out, lm)
+			}
+			return out, "", nil
+		},
+	}
+}
+
+// vultrModality is one input or output modality of a Vultr model: its
+// type, the request parameters it takes, and its prices.
+type vultrModality struct {
+	Type                string                     `json:"type"`
+	SupportedParameters map[string]json.RawMessage `json:"supported_parameters"`
+	Pricing             []struct {
+		Unit    string `json:"unit"`
+		CostUSD string `json:"cost_usd"`
+	} `json:"pricing"`
+}
+
+// vultrText is the text modality among ms.
+func vultrText(ms []vultrModality) (vultrModality, bool) {
+	for _, m := range ms {
+		if m.Type == "text" {
+			return m, true
+		}
+	}
+	return vultrModality{}, false
+}
+
+// perMillion is the modality's per-token price a million tokens, in US
+// dollars to the cent ("0.10"); "" where it names none.
+func (m vultrModality) perMillion() string {
+	for _, p := range m.Pricing {
+		if p.Unit != "token" {
+			continue
+		}
+		if f, err := strconv.ParseFloat(p.CostUSD, 64); err == nil && f >= 0 {
+			return strconv.FormatFloat(f*1e6, 'f', 2, 64)
+		}
+	}
+	return ""
 }
