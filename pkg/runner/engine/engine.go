@@ -228,6 +228,12 @@ type Params struct {
 	// token-file sign-in before the one the run holds expires; the engine
 	// rewrites the token file with it. Nil leaves the token as given.
 	RenewModelSignIn func(ctx context.Context) (ConnectionToken, error)
+	// Inference is the Agentry credits session the run pays for its model
+	// with, when its plan names model provider agentry (InferenceFor): the
+	// session's token alone reaches the harness. The engine renews it and
+	// ends it when the grant says so. A plan that pays with credits
+	// refuses to run without it.
+	Inference *InferenceGrant
 	// ServersDir is the signature's installed MCP-server store,
 	// substituted for the PHServers placeholder. Required when the plan
 	// declares MCP servers; unused otherwise.
@@ -461,6 +467,13 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	if err := checkModelSignIn(p); err != nil {
 		return fail(env, redact, err)
 	}
+	if err := checkInference(p); err != nil {
+		return fail(env, redact, err)
+	}
+	// The credits session ends whatever the run's outcome, after teardown
+	// (deferred first, so it runs last): every token the harness spent is
+	// in its final count.
+	defer endInference(p, env, p.Stderr)
 	// A saved destination is the person's on this computer: a hosted run
 	// delivers only to the destinations its host handed it in a destinations
 	// file, and never to one on a private network, whatever its caller put in
@@ -581,6 +594,8 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	// folders.
 	stopRenewal := renewConnections(ctx, p, rd)
 	td.add(func(context.Context) { stopRenewal() })
+	stopCredits := renewInference(ctx, p, p.Stderr)
+	td.add(func(context.Context) { stopCredits() })
 
 	env.Stage = receipt.StageInfra
 	// A run driven as one session turn may approve the gateway's tools: its
@@ -1268,7 +1283,7 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	defer cancelCause(nil)
 	defer func() { rd.harnessStarts++ }()
 
-	agentEnv, err := resolveEnv(p.Plan.Harness.Agent.Env, rep, token)
+	agentEnv, err := resolveEnv(p.Plan.Harness.Agent.Env, rep, token, inferenceToken(p))
 	if err != nil {
 		return agentOutcome{err: err}
 	}
@@ -1384,7 +1399,7 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		out.err = orgPolicyError(collector.orgPolicy)
 	// And a provider out of credits: the account that pays refused.
 	case collector.outOfCredits != nil:
-		out.err = outOfCreditsError(collector.outOfCredits.Text)
+		out.err = outOfCreditsError(p, collector.outOfCredits.Text)
 	case errors.As(turnErr, &refused):
 		out.err = orgPolicyError(&adapter.Event{Policy: refused.Policy, Text: refused.Text})
 	case context.Cause(agentCtx) == errBudget:

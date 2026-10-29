@@ -137,6 +137,8 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 		}
 		s.mu.Unlock()
 		td.run()
+		// A session that never started ends its credits session too.
+		endInference(p, env, p.Stderr)
 		_, cerr := fail(env, s.redact, err)
 		_ = td.reportLeftFiles(env) // the session already failed; the report amends it
 		return nil, cerr
@@ -158,6 +160,9 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 		return fail(err)
 	}
 	if err := checkModelSignIn(p); err != nil {
+		return fail(err)
+	}
+	if err := checkInference(p); err != nil {
 		return fail(err)
 	}
 	if err := checkBrowser(ctx, p); err != nil {
@@ -281,6 +286,8 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	// teardown stops the renewer before it deletes their folders.
 	stopRenewal := renewConnections(ctx, p, rd)
 	td.add(func(context.Context) { stopRenewal() })
+	s.stopCredits = sync.OnceFunc(renewInference(ctx, p, p.Stderr))
+	td.add(func(context.Context) { s.stopCredits() })
 
 	var served []string
 	ReportStage(p.OnStage, Stage{Name: receipt.StageInfra})
@@ -334,7 +341,10 @@ type liveSession struct {
 	p   Params
 	env *receipt.Envelope
 	td  *teardown
-	rd  *runDirs
+	// stopCredits stops the credits session's renewer before the session
+	// is ended.
+	stopCredits func()
+	rd          *runDirs
 	// granted is the run's own tool grant, read from its rendered tools
 	// spec after the run-time grants: what the driver permits.
 	granted []string
@@ -1092,7 +1102,7 @@ func (s *liveSession) launch(again bool) (io.ReadWriteCloser, error) {
 		}
 		run = wait
 	} else {
-		agentEnv, err := resolveEnv(p.Plan.Harness.Agent.Env, rep, token)
+		agentEnv, err := resolveEnv(p.Plan.Harness.Agent.Env, rep, token, inferenceToken(p))
 		if err != nil {
 			_ = stderrFile.Close()
 			return nil, err
@@ -1367,6 +1377,25 @@ func (s *liveSession) handle(ev adapter.Event) {
 			s.endWith(session.EndPlanLimit)
 		}
 	case adapter.EventOutOfCredits:
+		if s.p.Persistent != nil {
+			// A persistent agent outlives its credits running out: the turn
+			// fails, once, saying so, and the agent is there to answer
+			// again once credits are added.
+			msg := "out of credits: " + ev.Text
+			if s.p.Inference != nil {
+				msg = "out of credits: your Agentry credits are used up, so this turn could not be answered; add credits at the registry and ask again"
+			}
+			s.mu.Lock()
+			said := s.turnLimit != ""
+			if s.inTurn && !said {
+				s.turnErr, s.turnLimit = ev.Text, ev.Text
+			}
+			s.mu.Unlock()
+			if !said {
+				s.emit(session.Event{Kind: session.KindError, Text: msg, Raw: ev.Raw})
+			}
+			break
+		}
 		s.mu.Lock()
 		first := s.outOfCredits == nil
 		if first {
@@ -1940,7 +1969,7 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 	case session.EndOrgPolicy:
 		outErr = orgPolicyError(orgPolicy)
 	case session.EndOutOfCredits:
-		outErr = outOfCreditsError(outOfCredits.Text)
+		outErr = outOfCreditsError(s.p, outOfCredits.Text)
 	case session.EndIdle:
 		outErr = Classify(ExitTimeout, fmt.Errorf("session idle for more than %ds", s.budgets.IdleTimeoutSeconds))
 	case session.EndWall:
@@ -1962,6 +1991,12 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 		// went wrong.
 		outErr = Classify(ExitCLI, panicErr)
 	}
+	// The harness has stopped: the credits session's final count is
+	// complete, and it ends before the envelope is written.
+	if s.stopCredits != nil {
+		s.stopCredits()
+	}
+	endInference(s.p, env, s.p.Stderr)
 	if outErr != nil {
 		env.Result = receipt.TextResult(lastText)
 		env, outErr = fail(env, s.redact, outErr)

@@ -240,7 +240,7 @@ func gatewayCanMount(path, goos string) error {
 // gatewayEnv resolves the gateway container's env: its bind allow-lists
 // name host paths, in the gateway's spelling.
 func (rd *runDirs) gatewayEnv(plan *spec.Plan, token string) (map[string]string, error) {
-	env, err := resolveEnv(plan.Gateway.Env, rd.gatewayReplacer(), token)
+	env, err := resolveEnv(plan.Gateway.Env, rd.gatewayReplacer(), token, "")
 	if err != nil {
 		return nil, err
 	}
@@ -1088,12 +1088,17 @@ func parseEnvFile(path string) (map[string]string, error) {
 // placeholder substitution, FromHostEnv resolves from the operator's
 // environment (missing ⇒ exit 11, named), FromRunToken injects the
 // per-run gateway token.
-func resolveEnv(vars []spec.EnvVar, rep *strings.Replacer, token string) (map[string]string, error) {
+func resolveEnv(vars []spec.EnvVar, rep *strings.Replacer, token, credits string) (map[string]string, error) {
 	out := make(map[string]string, len(vars))
 	for _, v := range vars {
 		switch {
 		case v.FromRunToken:
 			out[v.Name] = token
+		case v.FromInference:
+			if credits == "" {
+				return nil, Classify(ExitPolicy, fmt.Errorf("%s is the run's Agentry credits session token, and the run was given no session", v.Name))
+			}
+			out[v.Name] = credits
 		case v.FromHostEnv != "":
 			val, err := hostSecret(v)
 			if err != nil {

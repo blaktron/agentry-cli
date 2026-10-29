@@ -7,6 +7,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -142,5 +143,35 @@ func TestSetupAPIKeySourceFlag(t *testing.T) {
 	_, _, err = setupPolicy(t, "--yes", "--provider", "anthropic", "--api-key-source", "vault")
 	if err == nil || !strings.Contains(err.Error(), "must be env or keyring") {
 		t.Fatalf("vault: %v", err)
+	}
+}
+
+// `agentry setup --provider agentry` records the registry this computer is
+// signed in to, with no key; signed out, it says to sign in and writes
+// nothing.
+func TestSetupProviderAgentryPaysThroughTheSignedInRegistry(t *testing.T) {
+	isolateEnv(t)
+	isolateRunnerHome(t)
+	const reg = "https://dev.secureagentry.net"
+	policyPath := filepath.Join(t.TempDir(), "policy.yaml")
+	args := []string{"setup", "--skip-images", "--policy", policyPath, "--registry", reg, "--yes", "--provider", "agentry"}
+	if _, _, err := runCLI(t, strings.NewReader(""), args...); err == nil || !strings.Contains(err.Error(), "agentry login") {
+		t.Fatalf("signed out: %v", err)
+	}
+	if b, _ := os.ReadFile(policyPath); strings.Contains(string(b), "provider: agentry") {
+		t.Fatal("a signed-out setup wrote provider agentry")
+	}
+	storeFileToken(t, reg, "agy_fakesigninforthesetuptestonly000000000000000000")
+	if _, _, err := runCLI(t, strings.NewReader(""), args...); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(policyPath)
+	for _, want := range []string{"provider: agentry", "baseUrl: https://dev.secureagentry.net/api/v1/x/inference/v1", "dev.secureagentry.net:443"} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("policy lacks %q:\n%s", want, raw)
+		}
+	}
+	if regexp.MustCompile(`apiKeyEnv: [A-Za-z]`).Match(raw) || strings.Contains(string(raw), "agy_fake") {
+		t.Errorf("the policy names a key or holds the sign-in:\n%s", raw)
 	}
 }

@@ -31,6 +31,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/gateway"
 	"github.com/blaktron/agentry-cli/pkg/runner/hybrid"
+	"github.com/blaktron/agentry-cli/pkg/runner/inference"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
@@ -127,6 +128,9 @@ type Options struct {
 	// (localrun.Run.Hosted). Its pages are read by AI Review through the
 	// registry with the job's credential (Review and Web say so).
 	Hosted bool
+	// Credits is the credits-session client for a policy that pays with
+	// Agentry credits (model provider agentry); see localrun.Run.Credits.
+	Credits *inference.Client
 	// Render lets a hosted build render a page drawn by scripts: its host
 	// dispatched it as a browser job. A build on this computer renders
 	// without it.
@@ -302,7 +306,7 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 		Builtin: writerPkg, Home: o.Home, Policy: o.Policy, PolicySHA: o.PolicySHA,
 		PolicyFile: o.PolicyFile, Build: o.Build, Task: strings.NewReader(task(o, docs, res.Cut) + pagesTask(res.Pages)),
 		Inputs: inputs, Decoded: res.Decoded, Enforced: enforced, OutDir: o.OutDir, Budgets: o.Budgets,
-		RunID: o.RunID, Stderr: logw, OnUsage: o.OnUsage, Web: web, Hosted: o.Hosted, HostedRender: o.Hosted && o.Render,
+		RunID: o.RunID, Stderr: logw, OnUsage: o.OnUsage, Web: web, Hosted: o.Hosted, HostedRender: o.Hosted && o.Render, Credits: o.Credits,
 	}.Execute(ctx, d)
 	res.Envelope = env
 

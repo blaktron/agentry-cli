@@ -42,6 +42,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/gateway"
+	"github.com/blaktron/agentry-cli/pkg/runner/inference"
 	"github.com/blaktron/agentry-cli/pkg/runner/intake"
 	"github.com/blaktron/agentry-cli/pkg/runner/mcpinstall"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
@@ -736,6 +737,13 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		eventsOut = f
 	}
 
+	// A model paid with Agentry credits: the run's credits session, opened
+	// last, so a run refused before it starts opens none. The run ends it.
+	credits, err := engine.InferenceFor(cmd.Context(), creditsClient(pol), plan, hostedRun(opts), inference.PurposeRun, cmd.ErrOrStderr())
+	if err != nil {
+		return err
+	}
+
 	params := engine.Params{
 		InputReview:      review,
 		Hosted:           hostedFor(opts),
@@ -763,6 +771,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		RenewConnection:  conns.renew,
 		ModelSignIn:      signIn,
 		RenewModelSignIn: renewSignIn,
+		Inference:        credits,
 		ServersDir:       serversDir,
 		Budgets:          budgets,
 		Attestation:      meta.Attestation,

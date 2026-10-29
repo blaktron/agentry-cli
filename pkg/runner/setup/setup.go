@@ -80,15 +80,21 @@ var providerDefaults = []ProviderDefault{
 		ModelsURL: "https://api.vultrinference.com/v1/models", KeyHeader: keyHeaderBearer},
 }
 
-// Providers lists the selectable provider names (copilot, paid by a
-// Copilot plan alone, then custom last).
+// Providers lists the selectable provider names (agentry, paid with
+// Agentry credits, and copilot, paid by a Copilot plan alone, then custom
+// last).
 func Providers() []string {
-	out := make([]string, 0, len(providerDefaults)+2)
+	out := make([]string, 0, len(providerDefaults)+3)
 	for _, d := range providerDefaults {
 		out = append(out, d.Provider)
 	}
-	return append(out, policy.ProviderCopilot, "custom")
+	return append(out, policy.ProviderAgentry, policy.ProviderCopilot, "custom")
 }
+
+// AgentryModelName is the model name a provider-agentry policy records:
+// the registry forwards every request to the model its staff chose, so the
+// name the harness sends is only a label.
+const AgentryModelName = "agentry"
 
 // DefaultsFor returns the table row for a provider (nil for custom or
 // unknown).
@@ -132,6 +138,11 @@ type ModelOpts struct {
 	// Copilot offers Sign in with GitHub for provider copilot, its one way
 	// to pay.
 	Copilot CopilotOffer
+	// AgentryRegistry is the SecureAgentry registry this computer is signed
+	// in to, which provider agentry pays through with the account's
+	// credits; "" when it is signed in to none, and then that provider is
+	// refused.
+	AgentryRegistry string
 	// Connect offers Connect your account for OpenRouter, Poe and Hugging Face:
 	// nil offers none. ConnectAccount asks for it without the question.
 	Connect        ConnectOffer
@@ -599,6 +610,10 @@ func ConfigureModel(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 		}
 	}
 
+	if prov == policy.ProviderAgentry {
+		return configureAgentry(p, pol, opts)
+	}
+
 	d := DefaultsFor(prov)
 	if d == nil && prov != "custom" && prov != policy.ProviderCopilot {
 		// An unlisted provider name is passed to the harness as it is:
@@ -1001,4 +1016,37 @@ func defaultOr(v, def string) string {
 		return v
 	}
 	return def
+}
+
+// configureAgentry records provider agentry: the model is paid with the
+// credits of the account signed in to opts.AgentryRegistry, and reached at
+// that registry's model endpoint. No key and no model is asked for: each
+// run opens a credits session with the sign-in, and the registry forwards
+// to the model its staff chose.
+func configureAgentry(p Prompter, pol *policy.Policy, opts ModelOpts) error {
+	if kind := strings.TrimSpace(opts.APIKeyKind); kind != "" {
+		return fmt.Errorf("provider agentry is paid with your Agentry credits and takes no api key kind (got %q)", kind)
+	}
+	if opts.APIKeyEnv != "" || opts.APIKeySource != "" || opts.BaseURL != "" {
+		return errors.New("provider agentry is paid with your Agentry credits through the registry you are signed in to: it takes no key variable, key source or base URL")
+	}
+	reg := strings.TrimRight(strings.TrimSpace(opts.AgentryRegistry), "/")
+	if reg == "" {
+		return errors.New("provider agentry pays with the credits of a SecureAgentry account: sign in first (agentry login), then run setup again")
+	}
+	m := policy.Model{Provider: policy.ProviderAgentry, Name: AgentryModelName, BaseURL: reg + policy.AgentryInferencePath}
+	if _, err := policy.AgentryRegistry(m); err != nil {
+		return err
+	}
+	hp, err := hostPortOf(reg)
+	if err != nil {
+		return err
+	}
+	m.ProxyAllow = []string{hp}
+	if opts.Model != "" && opts.Model != AgentryModelName {
+		p.Say(fmt.Sprintf("provider agentry uses the model %s's staff chose for runs paid with credits; --model %s is not used", reg, opts.Model))
+	}
+	pol.Model = m
+	p.Say(fmt.Sprintf("model: paid with your Agentry credits at %s (each run opens a credits session with your sign-in; the agent container reaches %s alone and never holds your sign-in)", reg, hp))
+	return nil
 }

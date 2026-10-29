@@ -331,7 +331,7 @@ func runDraft(cmd *cobra.Command, args []string, o *draftOpts) error {
 		Builtin: localrun.Drafter(), Home: home, Policy: pol, PolicySHA: polSHA, PolicyFile: &policyFile,
 		Build: version.Build(), Task: strings.NewReader(task), OutDir: outDir, Budgets: &budgets,
 		RunID: runID, Stderr: errOut, Web: web, OnUsage: usageReporter(o.outputFormat, errOut),
-		Hosted: o.hosted || hostedProcess(),
+		Hosted: o.hosted || hostedProcess(), Credits: creditsClient(pol),
 	}
 	if read != nil {
 		first.Knowledge = read.Packs
