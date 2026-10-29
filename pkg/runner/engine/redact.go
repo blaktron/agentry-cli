@@ -126,7 +126,7 @@ func (rd *runDirs) newRedactor(p Params, token string, secrets map[string]string
 		vars = append(vars, p.Plan.Harness.Host.Env...)
 	}
 	// A target host's sign-in is the run's own credential too.
-	extra := append(hostSecretValues(vars), hostCredentialValues(p)...)
+	extra := append(append(hostSecretValues(vars), hostCredentialValues(p)...), inferenceSecrets(p)...)
 	rd.redact = newRedactor(token, secrets, append(extra, calendarSessionValues(p)...))
 	return rd.redact
 }

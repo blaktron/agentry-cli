@@ -167,7 +167,7 @@ func runReview(cmd *cobra.Command, args []string, o *reviewOpts) error {
 	env, runErr := reviewRun(cmd, localrun.Run{
 		Builtin: localrun.Examiner(), Home: home, Policy: pol, PolicySHA: polSHA, PolicyFile: &policyFile,
 		Build: version.Build(), Task: strings.NewReader(examiner.Task(prep)), Inputs: prep.Inputs, OutDir: outDir,
-		Budgets: &budgets, RunID: runID, Stderr: errOut, Review: key, Hosted: hostedProcess(),
+		Budgets: &budgets, RunID: runID, Stderr: errOut, Review: key, Hosted: hostedProcess(), Credits: creditsClient(pol),
 	})
 	report := examiner.Finish(prep, env, runErr, outDir, localrun.Examiner().Ref(), version.Build())
 	path, err := examiner.Write(outDir, report)

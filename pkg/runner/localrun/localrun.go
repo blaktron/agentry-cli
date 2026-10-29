@@ -34,6 +34,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/gateway"
+	"github.com/blaktron/agentry-cli/pkg/runner/inference"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
 	"github.com/blaktron/agentry-cli/pkg/runner/mcpinstall"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelsignin"
@@ -685,6 +686,11 @@ type Run struct {
 	// HostedRender lets a hosted run render pages: its host dispatched it
 	// as a browser job (engine.Params.HostedRender).
 	HostedRender bool
+	// Credits is the credits-session client of the registry this computer
+	// is signed in to, for a policy that pays with Agentry credits (model
+	// provider agentry): the run opens its session with it. Nil refuses
+	// such a run as signed out.
+	Credits *inference.Client
 }
 
 // RepairRun is the Drafter's one repair turn after first (drafter.PostStep):
@@ -818,6 +824,10 @@ func (r Run) Execute(ctx context.Context, d dockerx.Client) (*receipt.Envelope, 
 	if r.Budgets != nil {
 		budgets = *r.Budgets
 	}
+	credits, err := engine.InferenceFor(ctx, r.Credits, plan, r.Hosted, inference.PurposeRun, logw)
+	if err != nil {
+		return nil, err
+	}
 	return engine.Run(ctx, d, engine.Params{
 		Plan: plan, PlanDir: planDir, WorkspaceSrc: workspace, RunRoot: installDir, RunnerHome: r.Home,
 		OutDir: r.OutDir, Task: r.Task, InputPaths: r.Inputs, Knowledge: knowledgePacks, Decoded: r.Decoded, Enforced: r.Enforced,
@@ -830,5 +840,6 @@ func (r Run) Execute(ctx context.Context, d dockerx.Client) (*receipt.Envelope, 
 		CheckWorkspace: builtinCopyCheck(meta.Digest),
 		RunID:          r.RunID, Stderr: logw, OnUsage: r.OnUsage, Web: r.Web, Review: r.Review,
 		ModelSignIn: signIn, RenewModelSignIn: renewSignIn, Hosted: r.Hosted, HostedRender: r.HostedRender,
+		Inference: credits,
 	})
 }

@@ -647,7 +647,7 @@ func newAgentSuperviseCmd() *cobra.Command {
 				Home: home, Agent: a, Client: persistent.ClientCLI,
 				Policy: pol, PolicySHA: sha, PolicyFile: &file, Build: version.Build(),
 				Docker: dockerx.New(), Stderr: errOut, Packs: agentPacks(cmd),
-				OnStage: stageLines(errOut),
+				OnStage: stageLines(errOut), Credits: creditsClient(pol),
 			})
 			close(starting)
 			if err != nil {

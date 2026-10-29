@@ -10,6 +10,7 @@ import (
 	"bufio"
 	"fmt"
 	"github.com/blaktron/agentry-cli/runnerimage"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -60,7 +61,7 @@ func newSetupCmd() *cobra.Command {
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&opts.provider, "provider", "", "LLM provider: anthropic | openai | google | vultr (Vultr Serverless Inference, a key) | openrouter | poe | huggingface (a key, or --connect your account) | copilot (your Copilot plan, Sign in with GitHub) | custom (or any docker-agent provider name)")
+	f.StringVar(&opts.provider, "provider", "", "LLM provider: anthropic | openai | google | vultr (Vultr Serverless Inference, a key) | agentry (your Agentry credits, through the registry you are signed in to; no key) | openrouter | poe | huggingface (a key, or --connect your account) | copilot (your Copilot plan, Sign in with GitHub) | custom (or any docker-agent provider name)")
 	f.StringVar(&opts.model, "model", "", "model id (default: the provider's table default)")
 	f.StringVar(&opts.apiKeyEnv, "api-key-env", "", "env var NAME holding your api key (never the value)")
 	f.StringVar(&opts.apiKeySource, "api-key-source", "", "where the key comes from when the variable is unset: env (the default) | keyring (the OS keychain entry provider:<provider>; an interactive setup offers to store it)")
@@ -132,7 +133,10 @@ func runSetup(cmd *cobra.Command, opts setupOpts) error {
 		Connect:        connectOffer(cmd, in, home),
 		ConnectAccount: opts.connect,
 		CopilotPlan:    opts.copilotPlan,
-		Yes:            !interactive,
+		// Read only when provider agentry may be chosen: the registry
+		// signed in to, which that provider pays through.
+		AgentryRegistry: agentryRegistryFor(opts.provider),
+		Yes:             !interactive,
 	}); err != nil {
 		return engine.Classify(engine.ExitPolicy, err)
 	}
@@ -178,4 +182,18 @@ func runSetup(cmd *cobra.Command, opts setupOpts) error {
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(),
 		"setup complete — gateway, harness, and runner images ready; QuickAgents can run")
 	return nil
+}
+
+// agentryRegistryFor is the registry this computer is signed in to, for
+// provider agentry (setup.ModelOpts.AgentryRegistry): "" when the provider
+// named is another, or when there is no sign-in.
+func agentryRegistryFor(provider string) string {
+	if p := strings.ToLower(strings.TrimSpace(provider)); p != "" && p != policy.ProviderAgentry {
+		return ""
+	}
+	reg := registryURL()
+	if tok, err := credentialFor(reg); err != nil || tok == "" {
+		return ""
+	}
+	return reg
 }

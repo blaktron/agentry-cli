@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/netip"
 	"net/url"
 	"os"
@@ -1081,7 +1082,14 @@ func (p *Policy) Validate() error {
 	if p.Sessions.IdleTimeoutSeconds < 0 || p.Sessions.MaxWallSeconds < 0 || p.Sessions.MaxUserTurns < 0 {
 		return errors.New("sessions.idleTimeoutSeconds, sessions.maxWallSeconds and sessions.maxUserTurns must not be negative")
 	}
-	if p.Model.APIKeyEnv == "" && !IsModelSignIn(p.Model.APIKeyKind) {
+	if p.Model.Provider == ProviderAgentry {
+		if _, err := AgentryRegistry(p.Model); err != nil {
+			return err
+		}
+		if p.Model.APIKeyEnv != "" || p.Model.APIKeySource != "" || IsModelSignIn(p.Model.APIKeyKind) {
+			return errors.New("model.provider agentry is paid with the signed-in account's credits: it takes no apiKeyEnv, apiKeySource or sign-in kind")
+		}
+	} else if p.Model.APIKeyEnv == "" && !IsModelSignIn(p.Model.APIKeyKind) {
 		return errors.New("model.apiKeyEnv is required (the runner never embeds keys; it names the env var to read)")
 	}
 	if !validKeySource(p.Model.APIKeySource) {
@@ -1646,6 +1654,38 @@ func KeyKind(hp HarnessPolicy, m Model) string {
 		return KeyKindAPI
 	}
 	return k
+}
+
+// AgentryInferencePath is where a SecureAgentry registry serves its
+// OpenAI-compatible model endpoint for credit-paid runs.
+const AgentryInferencePath = "/api/v1/x/inference/v1"
+
+// AgentryRegistry is the registry a provider-agentry model is paid
+// through: model.baseUrl less AgentryInferencePath. The endpoint must be
+// https, except on a loopback address, with no query or user info.
+func AgentryRegistry(m Model) (string, error) {
+	base := strings.TrimRight(m.BaseURL, "/")
+	reg, ok := strings.CutSuffix(base, AgentryInferencePath)
+	if !ok || reg == "" {
+		return "", fmt.Errorf("model.baseUrl %q must be a registry's model endpoint, <registry>%s", m.BaseURL, AgentryInferencePath)
+	}
+	u, err := url.Parse(reg)
+	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return "", fmt.Errorf("model.baseUrl %q must be a registry's model endpoint, <registry>%s", m.BaseURL, AgentryInferencePath)
+	}
+	if u.Scheme != "https" && (u.Scheme != "http" || !isLoopbackHost(u.Hostname())) {
+		return "", fmt.Errorf("model.baseUrl %q must be https (http only on this computer)", m.BaseURL)
+	}
+	return reg, nil
+}
+
+// isLoopbackHost is localhost or a loopback address.
+func isLoopbackHost(h string) bool {
+	if h == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(h)
+	return ip != nil && ip.IsLoopback()
 }
 
 // KeyEnv is the variable a run reads the model key from for an adapter:

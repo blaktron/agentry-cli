@@ -11,8 +11,10 @@ import (
 // on the person's own model provider, and it states the run's usage in tokens
 // and dollars. No field of it, at any depth, is named for credits: those are
 // what a hosted run reports, and the registry works them out from the token
-// counts here. (The files a run writes beside it are read by the engine's
-// TestALocalRunsOutputIsInTokens.)
+// counts here. The one exception is inference.credits, the registry's own
+// figure for a run paid with Agentry credits, which the CLI records as the
+// registry answered and never works out. (The files a run writes beside it
+// are read by the engine's TestALocalRunsOutputIsInTokens.)
 func TestNoReceiptFieldIsNamedInCredits(t *testing.T) {
 	seen := map[reflect.Type]bool{}
 	var walk func(path string, ty reflect.Type)
@@ -29,6 +31,9 @@ func TestNoReceiptFieldIsNamedInCredits(t *testing.T) {
 			name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
 			if name == "" {
 				name = f.Name
+			}
+			if path+"."+name == "envelope.inference.credits" {
+				continue
 			}
 			if strings.Contains(strings.ToLower(name), "credit") || strings.Contains(strings.ToLower(f.Name), "credit") {
 				t.Errorf("%s.%s is named in credits", path, name)

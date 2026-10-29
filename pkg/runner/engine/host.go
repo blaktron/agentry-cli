@@ -178,7 +178,7 @@ func startHostProcess(ctx context.Context, p Params, rd *runDirs, rep *strings.R
 	if err != nil {
 		return nil, hostStart{}, err
 	}
-	envMap, err := resolveEnv(hs.Env, rep, token)
+	envMap, err := resolveEnv(hs.Env, rep, token, inferenceToken(p))
 	if err != nil {
 		return nil, hostStart{}, err
 	}
@@ -365,7 +365,7 @@ func runHostHarness(ctx context.Context, p Params, rd *runDirs, token string, re
 	case collector.orgPolicy != nil:
 		out.err = orgPolicyError(collector.orgPolicy)
 	case collector.outOfCredits != nil:
-		out.err = outOfCreditsError(collector.outOfCredits.Text)
+		out.err = outOfCreditsError(p, collector.outOfCredits.Text)
 	case errors.As(turnErr, &refused):
 		out.err = orgPolicyError(&adapter.Event{Policy: refused.Policy, Text: refused.Text})
 	case context.Cause(agentCtx) == errBudget:

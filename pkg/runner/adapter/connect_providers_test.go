@@ -13,6 +13,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
 // The connect providers render as docker-agent reads them: OpenRouter and
@@ -204,5 +205,44 @@ func TestDockerAgentRendersVultrAsANamedProvider(t *testing.T) {
 		if c.baseURL == "" {
 			golden(t, filepath.Join("testdata", "providers", "vultr.yaml"), res.Files["agent.yaml"])
 		}
+	}
+}
+
+// Provider agentry renders as a named OpenAI-compatible provider at the
+// registry's model endpoint from the policy, with the run's credits
+// session token as its key: an env var the host fills from the session,
+// never a variable or a keychain entry of the person's.
+func TestDockerAgentRendersAgentryCreditsAsANamedProvider(t *testing.T) {
+	ad, _ := Get(DefaultName)
+	in := testInput()
+	in.Model = policy.Model{Provider: policy.ProviderAgentry, Name: "agentry", BaseURL: "https://registry.example" + policy.AgentryInferencePath,
+		ProxyAllow: []string{"registry.example:443"}}
+	res, err := ad.Compile(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	y := string(res.Files["agent.yaml"])
+	for _, s := range []string{"provider: agentry", "base_url: https://registry.example/api/v1/x/inference/v1", "api_type: openai_chatcompletions", "token_key: " + AgentryInferenceTokenEnv} {
+		if !strings.Contains(y, s) {
+			t.Errorf("agent.yaml lacks %q:\n%s", s, y)
+		}
+	}
+	var key *spec.EnvVar
+	for i, e := range res.Agent.Env {
+		if e.Name == AgentryInferenceTokenEnv {
+			key = &res.Agent.Env[i]
+		}
+		if e.FromHostEnv != "" || e.FromKeyring != "" {
+			t.Errorf("the agent's env reads %s from the host (%+v): a credits run reads no key of the person's", e.Name, e)
+		}
+	}
+	if key == nil || !key.FromInference {
+		t.Fatalf("the key var is %+v, want %s from the credits session", key, AgentryInferenceTokenEnv)
+	}
+	golden(t, filepath.Join("testdata", "providers", "agentry.yaml"), res.Files["agent.yaml"])
+
+	in.Model.BaseURL = ""
+	if _, err := ad.Compile(in); err == nil {
+		t.Fatal("provider agentry with no endpoint compiled")
 	}
 }

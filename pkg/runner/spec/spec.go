@@ -910,6 +910,28 @@ func (p *Plan) Conversational() bool {
 	return p != nil && (p.Mode == "interactive" || p.Mode == "persistent")
 }
 
+// PaysWithCredits says the plan's model is paid for with Agentry credits:
+// its harness reads a credits session token (EnvVar.FromInference), which
+// the host must open before the run starts.
+func (p *Plan) PaysWithCredits() bool {
+	if p == nil {
+		return false
+	}
+	for _, v := range p.Harness.Agent.Env {
+		if v.FromInference {
+			return true
+		}
+	}
+	if h := p.Harness.Host; h != nil {
+		for _, v := range h.Env {
+			if v.FromInference {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // Runtime is the OCI runtime the plan asks for, or "" for the daemon's
 // default.
 func (p *Plan) Runtime() string {
@@ -994,6 +1016,11 @@ type EnvVar struct {
 	// route, which reads its token from the environment): the access token
 	// alone, never the sign-in.
 	FromModelSignIn bool `json:"fromModelSignIn,omitempty"`
+	// FromInference injects the run's Agentry credits session token (model
+	// provider agentry): a token usable only on the registry's model
+	// endpoint, which the host opens for the run and renews while it
+	// lives. Never the person's registry sign-in.
+	FromInference bool `json:"fromInference,omitempty"`
 	// ExpectedKind, beside FromHostEnv, is the credential kind the plan was
 	// compiled for (policy apiKeyKind): the engine checks the value it resolves
 	// against it and refuses a mismatch by name, so a plan rendered for a

@@ -277,7 +277,7 @@ func runVoiceBuild(cmd *cobra.Command, job build.Job, o *voiceOpts) error {
 	res, err := voiceBuild(cmd.Context(), knowledgeDocker(), build.Options{
 		Job: job, Samples: o.files, URLs: urls, Review: review, Web: web, Render: o.render, Brief: o.brief, Current: current, MaxTextBytes: o.maxTextBytes,
 		Home: home, Policy: pol, PolicySHA: polSHA, PolicyFile: &policyFile, Build: version.Build(),
-		OutDir: outDir, Budgets: &budgets, RunID: runID, Stderr: errOut, OnUsage: o.onUsage, Hosted: hostedProcess(),
+		OutDir: outDir, Budgets: &budgets, RunID: runID, Stderr: errOut, OnUsage: o.onUsage, Hosted: hostedProcess(), Credits: creditsClient(pol),
 	})
 	report := voiceReport{Job: string(job)}
 	if !private {

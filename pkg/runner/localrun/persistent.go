@@ -409,6 +409,11 @@ type Segment struct {
 	Persistent engine.PersistentSegment
 	// Grants are what the agent's roster turns on (Apply).
 	Grants Grants
+	// Inference is the agent's Agentry credits session, when its policy
+	// pays with credits (model provider agentry): the supervisor opens it
+	// once for the agent's life and renews and ends it itself, so the
+	// grant carries no Renew or End.
+	Inference *engine.InferenceGrant
 }
 
 // Start starts the segment: materialize, validate, plan the persistent mode,
@@ -484,7 +489,7 @@ func (s Segment) Start(ctx context.Context, d dockerx.Client) (engine.Persistent
 		Attestation: meta.Attestation, ExecPackages: execPackages,
 		CheckWorkspace: builtinCopyCheck(meta.Digest),
 		RunID:          s.RunID, Stderr: logw, OnStage: s.OnStage,
-		ModelSignIn: signIn, RenewModelSignIn: renewSignIn,
+		ModelSignIn: signIn, RenewModelSignIn: renewSignIn, Inference: s.Inference,
 		SecretOverrides: s.secretOverrides(), WithheldSecrets: slices.Clone(s.Grants.WithheldSecrets),
 		AccountTokens: s.accountTokens(), CalendarURLs: s.calendarURLs(),
 		Persistent: &seg,
