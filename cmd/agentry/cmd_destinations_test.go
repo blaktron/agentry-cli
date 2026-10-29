@@ -40,7 +40,7 @@ func configDirForTest() (string, error) { return configDir() }
 
 func TestDestinationsAddListRemoveAndDefault(t *testing.T) {
 	dir := destinationsEnv(t)
-	t.Setenv("HOOK_SECRET", "whsec_PLANTEDfromTHEenvironment")
+	t.Setenv("HOOK_SECRET", "whsec_PLANTEDhookVALUE")
 	t.Setenv("HOOK_AUTH", "Bearer PLANTEDauthorizationVALUE")
 	out, errOut, err := runCLI(t, nil, "destinations", "add", "n8n", "--url", "https://hooks.example.com/webhook/abc?token=URLTOKEN", "--secret-env", "HOOK_SECRET", "--authorization-env", "HOOK_AUTH")
 	if err != nil {
@@ -53,7 +53,7 @@ func TestDestinationsAddListRemoveAndDefault(t *testing.T) {
 	if strings.Contains(string(raw), "PLANTED") {
 		t.Errorf("the file holds a credential: %s", raw)
 	}
-	if s, a, _ := destination.Secrets("n8n"); s != "whsec_PLANTEDfromTHEenvironment" || a != "Bearer PLANTEDauthorizationVALUE" {
+	if s, a, _ := destination.Secrets("n8n"); s != "whsec_PLANTEDhookVALUE" || a != "Bearer PLANTEDauthorizationVALUE" {
 		t.Errorf("keychain: %q %q", s, a)
 	}
 	if _, _, err := runCLI(t, nil, "destinations", "add", "lan", "--url", "http://192.168.1.20:5678/x", "--on-my-network", "--generate-secret"); err != nil {
@@ -450,14 +450,14 @@ func TestABucketsSecretIsNeverAWebhooksSigningSecret(t *testing.T) {
 		t.Errorf("a refused change was saved: %+v", s.Destinations)
 	}
 	// And a webhook saved over a bucket, given its own secret, keeps no key id.
-	t.Setenv("HOOK_SECRET", "whsec_PLANTEDfromTHEenvironment")
+	t.Setenv("HOOK_SECRET", "whsec_PLANTEDhookVALUE")
 	if _, _, err := runCLI(t, nil, "destinations", "add", "x", "--url", "https://hooks.example.com/hook", "--secret-env", "HOOK_SECRET"); err != nil {
 		t.Fatal(err)
 	}
 	if destination.HasAccessKey("x") {
 		t.Error("a webhook kept a bucket's key id")
 	}
-	if s, _, _ := destination.Secrets("x"); s != "whsec_PLANTEDfromTHEenvironment" {
+	if s, _, _ := destination.Secrets("x"); s != "whsec_PLANTEDhookVALUE" {
 		t.Errorf("secret %q", s)
 	}
 	// A webhook saved as a bucket with only a key id is refused: the webhook's

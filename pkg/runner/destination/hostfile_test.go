@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	hostedSecret = "whsec_HOSTEDsigningSECRET0123456789abcdef"
+	hostedSecret = "whsec_HOSTEDsignSECRET"
 	hostedAuth   = "Bearer HOSTEDauthorizationVALUE0123456789abcd"
 )
 
