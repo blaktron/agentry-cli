@@ -24,6 +24,8 @@ type Server struct {
 	// CreateError fails session.create with this message, after the token
 	// callback (GitHub refusing the token, an organization's policy).
 	CreateError string
+	// Abort plays a session.abort on c after its answer; nil only answers it.
+	Abort func(c *Conn)
 	// Turn plays one session.send on c; nil answers "Hello." and goes idle.
 	Turn func(c *Conn, prompt string)
 	// Models is session.model.list's list, each entry a model as Copilot
@@ -208,6 +210,15 @@ func (c *Conn) handle(id json.RawMessage, method string, params map[string]any) 
 		}
 		c.Event("assistant.message", map[string]any{"messageId": "a1", "content": "Hello."})
 		c.Event("session.idle", map[string]any{})
+	case "session.abort":
+		if params["sessionId"] != c.sessionID {
+			c.fail(id, "Session not found")
+			return
+		}
+		c.reply(id, map[string]any{})
+		if s.Abort != nil {
+			s.Abort(c)
+		}
 	case "session.history.compact":
 		if s.Compact == nil {
 			c.fail(id, "Unhandled method "+method)

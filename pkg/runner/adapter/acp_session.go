@@ -324,6 +324,19 @@ func (s *acpSession) Prompt(ctx context.Context, text string) (*Turn, error) {
 	return out, nil
 }
 
+// Interrupt implements Interrupter: session/cancel, a notification, after
+// which the harness answers the session/prompt in flight with the stop
+// reason "cancelled".
+func (s *acpSession) Interrupt(context.Context) error {
+	s.mu.Lock()
+	inTurn := s.turn != nil
+	s.mu.Unlock()
+	if !inTurn || s.sessionID == "" {
+		return nil
+	}
+	return s.send(map[string]any{"jsonrpc": "2.0", "method": "session/cancel", "params": map[string]any{"sessionId": s.sessionID}})
+}
+
 // Events implements SessionDriver.
 func (s *acpSession) Events() <-chan Event { return s.events }
 

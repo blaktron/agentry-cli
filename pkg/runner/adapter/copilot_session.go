@@ -98,6 +98,8 @@ type copilotTurn struct {
 	outTok   int64
 	done     chan copilotTurnEnd
 	finished bool
+	// stopped says Interrupt aborted the turn.
+	stopped bool
 }
 
 type copilotTurnEnd struct {
@@ -341,7 +343,14 @@ func (s *copilotSession) Prompt(ctx context.Context, text string) (*Turn, error)
 		if t.inTok > 0 || t.outTok > 0 {
 			out.Usage = &TurnUsage{InputTokens: int(t.inTok), OutputTokens: int(t.outTok), TotalTokens: int(t.inTok + t.outTok)}
 		}
+		stopped := t.stopped && s.breached == ""
 		s.mu.Unlock()
+		if stopped {
+			// Aborted at the person's asking: what it had said, whatever
+			// the abort itself reported. A breach is never taken for one.
+			out.StopReason = StopCancelled
+			return out, nil
+		}
 		// A turn that ended on an error is not an answer, whatever came
 		// before it (I9).
 		if end.err != "" {
@@ -375,6 +384,22 @@ func (s *copilotSession) CompactConversation(ctx context.Context) error {
 		return errors.New("copilot session: Copilot CLI did not complete the compaction")
 	}
 	return nil
+}
+
+// Interrupt implements Interrupter: session.abort, after which the session
+// goes idle and the turn ends with what it had said.
+func (s *copilotSession) Interrupt(ctx context.Context) error {
+	s.mu.Lock()
+	t := s.turn
+	if t != nil {
+		t.stopped = true
+	}
+	s.mu.Unlock()
+	if t == nil || s.id() == "" {
+		return nil
+	}
+	_, err := s.call(ctx, "session.abort", map[string]any{"sessionId": s.id()})
+	return err
 }
 
 // Events implements SessionDriver.

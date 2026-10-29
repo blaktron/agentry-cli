@@ -710,3 +710,70 @@ func TestClaudeCompileSubscriptionTokenDropsBareAndUsesTheOAuthVariable(t *testi
 		t.Errorf("an API-key run has --bare and names nothing to refuse over: %v", res.Host.RefuseAncestorFiles)
 	}
 }
+
+// Interrupt is Claude Code's interrupt control request, and the error
+// result Claude Code ends a stopped turn with is the stop: the turn closes
+// with what was said and the stop reason "interrupted", and no error.
+func TestClaudeSessionInterruptStopsTheTurnInFlight(t *testing.T) {
+	ad, _ := Get(ClaudeAdapterName)
+	stdio := newFakeStdio()
+	drv, err := ad.Session(context.Background(), stdio, SessionOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := drv.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	said := make(chan struct{})
+	go func() {
+		if !stdio.awaitLine(`"type":"user"`, 5*time.Second) {
+			return
+		}
+		stdio.say(`{"type":"assistant","message":{"content":[{"type":"text","text":"Once upon"}]}}`)
+		close(said)
+		if !stdio.awaitLine(`"subtype":"interrupt"`, 5*time.Second) {
+			return
+		}
+		// What Claude Code 2.1.296 answers, in order.
+		stdio.say(`{"type":"control_response","response":{"subtype":"success","request_id":"agentry-interrupt","response":{"still_queued":[]}}}`)
+		stdio.say(`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]}}`)
+		stdio.say(`{"type":"result","subtype":"error_during_execution","is_error":true,"result":null,"stop_reason":null,"errors":["[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null"]}`)
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	type answer struct {
+		turn *Turn
+		err  error
+	}
+	got := make(chan answer, 1)
+	go func() {
+		tr, err := drv.Prompt(ctx, "tell me a story")
+		got <- answer{tr, err}
+	}()
+	evs := make(chan []Event, 1)
+	go func() {
+		var all []Event
+		for ev := range drv.Events() {
+			all = append(all, ev)
+		}
+		evs <- all
+	}()
+	select {
+	case <-said:
+	case <-ctx.Done():
+		t.Fatal("the turn never started")
+	}
+	if err := drv.(Interrupter).Interrupt(ctx); err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+	a := <-got
+	if a.err != nil || a.turn.StopReason != StopInterrupted || a.turn.Text != "Once upon" {
+		t.Fatalf("Prompt after an interrupt: %+v, %v", a.turn, a.err)
+	}
+	_ = drv.Close()
+	for _, ev := range <-evs {
+		if ev.Kind == EventError {
+			t.Fatalf("the stop was reported as an error: %+v", ev)
+		}
+	}
+}
