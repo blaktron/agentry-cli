@@ -91,9 +91,14 @@ type model struct {
 	lines     []string
 	streaming strings.Builder // assistant text of the turn in progress
 	busy      bool
-	outcome   Outcome
-	ended     bool
-	quitting  bool
+	// own is set while a turn the runner sent runs (a task's or an
+	// upkeep's), upkeep while that turn is an upkeep's: the turn's tool
+	// lines and answer are drawn faint, and an upkeep's answer is not
+	// streamed and is cut to its first line.
+	own, upkeep bool
+	outcome     Outcome
+	ended       bool
+	quitting    bool
 
 	userTurns int
 	toolCalls int
@@ -281,14 +286,34 @@ func TaskLine(text string) string {
 	return "A task ran on its own"
 }
 
+// UpkeepLine is the one line a chat shows for a persistent agent's upkeep
+// turn, told apart by the message it was sent with: a compaction that saves
+// the conversation to the agent's memory, one that only writes a handoff,
+// or the memory's own tidy.
+func UpkeepLine(text string) string {
+	switch {
+	case strings.Contains(text, "(memory-consolidate)"):
+		return "Tidying its memory"
+	case strings.Contains(text, "(memory-compact)"):
+		return "Compacting: saving this conversation to memory first"
+	default:
+		return "Compacting: writing a handoff"
+	}
+}
+
 // apply renders one session event into the transcript.
 func (m *model) apply(ev session.Event) {
 	switch ev.Kind {
 	case session.KindUserTurn:
 		m.flushStreaming()
+		m.own, m.upkeep = !ev.Synthetic && (ev.Task != "" || ev.Upkeep), !ev.Synthetic && ev.Upkeep
 		switch {
 		case ev.Synthetic:
 			m.appendLine(m.styles.runner.Render("Runner: " + ev.Text))
+		case ev.Upkeep:
+			// The runner's upkeep: one line saying what it does, never its
+			// instruction as the person's words.
+			m.appendLine(m.styles.runner.Render(UpkeepLine(ev.Text)))
 		case ev.Task != "":
 			// A persistent agent's own task: one line naming it, never the
 			// person's words.
@@ -299,18 +324,25 @@ func (m *model) apply(ev session.Event) {
 		}
 		m.lastTurn = time.Now()
 	case session.KindAssistantText:
+		if m.upkeep {
+			return
+		}
 		m.streaming.WriteString(ev.Text)
 		m.refresh()
 	case session.KindAssistantTurn:
 		m.streaming.Reset()
-		m.appendLine(m.styles.assistant.Render("Agent: ") + strings.TrimSpace(ev.Text))
+		text := strings.TrimSpace(ev.Text)
+		if first, rest, ok := strings.Cut(text, "\n"); m.upkeep && ok && strings.TrimSpace(rest) != "" {
+			text = strings.TrimSpace(first) + " …"
+		}
+		m.appendLine(m.agentLine(text))
 	case session.KindToolCall:
 		m.toolCalls++
-		m.appendLine(m.styles.tool.Render("  · tool: " + ev.Text))
+		m.appendLine(m.toolStyle().Render("  · tool: " + ev.Text))
 	case session.KindPermissionGranted:
-		m.appendLine(m.styles.tool.Render("  · permission granted: " + ev.Text))
+		m.appendLine(m.toolStyle().Render("  · permission granted: " + ev.Text))
 	case session.KindPermissionDenied:
-		m.appendLine(m.styles.tool.Render("  · permission request denied: " + ev.Text))
+		m.appendLine(m.toolStyle().Render("  · permission request denied: " + ev.Text))
 	case session.KindInputAdded:
 		m.appendLine(m.styles.tool.Render("  · input added: " + ev.Path))
 	case session.KindUsage:
@@ -331,9 +363,26 @@ func (m *model) apply(ev session.Event) {
 
 func (m *model) flushStreaming() {
 	if m.streaming.Len() > 0 {
-		m.appendLine(m.styles.assistant.Render("Agent: ") + strings.TrimSpace(m.streaming.String()))
+		m.appendLine(m.agentLine(strings.TrimSpace(m.streaming.String())))
 		m.streaming.Reset()
 	}
+}
+
+// agentLine is a line of the agent's answer: faint in a turn the runner
+// sent.
+func (m *model) agentLine(text string) string {
+	if m.own {
+		return m.styles.dim.Render("Agent: " + text)
+	}
+	return m.styles.assistant.Render("Agent: ") + text
+}
+
+// toolStyle draws a tool line: faint in a turn the runner sent.
+func (m *model) toolStyle() lipgloss.Style {
+	if m.own {
+		return m.styles.dim
+	}
+	return m.styles.tool
 }
 
 func (m *model) appendLine(s string) {
@@ -347,7 +396,7 @@ func (m *model) refresh() {
 	}
 	body := strings.Join(m.lines, "\n")
 	if m.streaming.Len() > 0 {
-		body += "\n" + m.styles.assistant.Render("Agent: ") + m.streaming.String()
+		body += "\n" + m.agentLine(m.streaming.String())
 	}
 	m.vp.SetContent(wrap(body, m.vp.Width))
 	m.vp.GotoBottom()
