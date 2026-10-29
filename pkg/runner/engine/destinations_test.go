@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	plantedSigningSecret = "whsec_PLANTEDsigningSECRET0123456789abcdef"
+	plantedSigningSecret = "whsec_PLANTEDstepSECRET"
 	plantedAuthorization = "Bearer PLANTEDauthorizationVALUE0123456789abcd"
 )
 

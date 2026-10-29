@@ -46,8 +46,8 @@ const (
 	liveSudo     = livePassword
 	// What the host holds that the agent must get unchanged: keys the
 	// gateway's secret block would refuse in any other tool result.
-	liveAWSKey   = "AKIAQ3EGRQ5WJ2LZ7HXN"
-	liveAWSValue = "wJalrXUtnFEMIK7MDENGbPxRfiCYq3x8Nz2LkVb1"
+	liveAWSKey   = "AKIAIOSFODNN7EXAMPLE"
+	liveAWSValue = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
 	liveGitHub   = "ghp_R8mZq2LkVb1x9Nw4Ty7Pc3Ha6Sd0Fg5Jk2Lp"
 )
 
