@@ -73,6 +73,9 @@ const (
 var namedProviderBaseURLs = map[string]string{
 	policy.ProviderPoe:   poeBaseURL,
 	policy.ProviderVultr: vultrBaseURL,
+	// The registry's model endpoint has no fixed address: it is the
+	// policy's model.baseUrl, under the registry setup was signed in to.
+	policy.ProviderAgentry: "",
 }
 
 // namedProvider is a provider docker-agent 1.128.0 has no alias for, as it
@@ -177,6 +180,11 @@ func leadingNumber(s string) (n, width int) {
 	return n, width
 }
 
+// AgentryInferenceTokenEnv is the variable a credit-paid run's harness
+// reads its credits session token from (spec.EnvVar.FromInference): the
+// named provider's token_key.
+const AgentryInferenceTokenEnv = "AGENTRY_INFERENCE_TOKEN"
+
 // customProvider is the policy's name for an OpenAI-compatible endpoint of
 // the operator's own (setup's "custom"); docker-agent has no provider of
 // that name — 1.128.0 refuses it as `unknown provider type "custom"` — and
@@ -186,6 +194,15 @@ const customProvider = "custom"
 
 // harnessProvider maps the policy's provider name to docker-agent's.
 func harnessProvider(m policy.Model) (string, error) {
+	if m.Provider == policy.ProviderAgentry {
+		// The policy held the endpoint to a registry's when it loaded;
+		// here it may already name the host alias a container reaches this
+		// computer's loopback by.
+		if !strings.HasSuffix(strings.TrimRight(m.BaseURL, "/"), policy.AgentryInferencePath) {
+			return "", fmt.Errorf("docker-agent adapter: provider agentry needs model.baseUrl, a registry's model endpoint <registry>%s", policy.AgentryInferencePath)
+		}
+		return m.Provider, nil
+	}
 	if m.Provider != customProvider {
 		return m.Provider, nil
 	}
@@ -193,6 +210,17 @@ func harnessProvider(m policy.Model) (string, error) {
 		return "", errors.New("docker-agent adapter: provider custom needs model.baseUrl (the endpoint the openai client is pointed at)")
 	}
 	return "openai", nil
+}
+
+// modelKeyVar is the agent container's model credential: for provider
+// agentry the run's credits session token, which the host opens for the
+// run; for every other provider the key from the variable the policy names
+// (or the keychain account beside it).
+func modelKeyVar(provider, keyEnv, keyring string, expect *spec.CredentialKind) spec.EnvVar {
+	if provider == policy.ProviderAgentry {
+		return spec.EnvVar{Name: AgentryInferenceTokenEnv, FromInference: true}
+	}
+	return spec.EnvVar{Name: harnessKeyVar(provider, keyEnv), FromHostEnv: keyEnv, FromKeyring: keyring, ExpectedKind: expect}
 }
 
 // harnessKeyVar is the variable docker-agent's client for a provider reads
@@ -225,6 +253,8 @@ func harnessKeyVar(harnessProvider, policyVar string) string {
 		return "POE_API_KEY"
 	case policy.ProviderVultr:
 		return "VULTR_INFERENCE_API_KEY"
+	case policy.ProviderAgentry:
+		return AgentryInferenceTokenEnv
 	default:
 		return policyVar
 	}
@@ -508,7 +538,7 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 			// The key, under the name the harness's client reads it by,
 			// from the variable the policy names (the harness block's
 			// override first, as the receipt's line says: policy.KeyEnv).
-			{Name: harnessKeyVar(provider, keyEnv), FromHostEnv: keyEnv, FromKeyring: keyringAccount(in), ExpectedKind: keyExpect},
+			modelKeyVar(provider, keyEnv, keyringAccount(in), keyExpect),
 			// The proxy is the agent container's only route out; NO_PROXY
 			// keeps MCP traffic direct on the run network.
 			{Name: "HTTPS_PROXY", Value: spec.ProxyURL()},
@@ -679,8 +709,10 @@ func errorText(obj map[string]any) string {
 // outOfCreditsRE matches a provider's answer that the paying account has
 // no credits left: the 402 status as the OpenAI and Anthropic SDKs quote it
 // ("402 Payment Required"), a body's 402 code or status, Poe's
-// insufficient_credits, and Hugging Face's words for its included credits.
-var outOfCreditsRE = regexp.MustCompile(`(?i)\b402 payment required\b|"(?:code|status)"\s*:\s*"?402\b|insufficient[_ ]credits|out of credits|exceeded your monthly included credits`)
+// insufficient_credits, Hugging Face's words for its included credits, and
+// a SecureAgentry registry's answer when the account's Agentry credits are
+// spent (its credits_exhausted code and its message).
+var outOfCreditsRE = regexp.MustCompile(`(?i)\b402 payment required\b|"(?:code|status)"\s*:\s*"?402\b|insufficient[_ ]credits|out of credits|exceeded your monthly included credits|credits_exhausted|credits are used up`)
 
 // OutOfCredits reports whether a harness's error is a provider saying the
 // account that pays for the model has no credits left.

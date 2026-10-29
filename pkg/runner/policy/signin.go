@@ -35,6 +35,12 @@ const (
 	// endpoint paid by a key from the person's Vultr account.
 	ProviderVultr = "vultr"
 
+	// ProviderAgentry pays for the model with the credits of the account
+	// signed in to a SecureAgentry registry: an OpenAI-compatible endpoint
+	// under the registry's own address (AgentryInferencePath), reached with
+	// a session token the host opens for each run, never with a key.
+	ProviderAgentry = "agentry"
+
 	// The providers whose account a person may connect:
 	// each is paid by an ordinary API key (or, Hugging Face, an inference
 	// token), pasted or minted by a connect.

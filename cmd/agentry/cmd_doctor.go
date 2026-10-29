@@ -281,6 +281,18 @@ func doctorPolicy(rep *doctorReport, path string) *policy.Policy {
 		default:
 			rep.ok("model", "%s/%s (spends %s, kept as the model sign-in %s; runs report tokens, not dollars)", pol.Model.Provider, pol.Model.Name, policy.SignInSentence(pol.Model.APIKeyKind), vendor)
 		}
+	case pol.Model.Provider == policy.ProviderAgentry:
+		// Paid with Agentry credits: no key, a sign-in at the registry the
+		// model endpoint is under.
+		reg, err := policy.AgentryRegistry(pol.Model)
+		switch tok, cerr := credentialFor(reg); {
+		case err != nil:
+			rep.fail("model", "agentry: %v — run `agentry setup --provider agentry`", err)
+		case cerr != nil || tok == "":
+			rep.fail("model", "agentry: paid with Agentry credits at %s, and this computer is not signed in there — run `agentry login --registry %s`", reg, reg)
+		default:
+			rep.ok("model", "agentry (paid with your Agentry credits at %s; each run opens a credits session with your sign-in)", reg)
+		}
 	case pol.Model.APIKeyEnv == "":
 		rep.fail("model", "%s/%s: no apiKeyEnv configured — run `agentry setup`", pol.Model.Provider, pol.Model.Name)
 	case os.Getenv(pol.Model.APIKeyEnv) == "" && policy.KeySource(policy.HarnessPolicy{}, pol.Model) == modelkey.SourceKeyring:

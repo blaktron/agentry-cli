@@ -201,6 +201,11 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Agentry credits are spent through an OpenAI-compatible endpoint, which
+	// only docker-agent's client is pointed at.
+	if in.Policy != nil && in.Policy.Model.Provider == policy.ProviderAgentry && adapterName != adapter.DefaultName {
+		return nil, &adapter.Refusal{Reason: fmt.Sprintf("model provider agentry (Agentry credits) runs on the %s harness only; %s cannot spend them — drop --adapter, or choose another provider (agentry setup)", adapter.DefaultName, adapterName)}
+	}
 
 	mode := in.Mode
 	if mode == "" {
@@ -666,6 +671,16 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		}
 		plan.Enforcement["model.signIn"] = modelSignInLine(msi)
 		plan.Enforcement["model.cost"] = "paid by the person's own plan (" + policy.SignInSentence(msi.Kind) + "): the receipt reports tokens, not dollars, and a cost budget is refused"
+	}
+	// Paying with Agentry credits is a mechanism of its own: no key, a
+	// session token the host opens for the run.
+	if plan.PaysWithCredits() {
+		if plan.Enforcement == nil {
+			plan.Enforcement = map[string]string{}
+		}
+		plan.Enforcement["model.apiKey"] = "an Agentry credits session token, opened by this computer at the run's start with its registry sign-in, renewed while the run lives and ended with it; " +
+			"injected into the agent container only, valid on the registry's model endpoint alone; the sign-in itself never reaches the run"
+		plan.Enforcement["model.cost"] = "paid with the signed-in account's Agentry credits at the registry, which counts the tokens; the receipt's inference block has the session's tokens and credits"
 	}
 	// The model key's source is a mechanism the receipt names: the
 	// variable, or the variable else the keychain.

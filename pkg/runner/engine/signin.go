@@ -284,8 +284,11 @@ func planLimitError(text string, resets time.Time) error {
 // outOfCreditsError is the out-of-credits outcome: the budget class,
 // with its own reason and the provider's words. Never retried, never a
 // success.
-func outOfCreditsError(text string) error {
+func outOfCreditsError(p Params, text string) error {
 	msg := "out of credits: the model's provider refused the calls because the account that pays for them has no credits left; add credits there, or pay with another account or key (agentry setup)"
+	if p.Inference != nil {
+		msg = "out of credits: your Agentry credits are used up, so the registry refused the model's calls; add credits at the registry, or choose another model provider (agentry setup)"
+	}
 	if text != "" {
 		msg += "; the provider said: " + text
 	}

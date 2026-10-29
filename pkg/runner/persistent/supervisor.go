@@ -19,6 +19,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
+	"github.com/blaktron/agentry-cli/pkg/runner/inference"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
@@ -66,6 +67,11 @@ type Options struct {
 	// which the supervisor answers itself: the desktop's. Nil answers them
 	// as Agentry Desktop's.
 	AppLink AppLinkHandler
+	// Credits is the credits-session client of the registry this computer
+	// is signed in to, for a policy that pays with Agentry credits (model
+	// provider agentry): the agent opens one session with it for its whole
+	// life. Nil refuses such an agent as signed out.
+	Credits *inference.Client
 	// StartSegment starts a segment; nil starts it with localrun. Tests
 	// put a session of their own here.
 	StartSegment func(ctx context.Context, seg localrun.Segment) (engine.PersistentSession, error)
@@ -106,15 +112,20 @@ type Supervisor struct {
 	// so a stop never meets a segment half made.
 	seg sync.Mutex
 
-	mu        sync.Mutex
-	sess      engine.PersistentSession
-	runID     string
-	outDir    string
-	segment   int
-	applied   Applied
-	grants    string // grantsKey of the config the segment started with
-	packsDone func()
-	ending    *atomic.Bool // set for the segment being ended to start the next
+	mu sync.Mutex
+	// credits is the agent's Agentry credits session (credits.go), and
+	// creditsCancel and creditsDone its renewal's.
+	credits       *engine.InferenceGrant
+	creditsCancel context.CancelFunc
+	creditsDone   chan struct{}
+	sess          engine.PersistentSession
+	runID         string
+	outDir        string
+	segment       int
+	applied       Applied
+	grants        string // grantsKey of the config the segment started with
+	packsDone     func()
+	ending        *atomic.Bool // set for the segment being ended to start the next
 	// segEnded says the segment in sess has ended, with segEnv and segErr
 	// its end: a stop after a next segment failed to start does not end it
 	// or count it twice.
@@ -249,10 +260,17 @@ func Start(ctx context.Context, opts Options) (*Supervisor, error) {
 		owner.Release()
 		return nil, err
 	}
+	if err := s.openCredits(ctx); err != nil {
+		s.bgCancel()
+		s.closeAppLink()
+		owner.Release()
+		return nil, err
+	}
 	s.seg.Lock()
 	err = s.startSegment(ctx, false)
 	s.seg.Unlock()
 	if err != nil {
+		s.stopCredits()
 		s.bgCancel()
 		s.closeAppLink()
 		owner.Release()
@@ -266,6 +284,7 @@ func Start(ctx context.Context, opts Options) (*Supervisor, error) {
 	// they install now, and join at the turn after they are ready.
 	s.startInstalls()
 	s.startHeartbeat()
+	s.startCreditsRenewal()
 	return s, nil
 }
 
@@ -359,7 +378,8 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 			ShareMirror:   mirror,
 			Memory:        memory,
 		},
-		Grants: grants,
+		Grants:    grants,
+		Inference: s.creditsGrant(),
 	}
 	if s.appLn != nil {
 		seg.Grants.AppLink = AppSocketPath(home, name)
@@ -1016,6 +1036,9 @@ func (s *Supervisor) Stop(ctx context.Context) (*receipt.Envelope, error) {
 		s.seg.Lock()
 		s.env, s.endErr = s.endSegment(ctx, false)
 		s.seg.Unlock()
+		// The last segment has ended: the credits session's count is
+		// complete.
+		s.stopCredits()
 		s.stopHeartbeat()
 		s.closeAppLink()
 		s.mu.Lock()

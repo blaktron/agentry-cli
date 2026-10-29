@@ -44,6 +44,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/gateway"
 	"github.com/blaktron/agentry-cli/pkg/runner/hybrid"
+	"github.com/blaktron/agentry-cli/pkg/runner/inference"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
@@ -106,6 +107,9 @@ type Options struct {
 	// Hosted is a sandbox host's build, which never spends a model sign-in
 	// (localrun.Run.Hosted).
 	Hosted bool
+	// Credits is the credits-session client for a policy that pays with
+	// Agentry credits (model provider agentry); see localrun.Run.Credits.
+	Credits *inference.Client
 	// Render lets a hosted build render a page drawn by scripts: its host
 	// dispatched it as a browser job. A build on this computer renders
 	// without it.
@@ -337,7 +341,7 @@ func Build(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 		Builtin: creator, Home: o.Home, Policy: o.Policy, PolicySHA: o.PolicySHA,
 		PolicyFile: o.PolicyFile, Build: o.Build, Task: strings.NewReader(task(name, current, docs, brief, o.Web != nil, o.Now) + sourcesTask(res.Sources)),
 		Inputs: inputs, Knowledge: attached, Decoded: dec, Enforced: sourceLines(res.Sources, dec), OutDir: o.OutDir, Budgets: o.Budgets,
-		RunID: o.RunID, Stderr: logw, OnUsage: o.OnUsage, Web: o.Web, Hosted: o.Hosted, HostedRender: o.Hosted && o.Render,
+		RunID: o.RunID, Stderr: logw, OnUsage: o.OnUsage, Web: o.Web, Hosted: o.Hosted, HostedRender: o.Hosted && o.Render, Credits: o.Credits,
 	}.Execute(ctx, d)
 	res.Envelope = env
 

@@ -91,6 +91,12 @@ type Envelope struct {
 	// the inputs it scanned before the model, and the rubric calls; absent
 	// for any other run.
 	Review *Review `json:"review,omitempty"`
+	// Inference is the Agentry credits session a run paid for its model
+	// with (model provider agentry): the registry's own count of the
+	// session's requests and tokens and the credits it charged, as it
+	// answered when the session ended. Absent for a run on any other
+	// provider, and when the session's end was not answered.
+	Inference *Inference `json:"inference,omitempty"`
 	// PDFs is what export_pdf wrote: the report design every PDF of the run was
 	// laid out with, and each PDF in reports/ whose bytes are the ones the
 	// tools server recorded, with its form. A reader opens in place only a PDF
@@ -365,6 +371,21 @@ type Web struct {
 	// scan answered.
 	Model       string `json:"model,omitempty"`
 	QuestionSet string `json:"questionSet,omitempty"`
+}
+
+// Inference is a credits session as the registry reported it at its end.
+// The tokens are the registry's, taken from the provider's own usage
+// figures, so they stand where the harness reported none.
+type Inference struct {
+	// Session is the registry's id of the session.
+	Session string `json:"session"`
+	// Model is the model the registry forwarded the run's requests to.
+	Model        string `json:"model,omitempty"`
+	Requests     int64  `json:"requests"`
+	InputTokens  int64  `json:"inputTokens"`
+	OutputTokens int64  `json:"outputTokens"`
+	// Credits is what the session charged, all settlements together.
+	Credits int64 `json:"credits"`
 }
 
 // Review counts a review-grant run's ledger (receipts/review.ndjson).
