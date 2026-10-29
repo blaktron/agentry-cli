@@ -54,28 +54,40 @@ type agentYAML struct {
 }
 
 // providerYAML is a named provider of docker-agent's, for an endpoint it
-// has no alias for (Poe): its OpenAI-compatible client at base_url, the API
-// pinned, and the variable its key rides in.
+// has no alias for (Poe, Vultr): its OpenAI-compatible client at base_url,
+// the API pinned, and the variable its key rides in.
 type providerYAML struct {
 	APIType  string `yaml:"api_type"`
 	BaseURL  string `yaml:"base_url"`
 	TokenKey string `yaml:"token_key"`
 }
 
-// poeBaseURL is Poe's OpenAI-compatible API
-const poeBaseURL = "https://api.poe.com/v1"
+// The OpenAI-compatible APIs of the named providers.
+const (
+	poeBaseURL   = "https://api.poe.com/v1"
+	vultrBaseURL = "https://api.vultrinference.com/v1"
+)
 
-// poeProvider is Poe as docker-agent 1.128.0 needs it, which has no alias
-// for it: a named provider with Chat Completions set explicitly, since a
+// namedProviderBaseURLs are the providers docker-agent has no alias for,
+// each rendered as a named provider at its own endpoint.
+var namedProviderBaseURLs = map[string]string{
+	policy.ProviderPoe:   poeBaseURL,
+	policy.ProviderVultr: vultrBaseURL,
+}
+
+// namedProvider is a provider docker-agent 1.128.0 has no alias for, as it
+// needs it: a named provider with Chat Completions set explicitly, since a
 // named OpenAI-compatible provider otherwise picks the Responses API for
 // every gpt-5, o-series and codex model id (its defaultOpenAIAPIType), and
-// Poe's GPT bots would go to another API than every other bot's. The key
-// rides in POE_API_KEY as a bearer (token_key).
-func poeProvider(baseURL string) providerYAML {
+// such a model would go to another API than every other model's on the same
+// endpoint. The endpoint is the policy's when it names one (a test's, a
+// mirror's), the provider's own otherwise; the key rides as a bearer in the
+// variable token_key names.
+func namedProvider(provider, baseURL string) providerYAML {
 	if baseURL == "" {
-		baseURL = poeBaseURL
+		baseURL = namedProviderBaseURLs[provider]
 	}
-	return providerYAML{APIType: "openai_chatcompletions", BaseURL: baseURL, TokenKey: harnessKeyVar(policy.ProviderPoe, "")}
+	return providerYAML{APIType: "openai_chatcompletions", BaseURL: baseURL, TokenKey: harnessKeyVar(provider, "")}
 }
 
 type modelYAML struct {
@@ -190,10 +202,11 @@ func harnessProvider(m policy.Model) (string, error) {
 // config-level token_key, so a variable named in the config is not a
 // mechanism the others have. The connect providers read theirs by
 // docker-agent's aliases (openrouter OPENROUTER_API_KEY, huggingface
-// HF_TOKEN; its aliases.go at v1.128.0), and Poe by the token_key its named
-// provider sets (poeProvider). The container therefore carries the key
-// under the client's own name, and the policy's apiKeyEnv (whatever it is
-// called) is only where the value comes FROM on the host. A provider
+// HF_TOKEN; its aliases.go at v1.128.0), and Poe and Vultr by the
+// token_key their named providers set (namedProvider). The container
+// therefore carries the key under the client's own name, and the policy's
+// apiKeyEnv (whatever it is called) is only where the value comes FROM on
+// the host. A provider
 // docker-agent knows that this table does not (mistral, azure, …) keeps the
 // policy's name, which is then the operator's to get right.
 func harnessKeyVar(harnessProvider, policyVar string) string {
@@ -210,6 +223,8 @@ func harnessKeyVar(harnessProvider, policyVar string) string {
 		return "HF_TOKEN"
 	case policy.ProviderPoe:
 		return "POE_API_KEY"
+	case policy.ProviderVultr:
+		return "VULTR_INFERENCE_API_KEY"
 	default:
 		return policyVar
 	}
@@ -432,9 +447,9 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 			},
 		},
 	}
-	if provider == policy.ProviderPoe {
-		// Poe's endpoint is its named provider's, not the model's.
-		doc.Providers = map[string]providerYAML{provider: poeProvider(in.Model.BaseURL)}
+	if _, named := namedProviderBaseURLs[provider]; named {
+		// A named provider's endpoint is the provider's, not the model's.
+		doc.Providers = map[string]providerYAML{provider: namedProvider(provider, in.Model.BaseURL)}
 		m := doc.Models["main"]
 		m.BaseURL = ""
 		doc.Models["main"] = m

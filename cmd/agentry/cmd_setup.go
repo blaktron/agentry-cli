@@ -60,7 +60,7 @@ func newSetupCmd() *cobra.Command {
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&opts.provider, "provider", "", "LLM provider: anthropic | openai | google | openrouter | poe | huggingface (a key, or --connect your account) | copilot (your Copilot plan, Sign in with GitHub) | custom (or any docker-agent provider name)")
+	f.StringVar(&opts.provider, "provider", "", "LLM provider: anthropic | openai | google | vultr (Vultr Serverless Inference, a key) | openrouter | poe | huggingface (a key, or --connect your account) | copilot (your Copilot plan, Sign in with GitHub) | custom (or any docker-agent provider name)")
 	f.StringVar(&opts.model, "model", "", "model id (default: the provider's table default)")
 	f.StringVar(&opts.apiKeyEnv, "api-key-env", "", "env var NAME holding your api key (never the value)")
 	f.StringVar(&opts.apiKeySource, "api-key-source", "", "where the key comes from when the variable is unset: env (the default) | keyring (the OS keychain entry provider:<provider>; an interactive setup offers to store it)")

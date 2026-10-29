@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/exp/teatest"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
@@ -175,6 +176,81 @@ func TestTaskLine(t *testing.T) {
 	} {
 		if got := TaskLine(in); got != want {
 			t.Errorf("TaskLine(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestAnUpkeepTurnIsOneLineNotThePersonsMessage: a persistent agent's
+// upkeep turn is drawn as one runner line, its answer shortened to a faint
+// first line, and is not counted as the person's turn.
+func TestAnUpkeepTurnIsOneLineNotThePersonsMessage(t *testing.T) {
+	fs := newFakeSession()
+	tm := teatest.NewTestModel(t, newModel(fs, testOpts()), teatest.WithInitialTermSize(100, 30))
+	waitFor(t, tm, "Commands:")
+	fs.events <- session.Event{Kind: session.KindUserTurn, Upkeep: true, Text: "Upkeep: compact this conversation (memory-compact)."}
+	fs.events <- session.Event{Kind: session.KindToolCall, Text: "memory_write"}
+	fs.events <- session.Event{Kind: session.KindAssistantText, Text: "owed: the brief\nctx: secret details"}
+	fs.events <- session.Event{Kind: session.KindAssistantTurn, Text: "owed: the brief\nctx: secret details"}
+	waitFor(t, tm, "Agent: owed: the brief …")
+	tm.Type("hello")
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	waitFor(t, tm, "echo: hello")
+	tm.Type("/quit")
+	tm.Send(tea.KeyMsg{Type: tea.KeyEnter})
+	final := tm.FinalModel(t, teatest.WithFinalTimeout(5*time.Second)).(model)
+	transcript := strings.Join(final.lines, "\n")
+	for _, want := range []string{"Compacting: saving this conversation to memory first", "· tool: memory_write", "Agent: owed: the brief …", "You: hello", "Agent: echo: hello"} {
+		if !strings.Contains(transcript, want) {
+			t.Errorf("transcript lacks %q:\n%s", want, transcript)
+		}
+	}
+	for _, not := range []string{"You: Upkeep", "memory-compact", "secret details"} {
+		if strings.Contains(transcript, not) {
+			t.Errorf("the upkeep turn shows %q:\n%s", not, transcript)
+		}
+	}
+	if final.userTurns != 1 {
+		t.Errorf("userTurns = %d, want 1 (the person's alone)", final.userTurns)
+	}
+}
+
+// TestTheAgentsOwnTurnIsFaint: the tool lines and the answer of a task or
+// upkeep turn are drawn in the faint style; the person's turn's are not.
+func TestTheAgentsOwnTurnIsFaint(t *testing.T) {
+	m := newModel(newFakeSession(), testOpts())
+	// Styles that say their name, since a test's terminal draws no faint.
+	m.styles.dim = lipgloss.NewStyle().SetString("faint|")
+	m.styles.tool = lipgloss.NewStyle().SetString("tool|")
+	m.apply(session.Event{Kind: session.KindUserTurn, Task: "t1", Text: "Task: Stretch\n\nStand up."})
+	m.apply(session.Event{Kind: session.KindToolCall, Text: "fs_list"})
+	m.apply(session.Event{Kind: session.KindAssistantTurn, Text: "Time to stand up."})
+	m.apply(session.Event{Kind: session.KindUserTurn, Text: "thanks"})
+	m.apply(session.Event{Kind: session.KindToolCall, Text: "fs_read"})
+	m.apply(session.Event{Kind: session.KindAssistantTurn, Text: "You're welcome."})
+	want := []string{
+		"faint|   · tool: fs_list",
+		"faint| Agent: Time to stand up.",
+		"You: thanks",
+		"tool|   · tool: fs_read",
+		"Agent: You're welcome.",
+	}
+	got := m.lines[len(m.lines)-len(want):]
+	for i, w := range want {
+		if !strings.HasSuffix(got[i], w) || (!strings.HasPrefix(w, "faint|") && strings.Contains(got[i], "faint|")) {
+			t.Errorf("line %d = %q, want %q", i, got[i], w)
+		}
+	}
+}
+
+func TestUpkeepLine(t *testing.T) {
+	for in, want := range map[string]string{
+		"Upkeep: compact this conversation (memory-compact).":   "Compacting: saving this conversation to memory first",
+		"Upkeep: compact this conversation.":                    "Compacting: writing a handoff",
+		"Upkeep: consolidate your memory (memory-consolidate).": "Tidying its memory",
+		"anything else": "Compacting: writing a handoff",
+	} {
+		if got := UpkeepLine(in); got != want {
+			t.Errorf("UpkeepLine(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

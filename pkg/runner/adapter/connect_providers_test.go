@@ -167,3 +167,42 @@ func TestACPSessionReportsAProviderOutOfCredits(t *testing.T) {
 	}
 	t.Fatal("no out-of-credits event")
 }
+
+// Vultr renders as a named provider at Vultr's endpoint, on Chat
+// Completions, with the key as a bearer in VULTR_INFERENCE_API_KEY; a base
+// URL in the policy (a test's, a mirror's) takes the endpoint's place.
+func TestDockerAgentRendersVultrAsANamedProvider(t *testing.T) {
+	ad, _ := Get(DefaultName)
+	for _, c := range []struct{ baseURL, want string }{
+		{"", "https://api.vultrinference.com/v1"},
+		{"https://vultr.example/v1", "https://vultr.example/v1"},
+	} {
+		in := testInput()
+		in.Model = policy.Model{Provider: policy.ProviderVultr, Name: "qwen3.8-flash-next", APIKeyEnv: "VULTR_INFERENCE_API_KEY", APIKeySource: modelkey.SourceKeyring, BaseURL: c.baseURL, ProxyAllow: []string{"api.vultrinference.com:443"}}
+		res, err := ad.Compile(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		y := string(res.Files["agent.yaml"])
+		for _, s := range []string{"provider: vultr", "base_url: " + c.want, "api_type: openai_chatcompletions", "token_key: VULTR_INFERENCE_API_KEY"} {
+			if !strings.Contains(y, s) {
+				t.Errorf("agent.yaml lacks %q:\n%s", s, y)
+			}
+		}
+		if strings.Count(y, "base_url") != 1 {
+			t.Errorf("agent.yaml names base_url more than once:\n%s", y)
+		}
+		var name, account string
+		for _, e := range res.Agent.Env {
+			if e.FromHostEnv != "" {
+				name, account = e.Name, e.FromKeyring
+			}
+		}
+		if name != "VULTR_INFERENCE_API_KEY" || account != modelkey.Account(policy.ProviderVultr) {
+			t.Errorf("key travels as %s, else keychain %s", name, account)
+		}
+		if c.baseURL == "" {
+			golden(t, filepath.Join("testdata", "providers", "vultr.yaml"), res.Files["agent.yaml"])
+		}
+	}
+}
