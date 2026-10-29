@@ -398,10 +398,12 @@ type liveSession struct {
 	inTurn bool
 	// turnEnd is closed when the turn in flight ends; interrupted says
 	// Interrupt is stopping it; turnErr is the last error the harness
-	// reported in it, which the turn's own failure only restates.
+	// reported in it, which the turn's own failure only restates; and
+	// turnLimit is the plan's limit a persistent agent's turn met.
 	turnEnd     chan struct{}
 	interrupted bool
 	turnErr     string
+	turnLimit   string
 	// ending is set once End has begun: an input added after it starts no
 	// turn, so nothing can run between End's final-result turn and the end
 	// and replace the result it asked for.
@@ -1329,20 +1331,11 @@ func (s *liveSession) handle(ev adapter.Event) {
 		s.emit(session.Event{Kind: session.KindPermissionDenied, Text: ev.Text, Raw: ev.Raw})
 	case adapter.EventError:
 		s.mu.Lock()
-		echo := s.inTurn && s.interrupted
-		if !echo {
-			s.harnessErr = ev.Text
-			if s.inTurn {
-				s.turnErr = ev.Text
-			}
+		s.harnessErr = ev.Text
+		if s.inTurn {
+			s.turnErr = ev.Text
 		}
 		s.mu.Unlock()
-		if echo {
-			// What the harness says of a turn being stopped is the stop,
-			// not a failure: kept in the receipts only.
-			s.emit(session.Event{Kind: session.KindOther, Text: "while stopping the turn: " + ev.Text, Raw: ev.Raw})
-			break
-		}
 		s.emit(session.Event{Kind: session.KindError, Text: ev.Text, Raw: ev.Raw})
 	case adapter.EventPlanLimit:
 		if s.p.Persistent != nil {
@@ -1353,11 +1346,14 @@ func (s *liveSession) handle(ev adapter.Event) {
 				msg += " (it resets at " + ev.ResetsAt.Local().Format("Mon 2 Jan 15:04 MST") + ")"
 			}
 			s.mu.Lock()
-			if s.inTurn {
-				s.turnErr = ev.Text
+			said := s.turnLimit != ""
+			if s.inTurn && !said {
+				s.turnErr, s.turnLimit = ev.Text, ev.Text
 			}
 			s.mu.Unlock()
-			s.emit(session.Event{Kind: session.KindError, Text: msg, Raw: ev.Raw})
+			if !said {
+				s.emit(session.Event{Kind: session.KindError, Text: msg, Raw: ev.Raw})
+			}
 			break
 		}
 		s.mu.Lock()
@@ -1583,7 +1579,7 @@ func (s *liveSession) turnCarrying(ctx context.Context, carried, text string, sy
 	s.pendingNotices = nil
 	s.inTurn = true
 	turnEnd := make(chan struct{})
-	s.turnEnd, s.interrupted, s.turnErr = turnEnd, false, ""
+	s.turnEnd, s.interrupted, s.turnErr, s.turnLimit = turnEnd, false, "", ""
 	s.mu.Unlock()
 	// Every return clears it before the last event; this covers a panic
 	// in the driver, so no later add waits on a turn that is gone.
@@ -1623,26 +1619,22 @@ func (s *liveSession) turnCarrying(ctx context.Context, carried, text string, sy
 		}
 	}()
 	s.mu.Lock()
-	callsBefore, stopped := s.toolCalls, s.interrupted
+	callsBefore, early := s.toolCalls, s.interrupted
 	s.mu.Unlock()
-	if stopped {
+	if early {
 		// Stopped before the harness had it.
-		s.mu.Lock()
-		s.inTurn = false
-		s.mu.Unlock()
-		s.emit(session.Event{Kind: session.KindAssistantTurn, StopReason: session.StopInterrupted})
-		return session.ErrInterrupted
+		return s.stoppedTurn("")
 	}
 	res, err := promptAtCapacity(turnCtx, s.drv, carried+text, func(n int) bool {
 		// The failed attempt's events go ahead of the notice.
 		s.syncPump()
 		s.mu.Lock()
-		called, stopped := s.toolCalls != callsBefore, s.interrupted
+		called, asked := s.toolCalls != callsBefore, s.interrupted
 		s.mu.Unlock()
 		// The session's own wall and idle limits bound the wait as the
 		// run's timeout bounds an autonomous run's.
 		idle := s.budgets.IdleTimeoutSeconds > 0 && time.Duration(s.budgets.IdleTimeoutSeconds)*time.Second <= capacityWait
-		if called || idle || stopped || !canWaitAtCapacity(s.agentCtx) {
+		if called || idle || asked || !canWaitAtCapacity(s.agentCtx) {
 			return false
 		}
 		s.emit(session.Event{Kind: session.KindNotice, Text: capacityNotice(n)})
@@ -1659,33 +1651,26 @@ func (s *liveSession) turnCarrying(ctx context.Context, carried, text string, sy
 	// The turn is over before its last event is seen.
 	s.mu.Lock()
 	s.inTurn = false
-	stopped, said := s.interrupted, s.turnErr
+	asked, said, limit := s.interrupted, s.turnErr, s.turnLimit
 	s.mu.Unlock()
-	if stopped {
-		if ended, _ := s.Ended(); ended {
-			return session.ErrEnded
-		}
-		// What the agent had said by the stop closes the turn.
-		partial := ""
-		if res != nil {
-			partial = res.Text
-		}
-		s.mu.Lock()
-		s.lastActivity = time.Now()
-		s.mu.Unlock()
-		s.emit(session.Event{Kind: session.KindAssistantTurn, Text: partial, StopReason: session.StopInterrupted})
-		return session.ErrInterrupted
-	}
 	if err != nil {
 		if ended, _ := s.Ended(); ended {
 			return session.ErrEnded
 		}
 		// A failure that only restates the error the harness reported
 		// is said once.
-		if said == "" || !strings.Contains(err.Error(), said) {
+		if said == "" || !strings.Contains(err.Error(), firstLineOf(said)) {
 			s.emit(session.Event{Kind: session.KindError, Text: err.Error()})
 		}
 		return err
+	}
+	if limit != "" {
+		// The plan's limit was said as the turn's error: a harness that
+		// answers the turn all the same has not answered it.
+		return errors.New("plan limit reached: " + limit)
+	}
+	if asked && res.Stopped() {
+		return s.stoppedTurn(res.Text)
 	}
 	s.mu.Lock()
 	if res.Text != "" {
@@ -1699,40 +1684,66 @@ func (s *liveSession) turnCarrying(ctx context.Context, carried, text string, sy
 	return nil
 }
 
+// firstLineOf is s up to its first line break.
+func firstLineOf(s string) string {
+	line, _, _ := strings.Cut(s, "\n")
+	return line
+}
+
+// stoppedTurn closes a turn Interrupt stopped with what the agent had said
+// by then.
+func (s *liveSession) stoppedTurn(said string) error {
+	s.mu.Lock()
+	s.inTurn = false
+	s.lastActivity = time.Now()
+	s.mu.Unlock()
+	s.emit(session.Event{Kind: session.KindAssistantTurn, Text: said, StopReason: session.StopInterrupted})
+	return session.ErrInterrupted
+}
+
+// interruptAgain is how often Interrupt asks again while the turn has not
+// ended: a harness told before its driver had the turn did nothing.
+const interruptAgain = 500 * time.Millisecond
+
 // Interrupt implements session.Interrupter: the harness is told to stop the
-// turn in flight, and Interrupt returns once the turn has ended. The turn's
-// Send returns session.ErrInterrupted.
+// turn in flight, and Interrupt returns once the turn has ended. A turn the
+// harness stopped closes with what it had said and its Send returns
+// session.ErrInterrupted; one that finished first is answered as usual.
 func (s *liveSession) Interrupt(ctx context.Context) error {
 	s.mu.Lock()
-	in, drv, done := s.inTurn, s.drv, s.turnEnd
-	if in {
+	inTurn, drv, done := s.inTurn, s.drv, s.turnEnd
+	if inTurn {
 		s.interrupted = true
 	}
 	s.mu.Unlock()
-	if !in {
+	if !inTurn {
 		return session.ErrNoTurn
 	}
-	undo := func() {
+	it, ok := drv.(adapter.Interrupter)
+	if !ok {
 		s.mu.Lock()
 		if s.turnEnd == done {
 			s.interrupted = false
 		}
 		s.mu.Unlock()
-	}
-	it, ok := drv.(adapter.Interrupter)
-	if !ok {
-		undo()
 		return fmt.Errorf("the %s harness cannot stop a turn", s.p.Plan.Harness.Adapter)
 	}
-	if err := it.Interrupt(ctx); err != nil {
-		undo()
-		return fmt.Errorf("stopping the turn: %w", err)
-	}
-	select {
-	case <-done:
-		return nil
-	case <-ctx.Done():
-		return fmt.Errorf("the harness did not stop the turn: %w", ctx.Err())
+	for {
+		if err := it.Interrupt(ctx); err != nil {
+			select {
+			case <-done:
+				return nil
+			default:
+			}
+			return fmt.Errorf("stopping the turn: %w", err)
+		}
+		select {
+		case <-done:
+			return nil
+		case <-ctx.Done():
+			return fmt.Errorf("the harness did not stop the turn: %w", ctx.Err())
+		case <-time.After(interruptAgain):
+		}
 	}
 }
 

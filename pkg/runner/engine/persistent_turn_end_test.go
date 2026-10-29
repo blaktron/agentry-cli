@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -92,7 +93,12 @@ func TestAnInterruptStopsTheTurnAndTheSegmentGoesOn(t *testing.T) {
 // limitAdapter is the fixture's adapter whose driver meets the plan's
 // limit at every turn, as codex does on a ChatGPT plan: the limit, then the
 // turn's failure restating it.
-type limitAdapter struct{ adapter.Adapter }
+type limitAdapter struct {
+	adapter.Adapter
+	// answers has the driver answer the turn after saying the limit twice,
+	// as Claude Code's rejected rate-limit events and error result do.
+	answers bool
+}
 
 func (a limitAdapter) Session(ctx context.Context, rw io.ReadWriteCloser, o adapter.SessionOptions) (adapter.SessionDriver, error) {
 	d, err := a.Adapter.Session(ctx, rw, o)
@@ -106,12 +112,13 @@ func (a limitAdapter) Session(ctx context.Context, rw io.ReadWriteCloser, o adap
 		}
 		close(out)
 	}()
-	return &limitDriver{SessionDriver: d, out: out}, nil
+	return &limitDriver{SessionDriver: d, out: out, answers: a.answers}, nil
 }
 
 type limitDriver struct {
 	adapter.SessionDriver
-	out chan adapter.Event
+	out     chan adapter.Event
+	answers bool
 }
 
 func (d *limitDriver) Events() <-chan adapter.Event { return d.out }
@@ -119,6 +126,10 @@ func (d *limitDriver) Events() <-chan adapter.Event { return d.out }
 func (d *limitDriver) Prompt(context.Context, string) (*adapter.Turn, error) {
 	const said = "The ChatGPT user has reached their usage limit."
 	d.out <- adapter.Event{Kind: adapter.EventPlanLimit, Text: said}
+	if d.answers {
+		d.out <- adapter.Event{Kind: adapter.EventPlanLimit, Text: said}
+		return &adapter.Turn{StopReason: "end_turn", Text: "I could not answer."}, nil
+	}
 	return nil, errors.New("codex session: turn failed: stream disconnected before completion: " + said)
 }
 
@@ -126,14 +137,24 @@ func (d *limitDriver) Prompt(context.Context, string) (*adapter.Turn, error) {
 // fails with one error naming the limit, and the segment goes on, so the
 // next turn tries again.
 func TestAPersistentAgentOutlivesItsPlansLimit(t *testing.T) {
+	for _, answers := range []bool{false, true} {
+		t.Run(map[bool]string{false: "the turn fails", true: "the harness answers all the same"}[answers], func(t *testing.T) {
+			outlivesTheLimit(t, answers)
+		})
+	}
+}
+
+// outlivesTheLimit is TestAPersistentAgentOutlivesItsPlansLimit with a
+// harness that answers a turn the limit refused, or fails it.
+func outlivesTheLimit(t *testing.T, answers bool) {
 	p, f, h := persistentFixture(t, "")
-	p.Adapter = limitAdapter{p.Adapter}
+	p.Adapter = limitAdapter{Adapter: p.Adapter, answers: answers}
 	s, get, done := startSegment(t, p, f, h)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	for i := 0; i < 2; i++ {
-		if err := s.Send(ctx, "hello"); err == nil {
-			t.Fatalf("turn %d met the limit and succeeded", i+1)
+		if err := s.Send(ctx, "hello"); err == nil || !strings.Contains(err.Error(), "usage limit") {
+			t.Fatalf("turn %d met the limit: %v", i+1, err)
 		}
 		if ended, why := s.Ended(); ended {
 			t.Fatalf("turn %d ended the segment (%s)", i+1, why)

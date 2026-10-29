@@ -596,6 +596,7 @@ func (s *Supervisor) Interrupt(ctx context.Context) error {
 	sess := s.sess
 	s.mu.Unlock()
 	if sess == nil {
+		// Between segments no turn has a harness to stop.
 		return session.ErrNoTurn
 	}
 	it, ok := sess.(session.Interrupter)

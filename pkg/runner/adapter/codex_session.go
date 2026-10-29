@@ -299,7 +299,7 @@ func (s *codexSession) Prompt(ctx context.Context, text string) (*Turn, error) {
 		}
 		s.mu.Unlock()
 		// A turn stopped by Interrupt ends with what it had said.
-		if end.status == codexInterrupted {
+		if end.status == StopInterrupted {
 			return out, nil
 		}
 		// A turn that did not complete is not an answer, whether or not it
@@ -320,9 +320,6 @@ func (s *codexSession) Prompt(ctx context.Context, text string) (*Turn, error) {
 	}
 	return finish(end)
 }
-
-// codexInterrupted is the status of a turn turn/interrupt stopped.
-const codexInterrupted = "interrupted"
 
 // Interrupt implements Interrupter: turn/interrupt of the turn in flight,
 // which codex ends with turn/completed and the status "interrupted".
@@ -488,6 +485,21 @@ const codexClientName = "Agentry"
 type codexError struct {
 	Message string          `json:"message"`
 	Info    json.RawMessage `json:"codexErrorInfo"`
+	// Details is what a retry notice ("Reconnecting... 1/5") says the
+	// model call it retries failed with.
+	Details string `json:"additionalDetails"`
+}
+
+// reason is the error's own words: a retry notice's details, else its
+// message.
+func (e *codexError) reason() string {
+	if e == nil {
+		return ""
+	}
+	if e.Details != "" {
+		return e.Details
+	}
+	return e.Message
 }
 
 // codexUsageLimit is codex's own variant for a usage limit (with a
@@ -511,10 +523,24 @@ func (e *codexError) limitStatus() int {
 	if st := e.status(); st != 0 {
 		return st
 	}
-	if strings.Contains(e.Message, "last status: 429") || strings.Contains(strings.ToLower(e.Message), "usage limit") {
+	if strings.Contains(e.Message, "last status: 429") || saysUsageLimitReached(e.reason()) {
 		return 429
 	}
 	return 0
+}
+
+// saysUsageLimitReached says msg is a plan's usage limit having been met.
+func saysUsageLimitReached(msg string) bool {
+	low := strings.ToLower(msg)
+	if !strings.Contains(low, "usage limit") {
+		return false
+	}
+	for _, w := range []string{"reached", "exceeded", "hit your"} {
+		if strings.Contains(low, w) {
+			return true
+		}
+	}
+	return false
 }
 
 // status is the HTTP status the error carries, 0 when it names none; codex's
@@ -571,7 +597,7 @@ func (s *codexSession) signInError(e *codexError, raw json.RawMessage) (Event, b
 			if said {
 				return Event{}, false
 			}
-			return Event{Kind: EventPlanLimit, Text: strings.TrimPrefix(msg, codexStreamDisconnected), Raw: raw}, true
+			return Event{Kind: EventPlanLimit, Text: strings.TrimPrefix(e.reason(), codexStreamDisconnected), Raw: raw}, true
 		case 403:
 			return Event{Kind: EventError, Text: msg + codexPlanRefusal, Raw: raw}, true
 		}
@@ -679,16 +705,17 @@ func (s *codexSession) handleNotification(m rpcMessage, line []byte) {
 		}
 		return
 	case "error":
-		if p.WillRetry {
-			// Codex retries this itself and the turn goes on: a note for the
-			// receipts, not an error of the turn.
-			break
-		}
 		// The error object (0.162.0), or the bare message of an older
 		// release.
 		e := p.Error
 		if e == nil {
 			e = &codexError{Message: p.Message}
+		}
+		if p.WillRetry && (!s.signIn || e.limitStatus() != 429) {
+			// Codex retries this itself and the turn goes on: a note for the
+			// receipts, not an error of the turn. The plan's limit is never
+			// left to a retry.
+			break
 		}
 		if ev, ok := s.signInError(e, raw); ok {
 			s.emit(ev)

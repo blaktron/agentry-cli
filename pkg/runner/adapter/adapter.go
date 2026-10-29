@@ -485,6 +485,19 @@ type Interrupter interface {
 	Interrupt(ctx context.Context) error
 }
 
+// StopInterrupted and StopCancelled are the stop reasons of a turn its
+// harness was told to stop: codex's and Claude Code's word, and the Agent
+// Client Protocol's and Copilot's.
+const (
+	StopInterrupted = "interrupted"
+	StopCancelled   = "cancelled"
+)
+
+// Stopped says a turn ended because its harness was told to stop it.
+func (t *Turn) Stopped() bool {
+	return t != nil && (t.StopReason == StopInterrupted || t.StopReason == StopCancelled)
+}
+
 // Turn is the harness's answer to one Prompt.
 type Turn struct {
 	// StopReason is the protocol's reason (end_turn, cancelled, ...).

@@ -31,6 +31,9 @@ type claudeSession struct {
 
 	mu   sync.Mutex
 	turn chan claudeTurnResult // non-nil while a Prompt is in flight
+	// stopping says Interrupt asked for the turn in flight to stop: its
+	// result message is the stop, not an error of the turn.
+	stopping bool
 
 	events    chan Event
 	eventGate eventGate // orders sends against close(events)
@@ -162,6 +165,7 @@ func (s *claudeSession) Prompt(ctx context.Context, text string) (*Turn, error) 
 		return nil, errors.New("claude session: a turn is already in flight")
 	}
 	s.turn = ch
+	s.stopping = false
 	s.mu.Unlock()
 	defer func() {
 		s.mu.Lock()
@@ -203,6 +207,9 @@ const claudeInterruptID = "agentry-interrupt"
 func (s *claudeSession) Interrupt(context.Context) error {
 	s.mu.Lock()
 	inTurn := s.turn != nil
+	if inTurn {
+		s.stopping = true
+	}
 	s.mu.Unlock()
 	if !inTurn {
 		return nil
@@ -277,6 +284,12 @@ func (s *claudeSession) readLoop() {
 			ctxSize = msg.CompactMetadata.PostTokens
 		}
 		isResult := parsed && msg.Type == "result"
+		stopped := false
+		if isResult {
+			s.mu.Lock()
+			stopped, s.stopping = s.stopping, false
+			s.mu.Unlock()
+		}
 		reason := ""
 		if isResult && msg.IsError {
 			// A result before the handshake's answer is Claude Code ending
@@ -288,6 +301,11 @@ func (s *claudeSession) readLoop() {
 			s.started(claudeStart{failed: true, reason: reason})
 		}
 		for _, ev := range s.ad.Events(line) {
+			if stopped && ev.Kind == EventError {
+				// Claude Code ends a stopped turn with an error result
+				// (error_during_execution): the stop, kept in the receipts.
+				ev.Kind = EventOther
+			}
 			if isResult && ev.Kind == EventAssistantText {
 				// The assistant message already carried this text into the
 				// transcript; the result message's copy would double it.
@@ -308,6 +326,9 @@ func (s *claudeSession) readLoop() {
 			continue
 		}
 		res := claudeTurnResult{stopReason: msg.StopReason, text: msg.Result, failed: reason}
+		if stopped {
+			res.stopReason, res.failed = StopInterrupted, ""
+		}
 		if res.text == "" {
 			res.text = text.String()
 		}
