@@ -124,6 +124,11 @@ type fakeHarness struct {
 	// loadSession advertises session/load, which replays a stored
 	// conversation and continues it; loadFails answers it with an error.
 	loadSession, loadFails bool
+	// holdForCancel answers a prompt with a first chunk and then holds it
+	// until session/cancel, which it answers with the stop reason
+	// "cancelled"; cancels counts them.
+	holdForCancel bool
+	cancels       int
 }
 
 func (h *fakeHarness) handler(_ context.Context, r dockerx.RunSpec, stdin io.Reader, stdout, _ io.Writer) (int, error) {
@@ -176,6 +181,26 @@ func (h *fakeHarness) handler(_ context.Context, r dockerx.RunSpec, stdin io.Rea
 			}
 			if h.gate != nil {
 				<-h.gate
+			}
+			h.mu.Lock()
+			hold := h.holdForCancel
+			h.mu.Unlock()
+			if hold {
+				write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "s1", "update": map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": "Half an answer"}}}})
+				for sc.Scan() {
+					var c struct {
+						Method string `json:"method"`
+					}
+					_ = json.Unmarshal(sc.Bytes(), &c)
+					if c.Method == "session/cancel" {
+						h.mu.Lock()
+						h.cancels++
+						h.mu.Unlock()
+						break
+					}
+				}
+				write(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": map[string]any{"stopReason": "cancelled"}})
+				continue
 			}
 			text := ""
 			if len(m.Params.Prompt) > 0 {

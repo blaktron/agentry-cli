@@ -35,6 +35,8 @@ import (
 //	{"compact":{}}            an upkeep turn now, then a new conversation that
 //	                          opens with the handoff; answered with
 //	                          {"compacted":…} when it is done, or refused
+//	{"interrupt":{}}          stops the turn in flight; answered with
+//	                          {"interrupted":…} once it has ended
 //
 // A refused command is answered with an event of kind error carrying
 // Refused, as the session protocol answers one.
@@ -52,6 +54,8 @@ type Command struct {
 	TaskChange *TaskOp `json:"task_change,omitempty"`
 	// Compact asks for an upkeep turn and a compaction now.
 	Compact *struct{} `json:"compact,omitempty"`
+	// Interrupt asks for the turn in flight to stop.
+	Interrupt *struct{} `json:"interrupt,omitempty"`
 }
 
 // Reply is one line the supervisor sends.
@@ -63,6 +67,8 @@ type Reply struct {
 	Tasks   *[]Task         `json:"tasks,omitempty"`
 	// Compacted answers a compact: what the compaction did.
 	Compacted *Compacted `json:"compacted,omitempty"`
+	// Interrupted answers an interrupt.
+	Interrupted *Interrupted `json:"interrupted,omitempty"`
 	// Consent lists what a refused change would turn on, for the person to
 	// agree to before it is sent again with Consent set.
 	Consent []RosterEntry `json:"consent,omitempty"`
@@ -76,14 +82,21 @@ type Stopped struct {
 	Error      string `json:"error,omitempty"`
 }
 
+// Interrupted is the answer to an interrupt: whether a turn was in flight to
+// stop. A turn that would not stop is refused instead.
+type Interrupted struct {
+	Stopped bool `json:"stopped"`
+}
+
 // The refusal classes the owner socket adds to the session protocol's.
 const (
-	RefusedBusy                     = protocol.RefusedBusy
-	RefusedEnded   protocol.Refusal = "ended"
-	RefusedChange  protocol.Refusal = "change"
-	RefusedConsent protocol.Refusal = "consent"
-	RefusedTask    protocol.Refusal = "task"
-	RefusedCompact protocol.Refusal = "compact"
+	RefusedBusy                       = protocol.RefusedBusy
+	RefusedEnded     protocol.Refusal = "ended"
+	RefusedChange    protocol.Refusal = "change"
+	RefusedConsent   protocol.Refusal = "consent"
+	RefusedTask      protocol.Refusal = "task"
+	RefusedCompact   protocol.Refusal = "compact"
+	RefusedInterrupt protocol.Refusal = "interrupt"
 )
 
 // maxSocketPath is below the kernel's limit for a socket's name (108 bytes
@@ -164,7 +177,7 @@ func (s *Supervisor) serveConn(nc net.Conn) {
 		dec := json.NewDecoder(strings.NewReader(sc.Text()))
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&cmd); err != nil || commandsSet(cmd) != 1 {
-			c.refuse(protocol.RefusedMalformed, "a command is one JSON object naming exactly one of attach, send, status, roster, change, stop, tasks, task_change or compact")
+			c.refuse(protocol.RefusedMalformed, "a command is one JSON object naming exactly one of attach, send, status, roster, change, stop, tasks, task_change, compact or interrupt")
 			continue
 		}
 		switch {
@@ -231,6 +244,20 @@ func (s *Supervisor) serveConn(nc net.Conn) {
 					c.reply(Reply{Compacted: &out})
 				}
 			}()
+		case cmd.Interrupt != nil:
+			// The turn takes a moment to stop: the connection reads on.
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), interruptWait)
+				defer cancel()
+				switch err := s.Interrupt(ctx); {
+				case errors.Is(err, session.ErrNoTurn):
+					c.reply(Reply{Interrupted: &Interrupted{}})
+				case err != nil:
+					c.refuse(RefusedInterrupt, err.Error())
+				default:
+					c.reply(Reply{Interrupted: &Interrupted{Stopped: true}})
+				}
+			}()
 		case cmd.TaskChange != nil:
 			ts, err := s.ChangeTask(*cmd.TaskChange)
 			if err != nil {
@@ -249,7 +276,7 @@ func (s *Supervisor) serveConn(nc net.Conn) {
 // commandsSet is how many commands one line names.
 func commandsSet(c Command) int {
 	n := 0
-	for _, set := range []bool{c.Attach != nil, c.Send != nil, c.Status != nil, c.Roster != nil, c.Change != nil, c.Stop != nil, c.Tasks != nil, c.TaskChange != nil, c.Compact != nil} {
+	for _, set := range []bool{c.Attach != nil, c.Send != nil, c.Status != nil, c.Roster != nil, c.Change != nil, c.Stop != nil, c.Tasks != nil, c.TaskChange != nil, c.Compact != nil, c.Interrupt != nil} {
 		if set {
 			n++
 		}
@@ -407,6 +434,24 @@ func RequestCompact(ctx context.Context, home, name string) (Compacted, error) {
 		return false
 	})
 	return out, err
+}
+
+// interruptWait bounds how long a turn may take to stop once its harness is
+// told to.
+const interruptWait = 30 * time.Second
+
+// RequestInterrupt asks the running agent's supervisor to stop the turn in
+// flight, and returns once it has ended: stopped is false when no turn was
+// in flight.
+func RequestInterrupt(ctx context.Context, home, name string) (stopped bool, err error) {
+	err = request(ctx, home, name, Command{Interrupt: &struct{}{}}, func(r Reply) bool {
+		if r.Interrupted != nil {
+			stopped = r.Interrupted.Stopped
+			return true
+		}
+		return false
+	})
+	return stopped, err
 }
 
 // RequestStop asks the running agent's supervisor to stop it, and returns

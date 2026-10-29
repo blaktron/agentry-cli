@@ -9,6 +9,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"time"
 )
 
 // codexSession is the SessionDriver for an interactive Codex run: a
@@ -44,7 +45,7 @@ type codexSession struct {
 	// permit says whether an MCP approval for server/tool is granted.
 	permit func(server, tool string) bool
 	// signIn says the run is paid by a model sign-in (SessionOptions): a
-	// 429 is then the plan's limit, said once (planLimited).
+	// 429 is then the plan's limit, said once a turn (planLimited).
 	signIn      bool
 	planLimited bool
 	// resumable keeps the thread so Resume can carry it to a new process,
@@ -265,6 +266,9 @@ func (s *codexSession) Prompt(ctx context.Context, text string) (*Turn, error) {
 		return nil, errors.New("codex session: a turn is already in flight")
 	}
 	s.turn = t
+	// A session that outlives the plan's limit (a persistent agent's)
+	// hears of it again at a later turn that meets it.
+	s.planLimited = false
 	s.mu.Unlock()
 	defer func() {
 		s.mu.Lock()
@@ -294,6 +298,10 @@ func (s *codexSession) Prompt(ctx context.Context, text string) (*Turn, error) {
 			out.Usage = &TurnUsage{InputTokens: int(t.inTok), OutputTokens: int(t.outTok), TotalTokens: int(t.inTok + t.outTok)}
 		}
 		s.mu.Unlock()
+		// A turn stopped by Interrupt ends with what it had said.
+		if end.status == StopInterrupted {
+			return out, nil
+		}
 		// A turn that did not complete is not an answer, whether or not it
 		// said why: a failed turn with no error object would otherwise read
 		// as a success (I9).
@@ -311,6 +319,33 @@ func (s *codexSession) Prompt(ctx context.Context, text string) (*Turn, error) {
 		return nil, err
 	}
 	return finish(end)
+}
+
+// Interrupt implements Interrupter: turn/interrupt of the turn in flight,
+// which codex ends with turn/completed and the status "interrupted".
+// The turn's id comes with turn/start's answer, which it waits for.
+func (s *codexSession) Interrupt(ctx context.Context) error {
+	for {
+		s.mu.Lock()
+		t := s.turn
+		turnID := ""
+		if t != nil {
+			turnID = t.turnID
+		}
+		s.mu.Unlock()
+		if t == nil {
+			return nil
+		}
+		if turnID != "" {
+			_, err := s.call(ctx, "turn/interrupt", map[string]any{"threadId": s.threadID, "turnId": turnID})
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("codex session: the turn had not started: %w", ctx.Err())
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
 }
 
 // waitTurn waits for t's turn/completed, the turn method started.
@@ -450,11 +485,63 @@ const codexClientName = "Agentry"
 type codexError struct {
 	Message string          `json:"message"`
 	Info    json.RawMessage `json:"codexErrorInfo"`
+	// Details is what a retry notice ("Reconnecting... 1/5") says the
+	// model call it retries failed with.
+	Details string `json:"additionalDetails"`
+}
+
+// reason is the error's own words: a retry notice's details, else its
+// message.
+func (e *codexError) reason() string {
+	if e == nil {
+		return ""
+	}
+	if e.Details != "" {
+		return e.Details
+	}
+	return e.Message
 }
 
 // codexUsageLimit is codex's own variant for a usage limit (with a
 // limitId, in 0.162.0's binary): the plan's limit, as a 429 is.
 const codexUsageLimit = "usageLimitExceeded"
+
+// codexStreamDisconnected is how codex begins the message of a model call
+// whose stream ended early, the plan's usage limit among them.
+const codexStreamDisconnected = "stream disconnected before completion: "
+
+// limitStatus is status, or 429 when the message says what a 429 would: a
+// release whose error object carries no status still says it in its
+// message ("exceeded retry limit, last status: 429 …" in 0.162.0), and the
+// plan's usage limit can reach codex as a stream that ended early, with the
+// variant "other" and only the message to say so ("… The ChatGPT user has
+// reached their Subscription Sharing usage limit. …").
+func (e *codexError) limitStatus() int {
+	if e == nil {
+		return 0
+	}
+	if st := e.status(); st != 0 {
+		return st
+	}
+	if strings.Contains(e.Message, "last status: 429") || saysUsageLimitReached(e.reason()) {
+		return 429
+	}
+	return 0
+}
+
+// saysUsageLimitReached says msg is a plan's usage limit having been met.
+func saysUsageLimitReached(msg string) bool {
+	low := strings.ToLower(msg)
+	if !strings.Contains(low, "usage limit") {
+		return false
+	}
+	for _, w := range []string{"reached", "exceeded", "hit your"} {
+		if strings.Contains(low, w) {
+			return true
+		}
+	}
+	return false
+}
 
 // status is the HTTP status the error carries, 0 when it names none; codex's
 // usage-limit variant, as an object or a bare name, counts as a 429.
@@ -501,13 +588,7 @@ func (s *codexSession) signInError(e *codexError, raw json.RawMessage) (Event, b
 		msg = e.Message
 	}
 	if s.signIn {
-		status := e.status()
-		// A release whose error object carries no status still says it in
-		// its message (0.162.0: "exceeded retry limit, last status: 429 …").
-		if status == 0 && strings.Contains(msg, "last status: 429") {
-			status = 429
-		}
-		switch status {
+		switch e.limitStatus() {
 		case 429:
 			s.mu.Lock()
 			said := s.planLimited
@@ -516,7 +597,7 @@ func (s *codexSession) signInError(e *codexError, raw json.RawMessage) (Event, b
 			if said {
 				return Event{}, false
 			}
-			return Event{Kind: EventPlanLimit, Text: msg, Raw: raw}, true
+			return Event{Kind: EventPlanLimit, Text: strings.TrimPrefix(e.reason(), codexStreamDisconnected), Raw: raw}, true
 		case 403:
 			return Event{Kind: EventError, Text: msg + codexPlanRefusal, Raw: raw}, true
 		}
@@ -547,6 +628,9 @@ type codexNotification struct {
 	} `json:"tokenUsage"`
 	Message string      `json:"message"`
 	Error   *codexError `json:"error"`
+	// WillRetry is set on an error codex is about to retry itself
+	// ("Reconnecting... 1/5"): the turn goes on.
+	WillRetry bool `json:"willRetry"`
 }
 
 func (s *codexSession) handleNotification(m rpcMessage, line []byte) {
@@ -602,7 +686,7 @@ func (s *codexSession) handleNotification(m rpcMessage, line []byte) {
 		// sign-in, and goes out first; the marker goes out before the turn
 		// ends: every event of a turn is queued before Prompt returns
 		// (SessionDriver).
-		if p.Turn.Status == "failed" && p.Turn.Error != nil && s.signIn && p.Turn.Error.status() == 429 {
+		if p.Turn.Status == "failed" && p.Turn.Error != nil && s.signIn && p.Turn.Error.limitStatus() == 429 {
 			if ev, ok := s.signInError(p.Turn.Error, raw); ok {
 				s.emit(ev)
 			}
@@ -626,6 +710,12 @@ func (s *codexSession) handleNotification(m rpcMessage, line []byte) {
 		e := p.Error
 		if e == nil {
 			e = &codexError{Message: p.Message}
+		}
+		if p.WillRetry && (!s.signIn || e.limitStatus() != 429) {
+			// Codex retries this itself and the turn goes on: a note for the
+			// receipts, not an error of the turn. The plan's limit is never
+			// left to a retry.
+			break
 		}
 		if ev, ok := s.signInError(e, raw); ok {
 			s.emit(ev)

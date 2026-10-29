@@ -669,3 +669,81 @@ func TestACPSessionStartsANewConversationInTheRunningHarness(t *testing.T) {
 		t.Errorf("usage = %+v", usage)
 	}
 }
+
+// Interrupt is session/cancel, a notification of the session in flight,
+// and the prompt ends with the harness's "cancelled" and what was said.
+func TestACPSessionInterruptCancelsThePromptInFlight(t *testing.T) {
+	toHarnessR, toHarnessW := io.Pipe()
+	fromHarnessR, fromHarnessW := io.Pipe()
+	cancelled := make(chan string, 1)
+	go func() {
+		defer func() { _ = fromHarnessW.Close() }()
+		sc := bufio.NewScanner(toHarnessR)
+		var prompt string
+		for sc.Scan() {
+			var m struct {
+				ID     *json.RawMessage `json:"id"`
+				Method string           `json:"method"`
+				Params map[string]any   `json:"params"`
+			}
+			_ = json.Unmarshal(sc.Bytes(), &m)
+			say := func(s string) { _, _ = fromHarnessW.Write([]byte(s + "\n")) }
+			switch m.Method {
+			case "initialize":
+				say(`{"jsonrpc":"2.0","id":` + string(*m.ID) + `,"result":{"protocolVersion":1}}`)
+			case "session/new":
+				say(`{"jsonrpc":"2.0","id":` + string(*m.ID) + `,"result":{"sessionId":"s"}}`)
+			case "session/prompt":
+				prompt = string(*m.ID)
+				say(`{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Half"}}}}`)
+			case "session/cancel":
+				if m.ID != nil {
+					t.Error("session/cancel is a notification, sent with an id")
+				}
+				id, _ := m.Params["sessionId"].(string)
+				cancelled <- id
+				say(`{"jsonrpc":"2.0","id":` + prompt + `,"result":{"stopReason":"cancelled"}}`)
+			}
+		}
+	}()
+	drv := newACPSession(pipeRW{Reader: fromHarnessR, WriteCloser: toHarnessW}, 1, nil)
+	go func() {
+		for range drv.Events() {
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := drv.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	type answer struct {
+		turn *Turn
+		err  error
+	}
+	got := make(chan answer, 1)
+	go func() {
+		tr, err := drv.Prompt(ctx, "hello")
+		got <- answer{tr, err}
+	}()
+	// The prompt is in flight once its first chunk is in.
+	for {
+		drv.mu.Lock()
+		said := drv.turn != nil && drv.turn.text.Len() > 0
+		drv.mu.Unlock()
+		if said {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if err := drv.Interrupt(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if id := <-cancelled; id != "s" {
+		t.Fatalf("session/cancel of %q", id)
+	}
+	a := <-got
+	if a.err != nil || a.turn.StopReason != "cancelled" || a.turn.Text != "Half" {
+		t.Fatalf("Prompt after an interrupt: %+v, %v", a.turn, a.err)
+	}
+	_ = drv.Close()
+}

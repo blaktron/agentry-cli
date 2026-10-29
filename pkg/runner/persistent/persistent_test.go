@@ -56,6 +56,9 @@ type fakeSegment struct {
 	// (zero: not said).
 	compacts    bool
 	compactedTo int64
+	// stop, while a turn is in flight, is closed by Interrupt; turnDone is
+	// closed when that turn ends.
+	stop, turnDone chan struct{}
 }
 
 func newFakeSegment(seg localrun.Segment, id string, resumed bool, reason string) *fakeSegment {
@@ -82,12 +85,25 @@ func (f *fakeSegment) SendCarrying(_ context.Context, carried, text string) erro
 	f.raw = append(f.raw, carried+text)
 	f.sent = append(f.sent, timeFramed.ReplaceAllString(carried, "")+text)
 	hold := f.hold
+	stop, turnDone := make(chan struct{}), make(chan struct{})
+	f.stop, f.turnDone = stop, turnDone
 	f.inflight.Add(1)
 	defer f.inflight.Done()
+	defer func() {
+		f.mu.Lock()
+		f.stop, f.turnDone = nil, nil
+		f.mu.Unlock()
+		close(turnDone)
+	}()
 	f.mu.Unlock()
 	f.events <- session.Event{Kind: session.KindUserTurn, Text: text}
 	if hold != nil {
-		<-hold
+		select {
+		case <-hold:
+		case <-stop:
+			f.events <- session.Event{Kind: session.KindAssistantTurn, Text: "half", StopReason: session.StopInterrupted}
+			return session.ErrInterrupted
+		}
 	}
 	f.mu.Lock()
 	answer, ctxTokens, limit, compacts, compactedTo := "echo: "+text, f.context, f.limit, f.compacts, f.compactedTo
@@ -122,6 +138,27 @@ func (f *fakeSegment) sentTurns() []string {
 }
 
 func (f *fakeSegment) AddInput(context.Context, string) error { return errors.New("no inputs") }
+
+// Interrupt implements session.Interrupter: the held turn in flight ends,
+// stopped.
+func (f *fakeSegment) Interrupt(ctx context.Context) error {
+	f.mu.Lock()
+	stop, done := f.stop, f.turnDone
+	if stop != nil {
+		f.stop = nil
+	}
+	f.mu.Unlock()
+	if stop == nil {
+		return session.ErrNoTurn
+	}
+	close(stop)
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
 
 func (f *fakeSegment) End(context.Context, bool) (*receipt.Envelope, error) {
 	f.mu.Lock()
