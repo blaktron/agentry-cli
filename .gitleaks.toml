@@ -42,11 +42,11 @@ paths = ['''^pkg/mcpauth/mcpauthtest/chatgpt\.go$''']
 regexes = ['''eyJhbGciOiJSUzI1NiJ9''']
 
 [[allowlists]]
-description = "the target host live test's planted AWS key id and GitHub token, printed on a throwaway sshd to prove a host's own keys reach the agent unchanged past the gateway's secret block"
+description = "the target host live test's planted GitHub token, printed on a throwaway sshd to prove a host's own keys reach the agent unchanged past the gateway's secret block"
 condition = "AND"
 regexTarget = "match"
 paths = ['''^pkg/runner/engine/targethosts_live_test\.go$''']
-regexes = ['''AKIAQ3EGRQ5WJ2LZ7HXN''', '''ghp_R8mZq2LkVb1x9Nw4Ty7Pc3Ha6Sd0Fg5Jk2Lp''']
+regexes = ['''ghp_R8mZq2LkVb1x9Nw4Ty7Pc3Ha6Sd0Fg5Jk2Lp''']
 
 [[allowlists]]
 description = "a fake private key header and body line in the host link's test, the shape its scrub masks"
@@ -54,16 +54,6 @@ condition = "AND"
 regexTarget = "match"
 paths = ['''^runnerimage/hostlink/server_test\.go$''']
 regexes = ['''b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW''']
-
-[[allowlists]]
-description = "the fake signing secret the delivery tests plant to prove it reaches the delivery step's stdin and nowhere else"
-condition = "AND"
-regexTarget = "match"
-paths = [
-  '''^pkg/runner/engine/destinations_test\.go$''',
-  '''^runnerimage/send/send_test\.go$''',
-]
-regexes = ['''whsec_PLANTEDsigningSECRET0123456789''']
 
 [[allowlists]]
 description = "the fake signing secret of the destinations file's test, which proves the CLI takes a credential's variable out of its environment once the file is read"
