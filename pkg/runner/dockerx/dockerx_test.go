@@ -286,6 +286,33 @@ func TestCLIAvailable(t *testing.T) {
 			t.Fatalf("err = %v, want the daemon failure with stderr detail", err)
 		}
 	})
+	// A docker CLI that prints the daemon's error on stdout, as some engines'
+	// shims do: the message still reaches the person.
+	t.Run("daemon error on stdout only", func(t *testing.T) {
+		c, _ := stub(t, `echo "Error response from daemon: failed to connect to the backend"; exit 1`)
+		err := c.Available(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "failed to connect to the backend") {
+			t.Fatalf("err = %v, want the daemon's message from stdout", err)
+		}
+	})
+	t.Run("nothing on either stream", func(t *testing.T) {
+		c, _ := stub(t, `exit 1`)
+		err := c.Available(context.Background())
+		if err == nil {
+			t.Fatal("Available succeeded on exit 1")
+		}
+		msg := err.Error()
+		if strings.HasSuffix(strings.TrimSpace(msg), ":") || !strings.Contains(msg, "printed nothing") {
+			t.Fatalf("err = %q, want it to say docker printed nothing, not end in a bare colon", msg)
+		}
+	})
+	t.Run("stderr wins over stdout", func(t *testing.T) {
+		c, _ := stub(t, `echo "client section"; echo "Error response from daemon: boom" >&2; exit 1`)
+		err := c.Available(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "boom") || strings.Contains(err.Error(), "client section") {
+			t.Fatalf("err = %v, want stderr's message and not stdout's", err)
+		}
+	})
 }
 
 func TestCLIImageExists(t *testing.T) {

@@ -190,7 +190,7 @@ func (c *CLI) Create(ctx context.Context, r RunSpec) error {
 	cmd.Stdout, cmd.Stderr = io.Discard, &errb
 	if err := cmd.Run(); err != nil {
 		c.dropVolumes(ctx, named)
-		return fmt.Errorf("%s create %s: %w: %s", c.name(), r.Name, err, strings.TrimSpace(errb.String()))
+		return fmt.Errorf("%s create %s: %w%s", c.name(), r.Name, err, c.printed(errb.String(), ""))
 	}
 	return nil
 }

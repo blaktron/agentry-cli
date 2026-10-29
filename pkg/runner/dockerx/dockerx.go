@@ -311,9 +311,31 @@ func (c *CLI) run(ctx context.Context, args ...string) (string, error) {
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	if err := cmd.Run(); err != nil {
-		return out.String(), fmt.Errorf("%s %s: %w: %s", c.name(), args[0], err, strings.TrimSpace(errb.String()))
+		return out.String(), fmt.Errorf("%s %s: %w%s", c.name(), args[0], err, c.printed(errb.String(), out.String()))
 	}
 	return out.String(), nil
+}
+
+// printedTail bounds how much of stdout an error carries when it stands in
+// for an empty stderr.
+const printedTail = 512
+
+// printed is what a failed command said, appended to its error: stderr, or,
+// when stderr is empty, the end of stdout, since some engines' docker shims
+// print the daemon's error there. When the command printed nothing at all it
+// says so, rather than leaving the error to end in a bare colon. Callers whose
+// stdout is data (an archive, a build log, nothing kept) pass "" for it.
+func (c *CLI) printed(stderr, stdout string) string {
+	if s := strings.TrimSpace(stderr); s != "" {
+		return ": " + s
+	}
+	if s := strings.TrimSpace(stdout); s != "" {
+		if len(s) > printedTail {
+			s = "…" + strings.ToValidUTF8(s[len(s)-printedTail:], "")
+		}
+		return ": " + s
+	}
+	return " (" + c.name() + " printed nothing)"
 }
 
 // Available implements Client. It asks the daemon for its version with `docker
@@ -545,7 +567,7 @@ func (c *CLI) ImageFile(ctx context.Context, ref, path string) ([]byte, error) {
 	var out, errb bytes.Buffer
 	cp.Stdout, cp.Stderr = &out, &errb
 	if err := cp.Run(); err != nil {
-		return nil, fmt.Errorf("docker cp %s:%s: %w: %s", ref, path, err, strings.TrimSpace(errb.String()))
+		return nil, fmt.Errorf("docker cp %s:%s: %w%s", ref, path, err, c.printed(errb.String(), ""))
 	}
 	tr := tar.NewReader(&out)
 	for {
@@ -618,7 +640,7 @@ func (c *CLI) Build(ctx context.Context, dir, tag string, buildArgs map[string]s
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("%s build: %w: %s", c.name(), err, strings.TrimSpace(errb.String()))
+		return fmt.Errorf("%s build: %w%s", c.name(), err, c.printed(errb.String(), ""))
 	}
 	return nil
 }
@@ -752,7 +774,7 @@ func (c *CLI) RunDetached(ctx context.Context, r RunSpec) error {
 	cmd.Stdout, cmd.Stderr = io.Discard, &errb
 	if err := cmd.Run(); err != nil {
 		c.dropVolumes(ctx, named)
-		return fmt.Errorf("%s run %s: %w: %s", c.name(), r.Name, err, strings.TrimSpace(errb.String()))
+		return fmt.Errorf("%s run %s: %w%s", c.name(), r.Name, err, c.printed(errb.String(), ""))
 	}
 	return nil
 }
