@@ -588,6 +588,23 @@ func (s *Supervisor) Send(ctx context.Context, text string) error {
 	return s.sendLocked(ctx, "", text)
 }
 
+// Interrupt stops the turn in flight, the person's or one the runner sent
+// (a task's, an upkeep's), and returns once it has ended; the agent goes on.
+// With no turn in flight it is session.ErrNoTurn.
+func (s *Supervisor) Interrupt(ctx context.Context) error {
+	s.mu.Lock()
+	sess := s.sess
+	s.mu.Unlock()
+	if sess == nil {
+		return session.ErrNoTurn
+	}
+	it, ok := sess.(session.Interrupter)
+	if !ok {
+		return errors.New("this agent's segment cannot stop a turn")
+	}
+	return it.Interrupt(ctx)
+}
+
 // inUseDue says an in-use compaction is due.
 func (s *Supervisor) inUseDue() bool {
 	return s.upkeepDue() == UpkeepInUse

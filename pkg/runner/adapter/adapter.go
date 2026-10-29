@@ -477,6 +477,14 @@ type SessionDriver interface {
 	Close() error
 }
 
+// Interrupter is a SessionDriver that can tell its harness to stop the turn
+// in flight. Interrupt asks and returns; the Prompt in flight then returns
+// with what the turn had produced, its StopReason the protocol's word for a
+// stopped turn. With no turn in flight it does nothing.
+type Interrupter interface {
+	Interrupt(ctx context.Context) error
+}
+
 // Turn is the harness's answer to one Prompt.
 type Turn struct {
 	// StopReason is the protocol's reason (end_turn, cancelled, ...).

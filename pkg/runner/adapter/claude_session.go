@@ -195,6 +195,24 @@ func (s *claudeSession) Prompt(ctx context.Context, text string) (*Turn, error) 
 	}
 }
 
+// claudeInterruptID is the request id of the driver's interrupt request.
+const claudeInterruptID = "agentry-interrupt"
+
+// Interrupt implements Interrupter: Claude Code's interrupt control
+// request, after which it ends the turn with its result message.
+func (s *claudeSession) Interrupt(context.Context) error {
+	s.mu.Lock()
+	inTurn := s.turn != nil
+	s.mu.Unlock()
+	if !inTurn {
+		return nil
+	}
+	return s.send(map[string]any{
+		"type": "control_request", "request_id": claudeInterruptID,
+		"request": map[string]any{"subtype": "interrupt"},
+	})
+}
+
 // Events implements SessionDriver.
 func (s *claudeSession) Events() <-chan Event { return s.events }
 

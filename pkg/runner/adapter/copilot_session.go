@@ -377,6 +377,19 @@ func (s *copilotSession) CompactConversation(ctx context.Context) error {
 	return nil
 }
 
+// Interrupt implements Interrupter: session.abort, after which the session
+// goes idle and the turn ends with what it had said.
+func (s *copilotSession) Interrupt(ctx context.Context) error {
+	s.mu.Lock()
+	inTurn := s.turn != nil
+	s.mu.Unlock()
+	if !inTurn || s.id() == "" {
+		return nil
+	}
+	_, err := s.call(ctx, "session.abort", map[string]any{"sessionId": s.id()})
+	return err
+}
+
 // Events implements SessionDriver.
 func (s *copilotSession) Events() <-chan Event { return s.events }
 

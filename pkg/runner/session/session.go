@@ -137,6 +137,26 @@ var ErrEnded = errors.New("session has ended")
 // turn.
 var ErrBusy = errors.New("a turn is in flight; send again when its answer arrives")
 
+// ErrInterrupted is returned by Send when Interrupt stopped the turn before
+// the harness finished it. The turn's assistant_turn carries what the agent
+// had said by then, with StopReason StopInterrupted.
+var ErrInterrupted = errors.New("the turn was stopped")
+
+// ErrNoTurn is returned by Interrupt when no turn is in flight.
+var ErrNoTurn = errors.New("no turn is in flight")
+
+// StopInterrupted is the StopReason of a turn Interrupt stopped.
+const StopInterrupted = "interrupted"
+
+// Interrupter is a Session that can stop the turn in flight without ending
+// the session: the harness is told to stop, the turn ends, and the next
+// Send is taken as usual.
+type Interrupter interface {
+	// Interrupt stops the turn in flight and returns once it has ended,
+	// or with ErrNoTurn when there is none.
+	Interrupt(ctx context.Context) error
+}
+
 // Session is one interactive run.
 type Session interface {
 	// Events streams everything that happens, in order; closed after End.
