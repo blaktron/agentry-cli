@@ -73,6 +73,11 @@ var providerDefaults = []ProviderDefault{
 	{Provider: policy.ProviderOpenRouter, APIKeyEnv: "OPENROUTER_API_KEY", ProxyAllow: []string{"openrouter.ai:443"}},
 	{Provider: policy.ProviderPoe, APIKeyEnv: "POE_API_KEY", ProxyAllow: []string{"api.poe.com:443"}},
 	{Provider: policy.ProviderHuggingFace, APIKeyEnv: "HF_TOKEN", ProxyAllow: []string{"router.huggingface.co:443"}},
+	// Vultr Serverless Inference: an OpenAI-compatible endpoint paid by a key
+	// from the person's Vultr account. No default model, because Vultr's
+	// catalogue changes; its listing offers the models a run can use.
+	{Provider: policy.ProviderVultr, APIKeyEnv: "VULTR_INFERENCE_API_KEY", ProxyAllow: []string{"api.vultrinference.com:443"},
+		ModelsURL: "https://api.vultrinference.com/v1/models", KeyHeader: keyHeaderBearer},
 }
 
 // Providers lists the selectable provider names (copilot, paid by a
