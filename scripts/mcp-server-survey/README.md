@@ -12,7 +12,10 @@ the procedure: follow it to run the survey again.
    (npm's `engines.node`, PyPI's `requires_python`) admits the default runtime
    (Node and Python as `policy.DefaultNodeVersion` and `DefaultPythonVersion`
    give them). It starts from the registry's latest and works down through the
-   releases, and skips pre-releases unless the latest is one. Each newer
+   releases, and skips pre-releases unless the latest is one. It does not use the
+   runner's fallback Python (`policy.DefaultPythonFallbackRuntime`), which a run
+   gives a PyPI server whose range excludes the default's Python, so a survey
+   records the servers that run on the default. Each newer
    version it passes over is recorded under `excluded`, with the reason. A
    `version:` in the list pins one instead.
 2. **Installs it with the runner's own builder.** It calls

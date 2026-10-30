@@ -1092,6 +1092,12 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	if err := checkDeclaredServersStarted(logs, p.Plan.MCPServers); err != nil {
 		return Classify(ExitGateway, withRefusals(err, rd))
 	}
+	// A filter entry the gateway matched to nothing is a tool the contract
+	// granted and the run would lack; one that differs from a real name only
+	// in case stops the run here, naming the exact name.
+	if err := checkToolFilters(ctx, d, p, rd, runID, logs, listServerTools); err != nil {
+		return Classify(ExitGateway, withRefusals(err, rd))
+	}
 	// The host link checks each target host's sign-in before it serves:
 	// a refusal stops the run here, with its reason.
 	if p.Plan.HostLink != nil {

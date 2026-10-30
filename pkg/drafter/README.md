@@ -63,7 +63,7 @@ folder and the attached packs.
 The Drafter ships a knowledge pack of its own, `drafting-guide`, under
 `knowledge/drafting-guide/` in this release, declared in `knowledge.ships`.
 It covers how a QuickAgent run works and what a declared MCP server meets in
-the runner: a musl Node runtime and a glibc Python one, no install scripts, no launch arguments, stdio
+the runner: a musl Node runtime and a glibc Python one (which falls back to the previous Python line for a server whose `requires_python` excludes the default's), no install scripts, no launch arguments, stdio
 only, none of the run's files, and only port 443 to its declared hosts. It
 also has a checklist for a server before it is pinned, and two lists of
 servers: *Runs here*, the servers a survey saw install, start and list their

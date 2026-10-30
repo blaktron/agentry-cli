@@ -102,3 +102,9 @@ What checks a draft is no longer a page of today's facts awaiting a rewrite: the
 `registry_search` reads the registry's MCP server list with `mcp_server`: what a survey of about 60 000 npm packages, PyPI packages and remote addresses saw with the runner's own install, gateway and remote probe. Declared MCP servers says to look a server on neither list up there first, what each status means, and that a failure there may only be a missing host or setting.
 
 - updated: servers/mcp-servers.md
+
+## [2026-10-30] ingest | the runner's Python fallback (Drafter 1.18.5)
+
+A PyPI server whose `requires_python` excludes the default Python 3.15.2 but admits 3.14 now installs and runs on Python 3.14.10, so the servers page and the runtime facts say so, and the version check admits either Python.
+
+- updated: servers/mcp-servers.md, sources/runtime-facts.md

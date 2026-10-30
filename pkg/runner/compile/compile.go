@@ -1703,6 +1703,20 @@ func mcpServerEntry(srv spec.MCPServerSpec) *yaml.Node {
 	return e.node()
 }
 
+// runtimeEnforcement is the receipt's line for the language runtime a
+// declared PyPI server runs on: the Python and the image, and why it is the
+// fallback when it is. Empty for a server that records no runtime.
+func runtimeEnforcement(srv spec.MCPServerSpec) string {
+	if srv.Runtime == "" {
+		return ""
+	}
+	line := fmt.Sprintf("%s, in %s", srv.Runtime, srv.Image)
+	if srv.RuntimeFallback {
+		line += ": the fallback Python runtime, because the release's requires_python excludes the default runtime's Python"
+	}
+	return line
+}
+
 // checkImageServer refuses an image server spec the compiler cannot render
 // as a built-in's offer promises: an image not pinned by digest, a command
 // or env the gateway would rewrite, a host it reaches that is any host, or
@@ -2306,6 +2320,13 @@ func enforcement(caps spec.CapSummary, secrets, optional []string, extraServers 
 			remoteSecrets = append(remoteSecrets, srv.Package+": "+strings.Join(sortedCopy(srv.Secrets), ", "))
 		default:
 			serverSecrets = append(serverSecrets, srv.Ref()+": "+strings.Join(sortedCopy(srv.Secrets), ", "))
+		}
+	}
+	// The language runtime a declared PyPI server installs and runs on, as the
+	// install chose it from the release's requires_python.
+	for _, srv := range mcpServers {
+		if line := runtimeEnforcement(srv); line != "" {
+			e["mcp."+strings.TrimPrefix(srv.Name, "mcp-")+".runtime"] = line
 		}
 	}
 	serverPart := "each declared server's own, injected only into that server's container via gateway secret scoping: " + strings.Join(serverSecrets, "; ")

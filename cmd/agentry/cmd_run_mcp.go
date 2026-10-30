@@ -33,7 +33,7 @@ func ensureServerResolutions(ctx context.Context, errOut io.Writer, serversDir s
 	pol *policy.Policy, m *manifest.Manifest,
 ) ([]mcpinstall.Resolved, error) {
 	// A remote server is neither resolved nor installed.
-	return mcpinstall.StoredOrResolved(ctx, errOut, serversDir, pol.MCPRegistries, m.Capabilities.MCPServers)
+	return mcpinstall.StoredOrResolved(ctx, errOut, serversDir, pol.MCPRegistries, pol.Images, m.Capabilities.MCPServers)
 }
 
 // allSecretNames is the union of agent-level and per-server secret names —

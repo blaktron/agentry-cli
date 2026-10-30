@@ -311,6 +311,11 @@ func survey(ctx context.Context, d dockerx.Client, client *http.Client, pol *pol
 		return r
 	}
 
+	if e.Ecosystem == "pypi" {
+		// The install chose the Python from the release's own range.
+		r.Image, r.Runtime = resolved[0].Image(pol.Images), resolved[0].Runtime(pol.Images)
+	}
+
 	// Start it through the gateway and list its tools.
 	r.Stage = "start"
 	specs := mcpinstall.Specs(resolved, []manifest.MCPServer{srv}, pol.Images)

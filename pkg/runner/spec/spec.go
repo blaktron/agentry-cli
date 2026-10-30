@@ -1080,6 +1080,13 @@ type MCPServerSpec struct {
 	Integrity string `json:"integrity,omitempty"`
 	// Image is the pinned runtime image the server runs in.
 	Image string `json:"image"`
+	// Runtime names the language runtime the image holds for a PyPI server
+	// ("Python 3.14.10"), which is the fallback's when RuntimeFallback is
+	// set; empty for any other server.
+	Runtime string `json:"runtime,omitempty"`
+	// RuntimeFallback says the server runs on the policy's fallback Python
+	// runtime because its requires_python excludes the default's Python.
+	RuntimeFallback bool `json:"runtimeFallback,omitempty"`
 	// Command is the argv inside the runtime container (store-relative
 	// paths under MCPStorePrefix).
 	Command []string `json:"command"`

@@ -683,7 +683,7 @@ func (s Segment) resolveServers(ctx context.Context, m *manifest.Manifest, logw 
 	if len(mcpinstall.Packages(m.Capabilities.MCPServers)) > 0 && s.Grants.ServersDir == "" {
 		return nil, nil, engine.Classify(engine.ExitCLI, errors.New("the agent has a package server on, and no store to install it into"))
 	}
-	resolved, err := mcpinstall.StoredOrResolved(ctx, logw, s.Grants.ServersDir, s.Policy.MCPRegistries, m.Capabilities.MCPServers)
+	resolved, err := mcpinstall.StoredOrResolved(ctx, logw, s.Grants.ServersDir, s.Policy.MCPRegistries, s.Policy.Images, m.Capabilities.MCPServers)
 	if err != nil {
 		return nil, nil, engine.Classify(engine.ExitVerify, err)
 	}
@@ -748,7 +748,7 @@ func InstallServer(ctx context.Context, d dockerx.Client, pol *policy.Policy, st
 	if logw == nil {
 		logw = io.Discard
 	}
-	resolved, err := mcpinstall.StoredOrResolved(ctx, logw, storeDir, pol.MCPRegistries, []manifest.MCPServer{srv})
+	resolved, err := mcpinstall.StoredOrResolved(ctx, logw, storeDir, pol.MCPRegistries, pol.Images, []manifest.MCPServer{srv})
 	if err != nil {
 		return engine.Classify(engine.ExitVerify, err)
 	}

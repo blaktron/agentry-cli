@@ -6,6 +6,7 @@ Generated from the Agentry CLI's code by its tests; do not edit by hand. These a
 
 - npm servers install and run on `ghcr.io/blaktron/agentry-node-alpine:26-alpine@sha256:c6ad9e9c1d80f6eb607c26b4b0a132ff7a2344fad1c78ea3baa2a7d4c8de6d94`: Node 26.13.0.
 - PyPI servers install and run on `ghcr.io/blaktron/agentry-python-slim:3.15-slim-trixie@sha256:94d3426f1def7db4a106a232ac121bfd975393e5dfd40a619b955fae45fe7913`: Python 3.15.2.
+- A PyPI server whose `requires_python` excludes Python 3.15.2 but admits the previous line installs and runs on `ghcr.io/blaktron/agentry-python-slim:3.14-slim-trixie@sha256:cd89c30eda26ee911a4611b18680086e0ea42e6f5f8cbe653d07fa7958c9cec8`: Python 3.14.10. One that admits neither is refused.
 - The npm image is Alpine Linux, whose C library is musl. The PyPI image is Debian, whose C library is glibc, so a package's `manylinux` wheels install.
 - npm installs run with `--ignore-scripts`; PyPI installs take wheels only (`--only-binary=:all:`), for the server and every dependency.
 - A QuickAgent declares at most 8 MCP servers.

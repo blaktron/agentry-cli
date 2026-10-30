@@ -11,16 +11,18 @@ import (
 
 // RuntimeMismatch says why a resolved server's own declared runtime range
 // (Resolved.DeclaredRuntime: npm's engines.node, PyPI's requires_python)
-// excludes the runtime it would run on, node or python being that runtime's
-// version (policy.DefaultNodeVersion, policy.DefaultPythonVersion), or "" when
-// the range admits it or the release declares none. An npm range that cannot be
-// read admits nothing, as npm's engine-strict treats one; a requires_python
-// that cannot be read admits everything, as pip ignores one ("Ignoring invalid
-// Requires-Python"). The reason quotes the declared range only when it is a
-// plain range (plainRange): the text is the package author's, and the reason
-// reaches the Drafter's model. It reads the registry's metadata, not the
-// artifact: the npm builder's check at install reads the tarball itself.
-func RuntimeMismatch(r Resolved, node, python string) string {
+// excludes the runtime it would run on, node being the Node's version
+// (policy.DefaultNodeVersion) and pythons the Pythons a PyPI server may run on
+// (policy.DefaultPythonVersion, then policy.DefaultPythonFallbackVersion: the
+// range must admit at least one), or "" when the range admits it or the
+// release declares none. An npm range that cannot be read admits nothing, as
+// npm's engine-strict treats one; a requires_python that cannot be read admits
+// everything, as pip ignores one ("Ignoring invalid Requires-Python"). The
+// reason quotes the declared range only when it is a plain range (plainRange):
+// the text is the package author's, and the reason reaches the Drafter's
+// model. It reads the registry's metadata, not the artifact: the npm builder's
+// check at install reads the tarball itself.
+func RuntimeMismatch(r Resolved, node string, pythons ...string) string {
 	if r.DeclaredRuntime == "" {
 		return ""
 	}
@@ -34,9 +36,15 @@ func RuntimeMismatch(r Resolved, node, python string) string {
 			return fmt.Sprintf("it needs Node %s (its engines.node), and runs use Node %s", quoteRange(r.DeclaredRuntime), node)
 		}
 	case "pypi":
-		if ok, valid := pep440Admits(r.DeclaredRuntime, python); valid && !ok {
-			return fmt.Sprintf("it needs Python %s (its requires_python), and runs use Python %s", quoteRange(r.DeclaredRuntime), python)
+		if len(pythons) == 0 {
+			return ""
 		}
+		for _, python := range pythons {
+			if ok, valid := pep440Admits(r.DeclaredRuntime, python); !valid || ok {
+				return ""
+			}
+		}
+		return fmt.Sprintf("it needs Python %s (its requires_python), and runs use Python %s", quoteRange(r.DeclaredRuntime), strings.Join(pythons, " or "))
 	}
 	return ""
 }
