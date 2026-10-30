@@ -23,13 +23,16 @@ const (
 	kindHost    = "the egress host"
 	kindCommand = "the command"
 	kindSecret  = "the secret"
+	kindBrowser = "the browser at"
+	kindTarget  = "the target host"
 )
 
 // declaredCapabilities is what a manifest declares that a repair turn must
 // not drop without the report naming it: each MCP server (by its package,
 // whatever its version), each egress host (the QuickAgent's or a
-// server's), each exec command and each secret (the QuickAgent's or a
-// server's), in the manifest's order. Nil when the manifest does not
+// server's), each exec command, each secret (the QuickAgent's or a
+// server's), the browser and each target host (by its question), in the
+// manifest's order. Nil when the manifest does not
 // parse, which validate reports.
 func declaredCapabilities(raw json.RawMessage) []declared {
 	var m struct {
@@ -37,9 +40,11 @@ func declaredCapabilities(raw json.RawMessage) []declared {
 			Network struct {
 				Egress json.RawMessage `json:"egress"`
 			} `json:"network"`
-			Exec       json.RawMessage `json:"exec"`
-			Secrets    []string        `json:"secrets"`
-			MCPServers []struct {
+			Exec        json.RawMessage `json:"exec"`
+			Secrets     []string        `json:"secrets"`
+			Browser     json.RawMessage `json:"browser"`
+			TargetHosts []string        `json:"targetHosts"`
+			MCPServers  []struct {
 				NPM     string   `json:"npm"`
 				PyPI    string   `json:"pypi"`
 				URL     string   `json:"url"`
@@ -83,6 +88,12 @@ func declaredCapabilities(raw json.RawMessage) []declared {
 	}
 	for i, s := range caps.Secrets {
 		add(kindSecret, s, fmt.Sprintf("capabilities.secrets[%d]", i))
+	}
+	if len(caps.Browser) > 0 && string(caps.Browser) != "null" {
+		add(kindBrowser, "capabilities.browser", "capabilities.browser")
+	}
+	for i, q := range caps.TargetHosts {
+		add(kindTarget, q, fmt.Sprintf("capabilities.targetHosts[%d]", i))
 	}
 	for i, srv := range caps.MCPServers {
 		p := fmt.Sprintf("capabilities.mcpServers[%d]", i)
