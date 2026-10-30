@@ -107,8 +107,11 @@ func TestADraftThatMakesItsOwnSSHGoesToTheRepairTurn(t *testing.T) {
 		` "capabilities": {"network": {"egress": "none"}, "exec": {"commands": ["ssh", "grep"]}}}`)
 	d := &Draft{Manifest: raw, Instructions: hostDraftInstructions}
 	lines, refused := rulesReport(d)
-	if !refused || len(lines) != 1 || !strings.Contains(lines[0], "capabilities.exec: ssh: makes its own SSH session") ||
-		!strings.Contains(lines[0], "intake question of type host") || !strings.Contains(lines[0], "capabilities.targetHosts") {
+	// Its instructions call host_run with no target host declared, which
+	// the tool grant rule names too.
+	if !refused || len(lines) != 2 || !strings.Contains(lines[0], "capabilities.exec: ssh: makes its own SSH session") ||
+		!strings.Contains(lines[0], "intake question of type host") || !strings.Contains(lines[0], "capabilities.targetHosts") ||
+		!strings.Contains(lines[1], "host_run (line") || !strings.Contains(lines[1], "Add capabilities.targetHosts") {
 		t.Fatalf("the rules' report: %q, %v", lines, refused)
 	}
 	d.noteExecProblems()
