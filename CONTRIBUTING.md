@@ -116,3 +116,11 @@ Releases are cut by the maintainers. Each one is a `vX.Y.Z` tag (or a
 `vX.Y.Z-dev.N` prerelease) with a GitHub Release that carries the signed
 binaries, `SHA256SUMS` and its minisign signature. How to check them:
 <https://docs.secureagentry.net/agentry/downloads/>.
+
+Every version carries release highlights: one to four plain sentences,
+120 characters at most, saying what someone using the CLI can now do. They
+live in `internal/highlights/highlights.json`, newest version first, and open
+the version's release notes. A pull request into `dev` adds the next
+version's entry before that version is released, and a later change to the
+same version revises it. `make check` refuses a fifth line, Markdown, an
+issue or pull request number, an address and a `feat:`-style prefix.

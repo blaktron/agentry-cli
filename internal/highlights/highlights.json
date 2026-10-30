@@ -1,0 +1,10 @@
+{
+  "versions": [
+    {
+      "version": "0.6.1008",
+      "highlights": [
+        "When a draft's instructions use a tool the agent was not given, the Drafter now fixes the draft before handing it back."
+      ]
+    }
+  ]
+}
