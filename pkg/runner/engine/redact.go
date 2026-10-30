@@ -28,7 +28,7 @@ type redactor struct {
 	values []string
 }
 
-// gatewayMask is how docker/mcp-gateway (v0.43.3, pkg/gateway/clientpool.go
+// gatewayMask is how docker/mcp-gateway (v0.44.3, pkg/gateway/clientpool.go
 // and pkg/mcp/remote.go maskSecret) lists a secret it injects at a server's
 // start, verbose being its default: " - NAME: " + the value's first four
 // characters + "****". Four characters are no whole value, so the redactor

@@ -50,12 +50,12 @@ const (
 )
 
 // relayImages are the relays of the pinned gateway (docker/mcp-gateway
-// v0.43.3 names them docker/mcp-l4proxy:v1 and docker/mcp-l7proxy:v1),
+// v0.44.3 names them docker/mcp-l4proxy:v1 and docker/mcp-l7proxy:v1),
 // pinned by the digests those tags resolve to: a moved tag
 // is refused, and a new gateway pin brings new digests with it.
 var relayImages = []string{
-	"docker/mcp-l4proxy@sha256:121b87decc25cda901dbd4ffbd20b116fffbd0fbeecc827c228fa45094a9934c",
-	"docker/mcp-l7proxy@sha256:ef8fd775fdf8ad060af897018c0db3c52229c493cfde437e86c754f3fcd59233",
+	"docker/mcp-l4proxy@sha256:83c560e8938f6218e486b732469f49bd753dc832f0488a7386be4540242fff82",
+	"docker/mcp-l7proxy@sha256:f4b5fdcec8a80fb6769e513e68877ee739553a1ee3b41648d98c89d2c0fb41f5",
 }
 
 // maxSocketPath is below the kernel's sun_path limit (108 on Linux)

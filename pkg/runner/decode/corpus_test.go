@@ -132,7 +132,7 @@ func TestDecodeTheCorpusForReal(t *testing.T) {
 		"testWORD.doc":                   {runnerdecode.OutcomeDecoded, "tika", "Sample"},
 		"testEXCEL.xls":                  {runnerdecode.OutcomeDecoded, "tika", "Sample"},
 		"testPPT.ppt":                    {runnerdecode.OutcomeDecoded, "tika", "Sample"},
-		"test-outlook.msg":               {runnerdecode.OutcomeDecoded, "tika", "Microsoft Outlook Express 6"},
+		"test-outlook.msg":               {runnerdecode.OutcomeDecoded, "tika", "La réponse à vos attentes en matière de messagerie"},
 		"testOpenOffice2.odt":            {runnerdecode.OutcomeDecoded, "pandoc", ""},
 		"LibreOfficeCalc_ods_1.3.ods":    {runnerdecode.OutcomeDecoded, "agentry-runner", "|"},
 		"LibreOfficeImpress_odp_1.3.odp": {runnerdecode.OutcomeDecoded, "agentry-runner", "## Slide"},

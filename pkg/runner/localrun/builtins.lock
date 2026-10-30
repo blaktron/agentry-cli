@@ -121,6 +121,12 @@ agentry/drafter@1.18.0 sha256:1acebbf80754f3b5f8c78e2e8e78cad4ee23b9b3cc9f3b1617
 agentry/drafter@1.18.1 sha256:48e64286030e5f6f2477c27966074cde9c8e5c89bc6758db0f18b01fb5516eed
 # 1.18.2: the post-step sends a draft whose instructions call a runner tool its manifest does not grant to the repair turn, one line per grant to add, and a repair may not drop the browser or a target host unnamed.
 agentry/drafter@1.18.2 sha256:330a1c6a505d91dcb2778e1c893feaf04c4751173c104471fb03f1feb8270dca
+# 1.18.3, over 1.18.2: the same tree, packed by the archive format's newer zstd release (github.com/klauspost/compress v1.20.3), whose compressed bytes differ.
+agentry/drafter@1.18.3 sha256:c5cb8378025684a1c9ebccfd766c065c825bc8cb6e32a48e2c21cc2ff1fd3fb6
+# 1.18.4: the runtime facts and the servers page say npm servers run on Node 26.13.0 and PyPI servers on Python 3.15.2.
+agentry/drafter@1.18.4 sha256:80f6bee9a01be7ccd33ae2955f3093056f53a0595a826edbbc27b29e17bec24b
+# 1.18.5, over 1.18.4: the runtime facts and the servers page say a PyPI server whose requires_python excludes Python 3.15 but admits 3.14 runs on Python 3.14.10, and the version check admits either; the servers page says a tool filter names a tool exactly, case included.
+agentry/drafter@1.18.5 sha256:f0bbdc69eb7d535f39a0036e6c0ff16772d9330a1ec51a797039ce3068598bcf
 # 1.2.1: its README names the git hosts' CLIs (gh, glab, tea) and the scanners (osv-scanner, gitleaks) in its toolchain image.
 agentry/coder@1.2.1 sha256:f63b0f18a376c3628fc282901c3bec1b6a70cca41d3516c198a204ef1bb4b752
 # 1.2.2: its README names git host accounts and stored secrets; open-pull-request signs in through an account and names tea.

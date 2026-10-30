@@ -36,75 +36,79 @@ var runtimeNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 // Version is the current policy schema major.
 const Version = "1"
 
-// Default image pins. These are Agentry's own mirrors, published from
-// blaktron/agentry-dockerimages: each one's destination digest was verified
-// equal to the upstream digest it mirrors, so the bytes are what the upstream
-// tag named when it was pinned.
+// Default image pins. These are Agentry's own mirrors and builds, published
+// from blaktron/agentry-dockerimages: each mirror's destination digest was
+// verified equal to the upstream digest it mirrors, so the bytes are what the
+// upstream tag named when it was pinned. Every default is pinned by digest
+// (name:tag@sha256:…): the digest fixes the bytes and the tag is a label for a
+// reader, so a tag pushed again, or a mistaken re-mirror, cannot change what a
+// run pulls. Only the signature database (DefaultClamAVSignatures) is a tag,
+// by design.
 //
-// They are tags, and that is a real limit. The tags are ours, so they cannot
-// move without us — but nothing enforces that: a push by us, by anyone holding
-// a token that can write to the namespace, or by a mistaken re-mirror would
-// move one, and a run would not be able to tell. Say so rather than claiming
-// immutability.
-//
-// The exception is DefaultGoBuilder, one of the two bases of the runner image.
-// Its Go must be at least go.mod's go line, to the patch: the runner context's
-// go.mod names that line (runnerimage) and an older builder refuses it, so a go
-// bump re-mirrors and re-pins this in the same change. It is pinned by digest
-// (name:tag@sha256:…, the digest from images.tsv): the image is built, not
-// pulled, so the ref only ever reaches a Dockerfile FROM. The runtime base is
-// pinned the same way in runnerimage/Dockerfile. The pulled images (the
-// gateway, the two MCP runtimes) are still tags: every digest is in images.tsv,
-// but the digest form changes the ref the runner hands the daemon to pull and
-// to probe, and that wants its own live acceptance run.
+// DefaultGoBuilder is one of the two bases of the runner image. Its Go must be
+// at least go.mod's go line, to the patch: the runner context's go.mod names
+// that line (runnerimage) and an older builder refuses it, so a go bump
+// re-mirrors and re-pins this in the same change. The image is built, not
+// pulled, so the ref only ever reaches a Dockerfile FROM; the runtime base is
+// pinned the same way in runnerimage/Dockerfile.
 const (
-	DefaultGatewayImage = "ghcr.io/blaktron/agentry-mcp-gateway:v0.43.3"
+	DefaultGatewayImage = "ghcr.io/blaktron/agentry-mcp-gateway:v0.44.3@sha256:bae58d801fd4b73f6ad91e609b8ce5ec8868713825f33a2bb20a98f956d0bd46"
 	// DefaultHarnessImage is Docker Agent built from its pinned upstream
 	// commit by agentry-dockerimages (build/docker-agent/), amd64 and arm64,
 	// and signed keyless by that repository's docker-agent workflow on main;
 	// CI holds this pin to that signature (scripts/verify-docker-agent-image.sh).
 	// It is pinned by digest: the tag is a label, the digest the bytes, and
 	// the receipt names it.
-	DefaultHarnessImage = "ghcr.io/blaktron/agentry-docker-agent-src:1.152.0-2026.10.27.6@sha256:c6a3c74513b9ff274b3826bd0d673f14879c8ce589f5c7a8b5a9731b02cb56da"
-	DefaultGoBuilder    = "ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:d530cf60723abf1ffae0cd16bb546b379ec0550d2f3815e5b16ed69dbc00fba4"
-	// Runtime images that install and run declared npm/PyPI MCP servers
-	// Node is 24: servers whose engines.node needs 24 fail every tool
-	// call on 22. The OSV advisory server declares >=24.0.0 in every
-	// version, and 0.1.14 and later do fail on 22 (Promise.try).
+	DefaultHarnessImage = "ghcr.io/blaktron/agentry-docker-agent-src:1.154.0-2026.10.30.8@sha256:7a31b6babe98ceb0556dabfb45ed83998d6a9549b99c2c0a0536fdf52af9f217"
+	DefaultGoBuilder    = "ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb"
+	// Runtime images that install and run declared npm/PyPI MCP servers.
+	// Node is 26, the current release: a server whose engines.node needs a
+	// newer major than its runtime's fails every tool call (the OSV advisory
+	// server declares >=24.0.0 in every version, and 0.1.14 and later do
+	// fail on 22, Promise.try).
 	// Both are pinned by digest: an install pulls a runtime only when the
 	// engine lacks the reference, so a tag would leave a machine on the
 	// image it first pulled, CA bundle and all.
-	DefaultNodeRuntime = "ghcr.io/blaktron/agentry-node-alpine:24-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53"
+	DefaultNodeRuntime = "ghcr.io/blaktron/agentry-node-alpine:26-alpine@sha256:c6ad9e9c1d80f6eb607c26b4b0a132ff7a2344fad1c78ea3baa2a7d4c8de6d94"
 	// Python is Debian's (glibc), not Alpine's (musl): many PyPI packages
-	// publish only manylinux wheels (onnxruntime, scikit-learn on 3.12), and
-	// a server that depends on one cannot resolve on musl at all.
-	DefaultPythonRuntime = "ghcr.io/blaktron/agentry-python-slim:3.12-slim-trixie@sha256:cb33f7f771ecec2ef1225cf39b159591a040391bd73e4c01f00fdfc4c47611d2"
+	// publish only manylinux wheels (onnxruntime, scikit-learn), and a
+	// server that depends on one cannot resolve on musl at all.
+	DefaultPythonRuntime = "ghcr.io/blaktron/agentry-python-slim:3.15-slim-trixie@sha256:94d3426f1def7db4a106a232ac121bfd975393e5dfd40a619b955fae45fe7913"
 	// The Node and Python the two default runtimes run, as `node --version`
 	// and `python3 --version` print them in the digests images.tsv pins:
 	// the versions a declared server's own engines.node
 	// or requires_python must admit for its runs to work, which the Drafter
 	// is told and its post-step holds. A test holds each to its image's tag.
-	DefaultNodeVersion   = "24.22.1"
-	DefaultPythonVersion = "3.12.15"
+	DefaultNodeVersion   = "26.13.0"
+	DefaultPythonVersion = "3.15.2"
+	// DefaultPythonFallbackRuntime is the Python runtime a PyPI server runs on
+	// when its requires_python excludes DefaultPythonRuntime's Python but
+	// admits this one: the previous Python line, on the same Debian base,
+	// pinned by digest. A policy that sets pythonRuntime to its own image
+	// never reaches it (mcpinstall.ChoosePython).
+	DefaultPythonFallbackRuntime = "ghcr.io/blaktron/agentry-python-slim:3.14-slim-trixie@sha256:cd89c30eda26ee911a4611b18680086e0ea42e6f5f8cbe653d07fa7958c9cec8"
+	// DefaultPythonFallbackVersion is the Python that image runs, held to its
+	// tag by a test as DefaultPythonVersion is.
+	DefaultPythonFallbackVersion = "3.14.10"
 	// DefaultUnsafeImage is the Unsafe Mode base: Kali with a
 	// command index and an extras list, pinned by digest, amd64 and arm64.
 	// It moves with a CLI release, re-pinned monthly. The index also holds
 	// the programs the base itself carries through alternatives links or
 	// that Contents left ambiguous.
-	DefaultUnsafeImage = "ghcr.io/blaktron/agentry-unsafe-kali:2026.10.22.5@sha256:5461046de656f7493a04856454759254fd426d1e33c865b227bf69fd3cd440ae"
+	DefaultUnsafeImage = "ghcr.io/blaktron/agentry-unsafe-kali:2026.10.30.6@sha256:3e56f7a740b69abfa812be77a0c055bf4693a2092bb68b0bf2aade2585123567"
 	// DefaultFilesImage is the files image, the decoders and the malware check
 	// the decode step runs: pandoc, pdftotext, tesseract, Tika, libarchive and
 	// clamscan on Alpine, amd64 and arm64, pinned by digest and pulled, never
 	// built at run time. The digest is signed keyless by agentry-dockerimages'
 	// files workflow, and CI holds this pin to that signature
 	// (scripts/verify-files-image.sh); a run pulls by digest only.
-	DefaultFilesImage = "ghcr.io/blaktron/agentry-files:2026.10.22.4@sha256:a384b1e5319da5be8193cc6513715010b646bee535bb22d601e933ec586f3859"
+	DefaultFilesImage = "ghcr.io/blaktron/agentry-files:2026.10.30.6@sha256:effd241f134ca038a6a50d27dc637b56c85b41a683a17f1e662bf6151fb129de"
 	// DefaultHostlinkImage is the host link's base, the OpenSSH client a run
 	// reaches a target host with: Alpine's ssh, sftp and ssh-keyscan, amd64 and
 	// arm64, uid 10001, pinned by digest and pulled; the CLI copies its runner
 	// binary in. Signed keyless by agentry-dockerimages' hostlink workflow, and
 	// CI holds this pin to that signature (scripts/verify-hostlink-image.sh).
-	DefaultHostlinkImage = "ghcr.io/blaktron/agentry-hostlink:2026.10.22.2@sha256:10d0483f7eb8a4adbda2c00d5f1ceb30036399d0da1b853afc112831988b44e1"
+	DefaultHostlinkImage = "ghcr.io/blaktron/agentry-hostlink:2026.10.30.4@sha256:2095280de958ddf973b21cd76462d0ffb1418ab2cf28dd2ad1489c71620a9b2d"
 	// DefaultBrowserImage is the browser server's image, for a release that
 	// declares capabilities.browser: Microsoft's @playwright/mcp 0.0.83
 	// driving Debian's open-source Chromium (its executable named by the
@@ -113,7 +117,7 @@ const (
 	// pinned by digest and pulled. Signed keyless by agentry-dockerimages'
 	// browser workflow, and CI holds this pin to that signature
 	// (scripts/verify-browser-image.sh).
-	DefaultBrowserImage = "ghcr.io/blaktron/agentry-browser:2026.10.22.3@sha256:bc21a0d1db4508c73d8b45566ddf3d1156744974f1cedf212daaa94ea444680b"
+	DefaultBrowserImage = "ghcr.io/blaktron/agentry-browser:2026.10.30.5@sha256:8344cb900a301d292fbbb5e4399bc9db8e9604896f863c4ad4ea064f86cd894d"
 	// DefaultCoderImage is the Coding agent's toolchain, the base its exec
 	// container is built on: Debian 13's build tools (GCC, Make, CMake,
 	// pkg-config), Git, curl, Python 3 with pip and venv, Go and Node with
@@ -122,14 +126,14 @@ const (
 	// no SSH client, pinned by digest and pulled; the CLI copies its runner
 	// binary in. Signed keyless by agentry-dockerimages' coder workflow, and
 	// CI holds this pin to that signature (scripts/verify-coder-image.sh).
-	DefaultCoderImage = "ghcr.io/blaktron/agentry-coder:2026.10.22.4@sha256:fbea98861a3c5d74feef462f771f197f01ea2de20fddf2c5611ff1013d961213"
+	DefaultCoderImage = "ghcr.io/blaktron/agentry-coder:2026.10.30.6@sha256:9ad69c8edfa05420a254da5825537bce88b00a637d6f2bc9212a0805b60aee63"
 	// DefaultGogImage is gog, the Google Workspace CLI whose `gog mcp` mode
 	// serves Gmail, Calendar, Drive, Docs and Sheets as MCP tools, read-only
 	// unless started with --allow-write: built from gog's pinned source,
 	// amd64 and arm64, uid 10001, pinned by digest. Signed keyless by
 	// agentry-dockerimages' gog workflow, and CI holds this pin to that
 	// signature (scripts/verify-gog-image.sh).
-	DefaultGogImage = "ghcr.io/blaktron/agentry-gog:0.46.0-2026.10.22.1@sha256:19fa4267487f220604a4ede1f3efdd47c678736ca28de567f5f5b91b180c9b93"
+	DefaultGogImage = "ghcr.io/blaktron/agentry-gog:0.47.1-2026.10.30.3@sha256:339dcf0d6b2d8b60c96f09cfa4b71ffab0b1fe6e6acfa8d996bc19af468a1d3a"
 	// DefaultMS365Image is Softeria's ms-365-mcp-server, the Microsoft 365
 	// and Outlook.com MCP server: mail, calendar, contacts and OneDrive over
 	// stdio, the tools each switch allows named by --enabled-tools, its token
@@ -139,7 +143,7 @@ const (
 	// arm64, uid 10001, pinned by digest. Signed keyless by
 	// agentry-dockerimages' ms365 workflow, and CI holds this pin to that
 	// signature (scripts/verify-ms365-image.sh).
-	DefaultMS365Image = "ghcr.io/blaktron/agentry-ms365:0.171.0-2026.10.24.1@sha256:8d7e2b0e6947467443a100b35d9fc46fdf67b79a1070f4ff9622c6ee3aff36e4"
+	DefaultMS365Image = "ghcr.io/blaktron/agentry-ms365:0.177.0-2026.10.30.3@sha256:0eb25196cd762512b6220bf66f5de587045a1fec0849e5c7d4946e798425ed0e"
 	// DefaultClamAVSignatures is the ClamAV signature bundle the decode step
 	// checks every input against: a tag agentry-dockerimages' clamav-db
 	// workflow moves daily, only ever to a digest it has signed. It is not
@@ -507,6 +511,12 @@ type Images struct {
 	// servers. Empty resolves to the pinned defaults.
 	NodeRuntime   string `yaml:"nodeRuntime,omitempty"`
 	PythonRuntime string `yaml:"pythonRuntime,omitempty"`
+	// PythonFallbackRuntime runs a PyPI server whose requires_python excludes
+	// the default PythonRuntime's Python but admits this one, pinned by digest
+	// ("" = DefaultPythonFallbackRuntime; see PythonFallbackImage). A policy
+	// that sets PythonRuntime to its own image never falls back. The image's
+	// tag begins with its Python line (3.14-...), which the choice reads.
+	PythonFallbackRuntime string `yaml:"pythonFallbackRuntime,omitempty"`
 	// Unsafe is the base Unsafe Mode builds a QuickAgent's exec image on,
 	// pinned by digest ("" = DefaultUnsafeImage; see UnsafeImage). It
 	// names an image and turns nothing on: only a client that passes
@@ -629,6 +639,51 @@ var pinnedRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._/:-]*(?::[A-Za-z0-9._-]+)?@
 // so a pull of it can only yield those bytes and it is safe to write after
 // a FROM.
 func PinnedByDigest(ref string) bool { return pinnedRE.MatchString(ref) }
+
+// PythonFallbackImage is the fallback Python runtime this policy names:
+// images.pythonFallbackRuntime, else the CLI's pinned default. Resolved at use
+// rather than written into a generated policy file, so a saved file never
+// holds back a re-pin.
+func (i Images) PythonFallbackImage() string {
+	if i.PythonFallbackRuntime != "" {
+		return i.PythonFallbackRuntime
+	}
+	return DefaultPythonFallbackRuntime
+}
+
+// PythonPinned says the policy runs PyPI servers on an image of its own
+// choosing: images.pythonRuntime is anything but the CLI's default. Such a
+// policy gets exactly that image for every PyPI server, with no fallback.
+func (i Images) PythonPinned() bool {
+	return i.PythonRuntime != "" && i.PythonRuntime != DefaultPythonRuntime
+}
+
+// pythonLineRE is the Python line (major.minor, optionally a patch) a runtime
+// image's tag begins with: "3.14-slim-trixie" runs 3.14, "3.14.10-alpine" 3.14.10.
+var pythonLineRE = regexp.MustCompile(`^([0-9]+\.[0-9]+(?:\.[0-9]+)?)(?:[-_.].*)?$`)
+
+// PythonVersionOf is the Python version a runtime image holds: for the
+// CLI's own two defaults the exact version they were measured to run
+// (DefaultPythonVersion, DefaultPythonFallbackVersion), for any other image
+// the line its tag begins with ("3.14" for 3.14-slim-trixie, read as 3.14.0 by
+// a range check), or "" when the tag names none.
+func PythonVersionOf(ref string) string {
+	switch ref {
+	case DefaultPythonRuntime:
+		return DefaultPythonVersion
+	case DefaultPythonFallbackRuntime:
+		return DefaultPythonFallbackVersion
+	}
+	name, _, _ := strings.Cut(ref, "@")
+	i := strings.LastIndex(name, ":")
+	if i < 0 || strings.Contains(name[i:], "/") {
+		return ""
+	}
+	if m := pythonLineRE.FindStringSubmatch(name[i+1:]); m != nil {
+		return m[1]
+	}
+	return ""
+}
 
 // UnsafeImage is the Unsafe Mode base this policy names: images.unsafe,
 // else the CLI's pinned default. Resolved at use rather than written into
@@ -978,12 +1033,16 @@ func Load(path string) (*Policy, string, error) {
 	// CLI build changes the plan's compiledBy. A goBuilder that is a former
 	// generated default resolves the same way (formerDefaultGoBuilders). The
 	// harness follows too: its config schema moves with the CLI, so keeping a
-	// former default image would fail at config load.
+	// former default image would fail at config load. So does the gateway
+	// (formerDefaultGatewayImages).
 	if err := p.Images.foldDockerAgent(); err != nil {
 		return nil, "", fmt.Errorf("parse %s: %w", path, err)
 	}
 	if slices.Contains(formerDefaultHarnessImages, p.Images.HarnessDockerAgent) {
 		p.Images.HarnessDockerAgent = DefaultHarnessImage
+	}
+	if slices.Contains(formerDefaultGatewayImages, p.Images.Gateway) {
+		p.Images.Gateway = DefaultGatewayImage
 	}
 	if p.Images.NodeRuntime == "" || slices.Contains(formerDefaultNodeRuntimes, p.Images.NodeRuntime) {
 		p.Images.NodeRuntime = DefaultNodeRuntime
@@ -1047,6 +1106,14 @@ func (p *Policy) Validate() error {
 		}
 		if err := h.validate(name); err != nil {
 			return err
+		}
+	}
+	if f := p.Images.PythonFallbackRuntime; f != "" {
+		if !PinnedByDigest(f) {
+			return fmt.Errorf("images.pythonFallbackRuntime %q must be pinned by digest (<name>@sha256:<64 hex>): an install pulls a runtime only when the engine lacks the reference", f)
+		}
+		if PythonVersionOf(f) == "" {
+			return fmt.Errorf("images.pythonFallbackRuntime %q must carry its Python line at the start of its tag (3.14-slim-trixie): the runner picks the runtime from it", f)
 		}
 	}
 	if p.Images.Files != "" && !PinnedByDigest(p.Images.Files) {
@@ -1284,12 +1351,24 @@ var formerDefaultHarnessImages = []string{
 	"ghcr.io/blaktron/agentry-docker-agent-src:1.150.0-2026.10.21.3@sha256:e4cfd4d450ae22c6bd70e6b2fa0f98d3e399d206b238044498f9480304ea4e67",
 	"ghcr.io/blaktron/agentry-docker-agent-src:1.150.0-2026.10.22.4@sha256:8a5e058f2fb1284db5ae5a04fb79fd40bd531ad529d6b4f4e16fdb9f5c3b9a2d",
 	"ghcr.io/blaktron/agentry-docker-agent-src:1.152.0-2026.10.24.5@sha256:e8604adf8659b1b92b55b6442930cca1168db7c49ad79e17546e2c940a8d723c",
+	"ghcr.io/blaktron/agentry-docker-agent-src:1.152.0-2026.10.27.6@sha256:c6a3c74513b9ff274b3826bd0d673f14879c8ce589f5c7a8b5a9731b02cb56da",
+}
+
+// formerDefaultGatewayImages are the gateway refs earlier CLIs wrote into every
+// generated policy file as gateway. A file still naming one carries the
+// default of the day it was written, so it loads as the current default (as
+// for the harness): the gateway's flags and the line shapes the runner reads
+// from its log move with the CLI. Any other value is the operator's and is
+// kept. When DefaultGatewayImage moves, its old value joins this list.
+var formerDefaultGatewayImages = []string{
+	"docker/mcp-gateway:v0.43.3",
+	"ghcr.io/blaktron/agentry-mcp-gateway:v0.43.3",
 }
 
 // formerDefaultNodeRuntimes are the values earlier CLIs wrote into every
 // generated policy file as nodeRuntime: Docker Hub's node:22-alpine, then our
-// 22-alpine mirror, then our 24-alpine mirror by tag. When DefaultNodeRuntime
-// moves, its old value joins this list. A file still naming one carries the
+// 22-alpine mirror, then our 24-alpine mirror by tag and by digest. When
+// DefaultNodeRuntime moves, its old value joins this list. A file still naming one carries the
 // default of the day it was written, not an operator's choice, so it loads as
 // the current default, or the move would reach no machine set up before it.
 // Any other value is the operator's and is kept.
@@ -1297,35 +1376,39 @@ var formerDefaultNodeRuntimes = []string{
 	"node:22-alpine",
 	"ghcr.io/blaktron/agentry-node-alpine:22-alpine",
 	"ghcr.io/blaktron/agentry-node-alpine:24-alpine",
+	"ghcr.io/blaktron/agentry-node-alpine:24-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53",
 }
 
 // formerDefaultPythonRuntimes are the values earlier CLIs wrote into every
 // generated policy file as pythonRuntime: our python:3.12-alpine mirror, then
-// our python:3.12-slim-trixie mirror by tag. When DefaultPythonRuntime moves,
-// its old value joins this list. A file still naming it carries the default of the day it was written, so it
-// loads as the current default (as for nodeRuntime), or the move to a glibc
-// runtime would reach no machine set up before it. Any other value is the
-// operator's and is kept.
+// our python:3.12-slim-trixie mirror by tag and by digest. When
+// DefaultPythonRuntime moves, its old value joins this list. A file still
+// naming it carries the default of the day it was written, so it loads as the
+// current default (as for nodeRuntime), or the move to a glibc runtime would
+// reach no machine set up before it. Any other value is the operator's and is
+// kept.
 var formerDefaultPythonRuntimes = []string{
 	"ghcr.io/blaktron/agentry-python-alpine:3.12-alpine",
 	"ghcr.io/blaktron/agentry-python-slim:3.12-slim-trixie",
+	"ghcr.io/blaktron/agentry-python-slim:3.12-slim-trixie@sha256:cb33f7f771ecec2ef1225cf39b159591a040391bd73e4c01f00fdfc4c47611d2",
 }
 
 // formerDefaultGoBuilders are the values earlier CLIs wrote into every
 // generated policy file as goBuilder: Docker Hub's golang:1.27-alpine, our
-// 1.27-alpine mirror by tag, and that mirror pinned by digest at go1.27.1
-// and at go1.27.2 and go1.27.3. A file still naming one carries the builder of the day it
-// was written, not an operator's choice, so it loads as the current default
-// (as for nodeRuntime), or a re-pinned builder would compile no runner image
-// on a machine set up before it. Any other value, another digest of the same mirror included, is
-// the operator's and is kept. When DefaultGoBuilder moves, its old value joins
-// this list.
+// 1.27-alpine mirror by tag, and that mirror pinned by digest at go1.27.1,
+// at go1.27.2 and at go1.27.3 on Alpine 3.22. A file still naming one carries
+// the builder of the day it was written, not an operator's choice, so it loads
+// as the current default (as for nodeRuntime), or a re-pinned builder would
+// compile no runner image on a machine set up before it. Any other value,
+// another digest of the same mirror included, is the operator's and is kept.
+// When DefaultGoBuilder moves, its old value joins this list.
 var formerDefaultGoBuilders = []string{
 	"golang:1.27-alpine",
 	"ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine",
 	"ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414",
 	"ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:738d1cf061836894ff6bb8c33881080ac66de8cf0586615012a0c8f592649cfa",
 	"ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd",
+	"ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:d530cf60723abf1ffae0cd16bb546b379ec0550d2f3815e5b16ed69dbc00fba4",
 }
 
 // defaultFileText is the generated first-use policy. It must parse to
@@ -1343,13 +1426,11 @@ images:
   # Agentry's own mirrors of the upstream images, published from
   # blaktron/agentry-dockerimages. Every digest is recorded there, and each was
   # verified equal to the upstream digest it mirrors when it was copied.
-  # goBuilder is pinned by digest: the @sha256 part fixes the bytes, and the
-  # tag before it is only a label. The others are tags. They are ours, so they
-  # cannot move without us, but nothing enforces that — a push to one would
-  # move it and a run could not tell. For bytes that cannot move at all, pin
-  # the digest from that repository's images.tsv (repo:tag@sha256:...), or
-  # point these at any registry you prefer: a private one, or your own mirror.
-  gateway: ghcr.io/blaktron/agentry-mcp-gateway:v0.43.3
+  # Each is pinned by digest: the @sha256 part fixes the bytes, and the tag
+  # before it is only a label, so a tag pushed again cannot change what a run
+  # pulls. Point these at any registry you prefer, a private one or your own
+  # mirror, and pin the digest of what you serve.
+  gateway: ghcr.io/blaktron/agentry-mcp-gateway:v0.44.3@sha256:bae58d801fd4b73f6ad91e609b8ce5ec8868713825f33a2bb20a98f956d0bd46
   # The harness image of each adapter that runs in a container, by adapter
   # name: pinned by digest (ref: <name>@sha256:...) or, for one built on this
   # machine from its vendor's artifact, by that artifact's hash
@@ -1360,13 +1441,19 @@ images:
   # CLI's pinned default. (Older files name docker-agent's image as
   # harnessDockerAgent; that key is still read.)
   harnessImages:
-    docker-agent: { ref: ghcr.io/blaktron/agentry-docker-agent-src:1.152.0-2026.10.27.6@sha256:c6a3c74513b9ff274b3826bd0d673f14879c8ce589f5c7a8b5a9731b02cb56da }
+    docker-agent: { ref: ghcr.io/blaktron/agentry-docker-agent-src:1.154.0-2026.10.30.8@sha256:7a31b6babe98ceb0556dabfb45ed83998d6a9549b99c2c0a0536fdf52af9f217 }
     # codex-image: { ref: ghcr.io/blaktron/agentry-codex:<tag>@sha256:<digest> }
     # claude-image: { ref: agentry-claude-code:<version>, artifact: sha512-<integrity> }
-  goBuilder: ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:d530cf60723abf1ffae0cd16bb546b379ec0550d2f3815e5b16ed69dbc00fba4
+  goBuilder: ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb
   # Runtimes for MCP servers a QuickAgent declares (capabilities.mcpServers).
-  nodeRuntime: ghcr.io/blaktron/agentry-node-alpine:24-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53
-  pythonRuntime: ghcr.io/blaktron/agentry-python-slim:3.12-slim-trixie@sha256:cb33f7f771ecec2ef1225cf39b159591a040391bd73e4c01f00fdfc4c47611d2
+  nodeRuntime: ghcr.io/blaktron/agentry-node-alpine:26-alpine@sha256:c6ad9e9c1d80f6eb607c26b4b0a132ff7a2344fad1c78ea3baa2a7d4c8de6d94
+  pythonRuntime: ghcr.io/blaktron/agentry-python-slim:3.15-slim-trixie@sha256:94d3426f1def7db4a106a232ac121bfd975393e5dfd40a619b955fae45fe7913
+  # A PyPI server whose requires_python excludes that Python but admits the
+  # previous line runs on this image instead, pinned by digest. Unset, the
+  # CLI's pinned default is used, and it moves with the CLI. A file that
+  # changes pythonRuntime to an image of its own gets that image for every
+  # PyPI server and never this one.
+  # pythonFallbackRuntime: ghcr.io/blaktron/agentry-python-slim:3.14-slim-trixie@sha256:cd89c30eda26ee911a4611b18680086e0ea42e6f5f8cbe653d07fa7958c9cec8
   # The base of the desktop's Unsafe Mode exec images: Kali Linux with a
   # command index and an extras list, pinned by digest. Unset, the CLI's
   # pinned default is used, and it moves with the CLI. This key names the

@@ -6,6 +6,15 @@
 // the release's profile directory, which is what makes every isolation
 // property hold: attachment is derived from the signature, so no other
 // QuickAgent, user, or version can ever reference it.
+//
+// A PyPI server installs and runs on the policy's Python runtime
+// (images.pythonRuntime, Python 3.15 by default). When the release's own
+// requires_python excludes that Python but admits the previous line, it
+// installs and runs on images.pythonFallbackRuntime (Python 3.14 by default)
+// instead, and the choice is recorded with the install so the store's virtual
+// environment always runs on the Python it was built for. A release that
+// admits neither is refused before anything is fetched, and a policy that sets
+// images.pythonRuntime to its own image gets exactly that image (ChoosePython).
 package mcpinstall
 
 import (
@@ -63,6 +72,12 @@ type Resolved struct {
 	// so the builder can verify whichever wheel pip picks for its platform
 	// against what the registry's metadata said.
 	Artifacts map[string]string `json:"artifacts,omitempty"`
+	// PythonFallback (PyPI) says the server installs and runs on the policy's
+	// fallback Python runtime, because its requires_python excludes the
+	// default runtime's Python (ChoosePython). Recorded with the install: the
+	// server's virtual environment belongs to that Python line, so a reuse of
+	// the store runs on it again.
+	PythonFallback bool `json:"pythonFallback,omitempty"`
 	// InstalledAt is stamped by EnsureInstalled.
 	InstalledAt string `json:"installedAt,omitempty"`
 	// StoreDigest is the server store's tree as the install left it
@@ -116,6 +131,9 @@ func (r Resolved) Command() []string {
 func (r Resolved) Image(images policy.Images) string {
 	if r.Source == "npm" {
 		return images.NodeRuntime
+	}
+	if r.PythonFallback {
+		return images.PythonFallbackImage()
 	}
 	return images.PythonRuntime
 }
@@ -176,7 +194,7 @@ func PackageOf(srv manifest.MCPServer) string {
 // are reused verbatim, with no network, so cached installs run offline;
 // otherwise the registries are consulted (and EnsureInstalled later
 // refuses if a recorded pin disagrees with what came back).
-func StoredOrResolved(ctx context.Context, errOut io.Writer, storeDir string, regs policy.MCPRegistries, servers []manifest.MCPServer) ([]Resolved, error) {
+func StoredOrResolved(ctx context.Context, errOut io.Writer, storeDir string, regs policy.MCPRegistries, images policy.Images, servers []manifest.MCPServer) ([]Resolved, error) {
 	declared := Packages(servers)
 	if len(declared) == 0 {
 		return nil, nil
@@ -193,11 +211,20 @@ func StoredOrResolved(ctx context.Context, errOut io.Writer, storeDir string, re
 		}
 		stored = append(stored, *meta)
 	}
-	if len(stored) == len(declared) {
-		return stored, nil
+	if len(stored) != len(declared) {
+		_, _ = fmt.Fprintf(errOut, "resolving %d declared MCP server(s) against the configured registries\n", len(declared))
+		var err error
+		if stored, err = ResolveAll(ctx, nil, regs, declared); err != nil {
+			return nil, err
+		}
 	}
-	_, _ = fmt.Fprintf(errOut, "resolving %d declared MCP server(s) against the configured registries\n", len(declared))
-	return ResolveAll(ctx, nil, regs, declared)
+	// The Python each PyPI server runs on is decided here, before anything
+	// is installed, so a server no runtime can install is refused with the
+	// plan, not at the install.
+	if err := AssignRuntimes(stored, images); err != nil {
+		return nil, err
+	}
+	return stored, nil
 }
 
 // ResolveAll resolves every declared server against the configured
@@ -568,12 +595,34 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 				// produced; the fresh resolution only has the guess.
 				r.BinName = prior.BinName
 			}
+			if r.Source == "pypi" {
+				// The store's virtual environment belongs to the Python it
+				// was installed on, so the server runs on that one again.
+				r.PythonFallback = prior.PythonFallback
+				if r.PythonFallback && images.PythonPinned() {
+					return installFailed(r, receipt.InstallPinChanged, fmt.Errorf("server store for %s holds %s@%s installed on the fallback Python runtime, but the policy now sets images.pythonRuntime to its own image: remove the profile to install it again on that image",
+						r.ID, r.Package, r.Version))
+				}
+			}
 			r.StoreDigest = prior.StoreDigest
 			_, _ = fmt.Fprintf(logw, "mcp server %s@%s already installed (reusing the signature's store)\n", r.Package, r.Version)
 			continue
 		}
 		if err := builderArgs(r.Package, r.Version); err != nil {
 			return installFailed(r, receipt.InstallBuilder, fmt.Errorf("install %s: %w", r.ID, err))
+		}
+		if r.Source == "pypi" {
+			// The Python is chosen from the release's requires_python before
+			// anything is fetched or run: one a runtime of the policy can
+			// install, or a refusal that names why.
+			c, err := ChoosePython(*r, images)
+			if err != nil {
+				return err
+			}
+			r.PythonFallback = c.Fallback
+			if c.Fallback {
+				_, _ = fmt.Fprintf(logw, "mcp server %s@%s: %s\n", r.Package, r.Version, c.Why)
+			}
 		}
 		allow, err := installAllowlist(r, regs)
 		if err != nil {
@@ -584,7 +633,11 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 		if err := os.MkdirAll(storeDir, 0o700); err != nil {
 			return installFailed(r, receipt.InstallRecord, fmt.Errorf("create server store: %w", err))
 		}
-		_, _ = fmt.Fprintf(logw, "installing mcp server %s@%s (%s) into the signature store\n", r.Package, r.Version, r.Source)
+		what := r.Source
+		if rt := r.Runtime(images); rt != "" {
+			what += ", " + rt
+		}
+		_, _ = fmt.Fprintf(logw, "installing mcp server %s@%s (%s) into the signature store\n", r.Package, r.Version, what)
 
 		var argv []string
 		var image string
@@ -599,7 +652,7 @@ func EnsureInstalled(ctx context.Context, d dockerx.Client, resolved []Resolved,
 			// that verified file: npm_builder.js.
 			argv = npmArgv(r, regs)
 		case "pypi":
-			image = images.PythonRuntime
+			image = r.Image(images)
 			// Wheels only, and the pinned artifact verified against the
 			// registry's advertised digest before anything is installed: `pip
 			// download --no-deps` fetches exactly the declared package; the
@@ -760,20 +813,22 @@ func Specs(resolved []Resolved, servers []manifest.MCPServer, images policy.Imag
 	for _, r := range resolved {
 		m := bySource[r.Source+":"+r.Package]
 		out = append(out, spec.MCPServerSpec{
-			Name:        r.ServerName(),
-			Source:      r.Source,
-			Package:     r.Package,
-			Version:     r.Version,
-			Integrity:   r.Integrity,
-			Image:       r.Image(images),
-			Command:     r.Command(),
-			Args:        append([]string(nil), m.Args...),
-			StoreSubdir: r.ID,
-			Tools:       append([]string(nil), m.Tools...),
-			Egress:      append([]string(nil), m.Egress...),
-			Secrets:     append([]string(nil), m.Secrets...),
-			Env:         copyEnv(m.Env),
-			OAuth:       oauthSpec(m.OAuth),
+			Name:            r.ServerName(),
+			Source:          r.Source,
+			Package:         r.Package,
+			Version:         r.Version,
+			Integrity:       r.Integrity,
+			Image:           r.Image(images),
+			Runtime:         r.Runtime(images),
+			RuntimeFallback: r.PythonFallback,
+			Command:         r.Command(),
+			Args:            append([]string(nil), m.Args...),
+			StoreSubdir:     r.ID,
+			Tools:           append([]string(nil), m.Tools...),
+			Egress:          append([]string(nil), m.Egress...),
+			Secrets:         append([]string(nil), m.Secrets...),
+			Env:             copyEnv(m.Env),
+			OAuth:           oauthSpec(m.OAuth),
 		})
 	}
 	for _, srv := range servers {

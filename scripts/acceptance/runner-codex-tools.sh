@@ -8,7 +8,7 @@
 # Codex decides part of its tool list from the model's catalog entry, not
 # from feature keys: its bundled catalog gives real OpenAI models
 # apply_patch, deferred tool_search and code mode, and a new release can add
-# a built-in nothing switches off (0.162.0 added the goal tools). So the only
+# a built-in nothing switches off (0.162.0 added the goal tools; 0.166.0 adds none). So the only
 # proof is the request Codex actually sends. For each model this replays the
 # adapter's rendered config.toml and models.json (the conformance golden,
 # which the adapter's tests keep equal to what it compiles) against the

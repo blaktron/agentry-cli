@@ -29,12 +29,12 @@ func init() { Register(&dockerAgent{}) }
 const harnessSafety = "autonomous"
 
 // acpProtocolVersion is the Agent Client Protocol version negotiated with
-// serve acp (docker-agent 1.128.0, 1.150.0 and 1.152.0 answer protocolVersion 1).
+// serve acp (docker-agent 1.128.0, 1.150.0, 1.152.0 and 1.154.0 answer protocolVersion 1).
 const acpProtocolVersion = 1
 
 // HarnessConfigVersion is the docker-agent config schema version the
 // adapter writes (`version:` in agent.yaml). It belongs to the pinned
-// harness image (policy.DefaultHarnessImage, 1.152.0 ships schema 16).
+// harness image (policy.DefaultHarnessImage, 1.154.0 ships schema 16).
 const HarnessConfigVersion = "16"
 
 // dockerAgent implements Adapter for docker/docker-agent.
@@ -440,7 +440,7 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 		// parses a document with the strict schema of the version it names
 		// and upgrades afterwards, so an old number selects an old schema —
 		// "2" has no allow_private_ips and the harness refused every plan.
-		// Bump together with policy.DefaultHarnessImage (1.152.0 → 16).
+		// Bump together with policy.DefaultHarnessImage (1.154.0 → 16).
 		Version: HarnessConfigVersion,
 		Models: map[string]modelYAML{
 			"main": {
