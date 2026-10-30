@@ -41,7 +41,7 @@ const GuideName = "drafting-guide"
 const (
 	Namespace = "agentry"
 	Name      = "drafter"
-	Version   = "1.18.4"
+	Version   = "1.18.5"
 )
 
 // LocalTimeoutFloorSeconds is the least a draft made on this computer is

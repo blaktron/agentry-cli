@@ -3,7 +3,7 @@ title: Declared MCP servers
 type: guide
 summary: When a server that needs a key or an account is the right one (only when nothing key-free does the task, and never a hosted browser), what a declared MCP server meets in the runner (a package installed, started and reached, or a vendor's remote server reached at its address), what that rules out, how a server signs in, how to look a server up in the registry's MCP server list, and how to check a server before you pin it. Read it before you declare any server.
 sources: [doc:runtime-facts.md, doc:servers.yaml, web:https://docs.secureagentry.net/runner/, web:https://docs.secureagentry.net/quickagents/, web:https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization, web:https://docs.npmjs.com/cli/v11/commands/npm-install, web:https://docs.npmjs.com/cli/v11/configuring-npm/package-json, web:https://pip.pypa.io/en/stable/cli/pip_install/, web:https://peps.python.org/pep-0656/, web:https://packaging.python.org/en/latest/specifications/entry-points/, web:https://modelcontextprotocol.io/specification/2025-06-18/basic/transports]
-updated: 2026-10-22
+updated: 2026-10-30
 ---
 
 # Declared MCP servers
@@ -22,9 +22,9 @@ Before you declare a server, or `fetch` to an API, that needs a key, an account 
 
 ## How it is installed
 
-- **npm on Alpine Linux (musl), PyPI on Debian (glibc).** npm servers install and run on Node 26.13.0, PyPI servers on Python 3.15.2, one runtime per ecosystem (see [the numbers](#the-numbers)). A native binary built for glibc does not load in the npm runtime, which is musl [src: doc:runtime-facts.md].
+- **npm on Alpine Linux (musl), PyPI on Debian (glibc).** npm servers install and run on Node 26.13.0, PyPI servers on Python 3.15.2 (or on Python 3.14.10, the fallback, when a server's `requires_python` excludes 3.15 and admits 3.14), one default runtime per ecosystem (see [the numbers](#the-numbers)). A native binary built for glibc does not load in the npm runtime, which is musl [src: doc:runtime-facts.md].
 - **npm: no install scripts.** The package is installed with `--ignore-scripts`. No `install`, `postinstall`, `prepare` or node-gyp step runs. A native addon that compiles at install, or a package that downloads a binary at install (a browser for puppeteer or playwright, a prisma engine, some image libraries), arrives without it and fails when it is used. A prebuilt binary shipped as an optional dependency installs only when the package publishes one for musl [src: web:https://docs.npmjs.com/cli/v11/commands/npm-install; doc:runtime-facts.md].
-- **PyPI: wheels only, for the server and every dependency.** Nothing is built from source. Every package in the server's dependency tree needs a pure-Python wheel (`py3-none-any`) or a `manylinux` wheel for CPython 3.15 on x86_64 and aarch64. A dependency that publishes only a source distribution, or only `musllinux`, Windows or macOS wheels, can never install. `manylinux` wheels install because the PyPI runtime is glibc, so native packages such as `onnxruntime` and `scikit-learn` do; a `musllinux` wheel is not enough [src: web:https://pip.pypa.io/en/stable/cli/pip_install/; web:https://peps.python.org/pep-0600/; doc:runtime-facts.md].
+- **PyPI: wheels only, for the server and every dependency.** Nothing is built from source. Every package in the server's dependency tree needs a pure-Python wheel (`py3-none-any`) or a `manylinux` wheel for CPython 3.15 (3.14 for a server on the fallback) on x86_64 and aarch64. A dependency that publishes only a source distribution, or only `musllinux`, Windows or macOS wheels, can never install. `manylinux` wheels install because the PyPI runtime is glibc, so native packages such as `onnxruntime` and `scikit-learn` do; a `musllinux` wheel is not enough [src: web:https://pip.pypa.io/en/stable/cli/pip_install/; web:https://peps.python.org/pep-0600/; doc:runtime-facts.md].
 - **Only from the package registry.** During install the builder reaches the registry and the file hosts its metadata names, nothing else. A dependency fetched from a git URL or any other host is blocked.
 - **The version's own runtime range.** The version's `engines.node` (npm) or `requires_python` (PyPI) must admit the runtime's version. A version whose range excludes it is refused at install, or installs and fails every call. When the newest version excludes the runtime, pin the newest one whose range admits it [src: web:https://docs.npmjs.com/cli/v11/configuring-npm/package-json; doc:runtime-facts.md].
 
@@ -46,7 +46,7 @@ Before you declare a server, or `fetch` to an API, that needs a key, an account 
 ## Pinning it
 
 - **An exact version** you read from the package registry (`https://registry.npmjs.org/<package>/latest`, `https://pypi.org/pypi/<package>/json`), never a range and never `latest`. The pin is part of the release [src: web:https://docs.secureagentry.net/quickagents/].
-- **A version that runs where the runs put it:** npm servers run on Node 26.13.0 and PyPI servers on Python 3.15.2. Read the version's `engines.node` (npm) or `info.requires_python` (PyPI) in the same metadata. When it excludes that Node or Python, take the newest version whose range admits it (`https://registry.npmjs.org/<package>` lists every version with its `engines`), or another server [src: doc:runtime-facts.md].
+- **A version that runs where the runs put it:** npm servers run on Node 26.13.0 and PyPI servers on Python 3.15.2. A PyPI server whose range excludes 3.15 and admits Python 3.14.10 runs on 3.14.10 instead; one that admits neither is refused. Read the version's `engines.node` (npm) or `info.requires_python` (PyPI) in the same metadata. When it excludes that Node, or both Pythons, take the newest version whose range admits it (`https://registry.npmjs.org/<package>` lists every version with its `engines`), or another server [src: doc:runtime-facts.md].
 - **The registry's check of that version,** read with `registry_search` (`ecosystem`, `package`, `version`), below.
 - **Only the tools the task calls,** in `tools`, by their exact names from the server's documentation or its entry on [Runs here](runs-here.md).
 - **Its hosts, keys and settings on the server's own entry:** `egress` (exact hosts, never `"*"`), `secrets` (the names it reads its keys from) and `env` (plain settings, never a key). Prefer a server that needs no key, and one whose hosts you can name.
@@ -84,7 +84,7 @@ Read the version's metadata from its registry (`https://registry.npmjs.org/<pack
 1. **It starts with no arguments.** The README's start command is the bare package (`npx <package>`, `uvx <package>`) with nothing after it, or the arguments it shows are optional.
 2. **It speaks stdio.** Not "HTTP only", "SSE" or "streamable HTTP only". A vendor's own hosted server is declared by its address instead ([Remote servers](#remote-servers)).
 3. **It has a program to start.** An npm `bin`, or a PyPI console script.
-4. **Its runtime range admits Node 26.13.0 or Python 3.15.2.**
+4. **Its runtime range admits Node 26.13.0 or Python 3.15.2 (or, for PyPI, Python 3.14.10).**
 5. **It needs nothing built or fetched at install.** No `install` or `postinstall` script it depends on. No dependency on a native module such as `sharp`, `better-sqlite3`, `canvas`, `node-pty`, `keytar`, `puppeteer`, `playwright` or `onnxruntime`. For PyPI, no dependency that publishes only `manylinux` wheels or only a source distribution.
 6. **It works on what it is given, not on files.** Its tools take their data in arguments or fetch it from an API. They do not read a local path.
 7. **It runs no other program.** It does not call `git`, a browser, Docker or a command-line tool.

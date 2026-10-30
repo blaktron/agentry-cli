@@ -59,3 +59,24 @@ func TestQuoteRange(t *testing.T) {
 		}
 	}
 }
+
+// With a fallback Python, a PyPI range is admitted when either Python
+// satisfies it, and the reason names both.
+func TestRuntimeMismatchAdmitsEitherPython(t *testing.T) {
+	r := func(rng string) Resolved { return Resolved{Source: "pypi", DeclaredRuntime: rng} }
+	for _, c := range []struct{ rng, want string }{
+		{">=3.10", ""},
+		{">=3.10,<3.15", ""},
+		{"<3.14", "runs use Python 3.15.2 or 3.14.10"},
+		{">=3.16", "runs use Python 3.15.2 or 3.14.10"},
+		{"python3", ""},
+	} {
+		got := RuntimeMismatch(r(c.rng), "26.13.0", "3.15.2", "3.14.10")
+		if (c.want == "") != (got == "") || !strings.Contains(got, c.want) {
+			t.Errorf("%q: got %q, want %q", c.rng, got, c.want)
+		}
+	}
+	if got := RuntimeMismatch(r("<3.5"), "26.13.0"); got != "" {
+		t.Errorf("no Python given: %q", got)
+	}
+}

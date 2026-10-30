@@ -46,7 +46,9 @@ type serverCheck struct {
 // checkServers is the Drafter's rule on declared MCP servers: each pinned
 // release must be one the run's registry publishes, and its own runtime
 // range must admit the runtime a run gives it (policy.DefaultNodeVersion
-// for npm, policy.DefaultPythonVersion for PyPI). A release it excludes
+// for npm, policy.DefaultPythonVersion for PyPI, or the fallback's
+// policy.DefaultPythonFallbackVersion, which a run uses for a release the
+// default's Python excludes). A release it excludes
 // installs and then fails every tool call (the OSV server 0.1.15 on Node
 // 22), or is refused at install. A registry that does not answer is this
 // computer's reason, not the draft's: the pin is noted, never refused, and
@@ -154,7 +156,7 @@ func (p PostStep) checkServers(ctx context.Context, d *Draft) {
 			down = true
 			d.serversUnchecked = append(d.serversUnchecked, pin)
 		default:
-			if why := mcpinstall.RuntimeMismatch(c.r, policy.DefaultNodeVersion, policy.DefaultPythonVersion); why != "" {
+			if why := mcpinstall.RuntimeMismatch(c.r, policy.DefaultNodeVersion, policy.DefaultPythonVersion, policy.DefaultPythonFallbackVersion); why != "" {
 				d.serverProblems = append(d.serverProblems, fmt.Sprintf("capabilities.mcpServers[%d]: %s: %s, so its runs would fail; pin a version whose range admits the run's runtime (the package registry lists each version's), or another server",
 					i, pin, why))
 			}

@@ -69,6 +69,7 @@ func runtimeFacts() []byte {
 	b.WriteString("## Declared MCP servers\n\n")
 	fmt.Fprintf(&b, "- npm servers install and run on `%s`: Node %s.\n", policy.DefaultNodeRuntime, policy.DefaultNodeVersion)
 	fmt.Fprintf(&b, "- PyPI servers install and run on `%s`: Python %s.\n", policy.DefaultPythonRuntime, policy.DefaultPythonVersion)
+	fmt.Fprintf(&b, "- A PyPI server whose `requires_python` excludes Python %s but admits the previous line installs and runs on `%s`: Python %s. One that admits neither is refused.\n", policy.DefaultPythonVersion, policy.DefaultPythonFallbackRuntime, policy.DefaultPythonFallbackVersion)
 	b.WriteString("- The npm image is Alpine Linux, whose C library is musl. The PyPI image is Debian, whose C library is glibc, so a package's `manylinux` wheels install.\n")
 	b.WriteString("- npm installs run with `--ignore-scripts`; PyPI installs take wheels only (`--only-binary=:all:`), for the server and every dependency.\n")
 	fmt.Fprintf(&b, "- A QuickAgent declares at most %d MCP servers.\n", manifest.MaxMCPServers)

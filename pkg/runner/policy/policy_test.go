@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -989,6 +990,7 @@ func TestTheRuntimeVersionsMatchTheirImages(t *testing.T) {
 	for _, c := range []struct{ image, version, tag string }{
 		{DefaultNodeRuntime, DefaultNodeVersion, strings.SplitN(DefaultNodeVersion, ".", 2)[0] + "-alpine"},
 		{DefaultPythonRuntime, DefaultPythonVersion, strings.Join(strings.SplitN(DefaultPythonVersion, ".", 3)[:2], ".") + "-slim-trixie"},
+		{DefaultPythonFallbackRuntime, DefaultPythonFallbackVersion, strings.Join(strings.SplitN(DefaultPythonFallbackVersion, ".", 3)[:2], ".") + "-slim-trixie"},
 	} {
 		if ref, _, _ := strings.Cut(c.image, "@"); !strings.HasSuffix(ref, ":"+c.tag) {
 			t.Errorf("%s does not run %s (tag %s)", c.image, c.version, c.tag)
@@ -1070,5 +1072,86 @@ func TestTheDockerAgentHarnessIsAHarnessImagesEntry(t *testing.T) {
 	artifact := strings.Replace(defaultFileText, entry, "    docker-agent: { ref: "+DefaultHarnessImage+", artifact: "+testDigest+" }\n", 1)
 	if _, err := load(t, artifact); err == nil || !strings.Contains(err.Error(), "published image") {
 		t.Fatalf("an artifact on docker-agent's entry: %v", err)
+	}
+}
+
+// The fallback Python runtime is pinned by digest, is the Python line before
+// the default's, and is resolved at use: a policy file written before it
+// existed gets it, and one that names its own keeps that.
+func TestThePythonFallbackRuntime(t *testing.T) {
+	if !PinnedByDigest(DefaultPythonFallbackRuntime) {
+		t.Fatal("the default fallback is not pinned by digest")
+	}
+	if DefaultPythonFallbackRuntime == DefaultPythonRuntime {
+		t.Fatal("the fallback is the default")
+	}
+	def := strings.SplitN(DefaultPythonVersion, ".", 3)
+	fb := strings.SplitN(DefaultPythonFallbackVersion, ".", 3)
+	if def[0] != fb[0] {
+		t.Fatalf("fallback %s and default %s are not the same major", DefaultPythonFallbackVersion, DefaultPythonVersion)
+	}
+	minorDef, _ := strconv.Atoi(def[1])
+	minorFB, _ := strconv.Atoi(fb[1])
+	if minorFB != minorDef-1 {
+		t.Fatalf("fallback %s is not the line before the default %s", DefaultPythonFallbackVersion, DefaultPythonVersion)
+	}
+	var i Images
+	if i.PythonFallbackImage() != DefaultPythonFallbackRuntime {
+		t.Fatal("unset, the policy does not resolve to the default fallback")
+	}
+	i.PythonFallbackRuntime = "registry.example/python:3.13-slim@sha256:" + strings.Repeat("e", 64)
+	if i.PythonFallbackImage() != i.PythonFallbackRuntime {
+		t.Fatal("a policy's own fallback is not used")
+	}
+
+	for _, c := range []struct{ ref, want string }{
+		{DefaultPythonRuntime, DefaultPythonVersion},
+		{DefaultPythonFallbackRuntime, DefaultPythonFallbackVersion},
+		{"registry.example/python:3.13-slim-trixie@sha256:" + strings.Repeat("a", 64), "3.13"},
+		{"registry.example/python:3.13.4-alpine", "3.13.4"},
+		{"registry.example:5000/python:3.12", "3.12"},
+		{"registry.example:5000/python", ""},
+		{"registry.example/python:slim-trixie", ""},
+		{"registry.example/python:latest@sha256:" + strings.Repeat("a", 64), ""},
+	} {
+		if got := PythonVersionOf(c.ref); got != c.want {
+			t.Errorf("PythonVersionOf(%q) = %q, want %q", c.ref, got, c.want)
+		}
+	}
+
+	// PythonPinned: only a pythonRuntime of the policy's own choosing.
+	for _, c := range []struct {
+		runtime string
+		want    bool
+	}{{"", false}, {DefaultPythonRuntime, false}, {"registry.example/python:3.13@sha256:" + strings.Repeat("a", 64), true}} {
+		if got := (Images{PythonRuntime: c.runtime}).PythonPinned(); got != c.want {
+			t.Errorf("PythonPinned(%q) = %v", c.runtime, got)
+		}
+	}
+
+	// Validation and loading.
+	load := func(fallback string) (*Policy, error) {
+		path := filepath.Join(t.TempDir(), "policy.yaml")
+		text := defaultFileText
+		if fallback != "" {
+			text = strings.Replace(text, "  # pythonFallbackRuntime: ", "  pythonFallbackRuntime: "+fallback+"\n  # was: ", 1)
+		}
+		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		p, _, err := Load(path)
+		return p, err
+	}
+	if p, err := load(""); err != nil || p.Images.PythonFallbackImage() != DefaultPythonFallbackRuntime {
+		t.Fatalf("the generated file: %v", err)
+	}
+	own := "registry.example/python:3.13-slim@sha256:" + strings.Repeat("f", 64)
+	if p, err := load(own); err != nil || p.Images.PythonFallbackImage() != own {
+		t.Fatalf("a named fallback: %v", err)
+	}
+	for _, bad := range []string{"registry.example/python:3.13-slim", "registry.example/python:slim@sha256:" + strings.Repeat("a", 64)} {
+		if _, err := load(bad); err == nil || !strings.Contains(err.Error(), "pythonFallbackRuntime") {
+			t.Errorf("%q: %v", bad, err)
+		}
 	}
 }

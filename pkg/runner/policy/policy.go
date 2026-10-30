@@ -81,6 +81,15 @@ const (
 	// is told and its post-step holds. A test holds each to its image's tag.
 	DefaultNodeVersion   = "26.13.0"
 	DefaultPythonVersion = "3.15.2"
+	// DefaultPythonFallbackRuntime is the Python runtime a PyPI server runs on
+	// when its requires_python excludes DefaultPythonRuntime's Python but
+	// admits this one: the previous Python line, on the same Debian base,
+	// pinned by digest. A policy that sets pythonRuntime to its own image
+	// never reaches it (mcpinstall.ChoosePython).
+	DefaultPythonFallbackRuntime = "ghcr.io/blaktron/agentry-python-slim:3.14-slim-trixie@sha256:cd89c30eda26ee911a4611b18680086e0ea42e6f5f8cbe653d07fa7958c9cec8"
+	// DefaultPythonFallbackVersion is the Python that image runs, held to its
+	// tag by a test as DefaultPythonVersion is.
+	DefaultPythonFallbackVersion = "3.14.10"
 	// DefaultUnsafeImage is the Unsafe Mode base: Kali with a
 	// command index and an extras list, pinned by digest, amd64 and arm64.
 	// It moves with a CLI release, re-pinned monthly. The index also holds
@@ -502,6 +511,12 @@ type Images struct {
 	// servers. Empty resolves to the pinned defaults.
 	NodeRuntime   string `yaml:"nodeRuntime,omitempty"`
 	PythonRuntime string `yaml:"pythonRuntime,omitempty"`
+	// PythonFallbackRuntime runs a PyPI server whose requires_python excludes
+	// the default PythonRuntime's Python but admits this one, pinned by digest
+	// ("" = DefaultPythonFallbackRuntime; see PythonFallbackImage). A policy
+	// that sets PythonRuntime to its own image never falls back. The image's
+	// tag begins with its Python line (3.14-...), which the choice reads.
+	PythonFallbackRuntime string `yaml:"pythonFallbackRuntime,omitempty"`
 	// Unsafe is the base Unsafe Mode builds a QuickAgent's exec image on,
 	// pinned by digest ("" = DefaultUnsafeImage; see UnsafeImage). It
 	// names an image and turns nothing on: only a client that passes
@@ -624,6 +639,51 @@ var pinnedRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._/:-]*(?::[A-Za-z0-9._-]+)?@
 // so a pull of it can only yield those bytes and it is safe to write after
 // a FROM.
 func PinnedByDigest(ref string) bool { return pinnedRE.MatchString(ref) }
+
+// PythonFallbackImage is the fallback Python runtime this policy names:
+// images.pythonFallbackRuntime, else the CLI's pinned default. Resolved at use
+// rather than written into a generated policy file, so a saved file never
+// holds back a re-pin.
+func (i Images) PythonFallbackImage() string {
+	if i.PythonFallbackRuntime != "" {
+		return i.PythonFallbackRuntime
+	}
+	return DefaultPythonFallbackRuntime
+}
+
+// PythonPinned says the policy runs PyPI servers on an image of its own
+// choosing: images.pythonRuntime is anything but the CLI's default. Such a
+// policy gets exactly that image for every PyPI server, with no fallback.
+func (i Images) PythonPinned() bool {
+	return i.PythonRuntime != "" && i.PythonRuntime != DefaultPythonRuntime
+}
+
+// pythonLineRE is the Python line (major.minor, optionally a patch) a runtime
+// image's tag begins with: "3.14-slim-trixie" runs 3.14, "3.14.10-alpine" 3.14.10.
+var pythonLineRE = regexp.MustCompile(`^([0-9]+\.[0-9]+(?:\.[0-9]+)?)(?:[-_.].*)?$`)
+
+// PythonVersionOf is the Python version a runtime image holds: for the
+// CLI's own two defaults the exact version they were measured to run
+// (DefaultPythonVersion, DefaultPythonFallbackVersion), for any other image
+// the line its tag begins with ("3.14" for 3.14-slim-trixie, read as 3.14.0 by
+// a range check), or "" when the tag names none.
+func PythonVersionOf(ref string) string {
+	switch ref {
+	case DefaultPythonRuntime:
+		return DefaultPythonVersion
+	case DefaultPythonFallbackRuntime:
+		return DefaultPythonFallbackVersion
+	}
+	name, _, _ := strings.Cut(ref, "@")
+	i := strings.LastIndex(name, ":")
+	if i < 0 || strings.Contains(name[i:], "/") {
+		return ""
+	}
+	if m := pythonLineRE.FindStringSubmatch(name[i+1:]); m != nil {
+		return m[1]
+	}
+	return ""
+}
 
 // UnsafeImage is the Unsafe Mode base this policy names: images.unsafe,
 // else the CLI's pinned default. Resolved at use rather than written into
@@ -1048,6 +1108,14 @@ func (p *Policy) Validate() error {
 			return err
 		}
 	}
+	if f := p.Images.PythonFallbackRuntime; f != "" {
+		if !PinnedByDigest(f) {
+			return fmt.Errorf("images.pythonFallbackRuntime %q must be pinned by digest (<name>@sha256:<64 hex>): an install pulls a runtime only when the engine lacks the reference", f)
+		}
+		if PythonVersionOf(f) == "" {
+			return fmt.Errorf("images.pythonFallbackRuntime %q must carry its Python line at the start of its tag (3.14-slim-trixie): the runner picks the runtime from it", f)
+		}
+	}
 	if p.Images.Files != "" && !PinnedByDigest(p.Images.Files) {
 		return fmt.Errorf("images.files %q must be pinned by digest (<name>@sha256:<64 hex>): the files image is pulled by digest only", p.Images.Files)
 	}
@@ -1380,6 +1448,12 @@ images:
   # Runtimes for MCP servers a QuickAgent declares (capabilities.mcpServers).
   nodeRuntime: ghcr.io/blaktron/agentry-node-alpine:26-alpine@sha256:c6ad9e9c1d80f6eb607c26b4b0a132ff7a2344fad1c78ea3baa2a7d4c8de6d94
   pythonRuntime: ghcr.io/blaktron/agentry-python-slim:3.15-slim-trixie@sha256:94d3426f1def7db4a106a232ac121bfd975393e5dfd40a619b955fae45fe7913
+  # A PyPI server whose requires_python excludes that Python but admits the
+  # previous line runs on this image instead, pinned by digest. Unset, the
+  # CLI's pinned default is used, and it moves with the CLI. A file that
+  # changes pythonRuntime to an image of its own gets that image for every
+  # PyPI server and never this one.
+  # pythonFallbackRuntime: ghcr.io/blaktron/agentry-python-slim:3.14-slim-trixie@sha256:cd89c30eda26ee911a4611b18680086e0ea42e6f5f8cbe653d07fa7958c9cec8
   # The base of the desktop's Unsafe Mode exec images: Kali Linux with a
   # command index and an extras list, pinned by digest. Unset, the CLI's
   # pinned default is used, and it moves with the CLI. This key names the
