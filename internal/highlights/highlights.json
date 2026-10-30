@@ -1,6 +1,15 @@
 {
   "versions": [
     {
+      "version": "0.6.1009",
+      "highlights": [
+        "Runs use the newest Docker Agent, MCP gateway and Codex, and every runtime image is rebuilt with current fixes.",
+        "Declared npm servers run on Node 26 and PyPI servers on Python 3.15, or on Python 3.14 when a server needs it.",
+        "A run stops before it starts when a tool filter names a tool in the wrong case, and says the exact name to use.",
+        "The Drafter's knowledge of the runtime is updated to match."
+      ]
+    },
+    {
       "version": "0.6.1008",
       "highlights": [
         "When a draft's instructions use a tool the agent was not given, the Drafter now fixes the draft before handing it back."
