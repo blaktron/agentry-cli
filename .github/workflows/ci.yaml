@@ -121,6 +121,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.4
       - name: The pinned files image is signed by the files workflow on main
         run: ./scripts/verify-files-image.sh
 
@@ -136,6 +138,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.4
       - name: The pinned hostlink image is signed by the hostlink workflow on main
         run: ./scripts/verify-hostlink-image.sh
 
@@ -151,6 +155,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.4
       - name: The pinned browser image is signed by the browser workflow on main
         run: ./scripts/verify-browser-image.sh
 
@@ -166,6 +172,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.4
       - name: The pinned coder image is signed by the coder workflow on main
         run: ./scripts/verify-coder-image.sh
 
@@ -181,6 +189,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.4
       - name: The pinned gog image is signed by the gog workflow on main
         run: ./scripts/verify-gog-image.sh
 
@@ -196,6 +206,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.4
       - name: The pinned ms365 image is signed by the ms365 workflow on main
         run: ./scripts/verify-ms365-image.sh
 
@@ -211,6 +223,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.4
       - name: The pinned Codex image is signed by the codex workflow on main
         run: ./scripts/verify-codex-image.sh
 
@@ -226,6 +240,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.4
       - name: The pinned default harness is signed by the docker-agent workflow on main
         run: ./scripts/verify-docker-agent-image.sh
 
@@ -251,6 +267,8 @@ jobs:
           # The shared host module cache, as the `check` job says.
           cache: false
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.4
       - name: The pinned Typst image is signed by the typst workflow on main
         run: OUT="$RUNNER_TEMP/typst" ./scripts/verify-typst-image.sh
       - name: export_pdf renders with the real Typst
@@ -279,6 +297,8 @@ jobs:
           # The shared host module cache, as the `check` job says.
           cache: false
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.4
       - name: The pinned ripgrep image is signed by the ripgrep workflow on main
         run: OUT="$RUNNER_TEMP/ripgrep" ./scripts/verify-ripgrep-image.sh
       - name: grep and glob search with the real ripgrep
