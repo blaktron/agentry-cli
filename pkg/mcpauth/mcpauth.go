@@ -151,7 +151,13 @@ func DiscoverRemote(ctx context.Context, c *http.Client, serverURL string) (*Dis
 	if err != nil {
 		return nil, err
 	}
-	return &Discovery{Resource: rm.Resource, ChallengeScopes: scopes, ResourceScopes: rm.ScopesSupported, Server: *md}, nil
+	// Entra refuses a request that names a resource; its token's audience
+	// comes from the scopes.
+	resource := rm.Resource
+	if IsEntra(md.Issuer) {
+		resource = ""
+	}
+	return &Discovery{Resource: resource, ChallengeScopes: scopes, ResourceScopes: rm.ScopesSupported, Server: *md}, nil
 }
 
 // challenge makes the unauthenticated request and reads its
@@ -269,8 +275,20 @@ func DiscoverIssuer(ctx context.Context, c *http.Client, issuer string) (*Server
 	if lastErr != nil {
 		return nil, fmt.Errorf("authorization server %s publishes no metadata: %w", issuer, lastErr)
 	}
-	if strings.TrimRight(md.Issuer, "/") != strings.TrimRight(issuer, "/") {
+	entra := IsEntra(issuer)
+	switch {
+	case strings.TrimRight(md.Issuer, "/") == strings.TrimRight(issuer, "/"):
+	case entra && entraIssuerFor(issuer, md.Issuer):
+		// The authority asked is the issuer from here on: the client a
+		// person keeps for it, and the redirect's iss, are held to it.
+		md.Issuer = strings.TrimRight(issuer, "/")
+	case entra:
+		return nil, fmt.Errorf("authorization server %s calls itself %q: refused (a Microsoft Entra authority is /common/v2.0, /organizations/v2.0, /consumers/v2.0 or /<tenant id>/v2.0)", issuer, md.Issuer)
+	default:
 		return nil, fmt.Errorf("authorization server %s calls itself %q: refused", issuer, md.Issuer)
+	}
+	if entra && !entraEndpointsOnHost(md) {
+		return nil, fmt.Errorf("authorization server %s names an endpoint off %s: refused", issuer, EntraHost)
 	}
 	for _, e := range []string{md.AuthorizationEndpoint, md.TokenEndpoint} {
 		if !strings.HasPrefix(e, "https://") {
@@ -282,7 +300,8 @@ func DiscoverIssuer(ctx context.Context, c *http.Client, issuer string) (*Server
 			return nil, fmt.Errorf("authorization server %s names an endpoint that is not https", issuer)
 		}
 	}
-	if !slices.Contains(md.CodeChallengeMethodsSupported, "S256") {
+	// Entra takes S256 on every authority and advertises it on none.
+	if !slices.Contains(md.CodeChallengeMethodsSupported, "S256") && !entra {
 		return nil, fmt.Errorf("authorization server %s does not offer PKCE with S256, which a sign-in needs", issuer)
 	}
 	return &md, nil
@@ -450,7 +469,7 @@ func (r *Request) Callback(u *url.URL) (string, error) {
 	if iss == "" && r.Server.ISSParameterSupported {
 		return "", errors.New("the redirect names no issuer, which this authorization server promises to: refused")
 	}
-	if iss != "" && strings.TrimRight(iss, "/") != strings.TrimRight(r.Server.Issuer, "/") {
+	if iss != "" && strings.TrimRight(iss, "/") != strings.TrimRight(r.Server.Issuer, "/") && !entraRedirectIssuer(r.Server.Issuer, iss) {
 		return "", fmt.Errorf("the redirect came from another issuer (%q, not %s): refused", iss, r.Server.Issuer)
 	}
 	if e := q.Get("error"); e != "" {
