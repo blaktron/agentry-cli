@@ -58,7 +58,7 @@ func TestARepairNeverDropsWhatTheReportDoesNotName(t *testing.T) {
 			[]string{"the egress host api.github.com", "the egress host nvd.nist.gov", "the command tar", "the command grep",
 				"the secret GITHUB_TOKEN", "the MCP server @cyanheads/osv-advisory-mcp-server", "the egress host api.osv.dev", "the secret OSV_KEY"}},
 		{"a server the rules named by its path", scanDraft(scanHosts, scanExec, scanSecrets, `[]`),
-			RepairReport{Rules: []string{"capabilities.mcpServers[0]: npm:@cyanheads/osv-advisory-mcp-server@0.1.13: it needs Node >=26.0.0"}}, nil},
+			RepairReport{Rules: []string{"capabilities.mcpServers[0]: npm:@cyanheads/osv-advisory-mcp-server@0.1.13: it needs Node >=28.0.0"}}, nil},
 		{"a list the rules named whole", scanDraft(scanHosts, `"none"`, scanSecrets, scanServers),
 			RepairReport{Rules: []string{"V5 capabilities.exec: exec requires a commands list"}}, nil},
 		{"a command the exec rule named", scanDraft(scanHosts, `{"commands": ["grep"]}`, scanSecrets, scanServers),

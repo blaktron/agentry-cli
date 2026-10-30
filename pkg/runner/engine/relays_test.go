@@ -14,7 +14,7 @@ import (
 )
 
 // TestRelaysStartedBy reads relay names out of the gateway's own lines
-// (v0.43.3's l4 and l7 shapes), once each, and nothing out of other lines.
+// (v0.44.3's l4 and l7 shapes), once each, and nothing out of other lines.
 func TestRelaysStartedBy(t *testing.T) {
 	logs := strings.Join([]string{
 		"- Running proxy sidecars for hosts [{api.github.com 443 TCP}]",

@@ -1190,7 +1190,7 @@ func startProxy(ctx context.Context, d dockerx.Client, p Params, rd *runDirs, td
 
 // checkToolsServerStarted reads the gateway's startup log for its line
 // saying the run's own tools server did not start or list its tools, and
-// names it (the same v0.43.3 line shapes as checkDeclaredServersStarted).
+// names it (the same v0.44.3 line shapes as checkDeclaredServersStarted).
 func checkToolsServerStarted(logs string) error {
 	for _, line := range strings.Split(logs, "\n") {
 		t := strings.TrimSpace(line)
@@ -1204,7 +1204,7 @@ func checkToolsServerStarted(logs string) error {
 // checkDeclaredServersStarted reads the gateway's startup log for the
 // lines it writes when a declared server fails to start or to list its
 // tools, and names the first such server with the gateway's own line.
-// The line shapes are docker/mcp-gateway v0.43.3's (pkg/gateway/
+// The line shapes are docker/mcp-gateway v0.44.3's (pkg/gateway/
 // capabilitites.go "  > Can't start %s: %s", "  > Can't list tools %s:
 // %s"; pkg/mcp/stdio.go relays server stderr as "- %s: %s"): a gateway
 // bump re-checks them.

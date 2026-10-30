@@ -911,7 +911,7 @@ dependencies:
   evidence: survey 2026-10-05 (inferred)
   date: 2026-10-05
 runtimes:
-- image: ghcr.io/blaktron/agentry-node-alpine:24-alpine
+- image: ghcr.io/blaktron/agentry-node-alpine:26-alpine
   user: root
   home: /root
   observed: A server starts as the image's own user. HOME and /tmp are writable; writes there are discarded when the run ends.
@@ -920,9 +920,9 @@ runtimes:
   - node
   - npm
   - npx
-  evidence: survey 2026-10-05 (runtimes probe)
-  date: 2026-10-05
-- image: ghcr.io/blaktron/agentry-python-slim:3.12-slim-trixie
+  evidence: runtimes probe 2026-10-30
+  date: 2026-10-30
+- image: ghcr.io/blaktron/agentry-python-slim:3.15-slim-trixie
   user: root
   home: /root
   observed: A server starts as the image's own user. HOME and /tmp are writable; writes there are discarded when the run ends. Debian trixie's glibc 2.41, with no wget, curl or git.
@@ -930,8 +930,8 @@ runtimes:
   - bash and sh
   - python3
   - pip
-  evidence: runtimes probe 2026-10-16
-  date: 2026-10-16
+  evidence: runtimes probe 2026-10-30
+  date: 2026-10-30
 # Vendors' own remote MCP servers:
 # declared by url with an auth, reached through the runner image's bridge
 # behind one relay to the address's host. seen is true only for a server

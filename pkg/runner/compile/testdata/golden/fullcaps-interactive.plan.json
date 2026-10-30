@@ -69,7 +69,7 @@
     "toolResults": "every result of the runner's own tools is held to 48 KiB and 1,900 lines, the docker-agent harness's measured tool-result limit less a margin, by the tools server: a file is read a page at a time from the offset asked, each page saying where the next begins; a listing or a search stops at it and says what it left out; any other result is cut at it with a notice saying so; declared MCP servers' results are their own; a fetch response body larger than one result is saved to /scratch/fetch/ (never executable, refused when it holds a granted secret's value) and answered with its first page"
   },
   "gateway": {
-    "image": "ghcr.io/blaktron/agentry-mcp-gateway:v0.43.3",
+    "image": "ghcr.io/blaktron/agentry-mcp-gateway:v0.44.3@sha256:bae58d801fd4b73f6ad91e609b8ce5ec8868713825f33a2bb20a98f956d0bd46",
     "args": [
       "--transport",
       "streaming",
@@ -140,7 +140,7 @@
     "adapter": "docker-agent",
     "model": "anthropic/claude-sonnet-4-5",
     "agent": {
-      "image": "ghcr.io/blaktron/agentry-docker-agent-src:1.152.0-2026.10.27.6@sha256:c6a3c74513b9ff274b3826bd0d673f14879c8ce589f5c7a8b5a9731b02cb56da",
+      "image": "ghcr.io/blaktron/agentry-docker-agent-src:1.154.0-2026.10.30.8@sha256:7a31b6babe98ceb0556dabfb45ed83998d6a9549b99c2c0a0536fdf52af9f217",
       "argv": [
         "serve",
         "acp",
@@ -213,7 +213,7 @@
     },
     "imagePin": {
       "by": "digest",
-      "value": "sha256:c6a3c74513b9ff274b3826bd0d673f14879c8ce589f5c7a8b5a9731b02cb56da"
+      "value": "sha256:7a31b6babe98ceb0556dabfb45ed83998d6a9549b99c2c0a0536fdf52af9f217"
     }
   },
   "proxy": {

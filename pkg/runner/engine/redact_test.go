@@ -132,7 +132,7 @@ func TestRedactorMasksTheGatewaysPartialMask(t *testing.T) {
 }
 
 // TestGatewaySecretListingKeepsNoCharacterOfTheValue: the gateway
-// (docker/mcp-gateway v0.43.3, verbose by default) lists each secret it
+// (docker/mcp-gateway v0.44.3, verbose by default) lists each secret it
 // injects at a server's start as " - NAME: " + the value's first four
 // characters + "****" (pkg/gateway/clientpool.go maskSecret). That prefix is
 // no whole value, so it must be masked as one: gateway.log keeps the line and

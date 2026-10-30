@@ -64,7 +64,7 @@ func TestADraftPinningAServerItsRunsCannotRunGetsTheRepairTurn(t *testing.T) {
 	p := PostStep{
 		OutDir: out, Description: "Audit my dependencies against OSV.", Task: "Audit my dependencies against OSV.",
 		Scan: webscan.Result{Verdict: webscan.Pass}, Ref: Namespace + "/" + Name + "@" + Version, Checker: &postChecker{},
-		Servers: fakeServers(map[string]string{"0.1.15": ">=26.0.0", "0.1.13": ">=24.0.0"}),
+		Servers: fakeServers(map[string]string{"0.1.15": ">=28.0.0", "0.1.13": ">=24.0.0"}),
 		Repair: func(_ context.Context, rt RepairTurn) (*receipt.Envelope, error) {
 			tasks = append(tasks, rt.Task)
 			if err := os.MkdirAll(filepath.Join(rt.OutDir, "reports"), 0o755); err != nil {
@@ -80,7 +80,7 @@ func TestADraftPinningAServerItsRunsCannotRunGetsTheRepairTurn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "- capabilities.mcpServers[0]: npm:@cyanheads/osv-advisory-mcp-server@0.1.15: it needs Node >=26.0.0 (its engines.node), and runs use Node 24."
+	want := "- capabilities.mcpServers[0]: npm:@cyanheads/osv-advisory-mcp-server@0.1.15: it needs Node >=28.0.0 (its engines.node), and runs use Node 26."
 	if len(tasks) != 1 || !strings.Contains(tasks[0], want) {
 		t.Fatalf("the repair task(s) do not carry %q:\n%.1200s", want, strings.Join(tasks, "\n---\n"))
 	}

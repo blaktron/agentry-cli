@@ -50,7 +50,7 @@ AGENTRY=$(cd "$(dirname "$AGENTRY")" && pwd)/$(basename "$AGENTRY")
 # digest like the runtime images: an anonymous pull from Docker Hub is rate
 # limited on a shared address, and then every step fails before it tests the
 # engine.
-IMG=${ENGINE_PROBE_IMAGE:-ghcr.io/blaktron/agentry-alpine:3.22@sha256:d406446bc05b82480756ce8f1287964d28768c23955fa9480d2a74a2eae7a654}
+IMG=${ENGINE_PROBE_IMAGE:-ghcr.io/blaktron/agentry-alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a}
 
 if [ "${AGENTRY_ENGINE:-}" = podman ]; then
   C=${AGENTRY_PODMAN:-podman}
@@ -194,7 +194,7 @@ fi
 
 # --- The daemon socket from a container --------------------------------------
 GW=${AGENTRY_GATEWAY_IMAGE:-$(awk '/^ *gateway:/ {print $2; exit}' "${AGENTRY_POLICY:-$HOME/.agentry/runner/policy.yaml}" 2>/dev/null)}
-GW=${GW:-ghcr.io/blaktron/agentry-mcp-gateway:v0.43.3}
+GW=${GW:-ghcr.io/blaktron/agentry-mcp-gateway:v0.44.3@sha256:bae58d801fd4b73f6ad91e609b8ce5ec8868713825f33a2bb20a98f956d0bd46}
 # The gateway image is pulled when the store lacks it, as agentry setup does.
 "$C" image inspect "$GW" >/dev/null 2>&1 || "$C" pull -q "$GW" >/dev/null 2>&1 || true
 if [ -S "$SOCK" ] && "$C" image inspect "$GW" >/dev/null 2>&1; then
