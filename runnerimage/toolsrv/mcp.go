@@ -463,7 +463,7 @@ const InputResourceURI = "agentry://inputs"
 // refuses any tool result whose text items look like a
 // secret, with no exemption by server or tool, and it reads only the text
 // items of a result (pkg/interceptors/block_secrets.go in the pinned
-// v0.43.3). An embedded resource is past it, and the harness hands its
+// v0.44.3). An embedded resource is past it, and the harness hands its
 // text to the model as a text item's (docker-agent's processMCPContent).
 // Every other tool's result, an input tool's error, and the arguments of
 // every call (a report quoting a found key included) stay scanned.

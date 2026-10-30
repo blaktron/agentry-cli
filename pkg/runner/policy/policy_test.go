@@ -812,6 +812,8 @@ func TestLoadMovesAFormerDefaultNodeRuntime(t *testing.T) {
 	for _, c := range []struct{ written, want string }{
 		{"ghcr.io/blaktron/agentry-node-alpine:22-alpine", DefaultNodeRuntime},
 		{"node:22-alpine", DefaultNodeRuntime},
+		{"ghcr.io/blaktron/agentry-node-alpine:24-alpine", DefaultNodeRuntime},
+		{"ghcr.io/blaktron/agentry-node-alpine:24-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53", DefaultNodeRuntime},
 		{"ghcr.io/blaktron/agentry-node-alpine:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914",
 			"ghcr.io/blaktron/agentry-node-alpine:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914"},
 		{"registry.example/node:22", "registry.example/node:22"},
@@ -844,6 +846,8 @@ func TestLoadMovesAFormerDefaultNodeRuntime(t *testing.T) {
 func TestLoadMovesAFormerDefaultPythonRuntime(t *testing.T) {
 	for _, c := range []struct{ written, want string }{
 		{"ghcr.io/blaktron/agentry-python-alpine:3.12-alpine", DefaultPythonRuntime},
+		{"ghcr.io/blaktron/agentry-python-slim:3.12-slim-trixie", DefaultPythonRuntime},
+		{"ghcr.io/blaktron/agentry-python-slim:3.12-slim-trixie@sha256:cb33f7f771ecec2ef1225cf39b159591a040391bd73e4c01f00fdfc4c47611d2", DefaultPythonRuntime},
 		{"ghcr.io/blaktron/agentry-python-alpine:3.12-alpine@sha256:92abd2ba1bdfb48b1e2ac224b582dd1558d0d4bb11c903b126b5bf9c448fd656",
 			"ghcr.io/blaktron/agentry-python-alpine:3.12-alpine@sha256:92abd2ba1bdfb48b1e2ac224b582dd1558d0d4bb11c903b126b5bf9c448fd656"},
 		{"registry.example/python:3.12", "registry.example/python:3.12"},
@@ -882,6 +886,7 @@ func TestLoadMovesAFormerDefaultGoBuilder(t *testing.T) {
 		{"ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine", DefaultGoBuilder},
 		{"ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414", DefaultGoBuilder},
 		{"ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:738d1cf061836894ff6bb8c33881080ac66de8cf0586615012a0c8f592649cfa", DefaultGoBuilder},
+		{"ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:d530cf60723abf1ffae0cd16bb546b379ec0550d2f3815e5b16ed69dbc00fba4", DefaultGoBuilder},
 		{"ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:0000000000000000000000000000000000000000000000000000000000000000",
 			"ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:0000000000000000000000000000000000000000000000000000000000000000"},
 		{"registry.example/golang:1.27-alpine", "registry.example/golang:1.27-alpine"},
@@ -918,6 +923,7 @@ func TestLoadMovesAFormerDefaultHarnessImage(t *testing.T) {
 	for _, c := range []struct{ written, want string }{
 		{"docker-agent: { ref: " + previous + " }", DefaultHarnessImage},
 		{"docker-agent: { ref: ghcr.io/blaktron/agentry-docker-agent:1.150.0@sha256:27b0accfc83a74b03f30ac695a23878f71383106c9dec4d7808c72a4f13d5ee1 }", DefaultHarnessImage},
+		{"docker-agent: { ref: ghcr.io/blaktron/agentry-docker-agent-src:1.152.0-2026.10.27.6@sha256:c6a3c74513b9ff274b3826bd0d673f14879c8ce589f5c7a8b5a9731b02cb56da }", DefaultHarnessImage},
 		{"docker-agent: { ref: " + operators + " }", operators},
 	} {
 		path := filepath.Join(t.TempDir(), "policy.yaml")
@@ -938,6 +944,42 @@ func TestLoadMovesAFormerDefaultHarnessImage(t *testing.T) {
 	}
 	if slices.Contains(formerDefaultHarnessImages, DefaultHarnessImage) {
 		t.Fatal("the current default is listed as a former one")
+	}
+}
+
+// A policy file written by an earlier CLI names that day's gateway; it loads
+// as today's default, so a moved gateway (its flags and the log lines the
+// runner reads move with it) reaches machines set up before it, while any
+// other value is the operator's and is kept.
+func TestLoadMovesAFormerDefaultGatewayImage(t *testing.T) {
+	for _, c := range []struct{ written, want string }{
+		{"docker/mcp-gateway:v0.43.3", DefaultGatewayImage},
+		{"ghcr.io/blaktron/agentry-mcp-gateway:v0.43.3", DefaultGatewayImage},
+		{"ghcr.io/blaktron/agentry-mcp-gateway:v0.43.3@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+			"ghcr.io/blaktron/agentry-mcp-gateway:v0.43.3@sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+		{"registry.example/mcp-gateway:v0.43.3", "registry.example/mcp-gateway:v0.43.3"},
+	} {
+		path := filepath.Join(t.TempDir(), "policy.yaml")
+		text := strings.Replace(defaultFileText, "gateway: "+DefaultGatewayImage, "gateway: "+c.written, 1)
+		if text == defaultFileText {
+			t.Fatal("the generated text no longer names the default gateway")
+		}
+		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		p, _, err := Load(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.Images.Gateway != c.want {
+			t.Errorf("gateway %q loads as %q, want %q", c.written, p.Images.Gateway, c.want)
+		}
+	}
+	if slices.Contains(formerDefaultGatewayImages, DefaultGatewayImage) {
+		t.Fatal("the current default is listed as a former one")
+	}
+	if !PinnedByDigest(DefaultGatewayImage) {
+		t.Fatal("the default gateway is not pinned by digest")
 	}
 }
 

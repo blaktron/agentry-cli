@@ -42,8 +42,8 @@
 # repointing it means building this context yourself with
 # --build-arg RUNTIME_IMAGE=… and naming the result in the policy's
 # images.runner. Nothing in policy.yaml changes it.
-ARG GO_IMAGE=ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:d530cf60723abf1ffae0cd16bb546b379ec0550d2f3815e5b16ed69dbc00fba4
-ARG RUNTIME_IMAGE=ghcr.io/blaktron/agentry-alpine:3.22@sha256:d406446bc05b82480756ce8f1287964d28768c23955fa9480d2a74a2eae7a654
+ARG GO_IMAGE=ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb
+ARG RUNTIME_IMAGE=ghcr.io/blaktron/agentry-alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
 # export_pdf's renderer: agentry-dockerimages' files-only image of Typst
 # built from pinned source without its package downloader, the Noto fonts
 # for every script, the report designs' fourteen open-licence families and
@@ -51,13 +51,13 @@ ARG RUNTIME_IMAGE=ghcr.io/blaktron/agentry-alpine:3.22@sha256:d406446bc05b824807
 # (scripts/verify-typst-image.sh holds the pin to that signature). Like
 # RUNTIME_IMAGE it has no policy field: repointing it means building this
 # context yourself.
-ARG TYPST_IMAGE=ghcr.io/blaktron/agentry-typst:2026.10.09.2@sha256:da55b1dbe359c01def900853b2e65803bf783d8098b4ddcea6164ca946d38dd1
+ARG TYPST_IMAGE=ghcr.io/blaktron/agentry-typst:2026.10.30.3@sha256:2ab41811f54525a0e29256e3d5fc7a9dee79ff8a5f6e6b45f89f5cebe1c63e42
 # grep and glob's search engine: agentry-dockerimages' files-only image of
 # ripgrep 15.2.0 built from pinned source with its default features (no
 # PCRE2), static, signed by its ripgrep workflow on main
 # (scripts/verify-ripgrep-image.sh holds the pin to that signature). Like
 # TYPST_IMAGE it has no policy field.
-ARG RIPGREP_IMAGE=ghcr.io/blaktron/agentry-ripgrep:2026.10.13.2@sha256:2891a3998ffa4877998ad7f167ea00971e09fa3c68dcafc128e609c8cabee718
+ARG RIPGREP_IMAGE=ghcr.io/blaktron/agentry-ripgrep:2026.10.30.3@sha256:afa712469aa8f18c42c3f2729d731be2f3c53a3c7f0fa9c70242c106c26c812e
 FROM ${TYPST_IMAGE} AS typst
 FROM ${RIPGREP_IMAGE} AS ripgrep
 

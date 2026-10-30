@@ -1431,7 +1431,7 @@ func renderGatewayFiles(files map[string][]byte, tspec *toolsrv.Spec, caps spec.
 }
 
 // checkLiteralEnv refuses a declared env value the gateway would rewrite
-// or drop. docker/mcp-gateway (pinned v0.43.3, pkg/gateway/clientpool.go)
+// or drop. docker/mcp-gateway (pinned v0.44.3, pkg/gateway/clientpool.go)
 // expands `$NAME`/`${NAME}` in a catalog env value against the server
 // container's environment — the server's secrets included — evaluates a
 // value holding `{{…}}` as a template, and skips a value that comes out

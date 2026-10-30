@@ -334,7 +334,7 @@ func TestADraftThatReadNoPageIsStillHeld(t *testing.T) {
 	p := PostStep{
 		OutDir: out, Description: "Summarize my notes.", Task: "Summarize my notes.",
 		Scan: webscan.Result{Verdict: webscan.Pass}, Ref: Namespace + "/" + Name + "@" + Version, Checker: &postChecker{},
-		Servers: fakeServers(map[string]string{"99.0.0": ">=26.0.0"}),
+		Servers: fakeServers(map[string]string{"99.0.0": ">=28.0.0"}),
 		Repair: func(_ context.Context, rt RepairTurn) (*receipt.Envelope, error) {
 			tasks = append(tasks, rt.Task)
 			return &receipt.Envelope{Status: "ok", Result: json.RawMessage(postRepaired)}, nil
@@ -360,7 +360,7 @@ func TestADraftThatReadNoPageIsStillHeld(t *testing.T) {
 		// manifest/exec.md's list
 		"- capabilities.exec: curl: not a command every machine provides",
 		// servers/mcp-servers.md's runtime range
-		"- capabilities.mcpServers[0]: npm:@cyanheads/osv-advisory-mcp-server@99.0.0: it needs Node >=26.0.0 (its engines.node), and runs use Node " +
+		"- capabilities.mcpServers[0]: npm:@cyanheads/osv-advisory-mcp-server@99.0.0: it needs Node >=28.0.0 (its engines.node), and runs use Node " +
 			policy.DefaultNodeVersion,
 	} {
 		if !strings.Contains(report, want) {

@@ -195,7 +195,7 @@ func errorsAs(err error, target *(*PolicyRefusal)) bool {
 
 // TestCompileRendersDeclaredServerEnv: a declared server's plain env map
 // lands in its catalog entry as the gateway's `env: [{name, value}]` list
-// (docker/mcp-gateway v0.43.3, pkg/catalog/types.go `Server.Env []Env`,
+// (docker/mcp-gateway v0.44.3, pkg/catalog/types.go `Server.Env []Env`,
 // applied in pkg/gateway/clientpool.go as `-e NAME` with the value), sorted
 // by name and separate from the secrets list; the enforcement line names
 // the keys and never a value.

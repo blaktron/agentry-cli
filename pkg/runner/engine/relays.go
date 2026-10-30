@@ -11,7 +11,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
-// The gateway's relay network. docker/mcp-gateway v0.43.3 launches every
+// The gateway's relay network. docker/mcp-gateway v0.44.3 launches every
 // declared server with egress hosts on one internal network with a fixed
 // name, docker-mcp-proxies-int, and puts one relay sidecar per declared
 // host there (pkg/gateway/proxies/l4proxy.go, l7proxy.go); the name is not
@@ -61,7 +61,7 @@ func refuseForeignRelays(ctx context.Context, d dockerx.Client) error {
 }
 
 // relayStartRE matches the gateway's own line for each relay it started,
-// in the two exact shapes v0.43.3 writes: "starting l4 proxy
+// in the two exact shapes v0.44.3 writes: "starting l4 proxy
 // docker-mcp-l4proxy-<id> for <host>, ports …" at the start of a line, and
 // "    - Starting l7 proxy docker-mcp-l7proxy-<id> for <hosts>" (a gateway
 // bump re-checks them). Exact on purpose: a server's stderr reaches the
