@@ -240,6 +240,38 @@ func TestRemoveRevokesAndRecordsTheOutcome(t *testing.T) {
 	}
 }
 
+// Microsoft Entra names no revocation endpoint: a removal makes no request,
+// forgets the grant here and records that the vendor offers none.
+func TestRemoveWithoutARevocationEndpointRecordsNotOffered(t *testing.T) {
+	home := t.TempDir()
+	s := connection.Open(home, &fakeKeys{m: map[string]string{}})
+	k := release
+	k.Server = "microsoft-365"
+	g := &mcpauth.Grant{
+		Discovery: mcpauth.Discovery{Server: mcpauth.ServerMetadata{
+			Issuer:        "https://login.microsoftonline.com/organizations/v2.0",
+			TokenEndpoint: "https://login.microsoftonline.com/organizations/oauth2/v2.0/token",
+		}},
+		Client: mcpauth.Client{ID: "11111111-2222-3333-4444-555555555555", Kind: mcpauth.ClientOwn, AuthMethod: mcpauth.AuthNone},
+		Token:  mcpauth.Token{AccessToken: "PROBE-ACCESS", RefreshToken: "PROBE-REFRESH-entra"},
+	}
+	if _, err := s.Put(k, g, ""); err != nil {
+		t.Fatal(err)
+	}
+	// No client: any request at all would fail the removal's revocation.
+	outcome, err := s.Remove(context.Background(), k, nil, nil, "the person removed it")
+	if err != nil || outcome != connection.RevokeNotOffered {
+		t.Fatalf("outcome %q, err %v", outcome, err)
+	}
+	if _, err := s.Get(k); !errors.Is(err, connection.ErrNone) {
+		t.Fatalf("still there: %v", err)
+	}
+	audit, err := os.ReadFile(filepath.Join(connection.Dir(home), "audit.ndjson"))
+	if err != nil || !strings.Contains(string(audit), `"revocation":"not offered by the vendor"`) {
+		t.Fatalf("audit = %s (%v)", audit, err)
+	}
+}
+
 func TestOwnClientsAreKeptOncePerIssuer(t *testing.T) {
 	home := t.TempDir()
 	keys := &fakeKeys{m: map[string]string{}}
