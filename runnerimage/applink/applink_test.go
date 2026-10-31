@@ -178,3 +178,36 @@ func TestAnUnknownSetIsRefused(t *testing.T) {
 		t.Fatal("an unknown set was served")
 	}
 }
+
+// TestARunAndAScheduleTakeAnswersByQuestionID: quickagent_run and
+// schedule_add take a QuickAgent's answers as an object of strings keyed by
+// question id, and quickagent_show says it shows how to run the QuickAgent,
+// so an agent can read the questions and answer them.
+func TestARunAndAScheduleTakeAnswersByQuestionID(t *testing.T) {
+	byName := map[string]Tool{}
+	for _, tool := range sets[SetMain] {
+		byName[tool.Name] = tool
+	}
+	for _, name := range []string{"quickagent_run", "schedule_add"} {
+		props, _ := byName[name].Schema["properties"].(map[string]any)
+		a, ok := props["answers"].(map[string]any)
+		if !ok {
+			t.Fatalf("%s takes no answers: %v", name, byName[name].Schema)
+		}
+		if a["type"] != "object" || !reflect.DeepEqual(a["additionalProperties"], map[string]any{"type": "string"}) {
+			t.Errorf("%s's answers are not an object of strings: %v", name, a)
+		}
+		if req, _ := byName[name].Schema["required"].([]string); slices.Contains(req, "answers") {
+			t.Errorf("%s requires answers, which a QuickAgent without questions has none of", name)
+		}
+	}
+	show := byName["quickagent_show"].Description
+	for _, want := range []string{"how to run it", "the questions it asks", "the files it takes", "the keys it needs", "guide"} {
+		if !strings.Contains(show, want) {
+			t.Errorf("quickagent_show's description lacks %q: %s", want, show)
+		}
+	}
+	if run := byName["quickagent_run"].Description; !strings.Contains(run, "answers to the questions quickagent_show lists") {
+		t.Errorf("quickagent_run's description does not say where its answers come from: %s", run)
+	}
+}

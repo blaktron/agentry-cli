@@ -1,7 +1,7 @@
 schemaVersion: "2"
 name: main
 namespace: agentry
-version: 1.0.2
+version: 1.1.0
 summary: "Agentry's own assistant on Home: finds, installs, runs and schedules QuickAgents for you, and helps you with Agentry."
 license: MIT
 authors:

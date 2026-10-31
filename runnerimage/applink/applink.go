@@ -63,6 +63,10 @@ func strs(desc string) map[string]any {
 	return map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": desc}
 }
 
+func strMap(desc string) map[string]any {
+	return map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}, "description": desc}
+}
+
 func boolean(desc string) map[string]any {
 	return map[string]any{"type": "boolean", "description": desc}
 }
@@ -90,6 +94,10 @@ const (
 	TaskRemove = "task_remove"
 )
 
+// answersSchema is a run's answers to its QuickAgent's questions, by
+// question id, each written as quickagent_show says that question takes it.
+var answersSchema = strMap("answers to the questions quickagent_show lists, by question id: a repository's https address (with #branch, #tag or #commit to pick one), one file's https address, one of a choice's choices as written, a file in the share folder as share/…, or the text asked for")
+
 // helperTools are Agentry Helper's tools, which reach the application's own
 // operations, each under the application's own consent; none changes a
 // setting's value, starts or stops an agent, publishes, signs in or touches
@@ -97,17 +105,17 @@ const (
 var helperTools = []Tool{
 	{"registry_search", "Search Agentry's registry for QuickAgents by what they do. Returns each match's reference, summary and rating.",
 		obj(map[string]any{"query": str("what the QuickAgent should do, in a few words")}, "query")},
-	{"quickagent_show", "Show one QuickAgent: what it does, what it may reach, its versions and its security report.",
+	{"quickagent_show", "Show one QuickAgent: what it does, what it may reach, its versions and its security report, and how to run it: the questions it asks before a run and how to answer each, the files it takes, the keys it needs, and its publisher's guide.",
 		obj(map[string]any{"ref": str("its reference, namespace/name or namespace/name@version")}, "ref")},
 	{"quickagent_install", "Install a QuickAgent on this computer. The person is asked in Agentry first, and nothing is installed unless they agree.",
 		obj(map[string]any{"ref": str("its reference")}, "ref")},
-	{"quickagent_run", "Run an installed QuickAgent on this computer, on files from the share folder. The person is asked in Agentry before its first run; the run is an ordinary run, listed in Recent runs, and this returns its id.",
-		obj(map[string]any{"ref": str("its reference"), "task": str("what to ask it to do"), "files": strs("paths of files in the share folder to give it, as share/…")}, "ref")},
+	{"quickagent_run", "Run an installed QuickAgent on this computer, with answers to the questions quickagent_show lists, files from the share folder and a task. The person is asked in Agentry before its first run, and again before a run that fetches a repository or a file from an address they have not agreed to for it; the run is an ordinary run, listed in Recent runs, and this returns its id.",
+		obj(map[string]any{"ref": str("its reference"), "task": str("what to ask it to do"), "files": strs("paths of files in the share folder to give it, as share/…"), "answers": answersSchema}, "ref")},
 	{"run_result", "Read a run's outcome: its status, its result and where its files are.",
 		obj(map[string]any{"run": str("the run id quickagent_run returned")}, "run")},
 	{"installed_list", "List the QuickAgents installed on this computer.", obj(map[string]any{})},
 	{"schedule_add", "Schedule an installed QuickAgent to run on its own. The person is asked in Agentry first.",
-		obj(map[string]any{"ref": str("its reference"), "when": str("when it runs, as Agentry's schedule takes it (\"every weekday at 09:00\")"), "task": str("what to ask it to do")}, "ref", "when")},
+		obj(map[string]any{"ref": str("its reference"), "when": str("when it runs, as Agentry's schedule takes it (\"every weekday at 09:00\")"), "task": str("what to ask it to do"), "answers": answersSchema}, "ref", "when")},
 	{"schedule_list", "List the scheduled runs.", obj(map[string]any{})},
 	{"schedule_pause", "Pause or resume a scheduled run.",
 		obj(map[string]any{"schedule": str("the schedule's id"), "paused": boolean("true to pause, false to resume")}, "schedule", "paused")},

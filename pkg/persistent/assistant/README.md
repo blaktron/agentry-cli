@@ -51,7 +51,7 @@ and `agentry agent show assistant` lists what it has:
   into it, and stay where they are. `agentry agent memory export assistant
   <folder>` copies the memory into a new folder, readable by you alone; a
   reset removes it.
-- **Seventeen skills** of its own, on unless you switch them off:
+- **Eighteen skills** of its own, on unless you switch them off:
   `memory-ingest`, `memory-query`, `memory-consolidate` and `memory-compact`,
   which say how it adds to its memory, answers from it, tidies it and saves a
   whole conversation before it is compacted; `meeting-notes`, which says how
@@ -67,9 +67,12 @@ and `agentry agent show assistant` lists what it has:
   your Microsoft account with an Entra app of your own; `microsoft-365`,
   `microsoft-inbox-triage` and `microsoft-meeting-prep`, which say how it uses
   your Microsoft account safely; `fastmail-setup` and
-  `fastmail-inbox-triage`, for your Fastmail account; and
+  `fastmail-inbox-triage`, for your Fastmail account;
   `calendar-feeds-setup` and `calendar-feeds`, which walk you through giving
-  it a calendar by its iCal address and say how it reads one.
+  it a calendar by its iCal address and say how it reads one; and
+  `quickagent-use`, which says how it works out what a QuickAgent needs
+  from what it shows (its questions, files, keys and guide) and runs it for
+  you.
 - **A share folder** of yours, `~/agentry/assistantshare` unless you choose
   another, is mounted read and write while it runs: you see what it writes
   there as it writes it. A file you add is checked for malware with ClamAV
@@ -150,14 +153,19 @@ and `agentry agent show assistant` lists what it has:
 - **Agentry Helper's tools**, in Agentry Desktop: the same Agentry tools
   Agentry Helper has, so the Assistant can do anything the Helper can.
   `registry_search` and `quickagent_show` find a QuickAgent and say what it
-  may reach, `quickagent_install` installs one, `quickagent_run` runs an
-  installed one on files from its share folder and `run_result` reads the
-  outcome, `installed_list` lists what is installed, `schedule_add`,
+  may reach and how to run it (its questions, the files it takes, the keys
+  it needs and its publisher's guide), `quickagent_install` installs one,
+  `quickagent_run` runs an installed one with answers to its questions,
+  files from its share folder and a task, and `run_result` reads the
+  outcome; its `quickagent-use` skill says how it works out what to give a
+  QuickAgent from what you asked; `installed_list` lists what is installed, `schedule_add`,
   `schedule_list`, `schedule_pause` and `schedule_remove` keep scheduled
   runs, `settings_open` opens a section of Settings for you, and `docs_read`
   reads a page of Agentry's documentation. The desktop asks you first, in a
   dialog that names the Assistant, before an install, a QuickAgent's first
-  run for it, a schedule and a schedule's removal, and a No does nothing.
+  run for it, a run that fetches from an address you have not agreed to for
+  that QuickAgent, a schedule and a schedule's removal, and a No does
+  nothing.
   None of these tools changes a setting, starts or stops an agent, signs in,
   publishes or touches a key. Run from the CLI, these tools answer that only
   Agentry Desktop answers them.
