@@ -10,6 +10,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/blaktron/agentry/pkg/manifest"
+
+	"github.com/blaktron/agentry-cli/pkg/termtext"
 )
 
 // infoFixture registers one agent with a published 1.0.0 for info tests.
@@ -205,5 +209,199 @@ func TestDescribeFacets(t *testing.T) {
 	got := describeFacets(searchOpts{mode: "interactive", capability: "exec", license: "MIT", verified: true})
 	if got != " with mode=interactive, capability=exec, license=MIT, verified" {
 		t.Errorf("facets = %q", got)
+	}
+}
+
+// runFixtureCaps is a release that asks one question of each type, takes
+// code and data as uploaded, declares keys and carries a guide.
+const runFixtureCaps = `capabilities:
+  secrets: [API_TOKEN, EXTRA_TOKEN, ACCESS]
+  optionalSecrets: [EXTRA_TOKEN]
+  targetHosts: [server]
+  network:
+    egress: [api.example.com]
+intake:
+  - id: repo
+    prompt: The repository to audit
+    type: repository
+  - id: spec
+    prompt: The spec
+    type: url
+    required: true
+  - id: depth
+    prompt: How deep
+    type: choice
+    choices: [quick, full]
+  - id: notes
+    prompt: Your notes
+    type: file
+  - id: access
+    prompt: The access secret
+    type: secret
+  - id: server
+    prompt: The server
+    type: host
+  - id: focus
+    prompt: "What to focus on\u001b[2J"
+inputs:
+  kinds: [code, data]
+  view: original
+guide:
+  overview: Audits a repository.
+  prepare: [The repository address]
+  files: Optional SBOMs.
+  task: e.g. Audit everything.
+`
+
+func runFixture(t *testing.T) *fakeRegistry {
+	t.Helper()
+	fr := newFakeRegistry(t)
+	fr.addAgent("acme", "audit", "autonomous", "audits").
+		addVersion(t, "1.0.0", skillFiles("audit", runFixtureCaps))
+	return fr
+}
+
+// TestInfoShowsHowToRunIt: each question with how to answer it by its
+// type, the files, the keys and the guide, with no control character of
+// the publisher's reaching the terminal.
+func TestInfoShowsHowToRunIt(t *testing.T) {
+	isolateEnv(t)
+	fr := runFixture(t)
+
+	stdout, _, err := runCLI(t, nil, "--registry", fr.url(), "info", "acme/audit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"how to run it:",
+		"questions (answer each with --intake id=value):",
+		"repo (repository, optional): The repository to audit",
+		"answer: The repository's https address; add #branch, #tag or #commit to pick one. Agentry fetches it for the run: nothing needs downloading.",
+		"spec (url, required): The spec",
+		"answer: One file's https address.",
+		`answer: One of "quick", "full", as written.`,
+		"answer: A path to a file or folder on this computer.",
+		"access (secret, optional)",
+		"answer: The person's own value",
+		"server (host, optional)",
+		"answer: The person's own target host",
+		"focus (text, optional): What to focus on?[2J",
+		"Files it takes: code, data; read as uploaded. Give them with --file.",
+		"keys: API_TOKEN, EXTRA_TOKEN (optional)",
+		"guide (the publisher's words):",
+		termtext.Gutter + "Audits a repository.",
+		"have ready: The repository address",
+		"files: Optional SBOMs.",
+		"task: e.g. Audit everything.",
+		"install: agentry install acme/audit",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("info output lacks %q:\n%s", want, stdout)
+		}
+	}
+	if strings.Contains(stdout, "\x1b") {
+		t.Error("a publisher's control character reached the terminal")
+	}
+	if strings.Contains(stdout, "keys: API_TOKEN, EXTRA_TOKEN (optional), ACCESS") {
+		t.Error("the secret a secret question carries is listed again as a key")
+	}
+}
+
+func TestInfoShowsNoQuestions(t *testing.T) {
+	isolateEnv(t)
+	fr := infoFixture(t)
+
+	stdout, _, err := runCLI(t, nil, "--registry", fr.url(), "info", "acme/demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"questions: none", "Files it takes: any kind; read as text or as uploaded."} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("info output lacks %q:\n%s", want, stdout)
+		}
+	}
+	if strings.Contains(stdout, "guide (") || strings.Contains(stdout, "keys:") {
+		t.Errorf("a release with no guide or keys shows one:\n%s", stdout)
+	}
+}
+
+func TestInfoJSONCarriesHowToRunIt(t *testing.T) {
+	isolateEnv(t)
+	fr := runFixture(t)
+
+	stdout, _, err := runCLI(t, nil, "--registry", fr.url(), "--json", "info", "acme/audit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Run *infoRun `json:"run"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &doc); err != nil {
+		t.Fatalf("--json output is not JSON: %v\n%s", err, stdout)
+	}
+	r := doc.Run
+	if r == nil {
+		t.Fatalf("no run object:\n%s", stdout)
+	}
+	if len(r.Intake) != 7 {
+		t.Fatalf("intake = %+v", r.Intake)
+	}
+	repo := r.Intake[0]
+	if repo.ID != "repo" || repo.Type != "repository" || repo.Required || repo.PersonsOwn || !strings.Contains(repo.Answer, "#branch") {
+		t.Errorf("repository question = %+v", repo)
+	}
+	if !r.Intake[1].Required || r.Intake[2].Choices[1] != "full" {
+		t.Errorf("url or choice question = %+v %+v", r.Intake[1], r.Intake[2])
+	}
+	if !r.Intake[4].PersonsOwn || !r.Intake[5].PersonsOwn {
+		t.Errorf("a secret or host question is not the person's own: %+v %+v", r.Intake[4], r.Intake[5])
+	}
+	if strings.Join(r.Takes, ",") != "code,data" || r.InputView != "original" {
+		t.Errorf("takes = %v, view = %q", r.Takes, r.InputView)
+	}
+	if len(r.Secrets) != 2 || r.Secrets[0] != (infoSecret{Name: "API_TOKEN"}) || r.Secrets[1] != (infoSecret{Name: "EXTRA_TOKEN", Optional: true}) {
+		t.Errorf("secrets = %+v", r.Secrets)
+	}
+	if strings.Join(r.Modes, ",") != "autonomous" {
+		t.Errorf("modes = %v", r.Modes)
+	}
+	if r.Guide == nil || r.Guide.Overview != "Audits a repository." || r.Guide.Prepare[0] != "The repository address" || r.Guide.Files != "Optional SBOMs." || r.Guide.Task != "e.g. Audit everything." {
+		t.Errorf("guide = %+v", r.Guide)
+	}
+}
+
+// TestInfoJSONHasNoRunWithoutAVersion: run describes the latest version,
+// so an agent with nothing published carries none.
+func TestInfoJSONHasNoRunWithoutAVersion(t *testing.T) {
+	isolateEnv(t)
+	fr := newFakeRegistry(t)
+	fr.addAgent("acme", "empty", "autonomous", "nothing yet")
+
+	stdout, _, err := runCLI(t, nil, "--registry", fr.url(), "--json", "info", "acme/empty")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(stdout, `"run"`) {
+		t.Errorf("an agent with no version carries a run object:\n%s", stdout)
+	}
+}
+
+// TestASiteQuestionIsAnsweredWithAnAddressToOpen: a url question the
+// browser opens is a site to visit, never a file to fetch.
+func TestASiteQuestionIsAnsweredWithAnAddressToOpen(t *testing.T) {
+	m := &manifest.Manifest{
+		Capabilities: manifest.Capabilities{Browser: &manifest.Browser{Sites: []string{"site"}}},
+		Intake:       []manifest.IntakeQuestion{{ID: "site", Prompt: "The site", Type: manifest.IntakeURL}},
+	}
+	if got := howToRun(m).Intake[0].Answer; !strings.Contains(got, "browser opens") {
+		t.Errorf("site answer = %q", got)
+	}
+}
+
+func TestInfoCutsALongGuideLine(t *testing.T) {
+	m := &manifest.Manifest{Guide: &manifest.Guide{Task: strings.Repeat("x", maxInfoLine+50)}}
+	got := howToRun(m).Guide.Task
+	if len([]rune(got)) != maxInfoLine+1 || !strings.HasSuffix(got, "…") {
+		t.Errorf("task cut to %d runes", len([]rune(got)))
 	}
 }

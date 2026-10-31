@@ -1,6 +1,13 @@
 {
   "versions": [
     {
+      "version": "0.6.1011",
+      "highlights": [
+        "agentry info shows how to run a QuickAgent: its questions and how to answer each, its files, its keys and its guide.",
+        "agentry info --json carries the same, so an agent driving the CLI can answer the questions with --intake."
+      ]
+    },
+    {
       "version": "0.6.1010",
       "highlights": [
         "The Assistant and Agentry Helper work out how to run a QuickAgent from its own questions, files and guide.",
