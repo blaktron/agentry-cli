@@ -1,6 +1,15 @@
 {
   "versions": [
     {
+      "version": "0.6.1012",
+      "highlights": [
+        "A run ends with a summary: its files, how long it took, what it cost where known, and where its receipts are.",
+        "A failed run names its exit class in words, the cause, the receipts folder, and whether a retry is likely to help.",
+        "agentry runs lists the runs made from here and agentry open opens one's folder; run --dry-run says the plan in words.",
+        "Every exit class has one name and meaning, shared by run --help, the summary and the result's JSON."
+      ]
+    },
+    {
       "version": "0.6.1011",
       "highlights": [
         "agentry info shows how to run a QuickAgent: its questions and how to answer each, its files, its keys and its guide.",

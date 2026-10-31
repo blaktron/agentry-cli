@@ -24,7 +24,7 @@ func TestRunKnowledgeFlag(t *testing.T) {
 	_, policyPath := isolateRunnerHome(t)
 	pkg := repoPath(t, "testdata/runner/pure-text")
 	dry := func(extra ...string) (string, string, error) {
-		args := append([]string{"run", "--local", pkg, "--allow-unsigned", "--dry-run", "--policy", policyPath}, extra...)
+		args := append([]string{"--json", "run", "--local", pkg, "--allow-unsigned", "--dry-run", "--policy", policyPath}, extra...)
 		return runCLI(t, strings.NewReader(""), args...)
 	}
 

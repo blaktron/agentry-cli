@@ -218,7 +218,7 @@ func TestRunKnowledgeByName(t *testing.T) {
 	}
 	pkg := repoPath(t, "testdata/runner/pure-text")
 	dry := func(extra ...string) (string, string, error) {
-		args := append([]string{"run", "--local", pkg, "--allow-unsigned", "--dry-run", "--policy", policyPath, "--registry", reg.URL}, extra...)
+		args := append([]string{"--json", "run", "--local", pkg, "--allow-unsigned", "--dry-run", "--policy", policyPath, "--registry", reg.URL}, extra...)
 		return runCLI(t, strings.NewReader(""), args...)
 	}
 	without, _, err := dry()

@@ -337,7 +337,7 @@ func TestRunLocalDryRunDeterministic(t *testing.T) {
 	_, policyPath := isolateRunnerHome(t)
 	pkg := repoPath(t, "testdata/runner/pure-text")
 
-	args := []string{"run", "--local", pkg, "--allow-unsigned", "--dry-run", "--policy", policyPath}
+	args := []string{"--json", "run", "--local", pkg, "--allow-unsigned", "--dry-run", "--policy", policyPath}
 	stdout1, stderr1, err := runCLI(t, strings.NewReader(""), args...)
 	if err != nil {
 		t.Fatalf("dry run: %v (stderr %q)", err, stderr1)
@@ -478,7 +478,7 @@ func TestRunRegistryDryRun(t *testing.T) {
 	fv := fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
 	fv.attMode = attSigned
 
-	args := []string{"--registry", fr.url(), "run", "acme/demo@1.0.0", "--dry-run", "--policy", policyPath}
+	args := []string{"--json", "--registry", fr.url(), "run", "acme/demo@1.0.0", "--dry-run", "--policy", policyPath}
 	stdout, stderr, err := runCLI(t, strings.NewReader(""), args...)
 	if err != nil {
 		t.Fatalf("registry dry run: %v (stderr %q)", err, stderr)
@@ -683,7 +683,7 @@ func TestRunInteractiveUsageGates(t *testing.T) {
 	_, _, err = runCLI(t, strings.NewReader(""), "run", "--local", fixture, "--allow-unsigned", "--yes", "--policy", pol, "--mode", "interactive", "--output-format", "json")
 	wantClassified(t, err, engine.ExitUsage)
 
-	stdout, stderr, err := runCLI(t, strings.NewReader(""), "run", "--local", fixture, "--allow-unsigned", "--yes", "--policy", pol, "--mode", "interactive", "--dry-run")
+	stdout, stderr, err := runCLI(t, strings.NewReader(""), "--json", "run", "--local", fixture, "--allow-unsigned", "--yes", "--policy", pol, "--mode", "interactive", "--dry-run")
 	if err != nil {
 		t.Fatalf("interactive dry run: %v\n%s", err, stderr)
 	}
@@ -692,7 +692,7 @@ func TestRunInteractiveUsageGates(t *testing.T) {
 	}
 	// Both modes declared, no flag, no terminal: autonomous, and the
 	// consent screen carries no interactive line.
-	_, stderr, err = runCLI(t, strings.NewReader(""), "run", "--local", fixture, "--allow-unsigned", "--yes", "--policy", pol, "--dry-run")
+	_, stderr, err = runCLI(t, strings.NewReader(""), "--json", "run", "--local", fixture, "--allow-unsigned", "--yes", "--policy", pol, "--dry-run")
 	if err != nil || !strings.Contains(stderr, "mode: autonomous") || strings.Contains(stderr, "interactive: you can talk") {
 		t.Errorf("default mode: %v\n%s", err, stderr)
 	}

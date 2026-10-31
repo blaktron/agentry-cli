@@ -154,10 +154,12 @@ func newRunCmd() *cobra.Command {
 			"Task input: --input FILE, else piped stdin; with no task (or an empty one) the\n" +
 			"agent is sent its own instruction and runs that. The result goes to stdout\n" +
 			"(--output-format text|json); reports the QuickAgent writes and the full\n" +
-			"receipts land in the output folder. Every failure class has its own exit\n" +
-			"code: 0 ok, 1 cli (interrupted, unknown adapter, intake), 2 usage,\n" +
-			"10 verify, 11 policy/secret, 12 compile, 13 gateway/docker, 14 agent, 15\n" +
-			"timeout, 16 budget, 17 output schema.\n\n" +
+			"receipts land in the output folder. When the run ends, a summary on stderr\n" +
+			"names its files, its duration, its cost where known and its receipts; a\n" +
+			"failure names its class and the cause, the receipts, and whether running\n" +
+			"it again is likely to help. agentry runs lists past runs, agentry open\n" +
+			"opens one's folder.\n\n" +
+			exitClassHelp() + "\n" +
 			"Run modes: --mode autonomous runs from the files and ends; --mode interactive\n" +
 			"opens a chat with the agent in this terminal under exactly the same controls\n" +
 			"(/add a file, /finish for the final result, /quit, /caps). A release that\n" +
@@ -176,8 +178,8 @@ func newRunCmd() *cobra.Command {
 			"and runner images. Later runs reuse the verified install, the plan and the\n" +
 			"images; an unsigned or local release needs --allow-unsigned on every run,\n" +
 			"an unscanned one --allow-unscanned. --prepare stops after that install\n" +
-			"step; --dry-run prints the\n" +
-			"compiled plan and touches no docker. --local DIR runs an unpublished\n" +
+			"step; --dry-run compiles the plan, says in words what would run and\n" +
+			"touches no docker (--json prints the plan itself). --local DIR runs an unpublished\n" +
 			"QuickAgent directory (treated as unsigned).\n\n" +
 			"For drivers (a hosted run's worker): AGENTRY_RUN_GRANT is sent as the\n" +
 			"X-Agentry-Run-Grant header on every request to the --registry host and\n" +
@@ -206,8 +208,11 @@ func newRunCmd() *cobra.Command {
 			}
 			opts.progress = &runProgress{stage: receipt.StagePolicy, ref: ref}
 			err := runRun(cmd, ref, opts)
-			if err != nil && opts.outputFormat == "json" && !opts.progress.printed {
-				printFailure(cmd.Context(), cmd, opts.progress, err)
+			if err != nil {
+				if opts.outputFormat == "json" && !opts.progress.printed {
+					printFailure(cmd.Context(), cmd, opts.progress, err)
+				}
+				err = reportRunFailure(cmd, opts.progress, err)
 			}
 			return err
 		},
@@ -229,7 +234,7 @@ func newRunCmd() *cobra.Command {
 	f.BoolVar(&opts.allowUnscanned, "allow-unscanned", false, "run a release the registry admitted without a scan (no findings, no report, no attestation)")
 	f.BoolVar(&opts.allowVulnerableMCP, "allow-vulnerable-mcp", false, "run even when the registry's gate rates a declared MCP server's advisory high or critical (recorded in the receipt)")
 	f.BoolVar(&opts.prepare, "prepare", false, "verify, compile, and install images, then stop without executing")
-	f.BoolVar(&opts.dryRun, "dry-run", false, "print the compiled run plan and exit (no docker required)")
+	f.BoolVar(&opts.dryRun, "dry-run", false, "say what the compiled run plan would run and exit (no docker required); with --json, print the plan itself")
 	f.BoolVar(&opts.plan, "plan", false, "preview for a client: compile the run plan and report the attestation, the consent a run would ask for and the refusal it would meet; asks nothing, records nothing but a first-use pin of the registry's keys (with --json, the machine-readable shape)")
 	f.StringVar(&opts.mode, "mode", "", "run mode: autonomous | interactive (default: the release's only mode; asked on a terminal when it declares both, autonomous otherwise)")
 	f.BoolVar(&opts.keepRunDir, "keep-run-dir", false, "keep the per-run scratch dir for debugging (secrets are still deleted)")
@@ -553,7 +558,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		return printRunPlan(cmd, plan, meta, m, mode, consent, integrity, planRefusals)
 	}
 	if opts.dryRun {
-		return printDryRun(cmd, plan, planDir)
+		return printDryRun(cmd, plan, planDir, opts)
 	}
 
 	// Where the run sends its result is chosen before anything is installed
@@ -702,6 +707,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	if err != nil {
 		return err
 	}
+	opts.progress.wrote(outDir)
 
 	budgets := plan.Budgets
 	if opts.timeout > 0 {
@@ -973,6 +979,34 @@ type runProgress struct {
 	meta    *installdir.Meta
 	ref     string
 	printed bool
+	// outDir is the run's output folder once it exists, where a failure
+	// report finds the receipts.
+	outDir string
+}
+
+// wrote records the output folder the run made.
+func (p *runProgress) wrote(dir string) {
+	if p != nil {
+		p.outDir = dir
+	}
+}
+
+// reportRunFailure explains a failed run on stderr in the exit-class table's
+// words and marks the error reported, so main prints nothing more. An error
+// of no class from before the run had an output folder (a flag that cannot
+// be parsed, a missing argument) is not a run that failed: it is returned as
+// it is, for main to print the usual way.
+func reportRunFailure(cmd *cobra.Command, p *runProgress, err error) error {
+	var ce *engine.ClassifiedError
+	classified := errors.As(err, &ce)
+	outDir := ""
+	if p != nil {
+		outDir = p.outDir
+	}
+	if !classified && outDir == "" && cmd.Context().Err() == nil {
+		return err
+	}
+	return reportFailure(cmd.ErrOrStderr(), err, cmd.Context().Err() != nil, outDir)
 }
 
 // at moves the run into a step.
@@ -1083,13 +1117,18 @@ func installedChanges(e *installdir.ChangedError) *receipt.InstalledChanges {
 
 // printEnvelope writes the run result per --output-format. Text mode
 // prints only the agent's result (Unix composition); the envelope is
-// always in the output folder either way.
+// always in the output folder either way. A finished run's summary goes to
+// stderr under both formats; a failed run's report is printed by the
+// command that returns its error.
 func printEnvelope(cmd *cobra.Command, env *receipt.Envelope, format string) {
 	out := cmd.OutOrStdout()
 	if format == "json" {
 		b, err := env.Marshal()
 		if err == nil {
 			_, _ = out.Write(b)
+		}
+		if env.Status == "ok" {
+			printRunSummary(cmd.ErrOrStderr(), env)
 		}
 		return
 	}
@@ -1101,8 +1140,9 @@ func printEnvelope(cmd *cobra.Command, env *receipt.Envelope, format string) {
 	} else {
 		_, _ = fmt.Fprintln(out, string(env.Result))
 	}
-	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "reports and receipts: %s\n", env.OutDir)
-	printDeliverySummary(cmd.ErrOrStderr(), env)
+	if env.Status == "ok" {
+		printRunSummary(cmd.ErrOrStderr(), env)
+	}
 }
 
 // namedInError keeps the refused inputs the error's own text names, and
@@ -1386,9 +1426,16 @@ func stampVulnerabilities(plan *spec.Plan, line string) {
 	plan.Enforcement["mcpServers.vulnerabilities"] = line
 }
 
-// printDryRun prints the compiled plan (deterministic, hashable,
-// printable) without touching docker.
-func printDryRun(cmd *cobra.Command, plan *spec.Plan, planDir string) error {
+// printDryRun says what the compiled plan would run, without touching
+// docker: in words on stdout, or under --json the plan itself (deterministic,
+// hashable), with its hash, folder and mode on stderr.
+func printDryRun(cmd *cobra.Command, plan *spec.Plan, planDir string, opts runOpts) error {
+	if !flags.jsonOut {
+		for _, line := range dryRunSummary(plan, planDir, opts) {
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), line)
+		}
+		return nil
+	}
 	b, err := plan.MarshalCanonical()
 	if err != nil {
 		return err

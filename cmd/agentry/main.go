@@ -51,7 +51,12 @@ func main() {
 		stop()
 	}()
 	if err := newRootCmd().ExecuteContext(ctx); err != nil {
-		_, _ = fmt.Fprintln(os.Stderr, "agentry: "+err.Error())
+		// A run failure the run command has already explained is not
+		// printed a second time.
+		var reported *reportedError
+		if !errors.As(err, &reported) {
+			_, _ = fmt.Fprintln(os.Stderr, "agentry: "+err.Error())
+		}
 		// `agentry run` classifies its failures so pipelines and
 		// cron can branch on the exit code; everything else keeps
 		// the traditional 1.
@@ -99,7 +104,7 @@ func newRootCmd() *cobra.Command {
 	root.PersistentFlags().StringVar(&flags.registry, "registry", "",
 		"registry base URL (default: "+envRegistry+", else config defaultRegistry, else "+defaultRegistryURL+")")
 	root.PersistentFlags().BoolVar(&flags.jsonOut, "json", false,
-		"machine-readable JSON output on stdout (search, info, verify, doctor, install, uninstall, list, builtins, validate, setup, connections, logout, report-design show, run --plan; login writes NDJSON lifecycle events); narration stays on stderr")
+		"machine-readable JSON output on stdout (search, info, verify, doctor, install, uninstall, list, builtins, validate, setup, connections, logout, report-design show, run --plan, run --dry-run, runs; login writes NDJSON lifecycle events); narration stays on stderr")
 
 	root.AddCommand(
 		newInitCmd(),
@@ -114,6 +119,8 @@ func newRootCmd() *cobra.Command {
 		newFilesCmd(),
 		newBrowserCmd(),
 		newRunCmd(),
+		newRunsCmd(),
+		newOpenCmd(),
 		newACPCmd(),
 		newDeliverCmd(),
 		newDestinationsCmd(),
