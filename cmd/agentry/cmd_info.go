@@ -1,6 +1,7 @@
 // `agentry info` and `agentry search` (discovery). search calls the real
 // full-text endpoint (GET /search) with its facet filters; info shows one
-// agent, its latest published version, and its capability contract.
+// agent, its latest published version, its capability contract, and how to
+// run it (cmd_info_run.go).
 package main
 
 import (
@@ -21,8 +22,16 @@ import (
 func newInfoCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "info <ns/name>",
-		Short: "Show a QuickAgent, its latest published version, and its capability contract",
-		Args:  cobra.ExactArgs(1),
+		Short: "Show a QuickAgent, its latest published version, its capability contract, and how to run it",
+		Long: "Show a QuickAgent, its latest published version and its capability contract,\n" +
+			"and how to run that version: the questions it asks before a run and how to\n" +
+			"answer each with --intake, the files it takes, the keys it declares and its\n" +
+			"publisher's guide.\n\n" +
+			"With --json the document has agent, latest and, when a version is published,\n" +
+			"run: intake (id, type, required, prompt, choices, personsOwn, answer), takes,\n" +
+			"inputView, secrets (name, optional), modes and guide (overview, prepare,\n" +
+			"files, task).",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runInfo(cmd, args[0])
 		},
@@ -111,6 +120,9 @@ func runInfo(cmd *cobra.Command, ref string) error {
 		switch {
 		case latestErr == nil:
 			doc["latest"] = latest
+			if m, err := manifestFromResolve(latest); err == nil {
+				doc["run"] = howToRun(m)
+			}
 		case transportFailure:
 			doc["latestError"] = latestErr.Error()
 		default:
@@ -182,6 +194,7 @@ func renderAgentInfo(out io.Writer, agent *apiclient.Agent, latest *apiclient.Re
 		for _, line := range capabilityLines(m.Contract()) {
 			_, _ = fmt.Fprintf(out, "    %s\n", line)
 		}
+		renderHowToRun(out, m, howToRun(m))
 		_, _ = fmt.Fprintf(out, "  install: agentry install %s/%s\n", agent.Namespace, agent.Name)
 	}
 }
