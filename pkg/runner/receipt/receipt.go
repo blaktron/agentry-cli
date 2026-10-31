@@ -31,7 +31,12 @@ type Envelope struct {
 	// harness, timeout, budget, outputSchema, blocked, cli): a client acts
 	// on the name, never on the number. Set by Marshal.
 	ExitClass string `json:"exitClass"`
-	Error     string `json:"error,omitempty"`
+	// ExitClassMeaning is the class's one-phrase meaning and RetryLikelyHelps
+	// its retry hint, both from the exit-class table (ExitClasses), so a
+	// reader shows the same words every client does. Set by Marshal.
+	ExitClassMeaning string `json:"exitClassMeaning"`
+	RetryLikelyHelps bool   `json:"retryLikelyHelps"`
+	Error            string `json:"error,omitempty"`
 	// Stage names the step a failed run stopped in, one word from a fixed list
 	// (the Stage constants), so a driver that may not keep the error's text (a
 	// hosted run's host keeps nothing the run could have written) can still say
@@ -549,39 +554,6 @@ func TextResult(s string) json.RawMessage {
 	return b
 }
 
-// ExitClassName names an exit code; the table mirrors engine's constants
-// (engine imports this package, so the names live here), and engine's tests
-// hold the two together.
-func ExitClassName(code int) string {
-	switch code {
-	case 0:
-		return "ok"
-	case 1:
-		return "cli"
-	case 2:
-		return "usage"
-	case 10:
-		return "verify"
-	case 11:
-		return "policy"
-	case 12:
-		return "compile"
-	case 13:
-		return "gateway"
-	case 14:
-		return "harness"
-	case 15:
-		return "timeout"
-	case 16:
-		return "budget"
-	case 17:
-		return "outputSchema"
-	case 18:
-		return "blocked"
-	}
-	return fmt.Sprintf("exit-%d", code)
-}
-
 // The steps of a run as Stage names them, in about the order a run meets them:
 // the policy read; the release verified and installed; its manifest read, the
 // adapter chosen and the plan compiled (compile); its capabilities consented
@@ -610,7 +582,8 @@ const (
 // Marshal renders the envelope for stdout and result.json, deriving the
 // exit class name and the result file's path from what is already set.
 func (e *Envelope) Marshal() ([]byte, error) {
-	e.ExitClass = ExitClassName(e.ExitCode)
+	class := ExitClassOf(e.ExitCode)
+	e.ExitClass, e.ExitClassMeaning, e.RetryLikelyHelps = class.Name, class.Meaning, class.RetryLikelyHelps
 	if e.OutDir != "" {
 		e.ResultFile = filepath.Join(e.OutDir, "result.json")
 	}

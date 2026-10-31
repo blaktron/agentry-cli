@@ -96,7 +96,7 @@ func TestSessionProtocolChangesNoPlan(t *testing.T) {
 	if err := policy.Save(pol, catalogued); err != nil {
 		t.Fatal(err)
 	}
-	base := []string{"run", "--local", fixture, "--allow-unsigned", "--yes", "--policy", pol, "--mode", "interactive", "--dry-run"}
+	base := []string{"--json", "run", "--local", fixture, "--allow-unsigned", "--yes", "--policy", pol, "--mode", "interactive", "--dry-run"}
 	plain, _, err := runCLI(t, strings.NewReader(""), base...)
 	if err != nil {
 		t.Fatal(err)

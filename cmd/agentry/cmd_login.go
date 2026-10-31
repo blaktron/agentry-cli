@@ -25,14 +25,22 @@ import (
 
 // openBrowser hands a URL to the system browser; tests replace it.
 var openBrowser = func(url string) error {
+	return systemOpen(url, "rundll32", "url.dll,FileProtocolHandler")
+}
+
+// systemOpen hands a URL or a path to the system's own opener: open on
+// macOS, xdg-open elsewhere, and on Windows the program and arguments given
+// (a URL and a folder have different handlers there). The target is always
+// one argument, never part of a command line.
+func systemOpen(target string, windows ...string) error {
 	var c *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
-		c = exec.Command("open", url)
+		c = exec.Command("open", target)
 	case "windows":
-		c = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+		c = exec.Command(windows[0], append(windows[1:], target)...) //nolint:gosec // a fixed program with the target as its one argument
 	default:
-		c = exec.Command("xdg-open", url)
+		c = exec.Command("xdg-open", target)
 	}
 	return c.Start()
 }
