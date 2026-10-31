@@ -1,0 +1,76 @@
+{
+  "exitClasses": [
+    {
+      "code": 0,
+      "name": "ok",
+      "meaning": "the run finished and its result was collected",
+      "retryLikelyHelps": false
+    },
+    {
+      "code": 1,
+      "name": "cli",
+      "meaning": "the CLI itself could not finish the run: it was interrupted, or something it needed was missing",
+      "retryLikelyHelps": false
+    },
+    {
+      "code": 2,
+      "name": "usage",
+      "meaning": "the command cannot work as asked; change the flags or how it is called",
+      "retryLikelyHelps": false
+    },
+    {
+      "code": 10,
+      "name": "verify",
+      "meaning": "the release could not be verified: its digest, signature or installed files do not match",
+      "retryLikelyHelps": false
+    },
+    {
+      "code": 11,
+      "name": "policy",
+      "meaning": "refused by the operator policy or a missing secret before the agent started",
+      "retryLikelyHelps": false
+    },
+    {
+      "code": 12,
+      "name": "compile",
+      "meaning": "the QuickAgent's manifest and the policy could not be compiled into a run plan",
+      "retryLikelyHelps": false
+    },
+    {
+      "code": 13,
+      "name": "gateway",
+      "meaning": "the container engine or the tool gateway could not be started or reached",
+      "retryLikelyHelps": true
+    },
+    {
+      "code": 14,
+      "name": "harness",
+      "meaning": "the agent's harness failed or could not reach its model",
+      "retryLikelyHelps": true
+    },
+    {
+      "code": 15,
+      "name": "timeout",
+      "meaning": "the run's time budget ran out",
+      "retryLikelyHelps": false
+    },
+    {
+      "code": 16,
+      "name": "budget",
+      "meaning": "a turn, cost or usage budget ran out before the agent finished",
+      "retryLikelyHelps": false
+    },
+    {
+      "code": 17,
+      "name": "outputSchema",
+      "meaning": "the agent's final answer did not match the declared output schema",
+      "retryLikelyHelps": true
+    },
+    {
+      "code": 18,
+      "name": "blocked",
+      "meaning": "the agent could not do the task with what the run had",
+      "retryLikelyHelps": false
+    }
+  ]
+}

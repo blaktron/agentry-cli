@@ -48,8 +48,8 @@ exec:
     jq: jq
 EOF
 
-run_dry() { # fixture -> plan json on stdout
-  "$AGENTRY" run --local "testdata/runner/$1" --dry-run --allow-unsigned --yes --policy "$POLICY" 2>/dev/null
+run_dry() { # fixture -> plan json on stdout (--json; without it --dry-run says the plan in words)
+  "$AGENTRY" --json run --local "testdata/runner/$1" --dry-run --allow-unsigned --yes --policy "$POLICY" 2>/dev/null
 }
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -91,7 +91,7 @@ note "wildcard refused (exit 11)"
 
 # --- and allowed when policy says so ----------------------------------------
 sed 's/allowWildcardEgress: false/allowWildcardEgress: true/' "$POLICY" >"$WORK/policy-wild.yaml"
-WILD=$("$AGENTRY" run --local testdata/runner/wildcard --dry-run --allow-unsigned --yes --policy "$WORK/policy-wild.yaml" 2>/dev/null) \
+WILD=$("$AGENTRY" --json run --local testdata/runner/wildcard --dry-run --allow-unsigned --yes --policy "$WORK/policy-wild.yaml" 2>/dev/null) \
   || fail "wildcard: allowing policy still refused"
 grep -q 'UNRESTRICTED' <<<"$WILD" || fail "wildcard: enforcement must disclose itself"
 note "wildcard allowed by policy, loudly disclosed"
