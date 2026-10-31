@@ -179,3 +179,7 @@ agentry/assistant@1.15.3 sha256:c4bb112ce314ee35dfdaefe4d1d958c3e51e794659991eea
 agentry/assistant@1.15.4 sha256:9064af821a4556b294c62c959286768be9e8cf296baf75f74a323b30ec5af814
 # 1.15.5, over 1.15.4: calendar-feeds-setup says Agentry does not control the sign-in window, which closes by itself once the calendar downloads and is otherwise closed by the person (the browser quit on a Mac), and what the two ways a sign-in ends without one say.
 agentry/assistant@1.15.5 sha256:1e997c55567962920a06b433c607c5cb42c740fe1868f5bacba8bc0b40fc79c8
+# 1.16.0, over 1.15.5: the skill quickagent-use, which has it work out how to run a QuickAgent from what quickagent_show says (its questions and how to answer each, the files it takes, the keys it needs, its publisher's guide), answer a repository question with the address instead of asking for a download, ask only for what is missing, run it with answers and report run_result; the instruction sends every run and schedule to it, and the README names it.
+agentry/assistant@1.16.0 sha256:d095d45801009a48cd6c8145f8dcbdc4b50d573e7293db38881a24da1548d469
+# 1.1.0, over 1.0.2: Agentry Helper's instruction has it fit a request to what quickagent_show says about a QuickAgent's questions, files and guide, answer the questions by id, ask only for what is missing, and report run_result's outcome; its README says so.
+agentry/main@1.1.0 sha256:08f43b24d9c02ec1bff2aed94290afdd6bef3af3302f65c55dfc25c32d7a85ff

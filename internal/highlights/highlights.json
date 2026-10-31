@@ -1,6 +1,13 @@
 {
   "versions": [
     {
+      "version": "0.6.1010",
+      "highlights": [
+        "The Assistant and Agentry Helper work out how to run a QuickAgent from its own questions, files and guide.",
+        "Asked to run a QuickAgent on a repository, they give it the repository's address instead of asking you to download it."
+      ]
+    },
+    {
       "version": "0.6.1009",
       "highlights": [
         "Runs use the newest Docker Agent, MCP gateway and Codex, and every runtime image is rebuilt with current fixes.",

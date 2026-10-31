@@ -2,8 +2,9 @@
 
 Agentry Helper is Agentry's own assistant. It lives in a card on Home in Agentry
 Desktop and helps you with Agentry: it finds QuickAgents in the registry,
-installs and runs them on files you put in your mainshare folder, schedules
-them, opens the right part of Settings, and answers from Agentry's docs.
+installs and runs them on what you ask (a repository's address, files you
+put in your mainshare folder), working out from each QuickAgent's own
+questions and guide what to give it, schedules them, opens the right part of Settings, and answers from Agentry's docs.
 
 ## This is the package that runs
 
@@ -24,7 +25,9 @@ The manifest declares no network access, no file access, no commands and no
 secret. When Agentry Desktop runs Agentry Helper, it gives it:
 
 - **Agentry's own tools, through the app link**: searching the registry,
-  showing, installing and running a QuickAgent, reading a run's result,
+  showing a QuickAgent and how to run it (its questions, the files it takes,
+  the keys it needs and its publisher's guide), installing it, running it
+  with answers to its questions, reading a run's result,
   listing what is installed, adding, listing, pausing and removing a
   schedule, opening a section of Settings, and reading a page of the docs.
   Each call is answered by the application with its own operations, and
