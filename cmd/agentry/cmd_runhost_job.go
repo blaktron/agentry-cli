@@ -9,22 +9,28 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/blaktron/agentry-cli/pkg/runhost"
 	"github.com/blaktron/agentry-cli/pkg/runhost/job"
 	"github.com/blaktron/agentry-cli/pkg/runhost/output"
+	"github.com/blaktron/agentry-cli/pkg/runhost/payload"
 	"github.com/blaktron/agentry-cli/pkg/runhost/store"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
+	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/pkg/trust"
 	pkgarchive "github.com/blaktron/agentry/pkg/archive"
 	"github.com/blaktron/agentry/pkg/manifest"
@@ -43,9 +49,14 @@ var (
 	runhostStoreDir    = filepath.Join(runhost.StateDir, "store", "releases")
 	runhostStoreKey    = filepath.Join(runhost.StateDir, "store", store.KeyFile)
 	runhostOutputKeep  = 7 * 24 * time.Hour
+	// runhostCancelGrace is how long an interrupted run has to tear down
+	// before it is killed.
+	runhostCancelGrace = 30 * time.Second
 )
 
 const (
+	// runhostFilesDir is where a job's files are laid down in its directory.
+	runhostFilesDir    = "files"
 	runhostSealedName  = "output.sealed"
 	runhostJobRecord   = "job.json"
 	runhostMaxEnvelope = 16 << 20
@@ -111,12 +122,45 @@ func runhostJobVerb(ctx context.Context, _ runhost.Request, in io.Reader, fw *ru
 	if err := runhostLayDown(home, meta, archive); err != nil {
 		return engine.ExitVerify, err
 	}
-	_ = fw.Out("%s", runhostVerifiedLine(meta))
-	code, envelope, err := runhostRun(ctx, j, devices, fw)
+	dir, err := runhostJobDir(j)
 	if err != nil {
 		return engine.ExitCLI, err
 	}
+	// The run's files follow the release on the stream; they are laid down
+	// in the job's own directory, which keeps nothing but the sealed output
+	// once the run ends.
+	if j.Run.Payload != nil {
+		if err := payload.Unpack(in, j.Run.Payload.Size, j.Run.Payload.Digest, filepath.Join(dir, runhostFilesDir)); err != nil {
+			_ = os.RemoveAll(dir)
+			return engine.ExitUsage, err
+		}
+	}
+	_ = fw.Out("%s", runhostVerifiedLine(meta))
+	code, envelope, err := runhostRun(ctx, j, dir, home, devices, fw)
+	if err != nil {
+		// A job that sealed nothing keeps nothing.
+		if _, serr := os.Stat(filepath.Join(dir, runhostSealedName)); serr != nil {
+			_ = os.RemoveAll(dir)
+		}
+		if code == 0 {
+			code = engine.ExitCLI
+		}
+		return code, err
+	}
 	return code, fw.Result(runhostJobResult{Job: j.ID, ExitCode: code, Envelope: envelope})
+}
+
+// runhostJobDir makes the job's own directory, owner-only, refusing a job
+// whose id is already taken.
+func runhostJobDir(j *job.Job) (string, error) {
+	if err := os.MkdirAll(runhostJobsDir, 0o700); err != nil {
+		return "", err
+	}
+	dir := filepath.Join(runhostJobsDir, j.ID)
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		return "", fmt.Errorf("job %s: %w", j.ID, err)
+	}
+	return dir, nil
 }
 
 // runhostVerifiedLine says what the runhost checked of the release, and
@@ -243,13 +287,16 @@ func runhostLayDown(home string, meta *installdir.Meta, archive []byte) error {
 
 // runhostChildEnv is the run's environment: the service's own, less every
 // variable that would make the run a hosted one or hand it a hosted
-// credential, plus the model's key under the policy's variable.
+// credential, and less any the job's own credentials travel in, plus the
+// model's key under the policy's variable and the job's credentials under
+// theirs (runhostCredentialEnv).
 func runhostChildEnv(base []string, j *job.Job) []string {
 	drop := map[string]bool{envHosted: true, envRunGrant: true, envJobToken: true, trust.EnvPinRegistry: true}
 	var out []string
 	for _, kv := range base {
 		k, _, _ := strings.Cut(kv, "=")
-		if drop[k] || strings.HasPrefix(k, "AGENTRY_HOSTED") || (j.Run.Model.APIKeyEnv != "" && k == j.Run.Model.APIKeyEnv) {
+		if drop[k] || strings.HasPrefix(k, "AGENTRY_HOSTED") || strings.HasPrefix(k, "AGENTRY_DEST_") || strings.HasPrefix(k, runhostSourceTokenPrefix) ||
+			(j.Run.Model.APIKeyEnv != "" && k == j.Run.Model.APIKeyEnv) {
 			continue
 		}
 		out = append(out, kv)
@@ -257,15 +304,97 @@ func runhostChildEnv(base []string, j *job.Job) []string {
 	if j.Run.Model.APIKeyEnv != "" && j.Run.ModelKey != "" {
 		out = append(out, j.Run.Model.APIKeyEnv+"="+j.Run.ModelKey)
 	}
+	return append(out, runhostCredentialEnv(j)...)
+}
+
+// runhostSourceTokenPrefix names the variables an input source's token
+// reaches the run in; the run hands each to its source's fetch step alone.
+const runhostSourceTokenPrefix = "AGENTRY_SOURCE_TOKEN_"
+
+// runhostSourceTokenEnv is the variable the token of the source answering
+// question id travels in.
+func runhostSourceTokenEnv(id string) string { return runhostSourceTokenPrefix + strings.ToUpper(id) }
+
+// runhostCredentialEnv is the job's credentials as the run's environment
+// takes them: each input source's token, and each destination's credentials
+// under the names its destinations file gives (destinationEnv). The run
+// takes the destinations' out of its own environment as it reads them.
+func runhostCredentialEnv(j *job.Job) []string {
+	var out []string
+	for _, id := range slices.Sorted(maps.Keys(j.Run.SourceTokens)) {
+		out = append(out, runhostSourceTokenEnv(id)+"="+j.Run.SourceTokens[id])
+	}
+	for i, d := range j.Run.Destinations {
+		secret, auth, key := destinationEnv(i)
+		out = append(out, secret+"="+d.Secret)
+		if d.Authorization != "" {
+			out = append(out, auth+"="+d.Authorization)
+		}
+		if d.AccessKeyID != "" {
+			out = append(out, key+"="+d.AccessKeyID)
+		}
+	}
 	return out
 }
 
+// destinationEnv names the variables of the i-th destination's signing
+// secret (a bucket's secret access key), Authorization value and access key
+// id.
+func destinationEnv(i int) (secret, auth, key string) {
+	return fmt.Sprintf("AGENTRY_DEST_SECRET_%d", i), fmt.Sprintf("AGENTRY_DEST_AUTH_%d", i), fmt.Sprintf("AGENTRY_DEST_KEY_%d", i)
+}
+
+// runhostStaged is what a job's directory holds for its run, each path
+// empty when the job carries none of it.
+type runhostStaged struct {
+	dir, files                        string
+	policy, task, out, secrets        string
+	intake, connections, destinations string
+}
+
 // runhostRunArgs is the run's argv after the CLI's own path: a typed list,
-// never a shell line.
-func runhostRunArgs(j *job.Job, policyFile, taskFile, outDir string) []string {
-	args := []string{"run", j.Release.Ref(), "--installed", "--pin", j.Release.Digest,
-		"--policy", policyFile, "--input", taskFile, "--out", outDir,
+// never a shell line. The registry is the release's, which the run asks of
+// its declared servers' advisories and nothing else: the release itself is
+// the one laid down at --pin.
+func runhostRunArgs(j *job.Job, st runhostStaged) []string {
+	args := []string{"--registry", j.Release.Registry, "run", j.Release.Ref(), "--installed", "--pin", j.Release.Digest,
+		"--policy", st.policy, "--input", st.task, "--out", st.out,
 		"--output-format", "json", "--yes", "--mode", "autonomous"}
+	file := func(member string) string { return filepath.Join(st.files, filepath.FromSlash(member)) }
+	for _, name := range j.Run.Inputs {
+		args = append(args, "--file", file(name))
+	}
+	for _, name := range j.Run.Knowledge {
+		args = append(args, "--knowledge", file(name))
+	}
+	if j.Run.Voice != "" {
+		args = append(args, "--voice-file", file(j.Run.Voice))
+	} else {
+		args = append(args, "--no-voice")
+	}
+	switch {
+	case j.Run.ReportDesign != "":
+		args = append(args, "--report-design", file(j.Run.ReportDesign))
+	case j.Run.ReportTheme != "":
+		args = append(args, "--report-theme", j.Run.ReportTheme)
+	}
+	if st.intake != "" {
+		args = append(args, "--intake-file", st.intake)
+	}
+	for _, id := range slices.Sorted(maps.Keys(j.Run.SourceTokens)) {
+		args = append(args, "--intake-token", id+"="+runhostSourceTokenEnv(id))
+	}
+	if st.connections != "" {
+		args = append(args, "--connections-file", st.connections)
+	}
+	if st.destinations != "" {
+		args = append(args, "--destinations-file", st.destinations)
+	} else {
+		args = append(args, "--no-destination")
+	}
+	if j.Run.AllowVulnerableMCP {
+		args = append(args, "--allow-vulnerable-mcp")
+	}
 	if j.Run.AllowUnsigned {
 		args = append(args, "--allow-unsigned")
 	}
@@ -284,39 +413,39 @@ func runhostRunArgs(j *job.Job, policyFile, taskFile, outDir string) []string {
 	return args
 }
 
-// runhostRun runs the job's release in a job directory of its own, streams
-// the run's narration, seals its output and leaves nothing else behind.
-func runhostRun(ctx context.Context, j *job.Job, devices map[string][]byte, fw *runhost.FrameWriter) (int, json.RawMessage, error) {
-	if err := os.MkdirAll(runhostJobsDir, 0o700); err != nil {
-		return 0, nil, err
-	}
-	dir := filepath.Join(runhostJobsDir, j.ID)
-	if err := os.Mkdir(dir, 0o700); err != nil {
-		return 0, nil, fmt.Errorf("job %s: %w", j.ID, err)
-	}
-	outDir := filepath.Join(dir, "out")
-	policyFile := filepath.Join(dir, "policy.yaml")
-	taskFile := filepath.Join(dir, "task.txt")
-	// Everything but the sealed output and the job's record goes, on every
-	// path out of here; a CLI killed meanwhile is swept at the next start.
+// runhostRun runs the job's release in its job directory, streams the run's
+// narration, seals its output and leaves nothing else behind: the secrets
+// file, the intake, connections and destinations files, the run's files and
+// any file the CLI left holding one of the job's credentials go on every
+// path, and what a killed service left is swept at its next start.
+func runhostRun(ctx context.Context, j *job.Job, dir, home string, devices map[string][]byte, fw *runhost.FrameWriter) (int, json.RawMessage, error) {
+	st := runhostStaged{dir: dir, files: filepath.Join(dir, runhostFilesDir),
+		policy: filepath.Join(dir, "policy.yaml"), task: filepath.Join(dir, "task.txt"),
+		out: filepath.Join(dir, "out"), secrets: filepath.Join(dir, "secrets.env")}
+	values := runhostJobValues(j)
 	defer func() {
-		for _, p := range []string{outDir, policyFile, taskFile} {
-			_ = os.RemoveAll(p)
+		for _, p := range []string{st.secrets, st.intake, st.connections, st.destinations, st.files, st.out, st.policy, st.task} {
+			if p != "" {
+				_ = os.RemoveAll(p)
+			}
 		}
+		dropRunCredentials(home, values)
 	}()
-	if err := runhostJobPolicy(policyFile, j); err != nil {
-		return 0, nil, err
-	}
-	if err := os.WriteFile(taskFile, []byte(j.Run.Task), 0o600); err != nil {
-		return 0, nil, err
+	if err := runhostStage(j, &st); err != nil {
+		return engine.ExitUsage, nil, err
 	}
 	self, err := runhostCLI()
 	if err != nil {
 		return 0, nil, err
 	}
-	cmd := exec.CommandContext(ctx, self, runhostRunArgs(j, policyFile, taskFile, outDir)...) //nolint:gosec // the service's own CLI, a typed argv
+	cmd := exec.CommandContext(ctx, self, runhostRunArgs(j, st)...) //nolint:gosec // the service's own CLI, a typed argv
 	cmd.Env = runhostChildEnv(os.Environ(), j)
 	cmd.Dir = dir
+	// A dropped session interrupts the run, which tears its containers down
+	// as a local run's interrupt does, and is killed if it has not after the
+	// grace.
+	cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
+	cmd.WaitDelay = runhostCancelGrace
 	var stdout limitedBuffer
 	stdout.max = runhostMaxEnvelope
 	cmd.Stdout = &stdout
@@ -331,7 +460,7 @@ func runhostRun(ctx context.Context, j *job.Job, devices map[string][]byte, fw *
 	sc := bufio.NewScanner(stderr)
 	sc.Buffer(make([]byte, 64<<10), 1<<20)
 	for sc.Scan() {
-		_ = fw.Out("%s", maskKey(sc.Text(), j.Run.ModelKey))
+		_ = fw.Out("%s", maskValues(sc.Text(), values))
 	}
 	werr := cmd.Wait()
 	code := 0
@@ -342,7 +471,7 @@ func runhostRun(ctx context.Context, j *job.Job, devices map[string][]byte, fw *
 	case werr != nil:
 		return 0, nil, werr
 	}
-	if err := runhostSeal(dir, outDir, j, devices); err != nil {
+	if err := runhostSeal(dir, st.out, j, devices); err != nil {
 		return 0, nil, fmt.Errorf("seal the run's output: %w", err)
 	}
 	done := runhostJobDone{Job: j.ID, Device: j.Device, Ref: j.Release.Ref(), Digest: j.Release.Digest, ExitCode: code, FinishedAt: time.Now().UTC().Format(time.RFC3339)}
@@ -350,24 +479,218 @@ func runhostRun(ctx context.Context, j *job.Job, devices map[string][]byte, fw *
 	if err := os.WriteFile(filepath.Join(dir, runhostJobRecord), b, 0o600); err != nil {
 		return 0, nil, err
 	}
-	envelope := []byte(maskKey(string(bytes.TrimSpace(stdout.Bytes())), j.Run.ModelKey))
+	envelope := []byte(maskValues(string(bytes.TrimSpace(stdout.Bytes())), values))
 	if !json.Valid(envelope) {
 		envelope = nil
 	}
 	return code, envelope, nil
 }
 
-// maskKey is s with every occurrence of key masked.
-func maskKey(s, key string) string {
-	if key == "" {
-		return s
+// maskValues is s with every occurrence of each value masked, the longest
+// first, so a value that holds another is masked whole.
+func maskValues(s string, values []string) string {
+	for _, v := range values {
+		if v != "" {
+			s = strings.ReplaceAll(s, v, "***")
+		}
 	}
-	return strings.ReplaceAll(s, key, "***")
+	return s
+}
+
+// runhostJobValues are the job's credentials, every value the run's
+// narration and envelope are masked of: the model key, the secrets, the
+// sources' tokens, the connections' tokens and the destinations'
+// credentials, longest first.
+func runhostJobValues(j *job.Job) []string {
+	r := j.Run
+	values := []string{r.ModelKey}
+	for _, v := range r.Secrets {
+		values = append(values, v)
+	}
+	for _, v := range r.SourceTokens {
+		values = append(values, v)
+	}
+	for _, c := range r.Connections {
+		values = append(values, c.AccessToken)
+	}
+	for _, d := range r.Destinations {
+		values = append(values, d.Secret, d.Authorization, d.AccessKeyID)
+	}
+	values = slices.DeleteFunc(values, func(v string) bool { return len(v) < 4 })
+	slices.SortFunc(values, func(a, b string) int { return len(b) - len(a) })
+	return slices.Compact(values)
+}
+
+// runhostStage writes what the job's run reads, each file owner-only and
+// created new: the task, the secrets file the job's policy names as its
+// secret source (written even when empty, so no declared secret resolves
+// from the service's own environment), the intake answers, the connections
+// and the destinations, and the policy.
+func runhostStage(j *job.Job, st *runhostStaged) error {
+	if err := writeNewFile(st.task, []byte(j.Run.Task)); err != nil {
+		return err
+	}
+	var env strings.Builder
+	for _, name := range slices.Sorted(maps.Keys(j.Run.Secrets)) {
+		env.WriteString(name + "=" + j.Run.Secrets[name] + "\n")
+	}
+	if err := writeNewFile(st.secrets, []byte(env.String())); err != nil {
+		return err
+	}
+	if len(j.Run.Intake) > 0 || len(j.Run.IntakeFiles) > 0 {
+		answers := maps.Clone(j.Run.Intake)
+		if answers == nil {
+			answers = map[string]string{}
+		}
+		for id, member := range j.Run.IntakeFiles {
+			answers[id] = filepath.Join(st.files, filepath.FromSlash(member))
+		}
+		st.intake = filepath.Join(st.dir, "intake.json")
+		if err := writeNewJSON(st.intake, answers); err != nil {
+			return err
+		}
+	}
+	if len(j.Run.Connections) > 0 {
+		st.connections = filepath.Join(st.dir, "connections.json")
+		if err := writeNewJSON(st.connections, j.Run.Connections); err != nil {
+			return err
+		}
+	}
+	if len(j.Run.Destinations) > 0 {
+		type entry struct {
+			Name             string `json:"name"`
+			Kind             string `json:"kind"`
+			URL              string `json:"url,omitempty"`
+			Bucket           string `json:"bucket,omitempty"`
+			Prefix           string `json:"prefix,omitempty"`
+			Region           string `json:"region,omitempty"`
+			Endpoint         string `json:"endpoint,omitempty"`
+			SecretEnv        string `json:"secretEnv"`
+			AccessKeyIDEnv   string `json:"accessKeyIdEnv,omitempty"`
+			AuthorizationEnv string `json:"authorizationEnv,omitempty"`
+		}
+		var doc struct {
+			Destinations []entry `json:"destinations"`
+		}
+		for i, d := range j.Run.Destinations {
+			secret, auth, key := destinationEnv(i)
+			e := entry{Name: d.Name, Kind: d.Kind, URL: d.URL, Bucket: d.Bucket, Prefix: d.Prefix, Region: d.Region, Endpoint: d.Endpoint, SecretEnv: secret}
+			if d.Authorization != "" {
+				e.AuthorizationEnv = auth
+			}
+			if d.AccessKeyID != "" {
+				e.AccessKeyIDEnv = key
+			}
+			doc.Destinations = append(doc.Destinations, e)
+		}
+		st.destinations = filepath.Join(st.dir, "destinations.json")
+		if err := writeNewJSON(st.destinations, doc); err != nil {
+			return err
+		}
+	}
+	return runhostJobPolicy(st.policy, st.secrets, j)
+}
+
+// writeNewFile writes data to a new file only its owner can read, never
+// through a link and never over a file already there.
+func writeNewFile(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY|syscall.O_NOFOLLOW, 0o600) //nolint:gosec // the job's own directory
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		_ = os.Remove(path)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(path)
+		return err
+	}
+	return nil
+}
+
+func writeNewJSON(path string, v any) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	return writeNewFile(path, b)
+}
+
+// runCredentialFiles are the files under a run's configuration a local run
+// writes a credential into for its containers, and deletes at its teardown:
+// the gateway's secrets file and the remote servers' connection folders.
+// A CLI killed past its grace never reaches its teardown.
+func runCredentialFiles(home string) []string {
+	cfgs, _ := filepath.Glob(filepath.Join(installdir.AgentsRoot(home), "*", "*", "*", "runs", "*", "cfg"))
+	var out []string
+	for _, cfg := range cfgs {
+		out = append(out, filepath.Join(cfg, "gateway", "secrets.env"), filepath.Join(cfg, spec.ConnectionsDir))
+	}
+	return out
+}
+
+// dropRunCredentials deletes each credential file a run left under the
+// runner home that holds one of values: the CLI deletes them at its
+// teardown, which a killed CLI never reaches. Another job's are left alone.
+func dropRunCredentials(home string, values []string) {
+	if len(values) == 0 {
+		return
+	}
+	holds := func(p string) bool {
+		f, err := os.OpenFile(p, os.O_RDONLY|syscall.O_NOFOLLOW, 0) //nolint:gosec // under the runner home, the CLI's own layout
+		if err != nil {
+			return false
+		}
+		raw, err := io.ReadAll(io.LimitReader(f, 1<<20))
+		_ = f.Close()
+		if err != nil {
+			return false
+		}
+		for _, v := range values {
+			if bytes.Contains(raw, []byte(v)) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, p := range runCredentialFiles(home) {
+		fi, err := os.Lstat(p)
+		switch {
+		case err != nil:
+		case fi.Mode().IsRegular():
+			if holds(p) {
+				_ = os.Remove(p)
+			}
+		case fi.IsDir():
+			found := false
+			_ = filepath.WalkDir(p, func(q string, d fs.DirEntry, err error) error {
+				if err == nil && d.Type().IsRegular() && holds(q) {
+					found = true
+					return fs.SkipAll
+				}
+				return nil
+			})
+			if found {
+				_ = os.RemoveAll(p)
+			}
+		}
+	}
+}
+
+// sweepRunCredentials deletes every credential file a run left under the
+// runner home: the service's start, when no job is running.
+func sweepRunCredentials(home string) {
+	for _, p := range runCredentialFiles(home) {
+		_ = os.RemoveAll(p)
+	}
 }
 
 // runhostJobPolicy writes the job's policy: the runhost's own, with the
-// device's model, whose key the run reads from its environment.
-func runhostJobPolicy(file string, j *job.Job) error {
+// device's model, whose key the run reads from its environment, and the
+// job's secrets file as its secret source.
+func runhostJobPolicy(file, secrets string, j *job.Job) error {
 	path, err := policy.DefaultPath()
 	if err != nil {
 		return err
@@ -382,6 +705,7 @@ func runhostJobPolicy(file string, j *job.Job) error {
 		return fmt.Errorf("the runhost's policy runs containers under %q and the gateway under %q, not %s and %s: run agentry runhost add again, which repairs it", pol.Docker.Runtime, pol.Docker.GatewayRuntime, runhost.RunscRuntime, runhost.RunscUDSRuntime)
 	}
 	pol.Model = j.Run.Model.Policy()
+	pol.SecretSource = policy.SecretSource{Mode: "envFile", EnvFile: secrets}
 	if err := pol.Validate(); err != nil {
 		return fmt.Errorf("the run's model on this runhost: %w", err)
 	}

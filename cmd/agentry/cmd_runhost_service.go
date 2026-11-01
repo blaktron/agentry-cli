@@ -82,6 +82,9 @@ func runRunhostService(cmd *cobra.Command) error {
 	// No job runs before the service listens, so what a killed job left
 	// behind is swept now, and finished outputs past their keep hourly.
 	sweepRunhostJobs(time.Now(), true)
+	if home, err := runnerHome(); err == nil {
+		sweepRunCredentials(home)
+	}
 	go func() {
 		t := time.NewTicker(time.Hour)
 		defer t.Stop()
@@ -150,7 +153,7 @@ func readRunhostStatus() (runhostStatus, error) {
 	st := runhostStatus{
 		Name: cfg.Name, Version: version.Version, Arch: runtime.GOARCH, OS: osPretty(), GVisor: cfg.GVisor,
 		Owner: cfg.Owner, UnsafeMode: cfg.UnsafeMode, Devices: []runhostDevice{},
-		Capabilities: map[string]bool{"runs": true, "sessions": false, "schedules": false},
+		Capabilities: map[string]bool{"runs": true, "secrets": true, "files": true, "connections": true, "destinations": true, "sessions": false, "schedules": false},
 	}
 	for _, d := range devs.Devices {
 		st.Devices = append(st.Devices, runhostDevice{ID: d.ID, Label: d.Label, PairedAt: d.PairedAt})

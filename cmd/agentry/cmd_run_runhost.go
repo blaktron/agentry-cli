@@ -18,6 +18,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runhost"
 	"github.com/blaktron/agentry-cli/pkg/runhost/job"
 	"github.com/blaktron/agentry-cli/pkg/runhost/output"
+	"github.com/blaktron/agentry-cli/pkg/runhost/payload"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
@@ -44,22 +45,16 @@ func runOnUnsupported(opts runOpts) string {
 		return "--plan, --dry-run and --prepare"
 	case opts.sessionProtocol, opts.mode == string(manifest.ModeInteractive):
 		return "an interactive run"
-	case len(opts.files) > 0, len(opts.knowledge) > 0, opts.voice, opts.voiceFile != "":
-		return "--file, --knowledge and --voice"
-	case len(opts.intake) > 0, len(opts.intakeToken) > 0:
-		return "--intake"
-	case len(opts.destinations) > 0, opts.destinationsFile != "", opts.deliverTo != "":
-		return "--destination and --deliver-to"
+	case opts.destinationsFile != "":
+		return "--destinations-file (a runhost takes this device's saved destinations)"
 	case opts.connectionsFile != "", opts.reviewInputs != "", opts.eventsPath != "":
 		return "--connections-file, --review-inputs and --events"
-	case opts.reportDesign != "", opts.reportTheme != "":
-		return "--report-design and --report-theme"
-	case opts.keepProfile != "", opts.reconfigureProfile:
-		return "the MCP profile flags"
 	case opts.adapterName != "":
 		return "--adapter (a runhost runs its own container harness)"
-	case opts.keepRunDir, opts.allowVulnerableMCP:
-		return "--keep-run-dir and --allow-vulnerable-mcp"
+	case opts.keepRunDir:
+		return "--keep-run-dir"
+	case len(opts.hostFlags.key) > 0, len(opts.hostFlags.password) > 0, len(opts.hostFlags.passphrase) > 0, len(opts.hostFlags.sudo) > 0, len(opts.hostFlags.pins) > 0:
+		return "the target host flags"
 	}
 	return ""
 }
@@ -67,15 +62,8 @@ func runOnUnsupported(opts runOpts) string {
 // runOnRefusedRelease says what a release declares that a run on a runhost
 // does not carry yet.
 func runOnRefusedRelease(m *manifest.Manifest) string {
-	switch {
-	case len(m.Capabilities.Secrets) > 0 || len(m.Capabilities.OptionalSecrets) > 0:
-		return "secrets"
-	case len(m.Intake) > 0:
-		return "intake questions"
-	case len(m.Capabilities.TargetHosts) > 0:
+	if len(m.Capabilities.TargetHosts) > 0 {
 		return "target hosts"
-	case len(m.Capabilities.MCPServers) > 0:
-		return "MCP servers"
 	}
 	return ""
 }
@@ -156,6 +144,16 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	if err != nil {
 		return engine.Classify(engine.ExitVerify, err)
 	}
+	opts.progress.at(receipt.StageIntake)
+	carried, err := runOnCarry(cmd, home, meta, m, pol, opts)
+	if err != nil {
+		return err
+	}
+	defer carried.done()
+	files, err := carried.pack()
+	if err != nil {
+		return err
+	}
 	task, err := io.ReadAll(io.LimitReader(runTask(cmd, opts), job.MaxDocument/2+1))
 	if err != nil {
 		return engine.Classify(engine.ExitUsage, err)
@@ -167,11 +165,11 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	if err != nil {
 		return err
 	}
-	j := &job.Job{V: job.Version, ID: id, Device: rec.DeviceID, Release: rel, Run: job.Run{
-		Task: string(task), AllowUnsigned: opts.allowUnsigned, AllowUnscanned: opts.allowUnscanned,
-		Timeout: opts.timeout, MaxTurns: opts.maxTurns, MaxCost: opts.maxCost,
-		Model: job.ModelOf(pol.Model), ModelKey: modelKey,
-	}}
+	run := carried.run
+	run.Task, run.AllowUnsigned, run.AllowUnscanned = string(task), opts.allowUnsigned, opts.allowUnscanned
+	run.Timeout, run.MaxTurns, run.MaxCost = opts.timeout, opts.maxTurns, opts.maxCost
+	run.Model, run.ModelKey = job.ModelOf(pol.Model), modelKey
+	j := &job.Job{V: job.Version, ID: id, Device: rec.DeviceID, Release: rel, Run: run}
 	if err := j.Validate(); err != nil {
 		return engine.Classify(engine.ExitUsage, err)
 	}
@@ -193,7 +191,7 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	_, _ = fmt.Fprintf(errOut, "running %s on %s (%s, host key %s)\n", meta.Ref, rec.Name, rec.Host, rec.HostKeyFingerprint)
 
 	opts.progress.at(receipt.StageAgent)
-	res, err := runOnSend(cmd.Context(), client, j, archive, func(line string) {
+	res, err := runOnSend(cmd.Context(), client, j, archive, files, func(line string) {
 		_, _ = fmt.Fprintf(errOut, "%s: %s\n", rec.Name, safeTerminalText(line, 4096))
 	})
 	if err != nil {
@@ -237,6 +235,7 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	}
 
 	runOnEnvelope(&env, rec, outDir, j.ID)
+	carried.finish(errOut, &env, outDir)
 	if err := env.Write(outDir); err != nil {
 		return err
 	}
@@ -346,7 +345,7 @@ func runOnSameVersion(ctx context.Context, c *runhost.Client, name string) error
 
 // runOnSend sends the job, and its release when the runhost asks for it,
 // over one session, and reads the run's narration and its result.
-func runOnSend(ctx context.Context, c *runhost.Client, j *job.Job, archive []byte, say func(string)) (runhostJobResult, error) {
+func runOnSend(ctx context.Context, c *runhost.Client, j *job.Job, archive []byte, files *payload.Packed, say func(string)) (runhostJobResult, error) {
 	answered := make(chan string, 1)
 	stop := make(chan struct{})
 	defer close(stop)
@@ -357,15 +356,29 @@ func runOnSend(ctx context.Context, c *runhost.Client, j *job.Job, archive []byt
 		select {
 		case a := <-answered:
 			if a == runhost.ReleaseNeeded {
-				_, err := w.Write(archive)
-				return err
+				if _, err := w.Write(archive); err != nil {
+					return err
+				}
 			}
-			return nil
 		case <-stop:
 			return nil
 		case <-ctx.Done():
 			return ctx.Err()
 		}
+		// The run's files follow the release, exactly the size the job names.
+		if files == nil {
+			return nil
+		}
+		f, err := files.Open()
+		if err != nil {
+			return err
+		}
+		defer func() { _ = f.Close() }()
+		n, err := io.Copy(w, f)
+		if err == nil && n != files.Size {
+			err = fmt.Errorf("the run's files are %d bytes, not the %d the job names", n, files.Size)
+		}
+		return err
 	}
 	each := func(f runhost.Frame) error {
 		switch f.Type {
