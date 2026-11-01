@@ -15,7 +15,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
-	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/gateway"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
@@ -158,7 +157,7 @@ func runSetup(cmd *cobra.Command, opts setupOpts) error {
 		printNextSteps(cmd.ErrOrStderr(), setupNextSteps()...)
 		return nil
 	}
-	docker := dockerx.New()
+	docker := newDockerClient()
 	imageCtx := homeImageDir(home)
 	// The harness image prepared is the default adapter's for this model
 	// setup, and no other: docker-agent for a key, the Codex image for a

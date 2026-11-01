@@ -624,7 +624,8 @@ func TestDoctorRatesDeclaredServersAsTheGate(t *testing.T) {
 	out, _, _ := runCLI(t, nil, "doctor", "--local", dir, "--registry", fr.url(), "--policy", policyPath)
 	for _, want := range []string{
 		"npm:@acme/medium@1.0.0: an advisory the gate rates medium (GHSA-71 [advisory high, CVSS 7.1; the gate rates it medium]), below the refusal bar — a run proceeds",
-		"npm:@acme/high@1.0.0: an advisory the gate rates high (GHSA-87 [advisory high, CVSS 8.7]) — a run refuses it; pin a fixed version (fixed in 2.0.0)",
+		"npm:@acme/high@1.0.0: an advisory the gate rates high (GHSA-87 [advisory high, CVSS 8.7]); a run refuses it",
+		"fix                pin a fixed version of the server (fixed in 2.0.0), or set mcpServers.allowVulnerable in the policy",
 		"npm:@acme/failed@1.0.0: the registry's last lookup failed; it last knew an advisory the gate rates medium",
 	} {
 		if !strings.Contains(out, want) {

@@ -264,10 +264,23 @@ func TestCLIAvailable(t *testing.T) {
 			t.Errorf("argv = %q", got)
 		}
 	})
+	// The error a person reads is the sentence naming the engine and how to
+	// start it; the client's own words are its detail.
+	detail := func(t *testing.T, err error) string {
+		t.Helper()
+		var u *Unreachable
+		if !errors.As(err, &u) {
+			t.Fatalf("err = %v, want the engine named with its remedy", err)
+		}
+		if !strings.Contains(u.Error(), "no container engine answers the docker CLI: ") {
+			t.Fatalf("sentence = %q", u.Error())
+		}
+		return u.Detail()
+	}
 	t.Run("no server version", func(t *testing.T) {
 		c, _ := stub(t, `echo; exit 0`)
 		err := c.Available(context.Background())
-		if err == nil || !strings.Contains(err.Error(), "daemon not reachable") {
+		if err == nil || !strings.Contains(detail(t, err), "daemon not reachable") {
 			t.Fatalf("err = %v, want an empty server version taken as no daemon", err)
 		}
 	})
@@ -281,8 +294,8 @@ func TestCLIAvailable(t *testing.T) {
 	t.Run("daemon unreachable", func(t *testing.T) {
 		c, _ := stub(t, `echo "Cannot connect to the Docker daemon" >&2; exit 1`)
 		err := c.Available(context.Background())
-		if err == nil || !strings.Contains(err.Error(), "daemon not reachable") ||
-			!strings.Contains(err.Error(), "Cannot connect") {
+		if err == nil || !strings.Contains(detail(t, err), "daemon not reachable") ||
+			!strings.Contains(detail(t, err), "Cannot connect") {
 			t.Fatalf("err = %v, want the daemon failure with stderr detail", err)
 		}
 	})
@@ -291,7 +304,7 @@ func TestCLIAvailable(t *testing.T) {
 	t.Run("daemon error on stdout only", func(t *testing.T) {
 		c, _ := stub(t, `echo "Error response from daemon: failed to connect to the backend"; exit 1`)
 		err := c.Available(context.Background())
-		if err == nil || !strings.Contains(err.Error(), "failed to connect to the backend") {
+		if err == nil || !strings.Contains(detail(t, err), "failed to connect to the backend") {
 			t.Fatalf("err = %v, want the daemon's message from stdout", err)
 		}
 	})
@@ -301,7 +314,7 @@ func TestCLIAvailable(t *testing.T) {
 		if err == nil {
 			t.Fatal("Available succeeded on exit 1")
 		}
-		msg := err.Error()
+		msg := detail(t, err)
 		if strings.HasSuffix(strings.TrimSpace(msg), ":") || !strings.Contains(msg, "printed nothing") {
 			t.Fatalf("err = %q, want it to say docker printed nothing, not end in a bare colon", msg)
 		}
@@ -309,7 +322,7 @@ func TestCLIAvailable(t *testing.T) {
 	t.Run("stderr wins over stdout", func(t *testing.T) {
 		c, _ := stub(t, `echo "client section"; echo "Error response from daemon: boom" >&2; exit 1`)
 		err := c.Available(context.Background())
-		if err == nil || !strings.Contains(err.Error(), "boom") || strings.Contains(err.Error(), "client section") {
+		if err == nil || !strings.Contains(detail(t, err), "boom") || strings.Contains(detail(t, err), "client section") {
 			t.Fatalf("err = %v, want stderr's message and not stdout's", err)
 		}
 	})

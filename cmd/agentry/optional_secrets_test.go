@@ -39,7 +39,7 @@ func TestDoctorAnOptionalSecretUnsetIsANote(t *testing.T) {
 	}
 	t.Setenv("REQUIRED_PAT", "")
 	c := check()
-	if c.Status != "fail" || !strings.Contains(c.Detail, "would not resolve (run refuses with exit 11): REQUIRED_PAT —") {
+	if c.Status != "fail" || !strings.Contains(c.Detail, "would not resolve (run refuses with exit 11): REQUIRED_PAT;") || !strings.Contains(c.Remedy, "--reconfigure-profile") {
 		t.Fatalf("an unset required secret: %+v", c)
 	}
 }

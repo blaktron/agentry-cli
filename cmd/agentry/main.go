@@ -32,6 +32,8 @@ type globalFlags struct {
 	registry string
 	// jsonOut requests machine-readable output (info, search, verify).
 	jsonOut bool
+	// verbose adds the client library's own error under a failure's line.
+	verbose bool
 }
 
 // flags is the process-wide flag state bound by newRootCmd.
@@ -55,7 +57,7 @@ func main() {
 		// printed a second time.
 		var reported *reportedError
 		if !errors.As(err, &reported) {
-			_, _ = fmt.Fprintln(os.Stderr, "agentry: "+err.Error())
+			printCommandError(os.Stderr, err)
 		}
 		// `agentry run` classifies its failures so pipelines and
 		// cron can branch on the exit code; everything else keeps
@@ -105,6 +107,9 @@ func newRootCmd() *cobra.Command {
 		"registry base URL (default: "+envRegistry+", else config defaultRegistry, else "+defaultRegistryURL+")")
 	root.PersistentFlags().BoolVar(&flags.jsonOut, "json", false,
 		"machine-readable JSON output on stdout (search, info, verify, doctor, install, uninstall, list, builtins, validate, setup, connections, logout, report-design show, run --plan, run --dry-run, runs; login writes NDJSON lifecycle events); narration stays on stderr")
+
+	root.PersistentFlags().BoolVar(&flags.verbose, "verbose", false,
+		"add the client library's own error under a failure's line (a registry that cannot be reached, a container engine that does not answer)")
 
 	root.AddCommand(
 		newInitCmd(),

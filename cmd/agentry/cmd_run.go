@@ -332,6 +332,17 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	if err != nil {
 		return err
 	}
+	// The engine answers before anything is written under the runner home,
+	// fetched or laid down for the run: a missing engine is the first thing
+	// a person is told, not the last, and a release is not installed for a
+	// run that cannot start. A plan or a dry run needs no engine.
+	if !opts.plan && !opts.dryRun {
+		opts.progress.at(receipt.StageImages)
+		if err := newDockerClient().Available(cmd.Context()); err != nil {
+			return engine.Classify(engine.ExitGateway, err)
+		}
+		opts.progress.at(receipt.StagePolicy)
+	}
 
 	// The receipt names the policy file and how it was chosen, beside its
 	// digest.

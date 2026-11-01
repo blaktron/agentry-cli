@@ -208,11 +208,11 @@ func (c *CLI) dockerEngine(ctx context.Context) (Engine, error) {
 	}
 	vout, err := c.run(ctx, "version", "--format", "{{json .Server}}")
 	if err != nil {
-		return Engine{}, fmt.Errorf("docker daemon not reachable: %w", err)
+		return Engine{}, unreachable(KindDocker, endpoint, fmt.Errorf("docker daemon not reachable: %w", err))
 	}
 	iout, err := c.run(ctx, "info", "--format", daemonInfoFormat)
 	if err != nil {
-		return Engine{}, fmt.Errorf("docker daemon not reachable: %w", err)
+		return Engine{}, unreachable(KindDocker, endpoint, fmt.Errorf("docker daemon not reachable: %w", err))
 	}
 	return parseDockerEngine(endpoint, vout, iout)
 }
@@ -302,7 +302,7 @@ func (c *CLI) podmanInfo(ctx context.Context) (podmanInfo, error) {
 func (c *CLI) podmanEngine(ctx context.Context) (Engine, error) {
 	info, err := c.podmanInfo(ctx)
 	if err != nil {
-		return Engine{}, err
+		return Engine{}, unreachable(KindPodman, "", err)
 	}
 	if info.Host.ServiceIsRemote {
 		return Engine{}, errors.New("podman drives a service on another machine (CONTAINER_HOST, a connection, or a podman machine), and the runner drives podman only on this machine: its docker filter needs the service's socket here")

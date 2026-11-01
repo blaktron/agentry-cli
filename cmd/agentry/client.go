@@ -45,7 +45,7 @@ const httpTimeout = 5 * time.Minute
 // It never carries an Authorization header off the origin it was sent to,
 // so a redirect cannot take a registry token to another scheme, port or
 // host.
-var httpClient = origin.Guard(&http.Client{Timeout: httpTimeout})
+var httpClient = origin.Guard(&http.Client{Timeout: httpTimeout, Transport: unreachableTransport{}})
 
 // newAPIClient builds a generated client rooted at {registry}/api/v1,
 // attaching "Authorization: Bearer <token>" when a token is known.

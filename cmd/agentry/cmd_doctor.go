@@ -16,6 +16,7 @@ import (
 	"maps"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/blaktron/agentry/pkg/manifest"
 
+	"github.com/blaktron/agentry-cli/internal/version"
 	"github.com/blaktron/agentry-cli/pkg/installed"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
@@ -64,6 +66,8 @@ type doctorCheck struct {
 	Status string `json:"status"`
 	// Detail says what was found, never a secret value.
 	Detail string `json:"detail,omitempty"`
+	// Remedy says what to do about a failed or warned check, in one line.
+	Remedy string `json:"remedy,omitempty"`
 }
 
 // doctorReport is the whole run.
@@ -77,7 +81,27 @@ func (r *doctorReport) add(name, status, format string, args ...any) {
 }
 func (r *doctorReport) ok(name, f string, a ...any)   { r.add(name, "ok", f, a...) }
 func (r *doctorReport) warn(name, f string, a ...any) { r.add(name, "warn", f, a...) }
-func (r *doctorReport) fail(name, f string, a ...any) { r.add(name, "fail", f, a...) }
+
+// failFix is a failed check: every one carries the remedy beside the
+// finding, so a report never ends a failure without saying what to do.
+// warnFix is a warning with one.
+func (r *doctorReport) failFix(name, remedy, f string, a ...any) {
+	r.add(name, "fail", f, a...)
+	r.Checks[len(r.Checks)-1].Remedy = remedy
+}
+func (r *doctorReport) warnFix(name, remedy, f string, a ...any) {
+	r.add(name, "warn", f, a...)
+	r.Checks[len(r.Checks)-1].Remedy = remedy
+}
+
+// Remedies said on more than one row.
+const (
+	remedySetup     = "run `agentry setup`"
+	remedyNetwork   = "check the network connection, or pass --registry to use another registry"
+	remedyLogin     = "run `agentry login`"
+	remedyDocsCLI   = "download the current release from the registry's download page"
+	remedyHarnessIn = "install it, or pass --adapter for another harness"
+)
 
 // Failed counts the checks a run would refuse on.
 func (r *doctorReport) Failed() int {
@@ -107,12 +131,16 @@ func newDoctorCmd() *cobra.Command {
 			"preflight on this machine: the operator policy and model, the container engine\n" +
 			"(Docker Engine or podman: its version, its socket, whether it runs rootless,\n" +
 			"and where a run's docker filter would run on it), the pinned\n" +
-			"gateway/harness/runner images, and the registry. With a ref\n" +
+			"gateway/harness/runner images, the registry, the sign-in this computer has\n" +
+			"for it, this CLI's version against the oldest the registry supports, and\n" +
+			"whether the agentry on PATH is this program. With a ref\n" +
 			"(or --local DIR) it also checks that QuickAgent's verified install, its\n" +
 			"declared MCP servers' store, its MCP profile, and that every declared secret\n" +
 			"resolves — the exit-11 refusal a scheduled run would otherwise meet.\n\n" +
-			"Exit status 0 when every check passes (warnings allowed), 1 otherwise.\n" +
-			"--json prints the report as JSON. No secret VALUE is ever printed.",
+			"Every failed check ends with a fix line saying what to do. Exit status 0\n" +
+			"when every check passes (warnings allowed), 1 otherwise. --json prints the\n" +
+			"report as JSON, each check with its name, status, detail and remedy. No\n" +
+			"secret VALUE is ever printed.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ref := ""
@@ -166,6 +194,7 @@ func runDoctor(cmd *cobra.Command, ref string, opts doctorOpts) error {
 	// 3. Registry reachability (always: a scheduled run resolves its ref
 	// there unless the install is already cached).
 	doctorRegistry(cmd.Context(), rep)
+	doctorPath(rep)
 
 	// 4. The agent's declared commands against the catalog (a located
 	// manifest is enough), then its store, profile and secrets.
@@ -186,7 +215,12 @@ func runDoctor(cmd *cobra.Command, ref string, opts doctorOpts) error {
 		printDoctorReport(cmd.OutOrStdout(), rep)
 	}
 	if n := rep.Failed(); n > 0 {
-		return engine.Classify(engine.ExitCLI, fmt.Errorf("doctor: %d check(s) failed", n))
+		failed := engine.Classify(engine.ExitCLI, fmt.Errorf("doctor: %d check(s) failed", n))
+		if flags.jsonOut {
+			return failed
+		}
+		// The text report has said it; the exit status says it again.
+		return &reportedError{err: failed}
 	}
 	return nil
 }
@@ -203,7 +237,7 @@ func doctorHarness(ctx context.Context, rep *doctorReport, pol *policy.Policy, n
 	}
 	r := harnessprobe.Probe(ctx, pol, name)
 	if !r.Known {
-		rep.fail("adapter", "%s", r.Reason)
+		rep.failFix("adapter", "pass one of the adapters `agentry run --help` lists", "%s", r.Reason)
 		return
 	}
 	if !r.Host {
@@ -212,7 +246,7 @@ func doctorHarness(ctx context.Context, rep *doctorReport, pol *policy.Policy, n
 	}
 	check := "harness:" + name
 	if !r.Found {
-		rep.fail(check, "%s", r.Reason)
+		rep.failFix(check, remedyHarnessIn, "%s", r.Reason)
 		return
 	}
 	if len(r.Warnings) > 0 {
@@ -229,11 +263,11 @@ func doctorHarness(ctx context.Context, rep *doctorReport, pol *policy.Policy, n
 	}
 	switch {
 	case !r.Endpoint.Valid:
-		rep.fail(check+":endpoint", "harness.%s.baseUrl %q is not a URL", name, r.Endpoint.BaseURL)
+		rep.failFix(check+":endpoint", "set harness."+name+".baseUrl in the policy to the endpoint's https address", "harness.%s.baseUrl %q is not a URL", name, r.Endpoint.BaseURL)
 	case r.Endpoint.Allowed:
 		rep.ok(check+":endpoint", "%s is in model.proxyAllow", r.Endpoint.HostPort)
 	default:
-		rep.fail(check+":endpoint", "harness.%s.baseUrl points at %s, which model.proxyAllow does not list — the run's proxy would deny it",
+		rep.failFix(check+":endpoint", "add "+r.Endpoint.HostPort+" to model.proxyAllow in the policy", "harness.%s.baseUrl points at %s, which model.proxyAllow does not list: the run's proxy would deny it",
 			name, r.Endpoint.HostPort)
 	}
 	if r.Endpoint.Valid {
@@ -248,16 +282,16 @@ func doctorPolicy(rep *doctorReport, path string) *policy.Policy {
 	pol, _, err := policy.Load(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			rep.fail("policy", "%s does not exist — run `agentry setup`", path)
+			rep.failFix("policy", remedySetup, "%s does not exist", path)
 		} else {
-			rep.fail("policy", "%s: %v", path, err)
+			rep.failFix("policy", "fix the file, or move it aside and run `agentry setup` to write a new one", "%s: %v", path, err)
 		}
 		return nil
 	}
 	rep.ok("policy", "%s", path)
 	switch {
 	case pol.Model.Provider == "" || pol.Model.Name == "":
-		rep.fail("model", "no provider/model configured — run `agentry setup`")
+		rep.failFix("model", remedySetup, "no provider or model configured")
 	case policy.IsModelSignIn(pol.Model.APIKeyKind):
 		// A model sign-in: the person's grant, kept in the model sign-in
 		// store; doctor asks only whether one is kept.
@@ -269,11 +303,11 @@ func doctorPolicy(rep *doctorReport, path string) *policy.Policy {
 		}
 		switch {
 		case err != nil && !errors.Is(err, modelsignin.ErrNone):
-			rep.fail("model", "%s/%s: %v", pol.Model.Provider, pol.Model.Name, err)
+			rep.failFix("model", "run `agentry setup` to sign in again", "%s/%s: %v", pol.Model.Provider, pol.Model.Name, err)
 		case err != nil:
-			rep.fail("model", "%s/%s spends %s (apiKeyKind %s) and none is kept on this computer — run `agentry setup` to sign in", pol.Model.Provider, pol.Model.Name, policy.SignInSentence(pol.Model.APIKeyKind), pol.Model.APIKeyKind)
+			rep.failFix("model", "run `agentry setup` to sign in", "%s/%s spends %s (apiKeyKind %s) and none is kept on this computer", pol.Model.Provider, pol.Model.Name, policy.SignInSentence(pol.Model.APIKeyKind), pol.Model.APIKeyKind)
 		case r.Broken != "":
-			rep.fail("model", "%s/%s: the %s sign-in no longer works (%s) — run `agentry setup` to sign in again", pol.Model.Provider, pol.Model.Name, vendor, r.Broken)
+			rep.failFix("model", "run `agentry setup` to sign in again", "%s/%s: the %s sign-in no longer works (%s)", pol.Model.Provider, pol.Model.Name, vendor, r.Broken)
 		case vendor == modelsignin.Claude && r.ConfigDir == "":
 			// Each Claude Code signs in where it runs: the image,
 			// the default, is not signed in.
@@ -287,28 +321,28 @@ func doctorPolicy(rep *doctorReport, path string) *policy.Policy {
 		reg, err := policy.AgentryRegistry(pol.Model)
 		switch tok, cerr := credentialFor(reg); {
 		case err != nil:
-			rep.fail("model", "agentry: %v — run `agentry setup --provider agentry`", err)
+			rep.failFix("model", "run `agentry setup --provider agentry`", "agentry: %v", err)
 		case cerr != nil || tok == "":
-			rep.fail("model", "agentry: paid with Agentry credits at %s, and this computer is not signed in there — run `agentry login --registry %s`", reg, reg)
+			rep.failFix("model", "run `agentry login --registry "+reg+"`", "agentry: paid with Agentry credits at %s, and this computer is not signed in there", reg)
 		default:
 			rep.ok("model", "agentry (paid with your Agentry credits at %s; each run opens a credits session with your sign-in)", reg)
 		}
 	case pol.Model.APIKeyEnv == "":
-		rep.fail("model", "%s/%s: no apiKeyEnv configured — run `agentry setup`", pol.Model.Provider, pol.Model.Name)
+		rep.failFix("model", remedySetup, "%s/%s: no apiKeyEnv configured", pol.Model.Provider, pol.Model.Name)
 	case os.Getenv(pol.Model.APIKeyEnv) == "" && policy.KeySource(policy.HarnessPolicy{}, pol.Model) == modelkey.SourceKeyring:
 		// The variable is unset and the policy names the keychain as the
 		// fallback: a run would read it from there.
 		present, err := modelKeyPresent(pol.Model.Provider)
 		switch {
 		case err != nil:
-			rep.fail("model", "%s/%s: $%s is not set and the OS keychain could not be asked — %v", pol.Model.Provider, pol.Model.Name, pol.Model.APIKeyEnv, err)
+			rep.failFix("model", "export "+pol.Model.APIKeyEnv+" in the shell that runs agentry, or unlock the keychain and run doctor again", "%s/%s: $%s is not set and the OS keychain could not be asked: %v", pol.Model.Provider, pol.Model.Name, pol.Model.APIKeyEnv, err)
 		case !present:
-			rep.fail("model", "%s/%s: $%s is not set and the OS keychain has no entry %s (apiKeySource keyring) — run `agentry setup` to store the key, or set the variable", pol.Model.Provider, pol.Model.Name, pol.Model.APIKeyEnv, modelkey.Account(pol.Model.Provider))
+			rep.failFix("model", "run `agentry setup` to store the key in the keychain, or export "+pol.Model.APIKeyEnv+" in the shell that runs agentry", "%s/%s: $%s is not set and the OS keychain has no entry %s (apiKeySource keyring)", pol.Model.Provider, pol.Model.Name, pol.Model.APIKeyEnv, modelkey.Account(pol.Model.Provider))
 		default:
 			rep.ok("model", "%s/%s (key from the OS keychain entry %s; $%s unset)", pol.Model.Provider, pol.Model.Name, modelkey.Account(pol.Model.Provider), pol.Model.APIKeyEnv)
 		}
 	case os.Getenv(pol.Model.APIKeyEnv) == "":
-		rep.fail("model", "%s/%s: $%s is not set in this environment", pol.Model.Provider, pol.Model.Name, pol.Model.APIKeyEnv)
+		rep.failFix("model", "export "+pol.Model.APIKeyEnv+" in the shell that runs agentry, or run `agentry setup` to store the key in the OS keychain", "%s/%s: $%s is not set in this environment", pol.Model.Provider, pol.Model.Name, pol.Model.APIKeyEnv)
 	default:
 		rep.ok("model", "%s/%s (key from $%s)", pol.Model.Provider, pol.Model.Name, pol.Model.APIKeyEnv)
 	}
@@ -325,7 +359,7 @@ func doctorPolicy(rep *doctorReport, path string) *policy.Policy {
 	}
 	if pol.SecretSource.Mode == "envFile" {
 		if _, err := os.Stat(pol.SecretSource.EnvFile); err != nil {
-			rep.fail("secretSource", "envFile %s: %v", pol.SecretSource.EnvFile, err)
+			rep.failFix("secretSource", "create the file, or point secretSource.envFile in the policy at the one you keep", "envFile %s: %v", pol.SecretSource.EnvFile, err)
 		} else {
 			rep.ok("secretSource", "envFile %s", pol.SecretSource.EnvFile)
 		}
@@ -335,7 +369,7 @@ func doctorPolicy(rep *doctorReport, path string) *policy.Policy {
 	// The exec catalog: what a declared exec command resolves to on
 	// this machine beyond the commands every machine provides.
 	if len(pol.Exec.Packages) == 0 {
-		rep.ok("exec", "the commands every machine provides (%s); no others catalogued, so a QuickAgent declaring another is refused at plan time until exec.packages names its apk package", strings.Join(policy.BaseExecCommands(), ", "))
+		rep.ok("exec", "the commands every machine provides; none catalogued beyond them (exec.packages)")
 	} else {
 		var entries []string
 		for _, c := range slices.Sorted(maps.Keys(pol.Exec.Packages)) {
@@ -357,17 +391,17 @@ func doctorPolicy(rep *doctorReport, path string) *policy.Policy {
 func doctorPodmanRuntime(ctx context.Context, rep *doctorReport, d dockerx.Client, e dockerx.Engine, pol *policy.Policy) {
 	want := pol.Docker.Runtime
 	if e.CLI != dockerx.KindPodman {
-		rep.fail("docker:runtime", "%v", gateway.EnsurePodmanRuntime(ctx, d, e, pol))
+		rep.failFix("docker:runtime", "drive podman with its own CLI (AGENTRY_ENGINE=podman), or unset docker.runtime", "%v", gateway.EnsurePodmanRuntime(ctx, d, e, pol))
 		return
 	}
 	checker, ok := d.(dockerx.RuntimeChecker)
 	if !ok {
-		rep.fail("docker:runtime", "docker.runtime %q cannot be checked on this podman client", want)
+		rep.failFix("docker:runtime", "unset docker.runtime, or drive podman with its own CLI", "docker.runtime %q cannot be checked on this podman client", want)
 		return
 	}
 	rt, err := checker.CheckRuntime(ctx, want)
 	if err != nil {
-		rep.fail("docker:runtime", "policy docker.runtime %q: %v — %s, or unset docker.runtime", want, err, gateway.PodmanRuntimeRecipe)
+		rep.failFix("docker:runtime", gateway.PodmanRuntimeRecipe+", or unset docker.runtime", "policy docker.runtime %q: %v", want, err)
 	} else {
 		rep.ok("docker:runtime", "%s registered with podman at %s (podman --runtime %s info); a run holds it through a podman API service of its own, and every container is checked after create", want, rt.Path, want)
 		if len(pol.Docker.Resolvers) == 0 {
@@ -384,11 +418,11 @@ func doctorPodmanRuntime(ctx context.Context, rep *doctorReport, d dockerx.Clien
 	default:
 		reg, gerr := checker.CheckRuntime(ctx, gw)
 		if gerr != nil {
-			rep.fail("docker:gatewayRuntime", "policy docker.gatewayRuntime %q: %v — %s, or unset docker.gatewayRuntime", gw, gerr, gateway.PodmanRuntimeRecipe)
+			rep.failFix("docker:gatewayRuntime", gateway.PodmanRuntimeRecipe+", or unset docker.gatewayRuntime", "policy docker.gatewayRuntime %q: %v", gw, gerr)
 			return
 		}
 		if werr := dockerx.CheckHostUDSWrapper(reg.Path, rt.Path, gw); werr != nil {
-			rep.fail("docker:gatewayRuntime", "policy docker.gatewayRuntime %v — fix the wrapper, or unset docker.gatewayRuntime", werr)
+			rep.failFix("docker:gatewayRuntime", "fix the wrapper, or unset docker.gatewayRuntime", "policy docker.gatewayRuntime %v", werr)
 		} else {
 			rep.ok("docker:gatewayRuntime", "%s registered with podman at %s, a wrapper that runs %s with %s, for the gateway", gw, reg.Path, rt.Path, dockerx.HostUDSOpen)
 		}
@@ -418,17 +452,32 @@ func doctorCredentialHelpers(ctx context.Context, rep *doctorReport, d dockerx.C
 	}
 	for _, g := range dockerx.MissingCredentialHelpers(dockerx.ConfigFile(), nil) {
 		if g.Store {
-			rep.fail("docker:credentials", "%s names the credential helper %q as credsStore, and %s is not on PATH: the docker CLI fails every image pull on it until the entry is removed or the helper installed (a leftover of Docker Desktop, when it is \"desktop\")", g.Config, g.Helper, g.Program)
+			rep.failFix("docker:credentials", "remove credsStore from "+g.Config+", or install "+g.Program, "%s names the credential helper %q as credsStore, and %s is not on PATH: the docker CLI fails every image pull on it (a leftover of Docker Desktop, when it is \"desktop\")", g.Config, g.Helper, g.Program)
 			continue
 		}
 		rep.warn("docker:credentials", "%s names the credential helper %q for %s in credHelpers, and %s is not on PATH: the docker CLI fails a pull from %s until the entry is removed or the helper installed", g.Config, g.Helper, g.Registry, g.Program, g.Registry)
 	}
 }
 
+// doctorEngineDown is the docker row when no engine answers: the engine
+// this machine seems to have, with how to start it as the remedy; any
+// other refusal as its own sentence.
+func doctorEngineDown(rep *doctorReport, err error) {
+	var u *dockerx.Unreachable
+	if errors.As(err, &u) {
+		rep.failFix("docker", u.Remedy, "%s", u.Problem())
+		if flags.verbose {
+			rep.Checks[len(rep.Checks)-1].Detail += " (" + u.Detail() + ")"
+		}
+		return
+	}
+	rep.failFix("docker", "install Docker Engine, Docker Desktop or podman and start it", "%v", err)
+}
+
 // doctorDocker checks the engine and the images a run would need.
 func doctorDocker(ctx context.Context, rep *doctorReport, d dockerx.Client, pol *policy.Policy, m *manifest.Manifest) {
 	if err := d.Available(ctx); err != nil {
-		rep.fail("docker", "%v", err)
+		doctorEngineDown(rep, err)
 		doctorLeftSockets(ctx, rep)
 		doctorCredentialHelpers(ctx, rep, d)
 		return
@@ -438,7 +487,7 @@ func doctorDocker(ctx context.Context, rep *doctorReport, d dockerx.Client, pol 
 	// filter cannot be put in front of.
 	line, err := engine.EngineLine(ctx, d)
 	if err != nil {
-		rep.fail("docker", "%v", err)
+		doctorEngineDown(rep, err)
 		doctorCredentialHelpers(ctx, rep, d)
 		return
 	}
@@ -462,11 +511,11 @@ func doctorDocker(ctx context.Context, rep *doctorReport, d dockerx.Client, pol 
 		have := dockerx.SortedRuntimeNames(table)
 		switch {
 		case err != nil:
-			rep.fail("docker:runtime", "%v", err)
+			rep.failFix("docker:runtime", "check that the engine answers `docker info`", "%v", err)
 		case slices.Contains(have, want):
 			rep.ok("docker:runtime", "%s registered on the daemon", want)
 		default:
-			rep.fail("docker:runtime", "policy docker.runtime is %q but the daemon has only: %s — install it and register it in the daemon's runtimes, or unset docker.runtime", want, strings.Join(have, ", "))
+			rep.failFix("docker:runtime", "install "+want+" and register it in the daemon's runtimes, or unset docker.runtime", "policy docker.runtime is %q but the daemon has only: %s", want, strings.Join(have, ", "))
 		}
 		// The Drafter's web tools under a runtime resolve names only
 		// through the host's own name servers: without them a draft is
@@ -487,19 +536,19 @@ func doctorDocker(ctx context.Context, rep *doctorReport, d dockerx.Client, pol 
 		case !slices.Contains(have, want):
 			rep.warn("docker:gatewayRuntime", "%s not checked: docker.runtime %q is not registered (docker:runtime)", gw, want)
 		case !slices.Contains(have, gw):
-			rep.fail("docker:gatewayRuntime", "policy docker.gatewayRuntime is %q but the daemon has only: %s — register %s again under that name with runtimeArgs [%q], or unset docker.gatewayRuntime", gw, strings.Join(have, ", "), want, dockerx.HostUDSOpen)
+			rep.failFix("docker:gatewayRuntime", fmt.Sprintf("register %s again under that name with runtimeArgs [%q], or unset docker.gatewayRuntime", want, dockerx.HostUDSOpen), "policy docker.gatewayRuntime is %q but the daemon has only: %s", gw, strings.Join(have, ", "))
 		default:
 			if rerr := dockerx.CheckHostUDSRegistration(table, want, gw); rerr != nil {
-				rep.fail("docker:gatewayRuntime", "policy docker.gatewayRuntime: %v — fix the registration in the daemon's runtimes, or unset docker.gatewayRuntime", rerr)
+				rep.failFix("docker:gatewayRuntime", "fix the registration in the daemon's runtimes, or unset docker.gatewayRuntime", "policy docker.gatewayRuntime: %v", rerr)
 			} else {
 				rep.ok("docker:gatewayRuntime", "%s registered on the daemon as %s with %s, for the gateway", gw, want, dockerx.HostUDSOpen)
 			}
 		}
 	}
 	images := []struct{ name, ref, fix string }{
-		{"image:gateway", pol.Images.Gateway, "`agentry setup` pulls it"},
-		{"image:harness", pol.Images.HarnessDockerAgent, "`agentry setup` pulls it"},
-		{"image:runner", pol.RunnerImageTag(runnerimage.ContentVersion()), "`agentry setup` builds it"},
+		{"image:gateway", pol.Images.Gateway, "run `agentry setup`, which pulls it"},
+		{"image:harness", pol.Images.HarnessDockerAgent, "run `agentry setup`, which pulls it"},
+		{"image:runner", pol.RunnerImageTag(runnerimage.ContentVersion()), "run `agentry setup`, which builds it"},
 	}
 	if m != nil {
 		needNode, needPython := false, false
@@ -512,60 +561,143 @@ func doctorDocker(ctx context.Context, rep *doctorReport, d dockerx.Client, pol 
 			}
 		}
 		if needNode {
-			images = append(images, struct{ name, ref, fix string }{"image:nodeRuntime", pol.Images.NodeRuntime, "pulled at first MCP server install"})
+			images = append(images, struct{ name, ref, fix string }{"image:nodeRuntime", pol.Images.NodeRuntime, "run `agentry run " + m.Namespace + "/" + m.Name + " --prepare`, which pulls it"})
 		}
 		if needPython {
-			images = append(images, struct{ name, ref, fix string }{"image:pythonRuntime", pol.Images.PythonRuntime, "pulled at first MCP server install"})
+			images = append(images, struct{ name, ref, fix string }{"image:pythonRuntime", pol.Images.PythonRuntime, "run `agentry run " + m.Namespace + "/" + m.Name + " --prepare`, which pulls it"})
 		}
 	}
 	for _, im := range images {
 		if im.ref == "" {
-			rep.fail(im.name, "no image pinned in the policy")
+			rep.failFix(im.name, "run `agentry setup` to pin the current images", "no image pinned in the policy")
 			continue
 		}
 		ok, err := d.ImageExists(ctx, im.ref)
 		switch {
 		case err != nil:
-			rep.fail(im.name, "%s: %v", im.ref, err)
+			rep.failFix(im.name, "check that the engine answers `docker images`", "%s: %v", im.ref, err)
 		case !ok:
-			rep.fail(im.name, "%s is not present locally — %s", im.ref, im.fix)
+			rep.failFix(im.name, im.fix, "%s is not present locally", im.ref)
 		default:
 			rep.ok(im.name, "%s", im.ref)
 		}
 	}
 }
 
-// doctorRegistry probes the configured registry's liveness endpoint.
+// doctorRegistry probes the configured registry's liveness endpoint, then
+// reports the sign-in this computer has for it and this CLI's version
+// against the oldest the registry still supports.
 func doctorRegistry(ctx context.Context, rep *doctorReport) {
 	reg := registryURL()
 	ctx, cancel := context.WithTimeout(ctx, doctorHTTPTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reg+"/healthz", nil)
 	if err != nil {
-		rep.fail("registry", "%s: %v", reg, err)
+		rep.failFix("registry", "pass --registry with the registry's https address", "%s: %v", reg, err)
 		return
 	}
-	res, err := http.DefaultClient.Do(req)
+	res, err := httpClient.Do(req)
 	if err != nil {
-		rep.fail("registry", "%s unreachable: %v", reg, err)
+		var ru *registryUnreachable
+		if errors.As(err, &ru) {
+			detail := fmt.Sprintf("cannot reach %s (%s)", ru.registry, ru.cause)
+			if flags.verbose {
+				detail += ": " + ru.Detail()
+			}
+			rep.failFix("registry", remedyNetwork, "%s", detail)
+			return
+		}
+		rep.failFix("registry", remedyNetwork, "cannot reach %s: %v", reg, err)
 		return
 	}
 	defer func() { _ = res.Body.Close() }()
 	_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, 4096))
 	if res.StatusCode != http.StatusOK {
-		rep.fail("registry", "%s/healthz answered %d", reg, res.StatusCode)
+		rep.failFix("registry", "try again in a moment; if it keeps answering so, the registry is down", "%s/healthz answered %d", reg, res.StatusCode)
 		return
 	}
+	rep.ok("registry", "%s reachable", reg)
 	token, err := credentialFor(reg)
+	switch {
+	case err != nil:
+		rep.failFix("signin", remedyLogin, "%v", err)
+	case token == "":
+		rep.warnFix("signin", remedyLogin, "not signed in to %s: public QuickAgents only", reg)
+	default:
+		rep.ok("signin", "signed in to %s", reg)
+	}
+	doctorCLIVersion(ctx, rep, reg, token)
+}
+
+// doctorCLIVersion is the version row: this CLI against the oldest version
+// the registry still supports, from its /meta. A development build has no
+// version to compare.
+func doctorCLIVersion(ctx context.Context, rep *doctorReport, reg, token string) {
+	have := version.Version
+	client, err := newAPIClient(reg, token)
 	if err != nil {
-		rep.fail("registry", "%v", err)
+		rep.ok("version", "agentry %s", have)
 		return
 	}
-	if token == "" {
-		rep.ok("registry", "%s reachable (no credential stored; public agents only)", reg)
+	resp, err := client.GetMetaWithResponse(ctx)
+	if err != nil || resp.JSON200 == nil {
+		rep.ok("version", "agentry %s (the registry's minimum could not be read)", have)
 		return
 	}
-	rep.ok("registry", "%s reachable (credential stored)", reg)
+	minv := ""
+	if resp.JSON200.MinCLIVersion != nil {
+		minv = strings.TrimSpace(*resp.JSON200.MinCLIVersion)
+	}
+	if minv == "" {
+		rep.ok("version", "agentry %s (the registry states no minimum)", have)
+		return
+	}
+	if _, ok := parseSemver(have); !ok || strings.HasSuffix(have, "-dev") || strings.HasPrefix(have, "0.0.0") {
+		rep.ok("version", "agentry %s, a development build (the registry supports %s and later)", have, minv)
+		return
+	}
+	cmp, ok := compareSemver(have, minv)
+	switch {
+	case !ok || cmp >= 0:
+		rep.ok("version", "agentry %s (the registry supports %s and later)", have, minv)
+	case majorOf(have) < majorOf(minv):
+		rep.failFix("version", remedyDocsCLI, "agentry %s is a major behind the oldest version %s supports, %s; its API contract has moved", have, reg, minv)
+	default:
+		rep.warnFix("version", remedyDocsCLI, "agentry %s is older than the oldest version %s supports, %s", have, reg, minv)
+	}
+}
+
+// doctorPath is the path row: whether the agentry a shell finds on PATH is
+// this program, so the commands doctor and the docs name run this build.
+func doctorPath(rep *doctorReport) {
+	exe, err := os.Executable()
+	if err != nil {
+		rep.warn("path", "this program's own path is unknown: %v", err)
+		return
+	}
+	exe = resolvedPath(exe)
+	dir := filepath.Dir(exe)
+	found, err := exec.LookPath("agentry")
+	switch {
+	case err != nil:
+		rep.warnFix("path", "add "+dir+" to PATH in your shell's profile, then open a new shell", "agentry is not on PATH; this program is %s", exe)
+	case resolvedPath(found) == exe:
+		rep.ok("path", "agentry on PATH is this program (%s)", exe)
+	default:
+		rep.warnFix("path", "put "+dir+" ahead on PATH, or remove the other agentry", "the agentry on PATH is another program, %s; this one is %s", found, exe)
+	}
+}
+
+// resolvedPath follows symlinks and cleans a path, so two names of one
+// file compare equal.
+func resolvedPath(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		p = r
+	}
+	if a, err := filepath.Abs(p); err == nil {
+		p = a
+	}
+	return filepath.Clean(p)
 }
 
 // doctorAgent locates the QuickAgent: a cached verified install for a
@@ -574,12 +706,12 @@ func doctorAgent(cmd *cobra.Command, rep *doctorReport, home, ref, local string)
 	if local != "" {
 		m, err := localrun.ManifestFrom(local)
 		if err != nil {
-			rep.fail("manifest", "%s: %v", local, err)
+			rep.failFix("manifest", "fix agent.yaml in "+local+"; `agentry validate "+local+"` names each problem", "%s: %v", local, err)
 			return nil, nil, ""
 		}
 		digest, err := localrun.TreeDigest(local)
 		if err != nil {
-			rep.fail("manifest", "%s: %v", local, err)
+			rep.failFix("manifest", "check that every file under "+local+" can be read", "%s: %v", local, err)
 			return nil, nil, ""
 		}
 		rep.ok("manifest", "%s/%s@%s (%s)", m.Namespace, m.Name, m.Version, local)
@@ -604,20 +736,20 @@ func doctorAgent(cmd *cobra.Command, rep *doctorReport, home, ref, local string)
 	}
 	parsed, err := manifest.ParseRef(ref)
 	if err != nil {
-		rep.fail("resolve", "%v", err)
+		rep.failFix("resolve", "pass the QuickAgent as ns/name, with @version or @range to pick a release", "%v", err)
 		return nil, nil, ""
 	}
 	// A local install is checked where a run reads it, against
 	// its integrity record, with no registry to resolve.
 	if meta, installDir, ok, lerr := localinstall.Materialize(home, parsed.Namespace, parsed.Name, parsed.Range); ok {
 		if lerr != nil {
-			rep.fail("install", "%v", lerr)
+			rep.failFix("install", "run `agentry install --local DIR --allow-unsigned --repair` from the folder it came from", "%v", lerr)
 			return nil, nil, ""
 		}
 		rep.ok("resolve", "%s: installed from a local folder, unsigned (%s) — a run needs --allow-unsigned", meta.Ref, installdir.DigestSuffix(meta.Digest))
 		m, merr := localrun.ManifestFrom(filepath.Join(installDir, "workspace"))
 		if merr != nil {
-			rep.fail("install", "%v", merr)
+			rep.failFix("install", "run `agentry install --local DIR --allow-unsigned --repair` from the folder it came from", "%v", merr)
 			return nil, nil, ""
 		}
 		rep.ok("install", "verified install %s", installDir)
@@ -626,17 +758,23 @@ func doctorAgent(cmd *cobra.Command, rep *doctorReport, home, ref, local string)
 	reg := registryURL()
 	token, err := credentialFor(reg)
 	if err != nil {
-		rep.fail("resolve", "%v", err)
+		rep.failFix("resolve", remedyLogin, "%v", err)
 		return nil, nil, ""
 	}
 	client, err := newAPIClientChecked(cmd, reg, token)
 	if err != nil {
-		rep.fail("resolve", "%v", err)
+		rep.failFix("resolve", remedyDocsCLI, "%v", err)
 		return nil, nil, ""
 	}
 	res, err := resolveRef(cmd.Context(), client, ref, false)
 	if err != nil {
-		rep.fail("resolve", "%s: %v", ref, err)
+		line, _ := describeError(err)
+		remedy := "check the name with `agentry search`, and that this sign-in may read it"
+		var ru *registryUnreachable
+		if errors.As(err, &ru) {
+			remedy = remedyNetwork
+		}
+		rep.failFix("resolve", remedy, "%s: %s", ref, line)
 		return nil, nil, ""
 	}
 	if res.Yanked {
@@ -651,7 +789,7 @@ func doctorAgent(cmd *cobra.Command, rep *doctorReport, home, ref, local string)
 	case errors.As(ierr, &changed):
 		// What a run refuses, said here first.
 		changed.Ref = fmt.Sprintf("%s/%s@%s", res.Namespace, res.Name, res.Version)
-		rep.fail("install", "%v", changed)
+		rep.failFix("install", "run `agentry install "+ref+" --repair` to lay it down again from a fresh download", "%v", changed)
 		return nil, nil, ""
 	case errors.Is(ierr, installdir.ErrNotInstalled):
 		rep.warn("install", "not installed yet — `agentry run %s --prepare` downloads, verifies and installs it", ref)
@@ -660,12 +798,12 @@ func doctorAgent(cmd *cobra.Command, rep *doctorReport, home, ref, local string)
 		rep.warn("install", "%s has no integrity record from this runner home (laid down by an older CLI) — the next run fetches it again and checks it as a first fetch is", installDir)
 		return nil, nil, ""
 	case ierr != nil:
-		rep.fail("install", "%s: %v", installDir, ierr)
+		rep.failFix("install", "run `agentry install "+ref+" --repair` to lay it down again", "%s: %v", installDir, ierr)
 		return nil, nil, ""
 	}
 	m, err := localrun.ManifestFrom(filepath.Join(installDir, "workspace"))
 	if err != nil {
-		rep.fail("install", "%s: %v", installDir, err)
+		rep.failFix("install", "run `agentry install "+ref+" --repair` to lay it down again", "%s: %v", installDir, err)
 		return nil, nil, ""
 	}
 	rep.ok("install", "verified install %s", installDir)
@@ -688,7 +826,7 @@ func doctorExecCatalog(rep *doctorReport, pol *policy.Policy, m *manifest.Manife
 		}
 	}
 	if len(missing) > 0 {
-		rep.fail("exec", "declared command(s) not in this machine's exec.packages catalog: %s — a run is refused at plan time until the policy names each one's apk package", strings.Join(missing, ", "))
+		rep.failFix("exec", "name each one's apk package under exec.packages in the policy", "declared command(s) not in this machine's exec.packages catalog: %s; a run is refused at plan time", strings.Join(missing, ", "))
 		return
 	}
 	rep.ok("exec", "declared commands catalogued: %s", strings.Join(mapped, ", "))
@@ -721,7 +859,7 @@ func doctorAgentState(rep *doctorReport, home string, pol *policy.Policy, m *man
 		for _, st := range statuses {
 			switch {
 			case st.Refuses() && !pol.MCPServers.AllowVulnerable:
-				rep.fail("mcpServers.vulnerabilities", "%s: %s — a run refuses it; pin a fixed version%s", st.Ref, st.Describe(st.Refusing()), fixedNote(st))
+				rep.failFix("mcpServers.vulnerabilities", "pin a fixed version of the server"+fixedNote(st)+", or set mcpServers.allowVulnerable in the policy", "%s: %s; a run refuses it", st.Ref, st.Describe(st.Refusing()))
 			case st.Refuses():
 				rep.warn("mcpServers.vulnerabilities", "%s: %s, allowed by policy mcpServers.allowVulnerable%s", st.Ref, st.Describe(st.Refusing()), fixedNote(st))
 			case st.Status == "vulnerable":
@@ -761,7 +899,7 @@ func doctorAgentState(rep *doctorReport, home string, pol *policy.Policy, m *man
 	prof, err := profile.Load(profDir)
 	switch {
 	case err != nil:
-		rep.fail("profile", "%s: %v", profDir, err)
+		rep.failFix("profile", "run `agentry run "+meta.Namespace+"/"+meta.Name+" --reconfigure-profile` to write it again", "%s: %v", profDir, err)
 	case prof == nil && len(secrets) > 0:
 		rep.warn("profile", "no MCP profile — secrets resolve from the %s source (an interactive run offers guided setup)", pol.SecretSource.Mode)
 	case prof == nil:
@@ -795,8 +933,8 @@ func doctorAgentState(rep *doctorReport, home string, pol *policy.Policy, m *man
 		note = fmt.Sprintf("; optional and not set, so a run goes without them: %s", strings.Join(absent, ", "))
 	}
 	if len(missing) > 0 {
-		rep.fail("secrets", "%d of %d declared secret(s) would not resolve (run refuses with exit %d): %s — set them in the %s source or `agentry run --reconfigure-profile`%s",
-			len(missing), len(secrets), engine.ExitPolicy, strings.Join(missing, ", "), pol.SecretSource.Mode, note)
+		rep.failFix("secrets", "set them in the "+pol.SecretSource.Mode+" source, or run `agentry run "+meta.Namespace+"/"+meta.Name+" --reconfigure-profile`", "%d of %d declared secret(s) would not resolve (run refuses with exit %d): %s%s",
+			len(missing), len(secrets), engine.ExitPolicy, strings.Join(missing, ", "), note)
 		return
 	}
 	if len(absent) > 0 {
@@ -822,6 +960,9 @@ func printDoctorReport(w io.Writer, rep *doctorReport) {
 	for _, c := range rep.Checks {
 		mark := map[string]string{"ok": "ok  ", "warn": "warn", "fail": "FAIL"}[c.Status]
 		_, _ = fmt.Fprintf(w, "  %s  %-18s %s\n", mark, c.Name, c.Detail)
+		if c.Remedy != "" {
+			_, _ = fmt.Fprintf(w, "        %-18s %s\n", "fix", c.Remedy)
+		}
 	}
 	if n := rep.Failed(); n > 0 {
 		_, _ = fmt.Fprintf(w, "%d check(s) failed\n", n)
