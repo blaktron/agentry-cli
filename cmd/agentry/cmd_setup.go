@@ -155,6 +155,7 @@ func runSetup(cmd *cobra.Command, opts setupOpts) error {
 			return emitJSON(cmd.OutOrStdout(), result)
 		}
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "setup complete (policy only; images skipped)")
+		printNextSteps(cmd.ErrOrStderr(), setupNextSteps()...)
 		return nil
 	}
 	docker := dockerx.New()
@@ -181,6 +182,7 @@ func runSetup(cmd *cobra.Command, opts setupOpts) error {
 	}
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(),
 		"setup complete — gateway, harness, and runner images ready; QuickAgents can run")
+	printNextSteps(cmd.ErrOrStderr(), setupNextSteps()...)
 	return nil
 }
 

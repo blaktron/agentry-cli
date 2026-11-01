@@ -35,6 +35,10 @@ func TestLoginStoresTokenInConfigFallback(t *testing.T) {
 	if !strings.Contains(stdout, "pinned 1 signing key(s) on first use (TOFU)") {
 		t.Errorf("pin note = %q", stdout)
 	}
+	// The sign-in ends with what comes next, on stderr.
+	if !strings.Contains(stderr, "next steps:\n  1. agentry setup\n") || !strings.Contains(stderr, "2. agentry doctor") {
+		t.Errorf("next steps = %q", stderr)
+	}
 
 	cfg, err := loadCLIConfig()
 	if err != nil {

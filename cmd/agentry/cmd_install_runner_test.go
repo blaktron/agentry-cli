@@ -34,6 +34,12 @@ func TestInstallRunnerTargetIsTheDefault(t *testing.T) {
 	if !strings.Contains(stdout, "into the runner home: "+releaseDir) || !strings.Contains(stdout, "(export: agents-md)") {
 		t.Fatalf("stdout:\n%s", stdout)
 	}
+	// The install ends with the run line, on stderr: an unsigned release
+	// needs its consent flag again at run time, and this one asks no
+	// questions and declares no files, so the task's source is said.
+	if !strings.Contains(stderr, "next steps:\n  1. agentry run acme/demo --allow-unsigned\n     the task comes from --input FILE or piped stdin") || !strings.Contains(stderr, "2. agentry info acme/demo\n") {
+		t.Fatalf("next steps:\n%s", stderr)
+	}
 	meta, ok := installdir.Load(releaseDir, fv.digest)
 	if !ok || meta.Export != "agents-md" || meta.Attestation.State != "unsigned" || meta.Attestation.Consent != "" {
 		t.Fatalf("install.json: %+v ok=%v (the cache holds the verdict, never the consent)", meta, ok)

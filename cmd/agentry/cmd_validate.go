@@ -96,6 +96,7 @@ func runValidate(cmd *cobra.Command, dir string, strict, rulesUpdate bool) error
 			c.Errors, c.Warnings, c.InventoryFailing, c.Findings)
 	}
 	_, _ = fmt.Fprintln(out, "validate: PASSED")
+	printNextSteps(cmd.ErrOrStderr(), validateNextSteps(dir)...)
 	return nil
 }
 
