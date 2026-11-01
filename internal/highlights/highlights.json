@@ -1,6 +1,15 @@
 {
   "versions": [
     {
+      "version": "0.6.1015",
+      "highlights": [
+        "agentry agent install adds a persistent QuickAgent from the registry, or your own folder with --local.",
+        "An installed agent keeps its conversation and files between starts, and runs with the knowledge it ships.",
+        "It takes on the persona its publisher gave it, which you can rename and, unless locked, replace.",
+        "Two publishers' agents of the same name run side by side; agentry agent uninstall keeps their data unless asked."
+      ]
+    },
+    {
       "version": "0.6.1014",
       "highlights": [
         "agentry runhost add sets up a Linux server you own as a remote runhost, over SSH.",
