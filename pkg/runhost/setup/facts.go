@@ -159,9 +159,14 @@ func Evaluate(f Facts, reach []string) Plan {
 	}
 
 	var others []string
-	for _, e := range []string{"podman", "nerdctl", "containerd", "crio", "lxd", "incus"} {
+	for _, e := range []string{"podman", "nerdctl", "containerd", "crio"} {
 		if f.yes("engine_" + e) {
 			others = append(others, e)
+		}
+	}
+	for _, e := range []string{"lxd", "incus"} {
+		if f.yes("engine_" + e) {
+			add(LevelNote, "engine", "%s runs here too: its containers are its own, and Docker Engine runs beside it", e)
 		}
 	}
 	switch {

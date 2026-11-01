@@ -32,9 +32,13 @@ const (
 	Home = "/var/lib/agentry"
 	// BinDir holds the links to the CLI and runsc in use.
 	BinDir = Home + "/bin"
-	// CLIPath is the CLI the service, serve and the login shell run. It is
-	// also the account's login shell (see LoginShellCommand).
+	// CLIPath is the CLI the service and serve run.
 	CLIPath = BinDir + "/agentry"
+	// ShellPath is the account's login shell: a link to the CLI, which under
+	// this name runs the forced command and nothing else (LoginShell).
+	ShellPath = BinDir + "/" + ShellName
+	// ShellName is the login shell's file name.
+	ShellName = "agentry-shell"
 	// RunscPath is the runsc the Docker daemon's runtimes name.
 	RunscPath = BinDir + "/runsc"
 	// CLIDir holds each installed CLI release, one directory per version.
@@ -125,10 +129,10 @@ type ServerConfig struct {
 // device was signed in to, or, set up signed out, the paired devices alone.
 type Owner struct {
 	// Kind is "account" or "devices".
-	Kind string `json:"kind"`
+	Kind string `json:"kind" yaml:"kind"`
 	// Registry and Handle name the account, for Kind "account".
-	Registry string `json:"registry,omitempty"`
-	Handle   string `json:"handle,omitempty"`
+	Registry string `json:"registry,omitempty" yaml:"registry,omitempty"`
+	Handle   string `json:"handle,omitempty" yaml:"handle,omitempty"`
 }
 
 // Owner kinds.

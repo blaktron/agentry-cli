@@ -42,9 +42,15 @@ if command -v dockerd >/dev/null 2>&1; then
 else
 	fact dockerd no
 fi
-for e in podman nerdctl containerd crio lxd incus; do
+for e in podman nerdctl containerd crio; do
 	if command -v "$e" >/dev/null 2>&1; then fact "engine_$e" yes; fi
 done
+# LXD and Incus count only when their daemon runs: Ubuntu's images carry an
+# lxd command that only installs it.
+for s in /var/snap/lxd/common/lxd/unix.socket /var/lib/lxd/unix.socket; do
+	[ -S "$s" ] && fact engine_lxd yes
+done
+[ -S /var/lib/incus/unix.socket ] && fact engine_incus yes
 [ -r /etc/docker/daemon.json ] && fact daemon_json yes
 
 # The service's account, if an earlier setup made it.

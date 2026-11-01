@@ -481,7 +481,7 @@ func newRunhostDoctorCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			var rep doctorReport
+			rep := doctorReport{Ref: "runhost " + args[0]}
 			if len(a.Result) > 0 {
 				if err := json.Unmarshal(a.Result, &rep); err != nil {
 					return err

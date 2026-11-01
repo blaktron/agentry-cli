@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -87,25 +88,20 @@ func ServeSocket() string {
 	return SocketPath(os.Getuid())
 }
 
-// LoginShell decides what the CLI does when sshd runs it as the agentry
-// account's login shell. sshd runs a session's command as `shell -c
-// command`, and the forced command makes that `-c` + ServeCommand whatever
-// the device asked. A login (argv[0] starting with "-") and any other -c
-// command are refused, so the account has no shell even if a key were
-// installed without its forced command. handled is false when args are an
-// ordinary invocation of the CLI; serve is true when the command is serve.
+// LoginShell decides what the CLI does when it runs as the agentry
+// account's login shell, ShellPath, which sshd and su know it by. sshd runs a
+// session's command as `shell -c command`, and the forced command makes that
+// `-c` + ServeCommand whatever the device asked. Under that name everything
+// else is refused: a login, an interactive shell, and any other -c command,
+// so the account has no shell even if a key were installed without its
+// forced command. handled is false when the CLI runs under any other name;
+// serve is true when the command is serve.
 func LoginShell(args []string) (handled, serve bool, refusal string) {
-	if len(args) == 0 {
+	if len(args) == 0 || strings.TrimPrefix(filepath.Base(args[0]), "-") != ShellName {
 		return false, false, ""
 	}
-	if strings.HasPrefix(args[0], "-") {
-		return true, false, "the agentry account has no login shell"
+	if len(args) == 3 && args[1] == "-c" && args[2] == ServeCommand {
+		return true, true, ""
 	}
-	if len(args) >= 2 && args[1] == "-c" {
-		if len(args) == 3 && args[2] == ServeCommand {
-			return true, true, ""
-		}
-		return true, false, "the agentry account runs nothing but the runhost's service"
-	}
-	return false, false, ""
+	return true, false, "the agentry account has no shell: it runs nothing but the runhost's service"
 }

@@ -29,9 +29,9 @@ as_agentry() { runuser -u agentry -- env HOME="$HOME_DIR" XDG_RUNTIME_DIR="/run/
 step "the agentry account"
 if id agentry >/dev/null 2>&1; then
 	[ "$(getent passwd agentry | cut -d: -f6)" = "$HOME_DIR" ] || fail "an account named agentry already exists with another home; setup will not take it over"
-	usermod --shell "$BIN/agentry" agentry
 else
-	useradd --system --user-group --create-home --home-dir "$HOME_DIR" --shell "$BIN/agentry" agentry
+	# The login shell becomes the CLI once the CLI is installed, below.
+	useradd --system --user-group --create-home --home-dir "$HOME_DIR" --shell /usr/sbin/nologin agentry
 fi
 # No password, and not a locked one: sshd refuses every sign-in to an account
 # whose password is locked, a run key's included.
@@ -60,8 +60,12 @@ EOF
 fi
 command -v dockerd >/dev/null 2>&1 || fail "no Docker Engine on this server"
 step "the agentry account in the docker group"
+# A user manager already running when the account joins docker lacks the
+# group until it restarts.
 regroup=no
-id -nG agentry | tr ' ' '\n' | grep -qx docker || regroup=yes
+if ! id -nG agentry | tr ' ' '\n' | grep -qx docker && systemctl is-active --quiet "user@$AGENTRY_UID.service"; then
+	regroup=yes
+fi
 usermod -aG docker agentry
 
 step "gVisor $GVISOR_RELEASE"
@@ -87,6 +91,11 @@ ln -sfn "../cli/$AGENTRY_VERSION/agentry" "$BIN/agentry"
 chown -h agentry:agentry "$BIN/agentry"
 got=$(runuser -u agentry -- "$BIN/agentry" --version 2>&1) || fail "the CLI does not run on this server: $got"
 case "$got" in *"$AGENTRY_VERSION"*) ;; *) fail "the CLI reports $got, not $AGENTRY_VERSION" ;; esac
+# The login shell is the CLI under its shell's name, which runs the forced
+# command and nothing else.
+ln -sfn agentry "$BIN/agentry-shell"
+chown -h agentry:agentry "$BIN/agentry-shell"
+usermod --shell "$BIN/agentry-shell" agentry
 
 if [ -f "$STAGE/daemon.json" ]; then
 	step "gVisor's runtimes in the Docker daemon"
@@ -123,7 +132,6 @@ until [ -d "/run/user/$AGENTRY_UID" ] && systemctl is-active --quiet "user@$AGEN
 	sleep 1
 done
 if [ "$regroup" = yes ]; then
-	# A user manager started before the account joined docker lacks the group.
 	systemctl restart "user@$AGENTRY_UID.service"
 fi
 

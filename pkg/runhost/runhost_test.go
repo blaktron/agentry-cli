@@ -27,13 +27,19 @@ func TestLoginShellRunsServeAndNothingElse(t *testing.T) {
 		args            []string
 		handled, serves bool
 	}{
-		{[]string{"agentry", "-c", ServeCommand}, true, true},
-		{[]string{"agentry", "-c", "id"}, true, false},
-		{[]string{"agentry", "-c", ServeCommand + "; id"}, true, false},
-		{[]string{"-agentry"}, true, false},
-		{[]string{"agentry", "-c"}, true, false},
+		{[]string{"agentry-shell", "-c", ServeCommand}, true, true},
+		{[]string{ShellPath, "-c", ServeCommand}, true, true},
+		{[]string{"agentry-shell", "-c", "id"}, true, false},
+		{[]string{"agentry-shell", "-c", ServeCommand + "; id"}, true, false},
+		{[]string{"-agentry-shell"}, true, false},
+		{[]string{"-agentry-shell", "-c", "id"}, true, false},
+		{[]string{"agentry-shell"}, true, false},
+		{[]string{"agentry-shell", "-c"}, true, false},
+		{[]string{"agentry-shell", "runhost", "serve"}, true, false},
+		// Under its own name the CLI is the CLI.
+		{[]string{"agentry", "-c", ServeCommand}, false, false},
 		{[]string{"agentry", "runhost", "status", "lab"}, false, false},
-		{[]string{"agentry"}, false, false},
+		{[]string{"/var/lib/agentry/bin/agentry"}, false, false},
 	}
 	for _, c := range cases {
 		handled, serves, refusal := LoginShell(c.args)

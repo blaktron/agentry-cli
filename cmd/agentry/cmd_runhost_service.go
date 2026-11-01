@@ -212,9 +212,9 @@ func runhostDoctor(ctx context.Context) *doctorReport {
 		}
 	}
 	if v, err := exec.CommandContext(ctx, runhost.RunscPath, "--version").Output(); err != nil { //nolint:gosec // the runhost's own runsc
-		rep.failFix("runhost:runsc", "run `agentry runhost add` again", "runsc does not run: %v", err)
+		rep.failFix("runhost:runsc-version", "run `agentry runhost add` again", "runsc does not run: %v", err)
 	} else {
-		rep.ok("runhost:runsc", "%s", firstLineOf(string(v)))
+		rep.ok("runhost:runsc-version", "%s", firstLineOf(string(v)))
 	}
 	return rep
 }

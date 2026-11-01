@@ -79,6 +79,14 @@ func TestPreflightStopsWhatCannotBeARunhost(t *testing.T) {
 	}
 }
 
+func TestLXDBesideDockerIsANote(t *testing.T) {
+	f := debian13()
+	f["engine_lxd"] = "yes"
+	if p := Evaluate(f, nil); !p.Supported || !p.InstallDocker || findingOf(p, "engine").Level == LevelStop {
+		t.Fatalf("plan %+v", p)
+	}
+}
+
 func TestAnExistingDockerEngineIsKept(t *testing.T) {
 	f := debian13()
 	f["dockerd"], f["docker_server"], f["engine_containerd"] = "yes", "29.1.0", "yes"
