@@ -944,3 +944,49 @@ func TestLoginIgnoresThePinRegistry(t *testing.T) {
 		t.Fatalf("login did not pin the registry it was pointed at: %+v", set)
 	}
 }
+
+// An envelope in hand verifies against the set given and binds to the
+// archive's digest; another key, another digest and a changed payload are
+// each refused.
+func TestVerifyEnvelopeInHand(t *testing.T) {
+	s, other := newSigner(t), newSigner(t)
+	env := s.envelope(t, testDigestHex)
+	raw, err := json.Marshal(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res := VerifyEnvelope(raw, s.keySet(), "sha256:"+testDigestHex); res.State != StateVerified || res.KeyID != s.keyID || res.Agent != "demo/agent" {
+		t.Fatalf("verified = %+v", res)
+	}
+	if res := VerifyEnvelope(raw, other.keySet(), "sha256:"+testDigestHex); res.State != StateMismatch {
+		t.Errorf("another key = %+v", res)
+	}
+	if res := VerifyEnvelope(raw, s.keySet(), "sha256:"+strings.Repeat("0", 64)); res.State != StateMismatch {
+		t.Errorf("another digest = %+v", res)
+	}
+	env.Payload = base64.StdEncoding.EncodeToString([]byte(`{"subject":[{"digest":{"sha256":"` + testDigestHex + `"}}]}`))
+	changed, _ := json.Marshal(env)
+	if res := VerifyEnvelope(changed, s.keySet(), "sha256:"+testDigestHex); res.State != StateMismatch {
+		t.Errorf("a changed payload = %+v", res)
+	}
+	if res := VerifyEnvelope([]byte("not json"), s.keySet(), "sha256:"+testDigestHex); res.State != StateUnverifiable {
+		t.Errorf("not an envelope = %+v", res)
+	}
+}
+
+func TestFetchEnvelopeReadsItAsItIs(t *testing.T) {
+	isolatePins(t)
+	s := newSigner(t)
+	env := s.envelope(t, testDigestHex)
+	reg := newRegistry(t, s.keySet(), &env)
+	raw, err := FetchEnvelope(context.Background(), http.DefaultClient, reg.srv.URL, "", "/att")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res := VerifyEnvelope(raw, s.keySet(), testDigestHex); res.State != StateVerified {
+		t.Fatalf("fetched = %+v", res)
+	}
+	if raw, err := FetchEnvelope(context.Background(), http.DefaultClient, reg.srv.URL, "", ""); raw != nil || err != nil {
+		t.Errorf("no attestation URL = %q, %v", raw, err)
+	}
+}

@@ -700,3 +700,20 @@ func countFlags(cmd *cobra.Command, names ...string) int {
 	}
 	return n
 }
+
+// agentVoice opens the Writing Voice the person keeps in the local store,
+// for a published agent that has it on: the same voice a run attaches,
+// read at each segment's start, whatever its always-attach setting.
+func agentVoice(cmd *cobra.Command) persistent.Voice {
+	return func(ctx context.Context) (*engine.AttachedVoice, error) {
+		s, err := voiceStore(cmd)
+		if err != nil {
+			return nil, err
+		}
+		text, kept, err := s.OpenVoice(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return engine.AttachVoice(text, kept.Meta.Origin())
+	}
+}

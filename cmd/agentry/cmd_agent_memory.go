@@ -42,7 +42,7 @@ func newAgentMemoryExportCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if !a.Builtin.KeepsMemory() {
+			if !a.KeepsMemory() {
 				return engine.Classify(engine.ExitUsage, fmt.Errorf("the %s agent keeps no memory", a.Name))
 			}
 			dir, err := filepath.Abs(args[1])

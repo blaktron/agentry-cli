@@ -41,7 +41,7 @@ func readAtUse(id string) bool { return id == EntryHeartbeat || id == EntryMeeti
 // meetings entry on and the person agreed to it as its sentence reads now.
 // A config.yaml switched some other way lets it do nothing.
 func meetingsOn(a Agent, c Config) bool {
-	if !a.Builtin.ArmsMeetings() {
+	if !a.ArmsMeetings() {
 		return false
 	}
 	r := BuildRoster(a, c, nil)

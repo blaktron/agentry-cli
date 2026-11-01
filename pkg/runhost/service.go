@@ -5,15 +5,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"sync"
 )
 
-// Handler answers one verb. It writes its narration and result to fw and
-// returns the exit code and, when it is not 0, why.
-type Handler func(ctx context.Context, req Request, conn net.Conn, fw *FrameWriter) (int, error)
+// Handler answers one verb. in is the rest of the device's input after the
+// request line (a job's document and release, for job). It writes its
+// narration and result to fw and returns the exit code and, when it is not
+// 0, why.
+type Handler func(ctx context.Context, req Request, in io.Reader, fw *FrameWriter) (int, error)
 
 // Service is the runhost's service: an owner-only Unix socket and the
 // handlers of the verbs it answers.
@@ -85,7 +88,8 @@ func (s *Service) logf(format string, args ...any) {
 func (s *Service) answer(ctx context.Context, conn net.Conn) {
 	defer func() { _ = conn.Close() }()
 	fw := NewFrameWriter(conn)
-	req, err := ReadRequest(bufio.NewReaderSize(conn, 64<<10))
+	br := bufio.NewReaderSize(conn, 64<<10)
+	req, err := ReadRequest(br)
 	if err != nil {
 		_ = fw.Exit(2, err)
 		return
@@ -96,7 +100,7 @@ func (s *Service) answer(ctx context.Context, conn net.Conn) {
 		return
 	}
 	s.logf("request: %s", req.Verb)
-	code, err := h(ctx, req, conn, fw)
+	code, err := h(ctx, req, br, fw)
 	if err != nil {
 		s.logf("%s: %v", req.Verb, err)
 	}

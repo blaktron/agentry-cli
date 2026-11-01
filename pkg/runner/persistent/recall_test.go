@@ -225,7 +225,7 @@ func TestTheMemoryFrameOpensANewTopic(t *testing.T) {
 	}
 
 	for _, a := range Agents() {
-		if a.Name != "assistant" && a.Builtin.KeepsMemory() {
+		if a.Name != "assistant" && a.KeepsMemory() {
 			t.Errorf("%s keeps a memory and would be framed", a.Name)
 		}
 	}

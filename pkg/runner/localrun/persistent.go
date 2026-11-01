@@ -19,6 +19,7 @@ import (
 	mainagent "github.com/blaktron/agentry-cli/pkg/persistent/main"
 	"github.com/blaktron/agentry-cli/pkg/persistent/offer"
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
+	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/connection"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
@@ -35,42 +36,72 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/targethost"
 	"github.com/blaktron/agentry-cli/pkg/trust"
 	"github.com/blaktron/agentry-cli/runnerimage"
-	"github.com/blaktron/agentry-cli/runnerimage/applink"
 	"github.com/blaktron/agentry/pkg/manifest"
 )
 
 // Assistant is the Assistant (pkg/persistent/assistant), the first built-in
 // that runs as a persistent agent. A file in its share is read only once
-// ClamAV has checked it, its app link is its own name, personality and
-// tasks, and it keeps time: each turn tells it the time, and its heartbeat
-// fires its tasks. It keeps a memory of its own, and the secrets the person
-// stores for it, which reach the servers that declare them. It resets in
+// ClamAV has checked it. Its manifest declares what else it has: the time
+// and its tasks, a memory, skills, stored secrets, its own name and
+// persona, Agentry's helper tools and the meeting tools. It resets in
 // parts: its history alone, or everything but the credentials it was given.
-// It may arm meeting recordings, once the person lets it, and reads the
-// calendar feeds the person gives it.
+// It reads the calendar feeds the person gives it.
 func Assistant() Builtin {
 	return Builtin{namespace: assistant.Namespace, name: assistant.Name, version: assistant.Version, fsys: assistant.FS(),
-		persistent: true, runnable: true, checkShare: true, appLink: applink.SetAssistant, keepsTime: true, keepsMemory: true, keepsSecrets: true,
-		resetsInParts: true, armsMeetings: true, readsCalendars: true}
+		persistent: true, runnable: true, checkShare: true, resetsInParts: true, readsCalendars: true}
 }
 
 // Main is Agentry Helper (pkg/persistent/main), the persistent agent of Agentry
-// Desktop's Home: its app link is the application's own operations, and a
-// file in its share is read only once ClamAV has checked it.
+// Desktop's Home: a file in its share is read only once ClamAV has checked
+// it, and its manifest declares Agentry's helper tools and skills.
 func Main() Builtin {
 	return Builtin{namespace: mainagent.Namespace, name: mainagent.Name, version: mainagent.Version, fsys: mainagent.FS(),
-		persistent: true, runnable: true, checkShare: true, appLink: applink.SetMain}
+		persistent: true, runnable: true, checkShare: true}
 }
 
 // Coder is the Coding agent (pkg/persistent/coder): its programs run in its
 // own toolchain image, it may reach the internet, a browser and the person's
 // dev server, each as its roster has them on, and it reads its share as it
-// is: it builds and runs software. The secrets the person stores for it
-// reach its programs and the servers that declare them.
+// is: it builds and runs software. Its manifest declares skills and stored
+// secrets, which reach its programs and the servers that declare them.
 func Coder() Builtin {
 	return Builtin{namespace: coder.Namespace, name: coder.Name, version: coder.Version, fsys: coder.FS(),
-		persistent: true, runnable: true, coder: true, keepsSecrets: true}
+		persistent: true, runnable: true, coder: true}
 }
+
+// Declared is what the built-in declares under capabilities.persistent in its
+// own manifest, read once; nil for none, and for the zero Builtin. A
+// built-in's manifest that does not parse fails the build's tests, never a
+// start.
+func (b Builtin) Declared() *manifest.Persistent {
+	if b.fsys == nil {
+		return nil
+	}
+	if v, ok := builtinDeclared.Load(b.Ref()); ok {
+		return v.(*manifest.Persistent)
+	}
+	var p *manifest.Persistent
+	if raw, err := fs.ReadFile(b.fsys, "agent.yaml"); err == nil {
+		if m, err := manifest.Parse(raw); err == nil {
+			p = m.Capabilities.Persistent
+		}
+	}
+	builtinDeclared.Store(b.Ref(), p)
+	return p
+}
+
+// builtinDeclared are each built-in's declared capabilities by its ref.
+var builtinDeclared sync.Map
+
+// KeepsTime, KeepsMemory, KeepsSecrets and ArmsMeetings say the built-in
+// declares clock, memory, secrets and meetings; AppLink is the app link
+// tool set its declared keys compose. A published agent's are its
+// release's (persistent.Agent).
+func (b Builtin) KeepsTime() bool    { return b.Declared().Declares("clock") }
+func (b Builtin) KeepsMemory() bool  { return b.Declared().Declares("memory") }
+func (b Builtin) KeepsSecrets() bool { return b.Declared().Declares("secrets") }
+func (b Builtin) ArmsMeetings() bool { return b.Declared().Declares("meetings") }
+func (b Builtin) AppLink() string    { return compile.AppLinkSet(b.Declared()) }
 
 // PersistentBuiltins are the built-ins that run as persistent agents.
 func PersistentBuiltins() []Builtin { return []Builtin{Main(), Assistant(), Coder()} }
@@ -112,7 +143,14 @@ func (b Builtin) readSkills() []BuiltinSkill {
 		// The zero Builtin, a published agent's, has no tree.
 		return nil
 	}
-	sub, err := fs.Sub(b.fsys, "skills")
+	return SkillsOf(b.fsys)
+}
+
+// SkillsOf are the skills in a package's tree: each folder beneath its
+// skills/ that is a skill of its folder's name, in name order. A folder
+// that is not one is left out.
+func SkillsOf(fsys fs.FS) []BuiltinSkill {
+	sub, err := fs.Sub(fsys, manifest.SkillsDir)
 	if err != nil {
 		return nil
 	}
@@ -137,15 +175,6 @@ func (b Builtin) readSkills() []BuiltinSkill {
 	}
 	return out
 }
-
-// KeepsTime says the persistent agent is told the time at each turn and
-// keeps a heartbeat that fires the tasks it registers.
-func (b Builtin) KeepsTime() bool { return b.keepsTime }
-
-// ArmsMeetings says the persistent agent's app link has the meeting tools,
-// through which it arms Agentry Desktop to record a meeting, and its roster
-// the switch that lets it.
-func (b Builtin) ArmsMeetings() bool { return b.armsMeetings }
 
 // OfferedServers are the MCP servers the persistent agent comes with, each
 // an entry of its roster: its package's own (offer.Server), some drawn for
@@ -191,36 +220,33 @@ func (b Builtin) SuggestedServers() []offer.Suggestion {
 	return nil
 }
 
-// KeepsSecrets says the persistent agent keeps secrets the person stores for
-// it (Grants.Secrets).
-func (b Builtin) KeepsSecrets() bool { return b.keepsSecrets }
-
 // ReadsCalendars says the persistent agent reads the calendar feeds the
 // person gives it (Grants.CalendarFeeds).
 func (b Builtin) ReadsCalendars() bool { return b.readsCalendars }
-
-// KeepsMemory says the persistent agent has a memory volume of its own,
-// mounted read-write at spec.AgentRoot/spec.AgentMemoryDir.
-func (b Builtin) KeepsMemory() bool { return b.keepsMemory }
 
 // ResetsInParts says the persistent agent has Reset history and Reset
 // agent beside its Reset.
 func (b Builtin) ResetsInParts() bool { return b.resetsInParts }
 
-// memorySeedDir is the folder of a persistent built-in's tree its memory
-// volume is seeded from.
-const memorySeedDir = "memory"
-
 // MemorySeed is what the persistent built-in's memory volume starts with:
 // the files beneath its tree's memory/ folder, by path beneath it; none for
-// a built-in that keeps no memory.
+// a built-in that declares no memory.
 func (b Builtin) MemorySeed() (map[string][]byte, error) {
-	if !b.keepsMemory {
+	if !b.Declared().Declares("memory") {
 		return nil, nil
 	}
-	sub, err := fs.Sub(b.fsys, memorySeedDir)
+	return MemorySeedOf(b.fsys, b.Ref())
+}
+
+// MemorySeedOf is the memory seed in a package's tree: the files beneath
+// its memory/ folder, by path beneath it; none when it has no such folder.
+func MemorySeedOf(fsys fs.FS, ref string) (map[string][]byte, error) {
+	sub, err := fs.Sub(fsys, manifest.MemorySeedDir)
 	if err != nil {
 		return nil, err
+	}
+	if _, err := fs.Stat(sub, "."); errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
 	}
 	out := map[string][]byte{}
 	err = fs.WalkDir(sub, ".", func(p string, d fs.DirEntry, err error) error {
@@ -232,13 +258,10 @@ func (b Builtin) MemorySeed() (map[string][]byte, error) {
 		return err
 	})
 	if err != nil {
-		return nil, fmt.Errorf("the memory seed of %s: %w", b.Ref(), err)
+		return nil, fmt.Errorf("the memory seed of %s: %w", ref, err)
 	}
 	return out, nil
 }
-
-// AppLink is the persistent built-in's app link tool set; empty for none.
-func (b Builtin) AppLink() string { return b.appLink }
 
 // Persistent says the built-in runs as a persistent agent: only a Segment
 // starts it, and Execute refuses it.
@@ -306,6 +329,10 @@ type Grants struct {
 	// is the person's IANA zone, in which the calendar tools answer.
 	CalendarFeeds []CalendarFeed
 	CalendarZone  string
+	// Voice is the person's Writing Voice, when the roster has it on: read
+	// through voice_read as a run's is (engine.Params.Voice). The engine
+	// refuses it to a built-in.
+	Voice *engine.AttachedVoice
 }
 
 // CalendarFeed is one of the Assistant's calendar feeds, as a segment is
@@ -565,6 +592,7 @@ func (s Segment) Start(ctx context.Context, d dockerx.Client) (engine.Persistent
 		ModelSignIn: signIn, RenewModelSignIn: renewSignIn, Inference: s.Inference,
 		SecretOverrides: s.secretOverrides(), WithheldSecrets: slices.Clone(s.Grants.WithheldSecrets),
 		AccountTokens: s.accountTokens(), CalendarURLs: s.calendarURLs(),
+		Voice:      s.Grants.Voice,
 		Persistent: &seg,
 	})
 	if err != nil {
@@ -649,13 +677,14 @@ func ImageAdapter(name string) string {
 	return name
 }
 
-// appLinkSet is the app link tool set the segment's plan has: the
-// built-in's, when the segment is given a socket for it.
-func (s Segment) appLinkSet() string {
+// appLinkSet is the app link tool set the segment's plan has: the one the
+// package's declared capabilities compose (compile.AppLinkSet), when the
+// segment is given a socket for it.
+func (s Segment) appLinkSet(m *manifest.Manifest) string {
 	if s.Grants.AppLink == "" {
 		return ""
 	}
-	return s.Builtin.appLink
+	return compile.AppLinkSet(m.Capabilities.Persistent)
 }
 
 // coderGrant is the Coding agent's grant the segment's plan has: the
@@ -764,11 +793,11 @@ func (s Segment) calendarURLs() map[string]string {
 	return out
 }
 
-// checkSecrets refuses stored secrets for a built-in that keeps none, and
+// checkSecrets refuses stored secrets for a package that declares none, and
 // git host accounts for any but the Coding agent with its commands on.
-func (s Segment) checkSecrets() error {
-	if (len(s.Grants.Secrets) > 0 || len(s.Grants.WithheldSecrets) > 0) && !s.Builtin.keepsSecrets {
-		return engine.Classify(engine.ExitPolicy, fmt.Errorf("%s is not given stored secrets", s.ref()))
+func (s Segment) checkSecrets(m *manifest.Manifest) error {
+	if (len(s.Grants.Secrets) > 0 || len(s.Grants.WithheldSecrets) > 0) && !m.Capabilities.Persistent.Declares("secrets") {
+		return engine.Classify(engine.ExitPolicy, fmt.Errorf("%s is not given stored secrets: it does not declare capabilities.persistent.secrets", s.ref()))
 	}
 	if len(s.Grants.Accounts) > 0 && (!s.Builtin.coder || s.Grants.Coder == nil || !s.Grants.Coder.Commands) {
 		return engine.Classify(engine.ExitPolicy, fmt.Errorf("%s is not given git host accounts: they are the Coding agent's, for the programs it runs", s.ref()))
@@ -777,9 +806,10 @@ func (s Segment) checkSecrets() error {
 }
 
 // agentFiles are the folders the segment's plan mounts: the data volume,
-// and the share when the roster has it on.
-func (s Segment) agentFiles() *spec.AgentFiles {
-	return &spec.AgentFiles{Share: s.Grants.Share != "", CheckShare: s.Grants.Share != "" && s.checksShare(), Skills: s.Grants.Skills, Memory: s.Builtin.keepsMemory}
+// the share when the roster has it on, and the memory volume when the
+// package declares a memory.
+func (s Segment) agentFiles(m *manifest.Manifest) *spec.AgentFiles {
+	return &spec.AgentFiles{Share: s.Grants.Share != "", CheckShare: s.Grants.Share != "" && s.checksShare(), Skills: s.Grants.Skills, Memory: m.Capabilities.Persistent.Declares("memory")}
 }
 
 // checksShare says a file of the segment's share is read only once it was
@@ -905,9 +935,6 @@ func InstallServer(ctx context.Context, d dockerx.Client, pol *policy.Policy, st
 // store, or from the registries when the store does not hold its pin.
 func (s Segment) Plan(ctx context.Context, logw io.Writer) (*SegmentPlan, error) {
 	engine.ReportStage(s.OnStage, engine.Stage{Name: receipt.StageCompile})
-	if err := s.checkSecrets(); err != nil {
-		return nil, err
-	}
 	coderGrant, err := s.coderGrant()
 	if err != nil {
 		return nil, err
@@ -927,6 +954,9 @@ func (s Segment) Plan(ctx context.Context, logw io.Writer) (*SegmentPlan, error)
 	}
 	if !m.Supports(manifest.ModePersistent) {
 		return nil, engine.Classify(engine.ExitCompile, fmt.Errorf("%s does not declare the persistent mode", meta.Ref))
+	}
+	if err := s.checkSecrets(m); err != nil {
+		return nil, err
 	}
 	knowledge, err := s.knowledge(workspace, m, meta)
 	if err != nil {
@@ -957,7 +987,7 @@ func (s Segment) Plan(ctx context.Context, logw io.Writer) (*SegmentPlan, error)
 	in := PlanInputs{
 		Home: s.Home, Manifest: m, Meta: meta, InstallDir: installDir, WorkspaceDir: workspace,
 		Policy: s.Policy, PolicySHA: s.PolicySHA, Adapter: adapterName, Mode: manifest.ModePersistent,
-		Servers: servers, AgentFiles: s.agentFiles(), AppLink: s.appLinkSet(), Coder: coderGrant, Calendar: calendarGrant, ShareServers: s.shareServers(), CompiledBy: s.Build, Log: logw,
+		Servers: servers, AgentFiles: s.agentFiles(m), AppLink: s.appLinkSet(m), Coder: coderGrant, Calendar: calendarGrant, ShareServers: s.shareServers(), CompiledBy: s.Build, Log: logw,
 	}
 	plan, planDir, err := EnsurePlan(in)
 	if err != nil {
