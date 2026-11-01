@@ -34,6 +34,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
+	"github.com/blaktron/agentry-cli/pkg/runner/persistent"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/trust"
 )
@@ -62,6 +63,9 @@ type installOpts struct {
 	// otherwise refuse. The release is fetched and verified as every
 	// install's is.
 	repair bool
+	// agent installs the release as a persistent agent (agentry agent
+	// install): its checks, what it adds to the consent, and its record.
+	agent *agentInstall
 }
 
 // providerTargets maps the per-provider install entry points onto the
@@ -369,6 +373,11 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 	if m.Name != res.Name || m.Namespace != res.Namespace {
 		return fmt.Errorf("the registry's manifest names %s/%s but the release is %s/%s — refusing to install", m.Namespace, m.Name, res.Namespace, res.Name)
 	}
+	if opts.agent != nil {
+		if err := opts.agent.check(m); err != nil {
+			return err
+		}
+	}
 
 	archive, err := downloadArchive(cmd.Context(), reg, token, res)
 	if err != nil {
@@ -418,6 +427,9 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 		}
 		// The runner record is the run's own consent record, so a consent
 		// given here covers the run, and there is one record.
+		if err := persistentAgentsRelease(home, opts, res.Namespace, m.Name); err != nil {
+			return err
+		}
 		key = installdir.ConsentKey(home, res.Namespace, m.Name)
 		paths = installPaths{dest: key.Dir, managed: true}
 		releaseDir := installdir.ReleaseDir(home, res.Namespace, m.Name, res.Version, computed)
@@ -502,6 +514,11 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 	for _, line := range capabilityLinesSized(m.Contract(), sizes) {
 		_, _ = fmt.Fprintf(out, "  %s\n", line)
 	}
+	if opts.agent != nil {
+		opts.agent.describe(cmd.Context(), out, m, func(ref string) (*apiclient.ResolveResult, error) {
+			return resolveRef(cmd.Context(), client, ref, false)
+		})
+	}
 
 	state, serr := installed.Load()
 	if serr != nil {
@@ -578,6 +595,11 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 		} else if err != nil {
 			_, _ = fmt.Fprintf(errOut, "warning: %v — the older version's files are still in the runner home; installing this version again retries the removal\n", err)
 		}
+	}
+	if opts.agent != nil {
+		return opts.agent.record(cmd, persistent.Release{
+			Ref: res.Namespace + "/" + m.Name, Version: res.Version, Digest: computed, Source: persistent.SourceRegistry,
+		}, m, recorded)
 	}
 	if flags.jsonOut {
 		contract, cdigest, err := contractJSON(m.Contract())

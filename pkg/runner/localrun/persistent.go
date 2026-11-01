@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/blaktron/agentry-cli/pkg/installed"
 	"github.com/blaktron/agentry-cli/pkg/persistent/assistant"
 	"github.com/blaktron/agentry-cli/pkg/persistent/coder"
 	mainagent "github.com/blaktron/agentry-cli/pkg/persistent/main"
@@ -32,6 +33,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/skill"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/pkg/runner/targethost"
+	"github.com/blaktron/agentry-cli/pkg/trust"
 	"github.com/blaktron/agentry-cli/runnerimage"
 	"github.com/blaktron/agentry-cli/runnerimage/applink"
 	"github.com/blaktron/agentry/pkg/manifest"
@@ -106,6 +108,10 @@ func (b Builtin) Skills() []BuiltinSkill {
 var builtinSkills sync.Map
 
 func (b Builtin) readSkills() []BuiltinSkill {
+	if b.fsys == nil {
+		// The zero Builtin, a published agent's, has no tree.
+		return nil
+	}
 	sub, err := fs.Sub(b.fsys, "skills")
 	if err != nil {
 		return nil
@@ -345,7 +351,7 @@ func (s Segment) imageSpecs() ([]spec.MCPServerSpec, []string, error) {
 	for _, g := range s.Grants.ImageServers {
 		i := slices.IndexFunc(offered, func(o offer.ImageServer) bool { return o.Key == g.Key })
 		if i < 0 {
-			return nil, nil, fmt.Errorf("the segment is given the image server %s, which %s does not offer", g.Key, s.Builtin.Ref())
+			return nil, nil, fmt.Errorf("the segment is given the image server %s, which %s does not offer", g.Key, s.ref())
 		}
 		o := offered[i]
 		if g.AgentryApp {
@@ -386,10 +392,77 @@ type Account struct {
 	Token string
 }
 
-// Segment is one start of a persistent built-in: the session a persistent
-// agent's supervisor owns until it stops it.
+// Installed is a persistent release installed in the runner home, from the
+// registry or from an author's folder: the record it was laid down with and
+// its release folder. A segment runs it under the attestation its install
+// recorded and its integrity record vouches for, never as built in, and with
+// none of a built-in's grants.
+type Installed struct {
+	Meta *installdir.Meta
+	Dir  string
+}
+
+// verify holds the installed release to the runner home's integrity record
+// before a segment trusts it, and returns the record it was laid down with:
+// a signed release from the registry, or an author's folder installed on
+// this computer. Anything else is refused: a copy that changed, a record
+// that claims to be built in, an unsigned or unscanned registry release.
+func (r Installed) verify() (*installdir.Meta, error) {
+	if r.Meta == nil || r.Dir == "" {
+		return nil, engine.Classify(engine.ExitCLI, errors.New("an installed release with no record"))
+	}
+	meta, err := installdir.Inspect(r.Dir, r.Meta.Digest)
+	var changed *installdir.ChangedError
+	switch {
+	case errors.As(err, &changed):
+		changed.Ref = r.Meta.Ref
+		return nil, engine.Classify(engine.ExitVerify, changed)
+	case errors.Is(err, installdir.ErrNoRecord):
+		return nil, engine.Classify(engine.ExitVerify, fmt.Errorf("%s has no integrity record from this runner home: install it again with agentry agent install", r.Meta.Ref))
+	case err != nil:
+		return nil, engine.Classify(engine.ExitVerify, fmt.Errorf("installed %s: %w", r.Meta.Ref, err))
+	}
+	if meta.Namespace != r.Meta.Namespace || meta.Name != r.Meta.Name || meta.Version != r.Meta.Version {
+		return nil, engine.Classify(engine.ExitVerify, fmt.Errorf("the release folder of %s holds %s", r.Meta.Ref, meta.Ref))
+	}
+	switch {
+	case meta.Source == "builtin" || meta.Attestation.State == trust.StateBuiltin:
+		// Only the application's own packages are built in, and their
+		// record is made in memory (Materialize).
+		return nil, engine.Classify(engine.ExitVerify, fmt.Errorf("%s is recorded as built in, which only the application's own packages are: install it again with agentry agent install", meta.Ref))
+	case meta.Source == installed.SourceLocal && meta.Attestation.State == trust.StateLocal:
+		// The author's folder: unsigned, which its install agreed to.
+		meta.Attestation.Consent = receipt.ConsentAllowUnsigned
+	case meta.Source == "registry" && meta.Attestation.State == trust.StateVerified:
+	default:
+		return nil, engine.Classify(engine.ExitVerify, fmt.Errorf("%s is %s (source %s): a persistent agent runs a signed release from the registry or an author's folder installed on this computer", meta.Ref, meta.Attestation.State, meta.Source))
+	}
+	return meta, nil
+}
+
+// copyCheck holds the segment's copy of the release's workspace to the
+// release folder's integrity record, before anything reads it.
+func (r Installed) copyCheck(ref string) func(string) error {
+	return func(copyDir string) error {
+		err := installdir.CheckCopy(r.Dir, copyDir)
+		var changed *installdir.ChangedError
+		if errors.As(err, &changed) {
+			changed.Ref = ref
+			return changed
+		}
+		return err
+	}
+}
+
+// Segment is one start of a persistent agent: the session a persistent
+// agent's supervisor owns until it stops it. It runs either a persistent
+// built-in (Builtin) or an installed release (Release), never both.
 type Segment struct {
-	Builtin    Builtin
+	Builtin Builtin
+	// Release is the installed release the segment runs in place of a
+	// built-in; nil for a built-in. Builtin is then the zero value, which
+	// carries none of a built-in's grants.
+	Release    *Installed
 	Home       string
 	Policy     *policy.Policy
 	PolicySHA  string
@@ -484,10 +557,10 @@ func (s Segment) Start(ctx context.Context, d dockerx.Client) (engine.Persistent
 	sess, err := engine.StartSession(ctx, d, engine.Params{
 		Intake: answers,
 		Plan:   plan, PlanDir: planDir, WorkspaceSrc: workspace, RunRoot: installDir, RunnerHome: s.Home,
-		OutDir: s.OutDir, TextInputs: true, Knowledge: s.Grants.Knowledge, ServersDir: s.Grants.ServersDir,
+		OutDir: s.OutDir, TextInputs: true, Knowledge: sp.knowledge, ServersDir: s.Grants.ServersDir,
 		Adapter: ad, Policy: s.Policy, PolicyFile: s.PolicyFile, Budgets: spec.Budgets{},
 		Attestation: meta.Attestation, ExecPackages: execPackages,
-		CheckWorkspace: builtinCopyCheck(meta.Digest),
+		CheckWorkspace: s.copyCheck(meta),
 		RunID:          s.RunID, Stderr: logw, OnStage: s.OnStage,
 		ModelSignIn: signIn, RenewModelSignIn: renewSignIn, Inference: s.Inference,
 		SecretOverrides: s.secretOverrides(), WithheldSecrets: slices.Clone(s.Grants.WithheldSecrets),
@@ -503,6 +576,64 @@ func (s Segment) Start(ctx context.Context, d dockerx.Client) (engine.Persistent
 		return nil, engine.Classify(engine.ExitCLI, errors.New("the engine's session is not a persistent agent's segment"))
 	}
 	return ps, nil
+}
+
+// ref is the package the segment runs, as ns/name@version.
+func (s Segment) ref() string {
+	if s.Release != nil && s.Release.Meta != nil {
+		return s.Release.Meta.Ref
+	}
+	return s.Builtin.Ref()
+}
+
+// copyCheck is the engine's check of the segment's copy of the package's
+// workspace: against the embedded tree for a built-in, against the release
+// folder's integrity record for an installed release.
+func (s Segment) copyCheck(meta *installdir.Meta) func(string) error {
+	if s.Release != nil {
+		return s.Release.copyCheck(meta.Ref)
+	}
+	return builtinCopyCheck(meta.Digest)
+}
+
+// materialize is the package the segment runs, laid down in the runner home,
+// with its record: the embedded built-in, or the installed release held to
+// its integrity record.
+func (s Segment) materialize() (*installdir.Meta, string, error) {
+	if s.Release != nil {
+		if s.Builtin.fsys != nil {
+			return nil, "", engine.Classify(engine.ExitCLI, errors.New("a segment runs a built-in or an installed release, not both"))
+		}
+		meta, err := s.Release.verify()
+		if err != nil {
+			return nil, "", err
+		}
+		return meta, s.Release.Dir, nil
+	}
+	if !s.Builtin.persistent || !s.Builtin.runnable {
+		return nil, "", engine.Classify(engine.ExitCLI, fmt.Errorf("%s is not a persistent agent Agentry runs", s.Builtin.Ref()))
+	}
+	meta, dir, err := s.Builtin.Materialize(s.Home, s.Build)
+	if err != nil {
+		return nil, "", engine.Classify(engine.ExitCLI, err)
+	}
+	return meta, dir, nil
+}
+
+// knowledge is the segment's packs: the ones the package ships in its own
+// tree, read from the copy materialize just held to its record, before the
+// ones the person's roster attached. A pack of the person's that takes a
+// shipped pack's name is refused.
+func (s Segment) knowledge(workspace string, m *manifest.Manifest, meta *installdir.Meta) ([]engine.AttachedPack, error) {
+	shipped, err := engine.ShippedPacks(workspace, m, "release "+meta.Ref+" ("+meta.Digest+")")
+	if err != nil {
+		return nil, engine.Classify(engine.ExitCompile, err)
+	}
+	packs, err := engine.WithShipped(shipped, s.Grants.Knowledge)
+	if name, taken := engine.IsPackNameTaken(err); taken {
+		return nil, engine.Classify(engine.ExitCLI, fmt.Errorf("the knowledge pack %s: %s ships a knowledge pack of that name; remove yours from the agent or give it another name", name, meta.Ref))
+	}
+	return packs, err
 }
 
 // ImageAdapter is the adapter a persistent agent runs on for the machine's
@@ -536,7 +667,7 @@ func (s Segment) coderGrant() (*spec.CoderGrant, error) {
 	case g == nil && s.Grants.DevHost == nil:
 		return nil, nil
 	case !s.Builtin.coder:
-		return nil, engine.Classify(engine.ExitPolicy, fmt.Errorf("%s is not given the Coding agent's grants", s.Builtin.Ref()))
+		return nil, engine.Classify(engine.ExitPolicy, fmt.Errorf("%s is not given the Coding agent's grants", s.ref()))
 	case g == nil || g.DevHost != (s.Grants.DevHost != nil):
 		return nil, engine.Classify(engine.ExitCLI, errors.New("the Coding agent's dev server is given exactly when its roster has it on, readied"))
 	}
@@ -601,7 +732,7 @@ func (s Segment) calendarGrant() (*spec.CalendarGrant, error) {
 		return nil, nil
 	}
 	if !s.Builtin.readsCalendars {
-		return nil, engine.Classify(engine.ExitPolicy, fmt.Errorf("%s is not given calendar feeds: they are the Assistant's", s.Builtin.Ref()))
+		return nil, engine.Classify(engine.ExitPolicy, fmt.Errorf("%s is not given calendar feeds: they are the Assistant's", s.ref()))
 	}
 	g := &spec.CalendarGrant{TimeZone: s.Grants.CalendarZone}
 	for i, f := range s.sortedCalendarFeeds() {
@@ -637,10 +768,10 @@ func (s Segment) calendarURLs() map[string]string {
 // git host accounts for any but the Coding agent with its commands on.
 func (s Segment) checkSecrets() error {
 	if (len(s.Grants.Secrets) > 0 || len(s.Grants.WithheldSecrets) > 0) && !s.Builtin.keepsSecrets {
-		return engine.Classify(engine.ExitPolicy, fmt.Errorf("%s is not given stored secrets", s.Builtin.Ref()))
+		return engine.Classify(engine.ExitPolicy, fmt.Errorf("%s is not given stored secrets", s.ref()))
 	}
 	if len(s.Grants.Accounts) > 0 && (!s.Builtin.coder || s.Grants.Coder == nil || !s.Grants.Coder.Commands) {
-		return engine.Classify(engine.ExitPolicy, fmt.Errorf("%s is not given git host accounts: they are the Coding agent's, for the programs it runs", s.Builtin.Ref()))
+		return engine.Classify(engine.ExitPolicy, fmt.Errorf("%s is not given git host accounts: they are the Coding agent's, for the programs it runs", s.ref()))
 	}
 	return nil
 }
@@ -648,7 +779,14 @@ func (s Segment) checkSecrets() error {
 // agentFiles are the folders the segment's plan mounts: the data volume,
 // and the share when the roster has it on.
 func (s Segment) agentFiles() *spec.AgentFiles {
-	return &spec.AgentFiles{Share: s.Grants.Share != "", CheckShare: s.Grants.Share != "" && s.Builtin.checkShare, Skills: s.Grants.Skills, Memory: s.Builtin.keepsMemory}
+	return &spec.AgentFiles{Share: s.Grants.Share != "", CheckShare: s.Grants.Share != "" && s.checksShare(), Skills: s.Grants.Skills, Memory: s.Builtin.keepsMemory}
+}
+
+// checksShare says a file of the segment's share is read only once it was
+// checked: a built-in's as it declares, an installed release's always, so a
+// publisher's agent reads its share as the Assistant does.
+func (s Segment) checksShare() bool {
+	return s.Release != nil || s.Builtin.checkShare
 }
 
 // shareServers are the servers the segment's plan lets see the share: the
@@ -703,6 +841,8 @@ type SegmentPlan struct {
 	// inputs are what Plan was compiled from: the install compiles it
 	// again from them when it changes a server's command.
 	inputs PlanInputs
+	// knowledge is the segment's packs, the package's shipped ones first.
+	knowledge []engine.AttachedPack
 }
 
 // uninstalled names the segment's package servers the agent's store does
@@ -764,9 +904,6 @@ func InstallServer(ctx context.Context, d dockerx.Client, pol *policy.Policy, st
 // touches no container engine; a package server is resolved from the agent's
 // store, or from the registries when the store does not hold its pin.
 func (s Segment) Plan(ctx context.Context, logw io.Writer) (*SegmentPlan, error) {
-	if !s.Builtin.persistent || !s.Builtin.runnable {
-		return nil, engine.Classify(engine.ExitCLI, fmt.Errorf("%s is not a persistent agent Agentry runs", s.Builtin.Ref()))
-	}
 	engine.ReportStage(s.OnStage, engine.Stage{Name: receipt.StageCompile})
 	if err := s.checkSecrets(); err != nil {
 		return nil, err
@@ -779,14 +916,21 @@ func (s Segment) Plan(ctx context.Context, logw io.Writer) (*SegmentPlan, error)
 	if err != nil {
 		return nil, err
 	}
-	meta, installDir, err := s.Builtin.Materialize(s.Home, s.Build)
+	meta, installDir, err := s.materialize()
 	if err != nil {
-		return nil, engine.Classify(engine.ExitCLI, err)
+		return nil, err
 	}
 	workspace := filepath.Join(installDir, "workspace")
 	m, err := ManifestFrom(workspace)
 	if err != nil {
 		return nil, engine.Classify(engine.ExitCompile, err)
+	}
+	if !m.Supports(manifest.ModePersistent) {
+		return nil, engine.Classify(engine.ExitCompile, fmt.Errorf("%s does not declare the persistent mode", meta.Ref))
+	}
+	knowledge, err := s.knowledge(workspace, m, meta)
+	if err != nil {
+		return nil, err
 	}
 	m = s.withServers(m)
 	if blocking := manifest.Blocking(manifest.Validate(m)); len(blocking) > 0 {
@@ -822,5 +966,54 @@ func (s Segment) Plan(ctx context.Context, logw io.Writer) (*SegmentPlan, error)
 	if plan.Harness.Host != nil {
 		return nil, engine.Classify(engine.ExitPolicy, errors.New("a persistent agent runs its harness in a container, and this plan runs it on the host"))
 	}
-	return &SegmentPlan{Plan: plan, Dir: planDir, meta: meta, workspace: workspace, installDir: installDir, resolved: resolved, adapter: ad, inputs: in}, nil
+	return &SegmentPlan{Plan: plan, Dir: planDir, meta: meta, workspace: workspace, installDir: installDir, resolved: resolved, adapter: ad, inputs: in, knowledge: knowledge}, nil
+}
+
+// persistentImageServers are the image servers capabilities.persistent may
+// name, as the manifest spells them (manifest.ImageServerNames), by the key
+// of the server this build runs for each. The manifest names the service, so
+// the program behind it can change without a manifest's changing.
+var persistentImageServers = map[string]string{
+	"google-workspace": assistant.GogKey,
+	"microsoft-365":    assistant.MS365Key,
+}
+
+// PersistentImageServer is the key of the image server this build runs for
+// name, an entry of capabilities.persistent.imageServers; false for a name
+// it does not carry.
+func PersistentImageServer(name string) (string, bool) {
+	key, ok := persistentImageServers[name]
+	return key, ok
+}
+
+// PersistentMailProvider is the key of the mail provider this build reaches
+// for name, an entry of capabilities.persistent.mail; false for a name it
+// does not carry.
+func PersistentMailProvider(name string) (string, bool) {
+	for _, p := range assistant.MailProviders() {
+		if p.Key == name {
+			return p.Key, true
+		}
+	}
+	return "", false
+}
+
+// CheckPersistentNames refuses a capabilities.persistent block that names an
+// image server or a mail provider this build does not carry: a release
+// written for a newer Agentry is refused, never run without what it asks.
+func CheckPersistentNames(p *manifest.Persistent) error {
+	if p == nil {
+		return nil
+	}
+	for _, n := range p.ImageServers {
+		if _, ok := PersistentImageServer(n); !ok {
+			return fmt.Errorf("it asks for the image server %q, which this version of Agentry does not run: update Agentry", n)
+		}
+	}
+	for _, n := range p.Mail {
+		if _, ok := PersistentMailProvider(n); !ok {
+			return fmt.Errorf("it asks for mail at %q, which this version of Agentry does not reach: update Agentry", n)
+		}
+	}
+	return nil
 }

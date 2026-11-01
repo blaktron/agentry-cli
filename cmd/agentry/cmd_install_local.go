@@ -12,6 +12,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
 	"github.com/blaktron/agentry-cli/pkg/runner/localinstall"
+	"github.com/blaktron/agentry-cli/pkg/runner/persistent"
 	"github.com/blaktron/agentry-cli/pkg/trust"
 	"github.com/blaktron/agentry/pkg/apiclient"
 )
@@ -69,6 +70,11 @@ func runLocalInstall(cmd *cobra.Command, dir string, opts installOpts) error {
 		_, _ = fmt.Fprintf(errOut, "warning: %v\n", w)
 	}
 	m := staged.Manifest
+	if opts.agent != nil {
+		if err := opts.agent.check(m); err != nil {
+			return err
+		}
+	}
 	_, _ = fmt.Fprintf(out, "%s (%s), local and unsigned, from %s (%s)\n",
 		staged.Ref(), modesLabel(m.SupportedModes()), abs, staged.Digest)
 	if m.Summary != "" {
@@ -78,11 +84,17 @@ func runLocalInstall(cmd *cobra.Command, dir string, opts installOpts) error {
 	for _, line := range capabilityLinesSized(m.Contract(), nil) {
 		_, _ = fmt.Fprintf(out, "  %s\n", line)
 	}
+	if opts.agent != nil {
+		opts.agent.describe(cmd.Context(), out, m, nil)
+	}
 
 	state, serr := installed.Load()
 	if serr != nil {
 		_, _ = fmt.Fprintf(errOut, "warning: %v — treating this as a first install\n", serr)
 		state = installed.State{}
+	}
+	if err := persistentAgentsRelease(home, opts, m.Namespace, m.Name); err != nil {
+		return err
 	}
 	key := installdir.ConsentKey(home, m.Namespace, m.Name)
 	next := installed.Snapshot(m.Contract())
@@ -119,6 +131,11 @@ func runLocalInstall(cmd *cobra.Command, dir string, opts installOpts) error {
 		return err
 	}
 	_, _ = fmt.Fprintf(out, "installed %s (local, unsigned) into %s\n", staged.Ref(), releaseDir)
+	if opts.agent != nil {
+		return opts.agent.record(cmd, persistent.Release{
+			Ref: m.Namespace + "/" + m.Name, Version: m.Version, Digest: staged.Digest, Source: persistent.SourceLocal, Folder: abs,
+		}, m, true)
+	}
 	_, _ = fmt.Fprintf(out, "run it with: agentry run %s/%s --allow-unsigned\n", m.Namespace, m.Name)
 	if flags.jsonOut {
 		contract, cdigest, err := contractJSON(m.Contract())

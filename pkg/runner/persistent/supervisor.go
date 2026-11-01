@@ -227,7 +227,7 @@ func Start(ctx context.Context, opts Options) (*Supervisor, error) {
 	if a.DesktopOnly && opts.Client != ClientDesktop {
 		return nil, fmt.Errorf("%s %w", a.Title, ErrDesktopOnly)
 	}
-	if !a.Builtin.Persistent() {
+	if !a.Published() && !a.Builtin.Persistent() {
 		return nil, fmt.Errorf("%s is not a persistent agent of this build", a.Name)
 	}
 	cfg, err := LoadConfig(opts.Home, a.Name)
@@ -339,7 +339,7 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 	// The share's mirror is kept only while a server of a checked share
 	// sees it: otherwise no copy of the person's files is kept.
 	var mirror string
-	if len(grants.ShareServers) > 0 && a.Builtin.ChecksShare() {
+	if len(grants.ShareServers) > 0 && a.checksShare() {
 		mirror = shareMirror(home, name)
 	} else if err := removeShareMirror(home, name); err != nil {
 		packsDone()
@@ -350,7 +350,7 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 	// into the home's own. A home that has not run it is given none of
 	// another's.
 	var legacySession, legacyData string
-	if cfg.Segments > 0 {
+	if cfg.Segments > 0 && !a.Published() {
 		legacySession, legacyData = SessionVolume(name), DataVolume(name)
 	}
 	memory, err := memorySegment(home, a, time.Now())
@@ -365,7 +365,7 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 		return fmt.Errorf("the segment's folder: %w", err)
 	}
 	seg := localrun.Segment{
-		Builtin: a.Builtin, Home: home, Policy: s.opts.Policy, PolicySHA: s.opts.PolicySHA,
+		Builtin: a.Builtin, Release: a.Release, Home: home, Policy: s.opts.Policy, PolicySHA: s.opts.PolicySHA,
 		PolicyFile: s.opts.PolicyFile, Build: s.opts.Build, OutDir: outDir, RunID: runID, Stderr: s.opts.Stderr,
 		OnStage: s.opts.OnStage,
 		Persistent: engine.PersistentSegment{
@@ -690,9 +690,9 @@ func (s *Supervisor) sendLocked(ctx context.Context, pre, text string) error {
 	s.mu.Unlock()
 	failed := failFrame(BuildRoster(s.opts.Agent, cfg, nil), cfg.ServerFailures)
 	frame += failed
-	persona := personaKey(cfg)
+	persona := personaKey(s.opts.Agent, cfg)
 	if persona != given {
-		frame += personaFrame(cfg)
+		frame += personaFrame(s.opts.Agent, cfg)
 	}
 	frame += pre
 	sentAt := s.now()

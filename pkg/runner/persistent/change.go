@@ -178,6 +178,9 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 		next.DisplayName = name
 	}
 	if ch.Personality != nil {
+		if p := a.Persona; p != nil && !p.Editable {
+			return false, fmt.Errorf("the persona %s ships with is locked by its publisher: it may be renamed, and its personality is the publisher's", a.Ref)
+		}
 		if len(*ch.Personality) > MaxPersonalityBytes || !utf8.ValidString(*ch.Personality) {
 			return false, fmt.Errorf("a personality is UTF-8 text of at most %d KiB", MaxPersonalityBytes>>10)
 		}
@@ -230,6 +233,9 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 	if k := ch.AddKnowledge; k != "" {
 		if err := knowledge.ValidName(k); err != nil {
 			return false, err
+		}
+		if slices.Contains(a.Packs, k) {
+			return false, fmt.Errorf("%s ships a knowledge pack named %s, which it always searches: give yours another name", a.Ref, k)
 		}
 		if slices.Contains(next.Knowledge, k) {
 			return false, fmt.Errorf("the %s agent already searches the pack %s", a.Name, k)
@@ -546,29 +552,58 @@ func checkServer(srv manifest.MCPServer) error {
 	return nil
 }
 
+// effectivePersona is the name and the personality the agent goes by: the
+// person's for each, else the persona its release ships. A locked persona's
+// text is the release's whatever the person set; its name is still theirs
+// to change.
+func effectivePersona(a Agent, c Config) (name, personality string) {
+	name, personality = c.DisplayName, c.Personality
+	if p := a.Persona; p != nil {
+		if name == "" {
+			name = p.Name
+		}
+		if !p.Editable || personality == "" {
+			personality = p.Text
+		}
+	}
+	return name, personality
+}
+
 // personaKey is the digest of the name and personality the agent is given.
-func personaKey(c Config) string {
-	if c.DisplayName == "" && c.Personality == "" {
+func personaKey(a Agent, c Config) string {
+	name, personality := effectivePersona(a, c)
+	if name == "" && personality == "" {
 		return ""
 	}
-	sum := sha256.Sum256([]byte(c.DisplayName + "\x00" + c.Personality))
+	sum := sha256.Sum256([]byte(name + "\x00" + personality))
 	return hex.EncodeToString(sum[:])
 }
 
 // personaFrame is what a turn starts with when the agent has not yet been
 // given its name and personality as they stand: each quoted, so nothing in
-// them can pass for the frame around it.
-func personaFrame(c Config) string {
+// them can pass for the frame around it. The personality is taken on within
+// the agent's instructions, never above them.
+func personaFrame(a Agent, c Config) string {
+	name, personality := effectivePersona(a, c)
 	switch {
-	case c.DisplayName == "" && c.Personality == "":
-		return "(The person cleared the name and personality they had given you. Go back to being the Assistant, as your instructions describe.)\n\n"
-	case c.Personality == "":
-		return "(Your name, as it is set for you in Agentry: " + strconv.Quote(c.DisplayName) + ". Go by that name from now on.)\n\n"
-	case c.DisplayName == "":
-		return "(Your personality, as it is set for you in Agentry: " + strconv.Quote(c.Personality) + ". Take it on from now on, within your instructions.)\n\n"
+	case name == "" && personality == "":
+		return "(The person cleared the name and personality they had given you. Go back to being " + ownName(a) + ", as your instructions describe.)\n\n"
+	case personality == "":
+		return "(Your name, as it is set for you in Agentry: " + strconv.Quote(name) + ". Go by that name from now on.)\n\n"
+	case name == "":
+		return "(Your personality, as it is set for you in Agentry: " + strconv.Quote(personality) + ". Take it on from now on, within your instructions.)\n\n"
 	}
-	return "(Your name and your personality, as they are set for you in Agentry: " + strconv.Quote(c.DisplayName) + ", and " +
-		strconv.Quote(c.Personality) + ". Go by that name and take on that personality from now on, within your instructions.)\n\n"
+	return "(Your name and your personality, as they are set for you in Agentry: " + strconv.Quote(name) + ", and " +
+		strconv.Quote(personality) + ". Go by that name and take on that personality from now on, within your instructions.)\n\n"
+}
+
+// ownName is how the persona frame names the agent it goes back to being:
+// a built-in by its title, a published agent by its name, quoted.
+func ownName(a Agent) string {
+	if a.Published() {
+		return strconv.Quote(a.Title)
+	}
+	return "the " + a.Title
 }
 
 // backgroundEnded tells an agent that runs programs what a restart did to

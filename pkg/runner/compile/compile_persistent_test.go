@@ -205,9 +205,11 @@ func TestTheAppLinkIsAServerWithNoNetworkAndOneBind(t *testing.T) {
 	}
 }
 
-// TestPersistentGrantsRefusedOutsideBuiltins: the folders and the app link
-// are refused to a release from any source but a built-in, to a plan that is
-// not persistent, and beside the web tools or the review grant.
+// TestPersistentGrantsRefusedOutsideBuiltins: a memory, skills and the app
+// link are refused to a release from any source but a built-in (its share
+// and data folders are not: TestPersistentReleaseRunsWhereThePolicyAllows),
+// the app link to a plan that is not persistent, and the folders and the
+// app link beside the web tools or the review grant.
 func TestPersistentGrantsRefusedOutsideBuiltins(t *testing.T) {
 	refused := func(name string, in Inputs) {
 		t.Helper()
@@ -217,9 +219,9 @@ func TestPersistentGrantsRefusedOutsideBuiltins(t *testing.T) {
 		}
 	}
 	for _, source := range []string{"registry", "local"} {
-		in := persistentInputs(t, &spec.AgentFiles{Share: true})
+		in := persistentInputs(t, &spec.AgentFiles{Share: true, Memory: true})
 		in.Source = source
-		refused("the folders from "+source, in)
+		refused("a memory from "+source, in)
 		in = persistentInputs(t, nil)
 		in.Source, in.AppLink = source, applink.SetMain
 		refused("the app link from "+source, in)

@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/blaktron/agentry-cli/internal/version"
-	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
 	"github.com/blaktron/agentry-cli/pkg/runner/localinstall"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
@@ -458,10 +457,10 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	if err != nil {
 		return engine.Classify(engine.ExitUsage, err)
 	}
-	// Refused here as the compiler would refuse it, before any question or
-	// consent is put to the person for a run that cannot start.
+	// A persistent release is a persistent agent, which a run cannot be:
+	// refused before any question or consent is put to the person.
 	if mode == manifest.ModePersistent && meta.Source != "builtin" {
-		return engine.Classify(engine.ExitPolicy, &compile.PolicyRefusal{Reason: compile.PersistentOnlyBuiltin})
+		return engine.Classify(engine.ExitUsage, fmt.Errorf("%s/%s runs as a persistent agent, not as a run: install it with agentry agent install %s/%s, then start it with agentry agent start", m.Namespace, m.Name, m.Namespace, m.Name))
 	}
 	if opts.sessionInputs != "" && !opts.sessionProtocol {
 		return engine.Classify(engine.ExitUsage, errors.New("--session-inputs is for --session-protocol"))

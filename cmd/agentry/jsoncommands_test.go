@@ -170,6 +170,8 @@ func TestEveryJSONCommandEmitsOneObject(t *testing.T) {
 		"knowledge delete":     {reason: "needs a built pack"},
 		"knowledge ship":       {reason: "needs a built pack and a release"},
 		"agent show":           {reason: "needs a persistent agent"},
+		"agent install":        {reason: "needs a persistent release"},
+		"agent uninstall":      {reason: "needs an installed persistent agent"},
 		"agent start":          {reason: "needs a persistent agent and the engine"},
 		"agent stop":           {reason: "needs a running persistent agent"},
 		"agent attach":         {reason: "needs a running persistent agent"},

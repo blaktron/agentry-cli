@@ -39,33 +39,55 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/session"
 )
 
-// Agent is one persistent agent this build knows.
+// Agent is one persistent agent: a built-in, or a published agent installed
+// in the runner home (published.go).
 type Agent struct {
-	// Name is the agent's name, its built-in's name: what the commands and
-	// the state folder are keyed by.
+	// Name is the agent's key: what the commands, the state folder, the
+	// volumes and the socket are keyed by. A built-in's is its short name,
+	// a published agent's its reference with a dot (Key).
 	Name string
-	// Title is how the agent is named to a person until they name it.
+	// Ref is the agent's ns/name.
+	Ref string
+	// Title is how the agent is named to a person until they or its persona
+	// name it (DisplayName): a built-in's own, a published agent's release
+	// name.
 	Title string
 	// DesktopOnly says the agent runs only in Agentry Desktop; the CLI
 	// lists it and refuses to start, chat with or configure it.
 	DesktopOnly bool
-	// Builtin is the package it runs.
+	// Builtin is the built-in it runs; the zero value for a published
+	// agent, which has none of a built-in's grants.
 	Builtin localrun.Builtin
 	// ShareName is the default share folder's name, under ~/agentry.
 	ShareName string
+
+	// A published agent's, empty for a built-in: the version it runs and
+	// where it came from (SourceRegistry or SourceLocal), its release
+	// folder, the persona and the knowledge packs its release ships, and
+	// the subagents it declares as they were pinned at its install.
+	Version   string
+	Source    string
+	Release   *localrun.Installed
+	Persona   *Persona
+	Packs     []string
+	Subagents []SubagentPin
 }
 
-// Agents are the persistent agents this build knows, in the order they are
-// listed.
+// Agents are the persistent agents built into this build, in the order they
+// are listed; AgentsIn adds the ones installed in a runner home.
 func Agents() []Agent {
+	builtin := func(b localrun.Builtin, title, share string, desktopOnly bool) Agent {
+		return Agent{Name: b.Name(), Ref: b.Namespace() + "/" + b.Name(), Title: title, DesktopOnly: desktopOnly, Builtin: b, ShareName: share}
+	}
 	return []Agent{
-		{Name: localrun.Main().Name(), Title: "Agentry Helper", DesktopOnly: true, Builtin: localrun.Main(), ShareName: "mainshare"},
-		{Name: localrun.Assistant().Name(), Title: "Assistant", Builtin: localrun.Assistant(), ShareName: "assistantshare"},
-		{Name: localrun.Coder().Name(), Title: "Coding agent", Builtin: localrun.Coder(), ShareName: "codingshare"},
+		builtin(localrun.Main(), "Agentry Helper", "mainshare", true),
+		builtin(localrun.Assistant(), "Assistant", "assistantshare", false),
+		builtin(localrun.Coder(), "Coding agent", "codingshare", false),
 	}
 }
 
-// Lookup is the agent named name.
+// Lookup is the built-in agent named name; LookupIn finds the published
+// agents of a runner home too.
 func Lookup(name string) (Agent, error) {
 	var names []string
 	for _, a := range Agents() {
@@ -78,10 +100,13 @@ func Lookup(name string) (Agent, error) {
 }
 
 // DisplayName is the name the agent goes by: the person's for it, else its
-// title.
+// persona's, else its title.
 func (a Agent) DisplayName(c Config) string {
 	if n := strings.TrimSpace(c.DisplayName); n != "" {
 		return n
+	}
+	if a.Persona != nil && a.Persona.Name != "" {
+		return a.Persona.Name
 	}
 	return a.Title
 }
@@ -584,11 +609,13 @@ const (
 )
 
 func reset(ctx context.Context, home, name string, d dockerx.Client, kind resetKind) error {
-	// Only a known agent's folder is emptied.
-	a, err := Lookup(name)
+	// Only a known agent's folder is emptied, by the key it is kept under
+	// whichever way it was named.
+	a, err := LookupIn(home, name)
 	if err != nil {
 		return err
 	}
+	name = a.Name
 	if kind != resetAll && !a.Builtin.ResetsInParts() {
 		return fmt.Errorf("the %s agent has one Reset; Reset history and Reset agent are the Assistant's", name)
 	}
