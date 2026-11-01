@@ -1,6 +1,13 @@
 {
   "versions": [
     {
+      "version": "0.7.0",
+      "highlights": [
+        "The CLI, the desktop app, the MCP server and the Agentry server now share one version, 0.7.0.",
+        "It does everything 0.6.1019 does, with nothing removed."
+      ]
+    },
+    {
       "version": "0.6.1019",
       "highlights": [
         "agentry run --on now carries the rest of a local run: secrets, intake answers, files, knowledge packs and your voice.",
