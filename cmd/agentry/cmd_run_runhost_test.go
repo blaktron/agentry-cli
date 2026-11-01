@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -196,10 +197,48 @@ func TestRunOnARunhostEndToEnd(t *testing.T) {
 		t.Errorf("the failed run's folder holds %v", got)
 	}
 	t.Setenv("RUNHOST_TEST_EXIT", "0")
+	// A job the runhost refuses keeps the runhost's class: a device it has
+	// not paired is a usage refusal, not a gateway failure.
+	unpaired, _ := json.Marshal(runhost.Devices{Devices: []runhost.Device{{ID: "bbbbbbbbbbbbbbbb", SealKey: dk.SealPublic()}}})
+	if err := os.WriteFile(runhostDevicesFile, unpaired, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, stderr, err = runCLI(t, strings.NewReader(""), "--registry", fr.url(), "run", "acme/demo@1.0.0",
+		"--on", "lab", "--allow-unsigned", "--yes", "--out", filepath.Join(t.TempDir(), "refused"))
+	wantClassified(t, err, 2)
+	if !strings.Contains(err.Error(), "refused the run (exit 2)") {
+		t.Errorf("refusal: %v\n%s", err, stderr)
+	}
+	if err := os.WriteFile(runhostDevicesFile, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	// The release now in the runhost's store is not sent again.
 	if _, stderr, err := runCLI(t, strings.NewReader(""), "--registry", fr.url(), "run", "acme/demo@1.0.0",
 		"--on", "lab", "--allow-unsigned", "--yes", "--out", filepath.Join(t.TempDir(), "out2")); err != nil {
 		t.Fatalf("second run: %v\n%s", err, stderr)
+	}
+}
+
+// A refusal keeps the class the runhost gave it when that is a usage,
+// verify or policy refusal; any other answer, and a session that ended
+// without one, is the gateway's.
+func TestRunOnSendClass(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want int
+	}{
+		{&runhostRefusal{Code: 2, Reason: "x"}, 2},
+		{&runhostRefusal{Code: 10, Reason: "x"}, 10},
+		{&runhostRefusal{Code: 11, Reason: "x"}, 11},
+		{&runhostRefusal{Code: 1, Reason: "x"}, 13},
+		{&runhostRefusal{Code: 14, Reason: "x"}, 13},
+		{fmt.Errorf("wrapped: %w", &runhostRefusal{Code: 10, Reason: "x"}), 10},
+		{io.ErrUnexpectedEOF, 13},
+		{errors.New("the session ended without an answer"), 13},
+	} {
+		if got := runOnSendClass(tc.err); got != tc.want {
+			t.Errorf("%v: class %d, want %d", tc.err, got, tc.want)
+		}
 	}
 }
 

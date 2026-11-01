@@ -197,7 +197,7 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 		_, _ = fmt.Fprintf(errOut, "%s: %s\n", rec.Name, safeTerminalText(line, 4096))
 	})
 	if err != nil {
-		return engine.Classify(engine.ExitGateway, err)
+		return engine.Classify(runOnSendClass(err), err)
 	}
 	if res.Job != j.ID {
 		return engine.Classify(engine.ExitGateway, fmt.Errorf("%s answered for job %q, not this run's", rec.Name, res.Job))
@@ -391,9 +391,34 @@ func runOnSend(ctx context.Context, c *runhost.Client, j *job.Job, archive []byt
 	}
 	var res runhostJobResult
 	if len(a.Result) == 0 || json.Unmarshal(a.Result, &res) != nil {
-		return runhostJobResult{}, fmt.Errorf("the runhost refused the run (exit %d): %s", a.Code, nonEmptyOr(a.Error, "no reason given"))
+		return runhostJobResult{}, &runhostRefusal{Code: a.Code, Reason: nonEmptyOr(a.Error, "no reason given")}
 	}
 	return res, nil
+}
+
+// runhostRefusal is a job the runhost answered without running it, with the
+// exit class it gave.
+type runhostRefusal struct {
+	Code   int
+	Reason string
+}
+
+func (r *runhostRefusal) Error() string {
+	return fmt.Sprintf("the runhost refused the run (exit %d): %s", r.Code, r.Reason)
+}
+
+// runOnSendClass is the exit class of a job that did not run: a refusal the
+// runhost classed as usage, verify or policy keeps that class, and anything
+// else, a transport failure among them, is the gateway's.
+func runOnSendClass(err error) int {
+	var r *runhostRefusal
+	if errors.As(err, &r) {
+		switch r.Code {
+		case engine.ExitUsage, engine.ExitVerify, engine.ExitPolicy:
+			return r.Code
+		}
+	}
+	return engine.ExitGateway
 }
 
 // runOnCollect fetches the job's sealed output and opens it with this
