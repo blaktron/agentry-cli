@@ -17,7 +17,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/blaktron/agentry-cli/pkg/runhost"
@@ -667,7 +666,7 @@ func runhostStage(j *job.Job, st *runhostStaged) error {
 // writeNewFile writes data to a new file only its owner can read, never
 // through a link and never over a file already there.
 func writeNewFile(path string, data []byte) error {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY|syscall.O_NOFOLLOW, 0o600) //nolint:gosec // the job's own directory
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY|openNoFollow, 0o600) //nolint:gosec // the job's own directory
 	if err != nil {
 		return err
 	}
@@ -713,7 +712,7 @@ func dropRunCredentials(home string, values []string) {
 		return
 	}
 	holds := func(p string) bool {
-		f, err := os.OpenFile(p, os.O_RDONLY|syscall.O_NOFOLLOW, 0) //nolint:gosec // under the runner home, the CLI's own layout
+		f, err := os.OpenFile(p, os.O_RDONLY|openNoFollow, 0) //nolint:gosec // under the runner home, the CLI's own layout
 		if err != nil {
 			return false
 		}
