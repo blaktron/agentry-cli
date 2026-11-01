@@ -184,6 +184,13 @@ func testHostKeys(t *testing.T, port int) {
 		if !errors.As(err, &r) || r.Detail != RefusedKeyUnknown || !strings.Contains(err.Error(), ssh.FingerprintSHA256(served)) {
 			t.Fatalf("an unknown key: %v", err)
 		}
+		if !strings.HasPrefix(err.Error(), "target host server: box.example's host key (") {
+			t.Errorf("a run's refusal names the target host: %v", err)
+		}
+		r.Of = "runhost"
+		if !strings.HasPrefix(err.Error(), "runhost server: box.example's host key (") {
+			t.Errorf("a refusal of another role names it: %v", err)
+		}
 	})
 	t.Run("an unknown key a person trusts is kept in the runner's file", func(t *testing.T) {
 		dir := t.TempDir()
