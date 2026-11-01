@@ -326,6 +326,9 @@ func TestTheWebToolsReviewAndCalendarsCompose(t *testing.T) {
 		if !slices.Equal(got, c.allowHosts) || tools["disableNetwork"] != nil || plan.Capabilities.ToolsReachPastHost() != c.web {
 			t.Errorf("%v: allowHosts %v, disableNetwork %v, reaches past the host %v", c.keys, got, tools["disableNetwork"], plan.Capabilities.ToolsReachPastHost())
 		}
+		if cl := plan.Enforcement["persistent.calendar"]; c.cal && strings.Contains(cl, "through the gateway's proxy") == c.web {
+			t.Errorf("%v: calendar line: %s", c.keys, cl)
+		}
 		line := plan.Enforcement["network"]
 		for _, want := range c.lineHas {
 			if !strings.Contains(line, want) {

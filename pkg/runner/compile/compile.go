@@ -635,7 +635,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		plan.Enforcement["persistent.accounts"] = coderAccountsEnforcement(c.Accounts)
 	}
 	if caps.Calendar != nil {
-		plan.Enforcement["persistent.calendar"] = calendarEnforcement(caps.Calendar)
+		plan.Enforcement["persistent.calendar"] = calendarEnforcement(caps.Calendar, caps.WebTools)
 	}
 	if dependencyScan(caps) {
 		plan.Enforcement["persistent.dependencyScan"] = "dependency_scan runs OSV-Scanner from the Coding agent's toolchain image with --offline, under run_command's confinement, over a folder beneath " + spec.AgentRoot +
