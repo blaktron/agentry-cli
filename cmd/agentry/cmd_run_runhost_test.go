@@ -125,11 +125,11 @@ func TestRunOnARunhostEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pol.Model = policy.Model{Provider: "anthropic", Name: "claude-x", APIKeyEnv: "TEST_MODEL_KEY_VAR", ProxyAllow: []string{"api.anthropic.com:443"}}
+	pol.Model = policy.Model{Provider: "anthropic", Name: "claude-x", APIKeyEnv: "TEST_MODEL_API_KEY", ProxyAllow: []string{"api.anthropic.com:443"}}
 	if err := policy.Save(path, pol); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("TEST_MODEL_KEY_VAR", "sk-test-model-key")
+	t.Setenv("TEST_MODEL_API_KEY", "sk-test-model-key")
 
 	fr := newFakeRegistry(t)
 	fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
@@ -185,6 +185,17 @@ func TestRunOnARunhostEndToEnd(t *testing.T) {
 	if entries, _ := os.ReadDir(runhostJobsDir); len(entries) != 0 {
 		t.Errorf("the runhost kept %d jobs after collection", len(entries))
 	}
+	// A run that fails on the runhost fails here with its exit, its output
+	// collected all the same.
+	t.Setenv("RUNHOST_TEST_EXIT", "14")
+	failOut := filepath.Join(t.TempDir(), "fail")
+	_, _, err = runCLI(t, strings.NewReader(""), "--registry", fr.url(), "run", "acme/demo@1.0.0",
+		"--on", "lab", "--allow-unsigned", "--yes", "--out", failOut)
+	wantClassified(t, err, 14)
+	if got := listFiles(t, failOut); strings.Join(got, " ") != "receipts/events.ndjson reports/r.md result.json" {
+		t.Errorf("the failed run's folder holds %v", got)
+	}
+	t.Setenv("RUNHOST_TEST_EXIT", "0")
 	// The release now in the runhost's store is not sent again.
 	if _, stderr, err := runCLI(t, strings.NewReader(""), "--registry", fr.url(), "run", "acme/demo@1.0.0",
 		"--on", "lab", "--allow-unsigned", "--yes", "--out", filepath.Join(t.TempDir(), "out2")); err != nil {
@@ -202,6 +213,9 @@ func TestRunOnRefusesWhatItDoesNotCarry(t *testing.T) {
 	}
 	if _, _, err := runCLI(t, nil, "run", "acme/demo@1.0.0", "--on", "lab", "--file", "x"); err == nil || !strings.Contains(err.Error(), "--file") {
 		t.Errorf("--file: %v", err)
+	}
+	if _, _, err := runCLI(t, nil, "run", "acme/demo@1.0.0", "--on", "lab", "--adapter", "claude"); err == nil || !strings.Contains(err.Error(), "--adapter") {
+		t.Errorf("--adapter: %v", err)
 	}
 	if what := runOnRefusedRelease(&manifest.Manifest{Capabilities: manifest.Capabilities{Secrets: []string{"TOKEN"}}}); what != "secrets" {
 		t.Errorf("secrets: %q", what)

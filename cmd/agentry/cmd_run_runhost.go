@@ -56,6 +56,10 @@ func runOnUnsupported(opts runOpts) string {
 		return "--report-design and --report-theme"
 	case opts.keepProfile != "", opts.reconfigureProfile:
 		return "the MCP profile flags"
+	case opts.adapterName != "":
+		return "--adapter (a runhost runs its own container harness)"
+	case opts.keepRunDir, opts.allowVulnerableMCP:
+		return "--keep-run-dir and --allow-vulnerable-mcp"
 	}
 	return ""
 }
@@ -165,7 +169,7 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	}
 	j := &job.Job{V: job.Version, ID: id, Device: rec.DeviceID, Release: rel, Run: job.Run{
 		Task: string(task), AllowUnsigned: opts.allowUnsigned, AllowUnscanned: opts.allowUnscanned,
-		Adapter: opts.adapterName, Timeout: opts.timeout, MaxTurns: opts.maxTurns, MaxCost: opts.maxCost,
+		Timeout: opts.timeout, MaxTurns: opts.maxTurns, MaxCost: opts.maxCost,
 		Model: job.ModelOf(pol.Model), ModelKey: modelKey,
 	}}
 	if err := j.Validate(); err != nil {
@@ -189,7 +193,9 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	_, _ = fmt.Fprintf(errOut, "running %s on %s (%s, host key %s)\n", meta.Ref, rec.Name, rec.Host, rec.HostKeyFingerprint)
 
 	opts.progress.at(receipt.StageAgent)
-	res, err := runOnSend(cmd.Context(), client, j, archive, func(line string) { _, _ = fmt.Fprintf(errOut, "%s: %s\n", rec.Name, line) })
+	res, err := runOnSend(cmd.Context(), client, j, archive, func(line string) {
+		_, _ = fmt.Fprintf(errOut, "%s: %s\n", rec.Name, safeTerminalText(line, 4096))
+	})
 	if err != nil {
 		return engine.Classify(engine.ExitGateway, err)
 	}
@@ -198,9 +204,21 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	}
 
 	opts.progress.at(receipt.StageOutput)
+	// The envelope is the runhost CLI's stdout; a run that printed none still
+	// has its output collected, and fails as the CLI's exit says.
 	var env receipt.Envelope
-	if err := json.Unmarshal(res.Envelope, &env); err != nil {
-		return engine.Classify(engine.ExitCLI, fmt.Errorf("%s's run gave no envelope (exit %d)", rec.Name, res.ExitCode))
+	enveloped := json.Unmarshal(res.Envelope, &env) == nil
+	if !enveloped {
+		env = receipt.Envelope{Status: "error", ExitCode: res.ExitCode, Ref: meta.Ref, Digest: meta.Digest,
+			Error: fmt.Sprintf("the run on %s gave no envelope", rec.Name)}
+	}
+	// The CLI's exit status is what the run ended in, whatever its stdout
+	// says.
+	if env.ExitCode != res.ExitCode {
+		env.ExitCode = res.ExitCode
+		if res.ExitCode != 0 {
+			env.Status = "error"
+		}
 	}
 	runID := env.RunID
 	if runID == "" {
@@ -212,7 +230,7 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	}
 	opts.progress.wrote(outDir)
 	if err := runOnCollect(cmd.Context(), client, j.ID, rec.DeviceID, keys, outDir); err != nil {
-		return engine.Classify(engine.ExitCLI, fmt.Errorf("collect the run's output from %s: %w (it stays there, sealed, for 7 days)", rec.Name, err))
+		return engine.Classify(engine.ExitCLI, fmt.Errorf("collect the run's output from %s: %w (it stays there, sealed, for %d days)", rec.Name, err, int(runhostOutputKeep.Hours()/24)))
 	}
 	if _, err := client.Ask(cmd.Context(), "collect", []string{j.ID, "done"}, nil); err != nil {
 		_, _ = fmt.Fprintf(errOut, "warning: %s keeps the sealed output of job %s until it expires: %v\n", rec.Name, j.ID, err)
@@ -413,10 +431,22 @@ func runOnCollect(ctx context.Context, c *runhost.Client, jobID, device string, 
 	}
 	defer func() { _ = os.RemoveAll(staging) }()
 	pr, pw := io.Pipe()
-	go func() { pw.CloseWithError(output.Open(pw, sealed, device, keys.Seal, jobID)) }()
-	if err := output.Unpack(pr, filepath.Join(staging, "out")); err != nil {
-		_ = pr.CloseWithError(err)
-		return err
+	opened := make(chan error, 1)
+	go func() {
+		err := output.Open(pw, sealed, device, keys.Seal, jobID)
+		pw.CloseWithError(err)
+		opened <- err
+	}()
+	uerr := output.Unpack(pr, filepath.Join(staging, "out"))
+	// Whatever Unpack did not read is drained, so Open reaches the end of
+	// the sealed output and says whether all of it opened.
+	_, _ = io.Copy(io.Discard, pr)
+	oerr := <-opened
+	if uerr != nil {
+		return uerr
+	}
+	if oerr != nil {
+		return oerr
 	}
 	return moveInto(filepath.Join(staging, "out"), outDir)
 }

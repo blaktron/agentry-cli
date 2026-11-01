@@ -86,8 +86,9 @@ type Run struct {
 	// run.
 	AllowUnsigned  bool `json:"allowUnsigned,omitempty"`
 	AllowUnscanned bool `json:"allowUnscanned,omitempty"`
-	// Adapter is the harness adapter the person asked for; empty is the
-	// default.
+	// Adapter is the harness adapter the person asked for. A runhost takes
+	// only its default, the container harness: the host-process harnesses
+	// would run outside gVisor.
 	Adapter string `json:"adapter,omitempty"`
 	// Timeout, MaxTurns and MaxCost are the person's overrides of the
 	// policy's budgets; a negative MaxTurns or MaxCost and a zero Timeout
@@ -126,7 +127,31 @@ func (m Model) Policy() policy.Model {
 	return policy.Model{Provider: m.Provider, Name: m.Name, APIKeyEnv: m.APIKeyEnv, APIKeySource: "env", APIKeyKind: m.APIKeyKind, BaseURL: m.BaseURL, ProxyAllow: m.ProxyAllow}
 }
 
-var envNameRE = regexp.MustCompile(`^[A-Z_][A-Z0-9_]{0,63}$`)
+// keyEnvRE is the shape of a model key's variable: a provider's own name for
+// its key (ANTHROPIC_API_KEY, HF_TOKEN).
+var keyEnvRE = regexp.MustCompile(`^[A-Z][A-Z0-9_]{0,62}_(API_KEY|KEY|TOKEN)$`)
+
+// reservedEnvPrefixes are variables the run's environment never takes from a
+// device: the CLI's own (a hosted marker, a run grant, the runner home), the
+// container engine's, the dynamic loader's, SSH's and git's.
+var reservedEnvPrefixes = []string{"AGENTRY_", "SECUREAGENTRY_", "DOCKER_", "LD_", "SSH_", "GIT_", "XDG_", "CONTAINER_", "PODMAN_"}
+
+// ValidKeyEnv says whether name may carry a model key into a run on a
+// runhost: a key's name, and none the run's environment reserves.
+func ValidKeyEnv(name string) bool {
+	if !keyEnvRE.MatchString(name) {
+		return false
+	}
+	for _, p := range reservedEnvPrefixes {
+		if strings.HasPrefix(name, p) {
+			return false
+		}
+	}
+	return true
+}
+
+// ValidID says whether id can name a job or a device.
+func ValidID(id string) bool { return idRE.MatchString(id) }
 
 var (
 	idRE      = regexp.MustCompile(`^[0-9a-f]{16,64}$`)
@@ -141,10 +166,10 @@ func (j *Job) Validate() error {
 	if j.V != Version {
 		return fmt.Errorf("a job of version %d; this runhost reads version %d: update it", j.V, Version)
 	}
-	if !idRE.MatchString(j.ID) {
+	if !ValidID(j.ID) {
 		return errors.New("the job's id is not a lower-case hex string")
 	}
-	if !idRE.MatchString(j.Device) {
+	if !ValidID(j.Device) {
 		return errors.New("the job names no device")
 	}
 	r := j.Release
@@ -185,14 +210,17 @@ func (j *Job) Validate() error {
 	if j.Run.Model.Provider == "" || j.Run.Model.Name == "" {
 		return errors.New("the job names no model")
 	}
-	if j.Run.Model.APIKeyEnv != "" && !envNameRE.MatchString(j.Run.Model.APIKeyEnv) {
-		return fmt.Errorf("the model's key variable %q is not a variable's name", j.Run.Model.APIKeyEnv)
+	if !ValidKeyEnv(j.Run.Model.APIKeyEnv) {
+		return fmt.Errorf("the model's key variable %q is not one a runhost takes: name it as the provider does, ending in _API_KEY, _KEY or _TOKEN, outside the AGENTRY_, DOCKER_, LD_, SSH_, GIT_ and XDG_ names", j.Run.Model.APIKeyEnv)
+	}
+	if j.Run.ModelKey == "" {
+		return errors.New("the job carries no model key")
 	}
 	if j.Run.Timeout < 0 {
 		return errors.New("the job's timeout is negative")
 	}
-	if j.Run.Adapter != "" && !segmentRE.MatchString(j.Run.Adapter) {
-		return fmt.Errorf("the adapter %q is not an adapter's name", j.Run.Adapter)
+	if j.Run.Adapter != "" {
+		return fmt.Errorf("a runhost runs its own container harness; it does not take the adapter %q", j.Run.Adapter)
 	}
 	return nil
 }

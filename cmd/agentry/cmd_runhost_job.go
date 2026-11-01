@@ -12,16 +12,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/blaktron/agentry-cli/pkg/runhost"
 	"github.com/blaktron/agentry-cli/pkg/runhost/job"
 	"github.com/blaktron/agentry-cli/pkg/runhost/output"
 	"github.com/blaktron/agentry-cli/pkg/runhost/store"
+	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
@@ -44,9 +43,15 @@ var (
 	runhostStoreDir    = filepath.Join(runhost.StateDir, "store", "releases")
 	runhostStoreKey    = filepath.Join(runhost.StateDir, "store", store.KeyFile)
 	runhostOutputKeep  = 7 * 24 * time.Hour
+)
+
+const (
 	runhostSealedName  = "output.sealed"
 	runhostJobRecord   = "job.json"
 	runhostMaxEnvelope = 16 << 20
+	// runhostExitNoOutput is collect's answer for a job whose output the
+	// runhost does not hold.
+	runhostExitNoOutput = 4
 )
 
 // runhostJobResult is the job verb's answer.
@@ -70,50 +75,62 @@ type runhostJobDone struct {
 // runhostCLI is the CLI a job runs: the service's own. A variable for tests.
 var runhostCLI = os.Executable
 
-var jobIDRE = regexp.MustCompile(`^[0-9a-f]{16,64}$`)
-
 func runhostJobVerb(ctx context.Context, _ runhost.Request, in io.Reader, fw *runhost.FrameWriter) (int, error) {
 	j, err := job.Read(in)
 	if err != nil {
-		return 2, err
+		return engine.ExitUsage, err
 	}
 	devices, err := pairedSealKeys()
 	if err != nil {
-		return 1, err
+		return engine.ExitCLI, err
 	}
 	if _, ok := devices[j.Device]; !ok {
-		return 2, fmt.Errorf("device %s is not paired with this runhost", j.Device)
+		return engine.ExitUsage, fmt.Errorf("device %s is not paired with this runhost", j.Device)
 	}
 	st, err := store.Open(runhostStoreDir, runhostStoreKey)
 	if err != nil {
-		return 1, fmt.Errorf("the runhost's store: %w", err)
+		return engine.ExitCLI, fmt.Errorf("the runhost's store: %w", err)
 	}
 	archive, err := runhostTakeRelease(st, j, in, fw)
 	if err != nil {
-		return 10, err
+		return engine.ExitVerify, err
 	}
 	meta, err := runhostVerifyRelease(j.Release, archive)
 	if err != nil {
-		return 10, err
+		return engine.ExitVerify, err
 	}
 	if !st.Has(j.Release.Digest) {
 		if err := st.Put(j.Release, archive); err != nil {
-			return 1, fmt.Errorf("keep the release in the runhost's store: %w", err)
+			return engine.ExitCLI, fmt.Errorf("keep the release in the runhost's store: %w", err)
 		}
 	}
 	home, err := runnerHome()
 	if err != nil {
-		return 1, err
+		return engine.ExitCLI, err
 	}
 	if err := runhostLayDown(home, meta, archive); err != nil {
-		return 10, err
+		return engine.ExitVerify, err
 	}
-	_ = fw.Out("%s verified on the runhost (%s); running", meta.Ref, meta.Attestation.State)
+	_ = fw.Out("%s", runhostVerifiedLine(meta))
 	code, envelope, err := runhostRun(ctx, j, devices, fw)
 	if err != nil {
-		return 1, err
+		return engine.ExitCLI, err
 	}
 	return code, fw.Result(runhostJobResult{Job: j.ID, ExitCode: code, Envelope: envelope})
+}
+
+// runhostVerifiedLine says what the runhost checked of the release, and
+// claims no more: an unsigned or unscanned release is held to its digest
+// alone, and runs on the person's own flag.
+func runhostVerifiedLine(meta *installdir.Meta) string {
+	switch meta.Attestation.State {
+	case trust.StateVerified:
+		return fmt.Sprintf("%s: the runhost checked its digest and its attestation (key %s); running", meta.Ref, meta.Attestation.KeyID)
+	case trust.StateUnscanned:
+		return fmt.Sprintf("%s: the runhost checked its digest; it is unscanned and runs on --allow-unscanned", meta.Ref)
+	default:
+		return fmt.Sprintf("%s: the runhost checked its digest; it is unsigned and runs on --allow-unsigned", meta.Ref)
+	}
 }
 
 // runhostTakeRelease answers whether the release must follow the job's
@@ -156,13 +173,18 @@ func runhostVerifyRelease(rel job.Release, archive []byte) (*installdir.Meta, er
 	}
 	switch rel.State {
 	case job.StateVerified:
-		pins, err := runhostPins(rel.Registry, rel.Keys)
+		pins, first, err := runhostPins(rel.Registry, rel.Keys)
 		if err != nil {
 			return nil, err
 		}
 		res := trust.VerifyEnvelope(rel.Attestation, pins, rel.Digest)
 		if res.State != trust.StateVerified {
 			return nil, fmt.Errorf("attestation %s for %s on the runhost: %s; refusing to run", res.State, rel.Ref(), res.Detail)
+		}
+		if first {
+			if err := trust.SavePinned(rel.Registry, pins); err != nil {
+				return nil, fmt.Errorf("pin %s's signing keys on the runhost: %w", rel.Registry, err)
+			}
 		}
 		meta.Attestation = receipt.Attestation{State: trust.StateVerified, KeyID: res.KeyID, Verified: true}
 	case job.StateUnsigned:
@@ -173,25 +195,23 @@ func runhostVerifyRelease(rel job.Release, archive []byte) (*installdir.Meta, er
 	return meta, nil
 }
 
-// runhostPins is the runhost's pinned key set for registry: the device's
-// set, pinned at the first release from it, then the runhost's own, which a
-// device whose pins differ cannot replace.
-func runhostPins(registry string, sent trust.KeySet) (trust.KeySet, error) {
+// runhostPins is the key set the runhost verifies a release from registry
+// with: its own pins, or, before its first release from that registry, the
+// device's set, which first says whether it is pinned (it is, once a release
+// verifies with it). A device whose pins differ cannot replace the runhost's.
+func runhostPins(registry string, sent trust.KeySet) (keys trust.KeySet, first bool, err error) {
 	pinned, err := trust.LoadPinned(registry)
 	if err != nil {
-		return trust.KeySet{}, err
+		return trust.KeySet{}, false, err
 	}
 	if len(pinned.Keys) == 0 {
-		if err := trust.SavePinned(registry, sent); err != nil {
-			return trust.KeySet{}, fmt.Errorf("pin %s's signing keys on the runhost: %w", registry, err)
-		}
-		return sent, nil
+		return sent, true, nil
 	}
 	if !trust.SameKeyIDs(pinned, sent) {
 		change := trust.DiffKeys(pinned, sent)
-		return trust.KeySet{}, fmt.Errorf("this device's signing keys for %s are not the ones the runhost pinned at its first run from it (%s): the runhost verifies with its own pins and keeps them", registry, change.String())
+		return trust.KeySet{}, false, fmt.Errorf("this device's signing keys for %s are not the ones the runhost pinned at its first run from it (%s): the runhost verifies with its own pins and keeps them", registry, change.String())
 	}
-	return pinned, nil
+	return pinned, false, nil
 }
 
 // runhostLayDown extracts the verified archive and lays it down in the
@@ -212,6 +232,11 @@ func runhostLayDown(home string, meta *installdir.Meta, archive []byte) error {
 	}
 	if blocking := manifest.Blocking(manifest.Validate(m)); len(blocking) > 0 {
 		return fmt.Errorf("%s manifest invalid: %v", meta.Ref, blocking[0])
+	}
+	// The attestation binds the archive's digest; the name and version the
+	// job gives it are the device's, so they are held to the archive's own.
+	if m.Namespace != meta.Namespace || m.Name != meta.Name || m.Version != meta.Version {
+		return fmt.Errorf("the job names %s, but the archive is %s/%s@%s; refusing to run", meta.Ref, m.Namespace, m.Name, m.Version)
 	}
 	return installdir.Write(installdir.ReleaseDir(home, meta.Namespace, meta.Name, meta.Version, meta.Digest), staging, meta)
 }
@@ -246,9 +271,6 @@ func runhostRunArgs(j *job.Job, policyFile, taskFile, outDir string) []string {
 	}
 	if j.Run.AllowUnscanned {
 		args = append(args, "--allow-unscanned")
-	}
-	if j.Run.Adapter != "" {
-		args = append(args, "--adapter", j.Run.Adapter)
 	}
 	if j.Run.Timeout > 0 {
 		args = append(args, "--timeout", strconv.Itoa(j.Run.Timeout))
@@ -305,21 +327,12 @@ func runhostRun(ctx context.Context, j *job.Job, devices map[string][]byte, fw *
 	if err := cmd.Start(); err != nil {
 		return 0, nil, err
 	}
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		sc := bufio.NewScanner(stderr)
-		sc.Buffer(make([]byte, 64<<10), 1<<20)
-		for sc.Scan() {
-			line := sc.Text()
-			if j.Run.ModelKey != "" {
-				line = strings.ReplaceAll(line, j.Run.ModelKey, "***")
-			}
-			_ = fw.Out("%s", line)
-		}
-	}()
-	wg.Wait()
+	// The narration is read to its end before Wait, which closes the pipe.
+	sc := bufio.NewScanner(stderr)
+	sc.Buffer(make([]byte, 64<<10), 1<<20)
+	for sc.Scan() {
+		_ = fw.Out("%s", maskKey(sc.Text(), j.Run.ModelKey))
+	}
 	werr := cmd.Wait()
 	code := 0
 	var exitErr *exec.ExitError
@@ -337,11 +350,19 @@ func runhostRun(ctx context.Context, j *job.Job, devices map[string][]byte, fw *
 	if err := os.WriteFile(filepath.Join(dir, runhostJobRecord), b, 0o600); err != nil {
 		return 0, nil, err
 	}
-	envelope := bytes.TrimSpace(stdout.Bytes())
+	envelope := []byte(maskKey(string(bytes.TrimSpace(stdout.Bytes())), j.Run.ModelKey))
 	if !json.Valid(envelope) {
 		envelope = nil
 	}
 	return code, envelope, nil
+}
+
+// maskKey is s with every occurrence of key masked.
+func maskKey(s, key string) string {
+	if key == "" {
+		return s
+	}
+	return strings.ReplaceAll(s, key, "***")
 }
 
 // runhostJobPolicy writes the job's policy: the runhost's own, with the
@@ -354,6 +375,11 @@ func runhostJobPolicy(file string, j *job.Job) error {
 	pol, _, err := policy.Load(path)
 	if err != nil {
 		return fmt.Errorf("the runhost's policy: %w", err)
+	}
+	// Every container class runs under gVisor on a runhost; a policy changed
+	// since setup that says otherwise runs nothing.
+	if pol.Docker.Runtime != runhost.RunscRuntime || pol.Docker.GatewayRuntime != runhost.RunscUDSRuntime {
+		return fmt.Errorf("the runhost's policy runs containers under %q and the gateway under %q, not %s and %s: run agentry runhost add again, which repairs it", pol.Docker.Runtime, pol.Docker.GatewayRuntime, runhost.RunscRuntime, runhost.RunscUDSRuntime)
 	}
 	pol.Model = j.Run.Model.Policy()
 	if err := pol.Validate(); err != nil {
@@ -374,18 +400,29 @@ func runhostSeal(dir, outDir string, j *job.Job, devices map[string][]byte) erro
 		return err
 	}
 	defer func() { _ = os.Remove(tmp.Name()) }()
-	pr, pw := io.Pipe()
-	go func() {
-		if _, err := os.Stat(outDir); err != nil {
-			// A run that stopped before its output folder existed packs an
-			// empty tar.
-			_ = os.MkdirAll(outDir, 0o700)
+	if _, err := os.Stat(outDir); err != nil {
+		// A run that stopped before its output folder existed packs an
+		// empty tar.
+		if err := os.MkdirAll(outDir, 0o700); err != nil {
+			_ = tmp.Close()
+			return err
 		}
-		pw.CloseWithError(output.Pack(pw, outDir))
+	}
+	pr, pw := io.Pipe()
+	packed := make(chan error, 1)
+	go func() {
+		err := output.Pack(pw, outDir)
+		pw.CloseWithError(err)
+		packed <- err
 	}()
-	if err := output.Seal(tmp, pr, to, j.ID); err != nil {
+	serr := output.Seal(tmp, pr, to, j.ID)
+	_ = pr.CloseWithError(errors.New("sealing stopped"))
+	if perr := <-packed; serr == nil {
+		serr = perr
+	}
+	if serr != nil {
 		_ = tmp.Close()
-		return err
+		return serr
 	}
 	if err := tmp.Close(); err != nil {
 		return err
@@ -416,8 +453,8 @@ func pairedSealKeys() (map[string][]byte, error) {
 // runhostCollectVerb answers `collect <job>` with the job's sealed output as
 // data frames, and `collect <job> done` by deleting the job.
 func runhostCollectVerb(_ context.Context, req runhost.Request, _ io.Reader, fw *runhost.FrameWriter) (int, error) {
-	if len(req.Args) == 0 || len(req.Args) > 2 || !jobIDRE.MatchString(req.Args[0]) || (len(req.Args) == 2 && req.Args[1] != "done") {
-		return 2, errors.New("collect takes a job's id, and then done to delete it")
+	if len(req.Args) == 0 || len(req.Args) > 2 || !job.ValidID(req.Args[0]) || (len(req.Args) == 2 && req.Args[1] != "done") {
+		return engine.ExitUsage, errors.New("collect takes a job's id, and then done to delete it")
 	}
 	dir := filepath.Join(runhostJobsDir, req.Args[0])
 	if len(req.Args) == 2 {
@@ -425,10 +462,10 @@ func runhostCollectVerb(_ context.Context, req runhost.Request, _ io.Reader, fw 
 	}
 	f, err := os.Open(filepath.Join(dir, runhostSealedName)) //nolint:gosec // a job directory named by a checked id
 	if errors.Is(err, os.ErrNotExist) {
-		return 4, fmt.Errorf("the runhost holds no output of job %s: it was collected, has expired, or never finished", req.Args[0])
+		return runhostExitNoOutput, fmt.Errorf("the runhost holds no output of job %s: it was collected, has expired, or never finished", req.Args[0])
 	}
 	if err != nil {
-		return 1, err
+		return engine.ExitCLI, err
 	}
 	defer func() { _ = f.Close() }()
 	return 0, fw.Data(f)

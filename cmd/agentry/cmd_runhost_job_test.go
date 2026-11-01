@@ -48,7 +48,7 @@ echo '{"from":"the agent"}' > "$out/result.json"
 echo report > "$out/reports/r.md"
 echo receipt > "$out/receipts/events.ndjson"
 echo leftover > "$out/scratch/x"
-echo "the model key is $TEST_MODEL_KEY_VAR_VALUE" >&2
+echo "the model key is $TEST_MODEL_API_KEY" >&2
 echo "harness: working" >&2
 printf '{"agentry":"1","status":"ok","exitCode":0,"runId":"run123","ref":"acme/demo@1.0.0","outDir":"%s","receipts":{"dir":"%s/receipts"},"result":"done"}\n' "$out" "$out"
 exit "${RUNHOST_TEST_EXIT:-0}"
@@ -86,7 +86,12 @@ func newRunhostServer(t *testing.T) *runhostServer {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := policy.EnsureDefault(path); err != nil {
+	pol, _, err := policy.EnsureDefault(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pol.Docker.Runtime, pol.Docker.GatewayRuntime = runhost.RunscRuntime, runhost.RunscUDSRuntime
+	if err := policy.Save(path, pol); err != nil {
 		t.Fatal(err)
 	}
 	seal, err := ecdh.X25519().GenerateKey(rand.Reader)
@@ -114,7 +119,7 @@ func unsignedJob(t *testing.T, id string) (*job.Job, []byte) {
 		Release: job.Release{Namespace: "acme", Name: "demo", Version: "1.0.0", Digest: digest, Size: int64(len(archive)),
 			Registry: "https://registry.test", State: job.StateUnsigned},
 		Run: job.Run{AllowUnsigned: true, MaxTurns: -1, MaxCost: -1, ModelKey: "sk-test-model-key",
-			Model: job.Model{Provider: "anthropic", Name: "claude-x", APIKeyEnv: "TEST_MODEL_KEY_VAR", ProxyAllow: []string{"api.anthropic.com:443"}}},
+			Model: job.Model{Provider: "anthropic", Name: "claude-x", APIKeyEnv: "TEST_MODEL_API_KEY", ProxyAllow: []string{"api.anthropic.com:443"}}},
 	}, archive
 }
 
@@ -174,7 +179,7 @@ func TestARunhostJobRunsAndLeavesOnlyItsSealedOutput(t *testing.T) {
 	t.Setenv("AGENTRY_HOSTED", "1")
 	t.Setenv("AGENTRY_RUN_GRANT", "grant")
 	t.Setenv("AGENTRY_JOB_TOKEN", "token")
-	t.Setenv("TEST_MODEL_KEY_VAR", "the service's own, never the run's")
+	t.Setenv("TEST_MODEL_API_KEY", "the service's own, never the run's")
 	j, archive := unsignedJob(t, "0123456789abcdef")
 	a := sendJob(t, j, archive)
 	if a.err != nil || a.code != 0 {
@@ -195,7 +200,7 @@ func TestARunhostJobRunsAndLeavesOnlyItsSealedOutput(t *testing.T) {
 			t.Errorf("the run's environment carries %s", k)
 		}
 	}
-	if !strings.Contains(string(env), "TEST_MODEL_KEY_VAR=sk-test-model-key\n") || strings.Contains(string(env), "service's own") {
+	if !strings.Contains(string(env), "TEST_MODEL_API_KEY=sk-test-model-key\n") || strings.Contains(string(env), "service's own") {
 		t.Errorf("the run's model key: %s", env)
 	}
 	argv, _ := os.ReadFile(filepath.Join(srv.dir, "argv"))
@@ -253,6 +258,45 @@ func TestARunhostJobRunsAndLeavesOnlyItsSealedOutput(t *testing.T) {
 	}
 	if code, _ := runhostCollectVerb(context.Background(), runhost.Request{Args: []string{"../../etc"}}, nil, runhost.NewFrameWriter(io.Discard)); code != 2 {
 		t.Error("collect took a path for a job id")
+	}
+}
+
+// The names the job gives the release are held to the archive's own, and a
+// first release from a registry pins its keys only once it verifies.
+func TestTheRunhostHoldsTheJobsNamesToTheArchive(t *testing.T) {
+	newRunhostServer(t)
+	j, archive := unsignedJob(t, "0123456789abcdef")
+	j.Release.Name = "other"
+	if a := sendJob(t, j, archive); a.code != 10 || a.err == nil || !strings.Contains(a.err.Error(), "the archive is acme/demo@1.0.0") {
+		t.Errorf("a renamed release: %+v", a)
+	}
+	s := newTestSigner(t)
+	_, archive2, digest := buildTestArchive(t, skillFiles("demo", ""))
+	rel := job.Release{Namespace: "acme", Name: "demo", Version: "1.0.0", Digest: digest, Size: int64(len(archive2)),
+		Registry: "https://pins.test", State: job.StateVerified, Attestation: s.envelope(t, "sha256:"+strings.Repeat("0", 64)), Keys: s.keys}
+	if _, err := runhostVerifyRelease(rel, archive2); err == nil {
+		t.Fatal("an envelope over another digest verified")
+	}
+	if pinned, _ := trust.LoadPinned(rel.Registry); len(pinned.Keys) != 0 {
+		t.Error("a release that did not verify pinned its keys")
+	}
+}
+
+// A policy changed since setup to run containers outside gVisor runs nothing.
+func TestARunhostJobNeedsTheGVisorPolicy(t *testing.T) {
+	srv := newRunhostServer(t)
+	path, _ := policy.DefaultPath()
+	pol, _, _ := policy.Load(path)
+	pol.Docker.Runtime, pol.Docker.GatewayRuntime = "", ""
+	if err := policy.Save(path, pol); err != nil {
+		t.Fatal(err)
+	}
+	j, archive := unsignedJob(t, "0123456789abcdef")
+	if a := sendJob(t, j, archive); a.err == nil || !strings.Contains(a.err.Error(), "runsc") {
+		t.Errorf("a policy without gVisor: %+v", a)
+	}
+	if _, err := os.Stat(filepath.Join(srv.dir, "argv")); err == nil {
+		t.Error("a run started")
 	}
 }
 

@@ -231,7 +231,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&opts.local, "local", "", "run an unpublished QuickAgent DIRECTORY instead of a registry ref")
 	f.StringVar(&opts.pin, "pin", "", "require the resolved archive digest to equal this sha256:… value")
 	f.StringVar(&opts.on, "on", "", "run on this remote runhost (see agentry runhost list) instead of this computer: the release is verified here, sent, verified again there, and its output sealed to this device and opened into the output folder")
-	f.BoolVar(&opts.installed, "installed", false, "run the release already installed in the runner home at --pin, asking no registry (a remote runhost's service)")
+	f.BoolVar(&opts.installed, "installed", false, "run the release already installed in the runner home at --pin, asking no registry, so nothing the registry says of it today (a yank, a quarantine) is heard (a remote runhost's service, which verified it as it arrived)")
 	_ = f.MarkHidden("installed")
 	f.StringVar(&opts.policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml, created on first use)")
 	f.IntVar(&opts.timeout, "timeout", 0, "override the policy timeout (seconds)")
