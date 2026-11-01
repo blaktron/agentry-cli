@@ -101,6 +101,9 @@ func ParseKeys(data []byte) (*KeySet, error) {
 
 var carried = sync.OnceValues(func() (*KeySet, error) { return ParseKeys(keysJSON) })
 
+// Empty says whether the set holds no key, so verifies nothing.
+func (s *KeySet) Empty() bool { return s == nil || len(s.keys) == 0 }
+
 // Carried is the key set this build embeds.
 func Carried() (*KeySet, error) { return carried() }
 
@@ -192,7 +195,7 @@ const maxBinary = 512 << 20
 // the signature over SHA256SUMS against keys, then the binary's hash
 // against its signed line. Nothing it returns is unchecked.
 func Fetch(ctx context.Context, client *http.Client, keys *KeySet, version, arch string) (*Binary, error) {
-	if keys == nil || len(keys.keys) == 0 {
+	if keys.Empty() {
 		return nil, ErrNoKeys
 	}
 	base := BaseURL + "/v" + version + "/"
