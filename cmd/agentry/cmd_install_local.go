@@ -93,6 +93,9 @@ func runLocalInstall(cmd *cobra.Command, dir string, opts installOpts) error {
 		_, _ = fmt.Fprintf(errOut, "warning: %v — treating this as a first install\n", serr)
 		state = installed.State{}
 	}
+	if err := persistentAgentsRelease(home, opts, m.Namespace, m.Name); err != nil {
+		return err
+	}
 	key := installdir.ConsentKey(home, m.Namespace, m.Name)
 	next := installed.Snapshot(m.Contract())
 	att := trust.AttestationResult{State: trust.StateLocal}

@@ -587,7 +587,7 @@ func personaFrame(a Agent, c Config) string {
 	name, personality := effectivePersona(a, c)
 	switch {
 	case name == "" && personality == "":
-		return "(The person cleared the name and personality they had given you. Go back to being " + builtinTitle(a) + ", as your instructions describe.)\n\n"
+		return "(The person cleared the name and personality they had given you. Go back to being " + ownName(a) + ", as your instructions describe.)\n\n"
 	case personality == "":
 		return "(Your name, as it is set for you in Agentry: " + strconv.Quote(name) + ". Go by that name from now on.)\n\n"
 	case name == "":
@@ -597,9 +597,9 @@ func personaFrame(a Agent, c Config) string {
 		strconv.Quote(personality) + ". Go by that name and take on that personality from now on, within your instructions.)\n\n"
 }
 
-// builtinTitle is how the persona frame names the agent it goes back to
-// being: a built-in by its title, a published agent by its name, quoted.
-func builtinTitle(a Agent) string {
+// ownName is how the persona frame names the agent it goes back to being:
+// a built-in by its title, a published agent by its name, quoted.
+func ownName(a Agent) string {
 	if a.Published() {
 		return strconv.Quote(a.Title)
 	}

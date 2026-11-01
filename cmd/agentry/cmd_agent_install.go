@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"github.com/blaktron/agentry/pkg/apiclient"
 	"github.com/blaktron/agentry/pkg/manifest"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/pkg/runner/persistent"
@@ -43,13 +45,20 @@ func (a *agentInstall) check(m *manifest.Manifest) error {
 	if !m.IsPersistent() {
 		return engine.Classify(engine.ExitUsage, fmt.Errorf("%s is not a persistent QuickAgent (its modes: %s): install it with agentry install, and run it with agentry run", ref, modesLabel(m.SupportedModes())))
 	}
-	for _, b := range localrun.PersistentBuiltins() {
-		if b.Namespace()+"/"+b.Name() == ref {
-			return engine.Classify(engine.ExitUsage, fmt.Errorf("%s is built into Agentry: enable it with agentry agent enable %s", ref, b.Name()))
-		}
+	if persistent.IsBuiltinRef(ref) {
+		return engine.Classify(engine.ExitUsage, fmt.Errorf("%s is built into Agentry: enable it with agentry agent enable %s", ref, m.Name))
 	}
 	if !a.pol.PersistentReleasesAllowed() {
-		return engine.Classify(engine.ExitPolicy, errors.New("refused by policy: "+policy.PersistentReleasesRefused))
+		return engine.Classify(engine.ExitPolicy, &compile.PolicyRefusal{Reason: policy.PersistentReleasesRefused})
+	}
+	// What a segment refuses at its start is refused here, before the person
+	// is asked: a persistent agent's files are its share and data folders,
+	// and it has no intake to name a target host.
+	if fs := m.Capabilities.Filesystem; declaresFiles(fs.Read) || declaresFiles(fs.Write) {
+		return engine.Classify(engine.ExitPolicy, &compile.PolicyRefusal{Reason: ref + " declares filesystem access, and a persistent agent's files are its share folder and its data volume alone"})
+	}
+	if len(m.Capabilities.TargetHosts) > 0 {
+		return engine.Classify(engine.ExitPolicy, &compile.PolicyRefusal{Reason: ref + " declares a target host, which a persistent agent is never given: a target host is named in a run's intake"})
 	}
 	if err := localrun.CheckPersistentNames(m.Capabilities.Persistent); err != nil {
 		return engine.Classify(engine.ExitPolicy, fmt.Errorf("%s cannot run on this version of Agentry: %w", ref, err))
@@ -59,6 +68,23 @@ func (a *agentInstall) check(m *manifest.Manifest) error {
 	}
 	return nil
 }
+
+// persistentAgentsRelease refuses a plain install of a release that is
+// installed as a persistent agent: the install would replace the version
+// the agent is pinned to, which `agentry agent install` moves with its
+// record.
+func persistentAgentsRelease(home string, opts installOpts, namespace, name string) error {
+	if opts.agent != nil {
+		return nil
+	}
+	if _, err := persistent.LoadRelease(home, persistent.Key(namespace, name)); err == nil {
+		return engine.Classify(engine.ExitUsage, fmt.Errorf("%s/%s is installed as a persistent agent: update it with agentry agent install %s/%s", namespace, name, namespace, name))
+	}
+	return nil
+}
+
+// declaresFiles says a filesystem line grants access: declared, and not none.
+func declaresFiles(a manifest.FSAccess) bool { return !a.IsZero() && a.Mode != manifest.FSModeNone }
 
 // describe says, beside the contract, what a persistent agent is given that
 // the contract does not list: the persona it takes on, and each subagent
@@ -171,7 +197,7 @@ func (a *agentInstall) record(cmd *cobra.Command, r persistent.Release, m *manif
 	if !cfg.Enabled {
 		state = "disabled, as you left it (agentry agent enable " + ag.Ref + ")"
 	}
-	_, _ = fmt.Fprintf(out, "%s is installed as a persistent agent, %s. It goes by %s.\n", ag.PackageRef(), state, ag.DisplayName(cfg))
+	_, _ = fmt.Fprintf(out, "%s is installed as a persistent agent, %s. It goes by %s.\n", ag.PackageRef(), state, safeTerminalText(ag.DisplayName(cfg), 64))
 	printNextSteps(cmd.ErrOrStderr(),
 		nextStep{command: "agentry agent start " + ag.Ref},
 		nextStep{command: "agentry agent chat " + ag.Ref},
@@ -283,7 +309,8 @@ func newAgentUninstallCmd() *cobra.Command {
 						return engine.Classify(engine.ExitUsage, fmt.Errorf("--remove-data asks you to type the agent's reference, and there is no terminal: pass --confirm %s", a.Ref))
 					}
 					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "This uninstalls %s and wipes its conversation, its files and everything you chose for it. The files in its share folder are kept. Type its reference (%s) to go on: ", a.Ref, a.Ref)
-					confirm = readLine(cmd.InOrStdin())
+					line, _ := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
+					confirm = strings.TrimSpace(line)
 				}
 				if confirm != a.Ref {
 					return engine.Classify(engine.ExitUsage, errors.New("the reference did not match; nothing was uninstalled"))
@@ -314,23 +341,4 @@ func newAgentUninstallCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&removeData, "remove-data", false, "also remove its conversation, its files and everything you chose for it")
 	cmd.Flags().StringVar(&confirm, "confirm", "", "with --remove-data: the agent's reference, to confirm without a terminal")
 	return cmd
-}
-
-// readLine is one line of r, trimmed.
-func readLine(r io.Reader) string {
-	var b strings.Builder
-	buf := make([]byte, 1)
-	for {
-		n, err := r.Read(buf)
-		if n > 0 {
-			if buf[0] == '\n' {
-				break
-			}
-			b.WriteByte(buf[0])
-		}
-		if err != nil {
-			break
-		}
-	}
-	return strings.TrimSpace(b.String())
 }

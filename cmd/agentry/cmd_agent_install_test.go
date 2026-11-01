@@ -86,6 +86,9 @@ func TestAgentInstallLocalThenListShowUninstall(t *testing.T) {
 		t.Fatalf("show bob/helper: %q, %v", shown, err)
 	}
 
+	if _, _, err := runCLI(t, strings.NewReader(""), "--registry", noRegistry, "install", "--local", persistentFolder(t, "alice"), "--allow-unsigned", "--yes"); err == nil || !strings.Contains(err.Error(), "agentry agent install") {
+		t.Errorf("a plain install over a persistent agent's release: %v", err)
+	}
 	if _, _, err := runCLI(t, strings.NewReader(""), "uninstall", "alice/helper"); err == nil || !strings.Contains(err.Error(), "agentry agent uninstall") {
 		t.Errorf("agentry uninstall of a persistent agent's release: %v", err)
 	}
@@ -119,13 +122,26 @@ func TestAgentInstallLocalThenListShowUninstall(t *testing.T) {
 }
 
 // TestAgentInstallRefusesWhatIsNotAPersistentAgentHere: an autonomous
-// QuickAgent, and any persistent one under a policy that allows none, are
+// QuickAgent, a persistent one that declares filesystem access beside its
+// folders, and any persistent one under a policy that allows none, are
 // refused before anything is installed.
 func TestAgentInstallRefusesWhatIsNotAPersistentAgentHere(t *testing.T) {
 	isolateEnv(t)
 	home, policyPath := isolateRunnerHome(t)
 	if _, _, err := runCLI(t, strings.NewReader(""), "--registry", noRegistry, "agent", "install", "--local", localFolder(t), "--allow-unsigned", "--yes", "--policy", policyPath); err == nil || !strings.Contains(err.Error(), "not a persistent QuickAgent") {
 		t.Errorf("an autonomous QuickAgent: %v", err)
+	}
+	reads := persistentFolder(t, "alice")
+	manifestPath := filepath.Join(reads, "agent.yaml")
+	text, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(manifestPath, []byte(strings.Replace(string(text), "persona:", "capabilities:\n  filesystem:\n    read: workspace\n    write: none\npersona:", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runCLI(t, strings.NewReader(""), "--registry", noRegistry, "agent", "install", "--local", reads, "--allow-unsigned", "--yes", "--policy", policyPath); err == nil || !strings.Contains(err.Error(), "declares filesystem access") {
+		t.Errorf("a persistent QuickAgent that declares filesystem access: %v", err)
 	}
 	raw, err := os.ReadFile(policyPath)
 	if err != nil {

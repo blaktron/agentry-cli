@@ -236,7 +236,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 			return nil, &PolicyRefusal{Reason: "a persistent agent's share and data folders are granted to a persistent agent alone"}
 		}
 		if in.Source != "builtin" && (in.AgentFiles.Memory || len(in.AgentFiles.Skills) > 0) {
-			return nil, &PolicyRefusal{Reason: "a memory volume and skills are granted to a persistent built-in alone in this version"}
+			return nil, &PolicyRefusal{Reason: "a memory volume and skills are granted to a persistent built-in alone"}
 		}
 		if caps.FSReadMode != "none" || caps.FSWriteMode != "none" {
 			return nil, &PolicyRefusal{Reason: "a persistent agent's files are its share and data folders, and it declares no filesystem access of its own beside them"}

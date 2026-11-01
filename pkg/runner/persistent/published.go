@@ -29,7 +29,6 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/installed"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
-	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 )
@@ -90,6 +89,10 @@ type Persona struct {
 // socket's name.
 func Key(namespace, name string) string { return namespace + "." + name }
 
+// isPublishedKey says a state folder's name is a published agent's key:
+// only Key puts a dot in one.
+func isPublishedKey(name string) bool { return strings.Contains(name, ".") }
+
 // splitRef reads ns/name, refusing anything else.
 func splitRef(ref string) (namespace, name string, err error) {
 	ns, n, ok := strings.Cut(ref, "/")
@@ -99,8 +102,9 @@ func splitRef(ref string) (namespace, name string, err error) {
 	return ns, n, nil
 }
 
-// isBuiltinRef says ref (ns/name) is a persistent built-in's.
-func isBuiltinRef(ref string) bool {
+// IsBuiltinRef says ref (ns/name) is a persistent built-in's, which is never
+// installed as a published agent.
+func IsBuiltinRef(ref string) bool {
 	return slices.ContainsFunc(localrun.PersistentBuiltins(), func(b localrun.Builtin) bool { return b.Namespace()+"/"+b.Name() == ref })
 }
 
@@ -116,7 +120,7 @@ func LoadRelease(home, key string) (Release, error) {
 		return r, fmt.Errorf("read the install record of %s: %w", key, err)
 	}
 	ns, name, err := splitRef(r.Ref)
-	if err != nil || Key(ns, name) != key {
+	if err != nil || Key(ns, name) != key || IsBuiltinRef(r.Ref) {
 		return r, fmt.Errorf("the install record in %s names %q, another agent", Dir(home, key), r.Ref)
 	}
 	return r, nil
@@ -133,14 +137,15 @@ func SaveRelease(home string, r Release) (Agent, error) {
 	if err != nil {
 		return Agent{}, err
 	}
-	if isBuiltinRef(r.Ref) {
+	if IsBuiltinRef(r.Ref) {
 		return Agent{}, fmt.Errorf("%s is built into Agentry, and runs as the built-in", r.Ref)
 	}
 	if r.Source != SourceRegistry && r.Source != SourceLocal {
 		return Agent{}, fmt.Errorf("an install record from %q, neither the registry nor a local folder", r.Source)
 	}
 	key := Key(ns, name)
-	_, firstInstall := LoadRelease(home, key)
+	_, priorErr := LoadRelease(home, key)
+	firstInstall := errors.Is(priorErr, fs.ErrNotExist)
 	b, err := yaml.Marshal(r)
 	if err != nil {
 		return Agent{}, err
@@ -156,7 +161,7 @@ func SaveRelease(home string, r Release) (Agent, error) {
 	if err != nil {
 		return Agent{}, err
 	}
-	if firstInstall != nil {
+	if firstInstall {
 		cfg, err := LoadConfig(home, key)
 		if err != nil {
 			return a, err
@@ -255,7 +260,7 @@ func publishedAgents(home string) []Agent {
 	}
 	var out []Agent
 	for _, e := range entries {
-		if !e.IsDir() || !strings.Contains(e.Name(), ".") {
+		if !e.IsDir() || !isPublishedKey(e.Name()) {
 			continue
 		}
 		r, err := LoadRelease(home, e.Name())
@@ -318,11 +323,12 @@ func LookupIn(home, name string) (Agent, error) {
 
 // Uninstall removes a published agent's install record, so it is no longer
 // one of the agents, and keeps its state folder and volumes, which a later
-// install of the same reference takes up again, unless removeData: then its
-// volumes and its state folder go too, the files in its share folder, which
-// are the person's, staying. It refuses a built-in and a running agent, and
-// holds the agent's lock while it works. The release folder is the caller's
-// to remove, with its consent record.
+// install of the same reference takes up again, unless removeData: then it
+// is first reset as Reset does, its volumes and what it keeps in the
+// keychain removed, and its state folder goes too, the files in its share
+// folder, which are the person's, staying. It refuses a built-in and a
+// running agent, and holds the agent's lock while it works. The release
+// folder is the caller's to remove, with its consent record.
 func Uninstall(ctx context.Context, home, name string, d dockerx.Client, removeData bool) error {
 	a, err := LookupIn(home, name)
 	if err != nil {
@@ -331,19 +337,16 @@ func Uninstall(ctx context.Context, home, name string, d dockerx.Client, removeD
 	if a.Release == nil {
 		return fmt.Errorf("%s is built into Agentry, and is not uninstalled: disable it (agentry agent disable %s)", a.Title, a.Name)
 	}
+	if removeData {
+		if err := reset(ctx, home, a.Name, d, resetAll); err != nil {
+			return err
+		}
+	}
 	owner, err := Acquire(home, a.Name, ClientCLI)
 	if err != nil {
 		return err
 	}
 	defer owner.Release()
-	if removeData {
-		engine.SweepAbandoned(ctx, d, nil)
-		for _, v := range []string{SessionVolumeIn(home, a.Name), DataVolumeIn(home, a.Name), MemoryVolumeIn(home, a.Name)} {
-			if err := d.VolumeRemove(ctx, v); err != nil {
-				return fmt.Errorf("remove the %s agent's volume %s: %w", a.Ref, v, err)
-			}
-		}
-	}
 	if err := os.Remove(filepath.Join(Dir(home, a.Name), releaseFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("remove the install record of %s: %w", a.Ref, err)
 	}

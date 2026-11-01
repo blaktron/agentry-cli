@@ -267,12 +267,9 @@ func newAgentListCmd() *cobra.Command {
 				if st.Status != nil {
 					segment = fmt.Sprint(st.Status.Segment)
 				}
-				name := st.Agent
-				if st.Source != "" {
-					name = st.Ref
-				}
+				name := st.name()
 				if st.DisplayName != "" && !strings.EqualFold(st.DisplayName, name) && !strings.HasSuffix(name, "/"+st.DisplayName) {
-					name += " (" + st.DisplayName + ")"
+					name += " (" + safeTerminalText(st.DisplayName, 64) + ")"
 				}
 				_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", name, state, since, segment)
 			}
@@ -360,12 +357,17 @@ func newAgentShowCmd() *cobra.Command {
 	return cmd
 }
 
-func printAgentState(w io.Writer, st agentState) {
-	name := st.Agent
+// name is how list and show name the agent: a built-in by its short name,
+// an installed agent by its reference.
+func (st agentState) name() string {
 	if st.Source != "" {
-		name = st.Ref
+		return st.Ref
 	}
-	_, _ = fmt.Fprintf(w, "%s (%s): %s\n", safeTerminalText(st.DisplayName, 64), name, st.State)
+	return st.Agent
+}
+
+func printAgentState(w io.Writer, st agentState) {
+	_, _ = fmt.Fprintf(w, "%s (%s): %s\n", safeTerminalText(st.DisplayName, 64), st.name(), st.State)
 	if st.DesktopOnly {
 		_, _ = fmt.Fprintln(w, "It runs only in Agentry Desktop.")
 		return
@@ -789,7 +791,7 @@ func newAgentChatCmd() *cobra.Command {
 			}
 			cfg, _ := persistent.LoadConfig(home, a.Name)
 			_, uiErr := runChat(cmd.Context(), s, tui.Options{
-				Ref:     a.PackageRef() + " · " + a.DisplayName(cfg),
+				Ref:     a.PackageRef() + " · " + safeTerminalText(a.DisplayName(cfg), 64),
 				Model:   st.Model,
 				HasTask: true,
 			}, cmd.InOrStdin(), cmd.OutOrStdout())

@@ -427,6 +427,9 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 		}
 		// The runner record is the run's own consent record, so a consent
 		// given here covers the run, and there is one record.
+		if err := persistentAgentsRelease(home, opts, res.Namespace, m.Name); err != nil {
+			return err
+		}
 		key = installdir.ConsentKey(home, res.Namespace, m.Name)
 		paths = installPaths{dest: key.Dir, managed: true}
 		releaseDir := installdir.ReleaseDir(home, res.Namespace, m.Name, res.Version, computed)

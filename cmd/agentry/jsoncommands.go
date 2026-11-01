@@ -70,6 +70,8 @@ var jsonCommands = map[string]string{
 	"knowledge ship":            "the shipment",
 	"agent list":                "{agents[]}",
 	"agent show":                "the agent's state",
+	"agent install":             "{agent, ref, version, source, digest, persona, packs, subagents, enabled, recorded}",
+	"agent uninstall":           "{agent, ref, dataRemoved, release}",
 	"agent start":               "the agent's state",
 	"agent stop":                "the agent's state",
 	"agent attach":              "the agent's state",

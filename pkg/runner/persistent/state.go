@@ -48,9 +48,9 @@ type Agent struct {
 	Name string
 	// Ref is the agent's ns/name.
 	Ref string
-	// Title is how the agent is named to a person until they name it: a
-	// built-in's own, a published agent's persona's name or else its
-	// release's name.
+	// Title is how the agent is named to a person until they or its persona
+	// name it (DisplayName): a built-in's own, a published agent's release
+	// name.
 	Title string
 	// DesktopOnly says the agent runs only in Agentry Desktop; the CLI
 	// lists it and refuses to start, chat with or configure it.
@@ -609,11 +609,13 @@ const (
 )
 
 func reset(ctx context.Context, home, name string, d dockerx.Client, kind resetKind) error {
-	// Only a known agent's folder is emptied.
+	// Only a known agent's folder is emptied, by the key it is kept under
+	// whichever way it was named.
 	a, err := LookupIn(home, name)
 	if err != nil {
 		return err
 	}
+	name = a.Name
 	if kind != resetAll && !a.Builtin.ResetsInParts() {
 		return fmt.Errorf("the %s agent has one Reset; Reset history and Reset agent are the Assistant's", name)
 	}
