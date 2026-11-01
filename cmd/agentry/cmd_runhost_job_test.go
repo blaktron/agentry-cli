@@ -12,12 +12,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/blaktron/agentry-cli/pkg/runhost"
 	"github.com/blaktron/agentry-cli/pkg/runhost/job"
@@ -48,7 +50,18 @@ echo '{"from":"the agent"}' > "$out/result.json"
 echo report > "$out/reports/r.md"
 echo receipt > "$out/receipts/events.ndjson"
 echo leftover > "$out/scratch/x"
+[ -f secrets.env ] && cp secrets.env "$RUNHOST_TEST_DIR/secrets.seen"
+[ -f intake.json ] && cp intake.json "$RUNHOST_TEST_DIR/intake.seen"
+[ -d files ] && (cd files && find . -type f | sort) > "$RUNHOST_TEST_DIR/files.seen"
+[ -f known_hosts ] && cp known_hosts "$RUNHOST_TEST_DIR/known.seen"
+[ -f hostkeys/server ] && cp hostkeys/server "$RUNHOST_TEST_DIR/hostkey.seen"
+if [ -s secrets.env ]; then
+  gw="$AGENTRY_RUNNER_HOME/agents/acme/demo/1.0.0-test/runs/r1/cfg/gateway"
+  mkdir -p "$gw" && cp secrets.env "$gw/secrets.env"
+  echo "the secrets are $(cat secrets.env)" >&2
+fi
 echo "the model key is $TEST_MODEL_API_KEY" >&2
+[ -n "$RUNHOST_TEST_HANG" ] && { trap '' INT; sleep 30; }
 echo "harness: working" >&2
 printf '{"agentry":"1","status":"ok","exitCode":0,"runId":"run123","ref":"acme/demo@1.0.0","outDir":"%s","receipts":{"dir":"%s/receipts"},"result":"done"}\n' "$out" "$out"
 exit "${RUNHOST_TEST_EXIT:-0}"
@@ -133,13 +146,18 @@ type jobAnswer struct {
 
 func sendJob(t *testing.T, j *job.Job, archive []byte) jobAnswer {
 	t.Helper()
+	return sendJobCtx(t, context.Background(), j, archive)
+}
+
+func sendJobCtx(t *testing.T, ctx context.Context, j *job.Job, archive []byte) jobAnswer {
+	t.Helper()
 	var in bytes.Buffer
 	if err := job.Write(&in, j); err != nil {
 		t.Fatal(err)
 	}
 	in.Write(archive)
 	var out bytes.Buffer
-	code, err := runhostJobVerb(context.Background(), runhost.Request{Verb: "job"}, &in, runhost.NewFrameWriter(&out))
+	code, err := runhostJobVerb(ctx, runhost.Request{Verb: "job"}, &in, runhost.NewFrameWriter(&out))
 	a := jobAnswer{code: code, err: err}
 	if _, rerr := runhost.ReadFrames(io.MultiReader(&out, strings.NewReader(`{"type":"exit"}`+"\n")), func(f runhost.Frame) error {
 		switch f.Type {
@@ -169,6 +187,79 @@ func listFiles(t *testing.T, dir string) []string {
 	})
 	sort.Strings(got)
 	return got
+}
+
+// A job's secrets leave no file on the runhost however its run ends: when it
+// succeeds, fails, or is cut off by a dropped session and killed past the
+// grace, the job's secrets file and the run's own copy go with the run; and a
+// copy a killed service left is swept at its next start (I3).
+func TestARunhostJobsSecretsLeaveNoFileBehind(t *testing.T) {
+	srv := newRunhostServer(t)
+	home, _ := policy.Home()
+	oldGrace := runhostCancelGrace
+	runhostCancelGrace = 200 * time.Millisecond
+	t.Cleanup(func() { runhostCancelGrace = oldGrace })
+	gateway := filepath.Join(home, "agents", "acme", "demo", "1.0.0-test", "runs", "r1", "cfg", "gateway", "secrets.env")
+	leftover := func() []string {
+		var found []string
+		for _, root := range []string{runhostJobsDir, filepath.Join(home, "agents")} {
+			_ = filepath.Walk(root, func(p string, fi os.FileInfo, err error) error {
+				if err == nil && fi.Mode().IsRegular() {
+					if b, _ := os.ReadFile(p); strings.Contains(string(b), "tok-secret-value-2") {
+						found = append(found, p)
+					}
+				}
+				return nil
+			})
+		}
+		return found
+	}
+	for i, end := range []struct {
+		name string
+		exit string
+		hang bool
+	}{{"success", "0", false}, {"failure", "12", false}, {"a dropped session", "0", true}} {
+		t.Setenv("RUNHOST_TEST_EXIT", end.exit)
+		hang := ""
+		if end.hang {
+			hang = "1"
+		}
+		t.Setenv("RUNHOST_TEST_HANG", hang)
+		j, archive := unsignedJob(t, fmt.Sprintf("%016x", 0xabc0+i))
+		j.Run.Secrets = map[string]string{"API_TOKEN": "tok-secret-value-2"}
+		ctx, cancel := context.WithCancel(context.Background())
+		if end.hang {
+			go func() { time.Sleep(time.Second); cancel() }()
+		}
+		a := sendJobCtx(t, ctx, j, archive)
+		cancel()
+		if !end.hang && a.err != nil {
+			t.Fatalf("%s: %v", end.name, a.err)
+		}
+		if seen, _ := os.ReadFile(filepath.Join(srv.dir, "secrets.seen")); string(seen) != "API_TOKEN=tok-secret-value-2\n" {
+			t.Errorf("%s: the run read %q", end.name, seen)
+		}
+		for _, l := range a.out {
+			if strings.Contains(l, "tok-secret-value-2") {
+				t.Errorf("%s: narration carried the secret: %q", end.name, l)
+			}
+		}
+		if found := leftover(); len(found) > 0 {
+			t.Errorf("%s: the secret is still on the runhost in %v", end.name, found)
+		}
+		_ = os.Remove(filepath.Join(srv.dir, "secrets.seen"))
+	}
+	// A killed service's leftovers: the run's copy is swept at the start.
+	if err := os.MkdirAll(filepath.Dir(gateway), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(gateway, []byte("API_TOKEN=tok-secret-value-2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sweepRunCredentials(home)
+	if found := leftover(); len(found) > 0 {
+		t.Errorf("the start's sweep left %v", found)
+	}
 }
 
 // A job runs its release as a local run of the runhost's CLI, never a

@@ -6,7 +6,9 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -21,7 +23,6 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runhost"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
-	"github.com/blaktron/agentry/pkg/manifest"
 )
 
 // startTestRunhost is a runhost in this process: an SSH server that admits
@@ -196,10 +197,234 @@ func TestRunOnARunhostEndToEnd(t *testing.T) {
 		t.Errorf("the failed run's folder holds %v", got)
 	}
 	t.Setenv("RUNHOST_TEST_EXIT", "0")
+	// A job the runhost refuses keeps the runhost's class: a device it has
+	// not paired is a usage refusal, not a gateway failure.
+	unpaired, _ := json.Marshal(runhost.Devices{Devices: []runhost.Device{{ID: "bbbbbbbbbbbbbbbb", SealKey: dk.SealPublic()}}})
+	if err := os.WriteFile(runhostDevicesFile, unpaired, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, stderr, err = runCLI(t, strings.NewReader(""), "--registry", fr.url(), "run", "acme/demo@1.0.0",
+		"--on", "lab", "--allow-unsigned", "--yes", "--out", filepath.Join(t.TempDir(), "refused"))
+	wantClassified(t, err, 2)
+	if !strings.Contains(err.Error(), "refused the run (exit 2)") {
+		t.Errorf("refusal: %v\n%s", err, stderr)
+	}
+	if err := os.WriteFile(runhostDevicesFile, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	// The release now in the runhost's store is not sent again.
 	if _, stderr, err := runCLI(t, strings.NewReader(""), "--registry", fr.url(), "run", "acme/demo@1.0.0",
 		"--on", "lab", "--allow-unsigned", "--yes", "--out", filepath.Join(t.TempDir(), "out2")); err != nil {
 		t.Fatalf("second run: %v\n%s", err, stderr)
+	}
+}
+
+// newRunOnLab is a runhost named lab in this process, paired with this
+// device, whose policy names a model with its key in the environment.
+func newRunOnLab(t *testing.T) (*runhostServer, string) {
+	t.Helper()
+	srv := newRunhostServer(t)
+	keyring.MockInit()
+	t.Cleanup(keyring.MockInit)
+	home, _ := policy.Home()
+	path, _ := policy.DefaultPath()
+	pol, _, err := policy.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pol.Model = policy.Model{Provider: "anthropic", Name: "claude-x", APIKeyEnv: "TEST_MODEL_API_KEY", ProxyAllow: []string{"api.anthropic.com:443"}}
+	if err := policy.Save(path, pol); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TEST_MODEL_API_KEY", "sk-test-model-key")
+
+	dk, err := runhost.NewDeviceKeys()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runhost.SaveKeys("lab", dk); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(runhost.Devices{Devices: []runhost.Device{{ID: testDevice, SealKey: dk.SealPublic()}}})
+	if err := os.WriteFile(runhostDevicesFile, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	signer, _ := dk.Signer()
+	hostKey, port := startTestRunhost(t, signer.PublicKey())
+	recs := &runhost.Records{Runhosts: []runhost.Record{{Name: "lab", Host: "127.0.0.1", Port: port,
+		HostKey: strings.TrimSpace(string(ssh.MarshalAuthorizedKey(hostKey))), HostKeyFingerprint: ssh.FingerprintSHA256(hostKey),
+		DeviceID: testDevice, CLIVersion: version.Version}}}
+	if err := recs.Save(home); err != nil {
+		t.Fatal(err)
+	}
+	return srv, home
+}
+
+// A run on a runhost carries its secrets, its intake and its files: the
+// runhost's run reads them from its job directory, the narration and the
+// envelope are masked of every secret, and once the run ends nothing of them
+// is left on the runhost, the run's own copy of the secrets included (I3).
+func TestRunOnCarriesTheWholeJob(t *testing.T) {
+	srv, home := newRunOnLab(t)
+	t.Setenv("API_TOKEN", "tok-secret-value-1")
+
+	fr := newFakeRegistry(t)
+	caps := "capabilities:\n  secrets: [API_TOKEN, SPARE_TOKEN]\n  optionalSecrets: [SPARE_TOKEN]\n" +
+		"intake:\n  - id: topic\n    prompt: The topic\n    type: text\n    required: true\n  - id: doc\n    prompt: The document\n    type: file\n    required: true\n"
+	fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", caps))
+
+	in := t.TempDir()
+	input := filepath.Join(in, "notes.txt")
+	doc := filepath.Join(in, "brief.md")
+	_ = os.WriteFile(input, []byte("input text"), 0o600)
+	_ = os.WriteFile(doc, []byte("brief text"), 0o600)
+	_ = os.MkdirAll(filepath.Join(in, "folder", "sub"), 0o700)
+	_ = os.WriteFile(filepath.Join(in, "folder", "sub", "a.txt"), []byte("a"), 0o600)
+
+	out := filepath.Join(t.TempDir(), "out")
+	stdout, stderr, err := runCLI(t, strings.NewReader("the task"), "--registry", fr.url(), "run", "acme/demo@1.0.0",
+		"--on", "lab", "--allow-unsigned", "--yes", "--out", out, "--output-format", "json",
+		"--file", input, "--file", filepath.Join(in, "folder"), "--intake", "topic=birds", "--intake", "doc="+doc)
+	if err != nil {
+		t.Fatalf("run --on: %v\n%s", err, stderr)
+	}
+	if strings.Contains(stdout+stderr, "tok-secret-value-1") || strings.Contains(stdout+stderr, "sk-test-model-key") {
+		t.Errorf("a secret reached the device's narration or envelope:\n%s\n%s", stderr, stdout)
+	}
+	if seen, _ := os.ReadFile(filepath.Join(srv.dir, "secrets.seen")); string(seen) != "API_TOKEN=tok-secret-value-1\n" {
+		t.Errorf("the run's secrets file held %q", seen)
+	}
+	var answers map[string]string
+	raw, _ := os.ReadFile(filepath.Join(srv.dir, "intake.seen"))
+	if err := json.Unmarshal(raw, &answers); err != nil || answers["topic"] != "birds" || !strings.HasSuffix(answers["doc"], "/files/intake/doc/brief.md") {
+		t.Errorf("the run's intake answers: %s", raw)
+	}
+	if files, _ := os.ReadFile(filepath.Join(srv.dir, "files.seen")); string(files) != "./inputs/folder/sub/a.txt\n./inputs/notes.txt\n./intake/doc/brief.md\n" {
+		t.Errorf("the run's files: %q", files)
+	}
+	argv, _ := os.ReadFile(filepath.Join(srv.dir, "argv"))
+	for _, want := range []string{"--registry\n" + fr.url() + "\n", "--intake-file\n", "/files/inputs/notes.txt\n", "/files/inputs/folder\n", "--no-voice\n", "--no-destination\n"} {
+		if !strings.Contains(string(argv), want) {
+			t.Errorf("argv lacks %q:\n%s", want, argv)
+		}
+	}
+	if strings.Contains(string(argv), "birds") || strings.Contains(string(argv), "tok-secret") {
+		t.Errorf("an answer or a secret is on the run's command line:\n%s", argv)
+	}
+	// Nothing of the job is left on the runhost: the job directory went at
+	// collection, and the run's own copy of the secrets with the run.
+	if entries, _ := os.ReadDir(runhostJobsDir); len(entries) != 0 {
+		t.Errorf("the runhost kept %d jobs", len(entries))
+	}
+	if _, err := os.Stat(filepath.Join(home, "agents", "acme", "demo", "1.0.0-test", "runs", "r1", "cfg", "gateway", "secrets.env")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the run's copy of the secrets is still there: %v", err)
+	}
+
+	// A required secret this device has no value for is refused before
+	// anything is sent.
+	t.Setenv("API_TOKEN", "")
+	_ = os.Remove(filepath.Join(srv.dir, "argv"))
+	_, _, err = runCLI(t, strings.NewReader(""), "--registry", fr.url(), "run", "acme/demo@1.0.0",
+		"--on", "lab", "--allow-unsigned", "--yes", "--intake", "topic=birds", "--intake", "doc="+doc)
+	wantClassified(t, err, 11)
+	if !strings.Contains(err.Error(), "API_TOKEN") {
+		t.Errorf("refusal: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(srv.dir, "argv")); err == nil {
+		t.Error("a run started on the runhost without its secret")
+	}
+}
+
+// A release with a target host runs on a runhost with the host's sign-in and
+// the keys this device has accepted for it: the runhost resolves the address
+// and checks the key against those lines alone. A host this device has
+// never accepted a key for is refused before anything is sent.
+func TestRunOnCarriesATargetHost(t *testing.T) {
+	srv, home := newRunOnLab(t)
+	fr := newFakeRegistry(t)
+	caps := "capabilities:\n  exec:\n    commands: [git]\n  targetHosts: [server]\nintake:\n  - id: server\n    prompt: The server\n    type: host\n"
+	fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", caps))
+
+	_, priv, _ := ed25519.GenerateKey(rand.Reader)
+	block, err := ssh.MarshalPrivateKey(priv, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyFile := filepath.Join(t.TempDir(), "id_ed25519")
+	if err := os.WriteFile(keyFile, pem.EncodeToMemory(block), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	hostPub, _, _ := ed25519.GenerateKey(rand.Reader)
+	hk, _ := ssh.NewPublicKey(hostPub)
+	line := "box.test " + strings.TrimSpace(string(ssh.MarshalAuthorizedKey(hk)))
+
+	run := func(answer string) (string, error) {
+		_, stderr, err := runCLI(t, strings.NewReader(""), "--registry", fr.url(), "run", "acme/demo@1.0.0",
+			"--on", "lab", "--allow-unsigned", "--yes", "--out", filepath.Join(t.TempDir(), "out"),
+			"--intake", "server="+answer, "--host-key", "server="+keyFile)
+		return stderr, err
+	}
+	// Not yet accepted here: refused, and nothing reaches the runhost.
+	if _, err := run("root@box.test"); err == nil || !strings.Contains(err.Error(), "has not accepted a host key for box.test") {
+		t.Fatalf("an unknown host: %v", err)
+	}
+	wantClassified(t, func() error { _, err := run("root@box.test"); return err }(), 11)
+	if _, err := os.Stat(filepath.Join(srv.dir, "argv")); err == nil {
+		t.Fatal("a run started on the runhost for a host this device does not know")
+	}
+
+	if err := os.WriteFile(filepath.Join(home, "known_hosts"), []byte("other.test "+strings.TrimSpace(string(ssh.MarshalAuthorizedKey(hk)))+"\n"+line+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stderr, err := run("root@box.test")
+	if err != nil {
+		t.Fatalf("run --on: %v\n%s", err, stderr)
+	}
+	if !strings.Contains(stderr, "the runhost resolves its address") {
+		t.Errorf("the device did not say where the address is resolved:\n%s", stderr)
+	}
+	if known, _ := os.ReadFile(filepath.Join(srv.dir, "known.seen")); string(known) != line+"\n" {
+		t.Errorf("the run's known_hosts: %q", known)
+	}
+	if key, _ := os.ReadFile(filepath.Join(srv.dir, "hostkey.seen")); string(key) != string(pem.EncodeToMemory(block)) {
+		t.Error("the run's key file is not the device's key")
+	}
+	argv, _ := os.ReadFile(filepath.Join(srv.dir, "argv"))
+	for _, want := range []string{"--host-known-hosts\n", "--host-key\nserver=", "/hostkeys/server\n"} {
+		if !strings.Contains(string(argv), want) {
+			t.Errorf("argv lacks %q:\n%s", want, argv)
+		}
+	}
+	var answers map[string]string
+	raw, _ := os.ReadFile(filepath.Join(srv.dir, "intake.seen"))
+	if json.Unmarshal(raw, &answers) != nil || answers["server"] != "root@box.test" {
+		t.Errorf("the run's intake: %s", raw)
+	}
+	if entries, _ := os.ReadDir(runhostJobsDir); len(entries) != 0 {
+		t.Errorf("the runhost kept %d jobs", len(entries))
+	}
+}
+
+// A refusal keeps the class the runhost gave it when that is a usage,
+// verify or policy refusal; any other answer, and a session that ended
+// without one, is the gateway's.
+func TestRunOnSendClass(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want int
+	}{
+		{&runhostRefusal{Code: 2, Reason: "x"}, 2},
+		{&runhostRefusal{Code: 10, Reason: "x"}, 10},
+		{&runhostRefusal{Code: 11, Reason: "x"}, 11},
+		{&runhostRefusal{Code: 1, Reason: "x"}, 13},
+		{&runhostRefusal{Code: 14, Reason: "x"}, 13},
+		{fmt.Errorf("wrapped: %w", &runhostRefusal{Code: 10, Reason: "x"}), 10},
+		{io.ErrUnexpectedEOF, 13},
+		{errors.New("the session ended without an answer"), 13},
+	} {
+		if got := runOnSendClass(tc.err); got != tc.want {
+			t.Errorf("%v: class %d, want %d", tc.err, got, tc.want)
+		}
 	}
 }
 
@@ -211,14 +436,14 @@ func TestRunOnRefusesWhatItDoesNotCarry(t *testing.T) {
 	if _, _, err := runCLI(t, nil, "run", "acme/demo@1.0.0", "--on", "nowhere"); err == nil || !strings.Contains(err.Error(), "no runhost is named") {
 		t.Errorf("an unknown runhost: %v", err)
 	}
-	if _, _, err := runCLI(t, nil, "run", "acme/demo@1.0.0", "--on", "lab", "--file", "x"); err == nil || !strings.Contains(err.Error(), "--file") {
-		t.Errorf("--file: %v", err)
+	if _, _, err := runCLI(t, nil, "run", "acme/demo@1.0.0", "--on", "lab", "--keep-run-dir"); err == nil || !strings.Contains(err.Error(), "--keep-run-dir") {
+		t.Errorf("--keep-run-dir: %v", err)
+	}
+	if _, _, err := runCLI(t, nil, "run", "acme/demo@1.0.0", "--on", "lab", "--host-key-pin", "h=SHA256:x"); err == nil || !strings.Contains(err.Error(), "--host-key-pin") {
+		t.Errorf("--host-key-pin: %v", err)
 	}
 	if _, _, err := runCLI(t, nil, "run", "acme/demo@1.0.0", "--on", "lab", "--adapter", "claude"); err == nil || !strings.Contains(err.Error(), "--adapter") {
 		t.Errorf("--adapter: %v", err)
-	}
-	if what := runOnRefusedRelease(&manifest.Manifest{Capabilities: manifest.Capabilities{Secrets: []string{"TOKEN"}}}); what != "secrets" {
-		t.Errorf("secrets: %q", what)
 	}
 	for name, m := range map[string]policy.Model{
 		"credits": {Provider: policy.ProviderAgentry, Name: "x"},

@@ -13,10 +13,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -73,6 +75,10 @@ type runOpts struct {
 	mode        string
 	intake      []string
 	intakeToken []string
+	// intakeFile is a JSON object of intake answers, id to value, read as
+	// --intake would take each: a remote runhost's service hands them so,
+	// rather than on its command line.
+	intakeFile string
 	// hostFlags are the target hosts' sign-in flags.
 	hostFlags    targetHostFlags
 	input        string
@@ -230,7 +236,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&opts.adapterName, "adapter", "", "harness adapter (default "+adapter.DefaultName+", or "+adapter.CodexImageAdapterName+" when the model is paid by your ChatGPT plan); see --list-adapters")
 	f.StringVar(&opts.local, "local", "", "run an unpublished QuickAgent DIRECTORY instead of a registry ref")
 	f.StringVar(&opts.pin, "pin", "", "require the resolved archive digest to equal this sha256:… value")
-	f.StringVar(&opts.on, "on", "", "run on this remote runhost (see agentry runhost list) instead of this computer: the release is verified here, sent, verified again there, and its output sealed to this device and opened into the output folder")
+	f.StringVar(&opts.on, "on", "", "run on this remote runhost (see agentry runhost list) instead of this computer, carrying the run's secrets, files and intake: the release is verified here, sent, verified again there, and its output sealed to this device and opened into the output folder")
 	f.BoolVar(&opts.installed, "installed", false, "run the release already installed in the runner home at --pin, asking no registry, so nothing the registry says of it today (a yank, a quarantine) is heard (a remote runhost's service, which verified it as it arrived)")
 	_ = f.MarkHidden("installed")
 	f.StringVar(&opts.policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml, created on first use)")
@@ -261,6 +267,8 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&opts.destinationsFile, "destinations-file", "", "send the run's result and deliverables to the destinations in this JSON FILE once it succeeds, each a webhook or an S3 bucket with the names of the variables holding its credentials (a webhook's signing secret and Authorization value, a bucket's secret access key and access key id), at public addresses on port 443 alone (a hosted run's host)")
 	f.StringVar(&opts.voiceFile, "voice-file", "", "attach the VOICE.md in FILE as the run's Writing Voice (for a driver such as a sandbox host)")
 	f.StringArrayVar(&opts.intake, "intake", nil, "answer an intake question non-interactively: id=value (repeatable; unanswered questions are asked on a terminal); a repository question takes its https address, with #branch, #tag or #commit for another ref; a url question takes one file's https address")
+	f.StringVar(&opts.intakeFile, "intake-file", "", "answer intake questions from the JSON object of id to value in this 0600 FILE, as --intake takes each (a remote runhost's service)")
+	_ = f.MarkHidden("intake-file")
 	f.StringArrayVar(&opts.intakeToken, "intake-token", nil, "the access token for an input source: id=ENV_NAME, the name of an environment variable holding it (repeatable; otherwise the key saved for the source's host in the system keychain, then a prompt on a terminal, then none)")
 	addTargetHostFlags(cmd, &opts.hostFlags)
 	addHostKeyPinFlag(cmd, &opts.hostFlags)
@@ -1481,7 +1489,15 @@ func printDryRun(cmd *cobra.Command, plan *spec.Plan, planDir string, opts runOp
 // terminal, a secret question the run's profile or secret source already
 // holds is answered from there (fromSource).
 func collectIntake(cmd *cobra.Command, m *manifest.Manifest, opts runOpts, fromSource func(string) bool) (*intake.Answers, error) {
-	preset, err := intake.ParsePreset(opts.intake)
+	given := opts.intake
+	if opts.intakeFile != "" {
+		fromFile, err := readIntakeFile(opts.intakeFile)
+		if err != nil {
+			return nil, err
+		}
+		given = append(slices.Clone(given), fromFile...)
+	}
+	preset, err := intake.ParsePreset(given)
 	if err != nil {
 		return nil, err
 	}
@@ -1499,6 +1515,37 @@ func collectIntake(cmd *cobra.Command, m *manifest.Manifest, opts runOpts, fromS
 		}
 	}
 	return intake.CollectRun(p, m, preset, fromSource)
+}
+
+// readIntakeFile reads --intake-file: a regular file only its owner can
+// read, holding one JSON object of question id to answer, each answer an
+// id=value as --intake takes it.
+func readIntakeFile(path string) ([]string, error) {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return nil, fmt.Errorf("--intake-file: %w", err)
+	}
+	switch {
+	case !fi.Mode().IsRegular():
+		return nil, fmt.Errorf("--intake-file: %s is not a regular file", path)
+	case runtime.GOOS != "windows" && fi.Mode().Perm()&0o077 != 0:
+		return nil, fmt.Errorf("--intake-file: %s can be read by others (mode %04o); it must be 0600", path, fi.Mode().Perm())
+	case fi.Size() > 1<<20:
+		return nil, fmt.Errorf("--intake-file: %s is larger than 1 MiB", path)
+	}
+	raw, err := os.ReadFile(path) //nolint:gosec // a file the driver named
+	if err != nil {
+		return nil, fmt.Errorf("--intake-file: %w", err)
+	}
+	var answers map[string]string
+	if err := json.Unmarshal(raw, &answers); err != nil {
+		return nil, fmt.Errorf("--intake-file: %s is not a JSON object of answers", path)
+	}
+	out := make([]string, 0, len(answers))
+	for _, id := range slices.Sorted(maps.Keys(answers)) {
+		out = append(out, id+"="+answers[id])
+	}
+	return out, nil
 }
 
 // resolveSourceTokens gives each input source the run was given its
