@@ -25,6 +25,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/installed"
 	"github.com/blaktron/agentry-cli/pkg/runner/compile"
+	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/profile"
@@ -49,6 +50,11 @@ func isolateRunnerHome(t *testing.T) (home, policyPath string) {
 	t.Helper()
 	home = t.TempDir()
 	t.Setenv("AGENTRY_RUNNER_HOME", home)
+	// A run checks the engine before it installs anything; a test that
+	// stops before the engine must not depend on the machine's own.
+	prev := newDockerClient
+	newDockerClient = func() dockerx.Client { return &dockerx.Fake{} }
+	t.Cleanup(func() { newDockerClient = prev })
 	return home, filepath.Join(home, "policy.yaml")
 }
 
