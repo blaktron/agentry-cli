@@ -1,6 +1,14 @@
 {
   "versions": [
     {
+      "version": "0.6.1019",
+      "highlights": [
+        "agentry run --on now carries the rest of a local run: secrets, intake answers, files, knowledge packs and your voice.",
+        "A run on a runhost can reach a target host, use its MCP servers' sign-ins and deliver to your destinations from there.",
+        "When a runhost refuses a run, the exit code now says why (usage, verification or policy), as a local run's does."
+      ]
+    },
+    {
       "version": "0.6.1018",
       "highlights": [
         "An installed agent can run programs, browse and reach a dev server when its release declares the coding toolchain.",
