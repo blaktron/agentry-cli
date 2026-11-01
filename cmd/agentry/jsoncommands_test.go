@@ -147,6 +147,11 @@ func TestEveryJSONCommandEmitsOneObject(t *testing.T) {
 		"knowledge list":            {run: local("knowledge", "list")},
 		"agent list":                {run: local("agent", "list")},
 
+		"runhost list":         {run: local("runhost", "list")},
+		"runhost add":          {reason: "sets up a server over SSH"},
+		"runhost status":       {reason: "needs a runhost"},
+		"runhost doctor":       {reason: "needs a runhost"},
+		"runhost remove":       {reason: "needs a runhost and its admin sign-in"},
 		"login":                {reason: "signs in through a browser on a loopback listener; its NDJSON events are covered by the login tests"},
 		"fork":                 {reason: "needs a registry that forks"},
 		"review":               {reason: "runs the Examiner against a model"},

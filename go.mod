@@ -3,6 +3,7 @@ module github.com/blaktron/agentry-cli
 go 1.27.3
 
 require (
+	aead.dev/minisign v0.3.0
 	github.com/Masterminds/semver/v3 v3.5.0
 	github.com/blaktron/agentry v0.6.999
 	github.com/charmbracelet/bubbles v1.0.0
