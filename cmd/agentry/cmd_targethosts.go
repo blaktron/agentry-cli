@@ -30,6 +30,10 @@ type targetHostFlags struct {
 	// pins are the host keys a schedule was made with (--host-key-pin,
 	// hidden: a schedule's fire passes them).
 	pins []string
+	// knownHosts is a known_hosts file a remote runhost's service writes
+	// for its run from the device's own (--host-known-hosts, hidden): the
+	// host keys the person accepted, checked in place of this account's.
+	knownHosts string
 }
 
 func addTargetHostFlags(cmd *cobra.Command, f *targetHostFlags) {
@@ -46,6 +50,8 @@ func addTargetHostFlags(cmd *cobra.Command, f *targetHostFlags) {
 func addHostKeyPinFlag(cmd *cobra.Command, f *targetHostFlags) {
 	cmd.Flags().StringArrayVar(&f.pins, hostKeyPinFlag, nil, "refuse a target host whose key is not this one: id=SHA256:… (repeatable; a schedule's runs pass it)")
 	_ = cmd.Flags().MarkHidden(hostKeyPinFlag)
+	cmd.Flags().StringVar(&f.knownHosts, "host-known-hosts", "", "check each target host's key against this known_hosts FILE in place of yours (a remote runhost's service passes the device's)")
+	_ = cmd.Flags().MarkHidden("host-known-hosts")
 }
 
 const hostKeyPinFlag = "host-key-pin"
@@ -111,8 +117,12 @@ func readyHosts(cmd *cobra.Command, answers *intake.Answers, ids []string, pol *
 		ask = &setup.TTYPrompter{In: cmd.InOrStdin(), Err: cmd.ErrOrStderr()}
 	}
 	say := func(msg string) { _, _ = fmt.Fprintln(cmd.ErrOrStderr(), msg) }
+	known := targethost.DefaultKnownHostsFiles(home)
+	if f.knownHosts != "" {
+		known.Persons = f.knownHosts
+	}
 	o := targethost.Options{
-		Hosts: pol.Hosts, KnownHosts: targethost.DefaultKnownHostsFiles(home), Flags: flags,
+		Hosts: pol.Hosts, KnownHosts: known, Flags: flags,
 		Getenv: os.Getenv, Ask: ask, Say: say,
 	}
 	for _, id := range ids {

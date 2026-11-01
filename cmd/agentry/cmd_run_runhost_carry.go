@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -20,6 +21,9 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/profile"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
+	"github.com/blaktron/agentry-cli/pkg/runner/setup"
+	"github.com/blaktron/agentry-cli/pkg/runner/targethost"
+	"github.com/blaktron/agentry-cli/runnerimage/hostlink"
 	"github.com/blaktron/agentry/pkg/manifest"
 )
 
@@ -151,6 +155,10 @@ func runOnCarry(cmd *cobra.Command, home string, meta *installdir.Meta, m *manif
 	if err := c.carryIntake(answers); err != nil {
 		return nil, err
 	}
+	if err := c.carryTargetHosts(cmd, home, answers, m, opts); err != nil {
+		return nil, err
+	}
+	c.run.HostsAllow, c.run.HostsDeny = pol.Hosts.Allow, pol.Hosts.Deny
 
 	overrides := secretOverrides(profSecrets, answers)
 	for _, name := range allSecretNames(m) {
@@ -207,9 +215,6 @@ func (c *runOnCarried) carryIntake(a *intake.Answers) error {
 	if a == nil {
 		return nil
 	}
-	if len(a.Hosts) > 0 {
-		return engine.Classify(engine.ExitUsage, errors.New("a run on a runhost does not take target hosts yet"))
-	}
 	put := func(id, v string) {
 		if c.run.Intake == nil {
 			c.run.Intake = map[string]string{}
@@ -218,6 +223,9 @@ func (c *runOnCarried) carryIntake(a *intake.Answers) error {
 	}
 	for id, v := range a.Values {
 		put(id, v)
+	}
+	for id, h := range a.Hosts {
+		put(id, h.Answer.String())
 	}
 	for id, src := range a.Sources {
 		answer := src.URL
@@ -242,6 +250,70 @@ func (c *runOnCarried) carryIntake(a *intake.Answers) error {
 		}
 		c.run.IntakeFiles[id] = name
 		c.entries = append(c.entries, payload.Entry{Name: name, Src: path})
+	}
+	return nil
+}
+
+// carryTargetHosts is each answered target host's sign-in, resolved as a
+// local run resolves it (a flag, the keychain, a prompt on a terminal), and
+// the known_hosts lines of the keys this device has accepted for it. The
+// runhost resolves the address and reads the key itself, from its own
+// network, and takes only a key this device knows: one it does not is
+// refused here, since no one is at the runhost to accept it.
+func (c *runOnCarried) carryTargetHosts(cmd *cobra.Command, home string, a *intake.Answers, m *manifest.Manifest, opts runOpts) error {
+	ids := m.Capabilities.TargetHosts
+	flags, err := targethost.ParseFlags(opts.hostFlags.key, opts.hostFlags.passphrase, opts.hostFlags.password, opts.hostFlags.sudo)
+	if err != nil {
+		return engine.Classify(engine.ExitUsage, err)
+	}
+	if unknown := flags.Unknown(ids); len(unknown) > 0 {
+		slices.Sort(unknown)
+		return engine.Classify(engine.ExitUsage, fmt.Errorf("a --host-* flag names %v, which is none of this QuickAgent's target hosts (%v)", unknown, ids))
+	}
+	if a == nil || len(ids) == 0 {
+		return nil
+	}
+	var ask targethost.Asker
+	if stdinIsTTY(cmd.InOrStdin()) {
+		ask = &setup.TTYPrompter{In: cmd.InOrStdin(), Err: cmd.ErrOrStderr()}
+	}
+	say := func(msg string) { _, _ = fmt.Fprintln(cmd.ErrOrStderr(), msg) }
+	files := targethost.DefaultKnownHostsFiles(home)
+	for _, id := range ids {
+		h := a.Hosts[id]
+		if h == nil {
+			// Never answered: the runhost's run refuses it by name.
+			continue
+		}
+		known, err := targethost.KnownLines(files, h.Answer)
+		if err != nil {
+			return engine.Classify(engine.ExitCLI, err)
+		}
+		if len(known) == 0 {
+			return engine.Classify(engine.ExitPolicy, receipt.WithReason(fmt.Errorf(
+				"target host %s: this device has not accepted a host key for %s, and the runhost, which reaches it, has no one to ask: run a QuickAgent on %s from this computer once, or add its key to your known_hosts", id, h.Answer.KnownHostsName(), h.Answer.String()),
+				receipt.ReasonHostRefused, targethost.RefusedKeyUnknown, id))
+		}
+		if len(known) > job.MaxKnownLines {
+			known = known[:job.MaxKnownLines]
+		}
+		cred, err := targethost.ResolveCredential(id, h.Answer, flags, os.Getenv, ask, say)
+		if err != nil {
+			var r *targethost.Refusal
+			if errors.As(err, &r) {
+				return engine.Classify(engine.ExitPolicy, receipt.WithReason(err, receipt.ReasonHostRefused, r.Detail, id))
+			}
+			return engine.Classify(engine.ExitCLI, err)
+		}
+		t := job.TargetHost{Known: known, Passphrase: cred.Passphrase, Password: cred.Password, Sudo: cred.Sudo}
+		if cred.Auth == hostlink.AuthKey {
+			t.Key, t.Password = string(cred.Key), ""
+		}
+		if c.run.TargetHosts == nil {
+			c.run.TargetHosts = map[string]job.TargetHost{}
+		}
+		c.run.TargetHosts[id] = t
+		say(fmt.Sprintf("target host %s: %s, %s; the runhost resolves its address and checks its key against the %d this device has accepted", id, h.Answer.String(), cred.Words(), len(known)))
 	}
 	return nil
 }
