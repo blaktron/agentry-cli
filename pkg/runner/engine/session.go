@@ -1944,6 +1944,14 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 		env.CapabilitiesEnforced["usage.tokens"] = tokensUnreportedLine
 	}
 	env.CapabilitiesEnforced["daemon"] = daemon
+	// The agent has ended, so a persistent agent's web and review ledgers
+	// are complete.
+	if env.Web = webRecord(s.rd.receiptsDir, s.p.Web); env.Web != nil {
+		env.CapabilitiesEnforced["web.aiReview"] = webLine(env.Web)
+	}
+	if env.Review = reviewRecord(s.rd.receiptsDir, s.p.Review); env.Review != nil {
+		env.CapabilitiesEnforced["review.aiReview"] = reviewLine(env.Review)
+	}
 	env.PDFs = pdfs
 	env.FetchSaves = fetchSaves
 	// Every decode the session made, the files added mid-run included.

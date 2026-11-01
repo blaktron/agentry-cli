@@ -15,7 +15,8 @@ import (
 )
 
 // agentCalendarLong is configure's help for calendar feeds.
-const agentCalendarLong = "\n\n--calendar-feed <name> gives the Assistant a calendar to read, under a name\n" +
+const agentCalendarLong = "\n\n--calendar-feed <name> gives an agent that reads calendars (the Assistant, or a\n" +
+	"published agent that declares calendars) a calendar to read, under a name\n" +
 	"you choose: the calendar's iCal (ICS) address, read from the terminal without\n" +
 	"echoing it, or from stdin. Google Calendar gives it as \"Secret address in iCal\n" +
 	"format\" in a calendar's settings; Outlook (Microsoft 365 and Outlook.com) as\n" +
@@ -23,7 +24,7 @@ const agentCalendarLong = "\n\n--calendar-feed <name> gives the Assistant a cale
 	"iCloud as a public calendar's webcal:// link. Whoever holds the address reads\n" +
 	"the calendar, so it is kept in your system keychain, and the agent is never\n" +
 	"shown it. The address is fetched and read once before it is kept. A feed is\n" +
-	"read only: the Assistant reads what is on it and never changes it. Giving a\n" +
+	"read only: the agent reads what is on it and never changes it. Giving a\n" +
 	"name again sets its address again; --no-calendar-feed <name> removes it. Both\n" +
 	"are refused while the agent runs. A feed is a roster entry, switched with\n" +
 	"agentry agent grant assistant calendar:<name> on|off.\n\n" +
@@ -51,7 +52,7 @@ var signInCalendarFeed = persistent.SignInCalendarFeed
 // then keeps the feed's own.
 func configureCalendarFeed(cmd *cobra.Command, a persistent.Agent, home, name string, on, signIn, yes bool) error {
 	if !a.ReadsCalendars() {
-		return engine.Classify(engine.ExitUsage, fmt.Errorf("the %s agent has no calendar feeds: the Assistant alone reads them", a.Name))
+		return engine.Classify(engine.ExitUsage, fmt.Errorf("the %s agent has no calendar feeds: it does not declare calendars", a.Name))
 	}
 	if held, _ := persistent.Held(home, a.Name); held {
 		return engine.Classify(engine.ExitUsage, fmt.Errorf("the %s agent is running: stop it first (agentry agent stop %s)", a.Name, a.Name))
@@ -174,7 +175,7 @@ func printCalendarRead(w io.Writer, name, host, calName string, events int, sign
 	}
 	if signedIn {
 		_, _ = fmt.Fprintf(w, "Signed in and read %s from %s (%d events), and kept its address and the browser's sign-in in your system keychain as the feed %s. "+
-			"The sign-in is sent to %s alone. If %s ends it later, the Assistant says so: sign in again with --calendar-sign-in.\n", what, from, events, name, host, from)
+			"The sign-in is sent to %s alone. If %s ends it later, the agent says so: sign in again with --calendar-sign-in.\n", what, from, events, name, host, from)
 		return
 	}
 	_, _ = fmt.Fprintf(w, "Read %s from %s (%d events), and kept its address in your system keychain as the feed %s.\n", what, from, events, name)
