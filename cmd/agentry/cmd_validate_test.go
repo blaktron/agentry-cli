@@ -121,9 +121,15 @@ func TestValidateAcceptsDeclaredServerEnv(t *testing.T) {
         GITHUB_PERMISSION: read-only
       egress: [api.github.com]
 `
-	stdout, _, err := runCLI(t, nil, "validate", writeTree(t, publishableSkillFiles("demo", caps)))
+	dir := writeTree(t, publishableSkillFiles("demo", caps))
+	stdout, stderr, err := runCLI(t, nil, "validate", dir)
 	if err != nil || !strings.Contains(stdout, "validate: PASSED") {
 		t.Fatalf("env refused offline: %v\n%s", err, stdout)
+	}
+	// A clean validate ends with what comes next, on stderr, for the
+	// directory as it was given.
+	if !strings.Contains(stderr, "next steps:\n  1. agentry run --local "+dir+" --allow-unsigned\n") || !strings.Contains(stderr, "2. agentry publish "+dir+"\n") {
+		t.Errorf("next steps = %q", stderr)
 	}
 	bad := strings.Replace(caps, "        GITHUB_PERMISSION: read-only\n", "        GITHUB_PERMISSION: read-only\n        GITHUB_TOKEN: plain\n", 1)
 	stdout, _, err = runCLI(t, nil, "validate", writeTree(t, publishableSkillFiles("demo", bad)))

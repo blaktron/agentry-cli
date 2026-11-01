@@ -190,6 +190,7 @@ func completeLogin(cmd *cobra.Command, reg, token string) (authEvent, error) {
 	}
 	rewrapAfterLogin(cmd, reg)
 	resealSignedOut(cmd.ErrOrStderr())
+	printNextSteps(cmd.ErrOrStderr(), loginNextSteps()...)
 	result.Handle = strings.ReplaceAll(handle, token, "[redacted]")
 	result.Storage = entry.TokenRef
 	result.SigningKeys = pins.Status

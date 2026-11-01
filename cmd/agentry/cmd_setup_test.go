@@ -19,22 +19,33 @@ import (
 // returns the written policy file text.
 func setupPolicy(t *testing.T, extra ...string) (string, string, error) {
 	t.Helper()
+	stdout, _, written, err := setupPolicyErr(t, extra...)
+	return stdout, written, err
+}
+
+// setupPolicyErr is setupPolicy with the command's stderr as well.
+func setupPolicyErr(t *testing.T, extra ...string) (stdout, stderr, written string, err error) {
+	t.Helper()
 	isolateEnv(t)
 	isolateRunnerHome(t)
 	policyPath := filepath.Join(t.TempDir(), "policy.yaml")
 	args := append([]string{"setup", "--skip-images", "--policy", policyPath}, extra...)
-	stdout, _, err := runCLI(t, strings.NewReader(""), args...)
+	stdout, stderr, err = runCLI(t, strings.NewReader(""), args...)
 	raw, _ := os.ReadFile(policyPath)
-	return stdout, string(raw), err
+	return stdout, stderr, string(raw), err
 }
 
 func TestSetupYesWritesProviderDefaults(t *testing.T) {
-	stdout, written, err := setupPolicy(t, "--yes", "--provider", "openai")
+	stdout, stderr, written, err := setupPolicyErr(t, "--yes", "--provider", "openai")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(stdout, "setup complete (policy only; images skipped)") {
 		t.Errorf("setup banner = %q", stdout)
+	}
+	// Setup ends with what comes next, on stderr: doctor, then search or run.
+	if !strings.Contains(stderr, "next steps:\n  1. agentry doctor\n") || !strings.Contains(stderr, "agentry search <words>") || !strings.Contains(stderr, "agentry run <ns/name>") {
+		t.Errorf("next steps = %q", stderr)
 	}
 	// The table row for openai, and the generated-file warning header.
 	for _, want := range []string{

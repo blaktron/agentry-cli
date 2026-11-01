@@ -592,7 +592,22 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 			Repaired: opts.repair && target == installdir.Target,
 		})
 	}
+	if target == installdir.Target {
+		printNextSteps(errOut, installNextSteps(res.Namespace, m.Name, m, runConsentFlag(att.State))...)
+	}
 	return nil
+}
+
+// runConsentFlag is the flag a run of a release with attestation state
+// needs again, as attestationRefusal asks for it: "" for a verified one.
+func runConsentFlag(state string) string {
+	switch state {
+	case trust.StateUnsigned, trust.StateLocal:
+		return "--allow-unsigned"
+	case trust.StateUnscanned:
+		return "--allow-unscanned"
+	}
+	return ""
 }
 
 // writeInstallPlan is the --plan exit: the preview as text or JSON, nothing
