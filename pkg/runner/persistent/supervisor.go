@@ -75,8 +75,8 @@ type Options struct {
 	// Subagents runs the agent's subagents (subagentrun.go), and the runs
 	// quickagent_run starts; nil refuses both.
 	Subagents SubagentHost
-	// Helper answers Agentry's helper tools where AppLink does not
-	// (helper.go): the CLI's; nil, with no AppLink, refuses them.
+	// Helper answers Agentry's helper tools (helper.go), before AppLink;
+	// nil leaves them to AppLink, and with neither they are refused.
 	Helper HelperOps
 	// AppLink answers the agent's app link calls other than self_configure,
 	// which the supervisor answers itself: the desktop's. Nil answers them

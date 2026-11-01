@@ -133,3 +133,27 @@ func newQuestionID() (string, error) {
 	}
 	return "q-" + hex.EncodeToString(b[:]), nil
 }
+
+// Question is a question Ask puts to the person, as a client in this
+// process is given it: its id, its title and its text.
+type Question struct {
+	ID, Title, Text string
+}
+
+// OnQuestion sends the agent's questions to ask as well as to the clients
+// attached to the owner socket: a client that supervises the agent in its
+// own process (Agentry Desktop) draws them and answers with Answer. The
+// func it answers stops that.
+func (s *Supervisor) OnQuestion(ask func(Question)) func() {
+	return s.addAsker(func(r Reply) {
+		if r.Event == nil || r.Event.Kind != session.KindQuestion {
+			return
+		}
+		title, text, _ := strings.Cut(r.Event.Text, "\n\n")
+		ask(Question{ID: r.Event.Question, Title: title, Text: text})
+	})
+}
+
+// Answer takes the person's answer to the question id, as an answer over
+// the owner socket is taken.
+func (s *Supervisor) Answer(id string, yes bool) error { return s.answer(id, yes) }

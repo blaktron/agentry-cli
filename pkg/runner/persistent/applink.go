@@ -11,7 +11,7 @@ package persistent
 // unless the person lets the agent set up meeting recordings, and a
 // meeting_arm outside its rules (meetings.go). It answers the subagent tools
 // itself (subagentrun.go), and Agentry's helper tools through the client's
-// HelperOps (helper.go) when the client has no handler of its own. It hands
+// HelperOps (helper.go) when the client gives them. It hands
 // every other tool to its client's handler (the desktop's, which answers
 // with the application's own operations and consent); without one, the tool
 // is answered as Agentry Desktop's. Every call and its answer are a line of the segment's
@@ -137,7 +137,7 @@ func (s *Supervisor) answerAppLink(ctx context.Context, req applink.Request) app
 		return applink.Answer{Text: "no such tool: " + req.Tool, IsError: true}
 	case applink.IsSubagentTool(req.Tool):
 		return s.answerSubagent(ctx, cfg, req)
-	case isHelperTool(req.Tool) && s.opts.AppLink == nil && s.opts.Helper != nil:
+	case isHelperTool(req.Tool) && s.opts.Helper != nil:
 		return s.answerHelper(ctx, cfg, req)
 	case req.Tool == applink.SelfConfigure:
 		return s.selfConfigure(req.Arguments)

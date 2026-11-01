@@ -440,3 +440,27 @@ func TestAQuestionIsAskedAndAnsweredOverTheOwnerSocket(t *testing.T) {
 		t.Error("a second answer to the same question was taken")
 	}
 }
+
+// TestAQuestionReachesAClientInTheSupervisorsProcess: a client that runs the
+// supervisor in its own process is given each question with its title and
+// text apart, and answers it with Answer.
+func TestAQuestionReachesAClientInTheSupervisorsProcess(t *testing.T) {
+	home := shortHome(t)
+	a := installWithSubagent(t, home, "")
+	sv, _ := startPublished(t, home, a, &fakeHost{}, nil)
+	got := make(chan Question, 1)
+	stop := sv.OnQuestion(func(q Question) { got <- q })
+	defer stop()
+	done := make(chan error, 1)
+	go func() { done <- sv.Ask(context.Background(), "Install acme/x?", "The agent asks to install it.") }()
+	q := <-got
+	if q.Title != "Install acme/x?" || q.Text != "The agent asks to install it." || q.ID == "" {
+		t.Fatalf("the question: %+v", q)
+	}
+	if err := sv.Answer(q.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; !errors.Is(err, ErrNotAgreed) {
+		t.Fatalf("a no: %v", err)
+	}
+}
