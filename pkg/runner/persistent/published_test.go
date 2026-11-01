@@ -14,6 +14,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/trust"
 )
@@ -317,5 +318,42 @@ func TestPersonaFrameStaysWithinInstructions(t *testing.T) {
 		if strings.Contains(f, "\n\n(Agentry:") {
 			t.Errorf("the persona closed the frame: %q", f)
 		}
+	}
+}
+
+// TestAPublishedAgentStartsAsItsRelease: a published agent's supervisor
+// starts, and its segment runs the installed release (never a built-in), is
+// keyed by the agent's key, has the share and data folders and no app link,
+// and its first turn gives the agent its shipped persona.
+func TestAPublishedAgentStartsAsItsRelease(t *testing.T) {
+	home := shortHome(t)
+	t.Setenv("HOME", t.TempDir())
+	a := installPublished(t, home, "acme", "ada", "1.0.0", publishedRelease{extra: "persona:\n  name: Ada\n", persona: "Brisk.\n"})
+	c, err := LoadConfig(home, a.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	RecordConsent(BuildRoster(a, c, nil), &c)
+	if err := SaveConfig(home, a.Name, c); err != nil {
+		t.Fatal(err)
+	}
+	st := &starter{}
+	sv, err := Start(context.Background(), Options{Home: home, Agent: a, Client: ClientCLI, Policy: policy.Default(), Docker: &dockerx.Fake{}, StartSegment: st.start})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	defer func() { _, _ = sv.Stop(context.Background()) }()
+	seg := st.segments[0]
+	if seg.Release == nil || seg.Release.Meta.Ref != "acme/ada@1.0.0" || seg.Builtin.Name() != "" {
+		t.Fatalf("the segment runs %+v / %q, want the installed release and no built-in", seg.Release, seg.Builtin.Ref())
+	}
+	if seg.Persistent.Agent != a.Name || seg.Persistent.SessionVolume != SessionVolumeIn(home, a.Name) || seg.Grants.Share == "" || seg.Grants.AppLink != "" {
+		t.Errorf("segment %+v, grants %+v", seg.Persistent, seg.Grants)
+	}
+	if err := sv.Send(context.Background(), "hello"); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(st.last.rawTurns(), "\n"); !strings.Contains(got, `"Ada", and "Brisk."`) {
+		t.Errorf("the first turn %q does not give the shipped persona", got)
 	}
 }

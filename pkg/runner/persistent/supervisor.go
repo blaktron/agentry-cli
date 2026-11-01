@@ -227,7 +227,7 @@ func Start(ctx context.Context, opts Options) (*Supervisor, error) {
 	if a.DesktopOnly && opts.Client != ClientDesktop {
 		return nil, fmt.Errorf("%s %w", a.Title, ErrDesktopOnly)
 	}
-	if !a.Builtin.Persistent() {
+	if !a.Published() && !a.Builtin.Persistent() {
 		return nil, fmt.Errorf("%s is not a persistent agent of this build", a.Name)
 	}
 	cfg, err := LoadConfig(opts.Home, a.Name)
