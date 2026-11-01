@@ -4,6 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha1" //nolint:gosec // known_hosts hashes names with HMAC-SHA1
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net"
@@ -52,6 +55,68 @@ func DefaultKnownHostsFiles(runnerHome string) KnownHostsFiles {
 		f.Persons = filepath.Join(home, ".ssh", "known_hosts")
 	}
 	return f
+}
+
+// KnownLines are the lines of files that name a's host, as a's known_hosts
+// name or hashed from it, each as it is written: what a device that hands a
+// run to a remote runhost has accepted of the host's keys, for the runhost to
+// check the key it is offered against. A marker line (@revoked,
+// @cert-authority) is carried too, so a key revoked here stays refused there.
+func KnownLines(files KnownHostsFiles, a Answer) ([]string, error) {
+	name := a.KnownHostsName()
+	var out []string
+	for _, file := range []string{files.Persons, files.Runners} {
+		if file == "" {
+			continue
+		}
+		b, err := os.ReadFile(file) //nolint:gosec // the person's own known_hosts
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		sc := bufio.NewScanner(bytes.NewReader(b))
+		sc.Buffer(nil, 1<<20)
+		for sc.Scan() {
+			line := strings.TrimSpace(sc.Text())
+			if line == "" || line[0] == '#' {
+				continue
+			}
+			_, hosts, _, _, _, err := ssh.ParseKnownHosts([]byte(line))
+			if err != nil {
+				continue
+			}
+			for _, h := range hosts {
+				if knownHostMatches(h, name) {
+					out = append(out, line)
+					break
+				}
+			}
+		}
+	}
+	return out, nil
+}
+
+// knownHostMatches says whether pattern, one host of a known_hosts line,
+// names name: written as it is, or hashed (|1|salt|hash, HMAC-SHA1 of the
+// name keyed by the salt). Wildcard patterns are left to the full check.
+func knownHostMatches(pattern, name string) bool {
+	if rest, ok := strings.CutPrefix(pattern, "|1|"); ok {
+		saltB64, hashB64, ok := strings.Cut(rest, "|")
+		if !ok {
+			return false
+		}
+		salt, err1 := base64.StdEncoding.DecodeString(saltB64)
+		want, err2 := base64.StdEncoding.DecodeString(hashB64)
+		if err1 != nil || err2 != nil {
+			return false
+		}
+		mac := hmac.New(sha1.New, salt)
+		mac.Write([]byte(name))
+		return hmac.Equal(mac.Sum(nil), want)
+	}
+	return strings.EqualFold(pattern, name)
 }
 
 // HostKey is a target host's checked key.

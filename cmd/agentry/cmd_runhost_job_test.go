@@ -53,6 +53,8 @@ echo leftover > "$out/scratch/x"
 [ -f secrets.env ] && cp secrets.env "$RUNHOST_TEST_DIR/secrets.seen"
 [ -f intake.json ] && cp intake.json "$RUNHOST_TEST_DIR/intake.seen"
 [ -d files ] && (cd files && find . -type f | sort) > "$RUNHOST_TEST_DIR/files.seen"
+[ -f known_hosts ] && cp known_hosts "$RUNHOST_TEST_DIR/known.seen"
+[ -f hostkeys/server ] && cp hostkeys/server "$RUNHOST_TEST_DIR/hostkey.seen"
 if [ -s secrets.env ]; then
   gw="$AGENTRY_RUNNER_HOME/agents/acme/demo/1.0.0-test/runs/r1/cfg/gateway"
   mkdir -p "$gw" && cp secrets.env "$gw/secrets.env"
