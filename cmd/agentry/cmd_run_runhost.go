@@ -53,17 +53,8 @@ func runOnUnsupported(opts runOpts) string {
 		return "--adapter (a runhost runs its own container harness)"
 	case opts.keepRunDir:
 		return "--keep-run-dir"
-	case len(opts.hostFlags.key) > 0, len(opts.hostFlags.password) > 0, len(opts.hostFlags.passphrase) > 0, len(opts.hostFlags.sudo) > 0, len(opts.hostFlags.pins) > 0:
-		return "the target host flags"
-	}
-	return ""
-}
-
-// runOnRefusedRelease says what a release declares that a run on a runhost
-// does not carry yet.
-func runOnRefusedRelease(m *manifest.Manifest) string {
-	if len(m.Capabilities.TargetHosts) > 0 {
-		return "target hosts"
+	case len(opts.hostFlags.pins) > 0, opts.hostFlags.knownHosts != "":
+		return "--host-key-pin and --host-known-hosts"
 	}
 	return ""
 }
@@ -123,9 +114,6 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	}
 	if blocking := manifest.Blocking(manifest.Validate(m)); len(blocking) > 0 {
 		return engine.Classify(engine.ExitCompile, fmt.Errorf("%s manifest invalid: %v", meta.Ref, blocking[0]))
-	}
-	if what := runOnRefusedRelease(m); what != "" {
-		return engine.Classify(engine.ExitUsage, fmt.Errorf("%s declares %s, which a run on a runhost does not carry yet", meta.Ref, what))
 	}
 	mode, err := resolveRunMode(cmd, opts, m)
 	if err != nil {

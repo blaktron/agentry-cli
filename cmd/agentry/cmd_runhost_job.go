@@ -295,7 +295,7 @@ func runhostChildEnv(base []string, j *job.Job) []string {
 	var out []string
 	for _, kv := range base {
 		k, _, _ := strings.Cut(kv, "=")
-		if drop[k] || strings.HasPrefix(k, "AGENTRY_HOSTED") || strings.HasPrefix(k, "AGENTRY_DEST_") || strings.HasPrefix(k, runhostSourceTokenPrefix) ||
+		if drop[k] || strings.HasPrefix(k, "AGENTRY_HOSTED") || strings.HasPrefix(k, "AGENTRY_DEST_") || strings.HasPrefix(k, runhostSourceTokenPrefix) || strings.HasPrefix(k, runhostHostEnvPrefix) ||
 			(j.Run.Model.APIKeyEnv != "" && k == j.Run.Model.APIKeyEnv) {
 			continue
 		}
@@ -315,6 +315,17 @@ const runhostSourceTokenPrefix = "AGENTRY_SOURCE_TOKEN_"
 // question id travels in.
 func runhostSourceTokenEnv(id string) string { return runhostSourceTokenPrefix + strings.ToUpper(id) }
 
+// runhostHostEnvPrefix names the variables a target host's password,
+// passphrase and sudo password reach the run in.
+const runhostHostEnvPrefix = "AGENTRY_HOST_"
+
+// runhostHostEnv names the variables of target host id's password, key
+// passphrase and sudo password.
+func runhostHostEnv(id string) (password, passphrase, sudo string) {
+	u := strings.ToUpper(id)
+	return runhostHostEnvPrefix + "PASSWORD_" + u, runhostHostEnvPrefix + "PASSPHRASE_" + u, runhostHostEnvPrefix + "SUDO_" + u
+}
+
 // runhostCredentialEnv is the job's credentials as the run's environment
 // takes them: each input source's token, and each destination's credentials
 // under the names its destinations file gives (destinationEnv). The run
@@ -323,6 +334,15 @@ func runhostCredentialEnv(j *job.Job) []string {
 	var out []string
 	for _, id := range slices.Sorted(maps.Keys(j.Run.SourceTokens)) {
 		out = append(out, runhostSourceTokenEnv(id)+"="+j.Run.SourceTokens[id])
+	}
+	for _, id := range slices.Sorted(maps.Keys(j.Run.TargetHosts)) {
+		h := j.Run.TargetHosts[id]
+		password, passphrase, sudo := runhostHostEnv(id)
+		for _, kv := range [][2]string{{password, h.Password}, {passphrase, h.Passphrase}, {sudo, h.Sudo}} {
+			if kv[1] != "" {
+				out = append(out, kv[0]+"="+kv[1])
+			}
+		}
 	}
 	for i, d := range j.Run.Destinations {
 		secret, auth, key := destinationEnv(i)
@@ -350,6 +370,10 @@ type runhostStaged struct {
 	dir, files                        string
 	policy, task, out, secrets        string
 	intake, connections, destinations string
+	// knownHosts is the device's lines for the target hosts, and hostKeys
+	// each target host's key file, by id.
+	knownHosts string
+	hostKeys   map[string]string
 }
 
 // runhostRunArgs is the run's argv after the CLI's own path: a typed list,
@@ -392,6 +416,25 @@ func runhostRunArgs(j *job.Job, st runhostStaged) []string {
 	} else {
 		args = append(args, "--no-destination")
 	}
+	if st.knownHosts != "" {
+		args = append(args, "--host-known-hosts", st.knownHosts)
+	}
+	for _, id := range slices.Sorted(maps.Keys(j.Run.TargetHosts)) {
+		h := j.Run.TargetHosts[id]
+		password, passphrase, sudo := runhostHostEnv(id)
+		if f := st.hostKeys[id]; f != "" {
+			args = append(args, "--host-key", id+"="+f)
+		}
+		if h.Password != "" {
+			args = append(args, "--host-password", id+"="+password)
+		}
+		if h.Passphrase != "" {
+			args = append(args, "--host-passphrase", id+"="+passphrase)
+		}
+		if h.Sudo != "" {
+			args = append(args, "--host-sudo-password", id+"="+sudo)
+		}
+	}
 	if j.Run.AllowVulnerableMCP {
 		args = append(args, "--allow-vulnerable-mcp")
 	}
@@ -424,7 +467,7 @@ func runhostRun(ctx context.Context, j *job.Job, dir, home string, devices map[s
 		out: filepath.Join(dir, "out"), secrets: filepath.Join(dir, "secrets.env")}
 	values := runhostJobValues(j)
 	defer func() {
-		for _, p := range []string{st.secrets, st.intake, st.connections, st.destinations, st.files, st.out, st.policy, st.task} {
+		for _, p := range []string{st.secrets, st.intake, st.connections, st.destinations, st.knownHosts, filepath.Join(dir, "hostkeys"), st.files, st.out, st.policy, st.task} {
 			if p != "" {
 				_ = os.RemoveAll(p)
 			}
@@ -516,6 +559,9 @@ func runhostJobValues(j *job.Job) []string {
 	for _, d := range r.Destinations {
 		values = append(values, d.Secret, d.Authorization, d.AccessKeyID)
 	}
+	for _, h := range r.TargetHosts {
+		values = append(values, h.Key, h.Password, h.Passphrase, h.Sudo)
+	}
 	values = slices.DeleteFunc(values, func(v string) bool { return len(v) < 4 })
 	slices.SortFunc(values, func(a, b string) int { return len(b) - len(a) })
 	return slices.Compact(values)
@@ -588,6 +634,33 @@ func runhostStage(j *job.Job, st *runhostStaged) error {
 			return err
 		}
 	}
+	if len(j.Run.TargetHosts) > 0 {
+		var known strings.Builder
+		for _, id := range slices.Sorted(maps.Keys(j.Run.TargetHosts)) {
+			for _, l := range j.Run.TargetHosts[id].Known {
+				known.WriteString(l + "\n")
+			}
+		}
+		st.knownHosts = filepath.Join(st.dir, "known_hosts")
+		if err := writeNewFile(st.knownHosts, []byte(known.String())); err != nil {
+			return err
+		}
+		keys := filepath.Join(st.dir, "hostkeys")
+		if err := os.Mkdir(keys, 0o700); err != nil {
+			return err
+		}
+		st.hostKeys = map[string]string{}
+		for id, h := range j.Run.TargetHosts {
+			if h.Key == "" {
+				continue
+			}
+			f := filepath.Join(keys, id)
+			if err := writeNewFile(f, []byte(h.Key)); err != nil {
+				return err
+			}
+			st.hostKeys[id] = f
+		}
+	}
 	return runhostJobPolicy(st.policy, st.secrets, j)
 }
 
@@ -620,13 +693,14 @@ func writeNewJSON(path string, v any) error {
 
 // runCredentialFiles are the files under a run's configuration a local run
 // writes a credential into for its containers, and deletes at its teardown:
-// the gateway's secrets file and the remote servers' connection folders.
+// the gateway's secrets file, the remote servers' connection folders and the
+// target hosts' sign-in folders.
 // A CLI killed past its grace never reaches its teardown.
 func runCredentialFiles(home string) []string {
 	cfgs, _ := filepath.Glob(filepath.Join(installdir.AgentsRoot(home), "*", "*", "*", "runs", "*", "cfg"))
 	var out []string
 	for _, cfg := range cfgs {
-		out = append(out, filepath.Join(cfg, "gateway", "secrets.env"), filepath.Join(cfg, spec.ConnectionsDir))
+		out = append(out, filepath.Join(cfg, "gateway", "secrets.env"), filepath.Join(cfg, spec.ConnectionsDir), filepath.Join(cfg, spec.HostsDir))
 	}
 	return out
 }
@@ -706,6 +780,8 @@ func runhostJobPolicy(file, secrets string, j *job.Job) error {
 	}
 	pol.Model = j.Run.Model.Policy()
 	pol.SecretSource = policy.SecretSource{Mode: "envFile", EnvFile: secrets}
+	// A target host's address is held to the person's own lists.
+	pol.Hosts = policy.HostsPolicy{Allow: j.Run.HostsAllow, Deny: j.Run.HostsDeny}
 	if err := pol.Validate(); err != nil {
 		return fmt.Errorf("the run's model on this runhost: %w", err)
 	}

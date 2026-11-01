@@ -133,6 +133,16 @@ type Run struct {
 	// Destinations are where the run sends its result once it succeeds,
 	// with their credentials, delivered from the runhost.
 	Destinations []Destination `json:"destinations,omitempty"`
+	// TargetHosts are the release's target hosts, by id, each answered in
+	// Intake: the sign-in the device resolved and the known_hosts lines of
+	// the keys it has accepted for the host. The runhost resolves the
+	// address and checks the key it is offered against those lines alone.
+	TargetHosts map[string]TargetHost `json:"targetHosts,omitempty"`
+	// HostsAllow and HostsDeny are the device policy's networks a target
+	// host's address may and may never be in, which the runhost holds the
+	// address it resolves to.
+	HostsAllow []string `json:"hostsAllow,omitempty"`
+	HostsDeny  []string `json:"hostsDeny,omitempty"`
 	// AllowVulnerableMCP is the person's own --allow-vulnerable-mcp.
 	AllowVulnerableMCP bool `json:"allowVulnerableMcp,omitempty"`
 	// Payload is the tar of the run's files that follows the document (and
@@ -162,6 +172,23 @@ type Destination struct {
 	Authorization string `json:"authorization,omitempty"`
 	AccessKeyID   string `json:"accessKeyId,omitempty"`
 }
+
+// TargetHost is one target host's sign-in and the host keys the device has
+// accepted for it.
+type TargetHost struct {
+	// Known are known_hosts lines naming the host, as the device keeps them.
+	Known []string `json:"known"`
+	// Key is a private key's file, PEM, when the sign-in is a key; Password
+	// otherwise. Passphrase opens the key; Sudo is the account's sudo
+	// password.
+	Key        string `json:"key,omitempty"`
+	Passphrase string `json:"passphrase,omitempty"`
+	Password   string `json:"password,omitempty"`
+	Sudo       string `json:"sudo,omitempty"`
+}
+
+// MaxKnownLines bounds the known_hosts lines one target host carries.
+const MaxKnownLines = 32
 
 // Payload names the tar of the run's files: its length and its digest.
 type Payload struct {
@@ -386,6 +413,33 @@ func (r *Run) validateCarried() error {
 	for server, c := range r.Connections {
 		if server == "" || len(server) > 512 || strings.ContainsAny(server, "\x00\n") || c.AccessToken == "" || !SecretValueOK(c.AccessToken) {
 			return errors.New("a connection's access token is not one a run can carry")
+		}
+	}
+	for id, h := range r.TargetHosts {
+		if !intakeIDRE.MatchString(id) {
+			return fmt.Errorf("the target host %q is not a question's id", id)
+		}
+		if _, ok := r.Intake[id]; !ok {
+			return fmt.Errorf("the target host %s is not answered", id)
+		}
+		if len(h.Known) == 0 || len(h.Known) > MaxKnownLines {
+			return fmt.Errorf("the target host %s carries %d host keys; a run takes 1 to %d", id, len(h.Known), MaxKnownLines)
+		}
+		for _, l := range h.Known {
+			if len(l) > 16<<10 || strings.ContainsAny(l, "\r\n\x00") {
+				return fmt.Errorf("a host key of the target host %s is not one known_hosts line", id)
+			}
+		}
+		if (h.Key == "") == (h.Password == "") {
+			return fmt.Errorf("the target host %s carries no sign-in, or two", id)
+		}
+		if len(h.Key) > 64<<10 || strings.ContainsAny(h.Key, "\x00") {
+			return fmt.Errorf("the target host %s's key is not a key file", id)
+		}
+		for _, v := range []string{h.Passphrase, h.Password, h.Sudo} {
+			if !SecretValueOK(v) {
+				return fmt.Errorf("a sign-in of the target host %s is not one line", id)
+			}
 		}
 	}
 	if len(r.Destinations) > 16 {
