@@ -13,6 +13,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -702,6 +703,64 @@ func VerifyAttestation(ctx context.Context, hc *http.Client, registryURL, token,
 	out.State = StateVerified
 	out.KeyID = keyID
 	out.Detail = "DSSE signature valid; subject digest matches the archive"
+	if pred, err := decodePredicate(stmt); err == nil {
+		out.Agent, out.Version, out.Source = pred.Agent, pred.Version, pred.Source
+		out.RulesetVer, out.ReportDigest, out.JudgeModel = pred.ScanRun.RulesetVer, pred.ScanRun.ReportDigest, pred.ScanRun.JudgeModel
+	}
+	return out
+}
+
+// FetchEnvelope reads the attestation envelope at attestationURL as it is,
+// for a driver that hands the release on to a machine that verifies it
+// again (a remote runhost). nil with no error means the registry recorded
+// none. The token goes to the registry's own origin only, as for
+// VerifyAttestation.
+func FetchEnvelope(ctx context.Context, hc *http.Client, registryURL, token, attestationURL string) ([]byte, error) {
+	if attestationURL == "" {
+		return nil, nil
+	}
+	u := attestationURL
+	if !strings.HasPrefix(u, "http") {
+		u = strings.TrimRight(registryURL, "/") + u
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	if token != "" && origin.Same(u, registryURL) {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	res, err := origin.Guard(orDefault(hc)).Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch attestation: %w", err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	if res.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if res.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("attestation: HTTP %d", res.StatusCode)
+	}
+	return io.ReadAll(io.LimitReader(res.Body, 4<<20))
+}
+
+// VerifyEnvelope verifies an attestation envelope already in hand against
+// set, and binds it to archiveDigest. It fetches nothing and pins nothing:
+// the caller chooses the key set.
+func VerifyEnvelope(raw []byte, set KeySet, archiveDigest string) AttestationResult {
+	var env attest.DSSEEnvelope
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return AttestationResult{State: StateUnverifiable, Detail: "decode envelope: " + err.Error()}
+	}
+	stmt, key, ok := tryVerify(env, set)
+	if !ok {
+		return AttestationResult{State: StateMismatch, Detail: "no pinned key verifies this signature"}
+	}
+	if len(stmt.Subject) == 0 || stmt.Subject[0].Digest["sha256"] != strings.TrimPrefix(archiveDigest, "sha256:") {
+		return AttestationResult{State: StateMismatch, KeyID: key.KeyID, Detail: "attestation subject digest does not match the archive"}
+	}
+	out := AttestationResult{State: StateVerified, KeyID: key.KeyID, KeyRetired: key.Retired(), KeyRetiredAt: key.RetiredAt,
+		Detail: "DSSE signature valid; subject digest matches the archive"}
 	if pred, err := decodePredicate(stmt); err == nil {
 		out.Agent, out.Version, out.Source = pred.Agent, pred.Version, pred.Source
 		out.RulesetVer, out.ReportDigest, out.JudgeModel = pred.ScanRun.RulesetVer, pred.ScanRun.ReportDigest, pred.ScanRun.JudgeModel

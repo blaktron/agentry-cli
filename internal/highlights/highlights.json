@@ -1,6 +1,15 @@
 {
   "versions": [
     {
+      "version": "0.6.1017",
+      "highlights": [
+        "agentry run --on runs a published QuickAgent on one of your remote runhosts instead of this computer.",
+        "The release is checked here and again on the runhost, and runs there under gVisor.",
+        "The run's output comes back sealed to this computer and opens into the output folder.",
+        "The result names the runhost it ran on and the host key it was held to."
+      ]
+    },
+    {
       "version": "0.6.1016",
       "highlights": [
         "When agentry runhost add or remove refuses a server's address or host key, the message names the runhost."
