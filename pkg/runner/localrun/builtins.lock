@@ -183,3 +183,5 @@ agentry/assistant@1.15.5 sha256:1e997c55567962920a06b433c607c5cb42c740fe1868f5ba
 agentry/assistant@1.16.0 sha256:d095d45801009a48cd6c8145f8dcbdc4b50d573e7293db38881a24da1548d469
 # 1.1.0, over 1.0.2: Agentry Helper's instruction has it fit a request to what quickagent_show says about a QuickAgent's questions, files and guide, answer the questions by id, ask only for what is missing, and report run_result's outcome; its README says so.
 agentry/main@1.1.0 sha256:08f43b24d9c02ec1bff2aed94290afdd6bef3af3302f65c55dfc25c32d7a85ff
+# 1.2.1, over 1.2.0: the review guide's runner tools name the tools a persistent release's capabilities.persistent keys give, which the gate now reads against them.
+agentry/examiner@1.2.1 sha256:badc5ab694defc2fafca4f1fb1de44452ca17b2ee8196ccdac4defc40795c6dc

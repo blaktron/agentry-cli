@@ -176,3 +176,33 @@ func TestAnImageServersVolumeIsMadeOnceWithTheAgentsLabels(t *testing.T) {
 		}
 	}
 }
+
+// TestTheSweepKeepsAPublishedAgentsVolumes: the sweep of a dead run removes
+// none of a persistent agent's volumes, a published agent's keyed by its
+// reference as a built-in's are by its name, since none carries a run's
+// label (TestSweepKeepsPersistentVolumes has a segment's own).
+func TestTheSweepKeepsAPublishedAgentsVolumes(t *testing.T) {
+	dead := deadOwner(t)
+	kept := []string{
+		"agentry-persistent-assistant-aaaa-session", "agentry-persistent-assistant-aaaa-data",
+		"agentry-persistent-alice.helper-aaaa-session", "agentry-persistent-alice.helper-aaaa-data", "agentry-persistent-alice.helper-aaaa-memory",
+	}
+	f := &dockerx.Fake{
+		Containers: []dockerx.Labeled{{Name: "agentry-dead0001-gateway", Labels: withRun(dead, "dead0001")}},
+	}
+	for _, v := range kept {
+		agent := strings.TrimPrefix(strings.Split(v, "-aaaa-")[0], "agentry-persistent-")
+		f.Volumes = append(f.Volumes, dockerx.Labeled{Name: v, Labels: PersistentVolumeLabels(agent, "aaaa")})
+	}
+	SweepAbandoned(context.Background(), f, nil)
+	for _, op := range f.Ops() {
+		for _, v := range kept {
+			if op == "VolumeRemove:"+v {
+				t.Errorf("the sweep removed %s: %v", v, f.Ops())
+			}
+		}
+	}
+	if !slices.Contains(f.Ops(), "RemoveForce:agentry-dead0001-gateway") {
+		t.Fatalf("the dead run was not swept: %v", f.Ops())
+	}
+}

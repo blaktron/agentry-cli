@@ -106,6 +106,35 @@ func capabilityLinesSized(c manifest.Capabilities, sizes map[string]int64) []str
 		}
 		lines = append(lines, "knowledge: ships "+strings.Join(names, ", "))
 	}
+	lines = append(lines, persistentLines(c)...)
+	return lines
+}
+
+// persistentLines are a persistent release's own consent lines: each key
+// of capabilities.persistent it declares, in the words the registry's
+// report uses, and each subagent with its constraint and its reason.
+func persistentLines(c manifest.Capabilities) []string {
+	var lines []string
+	if p := c.Persistent; p != nil {
+		for _, pc := range manifest.PersistentCapabilities() {
+			if !p.Declares(pc.Key) {
+				continue
+			}
+			line := "persistent." + pc.Key + ": " + pc.Words
+			switch pc.Key {
+			case "secrets":
+				line += " (" + renderList(p.Secrets) + ")"
+			case "mail":
+				line += " (" + renderList(p.Mail) + ")"
+			case "imageServers":
+				line += " (" + renderList(p.ImageServers) + ")"
+			}
+			lines = append(lines, line)
+		}
+	}
+	for _, sa := range c.Subagents {
+		lines = append(lines, "subagent: "+sa.Ref+" "+sa.Version+", which it runs as a QuickAgent of its own: "+safeTerminalText(sa.Why, 200))
+	}
 	return lines
 }
 
@@ -175,7 +204,8 @@ func isZeroCapabilities(c manifest.Capabilities) bool {
 		c.Filesystem.Read.IsZero() && c.Filesystem.Write.IsZero() &&
 		c.Exec.IsZero() &&
 		len(c.Secrets) == 0 && len(c.DataAccess) == 0 &&
-		len(c.MCPServers) == 0 && len(c.Knowledge) == 0 && len(c.TargetHosts) == 0 && c.Browser == nil
+		len(c.MCPServers) == 0 && len(c.Knowledge) == 0 && len(c.TargetHosts) == 0 && c.Browser == nil &&
+		len(c.Persistent.Keys()) == 0 && len(c.Subagents) == 0
 }
 
 // browserLine says what a browser line lets the release do, as the

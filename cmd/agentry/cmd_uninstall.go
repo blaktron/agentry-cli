@@ -20,6 +20,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,7 +31,9 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/installed"
 	"github.com/blaktron/agentry-cli/pkg/runner/connection"
+	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
+	"github.com/blaktron/agentry-cli/pkg/runner/persistent"
 	"github.com/blaktron/agentry-cli/pkg/runner/profile"
 )
 
@@ -91,11 +94,40 @@ func runUninstall(cmd *cobra.Command, sel string, keepMCP, plan bool) error {
 	if err != nil {
 		return err
 	}
+	// A persistent agent's release is uninstalled with the agent, so its
+	// record never names a release that is gone.
+	if _, err := persistent.LoadRelease(home, persistent.Key(ref.Namespace, ref.Name)); err == nil {
+		return engine.Classify(engine.ExitUsage, fmt.Errorf("%s/%s is installed as a persistent agent: uninstall it with agentry agent uninstall %s/%s", ref.Namespace, ref.Name, ref.Namespace, ref.Name))
+	}
 	out := cmd.OutOrStdout()
 	if flags.jsonOut {
 		out = cmd.ErrOrStderr() // the result on stdout, the narration on stderr
 	}
+	result, err := uninstallRelease(cmd, out, sel, keepMCP, plan)
+	if err != nil {
+		return err
+	}
+	if flags.jsonOut {
+		return emitJSON(cmd.OutOrStdout(), result)
+	}
+	if result.empty() {
+		_, _ = fmt.Fprintf(out, "nothing installed for %s on this machine\n", sel)
+	}
+	return nil
+}
+
+// uninstallRelease removes a QuickAgent's runner state, narrating to out,
+// and says what it removed (or, with plan, would remove).
+func uninstallRelease(cmd *cobra.Command, out io.Writer, sel string, keepMCP, plan bool) (uninstallOutput, error) {
 	result := uninstallOutput{Ref: sel, Plan: plan, Installs: []string{}, Profiles: []string{}, Connections: []removedConnection{}}
+	ref, err := manifest.ParseRef(sel)
+	if err != nil {
+		return result, err
+	}
+	home, err := runnerHome()
+	if err != nil {
+		return result, err
+	}
 	verb := "removed"
 	if plan {
 		verb = "would remove"
@@ -105,7 +137,7 @@ func runUninstall(cmd *cobra.Command, sel string, keepMCP, plan bool) error {
 	agentDir := installdir.AgentDir(home, ref.Namespace, ref.Name)
 	entries, err := os.ReadDir(agentDir)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
+		return result, err
 	}
 	for _, e := range entries {
 		if !e.IsDir() {
@@ -117,7 +149,7 @@ func runUninstall(cmd *cobra.Command, sel string, keepMCP, plan bool) error {
 		full := filepath.Join(agentDir, e.Name())
 		if !plan {
 			if err := os.RemoveAll(full); err != nil {
-				return fmt.Errorf("remove install %s: %w", full, err)
+				return result, fmt.Errorf("remove install %s: %w", full, err)
 			}
 		}
 		_, _ = fmt.Fprintf(out, "%s install %s\n", verb, full)
@@ -134,7 +166,7 @@ func runUninstall(cmd *cobra.Command, sel string, keepMCP, plan bool) error {
 	// them for a same-digest reinstall and nothing else.
 	profs, err := profile.List(home)
 	if err != nil {
-		return err
+		return result, err
 	}
 	for _, e := range profs {
 		if e.Profile == nil || !e.Profile.MatchesRef(sel) {
@@ -148,7 +180,7 @@ func runUninstall(cmd *cobra.Command, sel string, keepMCP, plan bool) error {
 		}
 		if !plan {
 			if err := profile.Remove(e.Dir); err != nil {
-				return err
+				return result, err
 			}
 		}
 		_, _ = fmt.Fprintf(out, "%s MCP profile %s (keys, identities, and installed MCP servers)\n", verb, e.Profile.Ref)
@@ -205,11 +237,5 @@ func runUninstall(cmd *cobra.Command, sel string, keepMCP, plan bool) error {
 		}
 	}
 
-	if flags.jsonOut {
-		return emitJSON(cmd.OutOrStdout(), result)
-	}
-	if result.empty() {
-		_, _ = fmt.Fprintf(out, "nothing installed for %s on this machine\n", sel)
-	}
-	return nil
+	return result, nil
 }

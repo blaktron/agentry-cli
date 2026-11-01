@@ -167,10 +167,10 @@ type Policy struct {
 	// AllowWildcardEgress gates manifest `network.egress: "*"`.
 	// Default false: a wildcard agent is refused at compile time.
 	AllowWildcardEgress bool `yaml:"allowWildcardEgress"`
-	// AllowPersistentReleases is reserved for running a persistent release
-	// from a source other than a built-in. This version runs such a release
-	// only as a built-in, so a policy that sets the key, either way, is
-	// refused at load rather than read as a switch that does nothing.
+	// AllowPersistentReleases lets a persistent release run as a persistent
+	// agent on this computer: one installed from the registry, or an
+	// author's own folder. Unset is true; false refuses every persistent
+	// agent but the ones built into Agentry.
 	AllowPersistentReleases *bool `yaml:"allowPersistentReleases,omitempty"`
 	// Browser governs a release's browser (capabilities.browser):
 	// whether one may reach any public site.
@@ -229,6 +229,17 @@ type Policy struct {
 	// always checked, whatever this says.
 	MalwareCheck *bool `yaml:"malwareCheck,omitempty"`
 }
+
+// PersistentReleasesAllowed says whether the policy lets a persistent
+// release that is not built into Agentry run as a persistent agent (unset →
+// allowed).
+func (p *Policy) PersistentReleasesAllowed() bool {
+	return p == nil || p.AllowPersistentReleases == nil || *p.AllowPersistentReleases
+}
+
+// PersistentReleasesRefused is the refusal of a persistent release under a
+// policy that sets allowPersistentReleases false.
+const PersistentReleasesRefused = "the runner policy sets allowPersistentReleases: false, so only the persistent agents built into Agentry run on this computer"
 
 // MalwareCheckOn says whether the policy turns the whole malware check on
 // for this computer's runs (unset → off).
@@ -1106,9 +1117,6 @@ func (p *Policy) Validate() error {
 	if p.PolicyVersion != Version {
 		return fmt.Errorf("policyVersion %q not supported (want %q)", p.PolicyVersion, Version)
 	}
-	if p.AllowPersistentReleases != nil {
-		return errors.New("allowPersistentReleases is reserved: this version runs a persistent release only as a built-in, so a policy may not set it; remove the key")
-	}
 	if p.Images.Gateway == "" || p.Images.HarnessDockerAgent == "" || p.Images.GoBuilder == "" {
 		return errors.New("images.gateway, images.harnessImages.docker-agent, and images.goBuilder are all required")
 	}
@@ -1528,6 +1536,12 @@ model:
 
 # Manifest 'network.egress: "*"' is refused unless you set this true.
 allowWildcardEgress: false
+
+# A persistent QuickAgent, one that keeps its conversation and files
+# between starts, runs as a persistent agent once you install it
+# ("agentry agent install"). Set this false to allow only the persistent
+# agents built into Agentry.
+# allowPersistentReleases: true
 
 # A QuickAgent's browser (capabilities.browser) reaches the site you name
 # when the run starts and the hosts it declares. One whose scope is

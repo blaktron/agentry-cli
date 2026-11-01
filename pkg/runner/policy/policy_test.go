@@ -53,23 +53,33 @@ func TestLoadRejectsUnknownKeys(t *testing.T) {
 	}
 }
 
-// The reserved key is refused by name whichever way it is set, and the
-// policy setup writes never carries it.
-func TestLoadRefusesTheReservedPersistentKey(t *testing.T) {
-	if strings.Contains(defaultFileText, "allowPersistentReleases") {
-		t.Fatal("the default policy names the reserved key")
+// allowPersistentReleases is a switch that is on unless a policy sets it
+// false, and the policy setup writes leaves it unset, commented.
+func TestThePersistentReleasesKeyDefaultsOn(t *testing.T) {
+	if strings.Contains(defaultFileText, "\nallowPersistentReleases:") {
+		t.Fatal("the default policy sets allowPersistentReleases")
 	}
-	for _, value := range []string{"true", "false"} {
+	for value, want := range map[string]bool{"": true, "true": true, "false": false} {
 		path := filepath.Join(t.TempDir(), "policy.yaml")
-		text := strings.Replace(defaultFileText, "allowWildcardEgress: false",
-			"allowWildcardEgress: false\nallowPersistentReleases: "+value, 1)
+		text := defaultFileText
+		if value != "" {
+			text = strings.Replace(text, "allowWildcardEgress: false",
+				"allowWildcardEgress: false\nallowPersistentReleases: "+value, 1)
+		}
 		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		_, _, err := Load(path)
-		if err == nil || !strings.Contains(err.Error(), "allowPersistentReleases is reserved") {
-			t.Fatalf("allowPersistentReleases: %s: err = %v, want the reserved-key refusal", value, err)
+		p, _, err := Load(path)
+		if err != nil {
+			t.Fatalf("allowPersistentReleases %q: %v", value, err)
 		}
+		if got := p.PersistentReleasesAllowed(); got != want {
+			t.Errorf("allowPersistentReleases %q: allowed = %t, want %t", value, got, want)
+		}
+	}
+	var none *Policy
+	if !none.PersistentReleasesAllowed() {
+		t.Error("no policy refuses persistent releases")
 	}
 }
 

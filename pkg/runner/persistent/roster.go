@@ -61,9 +61,11 @@ const (
 	StateFailed EntryState = "failed"
 )
 
-// Who granted an entry.
+// Who granted an entry: the agent's built-in, its release's publisher (a
+// published agent's), or the person.
 const (
 	GrantedByBuiltin = "built-in"
+	GrantedByRelease = "release"
 	GrantedByYou     = "you"
 )
 
@@ -202,8 +204,14 @@ func BuildRosterUnder(a Agent, c Config, applied *Applied, malwareCheck bool) Ro
 	}
 	shareLine := "Shares the folder " + share + " with you, read and write: you see what it writes there as it writes it"
 	var shareAlike []string
+	// Whoever granted the folders: a published agent's come with the
+	// release, a built-in's with Agentry.
+	folders := GrantedByBuiltin
+	if a.Published() {
+		folders = GrantedByRelease
+	}
 	switch {
-	case a.Builtin.ChecksShare():
+	case a.checksShare():
 		checked, unchecked := shareLine+shareLineChecked, shareLine+shareLineUnchecked
 		shareLine, shareAlike = unchecked, []string{checked}
 		if malwareCheck {
@@ -212,8 +220,8 @@ func BuildRosterUnder(a Agent, c Config, applied *Applied, malwareCheck bool) Ro
 	case a.Builtin.Codes():
 		shareLine += shareLineCoder
 	}
-	add(RosterEntry{ID: EntryShare, Kind: KindFiles, Name: "Your share folder", GrantedBy: GrantedByBuiltin, Line: shareLine, alike: shareAlike}, true)
-	add(RosterEntry{ID: EntryData, Kind: KindFiles, Name: "Its own files", GrantedBy: GrantedByBuiltin, Fixed: true,
+	add(RosterEntry{ID: EntryShare, Kind: KindFiles, Name: "Your share folder", GrantedBy: folders, Line: shareLine, alike: shareAlike}, true)
+	add(RosterEntry{ID: EntryData, Kind: KindFiles, Name: "Its own files", GrantedBy: folders, Fixed: true,
 		Line: "Keeps its own notes and files on a volume of its own, kept until you reset it"}, true)
 	if a.Builtin.KeepsMemory() {
 		add(RosterEntry{ID: EntryMemory, Kind: KindMemory, Name: "Its memory", GrantedBy: GrantedByBuiltin, Fixed: true, Line: memoryLine}, true)
@@ -245,7 +253,18 @@ func BuildRosterUnder(a Agent, c Config, applied *Applied, malwareCheck bool) Ro
 			add(e, true)
 		}
 	}
+	// The packs the release ships: part of what its install agreed to, so
+	// they ask nothing again, and no switch takes them away.
+	for _, k := range a.Packs {
+		add(RosterEntry{ID: KnowledgeEntryID(k), Kind: KindKnowledge, Name: k, GrantedBy: GrantedByRelease, Fixed: true, noConsent: true,
+			Line: "Searches the knowledge pack " + k + " its release ships, read-only"}, true)
+	}
 	for _, k := range c.Knowledge {
+		if slices.Contains(a.Packs, k) {
+			// A pack of the person's that takes a shipped pack's name is
+			// refused when it is added; one added before is left out.
+			continue
+		}
 		line := "Searches your knowledge pack " + k + ", read-only"
 		if a.Builtin.Codes() {
 			line += "; the programs it runs can read the pack too, and with open egress on can send it anywhere"
@@ -589,7 +608,7 @@ func Apply(ctx context.Context, home string, a Agent, c Config, r Roster, open P
 	}
 	var names []string
 	for _, k := range c.Knowledge {
-		if on(KnowledgeEntryID(k)) {
+		if on(KnowledgeEntryID(k)) && !slices.Contains(a.Packs, k) {
 			names = append(names, k)
 		}
 	}
