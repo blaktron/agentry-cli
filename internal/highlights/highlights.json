@@ -1,6 +1,15 @@
 {
   "versions": [
     {
+      "version": "0.6.1014",
+      "highlights": [
+        "agentry runhost add sets up a Linux server you own as a remote runhost, over SSH.",
+        "Setup checks the server first, then installs Docker, gVisor and this CLI, and opens no network port.",
+        "Your computer gets its own key for the runhost, which runs nothing but the runhost's service.",
+        "agentry runhost list, status, doctor and remove look after each runhost."
+      ]
+    },
+    {
       "version": "0.6.1013",
       "highlights": [
         "login, setup, install and validate end with the next step to take.",
