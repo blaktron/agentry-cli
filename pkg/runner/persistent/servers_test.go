@@ -434,7 +434,7 @@ func TestRosterReachesEveryGateWithTheDependencyScan(t *testing.T) {
 // built-ins' own suggestions, as TestOfferedServerEgressIsDeclared does.
 func TestTheCodingAgentSuggestsSemgrep(t *testing.T) {
 	old := suggestionsOf
-	suggestionsOf = func(a Agent) []offer.Suggestion { return a.Builtin.SuggestedServers() }
+	suggestionsOf = func(a Agent) []offer.Suggestion { return a.SuggestedServers() }
 	t.Cleanup(func() { suggestionsOf = old })
 	coder, err := Lookup("coder")
 	if err != nil {

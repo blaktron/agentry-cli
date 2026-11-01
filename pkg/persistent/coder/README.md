@@ -26,9 +26,11 @@ the release declares only the persistent mode.
 ## What the application gives it
 
 The manifest declares no network access, no file access, no commands and no
-run secret. Under `capabilities.persistent` it declares skills (`skills`)
-and the stored secret it asks for (`secrets`: `BRAVE_API_KEY`; you may store
-others). When the application runs the Coding agent, it gives it what
+run secret. Under `capabilities.persistent` it declares skills (`skills`),
+the stored secret it asks for (`secrets`: `BRAVE_API_KEY`; you may store
+others) and the coding toolchain (`coder`: any program in its toolchain
+image, open egress, a public browser, a dev server, ports and git host
+accounts, each a switch you agree to). When the application runs the Coding agent, it gives it what
 follows.
 `agentry agent show coder` lists what it has, and its first start asks you to
 agree to each part:

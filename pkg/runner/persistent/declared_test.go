@@ -239,3 +239,103 @@ func TestAPublishedAgentsWritingVoiceIsOffUntilSwitchedOn(t *testing.T) {
 		}
 	}
 }
+
+// TestNoGrantKeyedOnName: the reach a built-in had by its name is a
+// published agent's by declaring it, under any name: the coding toolchain's
+// switches, calendar feeds, mail providers and the image servers the runner
+// pins, each granted by its release; the same release without the block is
+// given none of them.
+func TestNoGrantKeyedOnName(t *testing.T) {
+	home := shortHome(t)
+	t.Setenv("HOME", t.TempDir())
+	reach := installPublished(t, home, "acme", "builder", "1.0.0", publishedRelease{
+		extra: "capabilities:\n  persistent:\n    coder: true\n    calendars: true\n    mail: [google, fastmail]\n    imageServers: [google-workspace]\n",
+	})
+	bare := installPublished(t, home, "acme", "reader", "1.0.0", publishedRelease{})
+	if !reach.Codes() || !reach.ReadsCalendars() || bare.Codes() || bare.ReadsCalendars() {
+		t.Fatalf("codes %v/%v, calendars %v/%v", reach.Codes(), bare.Codes(), reach.ReadsCalendars(), bare.ReadsCalendars())
+	}
+	var mail []string
+	for _, p := range reach.MailProviders() {
+		mail = append(mail, p.Key)
+	}
+	if !slices.Equal(mail, []string{"google", "fastmail"}) || len(bare.MailProviders()) != 0 {
+		t.Errorf("mail providers %v, bare %v", mail, bare.MailProviders())
+	}
+	images := reach.ImageServers(policy.Default().Images)
+	if len(images) != 1 || images[0].Key != "gog" || len(bare.ImageServers(policy.Default().Images)) != 0 {
+		t.Errorf("image servers %v", images)
+	}
+	if offered := reach.OfferedServers(nil); len(offered) != 1 || offered[0].MailProvider != "fastmail" || len(bare.OfferedServers(nil)) != 0 {
+		t.Errorf("offered servers %v", offered)
+	}
+	c := Config{Enabled: true, MailProviders: []string{"google"}}
+	withBuiltinOffers(t)
+	withImageServers(t)
+	c.MailProviders = append(c.MailProviders, "fastmail")
+	r := BuildRoster(reach, c, nil)
+	for _, id := range []string{EntryCommands, EntryEgress, ImageServerEntryID("gog"), ServerEntryID(reach.OfferedServers(nil)[0].Server)} {
+		if e, ok := r.Entry(id); !ok || e.GrantedBy != GrantedByRelease {
+			t.Errorf("the entry %s: %+v (%v)", id, e, ok)
+		}
+	}
+	for _, id := range []string{EntryCommands, ImageServerEntryID("gog")} {
+		if _, ok := BuildRoster(bare, c, nil).Entry(id); ok {
+			t.Errorf("an agent that declares no reach has the entry %s", id)
+		}
+	}
+}
+
+// TestAPublishedAgentsWebAndReviewReachTheSegment: a published agent that
+// declares web or review has an entry for it, granted by its release and on;
+// its segment is given the keys its opener reads and its plan the grant;
+// switched off, or with no opener, it is not given them (no opener refuses
+// the segment, naming the switch); one that declares neither has no entry.
+func TestAPublishedAgentsWebAndReviewReachTheSegment(t *testing.T) {
+	home := shortHome(t)
+	t.Setenv("HOME", t.TempDir())
+	openers := Openers{
+		Web: func(context.Context) (*engine.WebRun, error) {
+			return &engine.WebRun{Scan: "jev", JevKey: "jev-test"}, nil
+		},
+		Review: func(context.Context) (*engine.ReviewRun, error) { return &engine.ReviewRun{JevKey: "jev-test"}, nil },
+	}
+	for _, key := range []string{"web", "review"} {
+		a := installPublished(t, home, "acme", "w"+key, "1.0.0", publishedRelease{extra: "capabilities:\n  persistent:\n    " + key + ": true\n"})
+		c := Config{Enabled: true}
+		e, ok := BuildRoster(a, c, nil).Entry(key)
+		if !ok || !e.On || e.GrantedBy != GrantedByRelease {
+			t.Fatalf("%s: entry %+v (%v)", key, e, ok)
+		}
+		g, _, done, err := ApplyWith(context.Background(), home, a, c, BuildRoster(a, c, nil), openers, nil, fakeSecrets{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		done()
+		if (g.Web != nil) != (key == "web") || (g.Review != nil) != (key == "review") {
+			t.Errorf("%s: given web %v, review %v", key, g.Web, g.Review)
+		}
+		sp, err := localrun.Segment{Release: a.Release, Home: home, Policy: policy.Default(), PolicySHA: "s", Build: "test", Grants: g}.Plan(context.Background(), nil)
+		if err != nil {
+			t.Fatalf("%s: plan: %v", key, err)
+		}
+		if sp.Plan.Capabilities.WebTools != (key == "web") || sp.Plan.Capabilities.ReviewTools != (key == "review") {
+			t.Errorf("%s: the plan's web %v, review %v", key, sp.Plan.Capabilities.WebTools, sp.Plan.Capabilities.ReviewTools)
+		}
+		off := Config{Enabled: true, Switches: map[string]bool{key: false}}
+		if g, _, done, err := ApplyWith(context.Background(), home, a, off, BuildRoster(a, off, nil), openers, nil, fakeSecrets{}); err != nil || g.Web != nil || g.Review != nil {
+			t.Errorf("%s off: given %v %v (%v)", key, g.Web, g.Review, err)
+		} else {
+			done()
+		}
+		if _, _, _, err := ApplyWith(context.Background(), home, a, c, BuildRoster(a, c, nil), Openers{}, nil, fakeSecrets{}); err == nil {
+			t.Errorf("%s: given with no opener to read its key", key)
+		}
+	}
+	bare := installPublished(t, home, "acme", "plain", "1.0.0", publishedRelease{})
+	for _, id := range []string{EntryWeb, EntryReview} {
+		if _, ok := BuildRoster(bare, Config{Enabled: true}, nil).Entry(id); ok {
+			t.Errorf("an agent that declares neither has the entry %s", id)
+		}
+	}
+}

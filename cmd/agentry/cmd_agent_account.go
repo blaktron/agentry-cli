@@ -52,7 +52,7 @@ const agentAccountLong = "--account gives the Coding agent an account on a git h
 // told what giving it means before the token is asked for.
 func readyAccount(cmd *cobra.Command, a persistent.Agent, c persistent.Config, f accountFlags) (persistent.GitAccount, string, error) {
 	var g persistent.GitAccount
-	if !a.Builtin.Codes() {
+	if !a.Codes() {
 		return g, "", engine.Classify(engine.ExitUsage, fmt.Errorf("the %s agent has no git host accounts: the Coding agent alone is given them", a.Name))
 	}
 	host := strings.ToLower(strings.TrimSpace(f.host))

@@ -51,6 +51,9 @@ type Review struct {
 	// Ledger is the container path the review ledger is appended to, one
 	// JSON line a file scanned or a call answered.
 	Ledger string `json:"ledger,omitempty"`
+	// Root is the folder ai_review's paths are beneath, a persistent
+	// agent's own root; empty is the inputs channel, a run's.
+	Root string `json:"root,omitempty"`
 }
 
 // EnvReviewJevKey carries the person's own TypeSafe key into this container
@@ -320,6 +323,29 @@ func aiReviewSchema() map[string]any {
 	}, "manifest")
 }
 
+// aiReviewText is ai_review's description: of a package in the inputs, or,
+// with a root, of one in the agent's own folders.
+func aiReviewText(root string) string {
+	if root == "" {
+		return aiReviewDescription
+	}
+	return "Ask AI Review's release rubric, the six questions the registry's stage S5 asks, about a QuickAgent package in your folders (" + root + "): the manifest as JSON (write agent.yaml out as a JSON object first if that is all the package has) and every text file under dir. " +
+		"Returns each question's score (0 to 3) and the file that drew it, the findings (the questions that scored 2 or more), the files left out and why, the model and the rubric hash. " +
+		"It sends the files to AI Review with the person's own key, and never returns their text. A conversation has at most 3 calls until the agent restarts."
+}
+
+// aiReviewSchemaFor is ai_review's input schema, its paths beneath the
+// inputs or, with a root, beneath it.
+func aiReviewSchemaFor(root string) map[string]any {
+	if root == "" {
+		return aiReviewSchema()
+	}
+	return objSchema(map[string]any{
+		"manifest": strProp("path of the manifest as a JSON object, beneath " + root + ", such as share/my-agent/agent.json"),
+		"dir":      strProp("directory of the package whose files are reviewed, beneath " + root + ", such as share/my-agent"),
+	}, "manifest", "dir")
+}
+
 const aiReviewDescription = "Ask AI Review's release rubric, the six questions the registry's stage S5 asks, about a QuickAgent package in your inputs: its manifest's canonical JSON and every text file under dir. " +
 	"Returns each question's score (0 to 3) and the file that drew it, the findings (the questions that scored 2 or more), the files left out and why, the model and the rubric hash. " +
 	"It never returns the package's text. It uses the person's own key; a run has at most 3 calls."
@@ -383,7 +409,7 @@ func (s *server) aiReview(raw json.RawMessage) (string, bool) {
 	if a.Manifest == "" {
 		return "ai_review: manifest is required", true
 	}
-	if s.spec.InputsDir == "" {
+	if s.spec.InputsDir == "" && s.spec.Review.Root == "" {
 		return "ai_review: no inputs channel configured", true
 	}
 	r := s.review()
@@ -391,7 +417,11 @@ func (s *server) aiReview(raw json.RawMessage) (string, bool) {
 		s.recordReview(ReviewEntry{Tool: ToolAIReview, Refused: "no AI Review key"})
 		return "ai_review: this run holds no AI Review key, so the review cannot run", true
 	}
-	manifestAbs, err := resolveUnder(s.spec.InputsDir, path.Clean(a.Manifest))
+	base := s.spec.InputsDir
+	if s.spec.Review.Root != "" {
+		base = s.spec.Review.Root
+	}
+	manifestAbs, err := resolveUnder(base, path.Clean(a.Manifest))
 	if err != nil {
 		return "ai_review: manifest: " + err.Error(), true
 	}
@@ -406,7 +436,7 @@ func (s *server) aiReview(raw json.RawMessage) (string, bool) {
 	if dir == "" {
 		dir = "."
 	}
-	root, err := resolveUnder(s.spec.InputsDir, path.Clean(dir))
+	root, err := resolveUnder(base, path.Clean(dir))
 	if err != nil {
 		return "ai_review: dir: " + err.Error(), true
 	}

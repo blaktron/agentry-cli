@@ -60,7 +60,7 @@ func builtinOffers(a Agent, c Config) []offer.Server {
 		hosts = append(hosts, offer.GitHost{Host: g.Host, Kind: string(g.Kind)})
 	}
 	var out []offer.Server
-	for _, o := range a.Builtin.OfferedServers(hosts) {
+	for _, o := range a.OfferedServers(hosts) {
 		if o.Account != "" && checkServer(o.Server) != nil {
 			continue
 		}
@@ -169,9 +169,9 @@ func offeredEntries(a Agent, c Config, o offer.Server) []RosterEntry {
 	if o.Note != "" {
 		line += "; " + o.Note
 	}
-	out := []RosterEntry{{ID: ServerEntryID(srv), Kind: KindServer, Name: o.Name, GrantedBy: GrantedByBuiltin, Line: line, alike: alike}}
+	out := []RosterEntry{{ID: ServerEntryID(srv), Kind: KindServer, Name: o.Name, GrantedBy: a.grantedBy(), Line: line, alike: alike}}
 	if o.Writes != nil {
-		out = append(out, RosterEntry{ID: ServerWritesID(srv), Kind: KindServerWrites, Name: o.Name + ": changes", GrantedBy: GrantedByBuiltin,
+		out = append(out, RosterEntry{ID: ServerWritesID(srv), Kind: KindServerWrites, Name: o.Name + ": changes", GrantedBy: a.grantedBy(),
 			Line: "Lets " + o.Name + " change what its token can change on " + srv.RemoteHost() + " (" + o.Writes.URL + "), while " + o.Name + " is on"})
 	}
 	return out
@@ -261,7 +261,7 @@ func checkPersonServer(a Agent, c Config, srv manifest.MCPServer) error {
 
 // suggestionsOf are the servers the agent's built-in suggests: its own, but
 // in a test.
-var suggestionsOf = func(a Agent) []offer.Suggestion { return a.Builtin.SuggestedServers() }
+var suggestionsOf = func(a Agent) []offer.Suggestion { return a.SuggestedServers() }
 
 // Suggestions are the servers the agent suggests that it does not have.
 func Suggestions(a Agent, c Config) []offer.Suggestion {

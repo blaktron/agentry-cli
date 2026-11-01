@@ -120,7 +120,7 @@ func (g Google) say(format string, args ...any) {
 
 // server is the agent's Google Workspace server at the policy's image.
 func (g Google) server() (offer.ImageServer, error) {
-	for _, s := range g.Agent.Builtin.ImageServers(g.Policy.Images) {
+	for _, s := range g.Agent.ImageServers(g.Policy.Images) {
 		if s.Key == assistant.GogKey {
 			return s, nil
 		}

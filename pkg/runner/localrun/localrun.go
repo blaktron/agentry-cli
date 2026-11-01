@@ -157,10 +157,6 @@ type Builtin struct {
 	// checkShare reads a file of the persistent agent's share folder only
 	// once ClamAV has checked it (spec.AgentFiles.CheckShare).
 	checkShare bool
-	// readsCalendars lets the person give the persistent agent calendar
-	// feeds: each a roster entry, its address in the keychain, read by the
-	// tools server's calendar tools while it is on (Grants.CalendarFeeds).
-	readsCalendars bool
 	// resetsInParts gives the persistent agent Reset history and Reset
 	// agent beside its Reset: the first keeps every choice the person made,
 	// the second keeps the secrets and sign-ins they gave it.
@@ -168,11 +164,9 @@ type Builtin struct {
 	// runnable says a persistent built-in runs as an agent; one that does
 	// not is published for reading only.
 	runnable bool
-	// coder is the Coding agent's part of the persistent grant class: any
-	// program in its own exec image, open egress, the browser on any public
-	// site and the person's dev server (compile.Inputs.Coder), each a
-	// switch of its roster, gated by the person's agreement for this agent.
-	coder bool
+	// offers names the package whose MCP servers the persistent built-in
+	// comes with and suggests (pkg/persistent/offer); none for "".
+	offers offerSet
 }
 
 // KnowledgeCreator is the Knowledge Creator (pkg/knowledge/creator),

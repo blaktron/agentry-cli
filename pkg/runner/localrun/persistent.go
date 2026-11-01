@@ -48,7 +48,8 @@ import (
 // It reads the calendar feeds the person gives it.
 func Assistant() Builtin {
 	return Builtin{namespace: assistant.Namespace, name: assistant.Name, version: assistant.Version, fsys: assistant.FS(),
-		persistent: true, runnable: true, checkShare: true, resetsInParts: true, readsCalendars: true}
+		persistent: true, runnable: true, checkShare: true, resetsInParts: true,
+		offers: offersAssistant}
 }
 
 // Main is Agentry Helper (pkg/persistent/main), the persistent agent of Agentry
@@ -66,7 +67,7 @@ func Main() Builtin {
 // secrets, which reach its programs and the servers that declare them.
 func Coder() Builtin {
 	return Builtin{namespace: coder.Namespace, name: coder.Name, version: coder.Version, fsys: coder.FS(),
-		persistent: true, runnable: true, coder: true}
+		persistent: true, runnable: true, offers: offersCoder}
 }
 
 // Declared is what the built-in declares under capabilities.persistent in its
@@ -106,9 +107,9 @@ func (b Builtin) AppLink() string    { return compile.AppLinkSet(b.Declared()) }
 // PersistentBuiltins are the built-ins that run as persistent agents.
 func PersistentBuiltins() []Builtin { return []Builtin{Main(), Assistant(), Coder()} }
 
-// Codes says the persistent built-in is given the Coding agent's grant
+// Codes says the persistent built-in declares the coding toolchain
 // (Grants.Coder).
-func (b Builtin) Codes() bool { return b.coder }
+func (b Builtin) Codes() bool { return b.Declared().Declares("coder") }
 
 // Runnable says a persistent built-in runs as an agent; one that is not is
 // published for reading alone.
@@ -176,53 +177,100 @@ func SkillsOf(fsys fs.FS) []BuiltinSkill {
 	return out
 }
 
-// OfferedServers are the MCP servers the persistent agent comes with, each
-// an entry of its roster: its package's own (offer.Server), some drawn for
-// the agent's git host accounts (hosts).
+// OfferedServers are the MCP servers the persistent built-in's package comes
+// with, each an entry of its roster, some drawn for the agent's git host
+// accounts (hosts), and the servers of the mail providers it declares; a
+// published agent's are its mail providers' alone (MailServersFor).
 func (b Builtin) OfferedServers(hosts []offer.GitHost) []offer.Server {
-	switch {
-	case b.persistent && b.namespace == assistant.Namespace && b.name == assistant.Name:
+	switch b.offers {
+	case offersAssistant:
 		return assistant.OfferedServers()
-	case b.persistent && b.namespace == coder.Namespace && b.name == coder.Name:
+	case offersCoder:
 		return coder.OfferedServers(hosts)
 	}
 	return nil
 }
 
-// ImageServers are the servers the persistent agent comes with that run
+// offerSet is a built-in package's set of offered and suggested servers.
+type offerSet string
+
+// The sets there are.
+const (
+	offersAssistant offerSet = "assistant"
+	offersCoder     offerSet = "coder"
+)
+
+// ImageServers are the servers the persistent built-in declares that run
 // from an image the CLI pins (images, the policy's), each an entry of its
-// roster; a built-in's alone.
+// roster (ImageServersFor).
 func (b Builtin) ImageServers(images policy.Images) []offer.ImageServer {
-	if b.persistent && b.namespace == assistant.Namespace && b.name == assistant.Name {
-		return assistant.ImageServers(images.GogImage(), images.MS365Image())
-	}
-	return nil
+	return ImageServersFor(b.Declared(), images)
 }
 
 // MailProviders are the services whose mail and calendar the persistent
-// agent reaches through its image servers; a built-in's alone.
-func (b Builtin) MailProviders() []offer.MailProvider {
-	if b.persistent && b.namespace == assistant.Namespace && b.name == assistant.Name {
-		return assistant.MailProviders()
-	}
-	return nil
-}
+// built-in declares (MailProvidersFor).
+func (b Builtin) MailProviders() []offer.MailProvider { return MailProvidersFor(b.Declared()) }
 
-// SuggestedServers are the MCP servers the persistent agent suggests: not
-// on its roster until the person adds one as their own.
+// SuggestedServers are the MCP servers the persistent built-in's package
+// suggests: not on its roster until the person adds one as their own.
 func (b Builtin) SuggestedServers() []offer.Suggestion {
-	switch {
-	case b.persistent && b.namespace == assistant.Namespace && b.name == assistant.Name:
+	switch b.offers {
+	case offersAssistant:
 		return assistant.SuggestedServers()
-	case b.persistent && b.namespace == coder.Namespace && b.name == coder.Name:
+	case offersCoder:
 		return coder.SuggestedServers()
 	}
 	return nil
 }
 
-// ReadsCalendars says the persistent agent reads the calendar feeds the
-// person gives it (Grants.CalendarFeeds).
-func (b Builtin) ReadsCalendars() bool { return b.readsCalendars }
+// ReadsCalendars says the persistent built-in declares calendars: the person
+// may give it calendar feeds (Grants.CalendarFeeds).
+func (b Builtin) ReadsCalendars() bool { return b.Declared().Declares("calendars") }
+
+// ImageServersFor are the servers run from an image the CLI pins (images,
+// the policy's) that p declares under imageServers, for any agent: each an
+// entry of its roster.
+func ImageServersFor(p *manifest.Persistent, images policy.Images) []offer.ImageServer {
+	declared := compile.DeclaredImageServers(p)
+	var out []offer.ImageServer
+	for _, s := range assistant.ImageServers(images.GogImage(), images.MS365Image()) {
+		if slices.Contains(declared, s.Key) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// MailProvidersFor are the mail providers p declares under mail, of the
+// ones this build reaches.
+func MailProvidersFor(p *manifest.Persistent) []offer.MailProvider {
+	if p == nil {
+		return nil
+	}
+	var out []offer.MailProvider
+	for _, m := range assistant.MailProviders() {
+		if slices.Contains(p.Mail, m.Key) {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// MailServersFor are the offered servers of the mail providers p declares
+// that reach their mail through a server of their own rather than an image
+// server (Fastmail's): a published agent's offered servers.
+func MailServersFor(p *manifest.Persistent) []offer.Server {
+	if p == nil {
+		return nil
+	}
+	var out []offer.Server
+	for _, s := range assistant.OfferedServers() {
+		if s.MailProvider != "" && slices.Contains(p.Mail, s.MailProvider) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
 
 // ResetsInParts says the persistent agent has Reset history and Reset
 // agent beside its Reset.
@@ -333,6 +381,11 @@ type Grants struct {
 	// through voice_read as a run's is (engine.Params.Voice). The engine
 	// refuses it to a built-in.
 	Voice *engine.AttachedVoice
+	// Web and Review are the keys of the web tools and the review grant,
+	// for a package that declares them and whose roster has them on; the
+	// plan has each exactly when it is given.
+	Web    *engine.WebRun
+	Review *engine.ReviewRun
 }
 
 // CalendarFeed is one of the Assistant's calendar feeds, as a segment is
@@ -365,14 +418,16 @@ type ImageGrant struct {
 }
 
 // imageSpecs are the plan's specs of the image servers the segment is
-// given, from the built-in's servers at the policy's images, and their
-// volumes. A grant naming a server the built-in does not offer is refused.
+// given, from the servers its package declares at the policy's images, and
+// their volumes. A grant naming a server the package does not declare is
+// refused.
 func (s Segment) imageSpecs() ([]spec.MCPServerSpec, []string, error) {
 	if len(s.Grants.ImageServers) == 0 {
 		return nil, nil, nil
 	}
-	offered := s.Builtin.ImageServers(s.Policy.Images)
-	builds := s.Builtin.ImageServers(policy.Images{})
+	declared := s.declared()
+	offered := ImageServersFor(declared, s.Policy.Images)
+	builds := ImageServersFor(declared, policy.Images{})
 	var specs []spec.MCPServerSpec
 	var volumes []string
 	for _, g := range s.Grants.ImageServers {
@@ -592,7 +647,7 @@ func (s Segment) Start(ctx context.Context, d dockerx.Client) (engine.Persistent
 		ModelSignIn: signIn, RenewModelSignIn: renewSignIn, Inference: s.Inference,
 		SecretOverrides: s.secretOverrides(), WithheldSecrets: slices.Clone(s.Grants.WithheldSecrets),
 		AccountTokens: s.accountTokens(), CalendarURLs: s.calendarURLs(),
-		Voice:      s.Grants.Voice,
+		Voice: s.Grants.Voice, Web: s.Grants.Web, Review: s.Grants.Review,
 		Persistent: &seg,
 	})
 	if err != nil {
@@ -604,6 +659,21 @@ func (s Segment) Start(ctx context.Context, d dockerx.Client) (engine.Persistent
 		return nil, engine.Classify(engine.ExitCLI, errors.New("the engine's session is not a persistent agent's segment"))
 	}
 	return ps, nil
+}
+
+// declared is what the segment's package declares under
+// capabilities.persistent, read before its start holds the release to its
+// integrity record, so a grant it does not declare is refused at once; the
+// compiler holds the plan to the verified manifest's block again.
+func (s Segment) declared() *manifest.Persistent {
+	if s.Release == nil {
+		return s.Builtin.Declared()
+	}
+	m, err := ManifestFrom(filepath.Join(s.Release.Dir, "workspace"))
+	if err != nil {
+		return nil
+	}
+	return m.Capabilities.Persistent
 }
 
 // ref is the package the segment runs, as ns/name@version.
@@ -695,8 +765,8 @@ func (s Segment) coderGrant() (*spec.CoderGrant, error) {
 	switch {
 	case g == nil && s.Grants.DevHost == nil:
 		return nil, nil
-	case !s.Builtin.coder:
-		return nil, engine.Classify(engine.ExitPolicy, fmt.Errorf("%s is not given the Coding agent's grants", s.ref()))
+	case !s.declared().Declares("coder"):
+		return nil, engine.Classify(engine.ExitPolicy, fmt.Errorf("%s is not given the coding toolchain: it does not declare capabilities.persistent.coder", s.ref()))
 	case g == nil || g.DevHost != (s.Grants.DevHost != nil):
 		return nil, engine.Classify(engine.ExitCLI, errors.New("the Coding agent's dev server is given exactly when its roster has it on, readied"))
 	}
@@ -760,8 +830,8 @@ func (s Segment) calendarGrant() (*spec.CalendarGrant, error) {
 	if len(s.Grants.CalendarFeeds) == 0 {
 		return nil, nil
 	}
-	if !s.Builtin.readsCalendars {
-		return nil, engine.Classify(engine.ExitPolicy, fmt.Errorf("%s is not given calendar feeds: they are the Assistant's", s.ref()))
+	if !s.declared().Declares("calendars") {
+		return nil, engine.Classify(engine.ExitPolicy, fmt.Errorf("%s is not given calendar feeds: it does not declare capabilities.persistent.calendars", s.ref()))
 	}
 	g := &spec.CalendarGrant{TimeZone: s.Grants.CalendarZone}
 	for i, f := range s.sortedCalendarFeeds() {
@@ -799,8 +869,8 @@ func (s Segment) checkSecrets(m *manifest.Manifest) error {
 	if (len(s.Grants.Secrets) > 0 || len(s.Grants.WithheldSecrets) > 0) && !m.Capabilities.Persistent.Declares("secrets") {
 		return engine.Classify(engine.ExitPolicy, fmt.Errorf("%s is not given stored secrets: it does not declare capabilities.persistent.secrets", s.ref()))
 	}
-	if len(s.Grants.Accounts) > 0 && (!s.Builtin.coder || s.Grants.Coder == nil || !s.Grants.Coder.Commands) {
-		return engine.Classify(engine.ExitPolicy, fmt.Errorf("%s is not given git host accounts: they are the Coding agent's, for the programs it runs", s.ref()))
+	if len(s.Grants.Accounts) > 0 && (!m.Capabilities.Persistent.Declares("coder") || s.Grants.Coder == nil || !s.Grants.Coder.Commands) {
+		return engine.Classify(engine.ExitPolicy, fmt.Errorf("%s is not given git host accounts: they come with the coding toolchain, for the programs it runs", s.ref()))
 	}
 	return nil
 }
@@ -988,6 +1058,7 @@ func (s Segment) Plan(ctx context.Context, logw io.Writer) (*SegmentPlan, error)
 		Home: s.Home, Manifest: m, Meta: meta, InstallDir: installDir, WorkspaceDir: workspace,
 		Policy: s.Policy, PolicySHA: s.PolicySHA, Adapter: adapterName, Mode: manifest.ModePersistent,
 		Servers: servers, AgentFiles: s.agentFiles(m), AppLink: s.appLinkSet(m), Coder: coderGrant, Calendar: calendarGrant, ShareServers: s.shareServers(), CompiledBy: s.Build, Log: logw,
+		Web: s.Grants.Web != nil, Review: s.Grants.Review != nil,
 	}
 	plan, planDir, err := EnsurePlan(in)
 	if err != nil {
@@ -999,22 +1070,10 @@ func (s Segment) Plan(ctx context.Context, logw io.Writer) (*SegmentPlan, error)
 	return &SegmentPlan{Plan: plan, Dir: planDir, meta: meta, workspace: workspace, installDir: installDir, resolved: resolved, adapter: ad, inputs: in, knowledge: knowledge}, nil
 }
 
-// persistentImageServers are the image servers capabilities.persistent may
-// name, as the manifest spells them (manifest.ImageServerNames), by the key
-// of the server this build runs for each. The manifest names the service, so
-// the program behind it can change without a manifest's changing.
-var persistentImageServers = map[string]string{
-	"google-workspace": assistant.GogKey,
-	"microsoft-365":    assistant.MS365Key,
-}
-
 // PersistentImageServer is the key of the image server this build runs for
 // name, an entry of capabilities.persistent.imageServers; false for a name
-// it does not carry.
-func PersistentImageServer(name string) (string, bool) {
-	key, ok := persistentImageServers[name]
-	return key, ok
-}
+// it does not carry (compile.PersistentImageServer).
+func PersistentImageServer(name string) (string, bool) { return compile.PersistentImageServer(name) }
 
 // PersistentMailProvider is the key of the mail provider this build reaches
 // for name, an entry of capabilities.persistent.mail; false for a name it
@@ -1044,6 +1103,25 @@ func CheckPersistentNames(p *manifest.Persistent) error {
 		if _, ok := PersistentMailProvider(n); !ok {
 			return fmt.Errorf("it asks for mail at %q, which this version of Agentry does not reach: update Agentry", n)
 		}
+	}
+	return checkNetworkShapes(p)
+}
+
+// networkShapes are the keys that each give the tools container a network
+// of its own, of which this build gives an agent one at a time.
+var networkShapes = []string{"web", "review", "coder", "calendars"}
+
+// checkNetworkShapes refuses a block that declares two keys of
+// networkShapes: its segments could never be given both.
+func checkNetworkShapes(p *manifest.Persistent) error {
+	var have []string
+	for _, k := range networkShapes {
+		if p.Declares(k) {
+			have = append(have, k)
+		}
+	}
+	if len(have) > 1 {
+		return fmt.Errorf("it declares %s, and this version of Agentry gives an agent one of web, review, coder and calendars: each gives its tools a network of its own", strings.Join(have, " and "))
 	}
 	return nil
 }

@@ -7,25 +7,21 @@ import (
 
 	"github.com/blaktron/agentry/pkg/manifest"
 
-	"github.com/blaktron/agentry-cli/pkg/persistent/assistant"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
-// The Assistant's calendar feeds (Inputs.Calendar): the calendar tools
-// read the feeds its roster has on, each feed's address a secret of the
-// tools container's, whose network reaches the feeds' hosts and nothing
-// else. Like the Coding agent's grants it is a part of the persistent grant
-// class, gated by the person's agreement for this agent, so it is given to
-// the persistent Assistant alone, beside its folders, and its manifest
-// declares no egress of its own.
+// Calendar feeds (Inputs.Calendar): the calendar tools read the feeds the
+// agent's roster has on, each feed's address a secret of the tools
+// container's, whose network reaches the feeds' hosts and nothing else. Like
+// the coding toolchain it is a part of the persistent grant class, gated by
+// the person's agreement for this agent, so it is given only to a persistent
+// agent whose manifest declares capabilities.persistent.calendars, beside its
+// folders, and the manifest declares no egress of its own.
 
 // calendarGrant checks the Assistant's calendar grant and sets it on caps.
 func calendarGrant(in Inputs, mode manifest.Mode, caps *spec.CapSummary) error {
-	if mode != manifest.ModePersistent || in.Source != "builtin" {
-		return &PolicyRefusal{Reason: "calendar feeds are a persistent built-in's alone"}
-	}
-	if in.Manifest.Namespace != assistant.Namespace || in.Manifest.Name != assistant.Name {
-		return &PolicyRefusal{Reason: fmt.Sprintf("calendar feeds are %s/%s's alone", assistant.Namespace, assistant.Name)}
+	if mode != manifest.ModePersistent || !in.Manifest.Capabilities.Persistent.Declares("calendars") {
+		return &PolicyRefusal{Reason: "calendar feeds are granted to a persistent agent that declares capabilities.persistent.calendars, and this one does not"}
 	}
 	if in.AgentFiles == nil {
 		return &PolicyRefusal{Reason: "calendar feeds come with the agent's folders"}

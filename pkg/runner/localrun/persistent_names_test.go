@@ -33,10 +33,9 @@ func TestEveryPersistentNameMaps(t *testing.T) {
 		}
 	}
 	nameOf := map[string]string{}
-	for n, key := range persistentImageServers {
-		nameOf[key] = n
-		if !slices.Contains(manifest.ImageServerNames, n) {
-			t.Errorf("%q is mapped but the manifest does not name it", n)
+	for _, n := range manifest.ImageServerNames {
+		if key, ok := PersistentImageServer(n); ok {
+			nameOf[key] = n
 		}
 	}
 	for _, n := range manifest.MailProviderNames {
@@ -87,4 +86,25 @@ func persistentManifest(t *testing.T, provider string, servers []string) *manife
 		t.Fatal(err)
 	}
 	return m
+}
+
+// TestTheWebToolsAndReviewAreDeclaredAlone: a block that declares two of
+// web, review, coder and calendars is refused, and one alone is not.
+func TestTheWebToolsAndReviewAreDeclaredAlone(t *testing.T) {
+	for _, c := range []struct {
+		p  manifest.Persistent
+		ok bool
+	}{
+		{manifest.Persistent{Web: true}, true},
+		{manifest.Persistent{Review: true, Memory: true}, true},
+		{manifest.Persistent{Coder: true}, true},
+		{manifest.Persistent{Coder: true, Calendars: true}, false},
+		{manifest.Persistent{Web: true, Review: true}, false},
+		{manifest.Persistent{Web: true, Coder: true}, false},
+		{manifest.Persistent{Review: true, Calendars: true}, false},
+	} {
+		if err := CheckPersistentNames(&c.p); (err == nil) != c.ok {
+			t.Errorf("%v: %v", c.p.Keys(), err)
+		}
+	}
 }

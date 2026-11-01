@@ -1,6 +1,14 @@
 {
   "versions": [
     {
+      "version": "0.6.1018",
+      "highlights": [
+        "An installed agent can run programs, browse and reach a dev server when its release declares the coding toolchain.",
+        "It can read your calendars, your mail at Google, Microsoft or Fastmail, and Google or Microsoft 365, as it declares.",
+        "It can search the web, each page read first by AI Review with your key, or ask AI Review about a package it holds."
+      ]
+    },
+    {
       "version": "0.6.1017",
       "highlights": [
         "agentry run --on runs a published QuickAgent on one of your remote runhosts and opens its sealed output here.",

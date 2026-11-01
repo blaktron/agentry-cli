@@ -64,7 +64,7 @@ func (s ImageSignIn) grants(w offer.ImageSwitch) bool {
 // imageServersOf are the agent's image servers: its built-in's, but in a
 // test. The roster names them by key, so the policy's image does not change
 // them; a segment takes the image from its policy.
-var imageServersOf = func(a Agent) []offer.ImageServer { return a.Builtin.ImageServers(policy.Images{}) }
+var imageServersOf = func(a Agent) []offer.ImageServer { return a.ImageServers(policy.Images{}) }
 
 // ImageServerEntryID is an image server's roster id.
 func ImageServerEntryID(key string) string { return serverPrefix + key }
@@ -115,13 +115,13 @@ func imageEntries(a Agent, c Config, add func(RosterEntry, bool), last func() *R
 			continue
 		}
 		id := ImageServerEntryID(s.Key)
-		add(RosterEntry{ID: id, Kind: KindServer, Name: s.Name, GrantedBy: GrantedByBuiltin, Line: imageLine(s)}, false)
+		add(RosterEntry{ID: id, Kind: KindServer, Name: s.Name, GrantedBy: a.grantedBy(), Line: imageLine(s)}, false)
 		in := c.SignIns[s.Key]
 		if e := last(); e.On && !in.signedIn() {
 			e.State, e.Reason = StateNeedsSetUp, s.SignIn
 		}
 		for _, w := range s.Switches {
-			add(RosterEntry{ID: ImageSwitchEntryID(s.Key, w.Key), Kind: KindServerSwitch, Name: w.Name, GrantedBy: GrantedByBuiltin, Line: w.Line}, false)
+			add(RosterEntry{ID: ImageSwitchEntryID(s.Key, w.Key), Kind: KindServerSwitch, Name: w.Name, GrantedBy: a.grantedBy(), Line: w.Line}, false)
 			if e := last(); e.On && in.signedIn() && !in.grants(w) {
 				e.State, e.Reason = StateNeedsSetUp, "the sign-in asked for no changes: with it on, sign in again ("+s.SignIn[strings.Index(s.SignIn, "agentry"):]+")"
 			}

@@ -144,13 +144,20 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 		return nil, cerr
 	}
 
-	// The web tools are an autonomous draft's; a session never runs them.
-	if p.Plan.Capabilities.WebTools || p.Web != nil {
+	// The web tools and the review grant run in a persistent agent's
+	// segment, which declares them, and in no other session: an
+	// interactive run of a release never has them.
+	if (p.Plan.Capabilities.WebTools || p.Web != nil) && p.Persistent == nil {
 		return fail(Classify(ExitPolicy, errors.New("the web tools do not run in an interactive session")))
 	}
-	// Nor the review grant, a built-in's autonomous review.
-	if p.Plan.Capabilities.ReviewTools || p.Review != nil {
+	if (p.Plan.Capabilities.ReviewTools || p.Review != nil) && p.Persistent == nil {
 		return fail(Classify(ExitPolicy, errors.New("the review grant does not run in an interactive session")))
+	}
+	if err := checkWeb(p); err != nil {
+		return fail(err)
+	}
+	if err := checkReview(p); err != nil {
+		return fail(err)
 	}
 	// Nor end_blocked: a session's person sees the agent stop, and ends it.
 	if p.EndBlocked {
@@ -1937,6 +1944,14 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 		env.CapabilitiesEnforced["usage.tokens"] = tokensUnreportedLine
 	}
 	env.CapabilitiesEnforced["daemon"] = daemon
+	// The agent has ended, so a persistent agent's web and review ledgers
+	// are complete.
+	if env.Web = webRecord(s.rd.receiptsDir, s.p.Web); env.Web != nil {
+		env.CapabilitiesEnforced["web.aiReview"] = webLine(env.Web)
+	}
+	if env.Review = reviewRecord(s.rd.receiptsDir, s.p.Review); env.Review != nil {
+		env.CapabilitiesEnforced["review.aiReview"] = reviewLine(env.Review)
+	}
 	env.PDFs = pdfs
 	env.FetchSaves = fetchSaves
 	// Every decode the session made, the files added mid-run included.

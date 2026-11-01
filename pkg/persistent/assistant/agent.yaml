@@ -1,7 +1,7 @@
 schemaVersion: "2"
 name: assistant
 namespace: agentry
-version: 1.17.0
+version: 1.18.0
 summary: "A personal assistant that keeps its conversation with you across sessions, on your computer."
 license: MIT
 authors:
@@ -26,5 +26,8 @@ capabilities:
     selfConfigure: true
     helper: true
     meetings: true
+    calendars: true
+    mail: [google, microsoft, fastmail]
+    imageServers: [google-workspace, microsoft-365]
 publish:
   include: [agent.yaml, INSTRUCTION.md, README.md, LICENSE, "memory/**", "skills/**"]
