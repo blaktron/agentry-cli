@@ -170,10 +170,14 @@ func printRunSummary(w io.Writer, env *receipt.Envelope) {
 func failureReport(err error, receipts string) []string {
 	class := engine.ExitClassOf(exitCodeOfRun(err))
 	lines := []string{fmt.Sprintf("agentry: run failed: %s: %s", class.Name, class.Meaning)}
-	cause := strings.Split(strings.TrimSpace(err.Error()), "\n")
+	text, detail := describeError(err)
+	cause := strings.Split(strings.TrimSpace(text), "\n")
 	lines = append(lines, "  cause: "+termtext.Safe(cause[0]))
 	for _, l := range cause[1:] {
 		lines = append(lines, "    "+termtext.Safe(l))
+	}
+	if flags.verbose && detail != "" && detail != text {
+		lines = append(lines, "  detail: "+termtext.Safe(detail))
 	}
 	if receipts != "" {
 		lines = append(lines, "  receipts: "+receipts)

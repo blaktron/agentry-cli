@@ -360,17 +360,29 @@ func (c *CLI) Available(ctx context.Context) error {
 		return fmt.Errorf("docker CLI not found (%s), and no podman answers: the runner needs a container engine — install Docker Engine or podman, or set AGENTRY_DOCKER", c.Bin)
 	}
 	if c.Podman {
-		_, err := c.podmanInfo(ctx)
-		return err
+		if _, err := c.podmanInfo(ctx); err != nil {
+			return unreachable(KindPodman, "", err)
+		}
+		return nil
 	}
 	out, err := c.run(ctx, "version", "--format", "{{.Server.Version}}")
 	if err != nil {
-		return fmt.Errorf("docker daemon not reachable: %w", err)
+		return unreachable(KindDocker, c.endpoint(ctx), fmt.Errorf("docker daemon not reachable: %w", err))
 	}
 	if strings.TrimSpace(out) == "" {
-		return errors.New("docker daemon not reachable: docker version named no server")
+		return unreachable(KindDocker, c.endpoint(ctx), errors.New("docker daemon not reachable: docker version named no server"))
 	}
 	return nil
+}
+
+// endpoint is where the docker CLI's current context sends requests, which
+// the CLI answers with no daemon behind it; "" when it cannot say.
+func (c *CLI) endpoint(ctx context.Context) string {
+	out, err := c.run(ctx, "context", "inspect", "--format", "{{.Endpoints.docker.Host}}")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
 }
 
 // OperatingSystem is what the daemon says it runs on (`docker info`'s
