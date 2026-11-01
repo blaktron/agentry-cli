@@ -1,0 +1,8 @@
+{
+  "_comment": [
+    "The update-signing keys this build trusts for a release of the Agentry CLI.",
+    "A build from source carries none, so it can verify no release and cannot set",
+    "up a remote runhost; a release build carries its publisher's key set here."
+  ],
+  "keys": []
+}

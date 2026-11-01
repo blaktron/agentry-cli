@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/blaktron/agentry-cli/internal/version"
+	"github.com/blaktron/agentry-cli/pkg/runhost"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 )
 
@@ -55,6 +56,15 @@ func main() {
 		<-ctx.Done()
 		stop()
 	}()
+	// On a remote runhost the CLI is also the agentry account's login shell,
+	// which runs the run key's forced command and nothing else.
+	if handled, serve, refusal := runhost.LoginShell(os.Args); handled {
+		if serve {
+			runServeAsLoginShell(ctx)
+		}
+		_, _ = fmt.Fprintln(os.Stderr, "agentry: "+refusal)
+		os.Exit(1)
+	}
 	if err := newRootCmd().ExecuteContext(ctx); err != nil {
 		// A run failure the run command has already explained is not
 		// printed a second time.
@@ -153,6 +163,7 @@ func newRootCmd() *cobra.Command {
 		newForkCmd(),
 		newRunnerToolsCmd(),
 		newRunnerConfineCmd(),
+		newRunhostCmd(),
 	)
 	markJSONCommands(root)
 	root.PersistentFlags().Lookup("json").Usage = jsonFlagHelp(root)
