@@ -88,8 +88,8 @@ func persistentManifest(t *testing.T, provider string, servers []string) *manife
 	return m
 }
 
-// TestTheWebToolsAndReviewAreDeclaredAlone: a block that declares two of
-// web, review, coder and calendars is refused, and one alone is not.
+// TestTheWebToolsAndReviewAreDeclaredAlone: a block that declares coder
+// beside web, review or calendars is refused; those three sit together.
 func TestTheWebToolsAndReviewAreDeclaredAlone(t *testing.T) {
 	for _, c := range []struct {
 		p  manifest.Persistent
@@ -99,9 +99,12 @@ func TestTheWebToolsAndReviewAreDeclaredAlone(t *testing.T) {
 		{manifest.Persistent{Review: true, Memory: true}, true},
 		{manifest.Persistent{Coder: true}, true},
 		{manifest.Persistent{Coder: true, Calendars: true}, false},
-		{manifest.Persistent{Web: true, Review: true}, false},
+		{manifest.Persistent{Coder: true, Review: true}, false},
 		{manifest.Persistent{Web: true, Coder: true}, false},
-		{manifest.Persistent{Review: true, Calendars: true}, false},
+		{manifest.Persistent{Web: true, Review: true}, true},
+		{manifest.Persistent{Review: true, Calendars: true}, true},
+		{manifest.Persistent{Web: true, Review: true, Calendars: true}, true},
+		{manifest.Persistent{Coder: true, Memory: true, Helper: true, Skills: true}, true},
 	} {
 		if err := CheckPersistentNames(&c.p); (err == nil) != c.ok {
 			t.Errorf("%v: %v", c.p.Keys(), err)

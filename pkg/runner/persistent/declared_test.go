@@ -339,3 +339,29 @@ func TestAPublishedAgentsWebAndReviewReachTheSegment(t *testing.T) {
 		}
 	}
 }
+
+// TestTheReviewLineSaysWhatItsContainerReaches: alone, the review grant's
+// container reaches TypeSafe's API alone; beside the web tools, its entry
+// says the container it shares reaches the public web and holds the key.
+func TestTheReviewLineSaysWhatItsContainerReaches(t *testing.T) {
+	home := shortHome(t)
+	t.Setenv("HOME", t.TempDir())
+	alone := installPublished(t, home, "acme", "rev", "1.0.0", publishedRelease{extra: "capabilities:\n  persistent:\n    review: true\n"})
+	beside := installPublished(t, home, "acme", "both", "1.0.0", publishedRelease{extra: "capabilities:\n  persistent:\n    review: true\n    web: true\n    calendars: true\n"})
+	line := func(a Agent) string {
+		e, ok := BuildRoster(a, Config{Enabled: true}, nil).Entry(EntryReview)
+		if !ok {
+			t.Fatalf("%s has no review entry", a.Name)
+		}
+		return e.Line
+	}
+	if got := line(alone); got != reviewLine {
+		t.Errorf("alone: %q", got)
+	}
+	if got := line(beside); got != reviewBesideWebLine || !strings.Contains(got, "alone, from") || !strings.Contains(got, "public web") {
+		t.Errorf("beside the web tools: %q", got)
+	}
+	if _, ok := BuildRoster(beside, Config{Enabled: true}, nil).Entry(EntryWeb); !ok {
+		t.Error("the agent beside review has no web entry")
+	}
+}

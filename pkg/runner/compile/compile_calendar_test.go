@@ -91,7 +91,7 @@ func TestTheCalendarFeedsCompileTheirContainer(t *testing.T) {
 
 // TestCalendarFeedsAreTheAssistantsAlone: the grant is refused to a package
 // that does not declare calendars (the Assistant's own name included), one
-// without its folders, beside other egress, and for a malformed feed.
+// without its folders, and for a malformed feed.
 func TestCalendarFeedsAreTheAssistantsAlone(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -107,7 +107,6 @@ func TestCalendarFeedsAreTheAssistantsAlone(t *testing.T) {
 		}, "not a host name"},
 		{"a feed named twice", func(in *Inputs) { in.Calendar.Feeds[1].Name = "family" }, "named twice"},
 		{"a zone that is not one", func(in *Inputs) { in.Calendar.TimeZone = "Local" }, "not an IANA zone"},
-		{"beside the review grant", func(in *Inputs) { in.Review = true }, "never given beside"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			in := assistantInputs(t, twoFeeds())
