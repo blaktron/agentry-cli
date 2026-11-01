@@ -4,17 +4,24 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/klauspost/compress/zstd"
+	"golang.org/x/crypto/ssh"
 
 	"github.com/blaktron/agentry-cli/pkg/runhost"
+	"github.com/blaktron/agentry-cli/pkg/runhost/clirelease"
+	"github.com/blaktron/agentry-cli/pkg/runner/targethost"
 )
 
 func debian13() Facts {
@@ -264,6 +271,49 @@ func TestAddRefusesABuildThatIsNotARelease(t *testing.T) {
 			t.Errorf("%s: %v", v, err)
 		}
 	}
+}
+
+// A refusal of the address or host-key check, which setup shares with
+// target hosts, names the runhost being set up.
+func TestSetupsHostRefusalsNameTheRunhost(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "clirelease", "testdata", "release-keys.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, err := clirelease.ParseKeys(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Add(t.Context(), Options{Name: "lab", Version: "0.6.1", Keys: keys,
+		Answer: targethost.Answer{User: "admin", Host: "127.0.0.1", Port: 22}})
+	var r *targethost.Refusal
+	if !errors.As(err, &r) || !strings.HasPrefix(err.Error(), "runhost lab: ") {
+		t.Fatalf("Add's address refusal = %v", err)
+	}
+	err = Remove(t.Context(), RemoveOptions{
+		Record: runhost.Record{Name: "lab", Host: "127.0.0.1", Port: 22, HostKey: testHostKey(t)},
+		Answer: targethost.Answer{User: "admin"}})
+	if !errors.As(err, &r) || !strings.HasPrefix(err.Error(), "runhost lab: ") {
+		t.Fatalf("Remove's address refusal = %v", err)
+	}
+	for _, detail := range []string{targethost.RefusedKeyUnknown, targethost.RefusedKeyChanged, targethost.RefusedUnreached} {
+		err := asRunhost(&targethost.Refusal{ID: "lab", Detail: detail, Err: errors.New("the key")})
+		if want := "runhost lab: the key"; err.Error() != want {
+			t.Errorf("%s: %q, want %q", detail, err, want)
+		}
+	}
+}
+
+func testHostKey(t *testing.T) string {
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	k, err := ssh.NewPublicKey(pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(string(ssh.MarshalAuthorizedKey(k)))
 }
 
 func TestMergeConfigKeepsWhatSetupFoundAndBindsAnOwner(t *testing.T) {
