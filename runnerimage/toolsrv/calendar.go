@@ -21,14 +21,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/cookiejar"
+	"net/netip"
 	"net/url"
 	"os"
 	"regexp"
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -194,8 +197,32 @@ func (s *server) calendarFeedsFor(name string) ([]CalendarFeed, error) {
 // calendarNow is the clock the calendar tools read; tests set it.
 var calendarNow = time.Now
 
-// calendarTransport is how a feed is fetched; tests replace it.
-var calendarTransport = func() http.RoundTripper { return fetchTransport() }
+// calendarTransport is how a feed is fetched; tests replace it. Direct is
+// beside the web tools, whose network leaves the host with no proxy to hold
+// it: no proxy from the environment, and every connection made only to a
+// public address on 443, as web_read's are. Otherwise the gateway's proxy
+// holds the fetch to the feeds' hosts.
+var calendarTransport = func(direct bool) http.RoundTripper {
+	t := fetchTransport().(*http.Transport)
+	if !direct {
+		return t
+	}
+	t.Proxy = nil
+	t.DialContext = (&net.Dialer{
+		Timeout: 10 * time.Second,
+		Control: func(_, address string, _ syscall.RawConn) error {
+			ap, err := netip.ParseAddrPort(address)
+			if err != nil {
+				return fmt.Errorf("refused %s: %w", address, err)
+			}
+			if ap.Port() != 443 {
+				return fmt.Errorf("refused %s: port %d is not 443", address, ap.Port())
+			}
+			return publicAddr(ap.Addr())
+		},
+	}).DialContext
+	return t
+}
 
 // fetchCalendar returns a feed's calendar, from the cache while it is
 // fresh, and when it was fetched. An error never names the address.
@@ -222,7 +249,7 @@ func (s *server) fetchCalendar(f CalendarFeed) (*ical.Calendar, time.Time, error
 	signIn := false
 	client := &http.Client{
 		Timeout:   CalendarFetchTimeout,
-		Transport: calendarTransport(),
+		Transport: calendarTransport(s.spec.Web.Enabled),
 		Jar:       jar,
 		CheckRedirect: func(r *http.Request, via []*http.Request) error {
 			if len(via) >= 5 {

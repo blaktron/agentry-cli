@@ -246,8 +246,7 @@ func TestPersistentGrantsRefusedOutsideBuiltins(t *testing.T) {
 
 // TestThePersistentWebToolsAndReviewAreDeclared: a persistent agent of any
 // source that declares web or review is given it beside its folders, its
-// app link and its MCP servers, and is refused it beside the other one,
-// beside the coding toolchain and beside calendar feeds; ai_review's paths
+// app link and its MCP servers; ai_review's paths
 // are beneath the agent's own root. One that does not declare it is refused
 // it, a built-in included.
 func TestThePersistentWebToolsAndReviewAreDeclared(t *testing.T) {
@@ -281,17 +280,61 @@ func TestThePersistentWebToolsAndReviewAreDeclared(t *testing.T) {
 					t.Errorf("ai_review's root %q, want %q", ts.Review.Root, spec.AgentRoot)
 				}
 			}
-			var refusal *PolicyRefusal
-			both := in
-			both.Web, both.Review = true, true
-			if _, err := Compile(both, t.TempDir()); !errors.As(err, &refusal) {
-				t.Errorf("%s: web beside review: %v", source, err)
+		}
+	}
+}
+
+// TestTheWebToolsReviewAndCalendarsCompose: a persistent agent that declares
+// two or three of web, review and calendars has each grant in its one tools
+// container. Beside the web tools, the container is on the web network with
+// no proxy list, and the plan says what the other grants' clients reach;
+// review and calendar feeds alone share the gateway's proxy list.
+func TestTheWebToolsReviewAndCalendarsCompose(t *testing.T) {
+	feed := &spec.CalendarGrant{TimeZone: "Europe/London", Feeds: []spec.CalendarFeed{{Name: "Work", Host: "calendar.google.com", URLEnv: spec.CalendarFeedEnv(0)}}}
+	for _, c := range []struct {
+		keys               []string
+		web, review, cal   bool
+		allowHosts         []string
+		lineHas, lineHasnt []string
+	}{
+		{[]string{"web", "review"}, true, true, false, nil, []string{"the web tools reach out", "asks for " + toolsrv.ReviewHost + ":443 alone"}, []string{"alone reach out"}},
+		{[]string{"web", "calendars"}, true, false, true, nil, []string{"fetch each feed from its own host (calendar.google.com)"}, []string{toolsrv.ReviewHost}},
+		{[]string{"review", "calendars"}, false, true, true, []string{toolsrv.ReviewHost + ":443", "calendar.google.com:443"}, []string{"reaches " + toolsrv.ReviewHost + ":443 and calendar.google.com:443 alone"}, nil},
+		{[]string{"web", "review", "calendars"}, true, true, true, nil, []string{"asks for " + toolsrv.ReviewHost + ":443 alone, and the calendar tools fetch"}, nil},
+	} {
+		in := persistentInputs(t, &spec.AgentFiles{Share: true})
+		block := "    clock: true"
+		for _, k := range c.keys {
+			block += "\n    " + k + ": true"
+		}
+		in.Source, in.Manifest, in.AppLink = "registry", parseManifest(t, strings.Replace(persistentOwnYAML, "    clock: true", block, 1)), applink.SetAssistant
+		in.WorkspaceDir = workspaceFor(t, in.Manifest, nil)
+		in.Web, in.Review = c.web, c.review
+		if c.cal {
+			in.Calendar = feed
+		}
+		plan, ts, reg := compiledCoder(t, in)
+		if plan.Capabilities.WebTools != c.web || plan.Capabilities.ReviewTools != c.review || (plan.Capabilities.Calendar != nil) != c.cal ||
+			ts.Web.Enabled != c.web || ts.Review.Enabled != c.review || (len(ts.Calendar.Feeds) == 1) != c.cal {
+			t.Errorf("%v: caps %+v, tools spec web %v review %v calendar %+v", c.keys, plan.Capabilities, ts.Web.Enabled, ts.Review.Enabled, ts.Calendar)
+		}
+		tools := reg[spec.ToolServerName]
+		var got []string
+		if tools["allowHosts"] != nil {
+			got = strs(tools["allowHosts"])
+		}
+		if !slices.Equal(got, c.allowHosts) || tools["disableNetwork"] != nil || plan.Capabilities.ToolsReachPastHost() != c.web {
+			t.Errorf("%v: allowHosts %v, disableNetwork %v, reaches past the host %v", c.keys, got, tools["disableNetwork"], plan.Capabilities.ToolsReachPastHost())
+		}
+		line := plan.Enforcement["network"]
+		for _, want := range c.lineHas {
+			if !strings.Contains(line, want) {
+				t.Errorf("%v: network line lacks %q: %s", c.keys, want, line)
 			}
-			cal := in
-			cal.Manifest = parseManifest(t, strings.Replace(persistentOwnYAML, "    clock: true", "    clock: true\n    "+key+": true\n    calendars: true", 1))
-			cal.Calendar = &spec.CalendarGrant{TimeZone: "Europe/London", Feeds: []spec.CalendarFeed{{Name: "Work", Host: "calendar.google.com", URLEnv: spec.CalendarFeedEnv(0)}}}
-			if _, err := Compile(cal, t.TempDir()); !errors.As(err, &refusal) || !strings.Contains(err.Error(), "calendar feeds") {
-				t.Errorf("%s: %s beside calendar feeds: %v", source, key, err)
+		}
+		for _, not := range c.lineHasnt {
+			if strings.Contains(line, not) {
+				t.Errorf("%v: network line has %q: %s", c.keys, not, line)
 			}
 		}
 	}

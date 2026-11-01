@@ -284,11 +284,11 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	if in.MCPServers, err = serverShares(in, mode, caps); err != nil {
 		return nil, err
 	}
-	// The web tools, the review grant, the coding toolchain's open egress
-	// and calendar feeds each give the tools container a network of its
-	// own, so a persistent agent is given one of them at a time; its
-	// folders, its app link and the MCP servers it has, each server a
-	// container of its own, sit beside any of them.
+	// The web tools, the review grant and calendar feeds sit together in
+	// one tools container, each tool holding its own hosts; the coding
+	// toolchain runs any program there, so it sits beside none of them.
+	// The agent's folders, its app link and the MCP servers it has, each
+	// server a container of its own, sit beside any of them.
 	if in.Web || in.Review {
 		if err := persistentNetworkShape(in, mode); err != nil {
 			return nil, err
@@ -1118,8 +1118,8 @@ func checkReviewGrant(in Inputs, caps spec.CapSummary) error {
 		return &PolicyRefusal{Reason: fmt.Sprintf("the review grant (%s) is a built-in's alone, and a persistent agent's that declares capabilities.persistent.review; a %s package is never granted it otherwise",
 			toolsrv.ToolAIReview, cmp.Or(in.Source, "release"))}
 	}
-	if in.Web {
-		return &PolicyRefusal{Reason: "the review grant is never given beside the web tools: its container reaches TypeSafe's API alone, theirs the public web"}
+	if in.Web && !persistent {
+		return &PolicyRefusal{Reason: "the review grant is never given beside the web tools outside a persistent agent: its container reaches TypeSafe's API alone, theirs the public web"}
 	}
 	c := in.Manifest.Capabilities
 	servers := !persistent && (len(c.MCPServers) > 0 || len(in.MCPServers) > 0)
@@ -2028,21 +2028,16 @@ func catalogEntry(tspec *toolsrv.Spec, caps spec.CapSummary, secrets []string, r
 			hosts = append(hosts, h+":443")
 		}
 		e.set("allowHosts", strListNode(hosts))
-	} else if tspec.Review.Enabled {
-		// The review grant reaches TypeSafe's API and nothing else, by the
-		// same gateway proxy a declared host is reached by: the judge's
-		// client reads the proxy variable the gateway sets.
-		e.set("allowHosts", strListNode([]string{toolsrv.ReviewHost + ":443"}))
-	} else if g := caps.Calendar; g != nil {
-		// The calendar feeds reach their own hosts and nothing else, by the
-		// same gateway proxy; the tools server re-checks each fetch and
-		// every redirect against its feed's host (calendarGrant leaves no
-		// other egress beside them).
-		var hosts []string
-		for _, h := range g.Hosts() {
-			hosts = append(hosts, h+":443")
-		}
-		e.set("allowHosts", strListNode(hosts))
+	} else if (tspec.Review.Enabled || caps.Calendar != nil) && !tspec.Web.Enabled {
+		// The review grant reaches TypeSafe's API, and the calendar feeds
+		// their own hosts, and nothing else, by the same gateway proxy a
+		// declared host is reached by: the judge's client reads the proxy
+		// variable the gateway sets, and the tools server re-checks each
+		// feed's fetch and every redirect against its feed's host
+		// (calendarGrant leaves no other egress beside them). Beside the
+		// web tools, both reach their hosts over the tools container's web
+		// network instead, each client still asking for its own host alone.
+		e.set("allowHosts", strListNode(proxiedHosts(caps, tspec)))
 	} else if !tspec.Fetch.Enabled && !tspec.Web.Enabled {
 		e.set("disableNetwork", boolNode(true))
 	}
@@ -2086,6 +2081,21 @@ func catalogEntry(tspec *toolsrv.Spec, caps spec.CapSummary, secrets []string, r
 		e.set("secrets", seqNode(entries))
 	}
 	return e.node()
+}
+
+// proxiedHosts are the hosts the review grant and the calendar feeds reach
+// through the gateway's proxy, each on 443.
+func proxiedHosts(caps spec.CapSummary, tspec *toolsrv.Spec) []string {
+	var hosts []string
+	if tspec.Review.Enabled {
+		hosts = append(hosts, toolsrv.ReviewHost+":443")
+	}
+	if g := caps.Calendar; g != nil {
+		for _, h := range g.Hosts() {
+			hosts = append(hosts, h+":443")
+		}
+	}
+	return hosts
 }
 
 // workspaceBind is one workspace bind of the tools server: a path under
@@ -2293,16 +2303,32 @@ func enforcement(caps spec.CapSummary, secrets, optional []string, extraServers 
 			e["web.render"] = renderEnforcement
 		}
 	}
-	if caps.ReviewTools {
+	if caps.ReviewTools && !caps.WebTools {
 		e["network"] = "no declared egress and no fetch tool; the tools container reaches " + toolsrv.ReviewHost + ":443 alone, TypeSafe's API, for the review grant, " +
 			"through the gateway's per-server proxy and DNS interception (--block-network)"
+	}
+	if caps.ReviewTools {
 		e["review"] = "the review grant, on the tools container only: " + toolsrv.ToolAIReview + " asks AI Review's release rubric (the six questions stage S5 asks) over the package in the run's inputs and answers with scores and file names, never the package's text; " +
 			toolsrv.ToolReadInput + " answers a file only after AI Review's model-input questions passed it, and one flagged or not scanned is withheld with its path and the reason; " +
 			"the person's own TypeSafe key is injected into the tools container only"
 	}
-	if g := caps.Calendar; g != nil {
-		e["network"] = "no declared egress and no fetch tool; the tools container reaches " + strings.Join(g.Hosts(), ":443, ") + ":443 alone, the hosts of the person's calendar feeds, for the calendar tools, " +
-			"through the gateway's per-server proxy and DNS interception (--block-network), the tools server re-checking each fetch and redirect against its feed's host (see persistent.calendar)"
+	if g := caps.Calendar; g != nil && !caps.WebTools {
+		reach, also := strings.Join(g.Hosts(), ":443, ")+":443", "the hosts of the person's calendar feeds, for the calendar tools"
+		if caps.ReviewTools {
+			reach, also = toolsrv.ReviewHost+":443 and "+reach, "TypeSafe's API for the review grant and the hosts of the person's calendar feeds for the calendar tools"
+		}
+		e["network"] = "no declared egress and no fetch tool; the tools container reaches " + reach + " alone, " + also + ", " +
+			"through the gateway's per-server proxy and DNS interception (--block-network), the tools server re-checking each feed's fetch and redirect against its feed's host (see persistent.calendar)"
+	}
+	if caps.WebTools && (caps.ReviewTools || caps.Calendar != nil) {
+		var beside []string
+		if caps.ReviewTools {
+			beside = append(beside, "the review grant's client asks for "+toolsrv.ReviewHost+":443 alone")
+		}
+		if g := caps.Calendar; g != nil {
+			beside = append(beside, "the calendar tools fetch each feed from its own host ("+strings.Join(g.Hosts(), ", ")+") by https, refusing a redirect to any other")
+		}
+		e["network"] = strings.Replace(e["network"], "the web tools alone reach out", "the web tools reach out", 1) + "; beside them, over the same network, " + strings.Join(beside, ", and ")
 	}
 	e["filesystem"] = "read " + fsDesc(caps.FSReadMode, caps.FSReadPaths) +
 		"; write " + fsDesc(caps.FSWriteMode, caps.FSWritePaths) +
@@ -2751,9 +2777,9 @@ func browserTools(caps spec.CapSummary) []string {
 }
 
 // persistentNetworkShape refuses the web tools or the review grant beside
-// another grant that gives the tools container a network of its own: the
-// coding toolchain's open egress or calendar feeds. A plan that is not
-// persistent is refused them beside a persistent agent's grants at all.
+// the coding toolchain, whose programs would run in the container that
+// holds their keys. A plan that is not persistent is refused them beside a
+// persistent agent's grants at all.
 func persistentNetworkShape(in Inputs, mode manifest.Mode) error {
 	what := "the web tools are"
 	if !in.Web {
@@ -2765,11 +2791,8 @@ func persistentNetworkShape(in Inputs, mode manifest.Mode) error {
 		}
 		return nil
 	}
-	switch {
-	case in.Coder != nil:
-		return &PolicyRefusal{Reason: what + " never given beside the coding toolchain: each gives the tools container a network of its own, so an agent takes one at a time"}
-	case in.Calendar != nil:
-		return &PolicyRefusal{Reason: what + " never given beside calendar feeds: the feeds' hosts are the tools container's only network, so an agent takes one at a time"}
+	if in.Coder != nil {
+		return &PolicyRefusal{Reason: what + " never given beside the coding toolchain: its programs run in the tools container, which would hold their keys"}
 	}
 	return nil
 }
