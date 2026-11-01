@@ -60,7 +60,7 @@ func secretAgent(name string) (persistent.Agent, error) {
 	if err != nil {
 		return a, err
 	}
-	if !a.Builtin.KeepsSecrets() {
+	if !a.KeepsSecrets() {
 		return a, engine.Classify(engine.ExitUsage, fmt.Errorf("the %s agent keeps no secrets", a.Name))
 	}
 	return a, nil

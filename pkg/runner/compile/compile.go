@@ -235,8 +235,11 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		if mode != manifest.ModePersistent {
 			return nil, &PolicyRefusal{Reason: "a persistent agent's share and data folders are granted to a persistent agent alone"}
 		}
-		if in.Source != "builtin" && (in.AgentFiles.Memory || len(in.AgentFiles.Skills) > 0) {
-			return nil, &PolicyRefusal{Reason: "a memory volume and skills are granted to a persistent built-in alone"}
+		if in.AgentFiles.Memory && !m.Capabilities.Persistent.Declares("memory") {
+			return nil, &PolicyRefusal{Reason: "a memory volume is granted to a persistent agent that declares capabilities.persistent.memory, and this one does not"}
+		}
+		if err := skillsDeclared(in.AgentFiles.Skills, m.Capabilities.Persistent); err != nil {
+			return nil, err
 		}
 		if caps.FSReadMode != "none" || caps.FSWriteMode != "none" {
 			return nil, &PolicyRefusal{Reason: "a persistent agent's files are its share and data folders, and it declares no filesystem access of its own beside them"}
@@ -257,11 +260,14 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		}
 	}
 	if in.AppLink != "" {
-		if mode != manifest.ModePersistent || in.Source != "builtin" {
-			return nil, &PolicyRefusal{Reason: "the app link is granted to a persistent built-in alone"}
+		if mode != manifest.ModePersistent {
+			return nil, &PolicyRefusal{Reason: "the app link is granted to a persistent agent alone"}
 		}
 		if len(applink.Tools(in.AppLink)) == 0 {
 			return nil, fmt.Errorf("no app link tool set %q", in.AppLink)
+		}
+		if key := undeclaredAppLinkPart(in.AppLink, m.Capabilities.Persistent); key != "" {
+			return nil, &PolicyRefusal{Reason: "the app link's tools for capabilities.persistent." + key + " are granted to a persistent agent that declares it, and this one does not"}
 		}
 		caps.AppLink = in.AppLink
 	}

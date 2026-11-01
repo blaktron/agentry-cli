@@ -44,11 +44,15 @@ func persistentFixture(t *testing.T, continueID string) (Params, *dockerx.Fake, 
 }
 
 // persistentFixtureWith is persistentFixture for a built-in granted its
-// folders (compile.Inputs.AgentFiles); a memory among them gives the
-// segment its memory volume and a seed.
+// folders (compile.Inputs.AgentFiles); a memory among them, which its
+// manifest then declares, gives the segment its memory volume and a seed.
 func persistentFixtureWith(t *testing.T, continueID string, files *spec.AgentFiles) (Params, *dockerx.Fake, *fakeHarness) {
 	t.Helper()
-	m, err := manifest.Parse([]byte(persistentManifest))
+	text := persistentManifest
+	if files != nil && files.Memory {
+		text = strings.Replace(text, "modes: [persistent]\n", "modes: [persistent]\ncapabilities:\n  persistent:\n    memory: true\n", 1)
+	}
+	m, err := manifest.Parse([]byte(text))
 	if err != nil {
 		t.Fatal(err)
 	}

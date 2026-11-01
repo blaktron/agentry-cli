@@ -28,7 +28,7 @@ const agentFastmailLong = "\n\n--fastmail-token gives the Assistant's Fastmail s
 
 // configureFastmail keeps the Fastmail token (on) or removes it (off).
 func configureFastmail(cmd *cobra.Command, a persistent.Agent, home string, on, yes bool) error {
-	if !a.Builtin.KeepsSecrets() || !slices.ContainsFunc(a.Builtin.OfferedServers(nil), func(s offer.Server) bool { return s.MailProvider == assistant.MailFastmail }) {
+	if !a.KeepsSecrets() || !slices.ContainsFunc(a.Builtin.OfferedServers(nil), func(s offer.Server) bool { return s.MailProvider == assistant.MailFastmail }) {
 		return engine.Classify(engine.ExitUsage, fmt.Errorf("the %s agent has no Fastmail", a.Name))
 	}
 	if held, _ := persistent.Held(home, a.Name); held {

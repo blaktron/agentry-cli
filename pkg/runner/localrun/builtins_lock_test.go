@@ -141,7 +141,7 @@ func TestTheBuiltInSkillsAreSkills(t *testing.T) {
 		if got := len(b.Skills()); got != len(entries) {
 			t.Errorf("%s: %d of its %d skill folders are skills", b.Ref(), got, len(entries))
 		}
-		if (len(entries) > 0) != (b.Codes() || b.KeepsMemory()) {
+		if (len(entries) > 0) != (b.Codes() || b.Declared().Declares("memory")) {
 			t.Errorf("%s has %d skills", b.Ref(), len(entries))
 		}
 	}

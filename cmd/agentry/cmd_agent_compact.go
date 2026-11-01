@@ -75,7 +75,7 @@ func newAgentCompactCmd() *cobra.Command {
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Nothing was compacted: %s. The conversation goes on as it was.\n", out.Reason)
 				return engine.Classify(engine.ExitCLI, errors.New("the compaction did not finish"))
 			}
-			if !a.Builtin.KeepsMemory() {
+			if !a.KeepsMemory() {
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Compacted: a fresh conversation opens with a %d-byte handoff.\n", out.HandoffBytes)
 				return nil
 			}

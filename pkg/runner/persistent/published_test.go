@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -26,6 +27,9 @@ type publishedRelease struct {
 	persona string
 	// pack ships the Drafter's guide as the release's own pack.
 	pack bool
+	// files are further files of the tree by path, each under a folder
+	// the archive includes whole (memory/, skills/).
+	files map[string]string
 }
 
 // installPublished lays a persistent release of ns/name@version down in the
@@ -52,6 +56,19 @@ func installPublished(t *testing.T, home, ns, name, version string, r publishedR
 		if err := os.CopyFS(filepath.Join(tree, "knowledge", "drafting-guide"), sub); err != nil {
 			t.Fatal(err)
 		}
+	}
+	folders := map[string]bool{}
+	for p, body := range r.files {
+		folders[strings.SplitN(p, "/", 2)[0]] = true
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(tree, p)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(tree, p), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, f := range slices.Sorted(maps.Keys(folders)) {
+		include += `, "` + f + `/**"`
 	}
 	text += "publish:\n  include: [" + include + "]\n"
 	for f, body := range map[string]string{"agent.yaml": text, "AGENT.md": "You keep notes for the person.\n"} {

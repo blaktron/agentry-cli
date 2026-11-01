@@ -69,14 +69,22 @@ func skillsPath(home, name string) string { return filepath.Join(Dir(home, name)
 // skillLineCut bounds the description a skill's consent sentence quotes.
 const skillLineCut = 200
 
-// skillEntries are the agent's skill entries: its built-in's, on by default
-// and asking no agreement (they come with the agent and grant nothing),
-// then the person's, each agreed to as its sentence says.
+// skillEntries are the agent's skill entries: its own (Agent.Skills), on
+// by default and asking no agreement (they come with the agent, were read
+// with it, and grant nothing), then, for an agent that takes skills, the
+// person's, each agreed to as its sentence says.
 func skillEntries(a Agent, c Config) []RosterEntry {
 	var out []RosterEntry
-	for _, s := range a.Builtin.Skills() {
-		out = append(out, RosterEntry{ID: SkillEntryID(s.Name), Kind: KindSkill, Name: s.Name, GrantedBy: GrantedByBuiltin,
-			Line: "Follows the skill " + s.Name + ", built into Agentry, when a request matches it: " + strconv.Quote(cutText(s.Description, skillLineCut)), noConsent: true})
+	for _, s := range a.Skills() {
+		from := ", built into Agentry"
+		if s.GrantedBy == GrantedByRelease {
+			from = ", which its release ships"
+		}
+		out = append(out, RosterEntry{ID: SkillEntryID(s.Name), Kind: KindSkill, Name: s.Name, GrantedBy: s.GrantedBy,
+			Line: "Follows the skill " + s.Name + from + ", when a request matches it: " + strconv.Quote(cutText(s.Description, skillLineCut)), noConsent: true})
+	}
+	if !a.TakesSkills() {
+		return out
 	}
 	for _, s := range c.Skills {
 		out = append(out, RosterEntry{ID: SkillEntryID(s.Name), Kind: KindSkill, Name: s.Name, GrantedBy: GrantedByYou, Line: addedSkillLine(a, s)})
@@ -111,7 +119,11 @@ func stageSkills(home string, a Agent, c Config, on func(id string) bool) ([]spe
 		return nil, "", fmt.Errorf("the %s agent's skills folder: %w", a.Name, err)
 	}
 	var skills []spec.Skill
-	builtins := a.Builtin.Skills()
+	builtins := a.Skills()
+	if !a.TakesSkills() {
+		// Only the agent's own, the memory's, without the key.
+		c.Skills = nil
+	}
 	for _, s := range builtins {
 		if on(SkillEntryID(s.Name)) {
 			skills = append(skills, spec.Skill{Name: s.Name, Description: s.Description})
@@ -250,9 +262,9 @@ func DiscardSkill(home string, a Agent, name string) error {
 
 // skillNameFree refuses a name the agent has already, built in or added.
 func skillNameFree(a Agent, c Config, name string) error {
-	for _, s := range a.Builtin.Skills() {
+	for _, s := range a.Skills() {
 		if s.Name == name {
-			return fmt.Errorf("the %s agent has a skill %s built in: give yours another name", a.Name, name)
+			return fmt.Errorf("the %s agent has a skill %s of its own: give yours another name", a.Name, name)
 		}
 	}
 	if slices.ContainsFunc(c.Skills, func(s AddedSkill) bool { return s.Name == name }) {
@@ -271,6 +283,8 @@ func addSkill(home string, a Agent, next *Config, s AddedSkill) error {
 		return skill.DescriptionValid(s.Description)
 	case s.Check != SkillCheckedClamAV && s.Check != SkillUnchecked:
 		return errors.New("a skill is added as checked by ClamAV or unchecked")
+	case !a.TakesSkills():
+		return fmt.Errorf("the %s agent takes no skills: its release does not declare them", a.Name)
 	case len(next.Skills) >= MaxAddedSkills:
 		return fmt.Errorf("the %s agent has %d skills you added, the most it takes", a.Name, MaxAddedSkills)
 	}
@@ -287,9 +301,9 @@ func addSkill(home string, a Agent, next *Config, s AddedSkill) error {
 }
 
 func removeSkill(a Agent, next *Config, name string) error {
-	for _, s := range a.Builtin.Skills() {
+	for _, s := range a.Skills() {
 		if s.Name == name {
-			return fmt.Errorf("the skill %s is built into the %s agent: switch it off instead (agentry agent grant %s %s off)", name, a.Name, a.Name, SkillEntryID(name))
+			return fmt.Errorf("the skill %s comes with the %s agent: switch it off instead (agentry agent grant %s %s off)", name, a.Name, a.Name, SkillEntryID(name))
 		}
 	}
 	i := slices.IndexFunc(next.Skills, func(s AddedSkill) bool { return s.Name == name })

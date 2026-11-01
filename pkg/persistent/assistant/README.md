@@ -14,15 +14,21 @@ its archive from the package the CLI carries, and the archive's digest is the
 one the CLI reports. Run `agentry builtins` to print it and compare it with
 the digest on this page.
 
-Installing this release does not give you the Assistant. A persistent release
-runs only as a built-in, so the application runs it, with what is listed
-below; the runner refuses to run this release as an ordinary QuickAgent.
+Installing this release does not give you a second Assistant: the CLI
+refuses to install a built-in's release as a persistent agent, and runs the
+Assistant it carries. It never runs this release as an ordinary QuickAgent,
+since the release declares only the persistent mode.
 
 ## What the application gives it
 
 The manifest declares no network access, no file access, no commands and no
-secret. When the application runs the Assistant, it gives it what follows,
-and `agentry agent show assistant` lists what it has:
+run secret. Under `capabilities.persistent` it declares the time with its
+tasks (`clock`), a memory (`memory`), skills (`skills`), the stored secrets
+it asks for (`secrets`: `FASTMAIL_TOKEN` and `BRAVE_API_KEY`; you may store
+others), its own name and personality (`selfConfigure`), Agentry's helper
+tools (`helper`) and the meeting tools (`meetings`). When the application
+runs the Assistant, it gives it what follows, and `agentry agent show
+assistant` lists what it has:
 
 - **Its conversation is kept** on a volume of the agent's own, which the
   runner keeps between starts and removes only when you reset the agent
