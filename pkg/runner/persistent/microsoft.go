@@ -194,7 +194,7 @@ func (m Microsoft) server() (offer.ImageServer, error) {
 	if m.Policy != nil {
 		images = m.Policy.Images
 	}
-	for _, s := range m.Agent.Builtin.ImageServers(images) {
+	for _, s := range m.Agent.ImageServers(images) {
 		if s.Key == assistant.MS365Key {
 			return s, nil
 		}
@@ -451,7 +451,7 @@ func (m Microsoft) signInClient(ctx context.Context, s offer.ImageServer, in Ima
 // buildImage is the image the build offers for an agent's image server, the
 // one a policy that names none runs.
 func buildImage(a Agent, key string) string {
-	for _, o := range a.Builtin.ImageServers(policy.Images{}) {
+	for _, o := range a.ImageServers(policy.Images{}) {
 		if o.Key == key {
 			return o.Image
 		}

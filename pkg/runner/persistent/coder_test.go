@@ -25,14 +25,26 @@ func coderAgent(t *testing.T) Agent {
 // devServer is a dev server as config.yaml keeps it.
 var devServer = DevHost{Host: "deploy@devbox.example", HostKey: "SHA256:" + strings.Repeat("A", 43)}
 
-// TestCoderEgressConsentRecorded: the Coding agent's open egress, its
-// programs and its browser are on by default and asked for before its first
-// segment; once agreed, the segment is given them and its receipt's roster
-// records the egress entry on, with the sentence the person agreed to.
+// TestCoderEgressConsentRecorded: the coding toolchain's open egress, its
+// programs and its browser are on by default and asked for before the first
+// segment of the Coding agent or of a published agent that declares coder;
+// once agreed, the segment is given them and its receipt's roster records
+// the egress entry on, with the sentence the person agreed to.
 func TestCoderEgressConsentRecorded(t *testing.T) {
-	home := shortHome(t)
-	t.Setenv("HOME", t.TempDir())
-	a := coderAgent(t)
+	t.Run("the Coding agent", func(t *testing.T) {
+		home := shortHome(t)
+		t.Setenv("HOME", t.TempDir())
+		coderEgressConsentRecorded(t, home, coderAgent(t))
+	})
+	t.Run("a published agent", func(t *testing.T) {
+		home := shortHome(t)
+		t.Setenv("HOME", t.TempDir())
+		coderEgressConsentRecorded(t, home, installPublished(t, home, "acme", "builder", "1.0.0", publishedRelease{extra: "capabilities:\n  persistent:\n    coder: true\n"}))
+	})
+}
+
+func coderEgressConsentRecorded(t *testing.T, home string, a Agent) {
+	t.Helper()
 	if err := SaveConfig(home, a.Name, Config{Enabled: true}); err != nil {
 		t.Fatal(err)
 	}

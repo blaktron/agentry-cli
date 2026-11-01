@@ -18,7 +18,7 @@ import (
 
 // mailProvidersOf are the agent's mail providers: its built-in's, but in a
 // test.
-var mailProvidersOf = func(a Agent) []offer.MailProvider { return a.Builtin.MailProviders() }
+var mailProvidersOf = func(a Agent) []offer.MailProvider { return a.MailProviders() }
 
 // mailProviderOf is the provider whose image server key is, if any.
 func mailProviderOf(a Agent, key string) (offer.MailProvider, bool) {

@@ -214,7 +214,7 @@ func BuildRosterUnder(a Agent, c Config, applied *Applied, malwareCheck bool) Ro
 		if malwareCheck {
 			shareLine, shareAlike = checked, []string{unchecked}
 		}
-	case a.Builtin.Codes():
+	case a.Codes():
 		shareLine += shareLineCoder
 	}
 	add(RosterEntry{ID: EntryShare, Kind: KindFiles, Name: "Your share folder", GrantedBy: folders, Line: shareLine, alike: shareAlike}, true)
@@ -229,8 +229,8 @@ func BuildRosterUnder(a Agent, c Config, applied *Applied, malwareCheck bool) Ro
 	if a.ArmsMeetings() {
 		add(RosterEntry{ID: EntryMeetings, Kind: KindMeetings, Name: meetingsName, GrantedBy: a.grantedBy(), Line: meetingsLine}, false)
 	}
-	if a.Builtin.Codes() {
-		for _, e := range coderEntries(c) {
+	if a.Codes() {
+		for _, e := range coderEntries(a, c) {
 			add(e, true)
 		}
 	}
@@ -240,15 +240,18 @@ func BuildRosterUnder(a Agent, c Config, applied *Applied, malwareCheck bool) Ro
 	for _, e := range secretEntries(a, c) {
 		add(e, true)
 	}
+	for _, e := range reachEntries(a) {
+		add(e, true)
+	}
 	if e, ok := voiceEntry(a); ok {
 		add(e, false)
 	}
-	if a.Builtin.Codes() {
+	if a.Codes() {
 		for _, e := range accountEntries(c) {
 			add(e, true)
 		}
 	}
-	if a.Builtin.ReadsCalendars() {
+	if a.ReadsCalendars() {
 		for _, e := range calendarEntries(c) {
 			add(e, true)
 		}
@@ -266,7 +269,7 @@ func BuildRosterUnder(a Agent, c Config, applied *Applied, malwareCheck bool) Ro
 			continue
 		}
 		line := "Searches your knowledge pack " + k + ", read-only"
-		if a.Builtin.Codes() {
+		if a.Codes() {
 			line += "; the programs it runs can read the pack too, and with open egress on can send it anywhere"
 		}
 		add(RosterEntry{ID: KnowledgeEntryID(k), Kind: KindKnowledge, Name: k, GrantedBy: GrantedByYou, Line: line}, true)
@@ -405,7 +408,7 @@ func ServerMaySeeShare(srv manifest.MCPServer) error {
 // and saves new files into it through the share outbox: for the Coding
 // agent, whose share is read as it is, that it sees it unchecked.
 func serverShareLine(a Agent) string {
-	if a.Builtin.Codes() {
+	if a.Codes() {
 		return ", and sees your share folder (read only, unchecked, and writes new files into it)"
 	}
 	return ", and sees your share folder (read only, and writes new files into it)"
@@ -416,7 +419,7 @@ func serverShareLine(a Agent) string {
 // server's sentence with the switch off, which says less, and not the one
 // with it on, which says more, so turning the switch on asks again.
 func readOnlyShareLine(a Agent) string {
-	if a.Builtin.Codes() {
+	if a.Codes() {
 		return ", and sees your share folder (read only, unchecked)"
 	}
 	return ", and sees your share folder (read only)"
@@ -497,8 +500,10 @@ func Apply(ctx context.Context, home string, a Agent, c Config, r Roster, open P
 // person's knowledge packs and their Writing Voice. A nil opener refuses a
 // roster with what it opens on.
 type Openers struct {
-	Packs Packs
-	Voice Voice
+	Packs  Packs
+	Voice  Voice
+	Web    WebOpener
+	Review ReviewOpener
 }
 
 // ApplyWith is Apply with each of the person's things it opens.
@@ -544,7 +549,7 @@ func ApplyWith(ctx context.Context, home string, a Agent, c Config, r Roster, op
 		}
 		g.Share = dir
 	}
-	if a.Builtin.Codes() {
+	if a.Codes() {
 		if g.Coder, g.DevHost, err = coderGrant(ctx, c, on, ready); err != nil {
 			return g, applied, done, err
 		}
@@ -569,7 +574,7 @@ func ApplyWith(ctx context.Context, home string, a Agent, c Config, r Roster, op
 	}
 	// The calendar feeds that are on reach the tools server's calendar
 	// tools, each with its address, read in the person's zone.
-	if a.Builtin.ReadsCalendars() {
+	if a.ReadsCalendars() {
 		if g.CalendarFeeds, err = readCalendarFeeds(keys, a, c, on); err != nil {
 			return g, applied, done, err
 		}
@@ -621,6 +626,9 @@ func ApplyWith(ctx context.Context, home string, a Agent, c Config, r Roster, op
 		return g, applied, done, err
 	}
 	if g.Voice, err = openVoice(ctx, a, on, openers.Voice); err != nil {
+		return g, applied, done, err
+	}
+	if g.Web, g.Review, err = openReach(ctx, a, on, openers); err != nil {
 		return g, applied, done, err
 	}
 	var names []string

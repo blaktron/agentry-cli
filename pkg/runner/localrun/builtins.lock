@@ -191,3 +191,7 @@ agentry/assistant@1.17.0 sha256:9db3fcd7fb147ae14d8b3ef7127feeddf47e2fd1d9354e99
 agentry/main@1.2.0 sha256:4e36da7002eef874d78995f4d1ca7494170c3b84b4d41ab95eef417ba3c2ae14
 # 1.4.0, over 1.3.2: the Coding agent's manifest declares skills and the stored secret BRAVE_API_KEY under capabilities.persistent; its README says so.
 agentry/coder@1.4.0 sha256:3c1c0235c0a4336fa17dd07abb83d8dd42c593cf4b5f0ff0ec4938284b4d43c2
+# 1.18.0, over 1.17.0: the Assistant's manifest also declares its reach under capabilities.persistent (calendars, mail at google, microsoft and fastmail, the google-workspace and microsoft-365 image servers), which the runner now reads in place of a check of its name; its README says so.
+agentry/assistant@1.18.0 sha256:c4fe07ab74cc149ee6c5327e57ca44630e861a75a9e4d841630a05cf8755d460
+# 1.5.0, over 1.4.0: the Coding agent's manifest declares the coding toolchain under capabilities.persistent (coder), which the runner now reads in place of a check of its name; its README says so.
+agentry/coder@1.5.0 sha256:991199473ed122e5a56dd495d14c08b5b8309a6fc217587668fdd5af34d2a433

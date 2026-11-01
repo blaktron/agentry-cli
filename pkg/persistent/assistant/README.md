@@ -26,7 +26,10 @@ run secret. Under `capabilities.persistent` it declares the time with its
 tasks (`clock`), a memory (`memory`), skills (`skills`), the stored secrets
 it asks for (`secrets`: `FASTMAIL_TOKEN` and `BRAVE_API_KEY`; you may store
 others), its own name and personality (`selfConfigure`), Agentry's helper
-tools (`helper`) and the meeting tools (`meetings`). When the application
+tools (`helper`), the meeting tools (`meetings`), calendar feeds
+(`calendars`), mail at Google, Microsoft and Fastmail (`mail`), and the
+Google Workspace and Microsoft 365 servers the CLI runs from its pinned
+images (`imageServers`). When the application
 runs the Assistant, it gives it what follows, and `agentry agent show
 assistant` lists what it has:
 

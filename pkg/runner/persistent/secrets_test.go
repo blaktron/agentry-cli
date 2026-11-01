@@ -184,7 +184,7 @@ func TestRosterReachesEveryGateWithAStoredSecret(t *testing.T) {
 					}
 					return string(b)
 				}
-				programs := on && a.Builtin.Codes()
+				programs := on && a.Codes()
 				ts, cat := read("toolspec.json"), read("catalog.yaml")
 				if strings.Contains(ts, `"secretEnv"`) != programs || strings.Contains(cat, "agentry-tools.github_token") != programs {
 					t.Errorf("the tools server's secret variables: spec %v, catalogue %v, want %v", strings.Contains(ts, `"secretEnv"`), strings.Contains(cat, "agentry-tools.github_token"), programs)

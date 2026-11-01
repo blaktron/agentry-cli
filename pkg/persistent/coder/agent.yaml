@@ -1,7 +1,7 @@
 schemaVersion: "2"
 name: coder
 namespace: agentry
-version: 1.4.0
+version: 1.5.0
 summary: "A coding agent that keeps its projects and conversation between starts, on your computer."
 license: MIT
 authors:
@@ -19,5 +19,6 @@ capabilities:
   persistent:
     skills: true
     secrets: [BRAVE_API_KEY]
+    coder: true
 publish:
   include: [agent.yaml, INSTRUCTION.md, README.md, LICENSE, "skills/**"]

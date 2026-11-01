@@ -13,8 +13,9 @@ import (
 )
 
 // agentMailLong is configure's help for the mail providers.
-const agentMailLong = "\n\n--mail-provider enables one of the Assistant's mail providers, the services\n" +
-	"whose mail and calendar it can reach (google: Google Workspace through gog),\n" +
+const agentMailLong = "\n\n--mail-provider enables one of an agent's mail providers (the Assistant's, or\n" +
+	"one a published agent declares), the services whose mail and calendar it can\n" +
+	"reach (google: Google Workspace through gog),\n" +
 	"and --no-mail-provider disables one. Only an enabled provider's servers are\n" +
 	"on its roster, to switch on with agentry agent grant. Disabling keeps the\n" +
 	"provider's sign-in, so enabling it again needs no new one; agentry agent reset\n" +

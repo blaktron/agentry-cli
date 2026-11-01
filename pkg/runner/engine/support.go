@@ -133,7 +133,7 @@ type runDirs struct {
 	// has unrestricted egress, and runID names it, for the receipt's
 	// daemon line.
 	web, anyEgress bool
-	// coderEgress says that egress is the Coding agent's open egress.
+	// coderEgress says that egress is the coding toolchain's open egress.
 	coderEgress bool
 	runID       string
 	// harnessEnds is when the run's timeout ends the harness, set at its

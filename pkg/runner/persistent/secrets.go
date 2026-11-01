@@ -142,7 +142,7 @@ func secretLine(a Agent, c Config, name string) string {
 	}
 	line := "Gives your secret " + name
 	switch {
-	case a.Builtin.Codes():
+	case a.Codes():
 		line += " to the programs it runs, in their environment, which can read it and send it anywhere they reach"
 		if len(servers) > 0 {
 			line += ", and to the MCP server " + strings.Join(servers, ", ")

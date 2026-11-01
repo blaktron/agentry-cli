@@ -195,7 +195,7 @@ func findCalendarFeed(feeds []CalendarFeed, name string) int {
 // addCalendarFeed records a calendar feed in c, on: a new one, or one whose
 // address was set again. The address is kept in the keychain first.
 func addCalendarFeed(a Agent, c *Config, f CalendarFeed) error {
-	if !a.Builtin.ReadsCalendars() {
+	if !a.ReadsCalendars() {
 		return fmt.Errorf("the %s agent has no calendar feeds: the Assistant alone reads them", a.Name)
 	}
 	if err := spec.CheckCalendarFeedName(f.Name); err != nil {
@@ -302,7 +302,7 @@ type CalendarFeedState struct {
 
 // CalendarFeeds are the agent's calendar feeds as a client shows them.
 func CalendarFeeds(a Agent, c Config) []CalendarFeedState {
-	if !a.Builtin.ReadsCalendars() {
+	if !a.ReadsCalendars() {
 		return nil
 	}
 	r := BuildRoster(a, c, nil)

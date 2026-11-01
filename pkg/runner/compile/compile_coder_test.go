@@ -29,13 +29,12 @@ func coderInputs(t *testing.T, g spec.CoderGrant) Inputs {
 	return in
 }
 
-// coderYAML is the pure-text release as agentry/coder, persistent, with caps
-// as its capabilities block.
+// coderYAML is the pure-text release as agentry/coder, persistent and
+// declaring the coding toolchain, with caps beside it in its capabilities
+// block.
 func coderYAML(caps string) string {
 	y := strings.Replace(strings.Replace(pureTextYAML, "modes: [autonomous]", "modes: [persistent]", 1), "name: pure-text\nnamespace: demo", "name: coder\nnamespace: agentry", 1)
-	if caps != "" {
-		y = strings.Replace(y, "publish:", "capabilities:\n"+caps+"publish:", 1)
-	}
+	y = strings.Replace(y, "publish:", "capabilities:\n  persistent:\n    coder: true\n"+caps+"publish:", 1)
 	return y
 }
 
@@ -99,7 +98,7 @@ func TestTheCodingAgentsGrantReachesEveryGate(t *testing.T) {
 	if plan.Capabilities.EgressMode != "all" || !ts.Fetch.AllowAll || tools["disableNetwork"] != nil || tools["allowHosts"] != nil || !plan.Capabilities.ToolsReachPastHost() {
 		t.Errorf("egress %q, fetch %+v, tools entry %v", plan.Capabilities.EgressMode, ts.Fetch, tools)
 	}
-	if line := plan.Enforcement["network"]; !strings.Contains(line, "the Coding agent's open egress") || strings.Contains(line, "permitted by operator policy") {
+	if line := plan.Enforcement["network"]; !strings.Contains(line, "the coding toolchain's open egress") || strings.Contains(line, "permitted by operator policy") {
 		t.Errorf("network line: %q", line)
 	}
 
@@ -130,10 +129,12 @@ func TestTheCodingAgentsGrantReachesEveryGate(t *testing.T) {
 	}
 }
 
-// TestTheCodingAgentsGrantIsAPersistentBuiltinsAlone: the grant is refused
-// to any source but a built-in, to a plan that is not persistent, without
-// the agent's folders, beside the web tools or the review grant, and beside
-// a manifest that declares egress of its own.
+// TestTheCodingAgentsGrantIsAPersistentBuiltinsAlone: the grant is given to
+// a package of any source and any name that declares
+// capabilities.persistent.coder, and refused to one that does not (the
+// Coding agent's own name included), to a plan that is not persistent,
+// without the agent's folders, beside the web tools or the review grant,
+// and beside a manifest that declares egress of its own.
 func TestTheCodingAgentsGrantIsAPersistentBuiltinsAlone(t *testing.T) {
 	all := spec.CoderGrant{Commands: true, OpenEgress: true, Browser: true, DevHost: true}
 	refused := func(name string, in Inputs, why string) {
@@ -146,24 +147,27 @@ func TestTheCodingAgentsGrantIsAPersistentBuiltinsAlone(t *testing.T) {
 	for _, source := range []string{"registry", "local"} {
 		in := coderInputs(t, all)
 		in.Source = source
-		refused("from "+source, in, "persistent built-in")
+		in.Manifest = parseManifest(t, strings.Replace(coderYAML(""), "name: coder\nnamespace: agentry", "name: builder\nnamespace: acme", 1))
+		if _, err := Compile(in, t.TempDir()); err != nil {
+			t.Errorf("a %s package that declares coder: %v", source, err)
+		}
 	}
 	auto := coderInputs(t, all)
 	auto.Manifest = parseManifest(t, strings.Replace(coderYAML(""), "modes: [persistent]", "modes: [autonomous, persistent]", 1))
 	auto.Mode, auto.AgentFiles = manifest.ModeAutonomous, nil
-	refused("on an autonomous plan", auto, "persistent built-in's alone")
-	other := coderInputs(t, all)
-	other.Manifest = parseManifest(t, strings.Replace(coderYAML(""), "name: coder", "name: assistant", 1))
-	refused("for another built-in", other, "agentry/coder's alone")
+	refused("on an autonomous plan", auto, "capabilities.persistent.coder")
+	undeclared := coderInputs(t, all)
+	undeclared.Manifest = parseManifest(t, strings.Replace(strings.Replace(pureTextYAML, "modes: [autonomous]", "modes: [persistent]", 1), "name: pure-text\nnamespace: demo", "name: coder\nnamespace: agentry", 1))
+	refused("for agentry/coder without the key", undeclared, "capabilities.persistent.coder")
 	noFiles := coderInputs(t, all)
 	noFiles.AgentFiles = nil
 	refused("without its folders", noFiles, "with its folders")
 	web := coderInputs(t, all)
 	web.Web = true
-	refused("beside the web tools", web, "beside the web tools")
+	refused("beside the web tools", web, "beside the coding toolchain")
 	review := coderInputs(t, all)
 	review.Review = true
-	refused("beside the review grant", review, "beside the web tools or the review grant")
+	refused("beside the review grant", review, "beside the coding toolchain")
 	for name, caps := range map[string]string{
 		"egress":      "  network:\n    egress: [example.com]\n",
 		"exec":        "  exec:\n    commands: [git]\n",

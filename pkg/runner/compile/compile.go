@@ -251,8 +251,8 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		}
 		caps.AgentFiles = &spec.AgentFiles{Share: in.AgentFiles.Share, CheckShare: checked, MalwareCheck: checked && in.Policy.MalwareCheckOn(), Skills: skills, Memory: in.AgentFiles.Memory}
 	}
-	if len(spec.ImageServers(in.MCPServers)) > 0 && (mode != manifest.ModePersistent || in.Source != "builtin") {
-		return nil, &PolicyRefusal{Reason: "a server run from an image is granted to a persistent built-in alone"}
+	if err := imageServersDeclared(in.MCPServers, mode, m.Capabilities.Persistent); err != nil {
+		return nil, err
 	}
 	for _, srv := range spec.ImageServers(in.MCPServers) {
 		if err := checkImageServer(srv); err != nil {
@@ -284,10 +284,15 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	if in.MCPServers, err = serverShares(in, mode, caps); err != nil {
 		return nil, err
 	}
-	// A persistent agent's grants never sit beside the web tools or the
-	// review grant, whose containers are held to one network each.
-	if (in.AgentFiles != nil || in.AppLink != "" || in.Coder != nil || in.Calendar != nil) && (in.Web || in.Review) {
-		return nil, &PolicyRefusal{Reason: "a persistent agent's grants are never given beside the web tools or the review grant"}
+	// The web tools, the review grant, the coding toolchain's open egress
+	// and calendar feeds each give the tools container a network of its
+	// own, so a persistent agent is given one of them at a time; its
+	// folders, its app link and the MCP servers it has, each server a
+	// container of its own, sit beside any of them.
+	if in.Web || in.Review {
+		if err := persistentNetworkShape(in, mode); err != nil {
+			return nil, err
+		}
 	}
 	if (in.RegistrySearch || in.WebSearchedOnly || in.WebGivenOnly) && !in.Web {
 		return nil, &PolicyRefusal{Reason: toolsrv.ToolRegistrySearch + ", the searched-only and the given-only web_read are of the web tools, and are never granted without them"}
@@ -1074,12 +1079,20 @@ func CompileOutputSchema(raw []byte) (*jsonschema.Schema, error) {
 // nothing their unrestricted container could widen (refused at compile for
 // any release).
 func checkWebGrant(in Inputs, caps spec.CapSummary) error {
-	if in.Source != "builtin" {
-		return &PolicyRefusal{Reason: fmt.Sprintf("the web tools (%s, %s, %s) are the built-ins' alone, the Drafter's, the Knowledge Creator's and the Voice Writer's; a %s package is never granted them",
+	persistent := in.Mode == manifest.ModePersistent
+	if persistent && !in.Manifest.Capabilities.Persistent.Declares("web") {
+		return &PolicyRefusal{Reason: "the web tools are granted to a persistent agent that declares capabilities.persistent.web, and this one does not"}
+	}
+	if in.Source != "builtin" && !persistent {
+		return &PolicyRefusal{Reason: fmt.Sprintf("the web tools (%s, %s, %s) are the built-ins' alone, the Drafter's, the Knowledge Creator's and the Voice Writer's, and a persistent agent's that declares capabilities.persistent.web; a %s package is never granted them otherwise",
 			toolsrv.ToolWebSearch, toolsrv.ToolWebRead, toolsrv.ToolRegistrySearch, cmp.Or(in.Source, "release"))}
 	}
 	c := in.Manifest.Capabilities
-	if caps.EgressMode != "none" || len(caps.ExecCommands) > 0 || caps.FSWriteMode != "none" || len(c.Secrets) > 0 || len(c.MCPServers) > 0 || len(in.MCPServers) > 0 {
+	// A persistent agent's MCP servers are containers of their own, each
+	// held to its declared hosts by the gateway, so they sit beside the web
+	// tools' container; a run's do not.
+	servers := !persistent && (len(c.MCPServers) > 0 || len(in.MCPServers) > 0)
+	if caps.EgressMode != "none" || len(caps.ExecCommands) > 0 || caps.FSWriteMode != "none" || len(c.Secrets) > 0 || servers {
 		return &PolicyRefusal{Reason: "the web tools are granted only to a package that declares no egress, exec, filesystem write, secret or MCP server: their container has no network allowlist of its own"}
 	}
 	// Under a sandboxed runtime the tools server's own network stack does
@@ -1097,15 +1110,20 @@ func checkWebGrant(in Inputs, caps spec.CapSummary) error {
 // widen, and never the web tools beside it, since their container's network
 // is the whole public web and the review's is TypeSafe's API alone.
 func checkReviewGrant(in Inputs, caps spec.CapSummary) error {
-	if in.Source != "builtin" {
-		return &PolicyRefusal{Reason: fmt.Sprintf("the review grant (%s) is a built-in's alone; a %s package is never granted it",
+	persistent := in.Mode == manifest.ModePersistent
+	if persistent && !in.Manifest.Capabilities.Persistent.Declares("review") {
+		return &PolicyRefusal{Reason: "the review grant is granted to a persistent agent that declares capabilities.persistent.review, and this one does not"}
+	}
+	if in.Source != "builtin" && !persistent {
+		return &PolicyRefusal{Reason: fmt.Sprintf("the review grant (%s) is a built-in's alone, and a persistent agent's that declares capabilities.persistent.review; a %s package is never granted it otherwise",
 			toolsrv.ToolAIReview, cmp.Or(in.Source, "release"))}
 	}
 	if in.Web {
 		return &PolicyRefusal{Reason: "the review grant is never given beside the web tools: its container reaches TypeSafe's API alone, theirs the public web"}
 	}
 	c := in.Manifest.Capabilities
-	if caps.EgressMode != "none" || len(caps.ExecCommands) > 0 || caps.FSWriteMode != "none" || len(c.Secrets) > 0 || len(c.MCPServers) > 0 || len(in.MCPServers) > 0 {
+	servers := !persistent && (len(c.MCPServers) > 0 || len(in.MCPServers) > 0)
+	if caps.EgressMode != "none" || len(caps.ExecCommands) > 0 || caps.FSWriteMode != "none" || len(c.Secrets) > 0 || servers {
 		return &PolicyRefusal{Reason: "the review grant is given only to a package that declares no egress, exec, filesystem write, secret or MCP server: its container holds the person's key and reaches TypeSafe's API, and nothing else may run beside it"}
 	}
 	return nil
@@ -1218,7 +1236,7 @@ func baseToolSpec(caps spec.CapSummary, secrets []string) *toolsrv.Spec {
 		Web: toolsrv.Web{Enabled: caps.WebTools, RegistrySearch: caps.RegistrySearch, SearchedOnly: caps.WebSearchedOnly, GivenOnly: caps.WebGivenOnly, Render: renderMount(caps)},
 		// The review grant: the run's ledger is the engine's, stamped per
 		// run.
-		Review: toolsrv.Review{Enabled: caps.ReviewTools},
+		Review: toolsrv.Review{Enabled: caps.ReviewTools, Root: reviewRoot(caps)},
 	}
 }
 
@@ -2250,7 +2268,7 @@ func enforcement(caps spec.CapSummary, secrets, optional []string, extraServers 
 	case "all":
 		e["network"] = "UNRESTRICTED tool-plane egress (manifest \"*\", permitted by operator policy allowWildcardEgress); where the gateway's docker socket is filtered (the daemon line says whether it is), from a network of the run's own that only the tools server joins (its declared commands run there too), else from the daemon's default"
 		if c := caps.Coder; c != nil && c.OpenEgress {
-			e["network"] = "UNRESTRICTED tool-plane egress: the Coding agent's open egress, which the person agreed to for this agent (its roster's egress entry, recorded in this receipt's persistent.roster), not the machine policy's allowWildcardEgress; " +
+			e["network"] = "UNRESTRICTED tool-plane egress: the coding toolchain's open egress, which the person agreed to for this agent (its roster's egress entry, recorded in this receipt's persistent.roster), not the machine policy's allowWildcardEgress; " +
 				"where the gateway's docker socket is filtered (the daemon line says whether it is), from a network of the segment's own that only the tools server joins (the programs it runs run there too), else from the daemon's default; the agent's own container still reaches only the llm-proxy"
 		}
 	}
@@ -2260,14 +2278,14 @@ func enforcement(caps spec.CapSummary, secrets, optional []string, extraServers 
 			tools = toolsrv.ToolWebSearch + " (only with a search to use), " + toolsrv.ToolWebRead + " and " + toolsrv.ToolRegistrySearch
 			read = "every page, search result and registry answer"
 		}
-		e["network"] = "no declared egress and no fetch tool; the built-in's web tools alone reach out, from a tools container with no network allowlist of its own, each holding its own bounds (see web)"
+		e["network"] = "no declared egress and no fetch tool; the web tools alone reach out, from a tools container with no network allowlist of its own, each holding its own bounds (see web)"
 		if caps.WebSearchedOnly {
 			tools += ", " + toolsrv.ToolWebRead + " opening only an address a " + toolsrv.ToolWebSearch + " of this run returned and AI Review passed"
 		}
 		if caps.WebGivenOnly {
 			tools, read = toolsrv.ToolWebRead+" alone, opening only an address the person gave the run (following a redirect that page's own server makes)", "every page"
 		}
-		e["web"] = "the built-in's web tools " + tools +
+		e["web"] = "the web tools " + tools +
 			", on the tools container only: " + toolsrv.ToolWebRead + " is GET only, http and https on ports 80 and 443, public addresses only, checked at every connection and redirect hop, no cookie or credential, at most 32 KiB of text a page; " +
 			read + " is read by AI Review (Jev) before the model, and one flagged or not scanned is withheld with its address and the reason; " +
 			"the keys (the job's credential, or the person's own Jev and search keys) are injected into the tools container only"
@@ -2278,7 +2296,7 @@ func enforcement(caps spec.CapSummary, secrets, optional []string, extraServers 
 	if caps.ReviewTools {
 		e["network"] = "no declared egress and no fetch tool; the tools container reaches " + toolsrv.ReviewHost + ":443 alone, TypeSafe's API, for the review grant, " +
 			"through the gateway's per-server proxy and DNS interception (--block-network)"
-		e["review"] = "the built-in's review grant, on the tools container only: " + toolsrv.ToolAIReview + " asks AI Review's release rubric (the six questions stage S5 asks) over the package in the run's inputs and answers with scores and file names, never the package's text; " +
+		e["review"] = "the review grant, on the tools container only: " + toolsrv.ToolAIReview + " asks AI Review's release rubric (the six questions stage S5 asks) over the package in the run's inputs and answers with scores and file names, never the package's text; " +
 			toolsrv.ToolReadInput + " answers a file only after AI Review's model-input questions passed it, and one flagged or not scanned is withheld with its path and the reason; " +
 			"the person's own TypeSafe key is injected into the tools container only"
 	}
@@ -2730,4 +2748,38 @@ func browserTools(caps spec.CapSummary) []string {
 		return nil
 	}
 	return browser.Tools(len(caps.Browser.Secrets) > 0)
+}
+
+// persistentNetworkShape refuses the web tools or the review grant beside
+// another grant that gives the tools container a network of its own: the
+// coding toolchain's open egress or calendar feeds. A plan that is not
+// persistent is refused them beside a persistent agent's grants at all.
+func persistentNetworkShape(in Inputs, mode manifest.Mode) error {
+	what := "the web tools are"
+	if !in.Web {
+		what = "the review grant is"
+	}
+	if mode != manifest.ModePersistent {
+		if in.AgentFiles != nil || in.AppLink != "" || in.Coder != nil || in.Calendar != nil {
+			return &PolicyRefusal{Reason: "a persistent agent's grants are never given beside the web tools or the review grant outside a persistent agent"}
+		}
+		return nil
+	}
+	switch {
+	case in.Coder != nil:
+		return &PolicyRefusal{Reason: what + " never given beside the coding toolchain: each gives the tools container a network of its own, so an agent takes one at a time"}
+	case in.Calendar != nil:
+		return &PolicyRefusal{Reason: what + " never given beside calendar feeds: the feeds' hosts are the tools container's only network, so an agent takes one at a time"}
+	}
+	return nil
+}
+
+// reviewRoot is the folder ai_review's paths are beneath: a persistent
+// agent's own root, where the packages it works on are; a run's inputs
+// otherwise.
+func reviewRoot(caps spec.CapSummary) string {
+	if caps.ReviewTools && caps.AgentFiles != nil {
+		return spec.AgentRoot
+	}
+	return ""
 }

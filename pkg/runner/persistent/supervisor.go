@@ -60,6 +60,12 @@ type Options struct {
 	// Voice opens the person's Writing Voice for each segment of a
 	// published agent that has it on; nil refuses a roster with it on.
 	Voice Voice
+	// Web and Review read the keys of the web tools and the review grant
+	// for each segment of an agent that declares them and has them on;
+	// nil reads them from Policy as work on this computer does
+	// (LocalWebOpener, LocalReviewOpener).
+	Web    WebOpener
+	Review ReviewOpener
 	// DevHost readies the Coding agent's dev server for each segment; nil
 	// readies it under Home and Policy (ReadyDevHost).
 	DevHost HostReady
@@ -315,7 +321,7 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 	if keys == nil {
 		keys = KeychainSecrets{}
 	}
-	grants, applied, packsDone, err := ApplyWith(ctx, home, a, cfg, roster, Openers{Packs: s.opts.Packs, Voice: s.opts.Voice}, ready, keys)
+	grants, applied, packsDone, err := ApplyWith(ctx, home, a, cfg, roster, s.openers(), ready, keys)
 	if err != nil {
 		return err
 	}
@@ -435,7 +441,7 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 		}
 		sess.SetResumeReason(reason)
 	}
-	if a.Builtin.Codes() && cfg.Segments > 0 && !byChange {
+	if a.Codes() && cfg.Segments > 0 && !byChange {
 		// The conversation goes on, and the programs it started in the
 		// background did not: they ran in the segment before. A restart
 		// for a change says so in the change's own frame.
@@ -1061,4 +1067,18 @@ func (s *Supervisor) Stop(ctx context.Context) (*receipt.Envelope, error) {
 		close(s.done)
 	})
 	return s.env, s.endErr
+}
+
+// openers are what each segment's Apply opens: the person's packs and
+// voice, and the keys of the web tools and the review grant, read from the
+// policy when the client gives no opener of its own.
+func (s *Supervisor) openers() Openers {
+	o := Openers{Packs: s.opts.Packs, Voice: s.opts.Voice, Web: s.opts.Web, Review: s.opts.Review}
+	if o.Web == nil && s.opts.Policy != nil {
+		o.Web = LocalWebOpener(s.opts.Policy)
+	}
+	if o.Review == nil && s.opts.Policy != nil {
+		o.Review = LocalReviewOpener(s.opts.Policy)
+	}
+	return o
 }

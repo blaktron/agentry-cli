@@ -253,7 +253,7 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 		delete(next.Consented, KnowledgeEntryID(k))
 	}
 	if ch.DevHost != nil || ch.ClearDevHost {
-		if !a.Builtin.Codes() {
+		if !a.Codes() {
 			return false, fmt.Errorf("the %s agent has no dev server: the Coding agent alone is given one", a.Name)
 		}
 		if ch.DevHost != nil && ch.ClearDevHost {
@@ -277,7 +277,7 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 		delete(next.Consented, EntryDevHost)
 	}
 	if ch.AddPort != nil || ch.RemovePort != "" {
-		if !a.Builtin.Codes() {
+		if !a.Codes() {
 			return false, fmt.Errorf("the %s agent publishes no ports: the Coding agent alone serves programs", a.Name)
 		}
 	}
