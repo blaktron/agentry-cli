@@ -113,8 +113,8 @@ func TestKnowledgeStoreCommands(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var got []knowledgeEntryJSON
-		if err := json.Unmarshal([]byte(out), &got); err != nil || len(got) != 1 || got[0].Name != "runbooks" || got[0].Wrapper != store.WrapperRegistry {
+		var listed struct{ Packs []knowledgeEntryJSON }
+		if err := json.Unmarshal([]byte(out), &listed); err != nil || len(listed.Packs) != 1 || listed.Packs[0].Name != "runbooks" || listed.Packs[0].Wrapper != store.WrapperRegistry {
 			t.Fatalf("list --json: %q %v", out, err)
 		}
 	})
@@ -478,8 +478,8 @@ func TestSharedKnowledgeCommands(t *testing.T) {
 		t.Fatalf("download --org: %q %v", out, err)
 	}
 	out, _, err = runCLI(t, nil, "--json", "knowledge", "list", "--registry", reg.URL)
-	var got []knowledgeEntryJSON
-	if err != nil || json.Unmarshal([]byte(out), &got) != nil || len(got) != 1 || got[0].Org != "acme" || !strings.Contains(got[0].Key, "acme's organization key") {
+	var listed struct{ Packs []knowledgeEntryJSON }
+	if err != nil || json.Unmarshal([]byte(out), &listed) != nil || len(listed.Packs) != 1 || listed.Packs[0].Org != "acme" || !strings.Contains(listed.Packs[0].Key, "acme's organization key") {
 		t.Fatalf("list --json: %q %v", out, err)
 	}
 

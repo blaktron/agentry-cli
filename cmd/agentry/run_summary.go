@@ -169,7 +169,7 @@ func printRunSummary(w io.Writer, env *receipt.Envelope) {
 // receipts folder when the run has one, and the retry hint.
 func failureReport(err error, receipts string) []string {
 	class := engine.ExitClassOf(exitCodeOfRun(err))
-	lines := []string{fmt.Sprintf("agentry: run failed: %s: %s", class.Name, class.Meaning)}
+	lines := []string{paint(os.Stderr, colorRed, fmt.Sprintf("agentry: run failed: %s: %s", class.Name, class.Meaning))}
 	text, detail := describeError(err)
 	cause := strings.Split(strings.TrimSpace(text), "\n")
 	lines = append(lines, "  cause: "+termtext.Safe(cause[0]))

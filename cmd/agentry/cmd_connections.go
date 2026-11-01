@@ -657,7 +657,7 @@ func newConnectionsListCmd() *cobra.Command {
 				})
 			}
 			if flags.jsonOut {
-				return emitJSON(cmd.OutOrStdout(), rows)
+				return emitJSON(cmd.OutOrStdout(), map[string]any{"connections": rows})
 			}
 			out := cmd.OutOrStdout()
 			if len(rows) == 0 {
@@ -741,7 +741,7 @@ func newConnectionsRemoveCmd() *cobra.Command {
 			}
 			removed, err := removeConnections(cmd.Context(), home, sel, server, "removed by the person")
 			if flags.jsonOut {
-				if jerr := emitJSON(cmd.OutOrStdout(), removed); jerr != nil {
+				if jerr := emitJSON(cmd.OutOrStdout(), map[string]any{"removed": removed}); jerr != nil {
 					return jerr
 				}
 				return err

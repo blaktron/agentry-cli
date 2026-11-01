@@ -14,7 +14,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -64,9 +63,7 @@ func listBuiltins(out io.Writer) error {
 		entries = append(entries, builtinEntry{Ref: b.Ref(), Digest: d})
 	}
 	if flags.jsonOut {
-		enc := json.NewEncoder(out)
-		enc.SetIndent("", "  ")
-		return enc.Encode(entries)
+		return emitJSON(out, map[string]any{"builtins": entries})
 	}
 	for _, e := range entries {
 		_, _ = fmt.Fprintf(out, "%s\t%s\n", e.Ref, e.Digest)

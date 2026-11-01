@@ -341,7 +341,10 @@ func runDraft(cmd *cobra.Command, args []string, o *draftOpts) error {
 		// its repair turn is given none (RepairRun).
 		first.Inputs = []string{rev.Dir}
 	}
+	stages := newStageLog(cmd)
+	stages.Stage("drafting with " + strings.TrimSpace(pol.Model.Provider+" "+pol.Model.Name))
 	env, runErr := draftRun(cmd, first)
+	stages.Close()
 	checker, checkerErr := draftChecker(web)
 	post := drafter.PostStep{
 		OutDir: outDir, Description: description, Task: task, Scan: desc, Ref: localrun.Drafter().Ref(), Build: version.Build(),

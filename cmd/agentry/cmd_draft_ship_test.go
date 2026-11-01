@@ -164,10 +164,11 @@ func TestDraftShipsAKeptPackWithItsOrigin(t *testing.T) {
 	}
 	d, _ := readDraft(t, out)
 	list, _, _ := runCLI(t, nil, "--json", "knowledge", "list", "--registry", f.reg.URL)
-	var kept []knowledgeEntryJSON
-	if json.Unmarshal([]byte(list), &kept) != nil || len(kept) != 1 {
+	var listed struct{ Packs []knowledgeEntryJSON }
+	if json.Unmarshal([]byte(list), &listed) != nil || len(listed.Packs) != 1 {
 		t.Fatalf("list %s", list)
 	}
+	kept := listed.Packs
 	if len(d.Ships) != 1 || d.Ships[0].Origin == nil || *d.Ships[0].Origin != (ship.Origin{Kind: ship.KindOwn, PackID: kept[0].Agentry.ID}) {
 		t.Fatalf("ships %+v", d.Ships)
 	}

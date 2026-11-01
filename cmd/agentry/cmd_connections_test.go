@@ -266,8 +266,8 @@ func TestConnectionsListRemoveAndUninstall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var rows []connectionOut
-	if err := json.Unmarshal([]byte(out), &rows); err != nil || len(rows) != 1 || rows[0].Server != v.ServerURL() || rows[0].State != "connected" || rows[0].KeptIn != "file" {
+	var listed struct{ Connections []connectionOut }
+	if err := json.Unmarshal([]byte(out), &listed); err != nil || len(listed.Connections) != 1 || listed.Connections[0].Server != v.ServerURL() || listed.Connections[0].State != "connected" || listed.Connections[0].KeptIn != "file" {
 		t.Fatalf("list = %s (%v)", out, err)
 	}
 	assertNoProbe(t, "connections list", out, append([]string{probeClientSecret}, v.Issued...))
@@ -584,10 +584,11 @@ func TestRemovalNamesTheConnectionsThatShareTheGrant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var rows []connectionOut
-	if err := json.Unmarshal([]byte(out), &rows); err != nil || len(rows) != 3 {
+	var listed struct{ Connections []connectionOut }
+	if err := json.Unmarshal([]byte(out), &listed); err != nil || len(listed.Connections) != 3 {
 		t.Fatalf("list = %s (%v)", out, err)
 	}
+	rows := listed.Connections
 	for _, r := range rows {
 		if len(r.SharesGrantWith) != 2 {
 			t.Errorf("%s shares its grant with %v, want the other two", r.Ref, r.SharesGrantWith)
@@ -624,8 +625,8 @@ func TestRemovalNamesTheConnectionsThatShareTheGrant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var removed []removedConnection
-	if err := json.Unmarshal([]byte(out), &removed); err != nil || len(removed) != 1 || len(removed[0].SharesGrantWith) != 0 {
+	var removed struct{ Removed []removedConnection }
+	if err := json.Unmarshal([]byte(out), &removed); err != nil || len(removed.Removed) != 1 || len(removed.Removed[0].SharesGrantWith) != 0 {
 		t.Fatalf("remove --all = %s (%v)", out, err)
 	}
 }

@@ -164,11 +164,14 @@ func runReview(cmd *cobra.Command, args []string, o *reviewOpts) error {
 		"key and to that model. Nothing of the QuickAgent runs, and nothing is submitted.\n", model, prep.Files)
 
 	budgets := o.over(localrun.Examiner().LocalBudgets(pol.Budgets))
+	stages := newStageLog(cmd)
+	stages.Stage("examining the package with " + model)
 	env, runErr := reviewRun(cmd, localrun.Run{
 		Builtin: localrun.Examiner(), Home: home, Policy: pol, PolicySHA: polSHA, PolicyFile: &policyFile,
 		Build: version.Build(), Task: strings.NewReader(examiner.Task(prep)), Inputs: prep.Inputs, OutDir: outDir,
 		Budgets: &budgets, RunID: runID, Stderr: errOut, Review: key, Hosted: hostedProcess(), Credits: creditsClient(pol),
 	})
+	stages.Close()
 	report := examiner.Finish(prep, env, runErr, outDir, localrun.Examiner().Ref(), version.Build())
 	path, err := examiner.Write(outDir, report)
 	if err != nil {

@@ -123,10 +123,11 @@ func TestKnowledgeShipLaysAStoredPackThatTheRegistryAccepts(t *testing.T) {
 	// The origin is the pack's copy in Agentry, and lives in the sidecar,
 	// never in agent.yaml.
 	out, _, err := runCLI(t, nil, "--json", "knowledge", "list", "--registry", f.reg.URL)
-	var kept []knowledgeEntryJSON
-	if err != nil || json.Unmarshal([]byte(out), &kept) != nil || len(kept) != 1 || kept[0].Agentry == nil {
+	var listed struct{ Packs []knowledgeEntryJSON }
+	if err != nil || json.Unmarshal([]byte(out), &listed) != nil || len(listed.Packs) != 1 || listed.Packs[0].Agentry == nil {
 		t.Fatalf("list: %q %v", out, err)
 	}
+	kept := listed.Packs
 	e, ok := recordOf(t, f.dir).Find("runbooks")
 	if !ok || e.Origin == nil || *e.Origin != (ship.Origin{Kind: ship.KindOwn, PackID: kept[0].Agentry.ID}) || e.Registry != f.reg.URL {
 		t.Errorf("sidecar %+v", e)

@@ -602,10 +602,11 @@ func TestScheduleListMarksAMissingAlarmAndSyncRepairsIt(t *testing.T) {
 		if err := cmd.RunE(cmd, nil); err != nil {
 			t.Fatal(err)
 		}
-		if err := json.Unmarshal(js.Bytes(), &views); err != nil {
+		var listed struct{ Schedules []scheduleViewJSON }
+		if err := json.Unmarshal(js.Bytes(), &listed); err != nil {
 			t.Fatal(err)
 		}
-		return out.String(), views
+		return out.String(), listed.Schedules
 	}
 	text, views := list()
 	if !strings.Contains(text, "no alarm: run `agentry schedule sync`") || len(views) != 1 || views[0].Alarm || views[0].AlarmUnknown {

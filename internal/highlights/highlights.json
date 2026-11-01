@@ -1,6 +1,15 @@
 {
   "versions": [
     {
+      "version": "0.6.1013",
+      "highlights": [
+        "login, setup, install and validate end with the next step to take.",
+        "When the container engine or the registry cannot be reached, the CLI names which and how to fix it.",
+        "agentry doctor ends every failed check with a fix line and checks your sign-in, CLI version and PATH.",
+        "setup warns when the key variable is unset and defaults to each provider's newest model; --quiet and --verbose."
+      ]
+    },
+    {
       "version": "0.6.1012",
       "highlights": [
         "A run ends with a summary: its files, how long it took, what it cost where known, and where its receipts are.",

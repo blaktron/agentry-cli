@@ -124,8 +124,8 @@ func TestARunIsHandedItsSignInsAccessTokenAlone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var rows []modelSignInOut
-	if err := json.Unmarshal([]byte(out), &rows); err != nil || len(rows) != 1 || rows[0].Vendor != "chatgpt" || rows[0].Kind != policy.KeyKindChatGPTPlan || rows[0].Account != "person@example.com" {
+	var listed struct{ ModelSignIns []modelSignInOut }
+	if err := json.Unmarshal([]byte(out), &listed); err != nil || len(listed.ModelSignIns) != 1 || listed.ModelSignIns[0].Vendor != "chatgpt" || listed.ModelSignIns[0].Kind != policy.KeyKindChatGPTPlan || listed.ModelSignIns[0].Account != "person@example.com" {
 		t.Fatalf("list = %s (%v)", out, err)
 	}
 	if strings.Contains(out, probeSignInRefresh) || strings.Contains(out, probeSignInAccess) {

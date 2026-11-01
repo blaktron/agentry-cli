@@ -958,7 +958,7 @@ func printDoctorReport(w io.Writer, rep *doctorReport) {
 		_, _ = fmt.Fprintln(w, "agentry doctor — machine checks (pass a ref to check one QuickAgent)")
 	}
 	for _, c := range rep.Checks {
-		mark := map[string]string{"ok": "ok  ", "warn": "warn", "fail": "FAIL"}[c.Status]
+		mark := map[string]string{"ok": paint(w, colorGreen, "ok  "), "warn": paint(w, colorYellow, "warn"), "fail": paint(w, colorRed, "FAIL")}[c.Status]
 		_, _ = fmt.Fprintf(w, "  %s  %-18s %s\n", mark, c.Name, c.Detail)
 		if c.Remedy != "" {
 			_, _ = fmt.Fprintf(w, "        %-18s %s\n", "fix", c.Remedy)
