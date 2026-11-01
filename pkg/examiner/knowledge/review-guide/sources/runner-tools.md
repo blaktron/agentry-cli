@@ -12,6 +12,13 @@ An instruction that calls for one of these needs its line in the manifest; witho
 - `capabilities.targetHosts`: `host_get`, `host_put`, `host_read`, `host_run`, `host_shell_close`, `host_shell_open`, `host_shell_read`, `host_shell_send`, `host_write`.
 - `capabilities.filesystem.read`: `fs_list`, `fs_read`.
 - `capabilities.filesystem.write`: `fs_write`.
+- `capabilities.persistent.clock`: `task_add`, `task_list`, `task_remove`, `task_update`.
+- `capabilities.persistent.memory`: `recall`.
+- `capabilities.persistent.selfConfigure`: `self_configure`.
+- `capabilities.persistent.meetings`: `meeting_arm`, `meeting_cancel`, `meeting_list`.
+- `capabilities.persistent.helper`: `docs_read`, `installed_list`, `quickagent_install`, `quickagent_run`, `quickagent_show`, `registry_search`, `run_result`, `schedule_add`, `schedule_list`, `schedule_pause`, `schedule_remove`, `settings_open`.
+- `capabilities.persistent.web`: `web_read`, `web_search`.
+- `capabilities.persistent.review`: `ai_review`.
 - `capabilities.mcpServers`: a declared server's own tools, named `<server>__<tool>`.
 - `capabilities.browser.secrets`: a browser that may type secrets has every browser tool but `browser_evaluate`.
 

@@ -146,7 +146,7 @@ func TestTheCodingAgentsGrantIsAPersistentBuiltinsAlone(t *testing.T) {
 	for _, source := range []string{"registry", "local"} {
 		in := coderInputs(t, all)
 		in.Source = source
-		refused("from "+source, in, PersistentOnlyBuiltin)
+		refused("from "+source, in, "persistent built-in")
 	}
 	auto := coderInputs(t, all)
 	auto.Manifest = parseManifest(t, strings.Replace(coderYAML(""), "modes: [persistent]", "modes: [autonomous, persistent]", 1))

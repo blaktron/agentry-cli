@@ -876,42 +876,82 @@ func TestCompileRefusesUndeclaredMode(t *testing.T) {
 	}
 }
 
-// TestPersistentReleaseRefusedOutsideBuiltins: a release run in the
-// persistent mode from the registry or a local folder is a policy refusal
-// (exit 11) before anything is written; a built-in compiles, its harness
-// half the interactive one, with none of the policy's session caps.
-func TestPersistentReleaseRefusedOutsideBuiltins(t *testing.T) {
+// TestPersistentReleaseRunsWhereThePolicyAllows: a release runs in the
+// persistent mode from the registry or a local folder, with its share and
+// data folders, unless the policy sets allowPersistentReleases false, which
+// is a policy refusal (exit 11) before anything is written; a memory, skills
+// and a target host stay refused to it, and a built-in compiles under either
+// setting, its harness half the interactive one, with none of the policy's
+// session caps.
+func TestPersistentReleaseRunsWhereThePolicyAllows(t *testing.T) {
 	m := parseManifest(t, strings.Replace(pureTextYAML, "modes: [autonomous]", "modes: [autonomous, persistent]", 1))
 	ws := workspaceFor(t, m, nil)
-	in := func(source string) Inputs {
+	in := func(source string, allowed bool) Inputs {
+		pol := testPolicy()
+		pol.AllowPersistentReleases = &allowed
 		return Inputs{
 			Manifest: m, Mode: manifest.ModePersistent, Digest: "sha256:x", Source: source, WorkspaceDir: ws,
-			Policy: testPolicy(), PolicySHA: "s", RunnerImage: "agentry-runner:test",
+			Policy: pol, PolicySHA: "s", RunnerImage: "agentry-runner:test",
+			AgentFiles: &spec.AgentFiles{Share: true, CheckShare: true},
 		}
 	}
-	for _, source := range []string{"registry", "local", ""} {
+	for _, source := range []string{"registry", "local"} {
+		plan, err := Compile(in(source, true), t.TempDir())
+		if err != nil {
+			t.Fatalf("source %q, allowed: %v", source, err)
+		}
+		if plan.Mode != "persistent" || plan.Capabilities.AgentFiles == nil || !plan.Capabilities.AgentFiles.Share || !plan.Capabilities.AgentFiles.CheckShare {
+			t.Fatalf("source %q: mode %q, folders %+v; want persistent with its checked share", source, plan.Mode, plan.Capabilities.AgentFiles)
+		}
 		planDir := t.TempDir()
-		_, err := Compile(in(source), planDir)
+		_, err = Compile(in(source, false), planDir)
 		var refusal *PolicyRefusal
-		if !errors.As(err, &refusal) || refusal.Reason != PersistentOnlyBuiltin {
-			t.Fatalf("source %q: err = %v, want the persistent refusal", source, err)
+		if !errors.As(err, &refusal) || refusal.Reason != policy.PersistentReleasesRefused {
+			t.Fatalf("source %q, refused by policy: err = %v, want the policy's refusal", source, err)
 		}
 		if entries, _ := os.ReadDir(planDir); len(entries) != 0 {
 			t.Errorf("source %q: the refusal wrote %d entries into the plan dir", source, len(entries))
 		}
+		for name, files := range map[string]*spec.AgentFiles{
+			"a memory": {Share: true, Memory: true},
+			"skills":   {Share: true, Skills: []spec.Skill{{Name: "s", Description: "d"}}},
+		} {
+			given := in(source, true)
+			given.AgentFiles = files
+			if _, err := Compile(given, t.TempDir()); !errors.As(err, &refusal) || !strings.Contains(err.Error(), "persistent built-in alone") {
+				t.Errorf("source %q given %s: err = %v, want a policy refusal", source, name, err)
+			}
+		}
 	}
-	plan, err := Compile(in("builtin"), t.TempDir())
-	if err != nil {
-		t.Fatalf("builtin: %v", err)
+	for _, allowed := range []bool{true, false} {
+		plan, err := Compile(in("builtin", allowed), t.TempDir())
+		if err != nil {
+			t.Fatalf("builtin, allowed %t: %v", allowed, err)
+		}
+		if plan.Mode != "persistent" || plan.Harness.Session == nil || plan.Harness.Session.Budgets != (spec.SessionBudgets{}) {
+			t.Fatalf("builtin: mode %q, session %+v; want persistent, the interactive harness half, no caps", plan.Mode, plan.Harness.Session)
+		}
 	}
-	if plan.Mode != "persistent" || plan.Harness.Session == nil || plan.Harness.Session.Budgets != (spec.SessionBudgets{}) {
-		t.Fatalf("builtin: mode %q, session %+v; want persistent, the interactive harness half, no caps", plan.Mode, plan.Harness.Session)
-	}
-	// The same release runs autonomous from any source.
-	auto := in("registry")
-	auto.Mode = manifest.ModeAutonomous
+	// The same release runs autonomous from any source, whatever the policy.
+	auto := in("registry", false)
+	auto.Mode, auto.AgentFiles = manifest.ModeAutonomous, nil
 	if _, err := Compile(auto, t.TempDir()); err != nil {
 		t.Fatalf("autonomous: %v", err)
+	}
+}
+
+// TestAPersistentReleaseIsGivenNoTargetHost: a target host is named in a
+// run's intake, and a persistent agent has none.
+func TestAPersistentReleaseIsGivenNoTargetHost(t *testing.T) {
+	m := parseManifest(t, strings.Replace(pureTextYAML, "modes: [autonomous]", "modes: [autonomous, persistent]", 1))
+	m.Capabilities.TargetHosts = []string{"box"}
+	in := Inputs{
+		Manifest: m, Mode: manifest.ModePersistent, Digest: "sha256:x", Source: "registry", WorkspaceDir: workspaceFor(t, m, nil),
+		Policy: testPolicy(), PolicySHA: "s", RunnerImage: "agentry-runner:test",
+	}
+	var refusal *PolicyRefusal
+	if _, err := Compile(in, t.TempDir()); !errors.As(err, &refusal) || !strings.Contains(err.Error(), "target host") {
+		t.Fatalf("err = %v, want the target host refusal", err)
 	}
 }
 

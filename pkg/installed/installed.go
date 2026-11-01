@@ -106,6 +106,16 @@ type CapSnapshot struct {
 	// widening the consent gate re-asks about. Absent in records written
 	// before the browser existed, which reads as "no browser".
 	Browser *manifest.Browser `yaml:"browser,omitempty" json:"browser,omitempty"`
+	// Persistent is a persistent release's capabilities.persistent: a key
+	// newly declared, or a name added to one of its lists, is a widening
+	// the consent gate re-asks about. Absent in records written before the
+	// block existed, which reads as "declares none".
+	Persistent *manifest.Persistent `yaml:"persistent,omitempty" json:"persistent,omitempty"`
+	// Subagents are a persistent release's subagents, each with its
+	// constraint and its reason: a new one, or a changed constraint, is a
+	// widening the consent gate re-asks about. Absent in records written
+	// before subagents existed, which reads as "none".
+	Subagents []manifest.AgentDependency `yaml:"subagents,omitempty" json:"subagents,omitempty"`
 }
 
 // RemoteSnapshot is what a consent recorded of one remote server beside
@@ -191,7 +201,19 @@ func Snapshot(c manifest.Capabilities) CapSnapshot {
 	if b := c.Browser; b != nil {
 		s.Browser = &manifest.Browser{Sites: slices.Clone(b.Sites), Hosts: slices.Clone(b.Hosts), Scope: b.Scope, Secrets: slices.Clone(b.Secrets)}
 	}
+	s.Persistent = clonePersistent(c.Persistent)
+	s.Subagents = slices.Clone(c.Subagents)
 	return s
+}
+
+// clonePersistent is a deep copy of a capabilities.persistent block.
+func clonePersistent(p *manifest.Persistent) *manifest.Persistent {
+	if p == nil {
+		return nil
+	}
+	out := *p
+	out.Secrets, out.Mail, out.ImageServers = slices.Clone(p.Secrets), slices.Clone(p.Mail), slices.Clone(p.ImageServers)
+	return &out
 }
 
 // capabilities is Snapshot's inverse, for the diff only: the stored
@@ -214,6 +236,8 @@ func (s CapSnapshot) capabilities() manifest.Capabilities {
 		Secrets:     slices.Clone(s.Secrets),
 		Knowledge:   slices.Clone(s.Knowledge),
 		TargetHosts: slices.Clone(s.TargetHosts),
+		Persistent:  clonePersistent(s.Persistent),
+		Subagents:   slices.Clone(s.Subagents),
 	}
 	if b := s.Browser; b != nil {
 		c.Browser = &manifest.Browser{Sites: slices.Clone(b.Sites), Hosts: slices.Clone(b.Hosts), Scope: b.Scope, Secrets: slices.Clone(b.Secrets)}

@@ -762,3 +762,50 @@ func TestAServersArgsAreInTheSnapshot(t *testing.T) {
 		t.Fatalf("an unrecorded server's line does not name its args: %+v", d)
 	}
 }
+
+// TestAPersistentReleasesBlockAndSubagentsAreInTheSnapshot: a persistent
+// release's capabilities.persistent and its subagents are recorded and read
+// back through installed.yaml, so an update that declares a key, names
+// another image server or adds or moves a subagent asks again, and the same
+// release asks nothing.
+func TestAPersistentReleasesBlockAndSubagentsAreInTheSnapshot(t *testing.T) {
+	sub := manifest.AgentDependency{Ref: "acme/pdf-summary", Version: "^1.4.0", Why: "summarises PDFs"}
+	caps := manifest.Capabilities{
+		Persistent: &manifest.Persistent{Clock: true, ImageServers: []string{"google-workspace"}},
+		Subagents:  []manifest.AgentDependency{sub},
+	}
+	before, after := Snapshot(manifest.Capabilities{}), Snapshot(caps)
+	if after.Persistent == nil || !after.Persistent.Clock || len(after.Subagents) != 1 {
+		t.Fatalf("snapshot = %+v", after)
+	}
+	if d := DiffCapabilities(before, after); !d.HasWidened() {
+		t.Fatalf("a new block did not widen: %+v", d)
+	}
+	if d := DiffCapabilities(after, after); !d.Empty() {
+		t.Fatalf("the same release changed the contract: %+v", d)
+	}
+	moved := sub
+	moved.Version = "^2.0.0"
+	for name, next := range map[string]manifest.Capabilities{
+		"a key":           {Persistent: &manifest.Persistent{Clock: true, Memory: true, ImageServers: []string{"google-workspace"}}, Subagents: []manifest.AgentDependency{sub}},
+		"an image server": {Persistent: &manifest.Persistent{Clock: true, ImageServers: []string{"google-workspace", "microsoft-365"}}, Subagents: []manifest.AgentDependency{sub}},
+		"a subagent":      {Persistent: caps.Persistent, Subagents: []manifest.AgentDependency{sub, {Ref: "acme/other", Version: "^1.0.0", Why: "w"}}},
+		"a constraint":    {Persistent: caps.Persistent, Subagents: []manifest.AgentDependency{moved}},
+	} {
+		if d := DiffCapabilities(after, Snapshot(next)); !d.HasWidened() {
+			t.Errorf("%s did not widen: %+v", name, d)
+		}
+	}
+	b, err := yaml.Marshal(after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back CapSnapshot
+	if err := yaml.Unmarshal(b, &back); err != nil || !DiffCapabilities(after, back).Empty() {
+		t.Fatalf("YAML round trip: %s %v %+v", b, err, back)
+	}
+	after.Persistent.ImageServers[0] = "changed"
+	if caps.Persistent.ImageServers[0] != "google-workspace" {
+		t.Fatal("the snapshot shares the manifest's lists")
+	}
+}

@@ -33,10 +33,13 @@ import (
 func newAgentCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "agent",
-		Short: "Start, chat with and stop the persistent agents, which keep their conversation between starts",
-		Long: "A persistent agent is a QuickAgent built into Agentry that the runner keeps\n" +
-			"between your conversations: you start it, chat with it, stop it, and when\n" +
-			"you start it again the conversation continues. Its conversation lives on a\n" +
+		Short: "Install, start, chat with and stop the persistent agents, which keep their conversation between starts",
+		Long: "A persistent agent is a QuickAgent that the runner keeps between your\n" +
+			"conversations: you start it, chat with it, stop it, and when you start it\n" +
+			"again the conversation continues. Three are built into Agentry; `install`\n" +
+			"adds a persistent QuickAgent from the registry, or your own folder, and\n" +
+			"`uninstall` removes one. An installed agent is named by its reference\n" +
+			"(ns/name), or by its name alone when no other agent has it. Its conversation lives on a\n" +
 			"volume of its own, beside a second one made for its files; stopping it\n" +
 			"keeps both and only `agentry agent reset` removes them. Each start is a\n" +
 			"segment, with its own receipts and envelope in the agent's folder under\n" +
@@ -65,6 +68,7 @@ func newAgentCmd() *cobra.Command {
 			"skills/: its built-in ones, and your own from a folder or a .zip on this\n" +
 			"computer (`agentry agent skill add`).\n\n" +
 			"Agentry Helper (main) runs only in Agentry Desktop.\n\n" +
+			"  agentry agent install acme/helper\n" +
 			"  agentry agent enable assistant\n" +
 			"  agentry agent start assistant\n" +
 			"  agentry agent chat assistant\n" +
@@ -73,6 +77,8 @@ func newAgentCmd() *cobra.Command {
 	cmd.AddCommand(
 		newAgentListCmd(),
 		newAgentShowCmd(),
+		newAgentInstallCmd(),
+		newAgentUninstallCmd(),
 		newAgentStartCmd(),
 		newAgentStopCmd(),
 		newAgentChatCmd(),
@@ -92,9 +98,14 @@ func newAgentCmd() *cobra.Command {
 	return cmd
 }
 
-// agentNamed is the agent an argument names, refused with the usage class.
+// agentNamed is the agent an argument names, a built-in or one installed in
+// the runner home, refused with the usage class.
 func agentNamed(name string) (persistent.Agent, error) {
-	a, err := persistent.Lookup(name)
+	home, err := runnerHome()
+	if err != nil {
+		return persistent.Agent{}, err
+	}
+	a, err := persistent.LookupIn(home, name)
 	if err != nil {
 		return a, engine.Classify(engine.ExitUsage, err)
 	}
@@ -115,19 +126,29 @@ func cliAgent(name string) (persistent.Agent, error) {
 
 // agentState is how an agent stands now, as list and show print it.
 type agentState struct {
-	Agent       string             `json:"agent"`
-	DisplayName string             `json:"displayName"`
-	State       string             `json:"state"`
-	DesktopOnly bool               `json:"desktopOnly,omitempty"`
-	Holder      *persistent.Holder `json:"holder,omitempty"`
-	Status      *persistent.Status `json:"status,omitempty"`
-	Config      *persistent.Config `json:"config,omitempty"`
-	Usage       *persistent.Usage  `json:"usage,omitempty"`
-	StateDir    string             `json:"stateDir,omitempty"`
-	Volumes     *agentVolumes      `json:"volumes,omitempty"`
-	Transcript  []persistent.Entry `json:"transcript,omitempty"`
-	Share       string             `json:"share,omitempty"`
-	Roster      persistent.Roster  `json:"roster,omitempty"`
+	Agent string `json:"agent"`
+	// Ref is the agent's ns/name, and Version, Source, Persona, Packs and
+	// Subagents what an installed agent runs: its version and where it came
+	// from, the persona and the packs its release ships, and its subagents
+	// as they were pinned at its install.
+	Ref         string                   `json:"ref"`
+	Version     string                   `json:"version,omitempty"`
+	Source      string                   `json:"source,omitempty"`
+	Persona     *persistent.Persona      `json:"persona,omitempty"`
+	Packs       []string                 `json:"packs,omitempty"`
+	Subagents   []persistent.SubagentPin `json:"subagents,omitempty"`
+	DisplayName string                   `json:"displayName"`
+	State       string                   `json:"state"`
+	DesktopOnly bool                     `json:"desktopOnly,omitempty"`
+	Holder      *persistent.Holder       `json:"holder,omitempty"`
+	Status      *persistent.Status       `json:"status,omitempty"`
+	Config      *persistent.Config       `json:"config,omitempty"`
+	Usage       *persistent.Usage        `json:"usage,omitempty"`
+	StateDir    string                   `json:"stateDir,omitempty"`
+	Volumes     *agentVolumes            `json:"volumes,omitempty"`
+	Transcript  []persistent.Entry       `json:"transcript,omitempty"`
+	Share       string                   `json:"share,omitempty"`
+	Roster      persistent.Roster        `json:"roster,omitempty"`
 	// Tasks counts an agent's tasks, for one that keeps time.
 	Tasks *int `json:"tasks,omitempty"`
 	// Suggested are the servers the agent suggests and does not have.
@@ -166,7 +187,7 @@ const (
 )
 
 func readAgentState(ctx context.Context, home string, a persistent.Agent) (agentState, error) {
-	st := agentState{Agent: a.Name, DisplayName: a.Title}
+	st := agentState{Agent: a.Name, Ref: a.Ref, Version: a.Version, Source: a.Source, Persona: a.Persona, Packs: a.Packs, Subagents: a.Subagents, DisplayName: a.Title}
 	if a.DesktopOnly {
 		st.State, st.DesktopOnly = agentDesktopOnly, true
 		return st, nil
@@ -223,12 +244,12 @@ func newAgentListCmd() *cobra.Command {
 				return err
 			}
 			var all []agentState
-			for _, a := range persistent.Agents() {
+			for _, a := range persistent.AgentsIn(home) {
 				st, err := readAgentState(cmd.Context(), home, a)
 				if err != nil {
 					return err
 				}
-				st.Config, st.Roster = nil, nil
+				st.Config, st.Roster, st.Persona = nil, nil, nil
 				all = append(all, st)
 			}
 			if flags.jsonOut {
@@ -247,7 +268,10 @@ func newAgentListCmd() *cobra.Command {
 					segment = fmt.Sprint(st.Status.Segment)
 				}
 				name := st.Agent
-				if st.DisplayName != "" && !strings.EqualFold(st.DisplayName, st.Agent) {
+				if st.Source != "" {
+					name = st.Ref
+				}
+				if st.DisplayName != "" && !strings.EqualFold(st.DisplayName, name) && !strings.HasSuffix(name, "/"+st.DisplayName) {
 					name += " (" + st.DisplayName + ")"
 				}
 				_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", name, state, since, segment)
@@ -337,10 +361,37 @@ func newAgentShowCmd() *cobra.Command {
 }
 
 func printAgentState(w io.Writer, st agentState) {
-	_, _ = fmt.Fprintf(w, "%s (%s): %s\n", st.DisplayName, st.Agent, st.State)
+	name := st.Agent
+	if st.Source != "" {
+		name = st.Ref
+	}
+	_, _ = fmt.Fprintf(w, "%s (%s): %s\n", safeTerminalText(st.DisplayName, 64), name, st.State)
 	if st.DesktopOnly {
 		_, _ = fmt.Fprintln(w, "It runs only in Agentry Desktop.")
 		return
+	}
+	switch st.Source {
+	case persistent.SourceRegistry:
+		_, _ = fmt.Fprintf(w, "  release:    %s@%s, from the registry\n", st.Ref, st.Version)
+	case persistent.SourceLocal:
+		_, _ = fmt.Fprintf(w, "  release:    %s@%s, from a folder on this computer (unsigned)\n", st.Ref, st.Version)
+	}
+	if p := st.Persona; p != nil {
+		lock := "you may replace its personality"
+		if !p.Editable {
+			lock = "its personality is locked by its publisher"
+		}
+		_, _ = fmt.Fprintf(w, "  persona:    %s, %d bytes; %s\n", safeTerminalText(p.Name, 64), len(p.Text), lock)
+	}
+	if len(st.Packs) > 0 {
+		_, _ = fmt.Fprintf(w, "  ships:      %s\n", strings.Join(st.Packs, ", "))
+	}
+	for _, sa := range st.Subagents {
+		if sa.Version != "" {
+			_, _ = fmt.Fprintf(w, "  subagent:   %s@%s (%s): %s\n", sa.Ref, sa.Version, sa.Constraint, safeTerminalText(sa.Why, 200))
+		} else {
+			_, _ = fmt.Fprintf(w, "  subagent:   %s (%s), resolved to no version: %s\n", sa.Ref, sa.Constraint, safeTerminalText(sa.Unresolved, 300))
+		}
 	}
 	if h := st.Holder; h != nil {
 		_, _ = fmt.Fprintf(w, "  run by:     %s (pid %d), since %s\n", h.Where(), h.PID, h.Since.Local().Format("2006-01-02 15:04"))
@@ -738,7 +789,7 @@ func newAgentChatCmd() *cobra.Command {
 			}
 			cfg, _ := persistent.LoadConfig(home, a.Name)
 			_, uiErr := runChat(cmd.Context(), s, tui.Options{
-				Ref:     a.Builtin.Ref() + " · " + a.DisplayName(cfg),
+				Ref:     a.PackageRef() + " · " + a.DisplayName(cfg),
 				Model:   st.Model,
 				HasTask: true,
 			}, cmd.InOrStdin(), cmd.OutOrStdout())
