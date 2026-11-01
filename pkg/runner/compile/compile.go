@@ -238,8 +238,8 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		if in.AgentFiles.Memory && !m.Capabilities.Persistent.Declares("memory") {
 			return nil, &PolicyRefusal{Reason: "a memory volume is granted to a persistent agent that declares capabilities.persistent.memory, and this one does not"}
 		}
-		if len(in.AgentFiles.Skills) > 0 && !m.Capabilities.Persistent.Declares("skills") {
-			return nil, &PolicyRefusal{Reason: "skills are granted to a persistent agent that declares capabilities.persistent.skills, and this one does not"}
+		if err := skillsDeclared(in.AgentFiles.Skills, m.Capabilities.Persistent); err != nil {
+			return nil, err
 		}
 		if caps.FSReadMode != "none" || caps.FSWriteMode != "none" {
 			return nil, &PolicyRefusal{Reason: "a persistent agent's files are its share and data folders, and it declares no filesystem access of its own beside them"}

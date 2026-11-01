@@ -2,12 +2,14 @@ package persistent
 
 import (
 	"context"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
@@ -99,6 +101,57 @@ func TestUndeclaredPersistentCapabilityRefused(t *testing.T) {
 	})
 }
 
+// TestAPublishedMemoryComesWithItsSkillsAndSchema: a published agent that
+// declares a memory is given the memory's own skills from Agentry's tree,
+// which its compaction and consolidation follow, even without skills, and
+// no skill of its release's or the person's then; its memory starts from
+// Agentry's schema, index and log with its release's memory/ files laid
+// over them, but never over the schema.
+func TestAPublishedMemoryComesWithItsSkillsAndSchema(t *testing.T) {
+	home := shortHome(t)
+	t.Setenv("HOME", t.TempDir())
+	a := installPublished(t, home, "acme", "ada", "1.0.0", publishedRelease{
+		extra: "capabilities:\n  persistent:\n    memory: true\n",
+		files: map[string]string{"memory/seed.md": "# What I know\n", "memory/SCHEMA.md": "Keep nothing.\n"},
+	})
+	var names []string
+	for _, s := range a.Skills() {
+		if s.GrantedBy != GrantedByBuiltin {
+			t.Errorf("the skill %s is granted by %s", s.Name, s.GrantedBy)
+		}
+		names = append(names, s.Name)
+	}
+	if !slices.Equal(names, compile.MemorySkills) {
+		t.Errorf("the memory agent's skills %v, want %v", names, compile.MemorySkills)
+	}
+	c := Config{Skills: []AddedSkill{{Name: "mine", Description: "Mine."}}}
+	staged, dir, err := stageSkills(home, a, c, func(string) bool { return true })
+	if err != nil || len(staged) != len(compile.MemorySkills) || dir == "" {
+		t.Fatalf("staged %v in %q (%v)", staged, dir, err)
+	}
+	for _, s := range staged {
+		if _, err := os.Stat(filepath.Join(dir, s.Name, "SKILL.md")); err != nil {
+			t.Errorf("the staged %s: %v", s.Name, err)
+		}
+	}
+	seed, err := a.MemorySeed()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ours, _ := localrun.Assistant().MemorySeed()
+	if string(seed["seed.md"]) != "# What I know\n" || string(seed["SCHEMA.md"]) != string(ours["SCHEMA.md"]) || len(seed["index.md"]) == 0 {
+		t.Errorf("the seed holds %v, its schema %q", slices.Sorted(maps.Keys(seed)), seed["SCHEMA.md"])
+	}
+	g, _, done, err := Apply(context.Background(), home, a, Config{Enabled: true}, BuildRoster(a, Config{Enabled: true}, nil), nil, nil, fakeSecrets{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done()
+	if _, err := (localrun.Segment{Release: a.Release, Home: home, Policy: policy.Default(), PolicySHA: "s", Build: "test", Grants: g}).Plan(context.Background(), nil); err != nil {
+		t.Errorf("a memory agent without skills was refused its memory's skills: %v", err)
+	}
+}
+
 // TestRosterReachesEveryGateForAReleasesOwnEntries: what a published
 // agent's release grants reaches its segment's plan through Apply as a
 // built-in's does: its memory volume, the skills its roster has on (and not
@@ -126,10 +179,8 @@ func TestRosterReachesEveryGateForAReleasesOwnEntries(t *testing.T) {
 		if got := slices.ContainsFunc(files.Skills, func(s spec.Skill) bool { return s.Name == "notes" }); got != on {
 			t.Errorf("skill on %v: the plan's skills %v", on, files.Skills)
 		}
-		if g.SkillsDir != "" {
-			if _, err := os.Stat(filepath.Join(g.SkillsDir, "notes", "SKILL.md")); err != nil {
-				t.Errorf("the staged skill: %v", err)
-			}
+		if _, err := os.Stat(filepath.Join(g.SkillsDir, "notes", "SKILL.md")); (err == nil) != on {
+			t.Errorf("skill on %v: the staged skill: %v", on, err)
 		}
 		if want := applink.Compose(applink.PartSelf, applink.PartTasks, applink.PartRecall); sp.Plan.Capabilities.AppLink != want {
 			t.Errorf("the plan's app link %q, want %q", sp.Plan.Capabilities.AppLink, want)

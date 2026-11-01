@@ -69,22 +69,22 @@ func skillsPath(home, name string) string { return filepath.Join(Dir(home, name)
 // skillLineCut bounds the description a skill's consent sentence quotes.
 const skillLineCut = 200
 
-// skillEntries are the agent's skill entries, for an agent that takes
-// skills: its package's own, on by default and asking no agreement (they
-// come with the agent, were read with it, and grant nothing), then the
+// skillEntries are the agent's skill entries: its own (Agent.Skills), on
+// by default and asking no agreement (they come with the agent, were read
+// with it, and grant nothing), then, for an agent that takes skills, the
 // person's, each agreed to as its sentence says.
 func skillEntries(a Agent, c Config) []RosterEntry {
-	if !a.TakesSkills() {
-		return nil
-	}
-	from := ", built into Agentry"
-	if a.Published() {
-		from = ", which its release ships"
-	}
 	var out []RosterEntry
 	for _, s := range a.Skills() {
-		out = append(out, RosterEntry{ID: SkillEntryID(s.Name), Kind: KindSkill, Name: s.Name, GrantedBy: a.grantedBy(),
+		from := ", built into Agentry"
+		if s.GrantedBy == GrantedByRelease {
+			from = ", which its release ships"
+		}
+		out = append(out, RosterEntry{ID: SkillEntryID(s.Name), Kind: KindSkill, Name: s.Name, GrantedBy: s.GrantedBy,
 			Line: "Follows the skill " + s.Name + from + ", when a request matches it: " + strconv.Quote(cutText(s.Description, skillLineCut)), noConsent: true})
+	}
+	if !a.TakesSkills() {
+		return out
 	}
 	for _, s := range c.Skills {
 		out = append(out, RosterEntry{ID: SkillEntryID(s.Name), Kind: KindSkill, Name: s.Name, GrantedBy: GrantedByYou, Line: addedSkillLine(a, s)})
@@ -118,11 +118,12 @@ func stageSkills(home string, a Agent, c Config, on func(id string) bool) ([]spe
 	if err := os.RemoveAll(dir); err != nil {
 		return nil, "", fmt.Errorf("the %s agent's skills folder: %w", a.Name, err)
 	}
-	if !a.TakesSkills() {
-		return nil, "", nil
-	}
 	var skills []spec.Skill
 	builtins := a.Skills()
+	if !a.TakesSkills() {
+		// Only the agent's own, the memory's, without the key.
+		c.Skills = nil
+	}
 	for _, s := range builtins {
 		if on(SkillEntryID(s.Name)) {
 			skills = append(skills, spec.Skill{Name: s.Name, Description: s.Description})

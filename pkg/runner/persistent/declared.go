@@ -3,6 +3,7 @@ package persistent
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/compile"
@@ -50,17 +51,52 @@ func (a Agent) ArmsMeetings() bool { return a.Declared().Declares("meetings") }
 // empty for none.
 func (a Agent) AppLink() string { return compile.AppLinkSet(a.Declared()) }
 
-// Skills are the agent's own skills, for an agent that takes skills: its
-// built-in's tree's, or the ones its release ships under skills/. A
-// release's are read from its folder, which a segment's start holds to its
-// integrity record before anything it staged is mounted.
-func (a Agent) Skills() []localrun.BuiltinSkill {
-	if !a.TakesSkills() {
-		return nil
-	}
+// AgentSkill is one of an agent's own skills and who grants it: the
+// application, for a built-in's and for the memory's own skills, or its
+// release.
+type AgentSkill struct {
+	localrun.BuiltinSkill
+	GrantedBy string
+}
+
+// Skills are the agent's own skills: for an agent that takes skills, its
+// built-in's tree's or the ones its release ships under skills/; and for a
+// published agent that keeps a memory, the memory's own skills
+// (compile.MemorySkills), from Agentry's tree, which its compaction and
+// consolidation follow; a release's skill of one of their names is left
+// out. A release's are read from its folder, which a segment's start holds
+// to its integrity record before anything it staged is mounted.
+func (a Agent) Skills() []AgentSkill {
+	var out []AgentSkill
 	if a.Release == nil {
-		return a.Builtin.Skills()
+		if a.TakesSkills() {
+			for _, s := range a.Builtin.Skills() {
+				out = append(out, AgentSkill{s, GrantedByBuiltin})
+			}
+		}
+		return out
 	}
+	memory := a.KeepsMemory()
+	if a.TakesSkills() {
+		for _, s := range a.releaseSkills() {
+			if !memory || !slices.Contains(compile.MemorySkills, s.Name) {
+				out = append(out, AgentSkill{s, GrantedByRelease})
+			}
+		}
+	}
+	if memory {
+		for _, s := range localrun.Assistant().Skills() {
+			if slices.Contains(compile.MemorySkills, s.Name) {
+				out = append(out, AgentSkill{s, GrantedByBuiltin})
+			}
+		}
+	}
+	return out
+}
+
+// releaseSkills are the skills a published agent's release ships, read
+// once per release folder.
+func (a Agent) releaseSkills() []localrun.BuiltinSkill {
 	key := a.Release.Dir
 	if v, ok := releaseSkills.Load(key); ok {
 		return v.([]localrun.BuiltinSkill)
@@ -83,8 +119,15 @@ func (a Agent) Skills() []localrun.BuiltinSkill {
 // which is named by the release's digest, so it never changes under it.
 var releaseSkills sync.Map
 
+// memorySchema is the file of a memory's seed that says how the memory is
+// kept, which the memory's skills follow.
+const memorySchema = "SCHEMA.md"
+
 // MemorySeed is what the agent's memory volume starts with, for an agent
-// that keeps a memory: its tree's memory/ folder.
+// that keeps a memory: a built-in's tree's memory/ folder; for a published
+// agent, Agentry's memory seed (its schema, index and log) with the files
+// of its release's memory/ laid over it, but for the schema, which stays
+// Agentry's so the memory's skills can keep it.
 func (a Agent) MemorySeed() (map[string][]byte, error) {
 	if !a.KeepsMemory() {
 		return nil, nil
@@ -92,12 +135,25 @@ func (a Agent) MemorySeed() (map[string][]byte, error) {
 	if a.Release == nil {
 		return a.Builtin.MemorySeed()
 	}
+	out, err := localrun.Assistant().MemorySeed()
+	if err != nil {
+		return nil, err
+	}
 	root, err := os.OpenRoot(filepath.Join(a.Release.Dir, "workspace"))
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = root.Close() }()
-	return localrun.MemorySeedOf(root.FS(), a.Release.Meta.Ref)
+	own, err := localrun.MemorySeedOf(root.FS(), a.Release.Meta.Ref)
+	if err != nil {
+		return nil, err
+	}
+	for p, b := range own {
+		if p != memorySchema {
+			out[p] = b
+		}
+	}
+	return out, nil
 }
 
 // grantedBy is who grants what the agent declares: its release for a

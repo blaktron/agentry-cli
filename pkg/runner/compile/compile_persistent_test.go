@@ -523,6 +523,17 @@ func TestUndeclaredPersistentCapabilityRefused(t *testing.T) {
 			}
 		}
 	}
+	memoryOnly := parseManifest(t, strings.Replace(pureTextYAML, "modes: [autonomous]", "modes: [persistent]\ncapabilities:\n  persistent:\n    memory: true", 1))
+	for _, c := range []struct {
+		skill string
+		ok    bool
+	}{{"memory-compact", true}, {"notes", false}} {
+		in := persistentInputs(t, &spec.AgentFiles{Memory: true, Skills: []spec.Skill{{Name: c.skill, Description: "d"}}})
+		in.Manifest, in.WorkspaceDir = memoryOnly, workspaceFor(t, memoryOnly, nil)
+		if _, err := Compile(in, t.TempDir()); (err == nil) != c.ok {
+			t.Errorf("a memory without skills given %s: %v", c.skill, err)
+		}
+	}
 	if got := AppLinkSet(bare.Capabilities.Persistent); got != "" {
 		t.Errorf("a package that declares nothing composes the set %q", got)
 	}

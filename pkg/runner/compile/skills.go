@@ -2,8 +2,11 @@ package compile
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/blaktron/agentry/pkg/manifest"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/skill"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
@@ -56,4 +59,25 @@ func skillsLine(skills []spec.Skill, commands bool) string {
 		b.WriteString("  - " + s.Name + ": " + strconv.Quote(s.Description) + "\n")
 	}
 	return b.String()
+}
+
+// MemorySkills are the skills the memory capability brings, which its
+// compaction and consolidation turns name: given to any agent that
+// declares capabilities.persistent.memory, whether or not it declares
+// skills.
+var MemorySkills = []string{"memory-compact", "memory-consolidate", "memory-ingest", "memory-query"}
+
+// skillsDeclared refuses skills to a persistent agent that does not
+// declare them, but for the memory's own skills to one that declares a
+// memory.
+func skillsDeclared(skills []spec.Skill, p *manifest.Persistent) error {
+	if len(skills) == 0 || p.Declares("skills") {
+		return nil
+	}
+	for _, s := range skills {
+		if !p.Declares("memory") || !slices.Contains(MemorySkills, s.Name) {
+			return &PolicyRefusal{Reason: "skills are granted to a persistent agent that declares capabilities.persistent.skills, and this one does not (one that declares memory is given the memory's own skills alone)"}
+		}
+	}
+	return nil
 }
