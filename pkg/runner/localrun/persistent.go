@@ -36,6 +36,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/targethost"
 	"github.com/blaktron/agentry-cli/pkg/trust"
 	"github.com/blaktron/agentry-cli/runnerimage"
+	"github.com/blaktron/agentry-cli/runnerimage/applink"
 	"github.com/blaktron/agentry/pkg/manifest"
 )
 
@@ -348,6 +349,9 @@ type Grants struct {
 	// AppLink is the socket the supervisor answers the agent's app link on;
 	// empty gives the segment no app link.
 	AppLink string
+	// Subagents says the roster names subagents, so the app link lists the
+	// subagent tools beside the parts the package declares.
+	Subagents bool
 	// Coder is what the Coding agent's roster has on of its grant; nil for
 	// any other agent, which is refused it.
 	Coder *spec.CoderGrant
@@ -754,7 +758,11 @@ func (s Segment) appLinkSet(m *manifest.Manifest) string {
 	if s.Grants.AppLink == "" {
 		return ""
 	}
-	return compile.AppLinkSet(m.Capabilities.Persistent)
+	set := compile.AppLinkSet(m.Capabilities.Persistent)
+	if s.Grants.Subagents {
+		set = applink.Compose(append(applink.SetParts(set), applink.PartSubagents)...)
+	}
+	return set
 }
 
 // coderGrant is the Coding agent's grant the segment's plan has: the
@@ -1057,7 +1065,7 @@ func (s Segment) Plan(ctx context.Context, logw io.Writer) (*SegmentPlan, error)
 	in := PlanInputs{
 		Home: s.Home, Manifest: m, Meta: meta, InstallDir: installDir, WorkspaceDir: workspace,
 		Policy: s.Policy, PolicySHA: s.PolicySHA, Adapter: adapterName, Mode: manifest.ModePersistent,
-		Servers: servers, AgentFiles: s.agentFiles(m), AppLink: s.appLinkSet(m), Coder: coderGrant, Calendar: calendarGrant, ShareServers: s.shareServers(), CompiledBy: s.Build, Log: logw,
+		Servers: servers, AgentFiles: s.agentFiles(m), AppLink: s.appLinkSet(m), Subagents: s.Grants.Subagents, Coder: coderGrant, Calendar: calendarGrant, ShareServers: s.shareServers(), CompiledBy: s.Build, Log: logw,
 		Web: s.Grants.Web != nil, Review: s.Grants.Review != nil,
 	}
 	plan, planDir, err := EnsurePlan(in)

@@ -40,9 +40,16 @@ import (
 
 // Command is one line of input: exactly one of its members is set.
 type Command struct {
-	Send *Send `json:"send,omitempty"`
-	Add  *Add  `json:"add,omitempty"`
-	End  *End  `json:"end,omitempty"`
+	Send   *Send   `json:"send,omitempty"`
+	Add    *Add    `json:"add,omitempty"`
+	End    *End    `json:"end,omitempty"`
+	Answer *Answer `json:"answer,omitempty"`
+}
+
+// Answer answers a question event (session.KindQuestion) by its id.
+type Answer struct {
+	ID  string `json:"id"`
+	Yes bool   `json:"yes"`
 }
 
 // Send is one user turn.
@@ -76,6 +83,8 @@ const (
 	// inputs directory, the session was given no inputs directory, or the
 	// session would not take it (a name already staged, unreadable).
 	RefusedInput Refusal = "input_refused"
+	// RefusedAnswer: an answer to no question this session has open.
+	RefusedAnswer Refusal = "answer_refused"
 )
 
 // Event is one line of output: a session event, or a refusal.
@@ -200,6 +209,15 @@ loop:
 					}
 					sv.settle(seq)
 				}(c.Send.Text)
+			case c.Answer != nil:
+				a, ok := s.(session.Answerer)
+				if !ok {
+					sv.refuse(RefusedAnswer, "this session asks no questions")
+					continue
+				}
+				if err := a.Answer(ctx, c.Answer.ID, c.Answer.Yes); err != nil {
+					sv.refuse(RefusedAnswer, err.Error())
+				}
 			case c.Add != nil:
 				path, err := staged(inputsDir, c.Add.Path)
 				if err != nil {
@@ -492,14 +510,14 @@ func parse(l line) (Command, Refusal, string) {
 	var names []string
 	for k := range members {
 		switch k {
-		case "send", "add", "end":
+		case "send", "add", "end", "answer":
 			names = append(names, k)
 		default:
-			return Command{}, RefusedUnknown, fmt.Sprintf("unknown command %q (want send, add or end)", k)
+			return Command{}, RefusedUnknown, fmt.Sprintf("unknown command %q (want send, add, end or answer)", k)
 		}
 	}
 	if len(names) != 1 {
-		return Command{}, RefusedMalformed, "a line names exactly one command: send, add or end"
+		return Command{}, RefusedMalformed, "a line names exactly one command: send, add, end or answer"
 	}
 	var c Command
 	dec := json.NewDecoder(bytes.NewReader(b))
@@ -510,9 +528,11 @@ func parse(l line) (Command, Refusal, string) {
 	switch {
 	case c.Send != nil && strings.TrimSpace(c.Send.Text) == "":
 		return Command{}, RefusedMalformed, "send needs a text"
+	case c.Answer != nil && strings.TrimSpace(c.Answer.ID) == "":
+		return Command{}, RefusedMalformed, "answer needs the question's id"
 	case c.Add != nil && c.Add.Path == "":
 		return Command{}, RefusedMalformed, "add needs a path"
-	case c.Send == nil && c.Add == nil && c.End == nil:
+	case c.Send == nil && c.Add == nil && c.End == nil && c.Answer == nil:
 		return Command{}, RefusedMalformed, fmt.Sprintf("%s needs its object", names[0])
 	}
 	return c, "", ""

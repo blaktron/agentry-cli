@@ -67,8 +67,13 @@ type Change struct {
 	// kept in the keychain by the client that asked them for it, or one set
 	// again; RemoveSecret takes one away, by its name. Neither carries a
 	// value.
-	SetSecret    *StoredSecret `json:"setSecret,omitempty"`
-	RemoveSecret string        `json:"removeSecret,omitempty"`
+	// AddSubagent adds a subagent the client checked is installed on this
+	// computer and runs autonomously, on; RemoveSubagent takes away one the
+	// person added, by its reference.
+	AddSubagent    *AddedSubagent `json:"addSubagent,omitempty"`
+	RemoveSubagent string         `json:"removeSubagent,omitempty"`
+	SetSecret      *StoredSecret  `json:"setSecret,omitempty"`
+	RemoveSecret   string         `json:"removeSecret,omitempty"`
 	// SetAccount records one of the Coding agent's git host accounts, on,
 	// its token already kept in the keychain by the client that asked for
 	// it, or one whose token was set again; RemoveAccount takes one away,
@@ -166,6 +171,7 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 	next.Servers = slices.Clone(c.Servers)
 	next.Knowledge = slices.Clone(c.Knowledge)
 	next.Skills = slices.Clone(c.Skills)
+	next.Subagents = slices.Clone(c.Subagents)
 	next.Secrets = slices.Clone(c.Secrets)
 	next.Accounts = slices.Clone(c.Accounts)
 	next.CalendarFeeds = slices.Clone(c.CalendarFeeds)
@@ -229,6 +235,16 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 		delete(next.Switches, id+shareSuffix)
 		delete(next.Consented, id)
 		delete(next.ServerFailures, id)
+	}
+	if sa := ch.AddSubagent; sa != nil {
+		if err := addSubagent(a, &next, *sa); err != nil {
+			return false, err
+		}
+	}
+	if ref := ch.RemoveSubagent; ref != "" {
+		if err := removeSubagent(a, &next, ref); err != nil {
+			return false, err
+		}
 	}
 	if k := ch.AddKnowledge; k != "" {
 		if err := knowledge.ValidName(k); err != nil {
@@ -454,13 +470,16 @@ func grantsKeyWith(a Agent, c Config, ready func(manifest.MCPServer) bool) strin
 		Secrets   []string
 		Accounts  []string
 		Calendars []string
+		// AppLink is the app link's tool set, which a first subagent added,
+		// or the last removed, changes.
+		AppLink string
 	}
 	counted := map[string]bool{}
 	servers := agentServers(a, c)
 	for _, s := range servers {
 		counted[s.ID()] = ready(s.Server)
 	}
-	k := key{}
+	k := key{AppLink: a.AppLinkWith(c)}
 	for _, e := range r {
 		// The heartbeat and the meetings switch are read when they are used:
 		// switching them restarts nothing.

@@ -153,6 +153,10 @@ func TestCommandLines(t *testing.T) {
 		{`{"send":{"text":"a","role":"system"}}`, RefusedMalformed},
 		{`{"add":{}}`, RefusedMalformed},
 		{`{"end":null}`, RefusedMalformed},
+		{`{"answer":{"id":"q-1","yes":true}}`, ""},
+		{`{"answer":{"id":"q-1"}}`, ""},
+		{`{"answer":{"yes":true}}`, RefusedMalformed},
+		{`{"answer":{"id":"q-1","yes":true,"all":true}}`, RefusedMalformed},
 	}
 	for _, tc := range cases {
 		_, got, why := parse(line{b: []byte(tc.line)})

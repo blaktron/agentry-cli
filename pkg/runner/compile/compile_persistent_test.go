@@ -598,3 +598,35 @@ func TestUndeclaredPersistentCapabilityRefused(t *testing.T) {
 		t.Errorf("a package that declares nothing composes the set %q", got)
 	}
 }
+
+// TestSubagentHasNoAppLink: the subagent tools are on a persistent agent's
+// app link only when its roster names subagents, never for an author's
+// folder; and a subagent's own run, an autonomous run of an ordinary
+// release, is refused an app link at all, so it starts no runs of its own.
+func TestSubagentHasNoAppLink(t *testing.T) {
+	set := applink.Compose(applink.PartHelper, applink.PartSubagents)
+	in := persistentInputs(t, &spec.AgentFiles{Share: true})
+	in.Source, in.AppLink = "registry", set
+	var refusal *PolicyRefusal
+	if _, err := Compile(in, t.TempDir()); !errors.As(err, &refusal) || !strings.Contains(err.Error(), "subagent tools") {
+		t.Errorf("the subagent tools without a subagent: %v", err)
+	}
+	in.Subagents = true
+	plan, err := Compile(in, t.TempDir())
+	if err != nil {
+		t.Fatalf("a published agent with subagents: %v", err)
+	}
+	if !slices.Contains(applink.Tools(plan.Capabilities.AppLink), applink.SubagentRun) {
+		t.Errorf("the app link lists %v", applink.Tools(plan.Capabilities.AppLink))
+	}
+	in.Source = "local"
+	if _, err := Compile(in, t.TempDir()); !errors.As(err, &refusal) || !strings.Contains(err.Error(), "author's folder") {
+		t.Errorf("an author's folder with the subagent tools: %v", err)
+	}
+	sub := Inputs{Manifest: parseManifest(t, pureTextYAML), Mode: manifest.ModeAutonomous, Digest: "sha256:x", Source: "registry",
+		Policy: testPolicy(), PolicySHA: "s", RunnerImage: "agentry-runner:test", AppLink: set, Subagents: true}
+	sub.WorkspaceDir = workspaceFor(t, sub.Manifest, nil)
+	if _, err := Compile(sub, t.TempDir()); !errors.As(err, &refusal) || !strings.Contains(err.Error(), "persistent agent alone") {
+		t.Errorf("an autonomous run with an app link: %v", err)
+	}
+}

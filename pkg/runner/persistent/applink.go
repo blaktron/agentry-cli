@@ -9,10 +9,12 @@ package persistent
 // register the turns its heartbeat sends later at their times, with the
 // roster those times find (heartbeat.go). It refuses the meeting tools
 // unless the person lets the agent set up meeting recordings, and a
-// meeting_arm outside its rules (meetings.go). It hands every other tool to its
-// client's handler (the desktop's, which answers with the application's own
-// operations and consent); without one, the tool is answered as Agentry
-// Desktop's. Every call and its answer are a line of the segment's
+// meeting_arm outside its rules (meetings.go). It answers the subagent tools
+// itself (subagentrun.go), and Agentry's helper tools through the client's
+// HelperOps (helper.go) when the client has no handler of its own. It hands
+// every other tool to its client's handler (the desktop's, which answers
+// with the application's own operations and consent); without one, the tool
+// is answered as Agentry Desktop's. Every call and its answer are a line of the segment's
 // receipts/applink.log.
 
 import (
@@ -53,7 +55,9 @@ const (
 // one: made 0600 before the first segment, so the segment can bind it, and
 // kept across segments until Stop.
 func (s *Supervisor) listenAppLink() error {
-	if s.opts.Agent.AppLink() == "" {
+	// An agent from the registry may be given subagents while it runs, and
+	// with them an app link it had none of.
+	if a := s.opts.Agent; a.AppLink() == "" && (a.Release == nil || a.Source == SourceLocal) {
 		return nil
 	}
 	path := AppSocketPath(s.opts.Home, s.opts.Agent.Name)
@@ -124,9 +128,17 @@ func (s *Supervisor) serveAppLink(c net.Conn) {
 
 // answerAppLink answers a call of the agent's own tool set.
 func (s *Supervisor) answerAppLink(ctx context.Context, req applink.Request) applink.Answer {
+	cfg, err := LoadConfig(s.opts.Home, s.opts.Agent.Name)
+	if err != nil {
+		return applink.Answer{Text: "the agent's configuration could not be read: " + err.Error(), IsError: true}
+	}
 	switch {
-	case !slices.Contains(applink.Tools(s.opts.Agent.AppLink()), req.Tool):
+	case !slices.Contains(applink.Tools(s.opts.Agent.AppLinkWith(cfg)), req.Tool):
 		return applink.Answer{Text: "no such tool: " + req.Tool, IsError: true}
+	case applink.IsSubagentTool(req.Tool):
+		return s.answerSubagent(ctx, cfg, req)
+	case isHelperTool(req.Tool) && s.opts.AppLink == nil && s.opts.Helper != nil:
+		return s.answerHelper(ctx, cfg, req)
 	case req.Tool == applink.SelfConfigure:
 		return s.selfConfigure(req.Arguments)
 	case isTaskTool(req.Tool):

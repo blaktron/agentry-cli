@@ -113,10 +113,10 @@ func (a *agentInstall) describe(ctx context.Context, w io.Writer, m *manifest.Ma
 	a.pins = nil
 	for _, dep := range subs {
 		pin := persistent.SubagentPin{Ref: dep.Ref, Constraint: dep.Version, Why: dep.Why}
-		pin.Version, pin.Unresolved = resolveSubagent(ctx, dep, resolve)
+		pin.Version, pin.Reach, pin.Unresolved = resolveSubagent(ctx, dep, resolve)
 		a.pins = append(a.pins, pin)
 		if pin.Version != "" {
-			_, _ = fmt.Fprintf(w, "  subagent %s@%s (%s), pinned until you update the agent\n", dep.Ref, pin.Version, dep.Version)
+			_, _ = fmt.Fprintf(w, "  subagent %s@%s (%s), pinned until you update the agent: it runs in a sandbox of its own under its own contract, which reaches %s\n", dep.Ref, pin.Version, dep.Version, pin.Reach)
 		} else {
 			_, _ = fmt.Fprintf(w, "  subagent %s (%s) resolves to no version it can run: %s\n", dep.Ref, dep.Version, pin.Unresolved)
 		}
@@ -126,29 +126,42 @@ func (a *agentInstall) describe(ctx context.Context, w io.Writer, m *manifest.Ma
 // resolveSubagent is the version a subagent's constraint resolves to now,
 // or why none does: the newest published version within it must run as an
 // ordinary autonomous QuickAgent and not be persistent.
-func resolveSubagent(ctx context.Context, dep manifest.AgentDependency, resolve func(string) (*apiclient.ResolveResult, error)) (version, unresolved string) {
+func resolveSubagent(ctx context.Context, dep manifest.AgentDependency, resolve func(string) (*apiclient.ResolveResult, error)) (version, reach, unresolved string) {
 	if ctx.Err() != nil {
-		return "", ctx.Err().Error()
+		return "", "", ctx.Err().Error()
 	}
 	res, err := resolve(dep.Ref + "@" + dep.Version)
 	if err != nil {
-		return "", safeTerminalText(err.Error(), 300)
+		return "", "", safeTerminalText(err.Error(), 300)
 	}
 	sm, err := manifestFromResolve(res)
 	if err != nil {
-		return "", safeTerminalText(err.Error(), 300)
+		return "", "", safeTerminalText(err.Error(), 300)
 	}
 	switch {
 	case res.Yanked:
-		return "", res.Version + " is withdrawn"
+		return "", "", res.Version + " is withdrawn"
 	case sm.IsPersistent():
-		return "", res.Version + " is a persistent QuickAgent, which never runs as a subagent"
+		return "", "", res.Version + " is a persistent QuickAgent, which never runs as a subagent"
 	case !sm.Supports(manifest.ModeAutonomous):
-		return "", res.Version + " does not run autonomously"
+		return "", "", res.Version + " does not run autonomously"
 	case !dep.SubagentAllows(res.Version):
-		return "", res.Version + " is outside the constraint " + dep.Version
+		return "", "", res.Version + " is outside the constraint " + dep.Version
 	}
-	return res.Version, ""
+	return res.Version, subagentReach(sm.Capabilities), ""
+}
+
+// subagentReach is what a subagent's contract reaches, in a line: what its
+// install's consent asks about, and the keys it asks for.
+func subagentReach(c manifest.Capabilities) string {
+	reach := confirmedCapabilitiesWords(c)
+	if reach == "" {
+		reach = "nothing beyond its model: no network, no programs, no server"
+	}
+	if len(c.Secrets) > 0 {
+		reach += "; the keys " + strings.Join(c.Secrets, ", ")
+	}
+	return safeTerminalText(reach, 400)
 }
 
 // agentInstallResult is the `agent install --json` shape.

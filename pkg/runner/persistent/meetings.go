@@ -35,7 +35,9 @@ const (
 
 // readAtUse says the roster entry id is read when it is used, not given to
 // a segment: switching it takes effect at once and restarts nothing.
-func readAtUse(id string) bool { return id == EntryHeartbeat || id == EntryMeetings }
+func readAtUse(id string) bool {
+	return id == EntryHeartbeat || id == EntryMeetings || isSubagentEntry(id)
+}
 
 // meetingsOn says the agent may use its meeting tools: its roster has the
 // meetings entry on and the person agreed to it as its sentence reads now.

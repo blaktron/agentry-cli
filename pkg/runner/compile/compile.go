@@ -137,6 +137,10 @@ type Inputs struct {
 	// network, bound to the supervisor's socket alone. Like AgentFiles it is
 	// a persistent built-in's alone, refused to anything else.
 	AppLink string
+	// Subagents says the agent's roster names subagents, whose tools its
+	// app link may then list (applink.PartSubagents): the subagents its
+	// release pins or the person added. An author's folder has none.
+	Subagents bool
 	// Coder grants the Coding agent what its roster has on (spec.CoderGrant):
 	// any program in its own exec image, open egress, the browser on any
 	// public site, the person's dev server. Its gate is the person's
@@ -268,6 +272,9 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		}
 		if key := undeclaredAppLinkPart(in.AppLink, m.Capabilities.Persistent); key != "" {
 			return nil, &PolicyRefusal{Reason: "the app link's tools for capabilities.persistent." + key + " are granted to a persistent agent that declares it, and this one does not"}
+		}
+		if applink.Has(in.AppLink, applink.PartSubagents) && (!in.Subagents || in.Source == "local") {
+			return nil, &PolicyRefusal{Reason: "the subagent tools are granted to a persistent agent whose roster names subagents, and never to one run from an author's folder"}
 		}
 		caps.AppLink = in.AppLink
 	}
