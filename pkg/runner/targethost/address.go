@@ -18,9 +18,19 @@ type Refusal struct {
 	ID     string
 	Detail string
 	Err    error
+	// Of is what the message calls the host; empty is a target host. A
+	// caller that checks a host in another role (a runhost's setup) names
+	// that role here.
+	Of string
 }
 
-func (r *Refusal) Error() string { return fmt.Sprintf("target host %s: %v", r.ID, r.Err) }
+func (r *Refusal) Error() string {
+	of := r.Of
+	if of == "" {
+		of = "target host"
+	}
+	return fmt.Sprintf("%s %s: %v", of, r.ID, r.Err)
+}
 func (r *Refusal) Unwrap() error { return r.Err }
 
 // The details of a refusal: the receipt's own words (receipt.Host*).

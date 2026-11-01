@@ -151,11 +151,11 @@ func Add(ctx context.Context, o Options) (out *Outcome, err error) {
 
 	addr, err := targethost.ResolveAddress(ctx, o.Name, o.Answer, policy.HostsPolicy{})
 	if err != nil {
-		return out, err
+		return out, asRunhost(err)
 	}
 	hk, err := targethost.CheckHostKey(ctx, o.Name, o.Answer, addr, o.KnownHosts, o.Ask, func(s string) { say("%s", s) })
 	if err != nil {
-		return out, err
+		return out, asRunhost(err)
 	}
 	say("host key: %s (%s)", targethost.Fingerprint(hk.Key), hk.From)
 
@@ -535,6 +535,17 @@ func yesNo(b bool) string {
 	return "no"
 }
 
+// asRunhost names the server as the runhost it is being set up as in a
+// refusal of the target hosts' address and host-key checks, which setup
+// shares: the person named no target host.
+func asRunhost(err error) error {
+	var r *targethost.Refusal
+	if errors.As(err, &r) {
+		r.Of = "runhost"
+	}
+	return err
+}
+
 // RemoveOptions are what Remove needs.
 type RemoveOptions struct {
 	Record runhost.Record
@@ -561,7 +572,7 @@ func Remove(ctx context.Context, o RemoveOptions) (err error) {
 	answer := targethost.Answer{User: o.Answer.User, Host: o.Record.Host, Port: o.Record.Port}
 	addr, err := targethost.ResolveAddress(ctx, o.Record.Name, answer, policy.HostsPolicy{})
 	if err != nil {
-		return err
+		return asRunhost(err)
 	}
 	conn, err := Dial(ctx, addr, o.Record.Port, o.Answer.User, pinned, o.Auth)
 	if err != nil {
