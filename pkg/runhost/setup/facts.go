@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/blaktron/agentry-cli/pkg/runhost"
 )
 
 // Facts are what the preflight read of a server, by key (assets/preflight.sh).
@@ -50,6 +52,10 @@ func (f Facts) Arch() string {
 
 // Listening is the set of listening sockets the preflight saw.
 func (f Facts) Listening() []string { return strings.Fields(f["listening"]) }
+
+// DockerRepoHost is Docker's apt repository, which the server must reach only
+// when setup installs Docker Engine.
+const DockerRepoHost = "download.docker.com"
 
 // Finding levels.
 const (
@@ -195,7 +201,7 @@ func Evaluate(f Facts, reach []string) Plan {
 	}
 
 	if f.yes("agentry_user") {
-		if f["agentry_home"] != "/var/lib/agentry" {
+		if f["agentry_home"] != runhost.Home {
 			add(LevelStop, "account", "an account named agentry already exists with the home %s; setup will not take it over", f["agentry_home"])
 		} else {
 			add(LevelOK, "account", "the agentry account from an earlier setup is there and is kept")
@@ -207,9 +213,14 @@ func Evaluate(f Facts, reach []string) Plan {
 
 	if l := f.Listening(); len(l) > 0 {
 		add(LevelNote, "listening", "open now: %s (setup opens none; the docs say how to firewall the server)", strings.Join(l, " "))
+	} else {
+		add(LevelStop, "listening", "the server's listening sockets could not be read (no ss): setup must show it opens none")
 	}
 
 	for _, h := range reach {
+		if h == DockerRepoHost && !p.InstallDocker {
+			continue
+		}
 		switch f["reach_"+h] {
 		case "yes":
 			add(LevelOK, "reach", "%s answers on port 443", h)

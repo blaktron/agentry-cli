@@ -37,7 +37,8 @@ func newRunhostCmd() *cobra.Command {
 			"Docker Engine where there is none, gVisor for every container, this CLI's own\n" +
 			"signed release, and the runhost's service, which listens on an owner-only\n" +
 			"socket and opens no network port. This computer is paired with its own run\n" +
-			"key, which can reach that service and nothing else.\n\n" +
+			"key, held to that service: setup checks that it is refused a shell, a\n" +
+			"terminal, any other command and forwarding.\n\n" +
 			"Servers: Debian 12 and 13, Ubuntu 22.04 and 24.04, on amd64 or arm64.",
 	}
 	cmd.AddCommand(newRunhostAddCmd(), newRunhostListCmd(), newRunhostStatusCmd(), newRunhostDoctorCmd(), newRunhostRemoveCmd(),
@@ -90,7 +91,7 @@ func (f *adminFlags) resolve(ask targethost.Asker, who string) (rhsetup.AdminAut
 		return a, errors.New("give the password one way: --password-env or --password-file")
 	}
 	if f.keyFile != "" {
-		b, err := os.ReadFile(expandTilde(f.keyFile)) //nolint:gosec // a file the person named
+		b, err := os.ReadFile(expandHome(f.keyFile)) //nolint:gosec // a file the person named
 		if err != nil {
 			return a, fmt.Errorf("--key: %w", err)
 		}
@@ -120,7 +121,7 @@ func (f *adminFlags) resolve(ask targethost.Asker, who string) (rhsetup.AdminAut
 		}
 		a.Password = v
 	case f.passwordFile != "":
-		v, err := readFile(expandTilde(f.passwordFile))
+		v, err := readFile(expandHome(f.passwordFile))
 		if err != nil {
 			return a, fmt.Errorf("--password-file: %w", err)
 		}
@@ -151,7 +152,7 @@ func (f *adminFlags) resolve(ask targethost.Asker, who string) (rhsetup.AdminAut
 		}
 		a.Sudo = v
 	case f.sudoFile != "":
-		v, err := readFile(expandTilde(f.sudoFile))
+		v, err := readFile(expandHome(f.sudoFile))
 		if err != nil {
 			return a, fmt.Errorf("--sudo-password-file: %w", err)
 		}
@@ -164,15 +165,6 @@ func needsPassphrase(key []byte) bool {
 	_, err := ssh.ParsePrivateKey(key)
 	var missing *ssh.PassphraseMissingError
 	return errors.As(err, &missing)
-}
-
-func expandTilde(p string) string {
-	if strings.HasPrefix(p, "~/") {
-		if h, err := os.UserHomeDir(); err == nil {
-			return h + p[1:]
-		}
-	}
-	return p
 }
 
 // parseSSHTarget reads ssh://[user@]host[:port].
@@ -244,12 +236,14 @@ func newRunhostAddCmd() *cobra.Command {
 			"    agentry account joins the docker group, which makes it root-equivalent on\n" +
 			"    the server; its run key can reach only the runhost's service);\n" +
 			"  - gVisor (runsc), registered for every container and for the gateway;\n" +
-			"  - this CLI's own signed release for the server's architecture, checked here\n" +
-			"    and again on the server;\n" +
+			"  - this CLI's own signed release for the server's architecture: its signature\n" +
+			"    checked here, its bytes checked again on the server;\n" +
 			"  - the images runs need, and the runhost's service.\n" +
 			"Then it pairs this computer: a run key and a sealing key made here and kept in\n" +
 			"the system keychain, the run key installed to run nothing but the service. It\n" +
-			"checks the result over the run key alone. The admin sign-in is kept nowhere.\n\n" +
+			"checks the result over the run key alone: the service's version and doctor,\n" +
+			"the key's refusals, and that no network listener was added. The admin\n" +
+			"sign-in is kept nowhere.\n\n" +
 			"The server's host key is checked as a target host's is: a key in your\n" +
 			"known_hosts or Agentry's is accepted, an unknown one is asked about at a\n" +
 			"terminal, and a changed one is refused.",
@@ -296,11 +290,11 @@ func runRunhostAdd(cmd *cobra.Command, name, target string, af *adminFlags, yes 
 		return err
 	}
 	label, _ := os.Hostname()
-	reach := []string{"ghcr.io", "download.docker.com"}
+	reach := []string{"ghcr.io", rhsetup.DockerRepoHost}
 	if u, err := url.Parse(registryURL()); err == nil && u.Hostname() != "" && u.Hostname() != "localhost" {
 		reach = append(reach, u.Hostname())
 	}
-	say := func(s string) { _, _ = fmt.Fprintln(narration(cmd), redactAll(s, auth.Values())) }
+	say := func(s string) { _, _ = fmt.Fprintln(narration(cmd), s) }
 	o := rhsetup.Options{
 		Name: name, Answer: answer, Auth: auth,
 		KnownHosts: targethost.DefaultKnownHostsFiles(home),
@@ -330,7 +324,7 @@ func runRunhostAdd(cmd *cobra.Command, name, target string, af *adminFlags, yes 
 		}
 	}
 	if err != nil {
-		return engine.Classify(engine.ExitCLI, errors.New(redactAll(err.Error(), auth.Values())))
+		return engine.Classify(engine.ExitCLI, err)
 	}
 	if flags.jsonOut {
 		doc := runhostAddOutput{Runhost: out.Record, Findings: out.Plan.Findings, Restrictions: out.Restrictions, Status: out.Status, Doctor: out.Doctor.Result}
@@ -345,16 +339,6 @@ func runRunhostAdd(cmd *cobra.Command, name, target string, af *adminFlags, yes 
 		nextStep{command: "agentry runhost status " + name, notes: []string{"the runhost's state, over this computer's run key"}},
 		nextStep{command: "agentry runhost doctor " + name, notes: []string{"its engine, gVisor, images and service, checked on the server"}})
 	return nil
-}
-
-// redactAll masks each secret in s.
-func redactAll(s string, secrets []string) string {
-	for _, v := range secrets {
-		if len(v) >= 4 {
-			s = strings.ReplaceAll(s, v, "[redacted]")
-		}
-	}
-	return s
 }
 
 func newRunhostListCmd() *cobra.Command {
@@ -560,13 +544,13 @@ func newRunhostRemoveCmd() *cobra.Command {
 			if err != nil {
 				return engine.Classify(engine.ExitUsage, err)
 			}
-			say := func(s string) { _, _ = fmt.Fprintln(narration(cmd), redactAll(s, auth.Values())) }
+			say := func(s string) { _, _ = fmt.Fprintln(narration(cmd), s) }
 			err = rhsetup.Remove(cmd.Context(), rhsetup.RemoveOptions{
 				Record: *rec, Auth: auth, Answer: targethost.Answer{User: user, Host: rec.Host, Port: rec.Port},
 				Ask: ask, Say: say, RemoveImages: removeImages, RemoveDocker: removeDocker,
 			})
 			if err != nil {
-				return engine.Classify(engine.ExitCLI, errors.New(redactAll(err.Error(), auth.Values())))
+				return engine.Classify(engine.ExitCLI, err)
 			}
 			if err := runhost.DeleteKeys(name); err != nil {
 				say("warning: this computer's keys for " + name + " could not be removed from the system keychain: " + err.Error())

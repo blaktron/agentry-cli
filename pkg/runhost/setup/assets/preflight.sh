@@ -14,22 +14,18 @@ if [ -r /etc/os-release ]; then
 	fact os_id "${ID:-}"
 	fact os_version_id "${VERSION_ID:-}"
 	fact os_pretty "${PRETTY_NAME:-}"
-	fact os_like "${ID_LIKE:-}"
 	fact os_codename "${VERSION_CODENAME:-${UBUNTU_CODENAME:-}}"
 fi
 fact arch "$(uname -m)"
-fact kernel "$(uname -r)"
 if command -v systemctl >/dev/null 2>&1; then
 	fact systemd "$(systemctl --version 2>/dev/null | awk 'NR==1{print $2}')"
 	fact systemd_running "$( [ -d /run/systemd/system ] && echo yes || echo no )"
 fi
-fact uid "$(id -u)"
 if [ -e /dev/tpmrm0 ] || [ -e /dev/tpm0 ]; then fact tpm2 yes; else fact tpm2 no; fi
 df_dir=/var/lib
 [ -d /var/lib/agentry ] && df_dir=/var/lib/agentry
 fact disk_free_kb "$(df -Pk "$df_dir" 2>/dev/null | awk 'NR==2{print $4}')"
 fact mem_available_kb "$(awk '/^MemAvailable:/{print $2}' /proc/meminfo 2>/dev/null)"
-fact mem_total_kb "$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null)"
 
 # Container engines already here.
 if command -v dockerd >/dev/null 2>&1; then
@@ -51,19 +47,15 @@ for s in /var/snap/lxd/common/lxd/unix.socket /var/lib/lxd/unix.socket; do
 	[ -S "$s" ] && fact engine_lxd yes
 done
 [ -S /var/lib/incus/unix.socket ] && fact engine_incus yes
-[ -r /etc/docker/daemon.json ] && fact daemon_json yes
 
 # The service's account, if an earlier setup made it.
 if id agentry >/dev/null 2>&1; then
 	fact agentry_user yes
-	fact agentry_uid "$(id -u agentry)"
-	fact agentry_shell "$(getent passwd agentry | cut -d: -f7)"
 	fact agentry_home "$(getent passwd agentry | cut -d: -f6)"
 else
 	fact agentry_user no
 fi
 command -v apt-get >/dev/null 2>&1 && fact apt yes
-command -v dnf >/dev/null 2>&1 && fact dnf yes
 command -v sshd >/dev/null 2>&1 && fact sshd_allow "$(sshd -T 2>/dev/null | awk '$1=="allowusers"||$1=="allowgroups"||$1=="denyusers"||$1=="denygroups"{printf "%s %s; ", $1, $2}')"
 
 # Every listening socket, so setup can show what is open and prove after the

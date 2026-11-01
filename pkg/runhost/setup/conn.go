@@ -9,12 +9,15 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
+
+	"github.com/blaktron/agentry-cli/pkg/runner/targethost"
 )
 
 // AdminAuth is the admin sign-in: the server account setup signs in as, root
@@ -241,6 +244,24 @@ func (c *Conn) FindRoot(ctx context.Context) error {
 	return c.checkSudo(ctx)
 }
 
+// EnsureRoot is FindRoot, asking for sudo's password at a terminal when it is
+// needed and was not given; a password typed there joins red's secrets.
+func (c *Conn) EnsureRoot(ctx context.Context, ask targethost.Asker, who string, red *redactor) error {
+	err := c.FindRoot(ctx)
+	if !errors.Is(err, ErrSudoPassword) {
+		return err
+	}
+	if ask == nil {
+		return fmt.Errorf("%w for %s, and no one is at a terminal to type it: give it with --sudo-password-env or --sudo-password-file", err, who)
+	}
+	pw, err := ask.AskSecret("sudo password for " + who)
+	if err != nil {
+		return err
+	}
+	red.add(pw)
+	return c.SetSudo(ctx, pw)
+}
+
 // SetSudo gives the sudo password after FindRoot asked for it, and checks it.
 func (c *Conn) SetSudo(ctx context.Context, pw string) error {
 	c.auth.Sudo = pw
@@ -280,7 +301,7 @@ func (c *Conn) Stage(ctx context.Context) (string, error) {
 		return "", err
 	}
 	dir := strings.TrimSpace(string(r.Stdout))
-	if r.Code != 0 || !strings.HasPrefix(dir, "/tmp/agentry-runhost.") || strings.ContainsAny(dir, " '\"\\\n") {
+	if r.Code != 0 || !stageRE.MatchString(dir) {
 		return "", fmt.Errorf("could not make a staging directory on the server: %s", strings.TrimSpace(string(r.Stderr)))
 	}
 	return dir, nil
@@ -305,7 +326,7 @@ func (c *Conn) Upload(ctx context.Context, dir, name string, data []byte) error 
 // Unstage removes the staging directory, as root, since root steps may have
 // left files in it.
 func (c *Conn) Unstage(ctx context.Context, dir string) {
-	if !strings.HasPrefix(dir, "/tmp/agentry-runhost.") {
+	if !stageRE.MatchString(dir) {
 		return
 	}
 	_, _ = c.RunRoot(ctx, "rm -rf "+shellQuote(dir), nil)
@@ -325,6 +346,9 @@ func (c *Conn) ReadRoot(ctx context.Context, path string) ([]byte, error) {
 	}
 	return nil, fmt.Errorf("read %s: %s", path, strings.TrimSpace(string(r.Stderr)))
 }
+
+// stageRE is the shape of mktemp's staging directory, and nothing else.
+var stageRE = regexp.MustCompile(`^/tmp/agentry-runhost\.[A-Za-z0-9]{8}$`)
 
 // shellQuote quotes s for a POSIX shell.
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }

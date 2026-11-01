@@ -5,7 +5,10 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -90,9 +93,15 @@ func TestLXDBesideDockerIsANote(t *testing.T) {
 func TestAnExistingDockerEngineIsKept(t *testing.T) {
 	f := debian13()
 	f["dockerd"], f["docker_server"], f["engine_containerd"] = "yes", "29.1.0", "yes"
-	p := Evaluate(f, nil)
+	// Docker's repository is not needed, so its being unreachable stops nothing.
+	f["reach_"+DockerRepoHost] = "no"
+	p := Evaluate(f, []string{"ghcr.io", DockerRepoHost})
 	if !p.Supported || p.InstallDocker {
 		t.Fatalf("plan %+v", p)
+	}
+	f["dockerd"] = "no"
+	if Evaluate(f, []string{"ghcr.io", DockerRepoHost}).Supported {
+		t.Fatal("a server that must install Docker went on without reaching Docker's repository")
 	}
 }
 
@@ -254,5 +263,69 @@ func TestAddRefusesABuildThatIsNotARelease(t *testing.T) {
 		if _, err := Add(t.Context(), Options{Name: "lab", Version: v}); err != ErrNotARelease {
 			t.Errorf("%s: %v", v, err)
 		}
+	}
+}
+
+func TestMergeConfigKeepsWhatSetupFoundAndBindsAnOwner(t *testing.T) {
+	devices := runhost.Owner{Kind: runhost.OwnerDevices}
+	me := runhost.Owner{Kind: runhost.OwnerAccount, Registry: "https://registry.example", Handle: "me"}
+	first, err := mergeConfig(nil, runhost.ServerConfig{Name: "lab", Owner: devices, InstalledDocker: true, GVisor: "1", SetUpAt: "t1"})
+	if err != nil || !first.InstalledDocker || first.Owner != devices {
+		t.Fatalf("%+v %v", first, err)
+	}
+	b, _ := json.Marshal(first)
+	second, err := mergeConfig(b, runhost.ServerConfig{Name: "other", Owner: me, InstalledDocker: false, GVisor: "2", SetUpAt: "t2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Owner != me || !second.InstalledDocker || second.GVisor != "2" || second.SetUpAt != "t1" || second.Name != "lab" {
+		t.Fatalf("after a signed-in add: %+v", second)
+	}
+	b, _ = json.Marshal(second)
+	if _, err := mergeConfig(b, runhost.ServerConfig{Owner: runhost.Owner{Kind: runhost.OwnerAccount, Registry: "https://registry.example", Handle: "someone-else"}}); err == nil {
+		t.Fatal("another account took over the runhost")
+	}
+	// A device pairs with an account's runhost only signed in to it.
+	if _, err := mergeConfig(b, runhost.ServerConfig{Owner: devices}); err == nil {
+		t.Fatal("a signed-out device paired with an account's runhost")
+	}
+}
+
+func TestTheStagingPathIsMktempsAndNothingElse(t *testing.T) {
+	if !stageRE.MatchString("/tmp/agentry-runhost.Ab12Cd34") {
+		t.Fatal("mktemp's own path refused")
+	}
+	for _, bad := range []string{"/tmp/agentry-runhost.Ab12Cd34/..", "/tmp/agentry-runhost.../etc", "/tmp/agentry-runhost.Ab12Cd34 /", "/", "/tmp/agentry-runhost."} {
+		if stageRE.MatchString(bad) {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}
+
+func TestTheRedactorMasksAPasswordTypedLater(t *testing.T) {
+	r := newRedactor(AdminAuth{Password: "sign-in-pw"})
+	r.add("typed-sudo-pw")
+	var said []string
+	say := r.say(func(s string) { said = append(said, s) })
+	say("sudo said: %s / %s", "typed-sudo-pw", "sign-in-pw")
+	err := r.err(errors.New("exit 1: typed-sudo-pw is wrong"))
+	if strings.Contains(said[0], "pw") || strings.Contains(err.Error(), "typed-sudo-pw") {
+		t.Fatalf("a secret got through: %q, %v", said[0], err)
+	}
+}
+
+func TestFetchGVisorRefusesAnArchiveOtherThanThePinned(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(zstdTar(t, map[string]string{"runsc": "not the pinned runsc"}))
+	}))
+	defer srv.Close()
+	old := GVisorBaseURL
+	GVisorBaseURL = srv.URL
+	defer func() { GVisorBaseURL = old }()
+	if _, err := FetchGVisor(t.Context(), srv.Client(), "x86_64"); err == nil || !strings.Contains(err.Error(), "SHA-512") {
+		t.Fatalf("a changed archive: %v", err)
+	}
+	if _, err := FetchGVisor(t.Context(), srv.Client(), "riscv64"); err == nil {
+		t.Fatal("an architecture with no pin was fetched")
 	}
 }

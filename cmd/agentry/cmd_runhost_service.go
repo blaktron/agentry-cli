@@ -15,11 +15,13 @@ import (
 	"runtime"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/blaktron/agentry-cli/internal/version"
 	"github.com/blaktron/agentry-cli/pkg/runhost"
+	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/gateway"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
@@ -160,27 +162,27 @@ func osPretty() string {
 	return runtime.GOOS
 }
 
-// runhostDoctorChecks are the CLI doctor's checks a runhost reports: its
-// policy, its engine and runtimes, and its images. The model and the
-// registry are a run's own concerns and are left to it.
+// runhostDoctorCheck says whether a check of the CLI doctor is one a runhost
+// reports: its policy, its engine and runtimes, and its images. The model and
+// the registry are a run's own concerns and are left to it.
 func runhostDoctorCheck(name string) bool {
 	return name == "policy" || strings.HasPrefix(name, "docker") || strings.HasPrefix(name, "image:")
 }
 
 // runhostDoctor checks the runhost: the CLI doctor's engine and image checks,
-// then that every container class runs under gVisor as the runhost's
-// registrations make it.
+// then that every container class runs under gVisor as the runhost registers
+// it, and that a container does start under each of its two runtimes.
 func runhostDoctor(ctx context.Context) *doctorReport {
 	rep := &doctorReport{}
 	self, err := os.Executable()
 	if err != nil {
-		rep.failFix("runhost:cli", "reinstall the runhost with `agentry runhost add`", "the service cannot find its own CLI: %v", err)
+		rep.failFix("runhost:cli", remedyRunhostAdd, "the service cannot find its own CLI: %v", err)
 		return rep
 	}
 	out, _ := exec.CommandContext(ctx, self, "doctor", "--json").Output() //nolint:gosec // the service's own binary
 	var cli doctorReport
 	if err := json.Unmarshal(out, &cli); err != nil {
-		rep.failFix("runhost:cli", "run `agentry runhost add` again", "the CLI's doctor gave no report: %v", err)
+		rep.failFix("runhost:cli", remedyRunhostAdd, "the CLI's doctor gave no report: %v", err)
 	}
 	for _, c := range cli.Checks {
 		if runhostDoctorCheck(c.Name) {
@@ -191,32 +193,85 @@ func runhostDoctor(ctx context.Context) *doctorReport {
 	pol, _, perr := policy.Load(path)
 	switch {
 	case perr != nil:
-		rep.failFix("runhost:gvisor", "run `agentry runhost add` again", "the policy is not readable: %v", perr)
+		rep.failFix("runhost:gvisor", remedyRunhostAdd, "the policy is not readable: %v", perr)
 	case pol.Docker.Runtime != runhost.RunscRuntime || pol.Docker.GatewayRuntime != runhost.RunscUDSRuntime:
-		rep.failFix("runhost:gvisor", "run `agentry runhost add` again to render the policy", "the policy runs containers under %q and the gateway under %q; a runhost runs them under %s and %s", pol.Docker.Runtime, pol.Docker.GatewayRuntime, runhost.RunscRuntime, runhost.RunscUDSRuntime)
+		rep.failFix("runhost:gvisor", remedyRunhostAdd, "the policy runs containers under %q and the gateway under %q; a runhost runs them under %s and %s", pol.Docker.Runtime, pol.Docker.GatewayRuntime, runhost.RunscRuntime, runhost.RunscUDSRuntime)
 	default:
 		rep.ok("runhost:gvisor", "every container runs under %s, the gateway under %s", runhost.RunscRuntime, runhost.RunscUDSRuntime)
 	}
-	d := newDockerClient()
-	if table, err := d.Runtimes(ctx); err == nil {
-		for _, name := range []string{runhost.RunscRuntime, runhost.RunscUDSRuntime} {
-			rt, ok := table[name]
-			switch {
-			case !ok:
-				rep.failFix("runhost:"+name, "run `agentry runhost add` again", "the Docker daemon does not register %s", name)
-			case rt.Path != runhost.RunscPath:
-				rep.failFix("runhost:"+name, "run `agentry runhost add` again", "%s is registered at %s, not the runhost's own %s", name, rt.Path, runhost.RunscPath)
-			default:
-				rep.ok("runhost:"+name, "registered at %s", rt.Path)
-			}
-		}
+	table, err := newDockerClient().Runtimes(ctx)
+	if err != nil {
+		rep.failFix("runhost:runtimes", "check that the Docker daemon answers", "the daemon's runtimes could not be read: %v", err)
+	} else {
+		rep.Checks = append(rep.Checks, runhostRuntimeChecks(table)...)
 	}
 	if v, err := exec.CommandContext(ctx, runhost.RunscPath, "--version").Output(); err != nil { //nolint:gosec // the runhost's own runsc
-		rep.failFix("runhost:runsc-version", "run `agentry runhost add` again", "runsc does not run: %v", err)
+		rep.failFix("runhost:runsc-version", remedyRunhostAdd, "runsc does not run: %v", err)
 	} else {
 		rep.ok("runhost:runsc-version", "%s", firstLineOf(string(v)))
 	}
+	if perr == nil {
+		image := pol.RunnerImageTag(runnerimage.ContentVersion())
+		for _, rt := range []string{runhost.RunscRuntime, runhost.RunscUDSRuntime} {
+			runhostSandboxCheck(ctx, rep, image, rt)
+		}
+	}
+	if st, err := os.Stat(runhost.ServeSocket()); err != nil || st.Mode().Perm() != 0o600 || st.Mode()&os.ModeSocket == 0 {
+		rep.failFix("runhost:socket", "restart the runhost's service", "the service's socket %s is not an owner-only socket", runhost.ServeSocket())
+	} else {
+		rep.ok("runhost:socket", "%s, owner-only", runhost.ServeSocket())
+	}
 	return rep
+}
+
+const remedyRunhostAdd = "run `agentry runhost add` again, which repairs the install"
+
+// runhostRuntimeChecks checks the daemon's two gVisor registrations as setup
+// makes them: runsc at the runhost's own binary with no arguments of its own,
+// and runsc-uds the same with --host-uds=open alone added.
+func runhostRuntimeChecks(table map[string]dockerx.Runtime) []doctorCheck {
+	var out []doctorCheck
+	add := func(name, status, remedy, format string, args ...any) {
+		out = append(out, doctorCheck{Name: name, Status: status, Detail: fmt.Sprintf(format, args...), Remedy: remedy})
+	}
+	rt, ok := table[runhost.RunscRuntime]
+	switch {
+	case !ok:
+		add("runhost:"+runhost.RunscRuntime, "fail", remedyRunhostAdd, "the Docker daemon does not register %s", runhost.RunscRuntime)
+	case rt.Path != runhost.RunscPath:
+		add("runhost:"+runhost.RunscRuntime, "fail", remedyRunhostAdd, "%s is registered at %s, not the runhost's own %s", runhost.RunscRuntime, rt.Path, runhost.RunscPath)
+	case len(rt.Args) > 0:
+		add("runhost:"+runhost.RunscRuntime, "fail", remedyRunhostAdd, "%s is registered with runtimeArgs %q; the runhost registers it with none", runhost.RunscRuntime, rt.Args)
+	default:
+		add("runhost:"+runhost.RunscRuntime, "ok", "", "registered at %s", rt.Path)
+	}
+	if !ok {
+		return out
+	}
+	if err := dockerx.CheckHostUDSRegistration(table, runhost.RunscRuntime, runhost.RunscUDSRuntime); err != nil {
+		add("runhost:"+runhost.RunscUDSRuntime, "fail", remedyRunhostAdd, "%v", err)
+	} else {
+		add("runhost:"+runhost.RunscUDSRuntime, "ok", "", "registered at %s with %s", table[runhost.RunscUDSRuntime].Path, dockerx.HostUDSOpen)
+	}
+	return out
+}
+
+// runhostSandboxCheck starts a container of the runner image under rt, with
+// no network, and reads the kernel it reports: gVisor's is its own.
+func runhostSandboxCheck(ctx context.Context, rep *doctorReport, image, rt string) {
+	name := "runhost:sandbox:" + rt
+	cctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	out, err := exec.CommandContext(cctx, "docker", "run", "--rm", "--runtime="+rt, "--network=none", "--entrypoint", "uname", image, "-r").CombinedOutput() //nolint:gosec // fixed arguments; the image is the policy's
+	kernel := firstLineOf(string(out))
+	switch {
+	case err != nil:
+		rep.failFix(name, remedyRunhostAdd, "a container would not start under %s: %v: %s", rt, err, kernel)
+	case !strings.Contains(kernel, "gvisor"):
+		rep.failFix(name, remedyRunhostAdd, "a container under %s reports the kernel %q, not gVisor's", rt, kernel)
+	default:
+		rep.ok(name, "a container starts under %s (kernel %s)", rt, kernel)
+	}
 }
 
 func firstLineOf(s string) string {

@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"syscall"
 )
 
 // Handler answers one verb. It writes its narration and result to fw and
@@ -42,9 +41,7 @@ func (s *Service) Listen() (net.Listener, error) {
 	if err := os.Remove(s.Socket); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	old := syscall.Umask(0o177)
-	l, err := net.Listen("unix", s.Socket)
-	syscall.Umask(old)
+	l, err := listenOwnerOnly(s.Socket)
 	if err != nil {
 		return nil, err
 	}

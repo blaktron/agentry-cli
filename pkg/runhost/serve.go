@@ -14,8 +14,8 @@ import (
 
 // Serve is the forced command of every run key. sshd runs it whatever the
 // device asked for, with the asked command in SSH_ORIGINAL_COMMAND; Serve
-// relays the session to the service's socket only when that command is one
-// of Verbs, and otherwise answers with a refusal and exit status 2. It never
+// relays the session to the service's socket only when that command is a
+// run key's verb (IsVerb), and otherwise answers with a refusal and exit status 2. It never
 // runs anything itself. It returns the exit status the session ends with:
 // the service's exit frame's.
 func Serve(ctx context.Context, original string, stdin io.Reader, stdout io.Writer, socket string) int {
@@ -38,7 +38,7 @@ func Serve(ctx context.Context, original string, stdin io.Reader, stdout io.Writ
 	var d net.Dialer
 	conn, err := d.DialContext(ctx, "unix", socket)
 	if err != nil {
-		_ = fw.Exit(3, fmt.Errorf("the runhost's service is not answering (%v): `agentry runhost doctor` with the admin sign-in says why", err))
+		_ = fw.Exit(3, fmt.Errorf("the runhost's service is not answering (%v): `agentry runhost add` again, with the admin sign-in, repairs and restarts it", err))
 		return 3
 	}
 	defer func() { _ = conn.Close() }()

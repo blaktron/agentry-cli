@@ -41,10 +41,6 @@ const (
 	ShellName = "agentry-shell"
 	// RunscPath is the runsc the Docker daemon's runtimes name.
 	RunscPath = BinDir + "/runsc"
-	// CLIDir holds each installed CLI release, one directory per version.
-	CLIDir = Home + "/cli"
-	// GVisorDir holds each installed gVisor release.
-	GVisorDir = Home + "/gvisor"
 	// StateDir is the service's own state: the runhost's configuration and
 	// the paired devices.
 	StateDir = Home + "/runhost"
@@ -56,8 +52,6 @@ const (
 	AuthorizedKeys = Home + "/.ssh/authorized_keys"
 	// UnitName is the systemd user unit of the service.
 	UnitName = "agentry-runhost.service"
-	// UnitFile is that unit's file.
-	UnitFile = Home + "/.config/systemd/user/" + UnitName
 	// SocketName is the service's socket under the user's runtime directory.
 	SocketName = "agentry-runhost.sock"
 	// RunscRuntime and RunscUDSRuntime are the Docker daemon's two gVisor
@@ -75,22 +69,13 @@ func SocketPath(uid int) string {
 	return path.Join("/run/user", strconv.Itoa(uid), SocketName)
 }
 
-// CLIVersionDir is where release version's CLI is installed.
-func CLIVersionDir(version string) string { return CLIDir + "/" + version }
-
-// GVisorReleaseDir is where a gVisor release is installed.
-func GVisorReleaseDir(release string) string { return GVisorDir + "/" + release }
-
-// Verbs a run key may ask for. sshd hands serve the asked command in
-// SSH_ORIGINAL_COMMAND, and serve relays only these.
-var Verbs = []string{"version", "status", "doctor", "job", "attach", "cancel", "collect", "update", "store", "schedule", "agent", "sign-in"}
-
-// IsVerb says whether v is one of Verbs.
+// IsVerb says whether v is a verb a run key may ask for. sshd hands serve
+// the asked command in SSH_ORIGINAL_COMMAND, and serve relays only these to
+// the service, which answers the ones it knows and refuses the rest.
 func IsVerb(v string) bool {
-	for _, w := range Verbs {
-		if w == v {
-			return true
-		}
+	switch v {
+	case "version", "status", "doctor", "job", "attach", "cancel", "collect", "update", "store", "schedule", "agent", "sign-in":
+		return true
 	}
 	return false
 }

@@ -3,6 +3,7 @@ module github.com/blaktron/agentry-cli
 go 1.27.3
 
 require (
+	aead.dev/minisign v0.3.0
 	github.com/Masterminds/semver/v3 v3.5.0
 	github.com/blaktron/agentry v0.6.999
 	github.com/charmbracelet/bubbles v1.0.0
@@ -26,7 +27,6 @@ require (
 )
 
 require (
-	aead.dev/minisign v0.3.0 // indirect
 	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect

@@ -12,7 +12,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -104,12 +106,6 @@ type Options struct {
 	Now func() time.Time
 }
 
-func (o *Options) say(format string, args ...any) {
-	if o.Say != nil {
-		o.Say(fmt.Sprintf(format, args...))
-	}
-}
-
 // Outcome is a finished setup.
 type Outcome struct {
 	Record       runhost.Record
@@ -120,13 +116,19 @@ type Outcome struct {
 }
 
 // Add sets the server up as a runhost and pairs this device with it. The
-// record it returns is not yet saved: the caller saves it.
-func Add(ctx context.Context, o Options) (*Outcome, error) {
+// record it returns is not yet saved: the caller saves it. It is returned
+// only once the server holds this device's run key, so a record always has
+// its keys in the keychain. No error and no narration carries a secret of the
+// admin sign-in, a sudo password typed at the prompt included.
+func Add(ctx context.Context, o Options) (out *Outcome, err error) {
 	if err := runhost.ValidName(o.Name); err != nil {
 		return nil, err
 	}
 	if !releaseVersionRE.MatchString(o.Version) {
 		return nil, ErrNotARelease
+	}
+	if o.Keys.Empty() {
+		return nil, clirelease.ErrNoKeys
 	}
 	if o.Now == nil {
 		o.Now = time.Now
@@ -142,90 +144,84 @@ func Add(ctx context.Context, o Options) (*Outcome, error) {
 	if o.FetchGVisor == nil {
 		o.FetchGVisor = func(ctx context.Context, arch string) ([]byte, error) { return FetchGVisor(ctx, o.HTTP, arch) }
 	}
-	if o.Keys.Empty() {
-		return nil, clirelease.ErrNoKeys
-	}
+	red := newRedactor(o.Auth)
+	say := red.say(o.Say)
+	out = &Outcome{}
+	defer func() { err = red.err(err) }()
 
 	addr, err := targethost.ResolveAddress(ctx, o.Name, o.Answer, policy.HostsPolicy{})
 	if err != nil {
-		return nil, err
+		return out, err
 	}
-	hk, err := targethost.CheckHostKey(ctx, o.Name, o.Answer, addr, o.KnownHosts, o.Ask, func(s string) { o.say("%s", s) })
+	hk, err := targethost.CheckHostKey(ctx, o.Name, o.Answer, addr, o.KnownHosts, o.Ask, func(s string) { say("%s", s) })
 	if err != nil {
-		return nil, err
+		return out, err
 	}
-	o.say("host key: %s (%s)", targethost.Fingerprint(hk.Key), hk.From)
+	say("host key: %s (%s)", targethost.Fingerprint(hk.Key), hk.From)
 
 	conn, err := Dial(ctx, addr, o.Answer.Port, o.Answer.User, hk.Key, o.Auth)
 	if err != nil {
-		return nil, err
+		return out, err
 	}
 	defer func() { _ = conn.Close() }()
-	if err := conn.FindRoot(ctx); errors.Is(err, ErrSudoPassword) {
-		if o.Ask == nil {
-			return nil, fmt.Errorf("%w for %s, and no one is at a terminal to type it: give it with --sudo-password-env or --sudo-password-file", err, o.Answer.String())
-		}
-		pw, aerr := o.Ask.AskSecret(fmt.Sprintf("sudo password for %s: ", o.Answer.String()))
-		if aerr != nil {
-			return nil, aerr
-		}
-		if err := conn.SetSudo(ctx, pw); err != nil {
-			return nil, err
-		}
-	} else if err != nil {
-		return nil, err
+	if err := conn.EnsureRoot(ctx, o.Ask, o.Answer.String(), red); err != nil {
+		return out, err
 	}
-
 	stage, err := conn.Stage(ctx)
 	if err != nil {
-		return nil, err
+		return out, err
 	}
 	defer conn.Unstage(context.WithoutCancel(ctx), stage)
 
-	o.say("checking the server (nothing changes yet)")
+	say("checking the server (nothing changes yet)")
 	facts, err := runPreflight(ctx, conn, stage, o.Reach)
 	if err != nil {
-		return nil, err
+		return out, err
 	}
-	plan := Evaluate(facts, o.Reach)
+	out.Plan = Evaluate(facts, o.Reach)
+	plan := out.Plan
 	for _, f := range plan.Findings {
-		o.say("  %-5s %-9s %s", f.Level, f.Name, f.Detail)
+		say("  %-5s %-9s %s", f.Level, f.Name, f.Detail)
 	}
 	if !plan.Supported {
-		return &Outcome{Plan: plan}, fmt.Errorf("%s cannot be a runhost: %s", o.Answer.Host, stops(plan))
+		return out, fmt.Errorf("%s cannot be a runhost: %s", o.Answer.Host, stops(plan))
 	}
 	if o.Confirm != nil {
 		ok, err := o.Confirm(plan)
 		if err != nil {
-			return &Outcome{Plan: plan}, err
+			return out, err
 		}
 		if !ok {
-			return &Outcome{Plan: plan}, errors.New("setup stopped before changing anything on the server")
+			return out, errors.New("setup stopped before changing anything on the server")
 		}
 	}
 
-	owner, err := ownerFor(ctx, conn, o.Owner)
+	oldConfig, err := conn.ReadRoot(ctx, runhost.ConfigFile)
 	if err != nil {
-		return &Outcome{Plan: plan}, err
+		return out, err
+	}
+	now := o.Now().UTC().Format(time.RFC3339)
+	cfg, err := mergeConfig(oldConfig, runhost.ServerConfig{Name: o.Name, Owner: o.Owner, InstalledDocker: plan.InstallDocker, GVisor: GVisorRelease, SetUpAt: now})
+	if err != nil {
+		return out, err
 	}
 
-	o.say("downloading this CLI's release for %s and gVisor %s, and checking both", plan.Arch, GVisorRelease)
+	say("downloading this CLI's release for %s and gVisor %s, and checking both", plan.Arch, GVisorRelease)
 	cli, err := o.FetchCLI(ctx, o.Version, plan.Arch)
 	if err != nil {
-		return &Outcome{Plan: plan}, err
+		return out, err
 	}
 	gv, err := o.FetchGVisor(ctx, facts["arch"])
 	if err != nil {
-		return &Outcome{Plan: plan}, err
+		return out, err
 	}
-
 	keys, err := runhost.NewDeviceKeys()
 	if err != nil {
-		return &Outcome{Plan: plan}, err
+		return out, err
 	}
 	runPub, err := keys.RunPublic()
 	if err != nil {
-		return &Outcome{Plan: plan}, err
+		return out, err
 	}
 
 	files := map[string][]byte{
@@ -235,76 +231,83 @@ func Add(ctx context.Context, o Options) (*Outcome, error) {
 		"docker.asc":              dockerKey,
 		"agentry-runhost.service": []byte(unitFile),
 	}
-	existing, err := conn.ReadRoot(ctx, "/etc/docker/daemon.json")
+	cfgJSON, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
-		return &Outcome{Plan: plan}, err
+		return out, err
 	}
-	if merged, changed, err := MergeRuntimes(existing); err != nil {
-		return &Outcome{Plan: plan}, err
-	} else if changed {
-		files["daemon.json"] = merged
-	}
-	oldKeys, err := conn.ReadRoot(ctx, runhost.AuthorizedKeys)
-	if err != nil {
-		return &Outcome{Plan: plan}, err
-	}
-	files["authorized_keys"] = mergeAuthorizedKeys(oldKeys, runhost.AuthorizedKeyLine(runPub, o.DeviceID), o.DeviceID)
-	oldDevices, err := conn.ReadRoot(ctx, runhost.DevicesFile)
-	if err != nil {
-		return &Outcome{Plan: plan}, err
-	}
-	now := o.Now().UTC().Format(time.RFC3339)
-	devices, err := mergeDevices(oldDevices, runhost.Device{ID: o.DeviceID, Label: o.DeviceLabel, RunKey: runPub, SealKey: keys.SealPublic(), PairedAt: now})
-	if err != nil {
-		return &Outcome{Plan: plan}, err
-	}
-	files["devices.json"] = devices
-	cfg, _ := json.MarshalIndent(runhost.ServerConfig{Name: o.Name, Owner: owner, InstalledDocker: plan.InstallDocker, GVisor: GVisorRelease, SetUpAt: now}, "", "  ")
-	files["config.json"] = cfg
-	env := envFile(map[string]string{
+	files["config.json"] = cfgJSON
+	// Each file the install overwrites is staged with the hash of the one
+	// it was merged from: a file changed on the server meanwhile (another
+	// device pairing, the person editing the daemon's configuration) stops
+	// the install instead of being lost.
+	env := map[string]string{
 		"STAGE":           stage,
 		"AGENTRY_VERSION": o.Version,
 		"AGENTRY_SHA256":  cli.SHA256,
 		"GVISOR_RELEASE":  GVisorRelease,
+		"GVISOR_SHA256":   sha256Hex(gv),
 		"INSTALL_DOCKER":  yesNo(plan.InstallDocker),
 		"OS_ID":           facts["os_id"],
 		"OS_CODENAME":     facts["os_codename"],
-	})
-	files["env"] = env
+	}
+	existing, err := conn.ReadRoot(ctx, daemonJSON)
+	if err != nil {
+		return out, err
+	}
+	if merged, changed, err := MergeRuntimes(existing); err != nil {
+		return out, err
+	} else if changed {
+		files["daemon.json"] = merged
+		env["WAS_DAEMON_JSON"] = hashOrNone(existing)
+	}
+	oldKeys, err := conn.ReadRoot(ctx, runhost.AuthorizedKeys)
+	if err != nil {
+		return out, err
+	}
+	files["authorized_keys"] = mergeAuthorizedKeys(oldKeys, runhost.AuthorizedKeyLine(runPub, o.DeviceID), o.DeviceID)
+	env["WAS_AUTHORIZED_KEYS"] = hashOrNone(oldKeys)
+	oldDevices, err := conn.ReadRoot(ctx, runhost.DevicesFile)
+	if err != nil {
+		return out, err
+	}
+	devices, err := mergeDevices(oldDevices, runhost.Device{ID: o.DeviceID, Label: o.DeviceLabel, RunKey: runPub, SealKey: keys.SealPublic(), PairedAt: now})
+	if err != nil {
+		return out, err
+	}
+	files["devices.json"] = devices
+	env["WAS_DEVICES_JSON"] = hashOrNone(oldDevices)
+	files["env"] = envFile(env)
 	for _, name := range sortedKeys(files) {
 		if err := conn.Upload(ctx, stage, name, files[name]); err != nil {
-			return &Outcome{Plan: plan}, err
+			return out, err
 		}
 	}
 
 	if err := runhost.SaveKeys(o.Name, keys); err != nil {
-		return &Outcome{Plan: plan}, err
+		return out, err
 	}
-	keep := false
+	installed := false
 	defer func() {
-		if !keep {
+		if !installed {
 			_ = runhost.DeleteKeys(o.Name)
 		}
 	}()
 
-	o.say("installing")
-	after, err := runScript(ctx, conn, "sh "+shellQuote(stage+"/install.sh")+" "+shellQuote(stage+"/env"), o.say)
+	say("installing")
+	after, err := runScript(ctx, conn, "sh "+shellQuote(stage+"/install.sh")+" "+shellQuote(stage+"/env"), say)
 	if err != nil {
-		return &Outcome{Plan: plan}, fmt.Errorf("the install stopped: %w", err)
+		return out, fmt.Errorf("the install stopped: %w", err)
 	}
-	if added := NewListeners(facts.Listening(), strings.Fields(after["listening_after"])); len(added) > 0 {
-		return &Outcome{Plan: plan}, fmt.Errorf("the install opened a network listener it should not have: %s", strings.Join(added, " "))
-	}
-	conn.Unstage(ctx, stage)
-	_ = conn.Close()
-
-	rec := runhost.Record{
+	// The server now holds this device's run key: the record is kept from
+	// here, so a failed check below can still be looked at and removed.
+	installed = true
+	out.Record = runhost.Record{
 		Name:               o.Name,
 		Host:               o.Answer.Host,
 		Port:               o.Answer.Port,
 		HostKey:            strings.TrimSpace(string(ssh.MarshalAuthorizedKey(hk.Key))),
 		HostKeyFingerprint: targethost.Fingerprint(hk.Key),
-		Owner:              owner,
+		Owner:              cfg.Owner,
 		DeviceID:           o.DeviceID,
 		CLIVersion:         o.Version,
 		Arch:               plan.Arch,
@@ -312,10 +315,14 @@ func Add(ctx context.Context, o Options) (*Outcome, error) {
 		GVisor:             GVisorRelease,
 		AddedAt:            now,
 	}
-	out := &Outcome{Record: rec, Plan: plan}
+	if added := NewListeners(facts.Listening(), strings.Fields(after["listening_after"])); len(added) > 0 {
+		return out, fmt.Errorf("the install opened a network listener it should not have: %s", strings.Join(added, " "))
+	}
+	conn.Unstage(ctx, stage)
+	_ = conn.Close()
 
-	o.say("checking the runhost over this device's run key alone")
-	rc, err := runhost.DialRunhost(ctx, rec, keys)
+	say("checking the runhost over this device's run key alone")
+	rc, err := runhost.DialRunhost(ctx, out.Record, keys)
 	if err != nil {
 		return out, err
 	}
@@ -335,6 +342,12 @@ func Add(ctx context.Context, o Options) (*Outcome, error) {
 		return out, err
 	}
 	out.Status = st.Result
+	var caps struct {
+		Capabilities map[string]bool `json:"capabilities"`
+	}
+	if json.Unmarshal(st.Result, &caps) == nil {
+		out.Record.Capabilities = caps.Capabilities
+	}
 	out.Restrictions = rc.CheckRestrictions(ctx)
 	for _, r := range out.Restrictions {
 		if !r.Refused {
@@ -346,7 +359,6 @@ func Add(ctx context.Context, o Options) (*Outcome, error) {
 		return out, err
 	}
 	out.Doctor = doc
-	keep = true
 	if doc.Code != 0 {
 		return out, fmt.Errorf("the runhost is installed, but its doctor is not green: %s", nonEmpty(doc.Error, "see its checks"))
 	}
@@ -435,24 +447,34 @@ func lastLines(s string, n int) string {
 	return strings.Join(lines, " / ")
 }
 
-// ownerFor is the owner the runhost keeps. A runhost set up before keeps its
-// owner, and one owned by its devices alone is bound to the account this
-// device is signed in to; one owned by another account is refused.
-func ownerFor(ctx context.Context, conn *Conn, want runhost.Owner) (runhost.Owner, error) {
-	b, err := conn.ReadRoot(ctx, runhost.ConfigFile)
-	if err != nil || b == nil {
-		return want, err
+// mergeConfig is the runhost's configuration after this setup. A runhost set
+// up before keeps its name, its setup date and whether setup installed
+// Docker, and takes the gVisor release installed now. One owned by its
+// devices alone is bound to the account this device is signed in to; one
+// owned by another account is refused.
+func mergeConfig(existing []byte, want runhost.ServerConfig) (runhost.ServerConfig, error) {
+	if len(bytes.TrimSpace(existing)) == 0 {
+		return want, nil
 	}
 	var cfg runhost.ServerConfig
-	if err := json.Unmarshal(b, &cfg); err != nil {
+	if err := json.Unmarshal(existing, &cfg); err != nil {
 		return want, fmt.Errorf("the runhost's configuration on the server is not readable: %w", err)
 	}
-	if cfg.Owner.Kind == runhost.OwnerAccount {
-		if want.Kind != runhost.OwnerAccount || want.Registry != cfg.Owner.Registry || want.Handle != cfg.Owner.Handle {
-			return want, fmt.Errorf("this runhost belongs to %s: pair it signed in to that account", cfg.Owner)
-		}
+	if cfg.Owner.Kind == runhost.OwnerAccount && cfg.Owner != want.Owner {
+		return want, fmt.Errorf("this runhost belongs to %s: pair it signed in to that account", cfg.Owner)
 	}
-	return want, nil
+	if want.Owner.Kind == runhost.OwnerAccount {
+		cfg.Owner = want.Owner
+	}
+	cfg.InstalledDocker = cfg.InstalledDocker || want.InstalledDocker
+	cfg.GVisor = want.GVisor
+	if cfg.Name == "" {
+		cfg.Name = want.Name
+	}
+	if cfg.SetUpAt == "" {
+		cfg.SetUpAt = want.SetUpAt
+	}
+	return cfg, nil
 }
 
 // mergeAuthorizedKeys replaces this device's line in the account's
@@ -528,17 +550,16 @@ type RemoveOptions struct {
 
 // Remove takes the runhost away from the server. The host key must still be
 // the one pinned at setup.
-func Remove(ctx context.Context, o RemoveOptions) error {
-	say := func(format string, args ...any) {
-		if o.Say != nil {
-			o.Say(fmt.Sprintf(format, args...))
-		}
-	}
+func Remove(ctx context.Context, o RemoveOptions) (err error) {
+	red := newRedactor(o.Auth)
+	say := red.say(o.Say)
+	defer func() { err = red.err(err) }()
 	pinned, _, _, _, err := ssh.ParseAuthorizedKey([]byte(o.Record.HostKey))
 	if err != nil {
 		return fmt.Errorf("the record of %s holds no readable host key: %w", o.Record.Name, err)
 	}
-	addr, err := targethost.ResolveAddress(ctx, o.Record.Name, targethost.Answer{User: o.Answer.User, Host: o.Record.Host, Port: o.Record.Port}, policy.HostsPolicy{})
+	answer := targethost.Answer{User: o.Answer.User, Host: o.Record.Host, Port: o.Record.Port}
+	addr, err := targethost.ResolveAddress(ctx, o.Record.Name, answer, policy.HostsPolicy{})
 	if err != nil {
 		return err
 	}
@@ -547,18 +568,7 @@ func Remove(ctx context.Context, o RemoveOptions) error {
 		return err
 	}
 	defer func() { _ = conn.Close() }()
-	if err := conn.FindRoot(ctx); errors.Is(err, ErrSudoPassword) {
-		if o.Ask == nil {
-			return fmt.Errorf("%w, and no one is at a terminal to type it", err)
-		}
-		pw, aerr := o.Ask.AskSecret(fmt.Sprintf("sudo password for %s@%s: ", o.Answer.User, o.Record.Host))
-		if aerr != nil {
-			return aerr
-		}
-		if err := conn.SetSudo(ctx, pw); err != nil {
-			return err
-		}
-	} else if err != nil {
+	if err := conn.EnsureRoot(ctx, o.Ask, answer.String(), red); err != nil {
 		return err
 	}
 	stage, err := conn.Stage(ctx)
@@ -567,7 +577,8 @@ func Remove(ctx context.Context, o RemoveOptions) error {
 	}
 	defer conn.Unstage(context.WithoutCancel(ctx), stage)
 	files := map[string][]byte{"remove.sh": removeScript}
-	existing, err := conn.ReadRoot(ctx, "/etc/docker/daemon.json")
+	env := map[string]string{"STAGE": stage, "REMOVE_IMAGES": yesNo(o.RemoveImages), "REMOVE_DOCKER": yesNo(o.RemoveDocker)}
+	existing, err := conn.ReadRoot(ctx, daemonJSON)
 	if err != nil {
 		return err
 	}
@@ -575,21 +586,9 @@ func Remove(ctx context.Context, o RemoveOptions) error {
 		return err
 	} else if changed {
 		files["daemon.json"] = out
+		env["WAS_DAEMON_JSON"] = hashOrNone(existing)
 	}
-	removeDocker := false
-	if o.RemoveDocker {
-		b, err := conn.ReadRoot(ctx, runhost.ConfigFile)
-		if err != nil {
-			return err
-		}
-		var cfg runhost.ServerConfig
-		if b != nil && json.Unmarshal(b, &cfg) == nil && cfg.InstalledDocker {
-			removeDocker = true
-		} else {
-			say("Docker Engine stays: setup did not install it")
-		}
-	}
-	files["env"] = envFile(map[string]string{"STAGE": stage, "REMOVE_IMAGES": yesNo(o.RemoveImages), "REMOVE_DOCKER": yesNo(removeDocker)})
+	files["env"] = envFile(env)
 	for _, name := range sortedKeys(files) {
 		if err := conn.Upload(ctx, stage, name, files[name]); err != nil {
 			return err
@@ -600,4 +599,58 @@ func Remove(ctx context.Context, o RemoveOptions) error {
 		return fmt.Errorf("the removal stopped: %w", err)
 	}
 	return nil
+}
+
+// daemonJSON is the Docker daemon's configuration file.
+const daemonJSON = "/etc/docker/daemon.json"
+
+func sha256Hex(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
+// hashOrNone is a file's SHA-256 as the install compares it, "none" for a
+// file that was not there.
+func hashOrNone(b []byte) string {
+	if b == nil {
+		return "none"
+	}
+	return sha256Hex(b)
+}
+
+// redactor masks the admin sign-in's secrets, and a sudo password typed later,
+// in everything setup says or returns.
+type redactor struct{ secrets []string }
+
+func newRedactor(a AdminAuth) *redactor { return &redactor{secrets: a.Values()} }
+
+func (r *redactor) add(v string) {
+	if v != "" {
+		r.secrets = append(r.secrets, v)
+	}
+}
+
+func (r *redactor) mask(s string) string {
+	for _, v := range r.secrets {
+		s = strings.ReplaceAll(s, v, "[redacted]")
+	}
+	return s
+}
+
+func (r *redactor) say(to func(string)) func(string, ...any) {
+	return func(format string, args ...any) {
+		if to != nil {
+			to(r.mask(fmt.Sprintf(format, args...)))
+		}
+	}
+}
+
+func (r *redactor) err(err error) error {
+	if err == nil {
+		return nil
+	}
+	if m := r.mask(err.Error()); m != err.Error() {
+		return errors.New(m)
+	}
+	return err
 }

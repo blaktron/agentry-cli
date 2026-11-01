@@ -13,18 +13,30 @@
 #                    runtimes merged in, when it differs from the server's
 #   authorized_keys  the agentry account's run keys, this device's included
 #   devices.json     the paired devices, this device's included
-#   config.json      the runhost's configuration, for a first install
+#   config.json      the runhost's configuration, merged with the server's
 #   agentry-runhost.service  the service's user unit
+# Each file the install overwrites comes with the SHA-256 of the one the device
+# merged it from (WAS_*, "none" for a file that was not there); a file changed
+# on the server since then stops the install rather than being lost.
 set -eu
 # shellcheck disable=SC1090
 . "$1"
-: "${STAGE:?}" "${AGENTRY_VERSION:?}" "${AGENTRY_SHA256:?}" "${GVISOR_RELEASE:?}" "${INSTALL_DOCKER:?}" "${OS_ID:?}"
+: "${STAGE:?}" "${AGENTRY_VERSION:?}" "${AGENTRY_SHA256:?}" "${GVISOR_RELEASE:?}" "${GVISOR_SHA256:?}" "${INSTALL_DOCKER:?}" "${OS_ID:?}"
+: "${WAS_AUTHORIZED_KEYS:?}" "${WAS_DEVICES_JSON:?}"
 
 HOME_DIR=/var/lib/agentry
 BIN=$HOME_DIR/bin
 step() { printf 'step: %s\n' "$*"; }
 fail() { printf 'error: %s\n' "$*"; exit 1; }
 as_agentry() { runuser -u agentry -- env HOME="$HOME_DIR" XDG_RUNTIME_DIR="/run/user/$AGENTRY_UID" "$@"; }
+# unchanged FILE HASH: FILE is still what the device read.
+unchanged() {
+	if [ "$2" = none ]; then
+		[ ! -e "$1" ] || fail "$1 appeared on the server during setup: run setup again"
+	else
+		echo "$2  $1" | sha256sum -c --quiet - >/dev/null 2>&1 || fail "$1 changed on the server during setup: run setup again"
+	fi
+}
 
 step "the agentry account"
 if id agentry >/dev/null 2>&1; then
@@ -42,6 +54,7 @@ install -d -m 0755 -o agentry -g agentry "$BIN" "$HOME_DIR/cli" "$HOME_DIR/gviso
 
 if [ "$INSTALL_DOCKER" = yes ]; then
 	step "Docker Engine from Docker's repository"
+	: "${OS_CODENAME:?}"
 	export DEBIAN_FRONTEND=noninteractive
 	install -d -m 0755 /etc/apt/keyrings
 	install -m 0644 "$STAGE/docker.asc" /etc/apt/keyrings/docker.asc
@@ -57,6 +70,10 @@ EOF
 	apt-get update -qq
 	apt-get install -y -qq docker-ce docker-ce-cli containerd.io >/dev/null
 	systemctl enable --now docker >/dev/null 2>&1
+	# Remembered at once, so a removal can take away the Docker Engine this
+	# setup installed even when the install stopped later.
+	install -d -m 0700 -o agentry -g agentry "$HOME_DIR/runhost"
+	touch "$HOME_DIR/runhost/installed-docker"
 fi
 command -v dockerd >/dev/null 2>&1 || fail "no Docker Engine on this server"
 step "the agentry account in the docker group"
@@ -71,6 +88,7 @@ usermod -aG docker agentry
 step "gVisor $GVISOR_RELEASE"
 gdir=$HOME_DIR/gvisor/$GVISOR_RELEASE
 if [ ! -x "$gdir/runsc" ]; then
+	echo "$GVISOR_SHA256  $STAGE/gvisor.tar.gz" | sha256sum -c --quiet - || fail "the gVisor archive that arrived is not the one the device verified"
 	rm -rf "$gdir.new"
 	install -d -m 0755 -o agentry -g agentry "$gdir.new"
 	tar -xzf "$STAGE/gvisor.tar.gz" -C "$gdir.new" --no-same-owner
@@ -99,11 +117,15 @@ usermod --shell "$BIN/agentry-shell" agentry
 
 if [ -f "$STAGE/daemon.json" ]; then
 	step "gVisor's runtimes in the Docker daemon"
+	: "${WAS_DAEMON_JSON:?}"
 	install -d -m 0755 /etc/docker
-	if [ -f /etc/docker/daemon.json ] && [ ! -f /etc/docker/daemon.json.before-agentry ]; then
-		cp -p /etc/docker/daemon.json /etc/docker/daemon.json.before-agentry
+	unchanged /etc/docker/daemon.json "$WAS_DAEMON_JSON"
+	mode=644
+	if [ -f /etc/docker/daemon.json ]; then
+		mode=$(stat -c %a /etc/docker/daemon.json)
+		[ -f /etc/docker/daemon.json.before-agentry ] || cp -p /etc/docker/daemon.json /etc/docker/daemon.json.before-agentry
 	fi
-	install -m 0644 "$STAGE/daemon.json" /etc/docker/daemon.json.new
+	install -m "$mode" "$STAGE/daemon.json" /etc/docker/daemon.json.new
 	mv /etc/docker/daemon.json.new /etc/docker/daemon.json
 	# Runtimes are reloadable: a reload changes no running container.
 	if systemctl is-active --quiet docker; then systemctl reload docker; else systemctl start docker; fi
@@ -117,10 +139,10 @@ done
 
 step "the runhost's state and this device's run key"
 install -d -m 0700 -o agentry -g agentry "$HOME_DIR/runhost" "$HOME_DIR/.ssh"
-if [ ! -f "$HOME_DIR/runhost/config.json" ]; then
-	install -m 0600 -o agentry -g agentry "$STAGE/config.json" "$HOME_DIR/runhost/config.json"
-fi
+install -m 0600 -o agentry -g agentry "$STAGE/config.json" "$HOME_DIR/runhost/config.json"
+unchanged "$HOME_DIR/runhost/devices.json" "$WAS_DEVICES_JSON"
 install -m 0600 -o agentry -g agentry "$STAGE/devices.json" "$HOME_DIR/runhost/devices.json"
+unchanged "$HOME_DIR/.ssh/authorized_keys" "$WAS_AUTHORIZED_KEYS"
 install -m 0600 -o agentry -g agentry "$STAGE/authorized_keys" "$HOME_DIR/.ssh/authorized_keys"
 
 step "the account's user manager"

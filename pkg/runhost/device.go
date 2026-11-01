@@ -46,6 +46,9 @@ type Record struct {
 	OS         string `yaml:"os" json:"os"`
 	GVisor     string `yaml:"gvisor" json:"gvisor"`
 	AddedAt    string `yaml:"addedAt" json:"addedAt"`
+	// Capabilities are the runs the runhost takes, as its status said at
+	// the last check.
+	Capabilities map[string]bool `yaml:"capabilities,omitempty" json:"capabilities,omitempty"`
 }
 
 // Records is the records file.

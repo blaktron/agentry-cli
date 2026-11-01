@@ -173,16 +173,13 @@ func SumOf(sums []byte, file string) (string, error) {
 	return "", fmt.Errorf("SHA256SUMS has no line for %s", file)
 }
 
-// Binary is a release's Linux binary for one architecture, with the signed
-// sums that cover it.
+// Binary is a release's Linux binary for one architecture, checked.
 type Binary struct {
 	Version string
 	Arch    string
 	Name    string
 	Bytes   []byte
 	SHA256  string
-	Sums    []byte
-	Sig     []byte
 }
 
 // BaseURL is where releases are downloaded from: the CLI's public releases.
@@ -223,7 +220,7 @@ func Fetch(ctx context.Context, client *http.Client, keys *KeySet, version, arch
 	if hex.EncodeToString(got[:]) != want {
 		return nil, fmt.Errorf("CLI release %s: %s does not match its signed SHA-256", version, name)
 	}
-	return &Binary{Version: version, Arch: arch, Name: name, Bytes: bin, SHA256: want, Sums: sums, Sig: sig}, nil
+	return &Binary{Version: version, Arch: arch, Name: name, Bytes: bin, SHA256: want}, nil
 }
 
 func get(ctx context.Context, client *http.Client, u string, limit int64) ([]byte, error) {
