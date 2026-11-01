@@ -31,14 +31,15 @@ func TestBuiltinCatalogsUnchanged(t *testing.T) {
 	}
 }
 
-// TestBuiltinsDeclareTheirOwnCapabilities: the five keys of an agent's own
-// life are the built-ins' manifests' to declare, and each declares what it
-// had: the Assistant all five, the Coding agent skills and stored secrets,
-// Agentry Helper none of them.
+// TestBuiltinsDeclareTheirOwnCapabilities: what each built-in has is its
+// manifest's to declare, and each declares what it had: the Assistant its
+// own life, the helper and meeting tools, calendars, mail and image
+// servers; the Coding agent skills, stored secrets and the coding
+// toolchain; Agentry Helper the helper tools.
 func TestBuiltinsDeclareTheirOwnCapabilities(t *testing.T) {
 	want := map[string][]string{
-		Assistant().Ref(): {"clock", "memory", "skills", "secrets", "selfConfigure", "meetings", "helper"},
-		Coder().Ref():     {"skills", "secrets"},
+		Assistant().Ref(): {"clock", "memory", "skills", "secrets", "selfConfigure", "meetings", "helper", "calendars", "mail", "imageServers"},
+		Coder().Ref():     {"skills", "secrets", "coder"},
 		Main().Ref():      {"helper"},
 	}
 	for _, b := range PersistentBuiltins() {

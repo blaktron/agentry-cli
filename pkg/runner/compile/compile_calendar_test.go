@@ -18,7 +18,7 @@ import (
 func assistantInputs(t *testing.T, g *spec.CalendarGrant) Inputs {
 	t.Helper()
 	in := persistentInputs(t, &spec.AgentFiles{Share: true})
-	y := strings.Replace(strings.Replace(pureTextYAML, "modes: [autonomous]", "modes: [persistent]", 1), "name: pure-text\nnamespace: demo", "name: assistant\nnamespace: agentry", 1)
+	y := strings.Replace(strings.Replace(pureTextYAML, "modes: [autonomous]", "modes: [persistent]\ncapabilities:\n  persistent:\n    calendars: true", 1), "name: pure-text\nnamespace: demo", "name: assistant\nnamespace: agentry", 1)
 	in.Manifest = parseManifest(t, y)
 	in.Calendar = g
 	return in
@@ -89,20 +89,19 @@ func TestTheCalendarFeedsCompileTheirContainer(t *testing.T) {
 	}
 }
 
-// TestCalendarFeedsAreTheAssistantsAlone: the grant is refused to anything
-// but the persistent Assistant with its folders, beside other egress, and
-// for a malformed feed.
+// TestCalendarFeedsAreTheAssistantsAlone: the grant is refused to a package
+// that does not declare calendars (the Assistant's own name included), one
+// without its folders, beside other egress, and for a malformed feed.
 func TestCalendarFeedsAreTheAssistantsAlone(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		edit func(*Inputs)
 		want string
 	}{
-		{"another built-in", func(in *Inputs) {
-			in.Manifest = parseManifest(t, strings.Replace(pureTextYAML, "modes: [autonomous]", "modes: [persistent]", 1))
-		}, "agentry/assistant's alone"},
+		{"a package that does not declare calendars", func(in *Inputs) {
+			in.Manifest = parseManifest(t, strings.Replace(strings.Replace(pureTextYAML, "modes: [autonomous]", "modes: [persistent]", 1), "name: pure-text\nnamespace: demo", "name: assistant\nnamespace: agentry", 1))
+		}, "capabilities.persistent.calendars"},
 		{"no folders", func(in *Inputs) { in.AgentFiles = nil }, "come with the agent's folders"},
-		{"not from a built-in", func(in *Inputs) { in.Source = "registry" }, "persistent"},
 		{"a feed with an address in its host", func(in *Inputs) {
 			in.Calendar.Feeds[0].Host = "user:pass@evil.example"
 		}, "not a host name"},

@@ -235,7 +235,7 @@ func TestRosterReachesEveryGateWithTheServerShare(t *testing.T) {
 		// The Assistant's server sees the mirror, the Coding agent's the
 		// folder itself.
 		how, src, line := spec.ServerShareMirror, spec.PHShareMirror, ", and sees your share folder (read only, and writes new files into it)"
-		if a.Builtin.Codes() {
+		if a.Codes() {
 			how, src, line = spec.ServerShareLive, spec.PHShare, ", and sees your share folder (read only, unchecked, and writes new files into it)"
 		}
 		for _, tc := range []struct {
@@ -397,7 +397,7 @@ func TestServerShareLineIsConsented(t *testing.T) {
 			t.Fatalf("%s: letting the server see the share: %v", a.Name, err)
 		}
 		want := ", and sees your share folder (read only, and writes new files into it)"
-		if a.Builtin.Codes() {
+		if a.Codes() {
 			want = ", and sees your share folder (read only, unchecked, and writes new files into it)"
 		}
 		if !strings.HasSuffix(ce.Entries[0].Line, want) {

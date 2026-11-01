@@ -165,7 +165,7 @@ func (s *server) buildTools() {
 			addInput(name, "Search the run's input files for a word or phrase, without regard to case, each in its default view (the one list_inputs marks) unless view says which; a document, PDF or image is searched in its text unless view is \"original\". Returns each matching line as path:line: excerpt; read the file with read_input for more.",
 				searchInputsSchema(), s.toolSearchInputs)
 		case ToolAIReview:
-			add(name, aiReviewDescription, aiReviewSchema(), s.toolAIReview)
+			add(name, aiReviewText(s.spec.Review.Root), aiReviewSchemaFor(s.spec.Review.Root), s.toolAIReview)
 		case ToolKnowledgeList:
 			add(name, s.knowledgeListDescription(), knowledgeListSchema(), s.toolKnowledgeList)
 		case ToolKnowledgeSearch:

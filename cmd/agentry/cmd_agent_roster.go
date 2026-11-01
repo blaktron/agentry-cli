@@ -407,7 +407,7 @@ func newAgentConfigureCmd() *cobra.Command {
 				if noDevHost {
 					return engine.Classify(engine.ExitUsage, errors.New("--dev-host and --no-dev-host are each other's opposite"))
 				}
-				if !a.Builtin.Codes() {
+				if !a.Codes() {
 					return engine.Classify(engine.ExitUsage, fmt.Errorf("the %s agent has no dev server: the Coding agent alone is given one", a.Name))
 				}
 				d, err := readyDevHost(cmd, home, policyPath, devHost, devKey, devPassphrase, devPassword)

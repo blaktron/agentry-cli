@@ -30,7 +30,7 @@ const agentGoogleLong = "\n\n--google-client gives the Assistant's Google Worksp
 
 // configureGoogle runs --google-client and --google-sign-in, in that order.
 func configureGoogle(cmd *cobra.Command, a persistent.Agent, home, policyPath, clientFile, email string) error {
-	if len(a.Builtin.ImageServers(policy.Images{})) == 0 {
+	if len(a.ImageServers(policy.Images{})) == 0 {
 		return engine.Classify(engine.ExitUsage, fmt.Errorf("the %s agent has no Google Workspace", a.Name))
 	}
 	if held, _ := persistent.Held(home, a.Name); held {

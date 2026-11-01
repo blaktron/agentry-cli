@@ -23,7 +23,7 @@ import (
 func withImageServers(t *testing.T) {
 	t.Helper()
 	old := imageServersOf
-	imageServersOf = func(a Agent) []offer.ImageServer { return a.Builtin.ImageServers(policy.Images{}) }
+	imageServersOf = func(a Agent) []offer.ImageServer { return a.ImageServers(policy.Images{}) }
 	t.Cleanup(func() { imageServersOf = old })
 }
 
@@ -42,7 +42,7 @@ func TestTheAssistantOffersGoogleWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := offer.CheckImageServers(a.Builtin.ImageServers(policy.Images{})); err != nil {
+	if err := offer.CheckImageServers(a.ImageServers(policy.Images{})); err != nil {
 		t.Fatal(err)
 	}
 	r := BuildRoster(a, Config{MailProviders: googleOn}, nil)

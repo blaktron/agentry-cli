@@ -162,7 +162,7 @@ func AccountGuidance(kind spec.GitHostKind, own bool) string {
 // addAccount records a git host account in c, on: a new one, or one whose
 // token was set again. The token is kept in the keychain first.
 func addAccount(a Agent, c *Config, g GitAccount) error {
-	if !a.Builtin.Codes() {
+	if !a.Codes() {
 		return fmt.Errorf("the %s agent has no git host accounts: the Coding agent alone is given them", a.Name)
 	}
 	if err := g.check(); err != nil {

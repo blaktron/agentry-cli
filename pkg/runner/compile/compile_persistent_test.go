@@ -19,8 +19,8 @@ import (
 )
 
 // persistentOwnYAML is the pure-text release as a persistent agent that
-// declares every key of its own life and the app link's helper and meeting
-// tools.
+// declares every key of its own life, the app link's helper and meeting
+// tools, and the image servers the runner pins.
 var persistentOwnYAML = strings.Replace(pureTextYAML, "modes: [autonomous]", `modes: [persistent]
 capabilities:
   persistent:
@@ -30,7 +30,8 @@ capabilities:
     secrets: [STORED_TOKEN]
     selfConfigure: true
     helper: true
-    meetings: true`, 1)
+    meetings: true
+    imageServers: [google-workspace, microsoft-365]`, 1)
 
 // persistentInputs compiles the pure-text release as a persistent built-in
 // with the agent's folders, declaring what persistentOwnYAML does.
@@ -237,10 +238,63 @@ func TestPersistentGrantsRefusedOutsideBuiltins(t *testing.T) {
 	refused("the app link on an autonomous plan", auto)
 	web := persistentInputs(t, &spec.AgentFiles{})
 	web.Web = true
-	refused("the folders beside the web tools", web)
+	refused("the web tools undeclared", web)
 	review := persistentInputs(t, nil)
 	review.AppLink, review.Review = applink.SetAssistant, true
-	refused("the app link beside the review grant", review)
+	refused("the review grant undeclared", review)
+}
+
+// TestThePersistentWebToolsAndReviewAreDeclared: a persistent agent of any
+// source that declares web or review is given it beside its folders, its
+// app link and its MCP servers, and is refused it beside the other one,
+// beside the coding toolchain and beside calendar feeds; ai_review's paths
+// are beneath the agent's own root. One that does not declare it is refused
+// it, a built-in included.
+func TestThePersistentWebToolsAndReviewAreDeclared(t *testing.T) {
+	declaring := func(key string) *manifest.Manifest {
+		return parseManifest(t, strings.Replace(persistentOwnYAML, "    clock: true", "    clock: true\n    "+key+": true", 1))
+	}
+	for _, source := range []string{"builtin", "registry"} {
+		for _, key := range []string{"web", "review"} {
+			in := persistentInputs(t, &spec.AgentFiles{Share: true})
+			in.Source, in.Manifest, in.AppLink = source, declaring(key), applink.SetAssistant
+			in.WorkspaceDir = workspaceFor(t, in.Manifest, nil)
+			in.Web, in.Review = key == "web", key == "review"
+			planDir := t.TempDir()
+			plan, err := Compile(in, planDir)
+			if err != nil {
+				t.Fatalf("%s declaring %s: %v", source, key, err)
+			}
+			if plan.Capabilities.WebTools != in.Web || plan.Capabilities.ReviewTools != in.Review {
+				t.Errorf("%s declaring %s: web %v, review %v", source, key, plan.Capabilities.WebTools, plan.Capabilities.ReviewTools)
+			}
+			if in.Review {
+				b, err := os.ReadFile(filepath.Join(planDir, "gateway", "toolspec.json"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				var ts toolsrv.Spec
+				if err := json.Unmarshal(b, &ts); err != nil {
+					t.Fatal(err)
+				}
+				if ts.Review.Root != spec.AgentRoot {
+					t.Errorf("ai_review's root %q, want %q", ts.Review.Root, spec.AgentRoot)
+				}
+			}
+			var refusal *PolicyRefusal
+			both := in
+			both.Web, both.Review = true, true
+			if _, err := Compile(both, t.TempDir()); !errors.As(err, &refusal) {
+				t.Errorf("%s: web beside review: %v", source, err)
+			}
+			cal := in
+			cal.Manifest = parseManifest(t, strings.Replace(persistentOwnYAML, "    clock: true", "    clock: true\n    "+key+": true\n    calendars: true", 1))
+			cal.Calendar = &spec.CalendarGrant{TimeZone: "Europe/London", Feeds: []spec.CalendarFeed{{Name: "Work", Host: "calendar.google.com", URLEnv: spec.CalendarFeedEnv(0)}}}
+			if _, err := Compile(cal, t.TempDir()); !errors.As(err, &refusal) || !strings.Contains(err.Error(), "calendar feeds") {
+				t.Errorf("%s: %s beside calendar feeds: %v", source, key, err)
+			}
+		}
+	}
 }
 
 // TestAPersistentPlanNamesTheShareFormats: a persistent plan whose share is
@@ -329,15 +383,21 @@ func gogSpec() spec.MCPServerSpec {
 }
 
 // TestAnImageServerIsAPersistentBuiltinsAlone: a server run from an image
-// compiles only into a persistent built-in's plan, and is refused from a
-// registry or local release and on an autonomous plan.
+// compiles into the plan of a persistent package of any source that
+// declares it under capabilities.persistent.imageServers, and is refused to
+// one that does not (a built-in included) and on an autonomous plan.
 func TestAnImageServerIsAPersistentBuiltinsAlone(t *testing.T) {
-	for _, source := range []string{"registry", "local"} {
+	bare := parseManifest(t, strings.Replace(pureTextYAML, "modes: [autonomous]", "modes: [persistent]", 1))
+	for _, source := range []string{"builtin", "registry", "local"} {
 		in := persistentInputs(t, nil)
 		in.Source, in.MCPServers = source, []spec.MCPServerSpec{gogSpec()}
+		if _, err := Compile(in, t.TempDir()); err != nil {
+			t.Errorf("a declared image server from %s: %v", source, err)
+		}
+		in.Manifest, in.WorkspaceDir = bare, workspaceFor(t, bare, nil)
 		var refusal *PolicyRefusal
-		if _, err := Compile(in, t.TempDir()); !errors.As(err, &refusal) {
-			t.Errorf("an image server from %s: err = %v, want a policy refusal", source, err)
+		if _, err := Compile(in, t.TempDir()); !errors.As(err, &refusal) || !strings.Contains(err.Error(), "capabilities.persistent.imageServers") {
+			t.Errorf("an undeclared image server from %s: err = %v, want a policy refusal naming the key", source, err)
 		}
 	}
 	auto := persistentInputs(t, nil)

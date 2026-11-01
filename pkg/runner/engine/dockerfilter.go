@@ -507,11 +507,11 @@ func daemonLine(rd *runDirs) string {
 		"or exceed the run's memory, CPU and process limits; a container that names no network is created on none, never on the daemon's default bridge; " +
 		"every decision is in receipts/" + dockerFilterLog
 	if rd != nil && (rd.web || rd.anyEgress) {
-		why := "the Drafter's web tools"
+		why := "the web tools"
 		switch {
 		case rd.web:
 		case rd.coderEgress:
-			why = "the Coding agent's open egress (its roster's egress entry)"
+			why = "the coding toolchain's open egress (its roster's egress entry)"
 		default:
 			why = "the tools server's unrestricted egress (manifest \"*\")"
 		}

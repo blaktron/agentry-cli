@@ -6,8 +6,10 @@ import (
 	"slices"
 	"sync"
 
+	"github.com/blaktron/agentry-cli/pkg/persistent/offer"
 	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry/pkg/manifest"
 )
 
@@ -163,4 +165,42 @@ func (a Agent) grantedBy() string {
 		return GrantedByRelease
 	}
 	return GrantedByBuiltin
+}
+
+// Codes says the agent declares the coding toolchain (coder): any program
+// in the coder exec image, open egress, the public browser, a dev host,
+// ports and git host accounts, each a switch of its roster.
+func (a Agent) Codes() bool { return a.Declared().Declares("coder") }
+
+// ReadsCalendars says the agent declares calendars: the person may give it
+// calendar feeds.
+func (a Agent) ReadsCalendars() bool { return a.Declared().Declares("calendars") }
+
+// OfferedServers are the MCP servers the agent comes with, each an entry of
+// its roster: a built-in's package's own (some drawn for its git host
+// accounts, hosts); a published agent's, the servers of the mail providers
+// its release declares that are reached through a server of their own.
+func (a Agent) OfferedServers(hosts []offer.GitHost) []offer.Server {
+	if a.Release == nil {
+		return a.Builtin.OfferedServers(hosts)
+	}
+	return localrun.MailServersFor(a.Caps)
+}
+
+// ImageServers are the servers run from an image the CLI pins that the agent
+// declares, at the policy's images.
+func (a Agent) ImageServers(images policy.Images) []offer.ImageServer {
+	return localrun.ImageServersFor(a.Declared(), images)
+}
+
+// MailProviders are the mail providers the agent declares.
+func (a Agent) MailProviders() []offer.MailProvider { return localrun.MailProvidersFor(a.Declared()) }
+
+// SuggestedServers are the MCP servers a built-in's package suggests; a
+// published agent suggests none.
+func (a Agent) SuggestedServers() []offer.Suggestion {
+	if a.Release == nil {
+		return a.Builtin.SuggestedServers()
+	}
+	return nil
 }

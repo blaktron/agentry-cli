@@ -50,7 +50,7 @@ var signInCalendarFeed = persistent.SignInCalendarFeed
 // a browser window, which is kept beside the address; an empty address
 // then keeps the feed's own.
 func configureCalendarFeed(cmd *cobra.Command, a persistent.Agent, home, name string, on, signIn, yes bool) error {
-	if !a.Builtin.ReadsCalendars() {
+	if !a.ReadsCalendars() {
 		return engine.Classify(engine.ExitUsage, fmt.Errorf("the %s agent has no calendar feeds: the Assistant alone reads them", a.Name))
 	}
 	if held, _ := persistent.Held(home, a.Name); held {

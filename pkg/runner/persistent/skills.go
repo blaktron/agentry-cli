@@ -103,7 +103,7 @@ func addedSkillLine(a Agent, s AddedSkill) string {
 	} else {
 		line += ", and its files were not checked for malware when you added it"
 	}
-	if a.Builtin.Codes() {
+	if a.Codes() {
 		line += "; its scripts run with the agent's programs, and reach what they reach"
 	}
 	return line

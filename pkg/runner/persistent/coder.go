@@ -98,16 +98,17 @@ func (d DevHost) check() error {
 	return nil
 }
 
-// coderEntries are the Coding agent's grant entries for its config.
-func coderEntries(c Config) []RosterEntry {
+// coderEntries are the coding toolchain's grant entries for an agent that
+// declares it, and its config.
+func coderEntries(a Agent, c Config) []RosterEntry {
 	out := []RosterEntry{
-		{ID: EntryCommands, Kind: KindTools, Name: "Programs", GrantedBy: GrantedByBuiltin,
+		{ID: EntryCommands, Kind: KindTools, Name: "Programs", GrantedBy: a.grantedBy(),
 			Line: "Runs any program it chooses in its toolchain image (build tools, Git, curl, Python 3, Go, Node and npm), in its folders, as you: it builds and runs software, which is riskier than an agent that only reads and writes"},
-		{ID: EntryEgress, Kind: KindTools, Name: "Open egress", GrantedBy: GrantedByBuiltin,
+		{ID: EntryEgress, Kind: KindTools, Name: "Open egress", GrantedBy: a.grantedBy(),
 			Line: "Reaches any address from its tools and the programs it runs (open egress): the internet, and also your local network and this computer's own services"},
-		{ID: EntryBrowser, Kind: KindTools, Name: "Browser", GrantedBy: GrantedByBuiltin,
+		{ID: EntryBrowser, Kind: KindTools, Name: "Browser", GrantedBy: a.grantedBy(),
 			Line: "Drives a headless browser to any public website, through the runner's browse proxy"},
-		{ID: EntryDependencyScan, Kind: KindTools, Name: "Dependency scan (OSV-Scanner)", GrantedBy: GrantedByBuiltin,
+		{ID: EntryDependencyScan, Kind: KindTools, Name: "Dependency scan (OSV-Scanner)", GrantedBy: a.grantedBy(),
 			Line: "Scans a project's dependencies for known vulnerabilities with OSV-Scanner, offline, against OSV's databases, which Agentry downloads to this computer once a day from " + osvdb.Host + " (about 300 MB), while its programs are on"},
 	}
 	if d := c.DevHost; d != nil {
