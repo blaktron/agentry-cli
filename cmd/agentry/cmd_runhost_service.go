@@ -6,8 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
-	"net"
 	"net/netip"
 	"os"
 	"os/exec"
@@ -79,21 +79,38 @@ func runRunhostService(cmd *cobra.Command) error {
 	ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
 	logger := log.New(os.Stderr, "", 0)
+	// No job runs before the service listens, so what a killed job left
+	// behind is swept now, and finished outputs past their keep hourly.
+	sweepRunhostJobs(time.Now(), true)
+	go func() {
+		t := time.NewTicker(time.Hour)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case now := <-t.C:
+				sweepRunhostJobs(now, false)
+			}
+		}
+	}()
 	s := &runhost.Service{
 		Socket: runhost.ServeSocket(),
 		Log:    logger.Printf,
 		Handlers: map[string]runhost.Handler{
-			"version": func(_ context.Context, _ runhost.Request, _ net.Conn, fw *runhost.FrameWriter) (int, error) {
+			"version": func(_ context.Context, _ runhost.Request, _ io.Reader, fw *runhost.FrameWriter) (int, error) {
 				return 0, fw.Result(map[string]string{"version": version.Version, "arch": runtime.GOARCH})
 			},
-			"status": func(_ context.Context, _ runhost.Request, _ net.Conn, fw *runhost.FrameWriter) (int, error) {
+			"status": func(_ context.Context, _ runhost.Request, _ io.Reader, fw *runhost.FrameWriter) (int, error) {
 				st, err := readRunhostStatus()
 				if err != nil {
 					return 1, err
 				}
 				return 0, fw.Result(st)
 			},
-			"doctor": func(ctx context.Context, _ runhost.Request, _ net.Conn, fw *runhost.FrameWriter) (int, error) {
+			"job":     runhostJobVerb,
+			"collect": runhostCollectVerb,
+			"doctor": func(ctx context.Context, _ runhost.Request, _ io.Reader, fw *runhost.FrameWriter) (int, error) {
 				rep := runhostDoctor(ctx)
 				if err := fw.Result(rep); err != nil {
 					return 1, err
@@ -133,7 +150,7 @@ func readRunhostStatus() (runhostStatus, error) {
 	st := runhostStatus{
 		Name: cfg.Name, Version: version.Version, Arch: runtime.GOARCH, OS: osPretty(), GVisor: cfg.GVisor,
 		Owner: cfg.Owner, UnsafeMode: cfg.UnsafeMode, Devices: []runhostDevice{},
-		Capabilities: map[string]bool{"runs": false, "sessions": false, "schedules": false},
+		Capabilities: map[string]bool{"runs": true, "sessions": false, "schedules": false},
 	}
 	for _, d := range devs.Devices {
 		st.Devices = append(st.Devices, runhostDevice{ID: d.ID, Label: d.Label, PairedAt: d.PairedAt})

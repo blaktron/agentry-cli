@@ -131,6 +131,21 @@ type Envelope struct {
 	// segment before, and the volumes that hold it between segments. Absent
 	// for every other run.
 	Persistent *Persistent `json:"persistent,omitempty"`
+	// Runhost is the remote runhost the run ran on: its name and address as
+	// this device knows them, the host key pinned when it was set up, which
+	// every connection to it was held to, its CLI's version, and the job's
+	// id there. The rest of the envelope is that CLI's own. Absent for a run
+	// on this computer.
+	Runhost *Runhost `json:"runhost,omitempty"`
+}
+
+// Runhost is the envelope's record of the remote runhost a run ran on.
+type Runhost struct {
+	Name               string `json:"name"`
+	Host               string `json:"host"`
+	HostKeyFingerprint string `json:"hostKeyFingerprint"`
+	CLIVersion         string `json:"cliVersion"`
+	Job                string `json:"job"`
 }
 
 // Persistent is the envelope's record of one segment of a persistent agent.

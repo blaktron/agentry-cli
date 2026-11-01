@@ -29,7 +29,21 @@ const (
 	// FrameExit ends the answer, with an exit code and, when it is not 0,
 	// the reason.
 	FrameExit = "exit"
+	// FrameRelease answers a job's document: Text is ReleaseNeeded when the
+	// release's archive must follow it, ReleaseHeld when the store holds it.
+	FrameRelease = "release"
+	// FrameData carries bytes of a sealed output, in order.
+	FrameData = "data"
 )
+
+// The two answers of a release frame.
+const (
+	ReleaseNeeded = "needed"
+	ReleaseHeld   = "held"
+)
+
+// DataChunk is the most bytes one data frame carries.
+const DataChunk = 256 << 10
 
 // Frame is one line of the service's answer.
 type Frame struct {
@@ -38,6 +52,7 @@ type Frame struct {
 	Result json.RawMessage `json:"result,omitempty"`
 	Code   int             `json:"code,omitempty"`
 	Error  string          `json:"error,omitempty"`
+	Data   []byte          `json:"data,omitempty"`
 }
 
 // MaxLine bounds one line of the wire format.
@@ -75,6 +90,30 @@ func (f *FrameWriter) Result(v any) error {
 		return err
 	}
 	return f.write(Frame{Type: FrameResult, Result: b})
+}
+
+// Release says whether a job's release must follow its document.
+func (f *FrameWriter) Release(answer string) error {
+	return f.write(Frame{Type: FrameRelease, Text: answer})
+}
+
+// Data writes r to its end as data frames.
+func (f *FrameWriter) Data(r io.Reader) error {
+	buf := make([]byte, DataChunk)
+	for {
+		n, err := io.ReadFull(r, buf)
+		if n > 0 {
+			if werr := f.write(Frame{Type: FrameData, Data: buf[:n]}); werr != nil {
+				return werr
+			}
+		}
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
 }
 
 // Exit ends the answer.
@@ -127,6 +166,17 @@ type Answer struct {
 // ReadAnswer reads frames until the exit frame, handing each narration line
 // to out (which may be nil).
 func ReadAnswer(r io.Reader, out func(string)) (Answer, error) {
+	return ReadFrames(r, func(f Frame) error {
+		if f.Type == FrameOut && out != nil {
+			out(f.Text)
+		}
+		return nil
+	})
+}
+
+// ReadFrames reads frames until the exit frame, handing every frame to each
+// (an error from each stops the read and is returned).
+func ReadFrames(r io.Reader, each func(Frame) error) (Answer, error) {
 	br := bufio.NewReaderSize(r, 64<<10)
 	var a Answer
 	for {
@@ -141,12 +191,12 @@ func ReadAnswer(r io.Reader, out func(string)) (Answer, error) {
 		if err := json.Unmarshal(line, &f); err != nil {
 			return a, fmt.Errorf("the runhost answered something that is not a frame: %w", err)
 		}
+		if err := each(f); err != nil {
+			return a, err
+		}
 		switch f.Type {
 		case FrameOut:
 			a.Out = append(a.Out, f.Text)
-			if out != nil {
-				out(f.Text)
-			}
 		case FrameResult:
 			a.Result = f.Result
 		case FrameExit:

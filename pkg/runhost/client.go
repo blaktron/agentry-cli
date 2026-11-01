@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"strconv"
 	"strings"
@@ -103,6 +104,63 @@ func (c *Client) Ask(ctx context.Context, verb string, args []string, out func(s
 	case r := <-done:
 		_ = s.Wait()
 		return r.a, r.err
+	}
+}
+
+// Call asks the service verb with args, gives send the session's input
+// (closed when send returns; nil sends nothing), and hands every frame of
+// the answer to each until the exit frame. An error from send or each ends
+// the session.
+func (c *Client) Call(ctx context.Context, verb string, args []string, send func(io.Writer) error, each func(Frame) error) (Answer, error) {
+	s, err := c.ssh.NewSession()
+	if err != nil {
+		return Answer{}, err
+	}
+	defer func() { _ = s.Close() }()
+	stdout, err := s.StdoutPipe()
+	if err != nil {
+		return Answer{}, err
+	}
+	stdin, err := s.StdinPipe()
+	if err != nil {
+		return Answer{}, err
+	}
+	if err := s.Start(strings.Join(append([]string{verb}, args...), " ")); err != nil {
+		return Answer{}, err
+	}
+	sent := make(chan error, 1)
+	go func() {
+		var err error
+		if send != nil {
+			err = send(stdin)
+		}
+		_ = stdin.Close()
+		sent <- err
+	}()
+	type res struct {
+		a   Answer
+		err error
+	}
+	done := make(chan res, 1)
+	go func() {
+		a, err := ReadFrames(stdout, each)
+		done <- res{a, err}
+	}()
+	for {
+		select {
+		case <-ctx.Done():
+			_ = s.Close()
+			return Answer{}, ctx.Err()
+		case err := <-sent:
+			if err != nil {
+				_ = s.Close()
+				return Answer{}, err
+			}
+			sent = nil
+		case r := <-done:
+			_ = s.Wait()
+			return r.a, r.err
+		}
 	}
 }
 

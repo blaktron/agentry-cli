@@ -4,12 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/zalando/go-keyring"
 )
@@ -119,12 +119,12 @@ func TestTheServiceRefusesAnOpenRuntimeDirectory(t *testing.T) {
 
 func TestServeRelaysAVerbAndItsExitCode(t *testing.T) {
 	sock := startService(t, map[string]Handler{
-		"status": func(_ context.Context, req Request, _ net.Conn, fw *FrameWriter) (int, error) {
+		"status": func(_ context.Context, req Request, _ io.Reader, fw *FrameWriter) (int, error) {
 			_ = fw.Out("checking %s", strings.Join(req.Args, ","))
 			_ = fw.Result(map[string]string{"state": "ready"})
 			return 0, nil
 		},
-		"doctor": func(context.Context, Request, net.Conn, *FrameWriter) (int, error) {
+		"doctor": func(context.Context, Request, io.Reader, *FrameWriter) (int, error) {
 			return 1, os.ErrPermission
 		},
 	})
@@ -180,17 +180,72 @@ func TestServeSaysWhenTheServiceIsDown(t *testing.T) {
 }
 
 func TestAnAnswerCutShortIsAnError(t *testing.T) {
-	sock := startService(t, map[string]Handler{
-		"status": func(_ context.Context, _ Request, conn net.Conn, fw *FrameWriter) (int, error) {
-			_ = fw.Out("half")
-			_ = conn.Close()
-			time.Sleep(10 * time.Millisecond)
-			return 0, nil
-		},
-	})
+	sock := filepath.Join(shortTempDir(t), "cut.sock")
+	l, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+	go func() {
+		c, err := l.Accept()
+		if err != nil {
+			return
+		}
+		_ = NewFrameWriter(c).Out("half")
+		_ = c.Close()
+	}()
 	var out bytes.Buffer
 	if code := Serve(context.Background(), "status", strings.NewReader(""), &out, sock); code != 3 {
 		t.Fatalf("exit %d", code)
+	}
+}
+
+// A verb's handler reads the device's input after the request line, all of
+// it, however much the request reader buffered.
+func TestAHandlerReadsTheInputAfterTheRequest(t *testing.T) {
+	sock := startService(t, map[string]Handler{
+		"job": func(_ context.Context, _ Request, in io.Reader, fw *FrameWriter) (int, error) {
+			b, err := io.ReadAll(in)
+			if err != nil {
+				return 1, err
+			}
+			return 0, fw.Result(map[string]int{"read": len(b)})
+		},
+	})
+	body := strings.Repeat("x", 300<<10)
+	var out bytes.Buffer
+	if code := Serve(context.Background(), "job", strings.NewReader(body), &out, sock); code != 0 {
+		t.Fatalf("exit %d: %s", code, out.String())
+	}
+	a, err := ReadAnswer(&out, nil)
+	var res map[string]int
+	if err != nil || json.Unmarshal(a.Result, &res) != nil || res["read"] != len(body) {
+		t.Fatalf("answer %+v (%v)", a, err)
+	}
+}
+
+// Data frames carry bytes in order, whole.
+func TestDataFramesCarryBytesWhole(t *testing.T) {
+	var buf bytes.Buffer
+	fw := NewFrameWriter(&buf)
+	payload := bytes.Repeat([]byte{0, 1, 2, 0xff}, DataChunk/2+3)
+	if err := fw.Data(bytes.NewReader(payload)); err != nil {
+		t.Fatal(err)
+	}
+	_ = fw.Exit(0, nil)
+	var got []byte
+	frames := 0
+	if _, err := ReadFrames(&buf, func(f Frame) error {
+		if f.Type == FrameData {
+			got = append(got, f.Data...)
+			frames++
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, payload) || frames != 3 {
+		t.Fatalf("%d frames, %d bytes", frames, len(got))
 	}
 }
 

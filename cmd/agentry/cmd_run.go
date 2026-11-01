@@ -64,6 +64,12 @@ type runOpts struct {
 	// lives; --plan materializes into a temp home, and a local install
 	// is looked up here all the same. Empty: the home.
 	consentHome string
+	// installed runs the release installed in this runner home at --pin and
+	// asks no registry: a remote runhost's service, which has verified and
+	// laid the release down itself.
+	installed bool
+	// on is the remote runhost the run goes to; empty runs it here.
+	on          string
 	mode        string
 	intake      []string
 	intakeToken []string
@@ -224,6 +230,9 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&opts.adapterName, "adapter", "", "harness adapter (default "+adapter.DefaultName+", or "+adapter.CodexImageAdapterName+" when the model is paid by your ChatGPT plan); see --list-adapters")
 	f.StringVar(&opts.local, "local", "", "run an unpublished QuickAgent DIRECTORY instead of a registry ref")
 	f.StringVar(&opts.pin, "pin", "", "require the resolved archive digest to equal this sha256:… value")
+	f.StringVar(&opts.on, "on", "", "run on this remote runhost (see agentry runhost list) instead of this computer: the release is verified here, sent, verified again there, and its output sealed to this device and opened into the output folder")
+	f.BoolVar(&opts.installed, "installed", false, "run the release already installed in the runner home at --pin, asking no registry, so nothing the registry says of it today (a yank, a quarantine) is heard (a remote runhost's service, which verified it as it arrived)")
+	_ = f.MarkHidden("installed")
 	f.StringVar(&opts.policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml, created on first use)")
 	f.IntVar(&opts.timeout, "timeout", 0, "override the policy timeout (seconds)")
 	f.IntVar(&opts.maxTurns, "max-turns", -1, "override the policy tool-call budget (0 = unlimited)")
@@ -283,6 +292,9 @@ func runnerHome() (string, error) { return policy.Home() }
 
 // runRun executes the whole run lifecycle.
 func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
+	if opts.on != "" {
+		return runOnRunhost(cmd, ref, opts)
+	}
 	if (ref == "") == (opts.local == "") {
 		return errors.New("pass exactly one of ns/name[@range] or --local DIR")
 	}
@@ -1678,6 +1690,9 @@ func materializeRegistry(cmd *cobra.Command, ref, home string, opts runOpts) (*i
 	if err != nil {
 		return nil, "", err
 	}
+	if opts.installed {
+		return materializeInstalled(cmd, parsed, home, opts)
+	}
 	// A QuickAgent installed from a local folder runs from the runner home,
 	// never resolved: no registry holds it. It is held to its integrity
 	// record like an installed release, and it is unsigned, so every run
@@ -1832,6 +1847,26 @@ func materializeRegistry(cmd *cobra.Command, ref, home string, opts runOpts) (*i
 		return nil, "", err
 	}
 	return meta, installDir, nil
+}
+
+// materializeInstalled is the release laid down in home at --pin, held to
+// its integrity record and its attestation's consent like any cached
+// install, with no registry asked: the runhost's service verified it and
+// laid it down before it started this run.
+func materializeInstalled(cmd *cobra.Command, parsed manifest.Ref, home string, opts runOpts) (*installdir.Meta, string, error) {
+	if opts.pin == "" || parsed.Range == "" || strings.ContainsAny(parsed.Range, "^~<>=*| ,") {
+		return nil, "", engine.Classify(engine.ExitUsage, errors.New("--installed runs one exact version at --pin: name it as ns/name@version"))
+	}
+	dir := installdir.ReleaseDir(home, parsed.Namespace, parsed.Name, parsed.Range, opts.pin)
+	meta, err := installdir.Inspect(dir, opts.pin)
+	if err != nil {
+		return nil, "", engine.Classify(engine.ExitVerify, fmt.Errorf("%s/%s@%s is not installed at %s: %w", parsed.Namespace, parsed.Name, parsed.Range, opts.pin, err))
+	}
+	if err := cachedAttestationGate(meta, opts.allowUnsigned, opts.allowUnscanned); err != nil {
+		return nil, "", engine.Classify(engine.ExitVerify, err)
+	}
+	narrateCachedConsent(cmd.ErrOrStderr(), meta, false)
+	return meta, dir, nil
 }
 
 // narrateCachedConsent says on stderr what a run from the cache is doing

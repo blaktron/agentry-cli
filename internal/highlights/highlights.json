@@ -3,6 +3,7 @@
     {
       "version": "0.6.1017",
       "highlights": [
+        "agentry run --on runs a published QuickAgent on one of your remote runhosts and opens its sealed output here.",
         "A persistent QuickAgent gets the time, tasks, a memory, skills and stored secrets only when its release declares them.",
         "An installed agent can keep tasks that fire on time, a memory it compacts and recalls, and its own name and persona.",
         "You can let an installed agent write in your Writing Voice; it is off until you switch it on."
