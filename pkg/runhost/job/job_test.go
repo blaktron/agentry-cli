@@ -2,6 +2,7 @@ package job
 
 import (
 	"bytes"
+	"maps"
 	"strings"
 	"testing"
 )
@@ -64,5 +65,49 @@ func TestAJobRoundTripsAndRefusesWhatARunhostDoesNotTake(t *testing.T) {
 	unknown.Write(doc)
 	if _, err := Read(&unknown); err == nil {
 		t.Error("an unknown field was read")
+	}
+}
+
+// What the run carries beside its release is held to what a secrets file, an
+// argument and the payload can take.
+func TestAJobRefusesCarriedValuesARunCannotTake(t *testing.T) {
+	payload := &Payload{Size: 10, Digest: "sha256:" + strings.Repeat("b", 64)}
+	ok := validJob()
+	ok.Run.Secrets = map[string]string{"API_TOKEN": "v"}
+	ok.Run.Intake = map[string]string{"topic": "birds"}
+	ok.Run.IntakeFiles = map[string]string{"doc": "intake/doc/brief.md"}
+	ok.Run.Inputs = []string{"inputs/a.txt"}
+	ok.Run.Knowledge = []string{"knowledge/pack"}
+	ok.Run.Voice, ok.Run.ReportDesign = "voice/VOICE.md", "design/report-design.json"
+	ok.Run.Payload = payload
+	if err := ok.Validate(); err != nil {
+		t.Fatalf("a whole job: %v", err)
+	}
+	for name, change := range map[string]func(*Job){
+		"a secret over two lines":         func(j *Job) { j.Run.Secrets = map[string]string{"A": "x\nB=y"} },
+		"a secret with a space at an end": func(j *Job) { j.Run.Secrets = map[string]string{"A": " x"} },
+		"a secret's name with =":          func(j *Job) { j.Run.Secrets = map[string]string{"A=B": "x"} },
+		"a secret named as the model key": func(j *Job) { j.Run.Secrets = map[string]string{"ANTHROPIC_API_KEY": "x"} },
+		"an intake id with a path":        func(j *Job) { j.Run.Intake = map[string]string{"../x": "y"} },
+		"an answer twice":                 func(j *Job) { j.Run.Intake = map[string]string{"doc": "y"} },
+		"an intake file of another id":    func(j *Job) { j.Run.IntakeFiles = map[string]string{"doc": "intake/other/x"} },
+		"an input that climbs":            func(j *Job) { j.Run.Inputs = []string{"inputs/../x"} },
+		"an input in a folder":            func(j *Job) { j.Run.Inputs = []string{"inputs/a/b"} },
+		"a pack outside knowledge":        func(j *Job) { j.Run.Knowledge = []string{"inputs/pack"} },
+		"a voice elsewhere":               func(j *Job) { j.Run.Voice = "inputs/VOICE.md" },
+		"a theme beside a design":         func(j *Job) { j.Run.ReportTheme = "plain" },
+		"files and no payload":            func(j *Job) { j.Run.Payload = nil },
+		"a payload with no digest":        func(j *Job) { j.Run.Payload = &Payload{Size: 1} },
+		"a source token over two lines":   func(j *Job) { j.Run.SourceTokens = map[string]string{"repo": "a\nb"} },
+		"a connection with no token":      func(j *Job) { j.Run.Connections = map[string]Connection{"srv": {}} },
+		"a destination with no secret":    func(j *Job) { j.Run.Destinations = []Destination{{Name: "hook", Kind: "webhook"}} },
+	} {
+		j := validJob()
+		*j = *ok
+		j.Run.Secrets, j.Run.Intake, j.Run.IntakeFiles = maps.Clone(ok.Run.Secrets), maps.Clone(ok.Run.Intake), maps.Clone(ok.Run.IntakeFiles)
+		change(j)
+		if err := j.Validate(); err == nil {
+			t.Errorf("%s: validated", name)
+		}
 	}
 }

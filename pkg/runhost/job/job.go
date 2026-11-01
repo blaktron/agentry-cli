@@ -17,6 +17,7 @@ import (
 	"io"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/trust"
@@ -103,6 +104,69 @@ type Run struct {
 	// keychain. It lives in the service's memory and the run's environment
 	// only, and never in a file.
 	ModelKey string `json:"modelKey,omitempty"`
+
+	// Secrets are the values of the release's declared secrets and its
+	// servers', by name, resolved on the device as a local run resolves them
+	// (its MCP profile, the intake's secret answers, then the policy's secret
+	// source). On the runhost they are written to the job's own secrets file,
+	// which is the run's secret source and is deleted when the run ends.
+	Secrets map[string]string `json:"secrets,omitempty"`
+	// Intake are the intake's answers as --intake takes them, by question
+	// id. A file answer names its file in the payload (IntakeFiles) instead.
+	Intake      map[string]string `json:"intake,omitempty"`
+	IntakeFiles map[string]string `json:"intakeFiles,omitempty"`
+	// SourceTokens are the access tokens of the run's input sources, by
+	// question id, resolved on the device; on the runhost each reaches the
+	// run's environment alone.
+	SourceTokens map[string]string `json:"sourceTokens,omitempty"`
+	// Inputs, Knowledge, Voice and ReportDesign name the payload's members:
+	// each input a --file, each pack a --knowledge, the Writing Voice and
+	// the report design. ReportTheme is a built-in theme's name.
+	Inputs       []string `json:"inputs,omitempty"`
+	Knowledge    []string `json:"knowledge,omitempty"`
+	Voice        string   `json:"voice,omitempty"`
+	ReportDesign string   `json:"reportDesign,omitempty"`
+	ReportTheme  string   `json:"reportTheme,omitempty"`
+	// Connections are the access tokens of the release's servers that sign
+	// in by OAuth, refreshed on the device; never a refresh token.
+	Connections map[string]Connection `json:"connections,omitempty"`
+	// Destinations are where the run sends its result once it succeeds,
+	// with their credentials, delivered from the runhost.
+	Destinations []Destination `json:"destinations,omitempty"`
+	// AllowVulnerableMCP is the person's own --allow-vulnerable-mcp.
+	AllowVulnerableMCP bool `json:"allowVulnerableMcp,omitempty"`
+	// Payload is the tar of the run's files that follows the document (and
+	// the release, when the runhost asks for it); nil when there are none.
+	Payload *Payload `json:"payload,omitempty"`
+}
+
+// Connection is one OAuth server's access token for the run.
+type Connection struct {
+	AccessToken string    `json:"accessToken"`
+	ExpiresAt   time.Time `json:"expiresAt"`
+	Issuer      string    `json:"issuer,omitempty"`
+	Scopes      []string  `json:"scopes,omitempty"`
+}
+
+// Destination is one destination the run delivers to: a webhook or a
+// bucket, at a public address, with its credentials.
+type Destination struct {
+	Name          string `json:"name"`
+	Kind          string `json:"kind"`
+	URL           string `json:"url,omitempty"`
+	Bucket        string `json:"bucket,omitempty"`
+	Prefix        string `json:"prefix,omitempty"`
+	Region        string `json:"region,omitempty"`
+	Endpoint      string `json:"endpoint,omitempty"`
+	Secret        string `json:"secret"`
+	Authorization string `json:"authorization,omitempty"`
+	AccessKeyID   string `json:"accessKeyId,omitempty"`
+}
+
+// Payload names the tar of the run's files: its length and its digest.
+type Payload struct {
+	Size   int64  `json:"size"`
+	Digest string `json:"digest"`
 }
 
 // Model is the model a run uses: the device policy's, less where its key
@@ -222,7 +286,136 @@ func (j *Job) Validate() error {
 	if j.Run.Adapter != "" {
 		return fmt.Errorf("a runhost runs its own container harness; it does not take the adapter %q", j.Run.Adapter)
 	}
+	return j.Run.validateCarried()
+}
+
+var (
+	secretNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
+	intakeIDRE   = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
+	themeRE      = regexp.MustCompile(`^[a-z][a-z0-9-]{0,63}$`)
+)
+
+// MaxSecret bounds one secret's value, and MaxSecrets their number.
+const (
+	MaxSecret  = 64 << 10
+	MaxSecrets = 256
+)
+
+// SecretValueOK says whether v is a value the job's secrets file carries as
+// it is: one line, with no NUL and no space at either end, which the file's
+// reader would trim.
+func SecretValueOK(v string) bool {
+	return len(v) <= MaxSecret && !strings.ContainsAny(v, "\r\n\x00") && strings.TrimSpace(v) == v
+}
+
+// validateCarried checks what the run carries beside the release: every
+// name is one a file name, a variable or an argument may carry, and every
+// payload member it names is one the payload can hold.
+func (r *Run) validateCarried() error {
+	if len(r.Secrets) > MaxSecrets {
+		return fmt.Errorf("the job carries %d secrets; a run takes at most %d", len(r.Secrets), MaxSecrets)
+	}
+	for name, v := range r.Secrets {
+		if !secretNameRE.MatchString(name) || name == r.Model.APIKeyEnv {
+			return errors.New("a secret's name is not one a run's secrets file carries")
+		}
+		if !SecretValueOK(v) {
+			return fmt.Errorf("the secret %s is not one line a secrets file can carry as it is", name)
+		}
+	}
+	for id, v := range r.Intake {
+		if !intakeIDRE.MatchString(id) {
+			return fmt.Errorf("the intake answer %q is not a question's id", id)
+		}
+		if strings.ContainsAny(v, "\x00") || len(v) > MaxDocument/4 {
+			return fmt.Errorf("the intake answer %s is not one a run takes", id)
+		}
+		if _, dup := r.IntakeFiles[id]; dup {
+			return fmt.Errorf("the intake question %s is answered twice", id)
+		}
+	}
+	members := map[string]bool{}
+	member := func(kind, name string) error {
+		if !strings.HasPrefix(name, kind+"/") || !cleanMember(name) {
+			return fmt.Errorf("%q is not a %s member of the run's files", name, kind)
+		}
+		if members[name] {
+			return fmt.Errorf("the job names %s twice", name)
+		}
+		members[name] = true
+		return nil
+	}
+	for id, name := range r.IntakeFiles {
+		if !intakeIDRE.MatchString(id) {
+			return fmt.Errorf("the intake answer %q is not a question's id", id)
+		}
+		if err := member("intake/"+id, name); err != nil {
+			return err
+		}
+	}
+	for id, tok := range r.SourceTokens {
+		if !intakeIDRE.MatchString(id) || tok == "" || !SecretValueOK(tok) {
+			return errors.New("an input source's token is not one a run takes")
+		}
+	}
+	for _, name := range r.Inputs {
+		if err := member("inputs", name); err != nil {
+			return err
+		}
+		if strings.Count(name, "/") != 1 {
+			return fmt.Errorf("the input %q is not one file or folder", name)
+		}
+	}
+	for _, name := range r.Knowledge {
+		if err := member("knowledge", name); err != nil {
+			return err
+		}
+		if strings.Count(name, "/") != 1 {
+			return fmt.Errorf("the pack %q is not one folder", name)
+		}
+	}
+	if r.Voice != "" && r.Voice != "voice/VOICE.md" {
+		return errors.New("the Writing Voice is not the payload's voice/VOICE.md")
+	}
+	if r.ReportDesign != "" && r.ReportDesign != "design/report-design.json" {
+		return errors.New("the report design is not the payload's design/report-design.json")
+	}
+	if r.ReportTheme != "" && (!themeRE.MatchString(r.ReportTheme) || r.ReportDesign != "") {
+		return fmt.Errorf("the report theme %q is not a built-in theme's name, or a design is given too", r.ReportTheme)
+	}
+	for server, c := range r.Connections {
+		if server == "" || len(server) > 512 || strings.ContainsAny(server, "\x00\n") || c.AccessToken == "" || !SecretValueOK(c.AccessToken) {
+			return errors.New("a connection's access token is not one a run can carry")
+		}
+	}
+	if len(r.Destinations) > 16 {
+		return errors.New("a run delivers to at most 16 destinations")
+	}
+	for _, d := range r.Destinations {
+		if d.Name == "" || d.Secret == "" || !SecretValueOK(d.Secret) || !SecretValueOK(d.Authorization) || !SecretValueOK(d.AccessKeyID) {
+			return fmt.Errorf("the destination %q is not one a run can deliver to", d.Name)
+		}
+	}
+	if len(members) > 0 && r.Payload == nil {
+		return errors.New("the job names files and carries none")
+	}
+	if p := r.Payload; p != nil && (p.Size <= 0 || !digestRE.MatchString(p.Digest)) {
+		return errors.New("the job's files are named by no size or digest")
+	}
 	return nil
+}
+
+// cleanMember says whether name is a clean relative slash path.
+func cleanMember(name string) bool {
+	if name == "" || strings.Contains(name, "\\") || strings.HasPrefix(name, "/") || len(name) > 4096 {
+		return false
+	}
+	for _, seg := range strings.Split(name, "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return false
+		}
+	}
+	return true
 }
 
 // Write writes the job document to w, length-prefixed.

@@ -1049,6 +1049,18 @@ func SecretResolvable(name string, overrides map[string]string, src policy.Secre
 	return ok && v != ""
 }
 
+// ResolveSecret is name's value as a run resolves it: the overrides (an MCP
+// profile, the intake's secret answers) first, then the policy source. A
+// device that hands a run to a remote runhost resolves each secret here, so
+// the run there has the values this computer's run would.
+func ResolveSecret(name string, overrides map[string]string, src policy.SecretSource) (string, bool) {
+	if v, ok := overrides[name]; ok && v != "" {
+		return v, true
+	}
+	v, ok := lookupSecret(name, src)
+	return v, ok && v != ""
+}
+
 // lookupSecret resolves one name from the operator source.
 func lookupSecret(name string, src policy.SecretSource) (string, bool) {
 	switch src.Mode {

@@ -105,6 +105,10 @@ type runConnections struct {
 	tokens map[string]engine.ConnectionToken
 	line   string
 	renew  func(ctx context.Context, server string) (engine.ConnectionToken, error)
+	// issuers and scopes are each connection's, by server, for a run handed
+	// to a remote runhost, whose receipt names them as this one's does.
+	issuers map[string]string
+	scopes  map[string][]string
 }
 
 // ensureConnections opens, or on a terminal makes, the connection of every
@@ -121,7 +125,7 @@ func ensureConnections(cmd *cobra.Command, home string, meta *installdir.Meta, m
 	clients := connection.OpenClients(home, connectionKeys())
 	httpc := vendorHTTP()
 	out := &runConnections{
-		tokens: map[string]engine.ConnectionToken{},
+		tokens: map[string]engine.ConnectionToken{}, issuers: map[string]string{}, scopes: map[string][]string{},
 		renew: func(ctx context.Context, server string) (engine.ConnectionToken, error) {
 			a, _, err := store.Use(ctx, connection.Key{Ref: meta.Ref, Digest: meta.Digest, Server: server}, httpc, clients)
 			return engine.ConnectionToken{AccessToken: a.Token, ExpiresAt: a.ExpiresAt}, err
@@ -161,6 +165,7 @@ func ensureConnections(cmd *cobra.Command, home string, meta *installdir.Meta, m
 			return nil, engine.Classify(engine.ExitCLI, err)
 		}
 		out.tokens[k.Server] = engine.ConnectionToken{AccessToken: access.Token, ExpiresAt: access.ExpiresAt}
+		out.issuers[k.Server], out.scopes[k.Server] = c.Issuer, c.Scopes
 		used = append(used, fmt.Sprintf("%s (issuer %s, scopes %s, client %s)", k.Server, c.Issuer, scopeList(c.Scopes), c.Client.Kind))
 	}
 	out.line = "servers signed in to by the person's connection for this release, refreshed by the runner before the run, and renewed before a token expires during the run where the server reads it from a file (a renewal that fails is said on the run's stderr); the run was given an access token alone: " + strings.Join(used, "; ")
@@ -240,7 +245,7 @@ func connectionsFromFile(path string, m *manifest.Manifest) (*runConnections, er
 		used = append(used, fmt.Sprintf("%s (issuer %s, scopes %s)", k, issuer, scopeList(c.Scopes)))
 	}
 	if len(used) > 0 {
-		out.line = "servers signed in to by connections the deployment keeps, refreshed before the run was handed to this host; the run was given an access token alone and renews nothing during the run, so a token that expires ends that server's calls: " + strings.Join(used, "; ")
+		out.line = "servers signed in to by connections kept where the run was started (a deployment, or the device that handed it to this runhost), refreshed there before the run was handed to this host; the run was given an access token alone and renews nothing during the run, so a token that expires ends that server's calls: " + strings.Join(used, "; ")
 	}
 	return out, nil
 }
