@@ -1,6 +1,12 @@
 {
   "versions": [
     {
+      "version": "0.6.1016",
+      "highlights": [
+        "When agentry runhost add or remove refuses a server's address or host key, the message names the runhost."
+      ]
+    },
+    {
       "version": "0.6.1015",
       "highlights": [
         "agentry agent install adds a persistent QuickAgent from the registry, or your own folder with --local.",
