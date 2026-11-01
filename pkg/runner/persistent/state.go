@@ -63,11 +63,13 @@ type Agent struct {
 
 	// A published agent's, empty for a built-in: the version it runs and
 	// where it came from (SourceRegistry or SourceLocal), its release
-	// folder, the persona and the knowledge packs its release ships, and
-	// the subagents it declares as they were pinned at its install.
+	// folder, what its release declares under capabilities.persistent
+	// (Declared), the persona and the knowledge packs its release ships,
+	// and the subagents it declares as they were pinned at its install.
 	Version   string
 	Source    string
 	Release   *localrun.Installed
+	Caps      *manifest.Persistent
 	Persona   *Persona
 	Packs     []string
 	Subagents []SubagentPin

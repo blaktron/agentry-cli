@@ -14,15 +14,17 @@ archive from the package the CLI carries, and the archive's digest is the one
 the CLI reports. Run `agentry builtins` to print it and compare it with the
 digest on this page.
 
-Installing this release does not give you Agentry Helper. A persistent release runs
-only as a built-in, so the application runs it, with what is listed below;
-the runner refuses to run this release as an ordinary QuickAgent. Agentry Helper runs in
+Installing this release does not give you a second Agentry Helper: the CLI
+refuses to install a built-in's release as a persistent agent, and runs the
+one it carries. It never runs this release as an ordinary QuickAgent, since
+the release declares only the persistent mode. Agentry Helper runs in
 Agentry Desktop only.
 
 ## What the application gives it
 
 The manifest declares no network access, no file access, no commands and no
-secret. When Agentry Desktop runs Agentry Helper, it gives it:
+secret. Under `capabilities.persistent` it declares Agentry's helper tools
+(`helper`). When Agentry Desktop runs Agentry Helper, it gives it:
 
 - **Agentry's own tools, through the app link**: searching the registry,
   showing a QuickAgent and how to run it (its questions, the files it takes,

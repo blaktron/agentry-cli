@@ -206,10 +206,7 @@ func BuildRosterUnder(a Agent, c Config, applied *Applied, malwareCheck bool) Ro
 	var shareAlike []string
 	// Whoever granted the folders: a published agent's come with the
 	// release, a built-in's with Agentry.
-	folders := GrantedByBuiltin
-	if a.Published() {
-		folders = GrantedByRelease
-	}
+	folders := a.grantedBy()
 	switch {
 	case a.checksShare():
 		checked, unchecked := shareLine+shareLineChecked, shareLine+shareLineUnchecked
@@ -223,14 +220,14 @@ func BuildRosterUnder(a Agent, c Config, applied *Applied, malwareCheck bool) Ro
 	add(RosterEntry{ID: EntryShare, Kind: KindFiles, Name: "Your share folder", GrantedBy: folders, Line: shareLine, alike: shareAlike}, true)
 	add(RosterEntry{ID: EntryData, Kind: KindFiles, Name: "Its own files", GrantedBy: folders, Fixed: true,
 		Line: "Keeps its own notes and files on a volume of its own, kept until you reset it"}, true)
-	if a.Builtin.KeepsMemory() {
-		add(RosterEntry{ID: EntryMemory, Kind: KindMemory, Name: "Its memory", GrantedBy: GrantedByBuiltin, Fixed: true, Line: memoryLine}, true)
+	if a.KeepsMemory() {
+		add(RosterEntry{ID: EntryMemory, Kind: KindMemory, Name: "Its memory", GrantedBy: a.grantedBy(), Fixed: true, Line: memoryLine}, true)
 	}
-	if a.Builtin.KeepsTime() {
-		add(RosterEntry{ID: EntryHeartbeat, Kind: KindTasks, Name: "Its heartbeat and tasks", GrantedBy: GrantedByBuiltin, Line: heartbeatLine}, false)
+	if a.KeepsTime() {
+		add(RosterEntry{ID: EntryHeartbeat, Kind: KindTasks, Name: "Its heartbeat and tasks", GrantedBy: a.grantedBy(), Line: heartbeatLine}, false)
 	}
-	if a.Builtin.ArmsMeetings() {
-		add(RosterEntry{ID: EntryMeetings, Kind: KindMeetings, Name: meetingsName, GrantedBy: GrantedByBuiltin, Line: meetingsLine}, false)
+	if a.ArmsMeetings() {
+		add(RosterEntry{ID: EntryMeetings, Kind: KindMeetings, Name: meetingsName, GrantedBy: a.grantedBy(), Line: meetingsLine}, false)
 	}
 	if a.Builtin.Codes() {
 		for _, e := range coderEntries(c) {
@@ -242,6 +239,9 @@ func BuildRosterUnder(a Agent, c Config, applied *Applied, malwareCheck bool) Ro
 	}
 	for _, e := range secretEntries(a, c) {
 		add(e, true)
+	}
+	if e, ok := voiceEntry(a); ok {
+		add(e, false)
 	}
 	if a.Builtin.Codes() {
 		for _, e := range accountEntries(c) {
@@ -490,6 +490,20 @@ type Packs func(ctx context.Context, names []string) (packs []engine.AttachedPac
 // what it returns, agree. applied names what the segment is given. done
 // closes the packs it opened.
 func Apply(ctx context.Context, home string, a Agent, c Config, r Roster, open Packs, ready HostReady, keys Secrets) (g localrun.Grants, applied Applied, done func(), err error) {
+	return ApplyWith(ctx, home, a, c, r, Openers{Packs: open}, ready, keys)
+}
+
+// Openers are what Apply opens for a segment beside the keychain: the
+// person's knowledge packs and their Writing Voice. A nil opener refuses a
+// roster with what it opens on.
+type Openers struct {
+	Packs Packs
+	Voice Voice
+}
+
+// ApplyWith is Apply with each of the person's things it opens.
+func ApplyWith(ctx context.Context, home string, a Agent, c Config, r Roster, openers Openers, ready HostReady, keys Secrets) (g localrun.Grants, applied Applied, done func(), err error) {
+	open := openers.Packs
 	done = func() {}
 	on := func(id string) bool {
 		e, ok := r.Entry(id)
@@ -604,6 +618,9 @@ func Apply(ctx context.Context, home string, a Agent, c Config, r Roster, open P
 		g.ServerSecrets[name] = v
 	}
 	if g.Skills, g.SkillsDir, err = stageSkills(home, a, c, on); err != nil {
+		return g, applied, done, err
+	}
+	if g.Voice, err = openVoice(ctx, a, on, openers.Voice); err != nil {
 		return g, applied, done, err
 	}
 	var names []string

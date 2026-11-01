@@ -53,7 +53,7 @@ const (
 // one: made 0600 before the first segment, so the segment can bind it, and
 // kept across segments until Stop.
 func (s *Supervisor) listenAppLink() error {
-	if s.opts.Agent.Builtin.AppLink() == "" {
+	if s.opts.Agent.AppLink() == "" {
 		return nil
 	}
 	path := AppSocketPath(s.opts.Home, s.opts.Agent.Name)
@@ -125,7 +125,7 @@ func (s *Supervisor) serveAppLink(c net.Conn) {
 // answerAppLink answers a call of the agent's own tool set.
 func (s *Supervisor) answerAppLink(ctx context.Context, req applink.Request) applink.Answer {
 	switch {
-	case !slices.Contains(applink.Tools(s.opts.Agent.Builtin.AppLink()), req.Tool):
+	case !slices.Contains(applink.Tools(s.opts.Agent.AppLink()), req.Tool):
 		return applink.Answer{Text: "no such tool: " + req.Tool, IsError: true}
 	case req.Tool == applink.SelfConfigure:
 		return s.selfConfigure(req.Arguments)

@@ -185,3 +185,9 @@ agentry/assistant@1.16.0 sha256:d095d45801009a48cd6c8145f8dcbdc4b50d573e7293db38
 agentry/main@1.1.0 sha256:08f43b24d9c02ec1bff2aed94290afdd6bef3af3302f65c55dfc25c32d7a85ff
 # 1.2.1, over 1.2.0: the review guide's runner tools name the tools a persistent release's capabilities.persistent keys give, which the gate now reads against them.
 agentry/examiner@1.2.1 sha256:badc5ab694defc2fafca4f1fb1de44452ca17b2ee8196ccdac4defc40795c6dc
+# 1.17.0, over 1.16.0: the Assistant's manifest declares its own capabilities under capabilities.persistent (clock, memory, skills, the stored secrets FASTMAIL_TOKEN and BRAVE_API_KEY, selfConfigure, helper, meetings), which the runner now reads in place of switches of its own; its README says what it declares and that the CLI refuses to install a built-in's release.
+agentry/assistant@1.17.0 sha256:9db3fcd7fb147ae14d8b3ef7127feeddf47e2fd1d9354e991e4a3ea421c07610
+# 1.2.0, over 1.1.0: Agentry Helper's manifest declares Agentry's helper tools under capabilities.persistent; its README says so.
+agentry/main@1.2.0 sha256:4e36da7002eef874d78995f4d1ca7494170c3b84b4d41ab95eef417ba3c2ae14
+# 1.4.0, over 1.3.2: the Coding agent's manifest declares skills and the stored secret BRAVE_API_KEY under capabilities.persistent; its README says so.
+agentry/coder@1.4.0 sha256:3c1c0235c0a4336fa17dd07abb83d8dd42c593cf4b5f0ff0ec4938284b4d43c2

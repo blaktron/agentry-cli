@@ -44,7 +44,7 @@ func newAgentTasksCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if !a.Builtin.KeepsTime() {
+			if !a.KeepsTime() {
 				return engine.Classify(engine.ExitUsage, fmt.Errorf("the %s agent keeps no tasks", a.Name))
 			}
 			home, err := runnerHome()

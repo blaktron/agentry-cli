@@ -111,7 +111,7 @@ func TestEveryTurnIsToldTheTime(t *testing.T) {
 		t.Errorf("the turn sent: %q", sent)
 	}
 	for _, a := range Agents() {
-		if keeps := a.Builtin.KeepsTime(); keeps != (a.Name == "assistant") {
+		if keeps := a.KeepsTime(); keeps != (a.Name == "assistant") {
 			t.Errorf("%s keeps time: %v", a.Name, keeps)
 		}
 		if _, ok := BuildRoster(a, Config{}, nil).Entry(EntryHeartbeat); ok != (a.Name == "assistant") {

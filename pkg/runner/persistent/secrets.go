@@ -158,7 +158,7 @@ func secretLine(a Agent, c Config, name string) string {
 // addSecret records a stored secret in c, on: a new one, or one whose
 // value was set again. The value is kept in the keychain first.
 func addSecret(a Agent, c *Config, s StoredSecret) error {
-	if !a.Builtin.KeepsSecrets() {
+	if !a.KeepsSecrets() {
 		return fmt.Errorf("the %s agent keeps no secrets", a.Name)
 	}
 	if err := CheckSecretName(s.Name); err != nil {
