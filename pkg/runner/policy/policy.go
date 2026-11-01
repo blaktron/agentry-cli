@@ -882,6 +882,18 @@ type Budgets struct {
 }
 
 // Default returns the built-in policy.
+// The model a fresh policy names: the provider the setup command offers
+// first and that provider's newest release line, with the variable its
+// key is read from and the one host the agent container may reach for it.
+// The setup command's provider table reads these, so the two never
+// disagree.
+const (
+	DefaultModelProvider  = "anthropic"
+	DefaultModelName      = "claude-sonnet-5-5"
+	DefaultModelAPIKeyEnv = "ANTHROPIC_API_KEY"
+	DefaultModelHostPort  = "api.anthropic.com:443"
+)
+
 func Default() *Policy {
 	return &Policy{
 		PolicyVersion: Version,
@@ -894,10 +906,10 @@ func Default() *Policy {
 		},
 		MCPRegistries: MCPRegistries{NPM: DefaultNPMRegistry, PyPI: DefaultPyPIRegistry},
 		Model: Model{
-			Provider:   "anthropic",
-			Name:       "claude-sonnet-4-5",
-			APIKeyEnv:  "ANTHROPIC_API_KEY",
-			ProxyAllow: []string{"api.anthropic.com:443"},
+			Provider:   DefaultModelProvider,
+			Name:       DefaultModelName,
+			APIKeyEnv:  DefaultModelAPIKeyEnv,
+			ProxyAllow: []string{DefaultModelHostPort},
 		},
 		SecretSource: SecretSource{Mode: "env"},
 		Budgets:      Budgets{TimeoutSeconds: 900, MaxTurns: 100},
@@ -1488,7 +1500,7 @@ model:
   # endpoint of your own (then baseUrl is required and proxyAllow names
   # its host:port; the harness reaches it through its openai client).
   provider: anthropic
-  name: claude-sonnet-4-5
+  name: claude-sonnet-5-5
   # The env var holding YOUR api key. Keys are operator-owned; packages
   # never carry them. The run reads the value from this variable (or the
   # keychain, apiKeySource: keyring) and hands it to the harness under
@@ -1553,7 +1565,7 @@ sessions:
 #     # An endpoint that speaks the Anthropic Messages API — Anthropic
 #     # itself, or a compatible one. Its host must be in model.proxyAllow.
 #     # baseUrl: https://api.anthropic.com
-#     # model: claude-sonnet-4-5
+#     # model: claude-sonnet-5-5
 #     # apiKeyEnv: ANTHROPIC_API_KEY
 #   codex-image:            # (or codex) on a ChatGPT plan
 #     # How Codex reads the plan's access token: auth-command (the default)

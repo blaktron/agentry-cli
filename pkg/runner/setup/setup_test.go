@@ -47,7 +47,7 @@ func TestConfigureModelTableDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pol.Model.Provider != "openai" || pol.Model.Name != "gpt-5.2" ||
+	if pol.Model.Provider != "openai" || pol.Model.Name != "gpt-6.1-sol" ||
 		pol.Model.APIKeyEnv != "OPENAI_API_KEY" ||
 		strings.Join(pol.Model.ProxyAllow, ",") != "api.openai.com:443" {
 		t.Fatalf("openai defaults not applied: %+v", pol.Model)
@@ -150,7 +150,7 @@ func TestConfigureModelInteractive(t *testing.T) {
 	if err := ConfigureModel(p, pol, ModelOpts{}); err != nil {
 		t.Fatal(err)
 	}
-	if pol.Model.Provider != "google" || pol.Model.Name != "gemini-3-pro" || pol.Model.APIKeyEnv != "GEMINI_API_KEY" {
+	if pol.Model.Provider != "google" || pol.Model.Name != "gemini-4-argon" || pol.Model.APIKeyEnv != "GEMINI_API_KEY" {
 		t.Fatalf("interactive google config: %+v", pol.Model)
 	}
 }
@@ -263,7 +263,7 @@ func TestConfigureModelUnknownProviderTreatedAsCustom(t *testing.T) {
 }
 
 func TestConfigureModelYesModeKeepsExistingProvider(t *testing.T) {
-	pol := policy.Default() // provider anthropic, model claude-sonnet-4-5
+	pol := policy.Default() // provider anthropic, the default model
 	pol.Model.Name = "claude-custom-tune"
 	err := ConfigureModel(&scriptPrompter{}, pol, ModelOpts{Yes: true})
 	if err != nil {
@@ -315,6 +315,67 @@ func TestGuidedProfileShowsContractAndDiscardChoice(t *testing.T) {
 		if !strings.Contains(said, want) {
 			t.Errorf("guided setup output missing %q in:\n%s", want, said)
 		}
+	}
+}
+
+// TestProviderTableMatchesThePolicyDefault: the model a fresh policy
+// names and the setup table's row for that provider are one fact, and each
+// table default is a model id the provider's listing would show, with no
+// dated snapshot and no preview mark.
+func TestProviderTableMatchesThePolicyDefault(t *testing.T) {
+	def := policy.Default().Model
+	row := DefaultsFor(def.Provider)
+	if row == nil {
+		t.Fatalf("the policy's default provider %q has no table row", def.Provider)
+	}
+	if row.Model != def.Name || row.APIKeyEnv != def.APIKeyEnv || strings.Join(row.ProxyAllow, ",") != strings.Join(def.ProxyAllow, ",") {
+		t.Fatalf("the policy's default model %+v and the table's row %+v disagree", def, *row)
+	}
+	for _, d := range providerDefaults {
+		if d.Model == "" {
+			continue
+		}
+		if strings.Contains(d.Model, "preview") || strings.Contains(d.Model, "-2025") || strings.Contains(d.Model, "-2026") {
+			t.Errorf("%s: default model %q is a preview or a dated snapshot, not a release line", d.Provider, d.Model)
+		}
+	}
+}
+
+// TestConfigureModelWarnsWhenTheVariableIsUnset: a policy whose key
+// variable this environment does not set is written with a warning that
+// names the variable and the two ways to supply the key, under --yes as on
+// a terminal; a set variable or a keychain source draws none.
+func TestConfigureModelWarnsWhenTheVariableIsUnset(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "")
+	warned := func(p *scriptPrompter) bool {
+		for _, s := range p.said {
+			if strings.Contains(s, "warning: $OPENAI_API_KEY is not set in this environment") && strings.Contains(s, "export it in the shell that runs agentry") && strings.Contains(s, "store the key in the OS keychain") {
+				return true
+			}
+		}
+		return false
+	}
+	p := &scriptPrompter{}
+	if err := ConfigureModel(p, policy.Default(), ModelOpts{Provider: "openai", Yes: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !warned(p) {
+		t.Errorf("--yes with the variable unset did not warn; said %q", p.said)
+	}
+	p = &scriptPrompter{}
+	if err := ConfigureModel(p, policy.Default(), ModelOpts{Provider: "openai", APIKeySource: "keyring", Yes: true}); err != nil {
+		t.Fatal(err)
+	}
+	if warned(p) {
+		t.Errorf("a keychain source stands in for the variable, yet it warned; said %q", p.said)
+	}
+	t.Setenv("OPENAI_API_KEY", "sk-set")
+	p = &scriptPrompter{}
+	if err := ConfigureModel(p, policy.Default(), ModelOpts{Provider: "openai", Yes: true}); err != nil {
+		t.Fatal(err)
+	}
+	if warned(p) {
+		t.Errorf("the variable is set, yet it warned; said %q", p.said)
 	}
 }
 
@@ -600,6 +661,7 @@ func TestGuidedProfileSaysEachKeysHelp(t *testing.T) {
 // A custom endpoint over plain http off this machine is configured, with
 // the warning said; https and loopback say nothing.
 func TestConfigureModelCustomPlainHTTPIsAllowedWithAWarning(t *testing.T) {
+	t.Setenv("K", "set") // the key variable is set, so the only warning is the endpoint's
 	for _, tc := range []struct {
 		url  string
 		warn bool

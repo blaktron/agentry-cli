@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"os"
 	"slices"
 	"sort"
 	"strings"
@@ -57,13 +58,16 @@ const keyHeaderBearer = "Authorization"
 
 // providerDefaults is the closed table; "custom" is handled by asking
 // (its endpoint is the operator's base URL, its key a bearer, the OpenAI
-// shape every compatible endpoint uses).
+// shape every compatible endpoint uses). Each default model is the
+// provider's newest release line as its models listing publishes it, at
+// the tier a run pays for by default: the first row is the policy's own
+// default, read from the policy package so the two cannot drift.
 var providerDefaults = []ProviderDefault{
-	{Provider: "anthropic", Model: "claude-sonnet-4-5", APIKeyEnv: "ANTHROPIC_API_KEY", ProxyAllow: []string{"api.anthropic.com:443"},
+	{Provider: policy.DefaultModelProvider, Model: policy.DefaultModelName, APIKeyEnv: policy.DefaultModelAPIKeyEnv, ProxyAllow: []string{policy.DefaultModelHostPort},
 		ModelsURL: "https://api.anthropic.com/v1/models", KeyHeader: "x-api-key"},
-	{Provider: "openai", Model: "gpt-5.2", APIKeyEnv: "OPENAI_API_KEY", ProxyAllow: []string{"api.openai.com:443"},
+	{Provider: "openai", Model: "gpt-6.1-sol", APIKeyEnv: "OPENAI_API_KEY", ProxyAllow: []string{"api.openai.com:443"},
 		ModelsURL: "https://api.openai.com/v1/models", KeyHeader: keyHeaderBearer},
-	{Provider: "google", Model: "gemini-3-pro", APIKeyEnv: "GEMINI_API_KEY", ProxyAllow: []string{"generativelanguage.googleapis.com:443"},
+	{Provider: "google", Model: "gemini-4-argon", APIKeyEnv: "GEMINI_API_KEY", ProxyAllow: []string{"generativelanguage.googleapis.com:443"},
 		ModelsURL: "https://generativelanguage.googleapis.com/v1beta/models", KeyHeader: "x-goog-api-key"},
 	// The providers whose account a person may connect, each also paid by a
 	// pasted key. No default model and no model list: the person types the
@@ -882,6 +886,13 @@ func ConfigureModel(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 	}
 	if kind == policy.KeyKindAPI {
 		kind = "" // the default, unwritten
+	}
+	// The policy names a variable; when this environment does not set it
+	// and no keychain entry stands in for it, a run launched from here
+	// finds no key, so setup says so now rather than leaving the first
+	// run to. Said under --yes as on a terminal.
+	if source != modelkey.SourceKeyring && os.Getenv(keyEnv) == "" {
+		p.Say(fmt.Sprintf("warning: $%s is not set in this environment, so a run started from here would find no key: export it in the shell that runs agentry, or run `agentry setup` on a terminal and accept the offer to store the key in the OS keychain", keyEnv))
 	}
 
 	pol.Model = policy.Model{
