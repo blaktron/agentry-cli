@@ -1426,7 +1426,7 @@ func newScheduleListCmd() *cobra.Command {
 				views = append(views, scheduleView(store, sc, now, alarms))
 			}
 			if flags.jsonOut {
-				return emitJSON(cmd.OutOrStdout(), views)
+				return emitJSON(cmd.OutOrStdout(), map[string]any{"schedules": views})
 			}
 			if len(views) == 0 {
 				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "no schedules on this computer")

@@ -232,7 +232,7 @@ func newAgentListCmd() *cobra.Command {
 				all = append(all, st)
 			}
 			if flags.jsonOut {
-				return emitJSON(cmd.OutOrStdout(), all)
+				return emitJSON(cmd.OutOrStdout(), map[string]any{"agents": all})
 			}
 			tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
 			_, _ = fmt.Fprintln(tw, "NAME\tSTATE\tSINCE\tSEGMENT")

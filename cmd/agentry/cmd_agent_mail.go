@@ -48,7 +48,7 @@ func configureMailProviders(cmd *cobra.Command, a persistent.Agent, home string,
 	}
 	ps := persistent.MailProviders(a, c)
 	if flags.jsonOut {
-		return emitJSON(cmd.OutOrStdout(), ps)
+		return emitJSON(cmd.OutOrStdout(), map[string]any{"providers": ps})
 	}
 	printMailProviders(cmd.OutOrStdout(), ps)
 	return nil

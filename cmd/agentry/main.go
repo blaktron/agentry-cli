@@ -34,6 +34,9 @@ type globalFlags struct {
 	jsonOut bool
 	// verbose adds the client library's own error under a failure's line.
 	verbose bool
+	// quiet silences narration: stage lines, next steps and the like.
+	// Results, warnings and errors are still written.
+	quiet bool
 }
 
 // flags is the process-wide flag state bound by newRootCmd.
@@ -105,11 +108,11 @@ func newRootCmd() *cobra.Command {
 	root.SetVersionTemplate("agentry version {{.Version}}\ndefault registry: " + defaultRegistryURL + "\n")
 	root.PersistentFlags().StringVar(&flags.registry, "registry", "",
 		"registry base URL (default: "+envRegistry+", else config defaultRegistry, else "+defaultRegistryURL+")")
-	root.PersistentFlags().BoolVar(&flags.jsonOut, "json", false,
-		"machine-readable JSON output on stdout (search, info, verify, doctor, install, uninstall, list, builtins, validate, setup, connections, logout, report-design show, run --plan, run --dry-run, runs; login writes NDJSON lifecycle events); narration stays on stderr")
-
+	root.PersistentFlags().BoolVar(&flags.jsonOut, "json", false, "")
 	root.PersistentFlags().BoolVar(&flags.verbose, "verbose", false,
 		"add the client library's own error under a failure's line (a registry that cannot be reached, a container engine that does not answer)")
+	root.PersistentFlags().BoolVar(&flags.quiet, "quiet", false,
+		"silence narration on stderr: stage lines, next steps and progress; results, warnings and errors are still written. NO_COLOR in the environment turns colour off, as does stderr that is not a terminal")
 
 	root.AddCommand(
 		newInitCmd(),
@@ -151,6 +154,8 @@ func newRootCmd() *cobra.Command {
 		newRunnerToolsCmd(),
 		newRunnerConfineCmd(),
 	)
+	markJSONCommands(root)
+	root.PersistentFlags().Lookup("json").Usage = jsonFlagHelp(root)
 	return root
 }
 

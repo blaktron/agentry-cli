@@ -50,7 +50,6 @@ func newVoiceUploadCmd() *cobra.Command {
 	var (
 		wait    bool
 		timeout time.Duration
-		asJSON  bool
 	)
 	cmd := &cobra.Command{
 		Use:   "upload",
@@ -78,7 +77,7 @@ func newVoiceUploadCmd() *cobra.Command {
 			}
 			digest := kept.Meta.SHA256
 			out := cmd.OutOrStdout()
-			if !asJSON {
+			if !flags.jsonOut {
 				_, _ = fmt.Fprintf(out, "Submitted your Writing Voice to %s (%d bytes, %s): in review.\n", c.URL(), len(text), digest)
 				_, _ = fmt.Fprintln(out, "It replaces your account's voice once AI Review passes it. This computer's voice is unchanged.")
 			}
@@ -88,7 +87,7 @@ func newVoiceUploadCmd() *cobra.Command {
 					return voiceAccountErr(err)
 				}
 			}
-			if asJSON {
+			if flags.jsonOut {
 				printJSON(out, acct)
 				return nil
 			}
@@ -101,7 +100,6 @@ func newVoiceUploadCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&wait, "wait", false, "wait for AI Review's verdict and report it")
 	cmd.Flags().DurationVar(&timeout, "timeout", 3*time.Minute, "how long --wait waits")
-	cmd.Flags().BoolVar(&asJSON, "json", false, "print your account's voice, as the registry answers it, as JSON")
 	return cmd
 }
 
@@ -234,7 +232,6 @@ type voiceStatus struct {
 }
 
 func newVoiceStatusCmd() *cobra.Command {
-	var asJSON bool
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show this computer's Writing Voice and your account's, with its review",
@@ -265,7 +262,7 @@ func newVoiceStatusCmd() *cobra.Command {
 				st.SignedIn = true
 				st.Error = err.Error()
 			}
-			if asJSON {
+			if flags.jsonOut {
 				printJSON(cmd.OutOrStdout(), st)
 				return nil
 			}
@@ -273,7 +270,6 @@ func newVoiceStatusCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&asJSON, "json", false, "print both voices and the review as JSON")
 	return cmd
 }
 
