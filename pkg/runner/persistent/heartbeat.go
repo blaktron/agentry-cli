@@ -67,7 +67,7 @@ func (s *Supervisor) now() time.Time {
 // not at a segment's start, so the agreement is checked here: a config.yaml
 // switched some other way fires nothing.
 func heartbeatOn(a Agent, c Config) bool {
-	if !a.Builtin.KeepsTime() {
+	if !a.KeepsTime() {
 		return false
 	}
 	r := BuildRoster(a, c, nil)
@@ -82,7 +82,7 @@ func heartbeatOn(a Agent, c Config) bool {
 // stopped, then ticks until Stop: tasks for an agent that keeps time, and
 // upkeep for every agent.
 func (s *Supervisor) startHeartbeat() {
-	keepsTime := s.opts.Agent.Builtin.KeepsTime()
+	keepsTime := s.opts.Agent.KeepsTime()
 	if keepsTime {
 		s.noteMissed()
 	}
@@ -418,7 +418,7 @@ func (s *Supervisor) Tasks() ([]Task, error) {
 // ChangeTask applies a person's pause, resume or remove to the running
 // agent's task.
 func (s *Supervisor) ChangeTask(op TaskOp) ([]Task, error) {
-	if !s.opts.Agent.Builtin.KeepsTime() {
+	if !s.opts.Agent.KeepsTime() {
 		return nil, fmt.Errorf("the %s agent has no tasks", s.opts.Agent.Name)
 	}
 	if err := s.updateTasks(func(ts *Tasks) error { return ts.ApplyOp(op, s.now()) }); err != nil {
@@ -482,7 +482,7 @@ func TaskList(home string, a Agent) ([]Task, error) {
 // task: through its supervisor while it runs, under its owner lock while it
 // does not.
 func ChangeTaskOf(ctx context.Context, home string, a Agent, client string, op TaskOp) ([]Task, bool, error) {
-	if !a.Builtin.KeepsTime() {
+	if !a.KeepsTime() {
 		return nil, false, fmt.Errorf("the %s agent has no tasks", a.Name)
 	}
 	owner, err := Acquire(home, a.Name, client)
@@ -511,7 +511,7 @@ func ChangeTaskOf(ctx context.Context, home string, a Agent, client string, op T
 // TasksOf are an agent's tasks: its supervisor's while it runs, its file's
 // while it does not.
 func TasksOf(ctx context.Context, home string, a Agent) ([]Task, bool, error) {
-	if !a.Builtin.KeepsTime() {
+	if !a.KeepsTime() {
 		return nil, false, nil
 	}
 	ts, err := RequestTasks(ctx, home, a.Name)

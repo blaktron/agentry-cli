@@ -879,8 +879,10 @@ func TestCompileRefusesUndeclaredMode(t *testing.T) {
 // TestPersistentReleaseRunsWhereThePolicyAllows: a release runs in the
 // persistent mode from the registry or a local folder, with its share and
 // data folders, unless the policy sets allowPersistentReleases false, which
-// is a policy refusal (exit 11) before anything is written; a memory, skills
-// and a target host stay refused to it, and a built-in compiles under either
+// is a policy refusal (exit 11) before anything is written; a memory and
+// skills are refused to a release that does not declare them, whatever its
+// source, and given to one that does; a target host stays refused to it,
+// and a built-in compiles under either
 // setting, its harness half the interactive one, with none of the policy's
 // session caps.
 func TestPersistentReleaseRunsWhereThePolicyAllows(t *testing.T) {
@@ -913,13 +915,19 @@ func TestPersistentReleaseRunsWhereThePolicyAllows(t *testing.T) {
 			t.Errorf("source %q: the refusal wrote %d entries into the plan dir", source, len(entries))
 		}
 		for name, files := range map[string]*spec.AgentFiles{
-			"a memory": {Share: true, Memory: true},
-			"skills":   {Share: true, Skills: []spec.Skill{{Name: "s", Description: "d"}}},
+			"memory": {Share: true, Memory: true},
+			"skills": {Share: true, Skills: []spec.Skill{{Name: "s", Description: "d"}}},
 		} {
 			given := in(source, true)
 			given.AgentFiles = files
-			if _, err := Compile(given, t.TempDir()); !errors.As(err, &refusal) || !strings.Contains(err.Error(), "persistent built-in alone") {
-				t.Errorf("source %q given %s: err = %v, want a policy refusal", source, name, err)
+			if _, err := Compile(given, t.TempDir()); !errors.As(err, &refusal) || !strings.Contains(err.Error(), "declares capabilities.persistent."+name) {
+				t.Errorf("source %q given %s undeclared: err = %v, want a policy refusal", source, name, err)
+			}
+			declaring := given
+			declaring.Manifest = parseManifest(t, strings.Replace(persistentOwnYAML, "modes: [persistent]", "modes: [autonomous, persistent]", 1))
+			declaring.WorkspaceDir = workspaceFor(t, declaring.Manifest, nil)
+			if _, err := Compile(declaring, t.TempDir()); err != nil {
+				t.Errorf("source %q given %s it declares: %v", source, name, err)
 			}
 		}
 	}

@@ -110,9 +110,9 @@ func TestAppLinkHasNoGrantTool(t *testing.T) {
 		"enable": true, "disable": true, "reset": true, "stop": true, "start": true, "agent": true, "agents": true, "connect": true,
 		"login": true, "signin": true, "publish": true, "secret": true, "key": true, "token": true, "credential": true, "policy": true,
 		"unsafe": true, "set": true, "write": true, "delete": true}
-	for _, set := range Sets() {
+	for _, set := range Parts() {
 		for _, name := range Tools(set) {
-			if name == SelfConfigure && set == SetAssistant {
+			if name == SelfConfigure {
 				continue
 			}
 			for _, w := range strings.Split(name, "_") {
@@ -137,7 +137,7 @@ func TestAppLinkHasNoGrantTool(t *testing.T) {
 		TaskRemove:    {"task"},
 		Recall:        {"from", "limit", "query", "to"},
 	}
-	for _, tool := range assistantTools {
+	for _, tool := range setTools(Compose(PartSelf, PartTasks, PartRecall)) {
 		props := tool.Schema["properties"].(map[string]any)
 		got := slices.Sorted(maps.Keys(props))
 		if !slices.Equal(got, takes[tool.Name]) || tool.Schema["additionalProperties"] != false {
@@ -151,16 +151,16 @@ func TestAppLinkHasNoGrantTool(t *testing.T) {
 // whatever the Helper can, and no tool is listed twice.
 func TestTheAssistantHasEveryHelperTool(t *testing.T) {
 	byName := map[string]Tool{}
-	for _, tool := range sets[SetAssistant] {
+	for _, tool := range setTools(SetAssistant) {
 		if _, dup := byName[tool.Name]; dup {
 			t.Errorf("the Assistant's set lists %s twice", tool.Name)
 		}
 		byName[tool.Name] = tool
 	}
-	if len(sets[SetMain]) == 0 {
+	if len(setTools(SetMain)) == 0 {
 		t.Fatal("Agentry Helper's set is empty")
 	}
-	for _, want := range sets[SetMain] {
+	for _, want := range setTools(SetMain) {
 		got, ok := byName[want.Name]
 		if !ok {
 			t.Errorf("the Assistant's set lacks %s", want.Name)
@@ -185,7 +185,7 @@ func TestAnUnknownSetIsRefused(t *testing.T) {
 // so an agent can read the questions and answer them.
 func TestARunAndAScheduleTakeAnswersByQuestionID(t *testing.T) {
 	byName := map[string]Tool{}
-	for _, tool := range sets[SetMain] {
+	for _, tool := range setTools(SetMain) {
 		byName[tool.Name] = tool
 	}
 	for _, name := range []string{"quickagent_run", "schedule_add"} {
@@ -209,5 +209,29 @@ func TestARunAndAScheduleTakeAnswersByQuestionID(t *testing.T) {
 	}
 	if run := byName["quickagent_run"].Description; !strings.Contains(run, "answers to the questions quickagent_show lists") {
 		t.Errorf("quickagent_run's description does not say where its answers come from: %s", run)
+	}
+}
+
+// TestASetIsComposedOfItsParts: a set lists its parts' tools in the parts'
+// own order whatever order they are named in, a part named twice or not at
+// all is left out, and a set Compose does not make lists nothing and is not
+// served.
+func TestASetIsComposedOfItsParts(t *testing.T) {
+	if got, want := Compose(PartMeetings, PartSelf, "coder", PartSelf), "self,meetings"; got != want {
+		t.Errorf("Compose = %q, want %q", got, want)
+	}
+	if got := Tools(Compose(PartTasks, PartRecall)); !slices.Equal(got, []string{TaskAdd, TaskList, TaskUpdate, TaskRemove, Recall}) {
+		t.Errorf("tasks and recall list %v", got)
+	}
+	for _, bad := range []string{"", "main", "assistant", "meetings,self", "self,self", "self,"} {
+		if got := Tools(bad); got != nil {
+			t.Errorf("Tools(%q) = %v", bad, got)
+		}
+		if err := Serve(context.Background(), strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{}, bad, "/nowhere"); err == nil {
+			t.Errorf("the set %q was served", bad)
+		}
+	}
+	if !Has(SetAssistant, PartRecall) || Has(SetMain, PartSelf) {
+		t.Error("Has does not read a set's parts")
 	}
 }

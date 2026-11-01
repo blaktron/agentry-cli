@@ -1,6 +1,14 @@
 {
   "versions": [
     {
+      "version": "0.6.1016",
+      "highlights": [
+        "A persistent QuickAgent gets the time, tasks, a memory, skills and stored secrets only when its release declares them.",
+        "An installed agent can keep tasks that fire on time, a memory it compacts and recalls, and its own name and persona.",
+        "You can let an installed agent write in your Writing Voice; it is off until you switch it on."
+      ]
+    },
+    {
       "version": "0.6.1015",
       "highlights": [
         "agentry agent install adds a persistent QuickAgent from the registry, or your own folder with --local.",

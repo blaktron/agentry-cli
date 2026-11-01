@@ -222,7 +222,7 @@ func readAgentState(ctx context.Context, home string, a persistent.Agent) (agent
 	default:
 		st.State = agentDisabled
 	}
-	if a.Builtin.KeepsTime() {
+	if a.KeepsTime() {
 		tctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 		if ts, _, err := persistent.TasksOf(tctx, home, a); err == nil {
@@ -336,7 +336,7 @@ func newAgentShowCmd() *cobra.Command {
 				st.Volumes = &agentVolumes{Session: persistent.SessionVolumeIn(home, a.Name), Data: persistent.DataVolumeIn(home, a.Name)}
 				compaction, consolidation := persistent.LastUpkeep(home, a.Name)
 				st.LastCompaction = compaction
-				if a.Builtin.KeepsMemory() {
+				if a.KeepsMemory() {
 					st.Volumes.Memory = persistent.MemoryVolumeIn(home, a.Name)
 					st.LastConsolidation = consolidation
 				}
@@ -699,7 +699,7 @@ func newAgentSuperviseCmd() *cobra.Command {
 			sv, err := persistent.Start(startCtx, persistent.Options{
 				Home: home, Agent: a, Client: persistent.ClientCLI,
 				Policy: pol, PolicySHA: sha, PolicyFile: &file, Build: version.Build(),
-				Docker: dockerx.New(), Stderr: errOut, Packs: agentPacks(cmd),
+				Docker: dockerx.New(), Stderr: errOut, Packs: agentPacks(cmd), Voice: agentVoice(cmd),
 				OnStage: stageLines(errOut), Credits: creditsClient(pol),
 			})
 			close(starting)
@@ -1001,11 +1001,11 @@ func newAgentResetCmd() *cobra.Command {
 					return engine.Classify(engine.ExitUsage, fmt.Errorf("reset asks you to type the agent's name, and there is no terminal: pass --confirm %s", a.Name))
 				}
 				wipes := "its conversation, its files"
-				if a.Builtin.KeepsMemory() {
+				if a.KeepsMemory() {
 					wipes += ", its memory"
 				}
 				export := ""
-				if a.Builtin.KeepsMemory() {
+				if a.KeepsMemory() {
 					export = fmt.Sprintf(" To keep its memory, export it first: agentry agent memory export %s <folder>.", a.Name)
 				}
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "%s The files in its share folder are kept.%s Type its name (%s) to go on: ", fmt.Sprintf(r.prompt, a.Name, wipes), export, a.Name)

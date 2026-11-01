@@ -18,11 +18,25 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
 
+// persistentOwnYAML is the pure-text release as a persistent agent that
+// declares every key of its own life and the app link's helper and meeting
+// tools.
+var persistentOwnYAML = strings.Replace(pureTextYAML, "modes: [autonomous]", `modes: [persistent]
+capabilities:
+  persistent:
+    clock: true
+    memory: true
+    skills: true
+    secrets: [STORED_TOKEN]
+    selfConfigure: true
+    helper: true
+    meetings: true`, 1)
+
 // persistentInputs compiles the pure-text release as a persistent built-in
-// with the agent's folders.
+// with the agent's folders, declaring what persistentOwnYAML does.
 func persistentInputs(t *testing.T, files *spec.AgentFiles) Inputs {
 	t.Helper()
-	m := parseManifest(t, strings.Replace(pureTextYAML, "modes: [autonomous]", "modes: [persistent]", 1))
+	m := parseManifest(t, persistentOwnYAML)
 	return Inputs{
 		Manifest: m, Mode: manifest.ModePersistent, Digest: "sha256:x", Source: "builtin", WorkspaceDir: workspaceFor(t, m, nil),
 		Policy: testPolicy(), PolicySHA: "s", RunnerImage: "agentry-runner:test", AgentFiles: files,
@@ -205,11 +219,10 @@ func TestTheAppLinkIsAServerWithNoNetworkAndOneBind(t *testing.T) {
 	}
 }
 
-// TestPersistentGrantsRefusedOutsideBuiltins: a memory, skills and the app
-// link are refused to a release from any source but a built-in (its share
-// and data folders are not: TestPersistentReleaseRunsWhereThePolicyAllows),
-// the app link to a plan that is not persistent, and the folders and the
-// app link beside the web tools or the review grant.
+// TestPersistentGrantsRefusedOutsideBuiltins: the app link is refused to a
+// plan that is not persistent, and the folders and the app link beside the
+// web tools or the review grant (a memory, skills and the app link's parts
+// are reached by declaring them: TestUndeclaredPersistentCapabilityRefused).
 func TestPersistentGrantsRefusedOutsideBuiltins(t *testing.T) {
 	refused := func(name string, in Inputs) {
 		t.Helper()
@@ -217,14 +230,6 @@ func TestPersistentGrantsRefusedOutsideBuiltins(t *testing.T) {
 		if _, err := Compile(in, t.TempDir()); !errors.As(err, &refusal) {
 			t.Errorf("%s: err = %v, want a policy refusal", name, err)
 		}
-	}
-	for _, source := range []string{"registry", "local"} {
-		in := persistentInputs(t, &spec.AgentFiles{Share: true, Memory: true})
-		in.Source = source
-		refused("a memory from "+source, in)
-		in = persistentInputs(t, nil)
-		in.Source, in.AppLink = source, applink.SetMain
-		refused("the app link from "+source, in)
 	}
 	auto := persistentInputs(t, nil)
 	auto.Manifest = parseManifest(t, strings.Replace(pureTextYAML, "modes: [autonomous]", "modes: [autonomous, persistent]", 1))
@@ -481,5 +486,44 @@ func TestASignedInImageServerIsEnabledByItsCatalogName(t *testing.T) {
 	})
 	if !named {
 		t.Error("the System Prompt no longer names the account")
+	}
+}
+
+// TestUndeclaredPersistentCapabilityRefused: a memory volume, skills and
+// each app link part are compiled only for a package that declares the
+// capabilities.persistent key behind it, whatever its source, a built-in's
+// included: one that declares nothing is refused each, naming the key, and
+// one that declares it is given it.
+func TestUndeclaredPersistentCapabilityRefused(t *testing.T) {
+	bare := parseManifest(t, strings.Replace(pureTextYAML, "modes: [autonomous]", "modes: [persistent]", 1))
+	cases := []struct {
+		key   string
+		files *spec.AgentFiles
+		set   string
+	}{
+		{"memory", &spec.AgentFiles{Memory: true}, ""},
+		{"skills", &spec.AgentFiles{Skills: []spec.Skill{{Name: "notes", Description: "Write notes."}}}, ""},
+		{"selfConfigure", nil, applink.Compose(applink.PartSelf)},
+		{"clock", nil, applink.Compose(applink.PartTasks)},
+		{"memory", nil, applink.Compose(applink.PartRecall)},
+		{"helper", nil, applink.Compose(applink.PartHelper)},
+		{"meetings", nil, applink.Compose(applink.PartMeetings)},
+	}
+	for _, source := range []string{"builtin", "registry", "local"} {
+		for _, c := range cases {
+			in := persistentInputs(t, c.files)
+			in.Source, in.AppLink = source, c.set
+			if _, err := Compile(in, t.TempDir()); err != nil {
+				t.Errorf("%s declaring %s (set %q): %v", source, c.key, c.set, err)
+			}
+			in.Manifest, in.WorkspaceDir = bare, workspaceFor(t, bare, nil)
+			var refusal *PolicyRefusal
+			if _, err := Compile(in, t.TempDir()); !errors.As(err, &refusal) || !strings.Contains(err.Error(), "capabilities.persistent."+c.key) {
+				t.Errorf("%s not declaring %s (set %q): err = %v, want a refusal naming the key", source, c.key, c.set, err)
+			}
+		}
+	}
+	if got := AppLinkSet(bare.Capabilities.Persistent); got != "" {
+		t.Errorf("a package that declares nothing composes the set %q", got)
 	}
 }

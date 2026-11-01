@@ -69,10 +69,10 @@ const memorySeededFile = "memory-seeded"
 // dated on, the notes folder it copies in, and whether a start has seeded
 // it. An agent that keeps no memory has none.
 func memorySegment(home string, a Agent, on time.Time) (*engine.PersistentMemory, error) {
-	if !a.Builtin.KeepsMemory() {
+	if !a.KeepsMemory() {
 		return nil, nil
 	}
-	tree, err := a.Builtin.MemorySeed()
+	tree, err := a.MemorySeed()
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +119,7 @@ type Exported struct {
 // under runtime and lim. A link or any other entry is left out, and
 // nothing is written outside dir. A failed export removes dir.
 func ExportMemory(ctx context.Context, d dockerx.Client, home string, a Agent, image, runtime string, lim policy.Limits, dir string) (Exported, error) {
-	if !a.Builtin.KeepsMemory() {
+	if !a.KeepsMemory() {
 		return Exported{}, fmt.Errorf("the %s agent keeps no memory", a.Name)
 	}
 	if !filepath.IsAbs(dir) || filepath.Clean(dir) != dir {

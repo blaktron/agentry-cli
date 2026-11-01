@@ -57,6 +57,9 @@ type Options struct {
 	// Packs opens the knowledge packs the roster has on, for each segment;
 	// nil refuses a roster with one on.
 	Packs Packs
+	// Voice opens the person's Writing Voice for each segment of a
+	// published agent that has it on; nil refuses a roster with it on.
+	Voice Voice
 	// DevHost readies the Coding agent's dev server for each segment; nil
 	// readies it under Home and Policy (ReadyDevHost).
 	DevHost HostReady
@@ -312,7 +315,7 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 	if keys == nil {
 		keys = KeychainSecrets{}
 	}
-	grants, applied, packsDone, err := Apply(ctx, home, a, cfg, roster, s.opts.Packs, ready, keys)
+	grants, applied, packsDone, err := ApplyWith(ctx, home, a, cfg, roster, Openers{Packs: s.opts.Packs, Voice: s.opts.Voice}, ready, keys)
 	if err != nil {
 		return err
 	}
@@ -478,7 +481,7 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 		// it, and it is reminded of its memory at its first turn.
 		s.upkeep.ContextTokens, s.upkeep.TurnsSince = 0, 0
 		s.upkeepDirty = true
-		s.memoryFrameDue = a.Builtin.KeepsMemory()
+		s.memoryFrameDue = a.KeepsMemory()
 	}
 	s.roster, s.byChange = roster, byChange
 	if !byChange {
@@ -669,7 +672,7 @@ func (s *Supervisor) sendLocked(ctx context.Context, pre, text string) error {
 	joined := maps.Clone(s.joined)
 	missed := s.missed
 	frame := ""
-	if s.opts.Agent.Builtin.KeepsTime() {
+	if s.opts.Agent.KeepsTime() {
 		frame = timeFrame(s.now())
 	}
 	frame += carry

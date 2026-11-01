@@ -59,8 +59,9 @@ const usageText = `usage: agentry-runner <mode> [flags]
         serve one remote MCP server on stdio, forwarding each message to it
         over streamable HTTP (or HTTP+SSE); the bearer, when there is one,
         is read from --token-file at every request
-  applink --set main|assistant
-        (a persistent agent's app link) serve the set's tools on stdio,
+  applink --set <part>[,<part>…]
+        (a persistent agent's app link) serve the tools of the set's parts
+        (self, tasks, recall, helper, meetings) on stdio,
         forwarding each call to the supervisor's socket at
         /run/agentry/app.sock; it has no network
   applink-relay [--owner uid:gid]
@@ -376,7 +377,7 @@ func runTools(args []string) error {
 // --set names, each call forwarded over the supervisor's socket.
 func runAppLink(args []string) error {
 	fs := flag.NewFlagSet("applink", flag.ContinueOnError)
-	set := fs.String("set", "", "the agent's tool set: "+strings.Join(applink.Sets(), " or "))
+	set := fs.String("set", "", "the agent's tool set: some of "+strings.Join(applink.Parts(), ", ")+", in that order, joined by commas")
 	if err := fs.Parse(args); err != nil || *set == "" || fs.NArg() != 0 {
 		fmt.Fprintln(os.Stderr, "agentry-runner applink: --set is required, and nothing else")
 		os.Exit(2)

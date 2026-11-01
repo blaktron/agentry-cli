@@ -157,28 +157,6 @@ type Builtin struct {
 	// checkShare reads a file of the persistent agent's share folder only
 	// once ClamAV has checked it (spec.AgentFiles.CheckShare).
 	checkShare bool
-	// appLink is the persistent agent's app link tool set
-	// (runnerimage/applink); empty for none. With persistent and
-	// checkShare it is the persistent grant class, which the compiler
-	// accepts for a built-in alone.
-	appLink string
-	// keepsTime tells the persistent agent the time at each turn and gives
-	// it a heartbeat that fires the tasks it registers through its app
-	// link. Both are the supervisor's: the plan a segment compiles grants
-	// nothing for them.
-	keepsTime bool
-	// keepsSecrets lets the person store secrets for the persistent agent:
-	// each a roster entry, its value in the keychain, given to the segment
-	// while it is on (Grants.Secrets).
-	keepsSecrets bool
-	// keepsMemory gives the persistent agent a memory volume of its own,
-	// mounted read-write beside its data volume and seeded from its tree's
-	// memory/ folder when it is made (spec.AgentFiles.Memory).
-	keepsMemory bool
-	// armsMeetings gives the persistent agent the app link's meeting tools
-	// and the roster's switch for them; the supervisor answers them only
-	// while that switch and the heartbeat are on.
-	armsMeetings bool
 	// readsCalendars lets the person give the persistent agent calendar
 	// feeds: each a roster entry, its address in the keychain, read by the
 	// tools server's calendar tools while it is on (Grants.CalendarFeeds).
