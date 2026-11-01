@@ -28,6 +28,7 @@ func setupPolicyErr(t *testing.T, extra ...string) (stdout, stderr, written stri
 	t.Helper()
 	isolateEnv(t)
 	isolateRunnerHome(t)
+	t.Setenv("OPENAI_API_KEY", "")
 	policyPath := filepath.Join(t.TempDir(), "policy.yaml")
 	args := append([]string{"setup", "--skip-images", "--policy", policyPath}, extra...)
 	stdout, stderr, err = runCLI(t, strings.NewReader(""), args...)
@@ -43,13 +44,18 @@ func TestSetupYesWritesProviderDefaults(t *testing.T) {
 	if !strings.Contains(stdout, "setup complete (policy only; images skipped)") {
 		t.Errorf("setup banner = %q", stdout)
 	}
+	// The variable the policy names is unset here: setup says so, with
+	// the two ways to supply the key, even under --yes.
+	if !strings.Contains(stderr, "warning: $OPENAI_API_KEY is not set in this environment") || !strings.Contains(stderr, "store the key in the OS keychain") {
+		t.Errorf("no warning for the unset variable: %q", stderr)
+	}
 	// Setup ends with what comes next, on stderr: doctor, then search or run.
 	if !strings.Contains(stderr, "next steps:\n  1. agentry doctor\n") || !strings.Contains(stderr, "agentry search <words>") || !strings.Contains(stderr, "agentry run <ns/name>") {
 		t.Errorf("next steps = %q", stderr)
 	}
 	// The table row for openai, and the generated-file warning header.
 	for _, want := range []string{
-		"provider: openai", "name: gpt-5.2", "apiKeyEnv: OPENAI_API_KEY",
+		"provider: openai", "name: gpt-6.1-sol", "apiKeyEnv: OPENAI_API_KEY",
 		"api.openai.com:443", "comments are not preserved",
 	} {
 		if !strings.Contains(written, want) {
@@ -132,7 +138,7 @@ func TestSetupPreservesNonModelPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Model.Provider != "google" || got.Model.Name != "gemini-3-pro" {
+	if got.Model.Provider != "google" || got.Model.Name != "gemini-4-argon" {
 		t.Errorf("model block not updated: %+v", got.Model)
 	}
 	if !got.AllowWildcardEgress || got.Budgets.TimeoutSeconds != 123 {

@@ -92,7 +92,7 @@ func TestSetupStillTakesAnOpenAIKeyWhenChatGPTIsOffered(t *testing.T) {
 		t.Error("a key setup signed in")
 	}
 	m := pol.Model
-	if m.APIKeyKind != "" || m.APIKeyEnv != "OPENAI_API_KEY" || m.Name != "gpt-5.2" {
+	if m.APIKeyKind != "" || m.APIKeyEnv != "OPENAI_API_KEY" || m.Name != "gpt-6.1-sol" {
 		t.Fatalf("leaving the plan for a key kept the plan's setup: %+v", m)
 	}
 }
