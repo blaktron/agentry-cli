@@ -172,7 +172,8 @@ func Evaluate(f Facts, reach []string) Plan {
 	switch {
 	case f.yes("dockerd"):
 		add(LevelOK, "engine", "Docker Engine is installed (%s) and is kept", nonEmpty(f["docker_server"], f["docker_version"]))
-	case len(others) > 0 && !(len(others) == 1 && others[0] == "containerd"):
+	// containerd alone is what Docker Engine itself runs on, so it is no other engine.
+	case len(others) > 1 || (len(others) == 1 && others[0] != "containerd"):
 		add(LevelStop, "engine", "the server runs another container engine (%s): a runhost uses Docker Engine and will not install it beside another", strings.Join(others, ", "))
 	case !f.yes("apt"):
 		add(LevelStop, "engine", "there is no Docker Engine, and no apt to install it with")

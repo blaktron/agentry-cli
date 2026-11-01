@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -142,5 +144,31 @@ func TestFetchChecksTheSignatureAndTheBinary(t *testing.T) {
 	}
 	if _, err := Fetch(context.Background(), srv.Client(), set, "1.2.3", "amd64"); err == nil {
 		t.Fatal("an architecture the sums do not list was accepted")
+	}
+}
+
+// A CLI release exactly as published, and the publisher's key set: this
+// package must accept what the release workflow signs, or a released CLI
+// could set up no runhost.
+func TestAPublishedReleaseVerifiesAgainstThePublishersKeys(t *testing.T) {
+	keys, err := os.ReadFile(filepath.Join("testdata", "release-keys.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	set, err := ParseKeys(keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join("testdata", "agentry-cli-0.6.1013")
+	sums, _ := os.ReadFile(filepath.Join(dir, "SHA256SUMS"))
+	sig, _ := os.ReadFile(filepath.Join(dir, "SHA256SUMS.minisig"))
+	if err := set.VerifySums(sums, sig, Product, "0.6.1013"); err != nil {
+		t.Fatalf("a published release was refused: %v", err)
+	}
+	if err := set.VerifySums(sums, sig, Product, "0.6.1012"); err == nil {
+		t.Fatal("a release's signature was taken for another version")
+	}
+	if _, err := SumOf(sums, BinaryName("0.6.1013", "arm64")); err != nil {
+		t.Fatal(err)
 	}
 }
