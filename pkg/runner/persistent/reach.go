@@ -26,6 +26,11 @@ const (
 		"That container also holds your share, its own files and memory, and the knowledge packs it has, so what it reads there can be sent in an address it opens"
 	reviewLine = "Asks AI Review's release rubric about a QuickAgent package in its folders (" + toolsrv.ToolAIReview + "), sending that package's files to TypeSafe with your own key; " +
 		"its tools container then reaches TypeSafe's API alone"
+	// reviewBesideWebLine is the review grant's sentence beside the web
+	// tools, whose container it shares: that container reaches the public
+	// web, and ai_review's client still asks for TypeSafe's API alone.
+	reviewBesideWebLine = "Asks AI Review's release rubric about a QuickAgent package in its folders (" + toolsrv.ToolAIReview + "), sending that package's files to TypeSafe with your own key; " +
+		"it asks for TypeSafe's API alone, from the tools container the web tools also use, which reaches the public web, and your key is in that container too"
 )
 
 // WebOpener and ReviewOpener read the keys a segment's web tools and review
@@ -43,7 +48,11 @@ func reachEntries(a Agent) []RosterEntry {
 		out = append(out, RosterEntry{ID: EntryWeb, Kind: KindTools, Name: "Web search and pages", GrantedBy: a.grantedBy(), Line: webLine})
 	}
 	if a.Declared().Declares("review") {
-		out = append(out, RosterEntry{ID: EntryReview, Kind: KindTools, Name: "AI Review", GrantedBy: a.grantedBy(), Line: reviewLine})
+		line := reviewLine
+		if a.Declared().Declares("web") {
+			line = reviewBesideWebLine
+		}
+		out = append(out, RosterEntry{ID: EntryReview, Kind: KindTools, Name: "AI Review", GrantedBy: a.grantedBy(), Line: line})
 	}
 	return out
 }

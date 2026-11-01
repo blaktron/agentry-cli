@@ -1,6 +1,7 @@
 package toolsrv
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -42,7 +43,7 @@ func calendarServer(t *testing.T, url string, handler func(*http.Request) (*http
 	t.Setenv("AGENTRY_CALENDAR_FEED_1", url)
 	ft := &feedTransport{handler: handler}
 	old, oldNow := calendarTransport, calendarNow
-	calendarTransport = func() http.RoundTripper { return ft }
+	calendarTransport = func(bool) http.RoundTripper { return ft }
 	now := time.Date(2026, 10, 27, 8, 0, 0, 0, time.UTC)
 	calendarNow = func() time.Time { return now }
 	t.Cleanup(func() { calendarTransport, calendarNow = old, oldNow })
@@ -204,5 +205,30 @@ func TestACalendarAddressIsHeldOutOfWrittenFiles(t *testing.T) {
 	s, _ := calendarServer(t, testFeedURL, func(*http.Request) (*http.Response, error) { return answer(200, testFeedBody), nil })
 	if got := s.holdsRunSecret("see " + testFeedURL); got != "AGENTRY_CALENDAR_FEED_1" {
 		t.Errorf("holdsRunSecret = %q", got)
+	}
+}
+
+// TestAFeedBesideTheWebToolsDialsOnlyPublicAddresses: beside the web tools a
+// feed is fetched with no proxy, and a connection to a private address or a
+// port other than 443 is refused before it is made; otherwise the feed goes
+// through the gateway's proxy.
+func TestAFeedBesideTheWebToolsDialsOnlyPublicAddresses(t *testing.T) {
+	direct := calendarTransport(true).(*http.Transport)
+	if direct.Proxy != nil {
+		t.Fatal("a direct feed transport reads a proxy")
+	}
+	if proxied := calendarTransport(false).(*http.Transport); proxied.Proxy == nil {
+		t.Fatal("a proxied feed transport reads no proxy")
+	}
+	for _, addr := range []string{"127.0.0.1:443", "10.0.0.1:443", "169.254.169.254:443", "[::1]:443", "93.184.215.14:80"} {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		conn, err := direct.DialContext(ctx, "tcp", addr)
+		cancel()
+		if err == nil {
+			_ = conn.Close()
+			t.Errorf("dialled %s", addr)
+		} else if !strings.Contains(err.Error(), "refused "+addr) && !strings.Contains(err.Error(), "not a public address") && !strings.Contains(err.Error(), "is not 443") {
+			t.Errorf("%s: %v", addr, err)
+		}
 	}
 }

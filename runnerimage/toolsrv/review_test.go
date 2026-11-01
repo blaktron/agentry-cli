@@ -92,7 +92,6 @@ func TestTheReviewGrantIsItsOwnSurface(t *testing.T) {
 	for name, mod := range map[string]func(*Spec){
 		"fetch":     func(s *Spec) { s.Fetch = Fetch{Enabled: true, Hosts: []string{"example.com"}} },
 		"exec":      func(s *Spec) { s.Exec.Commands = []string{"sh"} },
-		"web tools": func(s *Spec) { s.Web.Enabled = true },
 		"no inputs": func(s *Spec) { s.InputsDir = "" },
 	} {
 		s := inputsSpec(t)
@@ -101,6 +100,13 @@ func TestTheReviewGrantIsItsOwnSurface(t *testing.T) {
 		if err := validateSpec(s); err == nil {
 			t.Errorf("the review grant beside %s was accepted", name)
 		}
+	}
+	// The web tools' container runs no program either, so the review grant
+	// sits beside them.
+	s := inputsSpec(t)
+	s.Review.Enabled, s.Web.Enabled = true, true
+	if err := validateSpec(s); err != nil {
+		t.Errorf("the review grant beside the web tools: %v", err)
 	}
 }
 

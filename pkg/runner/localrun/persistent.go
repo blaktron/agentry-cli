@@ -1107,21 +1107,25 @@ func CheckPersistentNames(p *manifest.Persistent) error {
 	return checkNetworkShapes(p)
 }
 
-// networkShapes are the keys that each give the tools container a network
-// of its own, of which this build gives an agent one at a time.
-var networkShapes = []string{"web", "review", "coder", "calendars"}
+// coderAloneBeside are the keys whose grants put the person's keys or feed
+// addresses in the agent's tools container. They sit beside one another,
+// and never beside coder, whose programs run in that container.
+var coderAloneBeside = []string{"web", "review", "calendars"}
 
-// checkNetworkShapes refuses a block that declares two keys of
-// networkShapes: its segments could never be given both.
+// checkNetworkShapes refuses a block that declares coder beside a key of
+// coderAloneBeside: its segments could never be given both.
 func checkNetworkShapes(p *manifest.Persistent) error {
-	var have []string
-	for _, k := range networkShapes {
+	if !p.Declares("coder") {
+		return nil
+	}
+	var beside []string
+	for _, k := range coderAloneBeside {
 		if p.Declares(k) {
-			have = append(have, k)
+			beside = append(beside, k)
 		}
 	}
-	if len(have) > 1 {
-		return fmt.Errorf("it declares %s, and this version of Agentry gives an agent one of web, review, coder and calendars: each gives its tools a network of its own", strings.Join(have, " and "))
+	if len(beside) > 0 {
+		return fmt.Errorf("it declares coder beside %s, which Agentry never gives together: the coding toolchain's programs run in the tools container, which would hold the person's keys and feed addresses", strings.Join(beside, " and "))
 	}
 	return nil
 }
