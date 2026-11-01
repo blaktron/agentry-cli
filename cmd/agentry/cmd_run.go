@@ -220,7 +220,7 @@ func newRunCmd() *cobra.Command {
 	f := cmd.Flags()
 	f.StringVar(&opts.input, "input", "", "task input file (default: piped stdin, else the agent's own instruction)")
 	f.StringVar(&opts.out, "out", "", "output folder for reports and receipts (default ./agentry-out/<ns>-<name>-<runid>)")
-	f.StringVar(&opts.outputFormat, "output-format", "text", "stdout format: text | json (json = the full result envelope)")
+	f.StringVar(&opts.outputFormat, "output-format", "text", "stdout format: text | json (json = the full result envelope; the root --json asks for the same)")
 	f.StringVar(&opts.eventsPath, "events", "", "append the harness event stream to FILE as JSON lines while the run is live (the receipt keeps its own copy either way)")
 	f.StringVar(&opts.adapterName, "adapter", "", "harness adapter (default "+adapter.DefaultName+", or "+adapter.CodexImageAdapterName+" when the model is paid by your ChatGPT plan); see --list-adapters")
 	f.StringVar(&opts.local, "local", "", "run an unpublished QuickAgent DIRECTORY instead of a registry ref")
@@ -289,6 +289,12 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	}
 	if opts.outputFormat != "text" && opts.outputFormat != "json" {
 		return fmt.Errorf("unknown --output-format %q (want text or json)", opts.outputFormat)
+	}
+	// The root --json is the one JSON flag: on a run it asks for the
+	// result envelope, as --output-format json does; with --plan or
+	// --dry-run it asks for the plan, as it always has.
+	if flags.jsonOut && !opts.plan && !opts.dryRun {
+		opts.outputFormat = "json"
 	}
 	opts.guideShown = new(bool)
 	// AI Review of the inputs is checked before anything is pulled: a
@@ -615,9 +621,12 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	if err := refuseHostedTargetHosts(plan, opts); err != nil {
 		return err
 	}
-	if err := gateway.EnsureInstalledFor(cmd.Context(), docker, pol, runnerTag, homeImageDir(home), cmd.ErrOrStderr(), plan); err != nil {
+	stages := newStageLog(cmd)
+	if err := gateway.EnsureInstalledFor(cmd.Context(), docker, pol, runnerTag, homeImageDir(home), stages, plan); err != nil {
+		stages.Fail()
 		return engine.Classify(engine.ExitGateway, err)
 	}
+	stages.Close()
 	// The per-QuickAgent exec image the plan names: built with the
 	// operator's catalogued packages; the versions it resolved go
 	// into the receipt.

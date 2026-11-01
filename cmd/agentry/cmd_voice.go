@@ -394,7 +394,6 @@ func voiceErr(err error) error {
 }
 
 func newVoiceShowCmd() *cobra.Command {
-	var meta bool
 	cmd := &cobra.Command{
 		Use:   "show",
 		Short: "Print the Writing Voice kept on this computer",
@@ -404,7 +403,7 @@ func newVoiceShowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if meta {
+			if flags.jsonOut {
 				v, err := s.Voice()
 				if err != nil {
 					return voiceErr(err)
@@ -425,7 +424,6 @@ func newVoiceShowCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&meta, "json", false, "print the voice's record (digest, size, source, attach) as JSON instead of its text")
 	return cmd
 }
 

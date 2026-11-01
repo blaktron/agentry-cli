@@ -23,9 +23,10 @@ type nextStep struct {
 }
 
 // printNextSteps writes the block on w: a heading, then each step numbered
-// with its notes indented under it. Nothing is written under --json.
+// with its notes indented under it. Nothing is written under --json or
+// --quiet.
 func printNextSteps(w io.Writer, steps ...nextStep) {
-	if flags.jsonOut || len(steps) == 0 {
+	if flags.jsonOut || flags.quiet || len(steps) == 0 {
 		return
 	}
 	_, _ = fmt.Fprintln(w, "next steps:")

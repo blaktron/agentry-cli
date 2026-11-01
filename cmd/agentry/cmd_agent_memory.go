@@ -62,7 +62,10 @@ func newAgentMemoryExportCmd() *cobra.Command {
 				return engine.Classify(engine.ExitCLI, err)
 			}
 			runnerTag := pol.RunnerImageTag(runnerimage.ContentVersion())
-			if err := gateway.EnsureRunnerImage(cmd.Context(), d, pol, runnerTag, homeImageDir(home), cmd.ErrOrStderr()); err != nil {
+			stages := newStageLog(cmd)
+			defer stages.Close()
+			if err := gateway.EnsureRunnerImage(cmd.Context(), d, pol, runnerTag, homeImageDir(home), stages); err != nil {
+				stages.Fail()
 				return engine.Classify(engine.ExitGateway, err)
 			}
 			out, err := persistent.ExportMemory(cmd.Context(), d, home, a, runnerTag, pol.Docker.Runtime, pol.Docker.Limits, dir)

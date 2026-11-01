@@ -128,7 +128,7 @@ func newModelSignInsListCmd() *cobra.Command {
 					State: state, CreatedAt: r.CreatedAt, LastUsed: r.LastUsedAt, KeptIn: r.SecretIn, App: r.App, KeyExpiresAt: r.KeyExpiresAt})
 			}
 			if flags.jsonOut {
-				return emitJSON(cmd.OutOrStdout(), rows)
+				return emitJSON(cmd.OutOrStdout(), map[string]any{"modelSignIns": rows})
 			}
 			out := cmd.OutOrStdout()
 			if len(rows) == 0 {

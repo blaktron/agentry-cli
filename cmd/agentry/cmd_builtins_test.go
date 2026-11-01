@@ -40,10 +40,11 @@ func TestBuiltinsListsEveryBuiltinWithItsReleaseDigest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var got []builtinEntry
-	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+	var listed struct{ Builtins []builtinEntry }
+	if err := json.Unmarshal([]byte(stdout), &listed); err != nil {
 		t.Fatalf("--json: %v in %s", err, stdout)
 	}
+	got := listed.Builtins
 	if len(got) != len(want) {
 		t.Fatalf("--json = %+v, want %+v", got, want)
 	}

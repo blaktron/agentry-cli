@@ -298,7 +298,10 @@ func redeliverToDestinations(cmd *cobra.Command, runDir string, dests []destinat
 		return nil, engine.Classify(engine.ExitGateway, err)
 	}
 	runnerTag := pol.RunnerImageTag(runnerimage.ContentVersion())
-	if err := gateway.EnsureRunnerImage(cmd.Context(), docker, pol, runnerTag, homeImageDir(home), cmd.ErrOrStderr()); err != nil {
+	stages := newStageLog(cmd)
+	defer stages.Close()
+	if err := gateway.EnsureRunnerImage(cmd.Context(), docker, pol, runnerTag, homeImageDir(home), stages); err != nil {
+		stages.Fail()
 		return nil, engine.Classify(engine.ExitGateway, err)
 	}
 	return engine.Redeliver(cmd.Context(), docker, engine.RedeliverParams{

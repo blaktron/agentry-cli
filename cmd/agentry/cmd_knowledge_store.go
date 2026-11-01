@@ -159,7 +159,7 @@ func newKnowledgeListCmd() *cobra.Command {
 				for _, e := range entries {
 					list = append(list, entryJSON(e))
 				}
-				printJSON(out, list)
+				printJSON(out, map[string]any{"packs": list})
 				return nil
 			}
 			if len(entries) == 0 {

@@ -142,7 +142,7 @@ func runSetup(cmd *cobra.Command, opts setupOpts) error {
 	if err := policy.Save(policyPath, pol); err != nil {
 		return engine.Classify(engine.ExitPolicy, err)
 	}
-	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "policy written: %s\n", policyPath)
+	_, _ = fmt.Fprintf(narration(cmd), "policy written: %s\n", policyPath)
 	// A schedule that runs signed out holds its own sealed copy of the
 	// keys: a changed key or provider is sealed again now.
 	resealSignedOut(cmd.ErrOrStderr())
@@ -164,17 +164,21 @@ func runSetup(cmd *cobra.Command, opts setupOpts) error {
 	// ChatGPT plan, the Claude Code image (built here) for a Claude
 	// subscription, the Copilot CLI image (built here) for a Copilot plan.
 	runsOn := adapter.DefaultFor(pol)
+	stages := newStageLog(cmd)
 	if err := gateway.EnsureInstalled(cmd.Context(), docker, pol,
-		pol.RunnerImageTag(runnerimage.ContentVersion()), imageCtx, cmd.ErrOrStderr(), runsOn == adapter.DefaultName); err != nil {
+		pol.RunnerImageTag(runnerimage.ContentVersion()), imageCtx, stages, runsOn == adapter.DefaultName); err != nil {
+		stages.Fail()
 		return engine.Classify(engine.ExitGateway, err)
 	}
 	if runsOn != adapter.DefaultName {
 		if h, ok := pol.Images.HarnessImageFor(runsOn); ok {
-			if err := gateway.EnsureHarnessImage(cmd.Context(), docker, runsOn, h, cmd.ErrOrStderr()); err != nil {
+			if err := gateway.EnsureHarnessImage(cmd.Context(), docker, runsOn, h, stages); err != nil {
+				stages.Fail()
 				return engine.Classify(engine.ExitGateway, err)
 			}
 		}
 	}
+	stages.Close()
 	result.Images = "ready"
 	if flags.jsonOut {
 		return emitJSON(cmd.OutOrStdout(), result)
