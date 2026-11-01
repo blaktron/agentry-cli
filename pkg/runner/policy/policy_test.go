@@ -541,6 +541,9 @@ func TestRunnerImageBasesArePinnedByDigest(t *testing.T) {
 	if args["GO_IMAGE"] != DefaultGoBuilder {
 		t.Errorf("Dockerfile GO_IMAGE %q differs from the policy default %q", args["GO_IMAGE"], DefaultGoBuilder)
 	}
+	if !strings.Contains(defaultFileText, "  name: "+DefaultModelName+"\n") || !strings.Contains(defaultFileText, "  provider: "+DefaultModelProvider+"\n") {
+		t.Errorf("the default policy file names another model than Default(): want %s/%s", DefaultModelProvider, DefaultModelName)
+	}
 	if !strings.Contains(defaultFileText, "goBuilder: "+DefaultGoBuilder+"\n") {
 		t.Error("the generated policy file does not carry the digest-pinned goBuilder")
 	}

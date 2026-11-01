@@ -3,7 +3,10 @@ version: "16"
 models:
   main:
     provider: anthropic
-    model: claude-sonnet-4-5
+    model: claude-sonnet-5-5
+    provider_opts:
+      thinking_prefix_mismatch: drop_block
+      thinking_display: omitted
 agents:
   root:
     model: main
