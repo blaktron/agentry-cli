@@ -5,6 +5,8 @@ import (
 	"maps"
 	"strings"
 	"testing"
+
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 )
 
 func validJob() *Job {
@@ -54,6 +56,7 @@ func TestAJobRoundTripsAndRefusesWhatARunhostDoesNotTake(t *testing.T) {
 		"a path for a name":     func(j *Job) { j.Release.Name = "../x" },
 		"no model key":          func(j *Job) { j.Run.ModelKey = "" },
 		"an id not hex":         func(j *Job) { j.ID = "../../etc/passwd0" },
+		"a window no model has": func(j *Job) { j.Run.Model.ContextWindow = policy.MaxContextWindow + 1 },
 	} {
 		j := validJob()
 		change(j)
@@ -67,6 +70,25 @@ func TestAJobRoundTripsAndRefusesWhatARunhostDoesNotTake(t *testing.T) {
 	unknown.Write(doc)
 	if _, err := Read(&unknown); err == nil {
 		t.Error("an unknown field was read")
+	}
+}
+
+// The device policy's context window reaches the runhost's policy, so a model
+// of the operator's own endpoint is sized there as on the device.
+func TestAJobCarriesTheModelsContextWindow(t *testing.T) {
+	m := policy.Model{Provider: "custom", Name: "qwen3", APIKeyEnv: "CUSTOM_API_KEY", BaseURL: "https://llm.example.net/v1", ContextWindow: 262144, ProxyAllow: []string{"llm.example.net:443"}}
+	j := validJob()
+	j.Run.Model = ModelOf(m)
+	var b bytes.Buffer
+	if err := Write(&b, j); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Read(&b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := got.Run.Model.Policy().ContextWindow; w != 262144 {
+		t.Fatalf("the runhost's policy has window %d", w)
 	}
 }
 

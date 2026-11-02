@@ -605,6 +605,35 @@ func TestDoctorWarnsOnAPlainHTTPModelEndpoint(t *testing.T) {
 	}
 }
 
+// A custom endpoint's model with no context window is a warning with its
+// remedy; one with a window says nothing of it.
+func TestDoctorWarnsOnACustomModelWithNoContextWindow(t *testing.T) {
+	policyPath, _ := doctorFixture(t)
+	fr := newFakeRegistry(t)
+	pol, _, err := policy.Load(policyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pol.Model.Provider, pol.Model.Name, pol.Model.BaseURL = "custom", "local-llm", "http://127.0.0.1:1234/v1"
+	pol.Model.ProxyAllow = []string{"127.0.0.1:1234"}
+	if err := policy.Save(policyPath, pol); err != nil {
+		t.Fatal(err)
+	}
+	out, _, _ := runCLI(t, nil, "doctor", "--registry", fr.url(), "--policy", policyPath)
+	for _, want := range []string{"warn  model:context", "cannot compact", "--context-window"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	pol.Model.ContextWindow = 262144
+	if err := policy.Save(policyPath, pol); err != nil {
+		t.Fatal(err)
+	}
+	if out, _, _ := runCLI(t, nil, "doctor", "--registry", fr.url(), "--policy", policyPath); strings.Contains(out, "model:context") {
+		t.Errorf("a sized model is warned about:\n%s", out)
+	}
+}
+
 // doctor reports each declared server at the gate's rating: a High the
 // gate rates medium is a warning a run proceeds past, one it rates high
 // fails, and a failed lookup whose last-known advisories are below the

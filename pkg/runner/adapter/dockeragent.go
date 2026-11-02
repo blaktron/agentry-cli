@@ -99,15 +99,36 @@ type modelYAML struct {
 	// BaseURL points OpenAI-compatible providers at custom endpoints.
 	BaseURL string `yaml:"base_url,omitempty"`
 	// ProviderOpts is set for the Claude models whose thinking blocks are
-	// bound to the conversation (thinkingBinding).
-	ProviderOpts *anthropicOptsYAML `yaml:"provider_opts,omitempty"`
+	// bound to the conversation (thinkingBinding) and for a model whose
+	// context window the policy names (providerOpts).
+	ProviderOpts *providerOptsYAML `yaml:"provider_opts,omitempty"`
 }
 
-// anthropicOptsYAML is the part of docker-agent's provider_opts for its
-// anthropic client that the runner writes.
-type anthropicOptsYAML struct {
-	ThinkingPrefixMismatch string `yaml:"thinking_prefix_mismatch"`
-	ThinkingDisplay        string `yaml:"thinking_display"`
+// providerOptsYAML is the part of docker-agent's provider_opts the runner
+// writes: the anthropic client's thinking binding, and context_size, the
+// model's window in tokens, which every client reads.
+type providerOptsYAML struct {
+	ThinkingPrefixMismatch string `yaml:"thinking_prefix_mismatch,omitempty"`
+	ThinkingDisplay        string `yaml:"thinking_display,omitempty"`
+	ContextSize            int64  `yaml:"context_size,omitempty"`
+}
+
+// providerOpts is the rendered model's provider_opts: thinkingBinding's,
+// with the policy's context window when it names one. docker-agent sizes a
+// model from context_size first, its catalogue second; a model it cannot
+// size (an endpoint of the operator's own) is never compacted at the
+// threshold, and the compaction it tries once the endpoint refuses the
+// conversation as too long fails for the same want of a window.
+func providerOpts(provider string, m policy.Model) *providerOptsYAML {
+	opts := thinkingBinding(provider, m.Name)
+	if m.ContextWindow <= 0 {
+		return opts
+	}
+	if opts == nil {
+		opts = &providerOptsYAML{}
+	}
+	opts.ContextSize = m.ContextWindow
+	return opts
 }
 
 // thinkingBinding is the provider_opts for a Claude model that signs each
@@ -123,7 +144,7 @@ type anthropicOptsYAML struct {
 // display is kept at the models' own default (omitted); docker-agent would
 // otherwise ask for summaries. Fable and Mythos 5.1 are left to
 // docker-agent's defaults.
-func thinkingBinding(provider, model string) *anthropicOptsYAML {
+func thinkingBinding(provider, model string) *providerOptsYAML {
 	if provider != policy.ProviderAnthropic {
 		return nil
 	}
@@ -133,7 +154,7 @@ func thinkingBinding(provider, model string) *anthropicOptsYAML {
 	}
 	switch family {
 	case "opus", "sonnet", "haiku":
-		return &anthropicOptsYAML{ThinkingPrefixMismatch: "drop_block", ThinkingDisplay: "omitted"}
+		return &providerOptsYAML{ThinkingPrefixMismatch: "drop_block", ThinkingDisplay: "omitted"}
 	}
 	return nil
 }
@@ -447,7 +468,7 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 				Provider:     provider,
 				Model:        in.Model.Name,
 				BaseURL:      in.Model.BaseURL,
-				ProviderOpts: thinkingBinding(provider, in.Model.Name),
+				ProviderOpts: providerOpts(provider, in.Model),
 			},
 		},
 		Agents: map[string]agntYAML{

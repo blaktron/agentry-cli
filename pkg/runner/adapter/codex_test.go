@@ -163,6 +163,39 @@ func TestCodexCompileRendersModelCatalog(t *testing.T) {
 	}
 }
 
+// TestCodexCatalogCarriesThePolicysContextWindow: codex sizes the run's model
+// from the catalog alone, so a model whose window the policy names is
+// compacted against that window; a harness model of its own, or none named,
+// keeps codex's fallback.
+func TestCodexCatalogCarriesThePolicysContextWindow(t *testing.T) {
+	cases := []struct {
+		name         string
+		harnessModel string
+		window       int64
+		want         float64
+	}{
+		{"named", "", 131072, 131072},
+		{"unset", "", 0, codexDefaultContextWindow},
+		{"another harness model", "gpt-6-astra", 131072, codexDefaultContextWindow},
+	}
+	for _, c := range cases {
+		in := codexInput()
+		in.Model.ContextWindow = c.window
+		in.Harness.Model = c.harnessModel
+		var catalog struct {
+			Models []map[string]any `json:"models"`
+		}
+		if err := json.Unmarshal(codexCompile(t, in).Files[codexCatalogFile], &catalog); err != nil || len(catalog.Models) != 1 {
+			t.Fatalf("%s: catalog: %v", c.name, err)
+		}
+		for _, key := range []string{"context_window", "max_context_window"} {
+			if got := catalog.Models[0][key]; got != c.want {
+				t.Errorf("%s: %s = %v, want %v", c.name, key, got, c.want)
+			}
+		}
+	}
+}
+
 // TestCodexCompileSwitchesOffSkills: the model has no tool to use codex's
 // bundled skills, so the config installs none and lists none.
 func TestCodexCompileSwitchesOffSkills(t *testing.T) {

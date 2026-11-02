@@ -317,6 +317,10 @@ type codexModelInfo struct {
 // as escaped JSON (codexBudget).
 const codexToolResultBytes = 48_000
 
+// codexDefaultContextWindow is the window of codex's fallback metadata for an
+// unknown model, which the catalog keeps when the policy names none.
+const codexDefaultContextWindow = 272_000
+
 type codexTruncation struct {
 	Mode  string `json:"mode"`
 	Limit int64  `json:"limit"`
@@ -331,9 +335,14 @@ type codexTruncation struct {
 // which are pinned off: no apply_patch, no tool_search, no experimental
 // tools, no shell (also off by feature), and direct tools rather than code
 // mode; and the truncation policy, which is the runner's
-// (codexToolResultBytes). A catalog in the config replaces the bundled one and is
-// authoritative: codex fetches no model list from the provider.
-func codexCatalog(model string) ([]byte, error) {
+// (codexToolResultBytes); and the context window, which is the policy's where
+// it names one (window) and codex's fallback's otherwise. A catalog in the
+// config replaces the bundled one and is authoritative: codex fetches no model
+// list from the provider, so a window codex does not know comes from here.
+func codexCatalog(model string, window int64) ([]byte, error) {
+	if window <= 0 {
+		window = codexDefaultContextWindow
+	}
 	entry := codexModelInfo{
 		Slug:                          model,
 		DisplayName:                   model,
@@ -345,8 +354,8 @@ func codexCatalog(model string) ([]byte, error) {
 		DefaultReasoningSummary:       "auto",
 		WebSearchToolType:             "text",
 		TruncationPolicy:              codexTruncation{Mode: "bytes", Limit: codexToolResultBytes},
-		ContextWindow:                 272_000,
-		MaxContextWindow:              272_000,
+		ContextWindow:                 window,
+		MaxContextWindow:              window,
 		EffectiveContextWindowPercent: 95,
 		ExperimentalSupportedTools:    []string{},
 		ToolMode:                      "direct",
@@ -388,7 +397,13 @@ func codexResolve(name string, in Input) (codexCommon, error) {
 		return codexCommon{}, fmt.Errorf("%s adapter: %q is not a model id", name, model)
 	}
 	instruction, resultKind := schemaInstruction(in.Instruction, in.SchemaJSON)
-	catalog, err := codexCatalog(model)
+	// model.contextWindow is model.name's window; a harness model of its
+	// own keeps codex's fallback.
+	var window int64
+	if model == in.Model.Name {
+		window = in.Model.ContextWindow
+	}
+	catalog, err := codexCatalog(model, window)
 	if err != nil {
 		return codexCommon{}, err
 	}

@@ -93,6 +93,9 @@ func TestValidateTable(t *testing.T) {
 		{"missing api key env", func(p *Policy) { p.Model.APIKeyEnv = "" }, "apiKeyEnv"},
 		{"empty proxy allow", func(p *Policy) { p.Model.ProxyAllow = nil }, "proxyAllow"},
 		{"bad proxy entry", func(p *Policy) { p.Model.ProxyAllow = []string{"http://x"} }, "proxyAllow"},
+		{"negative context window", func(p *Policy) { p.Model.ContextWindow = -1 }, "model.contextWindow"},
+		{"context window too small to compact in", func(p *Policy) { p.Model.ContextWindow = MinContextWindow - 1 }, "model.contextWindow"},
+		{"context window no model has", func(p *Policy) { p.Model.ContextWindow = MaxContextWindow + 1 }, "model.contextWindow"},
 		{"bad secret mode", func(p *Policy) { p.SecretSource.Mode = "vault" }, "secretSource.mode"},
 		{"envFile without path", func(p *Policy) { p.SecretSource = SecretSource{Mode: "envFile"} }, "envFile"},
 		{"env with stray path", func(p *Policy) { p.SecretSource = SecretSource{Mode: "env", EnvFile: "x"} }, "envFile"},
@@ -124,6 +127,7 @@ func TestSaveRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "deep", "policy.yaml") // Save must create the directory
 	p := Default()
 	p.Model.Provider, p.Model.Name = "openai", "gpt-5.2"
+	p.Model.ContextWindow = 262144
 	p.DataAccessServers = map[string][]string{"tickets": {"/etc/agentry/jira.yaml"}}
 	p.Profiles.KeepByDefault = boolPtr(false)
 	if err := Save(path, p); err != nil {
