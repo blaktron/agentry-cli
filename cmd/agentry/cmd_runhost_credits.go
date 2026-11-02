@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"net/url"
 	"os"
 	"regexp"
@@ -18,6 +17,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/authflow"
 	"github.com/blaktron/agentry-cli/pkg/runhost"
+	"github.com/blaktron/agentry-cli/pkg/runhost/remote"
 	"github.com/blaktron/agentry-cli/pkg/runhost/signin"
 	"github.com/blaktron/agentry-cli/pkg/runhost/store"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
@@ -33,50 +33,18 @@ import (
 // runhostCreditsEntry is the store entry the credits token is kept in.
 const runhostCreditsEntry = "credits"
 
-// creditsSessionScope is the one scope a runhost's credits token carries.
-const creditsSessionScope = "credits:session"
-
 // runhostCredits is the credits token as the runhost's store keeps it.
-type runhostCredits struct {
-	Registry string `json:"registry"`
-	TokenID  string `json:"tokenId"`
-	Name     string `json:"name"`
-	Token    string `json:"token"`
-	Device   string `json:"device"`
-	StoredAt string `json:"storedAt,omitempty"`
-}
+type runhostCredits = remote.Credits
 
 // runhostCreditsInfo is what the runhost says of its credits token: never
 // the token.
-type runhostCreditsInfo struct {
-	Registry string `json:"registry"`
-	TokenID  string `json:"tokenId"`
-	Name     string `json:"name"`
-	Device   string `json:"device"`
-	StoredAt string `json:"storedAt"`
-}
-
-func (c runhostCredits) info() *runhostCreditsInfo {
-	return &runhostCreditsInfo{Registry: c.Registry, TokenID: c.TokenID, Name: c.Name, Device: c.Device, StoredAt: c.StoredAt}
-}
+type runhostCreditsInfo = remote.CreditsInfo
 
 // runhostStoreList is the store verb's list.
-type runhostStoreList struct {
-	Releases int                 `json:"releases"`
-	Credits  *runhostCreditsInfo `json:"credits,omitempty"`
-	// SignIns are the model sign-ins the runhost keeps: never a token.
-	SignIns []signin.Kept `json:"signIns,omitempty"`
-}
+type runhostStoreList = remote.StoreList
 
 // runhostCreditsRemoved is what removing the credits token did.
-type runhostCreditsRemoved struct {
-	Removed bool                `json:"removed"`
-	Revoked bool                `json:"revoked"`
-	Credits *runhostCreditsInfo `json:"credits,omitempty"`
-	// RevokeError says why the registry did not revoke the token, which
-	// the person then revokes there.
-	RevokeError string `json:"revokeError,omitempty"`
-}
+type runhostCreditsRemoved = remote.CreditsRemoved
 
 var (
 	tokenIDRE      = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
@@ -85,7 +53,7 @@ var (
 )
 
 // validate holds a credits token sent to the runhost to what one can be.
-func (c runhostCredits) validate() error {
+func validateCredits(c runhostCredits) error {
 	u, err := url.Parse(c.Registry)
 	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || strings.Trim(u.Path, "/") != "" {
 		return fmt.Errorf("the credits token's registry %q is not a registry's address", c.Registry)
@@ -129,26 +97,9 @@ func runhostStoredCredits(st *store.Store) (runhostCredits, bool, error) {
 	return c, true, nil
 }
 
-// revokeCredits has the token revoke itself at its registry. A token the
-// registry no longer takes (revoked or expired) is already gone.
+// revokeCredits has the token revoke itself at its registry.
 func revokeCredits(ctx context.Context, c runhostCredits) error {
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, strings.TrimRight(c.Registry, "/")+"/api/v1/user/tokens/"+c.TokenID, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.Token)
-	res, err := httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("revoke the credits token at %s: %w", c.Registry, err)
-	}
-	_ = res.Body.Close()
-	switch res.StatusCode {
-	case http.StatusNoContent, http.StatusUnauthorized:
-		return nil
-	}
-	return fmt.Errorf("revoke the credits token at %s: the registry answered %d", c.Registry, res.StatusCode)
+	return remote.RevokeCredits(ctx, httpClient, c)
 }
 
 // runhostStoreVerb answers the run key's store verb:
@@ -176,7 +127,7 @@ func runhostStoreVerb(ctx context.Context, req runhost.Request, in io.Reader, fw
 			return 1, err
 		}
 		if ok {
-			list.Credits = c.info()
+			list.Credits = c.Info()
 		}
 		return 0, fw.Result(list)
 	case "put-credits":
@@ -186,7 +137,7 @@ func runhostStoreVerb(ctx context.Context, req runhost.Request, in io.Reader, fw
 		if err := dec.Decode(&c); err != nil {
 			return engine.ExitUsage, fmt.Errorf("the credits token: %w", err)
 		}
-		if err := c.validate(); err != nil {
+		if err := validateCredits(c); err != nil {
 			return engine.ExitUsage, err
 		}
 		if !runhostDevicePaired(c.Device) {
@@ -212,7 +163,7 @@ func runhostStoreVerb(ctx context.Context, req runhost.Request, in io.Reader, fw
 				_ = fw.Out("the earlier credits token %q is revoked", old.Name)
 			}
 		}
-		return 0, fw.Result(c.info())
+		return 0, fw.Result(c.Info())
 	case "remove-credits":
 		c, ok, err := runhostStoredCredits(st)
 		if err != nil {
@@ -220,7 +171,7 @@ func runhostStoreVerb(ctx context.Context, req runhost.Request, in io.Reader, fw
 		}
 		out := runhostCreditsRemoved{}
 		if ok {
-			out.Credits = c.info()
+			out.Credits = c.Info()
 			if err := revokeCredits(ctx, c); err != nil {
 				out.RevokeError = err.Error()
 			} else {
@@ -389,19 +340,8 @@ func runRunhostModelCredits(cmd *cobra.Command, name string, yes bool) error {
 	}
 	defer func() { _ = c.Close() }()
 	doc := runhostCredits{Registry: reg, TokenID: pat.ID, Name: pat.Name, Token: pat.Token, Device: rec.DeviceID}
-	a, err := c.Call(ctx, "store", []string{"put-credits"}, func(w io.Writer) error {
-		return json.NewEncoder(w).Encode(doc)
-	}, func(f runhost.Frame) error {
-		if f.Type == runhost.FrameOut {
-			say(f.Text)
-		}
-		return nil
-	})
-	if err == nil && a.Code != 0 {
-		err = fmt.Errorf("%s: %s", name, a.Error)
-	}
-	if err != nil {
-		return errors.Join(engine.Classify(engine.ExitGateway, err), unsentCreditsToken(cmd.Context(), reg, pat))
+	if err := remote.PutCredits(ctx, c, doc, say); err != nil {
+		return errors.Join(engine.Classify(engine.ExitGateway, fmt.Errorf("%s: %w", name, err)), unsentCreditsToken(cmd.Context(), reg, pat))
 	}
 	rec.Credits = &runhost.CreditsRecord{Registry: reg, TokenID: pat.ID, TokenName: pat.Name, AddedAt: time.Now().UTC().Format(time.RFC3339)}
 	if err := recs.Save(home); err != nil {
@@ -418,46 +358,22 @@ func runRunhostModelCredits(cmd *cobra.Command, name string, yes bool) error {
 }
 
 // mintRunhostCreditsToken has the person approve a runhost's credits token
-// in the browser, and holds what comes back to a token that carries the
-// credits scope alone, with an id the runhost can revoke it by.
+// in the browser (remote.MintCredits), saying where.
 func mintRunhostCreditsToken(cmd *cobra.Command, reg, name string) (authflow.PAT, error) {
-	flow, err := authflow.Start()
-	if err != nil {
-		return authflow.PAT{}, err
-	}
-	defer flow.Close()
-	u := flow.AuthorizeRunhostURL(reg, name)
 	errOut := cmd.ErrOrStderr()
-	_, _ = fmt.Fprintf(errOut, "Approve runhost %s's credits token in your browser:\n  %s\n", name, u)
-	if os.Getenv("AGENTRY_NO_BROWSER") == "" {
-		if err := openBrowser(u); err != nil {
-			_, _ = fmt.Fprintf(errOut, "(could not open a browser: %v — open the address above yourself)\n", err)
+	return remote.MintCredits(cmd.Context(), reg, name, func(u string) {
+		_, _ = fmt.Fprintf(errOut, "Approve runhost %s's credits token in your browser:\n  %s\n", name, u)
+		if os.Getenv("AGENTRY_NO_BROWSER") == "" {
+			if err := openBrowser(u); err != nil {
+				_, _ = fmt.Fprintf(errOut, "(could not open a browser: %v — open the address above yourself)\n", err)
+			}
 		}
-	}
-	_, _ = fmt.Fprintln(errOut, "Waiting for the browser (up to 5 minutes; Ctrl-C to stop)…")
-	pat, err := flow.WaitPAT(cmd.Context())
-	if err != nil {
-		return authflow.PAT{}, err
-	}
-	if pat.ID == "" || len(pat.Scopes) != 1 || pat.Scopes[0] != creditsSessionScope {
-		// A registry that does not know a runhost's grant mints a sign-in
-		// token instead, which no runhost may hold.
-		what := "a token"
-		if pat.Name != "" {
-			what = fmt.Sprintf("the token %q", pat.Name)
-		}
-		return authflow.PAT{}, engine.Classify(engine.ExitPolicy, fmt.Errorf("%s does not mint a runhost's credits-only token, and handed back %s with other scopes: revoke it among your personal access tokens there; nothing was sent to %s", reg, what, name))
-	}
-	return pat, nil
+	}, func() { _, _ = fmt.Fprintln(errOut, "Waiting for the browser (up to 5 minutes; Ctrl-C to stop)…") })
 }
 
-// unsentCreditsToken revokes a token that never reached the runhost, and
-// says so if it cannot.
+// unsentCreditsToken revokes a token that never reached the runhost.
 func unsentCreditsToken(ctx context.Context, reg string, pat authflow.PAT) error {
-	if err := revokeCredits(ctx, runhostCredits{Registry: reg, TokenID: pat.ID, Token: pat.Token}); err != nil {
-		return fmt.Errorf("the token %q did not reach the runhost and could not be revoked (%v): revoke it among your personal access tokens on %s", pat.Name, err, reg)
-	}
-	return nil
+	return remote.RevokeUnsent(ctx, httpClient, reg, pat)
 }
 
 // newRunhostStoreCmd builds `agentry runhost store`.
@@ -542,16 +458,14 @@ func newRunhostStoreCmd() *cobra.Command {
 // removeRunhostCredits has the runhost revoke and remove its credits token,
 // and forgets it in this computer's record.
 func removeRunhostCredits(cmd *cobra.Command, name string) (runhostCreditsRemoved, error) {
-	a, _, err := askRunhostArgs(cmd, name, "store", []string{"remove-credits"})
+	_, _, c, err := dialRunhostNamed(cmd.Context(), name)
 	if err != nil {
 		return runhostCreditsRemoved{}, err
 	}
-	if a.Code != 0 {
-		return runhostCreditsRemoved{}, engine.Classify(engine.ExitCLI, fmt.Errorf("%s: %s", name, a.Error))
-	}
-	var out runhostCreditsRemoved
-	if err := json.Unmarshal(a.Result, &out); err != nil {
-		return runhostCreditsRemoved{}, err
+	out, err := remote.RemoveCredits(cmd.Context(), c)
+	_ = c.Close()
+	if err != nil {
+		return runhostCreditsRemoved{}, engine.Classify(engine.ExitCLI, fmt.Errorf("%s: %w", name, err))
 	}
 	if home, err := runnerHome(); err == nil {
 		if recs, err := runhost.LoadRecords(home); err == nil {

@@ -19,6 +19,7 @@ import (
 	"github.com/blaktron/agentry-cli/internal/version"
 	"github.com/blaktron/agentry-cli/pkg/runhost"
 	"github.com/blaktron/agentry-cli/pkg/runhost/clirelease"
+	"github.com/blaktron/agentry-cli/pkg/runhost/remote"
 	rhsetup "github.com/blaktron/agentry-cli/pkg/runhost/setup"
 	"github.com/blaktron/agentry-cli/pkg/runhost/signin"
 	"github.com/blaktron/agentry-cli/pkg/runner/claudesignin"
@@ -557,29 +558,16 @@ func newRunhostRemoveCmd() *cobra.Command {
 				return engine.Classify(engine.ExitUsage, err)
 			}
 			say := func(s string) { _, _ = fmt.Fprintln(narration(cmd), s) }
-			// The runhost's credits token revokes itself before the account
-			// that keeps it goes.
-			if removed, err := removeRunhostCredits(cmd, name); err != nil {
-				if rec.Credits != nil {
-					say(fmt.Sprintf("warning: %s could not revoke its credits token (%v): revoke %q among your personal access tokens on %s", name, err, rec.Credits.TokenName, rec.Credits.Registry))
-				}
-			} else if removed.Credits != nil {
-				var b strings.Builder
-				printCreditsRemoved(&b, name, removed)
-				say(strings.TrimSpace(b.String()))
-			}
-			// So do its model sign-ins: Claude Code's volume is the docker
-			// daemon's, which outlives the account.
-			for _, vendor := range signin.Vendors {
-				removed, err := removeRunhostSignIn(cmd, name, vendor)
-				switch {
-				case err != nil:
-					say(fmt.Sprintf("warning: %s could not end its %s sign-in (%v): end it at the vendor, and on the server `docker volume rm %s` for Claude Code", name, vendor, err, claudesignin.Volume))
-				case removed.Removed:
-					var b strings.Builder
-					printSignInRemoved(&b, name, removed)
-					say(strings.TrimSpace(b.String()))
-				}
+			// What the runhost holds of the person's ends before the account
+			// that keeps it goes: its credits token revokes itself, and its
+			// model sign-ins end (Claude Code's volume is the Docker
+			// daemon's, which outlives the account).
+			if _, _, c, err := dialRunhostNamed(cmd.Context(), name); err != nil {
+				say(fmt.Sprintf("warning: %s could not be reached over its run key (%v): its credits token and model sign-ins were not ended; revoke the token among your personal access tokens, end the sign-ins at the vendors, and on the server `docker volume rm %s`", name, err, claudesignin.Volume))
+			} else {
+				ended := remote.EndAll(cmd.Context(), c, say)
+				_ = c.Close()
+				reportEnded(say, name, rec, ended)
 			}
 			err = rhsetup.Remove(cmd.Context(), rhsetup.RemoveOptions{
 				Record: *rec, Auth: auth, Answer: targethost.Answer{User: user, Host: rec.Host, Port: rec.Port},
@@ -608,6 +596,28 @@ func newRunhostRemoveCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&removeDocker, "remove-docker", false, "remove Docker Engine, when setup installed it")
 	cmd.Flags().BoolVar(&yes, "yes", false, "remove without asking")
 	return cmd
+}
+
+// reportEnded says what EndAll ended on runhost name before its removal, and
+// what the person ends themselves.
+func reportEnded(say func(string), name string, rec *runhost.Record, e remote.Ended) {
+	if err, ok := e.Failed["credits"]; ok && rec.Credits != nil {
+		say(fmt.Sprintf("warning: %s could not revoke its credits token (%v): revoke %q among your personal access tokens on %s", name, err, rec.Credits.TokenName, rec.Credits.Registry))
+	} else if e.Credits.Credits != nil {
+		var b strings.Builder
+		printCreditsRemoved(&b, name, e.Credits)
+		say(strings.TrimSpace(b.String()))
+	}
+	for _, vendor := range signin.Vendors {
+		if err, ok := e.Failed[vendor]; ok {
+			say(fmt.Sprintf("warning: %s could not end its %s sign-in (%v): end it at the vendor, and on the server `docker volume rm %s` for Claude Code", name, vendor, err, claudesignin.Volume))
+		}
+	}
+	for _, r := range e.SignIns {
+		var b strings.Builder
+		printSignInRemoved(&b, name, r)
+		say(strings.TrimSpace(b.String()))
+	}
 }
 
 // unsafeModeMeaning is what Unsafe Mode on a runhost does, as the person is

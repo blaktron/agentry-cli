@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"os"
@@ -104,9 +105,13 @@ func runLocalInstall(cmd *cobra.Command, dir string, opts installOpts) error {
 		if !opts.allowUnsigned {
 			refusal = errLocalUnsigned
 		}
+		var agent *agentPlan
+		if opts.agent != nil {
+			refusal, agent = cmp.Or(refusal, opts.agent.refusal), opts.agent.planOf(m)
+		}
 		res := &apiclient.ResolveResult{Namespace: m.Namespace, Name: m.Name, Version: m.Version}
 		return writeInstallPlan(cmd, res, m, staged.Digest, att, refusal, &state, key, next, installdir.Target,
-			installPaths{dest: key.Dir, managed: true})
+			installPaths{dest: key.Dir, managed: true}, agent)
 	}
 	if prev := state.Find(key); prev != nil && !prev.Local() {
 		_, _ = fmt.Fprintf(errOut, "note: this replaces %s/%s@%s installed from a registry\n", m.Namespace, m.Name, prev.Version)
