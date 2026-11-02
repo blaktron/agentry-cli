@@ -1,0 +1,42 @@
+{
+  "agentry": "1",
+  "status": "ok",
+  "exitCode": 0,
+  "exitClass": "ok",
+  "exitClassMeaning": "the run finished and its result was collected",
+  "retryLikelyHelps": false,
+  "runId": "run123",
+  "ref": "acme/demo@1.0.0",
+  "digest": "",
+  "attestation": {
+    "state": "",
+    "verified": false
+  },
+  "capabilities_enforced": null,
+  "harness": {
+    "adapter": "",
+    "image": "",
+    "model": ""
+  },
+  "usage": {
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "costUsd": 0,
+    "wallMs": 0,
+    "turns": 0
+  },
+  "result": "done",
+  "outDir": "/home/agentry/agentry/.worktrees/agentry-cli/66-runhost-attach/cmd/agentry/agentry-out/acme-demo-run123",
+  "resultFile": "/home/agentry/agentry/.worktrees/agentry-cli/66-runhost-attach/cmd/agentry/agentry-out/acme-demo-run123/result.json",
+  "receipts": {
+    "dir": "/home/agentry/agentry/.worktrees/agentry-cli/66-runhost-attach/cmd/agentry/agentry-out/acme-demo-run123/receipts",
+    "runPlanSha256": ""
+  },
+  "runhost": {
+    "name": "lab",
+    "host": "127.0.0.1",
+    "hostKeyFingerprint": "SHA256:ROoOWhyNGaXpGDDaTBT8VQBMOH9cBUzLCKO8lFF7Qxs",
+    "cliVersion": "0.0.0-dev",
+    "job": "e314a0756c091bcd3c4e3b7d9e43b7ba"
+  }
+}

@@ -71,7 +71,9 @@ type runOpts struct {
 	// laid the release down itself.
 	installed bool
 	// on is the remote runhost the run goes to; empty runs it here.
-	on          string
+	on string
+	// detach leaves a run on a runhost to run once it has started there.
+	detach      bool
 	mode        string
 	intake      []string
 	intakeToken []string
@@ -236,7 +238,8 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&opts.adapterName, "adapter", "", "harness adapter (default "+adapter.DefaultName+", or "+adapter.CodexImageAdapterName+" when the model is paid by your ChatGPT plan); see --list-adapters")
 	f.StringVar(&opts.local, "local", "", "run an unpublished QuickAgent DIRECTORY instead of a registry ref")
 	f.StringVar(&opts.pin, "pin", "", "require the resolved archive digest to equal this sha256:… value")
-	f.StringVar(&opts.on, "on", "", "run on this remote runhost (see agentry runhost list) instead of this computer, carrying the run's secrets, files and intake: the release is verified here, sent, verified again there, and its output sealed to this device and opened into the output folder")
+	f.StringVar(&opts.on, "on", "", "run on this remote runhost (see agentry runhost list) instead of this computer, carrying the run's secrets, files and intake, or an interactive session: the release is verified here, sent, verified again there, and its output sealed to this device and opened into the output folder; a run lost mid-way goes on there (agentry runhost attach)")
+	f.BoolVar(&opts.detach, "detach", false, "with --on: leave the run on the runhost once it has started there, and say its job; agentry runhost attach, collect and cancel reach it later")
 	f.BoolVar(&opts.installed, "installed", false, "run the release already installed in the runner home at --pin, asking no registry, so nothing the registry says of it today (a yank, a quarantine) is heard (a remote runhost's service, which verified it as it arrived)")
 	_ = f.MarkHidden("installed")
 	f.StringVar(&opts.policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml, created on first use)")

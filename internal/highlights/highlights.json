@@ -1,6 +1,14 @@
 {
   "versions": [
     {
+      "version": "0.7.2",
+      "highlights": [
+        "A run on a runhost goes on there if your connection drops, and the CLI picks it up again where it was.",
+        "agentry runhost jobs, attach, collect and cancel reach a run on a runhost later; agentry run --on --detach leaves it.",
+        "agentry run --on runs an interactive session on a runhost, in the terminal chat or over --session-protocol."
+      ]
+    },
+    {
       "version": "0.7.1",
       "highlights": [
         "A persistent agent can start runs of other QuickAgents as its subagents, each in a sandbox of its own.",

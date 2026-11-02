@@ -242,9 +242,14 @@ func TestSubagentRefusedWhenQuarantined(t *testing.T) {
 
 // fakeHelper is a HelperOps with one installed QuickAgent.
 type fakeHelper struct {
-	mu      sync.Mutex
-	version string
+	mu       sync.Mutex
+	version  string
+	installs int
+	// asks makes it ops that ask the person themselves.
+	asks bool
 }
+
+func (f *fakeHelper) AsksThePerson() bool { return f.asks }
 
 func (f *fakeHelper) Search(context.Context, string) (string, []HelperHit, error) {
 	return "registry.test", nil, nil
@@ -255,14 +260,19 @@ func (f *fakeHelper) Installed(context.Context) ([]HelperInstalled, error) {
 	defer f.mu.Unlock()
 	return []HelperInstalled{{Ref: "acme/tool", Version: f.version}}, nil
 }
-func (f *fakeHelper) Install(context.Context, string) (string, error)     { return "", nil }
+func (f *fakeHelper) Install(context.Context, string, string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.installs++
+	return "acme/tool", nil
+}
 func (f *fakeHelper) Schedules(context.Context) ([]HelperSchedule, error) { return nil, nil }
-func (f *fakeHelper) AddSchedule(context.Context, HelperScheduleSpec) (string, error) {
+func (f *fakeHelper) AddSchedule(context.Context, HelperScheduleSpec, string) (string, error) {
 	return "", nil
 }
-func (f *fakeHelper) PauseSchedule(context.Context, string, bool) error { return nil }
-func (f *fakeHelper) RemoveSchedule(context.Context, string) error      { return nil }
-func (f *fakeHelper) Docs(context.Context, string) ([]byte, int, error) { return nil, 404, nil }
+func (f *fakeHelper) PauseSchedule(context.Context, string, bool) error    { return nil }
+func (f *fakeHelper) RemoveSchedule(context.Context, string, string) error { return nil }
+func (f *fakeHelper) Docs(context.Context, string) ([]byte, int, error)    { return nil, 404, nil }
 
 // TestHelperRunAsksPerNewVersion: quickagent_run, answered by the CLI's
 // supervisor, asks the person through an attached client before the first
@@ -462,5 +472,25 @@ func TestAQuestionReachesAClientInTheSupervisorsProcess(t *testing.T) {
 	}
 	if err := <-done; !errors.Is(err, ErrNotAgreed) {
 		t.Fatalf("a no: %v", err)
+	}
+}
+
+// TestOpsThatAskThemselvesAreNotAskedTwice: an install through ops that ask
+// the person themselves raises no question of the supervisor's; through
+// ops that do not, it asks, and with nobody to ask installs nothing.
+func TestOpsThatAskThemselvesAreNotAskedTwice(t *testing.T) {
+	home := shortHome(t)
+	a := installPublished(t, home, "acme", "helper", "1.0.0", publishedRelease{extra: "capabilities:\n  persistent:\n    helper: true\n"})
+	enableAgent(t, home, a)
+	ops := &fakeHelper{version: "1.0.0"}
+	_, _ = startPublished(t, home, a, &fakeHost{}, ops)
+	if ans := call(t, home, a.Name, "quickagent_install", `{"ref":"acme/other"}`); !ans.IsError || ops.installs != 0 {
+		t.Fatalf("ops that do not ask, with nobody to ask: %+v, installs %d", ans, ops.installs)
+	}
+	ops.mu.Lock()
+	ops.asks = true
+	ops.mu.Unlock()
+	if ans := call(t, home, a.Name, "quickagent_install", `{"ref":"acme/other"}`); ans.IsError || ops.installs != 1 {
+		t.Fatalf("ops that ask themselves: %+v, installs %d", ans, ops.installs)
 	}
 }

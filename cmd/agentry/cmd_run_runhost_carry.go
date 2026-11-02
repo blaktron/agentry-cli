@@ -365,18 +365,8 @@ func (c *runOnCarried) pack() (*payload.Packed, error) {
 	return p, nil
 }
 
-// finish copies a successful run's deliverables to the folder the device
-// delivers to, as a local run does at its end, recording each copy in the
-// envelope and the deliveries ledger, and settles the MCP profile.
-func (c *runOnCarried) finish(errOut io.Writer, env *receipt.Envelope, outDir string) {
-	if c.deliverTo != "" && env.ExitCode == 0 && env.Deliverables != nil {
-		ds := deliver.ToFolder(outDir, env.Deliverables.Files, deliver.FolderOptions{
-			Root: c.deliverTo, Agent: deliver.AgentName(env.Ref), Label: deliver.Label(env.Deliverables.Files, env.RunID),
-		})
-		env.Deliveries = append(env.Deliveries, ds...)
-		if err := deliver.WriteLedger(outDir, ds, true); err != nil {
-			_, _ = fmt.Fprintf(errOut, "warning: the deliveries could not be recorded in receipts/%s: %v\n", deliver.LedgerFile, err)
-		}
-	}
+// finishProfile settles the MCP profile once the job is sent: its secrets
+// travelled with the job, and a profile the person did not keep goes.
+func (c *runOnCarried) finishProfile(errOut io.Writer) {
 	finishProfile(errOut, c.prof, c.profDir, c.keep)
 }

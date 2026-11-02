@@ -180,7 +180,7 @@ func (h cliHelper) Installed(context.Context) ([]persistent.HelperInstalled, err
 	return out, nil
 }
 
-func (h cliHelper) Install(ctx context.Context, ref string) (string, error) {
+func (h cliHelper) Install(ctx context.Context, ref, _ string) (string, error) {
 	out, err := h.command(ctx, "install", ref, "--yes", "--json")
 	if err != nil {
 		return "", err
@@ -225,7 +225,7 @@ func (h cliHelper) Schedules(ctx context.Context) ([]persistent.HelperSchedule, 
 	return all, nil
 }
 
-func (h cliHelper) AddSchedule(ctx context.Context, s persistent.HelperScheduleSpec) (string, error) {
+func (h cliHelper) AddSchedule(ctx context.Context, s persistent.HelperScheduleSpec, _ string) (string, error) {
 	when, err := s.When.Args()
 	if err != nil {
 		return "", err
@@ -265,7 +265,7 @@ func (h cliHelper) PauseSchedule(ctx context.Context, id string, paused bool) er
 	return err
 }
 
-func (h cliHelper) RemoveSchedule(ctx context.Context, id string) error {
+func (h cliHelper) RemoveSchedule(ctx context.Context, id, _ string) error {
 	_, err := h.command(ctx, "schedule", "remove", id)
 	return err
 }

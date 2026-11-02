@@ -42,6 +42,7 @@ func newRunhostCmd() *cobra.Command {
 			"Servers: Debian 12 and 13, Ubuntu 22.04 and 24.04, on amd64 or arm64.",
 	}
 	cmd.AddCommand(newRunhostAddCmd(), newRunhostListCmd(), newRunhostStatusCmd(), newRunhostDoctorCmd(), newRunhostRemoveCmd(),
+		newRunhostJobsCmd(), newRunhostAttachCmd(), newRunhostCollectCmd(), newRunhostCancelCmd(),
 		newRunhostServeCmd(), newRunhostServiceCmd())
 	return cmd
 }
