@@ -672,7 +672,7 @@ func TestConfigureModelCustomPlainHTTPIsAllowedWithAWarning(t *testing.T) {
 	} {
 		pol := policy.Default()
 		p := &scriptPrompter{}
-		if err := ConfigureModel(p, pol, ModelOpts{Provider: "custom", Model: "m", APIKeyEnv: "K", BaseURL: tc.url, Yes: true}); err != nil {
+		if err := ConfigureModel(p, pol, ModelOpts{Provider: "custom", Model: "m", APIKeyEnv: "K", BaseURL: tc.url, ContextWindow: 32768, Yes: true}); err != nil {
 			t.Fatalf("%s: %v", tc.url, err)
 		}
 		if pol.Model.BaseURL != tc.url {

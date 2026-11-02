@@ -10,6 +10,7 @@
 package setup
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -17,7 +18,9 @@ import (
 	"os"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
@@ -133,6 +136,15 @@ type ModelOpts struct {
 	// the key it stores; a variable-only setup takes --api-key-kind.
 	APIKeyKind string
 	BaseURL    string
+	// ContextWindow is the model's context window in tokens (the policy's
+	// model.contextWindow). 0 keeps what the policy has for the same model
+	// at the same endpoint; for custom, what ProbeContextWindow finds is the
+	// question's default and, under Yes, the answer.
+	ContextWindow int64
+	// ProbeContextWindow asks a custom endpoint for the model's window
+	// (setup.ProbeContextWindow); nil asks nothing. A seam: tests do not
+	// reach the endpoints they name.
+	ProbeContextWindow func(ctx context.Context, baseURL, model, key string) (ContextWindow, error)
 	// ChatGPT offers Sign in with ChatGPT for provider openai: nil offers none.
 	// APIKeyKind chatgpt-plan asks for it without the question.
 	ChatGPT ChatGPTOffer
@@ -840,6 +852,7 @@ func ConfigureModel(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 	if kind == policy.KeyKindSubscription && prov != policy.ProviderAnthropic {
 		return fmt.Errorf("api key kind subscription needs provider anthropic (it is %q): %s", prov, policy.SubscriptionTokenSentence)
 	}
+	probeKey := os.Getenv(keyEnv)
 	if !opts.Yes && opts.APIKeySource == "" && source != modelkey.SourceKeyring && !modelkey.Disabled() {
 		store, err := p.Confirm(fmt.Sprintf("Store the key in this machine's keychain now, for runs launched without $%s (the variable still wins when it is set)?", keyEnv), false)
 		if err != nil {
@@ -853,6 +866,7 @@ func ConfigureModel(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 			if strings.TrimSpace(key) == "" {
 				p.Say("nothing stored: the key was empty")
 			} else {
+				probeKey = key
 				storeKey := opts.StoreKey
 				if storeKey == nil {
 					storeKey = modelkey.Store
@@ -895,14 +909,20 @@ func ConfigureModel(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 		p.Say(fmt.Sprintf("warning: $%s is not set in this environment, so a run started from here would find no key: export it in the shell that runs agentry, or run `agentry setup` on a terminal and accept the offer to store the key in the OS keychain", keyEnv))
 	}
 
+	window, err := contextWindowFor(p, pol, opts, prov, model, baseURL, probeKey)
+	if err != nil {
+		return err
+	}
+
 	pol.Model = policy.Model{
-		Provider:     prov,
-		Name:         model,
-		APIKeyEnv:    keyEnv,
-		APIKeySource: source,
-		APIKeyKind:   kind,
-		BaseURL:      baseURL,
-		ProxyAllow:   proxyAllow,
+		Provider:      prov,
+		Name:          model,
+		APIKeyEnv:     keyEnv,
+		APIKeySource:  source,
+		APIKeyKind:    kind,
+		BaseURL:       baseURL,
+		ContextWindow: window,
+		ProxyAllow:    proxyAllow,
 	}
 	from := "$" + keyEnv
 	if source == modelkey.SourceKeyring {
@@ -916,6 +936,83 @@ func ConfigureModel(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 	}
 	return nil
 }
+
+// contextWindowFor settles model.contextWindow: the caller's, else, for the
+// same model at the same endpoint, the policy's. For an OpenAI-compatible
+// endpoint of the operator's own (OwnEndpoint), whose models the harness's
+// catalogue seldom holds, the endpoint is asked, and on a terminal the person
+// is too, with what it said (or the policy's) as the default; under Yes an
+// endpoint that said nothing leaves the window unset, and setup says what that
+// costs a long run.
+func contextWindowFor(p Prompter, pol *policy.Policy, opts ModelOpts, prov, model, baseURL, key string) (int64, error) {
+	if w := opts.ContextWindow; w != 0 {
+		if err := policy.CheckContextWindow(w); err != nil {
+			return 0, err
+		}
+		return w, nil
+	}
+	var window int64
+	if prov == pol.Model.Provider && model == pol.Model.Name && baseURL == pol.Model.BaseURL {
+		window = pol.Model.ContextWindow
+	}
+	if !OwnEndpoint(policy.Model{Provider: prov, BaseURL: baseURL}) {
+		return window, nil
+	}
+	if window == 0 && opts.ProbeContextWindow != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), contextProbeBudget)
+		found, err := opts.ProbeContextWindow(ctx, baseURL, model, key)
+		cancel()
+		switch {
+		case err != nil:
+			p.Say(fmt.Sprintf("could not ask the endpoint for %s's context window: %v", model, err))
+		case found.Tokens > 0 && policy.CheckContextWindow(found.Tokens) == nil:
+			window = found.Tokens
+			p.Say(fmt.Sprintf("context window: %d tokens, as %s reports it", window, found.Source))
+		case found.Tokens > 0:
+			p.Say(fmt.Sprintf("not taken: %s reports a context window of %d tokens, outside %d to %d", found.Source, found.Tokens, policy.MinContextWindow, policy.MaxContextWindow))
+		}
+	}
+	if !opts.Yes {
+		def := ""
+		if window > 0 {
+			def = strconv.FormatInt(window, 10)
+		}
+		ans, err := p.Ask(fmt.Sprintf("Context window of %s, in tokens (the window the server runs it with; 0 if you do not know)", model), def)
+		if err != nil {
+			return 0, err
+		}
+		ans = strings.TrimSpace(strings.ReplaceAll(ans, "_", ""))
+		if ans == "" || ans == "0" {
+			window = 0
+		} else {
+			n, err := strconv.ParseInt(ans, 10, 64)
+			if err != nil || n == 0 || policy.CheckContextWindow(n) != nil {
+				return 0, fmt.Errorf("context window %q must be a whole number of tokens from %d to %d", ans, policy.MinContextWindow, policy.MaxContextWindow)
+			}
+			window = n
+		}
+	}
+	if window == 0 {
+		p.Say(fmt.Sprintf("warning: %s", UnknownWindowSentence(model)))
+	}
+	return window, nil
+}
+
+// OwnEndpoint reports whether m is an OpenAI-compatible endpoint of the
+// operator's own: custom, or openai pointed at a base URL. The harness's
+// catalogue seldom holds such a model, so the policy's window is often the
+// only one the harness has; where both are present, the policy's wins.
+func OwnEndpoint(m policy.Model) bool {
+	return m.Provider == "custom" || (m.Provider == policy.ProviderOpenAI && strings.TrimSpace(m.BaseURL) != "")
+}
+
+// UnknownWindowSentence says what an unset window costs a run on model.
+func UnknownWindowSentence(model string) string {
+	return fmt.Sprintf("%s's context window is unknown: unless the harness knows this model, a run cannot compact its conversation and fails once the endpoint refuses it as too long; set it with --context-window", model)
+}
+
+// contextProbeBudget bounds the whole of a setup's context-window probe.
+const contextProbeBudget = 30 * time.Second
 
 // hostPortOf derives the proxy allowlist entry from a base URL — the
 // agent container's ONLY egress, so it must be exact.

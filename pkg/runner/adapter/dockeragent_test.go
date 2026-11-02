@@ -280,6 +280,49 @@ func TestDockerAgentCompileMapsCustomToTheOpenAIClient(t *testing.T) {
 	}
 }
 
+// A model the harness cannot size itself is sized by the policy: Docker
+// Agent compacts at a share of the window it knows, and with none it cannot
+// compact at all, so a long run on such a model fails once the endpoint
+// refuses the conversation as too long.
+func TestDockerAgentCompileTellsTheHarnessTheContextWindow(t *testing.T) {
+	ad, err := Get(DefaultName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name  string
+		model policy.Model
+		want  map[string]any
+	}{
+		{"custom", policy.Model{Provider: "custom", Name: "qwen3.8-flash", APIKeyEnv: "CUSTOM_API_KEY", BaseURL: "http://127.0.0.1:1234/v1", ContextWindow: 262144, ProxyAllow: []string{"127.0.0.1:1234"}},
+			map[string]any{"context_size": 262144}},
+		{"named provider", policy.Model{Provider: "vultr", Name: "qwen3.8-flash-next", APIKeyEnv: "VULTR_API_KEY", ContextWindow: 131072, ProxyAllow: []string{"api.vultrinference.com:443"}},
+			map[string]any{"context_size": 131072}},
+		{"beside the thinking binding", policy.Model{Provider: "anthropic", Name: "claude-sonnet-5-5", APIKeyEnv: "MODEL_KEY", ContextWindow: 200000, ProxyAllow: []string{"x:443"}},
+			map[string]any{"thinking_prefix_mismatch": "drop_block", "thinking_display": "omitted", "context_size": 200000}},
+		{"unset", policy.Model{Provider: "custom", Name: "m", APIKeyEnv: "CUSTOM_API_KEY", BaseURL: "http://127.0.0.1:1234/v1", ProxyAllow: []string{"127.0.0.1:1234"}},
+			nil},
+	}
+	for _, c := range cases {
+		in := testInput()
+		in.Model = c.model
+		res, err := ad.Compile(in)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		var doc struct {
+			Models map[string]map[string]any `yaml:"models"`
+		}
+		if err := yaml.Unmarshal(res.Files["agent.yaml"], &doc); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := doc.Models["main"]["provider_opts"].(map[string]any)
+		if !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: provider_opts %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
 func TestDockerAgentCompileRefusesCustomWithoutABaseURL(t *testing.T) {
 	ad, err := Get(DefaultName)
 	if err != nil {

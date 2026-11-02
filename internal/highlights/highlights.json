@@ -1,6 +1,12 @@
 {
   "versions": [
     {
+      "version": "0.7.9",
+      "highlights": [
+        "agentry setup asks a model server of your own for its context window, so long runs on it compact instead of failing."
+      ]
+    },
+    {
       "version": "0.7.8",
       "highlights": [
         "agentry agent install --plan previews a persistent agent and its subagent pins; agent show lists its subagent runs."

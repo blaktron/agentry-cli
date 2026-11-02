@@ -5,6 +5,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/setup"
 )
 
 // setupPolicy runs `agentry setup --skip-images` against a temp policy and
@@ -90,16 +92,32 @@ func TestSetupCustomProvider(t *testing.T) {
 	// Setup failures are policy-class (exit 11) so scripts can branch.
 	wantClassified(t, err, engine.ExitPolicy)
 
+	asked := ""
+	probe := probeContextWindow
+	probeContextWindow = func(_ context.Context, baseURL, model, _ string) (setup.ContextWindow, error) {
+		asked = baseURL + " " + model
+		return setup.ContextWindow{Tokens: 131072, Source: baseURL + "/models"}, nil
+	}
+	t.Cleanup(func() { probeContextWindow = probe })
 	_, written, err := setupPolicy(t, "--yes", "--provider", "custom",
 		"--model", "local-llm", "--api-key-env", "LOCAL_KEY", "--base-url", "https://llm.internal:8443/v1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"provider: custom", "name: local-llm", "apiKeyEnv: LOCAL_KEY",
-		"baseUrl: https://llm.internal:8443/v1", "llm.internal:8443"} {
+		"baseUrl: https://llm.internal:8443/v1", "llm.internal:8443", "contextWindow: 131072"} {
 		if !strings.Contains(written, want) {
 			t.Errorf("custom policy lacks %q:\n%s", want, written)
 		}
+	}
+	if asked != "https://llm.internal:8443/v1 local-llm" {
+		t.Errorf("the endpoint was asked %q", asked)
+	}
+	// The flag wins over what the endpoint says.
+	_, written, err = setupPolicy(t, "--yes", "--provider", "custom", "--context-window", "262144",
+		"--model", "local-llm", "--api-key-env", "LOCAL_KEY", "--base-url", "https://llm.internal:8443/v1")
+	if err != nil || !strings.Contains(written, "contextWindow: 262144") {
+		t.Fatalf("--context-window: %v\n%s", err, written)
 	}
 }
 
