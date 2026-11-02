@@ -624,6 +624,50 @@ func TestEnsurePlanNeverReusesAnUnsafeModePlan(t *testing.T) {
 	}
 }
 
+// A runhost whose own Unsafe Mode setting is on compiles in Unsafe Mode, and
+// never reuses an installed plan, Unsafe Mode or not: the setting can change
+// between two runs of the same release.
+func TestARunhostsUnsafeModeCompilesAfreshEveryRun(t *testing.T) {
+	home := t.TempDir()
+	meta, dir, err := KnowledgeCreator().Materialize(home, "b1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := filepath.Join(dir, "workspace")
+	m, err := ManifestFrom(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Capabilities.Exec = manifest.ExecCapability{Commands: []string{"strings"}}
+	pol := policy.Default()
+	pol.Images.Runner = "agentry-runner:test"
+	pol.Exec.Packages = map[string]string{"strings": "binutils"}
+	data, err := unsafeexec.Parse(policy.DefaultUnsafeImage, []byte("strings\tbinutils\n"), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := PlanInputs{Home: home, Manifest: m, Meta: meta, InstallDir: dir, WorkspaceDir: ws, Policy: pol,
+		PolicySHA: "sha", Adapter: "docker-agent", Mode: manifest.ModeAutonomous, CompiledBy: "b1", Log: io.Discard}
+	plain, _, err := EnsurePlan(in)
+	if err != nil || plain.ExecImage == nil || plain.ExecImage.Unsafe != nil {
+		t.Fatalf("the default compile: %v %+v", err, plain)
+	}
+	in.Unsafe = data
+	for range 2 {
+		plan, _, err := EnsurePlan(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if plan.ExecImage == nil || plan.ExecImage.Unsafe == nil {
+			t.Fatalf("Unsafe Mode on compiled without it: %+v", plan.ExecImage)
+		}
+	}
+	in.Unsafe = nil
+	if plan, _, err := EnsurePlan(in); err != nil || plan.ExecImage.Unsafe != nil {
+		t.Fatalf("Unsafe Mode off reused the Unsafe Mode plan: %v %+v", err, plan.ExecImage)
+	}
+}
+
 // TestABuiltinsBudgetsOnThisComputer: a draft made on this computer is given
 // 30 minutes and a knowledge build 60, however short the runner policy's
 // run timeout is; a policy that allows more keeps its own. Nothing else

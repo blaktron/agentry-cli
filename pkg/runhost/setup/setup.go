@@ -565,23 +565,11 @@ func Remove(ctx context.Context, o RemoveOptions) (err error) {
 	red := newRedactor(o.Auth)
 	say := red.say(o.Say)
 	defer func() { err = red.err(err) }()
-	pinned, _, _, _, err := ssh.ParseAuthorizedKey([]byte(o.Record.HostKey))
-	if err != nil {
-		return fmt.Errorf("the record of %s holds no readable host key: %w", o.Record.Name, err)
-	}
-	answer := targethost.Answer{User: o.Answer.User, Host: o.Record.Host, Port: o.Record.Port}
-	addr, err := targethost.ResolveAddress(ctx, o.Record.Name, answer, policy.HostsPolicy{})
-	if err != nil {
-		return asRunhost(err)
-	}
-	conn, err := Dial(ctx, addr, o.Record.Port, o.Answer.User, pinned, o.Auth)
+	conn, err := adminConn(ctx, o.Record, o.Auth, o.Answer, o.Ask, red)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = conn.Close() }()
-	if err := conn.EnsureRoot(ctx, o.Ask, answer.String(), red); err != nil {
-		return err
-	}
 	stage, err := conn.Stage(ctx)
 	if err != nil {
 		return err
@@ -609,6 +597,71 @@ func Remove(ctx context.Context, o RemoveOptions) (err error) {
 	if _, err := runScript(ctx, conn, "sh "+shellQuote(stage+"/remove.sh")+" "+shellQuote(stage+"/env"), say); err != nil {
 		return fmt.Errorf("the removal stopped: %w", err)
 	}
+	return nil
+}
+
+// resolveAddress resolves a runhost's address as a target host's is: a
+// variable, so the live test can reach a server on this machine's loopback.
+var resolveAddress = targethost.ResolveAddress
+
+// adminConn signs in to rec's server with the admin sign-in, held to the
+// host key pinned at setup, and makes sure it runs as root.
+func adminConn(ctx context.Context, rec runhost.Record, auth AdminAuth, who targethost.Answer, ask targethost.Asker, red *redactor) (*Conn, error) {
+	pinned, _, _, _, err := ssh.ParseAuthorizedKey([]byte(rec.HostKey))
+	if err != nil {
+		return nil, fmt.Errorf("the record of %s holds no readable host key: %w", rec.Name, err)
+	}
+	answer := targethost.Answer{User: who.User, Host: rec.Host, Port: rec.Port}
+	addr, err := resolveAddress(ctx, rec.Name, answer, policy.HostsPolicy{})
+	if err != nil {
+		return nil, asRunhost(err)
+	}
+	conn, err := Dial(ctx, addr, rec.Port, who.User, pinned, auth)
+	if err != nil {
+		return nil, err
+	}
+	if err := conn.EnsureRoot(ctx, ask, answer.String(), red); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	return conn, nil
+}
+
+// SetOptions are what SetUnsafeMode needs.
+type SetOptions struct {
+	Record runhost.Record
+	Auth   AdminAuth
+	// Answer names the admin account; its host and port are the record's.
+	Answer targethost.Answer
+	Ask    targethost.Asker
+	Say    func(string)
+}
+
+// SetUnsafeMode turns the runhost's Unsafe Mode setting on or off, with the
+// admin sign-in: a root-owned file outside the agentry account's home, which
+// the service and the run keys can read and never write.
+func SetUnsafeMode(ctx context.Context, o SetOptions, on bool) (err error) {
+	red := newRedactor(o.Auth)
+	say := red.say(o.Say)
+	defer func() { err = red.err(err) }()
+	conn, err := adminConn(ctx, o.Record, o.Auth, o.Answer, o.Ask, red)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	dir, file := shellQuote(runhost.SettingsDir), shellQuote(runhost.UnsafeModeFile)
+	cmd := "rm -f " + file
+	if on {
+		cmd = "install -d -m 0755 -o root -g root " + dir + " && printf 'on\\n' > " + file + ".new && chmod 0644 " + file + ".new && mv " + file + ".new " + file
+	}
+	r, err := conn.RunRoot(ctx, "[ -f "+shellQuote(runhost.ConfigFile)+" ] || { echo 'this server is not a runhost' >&2; exit 3; }; "+cmd, nil)
+	if err != nil {
+		return err
+	}
+	if r.Code != 0 {
+		return fmt.Errorf("set Unsafe Mode on %s: %s", o.Record.Name, strings.TrimSpace(string(r.Stderr)))
+	}
+	say("Unsafe Mode is %s on runhost %s", map[bool]string{true: "on", false: "off"}[on], o.Record.Name)
 	return nil
 }
 

@@ -152,6 +152,9 @@ type Runhost struct {
 	// place (claude-image for claude).
 	Adapter      string `json:"adapter,omitempty"`
 	AdapterAsked string `json:"adapterAsked,omitempty"`
+	// UnsafeMode says the runhost's own Unsafe Mode setting was on: a
+	// release that declares commands ran in Unsafe Mode there.
+	UnsafeMode bool `json:"unsafeMode,omitempty"`
 }
 
 // Persistent is the envelope's record of one segment of a persistent agent.

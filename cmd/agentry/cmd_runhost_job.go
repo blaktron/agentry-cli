@@ -46,9 +46,11 @@ import (
 var (
 	runhostJobsDir     = filepath.Join(runhost.StateDir, "jobs")
 	runhostDevicesFile = runhost.DevicesFile
-	runhostStoreDir    = filepath.Join(runhost.StateDir, "store", "releases")
-	runhostStoreKey    = filepath.Join(runhost.StateDir, "store", store.KeyFile)
-	runhostOutputKeep  = 7 * 24 * time.Hour
+	// runhostUnsafeModeFile is the runhost's Unsafe Mode setting.
+	runhostUnsafeModeFile = runhost.UnsafeModeFile
+	runhostStoreDir       = filepath.Join(runhost.StateDir, "store", "releases")
+	runhostStoreKey       = filepath.Join(runhost.StateDir, "store", store.KeyFile)
+	runhostOutputKeep     = 7 * 24 * time.Hour
 	// runhostCancelGrace is how long an interrupted run has to tear down
 	// before it is killed.
 	runhostCancelGrace = 30 * time.Second

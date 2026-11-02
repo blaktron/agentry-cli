@@ -44,7 +44,7 @@ func newRunhostCmd() *cobra.Command {
 			"Servers: Debian 12 and 13, Ubuntu 22.04 and 24.04, on amd64 or arm64.",
 	}
 	cmd.AddCommand(newRunhostAddCmd(), newRunhostListCmd(), newRunhostStatusCmd(), newRunhostDoctorCmd(), newRunhostRemoveCmd(),
-		newRunhostModelCmd(), newRunhostStoreCmd(),
+		newRunhostModelCmd(), newRunhostStoreCmd(), newRunhostSetCmd(),
 		newRunhostJobsCmd(), newRunhostAttachCmd(), newRunhostCollectCmd(), newRunhostCancelCmd(),
 		newRunhostServeCmd(), newRunhostServiceCmd())
 	return cmd
@@ -607,6 +607,85 @@ func newRunhostRemoveCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&removeImages, "remove-images", false, "remove the images runs used")
 	cmd.Flags().BoolVar(&removeDocker, "remove-docker", false, "remove Docker Engine, when setup installed it")
 	cmd.Flags().BoolVar(&yes, "yes", false, "remove without asking")
+	return cmd
+}
+
+// unsafeModeMeaning is what Unsafe Mode on a runhost does, as the person is
+// asked before turning it on.
+const unsafeModeMeaning = "In Unsafe Mode a release's declared commands are installed from the Unsafe Mode image (a Kali Linux base) " +
+	"and run with that image's whole PATH, without the command catalogue: every run on this runhost, from every paired device, " +
+	"is compiled this way until it is turned off. The run is still sandboxed under gVisor, behind the egress proxy."
+
+func newRunhostSetCmd() *cobra.Command {
+	var af adminFlags
+	var user, unsafe string
+	var yes bool
+	cmd := &cobra.Command{
+		Use:   "set <name> --unsafe-mode on|off --user <admin>",
+		Short: "Change a runhost's settings, with the admin sign-in",
+		Long: "--unsafe-mode on makes every run on the runhost, from every paired device,\n" +
+			"an Unsafe Mode run: a release's declared commands are installed from the Unsafe\n" +
+			"Mode image (a Kali Linux base) and run with that image's PATH, without the\n" +
+			"command catalogue, still under gVisor and behind the egress proxy. The setting\n" +
+			"is kept on the server, in a file only root writes, so it is changed only with\n" +
+			"the admin sign-in, never this computer's run key. --unsafe-mode off turns it off.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := args[0]
+			var on bool
+			switch unsafe {
+			case "on":
+				on = true
+			case "off":
+			default:
+				return engine.Classify(engine.ExitUsage, errors.New("give --unsafe-mode on or --unsafe-mode off"))
+			}
+			if user == "" {
+				return engine.Classify(engine.ExitUsage, errors.New("name the admin account with --user (root, or one that can sudo)"))
+			}
+			home, err := runnerHome()
+			if err != nil {
+				return err
+			}
+			recs, err := runhost.LoadRecords(home)
+			if err != nil {
+				return err
+			}
+			rec, ok := recs.Find(name)
+			if !ok {
+				return engine.Classify(engine.ExitUsage, fmt.Errorf("no runhost named %s on this computer", name))
+			}
+			ask := terminalAsker(cmd)
+			if on && !yes {
+				if ask == nil {
+					return engine.Classify(engine.ExitUsage, errors.New("no one is at a terminal to confirm: pass --yes"))
+				}
+				ok, err := ask.Confirm(fmt.Sprintf("Turn Unsafe Mode on for runhost %s (%s)? %s", name, rec.Host, unsafeModeMeaning), false)
+				if err != nil || !ok {
+					return errors.Join(err, errors.New("nothing changed: Unsafe Mode stays off"))
+				}
+			}
+			auth, err := af.resolve(ask, user+"@"+rec.Host)
+			if err != nil {
+				return engine.Classify(engine.ExitUsage, err)
+			}
+			say := func(s string) { _, _ = fmt.Fprintln(narration(cmd), s) }
+			if err := rhsetup.SetUnsafeMode(cmd.Context(), rhsetup.SetOptions{
+				Record: *rec, Auth: auth, Answer: targethost.Answer{User: user, Host: rec.Host, Port: rec.Port}, Ask: ask, Say: say,
+			}, on); err != nil {
+				return engine.Classify(engine.ExitCLI, err)
+			}
+			if flags.jsonOut {
+				return emitJSON(cmd.OutOrStdout(), map[string]any{"runhost": name, "unsafeMode": on})
+			}
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "runhost %s: Unsafe Mode %s\n", name, onOff(on))
+			return nil
+		},
+	}
+	af.bind(cmd)
+	cmd.Flags().StringVar(&unsafe, "unsafe-mode", "", "on or off: whether runs on the runhost are Unsafe Mode runs")
+	cmd.Flags().StringVar(&user, "user", "", "the admin account to sign in as (root, or one that can sudo)")
+	cmd.Flags().BoolVar(&yes, "yes", false, "turn Unsafe Mode on without asking")
 	return cmd
 }
 

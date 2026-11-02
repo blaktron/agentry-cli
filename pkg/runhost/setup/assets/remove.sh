@@ -34,6 +34,8 @@ if id agentry >/dev/null 2>&1; then
 	userdel agentry
 	rm -rf /var/lib/agentry
 fi
+step "the runhost's settings"
+rm -rf /etc/agentry-runhost
 
 if [ -f "$STAGE/daemon.json" ]; then
 	: "${WAS_DAEMON_JSON:?}"
