@@ -70,6 +70,22 @@ func liveJob(id string) *runhostLive {
 	return runhostLiveJobs.m[id]
 }
 
+// runningJob is the live job id while it runs: once it has finished, its
+// sealed output and envelope are on disk, though the job may not have been
+// taken out of the registry yet.
+func runningJob(id string) *runhostLive {
+	l := liveJob(id)
+	if l == nil {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.done {
+		return nil
+	}
+	return l
+}
+
 // forget takes a finished job out of the registry: its record and sealed
 // output on disk answer for it from then on.
 func (l *runhostLive) forget() {

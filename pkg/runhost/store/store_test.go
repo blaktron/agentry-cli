@@ -90,3 +90,45 @@ func TestATamperedStoredReleaseIsRefused(t *testing.T) {
 		t.Error("a digest that is not one was read")
 	}
 }
+
+// A named entry comes back, is ciphertext on disk, does not open under
+// another name or once changed, and is gone once removed.
+func TestAnEntryIsSealedToItsName(t *testing.T) {
+	s, dir := open(t)
+	if err := s.PutEntry("credits", []byte("agy_the-token")); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Entry("credits")
+	if err != nil || string(got) != "agy_the-token" {
+		t.Fatalf("entry = %q, %v", got, err)
+	}
+	p := filepath.Join(dir, "releases", "credits.entry")
+	raw, err := os.ReadFile(p)
+	if err != nil || bytes.Contains(raw, []byte("agy_the-token")) {
+		t.Fatalf("the entry is plaintext on disk, or missing: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "releases", "other.entry"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Entry("other"); !errors.Is(err, ErrDamaged) {
+		t.Fatalf("an entry renamed opened: %v", err)
+	}
+	raw[len(raw)-1] ^= 1
+	if err := os.WriteFile(p, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Entry("credits"); !errors.Is(err, ErrDamaged) {
+		t.Fatalf("a changed entry opened: %v", err)
+	}
+	if err := s.RemoveEntry("credits"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Entry("credits"); !errors.Is(err, ErrNoEntry) {
+		t.Fatalf("a removed entry: %v", err)
+	}
+	for _, bad := range []string{"", "Credits", "../x", "a/b", strings.Repeat("a", 33)} {
+		if err := s.PutEntry(bad, nil); err == nil {
+			t.Errorf("entry name %q was taken", bad)
+		}
+	}
+}
