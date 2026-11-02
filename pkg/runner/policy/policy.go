@@ -755,9 +755,23 @@ type Model struct {
 	ProxyAllow []string `yaml:"proxyAllow"`
 }
 
-// MinContextWindow is the smallest model.contextWindow a policy takes: below
-// it a harness's own summary request and output budget would not fit.
-const MinContextWindow = 1024
+// MinContextWindow and MaxContextWindow bound model.contextWindow: below the
+// floor a harness's own summary request and output budget would not fit, and
+// above the ceiling no model's window lies (a number that large is an
+// endpoint's mistake, and would hold compaction back for good).
+const (
+	MinContextWindow = 1024
+	MaxContextWindow = 1 << 30
+)
+
+// CheckContextWindow refuses a context window outside the bounds; 0 is
+// unset and passes.
+func CheckContextWindow(tokens int64) error {
+	if tokens != 0 && (tokens < MinContextWindow || tokens > MaxContextWindow) {
+		return fmt.Errorf("a context window of %d tokens is outside %d to %d", tokens, MinContextWindow, MaxContextWindow)
+	}
+	return nil
+}
 
 // JudgeKey is where the person's own Jev key comes from. The value is
 // never in this file: the variable, else, with apiKeySource keyring, the
@@ -1195,8 +1209,8 @@ func (p *Policy) Validate() error {
 	if strings.ContainsAny(p.Model.Provider, ": \t\n") {
 		return fmt.Errorf("model.provider %q must not contain ':' or whitespace (it names the keychain account provider:<provider>)", p.Model.Provider)
 	}
-	if w := p.Model.ContextWindow; w != 0 && w < MinContextWindow {
-		return fmt.Errorf("model.contextWindow %d must be at least %d tokens (or absent, for the harness's own lookup)", w, MinContextWindow)
+	if err := CheckContextWindow(p.Model.ContextWindow); err != nil {
+		return fmt.Errorf("model.contextWindow: %w (or leave it out, for the harness's own lookup)", err)
 	}
 	if p.Sessions.IdleTimeoutSeconds < 0 || p.Sessions.MaxWallSeconds < 0 || p.Sessions.MaxUserTurns < 0 {
 		return errors.New("sessions.idleTimeoutSeconds, sessions.maxWallSeconds and sessions.maxUserTurns must not be negative")

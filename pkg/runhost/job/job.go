@@ -205,17 +205,20 @@ type Payload struct {
 // Model is the model a run uses: the device policy's, less where its key
 // comes from, which on the runhost is always the run's environment.
 type Model struct {
-	Provider   string   `json:"provider"`
-	Name       string   `json:"name"`
-	APIKeyEnv  string   `json:"apiKeyEnv"`
-	APIKeyKind string   `json:"apiKeyKind,omitempty"`
-	BaseURL    string   `json:"baseUrl,omitempty"`
-	ProxyAllow []string `json:"proxyAllow"`
+	Provider   string `json:"provider"`
+	Name       string `json:"name"`
+	APIKeyEnv  string `json:"apiKeyEnv"`
+	APIKeyKind string `json:"apiKeyKind,omitempty"`
+	BaseURL    string `json:"baseUrl,omitempty"`
+	// ContextWindow is the policy's model.contextWindow: the harness sizes a
+	// model of the operator's own endpoint from it.
+	ContextWindow int64    `json:"contextWindow,omitempty"`
+	ProxyAllow    []string `json:"proxyAllow"`
 }
 
 // ModelOf is the job's model for the device policy's m.
 func ModelOf(m policy.Model) Model {
-	return Model{Provider: m.Provider, Name: m.Name, APIKeyEnv: m.APIKeyEnv, APIKeyKind: m.APIKeyKind, BaseURL: m.BaseURL, ProxyAllow: m.ProxyAllow}
+	return Model{Provider: m.Provider, Name: m.Name, APIKeyEnv: m.APIKeyEnv, APIKeyKind: m.APIKeyKind, BaseURL: m.BaseURL, ContextWindow: m.ContextWindow, ProxyAllow: m.ProxyAllow}
 }
 
 // Policy is the model as the runhost's policy takes it: the key from the
@@ -226,7 +229,7 @@ func (m Model) Policy() policy.Model {
 	if m.PaysWithCredits() || m.SignIn() {
 		source = ""
 	}
-	return policy.Model{Provider: m.Provider, Name: m.Name, APIKeyEnv: m.APIKeyEnv, APIKeySource: source, APIKeyKind: m.APIKeyKind, BaseURL: m.BaseURL, ProxyAllow: m.ProxyAllow}
+	return policy.Model{Provider: m.Provider, Name: m.Name, APIKeyEnv: m.APIKeyEnv, APIKeySource: source, APIKeyKind: m.APIKeyKind, BaseURL: m.BaseURL, ContextWindow: m.ContextWindow, ProxyAllow: m.ProxyAllow}
 }
 
 // SignIn says whether the model is paid by a plan's sign-in (a Claude
@@ -352,6 +355,9 @@ func (j *Job) Validate() error {
 	}
 	if j.Run.Model.Provider == "" || j.Run.Model.Name == "" {
 		return errors.New("the job names no model")
+	}
+	if err := policy.CheckContextWindow(j.Run.Model.ContextWindow); err != nil {
+		return fmt.Errorf("the job's model: %w", err)
 	}
 	if j.Run.Model.PaysWithCredits() {
 		if _, err := policy.AgentryRegistry(j.Run.Model.Policy()); err != nil {

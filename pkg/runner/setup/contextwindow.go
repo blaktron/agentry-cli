@@ -14,7 +14,8 @@ import (
 )
 
 // ContextWindow is a model's context window as an endpoint reported it: the
-// tokens, and the URL that said so. Tokens 0 is an endpoint that did not say.
+// tokens, and the URL that said so (scheme, host and path only). Tokens 0 is
+// an endpoint that did not say.
 type ContextWindow struct {
 	Tokens int64
 	Source string
@@ -72,19 +73,29 @@ func ProbeContextWindow(ctx context.Context, baseURL, model, key string) (Contex
 		if err := ctx.Err(); err != nil {
 			return ContextWindow{}, err
 		}
-		body, ok := probeGet(ctx, t.method, t.url, t.body, key)
+		body, ok := probeFetch(ctx, t.method, t.url, t.body, key)
 		if !ok {
 			continue
 		}
 		if n := t.read(body); n > 0 {
-			return ContextWindow{Tokens: n, Source: t.url}, nil
+			return ContextWindow{Tokens: n, Source: sourceOf(t.url)}, nil
 		}
 	}
 	return ContextWindow{}, nil
 }
 
-// probeGet makes one of the probe's requests and returns the body of a 200.
-func probeGet(ctx context.Context, method, endpoint string, payload any, key string) ([]byte, bool) {
+// sourceOf is endpoint as setup may print it: no user information, query or
+// fragment, which a base URL can carry a secret in.
+func sourceOf(endpoint string) string {
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return ""
+	}
+	return (&url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path}).String()
+}
+
+// probeFetch makes one of the probe's requests and returns the body of a 200.
+func probeFetch(ctx context.Context, method, endpoint string, payload any, key string) ([]byte, bool) {
 	ctx, cancel := context.WithTimeout(ctx, contextProbeTimeout)
 	defer cancel()
 	var rd io.Reader

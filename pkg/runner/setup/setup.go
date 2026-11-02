@@ -939,15 +939,15 @@ func ConfigureModel(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 
 // contextWindowFor settles model.contextWindow: the caller's, else, for the
 // same model at the same endpoint, the policy's. For an OpenAI-compatible
-// endpoint of the person's own (OwnEndpoint), whose models the harness's
+// endpoint of the operator's own (OwnEndpoint), whose models the harness's
 // catalogue seldom holds, the endpoint is asked, and on a terminal the person
 // is too, with what it said (or the policy's) as the default; under Yes an
 // endpoint that said nothing leaves the window unset, and setup says what that
 // costs a long run.
 func contextWindowFor(p Prompter, pol *policy.Policy, opts ModelOpts, prov, model, baseURL, key string) (int64, error) {
 	if w := opts.ContextWindow; w != 0 {
-		if w < policy.MinContextWindow {
-			return 0, fmt.Errorf("context window %d must be at least %d tokens", w, policy.MinContextWindow)
+		if err := policy.CheckContextWindow(w); err != nil {
+			return 0, err
 		}
 		return w, nil
 	}
@@ -965,9 +965,11 @@ func contextWindowFor(p Prompter, pol *policy.Policy, opts ModelOpts, prov, mode
 		switch {
 		case err != nil:
 			p.Say(fmt.Sprintf("could not ask the endpoint for %s's context window: %v", model, err))
-		case found.Tokens >= policy.MinContextWindow:
+		case found.Tokens > 0 && policy.CheckContextWindow(found.Tokens) == nil:
 			window = found.Tokens
 			p.Say(fmt.Sprintf("context window: %d tokens, as %s reports it", window, found.Source))
+		case found.Tokens > 0:
+			p.Say(fmt.Sprintf("not taken: %s reports a context window of %d tokens, outside %d to %d", found.Source, found.Tokens, policy.MinContextWindow, policy.MaxContextWindow))
 		}
 	}
 	if !opts.Yes {
@@ -984,8 +986,8 @@ func contextWindowFor(p Prompter, pol *policy.Policy, opts ModelOpts, prov, mode
 			window = 0
 		} else {
 			n, err := strconv.ParseInt(ans, 10, 64)
-			if err != nil || n < policy.MinContextWindow {
-				return 0, fmt.Errorf("context window %q must be a whole number of tokens, at least %d", ans, policy.MinContextWindow)
+			if err != nil || n == 0 || policy.CheckContextWindow(n) != nil {
+				return 0, fmt.Errorf("context window %q must be a whole number of tokens from %d to %d", ans, policy.MinContextWindow, policy.MaxContextWindow)
 			}
 			window = n
 		}
@@ -997,8 +999,9 @@ func contextWindowFor(p Prompter, pol *policy.Policy, opts ModelOpts, prov, mode
 }
 
 // OwnEndpoint reports whether m is an OpenAI-compatible endpoint of the
-// person's own: custom, or openai pointed at a base URL. The harness sizes
-// such a model from the policy unless its catalogue happens to hold the id.
+// operator's own: custom, or openai pointed at a base URL. The harness's
+// catalogue seldom holds such a model, so the policy's window is often the
+// only one the harness has; where both are present, the policy's wins.
 func OwnEndpoint(m policy.Model) bool {
 	return m.Provider == "custom" || (m.Provider == policy.ProviderOpenAI && strings.TrimSpace(m.BaseURL) != "")
 }

@@ -236,6 +236,42 @@ func TestConfigureModelAsksNoWindowForATableProvider(t *testing.T) {
 	}
 }
 
+// A window no model has is an endpoint's mistake: it is said and not taken.
+func TestConfigureModelDoesNotTakeAWindowOutOfBounds(t *testing.T) {
+	t.Setenv("K", "set")
+	pol := policy.Default()
+	probed := 0
+	p := &scriptPrompter{}
+	if err := ConfigureModel(p, pol, ModelOpts{Provider: "custom", Model: "m", APIKeyEnv: "K", BaseURL: "http://127.0.0.1:1234/v1", Yes: true,
+		ProbeContextWindow: probeAnswering(ContextWindow{Tokens: 1 << 62, Source: "http://127.0.0.1:1234/props"}, nil, &probed)}); err != nil {
+		t.Fatal(err)
+	}
+	said := strings.Join(p.said, "\n")
+	if pol.Model.ContextWindow != 0 || !strings.Contains(said, "not taken") || !strings.Contains(said, "context window is unknown") {
+		t.Fatalf("window %d, said %q", pol.Model.ContextWindow, p.said)
+	}
+	if err := ConfigureModel(&scriptPrompter{}, pol, ModelOpts{Provider: "custom", Model: "m", APIKeyEnv: "K", BaseURL: "http://127.0.0.1:1234/v1", ContextWindow: policy.MaxContextWindow + 1, Yes: true}); err == nil {
+		t.Fatal("a flag outside the bounds was taken")
+	}
+}
+
+// The source setup prints carries no user information or query from the
+// base URL.
+func TestProbeContextWindowSourceCarriesNoCredentials(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"data":[{"id":"m","max_model_len":8192}]}`)
+	}))
+	defer srv.Close()
+	base := strings.Replace(srv.URL, "http://", "http://user:pw@", 1) + "/v1?token=abc"
+	got, err := ProbeContextWindow(context.Background(), base, "m", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Tokens != 8192 || strings.Contains(got.Source, "pw") || strings.Contains(got.Source, "abc") {
+		t.Fatalf("got %+v", got)
+	}
+}
+
 func TestConfigureModelRefusesAWindowTooSmall(t *testing.T) {
 	pol := policy.Default()
 	err := ConfigureModel(&scriptPrompter{}, pol, ModelOpts{Provider: "custom", Model: "m", APIKeyEnv: "K", BaseURL: "http://127.0.0.1:1234/v1", ContextWindow: 512, Yes: true})

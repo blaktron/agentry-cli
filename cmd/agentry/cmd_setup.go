@@ -52,7 +52,9 @@ func newSetupCmd() *cobra.Command {
 			"  1. Configure your preferred LLM provider for agent runs into the operator\n" +
 			"     policy — interactively on a terminal, or from --provider/--model/\n" +
 			"     --api-key-env/--base-url with --yes. The key itself is never stored;\n" +
-			"     only the env var NAME that will hold it.\n" +
+			"     only the env var NAME that will hold it. For a model server of your\n" +
+			"     own (custom, or openai with --base-url) setup asks the server for the\n" +
+			"     model's context window, or takes --context-window.\n" +
 			"  2. Configure the docker-mcp-gateway plane right away: verify the docker\n" +
 			"     engine, pull the pinned gateway and harness images, and build the local\n" +
 			"     runner image from the embedded context.\n\n" +
