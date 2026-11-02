@@ -1297,7 +1297,7 @@ func (s *server) toolReadInput(raw json.RawMessage) (string, bool) {
 				return fmt.Sprintf("read_input: %s is an archive; list_inputs with path %q lists what was unpacked from it, each read by its own path", e.Path, e.Path), true
 			}
 			view, mime = e.viewOrDefault(view), e.MIME
-			if abs, err = s.viewOf(e, view); err != nil {
+			if abs, err = s.viewOf(nil, e, view); err != nil {
 				return s.failed("read_input", err)
 			}
 		}

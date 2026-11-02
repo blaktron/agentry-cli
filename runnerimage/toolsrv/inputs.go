@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
@@ -161,9 +162,9 @@ func (e InputEntry) views() string {
 	return "original (default; the text is the same)"
 }
 
-// viewOf is where one view of an entry lives, resolved under its own root,
-// or why the entry has no such view.
-func (s *server) viewOf(e InputEntry, view string) (string, error) {
+// viewOf is where one view of an entry lives, resolved under its own root
+// by rs, or why the entry has no such view.
+func (s *server) viewOf(rs *resolvers, e InputEntry, view string) (string, error) {
 	if err := validView(view); err != nil {
 		return "", err
 	}
@@ -173,18 +174,18 @@ func (s *server) viewOf(e InputEntry, view string) (string, error) {
 			return "", fmt.Errorf("%s has no text: %s", e.Path, e.Unread)
 		}
 		if e.Converted {
-			return resolveUnder(filepath.Join(s.spec.InputsTextDir, InputsConvertedSubdir), e.Path)
+			return rs.under(filepath.Join(s.spec.InputsTextDir, InputsConvertedSubdir), e.Path)
 		}
-		return s.textOf(e)
+		return s.textOf(rs, e)
 	case ViewOriginal:
 		if !e.hasOriginal() {
 			return "", fmt.Errorf("%s has no original view: it was decoded from a document inside %s, which stayed in the decode step; read its text", e.Path, e.InArchive)
 		}
 		if e.InArchive != "" && !e.Original {
-			return s.textOf(e)
+			return s.textOf(rs, e)
 		}
 	}
-	return resolveUnder(s.spec.InputsDir, e.Path)
+	return rs.under(s.spec.InputsDir, e.Path)
 }
 
 // Outcome is the entry's outcome as list_inputs says it.
@@ -250,12 +251,13 @@ func (s *server) inputsIndex() (*InputsIndex, error) {
 }
 
 // textOf is where the text read_input serves for an entry lives, resolved
-// under its own root: the decoded text, or the original when it is text.
-func (s *server) textOf(e InputEntry) (string, error) {
+// under its own root by rs: the decoded text, or the original when it is
+// text.
+func (s *server) textOf(rs *resolvers, e InputEntry) (string, error) {
 	if e.Decoded || e.InArchive != "" {
-		return resolveUnder(filepath.Join(s.spec.InputsTextDir, InputsTextSubdir), e.Path)
+		return rs.under(filepath.Join(s.spec.InputsTextDir, InputsTextSubdir), e.Path)
 	}
-	return resolveUnder(s.spec.InputsDir, e.Path)
+	return rs.under(s.spec.InputsDir, e.Path)
 }
 
 // lookup finds the entry for a cleaned path.
@@ -349,22 +351,35 @@ func (s *server) toolSearchInputs(raw json.RawMessage) (string, bool) {
 			return s.failed("search_inputs", err)
 		}
 	}
-	targets, err := s.searchTargets(clean, a.View)
+	// One deadline for the whole call, so the answer arrives while the
+	// harness still waits for it, and part of it for the listing, so what
+	// was listed is read.
+	start := time.Now()
+	deadline := start.Add(s.searchTimeout)
+	targets, cut, err := s.searchTargets(clean, a.View, nil, s.listBy(start))
 	if err != nil {
 		return s.failed("search_inputs", err)
 	}
 	var m matches
 	for _, t := range targets {
+		if time.Now().After(deadline) {
+			cut = true
+			break
+		}
 		data, err := readPrefix(t.abs, maxSearchFileBytes)
 		if err != nil {
 			continue
 		}
 		m.add(t.path, data, needle, limit)
 	}
-	if m.total == 0 {
-		return fmt.Sprintf("no input text matches %q", strings.TrimSpace(a.Query)), false
+	tail := ""
+	if cut {
+		tail = fmt.Sprintf("\n[the search stopped at its %s limit, so this is part of the answer; narrow it with path]", s.searchTimeout)
 	}
-	return searchAnswer(m.hits, m.total, s.spec.Limits.budget()), false
+	if m.total == 0 {
+		return fmt.Sprintf("no input text matches %q", strings.TrimSpace(a.Query)) + tail, false
+	}
+	return searchAnswer(m.hits, m.total, s.spec.Limits.budget().less(tail)) + tail, false
 }
 
 // searchQuery holds a search's query and count to their bounds: the
@@ -433,17 +448,24 @@ func searchAnswer(hits []string, total int, b budget) string {
 // searchTargets is the texts under a cleaned path, in the view asked for
 // (each input's default when none is): from the index when there is one,
 // an input without that view left out, else every regular file under
-// /inputs (a link is never followed), which is both views at once.
-func (s *server) searchTargets(clean, view string) ([]searchTarget, error) {
+// /inputs (a link is never followed), which is both views at once. keep,
+// when set, is asked about each input's path before anything about it is
+// read from the disk, so a search narrowed by name checks only the inputs
+// it searches. Listing stops at deadline, and cut says it stopped: what
+// it listed by then is searched.
+func (s *server) searchTargets(clean, view string, keep func(string) bool, deadline time.Time) (out []searchTarget, cut bool, err error) {
 	idx, err := s.inputsIndex()
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	var out []searchTarget
 	if idx != nil {
+		rs := newResolvers(s.fsCalls)
 		for _, e := range idx.under(clean) {
-			if !e.hasText() {
+			if !e.hasText() || (keep != nil && !keep(e.Path)) {
 				continue
+			}
+			if time.Now().After(deadline) {
+				return out, true, nil
 			}
 			v := view
 			if v == "" && e.Decoded {
@@ -452,21 +474,25 @@ func (s *server) searchTargets(clean, view string) ([]searchTarget, error) {
 				// the release's default.
 				v = ViewText
 			}
-			abs, err := s.viewOf(e, v)
+			abs, err := s.viewOf(rs, e, v)
 			if err != nil {
 				continue
 			}
 			out = append(out, searchTarget{path: e.Path, abs: abs})
 		}
-		return out, nil
+		return out, false, nil
 	}
 	root, err := resolveUnder(s.spec.InputsDir, clean)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+		if time.Now().After(deadline) {
+			cut = true
+			return fs.SkipAll
 		}
 		if !d.Type().IsRegular() {
 			return nil
@@ -475,13 +501,15 @@ func (s *server) searchTargets(clean, view string) ([]searchTarget, error) {
 		if err != nil {
 			return err
 		}
-		out = append(out, searchTarget{path: filepath.ToSlash(rel), abs: p})
+		if rel = filepath.ToSlash(rel); keep == nil || keep(rel) {
+			out = append(out, searchTarget{path: rel, abs: p})
+		}
 		return nil
 	})
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, fmt.Errorf("no input at %q", clean)
+		return nil, false, fmt.Errorf("no input at %q", clean)
 	}
-	return out, err
+	return out, cut, err
 }
 
 // readPrefix reads at most limit bytes of a file, cut back to a rune

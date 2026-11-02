@@ -111,12 +111,16 @@ type server struct {
 	// set by grep for a search of the inputs (search.go), cleared before
 	// every call.
 	callPersonsInput bool
-	// search, rgBin and searchTimeout are grep and glob's ripgrep, how it
-	// is held, and how long a search may take (search.go); set when they
-	// are granted, and by a test.
+	// search and rgBin are grep and glob's ripgrep and how it is held
+	// (search.go), set when they are granted, and by a test;
+	// searchTimeout is how long one call of grep, glob or search_inputs
+	// may take: SearchTimeout, which a test shortens.
 	search        searchConfinement
 	rgBin         string
 	searchTimeout time.Duration
+	// fsCalls are the calls the search tools check their inputs with
+	// (paths.go), osResolverCalls but in a test.
+	fsCalls resolverCalls
 	// share is what the server remembers of a checked share folder
 	// (sharecheck.go).
 	share shareState
@@ -175,8 +179,9 @@ func newServer(spec *Spec, out, logw io.Writer) (*server, error) {
 		s.typst, s.render, s.pdfTimeout = defaultTypst(), newRenderConfinement(), PDFRenderTimeout
 		_, _ = fmt.Fprintln(logw, "agentry-runner tools: export_pdf: "+s.render.describe())
 	}
+	s.searchTimeout, s.fsCalls = SearchTimeout, osResolverCalls()
 	if spec.Search.Enabled {
-		s.rgBin, s.search, s.searchTimeout = ripgrepPath(), newSearchConfinement(), SearchTimeout
+		s.rgBin, s.search = ripgrepPath(), newSearchConfinement()
 		_, _ = fmt.Fprintln(logw, "agentry-runner tools: grep and glob: "+s.search.describe())
 	}
 	s.buildTools()

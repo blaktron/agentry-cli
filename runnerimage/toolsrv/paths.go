@@ -34,22 +34,10 @@ import (
 // (fs_list's ".") must apply it before resolving, so "empty means root"
 // is a per-tool decision, never a silent one.
 func resolveUnder(root, rel string) (string, error) {
-	if rel == "" {
-		return "", fmt.Errorf("empty path")
+	abs, err := lexicallyUnder(root, rel)
+	if err != nil {
+		return "", err
 	}
-	if strings.Contains(rel, "\\") {
-		return "", fmt.Errorf("path %q contains a backslash; tool paths are slash-separated", rel)
-	}
-	// Both checks: path.IsAbs sees the model's slash form, filepath.IsAbs
-	// the host form — on Windows only the latter catches "C:/x".
-	if path.IsAbs(rel) || filepath.IsAbs(rel) {
-		return "", fmt.Errorf("path %q is absolute; tool paths are relative to their root", rel)
-	}
-	clean := path.Clean(rel)
-	if clean == ".." || strings.HasPrefix(clean, "../") {
-		return "", fmt.Errorf("path %q escapes the tool root", rel)
-	}
-	abs := filepath.Join(root, filepath.FromSlash(clean))
 
 	// The lexical check cannot see symlinks. Resolve the root once (it may
 	// itself sit behind links, e.g. /tmp on macOS), then resolve the
@@ -80,6 +68,150 @@ func resolveUnder(root, rel string) (string, error) {
 		return "", fmt.Errorf("path %q escapes the tool root via a symlink", rel)
 	}
 	return abs, nil
+}
+
+// lexicallyUnder is resolveUnder's first layer: rel joined under root,
+// refused when it is empty, absolute, holds a backslash or climbs out with
+// "..", all without touching the filesystem.
+func lexicallyUnder(root, rel string) (string, error) {
+	if rel == "" {
+		return "", fmt.Errorf("empty path")
+	}
+	if strings.Contains(rel, "\\") {
+		return "", fmt.Errorf("path %q contains a backslash; tool paths are slash-separated", rel)
+	}
+	// Both checks: path.IsAbs sees the model's slash form, filepath.IsAbs
+	// the host form — on Windows only the latter catches "C:/x".
+	if path.IsAbs(rel) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("path %q is absolute; tool paths are relative to their root", rel)
+	}
+	clean := path.Clean(rel)
+	if clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", fmt.Errorf("path %q escapes the tool root", rel)
+	}
+	return filepath.Join(root, filepath.FromSlash(clean)), nil
+}
+
+// underResolver checks many paths beneath one root by resolveUnder's
+// rules, for a tool that checks every file of an area in one call (the
+// inputs' search targets). resolveUnder resolves the root and then the
+// whole path for each file, one metadata call per path element, and where
+// each call is a round trip (a host folder bind-mounted into a VM-backed
+// engine) an area of a thousand files outlasts a harness's wait for the
+// tool. This resolves the root once and each folder once, so a file that
+// is not a link costs one Lstat. A path that is a link, or is missing, is
+// left to resolveUnder whole. Links are known by Lstat's ModeSymlink, which
+// is what a link is in the Linux container this server runs in.
+type underResolver struct {
+	root string
+	// resolved is the symlink-resolved root, or err why it is not;
+	// resolved once, at the first path.
+	resolved string
+	err      error
+	done     bool
+	// dirs holds each folder beneath root resolved so far.
+	dirs  map[string]string
+	calls resolverCalls
+}
+
+// resolverCalls are the two filesystem calls an underResolver makes:
+// os.Lstat and filepath.EvalSymlinks, but in a test that counts or slows
+// them.
+type resolverCalls struct {
+	lstat func(string) (fs.FileInfo, error)
+	eval  func(string) (string, error)
+}
+
+func osResolverCalls() resolverCalls {
+	return resolverCalls{lstat: os.Lstat, eval: filepath.EvalSymlinks}
+}
+
+func newUnderResolver(root string, calls resolverCalls) *underResolver {
+	return &underResolver{root: filepath.Clean(root), dirs: map[string]string{}, calls: calls}
+}
+
+// resolve is resolveUnder(r.root, rel).
+func (r *underResolver) resolve(rel string) (string, error) {
+	abs, err := lexicallyUnder(r.root, rel)
+	if err != nil {
+		return "", err
+	}
+	if !r.done {
+		r.done = true
+		if r.resolved, r.err = r.calls.eval(r.root); r.err != nil {
+			r.err = fmt.Errorf("resolve tool root %s: %w", r.root, r.err)
+		}
+	}
+	if r.err != nil {
+		return "", r.err
+	}
+	if abs == r.root {
+		return abs, nil
+	}
+	fi, err := r.calls.lstat(abs)
+	if err != nil || fi.Mode()&fs.ModeSymlink != 0 {
+		return resolveUnder(r.root, rel)
+	}
+	dir, err := r.dir(filepath.Dir(abs))
+	if err != nil {
+		return "", fmt.Errorf("resolve %s: %w", abs, err)
+	}
+	if !within(r.resolved, filepath.Join(dir, filepath.Base(abs))) {
+		return "", fmt.Errorf("path %q escapes the tool root via a symlink", rel)
+	}
+	return abs, nil
+}
+
+// dir is the symlink-resolved path of d, a folder lexically beneath the
+// root: its parent's resolved path and its own name when it is no link,
+// what the link resolves to when it is one.
+func (r *underResolver) dir(d string) (string, error) {
+	if d == r.root {
+		return r.resolved, nil
+	}
+	if got, ok := r.dirs[d]; ok {
+		return got, nil
+	}
+	fi, err := r.calls.lstat(d)
+	if err != nil {
+		return "", err
+	}
+	var got string
+	if parent := filepath.Dir(d); fi.Mode()&fs.ModeSymlink != 0 || parent == d {
+		if got, err = r.calls.eval(d); err != nil {
+			return "", err
+		}
+	} else {
+		if got, err = r.dir(parent); err != nil {
+			return "", err
+		}
+		got = filepath.Join(got, filepath.Base(d))
+	}
+	r.dirs[d] = got
+	return got, nil
+}
+
+// resolvers checks paths beneath several roots in one call, an
+// underResolver a root; a nil one checks each path with resolveUnder.
+type resolvers struct {
+	calls resolverCalls
+	roots map[string]*underResolver
+}
+
+func newResolvers(calls resolverCalls) *resolvers {
+	return &resolvers{calls: calls, roots: map[string]*underResolver{}}
+}
+
+func (rs *resolvers) under(root, rel string) (string, error) {
+	if rs == nil {
+		return resolveUnder(root, rel)
+	}
+	r := rs.roots[root]
+	if r == nil {
+		r = newUnderResolver(root, rs.calls)
+		rs.roots[root] = r
+	}
+	return r.resolve(rel)
 }
 
 // within reports whether p equals root or lies below it. Both arguments
