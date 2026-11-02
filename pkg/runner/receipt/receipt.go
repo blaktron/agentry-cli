@@ -146,6 +146,12 @@ type Runhost struct {
 	HostKeyFingerprint string `json:"hostKeyFingerprint"`
 	CLIVersion         string `json:"cliVersion"`
 	Job                string `json:"job"`
+	// Adapter is the adapter the run was sent with, empty for the policy's
+	// default; AdapterAsked is the one the person asked for when a
+	// runhost, which runs no host-process harness, ran this one in its
+	// place (claude-image for claude).
+	Adapter      string `json:"adapter,omitempty"`
+	AdapterAsked string `json:"adapterAsked,omitempty"`
 }
 
 // Persistent is the envelope's record of one segment of a persistent agent.

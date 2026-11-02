@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/blaktron/agentry-cli/internal/version"
+	"github.com/blaktron/agentry-cli/pkg/runhost/job"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
 	"github.com/blaktron/agentry-cli/pkg/runner/localinstall"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
@@ -238,7 +239,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&opts.adapterName, "adapter", "", "harness adapter (default "+adapter.DefaultName+", or "+adapter.CodexImageAdapterName+" when the model is paid by your ChatGPT plan); see --list-adapters")
 	f.StringVar(&opts.local, "local", "", "run an unpublished QuickAgent DIRECTORY instead of a registry ref")
 	f.StringVar(&opts.pin, "pin", "", "require the resolved archive digest to equal this sha256:… value")
-	f.StringVar(&opts.on, "on", "", "run on this remote runhost (see agentry runhost list) instead of this computer, carrying the run's secrets, files and intake, or an interactive session: the release is verified here, sent, verified again there, and its output sealed to this device and opened into the output folder; a run lost mid-way goes on there (agentry runhost attach)")
+	f.StringVar(&opts.on, "on", "", "run on this remote runhost (see agentry runhost list) instead of this computer, carrying the run's secrets, files and intake, or an interactive session: the release is verified here, sent, verified again there, and its output sealed to this device and opened into the output folder; a run lost mid-way goes on there (agentry runhost attach); a plan's sign-in is the runhost's own (agentry runhost model --sign-in), and claude and codex run as their images there")
 	f.BoolVar(&opts.detach, "detach", false, "with --on: leave the run on the runhost once it has started there, and say its job; agentry runhost attach, collect and cancel reach it later")
 	f.BoolVar(&opts.installed, "installed", false, "run the release already installed in the runner home at --pin, asking no registry, so nothing the registry says of it today (a yank, a quarantine) is heard (a remote runhost's service, which verified it as it arrived)")
 	_ = f.MarkHidden("installed")
@@ -533,6 +534,11 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	adapterName := opts.adapterName
 	if adapterName == "" {
 		adapterName = adapter.DefaultFor(pol)
+	}
+	// A runhost's run (--installed) never runs a harness as a host process,
+	// outside gVisor: only the adapters whose harness is a container.
+	if opts.installed && !slices.Contains(job.ImageAdapters, adapterName) {
+		return engine.Classify(engine.ExitPolicy, fmt.Errorf("a runhost runs its harness in a container under gVisor; the adapter %q runs one as a host process", adapterName))
 	}
 	ad, err := adapter.Get(adapterName)
 	if err != nil {

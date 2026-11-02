@@ -20,6 +20,8 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runhost"
 	"github.com/blaktron/agentry-cli/pkg/runhost/clirelease"
 	rhsetup "github.com/blaktron/agentry-cli/pkg/runhost/setup"
+	"github.com/blaktron/agentry-cli/pkg/runhost/signin"
+	"github.com/blaktron/agentry-cli/pkg/runner/claudesignin"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/setup"
 	"github.com/blaktron/agentry-cli/pkg/runner/targethost"
@@ -565,6 +567,19 @@ func newRunhostRemoveCmd() *cobra.Command {
 				var b strings.Builder
 				printCreditsRemoved(&b, name, removed)
 				say(strings.TrimSpace(b.String()))
+			}
+			// So do its model sign-ins: Claude Code's volume is the docker
+			// daemon's, which outlives the account.
+			for _, vendor := range signin.Vendors {
+				removed, err := removeRunhostSignIn(cmd, name, vendor)
+				switch {
+				case err != nil:
+					say(fmt.Sprintf("warning: %s could not end its %s sign-in (%v): end it at the vendor, and on the server `docker volume rm %s` for Claude Code", name, vendor, err, claudesignin.Volume))
+				case removed.Removed:
+					var b strings.Builder
+					printSignInRemoved(&b, name, removed)
+					say(strings.TrimSpace(b.String()))
+				}
 			}
 			err = rhsetup.Remove(cmd.Context(), rhsetup.RemoveOptions{
 				Record: *rec, Auth: auth, Answer: targethost.Answer{User: user, Host: rec.Host, Port: rec.Port},

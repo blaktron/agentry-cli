@@ -45,7 +45,9 @@ func TestAJobRoundTripsAndRefusesWhatARunhostDoesNotTake(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, change := range map[string]func(*Job){
-		"an adapter":            func(j *Job) { j.Run.Adapter = "claude" },
+		"a host harness":        func(j *Job) { j.Run.Adapter = "claude" },
+		"another host harness":  func(j *Job) { j.Run.Adapter = "codex" },
+		"an unknown adapter":    func(j *Job) { j.Run.Adapter = "opencode" },
 		"another version":       func(j *Job) { j.V = 2 },
 		"unsigned, no consent":  func(j *Job) { j.Run.AllowUnsigned = false },
 		"verified, no envelope": func(j *Job) { j.Release.State = StateVerified },
@@ -141,6 +143,79 @@ func TestACreditsModelCarriesNoKey(t *testing.T) {
 		change(j)
 		if err := j.Validate(); err == nil {
 			t.Errorf("a credits job with %s: validated", name)
+		}
+	}
+}
+
+// A model paid by a plan's sign-in carries no key: the runhost keeps the
+// sign-in, and its policy reads no key.
+func TestASignInModelCarriesNoKey(t *testing.T) {
+	signIn := func(j *Job) {
+		j.Run.ModelKey = ""
+		j.Run.Model = Model{Provider: "anthropic", Name: "sonnet", APIKeyKind: "claude-signin",
+			ProxyAllow: []string{"api.anthropic.com:443", "platform.claude.com:443"}}
+	}
+	for _, m := range []Model{
+		{Provider: "anthropic", Name: "sonnet", APIKeyKind: "claude-signin"},
+		{Provider: "openai", Name: "gpt-5.5", APIKeyKind: "chatgpt-plan"},
+		{Provider: "copilot", Name: "auto", APIKeyKind: "copilot-signin"},
+	} {
+		j := validJob()
+		j.Run.ModelKey, j.Run.Model = "", m
+		if err := j.Validate(); err != nil {
+			t.Errorf("a %s job: %v", m.APIKeyKind, err)
+		}
+		if p := j.Run.Model.Policy(); p.APIKeySource != "" || p.APIKeyEnv != "" {
+			t.Errorf("a %s model's policy reads a key: %+v", m.APIKeyKind, p)
+		}
+	}
+	for name, change := range map[string]func(*Job){
+		"a key":              func(j *Job) { j.Run.ModelKey = "k" },
+		"a key variable":     func(j *Job) { j.Run.Model.APIKeyEnv = "ANTHROPIC_API_KEY" },
+		"another provider":   func(j *Job) { j.Run.Model.Provider = "openai" },
+		"a host harness":     func(j *Job) { j.Run.Adapter = "claude" },
+		"an unknown adapter": func(j *Job) { j.Run.Adapter = "aider" },
+	} {
+		j := validJob()
+		signIn(j)
+		change(j)
+		if err := j.Validate(); err == nil {
+			t.Errorf("%s: validated", name)
+		}
+	}
+	for _, a := range ImageAdapters {
+		j := validJob()
+		signIn(j)
+		j.Run.Adapter = a
+		if err := j.Validate(); err != nil {
+			t.Errorf("the image adapter %s: %v", a, err)
+		}
+	}
+}
+
+// No harness runs as a host process on a runhost: the installed claude and
+// codex become their images, image adapters stay, and any other is refused.
+func TestARunhostRunsTheImageOfAHostHarness(t *testing.T) {
+	for asked, want := range map[string]struct {
+		name   string
+		mapped bool
+	}{
+		"":              {"", false},
+		"claude":        {AdapterClaudeImage, true},
+		"codex":         {AdapterCodexImage, true},
+		"claude-image":  {AdapterClaudeImage, false},
+		"codex-image":   {AdapterCodexImage, false},
+		"copilot-image": {AdapterCopilot, false},
+		"docker-agent":  {AdapterDockerAgent, false},
+	} {
+		got, mapped, err := RunhostAdapter(asked)
+		if err != nil || got != want.name || mapped != want.mapped {
+			t.Errorf("%q: %q %v %v", asked, got, mapped, err)
+		}
+	}
+	for _, bad := range []string{"opencode", "copilot", "goose", "claude-image "} {
+		if _, _, err := RunhostAdapter(bad); err == nil {
+			t.Errorf("%q taken", bad)
 		}
 	}
 }

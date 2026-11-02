@@ -1,6 +1,14 @@
 {
   "versions": [
     {
+      "version": "0.7.6",
+      "highlights": [
+        "agentry runhost model --sign-in signs a runhost in to your Claude, ChatGPT or Copilot plan from your browser.",
+        "A run on a runhost can use that plan: Claude Code, Codex and Copilot CLI run in their images there, under gVisor.",
+        "agentry runhost store lists a runhost's sign-ins, and --remove ends one; agentry runhost remove ends them all."
+      ]
+    },
+    {
       "version": "0.7.5",
       "highlights": [
         "A personal agent with Brave Search or Fastmail switched on starts again; 0.7.1 refused its stored key."

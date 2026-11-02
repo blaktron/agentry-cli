@@ -23,6 +23,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
+	"github.com/blaktron/agentry-cli/pkg/runner/modelsignin"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/trust"
@@ -47,8 +48,6 @@ func runOnUnsupported(opts runOpts) string {
 		return "--destinations-file (a runhost takes this device's saved destinations)"
 	case opts.connectionsFile != "", opts.reviewInputs != "", opts.eventsPath != "":
 		return "--connections-file, --review-inputs and --events"
-	case opts.adapterName != "":
-		return "--adapter (a runhost runs its own container harness)"
 	case opts.keepRunDir:
 		return "--keep-run-dir"
 	case len(opts.hostFlags.pins) > 0, opts.hostFlags.knownHosts != "":
@@ -63,6 +62,12 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	}
 	if what := runOnUnsupported(opts); what != "" {
 		return engine.Classify(engine.ExitUsage, fmt.Errorf("a run on a runhost does not take %s yet", what))
+	}
+	// No harness runs as a host process on a runhost: the installed claude
+	// and codex run as their images there.
+	runAdapter, mapped, err := job.RunhostAdapter(opts.adapterName)
+	if err != nil {
+		return engine.Classify(engine.ExitUsage, err)
 	}
 	if opts.outputFormat != "text" && opts.outputFormat != "json" {
 		return fmt.Errorf("unknown --output-format %q (want text or json)", opts.outputFormat)
@@ -187,6 +192,7 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	run.Task, run.AllowUnsigned, run.AllowUnscanned = string(task), opts.allowUnsigned, opts.allowUnscanned
 	run.Timeout, run.MaxTurns, run.MaxCost = opts.timeout, opts.maxTurns, opts.maxCost
 	run.Model, run.ModelKey = job.ModelOf(pol.Model), modelKey
+	run.Adapter = runAdapter
 	run.Session = mode == manifest.ModeInteractive
 	j := &job.Job{V: job.Version, ID: id, Device: rec.DeviceID, Release: rel, Run: run}
 	if err := j.Validate(); err != nil {
@@ -208,10 +214,20 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	}
 	errOut := cmd.ErrOrStderr()
 	_, _ = fmt.Fprintf(errOut, "running %s on %s (%s, host key %s)\n", meta.Ref, rec.Name, rec.Host, rec.HostKeyFingerprint)
+	if mapped {
+		_, _ = fmt.Fprintf(errOut, "on a runhost the installed %s does not run: %s runs in its image, %s, in a container under gVisor\n", opts.adapterName, harnessName(opts.adapterName), runAdapter)
+	}
+	if pol.Model.APIKeyKind != "" && job.ModelOf(pol.Model).SignIn() {
+		_, _ = fmt.Fprintf(errOut, "paying for the model with the %s sign-in %s keeps\n", modelsignin.VendorOf(pol.Model.APIKeyKind), rec.Name)
+	}
 
 	opts.progress.at(receipt.StageAgent)
 	lj := runhostLocalJob{Job: j.ID, Runhost: rec.Name, Ref: meta.Ref, Namespace: meta.Namespace, Name: meta.Name, Version: meta.Version,
-		Digest: meta.Digest, Out: opts.out, DeliverTo: carried.deliverTo, Session: j.Run.Session, StartedAt: time.Now().UTC().Format(time.RFC3339)}
+		Digest: meta.Digest, Out: opts.out, DeliverTo: carried.deliverTo, Session: j.Run.Session, StartedAt: time.Now().UTC().Format(time.RFC3339),
+		Adapter: runAdapter}
+	if mapped {
+		lj.AdapterAsked = opts.adapterName
+	}
 	if err := putLocalJob(home, lj); err != nil {
 		return err
 	}
@@ -244,6 +260,17 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	return err
 }
 
+// harnessName is the vendor harness an adapter runs, for the person.
+func harnessName(adapterName string) string {
+	switch adapterName {
+	case "claude":
+		return "Claude Code"
+	case "codex":
+		return "Codex"
+	}
+	return adapterName
+}
+
 // runOnDetached says where a detached job is, and how to reach it again.
 func runOnDetached(cmd *cobra.Command, rec *runhost.Record, id, format string) error {
 	if format == "json" {
@@ -256,15 +283,19 @@ func runOnDetached(cmd *cobra.Command, rec *runhost.Record, id, format string) e
 
 // runOnModelKey is the device policy's model key, which the run carries in
 // flight: the variable the policy names, else its keychain entry. A model
-// paid with Agentry credits carries none: the runhost pays with the credits
-// token in its store (agentry runhost model). A model a runhost cannot be
-// handed this way yet is refused here.
+// paid with Agentry credits or a plan's sign-in carries none: the runhost
+// pays with the credits token, or the sign-in, it keeps (agentry runhost
+// model). A model a runhost cannot be handed this way is refused here.
 func runOnModelKey(pol *policy.Policy) (string, error) {
 	switch {
 	case pol.Model.Provider == policy.ProviderAgentry:
 		return "", nil
-	case policy.IsModelSignIn(pol.Model.APIKeyKind) || pol.Model.APIKeyKind == policy.KeyKindSubscription:
-		return "", errors.New("a run on a runhost cannot use a model sign-in yet: set an API key with agentry setup")
+	case policy.IsModelSignIn(pol.Model.APIKeyKind):
+		// The runhost keeps the plan's sign-in itself (agentry runhost
+		// model --sign-in): nothing of this computer's travels.
+		return "", nil
+	case pol.Model.APIKeyKind == policy.KeyKindSubscription:
+		return "", errors.New("a Claude subscription token runs only the installed claude, which a runhost does not run: sign the runhost in with agentry runhost model <name> --sign-in claude, and choose your Claude subscription with agentry setup")
 	}
 	key, err := modelkey.Personal(pol.Model.APIKeyEnv, pol.Model.APIKeySource, pol.Model.Provider)
 	if err != nil {
