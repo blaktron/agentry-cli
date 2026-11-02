@@ -106,6 +106,13 @@ func runhostJobVerb(ctx context.Context, _ runhost.Request, in io.Reader, fw *ru
 	if _, ok := devices[j.Device]; !ok {
 		return engine.ExitUsage, fmt.Errorf("device %s is not paired with this runhost", j.Device)
 	}
+	// A model paid with Agentry credits needs the runhost's credits token
+	// for its registry, before anything of the job is taken.
+	if j.Run.Model.PaysWithCredits() {
+		if _, err := runhostJobCredits(j.Run.Model.Policy()); err != nil {
+			return engine.ExitPolicy, err
+		}
+	}
 	st, err := store.Open(runhostStoreDir, runhostStoreKey)
 	if err != nil {
 		return engine.ExitCLI, fmt.Errorf("the runhost's store: %w", err)
@@ -319,10 +326,11 @@ func runhostLayDown(home string, meta *installdir.Meta, archive []byte) error {
 // runhostChildEnv is the run's environment: the service's own, less every
 // variable that would make the run a hosted one or hand it a hosted
 // credential, and less any the job's own credentials travel in, plus the
-// model's key under the policy's variable and the job's credentials under
+// model's key under the policy's variable, or the runhost's credits token
+// for a model paid with Agentry credits, and the job's credentials under
 // theirs (runhostCredentialEnv).
-func runhostChildEnv(base []string, j *job.Job) []string {
-	drop := map[string]bool{envHosted: true, envRunGrant: true, envJobToken: true, trust.EnvPinRegistry: true}
+func runhostChildEnv(base []string, j *job.Job, creditsToken string) []string {
+	drop := map[string]bool{envHosted: true, envRunGrant: true, envJobToken: true, trust.EnvPinRegistry: true, envRunhostCreditsToken: true}
 	var out []string
 	for _, kv := range base {
 		k, _, _ := strings.Cut(kv, "=")
@@ -334,6 +342,9 @@ func runhostChildEnv(base []string, j *job.Job) []string {
 	}
 	if j.Run.Model.APIKeyEnv != "" && j.Run.ModelKey != "" {
 		out = append(out, j.Run.Model.APIKeyEnv+"="+j.Run.ModelKey)
+	}
+	if creditsToken != "" {
+		out = append(out, envRunhostCreditsToken+"="+creditsToken)
 	}
 	return append(out, runhostCredentialEnv(j)...)
 }
@@ -512,7 +523,20 @@ func runhostRun(ctx context.Context, j *job.Job, dir, home string, devices map[s
 	if j.Run.Session {
 		st.inputs = filepath.Join(dir, "session-inputs")
 	}
+	// A model paid with Agentry credits opens its session with the
+	// runhost's own credits token, kept in its store.
+	var creditsToken string
+	if j.Run.Model.PaysWithCredits() {
+		tok, err := runhostJobCredits(j.Run.Model.Policy())
+		if err != nil {
+			return engine.ExitPolicy, err
+		}
+		creditsToken = tok
+	}
 	values := runhostJobValues(j)
+	if creditsToken != "" {
+		values = append([]string{creditsToken}, values...)
+	}
 	defer func() {
 		for _, p := range []string{st.secrets, st.intake, st.connections, st.destinations, st.knownHosts, filepath.Join(dir, "hostkeys"), st.files, st.inputs, st.out, st.policy, st.task} {
 			if p != "" {
@@ -529,7 +553,7 @@ func runhostRun(ctx context.Context, j *job.Job, dir, home string, devices map[s
 		return 0, err
 	}
 	cmd := exec.CommandContext(ctx, self, runhostRunArgs(j, st)...) //nolint:gosec // the service's own CLI, a typed argv
-	cmd.Env = runhostChildEnv(os.Environ(), j)
+	cmd.Env = runhostChildEnv(os.Environ(), j, creditsToken)
 	cmd.Dir = dir
 	// A cancel, or the service stopping, interrupts the run, which tears its
 	// containers down as a local run's interrupt does, and is killed if it

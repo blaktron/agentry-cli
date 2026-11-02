@@ -255,12 +255,14 @@ func runOnDetached(cmd *cobra.Command, rec *runhost.Record, id, format string) e
 }
 
 // runOnModelKey is the device policy's model key, which the run carries in
-// flight: the variable the policy names, else its keychain entry. A model a
-// runhost cannot be handed this way yet is refused here.
+// flight: the variable the policy names, else its keychain entry. A model
+// paid with Agentry credits carries none: the runhost pays with the credits
+// token in its store (agentry runhost model). A model a runhost cannot be
+// handed this way yet is refused here.
 func runOnModelKey(pol *policy.Policy) (string, error) {
 	switch {
 	case pol.Model.Provider == policy.ProviderAgentry:
-		return "", errors.New("a run on a runhost cannot use Agentry credits yet: set a model of your own with agentry setup")
+		return "", nil
 	case policy.IsModelSignIn(pol.Model.APIKeyKind) || pol.Model.APIKeyKind == policy.KeyKindSubscription:
 		return "", errors.New("a run on a runhost cannot use a model sign-in yet: set an API key with agentry setup")
 	}

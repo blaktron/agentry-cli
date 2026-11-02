@@ -66,7 +66,10 @@ type runhostStatus struct {
 	GatewayRuntime string          `json:"gatewayRuntime"`
 	Devices        []runhostDevice `json:"devices"`
 	Model          string          `json:"model"`
-	Capabilities   map[string]bool `json:"capabilities"`
+	// Credits is the runhost's Agentry credits token, when it has one:
+	// never the token.
+	Credits      *runhostCreditsInfo `json:"credits,omitempty"`
+	Capabilities map[string]bool     `json:"capabilities"`
 	// Jobs are the jobs the service runs, and the finished ones whose
 	// output waits for collection.
 	Jobs []runhostJobInfo `json:"jobs"`
@@ -118,6 +121,7 @@ func runRunhostService(cmd *cobra.Command) error {
 			"attach":  runhostAttachVerb,
 			"cancel":  runhostCancelVerb,
 			"collect": runhostCollectVerb,
+			"store":   runhostStoreVerb,
 			"doctor": func(ctx context.Context, _ runhost.Request, _ io.Reader, fw *runhost.FrameWriter) (int, error) {
 				rep := runhostDoctor(ctx)
 				if err := fw.Result(rep); err != nil {
@@ -158,11 +162,16 @@ func readRunhostStatus() (runhostStatus, error) {
 	st := runhostStatus{
 		Name: cfg.Name, Version: version.Version, Arch: runtime.GOARCH, OS: osPretty(), GVisor: cfg.GVisor,
 		Owner: cfg.Owner, UnsafeMode: cfg.UnsafeMode, Devices: []runhostDevice{},
-		Capabilities: map[string]bool{"runs": true, "secrets": true, "files": true, "connections": true, "destinations": true, "attach": true, "sessions": true, "schedules": false},
+		Capabilities: map[string]bool{"runs": true, "secrets": true, "files": true, "connections": true, "destinations": true, "attach": true, "sessions": true, "credits": true, "schedules": false},
 		Jobs:         runhostJobs(),
 	}
 	for _, d := range devs.Devices {
 		st.Devices = append(st.Devices, runhostDevice{ID: d.ID, Label: d.Label, PairedAt: d.PairedAt})
+	}
+	if s, err := openRunhostStore(); err == nil {
+		if c, ok, err := runhostStoredCredits(s); err == nil && ok {
+			st.Credits = c.info()
+		}
 	}
 	if path, err := policy.DefaultPath(); err == nil {
 		if pol, _, err := policy.Load(path); err == nil {

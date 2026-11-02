@@ -42,6 +42,7 @@ func newRunhostCmd() *cobra.Command {
 			"Servers: Debian 12 and 13, Ubuntu 22.04 and 24.04, on amd64 or arm64.",
 	}
 	cmd.AddCommand(newRunhostAddCmd(), newRunhostListCmd(), newRunhostStatusCmd(), newRunhostDoctorCmd(), newRunhostRemoveCmd(),
+		newRunhostModelCmd(), newRunhostStoreCmd(),
 		newRunhostJobsCmd(), newRunhostAttachCmd(), newRunhostCollectCmd(), newRunhostCancelCmd(),
 		newRunhostServeCmd(), newRunhostServiceCmd())
 	return cmd
@@ -379,6 +380,11 @@ func newRunhostListCmd() *cobra.Command {
 // askRunhost asks the runhost name's service verb over this device's run
 // key.
 func askRunhost(cmd *cobra.Command, name, verb string) (runhost.Answer, *runhost.Record, error) {
+	return askRunhostArgs(cmd, name, verb, nil)
+}
+
+// askRunhostArgs is askRunhost with the verb's arguments.
+func askRunhostArgs(cmd *cobra.Command, name, verb string, args []string) (runhost.Answer, *runhost.Record, error) {
 	home, err := runnerHome()
 	if err != nil {
 		return runhost.Answer{}, nil, err
@@ -402,7 +408,7 @@ func askRunhost(cmd *cobra.Command, name, verb string) (runhost.Answer, *runhost
 		return runhost.Answer{}, rec, err
 	}
 	defer func() { _ = c.Close() }()
-	a, err := c.Ask(ctx, verb, nil, func(s string) { _, _ = fmt.Fprintln(narration(cmd), s) })
+	a, err := c.Ask(ctx, verb, args, func(s string) { _, _ = fmt.Fprintln(narration(cmd), s) })
 	return a, rec, err
 }
 
@@ -436,6 +442,9 @@ func newRunhostStatusCmd() *cobra.Command {
 func printRunhostStatus(w io.Writer, st runhostStatus) {
 	_, _ = fmt.Fprintf(w, "runhost:   %s\nserver:    %s (%s)\nCLI:       %s\ngVisor:    %s\nowner:     %s\nUnsafe Mode: %s\n", st.Name, st.OS, st.Arch, st.Version, st.GVisor, st.Owner, onOff(st.UnsafeMode))
 	_, _ = fmt.Fprintf(w, "runtimes:  runs under %s, the gateway under %s\n", nonEmptyOr(st.Runtime, "(none)"), nonEmptyOr(st.GatewayRuntime, "(none)"))
+	if st.Credits != nil {
+		_, _ = fmt.Fprintf(w, "credits:   %q on %s\n", st.Credits.Name, st.Credits.Registry)
+	}
 	_, _ = fmt.Fprintf(w, "devices:   %d paired\n", len(st.Devices))
 	for _, d := range st.Devices {
 		_, _ = fmt.Fprintf(w, "  %s (%s), paired %s\n", d.Label, d.ID, d.PairedAt)
@@ -546,6 +555,17 @@ func newRunhostRemoveCmd() *cobra.Command {
 				return engine.Classify(engine.ExitUsage, err)
 			}
 			say := func(s string) { _, _ = fmt.Fprintln(narration(cmd), s) }
+			// The runhost's credits token revokes itself before the account
+			// that keeps it goes.
+			if removed, err := removeRunhostCredits(cmd, name); err != nil {
+				if rec.Credits != nil {
+					say(fmt.Sprintf("warning: %s could not revoke its credits token (%v): revoke %q among your personal access tokens on %s", name, err, rec.Credits.TokenName, rec.Credits.Registry))
+				}
+			} else if removed.Credits != nil {
+				var b strings.Builder
+				printCreditsRemoved(&b, name, removed)
+				say(strings.TrimSpace(b.String()))
+			}
 			err = rhsetup.Remove(cmd.Context(), rhsetup.RemoveOptions{
 				Record: *rec, Auth: auth, Answer: targethost.Answer{User: user, Host: rec.Host, Port: rec.Port},
 				Ask: ask, Say: say, RemoveImages: removeImages, RemoveDocker: removeDocker,

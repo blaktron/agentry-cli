@@ -2,6 +2,8 @@
 // one's archive and the facts it arrived with, encrypted at rest, so a later
 // run of the same release need not send it again. Whatever comes out of the
 // store is verified again before it runs; the store keeps bytes, not trust.
+// It also keeps named entries, a credential the runhost holds at rest for
+// its runs (the credits token), under the same key.
 //
 // An entry is the magic, a 12-byte nonce, and AES-256-GCM over a length-
 // prefixed JSON document (job.Release) followed by the archive, with the
@@ -22,6 +24,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/blaktron/agentry-cli/pkg/runhost/job"
@@ -34,6 +37,9 @@ const KeyFile = "store.key"
 
 // ErrNotStored means the store holds no release of that digest.
 var ErrNotStored = errors.New("the runhost's store holds no such release")
+
+// ErrNoEntry means the store holds no entry of that name.
+var ErrNoEntry = errors.New("the runhost's store holds no such entry")
 
 // ErrDamaged means an entry did not open with the store's key: it was
 // changed, moved or cut.
@@ -190,6 +196,90 @@ func (s *Store) Get(digest string) (job.Release, []byte, error) {
 // Remove deletes the release of digest; one not stored is not an error.
 func (s *Store) Remove(digest string) error {
 	p, err := s.path(digest)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+const entryMagic = "AGYRHE1\n"
+
+var entryNameRE = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
+
+func (s *Store) entryPath(name string) (string, error) {
+	if !entryNameRE.MatchString(name) {
+		return "", fmt.Errorf("%q is not a store entry's name", name)
+	}
+	return filepath.Join(s.dir, name+".entry"), nil
+}
+
+// PutEntry stores value as the entry name, replacing one of the same name.
+// The entry's name is its additional data, so an entry renamed does not
+// open as another.
+func (s *Store) PutEntry(name string, value []byte) error {
+	p, err := s.entryPath(name)
+	if err != nil {
+		return err
+	}
+	aead, err := s.aead()
+	if err != nil {
+		return err
+	}
+	nonce := make([]byte, aead.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return err
+	}
+	out := append([]byte(entryMagic), nonce...)
+	out = aead.Seal(out, nonce, value, []byte("entry:"+name))
+	tmp, err := os.CreateTemp(s.dir, ".put-*")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(tmp.Name()) }()
+	if _, err := tmp.Write(out); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), p)
+}
+
+// Entry reads the entry name back.
+func (s *Store) Entry(name string) ([]byte, error) {
+	p, err := s.entryPath(name)
+	if err != nil {
+		return nil, err
+	}
+	b, err := os.ReadFile(p) //nolint:gosec // the store's own entry, named by a checked name
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, ErrNoEntry
+	}
+	if err != nil {
+		return nil, err
+	}
+	aead, err := s.aead()
+	if err != nil {
+		return nil, err
+	}
+	if len(b) < len(entryMagic)+aead.NonceSize() || string(b[:len(entryMagic)]) != entryMagic {
+		return nil, ErrDamaged
+	}
+	nonce := b[len(entryMagic) : len(entryMagic)+aead.NonceSize()]
+	plain, err := aead.Open(nil, nonce, b[len(entryMagic)+aead.NonceSize():], []byte("entry:"+name))
+	if err != nil {
+		return nil, ErrDamaged
+	}
+	return plain, nil
+}
+
+// RemoveEntry deletes the entry name; one not stored is not an error.
+func (s *Store) RemoveEntry(name string) error {
+	p, err := s.entryPath(name)
 	if err != nil {
 		return err
 	}

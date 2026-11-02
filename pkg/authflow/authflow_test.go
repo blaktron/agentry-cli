@@ -255,3 +255,36 @@ func TestRefusedExchangeFails(t *testing.T) {
 		t.Fatal("refused exchange reported success")
 	}
 }
+
+// A runhost's authorize page names the runhost, and WaitPAT hands back the
+// exchanged token's id, name and scopes with it.
+func TestARunhostsTokenComesBackWithItsIDAndScopes(t *testing.T) {
+	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":"7d3c0f5e-0000-4000-8000-000000000001","name":"Runhost lab (credits only)","token":"agy_credits","scopes":["credits:session"]}`))
+	}))
+	defer registry.Close()
+	f, err := Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	u := f.AuthorizeRunhostURL(registry.URL, "lab-1")
+	if want := fmt.Sprintf("%s/ui/authorize?port=%d&state=%s&runhost=lab-1", registry.URL, f.Port, f.State); u != want {
+		t.Fatalf("authorize URL = %q, want %q", u, want)
+	}
+	resp := get(t, fmt.Sprintf("http://127.0.0.1:%d/callback?state=%s&code=agd_x", f.Port, f.State))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("callback status %d", resp.StatusCode)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	pat, err := f.WaitPAT(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pat.ID != "7d3c0f5e-0000-4000-8000-000000000001" || pat.Name != "Runhost lab (credits only)" || pat.Token != "agy_credits" || len(pat.Scopes) != 1 || pat.Scopes[0] != "credits:session" {
+		t.Fatalf("pat = %+v", pat)
+	}
+}

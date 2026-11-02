@@ -470,8 +470,12 @@ func TestRunOnRefusesWhatItDoesNotCarry(t *testing.T) {
 	if _, _, err := runCLI(t, nil, "run", "acme/demo@1.0.0", "--on", "lab", "--adapter", "claude"); err == nil || !strings.Contains(err.Error(), "--adapter") {
 		t.Errorf("--adapter: %v", err)
 	}
+	// A model paid with Agentry credits carries no key: the runhost pays
+	// with its own credits token.
+	if key, err := runOnModelKey(&policy.Policy{Model: policy.Model{Provider: policy.ProviderAgentry, Name: "x"}}); err != nil || key != "" {
+		t.Errorf("credits: %q, %v", key, err)
+	}
 	for name, m := range map[string]policy.Model{
-		"credits": {Provider: policy.ProviderAgentry, Name: "x"},
 		"sign-in": {Provider: "anthropic", Name: "x", APIKeyKind: policy.KeyKindSubscription},
 		"no key":  {Provider: "anthropic", Name: "x", APIKeyEnv: "UNSET_TEST_KEY_VAR"},
 	} {
