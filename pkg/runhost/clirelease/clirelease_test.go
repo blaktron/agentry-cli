@@ -172,3 +172,59 @@ func TestAPublishedReleaseVerifiesAgainstThePublishersKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestCompareVersions(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want int
+	}{
+		{"0.7.9", "0.7.9", 0},
+		{"0.7.9", "0.7.10", -1},
+		{"0.7.10", "0.7.9", 1},
+		{"0.7.10-dev.1", "0.7.10", -1},
+		{"0.7.10", "0.7.10-dev.3", 1},
+		{"0.7.10-dev.2", "0.7.10-dev.10", -1},
+		{"0.7.10-dev.1", "0.7.9", 1},
+		{"1.0.0", "0.99.99", 1},
+	}
+	for _, c := range cases {
+		got, ok := CompareVersions(c.a, c.b)
+		if !ok || got != c.want {
+			t.Errorf("%s vs %s: %d %v, want %d", c.a, c.b, got, ok, c.want)
+		}
+	}
+	for _, bad := range []string{"dev", "0.7", "0.7.9-rc.1", "v0.7.9", ""} {
+		if _, ok := CompareVersions(bad, "0.7.9"); ok {
+			t.Errorf("%q compared as a release", bad)
+		}
+	}
+}
+
+func TestVerifyChecksTheSignatureTheVersionAndTheArchitecture(t *testing.T) {
+	priv, entry := testKey(t, "prod", false)
+	set := testSet(t, entry)
+	bin := []byte("the cli")
+	sum := sha256.Sum256(bin)
+	sums := []byte(hex.EncodeToString(sum[:]) + "  agentry-1.2.3-linux-amd64\n")
+	sig := sign(priv, sums, "agentry-cli 1.2.3 (commit abcdef1)")
+	b, err := Verify(set, "1.2.3", "amd64", sums, sig, bin)
+	if err != nil || b.Name != "agentry-1.2.3-linux-amd64" || string(b.Sums) != string(sums) || string(b.Sig) != string(sig) {
+		t.Fatalf("a signed release did not verify: %+v %v", b, err)
+	}
+	if _, err := Verify(set, "1.2.3", "arm64", sums, sig, bin); err == nil {
+		t.Fatal("the amd64 binary verified as arm64's")
+	}
+	if _, err := Verify(set, "1.2.3", "amd64", sums, sig, []byte("another cli")); err == nil {
+		t.Fatal("a binary its sums do not name verified")
+	}
+	if _, err := Verify(set, "1.2.4", "amd64", sums, sig, bin); err == nil {
+		t.Fatal("sums signed for 1.2.3 verified as 1.2.4's")
+	}
+	other, _ := testKey(t, "other", false)
+	if _, err := Verify(set, "1.2.3", "amd64", sums, sign(other, sums, "agentry-cli 1.2.3 (commit abcdef1)"), bin); err == nil {
+		t.Fatal("a release signed by an unknown key verified")
+	}
+	if _, err := Verify(&KeySet{}, "1.2.3", "amd64", sums, sig, bin); !errors.Is(err, ErrNoKeys) {
+		t.Fatalf("an empty key set verified: %v", err)
+	}
+}

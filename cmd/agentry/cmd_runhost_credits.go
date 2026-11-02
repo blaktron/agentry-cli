@@ -143,6 +143,9 @@ func runhostStoreVerb(ctx context.Context, req runhost.Request, in io.Reader, fw
 		if !runhostDevicePaired(c.Device) {
 			return engine.ExitUsage, fmt.Errorf("device %s is not paired with this runhost", c.Device)
 		}
+		if req.Device != "" && c.Device != req.Device {
+			return engine.ExitUsage, fmt.Errorf("the token names device %s, but device %s's run key sent it", c.Device, req.Device)
+		}
 		old, had, err := runhostStoredCredits(st)
 		if err != nil && !errors.Is(err, store.ErrDamaged) {
 			return 1, err
@@ -165,28 +168,36 @@ func runhostStoreVerb(ctx context.Context, req runhost.Request, in io.Reader, fw
 		}
 		return 0, fw.Result(c.Info())
 	case "remove-credits":
-		c, ok, err := runhostStoredCredits(st)
+		out, err := revokeStoredCredits(ctx, st, "")
 		if err != nil {
 			return 1, err
-		}
-		out := runhostCreditsRemoved{}
-		if ok {
-			out.Credits = c.Info()
-			if err := revokeCredits(ctx, c); err != nil {
-				out.RevokeError = err.Error()
-			} else {
-				out.Revoked = true
-			}
-			// The token leaves the store whether or not the registry
-			// could be reached: the person revokes it there if not.
-			if err := st.RemoveEntry(runhostCreditsEntry); err != nil {
-				return 1, err
-			}
-			out.Removed = true
 		}
 		return 0, fw.Result(out)
 	}
 	return engine.ExitUsage, fmt.Errorf("store does not take %q: list, put-credits, remove-credits or remove-signin <vendor>", req.Args[0])
+}
+
+// revokeStoredCredits revokes the store's credits token at its registry
+// and removes it from the store. With device set, only a token that device
+// minted is touched. The token leaves the store whether or not the registry
+// could be reached: the person revokes it there if not, as the answer says.
+func revokeStoredCredits(ctx context.Context, st *store.Store, device string) (runhostCreditsRemoved, error) {
+	out := runhostCreditsRemoved{}
+	c, ok, err := runhostStoredCredits(st)
+	if err != nil || !ok || (device != "" && c.Device != device) {
+		return out, err
+	}
+	out.Credits = c.Info()
+	if err := revokeCredits(ctx, c); err != nil {
+		out.RevokeError = err.Error()
+	} else {
+		out.Revoked = true
+	}
+	if err := st.RemoveEntry(runhostCreditsEntry); err != nil {
+		return out, err
+	}
+	out.Removed = true
+	return out, nil
 }
 
 // countStoredReleases is how many releases the store holds.

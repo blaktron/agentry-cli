@@ -71,12 +71,28 @@ type Finding struct {
 	Detail string `json:"detail"`
 }
 
-// Supported servers: each distribution and the versions taken, for the
-// package manager setup drives.
-var supported = map[string][]string{
-	"debian": {"12", "13"},
-	"ubuntu": {"22.04", "24.04"},
+// distro is how setup installs Docker Engine on one distribution: its
+// package manager, the name of its tree in Docker's repository, and the
+// releases taken (VERSION_ID, or its major number where minor releases
+// follow one another within a major one).
+type distro struct {
+	pkg, repo string
+	major     bool
+	versions  []string
 }
+
+// Supported servers.
+var supported = map[string]distro{
+	"debian":    {pkg: "apt", repo: "debian", versions: []string{"12", "13"}},
+	"ubuntu":    {pkg: "apt", repo: "ubuntu", versions: []string{"22.04", "24.04"}},
+	"fedora":    {pkg: "dnf", repo: "fedora", versions: []string{"43", "44"}},
+	"rhel":      {pkg: "dnf", repo: "rhel", major: true, versions: []string{"9", "10"}},
+	"almalinux": {pkg: "dnf", repo: "rhel", major: true, versions: []string{"9", "10"}},
+	"rocky":     {pkg: "dnf", repo: "rhel", major: true, versions: []string{"9", "10"}},
+}
+
+// supportedList says the supported servers, for a refusal.
+const supportedList = "Debian 12 or 13, Ubuntu 22.04 or 24.04, Fedora 43 or 44, or RHEL, AlmaLinux or Rocky Linux 9 or 10"
 
 // MinSystemd is the oldest systemd setup works with: a system account with
 // linger and a user service are all it asks of it.
@@ -100,6 +116,10 @@ type Plan struct {
 	InstallDocker bool
 	// Arch is the server's architecture in Go's words.
 	Arch string
+	// Package is the server's package manager ("apt" or "dnf"), DockerRepo
+	// its tree in Docker's repository, and OSRelease the release that tree
+	// is named by.
+	Package, DockerRepo, OSRelease string
 }
 
 // Evaluate decides, from the preflight's facts, whether setup may go on.
@@ -114,14 +134,20 @@ func Evaluate(f Facts, reach []string) Plan {
 	}
 
 	id, ver := f["os_id"], f["os_version_id"]
+	d, known := supported[id]
+	rel := ver
+	if d.major {
+		rel, _, _ = strings.Cut(ver, ".")
+	}
 	switch {
 	case id == "":
 		add(LevelStop, "os", "the server has no /etc/os-release to say what it is")
-	case !slices.Contains(supported[id], ver):
-		add(LevelStop, "os", "%s is not a server a runhost is set up on yet: Debian 12 or 13, or Ubuntu 22.04 or 24.04", nonEmpty(f["os_pretty"], id+" "+ver))
-	case f["os_codename"] == "":
+	case !known || !slices.Contains(d.versions, rel):
+		add(LevelStop, "os", "%s is not a server a runhost is set up on yet: %s", nonEmpty(f["os_pretty"], id+" "+ver), supportedList)
+	case d.pkg == "apt" && f["os_codename"] == "":
 		add(LevelStop, "os", "%s does not name its release's codename, which Docker's repository needs", f["os_pretty"])
 	default:
+		p.Package, p.DockerRepo, p.OSRelease = d.pkg, d.repo, rel
 		add(LevelOK, "os", "%s", nonEmpty(f["os_pretty"], id+" "+ver))
 	}
 
@@ -165,9 +191,18 @@ func Evaluate(f Facts, reach []string) Plan {
 	}
 
 	var others []string
-	for _, e := range []string{"podman", "nerdctl", "containerd", "crio"} {
+	for _, e := range []string{"nerdctl", "containerd", "crio"} {
 		if f.yes("engine_" + e) {
 			others = append(others, e)
+		}
+	}
+	// Podman runs no daemon: installed, as Fedora and RHEL install it, it is
+	// only a command until it runs a container, each of which has a conmon.
+	if f.yes("engine_podman") {
+		if n, _ := strconv.Atoi(f["podman_running"]); n > 0 {
+			others = append(others, fmt.Sprintf("podman, with %d container(s) running", n))
+		} else {
+			add(LevelNote, "engine", "podman is installed but runs no container: Docker Engine runs beside it, and the runhost never uses podman")
 		}
 	}
 	for _, e := range []string{"lxd", "incus"} {
@@ -181,8 +216,10 @@ func Evaluate(f Facts, reach []string) Plan {
 	// containerd alone is what Docker Engine itself runs on, so it is no other engine.
 	case len(others) > 1 || (len(others) == 1 && others[0] != "containerd"):
 		add(LevelStop, "engine", "the server runs another container engine (%s): a runhost uses Docker Engine and will not install it beside another", strings.Join(others, ", "))
-	case !f.yes("apt"):
-		add(LevelStop, "engine", "there is no Docker Engine, and no apt to install it with")
+	case p.Package == "":
+		add(LevelStop, "engine", "there is no Docker Engine, and setup does not know how to install it on this server")
+	case !f.yes(p.Package):
+		add(LevelStop, "engine", "there is no Docker Engine, and no %s to install it with", p.Package)
 	default:
 		p.InstallDocker = true
 		add(LevelOK, "engine", "no engine yet: Docker Engine will be installed from Docker's repository")

@@ -42,6 +42,8 @@ var (
 	removeScript []byte
 	//go:embed assets/docker.asc
 	dockerKey []byte
+	//go:embed assets/docker-rpm.asc
+	dockerRPMKey []byte
 )
 
 // unitFile is the service's systemd user unit.
@@ -186,6 +188,13 @@ func Add(ctx context.Context, o Options) (out *Outcome, err error) {
 	if !plan.Supported {
 		return out, fmt.Errorf("%s cannot be a runhost: %s", o.Answer.Host, stops(plan))
 	}
+	// A runhost follows the newest of its devices: setup never puts an
+	// older CLI over the one an earlier setup or update installed.
+	if have := facts["agentry_cli"]; have != "" {
+		if cmp, ok := clirelease.CompareVersions(have, o.Version); ok && cmp > 0 {
+			return out, fmt.Errorf("%s already runs CLI %s, newer than this device's %s: update this device's CLI first", o.Answer.Host, have, o.Version)
+		}
+	}
 	if o.Confirm != nil {
 		ok, err := o.Confirm(plan)
 		if err != nil {
@@ -229,6 +238,7 @@ func Add(ctx context.Context, o Options) (out *Outcome, err error) {
 		"agentry":                 cli.Bytes,
 		"gvisor.tar.gz":           gv,
 		"docker.asc":              dockerKey,
+		"docker-rpm.asc":          dockerRPMKey,
 		"agentry-runhost.service": []byte(unitFile),
 	}
 	cfgJSON, err := json.MarshalIndent(cfg, "", "  ")
@@ -249,6 +259,9 @@ func Add(ctx context.Context, o Options) (out *Outcome, err error) {
 		"INSTALL_DOCKER":  yesNo(plan.InstallDocker),
 		"OS_ID":           facts["os_id"],
 		"OS_CODENAME":     facts["os_codename"],
+		"OS_RELEASE":      plan.OSRelease,
+		"PACKAGE":         plan.Package,
+		"DOCKER_REPO":     plan.DockerRepo,
 	}
 	existing, err := conn.ReadRoot(ctx, daemonJSON)
 	if err != nil {

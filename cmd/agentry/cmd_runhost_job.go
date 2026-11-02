@@ -89,10 +89,16 @@ type runhostJobDone struct {
 // runhostCLI is the CLI a job runs: the service's own. A variable for tests.
 var runhostCLI = os.Executable
 
-func runhostJobVerb(ctx context.Context, _ runhost.Request, in io.Reader, fw *runhost.FrameWriter) (int, error) {
+func runhostJobVerb(ctx context.Context, req runhost.Request, in io.Reader, fw *runhost.FrameWriter) (int, error) {
+	if v := runhostRestarting(); v != "" {
+		return engine.ExitCLI, fmt.Errorf("this runhost is restarting into CLI %s after an update: send the run again in a minute", v)
+	}
 	j, err := job.Read(in)
 	if err != nil {
 		return engine.ExitUsage, err
+	}
+	if req.Device != "" && j.Device != req.Device {
+		return engine.ExitUsage, fmt.Errorf("the job names device %s, but device %s's run key sent it", j.Device, req.Device)
 	}
 	devices, err := pairedSealKeys()
 	if err != nil {

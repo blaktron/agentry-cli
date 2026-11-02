@@ -41,6 +41,8 @@ fi
 for e in podman nerdctl containerd crio; do
 	if command -v "$e" >/dev/null 2>&1; then fact "engine_$e" yes; fi
 done
+# Every podman container, rootful or rootless, has a conmon watching it.
+command -v podman >/dev/null 2>&1 && fact podman_running "$(pgrep -c -x conmon 2>/dev/null || echo 0)"
 # LXD and Incus count only when their daemon runs: Ubuntu's images carry an
 # lxd command that only installs it.
 for s in /var/snap/lxd/common/lxd/unix.socket /var/lib/lxd/unix.socket; do
@@ -56,6 +58,9 @@ else
 	fact agentry_user no
 fi
 command -v apt-get >/dev/null 2>&1 && fact apt yes
+command -v dnf >/dev/null 2>&1 && fact dnf yes
+# The CLI an earlier setup installed, by the version its path points at.
+cli=$(readlink /var/lib/agentry/bin/agentry 2>/dev/null) && fact agentry_cli "$(basename "$(dirname "$cli")")"
 command -v sshd >/dev/null 2>&1 && fact sshd_allow "$(sshd -T 2>/dev/null | awk '$1=="allowusers"||$1=="allowgroups"||$1=="denyusers"||$1=="denygroups"{printf "%s %s; ", $1, $2}')"
 
 # Every listening socket, so setup can show what is open and prove after the
