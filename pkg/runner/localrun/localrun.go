@@ -381,6 +381,9 @@ type PlanInputs struct {
 	// (compile.Inputs.AppLink): set by a Segment alone.
 	AgentFiles *spec.AgentFiles
 	AppLink    string
+	// Subagents lets the app link list the subagent tools
+	// (compile.Inputs.Subagents): set by a Segment alone.
+	Subagents bool
 	// Coder grants the Coding agent what its roster has on
 	// (compile.Inputs.Coder): set by a Segment of the Coding agent alone.
 	Coder *spec.CoderGrant
@@ -528,6 +531,7 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 		Review:       in.Review,
 		AgentFiles:   in.AgentFiles,
 		AppLink:      in.AppLink,
+		Subagents:    in.Subagents,
 		Coder:        in.Coder,
 		Calendar:     in.Calendar,
 		ShareServers: in.ShareServers,

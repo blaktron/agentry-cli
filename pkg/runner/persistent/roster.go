@@ -38,6 +38,8 @@ const (
 	KindServer    EntryKind = "server"
 )
 
+// The kind of a subagent's entries is KindSubagent (subagents.go).
+
 // EntryState is a roster entry's state.
 type EntryState string
 
@@ -245,6 +247,9 @@ func BuildRosterUnder(a Agent, c Config, applied *Applied, malwareCheck bool) Ro
 	}
 	if e, ok := voiceEntry(a); ok {
 		add(e, false)
+	}
+	for _, e := range subagentEntries(a, c) {
+		add(e, subagentDefault(e.ID))
 	}
 	if a.Codes() {
 		for _, e := range accountEntries(c) {

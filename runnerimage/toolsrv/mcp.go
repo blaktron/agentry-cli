@@ -293,11 +293,12 @@ func validateSpec(spec *Spec) error {
 		// reach whatever it liked, bounded by nothing of ours.
 		return errors.New("the web tools are never granted beside fetch or exec")
 	}
-	if spec.Review.Enabled && (spec.Fetch.Enabled || len(spec.Exec.Commands) > 0 || spec.Exec.Any || spec.Web.Enabled || spec.InputsDir == "") {
-		// The review's container reaches TypeSafe alone (review.go): a
-		// fetch grant, a command or the web tools beside it would reach
-		// further, and without the inputs channel it has nothing to read.
-		return errors.New("the review grant is never granted beside fetch, exec or the web tools, nor without the inputs channel")
+	if spec.Review.Enabled && (spec.Fetch.Enabled || len(spec.Exec.Commands) > 0 || spec.Exec.Any || spec.InputsDir == "") {
+		// The review's client asks for TypeSafe alone (review.go), and holds
+		// the person's key: a fetch grant or a program beside it could reach
+		// that key, and without the inputs channel it has nothing to read.
+		// The web tools' container, like the review's, runs no program.
+		return errors.New("the review grant is never granted beside fetch or exec, nor without the inputs channel")
 	}
 	if err := validateKnowledge(spec); err != nil {
 		return err

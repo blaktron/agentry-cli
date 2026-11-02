@@ -37,6 +37,8 @@ import (
 //	                          {"compacted":…} when it is done, or refused
 //	{"interrupt":{}}          stops the turn in flight; answered with
 //	                          {"interrupted":…} once it has ended
+//	{"answer":{"id":…,"yes":…}} answers a question event; refused when no
+//	                          question with that id waits
 //
 // A refused command is answered with an event of kind error carrying
 // Refused, as the session protocol answers one.
@@ -56,6 +58,9 @@ type Command struct {
 	Compact *struct{} `json:"compact,omitempty"`
 	// Interrupt asks for the turn in flight to stop.
 	Interrupt *struct{} `json:"interrupt,omitempty"`
+	// Answer answers a question the agent's runner put to the person
+	// (ask.go), by its id.
+	Answer *protocol.Answer `json:"answer,omitempty"`
 }
 
 // Reply is one line the supervisor sends.
@@ -97,6 +102,7 @@ const (
 	RefusedTask      protocol.Refusal = "task"
 	RefusedCompact   protocol.Refusal = "compact"
 	RefusedInterrupt protocol.Refusal = "interrupt"
+	RefusedAnswer                     = protocol.RefusedAnswer
 )
 
 // maxSocketPath is below the kernel's limit for a socket's name (108 bytes
@@ -177,7 +183,7 @@ func (s *Supervisor) serveConn(nc net.Conn) {
 		dec := json.NewDecoder(strings.NewReader(sc.Text()))
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&cmd); err != nil || commandsSet(cmd) != 1 {
-			c.refuse(protocol.RefusedMalformed, "a command is one JSON object naming exactly one of attach, send, status, roster, change, stop, tasks, task_change, compact or interrupt")
+			c.refuse(protocol.RefusedMalformed, "a command is one JSON object naming exactly one of attach, send, status, roster, change, stop, tasks, task_change, compact, interrupt or answer")
 			continue
 		}
 		switch {
@@ -186,7 +192,8 @@ func (s *Supervisor) serveConn(nc net.Conn) {
 				continue
 			}
 			events, cancel := s.Subscribe()
-			detach = cancel
+			unask := s.addAsker(c.reply)
+			detach = func() { cancel(); unask() }
 			go func() {
 				for ev := range events {
 					ev.Raw = nil
@@ -258,6 +265,10 @@ func (s *Supervisor) serveConn(nc net.Conn) {
 					c.reply(Reply{Interrupted: &Interrupted{Stopped: true}})
 				}
 			}()
+		case cmd.Answer != nil:
+			if err := s.answer(cmd.Answer.ID, cmd.Answer.Yes); err != nil {
+				c.refuse(RefusedAnswer, err.Error())
+			}
 		case cmd.TaskChange != nil:
 			ts, err := s.ChangeTask(*cmd.TaskChange)
 			if err != nil {
@@ -276,7 +287,7 @@ func (s *Supervisor) serveConn(nc net.Conn) {
 // commandsSet is how many commands one line names.
 func commandsSet(c Command) int {
 	n := 0
-	for _, set := range []bool{c.Attach != nil, c.Send != nil, c.Status != nil, c.Roster != nil, c.Change != nil, c.Stop != nil, c.Tasks != nil, c.TaskChange != nil, c.Compact != nil, c.Interrupt != nil} {
+	for _, set := range []bool{c.Attach != nil, c.Send != nil, c.Status != nil, c.Roster != nil, c.Change != nil, c.Stop != nil, c.Tasks != nil, c.TaskChange != nil, c.Compact != nil, c.Interrupt != nil, c.Answer != nil} {
 		if set {
 			n++
 		}
@@ -507,6 +518,11 @@ type remote struct {
 	turnSeen bool
 }
 
+// Answer answers a question the agent's runner put to the person.
+func (r *remote) Answer(_ context.Context, id string, yes bool) error {
+	return r.write(Command{Answer: &protocol.Answer{ID: id, Yes: yes}})
+}
+
 func (r *remote) write(cmd Command) error {
 	b, err := json.Marshal(cmd)
 	if err != nil {
@@ -534,6 +550,13 @@ func (r *remote) read() {
 			// Another chat's turn is in flight: the send is answered busy,
 			// which the chat says in its own words.
 			r.finishTurn(ErrBusy)
+			continue
+		}
+		if rep.Event.Refused == RefusedAnswer {
+			// An answer to a question another client answered first: the
+			// turn in flight goes on.
+			ev.Kind = session.KindNotice
+			r.events <- ev
 			continue
 		}
 		if rep.Event.Refused != "" {

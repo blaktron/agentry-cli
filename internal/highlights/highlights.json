@@ -1,6 +1,15 @@
 {
   "versions": [
     {
+      "version": "0.7.1",
+      "highlights": [
+        "A persistent agent can start runs of other QuickAgents as its subagents, each in a sandbox of its own.",
+        "Add a QuickAgent installed here as one with agentry agent configure --subagent; switch each off or ask first.",
+        "An agent run from the CLI can find, install, run and schedule QuickAgents, asking you first in agentry agent chat.",
+        "A persistent agent can now declare web search, AI Review and calendar feeds together."
+      ]
+    },
+    {
       "version": "0.7.0",
       "highlights": [
         "The CLI, the desktop app, the MCP server and the Agentry server now share one version, 0.7.0.",

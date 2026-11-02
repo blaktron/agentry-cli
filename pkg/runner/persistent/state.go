@@ -73,6 +73,9 @@ type Agent struct {
 	Persona   *Persona
 	Packs     []string
 	Subagents []SubagentPin
+	// Registry is the registry a registry release came from, which its
+	// subagents run from; empty is this computer's default.
+	Registry string
 }
 
 // Agents are the persistent agents built into this build, in the order they
@@ -291,6 +294,8 @@ type Config struct {
 	// Skills are the skills the person added, as they were checked; each is
 	// a roster entry, its files in the agent's skills-added folder.
 	Skills []AddedSkill `yaml:"skills,omitempty" json:"skills,omitempty"`
+	// Subagents are the subagents the person added (subagents.go).
+	Subagents []AddedSubagent `yaml:"subagents,omitempty" json:"subagents,omitempty"`
 	// Secrets are the secrets the person stored for the agent, by name;
 	// each is a roster entry, its value in the keychain (SecretAccount).
 	Secrets []StoredSecret `yaml:"secrets,omitempty" json:"secrets,omitempty"`
