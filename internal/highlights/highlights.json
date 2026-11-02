@@ -1,6 +1,12 @@
 {
   "versions": [
     {
+      "version": "0.7.5",
+      "highlights": [
+        "A personal agent with Brave Search or Fastmail switched on starts again; 0.7.1 refused its stored key."
+      ]
+    },
+    {
       "version": "0.7.4",
       "highlights": [
         "A run on a runhost whose credits token was revoked now says to give the runhost a new one, not to sign in.",

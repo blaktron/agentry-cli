@@ -919,6 +919,51 @@ func (s Segment) withServers(m *manifest.Manifest) *manifest.Manifest {
 	return &out
 }
 
+// checkManifest refuses a segment whose release, as it ships, the
+// manifest's rules refuse, or whose manifest with the roster's servers
+// declared beside the release's own they refuse. A stored secret is given
+// by name to every server that declares it (secretOverrides), so a roster
+// server that declares one is how that secret reaches the server, not a
+// secret the release asks for at each run: that one V16 finding is the
+// release's alone, and the first check has it.
+func (s Segment) checkManifest(ref string, m *manifest.Manifest) error {
+	if err := manifestInvalid(ref, manifest.Validate(m)); err != nil || len(s.Grants.Servers) == 0 {
+		return err
+	}
+	stored := map[string]bool{}
+	if p := m.Capabilities.Persistent; p != nil {
+		for _, srv := range s.Grants.Servers {
+			for _, name := range srv.Secrets {
+				if i := slices.Index(p.Secrets, name); i >= 0 {
+					stored[fmt.Sprintf("capabilities.persistent.secrets[%d]", i)] = true
+				}
+			}
+		}
+	}
+	var errs []error
+	for _, e := range manifest.Validate(s.withServers(m)) {
+		if is, ok := manifest.AsIssue(e); ok && is.Rule == "V16" && stored[is.Path] {
+			continue
+		}
+		errs = append(errs, e)
+	}
+	return manifestInvalid(ref, errs)
+}
+
+// manifestInvalid is the start's refusal of a manifest with blocking
+// findings among errs; nil when it has none.
+func manifestInvalid(ref string, errs []error) error {
+	blocking := manifest.Blocking(errs)
+	if len(blocking) == 0 {
+		return nil
+	}
+	msgs := make([]string, 0, len(blocking))
+	for _, e := range blocking {
+		msgs = append(msgs, e.Error())
+	}
+	return engine.Classify(engine.ExitCompile, fmt.Errorf("%s manifest invalid:\n  %s", ref, strings.Join(msgs, "\n  ")))
+}
+
 // resolveServers resolves the package servers among the manifest's, from
 // the agent's store when it already holds each pin, and returns them with
 // the plan's server specs.
@@ -1040,14 +1085,10 @@ func (s Segment) Plan(ctx context.Context, logw io.Writer) (*SegmentPlan, error)
 	if err != nil {
 		return nil, err
 	}
-	m = s.withServers(m)
-	if blocking := manifest.Blocking(manifest.Validate(m)); len(blocking) > 0 {
-		msgs := make([]string, 0, len(blocking))
-		for _, e := range blocking {
-			msgs = append(msgs, e.Error())
-		}
-		return nil, engine.Classify(engine.ExitCompile, fmt.Errorf("%s manifest invalid:\n  %s", meta.Ref, strings.Join(msgs, "\n  ")))
+	if err := s.checkManifest(meta.Ref, m); err != nil {
+		return nil, err
 	}
+	m = s.withServers(m)
 	adapterName := ImageAdapter(adapter.DefaultFor(s.Policy))
 	ad, err := adapter.Get(adapterName)
 	if err != nil {
