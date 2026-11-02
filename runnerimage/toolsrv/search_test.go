@@ -615,3 +615,84 @@ func TestASlowSearchAnswersInPartBeforeItsLimit(t *testing.T) {
 		t.Errorf("a grep that listed nothing in time: (%q, %v)", got, isErr)
 	}
 }
+
+// TestAnAnswerIsInPathOrderWhateverRipgrepsOrder: ripgrep searching on
+// several threads writes files in any order; every answer comes back by
+// path, element by element ("a/b" before "a.b"), each file's lines kept
+// together and in their order.
+func TestAnAnswerIsInPathOrderWhateverRipgrepsOrder(t *testing.T) {
+	dir := t.TempDir()
+	fake := filepath.Join(dir, "rg")
+	ev := func(typ, p string, n int, text string) string {
+		b, _ := json.Marshal(map[string]any{"type": typ, "data": map[string]any{
+			"path": map[string]any{"text": p}, "lines": map[string]any{"text": text + "\n"}, "line_number": n,
+			"submatches": []map[string]any{{"start": 0}},
+		}})
+		return string(b)
+	}
+	jsonOut := strings.Join([]string{
+		ev("match", "./z.md", 1, "z one"),
+		ev("match", "./a.b", 4, "dot"),
+		ev("match", "./a/b", 2, "slash two"), ev("match", "./a/b", 9, "slash nine"),
+		ev("match", "./m.md", 3, "m"),
+	}, "\n") + "\n"
+	mustWrite(t, filepath.Join(dir, "json"), []byte(jsonOut))
+	script := "#!/bin/sh\nfor a in \"$@\"; do case $a in\n" +
+		"--json) exec cat " + filepath.Join(dir, "json") + ";;\n" +
+		"--count) printf './z.md\\0001\\n./a.b\\0001\\n./a/b\\0002\\n'; exit 0;;\n" +
+		"--files-with-matches|--files) printf './z.md\\000./a.b\\000./a/b\\000./m.md\\000'; exit 0;;\n" +
+		"esac; done\nexit 2\n"
+	mustWrite(t, fake, []byte(script))
+	if err := os.Chmod(fake, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	s := searchServer(t, scratchSpec(t), fake)
+	d := s.spec.ScratchDir
+	if got, _ := grepCall(t, s, map[string]any{"pattern": "x", "path": d}); got != strings.Join([]string{d + "/a/b", d + "/a.b", d + "/m.md", d + "/z.md"}, "\n") {
+		t.Errorf("files: %q", got)
+	}
+	if got, _ := grepCall(t, s, map[string]any{"pattern": "x", "path": d, "output": "count"}); got != d+"/a/b: 2\n"+d+"/a.b: 1\n"+d+"/z.md: 1" {
+		t.Errorf("count: %q", got)
+	}
+	want := strings.Join([]string{d + "/a/b:2: slash two", d + "/a/b:9: slash nine", d + "/a.b:4: dot", d + "/m.md:3: m", d + "/z.md:1: z one"}, "\n")
+	if got, _ := grepCall(t, s, map[string]any{"pattern": "x", "path": d, "output": "content"}); got != want {
+		t.Errorf("content:\n got %q\nwant %q", got, want)
+	}
+	if got, _ := s.toolGlob(rawArgs(t, map[string]any{"pattern": "*", "path": d})); got != strings.Join([]string{d + "/a/b", d + "/a.b", d + "/m.md", d + "/z.md"}, "\n") {
+		t.Errorf("glob: %q", got)
+	}
+}
+
+// TestPagesOfAThreadedSearchFitTogether: with ripgrep searching many
+// files at once, the pages an offset reads are the one answer in path
+// order, cut in turn.
+func TestPagesOfAThreadedSearchFitTogether(t *testing.T) {
+	s := searchServer(t, scratchSpec(t), realRipgrep(t))
+	d := s.spec.ScratchDir
+	var want []string
+	for i := range 120 {
+		name := filepath.Join(d, "dir"+strconv.Itoa(i%7), "f"+strconv.Itoa(i)+".txt")
+		mustWrite(t, name, []byte("zero\nneedle "+strconv.Itoa(i)+"\n"))
+		want = append(want, name+":2: needle "+strconv.Itoa(i))
+	}
+	slices.SortFunc(want, func(a, b string) int {
+		pa, _, _ := strings.Cut(a, ":")
+		pb, _, _ := strings.Cut(b, ":")
+		return pathCompare(pa, pb)
+	})
+	var got []string
+	for offset := 0; offset < len(want); offset += 50 {
+		page, isErr := grepCall(t, s, map[string]any{"pattern": "needle", "path": d, "output": "content", "maxResults": 50, "offset": offset})
+		if isErr {
+			t.Fatalf("offset %d: %q", offset, page)
+		}
+		for _, line := range strings.Split(page, "\n") {
+			if !strings.HasPrefix(line, "[results") {
+				got = append(got, line)
+			}
+		}
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("the pages:\n got %q\nwant %q", got, want)
+	}
+}
