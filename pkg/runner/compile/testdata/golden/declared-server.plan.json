@@ -203,8 +203,8 @@
     }
   ],
   "budgets": {
-    "timeoutSeconds": 900,
-    "maxTurns": 100
+    "timeoutSeconds": 1800,
+    "maxTurns": 0
   },
   "output": {},
   "files": {

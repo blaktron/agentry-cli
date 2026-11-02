@@ -85,7 +85,7 @@ Write `## Steps` for the browser tools by name, and spend the rest on the test: 
 
 ## Fitting the run's budget
 
-A run stops when its tool calls or its time run out: 100 calls and 900 seconds on the person's computer (the CLI's default policy, which its operator may change) and In Agentry on Pro and above, 20 calls and 300 seconds In Agentry on Standard. A run that stops before `write_report` leaves the person nothing. The System Prompt does not tell the agent its budget, so the instructions do. The first browser QuickAgents ran out before they wrote a report, in each of the ways below [src: doc:runtime-facts.md].
+A run stops when its tool calls or its time run out: 1800 seconds and no tool-call limit on the person's computer (the CLI's default policy, which its operator may change), 100 calls and 900 seconds In Agentry on Pro and above, and 20 calls and 300 seconds In Agentry on Standard. A run that stops before `write_report` leaves the person nothing. The System Prompt does not tell the agent its budget, so the instructions do. The first browser QuickAgents ran out before they wrote a report, in each of the ways below [src: doc:runtime-facts.md].
 
 - **Say the budget.** Tell the run that tool calls are limited, that a run which stops before `write_report` leaves the person nothing, and to stop testing and write the report after about 80 calls: a model does not count its calls reliably, so leave a margin. Bound the test the same way: a number of pages, a number of forms.
 - **One `browser_evaluate` per page** for all of that page's checks (headings, images without `alt`, unlabelled fields, links), returning one object. A navigate, a screenshot, one evaluate and the console is four calls a page.
