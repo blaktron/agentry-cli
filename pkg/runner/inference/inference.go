@@ -70,7 +70,13 @@ type Client struct {
 	registry string
 	signIn   func() (string, error)
 	hc       *http.Client
+	// advice is what a refused sign-in tells the person to do.
+	advice string
 }
+
+// defaultSignInAdvice is what a refused sign-in says when the sign-in is
+// this computer's own.
+const defaultSignInAdvice = "sign in again with agentry login"
 
 // New is the client of the registry at regURL (no trailing slash). signIn
 // answers the account's registry sign-in at each call, so a renewal made
@@ -81,7 +87,15 @@ func New(regURL string, signIn func() (string, error), hc *http.Client) *Client 
 	if hc == nil {
 		hc = &http.Client{Timeout: time.Minute}
 	}
-	return &Client{registry: strings.TrimRight(regURL, "/"), signIn: signIn, hc: origin.Guard(hc)}
+	return &Client{registry: strings.TrimRight(regURL, "/"), signIn: signIn, hc: origin.Guard(hc), advice: defaultSignInAdvice}
+}
+
+// WithSignInAdvice sets what a refused sign-in tells the person to do, for
+// a sign-in that is not this computer's own (a remote runhost's credits
+// token), and returns c.
+func (c *Client) WithSignInAdvice(advice string) *Client {
+	c.advice = advice
+	return c
 }
 
 // Registry is the registry's address.
@@ -191,7 +205,7 @@ func (c *Client) do(ctx context.Context, method, path string, body any, want int
 	}
 	switch res.StatusCode {
 	case http.StatusUnauthorized:
-		return fmt.Errorf("%w: %s (sign in again with agentry login)", ErrSignedOut, why)
+		return fmt.Errorf("%w: %s (%s)", ErrSignedOut, why, c.advice)
 	case http.StatusPaymentRequired:
 		return fmt.Errorf("%w: %s", ErrNoCredits, why)
 	case http.StatusGone:
