@@ -15,6 +15,12 @@ never merged into `dev`.
   whether the session resumes.
 - `signal/`: signal-cli's native build linking as a Signal device the same way.
   `run-signal.sh [hosts…]`.
+- `imsg/`: `imsg` on a Mac, run in Terminal by the person whose Messages is
+  signed in: Full Disk Access through Terminal's grant, inbound latency and
+  shape from their phone, a send through Messages (Automation), and whether a
+  launchd-started `imsg` reads with Terminal's grant or needs its own.
+  `IMSG=/path/to/imsg ./probe-imsg.sh <handle> [minutes]`. It prints no
+  message text.
 
 Every container and network the scripts make is named `probe-msgr-*`; remove
 them with `docker rm -f $(docker ps -aq --filter name=probe-msgr)` and
