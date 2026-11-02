@@ -182,7 +182,7 @@ func readRunhostStatus() (runhostStatus, error) {
 	}
 	if s, err := openRunhostStore(); err == nil {
 		if c, ok, err := runhostStoredCredits(s); err == nil && ok {
-			st.Credits = c.info()
+			st.Credits = c.Info()
 		}
 	}
 	if path, err := policy.DefaultPath(); err == nil {

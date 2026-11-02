@@ -217,22 +217,15 @@ func (l *runhostLive) relaySession(in io.Reader) {
 	}
 }
 
-// runhostSessionInput is one line of a session's input from the device.
-type runhostSessionInput struct {
-	Command *json.RawMessage    `json:"command,omitempty"`
-	File    *runhostSessionFile `json:"file,omitempty"`
-}
-
-// runhostSessionFile is a chunk of a file a device adds to a session: More
-// says another chunk of the same file follows.
-type runhostSessionFile struct {
-	Name string `json:"name"`
-	Data []byte `json:"data"`
-	More bool   `json:"more,omitempty"`
-}
+// runhostSessionInput is one line of a session's input from the device, and
+// runhostSessionFile a chunk of a file it adds.
+type (
+	runhostSessionInput = runhost.SessionInput
+	runhostSessionFile  = runhost.SessionFile
+)
 
 // runhostMaxSessionFile bounds one file a device adds to a session.
-const runhostMaxSessionFile = 512 << 20
+const runhostMaxSessionFile = runhost.MaxSessionFile
 
 func (l *runhostLive) takeFile(f *runhostSessionFile, open **os.File, openName *string) error {
 	if l.inputs == "" {
@@ -387,4 +380,4 @@ func sessionEventFrame(line []byte, values []string) (runhost.Frame, bool) {
 
 // sealedEnvelopeJob is the job string the envelope is sealed under, apart
 // from the output's, so neither opens as the other.
-func sealedEnvelopeJob(id string) string { return id + ":envelope" }
+func sealedEnvelopeJob(id string) string { return runhost.SealedEnvelopeJob(id) }

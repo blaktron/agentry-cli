@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/blaktron/agentry-cli/pkg/runhost/job"
+	"github.com/blaktron/agentry-cli/pkg/runhost/remote"
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/connection"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
@@ -136,12 +137,12 @@ func TestTheJobsPolicyTakesTheRunhostsNewestImages(t *testing.T) {
 // takes.
 func TestARunOnARunhostCarriesNoKeyForASignIn(t *testing.T) {
 	for _, kind := range []string{policy.KeyKindClaudeSignIn, policy.KeyKindChatGPTPlan, policy.KeyKindCopilotSignIn} {
-		key, err := runOnModelKey(&policy.Policy{Model: policy.Model{Provider: policy.SignInProvider(kind), Name: "m", APIKeyKind: kind}})
+		key, err := remote.ModelKey(&policy.Policy{Model: policy.Model{Provider: policy.SignInProvider(kind), Name: "m", APIKeyKind: kind}})
 		if err != nil || key != "" {
 			t.Errorf("%s: %q %v", kind, key, err)
 		}
 	}
-	if _, err := runOnModelKey(&policy.Policy{Model: policy.Model{Provider: "anthropic", Name: "m", APIKeyEnv: "ANTHROPIC_API_KEY", APIKeyKind: policy.KeyKindSubscription}}); err == nil || !strings.Contains(err.Error(), "--sign-in claude") {
+	if _, err := remote.ModelKey(&policy.Policy{Model: policy.Model{Provider: "anthropic", Name: "m", APIKeyEnv: "ANTHROPIC_API_KEY", APIKeyKind: policy.KeyKindSubscription}}); err == nil || !strings.Contains(err.Error(), "--sign-in claude") {
 		t.Fatalf("a subscription token: %v", err)
 	}
 }

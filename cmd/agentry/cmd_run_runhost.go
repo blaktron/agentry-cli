@@ -1,10 +1,6 @@
 package main
 
 import (
-	"context"
-	"crypto/rand"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,14 +11,12 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/blaktron/agentry-cli/internal/version"
 	"github.com/blaktron/agentry-cli/pkg/runhost"
 	"github.com/blaktron/agentry-cli/pkg/runhost/job"
-	"github.com/blaktron/agentry-cli/pkg/runhost/output"
+	"github.com/blaktron/agentry-cli/pkg/runhost/remote"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
-	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelsignin"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
@@ -96,7 +90,7 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	if err != nil {
 		return engine.Classify(engine.ExitPolicy, err)
 	}
-	modelKey, err := runOnModelKey(pol)
+	modelKey, err := remote.ModelKey(pol)
 	if err != nil {
 		return engine.Classify(engine.ExitPolicy, err)
 	}
@@ -184,7 +178,7 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	if len(task) > job.MaxDocument/2 {
 		return engine.Classify(engine.ExitUsage, fmt.Errorf("the task is over %d bytes, more than a run on a runhost takes", job.MaxDocument/2))
 	}
-	id, err := newRunhostJobID()
+	id, err := remote.NewJobID()
 	if err != nil {
 		return err
 	}
@@ -209,7 +203,7 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 		return engine.Classify(engine.ExitGateway, err)
 	}
 	defer func() { _ = client.Close() }()
-	rv, err := runOnSameVersion(cmd.Context(), client, rec.Name)
+	rv, err := remote.SameVersion(cmd.Context(), client, rec.Name)
 	if err != nil {
 		return engine.Classify(engine.ExitGateway, err)
 	}
@@ -226,30 +220,30 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	}
 
 	opts.progress.at(receipt.StageAgent)
-	lj := runhostLocalJob{Job: j.ID, Runhost: rec.Name, Ref: meta.Ref, Namespace: meta.Namespace, Name: meta.Name, Version: meta.Version,
+	lj := remote.LocalJob{Job: j.ID, Runhost: rec.Name, Ref: meta.Ref, Namespace: meta.Namespace, Name: meta.Name, Version: meta.Version,
 		Digest: meta.Digest, Out: opts.out, DeliverTo: carried.deliverTo, Session: j.Run.Session, StartedAt: time.Now().UTC().Format(time.RFC3339),
 		Adapter: runAdapter, UnsafeMode: rv.UnsafeMode}
 	if mapped {
 		lj.AdapterAsked = opts.adapterName
 	}
-	if err := putLocalJob(home, lj); err != nil {
+	if err := remote.PutJob(home, lj); err != nil {
 		return err
 	}
 	say := func(line string) { _, _ = fmt.Fprintf(errOut, "%s: %s\n", rec.Name, safeTerminalText(line, 4096)) }
 	if j.Run.Session {
 		return runOnSession(cmd, client, rec, keys, j, archive, files, lj, m, pol, opts, carried, say)
 	}
-	res, started, next, err := runOnStart(cmd.Context(), client, j, archive, files, opts.detach, say, nil, nil)
+	res, started, next, err := remote.Start(cmd.Context(), client, j, archive, files, opts.detach, say, nil, nil)
 	switch {
 	case err != nil && !started:
-		dropLocalJob(home, j.ID)
-		return engine.Classify(runOnSendClass(err), err)
+		remote.DropJob(home, j.ID)
+		return engine.Classify(remote.SendClass(err), err)
 	case opts.detach:
 		carried.finishProfile(errOut)
 		return runOnDetached(cmd, rec, j.ID, opts.outputFormat)
 	case err != nil:
 		var c2 *runhost.Client
-		res, c2, err = runOnReattach(cmd.Context(), rec, keys, j.ID, next, errOut, say, nil)
+		res, c2, err = remote.Reattach(cmd.Context(), rec, keys, j.ID, next, errOut, say, nil)
 		if err != nil {
 			carried.finishProfile(errOut)
 			return engine.Classify(engine.ExitGateway, fmt.Errorf("lost %s: %w; the job goes on there: agentry runhost attach %s %s follows it and opens its output here", rec.Name, err, rec.Name, j.ID))
@@ -283,32 +277,6 @@ func runOnDetached(cmd *cobra.Command, rec *runhost.Record, id, format string) e
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "job %s runs on %s\n  follow it:     agentry runhost attach %s %s\n  collect it:    agentry runhost collect %s %s (once it has ended)\n  stop it:       agentry runhost cancel %s %s\n",
 		id, rec.Name, rec.Name, id, rec.Name, id, rec.Name, id)
 	return nil
-}
-
-// runOnModelKey is the device policy's model key, which the run carries in
-// flight: the variable the policy names, else its keychain entry. A model
-// paid with Agentry credits or a plan's sign-in carries none: the runhost
-// pays with the credits token, or the sign-in, it keeps (agentry runhost
-// model). A model a runhost cannot be handed this way is refused here.
-func runOnModelKey(pol *policy.Policy) (string, error) {
-	switch {
-	case pol.Model.Provider == policy.ProviderAgentry:
-		return "", nil
-	case policy.IsModelSignIn(pol.Model.APIKeyKind):
-		// The runhost keeps the plan's sign-in itself (agentry runhost
-		// model --sign-in): nothing of this computer's travels.
-		return "", nil
-	case pol.Model.APIKeyKind == policy.KeyKindSubscription:
-		return "", errors.New("a Claude subscription token runs only the installed claude, which a runhost does not run: sign the runhost in with agentry runhost model <name> --sign-in claude, and choose your Claude subscription with agentry setup")
-	}
-	key, err := modelkey.Personal(pol.Model.APIKeyEnv, pol.Model.APIKeySource, pol.Model.Provider)
-	if err != nil {
-		return "", err
-	}
-	if key == "" {
-		return "", fmt.Errorf("no key for the model %s/%s: set $%s, or keep it in the keychain with agentry setup", pol.Model.Provider, pol.Model.Name, pol.Model.APIKeyEnv)
-	}
-	return key, nil
 }
 
 // runOnRelease fetches the verified release's archive and attestation as
@@ -366,153 +334,4 @@ func runOnRelease(cmd *cobra.Command, meta *installdir.Meta) (job.Release, []byt
 		return job.Release{}, nil, fmt.Errorf("%s is %s; a runhost runs a verified, unsigned or unscanned release", meta.Ref, meta.Attestation.State)
 	}
 	return rel, archive, nil
-}
-
-// runhostVersion is the version verb's answer.
-type runhostVersion struct {
-	Version string `json:"version"`
-	// UnsafeMode is the runhost's own Unsafe Mode setting.
-	UnsafeMode bool `json:"unsafeMode"`
-}
-
-// runOnSameVersion refuses a runhost whose CLI is not this device's
-// version: the run's plan, policy and envelope are this version's. It
-// returns what the runhost said of itself.
-func runOnSameVersion(ctx context.Context, c *runhost.Client, name string) (runhostVersion, error) {
-	a, err := c.Ask(ctx, "version", nil, nil)
-	if err != nil {
-		return runhostVersion{}, fmt.Errorf("ask %s its version: %w", name, err)
-	}
-	var v runhostVersion
-	if a.Code != 0 || json.Unmarshal(a.Result, &v) != nil {
-		return runhostVersion{}, fmt.Errorf("%s did not say its version: %s", name, a.Error)
-	}
-	if v.Version != version.Version {
-		return runhostVersion{}, fmt.Errorf("%s runs CLI %s and this device %s; a run needs the same version on both: run agentry runhost add %s again from this device, which updates it", name, v.Version, version.Version, name)
-	}
-	return v, nil
-}
-
-// runhostRefusal is a job the runhost answered without running it, with the
-// exit class it gave.
-type runhostRefusal struct {
-	Code   int
-	Reason string
-}
-
-func (r *runhostRefusal) Error() string {
-	return fmt.Sprintf("the runhost refused the run (exit %d): %s", r.Code, r.Reason)
-}
-
-// runOnSendClass is the exit class of a job that did not run: a refusal the
-// runhost classed as usage, verify or policy keeps that class, and anything
-// else, a transport failure among them, is the gateway's.
-func runOnSendClass(err error) int {
-	var r *runhostRefusal
-	if errors.As(err, &r) {
-		switch r.Code {
-		case engine.ExitUsage, engine.ExitVerify, engine.ExitPolicy:
-			return r.Code
-		}
-	}
-	return engine.ExitGateway
-}
-
-// runOnCollect fetches the job's sealed output and opens it with this
-// device's sealing key into outDir. An output that does not open, or holds
-// anything a run's output does not, leaves nothing in outDir.
-func runOnCollect(ctx context.Context, c *runhost.Client, jobID, device string, keys *runhost.DeviceKeys, outDir string) error {
-	sealed, err := os.CreateTemp(filepath.Dir(outDir), ".runhost-output-*")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = sealed.Close(); _ = os.Remove(sealed.Name()) }()
-	var written int64
-	a, err := c.Call(ctx, "collect", []string{jobID}, nil, func(f runhost.Frame) error {
-		if f.Type != runhost.FrameData {
-			return nil
-		}
-		if written += int64(len(f.Data)); written > output.MaxOutput+output.MaxHeader+(output.MaxOutput/output.ChunkSize+1)*20 {
-			return errors.New("the sealed output is larger than any run's")
-		}
-		_, err := sealed.Write(f.Data)
-		return err
-	})
-	if err != nil {
-		return err
-	}
-	if a.Code != 0 {
-		return errors.New(nonEmptyOr(a.Error, "the runhost would not hand the output over"))
-	}
-	if _, err := sealed.Seek(0, io.SeekStart); err != nil {
-		return err
-	}
-	staging, err := os.MkdirTemp(filepath.Dir(outDir), ".runhost-open-*")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = os.RemoveAll(staging) }()
-	pr, pw := io.Pipe()
-	opened := make(chan error, 1)
-	go func() {
-		err := output.Open(pw, sealed, device, keys.Seal, jobID)
-		pw.CloseWithError(err)
-		opened <- err
-	}()
-	uerr := output.Unpack(pr, filepath.Join(staging, "out"))
-	// Whatever Unpack did not read is drained, so Open reaches the end of
-	// the sealed output and says whether all of it opened.
-	_, _ = io.Copy(io.Discard, pr)
-	oerr := <-opened
-	if uerr != nil {
-		return uerr
-	}
-	if oerr != nil {
-		return oerr
-	}
-	return moveInto(filepath.Join(staging, "out"), outDir)
-}
-
-// moveInto moves every entry of src into dst, which exists.
-func moveInto(src, dst string) error {
-	entries, err := os.ReadDir(src)
-	if err != nil {
-		return err
-	}
-	for _, e := range entries {
-		to := filepath.Join(dst, e.Name())
-		if err := os.RemoveAll(to); err != nil {
-			return err
-		}
-		if err := os.Rename(filepath.Join(src, e.Name()), to); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// runOnEnvelope takes the runhost CLI's envelope as this device's record:
-// its folders are this device's, and it names the runhost it ran on.
-func runOnEnvelope(env *receipt.Envelope, rec *runhost.Record, outDir, jobID string) {
-	if env.OutDir != "" {
-		if env.Receipts.Dir != "" {
-			if rel, err := filepath.Rel(env.OutDir, env.Receipts.Dir); err == nil && !strings.HasPrefix(rel, "..") {
-				env.Receipts.Dir = filepath.Join(outDir, rel)
-			}
-		}
-	}
-	env.OutDir = outDir
-	if env.Receipts.Dir == "" {
-		env.Receipts.Dir = filepath.Join(outDir, "receipts")
-	}
-	env.Runhost = &receipt.Runhost{Name: rec.Name, Host: rec.Host, HostKeyFingerprint: rec.HostKeyFingerprint, CLIVersion: rec.CLIVersion, Job: jobID}
-}
-
-// newRunhostJobID is a fresh job id.
-func newRunhostJobID() (string, error) {
-	var raw [16]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(raw[:]), nil
 }

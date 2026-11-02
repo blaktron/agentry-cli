@@ -24,6 +24,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/internal/version"
 	"github.com/blaktron/agentry-cli/pkg/runhost"
+	"github.com/blaktron/agentry-cli/pkg/runhost/remote"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 )
@@ -438,16 +439,16 @@ func TestRunOnSendClass(t *testing.T) {
 		err  error
 		want int
 	}{
-		{&runhostRefusal{Code: 2, Reason: "x"}, 2},
-		{&runhostRefusal{Code: 10, Reason: "x"}, 10},
-		{&runhostRefusal{Code: 11, Reason: "x"}, 11},
-		{&runhostRefusal{Code: 1, Reason: "x"}, 13},
-		{&runhostRefusal{Code: 14, Reason: "x"}, 13},
-		{fmt.Errorf("wrapped: %w", &runhostRefusal{Code: 10, Reason: "x"}), 10},
+		{&remote.Refusal{Code: 2, Reason: "x"}, 2},
+		{&remote.Refusal{Code: 10, Reason: "x"}, 10},
+		{&remote.Refusal{Code: 11, Reason: "x"}, 11},
+		{&remote.Refusal{Code: 1, Reason: "x"}, 13},
+		{&remote.Refusal{Code: 14, Reason: "x"}, 13},
+		{fmt.Errorf("wrapped: %w", &remote.Refusal{Code: 10, Reason: "x"}), 10},
 		{io.ErrUnexpectedEOF, 13},
 		{errors.New("the session ended without an answer"), 13},
 	} {
-		if got := runOnSendClass(tc.err); got != tc.want {
+		if got := remote.SendClass(tc.err); got != tc.want {
 			t.Errorf("%v: class %d, want %d", tc.err, got, tc.want)
 		}
 	}
@@ -472,14 +473,14 @@ func TestRunOnRefusesWhatItDoesNotCarry(t *testing.T) {
 	}
 	// A model paid with Agentry credits carries no key: the runhost pays
 	// with its own credits token.
-	if key, err := runOnModelKey(&policy.Policy{Model: policy.Model{Provider: policy.ProviderAgentry, Name: "x"}}); err != nil || key != "" {
+	if key, err := remote.ModelKey(&policy.Policy{Model: policy.Model{Provider: policy.ProviderAgentry, Name: "x"}}); err != nil || key != "" {
 		t.Errorf("credits: %q, %v", key, err)
 	}
 	for name, m := range map[string]policy.Model{
 		"sign-in": {Provider: "anthropic", Name: "x", APIKeyKind: policy.KeyKindSubscription},
 		"no key":  {Provider: "anthropic", Name: "x", APIKeyEnv: "UNSET_TEST_KEY_VAR"},
 	} {
-		if _, err := runOnModelKey(&policy.Policy{Model: m}); err == nil {
+		if _, err := remote.ModelKey(&policy.Policy{Model: m}); err == nil {
 			t.Errorf("%s: a key was taken", name)
 		}
 	}
@@ -539,7 +540,7 @@ func TestRunOnDetachAttachCancelCollect(t *testing.T) {
 	if entries, _ := os.ReadDir(runhostJobsDir); len(entries) != 0 {
 		t.Errorf("the runhost kept %d jobs after collection", len(entries))
 	}
-	if jobs, _ := loadLocalJobs(home); len(jobs) != 0 {
+	if jobs, _ := remote.LoadJobs(home); len(jobs) != 0 {
 		t.Errorf("the device kept %v", jobs)
 	}
 
@@ -662,9 +663,9 @@ func TestRunOnReattachesAfterALostConnection(t *testing.T) {
 	newRunOnLab(t)
 	fr := newFakeRegistry(t)
 	fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
-	old := runOnReattachWaits
-	runOnReattachWaits = []time.Duration{100 * time.Millisecond, 200 * time.Millisecond}
-	t.Cleanup(func() { runOnReattachWaits = old })
+	old := remote.ReattachWaits
+	remote.ReattachWaits = []time.Duration{100 * time.Millisecond, 200 * time.Millisecond}
+	t.Cleanup(func() { remote.ReattachWaits = old })
 	t.Setenv("RUNHOST_TEST_SLEEP", "2")
 	go func() {
 		time.Sleep(700 * time.Millisecond)
