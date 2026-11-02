@@ -3,6 +3,7 @@ package inference_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -45,5 +46,20 @@ func TestTheClientOpensRenewsAndEndsASession(t *testing.T) {
 	none := inference.New(reg.URL, func() (string, error) { return "", nil }, nil)
 	if _, err := none.Open(context.Background(), inference.PurposeRun); !errors.Is(err, inference.ErrSignedOut) {
 		t.Fatalf("no sign-in: %v", err)
+	}
+}
+
+// A refused sign-in says what to do: sign in again by default, or the advice
+// the client was given for a sign-in that is not this computer's.
+func TestARefusedSignInSaysWhatToDo(t *testing.T) {
+	reg := inferencetest.New(t)
+	def := inference.New(reg.URL, func() (string, error) { return "agy_someoneelse", nil }, nil)
+	if _, err := def.Open(context.Background(), inference.PurposeRun); !errors.Is(err, inference.ErrSignedOut) || !strings.Contains(err.Error(), "agentry login") {
+		t.Fatalf("default advice: %v", err)
+	}
+	set := inference.New(reg.URL, func() (string, error) { return "agy_someoneelse", nil }, nil).WithSignInAdvice("give the runhost a new token")
+	_, err := set.Open(context.Background(), inference.PurposeRun)
+	if !errors.Is(err, inference.ErrSignedOut) || !strings.Contains(err.Error(), "(give the runhost a new token)") || strings.Contains(err.Error(), "agentry login") {
+		t.Fatalf("set advice: %v", err)
 	}
 }

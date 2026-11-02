@@ -29,10 +29,18 @@ func creditsClient(pol *policy.Policy) *inference.Client {
 		return nil
 	}
 	if tok := os.Getenv(envRunhostCreditsToken); tok != "" {
-		return inference.New(reg, func() (string, error) { return tok, nil }, httpClient)
+		return inference.New(reg, func() (string, error) { return tok, nil }, httpClient).
+			WithSignInAdvice(runhostCreditsAdvice(runhostOwnName()))
 	}
 	if tok, err := credentialFor(reg); err != nil || tok == "" {
 		return nil
 	}
 	return inference.New(reg, func() (string, error) { return credentialFor(reg) }, httpClient)
+}
+
+// runhostCreditsAdvice is what a run a remote runhost started says when the
+// registry refuses the runhost's credits token: signing in again on a device
+// changes nothing, since the runhost pays with a token of its own.
+func runhostCreditsAdvice(name string) string {
+	return "this runhost's credits token is revoked or expired: agentry runhost model " + name + " --provider agentry gives it a new one"
 }
