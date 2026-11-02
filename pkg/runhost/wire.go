@@ -34,6 +34,12 @@ const (
 	FrameRelease = "release"
 	// FrameData carries bytes of a sealed output, in order.
 	FrameData = "data"
+	// FrameStarted says the job runs under the service: Text is its id. A
+	// device that leaves after it finds the job again with attach.
+	FrameStarted = "started"
+	// FrameEvent carries one event of a session, as the session protocol
+	// wrote it, in Result.
+	FrameEvent = "event"
 )
 
 // The two answers of a release frame.
@@ -90,6 +96,14 @@ func (f *FrameWriter) Result(v any) error {
 		return err
 	}
 	return f.write(Frame{Type: FrameResult, Result: b})
+}
+
+// Frame writes f as it is.
+func (f *FrameWriter) Frame(fr Frame) error { return f.write(fr) }
+
+// Started says job id runs under the service.
+func (f *FrameWriter) Started(id string) error {
+	return f.write(Frame{Type: FrameStarted, Text: id})
 }
 
 // Release says whether a job's release must follow its document.

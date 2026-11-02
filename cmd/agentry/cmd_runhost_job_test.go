@@ -44,6 +44,22 @@ for a in "$@"; do
   prev="$a"
 done
 printf '%s\n' "$@" > "$RUNHOST_TEST_DIR/argv"
+[ -n "$RUNHOST_TEST_SLEEP" ] && sleep "$RUNHOST_TEST_SLEEP"
+case " $* " in *" --session-protocol "*)
+  turns=0
+  while IFS= read -r line; do
+    case "$line" in
+      *'"send"'*) turns=$((turns+1))
+        printf '{"kind":"user_turn","text":"turn %s"}\n{"kind":"assistant_turn","text":"answer %s"}\n' "$turns" "$turns" >&3 ;;
+      *'"add"'*) ls session-inputs > "$RUNHOST_TEST_DIR/session-inputs.seen"
+        printf '{"kind":"input_added","path":"/inputs/x"}\n' >&3 ;;
+      *'"end"'*) break ;;
+    esac
+  done
+  printf '{"kind":"session_end","reason":"quit"}\n' >&3
+  echo "$turns" > "$RUNHOST_TEST_DIR/turns"
+  ;;
+esac
 env > "$RUNHOST_TEST_DIR/env"
 mkdir -p "$out/reports" "$out/receipts" "$out/scratch"
 echo '{"from":"the agent"}' > "$out/result.json"
@@ -151,13 +167,18 @@ func sendJob(t *testing.T, j *job.Job, archive []byte) jobAnswer {
 
 func sendJobCtx(t *testing.T, ctx context.Context, j *job.Job, archive []byte) jobAnswer {
 	t.Helper()
-	var in bytes.Buffer
-	if err := job.Write(&in, j); err != nil {
+	var doc bytes.Buffer
+	if err := job.Write(&doc, j); err != nil {
 		t.Fatal(err)
 	}
-	in.Write(archive)
+	doc.Write(archive)
+	// The input stays open while the device follows the job, as an SSH
+	// session's does; its end would say the device left.
+	pr, pw := io.Pipe()
+	go func() { _, _ = pw.Write(doc.Bytes()) }()
+	defer func() { _ = pw.Close() }()
 	var out bytes.Buffer
-	code, err := runhostJobVerb(ctx, runhost.Request{Verb: "job"}, &in, runhost.NewFrameWriter(&out))
+	code, err := runhostJobVerb(ctx, runhost.Request{Verb: "job"}, pr, runhost.NewFrameWriter(&out))
 	a := jobAnswer{code: code, err: err}
 	if _, rerr := runhost.ReadFrames(io.MultiReader(&out, strings.NewReader(`{"type":"exit"}`+"\n")), func(f runhost.Frame) error {
 		switch f.Type {
@@ -190,8 +211,8 @@ func listFiles(t *testing.T, dir string) []string {
 }
 
 // A job's secrets leave no file on the runhost however its run ends: when it
-// succeeds, fails, or is cut off by a dropped session and killed past the
-// grace, the job's secrets file and the run's own copy go with the run; and a
+// succeeds, fails, or is interrupted by the service stopping and killed past
+// the grace, the job's secrets file and the run's own copy go with the run; and a
 // copy a killed service left is swept at its next start (I3).
 func TestARunhostJobsSecretsLeaveNoFileBehind(t *testing.T) {
 	srv := newRunhostServer(t)
@@ -218,7 +239,7 @@ func TestARunhostJobsSecretsLeaveNoFileBehind(t *testing.T) {
 		name string
 		exit string
 		hang bool
-	}{{"success", "0", false}, {"failure", "12", false}, {"a dropped session", "0", true}} {
+	}{{"success", "0", false}, {"failure", "12", false}, {"the service stopping", "0", true}} {
 		t.Setenv("RUNHOST_TEST_EXIT", end.exit)
 		hang := ""
 		if end.hang {
@@ -233,6 +254,7 @@ func TestARunhostJobsSecretsLeaveNoFileBehind(t *testing.T) {
 		}
 		a := sendJobCtx(t, ctx, j, archive)
 		cancel()
+		waitJobEnded(t, j.ID)
 		if !end.hang && a.err != nil {
 			t.Fatalf("%s: %v", end.name, a.err)
 		}
@@ -262,6 +284,18 @@ func TestARunhostJobsSecretsLeaveNoFileBehind(t *testing.T) {
 	}
 }
 
+// waitJobEnded waits for a job the service runs to end.
+func waitJobEnded(t *testing.T, id string) {
+	t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for liveJob(id) != nil {
+		if time.Now().After(deadline) {
+			t.Fatalf("job %s did not end", id)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 // A job runs its release as a local run of the runhost's CLI, never a
 // hosted one; its output comes back sealed to the device with only its
 // members; and nothing but the sealed output and the job's record is left.
@@ -276,8 +310,20 @@ func TestARunhostJobRunsAndLeavesOnlyItsSealedOutput(t *testing.T) {
 	if a.err != nil || a.code != 0 {
 		t.Fatalf("job: %d %v (%q)", a.code, a.err, a.out)
 	}
-	if a.release != runhost.ReleaseNeeded || a.result.Job != j.ID || a.result.ExitCode != 0 || !strings.Contains(string(a.result.Envelope), `"runId":"run123"`) {
+	if a.release != runhost.ReleaseNeeded || a.result.Job != j.ID || a.result.ExitCode != 0 || !a.result.Done {
 		t.Fatalf("answer: %+v", a)
+	}
+	// The envelope is sealed beside the output, under its own job string.
+	sealedEnv, err := os.ReadFile(filepath.Join(runhostJobsDir, j.ID, runhostEnvelopeName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envOut bytes.Buffer
+	if err := output.Open(&envOut, bytes.NewReader(sealedEnv), testDevice, srv.seal, sealedEnvelopeJob(j.ID)); err != nil || !strings.Contains(envOut.String(), `"runId":"run123"`) {
+		t.Fatalf("the sealed envelope: %v %s", err, envOut.String())
+	}
+	if err := output.Open(io.Discard, bytes.NewReader(sealedEnv), testDevice, srv.seal, j.ID); err == nil {
+		t.Error("the envelope opens as the output")
 	}
 	for _, l := range a.out {
 		if strings.Contains(l, "sk-test-model-key") {
@@ -307,7 +353,7 @@ func TestARunhostJobRunsAndLeavesOnlyItsSealedOutput(t *testing.T) {
 	}
 
 	jobDir := filepath.Join(runhostJobsDir, j.ID)
-	if got := listFiles(t, jobDir); strings.Join(got, " ") != "job.json output.sealed" {
+	if got := listFiles(t, jobDir); strings.Join(got, " ") != "envelope.sealed job.json output.sealed" {
 		t.Errorf("the job left %v", got)
 	}
 	sealed, _ := os.ReadFile(filepath.Join(jobDir, "output.sealed"))
@@ -401,7 +447,7 @@ func TestAFailedRunhostRunIsSealedToo(t *testing.T) {
 	if a.code != 14 || a.result.ExitCode != 14 {
 		t.Fatalf("answer: %+v", a)
 	}
-	if got := listFiles(t, filepath.Join(runhostJobsDir, j.ID)); strings.Join(got, " ") != "job.json output.sealed" {
+	if got := listFiles(t, filepath.Join(runhostJobsDir, j.ID)); strings.Join(got, " ") != "envelope.sealed job.json output.sealed" {
 		t.Errorf("the job left %v", got)
 	}
 }

@@ -145,6 +145,10 @@ type Run struct {
 	HostsDeny  []string `json:"hostsDeny,omitempty"`
 	// AllowVulnerableMCP is the person's own --allow-vulnerable-mcp.
 	AllowVulnerableMCP bool `json:"allowVulnerableMcp,omitempty"`
+	// Session makes the job an interactive session, driven over the job's
+	// own input by the session protocol's commands, its events coming back
+	// as frames.
+	Session bool `json:"session,omitempty"`
 	// Payload is the tar of the run's files that follows the document (and
 	// the release, when the runhost asks for it); nil when there are none.
 	Payload *Payload `json:"payload,omitempty"`
