@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/mcpauth"
 	"github.com/blaktron/agentry-cli/pkg/runhost"
+	"github.com/blaktron/agentry-cli/pkg/runhost/remote"
 	"github.com/blaktron/agentry-cli/pkg/runhost/signin"
 	"github.com/blaktron/agentry-cli/pkg/runner/connection"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
@@ -268,7 +268,7 @@ func runRunhostModelSignIn(cmd *cobra.Command, name, vendor string, oauthApp, ye
 		return engine.Classify(engine.ExitGateway, err)
 	}
 	defer func() { _ = c.Close() }()
-	if _, err := runOnSameVersion(ctx, c, name); err != nil {
+	if _, err := remote.SameVersion(ctx, c, name); err != nil {
 		return engine.Classify(engine.ExitGateway, err)
 	}
 	app := ""
@@ -326,16 +326,14 @@ func upsertSignIn(list []runhost.SignInRecord, r runhost.SignInRecord) []runhost
 // removeRunhostSignIn has the runhost end a sign-in, and forgets it in this
 // computer's record.
 func removeRunhostSignIn(cmd *cobra.Command, name, vendor string) (signin.Removed, error) {
-	a, _, err := askRunhostArgs(cmd, name, "store", []string{"remove-signin", vendor})
+	_, _, c, err := dialRunhostNamed(cmd.Context(), name)
 	if err != nil {
 		return signin.Removed{}, err
 	}
-	if a.Code != 0 {
-		return signin.Removed{}, engine.Classify(engine.ExitCLI, fmt.Errorf("%s: %s", name, a.Error))
-	}
-	var out signin.Removed
-	if err := json.Unmarshal(a.Result, &out); err != nil {
-		return signin.Removed{}, err
+	out, err := remote.RemoveSignIn(cmd.Context(), c, vendor, func(t string) { _, _ = fmt.Fprintln(narration(cmd), t) })
+	_ = c.Close()
+	if err != nil {
+		return signin.Removed{}, engine.Classify(engine.ExitCLI, fmt.Errorf("%s: %w", name, err))
 	}
 	if home, err := runnerHome(); err == nil {
 		if recs, err := runhost.LoadRecords(home); err == nil {
