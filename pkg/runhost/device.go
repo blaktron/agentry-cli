@@ -52,6 +52,17 @@ type Record struct {
 	// Credits is the Agentry credits token this device made for the
 	// runhost and the runhost keeps, when there is one: never the token.
 	Credits *CreditsRecord `yaml:"credits,omitempty" json:"credits,omitempty"`
+	// SignIns are the model sign-ins this device made on the runhost, which
+	// the runhost alone keeps: never a token.
+	SignIns []SignInRecord `yaml:"signIns,omitempty" json:"signIns,omitempty"`
+}
+
+// SignInRecord names a model sign-in a runhost keeps: the vendor and the
+// account the vendor named.
+type SignInRecord struct {
+	Vendor  string `yaml:"vendor" json:"vendor"`
+	Label   string `yaml:"label,omitempty" json:"label,omitempty"`
+	AddedAt string `yaml:"addedAt" json:"addedAt"`
 }
 
 // CreditsRecord names a runhost's credits token, which the runhost alone

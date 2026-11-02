@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -87,9 +88,10 @@ type Run struct {
 	// run.
 	AllowUnsigned  bool `json:"allowUnsigned,omitempty"`
 	AllowUnscanned bool `json:"allowUnscanned,omitempty"`
-	// Adapter is the harness adapter the person asked for. A runhost takes
-	// only its default, the container harness: the host-process harnesses
-	// would run outside gVisor.
+	// Adapter is the harness adapter the run takes, one of ImageAdapters;
+	// empty is the policy's default. A runhost runs no host-process harness,
+	// which would run outside gVisor: the device sends Claude Code's and
+	// Codex's image adapters for them (RunhostAdapter).
 	Adapter string `json:"adapter,omitempty"`
 	// Timeout, MaxTurns and MaxCost are the person's overrides of the
 	// policy's budgets; a negative MaxTurns or MaxCost and a zero Timeout
@@ -217,13 +219,50 @@ func ModelOf(m policy.Model) Model {
 }
 
 // Policy is the model as the runhost's policy takes it: the key from the
-// run's environment, or none for a model paid with Agentry credits.
+// run's environment, or none for a model paid with Agentry credits or with
+// a plan's sign-in the runhost keeps.
 func (m Model) Policy() policy.Model {
 	source := "env"
-	if m.PaysWithCredits() {
+	if m.PaysWithCredits() || m.SignIn() {
 		source = ""
 	}
 	return policy.Model{Provider: m.Provider, Name: m.Name, APIKeyEnv: m.APIKeyEnv, APIKeySource: source, APIKeyKind: m.APIKeyKind, BaseURL: m.BaseURL, ProxyAllow: m.ProxyAllow}
+}
+
+// SignIn says whether the model is paid by a plan's sign-in (a Claude
+// subscription, a ChatGPT plan, a Copilot plan), which the runhost keeps
+// itself: the job carries no key.
+func (m Model) SignIn() bool { return policy.IsModelSignIn(m.APIKeyKind) }
+
+// The adapters a run on a runhost may name: the default and the vendors'
+// container harnesses, every one a container under gVisor.
+const (
+	AdapterDockerAgent = "docker-agent"
+	AdapterClaudeImage = "claude-image"
+	AdapterCodexImage  = "codex-image"
+	AdapterCopilot     = "copilot-image"
+)
+
+// ImageAdapters are the adapters a runhost runs.
+var ImageAdapters = []string{AdapterDockerAgent, AdapterClaudeImage, AdapterCodexImage, AdapterCopilot}
+
+// RunhostAdapter is the adapter a runhost runs for the one a person asked
+// for: Claude Code's and Codex's images for the installed claude and codex,
+// which are host processes, and any image adapter as it is. mapped says the
+// asked adapter was replaced.
+func RunhostAdapter(asked string) (name string, mapped bool, err error) {
+	switch asked {
+	case "":
+		return "", false, nil
+	case "claude":
+		return AdapterClaudeImage, true, nil
+	case "codex":
+		return AdapterCodexImage, true, nil
+	}
+	if slices.Contains(ImageAdapters, asked) {
+		return asked, false, nil
+	}
+	return "", false, fmt.Errorf("a runhost runs its harness in a container under gVisor: %s, or claude and codex, which run as their images there; not %q", strings.Join(ImageAdapters, ", "), asked)
 }
 
 // PaysWithCredits says whether the model is paid with Agentry credits: the
@@ -321,6 +360,13 @@ func (j *Job) Validate() error {
 		if j.Run.Model.APIKeyEnv != "" || j.Run.Model.APIKeyKind != "" || j.Run.ModelKey != "" {
 			return errors.New("a model paid with Agentry credits carries no key")
 		}
+	} else if j.Run.Model.SignIn() {
+		if j.Run.Model.APIKeyEnv != "" || j.Run.ModelKey != "" {
+			return errors.New("a model paid by a plan's sign-in carries no key: the runhost keeps the sign-in")
+		}
+		if want := policy.SignInProvider(j.Run.Model.APIKeyKind); j.Run.Model.Provider != want {
+			return fmt.Errorf("a %s model's provider is %s, not %q", j.Run.Model.APIKeyKind, want, j.Run.Model.Provider)
+		}
 	} else {
 		if !ValidKeyEnv(j.Run.Model.APIKeyEnv) {
 			return fmt.Errorf("the model's key variable %q is not one a runhost takes: name it as the provider does, ending in _API_KEY, _KEY or _TOKEN, outside the AGENTRY_, DOCKER_, LD_, SSH_, GIT_ and XDG_ names", j.Run.Model.APIKeyEnv)
@@ -332,8 +378,8 @@ func (j *Job) Validate() error {
 	if j.Run.Timeout < 0 {
 		return errors.New("the job's timeout is negative")
 	}
-	if j.Run.Adapter != "" {
-		return fmt.Errorf("a runhost runs its own container harness; it does not take the adapter %q", j.Run.Adapter)
+	if j.Run.Adapter != "" && !slices.Contains(ImageAdapters, j.Run.Adapter) {
+		return fmt.Errorf("a runhost runs its harness in a container under gVisor (%s); it does not take the adapter %q", strings.Join(ImageAdapters, ", "), j.Run.Adapter)
 	}
 	return j.Run.validateCarried()
 }

@@ -46,6 +46,10 @@ type runhostLocalJob struct {
 	DeliverTo string `json:"deliverTo,omitempty"`
 	Session   bool   `json:"session,omitempty"`
 	StartedAt string `json:"startedAt"`
+	// Adapter is the adapter the job named, and AdapterAsked the one the
+	// person asked for when the runhost runs another in its place.
+	Adapter      string `json:"adapter,omitempty"`
+	AdapterAsked string `json:"adapterAsked,omitempty"`
 }
 
 const runhostLocalJobsFile = "runhost-jobs.json"
@@ -349,6 +353,7 @@ func runOnFinishEnv(cmd *cobra.Command, c *runhost.Client, rec *runhost.Record, 
 		_, _ = fmt.Fprintf(errOut, "warning: %s keeps the sealed output of job %s until it expires: %v\n", rec.Name, lj.Job, err)
 	}
 	runOnEnvelope(&env, rec, outDir, lj.Job)
+	env.Runhost.Adapter, env.Runhost.AdapterAsked = lj.Adapter, lj.AdapterAsked
 	deliverOnDevice(errOut, &env, outDir, lj.DeliverTo)
 	if err := env.Write(outDir); err != nil {
 		return nil, err

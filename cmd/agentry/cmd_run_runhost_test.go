@@ -467,8 +467,8 @@ func TestRunOnRefusesWhatItDoesNotCarry(t *testing.T) {
 	if _, _, err := runCLI(t, nil, "run", "acme/demo@1.0.0", "--on", "lab", "--host-key-pin", "h=SHA256:x"); err == nil || !strings.Contains(err.Error(), "--host-key-pin") {
 		t.Errorf("--host-key-pin: %v", err)
 	}
-	if _, _, err := runCLI(t, nil, "run", "acme/demo@1.0.0", "--on", "lab", "--adapter", "claude"); err == nil || !strings.Contains(err.Error(), "--adapter") {
-		t.Errorf("--adapter: %v", err)
+	if _, _, err := runCLI(t, nil, "run", "acme/demo@1.0.0", "--on", "lab", "--adapter", "opencode"); err == nil || !strings.Contains(err.Error(), "under gVisor") {
+		t.Errorf("--adapter opencode: %v", err)
 	}
 	// A model paid with Agentry credits carries no key: the runhost pays
 	// with its own credits token.

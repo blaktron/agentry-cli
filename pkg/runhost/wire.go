@@ -40,7 +40,20 @@ const (
 	// FrameEvent carries one event of a session, as the session protocol
 	// wrote it, in Result.
 	FrameEvent = "event"
+	// FrameOpen asks the device to open an address in the person's browser
+	// during a sign-in: Text is the address, Result an Open.
+	FrameOpen = "open"
 )
+
+// Open is what a sign-in's open frame asks of the device besides the
+// address: to relay the browser's answer back to the runhost (Relay names
+// the sign-in, Port is the callback's port on the device's loopback), or to
+// show the person a code to enter on the page.
+type Open struct {
+	Relay string `json:"relay,omitempty"`
+	Port  int    `json:"port,omitempty"`
+	Code  string `json:"code,omitempty"`
+}
 
 // The two answers of a release frame.
 const (

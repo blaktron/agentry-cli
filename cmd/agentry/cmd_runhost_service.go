@@ -103,6 +103,10 @@ func runRunhostService(cmd *cobra.Command) error {
 			}
 		}
 	}()
+	signIns, err := runhostSignIns()
+	if err != nil {
+		return err
+	}
 	s := &runhost.Service{
 		Socket: runhost.ServeSocket(),
 		Log:    logger.Printf,
@@ -122,6 +126,7 @@ func runRunhostService(cmd *cobra.Command) error {
 			"cancel":  runhostCancelVerb,
 			"collect": runhostCollectVerb,
 			"store":   runhostStoreVerb,
+			"sign-in": runhostSignInVerb(signIns),
 			"doctor": func(ctx context.Context, _ runhost.Request, _ io.Reader, fw *runhost.FrameWriter) (int, error) {
 				rep := runhostDoctor(ctx)
 				if err := fw.Result(rep); err != nil {
@@ -162,7 +167,7 @@ func readRunhostStatus() (runhostStatus, error) {
 	st := runhostStatus{
 		Name: cfg.Name, Version: version.Version, Arch: runtime.GOARCH, OS: osPretty(), GVisor: cfg.GVisor,
 		Owner: cfg.Owner, UnsafeMode: cfg.UnsafeMode, Devices: []runhostDevice{},
-		Capabilities: map[string]bool{"runs": true, "secrets": true, "files": true, "connections": true, "destinations": true, "attach": true, "sessions": true, "credits": true, "schedules": false},
+		Capabilities: map[string]bool{"runs": true, "secrets": true, "files": true, "connections": true, "destinations": true, "attach": true, "sessions": true, "credits": true, "signIns": true, "schedules": false},
 		Jobs:         runhostJobs(),
 	}
 	for _, d := range devs.Devices {

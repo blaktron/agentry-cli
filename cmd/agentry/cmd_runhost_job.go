@@ -113,6 +113,12 @@ func runhostJobVerb(ctx context.Context, _ runhost.Request, in io.Reader, fw *ru
 			return engine.ExitPolicy, err
 		}
 	}
+	// So does a model paid by a plan's sign-in, the runhost's own.
+	if j.Run.Model.SignIn() {
+		if err := runhostJobSignIn(j.Run.Model.APIKeyKind); err != nil {
+			return engine.ExitPolicy, err
+		}
+	}
 	st, err := store.Open(runhostStoreDir, runhostStoreKey)
 	if err != nil {
 		return engine.ExitCLI, fmt.Errorf("the runhost's store: %w", err)
@@ -433,6 +439,9 @@ func runhostRunArgs(j *job.Job, st runhostStaged) []string {
 	} else {
 		args = append(args, "--mode", "autonomous")
 	}
+	if j.Run.Adapter != "" {
+		args = append(args, "--adapter", j.Run.Adapter)
+	}
 	file := func(member string) string { return filepath.Join(st.files, filepath.FromSlash(member)) }
 	for _, name := range j.Run.Inputs {
 		args = append(args, "--file", file(name))
@@ -533,12 +542,18 @@ func runhostRun(ctx context.Context, j *job.Job, dir, home string, devices map[s
 		}
 		creditsToken = tok
 	}
+	// A model paid by a plan's sign-in runs on the one the runhost keeps.
+	if j.Run.Model.SignIn() {
+		if err := runhostJobSignIn(j.Run.Model.APIKeyKind); err != nil {
+			return engine.ExitPolicy, err
+		}
+	}
 	values := runhostJobValues(j)
 	if creditsToken != "" {
 		values = append([]string{creditsToken}, values...)
 	}
 	defer func() {
-		for _, p := range []string{st.secrets, st.intake, st.connections, st.destinations, st.knownHosts, filepath.Join(dir, "hostkeys"), st.files, st.inputs, st.out, st.policy, st.task} {
+		for _, p := range []string{st.secrets, st.intake, st.connections, st.destinations, st.knownHosts, filepath.Join(dir, "hostkeys"), st.files, st.inputs, st.out, st.policy, policy.NewestPathFor(st.policy), st.task} {
 			if p != "" {
 				_ = os.RemoveAll(p)
 			}
@@ -930,7 +945,16 @@ func runhostJobPolicy(file, secrets string, j *job.Job) error {
 	if err := pol.Validate(); err != nil {
 		return fmt.Errorf("the run's model on this runhost: %w", err)
 	}
-	return policy.Save(file, pol)
+	if err := policy.Save(file, pol); err != nil {
+		return err
+	}
+	// The vendors' newest harness images the runhost built (its sign-in or
+	// an earlier run) are recorded beside its own policy: the job's policy
+	// takes the same record, so a run uses the image the sign-in was made in.
+	if b, err := os.ReadFile(policy.NewestPathFor(path)); err == nil { //nolint:gosec // the runhost's own record
+		return os.WriteFile(policy.NewestPathFor(file), b, 0o600)
+	}
+	return nil
 }
 
 // runhostSeal packs the run's output and seals it to every paired device,
