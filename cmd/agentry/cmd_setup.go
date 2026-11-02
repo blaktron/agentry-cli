@@ -29,6 +29,7 @@ type setupOpts struct {
 	apiKeySource string
 	apiKeyKind   string
 	baseURL      string
+	window       int64
 	copilotPlan  string
 	oauthApp     bool
 	connect      bool
@@ -36,6 +37,10 @@ type setupOpts struct {
 	yes          bool
 	skipImages   bool
 }
+
+// probeContextWindow asks a custom endpoint for its model's window; a seam,
+// so tests do not reach the endpoints they name.
+var probeContextWindow = setup.ProbeContextWindow
 
 // newSetupCmd builds the setup command.
 func newSetupCmd() *cobra.Command {
@@ -66,6 +71,7 @@ func newSetupCmd() *cobra.Command {
 	f.StringVar(&opts.apiKeySource, "api-key-source", "", "where the key comes from when the variable is unset: env (the default) | keyring (the OS keychain entry provider:<provider>; an interactive setup offers to store it)")
 	f.StringVar(&opts.apiKeyKind, "api-key-kind", "", "what pays for the model: api (an API key, the default) | subscription (an Anthropic `claude setup-token` token — Claude Code only; derived from the key when this setup stores it) | chatgpt-plan (provider openai: your ChatGPT plan, signed in with ChatGPT; interactive setup asks) | claude-signin (provider anthropic: Use your Claude subscription (runs Claude Code): Claude Code signs you in itself; interactive setup asks) | copilot-signin (provider copilot, its only one: Sign in with GitHub)")
 	f.StringVar(&opts.baseURL, "base-url", "", "custom endpoint base URL (derives the egress-proxy allowlist)")
+	f.Int64Var(&opts.window, "context-window", 0, "the model's context window in tokens, for a model the harness cannot look up (custom endpoints): a run compacts its conversation before it outgrows the window; for custom, setup asks the endpoint when this is unset")
 	f.BoolVar(&opts.oauthApp, "oauth-app", false, "provider copilot: sign in through Agentry's OAuth App rather than its GitHub App (the fallback)")
 	f.BoolVar(&opts.connect, "connect", false, "provider openrouter, poe or huggingface: "+setup.ConnectLabel+" (the vendor makes a key for Agentry in your browser, kept in the OS keychain) rather than a key you paste; interactive setup asks")
 	f.StringVar(&opts.copilotPlan, "copilot-plan", "", "provider copilot: your Copilot plan, which names the Copilot API host runs reach: individual (Free, Pro, Pro+, Max; the default) | business | enterprise")
@@ -92,6 +98,9 @@ type setupOutput struct {
 	// token; absent for an API key.
 	APIKeyKind string `json:"apiKeyKind,omitempty"`
 	BaseURL    string `json:"baseUrl,omitempty"`
+	// ContextWindow is the model's context window in tokens where the
+	// policy names one; absent for the harness's own lookup.
+	ContextWindow int64 `json:"contextWindow,omitempty"`
 	// Images is "ready" when the gateway, harness and runner images were
 	// pulled or built, "skipped" under --skip-images.
 	Images string `json:"images"`
@@ -120,18 +129,21 @@ func runSetup(cmd *cobra.Command, opts setupOpts) error {
 	in := bufio.NewReader(cmd.InOrStdin())
 	prompter := setup.Prompter(&setup.TTYPrompter{In: in, Err: cmd.ErrOrStderr()})
 	if err := setup.ConfigureModel(prompter, pol, setup.ModelOpts{
-		Provider:       opts.provider,
-		Model:          opts.model,
-		APIKeyEnv:      opts.apiKeyEnv,
-		APIKeySource:   opts.apiKeySource,
-		APIKeyKind:     opts.apiKeyKind,
-		BaseURL:        opts.baseURL,
-		ChatGPT:        chatgptOffer(cmd, in, home),
-		Claude:         claudeOffer(cmd, in, home),
-		Copilot:        copilotOffer(cmd, home, opts.oauthApp, pol, !opts.skipImages),
-		Connect:        connectOffer(cmd, in, home),
-		ConnectAccount: opts.connect,
-		CopilotPlan:    opts.copilotPlan,
+		Provider:      opts.provider,
+		Model:         opts.model,
+		APIKeyEnv:     opts.apiKeyEnv,
+		APIKeySource:  opts.apiKeySource,
+		APIKeyKind:    opts.apiKeyKind,
+		BaseURL:       opts.baseURL,
+		ContextWindow: opts.window,
+		// Asked of a custom endpoint only.
+		ProbeContextWindow: probeContextWindow,
+		ChatGPT:            chatgptOffer(cmd, in, home),
+		Claude:             claudeOffer(cmd, in, home),
+		Copilot:            copilotOffer(cmd, home, opts.oauthApp, pol, !opts.skipImages),
+		Connect:            connectOffer(cmd, in, home),
+		ConnectAccount:     opts.connect,
+		CopilotPlan:        opts.copilotPlan,
 		// Read only when provider agentry may be chosen: the registry
 		// signed in to, which that provider pays through.
 		AgentryRegistry: agentryRegistryFor(opts.provider),
@@ -147,7 +159,7 @@ func runSetup(cmd *cobra.Command, opts setupOpts) error {
 	// keys: a changed key or provider is sealed again now.
 	resealSignedOut(cmd.ErrOrStderr())
 	result := setupOutput{PolicyPath: policyPath, Provider: pol.Model.Provider, Model: pol.Model.Name,
-		APIKeyEnv: pol.Model.APIKeyEnv, APIKeySource: pol.Model.APIKeySource, APIKeyKind: pol.Model.APIKeyKind, BaseURL: pol.Model.BaseURL, Images: "skipped"}
+		APIKeyEnv: pol.Model.APIKeyEnv, APIKeySource: pol.Model.APIKeySource, APIKeyKind: pol.Model.APIKeyKind, BaseURL: pol.Model.BaseURL, ContextWindow: pol.Model.ContextWindow, Images: "skipped"}
 
 	if opts.skipImages {
 		if flags.jsonOut {

@@ -351,6 +351,12 @@ func doctorPolicy(rep *doctorReport, path string) *policy.Policy {
 	if w := setup.PlainHTTPWarning(pol.Model.BaseURL); w != "" {
 		rep.warn("model:endpoint", "%s", w)
 	}
+	// The harness sizes a model of the person's own endpoint from the
+	// policy unless its catalogue holds the id; without the window a long
+	// run cannot compact and fails once the endpoint refuses it.
+	if setup.OwnEndpoint(pol.Model) && pol.Model.ContextWindow == 0 {
+		rep.warnFix("model:context", "run `agentry setup` again (it asks the endpoint), or pass it --context-window <tokens>", "%s/%s: %s", pol.Model.Provider, pol.Model.Name, setup.UnknownWindowSentence(pol.Model.Name))
+	}
 	// A subscription token drives Claude Code alone; a machine whose
 	// default adapter is the container harness cannot run with it, and
 	// doctor says so before a run finds out.
