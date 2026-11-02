@@ -112,7 +112,7 @@ func runRunhostService(cmd *cobra.Command) error {
 		Log:    logger.Printf,
 		Handlers: map[string]runhost.Handler{
 			"version": func(_ context.Context, _ runhost.Request, _ io.Reader, fw *runhost.FrameWriter) (int, error) {
-				return 0, fw.Result(map[string]string{"version": version.Version, "arch": runtime.GOARCH})
+				return 0, fw.Result(runhostVersionAnswer())
 			},
 			"status": func(_ context.Context, _ runhost.Request, _ io.Reader, fw *runhost.FrameWriter) (int, error) {
 				st, err := readRunhostStatus()
@@ -147,6 +147,13 @@ func runRunhostService(cmd *cobra.Command) error {
 	return s.Serve(ctx, l)
 }
 
+// runhostVersionAnswer is the version verb's answer: the CLI's version and
+// architecture, and the runhost's Unsafe Mode setting, which a device says
+// before it sends a run.
+func runhostVersionAnswer() map[string]any {
+	return map[string]any{"version": version.Version, "arch": runtime.GOARCH, "unsafeMode": runhost.UnsafeModeOn(runhostUnsafeModeFile)}
+}
+
 func readJSONFile(path string, v any) error {
 	b, err := os.ReadFile(path) //nolint:gosec // the service's own state
 	if err != nil {
@@ -166,7 +173,7 @@ func readRunhostStatus() (runhostStatus, error) {
 	}
 	st := runhostStatus{
 		Name: cfg.Name, Version: version.Version, Arch: runtime.GOARCH, OS: osPretty(), GVisor: cfg.GVisor,
-		Owner: cfg.Owner, UnsafeMode: cfg.UnsafeMode, Devices: []runhostDevice{},
+		Owner: cfg.Owner, UnsafeMode: runhost.UnsafeModeOn(runhostUnsafeModeFile), Devices: []runhostDevice{},
 		Capabilities: map[string]bool{"runs": true, "secrets": true, "files": true, "connections": true, "destinations": true, "attach": true, "sessions": true, "credits": true, "signIns": true, "schedules": false},
 		Jobs:         runhostJobs(),
 	}

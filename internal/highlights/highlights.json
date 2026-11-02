@@ -1,6 +1,13 @@
 {
   "versions": [
     {
+      "version": "0.7.7",
+      "highlights": [
+        "agentry runhost set --unsafe-mode on makes every run on a runhost an Unsafe Mode run, with the admin sign-in.",
+        "A run on a runhost with Unsafe Mode on says so before it starts, and its envelope records it."
+      ]
+    },
+    {
       "version": "0.7.6",
       "highlights": [
         "agentry runhost model --sign-in signs a runhost in to your Claude, ChatGPT or Copilot plan from your browser.",

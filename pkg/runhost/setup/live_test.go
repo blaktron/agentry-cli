@@ -20,6 +20,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/blaktron/agentry-cli/pkg/runhost"
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/targethost"
 )
 
@@ -254,6 +255,38 @@ func TestLiveSetupStepsAgainstAContainerisedSSHD(t *testing.T) {
 		if !r.Refused {
 			t.Errorf("the run key was not refused %s: %s", r.What, r.Detail)
 		}
+	}
+
+	// Unsafe Mode, with the admin sign-in: a file only root writes, which the
+	// service reads and the agentry account cannot change.
+	prevResolve := resolveAddress
+	resolveAddress = func(context.Context, string, targethost.Answer, policy.HostsPolicy) (netip.Addr, error) {
+		return addr, nil
+	}
+	t.Cleanup(func() { resolveAddress = prevResolve })
+	set := SetOptions{Record: rec, Auth: AdminAuth{Password: liveSudoPassword}, Answer: answer, Say: say}
+	if err := SetUnsafeMode(ctx, set, true); err != nil {
+		t.Fatal(err)
+	}
+	check, err := Dial(ctx, addr, srv.port, "tester", hk.Key, AdminAuth{Password: liveSudoPassword})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = check.Close() }()
+	if err := check.FindRoot(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := check.RunRoot(ctx, "stat -c '%U %a' "+runhost.UnsafeModeFile+"; cat "+runhost.UnsafeModeFile+"; su -s /bin/sh agentry -c 'echo off > "+runhost.UnsafeModeFile+"' 2>/dev/null; cat "+runhost.UnsafeModeFile, nil); string(r.Stdout) != "root 644\non\non\n" {
+		t.Fatalf("the setting on the server: %q", r.Stdout)
+	}
+	if v, err := rc.Ask(ctx, "version", nil, nil); err != nil || !strings.Contains(string(v.Result), `"unsafeMode":true`) {
+		t.Fatalf("the service does not report Unsafe Mode on: %s %v", v.Result, err)
+	}
+	if err := SetUnsafeMode(ctx, set, false); err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := check.RunRoot(ctx, "[ -e "+runhost.UnsafeModeFile+" ] && echo there || echo gone", nil); strings.TrimSpace(string(r.Stdout)) != "gone" {
+		t.Fatalf("Unsafe Mode off left the setting: %q", r.Stdout)
 	}
 
 	// A host key other than the pinned one is refused.

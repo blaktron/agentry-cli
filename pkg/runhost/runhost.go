@@ -17,9 +17,11 @@ package runhost
 
 import (
 	"fmt"
+	"os"
 	"path"
 	"regexp"
 	"strconv"
+	"strings"
 )
 
 // The server's layout. Everything the service owns lives under the agentry
@@ -48,6 +50,13 @@ const (
 	ConfigFile = StateDir + "/config.json"
 	// DevicesFile lists the paired devices (Device).
 	DevicesFile = StateDir + "/devices.json"
+	// SettingsDir holds the runhost's settings that only the admin sign-in
+	// changes: root's, outside the agentry account's home, so neither the
+	// service nor anything a run key reaches can write them.
+	SettingsDir = "/etc/agentry-runhost"
+	// UnsafeModeFile says "on" when runs on the runhost are compiled as
+	// Unsafe Mode runs; absent, or anything else, is off.
+	UnsafeModeFile = SettingsDir + "/unsafe-mode"
 	// AuthorizedKeys is where the run keys are installed.
 	AuthorizedKeys = Home + "/.ssh/authorized_keys"
 	// UnitName is the systemd user unit of the service.
@@ -60,6 +69,13 @@ const (
 	RunscRuntime    = "runsc"
 	RunscUDSRuntime = "runsc-uds"
 )
+
+// UnsafeModeOn says whether the runhost's Unsafe Mode setting, read from
+// file (UnsafeModeFile on the server), is on.
+func UnsafeModeOn(file string) bool {
+	b, err := os.ReadFile(file) //nolint:gosec // the runhost's own setting
+	return err == nil && strings.TrimSpace(string(b)) == "on"
+}
 
 // ServeCommand is the forced command of every run key.
 const ServeCommand = CLIPath + " runhost serve"
@@ -98,9 +114,9 @@ type ServerConfig struct {
 	Name string `json:"name"`
 	// Owner is who the runhost belongs to.
 	Owner Owner `json:"owner"`
-	// UnsafeMode is whether runs here are compiled as Unsafe Mode runs. It is
-	// changed only with the admin sign-in.
-	UnsafeMode bool `json:"unsafeMode"`
+	// UnsafeMode is no longer read: the setting is UnsafeModeFile, which
+	// only the admin sign-in writes. Kept so an older configuration reads.
+	UnsafeMode bool `json:"unsafeMode,omitempty"`
 	// InstalledDocker is whether setup installed Docker Engine, so that
 	// remove may offer to take it away again.
 	InstalledDocker bool `json:"installedDocker"`

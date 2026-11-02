@@ -166,3 +166,21 @@ func TestARunhostsRunRefusesAHostHarness(t *testing.T) {
 		}
 	}
 }
+
+// The runhost says its Unsafe Mode setting with its version, which a device
+// reads before it sends a run.
+func TestARunhostSaysItsUnsafeModeWithItsVersion(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "unsafe-mode")
+	prev := runhostUnsafeModeFile
+	runhostUnsafeModeFile = f
+	t.Cleanup(func() { runhostUnsafeModeFile = prev })
+	if runhostVersionAnswer()["unsafeMode"] != false {
+		t.Fatal("no setting is on")
+	}
+	if err := os.WriteFile(f, []byte("on\n"), 0o644); err != nil { //nolint:gosec // a test's setting
+		t.Fatal(err)
+	}
+	if runhostVersionAnswer()["unsafeMode"] != true {
+		t.Fatal("the setting on is not said")
+	}
+}

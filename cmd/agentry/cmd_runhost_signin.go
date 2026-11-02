@@ -268,7 +268,7 @@ func runRunhostModelSignIn(cmd *cobra.Command, name, vendor string, oauthApp, ye
 		return engine.Classify(engine.ExitGateway, err)
 	}
 	defer func() { _ = c.Close() }()
-	if err := runOnSameVersion(ctx, c, name); err != nil {
+	if _, err := runOnSameVersion(ctx, c, name); err != nil {
 		return engine.Classify(engine.ExitGateway, err)
 	}
 	app := ""

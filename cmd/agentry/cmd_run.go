@@ -24,10 +24,12 @@ import (
 	"time"
 
 	"github.com/blaktron/agentry-cli/internal/version"
+	"github.com/blaktron/agentry-cli/pkg/runhost"
 	"github.com/blaktron/agentry-cli/pkg/runhost/job"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
 	"github.com/blaktron/agentry-cli/pkg/runner/localinstall"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
+	"github.com/blaktron/agentry-cli/pkg/runner/unsafeexec"
 	"github.com/blaktron/agentry-cli/runnerimage"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 	"github.com/blaktron/agentry-cli/runnerimage/webscan"
@@ -592,6 +594,16 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		Home: home, Manifest: m, Meta: meta, InstallDir: installDir, WorkspaceDir: workspaceDir,
 		Policy: pol, PolicySHA: polSHA, Adapter: adapterName, Servers: serverSpecs, Mode: mode,
 		CompiledBy: version.Build(), Log: cmd.ErrOrStderr(),
+	}
+	// On a remote runhost whose own setting is on, the run is an Unsafe Mode
+	// run: set only with the server's admin sign-in, never by a flag here.
+	if opts.installed && onRunhostServer() && runhost.UnsafeModeOn(runhostUnsafeModeFile) && len(m.Capabilities.Exec.Commands) > 0 {
+		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Unsafe Mode: on, a setting of this runhost: the declared commands come from the Unsafe Mode image, without the command catalogue")
+		data, err := unsafeexec.Load(cmd.Context(), newDockerClient(), pol.Images.UnsafeImage(), cmd.ErrOrStderr())
+		if err != nil {
+			return engine.Classify(engine.ExitGateway, fmt.Errorf("the Unsafe Mode image: %w", err))
+		}
+		planIn.Unsafe = data
 	}
 	plan, planDir, err := localrun.EnsurePlan(planIn)
 	if err != nil {
