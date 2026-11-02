@@ -48,18 +48,34 @@ type HelperOps interface {
 	Show(ctx context.Context, ref string) (string, error)
 	// Installed are the QuickAgents installed on this computer.
 	Installed(ctx context.Context) ([]HelperInstalled, error)
-	// Install installs ref (ns/name or ns/name@version), the person having
-	// agreed, and says what it installed.
-	Install(ctx context.Context, ref string) (string, error)
+	// Install installs ref (ns/name or ns/name@version) for the agent who
+	// names, the person having agreed, and says what it installed.
+	Install(ctx context.Context, ref, who string) (string, error)
 	// Schedules lists the schedules; AddSchedule makes one, the person
 	// having agreed; PauseSchedule pauses or resumes one; RemoveSchedule
 	// removes one, the person having agreed.
 	Schedules(ctx context.Context) ([]HelperSchedule, error)
-	AddSchedule(ctx context.Context, s HelperScheduleSpec) (id string, err error)
+	AddSchedule(ctx context.Context, s HelperScheduleSpec, who string) (id string, err error)
 	PauseSchedule(ctx context.Context, id string, paused bool) error
-	RemoveSchedule(ctx context.Context, id string) error
+	RemoveSchedule(ctx context.Context, id, who string) error
 	// Docs reads a page of the docs site: its body and status.
 	Docs(ctx context.Context, page string) (body []byte, status int, err error)
+}
+
+// HelperOpsAsk is HelperOps that ask the person themselves before an
+// install, a schedule and a schedule's removal, naming the agent who asks:
+// a client whose own dialogs show what is installed or scheduled. The
+// supervisor then asks nothing more for those three, and an ErrNotAgreed
+// from them is the person's no.
+type HelperOpsAsk interface {
+	HelperOps
+	AsksThePerson() bool
+}
+
+// opsAsk says ops ask the person themselves.
+func opsAsk(ops HelperOps) bool {
+	a, ok := ops.(HelperOpsAsk)
+	return ok && a.AsksThePerson()
 }
 
 // HelperHit is one registry match.
@@ -244,10 +260,12 @@ func (s *Supervisor) helperCall(ctx context.Context, cfg Config, tool string, ra
 		if err != nil {
 			return "", err
 		}
-		if err := s.Ask(ctx, "Delete the schedule "+sc.Name+"?", fmt.Sprintf("%s asks to delete the schedule %s (%s, %s). Delete it?", s.asker(cfg), quoted(sc.Name), sc.Ref, sc.When)); err != nil {
-			return "", err
+		if !opsAsk(ops) {
+			if err := s.Ask(ctx, "Delete the schedule "+sc.Name+"?", fmt.Sprintf("%s asks to delete the schedule %s (%s, %s). Delete it?", s.asker(cfg), quoted(sc.Name), sc.Ref, sc.When)); err != nil {
+				return "", err
+			}
 		}
-		if err := ops.RemoveSchedule(ctx, sc.ID); err != nil {
+		if err := ops.RemoveSchedule(ctx, sc.ID, s.asker(cfg)); err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("Deleted the schedule %s.", quoted(sc.Name)), nil
@@ -334,10 +352,12 @@ func (s *Supervisor) helperInstall(ctx context.Context, cfg Config, ops HelperOp
 	if version != "" {
 		want += "@" + version
 	}
-	if err := s.Ask(ctx, "Install "+want+"?", fmt.Sprintf("%s asks to install %s on this computer. It is installed as any install is, under what it declares, which is listed as it is installed. Install it?", s.asker(cfg), want)); err != nil {
-		return "", err
+	if !opsAsk(ops) {
+		if err := s.Ask(ctx, "Install "+want+"?", fmt.Sprintf("%s asks to install %s on this computer. It is installed as any install is, under what it declares, which is listed as it is installed. Install it?", s.asker(cfg), want)); err != nil {
+			return "", err
+		}
 	}
-	msg, err := ops.Install(ctx, want)
+	msg, err := ops.Install(ctx, want, s.asker(cfg))
 	if err != nil {
 		return "", err
 	}
@@ -584,10 +604,12 @@ func (s *Supervisor) helperScheduleAdd(ctx context.Context, cfg Config, ops Help
 	if t := strings.TrimSpace(task); t != "" {
 		text += ", with the task " + quoted(cutText(t, 500))
 	}
-	if err := s.Ask(ctx, "Schedule "+exact+"?", text+". Each run is an ordinary run of it on this computer. Schedule it?"); err != nil {
-		return "", err
+	if !opsAsk(ops) {
+		if err := s.Ask(ctx, "Schedule "+exact+"?", text+". Each run is an ordinary run of it on this computer. Schedule it?"); err != nil {
+			return "", err
+		}
 	}
-	id, err := ops.AddSchedule(ctx, HelperScheduleSpec{Registry: it.Registry, Exact: exact, Task: strings.TrimSpace(task), Answers: given.intake, When: w})
+	id, err := ops.AddSchedule(ctx, HelperScheduleSpec{Registry: it.Registry, Exact: exact, Task: strings.TrimSpace(task), Answers: given.intake, When: w}, who)
 	if err != nil {
 		return "", err
 	}
