@@ -105,7 +105,11 @@ func runtimeFacts() []byte {
 	fmt.Fprintf(&b, "- The scratch folder, `%s`, is the run's own working space through `scratch_write`, `scratch_list`, `scratch_read` and `scratch_search`: empty at the start, at most %d MiB on Linux, never part of what the person receives, and deleted with the run.\n\n", spec.ScratchMount, spec.ToolsTmpfsBytes>>20)
 	b.WriteString("## A run's budget\n\n")
 	local := policy.Default().Budgets
-	fmt.Fprintf(&b, "- A run on the person's computer stops after %d tool calls or %d seconds, whichever comes first.\n", local.MaxTurns, local.TimeoutSeconds)
+	if local.MaxTurns > 0 {
+		fmt.Fprintf(&b, "- A run on the person's computer stops after %d tool calls or %d seconds, whichever comes first.\n", local.MaxTurns, local.TimeoutSeconds)
+	} else {
+		fmt.Fprintf(&b, "- A run on the person's computer stops after %d seconds. It has no tool-call limit unless the person sets one.\n", local.TimeoutSeconds)
+	}
 	fmt.Fprintf(&b, "- A run In Agentry stops after %d tool calls or %d seconds on Pro and above, and after %d tool calls or %d seconds on Standard.\n",
 		hostedProTurns, hostedProSeconds, hostedStandardTurns, hostedStandardSeconds)
 	fmt.Fprintf(&b, "- docker-agent, the default harness, ends a run that makes the same tool call %d times in a row.\n", sameCallLimit)

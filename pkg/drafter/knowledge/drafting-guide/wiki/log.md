@@ -108,3 +108,9 @@ What checks a draft is no longer a page of today's facts awaiting a rewrite: the
 A PyPI server whose `requires_python` excludes the default Python 3.15.2 but admits 3.14 now installs and runs on Python 3.14.10, so the servers page and the runtime facts say so, and the version check admits either Python.
 
 - updated: servers/mcp-servers.md, sources/runtime-facts.md
+
+## [2026-11-02] ingest | a local run's default budgets (Drafter 1.18.6)
+
+A fresh runner policy gives a run on the person's computer 1800 seconds and no tool-call limit, which the person may still set, so the runtime facts and the browser page say so. The budgets In Agentry are unchanged.
+
+- updated: sources/runtime-facts.md, manifest/browser.md

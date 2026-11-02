@@ -4,6 +4,7 @@
 package policy
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -994,6 +995,45 @@ func TestLoadMovesAFormerDefaultGatewayImage(t *testing.T) {
 	}
 	if !PinnedByDigest(DefaultGatewayImage) {
 		t.Fatal("the default gateway is not pinned by digest")
+	}
+}
+
+// A fresh policy gives a run half an hour and no turn limit. A file that
+// still holds the budgets earlier CLIs wrote (900 seconds, 100 turns) never
+// chose a limit, so it loads as today's default; any other pair, one of the
+// two old values among them, is the operator's and is kept.
+func TestLoadMovesTheFormerDefaultBudgets(t *testing.T) {
+	if d := Default().Budgets; d.TimeoutSeconds != 1800 || d.MaxTurns != 0 {
+		t.Fatalf("default budgets %+v, want 1800 seconds and no turn limit", d)
+	}
+	written := "  timeoutSeconds: 1800\n  # maxTurns: 0 = unlimited; a positive value stops the run after that\n  # many tool calls.\n  maxTurns: 0\n"
+	for _, c := range []struct {
+		timeout, turns int
+		want           Budgets
+	}{
+		{900, 100, DefaultBudgets},
+		{900, 60, Budgets{TimeoutSeconds: 900, MaxTurns: 60}},
+		{1200, 100, Budgets{TimeoutSeconds: 1200, MaxTurns: 100}},
+		{1800, 0, DefaultBudgets},
+	} {
+		path := filepath.Join(t.TempDir(), "policy.yaml")
+		text := strings.Replace(defaultFileText, written, fmt.Sprintf("  timeoutSeconds: %d\n  maxTurns: %d\n", c.timeout, c.turns), 1)
+		if text == defaultFileText {
+			t.Fatal("the generated text no longer holds the default budgets")
+		}
+		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		p, _, err := Load(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.Budgets != c.want {
+			t.Errorf("budgets %d s / %d turns load as %+v, want %+v", c.timeout, c.turns, p.Budgets, c.want)
+		}
+	}
+	if formerDefaultBudgets == DefaultBudgets {
+		t.Fatal("the current default budgets are listed as the former ones")
 	}
 }
 
