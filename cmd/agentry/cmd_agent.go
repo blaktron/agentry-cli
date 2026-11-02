@@ -172,6 +172,9 @@ type agentState struct {
 	// LastConsolidation of its memory's, for one that keeps a memory.
 	LastCompaction    *persistent.UpkeepRecord `json:"lastCompaction,omitempty"`
 	LastConsolidation *persistent.UpkeepRecord `json:"lastConsolidation,omitempty"`
+	// SubagentRuns are the runs it started of its subagents, newest first,
+	// at most persistent.MaxSubagentRunsShown.
+	SubagentRuns []persistent.SubagentRunRecord `json:"subagentRuns,omitempty"`
 }
 
 // suggestedServer is a server an agent suggests, as show lists it.
@@ -312,6 +315,9 @@ const agentShowLong = "Shows a persistent agent: whether it runs and which clien
 	"\"compacted\" names the agent's last compaction (when, why, and whether a\n" +
 	"fresh conversation started), and for an agent that keeps a memory \"tidied\"\n" +
 	"names its last daily consolidation of the memory.\n\n" +
+	"\"subagent runs\" lists the newest runs the agent started of its subagents, and\n" +
+	"--json lists up to 50 as subagentRuns, each with the subagent's exact\n" +
+	"version, when it started and ended, how it ended and the run's own id.\n\n" +
 	"  agentry agent show assistant\n" +
 	"  agentry agent show assistant --transcript 20"
 
@@ -345,6 +351,7 @@ func newAgentShowCmd() *cobra.Command {
 				st.Volumes = &agentVolumes{Session: persistent.SessionVolumeIn(home, a.Name), Data: persistent.DataVolumeIn(home, a.Name)}
 				compaction, consolidation := persistent.LastUpkeep(home, a.Name)
 				st.LastCompaction = compaction
+				st.SubagentRuns = persistent.SubagentRuns(home, a.Name, persistent.MaxSubagentRunsShown)
 				if a.KeepsMemory() {
 					st.Volumes.Memory = persistent.MemoryVolumeIn(home, a.Name)
 					st.LastConsolidation = consolidation
@@ -437,6 +444,7 @@ func printAgentState(w io.Writer, st agentState) {
 	if s := st.Status; s != nil && s.Pending {
 		_, _ = fmt.Fprintln(w, "  pending:    a change restarts it at its next turn")
 	}
+	printSubagentRuns(w, st.SubagentRuns)
 	if len(st.Roster) > 0 {
 		_, _ = fmt.Fprintln(w, "  roster:")
 		printRoster(w, st.Roster)
@@ -481,6 +489,28 @@ func printAgentState(w io.Writer, st agentState) {
 	for _, e := range st.Transcript {
 		text := strings.TrimSpace(e.Text)
 		_, _ = fmt.Fprintf(w, "  [%d] %s: %s\n", e.Segment, e.Kind, safeTerminalText(text, 400))
+	}
+}
+
+// subagentRunsPrinted is how many of an agent's subagent runs show prints;
+// --json lists them all.
+const subagentRunsPrinted = 5
+
+// printSubagentRuns prints the newest of an agent's subagent runs.
+func printSubagentRuns(w io.Writer, runs []persistent.SubagentRunRecord) {
+	if len(runs) == 0 {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "  subagent runs: %d, the newest first (all of them with --json):\n", len(runs))
+	for _, r := range runs[:min(len(runs), subagentRunsPrinted)] {
+		outcome := r.Outcome
+		switch {
+		case outcome == "" && r.Ended.IsZero():
+			outcome = "not ended"
+		case r.Error != "":
+			outcome += ": " + safeTerminalText(r.Error, 200)
+		}
+		_, _ = fmt.Fprintf(w, "    %s\t%s, started %s: %s\n", r.ID, r.Subagent, r.Started.Local().Format("2006-01-02 15:04"), outcome)
 	}
 }
 

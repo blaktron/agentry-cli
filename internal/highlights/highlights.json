@@ -4,7 +4,8 @@
       "version": "0.7.7",
       "highlights": [
         "agentry runhost set --unsafe-mode on makes every run on a runhost an Unsafe Mode run, with the admin sign-in.",
-        "A run on a runhost with Unsafe Mode on says so before it starts, and its envelope records it."
+        "A run on a runhost with Unsafe Mode on says so before it starts, and its envelope records it.",
+        "agentry agent install --plan previews a persistent agent and its subagent pins; agent show lists its subagent runs."
       ]
     },
     {

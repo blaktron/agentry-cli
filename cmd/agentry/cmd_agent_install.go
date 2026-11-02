@@ -33,6 +33,10 @@ type agentInstall struct {
 	// local says the release is an author's folder, whose subagents are
 	// never run.
 	local bool
+	// plan previews the install (--plan): what check would refuse of the
+	// agent as it is now, a running agent, is held as refused instead.
+	plan    bool
+	refusal error
 }
 
 // check refuses what cannot be a persistent agent here: a release that does
@@ -64,7 +68,11 @@ func (a *agentInstall) check(m *manifest.Manifest) error {
 		return engine.Classify(engine.ExitPolicy, fmt.Errorf("%s cannot run on this version of Agentry: %w", ref, err))
 	}
 	if held, h := persistent.Held(a.home, persistent.Key(m.Namespace, m.Name)); held {
-		return engine.Classify(engine.ExitUsage, fmt.Errorf("%w: stop it first (agentry agent stop %s), then install again", &persistent.HeldError{Agent: ref, Holder: h}, ref))
+		err := engine.Classify(engine.ExitUsage, fmt.Errorf("%w: stop it first (agentry agent stop %s), then install again", &persistent.HeldError{Agent: ref, Holder: h}, ref))
+		if !a.plan {
+			return err
+		}
+		a.refusal = err
 	}
 	return nil
 }
@@ -92,6 +100,7 @@ func declaresFiles(a manifest.FSAccess) bool { return !a.IsZero() && a.Mode != m
 // subagent's newest version within its constraint; nil (an author's folder)
 // runs none.
 func (a *agentInstall) describe(ctx context.Context, w io.Writer, m *manifest.Manifest, resolve func(string) (*apiclient.ResolveResult, error)) {
+	a.local = resolve == nil
 	_, _ = fmt.Fprintln(w, "as a persistent agent:")
 	_, _ = fmt.Fprintln(w, "  it keeps its conversation, its files and a share folder with you between starts, until you reset it")
 	if p := m.Persona; p != nil {
@@ -105,15 +114,13 @@ func (a *agentInstall) describe(ctx context.Context, w io.Writer, m *manifest.Ma
 	if len(subs) == 0 {
 		return
 	}
-	if resolve == nil {
-		a.local = true
+	if a.local {
 		_, _ = fmt.Fprintln(w, "  subagents: a folder installed from this computer runs none of the subagents it declares")
 		return
 	}
 	a.pins = nil
 	for _, dep := range subs {
-		pin := persistent.SubagentPin{Ref: dep.Ref, Constraint: dep.Version, Why: dep.Why}
-		pin.Version, pin.Reach, pin.Unresolved = resolveSubagent(ctx, dep, resolve)
+		pin := resolveSubagent(ctx, dep, resolve)
 		a.pins = append(a.pins, pin)
 		if pin.Version != "" {
 			_, _ = fmt.Fprintf(w, "  subagent %s@%s (%s), pinned until you update the agent: it runs in a sandbox of its own under its own contract, which reaches %s\n", dep.Ref, pin.Version, dep.Version, pin.Reach)
@@ -123,32 +130,104 @@ func (a *agentInstall) describe(ctx context.Context, w io.Writer, m *manifest.Ma
 	}
 }
 
-// resolveSubagent is the version a subagent's constraint resolves to now,
-// or why none does: the newest published version within it must run as an
-// ordinary autonomous QuickAgent and not be persistent.
-func resolveSubagent(ctx context.Context, dep manifest.AgentDependency, resolve func(string) (*apiclient.ResolveResult, error)) (version, reach, unresolved string) {
+// resolveSubagent pins a subagent to the version its constraint resolves
+// to now, with what it reaches and its digest, or says why none does: the
+// newest published version within it must run as an ordinary autonomous
+// QuickAgent and not be persistent.
+func resolveSubagent(ctx context.Context, dep manifest.AgentDependency, resolve func(string) (*apiclient.ResolveResult, error)) persistent.SubagentPin {
+	pin := persistent.SubagentPin{Ref: dep.Ref, Constraint: dep.Version, Why: dep.Why}
 	if ctx.Err() != nil {
-		return "", "", ctx.Err().Error()
+		pin.Unresolved = ctx.Err().Error()
+		return pin
 	}
 	res, err := resolve(dep.Ref + "@" + dep.Version)
 	if err != nil {
-		return "", "", safeTerminalText(err.Error(), 300)
+		pin.Unresolved = safeTerminalText(err.Error(), 300)
+		return pin
 	}
 	sm, err := manifestFromResolve(res)
 	if err != nil {
-		return "", "", safeTerminalText(err.Error(), 300)
+		pin.Unresolved = safeTerminalText(err.Error(), 300)
+		return pin
 	}
 	switch {
 	case res.Yanked:
-		return "", "", res.Version + " is withdrawn"
+		pin.Unresolved = res.Version + " is withdrawn"
 	case sm.IsPersistent():
-		return "", "", res.Version + " is a persistent QuickAgent, which never runs as a subagent"
+		pin.Unresolved = res.Version + " is a persistent QuickAgent, which never runs as a subagent"
 	case !sm.Supports(manifest.ModeAutonomous):
-		return "", "", res.Version + " does not run autonomously"
+		pin.Unresolved = res.Version + " does not run autonomously"
 	case !dep.SubagentAllows(res.Version):
-		return "", "", res.Version + " is outside the constraint " + dep.Version
+		pin.Unresolved = res.Version + " is outside the constraint " + dep.Version
+	default:
+		pin.Version, pin.Reach, pin.Digest = res.Version, subagentReach(sm.Capabilities), res.Digest
 	}
-	return res.Version, subagentReach(sm.Capabilities), ""
+	return pin
+}
+
+// agentPlan is what `agent install --plan --json` adds to the install's
+// plan: what the consent asks about beside the contract, and the agent as
+// it is installed now, for an update.
+type agentPlan struct {
+	// Agent is the name it is installed under.
+	Agent string `json:"agent"`
+	// Persistent are the capabilities.persistent keys it declares, in the
+	// order the consent lists them.
+	Persistent []string `json:"persistent,omitempty"`
+	// Persona is the persona it takes on.
+	Persona *agentPlanPersona `json:"persona,omitempty"`
+	// Packs are the knowledge packs it ships.
+	Packs []string `json:"packs,omitempty"`
+	// Subagents are its subagents, each pinned as the install would pin
+	// it, or with why it resolves to no version it can run. A folder
+	// installed with --local runs none (RunsSubagents false).
+	Subagents     []persistent.SubagentPin `json:"subagents,omitempty"`
+	RunsSubagents bool                     `json:"runsSubagents"`
+	// Installed is the agent's installed release, for an update.
+	Installed *agentPlanInstalled `json:"installed,omitempty"`
+}
+
+// agentPlanPersona is a release's persona as the plan shows it.
+type agentPlanPersona struct {
+	Name string `json:"name"`
+	File string `json:"file"`
+	// Locked says the publisher locked its text: it can be renamed, and
+	// its personality is not replaced.
+	Locked bool `json:"locked"`
+}
+
+// agentPlanInstalled is an installed agent's release as an update's plan
+// compares it.
+type agentPlanInstalled struct {
+	Version   string                   `json:"version"`
+	Source    string                   `json:"source"`
+	Digest    string                   `json:"digest"`
+	Subagents []persistent.SubagentPin `json:"subagents,omitempty"`
+}
+
+// planOf is the plan's agent block for m, after describe has pinned its
+// subagents.
+func (a *agentInstall) planOf(m *manifest.Manifest) *agentPlan {
+	p := &agentPlan{
+		Agent:         persistent.Key(m.Namespace, m.Name),
+		Persistent:    m.Capabilities.Persistent.Keys(),
+		Packs:         m.ShippedPacks(),
+		Subagents:     a.pins,
+		RunsSubagents: !a.local,
+	}
+	if per := m.Persona; per != nil {
+		p.Persona = &agentPlanPersona{Name: per.Name, File: m.PersonaFile(), Locked: !per.IsEditable()}
+	}
+	if a.local {
+		for _, dep := range m.Subagents() {
+			p.Subagents = append(p.Subagents, persistent.SubagentPin{Ref: dep.Ref, Constraint: dep.Version, Why: dep.Why,
+				Unresolved: "a folder installed from this computer runs none of the subagents it declares"})
+		}
+	}
+	if r, err := persistent.LoadRelease(a.home, p.Agent); err == nil {
+		p.Installed = &agentPlanInstalled{Version: r.Version, Source: r.Source, Digest: r.Digest, Subagents: r.Subagents}
+	}
+	return p
 }
 
 // subagentReach is what a subagent's contract reaches, in a line: what its
@@ -230,10 +309,16 @@ const agentInstallLong = "Installs a persistent QuickAgent from the registry, or
 	"new version declares more. Stop it before you update it.\n\n" +
 	"A folder installed with --local is unsigned, so it needs --allow-unsigned, and\n" +
 	"it runs none of the subagents it declares.\n\n" +
+	"--plan previews an install or an update and writes nothing: the contract and\n" +
+	"what it widens against the installed version, the persona, the packs it ships\n" +
+	"and each subagent with the version, reach and digest it would be pinned to, or\n" +
+	"why it resolves to none. With --json it is install --plan's shape with an\n" +
+	"\"agent\" block.\n\n" +
 	"A runner policy that sets allowPersistentReleases: false refuses every\n" +
 	"persistent agent but the ones built into Agentry.\n\n" +
 	"  agentry agent install acme/helper\n" +
 	"  agentry agent install acme/helper@1.2.0\n" +
+	"  agentry agent install acme/helper@1.2.0 --plan --json\n" +
 	"  agentry agent install --local ./my-agent --allow-unsigned"
 
 func newAgentInstallCmd() *cobra.Command {
@@ -263,7 +348,7 @@ func newAgentInstallCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			opts.agent = &agentInstall{home: home, pol: pol}
+			opts.agent = &agentInstall{home: home, pol: pol, plan: opts.plan}
 			if opts.local != "" {
 				return runLocalInstall(cmd, opts.local, opts)
 			}
@@ -273,6 +358,8 @@ func newAgentInstallCmd() *cobra.Command {
 	cmd.Flags().StringVar(&opts.local, "local", "", "install a QuickAgent folder on this computer instead of a release from the registry")
 	cmd.Flags().BoolVar(&opts.allowUnsigned, "allow-unsigned", false, "with --local: agree to install the folder, which is unsigned")
 	cmd.Flags().BoolVar(&opts.yes, "yes", false, "agree to what the agent declares without being asked")
+	cmd.Flags().BoolVar(&opts.plan, "plan", false,
+		"preview only: resolve, download and verify, then show what you would agree to and each subagent as it would be pinned; writes nothing but a first-use pin of the registry's keys (with --json, the machine-readable shape)")
 	cmd.Flags().StringVar(&policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml, created on first use)")
 	return cmd
 }
