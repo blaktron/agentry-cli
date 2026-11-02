@@ -1,0 +1,19 @@
+{
+  "id": "persistent-notes-keeper",
+  "description": "An agent that stays on my computer, remembers the notes and facts I share with it from one day to the next, and reminds me of my tasks when they are due.",
+  "hints": [],
+  "expect": {
+    "modes": [
+      "persistent"
+    ],
+    "hosts": [],
+    "maxSecrets": 0,
+    "maxServers": 0,
+    "exec": false,
+    "write": false,
+    "persistent": [
+      "clock",
+      "memory"
+    ]
+  }
+}

@@ -114,3 +114,10 @@ A PyPI server whose `requires_python` excludes the default Python 3.15.2 but adm
 A fresh runner policy gives a run on the person's computer 1800 seconds and no tool-call limit, which the person may still set, so the runtime facts and the browser page say so. The budgets In Agentry are unchanged.
 
 - updated: sources/runtime-facts.md, manifest/browser.md
+
+## [2026-11-02] ingest | persistent agents (Drafter 1.19.0)
+
+A new page, A persistent agent, says when a description asks for one (an agent that stays running, remembers, or works on a schedule for the person), each `capabilities.persistent` key with the tools it gives, how to write its instructions, a persona in its own file, and subagents the Drafter finds in the registry and proposes with a constraint and a reason. The manifest page lists the new fields and their bounds, run modes names the third mode, what checks a draft names the persona and subagent checks, and a sixth worked draft is a notes keeper named Pip.
+
+- wrote: manifest/persistent.md
+- updated: manifest/manifest.md, manifest/run-modes.md, draft/examples.md, draft/review.md, guide/start-here.md

@@ -2,6 +2,7 @@ package drafter
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -113,8 +114,33 @@ const repairFraming = "You have no web tools this turn: fix the draft from what 
 	"- If the report names the instruction file (AGENT.md, the instructions, or a rule S1, S3 or S4), write the whole file again with `write_report`, " +
 	"`path` `AGENT.md`. Otherwise do not write it: the one you wrote before is kept. Do not write notes.md.\n"
 
+// persistentRepairFraming is added to the framing of a persistent agent's
+// draft: its persona file is its own, and it may rely on a tool its key or
+// its subagents give.
+const persistentRepairFraming = "\nThis draft is a persistent agent:\n\n" +
+	"- If the report names the persona's file (PERSONA.md, or a rule V17), write the whole file again with `write_report`, `path` `PERSONA.md`. " +
+	"Otherwise do not write it: the one you wrote before is kept.\n" +
+	"- If the report says the instructions call a tool of a `capabilities.persistent` key that the manifest does not declare, either add the key " +
+	"(`manifest/persistent.md` names each key's tools) or take the tool out of the instructions, whichever the task needs. " +
+	"The subagent tools (`subagent_list`, `subagent_run`, `subagent_result`) need a subagent in `dependencies.agents`; you have no registry search this turn, " +
+	"so add one only if its ref, constraint and reason are already in your draft, and otherwise take the calls out.\n"
+
+// persistentDraft says the draft is a persistent agent: its manifest lists
+// the persistent mode, or, for an answer that was not a draft, its last
+// message names the mode.
+func persistentDraft(d *Draft) bool {
+	if len(d.Manifest) == 0 {
+		return strings.Contains(d.lastMessage, "persistent")
+	}
+	var m struct {
+		Modes []string `json:"modes"`
+	}
+	return json.Unmarshal(d.Manifest, &m) == nil && slices.Contains(m.Modes, "persistent")
+}
+
 // RepairTask is the repair turn's task: the constant framing, the rules' own
-// report on the draft, and the draft's manifest and instructions as the
+// report on the draft, and the draft's manifest, instructions and, for a
+// persistent agent that has one, persona text as the
 // Drafter wrote them (after the post-step's corrections), or, for an answer
 // the output schema refused, its last message as it wrote it. Nothing else
 // goes in: not the description, not the notes, the sources, the matches or AI
@@ -138,6 +164,9 @@ func RepairTask(d *Draft, r RepairReport) (string, error) {
 	}
 	var b strings.Builder
 	b.WriteString(repairWordsOf[r.by()].opening + repairFraming)
+	if persistentDraft(d) {
+		b.WriteString(persistentRepairFraming)
+	}
 	section := func(heading string, lines []string) {
 		if len(lines) == 0 {
 			return
@@ -172,6 +201,12 @@ func RepairTask(d *Draft, r RepairReport) (string, error) {
 	} else {
 		b.WriteString(d.Instructions)
 		if !strings.HasSuffix(d.Instructions, "\n") {
+			b.WriteString("\n")
+		}
+	}
+	if strings.TrimSpace(d.PersonaText) != "" {
+		b.WriteString("\n## Your persona (PERSONA.md)\n\n" + d.PersonaText)
+		if !strings.HasSuffix(d.PersonaText, "\n") {
 			b.WriteString("\n")
 		}
 	}
@@ -259,6 +294,13 @@ func Repaired(first *Draft, env *receipt.Envelope, outDir string, r RepairReport
 	}
 	if strings.TrimSpace(d.Instructions) == "" && d.ManifestError == "" {
 		d.ManifestError = "the Drafter wrote no instructions (AGENT.md)"
+	}
+	// The persona is read back the same way: kept unless the turn wrote it
+	// again.
+	if persona, perr := readReport(filepath.Join(outDir, "reports"), personaReport, maxPersonaText); perr != nil {
+		d.ManifestError = cmp.Or(d.ManifestError, perr.Error())
+	} else if strings.TrimSpace(persona) != "" {
+		d.PersonaText = persona
 	}
 	d.Manifest, d.corrections = Correct(d.Manifest, d.chosenShips...)
 	var s strings.Builder

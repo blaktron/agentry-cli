@@ -6,11 +6,11 @@ summary: Every page in drafting-guide, one line each, by section. Generated; do 
 
 # drafting-guide
 
-20 pages.
+21 pages.
 
 ## Draft
 
-- [Worked drafts](draft/examples.md) — Five whole drafts, each from a description to the manifest, the shape of its instructions and its notes; one with no tools, one with fetch and a key, one with a declared MCP server, each modelled on one of Agentry's first-party example QuickAgents, one that checks a server the person names (a target host), and one that checks a website the person names in a browser.
+- [Worked drafts](draft/examples.md) — Six whole drafts, each from a description to the manifest, the shape of its instructions and its notes; one with no tools, one with fetch and a key, one with a declared MCP server, each modelled on one of Agentry's first-party example QuickAgents, one that checks a server the person names (a target host), one that checks a website the person names in a browser, and one persistent agent with a persona and a proposed subagent.
 - [Writing the instructions](draft/instructions.md) — How to write the AGENT.md a draft returns, the instruction its QuickAgent's agent follows; the six headings in order, what each holds, how much to write, and what to leave out because the System Prompt already says it.
 - [What checks a draft](draft/review.md) — The checks a draft meets after you answer (the rules, AI Review's check of the finished draft, one repair turn) and the scan that decides whether a submitted QuickAgent publishes, goes to review or is rejected. A QuickAgent that describes attacks is not held for describing them; what holds is an instruction to use a capability the manifest does not declare, an injection technique, or deceiving the person.
 
@@ -28,7 +28,8 @@ summary: Every page in drafting-guide, one line each, by section. Generated; do 
 - [The person's knowledge at run time](manifest/knowledge-accepts.md) — When a QuickAgent asks the person to attach a knowledge pack of their own at run time (knowledge.accepts), how to write its prompt, and what goes into the instructions instead. A draft ships only the packs the person chose to ship.
 - [Writing for a shipped pack](manifest/knowledge-ships.md) — When the person chose to ship a knowledge pack with the QuickAgent, what that changes in the manifest and the notes, and how to write instructions that consult the pack at /knowledge/<name>: when to look, how to cite its pages, and how to read its procedure pages as reference.
 - [The manifest](manifest/manifest.md) — Every field of the manifest a draft returns, what to write in each, and the rules' bounds by value. Check the draft against the bounds before you return it.
-- [Run modes](manifest/run-modes.md) — Autonomous and interactive runs, when a draft adds interactive, what a conversation can and cannot do, and the opening line.
+- [A persistent agent](manifest/persistent.md) — When a description asks for an agent that stays running, remembers and works for the person over days, how to draft one (modes, the capabilities.persistent keys and the tools each gives, a persona, subagents the person is asked to agree to), and how to write its instructions.
+- [Run modes](manifest/run-modes.md) — Autonomous and interactive runs, when a draft adds interactive, what a conversation can and cannot do, the opening line, and where a persistent agent is drafted.
 - [Keys](manifest/secrets.md) — How a QuickAgent declares the keys it needs (its own for fetch, a server's on that server), how to mark each one optional or required, how a run gets them without the model seeing them, and what a run does without an optional one.
 - [Target hosts](manifest/target-hosts.md) — When a QuickAgent takes a target host (a server the person names when the run starts, to set up, manage or diagnose), how it declares one (a host question listed in capabilities.targetHosts), what the run reaches it with (the host tools and the shell, never a command of its own that makes SSH), how to write its instructions, and where it runs.
 
