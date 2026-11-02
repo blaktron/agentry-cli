@@ -149,6 +149,13 @@ type SignIn struct {
 	Docker func() dockerx.Client
 	// Keys is the keychain the sign-in store uses; nil keeps nothing there.
 	Keys connection.Keychain
+	// Relay, when set, takes the browser's answer to the container in place
+	// of a listener on this computer's loopback: for a sign-in on a server
+	// whose person's browser is on another machine, which listens there and
+	// hands each connection to Forward. It is told the login container and
+	// Claude Code's callback port before the address is opened, and stop
+	// ends every connection it relays.
+	Relay func(ctx context.Context, container string, port int) (stop func(), err error)
 }
 
 func (s SignIn) docker() dockerx.Client {
@@ -321,7 +328,9 @@ func (s SignIn) signInImage(ctx context.Context, p Person, pol *policy.Policy, p
 		failMu.Unlock()
 		cancel()
 	}}
-	if ex, ok := d.(dockerx.Execer); ok {
+	if s.Relay != nil {
+		w.startRelay = func(port int) (func(), error) { return s.Relay(lctx, login.Name, port) }
+	} else if ex, ok := d.(dockerx.Execer); ok {
 		w.startRelay = func(port int) (func(), error) { return relay(lctx, ex, login.Name, port) }
 	}
 	code, err := runContainer(lctx, d, login, p.In, &stream{b: w}, &stream{b: w})

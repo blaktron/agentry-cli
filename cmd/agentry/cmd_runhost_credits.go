@@ -18,6 +18,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/authflow"
 	"github.com/blaktron/agentry-cli/pkg/runhost"
+	"github.com/blaktron/agentry-cli/pkg/runhost/signin"
 	"github.com/blaktron/agentry-cli/pkg/runhost/store"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
@@ -63,6 +64,8 @@ func (c runhostCredits) info() *runhostCreditsInfo {
 type runhostStoreList struct {
 	Releases int                 `json:"releases"`
 	Credits  *runhostCreditsInfo `json:"credits,omitempty"`
+	// SignIns are the model sign-ins the runhost keeps: never a token.
+	SignIns []signin.Kept `json:"signIns,omitempty"`
 }
 
 // runhostCreditsRemoved is what removing the credits token did.
@@ -153,9 +156,13 @@ func revokeCredits(ctx context.Context, c runhostCredits) error {
 //	store list            what the store holds, never a credential
 //	store put-credits     the credits token, a JSON document as input
 //	store remove-credits  revokes the credits token and removes it
+//	store remove-signin <vendor>  ends a model sign-in and removes it
 func runhostStoreVerb(ctx context.Context, req runhost.Request, in io.Reader, fw *runhost.FrameWriter) (int, error) {
+	if len(req.Args) == 2 && req.Args[0] == "remove-signin" {
+		return runhostSignInRemove(ctx, req.Args[1], fw)
+	}
 	if len(req.Args) != 1 {
-		return engine.ExitUsage, errors.New("store takes one of list, put-credits and remove-credits")
+		return engine.ExitUsage, errors.New("store takes one of list, put-credits, remove-credits and remove-signin <vendor>")
 	}
 	st, err := openRunhostStore()
 	if err != nil {
@@ -163,7 +170,7 @@ func runhostStoreVerb(ctx context.Context, req runhost.Request, in io.Reader, fw
 	}
 	switch req.Args[0] {
 	case "list":
-		list := runhostStoreList{Releases: countStoredReleases()}
+		list := runhostStoreList{Releases: countStoredReleases(), SignIns: runhostSignInList()}
 		c, ok, err := runhostStoredCredits(st)
 		if err != nil {
 			return 1, err
@@ -228,7 +235,7 @@ func runhostStoreVerb(ctx context.Context, req runhost.Request, in io.Reader, fw
 		}
 		return 0, fw.Result(out)
 	}
-	return engine.ExitUsage, fmt.Errorf("store does not take %q: list, put-credits or remove-credits", req.Args[0])
+	return engine.ExitUsage, fmt.Errorf("store does not take %q: list, put-credits, remove-credits or remove-signin <vendor>", req.Args[0])
 }
 
 // countStoredReleases is how many releases the store holds.
@@ -291,30 +298,44 @@ func runhostOwnName() string {
 
 // newRunhostModelCmd builds `agentry runhost model`.
 func newRunhostModelCmd() *cobra.Command {
-	var provider string
-	var yes bool
+	var provider, signIn string
+	var yes, oauthApp bool
 	cmd := &cobra.Command{
-		Use:   "model <name> --provider agentry",
-		Short: "Let a runhost pay for its runs' models with your Agentry credits",
-		Long: "Makes a token on your account that can only pay for model use with your\n" +
-			"Agentry credits, named \"Runhost <name> (credits only)\", and keeps it in the\n" +
-			"runhost's store, encrypted. The registry's authorize page opens in your browser\n" +
-			"to approve it; this computer's own sign-in never reaches the server. A run on\n" +
-			"the runhost whose model is Agentry credits (agentry setup) then pays with it.\n" +
-			"Running it again replaces the token and revokes the earlier one; `agentry\n" +
-			"runhost store <name> --remove credits` and `agentry runhost remove` revoke it.\n\n" +
-			"A run's own API key needs nothing here: it travels with each run.",
+		Use:   "model <name> (--provider agentry | --sign-in claude|chatgpt|copilot)",
+		Short: "Give a runhost your Agentry credits, or sign it in to your Claude, ChatGPT or Copilot plan",
+		Long: "--provider agentry makes a token on your account that can only pay for model\n" +
+			"use with your Agentry credits, named \"Runhost <name> (credits only)\", and keeps\n" +
+			"it in the runhost's store, encrypted. The registry's authorize page opens in your\n" +
+			"browser to approve it; this computer's own sign-in never reaches the server. A run\n" +
+			"on the runhost whose model is Agentry credits (agentry setup) then pays with it.\n" +
+			"Running it again replaces the token and revokes the earlier one.\n\n" +
+			"--sign-in claude|chatgpt|copilot signs the runhost in to your plan from your\n" +
+			"browser on this computer: the vendor's page opens here, and its answer is relayed\n" +
+			"to the runhost over its run key. Claude Code signs in on the runhost itself and\n" +
+			"keeps its sign-in in its docker volume there; ChatGPT's and Copilot's refresh\n" +
+			"tokens are kept in the runhost's store, encrypted. Nothing of the sign-in stays\n" +
+			"on this computer. A run on the runhost whose model is that plan (agentry setup)\n" +
+			"then uses it, in the vendor's image under gVisor.\n\n" +
+			"`agentry runhost store <name> --remove credits|claude|chatgpt|copilot` and\n" +
+			"`agentry runhost remove` end them. A run's own API key needs nothing here: it\n" +
+			"travels with each run.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if provider != policy.ProviderAgentry {
-				return engine.Classify(engine.ExitUsage, fmt.Errorf("--provider %q: a runhost keeps a model of its own only for Agentry credits (--provider agentry); an API key travels with each run", provider))
+			switch {
+			case provider != "" && signIn != "":
+				return engine.Classify(engine.ExitUsage, errors.New("give --provider agentry or --sign-in, not both"))
+			case signIn != "":
+				return runRunhostModelSignIn(cmd, args[0], signIn, oauthApp, yes)
+			case provider != policy.ProviderAgentry:
+				return engine.Classify(engine.ExitUsage, fmt.Errorf("--provider %q: a runhost keeps Agentry credits (--provider agentry) or a plan's sign-in (--sign-in claude|chatgpt|copilot); an API key travels with each run", provider))
 			}
 			return runRunhostModelCredits(cmd, args[0], yes)
 		},
 	}
 	cmd.Flags().StringVar(&provider, "provider", "", "the model provider: agentry (Agentry credits)")
-	cmd.Flags().BoolVar(&yes, "yes", false, "make and keep the token without asking")
-	_ = cmd.MarkFlagRequired("provider")
+	cmd.Flags().StringVar(&signIn, "sign-in", "", "sign the runhost in to a plan: claude, chatgpt or copilot")
+	cmd.Flags().BoolVar(&oauthApp, "oauth-app", false, "for --sign-in copilot: sign in through Agentry's OAuth App instead of its GitHub App")
+	cmd.Flags().BoolVar(&yes, "yes", false, "make and keep the token, or sign in, without asking")
 	return cmd
 }
 
@@ -443,12 +464,14 @@ func unsentCreditsToken(ctx context.Context, reg string, pat authflow.PAT) error
 func newRunhostStoreCmd() *cobra.Command {
 	var remove string
 	cmd := &cobra.Command{
-		Use:   "store <name> [--remove credits]",
-		Short: "List what a runhost keeps in its store, and remove its credits token",
+		Use:   "store <name> [--remove credits|claude|chatgpt|copilot]",
+		Short: "List what a runhost keeps in its store, and remove its credits token or a sign-in",
 		Long: "Lists the runhost's store over this computer's run key: the releases it has\n" +
-			"run, kept so a later run need not send them again, and its Agentry credits\n" +
-			"token, if it has one. --remove credits revokes the token at its registry and\n" +
-			"removes it from the store.",
+			"run, kept so a later run need not send them again, its Agentry credits token,\n" +
+			"if it has one, and its model sign-ins. --remove credits revokes the token at its\n" +
+			"registry and removes it from the store; --remove claude runs Claude Code's own\n" +
+			"logout on the runhost and deletes its sign-in volume there; --remove chatgpt and\n" +
+			"--remove copilot revoke the sign-in at the vendor where it can and remove it.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
@@ -476,6 +499,16 @@ func newRunhostStoreCmd() *cobra.Command {
 				} else {
 					_, _ = fmt.Fprintln(w, "credits:   none")
 				}
+				if len(list.SignIns) == 0 {
+					_, _ = fmt.Fprintln(w, "sign-ins:  none")
+				}
+				for _, k := range list.SignIns {
+					line := fmt.Sprintf("sign-in:   %s as %s, kept since %s", k.Vendor, nonEmptyOr(k.Label, "an account the vendor did not name"), k.KeptAt)
+					if k.Broken != "" {
+						line += " (no longer works: " + k.Broken + ")"
+					}
+					_, _ = fmt.Fprintln(w, line)
+				}
 				return nil
 			case runhostCreditsEntry:
 				removed, err := removeRunhostCredits(cmd, name)
@@ -488,10 +521,21 @@ func newRunhostStoreCmd() *cobra.Command {
 				printCreditsRemoved(cmd.OutOrStdout(), name, removed)
 				return nil
 			}
-			return engine.Classify(engine.ExitUsage, fmt.Errorf("--remove %q: the store's entry to remove is credits", remove))
+			if signin.IsVendor(remove) {
+				removed, err := removeRunhostSignIn(cmd, name, remove)
+				if err != nil {
+					return err
+				}
+				if flags.jsonOut {
+					return emitJSON(cmd.OutOrStdout(), removed)
+				}
+				printSignInRemoved(cmd.OutOrStdout(), name, removed)
+				return nil
+			}
+			return engine.Classify(engine.ExitUsage, fmt.Errorf("--remove %q: the store's entry to remove is credits, claude, chatgpt or copilot", remove))
 		},
 	}
-	cmd.Flags().StringVar(&remove, "remove", "", "the entry to remove: credits")
+	cmd.Flags().StringVar(&remove, "remove", "", "the entry to remove: credits, claude, chatgpt or copilot")
 	return cmd
 }
 

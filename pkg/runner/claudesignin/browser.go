@@ -55,6 +55,11 @@ const relayJS = `const s=require("net").connect(+process.argv[1],"127.0.0.1");` 
 	`process.stdin.pipe(s);s.pipe(process.stdout);` +
 	`s.on("error",()=>process.exit(1));s.on("close",()=>process.exit(0))`
 
+// CallbackPort is the port of Claude Code's own callback in a sign-in
+// address, false for an address that is not one of Anthropic's sign-in
+// pages redirecting there: what a relay elsewhere listens on.
+func CallbackPort(raw string) (int, bool) { return callbackPort(raw) }
+
 // callbackPort is the port of a sign-in address whose redirect is Claude
 // Code's own callback, http://localhost:<port>/callback, on one of
 // Anthropic's sign-in pages; false for any other address.
@@ -94,7 +99,6 @@ func relay(ctx context.Context, ex dockerx.Execer, container string, port int) (
 	rctx, cancel := context.WithCancel(ctx)
 	var wg sync.WaitGroup
 	slots := make(chan struct{}, maxRelayed)
-	argv := []string{"node", "-e", relayJS, strconv.Itoa(port)}
 	for _, l := range ls {
 		wg.Add(1)
 		go func(l net.Listener) {
@@ -122,7 +126,7 @@ func relay(ctx context.Context, ex dockerx.Execer, container string, port int) (
 						}
 						_ = c.Close()
 					}()
-					_, _ = ex.ExecStream(rctx, container, argv, c, c)
+					_ = Forward(rctx, ex, container, port, c, c)
 					close(done)
 				}()
 			}
@@ -135,6 +139,14 @@ func relay(ctx context.Context, ex dockerx.Execer, container string, port int) (
 		}
 		wg.Wait()
 	}, nil
+}
+
+// Forward relays one connection's bytes, in and out, to Claude Code's
+// callback on the container's own loopback at port, through exec, unread.
+// It returns when either side closes.
+func Forward(ctx context.Context, ex dockerx.Execer, container string, port int, in io.Reader, out io.Writer) error {
+	_, err := ex.ExecStream(ctx, container, []string{"node", "-e", relayJS, strconv.Itoa(port)}, in, out)
+	return err
 }
 
 // browserSignIn watches Claude Code's output during the image's sign-in
