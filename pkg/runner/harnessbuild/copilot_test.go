@@ -209,7 +209,7 @@ func TestTheDefaultCopilotPinIsAReleaseThisBuildCarries(t *testing.T) {
 	if _, err := copilotReleaseFor(h); err != nil {
 		t.Fatal(err)
 	}
-	if !Builds(CopilotImageAdapter) || !strings.Contains(PinNote(CopilotImageAdapter), "pinned by checksum, not signed") || PinNote(ClaudeImageAdapter) != "" {
+	if !Builds(CopilotImageAdapter) || !strings.Contains(PinNote(CopilotImageAdapter, policy.HarnessImage{}), "pinned by checksum, not signed") || PinNote(ClaudeImageAdapter, policy.DefaultHarnessImages[ClaudeImageAdapter]) != "" {
 		t.Fatal("the Copilot image's pin note")
 	}
 }
