@@ -50,7 +50,7 @@ var (
 	runhostUnsafeModeFile = runhost.UnsafeModeFile
 	runhostStoreDir       = filepath.Join(runhost.StateDir, "store", "releases")
 	runhostStoreKey       = filepath.Join(runhost.StateDir, "store", store.KeyFile)
-	runhostOutputKeep     = 7 * 24 * time.Hour
+	runhostOutputKeep     = runhost.OutputKeep
 	// runhostCancelGrace is how long an interrupted run has to tear down
 	// before it is killed.
 	runhostCancelGrace = 30 * time.Second
@@ -63,7 +63,7 @@ const (
 	// runhostEnvelopeName is the run's envelope, sealed beside its output.
 	runhostEnvelopeName = "envelope.sealed"
 	runhostJobRecord    = "job.json"
-	runhostMaxEnvelope  = 16 << 20
+	runhostMaxEnvelope  = runhost.MaxEnvelope
 	// runhostExitNoOutput is collect's answer for a job whose output the
 	// runhost does not hold.
 	runhostExitNoOutput = 4
@@ -72,14 +72,7 @@ const (
 )
 
 // runhostJobResult is the job verb's answer.
-type runhostJobResult struct {
-	Job      string `json:"job"`
-	ExitCode int    `json:"exitCode"`
-	// Done says the job has ended: its sealed output and envelope wait for
-	// collect. Next is the index after the last frame the answer carried.
-	Done bool `json:"done"`
-	Next int  `json:"next,omitempty"`
-}
+type runhostJobResult = runhost.JobResult
 
 // runhostJobDone is what the server keeps of a finished job beside its
 // sealed output, for collection and expiry.
