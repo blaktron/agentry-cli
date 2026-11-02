@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -18,7 +19,6 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runhost"
 	"github.com/blaktron/agentry-cli/pkg/runhost/job"
 	"github.com/blaktron/agentry-cli/pkg/runhost/output"
-	"github.com/blaktron/agentry-cli/pkg/runhost/payload"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
@@ -43,8 +43,6 @@ func runOnUnsupported(opts runOpts) string {
 		return "--local (a runhost runs a published release)"
 	case opts.plan, opts.dryRun, opts.prepare:
 		return "--plan, --dry-run and --prepare"
-	case opts.sessionProtocol, opts.mode == string(manifest.ModeInteractive):
-		return "an interactive run"
 	case opts.destinationsFile != "":
 		return "--destinations-file (a runhost takes this device's saved destinations)"
 	case opts.connectionsFile != "", opts.reviewInputs != "", opts.eventsPath != "":
@@ -119,8 +117,36 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	if err != nil {
 		return engine.Classify(engine.ExitUsage, err)
 	}
-	if mode != manifest.ModeAutonomous {
-		return engine.Classify(engine.ExitUsage, fmt.Errorf("%s runs %s; a run on a runhost is autonomous", meta.Ref, mode))
+	switch mode {
+	case manifest.ModeAutonomous:
+		if opts.sessionProtocol {
+			return engine.Classify(engine.ExitUsage, fmt.Errorf("--session-protocol drives an interactive session; this run's mode is %s", mode))
+		}
+	case manifest.ModeInteractive:
+		if opts.detach {
+			return engine.Classify(engine.ExitUsage, errors.New("--detach is for an autonomous run: a session is driven from here"))
+		}
+		if !opts.sessionProtocol && !stdinIsTTY(cmd.InOrStdin()) {
+			return engine.Classify(engine.ExitUsage, errors.New("an interactive run needs a terminal on stdin (the chat is the input); drive the session with --session-protocol, or pipe a task to --mode autonomous"))
+		}
+		if !opts.sessionProtocol && opts.outputFormat == "json" {
+			return engine.Classify(engine.ExitUsage, errors.New("--output-format json is not available for an interactive run: the transcript and receipts are the record"))
+		}
+	default:
+		return engine.Classify(engine.ExitUsage, fmt.Errorf("%s runs %s; a runhost takes an autonomous run or an interactive session", meta.Ref, mode))
+	}
+	if opts.sessionProtocol {
+		if opts.sessionInputs != "" {
+			if fi, err := os.Stat(opts.sessionInputs); err != nil || !fi.IsDir() {
+				return engine.Classify(engine.ExitUsage, fmt.Errorf("--session-inputs %s is not a directory", opts.sessionInputs))
+			}
+		}
+		w, err := protocolEventsOut()
+		if err != nil {
+			return engine.Classify(engine.ExitUsage, err)
+		}
+		opts.protocolEvents = w
+		ignoreBrokenPipes()
 	}
 	opts.progress.at(receipt.StageConsent)
 	if err := confirmRun(cmd, m, meta, home, opts, mode, nil); err != nil {
@@ -142,7 +168,11 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	if err != nil {
 		return err
 	}
-	task, err := io.ReadAll(io.LimitReader(runTask(cmd, opts), job.MaxDocument/2+1))
+	taskIn := runTask(cmd, opts)
+	if taskIn == nil {
+		taskIn = strings.NewReader("")
+	}
+	task, err := io.ReadAll(io.LimitReader(taskIn, job.MaxDocument/2+1))
 	if err != nil {
 		return engine.Classify(engine.ExitUsage, err)
 	}
@@ -157,6 +187,7 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	run.Task, run.AllowUnsigned, run.AllowUnscanned = string(task), opts.allowUnsigned, opts.allowUnscanned
 	run.Timeout, run.MaxTurns, run.MaxCost = opts.timeout, opts.maxTurns, opts.maxCost
 	run.Model, run.ModelKey = job.ModelOf(pol.Model), modelKey
+	run.Session = mode == manifest.ModeInteractive
 	j := &job.Job{V: job.Version, ID: id, Device: rec.DeviceID, Release: rel, Run: run}
 	if err := j.Validate(); err != nil {
 		return engine.Classify(engine.ExitUsage, err)
@@ -179,59 +210,47 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	_, _ = fmt.Fprintf(errOut, "running %s on %s (%s, host key %s)\n", meta.Ref, rec.Name, rec.Host, rec.HostKeyFingerprint)
 
 	opts.progress.at(receipt.StageAgent)
-	res, err := runOnSend(cmd.Context(), client, j, archive, files, func(line string) {
-		_, _ = fmt.Fprintf(errOut, "%s: %s\n", rec.Name, safeTerminalText(line, 4096))
-	})
-	if err != nil {
+	lj := runhostLocalJob{Job: j.ID, Runhost: rec.Name, Ref: meta.Ref, Namespace: meta.Namespace, Name: meta.Name, Version: meta.Version,
+		Digest: meta.Digest, Out: opts.out, DeliverTo: carried.deliverTo, Session: j.Run.Session, StartedAt: time.Now().UTC().Format(time.RFC3339)}
+	if err := putLocalJob(home, lj); err != nil {
+		return err
+	}
+	say := func(line string) { _, _ = fmt.Fprintf(errOut, "%s: %s\n", rec.Name, safeTerminalText(line, 4096)) }
+	if j.Run.Session {
+		return runOnSession(cmd, client, rec, keys, j, archive, files, lj, m, pol, opts, carried, say)
+	}
+	res, started, next, err := runOnStart(cmd.Context(), client, j, archive, files, opts.detach, say, nil, nil)
+	switch {
+	case err != nil && !started:
+		dropLocalJob(home, j.ID)
 		return engine.Classify(runOnSendClass(err), err)
-	}
-	if res.Job != j.ID {
-		return engine.Classify(engine.ExitGateway, fmt.Errorf("%s answered for job %q, not this run's", rec.Name, res.Job))
-	}
-
-	opts.progress.at(receipt.StageOutput)
-	// The envelope is the runhost CLI's stdout; a run that printed none still
-	// has its output collected, and fails as the CLI's exit says.
-	var env receipt.Envelope
-	enveloped := json.Unmarshal(res.Envelope, &env) == nil
-	if !enveloped {
-		env = receipt.Envelope{Status: "error", ExitCode: res.ExitCode, Ref: meta.Ref, Digest: meta.Digest,
-			Error: fmt.Sprintf("the run on %s gave no envelope", rec.Name)}
-	}
-	// The CLI's exit status is what the run ended in, whatever its stdout
-	// says.
-	if env.ExitCode != res.ExitCode {
-		env.ExitCode = res.ExitCode
-		if res.ExitCode != 0 {
-			env.Status = "error"
+	case opts.detach:
+		carried.finishProfile(errOut)
+		return runOnDetached(cmd, rec, j.ID, opts.outputFormat)
+	case err != nil:
+		var c2 *runhost.Client
+		res, c2, err = runOnReattach(cmd.Context(), rec, keys, j.ID, next, errOut, say, nil)
+		if err != nil {
+			carried.finishProfile(errOut)
+			return engine.Classify(engine.ExitGateway, fmt.Errorf("lost %s: %w; the job goes on there: agentry runhost attach %s %s follows it and opens its output here", rec.Name, err, rec.Name, j.ID))
 		}
+		defer func() { _ = c2.Close() }()
+		client = c2
 	}
-	runID := env.RunID
-	if runID == "" {
-		runID = j.ID[:12]
-	}
-	outDir, err := resolveOutDir(opts.out, meta, runID)
-	if err != nil {
-		return err
-	}
-	opts.progress.wrote(outDir)
-	if err := runOnCollect(cmd.Context(), client, j.ID, rec.DeviceID, keys, outDir); err != nil {
-		return engine.Classify(engine.ExitCLI, fmt.Errorf("collect the run's output from %s: %w (it stays there, sealed, for %d days)", rec.Name, err, int(runhostOutputKeep.Hours()/24)))
-	}
-	if _, err := client.Ask(cmd.Context(), "collect", []string{j.ID, "done"}, nil); err != nil {
-		_, _ = fmt.Fprintf(errOut, "warning: %s keeps the sealed output of job %s until it expires: %v\n", rec.Name, j.ID, err)
-	}
-
-	runOnEnvelope(&env, rec, outDir, j.ID)
-	carried.finish(errOut, &env, outDir)
-	if err := env.Write(outDir); err != nil {
-		return err
-	}
-	printEnvelope(cmd, &env, opts.outputFormat)
+	carried.finishProfile(errOut)
+	opts.progress.at(receipt.StageOutput)
+	err = runOnFinish(cmd, client, rec, keys, lj, res.ExitCode, opts.outputFormat)
 	opts.progress.enveloped()
-	if env.ExitCode != 0 {
-		return engine.Classify(env.ExitCode, errors.New(nonEmptyOr(env.Error, "the run on "+rec.Name+" failed")))
+	return err
+}
+
+// runOnDetached says where a detached job is, and how to reach it again.
+func runOnDetached(cmd *cobra.Command, rec *runhost.Record, id, format string) error {
+	if format == "json" {
+		return emitJSON(cmd.OutOrStdout(), map[string]string{"job": id, "runhost": rec.Name, "state": "running"})
 	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "job %s runs on %s\n  follow it:     agentry runhost attach %s %s\n  collect it:    agentry runhost collect %s %s (once it has ended)\n  stop it:       agentry runhost cancel %s %s\n",
+		id, rec.Name, rec.Name, id, rec.Name, id, rec.Name, id)
 	return nil
 }
 
@@ -329,72 +348,6 @@ func runOnSameVersion(ctx context.Context, c *runhost.Client, name string) error
 		return fmt.Errorf("%s runs CLI %s and this device %s; a run needs the same version on both: run agentry runhost add %s again from this device, which updates it", name, v.Version, version.Version, name)
 	}
 	return nil
-}
-
-// runOnSend sends the job, and its release when the runhost asks for it,
-// over one session, and reads the run's narration and its result.
-func runOnSend(ctx context.Context, c *runhost.Client, j *job.Job, archive []byte, files *payload.Packed, say func(string)) (runhostJobResult, error) {
-	answered := make(chan string, 1)
-	stop := make(chan struct{})
-	defer close(stop)
-	send := func(w io.Writer) error {
-		if err := job.Write(w, j); err != nil {
-			return err
-		}
-		select {
-		case a := <-answered:
-			if a == runhost.ReleaseNeeded {
-				if _, err := w.Write(archive); err != nil {
-					return err
-				}
-			}
-		case <-stop:
-			return nil
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-		// The run's files follow the release, exactly the size the job names.
-		if files == nil {
-			return nil
-		}
-		f, err := files.Open()
-		if err != nil {
-			return err
-		}
-		defer func() { _ = f.Close() }()
-		n, err := io.Copy(w, f)
-		if err == nil && n != files.Size {
-			err = fmt.Errorf("the run's files are %d bytes, not the %d the job names", n, files.Size)
-		}
-		return err
-	}
-	each := func(f runhost.Frame) error {
-		switch f.Type {
-		case runhost.FrameOut:
-			if say != nil {
-				say(f.Text)
-			}
-		case runhost.FrameRelease:
-			if f.Text != runhost.ReleaseNeeded && f.Text != runhost.ReleaseHeld {
-				return fmt.Errorf("the runhost answered the job with %q", f.Text)
-			}
-			select {
-			case answered <- f.Text:
-			default:
-				return errors.New("the runhost answered the job twice")
-			}
-		}
-		return nil
-	}
-	a, err := c.Call(ctx, "job", nil, send, each)
-	if err != nil {
-		return runhostJobResult{}, err
-	}
-	var res runhostJobResult
-	if len(a.Result) == 0 || json.Unmarshal(a.Result, &res) != nil {
-		return runhostJobResult{}, &runhostRefusal{Code: a.Code, Reason: nonEmptyOr(a.Error, "no reason given")}
-	}
-	return res, nil
 }
 
 // runhostRefusal is a job the runhost answered without running it, with the

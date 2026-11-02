@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/blaktron/agentry-cli/pkg/runhost"
@@ -55,20 +56,27 @@ var (
 
 const (
 	// runhostFilesDir is where a job's files are laid down in its directory.
-	runhostFilesDir    = "files"
-	runhostSealedName  = "output.sealed"
-	runhostJobRecord   = "job.json"
-	runhostMaxEnvelope = 16 << 20
+	runhostFilesDir   = "files"
+	runhostSealedName = "output.sealed"
+	// runhostEnvelopeName is the run's envelope, sealed beside its output.
+	runhostEnvelopeName = "envelope.sealed"
+	runhostJobRecord    = "job.json"
+	runhostMaxEnvelope  = 16 << 20
 	// runhostExitNoOutput is collect's answer for a job whose output the
 	// runhost does not hold.
 	runhostExitNoOutput = 4
+	// runhostExitRunning is collect's answer for a job still running.
+	runhostExitRunning = 5
 )
 
 // runhostJobResult is the job verb's answer.
 type runhostJobResult struct {
-	Job      string          `json:"job"`
-	ExitCode int             `json:"exitCode"`
-	Envelope json.RawMessage `json:"envelope,omitempty"`
+	Job      string `json:"job"`
+	ExitCode int    `json:"exitCode"`
+	// Done says the job has ended: its sealed output and envelope wait for
+	// collect. Next is the index after the last frame the answer carried.
+	Done bool `json:"done"`
+	Next int  `json:"next,omitempty"`
 }
 
 // runhostJobDone is what the server keeps of a finished job beside its
@@ -80,6 +88,7 @@ type runhostJobDone struct {
 	Digest     string `json:"digest"`
 	ExitCode   int    `json:"exitCode"`
 	FinishedAt string `json:"finishedAt"`
+	Session    bool   `json:"session,omitempty"`
 }
 
 // runhostCLI is the CLI a job runs: the service's own. A variable for tests.
@@ -134,19 +143,42 @@ func runhostJobVerb(ctx context.Context, _ runhost.Request, in io.Reader, fw *ru
 			return engine.ExitUsage, err
 		}
 	}
-	_ = fw.Out("%s", runhostVerifiedLine(meta))
-	code, envelope, err := runhostRun(ctx, j, dir, home, devices, fw)
-	if err != nil {
-		// A job that sealed nothing keeps nothing.
-		if _, serr := os.Stat(filepath.Join(dir, runhostSealedName)); serr != nil {
-			_ = os.RemoveAll(dir)
+	// The job runs under the service from here, apart from this session: a
+	// device that leaves finds it again with attach.
+	jobCtx, cancel := context.WithCancel(ctx)
+	live := newRunhostLive(j, cancel)
+	live.out("%s", runhostVerifiedLine(meta))
+	ready := make(chan struct{})
+	go func() {
+		defer cancel()
+		code, err := runhostRun(jobCtx, j, dir, home, devices, live, ready)
+		if err != nil {
+			// A job that sealed nothing keeps nothing.
+			if _, serr := os.Stat(filepath.Join(dir, runhostSealedName)); serr != nil {
+				_ = os.RemoveAll(dir)
+			}
+			if code == 0 {
+				code = engine.ExitCLI
+			}
 		}
-		if code == 0 {
-			code = engine.ExitCLI
-		}
-		return code, err
+		live.finish(code, err)
+		// An attach that arrives after this reads the job's record.
+		live.forget()
+	}()
+	<-ready
+	if err := fw.Started(j.ID); err != nil {
+		return 0, nil
 	}
-	return code, fw.Result(runhostJobResult{Job: j.ID, ExitCode: code, Envelope: envelope})
+	gone := make(chan struct{})
+	go func() {
+		defer close(gone)
+		if j.Run.Session {
+			live.relaySession(in)
+			return
+		}
+		_, _ = io.Copy(io.Discard, in)
+	}()
+	return live.follow(ctx, fw, 0, gone)
 }
 
 // runhostJobDir makes the job's own directory, owner-only, refusing a job
@@ -369,6 +401,8 @@ type runhostStaged struct {
 	dir, files                        string
 	policy, task, out, secrets        string
 	intake, connections, destinations string
+	// inputs is a session's inputs folder.
+	inputs string
 	// knownHosts is the device's lines for the target hosts, and hostKeys
 	// each target host's key file, by id.
 	knownHosts string
@@ -382,7 +416,12 @@ type runhostStaged struct {
 func runhostRunArgs(j *job.Job, st runhostStaged) []string {
 	args := []string{"--registry", j.Release.Registry, "run", j.Release.Ref(), "--installed", "--pin", j.Release.Digest,
 		"--policy", st.policy, "--input", st.task, "--out", st.out,
-		"--output-format", "json", "--yes", "--mode", "autonomous"}
+		"--output-format", "json", "--yes"}
+	if j.Run.Session {
+		args = append(args, "--mode", "interactive", "--session-protocol", "--session-inputs", st.inputs)
+	} else {
+		args = append(args, "--mode", "autonomous")
+	}
 	file := func(member string) string { return filepath.Join(st.files, filepath.FromSlash(member)) }
 	for _, name := range j.Run.Inputs {
 		args = append(args, "--file", file(name))
@@ -460,13 +499,22 @@ func runhostRunArgs(j *job.Job, st runhostStaged) []string {
 // file, the intake, connections and destinations files, the run's files and
 // any file the CLI left holding one of the job's credentials go on every
 // path, and what a killed service left is swept at its next start.
-func runhostRun(ctx context.Context, j *job.Job, dir, home string, devices map[string][]byte, fw *runhost.FrameWriter) (int, json.RawMessage, error) {
+func runhostRun(ctx context.Context, j *job.Job, dir, home string, devices map[string][]byte, live *runhostLive, ready chan<- struct{}) (code int, err error) {
+	readied := false
+	defer func() {
+		if !readied {
+			close(ready)
+		}
+	}()
 	st := runhostStaged{dir: dir, files: filepath.Join(dir, runhostFilesDir),
 		policy: filepath.Join(dir, "policy.yaml"), task: filepath.Join(dir, "task.txt"),
 		out: filepath.Join(dir, "out"), secrets: filepath.Join(dir, "secrets.env")}
+	if j.Run.Session {
+		st.inputs = filepath.Join(dir, "session-inputs")
+	}
 	values := runhostJobValues(j)
 	defer func() {
-		for _, p := range []string{st.secrets, st.intake, st.connections, st.destinations, st.knownHosts, filepath.Join(dir, "hostkeys"), st.files, st.out, st.policy, st.task} {
+		for _, p := range []string{st.secrets, st.intake, st.connections, st.destinations, st.knownHosts, filepath.Join(dir, "hostkeys"), st.files, st.inputs, st.out, st.policy, st.task} {
 			if p != "" {
 				_ = os.RemoveAll(p)
 			}
@@ -474,18 +522,19 @@ func runhostRun(ctx context.Context, j *job.Job, dir, home string, devices map[s
 		dropRunCredentials(home, values)
 	}()
 	if err := runhostStage(j, &st); err != nil {
-		return engine.ExitUsage, nil, err
+		return engine.ExitUsage, err
 	}
 	self, err := runhostCLI()
 	if err != nil {
-		return 0, nil, err
+		return 0, err
 	}
 	cmd := exec.CommandContext(ctx, self, runhostRunArgs(j, st)...) //nolint:gosec // the service's own CLI, a typed argv
 	cmd.Env = runhostChildEnv(os.Environ(), j)
 	cmd.Dir = dir
-	// A dropped session interrupts the run, which tears its containers down
-	// as a local run's interrupt does, and is killed if it has not after the
-	// grace.
+	// A cancel, or the service stopping, interrupts the run, which tears its
+	// containers down as a local run's interrupt does, and is killed if it
+	// has not after the grace. A device that leaves does neither: the job
+	// goes on, and a session to its idle timeout.
 	cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
 	cmd.WaitDelay = runhostCancelGrace
 	var stdout limitedBuffer
@@ -493,39 +542,107 @@ func runhostRun(ctx context.Context, j *job.Job, dir, home string, devices map[s
 	cmd.Stdout = &stdout
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return 0, nil, err
+		return 0, err
+	}
+	var events *os.File
+	if j.Run.Session {
+		// The session's commands arrive on its stdin, and its events leave on
+		// descriptor 3, as the session protocol takes them.
+		stdin, err := cmd.StdinPipe()
+		if err != nil {
+			return 0, err
+		}
+		live.stdin, live.inputs = stdin, st.inputs
+		r, w, err := os.Pipe()
+		if err != nil {
+			return 0, err
+		}
+		cmd.ExtraFiles = []*os.File{w}
+		events = r
+		defer func() { _ = r.Close() }()
+		defer func() { _ = w.Close() }()
 	}
 	if err := cmd.Start(); err != nil {
-		return 0, nil, err
+		return 0, err
+	}
+	readied = true
+	close(ready)
+	var pumps sync.WaitGroup
+	if events != nil {
+		_ = cmd.ExtraFiles[0].Close()
+		pumps.Add(1)
+		go func() {
+			defer pumps.Done()
+			sc := bufio.NewScanner(events)
+			sc.Buffer(make([]byte, 64<<10), 4<<20)
+			for sc.Scan() {
+				if f, ok := sessionEventFrame(sc.Bytes(), values); ok {
+					live.emit(f)
+				}
+			}
+		}()
 	}
 	// The narration is read to its end before Wait, which closes the pipe.
 	sc := bufio.NewScanner(stderr)
 	sc.Buffer(make([]byte, 64<<10), 1<<20)
 	for sc.Scan() {
-		_ = fw.Out("%s", maskValues(sc.Text(), values))
+		live.out("%s", maskValues(sc.Text(), values))
 	}
+	pumps.Wait()
 	werr := cmd.Wait()
-	code := 0
 	var exitErr *exec.ExitError
 	switch {
 	case errors.As(werr, &exitErr):
 		code = exitErr.ExitCode()
+		if code < 0 {
+			// Killed by a signal past the grace: no class of the run's own.
+			code = engine.ExitCLI
+		}
 	case werr != nil:
-		return 0, nil, werr
+		return 0, werr
 	}
 	if err := runhostSeal(dir, st.out, j, devices); err != nil {
-		return 0, nil, fmt.Errorf("seal the run's output: %w", err)
+		return 0, fmt.Errorf("seal the run's output: %w", err)
 	}
-	done := runhostJobDone{Job: j.ID, Device: j.Device, Ref: j.Release.Ref(), Digest: j.Release.Digest, ExitCode: code, FinishedAt: time.Now().UTC().Format(time.RFC3339)}
-	b, _ := json.Marshal(done)
-	if err := os.WriteFile(filepath.Join(dir, runhostJobRecord), b, 0o600); err != nil {
-		return 0, nil, err
-	}
+	// The envelope is the CLI's stdout, which names the run's result: it is
+	// sealed to the devices too, so nothing of the run's outcome is kept in
+	// the clear.
 	envelope := []byte(maskValues(string(bytes.TrimSpace(stdout.Bytes())), values))
 	if !json.Valid(envelope) {
-		envelope = nil
+		envelope = []byte("null")
 	}
-	return code, envelope, nil
+	if err := runhostSealBytes(dir, runhostEnvelopeName, envelope, sealedEnvelopeJob(j.ID), devices); err != nil {
+		return 0, fmt.Errorf("seal the run's envelope: %w", err)
+	}
+	done := runhostJobDone{Job: j.ID, Device: j.Device, Ref: j.Release.Ref(), Digest: j.Release.Digest, ExitCode: code,
+		FinishedAt: time.Now().UTC().Format(time.RFC3339), Session: j.Run.Session}
+	b, _ := json.Marshal(done)
+	if err := os.WriteFile(filepath.Join(dir, runhostJobRecord), b, 0o600); err != nil {
+		return 0, err
+	}
+	return code, nil
+}
+
+// runhostSealBytes seals b to every paired device under the job string
+// sealJob, written aside and renamed into dir as name.
+func runhostSealBytes(dir, name string, b []byte, sealJob string, devices map[string][]byte) error {
+	to, err := output.Devices(devices)
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".sealing-*")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(tmp.Name()) }()
+	if err := output.Seal(tmp, bytes.NewReader(b), to, sealJob); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), filepath.Join(dir, name))
 }
 
 // maskValues is s with every occurrence of each value masked, the longest
@@ -574,6 +691,11 @@ func runhostJobValues(j *job.Job) []string {
 func runhostStage(j *job.Job, st *runhostStaged) error {
 	if err := writeNewFile(st.task, []byte(j.Run.Task)); err != nil {
 		return err
+	}
+	if st.inputs != "" {
+		if err := os.Mkdir(st.inputs, 0o700); err != nil {
+			return err
+		}
 	}
 	var env strings.Builder
 	for _, name := range slices.Sorted(maps.Keys(j.Run.Secrets)) {
@@ -852,14 +974,21 @@ func pairedSealKeys() (map[string][]byte, error) {
 // runhostCollectVerb answers `collect <job>` with the job's sealed output as
 // data frames, and `collect <job> done` by deleting the job.
 func runhostCollectVerb(_ context.Context, req runhost.Request, _ io.Reader, fw *runhost.FrameWriter) (int, error) {
-	if len(req.Args) == 0 || len(req.Args) > 2 || !job.ValidID(req.Args[0]) || (len(req.Args) == 2 && req.Args[1] != "done") {
-		return engine.ExitUsage, errors.New("collect takes a job's id, and then done to delete it")
+	if len(req.Args) == 0 || len(req.Args) > 2 || !job.ValidID(req.Args[0]) || (len(req.Args) == 2 && req.Args[1] != "done" && req.Args[1] != "envelope") {
+		return engine.ExitUsage, errors.New("collect takes a job's id, and then envelope for its envelope or done to delete it")
+	}
+	if liveJob(req.Args[0]) != nil {
+		return runhostExitRunning, fmt.Errorf("job %s is still running: attach to it to follow it to its end", req.Args[0])
 	}
 	dir := filepath.Join(runhostJobsDir, req.Args[0])
+	name := runhostSealedName
 	if len(req.Args) == 2 {
-		return 0, os.RemoveAll(dir)
+		if req.Args[1] == "done" {
+			return 0, os.RemoveAll(dir)
+		}
+		name = runhostEnvelopeName
 	}
-	f, err := os.Open(filepath.Join(dir, runhostSealedName)) //nolint:gosec // a job directory named by a checked id
+	f, err := os.Open(filepath.Join(dir, name)) //nolint:gosec // a job directory named by a checked id
 	if errors.Is(err, os.ErrNotExist) {
 		return runhostExitNoOutput, fmt.Errorf("the runhost holds no output of job %s: it was collected, has expired, or never finished", req.Args[0])
 	}

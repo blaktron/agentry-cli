@@ -158,7 +158,14 @@ func (c *Client) Call(ctx context.Context, verb string, args []string, send func
 			}
 			sent = nil
 		case r := <-done:
-			_ = s.Wait()
+			if r.err != nil {
+				// The reader stopped early (each refused a frame, or the
+				// caller is done with the job): the session is closed, not
+				// waited for, since its input may still be open.
+				_ = s.Close()
+			} else {
+				_ = s.Wait()
+			}
 			return r.a, r.err
 		}
 	}

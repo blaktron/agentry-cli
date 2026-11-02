@@ -67,6 +67,9 @@ type runhostStatus struct {
 	Devices        []runhostDevice `json:"devices"`
 	Model          string          `json:"model"`
 	Capabilities   map[string]bool `json:"capabilities"`
+	// Jobs are the jobs the service runs, and the finished ones whose
+	// output waits for collection.
+	Jobs []runhostJobInfo `json:"jobs"`
 }
 
 type runhostDevice struct {
@@ -112,6 +115,8 @@ func runRunhostService(cmd *cobra.Command) error {
 				return 0, fw.Result(st)
 			},
 			"job":     runhostJobVerb,
+			"attach":  runhostAttachVerb,
+			"cancel":  runhostCancelVerb,
 			"collect": runhostCollectVerb,
 			"doctor": func(ctx context.Context, _ runhost.Request, _ io.Reader, fw *runhost.FrameWriter) (int, error) {
 				rep := runhostDoctor(ctx)
@@ -153,7 +158,8 @@ func readRunhostStatus() (runhostStatus, error) {
 	st := runhostStatus{
 		Name: cfg.Name, Version: version.Version, Arch: runtime.GOARCH, OS: osPretty(), GVisor: cfg.GVisor,
 		Owner: cfg.Owner, UnsafeMode: cfg.UnsafeMode, Devices: []runhostDevice{},
-		Capabilities: map[string]bool{"runs": true, "secrets": true, "files": true, "connections": true, "destinations": true, "sessions": false, "schedules": false},
+		Capabilities: map[string]bool{"runs": true, "secrets": true, "files": true, "connections": true, "destinations": true, "attach": true, "sessions": true, "schedules": false},
+		Jobs:         runhostJobs(),
 	}
 	for _, d := range devs.Devices {
 		st.Devices = append(st.Devices, runhostDevice{ID: d.ID, Label: d.Label, PairedAt: d.PairedAt})
