@@ -106,6 +106,9 @@ func startTestRunhost(t *testing.T, runKey ssh.PublicKey) (hostKey ssh.PublicKey
 // going to sleep does.
 var dropTestRunhost func()
 
+// testServeDevice is the device the fake sshd's forced command names.
+var testServeDevice = ""
+
 func serveTestSSH(ctx context.Context, c net.Conn, cfg *ssh.ServerConfig, socket string) {
 	_, chans, reqs, err := ssh.NewServerConn(c, cfg)
 	if err != nil {
@@ -130,7 +133,7 @@ func serveTestSSH(ctx context.Context, c net.Conn, cfg *ssh.ServerConfig, socket
 				_ = r.Reply(true, nil)
 				command := string(r.Payload[4 : 4+binary.BigEndian.Uint32(r.Payload)])
 				go func() {
-					code := runhost.Serve(ctx, command, ch, ch, socket)
+					code := runhost.Serve(ctx, command, testServeDevice, ch, ch, socket)
 					_, _ = ch.SendRequest("exit-status", false, binary.BigEndian.AppendUint32(nil, uint32(code))) //nolint:gosec // an exit status
 					_ = ch.Close()
 				}()

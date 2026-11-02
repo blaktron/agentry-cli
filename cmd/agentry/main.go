@@ -58,9 +58,9 @@ func main() {
 	}()
 	// On a remote runhost the CLI is also the agentry account's login shell,
 	// which runs the run key's forced command and nothing else.
-	if handled, serve, refusal := runhost.LoginShell(os.Args); handled {
+	if handled, serve, device, refusal := runhost.LoginShell(os.Args); handled {
 		if serve {
-			runServeAsLoginShell(ctx)
+			runServeAsLoginShell(ctx, device)
 		}
 		_, _ = fmt.Fprintln(os.Stderr, "agentry: "+refusal)
 		os.Exit(1)

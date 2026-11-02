@@ -22,6 +22,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -173,13 +174,82 @@ func SumOf(sums []byte, file string) (string, error) {
 	return "", fmt.Errorf("SHA256SUMS has no line for %s", file)
 }
 
-// Binary is a release's Linux binary for one architecture, checked.
+// Binary is a release's Linux binary for one architecture, checked, with
+// the signed sums and signature it was checked against, so that another
+// machine can check it again.
 type Binary struct {
 	Version string
 	Arch    string
 	Name    string
 	Bytes   []byte
 	SHA256  string
+	Sums    []byte
+	Sig     []byte
+}
+
+// Verify checks a release's Linux binary for arch: sig must be a current
+// key's signature over sums naming the CLI at version, and bin must be the
+// file sums gives for that architecture. Nothing it returns is unchecked.
+func Verify(keys *KeySet, version, arch string, sums, sig, bin []byte) (*Binary, error) {
+	if keys.Empty() {
+		return nil, ErrNoKeys
+	}
+	if err := keys.VerifySums(sums, sig, Product, version); err != nil {
+		return nil, fmt.Errorf("CLI release %s: %w", version, err)
+	}
+	name := BinaryName(version, arch)
+	want, err := SumOf(sums, name)
+	if err != nil {
+		return nil, fmt.Errorf("CLI release %s: %w", version, err)
+	}
+	got := sha256.Sum256(bin)
+	if hex.EncodeToString(got[:]) != want {
+		return nil, fmt.Errorf("CLI release %s: %s does not match its signed SHA-256", version, name)
+	}
+	return &Binary{Version: version, Arch: arch, Name: name, Bytes: bin, SHA256: want, Sums: sums, Sig: sig}, nil
+}
+
+var versionRE = regexp.MustCompile(`^([0-9]+)\.([0-9]+)\.([0-9]+)(?:-dev\.([0-9]+))?$`)
+
+// ValidVersion says whether v is the shape of a released CLI version:
+// x.y.z, or x.y.z-dev.n for a release of the dev line.
+func ValidVersion(v string) bool { return versionRE.MatchString(v) }
+
+// CompareVersions orders two released CLI versions: -1 when a is older than
+// b, 0 when they are the same, 1 when a is newer. A dev release comes
+// before the release of its own number (0.7.10-dev.2 before 0.7.10). ok is
+// false when either is not a released version.
+func CompareVersions(a, b string) (cmp int, ok bool) {
+	ma, mb := versionRE.FindStringSubmatch(a), versionRE.FindStringSubmatch(b)
+	if ma == nil || mb == nil {
+		return 0, false
+	}
+	num := func(s string) int {
+		n, _ := strconv.Atoi(s)
+		return n
+	}
+	for i := 1; i <= 3; i++ {
+		if x, y := num(ma[i]), num(mb[i]); x != y {
+			if x < y {
+				return -1, true
+			}
+			return 1, true
+		}
+	}
+	switch {
+	case ma[4] == mb[4]:
+		return 0, true
+	case ma[4] == "":
+		return 1, true
+	case mb[4] == "":
+		return -1, true
+	}
+	if x, y := num(ma[4]), num(mb[4]); x < y {
+		return -1, true
+	} else if x > y {
+		return 1, true
+	}
+	return 0, true
 }
 
 // BaseURL is where releases are downloaded from: the CLI's public releases.
@@ -208,19 +278,14 @@ func Fetch(ctx context.Context, client *http.Client, keys *KeySet, version, arch
 		return nil, fmt.Errorf("CLI release %s: %w", version, err)
 	}
 	name := BinaryName(version, arch)
-	want, err := SumOf(sums, name)
-	if err != nil {
+	if _, err := SumOf(sums, name); err != nil {
 		return nil, fmt.Errorf("CLI release %s: %w", version, err)
 	}
 	bin, err := get(ctx, client, base+name, maxBinary)
 	if err != nil {
 		return nil, err
 	}
-	got := sha256.Sum256(bin)
-	if hex.EncodeToString(got[:]) != want {
-		return nil, fmt.Errorf("CLI release %s: %s does not match its signed SHA-256", version, name)
-	}
-	return &Binary{Version: version, Arch: arch, Name: name, Bytes: bin, SHA256: want}, nil
+	return Verify(keys, version, arch, sums, sig, bin)
 }
 
 func get(ctx context.Context, client *http.Client, u string, limit int64) ([]byte, error) {

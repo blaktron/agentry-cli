@@ -90,7 +90,7 @@ func SocketPath(uid int) string {
 // the service, which answers the ones it knows and refuses the rest.
 func IsVerb(v string) bool {
 	switch v {
-	case "version", "status", "doctor", "job", "attach", "cancel", "collect", "update", "store", "schedule", "agent", "sign-in":
+	case "version", "status", "doctor", "job", "attach", "cancel", "collect", "update", "unpair", "store", "schedule", "agent", "sign-in":
 		return true
 	}
 	return false
@@ -171,9 +171,48 @@ type Devices struct {
 
 // AuthorizedKeyLine is the authorized_keys line that installs a run key: the
 // key may run nothing but serve, and restrict takes away the pty, port,
-// agent and X11 forwarding and the user's rc file.
+// agent and X11 forwarding and the user's rc file. The forced command names
+// the device, so the service knows which paired device asks whatever the
+// device says of itself.
 func AuthorizedKeyLine(publicKey, deviceID string) string {
-	return `restrict,command="` + ServeCommand + `" ` + publicKey + " " + DeviceComment(deviceID)
+	return `restrict,command="` + ServeCommandFor(deviceID) + `" ` + publicKey + " " + DeviceComment(deviceID)
+}
+
+// ServeCommandFor is the forced command of the run key of device id.
+func ServeCommandFor(id string) string { return ServeCommand + " --device " + id }
+
+var deviceIDRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
+
+// ValidDeviceID says whether id can name a device in a forced command:
+// lower-case letters, digits and inner hyphens, which no shell reads as
+// anything but one word.
+func ValidDeviceID(id string) bool { return deviceIDRE.MatchString(id) }
+
+// BindAuthorizedKeys rewrites each run key line that names no device in its
+// forced command into AuthorizedKeyLine for the device its comment names,
+// and keeps every other line as it is. changed is false when nothing was
+// rewritten.
+func BindAuthorizedKeys(existing []byte) (out []byte, changed bool) {
+	prefix := `restrict,command="` + ServeCommand + `" `
+	var b strings.Builder
+	for _, l := range strings.SplitAfter(string(existing), "\n") {
+		t := strings.TrimRight(l, "\n")
+		if rest, ok := strings.CutPrefix(t, prefix); ok {
+			f := strings.Fields(rest)
+			if len(f) == 3 {
+				if id, ok := strings.CutPrefix(f[2], DeviceComment("")); ok && ValidDeviceID(id) {
+					b.WriteString(AuthorizedKeyLine(f[0]+" "+f[1], id))
+					if strings.HasSuffix(l, "\n") {
+						b.WriteString("\n")
+					}
+					changed = true
+					continue
+				}
+			}
+		}
+		b.WriteString(l)
+	}
+	return []byte(b.String()), changed
 }
 
 // DeviceComment is the comment a device's run key carries.

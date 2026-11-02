@@ -194,6 +194,12 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	}
 
 	opts.progress.at(receipt.StagePrepare)
+	runhostPostUpdate(cmd)
+	if recs, err := runhost.LoadRecords(home); err == nil {
+		if r, ok := recs.Find(rec.Name); ok {
+			rec = r
+		}
+	}
 	keys, err := runhost.LoadKeys(rec.Name)
 	if err != nil {
 		return engine.Classify(engine.ExitGateway, err)
@@ -204,6 +210,10 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	}
 	defer func() { _ = client.Close() }()
 	rv, err := remote.SameVersion(cmd.Context(), client, rec.Name)
+	var skew *remote.SkewError
+	if errors.As(err, &skew) {
+		return engine.Classify(engine.ExitUsage, err)
+	}
 	if err != nil {
 		return engine.Classify(engine.ExitGateway, err)
 	}

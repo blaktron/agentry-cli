@@ -54,18 +54,58 @@ func TestASupportedServerWithNoEngineGetsDocker(t *testing.T) {
 }
 
 func TestEachSupportedReleaseIsTaken(t *testing.T) {
-	for _, r := range []struct{ id, ver, sd string }{{"debian", "12", "252"}, {"debian", "13", "257"}, {"ubuntu", "22.04", "249"}, {"ubuntu", "24.04", "255"}} {
+	for _, r := range []struct{ id, ver, sd, pkg, repo, rel string }{
+		{"debian", "12", "252", "apt", "debian", "12"}, {"debian", "13", "257", "apt", "debian", "13"},
+		{"ubuntu", "22.04", "249", "apt", "ubuntu", "22.04"}, {"ubuntu", "24.04", "255", "apt", "ubuntu", "24.04"},
+		{"fedora", "43", "258", "dnf", "fedora", "43"}, {"fedora", "44", "259", "dnf", "fedora", "44"},
+		{"rhel", "9.6", "252", "dnf", "rhel", "9"}, {"rhel", "10.0", "257", "dnf", "rhel", "10"},
+		{"almalinux", "9.6", "252", "dnf", "rhel", "9"}, {"almalinux", "10.2", "257", "dnf", "rhel", "10"},
+		{"rocky", "9.6", "252", "dnf", "rhel", "9"}, {"rocky", "10.0", "257", "dnf", "rhel", "10"},
+	} {
 		f := debian13()
 		f["os_id"], f["os_version_id"], f["systemd"] = r.id, r.ver, r.sd
-		if p := Evaluate(f, nil); !p.Supported {
+		if r.pkg == "dnf" {
+			// Docker's RPM tree needs no codename, and these servers have dnf.
+			delete(f, "os_codename")
+			delete(f, "apt")
+			f["dnf"] = "yes"
+		}
+		p := Evaluate(f, nil)
+		if !p.Supported || !p.InstallDocker {
 			t.Errorf("%s %s with systemd %s refused: %+v", r.id, r.ver, r.sd, p.Findings)
+		}
+		if p.Package != r.pkg || p.DockerRepo != r.repo || p.OSRelease != r.rel {
+			t.Errorf("%s %s installs Docker with %s from %s/%s", r.id, r.ver, p.Package, p.DockerRepo, p.OSRelease)
 		}
 	}
 }
 
+func TestAnIdlePodmanIsANoteAndARunningOneStops(t *testing.T) {
+	f := debian13()
+	f["os_id"], f["os_version_id"], f["dnf"], f["engine_podman"], f["podman_running"] = "fedora", "44", "yes", "yes", "0"
+	if p := Evaluate(f, nil); !p.Supported || !p.InstallDocker {
+		t.Fatalf("an idle podman stopped setup: %+v", p.Findings)
+	}
+	f["podman_running"] = "2"
+	if p := Evaluate(f, nil); p.Supported || !strings.Contains(findingStop(p), "podman, with 2 container(s) running") {
+		t.Fatalf("a podman running containers: %+v", p.Findings)
+	}
+}
+
+func findingStop(p Plan) string {
+	for _, f := range p.Findings {
+		if f.Level == LevelStop {
+			return f.Detail
+		}
+	}
+	return ""
+}
+
 func TestPreflightStopsWhatCannotBeARunhost(t *testing.T) {
 	cases := map[string]func(Facts){
-		"fedora (not yet)":       func(f Facts) { f["os_id"], f["os_version_id"] = "fedora", "44" },
+		"fedora 42":              func(f Facts) { f["os_id"], f["os_version_id"], f["dnf"] = "fedora", "42", "yes" },
+		"rocky 8":                func(f Facts) { f["os_id"], f["os_version_id"], f["dnf"] = "rocky", "8.10", "yes" },
+		"fedora without dnf":     func(f Facts) { f["os_id"], f["os_version_id"] = "fedora", "44" },
 		"debian 11":              func(f Facts) { f["os_version_id"] = "11" },
 		"no os-release":          func(f Facts) { delete(f, "os_id") },
 		"riscv":                  func(f Facts) { f["arch"] = "riscv64" },
@@ -74,7 +114,7 @@ func TestPreflightStopsWhatCannotBeARunhost(t *testing.T) {
 		"no systemd":             func(f Facts) { delete(f, "systemd") },
 		"small disk":             func(f Facts) { f["disk_free_kb"] = "9000000" },
 		"little memory":          func(f Facts) { f["mem_available_kb"] = "1000000" },
-		"podman":                 func(f Facts) { f["engine_podman"] = "yes" },
+		"podman running":         func(f Facts) { f["engine_podman"], f["podman_running"] = "yes", "1" },
 		"no apt and no engine":   func(f Facts) { delete(f, "apt") },
 		"ghcr unreachable":       func(f Facts) { f["reach_ghcr.io"] = "no" },
 		"someone else's agentry": func(f Facts) { f["agentry_user"], f["agentry_home"] = "yes", "/home/agentry" },
@@ -179,8 +219,9 @@ func TestAuthorizedKeysKeepOtherDevicesAndReplaceThisOne(t *testing.T) {
 		t.Fatalf("merged:\n%s", got)
 	}
 	for _, l := range strings.Split(strings.TrimSpace(got), "\n") {
-		if !strings.HasPrefix(l, `restrict,command="`+runhost.ServeCommand+`" `) {
-			t.Errorf("a line without the forced command: %s", l)
+		id := strings.TrimPrefix(l[strings.LastIndex(l, " ")+1:], runhost.DeviceComment(""))
+		if !strings.HasPrefix(l, `restrict,command="`+runhost.ServeCommandFor(id)+`" `) {
+			t.Errorf("a line without its device's forced command: %s", l)
 		}
 	}
 }
