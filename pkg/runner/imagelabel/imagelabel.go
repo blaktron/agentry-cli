@@ -43,6 +43,8 @@ const (
 	ClaudeCode = "claude-code"
 	// Copilot is the Copilot CLI harness image and its unpack stage.
 	Copilot = "copilot"
+	// Codex is the Codex harness image built from Codex's newest release.
+	Codex = "codex"
 )
 
 // Filter is the `docker image ls --filter` argument that selects every

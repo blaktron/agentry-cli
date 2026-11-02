@@ -88,6 +88,17 @@ type Expect struct {
 	// PDF wants the result as a PDF: the instructions call export_pdf and
 	// break none of the Drafter's rules on PDFs. Not checked when false.
 	PDF bool `json:"pdf,omitempty"`
+	// Persistent are the capabilities.persistent keys the draft declares,
+	// exactly: a draft that declares more reaches further than its task
+	// needs, and one that declares fewer lacks a tool its instructions use.
+	// Empty means none, so an ordinary draft declares no persistent block.
+	Persistent []string `json:"persistent,omitempty"`
+	// Persona wants a persona (a name and its text); a draft without one
+	// declares none. Subagents wants at least one subagent in
+	// dependencies.agents, each with a constraint and a reason; a draft
+	// without them declares none.
+	Persona   bool `json:"persona,omitempty"`
+	Subagents bool `json:"subagents,omitempty"`
 }
 
 // LoadFixtures reads the fixture set, sorted by id.
@@ -224,6 +235,7 @@ func CheckShape(m *manifest.Manifest, d *Draft, e Expect) []string {
 			out = append(out, fmt.Sprintf("inputs.view %q, want one of %v", m.Inputs.View, e.InputViews))
 		}
 	}
+	out = append(out, persistentShape(m, d, e)...)
 	if e.Intake && len(m.Intake) == 0 {
 		out = append(out, "no intake question")
 	}
@@ -274,6 +286,43 @@ func CheckShape(m *manifest.Manifest, d *Draft, e Expect) []string {
 	return out
 }
 
+// persistentShape lists how a draft departs from the persistent agent
+// expected: the keys it declares, its persona and its subagents, and, for a
+// persistent draft, an instruction that calls a tool its manifest does not
+// grant.
+func persistentShape(m *manifest.Manifest, d *Draft, e Expect) []string {
+	var out []string
+	got, want := m.Capabilities.Persistent.Keys(), slices.Clone(e.Persistent)
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		out = append(out, fmt.Sprintf("capabilities.persistent declares %v, want %v", got, want))
+	}
+	switch {
+	case e.Persona && m.Persona == nil:
+		out = append(out, "no persona")
+	case e.Persona && strings.TrimSpace(d.PersonaText) == "":
+		out = append(out, "a persona with no text")
+	case !e.Persona && m.Persona != nil:
+		out = append(out, "a persona the description does not ask for")
+	}
+	switch {
+	case e.Subagents && len(m.Dependencies.Agents) == 0:
+		out = append(out, "no subagent")
+	case !e.Subagents && len(m.Dependencies.Agents) > 0:
+		out = append(out, "a subagent the description does not ask for")
+	}
+	for _, a := range m.Dependencies.Agents {
+		if strings.TrimSpace(a.Version) == "" || strings.TrimSpace(a.Why) == "" {
+			out = append(out, fmt.Sprintf("subagent %s has no constraint or no reason", a.Ref))
+		}
+	}
+	if m.IsPersistent() {
+		out = append(out, grantProblems(d.Manifest, d.Instructions)...)
+	}
+	return out
+}
+
 // instructionShape is the generated AGENT.md's fixed shape: its six headings,
 // in this order.
 var instructionShape = []string{"## Role", "## Inputs", "## Steps", "## Output", "## Background", "## Checks"}
@@ -292,7 +341,7 @@ func inOrder(text string, headings []string) bool {
 
 // postStepSections open the sections the post-step adds to the notes.
 var postStepSections = []string{"## Corrected after drafting", "## Repaired once", "## Not repaired", "## Withheld by AI Review",
-	serversToFixHeading, serversUncheckedHeading, serversToCheckHeading, serversAdmittedHeading}
+	subagentsHeading, serversToFixHeading, serversUncheckedHeading, serversToCheckHeading, serversAdmittedHeading}
 
 // noteBullets counts the list items of the notes the Drafter wrote, before
 // the post-step's own sections.

@@ -72,8 +72,15 @@ const searchID = 65532
 const (
 	// SearchMemory is ripgrep's address space.
 	SearchMemory = 512 << 20
-	// SearchTimeout is how long one search may run.
+	// SearchTimeout is how long one call of grep, glob or search_inputs
+	// may take, listing what it searches included: half the minute Claude
+	// Code waits for an MCP call before it gives up on it, so a slow search
+	// still answers, in part, while the harness listens.
 	SearchTimeout = 30 * time.Second
+	// searchListingShare is the part of SearchTimeout the inputs' listing
+	// may use, so that the search always has the rest to read what was
+	// listed.
+	searchListingShare = 2.0 / 3
 	// maxSearchOutput is the most of ripgrep's output the server reads; a
 	// search past it answers what it read and says it stopped.
 	maxSearchOutput = 16 << 20
@@ -103,14 +110,21 @@ type Search struct {
 // rgFixedArgs are the flags every ripgrep run takes: no config
 // file, ignore files not read and hidden files searched so nothing the
 // person gave is skipped, caps on file size and on what a pattern may
-// compile to, and a stable order so offset pages are the same pages
-// (sorting also makes ripgrep search on one thread). The output flags are
-// each tool's: --json for grep's content, --null paths otherwise.
+// compile to, and searchThreads threads. The output flags are each
+// tool's: --json for grep's content, --null paths otherwise.
 var rgFixedArgs = []string{
 	"--no-config", "--no-ignore", "--hidden",
-	"--max-filesize=8M", "--sort=path",
+	"--max-filesize=8M", "--threads=" + strconv.Itoa(searchThreads),
 	"--regex-size-limit=16M", "--dfa-size-limit=64M",
 }
+
+// searchThreads is how many files ripgrep reads at once. Where each read
+// waits on a round trip (a host folder bind-mounted into a VM-backed
+// engine), reading them one at a time made a search of 1,455 files ten
+// times slower, one CPU or many, so ripgrep is never asked to sort, which
+// would hold it to one thread; the server sorts each answer by path
+// itself (pathCompare), so offset pages are the same pages.
+const searchThreads = 8
 
 // rgSkipGit keeps .git out of every search. ripgrep lets the last glob that
 // matches a path decide, so it goes after the call's own glob: a call's "*"
@@ -210,9 +224,10 @@ type searchScope struct {
 	display map[string]string
 	// personsInput: the answer is the person's own input.
 	personsInput bool
-	// names are byName's paths as a glob is matched against them, each
-	// relative to the folder the call named.
-	names []string
+	// filtered says the call's glob was applied to byName's paths before
+	// they were listed; listingCut that the listing stopped at its share
+	// of the deadline.
+	filtered, listingCut bool
 	// hidden are paths an answer leaves out: each pack's manifest.json,
 	// which is the runner's record of the pack, not a page knowledge_read
 	// opens.
@@ -240,9 +255,11 @@ func (sc searchScope) keep(shown string) bool {
 // scope resolves where a call searches: an area the run has, and a path
 // beneath it, checked as every other tool checks a path (resolveUnder) and
 // against the workspace's paths grant. view is the inputs' view, refused
-// for any other area. grep searches the inputs' texts by name (texts);
-// glob lists the inputs' folder as uploaded.
-func (s *server) scope(tool, p, view string) (searchScope, error) {
+// for any other area. grep searches the inputs' texts by name (texts),
+// filtered by f and listed until listBy; every other area's ripgrep
+// applies a glob and a type itself. glob lists the inputs' folder as
+// uploaded.
+func (s *server) scope(tool, p, view string, f inputsFilter, listBy time.Time) (searchScope, error) {
 	p = strings.TrimSpace(p)
 	if p == "" {
 		return searchScope{}, fmt.Errorf("path is required: one of %s", s.searchAreaNames())
@@ -274,7 +291,7 @@ func (s *server) scope(tool, p, view string) (searchScope, error) {
 		}
 		switch {
 		case a.name == "inputs" && tool == ToolGrep:
-			return s.inputsScope(rel, view)
+			return s.inputsScope(rel, view, f, listBy)
 		case a.name == "workspace":
 			return s.workspaceScope(rel)
 		}
@@ -290,38 +307,58 @@ func (s *server) scope(tool, p, view string) (searchScope, error) {
 	return searchScope{}, fmt.Errorf("%s is not an area this run can search; search one of %s", p, s.searchAreaNames())
 }
 
+// inputsFilter is grep's glob and type, for the inputs, which ripgrep is
+// given by name and so filters by neither itself.
+type inputsFilter struct {
+	glob, typ string
+}
+
 // inputsScope is the inputs in view (each input's default when none is
 // asked for), as search_inputs reads them: the text of each, by name, and
-// shown by the input's own path.
-func (s *server) inputsScope(rel, view string) (searchScope, error) {
+// shown by the input's own path. f's glob is matched against each input's
+// path relative to rel before the input is listed, so a narrowed search
+// checks only the inputs it searches; the listing stops at listBy.
+func (s *server) inputsScope(rel, view string, f inputsFilter, listBy time.Time) (searchScope, error) {
 	if err := validView(view); err != nil {
 		return searchScope{}, err
+	}
+	if f.typ != "" {
+		return searchScope{}, fmt.Errorf("type does not apply to %s; pass a glob (\"*.%s\")", s.spec.InputsDir, f.typ)
 	}
 	if rel != "." {
 		if _, err := resolveUnder(s.spec.InputsDir, rel); err != nil {
 			return searchScope{}, err
 		}
 	}
-	targets, err := s.searchTargets(rel, view)
+	name := func(p string) string {
+		switch {
+		case rel == ".":
+			return p
+		case p == rel:
+			return path.Base(p)
+		}
+		return strings.TrimPrefix(p, rel+"/")
+	}
+	var keep func(string) bool
+	if f.glob != "" {
+		match, err := globMatcher(f.glob)
+		if err != nil {
+			return searchScope{}, err
+		}
+		keep = func(p string) bool { return match(name(p)) }
+	}
+	targets, cut, err := s.searchTargets(rel, view, keep, listBy)
 	if err != nil {
 		return searchScope{}, err
 	}
 	sc := searchScope{area: "inputs", dir: "/", byName: true, display: map[string]string{}, personsInput: true,
-		read: []string{s.spec.InputsDir}}
+		read: []string{s.spec.InputsDir}, filtered: f.glob != "", listingCut: cut}
 	if s.spec.InputsTextDir != "" {
 		sc.read = append(sc.read, s.spec.InputsTextDir)
 	}
 	for _, t := range targets {
 		sc.paths = append(sc.paths, t.abs)
 		sc.display[t.abs] = path.Join(s.spec.InputsDir, t.path)
-		name := t.path
-		if rel != "." {
-			name = strings.TrimPrefix(t.path, rel+"/")
-			if t.path == rel {
-				name = path.Base(t.path)
-			}
-		}
-		sc.names = append(sc.names, name)
 	}
 	return sc, nil
 }
@@ -475,12 +512,15 @@ type rgResult struct {
 	exit     int
 	timedOut bool
 	cut      bool
+	// listingCut says the call's listing of the inputs stopped at its
+	// share of the limit, so ripgrep searched only part of them.
+	listingCut bool
 }
 
 // runRipgrep runs ripgrep with args over sc, as many times as sc's paths
 // need, and joins what each answered. A failure of the machinery is the
 // tool's error; ripgrep's own (a pattern it refuses) is in the result.
-func (s *server) runRipgrep(tool string, args []string, sc searchScope) (rgResult, string) {
+func (s *server) runRipgrep(tool string, args []string, sc searchScope, deadline time.Time) (rgResult, string) {
 	if s.search.refused != "" {
 		s.callFault = true
 		return rgResult{}, tool + ": " + s.search.refused
@@ -494,10 +534,11 @@ func (s *server) runRipgrep(tool string, args []string, sc searchScope) (rgResul
 		s.callFault = true
 		return rgResult{}, tool + ": the search has no area to hold its reads to"
 	}
-	// One deadline for the whole call, however many runs its paths need.
-	ctx, cancel := context.WithTimeout(context.Background(), s.searchTimeout)
+	// One deadline for the whole call, its listing and however many runs
+	// its paths need.
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
-	var all rgResult
+	all := rgResult{listingCut: sc.listingCut}
 	for start := 0; start < len(sc.paths); start += searchTargetsPerRun {
 		chunk := sc.paths[start:min(len(sc.paths), start+searchTargetsPerRun)]
 		r, failed := s.runRipgrepOnce(ctx, sc.dir, append(append(append([]string{}, args...), "--"), chunk...), sc.read)
@@ -705,31 +746,20 @@ func (s *server) toolGrep(raw json.RawMessage) (string, bool) {
 	if err := checkGlob("glob", a.Glob); err != nil {
 		return "grep: " + err.Error(), true
 	}
-	sc, err := s.scope(ToolGrep, a.Path, a.View)
+	start := time.Now()
+	sc, err := s.scope(ToolGrep, a.Path, a.View, inputsFilter{glob: a.Glob, typ: a.Type}, s.listBy(start))
 	if err != nil {
 		return s.failed("grep", err)
 	}
-	if sc.byName {
-		// ripgrep searches a file given by name whatever --glob and --type
-		// say, so the inputs' glob is the server's to apply.
-		if a.Type != "" {
-			return fmt.Sprintf("grep: type does not apply to %s; pass a glob (\"*.%s\")", s.spec.InputsDir, a.Type), true
-		}
-		if a.Glob != "" {
-			keep, err := globMatcher(a.Glob)
-			if err != nil {
-				return "grep: " + err.Error(), true
-			}
-			var paths []string
-			for i, p := range sc.paths {
-				if keep(sc.names[i]) {
-					paths = append(paths, p)
-				}
-			}
-			sc.paths, a.Glob = paths, ""
-		}
+	if sc.filtered {
+		// ripgrep searches a file given by name whatever --glob says, so
+		// the server applied the inputs' glob as it listed them.
+		a.Glob = ""
 	}
 	if len(sc.paths) == 0 {
+		if sc.listingCut {
+			return fmt.Sprintf("no file in %s was listed before the search stopped at its %s limit; narrow path or glob", sc.area, s.searchTimeout), false
+		}
 		return "no file in " + sc.area + " to search", false
 	}
 	args := grepFlags(a.Glob, a.Type, a.IgnoreCase, a.FixedStrings)
@@ -756,7 +786,7 @@ func (s *server) toolGrep(raw json.RawMessage) (string, bool) {
 		seen := map[string]bool{}
 		sc.withheld, sc.withheldN = s.shareWithheld(verdicts), &seen
 	}
-	r, failed := s.runRipgrep("grep", args, sc)
+	r, failed := s.runRipgrep("grep", args, sc, start.Add(s.searchTimeout))
 	if failed != "" {
 		return failed, true
 	}
@@ -771,6 +801,7 @@ func (s *server) toolGrep(raw json.RawMessage) (string, bool) {
 				lines = append(lines, p)
 			}
 		}
+		slices.SortFunc(lines, pathCompare)
 	case "count":
 		lines = countLines(r.stdout, sc)
 	case "content":
@@ -803,7 +834,8 @@ func (s *server) toolGlob(raw json.RawMessage) (string, bool) {
 	if err := checkGlob("pattern", a.Pattern); err != nil {
 		return "glob: " + err.Error(), true
 	}
-	sc, err := s.scope(ToolGlob, a.Path, "")
+	start := time.Now()
+	sc, err := s.scope(ToolGlob, a.Path, "", inputsFilter{}, s.listBy(start))
 	if err != nil {
 		return s.failed("glob", err)
 	}
@@ -811,7 +843,7 @@ func (s *server) toolGlob(raw json.RawMessage) (string, bool) {
 		return "no file to list", false
 	}
 	args := []string{"--files", "--null", "--glob=" + a.Pattern, rgSkipGit}
-	r, failed := s.runRipgrep("glob", args, sc)
+	r, failed := s.runRipgrep("glob", args, sc, start.Add(s.searchTimeout))
 	if failed != "" {
 		return failed, true
 	}
@@ -824,7 +856,14 @@ func (s *server) toolGlob(raw json.RawMessage) (string, bool) {
 			lines = append(lines, p)
 		}
 	}
+	slices.SortFunc(lines, pathCompare)
 	return s.searchAnswer(lines, a.MaxResults, a.Offset, r, "no file in "+sc.area+" matches the pattern", "narrow path or pattern"), false
+}
+
+// listBy is when a call started at start stops listing the inputs it
+// searches: its share of the call's limit.
+func (s *server) listBy(start time.Time) time.Time {
+	return start.Add(time.Duration(float64(s.searchTimeout) * searchListingShare))
 }
 
 // searchAnswer is a search's result lines from offset: at most maxResults
@@ -834,6 +873,9 @@ func (s *server) searchAnswer(lines []string, maxResults, offset int, r rgResult
 	var notes []string
 	if n := unreadable(r.stderr); n > 0 {
 		notes = append(notes, fmt.Sprintf("files the search could not read, as only their owner may: %d", n))
+	}
+	if r.listingCut && !r.timedOut {
+		notes = append(notes, fmt.Sprintf("the search stopped listing files at its %s limit, so it searched part of them and this is part of the answer; narrow it", s.searchTimeout))
 	}
 	if r.timedOut {
 		notes = append(notes, fmt.Sprintf("the search stopped at its %s limit, so this is part of the answer; narrow it", s.searchTimeout))
@@ -906,19 +948,31 @@ func splitNul(out []byte) []string {
 }
 
 // countLines is --count --null's answer, path NUL count a line, as
-// "path: N".
+// "path: N", in path order.
 func countLines(out []byte, sc searchScope) []string {
-	var lines []string
+	type count struct{ path, n string }
+	var counts []count
 	for _, line := range bytes.Split(out, []byte("\n")) {
 		p, n, ok := bytes.Cut(line, []byte{0})
 		if !ok {
 			continue
 		}
 		if shown := sc.show(string(p)); sc.keep(shown) {
-			lines = append(lines, shown+": "+string(n))
+			counts = append(counts, count{shown, string(n)})
 		}
 	}
+	slices.SortFunc(counts, func(a, b count) int { return pathCompare(a.path, b.path) })
+	lines := make([]string, 0, len(counts))
+	for _, c := range counts {
+		lines = append(lines, c.path+": "+c.n)
+	}
 	return lines
+}
+
+// pathCompare orders two paths by their elements, as ripgrep's own
+// --sort=path does: "a/b" before "a.b", which a byte order would reverse.
+func pathCompare(a, b string) int {
+	return strings.Compare(strings.ReplaceAll(a, "/", "\x00"), strings.ReplaceAll(b, "/", "\x00"))
 }
 
 // rgEvent is the part of one --json event the answer needs.
@@ -940,12 +994,14 @@ type rgText struct {
 	Text *string `json:"text"`
 }
 
-// contentLines is --json's matches and context as grep lines: a match as
-// path:line: text, a context line as path-line- text, and, with context,
-// "--" between groups that do not touch.
+// contentLines is --json's matches and context as grep lines, file by
+// file in path order: a match as path:line: text, a context line as
+// path-line- text, and, with context, "--" between groups that do not
+// touch. ripgrep writes each file's events together but, searching
+// several files at once, the files in any order.
 func contentLines(out []byte, sc searchScope, context bool) []string {
-	var lines []string
-	lastPath, lastLine := "", 0
+	byPath := map[string][]rgEvent{}
+	var paths []string
 	for _, raw := range bytes.Split(out, []byte("\n")) {
 		var ev rgEvent
 		if len(raw) == 0 || json.Unmarshal(raw, &ev) != nil {
@@ -961,23 +1017,34 @@ func contentLines(out []byte, sc searchScope, context bool) []string {
 		if !sc.keep(p) {
 			continue
 		}
-		if context && lastPath != "" && (p != lastPath || ev.Data.LineNumber > lastLine+1) {
-			lines = append(lines, "--")
+		if _, ok := byPath[p]; !ok {
+			paths = append(paths, p)
 		}
-		lastPath, lastLine = p, ev.Data.LineNumber
-		text := "[a line that is not UTF-8]"
-		if ev.Data.Lines.Text != nil {
-			at := 0
-			if len(ev.Data.Submatches) > 0 {
-				at = ev.Data.Submatches[0].Start
+		byPath[p] = append(byPath[p], ev)
+	}
+	slices.SortFunc(paths, pathCompare)
+	var lines []string
+	lastPath, lastLine := "", 0
+	for _, p := range paths {
+		for _, ev := range byPath[p] {
+			if context && lastPath != "" && (p != lastPath || ev.Data.LineNumber > lastLine+1) {
+				lines = append(lines, "--")
 			}
-			text = grepLine(*ev.Data.Lines.Text, at)
+			lastPath, lastLine = p, ev.Data.LineNumber
+			text := "[a line that is not UTF-8]"
+			if ev.Data.Lines.Text != nil {
+				at := 0
+				if len(ev.Data.Submatches) > 0 {
+					at = ev.Data.Submatches[0].Start
+				}
+				text = grepLine(*ev.Data.Lines.Text, at)
+			}
+			sep := ":"
+			if ev.Type == "context" {
+				sep = "-"
+			}
+			lines = append(lines, p+sep+strconv.Itoa(ev.Data.LineNumber)+sep+" "+text)
 		}
-		sep := ":"
-		if ev.Type == "context" {
-			sep = "-"
-		}
-		lines = append(lines, p+sep+strconv.Itoa(ev.Data.LineNumber)+sep+" "+text)
 	}
 	return lines
 }

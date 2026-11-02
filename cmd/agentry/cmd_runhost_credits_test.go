@@ -262,3 +262,29 @@ func TestACreditsJobRunsWithTheRunhostsToken(t *testing.T) {
 		t.Fatalf("the credits run's environment:\n%s", env)
 	}
 }
+
+// A run a runhost started with its credits token, refused by the registry,
+// says to give the runhost a new token, not to sign in on a device; a local
+// run's advice is unchanged.
+func TestARevokedRunhostTokenSaysToGiveTheRunhostANewOne(t *testing.T) {
+	isolateEnv(t)
+	reg := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = io.WriteString(w, `{"title":"Unauthorized","detail":"This token is invalid or expired."}`)
+	}))
+	defer reg.Close()
+	pol := &policy.Policy{Model: policy.Model{Provider: policy.ProviderAgentry, Name: "m", BaseURL: reg.URL + policy.AgentryInferencePath}}
+	t.Setenv(envRunhostCreditsToken, testCreditsToken)
+	c := creditsClient(pol)
+	if c == nil {
+		t.Fatal("no credits client for a runhost's token")
+	}
+	_, err := c.Open(context.Background(), "run")
+	if err == nil || !strings.Contains(err.Error(), "agentry runhost model") || !strings.Contains(err.Error(), "--provider agentry") || strings.Contains(err.Error(), "agentry login") {
+		t.Fatalf("a revoked runhost token: %v", err)
+	}
+	if !strings.Contains(runhostCreditsAdvice("lab"), "agentry runhost model lab --provider agentry") {
+		t.Fatalf("advice: %s", runhostCreditsAdvice("lab"))
+	}
+}

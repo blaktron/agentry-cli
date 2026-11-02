@@ -120,17 +120,17 @@ const maxPackage = 1 << 30
 
 // Builds reports whether this build can make adapterName's image.
 func Builds(adapterName string) bool {
-	return adapterName == ClaudeImageAdapter || adapterName == CopilotImageAdapter
+	return adapterName == ClaudeImageAdapter || adapterName == CopilotImageAdapter || adapterName == CodexImageAdapter
 }
 
 // PinNote is what an image this build makes for adapterName is pinned by
 // and does not prove, for the receipt (spec.ImagePin.Note): "" when the
 // pin says it all.
-func PinNote(adapterName string) string {
+func PinNote(adapterName string, h policy.HarnessImage) string {
 	if adapterName == CopilotImageAdapter {
 		return CopilotPinNote
 	}
-	return ""
+	return NewestNote(adapterName, h)
 }
 
 // Builder makes the images this package builds.
@@ -148,6 +148,26 @@ type Builder struct {
 	Dir string
 	// Log is told what is built from what.
 	Log io.Writer
+	// Building, when set, is told the vendor release's version as a build
+	// starts, before anything is downloaded: an image already here calls it
+	// not at all.
+	Building func(version string)
+	// Recorded is the record's entry for the adapter being made: a newest
+	// release built here before, which Ensure builds again from what it
+	// records when its image is gone. nil knows only the tested releases.
+	Recorded *policy.Newest
+	// CodexAPI, CodexReleases and CodexFiles are where Codex's newest
+	// release, its downloads and its licence files are; "" is OpenAI's.
+	CodexAPI, CodexReleases, CodexFiles string
+	// CacheDir caches Sigstore's trust root under sigstore/; "" is the
+	// user's cache directory.
+	CacheDir string
+}
+
+func (b Builder) building(version string) {
+	if b.Building != nil {
+		b.Building(version)
+	}
 }
 
 // IntegrityError is a package whose bytes are not the ones this build
@@ -174,10 +194,26 @@ func (b Builder) Ensure(ctx context.Context, adapterName string, h policy.Harnes
 			return err
 		}
 		build = func() error { return b.buildCopilot(ctx, h, rel) }
+	case CodexImageAdapter:
+		rel, ok := b.recordedCodex(h)
+		if !ok {
+			return fmt.Errorf("this build of agentry builds a Codex image only from the newest release it recorded, and %s (%s) is not it: remove images.harnessImages.%s from the policy for the default", h.Ref, h.Artifact, CodexImageAdapter)
+		}
+		build = func() error {
+			got, _, err := b.buildCodex(ctx, rel)
+			if err == nil && got != h {
+				err = fmt.Errorf("the Codex %s image was built from %s, not the recorded %s", rel.Version, got.Artifact, h.Artifact)
+			}
+			return err
+		}
 	default:
 		rel, err := claudeReleaseFor(h)
 		if err != nil {
-			return err
+			recorded, ok := b.recordedClaude(h)
+			if !ok {
+				return err
+			}
+			rel = recorded
 		}
 		build = func() error { return b.buildClaude(ctx, h, rel) }
 	}
@@ -241,6 +277,7 @@ func (b Builder) buildClaude(ctx context.Context, h policy.HarnessImage, rel cla
 		return fmt.Errorf("no Claude Code %s image for this docker daemon's platform (linux/%s); it builds for linux/amd64 and linux/arm64", rel.version, arch)
 	}
 	nativePkg := claudeWrapper + "-linux-" + cpu + "-musl"
+	b.building(rel.version)
 	dir, err := os.MkdirTemp(b.Dir, "agentry-claude-code-")
 	if err != nil {
 		return err

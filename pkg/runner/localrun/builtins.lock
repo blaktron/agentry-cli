@@ -197,3 +197,7 @@ agentry/assistant@1.18.0 sha256:c4fe07ab74cc149ee6c5327e57ca44630e861a75a9e4d841
 agentry/coder@1.5.0 sha256:991199473ed122e5a56dd495d14c08b5b8309a6fc217587668fdd5af34d2a433
 # 1.2.2, over 1.2.1: the Examiner's guide names subagent_list, subagent_run and subagent_result, the tools a declared subagent grants.
 agentry/examiner@1.2.2 sha256:7521ae86d8a0a72a485d6c817cd37a5639d3d160e4f3e300ab0895c5d5a7cc71
+# 1.18.6, over 1.18.5: the runtime facts and the browser page say a run on the person's computer has 1800 seconds and no tool-call limit by default, the runner policy's new default budgets.
+agentry/drafter@1.18.6 sha256:c21b94327fb52f033e0824c4672d0d51e4cacb262af50a19c0d4a52f8e4d6789
+# 1.19.0, over 1.18.6: the Drafter drafts persistent agents: the persistent mode, only the capabilities.persistent keys the instructions rely on, a persona in its own file, and subagents it finds in the registry and proposes with a constraint and a reason; its output schema carries the persona's text, its post-step reads a persistent agent's instructions with its own tools, and its guide gains a page on them.
+agentry/drafter@1.19.0 sha256:32dd74afe43f5767084815a01fa0578a540bd01c6533a94da839bf537d14db63

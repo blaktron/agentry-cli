@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/connection"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
@@ -37,6 +38,15 @@ func claudeFixture(t *testing.T) (*dockerx.Fake, *[]string) {
 	isolateEnv(t)
 	t.Setenv("AGENTRY_RUNNER_HOME", t.TempDir())
 	t.Setenv("AGENTRY_NO_BROWSER", "")
+	// npm was just asked and had nothing newer than the tested release, so
+	// the sign-in takes the tested image and reaches no registry.
+	pf, err := policy.Resolve("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := policy.WriteNewest(policy.NewestPathFor(pf.Path), "claude-image", policy.Newest{Checked: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
 	h, _ := policy.Default().Images.HarnessImageFor("claude-image")
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

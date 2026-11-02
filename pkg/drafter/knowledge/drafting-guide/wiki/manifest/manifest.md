@@ -3,7 +3,7 @@ title: The manifest
 type: guide
 summary: Every field of the manifest a draft returns, what to write in each, and the rules' bounds by value. Check the draft against the bounds before you return it.
 sources: [web:https://docs.secureagentry.net/quickagents/, doc:runtime-facts.md]
-updated: 2026-10-12
+updated: 2026-11-02
 ---
 
 # The manifest
@@ -18,13 +18,15 @@ updated: 2026-10-12
 - `summary`: one plain sentence saying what the QuickAgent does (the bounds below).
 - `license`: `"Apache-2.0"` unless the description names another SPDX licence.
 - `tags`: from the task, lowercase letters, digits and hyphens.
-- `modes`: `["autonomous"]`, `["interactive"]` or both; `interactive.opening` with `interactive`. See [Run modes](run-modes.md).
+- `modes`: `["autonomous"]`, `["interactive"]` or both; `interactive.opening` with `interactive` or `persistent`. `["persistent"]` (alone, or beside `"autonomous"`) only for an agent that stays running; then the manifest may also carry `persona` and `dependencies.agents`. See [Run modes](run-modes.md) and [A persistent agent](persistent.md).
 - `entrypoints`: `{"instruction": "AGENT.md"}`.
 - `intake`: the questions asked before each run, each `{id, prompt, type, required}`. See [The intake and the guide](intake-and-guide.md).
 - `guide`: what a person reads before a run. See [The intake and the guide](intake-and-guide.md).
 - `inputs`: what files the QuickAgent takes and which view it reads them in first, `{"kinds": [...], "view": "text" | "original" | "both"}`, a field of the manifest itself and never under `capabilities`; left out when it takes no files. See [Input files](inputs.md).
 - `capabilities`: the least contract that does the task, line by line below.
 - `knowledge`: a field of the manifest itself, never under `capabilities`, and only `accepts`. See [The person's knowledge at run time](knowledge-accepts.md).
+- `persona`: a persistent agent's `{"name": "Pip"}`, its text written as the report `PERSONA.md` and listed in `publish.include`; left out otherwise. See [A persistent agent](persistent.md#a-persona).
+- `dependencies`: a persistent agent's subagents, `{"agents": [{"ref": "ns/name", "version": "^1.4.0", "why": "one line"}]}`, each found in the registry and proposed to the person; left out otherwise. See [A persistent agent](persistent.md#subagents).
 - `publish`: `{"include": ["agent.yaml", "AGENT.md", "README.md", "LICENSE"]}`. The Builder writes the README and the licence file.
 
 ## The capabilities
@@ -38,6 +40,7 @@ Every capability is shown to the person, asked for at install and scanned. Decla
 - `browser`: a headless browser for a QuickAgent that tests a website the person names: `sites` (the ids of `url` questions), and where needed `hosts`, `scope` and `secrets`; left out otherwise. See [A browser](browser.md).
 - `secrets`: the environment variable names of the keys the QuickAgent's own `fetch` uses. A key an MCP server needs goes in that server's `secrets`. See [Keys](secrets.md).
 - `optionalSecrets`: the declared keys, its own or a server's, a run can start without. Every other declared key is required. See [Keys](secrets.md).
+- `persistent`: for a persistent agent, `{"clock": true, "memory": true}` and the other keys it relies on, each tool of a key named in the instructions only with that key; left out otherwise. See [A persistent agent](persistent.md).
 - `dataAccess`: from `email`, `calendar`, `files`, `tickets`, `code`, `messages`, `payments`, `other`, only what the task touches.
 - `mcpServers`: a package server is `{"npm" or "pypi": package, "version": exact, "tools": [...], "egress": [hosts], "secrets": [NAMES], "env": {NAME: value}}`, the keys it does not need left out, and an `"oauth"` block only as copied from [Remote servers and sign-ins](../servers/sign-ins.md#package-sign-ins). A vendor's remote server is `{"url": address, "auth": "oauth" or "secret" or "none", "scopes": [...], "tools": [...]}`, with `"secrets": [one NAME]` only for `"auth": "secret"` and `"scopes"` only for `"auth": "oauth"`. See [Declared MCP servers](../servers/mcp-servers.md) before you declare one.
 
@@ -57,6 +60,9 @@ The registry refuses a manifest past any of these. Count before you return [src:
 - `knowledge.accepts.prompt`: one line of at most 300 characters.
 - `capabilities.targetHosts`: at most 4, each the id of a `host` question, and every `host` question listed, each once [src: doc:runtime-facts.md].
 - `capabilities.browser`: at most 4 `sites`, each the id of a `url` question, each once; at most 32 `hosts`, each an exact name or `*.` and a domain, never `"*"`, an address or a port; `scope` `site` or `public`; `secrets` only names also in `capabilities.secrets`, and never with `scope: public` [src: doc:runtime-facts.md].
+- `capabilities.persistent`: declares at least one key; `secrets` at most 32 environment variable names, each once; `coder` never beside `web`, `review` or `calendars` [src: web:https://docs.secureagentry.net/quickagents/].
+- `persona.name`: one plain line of at most 64 bytes; the persona's file at most 32 KiB.
+- `dependencies.agents`: at most 16 subagents, each once and never the agent itself, each `version` a semver constraint and each `why` one plain line of at most 200 characters.
 - `capabilities.mcpServers`: at most 8 servers, remote ones included; each package pinned at an exact version. A remote server's address is `https://` on a public host name and port 443, with no user name, query or fragment, at most 512 characters, and it declares at most 32 scopes [src: doc:runtime-facts.md; web:https://docs.secureagentry.net/quickagents/].
 
 Your own limits are tighter than the rules' on some of these (the intake, `prepare`, the notes) and are in your instruction, under *Decide, don't ask*.

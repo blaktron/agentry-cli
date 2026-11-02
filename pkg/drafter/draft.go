@@ -2,6 +2,7 @@ package drafter
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,7 +32,11 @@ type Draft struct {
 	// Instructions is the instruction file (AGENT.md).
 	Instructions string `json:"instructions"`
 	// Notes is Markdown for the person.
-	Notes         string   `json:"notes"`
+	Notes string `json:"notes"`
+	// PersonaText is the persona's text (PERSONA.md) of a persistent agent
+	// that has one: the file the manifest's persona names, which the package
+	// carries beside the instruction. Empty for a draft with no persona.
+	PersonaText   string   `json:"personaText,omitempty"`
 	Matches       []Match  `json:"matches"`
 	Sources       []Source `json:"sources"`
 	OpenQuestions []string `json:"openQuestions"`
@@ -213,23 +218,26 @@ func Parse(result json.RawMessage) (*Draft, error) {
 const (
 	instructionsReport = "AGENT.md"
 	notesReport        = "notes.md"
+	personaReport      = "PERSONA.md"
 	maxInstructions    = 60000
 	maxNotes           = 20000
+	maxPersonaText     = manifest.MaxPersonaFileBytes
 )
 
-// FromReports fills the instructions and the notes from the reports the
-// Drafter wrote: its last message carries the manifest and the lists,
-// and each long text comes as a report of its own, which a model writes
-// more reliably than one large JSON answer. A field the message carried
-// is kept. A report that is not a regular file, or is over its bound,
-// is not read, and the error says so.
+// FromReports fills the instructions, the notes and the persona's text from
+// the reports the Drafter wrote: its last message carries the manifest and
+// the lists, and each long text comes as a report of its own, which a model
+// writes more reliably than one large JSON answer. A field the message
+// carried is kept. A report that is not a regular file, or is over its
+// bound, is not read, and the error says so. The persona is written by a
+// persistent agent's draft alone, so its report is optional.
 func FromReports(d *Draft, reportsDir string) error {
 	var errs []error
 	for _, r := range []struct {
 		name  string
 		max   int
 		field *string
-	}{{instructionsReport, maxInstructions, &d.Instructions}, {notesReport, maxNotes, &d.Notes}} {
+	}{{instructionsReport, maxInstructions, &d.Instructions}, {notesReport, maxNotes, &d.Notes}, {personaReport, maxPersonaText, &d.PersonaText}} {
 		if strings.TrimSpace(*r.field) != "" {
 			continue
 		}
@@ -274,11 +282,14 @@ var instructionRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}\.md$`)
 // overview and a LICENSE placeholder naming its SPDX id, since public
 // publication needs both (V7) and the person writes the real ones.
 //
+// A persistent agent's persona text is written to the file its manifest's
+// persona names (PERSONA.md when it names none), beside the instruction.
+//
 // A manifest pkg/manifest cannot parse is still rendered, so the person
 // fixes it in the package, and the parse error is returned with it. An
-// instruction path that is not one Markdown file name at the root is
-// refused, and nothing is written: a draft is agent-written, and its paths
-// are data.
+// instruction or persona path that is not one Markdown file name at the
+// root is refused, and nothing is written: a draft is agent-written, and
+// its paths are data.
 func Render(d *Draft, dir string) (*manifest.Manifest, error) {
 	yml, err := manifestYAML(d.Manifest)
 	if err != nil {
@@ -301,6 +312,15 @@ func Render(d *Draft, dir string) (*manifest.Manifest, error) {
 	if !instructionRE.MatchString(inst) {
 		return m, fmt.Errorf("the draft names its instruction file %q; a draft's instruction is one Markdown file at the package's root", inst)
 	}
+	persona := ""
+	if strings.TrimSpace(d.PersonaText) != "" {
+		// A text with no persona in the manifest has no file to go in, so it
+		// is not written.
+		persona = personaFileOf(loose, m)
+		if persona != "" && (!instructionRE.MatchString(persona) || persona == inst || persona == "README.md") {
+			return m, fmt.Errorf("the draft names its persona file %q; a draft's persona is one Markdown file at the package's root, other than the instruction", persona)
+		}
+	}
 	if err := os.Mkdir(dir, 0o755); err != nil {
 		return m, fmt.Errorf("make the draft's package folder: %w", err)
 	}
@@ -312,6 +332,9 @@ func Render(d *Draft, dir string) (*manifest.Manifest, error) {
 	}
 	out["agent.yaml"] = yml
 	out[inst] = []byte(d.Instructions)
+	if persona != "" {
+		out[persona] = []byte(d.PersonaText)
+	}
 	for name, body := range out {
 		if err := os.WriteFile(filepath.Join(dir, name), body, 0o644); err != nil { //nolint:gosec // the person's own output folder
 			return m, fmt.Errorf("write the draft's %s: %w", name, err)
@@ -340,6 +363,19 @@ func (d *Draft) NoteWithheld() {
 		fmt.Fprintf(&b, "- %s (%s): %s\n", w.URL, w.Tool, w.Reason)
 	}
 	d.noteSection(b.String())
+}
+
+// personaFileOf is the file the manifest's persona names: PERSONA.md when it
+// names none, and "" for a manifest with no persona. A manifest that does
+// not parse is read as it came.
+func personaFileOf(loose map[string]any, m *manifest.Manifest) string {
+	if m != nil {
+		return m.PersonaFile()
+	}
+	if _, ok := loose["persona"].(map[string]any); !ok {
+		return ""
+	}
+	return cmp.Or(looseString(loose, "persona", "file"), manifest.DefaultPersonaFile)
 }
 
 // looseString reads a string at a path of the manifest as it came, or "":

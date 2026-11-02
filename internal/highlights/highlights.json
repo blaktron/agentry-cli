@@ -1,6 +1,15 @@
 {
   "versions": [
     {
+      "version": "0.7.4",
+      "highlights": [
+        "A run on a runhost whose credits token was revoked now says to give the runhost a new one, not to sign in.",
+        "A run now gets 30 minutes and no turn limit by default; you can still set a limit in the policy.",
+        "Setup builds Claude Code and Codex from their newest releases, checked against the vendors' signatures.",
+        "agentry draft writes persistent agents: the mode, only the capabilities they need, a persona and subagents."
+      ]
+    },
+    {
       "version": "0.7.3",
       "highlights": [
         "agentry runhost model --provider agentry lets a runhost pay for its runs' models with your Agentry credits.",

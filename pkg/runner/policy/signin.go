@@ -314,7 +314,8 @@ var DefaultHarnessImages = map[string]HarnessImage{
 
 // HarnessImageFor is the harness image adapterName runs in, from
 // images.harnessImages (docker-agent's as Load resolved it into
-// HarnessDockerAgent), else the CLI's default. ok is false for an adapter with none (a host
+// HarnessDockerAgent), else the newest release's image setup built (the
+// record beside the policy file), else the CLI's tested default. ok is false for an adapter with none (a host
 // adapter, which drives the person's own installation).
 func (i Images) HarnessImageFor(adapterName string) (h HarnessImage, ok bool) {
 	if adapterName == DockerAgentAdapter {
@@ -322,6 +323,11 @@ func (i Images) HarnessImageFor(adapterName string) (h HarnessImage, ok bool) {
 	}
 	if set, found := i.HarnessImages[adapterName]; found {
 		return set, true
+	}
+	if n, found := i.newest[adapterName]; found {
+		if h, ok := n.Image(); ok {
+			return h, true
+		}
 	}
 	h, ok = DefaultHarnessImages[adapterName]
 	return h, ok

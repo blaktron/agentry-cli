@@ -513,6 +513,11 @@ type Images struct {
 	// pinned). Load moves the docker-agent entry to HarnessDockerAgent. Unset
 	// entries take the CLI's defaults.
 	HarnessImages map[string]HarnessImage `yaml:"harnessImages,omitempty"`
+	// newest are the images setup built from a vendor's newest release,
+	// as the record beside the policy file holds them (NewestFile): an
+	// adapter HarnessImages does not name runs in its newest image, else in
+	// the CLI's tested default. nil when nothing is recorded.
+	newest map[string]Newest
 	// GoBuilder builds the local runner image.
 	GoBuilder string `yaml:"goBuilder"`
 	// Runner overrides the local runner image tag ("" = derived from the
@@ -882,15 +887,24 @@ type Sessions struct {
 
 // Budgets are the policy-default hard stops.
 type Budgets struct {
-	// TimeoutSeconds is the whole-run deadline (default 900).
+	// TimeoutSeconds is the whole-run deadline (default 1800).
 	TimeoutSeconds int `yaml:"timeoutSeconds"`
-	// MaxTurns caps tool-call events (default 100; 0 = unlimited).
+	// MaxTurns caps tool-call events (default 0, unlimited).
 	MaxTurns int `yaml:"maxTurns"`
 	// MaxCostUSD kills the run once the harness's reported running cost
 	// exceeds this many US dollars (exit 16); 0 = unlimited. Enforcement
 	// is only as good as the harness's usage events.
 	MaxCostUSD float64 `yaml:"maxCostUsd"`
 }
+
+// DefaultBudgets are a fresh policy's run budgets: half an hour and no turn
+// limit.
+var DefaultBudgets = Budgets{TimeoutSeconds: 1800}
+
+// formerDefaultBudgets is the budgets block earlier CLIs wrote into every
+// new policy file. A file that still holds exactly it never chose a limit,
+// so it resolves to today's DefaultBudgets, as a former default image does.
+var formerDefaultBudgets = Budgets{TimeoutSeconds: 900, MaxTurns: 100}
 
 // Default returns the built-in policy.
 // The model a fresh policy names: the provider the setup command offers
@@ -923,7 +937,7 @@ func Default() *Policy {
 			ProxyAllow: []string{DefaultModelHostPort},
 		},
 		SecretSource: SecretSource{Mode: "env"},
-		Budgets:      Budgets{TimeoutSeconds: 900, MaxTurns: 100},
+		Budgets:      DefaultBudgets,
 		Sessions:     Sessions{IdleTimeoutSeconds: 900, MaxWallSeconds: 7200, MaxUserTurns: 200},
 		Profiles:     Profiles{KeepByDefault: boolPtr(true)},
 		MalwareCheck: boolPtr(false),
@@ -1057,7 +1071,8 @@ func Load(path string) (*Policy, string, error) {
 	// generated default resolves the same way (formerDefaultGoBuilders). The
 	// harness follows too: its config schema moves with the CLI, so keeping a
 	// former default image would fail at config load. So does the gateway
-	// (formerDefaultGatewayImages).
+	// (formerDefaultGatewayImages). So do the run budgets, when they are
+	// exactly the block earlier CLIs wrote (formerDefaultBudgets).
 	if err := p.Images.foldDockerAgent(); err != nil {
 		return nil, "", fmt.Errorf("parse %s: %w", path, err)
 	}
@@ -1076,6 +1091,9 @@ func Load(path string) (*Policy, string, error) {
 	if p.Images.PythonRuntime == "" || slices.Contains(formerDefaultPythonRuntimes, p.Images.PythonRuntime) {
 		p.Images.PythonRuntime = DefaultPythonRuntime
 	}
+	if p.Budgets == formerDefaultBudgets {
+		p.Budgets = DefaultBudgets
+	}
 	if p.MCPRegistries.NPM == "" {
 		p.MCPRegistries.NPM = DefaultNPMRegistry
 	}
@@ -1085,6 +1103,7 @@ func Load(path string) (*Policy, string, error) {
 	if err := p.Validate(); err != nil {
 		return nil, "", fmt.Errorf("%s: %w", path, err)
 	}
+	p.loadNewest(path)
 	sum := sha256.Sum256(b)
 	return &p, hex.EncodeToString(sum[:]), nil
 }
@@ -1555,8 +1574,10 @@ secretSource:
   mode: env
 
 budgets:
-  timeoutSeconds: 900
-  maxTurns: 100
+  timeoutSeconds: 1800
+  # maxTurns: 0 = unlimited; a positive value stops the run after that
+  # many tool calls.
+  maxTurns: 0
   # maxCostUsd: 0 = unlimited; a positive value is a hard stop (exit 16)
   # on the harness's reported running cost. Must be 0 beside a model
   # sign-in, which spends your plan and has no dollars to measure.

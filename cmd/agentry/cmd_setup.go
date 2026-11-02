@@ -171,8 +171,10 @@ func runSetup(cmd *cobra.Command, opts setupOpts) error {
 		return engine.Classify(engine.ExitGateway, err)
 	}
 	if runsOn != adapter.DefaultName {
-		if h, ok := pol.Images.HarnessImageFor(runsOn); ok {
-			if err := gateway.EnsureHarnessImage(cmd.Context(), docker, runsOn, h, stages); err != nil {
+		// Claude Code's and Codex's images are built from the vendor's
+		// newest release first, the tested release the fallback.
+		if _, ok := pol.Images.HarnessImageFor(runsOn); ok {
+			if _, err := gateway.EnsureNewestHarnessImage(cmd.Context(), docker, pol, policy.NewestPathFor(policyPath), runsOn, stages, nil); err != nil {
 				stages.Fail()
 				return engine.Classify(engine.ExitGateway, err)
 			}

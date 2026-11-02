@@ -51,7 +51,7 @@ Generated from the Agentry CLI's code by its tests; do not edit by hand. These a
 
 ## A run's budget
 
-- A run on the person's computer stops after 100 tool calls or 900 seconds, whichever comes first.
+- A run on the person's computer stops after 1800 seconds. It has no tool-call limit unless the person sets one.
 - A run In Agentry stops after 100 tool calls or 900 seconds on Pro and above, and after 20 tool calls or 300 seconds on Standard.
 - docker-agent, the default harness, ends a run that makes the same tool call 5 times in a row.
 - The run is not told its budget.

@@ -183,7 +183,7 @@ func TestTheGuideTeachesTheBrowser(t *testing.T) {
 			"**Change nothing the person did not ask for.**",
 			"In Agentry** too since CLI v0.6.118, for a public site on port 80 or 443 only",
 			"## Fitting the run's budget",
-			"100 calls and 900 seconds on the person's computer (the CLI's default policy, which its operator may change) and In Agentry on Pro and above, 20 calls and 300 seconds In Agentry on Standard",
+			"1800 seconds and no tool-call limit on the person's computer (the CLI's default policy, which its operator may change), 100 calls and 900 seconds In Agentry on Pro and above, and 20 calls and 300 seconds In Agentry on Standard",
 			"The System Prompt does not tell the agent its budget, so the instructions do.",
 			"**One `browser_evaluate` per page**",
 			"**Bound every fetch in a page script.**",

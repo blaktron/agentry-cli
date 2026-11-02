@@ -119,12 +119,21 @@ func TestTheImageIsBuiltFromItsCheckedPackagesForTheDaemonsPlatform(t *testing.T
 	d := &dockerx.Fake{Arch: "arm64"}
 	dir := t.TempDir()
 	var log strings.Builder
-	b := Builder{Docker: d, Registry: reg.URL, Dir: dir, Log: &log}
+	var told []string
+	b := Builder{Docker: d, Registry: reg.URL, Dir: dir, Log: &log, Building: func(v string) {
+		if len(reg.asked) != 0 {
+			t.Errorf("told of the build after %v was downloaded", reg.asked)
+		}
+		told = append(told, v)
+	}}
 	if err := b.Ensure(context.Background(), ClaudeImageAdapter, h); err != nil {
 		t.Fatal(err)
 	}
 	if got := builds(d); len(got) != 1 || !strings.HasPrefix(got[0], "Build:agentry-claude-code:9.9.9<-") {
 		t.Fatalf("builds %v", got)
+	}
+	if !slices.Equal(told, []string{"9.9.9"}) {
+		t.Fatalf("Building was told %v", told)
 	}
 	args := d.BuildArgs[h.Ref]
 	if args["BASE"] != ClaudeBase || args["NATIVE"] != "claude-code-linux-arm64-musl" || args["ARTIFACT"] != h.Artifact ||
@@ -191,11 +200,15 @@ func TestAnImageIsBuiltAgainUnlessItCarriesItsArtifact(t *testing.T) {
 			label = h.Artifact
 		}
 		d := &dockerx.Fake{ExistingImages: map[string]bool{h.Ref: true}, Labels: map[string]map[string]string{h.Ref: {LabelArtifact: label, LabelRecipe: c.recipe}}}
-		if err := (Builder{Docker: d, Registry: reg.URL, Dir: t.TempDir()}).Ensure(context.Background(), ClaudeImageAdapter, h); err != nil {
+		told := false
+		if err := (Builder{Docker: d, Registry: reg.URL, Dir: t.TempDir(), Building: func(string) { told = true }}).Ensure(context.Background(), ClaudeImageAdapter, h); err != nil {
 			t.Fatal(err)
 		}
 		if got := len(builds(d)) == 1; got != c.rebuild {
 			t.Errorf("%+v: rebuilt %v", c, got)
+		}
+		if told != c.rebuild {
+			t.Errorf("%+v: Building told %v", c, told)
 		}
 		if !c.rebuild && len(reg.asked) != 0 {
 			t.Errorf("%+v: fetched %v for an image already here", c, reg.asked)

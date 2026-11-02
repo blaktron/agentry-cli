@@ -74,6 +74,56 @@ type Person struct {
 	// Through the image, the page's answer comes back to this computer and
 	// is relayed into the container (browser.go).
 	Open func(url string)
+	// Step, when set, is told each step of the sign-in as it starts, so a
+	// person waiting on it can be shown where it is; detail is the Claude
+	// Code version for StepBuild and "" otherwise.
+	Step func(step Step, detail string)
+}
+
+// Step is one step of a sign-in, in the order they come. A sign-in through
+// the installed Claude Code has no image, so it starts at StepStart.
+type Step string
+
+const (
+	// StepImage: looking for the Claude Code image on the docker daemon.
+	StepImage Step = "image"
+	// StepBuild: building the Claude Code image on this computer, which
+	// downloads Claude Code and takes a few minutes.
+	StepBuild Step = "build"
+	// StepStart: starting Claude Code's own sign-in.
+	StepStart Step = "start"
+	// StepBrowser: Anthropic's page is open in the person's browser, and the
+	// sign-in waits for them there.
+	StepBrowser Step = "browser"
+	// StepKeep: asking Claude Code who signed in, and keeping the sign-in.
+	StepKeep Step = "keep"
+)
+
+// Sentence is how the step is said to the person, with detail as Step
+// gives it.
+func (s Step) Sentence(detail string) string {
+	switch s {
+	case StepImage:
+		return "Checking the Claude Code image…"
+	case StepBuild:
+		if detail != "" {
+			return "Building the Claude Code " + detail + " image on this computer — the download and build take a few minutes…"
+		}
+		return "Building the Claude Code image on this computer — the download and build take a few minutes…"
+	case StepStart:
+		return "Starting Claude Code's sign-in…"
+	case StepBrowser:
+		return "Waiting for you in your browser…"
+	case StepKeep:
+		return "Checking the sign-in and keeping it…"
+	}
+	return ""
+}
+
+func (p Person) step(s Step, detail string) {
+	if p.Step != nil {
+		p.Step(s, detail)
+	}
 }
 
 func (p Person) out() io.Writer {
@@ -91,6 +141,10 @@ type SignIn struct {
 	// resolves the default policy file, writing it from defaults when
 	// absent.
 	Policy *policy.Policy
+	// PolicyPath is the file Policy was read from, beside which the image
+	// built from Claude Code's newest release is recorded; "" with a Policy
+	// given records nothing and takes the tested image.
+	PolicyPath string
 	// Docker is the daemon the image's sign-in runs on; nil is dockerx.New.
 	Docker func() dockerx.Client
 	// Keys is the keychain the sign-in store uses; nil keeps nothing there.
@@ -105,21 +159,27 @@ func (s SignIn) docker() dockerx.Client {
 }
 
 func (s SignIn) policy() (*policy.Policy, error) {
+	pol, _, err := s.policyAt()
+	return pol, err
+}
+
+// policyAt is the policy and the file it was read from.
+func (s SignIn) policyAt() (*policy.Policy, string, error) {
 	if s.Policy != nil {
-		return s.Policy, nil
+		return s.Policy, s.PolicyPath, nil
 	}
-	return DefaultPolicy()
+	pf, err := policy.Resolve("")
+	if err != nil {
+		return nil, "", err
+	}
+	pol, _, err := policy.EnsureDefault(pf.Path)
+	return pol, pf.Path, err
 }
 
 // DefaultPolicy is the operator policy a sign-in prepares its image under
 // when none is given: the default file, written from defaults when absent.
 func DefaultPolicy() (*policy.Policy, error) {
-	pf, err := policy.Resolve("")
-	if err != nil {
-		return nil, err
-	}
-	pol, _, err := policy.EnsureDefault(pf.Path)
-	return pol, err
+	return SignIn{}.policy()
 }
 
 // status is what `claude auth status` prints (Claude Code 2.1.296).
@@ -219,24 +279,34 @@ func runContainer(ctx context.Context, d dockerx.Client, r dockerx.RunSpec, stdi
 // signInImage builds the Claude Code image when it is not here, then runs
 // Claude Code's own sign-in in it, on its volume, and asks it who is signed
 // in. It returns the volume and the account.
-func (s SignIn) signInImage(ctx context.Context, p Person, pol *policy.Policy) (string, string, error) {
+func (s SignIn) signInImage(ctx context.Context, p Person, pol *policy.Policy, path string) (string, string, error) {
 	errOut := p.out()
-	h, ok := pol.Images.HarnessImageFor(adapter.ClaudeImageAdapterName)
-	if !ok {
+	if _, ok := pol.Images.HarnessImageFor(adapter.ClaudeImageAdapterName); !ok {
 		return "", "", errors.New("the policy names no Claude Code image")
 	}
 	d := s.docker()
-	if err := gateway.EnsureHarnessImage(ctx, d, adapter.ClaudeImageAdapterName, h, errOut); err != nil {
+	p.step(StepImage, "")
+	building := func(version string) { p.step(StepBuild, version) }
+	// Claude Code's newest release first, the tested one the fallback.
+	record := ""
+	if path != "" {
+		record = policy.NewestPathFor(path)
+	}
+	h, err := gateway.EnsureNewestHarnessImage(ctx, d, pol, record, adapter.ClaudeImageAdapterName, errOut, building)
+	if err != nil {
 		return "", "", engine.Classify(engine.ExitGateway, err)
 	}
 	if err := d.VolumeCreate(ctx, Volume, map[string]string{"org.agentry.model-signin": modelsignin.Claude}); err != nil {
 		return "", "", err
 	}
 	_, _ = fmt.Fprintf(errOut, "%s: Claude Code signs you in itself, in Anthropic's own pages in your browser, and keeps the sign-in in its docker volume %s, which Agentry never reads.\n", setup.ClaudeSignInLabel, Volume)
-	open := p.Open
-	if open == nil {
-		open = func(string) {}
+	open := func(u string) {
+		p.step(StepBrowser, "")
+		if p.Open != nil {
+			p.Open(u)
+		}
 	}
+	p.step(StepStart, "")
 	login := containerRun(pol, h.Ref, "login", "auth", "login")
 	login.Env["BROWSER"] = harnessbuild.ClaudeOpener
 	lctx, cancel := context.WithTimeout(ctx, Timeout)
@@ -271,6 +341,7 @@ func (s SignIn) signInImage(ctx context.Context, p Person, pol *policy.Policy) (
 	if code != 0 {
 		return "", "", fmt.Errorf("nothing kept: the sign-in in Claude Code did not complete (exit %d)", code)
 	}
+	p.step(StepKeep, "")
 	var out bytes.Buffer
 	if _, err := runContainer(ctx, d, containerRun(pol, h.Ref, "status", "auth", "status"), nil, &out, io.Discard); err != nil {
 		return "", "", fmt.Errorf("the sign-in status in Claude Code: %w", err)
@@ -329,9 +400,14 @@ func (s SignIn) signInInstalled(ctx context.Context, p Person, pol *policy.Polic
 	defer cancel()
 	login := hostCommand(lctx, exe, dir, "auth", "login")
 	login.Stdin, login.Stdout, login.Stderr = p.In, errOut, errOut
+	// The installed Claude Code opens the browser itself as it starts, so
+	// the wait for the person begins with it.
+	p.step(StepStart, "")
+	p.step(StepBrowser, "")
 	if err := login.Run(); err != nil {
 		return "", "", fmt.Errorf("nothing kept: the sign-in in Claude Code did not complete (%w)", err)
 	}
+	p.step(StepKeep, "")
 	st := hostCommand(ctx, exe, dir, "auth", "status")
 	// auth status exits 1 when no one is signed in, with its JSON still
 	// printed: the JSON is the answer, and only no answer is an error.
@@ -354,7 +430,7 @@ func (s SignIn) signInInstalled(ctx context.Context, p Person, pol *policy.Polic
 // sign-in leaves nothing behind; a failed sign-in again leaves the kept
 // one alone.
 func (s SignIn) Run(ctx context.Context, p Person, installed bool) (*modelsignin.Record, error) {
-	pol, err := s.policy()
+	pol, path, err := s.policyAt()
 	if err != nil {
 		return nil, engine.Classify(engine.ExitPolicy, err)
 	}
@@ -367,7 +443,7 @@ func (s SignIn) Run(ctx context.Context, p Person, installed bool) (*modelsignin
 	if installed {
 		dir, label, err = s.signInInstalled(ctx, p, pol)
 	} else {
-		dir, label, err = s.signInImage(ctx, p, pol)
+		dir, label, err = s.signInImage(ctx, p, pol, path)
 	}
 	if err != nil {
 		// "Nothing kept" must be true: a first sign-in that failed may

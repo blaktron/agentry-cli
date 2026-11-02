@@ -172,7 +172,7 @@ func imagePin(adapterName, image string, h policy.HarnessImage) *spec.ImagePin {
 	by, value := h.Pin()
 	pin := &spec.ImagePin{By: by, Value: value}
 	if by == policy.PinArtifact {
-		pin.Note = harnessbuild.PinNote(adapterName)
+		pin.Note = harnessbuild.PinNote(adapterName, h)
 	}
 	return pin
 }
