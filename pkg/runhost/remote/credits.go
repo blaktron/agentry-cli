@@ -56,6 +56,10 @@ type StoreList struct {
 	Credits  *CreditsInfo `json:"credits,omitempty"`
 	// SignIns are the model sign-ins the runhost keeps.
 	SignIns []signin.Kept `json:"signIns,omitempty"`
+	// Schedules are the runhost's schedules, each with what it keeps.
+	Schedules []runhost.ScheduleInfo `json:"schedules,omitempty"`
+	// Sealed says whether the store's key is sealed by systemd.
+	Sealed bool `json:"sealed"`
 }
 
 // CreditsRemoved is what removing the credits token did.

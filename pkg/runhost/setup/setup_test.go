@@ -420,3 +420,16 @@ func TestFetchGVisorRefusesAnArchiveOtherThanThePinned(t *testing.T) {
 		t.Fatal("an architecture with no pin was fetched")
 	}
 }
+
+func TestAnOldSystemdIsANoteThatSchedulesNeedANewerOne(t *testing.T) {
+	f := debian13()
+	f["systemd"] = "252"
+	p := Evaluate(f, nil)
+	if !p.Supported || findingOf(p, "systemd").Level != LevelNote || !strings.Contains(findingOf(p, "systemd").Detail, "schedules need 256") {
+		t.Fatalf("plan %+v", p.Findings)
+	}
+	f["systemd"] = "257"
+	if findingOf(Evaluate(f, nil), "systemd").Level != LevelOK {
+		t.Fatal("systemd 257 is noted")
+	}
+}

@@ -1,6 +1,14 @@
 {
   "versions": [
     {
+      "version": "0.7.11",
+      "highlights": [
+        "agentry schedule add --on lab runs a QuickAgent on the runhost named lab on repeat, with nobody present.",
+        "A runhost keeps a schedule's secrets in its store, under a key systemd seals to the server.",
+        "agentry runhost schedules lists a runhost's schedules and their runs, which runhost collect opens."
+      ]
+    },
+    {
       "version": "0.7.10",
       "highlights": [
         "agentry runhost update brings runhosts to this CLI's version over their run keys; so does each CLI update.",

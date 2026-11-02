@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,6 +25,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runhost/remote"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/schedule"
 )
 
 // updateServer is a runhost's CLI and runsc layout under a temporary home,
@@ -351,5 +353,63 @@ func TestThePostUpdateStepUpdatesEachRunhostOncePerVersion(t *testing.T) {
 	asked = nil
 	if _, _, err := runCLI(t, nil, "runhost", "list"); err != nil || len(asked) != 0 {
 		t.Fatalf("the step ran again for the same version: %v %v", asked, err)
+	}
+}
+
+// Where systemd seals a credential to a user, the store's key is kept only
+// sealed: a key file kept before is sealed and removed, and a later process
+// opens the store with the sealed key; entries stay readable throughout.
+func TestTheStoresKeyIsSealedWhereSystemdCan(t *testing.T) {
+	newRunhostServer(t)
+	st, err := openRunhostStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutEntry("probe", []byte("kept")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(runhostStoreKeyFile); err != nil {
+		t.Fatalf("an old systemd keeps a key file: %v", err)
+	}
+	// systemd-creds stands in as a reversible wrap, the credential's name
+	// bound into it.
+	oldEnc, oldDec := schedule.EncryptCredential, runhostDecryptCredential
+	t.Cleanup(func() { schedule.EncryptCredential, runhostDecryptCredential = oldEnc, oldDec })
+	schedule.EncryptCredential = func(name string, plain []byte, out string) error {
+		return os.WriteFile(out, append([]byte(name+":"), plain...), 0o600)
+	}
+	runhostDecryptCredential = func(name, file string) ([]byte, error) {
+		b, err := os.ReadFile(file) //nolint:gosec // the test's own file
+		if err != nil {
+			return nil, err
+		}
+		v, ok := bytes.CutPrefix(b, []byte(name+":"))
+		if !ok {
+			return nil, errors.New("another credential's name")
+		}
+		return v, nil
+	}
+	runhostSystemdVersion = func() int { return 257 }
+	forgetRunhostStoreKey()
+	if _, sealed, err := runhostStoreKeyBytes(); err != nil || !sealed {
+		t.Fatalf("sealed %v, %v", sealed, err)
+	}
+	if _, err := os.Stat(runhostStoreKeyFile); !os.IsNotExist(err) {
+		t.Fatalf("the plain key file stayed: %v", err)
+	}
+	forgetRunhostStoreKey()
+	st, err = openRunhostStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, err := st.Entry("probe"); err != nil || string(b) != "kept" {
+		t.Fatalf("the entry after sealing: %q %v", b, err)
+	}
+	// A credential that does not open refuses the store rather than making a
+	// new key over it.
+	runhostDecryptCredential = func(string, string) ([]byte, error) { return nil, errors.New("no TPM") }
+	forgetRunhostStoreKey()
+	if _, err := openRunhostStore(); err == nil {
+		t.Fatal("a store opened with its sealed key unreadable")
 	}
 }

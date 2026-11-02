@@ -98,6 +98,10 @@ const supportedList = "Debian 12 or 13, Ubuntu 22.04 or 24.04, Fedora 43 or 44, 
 // linger and a user service are all it asks of it.
 const MinSystemd = 249
 
+// MinSealingSystemd is the oldest systemd that seals a credential to one
+// user, which the runhost's schedules need for its store's key.
+const MinSealingSystemd = 256
+
 // MinDiskKB and MinMemKB are the free disk under /var/lib and the available
 // memory a runhost needs: Docker's images and a run's containers.
 const (
@@ -165,6 +169,8 @@ func Evaluate(f Facts, reach []string) Plan {
 		add(LevelStop, "systemd", "systemd reports a version setup cannot read (%q)", f["systemd"])
 	case sd < MinSystemd:
 		add(LevelStop, "systemd", "systemd %d is older than %d", sd, MinSystemd)
+	case sd < MinSealingSystemd:
+		add(LevelNote, "systemd", "systemd %d: runs work, but schedules need %d or newer, which seals the runhost's store key to the server", sd, MinSealingSystemd)
 	default:
 		add(LevelOK, "systemd", "systemd %d", sd)
 	}

@@ -122,6 +122,9 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 			return engine.Classify(engine.ExitUsage, fmt.Errorf("--session-protocol drives an interactive session; this run's mode is %s", mode))
 		}
 	case manifest.ModeInteractive:
+		if opts.runhostSchedule != "" {
+			return engine.Classify(engine.ExitUsage, fmt.Errorf("%s runs interactive, and a schedule runs with nobody there to answer it", meta.Ref))
+		}
 		if opts.detach {
 			return engine.Classify(engine.ExitUsage, errors.New("--detach is for an autonomous run: a session is driven from here"))
 		}
@@ -229,6 +232,9 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 		_, _ = fmt.Fprintf(errOut, "paying for the model with the %s sign-in %s keeps\n", modelsignin.VendorOf(pol.Model.APIKeyKind), rec.Name)
 	}
 
+	if opts.runhostSchedule != "" {
+		return putRunhostSchedule(cmd, client, rec, home, meta, j, archive, files, opts)
+	}
 	opts.progress.at(receipt.StageAgent)
 	lj := remote.LocalJob{Job: j.ID, Runhost: rec.Name, Ref: meta.Ref, Namespace: meta.Namespace, Name: meta.Name, Version: meta.Version,
 		Digest: meta.Digest, Out: opts.out, DeliverTo: carried.deliverTo, Session: j.Run.Session, StartedAt: time.Now().UTC().Format(time.RFC3339),
