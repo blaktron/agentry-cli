@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -115,7 +114,7 @@ func TestAttackLinksAndSpecialFiles(t *testing.T) {
 	must(os.Symlink("/nonexistent", filepath.Join(dir, "reports", "dangling.md")))
 	must(os.Symlink("link-in.md", filepath.Join(dir, "reports", "chain.md")))
 	must(os.Mkdir(filepath.Join(dir, "reports", "dir.md"), 0o755))
-	must(syscall.Mkfifo(filepath.Join(dir, "reports", "fifo.md"), 0o644))
+	hasFifo := mkfifo(t, filepath.Join(dir, "reports", "fifo.md"))
 	try("control", mkf(real, "reports/real.md"), true)
 	try("link out", mkf(secret, "reports/link-out.md"), false)
 	try("link in", mkf(real, "reports/link-in.md"), false)
@@ -125,7 +124,9 @@ func TestAttackLinksAndSpecialFiles(t *testing.T) {
 	try("dangling", mkf(real, "reports/dangling.md"), false)
 	try("directory", mkf(real, "reports/dir.md"), false)
 	empty := listed("x", "", "", true)
-	try("fifo", mkf(empty, "reports/fifo.md"), false)
+	if hasFifo {
+		try("fifo", mkf(empty, "reports/fifo.md"), false)
+	}
 	// reports itself a link
 	dir2 := t.TempDir()
 	write(t, outDir, "r/real.md", "hello")

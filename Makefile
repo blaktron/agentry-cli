@@ -5,7 +5,7 @@ export PATH := /opt/homebrew/bin:$(PATH)
 GO ?= go
 LDFLAGS := -X github.com/blaktron/agentry-cli/internal/version.Version=$(shell git describe --tags --always --dirty 2>/dev/null || echo 0.0.0-dev)
 
-.PHONY: build test lint check clean accept-runner dist workflows-check notices notices-check
+.PHONY: build test lint check cross clean accept-runner dist workflows-check notices notices-check
 
 build:
 	$(GO) build -ldflags '$(LDFLAGS)' -o bin/agentry ./cmd/agentry
@@ -31,7 +31,18 @@ notices:
 notices-check:
 	GO='$(GO)' scripts/notices/check.sh
 
-check: lint test build notices-check
+check: lint test build cross notices-check
+
+## cross: every package, tests included, builds and vets for each release
+## target other than this host's linux/amd64, so a symbol one system lacks
+## in a file with no build constraint fails here rather than in a release.
+CROSS_TARGETS := windows/amd64 darwin/arm64 darwin/amd64 linux/arm64
+cross:
+	@for t in $(CROSS_TARGETS); do \
+	  os=$${t%/*}; arch=$${t#*/}; echo "  cross $$os/$$arch"; \
+	  CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch $(GO) build ./... || exit 1; \
+	  CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch $(GO) vet ./... || exit 1; \
+	done
 
 ## workflows-check: no job a fork's pull request can start runs on a
 ## self-hosted runner without the fork guard, and the check's own tests pass.
