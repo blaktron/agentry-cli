@@ -220,6 +220,7 @@ func (p PostStep) Run(ctx context.Context, env *receipt.Envelope, runErr error) 
 	d.noteExecProblems()
 	d.notePDFProblems()
 	d.noteBrowserBudgetProblems()
+	d.noteSubagents()
 	d.noteServerProblems()
 	return d, env, nil
 }

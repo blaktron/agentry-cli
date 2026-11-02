@@ -34,7 +34,9 @@ import (
 //     the manifest takes it; knowledge.ships: held to the packs the person
 //     chose to ship (the ships argument, none when it is empty): any other
 //     entry removed, a chosen pack the draft left out added, and
-//     publish.include given the pattern that puts the packs in the archive.
+//     publish.include given the pattern that puts the packs in the archive;
+//   - a persona whose file publish.include does not match: the file added to
+//     publish.include, since the persona's text ships beside the instruction.
 //
 // The bounds are pkg/manifest's own. It returns what it corrected, one plain
 // sentence each, which Finish names in the draft's notes; the rules then
@@ -82,6 +84,7 @@ func Correct(raw json.RawMessage, ships ...string) (json.RawMessage, []string) {
 		}
 	}
 	c.dropIfEmpty(root, "knowledge", "")
+	c.personaIncluded(root)
 	c.lift(root, "inputs")
 	if in := value(root, "inputs"); in != nil && in.Kind == yaml.MappingNode {
 		c.inputs(in)
@@ -317,6 +320,41 @@ func (c *corrector) ships(root *yaml.Node, chosen []string) {
 			return
 		}
 	}
+}
+
+// personaIncluded gives publish.include the file the persona names
+// (PERSONA.md when it names none) when no pattern of the list matches it:
+// the persona's text ships with the release, and a draft that declares a
+// persona and forgets the line would be refused for it.
+func (c *corrector) personaIncluded(root *yaml.Node) {
+	p := value(root, "persona")
+	if p == nil || p.Kind != yaml.MappingNode {
+		return
+	}
+	file := manifest.DefaultPersonaFile
+	if f := value(p, "file"); f != nil {
+		if f.Kind != yaml.ScalarNode || f.Tag != "!!str" || strings.TrimSpace(f.Value) == "" {
+			return
+		}
+		file = f.Value
+	}
+	pub := value(root, "publish")
+	if pub == nil || pub.Kind != yaml.MappingNode {
+		return
+	}
+	inc := value(pub, "include")
+	if inc == nil || inc.Kind != yaml.SequenceNode {
+		return
+	}
+	var patterns []string
+	for _, it := range inc.Content {
+		patterns = append(patterns, it.Value)
+	}
+	if len(manifest.ResolveInclude(patterns, []manifest.FileInfo{{Path: file}})) > 0 {
+		return
+	}
+	inc.Content = append(inc.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: file})
+	c.did = append(c.did, fmt.Sprintf("publish.include: %s was added, so the persona's text is in the release.", file))
 }
 
 // removedShip names a knowledge.ships entry the post-step removed.

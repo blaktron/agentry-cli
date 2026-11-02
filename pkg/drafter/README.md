@@ -196,6 +196,20 @@ file tells its run to mark that file with `deliverable: true` and a one-line
 leave notes and drafts unmarked, so the person finds the result among a run's
 files.
 
+Since 1.19.0 the Drafter drafts persistent agents. When a description asks for
+an agent that stays running, remembers what the person tells it or works on a
+schedule for them, the draft lists `persistent` in `modes` and declares in
+`capabilities.persistent` only the keys its instructions rely on (`memory`
+for `recall`, `clock` for the task tools, and so on). A person who names the
+agent gets a `persona`, whose text is written to `PERSONA.md` and listed in
+`publish.include`. For a part of the task that a published QuickAgent already
+does, the Drafter searches the registry, reads the candidate's manifest and
+proposes it in `dependencies.agents` with a version constraint and a reason;
+the notes list every subagent so the person can remove one, and the registry
+resolves each when the version is published. The checks after a draft send
+instructions that call a tool of an undeclared key, or a subagent tool with
+no subagent, to the repair turn.
+
 The runner attaches the guide to every run of the Drafter, through the same
 knowledge tools, the repair turn included. It is part of this release, so
 the registry scans it with the published release. It is not one of your
@@ -206,7 +220,8 @@ that ships one.
 
 ## What it returns
 
-`AGENT.md` and `notes.md`, written with `write_report`, and a final answer
+`AGENT.md` and `notes.md`, written with `write_report` (and `PERSONA.md` for a
+persistent agent with a persona), and a final answer
 in the shape `output.schema.json` describes: the manifest's fields, the
 published QuickAgents that already do the job, and the questions the draft
 leaves open. The application turns them into the draft you review.

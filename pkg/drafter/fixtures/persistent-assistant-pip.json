@@ -1,0 +1,22 @@
+{
+  "id": "persistent-assistant-pip",
+  "description": "An assistant named Pip that stays running and keeps my notes, and that hands the PDFs I share with it to a PDF summariser QuickAgent and keeps each summary.",
+  "hints": [
+    "Pip should be brisk and plain-spoken."
+  ],
+  "expect": {
+    "modes": [
+      "persistent"
+    ],
+    "hosts": [],
+    "maxSecrets": 0,
+    "maxServers": 0,
+    "exec": false,
+    "write": false,
+    "persistent": [
+      "memory"
+    ],
+    "persona": true,
+    "subagents": true
+  }
+}

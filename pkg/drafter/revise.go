@@ -48,8 +48,12 @@ type Revision struct {
 	// InstructionFile is the release's instruction file, by its path in
 	// the package.
 	InstructionFile string
-	// Dir holds the release's agent.yaml and its instruction file, and
-	// nothing else: the folder staged under /inputs/revise.
+	// PersonaFile is the release's persona file, by its path in the
+	// package; empty for a release with no persona.
+	PersonaFile string
+	// Dir holds the release's agent.yaml, its instruction file and its
+	// persona file, and nothing else: the folder staged under
+	// /inputs/revise.
 	Dir string
 	// Additional and Problems are the person's two texts, the additional
 	// instructions and the problems with this draft; at least one is
@@ -67,9 +71,10 @@ type Revises struct {
 }
 
 // ReadRelease reads a release's package folder for a revision: its
-// agent.yaml, which must parse and name the QuickAgent, and the instruction
-// file it names. It copies both into dest (OutDir/revise), the only files
-// the Drafter is given of the release. digest is the release's archive
+// agent.yaml, which must parse and name the QuickAgent, the instruction
+// file it names and, for a persistent agent, its persona's file. It copies
+// them into dest (OutDir/revise), the only files the Drafter is given of
+// the release. digest is the release's archive
 // digest, which the caller computes; ref is checked against the manifest
 // when given, and made from it when not.
 func ReadRelease(src, dest, ref, digest string) (*Revision, error) {
@@ -105,7 +110,23 @@ func ReadRelease(src, dest, ref, digest string) (*Revision, error) {
 	if !utf8.Valid(text) {
 		return nil, fmt.Errorf("the release's instruction file %s is not text", inst)
 	}
-	// A fresh folder, so what is staged is these two files and nothing a
+	files := map[string][]byte{"agent.yaml": yml, inst: text}
+	// A persona's file at the package's root is staged beside the
+	// instruction; a persona the release keeps elsewhere is not.
+	persona := m.PersonaFile()
+	if persona != "" && persona != inst && instructionRE.MatchString(persona) {
+		b, err := os.ReadFile(filepath.Join(src, persona)) //nolint:gosec // the release the person names
+		switch {
+		case err != nil:
+			return nil, fmt.Errorf("the release's persona file %s: %w", persona, err)
+		case !utf8.Valid(b) || len(b) > manifest.MaxPersonaFileBytes:
+			return nil, fmt.Errorf("the release's persona file %s is not text of at most %d bytes", persona, manifest.MaxPersonaFileBytes)
+		}
+		files[persona] = b
+	} else {
+		persona = ""
+	}
+	// A fresh folder, so what is staged is these files and nothing a
 	// run before this one left there.
 	if _, err := os.Lstat(dest); err == nil {
 		return nil, fmt.Errorf("%s already holds a release; name another folder with --out", dest)
@@ -113,12 +134,12 @@ func ReadRelease(src, dest, ref, digest string) (*Revision, error) {
 	if err := os.MkdirAll(dest, 0o755); err != nil {
 		return nil, fmt.Errorf("the release's folder: %w", err)
 	}
-	for name, b := range map[string][]byte{"agent.yaml": yml, inst: text} {
+	for name, b := range files {
 		if err := os.WriteFile(filepath.Join(dest, name), b, 0o644); err != nil { //nolint:gosec // the draft's own output folder
 			return nil, fmt.Errorf("the release's %s: %w", name, err)
 		}
 	}
-	return &Revision{Revises: Revises{Ref: ref, Digest: digest}, Name: m.Name, Summary: m.Summary, InstructionFile: inst, Dir: dest}, nil
+	return &Revision{Revises: Revises{Ref: ref, Digest: digest}, Name: m.Name, Summary: m.Summary, InstructionFile: inst, PersonaFile: persona, Dir: dest}, nil
 }
 
 // WithTexts sets the person's two texts, holding each to its bound and
@@ -156,7 +177,12 @@ func RevisionTask(r *Revision) (string, error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Revise the QuickAgent %s into its next version. The person who maintains it asked for the revision, and AI Review read their texts below before you did.\n\n", r.Ref)
 	b.WriteString("## The release\n\n")
-	fmt.Fprintf(&b, "Its manifest is /inputs/%s/agent.yaml and its instruction file is /inputs/%s/%s. Read both before anything else.\n", ReviseInput, ReviseInput, r.InstructionFile)
+	if r.PersonaFile != "" {
+		fmt.Fprintf(&b, "Its manifest is /inputs/%s/agent.yaml, its instruction file is /inputs/%s/%s and its persona file is /inputs/%s/%s. Read all three before anything else.\n",
+			ReviseInput, ReviseInput, r.InstructionFile, ReviseInput, r.PersonaFile)
+	} else {
+		fmt.Fprintf(&b, "Its manifest is /inputs/%s/agent.yaml and its instruction file is /inputs/%s/%s. Read both before anything else.\n", ReviseInput, ReviseInput, r.InstructionFile)
+	}
 	section := func(heading, text, none string) {
 		b.WriteString("\n## " + heading + "\n\n")
 		if text == "" {
@@ -175,13 +201,17 @@ func RevisionTask(r *Revision) (string, error) {
 	return task, nil
 }
 
-// PrescanRelease has AI Review read the release's two staged files before
+// PrescanRelease has AI Review read the release's staged files before
 // the Drafter starts, as model input in the pack scan's chunks (the
 // Drafter's model reads nothing AI Review has not). A revision is of the
 // whole release, so a file it does not pass, or could not scan, stops the
 // draft at stage description rather than being withheld.
 func PrescanRelease(ctx context.Context, sc webscan.Scanner, r *Revision) (requests int, err error) {
-	withheld, requests, err := scanPack(ctx, sc, r.Dir, []string{"agent.yaml", r.InstructionFile})
+	staged := []string{"agent.yaml", r.InstructionFile}
+	if r.PersonaFile != "" {
+		staged = append(staged, r.PersonaFile)
+	}
+	withheld, requests, err := scanPack(ctx, sc, r.Dir, staged)
 	if err != nil {
 		return requests, err
 	}

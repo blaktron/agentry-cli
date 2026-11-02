@@ -3,6 +3,7 @@ package drafter
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
@@ -25,19 +26,34 @@ const (
 	kindSecret  = "the secret"
 	kindBrowser = "the browser at"
 	kindTarget  = "the target host"
+	// A persistent agent's: the mode, each key of capabilities.persistent
+	// (a list key by its names), the persona and each subagent.
+	kindMode       = "the run mode"
+	kindPersistent = "the persistent capability"
+	kindPersona    = "the persona"
+	kindSubagent   = "the subagent"
 )
 
 // declaredCapabilities is what a manifest declares that a repair turn must
 // not drop without the report naming it: each MCP server (by its package,
 // whatever its version), each egress host (the QuickAgent's or a
 // server's), each exec command, each secret (the QuickAgent's or a
-// server's), the browser and each target host (by its question), in the
-// manifest's order. Nil when the manifest does not
-// parse, which validate reports.
+// server's), the browser and each target host (by its question), and, of a
+// persistent agent, its mode, each capabilities.persistent key, its persona
+// and each subagent (by its ref), in the manifest's order. Nil when the
+// manifest does not parse, which validate reports.
 func declaredCapabilities(raw json.RawMessage) []declared {
 	var m struct {
+		Modes        []string        `json:"modes"`
+		Persona      json.RawMessage `json:"persona"`
+		Dependencies struct {
+			Agents []struct {
+				Ref string `json:"ref"`
+			} `json:"agents"`
+		} `json:"dependencies"`
 		Capabilities struct {
-			Network struct {
+			Persistent map[string]json.RawMessage `json:"persistent"`
+			Network    struct {
 				Egress json.RawMessage `json:"egress"`
 			} `json:"network"`
 			Exec        json.RawMessage `json:"exec"`
@@ -70,6 +86,23 @@ func declaredCapabilities(raw json.RawMessage) []declared {
 		}
 		index[k] = len(out)
 		out = append(out, declared{kind: kind, value: value, paths: []string{path}})
+	}
+	if slices.Contains(m.Modes, "persistent") {
+		add(kindMode, "persistent", "modes")
+		for _, key := range slices.Sorted(maps.Keys(m.Capabilities.Persistent)) {
+			if v := strings.TrimSpace(string(m.Capabilities.Persistent[key])); v != "false" && v != "null" && v != "[]" {
+				add(kindPersistent, key, "capabilities.persistent."+key)
+			}
+		}
+		var persona struct {
+			Name string `json:"name"`
+		}
+		if json.Unmarshal(m.Persona, &persona) == nil && persona.Name != "" {
+			add(kindPersona, persona.Name, "persona")
+		}
+		for i, a := range m.Dependencies.Agents {
+			add(kindSubagent, a.Ref, fmt.Sprintf("dependencies.agents[%d]", i))
+		}
 	}
 	caps := m.Capabilities
 	// egress "none" or "*" as a scalar is not a list: no host to drop by
@@ -162,7 +195,7 @@ func within(paths, servers []string) bool {
 
 // reportPath is a manifest path as validate and the post-step's own rules
 // write one in a report line.
-var reportPath = regexp.MustCompile(`capabilities(?:\.[A-Za-z]+(?:\[\d+\])*)+`)
+var reportPath = regexp.MustCompile(`capabilities(?:\.[A-Za-z]+(?:\[\d+\])*)+|(?:persona|dependencies)(?:\.[A-Za-z]+(?:\[\d+\])*)*|modes(?:\[\d+\])?`)
 
 // named says a line of the report names the capability c, of all the
 // capabilities the first answer declared.

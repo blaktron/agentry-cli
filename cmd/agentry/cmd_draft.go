@@ -152,10 +152,10 @@ func newDraftCmd() *cobra.Command {
 			"On this computer the draft has 30 minutes, or your runner policy's run timeout when that is longer, and\n" +
 			"--timeout sets it for one draft. It has no token limit; the tool-call cap is your policy's.\n\n" +
 			"--revise DIR (a package folder) or --revise-ref ns/name@version (a published release, fetched with this\n" +
-			"command's credential) drafts the release's next version instead: the Drafter is given its agent.yaml and\n" +
-			"instruction file, what you want changed (--instructions-file) and the problems you found (--problems-file),\n" +
-			"each at most " + strconv.Itoa(drafter.MaxRevisionTextBytes) + " bytes and at least one given. AI Review reads your two texts and the release's two\n" +
-			"files first; one it does not pass stops the revision. The revision keeps the release's name, and draft.json records the release under revises.",
+			"command's credential) drafts the release's next version instead: the Drafter is given its agent.yaml, its\n" +
+			"instruction file and, for a persistent agent, its persona file, what you want changed (--instructions-file)\n" +
+			"and the problems you found (--problems-file), each at most " + strconv.Itoa(drafter.MaxRevisionTextBytes) + " bytes and at least one given.\n" +
+			"AI Review reads your two texts and the release's files first; one it does not pass stops the revision. The revision keeps the release's name, and draft.json records the release under revises.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error { return draftRunE(cmd, args, &o) },
 	}
@@ -300,7 +300,7 @@ func runDraft(cmd *cobra.Command, args []string, o *draftOpts) error {
 		return err
 	}
 	if rev != nil {
-		// And the release's two files, which reach the Drafter as
+		// And the release's staged files, which reach the Drafter as
 		// inputs: one AI Review does not pass stops the revision here.
 		if _, err := drafter.PrescanRelease(cmd.Context(), sc, rev); err != nil {
 			return err

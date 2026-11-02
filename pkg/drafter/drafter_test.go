@@ -141,7 +141,7 @@ func TestTheGuidesWorkedDraftsValidate(t *testing.T) {
 			t.Fatalf("an example does not parse: %v\n%s", err, yml)
 		}
 		issues := manifest.ValidateInContext(m, manifest.Context{Namespace: m.Namespace, Name: m.Name, Public: true,
-			Files: []manifest.FileInfo{{Path: "agent.yaml", Size: int64(len(yml))}, {Path: "AGENT.md", Size: 10}, {Path: "README.md", Size: 10}, {Path: "LICENSE", Size: 10}}})
+			Files: []manifest.FileInfo{{Path: "agent.yaml", Size: int64(len(yml))}, {Path: "AGENT.md", Size: 10}, {Path: "PERSONA.md", Size: 10}, {Path: "README.md", Size: 10}, {Path: "LICENSE", Size: 10}}})
 		if blocking := manifest.Blocking(issues); len(blocking) > 0 {
 			t.Errorf("the example %s fails the registry's rules: %v", m.Name, blocking)
 		}

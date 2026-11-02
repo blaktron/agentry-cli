@@ -1,9 +1,9 @@
 ---
 title: Worked drafts
 type: example
-summary: Five whole drafts, each from a description to the manifest, the shape of its instructions and its notes; one with no tools, one with fetch and a key, one with a declared MCP server, each modelled on one of Agentry's first-party example QuickAgents, one that checks a server the person names (a target host), and one that checks a website the person names in a browser.
+summary: Six whole drafts, each from a description to the manifest, the shape of its instructions and its notes; one with no tools, one with fetch and a key, one with a declared MCP server, each modelled on one of Agentry's first-party example QuickAgents, one that checks a server the person names (a target host), one that checks a website the person names in a browser, and one persistent agent with a persona and a proposed subagent.
 sources: [web:https://docs.secureagentry.net/quickagents/, web:https://docs.secureagentry.net/agentry/target-hosts/, web:https://docs.secureagentry.net/agentry/browser/, doc:servers.yaml]
-updated: 2026-10-14
+updated: 2026-11-02
 ---
 
 # Worked drafts
@@ -207,3 +207,47 @@ The site changes from run to run, and only a browser shows how a page renders, s
 Its instructions: `## Role` (check a site's links and phone layout, change nothing); `## Inputs` (the site, and the task's page limit or section); `## Steps` (with `browser_navigate` open the site; `browser_snapshot` to list its links; open each link within the site and its subdomains, up to the limit, noting a link to another site rather than opening it; for each page read `browser_console_messages` and the failed requests in `browser_network_requests`; `browser_resize` to 1280 by 800 and to 390 by 844 and `browser_take_screenshot` of each page that breaks, by a bare file name such as `pricing-phone.png`); `## Output` (a skeleton of `report.md`: broken links with the page they are on, layout problems with their screenshot, console errors, worst first, then the pages that passed); `## Background` (what a broken link is: a 404, a 5xx or a page that never loads; what breaks on a phone: text cut off, a horizontal scroll, a button off screen); `## Checks` (no form submitted, nothing bought or posted, every finding backed by a screenshot or a request, a failed request to another host reported as a finding and not followed).
 
 Its notes: that a site on the person's own network can be checked only with the CLI or the desktop app on their computer, since a run in Agentry opens public sites only; and the page limit it picked.
+
+## A persistent agent: a notes keeper named Pip
+
+The description: "An assistant named Pip that keeps my notes, reminds me of my tasks, and hands the PDFs I share to a PDF summariser."
+
+The person wants an agent that stays, remembers and reminds, so the draft is `persistent` (see [A persistent agent](../manifest/persistent.md)). It declares two keys, `memory` for the notes (`recall`) and `clock` for the reminders (`task_add`, `task_list`, `task_update`, `task_remove`), and no more: it needs no web, no mail and no helper. The description names the agent, so there is a persona, and its text is a file of its own. A registry search found `acme/pdf-summary`, a published QuickAgent that runs on its own and summarises a PDF; the draft proposes it as a subagent with a constraint on the version it read and a reason, and the notes say so. It reads the PDFs the person puts in its share folder (`/agent/share`) and hands each to the subagent [src: web:https://docs.secureagentry.net/quickagents/].
+
+```json
+{
+  "schemaVersion": "2",
+  "name": "pip-notes-keeper",
+  "namespace": "draft",
+  "version": "0.1.0",
+  "summary": "Pip keeps your notes, reminds you of your tasks and has a PDF summariser read the PDFs you share.",
+  "license": "Apache-2.0",
+  "tags": ["assistant", "notes", "reminders"],
+  "modes": ["persistent"],
+  "entrypoints": {"instruction": "AGENT.md"},
+  "interactive": {"opening": "Hello, I am Pip. What should I keep for you, or what should I remind you of?"},
+  "guide": {
+    "overview": "Pip is an assistant that stays running on your computer. It keeps the notes you give it and finds them again when you ask, adds a task when you ask to be reminded and tells you when it is due, and has a PDF summariser read any PDF you put in its share folder. It reaches nothing on the internet.",
+    "task": "e.g. Remember that the quarterly report is due on Friday."
+  },
+  "capabilities": {
+    "network": {"egress": "none"},
+    "filesystem": {"read": "none", "write": "none"},
+    "exec": "none",
+    "persistent": {"clock": true, "memory": true}
+  },
+  "persona": {"name": "Pip"},
+  "dependencies": {
+    "agents": [
+      {"ref": "acme/pdf-summary", "version": "^1.4.0", "why": "Summarises the PDFs you put in the share folder."}
+    ]
+  },
+  "publish": {"include": ["agent.yaml", "AGENT.md", "PERSONA.md", "README.md", "LICENSE"]}
+}
+```
+
+Its instructions: `## Role` (Pip, the person's notes keeper and reminder, who answers briefly and does only what the person asks); `## Inputs` (what the person tells Pip, the PDFs in its share folder (`/agent/share`), and the time of each turn); `## Steps` (a note the person gives is kept in memory in a line of its own, with the date, and found again with `recall`; a request to be reminded becomes a task with `task_add`, listed with `task_list`, changed with `task_update` and removed with `task_remove`; a PDF in the share is listed with `subagent_list`, handed to the summariser with `subagent_run`, and its summary read with `subagent_result` and kept as a note); `## Output` (a short reply, the note or task it kept said back in one line, a summary headed by the PDF's name); `## Background` (how to word a task so it can be found: what, when, for whom; why a summary says what the PDF requires before what it describes); `## Checks` (nothing kept the person did not ask to keep, a task never invented, a due time said back, and a summariser that fails or returns nothing reported as that, with the PDF left for the person).
+
+Its persona, written as the report `PERSONA.md`: a few lines on how Pip sounds (brisk and plain, a short greeting, never pretending to be a person). Nothing in it about tools or permissions.
+
+Its notes: that Pip is a persistent agent, which runs on the person's computer and keeps its memory and tasks there; the two keys it declared and that it asks for no web or mail; the subagent `acme/pdf-summary` at `^1.4.0`, proposed because it summarises a PDF, which the person agrees to when they install Pip and can remove from `dependencies.agents`.

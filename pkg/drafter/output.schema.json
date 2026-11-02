@@ -9,13 +9,119 @@
   "properties": {
     "manifest": {
       "type": "object",
-      "description": "The v2 manifest (agent.yaml) as JSON.",
+      "description": "The v2 manifest (agent.yaml) as JSON. A persistent agent lists persistent in modes and may declare capabilities.persistent, persona and dependencies.agents.",
       "required": [
         "schemaVersion",
         "name",
         "summary",
         "modes"
-      ]
+      ],
+      "properties": {
+        "modes": {
+          "type": "array",
+          "description": "The run modes: autonomous, interactive and persistent, each once.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "persona": {
+          "type": "object",
+          "description": "A persistent agent's name and the file its persona text is in. Leave file out: the text is written as the report PERSONA.md.",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "file": {
+              "type": "string"
+            },
+            "editable": {
+              "type": "boolean"
+            }
+          }
+        },
+        "capabilities": {
+          "type": "object",
+          "properties": {
+            "persistent": {
+              "type": "object",
+              "description": "What a persistent agent may do beyond an ordinary run. Declare only the keys its instructions rely on.",
+              "properties": {
+                "clock": {
+                  "type": "boolean"
+                },
+                "memory": {
+                  "type": "boolean"
+                },
+                "skills": {
+                  "type": "boolean"
+                },
+                "selfConfigure": {
+                  "type": "boolean"
+                },
+                "calendars": {
+                  "type": "boolean"
+                },
+                "meetings": {
+                  "type": "boolean"
+                },
+                "coder": {
+                  "type": "boolean"
+                },
+                "web": {
+                  "type": "boolean"
+                },
+                "helper": {
+                  "type": "boolean"
+                },
+                "review": {
+                  "type": "boolean"
+                },
+                "secrets": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "mail": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "imageServers": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "dependencies": {
+          "type": "object",
+          "properties": {
+            "agents": {
+              "type": "array",
+              "description": "A persistent agent's subagents: published QuickAgents that run on their own, each with a semver constraint in version and a reason of at most 200 characters on one line in why.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "ref": {
+                    "type": "string"
+                  },
+                  "version": {
+                    "type": "string"
+                  },
+                  "why": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     },
     "instructions": {
       "type": "string",
@@ -27,6 +133,11 @@
       "type": "string",
       "maxLength": 20000,
       "description": "Markdown for the person: what was found, what was chosen and why; or written as the report notes.md."
+    },
+    "personaText": {
+      "type": "string",
+      "maxLength": 32768,
+      "description": "A persistent agent's persona text (PERSONA.md), in the Drafter's own words; or written as the report PERSONA.md. Left out for a draft with no persona."
     },
     "matches": {
       "type": "array",
