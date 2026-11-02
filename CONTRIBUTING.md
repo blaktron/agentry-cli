@@ -32,7 +32,8 @@ also needs a container engine: Docker Engine, Docker Desktop or podman.
 
 | Command | What |
 |---|---|
-| `make check` | lint, tests and build: run it before you push |
+| `make check` | lint, tests, build and `make cross`: run it before you push |
+| `make cross` | `go build ./...` and `go vet ./...` for Windows, macOS and Linux on arm64, the release targets other than linux/amd64 |
 | `make build` | `bin/agentry`, with the version taken from `git describe` |
 | `make test` | `go test -race ./...` |
 | `make lint` | `gofmt -l`, `go vet ./...`, `golangci-lint run ./...` |

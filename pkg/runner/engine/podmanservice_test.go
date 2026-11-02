@@ -63,12 +63,6 @@ func fakePodmanService(t *testing.T, hits string) func(runtime, socket string) *
 	}
 }
 
-// alive says whether a process with pid exists.
-func alive(pid int) bool {
-	err := syscall.Kill(pid, 0)
-	return err == nil || errors.Is(err, syscall.EPERM)
-}
-
 // On podman a run whose policy names a runtime drives its gateway through a
 // podman API service of its own, started with that runtime: the filter's
 // upstream is the service's socket, the service is recorded by pid and
