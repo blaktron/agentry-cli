@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -139,4 +140,94 @@ func TestAllowedByGrant(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestUnderResolverAgreesWithResolveUnder: an underResolver answers every
+// path of the traversal corpus as resolveUnder does, links in and out of
+// the root included, with one resolver for the whole corpus, as a search
+// uses one for all its targets.
+func TestUnderResolverAgreesWithResolveUnder(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs privileges on windows")
+	}
+	real := t.TempDir()
+	outside := t.TempDir()
+	mustWrite(t, filepath.Join(outside, "secret"), []byte("s"))
+	mustWrite(t, filepath.Join(outside, "deep", "secret"), []byte("s"))
+	mustWrite(t, filepath.Join(real, "a", "b.txt"), []byte("x"))
+	mustWrite(t, filepath.Join(real, "a", "c", "d.txt"), []byte("x"))
+	for link, target := range map[string]string{
+		"escape-dir":         outside,
+		"escape-file":        filepath.Join(outside, "secret"),
+		"inside-link":        filepath.Join(real, "a"),
+		"inside-file":        filepath.Join(real, "a", "b.txt"),
+		"a/c/up":             filepath.Join(real, "a"),
+		"a/c/out":            filepath.Join(outside, "deep"),
+		"a/dangling":         filepath.Join(real, "nothing-here"),
+		"inside-link-to-out": filepath.Join(real, "escape-dir"),
+	} {
+		if err := os.Symlink(target, filepath.Join(real, link)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The root itself behind a link, as /tmp is on macOS.
+	root := filepath.Join(t.TempDir(), "root-link")
+	if err := os.Symlink(real, root); err != nil {
+		t.Fatal(err)
+	}
+	rels := []string{
+		"a/b.txt", ".", "a", "a/c", "a/c/d.txt", "a/./b.txt", "a/../a/b.txt", "new/dir/file.txt", "a/new.txt",
+		"", "../x", "a/../../x", "/etc/passwd", `a\b`, "..",
+		"escape-dir", "escape-dir/secret", "escape-file", "escape-dir/new/file",
+		"inside-link", "inside-link/b.txt", "inside-link/c/d.txt", "inside-file",
+		"a/c/up/b.txt", "a/c/up/c/up/c/d.txt", "a/c/out", "a/c/out/secret", "a/dangling", "a/dangling/x",
+		"inside-link-to-out/secret", "inside-link/c/out/secret",
+		"a/b.txt/x", "inside-file/x",
+	}
+	r := newUnderResolver(root+"/", osResolverCalls())
+	for _, rel := range append(rels, rels...) {
+		want, wantErr := resolveUnder(root, rel)
+		got, err := r.resolve(rel)
+		if (err == nil) != (wantErr == nil) || got != want {
+			t.Errorf("%q: resolve = (%q, %v), resolveUnder = (%q, %v)", rel, got, err, want, wantErr)
+		}
+	}
+	if _, err := newUnderResolver(filepath.Join(real, "no-root"), osResolverCalls()).resolve("a"); err == nil || !strings.Contains(err.Error(), "resolve tool root") {
+		t.Errorf("a missing root: %v", err)
+	}
+}
+
+// TestUnderResolverResolvesEachFolderOnce: a thousand files in a hundred
+// folders cost one Lstat each, one each folder, and one root resolution.
+func TestUnderResolverResolvesEachFolderOnce(t *testing.T) {
+	root := t.TempDir()
+	var rels []string
+	for d := range 100 {
+		for f := range 10 {
+			rel := filepath.ToSlash(filepath.Join("pkg", strconv.Itoa(d), "file"+strconv.Itoa(f)+".go"))
+			mustWrite(t, filepath.Join(root, filepath.FromSlash(rel)), []byte("x"))
+			rels = append(rels, rel)
+		}
+	}
+	calls, lstats, evals := countingCalls()
+	r := newUnderResolver(root, calls)
+	for _, rel := range rels {
+		if _, err := r.resolve(rel); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 1000 files, 100 folders and "pkg".
+	if *lstats != 1101 || *evals != 1 {
+		t.Errorf("Lstat %d times and EvalSymlinks %d times, want 1101 and 1", *lstats, *evals)
+	}
+}
+
+// countingCalls are the filesystem's calls, each counted.
+func countingCalls() (calls resolverCalls, lstats, evals *int) {
+	var l, e int
+	real := osResolverCalls()
+	return resolverCalls{
+		lstat: func(p string) (os.FileInfo, error) { l++; return real.lstat(p) },
+		eval:  func(p string) (string, error) { e++; return real.eval(p) },
+	}, &l, &e
 }

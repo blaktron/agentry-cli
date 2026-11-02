@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // realRipgrep is the pinned ripgrep, or the test is skipped.
@@ -104,7 +105,7 @@ func TestSearchScopeHoldsEachArea(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(spec.ScratchDir, "out")); err != nil {
 		t.Fatal(err)
 	}
-	if sc, err := s.scope(ToolGrep, spec.ScratchDir, ""); err != nil || sc.area != "scratch" || sc.dir != spec.ScratchDir || !slices.Equal(sc.paths, []string{"."}) || sc.read[0] != spec.ScratchDir {
+	if sc, err := s.scope(ToolGrep, spec.ScratchDir, "", inputsFilter{}, time.Now().Add(time.Minute)); err != nil || sc.area != "scratch" || sc.dir != spec.ScratchDir || !slices.Equal(sc.paths, []string{"."}) || sc.read[0] != spec.ScratchDir {
 		t.Fatalf("the scratch folder: %+v, %v", sc, err)
 	}
 	for _, p := range []string{
@@ -115,11 +116,11 @@ func TestSearchScopeHoldsEachArea(t *testing.T) {
 		"",                                  // no path
 		spec.ScratchDir + "/missing",        // nothing there
 	} {
-		if sc, err := s.scope(ToolGrep, p, ""); err == nil {
+		if sc, err := s.scope(ToolGrep, p, "", inputsFilter{}, time.Now().Add(time.Minute)); err == nil {
 			t.Errorf("scope(%q) = %+v, want a refusal", p, sc)
 		}
 	}
-	if _, err := s.scope(ToolGrep, spec.ScratchDir, ViewText); err == nil || !strings.Contains(err.Error(), "view applies to") {
+	if _, err := s.scope(ToolGrep, spec.ScratchDir, ViewText, inputsFilter{}, time.Now().Add(time.Minute)); err == nil || !strings.Contains(err.Error(), "view applies to") {
 		t.Errorf("a view outside the inputs: %v", err)
 	}
 
@@ -129,10 +130,10 @@ func TestSearchScopeHoldsEachArea(t *testing.T) {
 	mustWrite(t, filepath.Join(ws.WorkspaceDir, "docs", "a.md"), []byte("a\n"))
 	mustWrite(t, filepath.Join(ws.WorkspaceDir, "private", "b.md"), []byte("b\n"))
 	w := newTestServer(t, ws)
-	if sc, err := w.scope(ToolGrep, ws.WorkspaceDir, ""); err != nil || sc.dir != ws.WorkspaceDir || !slices.Equal(sc.paths, []string{"docs"}) {
+	if sc, err := w.scope(ToolGrep, ws.WorkspaceDir, "", inputsFilter{}, time.Now().Add(time.Minute)); err != nil || sc.dir != ws.WorkspaceDir || !slices.Equal(sc.paths, []string{"docs"}) {
 		t.Errorf("the workspace root under a paths grant is the granted paths: %+v, %v", sc, err)
 	}
-	if _, err := w.scope(ToolGrep, ws.WorkspaceDir+"/private", ""); err == nil {
+	if _, err := w.scope(ToolGrep, ws.WorkspaceDir+"/private", "", inputsFilter{}, time.Now().Add(time.Minute)); err == nil {
 		t.Error("a workspace path outside the paths grant was searched")
 	}
 }
@@ -529,7 +530,88 @@ func TestTheInputsAreNotSearchedUnderReview(t *testing.T) {
 func TestASearchWithNothingToReadBeneathNeverStarts(t *testing.T) {
 	s := searchServer(t, scratchSpec(t), "/bin/true")
 	s.search = chooseSearchConfinement("linux", 4, nil, 0, "/r")
-	if _, failed := s.runRipgrep("grep", []string{"-e", "x"}, searchScope{dir: "/", paths: []string{"."}}); !strings.Contains(failed, "no area to hold its reads to") || !s.callFault {
+	if _, failed := s.runRipgrep("grep", []string{"-e", "x"}, searchScope{dir: "/", paths: []string{"."}}, time.Now().Add(time.Minute)); !strings.Contains(failed, "no area to hold its reads to") || !s.callFault {
 		t.Errorf("a search with no read set: %q (fault %v)", failed, s.callFault)
+	}
+}
+
+// manyInputsSpec is a run whose inputs are a repository of folders files
+// in each of dirs folders, indexed as the decode step indexes text, with
+// one go.mod at its top.
+func manyInputsSpec(t *testing.T, dirs, files int) *Spec {
+	t.Helper()
+	spec := inputsSpec(t)
+	spec.InputsTextDir = t.TempDir()
+	entries := []InputEntry{{Path: "repo/go.mod", Type: "text", Bytes: 12, TextBytes: 12}}
+	mustWrite(t, filepath.Join(spec.InputsDir, "repo", "go.mod"), []byte("module repo\n"))
+	for d := range dirs {
+		for f := range files {
+			p := "repo/pkg" + strconv.Itoa(d) + "/file" + strconv.Itoa(f) + ".go"
+			mustWrite(t, filepath.Join(spec.InputsDir, filepath.FromSlash(p)), []byte("package x // needle\n"))
+			entries = append(entries, InputEntry{Path: p, Type: "text", Bytes: 20, TextBytes: 20})
+		}
+	}
+	writeIndex(t, spec, entries)
+	return spec
+}
+
+// TestASearchOfManyInputsChecksEachFileOnce: listing the inputs a search
+// reads costs one Lstat a file and a folder, and grep's glob is applied
+// before anything is checked, so a grep that names one file checks it
+// alone.
+func TestASearchOfManyInputsChecksEachFileOnce(t *testing.T) {
+	spec := manyInputsSpec(t, 30, 10)
+	s := searchServer(t, spec, "/bin/true")
+	var lstats, evals *int
+	s.fsCalls, lstats, evals = countingCalls()
+	if got, isErr := s.toolSearchInputs(rawArgs(t, map[string]any{"query": "needle", "maxResults": 1})); isErr || !strings.Contains(got, "299 more matching lines") {
+		t.Fatalf("search_inputs: (%q, %v)", got, isErr)
+	}
+	// 301 files, 30 folders and repo.
+	if *lstats != 332 || *evals != 1 {
+		t.Errorf("search_inputs: Lstat %d times and EvalSymlinks %d times, want 332 and 1", *lstats, *evals)
+	}
+	*lstats, *evals = 0, 0
+	if _, isErr := grepCall(t, s, map[string]any{"pattern": "needle", "path": spec.InputsDir}); isErr {
+		t.Fatal("grep failed")
+	}
+	if *lstats != 332 || *evals != 1 {
+		t.Errorf("grep: Lstat %d times and EvalSymlinks %d times, want 332 and 1", *lstats, *evals)
+	}
+	*lstats, *evals = 0, 0
+	if _, isErr := grepCall(t, s, map[string]any{"pattern": "module", "path": spec.InputsDir + "/repo", "glob": "go.mod"}); isErr {
+		t.Fatal("grep failed")
+	}
+	// The file and its folder.
+	if *lstats != 2 || *evals != 1 {
+		t.Errorf("a grep of one file by glob: Lstat %d times and EvalSymlinks %d times, want 2 and 1", *lstats, *evals)
+	}
+}
+
+// TestASlowSearchAnswersInPartBeforeItsLimit: where every metadata call
+// is slow, grep and search_inputs stop listing at their limit and answer
+// what they reached, saying so, rather than outlasting the harness.
+func TestASlowSearchAnswersInPartBeforeItsLimit(t *testing.T) {
+	spec := manyInputsSpec(t, 30, 10)
+	s := searchServer(t, spec, realRipgrep(t))
+	s.searchTimeout = 300 * time.Millisecond
+	lstat := s.fsCalls.lstat
+	s.fsCalls.lstat = func(p string) (os.FileInfo, error) { time.Sleep(5 * time.Millisecond); return lstat(p) }
+
+	start := time.Now()
+	got, isErr := s.toolSearchInputs(rawArgs(t, map[string]any{"query": "needle", "maxResults": 1}))
+	if isErr || !strings.HasPrefix(got, "repo/pkg0/file0.go:1:") || !strings.Contains(got, "stopped at its 300ms limit") {
+		t.Errorf("search_inputs: (%q, %v)", got, isErr)
+	}
+	got, isErr = grepCall(t, s, map[string]any{"pattern": "needle", "path": spec.InputsDir, "maxResults": 1})
+	if isErr || !strings.HasPrefix(got, spec.InputsDir+"/repo/pkg0/file0.go\n") || !strings.Contains(got, "stopped listing files at its 300ms limit") {
+		t.Errorf("grep: (%q, %v)", got, isErr)
+	}
+	if took := time.Since(start); took > 2*time.Second {
+		t.Errorf("the two searches took %s", took)
+	}
+	s.searchTimeout = time.Nanosecond
+	if got, isErr := grepCall(t, s, map[string]any{"pattern": "needle", "path": spec.InputsDir}); isErr || !strings.Contains(got, "stopped at its 1ns limit; narrow path or glob") {
+		t.Errorf("a grep that listed nothing in time: (%q, %v)", got, isErr)
 	}
 }
