@@ -1,6 +1,13 @@
 {
   "versions": [
     {
+      "version": "0.7.3",
+      "highlights": [
+        "agentry runhost model --provider agentry lets a runhost pay for its runs' models with your Agentry credits.",
+        "The runhost keeps a token that can only pay for model use, and agentry runhost store or remove revokes it."
+      ]
+    },
+    {
       "version": "0.7.2",
       "highlights": [
         "A run on a runhost goes on there if your connection drops, and the CLI picks it up again where it was.",
