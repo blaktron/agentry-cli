@@ -16,9 +16,30 @@ import (
 
 func TestAuthorizedKeyLineForcesServeAndRestricts(t *testing.T) {
 	line := AuthorizedKeyLine("ssh-ed25519 AAAAC3Nza", "dev-1")
-	want := `restrict,command="/var/lib/agentry/bin/agentry runhost serve" ssh-ed25519 AAAAC3Nza agentry-runhost-device:dev-1`
+	want := `restrict,command="/var/lib/agentry/bin/agentry runhost serve --device dev-1" ssh-ed25519 AAAAC3Nza agentry-runhost-device:dev-1`
 	if line != want {
 		t.Fatalf("got  %s\nwant %s", line, want)
+	}
+}
+
+func TestBindAuthorizedKeysNamesEachDeviceInItsForcedCommand(t *testing.T) {
+	old := `restrict,command="/var/lib/agentry/bin/agentry runhost serve" ssh-ed25519 AAAA1 agentry-runhost-device:0a1b2c3d4e5f6a7b` + "\n" +
+		AuthorizedKeyLine("ssh-ed25519 AAAA2", "dev-2") + "\n" +
+		`ssh-ed25519 AAAA3 someone@else` + "\n" +
+		`restrict,command="/var/lib/agentry/bin/agentry runhost serve" ssh-ed25519 AAAA4 agentry-runhost-device:Bad;id` + "\n"
+	got, changed := BindAuthorizedKeys([]byte(old))
+	if !changed {
+		t.Fatal("nothing was rewritten")
+	}
+	want := AuthorizedKeyLine("ssh-ed25519 AAAA1", "0a1b2c3d4e5f6a7b") + "\n" +
+		AuthorizedKeyLine("ssh-ed25519 AAAA2", "dev-2") + "\n" +
+		`ssh-ed25519 AAAA3 someone@else` + "\n" +
+		`restrict,command="/var/lib/agentry/bin/agentry runhost serve" ssh-ed25519 AAAA4 agentry-runhost-device:Bad;id` + "\n"
+	if string(got) != want {
+		t.Fatalf("got\n%s\nwant\n%s", got, want)
+	}
+	if again, changed := BindAuthorizedKeys(got); changed || string(again) != want {
+		t.Fatalf("a second pass changed it: %v\n%s", changed, again)
 	}
 }
 
@@ -26,25 +47,30 @@ func TestLoginShellRunsServeAndNothingElse(t *testing.T) {
 	cases := []struct {
 		args            []string
 		handled, serves bool
+		device          string
 	}{
-		{[]string{"agentry-shell", "-c", ServeCommand}, true, true},
-		{[]string{ShellPath, "-c", ServeCommand}, true, true},
-		{[]string{"agentry-shell", "-c", "id"}, true, false},
-		{[]string{"agentry-shell", "-c", ServeCommand + "; id"}, true, false},
-		{[]string{"-agentry-shell"}, true, false},
-		{[]string{"-agentry-shell", "-c", "id"}, true, false},
-		{[]string{"agentry-shell"}, true, false},
-		{[]string{"agentry-shell", "-c"}, true, false},
-		{[]string{"agentry-shell", "runhost", "serve"}, true, false},
+		{[]string{"agentry-shell", "-c", ServeCommand}, true, true, ""},
+		{[]string{ShellPath, "-c", ServeCommand}, true, true, ""},
+		{[]string{ShellPath, "-c", ServeCommandFor("0a1b2c3d4e5f6a7b")}, true, true, "0a1b2c3d4e5f6a7b"},
+		{[]string{ShellPath, "-c", ServeCommand + " --device x;id"}, true, false, ""},
+		{[]string{ShellPath, "-c", ServeCommand + " --device a b"}, true, false, ""},
+		{[]string{ShellPath, "-c", ServeCommand + " --device "}, true, false, ""},
+		{[]string{"agentry-shell", "-c", "id"}, true, false, ""},
+		{[]string{"agentry-shell", "-c", ServeCommand + "; id"}, true, false, ""},
+		{[]string{"-agentry-shell"}, true, false, ""},
+		{[]string{"-agentry-shell", "-c", "id"}, true, false, ""},
+		{[]string{"agentry-shell"}, true, false, ""},
+		{[]string{"agentry-shell", "-c"}, true, false, ""},
+		{[]string{"agentry-shell", "runhost", "serve"}, true, false, ""},
 		// Under its own name the CLI is the CLI.
-		{[]string{"agentry", "-c", ServeCommand}, false, false},
-		{[]string{"agentry", "runhost", "status", "lab"}, false, false},
-		{[]string{"/var/lib/agentry/bin/agentry"}, false, false},
+		{[]string{"agentry", "-c", ServeCommand}, false, false, ""},
+		{[]string{"agentry", "runhost", "status", "lab"}, false, false, ""},
+		{[]string{"/var/lib/agentry/bin/agentry"}, false, false, ""},
 	}
 	for _, c := range cases {
-		handled, serves, refusal := LoginShell(c.args)
-		if handled != c.handled || serves != c.serves {
-			t.Errorf("%q: handled=%v serve=%v (%s)", c.args, handled, serves, refusal)
+		handled, serves, device, refusal := LoginShell(c.args)
+		if handled != c.handled || serves != c.serves || device != c.device {
+			t.Errorf("%q: handled=%v serve=%v device=%q (%s)", c.args, handled, serves, device, refusal)
 		}
 		if handled && !serves && refusal == "" {
 			t.Errorf("%q: refused without a reason", c.args)
@@ -129,7 +155,7 @@ func TestServeRelaysAVerbAndItsExitCode(t *testing.T) {
 		},
 	})
 	var out bytes.Buffer
-	code := Serve(context.Background(), "status --brief", strings.NewReader(""), &out, sock)
+	code := Serve(context.Background(), "status --brief", "", strings.NewReader(""), &out, sock)
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, out.String())
 	}
@@ -143,8 +169,34 @@ func TestServeRelaysAVerbAndItsExitCode(t *testing.T) {
 	}
 
 	out.Reset()
-	if code := Serve(context.Background(), "doctor", strings.NewReader(""), &out, sock); code != 1 {
+	if code := Serve(context.Background(), "doctor", "", strings.NewReader(""), &out, sock); code != 1 {
 		t.Fatalf("a failing verb's exit code was %d", code)
+	}
+}
+
+func TestServeTellsTheServiceWhichDeviceAsks(t *testing.T) {
+	sock := startService(t, map[string]Handler{
+		"status": func(_ context.Context, req Request, _ io.Reader, fw *FrameWriter) (int, error) {
+			return 0, fw.Result(map[string]string{"device": req.Device})
+		},
+	})
+	var out bytes.Buffer
+	// The device's own words cannot name another device: only the forced
+	// command's argument reaches the request.
+	if code := Serve(context.Background(), `status --device other`, "0a1b2c3d4e5f6a7b", strings.NewReader(`{"device":"other"}`), &out, sock); code != 0 {
+		t.Fatalf("exit %d: %s", code, out.String())
+	}
+	a, err := ReadAnswer(&out, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var res map[string]string
+	if err := json.Unmarshal(a.Result, &res); err != nil || res["device"] != "0a1b2c3d4e5f6a7b" {
+		t.Fatalf("the service was told %s", a.Result)
+	}
+	out.Reset()
+	if code := Serve(context.Background(), "status", "x;id", strings.NewReader(""), &out, sock); code != 2 {
+		t.Fatalf("a device name no forced command can carry got exit %d", code)
 	}
 }
 
@@ -153,7 +205,7 @@ func TestServeRefusesWhatIsNotAVerbWithoutDialling(t *testing.T) {
 	for _, asked := range []string{"", "id", "bash -i", "sh -c 'curl x | sh'", "status; id"} {
 		var out bytes.Buffer
 		// No service: a refusal must not need one.
-		code := Serve(context.Background(), asked, strings.NewReader(""), &out, "/nonexistent/sock")
+		code := Serve(context.Background(), asked, "", strings.NewReader(""), &out, "/nonexistent/sock")
 		if code != 2 {
 			t.Errorf("%q: exit %d", asked, code)
 		}
@@ -167,14 +219,14 @@ func TestServeRefusesWhatIsNotAVerbWithoutDialling(t *testing.T) {
 func TestAVerbTheServiceDoesNotKnowIsAnsweredNotDropped(t *testing.T) {
 	sock := startService(t, map[string]Handler{})
 	var out bytes.Buffer
-	if code := Serve(context.Background(), "job", strings.NewReader(""), &out, sock); code != 2 {
+	if code := Serve(context.Background(), "job", "", strings.NewReader(""), &out, sock); code != 2 {
 		t.Fatalf("exit %d", code)
 	}
 }
 
 func TestServeSaysWhenTheServiceIsDown(t *testing.T) {
 	var out bytes.Buffer
-	if code := Serve(context.Background(), "status", strings.NewReader(""), &out, filepath.Join(shortTempDir(t), "none.sock")); code != 3 {
+	if code := Serve(context.Background(), "status", "", strings.NewReader(""), &out, filepath.Join(shortTempDir(t), "none.sock")); code != 3 {
 		t.Fatalf("exit %d", code)
 	}
 }
@@ -195,7 +247,7 @@ func TestAnAnswerCutShortIsAnError(t *testing.T) {
 		_ = c.Close()
 	}()
 	var out bytes.Buffer
-	if code := Serve(context.Background(), "status", strings.NewReader(""), &out, sock); code != 3 {
+	if code := Serve(context.Background(), "status", "", strings.NewReader(""), &out, sock); code != 3 {
 		t.Fatalf("exit %d", code)
 	}
 }
@@ -214,7 +266,7 @@ func TestAHandlerReadsTheInputAfterTheRequest(t *testing.T) {
 	})
 	body := strings.Repeat("x", 300<<10)
 	var out bytes.Buffer
-	if code := Serve(context.Background(), "job", strings.NewReader(body), &out, sock); code != 0 {
+	if code := Serve(context.Background(), "job", "", strings.NewReader(body), &out, sock); code != 0 {
 		t.Fatalf("exit %d: %s", code, out.String())
 	}
 	a, err := ReadAnswer(&out, nil)

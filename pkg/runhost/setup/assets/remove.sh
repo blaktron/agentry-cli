@@ -36,6 +36,9 @@ if id agentry >/dev/null 2>&1; then
 fi
 step "the runhost's settings"
 rm -rf /etc/agentry-runhost
+if command -v semodule >/dev/null 2>&1 && semodule -l 2>/dev/null | grep -qx agentry-runhost; then
+	semodule -r agentry-runhost >/dev/null
+fi
 
 if [ -f "$STAGE/daemon.json" ]; then
 	: "${WAS_DAEMON_JSON:?}"
@@ -60,8 +63,13 @@ if [ "$REMOVE_DOCKER" = yes ] && [ "$installed_docker" = no ]; then
 fi
 if [ "$REMOVE_DOCKER" = yes ] && [ "$installed_docker" = yes ]; then
 	step "Docker Engine"
-	export DEBIAN_FRONTEND=noninteractive
-	apt-get purge -y -qq docker-ce docker-ce-cli containerd.io >/dev/null 2>&1 || true
-	rm -f /etc/apt/sources.list.d/docker.sources /etc/apt/keyrings/docker.asc
+	if command -v apt-get >/dev/null 2>&1; then
+		export DEBIAN_FRONTEND=noninteractive
+		apt-get purge -y -qq docker-ce docker-ce-cli containerd.io >/dev/null 2>&1 || true
+		rm -f /etc/apt/sources.list.d/docker.sources /etc/apt/keyrings/docker.asc
+	elif command -v dnf >/dev/null 2>&1; then
+		dnf -y -q remove docker-ce docker-ce-cli containerd.io >/dev/null 2>&1 || true
+		rm -f /etc/yum.repos.d/docker-ce.repo /etc/pki/rpm-gpg/docker-ce.asc
+	fi
 fi
 echo "done"

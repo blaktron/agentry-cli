@@ -9,6 +9,7 @@
 #   agentry          the CLI release for this server, verified on the device
 #   gvisor.tar.gz    runsc and its helpers, verified on the device
 #   docker.asc       Docker's apt repository key, carried by the CLI
+#   docker-rpm.asc   Docker's RPM repository key, carried by the CLI
 #   daemon.json      the Docker daemon's configuration with gVisor's two
 #                    runtimes merged in, when it differs from the server's
 #   authorized_keys  the agentry account's run keys, this device's included
@@ -21,7 +22,7 @@
 set -eu
 # shellcheck disable=SC1090
 . "$1"
-: "${STAGE:?}" "${AGENTRY_VERSION:?}" "${AGENTRY_SHA256:?}" "${GVISOR_RELEASE:?}" "${GVISOR_SHA256:?}" "${INSTALL_DOCKER:?}" "${OS_ID:?}"
+: "${STAGE:?}" "${AGENTRY_VERSION:?}" "${AGENTRY_SHA256:?}" "${GVISOR_RELEASE:?}" "${GVISOR_SHA256:?}" "${INSTALL_DOCKER:?}" "${OS_ID:?}" "${PACKAGE:?}"
 : "${WAS_AUTHORIZED_KEYS:?}" "${WAS_DEVICES_JSON:?}"
 
 HOME_DIR=/var/lib/agentry
@@ -54,21 +55,49 @@ install -d -m 0755 -o agentry -g agentry "$BIN" "$HOME_DIR/cli" "$HOME_DIR/gviso
 
 if [ "$INSTALL_DOCKER" = yes ]; then
 	step "Docker Engine from Docker's repository"
-	: "${OS_CODENAME:?}"
-	export DEBIAN_FRONTEND=noninteractive
-	install -d -m 0755 /etc/apt/keyrings
-	install -m 0644 "$STAGE/docker.asc" /etc/apt/keyrings/docker.asc
-	arch=$(dpkg --print-architecture)
-	cat >/etc/apt/sources.list.d/docker.sources <<EOF
+	: "${DOCKER_REPO:?}"
+	case "$PACKAGE" in
+	apt)
+		: "${OS_CODENAME:?}"
+		export DEBIAN_FRONTEND=noninteractive
+		install -d -m 0755 /etc/apt/keyrings
+		install -m 0644 "$STAGE/docker.asc" /etc/apt/keyrings/docker.asc
+		arch=$(dpkg --print-architecture)
+		cat >/etc/apt/sources.list.d/docker.sources <<EOF
 Types: deb
-URIs: https://download.docker.com/linux/$OS_ID
+URIs: https://download.docker.com/linux/$DOCKER_REPO
 Suites: $OS_CODENAME
 Components: stable
 Architectures: $arch
 Signed-By: /etc/apt/keyrings/docker.asc
 EOF
-	apt-get update -qq
-	apt-get install -y -qq docker-ce docker-ce-cli containerd.io >/dev/null
+		apt-get update -qq
+		apt-get install -y -qq docker-ce docker-ce-cli containerd.io >/dev/null
+		;;
+	dnf)
+		: "${OS_RELEASE:?}"
+		install -d -m 0755 /etc/pki/rpm-gpg
+		install -m 0644 "$STAGE/docker-rpm.asc" /etc/pki/rpm-gpg/docker-ce.asc
+		# The release is written out rather than left to $releasever, which
+		# names a minor release on RHEL and its rebuilds.
+		cat >/etc/yum.repos.d/docker-ce.repo <<EOF
+[docker-ce-stable]
+name=Docker CE Stable - \$basearch
+baseurl=https://download.docker.com/linux/$DOCKER_REPO/$OS_RELEASE/\$basearch/stable
+enabled=1
+gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/docker-ce.asc
+EOF
+		# Docker's bridge network needs netfilter's addrtype match, which RHEL
+		# and its rebuilds ship in kernel-modules-extra: the running kernel's
+		# own, since a newer kernel's is no use before a reboot.
+		if ! modinfo xt_addrtype >/dev/null 2>&1; then
+			dnf -y -q install "kernel-modules-extra-$(uname -r)" >/dev/null 2>&1 || fail "the running kernel $(uname -r) lacks the netfilter modules Docker needs, and its kernel-modules-extra is not in the repositories: reboot into the newest kernel and run setup again"
+		fi
+		dnf -y -q install docker-ce docker-ce-cli containerd.io >/dev/null
+		;;
+	*) fail "setup does not install Docker Engine with $PACKAGE" ;;
+	esac
 	systemctl enable --now docker >/dev/null 2>&1
 	# Remembered at once, so a removal can take away the Docker Engine this
 	# setup installed even when the install stopped later.
@@ -144,6 +173,21 @@ unchanged "$HOME_DIR/runhost/devices.json" "$WAS_DEVICES_JSON"
 install -m 0600 -o agentry -g agentry "$STAGE/devices.json" "$HOME_DIR/runhost/devices.json"
 unchanged "$HOME_DIR/.ssh/authorized_keys" "$WAS_AUTHORIZED_KEYS"
 install -m 0600 -o agentry -g agentry "$STAGE/authorized_keys" "$HOME_DIR/.ssh/authorized_keys"
+
+# Under SELinux, sshd starts the account's login shell, the CLI, only from a
+# file the policy lets a user session begin in, and the home's default label
+# is not one: a module of file contexts labels the CLI's directories as
+# commands (bin_t), which a relabel keeps and an update's new CLI inherits.
+# sshd reads the run keys as ssh_home_t, the policy's own label for them.
+if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
+	step "SELinux labels for the CLI"
+	cat >"$STAGE/agentry-runhost.cil" <<'EOF'
+(filecon "/var/lib/agentry/bin(/.*)?" any (system_u object_r bin_t ((s0) (s0))))
+(filecon "/var/lib/agentry/cli(/.*)?" any (system_u object_r bin_t ((s0) (s0))))
+EOF
+	semodule -i "$STAGE/agentry-runhost.cil" || fail "the SELinux module of the CLI's labels did not load"
+	restorecon -R "$HOME_DIR"
+fi
 
 step "the account's user manager"
 loginctl enable-linger agentry

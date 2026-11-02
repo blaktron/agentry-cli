@@ -18,6 +18,9 @@ import (
 type Request struct {
 	Verb string   `json:"verb"`
 	Args []string `json:"args,omitempty"`
+	// Device is the paired device whose run key opened the session, from
+	// the key's forced command: serve sets it, never the device.
+	Device string `json:"device,omitempty"`
 }
 
 // Frame types.

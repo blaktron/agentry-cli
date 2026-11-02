@@ -82,9 +82,13 @@ type runhostDevice struct {
 }
 
 func runRunhostService(cmd *cobra.Command) error {
-	ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGTERM, os.Interrupt)
+	sig, stopSig := signal.NotifyContext(cmd.Context(), syscall.SIGTERM, os.Interrupt)
+	defer stopSig()
+	ctx, stop := context.WithCancel(sig)
 	defer stop()
 	logger := log.New(os.Stderr, "", 0)
+	bindRunhostKeys(logger.Printf)
+	sweepOldCLIs()
 	// No job runs before the service listens, so what a killed job left
 	// behind is swept now, and finished outputs past their keep hourly.
 	sweepRunhostJobs(time.Now(), true)
@@ -126,6 +130,8 @@ func runRunhostService(cmd *cobra.Command) error {
 			"cancel":  runhostCancelVerb,
 			"collect": runhostCollectVerb,
 			"store":   runhostStoreVerb,
+			"update":  runhostUpdateVerb,
+			"unpair":  runhostUnpairVerb,
 			"sign-in": runhostSignInVerb(signIns),
 			"doctor": func(ctx context.Context, _ runhost.Request, _ io.Reader, fw *runhost.FrameWriter) (int, error) {
 				rep := runhostDoctor(ctx)
@@ -144,7 +150,16 @@ func runRunhostService(cmd *cobra.Command) error {
 		return err
 	}
 	logger.Printf("agentry runhost service %s listening on %s", version.Version, s.Socket)
-	return s.Serve(ctx, l)
+	restart := awaitRunhostRestart(ctx, stop, logger.Printf)
+	if err := s.Serve(ctx, l); err != nil {
+		return err
+	}
+	// An update stops the service between jobs; systemd starts it again,
+	// from the CLI the update installed.
+	if sig.Err() == nil && <-restart {
+		os.Exit(runhost.RestartExit)
+	}
+	return nil
 }
 
 // runhostVersionAnswer is the version verb's answer: the CLI's version and

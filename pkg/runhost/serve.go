@@ -16,9 +16,10 @@ import (
 // device asked for, with the asked command in SSH_ORIGINAL_COMMAND; Serve
 // relays the session to the service's socket only when that command is a
 // run key's verb (IsVerb), and otherwise answers with a refusal and exit status 2. It never
-// runs anything itself. It returns the exit status the session ends with:
-// the service's exit frame's.
-func Serve(ctx context.Context, original string, stdin io.Reader, stdout io.Writer, socket string) int {
+// runs anything itself. device is the device the run key's forced command
+// names, passed on to the service, or "" for a key that names none. It
+// returns the exit status the session ends with: the service's exit frame's.
+func Serve(ctx context.Context, original, device string, stdin io.Reader, stdout io.Writer, socket string) int {
 	fw := NewFrameWriter(stdout)
 	fields := strings.Fields(original)
 	if len(fields) == 0 || !IsVerb(fields[0]) {
@@ -35,6 +36,10 @@ func Serve(ctx context.Context, original string, stdin io.Reader, stdout io.Writ
 			return 2
 		}
 	}
+	if device != "" && !ValidDeviceID(device) {
+		_ = fw.Exit(2, fmt.Errorf("the run key names a device %q that cannot be one", device))
+		return 2
+	}
 	var d net.Dialer
 	conn, err := d.DialContext(ctx, "unix", socket)
 	if err != nil {
@@ -42,7 +47,7 @@ func Serve(ctx context.Context, original string, stdin io.Reader, stdout io.Writ
 		return 3
 	}
 	defer func() { _ = conn.Close() }()
-	if err := WriteRequest(conn, Request{Verb: fields[0], Args: fields[1:]}); err != nil {
+	if err := WriteRequest(conn, Request{Verb: fields[0], Args: fields[1:], Device: device}); err != nil {
 		_ = fw.Exit(3, err)
 		return 3
 	}
@@ -95,13 +100,19 @@ func ServeSocket() string {
 // else is refused: a login, an interactive shell, and any other -c command,
 // so the account has no shell even if a key were installed without its
 // forced command. handled is false when the CLI runs under any other name;
-// serve is true when the command is serve.
-func LoginShell(args []string) (handled, serve bool, refusal string) {
+// serve is true when the command is serve, and device is the device its
+// forced command names ("" for a forced command that names none).
+func LoginShell(args []string) (handled, serve bool, device, refusal string) {
 	if len(args) == 0 || strings.TrimPrefix(filepath.Base(args[0]), "-") != ShellName {
-		return false, false, ""
+		return false, false, "", ""
 	}
-	if len(args) == 3 && args[1] == "-c" && args[2] == ServeCommand {
-		return true, true, ""
+	if len(args) == 3 && args[1] == "-c" {
+		if args[2] == ServeCommand {
+			return true, true, "", ""
+		}
+		if id, ok := strings.CutPrefix(args[2], ServeCommand+" --device "); ok && ValidDeviceID(id) {
+			return true, true, id, ""
+		}
 	}
-	return true, false, "the agentry account has no shell: it runs nothing but the runhost's service"
+	return true, false, "", "the agentry account has no shell: it runs nothing but the runhost's service"
 }

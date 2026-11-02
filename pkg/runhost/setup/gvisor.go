@@ -10,7 +10,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path"
+	"path/filepath"
 	"strings"
 
 	"github.com/klauspost/compress/zstd"
@@ -37,8 +39,18 @@ const maxGVisor = 512 << 20
 // repacks runsc and its helper binaries as a gzip tar, which every server can
 // unpack. The containerd shim is left out: Docker runs runsc directly.
 func FetchGVisor(ctx context.Context, client *http.Client, arch string) ([]byte, error) {
-	want, ok := gvisorSHA512[arch]
-	if !ok {
+	archive, err := FetchGVisorArchive(ctx, client, arch)
+	if err != nil {
+		return nil, err
+	}
+	return RepackGVisor(archive)
+}
+
+// FetchGVisorArchive downloads gVisor's release archive for a server
+// architecture and checks it against the pinned SHA-512 (CheckGVisor). It is
+// the archive as gVisor publishes it, which a runhost checks again.
+func FetchGVisorArchive(ctx context.Context, client *http.Client, arch string) ([]byte, error) {
+	if _, ok := gvisorSHA512[arch]; !ok {
 		return nil, fmt.Errorf("no gVisor release is pinned for %s", arch)
 	}
 	u := GVisorBaseURL + "/" + GVisorRelease + "/" + arch + "/gvisor.tar.zstd"
@@ -58,14 +70,75 @@ func FetchGVisor(ctx context.Context, client *http.Client, arch string) ([]byte,
 	if err != nil {
 		return nil, fmt.Errorf("download gVisor: %w", err)
 	}
+	if err := CheckGVisor(arch, archive); err != nil {
+		return nil, err
+	}
+	return archive, nil
+}
+
+// CheckGVisor checks that archive is the pinned GVisorRelease's archive for
+// arch (uname -m), by its SHA-512.
+func CheckGVisor(arch string, archive []byte) error {
+	want, ok := gvisorSHA512[arch]
+	if !ok {
+		return fmt.Errorf("no gVisor release is pinned for %s", arch)
+	}
 	if len(archive) > maxGVisor {
-		return nil, fmt.Errorf("download gVisor: larger than %d bytes", maxGVisor)
+		return fmt.Errorf("the gVisor archive is larger than %d bytes", maxGVisor)
 	}
 	got := sha512.Sum512(archive)
 	if hex.EncodeToString(got[:]) != want {
-		return nil, fmt.Errorf("gVisor %s for %s does not match its pinned SHA-512", GVisorRelease, arch)
+		return fmt.Errorf("gVisor %s for %s does not match its pinned SHA-512", GVisorRelease, arch)
 	}
-	return RepackGVisor(archive)
+	return nil
+}
+
+// UnpackGVisor unpacks what RepackGVisor made into dir, which it creates:
+// runsc and its helpers, each executable.
+func UnpackGVisor(repacked []byte, dir string) error {
+	gz, err := gzip.NewReader(bytes.NewReader(repacked))
+	if err != nil {
+		return err
+	}
+	tr := tar.NewReader(io.LimitReader(gz, maxGVisor))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		name := path.Clean(h.Name)
+		if name == "." || strings.HasPrefix(name, "../") || path.IsAbs(name) {
+			return fmt.Errorf("the gVisor archive names %q", h.Name)
+		}
+		dst := filepath.Join(dir, filepath.FromSlash(name))
+		switch h.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(dst, 0o755); err != nil {
+				return err
+			}
+		case tar.TypeReg:
+			if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+				return err
+			}
+			f, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755) //nolint:gosec // a path checked above, under dir
+			if err != nil {
+				return err
+			}
+			_, cerr := io.CopyN(f, tr, h.Size)
+			if err := f.Close(); cerr == nil {
+				cerr = err
+			}
+			if cerr != nil {
+				return cerr
+			}
+		}
+	}
 }
 
 // RepackGVisor turns a checked gvisor.tar.zstd into the gzip tar the server

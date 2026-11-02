@@ -12,6 +12,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/internal/version"
 	"github.com/blaktron/agentry-cli/pkg/runhost"
+	"github.com/blaktron/agentry-cli/pkg/runhost/clirelease"
 	"github.com/blaktron/agentry-cli/pkg/runhost/job"
 	"github.com/blaktron/agentry-cli/pkg/runhost/payload"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
@@ -241,9 +242,28 @@ func NewJobID() (string, error) {
 // Version is the version verb's answer.
 type Version struct {
 	Version string `json:"version"`
+	// Arch is the runhost's architecture in Go's words.
+	Arch string `json:"arch,omitempty"`
 	// UnsafeMode is the runhost's own Unsafe Mode setting.
 	UnsafeMode bool `json:"unsafeMode"`
 }
+
+// VersionSkew is the refusal of a run on runhost name, whose CLI is
+// server, from a device whose CLI is device: both versions, and what brings
+// them together. A runhost follows the newest of its devices, so an older
+// device is the one to update.
+func VersionSkew(name, server, device string) error {
+	if cmp, ok := clirelease.CompareVersions(server, device); ok && cmp > 0 {
+		return &SkewError{fmt.Sprintf("%s runs CLI %s and this device %s; a run needs the same version on both, and a runhost follows the newest of its devices: update this device's CLI to %s", name, server, device, server)}
+	}
+	return &SkewError{fmt.Sprintf("%s runs CLI %s and this device %s; a run needs the same version on both: agentry runhost update %s brings it to %s", name, server, device, name, device)}
+}
+
+// SkewError is a refusal for a version skew between a runhost and this
+// device, which only an update ends.
+type SkewError struct{ msg string }
+
+func (e *SkewError) Error() string { return e.msg }
 
 // SameVersion refuses a runhost whose CLI is not this device's
 // version: the run's plan, policy and envelope are this version's. It
@@ -258,7 +278,7 @@ func SameVersion(ctx context.Context, c *runhost.Client, name string) (Version, 
 		return Version{}, fmt.Errorf("%s did not say its version: %s", name, a.Error)
 	}
 	if v.Version != version.Version {
-		return Version{}, fmt.Errorf("%s runs CLI %s and this device %s; a run needs the same version on both: run agentry runhost add %s again from this device, which updates it", name, v.Version, version.Version, name)
+		return Version{}, VersionSkew(name, v.Version, version.Version)
 	}
 	return v, nil
 }

@@ -42,9 +42,22 @@ func newRunhostCmd() *cobra.Command {
 			"socket and opens no network port. This computer is paired with its own run\n" +
 			"key, held to that service: setup checks that it is refused a shell, a\n" +
 			"terminal, any other command and forwarding.\n\n" +
-			"Servers: Debian 12 and 13, Ubuntu 22.04 and 24.04, on amd64 or arm64.",
+			"Servers: Debian 12 and 13, Ubuntu 22.04 and 24.04, Fedora 43 and 44, and\n" +
+			"RHEL, AlmaLinux and Rocky Linux 9 and 10, on amd64 or arm64.",
+		PersistentPreRun: func(c *cobra.Command, _ []string) {
+			// A runhost runs this CLI's exact version: after this CLI
+			// changes, the first runhost command brings them along. The
+			// commands that set up, pair, update or remove a runhost, and
+			// the server's own, see to versions themselves.
+			switch c.Name() {
+			case "add", "pair", "unpair", "update", "remove", "serve", "service", "prepare":
+				return
+			}
+			runhostPostUpdate(c)
+		},
 	}
 	cmd.AddCommand(newRunhostAddCmd(), newRunhostListCmd(), newRunhostStatusCmd(), newRunhostDoctorCmd(), newRunhostRemoveCmd(),
+		newRunhostUpdateCmd(), newRunhostPairCmd(), newRunhostUnpairCmd(),
 		newRunhostModelCmd(), newRunhostStoreCmd(), newRunhostSetCmd(),
 		newRunhostJobsCmd(), newRunhostAttachCmd(), newRunhostCollectCmd(), newRunhostCancelCmd(),
 		newRunhostServeCmd(), newRunhostServiceCmd())
@@ -701,21 +714,24 @@ func newRunhostSetCmd() *cobra.Command {
 
 // newRunhostServeCmd is the run key's forced command on the server.
 func newRunhostServeCmd() *cobra.Command {
-	return &cobra.Command{
+	var device string
+	cmd := &cobra.Command{
 		Use:    "serve",
 		Short:  "The run key's forced command on a runhost (run by sshd)",
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// The answer's exit frame has said why; the status is the frame's.
-			os.Exit(runhost.Serve(cmd.Context(), os.Getenv("SSH_ORIGINAL_COMMAND"), cmd.InOrStdin(), cmd.OutOrStdout(), runhost.ServeSocket()))
+			os.Exit(runhost.Serve(cmd.Context(), os.Getenv("SSH_ORIGINAL_COMMAND"), device, cmd.InOrStdin(), cmd.OutOrStdout(), runhost.ServeSocket()))
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&device, "device", "", "the paired device whose run key this is")
+	return cmd
 }
 
 // runServeAsLoginShell is serve when sshd runs the CLI as the agentry
 // account's login shell: it never returns.
-func runServeAsLoginShell(ctx context.Context) {
-	os.Exit(runhost.Serve(ctx, os.Getenv("SSH_ORIGINAL_COMMAND"), bufio.NewReader(os.Stdin), os.Stdout, runhost.ServeSocket()))
+func runServeAsLoginShell(ctx context.Context, device string) {
+	os.Exit(runhost.Serve(ctx, os.Getenv("SSH_ORIGINAL_COMMAND"), device, bufio.NewReader(os.Stdin), os.Stdout, runhost.ServeSocket()))
 }

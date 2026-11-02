@@ -68,6 +68,13 @@ type CreditsRemoved struct {
 	RevokeError string `json:"revokeError,omitempty"`
 }
 
+// Unpaired is the unpair verb's answer: the device that left, and the
+// credits token it had minted, revoked and removed with it.
+type Unpaired struct {
+	Device  string         `json:"device"`
+	Credits CreditsRemoved `json:"credits"`
+}
+
 // MintCredits has the person approve a runhost's credits token in their
 // browser, through the registry's authorize page for runhost name, and holds
 // what comes back to a token that carries the credits scope alone, with an
