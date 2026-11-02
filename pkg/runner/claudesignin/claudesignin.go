@@ -74,6 +74,56 @@ type Person struct {
 	// Through the image, the page's answer comes back to this computer and
 	// is relayed into the container (browser.go).
 	Open func(url string)
+	// Step, when set, is told each step of the sign-in as it starts, so a
+	// person waiting on it can be shown where it is; detail is the Claude
+	// Code version for StepBuild and "" otherwise.
+	Step func(step Step, detail string)
+}
+
+// Step is one step of a sign-in, in the order they come. A sign-in through
+// the installed Claude Code has no image, so it starts at StepStart.
+type Step string
+
+const (
+	// StepImage: looking for the Claude Code image on the docker daemon.
+	StepImage Step = "image"
+	// StepBuild: building the Claude Code image on this computer, which
+	// downloads Claude Code and takes a few minutes.
+	StepBuild Step = "build"
+	// StepStart: starting Claude Code's own sign-in.
+	StepStart Step = "start"
+	// StepBrowser: Anthropic's page is open in the person's browser, and the
+	// sign-in waits for them there.
+	StepBrowser Step = "browser"
+	// StepKeep: asking Claude Code who signed in, and keeping the sign-in.
+	StepKeep Step = "keep"
+)
+
+// Sentence is how the step is said to the person, with detail as Step
+// gives it.
+func (s Step) Sentence(detail string) string {
+	switch s {
+	case StepImage:
+		return "Checking the Claude Code image…"
+	case StepBuild:
+		if detail != "" {
+			return "Building the Claude Code " + detail + " image on this computer — the download and build take a few minutes…"
+		}
+		return "Building the Claude Code image on this computer — the download and build take a few minutes…"
+	case StepStart:
+		return "Starting Claude Code's sign-in…"
+	case StepBrowser:
+		return "Waiting for you in your browser…"
+	case StepKeep:
+		return "Checking the sign-in and keeping it…"
+	}
+	return ""
+}
+
+func (p Person) step(s Step, detail string) {
+	if p.Step != nil {
+		p.Step(s, detail)
+	}
 }
 
 func (p Person) out() io.Writer {
@@ -226,17 +276,22 @@ func (s SignIn) signInImage(ctx context.Context, p Person, pol *policy.Policy) (
 		return "", "", errors.New("the policy names no Claude Code image")
 	}
 	d := s.docker()
-	if err := gateway.EnsureHarnessImage(ctx, d, adapter.ClaudeImageAdapterName, h, errOut); err != nil {
+	p.step(StepImage, "")
+	building := func(version string) { p.step(StepBuild, version) }
+	if err := gateway.EnsureHarnessImageBuilding(ctx, d, adapter.ClaudeImageAdapterName, h, errOut, building); err != nil {
 		return "", "", engine.Classify(engine.ExitGateway, err)
 	}
 	if err := d.VolumeCreate(ctx, Volume, map[string]string{"org.agentry.model-signin": modelsignin.Claude}); err != nil {
 		return "", "", err
 	}
 	_, _ = fmt.Fprintf(errOut, "%s: Claude Code signs you in itself, in Anthropic's own pages in your browser, and keeps the sign-in in its docker volume %s, which Agentry never reads.\n", setup.ClaudeSignInLabel, Volume)
-	open := p.Open
-	if open == nil {
-		open = func(string) {}
+	open := func(u string) {
+		p.step(StepBrowser, "")
+		if p.Open != nil {
+			p.Open(u)
+		}
 	}
+	p.step(StepStart, "")
 	login := containerRun(pol, h.Ref, "login", "auth", "login")
 	login.Env["BROWSER"] = harnessbuild.ClaudeOpener
 	lctx, cancel := context.WithTimeout(ctx, Timeout)
@@ -271,6 +326,7 @@ func (s SignIn) signInImage(ctx context.Context, p Person, pol *policy.Policy) (
 	if code != 0 {
 		return "", "", fmt.Errorf("nothing kept: the sign-in in Claude Code did not complete (exit %d)", code)
 	}
+	p.step(StepKeep, "")
 	var out bytes.Buffer
 	if _, err := runContainer(ctx, d, containerRun(pol, h.Ref, "status", "auth", "status"), nil, &out, io.Discard); err != nil {
 		return "", "", fmt.Errorf("the sign-in status in Claude Code: %w", err)
@@ -329,9 +385,14 @@ func (s SignIn) signInInstalled(ctx context.Context, p Person, pol *policy.Polic
 	defer cancel()
 	login := hostCommand(lctx, exe, dir, "auth", "login")
 	login.Stdin, login.Stdout, login.Stderr = p.In, errOut, errOut
+	// The installed Claude Code opens the browser itself as it starts, so
+	// the wait for the person begins with it.
+	p.step(StepStart, "")
+	p.step(StepBrowser, "")
 	if err := login.Run(); err != nil {
 		return "", "", fmt.Errorf("nothing kept: the sign-in in Claude Code did not complete (%w)", err)
 	}
+	p.step(StepKeep, "")
 	st := hostCommand(ctx, exe, dir, "auth", "status")
 	// auth status exits 1 when no one is signed in, with its JSON still
 	// printed: the JSON is the answer, and only no answer is an error.

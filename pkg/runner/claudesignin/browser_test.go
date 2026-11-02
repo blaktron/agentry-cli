@@ -207,6 +207,54 @@ func TestTheImageSignsInThroughTheBrowserAlone(t *testing.T) {
 	}
 }
 
+// The person's side is told each step as it starts, in order, and the wait in
+// the browser only once Anthropic's page is being opened: the image already
+// built is checked and not built again.
+func TestTheSignInSaysEachStepInOrder(t *testing.T) {
+	port := freePort(t)
+	login := newClaudeLogin(port)
+	s, _ := browserFixture(t, login)
+	b := newBrowser()
+	var (
+		mu    sync.Mutex
+		steps []Step
+	)
+	open := b.open("THE-CODE")
+	p := Person{Out: io.Discard, Step: func(st Step, detail string) {
+		mu.Lock()
+		defer mu.Unlock()
+		if detail != "" {
+			t.Errorf("step %s has detail %q", st, detail)
+		}
+		steps = append(steps, st)
+	}, Open: func(u string) {
+		mu.Lock()
+		last := steps[len(steps)-1]
+		mu.Unlock()
+		if last != StepBrowser {
+			t.Errorf("the browser was opened at step %s", last)
+		}
+		open(u)
+	}}
+	if _, err := s.Run(context.Background(), p, false); err != nil {
+		t.Fatal(err)
+	}
+	<-b.got
+	mu.Lock()
+	defer mu.Unlock()
+	if want := []Step{StepImage, StepStart, StepBrowser, StepKeep}; !slices.Equal(steps, want) {
+		t.Fatalf("steps %v, want %v", steps, want)
+	}
+	for _, st := range append(steps, StepBuild) {
+		if st.Sentence("") == "" {
+			t.Errorf("step %s has no sentence", st)
+		}
+	}
+	if got := StepBuild.Sentence("2.1.296"); !strings.Contains(got, "Claude Code 2.1.296 image") {
+		t.Errorf("the build's sentence %q does not name the version", got)
+	}
+}
+
 // Where the browser cannot hand the sign-in back (here, the port taken on
 // this computer), a person who can paste is sent to Anthropic's paste-code
 // page and told why; one who cannot (the desktop) is told the sign-in did
