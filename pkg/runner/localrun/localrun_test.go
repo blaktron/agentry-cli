@@ -637,12 +637,13 @@ func TestABuiltinsBudgetsOnThisComputer(t *testing.T) {
 		policy  policy.Budgets
 		want    spec.Budgets
 	}{
-		{"a draft under the default policy", Drafter(), policy.Default().Budgets, spec.Budgets{TimeoutSeconds: 1800, MaxTurns: 100}},
+		{"a draft under the default policy", Drafter(), policy.Default().Budgets, spec.Budgets{TimeoutSeconds: 1800}},
+		{"a draft under a policy of 900 seconds", Drafter(), policy.Budgets{TimeoutSeconds: 900, MaxTurns: 100}, spec.Budgets{TimeoutSeconds: 1800, MaxTurns: 100}},
 		{"a draft under a policy that allows more", Drafter(), policy.Budgets{TimeoutSeconds: 2400, MaxTurns: 0, MaxCostUSD: 2.5},
 			spec.Budgets{TimeoutSeconds: 2400, MaxTurns: 0, MaxCostUSD: 2.5}},
 		{"a draft's repair turn is the same package", Drafter().WithoutWebTools(), policy.Budgets{TimeoutSeconds: 60, MaxTurns: 5},
 			spec.Budgets{TimeoutSeconds: 1800, MaxTurns: 5}},
-		{"a build under the default policy", KnowledgeCreator(), policy.Default().Budgets, spec.Budgets{TimeoutSeconds: 3600, MaxTurns: 100}},
+		{"a build under the default policy", KnowledgeCreator(), policy.Default().Budgets, spec.Budgets{TimeoutSeconds: 3600}},
 		{"a build under a policy that allowed the draft's 30 minutes", KnowledgeCreator(), policy.Budgets{TimeoutSeconds: 1800, MaxTurns: 300, MaxCostUSD: 9},
 			spec.Budgets{TimeoutSeconds: 3600, MaxTurns: 300, MaxCostUSD: 9}},
 		{"a build under a policy that allows more", KnowledgeCreator(), policy.Budgets{TimeoutSeconds: 7200, MaxTurns: 60},
