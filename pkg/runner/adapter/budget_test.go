@@ -51,7 +51,7 @@ func TestEveryAdapterHasAMeasuredResultBudget(t *testing.T) {
 // budget fits it even as a resource of short lines, which codex sends as
 // escaped JSON and which doubles in it.
 func TestTheCodexCatalogKeepsAWholePage(t *testing.T) {
-	raw, err := codexCatalog("gpt-6.1-sol")
+	raw, err := codexCatalog("gpt-6.1-sol", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

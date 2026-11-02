@@ -743,11 +743,21 @@ type Model struct {
 	// BaseURL points provider-compatible adapters at a custom endpoint
 	// (e.g. a local OpenAI-compatible server); empty = provider default.
 	BaseURL string `yaml:"baseUrl,omitempty"`
+	// ContextWindow is the model's context window in tokens, for a model the
+	// harness cannot look up itself (an endpoint of the operator's own, or
+	// any model outside the harness's catalogue). Without it such a harness
+	// cannot compact a long conversation before the endpoint refuses it as
+	// too long. 0 = the harness's own lookup.
+	ContextWindow int64 `yaml:"contextWindow,omitempty"`
 	// ProxyAllow is the llm-proxy CONNECT allowlist (host:port). This is
 	// the ONLY egress the agent container has; it must cover the
 	// model endpoint and nothing else.
 	ProxyAllow []string `yaml:"proxyAllow"`
 }
+
+// MinContextWindow is the smallest model.contextWindow a policy takes: below
+// it a harness's own summary request and output budget would not fit.
+const MinContextWindow = 1024
 
 // JudgeKey is where the person's own Jev key comes from. The value is
 // never in this file: the variable, else, with apiKeySource keyring, the
@@ -1185,6 +1195,9 @@ func (p *Policy) Validate() error {
 	if strings.ContainsAny(p.Model.Provider, ": \t\n") {
 		return fmt.Errorf("model.provider %q must not contain ':' or whitespace (it names the keychain account provider:<provider>)", p.Model.Provider)
 	}
+	if w := p.Model.ContextWindow; w != 0 && w < MinContextWindow {
+		return fmt.Errorf("model.contextWindow %d must be at least %d tokens (or absent, for the harness's own lookup)", w, MinContextWindow)
+	}
 	if p.Sessions.IdleTimeoutSeconds < 0 || p.Sessions.MaxWallSeconds < 0 || p.Sessions.MaxUserTurns < 0 {
 		return errors.New("sessions.idleTimeoutSeconds, sessions.maxWallSeconds and sessions.maxUserTurns must not be negative")
 	}
@@ -1548,6 +1561,10 @@ model:
   #   # this computer) or your installed claude, each signed in by
   #   # "agentry model-signins add claude [--installed]".
   # baseUrl: https://llm.internal:8443/v1   # custom only
+  # contextWindow: 262144   # the model's context window in tokens, for a
+  #   model the harness cannot look up (custom endpoints): without it a
+  #   long run cannot compact and fails when the endpoint refuses it as
+  #   too long; setup fills it from the endpoint where the server says
   # The llm-proxy CONNECT allowlist: the agent container can reach these
   # host:port pairs and nothing else. Keep it to model endpoints.
   proxyAllow:
