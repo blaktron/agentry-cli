@@ -64,6 +64,40 @@ func Open(dir, keyFile string) (*Store, error) {
 	return &Store{dir: dir, key: key}, nil
 }
 
+// OpenWithKey opens the store under dir (made 0700) with key, a 32-byte
+// key its caller keeps.
+func OpenWithKey(dir string, key []byte) (*Store, error) {
+	if len(key) != 32 {
+		return nil, errors.New("the store's key is not a 32-byte key")
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	return &Store{dir: dir, key: append([]byte(nil), key...)}, nil
+}
+
+// NewKey is a fresh store key.
+func NewKey() ([]byte, error) {
+	key := make([]byte, 32)
+	_, err := rand.Read(key)
+	return key, err
+}
+
+// Entries are the names of the entries the store holds, sorted.
+func (s *Store) Entries() ([]string, error) {
+	ents, err := os.ReadDir(s.dir)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, e := range ents {
+		if name, ok := strings.CutSuffix(e.Name(), ".entry"); ok && e.Type().IsRegular() && entryNameRE.MatchString(name) {
+			out = append(out, name)
+		}
+	}
+	return out, nil
+}
+
 func loadKey(file string) ([]byte, error) {
 	if b, err := os.ReadFile(file); err == nil { //nolint:gosec // the store's own key file
 		if len(b) != 32 {

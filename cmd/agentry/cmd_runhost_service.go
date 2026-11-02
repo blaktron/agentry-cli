@@ -125,14 +125,15 @@ func runRunhostService(cmd *cobra.Command) error {
 				}
 				return 0, fw.Result(st)
 			},
-			"job":     runhostJobVerb,
-			"attach":  runhostAttachVerb,
-			"cancel":  runhostCancelVerb,
-			"collect": runhostCollectVerb,
-			"store":   runhostStoreVerb,
-			"update":  runhostUpdateVerb,
-			"unpair":  runhostUnpairVerb,
-			"sign-in": runhostSignInVerb(signIns),
+			"job":      runhostJobVerb,
+			"attach":   runhostAttachVerb,
+			"cancel":   runhostCancelVerb,
+			"collect":  runhostCollectVerb,
+			"store":    runhostStoreVerb,
+			"update":   runhostUpdateVerb,
+			"schedule": runhostScheduleVerb,
+			"unpair":   runhostUnpairVerb,
+			"sign-in":  runhostSignInVerb(signIns),
 			"doctor": func(ctx context.Context, _ runhost.Request, _ io.Reader, fw *runhost.FrameWriter) (int, error) {
 				rep := runhostDoctor(ctx)
 				if err := fw.Result(rep); err != nil {
@@ -151,6 +152,7 @@ func runRunhostService(cmd *cobra.Command) error {
 	}
 	logger.Printf("agentry runhost service %s listening on %s", version.Version, s.Socket)
 	restart := awaitRunhostRestart(ctx, stop, logger.Printf)
+	go runhostScheduler(ctx, 30*time.Second, logger.Printf)
 	if err := s.Serve(ctx, l); err != nil {
 		return err
 	}
@@ -189,7 +191,7 @@ func readRunhostStatus() (runhostStatus, error) {
 	st := runhostStatus{
 		Name: cfg.Name, Version: version.Version, Arch: runtime.GOARCH, OS: osPretty(), GVisor: cfg.GVisor,
 		Owner: cfg.Owner, UnsafeMode: runhost.UnsafeModeOn(runhostUnsafeModeFile), Devices: []runhostDevice{},
-		Capabilities: map[string]bool{"runs": true, "secrets": true, "files": true, "connections": true, "destinations": true, "attach": true, "sessions": true, "credits": true, "signIns": true, "schedules": false},
+		Capabilities: map[string]bool{"runs": true, "secrets": true, "files": true, "connections": true, "destinations": true, "attach": true, "sessions": true, "credits": true, "signIns": true, "schedules": runhostStoreSeals()},
 		Jobs:         runhostJobs(),
 	}
 	for _, d := range devs.Devices {

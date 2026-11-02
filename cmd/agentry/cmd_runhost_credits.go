@@ -77,7 +77,11 @@ func validateCredits(c runhostCredits) error {
 }
 
 func openRunhostStore() (*store.Store, error) {
-	return store.Open(runhostStoreDir, runhostStoreKey)
+	key, _, err := runhostStoreKeyBytes()
+	if err != nil {
+		return nil, err
+	}
+	return store.OpenWithKey(runhostStoreDir, key)
 }
 
 // runhostStoredCredits is the credits token in the runhost's store; ok is
@@ -112,8 +116,15 @@ func runhostStoreVerb(ctx context.Context, req runhost.Request, in io.Reader, fw
 	if len(req.Args) == 2 && req.Args[0] == "remove-signin" {
 		return runhostSignInRemove(ctx, req.Args[1], fw)
 	}
+	if len(req.Args) == 2 && req.Args[0] == "remove-schedule" {
+		info, err := runhostScheduleRemove(req.Args[1])
+		if err != nil {
+			return engine.ExitUsage, err
+		}
+		return 0, fw.Result(info)
+	}
 	if len(req.Args) != 1 {
-		return engine.ExitUsage, errors.New("store takes one of list, put-credits, remove-credits and remove-signin <vendor>")
+		return engine.ExitUsage, errors.New("store takes one of list, put-credits, remove-credits, remove-signin <vendor> and remove-schedule <id>")
 	}
 	st, err := openRunhostStore()
 	if err != nil {
@@ -122,6 +133,10 @@ func runhostStoreVerb(ctx context.Context, req runhost.Request, in io.Reader, fw
 	switch req.Args[0] {
 	case "list":
 		list := runhostStoreList{Releases: countStoredReleases(), SignIns: runhostSignInList()}
+		if scheds, err := runhostScheduleList(); err == nil {
+			list.Schedules = scheds
+		}
+		_, list.Sealed, _ = runhostStoreKeyBytes()
 		c, ok, err := runhostStoredCredits(st)
 		if err != nil {
 			return 1, err
@@ -174,7 +189,7 @@ func runhostStoreVerb(ctx context.Context, req runhost.Request, in io.Reader, fw
 		}
 		return 0, fw.Result(out)
 	}
-	return engine.ExitUsage, fmt.Errorf("store does not take %q: list, put-credits, remove-credits or remove-signin <vendor>", req.Args[0])
+	return engine.ExitUsage, fmt.Errorf("store does not take %q: list, put-credits, remove-credits, remove-signin <vendor> or remove-schedule <id>", req.Args[0])
 }
 
 // revokeStoredCredits revokes the store's credits token at its registry
@@ -391,14 +406,16 @@ func unsentCreditsToken(ctx context.Context, reg string, pat authflow.PAT) error
 func newRunhostStoreCmd() *cobra.Command {
 	var remove string
 	cmd := &cobra.Command{
-		Use:   "store <name> [--remove credits|claude|chatgpt|copilot]",
-		Short: "List what a runhost keeps in its store, and remove its credits token or a sign-in",
+		Use:   "store <name> [--remove credits|claude|chatgpt|copilot|schedule:<id>]",
+		Short: "List what a runhost keeps in its store, and remove its credits token, a sign-in or a schedule",
 		Long: "Lists the runhost's store over this computer's run key: the releases it has\n" +
 			"run, kept so a later run need not send them again, its Agentry credits token,\n" +
 			"if it has one, and its model sign-ins. --remove credits revokes the token at its\n" +
 			"registry and removes it from the store; --remove claude runs Claude Code's own\n" +
 			"logout on the runhost and deletes its sign-in volume there; --remove chatgpt and\n" +
-			"--remove copilot revoke the sign-in at the vendor where it can and remove it.",
+			"--remove copilot revoke the sign-in at the vendor where it can and remove it;\n" +
+			"--remove schedule:<id> takes a schedule off the runhost with everything it\n" +
+			"kept there (agentry schedule add --on makes one).",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
@@ -429,6 +446,19 @@ func newRunhostStoreCmd() *cobra.Command {
 				if len(list.SignIns) == 0 {
 					_, _ = fmt.Fprintln(w, "sign-ins:  none")
 				}
+				defer func() {
+					if len(list.Schedules) == 0 {
+						_, _ = fmt.Fprintln(w, "schedules: none")
+					}
+					for _, sc := range list.Schedules {
+						_, _ = fmt.Fprintf(w, "schedule:  %s %q (%s), from device %s, keeps %s\n", sc.ID, sc.Name, sc.Ref, sc.Device, scheduleEntriesSaid(sc.Entries))
+					}
+					if list.Sealed {
+						_, _ = fmt.Fprintln(w, "the store's key is sealed by systemd to this runhost and its account")
+					} else {
+						_, _ = fmt.Fprintln(w, "the store's key is a file of the runhost's account (its systemd seals none): it takes no schedule")
+					}
+				}()
 				for _, k := range list.SignIns {
 					line := fmt.Sprintf("sign-in:   %s as %s, kept since %s", k.Vendor, nonEmptyOr(k.Label, "an account the vendor did not name"), k.KeptAt)
 					if k.Broken != "" {
@@ -448,6 +478,23 @@ func newRunhostStoreCmd() *cobra.Command {
 				printCreditsRemoved(cmd.OutOrStdout(), name, removed)
 				return nil
 			}
+			if id, ok := strings.CutPrefix(remove, "schedule:"); ok {
+				a, _, err := askRunhostArgs(cmd, name, "store", []string{"remove-schedule", id})
+				if err != nil {
+					return err
+				}
+				if a.Code != 0 {
+					return engine.Classify(engine.ExitUsage, fmt.Errorf("%s: %s", name, a.Error))
+				}
+				if flags.jsonOut {
+					_, err := fmt.Fprintln(cmd.OutOrStdout(), string(a.Result))
+					return err
+				}
+				var info runhost.ScheduleInfo
+				_ = json.Unmarshal(a.Result, &info)
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "schedule %s %q is off runhost %s, with what it kept: %s\n", id, info.Name, name, scheduleEntriesSaid(info.Entries))
+				return nil
+			}
 			if signin.IsVendor(remove) {
 				removed, err := removeRunhostSignIn(cmd, name, remove)
 				if err != nil {
@@ -462,7 +509,7 @@ func newRunhostStoreCmd() *cobra.Command {
 			return engine.Classify(engine.ExitUsage, fmt.Errorf("--remove %q: the store's entry to remove is credits, claude, chatgpt or copilot", remove))
 		},
 	}
-	cmd.Flags().StringVar(&remove, "remove", "", "the entry to remove: credits, claude, chatgpt or copilot")
+	cmd.Flags().StringVar(&remove, "remove", "", "the entry to remove: credits, claude, chatgpt, copilot or schedule:<id>")
 	return cmd
 }
 

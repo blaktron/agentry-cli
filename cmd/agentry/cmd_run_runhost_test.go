@@ -44,10 +44,12 @@ func startTestRunhost(t *testing.T, runKey ssh.PublicKey) (hostKey ssh.PublicKey
 		"version": func(_ context.Context, _ runhost.Request, _ io.Reader, fw *runhost.FrameWriter) (int, error) {
 			return 0, fw.Result(map[string]string{"version": version.Version})
 		},
-		"job":     runhostJobVerb,
-		"attach":  runhostAttachVerb,
-		"cancel":  runhostCancelVerb,
-		"collect": runhostCollectVerb,
+		"job":      runhostJobVerb,
+		"attach":   runhostAttachVerb,
+		"cancel":   runhostCancelVerb,
+		"collect":  runhostCollectVerb,
+		"schedule": runhostScheduleVerb,
+		"store":    runhostStoreVerb,
 		"status": func(_ context.Context, _ runhost.Request, _ io.Reader, fw *runhost.FrameWriter) (int, error) {
 			return 0, fw.Result(runhostStatus{Name: "lab", Jobs: runhostJobs()})
 		},
