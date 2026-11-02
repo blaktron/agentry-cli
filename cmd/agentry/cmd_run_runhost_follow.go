@@ -50,6 +50,9 @@ type runhostLocalJob struct {
 	// person asked for when the runhost runs another in its place.
 	Adapter      string `json:"adapter,omitempty"`
 	AdapterAsked string `json:"adapterAsked,omitempty"`
+	// UnsafeMode is whether the runhost's Unsafe Mode setting was on when
+	// the job was sent.
+	UnsafeMode bool `json:"unsafeMode,omitempty"`
 }
 
 const runhostLocalJobsFile = "runhost-jobs.json"
@@ -353,7 +356,7 @@ func runOnFinishEnv(cmd *cobra.Command, c *runhost.Client, rec *runhost.Record, 
 		_, _ = fmt.Fprintf(errOut, "warning: %s keeps the sealed output of job %s until it expires: %v\n", rec.Name, lj.Job, err)
 	}
 	runOnEnvelope(&env, rec, outDir, lj.Job)
-	env.Runhost.Adapter, env.Runhost.AdapterAsked = lj.Adapter, lj.AdapterAsked
+	env.Runhost.Adapter, env.Runhost.AdapterAsked, env.Runhost.UnsafeMode = lj.Adapter, lj.AdapterAsked, lj.UnsafeMode
 	deliverOnDevice(errOut, &env, outDir, lj.DeliverTo)
 	if err := env.Write(outDir); err != nil {
 		return nil, err

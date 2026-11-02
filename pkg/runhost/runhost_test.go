@@ -318,3 +318,19 @@ func TestDeviceKeysRoundTripThroughTheKeychain(t *testing.T) {
 		t.Fatal("keys were read after they were deleted")
 	}
 }
+
+// Unsafe Mode is on only when its setting file says "on".
+func TestUnsafeModeIsOnOnlyWhenItsFileSaysSo(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "unsafe-mode")
+	if UnsafeModeOn(f) {
+		t.Fatal("no file is on")
+	}
+	for content, want := range map[string]bool{"on\n": true, "on": true, "off\n": false, "yes\n": false, "": false, "on\non\n": false} {
+		if err := os.WriteFile(f, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if got := UnsafeModeOn(f); got != want {
+			t.Errorf("%q: %v", content, got)
+		}
+	}
+}

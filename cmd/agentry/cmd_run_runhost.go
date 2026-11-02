@@ -209,13 +209,17 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 		return engine.Classify(engine.ExitGateway, err)
 	}
 	defer func() { _ = client.Close() }()
-	if err := runOnSameVersion(cmd.Context(), client, rec.Name); err != nil {
+	rv, err := runOnSameVersion(cmd.Context(), client, rec.Name)
+	if err != nil {
 		return engine.Classify(engine.ExitGateway, err)
 	}
 	errOut := cmd.ErrOrStderr()
 	_, _ = fmt.Fprintf(errOut, "running %s on %s (%s, host key %s)\n", meta.Ref, rec.Name, rec.Host, rec.HostKeyFingerprint)
 	if mapped {
 		_, _ = fmt.Fprintf(errOut, "on a runhost the installed %s does not run: %s runs in its image, %s, in a container under gVisor\n", opts.adapterName, harnessName(opts.adapterName), runAdapter)
+	}
+	if rv.UnsafeMode {
+		_, _ = fmt.Fprintf(errOut, "Unsafe Mode is on for %s, a setting of the runhost: a release's declared commands come from the Unsafe Mode image there, without the command catalogue (agentry runhost set %s --unsafe-mode off turns it off)\n", rec.Name, rec.Name)
 	}
 	if pol.Model.APIKeyKind != "" && job.ModelOf(pol.Model).SignIn() {
 		_, _ = fmt.Fprintf(errOut, "paying for the model with the %s sign-in %s keeps\n", modelsignin.VendorOf(pol.Model.APIKeyKind), rec.Name)
@@ -224,7 +228,7 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	opts.progress.at(receipt.StageAgent)
 	lj := runhostLocalJob{Job: j.ID, Runhost: rec.Name, Ref: meta.Ref, Namespace: meta.Namespace, Name: meta.Name, Version: meta.Version,
 		Digest: meta.Digest, Out: opts.out, DeliverTo: carried.deliverTo, Session: j.Run.Session, StartedAt: time.Now().UTC().Format(time.RFC3339),
-		Adapter: runAdapter}
+		Adapter: runAdapter, UnsafeMode: rv.UnsafeMode}
 	if mapped {
 		lj.AdapterAsked = opts.adapterName
 	}
@@ -364,23 +368,29 @@ func runOnRelease(cmd *cobra.Command, meta *installdir.Meta) (job.Release, []byt
 	return rel, archive, nil
 }
 
+// runhostVersion is the version verb's answer.
+type runhostVersion struct {
+	Version string `json:"version"`
+	// UnsafeMode is the runhost's own Unsafe Mode setting.
+	UnsafeMode bool `json:"unsafeMode"`
+}
+
 // runOnSameVersion refuses a runhost whose CLI is not this device's
-// version: the run's plan, policy and envelope are this version's.
-func runOnSameVersion(ctx context.Context, c *runhost.Client, name string) error {
+// version: the run's plan, policy and envelope are this version's. It
+// returns what the runhost said of itself.
+func runOnSameVersion(ctx context.Context, c *runhost.Client, name string) (runhostVersion, error) {
 	a, err := c.Ask(ctx, "version", nil, nil)
 	if err != nil {
-		return fmt.Errorf("ask %s its version: %w", name, err)
+		return runhostVersion{}, fmt.Errorf("ask %s its version: %w", name, err)
 	}
-	var v struct {
-		Version string `json:"version"`
-	}
+	var v runhostVersion
 	if a.Code != 0 || json.Unmarshal(a.Result, &v) != nil {
-		return fmt.Errorf("%s did not say its version: %s", name, a.Error)
+		return runhostVersion{}, fmt.Errorf("%s did not say its version: %s", name, a.Error)
 	}
 	if v.Version != version.Version {
-		return fmt.Errorf("%s runs CLI %s and this device %s; a run needs the same version on both: run agentry runhost add %s again from this device, which updates it", name, v.Version, version.Version, name)
+		return runhostVersion{}, fmt.Errorf("%s runs CLI %s and this device %s; a run needs the same version on both: run agentry runhost add %s again from this device, which updates it", name, v.Version, version.Version, name)
 	}
-	return nil
+	return v, nil
 }
 
 // runhostRefusal is a job the runhost answered without running it, with the

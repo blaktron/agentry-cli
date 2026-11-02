@@ -41,6 +41,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	"github.com/blaktron/agentry-cli/pkg/runner/unsafeexec"
 	"github.com/blaktron/agentry-cli/pkg/trust"
 	"github.com/blaktron/agentry-cli/pkg/voice/writer"
 	"github.com/blaktron/agentry-cli/runnerimage"
@@ -359,6 +360,10 @@ type PlanInputs struct {
 	Adapter      string
 	Servers      []spec.MCPServerSpec
 	Mode         manifest.Mode
+	// Unsafe compiles the plan in Unsafe Mode (compile.Inputs.Unsafe), and
+	// never reuses an installed plan: a remote runhost whose own setting is
+	// on, the one client of this path that sets it. Nil is the default.
+	Unsafe *unsafeexec.Data
 	// CompiledBy is the build identity of the client compiling: a plan
 	// another build compiled is recompiled.
 	CompiledBy string
@@ -465,7 +470,7 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 			_, _ = fmt.Fprintln(errOut, "installed plan has no integrity record from this runner home — recompiling")
 		}
 	}
-	if rerr == nil {
+	if rerr == nil && in.Unsafe == nil {
 		// A plan from an older CLI is recompiled in place, and says so, so
 		// a cached install does not stay stale after an upgrade.
 		if v := PlanVersionOf(b); v != "" && v != spec.PlanVersion {
@@ -535,6 +540,7 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 		Coder:        in.Coder,
 		Calendar:     in.Calendar,
 		ShareServers: in.ShareServers,
+		Unsafe:       in.Unsafe,
 		IntegrityKey: key,
 	}, planDir)
 	if err != nil {
