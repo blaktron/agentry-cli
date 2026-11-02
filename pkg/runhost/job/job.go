@@ -217,10 +217,19 @@ func ModelOf(m policy.Model) Model {
 }
 
 // Policy is the model as the runhost's policy takes it: the key from the
-// run's environment.
+// run's environment, or none for a model paid with Agentry credits.
 func (m Model) Policy() policy.Model {
-	return policy.Model{Provider: m.Provider, Name: m.Name, APIKeyEnv: m.APIKeyEnv, APIKeySource: "env", APIKeyKind: m.APIKeyKind, BaseURL: m.BaseURL, ProxyAllow: m.ProxyAllow}
+	source := "env"
+	if m.PaysWithCredits() {
+		source = ""
+	}
+	return policy.Model{Provider: m.Provider, Name: m.Name, APIKeyEnv: m.APIKeyEnv, APIKeySource: source, APIKeyKind: m.APIKeyKind, BaseURL: m.BaseURL, ProxyAllow: m.ProxyAllow}
 }
+
+// PaysWithCredits says whether the model is paid with Agentry credits: the
+// runhost opens its credits session with the token in its store, and the job
+// carries no key.
+func (m Model) PaysWithCredits() bool { return m.Provider == policy.ProviderAgentry }
 
 // keyEnvRE is the shape of a model key's variable: a provider's own name for
 // its key (ANTHROPIC_API_KEY, HF_TOKEN).
@@ -305,11 +314,20 @@ func (j *Job) Validate() error {
 	if j.Run.Model.Provider == "" || j.Run.Model.Name == "" {
 		return errors.New("the job names no model")
 	}
-	if !ValidKeyEnv(j.Run.Model.APIKeyEnv) {
-		return fmt.Errorf("the model's key variable %q is not one a runhost takes: name it as the provider does, ending in _API_KEY, _KEY or _TOKEN, outside the AGENTRY_, DOCKER_, LD_, SSH_, GIT_ and XDG_ names", j.Run.Model.APIKeyEnv)
-	}
-	if j.Run.ModelKey == "" {
-		return errors.New("the job carries no model key")
+	if j.Run.Model.PaysWithCredits() {
+		if _, err := policy.AgentryRegistry(j.Run.Model.Policy()); err != nil {
+			return fmt.Errorf("the job's credits model: %w", err)
+		}
+		if j.Run.Model.APIKeyEnv != "" || j.Run.Model.APIKeyKind != "" || j.Run.ModelKey != "" {
+			return errors.New("a model paid with Agentry credits carries no key")
+		}
+	} else {
+		if !ValidKeyEnv(j.Run.Model.APIKeyEnv) {
+			return fmt.Errorf("the model's key variable %q is not one a runhost takes: name it as the provider does, ending in _API_KEY, _KEY or _TOKEN, outside the AGENTRY_, DOCKER_, LD_, SSH_, GIT_ and XDG_ names", j.Run.Model.APIKeyEnv)
+		}
+		if j.Run.ModelKey == "" {
+			return errors.New("the job carries no model key")
+		}
 	}
 	if j.Run.Timeout < 0 {
 		return errors.New("the job's timeout is negative")

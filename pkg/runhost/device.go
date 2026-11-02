@@ -49,6 +49,18 @@ type Record struct {
 	// Capabilities are the runs the runhost takes, as its status said at
 	// the last check.
 	Capabilities map[string]bool `yaml:"capabilities,omitempty" json:"capabilities,omitempty"`
+	// Credits is the Agentry credits token this device made for the
+	// runhost and the runhost keeps, when there is one: never the token.
+	Credits *CreditsRecord `yaml:"credits,omitempty" json:"credits,omitempty"`
+}
+
+// CreditsRecord names a runhost's credits token, which the runhost alone
+// holds: its registry, its id and its name among the account's tokens.
+type CreditsRecord struct {
+	Registry  string `yaml:"registry" json:"registry"`
+	TokenID   string `yaml:"tokenID" json:"tokenID"`
+	TokenName string `yaml:"tokenName" json:"tokenName"`
+	AddedAt   string `yaml:"addedAt" json:"addedAt"`
 }
 
 // Records is the records file.

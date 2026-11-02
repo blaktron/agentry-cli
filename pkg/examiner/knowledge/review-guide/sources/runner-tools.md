@@ -19,6 +19,7 @@ An instruction that calls for one of these needs its line in the manifest; witho
 - `capabilities.persistent.helper`: `docs_read`, `installed_list`, `quickagent_install`, `quickagent_run`, `quickagent_show`, `registry_search`, `run_result`, `schedule_add`, `schedule_list`, `schedule_pause`, `schedule_remove`, `settings_open`.
 - `capabilities.persistent.web`: `web_read`, `web_search`.
 - `capabilities.persistent.review`: `ai_review`.
+- `dependencies.agents`: `subagent_list`, `subagent_result`, `subagent_run`.
 - `capabilities.mcpServers`: a declared server's own tools, named `<server>__<tool>`.
 - `capabilities.browser.secrets`: a browser that may type secrets has every browser tool but `browser_evaluate`.
 

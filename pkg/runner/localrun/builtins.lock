@@ -195,3 +195,5 @@ agentry/coder@1.4.0 sha256:3c1c0235c0a4336fa17dd07abb83d8dd42c593cf4b5f0ff0ec493
 agentry/assistant@1.18.0 sha256:c4fe07ab74cc149ee6c5327e57ca44630e861a75a9e4d841630a05cf8755d460
 # 1.5.0, over 1.4.0: the Coding agent's manifest declares the coding toolchain under capabilities.persistent (coder), which the runner now reads in place of a check of its name; its README says so.
 agentry/coder@1.5.0 sha256:991199473ed122e5a56dd495d14c08b5b8309a6fc217587668fdd5af34d2a433
+# 1.2.2, over 1.2.1: the Examiner's guide names subagent_list, subagent_run and subagent_result, the tools a declared subagent grants.
+agentry/examiner@1.2.2 sha256:7521ae86d8a0a72a485d6c817cd37a5639d3d160e4f3e300ab0895c5d5a7cc71

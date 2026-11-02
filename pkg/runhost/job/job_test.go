@@ -111,3 +111,36 @@ func TestAJobRefusesCarriedValuesARunCannotTake(t *testing.T) {
 		}
 	}
 }
+
+// A model paid with Agentry credits carries no key: its job names a
+// registry's model endpoint and nothing a key travels in, and its policy
+// reads no key.
+func TestACreditsModelCarriesNoKey(t *testing.T) {
+	credits := func(j *Job) {
+		j.Run.ModelKey = ""
+		j.Run.Model = Model{Provider: "agentry", Name: "claude-sonnet-5-5", BaseURL: "https://registry.test/api/v1/x/inference/v1"}
+	}
+	j := validJob()
+	credits(j)
+	if err := j.Validate(); err != nil {
+		t.Fatalf("a credits job: %v", err)
+	}
+	if p := j.Run.Model.Policy(); p.APIKeySource != "" || p.APIKeyEnv != "" {
+		t.Fatalf("a credits model's policy reads a key: %+v", p)
+	}
+	for name, change := range map[string]func(*Job){
+		"a key":                func(j *Job) { j.Run.ModelKey = "k" },
+		"a key variable":       func(j *Job) { j.Run.Model.APIKeyEnv = "ANTHROPIC_API_KEY" },
+		"a sign-in kind":       func(j *Job) { j.Run.Model.APIKeyKind = "subscription" },
+		"no model endpoint":    func(j *Job) { j.Run.Model.BaseURL = "" },
+		"another endpoint":     func(j *Job) { j.Run.Model.BaseURL = "https://registry.test/v1" },
+		"plain http elsewhere": func(j *Job) { j.Run.Model.BaseURL = "http://registry.test/api/v1/x/inference/v1" },
+	} {
+		j := validJob()
+		credits(j)
+		change(j)
+		if err := j.Validate(); err == nil {
+			t.Errorf("a credits job with %s: validated", name)
+		}
+	}
+}
