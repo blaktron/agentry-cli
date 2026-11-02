@@ -977,7 +977,7 @@ func runhostCollectVerb(_ context.Context, req runhost.Request, _ io.Reader, fw 
 	if len(req.Args) == 0 || len(req.Args) > 2 || !job.ValidID(req.Args[0]) || (len(req.Args) == 2 && req.Args[1] != "done" && req.Args[1] != "envelope") {
 		return engine.ExitUsage, errors.New("collect takes a job's id, and then envelope for its envelope or done to delete it")
 	}
-	if liveJob(req.Args[0]) != nil {
+	if runningJob(req.Args[0]) != nil {
 		return runhostExitRunning, fmt.Errorf("job %s is still running: attach to it to follow it to its end", req.Args[0])
 	}
 	dir := filepath.Join(runhostJobsDir, req.Args[0])

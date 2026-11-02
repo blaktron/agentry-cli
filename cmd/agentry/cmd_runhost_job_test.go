@@ -572,3 +572,37 @@ func TestRunInstalledTakesOnlyWhatIsLaidDown(t *testing.T) {
 		}
 	}
 }
+
+// A job that has finished is collected even before the service has taken it
+// out of its live jobs: its result reaches the device first, and the device
+// collects at once.
+func TestAFinishedJobIsCollectedBeforeItIsForgotten(t *testing.T) {
+	newRunhostServer(t)
+	j, _ := unsignedJob(t, "f1f1f1f1f1f1f1f1")
+	l := newRunhostLive(j, func() {})
+	t.Cleanup(l.forget)
+	dir := filepath.Join(runhostJobsDir, j.ID)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{runhostSealedName, runhostEnvelopeName} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("sealed "+name), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	collect := func(args ...string) int {
+		var buf bytes.Buffer
+		code, _ := runhostCollectVerb(context.Background(), runhost.Request{Verb: "collect", Args: append([]string{j.ID}, args...)}, nil, runhost.NewFrameWriter(&buf))
+		return code
+	}
+	if code := collect("envelope"); code != runhostExitRunning {
+		t.Fatalf("collect while the job runs: %d, want %d", code, runhostExitRunning)
+	}
+	l.finish(0, nil)
+	if code := collect("envelope"); code != 0 {
+		t.Fatalf("collect the envelope once the job finished, before it is forgotten: %d", code)
+	}
+	if code := collect(); code != 0 {
+		t.Fatalf("collect the output once the job finished, before it is forgotten: %d", code)
+	}
+}
