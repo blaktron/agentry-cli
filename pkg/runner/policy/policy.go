@@ -513,6 +513,11 @@ type Images struct {
 	// pinned). Load moves the docker-agent entry to HarnessDockerAgent. Unset
 	// entries take the CLI's defaults.
 	HarnessImages map[string]HarnessImage `yaml:"harnessImages,omitempty"`
+	// newest are the images setup built from a vendor's newest release,
+	// as the record beside the policy file holds them (NewestFile): an
+	// adapter HarnessImages does not name runs in its newest image, else in
+	// the CLI's tested default. nil when nothing is recorded.
+	newest map[string]Newest
 	// GoBuilder builds the local runner image.
 	GoBuilder string `yaml:"goBuilder"`
 	// Runner overrides the local runner image tag ("" = derived from the
@@ -1098,6 +1103,7 @@ func Load(path string) (*Policy, string, error) {
 	if err := p.Validate(); err != nil {
 		return nil, "", fmt.Errorf("%s: %w", path, err)
 	}
+	p.loadNewest(path)
 	sum := sha256.Sum256(b)
 	return &p, hex.EncodeToString(sum[:]), nil
 }

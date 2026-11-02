@@ -121,7 +121,11 @@ func EnsureInstalledFor(ctx context.Context, d dockerx.Client, pol *policy.Polic
 	if err := EnsureInstalled(ctx, d, pol, runnerTag, imageCtxDir, logw, false); err != nil {
 		return err
 	}
-	return EnsureHarnessImage(ctx, d, h.Adapter, pin, logw)
+	b := harnessbuild.Builder{Docker: d, Log: logw}
+	if rec, ok := pol.Images.NewestRecord(h.Adapter); ok {
+		b.Recorded = &rec
+	}
+	return ensureHarnessImage(ctx, d, h.Adapter, pin, logw, b)
 }
 
 // checkHarnessImage refuses an image pinned by the artifact it is built
@@ -148,11 +152,17 @@ func EnsureHarnessImage(ctx context.Context, d dockerx.Client, adapterName strin
 // download starts, so a caller can say a build is under way; nil tells
 // nothing.
 func EnsureHarnessImageBuilding(ctx context.Context, d dockerx.Client, adapterName string, h policy.HarnessImage, logw io.Writer, building func(version string)) error {
+	return ensureHarnessImage(ctx, d, adapterName, h, logw, harnessbuild.Builder{Docker: d, Log: logw, Building: building})
+}
+
+// ensureHarnessImage makes h present with b, which builds an image pinned by
+// its artifact.
+func ensureHarnessImage(ctx context.Context, d dockerx.Client, adapterName string, h policy.HarnessImage, logw io.Writer, b harnessbuild.Builder) error {
 	if err := checkHarnessImage(adapterName, h); err != nil {
 		return err
 	}
 	if h.Artifact != "" {
-		return harnessbuild.Builder{Docker: d, Log: logw, Building: building}.Ensure(ctx, adapterName, h)
+		return b.Ensure(ctx, adapterName, h)
 	}
 	ok, err := d.ImageExists(ctx, h.Ref)
 	if err != nil || ok {

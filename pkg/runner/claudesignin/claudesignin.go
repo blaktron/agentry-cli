@@ -141,6 +141,10 @@ type SignIn struct {
 	// resolves the default policy file, writing it from defaults when
 	// absent.
 	Policy *policy.Policy
+	// PolicyPath is the file Policy was read from, beside which the image
+	// built from Claude Code's newest release is recorded; "" with a Policy
+	// given records nothing and takes the tested image.
+	PolicyPath string
 	// Docker is the daemon the image's sign-in runs on; nil is dockerx.New.
 	Docker func() dockerx.Client
 	// Keys is the keychain the sign-in store uses; nil keeps nothing there.
@@ -155,21 +159,27 @@ func (s SignIn) docker() dockerx.Client {
 }
 
 func (s SignIn) policy() (*policy.Policy, error) {
+	pol, _, err := s.policyAt()
+	return pol, err
+}
+
+// policyAt is the policy and the file it was read from.
+func (s SignIn) policyAt() (*policy.Policy, string, error) {
 	if s.Policy != nil {
-		return s.Policy, nil
+		return s.Policy, s.PolicyPath, nil
 	}
-	return DefaultPolicy()
+	pf, err := policy.Resolve("")
+	if err != nil {
+		return nil, "", err
+	}
+	pol, _, err := policy.EnsureDefault(pf.Path)
+	return pol, pf.Path, err
 }
 
 // DefaultPolicy is the operator policy a sign-in prepares its image under
 // when none is given: the default file, written from defaults when absent.
 func DefaultPolicy() (*policy.Policy, error) {
-	pf, err := policy.Resolve("")
-	if err != nil {
-		return nil, err
-	}
-	pol, _, err := policy.EnsureDefault(pf.Path)
-	return pol, err
+	return SignIn{}.policy()
 }
 
 // status is what `claude auth status` prints (Claude Code 2.1.296).
@@ -269,16 +279,21 @@ func runContainer(ctx context.Context, d dockerx.Client, r dockerx.RunSpec, stdi
 // signInImage builds the Claude Code image when it is not here, then runs
 // Claude Code's own sign-in in it, on its volume, and asks it who is signed
 // in. It returns the volume and the account.
-func (s SignIn) signInImage(ctx context.Context, p Person, pol *policy.Policy) (string, string, error) {
+func (s SignIn) signInImage(ctx context.Context, p Person, pol *policy.Policy, path string) (string, string, error) {
 	errOut := p.out()
-	h, ok := pol.Images.HarnessImageFor(adapter.ClaudeImageAdapterName)
-	if !ok {
+	if _, ok := pol.Images.HarnessImageFor(adapter.ClaudeImageAdapterName); !ok {
 		return "", "", errors.New("the policy names no Claude Code image")
 	}
 	d := s.docker()
 	p.step(StepImage, "")
 	building := func(version string) { p.step(StepBuild, version) }
-	if err := gateway.EnsureHarnessImageBuilding(ctx, d, adapter.ClaudeImageAdapterName, h, errOut, building); err != nil {
+	// Claude Code's newest release first, the tested one the fallback.
+	record := ""
+	if path != "" {
+		record = policy.NewestPathFor(path)
+	}
+	h, err := gateway.EnsureNewestHarnessImage(ctx, d, pol, record, adapter.ClaudeImageAdapterName, errOut, building)
+	if err != nil {
 		return "", "", engine.Classify(engine.ExitGateway, err)
 	}
 	if err := d.VolumeCreate(ctx, Volume, map[string]string{"org.agentry.model-signin": modelsignin.Claude}); err != nil {
@@ -415,7 +430,7 @@ func (s SignIn) signInInstalled(ctx context.Context, p Person, pol *policy.Polic
 // sign-in leaves nothing behind; a failed sign-in again leaves the kept
 // one alone.
 func (s SignIn) Run(ctx context.Context, p Person, installed bool) (*modelsignin.Record, error) {
-	pol, err := s.policy()
+	pol, path, err := s.policyAt()
 	if err != nil {
 		return nil, engine.Classify(engine.ExitPolicy, err)
 	}
@@ -428,7 +443,7 @@ func (s SignIn) Run(ctx context.Context, p Person, installed bool) (*modelsignin
 	if installed {
 		dir, label, err = s.signInInstalled(ctx, p, pol)
 	} else {
-		dir, label, err = s.signInImage(ctx, p, pol)
+		dir, label, err = s.signInImage(ctx, p, pol, path)
 	}
 	if err != nil {
 		// "Nothing kept" must be true: a first sign-in that failed may
