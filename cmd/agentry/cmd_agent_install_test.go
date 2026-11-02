@@ -159,3 +159,137 @@ func TestAgentInstallRefusesWhatIsNotAPersistentAgentHere(t *testing.T) {
 		t.Errorf("a refused install left an agent: %v", agents)
 	}
 }
+
+// persistentRelease is a persistent release's files at version, with a
+// locked persona, two persistent keys and two subagents: acme/digest, which
+// resolves, and acme/gone, which is not in the registry.
+func persistentRelease(version, extraKeys string) map[string]string {
+	return map[string]string{
+		"agent.yaml": "schemaVersion: \"2\"\nname: helper\nnamespace: acme\nmodes: [persistent]\nversion: " + version + "\nsummary: Keeps notes\n" +
+			"capabilities:\n  persistent:\n    clock: true\n    memory: true\n" + extraKeys +
+			"persona:\n  name: Ada\n  editable: false\n" +
+			"dependencies:\n  agents:\n" +
+			"    - ref: acme/digest\n      version: 1.0.0\n      why: Summarises the notes you share\n" +
+			"    - ref: acme/gone\n      version: ^1.0.0\n      why: Fetches pages\n" +
+			"publish:\n  include: [agent.yaml, AGENT.md, PERSONA.md]\n",
+		"AGENT.md":   "You keep notes for the person.\n",
+		"PERSONA.md": "Brisk, warm and exact.\n",
+	}
+}
+
+// TestAgentInstallPlanPreviewsThePinsAndWritesNothing: agent install --plan
+// --json answers the consent facts of a persistent release (its persistent
+// keys, its locked persona, each subagent pinned with its version, reach and
+// digest, or why it resolves to none) and installs, records and pins
+// nothing; after an install, the plan of a newer version names the
+// installed release and what the update widens.
+func TestAgentInstallPlanPreviewsThePinsAndWritesNothing(t *testing.T) {
+	isolateEnv(t)
+	home, policyPath := isolateRunnerHome(t)
+	prev := agentDocker
+	agentDocker = func() dockerx.Client { return &dockerx.Fake{} }
+	t.Cleanup(func() { agentDocker = prev })
+	fr := newFakeRegistry(t)
+	fr.enableSigning(t)
+	fa := fr.addAgent("acme", "helper", "persistent", "Keeps notes")
+	fa.addVersion(t, "1.0.0", persistentRelease("1.0.0", "")).attMode = attSigned
+	digest := fr.addAgent("acme", "digest", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("digest", "capabilities:\n  network:\n    egress: [api.example.com]\n"))
+	digest.attMode = attSigned
+
+	plan := func(ref string) installPlan {
+		t.Helper()
+		stdout, _, err := runCLI(t, strings.NewReader(""), "--registry", fr.url(), "--json", "agent", "install", ref, "--plan", "--policy", policyPath)
+		if err != nil {
+			t.Fatalf("agent install --plan %s: %v", ref, err)
+		}
+		var p installPlan
+		if err := json.Unmarshal([]byte(stdout), &p); err != nil {
+			t.Fatalf("plan is not JSON: %v\n%s", err, stdout)
+		}
+		if p.Agent == nil {
+			t.Fatalf("the plan has no agent block: %s", stdout)
+		}
+		return p
+	}
+	p := plan("acme/helper@1.0.0")
+	a := p.Agent
+	if p.Ref != "acme/helper@1.0.0" || p.Refusal != "" || a.Agent != "acme.helper" || !a.RunsSubagents || a.Installed != nil || p.Installed != nil {
+		t.Fatalf("plan: %+v, agent %+v", p, a)
+	}
+	if strings.Join(a.Persistent, ",") != "clock,memory" {
+		t.Errorf("persistent keys = %v", a.Persistent)
+	}
+	if a.Persona == nil || a.Persona.Name != "Ada" || a.Persona.File != "PERSONA.md" || !a.Persona.Locked {
+		t.Errorf("persona = %+v", a.Persona)
+	}
+	if len(a.Subagents) != 2 {
+		t.Fatalf("subagents = %+v", a.Subagents)
+	}
+	if s := a.Subagents[0]; s.Ref != "acme/digest" || s.Version != "1.0.0" || s.Digest != digest.digest || !strings.Contains(s.Reach, "network egress") || s.Why != "Summarises the notes you share" || s.Unresolved != "" {
+		t.Errorf("acme/digest pinned as %+v", s)
+	}
+	if s := a.Subagents[1]; s.Ref != "acme/gone" || s.Version != "" || s.Digest != "" || s.Unresolved == "" {
+		t.Errorf("acme/gone pinned as %+v", s)
+	}
+	if !strings.Contains(string(p.Contract), `"clock":true`) {
+		t.Errorf("contract lacks the persistent block: %s", p.Contract)
+	}
+	if _, err := persistent.LoadRelease(home, "acme.helper"); err == nil {
+		t.Error("--plan recorded the agent")
+	}
+	if st, _ := installed.Load(); len(st.Records) != 0 {
+		t.Errorf("--plan wrote the install state: %+v", st.Records)
+	}
+	if _, err := os.Stat(installdir.AgentDir(home, "acme", "helper")); !os.IsNotExist(err) {
+		t.Errorf("--plan laid the release down: %v", err)
+	}
+	if agents := persistent.AgentsIn(home); len(agents) != len(persistent.Agents()) {
+		t.Errorf("--plan left an agent: %v", agents)
+	}
+
+	if _, _, err := runCLI(t, strings.NewReader(""), "--registry", fr.url(), "agent", "install", "acme/helper@1.0.0", "--yes", "--policy", policyPath); err != nil {
+		t.Fatalf("agent install: %v", err)
+	}
+	fa.addVersion(t, "1.1.0", persistentRelease("1.1.0", "    skills: true\n")).attMode = attSigned
+	p = plan("acme/helper@1.1.0")
+	if in := p.Agent.Installed; in == nil || in.Version != "1.0.0" || in.Source != persistent.SourceRegistry || len(in.Subagents) != 2 || in.Subagents[0].Digest != digest.digest {
+		t.Fatalf("the update's plan names the installed release as %+v", p.Agent.Installed)
+	}
+	if p.Installed == nil || p.Installed.Version != "1.0.0" || !p.NeedsConfirmation || !strings.Contains(strings.Join(p.Diff.Widened, "; "), "skills") {
+		t.Errorf("the update's widening: installed %+v, diff %+v, asks %t", p.Installed, p.Diff, p.NeedsConfirmation)
+	}
+	if r, err := persistent.LoadRelease(home, "acme.helper"); err != nil || r.Version != "1.0.0" {
+		t.Errorf("the update's plan moved the agent: %+v, %v", r, err)
+	}
+}
+
+// TestAgentInstallPlanOfAFolderRunsNoSubagents: the plan of a folder
+// installed with --local says it runs none of its subagents and installs
+// nothing, without --allow-unsigned, whose absence is its refusal.
+func TestAgentInstallPlanOfAFolderRunsNoSubagents(t *testing.T) {
+	isolateEnv(t)
+	home, policyPath := isolateRunnerHome(t)
+	dir := t.TempDir()
+	for name, body := range persistentRelease("1.0.0", "") {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stdout, _, err := runCLI(t, strings.NewReader(""), "--registry", noRegistry, "--json", "agent", "install", "--local", dir, "--plan", "--policy", policyPath)
+	if err != nil {
+		t.Fatalf("agent install --local --plan: %v", err)
+	}
+	var p installPlan
+	if err := json.Unmarshal([]byte(stdout), &p); err != nil {
+		t.Fatalf("plan is not JSON: %v\n%s", err, stdout)
+	}
+	if a := p.Agent; a == nil || a.RunsSubagents || len(a.Subagents) != 2 || a.Subagents[0].Version != "" || !strings.Contains(a.Subagents[0].Unresolved, "runs none") {
+		t.Fatalf("agent block: %+v", p.Agent)
+	}
+	if !strings.Contains(p.Refusal, "--allow-unsigned") {
+		t.Errorf("refusal = %q", p.Refusal)
+	}
+	if _, err := persistent.LoadRelease(home, "acme.helper"); err == nil {
+		t.Error("--plan recorded the agent")
+	}
+}

@@ -79,6 +79,9 @@ type SubagentPin struct {
 	// Reach is what that version's contract reaches, in a line, as its
 	// roster entry's sentence quotes it.
 	Reach string `yaml:"reach,omitempty" json:"reach,omitempty"`
+	// Digest is that version's archive digest, as the registry answered
+	// it when the constraint was resolved.
+	Digest string `yaml:"digest,omitempty" json:"digest,omitempty"`
 }
 
 // Persona is the name and the text a published agent's release ships for

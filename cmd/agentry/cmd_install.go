@@ -8,6 +8,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -224,6 +225,9 @@ type installPlan struct {
 	// Refusal is set when an install would stop before writing: the
 	// attestation verdict or the missing --allow-unsigned. Empty otherwise.
 	Refusal string `json:"refusal,omitempty"`
+	// Agent is, for `agentry agent install --plan`, what installing the
+	// release as a persistent agent adds.
+	Agent *agentPlan `json:"agent,omitempty"`
 }
 
 type installPlanPrior struct {
@@ -528,11 +532,12 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 	}
 	nextCaps := installed.Snapshot(m.Contract())
 	if opts.plan {
-		refusal := attErr
-		if refusal == nil {
-			refusal = changedRefusal
+		refusal := cmp.Or(attErr, changedRefusal)
+		var agent *agentPlan
+		if opts.agent != nil {
+			refusal, agent = cmp.Or(refusal, opts.agent.refusal), opts.agent.planOf(m)
 		}
-		return writeInstallPlan(cmd, res, m, computed, att, refusal, &state, key, nextCaps, target, paths)
+		return writeInstallPlan(cmd, res, m, computed, att, refusal, &state, key, nextCaps, target, paths, agent)
 	}
 	if err := confirmCapabilityChange(cmd, out, &state, key, res.Version, nextCaps, m.Contract(), opts.yes); err != nil {
 		return err
@@ -637,7 +642,7 @@ func runConsentFlag(state string) string {
 // refusal is part of what the plan reports.
 func writeInstallPlan(cmd *cobra.Command, res *apiclient.ResolveResult, m *manifest.Manifest, digest string,
 	att trust.AttestationResult, attErr error, state *installed.State, key installed.Key,
-	next installed.CapSnapshot, target string, paths installPaths,
+	next installed.CapSnapshot, target string, paths installPaths, agent *agentPlan,
 ) error {
 	contract, cdigest, err := contractJSON(m.Contract())
 	if err != nil {
@@ -648,7 +653,7 @@ func writeInstallPlan(cmd *cobra.Command, res *apiclient.ResolveResult, m *manif
 		Version: res.Version, Digest: digest, Modes: modeStrings(m.SupportedModes()), Summary: m.Summary, Yanked: res.Yanked,
 		Contract: contract, ContractDigest: cdigest,
 		Attestation: string(att.State), KeyID: att.KeyID, Signed: att.State == trust.StateVerified,
-		Target: target, Dir: paths.dest, Managed: paths.managed,
+		Target: target, Dir: paths.dest, Managed: paths.managed, Agent: agent,
 	}
 	if attErr != nil {
 		plan.Refusal = attErr.Error()

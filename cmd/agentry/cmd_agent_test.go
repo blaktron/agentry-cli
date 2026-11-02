@@ -556,6 +556,61 @@ func TestAgentShowNamesTheLastUpkeep(t *testing.T) {
 	}
 }
 
+// TestAgentShowListsTheSubagentRuns: show lists the runs an agent started
+// of its subagents, read from two segments' records, newest first, in text
+// and as subagentRuns in --json; an agent with none lists none.
+func TestAgentShowListsTheSubagentRuns(t *testing.T) {
+	home := agentHome(t)
+	if _, _, err := runCLI(t, nil, "agent", "enable", "assistant"); err != nil {
+		t.Fatal(err)
+	}
+	js, _, err := runCLI(t, nil, "agent", "show", "assistant", "--json")
+	if err != nil || strings.Contains(js, "subagentRuns") {
+		t.Fatalf("show with no subagent runs: %v\n%s", err, js)
+	}
+	write := func(segment string, lines ...string) {
+		t.Helper()
+		dir := filepath.Join(persistent.Dir(home, "assistant"), "segments", segment, "receipts")
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "subagents.ndjson"), []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("aaaa0001",
+		`{"time":"2026-10-24T10:00:00Z","event":"started","run":"sa-00000000000a","subagent":"acme/digest@1.0.0","grantedBy":"release"}`,
+		`{"time":"2026-10-24T10:03:00Z","event":"ended","run":"sa-00000000000a","subagent":"acme/digest@1.0.0","outcome":"ok","runId":"run-a"}`)
+	write("aaaa0002",
+		`{"time":"2026-10-25T09:00:00Z","event":"started","run":"sa-00000000000b","subagent":"acme/fetch@0.2.0","grantedBy":"you"}`,
+		`{"time":"2026-10-25T09:01:00Z","event":"ended","run":"sa-00000000000b","subagent":"acme/fetch@0.2.0","outcome":"error","error":"the engine is not running"}`)
+	out, _, err := runCLI(t, nil, "agent", "show", "assistant")
+	if err != nil || !strings.Contains(out, "subagent runs: 2") ||
+		!strings.Contains(out, "sa-00000000000b\tacme/fetch@0.2.0") || !strings.Contains(out, "error: the engine is not running") ||
+		strings.Index(out, "sa-00000000000b") > strings.Index(out, "sa-00000000000a") {
+		t.Fatalf("show: %v\n%s", err, out)
+	}
+	js, _, err = runCLI(t, nil, "agent", "show", "assistant", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var st struct {
+		SubagentRuns []persistent.SubagentRunRecord `json:"subagentRuns"`
+	}
+	if err := json.Unmarshal([]byte(js), &st); err != nil {
+		t.Fatal(err)
+	}
+	if len(st.SubagentRuns) != 2 {
+		t.Fatalf("subagentRuns = %+v", st.SubagentRuns)
+	}
+	if r := st.SubagentRuns[0]; r.ID != "sa-00000000000b" || r.Subagent != "acme/fetch@0.2.0" || r.Outcome != "error" || r.Error != "the engine is not running" || r.Segment != "aaaa0002" {
+		t.Errorf("newest = %+v", r)
+	}
+	if r := st.SubagentRuns[1]; r.ID != "sa-00000000000a" || r.RunID != "run-a" || r.Outcome != "ok" || r.GrantedBy != "release" || r.Ended.Sub(r.Started) != 3*time.Minute {
+		t.Errorf("oldest = %+v", r)
+	}
+}
+
 // TestUpkeepLineLeavesOutFactsNotCounted: a compaction's line names the
 // memory's fact lines only when they were counted; an agent that keeps no
 // memory, or a memory that could not be read, has none to name.
