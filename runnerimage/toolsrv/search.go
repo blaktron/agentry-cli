@@ -110,14 +110,21 @@ type Search struct {
 // rgFixedArgs are the flags every ripgrep run takes: no config
 // file, ignore files not read and hidden files searched so nothing the
 // person gave is skipped, caps on file size and on what a pattern may
-// compile to, and a stable order so offset pages are the same pages
-// (sorting also makes ripgrep search on one thread). The output flags are
-// each tool's: --json for grep's content, --null paths otherwise.
+// compile to, and searchThreads threads. The output flags are each
+// tool's: --json for grep's content, --null paths otherwise.
 var rgFixedArgs = []string{
 	"--no-config", "--no-ignore", "--hidden",
-	"--max-filesize=8M", "--sort=path",
+	"--max-filesize=8M", "--threads=" + strconv.Itoa(searchThreads),
 	"--regex-size-limit=16M", "--dfa-size-limit=64M",
 }
+
+// searchThreads is how many files ripgrep reads at once. Where each read
+// waits on a round trip (a host folder bind-mounted into a VM-backed
+// engine), reading them one at a time made a search of 1,455 files ten
+// times slower, one CPU or many, so ripgrep is never asked to sort, which
+// would hold it to one thread; the server sorts each answer by path
+// itself (pathCompare), so offset pages are the same pages.
+const searchThreads = 8
 
 // rgSkipGit keeps .git out of every search. ripgrep lets the last glob that
 // matches a path decide, so it goes after the call's own glob: a call's "*"
@@ -794,6 +801,7 @@ func (s *server) toolGrep(raw json.RawMessage) (string, bool) {
 				lines = append(lines, p)
 			}
 		}
+		slices.SortFunc(lines, pathCompare)
 	case "count":
 		lines = countLines(r.stdout, sc)
 	case "content":
@@ -848,6 +856,7 @@ func (s *server) toolGlob(raw json.RawMessage) (string, bool) {
 			lines = append(lines, p)
 		}
 	}
+	slices.SortFunc(lines, pathCompare)
 	return s.searchAnswer(lines, a.MaxResults, a.Offset, r, "no file in "+sc.area+" matches the pattern", "narrow path or pattern"), false
 }
 
@@ -939,19 +948,31 @@ func splitNul(out []byte) []string {
 }
 
 // countLines is --count --null's answer, path NUL count a line, as
-// "path: N".
+// "path: N", in path order.
 func countLines(out []byte, sc searchScope) []string {
-	var lines []string
+	type count struct{ path, n string }
+	var counts []count
 	for _, line := range bytes.Split(out, []byte("\n")) {
 		p, n, ok := bytes.Cut(line, []byte{0})
 		if !ok {
 			continue
 		}
 		if shown := sc.show(string(p)); sc.keep(shown) {
-			lines = append(lines, shown+": "+string(n))
+			counts = append(counts, count{shown, string(n)})
 		}
 	}
+	slices.SortFunc(counts, func(a, b count) int { return pathCompare(a.path, b.path) })
+	lines := make([]string, 0, len(counts))
+	for _, c := range counts {
+		lines = append(lines, c.path+": "+c.n)
+	}
 	return lines
+}
+
+// pathCompare orders two paths by their elements, as ripgrep's own
+// --sort=path does: "a/b" before "a.b", which a byte order would reverse.
+func pathCompare(a, b string) int {
+	return strings.Compare(strings.ReplaceAll(a, "/", "\x00"), strings.ReplaceAll(b, "/", "\x00"))
 }
 
 // rgEvent is the part of one --json event the answer needs.
@@ -973,12 +994,14 @@ type rgText struct {
 	Text *string `json:"text"`
 }
 
-// contentLines is --json's matches and context as grep lines: a match as
-// path:line: text, a context line as path-line- text, and, with context,
-// "--" between groups that do not touch.
+// contentLines is --json's matches and context as grep lines, file by
+// file in path order: a match as path:line: text, a context line as
+// path-line- text, and, with context, "--" between groups that do not
+// touch. ripgrep writes each file's events together but, searching
+// several files at once, the files in any order.
 func contentLines(out []byte, sc searchScope, context bool) []string {
-	var lines []string
-	lastPath, lastLine := "", 0
+	byPath := map[string][]rgEvent{}
+	var paths []string
 	for _, raw := range bytes.Split(out, []byte("\n")) {
 		var ev rgEvent
 		if len(raw) == 0 || json.Unmarshal(raw, &ev) != nil {
@@ -994,23 +1017,34 @@ func contentLines(out []byte, sc searchScope, context bool) []string {
 		if !sc.keep(p) {
 			continue
 		}
-		if context && lastPath != "" && (p != lastPath || ev.Data.LineNumber > lastLine+1) {
-			lines = append(lines, "--")
+		if _, ok := byPath[p]; !ok {
+			paths = append(paths, p)
 		}
-		lastPath, lastLine = p, ev.Data.LineNumber
-		text := "[a line that is not UTF-8]"
-		if ev.Data.Lines.Text != nil {
-			at := 0
-			if len(ev.Data.Submatches) > 0 {
-				at = ev.Data.Submatches[0].Start
+		byPath[p] = append(byPath[p], ev)
+	}
+	slices.SortFunc(paths, pathCompare)
+	var lines []string
+	lastPath, lastLine := "", 0
+	for _, p := range paths {
+		for _, ev := range byPath[p] {
+			if context && lastPath != "" && (p != lastPath || ev.Data.LineNumber > lastLine+1) {
+				lines = append(lines, "--")
 			}
-			text = grepLine(*ev.Data.Lines.Text, at)
+			lastPath, lastLine = p, ev.Data.LineNumber
+			text := "[a line that is not UTF-8]"
+			if ev.Data.Lines.Text != nil {
+				at := 0
+				if len(ev.Data.Submatches) > 0 {
+					at = ev.Data.Submatches[0].Start
+				}
+				text = grepLine(*ev.Data.Lines.Text, at)
+			}
+			sep := ":"
+			if ev.Type == "context" {
+				sep = "-"
+			}
+			lines = append(lines, p+sep+strconv.Itoa(ev.Data.LineNumber)+sep+" "+text)
 		}
-		sep := ":"
-		if ev.Type == "context" {
-			sep = "-"
-		}
-		lines = append(lines, p+sep+strconv.Itoa(ev.Data.LineNumber)+sep+" "+text)
 	}
 	return lines
 }
