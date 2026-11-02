@@ -598,7 +598,7 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 	}
 	if opts.agent != nil {
 		return opts.agent.record(cmd, persistent.Release{
-			Ref: res.Namespace + "/" + m.Name, Version: res.Version, Digest: computed, Source: persistent.SourceRegistry,
+			Ref: res.Namespace + "/" + m.Name, Version: res.Version, Digest: computed, Source: persistent.SourceRegistry, Registry: reg,
 		}, m, recorded)
 	}
 	if flags.jsonOut {

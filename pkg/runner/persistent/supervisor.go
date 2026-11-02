@@ -72,6 +72,12 @@ type Options struct {
 	// Secrets is where the stored secrets' values are read for each
 	// segment; nil is the keychain (KeychainSecrets).
 	Secrets Secrets
+	// Subagents runs the agent's subagents (subagentrun.go), and the runs
+	// quickagent_run starts; nil refuses both.
+	Subagents SubagentHost
+	// Helper answers Agentry's helper tools (helper.go), before AppLink;
+	// nil leaves them to AppLink, and with neither they are refused.
+	Helper HelperOps
 	// AppLink answers the agent's app link calls other than self_configure,
 	// which the supervisor answers itself: the desktop's. Nil answers them
 	// as Agentry Desktop's.
@@ -154,13 +160,20 @@ type Supervisor struct {
 	resumeReason string
 	busy         bool
 	usage        receipt.Usage
-	watchers     map[int]chan session.Event
-	nextWatcher  int
-	ln           net.Listener
-	appLn        net.Listener // the app link's socket, for an agent that has one
-	appCtx       context.Context
-	appCancel    context.CancelFunc
-	stopped      bool // set under mu once Stop has let the watchers go
+	// askers are the clients the agent's questions go to, and questions the
+	// ones waiting for an answer (ask.go).
+	askers    map[int]asker
+	nextAsker int
+	questions map[string]*question
+	// subagents are the subagent runs the agent started.
+	subagents   *subagentRuns
+	watchers    map[int]chan session.Event
+	nextWatcher int
+	ln          net.Listener
+	appLn       net.Listener // the app link's socket, for an agent that has one
+	appCtx      context.Context
+	appCancel   context.CancelFunc
+	stopped     bool // set under mu once Stop has let the watchers go
 	// served are the tools the running segment's gateway serves; joined
 	// are the servers whose background install finished since the agent
 	// was last told, and joinTools the tools the segments they joined
@@ -255,9 +268,10 @@ func Start(ctx context.Context, opts Options) (*Supervisor, error) {
 	}
 	s := &Supervisor{
 		opts: opts, owner: owner, since: time.Now().UTC(),
-		adapter:  localrun.ImageAdapter(adapter.DefaultFor(opts.Policy)),
-		watchers: map[int]chan session.Event{},
-		joined:   map[string]bool{}, installs: map[string]*bgInstall{}, ranUntil: map[string]time.Time{},
+		adapter:   localrun.ImageAdapter(adapter.DefaultFor(opts.Policy)),
+		watchers:  map[int]chan session.Event{},
+		subagents: &subagentRuns{},
+		joined:    map[string]bool{}, installs: map[string]*bgInstall{}, ranUntil: map[string]time.Time{},
 		done: make(chan struct{}),
 	}
 	s.bgCtx, s.bgCancel = context.WithCancel(context.Background())
@@ -390,8 +404,9 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 		Grants:    grants,
 		Inference: s.creditsGrant(),
 	}
-	if s.appLn != nil {
+	if s.appLn != nil && a.AppLinkWith(cfg) != "" {
 		seg.Grants.AppLink = AppSocketPath(home, name)
+		seg.Grants.Subagents = len(Subagents(a, cfg)) > 0
 	}
 	start := s.opts.StartSegment
 	if start == nil {

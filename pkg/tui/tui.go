@@ -1,6 +1,6 @@
 // Package tui is the terminal chat for an interactive run: one full-screen
 // conversation over a session.Session — transcript pane, input line, status
-// line, and the slash commands /add, /finish, /quit, /caps. It is a view:
+// line, and the slash commands /add, /yes, /no, /finish, /quit, /caps. It is a view:
 // every message goes through Session.Send, every file through
 // Session.AddInput, and the engine's budgets end the session whatever the
 // terminal does.
@@ -90,7 +90,10 @@ type model struct {
 
 	lines     []string
 	streaming strings.Builder // assistant text of the turn in progress
-	busy      bool
+	// question is the id of the question the runner asked last for the
+	// agent, which /yes and /no answer; empty once answered.
+	question string
+	busy     bool
 	// own is set while a turn the runner sent runs (a task's or an
 	// upkeep's), upkeep while that turn is an upkeep's: the turn's tool
 	// lines and answer are drawn faint, and an upkeep's answer is not
@@ -220,6 +223,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case answerDoneMsg:
+		if msg.err != nil {
+			m.appendLine(m.styles.warn.Render("the answer was not taken: " + msg.err.Error()))
+		}
+		return m, nil
+
 	case tickMsg:
 		return m, tick()
 	}
@@ -227,6 +236,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.input, cmd = m.input.Update(msg)
 	return m, cmd
 }
+
+// answerDoneMsg is a question's answer sent, or why it was not taken.
+type answerDoneMsg struct{ err error }
 
 // submit handles one line from the input: a slash command or a turn.
 func (m model) submit(text string) (tea.Model, tea.Cmd) {
@@ -248,8 +260,17 @@ func (m model) submit(text string) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "/help":
-			m.appendLine(m.styles.dim.Render("/add <path> — give the agent a file (read-only under /inputs); /finish — ask for the final result and end; /quit — end without a result; /caps — the enforced contract"))
+			m.appendLine(m.styles.dim.Render("/add <path> — give the agent a file (read-only under /inputs); /yes, /no — answer what Agentry asks you for the agent; /finish — ask for the final result and end; /quit — end without a result; /caps — the enforced contract"))
 			return m, nil
+		case "/yes", "/no":
+			a, ok := m.s.(session.Answerer)
+			if !ok || m.question == "" {
+				m.appendLine(m.styles.warn.Render("no question is waiting for your answer"))
+				return m, nil
+			}
+			id, yes := m.question, cmdName == "/yes"
+			m.question = ""
+			return m, func() tea.Msg { return answerDoneMsg{err: a.Answer(context.Background(), id, yes)} }
 		case "/add":
 			if arg == "" {
 				m.appendLine(m.styles.warn.Render("usage: /add <path>"))
@@ -351,6 +372,10 @@ func (m *model) apply(ev session.Event) {
 		}
 	case session.KindNotice:
 		m.appendLine(m.styles.runner.Render("Runner: " + ev.Text))
+	case session.KindQuestion:
+		m.question = ev.Question
+		m.appendLine(m.styles.runner.Render("Agentry asks you: " + ev.Text))
+		m.appendLine(m.styles.runner.Render("Answer with /yes or /no."))
 	case session.KindError:
 		m.appendLine(m.styles.warn.Render("harness error: " + ev.Text))
 	case session.KindSessionEnd:

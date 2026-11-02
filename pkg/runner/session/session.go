@@ -50,7 +50,17 @@ const (
 	// a chat shows them and the harness never sees: a check of a persistent
 	// agent's share folder, a change it is restarting with.
 	KindNotice Kind = "notice"
+	// KindQuestion is a question the runner puts to the person for an agent:
+	// Question is its id, Text the question. A client that can answer
+	// sends an answer naming the id (protocol.Answer); the first answer is
+	// the one taken.
+	KindQuestion Kind = "question"
 )
+
+// Answerer is a session a client can answer a question of.
+type Answerer interface {
+	Answer(ctx context.Context, id string, yes bool) error
+}
 
 // Event is one thing that happened in the session.
 type Event struct {
@@ -59,6 +69,8 @@ type Event struct {
 	// Text is the message text (turns, chunks), the tool name (tool calls),
 	// or the error text.
 	Text string `json:"text,omitempty"`
+	// Question is a question's id (KindQuestion).
+	Question string `json:"question,omitempty"`
 	// Synthetic marks a user turn the runner composed (an input notice).
 	Synthetic bool `json:"synthetic,omitempty"`
 	// Task is, on a user turn a persistent agent's heartbeat sent, the id

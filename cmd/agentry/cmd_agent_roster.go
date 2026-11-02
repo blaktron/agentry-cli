@@ -221,6 +221,7 @@ func newAgentGrantCmd() *cobra.Command {
 func newAgentConfigureCmd() *cobra.Command {
 	var (
 		name, personalityFile, share, runOnStart, addServer, removeServer, addPack, removePack string
+		addSubagentRef, removeSubagentRef                                                      string
 		devHost, devKey, devPassphrase, devPassword, policyPath, addPort, removePort           string
 		yes, allowVulnerable, noDevHost                                                        bool
 		acct                                                                                   accountFlags
@@ -400,6 +401,16 @@ func newAgentConfigureCmd() *cobra.Command {
 			if removePack != "" {
 				ch.RemoveKnowledge, set = removePack, set+1
 			}
+			if addSubagentRef != "" {
+				sa, err := installedSubagent(home, addSubagentRef)
+				if err != nil {
+					return engine.Classify(engine.ExitUsage, fmt.Errorf("--subagent: %w", err))
+				}
+				ch.AddSubagent, set = &sa, set+1
+			}
+			if removeSubagentRef != "" {
+				ch.RemoveSubagent, set = removeSubagentRef, set+1
+			}
 			if noDevHost {
 				ch.ClearDevHost, set = true, set+1
 			}
@@ -513,6 +524,8 @@ func newAgentConfigureCmd() *cobra.Command {
 	f.StringVar(&googleSignIn, "google-sign-in", "", "the Assistant's Google Workspace: sign it in to this Google account, in your browser")
 	f.StringVar(&addPack, "knowledge", "", "a knowledge pack kept on this computer for it to search")
 	f.StringVar(&removePack, "no-knowledge", "", "a knowledge pack to take away")
+	f.StringVar(&addSubagentRef, "subagent", "", "a persistent agent from the registry: let it start runs of this QuickAgent (namespace/name), installed on this computer and run autonomously, at the version it is installed at")
+	f.StringVar(&removeSubagentRef, "no-subagent", "", "take away a subagent you added (namespace/name)")
 	f.StringVar(&addPort, "port", "", "publish one of the Coding agent's ports on this computer, as name=number (web=3000)")
 	f.StringVar(&removePort, "no-port", "", "take away the Coding agent's port of this name")
 	f.StringVar(&devHost, "dev-host", "", "the Coding agent's dev server, user@host[:port], readied here and kept")

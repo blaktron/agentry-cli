@@ -52,6 +52,9 @@ type Release struct {
 	Digest  string `yaml:"digest" json:"digest"`
 	// Source is SourceRegistry or SourceLocal.
 	Source string `yaml:"source" json:"source"`
+	// Registry is the registry a registry release was installed from, which
+	// its subagents are run from; empty is this computer's default.
+	Registry string `yaml:"registry,omitempty" json:"registry,omitempty"`
 	// Folder is the author's folder a local agent was installed from, to
 	// say where it came from; empty for a registry release.
 	Folder string `yaml:"folder,omitempty" json:"folder,omitempty"`
@@ -73,6 +76,9 @@ type SubagentPin struct {
 	// empty when it resolved to none, with Unresolved saying why.
 	Version    string `yaml:"version,omitempty" json:"version,omitempty"`
 	Unresolved string `yaml:"unresolved,omitempty" json:"unresolved,omitempty"`
+	// Reach is what that version's contract reaches, in a line, as its
+	// roster entry's sentence quotes it.
+	Reach string `yaml:"reach,omitempty" json:"reach,omitempty"`
 }
 
 // Persona is the name and the text a published agent's release ships for
@@ -208,7 +214,7 @@ func agentOf(home, key string, r Release) (Agent, error) {
 	dir := installdir.ReleaseDir(home, ns, name, r.Version, r.Digest)
 	a := Agent{
 		Name: key, Ref: r.Ref, Version: r.Version, Title: name, ShareName: key + "-share",
-		Source: r.Source, Subagents: slices.Clone(r.Subagents),
+		Source: r.Source, Subagents: slices.Clone(r.Subagents), Registry: r.Registry,
 		Release: &localrun.Installed{Dir: dir, Meta: &installdir.Meta{
 			Ref: r.Ref + "@" + r.Version, Namespace: ns, Name: name, Version: r.Version, Digest: r.Digest, Source: r.Source,
 		}},

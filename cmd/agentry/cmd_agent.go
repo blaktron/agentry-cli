@@ -67,6 +67,15 @@ func newAgentCmd() *cobra.Command {
 			"Each agent reads skills, folders of instructions for kinds of work, at\n" +
 			"skills/: its built-in ones, and your own from a folder or a .zip on this\n" +
 			"computer (`agentry agent skill add`).\n\n" +
+			"A persistent agent from the registry may have subagents: QuickAgents it\n" +
+			"starts as runs of their own, each in its own sandbox under its own\n" +
+			"contract, given only the task and the files it names. Those its release\n" +
+			"declares are pinned when you install it; you add one installed here with\n" +
+			"`configure --subagent`. Each is a roster entry, on until you switch it off,\n" +
+			"with a second switch that asks you before each run. An agent that\n" +
+			"declares the helper tools may also find, install, run and schedule\n" +
+			"QuickAgents, asking you first. Agentry asks in the window attached to the\n" +
+			"agent (`chat` takes /yes and /no); with none attached, nothing is done.\n\n" +
 			"Agentry Helper (main) runs only in Agentry Desktop.\n\n" +
 			"  agentry agent install acme/helper\n" +
 			"  agentry agent enable assistant\n" +
@@ -701,6 +710,7 @@ func newAgentSuperviseCmd() *cobra.Command {
 				Policy: pol, PolicySHA: sha, PolicyFile: &file, Build: version.Build(),
 				Docker: dockerx.New(), Stderr: errOut, Packs: agentPacks(cmd), Voice: agentVoice(cmd),
 				OnStage: stageLines(errOut), Credits: creditsClient(pol),
+				Subagents: cliSubagents{policyPath: policyPath}, Helper: cliHelper{policyPath: policyPath},
 			})
 			close(starting)
 			if err != nil {

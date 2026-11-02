@@ -39,8 +39,8 @@ const (
 // The parts a tool set is composed of, each the tools of one capability
 // the agent declares: its own name and persona (PartSelf), its tasks
 // (PartTasks), the search of its earlier conversations (PartRecall),
-// Agentry's helper tools (PartHelper) and the meeting tools
-// (PartMeetings). A set is the parts it has, in this order, joined by
+// Agentry's helper tools (PartHelper), the meeting tools (PartMeetings)
+// and the subagent tools (PartSubagents, subagents.go). A set is the parts it has, in this order, joined by
 // commas (Compose).
 const (
 	PartSelf     = "self"
@@ -189,6 +189,7 @@ var parts = []struct {
 	{PartRecall, []Tool{recallTool}},
 	{PartHelper, helperTools},
 	{PartMeetings, meetingTools},
+	{PartSubagents, subagentTools},
 }
 
 // Parts are the parts there are, in the order a set lists them.
