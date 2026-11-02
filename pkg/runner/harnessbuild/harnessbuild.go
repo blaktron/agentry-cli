@@ -148,6 +148,16 @@ type Builder struct {
 	Dir string
 	// Log is told what is built from what.
 	Log io.Writer
+	// Building, when set, is told the vendor release's version as a build
+	// starts, before anything is downloaded: an image already here calls it
+	// not at all.
+	Building func(version string)
+}
+
+func (b Builder) building(version string) {
+	if b.Building != nil {
+		b.Building(version)
+	}
 }
 
 // IntegrityError is a package whose bytes are not the ones this build
@@ -241,6 +251,7 @@ func (b Builder) buildClaude(ctx context.Context, h policy.HarnessImage, rel cla
 		return fmt.Errorf("no Claude Code %s image for this docker daemon's platform (linux/%s); it builds for linux/amd64 and linux/arm64", rel.version, arch)
 	}
 	nativePkg := claudeWrapper + "-linux-" + cpu + "-musl"
+	b.building(rel.version)
 	dir, err := os.MkdirTemp(b.Dir, "agentry-claude-code-")
 	if err != nil {
 		return err

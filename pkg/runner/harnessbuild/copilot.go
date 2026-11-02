@@ -121,6 +121,7 @@ func (b Builder) buildCopilot(ctx context.Context, h policy.HarnessImage, rel co
 		return fmt.Errorf("no Copilot CLI %s image for this docker daemon's platform (linux/%s); it builds for linux/amd64 and linux/arm64", rel.version, arch)
 	}
 	asset := "copilot-linuxmusl-" + cpu + ".tar.gz"
+	b.building(rel.version)
 	dir, err := os.MkdirTemp(b.Dir, "agentry-copilot-")
 	if err != nil {
 		return err

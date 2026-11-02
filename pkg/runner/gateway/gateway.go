@@ -140,11 +140,19 @@ func checkHarnessImage(adapterName string, h policy.HarnessImage) error {
 // it is pinned by. Setup prepares the default adapter's image with
 // it, a run its plan's (EnsureInstalledFor).
 func EnsureHarnessImage(ctx context.Context, d dockerx.Client, adapterName string, h policy.HarnessImage, logw io.Writer) error {
+	return EnsureHarnessImageBuilding(ctx, d, adapterName, h, logw, nil)
+}
+
+// EnsureHarnessImageBuilding is EnsureHarnessImage that also tells building
+// the vendor release's version when an image is built here, before its
+// download starts, so a caller can say a build is under way; nil tells
+// nothing.
+func EnsureHarnessImageBuilding(ctx context.Context, d dockerx.Client, adapterName string, h policy.HarnessImage, logw io.Writer, building func(version string)) error {
 	if err := checkHarnessImage(adapterName, h); err != nil {
 		return err
 	}
 	if h.Artifact != "" {
-		return harnessbuild.Builder{Docker: d, Log: logw}.Ensure(ctx, adapterName, h)
+		return harnessbuild.Builder{Docker: d, Log: logw, Building: building}.Ensure(ctx, adapterName, h)
 	}
 	ok, err := d.ImageExists(ctx, h.Ref)
 	if err != nil || ok {
