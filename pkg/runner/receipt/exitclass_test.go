@@ -98,4 +98,44 @@ func TestTheEnvelopeCarriesTheClassWords(t *testing.T) {
 	if !strings.Contains(string(b), `"retryLikelyHelps": false`) || !strings.Contains(string(b), `"exitClassMeaning": "the run finished`) {
 		t.Errorf("ok envelope: %s", b)
 	}
+
+	// Every code a run exits with names its own class in the envelope, and the
+	// table answers the same row by code and by name. A client acts on these
+	// words, so each is written out here rather than read back from the table.
+	classes := []struct {
+		code  int
+		name  string
+		retry bool
+	}{
+		{0, "ok", false}, {1, "cli", false}, {2, "usage", false}, {10, "verify", false},
+		{11, "policy", false}, {12, "compile", false}, {13, "gateway", true}, {14, "harness", true},
+		{15, "timeout", false}, {16, "budget", false}, {17, "outputSchema", true}, {18, "blocked", false},
+		{137, "exit-137", false},
+	}
+	if len(ExitClasses) != len(classes)-1 {
+		t.Errorf("the table has %d rows, the contract has %d", len(ExitClasses), len(classes)-1)
+	}
+	for _, c := range classes {
+		t.Run(c.name, func(t *testing.T) {
+			row := ExitClassOf(c.code)
+			if row.Code != c.code || row.Name != c.name || row.RetryLikelyHelps != c.retry || row.Meaning == "" {
+				t.Fatalf("ExitClassOf(%d) = %+v, want %s with retry %v", c.code, row, c.name, c.retry)
+			}
+			if byName, found := ExitClassByName(c.name); c.code != 137 && (!found || byName != row) {
+				t.Errorf("ExitClassByName(%q) = %+v, %v, want %+v", c.name, byName, found, row)
+			}
+			env := &Envelope{Status: "error", ExitCode: c.code}
+			raw, err := env.Marshal()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var doc map[string]any
+			if err := json.Unmarshal(raw, &doc); err != nil {
+				t.Fatal(err)
+			}
+			if doc["exitClass"] != c.name || doc["exitClassMeaning"] != row.Meaning || doc["retryLikelyHelps"] != c.retry {
+				t.Errorf("envelope for exit %d: class %v, meaning %v, retry %v", c.code, doc["exitClass"], doc["exitClassMeaning"], doc["retryLikelyHelps"])
+			}
+		})
+	}
 }
