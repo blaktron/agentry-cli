@@ -1,6 +1,12 @@
 {
   "versions": [
     {
+      "version": "0.7.12",
+      "highlights": [
+        "agentry schedule add --check with --on says what a runhost's schedule would keep there, keeping nothing."
+      ]
+    },
+    {
       "version": "0.7.11",
       "highlights": [
         "agentry schedule add --on lab runs a QuickAgent on the runhost named lab on repeat, with nobody present.",
