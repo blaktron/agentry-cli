@@ -6,6 +6,8 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"maps"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -14,10 +16,12 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/drafter"
 	"github.com/blaktron/agentry-cli/pkg/knowledge/creator"
+	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/inference"
+	"github.com/blaktron/agentry-cli/pkg/runner/inference/inferencetest"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
@@ -25,6 +29,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/unsafeexec"
 	"github.com/blaktron/agentry-cli/pkg/trust"
 	"github.com/blaktron/agentry-cli/runnerimage"
+	"github.com/blaktron/agentry-cli/runnerimage/applink"
 	runnerdecode "github.com/blaktron/agentry-cli/runnerimage/decode"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 	"github.com/blaktron/agentry/pkg/manifest"
@@ -59,21 +64,60 @@ func TestOnlyTheEmbeddedPackagesRunAsBuiltin(t *testing.T) {
 			if b.Codes() != (b.Ref() == Coder().Ref()) {
 				t.Fatalf("%s: codes %v", b.Ref(), b.Codes())
 			}
+			// Only the Assistant and Agentry Helper read their share once ClamAV
+			// has checked it, and only the Assistant resets in parts.
+			if b.ChecksShare() != (b.Ref() == Assistant().Ref() || b.Ref() == Main().Ref()) {
+				t.Fatalf("%s: checks its share %v", b.Ref(), b.ChecksShare())
+			}
+			if b.ResetsInParts() != (b.Ref() == Assistant().Ref()) {
+				t.Fatalf("%s: resets in parts %v", b.Ref(), b.ResetsInParts())
+			}
 		}
-		if _, err := (Segment{Builtin: Assistant(), Grants: Grants{Coder: &spec.CoderGrant{Commands: true}}}).Plan(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "capabilities.persistent.coder") {
+		var persistentRefs []string
+		for _, b := range PersistentBuiltins() {
+			persistentRefs = append(persistentRefs, b.Ref())
+		}
+		if want := []string{Main().Ref(), Assistant().Ref(), Coder().Ref()}; !slices.Equal(persistentRefs, want) {
+			t.Fatalf("the persistent built-ins are %v, want %v", persistentRefs, want)
+		}
+		if (Builtin{}).ChecksShare() || (Builtin{}).ResetsInParts() || (Builtin{}).Runnable() {
+			t.Fatal("the zero Builtin checks its share, resets in parts or runs")
+		}
+		// A persistent agent runs its harness in a container: a harness that would
+		// run on the host is replaced by its image counterpart, and any other
+		// stays as it is.
+		for from, to := range map[string]string{
+			adapter.ClaudeAdapterName:       adapter.ClaudeImageAdapterName,
+			adapter.CodexAdapterName:        adapter.CodexImageAdapterName,
+			adapter.ClaudeImageAdapterName:  adapter.ClaudeImageAdapterName,
+			adapter.CodexImageAdapterName:   adapter.CodexImageAdapterName,
+			adapter.CopilotImageAdapterName: adapter.CopilotImageAdapterName,
+			adapter.DefaultName:             adapter.DefaultName,
+		} {
+			if got := ImageAdapter(from); got != to {
+				t.Fatalf("ImageAdapter(%q) = %q, want %q", from, got, to)
+			}
+		}
+		// A persistent built-in that Agentry does not run is refused at once.
+		idle := Assistant()
+		idle.runnable = false
+		if _, err := (Segment{Builtin: idle, Home: t.TempDir()}).Plan(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "is not a persistent agent Agentry runs") {
+			t.Fatalf("a persistent built-in that is not runnable was planned: %v", err)
+		}
+		if _, err := (Segment{Builtin: Assistant(), Home: t.TempDir(), Grants: Grants{Coder: &spec.CoderGrant{Commands: true}}}).Plan(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "capabilities.persistent.coder") {
 			t.Fatalf("the Assistant was planned with the Coding agent's grants: %v", err)
 		}
-		if _, err := (Segment{Builtin: Coder(), Grants: Grants{Coder: &spec.CoderGrant{DevHost: true}}}).Plan(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "dev server") {
+		if _, err := (Segment{Builtin: Coder(), Home: t.TempDir(), Grants: Grants{Coder: &spec.CoderGrant{DevHost: true}}}).Plan(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "dev server") {
 			t.Fatalf("the Coding agent was planned with a dev server it was not given: %v", err)
 		}
 		if (Builtin{}).Persistent() {
 			t.Fatal("the zero Builtin is persistent")
 		}
-		_, err := Run{Builtin: Assistant()}.Execute(context.Background(), nil)
+		_, err := Run{Builtin: Assistant(), Home: t.TempDir()}.Execute(context.Background(), nil)
 		if err == nil || !strings.Contains(err.Error(), "agentry agent start") {
 			t.Fatalf("Execute of the Assistant: err = %v", err)
 		}
-		_, err = Segment{Builtin: Examiner()}.Start(context.Background(), nil)
+		_, err = Segment{Builtin: Examiner(), Home: t.TempDir()}.Start(context.Background(), nil)
 		if err == nil || !strings.Contains(err.Error(), "not a persistent agent") {
 			t.Fatalf("a segment of the Examiner: err = %v", err)
 		}
@@ -176,6 +220,12 @@ func TestOnlyTheEmbeddedPackagesRunAsBuiltin(t *testing.T) {
 		if _, _, err := (Builtin{}).Materialize(t.TempDir(), "x"); err == nil {
 			t.Fatal("the zero Builtin materialized")
 		}
+		if err := (Builtin{}).Stage(t.TempDir()); err == nil || !strings.Contains(err.Error(), "not a built-in package") {
+			t.Fatalf("the zero Builtin was staged: %v", err)
+		}
+		if _, err := (Builtin{}).ArchiveDigest(); err == nil {
+			t.Fatal("the zero Builtin has an archive digest")
+		}
 	})
 	t.Run("an installed copy that changed is replaced by the embedded tree", func(t *testing.T) {
 		home := t.TempDir()
@@ -195,10 +245,37 @@ func TestOnlyTheEmbeddedPackagesRunAsBuiltin(t *testing.T) {
 			t.Fatal("a changed installed copy was run as the built-in")
 		}
 	})
+	t.Run("an unchanged installed copy is kept with the plans inside it", func(t *testing.T) {
+		home := t.TempDir()
+		meta, dir, err := KnowledgeCreator().Materialize(home, "b")
+		if err != nil {
+			t.Fatal(err)
+		}
+		kept := filepath.Join(dir, "plan", "kept.txt")
+		if err := os.MkdirAll(filepath.Dir(kept), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(kept, []byte("a plan\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		again, sameDir, err := KnowledgeCreator().Materialize(home, "b")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if sameDir != dir || again.Digest != meta.Digest {
+			t.Fatalf("the second materialize is %s (%s), the first %s (%s)", sameDir, again.Digest, dir, meta.Digest)
+		}
+		if _, err := os.Stat(kept); err != nil {
+			t.Fatalf("an unchanged copy was laid down again: %v", err)
+		}
+	})
 	t.Run("a directory package never materializes as builtin", func(t *testing.T) {
-		for _, tree := range []fs.FS{creator.FS(), drafter.FS()} {
+		for _, tc := range []struct {
+			tree fs.FS
+			ref  string
+		}{{creator.FS(), KnowledgeCreator().Ref()}, {drafter.FS(), Drafter().Ref()}} {
 			src := t.TempDir()
-			if err := os.CopyFS(src, tree); err != nil {
+			if err := os.CopyFS(src, tc.tree); err != nil {
 				t.Fatal(err)
 			}
 			meta, err := LocalMeta(src)
@@ -207,6 +284,16 @@ func TestOnlyTheEmbeddedPackagesRunAsBuiltin(t *testing.T) {
 			}
 			if meta.Attestation.State != "local" || meta.Source != "local" {
 				t.Fatalf("a built-in's own tree, given as a directory, is %+v", meta.Attestation)
+			}
+			// The record is computed from the folder: its own ref and the
+			// folder's tree digest, and the unsigned consent an author's folder
+			// runs under.
+			digest, err := TreeDigest(src)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if meta.Ref != tc.ref || meta.Digest != digest || meta.Attestation.Consent != receipt.ConsentAllowUnsigned || meta.Attestation.Build != "" {
+				t.Fatalf("the record of %s: ref %q digest %q (want %q) attestation %+v", tc.ref, meta.Ref, meta.Digest, digest, meta.Attestation)
 			}
 		}
 	})
@@ -253,6 +340,36 @@ func TestTreeDigest(t *testing.T) {
 	}
 	if d4, _ := TreeDigest(dir); d4 == d1 {
 		t.Error("package content change did not change the digest")
+	}
+	// Only the package's own files count: a run's output folder changing
+	// leaves the digest where it was.
+	if err := os.WriteFile(filepath.Join(dir, "sub", "a.md"), []byte("aa"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "agentry-out", "old", "r.json"), []byte(`{"changed":true}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if d5, _ := TreeDigest(dir); d5 != d1 {
+		t.Error("agentry-out content changed the tree digest")
+	}
+	// A file's name is part of what is hashed.
+	if err := os.Rename(filepath.Join(dir, "sub", "a.md"), filepath.Join(dir, "sub", "b.md")); err != nil {
+		t.Fatal(err)
+	}
+	if d6, _ := TreeDigest(dir); d6 == d1 {
+		t.Error("renaming a file did not change the digest")
+	}
+	// Where one file ends and the next begins is hashed too: two files that
+	// together hold the bytes of one do not make the same tree.
+	split := writeTree(t, map[string]string{"a": "1", "b": "2"})
+	joined := writeTree(t, map[string]string{"a": "1b\x002"})
+	dSplit, _ := TreeDigest(split)
+	dJoined, _ := TreeDigest(joined)
+	if dSplit == dJoined {
+		t.Error("two files and one file holding their bytes made the same digest")
+	}
+	if _, err := TreeDigest(filepath.Join(dir, "missing")); err == nil || !strings.Contains(err.Error(), "hash local tree") {
+		t.Errorf("a folder that is not there: %v", err)
 	}
 }
 
@@ -324,6 +441,282 @@ func TestEnsurePlan(t *testing.T) {
 	if !errors.As(err, &ce) || ce.Code != engine.ExitVerify {
 		t.Fatalf("a plan changed after its compile was not refused: %v", err)
 	}
+
+	// The first run's plan is kept for the next run of the same package: the
+	// built-in is laid down again at each run, and the plan beside its
+	// release stays.
+	t.Run("a second run of the package reuses the plan the first compiled", func(t *testing.T) {
+		in := runPlanInputs(t, KnowledgeCreator(), io.Discard)
+		_, planDir, err := EnsurePlan(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		compiled, err := os.Stat(filepath.Join(planDir, "plan.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		meta, dir, err := KnowledgeCreator().Materialize(in.Home, in.CompiledBy)
+		if err != nil || dir != in.InstallDir || meta.Digest != in.Meta.Digest {
+			t.Fatalf("materialize again: %s %v", dir, err)
+		}
+		_, again, err := EnsurePlan(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		reused, err := os.Stat(filepath.Join(again, "plan.json"))
+		if err != nil || again != planDir || !os.SameFile(compiled, reused) {
+			t.Fatalf("the plan was compiled again (%v)", err)
+		}
+	})
+
+	t.Run("a plan of the single-plan layout is cleared", func(t *testing.T) {
+		in := runPlanInputs(t, KnowledgeCreator(), io.Discard)
+		stale := filepath.Join(in.InstallDir, "plan", "plan.json")
+		if err := os.MkdirAll(filepath.Dir(stale), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(stale, []byte(`{"planVersion":"1"}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, planDir, err := EnsurePlan(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(stale); !os.IsNotExist(err) {
+			t.Fatalf("the single-plan layout's plan.json is still there (%v)", err)
+		}
+		if _, err := os.Stat(filepath.Join(planDir, "plan.json")); err != nil {
+			t.Fatalf("the plan for the mode: %v", err)
+		}
+	})
+
+	t.Run("a plan with no record, or from an older CLI, is compiled again and says so", func(t *testing.T) {
+		for _, tc := range []struct {
+			name    string
+			version string
+			sealed  bool
+			notice  string
+		}{
+			{"no record from this home", "", false, "installed plan has no integrity record from this runner home — recompiling"},
+			{"no record, from an older CLI", "1", false, "installed plan was compiled by an older CLI (plan version 1, want " + spec.PlanVersion + ") — recompiling"},
+			{"a record, from an older CLI", "1", true, "installed plan was compiled by an older CLI (plan version 1, want " + spec.PlanVersion + ") — recompiling"},
+		} {
+			var log strings.Builder
+			in := runPlanInputs(t, KnowledgeCreator(), &log)
+			_, planDir, err := EnsurePlan(in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pristine := planBytes(t, planDir)
+			if tc.version != "" {
+				resealed(t, in.Home, planDir, func(p *spec.Plan) { p.PlanVersion = tc.version })
+			}
+			if !tc.sealed {
+				if err := os.Remove(filepath.Join(planDir, compile.IntegrityFile)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			log.Reset()
+			if _, _, err := EnsurePlan(in); err != nil {
+				t.Fatalf("%s: %v", tc.name, err)
+			}
+			if got := strings.TrimSpace(log.String()); got != tc.notice {
+				t.Errorf("%s: log %q, want %q", tc.name, got, tc.notice)
+			}
+			if got := planBytes(t, planDir); got != pristine {
+				t.Errorf("%s: the plan was not compiled again", tc.name)
+			}
+		}
+	})
+
+	t.Run("a plan another build or another runner image compiled is compiled again and says so", func(t *testing.T) {
+		var log strings.Builder
+		in := runPlanInputs(t, KnowledgeCreator(), &log)
+		in.CompiledBy = ""
+		if _, _, err := EnsurePlan(in); err != nil {
+			t.Fatal(err)
+		}
+		in.CompiledBy = "b7"
+		log.Reset()
+		if _, _, err := EnsurePlan(in); err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.TrimSpace(log.String()); got != "installed plan was compiled by another CLI build (unknown, this is b7) — recompiling" {
+			t.Errorf("a plan no build stamped: %q", got)
+		}
+		other := *in.Policy
+		other.Images.Runner = "agentry-runner:other"
+		in.Policy = &other
+		log.Reset()
+		plan, _, err := EnsurePlan(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.TrimSpace(log.String()); got != "installed plan names runner image agentry-runner:test, this CLI builds agentry-runner:other — recompiling" || plan.Proxy.Image != "agentry-runner:other" {
+			t.Errorf("another runner image: %q, proxy %s", got, plan.Proxy.Image)
+		}
+	})
+
+	t.Run("a plan whose generated files changed is compiled again and says so", func(t *testing.T) {
+		var log strings.Builder
+		in := runPlanInputs(t, KnowledgeCreator(), &log)
+		first, planDir, err := EnsurePlan(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		files := slices.Sorted(maps.Keys(first.Files))
+		if len(files) == 0 {
+			t.Fatal("the plan generates no files")
+		}
+		target := filepath.Join(planDir, filepath.FromSlash(files[0]))
+		if err := os.WriteFile(target, []byte("changed after the compile\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		log.Reset()
+		plan, _, err := EnsurePlan(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.TrimSpace(log.String()); got != "installed plan failed integrity check — recompiling" {
+			t.Errorf("log %q", got)
+		}
+		if err := compile.VerifyFiles(plan, planDir); err != nil {
+			t.Errorf("the compiled plan's files: %v", err)
+		}
+	})
+
+	t.Run("a run that cannot be compiled, or has no key home, fails as it should", func(t *testing.T) {
+		in := runPlanInputs(t, KnowledgeCreator(), io.Discard)
+		in.Adapter = "no-such-adapter"
+		_, _, err := EnsurePlan(in)
+		var ce *engine.ClassifiedError
+		if !errors.As(err, &ce) || ce.Code != engine.ExitCompile {
+			t.Errorf("an adapter that does not exist: %v", err)
+		}
+		file := filepath.Join(t.TempDir(), "file")
+		if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, _, err = EnsurePlan(PlanInputs{Home: filepath.Join(file, "home")})
+		if !errors.As(err, &ce) || ce.Code != engine.ExitCLI {
+			t.Errorf("a runner home under a file: %v", err)
+		}
+	})
+
+	t.Run("a run with no log still recompiles", func(t *testing.T) {
+		in := runPlanInputs(t, KnowledgeCreator(), nil)
+		if _, _, err := EnsurePlan(in); err != nil {
+			t.Fatal(err)
+		}
+		in.CompiledBy = "b8"
+		plan, _, err := EnsurePlan(in)
+		if err != nil || plan.CompiledBy != "b8" {
+			t.Fatalf("recompiled by %v: %v", plan, err)
+		}
+	})
+
+	// Whatever the plan was compiled for, a plan compiled for anything else is
+	// compiled again. Each row sets up a run, takes the plan it compiles, shows
+	// the grant it asked for in it, then changes that one thing in the sealed
+	// plan: the run must return the compile's own bytes, not the changed plan.
+	for _, tc := range []struct {
+		name  string
+		build func(t *testing.T) (PlanInputs, string)
+		has   func(c spec.CapSummary, p *spec.Plan) bool
+		edit  func(p *spec.Plan)
+	}{
+		{"another run mode", runPlan(Drafter()), nil, func(p *spec.Plan) { p.Mode = string(manifest.ModePersistent) }},
+		{"another package digest", runPlan(Drafter()), nil, func(p *spec.Plan) { p.Digest = "sha256:" + strings.Repeat("0", 64) }},
+		{"another adapter", runPlan(Drafter()), nil, func(p *spec.Plan) { p.Harness.Adapter = adapter.ClaudeImageAdapterName }},
+		{"web tools", runPlan(Drafter()), func(c spec.CapSummary, _ *spec.Plan) bool { return c.WebTools }, func(p *spec.Plan) { p.Capabilities.WebTools = false }},
+		{"registry_search", runPlan(Drafter()), func(c spec.CapSummary, _ *spec.Plan) bool {
+			return c.RegistrySearch && !c.WebGivenOnly && !c.WebSearchedOnly && !c.WebRender
+		}, func(p *spec.Plan) { p.Capabilities.RegistrySearch = false }},
+		{"searched-only web_read", runPlan(KnowledgeCreator()), func(c spec.CapSummary, _ *spec.Plan) bool { return c.WebSearchedOnly && !c.RegistrySearch }, func(p *spec.Plan) { p.Capabilities.WebSearchedOnly = false }},
+		{"rendering web_read", runPlan(KnowledgeCreator()), func(c spec.CapSummary, _ *spec.Plan) bool { return c.WebRender }, func(p *spec.Plan) { p.Capabilities.WebRender = false }},
+		{"given-only web_read", runPlan(VoiceWriter()), func(c spec.CapSummary, _ *spec.Plan) bool { return c.WebGivenOnly && !c.WebSearchedOnly }, func(p *spec.Plan) { p.Capabilities.WebGivenOnly = false }},
+		{"the review grant", runPlan(Examiner()), func(c spec.CapSummary, _ *spec.Plan) bool { return c.ReviewTools && !c.WebTools }, func(p *spec.Plan) { p.Capabilities.ReviewTools = false }},
+		{"the agent's folders", segmentPlan(Assistant(), Grants{Share: "/share"}), func(c spec.CapSummary, _ *spec.Plan) bool {
+			return c.AgentFiles != nil && c.AgentFiles.Share && c.AgentFiles.CheckShare && c.AgentFiles.Memory
+		}, func(p *spec.Plan) { p.Capabilities.AgentFiles.Share = false }},
+		{"the app link", segmentPlan(Assistant(), Grants{AppLink: "/run/app.sock"}), func(c spec.CapSummary, _ *spec.Plan) bool {
+			return c.AppLink == compile.AppLinkSet(Assistant().Declared())
+		},
+			func(p *spec.Plan) { p.Capabilities.AppLink = applink.SetMain }},
+		{"the subagent tools", segmentPlan(Assistant(), Grants{AppLink: "/run/app.sock", Subagents: true}), func(c spec.CapSummary, _ *spec.Plan) bool { return applink.Has(c.AppLink, applink.PartSubagents) },
+			func(p *spec.Plan) { p.Capabilities.AppLink = compile.AppLinkSet(Assistant().Declared()) }},
+		{"the coding toolchain", segmentPlan(Coder(), Grants{Coder: &spec.CoderGrant{Commands: true}}), func(c spec.CapSummary, _ *spec.Plan) bool { return c.Coder != nil && c.Coder.Commands },
+			func(p *spec.Plan) { p.Capabilities.Coder = nil }},
+		{"the calendar feeds", segmentPlan(Assistant(), Grants{CalendarZone: "Europe/Paris", CalendarFeeds: []CalendarFeed{{Name: "Work", Host: "calendar.example.com", URL: "https://calendar.example.com/work.ics"}}}),
+			func(c spec.CapSummary, _ *spec.Plan) bool {
+				return c.Calendar != nil && c.Calendar.TimeZone == "Europe/Paris" && len(c.Calendar.Feeds) == 1 && c.Calendar.Feeds[0].Name == "Work"
+			}, func(p *spec.Plan) { p.Capabilities.Calendar = nil }},
+		{"the image servers", segmentPlan(Assistant(), Grants{ImageServers: []ImageGrant{{Key: "gog", Volume: "vol-gog"}}}), func(_ spec.CapSummary, p *spec.Plan) bool {
+			return len(p.MCPServers) == 1 && p.MCPServers[0].Name == "mcp-image-gog"
+		}, func(p *spec.Plan) { p.MCPServers = nil }},
+		{"the servers that see the share", planOf(func(t *testing.T) Segment {
+			pol := wordServerRegistry(t)
+			pol.Images.Runner = "agentry-runner:test"
+			return Segment{Builtin: Assistant(), Home: t.TempDir(), Policy: pol, PolicySHA: "sha", Build: "b1", Grants: Grants{
+				Share: "/share", ServersDir: t.TempDir(), ShareServers: []string{"pypi:some-word-server"},
+				Servers: []manifest.MCPServer{{PyPI: "some-word-server", Version: "1.1.11", Tools: []string{"create_document"}}},
+			}}
+		}), func(_ spec.CapSummary, p *spec.Plan) bool {
+			return len(p.MCPServers) == 1 && p.MCPServers[0].Share != ""
+		},
+			func(p *spec.Plan) { p.MCPServers[0].Share = "" }},
+	} {
+		t.Run("a plan compiled for "+tc.name+" is not reused for another", func(t *testing.T) {
+			in, planDir := tc.build(t)
+			plan := readPlan(t, planDir)
+			if tc.has != nil && !tc.has(plan.Capabilities, plan) {
+				t.Fatalf("the compiled plan does not carry the grant: %+v", plan.Capabilities)
+			}
+			if plan.CompiledBy != "b1" {
+				t.Fatalf("the plan names the build %q that compiled it, want b1", plan.CompiledBy)
+			}
+			pristine := planBytes(t, planDir)
+			resealed(t, in.Home, planDir, tc.edit)
+			if planBytes(t, planDir) == pristine {
+				t.Fatal("the edit changed nothing")
+			}
+			if _, _, err := EnsurePlan(in); err != nil {
+				t.Fatal(err)
+			}
+			if got := planBytes(t, planDir); got != pristine {
+				t.Fatalf("the changed plan was reused:\n%s", got)
+			}
+		})
+	}
+
+	t.Run("the servers a plan was compiled with are the servers given", func(t *testing.T) {
+		image := func(name, shared string) spec.MCPServerSpec {
+			return spec.MCPServerSpec{Name: name, Source: spec.SourceImage, Package: name, Image: name, Share: spec.ServerShare(shared)}
+		}
+		a, b := image("a", ""), image("b", "")
+		for _, tc := range []struct {
+			name           string
+			planned, given []spec.MCPServerSpec
+			shares         []string
+			want           bool
+		}{
+			{"the same servers", []spec.MCPServerSpec{a, b}, []spec.MCPServerSpec{a, b}, nil, true},
+			{"no servers", nil, nil, nil, true},
+			{"a server given that the plan lacks", []spec.MCPServerSpec{a}, []spec.MCPServerSpec{a, b}, nil, false},
+			{"a server in the plan that is not given", []spec.MCPServerSpec{a, b}, []spec.MCPServerSpec{a}, nil, false},
+			{"another server", []spec.MCPServerSpec{a}, []spec.MCPServerSpec{b}, nil, false},
+			{"a server changed", []spec.MCPServerSpec{a}, []spec.MCPServerSpec{{Name: "a", Source: spec.SourceImage, Package: "a", Image: "other"}}, nil, false},
+			{"a server the plan lets see the share beside another that is named", []spec.MCPServerSpec{image("a", "/share"), b}, []spec.MCPServerSpec{a, b}, []string{b.SourceID()}, false},
+			{"a server that sees the share, as given", []spec.MCPServerSpec{image("a", "/share")}, []spec.MCPServerSpec{a}, []string{a.SourceID()}, true},
+			{"a server the plan lets see the share that is not named", []spec.MCPServerSpec{image("a", "/share")}, []spec.MCPServerSpec{a}, nil, false},
+			{"a server named for the share that the plan keeps from it", []spec.MCPServerSpec{a}, []spec.MCPServerSpec{a}, []string{a.SourceID()}, false},
+			{"a share server named that is not in the plan", []spec.MCPServerSpec{image("a", "/share")}, []spec.MCPServerSpec{a}, []string{a.SourceID(), "image:gone"}, false},
+		} {
+			if got := sameServers(tc.planned, tc.given, tc.shares); got != tc.want {
+				t.Errorf("%s: %v, want %v", tc.name, got, tc.want)
+			}
+		}
+	})
 }
 
 // TestTheDraftersTwoPlansKeepTheirOwnDirectories: the Drafter's plan with
@@ -431,7 +824,7 @@ func TestTheReviewGrantCompilesForABuiltinAlone(t *testing.T) {
 	examiner := Examiner()
 	for _, r := range []*engine.ReviewRun{nil, {}} {
 		runHome := t.TempDir()
-		_, err := Run{Builtin: examiner, Home: runHome, Policy: pol, Review: r}.Execute(context.Background(), &dockerx.Fake{})
+		_, err := Run{Builtin: examiner, Home: runHome, Policy: pol, Review: r, OutDir: t.TempDir()}.Execute(context.Background(), &dockerx.Fake{})
 		if !errors.As(err, &ce) || ce.Code != engine.ExitPolicy || !errors.Is(err, engine.ErrNoReviewKey) {
 			t.Fatalf("no key %+v: %v", r, err)
 		}
@@ -476,6 +869,139 @@ func TestRunBuiltinRunsTheCreator(t *testing.T) {
 	if got := env.CapabilitiesEnforced["decode"]; got != dec.Line() {
 		t.Fatalf("decode line %q, want %q", got, dec.Line())
 	}
+
+	// The plan the run compiled names the build that compiled it.
+	_, creatorDir, err := KnowledgeCreator().Materialize(home, "agentry 9.9.9 (test)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if built := readPlan(t, filepath.Join(creatorDir, "plan", string(manifest.ModeAutonomous))); built.CompiledBy != "agentry 9.9.9 (test)" {
+		t.Fatalf("the plan names the build %q that compiled it", built.CompiledBy)
+	}
+
+	// What the caller names for the run reaches it: its inputs, the lines it
+	// adds to the receipt, the policy file it obeyed and its usage reporter.
+	t.Run("the caller's inputs, receipt lines, policy file and usage reporter reach the run", func(t *testing.T) {
+		in := filepath.Join(t.TempDir(), "notes.txt")
+		if err := os.WriteFile(in, []byte("n\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		var usage []receipt.Usage
+		env, err := Run{
+			Builtin: KnowledgeCreator().WithoutWebTools(), Home: home, Policy: pol, PolicySHA: "sha", Build: "agentry 9.9.9 (test)",
+			Task: strings.NewReader("Ingest."), OutDir: t.TempDir(), Stderr: io.Discard, RunID: "cafe0011", KeepRunDir: true,
+			Inputs: []string{in}, Enforced: map[string]string{"sources": "2 pages"},
+			PolicyFile: &policy.File{Path: "/etc/agentry/policy.yaml", Source: receipt.PolicySourceFlag},
+			OnUsage:    func(u receipt.Usage) { usage = append(usage, u) },
+		}.Execute(context.Background(), f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		staged := false
+		_ = filepath.WalkDir(filepath.Join(creatorDir, "runs", "cafe0011"), func(p string, d fs.DirEntry, err error) error {
+			staged = staged || err == nil && !d.IsDir() && d.Name() == "notes.txt"
+			return nil
+		})
+		if !staged {
+			t.Error("the input was not staged in the run")
+		}
+		if env.CapabilitiesEnforced["sources"] != "2 pages" {
+			t.Errorf("enforced lines %v", env.CapabilitiesEnforced)
+		}
+		if env.Policy == nil || env.Policy.Path != "/etc/agentry/policy.yaml" || env.Policy.Source != receipt.PolicySourceFlag {
+			t.Errorf("policy %+v", env.Policy)
+		}
+		if len(usage) == 0 || usage[len(usage)-1].InputTokens != 120 {
+			t.Errorf("usage reports %+v", usage)
+		}
+	})
+
+	// The budgets the caller names replace the plan's, and a run within them
+	// is not stopped: five tool calls are over a limit of four and within one
+	// of five.
+	t.Run("the budgets the caller names bound the run", func(t *testing.T) {
+		calls := func() *dockerx.Fake {
+			return &dockerx.Fake{Foreground: map[string]*dockerx.FakeForeground{
+				"-probe": {ExitCode: 0},
+				"-agent": {Stdout: strings.Repeat(`{"type":"tool_call"}`+"\n", 5) +
+					`{"type":"agent_choice","message":{"content":"done"}}` + "\n" + `{"type":"stream_stopped","usage":{"input_tokens":1,"output_tokens":1}}` + "\n"},
+			}}
+		}
+		for _, tc := range []struct {
+			turns  int
+			budget bool
+		}{{4, true}, {5, false}} {
+			_, err := Run{
+				Builtin: KnowledgeCreator().WithoutWebTools(), Home: home, Policy: pol, PolicySHA: "sha", Build: "agentry 9.9.9 (test)",
+				Task: strings.NewReader("Ingest."), OutDir: t.TempDir(), Stderr: io.Discard, RunID: "cafe0012",
+				Budgets: &spec.Budgets{TimeoutSeconds: 600, MaxTurns: tc.turns},
+			}.Execute(context.Background(), calls())
+			var ce *engine.ClassifiedError
+			if got := errors.As(err, &ce) && ce.Code == engine.ExitBudget; got != tc.budget || (!tc.budget && err != nil) {
+				t.Errorf("a limit of %d tool calls: %v", tc.turns, err)
+			}
+		}
+	})
+
+	t.Run("a run names an adapter that exists, and a runner home it can use", func(t *testing.T) {
+		var ce *engine.ClassifiedError
+		_, err := Run{Builtin: KnowledgeCreator().WithoutWebTools(), Home: home, Policy: pol, Adapter: "no-such-adapter", OutDir: t.TempDir()}.Execute(context.Background(), &dockerx.Fake{})
+		if !errors.As(err, &ce) || ce.Code != engine.ExitCLI || !strings.Contains(err.Error(), "no-such-adapter") {
+			t.Errorf("an adapter that does not exist: %v", err)
+		}
+		file := filepath.Join(t.TempDir(), "file")
+		if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, err = Run{Builtin: KnowledgeCreator().WithoutWebTools(), Home: filepath.Join(file, "home"), Policy: pol, OutDir: t.TempDir()}.Execute(context.Background(), &dockerx.Fake{})
+		if !errors.As(err, &ce) || ce.Code != engine.ExitCLI {
+			t.Errorf("a runner home under a file: %v", err)
+		}
+	})
+
+	// A policy that pays with Agentry credits opens a session with the client
+	// the run is given, hands the agent its token, and ends the session; a
+	// hosted run takes none, and a run with no client is refused as signed
+	// out. No log writer is given: the run still goes.
+	t.Run("a run on Agentry credits pays through the client it is given", func(t *testing.T) {
+		reg := inferencetest.New(t)
+		regURL, _ := url.Parse(reg.URL)
+		credits := policy.Default()
+		credits.Images.Runner = "agentry-runner:test"
+		credits.Model = policy.Model{Provider: policy.ProviderAgentry, Name: "agentry", BaseURL: reg.URL + policy.AgentryInferencePath, ProxyAllow: []string{regURL.Host}}
+		client := inference.New(reg.URL, func() (string, error) { return inferencetest.SignIn, nil }, nil)
+		var agentEnv map[string]string
+		credited := func() *dockerx.Fake {
+			agent := &dockerx.FakeForeground{Stdout: `{"type":"agent_choice","message":{"content":"done"}}` + "\n" + `{"type":"stream_stopped","usage":{"input_tokens":1,"output_tokens":1}}` + "\n"}
+			agent.Before = func(r dockerx.RunSpec) { agentEnv = r.Env }
+			return &dockerx.Fake{Foreground: map[string]*dockerx.FakeForeground{"-probe": {ExitCode: 0}, "-agent": agent}}
+		}
+		run := func(runID string, client *inference.Client, hosted bool) error {
+			_, err := Run{
+				Builtin: KnowledgeCreator().WithoutWebTools(), Home: t.TempDir(), Policy: credits, PolicySHA: "sha", Build: "agentry 9.9.9 (test)",
+				Task: strings.NewReader("Ingest."), OutDir: t.TempDir(), RunID: runID, Credits: client, Hosted: hosted,
+			}.Execute(context.Background(), credited())
+			return err
+		}
+		if err := run("cafe0021", client, false); err != nil {
+			t.Fatal(err)
+		}
+		if got := reg.Opened(); len(got) != 1 || got[0] != inference.PurposeRun || len(reg.Ended()) != 1 {
+			t.Errorf("sessions opened %v, ended %v", got, reg.Ended())
+		}
+		if agentEnv[adapter.AgentryInferenceTokenEnv] != inferencetest.TokenFor(1) {
+			t.Errorf("the agent's %s = %q, want the session's token", adapter.AgentryInferenceTokenEnv, agentEnv[adapter.AgentryInferenceTokenEnv])
+		}
+		var ce *engine.ClassifiedError
+		err := run("cafe0022", nil, false)
+		if r := receipt.ReasonOf(err); !errors.As(err, &ce) || ce.Code != engine.ExitPolicy || r == nil || r.Code != receipt.ReasonSignInMissing {
+			t.Errorf("credits with no client: %v", err)
+		}
+		err = run("cafe0023", client, true)
+		if !errors.As(err, &ce) || ce.Code != engine.ExitPolicy || !strings.Contains(err.Error(), "pays for a run on this computer with your credits") || len(reg.Opened()) != 1 {
+			t.Errorf("credits on a hosted run: %v (sessions opened %v)", err, reg.Opened())
+		}
+	})
 }
 
 // TestTheCreatorsWebRunsOnlyWithItsScanner: the Knowledge
@@ -527,6 +1053,28 @@ func TestTheCreatorsWebRunsOnlyWithItsScanner(t *testing.T) {
 	if err != nil || env.CapabilitiesEnforced["web"] != "" {
 		t.Fatalf("the Creator without the web: %v %v", err, env.CapabilitiesEnforced)
 	}
+
+	// A sandbox host renders a page only for a run it dispatched as a browser
+	// job: the hosted flags reach the engine, which refuses the render
+	// otherwise.
+	hosted := func(renders bool, runID string) error {
+		_, err := Run{
+			Builtin: KnowledgeCreator(), Home: home, Policy: pol, PolicySHA: "sha", Build: "agentry 9.9.9 (test)",
+			Task: strings.NewReader("Research the brief."), OutDir: t.TempDir(), Stderr: io.Discard, RunID: runID,
+			Web: &engine.WebRun{Scan: toolsrv.WebScanJev, JevKey: "not-a-real-jev-key"}, Hosted: true, HostedRender: renders,
+		}.Execute(context.Background(), &dockerx.Fake{Foreground: map[string]*dockerx.FakeForeground{
+			"-probe": {ExitCode: 0},
+			"-agent": {Stdout: `{"type":"agent_choice","message":{"content":"wrote 1 page"}}` + "\n" +
+				`{"type":"stream_stopped","usage":{"input_tokens":10,"output_tokens":3}}` + "\n"},
+		}})
+		return err
+	}
+	if err := hosted(false, "c0de0004"); err == nil || !strings.Contains(err.Error(), "renders pages only when its host dispatched it as a browser job") {
+		t.Errorf("a hosted run that renders without a browser job: %v", err)
+	}
+	if err := hosted(true, "c0de0005"); err != nil {
+		t.Errorf("a hosted run dispatched as a browser job: %v", err)
+	}
 }
 
 // A Drafter paid with Agentry credits pays for its repair turn the same
@@ -547,7 +1095,8 @@ func TestTheRepairRunPaysWithTheFirstRunsCredits(t *testing.T) {
 func TestTheRepairRunHasNoWebToolsAndNoKey(t *testing.T) {
 	pol := policy.Default()
 	var usage []receipt.Usage
-	first := Run{Builtin: Drafter(), Home: "/home/x/.agentry", Policy: pol, PolicySHA: "sha256:p", Build: "b1",
+	policyFile := &policy.File{Path: "/etc/agentry/policy.yaml", Source: receipt.PolicySourceFlag}
+	first := Run{Builtin: Drafter(), Home: "/home/x/.agentry", Policy: pol, PolicySHA: "sha256:p", PolicyFile: policyFile, Adapter: adapter.ClaudeImageAdapterName, Stderr: io.Discard, Build: "b1",
 		Task: strings.NewReader("THE FIRST TASK"), OutDir: "/out", Budgets: &spec.Budgets{TimeoutSeconds: 900}, RunID: "run-1",
 		Web: &engine.WebRun{JevKey: "jev-person-key", SearchKey: "search-key"}, Inputs: []string{"/out/revise"}}
 	turn := drafter.RepairTurn{Task: "the repair task", OutDir: "/out/repair", Budgets: spec.Budgets{TimeoutSeconds: 300, MaxTurns: 8},
@@ -563,7 +1112,8 @@ func TestTheRepairRunHasNoWebToolsAndNoKey(t *testing.T) {
 	}
 	task, _ := io.ReadAll(r.Task)
 	if string(task) != "the repair task" || r.OutDir != "/out/repair" || r.RunID != "run-2" || *r.Budgets != turn.Budgets ||
-		r.Home != first.Home || r.Policy != pol || r.PolicySHA != "sha256:p" || r.Build != "b1" {
+		r.Home != first.Home || r.Policy != pol || r.PolicySHA != "sha256:p" || r.Build != "b1" ||
+		r.PolicyFile != policyFile || r.Adapter != adapter.ClaudeImageAdapterName || r.Stderr != io.Discard {
 		t.Fatalf("the repair run %+v", r)
 	}
 	r.OnUsage(receipt.Usage{Turns: 1})
@@ -713,5 +1263,104 @@ func TestARenderIsTheCreatorsAndTheVoiceWritersAndCanOnlyBeTakenAway(t *testing.
 	}
 	if c := KnowledgeCreator().WithoutRender(); !c.web || !c.searchedOnly {
 		t.Fatal("WithoutRender took the web tools away")
+	}
+}
+
+// runPlanInputs is what Execute hands EnsurePlan for b under a runner home of
+// its own: the built-in's web and review grants, nothing of a persistent
+// agent's.
+func runPlanInputs(t *testing.T, b Builtin, log io.Writer) PlanInputs {
+	t.Helper()
+	home := t.TempDir()
+	meta, dir, err := b.Materialize(home, "b1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := filepath.Join(dir, "workspace")
+	m, err := ManifestFrom(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pol := policy.Default()
+	pol.Images.Runner = "agentry-runner:test"
+	return PlanInputs{Home: home, Manifest: m, Meta: meta, InstallDir: dir, WorkspaceDir: ws, Policy: pol, PolicySHA: "sha", Adapter: "docker-agent",
+		Mode: manifest.ModeAutonomous, CompiledBy: "b1", Web: b.web, RegistrySearch: b.registry, WebSearchedOnly: b.searchedOnly,
+		WebGivenOnly: b.givenOnly, WebRender: b.render, Review: b.review, Log: log}
+}
+
+// runPlan is the plan b's run compiles: its inputs and the plan's folder.
+func runPlan(b Builtin) func(t *testing.T) (PlanInputs, string) {
+	return func(t *testing.T) (PlanInputs, string) {
+		t.Helper()
+		in := runPlanInputs(t, b, io.Discard)
+		_, planDir, err := EnsurePlan(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return in, planDir
+	}
+}
+
+// segmentPlan is the plan a segment of the persistent built-in b compiles
+// with g: the inputs the segment hands EnsurePlan and the plan's folder.
+func segmentPlan(b Builtin, g Grants) func(t *testing.T) (PlanInputs, string) {
+	return planOf(func(t *testing.T) Segment {
+		pol := policy.Default()
+		pol.Images.Runner = "agentry-runner:test"
+		return Segment{Builtin: b, Home: t.TempDir(), Policy: pol, PolicySHA: "sha", Build: "b1", Grants: g}
+	})
+}
+
+// planOf is the plan the segment compiles.
+func planOf(seg func(t *testing.T) Segment) func(t *testing.T) (PlanInputs, string) {
+	return func(t *testing.T) (PlanInputs, string) {
+		t.Helper()
+		sp, err := seg(t).Plan(context.Background(), io.Discard)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sp.inputs, sp.Dir
+	}
+}
+
+// planBytes is the installed plan.json as text.
+func planBytes(t *testing.T, planDir string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(planDir, "plan.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+// readPlan is the installed plan.
+func readPlan(t *testing.T, planDir string) *spec.Plan {
+	t.Helper()
+	p, err := spec.ParsePlan([]byte(planBytes(t, planDir)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// resealed changes the installed plan with edit and records the result under
+// the runner home's key, as a compile that wrote it would have.
+func resealed(t *testing.T, home, planDir string, edit func(*spec.Plan)) {
+	t.Helper()
+	p := readPlan(t, planDir)
+	edit(p)
+	b, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(planDir, "plan.json"), b, 0o644); err != nil { //nolint:gosec // the test's own plan
+		t.Fatal(err)
+	}
+	key, err := compile.IntegrityKey(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := compile.Seal(key, planDir); err != nil {
+		t.Fatal(err)
 	}
 }

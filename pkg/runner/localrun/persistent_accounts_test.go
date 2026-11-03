@@ -1,11 +1,13 @@
 package localrun
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/blaktron/agentry/pkg/manifest"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
@@ -41,6 +43,11 @@ func TestGitHostAccountsComeOnlyWithTheCodingToolchain(t *testing.T) {
 		err := Segment{Grants: c.g}.checkSecrets(parse(c.keys))
 		if c.wants == "" && err != nil || c.wants != "" && (err == nil || !strings.Contains(err.Error(), c.wants)) {
 			t.Errorf("%s: %v", c.name, err)
+		}
+		// A refusal is the policy's.
+		var ce *engine.ClassifiedError
+		if c.wants != "" && (!errors.As(err, &ce) || ce.Code != engine.ExitPolicy) {
+			t.Errorf("%s: %v is not a policy refusal", c.name, err)
 		}
 	}
 }

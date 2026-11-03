@@ -7428,13 +7428,15 @@
         {
           "path": "pkg/runner/localrun/persistent_stages_test.go",
           "tests": [
-            "TestASegmentStartReportsEachStageOnceInOrder"
+            "TestASegmentStartReportsEachStageOnceInOrder",
+            "TestASegmentStartGivesTheEngineWhatItsRosterTurnsOn"
           ],
           "fuzz": [],
           "benchmarks": [],
           "fixtureEntryPoint": false,
           "dependencyHints": [
-            "docker interface (real or fake)"
+            "docker interface (real or fake)",
+            "source/file contract"
           ]
         },
         {
@@ -7466,6 +7468,20 @@
           "fixtureEntryPoint": false,
           "dependencyHints": [
             "docker interface (real or fake)"
+          ]
+        },
+        {
+          "path": "pkg/runner/localrun/skillcheck_test.go",
+          "tests": [
+            "TestAFolderClamAVFoundMalwareInIsRefused"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "docker interface (real or fake)",
+            "real docker daemon",
+            "source/file contract"
           ]
         }
       ]

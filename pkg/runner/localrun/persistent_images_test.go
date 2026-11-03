@@ -8,6 +8,8 @@ import (
 
 	"github.com/blaktron/agentry/pkg/manifest"
 
+	"github.com/blaktron/agentry-cli/pkg/persistent/assistant"
+	"github.com/blaktron/agentry-cli/pkg/persistent/offer"
 	"github.com/blaktron/agentry-cli/pkg/runner/mcpinstall"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
@@ -49,6 +51,48 @@ func TestASegmentGivesItsImageServersFromThePolicysImage(t *testing.T) {
 	if len(specs) != 1 || specs[0].Image != pol.Images.Gog || specs[0].Package != pol.Images.Gog || !slices.Equal(specs[0].Command, []string{"mcp", "--allow-write"}) ||
 		!slices.Equal(specs[0].Volumes, []string{"vol-gog:/persist/gogcli"}) || !slices.Equal(volumes, []string{"vol-gog"}) {
 		t.Fatalf("specs %+v volumes %v", specs, volumes)
+	}
+	// What the grant adds reaches the spec: the signed-in account in the
+	// server's account variable, its sign-in environment and arguments, the
+	// switches' arguments in order, and the offer's own egress and secret
+	// slots; the grant's volume is mounted at the offer's target.
+	served := assistant.ImageServers(pol.Images.GogImage(), pol.Images.MS365Image())[0]
+	rich := Segment{Builtin: b, Policy: pol, Grants: Grants{ImageServers: []ImageGrant{{
+		Key: "gog", Volume: "vol-gog", Account: "ada@example.com", Switches: []string{"writes", "send"},
+		Env: map[string]string{"GOG_EXTRA": "1"}, Args: []string{"--signoff", "Ada"},
+	}}}}
+	richSpecs, richVolumes, err := rich.imageSpecs()
+	if err != nil || len(richSpecs) != 1 || !slices.Equal(richVolumes, []string{"vol-gog"}) {
+		t.Fatalf("specs %+v volumes %v: %v", richSpecs, richVolumes, err)
+	}
+	wantSpec := spec.MCPServerSpec{
+		Name: "mcp-image-gog", Source: spec.SourceImage, Package: pol.Images.Gog, Image: pol.Images.Gog,
+		Command: []string{"mcp", "--allow-write", "--allow-gmail-send", "--signoff", "Ada"},
+		Egress:  assistant.GogEgress, Secrets: []string{assistant.GogKeyringSecret},
+		Env:     map[string]string{"GOG_HOME": assistant.GogHome, "GOG_KEYRING_BACKEND": "file", "GOG_ACCOUNT": "ada@example.com", "GOG_EXTRA": "1"},
+		Volumes: []string{"vol-gog:" + served.VolumeTarget}, Account: "ada@example.com",
+	}
+	if !reflect.DeepEqual(richSpecs[0], wantSpec) {
+		t.Fatalf("spec %+v, want %+v", richSpecs[0], wantSpec)
+	}
+	// A package is offered the image servers it declares and no others.
+	keys := func(servers []offer.ImageServer) []string {
+		var out []string
+		for _, o := range servers {
+			out = append(out, o.Key)
+		}
+		return out
+	}
+	if got := keys(Assistant().ImageServers(pol.Images)); !slices.Equal(got, []string{assistant.GogKey, assistant.MS365Key}) {
+		t.Errorf("the Assistant is offered %v", got)
+	}
+	for _, none := range []Builtin{Main(), Coder(), {}} {
+		if got := none.ImageServers(pol.Images); len(got) != 0 {
+			t.Errorf("%q declares no image server and is offered %v", none.Ref(), keys(got))
+		}
+	}
+	if got := keys(ImageServersFor(&manifest.Persistent{ImageServers: []string{"google-workspace"}}, pol.Images)); !slices.Equal(got, []string{assistant.GogKey}) {
+		t.Errorf("a block that names Google Workspace is offered %v", got)
 	}
 	s.Grants.ImageServers[0].Key = "other"
 	if _, _, err := s.imageSpecs(); err == nil {
