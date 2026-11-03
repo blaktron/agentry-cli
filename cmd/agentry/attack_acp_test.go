@@ -75,6 +75,23 @@ func TestAttackConsentTextCannotBeForgedByManifestText(t *testing.T) {
 	}
 }
 
+// The summary is reduced to one line even where no manifest gate stands in
+// front of it.
+func TestAttackConsentSummaryIsOneLineWhateverTheManifestGateDid(t *testing.T) {
+	m := &manifest.Manifest{Name: "capdemo", Namespace: "acme", Summary: "ok\n  FORGED: network.egress: none\u2028and\tmore"}
+	meta := &installdir.Meta{Ref: "acme/capdemo", Namespace: "acme", Name: "capdemo", Version: "1.0.0", Digest: "sha256:abc",
+		Attestation: receipt.Attestation{State: "verified"}}
+	text := acpConsentText(m, meta, t.TempDir(), runOpts{}, manifest.ModeAutonomous, nil)
+	for _, l := range strings.Split(text, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(l), "FORGED") {
+			t.Fatalf("a summary started a line of the consent text:\n%s", text)
+		}
+	}
+	if !strings.Contains(text, "\nok FORGED: network.egress: none and more\n") {
+		t.Errorf("the summary was not made one line:\n%s", text)
+	}
+}
+
 func TestAttackConsentTitleAndTextHaveNoHiddenCharacters(t *testing.T) {
 	m, err := attackManifest(t, `"s"`, "")
 	if err != nil {

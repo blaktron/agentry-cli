@@ -24,6 +24,15 @@ func TestNoCachedRecordRunsAsBuiltin(t *testing.T) {
 			t.Fatalf("err = %v", err)
 		}
 	})
+	t.Run("a cached record in a state a run does not admit is refused", func(t *testing.T) {
+		for _, state := range []string{"mismatch", "unverifiable", ""} {
+			meta := &installdir.Meta{Ref: "acme/x@1.0.0", Namespace: "acme", Name: "x", Attestation: receipt.Attestation{State: state}}
+			err := cachedAttestationGate(meta, true, true)
+			if err == nil || !strings.Contains(err.Error(), "which a run does not admit") || strings.Contains(err.Error(), "built in") {
+				t.Errorf("state %q: err = %v", state, err)
+			}
+		}
+	})
 	t.Run("a forged record under a --local package does not change its state", func(t *testing.T) {
 		isolateEnv(t)
 		home, _ := isolateRunnerHome(t)

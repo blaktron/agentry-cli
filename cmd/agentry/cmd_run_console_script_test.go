@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -93,9 +94,25 @@ func TestRunLaunchesTheConsoleScriptItsFirstInstallFound(t *testing.T) {
 	newDockerClient = func() dockerx.Client { return f }
 	t.Cleanup(func() { newDockerClient = prev })
 
+	// The plan the resolution's guess compiles, before any install.
+	_, guess, err := runCLI(t, strings.NewReader(""), "--json", "run", "--local", dir, "--allow-unsigned", "--yes", "--policy", polPath, "--dry-run")
+	if err != nil {
+		t.Fatalf("dry run: %v\n%s", err, guess)
+	}
+	gm := regexp.MustCompile(`run plan sha256: ([0-9a-f]{12})\n`).FindStringSubmatch(guess)
+	if gm == nil {
+		t.Fatalf("the dry run named no plan:\n%s", guess)
+	}
+	guessed := gm[1]
+
 	args := []string{"run", "--local", dir, "--allow-unsigned", "--yes", "--policy", polPath, "--prepare"}
-	if _, stderr, err := runCLI(t, strings.NewReader(""), args...); err != nil {
+	stdout, stderr, err := runCLI(t, strings.NewReader(""), args...)
+	if err != nil {
 		t.Fatalf("first run: %v\n%s", err, stderr)
+	}
+	// --prepare stops after the install and says so on stdout.
+	if !strings.HasPrefix(stdout, "prepared fixtures/word-probe@1.0.0 (plan ") || !strings.HasSuffix(stdout, ", images installed) — run again without --prepare to execute\n") {
+		t.Errorf("--prepare printed %q", stdout)
 	}
 	if builds != 1 {
 		t.Fatalf("the server was built %d times, want once", builds)
@@ -103,12 +120,17 @@ func TestRunLaunchesTheConsoleScriptItsFirstInstallFound(t *testing.T) {
 	want := spec.MCPStorePrefix + "/pypi-some-word-server/venv/bin/word_server"
 	planDir := onlyPlanDir(t, home)
 	assertLaunches(t, planDir, want)
+	// What --prepare says is the plan the install left, not the one compiled
+	// from the resolution's guess.
+	if m := regexp.MustCompile(`^prepared fixtures/word-probe@1.0.0 \(plan ([0-9a-f]{12}), images installed\) — run again without --prepare to execute\n$`).FindStringSubmatch(stdout); m == nil || m[1] == guessed {
+		t.Errorf("--prepare printed %q, the plan the guess compiled was %s", stdout, guessed)
+	}
 	compiled, err := os.Stat(filepath.Join(planDir, "plan.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	_, stderr, err := runCLI(t, strings.NewReader(""), args...)
+	_, stderr, err = runCLI(t, strings.NewReader(""), args...)
 	if err != nil {
 		t.Fatalf("second run: %v\n%s", err, stderr)
 	}

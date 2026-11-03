@@ -1,11 +1,13 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/blaktron/agentry-cli/pkg/knowledge"
 	"github.com/blaktron/agentry-cli/pkg/knowledge/knowledgetest"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 )
@@ -33,9 +35,18 @@ func TestRunKnowledgeFlag(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		with, stderr, err := dry("--knowledge", handMadePack(t, "runbooks"))
+		packDir := handMadePack(t, "runbooks")
+		with, stderr, err := dry("--knowledge", packDir)
 		if err != nil {
 			t.Fatalf("%v (stderr %q)", err, stderr)
+		}
+		pack, err := knowledge.Load(packDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		attached := engine.AttachPack(pack)
+		if want := fmt.Sprintf("knowledge pack runbooks: 1 page, %d bytes, %s, not scanned — mounted read-only at /knowledge/runbooks\n", attached.Bytes, attached.Digest); !strings.HasPrefix(stderr, want) {
+			t.Fatalf("stderr does not begin with %q: %q", want, stderr)
 		}
 		if with != without {
 			t.Fatal("attaching a pack changed the printed plan")
@@ -58,6 +69,31 @@ func TestRunKnowledgeFlag(t *testing.T) {
 		}
 		_, _, err := dry("--knowledge", dir)
 		wantClassified(t, err, engine.ExitVerify)
+	})
+	t.Run("a name that no pack can have", func(t *testing.T) {
+		_, _, err := dry("--knowledge", "Not A Pack Name")
+		wantClassified(t, err, engine.ExitCLI)
+		if !strings.Contains(err.Error(), "--knowledge Not A Pack Name: not a directory, and ") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+	t.Run("a name that no kept pack has", func(t *testing.T) {
+		_, _, err := dry("--knowledge", "never-kept")
+		wantClassified(t, err, engine.ExitPolicy)
+		if !strings.Contains(err.Error(), "--knowledge never-kept: ") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+	t.Run("a pack directory named from the working directory", func(t *testing.T) {
+		dir := handMadePack(t, "runbooks")
+		t.Chdir(filepath.Dir(dir))
+		_, stderr, err := dry("--knowledge", "runbooks")
+		if err != nil {
+			t.Fatalf("%v (stderr %q)", err, stderr)
+		}
+		if !strings.Contains(stderr, "knowledge pack runbooks: 1 page") {
+			t.Fatalf("stderr = %q", stderr)
+		}
 	})
 	t.Run("two packs of one name", func(t *testing.T) {
 		_, _, err := dry("--knowledge", handMadePack(t, "runbooks"), "--knowledge", handMadePack(t, "runbooks"))
