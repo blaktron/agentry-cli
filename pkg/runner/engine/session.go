@@ -645,12 +645,31 @@ func (s *liveSession) harnessDone() {
 	}
 }
 
+// notContinuedGrace is how long a harness that could not load the stored
+// conversation has to exit once its stdin is closed, before its container
+// is removed.
+var notContinuedGrace = 10 * time.Second
+
 // relaunchAnew starts the harness again on a new conversation after it
-// could not load the stored one and ended (adapter.NotContinuedError): the
-// old process's exit is awaited and its driver closed, and the new one is
-// started with the id of a new conversation.
+// could not load the stored one (adapter.NotContinuedError): the old
+// process is ended and its driver closed, and the new one is started with
+// the id of a new conversation. Claude Code can answer a --resume it cannot
+// load with its error result and go on reading its input, so its stdin is
+// closed rather than its exit awaited, and a container still running after
+// the grace is removed.
 func (s *liveSession) relaunchAnew(ctx context.Context, old adapter.SessionDriver, opts *adapter.SessionOptions) (adapter.SessionDriver, error) {
-	_, exited := s.harness()
+	stdin, exited := s.harness()
+	_ = stdin.Close()
+	grace := time.NewTimer(notContinuedGrace)
+	defer grace.Stop()
+	select {
+	case <-exited:
+	case <-grace.C:
+		if s.p.Plan.Harness.Host == nil {
+			_ = s.d.RemoveForce(ctx, containerName(s.runID, "agent"))
+		}
+	case <-ctx.Done():
+	}
 	select {
 	case <-exited:
 	case <-ctx.Done():
