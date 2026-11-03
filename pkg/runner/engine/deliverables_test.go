@@ -78,6 +78,8 @@ func TestTheEnvelopeListsWhatTheAgentMarked(t *testing.T) {
 		"reports/final/brief.md": "# Brief\n",
 		"reports/data.csv":       "a,b\n1,2\n",
 	},
+		`{"path":"reports/notes.md","marked":true}`,
+		`{"path":"reports/notes.md","marked":false}`,
 		`{"path":"reports/final/brief.md","title":"The brief","marked":true}`,
 		`{"path":"reports/data.csv","marked":true}`,
 		`{"path":"reports/data.csv","marked":false}`,
@@ -118,11 +120,15 @@ func TestAForgedLedgerNamesNothingTheRunnerDoesNotStandBehind(t *testing.T) {
 	}
 	f.OnForeground = nil
 	agentWrites(p, f, map[string]string{
-		"reports/real.md":        "real",
-		"reports/odd.md":         "odd title",
-		"reports/forged.pdf":     "%PDF-1.7 not exported by export_pdf",
-		"reports/dir/inner.md":   "x",
-		"receipts/events.ndjson": "evidence",
+		"reports/real.md":          "real",
+		"reports/odd.md":           "odd title",
+		"reports/forged.pdf":       "%PDF-1.7 not exported by export_pdf",
+		"reports/Shouted.PDF":      "%PDF-1.7 not exported either",
+		"reports/padded.md":        "padded",
+		"reports/blank.md":         "blank",
+		"reports/dir/inner.md":     "x",
+		"reports/browser/shot.png": "screenshot",
+		"receipts/events.ndjson":   "evidence",
 	},
 		`{"path":"reports/real.md","title":"Real","marked":true,"sha256":"`+strings.Repeat("0", 64)+`"}`,
 		`{"path":"result.json","marked":true}`,
@@ -132,8 +138,11 @@ func TestAForgedLedgerNamesNothingTheRunnerDoesNotStandBehind(t *testing.T) {
 		`{"path":"reports/gone.md","marked":true}`,
 		`{"path":"reports/dir","marked":true}`,
 		`{"path":"reports/forged.pdf","marked":true}`,
+		`{"path":"reports/Shouted.PDF","marked":true}`,
 		`{"path":"reports/browser/shot.png","marked":true}`,
 		`{"path":"reports/odd.md","title":"a`+"\\u202e"+`b","marked":true}`,
+		`{"path":"reports/padded.md","title":"  Padded title  ","marked":true}`,
+		`{"path":"reports/blank.md","title":"   ","marked":true}`,
 		`not json at all`,
 	)
 	if runtime.GOOS != "windows" {
@@ -143,8 +152,9 @@ func TestAForgedLedgerNamesNothingTheRunnerDoesNotStandBehind(t *testing.T) {
 			if strings.HasSuffix(r.Name, "-agent") {
 				_ = os.Symlink(outside, filepath.Join(p.OutDir, "reports", "link.md"))
 				_ = os.Symlink(outside, filepath.Join(p.OutDir, "reports", "dir", "link.md"))
+				_ = os.Symlink("../receipts", filepath.Join(p.OutDir, "reports", "alias"))
 				ledger, _ := os.OpenFile(filepath.Join(p.OutDir, "receipts", DeliverablesLedgerFile), os.O_APPEND|os.O_WRONLY, 0o644)
-				_, _ = ledger.WriteString(`{"path":"reports/link.md","marked":true}` + "\n" + `{"path":"reports/dir/link.md","marked":true}` + "\n")
+				_, _ = ledger.WriteString(`{"path":"reports/link.md","marked":true}` + "\n" + `{"path":"reports/dir/link.md","marked":true}` + "\n" + `{"path":"reports/alias/events.ndjson","marked":true}` + "\n")
 				_ = ledger.Close()
 			}
 		}
@@ -154,10 +164,16 @@ func TestAForgedLedgerNamesNothingTheRunnerDoesNotStandBehind(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := paths(env.Deliverables)
-	if len(got) != 2 || got[0] != "reports/real.md" || got[1] != "reports/odd.md" {
-		t.Fatalf("deliverables = %v, want real.md and odd.md alone", got)
+	if len(got) != 4 || got[0] != "reports/real.md" || got[1] != "reports/odd.md" || got[2] != "reports/padded.md" || got[3] != "reports/blank.md" {
+		t.Fatalf("deliverables = %v, want real.md, odd.md, padded.md and blank.md alone", got)
 	}
 	real, odd := env.Deliverables.Files[0], env.Deliverables.Files[1]
+	if title := env.Deliverables.Files[2].Title; title != "Padded title" {
+		t.Errorf("a title with surrounding spaces became %q, want it trimmed", title)
+	}
+	if title := env.Deliverables.Files[3].Title; title != "blank" {
+		t.Errorf("a title of spaces alone became %q, want the file's name", title)
+	}
 	if real.SHA256 != sha([]byte("real")) || real.Title != "Real" {
 		t.Errorf("real.md = %+v: the digest is the runner's own", real)
 	}
@@ -218,6 +234,36 @@ func TestNothingMarkedTheRunnerPicks(t *testing.T) {
 			t.Errorf("deliverables = %+v, want the PDF alone, unmarked", got)
 		}
 	})
+	t.Run("a PDF the ledger vouches for with another digest", func(t *testing.T) {
+		p, f := fixture(t)
+		happyFake(f)
+		agentWrites(p, f, map[string]string{"reports/swapped.pdf": "%PDF-1.7 swapped later", "reports/summary.md": "# Summary"})
+		inner := f.OnForeground
+		f.OnForeground = func(r dockerx.RunSpec) {
+			inner(r)
+			if strings.HasSuffix(r.Name, "-agent") {
+				_ = os.WriteFile(filepath.Join(p.OutDir, "receipts", PDFLedgerFile), []byte(`{"path":"reports/swapped.pdf","sha256":"`+sha([]byte("%PDF-1.7 as exported"))+`","pages":1,"bytes":20}`+"\n"), 0o644)
+			}
+		}
+		env, err := Run(context.Background(), f, p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := paths(env.Deliverables); len(got) != 1 || got[0] != "reports/summary.md" {
+			t.Errorf("deliverables = %v, want summary.md alone: the PDF is not the one exported", got)
+		}
+		// The pick checks the PDF ledger's digest again against the file as it
+		// is when the pick is made, whatever the ledger's record held.
+		rd := &runDirs{outDir: p.OutDir}
+		swapped := &receipt.PDFs{Files: []receipt.PDFFile{{Path: "reports/swapped.pdf", SHA256: sha([]byte("%PDF-1.7 as exported"))}}}
+		if got := pickedDeliverables(rd, swapped); len(got) != 1 || got[0].Path != "reports/summary.md" {
+			t.Errorf("picked %+v, want summary.md alone", got)
+		}
+		asExported := &receipt.PDFs{Files: []receipt.PDFFile{{Path: "reports/swapped.pdf", SHA256: sha([]byte("%PDF-1.7 swapped later"))}}}
+		if got := pickedDeliverables(rd, asExported); len(got) != 1 || got[0].Path != "reports/swapped.pdf" {
+			t.Errorf("picked %+v, want the PDF the ledger vouches for", got)
+		}
+	})
 	t.Run("the files in reports", func(t *testing.T) {
 		p, f := fixture(t)
 		happyFake(f)
@@ -226,6 +272,7 @@ func TestNothingMarkedTheRunnerPicks(t *testing.T) {
 			"reports/a/first.txt":      "first",
 			"reports/browser/shot.png": "screenshot",
 			"reports/loose.pdf":        "%PDF-1.7 no ledger vouches for it",
+			"reports/LOUD.PDF":         "%PDF-1.7 no ledger vouches for this one either",
 		})
 		env, err := Run(context.Background(), f, p)
 		if err != nil {
@@ -258,6 +305,38 @@ func TestNothingMarkedTheRunnerPicks(t *testing.T) {
 		}
 		if b, err := os.ReadFile(filepath.Join(p.OutDir, "reports", "deliverable.md")); err != nil || string(b) != "final answer\n" {
 			t.Errorf("deliverable.md = %q, %v", b, err)
+		}
+	})
+	t.Run("a final message that ends in a newline is written as it is", func(t *testing.T) {
+		rd := &runDirs{outDir: t.TempDir()}
+		d := deliverablesRecord(rd, nil, "done\n")
+		if d == nil || len(d.Files) != 1 || d.Files[0].Bytes != 5 || d.Files[0].SHA256 != sha([]byte("done\n")) {
+			t.Fatalf("deliverables = %+v", d)
+		}
+		if b, err := os.ReadFile(filepath.Join(rd.outDir, "reports", "deliverable.md")); err != nil || string(b) != "done\n" {
+			t.Errorf("deliverable.md = %q, %v", b, err)
+		}
+	})
+	t.Run("a link where the final message goes", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			return // a symbolic link needs a privilege there
+		}
+		rd := &runDirs{outDir: t.TempDir()}
+		if err := os.MkdirAll(filepath.Join(rd.outDir, "reports"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		target := filepath.Join(rd.outDir, "kept.txt")
+		if err := os.WriteFile(target, []byte("kept"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("../kept.txt", filepath.Join(rd.outDir, "reports", "deliverable.md")); err != nil {
+			t.Fatal(err)
+		}
+		if d := deliverablesRecord(rd, nil, "final answer"); d != nil {
+			t.Errorf("deliverables = %+v, want none: the message is never written through a link", d)
+		}
+		if b, _ := os.ReadFile(target); string(b) != "kept" {
+			t.Errorf("the file behind the link = %q", b)
 		}
 	})
 	t.Run("only the browser's files and no message", func(t *testing.T) {
@@ -471,6 +550,38 @@ func TestAHugeReportsFolderIsListedByTheFirstFiles(t *testing.T) {
 	if d := deliverablesRecord(few, nil, ""); d == nil || d.Truncated {
 		t.Errorf("a short list = %+v", d)
 	}
+	// Exactly the most a block names is not a truncated list, picked or
+	// marked, and one file more is.
+	for _, c := range []struct {
+		name  string
+		files int
+		want  bool
+	}{{"the cap exactly", receipt.MaxDeliverables, false}, {"one past the cap", receipt.MaxDeliverables + 1, true}} {
+		for _, marked := range []bool{false, true} {
+			rd := &runDirs{outDir: t.TempDir()}
+			var ledger []string
+			for i := range c.files {
+				name := fmt.Sprintf("f%04d.txt", i)
+				if err := os.MkdirAll(filepath.Join(rd.outDir, "reports"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(rd.outDir, "reports", name), []byte("x"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				ledger = append(ledger, `{"path":"reports/`+name+`","marked":true}`)
+			}
+			if marked {
+				rd.deliverablesLedger = filepath.Join(t.TempDir(), DeliverablesLedgerFile)
+				if err := os.WriteFile(rd.deliverablesLedger, []byte(strings.Join(ledger, "\n")+"\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			d := deliverablesRecord(rd, nil, "")
+			if d == nil || len(d.Files) != receipt.MaxDeliverables || d.Truncated != c.want {
+				t.Errorf("%s (marked %v): listed %d, truncated %v, want %d and %v", c.name, marked, len(d.Files), d != nil && d.Truncated, receipt.MaxDeliverables, c.want)
+			}
+		}
+	}
 }
 
 // TestARunTeardownFailsListsAndDeliversNothing: what teardown could not
@@ -508,7 +619,9 @@ func TestAHostileFileNameIsOneLineOfPlainText(t *testing.T) {
 	rd := &runDirs{outDir: t.TempDir()}
 	bidi := string(rune(0x202e))
 	name := "q3" + bidi + "fdp\nline" + string(rune(0x200b)) + "break.md"
-	for _, n := range []string{name, "x.m" + bidi + "d", "y.a b", "z." + strings.Repeat("e", 40), strings.Repeat("é", 300) + ".md"} {
+	long := strings.Repeat("é", 121) + ".md"
+	for _, n := range []string{name, "x.m" + bidi + "d", "y.a b", "z." + strings.Repeat("e", 40), long,
+		"sep" + string(rune(0x2028)) + string(rune(0x2029)) + "name.md", "bad" + string([]byte{0xff}) + "name.md", ".md", "UP.CSV", "ten.abcdefghij", "eleven.abcdefghijk"} {
 		p := filepath.Join(rd.outDir, "reports", n)
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 			t.Fatal(err)
@@ -518,7 +631,7 @@ func TestAHostileFileNameIsOneLineOfPlainText(t *testing.T) {
 		}
 	}
 	d := deliverablesRecord(rd, nil, "")
-	if d == nil || len(d.Files) != 5 {
+	if d == nil || len(d.Files) != 11 {
 		t.Fatalf("deliverables = %+v", d)
 	}
 	for _, f := range d.Files {
@@ -535,6 +648,23 @@ func TestAHostileFileNameIsOneLineOfPlainText(t *testing.T) {
 		}
 		if strings.HasPrefix(f.Path, "reports/z.") && f.Type != "" {
 			t.Errorf("a 40-letter extension gave the type %q", f.Type)
+		}
+	}
+	// Each rule on its own: the separators, bytes that are not UTF-8, a name
+	// of nothing, a title cut at its longest, and the type's case and length.
+	wantTitle := map[string]string{
+		"reports/" + long: strings.Repeat("é", toolsrv.MaxDeliverableTitleRunes),
+		"reports/sep" + string(rune(0x2028)) + string(rune(0x2029)) + "name.md": "sep__name",
+		"reports/bad" + string([]byte{0xff}) + "name.md":                        "bad_name",
+		"reports/.md": "file",
+	}
+	wantType := map[string]string{"reports/UP.CSV": "csv", "reports/ten.abcdefghij": "abcdefghij", "reports/eleven.abcdefghijk": "", "reports/.md": "md"}
+	for _, f := range d.Files {
+		if want, ok := wantTitle[f.Path]; ok && f.Title != want {
+			t.Errorf("%q: title %q, want %q", f.Path, f.Title, want)
+		}
+		if want, ok := wantType[f.Path]; ok && f.Type != want {
+			t.Errorf("%q: type %q, want %q", f.Path, f.Type, want)
 		}
 	}
 }
@@ -583,8 +713,51 @@ func TestTheRunnersPickIsBounded(t *testing.T) {
 		t.Fatalf("deliverables = %+v, want the first 7 files in path order", d)
 	}
 
+	// The walk's budget of entries counts the folder itself: a folder of
+	// exactly the budget is read whole, and one more entry is not read.
+	maxPickedPaths = 100
+	for _, c := range []struct{ files, want int }{{maxPickedVisits - 1, maxPickedVisits - 1}, {maxPickedVisits, maxPickedVisits - 1}} {
+		visits := &runDirs{outDir: t.TempDir()}
+		if err := os.MkdirAll(filepath.Join(visits.outDir, "reports"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for i := range c.files {
+			_ = os.WriteFile(filepath.Join(visits.outDir, "reports", fmt.Sprintf("v%02d.txt", i)), []byte("x"), 0o644)
+		}
+		if d := deliverablesRecord(visits, nil, ""); d == nil || len(d.Files) != c.want {
+			t.Errorf("%d files with a budget of %d entries: %+v", c.files, maxPickedVisits, d)
+		}
+	}
+	maxPickedPaths = 7
+
+	// Files under reports/browser are never listed, so they use none of the
+	// budget of paths the folder is read to.
+	browserRD := &runDirs{outDir: t.TempDir()}
+	if err := os.MkdirAll(filepath.Join(browserRD.outDir, "reports", "browser"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 20 {
+		_ = os.WriteFile(filepath.Join(browserRD.outDir, "reports", "browser", fmt.Sprintf("shot%02d.png", i)), []byte("x"), 0o644)
+	}
+	_ = os.WriteFile(filepath.Join(browserRD.outDir, "reports", "z.txt"), []byte("x"), 0o644)
+	if d := deliverablesRecord(browserRD, nil, ""); d == nil || len(d.Files) != 1 || d.Files[0].Path != "reports/z.txt" {
+		t.Errorf("the browser's screenshots used up the budget: %+v", d)
+	}
+
 	if runtime.GOOS == "windows" {
 		return
+	}
+	// A link is never listed and counts for nothing against the budget of paths.
+	linkRD := &runDirs{outDir: t.TempDir()}
+	if err := os.MkdirAll(filepath.Join(linkRD.outDir, "reports"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 9 {
+		_ = os.Symlink("z.txt", filepath.Join(linkRD.outDir, "reports", fmt.Sprintf("a%02d.lnk", i)))
+	}
+	_ = os.WriteFile(filepath.Join(linkRD.outDir, "reports", "z.txt"), []byte("x"), 0o644)
+	if d := deliverablesRecord(linkRD, nil, ""); d == nil || len(d.Files) != 1 || d.Files[0].Path != "reports/z.txt" {
+		t.Errorf("links used up the budget: %+v", d)
 	}
 	ledger := filepath.Join(t.TempDir(), "deliverables.ndjson")
 	if err := os.Symlink("/dev/zero", ledger); err != nil {
@@ -600,5 +773,23 @@ func TestTheRunnersPickIsBounded(t *testing.T) {
 	}
 	if got, _ := ReadDeliverablesLedger(big); len(got) != maxLedgerLines {
 		t.Errorf("a ledger of %d lines was read as %d", maxLedgerLines+500, len(got))
+	}
+	// The ledger is read to its byte cap and no further: a ledger of exactly
+	// the cap is read whole, and one more line is not read.
+	const lineBytes = 512 << 10
+	one := `{"path":"reports/a.md","marked":true,"title":"`
+	row := one + strings.Repeat("x", lineBytes-len(one)-len("\"}\n")) + "\"}\n"
+	if len(row) != lineBytes {
+		t.Fatalf("a ledger line is %d bytes", len(row))
+	}
+	whole := maxLedgerBytes / lineBytes
+	for _, lines := range []int{whole, whole + 1} {
+		capped := filepath.Join(t.TempDir(), "capped.ndjson")
+		if err := os.WriteFile(capped, []byte(strings.Repeat(row, lines)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := ReadDeliverablesLedger(capped); err != nil || len(got) != whole {
+			t.Errorf("a ledger of %d bytes was read as %d lines (%v), want %d", lines*lineBytes, len(got), err, whole)
+		}
 	}
 }

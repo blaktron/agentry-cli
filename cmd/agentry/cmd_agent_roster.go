@@ -41,7 +41,7 @@ func agentConsent(cmd *cobra.Command, a persistent.Agent, ce *persistent.Consent
 		return engine.Classify(engine.ExitPolicy, errors.New("this needs the person's agreement to what needsAgreement lists: nothing was changed; run it again with --yes once they agree"))
 	}
 	errOut := cmd.ErrOrStderr()
-	_, _ = fmt.Fprintf(errOut, "The %s agent would be given, for the first time on this computer:\n", a.Name)
+	_, _ = fmt.Fprintf(errOut, "The %s agent would be given, for the first time on %s:\n", a.Name, thisMachine())
 	for _, e := range ce.Entries {
 		_, _ = fmt.Fprintf(errOut, "  - %s\n", safeTerminalText(e.Line, 600))
 	}

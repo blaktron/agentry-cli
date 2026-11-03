@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -18,6 +20,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/intake"
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/sources"
 	"github.com/blaktron/agentry-cli/runnerimage/source"
@@ -83,6 +86,8 @@ func TestARepositorySourceIsFetchedBeforeTheDecode(t *testing.T) {
 	happyFake(f)
 	p.KeepRunDir = true
 	fg := withSource(t, &p, f, map[string]string{"README.md": "# r\n", "src/main.go": "package main\n"}, nil)
+	// The proxy's decisions are kept as a receipt, with the token masked.
+	f.LogsByName = map[string]string{containerName("cafe0000", "source-proxy-repo"): "CONNECT github.com:443 allowed (token " + plantedToken + ")"}
 	env, err := Run(context.Background(), f, p)
 	if err != nil {
 		t.Fatal(err)
@@ -102,8 +107,8 @@ func TestARepositorySourceIsFetchedBeforeTheDecode(t *testing.T) {
 	if fg.GotStdin != plantedToken+"\n" {
 		t.Errorf("the token did not reach the fetch step on stdin: %q", fg.GotStdin)
 	}
-	if !fetch.ReadOnly || fetch.User == "" && os.Getuid() >= 0 {
-		t.Errorf("the fetch step's posture: read-only %v, user %q", fetch.ReadOnly, fetch.User)
+	if !fetch.ReadOnly || fetch.User == "" && os.Getuid() >= 0 || !fetch.Interactive || !fetch.AutoRemove {
+		t.Errorf("the fetch step's posture: read-only %v, user %q, interactive %v, auto-remove %v", fetch.ReadOnly, fetch.User, fetch.Interactive, fetch.AutoRemove)
 	}
 	proxy, ok := f.FindRun("-source-proxy-repo")
 	if !ok {
@@ -139,8 +144,9 @@ func TestARepositorySourceIsFetchedBeforeTheDecode(t *testing.T) {
 			}
 		}
 	}
-	removedNet := false
+	removedNet, bridged := false, false
 	for _, c := range f.Calls {
+		bridged = bridged || (c.Op == "NetworkConnect" && c.Arg == "bridge<-"+proxy.Name)
 		removedNet = removedNet || (c.Op == "NetworkRemove" && c.Arg == fetch.Network)
 		if c.Op == "NetworkConnect" && c.Arg == fetch.Network {
 			t.Errorf("a container was connected to the source's network: %+v", c)
@@ -148,6 +154,19 @@ func TestARepositorySourceIsFetchedBeforeTheDecode(t *testing.T) {
 	}
 	if !removedNet {
 		t.Error("the source's network was not removed")
+	}
+	if !bridged {
+		t.Error("the source's proxy was not given its route out on the bridge")
+	}
+	internal := false
+	for _, c := range f.Calls {
+		internal = internal || (c.Op == "NetworkCreate" && c.Arg == fetch.Network+"(internal=true)")
+	}
+	if !internal {
+		t.Errorf("the source's network is not internal: %v", f.Ops())
+	}
+	if log, err := os.ReadFile(filepath.Join(p.OutDir, "receipts", "source-proxy-repo.log")); err != nil || !strings.Contains(string(log), "CONNECT github.com:443 allowed") || !strings.Contains(string(log), "[token]") {
+		t.Errorf("the source proxy's log = %q, %v", log, err)
 	}
 	// Staged and decoded as inputs.
 	if b, err := os.ReadFile(filepath.Join(runDir, "inputs", "repo", "src", "main.go")); err != nil || string(b) != "package main\n" {
@@ -181,6 +200,36 @@ func TestARepositorySourceIsFetchedBeforeTheDecode(t *testing.T) {
 	}
 	assertNoToken(t, p.OutDir)
 	assertNoToken(t, runDir)
+
+	t.Run("a source named like an upload is refused", func(t *testing.T) {
+		resetDecodeCalls()
+		p, f := fixture(t)
+		happyFake(f)
+		withSource(t, &p, f, map[string]string{"a.txt": "a"}, nil)
+		p.InputPaths = []string{writeInput(t, t.TempDir(), "repo", "an upload named like the source")}
+		_, err := Run(context.Background(), f, p)
+		var ce *ClassifiedError
+		if !errors.As(err, &ce) || ce.Code != ExitCLI || !strings.Contains(err.Error(), "the input source repo collides with an input of the same name") {
+			t.Fatalf("err %v, want the name clash", err)
+		}
+		if _, ok := f.FindRun("-agent"); ok {
+			t.Error("the agent ran on a source that took an upload's name")
+		}
+	})
+	t.Run("sources are not fetched with no policy", func(t *testing.T) {
+		p, f := fixture(t)
+		withSource(t, &p, f, nil, nil)
+		p.Policy = nil
+		rd := &runDirs{root: t.TempDir(), inputs: t.TempDir(), receiptsDir: t.TempDir()}
+		_, err := fetchSources(context.Background(), f, p, rd, &teardown{}, "cafe0000")
+		var ce *ClassifiedError
+		if !errors.As(err, &ce) || ce.Code != ExitCLI || !strings.Contains(err.Error(), "no policy names the files image") {
+			t.Fatalf("err %v", err)
+		}
+		if _, ok := f.FindRun("-source-repo"); ok {
+			t.Error("a fetch step ran with no policy")
+		}
+	})
 }
 
 // TestASourcesExecutableIsMalwareChecked: a repository holding an EICAR
@@ -257,6 +306,16 @@ func TestAFetchStepThatBreaksTheRulesIsNotStaged(t *testing.T) {
 		"a link": func(_ *source.Report, out string) {
 			_ = os.Symlink("/etc/passwd", filepath.Join(out, "escape"))
 		},
+		"a link the report counts": func(rep *source.Report, out string) {
+			_ = os.Symlink("/etc/passwd", filepath.Join(out, "escape"))
+			rep.Files++
+			rep.Bytes += int64(len("/etc/passwd"))
+		},
+		"a .git. folder": func(rep *source.Report, out string) {
+			writeInput(t, out, "sub/.git./config", "x")
+			rep.Files++
+			rep.Bytes++
+		},
 		"a .git folder": func(rep *source.Report, out string) {
 			writeInput(t, out, "sub/.git/config", "x")
 			rep.Files++
@@ -292,6 +351,42 @@ func TestAFetchStepThatBreaksTheRulesIsNotStaged(t *testing.T) {
 			}
 		})
 	}
+	t.Run("a report that is a link", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			return // a symbolic link needs a privilege there
+		}
+		resetDecodeCalls()
+		p, f := fixture(t)
+		happyFake(f)
+		p.KeepRunDir = true
+		fg := withSource(t, &p, f, map[string]string{"a.txt": "a"}, nil)
+		before := fg.Before
+		fg.Before = func(r dockerx.RunSpec) {
+			before(r)
+			for _, m := range r.Mounts {
+				if m.Target == "/work" {
+					_ = os.Rename(filepath.Join(m.Source, source.ReportFile), filepath.Join(m.Source, "real.json"))
+					_ = os.Symlink("real.json", filepath.Join(m.Source, source.ReportFile))
+				}
+			}
+		}
+		_, err := Run(context.Background(), f, p)
+		var ce *ClassifiedError
+		if !errors.As(err, &ce) || ce.Code != ExitGateway || !strings.Contains(err.Error(), "wrote no readable report") {
+			t.Fatalf("err %v, want the gateway class: no readable report", err)
+		}
+	})
+	t.Run("a build fetcher needs a run id", func(t *testing.T) {
+		_, err := BuildSourceFetcher(context.Background(), &dockerx.Fake{}, "runner", "files", policy.Limits{}, "", t.TempDir(), filepath.Join(t.TempDir(), "receipts"), io.Discard)
+		var ce *ClassifiedError
+		if !errors.As(err, &ce) || ce.Code != ExitCLI || !strings.Contains(err.Error(), "needs a run id") {
+			t.Errorf("err %v", err)
+		}
+		fetcher, err := BuildSourceFetcher(context.Background(), &dockerx.Fake{}, "runner", "files", policy.Limits{}, "build1", t.TempDir(), filepath.Join(t.TempDir(), "receipts"), io.Discard)
+		if err != nil || fetcher.RunID != "build1" {
+			t.Errorf("fetcher %+v, err %v", fetcher, err)
+		}
+	})
 }
 
 // TestAFetchFailureSaysWhy: a host's refusal reaches the person in the
@@ -315,6 +410,90 @@ func TestAFetchFailureSaysWhy(t *testing.T) {
 		t.Error("the token reached the error")
 	}
 	assertNoToken(t, p.OutDir)
+
+	// A step that exits with a failure and says nothing, and one that says it
+	// failed but exits zero, are each a failed fetch.
+	for name, c := range map[string]struct {
+		exit int
+		said string
+		want string
+	}{
+		"an exit code alone": {1, "", "the fetch step failed (exit 1)"},
+		"an error alone":     {0, "the host did not answer", "the host did not answer"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			resetDecodeCalls()
+			p, f := fixture(t)
+			happyFake(f)
+			fg := withSource(t, &p, f, map[string]string{"a.txt": "a"}, func(rep *source.Report, _ string) { rep.Error = c.said })
+			fg.ExitCode = c.exit
+			env, err := Run(context.Background(), f, p)
+			var ce *ClassifiedError
+			if !errors.As(err, &ce) || ce.Code != ExitCLI || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("err %v, want the CLI class saying %q", err, c.want)
+			}
+			wantReason(t, env, err, &receipt.Reason{Code: receipt.ReasonInputRefused, Detail: receipt.InputSourceFetch, Names: []string{"repo"}})
+		})
+	}
+	t.Run("the step cleans up after itself", func(t *testing.T) {
+		f := &dockerx.Fake{}
+		var network string
+		var later func(context.Context)
+		fetcher := SourceFetcher{Docker: f, ProxyImage: "runner", FilesImage: "files", User: "1000:1000", RunID: "cafe0000", Work: t.TempDir(), Stderr: io.Discard,
+			Later: func(c func(context.Context)) { later = c }, Network: func(n string) { network = n }}
+		f.Foreground = map[string]*dockerx.FakeForeground{"-source-repo": {Before: func(r dockerx.RunSpec) {
+			for _, m := range r.Mounts {
+				if m.Target == "/work" {
+					b, _ := json.Marshal(source.Report{Schema: source.Schema, Kind: source.KindRepository, Commit: testCommit})
+					_ = os.WriteFile(filepath.Join(m.Source, source.ReportFile), b, 0o644)
+				}
+			}
+		}}}
+		src := sources.Source{ID: "repo", Kind: manifest.IntakeRepository, URL: "https://github.com/o/r", Host: "github.com"}
+		if _, err := fetcher.Fetch(context.Background(), src, sources.LocalCaps, filepath.Join(t.TempDir(), "dest")); err != nil {
+			t.Fatal(err)
+		}
+		if network != sourceNetworkName("cafe0000", "repo") || later == nil {
+			t.Errorf("the teardown was told of network %q and cleanup %v", network, later != nil)
+		}
+		removed := map[string]int{}
+		for _, c := range f.Calls {
+			if c.Op == "RemoveForce" || c.Op == "NetworkRemove" {
+				removed[c.Op+" "+c.Arg]++
+			}
+		}
+		for _, want := range []string{"NetworkRemove " + network, "RemoveForce " + containerName("cafe0000", "source-repo"), "RemoveForce " + containerName("cafe0000", "source-proxy-repo")} {
+			if removed[want] == 0 {
+				t.Errorf("%q did not happen; calls: %v", want, f.Ops())
+			}
+		}
+		before := len(f.Calls)
+		later(context.Background())
+		if len(f.Calls) != before {
+			t.Error("a cleanup that already ran ran again")
+		}
+	})
+	t.Run("a proxy log has nowhere to go without a receipts folder", func(t *testing.T) {
+		here := t.TempDir()
+		t.Chdir(here)
+		f := &dockerx.Fake{LogsByName: map[string]string{containerName("cafe0000", "source-proxy-repo"): "CONNECT github.com:443 allowed"}}
+		fetcher := SourceFetcher{Docker: f, ProxyImage: "runner", FilesImage: "files", User: "1000:1000", RunID: "cafe0000", Work: t.TempDir(), Stderr: io.Discard}
+		f.Foreground = map[string]*dockerx.FakeForeground{"-source-repo": {Before: func(r dockerx.RunSpec) {
+			for _, m := range r.Mounts {
+				if m.Target == "/work" {
+					b, _ := json.Marshal(source.Report{Schema: source.Schema, Kind: source.KindRepository, Commit: testCommit})
+					_ = os.WriteFile(filepath.Join(m.Source, source.ReportFile), b, 0o644)
+				}
+			}
+		}}}
+		src := sources.Source{ID: "repo", Kind: manifest.IntakeRepository, URL: "https://github.com/o/r", Host: "github.com"}
+		if _, err := fetcher.Fetch(context.Background(), src, sources.LocalCaps, filepath.Join(t.TempDir(), "dest")); err != nil {
+			t.Fatal(err)
+		}
+		if left, _ := os.ReadDir(here); len(left) != 0 {
+			t.Errorf("a log was written beside the working folder: %v", left)
+		}
+	})
 }
 
 // TestAHostedRunReviewsASourcesMarkdownAlone pins: a hosted run (AI Review
@@ -377,6 +556,24 @@ func TestAHostedRunReviewsASourcesMarkdownAlone(t *testing.T) {
 	}
 	if line := env.CapabilitiesEnforced["source.repo"]; !strings.Contains(line, "AI Review read its 3 Markdown files, not its code") {
 		t.Errorf("the source line: %q", line)
+	}
+	// The words for a source of one Markdown file, of none, and of a url
+	// source, which is read whole as an upload is.
+	repo := sources.Source{ID: "repo", Kind: manifest.IntakeRepository}
+	doc := sources.Source{ID: "doc", Kind: manifest.IntakeURL}
+	for _, c := range []struct {
+		src  sources.Source
+		n    int
+		want string
+	}{
+		{repo, 0, "AI Review read no file of it: it has no Markdown file"},
+		{repo, 1, "AI Review read its 1 Markdown file, not its code"},
+		{repo, 2, "AI Review read its 2 Markdown files, not its code"},
+		{doc, 0, "AI Review reads it as it reads an upload"},
+	} {
+		if got := reviewedWords(c.src, c.n); got != c.want {
+			t.Errorf("%s with %d: %q, want %q", c.src.Kind, c.n, got, c.want)
+		}
 	}
 }
 
@@ -591,8 +788,9 @@ func TestAURLFetchStepThatBreaksItsReportIsNotStaged(t *testing.T) {
 		edit func(*source.Report, string)
 		code int
 	}{
-		"another file": {func(rep *source.Report, _ string) { rep.Name = "other.txt" }, ExitGateway},
-		"two files":    {func(rep *source.Report, out string) { writeInput(t, out, "b.txt", "") }, ExitGateway},
+		"another file":             {func(rep *source.Report, _ string) { rep.Name = "other.txt" }, ExitGateway},
+		"two files":                {func(rep *source.Report, out string) { writeInput(t, out, "b.txt", "") }, ExitGateway},
+		"a folder beside the file": {func(rep *source.Report, out string) { _ = os.Mkdir(filepath.Join(out, "extra"), 0o755) }, ExitGateway},
 		"over its cap": {func(rep *source.Report, out string) {
 			*rep = source.Report{Schema: source.Schema, Kind: source.KindURL, Refusal: "the file at the address is 300.0 MiB, past the 256 MiB cap",
 				Over: &source.Over{Cap: source.CapBytes, Of: source.OfBytes, Count: 300 << 20}}

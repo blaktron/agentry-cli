@@ -65,8 +65,8 @@ assistant` lists what it has:
   which say how it adds to its memory, answers from it, tidies it and saves a
   whole conversation before it is compacted; `meeting-notes`, which says how
   it summarises a meeting Agentry Desktop recorded and transcribed (a call,
-  or a meeting held in the room, whose voices it never names unless the
-  transcript does), each point with its time in the transcript, saves the
+  its far side's voices told apart or not, or a meeting held in the room;
+  it never names a voice unless the transcript does), each point with its time in the transcript, saves the
   summary beside it, files the
   meeting in its memory, and arms the recordings you ask it for; `google-workspace-setup`, which
   walks you through connecting your Google account; `google-workspace`,

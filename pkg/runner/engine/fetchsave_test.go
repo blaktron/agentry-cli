@@ -79,6 +79,31 @@ func TestNoSaveNoFetchSavesBlock(t *testing.T) {
 		t.Errorf("the fetching run's ledger: %v", err)
 	}
 
+	// The ledger is stamped into a tools spec that can fetch and save, and
+	// into no other.
+	for name, c := range map[string]struct {
+		spec toolsrv.Spec
+		want string
+	}{
+		"fetch and a scratch folder": {toolsrv.Spec{ScratchDir: "/scratch", Fetch: toolsrv.Fetch{Enabled: true}}, "/out/receipts/" + FetchLedgerFile},
+		"no fetch":                   {toolsrv.Spec{ScratchDir: "/scratch"}, ""},
+		"no scratch folder":          {toolsrv.Spec{Fetch: toolsrv.Fetch{Enabled: true}}, ""},
+	} {
+		dir := t.TempDir()
+		b, _ := json.Marshal(c.spec)
+		if err := os.WriteFile(filepath.Join(dir, "toolspec.json"), b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := grantFetchLedger(dir, &runDirs{fetchLedger: "/ledger"}); err != nil {
+			t.Fatal(err)
+		}
+		var got toolsrv.Spec
+		b, _ = os.ReadFile(filepath.Join(dir, "toolspec.json"))
+		if err := json.Unmarshal(b, &got); err != nil || got.Fetch.Ledger != c.want {
+			t.Errorf("%s: the ledger is %q (%v), want %q", name, got.Fetch.Ledger, err, c.want)
+		}
+	}
+
 	p, f = fixtureEdited(t, nil, func(m *manifest.Manifest) { m.Capabilities.Network.Egress = manifest.Egress{} })
 	happyFake(f)
 	if _, err := Run(context.Background(), f, p); err != nil {

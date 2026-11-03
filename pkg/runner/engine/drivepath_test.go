@@ -39,6 +39,11 @@ func TestGatewayHostPathUnderWSLDriveRoot(t *testing.T) {
 		{`C:\`, "windows", "/mnt/c"},
 		{`\\server\share\x`, "windows", `\\server\share\x`},
 		{"/home/u/runs/r", "linux", "/home/u/runs/r"},
+		// A character before a colon that is no drive letter, below a and
+		// above z once lower cased, is left as it is.
+		{`1:\x`, "windows", `1:\x`},
+		{`@:\x`, "windows", `@:\x`},
+		{`[:\x`, "windows", `[:\x`},
 	} {
 		if got := gatewayHostPathUnder(c.in, c.goos, wslDriveRoot); got != c.want {
 			t.Errorf("gatewayHostPathUnder(%q, %s, %q) = %q, want %q", c.in, c.goos, wslDriveRoot, got, c.want)
@@ -51,6 +56,8 @@ func TestNativeOfGatewayPathUnderWSLDriveRoot(t *testing.T) {
 		{"/mnt/c/Users/me/x", `C:\Users\me\x`},
 		{"/mnt/c", `C:\`},
 		{"/mnt/cd/x", "/mnt/cd/x"},
+		{"/mnt/{/x", "/mnt/{/x"},
+		{"/xyz/c/foo", "/xyz/c/foo"},
 		// Docker Desktop's spelling is not this engine's: left as it is.
 		{"/c/Users/me", "/c/Users/me"},
 		{"/mnt", "/mnt"},

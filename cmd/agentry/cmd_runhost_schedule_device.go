@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,14 +12,17 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/blaktron/agentry-cli/pkg/mcpauth"
 	"github.com/blaktron/agentry-cli/pkg/runhost"
 	"github.com/blaktron/agentry-cli/pkg/runhost/job"
 	"github.com/blaktron/agentry-cli/pkg/runhost/payload"
 	"github.com/blaktron/agentry-cli/pkg/runhost/remote"
+	"github.com/blaktron/agentry-cli/pkg/runhost/signin"
 	"github.com/blaktron/agentry-cli/pkg/runner/connection"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
 	"github.com/blaktron/agentry-cli/pkg/schedule"
+	"github.com/blaktron/agentry/pkg/manifest"
 )
 
 // The device's side of a runhost's schedules: `agentry schedule add --on`
@@ -133,9 +137,10 @@ func scheduleOnRunhost(cmd *cobra.Command, ref, name, on string, spec runSpecFla
 }
 
 // putRunhostSchedule is `run --on` in its schedule mode: the job prepared
-// for the runhost, its OAuth connections handed over, and, after the consent
-// that names what the store keeps, sent as a schedule.
-func putRunhostSchedule(cmd *cobra.Command, client *runhost.Client, rec *runhost.Record, home string, meta *installdir.Meta, j *job.Job, archive []byte, files *payload.Packed, opts runOpts) error {
+// for the runhost and, after the consent that names what the store keeps,
+// a connection of the runhost's own made for each OAuth server the release
+// signs in to, then the job sent as a schedule.
+func putRunhostSchedule(cmd *cobra.Command, client *runhost.Client, rec *runhost.Record, home string, meta *installdir.Meta, m *manifest.Manifest, j *job.Job, archive []byte, files *payload.Packed, opts runOpts) error {
 	var h runhost.ScheduleHeader
 	if err := json.Unmarshal([]byte(opts.runhostSchedule), &h); err != nil {
 		return engine.Classify(engine.ExitUsage, fmt.Errorf("--runhost-schedule: %w", err))
@@ -153,27 +158,18 @@ func putRunhostSchedule(cmd *cobra.Command, client *runhost.Client, rec *runhost
 		return engine.Classify(engine.ExitPolicy, fmt.Errorf("runhost %s takes no schedule: its systemd cannot seal its store's key to it (schedules need systemd %d or newer; agentry runhost store %s says so)", rec.Name, schedule.MinSystemd, rec.Name))
 	}
 	h.Entries = remote.Entries(j)
-	if len(j.Run.Connections) > 0 {
-		conns := connection.Open(home, connectionKeys())
-		clients := connection.OpenClients(home, connectionKeys())
-		for server := range j.Run.Connections {
-			hd, err := conns.Hand(connection.Key{Ref: meta.Ref, Digest: meta.Digest, Server: server}, clients)
-			if err != nil {
-				return engine.Classify(engine.ExitPolicy, fmt.Errorf("the connection to %s cannot be handed to %s: %w", server, rec.Name, err))
-			}
-			raw, err := json.Marshal(hd)
-			if err != nil {
-				return err
-			}
-			h.Connections = append(h.Connections, raw)
+	var servers []manifest.MCPServer
+	for _, srv := range oauthServers(m) {
+		if _, ok := j.Run.Connections[connectionServer(srv)]; ok {
+			servers = append(servers, srv)
 		}
 	}
 	errOut := cmd.ErrOrStderr()
 	what := scheduleEntriesSaid(h.Entries)
 	_, _ = fmt.Fprintf(errOut, "schedule %q runs %s on runhost %s (%s, host key %s) with nobody present.\n", h.Name, meta.Ref, rec.Name, rec.Host, rec.HostKeyFingerprint)
 	_, _ = fmt.Fprintf(errOut, "Its store keeps, encrypted under a key systemd seals to that server, for every run of this schedule: %s.\n", what)
-	if len(h.Connections) > 0 {
-		_, _ = fmt.Fprintln(errOut, "Each OAuth connection is handed to the runhost, which refreshes it itself: both it and this computer then hold the grant, and a vendor that rotates its refresh tokens leaves one of them to connect again.")
+	if len(servers) > 0 {
+		_, _ = fmt.Fprintf(errOut, "Each OAuth connection it signs in to is one of %s's own: you sign in for the runhost once, in your browser here, and it keeps and refreshes that grant itself. This computer's connections are not shared with it.\n", rec.Name)
 	}
 	if !opts.yes {
 		ask := terminalAsker(cmd)
@@ -189,6 +185,11 @@ func putRunhostSchedule(cmd *cobra.Command, client *runhost.Client, rec *runhost
 		}
 	}
 	say := func(line string) { _, _ = fmt.Fprintf(errOut, "%s: %s\n", rec.Name, safeTerminalText(line, 4096)) }
+	for _, srv := range servers {
+		if err := runhostConnect(cmd, client, rec, home, meta, srv, m.Guide.ServerConnect(srv)); err != nil {
+			return err
+		}
+	}
 	info, err := remote.PutSchedule(cmd.Context(), client, h, j, archive, files, say)
 	if err != nil {
 		return engine.Classify(remote.SendClass(err), err)
@@ -284,4 +285,72 @@ func newRunhostSchedulesCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&runNow, "run", "", "run schedule ID now")
 	return cmd
+}
+
+// runhostConnect makes the runhost's own connection to srv for the release
+// meta names, unless it keeps a working one: the consent opens in the
+// person's browser here, at the authorization endpoint this device
+// discovers for the server itself, and the runhost keeps the grant. A
+// vendor that takes only the person's own OAuth client is given the one
+// this device keeps for its issuer, or asked for one at the terminal.
+func runhostConnect(cmd *cobra.Command, client *runhost.Client, rec *runhost.Record, home string, meta *installdir.Meta, srv manifest.MCPServer, help string) error {
+	ctx := cmd.Context()
+	httpc := vendorHTTP()
+	var md *mcpauth.ServerMetadata
+	if srv.IsRemote() {
+		d, err := mcpauth.DiscoverRemote(ctx, httpc, srv.URL)
+		if err != nil {
+			return engine.Classify(engine.ExitCLI, fmt.Errorf("discover how %s signs in: %w", connectionServer(srv), err))
+		}
+		md = &d.Server
+	} else {
+		d, err := mcpauth.DiscoverIssuer(ctx, httpc, srv.OAuth.Issuer)
+		if err != nil {
+			return engine.Classify(engine.ExitCLI, fmt.Errorf("discover how %s signs in: %w", connectionServer(srv), err))
+		}
+		md = d
+	}
+	req := signin.ConnectRequest{
+		Ref: meta.Ref, Digest: meta.Digest, Server: connectionServer(srv), Scopes: connectionScopes(srv),
+		AgentryClient: connection.OpenPublicClients(home, registryURL(), httpClient).ForServer(ctx, srv, md.Issuer),
+	}
+	if srv.IsRemote() {
+		req.URL = srv.URL
+	} else {
+		req.Issuer = srv.OAuth.Issuer
+	}
+	clients := connection.OpenClients(home, connectionKeys())
+	errOut := narration(cmd)
+	p := signin.Person{
+		Say: func(s string) { _, _ = fmt.Fprintf(errOut, "%s: %s\n", rec.Name, safeTerminalText(s, 4096)) },
+		Open: func(u string) {
+			if os.Getenv("AGENTRY_NO_BROWSER") != "" {
+				return
+			}
+			if err := openBrowser(u); err != nil {
+				_, _ = fmt.Fprintf(errOut, "(could not open a browser: %v; open the address above yourself)\n", err)
+			}
+		},
+	}
+	_, _ = fmt.Fprintf(errOut, "\n%s needs runhost %s to sign in to %s.\n", meta.Ref, rec.Name, connectionWhat(srv))
+	for attempt := 0; ; attempt++ {
+		if own, err := clients.Get(md.Issuer); err != nil {
+			return engine.Classify(engine.ExitCLI, err)
+		} else if own != nil {
+			req.OwnClientID, req.OwnClientSecret = own.ID, own.Secret
+		}
+		kept, err := signin.Connect(ctx, client, req, md.AuthorizationEndpoint, p)
+		if err == nil {
+			_, _ = fmt.Fprintf(errOut, "runhost %s is connected to %s for %s\n", rec.Name, kept.Kind, meta.Ref)
+			return nil
+		}
+		needs := (&mcpauth.NeedsOwnClientError{Issuer: md.Issuer}).Error()
+		if attempt == 0 && req.OwnClientID == "" && strings.Contains(err.Error(), needs) && consentTTY(cmd.InOrStdin()) {
+			if aerr := askOwnClient(cmd, bufio.NewReader(cmd.InOrStdin()), clients, md.Issuer, connectionServer(srv), help); aerr != nil {
+				return engine.Classify(engine.ExitPolicy, aerr)
+			}
+			continue
+		}
+		return engine.Classify(engine.ExitPolicy, fmt.Errorf("connect runhost %s to %s: %w", rec.Name, connectionServer(srv), err))
+	}
 }
