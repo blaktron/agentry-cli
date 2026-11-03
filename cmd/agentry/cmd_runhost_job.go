@@ -49,7 +49,7 @@ var (
 	// runhostUnsafeModeFile is the runhost's Unsafe Mode setting.
 	runhostUnsafeModeFile = runhost.UnsafeModeFile
 	runhostStoreDir       = filepath.Join(runhost.StateDir, "store", "releases")
-	runhostStoreKey       = filepath.Join(runhost.StateDir, "store", store.KeyFile)
+	runhostStoreKeyFile   = filepath.Join(runhost.StateDir, "store", store.KeyFile)
 	runhostOutputKeep     = runhost.OutputKeep
 	// runhostCancelGrace is how long an interrupted run has to tear down
 	// before it is killed.
@@ -120,7 +120,7 @@ func runhostJobVerb(ctx context.Context, req runhost.Request, in io.Reader, fw *
 			return engine.ExitPolicy, err
 		}
 	}
-	st, err := store.Open(runhostStoreDir, runhostStoreKey)
+	st, err := openRunhostStore()
 	if err != nil {
 		return engine.ExitCLI, fmt.Errorf("the runhost's store: %w", err)
 	}
@@ -137,28 +137,51 @@ func runhostJobVerb(ctx context.Context, req runhost.Request, in io.Reader, fw *
 			return engine.ExitCLI, fmt.Errorf("keep the release in the runhost's store: %w", err)
 		}
 	}
+	live, code, err := beginRunhostJob(ctx, j, meta, archive, in, devices, nil)
+	if err != nil {
+		return code, err
+	}
+	if err := fw.Started(j.ID); err != nil {
+		return 0, nil
+	}
+	gone := make(chan struct{})
+	go func() {
+		defer close(gone)
+		if j.Run.Session {
+			live.relaySession(in)
+			return
+		}
+		_, _ = io.Copy(io.Discard, in)
+	}()
+	return live.follow(ctx, fw, 0, gone)
+}
+
+// beginRunhostJob runs j under the service, apart from any session: its
+// release, verified, laid down in this account's runner home, its files
+// unpacked from files when it carries them (the payload's bytes), and the
+// run started. It returns once the run has started, or failed to start;
+// done, when set, is told the run's exit code when it ends. A device that
+// leaves finds the job again with attach.
+func beginRunhostJob(ctx context.Context, j *job.Job, meta *installdir.Meta, archive []byte, files io.Reader, devices map[string][]byte, done func(code int)) (*runhostLive, int, error) {
 	home, err := runnerHome()
 	if err != nil {
-		return engine.ExitCLI, err
+		return nil, engine.ExitCLI, err
 	}
 	if err := runhostLayDown(home, meta, archive); err != nil {
-		return engine.ExitVerify, err
+		return nil, engine.ExitVerify, err
 	}
 	dir, err := runhostJobDir(j)
 	if err != nil {
-		return engine.ExitCLI, err
+		return nil, engine.ExitCLI, err
 	}
-	// The run's files follow the release on the stream; they are laid down
-	// in the job's own directory, which keeps nothing but the sealed output
-	// once the run ends.
+	// The run's files are laid down in the job's own directory, which keeps
+	// nothing but the sealed output once the run ends.
 	if j.Run.Payload != nil {
-		if err := payload.Unpack(in, j.Run.Payload.Size, j.Run.Payload.Digest, filepath.Join(dir, runhostFilesDir)); err != nil {
+		if err := payload.Unpack(files, j.Run.Payload.Size, j.Run.Payload.Digest, filepath.Join(dir, runhostFilesDir)); err != nil {
 			_ = os.RemoveAll(dir)
-			return engine.ExitUsage, err
+			return nil, engine.ExitUsage, err
 		}
 	}
-	// The job runs under the service from here, apart from this session: a
-	// device that leaves finds it again with attach.
 	jobCtx, cancel := context.WithCancel(ctx)
 	live := newRunhostLive(j, cancel)
 	live.out("%s", runhostVerifiedLine(meta))
@@ -178,21 +201,12 @@ func runhostJobVerb(ctx context.Context, req runhost.Request, in io.Reader, fw *
 		live.finish(code, err)
 		// An attach that arrives after this reads the job's record.
 		live.forget()
+		if done != nil {
+			done(code)
+		}
 	}()
 	<-ready
-	if err := fw.Started(j.ID); err != nil {
-		return 0, nil
-	}
-	gone := make(chan struct{})
-	go func() {
-		defer close(gone)
-		if j.Run.Session {
-			live.relaySession(in)
-			return
-		}
-		_, _ = io.Copy(io.Discard, in)
-	}()
-	return live.follow(ctx, fw, 0, gone)
+	return live, 0, nil
 }
 
 // runhostJobDir makes the job's own directory, owner-only, refusing a job

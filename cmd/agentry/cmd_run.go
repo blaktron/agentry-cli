@@ -75,6 +75,10 @@ type runOpts struct {
 	installed bool
 	// on is the remote runhost the run goes to; empty runs it here.
 	on string
+	// runhostSchedule, set by `agentry schedule add --on`, sends the run to
+	// the runhost as a schedule (a runhost.ScheduleHeader, as JSON) instead of
+	// starting it.
+	runhostSchedule string
 	// detach leaves a run on a runhost to run once it has started there.
 	detach      bool
 	mode        string
@@ -245,6 +249,8 @@ func newRunCmd() *cobra.Command {
 	f.BoolVar(&opts.detach, "detach", false, "with --on: leave the run on the runhost once it has started there, and say its job; agentry runhost attach, collect and cancel reach it later")
 	f.BoolVar(&opts.installed, "installed", false, "run the release already installed in the runner home at --pin, asking no registry, so nothing the registry says of it today (a yank, a quarantine) is heard (a remote runhost's service, which verified it as it arrived)")
 	_ = f.MarkHidden("installed")
+	f.StringVar(&opts.runhostSchedule, "runhost-schedule", "", "with --on: keep the run on the runhost as this schedule (agentry schedule add --on)")
+	_ = f.MarkHidden("runhost-schedule")
 	f.StringVar(&opts.policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml, created on first use)")
 	f.IntVar(&opts.timeout, "timeout", 0, "override the policy timeout (seconds)")
 	f.IntVar(&opts.maxTurns, "max-turns", -1, "override the policy tool-call budget (0 = unlimited)")

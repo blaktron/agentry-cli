@@ -1,0 +1,296 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/blaktron/agentry-cli/pkg/runhost"
+	"github.com/blaktron/agentry-cli/pkg/runhost/job"
+	"github.com/blaktron/agentry-cli/pkg/runner/engine"
+	"github.com/blaktron/agentry-cli/pkg/schedule"
+)
+
+// sealingRunhost is a runhost server whose systemd seals the store's key: a
+// reversible wrap stands in for systemd-creds.
+func sealingRunhost(t *testing.T) *runhostServer {
+	t.Helper()
+	s := newRunhostServer(t)
+	oldEnc, oldDec, oldDir, oldNow := schedule.EncryptCredential, runhostDecryptCredential, runhostSchedulesDir, runhostScheduleNow
+	t.Cleanup(func() {
+		schedule.EncryptCredential, runhostDecryptCredential, runhostSchedulesDir, runhostScheduleNow = oldEnc, oldDec, oldDir, oldNow
+	})
+	schedule.EncryptCredential = func(name string, plain []byte, out string) error {
+		return os.WriteFile(out, append([]byte(name+":"), plain...), 0o600)
+	}
+	runhostDecryptCredential = func(name, file string) ([]byte, error) {
+		b, err := os.ReadFile(file) //nolint:gosec // the test's own file
+		if err != nil {
+			return nil, err
+		}
+		v, ok := bytes.CutPrefix(b, []byte(name+":"))
+		if !ok {
+			return nil, errors.New("another credential's name")
+		}
+		return v, nil
+	}
+	runhostSystemdVersion = func() int { return 257 }
+	runhostSchedulesDir = filepath.Join(s.dir, "schedules")
+	return s
+}
+
+func putSchedule(t *testing.T, j *job.Job, archive []byte, when schedule.Recurrence) (runhost.ScheduleInfo, int, error) {
+	t.Helper()
+	w, _ := json.Marshal(when)
+	h, _ := json.Marshal(runhost.ScheduleHeader{Name: "nightly", When: w, Entries: []runhost.ScheduleEntry{{Kind: "model-key", Name: "anthropic"}}})
+	var in bytes.Buffer
+	in.Write(append(h, '\n'))
+	if err := job.Write(&in, j); err != nil {
+		t.Fatal(err)
+	}
+	in.Write(archive)
+	var out bytes.Buffer
+	fw := runhost.NewFrameWriter(&out)
+	code, err := runhostScheduleVerb(context.Background(), runhost.Request{Verb: "schedule", Args: []string{"put"}}, &in, fw)
+	_ = fw.Exit(code, err)
+	a, rerr := runhost.ReadAnswer(&out, nil)
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	var info runhost.ScheduleInfo
+	if a.Code == 0 {
+		_ = json.Unmarshal(a.Result, &info)
+	}
+	return info, a.Code, err
+}
+
+func daily(t *testing.T, start time.Time, at string) schedule.Recurrence {
+	t.Helper()
+	return schedule.Recurrence{Kind: schedule.Daily, Time: at, Zone: "UTC", Start: start}
+}
+
+// A schedule sent to a runhost is kept in its store, encrypted, and its
+// occurrence runs a copy of its job with an id of its own, whose output is
+// sealed for the devices to collect; removing it takes its entry off the
+// disk.
+func TestARunhostRunsAScheduleFromItsStore(t *testing.T) {
+	sealingRunhost(t)
+	start := time.Date(2026, 11, 3, 6, 0, 0, 0, time.UTC)
+	runhostScheduleNow = func() time.Time { return start }
+	j, archive := unsignedJob(t, "0123456789abcdef0123456789abcdef")
+	info, code, err := putSchedule(t, j, archive, daily(t, start, "07:00"))
+	if code != 0 {
+		t.Fatalf("put: %d %v", code, err)
+	}
+	if info.ID == "" || info.Next == nil || !info.Next.Equal(time.Date(2026, 11, 3, 7, 0, 0, 0, time.UTC)) || info.Device != testDevice {
+		t.Fatalf("info %+v", info)
+	}
+	entry := filepath.Join(runhostStoreDir, scheduleEntryName(info.ID)+".entry")
+	b, err := os.ReadFile(entry) //nolint:gosec // the test's own store
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(b, []byte("sk-test-model-key")) {
+		t.Fatal("the schedule's model key is plaintext on disk")
+	}
+
+	// Nothing is due before seven; at seven one run starts.
+	runhostSchedulerTick(context.Background(), t.Logf)
+	if fires, _ := runhostScheduleStore().Fires(info.ID, 0); len(fires) != 0 {
+		t.Fatalf("a run before its time: %+v", fires)
+	}
+	runhostScheduleNow = func() time.Time { return start.Add(time.Hour + time.Minute) }
+	runhostSchedulerTick(context.Background(), t.Logf)
+	var fire schedule.Fire
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		fires, _ := runhostScheduleStore().Fires(info.ID, 0)
+		if len(fires) == 1 {
+			fire = fires[0]
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no fire recorded: %+v", fires)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if fire.Outcome != schedule.Ran || fire.RunID == "" || fire.RunID == j.ID {
+		t.Fatalf("fire %+v", fire)
+	}
+	if _, err := os.Stat(filepath.Join(runhostJobsDir, fire.RunID, runhostSealedName)); err != nil {
+		t.Fatalf("the run's output was not sealed for collection: %v", err)
+	}
+	// The same occurrence never runs twice.
+	runhostSchedulerTick(context.Background(), t.Logf)
+	time.Sleep(100 * time.Millisecond)
+	if fires, _ := runhostScheduleStore().Fires(info.ID, 0); len(fires) != 1 {
+		t.Fatalf("fires %+v", fires)
+	}
+	list, err := runhostScheduleList()
+	if err != nil || len(list) != 1 || len(list[0].Fires) != 1 || list[0].Fires[0].Job != fire.RunID {
+		t.Fatalf("list %+v %v", list, err)
+	}
+
+	if _, err := runhostScheduleRemove(info.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(entry); !os.IsNotExist(err) {
+		t.Fatalf("the removed schedule's entry is still on disk: %v", err)
+	}
+	if list, _ := runhostScheduleList(); len(list) != 0 {
+		t.Fatalf("list after removal: %+v", list)
+	}
+}
+
+// A runhost whose systemd cannot seal its store's key to its account takes
+// no schedule, and says why.
+func TestAScheduleNeedsASealedStore(t *testing.T) {
+	sealingRunhost(t)
+	runhostSystemdVersion = func() int { return 252 }
+	forgetRunhostStoreKey()
+	j, archive := unsignedJob(t, "0123456789abcdef0123456789abcdef")
+	_, code, err := putSchedule(t, j, archive, daily(t, time.Now(), "07:00"))
+	if code != 11 && code == 0 {
+		t.Fatalf("an unsealed store took a schedule: %d", code)
+	}
+	if err == nil || !strings.Contains(err.Error(), "systemd 256") {
+		t.Fatalf("the refusal: %v", err)
+	}
+}
+
+// A session cannot be scheduled, and a schedule for another device than the
+// run key's is refused.
+func TestARunhostScheduleRefusesWhatCannotRunUnattended(t *testing.T) {
+	sealingRunhost(t)
+	j, archive := unsignedJob(t, "0123456789abcdef0123456789abcdef")
+	j.Run.Session = true
+	if _, code, _ := putSchedule(t, j, archive, daily(t, time.Now(), "07:00")); code == 0 {
+		t.Fatal("a session was scheduled")
+	}
+}
+
+// `agentry schedule add --on` prepares the run as `run --on` does, names
+// what the runhost's store will keep, and hands it over; the runhost then
+// runs it with no device present, and the device collects the run's output
+// as it collects any job's.
+func TestScheduleAddOnARunhostHandsTheScheduleOver(t *testing.T) {
+	srv, _ := newRunOnLab(t)
+	oldEnc, oldDec, oldDir, oldNow := schedule.EncryptCredential, runhostDecryptCredential, runhostSchedulesDir, runhostScheduleNow
+	t.Cleanup(func() {
+		schedule.EncryptCredential, runhostDecryptCredential, runhostSchedulesDir, runhostScheduleNow = oldEnc, oldDec, oldDir, oldNow
+	})
+	schedule.EncryptCredential = func(name string, plain []byte, out string) error {
+		return os.WriteFile(out, append([]byte(name+":"), plain...), 0o600)
+	}
+	runhostDecryptCredential = func(name, file string) ([]byte, error) {
+		b, err := os.ReadFile(file) //nolint:gosec // the test's own file
+		if err != nil {
+			return nil, err
+		}
+		v, _ := bytes.CutPrefix(b, []byte(name+":"))
+		return v, nil
+	}
+	runhostSystemdVersion = func() int { return 257 }
+	runhostSchedulesDir = filepath.Join(srv.dir, "schedules")
+	t.Setenv("API_TOKEN", "tok-secret-value-1")
+	fr := newFakeRegistry(t)
+	fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", "capabilities:\n  secrets: [API_TOKEN]\n"))
+
+	stdout, stderr, err := runCLI(t, nil, "--registry", fr.url(), "schedule", "add", "acme/demo@1.0.0", "--on", "lab",
+		"--daily", "07:00", "--zone", "UTC", "--task", "the scheduled task", "--allow-unsigned", "--yes")
+	if err != nil {
+		t.Fatalf("schedule add --on: %v\n%s", err, stderr)
+	}
+	for _, want := range []string{"model-key anthropic", "secret API_TOKEN", "runhost lab"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("the consent does not name %q:\n%s", want, stderr)
+		}
+	}
+	if !strings.Contains(stdout, "is on runhost lab") {
+		t.Fatalf("stdout:\n%s", stdout)
+	}
+	list, err := runhostScheduleList()
+	if err != nil || len(list) != 1 {
+		t.Fatalf("the runhost holds %+v (%v)", list, err)
+	}
+	sc := list[0]
+	if sc.Ref != "acme/demo@1.0.0" || sc.Device != testDevice || len(sc.Entries) != 2 {
+		t.Fatalf("schedule %+v", sc)
+	}
+	// Nothing of the task, the secret or the model key is in the clear in
+	// the runhost's state.
+	err = filepath.WalkDir(srv.dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		b, _ := os.ReadFile(p) //nolint:gosec // the test's own tree
+		for _, v := range []string{"tok-secret-value-1", "sk-test-model-key", "the scheduled task"} {
+			if bytes.Contains(b, []byte(v)) {
+				t.Errorf("%s holds %q in the clear", p, v)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The occurrence runs a copy of the job, its secret and task among what
+	// it carries.
+	runhostScheduleNow = func() time.Time { return sc.Next.Add(time.Minute) }
+	runhostSchedulerTick(context.Background(), t.Logf)
+	var fire schedule.Fire
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		fires, _ := runhostScheduleStore().Fires(sc.ID, 0)
+		if len(fires) == 1 {
+			fire = fires[0]
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the occurrence did not run")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if fire.Outcome != schedule.Ran {
+		t.Fatalf("fire %+v", fire)
+	}
+	if seen, _ := os.ReadFile(filepath.Join(srv.dir, "secrets.seen")); string(seen) != "API_TOKEN=tok-secret-value-1\n" {
+		t.Errorf("the occurrence's secrets file held %q", seen)
+	}
+	out := filepath.Join(t.TempDir(), "collected")
+	_, stderr, err = runCLI(t, nil, "runhost", "collect", "lab", fire.RunID, "--out", out)
+	if err != nil {
+		t.Fatalf("collect the occurrence's job: %v\n%s", err, stderr)
+	}
+	stdout, _, err = runCLI(t, nil, "runhost", "store", "lab", "--remove", "schedule:"+sc.ID)
+	if err != nil || !strings.Contains(stdout, "is off runhost lab") {
+		t.Fatalf("remove: %v\n%s", err, stdout)
+	}
+	if list, _ := runhostScheduleList(); len(list) != 0 {
+		t.Fatalf("the schedule stayed: %+v", list)
+	}
+}
+
+// A runhost whose systemd seals nothing is refused before the consent is
+// asked, as a policy refusal.
+func TestScheduleAddOnARunhostThatTakesNoScheduleAsksNothing(t *testing.T) {
+	newRunOnLab(t)
+	fr := newFakeRegistry(t)
+	fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
+	_, stderr, err := runCLI(t, nil, "--registry", fr.url(), "schedule", "add", "acme/demo@1.0.0", "--on", "lab",
+		"--daily", "07:00", "--zone", "UTC", "--allow-unsigned", "--yes")
+	var ce *engine.ClassifiedError
+	if err == nil || !errors.As(err, &ce) || ce.Code != engine.ExitPolicy || !strings.Contains(err.Error(), "takes no schedule") {
+		t.Fatalf("schedule add on an unsealed runhost: %v", err)
+	}
+	if strings.Contains(stderr, "Its store keeps") {
+		t.Fatalf("the consent was put before the refusal:\n%s", stderr)
+	}
+}

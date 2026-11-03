@@ -215,6 +215,7 @@ func newScheduleAddCmd() *cobra.Command {
 		spec  runSpecFlags
 		name  string
 		out   string
+		on    string
 		yes   bool
 		check bool
 	)
@@ -257,6 +258,13 @@ func newScheduleAddCmd() *cobra.Command {
 			}
 			if (ref == "") == (spec.local == "") {
 				return errors.New("pass exactly one of ns/name[@range] or --local DIR")
+			}
+			if on != "" {
+				w, err := when.recurrence(scheduleNow())
+				if err != nil {
+					return err
+				}
+				return scheduleOnRunhost(cmd, ref, name, on, spec, w, scheduleNow(), yes)
 			}
 			if out == "" {
 				return errors.New("--out DIR is required: each scheduled run gets its own folder in it")
@@ -304,6 +312,7 @@ func newScheduleAddCmd() *cobra.Command {
 	f.BoolVar(&spec.signedOut, "signed-out", false, "also run while you are signed out (Linux with Docker Engine; turns on linger, seals the keys in an encrypted systemd credential)")
 	f.BoolVar(&yes, "yes", false, "consent to the release's capabilities without the prompt (no terminal); with --signed-out, also confirms turning on linger")
 	f.BoolVar(&check, "check", false, "only check whether the schedule could be made, and what it would still need; nothing is asked, installed or kept")
+	f.StringVar(&on, "on", "", "run it on this remote runhost, with nobody present, instead of this computer: what it needs is kept in the runhost's encrypted store after a consent naming each item (see agentry runhost schedules)")
 	return cmd
 }
 

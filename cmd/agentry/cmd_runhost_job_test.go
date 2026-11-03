@@ -94,21 +94,27 @@ func newRunhostServer(t *testing.T) *runhostServer {
 	t.Helper()
 	isolateEnv(t)
 	dir := t.TempDir()
-	saved := []*string{&runhostJobsDir, &runhostStoreDir, &runhostStoreKey, &runhostDevicesFile}
+	saved := []*string{&runhostJobsDir, &runhostStoreDir, &runhostStoreKeyFile, &runhostStoreKeyCred, &runhostDevicesFile}
 	old := make([]string, len(saved))
 	for i, p := range saved {
 		old[i] = *p
 	}
-	oldCLI := runhostCLI
+	oldCLI, oldSystemd := runhostCLI, runhostSystemdVersion
+	// A server whose systemd cannot seal the store's key, unless a test
+	// says otherwise: no test reaches this machine's systemd-creds.
+	runhostSystemdVersion = func() int { return 252 }
+	forgetRunhostStoreKey()
 	t.Cleanup(func() {
 		for i, p := range saved {
 			*p = old[i]
 		}
-		runhostCLI = oldCLI
+		runhostCLI, runhostSystemdVersion = oldCLI, oldSystemd
+		forgetRunhostStoreKey()
 	})
 	runhostJobsDir = filepath.Join(dir, "jobs")
 	runhostStoreDir = filepath.Join(dir, "store", "releases")
-	runhostStoreKey = filepath.Join(dir, "store", "store.key")
+	runhostStoreKeyFile = filepath.Join(dir, "store", "store.key")
+	runhostStoreKeyCred = filepath.Join(dir, "store", "store.key.cred")
 	runhostDevicesFile = filepath.Join(dir, "devices.json")
 	t.Setenv(policy.HomeEnv, filepath.Join(dir, "runner"))
 	path, err := policy.DefaultPath()

@@ -42,6 +42,9 @@ func newRunhostCmd() *cobra.Command {
 			"socket and opens no network port. This computer is paired with its own run\n" +
 			"key, held to that service: setup checks that it is refused a shell, a\n" +
 			"terminal, any other command and forwarding.\n\n" +
+			"A schedule runs there with nobody present (agentry schedule add --on): what it\n" +
+			"needs is kept in the runhost's store, encrypted under a key systemd seals to\n" +
+			"the server (systemd 256 or newer).\n\n" +
 			"Servers: Debian 12 and 13, Ubuntu 22.04 and 24.04, Fedora 43 and 44, and\n" +
 			"RHEL, AlmaLinux and Rocky Linux 9 and 10, on amd64 or arm64.",
 		PersistentPreRun: func(c *cobra.Command, _ []string) {
@@ -57,7 +60,7 @@ func newRunhostCmd() *cobra.Command {
 		},
 	}
 	cmd.AddCommand(newRunhostAddCmd(), newRunhostListCmd(), newRunhostStatusCmd(), newRunhostDoctorCmd(), newRunhostRemoveCmd(),
-		newRunhostUpdateCmd(), newRunhostPairCmd(), newRunhostUnpairCmd(),
+		newRunhostUpdateCmd(), newRunhostPairCmd(), newRunhostUnpairCmd(), newRunhostSchedulesCmd(),
 		newRunhostModelCmd(), newRunhostStoreCmd(), newRunhostSetCmd(),
 		newRunhostJobsCmd(), newRunhostAttachCmd(), newRunhostCollectCmd(), newRunhostCancelCmd(),
 		newRunhostServeCmd(), newRunhostServiceCmd())

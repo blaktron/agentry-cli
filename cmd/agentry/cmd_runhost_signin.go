@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/user"
+	"regexp"
 	"strings"
 	"time"
 
@@ -50,19 +51,32 @@ func init() {
 	}
 }
 
-// runhostKeychain keeps the sign-in store's secrets as entries of the
-// runhost's store. It takes only a model sign-in's account, so nothing else
-// lands there by accident.
+// runhostKeychain keeps the connection stores' secrets as entries of the
+// runhost's store: a model sign-in's, a schedule's OAuth connection's
+// refresh token, and the person's own OAuth client's secret. It takes no
+// other account, so nothing else lands there by accident.
 type runhostKeychain struct{}
 
-const signInAccountPrefix = "model-signin:"
+const (
+	signInAccountPrefix     = "model-signin:"
+	connectionAccountPrefix = "connection:"
+	ownClientAccountPrefix  = "mcp-client:"
+)
+
+// hexIDRE is a connection's or an issuer's id in its keychain account.
+var hexIDRE = regexp.MustCompile(`^[0-9a-f]{16,24}$`)
 
 func runhostKeychainEntry(account string) (string, error) {
-	vendor, ok := strings.CutPrefix(account, signInAccountPrefix)
-	if !ok || !signin.IsVendor(vendor) {
-		return "", fmt.Errorf("a runhost keeps only its model sign-ins' secrets, not %q", account)
+	if vendor, ok := strings.CutPrefix(account, signInAccountPrefix); ok && signin.IsVendor(vendor) {
+		return "signin-" + vendor, nil
 	}
-	return "signin-" + vendor, nil
+	if id, ok := strings.CutPrefix(account, connectionAccountPrefix); ok && hexIDRE.MatchString(id) {
+		return "conn-" + id, nil
+	}
+	if id, ok := strings.CutPrefix(account, ownClientAccountPrefix); ok && hexIDRE.MatchString(id) {
+		return "client-" + id, nil
+	}
+	return "", fmt.Errorf("a runhost keeps only its model sign-ins', its schedules' connections' and their OAuth clients' secrets, not %q", account)
 }
 
 func (runhostKeychain) Get(account string) (string, error) {
