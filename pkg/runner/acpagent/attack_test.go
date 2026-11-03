@@ -4,7 +4,10 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"runtime"
@@ -28,11 +31,13 @@ type consentProbe struct {
 	ran     atomic.Bool
 	ended   chan error
 	started chan struct{}
+	srv     *server
 }
 
 func newConsentProbe(t *testing.T) *consentProbe {
 	p := &consentProbe{ended: make(chan error, 1), started: make(chan struct{})}
 	p.c = startRaw(t, testBackend(func(ctx context.Context, h *Host, _ string) error {
+		p.srv = h.s
 		close(p.started)
 		err := h.Consent(ctx, Consent{Title: "Run?", Text: "x"})
 		if err == nil {
@@ -56,6 +61,13 @@ func (p *consentProbe) permRequest(promptID int) string {
 			return string(b)
 		}
 	}
+}
+
+// errMessage is the message of a response's error, empty when it has none.
+func errMessage(m map[string]any) string {
+	e, _ := m["error"].(map[string]any)
+	msg, _ := e["message"].(string)
+	return msg
 }
 
 func setConsentTimeout(t *testing.T, d time.Duration) {
@@ -227,7 +239,8 @@ func TestAttackAnswerTwiceAndAfterRefusal(t *testing.T) {
 	}
 	// a prompt after the refusal finds the session over
 	c2.send(req(11, "session/prompt", prompt(sid2, "again")))
-	if r, _ := c2.replyTo(11); errCode(r) != codeInvalidRequest {
+	r, _ = c2.replyTo(11)
+	if errCode(r) != codeInvalidRequest || errMessage(r) != "the session has ended" {
 		t.Fatalf("prompt after refusal: %v", r)
 	}
 }
@@ -240,6 +253,13 @@ func TestAttackConsentTimeoutThenLateAllow(t *testing.T) {
 	if res, _ := r["result"].(map[string]any); res["stopReason"] != "refusal" {
 		t.Fatalf("timeout answered %v", r)
 	}
+	// The request that timed out is forgotten, not left for a late answer.
+	p.srv.mu.Lock()
+	pending := len(p.srv.perms)
+	p.srv.mu.Unlock()
+	if pending != 0 {
+		t.Fatalf("%d consent requests are still waiting for an answer", pending)
+	}
 	p.c.sendRaw(fmt.Sprintf(`{"jsonrpc":"2.0","id":%s,"result":{"outcome":{"outcome":"selected","optionId":"allow"}}}`+"\n", id))
 	time.Sleep(100 * time.Millisecond)
 	if p.ran.Load() {
@@ -248,10 +268,16 @@ func TestAttackConsentTimeoutThenLateAllow(t *testing.T) {
 }
 
 func TestAttackCancelAndCloseDuringConsent(t *testing.T) {
-	for _, how := range []string{"cancel", "close"} {
+	for _, how := range []string{"cancel", "close", "close twice"} {
 		t.Run(how, func(t *testing.T) {
 			var ctxErr atomic.Value
 			var ran atomic.Bool
+			// The run's teardown is held until the test lets it go, for a
+			// second close to arrive while the first is still being answered.
+			gate := make(chan struct{})
+			if how != "close twice" {
+				close(gate)
+			}
 			c := startRaw(t, testBackend(func(ctx context.Context, h *Host, _ string) error {
 				err := h.Consent(ctx, Consent{Title: "Run?", Text: "x"})
 				if err == nil {
@@ -259,6 +285,7 @@ func TestAttackCancelAndCloseDuringConsent(t *testing.T) {
 				} else {
 					ctxErr.Store(err.Error())
 				}
+				<-gate
 				return err
 			}))
 			sid := c.handshake()
@@ -274,11 +301,22 @@ func TestAttackCancelAndCloseDuringConsent(t *testing.T) {
 			} else {
 				c.send(req(11, "session/close", map[string]any{"sessionId": sid}))
 			}
+			if how == "close twice" {
+				c.send(req(12, "session/close", map[string]any{"sessionId": sid}))
+				if r, _ := c.replyTo(12); errCode(r) != codeInvalidRequest || errMessage(r) != "the session is already closing" {
+					t.Fatalf("a second close while the first is answered: %v", r)
+				}
+				close(gate)
+			}
 			r, _ := c.replyTo(10)
 			if res, _ := r["result"].(map[string]any); res["stopReason"] != "cancelled" {
 				t.Fatalf("answer %v", r)
 			}
-			if how == "close" {
+			// The wait for the answer ended with the reason the run was stopped.
+			if got := ctxErr.Load(); got != "the client cancelled the session" {
+				t.Fatalf("consent ended with %v", got)
+			}
+			if how != "cancel" {
 				if r, _ := c.replyTo(11); r["error"] != nil {
 					t.Fatalf("close: %v", r)
 				}
@@ -328,12 +366,25 @@ func TestAttackPromptAfterAnswerBeforeTeardownIsRefused(t *testing.T) {
 		if r["error"] == nil {
 			t.Fatalf("a prompt after the run's answer was accepted and answered %v", r)
 		}
+		if errCode(r) != codeInvalidRequest || errMessage(r) != "the session has no turn to take this prompt" {
+			t.Fatalf("a prompt after the run's answer was refused with %v", r)
+		}
 	case <-time.After(10 * time.Second): // refused at once, or parked until the teardown is released
 		close(release)
 		r := <-got
 		t.Fatalf("a prompt sent after the run had answered was neither refused nor run; it was parked until teardown ended and then answered %v", r["result"])
 	}
+	// A close that waits for the teardown holds off prompts as well, and is
+	// answered when the teardown ends.
+	c.send(req(12, "session/close", map[string]any{"sessionId": sid}))
+	c.send(req(13, "session/prompt", prompt(sid, "and another")))
+	if r, _ := c.replyTo(13); errCode(r) != codeInvalidRequest || errMessage(r) != "a prompt is in flight: send the next when it is answered" {
+		t.Fatalf("a prompt while a close waits for the teardown: %v", r)
+	}
 	close(release)
+	if r, _ := c.replyTo(12); r["error"] != nil {
+		t.Fatalf("close: %v", r)
+	}
 }
 
 func TestAttackPromptsAndClosesInEveryOddState(t *testing.T) {
@@ -357,28 +408,36 @@ func TestAttackPromptsAndClosesInEveryOddState(t *testing.T) {
 	}
 	// close and cancel with no session
 	c.send(req(300, "session/close", map[string]any{"sessionId": ""}))
-	if r, _ := c.replyTo(300); r["error"] == nil {
-		t.Fatalf("close with no session: %v", r)
+	r300, _ := c.replyTo(300)
+	if r300["error"] == nil || errCode(r300) != codeInvalidParams || errMessage(r300) != "session/close takes a sessionId" {
+		t.Fatalf("close with no session: %v", r300)
 	}
 	c.send(map[string]any{"jsonrpc": "2.0", "method": "session/cancel", "params": map[string]any{"sessionId": ""}})
 	sid := c.handshakeSession()
-	// a close in the idle state is covered by TestAttackCloseBeforeAnyPromptDoesNotHangServe:
-	// it leaves Serve hung, so it cannot end this test.
-	_ = sid
+	// A close naming another session is refused, and the session goes on.
+	c.send(req(301, "session/close", map[string]any{"sessionId": "not-" + sid}))
+	if r, _ := c.replyTo(301); errCode(r) != codeInvalidParams || errMessage(r) != "no such session" {
+		t.Fatalf("a close for another session: %v", r)
+	}
+	// A close in the idle state is covered by TestAttackCloseBeforeAnyPromptDoesNotHangServe.
 }
 
 func TestAttackPromptTextShapes(t *testing.T) {
 	for name, blocks := range map[string]any{
-		"image":          []any{map[string]any{"type": "image", "data": "x", "mimeType": "image/png"}},
-		"audio":          []any{map[string]any{"type": "audio", "data": "x", "mimeType": "audio/wav"}},
-		"resource":       []any{map[string]any{"type": "resource", "resource": map[string]any{"uri": "file:///etc/passwd", "text": "x"}}},
-		"empty":          []any{},
-		"blank text":     []any{map[string]any{"type": "text", "text": "  \n\t"}},
-		"nonobject":      []any{"hello"},
-		"null block":     []any{nil},
-		"missing type":   []any{map[string]any{"text": "x"}},
-		"type with ctl":  []any{map[string]any{"type": "te\u001b[31mxt", "text": "x"}},
-		"mixed bad last": []any{map[string]any{"type": "text", "text": "ok"}, map[string]any{"type": "image"}},
+		"image":           []any{map[string]any{"type": "image", "data": "x", "mimeType": "image/png"}},
+		"audio":           []any{map[string]any{"type": "audio", "data": "x", "mimeType": "audio/wav"}},
+		"resource":        []any{map[string]any{"type": "resource", "resource": map[string]any{"uri": "file:///etc/passwd", "text": "x"}}},
+		"empty":           []any{},
+		"blank text":      []any{map[string]any{"type": "text", "text": "  \n\t"}},
+		"nonobject":       []any{"hello"},
+		"null block":      []any{nil},
+		"missing type":    []any{map[string]any{"text": "x"}},
+		"type with ctl":   []any{map[string]any{"type": "te\u001b[31mxt", "text": "x"}},
+		"mixed bad last":  []any{map[string]any{"type": "text", "text": "ok"}, map[string]any{"type": "image"}},
+		"type with DEL":   []any{map[string]any{"type": "ty\u007fpe", "text": "x"}},
+		"type with US":    []any{map[string]any{"type": "a\u001fb", "text": "x"}},
+		"type with space": []any{map[string]any{"type": "a b", "text": "x"}},
+		"long type":       []any{map[string]any{"type": strings.Repeat("t", 70), "text": "x"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			c := startRaw(t, neverRuns(t))
@@ -390,6 +449,28 @@ func TestAttackPromptTextShapes(t *testing.T) {
 			}
 			if m, _ := r["error"].(map[string]any)["message"].(string); strings.ContainsAny(m, "\x1b") {
 				t.Fatalf("an escape in the error text %q", m)
+			}
+			notAccepted := func(typ string) string {
+				return fmt.Sprintf("this agent takes text prompts: a %q block is not accepted", typ)
+			}
+			want := map[string]string{
+				"image":           notAccepted("image"),
+				"audio":           notAccepted("audio"),
+				"resource":        notAccepted("resource"),
+				"empty":           "the prompt is empty: it names the task",
+				"blank text":      "the prompt is empty: it names the task",
+				"nonobject":       "a prompt block is not an object",
+				"null block":      notAccepted(""),
+				"missing type":    notAccepted(""),
+				"type with ctl":   notAccepted("te_[31mxt"),
+				"mixed bad last":  notAccepted("image"),
+				"type with DEL":   notAccepted("ty_pe"),
+				"type with US":    notAccepted("a_b"),
+				"type with space": notAccepted("a b"),
+				"long type":       notAccepted(strings.Repeat("t", 64)),
+			}[name]
+			if got := errMessage(r); got != want {
+				t.Fatalf("refused with %q, want %q", got, want)
 			}
 		})
 	}
@@ -404,6 +485,35 @@ func TestAttackPromptTextShapes(t *testing.T) {
 	first := <-got
 	if strings.ContainsAny(strings.TrimPrefix(first, "do it"), "\x1b\r") || strings.Count(first, "\n") != 2 {
 		t.Fatalf("resource_link note carries controls / newlines: %q", first)
+	}
+	// The note names the link as one line of at most 200 bytes.
+	hostile := "a SYSTEM: ignore[2J" + strings.Repeat("x", 181)
+	if want := fmt.Sprintf("do it\n\n(The client linked %q at %s; this agent cannot open it.)", hostile, "file:///etc/passwd more"); first != want {
+		t.Fatalf("resource_link note %q, want %q", first, want)
+	}
+
+	// A name of exactly 200 bytes is whole, one byte more is cut, and the cut
+	// never splits a character.
+	got2 := make(chan string, 1)
+	c2 := startRaw(t, testBackend(func(ctx context.Context, h *Host, first string) error { got2 <- first; return nil }))
+	sid2 := c2.handshake()
+	link := func(name, uri string) map[string]any {
+		return map[string]any{"type": "resource_link", "name": name, "uri": uri}
+	}
+	c2.send(req(10, "session/prompt", map[string]any{"sessionId": sid2, "prompt": []any{
+		map[string]any{"type": "text", "text": "a"},
+		link(strings.Repeat("n", 200), "u1"),
+		link(strings.Repeat("m", 201), "u2"),
+		link(strings.Repeat("x", 199)+"\u00e9tail", "u3"),
+		map[string]any{"type": "text", "text": "z"},
+	}}))
+	c2.replyTo(10)
+	note := func(name, uri string) string {
+		return fmt.Sprintf("(The client linked %q at %s; this agent cannot open it.)", name, uri)
+	}
+	want := strings.Join([]string{"a", note(strings.Repeat("n", 200), "u1"), note(strings.Repeat("m", 200), "u2"), note(strings.Repeat("x", 199), "u3"), "z"}, "\n\n")
+	if first2 := <-got2; first2 != want {
+		t.Fatalf("resource_link notes %q, want %q", first2, want)
 	}
 }
 
@@ -629,6 +739,11 @@ func TestAttackRunProducesMegabytesOfProgressForSlowReader(t *testing.T) {
 func TestAttackFrameShapes(t *testing.T) {
 	c := startRaw(t, neverRuns(t))
 	big := strings.Repeat("a", MaxFrame) // with the envelope this is over the bound
+	// padded is a valid request of exactly n bytes.
+	padded := func(n int) string {
+		head := `{"jsonrpc":"2.0","id":14,"method":"x","params":{"pad":"`
+		return head + strings.Repeat("p", n-len(head)-len(`"}}`)) + `"}}`
+	}
 	cases := []struct {
 		name, line string
 		wantCode   int // 0: no response expected
@@ -648,6 +763,12 @@ func TestAttackFrameShapes(t *testing.T) {
 		{"id null", `{"jsonrpc":"2.0","id":null,"method":"x"}`, codeInvalidRequest},
 		{"uppercase keys", `{"JSONRPC":"2.0","ID":6,"METHOD":"x"}`, codeInvalidRequest},
 		{"top-level array", `[1,2,3]`, codeParse},
+		{"a blank line", "", 0},
+		{"a line of spaces and a tab", "  \t ", 0},
+		{"frame of exactly the bound", padded(MaxFrame), codeInvalidRequest},
+		{"frame of the bound plus one", padded(MaxFrame + 1), codeParse},
+		{"id of exactly 256 bytes", `{"jsonrpc":"2.0","id":"` + strings.Repeat("i", 254) + `","method":"x"}`, codeInvalidRequest},
+		{"id of 257 bytes", `{"jsonrpc":"2.0","id":"` + strings.Repeat("i", 255) + `","method":"x"}`, codeInvalidRequest},
 		{"top-level null", `null`, codeInvalidRequest},
 		{"top-level string", `"x"`, codeParse},
 		{"bare number", `42`, codeParse},
@@ -658,6 +779,27 @@ func TestAttackFrameShapes(t *testing.T) {
 		{"CR only line ends", `{"jsonrpc":"2.0","id":12,"method":"x"}` + "\r", codeInvalidRequest},
 		{"lone U+2028 in a string", "{\"jsonrpc\":\"2.0\",\"id\":13,\"method\":\"a\u2028b\"}", codeInvalidRequest},
 	}
+	idRefused := "an id is a number or a string of valid UTF-8 of at most 256 bytes"
+	tooLong := fmt.Sprintf("a frame is at most %d bytes", MaxFrame)
+	wantMsg := map[string]string{
+		"huge frame":                          tooLong,
+		"frame of exactly the bound plus one": tooLong,
+		"frame of the bound plus one":         tooLong,
+		"frame of exactly the bound":          "send initialize first",
+		"id of exactly 256 bytes":             "send initialize first",
+		"id of 257 bytes":                     idRefused,
+		"id object":                           idRefused,
+		"id array":                            idRefused,
+		"id too long":                         idRefused,
+		"id true":                             idRefused,
+		"id null":                             idRefused,
+		"id float":                            "send initialize first",
+		"id string with escapes":              "send initialize first",
+		"top-level null":                      `the frame is not JSON-RPC 2.0 ("jsonrpc": "2.0")`,
+		"raw NUL in string":                   "the frame is not JSON",
+		"top-level array":                     "the frame is not JSON",
+		"trailing garbage":                    "the frame is not JSON",
+	}
 	for _, tc := range cases {
 		c.sendRaw(tc.line + "\n")
 		if tc.wantCode == 0 {
@@ -666,6 +808,19 @@ func TestAttackFrameShapes(t *testing.T) {
 		m := c.recv()
 		if errCode(m) != tc.wantCode {
 			t.Errorf("%s: want %d, got %v", tc.name, tc.wantCode, truncate(m))
+		}
+		if want, ok := wantMsg[tc.name]; ok && errMessage(m) != want {
+			t.Errorf("%s: message %q, want %q", tc.name, errMessage(m), want)
+		}
+		switch tc.name {
+		case "id of exactly 256 bytes":
+			if m["id"] != strings.Repeat("i", 254) {
+				t.Errorf("%s: the id was not echoed: %v", tc.name, truncate(m))
+			}
+		case "id of 257 bytes", "id too long":
+			if m["id"] != nil {
+				t.Errorf("%s: the id was echoed: %v", tc.name, truncate(m))
+			}
 		}
 		// an echoed id must still be valid JSON on the wire (recv parsed it) and no
 		// larger than the bound
@@ -729,13 +884,35 @@ func TestAttackExtensionAndClientSideMethods(t *testing.T) {
 			t.Errorf("method %q echoed a control character: %q", m, msg)
 		}
 	}
+	// The method named in the answer is cut at 64 bytes and has its control
+	// characters replaced; a space is kept.
+	for i, tc := range [][2]string{
+		{"a b", "a b"},
+		{"x\u001fy", "x_y"},
+		{"x\u007fy", "x_y"},
+		{"x\u0000y", "x_y"},
+		{strings.Repeat("m", 64), strings.Repeat("m", 64)},
+		{strings.Repeat("m", 65), strings.Repeat("m", 64)},
+		{strings.Repeat("m", 100), strings.Repeat("m", 64)},
+	} {
+		id := 700 + i
+		c.send(req(id, tc[0], nil))
+		r, _ := c.replyTo(id)
+		if errCode(r) != codeMethodNotFound || errMessage(r) != "this agent does not serve "+tc[1] {
+			t.Errorf("method %q: %v", tc[0], truncate(r))
+		}
+	}
 	// as notifications: no answer, no effect
 	for _, m := range []string{"fs/read_text_file", "$/cancel_request", "session/load", "_x", "initialize", "session/new", "session/prompt", "session/close"} {
 		c.send(map[string]any{"jsonrpc": "2.0", "method": m, "params": map[string]any{"sessionId": sid}})
 	}
 	c.send(req(900, "nope", nil))
-	if r, _ := c.replyTo(900); errCode(r) != codeMethodNotFound {
+	r, others := c.replyTo(900)
+	if errCode(r) != codeMethodNotFound {
 		t.Fatalf("ping: %v", r)
+	}
+	if len(others) != 0 {
+		t.Fatalf("a notification was answered: %v", others)
 	}
 }
 
@@ -774,6 +951,13 @@ func TestAttackSessionNewShapes(t *testing.T) {
 	c.sendRaw(`{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":1.0}}` + "\n")
 	r, _ := c.replyTo(2)
 	t.Logf("protocolVersion 1.0 -> %v", truncate(r))
+	// The version the client speaks is 1 or more.
+	for i, v := range []string{"0", "-1"} {
+		c.sendRaw(fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"initialize","params":{"protocolVersion":%s}}`, 20+i, v) + "\n")
+		if r, _ := c.replyTo(20 + i); errCode(r) != codeInvalidParams || errMessage(r) != "initialize needs the protocolVersion the client speaks" {
+			t.Fatalf("protocolVersion %s: %v", v, r)
+		}
+	}
 	c.sendRaw(`{"jsonrpc":"2.0","id":3,"method":"initialize","params":{"protocolVersion":1}}` + "\n")
 	c.replyTo(3)
 	c.sendRaw(`{"jsonrpc":"2.0","id":4,"method":"session/new"}` + "\n")
@@ -817,6 +1001,11 @@ func waitNoLeak(t *testing.T, base int) {
 
 func TestAttackEOFInEveryStateEndsCleanly(t *testing.T) {
 	setConsentTimeout(t, time.Minute)
+	// The flush grace is an hour: Serve returns in time only because the
+	// writer finishes what is queued, not because the grace runs out.
+	oldGrace := flushGrace
+	flushGrace = time.Hour
+	t.Cleanup(func() { flushGrace = oldGrace })
 	type stage struct {
 		name string
 		run  func(c *rawClient, started <-chan struct{}) // drive to the state, then EOF follows
@@ -1044,6 +1233,9 @@ func TestAttackIDWithoutMethodIsAnswered(t *testing.T) {
 	if fmt.Sprint(m["id"]) != "777" {
 		t.Fatalf("the frame with id 777 and no method was not answered; the next frame is %v", truncate(m))
 	}
+	if errCode(m) != codeInvalidRequest || errMessage(m) != "the frame names no method, result or error" {
+		t.Fatalf("the frame with id 777 and no method was answered %v", truncate(m))
+	}
 }
 
 // ---- interactive sessions -----------------------------------------------------
@@ -1159,8 +1351,13 @@ func TestAttackInteractiveCancelCloseAndEOFMidTurn(t *testing.T) {
 				}
 				// prompt afterwards: the session is over
 				c.send(req(13, "session/prompt", prompt(sid, "quick")))
-				if r, _ := c.replyTo(13); errCode(r) != codeInvalidRequest {
+				if r, _ := c.replyTo(13); errCode(r) != codeInvalidRequest || errMessage(r) != "the session has ended" {
 					t.Fatalf("prompt after the session ended: %v", truncate(r))
+				}
+				// A close once the session is over is answered, not refused.
+				c.send(req(14, "session/close", map[string]any{"sessionId": sid}))
+				if r, _ := c.replyTo(14); r["error"] != nil {
+					t.Fatalf("close after the session ended: %v", truncate(r))
 				}
 				_ = cw.Close()
 			}
@@ -1219,8 +1416,10 @@ func TestAttackInteractiveCloseBetweenTurnsAnswersAfterTheTeardownUpdates(t *tes
 
 func TestAttackConcurrentPromptsAreOneRun(t *testing.T) {
 	var runs atomic.Int32
+	runCtx := make(chan context.Context, 1)
 	c := startRaw(t, testBackend(func(ctx context.Context, h *Host, _ string) error {
 		runs.Add(1)
+		runCtx <- ctx
 		<-ctx.Done()
 		return context.Cause(ctx)
 	}))
@@ -1233,11 +1432,27 @@ func TestAttackConcurrentPromptsAreOneRun(t *testing.T) {
 	for seen < 199 {
 		m := c.recv()
 		if m["error"] != nil && errCode(m) == codeInvalidRequest {
+			if msg := errMessage(m); msg != "a prompt is in flight: send the next when it is answered" {
+				t.Fatalf("a prompt in flight was refused with %q", msg)
+			}
 			seen++
 		}
 	}
 	if runs.Load() != 1 {
 		t.Fatalf("runs = %d", runs.Load())
+	}
+	// A cancel that names another session, or none, stops nothing: the frame
+	// after them is answered, so they have been read, and the run still goes.
+	ctx := <-runCtx
+	c.send(map[string]any{"jsonrpc": "2.0", "method": "session/cancel", "params": map[string]any{"sessionId": "not-" + sid}})
+	c.send(map[string]any{"jsonrpc": "2.0", "method": "session/cancel", "params": map[string]any{}})
+	c.send(map[string]any{"jsonrpc": "2.0", "method": "session/cancel", "params": "x"})
+	c.send(req(2000, "nope", nil))
+	if r, _ := c.replyTo(2000); errCode(r) != codeMethodNotFound {
+		t.Fatalf("ping: %v", r)
+	}
+	if ctx.Err() != nil {
+		t.Fatalf("a cancel for another session stopped the run: %v", context.Cause(ctx))
 	}
 	c.send(map[string]any{"jsonrpc": "2.0", "method": "session/cancel", "params": map[string]any{"sessionId": sid}})
 	r, _ := c.replyTo(1000)
@@ -1275,4 +1490,590 @@ func cancelMidTurn(t *testing.T, silent bool) {
 	if d > 4*time.Second {
 		t.Fatalf("the cancel was answered after %v", d)
 	}
+}
+
+// ---- what the client draws and how the run's answer is made ---------------------
+
+// startTuned is startRaw with the outbox's bounds set by tune.
+func startTuned(t *testing.T, b Backend, tune func(*outbox)) *rawClient {
+	t.Helper()
+	cr, aw := io.Pipe()
+	ar, cw := io.Pipe()
+	c := &rawClient{t: t, w: cw, r: bufio.NewReaderSize(cr, 1<<20), done: make(chan struct{})}
+	go func() {
+		defer close(c.done)
+		_ = serve(context.Background(), ar, aw, Info{Name: "agentry", Version: "test"}, b, tune)
+		_ = aw.Close()
+	}()
+	t.Cleanup(func() {
+		_ = cw.Close()
+		_, _ = io.Copy(io.Discard, cr)
+		<-c.done
+	})
+	return c
+}
+
+// runToAnswer sends the prompt with id, allows the consent request if the run
+// asks one, and returns that request, every session/update that came before
+// the prompt's answer, and the answer.
+func runToAnswer(c *rawClient, sid string, id int, text string) (consent map[string]any, updates []map[string]any, answer map[string]any) {
+	c.t.Helper()
+	c.send(req(id, "session/prompt", prompt(sid, text)))
+	for {
+		m := c.recv()
+		switch {
+		case m["method"] == "session/request_permission":
+			consent = m
+			c.send(map[string]any{"jsonrpc": "2.0", "id": m["id"], "result": map[string]any{"outcome": map[string]any{"outcome": "selected", "optionId": "allow"}}})
+		case m["method"] == "session/update":
+			u, _ := m["params"].(map[string]any)["update"].(map[string]any)
+			updates = append(updates, u)
+		case m["method"] == nil && fmt.Sprint(m["id"]) == fmt.Sprint(id):
+			return consent, updates, m
+		}
+	}
+}
+
+// summary is an update as one short string: the text of a message chunk, the
+// type of an embedded file or the name of a linked one, or its JSON.
+func summary(u map[string]any) string {
+	if u["sessionUpdate"] == "agent_message_chunk" {
+		c, _ := u["content"].(map[string]any)
+		switch c["type"] {
+		case "text":
+			return "text:" + fmt.Sprint(c["text"])
+		case "resource":
+			r, _ := c["resource"].(map[string]any)
+			return "resource:" + fmt.Sprint(r["mimeType"])
+		case "resource_link":
+			return "link:" + fmt.Sprint(c["name"])
+		}
+	}
+	return toJSON(u)
+}
+
+// What the agent sends a client to draw is cleaned of what could make it read
+// as other than it says. The words of a run (a reply, a tool's output) lose
+// their control characters only. What a person decides on or reads as the
+// agent's own statement (the consent request, a note) also has its invisible
+// formatting marked, and a label is one short line.
+func TestTextTheClientDrawsIsCleanedOfWhatCouldMisleadIt(t *testing.T) {
+	rlo, zwsp, ls, ps := string(rune(0x202e)), string(rune(0x200b)), string(rune(0x2028)), string(rune(0x2029))
+	nel, c1lo, c1hi := string(rune(0x85)), string(rune(0x80)), string(rune(0x9f))
+	nbsp, shy, eacute := string(rune(0xa0)), string(rune(0xad)), string(rune(0xe9))
+	hostile := "a\x1b[31mred\r\nline\ttab" + nel + "\x7f" + rlo + zwsp + ls + ps + "end"
+	asBody := "a[31mred\nline\ttab" + rlo + zwsp + ls + ps + "end"
+	asText := "a[31mred\nline\ttab????end"
+	asLine := "a[31mred line tab????end"
+
+	t.Run("the cleaners", func(t *testing.T) {
+		edge := "\x1f \x7e\x7f" + c1lo + c1hi + nbsp
+		for _, tc := range []struct{ name, got, want string }{
+			{"a body", cleanBody(hostile), asBody},
+			{"a text", cleanText(hostile), asText},
+			{"a line", cleanLine(hostile), asLine},
+			{"a body keeps the line feed and the tab", cleanBody("a\tb\nc\x1fd\x1be\rf"), "a\tb\ncdef"},
+			{"the edges of the controls in a body", cleanBody(edge), " ~" + nbsp},
+			{"the edges of the controls in a text", cleanText(edge), " ~" + nbsp},
+			{"a text keeps the line feed and the tab", cleanText("a\tb\nc\x1fd"), "a\tb\ncd"},
+			{"a text marks a format character", cleanText("a" + shy + "b"), "a?b"},
+			{"a text marks a line separator", cleanText("a" + ls + "b"), "a?b"},
+			{"a text marks a paragraph separator", cleanText("a" + ps + "b"), "a?b"},
+			{"a line is one line", cleanLine("  a \n\t b  "), "a b"},
+			{"an empty line", cleanLine(""), ""},
+			{"a line of 200 bytes is whole", cleanLine(strings.Repeat("a", 200)), strings.Repeat("a", 200)},
+			{"a line of 201 bytes is cut", cleanLine(strings.Repeat("a", 201)), strings.Repeat("a", 200)},
+			{"a cut does not split a character", cleanLine(strings.Repeat("a", 199) + eacute), strings.Repeat("a", 199)},
+			{"a cut at a character keeps it", cleanLine(strings.Repeat("a", 198) + eacute + eacute), strings.Repeat("a", 198) + eacute},
+		} {
+			if tc.got != tc.want {
+				t.Errorf("%s: %q, want %q", tc.name, tc.got, tc.want)
+			}
+		}
+	})
+
+	t.Run("on the wire", func(t *testing.T) {
+		raw, _ := json.Marshal(hostile)
+		c := startRaw(t, testBackend(func(ctx context.Context, h *Host, _ string) error {
+			if err := h.Consent(ctx, Consent{Title: "  Run\tit" + rlo + "?\n  now  ", Text: hostile}); err != nil {
+				return err
+			}
+			h.Say(hostile)
+			h.Event(adapter.Event{Kind: adapter.EventToolCall, Tool: "tool\x1b[x" + rlo, CallID: "c1"})
+			h.Event(adapter.Event{Kind: adapter.EventToolResult, CallID: "c1", Text: hostile})
+			h.Finish(&receipt.Envelope{Result: raw}, nil)
+			return nil
+		}))
+		sid := c.handshake()
+		consent, updates, _ := runToAnswer(c, sid, 10, "go")
+		tc, _ := consent["params"].(map[string]any)["toolCall"].(map[string]any)
+		content, _ := tc["content"].([]any)
+		if len(content) != 1 || fmt.Sprint(tc["title"]) != "Run it?? now" || toJSON(content[0]) != toJSON(map[string]any{"type": "content", "content": map[string]any{"type": "text", "text": asText}}) {
+			t.Errorf("consent request: title %q, content %v", tc["title"], content)
+		}
+		if len(updates) != 4 {
+			t.Fatalf("%d updates, want 4: %v", len(updates), updates)
+		}
+		if got := summary(updates[0]); got != "text:"+asText {
+			t.Errorf("a note: %q", got)
+		}
+		if fmt.Sprint(updates[1]["title"]) != "tool[x?" {
+			t.Errorf("a tool's title: %q", updates[1]["title"])
+		}
+		if got := toJSON(updates[2]["content"]); got != toJSON([]any{map[string]any{"type": "content", "content": map[string]any{"type": "text", "text": asBody}}}) {
+			t.Errorf("a tool's output: %s", got)
+		}
+		if got := summary(updates[3]); got != "text:"+asBody {
+			t.Errorf("the run's result: %q", got)
+		}
+	})
+}
+
+// A tool call is progress for the client: it starts as in progress, and its
+// result names the call it answers and says whether it failed.
+func TestAToolCallIsReportedAsProgressAndItsResultNamesTheCall(t *testing.T) {
+	c := startRaw(t, testBackend(func(ctx context.Context, h *Host, _ string) error {
+		h.Event(adapter.Event{Kind: adapter.EventToolCall, Tool: "read_input", CallID: "c1"})
+		h.Event(adapter.Event{Kind: adapter.EventToolResult, Tool: "read_input", CallID: "c1", Text: "ten lines"})
+		h.Event(adapter.Event{Kind: adapter.EventToolCall, Text: "  search   the web ", CallID: "c2"})
+		h.Event(adapter.Event{Kind: adapter.EventToolResult, CallID: "c2", Failed: true, Text: "   "})
+		h.Event(adapter.Event{Kind: adapter.EventToolCall})
+		h.Event(adapter.Event{Kind: adapter.EventToolResult, CallID: "unknown", Text: "x"})
+		h.Event(adapter.Event{Kind: adapter.EventToolResult, Text: "x"})
+		h.Event(adapter.Event{Kind: adapter.EventToolCall, Tool: "again", CallID: "c1"})
+		h.Event(adapter.Event{Kind: adapter.EventToolResult, CallID: "c1", Text: "ok"})
+		h.Event(adapter.Event{Kind: adapter.EventAssistantText, Text: "not a tool"})
+		return nil
+	}))
+	sid := c.handshake()
+	_, updates, answer := runToAnswer(c, sid, 10, "go")
+	call := func(id, title string) string {
+		return `{"kind":"other","sessionUpdate":"tool_call","status":"in_progress","title":"` + title + `","toolCallId":"` + id + `"}`
+	}
+	want := []string{
+		call("call-1", "read_input"),
+		`{"content":[{"content":{"text":"ten lines","type":"text"},"type":"content"}],"sessionUpdate":"tool_call_update","status":"completed","toolCallId":"call-1"}`,
+		call("call-2", "search the web"),
+		`{"sessionUpdate":"tool_call_update","status":"failed","toolCallId":"call-2"}`,
+		call("call-3", "tool call"),
+		call("call-4", "again"),
+		`{"content":[{"content":{"text":"ok","type":"text"},"type":"content"}],"sessionUpdate":"tool_call_update","status":"completed","toolCallId":"call-4"}`,
+	}
+	var got []string
+	for _, u := range updates {
+		got = append(got, toJSON(u))
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("updates:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	if res, _ := answer["result"].(map[string]any); res["stopReason"] != "end_turn" {
+		t.Fatalf("answer %v", answer)
+	}
+}
+
+// Progress is what a client that reads slowly loses first: with the queue
+// past its bound the tool calls, their results and an interactive session's
+// replies are dropped, while a note, the run's result and the answer to the
+// prompt are kept.
+func TestProgressIsDroppedBeforeTheAnswersTheClientIsOwed(t *testing.T) {
+	tune := func(o *outbox) { o.maxBehind, o.keepHeadroom = 1, 1<<30 }
+	t.Run("an autonomous run", func(t *testing.T) {
+		dropped := make(chan int, 1)
+		c := startTuned(t, testBackend(func(ctx context.Context, h *Host, _ string) error {
+			h.Event(adapter.Event{Kind: adapter.EventToolCall, Tool: "t", CallID: "c1"})
+			h.Event(adapter.Event{Kind: adapter.EventToolResult, CallID: "c1", Text: "the output of the call"})
+			h.Say("a note")
+			h.Finish(&receipt.Envelope{Result: []byte(`"the result"`)}, nil)
+			h.s.out.mu.Lock()
+			dropped <- h.s.out.dropped
+			h.s.out.mu.Unlock()
+			return nil
+		}), tune)
+		sid := c.handshake()
+		_, updates, answer := runToAnswer(c, sid, 10, "go")
+		var got []string
+		for _, u := range updates {
+			got = append(got, summary(u))
+		}
+		if strings.Join(got, "|") != "text:a note|text:the result" {
+			t.Fatalf("updates kept: %q", got)
+		}
+		if res, _ := answer["result"].(map[string]any); res["stopReason"] != "end_turn" {
+			t.Fatalf("answer %v", answer)
+		}
+		if n := <-dropped; n != 2 {
+			t.Fatalf("%d frames dropped, want the tool call and its result", n)
+		}
+	})
+	t.Run("an interactive session", func(t *testing.T) {
+		fs := newScriptSession(func(f *scriptSession, text string) error {
+			f.events <- session.Event{Kind: session.KindToolCall, Text: "list_inputs"}
+			f.events <- session.Event{Kind: session.KindAssistantText, Text: "hello"}
+			f.events <- session.Event{Kind: session.KindAssistantTurn, Text: "hello"}
+			return nil
+		})
+		dropped := make(chan int, 1)
+		c := startTuned(t, testBackend(func(ctx context.Context, h *Host, _ string) error {
+			_ = h.Converse(ctx, fs)
+			h.s.out.mu.Lock()
+			dropped <- h.s.out.dropped
+			h.s.out.mu.Unlock()
+			env, err := fs.End(context.Background(), false)
+			h.Finish(env, err)
+			return err
+		}), tune)
+		sid := c.handshake()
+		_, updates, answer := runToAnswer(c, sid, 10, "hi")
+		if len(updates) != 0 {
+			t.Fatalf("progress was kept: %v", updates)
+		}
+		if res, _ := answer["result"].(map[string]any); res["stopReason"] != "end_turn" {
+			t.Fatalf("answer %v", answer)
+		}
+		c.send(req(11, "session/close", map[string]any{"sessionId": sid}))
+		if r, _ := c.replyTo(11); r["error"] != nil {
+			t.Fatalf("close: %v", r)
+		}
+		if n := <-dropped; n != 3 {
+			t.Fatalf("%d frames dropped, want the tool call, the reply and the tool call's end", n)
+		}
+	})
+}
+
+// The run's result and its folder are the final answer: the result is the
+// message (a JSON string as itself, anything else indented, none for null),
+// bounded at InlineTotal bytes, the deliverables follow under a heading, and
+// the answer says how the run ended.
+func TestTheRunsFinalAnswerCarriesItsResultAndHowItEnded(t *testing.T) {
+	sum := func(s string) string { h := sha256.Sum256([]byte(s)); return hex.EncodeToString(h[:]) }
+	cut := func(s, dir string) string {
+		return s + fmt.Sprintf("\n\n[The result is longer than %d bytes and is cut here; all of it is in result.json in %s.]", InlineTotal, dir)
+	}
+	eacute := string(rune(0xe9))
+	type tc struct {
+		name string
+		env  func(dir string, ds *receipt.Deliverables) *receipt.Envelope
+		want func(dir string) []string
+	}
+	str := func(s string) json.RawMessage { b, _ := json.Marshal(s); return b }
+	cases := []tc{
+		{"a string result is the message itself",
+			func(string, *receipt.Deliverables) *receipt.Envelope {
+				return &receipt.Envelope{Result: str("All quiet.")}
+			},
+			func(string) []string { return []string{"text:All quiet."} }},
+		{"an object result is indented",
+			func(string, *receipt.Deliverables) *receipt.Envelope {
+				return &receipt.Envelope{Result: json.RawMessage(`{"a":1,"b":[1,2]}`)}
+			},
+			func(string) []string { return []string{"text:{\n  \"a\": 1,\n  \"b\": [\n    1,\n    2\n  ]\n}"} }},
+		{"a null result is no message",
+			func(string, *receipt.Deliverables) *receipt.Envelope {
+				return &receipt.Envelope{Result: json.RawMessage(`null`)}
+			},
+			func(string) []string { return nil }},
+		{"no result is no message",
+			func(string, *receipt.Deliverables) *receipt.Envelope { return &receipt.Envelope{} },
+			func(string) []string { return nil }},
+		{"no envelope is no message",
+			func(string, *receipt.Deliverables) *receipt.Envelope { return nil },
+			func(string) []string { return nil }},
+		{"a result of exactly the bound is whole",
+			func(string, *receipt.Deliverables) *receipt.Envelope {
+				return &receipt.Envelope{Result: str(strings.Repeat("x", InlineTotal))}
+			},
+			func(string) []string { return []string{"text:" + strings.Repeat("x", InlineTotal)} }},
+		{"a result past the bound is cut and says where it is",
+			func(dir string, _ *receipt.Deliverables) *receipt.Envelope {
+				return &receipt.Envelope{OutDir: dir, Result: str(strings.Repeat("x", InlineTotal+1))}
+			},
+			func(dir string) []string { return []string{"text:" + cut(strings.Repeat("x", InlineTotal), dir)} }},
+		{"a cut does not split a character",
+			func(dir string, _ *receipt.Deliverables) *receipt.Envelope {
+				return &receipt.Envelope{OutDir: dir, Result: str("a" + strings.Repeat(eacute, InlineTotal/2+1))}
+			},
+			func(dir string) []string {
+				return []string{"text:" + cut("a"+strings.Repeat(eacute, InlineTotal/2-1), dir)}
+			}},
+		{"two deliverables are handed back under a plural heading",
+			func(dir string, ds *receipt.Deliverables) *receipt.Envelope {
+				return &receipt.Envelope{OutDir: dir, Result: str("done"), Deliverables: ds}
+			},
+			func(string) []string {
+				return []string{"text:done", "text:Deliverables (2):", "resource:text/markdown", "link:b.pdf"}
+			}},
+		{"one deliverable is handed back under a singular heading",
+			func(dir string, ds *receipt.Deliverables) *receipt.Envelope {
+				return &receipt.Envelope{OutDir: dir, Deliverables: &receipt.Deliverables{Files: ds.Files[:1]}}
+			},
+			func(string) []string { return []string{"text:Deliverable:", "resource:text/markdown"} }},
+		{"a file that is gone is named after the ones handed back",
+			func(dir string, ds *receipt.Deliverables) *receipt.Envelope {
+				gone := receipt.Deliverable{Path: "reports/gone.md", Title: "gone", SHA256: sum("x"), Bytes: 1, Type: "md"}
+				return &receipt.Envelope{OutDir: dir, Deliverables: &receipt.Deliverables{Files: []receipt.Deliverable{ds.Files[0], gone}}}
+			},
+			func(string) []string {
+				return []string{"text:Deliverable:", "resource:text/markdown", `text:"gone" was not handed back: it is not in the run's folder.`}
+			}},
+		{"files that are all withheld are named under no heading",
+			func(dir string, _ *receipt.Deliverables) *receipt.Envelope {
+				gone := receipt.Deliverable{Path: "reports/gone.md", Title: "gone", SHA256: sum("x"), Bytes: 1, Type: "md"}
+				return &receipt.Envelope{OutDir: dir, Deliverables: &receipt.Deliverables{Files: []receipt.Deliverable{gone}}}
+			},
+			func(string) []string {
+				return []string{`text:"gone" was not handed back: it is not in the run's folder.`}
+			}},
+		{"a truncated list says so",
+			func(dir string, ds *receipt.Deliverables) *receipt.Envelope {
+				return &receipt.Envelope{OutDir: dir, Deliverables: &receipt.Deliverables{Files: ds.Files[:1], Truncated: true}}
+			},
+			func(string) []string {
+				return []string{"text:Deliverable:", "resource:text/markdown", fmt.Sprintf("text:The run had more than %d deliverables; the rest are not listed.", receipt.MaxDeliverables)}
+			}},
+		{"deliverables of a run with no folder are not listed",
+			func(_ string, ds *receipt.Deliverables) *receipt.Envelope { return &receipt.Envelope{Deliverables: ds} },
+			func(string) []string { return nil }},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			ds := &receipt.Deliverables{Files: []receipt.Deliverable{put(t, dir, "reports/a.md", "# a\n"), put(t, dir, "reports/b.pdf", "%PDF")}}
+			env := c.env(dir, ds)
+			cl := startRaw(t, testBackend(func(ctx context.Context, h *Host, _ string) error {
+				h.Finish(env, nil)
+				return nil
+			}))
+			sid := cl.handshake()
+			_, updates, answer := runToAnswer(cl, sid, 10, "go")
+			var got []string
+			for _, u := range updates {
+				got = append(got, summary(u))
+			}
+			if want := c.want(dir); strings.Join(got, "\n") != strings.Join(want, "\n") {
+				t.Fatalf("updates:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+			}
+			if res, _ := answer["result"].(map[string]any); res["stopReason"] != "end_turn" {
+				t.Fatalf("answer %v", answer)
+			}
+		})
+	}
+
+	t.Run("the answer says how the run ended", func(t *testing.T) {
+		dir := t.TempDir()
+		c := startRaw(t, testBackend(func(ctx context.Context, h *Host, _ string) error {
+			h.Finish(&receipt.Envelope{RunID: "r1", Status: "ok", ExitClass: "ok", OutDir: dir, Deliveries: []receipt.Delivery{
+				{Destination: "folder", Kind: "folder", Status: "ok"},
+				{Destination: "https://example.test/in", Kind: "post", Status: "failed", Error: "timeout"},
+			}}, nil)
+			return nil
+		}))
+		sid := c.handshake()
+		_, _, answer := runToAnswer(c, sid, 10, "go")
+		dirJSON, _ := json.Marshal(dir)
+		want := `{"_meta":{"agentry":{"deliveries":[{"destination":"folder","error":"","kind":"folder","status":"ok"},` +
+			`{"destination":"https://example.test/in","error":"timeout","kind":"post","status":"failed"}],` +
+			`"exitClass":"ok","outDir":` + string(dirJSON) + `,"runId":"r1","status":"ok"}},"stopReason":"end_turn"}`
+		if got := toJSON(answer["result"]); got != want {
+			t.Fatalf("answer %s\nwant   %s", got, want)
+		}
+	})
+	t.Run("a run with no deliveries does not list any", func(t *testing.T) {
+		c := startRaw(t, testBackend(func(ctx context.Context, h *Host, _ string) error {
+			h.Finish(&receipt.Envelope{RunID: "r2", Status: "failed", ExitClass: "model"}, nil)
+			return nil
+		}))
+		sid := c.handshake()
+		_, _, answer := runToAnswer(c, sid, 10, "go")
+		want := `{"_meta":{"agentry":{"exitClass":"model","outDir":"","runId":"r2","status":"failed"}},"stopReason":"end_turn"}`
+		if got := toJSON(answer["result"]); got != want {
+			t.Fatalf("answer %s\nwant   %s", got, want)
+		}
+	})
+	t.Run("a run that left no envelope says nothing of how it ended", func(t *testing.T) {
+		c := startRaw(t, testBackend(func(ctx context.Context, h *Host, _ string) error {
+			h.Finish(nil, nil)
+			return nil
+		}))
+		sid := c.handshake()
+		_, _, answer := runToAnswer(c, sid, 10, "go")
+		if got := toJSON(answer["result"]); got != `{"stopReason":"end_turn"}` {
+			t.Fatalf("answer %s", got)
+		}
+	})
+	t.Run("a run that failed is answered with its error as one line", func(t *testing.T) {
+		c := startRaw(t, testBackend(func(ctx context.Context, h *Host, _ string) error {
+			h.Finish(&receipt.Envelope{Status: "failed"}, errors.New("the harness\nexited \x1b[31m1"))
+			return nil
+		}))
+		sid := c.handshake()
+		_, _, answer := runToAnswer(c, sid, 10, "go")
+		if errCode(answer) != codeInternal || errMessage(answer) != "the harness exited [31m1" {
+			t.Fatalf("answer %v", answer)
+		}
+	})
+}
+
+// scriptSession is an interactive session whose turns do what a test says.
+type scriptSession struct {
+	events chan session.Event
+	mu     sync.Mutex
+	ended  bool
+	closed bool
+	reason session.EndReason
+	send   func(f *scriptSession, text string) error
+}
+
+func newScriptSession(send func(f *scriptSession, text string) error) *scriptSession {
+	return &scriptSession{events: make(chan session.Event, 64), send: send}
+}
+
+func (f *scriptSession) Events() <-chan session.Event { return f.events }
+func (f *scriptSession) Send(_ context.Context, text string) error {
+	return f.send(f, text)
+}
+func (f *scriptSession) AddInput(context.Context, string) error { return nil }
+func (f *scriptSession) End(context.Context, bool) (*receipt.Envelope, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ended = true
+	if !f.closed {
+		f.closed = true
+		close(f.events)
+	}
+	return &receipt.Envelope{}, nil
+}
+func (f *scriptSession) Ended() (bool, session.EndReason) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.ended, f.reason
+}
+
+// endWith marks the session over, as a budget or the harness's exit does.
+func (f *scriptSession) endWith(r session.EndReason) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ended, f.reason = true, r
+}
+
+// answer is a turn that completes.
+func (f *scriptSession) answer(text string) {
+	f.events <- session.Event{Kind: session.KindUserTurn, Text: text}
+	f.events <- session.Event{Kind: session.KindAssistantTurn, Text: "ok"}
+}
+
+// An interactive turn is answered by how it ended: a turn that completed
+// ends the turn, a session that ran out of turns or tools says it stopped
+// there, any other end of the session is an error that names why, and a turn
+// that failed leaves the session open for the next.
+func TestATurnThatEndsTheSessionIsAnsweredWithWhy(t *testing.T) {
+	budget := func(r session.EndReason) func(f *scriptSession, text string) error {
+		return func(f *scriptSession, _ string) error { f.endWith(r); return session.ErrEnded }
+	}
+	cases := []struct {
+		name string
+		send func(f *scriptSession, text string) error
+		want string // the answer to the first prompt, as JSON
+	}{
+		{"the tool budget", budget(session.EndToolBudget), `{"result":{"_meta":{"agentry":{"endReason":"tool_budget"}},"stopReason":"max_turn_requests"}}`},
+		{"the cap on the person's turns", budget(session.EndUserTurns), `{"result":{"_meta":{"agentry":{"endReason":"max_user_turns"}},"stopReason":"max_turn_requests"}}`},
+		{"the idle timeout", budget(session.EndIdle), `{"error":{"code":-32603,"message":"the session ended: idle_timeout"}}`},
+		{"an end with no reason", budget(""), `{"error":{"code":-32603,"message":"the session ended: harness_exit"}}`},
+		{"a failed turn that ended the session", func(f *scriptSession, _ string) error {
+			f.events <- session.Event{Kind: session.KindError, Text: "the harness exited"}
+			f.endWith(session.EndHarness)
+			return errors.New("the harness exited")
+		}, `{"error":{"code":-32603,"message":"the session ended: harness_exit"}}`},
+		{"an end that comes with a completed turn", func(f *scriptSession, text string) error {
+			f.answer(text)
+			f.endWith(session.EndFinished)
+			return nil
+		}, `{"result":{"stopReason":"end_turn"}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fs := newScriptSession(tc.send)
+			c := startRaw(t, testBackend(func(ctx context.Context, h *Host, _ string) error {
+				_ = h.Converse(ctx, fs)
+				env, err := fs.End(context.Background(), false)
+				h.Finish(env, err)
+				return err
+			}))
+			sid := c.handshake()
+			_, _, answer := runToAnswer(c, sid, 10, "hello")
+			got := map[string]any{}
+			for _, k := range []string{"result", "error"} {
+				if v, ok := answer[k]; ok {
+					got[k] = v
+				}
+			}
+			if toJSON(got) != tc.want {
+				t.Fatalf("answer %s, want %s", toJSON(got), tc.want)
+			}
+			// The session is over: the next prompt finds it so.
+			c.send(req(11, "session/prompt", prompt(sid, "again")))
+			if r, _ := c.replyTo(11); errCode(r) != codeInvalidRequest || errMessage(r) != "the session has ended" {
+				t.Fatalf("a prompt after the end: %v", r)
+			}
+		})
+	}
+
+	t.Run("a turn that failed leaves the session open", func(t *testing.T) {
+		turns := 0
+		fs := newScriptSession(func(f *scriptSession, text string) error {
+			turns++
+			f.events <- session.Event{Kind: session.KindUserTurn, Text: text}
+			if turns == 1 {
+				f.events <- session.Event{Kind: session.KindToolCall, Text: "fetch"}
+				f.events <- session.Event{Kind: session.KindError, Text: "the model said no"}
+				return errors.New("the model said\nno \x1b[0m")
+			}
+			f.events <- session.Event{Kind: session.KindAssistantTurn, Text: "ok"}
+			return nil
+		})
+		c := startRaw(t, testBackend(func(ctx context.Context, h *Host, _ string) error {
+			_ = h.Converse(ctx, fs)
+			env, err := fs.End(context.Background(), false)
+			h.Finish(env, err)
+			return err
+		}))
+		sid := c.handshake()
+		_, updates, first := runToAnswer(c, sid, 10, "hello")
+		if errCode(first) != codeInternal || errMessage(first) != "the model said no [0m" {
+			t.Fatalf("the failed turn was answered %v", first)
+		}
+		// The tool call it left open is closed before the answer.
+		var got []string
+		for _, u := range updates {
+			got = append(got, toJSON(u))
+		}
+		if want := `{"kind":"other","sessionUpdate":"tool_call","status":"in_progress","title":"fetch","toolCallId":"call-1"}|{"sessionUpdate":"tool_call_update","status":"completed","toolCallId":"call-1"}`; strings.Join(got, "|") != want {
+			t.Fatalf("updates of the failed turn:\n%s\nwant:\n%s", strings.Join(got, "|"), want)
+		}
+		_, _, second := runToAnswer(c, sid, 11, "again")
+		if res, _ := second["result"].(map[string]any); res["stopReason"] != "end_turn" {
+			t.Fatalf("the turn after a failed one was answered %v", second)
+		}
+	})
+
+	t.Run("a session that ends by itself between turns is over", func(t *testing.T) {
+		fs := newScriptSession(func(f *scriptSession, text string) error { f.answer(text); return nil })
+		over := make(chan struct{})
+		c := startRaw(t, testBackend(func(ctx context.Context, h *Host, _ string) error {
+			defer close(over)
+			_ = h.Converse(ctx, fs)
+			env, err := fs.End(context.Background(), false)
+			h.Finish(env, err)
+			return err
+		}))
+		sid := c.handshake()
+		if _, _, answer := runToAnswer(c, sid, 10, "hello"); answer["error"] != nil {
+			t.Fatalf("answer %v", answer)
+		}
+		fs.endWith(session.EndIdle)
+		<-over
+		c.send(req(11, "session/prompt", prompt(sid, "again")))
+		if r, _ := c.replyTo(11); errCode(r) != codeInvalidRequest || errMessage(r) != "the session has ended" {
+			t.Fatalf("a prompt after the end: %v", r)
+		}
+	})
 }

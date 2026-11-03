@@ -56,6 +56,21 @@ func TestAttackDeliverableNameAndTitleCarryNoHiddenCharacters(t *testing.T) {
 			}
 		}
 	}
+
+	// What replaces them: a hidden character is marked, a control one is
+	// dropped, and the label is one line.
+	if m, _ := dec[0]["resource"].(map[string]any)["_meta"].(map[string]any); m["agentry"].(map[string]any)["path"] != "reports/a?txt.md" {
+		t.Errorf("_meta path %v", m)
+	}
+	if dec[1]["title"] != "tx?y?z" || dec[1]["name"] != "plain.pdf" {
+		t.Errorf("title %q, name %q", dec[1]["title"], dec[1]["name"])
+	}
+	spoof := put(t, dir, "reports/b\u202egpj.pdf", "x")
+	spoof.Title = "a\u2028b"
+	blocks, _ = deliverableBlocks(dir, &receipt.Deliverables{Files: []receipt.Deliverable{spoof}})
+	if len(blocks) != 1 || blocks[0]["name"] != "b?gpj.pdf" || blocks[0]["title"] != "a?b" {
+		t.Errorf("name and title of a link: %v", blocks)
+	}
 }
 
 func TestAttackFileURIsAreWellFormedWhateverTheName(t *testing.T) {
@@ -115,6 +130,15 @@ func TestAttackInlineBoundsHold(t *testing.T) {
 	if total > InlineTotal {
 		t.Fatalf("inlined %d bytes, bound %d", total, InlineTotal)
 	}
+	// Files of exactly InlineEach bytes are embedded until InlineTotal is
+	// spent, to the byte; every one after them, and the file one byte over
+	// InlineEach, is linked.
+	if total != InlineTotal {
+		t.Fatalf("inlined %d bytes, want exactly %d", total, InlineTotal)
+	}
+	if got := strings.Join(kinds(blocks), ","); got != strings.Repeat("resource,", InlineTotal/InlineEach)+strings.Repeat("resource_link,", len(ds)-InlineTotal/InlineEach-1)+"resource_link" {
+		t.Fatalf("blocks %s", got)
+	}
 	// a negative or lying size in the envelope cannot widen the bound
 	neg := put(t, dir, "reports/neg.md", "x")
 	neg.Bytes = -1 << 40
@@ -152,6 +176,14 @@ func TestAttackTypeFieldCannotMakeAnExecutableTextOrHideTheExtension(t *testing.
 	blocks, notes := deliverableBlocks(dir, &receipt.Deliverables{Files: []receipt.Deliverable{d, d2}})
 	for _, b := range blocks {
 		t.Logf("handed back: %v %v mime=%v", b["type"], b["name"], b["mimeType"])
+	}
+	// The type is the file name's own: a .lnk named md is refused with its
+	// reason, and a .html named pdf is handed back as the opaque file it is.
+	if len(notes) != 1 || notes[0] != `"t x.lnk" was not handed back: its type is one a file manager acts on when it is merely viewed.` {
+		t.Fatalf("notes %q", notes)
+	}
+	if len(blocks) != 1 || blocks[0]["type"] != "resource_link" || blocks[0]["mimeType"] != "application/octet-stream" {
+		t.Fatalf("blocks %v", blocks)
 	}
 	for _, b := range blocks {
 		if strings.HasSuffix(b["uri"].(string), ".lnk") || strings.HasSuffix(strings.ToLower(b["uri"].(string)), ".lnk") {
