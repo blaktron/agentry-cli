@@ -63,8 +63,45 @@ var (
 	keyringDelete = keyring.Delete
 )
 
-// Disabled reports whether AGENTRY_NO_KEYRING is set.
-func Disabled() bool { return os.Getenv(EnvNoKeyring) != "" }
+// Disabled reports whether AGENTRY_NO_KEYRING is set and no other keychain
+// is in use (UseKeychain).
+func Disabled() bool { return os.Getenv(EnvNoKeyring) != "" && !ownKeychain }
+
+// Keychain is a keychain other than the OS's, for a machine that keeps its
+// secrets elsewhere: a remote runhost keeps them in its encrypted store. Get
+// answers ErrNotStored for an account it holds nothing for.
+type Keychain interface {
+	Get(account string) (string, error)
+	Set(account, value string) error
+	Delete(account string) error
+}
+
+// ErrNotStored is a Keychain's answer for an account it holds nothing for.
+var ErrNotStored = errors.New("no such entry")
+
+// ownKeychain says UseKeychain is in force.
+var ownKeychain bool
+
+// UseKeychain makes every call here use k in place of the OS keychain, until
+// the restore it answers with is called.
+func UseKeychain(k Keychain) (restore func()) {
+	prevGet, prevSet, prevDelete, prevOwn := keyringGet, keyringSet, keyringDelete, ownKeychain
+	restore = func() { keyringGet, keyringSet, keyringDelete, ownKeychain = prevGet, prevSet, prevDelete, prevOwn }
+	ownKeychain = true
+	notFound := func(err error) error {
+		if errors.Is(err, ErrNotStored) {
+			return keyring.ErrNotFound
+		}
+		return err
+	}
+	keyringGet = func(_, account string) (string, error) {
+		v, err := k.Get(account)
+		return v, notFound(err)
+	}
+	keyringSet = func(_, account, value string) error { return k.Set(account, value) }
+	keyringDelete = func(_, account string) error { return notFound(k.Delete(account)) }
+	return restore
+}
 
 // Account is the keychain account for a provider's key.
 func Account(provider string) string {

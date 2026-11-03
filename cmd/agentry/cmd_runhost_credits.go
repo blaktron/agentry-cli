@@ -112,9 +112,13 @@ func revokeCredits(ctx context.Context, c runhostCredits) error {
 //	store put-credits     the credits token, a JSON document as input
 //	store remove-credits  revokes the credits token and removes it
 //	store remove-signin <vendor>  ends a model sign-in and removes it
+//	store put-model       the runhost's own model and its API key, a JSON document as input
 func runhostStoreVerb(ctx context.Context, req runhost.Request, in io.Reader, fw *runhost.FrameWriter) (int, error) {
 	if len(req.Args) == 2 && req.Args[0] == "remove-signin" {
 		return runhostSignInRemove(ctx, req.Args[1], fw)
+	}
+	if len(req.Args) == 1 && req.Args[0] == "put-model" {
+		return runhostPutModel(in, fw)
 	}
 	if len(req.Args) == 2 && req.Args[0] == "remove-schedule" {
 		info, err := runhostScheduleRemove(ctx, req.Args[1])
@@ -275,7 +279,7 @@ func runhostOwnName() string {
 
 // newRunhostModelCmd builds `agentry runhost model`.
 func newRunhostModelCmd() *cobra.Command {
-	var provider, signIn string
+	var provider, signIn, model, keyEnv string
 	var yes, oauthApp bool
 	cmd := &cobra.Command{
 		Use:   "model <name> (--provider agentry | --sign-in claude|chatgpt|copilot)",
@@ -304,12 +308,14 @@ func newRunhostModelCmd() *cobra.Command {
 			case signIn != "":
 				return runRunhostModelSignIn(cmd, args[0], signIn, oauthApp, yes)
 			case provider != policy.ProviderAgentry:
-				return engine.Classify(engine.ExitUsage, fmt.Errorf("--provider %q: a runhost keeps Agentry credits (--provider agentry) or a plan's sign-in (--sign-in claude|chatgpt|copilot); an API key travels with each run", provider))
+				return runRunhostModelKey(cmd, args[0], provider, model, keyEnv, yes)
 			}
 			return runRunhostModelCredits(cmd, args[0], yes)
 		},
 	}
-	cmd.Flags().StringVar(&provider, "provider", "", "the model provider: agentry (Agentry credits)")
+	cmd.Flags().StringVar(&provider, "provider", "", "the model provider: agentry (Agentry credits), or an API provider whose key the runhost keeps for its persistent agents")
+	cmd.Flags().StringVar(&model, "model", "", "with an API provider: the model the runhost's persistent agents run on (default: the provider's)")
+	cmd.Flags().StringVar(&keyEnv, "api-key-env", "", "with an API provider: the variable holding its key here (default: the provider's, then this computer's keychain)")
 	cmd.Flags().StringVar(&signIn, "sign-in", "", "sign the runhost in to a plan: claude, chatgpt or copilot")
 	cmd.Flags().BoolVar(&oauthApp, "oauth-app", false, "for --sign-in copilot: sign in through Agentry's OAuth App instead of its GitHub App")
 	cmd.Flags().BoolVar(&yes, "yes", false, "make and keep the token, or sign in, without asking")

@@ -36,7 +36,8 @@ func TestTheRunhostsAdaptersAreTheRunnersContainerHarnesses(t *testing.T) {
 	}
 }
 
-// The runhost keeps its sign-ins' refresh tokens in its encrypted store, and
+// The runhost keeps its sign-ins' refresh tokens and its model keys in its
+// encrypted store, and
 // nothing else lands there through the keychain.
 func TestARunhostKeepsSignInSecretsInItsStore(t *testing.T) {
 	newRunhostServer(t)
@@ -51,7 +52,7 @@ func TestARunhostKeepsSignInSecretsInItsStore(t *testing.T) {
 	if err != nil || strings.Contains(string(b), "PROBE-RT") {
 		t.Fatalf("the entry is not ciphertext: %q %v", b, err)
 	}
-	for _, other := range []string{"connection:x", "model-signin:openrouter", "model-signin:../x", "provider:anthropic"} {
+	for _, other := range []string{"connection:x", "model-signin:openrouter", "model-signin:../x", "provider:../x", "stored:provider:a/b", "agent-secret:x"} {
 		if err := k.Set(other, "v"); err == nil {
 			t.Errorf("%s kept in the store", other)
 		}
