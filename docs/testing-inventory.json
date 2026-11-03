@@ -10650,13 +10650,25 @@
           ]
         },
         {
+          "path": "runnerimage/toolsrv/confinement_linux_test.go",
+          "tests": [
+            "TestWithoutLandlockOwnershipHoldsAWorkspaceWritingCommand"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract",
+            "explicit skip"
+          ]
+        },
+        {
           "path": "runnerimage/toolsrv/confinement_test.go",
           "tests": [
             "TestChooseConfinement",
             "TestRunCommandRefusedWhenItCannotBeConfined",
             "TestRunCommandCannotWriteTheOutputFolder",
-            "TestRunCommandAsNobodyCannotWriteTheOutputFolder",
-            "TestWithoutLandlockOwnershipHoldsAWorkspaceWritingCommand"
+            "TestRunCommandAsNobodyCannotWriteTheOutputFolder"
           ],
           "fuzz": [],
           "benchmarks": [],
