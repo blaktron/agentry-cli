@@ -8,24 +8,40 @@ import (
 	"unicode/utf16"
 )
 
-// An answer is Markdown, as a model writes it. Telegram is sent it as the
-// subset of HTML its Bot API parses (bold, italic, strikethrough, code,
-// preformatted blocks, links and quotes), every other character escaped,
-// and split into messages of at most its length. The text reaching here is
-// already masked whole by the supervisor, so no cut ever leaves part of a
-// secret on one side of it.
+// An answer is Markdown, as a model writes it. Each service is sent it in
+// its own format (Format), every character that format gives a meaning
+// escaped but the marks it renders (bold, italic, strikethrough, code,
+// preformatted blocks, links and quotes), and split into messages of at
+// most its length. The text reaching here is already masked whole by the
+// supervisor, so no cut ever leaves part of a secret on one side of it.
 
-// Part is one message of an answer: its HTML, and the same text plain, sent
-// instead when the service cannot parse the HTML.
+// Format is how a service is written to.
+type Format int
+
+const (
+	// FormatHTML is the subset of HTML Telegram's Bot API parses, which a
+	// Matrix client renders too.
+	FormatHTML Format = iota
+	// FormatMarkdown is Discord's Markdown, which takes a model's own
+	// marks as they are.
+	FormatMarkdown
+	// FormatSlack is Slack's mrkdwn: *bold*, _italic_, ~strike~ and
+	// <url|text> links, with &, < and > escaped.
+	FormatSlack
+)
+
+// Part is one message of an answer: in the service's format, and the same
+// text plain, sent instead where the service cannot parse the format and
+// beside it where the service takes both.
 type Part struct {
-	HTML  string
+	Rich  string
 	Plain string
 }
 
-// Split is an answer's messages for a service whose messages hold at most
-// limit characters: at most MaxParts of them, the last ending with
-// RestInAgentry when the answer is longer, and cut says it was.
-func Split(markdown string, limit int) (parts []Part, cut bool) {
+// SplitAs is an answer's messages in format f for a service whose messages
+// hold at most limit characters: at most MaxParts of them, the last ending
+// with RestInAgentry when the answer is longer, and cut says it was.
+func SplitAs(f Format, markdown string, limit int) (parts []Part, cut bool) {
 	reserve := units(RestInAgentry) + 2
 	if limit < reserve+16 {
 		limit = reserve + 16
@@ -33,8 +49,8 @@ func Split(markdown string, limit int) (parts []Part, cut bool) {
 	// No block is longer than the last part's room, so every block fits a
 	// part of its own.
 	var blocks []block
-	for _, b := range blocksOf(markdown) {
-		if units(b.html) <= limit-reserve {
+	for _, b := range blocksOf(f, markdown) {
+		if units(b.rich) <= limit-reserve {
 			blocks = append(blocks, b)
 			continue
 		}
@@ -53,7 +69,7 @@ func Split(markdown string, limit int) (parts []Part, cut bool) {
 		if len(cur) > 0 {
 			sep = 2
 		}
-		if n := units(b.html); len(cur) == 0 || curLen+sep+n <= room {
+		if n := units(b.rich); len(cur) == 0 || curLen+sep+n <= room {
 			cur = append(cur, b)
 			curLen += sep + n
 			continue
@@ -64,14 +80,14 @@ func Split(markdown string, limit int) (parts []Part, cut bool) {
 			cur = nil
 			break
 		}
-		cur, curLen = []block{b}, units(b.html)
+		cur, curLen = []block{b}, units(b.rich)
 	}
 	if len(cur) > 0 {
 		parts = append(parts, joinBlocks(cur))
 	}
 	if cut {
 		last := &parts[len(parts)-1]
-		last.HTML += "\n\n" + html.EscapeString(RestInAgentry)
+		last.Rich += "\n\n" + escapeFor(f, RestInAgentry)
 		last.Plain += "\n\n" + RestInAgentry
 	}
 	return parts, cut
@@ -83,7 +99,8 @@ func units(s string) int { return len(utf16.Encode([]rune(s))) }
 
 // block is one paragraph, list, quote or code block of an answer, rendered.
 type block struct {
-	html, plain string
+	rich, plain string
+	f           Format
 	code        bool
 	lang        string
 	raw         string // a code block's code, a paragraph's Markdown
@@ -93,13 +110,13 @@ func joinBlocks(bs []block) Part {
 	h := make([]string, 0, len(bs))
 	p := make([]string, 0, len(bs))
 	for _, b := range bs {
-		if b.html == "" && b.plain == "" {
+		if b.rich == "" && b.plain == "" {
 			continue
 		}
-		h = append(h, b.html)
+		h = append(h, b.rich)
 		p = append(p, b.plain)
 	}
-	return Part{HTML: strings.Join(h, "\n\n"), Plain: strings.Join(p, "\n\n")}
+	return Part{Rich: strings.Join(h, "\n\n"), Plain: strings.Join(p, "\n\n")}
 }
 
 // pieces splits a block longer than limit into blocks of at most limit: a
@@ -108,11 +125,11 @@ func joinBlocks(bs []block) Part {
 func (b block) pieces(limit int) []block {
 	render := func(raw string) block {
 		if b.code {
-			return codeBlock(raw, b.lang)
+			return codeBlock(b.f, raw, b.lang)
 		}
-		return textBlock(raw)
+		return textBlock(b.f, raw)
 	}
-	fits := func(raw string) bool { return units(render(raw).html) <= limit }
+	fits := func(raw string) bool { return units(render(raw).rich) <= limit }
 	var out []block
 	var cur []string
 	flush := func() {
@@ -155,13 +172,13 @@ func (b block) pieces(limit int) []block {
 var fence = regexp.MustCompile("^\\s*(```|~~~)\\s*([A-Za-z0-9_+.-]*)\\s*$")
 
 // blocksOf reads an answer's Markdown as its blocks.
-func blocksOf(md string) []block {
+func blocksOf(f Format, md string) []block {
 	md = strings.ReplaceAll(strings.ReplaceAll(md, "\r\n", "\n"), "\r", "\n")
 	var out []block
 	var para []string
 	endPara := func() {
 		if len(para) > 0 {
-			out = append(out, textBlock(strings.Join(para, "\n")))
+			out = append(out, textBlock(f, strings.Join(para, "\n")))
 			para = nil
 		}
 	}
@@ -178,7 +195,7 @@ func blocksOf(md string) []block {
 				}
 				code = append(code, lines[j])
 			}
-			out = append(out, codeBlock(strings.Join(code, "\n"), m[2]))
+			out = append(out, codeBlock(f, strings.Join(code, "\n"), m[2]))
 			i = j
 			continue
 		}
@@ -193,14 +210,39 @@ func blocksOf(md string) []block {
 }
 
 // codeBlock renders code as a preformatted block.
-func codeBlock(code, lang string) block {
-	esc := html.EscapeString(code)
-	h := "<pre>" + esc + "</pre>"
-	if lang != "" {
-		h = `<pre><code class="language-` + html.EscapeString(lang) + `">` + esc + "</code></pre>"
+func codeBlock(f Format, code, lang string) block {
+	var h string
+	switch f {
+	case FormatMarkdown:
+		// A fence inside the code would end the block early.
+		h = "```" + lang + "\n" + strings.ReplaceAll(code, "```", "``\u200b`") + "\n```"
+	case FormatSlack:
+		h = "```\n" + slackEscape(strings.ReplaceAll(code, "```", "``\u200b`")) + "\n```"
+	default:
+		esc := html.EscapeString(code)
+		h = "<pre>" + esc + "</pre>"
+		if lang != "" {
+			h = `<pre><code class="language-` + html.EscapeString(lang) + `">` + esc + "</code></pre>"
+		}
 	}
-	return block{html: h, plain: code, code: true, lang: lang, raw: code}
+	return block{rich: h, plain: code, f: f, code: true, lang: lang, raw: code}
 }
+
+// escapeFor is text with every character f gives a meaning escaped.
+func escapeFor(f Format, s string) string {
+	switch f {
+	case FormatMarkdown:
+		return s
+	case FormatSlack:
+		return slackEscape(s)
+	}
+	return html.EscapeString(s)
+}
+
+var slackEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
+
+// slackEscape escapes the three characters mrkdwn reads as its own.
+func slackEscape(s string) string { return slackEscaper.Replace(s) }
 
 var (
 	heading  = regexp.MustCompile(`^\s{0,3}#{1,6}\s+(.*?)\s*#*\s*$`)
@@ -215,8 +257,18 @@ var (
 )
 
 // textBlock renders a paragraph, a list or a quote.
-func textBlock(md string) block {
+func textBlock(f Format, md string) block {
 	lines := strings.Split(md, "\n")
+	if f == FormatMarkdown {
+		// Discord renders a model's Markdown itself, but for a rule.
+		for i, l := range lines {
+			if rule.MatchString(l) {
+				lines[i] = "———"
+			}
+		}
+		out := strings.Join(lines, "\n")
+		return block{rich: out, plain: out, f: f, raw: md}
+	}
 	var h, p []string
 	quoted := len(lines) > 0
 	for _, l := range lines {
@@ -228,7 +280,11 @@ func textBlock(md string) block {
 		switch {
 		case quoted:
 			l = quote.FindStringSubmatch(l)[1]
-			h = append(h, inline(l))
+			if f == FormatSlack {
+				h = append(h, "> "+inline(f, l))
+			} else {
+				h = append(h, inline(f, l))
+			}
 			p = append(p, l)
 			continue
 		case rule.MatchString(l):
@@ -237,60 +293,89 @@ func textBlock(md string) block {
 			continue
 		}
 		if m := heading.FindStringSubmatch(l); m != nil {
-			h = append(h, "<b>"+inline(m[1])+"</b>")
+			if f == FormatSlack {
+				h = append(h, "*"+inline(f, m[1])+"*")
+			} else {
+				h = append(h, "<b>"+inline(f, m[1])+"</b>")
+			}
 			p = append(p, m[1])
 			continue
 		}
 		if m := bullet.FindStringSubmatch(l); m != nil {
-			h = append(h, m[1]+"• "+inline(m[2]))
+			h = append(h, m[1]+"• "+inline(f, m[2]))
 			p = append(p, m[1]+"• "+m[2])
 			continue
 		}
-		h = append(h, inline(l))
+		h = append(h, inline(f, l))
 		p = append(p, l)
 	}
 	out := strings.Join(h, "\n")
-	if quoted {
+	if quoted && f == FormatHTML {
 		out = "<blockquote>" + out + "</blockquote>"
 	}
-	return block{html: out, plain: strings.Join(p, "\n"), raw: md}
+	return block{rich: out, plain: strings.Join(p, "\n"), f: f, raw: md}
 }
 
 // inline renders a line's code spans, links, bold, italic and
-// strikethrough; everything else is escaped. A code span's text is taken
-// as it is.
-func inline(s string) string {
+// strikethrough in format f; everything else is escaped. A code span's text
+// is taken as it is.
+func inline(f Format, s string) string {
 	var b strings.Builder
 	for {
 		loc := codeSpan.FindStringSubmatchIndex(s)
 		if loc == nil {
-			b.WriteString(emphasis(s))
+			b.WriteString(emphasis(f, s))
 			return b.String()
 		}
-		b.WriteString(emphasis(s[:loc[0]]))
-		b.WriteString("<code>" + html.EscapeString(s[loc[2]:loc[3]]) + "</code>")
+		b.WriteString(emphasis(f, s[:loc[0]]))
+		if f == FormatSlack {
+			b.WriteString("`" + slackEscape(s[loc[2]:loc[3]]) + "`")
+		} else {
+			b.WriteString("<code>" + html.EscapeString(s[loc[2]:loc[3]]) + "</code>")
+		}
 		s = s[loc[1]:]
 	}
 }
 
-func emphasis(s string) string {
+func emphasis(f Format, s string) string {
 	var b strings.Builder
 	for {
 		loc := link.FindStringSubmatchIndex(s)
 		if loc == nil {
-			b.WriteString(marks(html.EscapeString(s)))
+			b.WriteString(marks(f, escapeFor(f, s)))
 			return b.String()
 		}
-		b.WriteString(marks(html.EscapeString(s[:loc[0]])))
+		b.WriteString(marks(f, escapeFor(f, s[:loc[0]])))
 		text, href := s[loc[2]:loc[3]], s[loc[4]:loc[5]]
-		b.WriteString(`<a href="` + html.EscapeString(href) + `">` + marks(html.EscapeString(text)) + "</a>")
+		if f == FormatSlack {
+			// A link's address cannot hold the characters mrkdwn reads,
+			// and its text cannot hold the bar that ends the address.
+			b.WriteString("<" + slackEscape(href) + "|" + marks(f, slackEscape(strings.ReplaceAll(text, "|", "¦"))) + ">")
+		} else {
+			b.WriteString(`<a href="` + html.EscapeString(href) + `">` + marks(f, html.EscapeString(text)) + "</a>")
+		}
 		s = s[loc[1]:]
 	}
 }
 
 // marks renders bold, italic and strikethrough in escaped text, whose
-// markers escaping leaves as they are.
-func marks(s string) string {
+// markers escaping leaves as they are. Slack's italic comes first, so the
+// bold it writes as single asterisks is not read as italic again.
+func marks(f Format, s string) string {
+	if f == FormatSlack {
+		s = italic.ReplaceAllStringFunc(s, func(m string) string {
+			g := italic.FindStringSubmatch(m)
+			if g[2] != "" {
+				return g[1] + "_" + g[2] + "_" + g[3]
+			}
+			return g[4] + "_" + g[5] + "_" + g[6]
+		})
+		s = bold.ReplaceAllStringFunc(s, func(m string) string {
+			g := bold.FindStringSubmatch(m)
+			return "*" + g[1] + g[2] + "*"
+		})
+		return strike.ReplaceAllString(s, "~$1~")
+	}
 	s = bold.ReplaceAllStringFunc(s, func(m string) string {
 		g := bold.FindStringSubmatch(m)
 		return "<b>" + g[1] + g[2] + "</b>"
@@ -303,4 +388,31 @@ func marks(s string) string {
 		return g[4] + "<i>" + g[5] + "</i>" + g[6]
 	})
 	return strike.ReplaceAllString(s, "<s>$1</s>")
+}
+
+// HTMLLineBreaks is FormatHTML for a Matrix client, which collapses a line
+// break outside a preformatted block as a browser does: each such break
+// becomes <br>.
+func HTMLLineBreaks(h string) string {
+	var b strings.Builder
+	for {
+		i := strings.Index(h, "<pre>")
+		j := strings.Index(h, "<pre><code")
+		if j >= 0 && (i < 0 || j < i) {
+			i = j
+		}
+		if i < 0 {
+			b.WriteString(strings.ReplaceAll(h, "\n", "<br>"))
+			return b.String()
+		}
+		end := strings.Index(h[i:], "</pre>")
+		if end < 0 {
+			b.WriteString(strings.ReplaceAll(h[:i], "\n", "<br>") + h[i:])
+			return b.String()
+		}
+		end += i + len("</pre>")
+		b.WriteString(strings.ReplaceAll(h[:i], "\n", "<br>"))
+		b.WriteString(h[i:end])
+		h = h[end:]
+	}
 }

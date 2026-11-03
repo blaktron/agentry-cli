@@ -21,6 +21,17 @@ func TestEmitAfterTheEventsCloseIsDropped(t *testing.T) {
 	if _, open := <-s.events; open {
 		t.Fatal("an event emitted after the close was delivered")
 	}
+
+	// A session that has ended records nothing but its own end.
+	ended := &liveSession{events: make(chan session.Event, 4), done: make(chan struct{}), ended: true}
+	ended.emit(session.Event{Kind: session.KindAssistantText, Text: "after the end"})
+	if len(ended.log) != 0 || len(ended.events) != 0 {
+		t.Fatalf("an event after the end was recorded: log %v, delivered %d", ended.log, len(ended.events))
+	}
+	ended.emit(session.Event{Kind: session.KindSessionEnd, Reason: session.EndQuit})
+	if len(ended.log) != 1 || ended.log[0].Kind != session.KindSessionEnd || len(ended.events) != 1 {
+		t.Fatalf("the session's own end was not recorded: log %v, delivered %d", ended.log, len(ended.events))
+	}
 }
 
 // TestEndingWhileATurnEmits: closing the events while turns still emit,

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -56,9 +57,9 @@ func TestAStoredSecretReachesItsServerSlotAndTheCodersPrograms(t *testing.T) {
 // server requires it; the receipt names it.
 func TestAWithheldSecretIsWrittenEmptyAndNotReadFromThePolicy(t *testing.T) {
 	p, _ := fixture(t)
-	p.Plan.MCPServers = []spec.MCPServerSpec{{Name: "srv", Secrets: []string{"STORED_TOKEN"}}}
+	p.Plan.MCPServers = []spec.MCPServerSpec{{Name: "srv", Secrets: []string{"STORED_TOKEN", "W_E", "W_B", "W_D", "W_A"}}}
 	t.Setenv("STORED_TOKEN", "from-the-environment")
-	p.WithheldSecrets = []string{"STORED_TOKEN", "NOT_DECLARED"}
+	p.WithheldSecrets = []string{"W_E", "STORED_TOKEN", "W_B", "NOT_DECLARED", "W_D", "W_A"}
 	path := filepath.Join(t.TempDir(), "secrets.env")
 	if err := writeSecretsFile(p, path); err != nil {
 		t.Fatal(err)
@@ -70,10 +71,10 @@ func TestAWithheldSecretIsWrittenEmptyAndNotReadFromThePolicy(t *testing.T) {
 	if !strings.Contains(string(b), compile.ServerSecretKey("srv", "STORED_TOKEN")+"=\n") || strings.Contains(string(b), "from-the-environment") {
 		t.Fatalf("the secrets file:\n%s", b)
 	}
-	if got := withheldSecrets(p); len(got) != 1 || got[0] != "STORED_TOKEN" {
-		t.Fatalf("withheld = %v, want the declared one alone", got)
+	if got := withheldSecrets(p); strings.Join(got, ",") != "STORED_TOKEN,W_A,W_B,W_D,W_E" {
+		t.Fatalf("withheld = %v, want the declared ones alone, in order", got)
 	}
-	if got := withWithheldNote(nil, withheldSecrets(p))["secrets.withheld"]; !strings.HasSuffix(got, ": STORED_TOKEN") {
+	if got := withWithheldNote(nil, withheldSecrets(p))["secrets.withheld"]; !strings.HasSuffix(got, ": STORED_TOKEN, W_A, W_B, W_D, W_E") {
 		t.Fatalf("the receipt's line: %q", got)
 	}
 }
@@ -234,17 +235,30 @@ func TestADependencyDatabaseIsGivenExactlyWhenThePlanScans(t *testing.T) {
 		grant  *spec.CoderGrant
 		dir    string
 		wantOK bool
+		// class and msg are the refusal's exit class and what it says.
+		class int
+		msg   string
 	}{
-		"a scan with its folder":    {scans, dir, true},
-		"a scan with none":          {scans, "", false},
-		"a folder with no scan":     {&spec.CoderGrant{Commands: true}, dir, false},
-		"neither":                   {nil, "", true},
-		"a relative folder":         {scans, "osv", false},
-		"a file":                    {scans, filepath.Join(dir, "f"), false},
-		"its programs off, no scan": {&spec.CoderGrant{DependencyScan: true}, "", true},
+		"a scan with its folder":    {scans, dir, true, 0, ""},
+		"a scan with none":          {scans, "", false, ExitCompile, "disagree: recompile"},
+		"a folder with no scan":     {&spec.CoderGrant{Commands: true}, dir, false, ExitCompile, "disagree: recompile"},
+		"neither":                   {nil, "", true, 0, ""},
+		"a relative folder":         {scans, "osv", false, ExitCLI, "is not a clean absolute path"},
+		"an unclean folder":         {scans, dir + string(filepath.Separator) + ".", false, ExitCLI, "is not a clean absolute path"},
+		"a file":                    {scans, filepath.Join(dir, "f"), false, ExitCLI, "is not a folder"},
+		"a link to a folder":        {scans, filepath.Join(t.TempDir(), "link"), false, ExitCLI, "is not a folder"},
+		"its programs off, no scan": {&spec.CoderGrant{DependencyScan: true}, "", true, 0, ""},
 	} {
 		if name == "a file" {
 			if err := os.WriteFile(tc.dir, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if name == "a link to a folder" {
+			if runtime.GOOS == "windows" {
+				continue // a symlink needs a privilege the test cannot assume
+			}
+			if err := os.Symlink(dir, tc.dir); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -254,6 +268,10 @@ func TestADependencyDatabaseIsGivenExactlyWhenThePlanScans(t *testing.T) {
 		err := prepareDependencyDB(p, rd)
 		if (err == nil) != tc.wantOK {
 			t.Errorf("%s: %v", name, err)
+		}
+		var ce *ClassifiedError
+		if err != nil && (!errors.As(err, &ce) || ce.Code != tc.class || !strings.Contains(err.Error(), tc.msg)) {
+			t.Errorf("%s: %v, want exit %d saying %q", name, err, tc.class, tc.msg)
 		}
 		if err == nil && rd.dependencyDB != tc.dir {
 			t.Errorf("%s: mounted %q", name, rd.dependencyDB)

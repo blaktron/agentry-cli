@@ -211,6 +211,40 @@ func TestTheRunsWebHalfIsStamped(t *testing.T) {
 	if !slices.Equal(ts.GrantedTools(), []string{toolsrv.ToolListInputs, toolsrv.ToolReadInput, toolsrv.ToolSearchInputs, toolsrv.ToolScratchList, toolsrv.ToolScratchRead, toolsrv.ToolScratchWrite, toolsrv.ToolScratchSearch, toolsrv.ToolGrep, toolsrv.ToolGlob, toolsrv.ToolWebSearch, toolsrv.ToolWebRead, toolsrv.ToolRegistrySearch, toolsrv.ToolWriteReport}) {
 		t.Fatalf("granted %v", ts.GrantedTools())
 	}
+
+	// Granting again replaces the scanner, the caps and the given addresses
+	// the spec held (the compiled ones included), and a spec that grants no
+	// web tools is refused, as is a run with nothing to grant left alone.
+	ts.Web.Given = []string{"https://compiled.example/"}
+	stale, err := json.Marshal(&ts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(gw, "toolspec.json"), stale, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := grantWeb(gw, &WebRun{Scan: toolsrv.WebScanRegistry, Registry: "https://other.example", MaxPages: 7, MaxSearches: 8, MaxRegistryCalls: 9}); err != nil {
+		t.Fatal(err)
+	}
+	var again toolsrv.Spec
+	b, _ = os.ReadFile(filepath.Join(gw, "toolspec.json"))
+	if err := json.Unmarshal(b, &again); err != nil {
+		t.Fatal(err)
+	}
+	if again.Web.Scan != toolsrv.WebScanRegistry || again.Web.Search != "" || again.Web.Registry != "https://other.example" ||
+		again.Web.MaxPages != 7 || again.Web.MaxSearches != 8 || again.Web.MaxRegistryCalls != 9 || len(again.Web.Given) != 0 || again.Web.Ledger != "/out/receipts/"+WebLedgerFile {
+		t.Errorf("web after a second grant: %+v", again.Web)
+	}
+	if err := grantWeb(gw, nil); err != nil {
+		t.Errorf("nothing to grant: %v", err)
+	}
+	off := t.TempDir()
+	if err := os.WriteFile(filepath.Join(off, "toolspec.json"), []byte(`{"specVersion":"8"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := grantWeb(off, &WebRun{Scan: toolsrv.WebScanJev}); err == nil || !strings.Contains(err.Error(), "grants no web tools") {
+		t.Errorf("a spec with no web tools was granted them: %v", err)
+	}
 }
 
 // TestACreatorsWebHasNoRegistrySearch: the Knowledge Creator's plan carries
@@ -251,29 +285,35 @@ func TestACreatorsWebHasNoRegistrySearch(t *testing.T) {
 // key, refuses before any container; a plan without the web tools refuses a
 // web configuration.
 func TestAWebPlanRunsOnlyWithItsScanner(t *testing.T) {
-	for name, w := range map[string]*WebRun{
-		"none":            nil,
-		"no Jev key":      {Scan: toolsrv.WebScanJev},
-		"no job token":    {Scan: toolsrv.WebScanRegistry, Registry: "https://r.example"},
-		"unknown scanner": {Scan: "static", JevKey: testJevKey},
-		"search, no key":  {Scan: toolsrv.WebScanJev, JevKey: testJevKey, Search: "youcom"},
-		"registry search": {Scan: toolsrv.WebScanJev, JevKey: testJevKey, Search: toolsrv.WebScanRegistry},
+	for _, tc := range []struct {
+		name string
+		w    *WebRun
+		want string
+	}{
+		{"none", nil, "this run names no scanner"},
+		{"no Jev key", &WebRun{Scan: toolsrv.WebScanJev}, "need your own Jev key"},
+		{"no job token", &WebRun{Scan: toolsrv.WebScanRegistry, Registry: "https://r.example"}, "need the registry and the job's credential"},
+		{"no registry", &WebRun{Scan: toolsrv.WebScanRegistry, JobToken: testJobToken}, "need the registry and the job's credential"},
+		{"unknown scanner", &WebRun{Scan: "static", JevKey: testJevKey}, `unknown scanner "static"`},
+		{"search, no key", &WebRun{Scan: toolsrv.WebScanJev, JevKey: testJevKey, Search: "youcom"}, "a search through youcom needs your own key"},
+		{"registry search", &WebRun{Scan: toolsrv.WebScanJev, JevKey: testJevKey, Search: toolsrv.WebScanRegistry}, "the registry's search is a hosted draft's"},
 	} {
 		p, f := webFixture(t)
-		p.Web = w
+		p.Web = tc.w
 		_, err := Run(context.Background(), f, p)
 		var ce *ClassifiedError
-		if !errors.As(err, &ce) || ce.Code != ExitPolicy {
-			t.Fatalf("%s: %v", name, err)
+		if !errors.As(err, &ce) || ce.Code != ExitPolicy || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("%s: %v, want exit %d with %q", tc.name, err, ExitPolicy, tc.want)
 		}
 		if len(f.Calls) != 0 {
-			t.Fatalf("%s: docker was called: %+v", name, f.Calls)
+			t.Fatalf("%s: docker was called: %+v", tc.name, f.Calls)
 		}
 	}
 	p, f := fixture(t)
 	p.Web = &WebRun{Scan: toolsrv.WebScanJev, JevKey: testJevKey}
-	if _, err := Run(context.Background(), f, p); err == nil {
-		t.Fatal("a plan without the web tools took a web configuration")
+	var ce *ClassifiedError
+	if _, err := Run(context.Background(), f, p); !errors.As(err, &ce) || ce.Code != ExitCLI || !strings.Contains(err.Error(), "this plan has no web tools") {
+		t.Fatalf("a plan without the web tools took a web configuration: %v", err)
 	}
 }
 
@@ -305,6 +345,9 @@ func TestTheWebLedgerIsCountedIntoTheReceipt(t *testing.T) {
 	if w == nil || w.Read != 5 || w.Pages != 2 || w.Searches != 1 || w.SearchResults != 2 || w.RegistryCalls != 1 || w.Passed != 3 || w.Withheld != 1 ||
 		w.NotScanned != 1 || w.Refused != 2 || w.ScanRequests != 7 || w.ScanInputTokens != 1630 || w.Model != "jev-1.13.0" || w.Scan != "jev" {
 		t.Fatalf("%+v", w)
+	}
+	if got, bad, err := ReadWebLedger(filepath.Join(t.TempDir(), "absent.ndjson")); got != nil || bad != 0 || err != nil {
+		t.Errorf("a ledger never written read as %v, %d bad lines, %v", got, bad, err)
 	}
 	line := env.CapabilitiesEnforced["web.aiReview"]
 	if !strings.Contains(line, "5 read (2 pages, 2 search results of 1 searches, 1 registry answers), 3 passed, 1 withheld as flagged, 1 withheld as not scanned") {

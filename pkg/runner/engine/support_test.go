@@ -26,6 +26,8 @@ func TestParseEnvFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "secrets.env")
 	content := strings.Join([]string{
 		"# leading comment",
+		"# COMMENTED_OUT=still-a-comment",
+		"  # indented_comment=also-a-comment",
 		"",
 		"PLAIN=value",
 		"  SPACED  =  padded value  ",
@@ -109,6 +111,25 @@ func TestStderrTail(t *testing.T) {
 		}
 		if strings.Contains(got, "line-05") || !strings.Contains(got, "line-06") || !strings.Contains(got, "line-20") {
 			t.Errorf("tail window wrong:\n%s", got)
+		}
+	})
+	t.Run("the window is fifteen lines, not sixteen", func(t *testing.T) {
+		var lines []string
+		for i := 1; i <= 16; i++ {
+			lines = append(lines, fmt.Sprintf("line-%02d", i))
+		}
+		path := filepath.Join(dir, "sixteen.log")
+		if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got := stderrTail(path); strings.Contains(got, "line-01") || !strings.Contains(got, "line-02") || !strings.Contains(got, "line-16") {
+			t.Errorf("tail window wrong:\n%s", got)
+		}
+		if err := os.WriteFile(path, []byte(strings.Join(lines[:15], "\n")+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got := stderrTail(path); !strings.Contains(got, "line-01") || !strings.Contains(got, "line-15") {
+			t.Errorf("fifteen lines were cut:\n%s", got)
 		}
 	})
 	t.Run("short output passes through whole", func(t *testing.T) {
@@ -203,6 +224,18 @@ func TestReadTask(t *testing.T) {
 			t.Fatalf("task receipt = (%q, %v)", rec, err)
 		}
 	})
+	t.Run("a task is bounded at four mebibytes", func(t *testing.T) {
+		const limit = 4 << 20
+		for _, extra := range []int{0, 7} {
+			b, err := readTask(strings.NewReader(strings.Repeat("x", limit+extra)), dir)
+			if err != nil || len(b) != limit {
+				t.Fatalf("a task of %d bytes read as %d bytes, %v; want %d", limit+extra, len(b), err, limit)
+			}
+		}
+		if rec, err := os.ReadFile(filepath.Join(dir, "task.txt")); err != nil || len(rec) != limit {
+			t.Fatalf("task receipt holds %d bytes, %v", len(rec), err)
+		}
+	})
 	t.Run("read failure is CLI class", func(t *testing.T) {
 		_, err := readTask(iotest.ErrReader(errors.New("pipe burst")), dir)
 		var ce *ClassifiedError
@@ -234,6 +267,9 @@ func TestFailClassification(t *testing.T) {
 		if !errors.As(err, &ce) || ce.Code != ExitGateway {
 			t.Fatalf("err = %v", err)
 		}
+		if env.Status != "error" || env.ExitCode != ExitGateway || env.Error != "gw down" {
+			t.Fatalf("envelope = %+v", env)
+		}
 		if _, statErr := os.Stat(filepath.Join(dir, "result.json")); statErr != nil {
 			t.Errorf("failed run left no result.json: %v", statErr)
 		}
@@ -256,6 +292,7 @@ func TestTeardownLeakSweep(t *testing.T) {
 	// A run container, not a relay: where the filter does not run, the run
 	// first checks the shared relay network, and it is empty.
 	f.ByLabel = map[string][]string{RelayLabel: nil}
+	f.LeftoverVolumes = []string{"agentry-cafe0000-leftvol"}
 	if _, err := Run(context.Background(), f, p); err != nil {
 		t.Fatal(err)
 	}
@@ -276,6 +313,27 @@ func TestTeardownLeakSweep(t *testing.T) {
 	}
 	if removeAt < 0 || removeAt < sweepAt {
 		t.Fatalf("leftover container not removed by the sweep: %v", ops)
+	}
+	// The run's network is removed once by its own teardown step and again by
+	// the sweep, after every container with the run's label is gone.
+	netAt := -1
+	for i, op := range ops {
+		if op == "NetworkRemove:agentry-cafe0000-net" {
+			netAt = i
+		}
+	}
+	if netAt < removeAt {
+		t.Fatalf("the sweep did not remove the run's network after its containers: %v", ops)
+	}
+	// A volume carrying the run's label goes last, after the containers.
+	volAt := -1
+	for i, op := range ops {
+		if op == "VolumeRemove:agentry-cafe0000-leftvol" {
+			volAt = i
+		}
+	}
+	if volAt < netAt {
+		t.Fatalf("the sweep did not remove the run's labelled volume after its containers: %v", ops)
 	}
 }
 
@@ -331,6 +389,20 @@ func TestPrepareRunDirsErrors(t *testing.T) {
 		var ce *ClassifiedError
 		if !errors.As(err, &ce) || ce.Code != ExitCLI || !strings.Contains(err.Error(), "create run dirs") {
 			t.Fatalf("err = %v", err)
+		}
+	})
+	t.Run("package servers and no server store", func(t *testing.T) {
+		p, f := serverFixture(t)
+		p.ServersDir = ""
+		_, err := Run(context.Background(), f, p)
+		var ce *ClassifiedError
+		if !errors.As(err, &ce) || ce.Code != ExitCLI || !strings.Contains(err.Error(), "plan declares MCP servers but no server store was provided") {
+			t.Fatalf("err = %v", err)
+		}
+		for _, c := range f.Calls {
+			if strings.HasPrefix(c.Op, "Run") || c.Op == "NetworkCreate" {
+				t.Fatalf("docker was asked to %s after the refusal", c.Op)
+			}
 		}
 	})
 	t.Run("workspace source missing", func(t *testing.T) {

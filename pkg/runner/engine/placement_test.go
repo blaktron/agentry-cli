@@ -39,6 +39,10 @@ func TestPlacementByKernel(t *testing.T) {
 		{"a container that is not on the daemon's kernel", desktop, hostFacts{goos: "linux", hostname: "c0ffee", kernel: "7.1.13", inContainer: true}, "", false, "/home/me/.docker/desktop/docker.sock", DockerSocket, "runs in a VM"},
 		{"sidecar asked for on a local daemon", podman, linux, "sidecar", false, "/run/user/1000/podman/podman.sock", "/run/user/1000/podman/podman.sock", EnvDockerFilter + "=sidecar"},
 		{"process asked for in a VM", desktop, linux, "process", true, "/home/me/.docker/desktop/docker.sock", DockerSocket, EnvDockerFilter + "=process"},
+		{"a host off Linux that reports the daemon's own kernel and name", dockerx.Engine{Endpoint: "unix:///x.sock", DaemonHost: "mac", DaemonKernel: "6.10.14-linuxkit"}, hostFacts{goos: "darwin", hostname: "mac", kernel: "6.10.14-linuxkit"}, "", false, "/x.sock", DockerSocket, "on darwin"},
+		{"kernels neither side knows", dockerx.Engine{Endpoint: "unix:///x.sock", DaemonHost: "box", DaemonKernel: ""}, hostFacts{goos: "linux", hostname: "box", kernel: ""}, "", false, "/x.sock", DockerSocket, "kernel unknown"},
+		{"an override with capitals and spaces for sidecar", podman, linux, " Sidecar ", false, "/run/user/1000/podman/podman.sock", "/run/user/1000/podman/podman.sock", EnvDockerFilter + "=sidecar"},
+		{"an override with capitals and spaces for process", desktop, linux, " Process\t", true, "/home/me/.docker/desktop/docker.sock", DockerSocket, EnvDockerFilter + "=process"},
 		{"Docker Desktop's pipe on Windows", dockerx.Engine{Endpoint: "npipe:////./pipe/dockerDesktopLinuxEngine", DaemonHost: "docker-desktop"}, hostFacts{goos: "windows", hostname: "pc"}, "", false, "//./pipe/dockerDesktopLinuxEngine", DockerSocket, "on windows"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -50,6 +54,42 @@ func TestPlacementByKernel(t *testing.T) {
 				t.Errorf("placement %+v\nwant in-process %v, upstream %q, mount %q, a reason with %q", p, c.inProcess, c.upstream, c.mountSource, c.reason)
 			}
 		})
+	}
+	t.Run("the rule's two questions", placementRulesAsked)
+}
+
+// placementRulesAsked asks the rule's two questions directly: whether the engine's daemon runs
+// on this Linux machine's kernel, and whether it is this machine's own.
+func placementRulesAsked(t *testing.T) {
+	linux := hostFacts{goos: "linux", hostname: "box", kernel: "7.1.13"}
+	e := dockerx.Engine{Endpoint: "unix:///x.sock", DaemonHost: "box", DaemonKernel: "7.1.13"}
+	for _, c := range []struct {
+		name         string
+		h            hostFacts
+		e            dockerx.Engine
+		scheme       string
+		kernel, host bool
+	}{
+		{"the daemon on this machine", linux, e, dockerx.SchemeUnix, true, true},
+		{"a daemon on another kernel", linux, dockerx.Engine{Endpoint: e.Endpoint, DaemonHost: "box", DaemonKernel: "6.10.14-linuxkit"}, dockerx.SchemeUnix, false, false},
+		{"a named pipe", linux, e, dockerx.SchemeNpipe, false, false},
+		{"a tcp endpoint", linux, e, "tcp", false, false},
+		{"a host that is not Linux", hostFacts{goos: "darwin", hostname: "box", kernel: "7.1.13"}, e, dockerx.SchemeUnix, false, false},
+		{"no kernel known on either side", hostFacts{goos: "linux", hostname: "box"}, dockerx.Engine{Endpoint: e.Endpoint, DaemonHost: "box"}, dockerx.SchemeUnix, false, false},
+		{"a daemon of another name on this kernel", linux, dockerx.Engine{Endpoint: e.Endpoint, DaemonHost: "elsewhere", DaemonKernel: "7.1.13"}, dockerx.SchemeUnix, true, false},
+		{"this process in a container", hostFacts{goos: "linux", hostname: "box", kernel: "7.1.13", inContainer: true}, e, dockerx.SchemeUnix, true, false},
+	} {
+		if got := c.h.sameKernel(c.e, c.scheme); got != c.kernel {
+			t.Errorf("%s: sameKernel = %v, want %v", c.name, got, c.kernel)
+		}
+		if c.scheme == dockerx.SchemeUnix {
+			if got := c.h.servesThisMachine(c.e); got != c.host {
+				t.Errorf("%s: servesThisMachine = %v, want %v", c.name, got, c.host)
+			}
+		}
+	}
+	if (linux).servesThisMachine(dockerx.Engine{Endpoint: "npipe:////./pipe/docker_engine", DaemonHost: "box", DaemonKernel: "7.1.13"}) {
+		t.Error("a daemon at a named pipe was taken for this machine's")
 	}
 }
 
@@ -66,6 +106,8 @@ func TestPlacementRefusesARemoteEndpoint(t *testing.T) {
 		{"npipe:////./pipe/docker_engine", "", "is not a Unix socket", linux},
 		{"npipe:////./pipe/docker_engine", "process", "=process needs an engine on a Unix socket", hostFacts{goos: "windows"}},
 		{"unix:///var/run/docker.sock", "both", `is "both": it takes process or sidecar`, linux},
+		{"docker.sock", "", `container engine endpoint "docker.sock" names no scheme`, linux},
+		{"unix://relative.sock", "", `container engine endpoint "unix://relative.sock" is not an absolute socket path`, linux},
 	} {
 		_, err := placeFilter(dockerx.Engine{Endpoint: c.endpoint, DaemonHost: "box", DaemonKernel: "7.1.13"}, c.h, c.override)
 		var ce *ClassifiedError

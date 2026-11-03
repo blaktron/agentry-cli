@@ -98,18 +98,23 @@ func TestShortSecretsAreDisclosedInTheReceipt(t *testing.T) {
 func TestRedactionNoteReadsServerScopedSecrets(t *testing.T) {
 	var p Params
 	p.Plan = &spec.Plan{
-		Secrets:    []string{"SHARED", "LONG_ONE"},
+		Secrets:    []string{"SHARED", "LONG_ONE", "ZZ_LAST", "AA_FIRST", "SEVEN_CHARS", "EIGHT_CHARS", "NOT_GIVEN"},
 		MCPServers: []spec.MCPServerSpec{{Name: "mcp-x", Secrets: []string{"SHARED", "SRV_PIN"}}},
 	}
 	secrets := map[string]string{
 		compile.SecretKey("SHARED"):                 "abc",
 		compile.SecretKey("LONG_ONE"):               "long-enough-value",
+		compile.SecretKey("ZZ_LAST"):                "z",
+		compile.SecretKey("AA_FIRST"):               "a1",
+		compile.SecretKey("SEVEN_CHARS"):            "1234567",
+		compile.SecretKey("EIGHT_CHARS"):            "12345678",
+		compile.SecretKey("NOT_GIVEN"):              "", // an optional secret the run went without
 		compile.ServerSecretKey("mcp-x", "SHARED"):  "abc",
 		compile.ServerSecretKey("mcp-x", "SRV_PIN"): "1234",
 	}
 	in := map[string]string{"network": "internal"}
 	out := withRedactionNote(in, p, secrets)
-	want := "secret values shorter than 8 characters are not masked in receipts: SHARED, SRV_PIN"
+	want := "secret values shorter than 8 characters are not masked in receipts: AA_FIRST, SEVEN_CHARS, SHARED, SRV_PIN, ZZ_LAST"
 	if out["redaction"] != want || out["network"] != "internal" {
 		t.Errorf("note = %v, want redaction %q beside the existing entries", out, want)
 	}
@@ -128,6 +133,11 @@ func TestRedactorMasksTheGatewaysPartialMask(t *testing.T) {
 	want := "    - A: [redacted]\n    - T: [redacted]\n    - B: seve****\n    - C: ****\n    - D: xyzw****\nfull [redacted]\n"
 	if got := r.String(in); got != want {
 		t.Errorf("String = %q, want %q", got, want)
+	}
+	// A value that holds another is masked whole, not around the shorter one.
+	nested := newRedactor("tok-0123456789", map[string]string{"SHORT": "abcd1234", "LONG": "abcd1234-extended-tail"}, nil)
+	if got, want := nested.String("x abcd1234-extended-tail y abcd1234 z"), "x [redacted] y [redacted] z"; got != want {
+		t.Errorf("nested values: String = %q, want %q", got, want)
 	}
 }
 

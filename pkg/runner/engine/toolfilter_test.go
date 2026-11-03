@@ -28,6 +28,11 @@ func TestGatewayToolCountReadsTheGatewaysStartupLog(t *testing.T) {
 			t.Errorf("%s: %d, want %d", name, got, want)
 		}
 	}
+	// A line that only mentions the server's count further along is not the
+	// gateway's own.
+	if got := gatewayToolCount("- mcp-pypi-time: text > mcp-pypi-time: (9 tools)\n", "mcp-pypi-time"); got != 0 {
+		t.Errorf("a count quoted mid-line read as %d", got)
+	}
 }
 
 func filterParams(stderr io.Writer, servers ...spec.MCPServerSpec) Params {
@@ -76,6 +81,11 @@ func TestAFilterTheGatewayServedInFullIsNotLookedInto(t *testing.T) {
 		&runDirs{}, "r1", gatewayLog, listerOf([]string{"x"}, nil, &calls))
 	if err != nil || calls != 0 || stderr.Len() != 0 {
 		t.Fatalf("err %v, lister calls %d, stderr %q", err, calls, stderr.String())
+	}
+	// An image server's filter is its image's own, not looked into either.
+	image := spec.MCPServerSpec{Name: "mcp-image-x", Source: spec.SourceImage, Image: "ghcr.io/x/y:1", Tools: []string{"a", "b"}}
+	if err := checkToolFilters(t.Context(), nil, filterParams(&stderr, image), &runDirs{}, "r1", "", listerOf([]string{"a"}, nil, &calls)); err != nil || calls != 0 || stderr.Len() != 0 {
+		t.Fatalf("an image server: %v, %d calls, stderr %q", err, calls, stderr.String())
 	}
 	// A server with no filter is never listed either.
 	if err := checkToolFilters(t.Context(), nil, filterParams(&stderr, timeServer()), &runDirs{}, "r1", "", listerOf(nil, nil, &calls)); err != nil || calls != 0 {

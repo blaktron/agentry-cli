@@ -110,8 +110,17 @@ func TestInstallLocalGates(t *testing.T) {
 	if err := os.WriteFile(statePath, []byte("records: [unclosed\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, stderr, err := runCLI(t, strings.NewReader(""), "--registry", noRegistry, "install", "--local", wide, "--allow-unsigned", "--yes"); err == nil || !strings.Contains(err.Error(), "its record could not be read") || !strings.Contains(stderr, "treating this as a first install") {
-		t.Fatalf("install over unreadable state: %v (stderr %q)", err, stderr)
+	// It goes on as a registry install does: the record is rewritten and
+	// names the release just laid down.
+	if _, stderr, err := runCLI(t, strings.NewReader(""), "--registry", noRegistry, "install", "--local", wide, "--allow-unsigned", "--yes"); err != nil || !strings.Contains(stderr, "treating this as a first install") {
+		t.Fatalf("install over unreadable state: %v (stderr %q), want the warning and an install", err, stderr)
+	}
+	rewritten, err := installed.Load()
+	if err != nil {
+		t.Fatalf("the record after an install over unreadable state: %v, want it rewritten", err)
+	}
+	if len(rewritten.Records) != 1 || rewritten.Records[0].Namespace != "fixtures" || rewritten.Records[0].Name != "pure-text" || !rewritten.Records[0].Local() {
+		t.Fatalf("the rewritten record = %+v, want the one local release just installed", rewritten.Records)
 	}
 	if err := os.Remove(statePath); err != nil {
 		t.Fatal(err)

@@ -65,11 +65,28 @@ func TestSweepWorkDirsJudgesOnlyWhatIsProvenDead(t *testing.T) {
 	if err := os.Chtimes(stale, old, old); err != nil {
 		t.Fatal(err)
 	}
+	// Nothing but its name keeps a directory of another owner from the sweep
+	// once it is older than the grace.
+	if err := os.Chtimes(other, old, old); err != nil {
+		t.Fatal(err)
+	}
 	outside := writeWorkDir(t, t.TempDir(), "outside")
 	if err := os.Symlink(outside, filepath.Join(root, "knowledge-build-link")); err != nil {
 		t.Skipf("symlink: %v", err)
 	}
+	// A directory whose lock file is a link to a free one is not judged by it.
+	linked := writeWorkDir(t, root, "knowledge-build-linked")
+	free := filepath.Join(t.TempDir(), "free.lock")
+	if err := os.WriteFile(free, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(free, filepath.Join(linked, WorkLockFile)); err != nil {
+		t.Skipf("symlink: %v", err)
+	}
 	SweepWorkDirs(root, "knowledge-build-", time.Hour, nil)
+	if !pathExists(filepath.Join(linked, "docs", "report.pdf")) {
+		t.Error("a work directory with a lock file that is a link was swept as a dead build's")
+	}
 	if !pathExists(fresh) || pathExists(stale) || !pathExists(other) || !pathExists(filepath.Join(outside, "docs", "report.pdf")) {
 		t.Errorf("fresh %v, stale %v, other %v, outside %v", pathExists(fresh), pathExists(stale), pathExists(other), pathExists(outside))
 	}

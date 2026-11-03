@@ -100,6 +100,10 @@ type Fake struct {
 	// container as it starts — how a test makes something happen once the
 	// agent is running, such as a relay the gateway starts late.
 	OnForeground func(r RunSpec)
+	// OnRemoveForce, when set, runs with the name of every container
+	// RemoveForce is given — how a test ends a foreground container that
+	// only a removal stops.
+	OnRemoveForce func(name string)
 	// EngineInfo, when set, is what Engine answers; nil answers
 	// LocalDockerEngine. EngineErr fails Engine.
 	EngineInfo *Engine
@@ -449,6 +453,9 @@ func (f *Fake) Stop(_ context.Context, name string, _ int) error {
 // RemoveForce implements Client.
 func (f *Fake) RemoveForce(_ context.Context, name string) error {
 	f.record("RemoveForce", name, RunSpec{})
+	if f.OnRemoveForce != nil {
+		f.OnRemoveForce(name)
+	}
 	return nil
 }
 
