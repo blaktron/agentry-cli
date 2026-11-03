@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -39,10 +40,19 @@ func TestInfoHappyPath(t *testing.T) {
 		"latest:  1.0.0 (sha256:",
 		"network.egress: api.example.com",
 		"install: agentry install acme/demo",
+		"  git:     " + fr.url() + "/git/acme/demo.git\n",
+		"  created: 2026-01-02\n",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("info output lacks %q:\n%s", want, stdout)
 		}
+	}
+
+	// An agent with no summary has no summary line.
+	fr.addAgent("acme", "plain", "autonomous", "").addVersion(t, "1.0.0", skillFiles("plain", ""))
+	stdout, _, err = runCLI(t, nil, "--registry", fr.url(), "info", "acme/plain")
+	if err != nil || strings.Contains(stdout, "summary:") || !strings.Contains(stdout, "acme/plain — autonomous, public\n  git:") {
+		t.Errorf("info of an agent with no summary: %v\n%s", err, stdout)
 	}
 }
 
@@ -55,8 +65,27 @@ func TestInfoNoPublishedVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("an agent with no versions is a fact, not a failure: %v", err)
 	}
-	if !strings.Contains(stdout, "latest:  no published version") {
+	if !strings.Contains(stdout, "latest:  no published version") || strings.Contains(stdout, "install:") {
 		t.Errorf("info output = %s", stdout)
+	}
+
+	// A registry that says the agent is gone (410) says the same.
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/agents/{ns}/{name}", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"id": "00000000-0000-0000-0000-000000000001", "namespace": "acme", "name": "yanked",
+			"modes": []string{"autonomous"}, "summary": "s", "visibility": "public", "quarantineState": "none",
+			"defaultBranch": "main", "gitHttpUrl": "http://x/git", "createdAt": "2026-01-02T03:04:05Z",
+		})
+	})
+	mux.HandleFunc("GET /api/v1/resolve", func(w http.ResponseWriter, _ *http.Request) {
+		writeProblem(w, http.StatusGone, "every version yanked", "")
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	stdout, _, err = runCLI(t, nil, "--registry", srv.URL, "info", "acme/yanked")
+	if err != nil || !strings.Contains(stdout, "latest:  no published version") {
+		t.Errorf("a gone agent: %v\n%s", err, stdout)
 	}
 }
 
@@ -89,6 +118,19 @@ func TestInfoTransportFailureIsNonZero(t *testing.T) {
 	if strings.Contains(stdout, "no published version") {
 		t.Error("an outage was reported as an empty agent")
 	}
+
+	// The same in JSON: the agent, the error, and no latest version.
+	stdout, _, err = runCLI(t, nil, "--registry", srv.URL, "--json", "info", "acme/demo")
+	if err == nil {
+		t.Fatal("a 503 version lookup exited 0 under --json")
+	}
+	var doc map[string]json.RawMessage
+	if jerr := json.Unmarshal([]byte(stdout), &doc); jerr != nil || doc["agent"] == nil || !strings.Contains(string(doc["latestError"]), "registry melting") {
+		t.Errorf("--json of an outage: %v\n%s", jerr, stdout)
+	}
+	if _, ok := doc["latest"]; ok {
+		t.Errorf("--json of an outage names a latest version: %s", doc["latest"])
+	}
 }
 
 func TestInfoJSONShape(t *testing.T) {
@@ -113,9 +155,11 @@ func TestInfoJSONShape(t *testing.T) {
 
 func TestInfoRejectsBareName(t *testing.T) {
 	isolateEnv(t)
-	_, _, err := runCLI(t, nil, "--registry", "http://127.0.0.1:1", "info", "demo")
-	if err == nil || !strings.Contains(err.Error(), "info wants ns/name") {
-		t.Errorf("bare name accepted: %v", err)
+	for _, ref := range []string{"demo", "acme/", "/demo"} {
+		_, _, err := runCLI(t, nil, "--registry", "http://127.0.0.1:1", "info", ref)
+		if err == nil || !strings.Contains(err.Error(), "info wants ns/name") {
+			t.Errorf("%q accepted: %v", ref, err)
+		}
 	}
 }
 
@@ -159,6 +203,28 @@ func TestSearchForwardsFacetsToTheWire(t *testing.T) {
 	if !strings.Contains(stdout, "-") || !strings.Contains(stdout, "2 of 40 results shown (--limit to see more)") {
 		t.Errorf("results footer = %s", stdout)
 	}
+	// One result to a line: the name in 40 columns, the modes in 23, the
+	// installs in 16, then the summary or its placeholder.
+	sp := func(n int) string { return strings.Repeat(" ", n) }
+	want := "acme/demo" + sp(31) + " autonomous" + sp(13) + " 12 installs/30d" + sp(1) + " does things\n" +
+		"acme/quiet" + sp(30) + " autonomous" + sp(13) + " " + sp(16) + " -\n" +
+		"\n2 of 40 results shown (--limit to see more)\n"
+	if stdout != want {
+		t.Errorf("results:\n%q\nwant\n%q", stdout, want)
+	}
+
+	// All of them shown is no cut.
+	total = 2
+	stdout, _, err = runCLI(t, nil, "--registry", fr.url(), "search", "report")
+	if err != nil || strings.Contains(stdout, "results shown") {
+		t.Errorf("a complete result carries a cut notice: %v\n%s", err, stdout)
+	}
+
+	// A mode that is not one is refused before the registry is asked.
+	before := len(fr.searchQueries)
+	if _, _, err := runCLI(t, nil, "--registry", fr.url(), "search", "report", "--mode", "bogus"); err == nil || err.Error() != `unknown --mode "bogus" (want autonomous or interactive)` || len(fr.searchQueries) != before {
+		t.Errorf("an unknown mode: %v (%d request(s) sent)", err, len(fr.searchQueries)-before)
+	}
 }
 
 func TestSearchEmptyResultNamesTheFilters(t *testing.T) {
@@ -173,6 +239,20 @@ func TestSearchEmptyResultNamesTheFilters(t *testing.T) {
 	// query never reads as an empty registry.
 	if !strings.Contains(stdout, `no QuickAgents match "nada" with mode=autonomous, verified`) {
 		t.Errorf("empty-result line = %q", stdout)
+	}
+	// A filter or limit that was not given is not sent.
+	q := fr.searchQueries[0]
+	for _, param := range []string{"capability", "license", "sort", "limit"} {
+		if q.Has(param) {
+			t.Errorf("the query carries %s though none was given: %v", param, q)
+		}
+	}
+	// Nor is an empty query.
+	if _, _, err := runCLI(t, nil, "--registry", fr.url(), "search", ""); err != nil {
+		t.Fatal(err)
+	}
+	if fr.searchQueries[1].Has("q") {
+		t.Errorf("an empty query was sent: %v", fr.searchQueries[1])
 	}
 }
 
@@ -209,6 +289,18 @@ func TestDescribeFacets(t *testing.T) {
 	got := describeFacets(searchOpts{mode: "interactive", capability: "exec", license: "MIT", verified: true})
 	if got != " with mode=interactive, capability=exec, license=MIT, verified" {
 		t.Errorf("facets = %q", got)
+	}
+	for opts, want := range map[searchOpts]string{
+		{mode: "autonomous"}: " with mode=autonomous",
+		{capability: "exec"}: " with capability=exec",
+		{license: "MIT"}:     " with license=MIT",
+		{verified: true}:     " with verified",
+		{sort: "installs"}:   "",
+		{limit: 5}:           "",
+	} {
+		if got := describeFacets(opts); got != want {
+			t.Errorf("describeFacets(%+v) = %q, want %q", opts, got, want)
+		}
 	}
 }
 
@@ -286,6 +378,9 @@ func TestInfoShowsHowToRunIt(t *testing.T) {
 		"server (host, optional)",
 		"answer: The person's own target host",
 		"focus (text, optional): What to focus on?[2J",
+		"        answer: The text it asks for.\n",
+		"        answer: The person's own target host, [user@]host[:port], which they set up and sign in to; never give it for them.\n",
+		"        answer: One file's https address. Agentry fetches it for the run.\n",
 		"Files it takes: code, data; read as uploaded. Give them with --file.",
 		"keys: API_TOKEN, EXTRA_TOKEN (optional)",
 		"guide (the publisher's words):",
@@ -384,6 +479,10 @@ func TestInfoJSONHasNoRunWithoutAVersion(t *testing.T) {
 	if strings.Contains(stdout, `"run"`) {
 		t.Errorf("an agent with no version carries a run object:\n%s", stdout)
 	}
+	// It says outright that there is no latest version.
+	if !strings.Contains(stdout, `"latest": null`) {
+		t.Errorf("the document does not say the latest version is none:\n%s", stdout)
+	}
 }
 
 // TestASiteQuestionIsAnsweredWithAnAddressToOpen: a url question the
@@ -403,5 +502,89 @@ func TestInfoCutsALongGuideLine(t *testing.T) {
 	got := howToRun(m).Guide.Task
 	if len([]rune(got)) != maxInfoLine+1 || !strings.HasSuffix(got, "…") {
 		t.Errorf("task cut to %d runes", len([]rune(got)))
+	}
+
+	// The bounds are 400 characters for a line and 2,048 for the overview: a
+	// text of exactly the bound is kept whole, one character more is cut.
+	line := func(n int) string { return strings.Repeat("é", n) }
+	for _, tc := range []struct {
+		name         string
+		in           string
+		bound        int
+		get          func(*infoRun) string
+		wantRunes    int
+		wantEllipsis bool
+	}{
+		{"task at the bound", line(400), 400, func(r *infoRun) string { return r.Guide.Task }, 400, false},
+		{"task past the bound", line(401), 400, func(r *infoRun) string { return r.Guide.Task }, 401, true},
+		{"files at the bound", line(400), 400, func(r *infoRun) string { return r.Guide.Files }, 400, false},
+		{"files past the bound", line(401), 400, func(r *infoRun) string { return r.Guide.Files }, 401, true},
+		{"overview at the bound", line(2048), 2048, func(r *infoRun) string { return r.Guide.Overview }, 2048, false},
+		{"overview past the bound", line(2049), 2048, func(r *infoRun) string { return r.Guide.Overview }, 2049, true},
+	} {
+		g := &manifest.Guide{}
+		switch {
+		case strings.HasPrefix(tc.name, "task"):
+			g.Task = tc.in
+		case strings.HasPrefix(tc.name, "files"):
+			g.Files = tc.in
+		default:
+			g.Overview = tc.in
+		}
+		got := tc.get(howToRun(&manifest.Manifest{Guide: g}))
+		if len([]rune(got)) != tc.wantRunes || strings.HasSuffix(got, "…") != tc.wantEllipsis {
+			t.Errorf("%s: %d runes (cut %v), want %d (cut %v)", tc.name, len([]rune(got)), strings.HasSuffix(got, "…"), tc.wantRunes, tc.wantEllipsis)
+		}
+	}
+
+	// A line of the guide is trimmed, an item to have ready that is blank is
+	// left out and one that is long is cut; a guide of nothing is no guide.
+	r := howToRun(&manifest.Manifest{Guide: &manifest.Guide{
+		Overview: "  \n Reads it.\n ", Prepare: []string{" ", "", line(401), " the address "},
+	}})
+	if r.Guide == nil || r.Guide.Overview != "Reads it." || !slices.Equal(r.Guide.Prepare, []string{line(400) + "…", "the address"}) {
+		t.Errorf("guide = %+v", r.Guide)
+	}
+	if r := howToRun(&manifest.Manifest{Guide: &manifest.Guide{Overview: "  ", Prepare: []string{" "}, Files: "\n"}}); r.Guide != nil {
+		t.Errorf("a blank guide is reported: %+v", r.Guide)
+	}
+
+	// A question's prompt is trimmed and cut at the same bound.
+	r = howToRun(&manifest.Manifest{Intake: []manifest.IntakeQuestion{
+		{ID: "a", Prompt: "  What?  "}, {ID: "b", Prompt: line(401)}, {ID: "c", Prompt: line(400)},
+	}})
+	if r.Intake[0].Prompt != "What?" || r.Intake[1].Prompt != line(400)+"…" || r.Intake[2].Prompt != line(400) {
+		t.Errorf("prompts = %q %d %d", r.Intake[0].Prompt, len([]rune(r.Intake[1].Prompt)), len([]rune(r.Intake[2].Prompt)))
+	}
+
+	// A key is listed once, whichever of the release and its servers declare
+	// it, and the key a secret question carries is not listed at all.
+	r = howToRun(&manifest.Manifest{
+		Capabilities: manifest.Capabilities{
+			Secrets:    []string{"A", "B", "ASKS"},
+			MCPServers: []manifest.MCPServer{{NPM: "x", Version: "1.0.0", Secrets: []string{"A", "C"}}},
+		},
+		Intake: []manifest.IntakeQuestion{{ID: "asks", Prompt: "p", Type: manifest.IntakeSecret}},
+	})
+	var keys []string
+	for _, s := range r.Secrets {
+		keys = append(keys, s.Name)
+	}
+	if !slices.Equal(keys, []string{"A", "B", "C"}) {
+		t.Errorf("keys = %v, want A B C", keys)
+	}
+
+	// A release that runs only as an interactive session says so.
+	var buf strings.Builder
+	only := &manifest.Manifest{Modes: []manifest.Mode{manifest.ModeInteractive}}
+	renderHowToRun(&buf, only, howToRun(only))
+	if !strings.Contains(buf.String(), "    it runs only as an interactive session\n") {
+		t.Errorf("an interactive-only release: %q", buf.String())
+	}
+	buf.Reset()
+	both := &manifest.Manifest{Modes: []manifest.Mode{manifest.ModeAutonomous, manifest.ModeInteractive}}
+	renderHowToRun(&buf, both, howToRun(both))
+	if strings.Contains(buf.String(), "interactive session") {
+		t.Errorf("a release that runs on its own is said to be interactive only: %q", buf.String())
 	}
 }

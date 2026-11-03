@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,17 +11,25 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
+	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
+	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/profile"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/session"
 	"github.com/blaktron/agentry-cli/pkg/runner/session/protocol"
+	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	"github.com/blaktron/agentry-cli/runnerimage/webscan"
 )
 
 // The command's half of the session protocol: the gates it lifts and
@@ -74,6 +83,16 @@ func TestSessionProtocolGates(t *testing.T) {
 		t.Errorf("--session-inputs missing: %v", err)
 	}
 
+	file := filepath.Join(t.TempDir(), "a-file")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = runCLI(t, strings.NewReader(""), append(base, "--mode", "interactive", "--session-protocol", "--session-inputs", file)...)
+	wantClassified(t, err, engine.ExitUsage)
+	if !strings.Contains(err.Error(), "--session-inputs "+file+" is not a directory") {
+		t.Errorf("--session-inputs a file: %v", err)
+	}
+
 	// No terminal and --output-format json pass; what stops the run is the
 	// missing descriptor, before docker is touched.
 	withProtocolEvents(t, nil, errors.New("--session-protocol writes its events to descriptor 3, and it is not open"))
@@ -120,6 +139,22 @@ func TestSessionProtocolReadsNoTaskFromStdin(t *testing.T) {
 	}
 	if r := runTask(cmd, runOpts{}); r == nil {
 		t.Errorf("without the flag, piped stdin is the task")
+	}
+	// A task file the driver names is read as for any run; a client of the
+	// Agent Client Protocol gives its task as its first prompt.
+	task := filepath.Join(t.TempDir(), "task.txt")
+	if err := os.WriteFile(task, []byte("look at this\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := runTask(cmd, runOpts{sessionProtocol: true, input: task})
+	if r == nil {
+		t.Fatal("the --input file is no task under the protocol")
+	}
+	if b, err := io.ReadAll(r); err != nil || string(b) != "look at this\n" {
+		t.Errorf("the task under the protocol = %q, %v", b, err)
+	}
+	if r := runTask(cmd, runOpts{acp: &acpRun{}, input: task}); r != nil {
+		t.Errorf("an ACP run reads a task reader")
 	}
 }
 
@@ -372,5 +407,158 @@ func TestBrokenPipesDoNotKillAProtocolSession(t *testing.T) {
 		if lived != c.lives {
 			t.Errorf("%s: lived=%v (%v), want %v", c.mode, lived, err, c.lives)
 		}
+	}
+}
+
+// TestRunHandsTheEngineWhatItsFlagsAsked: the session the command starts, and
+// the protocol it serves it with, carry what the command line named: the
+// budgets (a zero lifts the policy's cap, a zero timeout keeps the policy's),
+// the task and files, the folders, the attached packs, the review of inputs
+// and the live usage narration.
+func TestRunHandsTheEngineWhatItsFlagsAsked(t *testing.T) {
+	isolateEnv(t)
+	home, pol := isolateRunnerHome(t)
+	capped := policy.Default()
+	capped.Budgets.MaxTurns, capped.Budgets.MaxCostUSD = 40, 3
+	if err := policy.Save(pol, capped); err != nil {
+		t.Fatal(err)
+	}
+	fixture := repoPath(t, "testdata/runner/hello-chat")
+	work := t.TempDir()
+	t.Chdir(work)
+	taskFile := filepath.Join(work, "task.txt")
+	inputFile := filepath.Join(work, "notes.csv")
+	for f, body := range map[string]string{taskFile: "look at this\n", inputFile: "a,b\n"} {
+		if err := os.WriteFile(f, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	staged := filepath.Join(work, "staged")
+	if err := os.Mkdir(staged, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	var got engine.Params
+	var gotProto protocol.Options
+	var gotEvents io.Writer
+	events := &bytes.Buffer{}
+	oldStart, oldServe := startSession, serveProtocol
+	t.Cleanup(func() { startSession, serveProtocol = oldStart, oldServe })
+	startSession = func(_ context.Context, _ dockerx.Client, p engine.Params) (session.Session, error) {
+		got = p
+		if p.OnUsage != nil {
+			p.OnUsage(receipt.Usage{InputTokens: 4, OutputTokens: 1, Turns: 2})
+		}
+		return &endRecorder{}, nil
+	}
+	serveProtocol = func(_ context.Context, _ session.Session, _ io.Reader, w io.Writer, o protocol.Options) (*receipt.Envelope, error) {
+		gotProto, gotEvents = o, w
+		if o.OnUsage != nil {
+			o.OnUsage(receipt.Usage{InputTokens: 6, OutputTokens: 2, Turns: 1})
+		}
+		if o.OnDropped != nil {
+			o.OnDropped()
+		}
+		return &receipt.Envelope{Status: "ok", Result: receipt.TextResult("the result"), OutDir: "/out"}, nil
+	}
+	withProtocolEvents(t, events, nil)
+	run := func(extra ...string) (stdout, stderr string) {
+		t.Helper()
+		got, gotProto, gotEvents = engine.Params{}, protocol.Options{}, nil
+		args := append([]string{"run", "--local", fixture, "--allow-unsigned", "--yes", "--policy", pol,
+			"--mode", "interactive", "--session-protocol"}, extra...)
+		stdout, stderr, err := runCLI(t, strings.NewReader(""), args...)
+		if err != nil {
+			t.Fatalf("%v: %v\n%s", extra, err, stderr)
+		}
+		return stdout, stderr
+	}
+
+	stdout, stderr := run()
+	if got.Budgets != (spec.Budgets{TimeoutSeconds: 1800, MaxTurns: 40, MaxCostUSD: 3}) {
+		t.Errorf("the policy's budgets = %+v", got.Budgets)
+	}
+	if got.Task != nil || len(got.InputPaths) != 0 || len(got.Knowledge) != 0 || got.KeepRunDir || got.DeliverTo != "" || got.InputReview != nil {
+		t.Errorf("a bare run was handed %+v", got)
+	}
+	if !got.Hosted {
+		t.Error("a run driven by the protocol is not marked hosted")
+	}
+	if got.Attestation.State != "local" || got.PolicyFile == nil || got.PolicyFile.Path != pol || got.Adapter == nil || got.RunID == "" || got.RunnerHome != home {
+		t.Errorf("the release, policy and runner home were not handed on: %s %+v %s", got.Attestation.State, got.PolicyFile, got.RunID)
+	}
+	if want := filepath.Join(work, "agentry-out", "fixtures-hello-chat-"+got.RunID); got.OutDir != want {
+		t.Errorf("OutDir = %q, want %q", got.OutDir, want)
+	}
+	if got.OnUsage != nil || got.Events != nil || gotProto.OnUsage != nil {
+		t.Error("a text run narrates its usage")
+	}
+	if gotProto.OpeningTurn || gotProto.InputsDir != "" || gotEvents != io.Writer(events) {
+		t.Errorf("protocol options %+v, events %v", gotProto, gotEvents)
+	}
+	if stdout != "the result\n" || !strings.Contains(stderr, "session protocol: the events reader stopped taking events; the rest are in the receipts only\n") {
+		t.Errorf("stdout %q, stderr %q", stdout, stderr)
+	}
+
+	run("--timeout", "120", "--max-turns", "7", "--max-cost", "1.5")
+	if got.Budgets != (spec.Budgets{TimeoutSeconds: 120, MaxTurns: 7, MaxCostUSD: 1.5}) {
+		t.Errorf("overridden budgets = %+v", got.Budgets)
+	}
+	run("--timeout", "0", "--max-turns", "0", "--max-cost", "0")
+	if got.Budgets != (spec.Budgets{TimeoutSeconds: 1800}) {
+		t.Errorf("zero budgets = %+v: a zero turn or cost cap is unlimited, a zero timeout is no override", got.Budgets)
+	}
+
+	outDir := filepath.Join(t.TempDir(), "out")
+	delivery := t.TempDir()
+	stdout, stderr = run("--input", taskFile, "--file", inputFile, "--out", outDir, "--deliver-to", delivery, "--keep-run-dir",
+		"--knowledge", handMadePack(t, "runbooks"), "--session-inputs", staged, "--output-format", "json")
+	if task, err := io.ReadAll(got.Task); err != nil || string(task) != "look at this\n" {
+		t.Errorf("task %q, %v", task, err)
+	}
+	if !slices.Equal(got.InputPaths, []string{inputFile}) || got.OutDir != outDir || got.DeliverTo != delivery || !got.KeepRunDir {
+		t.Errorf("inputs %v, out %q, deliver-to %q, keep-run-dir %v", got.InputPaths, got.OutDir, got.DeliverTo, got.KeepRunDir)
+	}
+	if len(got.Knowledge) != 1 || got.Knowledge[0].Name != "runbooks" {
+		t.Errorf("attached packs = %+v", got.Knowledge)
+	}
+	if !gotProto.OpeningTurn || gotProto.InputsDir != staged || got.OnUsage == nil || gotProto.OnUsage == nil {
+		t.Errorf("protocol options %+v", gotProto)
+	}
+	for _, line := range []string{"usage: input=4 output=1 total=5 turns=2\n", "usage: input=6 output=2 total=8 turns=1\n"} {
+		if !strings.Contains(stderr, line) {
+			t.Errorf("stderr lacks %q:\n%s", line, stderr)
+		}
+	}
+	var env receipt.Envelope
+	if err := json.Unmarshal([]byte(stdout), &env); err != nil || env.Status != "ok" {
+		t.Errorf("stdout is not the envelope: %q (%v)", stdout, err)
+	}
+
+	// The profile's secrets are the engine's overrides.
+	local, err := localrun.LocalMeta(fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := profile.New(local.Ref, local.Digest, true, map[string]string{"API_TOKEN": "profile-value"})
+	if err := stored.Save(profile.Dir(home, local.Namespace, local.Name, local.Version, installdir.DigestSuffix(local.Digest))); err != nil {
+		t.Fatal(err)
+	}
+	run()
+	if !reflect.DeepEqual(got.SecretOverrides, map[string]string{"API_TOKEN": "profile-value"}) {
+		t.Errorf("secret overrides = %v", got.SecretOverrides)
+	}
+
+	// A profile that is not to be kept goes with the run.
+	_, stderr = run("--keep-profile", "false")
+	if _, err := os.Stat(profile.Dir(home, local.Namespace, local.Name, local.Version, installdir.DigestSuffix(local.Digest))); !os.IsNotExist(err) ||
+		!strings.Contains(stderr, "MCP profile removed (run completed with keep-profile=false)\n") {
+		t.Errorf("the profile a run was to drop: %v\n%s", err, stderr)
+	}
+
+	t.Setenv(envJobToken, "job-credential")
+	run("--review-inputs", "http://127.0.0.1:9")
+	if r, ok := got.InputReview.(*webscan.Registry); !ok || r.Base != "http://127.0.0.1:9" || r.JobToken != "job-credential" {
+		t.Errorf("input review = %#v", got.InputReview)
 	}
 }

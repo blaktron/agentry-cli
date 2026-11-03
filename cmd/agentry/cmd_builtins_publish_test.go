@@ -8,9 +8,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/blaktron/agentry/pkg/manifest"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 )
@@ -33,6 +36,13 @@ type builtinsRegistry struct {
 	review bool
 	// refuseMark answers 403 to the built-in mark: a token without staff.
 	refuseMark bool
+	// versionStatus and agentStatus answer the lookups of a version and of an
+	// agent with that status; refuseUpload answers 403 to the upload alone;
+	// ignoreMark answers the mark without it; builtDigest is the digest the
+	// registry says it built from an upload.
+	versionStatus, agentStatus int
+	refuseUpload, ignoreMark   bool
+	builtDigest                string
 	// marks records each agent the mark was sent for.
 	marks   []string
 	created []map[string]any
@@ -57,6 +67,10 @@ func newBuiltinsRegistry(t *testing.T) *builtinsRegistry {
 		br.mu.Lock()
 		d, ok := br.versions[r.PathValue("ns")+"/"+r.PathValue("name")+"@"+r.PathValue("v")]
 		br.mu.Unlock()
+		if br.versionStatus != 0 {
+			writeProblem(w, br.versionStatus, "version lookup failed", "")
+			return
+		}
 		if !ok {
 			writeProblem(w, http.StatusNotFound, "version not found", "")
 			return
@@ -71,6 +85,10 @@ func newBuiltinsRegistry(t *testing.T) *builtinsRegistry {
 		br.mu.Lock()
 		marked, ok := br.agents[r.PathValue("ns")+"/"+r.PathValue("name")]
 		br.mu.Unlock()
+		if br.agentStatus != 0 {
+			writeProblem(w, br.agentStatus, "agent lookup failed", "")
+			return
+		}
 		if !ok {
 			writeProblem(w, http.StatusNotFound, "agent not found", "")
 			return
@@ -89,6 +107,10 @@ func newBuiltinsRegistry(t *testing.T) *builtinsRegistry {
 		}
 		if br.refuseMark {
 			writeProblem(w, http.StatusForbidden, "Access denied", "Marking or unmarking a QuickAgent as built-in is open to platform staff only.")
+			return
+		}
+		if br.ignoreMark {
+			writeJSON(w, http.StatusOK, agentDoc(r.PathValue("ns"), r.PathValue("name"), false))
 			return
 		}
 		br.mu.Lock()
@@ -111,7 +133,7 @@ func newBuiltinsRegistry(t *testing.T) *builtinsRegistry {
 		writeJSON(w, http.StatusCreated, agentDoc(body["namespace"].(string), body["name"].(string), false))
 	})
 	mux.HandleFunc("POST /api/v1/agents/{ns}/{name}/versions", func(w http.ResponseWriter, r *http.Request) {
-		if br.refuse {
+		if br.refuse || br.refuseUpload {
 			writeProblem(w, http.StatusForbidden, "Forbidden", "no publish right on this agent")
 			return
 		}
@@ -152,6 +174,9 @@ func newBuiltinsRegistry(t *testing.T) *builtinsRegistry {
 		br.uploads = append(br.uploads, got)
 		br.acks[r.PathValue("ns")+"/"+r.PathValue("name")] = ack
 		br.mu.Unlock()
+		if br.builtDigest != "" {
+			got = br.builtDigest
+		}
 		writeJSON(w, http.StatusAccepted, version(v, status, got))
 	})
 	br.srv = httptest.NewServer(mux)
@@ -182,6 +207,20 @@ func builtinShips(t *testing.T, b localrun.Builtin) []string {
 		t.Fatal(err)
 	}
 	return m.ShippedPacks()
+}
+
+// builtinManifest is the manifest of a built-in's tree.
+func builtinManifest(t *testing.T, b localrun.Builtin) *manifest.Manifest {
+	t.Helper()
+	dir := t.TempDir()
+	if err := b.Stage(dir); err != nil {
+		t.Fatal(err)
+	}
+	m, err := localrun.ManifestFrom(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
 }
 
 func builtinDigests(t *testing.T) map[string]string {
@@ -221,6 +260,18 @@ func TestBuiltinsPublishUploadsTheEmbeddedBytes(t *testing.T) {
 		c := br.created[i]
 		if c["namespace"] != b.Namespace() || c["name"] != b.Name() || c["visibility"] != "public" {
 			t.Errorf("%s: created %v", b.Ref(), c)
+		}
+		// It is created with the manifest's own summary and run modes.
+		bm := builtinManifest(t, b)
+		var wantModes []any
+		for _, md := range bm.SupportedModes() {
+			wantModes = append(wantModes, string(md))
+		}
+		if c["summary"] != bm.Summary || !reflect.DeepEqual(c["modes"], wantModes) {
+			t.Errorf("%s: created with summary %v modes %v, want %q %v", b.Ref(), c["summary"], c["modes"], bm.Summary, wantModes)
+		}
+		if !strings.Contains(stdout, "created "+b.Namespace()+"/"+b.Name()+", public\n") {
+			t.Errorf("%s: creation not said in %q", b.Ref(), stdout)
 		}
 		if !strings.Contains(stdout, "published "+b.Ref()) {
 			t.Errorf("no verdict for %s in %q", b.Ref(), stdout)
@@ -286,6 +337,16 @@ func TestBuiltinsPublishFailsWhenTheMarkIsRefused(t *testing.T) {
 	if len(br.uploads) != 0 {
 		t.Errorf("uploaded %v", br.uploads)
 	}
+
+	// A registry that answers the mark without it is not trusted to have it.
+	br.refuseMark, br.ignoreMark = false, true
+	_, stderr, err = runCLI(t, nil, "--registry", br.srv.URL, "builtins", "publish")
+	if err == nil || !strings.Contains(err.Error(), allNotPublished()) || !strings.Contains(stderr, "without it: does it carry the built-in attribute?") {
+		t.Fatalf("a mark answered without it: err = %v stderr %s", err, stderr)
+	}
+	if len(br.uploads) != 0 {
+		t.Errorf("uploaded %v", br.uploads)
+	}
 }
 
 // TestBuiltinsPublishSkipsWhatTheRegistryHas: a version the registry holds
@@ -307,7 +368,7 @@ func TestBuiltinsPublishSkipsWhatTheRegistryHas(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("1 of %d built-ins not published: %s", len(localrun.Builtins()), drafter)) {
 		t.Fatalf("err = %v", err)
 	}
-	if !strings.Contains(stdout, creator+" already in the registry") || !strings.Contains(stderr, "never rebuilt") {
+	if !strings.Contains(stdout, creator+" already in the registry (published, "+want[creator]+")\n") || !strings.Contains(stderr, drafter+": the registry holds this version as sha256:0000") || !strings.Contains(stderr, "never rebuilt") {
 		t.Errorf("stdout %s stderr %s", stdout, stderr)
 	}
 	if len(br.uploads) != 0 {
@@ -334,6 +395,55 @@ func TestBuiltinsPublishNeedsTheNamespace(t *testing.T) {
 	}
 	if len(br.uploads) != 0 || len(br.created) != 0 {
 		t.Errorf("uploads %v created %v", br.uploads, br.created)
+	}
+
+	// Without a credential nothing is asked of the registry at all.
+	br.refuse = false
+	t.Setenv(envToken, "")
+	if _, _, err := runCLI(t, nil, "--registry", br.srv.URL, "builtins", "publish"); err == nil || !strings.Contains(err.Error(), "no credential for") || !strings.Contains(err.Error(), "agentry login") {
+		t.Errorf("without a credential: %v", err)
+	}
+	t.Setenv(envToken, "agy_testtoken")
+	if len(br.uploads) != 0 || len(br.created) != 0 {
+		t.Errorf("uploads %v created %v", br.uploads, br.created)
+	}
+
+	// A lookup the registry fails is a failure, not a reason to create or upload.
+	br.versionStatus = http.StatusInternalServerError
+	for ref := range builtinDigests(t) {
+		br.versions[ref] = "sha256:0000"
+	}
+	for _, b := range localrun.Builtins() {
+		br.agents[b.Namespace()+"/"+b.Name()] = true
+	}
+	_, stderr, err = runCLI(t, nil, "--registry", br.srv.URL, "builtins", "publish")
+	if err == nil || !strings.Contains(err.Error(), allNotPublished()) || !strings.Contains(stderr, "look up ") || !strings.Contains(stderr, "HTTP 500") {
+		t.Errorf("a failed version lookup: err = %v stderr %s", err, stderr)
+	}
+	br.versionStatus, br.agentStatus = 0, http.StatusInternalServerError
+	_, stderr, err = runCLI(t, nil, "--registry", br.srv.URL, "builtins", "publish")
+	if err == nil || !strings.Contains(err.Error(), allNotPublished()) || !strings.Contains(stderr, "look up ") || !strings.Contains(stderr, "HTTP 500") {
+		t.Errorf("a failed agent lookup: err = %v stderr %s", err, stderr)
+	}
+	if len(br.uploads) != 0 || len(br.created) != 0 {
+		t.Errorf("uploads %v created %v", br.uploads, br.created)
+	}
+
+	// An upload the registry refuses is a failure, reported with the registry's words.
+	br.agentStatus = 0
+	br.versions = map[string]string{}
+	br.refuseUpload = true
+	_, stderr, err = runCLI(t, nil, "--registry", br.srv.URL, "builtins", "publish")
+	if err == nil || !strings.Contains(err.Error(), allNotPublished()) || !strings.Contains(stderr, "submit ") || !strings.Contains(stderr, "no publish right on this agent") {
+		t.Errorf("a refused upload: err = %v stderr %s", err, stderr)
+	}
+
+	// So is a build of another digest than the one claimed.
+	br.refuseUpload = false
+	br.builtDigest = "sha256:" + strings.Repeat("f", 64)
+	_, stderr, err = runCLI(t, nil, "--registry", br.srv.URL, "builtins", "publish")
+	if err == nil || !strings.Contains(err.Error(), allNotPublished()) || !strings.Contains(stderr, "the registry built "+br.builtDigest+" from the upload, not ") {
+		t.Errorf("a build of another digest: err = %v stderr %s", err, stderr)
 	}
 }
 
@@ -370,6 +480,33 @@ func TestBuiltinsPublishFailsOnARejectedVersion(t *testing.T) {
 	_, stderr, err := runCLI(t, nil, "--registry", br.srv.URL, "builtins", "publish")
 	if err == nil || !strings.Contains(err.Error(), allNotPublished()) || !strings.Contains(stderr, "state rejected") {
 		t.Fatalf("err = %v stderr %s", err, stderr)
+	}
+	if len(br.uploads) != 0 {
+		t.Errorf("uploaded %v", br.uploads)
+	}
+
+	// A version burned in any other way fails the same; one that is held or
+	// on its way to being published, in whatever state, is left alone.
+	for _, state := range []string{"quarantined", "blocked", "yanked"} {
+		br.state = state
+		_, stderr, err := runCLI(t, nil, "--registry", br.srv.URL, "builtins", "publish")
+		if err == nil || !strings.Contains(err.Error(), allNotPublished()) || !strings.Contains(stderr, "state "+state+": the built-in needs a new version") {
+			t.Errorf("%s: err = %v stderr %s", state, err, stderr)
+		}
+	}
+	want := builtinDigests(t)
+	for _, state := range []string{"published", "needs_review", "submitted", "scanning", "approved"} {
+		br.state = state
+		stdout, stderr, err := runCLI(t, nil, "--registry", br.srv.URL, "builtins", "publish")
+		if err != nil {
+			t.Errorf("%s: %v (stderr %s)", state, err, stderr)
+			continue
+		}
+		for ref, d := range want {
+			if !strings.Contains(stdout, ref+" already in the registry ("+state+", "+d+")\n") {
+				t.Errorf("%s: %s not said to be held in %q", state, ref, stdout)
+			}
+		}
 	}
 	if len(br.uploads) != 0 {
 		t.Errorf("uploaded %v", br.uploads)

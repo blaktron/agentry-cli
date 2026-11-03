@@ -227,6 +227,12 @@ func newRunCmd() *cobra.Command {
 				ref = args[0]
 			}
 			opts.progress = &runProgress{stage: receipt.StagePolicy, ref: ref}
+			// The root --json asks for the result envelope here as well as
+			// in runRun, which takes the options by value: the failure
+			// envelope below is printed under either flag.
+			if flags.jsonOut && !opts.plan && !opts.dryRun && opts.outputFormat == "text" {
+				opts.outputFormat = "json"
+			}
 			err := runRun(cmd, ref, opts)
 			if err != nil {
 				if opts.outputFormat == "json" && !opts.progress.printed {

@@ -689,7 +689,9 @@
           "fuzz": [],
           "benchmarks": [],
           "fixtureEntryPoint": false,
-          "dependencyHints": []
+          "dependencyHints": [
+            "source/file contract"
+          ]
         },
         {
           "path": "cmd/agentry/builtin_budgets_test.go",
@@ -750,7 +752,9 @@
           "fuzz": [],
           "benchmarks": [],
           "fixtureEntryPoint": false,
-          "dependencyHints": []
+          "dependencyHints": [
+            "HTTP transport"
+          ]
         },
         {
           "path": "cmd/agentry/cmd_info_test.go",
@@ -849,14 +853,15 @@
             "TestInstallRefusesAnEscapingSkillEntrypoint",
             "TestPrepareDestRefusesWhatItMustNeverClear",
             "TestInstallUnscannedGate",
-            "TestInstallHoldsTheArchiveToTheConsentedContract"
+            "TestInstallHoldsTheArchiveToTheConsentedContract",
+            "TestInstallRefusesAnArchiveBomb"
           ],
           "fuzz": [],
           "benchmarks": [],
           "fixtureEntryPoint": false,
           "dependencyHints": [
-            "source/file contract",
-            "explicit skip"
+            "HTTP transport",
+            "source/file contract"
           ]
         },
         {
@@ -946,7 +951,9 @@
           "fuzz": [],
           "benchmarks": [],
           "fixtureEntryPoint": false,
-          "dependencyHints": []
+          "dependencyHints": [
+            "HTTP transport"
+          ]
         },
         {
           "path": "cmd/agentry/cmd_yank_test.go",
@@ -957,7 +964,9 @@
           "fuzz": [],
           "benchmarks": [],
           "fixtureEntryPoint": false,
-          "dependencyHints": []
+          "dependencyHints": [
+            "HTTP transport"
+          ]
         },
         {
           "path": "cmd/agentry/guide_test.go",
@@ -1049,6 +1058,7 @@
           "path": "cmd/agentry/attack_acp_test.go",
           "tests": [
             "TestAttackConsentTextCannotBeForgedByManifestText",
+            "TestAttackConsentSummaryIsOneLineWhateverTheManifestGateDid",
             "TestAttackConsentTitleAndTextHaveNoHiddenCharacters"
           ],
           "fuzz": [],
@@ -1063,6 +1073,9 @@
           "tests": [
             "TestAgentryACPDoesNotStartARunTheClientDidNotConsentTo",
             "TestAgentryACPAsksForConsentAndShowsThePlan",
+            "TestAgentryACPRunsWhatTheClientConsentedTo",
+            "TestAgentryACPRefusesAReleaseChangedWhileTheClientConsidered",
+            "TestAgentryACPConsentTextComparesWithWhatWasAcceptedBefore",
             "TestAgentryACPYesAsksNoOneButStillShowsThePlan",
             "TestAgentryACPRefusesBadFlagsBeforeServing",
             "TestAgentryACPServesAnInteractiveSession"
@@ -1072,6 +1085,7 @@
           "fixtureEntryPoint": false,
           "dependencyHints": [
             "docker interface (real or fake)",
+            "source/file contract",
             "real-time wait"
           ]
         },
@@ -1106,7 +1120,8 @@
           "path": "cmd/agentry/cmd_run_interactive_test.go",
           "tests": [
             "TestRunInteractiveTearsDownWhenTheChatPanics",
-            "TestRunInteractiveTearsDownWhenTheChatReturnsEarly"
+            "TestRunInteractiveTearsDownWhenTheChatReturnsEarly",
+            "TestRunInteractiveHandsTheChatWhatItNeeds"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -1146,12 +1161,14 @@
             "TestSessionProtocolOpeningTurnFollowsTheTask",
             "TestProtocolEventsDescriptor",
             "TestRunProtocolStreams",
-            "TestBrokenPipesDoNotKillAProtocolSession"
+            "TestBrokenPipesDoNotKillAProtocolSession",
+            "TestRunHandsTheEngineWhatItsFlagsAsked"
           ],
           "fuzz": [],
           "benchmarks": [],
           "fixtureEntryPoint": false,
           "dependencyHints": [
+            "docker interface (real or fake)",
             "child process",
             "source/file contract",
             "real-time wait",
@@ -1166,7 +1183,9 @@
           "fuzz": [],
           "benchmarks": [],
           "fixtureEntryPoint": false,
-          "dependencyHints": []
+          "dependencyHints": [
+            "source/file contract"
+          ]
         },
         {
           "path": "cmd/agentry/cmd_run_secrets_test.go",
@@ -1200,7 +1219,9 @@
             "TestAgentryRunRefusesASignInForAHostedRun",
             "TestAgentryRunRefusesACostBudgetForAPlanRun",
             "TestAgentryRunHandsItsSignInsAccessTokenAlone",
-            "TestAgentryRunRefusesATargetHostForAHostedRun"
+            "TestAgentryRunRefusesATargetHostForAHostedRun",
+            "TestAgentryRunAppendsTheLiveEventsToTheNamedFile",
+            "TestAgentryRunRemovesAProfileThatIsNotKept"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -1226,6 +1247,8 @@
             "TestRunLocalDryRunDeterministic",
             "TestRunWildcardEgressPolicyRefusal",
             "TestRunFailingBeforeTheEngineNamesItsStage",
+            "TestRunNeedsTheEngineBeforeItInstallsAnything",
+            "TestRunFailingBeforeTheEngineNamesTheRefItWasAskedFor",
             "TestAnInterruptedRunBeforeTheEngineSaysSo",
             "TestARefusalBeforeTheEnginesEnvelopeNamesWhatItsErrorNames",
             "TestRunUnknownAdapterIsCLIError",
@@ -1243,7 +1266,9 @@
             "TestRunUnscannedIsItsOwnConsent",
             "TestReceiptRecordsTheConsent",
             "TestRunStaleCacheDefersToTheRegistry",
-            "TestEnsurePlanRecompilesUnderAnotherPolicy"
+            "TestEnsurePlanRecompilesUnderAnotherPolicy",
+            "TestRunSaysWhatItFoundOfTheSignature",
+            "TestRunReceiptNamesTheConsentThatAdmittedARegistryRelease"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -1273,7 +1298,8 @@
           "path": "cmd/agentry/cmd_runnertools_test.go",
           "tests": [
             "TestRunnerToolsSpecGuards",
-            "TestRunnerToolsServeSmoke"
+            "TestRunnerToolsServeSmoke",
+            "TestRunnerToolsAndConfineStayHiddenAndConfineTakesItsArgumentsAsTheyCome"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -1300,6 +1326,7 @@
           "path": "cmd/agentry/nextsteps_test.go",
           "tests": [
             "TestInstallNextStepsNameTheQuestionsAndFiles",
+            "TestNextStepsBlockNamesWhatFollows",
             "TestNextStepsAreSilentUnderJSON"
           ],
           "fuzz": [],
@@ -1318,7 +1345,9 @@
           "fuzz": [],
           "benchmarks": [],
           "fixtureEntryPoint": false,
-          "dependencyHints": []
+          "dependencyHints": [
+            "source/file contract"
+          ]
         },
         {
           "path": "cmd/agentry/run_summary_test.go",
@@ -1329,6 +1358,7 @@
             "TestTheSummaryShowsNoTerminalControlCharacters",
             "TestAFailureReportNamesTheClassCauseReceiptsAndRetry",
             "TestAReportedFailureKeepsItsClassAndText",
+            "TestAFailedRunIsExplainedOnlyOnceItBegan",
             "TestRunHelpListsEveryExitClass",
             "TestHumanDuration",
             "TestTheDryRunSummaryReadsThePlan",
@@ -1357,7 +1387,8 @@
           "tests": [
             "TestRunGrantReachesOnlyTheRegistryHost",
             "TestNoRunGrantLeavesTheTransport",
-            "TestRunGrantInstalledReachesTheCLIsClient"
+            "TestRunGrantInstalledReachesTheCLIsClient",
+            "TestRunGrantOriginIsTheRegistrysSchemeAndHost"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -6072,6 +6103,7 @@
           "tests": [
             "TestAPersistentClaudeSegmentNamesItsConversation",
             "TestAPersistentClaudeSegmentStartsAnewWhenItsConversationIsGone",
+            "TestAPersistentClaudeSegmentRemovesAHarnessThatOutlivesItsInput",
             "TestAPersistentClaudeSegmentTakesOnlyAConversationIDItsHarnessNames"
           ],
           "fuzz": [],

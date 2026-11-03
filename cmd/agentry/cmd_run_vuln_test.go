@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/blaktron/agentry/pkg/manifest"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/mcpinstall"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
@@ -45,6 +47,31 @@ func TestVulnerabilityVerdict(t *testing.T) {
 	line, err = vulnerabilityVerdict([]mcpinstall.VulnStatus{bad}, "https://reg.example", false, true)
 	if err != nil || !strings.HasSuffix(line, "; run allowed by policy mcpServers.allowVulnerable") {
 		t.Fatalf("policy override: %q %v", line, err)
+	}
+	// Both overrides: the flag is the one named. Neither is named where
+	// nothing needed one.
+	line, err = vulnerabilityVerdict([]mcpinstall.VulnStatus{bad}, "https://reg.example", true, true)
+	if err != nil || !strings.HasSuffix(line, "; run allowed by --allow-vulnerable-mcp") {
+		t.Fatalf("both overrides: %q %v", line, err)
+	}
+	line, err = vulnerabilityVerdict([]mcpinstall.VulnStatus{ok}, "https://reg.example", true, true)
+	if err != nil || strings.Contains(line, "allowed by") {
+		t.Fatalf("an override beside a clean server: %q %v", line, err)
+	}
+	// The refusal says how to lift it, both ways, and names every refusing
+	// server, each with all the versions that fix it.
+	_, err = vulnerabilityVerdict([]mcpinstall.VulnStatus{bad}, "https://reg.example", false, false)
+	if err == nil || !strings.HasSuffix(err.Error(), "pin a fixed version, or override with --allow-vulnerable-mcp or policy mcpServers.allowVulnerable") {
+		t.Fatalf("how to lift the refusal: %v", err)
+	}
+	worse := mcpinstall.VulnStatus{Ref: "pypi:requests@2.0.0", Server: "pypi:requests", Status: "vulnerable", MaxSeverity: "high",
+		Advisories: []mcpinstall.VulnAdvisory{{ID: "GHSA-aaaa-bbbb-cccc", Severity: "high", FixedIn: []string{"2.0.1", "2.1.0"}}}}
+	_, err = vulnerabilityVerdict([]mcpinstall.VulnStatus{bad, ok, worse}, "https://reg.example", false, false)
+	if err == nil || !strings.Contains(err.Error(), "npm:minimist@1.2.5 has a known critical vulnerability (GHSA-xvch-5gv4-984h), fixed in 1.2.6; pypi:requests@2.0.0 has a known high vulnerability (GHSA-aaaa-bbbb-cccc), fixed in 2.0.1, 2.1.0 — pin") {
+		t.Fatalf("two refusing servers: %v", err)
+	}
+	if got, want := receipt.ReasonOf(err), (&receipt.Reason{Code: receipt.ReasonMCPVulnerable, Names: []string{"npm:minimist", "pypi:requests"}}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("reason = %+v, want %+v", got, want)
 	}
 }
 
@@ -95,7 +122,11 @@ func TestRunPlanReportsEveryRefusal(t *testing.T) {
 	fr.scans = map[string]string{"@acme/osv-mcp": `{"status":"vulnerable","maxSeverity":"critical",` +
 		`"advisories":[{"id":"GHSA-test-0001","severity":"critical","summary":"s","fixedIn":["1.2.4"]}]}`}
 	prev := serverResolutions
+	var resolveErr error
 	serverResolutions = func(context.Context, io.Writer, string, *policy.Policy, *manifest.Manifest) ([]mcpinstall.Resolved, error) {
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
 		return []mcpinstall.Resolved{{Source: "npm", Package: "@acme/osv-mcp", Version: "1.2.3", ID: "npm-acme-osv-mcp",
 			BinName: "osv-mcp", Integrity: "sha512-test"}}, nil
 	}
@@ -138,6 +169,10 @@ func TestRunPlanReportsEveryRefusal(t *testing.T) {
 	if !strings.Contains(stdout, `"kind":"vulnerable_server"`) {
 		t.Fatalf("kind on the wire:\n%s", stdout)
 	}
+	// The verdict is recorded in the plan, whatever the refusal.
+	if !strings.Contains(string(out.Plan), "mcpServers.vulnerabilities") || !strings.Contains(string(out.Plan), "checked against "+fr.url()+": ") {
+		t.Fatalf("the plan does not record the registry's verdict:\n%s", out.Plan)
+	}
 
 	// With the unsigned gate lifted, the vulnerability is what remains.
 	out, _ = plan("--allow-unsigned")
@@ -148,5 +183,52 @@ func TestRunPlanReportsEveryRefusal(t *testing.T) {
 	_, stdout = plan("--allow-unsigned", "--allow-vulnerable-mcp")
 	if strings.Contains(stdout, `"refusal`) {
 		t.Fatalf("a plan with nothing to refuse carries a refusal field:\n%s", stdout)
+	}
+
+	// A run, as against the preview, stops at the refusal: with the policy
+	// class, naming the advisory, before anything is compiled.
+	dry := func(extra ...string) (string, string, error) {
+		args := append([]string{"--registry", fr.url(), "--json", "run", "--local", ws, "--dry-run", "--allow-unsigned", "--yes", "--policy", policyPath}, extra...)
+		return runCLI(t, strings.NewReader(""), args...)
+	}
+	_, stderr, err := dry()
+	wantClassified(t, err, engine.ExitPolicy)
+	if !strings.Contains(err.Error(), "GHSA-test-0001") || !strings.Contains(err.Error(), "--allow-vulnerable-mcp") {
+		t.Fatalf("a vulnerable server ran: %v", err)
+	}
+	if !strings.Contains(stderr, "declared MCP servers, per the registry: ") {
+		t.Errorf("stderr does not say what the registry answered: %q", stderr)
+	}
+	// Lifted by the flag or by the policy, the run goes on, and the plan it
+	// compiled says on what footing.
+	enforcement := func(stdout string) string {
+		t.Helper()
+		var plan struct {
+			Enforcement map[string]string `json:"enforcement"`
+		}
+		if err := json.Unmarshal([]byte(stdout), &plan); err != nil {
+			t.Fatalf("not the plan: %v\n%s", err, stdout)
+		}
+		return plan.Enforcement["mcpServers.vulnerabilities"]
+	}
+	stdout, _, err = dry("--allow-vulnerable-mcp")
+	if err != nil || !strings.HasPrefix(enforcement(stdout), "checked against "+fr.url()+": ") || !strings.HasSuffix(enforcement(stdout), "; run allowed by --allow-vulnerable-mcp") {
+		t.Fatalf("with the flag: %v\n%s", err, stdout)
+	}
+	allowing := policy.Default()
+	allowing.MCPServers.AllowVulnerable = true
+	if err := policy.Save(policyPath, allowing); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, err = dry()
+	if err != nil || !strings.HasSuffix(enforcement(stdout), "; run allowed by policy mcpServers.allowVulnerable") {
+		t.Fatalf("with the policy: %v\n%s", err, stdout)
+	}
+	// A server whose pins cannot be resolved fails the run's verification.
+	resolveErr = errors.New("registry unreachable")
+	_, _, err = dry("--allow-vulnerable-mcp")
+	wantClassified(t, err, engine.ExitVerify)
+	if !strings.Contains(err.Error(), "registry unreachable") {
+		t.Errorf("err = %v", err)
 	}
 }

@@ -131,7 +131,9 @@ func (s *Staged) Meta() *installdir.Meta {
 // coding-agent export in style (installdir.StyleForHome's, as a registry
 // install writes it), records it in installed.yaml as a local install of
 // this digest under the runner's consent key, and removes the agent's
-// other releases, as an install of a newer version does. It is called once
+// other releases, as an install of a newer version does. An installed.yaml
+// that cannot be read is rewritten holding this record alone, as a
+// registry install treats it as a first install. It is called once
 // the person has consented to s.Manifest's contract; it asks nothing, and
 // refuses a staged tree whose manifest no longer matches what was shown.
 // An installed copy of the same digest whose files changed is refused
@@ -170,9 +172,12 @@ func (s *Staged) layDown(home, style string, repair bool) (string, error) {
 		}
 		return "", err
 	}
+	// An installed.yaml that cannot be read is replaced, as a registry
+	// install replaces it, so the release just laid down has a record
+	// naming it. The caller says so before the install goes on.
 	st, err := installed.Load()
 	if err != nil {
-		return releaseDir, fmt.Errorf("installed into %s, but its record could not be read: %w", releaseDir, err)
+		st = installed.State{}
 	}
 	key := installdir.ConsentKey(home, m.Namespace, m.Name)
 	st.Upsert(key, m.Version, installed.Snapshot(m.Contract()), true)
