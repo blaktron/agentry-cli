@@ -171,8 +171,8 @@ func TestVoiceChangedAfterVerificationIsRefused(t *testing.T) {
 	p.Voice = v
 	_, err := Run(context.Background(), f, p)
 	var ce *ClassifiedError
-	if !errors.As(err, &ce) || ce.Code != ExitVerify {
-		t.Fatalf("err = %v, want the verify class", err)
+	if !errors.As(err, &ce) || ce.Code != ExitVerify || !strings.Contains(err.Error(), "the Writing Voice changed after it was verified (verified "+v.Digest) {
+		t.Fatalf("err = %v, want the verify class naming the digest verified", err)
 	}
 }
 

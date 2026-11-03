@@ -27,6 +27,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/session"
+	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	runnerdecode "github.com/blaktron/agentry-cli/runnerimage/decode"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
@@ -397,6 +398,43 @@ func TestASessionsAddedFileIsDecodedBeforeItIsAnnounced(t *testing.T) {
 	if line := env.CapabilitiesEnforced["decode"]; !strings.Contains(line, "1 decoded") {
 		t.Fatalf("decode line %q", line)
 	}
+	// A decode that reports a file that was not added is refused: nothing
+	// outside the added name is indexed.
+	t.Run("a decode that reports another file", func(t *testing.T) {
+		saved := runDecode
+		t.Cleanup(func() { runDecode = saved })
+		runDecode = func(_ context.Context, _ dockerx.Client, img decode.Image, in, out string, _ policy.Limits, _ decode.Options, _ io.Writer) (*decode.Result, error) {
+			return &decode.Result{Image: img, In: in, Out: out, Report: runnerdecode.Report{Schema: runnerdecode.Schema, Files: []runnerdecode.File{
+				{Path: "note.txt", Family: runnerdecode.FamilyText, Outcome: runnerdecode.OutcomeText},
+				{Path: "other.txt", Family: runnerdecode.FamilyText, Outcome: runnerdecode.OutcomeText},
+			}}}, nil
+		}
+		s2, _, p2, _ := startFixture(t)
+		_, done2 := collect(s2)
+		err := s2.AddInput(context.Background(), writeInput(t, t.TempDir(), "note.txt", "hello"))
+		if err == nil || !strings.Contains(err.Error(), "the decode reported other.txt, which is not note.txt") {
+			t.Errorf("err %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(p2.RunRoot, "runs", p2.RunID, "inputs", "note.txt")); !os.IsNotExist(err) {
+			t.Errorf("the refused file was staged: %v", err)
+		}
+		if _, err := s2.End(context.Background(), false); err != nil && !errors.Is(err, session.ErrEnded) {
+			t.Fatal(err)
+		}
+		<-done2
+	})
+	// Two adds of one name could both pass the caller's check before either is
+	// staged: the decoder itself refuses a name that is staged, or a folder
+	// some staged name lies in.
+	for base, files := range map[string][]toolsrv.InputEntry{
+		"notes.txt": {{Path: "notes.txt"}},
+		"dir":       {{Path: "dir/b.md"}},
+	} {
+		staged := &inputsDecoder{rd: &runDirs{root: t.TempDir()}, index: toolsrv.InputsIndex{Files: files}}
+		if _, err := staged.add(context.Background(), base, []byte("x")); err == nil || !strings.Contains(err.Error(), "already staged") {
+			t.Errorf("add(%q) = %v, want it refused as already staged", base, err)
+		}
+	}
 }
 
 // Containment: what the decode container wrote reaches /inputs-text
@@ -502,6 +540,44 @@ func TestAnUnreadReasonIsTheDecodesOwnWords(t *testing.T) {
 	b, _ := os.ReadFile(filepath.Join(p.RunRoot, "runs", "cafe0000", "inputs-text", toolsrv.InputsIndexFile))
 	if strings.Contains(string(b), injected) {
 		t.Fatalf("a decoder's words reached the index: %s", b)
+	}
+
+	// Which unread files can still be read as uploaded: a file no reader
+	// took, but never an archive's member (it is not under /inputs), one
+	// inside a .git folder, or one handed over flagged from inside an
+	// archive; and an unread file keeps no Markdown view.
+	out := t.TempDir()
+	writeInput(t, out, "view.md", "# converted\n")
+	x := &inputsDecoder{rd: &runDirs{inputsText: t.TempDir()}}
+	res := &decode.Result{In: t.TempDir(), Out: out, Report: runnerdecode.Report{Schema: runnerdecode.Schema, Files: []runnerdecode.File{
+		{Path: "plain.bin", Family: runnerdecode.FamilyUnknown, Outcome: runnerdecode.OutcomeUndecodable},
+		{Path: "pack.zip/inner.bin", In: "pack.zip", Family: runnerdecode.FamilyUnknown, Outcome: runnerdecode.OutcomeUndecodable},
+		{Path: "proj/.git/config", Family: runnerdecode.FamilyUnknown, Outcome: runnerdecode.OutcomeUndecodable, Why: runnerdecode.WhyRepository},
+		{Path: "page.html", Family: runnerdecode.FamilyUnknown, Outcome: runnerdecode.OutcomeUndecodable, Markdown: "view.md", MarkdownBy: "pandoc"},
+		{Path: "top.exe", Family: runnerdecode.FamilyUnknown, Outcome: runnerdecode.OutcomeRefused, Why: runnerdecode.WhyFound, Check: runnerdecode.CheckFound, Signature: "Eicar-Test-Signature"},
+		{Path: "pack.zip/bad.exe", In: "pack.zip", Family: runnerdecode.FamilyUnknown, Outcome: runnerdecode.OutcomeRefused, Why: runnerdecode.WhyFound, Check: runnerdecode.CheckFound, Signature: "Eicar-Test-Signature"},
+	}}}
+	entries, err := x.stageTexts(res)
+	if err != nil || len(entries) != 6 {
+		t.Fatalf("stageTexts = %+v, %v", entries, err)
+	}
+	for i, want := range []struct {
+		original, converted bool
+		unread              string
+	}{
+		{true, false, "not text, and no decoder reads this kind of file"},
+		{false, false, "not text, and no decoder reads this kind of file"},
+		{false, false, ""},
+		{true, false, "not text, and no decoder reads this kind of file"},
+		{true, false, "flagged: ClamAV found Eicar-Test-Signature in it; it was not decoded, and it can be read only as uploaded (it cannot be executed)"},
+		{false, false, "flagged: ClamAV found Eicar-Test-Signature in it; it was not decoded, and it stayed in pack.zip"},
+	} {
+		if e := entries[i]; e.Original != want.original || e.Converted != want.converted || want.unread != "" && e.Unread != want.unread {
+			t.Errorf("%s: original %v, converted %v, unread %q; want original %v, converted %v, unread %q", e.Path, e.Original, e.Converted, e.Unread, want.original, want.converted, want.unread)
+		}
+	}
+	if entries[2].Unread == "" {
+		t.Error("a file inside a .git folder is not marked unread")
 	}
 }
 
@@ -894,6 +970,24 @@ func TestARunWithNoHybridAnalysisKeySaysSo(t *testing.T) {
 	if line := env.CapabilitiesEnforced["decode"]; !strings.HasSuffix(line, "; Hybrid Analysis (CrowdStrike), asked by SHA-256 alone and never sent a file, on the files of a type it is asked about: 1 not checked: no key") {
 		t.Fatalf("decode line %q", line)
 	}
+
+	// A key the policy names that cannot be read stops the run, before the
+	// agent, with the policy class.
+	saved := hybridClient
+	t.Cleanup(func() { hybridClient = saved })
+	hybridClient = func(*policy.Policy) (*hybrid.Client, error) { return nil, errors.New("the keychain is locked") }
+	resetDecodeCalls()
+	p, f = fixture(t)
+	happyFake(f)
+	p.InputPaths = []string{writeInput(t, t.TempDir(), "paper.pdf", "%PDF not really")}
+	_, err = Run(context.Background(), f, p)
+	var ce *ClassifiedError
+	if !errors.As(err, &ce) || ce.Code != ExitPolicy || !strings.Contains(err.Error(), "the Hybrid Analysis key: the keychain is locked") {
+		t.Fatalf("err %v, want the policy class naming the key", err)
+	}
+	if _, ok := f.FindRun("-agent"); ok {
+		t.Error("the agent ran although the Hybrid Analysis key could not be read")
+	}
 }
 
 // A session's added file Hybrid Analysis calls malicious is refused alone,
@@ -1115,6 +1209,31 @@ func TestALocalRunThatExecutesChecksOnlyItsExecutables(t *testing.T) {
 				t.Fatalf("decode line %q", line)
 			}
 		})
+	}
+
+	// How much is checked follows the host, the policy and what the plan can
+	// execute: a sandbox host or a policy that turns the check on checks
+	// everything; otherwise a plan with commands or an exec image checks the
+	// executables, and one with neither checks nothing.
+	on, off := true, false
+	commands := &spec.Plan{}
+	commands.Capabilities.ExecCommands = []string{"echo"}
+	image := &spec.Plan{ExecImage: &spec.ExecImageSpec{Tag: "exec:1"}}
+	none := &spec.Plan{}
+	for name, c := range map[string]struct {
+		p    Params
+		want checkScope
+	}{
+		"a hosted run, the policy off":    {Params{Hosted: true, Plan: none, Policy: &policy.Policy{MalwareCheck: &off}}, checkAll},
+		"the policy on":                   {Params{Plan: none, Policy: &policy.Policy{MalwareCheck: &on}}, checkAll},
+		"commands, the policy off":        {Params{Plan: commands, Policy: &policy.Policy{MalwareCheck: &off}}, checkExecutables},
+		"an exec image, the policy unset": {Params{Plan: image, Policy: &policy.Policy{}}, checkExecutables},
+		"no commands, the policy off":     {Params{Plan: none, Policy: &policy.Policy{MalwareCheck: &off}}, checkOff},
+		"no commands, the policy unset":   {Params{Plan: none, Policy: &policy.Policy{}}, checkOff},
+	} {
+		if got := c.p.checkScope(); got != c.want {
+			t.Errorf("%s: scope %d, want %d", name, got, c.want)
+		}
 	}
 }
 
