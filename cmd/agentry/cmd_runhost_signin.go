@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -23,6 +25,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelsignin"
+	"github.com/blaktron/agentry-cli/pkg/runner/persistent"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 )
 
@@ -57,6 +60,8 @@ func init() {
 		_ = modelkey.UseKeychain(runhostModelKeys{})
 		// Every container here runs under gVisor, which has no Landlock.
 		engine.WorkspaceOwnership = true
+		persistent.KeptIn = "this runhost's store, encrypted"
+
 	}
 }
 
@@ -97,10 +102,13 @@ const (
 )
 
 // hexIDRE is a connection's or an issuer's id in its keychain account;
-// providerRE a model provider's name in a model key's.
+// providerRE a model provider's name in a model key's;
+// agentAccountRE a persistent agent's stored secret's or git host
+// account's.
 var (
-	hexIDRE    = regexp.MustCompile(`^[0-9a-f]{16,24}$`)
-	providerRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,40}$`)
+	hexIDRE        = regexp.MustCompile(`^[0-9a-f]{16,24}$`)
+	providerRE     = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,40}$`)
+	agentAccountRE = regexp.MustCompile(`^(agent-secret:[a-z0-9][a-z0-9.-]{0,127}:[A-Za-z_][A-Za-z0-9_]{0,127}|account:[a-z0-9][a-z0-9.:-]{0,252}:[A-Za-z0-9][A-Za-z0-9._-]{0,99})$`)
 )
 
 func runhostKeychainEntry(account string) (string, error) {
@@ -121,7 +129,11 @@ func runhostKeychainEntry(account string) (string, error) {
 			return "model-key-stored-" + p, nil
 		}
 	}
-	return "", fmt.Errorf("a runhost keeps only its model keys, its model sign-ins', its schedules' connections' and their OAuth clients' secrets, not %q", account)
+	if agentAccountRE.MatchString(account) {
+		sum := sha256.Sum256([]byte(account))
+		return "agent-" + hex.EncodeToString(sum[:12]), nil
+	}
+	return "", fmt.Errorf("a runhost keeps only its model keys, its agents' stored secrets and git host accounts, its model sign-ins', its schedules' connections' and their OAuth clients' secrets, not %q", account)
 }
 
 func (runhostKeychain) Get(account string) (string, error) {

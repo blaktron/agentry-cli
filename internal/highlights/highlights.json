@@ -5,7 +5,8 @@
       "highlights": [
         "Talk to a running persistent agent from Discord, Slack or Matrix as well as Telegram: agentry agent messenger add.",
         "agentry agent start, chat and stop take --on to run the Assistant on your remote runhost.",
-        "The Assistant summarises a call whose other voices Agentry Desktop told apart, keeping each as Speaker 1, 2 and so on."
+        "The Assistant summarises a call whose other voices Agentry Desktop told apart, keeping each as Speaker 1, 2 and so on.",
+        "agentry agent secret set and configure --account take --on, keeping the value in the runhost's store."
       ]
     },
     {

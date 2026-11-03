@@ -39,7 +39,7 @@ import (
 // would read a file or a credential of the device's.
 
 // runhostAgentCommands are the agent subcommands a device runs on a runhost.
-var runhostAgentCommands = []string{"list", "show", "start", "stop", "attach", "enable", "disable", "reset", "grant", "configure", "tasks"}
+var runhostAgentCommands = []string{"list", "show", "start", "stop", "attach", "enable", "disable", "reset", "grant", "configure", "tasks", "secret"}
 
 // runhostAgentRefusedFlags name a file, a sign-in or a credential on the
 // device, which the runhost's CLI would look for on the server instead.
@@ -48,7 +48,6 @@ var runhostAgentRefusedFlags = []string{
 	"mail-provider", "microsoft-client", "microsoft-tenant", "microsoft-sign-in",
 	"fastmail-token", "calendar-feed", "calendar-sign-in", "google-client", "google-sign-in",
 	"dev-host", "dev-key", "dev-passphrase", "dev-password",
-	"account", "own", "yours", "account-user", "account-email", "account-name", "account-kind",
 }
 
 // The data frames' streams.
@@ -117,9 +116,14 @@ func runhostAgentRun(ctx context.Context, sub string, args []string, in io.Reade
 	c.Stdout = streamWriter{fw: fw, stream: agentStreamStdout}
 	c.Stderr = streamWriter{fw: fw, stream: agentStreamStderr}
 	// Only attach reads the device's input and writes events on descriptor
-	// 3. Every other command gets neither: a supervisor that start detaches
-	// would inherit them, and the answer would not end while it runs.
+	// 3, and secret and configure the value the device read for them on
+	// stdin. Every other command gets neither: a supervisor that start
+	// detaches would inherit them, and the answer would not end while it
+	// runs.
 	var werr error
+	if sub == "secret" || sub == "configure" {
+		c.Stdin = io.LimitReader(in, persistent.MaxSecretBytes+3)
+	}
 	if sub == "attach" {
 		c.Stdin = in
 		er, ew, err := os.Pipe()
@@ -287,6 +291,20 @@ func wireAgentOn(cmd *cobra.Command) {
 		if name != "chat" && !slices.Contains(runhostAgentCommands, name) {
 			continue
 		}
+		// A command of subcommands (secret) runs each of them there, named
+		// first among its arguments.
+		if sub.HasSubCommands() {
+			for _, child := range sub.Commands() {
+				child, local := child, child.RunE
+				child.RunE = func(c *cobra.Command, args []string) error {
+					if on == "" {
+						return local(c, args)
+					}
+					return remoteAgentCommand(c, on, name, append([]string{child.Name()}, args...))
+				}
+			}
+			continue
+		}
 		local := sub.RunE
 		sub.RunE = func(c *cobra.Command, args []string) error {
 			if on == "" {
@@ -374,8 +392,12 @@ func remoteAgentCommand(cmd *cobra.Command, on, sub string, args []string) error
 		return err
 	}
 	defer func() { _ = c.Close() }()
+	value, err := runhostAgentValue(cmd, rec.Name, sub, args, fwd)
+	if err != nil {
+		return err
+	}
 	for attempt := 0; ; attempt++ {
-		code, stderr, err := runOnRunhostAgent(cmd, c, sub, fwd)
+		code, stderr, err := runOnRunhostAgent(cmd, c, sub, fwd, value)
 		if err != nil {
 			return engine.Classify(engine.ExitGateway, err)
 		}
@@ -399,7 +421,7 @@ func remoteAgentCommand(cmd *cobra.Command, on, sub string, args []string) error
 // its exit code and what it wrote to stderr. Its stdout and stderr are this
 // command's; its descriptor 3, attach's events, goes to this process's own
 // descriptor 3 when that is open.
-func runOnRunhostAgent(cmd *cobra.Command, c runhostCaller, sub string, fwd []string) (int, string, error) {
+func runOnRunhostAgent(cmd *cobra.Command, c runhostCaller, sub string, fwd []string, value string) (int, string, error) {
 	var (
 		mu     sync.Mutex
 		stderr strings.Builder
@@ -413,8 +435,12 @@ func runOnRunhostAgent(cmd *cobra.Command, c runhostCaller, sub string, fwd []st
 		}
 	}
 	send := func(w io.Writer) error {
-		if sub == "attach" {
+		switch {
+		case sub == "attach":
 			_, err := io.Copy(w, cmd.InOrStdin())
+			return err
+		case value != "":
+			_, err := io.WriteString(w, value+"\n")
 			return err
 		}
 		return nil
@@ -577,4 +603,42 @@ func onThisRunhost() string {
 		return " --on <this runhost>"
 	}
 	return ""
+}
+
+// runhostAgentValue is what a command that keeps a value on the runhost is
+// sent: a stored secret's (secret set) or a git host account's token
+// (configure --account), read here as the command reads it on a computer,
+// after the person agrees to its being kept on the runhost, encrypted in
+// its store. Any other command is sent nothing.
+func runhostAgentValue(cmd *cobra.Command, runhostName, sub string, args, fwd []string) (string, error) {
+	var what string
+	switch {
+	case sub == "secret" && len(args) >= 1 && args[0] == "set":
+		if len(args) < 3 {
+			return "", nil
+		}
+		what = "the secret " + args[2]
+	case sub == "configure" && slices.ContainsFunc(fwd, func(a string) bool { return strings.HasPrefix(a, "--account=") }):
+		what = "the account's token"
+	default:
+		return "", nil
+	}
+	v, err := readSecretValue(cmd, "Value of "+what, what)
+	if err != nil {
+		return "", engine.Classify(engine.ExitUsage, err)
+	}
+	if !slices.Contains(fwd, "--yes=true") && !slices.Contains(fwd, "--yes") {
+		ask := terminalAsker(cmd)
+		if ask == nil {
+			return "", engine.Classify(engine.ExitPolicy, fmt.Errorf("%s would be kept on runhost %s, and no one is at a terminal to agree: pass --yes", what, runhostName))
+		}
+		ok, err := ask.Confirm(fmt.Sprintf("Keep %s on runhost %s, encrypted in its store, for the agent that runs there?", what, runhostName), false)
+		if err != nil {
+			return "", err
+		}
+		if !ok {
+			return "", engine.Classify(engine.ExitPolicy, errors.New("nothing was kept"))
+		}
+	}
+	return v, nil
 }
