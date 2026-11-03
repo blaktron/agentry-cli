@@ -1518,6 +1518,7 @@
           "path": "cmd/agentry/cmd_runhost_update_test.go",
           "tests": [
             "TestARunhostInstallsOnlyASignedNewerReleaseForItsArchitecture",
+            "TestAnUpdatePreparesTheNewCLIBeforeSwitchingToIt",
             "TestTheServiceRestartsOnlyOnceItsJobsFinish",
             "TestADeviceLeavesWithItsKeysAndTheCreditsItMinted",
             "TestARunKeyCannotSendAJobOrATokenForAnotherDevice",
