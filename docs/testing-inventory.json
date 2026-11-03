@@ -5171,6 +5171,8 @@
             "TestMemoryBytesReadsDockersSizes",
             "TestThroughFilterSwapsOnlyTheDaemonSocket",
             "TestRefusalsReachTheOutcome",
+            "TestTheFilterIsGivenTheRunsLimitsNetworksAndRuntime",
+            "TestTheRuntimeVerifierRemovesWhatTheEngineCreatedUnderAnotherRuntime",
             "TestTheSocketIsUnderTheRunnerHome",
             "TestALongRunDirectoryFallsBackToAShortSocket",
             "TestARunWithRelaysHasRelayNetworksOfItsOwn",
@@ -5221,6 +5223,7 @@
           "benchmarks": [],
           "fixtureEntryPoint": false,
           "dependencyHints": [
+            "docker interface (real or fake)",
             "source/file contract"
           ]
         },
@@ -5245,7 +5248,9 @@
           "fuzz": [],
           "benchmarks": [],
           "fixtureEntryPoint": false,
-          "dependencyHints": []
+          "dependencyHints": [
+            "docker interface (real or fake)"
+          ]
         },
         {
           "path": "pkg/runner/engine/heldcfg_test.go",
@@ -5400,7 +5405,8 @@
           "path": "pkg/runner/engine/portrelay_test.go",
           "tests": [
             "TestAPublishedPortIsCarriedIntoTheToolsServer",
-            "TestAConnectionBeforeTheToolsServerIsClosed"
+            "TestAConnectionBeforeTheToolsServerIsClosed",
+            "TestThePortRelayListensOnLoopbackAndBoundsItsConnections"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -5434,6 +5440,7 @@
           "fixtureEntryPoint": false,
           "dependencyHints": [
             "docker interface (real or fake)",
+            "source/file contract",
             "real-time wait"
           ]
         },
@@ -5541,12 +5548,14 @@
           "tests": [
             "TestTeardownThatCannotDeleteSecretsSaysSo",
             "TestTeardownDoesNotReportWhatTheRunDirRemovalTook",
-            "TestTeardownRetriesWhatTheSweepFreed"
+            "TestTeardownRetriesWhatTheSweepFreed",
+            "TestTeardownSweepsWhatTheRunLabelStillFinds"
           ],
           "fuzz": [],
           "benchmarks": [],
           "fixtureEntryPoint": false,
           "dependencyHints": [
+            "docker interface (real or fake)",
             "source/file contract"
           ]
         },

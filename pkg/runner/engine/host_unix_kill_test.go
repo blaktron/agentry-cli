@@ -39,8 +39,11 @@ func TestConfigProcessEscalatesToTheWholeGroup(t *testing.T) {
 	pidFile := filepath.Join(dir, "child.pid")
 	script := filepath.Join(dir, "harness.sh")
 	// The leader answers SIGTERM and dies. The child ignores it, loops, and
-	// keeps the inherited stdout open.
-	body := "#!/bin/sh\n( trap '' TERM; while :; do sleep 0.05; done ) &\necho $! > " + pidFile + "\nwait\n"
+	// keeps the inherited stdout open. A second child answers SIGTERM by
+	// writing a marker: it is told to end by the signal, before the kill.
+	marker, ready := filepath.Join(dir, "term.marker"), filepath.Join(dir, "ready")
+	body := "#!/bin/sh\n( trap 'echo term > " + marker + "; exit 0' TERM; : > " + ready + "; while :; do sleep 0.05; done ) &\n" +
+		"( trap '' TERM; while :; do sleep 0.05; done ) &\necho $! > " + pidFile + "\nwait\n"
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil { //nolint:gosec // a throwaway test script
 		t.Fatal(err)
 	}
@@ -61,7 +64,7 @@ func TestConfigProcessEscalatesToTheWholeGroup(t *testing.T) {
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		if b, err := os.ReadFile(pidFile); err == nil {
-			if pid, aerr := strconv.Atoi(strings.TrimSpace(string(b))); aerr == nil && pid > 0 {
+			if pid, aerr := strconv.Atoi(strings.TrimSpace(string(b))); aerr == nil && pid > 0 && pathExists(ready) {
 				child = pid
 				break
 			}
@@ -71,6 +74,7 @@ func TestConfigProcessEscalatesToTheWholeGroup(t *testing.T) {
 	if child == 0 {
 		t.Fatal("the child never recorded its pid")
 	}
+
 	if !processAlive(child) {
 		t.Fatalf("child %d is not running before the kill", child)
 	}
@@ -92,6 +96,9 @@ func TestConfigProcessEscalatesToTheWholeGroup(t *testing.T) {
 	if !gone {
 		_ = syscall.Kill(child, syscall.SIGKILL) // do not leave it behind
 		t.Fatalf("child %d ignored SIGTERM and survived: the escalation did not reach the process group", child)
+	}
+	if !pathExists(marker) {
+		t.Error("the child that answers SIGTERM was not sent it: the first signal did not reach the process group")
 	}
 	// Ours, not exec's: WaitDelay is grace + 2s, so a Wait that returned
 	// inside the grace plus a margin was ended by the group SIGKILL.

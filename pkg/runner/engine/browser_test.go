@@ -12,6 +12,7 @@ import (
 
 	"github.com/blaktron/agentry/pkg/manifest"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/intake"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
@@ -170,10 +171,14 @@ func TestABrowserRunStartsTheBrowseProxyWithItsScope(t *testing.T) {
 			t.Errorf("%s = %q, want %q", key, env.CapabilitiesEnforced[key], want)
 		}
 	}
+	if got := env.CapabilitiesEnforced["browser.scope"]; !strings.Contains(got, "the hosts fonts.googleapis.com") {
+		t.Errorf("browser.scope = %q, want the browser's hosts named", got)
+	}
 	doc, _ := os.ReadFile(filepath.Join(runDir, "inputs", "intake.json")) //nolint:gosec // the test's own run folder
 	if !strings.Contains(string(doc), "https://Shop.Example/login") {
 		t.Errorf("intake.json does not give the site: %s", doc)
 	}
+	t.Run("the browser's network", browserNetworkIsInternal)
 }
 
 // stubSiteDNS answers lookupSiteHost from a table for the test.
@@ -187,6 +192,10 @@ func stubSiteDNS(t *testing.T, table map[string][]string) {
 		}
 		var out []net.IPAddr
 		for _, ip := range ips {
+			if ip == "garbled" {
+				out = append(out, net.IPAddr{IP: net.IP{1, 2, 3}}) // not an address of any family
+				continue
+			}
 			out = append(out, net.IPAddr{IP: net.ParseIP(ip)})
 		}
 		return out, nil
@@ -227,9 +236,12 @@ func TestAHostedRunRefusesASiteItCouldNotOpen(t *testing.T) {
 	for _, tc := range []struct{ name, site, want string }{
 		{"private address", "http://10.0.0.5/", "10.0.0.5 is not a public address"},
 		{"loopback v6", "http://[::1]:80/", "::1 is not a public address"},
+		{"a private address spelled as a mapped one", "http://[::ffff:10.0.0.5]/", "is not a public address"},
 		{"name to a LAN", "https://intranet.corp.example/", "resolves to 192.168.1.4, which is not a public address"},
 		{"one address of two private", "https://split.example/", "resolves to 127.0.0.1"},
 		{"unresolvable", "https://nowhere.invalid/", "could not be found on the public internet"},
+		{"a name with no address", "https://empty.example/", "could not be found on the public internet"},
+		{"an answer that is no address", "https://garbled.example/", "garbled.example resolves to"},
 		{"own port", "https://shop.example:8443/", "names port 8443"},
 	} {
 		for _, review := range []bool{false, true} {
@@ -238,6 +250,8 @@ func TestAHostedRunRefusesASiteItCouldNotOpen(t *testing.T) {
 					"shop.example":          {"93.184.215.14"},
 					"intranet.corp.example": {"192.168.1.4"},
 					"split.example":         {"93.184.215.14", "127.0.0.1"},
+					"empty.example":         {},
+					"garbled.example":       {"garbled"},
 				})
 				p, f := browserFixture(t)
 				happyFake(f)
@@ -300,6 +314,19 @@ func TestABrowserWithNowhereToGoIsRefused(t *testing.T) {
 	if env, err := Run(context.Background(), f, p); env == nil || env.ExitCode != ExitCLI || err == nil || !strings.Contains(err.Error(), "nowhere to go") {
 		t.Fatalf("no site: %v (%+v)", err, env)
 	}
+	// A browser given hosts of its own, or the public web, needs no site.
+	for name, edit := range map[string]func(c *spec.BrowserCap){
+		"hosts only":      func(c *spec.BrowserCap) { c.Hosts = []string{"fonts.googleapis.com"}; c.Public = false },
+		"the public only": func(c *spec.BrowserCap) { c.Hosts = nil; c.Public = true },
+	} {
+		p, f = browserFixture(t)
+		happyFake(f)
+		edit(p.Plan.Capabilities.Browser)
+		p.Intake = &intake.Answers{Values: map[string]string{}}
+		if _, err := Run(context.Background(), f, p); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
 	p, f = browserFixture(t)
 	happyFake(f)
 	p.Intake = &intake.Answers{Values: map[string]string{"site": "ftp://shop.example/"}}
@@ -309,6 +336,21 @@ func TestABrowserWithNowhereToGoIsRefused(t *testing.T) {
 }
 
 func TestBrowserSecretsFile(t *testing.T) {
+	// A server's secret is the browser's only when that server declares it.
+	plan := &spec.Plan{MCPServers: []spec.MCPServerSpec{
+		{Name: "mcp-a", Secrets: []string{"OTHER"}},
+		{Name: "mcp-b", Secrets: []string{"SITE_PASSWORD"}},
+	}}
+	got := browserSecretValues(plan, []string{"SITE_PASSWORD"}, map[string]string{
+		compile.ServerSecretKey("mcp-a", "SITE_PASSWORD"): "from the wrong server",
+		compile.ServerSecretKey("mcp-b", "SITE_PASSWORD"): "from its own server",
+	})
+	if got["SITE_PASSWORD"] != "from its own server" {
+		t.Errorf("browser secrets %v", got)
+	}
+	if got := browserSecretValues(plan, []string{"SITE_PASSWORD"}, map[string]string{compile.ServerSecretKey("mcp-a", "SITE_PASSWORD"): "x"}); len(got) != 0 {
+		t.Errorf("a secret of a server that does not declare it was taken: %v", got)
+	}
 	f, err := browserSecretsFile([]string{"A", "B", "C", "D"}, map[string]string{"A": "plain", "B": "it's", "D": ""})
 	if err != nil || string(f) != "A='plain'\nB=\"it's\"\n" {
 		t.Fatalf("%q %v", f, err)
@@ -368,5 +410,43 @@ func TestTheSecretsLineNamesOnlyWhatTheRunWasGiven(t *testing.T) {
 	}
 	if got := browserSecretsLine(declared, declared); strings.Contains(got, "not given") || !strings.HasPrefix(got, "SITE_USER, SITE_PASSWORD, in a file") {
 		t.Errorf("both given: %q", got)
+	}
+
+	// A run whose secret was not given says so, and writes no secret.
+	p, f := browserFixture(t)
+	happyFake(f)
+	plan := *p.Plan
+	plan.OptionalSecrets = []string{"SITE_PASSWORD"}
+	p.Plan = &plan
+	t.Setenv("SITE_PASSWORD", "")
+	env, err := Run(context.Background(), f, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := env.CapabilitiesEnforced["browser.secrets"]; !strings.HasPrefix(got, "none of SITE_PASSWORD was given to this run") {
+		t.Errorf("a secret that was not given: %q", got)
+	}
+}
+
+// The browser's network is internal, made for the browser plan alone, recorded
+// for the sweep and removed with the teardown.
+func browserNetworkIsInternal(t *testing.T) {
+	f := &dockerx.Fake{}
+	td := &teardown{}
+	with := Params{Plan: &spec.Plan{Browser: &spec.BrowserSpec{Image: "browser:img"}}}
+	if err := makeBrowserNetwork(context.Background(), f, with, "cafe0000", td); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(f.Ops(), []string{"NetworkCreate:agentry-cafe0000-browser(internal=true)"}) || !slices.Equal(td.networks, []string{"agentry-cafe0000-browser"}) ||
+		f.NetworkState()[0].Labels[runLabel] != "cafe0000" {
+		t.Errorf("browser network: ops %v, recorded %v", f.Ops(), td.networks)
+	}
+	td.run()
+	if got := f.Ops(); len(got) != 2 || got[1] != "NetworkRemove:agentry-cafe0000-browser" {
+		t.Errorf("teardown ops %v", got)
+	}
+	f = &dockerx.Fake{}
+	if err := makeBrowserNetwork(context.Background(), f, Params{Plan: &spec.Plan{}}, "cafe0000", &teardown{}); err != nil || len(f.Ops()) != 0 {
+		t.Errorf("a plan without a browser made a browser network: %v %v", f.Ops(), err)
 	}
 }

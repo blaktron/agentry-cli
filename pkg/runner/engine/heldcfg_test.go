@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -157,6 +158,42 @@ func TestTheCfgFolderIsHeldToTheCatalogsEntries(t *testing.T) {
 			}
 		}
 	}
+	// A folder that only starts like cfg is not beneath it: it is neither held
+	// nor dropped from the writable paths. And with no cfg folder at all the
+	// lists pass through as they came.
+	sibling := []byte("registry:\n  e:\n    image: i\n    command: [c]\n    volumes:\n      - '" + cfg + "2/y:/y:ro'\n")
+	roots2, writable2, held2, err := cfgBinds([]string{run + "/workspace", cfg + "2"}, []string{cfg + "2/z"}, cfg, sibling)
+	if err != nil || len(held2) != 0 || !slices.Equal(roots2, []string{run + "/workspace", cfg + "2"}) || !slices.Equal(writable2, []string{cfg + "2/z"}) {
+		t.Errorf("a sibling of cfg: roots %v, writable %v, held %v, %v", roots2, writable2, held2, err)
+	}
+	// Entries that bind one path are told apart by image, command and binds
+	// alike; one that repeats another's is listed once; a bind of cfg itself
+	// is held like any other.
+	same := []byte(`registry:
+  e1: {image: i, command: [a], volumes: ['` + cfg + `/p:/x']}
+  e2: {image: i, command: [a], volumes: ['` + cfg + `/p:/x']}
+  e3: {image: i, command: [b], volumes: ['` + cfg + `/p:/x']}
+  e4: {image: i, command: [a], volumes: ['` + cfg + `/p:/x', '` + cfg + `/q:/y']}
+  e5: {image: j, command: [a], volumes: ['` + cfg + `:/whole']}
+`)
+	_, _, held2, err = cfgBinds(nil, nil, cfg, same)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := map[string]int{}
+	for _, h := range held2 {
+		count[h.Root] = len(h.By)
+	}
+	if len(held2) != 3 || count[cfg+"/p"] != 3 || count[cfg+"/q"] != 1 || count[cfg] != 1 {
+		t.Errorf("holders per path %v, want 3 for p (e1 and e2 are one), 1 for q, 1 for cfg itself", count)
+	}
+	roots2, writable2, held2, err = cfgBinds([]string{".", cfg, run + "/out"}, []string{".", cfg + "/x"}, "", []byte(catalog))
+	if err != nil || len(held2) != 0 || !slices.Equal(roots2, []string{".", cfg, run + "/out"}) || !slices.Equal(writable2, []string{".", cfg + "/x"}) {
+		t.Errorf("no cfg folder: roots %v, writable %v, held %v, %v", roots2, writable2, held2, err)
+	}
+	if _, _, _, err := cfgBinds([]string{cfg}, nil, cfg, []byte("registry: [not, a, mapping]")); err == nil || !strings.Contains(err.Error(), "read the gateway's catalog") {
+		t.Errorf("a catalog that is not a mapping: %v", err)
+	}
 	// No catalog: nothing beneath cfg.
 	roots, _, held, err = cfgBinds([]string{cfg, run + "/out"}, nil, cfg, nil)
 	if err != nil || len(held) != 0 || !slices.Equal(roots, []string{run + "/out"}) {
@@ -188,6 +225,33 @@ func TestFilterHoldsTheRunsCfgFolder(t *testing.T) {
 	if i < 0 || len(cfg.HeldRoots[i].By) != 1 || cfg.HeldRoots[i].By[0].Cmd[0] != "tools" {
 		t.Errorf("the share's verdicts are held to %v", cfg.HeldRoots)
 	}
+	if len(cfg.HeldVolumes) != 0 {
+		t.Errorf("a plan with no image server holds volumes %v", cfg.HeldVolumes)
+	}
+
+	// An image server's volume is held to the catalog entries that mount it:
+	// none here, so no container may mount it.
+	image := &spec.Plan{MCPServers: []spec.MCPServerSpec{{Name: "mcp-image-gog", Source: spec.SourceImage, Image: "ghcr.io/example/gog:1", Volumes: []string{"agentry-persistent-gog:/persist/gogcli"}}}}
+	cfg, err = filterConfig(rd, "run1", env, policy.Limits{}, image, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.HeldVolumes) != 1 || cfg.HeldVolumes[0].Root != "agentry-persistent-gog" || len(cfg.HeldVolumes[0].By) != 0 {
+		t.Errorf("an image server's volume is held to %+v", cfg.HeldVolumes)
+	}
+
+	// A catalog that cannot be read, not one that is absent, stops the run.
+	unreadable := runDirsAt(t.TempDir())
+	if err := os.MkdirAll(filepath.Join(unreadable.cfg, "gateway", "catalog.yaml"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var ce *ClassifiedError
+	if _, err := filterConfig(unreadable, "run1", nil, policy.Limits{}, &spec.Plan{}, nil); !errors.As(err, &ce) || ce.Code != ExitGateway || !strings.Contains(err.Error(), "read the gateway's catalog") {
+		t.Errorf("a catalog that cannot be read: %v", err)
+	}
+	if _, err := filterConfig(runDirsAt(t.TempDir()), "run1", nil, policy.Limits{}, &spec.Plan{}, nil); err != nil {
+		t.Errorf("a run with no catalog yet: %v", err)
+	}
 }
 
 // TestAnImageServersVolumeIsHeldToTheEntryThatMountsIt: the docker filter
@@ -207,6 +271,10 @@ func TestAnImageServersVolumeIsHeldToTheEntryThatMountsIt(t *testing.T) {
     volumes:
       - /run/cfg/toolspec.json:/etc/agentry/toolspec.json:ro
 `)
+	// No volume to hold: the catalog is not even read.
+	if none, err := volumeHolders([]byte("registry: [not, a, mapping]"), nil); none != nil || err != nil {
+		t.Fatalf("no volumes: %v %v", none, err)
+	}
 	held, err := volumeHolders(catalog, []string{"agentry-persistent-assistant-0123456789-gog", "agentry-persistent-assistant-0123456789-unmounted"})
 	if err != nil {
 		t.Fatal(err)

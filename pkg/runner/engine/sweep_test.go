@@ -83,6 +83,21 @@ func TestSweepRemovesOnlyWhatADeadRunLeft(t *testing.T) {
 	if !strings.Contains(stderr.String(), "removed 3 container(s)") {
 		t.Errorf("stderr = %q, want the sweep to say what it removed", stderr.String())
 	}
+
+	// A container docker would not remove is named, and is not counted as
+	// removed.
+	stuck := &removeFails{Fake: &dockerx.Fake{Containers: []dockerx.Labeled{
+		{Name: "agentry-dead0009-gateway", Labels: withRun(dead, "dead0009")},
+		{Name: "agentry-dead0009-agent", Labels: withRun(dead, "dead0009")},
+	}}, name: "agentry-dead0009-agent"}
+	stderr.Reset()
+	SweepAbandoned(context.Background(), stuck, &stderr)
+	if !strings.Contains(stderr.String(), "removed 1 container(s) a run whose process had died left behind: agentry-dead0009-gateway") {
+		t.Errorf("stderr = %q, want the one container removed", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "warning: could not remove 1 container(s) a run whose process had died left behind: agentry-dead0009-agent (docker rm -fv <name>)") {
+		t.Errorf("stderr = %q, want the container docker would not remove", stderr.String())
+	}
 }
 
 // TestRunSweepsBeforeItBuilds: a run removes a dead run's leftovers before

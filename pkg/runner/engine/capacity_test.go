@@ -14,7 +14,9 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
+	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/session"
+	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
 // overloadedLine is docker-agent's error event for a provider at capacity.
@@ -109,6 +111,22 @@ func TestAHarnessAtCapacityAfterAToolCallIsNotStartedAgain(t *testing.T) {
 	}
 	if calls() != 1 {
 		t.Fatalf("the harness started %d times, want 1", calls())
+	}
+
+	// A harness that fails for another reason before any tool call, and one
+	// that answers without calling any, are started once.
+	for name, stream := range map[string]string{
+		"another failure": `{"type":"error","error":"model failed: 400 invalid request","code":"model_error"}` + "\n",
+		"no tool call":    `{"type":"agent_choice","message":{"content":"final answer"}}` + "\n",
+	} {
+		p, f := fixture(t)
+		happyFake(f)
+		fg, calls := countedAgent(stream)
+		f.Foreground["-agent"] = fg
+		_, _ = Run(context.Background(), f, p)
+		if calls() != 1 {
+			t.Errorf("%s: the harness started %d times, want 1", name, calls())
+		}
 	}
 }
 
@@ -219,6 +237,76 @@ func TestASessionTurnAtCapacityIsSentAgain(t *testing.T) {
 	}
 	if !notice || !answered {
 		t.Fatalf("notice %v, answered %v: %+v", notice, answered, get())
+	}
+	t.Run("what bounds the sending again", turnsAtCapacityAreBounded)
+}
+
+// turnsAtCapacityAreBounded sends a turn through promptAtCapacity to a
+// driver that answers with the errors given: the turn is sent again at most
+// capacityTries times, only after a capacity answer, only while the caller
+// allows it and only while the wait can end before the context does.
+func turnsAtCapacityAreBounded(t *testing.T) {
+	shortCapacityWait(t)
+	const atCapacity = "codex session: turn failed: Selected model is at capacity. Please try a different model."
+	fails := func(n int, msg string) []string {
+		out := make([]string, n)
+		for i := range out {
+			out[i] = msg
+		}
+		return out
+	}
+	for _, tc := range []struct {
+		name    string
+		within  time.Duration // the run's time left, none when zero
+		wait    time.Duration // the capacity wait, the short test one when zero
+		inError bool          // asking at all is the error: the context ends then, so no wait is waited
+		fails   []string
+		allow   bool
+		prompts int // prompts sent
+		asked   int // times the caller was asked before a wait
+		ok      bool
+	}{
+		{"as many capacity answers as the tries", 0, 0, false, fails(capacityTries, atCapacity), true, capacityTries + 1, capacityTries, true},
+		{"one more than the tries", 0, 0, false, fails(capacityTries+1, atCapacity), true, capacityTries + 1, capacityTries, false},
+		{"an answer that is not a capacity one", 0, 0, false, fails(1, "codex session: turn failed: invalid request"), true, 1, 0, false},
+		{"a caller that allows no more", 0, 0, false, fails(2, atCapacity), false, 1, 1, false},
+		{"a run whose end is inside the wait", 30 * time.Minute, time.Hour, true, fails(1, atCapacity), true, 1, 0, false},
+		{"a run whose end is well past the wait", time.Hour, 0, false, fails(1, atCapacity), true, 2, 1, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.wait > 0 {
+				was := capacityWait
+				capacityWait = tc.wait
+				t.Cleanup(func() { capacityWait = was })
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if tc.within > 0 {
+				var stop context.CancelFunc
+				ctx, stop = context.WithTimeout(ctx, tc.within)
+				defer stop()
+			}
+			drv := &scriptedDriver{fails: tc.fails, events: make(chan adapter.Event, 16)}
+			asked := 0
+			// Asked before a wait that the run's end should have ruled out, the
+			// caller ends the context, so a wait taken in error is not waited.
+			_, err := promptAtCapacity(ctx, drv, "hello", func(int) bool {
+				asked++
+				if tc.inError {
+					cancel()
+				}
+				return tc.allow
+			})
+			if (err == nil) != tc.ok || drv.prompts != tc.prompts || asked != tc.asked {
+				t.Fatalf("err %v after %d prompts and %d asks, want ok %v after %d and %d", err, drv.prompts, asked, tc.ok, tc.prompts, tc.asked)
+			}
+		})
+	}
+	// The wait is not taken inside a context that has ended.
+	ended, cancel := context.WithCancel(context.Background())
+	cancel()
+	if canWaitAtCapacity(ended) {
+		t.Error("a wait was allowed in a context that has ended")
 	}
 }
 
@@ -391,4 +479,87 @@ func TestAHarnessAtCapacityOnItsStderrStartsAgain(t *testing.T) {
 	if n != 2 {
 		t.Fatalf("the harness started %d times, want 2", n)
 	}
+	t.Run("what a restart carries", harnessRestartBookkeeping)
+}
+
+// harnessRestartBookkeeping holds what a harness started again carries from
+// its earlier starts: one deadline for all of them, receipts made new for the
+// first start and added to for the others, the usage of every start, and the
+// last stderr lines read for the provider's words.
+func harnessRestartBookkeeping(t *testing.T) {
+	t.Run("one deadline for every start", func(t *testing.T) {
+		rd := &runDirs{}
+		p := Params{}
+		p.Budgets.TimeoutSeconds = 3600
+		first, cancel := rd.harnessContext(context.Background(), p)
+		defer cancel()
+		again, cancelAgain := rd.harnessContext(context.Background(), p)
+		defer cancelAgain()
+		d1, ok1 := first.Deadline()
+		d2, ok2 := again.Deadline()
+		if !ok1 || !ok2 || !d1.Equal(d2) {
+			t.Errorf("deadlines %v (%v) and %v (%v), want the same one", d1, ok1, d2, ok2)
+		}
+		p.Budgets.TimeoutSeconds = 0
+		none, cancelNone := (&runDirs{}).harnessContext(context.Background(), p)
+		defer cancelNone()
+		if _, ok := none.Deadline(); ok {
+			t.Error("a run with no timeout got a deadline")
+		}
+	})
+	t.Run("receipts", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "events.ndjson")
+		if err := os.WriteFile(path, []byte("an earlier run\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		rd := &runDirs{}
+		for i, line := range []string{"first\n", "second\n"} {
+			rd.harnessStarts = i
+			f, err := rd.harnessReceipt(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _ = io.WriteString(f, line)
+			_ = f.Close()
+		}
+		if b, _ := os.ReadFile(path); string(b) != "first\nsecond\n" {
+			t.Errorf("receipt %q, want an earlier run's lines gone and both starts kept", b)
+		}
+	})
+	t.Run("usage", func(t *testing.T) {
+		got := withBase(receipt.Usage{InputTokens: 1, OutputTokens: 2, TotalTokens: 3, CostUSD: 0.5, Turns: 4},
+			receipt.Usage{InputTokens: 10, OutputTokens: 20, TotalTokens: 30, CostUSD: 5, Turns: 40})
+		if got != (receipt.Usage{InputTokens: 11, OutputTokens: 22, TotalTokens: 33, CostUSD: 5.5, Turns: 44}) {
+			t.Errorf("usage %+v", got)
+		}
+	})
+	t.Run("stderr", func(t *testing.T) {
+		const words = "Error: model failed: HTTP 503: Selected model is at capacity. Please try a different model."
+		p := Params{Plan: &spec.Plan{}}
+		for _, tc := range []struct {
+			name, stderr string
+			want         bool
+		}{
+			{"the last line", "a\nb\n" + words + "\n", true},
+			{"the third from last", words + "\nb\nc\n", true},
+			{"blank lines are no lines", words + "\nb\n\nc\n\n\n", true},
+			{"the fourth from last", words + "\nb\nc\nd\n", false},
+			{"no capacity words", "a\nb\nc\n", false},
+		} {
+			path := filepath.Join(t.TempDir(), "agent-stderr.log")
+			if err := os.WriteFile(path, []byte(tc.stderr), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if got := exitedAtCapacity(p, "", path); got != tc.want {
+				t.Errorf("%s: exitedAtCapacity = %v, want %v", tc.name, got, tc.want)
+			}
+		}
+		if !exitedAtCapacity(p, words, filepath.Join(t.TempDir(), "absent.log")) {
+			t.Error("the error the harness reported on its events was not read")
+		}
+		oneTurn := Params{Plan: &spec.Plan{Harness: spec.HarnessSpec{OneTurn: &spec.SessionSpec{}}}}
+		if exitedAtCapacity(oneTurn, words, filepath.Join(t.TempDir(), "absent.log")) {
+			t.Error("a run driven as one turn was taken for a harness to start again")
+		}
+	})
 }

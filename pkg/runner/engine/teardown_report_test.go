@@ -7,10 +7,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/blaktron/agentry-cli/pkg/removal"
+	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 )
 
 func holdSecrets(t *testing.T) {
@@ -103,5 +105,35 @@ func TestTeardownRetriesWhatTheSweepFreed(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(p.RunRoot, "runs", "cafe0000", "cfg", "gateway", "secrets.env")); !os.IsNotExist(err) {
 		t.Error("secrets.env is still there")
+	}
+}
+
+// Whatever the run's label still finds when the queued steps are done is
+// removed last: its containers, the networks the run recorded and its
+// labelled volumes; a teardown with no run id sweeps none of them.
+func TestTeardownSweepsWhatTheRunLabelStillFinds(t *testing.T) {
+	newFake := func() *dockerx.Fake {
+		return &dockerx.Fake{
+			ByLabel: map[string][]string{runLabel + "=cafe0000": {"agentry-cafe0000-left"}},
+			Volumes: []dockerx.Labeled{{Name: "agentry-cafe0000-volume", Labels: map[string]string{runLabel: "cafe0000"}}},
+		}
+	}
+	f := newFake()
+	td := &teardown{d: f, runID: "cafe0000", networks: []string{"agentry-cafe0000-recorded"}}
+	td.run()
+	ops := f.Ops()
+	for _, want := range []string{"RemoveForce:agentry-cafe0000-left", "NetworkRemove:agentry-cafe0000-recorded", "VolumeRemove:agentry-cafe0000-volume"} {
+		if !slices.Contains(ops, want) {
+			t.Errorf("the final sweep did not do %s: %v", want, ops)
+		}
+	}
+	if slices.Index(ops, "RemoveForce:agentry-cafe0000-left") > slices.Index(ops, "NetworkRemove:agentry-cafe0000-recorded") {
+		t.Errorf("a network was removed before the containers left on it: %v", ops)
+	}
+	f = newFake()
+	td = &teardown{d: f, networks: []string{"agentry-cafe0000-recorded"}}
+	td.run()
+	if len(f.Ops()) != 0 {
+		t.Errorf("a teardown with no run id touched the daemon: %v", f.Ops())
 	}
 }
