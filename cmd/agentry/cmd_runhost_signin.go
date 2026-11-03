@@ -103,12 +103,12 @@ const (
 
 // hexIDRE is a connection's or an issuer's id in its keychain account;
 // providerRE a model provider's name in a model key's;
-// agentAccountRE a persistent agent's stored secret's or git host
-// account's.
+// agentAccountRE a persistent agent's: a stored secret's, an image server's
+// key's, a git host account's, a calendar feed's address's or its sign-in's.
 var (
 	hexIDRE        = regexp.MustCompile(`^[0-9a-f]{16,24}$`)
 	providerRE     = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,40}$`)
-	agentAccountRE = regexp.MustCompile(`^(agent-secret:[a-z0-9][a-z0-9.-]{0,127}:[A-Za-z_][A-Za-z0-9_]{0,127}|account:[a-z0-9][a-z0-9.:-]{0,252}:[A-Za-z0-9][A-Za-z0-9._-]{0,99})$`)
+	agentAccountRE = regexp.MustCompile(`^(agent-secret:[a-z0-9][a-z0-9.-]{0,127}:[A-Za-z_][A-Za-z0-9_-]{0,127}|account:[a-z0-9][a-z0-9.:-]{0,252}:[A-Za-z0-9][A-Za-z0-9._-]{0,99}|calendar-feed:[a-z0-9][a-z0-9.-]{0,127}:[A-Za-z0-9][A-Za-z0-9._-]{0,63}|calendar-session:[a-z0-9][a-z0-9.-]{0,127}:[A-Za-z0-9][A-Za-z0-9._-]{0,63}:[0-9]{1,3})$`)
 )
 
 func runhostKeychainEntry(account string) (string, error) {

@@ -81,10 +81,13 @@ func newAgentCmd() *cobra.Command {
 			"disable, reset, grant, configure, tasks and secret on a remote runhost,\n" +
 			"where the agent then runs under the runhost's service, on the model the\n" +
 			"runhost keeps (agentry runhost model <name> --provider <provider>). What it\n" +
-			"is given for the first time is agreed to here. A stored secret's value and\n" +
-			"a git host account's token (secret set, configure --account) are read here\n" +
-			"and kept in the runhost's store, encrypted, once you agree. A flag that\n" +
-			"reads a file or a sign-in from this computer is refused with --on.\n\n" +
+			"is given for the first time is agreed to here. A stored secret's value, a\n" +
+			"git host account's token, the Fastmail token and a calendar feed's address\n" +
+			"(secret set, configure --account, --fastmail-token, --calendar-feed) are read\n" +
+			"here and kept in the runhost's store, encrypted, once you agree; Microsoft\n" +
+			"365 signs in by its device code. A flag that reads a file from this computer\n" +
+			"or a sign-in whose browser answer goes into a container (Google Workspace's,\n" +
+			"a calendar's) is refused with --on.\n\n" +
 			"  agentry agent install acme/helper\n" +
 			"  agentry agent enable assistant\n" +
 			"  agentry agent start assistant\n" +

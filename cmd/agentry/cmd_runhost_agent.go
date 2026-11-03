@@ -43,10 +43,11 @@ var runhostAgentCommands = []string{"list", "show", "start", "stop", "attach", "
 
 // runhostAgentRefusedFlags name a file, a sign-in or a credential on the
 // device, which the runhost's CLI would look for on the server instead.
+// A sign-in whose browser answer is a callback in a container on the runhost
+// (Google Workspace's, a calendar's) is refused too: nothing relays it yet.
 var runhostAgentRefusedFlags = []string{
 	"policy", "personality-file", "share", "knowledge", "subagent",
-	"mail-provider", "microsoft-client", "microsoft-tenant", "microsoft-sign-in",
-	"fastmail-token", "calendar-feed", "calendar-sign-in", "google-client", "google-sign-in",
+	"calendar-sign-in", "google-client", "google-sign-in",
 	"dev-host", "dev-key", "dev-passphrase", "dev-password",
 }
 
@@ -620,6 +621,10 @@ func runhostAgentValue(cmd *cobra.Command, runhostName, sub string, args, fwd []
 		what = "the secret " + args[2]
 	case sub == "configure" && slices.ContainsFunc(fwd, func(a string) bool { return strings.HasPrefix(a, "--account=") }):
 		what = "the account's token"
+	case sub == "configure" && slices.Contains(fwd, "--fastmail-token=true"):
+		what = "your Fastmail API token"
+	case sub == "configure" && slices.ContainsFunc(fwd, func(a string) bool { return strings.HasPrefix(a, "--calendar-feed=") }):
+		what = "the calendar's address"
 	default:
 		return "", nil
 	}
