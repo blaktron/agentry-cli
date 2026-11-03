@@ -78,11 +78,13 @@ func newAgentCmd() *cobra.Command {
 			"agent (`chat` takes /yes and /no); with none attached, nothing is done.\n\n" +
 			"Agentry Helper (main) runs only in Agentry Desktop.\n\n" +
 			"--on <runhost> runs list, show, start, stop, chat, attach, enable,\n" +
-			"disable, reset, grant, configure and tasks on a remote runhost, where the\n" +
-			"agent then runs under the runhost's service, on the model the runhost keeps\n" +
-			"(agentry runhost model <name> --provider <provider>). What it is given for\n" +
-			"the first time is agreed to here. A flag that reads a file, a sign-in or a\n" +
-			"credential from this computer is refused with --on.\n\n" +
+			"disable, reset, grant, configure, tasks and secret on a remote runhost,\n" +
+			"where the agent then runs under the runhost's service, on the model the\n" +
+			"runhost keeps (agentry runhost model <name> --provider <provider>). What it\n" +
+			"is given for the first time is agreed to here. A stored secret's value and\n" +
+			"a git host account's token (secret set, configure --account) are read here\n" +
+			"and kept in the runhost's store, encrypted, once you agree. A flag that\n" +
+			"reads a file or a sign-in from this computer is refused with --on.\n\n" +
 			"  agentry agent install acme/helper\n" +
 			"  agentry agent enable assistant\n" +
 			"  agentry agent start assistant\n" +

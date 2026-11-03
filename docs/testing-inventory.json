@@ -1433,7 +1433,9 @@
             "TestTheAgentVerbRunsTheRunhostsOwnCommand",
             "TestTheServiceStartsItsAgentsAgain",
             "TestTheAgentSocketIsRelayedToTheDevice",
-            "TestARunhostKeepsTheModelItsAgentsRunOn"
+            "TestARunhostKeepsTheModelItsAgentsRunOn",
+            "TestARunhostKeepsItsAgentsSecretsInItsStore",
+            "TestAStoredSecretsValueTravelsToTheRunhostsSecretSet"
           ],
           "fuzz": [],
           "benchmarks": [],

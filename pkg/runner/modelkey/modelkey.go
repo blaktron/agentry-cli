@@ -269,3 +269,24 @@ func Personal(env, source, provider string) (string, error) {
 	v, err := Lookup(provider)
 	return strings.TrimSpace(v), err
 }
+
+// SetAccount keeps value under account in the keychain in use: the OS's, or
+// the one UseKeychain names.
+func SetAccount(account, value string) error {
+	if Disabled() {
+		return disabledErr("keep a secret")
+	}
+	return keyringSet(Service, account, value)
+}
+
+// DeleteAccount removes account from the keychain in use; a missing entry
+// is not an error.
+func DeleteAccount(account string) error {
+	if Disabled() {
+		return nil
+	}
+	if err := keyringDelete(Service, account); err != nil && !errors.Is(err, keyring.ErrNotFound) {
+		return err
+	}
+	return nil
+}

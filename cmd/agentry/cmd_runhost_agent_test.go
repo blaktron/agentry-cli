@@ -75,15 +75,15 @@ func testCommand(stdin string) (*cobra.Command, *bytes.Buffer, *bytes.Buffer) {
 // The runhost runs only the agent subcommands a device may drive there, and
 // none of the flags that name a file or a credential on the device.
 func TestARunhostRunsOnlyTheAgentCommandsADeviceDrives(t *testing.T) {
-	for _, ok := range [][]string{{"start", "assistant"}, {"grant", "assistant", "--yes"}, {"configure", "coder", "--name=Ada"}, {"list", "--json"}} {
+	for _, ok := range [][]string{{"start", "assistant"}, {"grant", "assistant", "--yes"}, {"configure", "coder", "--name=Ada"}, {"list", "--json"}, {"secret", "set", "assistant", "X"}, {"configure", "coder", "--no-account=github.com"}, {"configure", "coder", "--account=github.com", "--own"}} {
 		if err := checkRunhostAgentArgs(ok[0], ok[1:]); err != nil {
 			t.Errorf("%v refused: %v", ok, err)
 		}
 	}
 	for _, bad := range [][]string{
-		{"install", "acme/helper"}, {"supervise", "assistant"}, {"skill", "add", "x"}, {"secret", "set", "assistant", "X"},
+		{"install", "acme/helper"}, {"supervise", "assistant"}, {"skill", "add", "x"}, {"messenger", "add", "assistant"},
 		{"start", "assistant", "--policy=/etc/passwd"}, {"configure", "coder", "--share=/srv"}, {"configure", "coder", "--dev-key=/k"},
-		{"configure", "assistant", "--google-sign-in"}, {"configure", "coder", "--no-account=github.com"},
+		{"configure", "assistant", "--google-sign-in"},
 	} {
 		if err := checkRunhostAgentArgs(bad[0], bad[1:]); err == nil {
 			t.Errorf("%v was taken", bad)
@@ -98,7 +98,7 @@ func TestTheAgentVerbRunsTheRunhostsOwnCommand(t *testing.T) {
 	newRunhostServer(t)
 	fakeAgentCLI(t, `echo "args: $*"; echo "a warning" >&2; echo '{"event":"x"}' >&3; cat; [ "$3" = fail ] && exit 11; exit 0`+"\n")
 	cmd, out, errOut := testCommand("")
-	code, stderr, err := runOnRunhostAgent(cmd, verbCaller{}, "list", []string{"--json"})
+	code, stderr, err := runOnRunhostAgent(cmd, verbCaller{}, "list", []string{"--json"}, "")
 	if err != nil || code != 0 {
 		t.Fatalf("list: %d %v", code, err)
 	}
@@ -106,18 +106,18 @@ func TestTheAgentVerbRunsTheRunhostsOwnCommand(t *testing.T) {
 		t.Fatalf("out %q err %q", out, errOut)
 	}
 	cmd, out, _ = testCommand("{\"send\":\"hi\"}\n")
-	if code, _, err := runOnRunhostAgent(cmd, verbCaller{}, "attach", []string{"assistant", "--json"}); err != nil || code != 0 {
+	if code, _, err := runOnRunhostAgent(cmd, verbCaller{}, "attach", []string{"assistant", "--json"}, ""); err != nil || code != 0 {
 		t.Fatalf("attach: %d %v", code, err)
 	}
 	if !strings.Contains(out.String(), `{"send":"hi"}`) {
 		t.Fatalf("attach's stdin did not reach the runhost: %q", out)
 	}
 	cmd, _, _ = testCommand("")
-	if code, _, err := runOnRunhostAgent(cmd, verbCaller{}, "show", []string{"fail"}); err != nil || code != engine.ExitPolicy {
+	if code, _, err := runOnRunhostAgent(cmd, verbCaller{}, "show", []string{"fail"}, ""); err != nil || code != engine.ExitPolicy {
 		t.Fatalf("a failing command: %d %v", code, err)
 	}
 	cmd, _, _ = testCommand("")
-	if code, _, _ := runOnRunhostAgent(cmd, verbCaller{}, "install", []string{"acme/helper"}); code != engine.ExitUsage {
+	if code, _, _ := runOnRunhostAgent(cmd, verbCaller{}, "install", []string{"acme/helper"}, ""); code != engine.ExitUsage {
 		t.Fatalf("a subcommand a runhost does not run: %d", code)
 	}
 }
@@ -130,13 +130,13 @@ func TestTheServiceStartsItsAgentsAgain(t *testing.T) {
 	log := filepath.Join(t.TempDir(), "started")
 	fakeAgentCLI(t, `echo "$*" >>`+log+"\n")
 	cmd, _, _ := testCommand("")
-	if code, _, err := runOnRunhostAgent(cmd, verbCaller{}, "start", []string{"assistant"}); err != nil || code != 0 {
+	if code, _, err := runOnRunhostAgent(cmd, verbCaller{}, "start", []string{"assistant"}, ""); err != nil || code != 0 {
 		t.Fatalf("start: %d %v", code, err)
 	}
-	if code, _, err := runOnRunhostAgent(cmd, verbCaller{}, "start", []string{"coder"}); err != nil || code != 0 {
+	if code, _, err := runOnRunhostAgent(cmd, verbCaller{}, "start", []string{"coder"}, ""); err != nil || code != 0 {
 		t.Fatalf("start: %d %v", code, err)
 	}
-	if code, _, err := runOnRunhostAgent(cmd, verbCaller{}, "stop", []string{"coder"}); err != nil || code != 0 {
+	if code, _, err := runOnRunhostAgent(cmd, verbCaller{}, "stop", []string{"coder"}, ""); err != nil || code != 0 {
 		t.Fatalf("stop: %d %v", code, err)
 	}
 	if err := os.WriteFile(log, nil, 0o600); err != nil {
@@ -236,5 +236,58 @@ func TestARunhostKeepsTheModelItsAgentsRunOn(t *testing.T) {
 		if code, _ := runhostStoreVerb(context.Background(), runhost.Request{Verb: "store", Args: []string{"put-model"}}, strings.NewReader(bad), runhost.NewFrameWriter(&o)); code != engine.ExitUsage {
 			t.Errorf("%s: code %d", bad, code)
 		}
+	}
+}
+
+// An agent's stored secret and git host account are kept in the runhost's
+// store, each as an entry of its own named for no part of its account; no
+// other kind of account is taken.
+func TestARunhostKeepsItsAgentsSecretsInItsStore(t *testing.T) {
+	for _, ok := range []string{"agent-secret:coder:GITHUB_TOKEN", "agent-secret:acme.helper:API_KEY", "account:github.com:octo-bot"} {
+		name, err := runhostKeychainEntry(ok)
+		if err != nil || !strings.HasPrefix(name, "agent-") || len(name) > 32 || strings.Contains(name, "GITHUB") || strings.Contains(name, "octo") {
+			t.Errorf("%s: %q %v", ok, name, err)
+		}
+	}
+	a, _ := runhostKeychainEntry("agent-secret:coder:A")
+	b, _ := runhostKeychainEntry("agent-secret:coder:B")
+	if a == b {
+		t.Error("two secrets share an entry")
+	}
+	for _, bad := range []string{"agent-secret:../x:A", "agent-secret:coder:../A", "account:github.com:a/b", "agent-secret:coder:", "other:x"} {
+		if _, err := runhostKeychainEntry(bad); err == nil {
+			t.Errorf("%s was taken", bad)
+		}
+	}
+}
+
+// A stored secret's value is read on the device, agreed to, and reaches the
+// runhost's own secret set on its stdin, and nothing but secret and
+// configure is given stdin.
+func TestAStoredSecretsValueTravelsToTheRunhostsSecretSet(t *testing.T) {
+	newRunhostServer(t)
+	fakeAgentCLI(t, `echo "args: $*"; echo "stdin: $(cat)"`+"\n")
+	cmd, _, _ := testCommand("s3cret-value\n")
+	v, err := runhostAgentValue(cmd, "lab", "secret", []string{"set", "coder", "GITHUB_TOKEN"}, []string{"set", "coder", "GITHUB_TOKEN", "--yes=true"})
+	if err != nil || v != "s3cret-value" {
+		t.Fatalf("the value read here: %q %v", v, err)
+	}
+	cmd, out, _ := testCommand("")
+	if code, _, err := runOnRunhostAgent(cmd, verbCaller{}, "secret", []string{"set", "coder", "GITHUB_TOKEN", "--yes=true"}, v); err != nil || code != 0 {
+		t.Fatalf("secret set: %d %v", code, err)
+	}
+	if !strings.Contains(out.String(), "stdin: s3cret-value") || !strings.Contains(out.String(), "args: agent secret set coder GITHUB_TOKEN") {
+		t.Fatalf("the runhost got %q", out)
+	}
+	cmd, out, _ = testCommand("")
+	if code, _, err := runOnRunhostAgent(cmd, verbCaller{}, "show", []string{"coder"}, "leaked"); err != nil || code != 0 {
+		t.Fatalf("show: %d %v", code, err)
+	}
+	if strings.Contains(out.String(), "leaked") {
+		t.Fatalf("show was given stdin: %q", out)
+	}
+	cmd, _, _ = testCommand("s3cret\n")
+	if _, err := runhostAgentValue(cmd, "lab", "secret", []string{"set", "coder", "X"}, []string{"set", "coder", "X"}); err == nil {
+		t.Fatal("a value was kept with nobody at a terminal to agree and no --yes")
 	}
 }
