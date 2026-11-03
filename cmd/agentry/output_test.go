@@ -36,6 +36,23 @@ func TestStageLogSpeaksOnlyOnATerminal(t *testing.T) {
 	if !strings.Contains(out.String(), "pulling x… failed after 1s\n") {
 		t.Errorf("failed stage: %q", out.String())
 	}
+	// A line that arrives in pieces opens one stage when it is complete, several
+	// in one write open one each, and a stage is closed once.
+	out.Reset()
+	s = &stageLog{w: &out, now: clock}
+	_, _ = io.WriteString(s, "  pulling a")
+	if out.Len() != 0 {
+		t.Errorf("half a line opened a stage: %q", out.String())
+	}
+	_, _ = io.WriteString(s, "b  \nbuilding c\npulling")
+	now = now.Add(2 * time.Second)
+	_, _ = io.WriteString(s, " d\n")
+	s.Close()
+	s.Close()
+	s.Fail()
+	if want := "pulling ab… 0ms\nbuilding c… 2s\npulling d… 0ms\n"; out.String() != want {
+		t.Errorf("stages:\n%q\nwant\n%q", out.String(), want)
+	}
 	// Off a terminal, or under --quiet, the log is silent and the writes
 	// succeed.
 	silent := &stageLog{w: nil, now: clock}
@@ -81,6 +98,10 @@ func TestNewStageLogIsSilentOffATerminalAndUnderQuiet(t *testing.T) {
 	if narration(root) != io.Discard {
 		t.Error("--quiet narration is not discarded")
 	}
+	flags.quiet = false
+	if narration(root) != io.Writer(&errOut) {
+		t.Error("narration is not on stderr")
+	}
 }
 
 // TestColorFollowsNoColorAndTheTerminal: colour needs a terminal, no
@@ -90,6 +111,45 @@ func TestColorFollowsNoColorAndTheTerminal(t *testing.T) {
 	if paint(&buf, colorRed, "x") != "x" {
 		t.Error("a buffer took colour")
 	}
+	// Only this process's stderr or stdout is a terminal, and only when it is
+	// a character device: another open file is not, however it looks, nor is
+	// a stream that is a regular file.
+	chardev, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = chardev.Close() }()
+	regular, err := os.CreateTemp(t.TempDir(), "out")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = regular.Close() }()
+	if terminalWriter(chardev) {
+		t.Error("an unrelated character device is a terminal")
+	}
+	prevOut, prevErr := os.Stdout, os.Stderr
+	defer func() { os.Stdout, os.Stderr = prevOut, prevErr }()
+	os.Stdout, os.Stderr = chardev, regular
+	if !terminalWriter(chardev) {
+		t.Error("a stdout that is a character device is not a terminal")
+	}
+	if terminalWriter(regular) {
+		t.Error("a stderr that is a regular file is a terminal")
+	}
+	os.Stdout, os.Stderr = regular, chardev
+	if !terminalWriter(chardev) {
+		t.Error("a stderr that is a character device is not a terminal")
+	}
+	closed, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = closed.Close()
+	os.Stdout = closed
+	if terminalWriter(closed) {
+		t.Error("a stdout that cannot be stated is a terminal")
+	}
+	os.Stdout, os.Stderr = prevOut, prevErr
 	prev := terminalWriter
 	terminalWriter = func(io.Writer) bool { return true }
 	t.Cleanup(func() { terminalWriter = prev })

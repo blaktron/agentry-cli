@@ -53,7 +53,7 @@ func TestRunnerToolsSpecGuards(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, _, err = runCLI(t, nil, "runner-tools", "--spec", specPath)
-	if err == nil || !strings.Contains(err.Error(), "parse "+specPath) {
+	if err == nil || !strings.Contains(err.Error(), "parse "+specPath+": ") || !strings.Contains(err.Error(), `unknown field "bogusField"`) {
 		t.Errorf("unknown-field spec: %v", err)
 	}
 }
@@ -67,9 +67,14 @@ func TestRunnerToolsServeSmoke(t *testing.T) {
 	}
 
 	stdin := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}` + "\n")
+	toolsrv.ConfineRole = ""
 	stdout, _, err := runCLI(t, stdin, "runner-tools", "--spec", specPath)
 	if err != nil {
 		t.Fatalf("serve: %v", err)
+	}
+	// The server runs a declared command through the trampoline command.
+	if toolsrv.ConfineRole != "runner-confine" {
+		t.Errorf("the tools server names the confine role %q", toolsrv.ConfineRole)
 	}
 	var resp struct {
 		JSONRPC string `json:"jsonrpc"`
@@ -84,5 +89,25 @@ func TestRunnerToolsServeSmoke(t *testing.T) {
 	}
 	if resp.JSONRPC != "2.0" || resp.ID != 1 || len(resp.Result.ServerInfo) == 0 {
 		t.Errorf("initialize response = %+v", resp)
+	}
+}
+
+// The two commands are for the runner's own containers and for debugging: not
+// listed in help. The trampoline takes its flags as the confined program's
+// arguments, not as its own.
+func TestRunnerToolsAndConfineStayHiddenAndConfineTakesItsArgumentsAsTheyCome(t *testing.T) {
+	root := newRootCmd()
+	for _, name := range []string{"runner-tools", "runner-confine"} {
+		cmd, _, err := root.Find([]string{name})
+		if err != nil || cmd.Name() != name {
+			t.Fatalf("%s: %v (found %q)", name, err, cmd.Name())
+		}
+		if !cmd.Hidden {
+			t.Errorf("%s is listed in help", name)
+		}
+	}
+	confine, _, _ := root.Find([]string{"runner-confine"})
+	if !confine.DisableFlagParsing {
+		t.Error("runner-confine parses the flags of the program it confines")
 	}
 }
