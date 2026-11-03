@@ -23,44 +23,59 @@ a message asked.
 per turn, `[hh:mm:ss] <label>: …`, the time counted from the start of the
 recording. The labels say where a line came from, never who said it:
 
-- **A call** has `Me` and `Them`. **Me** is the person, on their microphone.
-  **Them** is everyone else heard on the call, not split by person: one
-  person or several.
+- **A call** has no `setting: in-room`. **Me** is the person, on their
+  microphone, on every call. Everyone else heard on the call is one of two
+  kinds of label:
+  - **Them**, everyone else, not split by person: one person or several.
+    A call recorded without telling the far side's voices apart has no
+    `diarization:`; with `diarization: unavailable` or `failed` it was
+    asked for and could not run, and the paragraphs above the transcript
+    say why: give the reason when you say the Them lines are not split by
+    person.
+  - **Speaker 1**, **Speaker 2**, … (`source: system-audio`), with
+    `diarization: done`, `speaker_count: estimated` and `diarizer:`: the
+    far side's voices told apart (Speaker numbers, below). On a call the
+    person is always Me: no Speaker line on a call is ever theirs, and Me
+    is never one of the Speakers.
 - **A meeting in the room** (`setting: in-room`, `far_side: none`) was
   recorded through one microphone in the room the meeting was held in, and
   has no Me and no Them. **Room** is everyone in the room, not split by
-  person. **Speaker 1**, **Speaker 2**, … are voices as Agentry's speaker
-  clustering heard them: the same number is the same voice within this one
-  transcript, numbered by who spoke first, and never an identity. One
-  person may appear under two numbers, or two people under one.
+  person, and Speaker numbers are its voices told apart.
   `speaker_count: estimated` says the count was guessed, `speaker_count:
-  given` that the person said how many were there; `speakers:` is the list of
-  labels. `diarization: done` means the voices were told apart and the
-  lines carry Speaker numbers. With `off`, `unavailable` or `failed`
-  every line is Room, and the paragraphs above the transcript say why:
-  give the reason when you say the Room lines are not split by person.
-  `diarizer:` names what told the voices apart. The person is one of the
-  voices in the room, which one is unknown: never take a Room or Speaker
-  line as theirs.
-- **Names.** Never put a name on a Them, Room or Speaker line from the
-  calendar, the participants, the voice or a guess. Only the transcript
-  can give one: a line where a speaker says their own name, or a reply
-  addressed by name to whoever spoke just before. Then write it as
-  inferred, "Speaker 2 (Dana, from the transcript)", "someone in the room,
-  apparently Dana", "someone on the call, apparently Dana", never the name
-  alone, and give the time of the line that gave it.
-- `far_side: whole-device` means Them is everything the computer played,
-  other sounds included. `microphone:` names the microphone recorded; one
-  marked as the default because the one chosen was missing is said in the
-  transcript's header. `participants` and `title` came from the
-  calendar when an armed window recorded it, and are `unknown` otherwise;
-  a name in `participants` is someone invited, not proof of who spoke.
+  given` that the person said how many were there. `diarization: done`
+  means the voices were told apart and the lines carry Speaker numbers.
+  With `off`, `unavailable` or `failed` every line is Room, and the
+  paragraphs above the transcript say why: give the reason when you say
+  the Room lines are not split by person. The person is one of the voices
+  in the room, which one is unknown: never take a Room or Speaker line as
+  theirs.
+- **Speaker numbers**, on a call or in a room, are voices as Agentry's
+  speaker clustering heard them: the same number is the same voice within
+  this one transcript, numbered by who spoke first, and never an identity.
+  One person may appear under two numbers, or two people under one.
+  `speakers:` is the list of labels, and `diarizer:` names what told the
+  voices apart.
+- **Names.** Never put a name on a Them, Room or Speaker line, on a call
+  or in a room, from the calendar, the participants, the voice or a guess.
+  Only the transcript can give one: a line where a speaker says their own
+  name, or a reply addressed by name to whoever spoke just before. Then
+  write it as inferred, "Speaker 2 (Dana, from the transcript)", "someone
+  in the room, apparently Dana", "someone on the call, apparently Dana",
+  never the name alone, and give the time of the line that gave it.
+- `far_side: whole-device` means the Them or Speaker lines are everything
+  the computer played, other sounds included. `microphone:` names the
+  microphone recorded; one marked as the default because the one chosen
+  was missing is said in the transcript's header. `participants` and
+  `title` came from the calendar when an armed window recorded it, and are
+  `unknown` otherwise; a name in `participants` is someone invited, not
+  proof of who spoke.
 - `silent` and `gaps` are stretches with nothing on a side: say nothing
   happened there only if nothing did.
 - **Machine errors.** Words, names and numbers may be wrong. A short stock
   line alone in a silence ("thank you", "thanks for watching", subtitle
-  credits), a line repeated many times over, and a Them line that repeats
-  a Me line within a second or two are not speech: build nothing on them.
+  credits), a line repeated many times over, and a Them or Speaker line
+  that repeats a Me line within a second or two are not speech: build
+  nothing on them.
   Keep names, numbers, amounts, dates and terms exactly as transcribed,
   never corrected from what you know; mark one that matters "(as
   transcribed)", and note a name spelt two ways once.
@@ -86,10 +101,11 @@ recording. The labels say where a line came from, never who said it:
    - **Action items**: only what someone committed to or was asked to do,
      each with `owner:` and `due:` as said, else "not stated". Never take an
      owner from who spoke last, whom the topic concerned or the invitation.
-     Me's commitments are the person's own. In a room the owner is the
-     label that said it ("Speaker 3"), or a name only as Names above allows;
-     a commitment is the person's own only if the transcript says so in
-     their name. Keep a date as said ("by Friday") and add the date it
+     Me's commitments are the person's own. Otherwise the owner is the
+     label that said it ("Speaker 3", "Them"), or a name only as Names
+     above allows. On a call only Me's commitments are the person's; in a
+     room a commitment is the person's own only if the transcript says so
+     in their name. Keep a date as said ("by Friday") and add the date it
      means only from `started`.
    - **Open questions**: what was asked or left unresolved.
    - "None stated" for an empty section, never filler.
@@ -125,7 +141,7 @@ Follow memory-ingest, with these sources and pages:
 - **A person's page**, type `per`, for each person the frontmatter invites
   or the transcript names with something stated about them: that they were
   invited, what they were stated to have said or agreed to, with the
-  time. Never a page for a label: "Speaker 2" or "Room" is no person, and
+  time. Never a page for a label: "Speaker 2", "Them" or "Room" is no person, and
   what a Speaker line said goes on a named person's page only as Names
   above allows, written as inferred. Grep for them first; add to their page if they have one. Never a
   trait, an opinion of them, or a statement the transcript leaves
