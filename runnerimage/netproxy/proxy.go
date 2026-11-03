@@ -144,6 +144,10 @@ func (p *Proxy) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dialHost := host
+	// The addresses the proxy checked, tried in turn: a host whose name
+	// resolves to an IPv6 address first, on a machine with no IPv6 route,
+	// is reached at its IPv4 one.
+	var checked []net.IP
 	switch {
 	case p.Scope != nil:
 		a, why := p.scopedAddress(r.Context(), host, port)
@@ -157,16 +161,25 @@ func (p *Proxy) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("forbidden: %s:%s is not in the egress allowlist", host, port), http.StatusForbidden)
 		return
 	case p.PublicOnly || p.NetworkOK:
-		ip, err := p.checkedAddress(r.Context(), host)
+		ips, err := p.checkedAddresses(r.Context(), host)
 		if err != nil {
 			p.logf("deny %s:%s (%v)", host, port, err)
 			http.Error(w, fmt.Sprintf("forbidden: %s: %v", host, err), http.StatusForbidden)
 			return
 		}
-		dialHost = ip.String()
+		checked = ips
 	}
 	p.logf("allow %s:%s", host, port)
-	upstream, err := p.dialUpstream(r.Context(), net.JoinHostPort(dialHost, port))
+	var upstream net.Conn
+	if len(checked) > 0 {
+		for _, ip := range checked {
+			if upstream, err = p.dialUpstream(r.Context(), net.JoinHostPort(ip.String(), port)); err == nil {
+				break
+			}
+		}
+	} else {
+		upstream, err = p.dialUpstream(r.Context(), net.JoinHostPort(dialHost, port))
+	}
 	if err != nil {
 		if msg := p.unresolvedMessage(host, err); msg != "" {
 			p.logf("unresolved %s:%s", host, port)
@@ -362,10 +375,11 @@ type Resolver interface {
 	LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr, error)
 }
 
-// checkedAddress resolves host and answers its first address, refusing the
-// host when any address fails the proxy's rule: public for PublicOnly, public
-// or the person's own network for NetworkOK.
-func (p *Proxy) checkedAddress(ctx context.Context, host string) (net.IP, error) {
+// checkedAddresses resolves host and answers every address it resolves to,
+// in the resolver's order, refusing the host when any address fails the
+// proxy's rule: public for PublicOnly, public or the person's own network
+// for NetworkOK.
+func (p *Proxy) checkedAddresses(ctx context.Context, host string) ([]net.IP, error) {
 	ok, kind := Public, "public"
 	if p.NetworkOK {
 		ok, kind = Network, "public or private-network"
@@ -374,7 +388,7 @@ func (p *Proxy) checkedAddress(ctx context.Context, host string) (net.IP, error)
 		if !ok(ip) {
 			return nil, fmt.Errorf("%s is not a %s address", ip, kind)
 		}
-		return ip, nil
+		return []net.IP{ip}, nil
 	}
 	var res Resolver = net.DefaultResolver
 	if p.Resolver != nil {
@@ -389,12 +403,14 @@ func (p *Proxy) checkedAddress(ctx context.Context, host string) (net.IP, error)
 	if len(addrs) == 0 {
 		return nil, fmt.Errorf("it resolves to no address")
 	}
+	out := make([]net.IP, 0, len(addrs))
 	for _, a := range addrs {
 		if !ok(a.IP) {
 			return nil, fmt.Errorf("it resolves to %s, which is not a %s address", a.IP, kind)
 		}
+		out = append(out, a.IP)
 	}
-	return addrs[0].IP, nil
+	return out, nil
 }
 
 // Public says whether an address is on the public internet: the runner's

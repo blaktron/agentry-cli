@@ -37,6 +37,7 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/confine"
 	"github.com/blaktron/agentry-cli/runnerimage/decode"
 	"github.com/blaktron/agentry-cli/runnerimage/hostlink"
+	"github.com/blaktron/agentry-cli/runnerimage/messenger"
 	"github.com/blaktron/agentry-cli/runnerimage/minimize"
 	"github.com/blaktron/agentry-cli/runnerimage/netproxy"
 	"github.com/blaktron/agentry-cli/runnerimage/portrelay"
@@ -68,6 +69,11 @@ const usageText = `usage: agentry-runner <mode> [flags]
         (where the engine's daemon runs in a VM) serve the app link's socket
         at /run/agentry/app.sock and carry each tool call over stdio to the
         CLI, which answers it from the supervisor; it has no network
+  messenger --proxy <url>
+        (a persistent agent's messenger role) hold one messenger account's
+        connection: the start line on stdin carries its credential, then the
+        paired person's messages go out on stdout and the replies come in on
+        stdin; its one route out is the relay at --proxy
   hostlink
         (the host link's container) serve the target-host tools on stdio,
         from /run/agentry/hostspec.json and the run's /run/agentry/hosts;
@@ -130,6 +136,8 @@ func main() {
 		err = runAppLink(os.Args[2:])
 	case "applink-relay":
 		err = runAppLinkRelay(os.Args[2:])
+	case "messenger":
+		err = runMessenger(os.Args[2:])
 	case "hostlink":
 		if len(os.Args) != 2 {
 			usageExit()
@@ -398,6 +406,20 @@ func runAppLinkRelay(args []string) error {
 	return applink.Relay(context.Background(), applink.RelayConfig{
 		Listen: applink.SocketMount, Owner: *owner, In: os.Stdin, Out: os.Stdout, Log: os.Stderr,
 	})
+}
+
+// runMessenger holds one messenger account's connection until the
+// supervisor closes stdin.
+func runMessenger(args []string) error {
+	fs := flag.NewFlagSet("messenger", flag.ContinueOnError)
+	proxy := fs.String("proxy", "", "the relay's http:// address, the role's only route out")
+	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || *proxy == "" {
+		fmt.Fprintln(os.Stderr, "agentry-runner messenger: takes --proxy and nothing else")
+		os.Exit(2)
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+	defer stop()
+	return messenger.Serve(ctx, os.Stdin, os.Stdout, os.Stderr, messenger.Config{Proxy: *proxy})
 }
 
 // runBridge serves one remote MCP server on stdio until the gateway closes

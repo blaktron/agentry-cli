@@ -65,6 +65,9 @@ func (s *Supervisor) Ask(ctx context.Context, title, text string) error {
 		s.questions[id] = q
 	}
 	s.mu.Unlock()
+	// A messenger's turn says so where the person wrote: nothing is
+	// approved from there.
+	s.tellMessengerOfQuestion(title, len(askers) > 0)
 	if len(askers) == 0 {
 		return ErrNobodyToAsk
 	}

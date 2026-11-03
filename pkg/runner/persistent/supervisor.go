@@ -90,6 +90,9 @@ type Options struct {
 	// StartSegment starts a segment; nil starts it with localrun. Tests
 	// put a session of their own here.
 	StartSegment func(ctx context.Context, seg localrun.Segment) (engine.PersistentSession, error)
+	// StartMessenger starts a messenger role; nil starts it with the engine
+	// under Docker and Policy. Tests put a role of their own here.
+	StartMessenger func(ctx context.Context, st MessengerStart) (MessengerConn, error)
 	// InstallServer installs a server in the background; nil installs it
 	// with localrun under Docker and Policy. Tests put an install of their
 	// own here.
@@ -170,10 +173,18 @@ type Supervisor struct {
 	watchers    map[int]chan session.Event
 	nextWatcher int
 	ln          net.Listener
-	appLn       net.Listener // the app link's socket, for an agent that has one
-	appCtx      context.Context
-	appCancel   context.CancelFunc
-	stopped     bool // set under mu once Stop has let the watchers go
+	// msgs are the agent's messengers (messengerrun.go); msgTurn and
+	// msgText mark the messenger turn sent, until its user turn takes the
+	// mark.
+	msgs             *messengerHub
+	msgTurn, msgText string
+	appLn            net.Listener // the app link's socket, for an agent that has one
+	appCtx           context.Context
+	appCancel        context.CancelFunc
+	stopped          bool // set under mu once Stop has let the watchers go
+	// closing is set under mu as Stop begins: no turn still in flight may
+	// start a next segment once Stop has ended this one.
+	closing bool
 	// served are the tools the running segment's gateway serves; joined
 	// are the servers whose background install finished since the agent
 	// was last told, and joinTools the tools the segments they joined
@@ -308,6 +319,7 @@ func Start(ctx context.Context, opts Options) (*Supervisor, error) {
 	s.startInstalls()
 	s.startHeartbeat()
 	s.startCreditsRenewal()
+	s.startMessengers()
 	return s, nil
 }
 
@@ -538,6 +550,10 @@ func (s *Supervisor) pump(sess engine.PersistentSession, segment int, runID stri
 				if s.taskTurn != "" && ev.Text == s.taskText {
 					ev.Task, s.taskTurn = s.taskTurn, ""
 				}
+				// So does a messenger's.
+				if s.msgTurn != "" && ev.Text == s.msgText {
+					ev.Messenger, s.msgTurn, s.msgText = s.msgTurn, "", ""
+				}
 				// An upkeep turn is the runner's, and says so likewise.
 				if s.upkeepTurn && ev.Text == s.upkeepMark {
 					ev.Upkeep, s.upkeepTurn = true, false
@@ -618,17 +634,7 @@ func (s *Supervisor) Send(ctx context.Context, text string) error {
 		}
 	}
 	defer s.turn.Unlock()
-	if trigger := s.upkeepDue(); trigger != "" {
-		// The last turn filled most of the model's window, or the person
-		// comes back to a large conversation the heartbeat has not yet
-		// compacted (a start): it is compacted before their message.
-		_, _ = s.compactLocked(ctx, trigger)
-	} else if s.coldDue() {
-		// The person comes back after the harness's prompt cache has
-		// expired: their message re-sends the whole history uncached, so
-		// it is compacted first, when that costs least.
-		_, _ = s.coldCompactLocked(ctx)
-	}
+	s.compactBeforePerson(ctx)
 	return s.sendLocked(ctx, "", text)
 }
 
@@ -669,9 +675,31 @@ func (s *Supervisor) upkeepDue() string {
 	return ""
 }
 
+// compactBeforePerson compacts the conversation before a turn of the
+// person's, when that is due. The caller holds turn.
+func (s *Supervisor) compactBeforePerson(ctx context.Context) {
+	if trigger := s.upkeepDue(); trigger != "" {
+		// The last turn filled most of the model's window, or the person
+		// comes back to a large conversation the heartbeat has not yet
+		// compacted (a start): it is compacted before their message.
+		_, _ = s.compactLocked(ctx, trigger)
+	} else if s.coldDue() {
+		// The person comes back after the harness's prompt cache has
+		// expired: their message re-sends the whole history uncached, so
+		// it is compacted first, when that costs least.
+		_, _ = s.coldCompactLocked(ctx)
+	}
+}
+
 // sendLocked is Send for a caller that holds turn; pre is a frame of the
 // caller's own, last before the text (a task's).
 func (s *Supervisor) sendLocked(ctx context.Context, pre, text string) error {
+	return s.sendAs(ctx, pre, text, pre == "")
+}
+
+// sendAs is sendLocked, person saying the turn is the person's own whatever
+// frame it carries (a message they sent from a messenger).
+func (s *Supervisor) sendAs(ctx context.Context, pre, text string, person bool) error {
 	cfg, err := LoadConfig(s.opts.Home, s.opts.Agent.Name)
 	if err != nil {
 		return err
@@ -697,7 +725,6 @@ func (s *Supervisor) sendLocked(ctx context.Context, pre, text string) error {
 		frame = timeFrame(s.now())
 	}
 	frame += carry
-	person := pre == ""
 	reminded := s.memoryFrameLocked(person)
 	frame += reminded + missed
 	if byChange {
@@ -794,7 +821,7 @@ func (s *Supervisor) nextSegmentFor(ctx context.Context, notice string) error {
 	s.seg.Lock()
 	defer s.seg.Unlock()
 	s.mu.Lock()
-	if s.stopped {
+	if s.stopped || s.closing {
 		s.mu.Unlock()
 		return session.ErrEnded
 	}
@@ -934,6 +961,9 @@ func (s *Supervisor) Change(ch Change) (Roster, error) {
 	// installs now, and an install whose server it switched off or removed
 	// is cancelled.
 	s.startInstalls()
+	// A messenger the change added, removed, switched or paired starts,
+	// stops or is told now.
+	s.reconcileMessengers()
 	return s.Roster(), nil
 }
 
@@ -1021,6 +1051,8 @@ type Status struct {
 	Usage        receipt.Usage `json:"usage"`
 	// Pending says a change waits for the next turn's segment.
 	Pending bool `json:"pending,omitempty"`
+	// Messengers are the agent's messengers and each one's connection.
+	Messengers []MessengerState `json:"messengers,omitempty"`
 }
 
 // StateRunning is a running agent's state.
@@ -1030,13 +1062,14 @@ const StateRunning = "running"
 func (s *Supervisor) Status() Status {
 	cfg, _ := LoadConfig(s.opts.Home, s.opts.Agent.Name)
 	pending := grantsKey(s.opts.Home, s.opts.Agent, cfg)
+	messengers := s.messengerStates(cfg)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return Status{
 		Agent: s.opts.Agent.Name, State: StateRunning, Client: s.opts.Client, PID: os.Getpid(), Since: s.since,
 		Segment: s.segment, Run: s.runID, SegmentDir: s.outDir, Adapter: s.adapter, Model: s.model,
 		Resumed: s.resumed, ResumeReason: s.resumeReason, Busy: s.busy, Usage: s.usage,
-		Pending: pending != s.grants,
+		Pending: pending != s.grants, Messengers: messengers,
 	}
 }
 
@@ -1055,11 +1088,17 @@ func (s *Supervisor) Stop(ctx context.Context) (*receipt.Envelope, error) {
 		// they have, so the next start of the agent finds none of them.
 		// The heartbeat fires nothing more; a task's turn in flight ends
 		// with the segment.
+		s.mu.Lock()
+		s.closing = true
+		s.mu.Unlock()
 		s.cancelInstalls()
 		s.cancelHeartbeat()
+		// No messenger's message becomes a turn from here.
+		waitMessengers := s.stopMessengers()
 		s.seg.Lock()
 		s.env, s.endErr = s.endSegment(ctx, false)
 		s.seg.Unlock()
+		waitMessengers()
 		// The last segment has ended: the credits session's count is
 		// complete.
 		s.stopCredits()

@@ -101,6 +101,7 @@ func newAgentCmd() *cobra.Command {
 		newAgentCompactCmd(),
 		newAgentSkillCmd(),
 		newAgentSecretCmd(),
+		newAgentMessengerCmd(),
 		newAgentMemoryCmd(),
 		newAgentSuperviseCmd(),
 	)
@@ -168,6 +169,9 @@ type agentState struct {
 	// CalendarFeeds are the calendars the agent reads, by name, never with
 	// their addresses.
 	CalendarFeeds []persistent.CalendarFeedState `json:"calendarFeeds,omitempty"`
+	// Messengers are the messengers the agent is reached on, never with
+	// their credentials, each with its connection while the agent runs.
+	Messengers []persistent.MessengerState `json:"messengers,omitempty"`
 	// LastCompaction is the newest record of the agent's compactions, and
 	// LastConsolidation of its memory's, for one that keeps a memory.
 	LastCompaction    *persistent.UpkeepRecord `json:"lastCompaction,omitempty"`
@@ -214,6 +218,7 @@ func readAgentState(ctx context.Context, home string, a persistent.Agent) (agent
 	st.Roster = persistent.BuildRosterUnder(a, cfg, nil, persistent.HomeMalwareCheck(home))
 	st.MailProviders = persistent.MailProviders(a, cfg)
 	st.CalendarFeeds = persistent.CalendarFeeds(a, cfg)
+	st.Messengers = persistent.Messengers(a, cfg, homeMessengerAllowed(home))
 	for _, s := range persistent.Suggestions(a, cfg) {
 		st.Suggested = append(st.Suggested, suggestedServer{Key: s.Key, Name: s.Name, ID: persistent.ServerEntryID(s.Server), Line: s.Note})
 	}
@@ -225,6 +230,9 @@ func readAgentState(ctx context.Context, home string, a persistent.Agent) (agent
 		defer cancel()
 		if s, err := persistent.QueryStatus(qctx, home, a.Name); err == nil {
 			st.Status = &s
+			if len(s.Messengers) > 0 {
+				st.Messengers = s.Messengers
+			}
 		}
 		if r, err := persistent.QueryRoster(qctx, home, a.Name); err == nil {
 			st.Roster = r
@@ -466,6 +474,11 @@ func printAgentState(w io.Writer, st agentState) {
 			}
 			_, _ = fmt.Fprintf(w, "    %s\t%s (%s): %s, address set %s\n", safeTerminalText(f.Name, 80), f.Entry, from, state, f.Set.Local().Format("2 Jan 2006 15:04"))
 		}
+	}
+	if len(st.Messengers) > 0 {
+		_, _ = fmt.Fprintf(w, "  messengers (agentry agent messenger list %s):\n", st.Agent)
+		a, _ := agentNamed(st.Agent)
+		printMessengers(w, a, st.Messengers)
 	}
 	if len(st.Suggested) > 0 {
 		_, _ = fmt.Fprintf(w, "  suggested servers (agentry agent configure %s --add-suggested <key>):\n", st.Agent)
