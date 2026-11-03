@@ -5,6 +5,7 @@ package validate
 // straight back.
 
 import (
+	"slices"
 	"testing"
 )
 
@@ -27,8 +28,30 @@ func TestLocalS1FlagsBinariesArchivesAndEncoding(t *testing.T) {
 		files = append(files, localFile{Path: name, Content: content})
 	}
 	got := map[string]string{}
-	for _, f := range scanS1(files) {
+	var order []string
+	found := scanS1(files)
+	for _, f := range found {
 		got[f.FilePath] = f.Scanner
+		order = append(order, f.FilePath)
+	}
+	// Findings come out by path, and each carries the severity and title the
+	// registry gives it.
+	if want := []string{"legacy.txt", "lib/helper.md", "vendor/deps.md"}; !slices.Equal(order, want) {
+		t.Errorf("findings are in the order %v, want %v", order, want)
+	}
+	for _, f := range found {
+		wantSeverity, wantTitle := map[string]string{
+			"S1/binary-executable": "critical",
+			"S1/nested-archive":    "critical",
+			"S1/non-utf8":          "low",
+		}[f.Scanner], map[string]string{
+			"S1/binary-executable": "Executable binary in package",
+			"S1/nested-archive":    "Nested archive in package",
+			"S1/non-utf8":          "Non-UTF-8 text file",
+		}[f.Scanner]
+		if f.Severity != wantSeverity || f.Title != wantTitle {
+			t.Errorf("%s: severity %q title %q, want %q %q", f.FilePath, f.Severity, f.Title, wantSeverity, wantTitle)
+		}
 	}
 
 	want := map[string]string{

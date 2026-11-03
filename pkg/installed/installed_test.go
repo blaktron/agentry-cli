@@ -5,11 +5,13 @@ package installed
 // as widening.
 
 import (
+	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/blaktron/agentry/pkg/manifest"
 	"gopkg.in/yaml.v3"
@@ -43,6 +45,14 @@ publish:
 		t.Fatal(err)
 	}
 	snap := Snapshot(m.Capabilities)
+	// The record owns its lists: a later change to the manifest's is not a
+	// change to what was recorded.
+	first := snap.EgressHosts[0]
+	m.Capabilities.Network.Egress.Hosts[0] = "changed.example.com"
+	if snap.EgressHosts[0] != first {
+		t.Errorf("the snapshot shares the manifest's egress hosts: %v", snap.EgressHosts)
+	}
+	m.Capabilities.Network.Egress.Hosts[0] = first
 	if len(snap.EgressHosts) != 2 {
 		t.Errorf("egress hosts = %v", snap.EgressHosts)
 	}
@@ -189,6 +199,11 @@ func TestInstallStateRoundTrip(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv(configdir.EnvVar, filepath.Join(home, "config"))
 
+	// Nothing recorded yet: a missing file is empty state, not an error.
+	if empty, err := Load(); err != nil || len(empty.Records) != 0 {
+		t.Fatalf("Load of a missing file = (%+v, %v), want empty state", empty, err)
+	}
+
 	key := Key{
 		Registry: "https://reg.example/", Namespace: "acme", Name: "helper",
 		Target: "claude-skill", Dir: "/tmp/skills/helper",
@@ -198,9 +213,28 @@ func TestInstallStateRoundTrip(t *testing.T) {
 		FSWritePaths: []string{"out"}, Secrets: []string{"API_KEY"},
 	}
 	var st State
+	recordedAfter := time.Now()
 	st.Upsert(key, "1.0.0", caps, true)
+	if at := st.Records[0].InstalledAt; at.Before(recordedAfter) || at.After(time.Now()) || at.Location() != time.UTC {
+		t.Errorf("install time = %v (%v), want now, in UTC", at, at.Location())
+	}
 	if err := Save(st); err != nil {
 		t.Fatal(err)
+	}
+	// The file is named, placed and permitted as every client expects: it
+	// names local paths, so only the person may read it.
+	path, err := StatePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Base(path) != "installed.yaml" || filepath.Dir(path) != filepath.Join(home, "config") {
+		t.Errorf("state path = %s", path)
+	}
+	if fi, err := os.Stat(path); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Errorf("state file = (%v, %v), want mode 0600", fi, err)
+	}
+	if di, err := os.Stat(filepath.Dir(path)); err != nil || di.Mode().Perm() != 0o700 {
+		t.Errorf("config directory = (%v, %v), want mode 0700", di, err)
 	}
 
 	back, err := Load()
@@ -216,6 +250,25 @@ func TestInstallStateRoundTrip(t *testing.T) {
 	}
 	if !rec.Managed {
 		t.Error("managed flag did not survive the round trip")
+	}
+	if rec.Registry != "https://reg.example" {
+		t.Errorf("registry = %q, want the address without its trailing slash", rec.Registry)
+	}
+	// A record is found by the whole key, and by either spelling of the
+	// registry's address.
+	for name, k := range map[string]Key{
+		"another registry":  {Registry: "https://other.example", Namespace: key.Namespace, Name: key.Name, Target: key.Target, Dir: key.Dir},
+		"another target":    {Registry: key.Registry, Namespace: key.Namespace, Name: key.Name, Target: "agents-md", Dir: key.Dir},
+		"another directory": {Registry: key.Registry, Namespace: key.Namespace, Name: key.Name, Target: key.Target, Dir: "/elsewhere"},
+	} {
+		if back.Find(k) != nil {
+			t.Errorf("%s found the record", name)
+		}
+	}
+	bare := key
+	bare.Registry = "https://reg.example"
+	if back.Find(bare) == nil {
+		t.Error("the registry address without its trailing slash does not find the record")
 	}
 	if d := DiffCapabilities(rec.Capabilities, caps); !d.Empty() {
 		t.Errorf("capabilities did not survive the round trip: %+v", d)
@@ -233,6 +286,12 @@ func TestInstallStateRoundTrip(t *testing.T) {
 		t.Error("recording a second directory overwrote the first")
 	}
 
+	// Recording an installation again replaces its record in place.
+	back.Upsert(key, "1.1.0", caps, true)
+	if len(back.Records) != 2 || back.Find(key).Version != "1.1.0" {
+		t.Fatalf("a second record of the same installation: %+v", back.Records)
+	}
+
 	// Remove deletes exactly the keyed record.
 	if !back.Remove(other) {
 		t.Error("Remove did not find the second record")
@@ -242,6 +301,19 @@ func TestInstallStateRoundTrip(t *testing.T) {
 	}
 	if len(back.Records) != 1 || back.Find(key) == nil {
 		t.Errorf("Remove disturbed the wrong record: %+v", back.Records)
+	}
+	// Removing the first of two leaves the second.
+	back.Upsert(other, "2.0.0", CapSnapshot{}, false)
+	if !back.Remove(key) || len(back.Records) != 1 || back.Find(other) == nil {
+		t.Errorf("Remove of the first record disturbed the other: %+v", back.Records)
+	}
+
+	// A file that is not state is an error, with nothing loaded.
+	if err := os.WriteFile(path, []byte("records: [unclosed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if corrupt, err := Load(); err == nil || !strings.Contains(err.Error(), "parse") || len(corrupt.Records) != 0 {
+		t.Errorf("Load of a corrupt file = (%+v, %v), want a parse error and no records", corrupt, err)
 	}
 }
 
@@ -272,7 +344,12 @@ publish:
 		t.Fatal(err)
 	}
 	snap := Snapshot(m.Capabilities)
+	m.Capabilities.MCPServers[0].Env["LOGS_DIR"] = "/changed"
 	got := snap.MCPServerEnv["npm:github-mcp-server-js@0.1.7"]
+	if got["LOGS_DIR"] != "/tmp/logs" {
+		t.Fatalf("the snapshot shares the manifest's server env: %v", got)
+	}
+	m.Capabilities.MCPServers[0].Env["LOGS_DIR"] = "/tmp/logs"
 	if len(got) != 2 || got["GITHUB_PERMISSION"] != "read-only" || got["LOGS_DIR"] != "/tmp/logs" {
 		t.Fatalf("snapshot env = %v", snap.MCPServerEnv)
 	}
@@ -345,6 +422,23 @@ func TestCapabilitiesInvertsSnapshot(t *testing.T) {
 // one no release declares, so the release's server widens and re-asks,
 // as the raw-string comparison it replaced did.
 func TestMalformedServerIDStillReasks(t *testing.T) {
+	// What an id reads back as: a server of a package at a pin, a remote
+	// server, or one no release declares.
+	for _, tc := range []struct{ id, npm, pypi, url, version string }{
+		{"npm:@scope/x@1.2.3", "@scope/x", "", "", "1.2.3"},
+		{"npm:plain@2.0.0", "plain", "", "", "2.0.0"},
+		{"pypi:mcp-thing@0.4.0", "", "mcp-thing", "", "0.4.0"},
+		{"url:https://mcp.example/sse", "", "", "https://mcp.example/sse", ""},
+		{"npm:@scope/x", "", unparsedServer + "npm:@scope/x", "", ""},
+		{"foo@1", "", unparsedServer + "foo@1", "", ""},
+		{"pypi:", "", unparsedServer + "pypi:", "", ""},
+		{"url:", "", unparsedServer + "url:", "", ""},
+	} {
+		srv := serverFromID(tc.id)
+		if srv.NPM != tc.npm || srv.PyPI != tc.pypi || srv.URL != tc.url || srv.Version != tc.version {
+			t.Errorf("serverFromID(%q) = %+v, want npm %q pypi %q url %q version %q", tc.id, srv, tc.npm, tc.pypi, tc.url, tc.version)
+		}
+	}
 	next := Snapshot(manifest.Capabilities{MCPServers: []manifest.MCPServer{
 		{PyPI: "foo", Version: "1"},
 		{NPM: "@scope/x", Version: "2.0.0"},
@@ -411,9 +505,14 @@ func TestArchiveWideningsHoldTheArchiveToTheConsentedContract(t *testing.T) {
 // and the record reads back what was consented.
 func TestShippedKnowledgeIsInTheSnapshot(t *testing.T) {
 	before := Snapshot(manifest.Capabilities{})
-	after := Snapshot(manifest.Capabilities{Knowledge: []string{"aws-docs"}})
+	shipped := manifest.Capabilities{Knowledge: []string{"aws-docs"}}
+	after := Snapshot(shipped)
 	if !slices.Equal(after.Knowledge, []string{"aws-docs"}) {
 		t.Fatalf("snapshot = %+v", after)
+	}
+	shipped.Knowledge[0] = "changed"
+	if after.Knowledge[0] != "aws-docs" {
+		t.Fatalf("the snapshot shares the manifest's list of packs: %v", after.Knowledge)
 	}
 	if d := DiffCapabilities(before, after); !slices.Contains(d.Widened, "ships knowledge: aws-docs") {
 		t.Fatalf("a newly shipped pack did not widen: %+v", d)
@@ -499,6 +598,19 @@ func TestReconsentKeepsALocalInstall(t *testing.T) {
 	if !st.Reconsent(k, "1.0.0", CapSnapshot{}, "sha256:ccc") || st.Find(k).Local() {
 		t.Fatal("a registry record became local")
 	}
+
+	// A run that finds no record records its consent, for a directory the
+	// client did not choose.
+	var fresh State
+	if !fresh.Reconsent(k, "1.0.0", CapSnapshot{EgressHosts: []string{"a.example"}}, "sha256:ddd") {
+		t.Fatal("a run with no record recorded nothing")
+	}
+	if r := fresh.Find(k); r == nil || r.Version != "1.0.0" || r.Managed || r.Local() || !slices.Equal(r.Capabilities.EgressHosts, []string{"a.example"}) {
+		t.Fatalf("after a run with no record: %+v", r)
+	}
+	if !(Record{Source: SourceLocal}).Local() || (Record{Source: "registry"}).Local() || (Record{}).Local() {
+		t.Error("Local() is true only for the local source")
+	}
 }
 
 // A remote server in the consent record: the record keeps its address,
@@ -580,6 +692,20 @@ func TestTheBrowserIsInTheSnapshot(t *testing.T) {
 	before, after := Snapshot(manifest.Capabilities{}), Snapshot(site)
 	if after.Browser == nil || !slices.Equal(after.Browser.Hosts, []string{"cdn.example.com"}) {
 		t.Fatalf("snapshot = %+v", after)
+	}
+	site.Browser.Hosts[0], site.Browser.Sites[0] = "changed", "changed"
+	if after.Browser.Hosts[0] != "cdn.example.com" || after.Browser.Sites[0] != "site" {
+		t.Fatalf("the snapshot shares the manifest's browser lists: %+v", after.Browser)
+	}
+	// Every field of the line survives the way back: a record of a browser
+	// that may reach any public site and type a secret reads as that.
+	full := Snapshot(manifest.Capabilities{Browser: &manifest.Browser{
+		Sites: []string{"site"}, Hosts: []string{"cdn.example.com"}, Scope: manifest.BrowserScopePublic, Secrets: []string{"SITE_PASSWORD"}}})
+	if got := Snapshot(full.capabilities()); !reflect.DeepEqual(got, full) {
+		t.Fatalf("a full browser line did not survive: %+v, want %+v", got.Browser, full.Browser)
+	}
+	if d := DiffCapabilities(full, full); !d.Empty() {
+		t.Fatalf("the same full browser line changed the contract: %+v", d)
 	}
 	if d := DiffCapabilities(before, after); !d.HasWidened() {
 		t.Fatalf("a new browser did not widen: %+v", d)
@@ -707,10 +833,19 @@ func TestARecordWithoutAServersGrantsAsksOnce(t *testing.T) {
 			if len(d.Widened) != 1 || len(d.Narrowed) != 0 {
 				t.Fatalf("an unrecorded server reported more than its one line: %+v", d)
 			}
+			if tc.name != "any host" && d.Widened[0] != tc.want {
+				t.Fatalf("the line asking again is %q, want %q", d.Widened[0], tc.want)
+			}
 			if d := DiffCapabilities(next, next); !d.Empty() {
 				t.Fatalf("the record written by the consent still differs: %+v", d)
 			}
 		})
+	}
+	// A server the release no longer declares is no widening, whatever its
+	// grants were: the release asks for nothing it had not.
+	gone := DiffCapabilities(old, Snapshot(manifest.Capabilities{}))
+	if len(gone.Widened) != 0 || len(gone.Narrowed) != 1 {
+		t.Fatalf("a dropped server with unrecorded grants: %+v", gone)
 	}
 	// A remote server's grants are recorded beside its address, so its
 	// record is never unknown.
@@ -803,6 +938,12 @@ func TestAPersistentReleasesBlockAndSubagentsAreInTheSnapshot(t *testing.T) {
 	var back CapSnapshot
 	if err := yaml.Unmarshal(b, &back); err != nil || !DiffCapabilities(after, back).Empty() {
 		t.Fatalf("YAML round trip: %s %v %+v", b, err, back)
+	}
+	owned := manifest.Capabilities{Persistent: &manifest.Persistent{Secrets: []string{"KEY"}, Mail: []string{"gmail"}}}
+	snapped := Snapshot(owned)
+	snapped.Persistent.Secrets[0], snapped.Persistent.Mail[0] = "changed", "changed"
+	if owned.Persistent.Secrets[0] != "KEY" || owned.Persistent.Mail[0] != "gmail" {
+		t.Fatal("the snapshot shares the manifest's secrets or mail lists")
 	}
 	after.Persistent.ImageServers[0] = "changed"
 	if caps.Persistent.ImageServers[0] != "google-workspace" {

@@ -60,6 +60,9 @@ func TestMinVersionPolicy(t *testing.T) {
 		{"no floor advertised is silent", "", "0.0.1", false, false},
 		{"an unparseable floor is silent", "next", "1.0.0", false, false},
 		{"a dev build below the floor warns, not refuses", "0.5.0", "0.0.0-dev", true, false},
+		{"one patch below the floor warns", "1.2.1", "1.2.0", true, false},
+		{"one patch above the floor is silent", "1.2.0", "1.2.1", false, false},
+		{"one minor below the floor warns", "1.3.0", "1.2.9", true, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -72,6 +75,12 @@ func TestMinVersionPolicy(t *testing.T) {
 			}
 			if tt.wantRefusal && !strings.Contains(err.Error(), envSkipVersionCheck) {
 				t.Errorf("refusal does not name the escape hatch: %v", err)
+			}
+			if tt.wantRefusal && !strings.Contains(err.Error(), "this CLI is version "+tt.have+";") || tt.wantRefusal && !strings.Contains(err.Error(), "requires at least "+tt.minCLI+" ") {
+				t.Errorf("refusal does not say the versions: %v", err)
+			}
+			if tt.wantWarn && (!strings.Contains(warn, "warning: agentry "+tt.have+" is older than ") || !strings.Contains(warn, "minimum supported version "+tt.minCLI+" ")) {
+				t.Errorf("warning does not say the versions: %q", warn)
 			}
 		})
 	}

@@ -44,6 +44,8 @@ func TestDiffKeys(t *testing.T) {
 	a, b, c := newSigner(t), newSigner(t), newSigner(t)
 	swapped := a.keySet().Keys[0]
 	swapped.PublicKey = b.pubPEM
+	spaced := a.keySet().Keys[0]
+	spaced.PublicKey = "\n" + spaced.PublicKey + "\n"
 	tests := []struct {
 		name               string
 		pinned, advertised KeySet
@@ -56,6 +58,10 @@ func TestDiffKeys(t *testing.T) {
 		{"replaced", setOfKeys(a.keySet().Keys[0]), setOfKeys(swapped), KeyChange{Replaced: []string{a.keyID}}, false},
 		{"an id listed twice with another key", setOfKeys(a.keySet().Keys[0]), setOfKeys(a.keySet().Keys[0], swapped, b.keySet().Keys[0]), KeyChange{Added: []string{b.keyID}, Replaced: []string{a.keyID}}, false},
 		{"swapped", setOfKeys(a.keySet().Keys[0]), setOfKeys(c.keySet().Keys[0]), KeyChange{Added: []string{c.keyID}, Removed: []string{a.keyID}}, false},
+		{"the same key with other whitespace around it", setOfKeys(a.keySet().Keys[0]), setOfKeys(spaced), KeyChange{}, false},
+		{"an id listed twice with another key each time", setOfKeys(a.keySet().Keys[0]), setOfKeys(swapped, swapped), KeyChange{Replaced: []string{a.keyID}}, false},
+		{"a new id listed twice", setOfKeys(a.keySet().Keys[0]), setOfKeys(b.keySet().Keys[0], b.keySet().Keys[0]), KeyChange{Added: []string{b.keyID}, Removed: []string{a.keyID}}, false},
+		{"a pinned id listed twice and gone", setOfKeys(a.keySet().Keys[0], a.keySet().Keys[0]), KeySet{}, KeyChange{Removed: []string{a.keyID}}, false},
 	}
 	for _, tc := range tests {
 		got := DiffKeys(tc.pinned, tc.advertised)
@@ -80,6 +86,27 @@ func TestPinCarriesStatus(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(got, set) {
 		t.Fatalf("round trip = (%+v, %v), want %+v", got, err, set)
 	}
+
+	// What a client shows of a retired key's date: the day in UTC of a
+	// timestamp, and for anything else only printable ASCII, cut to 40.
+	long := strings.Repeat("x", 40)
+	for _, tc := range []struct{ retiredAt, want string }{
+		{"", "signed by a retired key (the registry gives no retirement date)"},
+		{"2026-09-20T10:00:00Z", "signed by a retired key (retired 2026-09-20)"},
+		{"2026-09-20T23:30:00-05:00", "signed by a retired key (retired 2026-09-21)"},
+		{"2026-09-20", "signed by a retired key (retired 2026-09-20)"},
+		{"20\x1b[2Jsep", "signed by a retired key (retired 20[2Jsep)"},
+		{"caf\xc3\xa9", "signed by a retired key (retired caf)"},
+		{long, "signed by a retired key (retired " + long + ")"},
+		{long + "y", "signed by a retired key (retired " + long + ")"},
+	} {
+		if got := (AttestationResult{KeyRetired: true, KeyRetiredAt: tc.retiredAt}).RetiredNote(); got != tc.want {
+			t.Errorf("RetiredNote(%q) = %q, want %q", tc.retiredAt, got, tc.want)
+		}
+	}
+	if got := (AttestationResult{KeyRetiredAt: "2026-09-20"}).RetiredNote(); got != "" {
+		t.Errorf("RetiredNote of a key that is not retired = %q", got)
+	}
 }
 
 func TestPinAtLoginClassifiesTheChange(t *testing.T) {
@@ -93,7 +120,11 @@ func TestPinAtLoginClassifiesTheChange(t *testing.T) {
 		reg.set(func(f *registryFixture) {
 			f.keys = setOfKeys(old.withStatus(KeyStatusRetired, "2026-09-20"), next.withStatus(KeyStatusActive, ""))
 		})
-		note := PinAtLogin(ctx, http.DefaultClient, reg.srv.URL)
+		res := PinAtLoginResult(ctx, http.DefaultClient, reg.srv.URL)
+		note := res.Note
+		if res.Status != "rotation" {
+			t.Errorf("status = %q, want rotation", res.Status)
+		}
 		for _, want := range []string{"possible key rotation", "added key id(s) " + next.keyID, "key " + old.keyID + " retired 2026-09-20", "consistent with a key rotation", "Confirm the rotation with the registry's operator", "log in again to re-pin deliberately"} {
 			if !strings.Contains(note, want) {
 				t.Errorf("note %q lacks %q", note, want)
@@ -115,7 +146,11 @@ func TestPinAtLoginClassifiesTheChange(t *testing.T) {
 		reg := newRegistry(t, setOfKeys(old.keySet().Keys[0], next.keySet().Keys[0]), nil)
 		_ = PinAtLogin(ctx, http.DefaultClient, reg.srv.URL)
 		reg.set(func(f *registryFixture) { f.keys = next.keySet() })
-		note := PinAtLogin(ctx, http.DefaultClient, reg.srv.URL)
+		res := PinAtLoginResult(ctx, http.DefaultClient, reg.srv.URL)
+		note := res.Note
+		if res.Status != "mismatch" {
+			t.Errorf("status = %q, want mismatch", res.Status)
+		}
 		if !strings.Contains(note, "WARNING") || !strings.Contains(note, "removed key id(s) "+old.keyID) || !strings.Contains(note, "possible compromise") || !strings.Contains(note, "log in again to re-pin deliberately") {
 			t.Fatalf("note = %q", note)
 		}
@@ -131,7 +166,11 @@ func TestPinAtLoginClassifiesTheChange(t *testing.T) {
 		swapped.Keys[0].PublicKey = next.pubPEM
 		swapped.Keys[0].Status = KeyStatusRetired
 		reg.set(func(f *registryFixture) { f.keys = swapped })
-		note := PinAtLogin(ctx, http.DefaultClient, reg.srv.URL)
+		res := PinAtLoginResult(ctx, http.DefaultClient, reg.srv.URL)
+		note := res.Note
+		if res.Status != "mismatch" {
+			t.Errorf("status = %q, want mismatch", res.Status)
+		}
 		if !strings.Contains(note, "WARNING") || !strings.Contains(note, "different public key under key id(s) "+old.keyID) || strings.Contains(note, "retired") {
 			t.Fatalf("note = %q", note)
 		}
@@ -145,9 +184,56 @@ func TestPinAtLoginClassifiesTheChange(t *testing.T) {
 		reg := newRegistry(t, old.keySet(), nil)
 		_ = PinAtLogin(ctx, http.DefaultClient, reg.srv.URL)
 		reg.set(func(f *registryFixture) { f.keys = setOfKeys(old.withStatus(KeyStatusRetired, "2026-09-21")) })
-		note := PinAtLogin(ctx, http.DefaultClient, reg.srv.URL)
+		res := PinAtLoginResult(ctx, http.DefaultClient, reg.srv.URL)
+		note := res.Note
+		if res.Status != "unchanged" {
+			t.Errorf("status = %q, want unchanged", res.Status)
+		}
 		if !strings.Contains(note, "signing keys unchanged (1 pinned); key "+old.keyID+" retired 2026-09-21") {
 			t.Fatalf("note = %q", note)
+		}
+	})
+	t.Run("a retirement date that changes later is recorded", func(t *testing.T) {
+		isolatePins(t)
+		reg := newRegistry(t, old.keySet(), nil)
+		_ = PinAtLogin(ctx, http.DefaultClient, reg.srv.URL)
+		reg.set(func(f *registryFixture) { f.keys = setOfKeys(old.withStatus(KeyStatusRetired, "2026-09-21")) })
+		_ = PinAtLogin(ctx, http.DefaultClient, reg.srv.URL)
+		reg.set(func(f *registryFixture) { f.keys = setOfKeys(old.withStatus(KeyStatusRetired, "2026-09-25")) })
+		note := PinAtLogin(ctx, http.DefaultClient, reg.srv.URL)
+		if !strings.Contains(note, "key "+old.keyID+" retired 2026-09-25") {
+			t.Fatalf("note = %q", note)
+		}
+		if pinned, _ := LoadPinned(reg.srv.URL); pinned.Keys[0].RetiredAt != "2026-09-25" {
+			t.Fatalf("the pin keeps %+v", pinned.Keys[0])
+		}
+	})
+	t.Run("a retired key with no date is said so", func(t *testing.T) {
+		isolatePins(t)
+		reg := newRegistry(t, old.keySet(), nil)
+		_ = PinAtLogin(ctx, http.DefaultClient, reg.srv.URL)
+		reg.set(func(f *registryFixture) { f.keys = setOfKeys(old.withStatus(KeyStatusRetired, "")) })
+		note := PinAtLogin(ctx, http.DefaultClient, reg.srv.URL)
+		if !strings.Contains(note, "key "+old.keyID+" retired (no date given)") {
+			t.Fatalf("note = %q", note)
+		}
+	})
+	t.Run("a changed set records no status", func(t *testing.T) {
+		isolatePins(t)
+		reg := newRegistry(t, setOfKeys(old.keySet().Keys[0], next.keySet().Keys[0]), nil)
+		_ = PinAtLogin(ctx, http.DefaultClient, reg.srv.URL)
+		// One pinned key is gone and the other is marked retired: the set
+		// changed other than by a rotation, so even its status is not taken.
+		reg.set(func(f *registryFixture) { f.keys = setOfKeys(next.withStatus(KeyStatusRetired, "2026-09-20")) })
+		note := PinAtLogin(ctx, http.DefaultClient, reg.srv.URL)
+		if !strings.Contains(note, "WARNING") || strings.Contains(note, "retired") {
+			t.Fatalf("note = %q", note)
+		}
+		pinned, _ := LoadPinned(reg.srv.URL)
+		for _, k := range pinned.Keys {
+			if k.Retired() || k.RetiredAt != "" {
+				t.Fatalf("a status of a changed set was recorded: %+v", pinned.Keys)
+			}
 		}
 	})
 }
@@ -198,6 +284,33 @@ func TestVerifyAttestationAcrossARotation(t *testing.T) {
 			t.Fatalf("res = %+v, want verified with the pin's (active) record", res)
 		}
 	})
+	t.Run("the record the registry gives under a pinned id with another key is not taken", func(t *testing.T) {
+		isolatePins(t)
+		env := old.envelope(t, testDigestHex)
+		other := old.withStatus(KeyStatusRetired, "2026-09-20")
+		other.PublicKey = next.pubPEM
+		reg := newRegistry(t, setOfKeys(other, next.withStatus(KeyStatusActive, "")), &env)
+		if err := SavePinned(reg.srv.URL, old.keySet()); err != nil {
+			t.Fatal(err)
+		}
+		res := VerifyAttestation(ctx, http.DefaultClient, reg.srv.URL, "", "/att", "sha256:"+testDigestHex)
+		if res.State != StateVerified || res.KeyID != old.keyID || res.KeyRetired {
+			t.Fatalf("res = %+v, want verified by the key as pinned, not retired", res)
+		}
+	})
+	t.Run("a prefix of the registry verifies against the pins of the registry AGENTRY_PIN_REGISTRY names", func(t *testing.T) {
+		isolatePins(t)
+		env := old.envelope(t, testDigestHex)
+		reg := newRegistry(t, old.keySet(), &env)
+		t.Setenv(EnvPinRegistry, reg.srv.URL)
+		if err := SavePinned(reg.srv.URL, old.keySet()); err != nil {
+			t.Fatal(err)
+		}
+		res := VerifyAttestation(ctx, http.DefaultClient, reg.srv.URL+"/api/v1/x/runs/rel", "", reg.srv.URL+"/att", "sha256:"+testDigestHex)
+		if res.State != StateVerified || res.KeyID != old.keyID {
+			t.Fatalf("res = %+v, want verified by the named registry's pin", res)
+		}
+	})
 	t.Run("a countersigned release is reported under the active key", func(t *testing.T) {
 		isolatePins(t)
 		env := countersigned(t, old.envelope(t, testDigestHex), next)
@@ -240,6 +353,9 @@ func TestVerifyAttestationAcrossARotation(t *testing.T) {
 		res := VerifyAttestation(ctx, http.DefaultClient, reg.srv.URL, "", "/att", "sha256:"+testDigestHex)
 		if res.State != StateMismatch || res.KeyRotated || res.KeyChange == nil || len(res.KeyChange.Replaced) != 1 {
 			t.Fatalf("res = %+v, want a mismatch naming the replaced key", res)
+		}
+		if want := "no pinned key verifies this signature (the registry now advertises a different public key under key id(s) " + old.keyID + ")"; res.Detail != want {
+			t.Fatalf("detail = %q, want %q", res.Detail, want)
 		}
 	})
 }
