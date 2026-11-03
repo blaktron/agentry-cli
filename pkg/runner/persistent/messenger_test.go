@@ -422,7 +422,7 @@ func TestMessengerReplyMaskedBeforeSplit(t *testing.T) {
 	if strings.Contains(text, botToken) || !strings.Contains(text, "[redacted]") {
 		t.Fatal("the answer was not masked whole")
 	}
-	parts, _ := messenger.Split(text, 4096)
+	parts, _ := messenger.SplitAs(messenger.FormatHTML, text, 4096)
 	for _, p := range parts {
 		for n := 8; n <= len(botToken); n++ {
 			if strings.Contains(p.Plain, botToken[:n]) || strings.Contains(p.Plain, botToken[len(botToken)-n:]) {
@@ -688,5 +688,35 @@ func TestSwitchingAMessengerOffDropsItsWaitingMessages(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 	if n := len(st.last.sentTurns()); n != 1 {
 		t.Fatalf("a switched-off messenger's message became a turn: %v", st.last.sentTurns())
+	}
+}
+
+func TestAMatrixMessengerNamesItsHomeserverAndNeedsOne(t *testing.T) {
+	home := shortHome(t)
+	enable(t, home)
+	a := assistantAgent(t)
+	c, _ := LoadConfig(home, a.Name)
+	m := MessengerAccount{Kind: messenger.KindMatrix, Account: "@agent:example.org", Name: "@agent:example.org", Set: time.Now()}
+	if _, err := ApplyChange(home, a, &c, Change{SetMessenger: &m, Consent: true}); err == nil {
+		t.Fatal("a Matrix account with no homeserver was taken")
+	}
+	m.Server = "https://matrix.example.org"
+	_, err := ApplyChange(home, a, &c, Change{SetMessenger: &m})
+	var ce *ConsentError
+	if !errors.As(err, &ce) || len(ce.Entries) != 1 {
+		t.Fatalf("adding a messenger asks nothing: %v", err)
+	}
+	line := ce.Entries[0].Line
+	for _, want := range []string{"Matrix", "your homeserver, matrix.example.org, carries them and does not encrypt them end to end, so it can read", "reaches matrix.example.org and nothing else"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("the sentence does not say %q: %s", want, line)
+		}
+	}
+	tg := MessengerAccount{Kind: messenger.KindTelegram, Account: telegramBot, Server: "https://ignored.example.org", Set: time.Now()}
+	if _, err := ApplyChange(home, a, &c, Change{SetMessenger: &tg, Consent: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := MessengerOf(c, messenger.KindTelegram); got.Server != "" {
+		t.Fatalf("a Telegram account kept a server: %+v", got)
 	}
 }

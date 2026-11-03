@@ -57,7 +57,7 @@ func TestAgentMessengerAddPairListRemove(t *testing.T) {
 	if _, _, err := runCLI(t, strings.NewReader("not a token\n"), "agent", "messenger", "add", "assistant", "telegram", "--yes"); err == nil || exitCode(err) != engine.ExitUsage || !strings.Contains(err.Error(), "BotFather") {
 		t.Fatalf("a malformed token: %v", err)
 	}
-	if _, _, err := runCLI(t, strings.NewReader("123456789:AAanotherTokenTheServiceDoesNotKnow_y\n"), "agent", "messenger", "add", "assistant", "telegram", "--yes"); err == nil || !strings.Contains(err.Error(), "did not take the token") || strings.Contains(err.Error(), "AAanother") {
+	if _, _, err := runCLI(t, strings.NewReader("123456789:AAanotherTokenTheServiceDoesNotKnow_y\n"), "agent", "messenger", "add", "assistant", "telegram", "--yes"); err == nil || !strings.Contains(err.Error(), "did not take the credential") || strings.Contains(err.Error(), "AAanother") {
 		t.Fatalf("a refused token: %v", err)
 	}
 	_, asked, err := runCLI(t, strings.NewReader(cliBotToken+"\n"), "agent", "messenger", "add", "assistant", "telegram")
@@ -68,7 +68,7 @@ func TestAgentMessengerAddPairListRemove(t *testing.T) {
 		t.Fatal("an unagreed messenger's token was kept")
 	}
 	out, errOut, err := runCLI(t, strings.NewReader(cliBotToken+"\n"), "agent", "messenger", "add", "assistant", "telegram", "--yes")
-	if err != nil || !strings.Contains(out, "Telegram took the token of @my_helper_bot") || strings.Contains(out+errOut, cliBotToken) {
+	if err != nil || !strings.Contains(out, "Telegram took the credential of @my_helper_bot") || strings.Contains(out+errOut, cliBotToken) {
 		t.Fatalf("add: %v\n%s\n%s", err, out, errOut)
 	}
 	if keys[account] != cliBotToken {
@@ -139,4 +139,137 @@ func raw2(t *testing.T, home string) string {
 		t.Fatal(err)
 	}
 	return string(b)
+}
+
+// Test values in Slack's shape, built from parts so that no scanner of
+// secrets takes the source for a real token.
+const (
+	cliSlackApp = "xapp" + "-1-A0CLI-1234567890-" + "abcdef0123456789abcdef"
+	cliSlackBot = "xoxb" + "-1234567890-0987654321-" + "clitokenvalue"
+)
+
+// TestAgentMessengerAddSlackTakesBothTokens: a Slack app's two tokens come
+// on one stdin, both are checked and kept as one credential, and the
+// manifest asks for direct messages over Socket Mode.
+func TestAgentMessengerAddSlackTakesBothTokens(t *testing.T) {
+	home := agentHome(t)
+	keys := memSecrets{}
+	old := agentSecrets
+	agentSecrets = keys
+	t.Cleanup(func() { agentSecrets = old })
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/auth.test" || r.Header.Get("Authorization") != "Bearer "+cliSlackBot {
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "invalid_auth"})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "team_id": "T9", "team": "Home", "user_id": "UB", "user": "helper", "bot_id": "B9"})
+	}))
+	t.Cleanup(srv.Close)
+	oldAPI := messengerAPI
+	messengerAPI = srv.URL
+	t.Cleanup(func() { messengerAPI = oldAPI })
+
+	if _, _, err := runCLI(t, strings.NewReader(cliSlackBot+"\n"), "agent", "messenger", "add", "assistant", "slack", "--yes"); err == nil || !strings.Contains(err.Error(), "both are needed") {
+		t.Fatalf("one token: %v", err)
+	}
+	out, errOut, err := runCLI(t, strings.NewReader(cliSlackApp+"\n"+cliSlackBot+"\n"), "agent", "messenger", "add", "assistant", "slack", "--yes")
+	if err != nil || !strings.Contains(out, "Slack took the credential of @helper in Home") || strings.Contains(out+errOut, cliSlackBot) || strings.Contains(out+errOut, cliSlackApp) {
+		t.Fatalf("add: %v\n%s\n%s", err, out, errOut)
+	}
+	if keys[persistent.MessengerKeychainAccount("assistant", "slack")] != cliSlackApp+" "+cliSlackBot {
+		t.Fatal("the two tokens are not kept as one credential")
+	}
+	cfg, _ := persistent.LoadConfig(home, "assistant")
+	if len(cfg.Messengers) != 1 || cfg.Messengers[0].Account != "T9/UB" {
+		t.Fatalf("config: %+v", cfg.Messengers)
+	}
+	if !strings.Contains(raw2(t, home), "version: 13") {
+		t.Fatal("a Slack messenger was not written at the version that knows it")
+	}
+	out, _, err = runCLI(t, nil, "agent", "messenger", "pair", "assistant", "slack", "--no-wait")
+	if err != nil || !strings.Contains(out, "Messages tab") {
+		t.Fatalf("pair: %v\n%s", err, out)
+	}
+	out, _, err = runCLI(t, nil, "agent", "messenger", "manifest", "slack", "--name", "Helper")
+	if err != nil || !strings.Contains(out, `"socket_mode_enabled": true`) || !strings.Contains(out, `"message.im"`) || !strings.Contains(out, `"name": "Helper"`) {
+		t.Fatalf("manifest: %v\n%s", err, out)
+	}
+	if _, _, err := runCLI(t, nil, "agent", "messenger", "manifest", "telegram"); err == nil {
+		t.Fatal("a manifest for Telegram")
+	}
+}
+
+// TestAgentMessengerAddMatrixSignsInAndKeepsTheTokenAlone: a Matrix account
+// is added from its homeserver and a password, which signs in once; the
+// session's access token is kept, never the password, and the homeserver
+// is recorded and named in the consent.
+func TestAgentMessengerAddMatrixSignsInAndKeepsTheTokenAlone(t *testing.T) {
+	home := agentHome(t)
+	keys := memSecrets{}
+	old := agentSecrets
+	agentSecrets = keys
+	t.Cleanup(func() { agentSecrets = old })
+	const password, token = "correct horse battery staple", "syt_Y2xp_matrixclitoken_000abc"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/_matrix/client/v3/login":
+			var body struct {
+				Password   string `json:"password"`
+				Identifier struct {
+					User string `json:"user"`
+				} `json:"identifier"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if body.Password != password || body.Identifier.User != "@agent:example.org" {
+				w.WriteHeader(http.StatusForbidden)
+				_ = json.NewEncoder(w).Encode(map[string]string{"errcode": "M_FORBIDDEN", "error": "Invalid username or password"})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]string{"access_token": token, "user_id": "@agent:example.org"})
+		case "/_matrix/client/v3/account/whoami":
+			if r.Header.Get("Authorization") != "Bearer "+token {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]string{"user_id": "@agent:example.org"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	oldAPI := messengerAPI
+	messengerAPI = srv.URL
+	t.Cleanup(func() { messengerAPI = oldAPI })
+
+	if _, _, err := runCLI(t, strings.NewReader(password+"\n"), "agent", "messenger", "add", "assistant", "matrix", "--user", "@agent:example.org", "--yes"); err == nil || !strings.Contains(err.Error(), "--homeserver") {
+		t.Fatalf("no homeserver: %v", err)
+	}
+	if _, _, err := runCLI(t, strings.NewReader(cliBotToken+"\n"), "agent", "messenger", "add", "assistant", "telegram", "--homeserver", "https://matrix.example.org", "--yes"); err == nil {
+		t.Fatal("--homeserver taken for Telegram")
+	}
+	if _, _, err := runCLI(t, strings.NewReader("wrong password\n"), "agent", "messenger", "add", "assistant", "matrix", "--homeserver", "https://matrix.example.org", "--user", "@agent:example.org", "--yes"); err == nil || strings.Contains(err.Error(), "wrong password") {
+		t.Fatalf("a wrong password: %v", err)
+	}
+	_, asked, err := runCLI(t, strings.NewReader(password+"\n"), "agent", "messenger", "add", "assistant", "matrix", "--homeserver", "https://matrix.example.org/", "--user", "@agent:example.org")
+	if err == nil || !strings.Contains(asked, "your homeserver, matrix.example.org, carries them and does not encrypt them end to end") {
+		t.Fatalf("unagreed: %v\n%s", err, asked)
+	}
+	out, errOut, err := runCLI(t, strings.NewReader(password+"\n"), "agent", "messenger", "add", "assistant", "matrix", "--homeserver", "https://matrix.example.org/", "--user", "@agent:example.org", "--yes")
+	if err != nil || strings.Contains(out+errOut, password) || strings.Contains(out+errOut, token) {
+		t.Fatalf("add: %v\n%s\n%s", err, out, errOut)
+	}
+	if got := keys[persistent.MessengerKeychainAccount("assistant", "matrix")]; got != token {
+		t.Fatalf("kept %q, want the session's access token alone", got)
+	}
+	if strings.Contains(raw2(t, home), password) || strings.Contains(raw2(t, home), token) {
+		t.Fatal("config.yaml holds the password or the token")
+	}
+	cfg, _ := persistent.LoadConfig(home, "assistant")
+	if len(cfg.Messengers) != 1 || cfg.Messengers[0].Server != "https://matrix.example.org" || cfg.Messengers[0].Account != "@agent:example.org" {
+		t.Fatalf("config: %+v", cfg.Messengers)
+	}
+	out, _, err = runCLI(t, nil, "agent", "messenger", "pair", "assistant", "matrix", "--no-wait")
+	if err != nil || !strings.Contains(out, "with encryption off") {
+		t.Fatalf("pair: %v\n%s", err, out)
+	}
 }

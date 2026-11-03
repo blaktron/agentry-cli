@@ -68,18 +68,32 @@ func TestALiveRunHandsItsEventsToTheDriverMasked(t *testing.T) {
 	if env.Usage.Turns != 1 || string(env.Result) != `"final answer"` {
 		t.Errorf("envelope: turns %d, result %s", env.Usage.Turns, env.Result)
 	}
+
+	// Whatever field of an event carries text, the secret is masked in it.
+	var masked []adapter.Event
+	c := &eventCollector{
+		redact:  newRedactor("", map[string]string{"k": secret}, nil),
+		onEvent: func(ev adapter.Event) { masked = append(masked, ev) },
+	}
+	c.notifyEvent(adapter.Event{Kind: adapter.EventOrgPolicy, Text: "text " + secret, Tool: "tool " + secret, CallID: "call " + secret, Policy: "policy " + secret})
+	if len(masked) != 1 {
+		t.Fatalf("events %+v", masked)
+	}
+	if m := masked[0]; m.Text != "text [redacted]" || m.Tool != "tool [redacted]" || m.CallID != "call [redacted]" || m.Policy != "policy [redacted]" {
+		t.Errorf("masked event = %+v", m)
+	}
 }
 
 // A receiver that fails is switched off and said once on stderr; the run
 // finishes as it would have, and its receipts keep every event.
 func TestALiveEventReceiverThatFailsDoesNotEndTheRun(t *testing.T) {
-	p, f, _ := toolRunFake(t)
+	p, f, secret := toolRunFake(t)
 	var narration bytes.Buffer
 	p.Stderr = &narration
 	calls := 0
 	p.OnEvent = func(adapter.Event) {
 		calls++
-		panic("receiver gone")
+		panic("receiver gone: " + secret)
 	}
 	env, err := Run(context.Background(), f, p)
 	if err != nil {
@@ -93,6 +107,9 @@ func TestALiveEventReceiverThatFailsDoesNotEndTheRun(t *testing.T) {
 	}
 	if n := strings.Count(narration.String(), "live events stopped"); n != 1 {
 		t.Errorf("stderr said it %d times:\n%s", n, narration.String())
+	}
+	if strings.Contains(narration.String(), secret) || !strings.Contains(narration.String(), "receiver gone: [redacted]") {
+		t.Errorf("stderr says why the receiver failed without masking it:\n%s", narration.String())
 	}
 }
 
@@ -159,6 +176,41 @@ func TestALiveRunsLastStreamedMessageArrives(t *testing.T) {
 	}
 	if len(texts) != 1 || texts[0] != "final answer" {
 		t.Errorf("messages %q", texts)
+	}
+
+	// A streamed message arrives where the next event begins, ahead of it:
+	// at a tool call, at a tool's result and at the usage.
+	stream := func(lines ...string) []adapter.Event {
+		p, f, _ := toolRunFake(t)
+		f.Foreground["-agent"].Stdout = strings.Join(lines, "\n") + "\n"
+		var got []adapter.Event
+		p.OnEvent = func(ev adapter.Event) { got = append(got, ev) }
+		_, _ = Run(context.Background(), f, p)
+		return got
+	}
+	describe := func(evs []adapter.Event) string {
+		var out []string
+		for _, ev := range evs {
+			out = append(out, string(ev.Kind)+":"+ev.Text)
+		}
+		return strings.Join(out, " | ")
+	}
+	chunk := func(text string) string { return `{"type":"agent_choice","content":"` + text + `"}` }
+	call := `{"type":"tool_call","tool_call":{"id":"call_1","function":{"name":"fs_read","arguments":"{}"}}}`
+	result := `{"type":"tool_call_response","tool_call_id":"call_1","response":"r","result":{"output":"r"}}`
+	usage := `{"type":"stream_stopped","usage":{"input_tokens":1,"output_tokens":1,"cost":0}}`
+	want := "assistant_text:first message | tool_call:fs_read | assistant_text:mid | tool_result:r | assistant_text:second | usage:"
+	if got := describe(stream(chunk("first "), chunk("message"), call, chunk("mid"), result, chunk("second"), usage)); got != want {
+		t.Errorf("events\n%s\nwant\n%s", got, want)
+	}
+	// A whole message ends the chunks held before it.
+	whole := `{"type":"assistant_message","content":"full answer"}`
+	if got := describe(stream(chunk("par"), chunk("tial"), whole)); got != "assistant_text:full answer" {
+		t.Errorf("events after a whole message: %s", got)
+	}
+	// An error ends them too, and arrives after the message.
+	if got := describe(stream(chunk("so far"), `{"type":"error","error":"boom"}`)); !strings.HasPrefix(got, "assistant_text:so far | error:") {
+		t.Errorf("events around an error: %s", got)
 	}
 }
 

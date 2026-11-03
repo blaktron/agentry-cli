@@ -125,6 +125,10 @@ func TestASignInReachesTheToolsContainerAloneAndIsMasked(t *testing.T) {
 			t.Errorf("masked %q to %q", text, got)
 		}
 	}
+	// The sign-in is masked whole, not cookie by cookie around its shape.
+	if got := r.String("whole " + session); got != "whole [redacted]" {
+		t.Errorf("the sign-in is masked to %q", got)
+	}
 	delete(p.CalendarURLs, spec.CalendarSessionEnv(0))
 	if _, err := secretValues(p); err == nil || !strings.Contains(err.Error(), "the sign-in of the calendar feed Work") {
 		t.Fatalf("a feed with no sign-in: %v", err)

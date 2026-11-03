@@ -513,6 +513,16 @@ func TestRunFailingBeforeTheEngineNamesItsStage(t *testing.T) {
 			t.Errorf("%s: digest %q attestation %+v, want the verified local release", c.name, env.Digest, env.Attestation)
 		}
 		textArgs := args[:len(args)-2]
+		// The root --json prints the same failure envelope.
+		rootOut, _, rootErr := runCLI(t, strings.NewReader(""), append([]string{"--json"}, textArgs...)...)
+		wantClassified(t, rootErr, c.code)
+		var rootEnv receipt.Envelope
+		if jerr := json.Unmarshal([]byte(rootOut), &rootEnv); jerr != nil {
+			t.Fatalf("%s: under the root --json stdout is not an envelope: %v\n%s", c.name, jerr, rootOut)
+		}
+		if !reflect.DeepEqual(rootEnv, env) {
+			t.Errorf("%s: the root --json printed %+v, want the --output-format json envelope %+v", c.name, rootEnv, env)
+		}
 		out, textErr, _ := runCLI(t, strings.NewReader(""), textArgs...)
 		if out != "" {
 			t.Errorf("%s: text mode printed %q", c.name, out)
