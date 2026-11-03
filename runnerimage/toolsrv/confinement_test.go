@@ -26,8 +26,9 @@ func TestMain(m *testing.M) {
 
 // TestChooseConfinement is the confinement decision table: Landlock
 // wherever the kernel has it; without it, nobody when the contract grants
-// no workspace writes, and no command at all when it does or when the
-// server cannot change user; nothing off Linux, the debugging path.
+// no workspace writes, nobody owning the workspace and HOME when it does and
+// the spec holds that by ownership, and no command at all otherwise or when
+// the server cannot change user; nothing off Linux, the debugging path.
 func TestChooseConfinement(t *testing.T) {
 	noLandlock := errors.New("landlock: function not implemented")
 	reads := &Spec{WorkspaceDir: "/workspace", Exec: Exec{Commands: []string{"tar"}}}
@@ -56,6 +57,16 @@ func TestChooseConfinement(t *testing.T) {
 	c = chooseConfinement(writes, "linux", 0, noLandlock, 0, "/usr/local/bin/agentry-runner", "/tmp")
 	if c.refused == "" || !strings.Contains(c.refused, "may write its workspace") || c.asNobody {
 		t.Errorf("no Landlock, workspace writes = %+v, want refused", c)
+	}
+	owned := *writes
+	owned.WorkspaceOwnership = true
+	owned.Owner = &Owner{UID: 999, GID: 999}
+	c = chooseConfinement(&owned, "linux", 0, noLandlock, 0, "/usr/local/bin/agentry-runner", "/tmp")
+	if !c.asNobody || !c.ownsWorkspace || c.refused != "" || !strings.Contains(c.describe(), "owns the workspace and its HOME alone") {
+		t.Errorf("no Landlock, workspace writes held by ownership = %+v, want nobody owning the workspace", c)
+	}
+	if c = chooseConfinement(&owned, "linux", 0, noLandlock, 1000, "/usr/local/bin/agentry-runner", "/tmp"); c.refused == "" {
+		t.Errorf("held by ownership, not root = %+v, want refused", c)
 	}
 	c = chooseConfinement(reads, "linux", 0, noLandlock, 1000, "/usr/local/bin/agentry-runner", "/tmp")
 	if c.refused == "" || c.asNobody {

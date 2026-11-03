@@ -55,7 +55,7 @@ func (s *server) makeExecHome() {
 		s.logf("run_command: make HOME %s: %v", home, err)
 		return
 	}
-	if o := s.spec.Owner; o != nil {
+	if o := s.writesOwner(); o != nil {
 		for _, p := range []string{filepath.Dir(home), home} {
 			_ = os.Lchown(p, o.UID, o.GID)
 		}

@@ -32,8 +32,12 @@ const unprivilegedID = 65534
 //     workspace.
 //   - Where it does not (gVisor implements no Landlock): the command runs as
 //     nobody, which can write only where anyone may, the scratch tmpfs. A
-//     contract that grants workspace writes cannot be held that way, so no
-//     declared command runs.
+//     contract that grants workspace writes runs no command, unless the spec
+//     holds it by ownership (WorkspaceOwnership): then nobody is given the
+//     workspace and the command's HOME, and only those. The tools server
+//     owns them to nobody at its start and owns to nobody what it writes
+//     there, so file ownership holds the command's writes where Landlock
+//     would.
 //   - Off Linux the tools server is only `agentry runner-tools`, a
 //     debugging path that never runs a QuickAgent, and nothing is confined.
 type confinement struct {
@@ -44,6 +48,9 @@ type confinement struct {
 	writable []string
 	// asNobody runs the command as unprivilegedID.
 	asNobody bool
+	// ownsWorkspace gives unprivilegedID the workspace and HOME, which the
+	// command may write: Landlock's place under gVisor.
+	ownsWorkspace bool
 	// refused, when set, is why no declared command runs.
 	refused string
 	// none is the off-Linux debugging path.
@@ -69,6 +76,8 @@ func chooseConfinement(spec *Spec, goos string, abi int, abiErr error, euid int,
 	switch {
 	case abiErr == nil:
 		return confinement{landlock: abi, writable: writable, trampoline: []string{exe, ConfineRole}}
+	case spec.FSWrite.Enabled && euid == 0 && spec.WorkspaceOwnership:
+		return confinement{asNobody: true, ownsWorkspace: true}
 	case spec.FSWrite.Enabled:
 		return confinement{refused: fmt.Sprintf("this machine cannot hold a command to the paths it may write (%v), and this QuickAgent may write its workspace, so no declared command runs", abiErr)}
 	case euid != 0:
@@ -142,6 +151,8 @@ func (c confinement) describe() string {
 		return "No declared command runs: " + c.refused + "."
 	case c.landlock > 0:
 		return fmt.Sprintf("It can write only beneath %s (Landlock ABI %d).", strings.Join(c.writable, " and "), c.landlock)
+	case c.ownsWorkspace:
+		return "It runs as an unprivileged user that owns the workspace and its HOME alone, so it can write only there and where anyone may, such as /tmp (this machine has no Landlock)."
 	case c.asNobody:
 		return "It runs as an unprivileged user, so it can write only where anyone may, such as /tmp (this machine has no Landlock)."
 	default:

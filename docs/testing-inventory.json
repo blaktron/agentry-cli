@@ -5624,6 +5624,18 @@
             "source/file contract",
             "explicit skip"
           ]
+        },
+        {
+          "path": "pkg/runner/engine/workspace_ownership_test.go",
+          "tests": [
+            "TestTheRunhostsToolSpecHoldsWritesByOwnership"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
+          ]
         }
       ]
     },
@@ -10628,6 +10640,19 @@
             "TestEndBlockedWithoutALedgerSaysSo",
             "TestAFaultIsTheRunsMachinery",
             "TestAnUnreadableChannelIsRecordedAsAFault"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract",
+            "explicit skip"
+          ]
+        },
+        {
+          "path": "runnerimage/toolsrv/confinement_linux_test.go",
+          "tests": [
+            "TestWithoutLandlockOwnershipHoldsAWorkspaceWritingCommand"
           ],
           "fuzz": [],
           "benchmarks": [],
