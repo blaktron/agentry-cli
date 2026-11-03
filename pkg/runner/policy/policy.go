@@ -26,6 +26,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/dirpublish"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
+	"github.com/blaktron/agentry-cli/runnerimage/messenger"
 	"github.com/blaktron/agentry-cli/runnerimage/websearch"
 )
 
@@ -172,6 +173,14 @@ type Policy struct {
 	// author's own folder. Unset is true; false refuses every persistent
 	// agent but the ones built into Agentry.
 	AllowPersistentReleases *bool `yaml:"allowPersistentReleases,omitempty"`
+	// AllowMessengers lets the person add a messenger (Telegram and the
+	// others) to a persistent agent, so they can talk to it from there.
+	// Unset is true; false refuses every messenger, and an agent that has
+	// one runs without it.
+	AllowMessengers *bool `yaml:"allowMessengers,omitempty"`
+	// MessengerKinds, when set, are the only messengers allowed, by name
+	// (telegram). Unset allows every one this build knows.
+	MessengerKinds []string `yaml:"messengerKinds,omitempty"`
 	// Browser governs a release's browser (capabilities.browser):
 	// whether one may reach any public site.
 	Browser BrowserPolicy `yaml:"browser,omitempty"`
@@ -240,6 +249,20 @@ func (p *Policy) PersistentReleasesAllowed() bool {
 // PersistentReleasesRefused is the refusal of a persistent release under a
 // policy that sets allowPersistentReleases false.
 const PersistentReleasesRefused = "the runner policy sets allowPersistentReleases: false, so only the persistent agents built into Agentry run on this computer"
+
+// MessengerAllowed says whether the policy lets a persistent agent be
+// reached on the messenger kind, and why not.
+func (p *Policy) MessengerAllowed(kind string) (bool, string) {
+	switch {
+	case p == nil:
+		return true, ""
+	case p.AllowMessengers != nil && !*p.AllowMessengers:
+		return false, "the runner policy sets allowMessengers: false, so no persistent agent is reached on a messenger on this computer"
+	case len(p.MessengerKinds) > 0 && !slices.ContainsFunc(p.MessengerKinds, func(k string) bool { return strings.EqualFold(k, kind) }):
+		return false, "the runner policy's messengerKinds (" + strings.Join(p.MessengerKinds, ", ") + ") does not allow " + kind
+	}
+	return true, ""
+}
 
 // MalwareCheckOn says whether the policy turns the whole malware check on
 // for this computer's runs (unset → off).
@@ -1200,6 +1223,11 @@ func (p *Policy) Validate() error {
 	if err := p.Hosts.validate(); err != nil {
 		return err
 	}
+	for _, k := range p.MessengerKinds {
+		if _, ok := messenger.Lookup(k); !ok {
+			return fmt.Errorf("messengerKinds names %q, which is not a messenger this build knows (%s)", k, strings.Join(messenger.Names(), ", "))
+		}
+	}
 	if c := p.Images.ClamAVSignatures; c != "" && !tagRefRE.MatchString(c) {
 		return fmt.Errorf("images.clamavSignatures %q must be <registry>/<repository>:<tag>: the bundle moves daily and its signature is what is checked", c)
 	}
@@ -1592,6 +1620,13 @@ allowWildcardEgress: false
 # ("agentry agent install"). Set this false to allow only the persistent
 # agents built into Agentry.
 # allowPersistentReleases: true
+
+# A persistent agent can be reached on a messenger the person adds to it
+# ("agentry agent messenger add"): its messages become turns, and its
+# answers go back there. Set this false to refuse every messenger, or list
+# the ones allowed in messengerKinds (telegram).
+# allowMessengers: true
+# messengerKinds: [telegram]
 
 # A QuickAgent's browser (capabilities.browser) reaches the site you name
 # when the run starts and the hosts it declares. One whose scope is

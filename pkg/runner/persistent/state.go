@@ -234,11 +234,12 @@ func LogPath(home, name string) string { return filepath.Join(Dir(home, name), l
 // secrets they stored, version 7 the Coding agent's git host accounts and
 // version 8 the sign-ins of the servers it runs from images, version 9
 // the mail providers the person enabled, version 10 the Assistant's
-// calendar feeds and version 11 their browser sign-ins; a build that reads
+// calendar feeds, version 11 their browser sign-ins and version 12 the
+// messengers; a build that reads
 // an older
 // version alone refuses a newer one rather than drop what it does not know
 // on its next save.
-const ConfigVersion = 11
+const ConfigVersion = messengersVersion
 
 // mailProvidersVersion is the version that added MailProviders: an older
 // configuration with a sign-in is migrated when read (migrateMailProviders).
@@ -313,6 +314,10 @@ type Config struct {
 	// CalendarFeeds are the Assistant's calendar feeds, by name; each is a
 	// roster entry, its address in the keychain (CalendarKeychainAccount).
 	CalendarFeeds []CalendarFeed `yaml:"calendarFeeds,omitempty" json:"calendarFeeds,omitempty"`
+	// Messengers are the messenger accounts the person added, by kind; each
+	// is a roster entry, its credential in the keychain
+	// (MessengerKeychainAccount).
+	Messengers []MessengerAccount `yaml:"messengers,omitempty" json:"messengers,omitempty"`
 }
 
 // ServerFailure is why a server the person added could not be installed.
@@ -392,6 +397,9 @@ func SaveConfig(home, name string, c Config) error {
 	}
 	if slices.ContainsFunc(c.CalendarFeeds, func(f CalendarFeed) bool { return f.SignedIn }) {
 		c.Version = calendarSignInsVersion
+	}
+	if len(c.Messengers) > 0 {
+		c.Version = messengersVersion
 	}
 	b, err := yaml.Marshal(c)
 	if err != nil {
