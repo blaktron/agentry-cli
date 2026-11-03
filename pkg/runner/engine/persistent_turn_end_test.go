@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -88,6 +89,52 @@ func TestAnInterruptStopsTheTurnAndTheSegmentGoesOn(t *testing.T) {
 	if errs := eventsOfKind(get(), session.KindError); len(errs) != 0 {
 		t.Fatalf("a stopped turn is not an error: %+v", errs)
 	}
+
+	// A stop is said as it went: a harness that cannot stop a turn says so, one
+	// that tries and fails says why, and the turn goes on in both.
+	t.Run("a harness that cannot stop a turn says so", func(t *testing.T) {
+		for name, tc := range map[string]struct {
+			stopErr error
+			want    string
+		}{
+			"it cannot":   {nil, "harness cannot stop a turn"},
+			"it fails to": {errors.New("the harness is busy"), "stopping the turn: the harness is busy"},
+		} {
+			t.Run(name, func(t *testing.T) {
+				p, f, h := persistentFixture(t, "")
+				p.Adapter = holdAdapter{Adapter: p.Adapter, stopErr: tc.stopErr}
+				s, _, done := startSegment(t, p, f, h)
+				it, ok := s.(session.Interrupter)
+				if !ok {
+					t.Fatal("a segment cannot be interrupted")
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				sent := make(chan error, 1)
+				go func() { sent <- s.Send(ctx, "wait here") }()
+				var err error
+				for {
+					if err = it.Interrupt(ctx); !errors.Is(err, session.ErrNoTurn) {
+						break
+					}
+					if ctx.Err() != nil {
+						t.Fatal("the turn never started")
+					}
+					runtime.Gosched()
+				}
+				if err == nil || !strings.Contains(err.Error(), tc.want) {
+					t.Errorf("Interrupt = %v, want one saying %q", err, tc.want)
+				}
+				if _, err := s.End(ctx, false); err != nil {
+					t.Fatal(err)
+				}
+				<-done
+				if err := <-sent; err == nil {
+					t.Error("the held turn was answered")
+				}
+			})
+		}
+	})
 }
 
 // limitAdapter is the fixture's adapter whose driver meets the plan's
@@ -98,6 +145,8 @@ type limitAdapter struct {
 	// answers has the driver answer the turn after saying the limit twice,
 	// as Claude Code's rejected rate-limit events and error result do.
 	answers bool
+	// resetsAt, when set, is when the limit says it lifts.
+	resetsAt time.Time
 }
 
 func (a limitAdapter) Session(ctx context.Context, rw io.ReadWriteCloser, o adapter.SessionOptions) (adapter.SessionDriver, error) {
@@ -112,22 +161,23 @@ func (a limitAdapter) Session(ctx context.Context, rw io.ReadWriteCloser, o adap
 		}
 		close(out)
 	}()
-	return &limitDriver{SessionDriver: d, out: out, answers: a.answers}, nil
+	return &limitDriver{SessionDriver: d, out: out, answers: a.answers, resetsAt: a.resetsAt}, nil
 }
 
 type limitDriver struct {
 	adapter.SessionDriver
-	out     chan adapter.Event
-	answers bool
+	out      chan adapter.Event
+	answers  bool
+	resetsAt time.Time
 }
 
 func (d *limitDriver) Events() <-chan adapter.Event { return d.out }
 
 func (d *limitDriver) Prompt(context.Context, string) (*adapter.Turn, error) {
 	const said = "The ChatGPT user has reached their usage limit."
-	d.out <- adapter.Event{Kind: adapter.EventPlanLimit, Text: said}
+	d.out <- adapter.Event{Kind: adapter.EventPlanLimit, Text: said, ResetsAt: d.resetsAt}
 	if d.answers {
-		d.out <- adapter.Event{Kind: adapter.EventPlanLimit, Text: said}
+		d.out <- adapter.Event{Kind: adapter.EventPlanLimit, Text: said, ResetsAt: d.resetsAt}
 		return &adapter.Turn{StopReason: "end_turn", Text: "I could not answer."}, nil
 	}
 	return nil, errors.New("codex session: turn failed: stream disconnected before completion: " + said)
@@ -139,16 +189,19 @@ func (d *limitDriver) Prompt(context.Context, string) (*adapter.Turn, error) {
 func TestAPersistentAgentOutlivesItsPlansLimit(t *testing.T) {
 	for _, answers := range []bool{false, true} {
 		t.Run(map[bool]string{false: "the turn fails", true: "the harness answers all the same"}[answers], func(t *testing.T) {
-			outlivesTheLimit(t, answers)
+			outlivesTheLimit(t, answers, time.Time{})
 		})
 	}
+	t.Run("the limit says when it resets", func(t *testing.T) {
+		outlivesTheLimit(t, false, time.Date(2031, time.March, 4, 15, 30, 0, 0, time.UTC))
+	})
 }
 
 // outlivesTheLimit is TestAPersistentAgentOutlivesItsPlansLimit with a
 // harness that answers a turn the limit refused, or fails it.
-func outlivesTheLimit(t *testing.T, answers bool) {
+func outlivesTheLimit(t *testing.T, answers bool, resetsAt time.Time) {
 	p, f, h := persistentFixture(t, "")
-	p.Adapter = limitAdapter{Adapter: p.Adapter, answers: answers}
+	p.Adapter = limitAdapter{Adapter: p.Adapter, answers: answers, resetsAt: resetsAt}
 	s, get, done := startSegment(t, p, f, h)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -160,6 +213,14 @@ func outlivesTheLimit(t *testing.T, answers bool) {
 			t.Fatalf("turn %d ended the segment (%s)", i+1, why)
 		}
 	}
+	// This harness neither continues a stored conversation nor starts a new
+	// one in place, and the segment says so.
+	if _, resumed, reason := s.(PersistentSession).Conversation(); resumed || !strings.Contains(reason, "adapter does not continue a stored conversation") {
+		t.Errorf("Conversation = %v %q", resumed, reason)
+	}
+	if _, err := s.(ConversationRenewer).NewConversation(ctx, "again"); !errors.Is(err, ErrNoNewConversation) {
+		t.Errorf("NewConversation = %v, want ErrNoNewConversation", err)
+	}
 	env, err := s.End(ctx, false)
 	<-done
 	if err != nil || env.Reason != nil {
@@ -169,9 +230,47 @@ func outlivesTheLimit(t *testing.T, answers bool) {
 	if len(errs) != 2 {
 		t.Fatalf("errors %+v, want one for each turn", errs)
 	}
+	want := "plan limit reached: The ChatGPT user has reached their usage limit."
+	if !resetsAt.IsZero() {
+		want += " (it resets at " + resetsAt.Local().Format("Mon 2 Jan 15:04 MST") + ")"
+	}
 	for _, e := range errs {
-		if e.Text != "plan limit reached: The ChatGPT user has reached their usage limit." {
-			t.Errorf("error %q", e.Text)
+		if e.Text != want {
+			t.Errorf("error %q, want %q", e.Text, want)
 		}
 	}
 }
+
+// holdAdapter is the fixture's adapter whose driver holds each prompt until
+// its context ends. Its driver cannot stop a turn, unless stopErr is set,
+// when it tries to and fails with it.
+type holdAdapter struct {
+	adapter.Adapter
+	stopErr error
+}
+
+func (a holdAdapter) Session(ctx context.Context, rw io.ReadWriteCloser, o adapter.SessionOptions) (adapter.SessionDriver, error) {
+	d, err := a.Adapter.Session(ctx, rw, o)
+	if err != nil {
+		return nil, err
+	}
+	hold := &holdDriver{SessionDriver: d}
+	if a.stopErr != nil {
+		return &stubbornDriver{holdDriver: hold, err: a.stopErr}, nil
+	}
+	return hold, nil
+}
+
+type holdDriver struct{ adapter.SessionDriver }
+
+func (d *holdDriver) Prompt(ctx context.Context, _ string) (*adapter.Turn, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+type stubbornDriver struct {
+	*holdDriver
+	err error
+}
+
+func (d *stubbornDriver) Interrupt(context.Context) error { return d.err }

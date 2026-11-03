@@ -6025,6 +6025,7 @@
           "path": "pkg/runner/engine/applinkrelay_test.go",
           "tests": [
             "TestTheAppLinkRelayCarriesCallsToTheSupervisor",
+            "TestTheAppLinkTransportLineSaysHowTheSupervisorIsReached",
             "TestTheAppLinkRelayCarriesNothingButToolCalls",
             "TestTheAppLinksMountFollowsTheTransport"
           ],
@@ -6090,6 +6091,7 @@
             "TestMessengerRoleEgressIsItsHosts",
             "TestMessengerRoleRunsUnderTheRuntimeWithTheHostsNameServers",
             "TestARefusedMessengerTokenFailsTheStartAndRemovesEverything",
+            "TestAMessengerRolesFramesReachTheSupervisor",
             "TestAMatrixRoleReachesItsHomeserverAlone"
           ],
           "fuzz": [],
@@ -6098,6 +6100,7 @@
           "dependencyHints": [
             "docker interface (real or fake)",
             "HTTP transport",
+            "source/file contract",
             "real-time wait"
           ]
         },
@@ -6128,6 +6131,7 @@
             "TestPersistentSegmentReceipts",
             "TestACarriedContextReachesTheHarnessAndNotTheUserTurn",
             "TestASegmentStartsANewConversationInItsRunningHarness",
+            "TestASegmentsConversationNotesAreMasked",
             "TestASegmentWhoseHarnessCannotCompactSaysSo",
             "TestTheTurnCountMovesAtEachTurnAndNewConversation"
           ],
