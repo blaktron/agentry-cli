@@ -31,9 +31,6 @@ type ScheduleHeader struct {
 	// Entries are what the schedule keeps in the store, besides the
 	// release: the consent's list.
 	Entries []ScheduleEntry `json:"entries"`
-	// Connections are the release's OAuth connections, handed to the
-	// runhost to refresh itself (connection.Handed, as JSON).
-	Connections []json.RawMessage `json:"connections,omitempty"`
 }
 
 // ScheduleInfo is one schedule as the service lists it: never a secret.

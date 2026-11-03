@@ -117,7 +117,7 @@ func runhostStoreVerb(ctx context.Context, req runhost.Request, in io.Reader, fw
 		return runhostSignInRemove(ctx, req.Args[1], fw)
 	}
 	if len(req.Args) == 2 && req.Args[0] == "remove-schedule" {
-		info, err := runhostScheduleRemove(req.Args[1])
+		info, err := runhostScheduleRemove(ctx, req.Args[1])
 		if err != nil {
 			return engine.ExitUsage, err
 		}

@@ -1471,12 +1471,14 @@
             "TestARunhostScheduleRefusesWhatCannotRunUnattended",
             "TestScheduleAddOnARunhostHandsTheScheduleOver",
             "TestScheduleAddOnARunhostThatTakesNoScheduleAsksNothing",
-            "TestScheduleAddCheckOnARunhostKeepsNothing"
+            "TestScheduleAddCheckOnARunhostKeepsNothing",
+            "TestARunhostScheduleUsesOnlyAConnectionOfTheRunhostsOwn"
           ],
           "fuzz": [],
           "benchmarks": [],
           "fixtureEntryPoint": false,
           "dependencyHints": [
+            "HTTP transport",
             "source/file contract",
             "real-time wait"
           ]
@@ -3451,7 +3453,9 @@
             "TestACopilotSignInShowsTheCodeOnTheDevice",
             "TestTheDeviceOpensOnlyTheVendorsOwnPage",
             "TestAClaudeRelayReachesTheLoginContainerAlone",
-            "TestOneSignInAtATime"
+            "TestOneSignInAtATime",
+            "TestARunhostConnectionIsAGrantOfItsOwn",
+            "TestTheDeviceOpensOnlyTheConsentItDiscovered"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -4545,16 +4549,6 @@
           "dependencyHints": [
             "source/file contract"
           ]
-        },
-        {
-          "path": "pkg/runner/connection/handover_test.go",
-          "tests": [
-            "TestAHandedConnectionRefreshesOnTheOtherMachine"
-          ],
-          "fuzz": [],
-          "benchmarks": [],
-          "fixtureEntryPoint": false,
-          "dependencyHints": []
         },
         {
           "path": "pkg/runner/connection/publicclients_test.go",
