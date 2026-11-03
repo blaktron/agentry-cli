@@ -294,3 +294,34 @@ func TestScheduleAddOnARunhostThatTakesNoScheduleAsksNothing(t *testing.T) {
 		t.Fatalf("the consent was put before the refusal:\n%s", stderr)
 	}
 }
+
+// --check with --on says what the runhost's store would keep and whether
+// the runhost takes schedules, and sends nothing.
+func TestScheduleAddCheckOnARunhostKeepsNothing(t *testing.T) {
+	srv, _ := newRunOnLab(t)
+	runhostSchedulesDir = filepath.Join(srv.dir, "schedules")
+	fr := newFakeRegistry(t)
+	fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", "capabilities:\n  secrets: [API_TOKEN]\n"))
+	stdout, stderr, err := runCLI(t, nil, "--registry", fr.url(), "--json", "schedule", "add", "acme/demo@1.0.0", "--on", "lab",
+		"--daily", "07:00", "--zone", "UTC", "--allow-unsigned", "--check")
+	if err != nil {
+		t.Fatalf("check: %v\n%s", err, stderr)
+	}
+	var res scheduleCheckJSON
+	if err := json.Unmarshal([]byte(stdout), &res); err != nil {
+		t.Fatalf("%v\n%s", err, stdout)
+	}
+	if res.Runhost == nil || res.Runhost.Name != "lab" || res.Runhost.TakesSchedules || res.Ready {
+		t.Fatalf("an unsealed runhost: %+v %+v", res, res.Runhost)
+	}
+	kinds := map[string]string{}
+	for _, e := range res.Runhost.Entries {
+		kinds[e.Kind] = e.Name
+	}
+	if kinds["secret"] != "API_TOKEN" || kinds["model-key"] != "anthropic" {
+		t.Fatalf("entries %+v", res.Runhost.Entries)
+	}
+	if list, _ := runhostScheduleList(); len(list) != 0 {
+		t.Fatalf("a check kept a schedule: %+v", list)
+	}
+}

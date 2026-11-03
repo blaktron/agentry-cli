@@ -40,6 +40,7 @@ also needs a container engine: Docker Engine, Docker Desktop or podman.
 | `make dist` | the five release binaries into `dist/`, unsigned |
 | `make accept-runner` | the runner acceptance scripts in `scripts/acceptance/` |
 | `make workflows-check` | no workflow job that a fork's pull request can start runs on a self-hosted runner without the fork guard (needs python3 with PyYAML) |
+| `make test-inventory-check` | `docs/testing-inventory.json` still lists every test, fuzz target, acceptance script and workflow job (needs python3) |
 
 `make accept-runner`'s first two scripts need no Docker. The third needs a
 Docker daemon and `ANTHROPIC_API_KEY`, and skips itself without them.
@@ -92,6 +93,15 @@ container. Fixtures for hostile content are text only, defanged, and use
 `*.invalid.example` hosts. Never use functional malware, real endpoints or
 real secrets. Test values that look like secrets are allowlisted narrowly in
 `.gitleaks.toml`, by file and value.
+
+Every test file belongs to a behavior family in `docs/testing-inventory.json`:
+its package's owner, or for the command and engine packages a subject chosen
+by the file's name, with the tests and fuzz targets it declares and hints
+about what it depends on. After adding, removing or renaming a test, run
+`python3 scripts/testing/inventory.py --write` and commit the result; a new
+package also needs a line in the script's `PURPOSES`. The catalogue records
+what evidence is kept. It never decides that two tests are equivalent: that
+takes reading their assertions.
 
 ## Certificate of origin
 

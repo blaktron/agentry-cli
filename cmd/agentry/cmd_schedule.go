@@ -259,6 +259,9 @@ func newScheduleAddCmd() *cobra.Command {
 			if (ref == "") == (spec.local == "") {
 				return errors.New("pass exactly one of ns/name[@range] or --local DIR")
 			}
+			if on != "" && check {
+				return scheduleCheck(cmd, ref, name, out, on, spec, when, scheduleNow())
+			}
 			if on != "" {
 				w, err := when.recurrence(scheduleNow())
 				if err != nil {
@@ -274,7 +277,7 @@ func newScheduleAddCmd() *cobra.Command {
 			}
 			now := scheduleNow()
 			if check {
-				return scheduleCheck(cmd, ref, name, out, spec, when, now)
+				return scheduleCheck(cmd, ref, name, out, "", spec, when, now)
 			}
 			if spec.signedOut && scheduleGOOS != "linux" {
 				return signedOutUnsupported()

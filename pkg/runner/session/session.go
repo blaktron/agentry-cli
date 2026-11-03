@@ -77,6 +77,9 @@ type Event struct {
 	// of the task it was for: the turn is the agent's own, not the
 	// person's, and a chat draws it as such.
 	Task string `json:"task,omitempty"`
+	// Messenger is, on a user turn a persistent agent's messenger sent, the
+	// messenger's kind (telegram): the person wrote it there.
+	Messenger string `json:"messenger,omitempty"`
 	// Upkeep marks, on a user turn, a persistent agent's upkeep: the turn
 	// is the runner's, sent before its conversation is compacted or its
 	// memory is tidied, and a chat draws it as such.

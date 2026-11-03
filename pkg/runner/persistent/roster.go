@@ -261,6 +261,11 @@ func BuildRosterUnder(a Agent, c Config, applied *Applied, malwareCheck bool) Ro
 			add(e, true)
 		}
 	}
+	if a.TakesMessengers() {
+		for _, e := range messengerEntries(c) {
+			add(e, true)
+		}
+	}
 	// The packs the release ships: part of what its install agreed to, so
 	// they ask nothing again, and no switch takes them away.
 	for _, k := range a.Packs {

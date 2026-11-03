@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -206,8 +207,11 @@ func TestRosterGivesASignedInFeedItsSessionAlone(t *testing.T) {
 	if err := SaveConfig(home, a.Name, c); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := LoadConfig(home, a.Name); err != nil || got.Version != calendarSignInsVersion || !got.CalendarFeeds[0].SignedIn {
+	if got, err := LoadConfig(home, a.Name); err != nil || !got.CalendarFeeds[0].SignedIn {
 		t.Errorf("saved: %v %+v", err, got)
+	}
+	if raw, err := os.ReadFile(filepath.Join(Dir(home, a.Name), configFile)); err != nil || !strings.Contains(string(raw), "version: "+strconv.Itoa(calendarSignInsVersion)+"\n") {
+		t.Errorf("written at another version: %v\n%s", err, raw)
 	}
 }
 

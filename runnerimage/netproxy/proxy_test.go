@@ -10,12 +10,14 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -836,5 +838,29 @@ func TestFailConnectDropsControlCharacters(t *testing.T) {
 	}
 	if strings.Contains(headers, "\r\nX-Injected") || strings.HasPrefix(headers, "X-Injected") {
 		t.Errorf("a header was injected: %q", raw)
+	}
+}
+
+// TestPublicOnlyTriesEachCheckedAddress: a host whose first answer cannot
+// be reached (an IPv6 address on a machine with no IPv6 route) is reached
+// at the next address it resolves to, and only at addresses the check
+// passed.
+func TestPublicOnlyTriesEachCheckedAddress(t *testing.T) {
+	echo := startEcho(t)
+	host, port, _ := net.SplitHostPort(echo.Addr().String())
+	var dialled []string
+	p := &Proxy{Allow: []string{"api.example:" + port}, PublicOnly: true, Resolver: fakeResolver{"2606:4700::1", "8.8.8.8"}, Logw: &lockedBuf{},
+		dial: func(ctx context.Context, address string) (net.Conn, error) {
+			dialled = append(dialled, address)
+			if strings.HasPrefix(address, "[") {
+				return nil, errors.New("connect: network is unreachable")
+			}
+			return (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(host, port))
+		}}
+	if got := connectStatus(t, p, "api.example:"+port); got != http.StatusOK {
+		t.Fatalf("status %d, want 200", got)
+	}
+	if want := []string{net.JoinHostPort("2606:4700::1", port), net.JoinHostPort("8.8.8.8", port)}; !slices.Equal(dialled, want) {
+		t.Fatalf("dialled %v, want %v", dialled, want)
 	}
 }

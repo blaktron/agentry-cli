@@ -87,6 +87,16 @@ type Change struct {
 	// address.
 	SetCalendarFeed    *CalendarFeed `json:"setCalendarFeed,omitempty"`
 	RemoveCalendarFeed string        `json:"removeCalendarFeed,omitempty"`
+	// SetMessenger records a messenger account, on, its credential already
+	// kept in the keychain by the client that asked for it
+	// (MessengerKeychainAccount), or one whose credential was set again;
+	// RemoveMessenger takes one away, by its kind. Neither carries a
+	// credential.
+	SetMessenger    *MessengerAccount `json:"setMessenger,omitempty"`
+	RemoveMessenger string            `json:"removeMessenger,omitempty"`
+	// OpenPairing opens a pairing on a messenger, for the code whose digest
+	// it carries.
+	OpenPairing *PairingChange `json:"openPairing,omitempty"`
 	// Consent says the person consented to what this change turns on, as
 	// the lines a ConsentError listed say it.
 	Consent bool `json:"consent,omitempty"`
@@ -175,6 +185,7 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 	next.Secrets = slices.Clone(c.Secrets)
 	next.Accounts = slices.Clone(c.Accounts)
 	next.CalendarFeeds = slices.Clone(c.CalendarFeeds)
+	next.Messengers = slices.Clone(c.Messengers)
 	next.ServerFailures = cloneMap(c.ServerFailures)
 	if ch.Name != nil {
 		name, err := cleanName(*ch.Name)
@@ -356,6 +367,24 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 	}
 	if f := ch.SetCalendarFeed; f != nil {
 		if err := addCalendarFeed(a, &next, *f); err != nil {
+			return false, err
+		}
+	}
+	if m := ch.SetMessenger; m != nil {
+		if other := MessengerAccountOf(home, m.Kind, m.Account); other != "" && other != a.Name {
+			return false, fmt.Errorf("that %s account is the %s agent's: one account reaches one agent, so give this agent an account of its own", m.Kind, other)
+		}
+		if err := addMessenger(a, &next, *m); err != nil {
+			return false, err
+		}
+	}
+	if k := ch.RemoveMessenger; k != "" {
+		if err := removeMessenger(a, &next, k); err != nil {
+			return false, err
+		}
+	}
+	if p := ch.OpenPairing; p != nil {
+		if err := openPairing(a, &next, p.Kind, MessengerPairing{CodeDigest: p.CodeDigest, Until: p.Until}); err != nil {
 			return false, err
 		}
 	}

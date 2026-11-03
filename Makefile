@@ -5,7 +5,7 @@ export PATH := /opt/homebrew/bin:$(PATH)
 GO ?= go
 LDFLAGS := -X github.com/blaktron/agentry-cli/internal/version.Version=$(shell git describe --tags --always --dirty 2>/dev/null || echo 0.0.0-dev)
 
-.PHONY: build test lint check cross clean accept-runner dist workflows-check notices notices-check
+.PHONY: build test lint check cross clean accept-runner dist workflows-check test-inventory-check notices notices-check
 
 build:
 	$(GO) build -ldflags '$(LDFLAGS)' -o bin/agentry ./cmd/agentry
@@ -51,6 +51,15 @@ cross:
 workflows-check:
 	python3 scripts/ci/workflow_guard.py
 	python3 -m unittest discover -s scripts/ci
+
+## test-inventory-check: docs/testing-inventory.json lists every test file,
+## named test and fuzz target under its behavior family, and every
+## acceptance script and workflow job; a test added or removed without
+## `python3 scripts/testing/inventory.py --write` fails here. Needs python3
+## (no packages), so like workflows-check it is not part of `check`; CI runs
+## it as its own step in the `check` job.
+test-inventory-check:
+	python3 scripts/testing/inventory.py --check
 
 # The five release binaries into dist/, named as the site's download manifest
 # admits them. DIST_VERSION is the tag (bare semver) or the describe string;
