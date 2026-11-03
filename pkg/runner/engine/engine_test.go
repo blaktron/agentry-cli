@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -154,12 +155,30 @@ func probeListing(tools ...string) func(context.Context, dockerx.RunSpec, io.Rea
 func TestRunHappyPath(t *testing.T) {
 	p, f := fixture(t)
 	happyFake(f)
+	// The gateway's secrets file during the run: the invoking user's alone,
+	// holding the secret under the gateway's key.
+	var secretsMode os.FileMode
+	var secretsFile string
+	f.Foreground["-agent"].Before = func(dockerx.RunSpec) {
+		path := filepath.Join(p.RunRoot, "runs", "cafe0000", "cfg", "gateway", "secrets.env")
+		if fi, err := os.Stat(path); err == nil {
+			secretsMode = fi.Mode().Perm()
+		}
+		b, _ := os.ReadFile(path) //nolint:gosec // the test's run dir
+		secretsFile = string(b)
+	}
 	env, err := Run(context.Background(), f, p)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if env.Status != "ok" || env.ExitCode != ExitOK {
 		t.Fatalf("envelope status=%s code=%d", env.Status, env.ExitCode)
+	}
+	if runtime.GOOS != "windows" && secretsMode != 0o600 {
+		t.Errorf("secrets.env was mode %v during the run, want 0600", secretsMode)
+	}
+	if !strings.Contains(secretsFile, compile.SecretKey("ENGINE_TEST_TOKEN")+"=sekret-value-1234\n") {
+		t.Errorf("secrets.env during the run:\n%s", secretsFile)
 	}
 	if string(env.Result) != `"final answer"` {
 		t.Errorf("result = %s", env.Result)
@@ -169,6 +188,33 @@ func TestRunHappyPath(t *testing.T) {
 	}
 	if env.Receipts.RunPlanSHA256 == "" {
 		t.Error("envelope lacks plan hash")
+	}
+	// meta.json says which run this was and what it was held to.
+	metaRaw, err := os.ReadFile(filepath.Join(p.OutDir, "receipts", "meta.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var meta struct {
+		RunID   string         `json:"runId"`
+		Adapter string         `json:"adapter"`
+		Budgets map[string]int `json:"budgets"`
+		Started string         `json:"started"`
+		Ended   string         `json:"ended"`
+	}
+	if err := json.Unmarshal(metaRaw, &meta); err != nil {
+		t.Fatal(err)
+	}
+	if meta.RunID != "cafe0000" || meta.Adapter != adapter.DefaultName || meta.Budgets["timeoutSeconds"] != 30 || meta.Budgets["maxTurns"] != 10 {
+		t.Errorf("meta.json = %s", metaRaw)
+	}
+	started, serr := time.Parse(time.RFC3339, meta.Started)
+	ended, eerr := time.Parse(time.RFC3339, meta.Ended)
+	if serr != nil || eerr != nil || started.After(ended) || time.Since(started) > time.Hour || time.Until(ended) > time.Minute {
+		t.Errorf("meta.json times: started %q ended %q (%v, %v)", meta.Started, meta.Ended, serr, eerr)
+	}
+	// A run with no review grant has no review record and no review line.
+	if env.Review != nil || env.CapabilitiesEnforced["review.aiReview"] != "" {
+		t.Errorf("a run with no review grant carries review %+v, line %q", env.Review, env.CapabilitiesEnforced["review.aiReview"])
 	}
 
 	// Execute order: network → proxy (+bridge) → gateway → probe →
@@ -307,6 +353,28 @@ func TestRunHappyPath(t *testing.T) {
 		t.Errorf("agent stdin = %q", got)
 	}
 
+	// Every container carries the run's label (the sweep finds them by it);
+	// the proxy takes the plan's allow list on the plan's port under its
+	// alias; the gateway's declared volume is labelled; the probe is bounded,
+	// holds the token and goes with its run.
+	for _, name := range []string{"-proxy", "-gateway", "-probe", "-agent"} {
+		if c, _ := f.FindRun(name); c.Labels["agentry.run"] != "cafe0000" {
+			t.Errorf("%s labels = %v, want the run's", name, c.Labels)
+		}
+	}
+	proxy, _ := f.FindRun("-proxy")
+	if want := []string{"proxy", "--allow", strings.Join(p.Plan.Proxy.Allow, ","), "--addr", fmt.Sprintf(":%d", spec.ProxyPort)}; !slices.Equal(proxy.Argv, want) || proxy.Alias != spec.ProxyAlias {
+		t.Errorf("proxy argv %q alias %q, want %q under %q", proxy.Argv, proxy.Alias, want, spec.ProxyAlias)
+	}
+	if len(gw.Volumes) != 1 || gw.Volumes[0].Target != gatewayVolumeDir || gw.Volumes[0].Labels["agentry.run"] != "cafe0000" || gw.Alias != spec.GatewayAlias {
+		t.Errorf("gateway volumes %+v alias %q", gw.Volumes, gw.Alias)
+	}
+	probe, _ := f.FindRun("-probe")
+	if !slices.Equal(probe.Argv, []string{"probe", "--url", spec.GatewayURL(), "--token-env", spec.GatewayTokenEnv, "--timeout", "90"}) ||
+		probe.Env[spec.GatewayTokenEnv] != agent.Env["MCP_GATEWAY_TOKEN"] || !probe.AutoRemove || !agent.AutoRemove {
+		t.Errorf("probe %q env %v auto-remove %v, agent auto-remove %v", probe.Argv, probe.Env, probe.AutoRemove, agent.AutoRemove)
+	}
+
 	// Teardown: run dir gone, secrets.env gone; receipts remain.
 	if _, err := os.Stat(filepath.Join(p.RunRoot, "runs", "cafe0000")); !os.IsNotExist(err) {
 		t.Error("run dir survived teardown")
@@ -434,6 +502,17 @@ func TestSecretOverridesBeatEnvironment(t *testing.T) {
 			}
 		}
 	}
+
+	// An override with no value is no override: the policy source answers.
+	t.Setenv("ENGINE_TEST_TOKEN", "from-the-environment")
+	p.SecretOverrides = map[string]string{"ENGINE_TEST_TOKEN": ""}
+	values, err := secretValues(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := values[compile.SecretKey("ENGINE_TEST_TOKEN")]; got != "from-the-environment" {
+		t.Errorf("an empty override gave %q, want the environment's value", got)
+	}
 }
 
 func TestMissingSecretRefusesBeforeDocker(t *testing.T) {
@@ -451,6 +530,24 @@ func TestMissingSecretRefusesBeforeDocker(t *testing.T) {
 		if strings.HasPrefix(op, "Run") || strings.HasPrefix(op, "Network") {
 			t.Fatalf("docker touched before secret check: %v", f.Ops())
 		}
+	}
+	// The refusal names the source the secrets were looked for in.
+	if !strings.Contains(env.Error, "or the "+p.Policy.SecretSource.Mode+" source") {
+		t.Errorf("the refusal does not name the secret source: %s", env.Error)
+	}
+
+	// Several missing secrets are named in order, whatever order they were
+	// found in: the plan's own come first, and the coding agent's stored
+	// secret that sorts among them is found last.
+	p2, f2 := fixtureEdited(t, nil, func(m *manifest.Manifest) {
+		m.Capabilities.Secrets = append(m.Capabilities.Secrets, "SECRET_E", "SECRET_B", "SECRET_D", "SECRET_A", "SECRET_C")
+	})
+	p2.Plan.Capabilities.Coder = &spec.CoderGrant{Commands: true, Secrets: []string{"MID_CODER"}}
+	_ = os.Unsetenv("ENGINE_TEST_TOKEN")
+	env2, err := Run(context.Background(), f2, p2)
+	wantReason(t, env2, err, &receipt.Reason{Code: receipt.ReasonSecretMissing, Names: []string{"ENGINE_TEST_TOKEN", "MID_CODER", "SECRET_A", "SECRET_B", "SECRET_C", "SECRET_D", "SECRET_E"}})
+	if !strings.Contains(env2.Error, "ENGINE_TEST_TOKEN, MID_CODER, SECRET_A, SECRET_B, SECRET_C, SECRET_D, SECRET_E") {
+		t.Errorf("the refusal does not list the secrets in order: %s", env2.Error)
 	}
 }
 
@@ -508,7 +605,10 @@ func TestAgentNonZeroExitIsHarnessClass(t *testing.T) {
 	p, f := fixture(t)
 	f.Foreground = map[string]*dockerx.FakeForeground{
 		"-probe": {ExitCode: 0},
-		"-agent": {Stdout: `{"type":"error","message":{"content":"model refused"}}` + "\n", ExitCode: 3},
+		"-agent": {
+			Stdout: `{"type":"agent_choice","message":{"content":"half an answer"}}` + "\n" + `{"type":"error","message":{"content":"model refused"}}` + "\n",
+			Stderr: "boot: ENGINE_TEST_TOKEN=sekret-value-1234\nfatal: no model\n", ExitCode: 3,
+		},
 	}
 	env, err := Run(context.Background(), f, p)
 	var ce *ClassifiedError
@@ -520,6 +620,25 @@ func TestAgentNonZeroExitIsHarnessClass(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "model refused") {
 		t.Errorf("harness error detail missing: %v", err)
+	}
+	// The exit code, the harness's own error and the masked stderr tail, in
+	// that order, and the agent's last message still the run's answer.
+	if want := "agent exited 3\nharness error: model refused\nagent stderr tail:\nboot: ENGINE_TEST_TOKEN=[redacted]\nfatal: no model"; !strings.Contains(err.Error(), want) {
+		t.Errorf("error = %q, want it to hold %q", err.Error(), want)
+	}
+	if string(env.Result) != `"half an answer"` {
+		t.Errorf("result = %s, want the agent's last message", env.Result)
+	}
+
+	// A container docker could not run is the gateway class, not the harness's.
+	p2, f2 := fixture(t)
+	f2.Foreground = map[string]*dockerx.FakeForeground{
+		"-probe": {ExitCode: 0},
+		"-agent": {Err: errors.New("cannot attach")},
+	}
+	_, err = Run(context.Background(), f2, p2)
+	if !errors.As(err, &ce) || ce.Code != ExitGateway || !strings.Contains(err.Error(), "agent container failed to run") {
+		t.Fatalf("want exit %d naming the container, got %v", ExitGateway, err)
 	}
 }
 
@@ -539,6 +658,92 @@ func TestTurnBudgetKillsRun(t *testing.T) {
 	if env.Usage.Turns < 3 {
 		t.Errorf("turns = %d, want >2", env.Usage.Turns)
 	}
+	if !strings.Contains(err.Error(), "turn budget exceeded (2 tool calls)") {
+		t.Errorf("error = %q, want the budget named", err.Error())
+	}
+
+	// The limit itself is within the budget, one past it is not.
+	for _, tc := range []struct {
+		name string
+		max  int
+		stop bool
+	}{{"as many calls as the budget", 2, false}, {"one call past the budget", 1, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, f := fixture(t)
+			happyFake(f) // two tool calls
+			p.Budgets.MaxTurns = tc.max
+			env, err := Run(context.Background(), f, p)
+			if !tc.stop {
+				if err != nil || env.Status != "ok" || env.Usage.Turns != 2 {
+					t.Fatalf("a run of exactly its budget: %v (%+v)", err, env)
+				}
+				return
+			}
+			var ce *ClassifiedError
+			if !errors.As(err, &ce) || ce.Code != ExitBudget || !strings.Contains(err.Error(), "turn budget exceeded (1 tool calls)") {
+				t.Fatalf("want exit %d naming the budget, got %v", ExitBudget, err)
+			}
+		})
+	}
+}
+
+// The cost ceiling stops a run whose harness reports a running cost past
+// it, and not one that reports exactly the ceiling.
+func TestCostBudgetKillsRun(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		ceiling float64
+		stop    bool
+	}{{"a ceiling the cost reaches", 0.05, false}, {"a ceiling the cost passes", 0.04, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, f := fixture(t)
+			happyFake(f) // reports a running cost of $0.05
+			p.Budgets.MaxCostUSD = tc.ceiling
+			env, err := Run(context.Background(), f, p)
+			if !tc.stop {
+				if err != nil || env.Status != "ok" || env.Usage.CostUSD != 0.05 {
+					t.Fatalf("a run that reached its ceiling: %v (%+v)", err, env)
+				}
+				return
+			}
+			var ce *ClassifiedError
+			if !errors.As(err, &ce) || ce.Code != ExitBudget || !strings.Contains(err.Error(), "cost budget exceeded (harness reported $0.0500, budget $0.04)") {
+				t.Fatalf("want exit %d naming the cost and the ceiling, got %v", ExitBudget, err)
+			}
+			if env.ExitCode != ExitBudget || env.Status != "error" {
+				t.Fatalf("envelope = %+v", env)
+			}
+		})
+	}
+
+	// A harness the provider turned away before its first tool call is started
+	// again, and what the first start spent counts against the ceiling.
+	t.Run("the cost of an earlier start counts", func(t *testing.T) {
+		was := capacityWait
+		capacityWait = 10 * time.Millisecond
+		t.Cleanup(func() { capacityWait = was })
+		p, f := fixture(t)
+		happyFake(f)
+		p.Budgets.MaxCostUSD = 0.07 // each start costs less; the two together cost $0.08
+		var starts int
+		turnedAway := `{"type":"stream_stopped","usage":{"input_tokens":7,"output_tokens":0,"cost":0.03}}` + "\n" +
+			`{"type":"error","error":"model failed: 529 Overloaded {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}","code":"model_error"}` + "\n"
+		answered := f.Foreground["-agent"].Stdout
+		f.Foreground["-agent"] = &dockerx.FakeForeground{Handler: func(_ context.Context, _ dockerx.RunSpec, _ io.Reader, stdout, _ io.Writer) (int, error) {
+			starts++
+			if starts == 1 {
+				_, err := io.WriteString(stdout, turnedAway)
+				return 1, err
+			}
+			_, err := io.WriteString(stdout, answered)
+			return 0, err
+		}}
+		_, err := Run(context.Background(), f, p)
+		var ce *ClassifiedError
+		if !errors.As(err, &ce) || ce.Code != ExitBudget || !strings.Contains(err.Error(), "cost budget exceeded (harness reported $0.0800, budget $0.07)") {
+			t.Fatalf("want exit %d naming both starts' cost, got %v after %d starts", ExitBudget, err, starts)
+		}
+	})
 }
 
 func TestTimeoutKillsRun(t *testing.T) {
@@ -550,8 +755,8 @@ func TestTimeoutKillsRun(t *testing.T) {
 	}
 	_, err := Run(context.Background(), f, p)
 	var ce *ClassifiedError
-	if !errors.As(err, &ce) || ce.Code != ExitTimeout {
-		t.Fatalf("want exit %d, got %v", ExitTimeout, err)
+	if !errors.As(err, &ce) || ce.Code != ExitTimeout || !strings.Contains(err.Error(), "run timed out after 1s") {
+		t.Fatalf("want exit %d naming the timeout, got %v", ExitTimeout, err)
 	}
 }
 
@@ -629,8 +834,8 @@ func TestJSONResultKindEnforced(t *testing.T) {
 		q.OutDir = t.TempDir()
 		_, err := Run(context.Background(), f, q)
 		var ce *ClassifiedError
-		if !errors.As(err, &ce) || ce.Code != ExitOutputSchema {
-			t.Fatalf("want exit %d, got %v", ExitOutputSchema, err)
+		if !errors.As(err, &ce) || ce.Code != ExitOutputSchema || !strings.Contains(err.Error(), "is not valid JSON") {
+			t.Fatalf("want exit %d naming the JSON, got %v", ExitOutputSchema, err)
 		}
 	})
 	// A schema violation: valid JSON that violates the schema is exit 17
@@ -737,6 +942,101 @@ func TestJSONResultKindEnforced(t *testing.T) {
 			t.Errorf("result = %s", env.Result)
 		}
 	})
+	t.Run("a fence with no language is unwrapped too", func(t *testing.T) {
+		line, _ := json.Marshal(map[string]any{"type": "agent_choice", "message": map[string]any{"content": "```\n{\"answer\":42}\n```"}})
+		f := &dockerx.Fake{Foreground: map[string]*dockerx.FakeForeground{
+			"-probe": {ExitCode: 0},
+			"-agent": {Stdout: string(line) + "\n"},
+		}}
+		q := p
+		q.OutDir = t.TempDir()
+		env, err := Run(context.Background(), f, q)
+		if err != nil {
+			t.Fatalf("plain-fenced JSON should parse: %v", err)
+		}
+		if string(env.Result) != `{"answer":42}` {
+			t.Errorf("result = %s", env.Result)
+		}
+	})
+	// A tool call written as text is exit 14 in a text run; in a json run the
+	// message is simply not the declared JSON, exit 17.
+	t.Run("a tool call written as text is not json", func(t *testing.T) {
+		leaked := "Let me try that approach again.\n</parameter>\n</function>\n</tool_call>"
+		line, _ := json.Marshal(map[string]any{"type": "agent_choice", "message": map[string]any{"content": leaked}})
+		f := &dockerx.Fake{Foreground: map[string]*dockerx.FakeForeground{
+			"-probe": {ExitCode: 0},
+			"-agent": {Stdout: string(line) + "\n"},
+		}}
+		q := p
+		q.OutDir = t.TempDir()
+		_, err := Run(context.Background(), f, q)
+		var ce *ClassifiedError
+		if !errors.As(err, &ce) || ce.Code != ExitOutputSchema {
+			t.Fatalf("want exit %d, got %v", ExitOutputSchema, err)
+		}
+	})
+	answered := func() *dockerx.Fake {
+		line, _ := json.Marshal(map[string]any{"type": "agent_choice", "message": map[string]any{"content": `{"answer":42}`}})
+		return &dockerx.Fake{Foreground: map[string]*dockerx.FakeForeground{
+			"-probe": {ExitCode: 0},
+			"-agent": {Stdout: string(line) + "\n"},
+		}}
+	}
+	schemaPath := filepath.Join(p.WorkspaceSrc, compile.OutputSchemaFile)
+	// The schema the run reads is the one the plan was compiled with.
+	t.Run("a schema changed after the compile is refused", func(t *testing.T) {
+		orig, err := os.ReadFile(schemaPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.WriteFile(schemaPath, orig, 0o644) })
+		if err := os.WriteFile(schemaPath, []byte(`{"type":"object"}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		q := p
+		q.OutDir = t.TempDir()
+		_, err = Run(context.Background(), answered(), q)
+		var ce *ClassifiedError
+		if !errors.As(err, &ce) || ce.Code != ExitVerify || !strings.Contains(err.Error(), "does not match the plan's recorded digest") {
+			t.Fatalf("want exit %d naming the digest, got %v", ExitVerify, err)
+		}
+	})
+	t.Run("a schema that is gone is refused", func(t *testing.T) {
+		orig, err := os.ReadFile(schemaPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.WriteFile(schemaPath, orig, 0o644) })
+		if err := os.Remove(schemaPath); err != nil {
+			t.Fatal(err)
+		}
+		q := p
+		q.OutDir = t.TempDir()
+		_, err = Run(context.Background(), answered(), q)
+		var ce *ClassifiedError
+		if !errors.As(err, &ce) || ce.Code != ExitCompile || !strings.Contains(err.Error(), "read "+compile.OutputSchemaFile) {
+			t.Fatalf("want exit %d naming the file, got %v", ExitCompile, err)
+		}
+	})
+	t.Run("a schema that does not compile is refused", func(t *testing.T) {
+		orig, err := os.ReadFile(schemaPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.WriteFile(schemaPath, orig, 0o644) })
+		if err := os.WriteFile(schemaPath, []byte(`{"type":"nonsense"}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		plan := *p.Plan
+		plan.Output.SchemaSHA256 = "" // the digest check is for a schema that was recorded
+		q := p
+		q.Plan, q.OutDir = &plan, t.TempDir()
+		_, err = Run(context.Background(), answered(), q)
+		var ce *ClassifiedError
+		if !errors.As(err, &ce) || ce.Code != ExitCompile || !strings.Contains(err.Error(), compile.OutputSchemaFile+":") {
+			t.Fatalf("want exit %d naming the file, got %v", ExitCompile, err)
+		}
+	})
 }
 
 // serverFixture is fixture with one declared MCP server in the plan and a
@@ -797,6 +1097,56 @@ func TestDeclaredServerThatDidNotStartFailsTheRun(t *testing.T) {
 		if strings.HasPrefix(op, "RunForeground:agentry-cafe0000-agent") {
 			t.Error("the agent ran without its declared server")
 		}
+	}
+	if r := receipt.ReasonOf(err); r == nil || r.Code != receipt.ReasonMCPStartFailed || !slices.Equal(r.Names, []string{"npm:@scope/server-x"}) {
+		t.Errorf("reason = %+v, want the server named", r)
+	}
+
+	// A server that started and could not list its tools is refused the same way.
+	p2, f2 := serverFixture(t)
+	happyFake(f2)
+	f2.LogsByName = map[string]string{"agentry-cafe0000-gateway": "  > Can't list tools mcp-npm-scope-server-x: calling \"tools/list\": EOF\n"}
+	_, err = Run(context.Background(), f2, p2)
+	if !errors.As(err, &ce) || ce.Code != ExitGateway || !strings.Contains(err.Error(), "@scope/server-x") || !strings.Contains(err.Error(), "Can't list tools mcp-npm-scope-server-x") {
+		t.Errorf("a server that could not list its tools: %v", err)
+	}
+
+	// The tail of the server's own output is its last fifteen lines.
+	p3, f3 := serverFixture(t)
+	happyFake(f3)
+	var logLines []string
+	for i := 1; i <= 20; i++ {
+		logLines = append(logLines, fmt.Sprintf("- mcp-npm-scope-server-x: output-%02d", i))
+	}
+	logLines = append(logLines, "  > Can't start mcp-npm-scope-server-x: failed to connect: EOF")
+	f3.LogsByName = map[string]string{"agentry-cafe0000-gateway": strings.Join(logLines, "\n") + "\n"}
+	_, err = Run(context.Background(), f3, p3)
+	if err == nil || !strings.Contains(err.Error(), "server output tail:\noutput-06\n") || !strings.HasSuffix(err.Error(), "\noutput-20") || strings.Contains(err.Error(), "output-05") {
+		t.Errorf("the server output tail: %v", err)
+	}
+}
+
+// TestTheToolsServerThatDidNotStartFailsTheRun: the gateway carries on
+// without the run's own tools server when it cannot start it or list its
+// tools, and the engine does not: the agent would have none of its tools.
+func TestTheToolsServerThatDidNotStartFailsTheRun(t *testing.T) {
+	for name, line := range map[string]string{
+		"it did not start":      "  > Can't start agentry-tools: failed to connect: calling \"initialize\": EOF",
+		"it did not list tools": "  > Can't list tools agentry-tools: calling \"tools/list\": EOF",
+	} {
+		t.Run(name, func(t *testing.T) {
+			p, f := fixture(t)
+			happyFake(f)
+			f.LogsByName = map[string]string{"agentry-cafe0000-gateway": "- Those servers are enabled: agentry-tools\n" + line + "\n"}
+			_, err := Run(context.Background(), f, p)
+			var ce *ClassifiedError
+			if !errors.As(err, &ce) || ce.Code != ExitGateway || !strings.Contains(err.Error(), "the run's tools server did not start") || !strings.Contains(err.Error(), strings.TrimSpace(line)) {
+				t.Fatalf("want exit %d naming the tools server and quoting the gateway, got %v", ExitGateway, err)
+			}
+			if _, ran := f.FindRun("-agent"); ran {
+				t.Error("the agent ran without its tools server")
+			}
+		})
 	}
 }
 
@@ -1259,9 +1609,15 @@ func TestRunContainersAreHardened(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			p, f := fixtureWith(t, func(pol *policy.Policy) { pol.Docker.Limits = tc.lim })
 			happyFake(f)
+			// A caller's line never replaces the engine's own, and is kept
+			// where the engine states none.
+			p.Enforced = map[string]string{"containers": "the caller's own line", "caller.extra": "kept"}
 			env, err := Run(context.Background(), f, p)
 			if err != nil {
 				t.Fatalf("Run: %v", err)
+			}
+			if env.CapabilitiesEnforced["caller.extra"] != "kept" || env.CapabilitiesEnforced["containers"] == "the caller's own line" {
+				t.Errorf("a caller's lines: containers %q, extra %q", env.CapabilitiesEnforced["containers"], env.CapabilitiesEnforced["caller.extra"])
 			}
 			for _, name := range []string{"-proxy", "-gateway", "-probe", "-agent"} {
 				c, ok := f.FindRun(name)
@@ -1298,7 +1654,39 @@ func TestRunContainersAreHardened(t *testing.T) {
 				!strings.Contains(line, "the agent (tmpfs /tmp, /work, /home/docker-agent)") || !strings.Contains(line, "DAC_READ_SEARCH alone") {
 				t.Errorf("receipt containers line = %q", line)
 			}
+			// What the gateway's launched containers get is said for the
+			// platform the run is on.
+			launched := "their capabilities and root as it leaves them"
+			if filterSupported {
+				launched = "through this run's docker filter the run's pids bound and every capability dropped"
+			}
+			if !strings.Contains(line, launched) {
+				t.Errorf("receipt containers line lacks %q: %q", launched, line)
+			}
 		})
+	}
+	// With no policy at all the bounds are the defaults.
+	if got := (Params{}).limits(); got != (policy.Limits{}).WithDefaults() {
+		t.Errorf("limits with no policy = %+v", got)
+	}
+	// The line names the classes a plan has: an installer for package
+	// servers, the store's one-shot for a conversation.
+	withInstaller, _ := serverFixture(t)
+	plain, _ := fixture(t)
+	conversation, _ := sessionFixture(t)
+	for _, tc := range []struct {
+		name, want string
+		params     Params
+		has        bool
+	}{
+		{"package servers", "the MCP server installer", withInstaller, true},
+		{"a run with none", "the MCP server installer", plain, false},
+		{"a conversation", "the session store's one-shot chown keeps CHOWN alone", conversation, true},
+		{"a one-shot run", "the session store's one-shot chown keeps CHOWN alone", plain, false},
+	} {
+		if got := strings.Contains(withContainers(nil, tc.params)["containers"], tc.want); got != tc.has {
+			t.Errorf("%s: the containers line names %q = %v, want %v", tc.name, tc.want, got, tc.has)
+		}
 	}
 }
 
@@ -1447,5 +1835,20 @@ func TestReceiptNamesWhatAnUnsafeBuildDidNotInstall(t *testing.T) {
 		"; NOT installed at image build (the commands named are absent from this run unless the base image already carries them): ghidra (E: Unable to locate package ghidra); analyzeHeadless (/usr/share/ghidra/support/analyzeHeadless is not in the image)"
 	if got := env.CapabilitiesEnforced["exec"]; got != want {
 		t.Fatalf("exec line:\n%s\nwant\n%s", got, want)
+	}
+
+	// With nothing installed at all, the line claims no resolved packages.
+	p2, f2 := fixture(t)
+	happyFake(f2)
+	p2.Plan.Enforcement["exec"] = "UNSAFE MODE: run_command restricted to the argv0 allowlist {strings}; …"
+	p2.ExecPackages = []string{spec.ExecNotInstalledPrefix + "ghidra (E: Unable to locate package ghidra)"}
+	env2, err := Run(context.Background(), f2, p2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want2 := "UNSAFE MODE: run_command restricted to the argv0 allowlist {strings}; …" +
+		"; NOT installed at image build (the commands named are absent from this run unless the base image already carries them): ghidra (E: Unable to locate package ghidra)"
+	if got := env2.CapabilitiesEnforced["exec"]; got != want2 {
+		t.Fatalf("exec line:\n%s\nwant\n%s", got, want2)
 	}
 }

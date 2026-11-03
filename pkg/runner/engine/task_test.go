@@ -64,6 +64,15 @@ func TestAGivenTaskIsSentAsItIs(t *testing.T) {
 	if strings.Contains(string(b), `"task"`) {
 		t.Errorf("meta.json claims a substitute for a given task: %s", b)
 	}
+
+	// A harness that takes no task on stdin is sent none in its place: the
+	// empty task stays empty and no substitute is claimed.
+	plan := *p.Plan
+	plan.Harness.Agent.StdinTask = false
+	task, sent, err := ownInstructionWhenEmpty(nil, &plan, p.WorkspaceSrc)
+	if err != nil || len(task) != 0 || sent != "" {
+		t.Errorf("a harness with no stdin task: %q, %q, %v", task, sent, err)
+	}
 }
 
 // The instruction comes from the run's own copy of the workspace, the one

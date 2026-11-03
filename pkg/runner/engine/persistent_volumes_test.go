@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
+	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
 func volumeNames(f *dockerx.Fake) []string {
@@ -97,6 +98,18 @@ func TestAHomeThatRanTheAgentCarriesTheSharedVolumesOver(t *testing.T) {
 			from.Source != strings.Replace(to.Source, "-aaaa", "", 1) {
 			t.Errorf("copy %+v from %+v to %+v", c.Run, from, to)
 		}
+		// The copy keeps owners, modes and times as root, with the
+		// capabilities that takes and no more, in the harness image.
+		lim := p.limits()
+		if !slices.Equal(c.Run.Argv, []string{"-c", "cp -a /from/. /to/"}) || c.Run.Entrypoint != "sh" || c.Run.User != "0:0" || c.Run.Image != p.Plan.Harness.Agent.Image || c.Run.Image == "" ||
+			!slices.Equal(c.Run.CapAdd, []string{"CHOWN", "DAC_OVERRIDE", "DAC_READ_SEARCH", "FOWNER"}) || !slices.Equal(c.Run.CapDrop, []string{"ALL"}) || !c.Run.AutoRemove ||
+			c.Run.Labels[runLabel] != p.RunID || lim.Memory == "" || c.Run.Memory != lim.Memory || c.Run.CPUs != lim.CPUs || c.Run.PidsLimit != lim.Pids || !c.Run.NoNewPrivileges {
+			t.Errorf("the copy's one-shot: %+v", c.Run)
+		}
+
+		if !slices.Contains(f.Ops(), "RemoveForce:"+c.Run.Name) {
+			t.Errorf("the copy's one-shot was not removed: %v", f.Ops())
+		}
 	}
 	if copies != 2 {
 		t.Errorf("%d copies, want the session volume and the data volume", copies)
@@ -108,6 +121,20 @@ func TestAHomeThatRanTheAgentCarriesTheSharedVolumesOver(t *testing.T) {
 		if strings.HasPrefix(op, "VolumeRemove:") {
 			t.Errorf("a volume was removed: %s", op)
 		}
+	}
+
+	// Under the plan's runtime the copy runs under it too.
+	p2, f2, _ := persistentFixture(t, "")
+	p2.Plan.Docker = &spec.DockerSpec{Runtime: "runsc"}
+	legacyVolumes(f2)
+	p2.Persistent.Home = "aaaa"
+	p2.Persistent.SessionVolume, p2.Persistent.DataVolume = "agentry-persistent-keeper-aaaa-session", "agentry-persistent-keeper-aaaa-data"
+	p2.Persistent.LegacySessionVolume, p2.Persistent.LegacyDataVolume = "agentry-persistent-keeper-session", "agentry-persistent-keeper-data"
+	if err := ensurePersistentVolumes(context.Background(), f2, p2); err != nil {
+		t.Fatal(err)
+	}
+	if r, ok := f2.FindRun("-volume-copy"); !ok || r.Runtime != "runsc" {
+		t.Errorf("the copy under the runtime: %+v (found %v)", r, ok)
 	}
 }
 
@@ -126,6 +153,24 @@ func TestAHomeThatNeverRanTheAgentGetsNoneOfAnothersVolumes(t *testing.T) {
 			t.Errorf("a copy ran: %s", op)
 		}
 	}
+
+	// Nor is a volume copied that does not exist: an earlier build's names
+	// are only a claim until its volumes are found.
+	p2, f2, _ := persistentFixture(t, "")
+	p2.Persistent.Home = "cccc"
+	p2.Persistent.SessionVolume, p2.Persistent.DataVolume = "agentry-persistent-keeper-cccc-session", "agentry-persistent-keeper-cccc-data"
+	p2.Persistent.LegacySessionVolume, p2.Persistent.LegacyDataVolume = "agentry-persistent-keeper-session", "agentry-persistent-keeper-data"
+	if err := ensurePersistentVolumes(context.Background(), f2, p2); err != nil {
+		t.Fatal(err)
+	}
+	if got := volumeNames(f2); len(got) != 2 {
+		t.Errorf("volumes %v, want the new two", got)
+	}
+	for _, op := range f2.Ops() {
+		if strings.HasPrefix(op, "RunForeground:") {
+			t.Errorf("a copy of a volume that does not exist ran: %s", op)
+		}
+	}
 }
 
 // TestAFailedCopyLeavesNoHalfVolume: a copy that fails stops the start, and
@@ -138,8 +183,11 @@ func TestAFailedCopyLeavesNoHalfVolume(t *testing.T) {
 	p.Persistent.SessionVolume, p.Persistent.DataVolume = "agentry-persistent-keeper-aaaa-session", "agentry-persistent-keeper-aaaa-data"
 	p.Persistent.LegacySessionVolume, p.Persistent.LegacyDataVolume = "agentry-persistent-keeper-session", "agentry-persistent-keeper-data"
 	err := ensurePersistentVolumes(context.Background(), f, p)
-	if err == nil || !strings.Contains(err.Error(), "no space left") {
+	if err == nil || !strings.Contains(err.Error(), "the copy exited 1: cp: no space left on device") || !strings.Contains(err.Error(), "carry the volume agentry-persistent-keeper-session") {
 		t.Fatalf("err = %v", err)
+	}
+	if !slices.Contains(f.Ops(), "RemoveForce:"+containerName(p.RunID, "volume-copy")) {
+		t.Errorf("the failed copy's one-shot was not removed: %v", f.Ops())
 	}
 	if got := volumeNames(f); len(got) != 2 {
 		t.Errorf("volumes %v, want only the shared two", got)

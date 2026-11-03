@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -83,10 +84,11 @@ func TestARequiredSecretStillRefusesBesideAnOptionalOne(t *testing.T) {
 // key (webSecrets), so the absent secret is written as an empty line, for
 // the release's own and for a declared server's.
 func TestAnAbsentOptionalSecretIsWrittenEmpty(t *testing.T) {
+	// Declared out of order: the receipt names them in order.
 	p, _ := fixtureEdited(t, nil, func(m *manifest.Manifest) {
-		m.Capabilities.OptionalSecrets = []string{"ENGINE_TEST_TOKEN", "SERVER_TOKEN"}
+		m.Capabilities.OptionalSecrets = []string{"ENGINE_TEST_TOKEN", "SERVER_TOKEN", "SRV_E", "SRV_B", "SRV_D", "SRV_A", "SRV_C"}
 	})
-	p.Plan.MCPServers = []spec.MCPServerSpec{{Name: "srv", Secrets: []string{"SERVER_TOKEN"}}}
+	p.Plan.MCPServers = []spec.MCPServerSpec{{Name: "srv", Secrets: []string{"SERVER_TOKEN", "SRV_E", "SRV_B", "SRV_D", "SRV_A", "SRV_C"}}}
 	_ = os.Unsetenv("ENGINE_TEST_TOKEN")
 	_ = os.Unsetenv("SERVER_TOKEN")
 	path := filepath.Join(t.TempDir(), "secrets.env")
@@ -109,8 +111,18 @@ func TestAnAbsentOptionalSecretIsWrittenEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := absentSecrets(p.Plan, values); strings.Join(got, ",") != "ENGINE_TEST_TOKEN,SERVER_TOKEN" {
+	if got := absentSecrets(p.Plan, values); strings.Join(got, ",") != "ENGINE_TEST_TOKEN,SERVER_TOKEN,SRV_A,SRV_B,SRV_C,SRV_D,SRV_E" {
 		t.Fatalf("absentSecrets = %v", got)
+	}
+	// Only an optional secret can be gone: a required one with no value is a
+	// refusal elsewhere, never a secret the run went without.
+	plan := *p.Plan
+	plan.Secrets = append(slices.Clone(plan.Secrets), "ONLY_REQUIRED")
+	values[compile.SecretKey("ONLY_REQUIRED")] = ""
+	for _, name := range absentSecrets(&plan, values) {
+		if name == "ONLY_REQUIRED" {
+			t.Fatalf("a required secret was named as one the run went without")
+		}
 	}
 }
 

@@ -34,12 +34,14 @@ type Peer struct {
 	Chat   string `json:"chat"`
 }
 
-// Start is the supervisor's first line: the kind, the account's credential
-// and the paired person, if any.
+// Start is the supervisor's first line: the kind, the account's credential,
+// the account's own server where the kind has one (a Matrix homeserver's
+// https:// address), and the paired person, if any.
 type Start struct {
-	Kind  string `json:"kind"`
-	Token string `json:"token"`
-	Peer  *Peer  `json:"peer,omitempty"`
+	Kind   string `json:"kind"`
+	Token  string `json:"token"`
+	Server string `json:"server,omitempty"`
+	Peer   *Peer  `json:"peer,omitempty"`
 }
 
 // Reply is an answer for the paired person's chat. ID names its Sent report.
