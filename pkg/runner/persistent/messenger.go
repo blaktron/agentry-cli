@@ -1,11 +1,13 @@
 package persistent
 
-// A persistent agent's messengers: a messaging service (Telegram) the person
-// adds to the agent so they can talk to it from there, each a roster entry
-// messenger:<kind> of the person's own, never one a release declares. The
-// account's credential (a Telegram bot's token) is kept in the system
+// A persistent agent's messengers: a messaging service (Telegram, Discord,
+// Slack, Matrix) the person adds to the agent so they can talk to it from
+// there, each a roster entry messenger:<kind> of the person's own, never one
+// a release declares. The account's credential (a bot's token, a Slack
+// app's two tokens, a Matrix account's access token) is kept in the system
 // keychain under messenger:<agent>:<kind>; config.yaml records the account's
-// id and name on the service, and the person paired with it.
+// id and name on the service, its own server where it has one, and the
+// person paired with it.
 //
 // Only the paired person reaches the agent. Pairing binds the person's own
 // account: Agentry shows a code, valid for a few minutes, and the person
@@ -30,6 +32,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net"
 	"slices"
 	"strings"
 	"time"
@@ -43,8 +46,14 @@ const KindMessenger EntryKind = "messenger"
 // messengerPrefix begins a messenger's roster id.
 const messengerPrefix = "messenger:"
 
-// messengersVersion is the version of config.yaml that added Messengers.
-const messengersVersion = 12
+// messengersVersion is the version of config.yaml that added Messengers,
+// and messengerKindsVersion the one that added every kind but Telegram and
+// an account's own server: a build that knows only Telegram would drop the
+// server at its next save, so it refuses the config instead.
+const (
+	messengersVersion     = 12
+	messengerKindsVersion = 13
+)
 
 // MessengerAccount is one messenger account the person added to the agent,
 // as config.yaml keeps it: never its credential.
@@ -56,6 +65,9 @@ type MessengerAccount struct {
 	// (@helper_bot).
 	Account string `yaml:"account" json:"account"`
 	Name    string `yaml:"name,omitempty" json:"name,omitempty"`
+	// Server is the account's own server, for a kind whose accounts name
+	// one: a Matrix homeserver's https:// address.
+	Server string `yaml:"server,omitempty" json:"server,omitempty"`
 	// Set is when its credential was last set, so setting it again starts
 	// its role again.
 	Set time.Time `yaml:"set" json:"set"`
@@ -158,21 +170,29 @@ func messengerLine(k messenger.Kind, m MessengerAccount) string {
 	if m.Name != "" {
 		account += " " + m.Name
 	}
-	carried := k.Title + " carries them and does not encrypt them end to end, so " + k.Title + " can read what you and the agent write there"
+	carrier, reader := k.Title, k.Title
+	hosts, _ := messenger.HostsFor(k, m.Server)
+	if k.NamesServer {
+		carrier, reader = "your homeserver, "+strings.Join(hostNames(hosts), ", ")+",", "it"
+	}
+	carried := carrier + " carries them and does not encrypt them end to end, so " + reader + " can read what you and the agent write there"
 	if k.EndToEnd {
-		carried = k.Title + " carries them, encrypted end to end"
+		carried = carrier + " carries them, encrypted end to end"
 	}
 	return "Takes your messages on " + k.Title + ", through " + account + ", as turns of its conversation, and answers you there: " + carried +
 		". Only your own " + k.Title + " account reaches it, once you pair it with a code Agentry shows; anyone else who writes to it is ignored, never answered. " +
 		"Nothing is approved from " + k.Title + ": what the agent asks your agreement to waits for you in Agentry. " +
-		"The " + k.Account + "'s credential stays in your keychain, and Agentry hands it to one container alone, of its own, which reaches " + strings.Join(hostsOf(k), ", ") + " and nothing else; the agent is never given it"
+		"The " + k.Account + "'s credential stays in your keychain, and Agentry hands it to one container alone, of its own, which reaches " + strings.Join(hostNames(hosts), ", ") + " and nothing else; the agent is never given it"
 }
 
-// hostsOf are a kind's hosts without their ports.
-func hostsOf(k messenger.Kind) []string {
-	out := make([]string, 0, len(k.Hosts))
-	for _, h := range k.Hosts {
-		host, _, _ := strings.Cut(h, ":")
+// hostNames are host:port pairs without their ports.
+func hostNames(hosts []string) []string {
+	out := make([]string, 0, len(hosts))
+	for _, h := range hosts {
+		host, _, err := net.SplitHostPort(h)
+		if err != nil {
+			host = h
+		}
 		out = append(out, host)
 	}
 	return out
@@ -185,8 +205,19 @@ func addMessenger(a Agent, c *Config, m MessengerAccount) error {
 	if !a.TakesMessengers() {
 		return fmt.Errorf("%s is reached in Agentry Desktop's window alone: it takes no messenger", a.Title)
 	}
-	if _, ok := messenger.Lookup(m.Kind); !ok {
+	k, ok := messenger.Lookup(m.Kind)
+	if !ok {
 		return fmt.Errorf("%q is not a messenger this build knows (%s)", m.Kind, strings.Join(messenger.Names(), ", "))
+	}
+	if k.NamesServer {
+		if _, err := messenger.ServerHost(m.Server); err != nil {
+			return err
+		}
+		if !strings.HasPrefix(m.Server, "https://") {
+			return fmt.Errorf("%q is not https://: a homeserver is reached over TLS", m.Server)
+		}
+	} else {
+		m.Server = ""
 	}
 	if m.Account == "" {
 		return errors.New("a messenger account needs its id on the service")
@@ -300,7 +331,9 @@ type MessengerState struct {
 	Title   string `json:"title"`
 	Account string `json:"account,omitempty"`
 	Name    string `json:"name,omitempty"`
-	On      bool   `json:"on"`
+	// Server is the account's own server, where its kind has one.
+	Server string `json:"server,omitempty"`
+	On     bool   `json:"on"`
 	// Paired says a person is paired; Pairing says a code is taken until
 	// PairingUntil.
 	Paired       bool      `json:"paired"`
@@ -334,7 +367,7 @@ func Messengers(a Agent, c Config, allowed func(kind string) (bool, string)) []M
 			continue
 		}
 		e, _ := r.Entry(MessengerEntryID(m.Kind))
-		st := MessengerState{Kind: m.Kind, Title: k.Title, Account: m.Account, Name: m.Name, On: e.On, Entry: e.ID}
+		st := MessengerState{Kind: m.Kind, Title: k.Title, Account: m.Account, Name: m.Name, Server: m.Server, On: e.On, Entry: e.ID}
 		if m.Peer != nil {
 			st.Paired, st.PairedAt = true, m.Peer.Paired
 		}

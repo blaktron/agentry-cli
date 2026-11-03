@@ -49,6 +49,9 @@ type MessengerParams struct {
 	Kind  messenger.Kind
 	Token string
 	Peer  *messenger.Peer
+	// Server is the account's own server, for a kind whose accounts name
+	// one (a Matrix homeserver): the one host its relay reaches.
+	Server string
 	// Image is the runner image.
 	Image  string
 	Policy *policy.Policy
@@ -107,7 +110,11 @@ func StartMessenger(ctx context.Context, d dockerx.Client, p MessengerParams) (_
 	if p.Token == "" {
 		return nil, errors.New("the messenger account has no credential")
 	}
-	if len(p.Kind.Hosts) == 0 {
+	hosts, err := messenger.HostsFor(p.Kind, p.Server)
+	if err != nil {
+		return nil, err
+	}
+	if len(hosts) == 0 {
 		return nil, fmt.Errorf("the messenger %q declares no host", p.Kind.Name)
 	}
 	if p.Log == nil {
@@ -144,7 +151,7 @@ func StartMessenger(ctx context.Context, d dockerx.Client, p MessengerParams) (_
 
 	relay := readOnlyRoot(hardened(dockerx.RunSpec{
 		Name: relayName, Image: p.Image, Network: netName, Alias: messengerRelayAlias, Labels: labels,
-		Argv: []string{"proxy", "--allow", strings.Join(p.Kind.Hosts, ","), "--public-only", "--addr", fmt.Sprintf(":%d", spec.ProxyPort)},
+		Argv: []string{"proxy", "--allow", strings.Join(hosts, ","), "--public-only", "--addr", fmt.Sprintf(":%d", spec.ProxyPort)},
 	}, lim), "/tmp")
 	// Under the runtime where the host's name servers are known: its leg out
 	// a network of its own joined at create, and a resolv.conf naming them.
@@ -236,7 +243,7 @@ func StartMessenger(ctx context.Context, d dockerx.Client, p MessengerParams) (_
 		}
 	})
 	w := messenger.NewWriter(inW)
-	if err := w.Write(messenger.ToRole{Start: &messenger.Start{Kind: p.Kind.Name, Token: p.Token, Peer: p.Peer}}); err != nil {
+	if err := w.Write(messenger.ToRole{Start: &messenger.Start{Kind: p.Kind.Name, Token: p.Token, Server: p.Server, Peer: p.Peer}}); err != nil {
 		return nil, fmt.Errorf("the messenger role did not take its start: %w", err)
 	}
 	l := &MessengerLink{frames: make(chan messenger.FromRole, 64), w: w}
