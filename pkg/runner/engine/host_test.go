@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -89,6 +90,7 @@ if [ "$1" = "--version" ]; then echo "hosttest 1.2.3"; exit 0; fi
 env | sort > "$AGENTRY_HOSTTEST_ENVFILE"
 echo "argv: $*" >> "$AGENTRY_HOSTTEST_ENVFILE"
 echo "cwd: $(pwd)" >> "$AGENTRY_HOSTTEST_ENVFILE"
+echo "group: $(ps -o pgid= -p $$ | tr -d ' ') pid: $$" >> "$AGENTRY_HOSTTEST_ENVFILE"
 cat config.txt >> "$AGENTRY_HOSTTEST_ENVFILE"
 cat > "$AGENTRY_HOSTTEST_TASKFILE"
 echo '{"type":"tool_call","tool":"fs_read"}'
@@ -215,6 +217,11 @@ func TestRunHostHarness(t *testing.T) {
 			t.Errorf("harness environment leaks %q", leak)
 		}
 	}
+	// The harness leads a process group of its own, so a kill reaches what it
+	// started.
+	if m := regexp.MustCompile(`group: (\d*) pid: (\d+)`).FindStringSubmatch(got); m == nil || (m[1] != "" && m[1] != m[2]) {
+		t.Errorf("the harness's process group is not its own: %v", m)
+	}
 	task, _ := os.ReadFile(taskFile) //nolint:gosec // test file
 	if string(task) != "the host task" {
 		t.Errorf("task on stdin = %q", task)
@@ -225,12 +232,67 @@ func TestRunHostHarness(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(p.OutDir, "receipts", "events.ndjson")); err != nil {
 		t.Error("events receipt missing")
 	}
+	t.Run("the host process environment", hostProcessEnvironment)
 }
 
 // The run network is internal, so docker programs a published port only
 // once the container has been connected to the bridge — a moment after
 // `docker run -d` returns. Reading it once made the gateway's address
 // fail intermittently on a real daemon; the engine must wait for the mapping.
+// hostProcessEnvironment starts the host process of a run directly, to see
+// what its environment is made of: the model sign-in's token for a variable
+// that takes it (and a refusal when the token cannot be read), and the
+// plan's own value for a variable it also lets the process inherit.
+func hostProcessEnvironment(t *testing.T) {
+	p, _, envFile, _ := hostFixture(t)
+	hs := p.Plan.Harness.Host
+	hs.Env = append(hs.Env, spec.EnvVar{Name: "HOSTTEST_SIGNIN", FromModelSignIn: true}, spec.EnvVar{Name: "HOME", Value: "/the/plans/home"})
+	rd := runDirsAt(filepath.Join(p.RunRoot, "runs", "cafe0001"))
+	if err := os.MkdirAll(rd.cfg, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rd.hostGatewayURL, rd.hostProxyURL = "http://127.0.0.1:1/mcp", "http://127.0.0.1:2"
+	start := func() (int, error) {
+		wait, _, err := startHostProcess(context.Background(), p, rd, rd.replacer(), "tok", strings.NewReader("task"), io.Discard, io.Discard)
+		if err != nil {
+			return -1, err
+		}
+		return wait()
+	}
+	var ce *ClassifiedError
+	if _, err := start(); !errors.As(err, &ce) || ce.Code != ExitCLI || !strings.Contains(err.Error(), "read the model sign-in's token for HOSTTEST_SIGNIN") {
+		t.Fatalf("a token that cannot be read: %v", err)
+	}
+	if err := os.MkdirAll(rd.modelSignInDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rd.modelSignInDir(), spec.ModelSignInTokenFile), []byte("signin-token-1234"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code, err := start(); err != nil || code != 0 {
+		t.Fatalf("the host process: %d %v", code, err)
+	}
+	seen, err := os.ReadFile(envFile) //nolint:gosec // test file
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"HOSTTEST_SIGNIN=signin-token-1234\n", "HOME=/the/plans/home\n"} {
+		if !strings.Contains(string(seen), want) {
+			t.Errorf("the host process environment lacks %q:\n%s", want, seen)
+		}
+	}
+	if strings.Count(string(seen), "HOME=") != 1 {
+		t.Errorf("HOME is set more than once:\n%s", seen)
+	}
+	// A run whose harness is a container publishes no port to the host.
+	if got := hostPublish(Params{Plan: &spec.Plan{}}, spec.GatewayPort); got != nil {
+		t.Errorf("a container harness publishes %+v", got)
+	}
+	if got := hostPublish(p, spec.GatewayPort); len(got) != 1 || got[0].HostIP != "127.0.0.1" || got[0].ContainerPort != spec.GatewayPort {
+		t.Errorf("a host harness publishes %+v", got)
+	}
+}
+
 func TestRunHostHarnessWaitsForThePublishedPort(t *testing.T) {
 	p, f, _, _ := hostFixture(t)
 	f.PortFailures = 3 // the first reads find no mapping yet
@@ -274,6 +336,37 @@ func TestRunHostHarnessPolicyPath(t *testing.T) {
 	}
 	if _, err := os.Stat(envFile); err != nil {
 		t.Error("the policy-named harness did not run")
+	}
+
+	// A harness that exits with a failure fails the run, with its status and
+	// the last of its stderr.
+	failing := filepath.Join(t.TempDir(), "failing-harness")
+	if err := os.WriteFile(failing, []byte("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 1.0; exit 0; fi\necho 'harness broke with key '\"$ANTHROPIC_API_KEY\" >&2\nexit 7\n"), 0o755); err != nil { //nolint:gosec // test script
+		t.Fatal(err)
+	}
+	p, f, _, _ = hostFixture(t)
+	p.Policy.Harness = map[string]policy.HarnessPolicy{"hosttest": {Path: failing}}
+	_, err = Run(context.Background(), f, p)
+	var ce *ClassifiedError
+	if !errors.As(err, &ce) || ce.Code != ExitHarness || !strings.Contains(err.Error(), "harness exited 7") || !strings.Contains(err.Error(), "harness broke") {
+		t.Errorf("a harness that exited 7: %v", err)
+	}
+	// The key it printed is masked in the receipt of its stderr.
+	if b, _ := os.ReadFile(filepath.Join(p.OutDir, "receipts", "agent-stderr.log")); !strings.Contains(string(b), "harness broke") || strings.Contains(string(b), "sk-test-key") {
+		t.Errorf("agent-stderr.log = %q, want the harness's words with its key masked", b)
+	}
+
+	// A harness that outlasts the run's timeout fails it as a timeout.
+	slow := filepath.Join(t.TempDir(), "slow-harness")
+	if err := os.WriteFile(slow, []byte("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 1.0; exit 0; fi\nexec /bin/sleep 30\n"), 0o755); err != nil { //nolint:gosec // test script
+		t.Fatal(err)
+	}
+	p, f, _, _ = hostFixture(t)
+	p.Policy.Harness = map[string]policy.HarnessPolicy{"hosttest": {Path: slow}}
+	p.Budgets.TimeoutSeconds = 1
+	_, err = Run(context.Background(), f, p)
+	if !errors.As(err, &ce) || ce.Code != ExitTimeout || !strings.Contains(err.Error(), "run timed out after 1s") {
+		t.Errorf("a harness that outlasted the timeout: %v", err)
 	}
 }
 

@@ -256,13 +256,31 @@ func TestTheSweepStopsADeadRunsPodmanService(t *testing.T) {
 			t.Errorf("%s was removed: %v", p, err)
 		}
 	}
+	// exits reports a process that is signalled to end, which the sweep waits
+	// out before it returns: a signalled stand-in has ended, whether or not
+	// it has been reaped.
+	exits := func(cmd *exec.Cmd) func() bool {
+		done := make(chan struct{})
+		go func() { _, _ = cmd.Process.Wait(); close(done) }()
+		return func() bool {
+			ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+			defer cancel()
+			select {
+			case <-done:
+				return true
+			case <-ctx.Done():
+				return false
+			}
+		}
+	}
 	// A record whose start time is another process's: the process is
 	// left alone (a reused pid), the dead run's socket and record go.
 	svc := service(podman, "system", "service", "--time=0", "unix://"+sock)
+	svcEnded := exits(svc)
 	start, _ := owner.StartTime(svc.Process.Pid)
 	write(podmanServiceRecord{PID: svc.Process.Pid, Start: start + 7, Socket: sock})
 	StopLeftPodmanService(dir, home, runID)
-	if !alive(svc.Process.Pid) {
+	if !alive(svc.Process.Pid) || svcEnded() {
 		t.Fatal("a reused pid was killed")
 	}
 	gone(sock, record)
@@ -270,10 +288,11 @@ func TestTheSweepStopsADeadRunsPodmanService(t *testing.T) {
 	// line is not a podman service: left alone; the record goes.
 	_ = os.Remove(sock)
 	other := service(os.Args[0])
+	otherEnded := exits(other)
 	start, _ = owner.StartTime(other.Process.Pid)
 	write(podmanServiceRecord{PID: other.Process.Pid, Start: start, Socket: sock})
 	StopLeftPodmanService(dir, home, runID)
-	if !alive(other.Process.Pid) {
+	if !alive(other.Process.Pid) || otherEnded() {
 		t.Fatal("a process that is not a podman service was killed")
 	}
 	gone(record)
@@ -299,6 +318,16 @@ func TestTheSweepStopsADeadRunsPodmanService(t *testing.T) {
 	write(podmanServiceRecord{PID: svc.Process.Pid, Start: start + 7, Socket: home + "/s/x/../" + runID + "-podman.sock"})
 	StopLeftPodmanService(dir, home, runID)
 	gone(sock, record)
+	// A record with no pid is no record of a service: nothing is touched.
+	if err := os.WriteFile(sock, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	write(podmanServiceRecord{PID: 0, Start: start, Socket: sock})
+	StopLeftPodmanService(dir, home, runID)
+	kept(sock)
+	kept(record)
+	_ = os.Remove(record)
+	_ = os.Remove(sock)
 	// A run id that is not a plain name is refused before the record is read.
 	if err := os.WriteFile(sock, nil, 0o600); err != nil {
 		t.Fatal(err)
@@ -342,6 +371,8 @@ func TestOnlyTheRunsOwnServiceSocketIsRemoved(t *testing.T) {
 		filepath.Join(tmp, "agentry-pm-123456", "other.sock"):       false,
 		filepath.Join(tmp, "podman.sock"):                           false,
 		filepath.Join(tmp, "agentry-pm-1", "deeper", "podman.sock"): false,
+		tmp + "/agentry-pm-1/../agentry-pm-2/podman.sock":           false,
+		filepath.Join(tmp, "not-agentry-pm", "podman.sock"):         false,
 		filepath.Join(home, "agentry-pm-123456", "podman.sock"):     false,
 		filepath.Join(dir, "podman.sock"):                           false,
 		home + "/s/x/../" + runID + "-podman.sock":                  false,
@@ -379,6 +410,9 @@ func TestOnlyAPodmanSystemServiceIsSignalled(t *testing.T) {
 		{[]string{"/usr/bin/podman", "exec", "c", "system", "service", "unix://" + sock}, false},
 		{[]string{"/usr/bin/podman", "service", "system", "unix://" + sock}, false},
 		{[]string{"/usr/bin/podman", "system", "prune"}, false},
+		{[]string{"/usr/bin/podman", "system", "prune", "unix://" + sock}, false},
+		{[]string{"/usr/bin/podman", "machine", "service", "unix://" + sock}, false},
+		{[]string{"/usr/bin/podman", "--runtime", "runsc", "system", "service", "--time=0", sock}, true},
 		{[]string{"/usr/bin/sleep", "system", "service", "unix://" + sock}, false},
 		{[]string{"/usr/bin/podman-remote", "system", "service", "unix://" + sock}, false},
 		{nil, false},
@@ -429,6 +463,22 @@ func TestTheRunSweepFindsTheServiceSocketUnderTheRunnerHome(t *testing.T) {
 		if _, err := os.Stat(p); !errors.Is(err, os.ErrNotExist) {
 			t.Errorf("%s was kept: %v", p, err)
 		}
+	}
+	// A run whose free lock proves it dead is reached the same way.
+	const lockedID = "dead0008"
+	locked := filepath.Join(root, "runs", lockedID)
+	killRun(t, startLockedRun(t, locked, false))
+	lockedSock := filepath.Join(home, "s", lockedID+"-podman.sock")
+	if err := os.WriteFile(lockedSock, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rec, _ = json.Marshal(podmanServiceRecord{PID: os.Getpid(), Start: 1, Socket: lockedSock})
+	if err := os.WriteFile(filepath.Join(locked, podmanServicePIDFile), rec, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sweepRunDirs(root, home, nil, nil)
+	if _, err := os.Stat(lockedSock); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the service socket of a run proved dead by its lock was kept: %v", err)
 	}
 }
 
@@ -515,6 +565,12 @@ func TestARuntimeOnPodmanNeedsTheCLIsFilter(t *testing.T) {
 	if strings.Contains(env.CapabilitiesEnforced["runtime"], "podman API service") {
 		t.Errorf("the receipt claims the service: %q", env.CapabilitiesEnforced["runtime"])
 	}
+
+	// An engine client that cannot start a service is refused the same way.
+	_, err = startPodmanService(context.Background(), struct{ dockerx.Client }{&dockerx.Fake{}}, &runDirs{root: t.TempDir()}, "cafe0000", "", "runsc")
+	if !errors.As(err, &ce) || ce.Code != ExitGateway || !strings.Contains(err.Error(), "which this engine client cannot start") {
+		t.Errorf("a client that cannot start a service: %v", err)
+	}
 }
 
 // The service's socket sits beside the filter's under the runner home, and
@@ -539,8 +595,41 @@ func TestThePodmanServiceSocketFitsASocketPath(t *testing.T) {
 		t.Errorf("a home too deep: %q (%d), %v", sock, len(sock), err)
 	}
 	s := &podmanService{socket: sock, pidFile: filepath.Join(rd.root, podmanServicePIDFile)}
+	for _, f := range []string{s.socket, s.pidFile} {
+		if err := os.WriteFile(f, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	s.stop()
 	if _, err := os.Stat(filepath.Dir(sock)); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("the short directory was kept: %v", err)
+	}
+	if _, err := os.Stat(s.pidFile); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the service's record was kept: %v", err)
+	}
+
+	// The limit is 103 bytes: a socket path of exactly 103 stays under the
+	// runner home, one byte more moves to the short directory.
+	base, err := os.MkdirTemp("", "pm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(base) })
+	const tail = "/s/cafe0000-podman.sock"
+	for _, c := range []struct {
+		length int
+		moved  bool
+	}{{103, false}, {104, true}} {
+		home := filepath.Join(base, strings.Repeat("h", c.length-len(tail)-len(base)-1))
+		sock, err := podmanServiceSocket(rd, "cafe0000", home)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if moved := !strings.HasPrefix(sock, home); moved != c.moved || (!moved && len(sock) != c.length) {
+			t.Errorf("a socket path of %d bytes: %q (%d), moved to a short directory = %v, want %v", c.length, sock, len(sock), moved, c.moved)
+		}
+		if moved := !strings.HasPrefix(sock, home); moved {
+			_ = os.RemoveAll(filepath.Dir(sock))
+		}
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"slices"
@@ -14,6 +15,9 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	"github.com/blaktron/agentry-cli/pkg/runner/targethost"
+	"github.com/blaktron/agentry-cli/runnerimage/hostlink"
+	"github.com/blaktron/agentry-cli/runnerimage/sockfilter"
 )
 
 // withFilter sets filterSupported for one test. The receipt's lines are
@@ -99,6 +103,178 @@ func TestRefusalsReachTheOutcome(t *testing.T) {
 	if !strings.Contains(string(log), "refuse POST /build") {
 		t.Errorf("filter log = %q", log)
 	}
+
+	// A filter in a container of the run's: the decisions it logged are counted.
+	side := filepath.Join(dir, "side.log")
+	if err := os.WriteFile(side, []byte("2026-11-03T10:00:00Z refuse POST /build\n2026-11-03T10:00:01Z allow GET /_ping\n2026-11-03T10:00:02Z refuse DELETE /volumes/x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	viaSidecar := &runDirs{filterSidecar: side}
+	if !strings.HasSuffix(daemonLine(viaSidecar), "; 2 request(s) refused") {
+		t.Errorf("daemon line = %q", daemonLine(viaSidecar))
+	}
+	if err := withRefusals(errors.New("gateway health probe failed"), viaSidecar); !strings.Contains(err.Error(), "docker filter refused 2 request(s)") {
+		t.Errorf("error = %v", err)
+	}
+	if err := withRefusals(errors.New("gateway health probe failed"), &runDirs{}); err.Error() != "gateway health probe failed" {
+		t.Errorf("a run whose filter refused nothing changed the error: %v", err)
+	}
+}
+
+// TestTheFilterIsGivenTheRunsLimitsNetworksAndRuntime: the policy the run's
+// filter takes is the run's own: its limits in the daemon's units, its
+// runtime, the engine's kind, the relay networks only a plan that needs
+// relays has, and the roots of the folders the run has, spelled the
+// gateway's way; a folder the run lacks is no root at all.
+func TestTheFilterIsGivenTheRunsLimitsNetworksAndRuntime(t *testing.T) {
+	p, _ := fixtureWith(t, func(pol *policy.Policy) { pol.Docker.Runtime = "runsc" })
+	rd := runDirsAt(t.TempDir())
+	lim := policy.Limits{Memory: "1536m", CPUs: 3, Pids: 321}
+	cfg, err := filterConfig(rd, "run1", nil, lim, p.Plan, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RunID != "run1" || cfg.Label != runLabel || cfg.OwnerLabel != gatewayOwnerLabel {
+		t.Errorf("run %q, label %q, owner label %q", cfg.RunID, cfg.Label, cfg.OwnerLabel)
+	}
+	if cfg.Limits != (sockfilter.Limits{MemoryBytes: 1536 << 20, NanoCPUs: 3_000_000_000, Pids: 321}) {
+		t.Errorf("limits %+v", cfg.Limits)
+	}
+	if cfg.Runtime != "runsc" || cfg.Runtime != p.Plan.Runtime() {
+		t.Errorf("runtime %q, want the policy's runsc", cfg.Runtime)
+	}
+	if cfg.Podman {
+		t.Error("Docker Engine was taken for podman")
+	}
+	internal, out := relayNetworks("run1")
+	if !slices.Equal(cfg.SharedNetworks, []string{internal}) || !slices.Equal(cfg.EgressNetworks[out], relayImages) || len(cfg.EgressNetworks) != 1 ||
+		cfg.NetworkNames[relayNetwork] != internal || cfg.NetworkNames[relayEgressNetwork] != out || len(cfg.NetworkNames) != 2 {
+		t.Errorf("relay networks %v, egress %v, names %v", cfg.SharedNetworks, cfg.EgressNetworks, cfg.NetworkNames)
+	}
+	if cfg.ToolsImage != p.Plan.ToolsImage() || !slices.Equal(cfg.ToolsCmd, spec.ToolsCmd()) {
+		t.Errorf("tools server %q %v", cfg.ToolsImage, cfg.ToolsCmd)
+	}
+	place := &filterPlacement{engine: dockerx.Engine{Kind: dockerx.KindPodman}}
+	if cfg, err = filterConfig(rd, "run1", nil, lim, p.Plan, place); err != nil || !cfg.Podman {
+		t.Errorf("podman was not told to the filter: %v", err)
+	}
+
+	// A plan that needs no relays has none.
+	none := *p.Plan
+	none.Capabilities.EgressMode, none.Capabilities.EgressHosts, none.MCPServers = "none", nil, nil
+	if cfg, err = filterConfig(rd, "run1", nil, lim, &none, nil); err != nil || len(cfg.SharedNetworks) != 0 || len(cfg.EgressNetworks) != 0 || len(cfg.NetworkNames) != 0 {
+		t.Errorf("a plan without relays got networks %v %v %v (%v)", cfg.SharedNetworks, cfg.EgressNetworks, cfg.NetworkNames, err)
+	}
+
+	// The run's folders: none of them is a root when the run lacks them.
+	if len(cfg.ToolsWritableRoots)+len(cfg.ToolsOnlyRoots)+len(cfg.OfflineRoots) != 0 {
+		t.Errorf("a run without a share, a mirror or skills got roots %v %v %v", cfg.ToolsWritableRoots, cfg.ToolsOnlyRoots, cfg.OfflineRoots)
+	}
+	rd.share, rd.shareMirror, rd.shareOut = "/home/p/share", &shareMirror{dir: "/home/p/mirror"}, "/home/p/outbox"
+	rd.skills, rd.dependencyDB = "/home/p/skills", "/home/p/osv"
+	if cfg, err = filterConfig(rd, "run1", nil, lim, &none, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(cfg.ToolsWritableRoots, []string{"/home/p/share"}) ||
+		!slices.Equal(cfg.ToolsOnlyRoots, []string{"/home/p/share", "/home/p/skills", "/home/p/osv"}) ||
+		!slices.Equal(cfg.OfflineRoots, []string{"/home/p/share", "/home/p/mirror", "/home/p/outbox"}) {
+		t.Errorf("roots: tools writable %v, tools only %v, offline %v", cfg.ToolsWritableRoots, cfg.ToolsOnlyRoots, cfg.OfflineRoots)
+	}
+
+	// The browse proxy is a relay host, pinned to its address.
+	proxy := containerName(filepath.Base(rd.root), "browse-proxy")
+	rd.browser = &browserRun{proxy: proxy, proxyIP: "10.9.0.4"}
+	if cfg, err = filterConfig(rd, "run1", nil, lim, &none, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(cfg.RelayHosts, []string{proxy + ":3128"}) || cfg.RelayPins[proxy] != "10.9.0.4" || cfg.BrowseProxy != proxy {
+		t.Errorf("relay hosts %v, pins %v, browse proxy %q", cfg.RelayHosts, cfg.RelayPins, cfg.BrowseProxy)
+	}
+	rd.browser = nil
+
+	// The tools server's own tmpfs, host link copy folder and volumes.
+	rd.data, rd.memory = "agentry-data", "agentry-memory"
+	tools := none
+	tools.HostLink, tools.Capabilities.Scratch = &spec.HostLinkSpec{}, true
+	if cfg, err = filterConfig(rd, "run1", nil, lim, &tools, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.ToolsTmpfs) != 2 || cfg.ToolsTmpfs["/tmp"] != "size=268435456,mode=1777" || cfg.ToolsTmpfs["/scratch"] != "size=268435456,mode=1777" {
+		t.Errorf("tools tmpfs %v", cfg.ToolsTmpfs)
+	}
+	if len(cfg.ToolsShared) != 1 || cfg.ToolsShared[hostlink.FilesPath] != rd.hostFilesDir() {
+		t.Errorf("tools shared %v, want the host link's copy folder %s", cfg.ToolsShared, rd.hostFilesDir())
+	}
+	if !slices.Equal(cfg.ToolsVolumes, []string{"agentry-data", "agentry-memory"}) {
+		t.Errorf("tools volumes %v", cfg.ToolsVolumes)
+	}
+
+	// A plan with a browser: its image, its own network, the relay network it
+	// reaches the browse proxy on, and its tmpfs.
+	browser := none
+	browser.Browser = &spec.BrowserSpec{Image: "browser:img"}
+	if cfg, err = filterConfig(rd, "run1", nil, lim, &browser, nil); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.BrowserImage != "browser:img" || cfg.BrowserNetwork != "agentry-run1-browser" || cfg.BrowserNetworkFor != internal ||
+		cfg.BrowserUser != rd.personUser() || len(cfg.BrowserTmpfs) != 2 || cfg.BrowserTmpfs["/tmp"] == "" {
+		t.Errorf("browser %q on %q, relays on %q, as %q, tmpfs %v", cfg.BrowserImage, cfg.BrowserNetwork, cfg.BrowserNetworkFor, cfg.BrowserUser, cfg.BrowserTmpfs)
+	}
+	if cfg, err = filterConfig(rd, "run1", nil, lim, &none, nil); err != nil || cfg.BrowserImage != "" || cfg.BrowserNetwork != "" || cfg.BrowserNetworkFor != "" || cfg.BrowserTmpfs != nil {
+		t.Errorf("a plan without a browser got one: %+v (%v)", cfg, err)
+	}
+
+	// The host link's targets are relay hosts.
+	rd.targets = []*targethost.Host{{ID: "web1", Answer: targethost.Answer{Port: 2222}, Address: netip.MustParseAddr("10.1.2.3")}}
+	if cfg, err = filterConfig(rd, "run1", nil, lim, &none, nil); err != nil || !slices.Equal(cfg.RelayHosts, []string{"10.1.2.3:2222"}) {
+		t.Errorf("relay hosts %v (%v)", cfg.RelayHosts, err)
+	}
+}
+
+// A container the gateway created is read back for its runtime: the engine's
+// answer must be the policy's, and a container it put under another runtime,
+// or whose runtime cannot be read, is removed.
+func TestTheRuntimeVerifierRemovesWhatTheEngineCreatedUnderAnotherRuntime(t *testing.T) {
+	if runtimeVerifier(struct{ dockerx.Client }{&dockerx.Fake{}}) != nil {
+		t.Fatal("a client that cannot inspect got a verifier")
+	}
+	const id = "0123456789abcdef0123"
+	create := func(f *dockerx.Fake, rt string) {
+		t.Helper()
+		if err := f.Create(context.Background(), dockerx.RunSpec{Name: id, Image: "img", Runtime: rt}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f := &dockerx.Fake{}
+	create(f, "runsc")
+	verify := runtimeVerifier(f)
+	if err := verify(context.Background(), id, "tools server", "runsc"); err != nil {
+		t.Fatalf("a container under the runtime asked for: %v", err)
+	}
+	if slices.Contains(f.Ops(), "RemoveForce:"+id) {
+		t.Error("a container under the runtime asked for was removed")
+	}
+	f = &dockerx.Fake{DropRuntime: true, DroppedRuntime: "runc"}
+	create(f, "runsc")
+	err := runtimeVerifier(f)(context.Background(), id, "tools server", "runsc")
+	var mm *dockerx.RuntimeMismatch
+	if !errors.As(err, &mm) || mm.Class != "tools server the gateway launched" || mm.Name != id[:12] || mm.Want != "runsc" || mm.Got != "runc" {
+		t.Fatalf("a container under another runtime: %v", err)
+	}
+	if !slices.Contains(f.Ops(), "RemoveForce:"+id) {
+		t.Errorf("a container under another runtime was kept: %v", f.Ops())
+	}
+	f = &dockerx.Fake{}
+	err = runtimeVerifier(f)(context.Background(), id, "tools server", "runsc")
+	if err == nil || !strings.Contains(err.Error(), "read the runtime the tools server the gateway launched ("+id[:12]+") was created with") {
+		t.Fatalf("a container whose runtime cannot be read: %v", err)
+	}
+	if !slices.Contains(f.Ops(), "RemoveForce:"+id) {
+		t.Errorf("a container whose runtime cannot be read was kept: %v", f.Ops())
+	}
+	if got := shortID("0123456789ab"); got != "0123456789ab" {
+		t.Errorf("a twelve-character id was cut to %q", got)
+	}
 }
 
 // The socket sits under the runner home, the path runhost shares with the
@@ -130,6 +306,15 @@ func TestTheSocketIsUnderTheRunnerHome(t *testing.T) {
 	if fi, err := os.Stat(filepath.Join(home, "s")); err != nil || fi.Mode().Perm() != 0o700 {
 		t.Errorf("socket directory: %v %v", fi, err)
 	}
+	// Closing the run's filter stops it answering.
+	if code := filterRequest(t, sock, "GET", "/_ping"); code == 0 {
+		t.Fatal("the filter did not answer before it was closed")
+	}
+	closeDaemonFilter(rd)
+	if c, err := net.Dial("unix", sock); err == nil {
+		_ = c.Close()
+		t.Error("the filter still answers after it was closed")
+	}
 }
 
 // A runner home too long for a socket path puts the filter in a short
@@ -154,6 +339,34 @@ func TestALongRunDirectoryFallsBackToAShortSocket(t *testing.T) {
 	closeDaemonFilter(rd)
 	if _, err := os.Stat(rd.filterDir); !os.IsNotExist(err) {
 		t.Errorf("fallback directory left behind: %v", err)
+	}
+
+	// The limit is 103 bytes (a socket path binds in 108, with room for the
+	// terminator): a path of exactly 103 stays where it is, one byte more
+	// moves.
+	base, err := os.MkdirTemp("", "df")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(base) })
+	for _, c := range []struct {
+		length   int
+		fallback bool
+	}{{103, false}, {104, true}} {
+		root := filepath.Join(base, strings.Repeat("d", c.length-len("/docker.sock")-len(base)-1))
+		if err := os.MkdirAll(root, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		rd := &runDirs{root: root, receiptsDir: root}
+		f, sock, err := startDaemonFilter(&dockerx.Fake{}, rd, "cafe0000", nil, policy.Limits{}, &spec.Plan{}, "", nil, DockerSocket)
+		if err != nil {
+			t.Fatalf("a socket path of %d bytes: %v", c.length, err)
+		}
+		rd.filter = f
+		if (rd.filterDir != "") != c.fallback || (len(sock) == c.length) == c.fallback {
+			t.Errorf("a socket path of %d bytes: served at %q (%d bytes), fallback directory %q, want a fallback = %v", c.length, sock, len(sock), rd.filterDir, c.fallback)
+		}
+		closeDaemonFilter(rd)
 	}
 }
 
@@ -261,6 +474,20 @@ func TestTheAgentsEgressGetsRelays(t *testing.T) {
 	ops := strings.Join(f.Ops(), " ")
 	if !strings.Contains(ops, "NetworkCreate:agentry-cafe0000-relays(internal=true)") || !strings.Contains(ops, "NetworkCreate:agentry-cafe0000-relays-out(internal=false)") {
 		t.Errorf("an egress-only run made no relay networks of its own: %s", ops)
+	}
+	// A host link or a browser reaches its target through a relay too, with
+	// no egress host or server declared at all.
+	for name, tc := range map[string]struct {
+		plan *spec.Plan
+		want bool
+	}{
+		"host link only": {&spec.Plan{HostLink: &spec.HostLinkSpec{}}, true},
+		"browser only":   {&spec.Plan{Browser: &spec.BrowserSpec{}}, true},
+		"neither":        {&spec.Plan{}, false},
+	} {
+		if got := relaysNeeded(tc.plan); got != tc.want {
+			t.Errorf("relaysNeeded for a plan with %s = %v, want %v", name, got, tc.want)
+		}
 	}
 }
 
@@ -383,6 +610,43 @@ func TestUnrestrictedEgressHasANetworkOfTheRunsOwn(t *testing.T) {
 	line := daemonLine(rd)
 	if !strings.Contains(line, "unrestricted egress") || !strings.Contains(line, "agentry-cafe0000-web") || !strings.Contains(line, "never on the daemon's default bridge") {
 		t.Errorf("daemon line = %q", line)
+	}
+
+	// The web network leaves the host, so it is not an internal one; it
+	// carries the run's label, is recorded for the sweep, and its removal is
+	// queued with the teardown.
+	f := &dockerx.Fake{}
+	td := &teardown{}
+	if err := makeWebNetwork(context.Background(), f, "cafe0000", td); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(f.Ops(), []string{"NetworkCreate:agentry-cafe0000-web(internal=false)"}) || !slices.Equal(td.networks, []string{"agentry-cafe0000-web"}) ||
+		len(f.NetworkState()) != 1 || f.NetworkState()[0].Labels[runLabel] != "cafe0000" {
+		t.Errorf("web network: ops %v, recorded %v, state %+v", f.Ops(), td.networks, f.NetworkState())
+	}
+	td.run()
+	if got := f.Ops(); len(got) != 2 || got[1] != "NetworkRemove:agentry-cafe0000-web" {
+		t.Errorf("teardown ops %v, want the web network removed", got)
+	}
+
+	// The relay networks are the same two the filter maps the gateway's fixed
+	// names to: the inner one internal, the outer one leaving the host.
+	f, td = &dockerx.Fake{}, &teardown{}
+	if err := makeRelayNetworks(context.Background(), f, "cafe0000", td); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(f.Ops(), []string{"NetworkCreate:agentry-cafe0000-relays(internal=true)", "NetworkCreate:agentry-cafe0000-relays-out(internal=false)"}) ||
+		!slices.Equal(td.networks, []string{"agentry-cafe0000-relays", "agentry-cafe0000-relays-out"}) {
+		t.Errorf("relay networks: ops %v, recorded %v", f.Ops(), td.networks)
+	}
+	for _, n := range f.NetworkState() {
+		if n.Labels[runLabel] != "cafe0000" {
+			t.Errorf("relay network %s has labels %v, want the run's", n.Name, n.Labels)
+		}
+	}
+	td.run()
+	if got := f.Ops(); len(got) != 4 || got[2] != "NetworkRemove:agentry-cafe0000-relays-out" || got[3] != "NetworkRemove:agentry-cafe0000-relays" {
+		t.Errorf("teardown ops %v, want the relay networks removed, the outer one first", got)
 	}
 }
 

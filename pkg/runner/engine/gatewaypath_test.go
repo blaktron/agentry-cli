@@ -12,6 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/compile"
+	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry/pkg/manifest"
@@ -293,38 +294,60 @@ func tomlBasicString(v string) (string, error) {
 // On Windows a folder the gateway cannot be given as a /<drive>/… path is
 // refused before the run makes anything, naming the folder.
 func TestGatewayCanMount(t *testing.T) {
+	const netShare, notDrive = "network share or a long-form path", "is not on a drive"
 	for _, c := range []struct {
 		path, goos string
 		ok         bool
+		why        string
 	}{
-		{`C:\Users\blakt\.agentry\runner`, "windows", true},
-		{`d:\out`, "windows", true},
-		{"", "windows", true},
-		{`\\server\share\runner`, "windows", false},
-		{`\\?\C:\Users\blakt\.agentry\runner`, "windows", false},
-		{`//server/share/runner`, "windows", false},
-		{`runner`, "windows", false}, // relative: the engine is always given absolute folders
-		{`\\server\share\runner`, "linux", true},
-		{"/home/u/.agentry/runner", "linux", true},
+		{`C:\Users\blakt\.agentry\runner`, "windows", true, ""},
+		{`d:\out`, "windows", true, ""},
+		{"", "windows", true, ""},
+		{`\\server\share\runner`, "windows", false, netShare},
+		{`\\?\C:\Users\blakt\.agentry\runner`, "windows", false, netShare},
+		{`//server/share/runner`, "windows", false, netShare},
+		{`runner`, "windows", false, notDrive}, // relative: the engine is always given absolute folders
+		{`\\server\share\runner`, "linux", true, ""},
+		{"/home/u/.agentry/runner", "linux", true, ""},
 	} {
 		err := gatewayCanMount(c.path, c.goos)
-		if (err == nil) != c.ok {
-			t.Errorf("gatewayCanMount(%q, %s) = %v, want ok=%v", c.path, c.goos, err, c.ok)
+		if (err == nil) != c.ok || (err != nil && !strings.Contains(err.Error(), c.why)) {
+			t.Errorf("gatewayCanMount(%q, %s) = %v, want ok=%v with %q", c.path, c.goos, err, c.ok, c.why)
+		}
+	}
+	// Rancher Desktop's daemon sees the drives under /mnt, Docker Desktop's at /.
+	for e, want := range map[dockerx.Engine]string{{OS: "Rancher Desktop WSL"}: "/mnt", {OS: "Docker Desktop"}: "", {}: ""} {
+		if got := driveRootOf(e); got != want {
+			t.Errorf("driveRootOf(%q) = %q, want %q", e.OS, got, want)
 		}
 	}
 }
 
 func TestRunRefusesAUNCRunnerHomeOnWindows(t *testing.T) {
-	p, f := fixture(t)
-	setGatewayOS(t, "windows")
-	p.RunRoot = `\\server\share\runner`
-	_, err := Run(context.Background(), f, p)
-	if err == nil || !strings.Contains(err.Error(), `the runner home \\server\share\runner`) || !strings.Contains(err.Error(), "local drive") {
-		t.Fatalf("err = %v", err)
-	}
-	for _, op := range f.Ops() {
-		if strings.HasPrefix(op, "Run:") || strings.HasPrefix(op, "NetworkCreate") {
-			t.Fatalf("the run reached docker before refusing: %v", f.Ops())
+	// Folders spelled for Windows are relative names here: the refused run's
+	// envelope lands in a throwaway working directory.
+	t.Chdir(t.TempDir())
+	for _, c := range []struct {
+		what string
+		edit func(p *Params, unc string)
+	}{
+		{"the runner home", func(p *Params, unc string) { p.RunRoot = unc }},
+		{"the output folder", func(p *Params, unc string) { p.OutDir = unc }},
+		{"the MCP server store", func(p *Params, unc string) { p.ServersDir = unc }},
+	} {
+		p, f := fixture(t)
+		setGatewayOS(t, "windows")
+		const unc = `\\server\share\folder`
+		p.RunRoot, p.OutDir, p.ServersDir = `C:\runner`, `C:\out`, `C:\servers`
+		c.edit(&p, unc)
+		_, err := Run(context.Background(), f, p)
+		if err == nil || !strings.Contains(err.Error(), c.what+" "+unc) || !strings.Contains(err.Error(), "local drive") {
+			t.Fatalf("%s: err = %v", c.what, err)
+		}
+		for _, op := range f.Ops() {
+			if strings.HasPrefix(op, "Run:") || strings.HasPrefix(op, "NetworkCreate") {
+				t.Fatalf("%s: the run reached docker before refusing: %v", c.what, f.Ops())
+			}
 		}
 	}
 }

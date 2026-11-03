@@ -27,6 +27,9 @@ func TestRecoveryTakesOnlyASchemaValidTerminalObject(t *testing.T) {
 		{"truncated", `Done. {"answer":"x"`, false, 0},
 		{"trailing text", answer + " Done.", false, 0},
 		{"trailing markup", answer + "<tool_call>", false, 0},
+		{"a line after it", answer + "\nDone.", false, 0},
+		{"a line ending in a fence", "Done.\n" + answer + "\nok```", false, 0},
+		{"a line that is not a closing fence", "Done.\n" + answer + "\n```json", false, 0},
 		{"inline closing fence", answer + "```", false, 0},
 		{"array", `[{"answer":"x"}]`, false, 0},
 	} {

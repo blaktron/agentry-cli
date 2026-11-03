@@ -4,11 +4,13 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -52,6 +54,8 @@ func writeRunSecrets(root string) {
 		rd.secretsPath: "ENGINE_TEST_TOKEN=sekret-value-1234\n",
 		filepath.Join(rd.connections(), "a-server", "me@agentry.invalid.json"): `{"access_token":"at-1234"}`,
 		filepath.Join(rd.modelSignInDir(), "token"):                            "signin-1234",
+		filepath.Join(rd.hostsDir(), "web1", "password"):                       "host-signin-1234",
+		filepath.Join(rd.browserDir(), "secrets.env"):                          "SITE_PASSWORD='browser-1234'\n",
 		filepath.Join(rd.knowledge, "notes", "pages", "topic.md"):              "# A page of the attached pack, in the clear\n",
 		filepath.Join(rd.workspace, "SKILL.md"):                                "Do the test.\n",
 	} {
@@ -145,7 +149,7 @@ func TestSweepKeepsAKilledKeptRunsDirectoryButNotItsSecrets(t *testing.T) {
 	rd := runDirsAt(root)
 
 	sweepRunDirs(home, home, nil, nil)
-	for _, gone := range []string{rd.secretsPath, rd.connections(), rd.modelSignInDir(), rd.knowledge, filepath.Join(root, RunLockFile)} {
+	for _, gone := range []string{rd.secretsPath, rd.connections(), rd.modelSignInDir(), rd.knowledge, rd.hostsDir(), rd.browserDir(), filepath.Join(root, RunLockFile)} {
 		if pathExists(gone) {
 			t.Errorf("%s survived the sweep of a killed kept run", gone)
 		}
@@ -178,11 +182,95 @@ func TestSweepLeavesARunDirectoryItCannotJudge(t *testing.T) {
 			t.Errorf("%s: the sweep removed a run's secrets it could not prove dead", root)
 		}
 	}
-	if pathExists(runDirsAt(noLockDead).secretsPath) || pathExists(runDirsAt(noLockDead).connections()) {
+	if pathExists(runDirsAt(noLockDead).secretsPath) || pathExists(runDirsAt(noLockDead).connections()) ||
+		pathExists(runDirsAt(noLockDead).hostsDir()) || pathExists(runDirsAt(noLockDead).browserDir()) {
 		t.Error("a run the container sweep proved dead kept its secrets")
 	}
 	if !pathExists(filepath.Join(runDirsAt(noLockDead).workspace, "SKILL.md")) {
 		t.Error("a run directory whose keep is unknown lost more than its secrets")
+	}
+	t.Run("a link, another run's name, a record it cannot read", sweepJudgesOnlyARunDirectoryOfItsOwnWhoseRecordItCanRead)
+}
+
+// A run directory the sweep reaches through a link, whose lock record names
+// another run, or whose record is longer than the sweep reads, is not a
+// dead run it can judge; a record at exactly the length it reads is.
+func sweepJudgesOnlyARunDirectoryOfItsOwnWhoseRecordItCanRead(t *testing.T) {
+	home := t.TempDir()
+	elsewhere := t.TempDir()
+	// A dead run standing outside the runs folder, linked into it under its
+	// own name.
+	outside := filepath.Join(elsewhere, "dead0010")
+	killRun(t, startLockedRun(t, outside, false))
+	if err := os.MkdirAll(filepath.Join(home, "runs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(home, "runs", "dead0010")); err != nil {
+		t.Skipf("no symbolic links here: %v", err)
+	}
+	// A dead run in a directory that carries another run's name.
+	renamed := filepath.Join(home, "runs", "dead0012")
+	killRun(t, startLockedRun(t, filepath.Join(home, "runs", "dead0011"), false))
+	if err := os.Rename(filepath.Join(home, "runs", "dead0011"), renamed); err != nil {
+		t.Fatal(err)
+	}
+	// A dead run whose record sits past the bytes the sweep reads, and one
+	// whose record ends exactly at the last of them.
+	long, exact := filepath.Join(home, "runs", "dead0013"), filepath.Join(home, "runs", "dead0014")
+	for _, root := range []string{long, exact} {
+		killRun(t, startLockedRun(t, root, false))
+	}
+	for root, pad := range map[string]int{long: 4097 - len(`{"run_id":"dead0013","keep":false}`), exact: 4096 - len(`{"run_id":"dead0014","keep":false}`)} {
+		rec := strings.Repeat(" ", pad) + `{"run_id":"` + filepath.Base(root) + `","keep":false}`
+		if err := os.WriteFile(filepath.Join(root, RunLockFile), []byte(rec), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A dead run's lock file reached through a link standing in the place
+	// of a run directory's own.
+	lockLinked := filepath.Join(home, "runs", "dead0016")
+	killRun(t, startLockedRun(t, filepath.Join(elsewhere, "dead0016"), false))
+	writeRunSecrets(lockLinked)
+	if err := os.Symlink(filepath.Join(elsewhere, "dead0016", RunLockFile), filepath.Join(lockLinked, RunLockFile)); err != nil {
+		t.Skipf("no symbolic links here: %v", err)
+	}
+	// An empty run root is no run root: the sweep does not read the runs
+	// folder of the directory it happens to run in.
+	here := t.TempDir()
+	killRun(t, startLockedRun(t, filepath.Join(here, "runs", "dead0017"), false))
+	t.Chdir(here)
+	sweepRunDirs("", "", nil, nil)
+	if !pathExists(runDirsAt(filepath.Join(here, "runs", "dead0017")).secretsPath) {
+		t.Error("an empty run root swept the runs folder of the working directory")
+	}
+	t.Chdir(home)
+	sweepRunDirs(home, home, nil, nil)
+	if !pathExists(runDirsAt(lockLinked).secretsPath) {
+		t.Error("the sweep took a lock file that is a link for a dead run's")
+	}
+	for _, root := range []string{outside, renamed, long} {
+		if !pathExists(runDirsAt(root).secretsPath) {
+			t.Errorf("the sweep removed the secrets of %s, a run it could not judge", root)
+		}
+	}
+	if pathExists(exact) {
+		t.Error("a record that ends at the last byte read was not taken for a dead run's")
+	}
+
+	// A runs folder that is a link to one holding a dead run is not followed.
+	other := t.TempDir()
+	linkedRuns := filepath.Join(other, "real")
+	killRun(t, startLockedRun(t, filepath.Join(linkedRuns, "runs", "dead0015"), false))
+	linkRoot := filepath.Join(other, "link")
+	if err := os.MkdirAll(linkRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(linkedRuns, "runs"), filepath.Join(linkRoot, "runs")); err != nil {
+		t.Skipf("no symbolic links here: %v", err)
+	}
+	sweepRunDirs(linkRoot, linkRoot, nil, nil)
+	if !pathExists(runDirsAt(filepath.Join(linkedRuns, "runs", "dead0015")).secretsPath) {
+		t.Error("the sweep followed a link standing in the place of the runs folder")
 	}
 }
 
@@ -313,6 +401,18 @@ func TestRunsInUseNamesTheRunsALiveProcessHolds(t *testing.T) {
 	defer lock.release(false)
 	writeRunSecrets(own)
 	writeRunSecrets(filepath.Join(home, "runs", "aaaa0004"))
+	// A live run reached through a link standing in a run directory's place
+	// is not listed.
+	if err := os.Symlink(filepath.Join(home, "runs", "aaaa0001"), filepath.Join(home, "runs", "aaaa0005")); err != nil {
+		t.Skipf("no symbolic links here: %v", err)
+	}
+	// So is one whose lock file is a link to a live run's.
+	if err := os.MkdirAll(filepath.Join(home, "runs", "aaaa0006"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(home, "runs", "aaaa0001", RunLockFile), filepath.Join(home, "runs", "aaaa0006", RunLockFile)); err != nil {
+		t.Skipf("no symbolic links here: %v", err)
+	}
 	got := RunsInUse(home)
 	if strings.Join(got, ",") != "aaaa0001,aaaa0003" {
 		t.Errorf("RunsInUse = %v, want the two live runs", got)
@@ -342,7 +442,9 @@ func TestSweepRemovesTheNetworksOfARunKilledBeforeItsContainers(t *testing.T) {
 	sweepAbandonedRun(context.Background(), f, home, home, nil)
 
 	ops := f.Ops()
-	for _, want := range []string{"NetworkRemove:" + networkName("dead0006"), "NetworkRemove:" + sourceNetworkName("dead0006", "repo"), "VolumeRemove:" + sessionVolumeName("dead0006")} {
+	relayIn, relayOut := relayNetworks("dead0006")
+	for _, want := range []string{"NetworkRemove:" + networkName("dead0006"), "NetworkRemove:" + sourceNetworkName("dead0006", "repo"), "VolumeRemove:" + sessionVolumeName("dead0006"),
+		"NetworkRemove:" + proxyEgressNetwork("dead0006"), "NetworkRemove:" + webNetwork("dead0006"), "NetworkRemove:" + relayIn, "NetworkRemove:" + relayOut} {
 		if !slices.Contains(ops, want) {
 			t.Errorf("missing %s in %v", want, ops)
 		}
@@ -396,6 +498,61 @@ func TestSweepRemovesTheContainersOfARunItsLockProvesDead(t *testing.T) {
 	if !strings.Contains(out.String(), "removed 2 container(s) of 1 run(s) whose process had died: dead0007") {
 		t.Errorf("the sweep said %q", out.String())
 	}
+	t.Run("a container docker would not remove", theSweepTellsAContainerDockerWouldNotRemove)
+	t.Run("a run the container sweep took by its owner labels", aRunSweptByItsContainersIsNotSweptAgainByItsLock)
+}
+
+// A container docker will not remove is told as one left behind, never as
+// removed.
+func theSweepTellsAContainerDockerWouldNotRemove(t *testing.T) {
+	home := t.TempDir()
+	killRun(t, startLockedRun(t, filepath.Join(home, "runs", "dead0107"), false))
+	f := &removeFails{Fake: &dockerx.Fake{ByLabel: map[string][]string{
+		runLabel + "=dead0107": {containerName("dead0107", "gateway"), "docker-mcp-l4proxy-stuck"},
+	}}, name: "docker-mcp-l4proxy-stuck"}
+	var out strings.Builder
+	sweepAbandonedRun(context.Background(), f, home, home, &out)
+	if !strings.Contains(out.String(), "removed 1 container(s) of 1 run(s) whose process had died: dead0107") {
+		t.Errorf("the sweep said %q", out.String())
+	}
+	if !strings.Contains(out.String(), "warning: could not remove 1 container(s) a run whose process had died left behind: docker-mcp-l4proxy-stuck (docker rm -fv <name>)") {
+		t.Errorf("the sweep did not name the container it could not remove: %q", out.String())
+	}
+}
+
+// removeFails is a client that cannot remove one container.
+type removeFails struct {
+	*dockerx.Fake
+	name string
+}
+
+func (r *removeFails) RemoveForce(ctx context.Context, name string) error {
+	if name == r.name {
+		return errors.New("the daemon would not remove it")
+	}
+	return r.Fake.RemoveForce(ctx, name)
+}
+
+// A run the container sweep already took by its owner labels is not swept
+// again by its free lock.
+func aRunSweptByItsContainersIsNotSweptAgainByItsLock(t *testing.T) {
+	dead := deadOwner(t)
+	home := t.TempDir()
+	killRun(t, startLockedRun(t, filepath.Join(home, "runs", "dead0108"), false))
+	f := &dockerx.Fake{Containers: []dockerx.Labeled{{Name: containerName("dead0108", "gateway"), Labels: withRun(dead, "dead0108")}}}
+	sweepAbandonedRun(context.Background(), f, home, home, nil)
+	var removed, listed int
+	for _, op := range f.Ops() {
+		switch {
+		case op == "NetworkRemove:"+networkName("dead0108"):
+			removed++
+		case op == "PSByLabel:"+runLabel+"=dead0108":
+			listed++
+		}
+	}
+	if removed != 1 || listed != 0 {
+		t.Errorf("the run's network was removed %d time(s) and its containers listed %d time(s) again by the lock sweep, want 1 and 0: %v", removed, listed, f.Ops())
+	}
 }
 
 // TestSweepReachesTheRunsOfEveryInstallInTheRunnerHome: a run that died
@@ -425,7 +582,55 @@ func TestSweepReachesTheRunsOfEveryInstallInTheRunnerHome(t *testing.T) {
 			runLabel + "=live0008": {containerName("live0008", "gateway")},
 		},
 	}
+	// A delivery folder an earlier process left, older than any delivery in
+	// flight, goes with the same sweep.
+	oldDelivery := filepath.Join(newInstall, "delivery-123456")
+	if err := os.Mkdir(oldDelivery, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	longAgo := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(oldDelivery, longAgo, longAgo); err != nil {
+		t.Fatal(err)
+	}
+	// Dead runs reached only through a link standing in the place of the
+	// install's namespace, name, version or runs folder are not followed.
+	linked := map[string]string{}
+	for i, link := range []string{
+		filepath.Join(home, "agents", "ns-link"),
+		filepath.Join(home, "agents", "agentry", "name-link"),
+		filepath.Join(home, "agents", "agentry", "name-real", "ver-link"),
+		filepath.Join(home, "agents", "agentry", "name-real", "ver-real", "runs"),
+	} {
+		id := "dead010" + strconv.Itoa(i)
+		target := filepath.Join(home, "elsewhere"+strconv.Itoa(i))
+		runsDir := filepath.Join(target, "runs", id)
+		switch i {
+		case 0:
+			runsDir = filepath.Join(target, "name", "ver", "runs", id)
+		case 1:
+			runsDir = filepath.Join(target, "ver", "runs", id)
+		case 3:
+			runsDir = filepath.Join(target, id)
+		}
+		killRun(t, startLockedRun(t, runsDir, false))
+		if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, link); err != nil {
+			t.Skipf("no symbolic links here: %v", err)
+		}
+		linked[id] = runsDir
+		f.ByLabel[runLabel+"="+id] = []string{containerName(id, "gateway")}
+	}
 	sweepAbandonedRun(context.Background(), f, newInstall, home, nil)
+	if pathExists(oldDelivery) {
+		t.Error("a stale delivery folder survived the run sweep")
+	}
+	for id, dir := range linked {
+		if !pathExists(filepath.Join(dir, "cfg", "gateway", "secrets.env")) || slices.Contains(f.Ops(), "RemoveForce:"+containerName(id, "gateway")) {
+			t.Errorf("the sweep followed a link out of the runner home to the dead run %s", id)
+		}
+	}
 
 	ops := f.Ops()
 	gateway := slices.Index(ops, "RemoveForce:"+containerName("dead0008", "gateway"))

@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"io"
 	"io/fs"
 	"net/netip"
@@ -265,6 +266,42 @@ func TestATargetHostThatWasNotReadiedIsRefused(t *testing.T) {
 	p.Intake = nil
 	env, err = Run(context.Background(), f, p)
 	wantReason(t, env, err, &receipt.Reason{Code: receipt.ReasonHostRefused, Detail: receipt.HostCredential, Names: []string{"server"}})
+	// No address, no sign-in: each alone is as unreadied as no host key; and a
+	// user that is an ssh option is a target the host link never gets.
+	for _, tc := range []struct {
+		name   string
+		edit   func(h *targethost.Host)
+		detail string
+	}{
+		{"no address", func(h *targethost.Host) { h.Address = netip.Addr{} }, receipt.HostCredential},
+		{"no sign-in", func(h *targethost.Host) { h.Credential = targethost.Credential{} }, receipt.HostCredential},
+		{"a user that is an ssh option", func(h *targethost.Host) { h.Answer.User = "-oProxyCommand=evil" }, receipt.HostAddress},
+	} {
+		p, f, h = targetHostFixture(t)
+		happyFake(f)
+		tc.edit(h)
+		env, err = Run(context.Background(), f, p)
+		if env == nil || err == nil {
+			t.Fatalf("%s: the run was not refused", tc.name)
+		}
+		wantReason(t, env, err, &receipt.Reason{Code: receipt.ReasonHostRefused, Detail: tc.detail, Names: []string{"server"}})
+	}
+	// A plan that declares target hosts and carries no host link is recompiled.
+	p, f, _ = targetHostFixture(t)
+	happyFake(f)
+	p.Plan.HostLink = nil
+	var ce *ClassifiedError
+	if _, err := Run(context.Background(), f, p); !errors.As(err, &ce) || ce.Code != ExitCompile || !strings.Contains(err.Error(), "declares target hosts but no host link") {
+		t.Errorf("target hosts with no host link: %v", err)
+	}
+	// A host link image the plan names that its base and the runner do not
+	// make is a plan to recompile.
+	p, f, _ = targetHostFixture(t)
+	happyFake(f)
+	p.Plan.HostLink.Image = "agentry-hostlink:someone-elses"
+	if _, err := Run(context.Background(), f, p); !errors.As(err, &ce) || ce.Code != ExitCompile || !strings.Contains(err.Error(), "agentry-hostlink:someone-elses is not the one its base and runner make") {
+		t.Errorf("a host link image that is not the plan's own: %v", err)
+	}
 }
 
 // TestAHostThatRefusesTheSignInStopsTheRun: the host link's start check
@@ -282,6 +319,13 @@ func TestAHostThatRefusesTheSignInStopsTheRun(t *testing.T) {
 		happyFake(f)
 		f.LogsByName["agentry-cafe0000-gateway"] = "  - " + hostlink.ServerName + ": " + hostlink.RefusedLine("server", detail, "Permission denied (password) "+plantedHostPassword) + "\n" +
 			"  > Can't start " + hostlink.ServerName + ": exit 1\n"
+		// The host link logged a call, quoting the password, before it refused.
+		hostLog := filepath.Join(p.RunRoot, "runs", "cafe0000", "cfg", spec.HostLogDir, hostlink.LogFile("server"))
+		f.OnDetached = func(r dockerx.RunSpec) {
+			if strings.HasSuffix(r.Name, "-gateway") {
+				_ = os.WriteFile(hostLog, []byte(`{"time":"t","tool":"host_run","command":"echo `+plantedHostPassword+`","exit":1}`+"\n"), 0o600)
+			}
+		}
 		env, err := Run(context.Background(), f, p)
 		if env == nil || env.ExitCode != want.code {
 			t.Fatalf("%s: exit %v, %v", detail, env, err)
@@ -290,9 +334,26 @@ func TestAHostThatRefusesTheSignInStopsTheRun(t *testing.T) {
 		if strings.Contains(err.Error(), plantedHostPassword) {
 			t.Errorf("%s: the error holds the password", detail)
 		}
+		// The call is a receipt of the run that stopped, with the password masked.
+		if b, rerr := os.ReadFile(filepath.Join(p.OutDir, "receipts", hostlink.LogFile("server"))); rerr != nil || !strings.Contains(string(b), "host_run") || strings.Contains(string(b), plantedHostPassword) {
+			t.Errorf("%s: receipts/host-server.log of the stopped run: %q (%v)", detail, b, rerr)
+		}
 		if slices.Contains(f.Ops(), "RunForeground:agentry-cafe0000-agent") {
 			t.Errorf("%s: the agent started", detail)
 		}
+	}
+	// A host link the gateway could not start, or whose tools it could not
+	// list, stops the run before the agent has none of the host tools; a log
+	// that says neither does not.
+	for _, line := range []string{"  > Can't start " + hostlink.ServerName + ": exit 1", "> Can't list tools " + hostlink.ServerName + ": EOF"} {
+		err := checkHostLinkStarted("- Those servers are enabled: " + hostlink.ServerName + "\n" + line + "\n")
+		var ce *ClassifiedError
+		if !errors.As(err, &ce) || ce.Code != ExitGateway || !strings.Contains(err.Error(), "the host link did not start") || !strings.Contains(err.Error(), line[strings.Index(line, ">"):]) {
+			t.Errorf("%q: %v", line, err)
+		}
+	}
+	if err := checkHostLinkStarted("- Those servers are enabled: " + hostlink.ServerName + "\n> 4 tools listed in 1.2s\n"); err != nil {
+		t.Errorf("a host link that started: %v", err)
 	}
 }
 
