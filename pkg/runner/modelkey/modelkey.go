@@ -290,4 +290,3 @@ func DeleteAccount(account string) error {
 	}
 	return nil
 }
-

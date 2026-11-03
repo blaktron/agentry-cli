@@ -20,7 +20,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
