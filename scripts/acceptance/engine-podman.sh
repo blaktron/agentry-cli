@@ -30,8 +30,8 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 PODMAN_IMAGE=quay.io/podman/stable@sha256:2fb39ca923dd9e0ee33f9e319c3a107a2bfde022a6a31560cbd56a862821e7d3 # podman 5.8.7
-GVISOR_RELEASE=20261026.0
-GVISOR_SHA512=26e4a327565f5da0f73261a6387e2c20f4695a232e330095a3111b70efd604fdf09d734e8cc8f714dbb5c5607ce8c87ea80b26df549d83a146f2efd5a1af448a # x86_64/gvisor.tar.bz2
+GVISOR_RELEASE=20261102.0
+GVISOR_SHA512=2e6671bb2d033b871c5811ab57e16ac570988b0e0054c525f911cfaf191bab3ca4efb08e0a98daa4b9e7d248f9e5776ef2ef2f8a6b82d829646a42924c98bb05 # x86_64/gvisor.tar.bz2
 
 case "$(uname -m)" in
   x86_64) ;;
