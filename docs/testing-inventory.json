@@ -4650,6 +4650,19 @@
           ]
         },
         {
+          "path": "pkg/runner/decode/fake_test.go",
+          "tests": [
+            "TestScriptFakePlaysTheDecodeStep"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "docker interface (real or fake)",
+            "source/file contract"
+          ]
+        },
+        {
           "path": "pkg/runner/decode/hybrid_live_test.go",
           "tests": [
             "TestHybridAnalysisForReal"
