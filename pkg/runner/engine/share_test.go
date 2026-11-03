@@ -9,9 +9,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/clamdb"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/session"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	runnerdecode "github.com/blaktron/agentry-cli/runnerimage/decode"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
 
@@ -96,6 +98,33 @@ func TestShareCheckWritesAVerdictPerFile(t *testing.T) {
 	if decodeRuns() != runs {
 		t.Fatal("an unchanged share was checked again")
 	}
+	// A file whose size or time of last change moved is checked again, though
+	// the other is as it was.
+	notes := filepath.Join(share, "notes.md")
+	then := time.Unix(1_700_000_000, 0)
+	for name, c := range map[string]struct {
+		body    string
+		sameMod bool
+	}{"another time": {"the person's notes\n", false}, "another size": {"the person's longer notes\n", true}} {
+		before, err := os.Stat(notes)
+		if err != nil {
+			t.Fatal(err)
+		}
+		write("notes.md", c.body)
+		mod := then.Add(time.Hour * time.Duration(len(name)))
+		if c.sameMod {
+			mod = before.ModTime()
+		}
+		if err := os.Chtimes(notes, mod, mod); err != nil {
+			t.Fatal(err)
+		}
+		was := decodeRuns()
+		s.checkShare(ctx)
+		if decodeRuns() != was+1 {
+			t.Errorf("%s: the file was not checked again", name)
+		}
+	}
+	runs = decodeRuns()
 	time.Sleep(10 * time.Millisecond)
 	write("notes.md", "changed\n")
 	if err := os.Remove(filepath.Join(share, "in", "eicar.txt")); err != nil {
@@ -107,7 +136,7 @@ func TestShareCheckWritesAVerdictPerFile(t *testing.T) {
 		t.Fatalf("after a change and a removal: %d runs, %+v", decodeRuns()-runs, v)
 	}
 	log, err := os.ReadFile(filepath.Join(s.rd.receiptsDir, ShareChecksLog))
-	if err != nil || strings.Count(string(log), "\n") != 3 {
+	if err != nil || strings.Count(string(log), "\n") != 5 {
 		t.Fatalf("the receipt holds %q (%v); want a line a check of a file", log, err)
 	}
 }
@@ -127,7 +156,12 @@ func TestShareFolderUsable(t *testing.T) {
 	if err := ShareFolderUsable(dir); err != nil {
 		t.Fatalf("a folder: %v", err)
 	}
-	for _, bad := range []string{link, file, "relative/share", dir + ":/etc", dir + "/../" + filepath.Base(dir), filepath.Join(dir, "missing")} {
+	bads := []string{link, file, "relative/share", ".", dir + ":/etc", dir + "/../" + filepath.Base(dir), filepath.Join(dir, "missing")}
+	// A folder that exists with a colon in its name, where a file system takes one.
+	if coloned := filepath.Join(dir, "a:b"); os.Mkdir(coloned, 0o755) == nil {
+		bads = append(bads, coloned)
+	}
+	for _, bad := range bads {
 		if err := ShareFolderUsable(bad); err == nil {
 			t.Errorf("%s was accepted", bad)
 		}
@@ -155,6 +189,19 @@ func TestShareVerdictsAreKeptBetweenSegments(t *testing.T) {
 	}
 	if kept := readShareCache(cache, filepath.Join(share, "other"), true); len(kept) != 0 {
 		t.Fatalf("verdicts kept for another folder were used: %+v", kept)
+	}
+	// Only a verdict of a kind the check gives is used: clean, found or
+	// unchecked.
+	mixed := filepath.Join(t.TempDir(), "mixed.json")
+	if err := keepShareCache(mixed, share, true, map[string]toolsrv.ShareVerdict{
+		"clean.md": {Verdict: toolsrv.ShareClean}, "found.exe": {Verdict: toolsrv.ShareFound}, "unchecked.md": {Verdict: toolsrv.ShareUnchecked},
+		"odd.md": {Verdict: "trusted"}, "none.md": {},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	kept := readShareCache(mixed, share, true)
+	if len(kept) != 3 || kept["clean.md"].Verdict != toolsrv.ShareClean || kept["found.exe"].Verdict != toolsrv.ShareFound || kept["unchecked.md"].Verdict != toolsrv.ShareUnchecked {
+		t.Fatalf("the verdicts used: %+v", kept)
 	}
 }
 
@@ -187,6 +234,41 @@ func TestShareFilesUncheckedWithoutSignatures(t *testing.T) {
 	if !told {
 		t.Error("the chat was not told the file is read unchecked")
 	}
+
+	// The verdict of a file from what the check made of it and of what is
+	// inside it: found anywhere is found; clean only by the file itself; a
+	// file the check did not take is unchecked, with its reason, when the
+	// signatures are held; with the check off every top-level file is unchecked.
+	top := func(check runnerdecode.Check) runnerdecode.File {
+		return runnerdecode.File{Path: "a.zip", Check: check}
+	}
+	member := func(check runnerdecode.Check, sig string) runnerdecode.File {
+		return runnerdecode.File{Path: "a.zip/x", In: "a.zip", Check: check, Signature: sig}
+	}
+	skipped := top(runnerdecode.CheckUnchecked)
+	skipped.Unchecked = runnerdecode.UncheckedNotExecutable
+	held, none := testSignatures, clamdb.DB{Problem: "no bundle"}
+	for name, c := range map[string]struct {
+		files                   []runnerdecode.File
+		sigs                    clamdb.DB
+		check                   bool
+		verdict, signature, why string
+	}{
+		"clean":                  {[]runnerdecode.File{top(runnerdecode.CheckClean)}, held, true, toolsrv.ShareClean, "", ""},
+		"found in a member":      {[]runnerdecode.File{top(runnerdecode.CheckClean), member(runnerdecode.CheckFound, "Eicar")}, held, true, toolsrv.ShareFound, "Eicar", ""},
+		"found with no name":     {[]runnerdecode.File{member(runnerdecode.CheckFound, "")}, held, true, toolsrv.ShareFound, "a signature", ""},
+		"only a member clean":    {[]runnerdecode.File{skipped, member(runnerdecode.CheckClean, "")}, held, true, toolsrv.ShareUnchecked, "", string(runnerdecode.UncheckedNotExecutable)},
+		"not taken by the check": {[]runnerdecode.File{skipped}, held, true, toolsrv.ShareUnchecked, "", string(runnerdecode.UncheckedNotExecutable)},
+		"no signatures":          {[]runnerdecode.File{skipped}, none, true, toolsrv.ShareUnchecked, "", "no ClamAV signatures on this computer: no bundle"},
+		"nothing to say":         {[]runnerdecode.File{member(runnerdecode.CheckClean, "")}, held, true, "", "", ""},
+		"the check off":          {[]runnerdecode.File{top(runnerdecode.CheckClean)}, none, false, toolsrv.ShareUnchecked, "", shareCheckOff},
+		"the check off, members": {[]runnerdecode.File{member(runnerdecode.CheckClean, "")}, none, false, "", "", ""},
+	} {
+		verdict, signature, why := shareVerdictOf(c.files, c.sigs, c.check)
+		if verdict != c.verdict || signature != c.signature || why != c.why {
+			t.Errorf("%s: %q, %q, %q; want %q, %q, %q", name, verdict, signature, why, c.verdict, c.signature, c.why)
+		}
+	}
 }
 
 // TestFilterConfigAdmitsTheSegmentsFolders: a segment's filter admits its
@@ -208,6 +290,22 @@ func TestFilterConfigAdmitsTheSegmentsFolders(t *testing.T) {
 	}
 	if !slicesContains(cfg.WritableRoots, rd.share) || !slicesContains(cfg.BindRoots, rd.share) {
 		t.Errorf("roots %v, writable %v", cfg.BindRoots, cfg.WritableRoots)
+	}
+	// The share is the tools server's to write, its alone to bind, and no
+	// container's that joins a network.
+	share := rd.gatewayPath(rd.share)
+	if !slicesContains(cfg.ToolsWritableRoots, share) || !slicesContains(cfg.ToolsOnlyRoots, share) || !slicesContains(cfg.OfflineRoots, share) {
+		t.Errorf("tools writable %v, tools only %v, offline %v; each should hold %s", cfg.ToolsWritableRoots, cfg.ToolsOnlyRoots, cfg.OfflineRoots, share)
+	}
+	// A server the plan lets see the folder itself binds it too: it is no
+	// longer the tools server's alone.
+	live := &spec.Plan{MCPServers: []spec.MCPServerSpec{{Name: "mcp-pypi-x", Source: "pypi", Share: spec.ServerShareLive}}}
+	cfg, err = filterConfig(rd, "run1", env, policy.Limits{}, live, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slicesContains(cfg.ToolsOnlyRoots, share) || !slicesContains(cfg.ToolsWritableRoots, share) {
+		t.Errorf("a plan whose server sees the share: tools only %v, tools writable %v", cfg.ToolsOnlyRoots, cfg.ToolsWritableRoots)
 	}
 }
 
@@ -274,6 +372,43 @@ func TestShareCheckKeepsEachDocumentsText(t *testing.T) {
 	}
 	if n := v["notes.md"]; n.Text || n.Unread != "" || n.Verdict != toolsrv.ShareClean {
 		t.Errorf("a text file: %+v", n)
+	}
+	// A document ClamAV finds is never read: it has no text and no reason it
+	// went unread.
+	writeShare(t, share, "bad.docx", "X5O EICAR a word file")
+	s.checkShare(context.Background())
+	if b := readVerdicts(t, s)["bad.docx"]; b.Verdict != toolsrv.ShareFound || b.Text || b.Unread != "" || b.Tool != "" {
+		t.Errorf("a document ClamAV finds: %+v", b)
+	}
+	// Past the bytes one check reads, a file waits for the next turn.
+	big, err := os.Create(filepath.Join(share, "zz-big.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sparse := big.Truncate(maxShareCheckBytes+1) == nil // a file system that takes a sparse file
+	_ = big.Close()
+	if !sparse {
+		_ = os.Remove(filepath.Join(share, "zz-big.bin"))
+	}
+	writeShare(t, share, "zz-new.md", "new\n")
+	s.checkShare(context.Background())
+	if got := readVerdicts(t, s); got["zz-new.md"].Verdict != toolsrv.ShareClean {
+		t.Errorf("the small file beside it was not checked: %+v", got["zz-new.md"])
+	} else if _, ok := got["zz-big.bin"]; ok {
+		t.Error("a file past the bytes a check reads was checked")
+	}
+	waiting := false
+	for len(s.events) > 0 {
+		ev := <-s.events
+		waiting = waiting || ev.Kind == session.KindNotice && strings.Contains(ev.Text, "1 more file(s) in the share wait for the next turn's check")
+	}
+	if sparse && !waiting {
+		t.Error("the chat was not told a file waits for the next turn")
+	}
+	if sparse {
+		if err := os.Remove(filepath.Join(share, "zz-big.bin")); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := os.Remove(filepath.Join(share, "cv.docx")); err != nil {
 		t.Fatal(err)
@@ -348,6 +483,43 @@ func TestKeptShareTextFollowsTheNextSegment(t *testing.T) {
 	next.checkShare(context.Background())
 	if decodeRuns() != runs+1 || !readVerdicts(t, next)["report.pdf"].Text {
 		t.Fatalf("the document whose text was gone was not read again: %d runs, %+v", decodeRuns()-runs, readVerdicts(t, next))
+	}
+
+	// A kept text is linked or copied only from a regular file of the run, and
+	// a share file is copied only when it is one.
+	folder := t.TempDir()
+	if err := linkOrCopy(folder, filepath.Join(t.TempDir(), "text")); err == nil || !strings.Contains(err.Error(), "is not a regular file") {
+		t.Errorf("a folder was kept as a text: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(share, "cv.docx"), filepath.Join(folder, "link")); err == nil {
+		root, err := os.OpenRoot(folder)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = root.Close() }()
+		if err := linkOrCopy(filepath.Join(folder, "link"), filepath.Join(t.TempDir(), "text")); err == nil {
+			t.Error("a link was kept as a text")
+		}
+		if _, err := copyShareFile(root, "link", filepath.Join(t.TempDir(), "copy")); err == nil || !strings.Contains(err.Error(), "is not a regular file") {
+			t.Errorf("a link in the share was copied: %v", err)
+		}
+	}
+	// A kept text whose digest is not a plain one is never looked for.
+	odd := "NotAHexDigest"
+	if err := os.MkdirAll(next.rd.shareTextKept, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(next.rd.shareTextKept, toolsrv.ShareTextName(odd)), "a text\n")
+	next.rd.shareKept = map[string]toolsrv.ShareVerdict{"odd.md": {Verdict: toolsrv.ShareClean, SHA256: odd, Text: true}}
+	restoreShareText(next.rd)
+	if _, ok := next.rd.shareKept["odd.md"]; ok {
+		t.Error("a kept verdict with a digest that is not plain was restored")
+	}
+	good := strings.Repeat("ab", 32)
+	for digest, want := range map[string]bool{good: true, strings.ToUpper(good): false, good[1:]: false, good + "a": false, strings.Repeat("g", 64): false, "": false} {
+		if got := plainDigest(digest); got != want {
+			t.Errorf("plainDigest(%q) = %v, want %v", digest, got, want)
+		}
 	}
 
 	// Verdicts kept before the text was are not used.

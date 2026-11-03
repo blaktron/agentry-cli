@@ -131,6 +131,10 @@ func runhostSignIns() (*signin.Server, error) {
 	}
 	return &signin.Server{
 		Home: home, Keys: connectionKeys(), PolicyPath: path, Docker: newDockerClient,
+		Connections: func() (*connection.Store, *connection.Clients) {
+			return connection.Open(home, runhostKeychain{}), connection.OpenClients(home, runhostKeychain{})
+		},
+		ConnectHTTP: vendorHTTP, CIMDURL: nativeCIMD,
 		ChatGPT: func() mcpauth.ChatGPT {
 			f := mcpauth.ChatGPT{HTTP: vendorHTTP()}
 			if chatgptEndpoints != nil {
@@ -151,6 +155,7 @@ func runhostSignIns() (*signin.Server, error) {
 // runhostSignInVerb answers the run key's sign-in verb:
 //
 //	sign-in start <vendor> [app]  signs the runhost in, the device's browser relaying
+//	sign-in connection            a connection of the runhost's own, its request on the first line
 //	sign-in relay <id>            one browser connection to the sign-in's callback
 func runhostSignInVerb(s *signin.Server) runhost.Handler {
 	return func(ctx context.Context, req runhost.Request, in io.Reader, fw *runhost.FrameWriter) (int, error) {
@@ -164,10 +169,12 @@ func runhostSignInVerb(s *signin.Server) runhost.Handler {
 				}
 			}
 			return s.Start(ctx, req.Args[1], app, in, fw)
+		case len(req.Args) == 1 && req.Args[0] == signin.ConnectionVendor:
+			return s.Connect(ctx, in, fw)
 		case len(req.Args) == 2 && req.Args[0] == "relay":
 			return s.Relay(ctx, req.Args[1], in, fw)
 		}
-		return engine.ExitUsage, errors.New("sign-in takes start <vendor> or relay <id>")
+		return engine.ExitUsage, errors.New("sign-in takes start <vendor>, connection or relay <id>")
 	}
 }
 

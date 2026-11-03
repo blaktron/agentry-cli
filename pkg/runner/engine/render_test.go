@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -23,7 +24,12 @@ func TestARenderRequestIsHeldAsWebReadHoldsOne(t *testing.T) {
 			t.Errorf("%s refused: %v", ok, err)
 		}
 	}
-	for _, bad := range []string{"file:///etc/passwd", "https://user:pw@example.com/", "https://example.com:8443/", "javascript:alert(1)", "", "chrome://settings"} {
+	for id, want := range map[string]bool{"r1": true, "a-B-9": true, strings.Repeat("a", 64): true, strings.Repeat("a", 65): false, "": false, "a_b": false, "a.b": false, "a b": false} {
+		if got := renderIDPattern.MatchString(id); got != want {
+			t.Errorf("render id %q: %v, want %v", id, got, want)
+		}
+	}
+	for _, bad := range []string{"file:///etc/passwd", "https://user:pw@example.com/", "https://example.com:8443/", "javascript:alert(1)", "", "chrome://settings", "https:///path", "http://example.com:8080/", "https://example.com:81/", "ftp://example.com/"} {
 		if _, err := renderTarget(bad); err == nil {
 			t.Errorf("%s accepted", bad)
 		}
@@ -136,6 +142,65 @@ func TestTheRendererAnswersARequestFromItsOwnContainer(t *testing.T) {
 	if !strings.Contains(r.line(), "1 page(s) rendered, 3 render(s) that failed") {
 		t.Fatalf("receipt line %q", r.line())
 	}
+
+	// A page answered with a status of 200 to 399 is handed back, any other
+	// is not; a browser that draws nothing, a request cut short and one too
+	// long to read are each a failure of their own.
+	fresh := func() *renderRun {
+		return &renderRun{image: "agentry-browser:test", network: "n", proxy: "p", user: "1000:1000"}
+	}
+	answerWith := func(ctx context.Context, r *renderRun, id, request string, fg *dockerx.FakeForeground) string {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, id+toolsrv.RenderRequestExt), []byte(request), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		f.Foreground["-render"] = fg
+		r.answer(ctx, f, Params{}, root, id, "run1")
+		if b, err := os.ReadFile(filepath.Join(dir, id+toolsrv.RenderPageExt)); err == nil {
+			return "page " + string(b)
+		}
+		b, _ := os.ReadFile(filepath.Join(dir, id+toolsrv.RenderFailExt))
+		return "fail " + strings.TrimSpace(string(b))
+	}
+	for status, ok := range map[string]bool{"199": false, "200": true, "399": true, "400": false} {
+		got := answerWith(context.Background(), fresh(), "s"+status, `{"url":"https://example.com/"}`, &dockerx.FakeForeground{Stdout: "https://example.com/\n" + status + "\n<html></html>"})
+		if ok != strings.HasPrefix(got, "page ") || !ok && got != "fail the page answered with status "+status {
+			t.Errorf("status %s: %q", status, got)
+		}
+	}
+	if got := answerWith(context.Background(), fresh(), "blank", `{"url":"https://example.com/"}`, &dockerx.FakeForeground{}); got != "fail the browser drew nothing" {
+		t.Errorf("a browser that drew nothing: %q", got)
+	}
+	if got := answerWith(context.Background(), fresh(), "long", `{"url":"https://example.com/`+strings.Repeat("a", 5000)+`"}`, &dockerx.FakeForeground{Stdout: "u\n200\n<html></html>"}); got != "fail the request is not a page web_read reaches" {
+		t.Errorf("a request too long to read: %q", got)
+	}
+	spent := fresh()
+	spent.pages = maxRenders
+	if got := answerWith(context.Background(), spent, "spent", `{"url":"https://example.com/"}`, &dockerx.FakeForeground{Stdout: "u\n200\n<html></html>"}); !strings.HasPrefix(got, "fail this run's ") || !strings.HasSuffix(got, " renders are spent") {
+		t.Errorf("a run past its renders: %q", got)
+	}
+	last := fresh()
+	last.pages = maxRenders - 1
+	if got := answerWith(context.Background(), last, "last", `{"url":"https://example.com/"}`, &dockerx.FakeForeground{Stdout: "u\n200\n<html></html>"}); !strings.HasPrefix(got, "page ") {
+		t.Errorf("a run's last render: %q", got)
+	}
+	cancelled, stop := context.WithCancel(context.Background())
+	stop()
+	if got := answerWith(cancelled, fresh(), "late", `{"url":"https://example.com/"}`, &dockerx.FakeForeground{Stdout: "u\n200\n<html></html>"}); got != "fail the page did not render in time" {
+		t.Errorf("a render that ran out of time: %q", got)
+	}
+	// Under a runtime the renderer reaches its proxy by the address it was
+	// given, and without one by name alone.
+	pinned := fresh()
+	pinned.proxyIP = "172.20.0.2"
+	var saw dockerx.RunSpec
+	answerWith(context.Background(), pinned, "pin", `{"url":"https://example.com/"}`, &dockerx.FakeForeground{Before: func(rs dockerx.RunSpec) { saw = rs }, Stdout: "u\n200\n<html></html>"})
+	if !slices.Equal(saw.ExtraHosts, []string{renderProxyAlias + ":172.20.0.2"}) {
+		t.Errorf("the renderer's extra hosts = %v", saw.ExtraHosts)
+	}
+	if len(seen.ExtraHosts) != 0 {
+		t.Errorf("a renderer with no pinned address was given extra hosts %v", seen.ExtraHosts)
+	}
 }
 
 // TestTheRendererClosesOnceBeforeTheReceipt: closing the renderer stops its
@@ -155,8 +220,11 @@ func TestTheRendererClosesOnceBeforeTheReceipt(t *testing.T) {
 	}
 	rd := &runDirs{receiptsDir: t.TempDir()}
 	env := &receipt.Envelope{CapabilitiesEnforced: map[string]string{}}
-	f := &dockerx.Fake{}
+	f := &dockerx.Fake{LogsByName: map[string]string{"agentry-run1-render-proxy": "CONNECT example.com:443 allowed\n"}}
 	r.close(context.Background(), f, rd, env)
+	if b, err := os.ReadFile(filepath.Join(rd.receiptsDir, "render-proxy.log")); err != nil || string(b) != "CONNECT example.com:443 allowed\n" {
+		t.Fatalf("the proxy's log = %q, %v", b, err)
+	}
 	if got := env.CapabilitiesEnforced["web.render.pages"]; !strings.HasPrefix(got, "2 page(s) rendered, 1 render(s) that failed") {
 		t.Fatalf("receipt line %q", got)
 	}
@@ -233,6 +301,26 @@ func TestTheRenderProxyReadsTheMachinesNameServersOnPodman(t *testing.T) {
 	}
 	t.Cleanup(td.run)
 	proxy, ok := f.FindRun("-render-proxy")
+	if !ok || !strings.Contains(strings.Join(proxy.Argv, " "), "--browse-public") {
+		t.Errorf("the render proxy's argv: %v (found %v)", proxy.Argv, ok)
+	}
+	var internal, bridged bool
+	for _, c := range f.Calls {
+		internal = internal || c.Op == "NetworkCreate" && c.Arg == "agentry-run1-render(internal=true)"
+		bridged = bridged || c.Op == "NetworkConnect" && c.Arg == "bridge<-"+proxy.Name
+	}
+	if !internal || !bridged {
+		t.Errorf("the render network is internal %v and its proxy on the bridge %v: %v", internal, bridged, f.Ops())
+	}
+	// A run on a sandbox host renders only when its host dispatched it as a
+	// browser job.
+	hosted := p
+	hosted.Hosted = true
+	err := prepareRender(context.Background(), &dockerx.Fake{EngineInfo: podman("box")}, hosted, &runDirs{cfg: t.TempDir(), receiptsDir: t.TempDir()}, &teardown{d: f, stderr: io.Discard, runID: "run2"}, "run2", &receipt.Envelope{CapabilitiesEnforced: map[string]string{}})
+	var ce *ClassifiedError
+	if !errors.As(err, &ce) || ce.Code != ExitPolicy || !strings.Contains(err.Error(), "only when its host dispatched it as a browser job") {
+		t.Errorf("a hosted run that was not dispatched as a browser job: %v", err)
+	}
 	conf := filepath.Join(cfg, renderResolvConf)
 	if !ok || !slices.Contains(proxy.Mounts, dockerx.Mount{Source: conf, Target: "/etc/resolv.conf", ReadOnly: true, Relabel: true}) {
 		t.Fatalf("the render proxy's mounts: %+v (found %v)", proxy.Mounts, ok)

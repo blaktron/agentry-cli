@@ -1,6 +1,14 @@
-// Package signin is a model sign-in made for a remote runhost: Claude Code's
-// own sign-in, Sign in with ChatGPT and Sign in with GitHub for a Copilot
-// plan, run on the runhost while the person's browser is on the device.
+// Package signin is a sign-in made for a remote runhost: Claude Code's own
+// sign-in, Sign in with ChatGPT and Sign in with GitHub for a Copilot plan,
+// and an OAuth connection of the runhost's own to a release's server, each
+// run on the runhost while the person's browser is on the device.
+//
+// A connection is the runhost's own grant, never a copy of the device's:
+// the consent runs on the runhost as mcpauth.Consent does on a computer,
+// its redirect relayed like ChatGPT's, and the runhost keeps the refresh
+// token it is issued in its connection store, whose secrets are entries of
+// its encrypted store. The device opens the consent only at the
+// authorization endpoint it discovered for the server itself.
 //
 // The sign-in runs on the server exactly as it runs on a person's computer
 // (claudesignin, modelsignin), into the runhost's own sign-in store: Claude
@@ -25,6 +33,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -96,6 +105,15 @@ type Server struct {
 	GitHub  func() mcpauth.GitHub
 	// Dial reaches a loopback callback on the server; nil is net.Dialer's.
 	Dial func(ctx context.Context, addr string) (net.Conn, error)
+	// Connections are the runhost's connection store and its store of the
+	// person's own OAuth clients, which its schedules' connections are kept
+	// in; nil for a runhost that keeps none.
+	Connections func() (*connection.Store, *connection.Clients)
+	// ConnectHTTP reaches a connection's vendor; nil is mcpauth.Guard's.
+	ConnectHTTP func() *http.Client
+	// CIMDURL is Agentry's client metadata document for a connection's
+	// consent; "" leaves it out.
+	CIMDURL string
 
 	mu     sync.Mutex
 	active *active
