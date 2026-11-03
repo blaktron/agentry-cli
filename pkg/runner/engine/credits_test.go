@@ -7,7 +7,9 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -49,6 +51,11 @@ func TestACreditPaidRunHandsItsContainerTheSessionTokenAlone(t *testing.T) {
 		endedBeforeAgent = len(reg.Ended()) > 0
 	}
 	reg.InputTokens, reg.OutputTokens, reg.Credits = 1200, 300, 1
+	// The harness quotes the session token it was given, on its event stream
+	// and on its stderr: neither receipt keeps it.
+	quoted := inferencetest.TokenFor(1)
+	f.Foreground["-agent"].Stdout = `{"type":"agent_choice","message":{"content":"my key is ` + quoted + `"}}` + "\n" + f.Foreground["-agent"].Stdout
+	f.Foreground["-agent"].Stderr = "key in use: " + quoted + "\n"
 	var stderr bytes.Buffer
 	g, err := InferenceFor(context.Background(), c, p.Plan, false, inference.PurposeRun, &stderr)
 	if err != nil {
@@ -58,6 +65,9 @@ func TestACreditPaidRunHandsItsContainerTheSessionTokenAlone(t *testing.T) {
 	env, err := Run(context.Background(), f, p)
 	if err != nil {
 		t.Fatalf("run: %v (stderr %s)", err, stderr.String())
+	}
+	if note := "agentry: paying for the model with Agentry credits at " + reg.URL + " (" + inferencetest.Model + ")\n"; !strings.Contains(stderr.String(), note) {
+		t.Fatalf("the run did not say it pays with credits: %q", stderr.String())
 	}
 	if got := agentEnv[adapter.AgentryInferenceTokenEnv]; got != inferencetest.TokenFor(1) {
 		t.Fatalf("the agent's %s = %q, want the session's token", adapter.AgentryInferenceTokenEnv, got)
@@ -150,6 +160,34 @@ func TestACreditsSessionIsRenewedAtItsIntervalAndNotAfterItsEnd(t *testing.T) {
 	if got := len(reg.Ended()); got != 1 {
 		t.Fatalf("ended %d times, want once", got)
 	}
+
+	// A session whose end fails is said not to have ended and leaves the
+	// envelope without an inference block; a grant with no End, or no
+	// envelope to record in, is left alone.
+	failing := Params{Inference: &InferenceGrant{End: func(context.Context) (receipt.Inference, error) {
+		return receipt.Inference{Session: "s-1"}, errors.New("registry unreachable")
+	}}}
+	failed := &receipt.Envelope{}
+	var said bytes.Buffer
+	endInference(failing, failed, &said)
+	if failed.Inference != nil || !strings.Contains(said.String(), "could not end the Agentry credits session (it lapses within the hour): registry unreachable") {
+		t.Fatalf("a failed end: inference %+v, said %q", failed.Inference, said.String())
+	}
+	good := Params{Inference: &InferenceGrant{End: func(context.Context) (receipt.Inference, error) {
+		return receipt.Inference{Session: "s-2", Credits: 3}, nil
+	}}}
+	endInference(good, nil, nil)
+	kept := &receipt.Envelope{}
+	endInference(good, kept, nil)
+	if kept.Inference == nil || kept.Inference.Session != "s-2" || kept.Inference.Credits != 3 {
+		t.Fatalf("a good end: %+v", kept.Inference)
+	}
+	none := &receipt.Envelope{}
+	endInference(Params{Inference: &InferenceGrant{}}, none, nil)
+	endInference(Params{}, none, nil)
+	if none.Inference != nil {
+		t.Fatalf("a grant with no End recorded %+v", none.Inference)
+	}
 }
 
 // A renewal the registry answers 410 (the session ended) stops the renewer:
@@ -170,6 +208,52 @@ func TestARenewalOfAnEndedSessionStopsTheRenewer(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "the Agentry credits session ended") {
 		t.Fatalf("stderr %q", stderr.String())
+	}
+
+	// A renewal that fails is said once and asked again at the interval until
+	// it works; a failure after a good renewal is said again.
+	var asks atomic.Int32
+	reached := make(chan struct{})
+	flaky := &InferenceGrant{Session: "s-y", Token: "t", RenewEvery: time.Millisecond,
+		Renew: func(context.Context) error {
+			n := asks.Add(1)
+			if n == 8 {
+				close(reached)
+			}
+			// Two failures, a good renewal, three failures, a good renewal.
+			if n == 3 || n >= 7 {
+				return nil
+			}
+			return errors.New("registry unreachable " + strconv.Itoa(int(n)))
+		}}
+	stderr.Reset()
+	stop = renewInference(context.Background(), Params{Inference: flaky}, &stderr)
+	wait, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	select {
+	case <-reached:
+	case <-wait.Done():
+		t.Fatalf("the renewer asked %d times: a failed renewal was not asked again at the interval", asks.Load())
+	}
+	stop()
+	said := strings.Split(strings.TrimSpace(stderr.String()), "\n")
+	if len(said) != 2 ||
+		!strings.Contains(said[0], "could not renew the Agentry credits session (trying again each minute): registry unreachable 1") ||
+		!strings.Contains(said[1], "could not renew the Agentry credits session (trying again each minute): registry unreachable 4") {
+		t.Fatalf("a failure is said once until a renewal works, got:\n%s", stderr.String())
+	}
+
+	// A grant with no Renew starts no renewer; one with no interval waits the
+	// default one rather than asking at once.
+	for range 50 {
+		renewInference(context.Background(), Params{Inference: &InferenceGrant{RenewEvery: time.Nanosecond}}, nil)()
+	}
+	var early atomic.Int32
+	for range 50 {
+		renewInference(context.Background(), Params{Inference: &InferenceGrant{Renew: func(context.Context) error { early.Add(1); return nil }}}, nil)()
+	}
+	if n := early.Load(); n != 0 {
+		t.Fatalf("a grant with no interval asked for a renewal at once, %d times", n)
 	}
 }
 
@@ -192,6 +276,24 @@ func TestTheRunHoldsItsCreditsSessionAgainstItsPlan(t *testing.T) {
 		}
 	}
 
+	// A session with no token is no session.
+	p, f, _, _ = creditsFixture(t)
+	happyFake(f)
+	p.Inference = &InferenceGrant{Session: "s-1"}
+	_, err = Run(context.Background(), f, p)
+	if r := receipt.ReasonOf(err); !errors.As(err, &ce) || ce.Code != ExitPolicy || !strings.Contains(err.Error(), "was given no credits session") || r == nil || r.Code != receipt.ReasonSignInMissing || len(f.Calls) != 0 {
+		t.Fatalf("a session with no token: %v (%d docker calls)", err, len(f.Calls))
+	}
+	// A hosted run uses the platform's model, whatever session it is handed.
+	p, f, _, _ = creditsFixture(t)
+	happyFake(f)
+	p.Inference = &InferenceGrant{Session: "s-1", Token: inferencetest.TokenFor(1)}
+	p.Hosted = true
+	_, err = Run(context.Background(), f, p)
+	if !errors.As(err, &ce) || ce.Code != ExitPolicy || !strings.Contains(err.Error(), "a hosted run uses the platform's model and takes no Agentry credits session") || len(f.Calls) != 0 {
+		t.Fatalf("a hosted run handed a session: %v (%d docker calls)", err, len(f.Calls))
+	}
+
 	kp, kf := fixture(t)
 	happyFake(kf)
 	kp.Inference = &InferenceGrant{Session: "s-1", Token: inferencetest.TokenFor(1)}
@@ -212,6 +314,14 @@ func TestAHostedRunOpensNoCreditsSession(t *testing.T) {
 	if _, err := InferenceFor(context.Background(), nil, p.Plan, false, inference.PurposeRun, nil); err == nil || !strings.Contains(err.Error(), "agentry login") {
 		t.Fatalf("signed out: %v", err)
 	}
+	// A plan that spends a key asks the registry for nothing, hosted or not,
+	// signed in or not.
+	kp, _ := fixture(t)
+	for _, hosted := range []bool{false, true} {
+		if g, err := InferenceFor(context.Background(), nil, kp.Plan, hosted, inference.PurposeRun, nil); g != nil || err != nil {
+			t.Fatalf("a key plan (hosted %v) was handed a credits session: %+v %v", hosted, g, err)
+		}
+	}
 }
 
 // A payer whose credits are used up is refused the session before the run
@@ -229,7 +339,30 @@ func TestUsedUpCreditsAreOutOfCredits(t *testing.T) {
 		t.Fatal("the registry's refusal is not recognized as out of credits")
 	}
 	err = outOfCreditsError(Params{Inference: &InferenceGrant{}}, "")
-	if !strings.Contains(err.Error(), "your Agentry credits are used up") {
+	if !strings.Contains(err.Error(), "your Agentry credits are used up") || strings.Contains(err.Error(), "the provider said") {
 		t.Fatalf("message %q", err)
+	}
+	// A run on the person's own account words the provider's refusal, and the
+	// provider's words only when it gave some.
+	plain := outOfCreditsError(Params{}, "")
+	if !strings.Contains(plain.Error(), "the account that pays for them has no credits left") || strings.Contains(plain.Error(), "Agentry credits") ||
+		strings.Contains(plain.Error(), "the provider said") {
+		t.Fatalf("message %q", plain)
+	}
+	if said := outOfCreditsError(Params{}, "402 from upstream"); !strings.HasSuffix(said.Error(), "; the provider said: 402 from upstream") {
+		t.Fatalf("message %q", said)
+	}
+
+	// The open's refusal names the fix; a registry that no longer knows the
+	// sign-in is a missing sign-in, not a lack of credits.
+	if err := creditsError(inference.ErrNoCredits); !strings.Contains(err.Error(), "add credits at the registry, or choose another model provider (agentry setup)") {
+		t.Fatalf("no credits: %v", err)
+	}
+	stale := inference.New(reg.URL, func() (string, error) { return "agy_staleSignIn", nil }, nil)
+	reg.NoCredits = false
+	_, err = InferenceFor(context.Background(), stale, p.Plan, false, inference.PurposeRun, nil)
+	var ce *ClassifiedError
+	if r := receipt.ReasonOf(err); !errors.As(err, &ce) || ce.Code != ExitPolicy || r == nil || r.Code != receipt.ReasonSignInMissing {
+		t.Fatalf("a signed-out registry: %v (reason %v)", err, r)
 	}
 }

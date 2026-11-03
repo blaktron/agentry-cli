@@ -121,6 +121,11 @@ type fakeHarness struct {
 	answers map[string]string
 	// onPrompt, when set, sees each prompt's text as it arrives.
 	onPrompt func(text string)
+	// exitErr is what the harness exits with when it exits on a prompt
+	// (exitOnPrompt): the container's own failure, as docker reports one.
+	exitErr error
+	// answer, when set, is the reply to a prompt in place of the echo.
+	answer func(text string) string
 	// loadSession advertises session/load, which replays a stored
 	// conversation and continues it; loadFails answers it with an error.
 	loadSession, loadFails bool
@@ -177,7 +182,7 @@ func (h *fakeHarness) handler(_ context.Context, r dockerx.RunSpec, stdin io.Rea
 			write(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": map[string]any{"sessionId": "s1"}})
 		case "session/prompt":
 			if h.exitOnPrompt {
-				return 1, nil
+				return 1, h.exitErr
 			}
 			if h.gate != nil {
 				<-h.gate
@@ -266,6 +271,9 @@ func (h *fakeHarness) handler(_ context.Context, r dockerx.RunSpec, stdin io.Rea
 				write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "s1", "update": upd}})
 			}
 			reply := "You said: " + text + ". The token is sekret-value-1234 and the key is sk-test-key-9876."
+			if h.answer != nil {
+				reply = h.answer(text)
+			}
 			write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "s1", "update": map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": reply}}}})
 			result := map[string]any{"stopReason": "end_turn", "usage": map[string]any{"inputTokens": 10, "outputTokens": 5, "totalTokens": 15}}
 			if h.bareResult {
@@ -333,6 +341,9 @@ func TestSessionTurnsInputsAndReceipts(t *testing.T) {
 	s, h, p, f := startFixture(t)
 	get, done := collect(s)
 	ctx := context.Background()
+	// The gateway's and the proxy's logs, read at the end, hold the secret.
+	f.LogsByName["agentry-5e5510-gateway"] = "- agentry-tools: fetch: Authorization: Bearer sekret-value-1234\n"
+	f.LogsByName["agentry-5e5510-proxy"] = "deny api.example:443 token sekret-value-1234\n"
 
 	if err := s.Send(ctx, "hello there"); err != nil {
 		t.Fatalf("send: %v", err)
@@ -344,8 +355,16 @@ func TestSessionTurnsInputsAndReceipts(t *testing.T) {
 	if err := s.AddInput(ctx, inputFile); err != nil {
 		t.Fatalf("add input: %v", err)
 	}
-	if err := s.AddInput(ctx, t.TempDir()); err == nil {
-		t.Error("a directory was accepted as an input")
+	if err := s.AddInput(ctx, t.TempDir()); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+		t.Errorf("a directory as an input: %v", err)
+	}
+	if err := s.AddInput(ctx, inputFile); err == nil || !strings.Contains(err.Error(), `an input named "notes.txt" is already staged — rename the file (inputs are basename-rooted under /inputs)`) {
+		t.Errorf("a second file named notes.txt: %v", err)
+	}
+	if link := filepath.Join(t.TempDir(), "link.txt"); os.Symlink(inputFile, link) == nil {
+		if err := s.AddInput(ctx, link); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+			t.Errorf("a link to a file as an input: %v", err)
+		}
 	}
 	env, err := s.End(ctx, true)
 	if err != nil {
@@ -399,6 +418,14 @@ func TestSessionTurnsInputsAndReceipts(t *testing.T) {
 	if env.Status != "ok" || env.Harness.Mode != "interactive" || env.Usage.UserTurns != 1 || env.Usage.Turns != 2 || env.Usage.InputTokens != 20 {
 		t.Errorf("envelope = status %s mode %s usage %+v", env.Status, env.Harness.Mode, env.Usage)
 	}
+	for name, want := range map[string]string{
+		"gateway.log": "- agentry-tools: fetch: Authorization: Bearer [redacted]\n",
+		"proxy.log":   "deny api.example:443 token [redacted]\n",
+	} {
+		if b, err := os.ReadFile(filepath.Join(env.Receipts.Dir, name)); err != nil || string(b) != want {
+			t.Errorf("%s = %q (%v), want %q", name, b, err, want)
+		}
+	}
 	// The result is the last assistant message (the reply to the input
 	// notice here), redacted.
 	if !strings.Contains(string(env.Result), "You said:") || strings.Contains(string(env.Result), "sekret-value") {
@@ -426,10 +453,14 @@ func TestSessionTurnsInputsAndReceipts(t *testing.T) {
 		}
 	}
 	tr, _ := os.ReadFile(filepath.Join(env.Receipts.Dir, "transcript.md"))
-	for _, want := range []string{"## User\n\nhello there", "## Assistant", "- tool call: fs_list", "- permission granted: write_report", "- permission request denied: run_command", "- input added: /inputs/notes.txt (sha256:", "_Session ended: finished._"} {
+	for _, want := range []string{"## User\n\nhello there", "## Runner\n\nA new input file is available at /inputs/notes.txt", "## Assistant", "- tool call: fs_list", "- permission granted: write_report", "- permission request denied: run_command", "- input added: /inputs/notes.txt (sha256:", "_Session ended: finished._"} {
 		if !strings.Contains(string(tr), want) {
 			t.Errorf("transcript lacks %q:\n%s", want, tr)
 		}
+	}
+	// An error the session recorded is a line of the transcript.
+	if got := transcript(env, []session.Event{{Kind: session.KindError, Text: "the harness said no"}}); !strings.Contains(got, "- error: the harness said no\n") {
+		t.Errorf("an error event is missing from the transcript:\n%s", got)
 	}
 	if len(f.Leftover) != 0 {
 		t.Errorf("leftovers after End: %v", f.Leftover)
@@ -510,12 +541,36 @@ func TestSessionBudgetsEndTheSession(t *testing.T) {
 		env, err := s.End(ctx, false)
 		<-done
 		var ce *ClassifiedError
-		if err == nil || !errors.As(err, &ce) || ce.Code != ExitBudget || env.Status != "error" {
+		if err == nil || !errors.As(err, &ce) || ce.Code != ExitBudget || env.Status != "error" || !strings.Contains(err.Error(), "user-turn budget exceeded (3 turns)") {
 			t.Fatalf("end = %v (%+v)", err, env)
 		}
 		last := get()[len(get())-1]
 		if last.Kind != session.KindSessionEnd || last.Reason != session.EndUserTurns {
 			t.Errorf("last event = %+v", last)
+		}
+	})
+	t.Run("no user-turn cap", func(t *testing.T) {
+		p, f := sessionFixture(t)
+		p.Plan.Harness.Session.Budgets.MaxUserTurns = 0
+		p.Budgets.MaxTurns = 0
+		happyFake(f)
+		h := &fakeHarness{}
+		f.Foreground["-agent"] = &dockerx.FakeForeground{Handler: h.handler}
+		s, err := StartSession(context.Background(), f, p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, done := collect(s)
+		ctx := context.Background()
+		for i := 0; i < 5; i++ {
+			if err := s.Send(ctx, "turn"); err != nil {
+				t.Fatalf("turn %d: %v", i+1, err)
+			}
+		}
+		env, err := s.End(ctx, true)
+		<-done
+		if err != nil || env.Usage.UserTurns != 5 || env.Usage.Turns != 5 {
+			t.Fatalf("a session with no caps: %v (%+v)", err, env.Usage)
 		}
 	})
 	t.Run("idle timeout", func(t *testing.T) {
@@ -546,7 +601,7 @@ func TestSessionBudgetsEndTheSession(t *testing.T) {
 		env, err := s.End(context.Background(), false)
 		<-done
 		var ce *ClassifiedError
-		if err == nil || !errors.As(err, &ce) || ce.Code != ExitTimeout || env.Status != "error" {
+		if err == nil || !errors.As(err, &ce) || ce.Code != ExitTimeout || env.Status != "error" || !strings.Contains(err.Error(), "session idle for more than 1s") {
 			t.Fatalf("end = %v", err)
 		}
 		if k := kinds(get()); k[session.KindSessionEnd] != 1 {
@@ -589,7 +644,7 @@ func TestSessionCostBudgetNeedsACostTheHarnessReports(t *testing.T) {
 		env, err := s.End(ctx, false)
 		<-done
 		var ce *ClassifiedError
-		if err == nil || !errors.As(err, &ce) || ce.Code != ExitBudget || env.Status != "error" {
+		if err == nil || !errors.As(err, &ce) || ce.Code != ExitBudget || env.Status != "error" || !strings.Contains(err.Error(), "cost budget exceeded (harness reported $4.5000, budget $1.00)") {
 			t.Fatalf("end = %v (%+v)", err, env)
 		}
 		if env.Usage.CostUSD != 4.5 {
@@ -600,6 +655,66 @@ func TestSessionCostBudgetNeedsACostTheHarnessReports(t *testing.T) {
 		}
 		if last := get()[len(get())-1]; last.Kind != session.KindSessionEnd || last.Reason != session.EndCostBudget {
 			t.Errorf("last event = %+v", last)
+		}
+	})
+
+	t.Run("a cost that only reaches the ceiling does not end the session", func(t *testing.T) {
+		s, _, done := start(t, 4.5, map[string]any{
+			"used": 1262, "size": 0,
+			"cost": map[string]any{"amount": 4.5, "currency": "USD"},
+		})
+		ctx := context.Background()
+		if err := s.Send(ctx, "turn"); err != nil {
+			t.Fatalf("send: %v", err)
+		}
+		env, err := s.End(ctx, true)
+		<-done
+		if err != nil || env.Usage.CostUSD != 4.5 {
+			t.Fatalf("end = %v (%+v)", err, env)
+		}
+		if line := env.CapabilitiesEnforced["budgets.cost"]; line != "cost ceiling $4.50 enforced on the harness's reported running cost ($4.5000)" {
+			t.Errorf("budgets.cost = %q", line)
+		}
+	})
+
+	t.Run("a reported cost with no ceiling asked for is only reported", func(t *testing.T) {
+		s, _, done := start(t, 0, map[string]any{
+			"used": 1262, "size": 0,
+			"cost": map[string]any{"amount": 4.5, "currency": "USD"},
+		})
+		ctx := context.Background()
+		if err := s.Send(ctx, "turn"); err != nil {
+			t.Fatalf("send: %v", err)
+		}
+		env, err := s.End(ctx, true)
+		<-done
+		if err != nil {
+			t.Fatalf("end = %v", err)
+		}
+		if line := env.CapabilitiesEnforced["budgets.cost"]; line != "no cost ceiling requested; the harness reported a running cost of $4.5000" {
+			t.Errorf("budgets.cost = %q", line)
+		}
+	})
+
+	// A session paid by a person's plan counts tokens and never dollars: a cost
+	// its harness reports is not recorded, so no ceiling can trip on it.
+	t.Run("a plan-paid session records no dollars", func(t *testing.T) {
+		usage := adapter.Event{Kind: adapter.EventUsage, InputTokens: 10, OutputTokens: 5, CostUSD: 4.5}
+		for name, tc := range map[string]struct {
+			signIn bool
+			cost   float64
+		}{"paid by a plan": {true, 0}, "paid by a key": {false, 4.5}} {
+			s := &liveSession{
+				p:      Params{Plan: &spec.Plan{}},
+				events: make(chan session.Event, 4), done: make(chan struct{}),
+			}
+			if tc.signIn {
+				s.p.Plan.Harness.ModelSignIn = &spec.ModelSignInSpec{}
+			}
+			s.handle(usage)
+			if s.costUSD != tc.cost || s.inTok != 10 || s.outTok != 5 {
+				t.Errorf("%s: cost %v and %d/%d tokens, want cost %v and 10/5 tokens", name, s.costUSD, s.inTok, s.outTok, tc.cost)
+			}
 		}
 	})
 
@@ -661,6 +776,10 @@ func TestASessionWhoseHarnessReportsNoTokensSaysSo(t *testing.T) {
 		line := env.CapabilitiesEnforced["usage.tokens"]
 		if !strings.Contains(line, "reported no token usage") || !strings.Contains(line, "not because the session used none") {
 			t.Errorf("usage.tokens = %q", line)
+		}
+		// With no ceiling asked for either, the cost line says the 0 is unreported.
+		if line := env.CapabilitiesEnforced["budgets.cost"]; !strings.Contains(line, "reported no cost on its event stream") || !strings.Contains(line, "not because the session cost nothing") {
+			t.Errorf("budgets.cost = %q", line)
 		}
 	})
 
@@ -732,6 +851,33 @@ func TestIntakeStagedAndReceipted(t *testing.T) {
 	if k := kinds(get()); k[session.KindIntake] != 1 {
 		t.Errorf("kinds = %v", k)
 	}
+	// A session that took no turn does not claim its tokens went unreported.
+	if line, has := env.CapabilitiesEnforced["usage.tokens"]; has {
+		t.Errorf("usage.tokens = %q for a session with no turns", line)
+	}
+
+	// A file answer may not take the name of an input, and no input may take
+	// the name the intake answers are staged under.
+	for name, tc := range map[string]struct{ input, file, msg string }{
+		"a file answer named like an input": {"data.csv", "data.csv", "intake file"},
+		"an input named like the answers":   {"intake.json", "", "reserved for the intake answers"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p, f := sessionFixture(t)
+			happyFake(f)
+			p.InputPaths = []string{writeInput(t, t.TempDir(), tc.input, "x")}
+			p.Intake = &intake.Answers{Values: map[string]string{"region": "apac"}}
+			if tc.file != "" {
+				p.Intake.Files = map[string]string{"dataset": writeInput(t, t.TempDir(), tc.file, "y")}
+			}
+			_, err := StartSession(context.Background(), f, p)
+			var ce *ClassifiedError
+			r := receipt.ReasonOf(err)
+			if !errors.As(err, &ce) || ce.Code != ExitCLI || !strings.Contains(err.Error(), tc.msg) || r == nil || r.Code != receipt.ReasonInputRefused || r.Detail != receipt.InputNameClash {
+				t.Fatalf("err = %v (reason %+v), want a name clash saying %q", err, r, tc.msg)
+			}
+		})
+	}
 }
 
 // TestSessionHandshakeFailureMasksStderr: a harness that dies during the
@@ -741,6 +887,14 @@ func TestIntakeStagedAndReceipted(t *testing.T) {
 func TestSessionHandshakeFailureMasksStderr(t *testing.T) {
 	p, f := sessionFixture(t)
 	happyFake(f)
+	// A stderr receipt an earlier session left in the output folder is
+	// replaced, not added to.
+	if err := os.MkdirAll(filepath.Join(p.OutDir, "receipts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(p.OutDir, "receipts", "agent-stderr.log"), []byte("stale line from an earlier session\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	// The harness refuses the handshake and then hangs until it is
 	// killed, dying with docker's usual latency: the receipt is masked
 	// only once it has exited, so the failure has to wait for that.
@@ -852,6 +1006,9 @@ func TestSessionStoreIsARunVolume(t *testing.T) {
 	// The container posture: the one-shot keeps CHOWN alone; the
 	// session's agent is hardened and read-only like the exec path's,
 	// and the receipt says both.
+	if !init.AutoRemove || init.Labels["agentry.run"] != "5e5510" {
+		t.Errorf("session-init is kept after it ends or carries no run label: auto-remove %v labels %v", init.AutoRemove, init.Labels)
+	}
 	if strings.Join(init.CapDrop, ",") != "ALL" || strings.Join(init.CapAdd, ",") != "CHOWN" || !init.NoNewPrivileges || init.PidsLimit == 0 || init.Memory == "" {
 		t.Errorf("session-init posture: drop %v add %v nnp %v pids %d memory %q", init.CapDrop, init.CapAdd, init.NoNewPrivileges, init.PidsLimit, init.Memory)
 	}
@@ -899,6 +1056,15 @@ func TestSessionStoreIsARunVolume(t *testing.T) {
 		if strings.HasPrefix(o, "RemoveForce:agentry-5e5510-agent") && i > remove {
 			t.Errorf("the volume was removed before its container: %v", ops)
 		}
+	}
+
+	// A store that cannot be handed to the harness user fails the start.
+	p2, f2 := sessionFixture(t)
+	happyFake(f2)
+	f2.Foreground["-session-init"] = &dockerx.FakeForeground{ExitCode: 1}
+	var ce *ClassifiedError
+	if _, err := StartSession(context.Background(), f2, p2); !errors.As(err, &ce) || ce.Code != ExitCLI || !strings.Contains(err.Error(), "give the session store to the harness user") {
+		t.Errorf("a store the one-shot could not hand over: %v", err)
 	}
 }
 
@@ -1125,5 +1291,108 @@ func TestANoticeIsCarriedNotPutInThePersonsTurn(t *testing.T) {
 	}
 	if strings.Contains(first, "notes.txt") || !strings.Contains(second, "notes.txt") || !strings.HasSuffix(second, "second") {
 		t.Errorf("the harness was sent %q then %q", first, second)
+	}
+}
+
+// jsonSession starts a session of a plan that declares an output schema, the
+// harness answering the final-result prompt with the JSON the schema wants and
+// every other turn with text.
+func jsonSession(t *testing.T) (session.Session, chan string) {
+	t.Helper()
+	p, f := sessionFixture(t)
+	happyFake(f)
+	schema := []byte(`{"type":"object","required":["answer"],"properties":{"answer":{"type":"integer"}}}`)
+	if err := os.WriteFile(filepath.Join(p.WorkspaceSrc, compile.OutputSchemaFile), schema, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p.Plan.Harness.ResultKind = "json"
+	p.Plan.Output = spec.OutputSpec{SchemaFile: compile.OutputSchemaFile, SchemaSHA256: sha256Hex(schema)}
+	prompts := make(chan string, 8)
+	h := &fakeHarness{
+		onPrompt: func(text string) { prompts <- text },
+		answer: func(text string) string {
+			if strings.HasPrefix(text, "Reply now with your final result as JSON") {
+				return `{"answer":42}`
+			}
+			return "working on it"
+		},
+	}
+	f.Foreground["-agent"] = &dockerx.FakeForeground{Handler: h.handler}
+	s, err := StartSession(context.Background(), f, p)
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	return s, prompts
+}
+
+// TestASessionOfAJSONPlanAsksForItsResultOnlyWhenFinished: finishing a
+// session of a plan with an output schema asks the agent for its final
+// result as JSON and holds it to the schema; quitting asks nothing and holds
+// the session to nothing.
+func TestASessionOfAJSONPlanAsksForItsResultOnlyWhenFinished(t *testing.T) {
+	ctx := context.Background()
+	t.Run("finish", func(t *testing.T) {
+		s, prompts := jsonSession(t)
+		_, done := collect(s)
+		if err := s.Send(ctx, "hello"); err != nil {
+			t.Fatal(err)
+		}
+		env, err := s.End(ctx, true)
+		<-done
+		if err != nil || string(env.Result) != `{"answer":42}` || env.Status != "ok" {
+			t.Fatalf("a finished session: %v, result %s (%+v)", err, env.Result, env)
+		}
+		close(prompts)
+		var asked []string
+		for text := range prompts {
+			asked = append(asked, text)
+		}
+		if len(asked) != 2 || !strings.HasPrefix(asked[1], "Reply now with your final result as JSON") {
+			t.Fatalf("the agent was prompted %q", asked)
+		}
+	})
+	t.Run("quit", func(t *testing.T) {
+		s, prompts := jsonSession(t)
+		_, done := collect(s)
+		if err := s.Send(ctx, "hello"); err != nil {
+			t.Fatal(err)
+		}
+		env, err := s.End(ctx, false)
+		<-done
+		if err != nil || env.Status != "ok" || string(env.Result) != `"working on it"` {
+			t.Fatalf("a session that quit: %v, result %s (%+v)", err, env.Result, env)
+		}
+		close(prompts)
+		var asked []string
+		for text := range prompts {
+			asked = append(asked, text)
+		}
+		if len(asked) != 1 {
+			t.Fatalf("the agent was prompted %q", asked)
+		}
+	})
+}
+
+// TestASessionWhoseEventPumpPanicsEndsAndNamesIt: a panic while the session
+// records the harness's events ends the session, tears it down and is the
+// error End returns, whatever reason the recovery ended it with.
+func TestASessionWhoseEventPumpPanicsEndsAndNamesIt(t *testing.T) {
+	pumpEventHook = func() { panic("the pump exploded") }
+	t.Cleanup(func() { pumpEventHook = nil })
+	s, _, _, f := startFixture(t)
+	_, done := collect(s)
+	ctx := context.Background()
+	_ = s.Send(ctx, "hello") // the turn's events reach the pump, which panics
+	env, err := s.End(ctx, false)
+	<-done
+	var ce *ClassifiedError
+	if !errors.As(err, &ce) || ce.Code != ExitCLI || !strings.Contains(err.Error(), "session event pump panicked: the pump exploded") {
+		t.Fatalf("End = %v, want the panic named under exit %d", err, ExitCLI)
+	}
+	if env == nil || env.Status != "error" || !strings.Contains(env.Error, "the pump exploded") {
+		t.Fatalf("envelope = %+v", env)
+	}
+	if !strings.Contains(strings.Join(f.Ops(), "\n"), "NetworkRemove:agentry-5e5510-net") {
+		t.Fatalf("teardown did not run: %v", f.Ops())
 	}
 }

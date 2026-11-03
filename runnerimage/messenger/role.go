@@ -64,11 +64,76 @@ const (
 	maxBackoff           = time.Minute
 )
 
-// DroppedStale is a message older than the role passes on.
-const DroppedStale = "stale"
+// DroppedStale is a message older than the role passes on, and
+// DroppedEncrypted one encrypted end to end, which the role cannot read.
+const (
+	DroppedStale     = "stale"
+	DroppedEncrypted = "encrypted"
+)
 
 // errNoStart refuses a link whose first line is not its start.
 var errNoStart = errors.New("the messenger link's first line was not its start")
+
+// client is one service's connection, as the role drives it: who the
+// account is, the messages the service delivers, and the role's answers
+// and typing. Each kind has one (telegram.go, discord.go, slack.go,
+// matrix.go).
+type client interface {
+	// connect asks the service who the account is: errTokenRefused when it
+	// does not take the credential.
+	connect(ctx context.Context) (Ready, error)
+	// listen passes each message the service delivers to r.pass, calling
+	// r.up while the connection holds, until it fails or ctx ends; it
+	// always ends with why.
+	listen(ctx context.Context, r *role) error
+	// send writes one part of an answer to chat.
+	send(ctx context.Context, chat string, p Part) error
+	// typing shows chat that the agent is answering, where the service
+	// lets an account do that.
+	typing(ctx context.Context, chat string) error
+}
+
+// message is one message a service delivered, as the role judges it.
+type message struct {
+	id     int64
+	chat   string
+	sender string
+	// direct says it was written in a direct conversation with the account.
+	direct bool
+	// own says the account itself wrote it, as a service shows the
+	// account its own answers: passed over without a word.
+	own bool
+	// bot says another bot wrote it.
+	bot bool
+	at  time.Time
+	// text is empty for a message with no text: a sticker, a photo, a
+	// voice note.
+	text string
+	// command says it is the service's own command (Telegram's /start).
+	command bool
+	// encrypted says it is end-to-end encrypted, which the role cannot read.
+	encrypted bool
+}
+
+// newClient is kind's client for the credential token, reaching base (the
+// service's address; a test server's, or for Matrix the account's
+// homeserver) through proxy.
+func newClient(kind, base, token, proxy string) (client, error) {
+	switch kind {
+	case KindTelegram:
+		if base == "" {
+			base = TelegramAPI
+		}
+		return newTelegram(base, token, proxy)
+	case KindDiscord:
+		return newDiscord(base, token, proxy)
+	case KindSlack:
+		return newSlack(base, token, proxy)
+	case KindMatrix:
+		return newMatrix(base, token, proxy)
+	}
+	return nil, fmt.Errorf("this role does not carry %q", kind)
+}
 
 // Serve is the role: it reads its start from in, connects to the service
 // with the credential it carries, writes ready to out, then passes on the
@@ -85,32 +150,34 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, logw io.Writer, cfg
 		return errNoStart
 	}
 	start := *first.Start
-	if start.Kind != KindTelegram {
+	k, ok := Lookup(start.Kind)
+	if !ok {
 		return fmt.Errorf("this role does not carry %q", start.Kind)
 	}
 	if start.Token == "" {
 		return errors.New("the start carries no credential")
 	}
-	api := cfg.API
-	if api == "" {
-		api = TelegramAPI
+	base := cfg.API
+	if k.NamesServer {
+		if _, err := ServerHost(start.Server); err != nil {
+			return err
+		}
+		if base == "" {
+			base = start.Server
+		}
 	}
-	tg, err := newTelegram(api, start.Token, cfg.Proxy)
+	c, err := newClient(k.Name, base, start.Token, cfg.Proxy)
 	if err != nil {
 		return err
 	}
-	r := &role{tg: tg, w: NewWriter(out), log: logw, peer: start.Peer, started: time.Now()}
+	r := &role{kind: k, c: c, w: NewWriter(out), log: logw, peer: start.Peer, started: time.Now(), wait: minBackoff}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	me, err := r.connect(ctx)
+	ready, err := r.connect(ctx)
 	if err != nil {
 		return err
 	}
-	name := me.FirstName
-	if me.Username != "" {
-		name = "@" + me.Username
-	}
-	if err := r.w.Write(FromRole{Ready: &Ready{Account: id(me.ID), Name: name}}); err != nil {
+	if err := r.w.Write(FromRole{Ready: &ready}); err != nil {
 		return err
 	}
 	// The supervisor's lines, until it closes the link: then the role ends.
@@ -129,13 +196,14 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, logw io.Writer, cfg
 			r.handle(ctx, f)
 		}
 	}()
-	r.poll(ctx)
+	r.run(ctx)
 	return nil
 }
 
 // role is one account's connection.
 type role struct {
-	tg      *telegram
+	kind    Kind
+	c       client
 	w       *Writer
 	log     io.Writer
 	started time.Time
@@ -144,6 +212,7 @@ type role struct {
 	peer      *Peer
 	pairings  []time.Time
 	connected *bool
+	wait      time.Duration
 }
 
 func (r *role) logf(format string, args ...any) {
@@ -164,68 +233,70 @@ func (r *role) state(connected bool, why string) {
 	_ = r.w.Write(FromRole{State: &State{Connected: connected, Error: why}})
 }
 
-// connect asks the service who the bot is, until it answers: a refused
-// token ends the role, anything else is tried again with backoff.
-func (r *role) connect(ctx context.Context) (telegramUser, error) {
+// up says the connection holds: connected, and the next failure waits the
+// least again.
+func (r *role) up() {
+	r.mu.Lock()
+	r.wait = minBackoff
+	r.mu.Unlock()
+	r.state(true, "")
+}
+
+// currentPeer is the person paired now, if any.
+func (r *role) currentPeer() *Peer {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.peer
+}
+
+// connect asks the service who the account is, until it answers: a refused
+// credential ends the role, anything else is tried again with backoff.
+func (r *role) connect(ctx context.Context) (Ready, error) {
 	wait := minBackoff
 	for {
-		me, err := r.tg.getMe(ctx)
+		ready, err := r.c.connect(ctx)
 		if err == nil {
 			r.state(true, "")
-			return me, nil
-		}
-		if errors.Is(err, errTokenRefused) {
-			r.state(false, err.Error())
-			return telegramUser{}, err
+			return ready, nil
 		}
 		r.state(false, err.Error())
+		if errors.Is(err, errTokenRefused) {
+			return Ready{}, err
+		}
 		if !sleep(ctx, max(wait, retryAfter(err))) {
-			return telegramUser{}, ctx.Err()
+			return Ready{}, ctx.Err()
 		}
 		wait = min(wait*2, maxBackoff)
 	}
 }
 
-// poll long-polls the service for messages until ctx ends, reconnecting
-// with backoff. The relay never closes a connection, so a poll that outlives
-// its own deadline is given up on here.
-func (r *role) poll(ctx context.Context) {
-	var offset int64
-	wait := minBackoff
+// run holds the service's connection until ctx ends, opening it again with
+// backoff each time it fails. Every client keeps its own deadlines, since
+// the relay never closes a connection that went quiet.
+func (r *role) run(ctx context.Context) {
 	for ctx.Err() == nil {
-		us, err := r.tg.getUpdates(ctx, offset)
-		if err != nil {
-			if ctx.Err() != nil {
-				return
-			}
-			if errors.Is(err, errTokenRefused) {
-				// Revoked while it ran: nothing will connect until it is
-				// set again.
-				r.state(false, err.Error())
-				return
-			}
-			why := err.Error()
-			var te *TelegramError
-			if errors.As(err, &te) && te.Code == 409 {
-				why = "another program is reading this bot's messages (a second copy of this agent, or a webhook set on the bot): " + te.Description
-			}
-			r.state(false, why)
-			r.logf("%s", why)
-			if !sleep(ctx, max(wait, retryAfter(err))) {
-				return
-			}
-			wait = min(wait*2, maxBackoff)
-			continue
+		err := r.c.listen(ctx, r)
+		if ctx.Err() != nil {
+			return
 		}
-		wait = minBackoff
-		r.state(true, "")
-		for _, u := range us {
-			if u.UpdateID >= offset {
-				offset = u.UpdateID + 1
-			}
-			if u.Message != nil {
-				r.pass(*u.Message)
-			}
+		if errors.Is(err, errTokenRefused) {
+			// Revoked while it ran: nothing will connect until it is set
+			// again.
+			r.state(false, err.Error())
+			return
+		}
+		why := "the connection ended"
+		if err != nil {
+			why = err.Error()
+		}
+		r.state(false, why)
+		r.logf("%s", why)
+		r.mu.Lock()
+		wait := r.wait
+		r.wait = min(r.wait*2, maxBackoff)
+		r.mu.Unlock()
+		if !sleep(ctx, max(wait, retryAfter(err))) {
+			return
 		}
 	}
 }
@@ -233,49 +304,56 @@ func (r *role) poll(ctx context.Context) {
 // pass judges one message: the paired person's goes on, a pairing code from
 // a direct message goes on for the supervisor to judge, and every other
 // message is dropped, with its reason alone.
-func (r *role) pass(m telegramMessage) {
-	drop := func(reason string) { _ = r.w.Write(FromRole{Dropped: &Dropped{Reason: reason}}) }
-	if m.Chat.Type != "private" || m.From == nil || m.From.IsBot {
-		drop(DroppedNotDirect)
+func (r *role) pass(m message) {
+	if m.own {
 		return
 	}
-	if m.Date > 0 && time.Unix(m.Date, 0).Before(r.started.Add(-staleAfter)) {
-		drop(DroppedStale)
+	if !m.direct || m.bot || m.sender == "" {
+		r.drop(DroppedNotDirect)
 		return
 	}
-	if m.Text == "" {
-		drop(DroppedNoText)
+	if !m.at.IsZero() && m.at.Before(r.started.Add(-staleAfter)) {
+		r.drop(DroppedStale)
 		return
 	}
-	chat, sender := id(m.Chat.ID), id(m.From.ID)
-	r.mu.Lock()
-	peer := r.peer
-	r.mu.Unlock()
-	if peer != nil && peer.Sender == sender && peer.Chat == chat {
-		if cmd := strings.Fields(m.Text); len(cmd) > 0 && (cmd[0] == "/start" || strings.HasPrefix(cmd[0], "/start@")) {
-			drop(DroppedCommand)
+	if m.encrypted {
+		r.drop(DroppedEncrypted)
+		return
+	}
+	if m.text == "" {
+		r.drop(DroppedNoText)
+		return
+	}
+	peer := r.currentPeer()
+	if peer != nil && peer.Sender == m.sender && peer.Chat == m.chat {
+		if m.command {
+			r.drop(DroppedCommand)
 			return
 		}
-		text, cut := m.Text, false
+		text, cut := m.text, false
 		if len(text) > MaxInboundText {
 			text, cut = strings.ToValidUTF8(text[:MaxInboundText], ""), true
 		}
-		_ = r.w.Write(FromRole{Inbound: &Inbound{ID: m.MessageID, Chat: chat, Sender: sender, Text: text, Cut: cut}})
+		_ = r.w.Write(FromRole{Inbound: &Inbound{ID: m.id, Chat: m.chat, Sender: m.sender, Text: text, Cut: cut}})
 		return
 	}
-	code, ok := NormalizeCode(m.Text)
+	code, ok := NormalizeCode(m.text)
 	if !ok {
-		drop(DroppedUnpaired)
+		r.drop(DroppedUnpaired)
 		return
 	}
 	if !r.pairingAllowed() {
-		drop(DroppedPairings)
+		r.drop(DroppedPairings)
 		return
 	}
-	_ = r.w.Write(FromRole{Pairing: &Pairing{Chat: chat, Sender: sender, Code: code}})
+	_ = r.w.Write(FromRole{Pairing: &Pairing{Chat: m.chat, Sender: m.sender, Code: code}})
 }
 
-// pairingAllowed counts a pairing code against the minute's bound.
+// drop reports a message the role did not pass on, by its reason alone.
+func (r *role) drop(reason string) { _ = r.w.Write(FromRole{Dropped: &Dropped{Reason: reason}}) }
+
+// pairingAllowed counts a pairing code, or a conversation an unpaired
+// sender opens with the account, against the minute's bound.
 func (r *role) pairingAllowed() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -297,17 +375,15 @@ func (r *role) pairingAllowed() bool {
 // handle carries out one of the supervisor's lines. A reply or typing for
 // any chat but the paired person's is refused.
 func (r *role) handle(ctx context.Context, f ToRole) {
-	r.mu.Lock()
-	peer := r.peer
-	r.mu.Unlock()
+	peer := r.currentPeer()
 	switch {
 	case f.Paired != nil:
 		r.mu.Lock()
 		r.peer = f.Paired.Peer
 		r.mu.Unlock()
 	case f.Typing != nil:
-		if peer != nil && f.Typing.Chat == peer.Chat {
-			if err := r.tg.sendTyping(ctx, peer.Chat); err != nil {
+		if peer != nil && f.Typing.Chat == peer.Chat && r.kind.Typing {
+			if err := r.c.typing(ctx, peer.Chat); err != nil {
 				r.logf("typing: %s", err)
 			}
 		}
@@ -316,21 +392,18 @@ func (r *role) handle(ctx context.Context, f ToRole) {
 	}
 }
 
-// reply sends an answer to the paired person's chat as Telegram's HTML,
-// part by part, each part plain where its HTML is refused.
+// reply sends an answer to the paired person's chat in the service's own
+// format, part by part.
 func (r *role) reply(ctx context.Context, peer *Peer, rep Reply) *Sent {
 	if peer == nil || rep.Chat != peer.Chat {
 		return &Sent{ID: rep.ID, Error: "not the paired person's chat"}
 	}
-	parts, cut := Split(rep.Text, maxMessage(KindTelegram))
+	parts, cut := SplitAs(r.kind.Format, rep.Text, r.kind.MaxMessage)
 	sent := 0
 	for _, p := range parts {
-		err := r.tg.sendMessage(ctx, peer.Chat, p.HTML, true)
-		if unparsable(err) {
-			err = r.tg.sendMessage(ctx, peer.Chat, p.Plain, false)
-		}
+		err := r.c.send(ctx, peer.Chat, p)
 		if d := retryAfter(err); d > 0 && d <= maxBackoff && sleep(ctx, d) {
-			err = r.tg.sendMessage(ctx, peer.Chat, p.HTML, true)
+			err = r.c.send(ctx, peer.Chat, p)
 		}
 		if err != nil {
 			return &Sent{ID: rep.ID, Parts: sent, Cut: cut, Error: err.Error()}
@@ -340,10 +413,33 @@ func (r *role) reply(ctx context.Context, peer *Peer, rep Reply) *Sent {
 	return &Sent{ID: rep.ID, Parts: sent, Cut: cut}
 }
 
-func maxMessage(kind string) int {
-	k, _ := Lookup(kind)
-	return k.MaxMessage
+// retryAfterer is a service's refusal that says how long to wait.
+type retryAfterer interface{ retryAfter() time.Duration }
+
+// retryAfter is how long the service asked the role to wait, or 0.
+func retryAfter(err error) time.Duration {
+	var ra retryAfterer
+	if errors.As(err, &ra) {
+		return ra.retryAfter()
+	}
+	return 0
 }
+
+// ServiceError is a service's refusal of a request.
+type ServiceError struct {
+	Service string
+	Method  string
+	Code    int
+	// Description is the service's own words, without the credential.
+	Description string
+	After       time.Duration
+}
+
+func (e *ServiceError) Error() string {
+	return fmt.Sprintf("%s refused %s (%d): %s", e.Service, e.Method, e.Code, e.Description)
+}
+
+func (e *ServiceError) retryAfter() time.Duration { return e.After }
 
 // sleep waits d, false when ctx ends first.
 func sleep(ctx context.Context, d time.Duration) bool {

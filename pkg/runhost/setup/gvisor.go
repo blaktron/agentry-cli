@@ -21,11 +21,11 @@ import (
 // GVisorRelease is the gVisor release a runhost runs, the one Agentry's own
 // runhosts pin. Each architecture's archive is pinned by its SHA-512, so a
 // changed archive is refused whatever the download says of itself.
-const GVisorRelease = "20261026.0"
+const GVisorRelease = "20261102.0"
 
 var gvisorSHA512 = map[string]string{
-	"x86_64":  "e6aa030fb8379fe92b53e9b8b696419e0dce8a3bbcc7d4c1cf76b2ea3d6569eabd7360e694deda6ccbdcd77095b3e82ca0f90a3d8fd13a3e5d6b11cd29fe4649",
-	"aarch64": "88d6194a71a73e3934556028e2168c7bd1051aea28fe190cfd97226ff08e2697550927bc98a56270c90f3452401e3b1081b4d75d9a1283228e86e62f60ebdf0d",
+	"x86_64":  "3c400f72be459b57b99b1c4f69be96bcd67eef3caf2078e595fc98e688b6b9a3af7802646b3dde7da8a9aba96d34f86be303e0430c7868ab2d13becdd403c0c1",
+	"aarch64": "e829ca32eef36f4e960460a6dcb094d7945ab507e9bfe0275f09467ab9bfeb846528fddfd42349ad64bb4f5b02148e1065c06e573feb8f6a8b3f47efa30a7d2e",
 }
 
 // GVisorBaseURL is gVisor's release bucket.

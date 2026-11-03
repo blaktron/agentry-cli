@@ -32,7 +32,9 @@ type MessengerConn interface {
 type MessengerStart struct {
 	Kind  messenger.Kind
 	Token string
-	Peer  *messenger.Peer
+	// Server is the account's own server, where its kind has one.
+	Server string
+	Peer   *messenger.Peer
 	// Dir is a folder of the account's own; Log gets the role's errors.
 	Dir string
 	Log io.Writer
@@ -300,12 +302,12 @@ func (s *Supervisor) runMessengerRole(ctx context.Context, hub *messengerHub, r 
 		r.mu.Lock()
 		peer := r.peer
 		r.mu.Unlock()
-		conn, err := s.startMessengerConn(ctx, MessengerStart{Kind: r.kind, Token: token, Peer: peer, Dir: dir, Log: logf})
+		conn, err := s.startMessengerConn(ctx, MessengerStart{Kind: r.kind, Token: token, Server: m.Server, Peer: peer, Dir: dir, Log: logf})
 		if err != nil {
 			if ctx.Err() != nil {
 				return
 			}
-			why := maskValues(err.Error(), []string{token})
+			why := maskValues(err.Error(), messenger.CredentialParts(r.kind.Name, token))
 			r.setState(why)
 			if strings.Contains(why, messenger.TokenRefused) {
 				return
@@ -358,7 +360,7 @@ func (s *Supervisor) startMessengerConn(ctx context.Context, st MessengerStart) 
 		return nil, errors.New("this client starts no messenger")
 	}
 	l, err := engine.StartMessenger(ctx, s.opts.Docker, engine.MessengerParams{
-		Kind: st.Kind, Token: st.Token, Peer: st.Peer, Dir: st.Dir, Log: st.Log,
+		Kind: st.Kind, Token: st.Token, Server: st.Server, Peer: st.Peer, Dir: st.Dir, Log: st.Log,
 		Image: s.opts.Policy.RunnerImageTag(runnerimage.ContentVersion()), Policy: s.opts.Policy,
 	})
 	if err != nil {
@@ -696,7 +698,7 @@ func (s *Supervisor) messengerReply(r *messengerRole, chat, text string) {
 		s.logMessenger(messengerRecord{Messenger: kind, Direction: dirOut, Outcome: msgCapped, Reason: fmt.Sprintf("%d messages in the last hour", MaxMessengerSentAnHour)})
 		return
 	}
-	masked := maskValues(text, append(s.storedSecretValues(), token))
+	masked := maskValues(text, append(s.storedSecretValues(), messenger.CredentialParts(kind, token)...))
 	hub := s.hub()
 	var id uint64
 	if hub != nil {

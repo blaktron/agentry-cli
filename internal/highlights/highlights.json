@@ -1,6 +1,20 @@
 {
   "versions": [
     {
+      "version": "0.7.14",
+      "highlights": [
+        "Talk to a running persistent agent from Discord, Slack or Matrix as well as Telegram: agentry agent messenger add."
+      ]
+    },
+    {
+      "version": "0.7.13",
+      "highlights": [
+        "A persistent agent on Claude Code whose stored conversation is gone starts on a new one instead of failing.",
+        "agentry install --local over an unreadable installed.yaml installs and rewrites the record.",
+        "agentry --json run prints the failure envelope when a run fails before it has a result."
+      ]
+    },
+    {
       "version": "0.7.12",
       "highlights": [
         "agentry schedule add --check with --on says what a runhost's schedule would keep there, keeping nothing.",

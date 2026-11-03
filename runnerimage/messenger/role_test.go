@@ -116,12 +116,18 @@ func startRole(t *testing.T, bot *fakeBot, peer *Peer) *roleUnderTest {
 	t.Cleanup(func() { telegramPoll = old })
 	srv := httptest.NewServer(bot)
 	t.Cleanup(srv.Close)
+	return serveRole(t, srv.URL, Start{Kind: KindTelegram, Token: testToken, Peer: peer})
+}
+
+// serveRole runs Serve against the service at api, started with start.
+func serveRole(t *testing.T, api string, start Start) *roleUnderTest {
+	t.Helper()
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()
 	ctx, cancel := context.WithCancel(context.Background())
 	r := &roleUnderTest{in: inW, frames: make(chan FromRole, 64), done: make(chan error, 1), cancel: cancel}
 	go func() {
-		err := Serve(ctx, inR, outW, io.Discard, Config{API: srv.URL})
+		err := Serve(ctx, inR, outW, io.Discard, Config{API: api})
 		_ = outW.Close()
 		r.done <- err
 	}()
@@ -139,7 +145,7 @@ func startRole(t *testing.T, bot *fakeBot, peer *Peer) *roleUnderTest {
 		close(r.frames)
 	}()
 	t.Cleanup(func() { cancel(); _ = inW.Close() })
-	r.write(t, ToRole{Start: &Start{Kind: KindTelegram, Token: testToken, Peer: peer}})
+	r.write(t, ToRole{Start: &start})
 	return r
 }
 
@@ -340,11 +346,11 @@ func TestNormalizeCode(t *testing.T) {
 func TestCheckNamesTheBotAndRefusesAnotherShape(t *testing.T) {
 	srv := httptest.NewServer(&fakeBot{})
 	defer srv.Close()
-	got, err := Check(context.Background(), KindTelegram, "123456:"+strings.Repeat("A", 35), srv.URL)
+	got, err := Check(context.Background(), Credential{Kind: KindTelegram, Token: "123456:" + strings.Repeat("A", 35)}, srv.URL)
 	if err == nil {
 		t.Fatalf("Check took a token the service does not know: %+v", got)
 	}
-	if _, err := Check(context.Background(), KindTelegram, "not a token", srv.URL); err == nil || !strings.Contains(err.Error(), "BotFather") {
+	if _, err := Check(context.Background(), Credential{Kind: KindTelegram, Token: "not a token"}, srv.URL); err == nil || !strings.Contains(err.Error(), "BotFather") {
 		t.Fatalf("Check of a malformed token = %v", err)
 	}
 }

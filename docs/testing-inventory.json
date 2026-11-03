@@ -602,7 +602,9 @@
         {
           "path": "cmd/agentry/cmd_agent_messenger_test.go",
           "tests": [
-            "TestAgentMessengerAddPairListRemove"
+            "TestAgentMessengerAddPairListRemove",
+            "TestAgentMessengerAddSlackTakesBothTokens",
+            "TestAgentMessengerAddMatrixSignsInAndKeepsTheTokenAlone"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -1516,6 +1518,7 @@
           "path": "cmd/agentry/cmd_runhost_update_test.go",
           "tests": [
             "TestARunhostInstallsOnlyASignedNewerReleaseForItsArchitecture",
+            "TestAnUpdatePreparesTheNewCLIBeforeSwitchingToIt",
             "TestTheServiceRestartsOnlyOnceItsJobsFinish",
             "TestADeviceLeavesWithItsKeysAndTheCreditsItMinted",
             "TestARunKeyCannotSendAJobOrATokenForAnotherDevice",
@@ -6032,6 +6035,7 @@
           "path": "pkg/runner/engine/applinkrelay_test.go",
           "tests": [
             "TestTheAppLinkRelayCarriesCallsToTheSupervisor",
+            "TestTheAppLinkTransportLineSaysHowTheSupervisorIsReached",
             "TestTheAppLinkRelayCarriesNothingButToolCalls",
             "TestTheAppLinksMountFollowsTheTransport"
           ],
@@ -6096,7 +6100,9 @@
             "TestMessengerTokenReachesTheRoleAlone",
             "TestMessengerRoleEgressIsItsHosts",
             "TestMessengerRoleRunsUnderTheRuntimeWithTheHostsNameServers",
-            "TestARefusedMessengerTokenFailsTheStartAndRemovesEverything"
+            "TestARefusedMessengerTokenFailsTheStartAndRemovesEverything",
+            "TestAMessengerRolesFramesReachTheSupervisor",
+            "TestAMatrixRoleReachesItsHomeserverAlone"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -6104,6 +6110,7 @@
           "dependencyHints": [
             "docker interface (real or fake)",
             "HTTP transport",
+            "source/file contract",
             "real-time wait"
           ]
         },
@@ -6112,6 +6119,7 @@
           "tests": [
             "TestAPersistentClaudeSegmentNamesItsConversation",
             "TestAPersistentClaudeSegmentStartsAnewWhenItsConversationIsGone",
+            "TestAPersistentClaudeSegmentRemovesAHarnessThatOutlivesItsInput",
             "TestAPersistentClaudeSegmentTakesOnlyAConversationIDItsHarnessNames"
           ],
           "fuzz": [],
@@ -6133,6 +6141,7 @@
             "TestPersistentSegmentReceipts",
             "TestACarriedContextReachesTheHarnessAndNotTheUserTurn",
             "TestASegmentStartsANewConversationInItsRunningHarness",
+            "TestASegmentsConversationNotesAreMasked",
             "TestASegmentWhoseHarnessCannotCompactSaysSo",
             "TestTheTurnCountMovesAtEachTurnAndNewConversation"
           ],
@@ -6247,10 +6256,12 @@
             "TestAFailureBeforeTheContainersIsStagePrepare",
             "TestAgentNonZeroExitIsHarnessClass",
             "TestTurnBudgetKillsRun",
+            "TestCostBudgetKillsRun",
             "TestTimeoutKillsRun",
             "TestRunWithoutTimeoutHasNoAgentDeadlineAndRecordsZero",
             "TestJSONResultKindEnforced",
             "TestDeclaredServerThatDidNotStartFailsTheRun",
+            "TestTheToolsServerThatDidNotStartFailsTheRun",
             "TestDeclaredServerStartedRunsTheAgent",
             "TestReceiptNamesResolvedExecPackages",
             "TestRunInterruptedTearsDownAndWritesEnvelope",
@@ -6469,7 +6480,9 @@
             "TestSessionEndIsSafeToCallConcurrently",
             "TestSessionEnvelopeNamesThePolicyFile",
             "TestAnInputAddedAsATurnEndsGetsItsNoticeTurn",
-            "TestANoticeIsCarriedNotPutInThePersonsTurn"
+            "TestANoticeIsCarriedNotPutInThePersonsTurn",
+            "TestASessionOfAJSONPlanAsksForItsResultOnlyWhenFinished",
+            "TestASessionWhoseEventPumpPanicsEndsAndNamesIt"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -6632,7 +6645,8 @@
           "tests": [
             "TestACopilotModelListRunsInARunsContainer",
             "TestACopilotModelListRenewsAShortLivedToken",
-            "TestACopilotModelListRefusesWhatARunWould"
+            "TestACopilotModelListRefusesWhatARunWould",
+            "TestACopilotModelListSignInComesFromThePersonsStore"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -8124,7 +8138,8 @@
             "TestAMessengerEntryRendersAgree",
             "TestWrongCodesCloseThePairing",
             "TestAMessagePassedOnTwiceIsOneTurn",
-            "TestSwitchingAMessengerOffDropsItsWaitingMessages"
+            "TestSwitchingAMessengerOffDropsItsWaitingMessages",
+            "TestAMatrixMessengerNamesItsHomeserverAndNeedsOne"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -9966,17 +9981,72 @@
       "disposition": "retain",
       "files": [
         {
-          "path": "runnerimage/messenger/format_test.go",
+          "path": "runnerimage/messenger/check_test.go",
           "tests": [
-            "TestSplitRendersTelegramsHTML",
-            "TestSplitKeepsCodeBlocksAsTheyAre",
-            "TestSplitBoundsEveryPartAndTheirCount",
-            "TestSplitCutsALongLineWithoutLosingIt"
+            "TestCheckCredentialShapeKnowsEveryKind",
+            "TestASlackCredentialIsMaskedTokenByToken",
+            "TestAServersHostIsItsAddressOverTLS"
           ],
           "fuzz": [],
           "benchmarks": [],
           "fixtureEntryPoint": false,
           "dependencyHints": []
+        },
+        {
+          "path": "runnerimage/messenger/discord_test.go",
+          "tests": [
+            "TestDiscordSaysWhoTheBotIsAndAsksForDirectMessagesAlone",
+            "TestDiscordUnpairedSenderNeverReachesTheAgent",
+            "TestDiscordPassesThePairedPersonAndDropsAServerMessage",
+            "TestDiscordSendsMarkdownToThePairedPersonAlonePingingNoOne",
+            "TestDiscordIdentifiesAgainAfterTheGatewayCloses",
+            "TestDiscordRefusedTokenEndsTheRoleWithoutRepeatingIt",
+            "TestDiscordGatewayAuthenticationFailureIsARefusal"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "HTTP transport",
+            "real-time wait"
+          ]
+        },
+        {
+          "path": "runnerimage/messenger/format_test.go",
+          "tests": [
+            "TestSplitRendersTelegramsHTML",
+            "TestSplitKeepsCodeBlocksAsTheyAre",
+            "TestSplitBoundsEveryPartAndTheirCount",
+            "TestSplitCutsALongLineWithoutLosingIt",
+            "TestSplitAsWritesEachServicesFormat",
+            "TestSplitAsBoundsEveryFormatsParts",
+            "TestHTMLLineBreaksLeavesPreformattedBlocks"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
+          "path": "runnerimage/messenger/matrix_test.go",
+          "tests": [
+            "TestMatrixPassesThePairedPersonButNotWhatCameBefore",
+            "TestMatrixDropsAnEncryptedRoomAndAGroup",
+            "TestMatrixJoinsADirectInvitationOnlyWhileUnpaired",
+            "TestMatrixUnpairedSenderNeverReachesTheAgent",
+            "TestMatrixSendsHTMLAndPlainToThePairedRoomAlone",
+            "TestMatrixRefusedTokenEndsTheRoleWithoutRepeatingIt",
+            "TestMatrixStartNeedsTheAccountsServer",
+            "TestMatrixSendsNothingToAPairedRoomSomeoneElseJoined",
+            "TestMatrixBoundsTheRoomsAStrangerBringsItInto"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "HTTP transport",
+            "real-time wait"
+          ]
         },
         {
           "path": "runnerimage/messenger/role_test.go",
@@ -10001,6 +10071,48 @@
             "HTTP transport",
             "real-time wait"
           ]
+        },
+        {
+          "path": "runnerimage/messenger/slack_test.go",
+          "tests": [
+            "TestSlackSaysWhoTheAppIs",
+            "TestSlackPassesThePairedPersonAndAcknowledgesEveryEnvelope",
+            "TestSlackUnpairedSenderNeverReachesTheAgent",
+            "TestSlackSendsMrkdwnToThePairedPersonAlone",
+            "TestSlackConnectsAgainWhenAskedTo",
+            "TestSlackRefusedTokenEndsTheRoleWithoutRepeatingIt",
+            "TestSlackManifestAsksForDirectMessagesOverSocketModeAlone",
+            "TestSlackDialsNoSocketModeAddressOffItsHosts"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "HTTP transport",
+            "real-time wait"
+          ]
+        },
+        {
+          "path": "runnerimage/messenger/websocket_test.go",
+          "tests": [
+            "TestTheWebSocketRefusesWhatRFC6455Forbids",
+            "TestTheWebSocketAnswersAPingAndAPongKeepsItOpen"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "HTTP transport",
+            "real-time wait"
+          ]
+        },
+        {
+          "path": "runnerimage/messenger/wsserver_test.go",
+          "tests": [],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
         }
       ]
     },

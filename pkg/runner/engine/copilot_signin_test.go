@@ -105,9 +105,13 @@ func copilotPlanFixture(t *testing.T, srv *copilottest.Server) (Params, *dockerx
 func TestACopilotRunIsHandedItsTokenThroughTheCallbackAlone(t *testing.T) {
 	srv := &copilottest.Server{Turn: func(c *copilottest.Conn, prompt string) {
 		c.AskToken("refresh")
+		// Asked again with no refresh wanted, it is handed the renewed token it
+		// holds now, not renewed once more.
+		c.AskToken("initial")
 		c.ToolCall("c1", "write_report")
 		c.Event("assistant.usage", map[string]any{"inputTokens": 10, "outputTokens": 5})
-		c.Event("assistant.message", map[string]any{"content": "You said: " + prompt})
+		// Copilot CLI quotes the tokens it was handed in its answer.
+		c.Event("assistant.message", map[string]any{"content": "You said: " + prompt + " [" + copilotToken + " " + copilotRenewed + "]"})
 		c.Event("session.idle", map[string]any{})
 	}}
 	p, f, renewals := copilotPlanFixture(t, srv)
@@ -115,7 +119,7 @@ func TestACopilotRunIsHandedItsTokenThroughTheCallbackAlone(t *testing.T) {
 	if err != nil || env.Status != "ok" {
 		t.Fatalf("run: %v (%+v)", err, env)
 	}
-	if got := string(env.Result); !strings.Contains(got, "You said: the task text") {
+	if got := string(env.Result); !strings.Contains(got, "You said: the task text") || strings.Contains(got, copilotToken) || strings.Contains(got, copilotRenewed) {
 		t.Fatalf("result %s", got)
 	}
 	agent := agentCall(t, f)
@@ -123,7 +127,7 @@ func TestACopilotRunIsHandedItsTokenThroughTheCallbackAlone(t *testing.T) {
 		t.Fatalf("agent container %+v", agent)
 	}
 	_, _, toks, decisions, _ := srv.Snapshot()
-	if len(toks) != 2 || toks[0]["accessToken"] != copilotToken || toks[1]["accessToken"] != copilotRenewed || *renewals != 1 {
+	if len(toks) != 3 || toks[0]["accessToken"] != copilotToken || toks[1]["accessToken"] != copilotRenewed || toks[2]["accessToken"] != copilotRenewed || *renewals != 1 {
 		t.Fatalf("tokens %v, renewals %d", toks, *renewals)
 	}
 	if decisions["p-c1"]["kind"] != "approve-once" {
@@ -133,7 +137,8 @@ func TestACopilotRunIsHandedItsTokenThroughTheCallbackAlone(t *testing.T) {
 		!strings.HasPrefix(env.Harness.ImagePin, "artifact sha256:") {
 		t.Fatalf("receipt harness %+v", env.Harness)
 	}
-	if line := env.CapabilitiesEnforced["model.signIn"]; !strings.Contains(line, "hands the harness over its stdio") {
+	if line := env.CapabilitiesEnforced["model.signIn"]; !strings.Contains(line, "hands the harness over its stdio") || strings.Contains(line, "not renewed") ||
+		!strings.Contains(line, "then renewed first whenever the harness asks for a refresh") {
 		t.Fatalf("model.signIn %q", line)
 	}
 	if env.Usage.InputTokens != 10 || env.Usage.CostUSD != 0 {
@@ -192,20 +197,67 @@ func TestAnOrganizationsCopilotPolicyEndsTheRunWithThePolicyNamed(t *testing.T) 
 	if !strings.Contains(err.Error(), "Access denied by policy settings") || !strings.Contains(err.Error(), "policy for this client") {
 		t.Fatalf("the policy named: %v", err)
 	}
+
+	// Managed settings that want a person to approve each tool call refuse the
+	// run too, naming that policy and the tool.
+	managed := &copilottest.Server{Turn: func(c *copilottest.Conn, _ string) {
+		c.AskPermission("m1", map[string]any{"kind": "mcp", "serverName": "gateway", "toolName": "gateway-write_report", "managedApprovalRequired": true})
+	}}
+	p, f, _ = copilotPlanFixture(t, managed)
+	env, err = Run(context.Background(), f, p)
+	if !errors.As(err, &ce) || ce.Code != ExitPolicy || env.Reason == nil || env.Reason.Code != receipt.ReasonOrgPolicy ||
+		env.Reason.Detail != receipt.OrgPolicyManagedApproval {
+		t.Fatalf("want the managed-approval outcome, got %v (%+v)", err, env.Reason)
+	}
+	if !strings.Contains(err.Error(), "your organization's managed settings, which require a person to approve each tool call") ||
+		!strings.Contains(err.Error(), "the organization's managed settings require a person to approve write_report") {
+		t.Fatalf("the policy named: %v", err)
+	}
+
+	// The outcome words the policy that refused, and the vendor's words only
+	// when it gave some.
+	const advice = " at the model's vendor: ask its administrators, or pay with another account or an API key"
+	for _, c := range []struct {
+		policy, text, want string
+	}{
+		{"", "", "refused by a policy of your organization or enterprise" + advice},
+		{receipt.OrgPolicyClient, "", "refused by your organization's or enterprise's policy for this client (it is turned off for your account, or your account is barred from it)" + advice},
+		{receipt.OrgPolicyManagedApproval, "", "refused by your organization's managed settings, which require a person to approve each tool call; a run's tools are approved by the runner" + advice},
+		{"", "turned off", "refused by a policy of your organization or enterprise" + advice + "; the vendor said: turned off"},
+	} {
+		got := orgPolicyError(&adapter.Event{Policy: c.policy, Text: c.text})
+		var pe *ClassifiedError
+		if !errors.As(got, &pe) || pe.Code != ExitPolicy || got.Error() != c.want {
+			t.Errorf("orgPolicyError(%q, %q) = %v, want %q", c.policy, c.text, got, c.want)
+		}
+		if r := receipt.ReasonOf(got); r == nil || r.Code != receipt.ReasonOrgPolicy || r.Detail != c.policy {
+			t.Errorf("orgPolicyError(%q, %q): reason %+v", c.policy, c.text, r)
+		}
+	}
 }
 
 // Without a renewal from its caller the run's token is the one it was
 // given, and the receipt says it is not renewed.
 func TestACopilotRunWithoutARenewalSaysSo(t *testing.T) {
-	srv := &copilottest.Server{}
+	// Copilot CLI asks for a refresh all the same; with nothing to renew with,
+	// it is handed the token it was given again.
+	srv := &copilottest.Server{Turn: func(c *copilottest.Conn, prompt string) {
+		c.AskToken("refresh")
+		c.Event("assistant.message", map[string]any{"content": "You said: " + prompt})
+		c.Event("session.idle", map[string]any{})
+	}}
 	p, f, _ := copilotPlanFixture(t, srv)
 	p.RenewModelSignIn = nil
 	env, err := Run(context.Background(), f, p)
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || env.Status != "ok" {
+		t.Fatalf("run: %v (%+v)", err, env)
 	}
 	if line := env.CapabilitiesEnforced["model.signIn"]; !strings.Contains(line, "not renewed") {
 		t.Fatalf("model.signIn %q", line)
+	}
+	_, _, toks, _, _ := srv.Snapshot()
+	if len(toks) != 2 || toks[0]["accessToken"] != copilotToken || toks[1]["accessToken"] != copilotToken {
+		t.Fatalf("tokens handed over %v, want the given token each time", toks)
 	}
 }
 

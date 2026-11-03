@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -408,19 +409,23 @@ func TestProtocolReachesEveryEndReason(t *testing.T) {
 		closeInput bool
 		cancel     bool
 		wantCode   int
+		// wantErr is what the session's error says of the stop.
+		wantErr string
 	}{
 		{reason: session.EndFinished, commands: []string{`{"send":{"text":"hi"}}`, `{"end":{"finish":true}}`}, wantCode: ExitOK},
 		{reason: session.EndQuit, commands: []string{`{"send":{"text":"hi"}}`, `{"end":{"finish":false}}`}, wantCode: ExitOK},
 		{reason: session.EndQuit, commands: []string{`{"send":{"text":"hi"}}`}, closeInput: true, wantCode: ExitOK},
-		{reason: session.EndIdle, tune: func(p *Params, _ *fakeHarness) { p.Plan.Harness.Session.Budgets.IdleTimeoutSeconds = 1 }, wantCode: ExitTimeout},
-		{reason: session.EndWall, tune: func(p *Params, _ *fakeHarness) { p.Plan.Harness.Session.Budgets.MaxWallSeconds = 1 }, wantCode: ExitTimeout},
-		{reason: session.EndUserTurns, commands: []string{`{"send":{"text":"1"}}`, `{"send":{"text":"2"}}`, `{"send":{"text":"3"}}`, `{"send":{"text":"4"}}`}, wantCode: ExitBudget},
-		{reason: session.EndToolBudget, tune: func(p *Params, _ *fakeHarness) { p.Budgets.MaxTurns = 1 }, commands: []string{`{"send":{"text":"1"}}`, `{"send":{"text":"2"}}`}, wantCode: ExitBudget},
+		{reason: session.EndIdle, tune: func(p *Params, _ *fakeHarness) { p.Plan.Harness.Session.Budgets.IdleTimeoutSeconds = 1 }, wantCode: ExitTimeout, wantErr: "session idle for more than 1s"},
+		{reason: session.EndWall, tune: func(p *Params, _ *fakeHarness) { p.Plan.Harness.Session.Budgets.MaxWallSeconds = 1 }, wantCode: ExitTimeout, wantErr: "session exceeded 1s"},
+		{reason: session.EndUserTurns, commands: []string{`{"send":{"text":"1"}}`, `{"send":{"text":"2"}}`, `{"send":{"text":"3"}}`, `{"send":{"text":"4"}}`}, wantCode: ExitBudget, wantErr: "user-turn budget exceeded (3 turns)"},
+		{reason: session.EndToolBudget, tune: func(p *Params, _ *fakeHarness) { p.Budgets.MaxTurns = 1 }, commands: []string{`{"send":{"text":"1"}}`, `{"send":{"text":"2"}}`}, wantCode: ExitBudget, wantErr: "turn budget exceeded (1 tool calls)"},
 		{reason: session.EndCostBudget, tune: func(p *Params, h *fakeHarness) {
 			p.Budgets.MaxCostUSD = 1
 			h.usage = map[string]any{"used": 1262, "size": 0, "cost": map[string]any{"amount": 4.5, "currency": "USD"}}
-		}, commands: []string{`{"send":{"text":"1"}}`}, wantCode: ExitBudget},
-		{reason: session.EndHarness, tune: func(_ *Params, h *fakeHarness) { h.exitOnPrompt = true }, commands: []string{`{"send":{"text":"1"}}`}, wantCode: ExitHarness},
+		}, commands: []string{`{"send":{"text":"1"}}`}, wantCode: ExitBudget, wantErr: "cost budget exceeded (harness reported $4.5000, budget $1.00)"},
+		{reason: session.EndHarness, tune: func(_ *Params, h *fakeHarness) {
+			h.exitOnPrompt, h.exitErr = true, errors.New("the container was lost")
+		}, commands: []string{`{"send":{"text":"1"}}`}, wantCode: ExitHarness, wantErr: "agent exited before the session ended\nharness error: the container was lost"},
 		{reason: session.EndCancelled, cancel: true, wantCode: ExitCLI},
 	}
 	for _, tc := range cases {
@@ -474,6 +479,9 @@ func TestProtocolReachesEveryEndReason(t *testing.T) {
 					t.Errorf("Serve = %v, want exit class %d", d.err, tc.wantCode)
 				}
 			}
+			if tc.wantErr != "" && (d.err == nil || !strings.Contains(d.err.Error(), tc.wantErr)) {
+				t.Errorf("Serve = %v, want it to say %q", d.err, tc.wantErr)
+			}
 			assertTornDown(t, f)
 		})
 	}
@@ -502,24 +510,29 @@ func TestProtocolRefusesWithoutEndingTheSession(t *testing.T) {
 	refused := []struct {
 		line  string
 		class protocol.Refusal
+		// text is what the refusal says of the command.
+		text string
 	}{
-		{`this is not json`, protocol.RefusedMalformed},
-		{`["send"]`, protocol.RefusedMalformed},
-		{`{}`, protocol.RefusedMalformed},
-		{`{"stop":{}}`, protocol.RefusedUnknown},
-		{`{"send":{"text":"a"},"end":{"finish":false}}`, protocol.RefusedMalformed},
-		{`{"send":{"text":"  "}}`, protocol.RefusedMalformed},
-		{`{"send":{"text":"a","as":"system"}}`, protocol.RefusedMalformed},
-		{`{"send":null}`, protocol.RefusedMalformed},
-		{`{"end":{"finish":"yes"}}`, protocol.RefusedMalformed},
-		{`{"add":{"path":""}}`, protocol.RefusedMalformed},
-		{`{"send":{"text":"` + strings.Repeat("x", protocol.MaxLine) + `"}}`, protocol.RefusedMalformed},
+		{`this is not json`, protocol.RefusedMalformed, "one JSON object per line"},
+		{`["send"]`, protocol.RefusedMalformed, "one JSON object per line"},
+		{`{}`, protocol.RefusedMalformed, "exactly one command"},
+		{`{"stop":{}}`, protocol.RefusedUnknown, `unknown command "stop"`},
+		{`{"send":{"text":"a"},"end":{"finish":false}}`, protocol.RefusedMalformed, "exactly one command"},
+		{`{"send":{"text":"  "}}`, protocol.RefusedMalformed, "send needs a text"},
+		{`{"send":{"text":"a","as":"system"}}`, protocol.RefusedMalformed, `unknown field "as"`},
+		{`{"send":null}`, protocol.RefusedMalformed, "send needs its object"},
+		{`{"end":{"finish":"yes"}}`, protocol.RefusedMalformed, "end:"},
+		{`{"add":{"path":""}}`, protocol.RefusedMalformed, "add needs a path"},
+		{`{"send":{"text":"` + strings.Repeat("x", protocol.MaxLine) + `"}}`, protocol.RefusedMalformed, "at most"},
+		// A session that asks no questions has none to answer.
+		{`{"answer":{"id":"q1","yes":true}}`, protocol.RefusedAnswer, "asks no questions"},
+		{`{"answer":{"id":"  ","yes":true}}`, protocol.RefusedMalformed, "answer needs the question's id"},
 	}
 	for _, r := range refused {
 		d.send(r.line)
 		got := d.until(func(ev protocol.Event) bool { return ev.Refused != "" })
-		if last := got[len(got)-1]; last.Refused != r.class || last.Kind != session.KindError || last.Text == "" {
-			t.Errorf("%.60s: refused %+v, want class %s", r.line, last, r.class)
+		if last := got[len(got)-1]; last.Refused != r.class || last.Kind != session.KindError || !strings.Contains(last.Text, r.text) {
+			t.Errorf("%.60s: refused %+v, want class %s saying %q", r.line, last, r.class, r.text)
 		}
 	}
 
@@ -573,6 +586,54 @@ func TestProtocolRefusesWithoutEndingTheSession(t *testing.T) {
 		t.Errorf("a refusal reached the receipt: %s", b)
 	}
 	assertTornDown(t, f)
+
+	// The refusals are the protocol's own, made before the session is asked:
+	// a session that takes any file it is given never sees one the protocol
+	// refuses, and sees the one regular file directly in the inputs directory.
+	rec := &addRecorder{events: make(chan session.Event)}
+	d2 := serveProtocol(t, ctx, rec, protocol.Options{InputsDir: inputs})
+	for _, path := range adds {
+		d2.send(`{"add":{"path":` + jsonString(path) + `}}`)
+		if got := d2.until(func(ev protocol.Event) bool { return ev.Refused != "" }); got[len(got)-1].Refused != protocol.RefusedInput {
+			t.Errorf("add %s: %v, want input_refused", path, eventKinds(got))
+		}
+	}
+	regular := stagedInput(t, inputs, "regular.txt", "a regular file")
+	d2.send(`{"add":{"path":"regular.txt"}}`)
+	d2.send(`{"end":{"finish":false}}`)
+	d2.wait()
+	if got := rec.added(); !slices.Equal(got, []string{regular}) {
+		t.Errorf("the session was asked to add %q, want %q alone", got, regular)
+	}
+}
+
+// addRecorder is a session that takes every file it is asked to add and
+// remembers which, so a test sees what the protocol let through.
+type addRecorder struct {
+	events chan session.Event
+	mu     sync.Mutex
+	paths  []string
+}
+
+func (a *addRecorder) Events() <-chan session.Event       { return a.events }
+func (a *addRecorder) Send(context.Context, string) error { return nil }
+func (a *addRecorder) Ended() (bool, session.EndReason)   { return false, "" }
+func (a *addRecorder) AddInput(_ context.Context, path string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.paths = append(a.paths, path)
+	return nil
+}
+
+func (a *addRecorder) End(context.Context, bool) (*receipt.Envelope, error) {
+	close(a.events)
+	return &receipt.Envelope{Status: "ok"}, nil
+}
+
+func (a *addRecorder) added() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]string(nil), a.paths...)
 }
 
 // TestProtocolTakesNoFilesWithoutAnInputsDirectory: a driver that named no

@@ -159,8 +159,12 @@ func TestAReviewPlanRunsOnlyWithItsKey(t *testing.T) {
 	}
 	p, f := fixture(t)
 	p.Review = &ReviewRun{JevKey: testReviewKey}
-	if _, err := Run(context.Background(), f, p); err == nil {
-		t.Fatal("a plan without the review grant took a key")
+	var ce *ClassifiedError
+	if _, err := Run(context.Background(), f, p); !errors.As(err, &ce) || ce.Code != ExitCLI || !strings.Contains(err.Error(), "no review grant") {
+		t.Fatalf("a plan without the review grant took a key: %v", err)
+	}
+	if len(f.Calls) != 0 {
+		t.Fatalf("docker was called: %+v", f.Calls)
 	}
 	// A session refuses the grant whether the plan carries it or only the
 	// run brings a key.
@@ -199,6 +203,8 @@ func TestTheReviewLedgerIsStampedAndCounted(t *testing.T) {
 		`{"tool":"read_input","path":"pkg/logo.png","refused":"binary file"}`,
 		`{"tool":"ai_review","files":3,"notRead":1,"rubricHash":"sha256:r","findings":2,"verdict":"withheld","score":3,"model":"jev-1.13.0","requests":10,"inputTokens":5000}`,
 		`{"tool":"ai_review","files":3,"verdict":"not_scanned","failure":"timeout","requests":2,"inputTokens":100}`,
+		``,
+		`   `,
 		`{"verdict":"pass"`,
 	}, "\n") + "\n"
 	f.OnForeground = func(r dockerx.RunSpec) {
@@ -239,7 +245,8 @@ func TestTheReviewLedgerIsStampedAndCounted(t *testing.T) {
 		t.Fatalf("%+v", r)
 	}
 	line := env.CapabilitiesEnforced["review.aiReview"]
-	if !strings.Contains(line, "3 read, 1 passed, 1 withheld as flagged, 1 withheld as not scanned; 2 refused") ||
+	if !strings.Contains(line, "; judge jev-1.13.0, rubric sha256:r; each file and verdict is in receipts/"+ReviewLedgerFile) ||
+		!strings.Contains(line, "3 read, 1 passed, 1 withheld as flagged, 1 withheld as not scanned; 2 refused") ||
 		!strings.Contains(line, "1 rubric review(s) answered with 2 finding(s)") || !strings.Contains(line, toolsrv.ReviewHost+":443 alone") {
 		t.Fatalf("%q", line)
 	}
@@ -248,5 +255,23 @@ func TestTheReviewLedgerIsStampedAndCounted(t *testing.T) {
 	}
 	if !strings.Contains(env.CapabilitiesEnforced["review"], "never the package's text") || !strings.Contains(env.CapabilitiesEnforced["network"], toolsrv.ReviewHost) {
 		t.Fatalf("%v", env.CapabilitiesEnforced)
+	}
+
+	// A rendered tools spec with no review grant is not stamped with a ledger.
+	var bare toolsrv.Spec
+	if err := json.Unmarshal(b, &bare); err != nil {
+		t.Fatal(err)
+	}
+	bare.Review.Enabled = false
+	raw, err := json.Marshal(&bare)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "toolspec.json"), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := grantReview(dir, &ReviewRun{JevKey: testReviewKey}); err == nil || !strings.Contains(err.Error(), "has no review grant") {
+		t.Fatalf("a tools spec with no review grant: %v", err)
 	}
 }

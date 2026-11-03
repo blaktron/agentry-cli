@@ -24,6 +24,7 @@ func TestAProviderOutOfCreditsEndsTheRunWithItsReason(t *testing.T) {
 	f.Foreground["-agent"].Stdout = strings.Join([]string{
 		`{"type":"agent_choice","message":{"content":"working"}}`,
 		`{"type":"error","error":"POST \"https://openrouter.ai/api/v1/chat/completions\": 402 Payment Required {\"error\":{\"message\":\"Insufficient credits. Add more using https://openrouter.ai/settings/credits\",\"code\":402}}","code":"model_error"}`,
+		`{"type":"error","error":"POST \"https://openrouter.ai/api/v1/chat/completions\": 402 Payment Required again, from a retry","code":"model_error"}`,
 	}, "\n") + "\n"
 	f.Foreground["-agent"].ExitCode = 1
 	env, err := Run(context.Background(), f, p)
@@ -38,6 +39,12 @@ func TestAProviderOutOfCreditsEndsTheRunWithItsReason(t *testing.T) {
 	}
 	if env.Status != "error" || env.Reason == nil || env.Reason.Code != receipt.ReasonOutOfCredits {
 		t.Fatalf("envelope %s, reason %+v", env.Status, env.Reason)
+	}
+	// A run on the person's own account words it as the account's, quotes the
+	// provider's first refusal and not a later one.
+	if !strings.Contains(err.Error(), "the account that pays for them has no credits left") || strings.Contains(err.Error(), "Agentry credits") ||
+		strings.Contains(err.Error(), "from a retry") {
+		t.Fatalf("the outcome is worded %v", err)
 	}
 }
 
@@ -149,5 +156,14 @@ func TestAProviderOutOfCreditsEndsASession(t *testing.T) {
 	}
 	if last := get()[len(get())-1]; last.Kind != session.KindSessionEnd || last.Reason != session.EndOutOfCredits {
 		t.Fatalf("last event %+v", last)
+	}
+	said := false
+	for _, ev := range get() {
+		if ev.Kind == session.KindError && ev.Text == "out of credits: 402 Payment Required: insufficient_credits" {
+			said = true
+		}
+	}
+	if !said {
+		t.Fatalf("the session never said it ran out of credits: %+v", get())
 	}
 }
