@@ -121,9 +121,25 @@ func PutSchedule(ctx context.Context, c *runhost.Client, h runhost.ScheduleHeade
 		return info, err
 	}
 	if a.Code != 0 {
-		return info, errors.New(nonEmptyOr(a.Error, "the runhost did not keep the schedule"))
+		return info, &Refusal{Code: a.Code, Reason: nonEmptyOr(a.Error, "the runhost did not keep the schedule")}
 	}
 	return info, json.Unmarshal(a.Result, &info)
+}
+
+// TakesSchedules says whether the runhost takes schedules (its store's key
+// sealed by its systemd), as its status says, and why not.
+func TakesSchedules(ctx context.Context, c *runhost.Client) (bool, error) {
+	a, err := c.Ask(ctx, "status", nil, nil)
+	if err != nil {
+		return false, err
+	}
+	var st struct {
+		Capabilities map[string]bool `json:"capabilities"`
+	}
+	if a.Code != 0 || json.Unmarshal(a.Result, &st) != nil {
+		return false, errors.New(nonEmptyOr(a.Error, "the runhost did not say its status"))
+	}
+	return st.Capabilities["schedules"], nil
 }
 
 // Schedules lists the runhost's schedules.

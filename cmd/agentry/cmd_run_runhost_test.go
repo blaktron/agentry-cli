@@ -51,7 +51,7 @@ func startTestRunhost(t *testing.T, runKey ssh.PublicKey) (hostKey ssh.PublicKey
 		"schedule": runhostScheduleVerb,
 		"store":    runhostStoreVerb,
 		"status": func(_ context.Context, _ runhost.Request, _ io.Reader, fw *runhost.FrameWriter) (int, error) {
-			return 0, fw.Result(runhostStatus{Name: "lab", Jobs: runhostJobs()})
+			return 0, fw.Result(runhostStatus{Name: "lab", Jobs: runhostJobs(), Capabilities: map[string]bool{"schedules": runhostStoreSeals()}})
 		},
 	}}
 	l, err := svc.Listen()
