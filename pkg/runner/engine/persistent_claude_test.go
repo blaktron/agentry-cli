@@ -9,7 +9,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -25,15 +27,26 @@ import (
 // goneConversation is a stored conversation the fake Claude Code cannot find.
 const goneConversation = "0e9d0000-0000-4000-8000-00000000dead"
 
+// lingeringConversation is one the fake Claude Code cannot find either, but
+// answers as a Claude Code that goes on reading its input after the error
+// result does: it ends only when its stdin closes.
+const lingeringConversation = "0e9d0000-0000-4000-8000-0000000011e7"
+
 // playPersistentClaude is Claude Code's stream-json with session
 // persistence on: a --resume of a conversation it cannot find ends the
 // process at once with its error result, before reading anything, as
 // Claude Code 2.1.296 does; otherwise the initialize control request is
-// answered and each user line gets an answer and a result.
+// answered and each user line gets an answer and a result. A --resume of
+// lingeringConversation prints the same error result and then reads its
+// input until it closes, answering nothing.
 func playPersistentClaude(r dockerx.RunSpec, in io.Reader, out io.Writer) int {
-	if i := slices.Index(r.Argv, "--resume"); i >= 0 && i+1 < len(r.Argv) && r.Argv[i+1] == goneConversation {
+	if i := slices.Index(r.Argv, "--resume"); i >= 0 && i+1 < len(r.Argv) && (r.Argv[i+1] == goneConversation || r.Argv[i+1] == lingeringConversation) {
+		id := r.Argv[i+1]
 		sayLine(out, map[string]any{"type": "result", "subtype": "error_during_execution", "is_error": true,
-			"session_id": goneConversation, "errors": []string{"No conversation found with session ID: " + goneConversation}})
+			"session_id": id, "errors": []string{"No conversation found with session ID: " + id}})
+		if id == lingeringConversation {
+			_, _ = io.Copy(io.Discard, in)
+		}
 		return 1
 	}
 	sc := bufio.NewScanner(in)
@@ -199,21 +212,29 @@ func TestAPersistentClaudeSegmentNamesItsConversation(t *testing.T) {
 }
 
 // TestAPersistentClaudeSegmentStartsAnewWhenItsConversationIsGone: Claude
-// Code ending at its start because it cannot find the stored conversation
-// does not end the segment; the engine starts it again on a new
-// conversation, and the envelope says why in Claude Code's words.
+// Code failing at its start because it cannot find the stored conversation
+// does not end the segment, whether it then exits or goes on reading its
+// input; the engine starts it again on a new conversation, and the
+// envelope says why in Claude Code's words.
 func TestAPersistentClaudeSegmentStartsAnewWhenItsConversationIsGone(t *testing.T) {
-	p, f := persistentClaudeFixture(t, goneConversation)
+	for _, stored := range []string{goneConversation, lingeringConversation} {
+		t.Run(stored, func(t *testing.T) { startsAnewWhenGone(t, stored) })
+	}
+}
+
+func startsAnewWhenGone(t *testing.T, stored string) {
+	t.Helper()
+	p, f := persistentClaudeFixture(t, stored)
 	env, evs, ps := runSegment(t, p, f)
 	calls := agentCalls(f)
 	if len(calls) != 2 {
 		t.Fatalf("%d agent containers, want the refused one and its replacement", len(calls))
 	}
-	if flag, id := conversationFlag(t, calls[0]); flag != "--resume" || id != goneConversation {
+	if flag, id := conversationFlag(t, calls[0]); flag != "--resume" || id != stored {
 		t.Fatalf("first start %s %q", flag, id)
 	}
 	flag, id := conversationFlag(t, calls[1])
-	if flag != "--session-id" || id == goneConversation || uuid.Validate(id) != nil {
+	if flag != "--session-id" || id == stored || uuid.Validate(id) != nil {
 		t.Fatalf("second start %s %q", flag, id)
 	}
 	got, resumed, reason := ps.Conversation()
@@ -234,6 +255,46 @@ func TestAPersistentClaudeSegmentStartsAnewWhenItsConversationIsGone(t *testing.
 	}
 	if env.Status != "ok" && env.Status != "stopped" {
 		t.Errorf("the segment ended %q", env.Status)
+	}
+}
+
+// TestAPersistentClaudeSegmentRemovesAHarnessThatOutlivesItsInput: a Claude
+// Code that cannot find the stored conversation and does not exit when its
+// stdin closes is removed after the grace, and the segment starts again on
+// a new conversation.
+func TestAPersistentClaudeSegmentRemovesAHarnessThatOutlivesItsInput(t *testing.T) {
+	grace := notContinuedGrace
+	notContinuedGrace = 50 * time.Millisecond
+	t.Cleanup(func() { notContinuedGrace = grace })
+	p, f := persistentClaudeFixture(t, lingeringConversation)
+	removed := make(chan struct{})
+	var once sync.Once
+	f.OnRemoveForce = func(name string) {
+		if strings.HasSuffix(name, "-agent") {
+			once.Do(func() { close(removed) })
+		}
+	}
+	f.Foreground["-agent"] = &dockerx.FakeForeground{Handler: func(_ context.Context, r dockerx.RunSpec, stdin io.Reader, stdout, _ io.Writer) (int, error) {
+		if i := slices.Index(r.Argv, "--resume"); i >= 0 && r.Argv[i+1] == lingeringConversation {
+			sayLine(stdout, map[string]any{"type": "result", "subtype": "error_during_execution", "is_error": true,
+				"session_id": lingeringConversation, "errors": []string{"No conversation found with session ID: " + lingeringConversation}})
+			_, _ = io.Copy(io.Discard, stdin)
+			<-removed
+			return 137, nil
+		}
+		return playPersistentClaude(r, stdin, stdout), nil
+	}}
+	_, _, ps := runSegment(t, p, f)
+	calls := agentCalls(f)
+	if len(calls) != 2 {
+		t.Fatalf("%d agent containers, want the removed one and its replacement", len(calls))
+	}
+	flag, id := conversationFlag(t, calls[1])
+	if flag != "--session-id" || id == lingeringConversation {
+		t.Fatalf("second start %s %q", flag, id)
+	}
+	if got, resumed, reason := ps.Conversation(); got != id || resumed || !strings.Contains(reason, "No conversation found") {
+		t.Errorf("conversation = %q %v %q", got, resumed, reason)
 	}
 }
 
