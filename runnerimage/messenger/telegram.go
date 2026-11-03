@@ -43,27 +43,19 @@ type telegram struct {
 	token  string
 	poll   time.Duration
 	client *http.Client
+	// offset is the update after the last one passed on.
+	offset int64
 }
 
 // newTelegram is a client for the bot whose token is token, reaching base
 // through proxy (an http:// CONNECT proxy, or "" for none).
 func newTelegram(base, token, proxy string) (*telegram, error) {
 	poll := telegramPoll
-	tr := &http.Transport{
-		ForceAttemptHTTP2:     true,
-		TLSHandshakeTimeout:   15 * time.Second,
-		ResponseHeaderTimeout: poll + telegramSlack,
-		IdleConnTimeout:       90 * time.Second,
-		MaxIdleConns:          4,
+	c, err := newHTTPClient(proxy, poll+telegramSlack)
+	if err != nil {
+		return nil, err
 	}
-	if proxy != "" {
-		u, err := url.Parse(proxy)
-		if err != nil || u.Scheme != "http" || u.Host == "" {
-			return nil, fmt.Errorf("the relay's address %q is not an http:// proxy", proxy)
-		}
-		tr.Proxy = http.ProxyURL(u)
-	}
-	return &telegram{base: strings.TrimRight(base, "/"), token: token, poll: poll, client: &http.Client{Transport: tr}}, nil
+	return &telegram{base: strings.TrimRight(base, "/"), token: token, poll: poll, client: c}, nil
 }
 
 // TelegramError is the Bot API's refusal of a request.
@@ -78,12 +70,23 @@ func (e *TelegramError) Error() string {
 	return fmt.Sprintf("Telegram refused %s (%d): %s", e.Method, e.Code, e.Description)
 }
 
+func (e *TelegramError) retryAfter() time.Duration {
+	return time.Duration(e.RetryAfter) * time.Second
+}
+
 // TokenRefused begins the error of a credential the service does not know,
 // in the role's state and in Serve's error alike.
 const TokenRefused = "the service refused the account's credential"
 
-// errTokenRefused says Telegram does not know the bot's token.
-var errTokenRefused = errors.New(TokenRefused + ": Telegram does not know the bot's token, which was revoked or is not a bot token from BotFather")
+// errTokenRefused is a credential the service does not take; each kind's
+// refusal wraps it with why.
+var errTokenRefused = errors.New(TokenRefused)
+
+// refused is errTokenRefused, with why.
+func refused(why string) error { return fmt.Errorf("%w: %s", errTokenRefused, why) }
+
+// errTelegramRefused says Telegram does not know the bot's token.
+var errTelegramRefused = refused("Telegram does not know the bot's token, which was revoked or is not a bot token from BotFather")
 
 type telegramAnswer struct {
 	OK          bool            `json:"ok"`
@@ -123,7 +126,7 @@ func (t *telegram) call(ctx context.Context, method string, params, out any, tim
 	}
 	if !a.OK {
 		if a.ErrorCode == http.StatusUnauthorized || a.ErrorCode == http.StatusNotFound {
-			return errTokenRefused
+			return errTelegramRefused
 		}
 		return &TelegramError{Method: method, Code: a.ErrorCode, Description: t.scrub(a.Description), RetryAfter: a.Parameters.RetryAfter}
 	}
@@ -217,13 +220,64 @@ func unparsable(err error) bool {
 	return errors.As(err, &te) && te.Code == http.StatusBadRequest && strings.Contains(strings.ToLower(te.Description), "parse")
 }
 
-// retryAfter is how long Telegram asked the role to wait, or 0.
-func retryAfter(err error) time.Duration {
-	var te *TelegramError
-	if errors.As(err, &te) && te.RetryAfter > 0 {
-		return time.Duration(te.RetryAfter) * time.Second
+func id(n int64) string { return strconv.FormatInt(n, 10) }
+
+// The client: getMe to connect, a long poll of getUpdates to listen, and
+// sendMessage and sendChatAction to answer.
+
+func (t *telegram) connect(ctx context.Context) (Ready, error) {
+	me, err := t.getMe(ctx)
+	if err != nil {
+		return Ready{}, err
 	}
-	return 0
+	name := me.FirstName
+	if me.Username != "" {
+		name = "@" + me.Username
+	}
+	return Ready{Account: id(me.ID), Name: name}, nil
 }
 
-func id(n int64) string { return strconv.FormatInt(n, 10) }
+func (t *telegram) listen(ctx context.Context, r *role) error {
+	for ctx.Err() == nil {
+		us, err := t.getUpdates(ctx, t.offset)
+		if err != nil {
+			var te *TelegramError
+			if errors.As(err, &te) && te.Code == http.StatusConflict {
+				return fmt.Errorf("another program is reading this bot's messages (a second copy of this agent, or a webhook set on the bot): %w", err)
+			}
+			return err
+		}
+		r.up()
+		for _, u := range us {
+			if u.UpdateID >= t.offset {
+				t.offset = u.UpdateID + 1
+			}
+			if m := u.Message; m != nil {
+				msg := message{id: m.MessageID, chat: id(m.Chat.ID), direct: m.Chat.Type == "private" && m.From != nil, text: m.Text}
+				if m.From != nil {
+					msg.sender, msg.bot = id(m.From.ID), m.From.IsBot
+				}
+				if m.Date > 0 {
+					msg.at = time.Unix(m.Date, 0)
+				}
+				if cmd := strings.Fields(m.Text); len(cmd) > 0 && (cmd[0] == "/start" || strings.HasPrefix(cmd[0], "/start@")) {
+					msg.command = true
+				}
+				r.pass(msg)
+			}
+		}
+	}
+	return ctx.Err()
+}
+
+// send sends a part as Telegram's HTML, plain where Telegram cannot parse
+// its HTML.
+func (t *telegram) send(ctx context.Context, chat string, p Part) error {
+	err := t.sendMessage(ctx, chat, p.Rich, true)
+	if unparsable(err) {
+		err = t.sendMessage(ctx, chat, p.Plain, false)
+	}
+	return err
+}
+
+func (t *telegram) typing(ctx context.Context, chat string) error { return t.sendTyping(ctx, chat) }

@@ -467,3 +467,42 @@ func TestAMessengerRolesFramesReachTheSupervisor(t *testing.T) {
 		t.Errorf("a frame after the two: %+v", fr)
 	}
 }
+
+func TestAMatrixRoleReachesItsHomeserverAlone(t *testing.T) {
+	var start messenger.Start
+	f := &dockerx.Fake{Foreground: map[string]*dockerx.FakeForeground{
+		"-messenger": {Handler: func(ctx context.Context, _ dockerx.RunSpec, stdin io.Reader, stdout, _ io.Writer) (int, error) {
+			sc := bufio.NewScanner(stdin)
+			if !sc.Scan() {
+				return 1, nil
+			}
+			fr, err := messenger.ReadToRole(sc.Bytes())
+			if err != nil || fr.Start == nil {
+				return 1, err
+			}
+			start = *fr.Start
+			_ = messenger.NewWriter(stdout).Write(messenger.FromRole{Ready: &messenger.Ready{Account: "@agent:example.org"}})
+			<-ctx.Done()
+			return 0, nil
+		}},
+	}}
+	k, _ := messenger.Lookup(messenger.KindMatrix)
+	if _, err := StartMessenger(context.Background(), f, MessengerParams{Kind: k, Token: messengerTestToken, Image: "agentry-runner:test", Dir: t.TempDir()}); err == nil {
+		t.Fatal("a Matrix role started with no homeserver")
+	}
+	l, err := StartMessenger(context.Background(), f, MessengerParams{Kind: k, Token: messengerTestToken, Server: "https://matrix.example.org", Image: "agentry-runner:test", Dir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close(context.Background())
+	for _, r := range runsOf(f) {
+		if strings.HasSuffix(r.Name, "-messenger-relay") {
+			if want := []string{"proxy", "--allow", "matrix.example.org:443", "--public-only", "--addr", ":3128"}; !slices.Equal(r.Argv, want) {
+				t.Errorf("relay argv = %v, want %v", r.Argv, want)
+			}
+		}
+	}
+	if start.Kind != messenger.KindMatrix || start.Server != "https://matrix.example.org" {
+		t.Fatalf("start = %+v, want the kind and its homeserver", start)
+	}
+}

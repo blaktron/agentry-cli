@@ -7,11 +7,13 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/persistent"
@@ -23,33 +25,59 @@ const agentMessengerLong = "A messenger lets you talk to a persistent agent from
 	"from this computer: each message you send there becomes a turn of the\n" +
 	"agent's conversation, as in Agentry, and its answer comes back there. The\n" +
 	"Assistant, the Coding agent and the persistent agents you install can each\n" +
-	"have one; the agent must be running (agentry agent start) to answer.\n\n" +
+	"have one of each kind; the agent must be running (agentry agent start) to\n" +
+	"answer.\n\n" +
 	"Telegram, through a bot of your own:\n" +
 	"  1. In Telegram, open @BotFather, send /newbot and choose a name and a\n" +
 	"     username ending in \"bot\". BotFather answers with the bot's token.\n" +
-	"  2. agentry agent messenger add assistant telegram, and paste the token.\n" +
-	"     It is checked with Telegram, kept in your system keychain, and asks\n" +
-	"     you to agree to what Telegram carries.\n" +
-	"  3. agentry agent messenger pair assistant telegram shows a code: send it\n" +
-	"     to your bot from your own Telegram account within 10 minutes.\n\n" +
+	"  2. agentry agent messenger add assistant telegram, and paste the token.\n\n" +
+	"Discord, through a bot of your own:\n" +
+	"  1. In Discord's developer portal (discord.com/developers), make an\n" +
+	"     application; on its Bot page, reset and copy the bot's token.\n" +
+	"  2. On its Installation page, add the bot to a server of yours (scope\n" +
+	"     bot, no permission), so you can open a direct message with it.\n" +
+	"  3. agentry agent messenger add assistant discord, and paste the token.\n\n" +
+	"Slack, through an app of your own in your workspace:\n" +
+	"  1. agentry agent messenger manifest slack prints an app manifest. At\n" +
+	"     api.slack.com/apps, create an app from it and install it.\n" +
+	"  2. Copy the bot's token (xoxb-, OAuth & Permissions) and make an\n" +
+	"     app-level token with connections:write (xapp-, Basic Information).\n" +
+	"  3. agentry agent messenger add assistant slack, and paste both.\n\n" +
+	"Matrix, through an account of its own on any homeserver:\n" +
+	"  1. Make an account for the agent, on your homeserver or another.\n" +
+	"  2. agentry agent messenger add assistant matrix --homeserver\n" +
+	"     https://matrix.example.org --user @agent:example.org, and type its\n" +
+	"     password: Agentry signs in once and keeps the session's access\n" +
+	"     token, never the password. Without --user, paste an access token.\n" +
+	"  3. Start a direct chat with that account, with encryption off: the\n" +
+	"     agent's account holds no encryption keys, so it cannot read an\n" +
+	"     encrypted chat, and your homeserver can read this one. The\n" +
+	"     homeserver must be on a public address: the messenger's container\n" +
+	"     reaches public addresses alone.\n\n" +
+	"Then pair it: agentry agent messenger pair assistant <messenger> shows a\n" +
+	"code; send it to the account from your own within 10 minutes. Each\n" +
+	"credential is checked with its service, kept in your system keychain, and\n" +
+	"adding it asks you to agree to what the service carries.\n\n" +
 	"Only the account that sent the code reaches the agent; anyone else who\n" +
-	"writes to the bot is ignored and never answered. Telegram does not encrypt\n" +
-	"bot conversations end to end, so Telegram can read them. Send /stop to stop\n" +
-	"what the agent is doing. Nothing is approved from a messenger: what the agent\n" +
-	"asks your agreement to waits for you in Agentry. A message sent while the\n" +
-	"agent answers another waits, and the waiting ones go together as its next\n" +
-	"turn. One bot reaches one agent: give each agent a bot of its own.\n\n" +
-	"The bot's token stays in your keychain; Agentry hands it to one container of\n" +
-	"its own alone, which reaches api.telegram.org and nothing else, and the agent\n" +
-	"is never given it. A messenger is a\n" +
-	"roster entry, switched with agentry agent grant <name> messenger:telegram\n" +
-	"on|off, which starts or stops it at once. The runner policy's\n" +
-	"allowMessengers and messengerKinds can refuse messengers on this computer.\n\n" +
+	"writes to it is ignored and never answered, and so is every group, server\n" +
+	"channel and Slack channel. None of these services encrypts a bot's\n" +
+	"conversation end to end, so each can read it. Send /stop to stop what the\n" +
+	"agent is doing. Nothing is approved from a messenger: what the agent asks\n" +
+	"your agreement to waits for you in Agentry. A message sent while the agent\n" +
+	"answers another waits, and the waiting ones go together as its next turn.\n" +
+	"One account reaches one agent: give each agent its own.\n\n" +
+	"The credential stays in your keychain; Agentry hands it to one container of\n" +
+	"its own alone, which reaches that service's hosts and nothing else, and the\n" +
+	"agent is never given it. A messenger is a roster entry, switched with\n" +
+	"agentry agent grant <name> messenger:<messenger> on|off, which starts or\n" +
+	"stops it at once. The runner policy's allowMessengers and messengerKinds\n" +
+	"can refuse messengers on this computer.\n\n" +
 	"  agentry agent messenger add assistant telegram < token.txt\n" +
 	"  agentry agent messenger pair assistant telegram\n" +
 	"  agentry agent messenger list assistant\n" +
 	"  agentry agent messenger test assistant telegram\n" +
-	"  agentry agent messenger remove assistant telegram"
+	"  agentry agent messenger remove assistant telegram\n" +
+	"  agentry agent messenger manifest slack"
 
 // messengerAPI is the messengers' address for add and test: the service's
 // own, but in a test.
@@ -61,7 +89,7 @@ func newAgentMessengerCmd() *cobra.Command {
 		Short: "Add, pair, list, test and remove the messengers a persistent agent is reached on",
 		Long:  agentMessengerLong,
 	}
-	cmd.AddCommand(newAgentMessengerAddCmd(), newAgentMessengerPairCmd(), newAgentMessengerListCmd(), newAgentMessengerTestCmd(), newAgentMessengerRemoveCmd())
+	cmd.AddCommand(newAgentMessengerAddCmd(), newAgentMessengerPairCmd(), newAgentMessengerListCmd(), newAgentMessengerTestCmd(), newAgentMessengerRemoveCmd(), newAgentMessengerManifestCmd())
 	return cmd
 }
 
@@ -92,8 +120,54 @@ func homeMessengerAllowed(home string) func(string) (bool, string) {
 	return pol.MessengerAllowed
 }
 
+// readMessengerCredential reads an account's credential the way its kind
+// gives it: a Slack app's two tokens, a Matrix account's access token or,
+// with user, its password, which signs in once on server and is never kept;
+// any other kind's one token.
+func readMessengerCredential(cmd *cobra.Command, k messenger.Kind, server, user string) (string, error) {
+	switch {
+	case k.Name == messenger.KindSlack:
+		in := cmd.InOrStdin()
+		if f, ok := in.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
+			app, err := readSecretValue(cmd, "Slack app-level token (xapp-)", "the app-level token")
+			if err != nil {
+				return "", err
+			}
+			bot, err := readSecretValue(cmd, "Slack bot token (xoxb-)", "the bot's token")
+			if err != nil {
+				return "", err
+			}
+			return app + " " + bot, nil
+		}
+		// From a file or a pipe: both tokens, on one line or two.
+		b, err := io.ReadAll(io.LimitReader(in, persistent.MaxSecretBytes+3))
+		if err != nil {
+			return "", fmt.Errorf("read the tokens from stdin: %w", err)
+		}
+		app, bot, err := messenger.SlackTokens(string(b))
+		if err != nil {
+			return "", err
+		}
+		return app + " " + bot, nil
+	case k.Name == messenger.KindMatrix && user != "":
+		password, err := readSecretValue(cmd, "Password of "+user, "the password")
+		if err != nil {
+			return "", err
+		}
+		ctx, cancel := context.WithTimeout(cmd.Context(), time.Minute)
+		defer cancel()
+		api := server
+		if messengerAPI != "" {
+			api = messengerAPI
+		}
+		return messenger.MatrixLogin(ctx, api, user, password)
+	}
+	return readSecretValue(cmd, k.Title+" "+k.Account+" token", "the "+k.Account+"'s token")
+}
+
 func newAgentMessengerAddCmd() *cobra.Command {
 	var yes bool
+	var server, user string
 	cmd := &cobra.Command{
 		Use:   "add <name> <messenger>",
 		Short: "Add a messenger account to a persistent agent, or set its credential again",
@@ -110,7 +184,18 @@ func newAgentMessengerAddCmd() *cobra.Command {
 			if ok, why := homeMessengerAllowed(home)(k.Name); !ok {
 				return engine.Classify(engine.ExitUsage, fmt.Errorf("%s: %s", k.Title, why))
 			}
-			token, err := readSecretValue(cmd, k.Title+" "+k.Account+" token", "the "+k.Account+"'s token")
+			if k.NamesServer {
+				if _, err := messenger.ServerHost(server); err != nil || !strings.HasPrefix(server, "https://") {
+					if err == nil {
+						err = fmt.Errorf("%q is not https://: a homeserver is reached over TLS", server)
+					}
+					return engine.Classify(engine.ExitUsage, fmt.Errorf("--homeserver: %w", err))
+				}
+				server = strings.TrimRight(server, "/")
+			} else if server != "" || user != "" {
+				return engine.Classify(engine.ExitUsage, fmt.Errorf("--homeserver and --user are for a Matrix account, not %s", k.Title))
+			}
+			token, err := readMessengerCredential(cmd, k, server, user)
 			if err != nil {
 				return engine.Classify(engine.ExitUsage, err)
 			}
@@ -122,9 +207,9 @@ func newAgentMessengerAddCmd() *cobra.Command {
 			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), time.Minute)
 			defer cancel()
-			ready, err := messenger.Check(ctx, k.Name, token, messengerAPI)
+			ready, err := messenger.Check(ctx, messenger.Credential{Kind: k.Name, Token: token, Server: server}, messengerAPI)
 			if err != nil {
-				return engine.Classify(engine.ExitUsage, fmt.Errorf("%s did not take the token: %w", k.Title, err))
+				return engine.Classify(engine.ExitUsage, fmt.Errorf("%s did not take the credential: %w", k.Title, err))
 			}
 			if other := persistent.MessengerAccountOf(home, k.Name, ready.Account); other != "" && other != a.Name {
 				return engine.Classify(engine.ExitUsage, fmt.Errorf("%s is the %s agent's %s %s: one %s reaches one agent, so make another for this one", ready.Name, other, k.Title, k.Account, k.Account))
@@ -134,7 +219,7 @@ func newAgentMessengerAddCmd() *cobra.Command {
 			if err := agentSecrets.Set(account, token); err != nil {
 				return engine.Classify(engine.ExitCLI, err)
 			}
-			m := persistent.MessengerAccount{Kind: k.Name, Account: ready.Account, Name: ready.Name, Set: time.Now().UTC()}
+			m := persistent.MessengerAccount{Kind: k.Name, Account: ready.Account, Name: ready.Name, Server: server, Set: time.Now().UTC()}
 			r, running, err := configureAgent(cmd, home, a, persistent.Change{SetMessenger: &m}, yes)
 			if err != nil {
 				if previous != "" {
@@ -151,13 +236,62 @@ func newAgentMessengerAddCmd() *cobra.Command {
 				}{a.Name, m})
 			}
 			w := cmd.OutOrStdout()
-			_, _ = fmt.Fprintf(w, "%s took the token of %s, now kept in your system keychain.\n", k.Title, safeTerminalText(ready.Name, 80))
+			_, _ = fmt.Fprintf(w, "%s took the credential of %s, now kept in your system keychain.\n", k.Title, safeTerminalText(ready.Name, 80))
 			printChangedMessenger(w, a, r, running)
 			_, _ = fmt.Fprintf(w, "Next, pair your own %s account: agentry agent messenger pair %s %s\n", k.Title, a.Name, k.Name)
 			return nil
 		},
 	}
 	cmd.Flags().BoolVar(&yes, "yes", false, "agree to what the messenger carries without being asked")
+	cmd.Flags().StringVar(&server, "homeserver", "", "a Matrix account's homeserver, as https://matrix.example.org")
+	cmd.Flags().StringVar(&user, "user", "", "a Matrix account's user id, to sign in with its password instead of pasting an access token")
+	return cmd
+}
+
+// pairHint says where the person sends the pairing code from.
+func pairHint(k messenger.Kind, acct persistent.MessengerAccount) string {
+	name := safeTerminalText(acct.Name, 80)
+	switch k.Name {
+	case messenger.KindDiscord:
+		return "From your own Discord account, open a direct message with " + name + " (from its profile, in a server you share) and send"
+	case messenger.KindSlack:
+		return "In Slack, open " + name + " under Apps, and in its Messages tab send"
+	case messenger.KindMatrix:
+		return "From your own Matrix account, start a direct chat with " + name + ", with encryption off, and send"
+	}
+	return "From your own " + k.Title + " account, send " + name
+}
+
+// removeHint says how the account itself is deleted on its service.
+func removeHint(k messenger.Kind) string {
+	switch k.Name {
+	case messenger.KindTelegram:
+		return " (BotFather's /deletebot)"
+	case messenger.KindDiscord:
+		return " (the application, in the developer portal)"
+	case messenger.KindSlack:
+		return " (the app, at api.slack.com/apps)"
+	case messenger.KindMatrix:
+		return " (its session too, in your Matrix client's sessions)"
+	}
+	return ""
+}
+
+func newAgentMessengerManifestCmd() *cobra.Command {
+	var name string
+	cmd := &cobra.Command{
+		Use:   "manifest slack",
+		Short: "Print the Slack app manifest to create a messenger's app from",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !strings.EqualFold(args[0], messenger.KindSlack) {
+				return engine.Classify(engine.ExitUsage, fmt.Errorf("only Slack's app is made from a manifest; %q needs none", args[0]))
+			}
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), messenger.SlackManifest(name))
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&name, "name", "Agentry", "the app's name, as Slack shows it")
 	return cmd
 }
 
@@ -215,8 +349,8 @@ func newAgentMessengerPairCmd() *cobra.Command {
 				}{a.Name, k.Name, code, p.Until, running})
 			}
 			w := cmd.OutOrStdout()
-			_, _ = fmt.Fprintf(w, "From your own %s account, send this code to %s before %s:\n\n    %s\n\n",
-				k.Title, safeTerminalText(acct.Name, 80), p.Until.Local().Format("15:04"), persistent.FormatPairingCode(code))
+			_, _ = fmt.Fprintf(w, "%s this code before %s:\n\n    %s\n\n",
+				pairHint(k, acct), p.Until.Local().Format("15:04"), persistent.FormatPairingCode(code))
 			if !running {
 				_, _ = fmt.Fprintf(w, "The %s agent is not running, and takes the code only while it runs: start it now (agentry agent start %s).\n", a.Name, a.Name)
 			}
@@ -284,7 +418,7 @@ func newAgentMessengerListCmd() *cobra.Command {
 // printMessengers prints an agent's messengers, one a line.
 func printMessengers(w io.Writer, a persistent.Agent, ms []persistent.MessengerState) {
 	if len(ms) == 0 {
-		_, _ = fmt.Fprintf(w, "The %s agent has no messenger: agentry agent messenger add %s telegram\n", a.Name, a.Name)
+		_, _ = fmt.Fprintf(w, "The %s agent has no messenger: agentry agent messenger add %s <%s>\n", a.Name, a.Name, strings.Join(messenger.Names(), "|"))
 		return
 	}
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
@@ -337,25 +471,26 @@ func newAgentMessengerTestCmd() *cobra.Command {
 			}
 			token, err := agentSecrets.Get(persistent.MessengerKeychainAccount(a.Name, k.Name))
 			if err != nil {
-				return engine.Classify(engine.ExitUsage, fmt.Errorf("the %s token is not in your keychain (%v): agentry agent messenger add %s %s", k.Title, err, a.Name, k.Name))
+				return engine.Classify(engine.ExitUsage, fmt.Errorf("the %s credential is not in your keychain (%v): agentry agent messenger add %s %s", k.Title, err, a.Name, k.Name))
 			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), time.Minute)
 			defer cancel()
-			ready, err := messenger.Check(ctx, k.Name, token, messengerAPI)
+			cred := messenger.Credential{Kind: k.Name, Token: token, Server: acct.Server}
+			ready, err := messenger.Check(ctx, cred, messengerAPI)
 			if err != nil {
-				return engine.Classify(engine.ExitUsage, fmt.Errorf("%s did not take the token: %w", k.Title, err))
+				return engine.Classify(engine.ExitUsage, fmt.Errorf("%s did not take the credential: %w", k.Title, err))
 			}
 			w := cmd.OutOrStdout()
 			if ready.Account != acct.Account {
-				return engine.Classify(engine.ExitUsage, fmt.Errorf("the token in your keychain is %s's, not %s's: add it again", ready.Name, acct.Name))
+				return engine.Classify(engine.ExitUsage, fmt.Errorf("the credential in your keychain is %s's, not %s's: add it again", ready.Name, acct.Name))
 			}
-			_, _ = fmt.Fprintf(w, "%s takes the token of %s.\n", k.Title, safeTerminalText(ready.Name, 80))
+			_, _ = fmt.Fprintf(w, "%s takes the credential of %s.\n", k.Title, safeTerminalText(ready.Name, 80))
 			if acct.Peer == nil {
 				_, _ = fmt.Fprintf(w, "No account is paired, so no test message was sent: agentry agent messenger pair %s %s\n", a.Name, k.Name)
 				return nil
 			}
 			msg := "A test from Agentry on your computer: this " + k.Account + " reaches you. The agent did not write this."
-			if err := messenger.SendTest(ctx, k.Name, token, messengerAPI, acct.Peer.Chat, msg); err != nil {
+			if err := messenger.SendTest(ctx, cred, messengerAPI, acct.Peer.Chat, msg); err != nil {
 				return engine.Classify(engine.ExitUsage, fmt.Errorf("the test message was not sent: %w", err))
 			}
 			_, _ = fmt.Fprintf(w, "Sent a test message to your paired %s account.\n", k.Title)
@@ -392,7 +527,7 @@ func newAgentMessengerRemoveCmd() *cobra.Command {
 				}{a.Name, k.Name})
 			}
 			w := cmd.OutOrStdout()
-			_, _ = fmt.Fprintf(w, "Removed %s from the %s agent and its token from your keychain. The %s itself is still yours on %s: delete it there (BotFather's /deletebot) if you no longer want it.\n", k.Title, a.Name, k.Account, k.Title)
+			_, _ = fmt.Fprintf(w, "Removed %s from the %s agent and its credential from your keychain. The %s itself is still yours on %s: delete it there%s if you no longer want it.\n", k.Title, a.Name, k.Account, k.Title, removeHint(k))
 			printChangedMessenger(w, a, r, running)
 			return nil
 		},

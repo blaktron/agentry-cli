@@ -37,6 +37,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/pkg/runner/session"
+	"github.com/blaktron/agentry-cli/runnerimage/messenger"
 )
 
 // Agent is one persistent agent: a built-in, or a published agent installed
@@ -239,7 +240,7 @@ func LogPath(home, name string) string { return filepath.Join(Dir(home, name), l
 // an older
 // version alone refuses a newer one rather than drop what it does not know
 // on its next save.
-const ConfigVersion = messengersVersion
+const ConfigVersion = messengerKindsVersion
 
 // mailProvidersVersion is the version that added MailProviders: an older
 // configuration with a sign-in is migrated when read (migrateMailProviders).
@@ -400,6 +401,9 @@ func SaveConfig(home, name string, c Config) error {
 	}
 	if len(c.Messengers) > 0 {
 		c.Version = messengersVersion
+	}
+	if slices.ContainsFunc(c.Messengers, func(m MessengerAccount) bool { return m.Kind != messenger.KindTelegram || m.Server != "" }) {
+		c.Version = messengerKindsVersion
 	}
 	b, err := yaml.Marshal(c)
 	if err != nil {
