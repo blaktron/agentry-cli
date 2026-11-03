@@ -5,14 +5,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/blaktron/agentry-cli/pkg/mcpauth"
+	"github.com/blaktron/agentry-cli/pkg/mcpauth/mcpauthtest"
 	"github.com/blaktron/agentry-cli/pkg/runhost"
 	"github.com/blaktron/agentry-cli/pkg/runhost/job"
+	"github.com/blaktron/agentry-cli/pkg/runner/connection"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/schedule"
 )
@@ -137,7 +141,7 @@ func TestARunhostRunsAScheduleFromItsStore(t *testing.T) {
 		t.Fatalf("list %+v %v", list, err)
 	}
 
-	if _, err := runhostScheduleRemove(info.ID); err != nil {
+	if _, err := runhostScheduleRemove(context.Background(), info.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(entry); !os.IsNotExist(err) {
@@ -323,5 +327,75 @@ func TestScheduleAddCheckOnARunhostKeepsNothing(t *testing.T) {
 	}
 	if list, _ := runhostScheduleList(); len(list) != 0 {
 		t.Fatalf("a check kept a schedule: %+v", list)
+	}
+}
+
+// A schedule's OAuth connection is one the runhost made for itself: a
+// schedule whose connection the runhost does not keep is refused, one it
+// keeps is taken, and removing the last schedule that uses it revokes the
+// runhost's grant at the vendor and forgets it.
+func TestARunhostScheduleUsesOnlyAConnectionOfTheRunhostsOwn(t *testing.T) {
+	sealingRunhost(t)
+	v := mcpauthtest.New(t)
+	v.DCR = true
+	prevHTTP := vendorHTTP
+	vendorHTTP = func() *http.Client { return v.Guard().Client() }
+	t.Cleanup(func() { vendorHTTP = prevHTTP })
+	start := time.Date(2026, 11, 3, 6, 0, 0, 0, time.UTC)
+	runhostScheduleNow = func() time.Time { return start }
+	j, archive := unsignedJob(t, "0123456789abcdef0123456789abcdef")
+	j.Run.Connections = map[string]job.Connection{v.ServerURL(): {AccessToken: "at-from-the-device", ExpiresAt: start.Add(time.Hour)}}
+
+	if _, code, err := putSchedule(t, j, archive, daily(t, start, "07:00")); code != engine.ExitPolicy || err == nil || !strings.Contains(err.Error(), "signs the runhost in") {
+		t.Fatalf("a connection the runhost does not keep: %d %v", code, err)
+	}
+
+	home, err := runnerHome()
+	if err != nil {
+		t.Fatal(err)
+	}
+	conns := connection.Open(home, runhostKeychain{})
+	g, err := mcpauth.Consent{HTTP: v.Guard().Client(), ServerURL: v.ServerURL(), Present: v.Browser(), Timeout: 10 * time.Second}.Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	k := connection.Key{Ref: "acme/demo@1.0.0", Digest: j.Release.Digest, Server: v.ServerURL()}
+	if _, err := conns.Put(k, g, ""); err != nil {
+		t.Fatal(err)
+	}
+	info, code, err := putSchedule(t, j, archive, daily(t, start, "07:00"))
+	if code != 0 {
+		t.Fatalf("a connection the runhost keeps: %d %v", code, err)
+	}
+	// Its occurrence runs on a token the runhost's own grant refreshed.
+	issued := len(v.Issued)
+	runhostScheduleNow = func() time.Time { return start.Add(time.Hour + time.Minute) }
+	runhostSchedulerTick(context.Background(), t.Logf)
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		fires, _ := runhostScheduleStore().Fires(info.ID, 0)
+		if len(fires) == 1 {
+			if fires[0].Outcome != schedule.Ran {
+				t.Fatalf("fire %+v", fires[0])
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no fire recorded: %+v", fires)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if len(v.Issued) == issued {
+		t.Fatal("the occurrence did not refresh the runhost's connection")
+	}
+	g.Token.RefreshToken = v.Issued[len(v.Issued)-1]
+	if _, err := runhostScheduleRemove(context.Background(), info.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conns.Get(k); !errors.Is(err, connection.ErrNone) {
+		t.Fatalf("the removed schedule's connection is still kept: %v", err)
+	}
+	if v.Live(g.Token.RefreshToken) {
+		t.Fatal("the runhost's grant was not revoked")
 	}
 }

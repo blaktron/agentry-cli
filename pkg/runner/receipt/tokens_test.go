@@ -60,3 +60,28 @@ func TestNoReceiptFieldIsNamedInCredits(t *testing.T) {
 		t.Fatalf("the envelope is worded in credits:\n%s", raw)
 	}
 }
+
+// A run's token total is the total its harness reported when it reported
+// one, and the input and output counts added together otherwise.
+func TestUsageTotalIsTheReportedTotalOrTheSum(t *testing.T) {
+	cases := []struct {
+		name  string
+		usage Usage
+		want  int64
+	}{
+		{"nothing counted", Usage{}, 0},
+		{"the sum when no total was reported", Usage{InputTokens: 100, OutputTokens: 40}, 140},
+		{"input alone", Usage{InputTokens: 100}, 100},
+		{"output alone", Usage{OutputTokens: 40}, 40},
+		{"the reported total wins over the sum", Usage{InputTokens: 100, OutputTokens: 40, TotalTokens: 500}, 500},
+		{"a reported total of one", Usage{InputTokens: 100, OutputTokens: 40, TotalTokens: 1}, 1},
+		{"a negative total is not a reported one", Usage{InputTokens: 100, OutputTokens: 40, TotalTokens: -3}, 140},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.usage.Total(); got != c.want {
+				t.Fatalf("Total() = %d, want %d", got, c.want)
+			}
+		})
+	}
+}

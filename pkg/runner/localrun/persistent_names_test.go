@@ -62,6 +62,34 @@ func TestEveryPersistentNameMaps(t *testing.T) {
 			}
 		}
 	}
+	// The providers and servers a block declares are the ones it names.
+	providers := func(p *manifest.Persistent) []string {
+		var out []string
+		for _, m := range MailProvidersFor(p) {
+			out = append(out, m.Key)
+		}
+		return out
+	}
+	if got := providers(&manifest.Persistent{Mail: []string{"fastmail", "google"}}); !slices.Equal(got, []string{assistant.MailGoogle, assistant.MailFastmail}) {
+		t.Errorf("a block that names Google and Fastmail declares the providers %v", got)
+	}
+	if len(MailProvidersFor(nil)) != 0 || len(MailProvidersFor(&manifest.Persistent{})) != 0 {
+		t.Error("a block with no mail declares providers")
+	}
+	for name, p := range map[string]*manifest.Persistent{"nothing": nil, "no mail": {}, "mail reached through an image server": {Mail: []string{"google", "microsoft"}}} {
+		if got := MailServersFor(p); len(got) != 0 {
+			t.Errorf("%s: the servers of mail providers are %+v", name, got)
+		}
+	}
+	fastmail := MailServersFor(&manifest.Persistent{Mail: []string{"google", "fastmail"}})
+	if len(fastmail) == 0 {
+		t.Fatal("a block that names Fastmail is offered no server of it")
+	}
+	for _, s := range fastmail {
+		if s.MailProvider != assistant.MailFastmail {
+			t.Errorf("%s is offered for mail at %q", s.Name, s.MailProvider)
+		}
+	}
 	if err := CheckPersistentNames(&manifest.Persistent{ImageServers: []string{"google-workspace"}, Mail: []string{"google"}}); err != nil {
 		t.Errorf("known names refused: %v", err)
 	}

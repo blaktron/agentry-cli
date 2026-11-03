@@ -128,7 +128,7 @@ func accountLine(g GitAccount) string {
 	} else {
 		line += "your account: it can do whatever the token can do as you, in every repository the token reaches"
 	}
-	return line + "; the token reaches the programs it runs (" + via + " sign in with it), which can read it and send it anywhere they reach, while its commands are on; it commits there as " + g.Name + " <" + g.Email + ">; the token stays in your keychain, and Agentry masks it wherever it shows it whole"
+	return line + "; the token reaches the programs it runs (" + via + " sign in with it), which can read it and send it anywhere they reach, while its commands are on; it commits there as " + g.Name + " <" + g.Email + ">; the token stays in " + KeptIn + ", and Agentry masks it wherever it shows it whole"
 }
 
 // AccountGuidance is what the person is told before giving the agent an

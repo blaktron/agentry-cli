@@ -17,9 +17,11 @@ func read(t *testing.T, p string) string {
 
 // TestTheMeetingNotesSkillHoldsItsRules: the skill treats a transcript as a
 // record and never as instructions, summarises from verbatim evidence with
-// a time on every line, owners and dates only as stated, a call's Them and a
-// room's Room and Speaker voices never named but from the transcript's own
-// words and then as inferred, a room's line never taken as the person's,
+// a time on every line, owners and dates only as stated, a call's Them, a
+// call's far side told apart into Speaker voices (the person always Me, no
+// Speaker ever the person) and a room's Room and Speaker voices never named
+// but from the transcript's own words and then as inferred, a room's line
+// never taken as the person's,
 // machine errors discounted, every line checked, the summary saved beside
 // the transcript, the meeting filed as an ev page and named people as per
 // pages in schema 2, and arms only the meetings the person asked for,
@@ -40,13 +42,21 @@ func TestTheMeetingNotesSkillHoldsItsRules(t *testing.T) {
 		"Never take an\n     owner from who spoke last",
 		// The labels: Them and Room are not split by person, a Speaker number
 		// is a voice and never an identity, and machine errors.
-		"one\n  person or several", "**Room** is everyone in the room", "never an identity",
-		"`speaker_count: estimated`", "`speaker_count:\n  given`", "`speakers:` is the list of\n  labels",
+		"not split by person: one person or several", "**Room** is everyone in the room", "never an identity",
+		"`speaker_count: estimated`", "`speaker_count:\n  given`", "`speakers:` is the list of labels",
 		"`diarization: done`", "`off`, `unavailable` or `failed`", "every line is Room", "say why", "give the reason", "`diarizer:`",
-		"never take a Room or Speaker\n  line as theirs",
-		"Never put a name on a Them, Room or Speaker line", "Only the transcript\n  can give one",
-		"\"Speaker 2 (Dana, from the transcript)\"", "never the name\n  alone",
-		"Never a page for a label", "Speaker\n   numbers that are estimated voices",
+		"never take a Room or Speaker line as\n  theirs",
+		// A call whose far side was told apart: Me is always the person, and
+		// no Speaker on a call ever is; one that could not be keeps Them.
+		"A call** has no `setting: in-room`", "on every call",
+		"(`source: system-audio`), with\n    `diarization: done`, `speaker_count: estimated` and `diarizer:`",
+		"`diarization: unavailable` or `failed` it was\n    asked for and could not run", "the Them lines are not split by\n    person",
+		"On a call the\n    person is always Me: no Speaker line on a call is ever theirs, and Me\n    is never one of the Speakers",
+		"**Speaker numbers**, on a call or in a room",
+		"On a call only Me's commitments are the person's",
+		"Never put a name on a Them, Room or Speaker line, on a call\n  or in a room", "Only the transcript can give one",
+		"\"Speaker 2 (Dana, from the transcript)\"", "never the name alone",
+		"Never a page for a label: \"Speaker 2\", \"Them\" or \"Room\"", "Speaker\n   numbers that are estimated voices",
 		"thanks for watching", "(as\n  transcribed)",
 		// Where it goes.
 		"<transcript's name>.summary.md", "Never change, move or delete the transcript",

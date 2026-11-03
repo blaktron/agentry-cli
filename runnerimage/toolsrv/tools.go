@@ -1558,10 +1558,21 @@ func (s *server) own(path string) {
 // through root, so a link swapped in after the write cannot point the chown
 // elsewhere. Best-effort, as own is.
 func (s *server) ownIn(root *beneath.Dir, rel string) {
-	if s.spec.Owner == nil || rel == "" || rel == "." {
+	o := s.writesOwner()
+	if o == nil || rel == "" || rel == "." {
 		return
 	}
-	_ = root.Lchown(rel, s.spec.Owner.UID, s.spec.Owner.GID)
+	_ = root.Lchown(rel, o.UID, o.GID)
+}
+
+// writesOwner is who what the server writes in the workspace belongs to:
+// the workspace's owner where ownership holds a command's writes
+// (workOwner), else the host user the spec names.
+func (s *server) writesOwner() *Owner {
+	if s.workOwner != nil {
+		return s.workOwner
+	}
+	return s.spec.Owner
 }
 
 // ownBetween chowns every directory below root down to dir (inclusive) —

@@ -77,6 +77,17 @@ func newAgentCmd() *cobra.Command {
 			"QuickAgents, asking you first. Agentry asks in the window attached to the\n" +
 			"agent (`chat` takes /yes and /no); with none attached, nothing is done.\n\n" +
 			"Agentry Helper (main) runs only in Agentry Desktop.\n\n" +
+			"--on <runhost> runs list, show, start, stop, chat, attach, enable,\n" +
+			"disable, reset, grant, configure, tasks and secret on a remote runhost,\n" +
+			"where the agent then runs under the runhost's service, on the model the\n" +
+			"runhost keeps (agentry runhost model <name> --provider <provider>). What it\n" +
+			"is given for the first time is agreed to here. A stored secret's value, a\n" +
+			"git host account's token, the Fastmail token and a calendar feed's address\n" +
+			"(secret set, configure --account, --fastmail-token, --calendar-feed) are read\n" +
+			"here and kept in the runhost's store, encrypted, once you agree; Microsoft\n" +
+			"365 signs in by its device code. A flag that reads a file from this computer\n" +
+			"or a sign-in whose browser answer goes into a container (Google Workspace's,\n" +
+			"a calendar's) is refused with --on.\n\n" +
 			"  agentry agent install acme/helper\n" +
 			"  agentry agent enable assistant\n" +
 			"  agentry agent start assistant\n" +
@@ -105,6 +116,7 @@ func newAgentCmd() *cobra.Command {
 		newAgentMemoryCmd(),
 		newAgentSuperviseCmd(),
 	)
+	wireAgentOn(cmd)
 	return cmd
 }
 
@@ -678,7 +690,7 @@ func printStarted(w io.Writer, a persistent.Agent, st persistent.Status) {
 	} else {
 		_, _ = fmt.Fprintf(w, "A new conversation: %s.\n", st.ResumeReason)
 	}
-	_, _ = fmt.Fprintf(w, "Chat with it: agentry agent chat %s\nStop it:      agentry agent stop %s\n", a.Name, a.Name)
+	_, _ = fmt.Fprintf(w, "Chat with it: agentry agent chat %s%s\nStop it:      agentry agent stop %s%s\n", a.Name, onThisRunhost(), a.Name, onThisRunhost())
 }
 
 // logFollower prints what a file gained since the last flush.
@@ -949,7 +961,7 @@ func newAgentEnableCmd(on bool) *cobra.Command {
 				return err
 			}
 			if on {
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "The %s agent is enabled. Start it: agentry agent start %s\n", a.Name, a.Name)
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "The %s agent is enabled. Start it: agentry agent start %s%s\n", a.Name, a.Name, onThisRunhost())
 			} else {
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "The %s agent is disabled. Its conversation and files are kept.\n", a.Name)
 			}

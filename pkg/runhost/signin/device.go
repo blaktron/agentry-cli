@@ -49,12 +49,27 @@ func Run(ctx context.Context, c Caller, vendor, app string, p Person) (Kept, err
 	if !IsVendor(vendor) {
 		return Kept{}, fmt.Errorf("a runhost signs in to claude, chatgpt or copilot, not %q", vendor)
 	}
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
 	args := []string{"start", vendor}
 	if app != "" {
 		args = append(args, app)
 	}
+	page := func(addr string, o runhost.Open) bool { return vendorPage(vendor, addr, o) }
+	k, err := call(ctx, c, args, nil, page, vendor == modelsignin.Claude, p)
+	if err != nil {
+		return Kept{}, err
+	}
+	if k.Vendor != vendor {
+		return Kept{}, errors.New("the runhost did not say what it kept")
+	}
+	return k, nil
+}
+
+// call runs the sign-in verb with args, header its input's first bytes,
+// and opens each address page allows; claude says the sign-in is Claude
+// Code's, whose relay and narration are its own.
+func call(ctx context.Context, c Caller, args []string, header []byte, page func(addr string, o runhost.Open) bool, claude bool, p Person) (Kept, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	var (
 		failMu sync.Mutex
 		failed error
@@ -73,7 +88,12 @@ func Run(ctx context.Context, c Caller, vendor, app string, p Person) (Kept, err
 		failMu.Unlock()
 		cancel()
 	}
-	a, err := c.Call(ctx, "sign-in", args, func(io.Writer) error {
+	a, err := c.Call(ctx, "sign-in", args, func(w io.Writer) error {
+		if len(header) > 0 {
+			if _, err := w.Write(header); err != nil {
+				return err
+			}
+		}
 		// The input stays open while the sign-in runs: its end tells the
 		// runhost the device has left.
 		<-ctx.Done()
@@ -88,7 +108,7 @@ func Run(ctx context.Context, c Caller, vendor, app string, p Person) (Kept, err
 				fail(errors.New("the runhost asked to open an address it did not describe"))
 				return nil
 			}
-			stop, err := p.open(ctx, c, vendor, f.Text, o)
+			stop, err := p.open(ctx, c, page, claude, f.Text, o)
 			if err != nil {
 				fail(err)
 				return nil
@@ -115,7 +135,7 @@ func Run(ctx context.Context, c Caller, vendor, app string, p Person) (Kept, err
 		return Kept{}, fmt.Errorf("%s", a.Error)
 	}
 	var k Kept
-	if err := json.Unmarshal(a.Result, &k); err != nil || k.Vendor != vendor {
+	if err := json.Unmarshal(a.Result, &k); err != nil {
 		return Kept{}, errors.New("the runhost did not say what it kept")
 	}
 	return k, nil
@@ -123,10 +143,10 @@ func Run(ctx context.Context, c Caller, vendor, app string, p Person) (Kept, err
 
 // open does what an open frame asks: shows a code and opens the page, or
 // listens on the callback's port here, relays each connection to the
-// runhost, and opens the address. The address must be the vendor's own.
-func (p Person) open(ctx context.Context, c Caller, vendor, addr string, o runhost.Open) (func(), error) {
-	if !vendorPage(vendor, addr, o) {
-		return nil, fmt.Errorf("the runhost asked this device to open an address that is not %s's sign-in: %s", vendor, addr)
+// runhost, and opens the address. The address must be one page allows.
+func (p Person) open(ctx context.Context, c Caller, page func(string, runhost.Open) bool, claude bool, addr string, o runhost.Open) (func(), error) {
+	if !page(addr, o) {
+		return nil, fmt.Errorf("the runhost asked this device to open an address that is not the sign-in it started: %s", addr)
 	}
 	if o.Code != "" {
 		if p.Code != nil {
@@ -137,12 +157,12 @@ func (p Person) open(ctx context.Context, c Caller, vendor, addr string, o runho
 		}
 		return nil, nil
 	}
-	stop, err := p.relay(ctx, c, o.Relay, o.Port, vendor == modelsignin.Claude)
+	stop, err := p.relay(ctx, c, o.Relay, o.Port, claude)
 	if err != nil {
 		return nil, fmt.Errorf("nothing kept: port %d on this computer is in use, so the browser's answer cannot reach the runhost (%v); try again", o.Port, err)
 	}
 	// Claude Code's sign-in on the runhost says this itself.
-	if vendor != modelsignin.Claude {
+	if !claude {
 		p.say("Approve the sign-in in your browser; it finishes on the runhost by itself.")
 		p.say("If no browser opened, open this address in a browser on this computer:\n  " + addr)
 	}

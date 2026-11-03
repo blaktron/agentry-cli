@@ -357,8 +357,16 @@ func request(ctx context.Context, home, name string, cmd Command, want func(Repl
 	if err := sc.Err(); err != nil {
 		return fmt.Errorf("the %s agent's socket: %w", name, err)
 	}
-	return fmt.Errorf("the %s agent's supervisor closed the socket without answering", name)
+	return fmt.Errorf("the %s agent's supervisor closed the socket without answering: %w", name, ErrNoAnswer)
 }
+
+// ErrNoAnswer is a supervisor that closed its socket without answering the
+// command it was sent.
+var ErrNoAnswer = errors.New("no answer")
+
+// stopSettle bounds how long RequestStop waits for a supervisor that closed
+// its socket without answering to let the agent go.
+var stopSettle = 10 * time.Second
 
 // QueryStatus asks the running agent's supervisor for its status.
 func QueryStatus(ctx context.Context, home, name string) (Status, error) {
@@ -466,7 +474,9 @@ func RequestInterrupt(ctx context.Context, home, name string) (stopped bool, err
 }
 
 // RequestStop asks the running agent's supervisor to stop it, and returns
-// once the segment's envelope is written.
+// once the segment's envelope is written. A supervisor that stops and lets
+// the agent go before its answer is written closes the socket without one:
+// the agent's lock then says whether it stopped.
 func RequestStop(ctx context.Context, home, name string) (Stopped, error) {
 	var st Stopped
 	err := request(ctx, home, name, Command{Stop: &struct{}{}}, func(r Reply) bool {
@@ -476,6 +486,18 @@ func RequestStop(ctx context.Context, home, name string) (Stopped, error) {
 		}
 		return false
 	})
+	if errors.Is(err, ErrNoAnswer) {
+		deadline := time.Now().Add(stopSettle)
+		for {
+			if held, _ := Held(home, name); !held {
+				return Stopped{Status: "stopped"}, nil
+			}
+			if time.Now().After(deadline) || ctx.Err() != nil {
+				return st, err
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
 	return st, err
 }
 

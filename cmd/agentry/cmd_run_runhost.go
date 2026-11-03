@@ -233,7 +233,7 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	}
 
 	if opts.runhostSchedule != "" {
-		return putRunhostSchedule(cmd, client, rec, home, meta, j, archive, files, opts)
+		return putRunhostSchedule(cmd, client, rec, home, meta, m, j, archive, files, opts)
 	}
 	opts.progress.at(receipt.StageAgent)
 	lj := remote.LocalJob{Job: j.ID, Runhost: rec.Name, Ref: meta.Ref, Namespace: meta.Namespace, Name: meta.Name, Version: meta.Version,
