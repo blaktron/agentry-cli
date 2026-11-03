@@ -3,7 +3,8 @@
     {
       "version": "0.7.14",
       "highlights": [
-        "Talk to a running persistent agent from Discord, Slack or Matrix as well as Telegram: agentry agent messenger add."
+        "Talk to a running persistent agent from Discord, Slack or Matrix as well as Telegram: agentry agent messenger add.",
+        "agentry agent start, chat and stop take --on to run the Assistant on your remote runhost."
       ]
     },
     {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/user"
 	"regexp"
@@ -17,8 +18,10 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runhost"
 	"github.com/blaktron/agentry-cli/pkg/runhost/remote"
 	"github.com/blaktron/agentry-cli/pkg/runhost/signin"
+	"github.com/blaktron/agentry-cli/pkg/runhost/store"
 	"github.com/blaktron/agentry-cli/pkg/runner/connection"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
+	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelsignin"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 )
@@ -49,6 +52,34 @@ func init() {
 		}
 		return osKeys()
 	}
+	// Its model keys too, which its persistent agents' runs read.
+	if onRunhostServer() {
+		_ = modelkey.UseKeychain(runhostModelKeys{})
+	}
+}
+
+// runhostModelKeys is the runhost's store as modelkey's keychain: it answers
+// modelkey.ErrNotStored for a key it does not keep.
+type runhostModelKeys struct{}
+
+func (runhostModelKeys) Get(account string) (string, error) {
+	v, err := runhostKeychain{}.Get(account)
+	if errors.Is(err, store.ErrNoEntry) {
+		return "", modelkey.ErrNotStored
+	}
+	return v, err
+}
+
+func (runhostModelKeys) Set(account, value string) error {
+	return runhostKeychain{}.Set(account, value)
+}
+
+func (runhostModelKeys) Delete(account string) error {
+	err := runhostKeychain{}.Delete(account)
+	if errors.Is(err, store.ErrNoEntry) || errors.Is(err, fs.ErrNotExist) {
+		return modelkey.ErrNotStored
+	}
+	return err
 }
 
 // runhostKeychain keeps the connection stores' secrets as entries of the
@@ -63,8 +94,12 @@ const (
 	ownClientAccountPrefix  = "mcp-client:"
 )
 
-// hexIDRE is a connection's or an issuer's id in its keychain account.
-var hexIDRE = regexp.MustCompile(`^[0-9a-f]{16,24}$`)
+// hexIDRE is a connection's or an issuer's id in its keychain account;
+// providerRE a model provider's name in a model key's.
+var (
+	hexIDRE    = regexp.MustCompile(`^[0-9a-f]{16,24}$`)
+	providerRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,40}$`)
+)
 
 func runhostKeychainEntry(account string) (string, error) {
 	if vendor, ok := strings.CutPrefix(account, signInAccountPrefix); ok && signin.IsVendor(vendor) {
@@ -76,7 +111,15 @@ func runhostKeychainEntry(account string) (string, error) {
 	if id, ok := strings.CutPrefix(account, ownClientAccountPrefix); ok && hexIDRE.MatchString(id) {
 		return "client-" + id, nil
 	}
-	return "", fmt.Errorf("a runhost keeps only its model sign-ins', its schedules' connections' and their OAuth clients' secrets, not %q", account)
+	if p := modelkey.ProviderOf(account); p != "" && providerRE.MatchString(p) {
+		return "model-key-" + p, nil
+	}
+	if m, ok := strings.CutPrefix(account, "stored:"); ok {
+		if p := modelkey.ProviderOf(m); p != "" && providerRE.MatchString(p) {
+			return "model-key-stored-" + p, nil
+		}
+	}
+	return "", fmt.Errorf("a runhost keeps only its model keys, its model sign-ins', its schedules' connections' and their OAuth clients' secrets, not %q", account)
 }
 
 func (runhostKeychain) Get(account string) (string, error) {

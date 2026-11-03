@@ -1427,6 +1427,23 @@
           ]
         },
         {
+          "path": "cmd/agentry/cmd_runhost_agent_test.go",
+          "tests": [
+            "TestARunhostRunsOnlyTheAgentCommandsADeviceDrives",
+            "TestTheAgentVerbRunsTheRunhostsOwnCommand",
+            "TestTheServiceStartsItsAgentsAgain",
+            "TestTheAgentSocketIsRelayedToTheDevice",
+            "TestARunhostKeepsTheModelItsAgentsRunOn"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract",
+            "explicit skip"
+          ]
+        },
+        {
           "path": "cmd/agentry/cmd_runhost_credits_test.go",
           "tests": [
             "TestARunhostKeepsItsCreditsTokenAndRevokesIt",
