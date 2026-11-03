@@ -36,6 +36,15 @@ func playClaudePrint(in io.Reader, out io.Writer) int {
 		_ = os.WriteFile(filepath.Join(dir, ".claude.json"), []byte(`{"numStartups":1}`), 0o600)
 	}
 	if strings.Contains(string(task), "limit") {
+		defer func() {
+			// A task that asks to hang goes on running after it said so.
+			if strings.Contains(string(task), "hang") {
+				r, _, err := os.Pipe()
+				if err == nil {
+					_, _ = r.Read(make([]byte, 1))
+				}
+			}
+		}()
 		sayLine(out, map[string]any{"type": "rate_limit_event", "rate_limit_info": map[string]any{
 			"status": "rejected", "resetsAt": claudeResets.Unix(), "rateLimitType": "five_hour"}})
 		sayLine(out, map[string]any{"type": "result", "subtype": "error_during_execution", "is_error": true,
@@ -170,6 +179,20 @@ func TestAClaudePlanLimitEndsTheRunWithItsResetTime(t *testing.T) {
 			t.Fatalf("%s: envelope %s, reason %+v", name, env.Status, env.Reason)
 		}
 	}
+
+	// The installed Claude Code that goes on running after it said so is
+	// ended by the limit, not left to the run's timeout.
+	p, f := claudePlanFixture(t, adapter.ClaudeAdapterName)
+	p.Task = strings.NewReader("run until the limit and hang")
+	p.Budgets.TimeoutSeconds = 60
+	start := time.Now()
+	env, err := Run(context.Background(), f, p)
+	if took := time.Since(start); took > 25*time.Second {
+		t.Fatalf("the run waited %v for its timeout", took)
+	}
+	if env.Reason == nil || env.Reason.Code != receipt.ReasonPlanLimit || !strings.Contains(err.Error(), "2026-10-10T15:00:00Z") {
+		t.Fatalf("err %v, reason %+v", err, env.Reason)
+	}
 }
 
 // The installed Claude Code reads a directory on this computer: the image's
@@ -190,6 +213,16 @@ func TestTheInstalledClaudeCodeIsRefusedWhatItCannotRunOn(t *testing.T) {
 	}
 	if _, err := Run(context.Background(), f, p); err == nil || !strings.Contains(err.Error(), "CLAUDE.md") {
 		t.Fatalf("an ancestor CLAUDE.md: %v", err)
+	}
+
+	// A sign-in handed over through a session callback is for a harness
+	// image's driver: a harness on this computer is refused it.
+	p, f = claudePlanFixture(t, adapter.ClaudeAdapterName)
+	p.Plan.Harness.ModelSignIn.Delivery = spec.ModelSignInCallback
+	p.ModelSignIn.Token = ConnectionToken{AccessToken: signInAccessToken, ExpiresAt: time.Now().Add(time.Hour)}
+	_, err = Run(context.Background(), f, p)
+	if !errors.As(err, &ce) || ce.Code != ExitCLI || !strings.Contains(err.Error(), "session callback") || len(f.Calls) != 0 {
+		t.Fatalf("a callback sign-in for a host harness: %v (%d docker calls)", err, len(f.Calls))
 	}
 }
 
