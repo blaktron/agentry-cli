@@ -112,6 +112,13 @@ func TestTheRunnersEvidenceEndsTheRunBlocked(t *testing.T) {
 			`{"tool":"end_blocked","ok":true,"blocked":"nothing to read"}`}, receipt.BlockedInputsUnread},
 		{"every report failed", []string{startLine,
 			`{"tool":"read_input","ok":true}`, `{"tool":"write_report"}`, `{"tool":"write_report","fault":true}`}, receipt.BlockedReportUnwritten},
+		// Each input tool is evidence on its own.
+		{"a list_inputs call alone failed", []string{startLine, `{"tool":"list_inputs","fault":true}`}, receipt.BlockedInputsUnread},
+		{"a read_input call alone failed", []string{startLine, `{"tool":"read_input","fault":true}`}, receipt.BlockedInputsUnread},
+		{"a search_inputs call alone failed", []string{startLine, `{"tool":"search_inputs","fault":true}`}, receipt.BlockedInputsUnread},
+		// A line that does not decode is skipped, and the lines after it still count.
+		{"an unreadable line among the evidence", []string{startLine,
+			`{"tool":"read_input","fault":true}`, `{"tool":`, `{"tool":"read_input","fault":true}`}, receipt.BlockedInputsUnread},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			env, _, err := blockedRun(t, tc.ledger)
@@ -120,6 +127,19 @@ func TestTheRunnersEvidenceEndsTheRunBlocked(t *testing.T) {
 				t.Fatalf("the runner's evidence carried the agent's sentence: %q", env.Error)
 			}
 		})
+	}
+	// A ledger that is not there reads as none, which is tools that wrote
+	// nothing; a path that cannot be read as a file is no evidence either way.
+	if entries, err := ReadCallsLedger(filepath.Join(t.TempDir(), CallsLedgerFile)); entries != nil || err != nil {
+		t.Fatalf("a missing ledger read as %v, %v", entries, err)
+	}
+	err := blockedOf(filepath.Join(t.TempDir(), CallsLedgerFile))
+	var ce *ClassifiedError
+	if r := receipt.ReasonOf(err); !errors.As(err, &ce) || ce.Code != ExitBlocked || r == nil || r.Code != receipt.ReasonRunnerBlocked || r.Detail != receipt.BlockedToolsUnrecorded {
+		t.Fatalf("a missing ledger: %v (reason %+v)", err, r)
+	}
+	if err := blockedOf(t.TempDir()); err != nil {
+		t.Fatalf("a ledger that cannot be read was taken as evidence: %v", err)
 	}
 }
 
