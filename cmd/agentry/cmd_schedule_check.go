@@ -5,6 +5,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -16,7 +17,11 @@ import (
 
 	"github.com/blaktron/agentry/pkg/manifest"
 
+	"github.com/blaktron/agentry-cli/pkg/runhost"
+	"github.com/blaktron/agentry-cli/pkg/runhost/job"
+	"github.com/blaktron/agentry-cli/pkg/runhost/remote"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/schedule"
 )
 
@@ -47,12 +52,26 @@ type scheduleCheckJSON struct {
 	SignedOut signedOutAvailability `json:"signedOut"`
 	Describe  string                `json:"describe,omitempty"`
 	Next      *time.Time            `json:"next,omitempty"`
+	// Runhost is the remote runhost a schedule with --on would run on, and
+	// what its store would keep for it.
+	Runhost *scheduleCheckRunhost `json:"runhost,omitempty"`
+}
+
+// scheduleCheckRunhost is a runhost schedule's part of the check: the
+// runhost, whether it takes schedules, and the entries its store would keep
+// (by name, never a value), which the consent names.
+type scheduleCheckRunhost struct {
+	Name           string                  `json:"name"`
+	Host           string                  `json:"host"`
+	Fingerprint    string                  `json:"hostKeyFingerprint"`
+	TakesSchedules bool                    `json:"takesSchedules"`
+	Entries        []runhost.ScheduleEntry `json:"entries"`
 }
 
 // scheduleCheck is add up to the point it would ask, install or keep
 // anything. It fails only when it could not check: a release that cannot
 // be resolved, or no run plan.
-func scheduleCheck(cmd *cobra.Command, ref, name, out string, spec runSpecFlags, w whenFlags, now time.Time) error {
+func scheduleCheck(cmd *cobra.Command, ref, name, out, on string, spec runSpecFlags, w whenFlags, now time.Time) error {
 	res := scheduleCheckJSON{Modes: []string{}, Gaps: []string{}, Refusals: []runPlanRefusal{}, SignedOut: signedOutHere(cmd.Context())}
 	gap := func(err error) {
 		for _, line := range strings.Split(err.Error(), "\n") {
@@ -96,6 +115,23 @@ func scheduleCheck(cmd *cobra.Command, ref, name, out string, spec runSpecFlags,
 	}
 	res.Ref, res.Version, res.Digest = sc.Ref, sc.Version, sc.Digest
 
+	if on != "" {
+		res.Runhost, err = checkRunhostSchedule(cmd, on, sc, preview, gap)
+		if err != nil {
+			return err
+		}
+		res.Ready = len(res.Gaps) == 0
+		if flags.jsonOut {
+			return emitJSON(cmd.OutOrStdout(), res)
+		}
+		o := cmd.OutOrStdout()
+		if res.Ready {
+			_, _ = fmt.Fprintf(o, "ready: %s@%s can be scheduled on runhost %s (%s); its store would keep %s\n", res.Ref, res.Version, on, res.Describe, scheduleEntriesSaid(res.Runhost.Entries))
+		} else {
+			_, _ = fmt.Fprintf(o, "not ready: a schedule of %s@%s on runhost %s would not have what it needs:\n  - %s\n", res.Ref, res.Version, on, strings.Join(res.Gaps, "\n  - "))
+		}
+		return nil
+	}
 	res.Installed = installedHere(sc)
 	if res.Installed {
 		res.Gaps = append(res.Gaps, fireGaps(sc)...)
@@ -149,4 +185,69 @@ func installedHere(sc schedule.Schedule) bool {
 	}
 	_, err = os.Stat(installdir.ReleaseDir(home, ns, name, sc.Version, sc.Digest))
 	return err == nil
+}
+
+// checkRunhostSchedule is --check with --on: whether runhost on takes
+// schedules, and what a schedule of sc would keep in its store, read from
+// the release's contract, this computer's policy and the flags, with no
+// value read and nothing sent.
+func checkRunhostSchedule(cmd *cobra.Command, on string, sc schedule.Schedule, preview *runPlanOutput, gap func(error)) (*scheduleCheckRunhost, error) {
+	switch {
+	case sc.Local != "":
+		gap(errors.New("a runhost runs a published release, not a local folder"))
+	case sc.SignedOut:
+		gap(errors.New("--signed-out is for this computer: a runhost runs its schedules with nobody signed in"))
+	case sc.Run.DeliverTo != "":
+		gap(errors.New("--deliver-to copies to this computer, and a runhost's schedule runs while it may be away"))
+	}
+	rec, _, c, err := dialRunhostNamed(cmd.Context(), on)
+	if rec == nil {
+		return nil, err
+	}
+	out := &scheduleCheckRunhost{Name: rec.Name, Host: rec.Host, Fingerprint: rec.HostKeyFingerprint, Entries: []runhost.ScheduleEntry{}}
+	if err != nil {
+		gap(fmt.Errorf("runhost %s cannot be reached over its run key: %w", on, err))
+	} else {
+		defer func() { _ = c.Close() }()
+		if _, verr := remote.SameVersion(cmd.Context(), c, rec.Name); verr != nil {
+			gap(verr)
+		}
+		if out.TakesSchedules, err = remote.TakesSchedules(cmd.Context(), c); err != nil {
+			gap(err)
+		} else if !out.TakesSchedules {
+			gap(fmt.Errorf("runhost %s takes no schedule: its systemd cannot seal its store's key to it (schedules need systemd %d or newer)", on, schedule.MinSystemd))
+		}
+	}
+	add := func(kind, name string) {
+		out.Entries = append(out.Entries, runhost.ScheduleEntry{Kind: kind, Name: name})
+	}
+	if pf, err := policy.Resolve(sc.Run.Policy); err == nil {
+		if pol, _, err := policy.EnsureDefault(pf.Path); err == nil {
+			if m := job.ModelOf(pol.Model); !m.SignIn() && !m.PaysWithCredits() && pol.Model.Provider != "" {
+				add("model-key", pol.Model.Provider)
+			}
+		}
+	}
+	var caps manifest.Capabilities
+	if len(preview.Contract) > 0 {
+		if err := json.Unmarshal(preview.Contract, &caps); err != nil {
+			return nil, fmt.Errorf("read the release's contract: %w", err)
+		}
+	}
+	secrets := slices.Clone(caps.Secrets)
+	slices.Sort(secrets)
+	for _, s := range secrets {
+		add("secret", s)
+	}
+	for _, d := range sc.Run.Destinations {
+		add("destination", d)
+	}
+	for _, h := range sc.Run.Hosts {
+		add("target-host", h.ID)
+	}
+	m := &manifest.Manifest{Capabilities: caps}
+	for _, s := range oauthServers(m) {
+		add("connection", connectionServer(s))
+	}
+	return out, nil
 }
