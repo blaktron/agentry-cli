@@ -6636,7 +6636,8 @@
           "tests": [
             "TestACopilotModelListRunsInARunsContainer",
             "TestACopilotModelListRenewsAShortLivedToken",
-            "TestACopilotModelListRefusesWhatARunWould"
+            "TestACopilotModelListRefusesWhatARunWould",
+            "TestACopilotModelListSignInComesFromThePersonsStore"
           ],
           "fuzz": [],
           "benchmarks": [],

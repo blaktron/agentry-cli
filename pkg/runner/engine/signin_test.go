@@ -119,18 +119,32 @@ func TestASignInTokenReachesTheAgentAloneAndIsRenewed(t *testing.T) {
 	p.ModelSignIn.Token.ExpiresAt = time.Now().Add(3 * time.Second)
 	var stderr lockedBuffer
 	p.Stderr = &stderr
+	// The first renewal answers a token that is not an access token's shape:
+	// it is refused and never written; the renewer asks again soon after, and
+	// the second answer is good. The token file is read while the second
+	// call is held, so a malformed token written by the first would show.
+	oldRetry := renewRetry
+	renewRetry = 20 * time.Millisecond
+	t.Cleanup(func() { renewRetry = oldRetry })
 	renewed := make(chan struct{})
+	asked := make(chan struct{})
+	release := make(chan struct{})
 	var renewals atomic.Int32
 	p.RenewModelSignIn = func(context.Context) (ConnectionToken, error) {
-		if renewals.Add(1) == 1 {
+		switch renewals.Add(1) {
+		case 1:
+			return ConnectionToken{AccessToken: "not an access token\n", ExpiresAt: time.Now().Add(time.Second)}, nil
+		case 2:
+			close(asked)
+			<-release
 			defer close(renewed)
 		}
 		return ConnectionToken{AccessToken: signInRenewedToken, ExpiresAt: time.Now().Add(time.Hour)}, nil
 	}
 	dir := filepath.Join(p.RunRoot, "runs", "cafe0000", "cfg", "model-signin")
 	tokenPath := filepath.Join(dir, spec.ModelSignInTokenFile)
-	var before, after string
-	var mode os.FileMode
+	var before, afterRefused, after string
+	var mode, dirMode os.FileMode
 	var entries int
 	f.Foreground["-agent"].Before = func(dockerx.RunSpec) {
 		b, _ := os.ReadFile(tokenPath) //nolint:gosec // the test's run dir
@@ -138,8 +152,22 @@ func TestASignInTokenReachesTheAgentAloneAndIsRenewed(t *testing.T) {
 		if fi, err := os.Stat(tokenPath); err == nil {
 			mode = fi.Mode().Perm()
 		}
+		if fi, err := os.Stat(dir); err == nil {
+			dirMode = fi.Mode().Perm()
+		}
 		if es, err := os.ReadDir(dir); err == nil {
 			entries = len(es)
+		}
+		wait, stopWaiting := context.WithTimeout(context.Background(), 10*time.Second)
+		defer stopWaiting()
+		select {
+		case <-asked:
+			b, _ = os.ReadFile(tokenPath) //nolint:gosec // the test's run dir
+			afterRefused = string(b)
+			close(release)
+		case <-wait.Done():
+			t.Error("the sign-in's token was not renewed before it expired")
+			close(release)
 		}
 		select {
 		case <-renewed:
@@ -160,8 +188,15 @@ func TestASignInTokenReachesTheAgentAloneAndIsRenewed(t *testing.T) {
 	if err != nil || env.Status != "ok" {
 		t.Fatalf("run: %v (%+v)", err, env)
 	}
-	if before != signInAccessToken || mode != 0o600 || entries != 1 {
-		t.Fatalf("the token file held %q (mode %v, %d entries in its folder)", before, mode, entries)
+	if before != signInAccessToken || mode != 0o600 || dirMode != 0o700 || entries != 1 {
+		t.Fatalf("the token file held %q (mode %v, its folder %v, %d entries in its folder)", before, mode, dirMode, entries)
+	}
+	if afterRefused != signInAccessToken {
+		t.Fatalf("a renewed token of the wrong shape reached the token file: %q", afterRefused)
+	}
+	if !strings.Contains(stderr.String(), "could not renew the model sign-in before its access token expires") ||
+		!strings.Contains(stderr.String(), "not in the shape an access token takes") {
+		t.Fatalf("the refused renewal was not said:\n%s", stderr.String())
 	}
 	if after != signInRenewedToken {
 		t.Fatalf("after the renewal the token file held %q", after)
@@ -217,8 +252,11 @@ func TestASignInTokenReachesTheAgentAloneAndIsRenewed(t *testing.T) {
 	if !strings.Contains(env.CapabilitiesEnforced["model.cost"], "tokens, not dollars") || env.CapabilitiesEnforced["model.signIn"] == "" {
 		t.Fatalf("capabilities %v", env.CapabilitiesEnforced)
 	}
-	if n := renewals.Load(); n != 1 {
+	if n := renewals.Load(); n != 2 {
 		t.Fatalf("renewals: %d", n)
+	}
+	if l := env.CapabilitiesEnforced["model.signIn"]; !strings.Contains(l, "rewritten by the runner before it expires") || strings.Contains(l, "not renewed") {
+		t.Fatalf("a renewed run says model.signIn %q", l)
 	}
 }
 
@@ -244,23 +282,43 @@ func TestAConfigDirectorySignInIsMountedAndLeftAlone(t *testing.T) {
 	if env.Harness.CredentialKind != policy.KeyKindClaudeSignIn {
 		t.Fatalf("harness %+v", env.Harness)
 	}
+	// There is no token to renew in a directory the harness keeps itself, so
+	// the receipt's line is the plan's own, not a claim that nothing is renewed.
+	if l := env.CapabilitiesEnforced["model.signIn"]; l == "" || l != p.Plan.Enforcement["model.signIn"] {
+		t.Fatalf("model.signIn %q, want the plan's line %q", l, p.Plan.Enforcement["model.signIn"])
+	}
 }
 
 // Only a directory of Agentry's own is mounted read-write: a person's own
-// folder, the store itself, a path that climbs out of it, or a volume not
-// named agentry-… is refused before the daemon.
+// folder, the store itself, a path that climbs out of it, a volume not
+// named agentry-…, a directory that is gone or a file in its place is
+// refused before the daemon, each saying why.
 func TestAConfigDirectoryMustBeAgentrysOwn(t *testing.T) {
-	for _, dir := range []string{"", "home", "store", "climb", "volume"} {
+	for _, dir := range []string{"", "home", "store", "climb", "volume", "missing", "file"} {
 		p, f := signInFixture(t, signintest.DirAdapter, policy.KeyKindClaudeSignIn)
+		say := ""
 		switch dir {
 		case "home":
 			p.ModelSignIn.ConfigDir = t.TempDir()
+			say = "is not one of Agentry's own"
 		case "store":
 			p.ModelSignIn.ConfigDir = filepath.Join(p.RunnerHome, "model-signins")
+			say = "is not one of Agentry's own"
 		case "climb":
 			p.ModelSignIn.ConfigDir = filepath.Join(p.RunnerHome, "model-signins", "..", "runs")
+			say = "is not one of Agentry's own"
 		case "volume":
 			p.ModelSignIn.ConfigDir = "claude-config"
+			say = "neither one of Agentry's own folders nor a docker volume"
+		case "missing":
+			p.ModelSignIn.ConfigDir = filepath.Join(p.RunnerHome, "model-signins", "gone")
+			say = "directory is missing"
+		case "file":
+			p.ModelSignIn.ConfigDir = filepath.Join(p.RunnerHome, "model-signins", "a-file")
+			if err := os.WriteFile(p.ModelSignIn.ConfigDir, []byte("not a directory"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			say = "directory is missing"
 		}
 		_, err := Run(context.Background(), f, p)
 		if dir == "" {
@@ -269,12 +327,38 @@ func TestAConfigDirectoryMustBeAgentrysOwn(t *testing.T) {
 			}
 			continue
 		}
-		if err == nil || len(f.Calls) != 0 {
-			t.Errorf("%s: %v (%d docker calls)", dir, err, len(f.Calls))
+		if err == nil || !strings.Contains(err.Error(), say) || len(f.Calls) != 0 {
+			t.Errorf("%s: %v (%d docker calls), want a refusal saying %q", dir, err, len(f.Calls), say)
 		}
 	}
-	if !OwnSignInDir("", "agentry-claude-config") || OwnSignInDir("", "/abs") {
-		t.Fatal("volumes")
+	home := filepath.Join(string(filepath.Separator), "runner-home")
+	for _, c := range []struct {
+		home, dir string
+		want      bool
+	}{
+		{"", "agentry-claude-config", true},
+		{"", "agentry-a", true},
+		{"", "agentry-0.x_y-z", true},
+		{"", "xagentry-claude-config", false},
+		{"", "my-agentry-claude", false},
+		{"", "agentry-", false},
+		{"", "agentry-.hidden", false},
+		{"", "agentry--x", false},
+		{"", "agentry-with space", false},
+		{"", "agentry-Upper", false},
+		{"", "agentry-a/b", false},
+		{"", "claude-config", false},
+		{"", "/abs", false},
+		{home, filepath.Join(home, "model-signins", "claude"), true},
+		{home, filepath.Join(home, "model-signins", "a", "b"), true},
+		{home, filepath.Join(home, "model-signins"), false},
+		{home, filepath.Join(home, "model-signins", "..", "runs"), false},
+		{home, filepath.Join(home, "other", "claude"), false},
+		{home, "agentry-claude-config", true},
+	} {
+		if got := OwnSignInDir(c.home, c.dir); got != c.want {
+			t.Errorf("OwnSignInDir(%q, %q) = %v, want %v", c.home, c.dir, got, c.want)
+		}
 	}
 }
 
@@ -296,7 +380,8 @@ func TestAnUnrenewedTokenIsSaidSo(t *testing.T) {
 
 // Every refusal is made before the daemon is touched: no grant (exit 11,
 // signin-missing), a grant of another kind (11), a grant handed to a run
-// compiled for a key (11), and a cost budget (exit 2).
+// compiled for a key (11), a cost budget of any size (exit 2), a token that
+// is no access token, and a delivery the build does not know.
 func TestASignInRunRefusesWhatItWasNotCompiledFor(t *testing.T) {
 	for _, c := range []struct {
 		name   string
@@ -309,6 +394,8 @@ func TestASignInRunRefusesWhatItWasNotCompiledFor(t *testing.T) {
 		{"no token", func(p *Params) { p.ModelSignIn.Token.AccessToken = "" }, ExitPolicy, receipt.ReasonSignInMissing, "no access token"},
 		{"another kind", func(p *Params) { p.ModelSignIn.Kind = policy.KeyKindCopilotSignIn }, ExitPolicy, "", "compiled for a ChatGPT plan sign-in"},
 		{"a cost budget", func(p *Params) { p.Budgets.MaxCostUSD = 2 }, ExitUsage, "", "tokens, not dollars"},
+		{"a cost budget under a dollar", func(p *Params) { p.Budgets.MaxCostUSD = 0.05 }, ExitUsage, "", "tokens, not dollars"},
+		{"a delivery the build does not know", func(p *Params) { p.Plan.Harness.ModelSignIn.Delivery = "carrier-pigeon" }, ExitCLI, "", `unknown model sign-in delivery "carrier-pigeon"`},
 		{"a token of another shape", func(p *Params) { p.ModelSignIn.Token.AccessToken = "a b\n" }, ExitCLI, "", "shape"},
 	} {
 		p, f := signInFixture(t, signintest.TokenAdapter, policy.KeyKindChatGPTPlan)
@@ -368,17 +455,76 @@ func TestAPlanLimitEndsTheRunWithItsOwnOutcome(t *testing.T) {
 	if agents != 1 {
 		t.Fatalf("the agent ran %d times", agents)
 	}
-	// No reset time is invented when the vendor gave none.
+	// No reset time is invented when the vendor gave none, and no vendor
+	// words are when it gave none either.
 	p, f = signInFixture(t, signintest.TokenAdapter, policy.KeyKindChatGPTPlan)
 	f.Foreground["-agent"].Stdout = signintest.Line(signintest.Event{Type: "plan_limit"}) + "\n"
 	_, err = Run(context.Background(), f, p)
-	if err == nil || strings.Contains(err.Error(), "resets") {
-		t.Fatalf("no reset time: %v", err)
+	if err == nil || strings.Contains(err.Error(), "resets") || strings.Contains(err.Error(), "the vendor said") ||
+		!strings.Contains(err.Error(), "plan limit reached") {
+		t.Fatalf("no reset time, no vendor words: %v", err)
+	}
+	// The first limit the harness reports is the outcome; a later report does
+	// not replace it.
+	p, f = signInFixture(t, signintest.TokenAdapter, policy.KeyKindChatGPTPlan)
+	f.Foreground["-agent"].Stdout = strings.Join([]string{
+		signintest.Line(signintest.Event{Type: "plan_limit", Text: "first limit", Resets: resets}),
+		signintest.Line(signintest.Event{Type: "plan_limit", Text: "second limit", Resets: resets.Add(time.Hour)}),
+	}, "\n") + "\n"
+	_, err = Run(context.Background(), f, p)
+	if err == nil || !strings.Contains(err.Error(), "first limit") || strings.Contains(err.Error(), "second limit") ||
+		!strings.Contains(err.Error(), "2026-10-12T09:00:00Z") || strings.Contains(err.Error(), "T10:00:00Z") {
+		t.Fatalf("the first limit is the outcome: %v", err)
+	}
+	// A harness that keeps running after it reports the limit is ended by the
+	// limit, not left to its timeout.
+	p, f = signInFixture(t, signintest.TokenAdapter, policy.KeyKindChatGPTPlan)
+	var cause error
+	limitLine := signintest.Line(signintest.Event{Type: "plan_limit", Text: "usage limit reached"}) + "\n"
+	f.Foreground["-agent"].Handler = func(ctx context.Context, _ dockerx.RunSpec, _ io.Reader, stdout, _ io.Writer) (int, error) {
+		_, _ = io.WriteString(stdout, limitLine)
+		<-ctx.Done()
+		cause = context.Cause(ctx)
+		return 137, nil
+	}
+	env, err = Run(context.Background(), f, p)
+	if !errors.Is(cause, errPlanLimit) {
+		t.Fatalf("the running harness was ended by %v, want the plan limit", cause)
+	}
+	if env.Reason == nil || env.Reason.Code != receipt.ReasonPlanLimit || !strings.Contains(err.Error(), "usage limit reached") {
+		t.Fatalf("err %v, reason %+v", err, env.Reason)
+	}
+	// The outcome words the vendor's text and a reset time only when they
+	// were given, and states the reset in UTC whatever zone it came in.
+	zone := time.FixedZone("far east", 9*60*60)
+	at := time.Date(2026, 10, 12, 18, 0, 0, 0, zone)
+	for _, c := range []struct {
+		text   string
+		resets time.Time
+		want   string
+	}{
+		{"", time.Time{}, "plan limit reached: the person's plan (or this app's weekly cap on it) refused the model's calls"},
+		{"hit the cap", time.Time{}, "plan limit reached: the person's plan (or this app's weekly cap on it) refused the model's calls; the vendor said: hit the cap"},
+		{"", at, "plan limit reached: the person's plan (or this app's weekly cap on it) refused the model's calls; it resets at 2026-10-12T09:00:00Z"},
+		{"hit the cap", at, "plan limit reached: the person's plan (or this app's weekly cap on it) refused the model's calls; the vendor said: hit the cap; it resets at 2026-10-12T09:00:00Z"},
+	} {
+		err := planLimitError(c.text, c.resets)
+		var ce *ClassifiedError
+		if !errors.As(err, &ce) || ce.Code != ExitBudget || err.Error() != c.want {
+			t.Errorf("planLimitError(%q, %v) = %v (%v), want %q in the budget class", c.text, c.resets, err, ce, c.want)
+		}
+		if r := receipt.ReasonOf(err); r == nil || r.Code != receipt.ReasonPlanLimit {
+			t.Errorf("planLimitError(%q, %v): reason %+v", c.text, c.resets, r)
+		}
 	}
 }
 
+// planLimitResets is when the session fixture's plan limit lifts.
+var planLimitResets = time.Date(2026, 10, 13, 8, 0, 0, 0, time.UTC)
+
 // planLimitAdapter is the session fixture's adapter whose driver reports a
-// plan limit after its first turn, as a sign-in harness would.
+// plan limit after its first turn, as a sign-in harness would, and again
+// while the session ends.
 type planLimitAdapter struct{ adapter.Adapter }
 
 func (a planLimitAdapter) Session(ctx context.Context, rw io.ReadWriteCloser, o adapter.SessionOptions) (adapter.SessionDriver, error) {
@@ -407,7 +553,8 @@ func (d *planLimitDriver) Events() <-chan adapter.Event { return d.out }
 func (d *planLimitDriver) Prompt(ctx context.Context, text string) (*adapter.Turn, error) {
 	turn, err := d.SessionDriver.Prompt(ctx, text)
 	d.once.Do(func() {
-		d.out <- adapter.Event{Kind: adapter.EventPlanLimit, Text: "weekly limit reached"}
+		d.out <- adapter.Event{Kind: adapter.EventPlanLimit, Text: "weekly limit reached", ResetsAt: planLimitResets}
+		d.out <- adapter.Event{Kind: adapter.EventPlanLimit, Text: "a later limit report", ResetsAt: planLimitResets.Add(time.Hour)}
 	})
 	return turn, err
 }
@@ -448,10 +595,22 @@ func TestAPlanLimitEndsASession(t *testing.T) {
 	<-done
 	var ce *ClassifiedError
 	if !errors.As(err, &ce) || ce.Code != ExitBudget || env.Status != "error" || env.Reason == nil || env.Reason.Code != receipt.ReasonPlanLimit ||
-		!strings.Contains(err.Error(), "weekly limit reached") {
+		!strings.Contains(err.Error(), "weekly limit reached") || !strings.Contains(err.Error(), "2026-10-13T08:00:00Z") {
 		t.Fatalf("end = %v (%+v)", err, env.Reason)
+	}
+	if strings.Contains(err.Error(), "a later limit report") || strings.Contains(err.Error(), "T09:00:00Z") {
+		t.Fatalf("a later report replaced the first limit: %v", err)
 	}
 	if last := get()[len(get())-1]; last.Kind != session.KindSessionEnd || last.Reason != session.EndPlanLimit {
 		t.Fatalf("last event %+v", last)
+	}
+	said := false
+	for _, ev := range get() {
+		if ev.Kind == session.KindError && ev.Text == "plan limit reached: weekly limit reached" {
+			said = true
+		}
+	}
+	if !said {
+		t.Fatalf("the session never said the limit: %+v", get())
 	}
 }

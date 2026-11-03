@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
@@ -39,6 +40,16 @@ func TestKeyringIsReadOnceForTheRedactorAndTheRun(t *testing.T) {
 	got, err := hostSecret(v)
 	if err != nil || got != "from-keyring" || calls != 1 {
 		t.Fatalf("got %q err %v calls %d", got, err, calls)
+	}
+
+	// A failed read is remembered as well: the run is refused with the error
+	// the redactor already met, and the keychain is asked once.
+	failures := 0
+	resetKeyringOnce()
+	keyringLookup = func(string) (string, error) { failures++; return "", errors.New("the OS keychain is locked") }
+	_ = hostSecretValues([]spec.EnvVar{v})
+	if _, err := hostSecret(v); err == nil || !strings.Contains(err.Error(), "the OS keychain is locked") || failures != 1 {
+		t.Fatalf("a failed read: %v after %d lookups, want one", err, failures)
 	}
 }
 
@@ -75,13 +86,24 @@ func TestHostSecretMissingEverywhereNamesTheFix(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "provider anthropic") || !strings.Contains(err.Error(), "$TEST_MODEL_KEY is not set") || !strings.Contains(err.Error(), "provider:anthropic") || !strings.Contains(err.Error(), "agentry setup") {
 		t.Fatalf("err = %v", err)
 	}
-	// Without a keyring account the old refusal stands, untouched.
+	// Without a keyring account the old refusal stands, untouched: naming the
+	// name the harness reads it by only when that is another name.
 	_, err = hostSecret(spec.EnvVar{Name: "K", FromHostEnv: "TEST_MODEL_KEY"})
-	if err == nil || !strings.Contains(err.Error(), "required environment variable TEST_MODEL_KEY is not set") {
+	if err == nil || !strings.Contains(err.Error(), "required environment variable TEST_MODEL_KEY is not set (the policy names it; the harness reads it as K)") {
+		t.Fatalf("err = %v", err)
+	}
+	_, err = hostSecret(spec.EnvVar{Name: "TEST_MODEL_KEY", FromHostEnv: "TEST_MODEL_KEY"})
+	if err == nil || !strings.HasSuffix(err.Error(), "required environment variable TEST_MODEL_KEY is not set (the policy names it)") {
 		t.Fatalf("err = %v", err)
 	}
 	if vals := hostSecretValues([]spec.EnvVar{v}); len(vals) != 0 {
 		t.Fatalf("a failed lookup must add nothing to redact: %q", vals)
+	}
+	// Nor does a keychain entry that holds nothing: an empty value in the
+	// redactor would mask every character.
+	fakeKeyring(t, map[string]string{"provider:anthropic": ""})
+	if vals := hostSecretValues([]spec.EnvVar{v}); len(vals) != 0 {
+		t.Fatalf("an empty keychain value must add nothing to redact: %q", vals)
 	}
 }
 
@@ -98,6 +120,35 @@ func TestReceiptNamesTheModelKeySource(t *testing.T) {
 	line := env.CapabilitiesEnforced["model.apiKey"]
 	if !strings.HasPrefix(line, "$") || !strings.Contains(line, "from the host environment") {
 		t.Fatalf("receipt model.apiKey line = %q", line)
+	}
+	// The receipt names the kind of the credential, never its value: an API
+	// key for a key read from the environment, the kind the plan was compiled
+	// for when it names one, the sign-in's kind for a sign-in; the harness on
+	// this computer is read by its own environment.
+	if env.Harness.CredentialKind != policy.KeyKindAPI {
+		t.Fatalf("receipt credential kind = %q", env.Harness.CredentialKind)
+	}
+	keyVar := spec.EnvVar{Name: "K", FromHostEnv: "TEST_MODEL_KEY"}
+	subscription := spec.EnvVar{Name: "T", FromHostEnv: "TEST_MODEL_KEY", ExpectedKind: &spec.CredentialKind{Provider: "anthropic", Kind: "subscription"}}
+	inContainer := func(vars ...spec.EnvVar) *spec.Plan {
+		return &spec.Plan{Harness: spec.HarnessSpec{Agent: spec.ContainerSpec{Env: vars}}}
+	}
+	onHost := func(vars ...spec.EnvVar) *spec.Plan {
+		return &spec.Plan{Harness: spec.HarnessSpec{Host: &spec.HostProcessSpec{Env: vars}, Agent: spec.ContainerSpec{Env: []spec.EnvVar{keyVar}}}}
+	}
+	for name, c := range map[string]struct {
+		plan *spec.Plan
+		want string
+	}{
+		"a key from the environment":             {inContainer(keyVar), policy.KeyKindAPI},
+		"a kind the plan was compiled for":       {inContainer(keyVar, subscription), "subscription"},
+		"no key at all":                          {inContainer(spec.EnvVar{Name: "A", Value: "literal"}), ""},
+		"a key for the harness on this computer": {onHost(subscription), "subscription"},
+		"a sign-in":                              {&spec.Plan{Harness: spec.HarnessSpec{ModelSignIn: &spec.ModelSignInSpec{Kind: policy.KeyKindChatGPTPlan}, Agent: spec.ContainerSpec{Env: []spec.EnvVar{keyVar}}}}, policy.KeyKindChatGPTPlan},
+	} {
+		if got := credentialKind(c.plan); got != c.want {
+			t.Errorf("%s: credential kind %q, want %q", name, got, c.want)
+		}
 	}
 	for _, v := range []string{p.Plan.Harness.Agent.Env[0].Value} {
 		if v != "" && strings.Contains(line, v) {

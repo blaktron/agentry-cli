@@ -341,6 +341,42 @@ func codexSessionOnAPlan(t *testing.T, route string) (Params, *dockerx.Fake, fun
 	}
 }
 
+// costlyAdapter is the session fixture's adapter whose driver reports a
+// dollar cost with some usage when its first turn is prompted, as a harness
+// that prices its own calls would.
+type costlyAdapter struct{ adapter.Adapter }
+
+func (a costlyAdapter) Session(ctx context.Context, rw io.ReadWriteCloser, o adapter.SessionOptions) (adapter.SessionDriver, error) {
+	d, err := a.Adapter.Session(ctx, rw, o)
+	if err != nil {
+		return nil, err
+	}
+	out := make(chan adapter.Event, 64)
+	go func() {
+		for ev := range d.Events() {
+			out <- ev
+		}
+		close(out)
+	}()
+	return &costlyDriver{SessionDriver: d, out: out}, nil
+}
+
+type costlyDriver struct {
+	adapter.SessionDriver
+	out  chan adapter.Event
+	once sync.Once
+}
+
+func (d *costlyDriver) Events() <-chan adapter.Event { return d.out }
+
+func (d *costlyDriver) Prompt(ctx context.Context, text string) (*adapter.Turn, error) {
+	turn, err := d.SessionDriver.Prompt(ctx, text)
+	d.once.Do(func() {
+		d.out <- adapter.Event{Kind: adapter.EventUsage, InputTokens: 7, CostUSD: 0.42}
+	})
+	return turn, err
+}
+
 // tokensByTurn is the token file's content at each turn the last
 // codexSessionOnAPlan fixture's codex took.
 var tokensByTurn func() []string
@@ -432,6 +468,7 @@ func TestTheRestartRouteResumesTheConversationOnARenewedToken(t *testing.T) {
 	}
 
 	p, f, seen = codexSessionOnAPlan(t, "")
+	p.Adapter = costlyAdapter{p.Adapter}
 	s, err = StartSession(ctx, f, p)
 	if err != nil {
 		t.Fatal(err)
@@ -443,8 +480,14 @@ func TestTheRestartRouteResumesTheConversationOnARenewedToken(t *testing.T) {
 	if err := s.Send(ctx, "second"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.End(ctx, false); err != nil {
+	env, err = s.End(ctx, false)
+	if err != nil {
 		t.Fatal(err)
+	}
+	// The harness reported dollars with its first turn's usage; a plan session
+	// reports the tokens (the codex fixture's 10 for each of two turns, and the 7) and not those dollars.
+	if env.Usage.InputTokens != 27 || env.Usage.CostUSD != 0 {
+		t.Fatalf("a plan session's usage %+v: tokens, not the harness's dollars", env.Usage)
 	}
 	if got := seen(); len(got) != 1 {
 		t.Fatalf("the default route started codex %d times", len(got))
