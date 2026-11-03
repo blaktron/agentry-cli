@@ -3570,7 +3570,12 @@
             "TestAttackInteractiveCancelCloseAndEOFMidTurn",
             "TestAttackInteractiveCloseBetweenTurnsAnswersAfterTheTeardownUpdates",
             "TestAttackConcurrentPromptsAreOneRun",
-            "TestAttackCancelMidTurnIsAnsweredPromptly"
+            "TestAttackCancelMidTurnIsAnsweredPromptly",
+            "TestTextTheClientDrawsIsCleanedOfWhatCouldMisleadIt",
+            "TestAToolCallIsReportedAsProgressAndItsResultNamesTheCall",
+            "TestProgressIsDroppedBeforeTheAnswersTheClientIsOwed",
+            "TestTheRunsFinalAnswerCarriesItsResultAndHowItEnded",
+            "TestATurnThatEndsTheSessionIsAnsweredWithWhy"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -8785,12 +8790,19 @@
             "TestCommandLines",
             "TestReadLinesBoundsALineAndReadsOn",
             "TestAnEventLineIsTheSessionEventWithoutRaw",
-            "TestASendTheSessionAnswersBusyIsRefusedBusy"
+            "TestASendTheSessionAnswersBusyIsRefusedBusy",
+            "TestAnAddIsHeldToTheInputsDirectory",
+            "TestTheEndCommandAndTheEndOfInputEndTheSession",
+            "TestASendIsRefusedBusyWhileATurnIsOnItsWayOrInFlight",
+            "TestAnAnswerReachesTheSessionThatAsksOrIsRefused",
+            "TestUsageIsMeteredAsTheSessionNarratesIt",
+            "TestAClosedOutputStillWritesWhatIsQueued"
           ],
           "fuzz": [],
           "benchmarks": [],
           "fixtureEntryPoint": false,
           "dependencyHints": [
+            "source/file contract",
             "real-time wait"
           ]
         }
@@ -9396,12 +9408,22 @@
             "TestTaskLine",
             "TestAnUpkeepTurnIsOneLineNotThePersonsMessage",
             "TestTheAgentsOwnTurnIsFaint",
-            "TestUpkeepLine"
+            "TestUpkeepLine",
+            "TestEscAndTheQuitCommandsLeaveTheChatAndOnlyFinishAsksForAResult",
+            "TestTheInputLineSendsOneTurnAtATime",
+            "TestTheSlashCommandsOfTheChat",
+            "TestTheTranscriptShowsWhatTheSessionDoes",
+            "TestTheChatOpensWithTheAgentsOpeningLineAndTheCommands",
+            "TestTheStatusLineShowsTheRunsBudgets",
+            "TestTheChatIsDrawnToTheWindowAndStopsWhenItEnds",
+            "TestRunReturnsHowTheChatWasLeft"
           ],
           "fuzz": [],
           "benchmarks": [],
           "fixtureEntryPoint": false,
-          "dependencyHints": []
+          "dependencyHints": [
+            "explicit skip"
+          ]
         }
       ]
     },

@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -192,8 +194,19 @@ func TestASessionTakesNoClientToolsAndOnlyOneSession(t *testing.T) {
 		t.Fatalf("a client's directory was taken: %v", r)
 	}
 	c.send(req(4, "session/new", map[string]any{"cwd": "/w", "mcpServers": []any{}}))
-	if r, _ := c.replyTo(4); r["error"] != nil {
-		t.Fatalf("session/new: %v", r)
+	r4, _ := c.replyTo(4)
+	if r4["error"] != nil {
+		t.Fatalf("session/new: %v", r4)
+	}
+	// The session id is the agent's prefix and 96 random bits in hex, and no
+	// two connections share one.
+	sid, _ := r4["result"].(map[string]any)["sessionId"].(string)
+	if !regexp.MustCompile(`^agentry-[0-9a-f]{24}$`).MatchString(sid) {
+		t.Fatalf("session id %q", sid)
+	}
+	other := startRaw(t, neverRuns(t))
+	if sid2 := other.handshake(); sid2 == sid || !regexp.MustCompile(`^agentry-[0-9a-f]{24}$`).MatchString(sid2) {
+		t.Fatalf("a second connection was given session id %q beside %q", sid2, sid)
 	}
 	c.send(req(5, "session/new", map[string]any{"cwd": "/w", "mcpServers": []any{}}))
 	if r, _ := c.replyTo(5); errCode(r) != codeInvalidRequest {
@@ -203,8 +216,12 @@ func TestASessionTakesNoClientToolsAndOnlyOneSession(t *testing.T) {
 	for i, m := range []string{"fs/read_text_file", "fs/write_text_file", "terminal/create", "terminal/output", "session/load", "session/set_mode", "session/list", "authenticate", "nonsense"} {
 		id := 10 + i
 		c.send(req(id, m, map[string]any{"path": "/etc/passwd", "sessionId": "x"}))
-		if r, _ := c.replyTo(id); errCode(r) != codeMethodNotFound {
+		r, _ := c.replyTo(id)
+		if errCode(r) != codeMethodNotFound {
 			t.Fatalf("%s: %v", m, r)
+		}
+		if msg, _ := r["error"].(map[string]any)["message"].(string); msg != "this agent does not serve "+m {
+			t.Fatalf("%s: message %q", m, msg)
 		}
 	}
 }
@@ -242,6 +259,9 @@ func TestPromptsBeforeConsentAreRefusedAndThePendingOneIsTheOnlyOne(t *testing.T
 			if errCode(m) != codeInvalidRequest {
 				t.Fatalf("a prompt in flight was answered %v", m)
 			}
+			if msg, _ := m["error"].(map[string]any)["message"].(string); msg != "a prompt is in flight: send the next when it is answered" {
+				t.Fatalf("a prompt in flight was refused with %q", msg)
+			}
 			seen++
 		}
 	}
@@ -271,6 +291,9 @@ func TestAMalformedOrHugeFrameDoesNotEndTheConnection(t *testing.T) {
 	if r := c.recv(); errCode(r) != codeParse {
 		t.Fatalf("garbage: %v", r)
 	}
+	// Blank and whitespace-only lines are not frames: nothing answers them,
+	// so the next frame read is the answer to the one that follows.
+	c.sendRaw("\n   \t \n\r\n")
 	c.sendRaw(`{"jsonrpc":"1.0","id":1,"method":"initialize"}` + "\n")
 	if r := c.recv(); errCode(r) != codeInvalidRequest {
 		t.Fatalf("a wrong version: %v", r)
@@ -283,11 +306,40 @@ func TestAMalformedOrHugeFrameDoesNotEndTheConnection(t *testing.T) {
 	if r := c.recv(); errCode(r) != codeInvalidRequest || r["id"] != nil {
 		t.Fatalf("a huge id was echoed: %v", r)
 	}
+	// An id string of exactly 256 bytes (its quotes included) is echoed; one
+	// byte more is refused with a null id.
+	c.sendRaw(fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"method":"initialize"}`, strings.Repeat("i", 254)) + "\n")
+	if r := c.recv(); errCode(r) != codeInvalidParams || r["id"] != strings.Repeat("i", 254) {
+		t.Fatalf("an id of 256 bytes was not echoed: %v", truncate(r))
+	}
+	c.sendRaw(fmt.Sprintf(`{"jsonrpc":"2.0","id":%q,"method":"initialize"}`, strings.Repeat("i", 255)) + "\n")
+	if r := c.recv(); errCode(r) != codeInvalidRequest || r["id"] != nil {
+		t.Fatalf("an id of 257 bytes was echoed: %v", truncate(r))
+	}
+	// A frame of exactly MaxFrame bytes is taken, one byte more is refused.
+	exact := `{"jsonrpc":"2.0","id":5,"method":"x","params":{"pad":"`
+	exact += strings.Repeat("x", MaxFrame-len(exact)-len(`"}}`)) + `"}}`
+	if len(exact) != MaxFrame {
+		t.Fatalf("test frame is %d bytes", len(exact))
+	}
+	go func() { _, _ = c.w.Write([]byte(exact + "\n")) }()
+	if r := c.recv(); errCode(r) != codeInvalidRequest || fmt.Sprint(r["id"]) != "5" {
+		t.Fatalf("a frame of exactly %d bytes: %v", MaxFrame, truncate(r))
+	}
+	over := exact[:len(exact)-3] + `x"}}`
+	go func() { _, _ = c.w.Write([]byte(over + "\n")) }()
+	if r := c.recv(); errCode(r) != codeParse || r["id"] != nil {
+		t.Fatalf("a frame of %d bytes: %v", MaxFrame+1, truncate(r))
+	} else if msg, _ := r["error"].(map[string]any)["message"].(string); msg != fmt.Sprintf("a frame is at most %d bytes", MaxFrame) {
+		t.Fatalf("an overlong frame was refused with %q", msg)
+	}
 	// 3 MiB on one line, then a valid request on the next.
 	big := `{"jsonrpc":"2.0","id":3,"method":"initialize","params":{"pad":"` + strings.Repeat("x", 3<<20) + `"}}` + "\n"
 	go func() { _, _ = c.w.Write([]byte(big)) }()
 	if r := c.recv(); errCode(r) != codeParse {
 		t.Fatalf("a huge frame: %v", r)
+	} else if msg, _ := r["error"].(map[string]any)["message"].(string); msg != fmt.Sprintf("a frame is at most %d bytes", MaxFrame) {
+		t.Fatalf("a huge frame was refused with %q", msg)
 	}
 	c.send(req(4, "initialize", map[string]any{"protocolVersion": 1}))
 	if r, _ := c.replyTo(4); r["error"] != nil {
@@ -316,6 +368,19 @@ func TestAFrameWithoutItsNewlineAtTheEndIsStillAFrame(t *testing.T) {
 	_ = c.w.Close()
 	if r := c.recv(); r["error"] != nil || r["id"].(float64) != 1 {
 		t.Fatalf("%v", r)
+	}
+	// An overlong last line without its newline is refused like any other.
+	c2 := startRaw(t, neverRuns(t))
+	go func() {
+		_, _ = c2.w.Write([]byte(strings.Repeat("a", MaxFrame+10)))
+		_ = c2.w.Close()
+	}()
+	r := c2.recv()
+	if errCode(r) != codeParse {
+		t.Fatalf("an overlong last line: %v", r)
+	}
+	if msg, _ := r["error"].(map[string]any)["message"].(string); msg != fmt.Sprintf("a frame is at most %d bytes", MaxFrame) {
+		t.Fatalf("an overlong last line was refused with %q", msg)
 	}
 }
 
@@ -409,7 +474,115 @@ func TestTheQueueGivesUpOnAClientThatCannotTakeTheAnswersItIsOwed(t *testing.T) 
 	if time.Since(start) > 5*time.Second {
 		t.Fatal("close waited on a writer that never returns")
 	}
+
+	// With small bounds the limits are exact. A writer holds the first frame
+	// and the queue behind it is counted: progress is kept up to maxBehind
+	// and dropped past it, an answer is kept up to maxBehind+keepHeadroom and
+	// the connection is given up past that, after which nothing is taken.
+	g := &gatedWriter{took: make(chan struct{}, 1), gate: make(chan struct{})}
+	defer close(g.gate)
+	small := newOutbox(g)
+	small.maxBehind, small.keepHeadroom = 100, 50
+	small.send([]byte("first"), false)
+	<-g.took
+	ten := []byte("0123456789")
+	for i := 0; i < 10; i++ {
+		small.send(ten, true)
+	}
+	small.send([]byte("x"), true)
+	small.mu.Lock()
+	queued, dropped, dead := small.queued, small.dropped, small.dead
+	small.mu.Unlock()
+	if queued != 100 || dropped != 1 || dead {
+		t.Fatalf("progress up to maxBehind: queued=%d dropped=%d dead=%v, want 100, 1, false", queued, dropped, dead)
+	}
+	for i := 0; i < 5; i++ {
+		small.send(ten, false)
+	}
+	small.mu.Lock()
+	queued, dropped, dead = small.queued, small.dropped, small.dead
+	small.mu.Unlock()
+	if queued != 150 || dropped != 1 || dead {
+		t.Fatalf("answers up to the headroom: queued=%d dropped=%d dead=%v, want 150, 1, false", queued, dropped, dead)
+	}
+	small.send([]byte("x"), false)
+	small.send(ten, true)
+	small.mu.Lock()
+	queued, dropped, dead = small.queued, small.dropped, small.dead
+	small.mu.Unlock()
+	if queued != 0 || dropped != 1 || !dead {
+		t.Fatalf("an answer past the headroom: queued=%d dropped=%d dead=%v, want 0, 1, true", queued, dropped, dead)
+	}
+
+	// A closed outbox takes nothing more, and close returns once the queue is
+	// written, not at the end of the grace.
+	var sink recordingWriter
+	closed := newOutbox(&sink)
+	closed.send([]byte("one"), false)
+	closed.send([]byte("two"), true)
+	closed.close(10 * time.Second)
+	select {
+	case <-closed.done:
+	default:
+		t.Fatal("close returned before the writer had finished")
+	}
+	closed.send([]byte("late"), false)
+	closed.mu.Lock()
+	queued = closed.queued
+	closed.mu.Unlock()
+	if got := sink.String(); got != "one\ntwo\n" || queued != 0 {
+		t.Fatalf("written %q, %d queued after close", got, queued)
+	}
+
+	// A write that fails gives the connection up: nothing is queued after it.
+	failing := newOutbox(failingWriter{})
+	failing.send([]byte("one"), false)
+	<-failing.done
+	failing.send([]byte("two"), false)
+	failing.mu.Lock()
+	queued, dead = failing.queued, failing.dead
+	failing.mu.Unlock()
+	if !dead || queued != 0 {
+		t.Fatalf("after a failed write: dead=%v queued=%d", dead, queued)
+	}
 }
+
+// gatedWriter holds every write until gate is closed, and says once that it
+// has taken one.
+type gatedWriter struct {
+	took chan struct{}
+	gate chan struct{}
+}
+
+func (g *gatedWriter) Write(p []byte) (int, error) {
+	select {
+	case g.took <- struct{}{}:
+	default:
+	}
+	<-g.gate
+	return len(p), nil
+}
+
+type recordingWriter struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (r *recordingWriter) Write(p []byte) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.b.Write(p)
+}
+
+func (r *recordingWriter) String() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.b.String()
+}
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
 
 func TestADeadReaderDoesNotStopTheRunsEvents(t *testing.T) {
 	// The client closed its read side: writes fail, and Event stays cheap.

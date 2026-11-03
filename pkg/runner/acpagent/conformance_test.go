@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -87,6 +89,16 @@ func (r *recorder) WaitForTerminalExit(context.Context, acp.WaitForTerminalExitR
 	return acp.WaitForTerminalExitResponse{}, nil
 }
 
+// canon is v as JSON with its keys in order, for comparing what went over the
+// wire to a literal.
+func canon(v any) string {
+	b, _ := json.Marshal(v)
+	var m any
+	_ = json.Unmarshal(b, &m)
+	b, _ = json.Marshal(m)
+	return string(b)
+}
+
 type fnBackend func(ctx context.Context, h *acpagent.Host, first string) error
 
 func (f fnBackend) Run(ctx context.Context, h *acpagent.Host, first string) error {
@@ -135,6 +147,9 @@ func start(t *testing.T, conn *acp.ClientSideConnection) acp.SessionId {
 	caps := init.AgentCapabilities
 	if caps.LoadSession || caps.PromptCapabilities.Image || caps.PromptCapabilities.Audio || caps.PromptCapabilities.EmbeddedContext {
 		t.Fatalf("capabilities offered more than the agent serves: %+v", caps)
+	}
+	if caps.McpCapabilities.Http || caps.McpCapabilities.Sse || len(init.AuthMethods) != 0 || init.AgentInfo.Version != "test" {
+		t.Fatalf("initialize answered %+v", init)
 	}
 	if caps.SessionCapabilities.Close == nil {
 		t.Fatal("session/close is served and not advertised")
@@ -216,6 +231,14 @@ func TestAutonomousRunIsOneTurnWithItsDeliverablesInTheLastUpdates(t *testing.T)
 	if rec.fsCalls != 0 {
 		t.Fatalf("the agent used the client's file system or terminal %d times", rec.fsCalls)
 	}
+	// The request is an execute-kind tool call still pending, with the run's
+	// own words, and one option that runs it once and one that does not.
+	if got := canon(q.ToolCall); got != `{"content":[{"content":{"text":"acme/weekly@1.2.0\ncapabilities: no network","type":"text"},"type":"content"}],"kind":"execute","status":"pending","title":"Run acme/weekly?","toolCallId":"consent"}` {
+		t.Fatalf("consent tool call %s", got)
+	}
+	if got := canon(q.Options); got != `[{"kind":"allow_once","name":"Run it","optionId":"allow"},{"kind":"reject_once","name":"Do not run it","optionId":"reject"}]` {
+		t.Fatalf("consent options %s", got)
+	}
 
 	var kinds, texts []string
 	var inline *acp.EmbeddedResourceResource
@@ -258,26 +281,47 @@ func TestAutonomousRunIsOneTurnWithItsDeliverablesInTheLastUpdates(t *testing.T)
 	if meta["runId"] != "r1" || meta["status"] != "ok" {
 		t.Fatalf("the answer's _meta says %v", resp.Meta)
 	}
+	if meta["exitClass"] != "ok" || meta["outDir"] != dir {
+		t.Fatalf("the answer's _meta says %v", resp.Meta)
+	}
+
+	// The tool call is progress, and its result names it.
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if got := canon(rec.updates[0]); got != `{"kind":"other","sessionUpdate":"tool_call","status":"in_progress","title":"read_input","toolCallId":"call-1"}` {
+		t.Fatalf("the tool call: %s", got)
+	}
+	if got := canon(rec.updates[1]); got != `{"content":[{"content":{"text":"ten lines","type":"text"},"type":"content"}],"sessionUpdate":"tool_call_update","status":"completed","toolCallId":"call-1"}` {
+		t.Fatalf("the tool call's result: %s", got)
+	}
+	if got := canon(link); !strings.Contains(got, `"title":"pdf report"`) || !strings.Contains(got, `"name":"data.pdf"`) || !strings.Contains(got, `"size":13`) {
+		t.Fatalf("the pdf link: %s", got)
+	}
 }
 
 func TestAConsentTheClientDoesNotGiveIsARefusal(t *testing.T) {
+	// What the client is told besides the refusal: the agent's reason for it.
+	const declined = "the run was not consented to: the client declined it"
+	const unanswered = "the run was not consented to: the client did not answer the consent request"
 	cases := map[string]struct {
 		answer func(acp.RequestPermissionRequest) (acp.RequestPermissionResponse, error)
 		wait   time.Duration
+		notice string
+		prefix bool // notice is the start of what is said, not all of it
 	}{
-		"declined": {answer: choose("reject")},
+		"declined": {answer: choose("reject"), notice: declined},
 		"dismissed": {answer: func(acp.RequestPermissionRequest) (acp.RequestPermissionResponse, error) {
 			return acp.RequestPermissionResponse{Outcome: acp.NewRequestPermissionOutcomeCancelled()}, nil
-		}},
+		}, notice: declined},
 		"an error": {answer: func(acp.RequestPermissionRequest) (acp.RequestPermissionResponse, error) {
 			return acp.RequestPermissionResponse{}, errors.New("cannot show it")
-		}},
-		"no handler": {answer: nil},
-		"another id": {answer: choose("allow-always")},
-		"no answer":  {answer: func(acp.RequestPermissionRequest) (acp.RequestPermissionResponse, error) { select {} }},
+		}, notice: unanswered + " (the client answered with an error (", prefix: true},
+		"no handler": {answer: nil, notice: unanswered + " (the client answered with an error (", prefix: true},
+		"another id": {answer: choose("allow-always"), notice: unanswered + " (an answer the request did not offer)"},
+		"no answer":  {answer: func(acp.RequestPermissionRequest) (acp.RequestPermissionResponse, error) { select {} }, notice: unanswered + " (no answer in 300ms)"},
 		"empty outcome": {answer: func(acp.RequestPermissionRequest) (acp.RequestPermissionResponse, error) {
 			return acp.RequestPermissionResponse{Outcome: acp.RequestPermissionOutcome{}}, nil
-		}},
+		}, notice: unanswered + " (the client answered with an error (", prefix: true},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -304,6 +348,17 @@ func TestAConsentTheClientDoesNotGiveIsARefusal(t *testing.T) {
 			}
 			if ran {
 				t.Fatal("the run started without consent")
+			}
+			var told []string
+			rec.mu.Lock()
+			for _, u := range rec.updates {
+				if u.AgentMessageChunk != nil && u.AgentMessageChunk.Content.Text != nil {
+					told = append(told, u.AgentMessageChunk.Content.Text.Text)
+				}
+			}
+			rec.mu.Unlock()
+			if len(told) != 1 || (c.prefix && !strings.HasPrefix(told[0], c.notice)) || (!c.prefix && told[0] != c.notice) {
+				t.Fatalf("the client was told %q, want %q", told, c.notice)
 			}
 		})
 	}
@@ -356,7 +411,7 @@ func TestInteractiveSessionIsOneSessionAndEachPromptATurn(t *testing.T) {
 		}
 		_ = h.Converse(ctx, fs)
 		env, err := fs.End(context.Background(), false)
-		env.OutDir, env.Deliverables = dir, ds
+		env.OutDir, env.Deliverables, env.Result = dir, ds, []byte(`"all done"`)
 		h.Finish(env, err)
 		return err
 	})
@@ -376,20 +431,47 @@ func TestInteractiveSessionIsOneSessionAndEachPromptATurn(t *testing.T) {
 	if strings.Join(fs.sent, "|") != "hello|and again" {
 		t.Fatalf("turns were %q", fs.sent)
 	}
+	// Each turn's events reach the client ahead of the turn's answer: the tool
+	// call, the reply, and the end of the tool call.
+	var got []string
+	rec.mu.Lock()
+	for _, u := range rec.updates {
+		got = append(got, canon(u))
+	}
+	rec.mu.Unlock()
+	turn := func(n int, say string) []string {
+		return []string{
+			fmt.Sprintf(`{"kind":"other","sessionUpdate":"tool_call","status":"in_progress","title":"list_inputs","toolCallId":"call-%d"}`, n),
+			`{"content":{"text":"echo: ` + say + `","type":"text"},"sessionUpdate":"agent_message_chunk"}`,
+			fmt.Sprintf(`{"sessionUpdate":"tool_call_update","status":"completed","toolCallId":"call-%d"}`, n),
+		}
+	}
+	if want := append(turn(1, "hello"), turn(2, "and again")...); strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("updates:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
 	before := len(rec.updates)
 	if _, err := conn.CloseSession(ctx, acp.CloseSessionRequest{SessionId: sid}); err != nil {
 		t.Fatalf("session/close: %v", err)
 	}
 	var sawResource bool
+	var told []string
 	rec.mu.Lock()
 	for _, u := range rec.updates[before:] {
 		if u.AgentMessageChunk != nil && u.AgentMessageChunk.Content.Resource != nil {
 			sawResource = true
 		}
+		if u.AgentMessageChunk != nil && u.AgentMessageChunk.Content.Text != nil {
+			told = append(told, u.AgentMessageChunk.Content.Text.Text)
+		}
 	}
 	rec.mu.Unlock()
 	if !sawResource {
 		t.Fatal("the deliverables the teardown listed did not come back before the close was answered")
+	}
+	// The session's replies were its turns' answers: its final result is not
+	// said again as a message.
+	if strings.Join(told, "|") != "Deliverable:" {
+		t.Fatalf("the teardown said %q", told)
 	}
 	if _, err := conn.Prompt(ctx, acp.PromptRequest{SessionId: sid, Prompt: []acp.ContentBlock{acp.TextBlock("more")}}); err == nil {
 		t.Fatal("a prompt after the close was taken")
@@ -448,6 +530,25 @@ func TestARunThatFailsIsAnErrorAnswer(t *testing.T) {
 	_, err := conn.Prompt(context.Background(), acp.PromptRequest{SessionId: sid, Prompt: []acp.ContentBlock{acp.TextBlock("go")}})
 	var re *acp.RequestError
 	if !errors.As(err, &re) || !strings.Contains(re.Message, "the harness exited 1") {
+		t.Fatalf("want the run's error, got %v", err)
+	}
+	if re.Code != -32603 {
+		t.Fatalf("the run's error has code %d, want an internal error", re.Code)
+	}
+
+	// A run that returns its error without reporting a finish is answered the
+	// same way.
+	bare := fnBackend(func(ctx context.Context, h *acpagent.Host, _ string) error {
+		if err := h.Consent(ctx, acpagent.Consent{Title: "Run?", Text: "x"}); err != nil {
+			return err
+		}
+		return errors.New("the model was unreachable")
+	})
+	rec2 := &recorder{answer: choose("allow")}
+	conn2, _ := connect(t, bare, rec2)
+	sid2 := start(t, conn2)
+	_, err = conn2.Prompt(context.Background(), acp.PromptRequest{SessionId: sid2, Prompt: []acp.ContentBlock{acp.TextBlock("go")}})
+	if !errors.As(err, &re) || re.Message != "the model was unreachable" || re.Code != -32603 {
 		t.Fatalf("want the run's error, got %v", err)
 	}
 }
