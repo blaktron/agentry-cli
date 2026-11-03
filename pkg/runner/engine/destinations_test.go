@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -43,6 +45,8 @@ type deliveryStepSaw struct {
 	job    send.Job
 	staged map[string]string
 	spec   dockerx.RunSpec
+	// limit is the time the step was given.
+	limit time.Duration
 }
 
 func deliveryStepPlays(t *testing.T, f *dockerx.Fake, answer func(job send.Job) send.Report) *deliveryStepSaw {
@@ -51,8 +55,11 @@ func deliveryStepPlays(t *testing.T, f *dockerx.Fake, answer func(job send.Job) 
 	if f.Foreground == nil {
 		f.Foreground = map[string]*dockerx.FakeForeground{}
 	}
-	f.Foreground["-delivery"] = &dockerx.FakeForeground{Handler: func(_ context.Context, r dockerx.RunSpec, stdin io.Reader, _, _ io.Writer) (int, error) {
+	f.Foreground["-delivery"] = &dockerx.FakeForeground{Handler: func(ctx context.Context, r dockerx.RunSpec, stdin io.Reader, _, _ io.Writer) (int, error) {
 		saw.spec = r
+		if dl, ok := ctx.Deadline(); ok {
+			saw.limit = time.Until(dl)
+		}
 		b, _ := io.ReadAll(stdin)
 		saw.stdin = string(b)
 		var jobDir, stagedDir, work string
@@ -166,6 +173,14 @@ func TestADestinationGetsAStepOfItsOwn(t *testing.T) {
 	happyFake(f)
 	agentWrites(p, f, map[string]string{"reports/brief.md": "# Brief\n"}, `{"path":"reports/brief.md","title":"The brief","marked":true}`)
 	saw := deliveryStepPlays(t, f, delivered)
+	// The proxy's decisions are kept beside the run's other receipts.
+	playStep := f.Foreground["-delivery"].Handler
+	f.Foreground["-delivery"].Handler = func(ctx context.Context, r dockerx.RunSpec, stdin io.Reader, o, e io.Writer) (int, error) {
+		if px, ok := proxyRun(f); ok {
+			f.LogsByName = map[string]string{px.Name: "hooks.example.com:443 CONNECT allowed"}
+		}
+		return playStep(ctx, r, stdin, o, e)
+	}
 	p.Destinations = []destination.Resolved{hook("n8n", "https://hooks.example.com/in/abc", false)}
 	env, err := Run(context.Background(), f, p)
 	if err != nil {
@@ -174,6 +189,12 @@ func TestADestinationGetsAStepOfItsOwn(t *testing.T) {
 	step, ok := stepRun(f)
 	if !ok {
 		t.Fatal("no delivery step ran")
+	}
+	if saw.limit <= 5*time.Minute || saw.limit > 6*time.Minute {
+		t.Errorf("the step was given %v, want the webhook's 6 minutes", saw.limit)
+	}
+	if !step.AutoRemove || len(step.Labels) == 0 {
+		t.Errorf("the step's removal and labels: auto-remove %v, labels %v", step.AutoRemove, step.Labels)
 	}
 	if step.Image != p.Plan.Proxy.Image {
 		t.Errorf("the step ran %s, not the runner image %s", step.Image, p.Plan.Proxy.Image)
@@ -187,6 +208,12 @@ func TestADestinationGetsAStepOfItsOwn(t *testing.T) {
 	}
 	if got := strings.Join(proxy.Argv, " "); !strings.Contains(got, "--allow hooks.example.com:443") || !strings.Contains(got, "--public-only") || strings.Contains(got, "--network-ok") || strings.Contains(got, "plain-http") {
 		t.Errorf("the proxy's argv: %s", got)
+	}
+	if !proxy.ReadOnly || !maps.Equal(proxy.Labels, step.Labels) {
+		t.Errorf("the proxy's posture: read-only %v, labels %v against the step's %v", proxy.ReadOnly, proxy.Labels, step.Labels)
+	}
+	if log, err := os.ReadFile(filepath.Join(p.OutDir, "receipts", "delivery-proxy-n8n.log")); err != nil || !strings.Contains(string(log), "hooks.example.com:443 CONNECT allowed\n") || !strings.HasPrefix(string(log), "# ") {
+		t.Errorf("the proxy's log = %q, %v", log, err)
 	}
 	// An internal network of its own, the step on it and nothing else but
 	// the proxy.
@@ -266,13 +293,18 @@ func TestADestinationGetsAStepOfItsOwn(t *testing.T) {
 	if len(left) != 0 {
 		t.Errorf("the step's folders remain: %v", left)
 	}
-	var removedNet, removedStep bool
+	var removedNet, removedStep, removedProxy, bridged bool
 	for _, c := range f.Calls {
 		removedNet = removedNet || c.Op == "NetworkRemove" && strings.HasSuffix(c.Arg, "-dlv")
 		removedStep = removedStep || c.Op == "RemoveForce" && c.Arg == step.Name
+		removedProxy = removedProxy || c.Op == "RemoveForce" && c.Arg == proxy.Name
+		bridged = bridged || c.Op == "NetworkConnect" && c.Arg == "bridge<-"+proxy.Name
 	}
-	if !removedNet || !removedStep {
-		t.Errorf("cleanup: network %v step %v", removedNet, removedStep)
+	if !removedNet || !removedStep || !removedProxy {
+		t.Errorf("cleanup: network %v step %v proxy %v", removedNet, removedStep, removedProxy)
+	}
+	if !bridged {
+		t.Error("the proxy was not given its route out on the bridge")
 	}
 }
 
@@ -340,15 +372,33 @@ func TestADestinationThatBreaksTheAddressRuleMakesNoContainer(t *testing.T) {
 			t.Errorf("%s: %s, deliveries %+v", d.Name, env.Status, env.Deliveries)
 		}
 	}
-	bad := hook("split", "https://hooks.example.com/x", false)
-	bad.Authorization = "Bearer x\r\nX-Evil: 1"
+	badAuth := hook("split", "https://hooks.example.com/x", false)
+	badAuth.Authorization = "Bearer x\r\nX-Evil: 1"
+	badSecret := hook("split-secret", "https://hooks.example.com/x", false)
+	badSecret.Secret = "whsec_a\nb"
+	for _, bad := range []destination.Resolved{badAuth, badSecret} {
+		p, f := fixture(t)
+		happyFake(f)
+		agentWrites(p, f, map[string]string{"reports/a.md": "a"}, `{"path":"reports/a.md","marked":true}`)
+		p.Destinations = []destination.Resolved{bad}
+		env, _ := Run(context.Background(), f, p)
+		if _, ok := stepRun(f); ok || len(env.Deliveries) != 1 || env.Deliveries[0].Error != receipt.DeliveryErrCredential {
+			t.Errorf("%s: a header-splitting value: %+v", bad.Name, env.Deliveries)
+		}
+	}
+	// A destination of a kind the runner does not send to is refused too.
+	odd := hook("odd", "https://hooks.example.com/x", false)
+	odd.Kind = "ftp"
 	p, f := fixture(t)
 	happyFake(f)
 	agentWrites(p, f, map[string]string{"reports/a.md": "a"}, `{"path":"reports/a.md","marked":true}`)
-	p.Destinations = []destination.Resolved{bad}
+	deliveryStepPlays(t, f, delivered)
+	p.Destinations = []destination.Resolved{odd}
 	env, _ := Run(context.Background(), f, p)
-	if _, ok := stepRun(f); ok || len(env.Deliveries) != 1 || env.Deliveries[0].Error != receipt.DeliveryErrCredential {
-		t.Errorf("a header-splitting value: %+v", env.Deliveries)
+	_, stepRan := stepRun(f)
+	_, proxyRan := proxyRun(f)
+	if stepRan || proxyRan || len(env.Deliveries) != 1 || env.Deliveries[0].Status != receipt.DeliveryFailed || env.Deliveries[0].Error != receipt.DeliveryErrDestination {
+		t.Errorf("a destination of an unknown kind: step %v proxy %v %+v", stepRan, proxyRan, env.Deliveries)
 	}
 }
 
@@ -417,6 +467,101 @@ func TestTheStepsReportIsReadAsTheWordOfAProgramThatHeldTheCredential(t *testing
 		}
 		if d := env.Deliveries[0]; d.Status != receipt.DeliveryFailed || d.Error != receipt.DeliveryErrStep {
 			t.Errorf("%s: delivery = %+v", name, d)
+		}
+	}
+	// A report the host cannot take as the step's: the wrong schema, one past
+	// the bound, a link; one exactly at the bound is taken.
+	reportOf := func(job send.Job, schema string) []byte {
+		rep := send.Report{Schema: schema, Kind: send.KindWebhook, Host: "hooks.example.com:443", Status: send.StatusDelivered, Result: send.StatusDelivered}
+		for _, fl := range job.Files {
+			rep.Files = append(rep.Files, send.FileResult{Path: fl.Path, Status: send.StatusDelivered})
+		}
+		b, _ := json.Marshal(rep)
+		return b
+	}
+	padded := func(b []byte, n int) []byte { return append(b, bytes.Repeat([]byte(" "), n-len(b))...) }
+	for name, c := range map[string]struct {
+		write  func(work string, job send.Job) error
+		status string
+		reason string
+	}{
+		"the wrong schema": {func(work string, job send.Job) error {
+			return os.WriteFile(filepath.Join(work, send.ReportFile), reportOf(job, "other/v1"), 0o644)
+		}, receipt.DeliveryFailed, receipt.DeliveryErrStep},
+		"past the bound": {func(work string, job send.Job) error {
+			return os.WriteFile(filepath.Join(work, send.ReportFile), padded(reportOf(job, send.ReportSchema), maxDeliveryReport+1), 0o644)
+		}, receipt.DeliveryFailed, receipt.DeliveryErrStep},
+		"at the bound": {func(work string, job send.Job) error {
+			return os.WriteFile(filepath.Join(work, send.ReportFile), padded(reportOf(job, send.ReportSchema), maxDeliveryReport), 0o644)
+		}, receipt.DeliveryDelivered, ""},
+		"a link": {func(work string, job send.Job) error {
+			if err := os.WriteFile(filepath.Join(work, "real.json"), reportOf(job, send.ReportSchema), 0o644); err != nil {
+				return err
+			}
+			return os.Symlink("real.json", filepath.Join(work, send.ReportFile))
+		}, receipt.DeliveryFailed, receipt.DeliveryErrStep},
+	} {
+		if name == "a link" && runtime.GOOS == "windows" {
+			continue
+		}
+		p, f := fixture(t)
+		happyFake(f)
+		agentWrites(p, f, map[string]string{"reports/a.md": "a"}, `{"path":"reports/a.md","marked":true}`)
+		f.Foreground["-delivery"] = &dockerx.FakeForeground{Handler: func(_ context.Context, r dockerx.RunSpec, _ io.Reader, _, _ io.Writer) (int, error) {
+			var jobDir, work string
+			for _, m := range r.Mounts {
+				switch m.Target {
+				case "/job":
+					jobDir = m.Source
+				case "/work":
+					work = m.Source
+				}
+			}
+			job, err := send.ReadJob(jobDir)
+			if err != nil {
+				t.Errorf("the step cannot read its job: %v", err)
+				return 1, nil
+			}
+			if err := c.write(work, job); err != nil {
+				t.Errorf("the step cannot write its report: %v", err)
+			}
+			return 0, nil
+		}}
+		p.Destinations = []destination.Resolved{hook("n8n", "https://hooks.example.com/in/abc", false)}
+		env, err := Run(context.Background(), f, p)
+		if err != nil || len(env.Deliveries) != 1 {
+			t.Fatalf("%s: %v %+v", name, err, env.Deliveries)
+		}
+		if d := env.Deliveries[0]; d.Status != c.status || d.Error != c.reason {
+			t.Errorf("%s: delivery = %+v, want %s/%s", name, d, c.status, c.reason)
+		}
+	}
+	// A file's own word is held to the closed lists: a delivered file has no
+	// reason, and the word for a file the run never marked is not the step's
+	// to give.
+	oneFile := deliveryRun{Files: []receipt.Deliverable{{Path: "reports/a.md", SHA256: "abc"}}}
+	for name, c := range map[string]struct {
+		file   send.FileResult
+		status string
+		reason string
+	}{
+		"delivered with a reason":          {send.FileResult{Path: "reports/a.md", Status: send.StatusDelivered, Error: send.ReasonTLS}, receipt.DeliveryDelivered, ""},
+		"refused with a closed reason":     {send.FileResult{Path: "reports/a.md", Status: send.StatusRefused, Error: send.ReasonTooLarge}, receipt.DeliveryRefused, receipt.DeliveryErrTooLarge},
+		"failed with a closed reason":      {send.FileResult{Path: "reports/a.md", Status: send.StatusFailed, Error: send.ReasonTLS}, receipt.DeliveryFailed, send.ReasonTLS},
+		"failed with the not-marked word":  {send.FileResult{Path: "reports/a.md", Status: send.StatusFailed, Error: receipt.DeliveryErrNotMarked}, receipt.DeliveryFailed, receipt.DeliveryErrStep},
+		"refused with the not-marked word": {send.FileResult{Path: "reports/a.md", Status: send.StatusRefused, Error: receipt.DeliveryErrNotMarked}, receipt.DeliveryFailed, receipt.DeliveryErrStep},
+	} {
+		got := recordsFromReport(oneFile, hook("n8n", "https://hooks.example.com/x", false), "hooks.example.com:443", send.Report{Schema: send.ReportSchema, Files: []send.FileResult{c.file}})
+		if len(got) != 1 || got[0].Status != c.status || got[0].Error != c.reason {
+			t.Errorf("%s: %+v, want %s/%s", name, got, c.status, c.reason)
+		}
+	}
+	// The credential is masked from any text that may echo it.
+	masked := bucket("archive", destination.Destination{Bucket: "my-reports", Region: "us-east-1"})
+	masked.Authorization = plantedAuthorization
+	for _, v := range []string{masked.Secret, masked.Authorization, masked.AccessKeyID} {
+		if got := scrubCredential("dial "+v+" failed", masked); got != "dial [credential] failed" {
+			t.Errorf("scrubCredential left %q", got)
 		}
 	}
 	// No report at all.
@@ -526,6 +671,25 @@ func TestADeliveryLeavesTheRunFolderAsItWas(t *testing.T) {
 	}
 	if got := strings.Count(after["receipts/deliveries.ndjson"], "\n"); got != 2 {
 		t.Errorf("the ledger has %d lines: %q", got, after["receipts/deliveries.ndjson"])
+	}
+	// A later redelivery adds to the ledger, and clears the folder a killed
+	// delivery left in the runner home before it starts.
+	killed, err := newDeliveryFolder(p.RunRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = killed.lock.Close()
+	if _, err := Redeliver(context.Background(), f2, RedeliverParams{
+		RunDir: p.OutDir, Destinations: []destination.Resolved{hook("n8n", "https://hooks.example.com/in/abc", false)},
+		Policy: p.Policy, RunnerImage: p.Plan.Proxy.Image, RunRoot: p.RunRoot, Stderr: io.Discard,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(snapshot(t, p.OutDir)["receipts/deliveries.ndjson"], "\n"); got != 4 {
+		t.Errorf("the ledger has %d lines after a second redelivery, want 4", got)
+	}
+	if _, err := os.Stat(killed.path); err == nil {
+		t.Error("a redelivery left the folder a killed delivery left behind")
 	}
 	// A folder that is not a run's, and one whose run failed, deliver nothing.
 	if _, err := Redeliver(context.Background(), f2, RedeliverParams{RunDir: t.TempDir(), Destinations: []destination.Resolved{hook("n8n", "https://hooks.example.com/in/abc", false)}, RunRoot: p.RunRoot}); err == nil {
@@ -792,6 +956,16 @@ func TestSeveralDestinationsShareOneTimeLimit(t *testing.T) {
 	if _, ok := stepRun(f); ok {
 		t.Error("a step ran after the time was spent")
 	}
+	// A delivery that was cancelled is not a timeout.
+	cctx, stop := context.WithCancel(context.Background())
+	stop()
+	got = sendToDestinations(cctx, f, r, []destination.Resolved{hook("a", "https://hooks.example.com/a", false)})
+	if len(got) != 1 || got[0].Error != receipt.DeliveryErrStep || got[0].Status != receipt.DeliveryFailed {
+		t.Errorf("a cancelled delivery: %+v", got)
+	}
+	if _, ok := stepRun(f); ok {
+		t.Error("a step ran after the delivery was cancelled")
+	}
 }
 
 // TestARedeliveryOfAnOversizedListingIsRefused: an envelope that lists more
@@ -809,6 +983,43 @@ func TestARedeliveryOfAnOversizedListingIsRefused(t *testing.T) {
 	f := &dockerx.Fake{}
 	if _, err := Redeliver(context.Background(), f, RedeliverParams{RunDir: dir, Destinations: []destination.Resolved{hook("n8n", "https://hooks.example.com/x", false)}, RunRoot: t.TempDir()}); err == nil {
 		t.Error("an oversized listing was delivered")
+	}
+	// The most a run lists is delivered; a run that failed, and one with
+	// nothing to send, are not.
+	write := func(env receipt.Envelope) string {
+		d := t.TempDir()
+		env.OutDir = d
+		b, _ := env.Marshal()
+		if err := os.WriteFile(filepath.Join(d, "result.json"), b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	atTheCap := receipt.Envelope{Agentry: receipt.EnvelopeVersion, Status: "ok", RunID: "r", Ref: "a/b@1", Deliverables: &receipt.Deliverables{}}
+	for i := 0; i < receipt.MaxDeliverables; i++ {
+		atTheCap.Deliverables.Files = append(atTheCap.Deliverables.Files, receipt.Deliverable{Path: fmt.Sprintf("reports/%d.md", i)})
+	}
+	f = &dockerx.Fake{}
+	deliveryStepPlays(t, f, delivered)
+	ds, err := Redeliver(context.Background(), f, RedeliverParams{RunDir: write(atTheCap), Destinations: []destination.Resolved{hook("n8n", "https://hooks.example.com/x", false)}, RunRoot: t.TempDir(), Stderr: io.Discard})
+	if err != nil || len(ds) != receipt.MaxDeliverables {
+		t.Errorf("a listing at the cap: %d records, %v", len(ds), err)
+	}
+	failedRun := receipt.Envelope{Agentry: receipt.EnvelopeVersion, Status: "error", ExitClass: "agent", RunID: "r", Ref: "a/b@1", Deliverables: &receipt.Deliverables{Files: []receipt.Deliverable{{Path: "reports/a.md"}}}}
+	f = &dockerx.Fake{}
+	deliveryStepPlays(t, f, delivered)
+	if _, err := Redeliver(context.Background(), f, RedeliverParams{RunDir: write(failedRun), Destinations: []destination.Resolved{hook("n8n", "https://hooks.example.com/x", false)}, RunRoot: t.TempDir()}); err == nil || !strings.Contains(err.Error(), "did not succeed") {
+		t.Errorf("a failed run was delivered: %v", err)
+	}
+	if _, ok := stepRun(f); ok {
+		t.Error("a delivery step ran for a failed run")
+	}
+	empty := receipt.Envelope{Agentry: receipt.EnvelopeVersion, Status: "ok", RunID: "r", Ref: "a/b@1", Result: json.RawMessage("null")}
+	if _, err := Redeliver(context.Background(), f, RedeliverParams{RunDir: write(empty), Destinations: []destination.Resolved{hook("n8n", "https://hooks.example.com/x", false)}, RunRoot: t.TempDir()}); err == nil || !strings.Contains(err.Error(), "no deliverables and has no result") {
+		t.Errorf("a run with nothing to send was delivered: %v", err)
+	}
+	if _, ok := stepRun(f); ok {
+		t.Error("a delivery step ran for a run with nothing to send")
 	}
 }
 
@@ -853,6 +1064,9 @@ func TestABucketGetsAStepOfItsOwnAndItsKeyPairReachesItAlone(t *testing.T) {
 	proxy, ok := proxyRun(f)
 	if !ok {
 		t.Fatal("no delivery proxy ran")
+	}
+	if saw.limit <= 11*time.Minute || saw.limit > 12*time.Minute {
+		t.Errorf("the step was given %v, want the bucket's 12 minutes", saw.limit)
 	}
 	if got := strings.Join(proxy.Argv, " "); !strings.Contains(got, "--allow my-reports.s3.eu-west-1.amazonaws.com:443") || !strings.Contains(got, "--public-only") || strings.Contains(got, "--network-ok") {
 		t.Errorf("the proxy's argv: %s", got)
@@ -979,6 +1193,22 @@ func TestABucketThatBreaksTheRulesMakesNoContainer(t *testing.T) {
 		if env.Status != "ok" || len(env.Deliveries) != 1 || env.Deliveries[0].Status != receipt.DeliveryFailed || env.Deliveries[0].Error != want.reason || env.Deliveries[0].Kind != receipt.DeliveryKindS3 {
 			t.Errorf("%s: %s, deliveries %+v", name, env.Status, env.Deliveries)
 		}
+	}
+	// The objects of a run are keyed by its id, so an id that is not a plain
+	// one makes no step either.
+	p, f := fixture(t)
+	happyFake(f)
+	deliveryStepPlays(t, f, bucketDelivered)
+	r := deliveryRun{RunDir: p.OutDir, RunID: "../x", Files: []receipt.Deliverable{{Path: "reports/a.md", SHA256: sha([]byte("a")), Bytes: 1}}, Image: "agentry-runner:test", Root: p.RunRoot, Engine: dockerx.LocalDockerEngine()}
+	got := sendToDestinations(context.Background(), f, r, []destination.Resolved{bucket("archive", destination.Destination{Bucket: "my-reports", Region: "us-east-1"})})
+	if len(got) != 1 || got[0].Status != receipt.DeliveryFailed || got[0].Error != receipt.DeliveryErrDestination || got[0].Kind != receipt.DeliveryKindS3 {
+		t.Errorf("a run id that cannot key an object: %+v", got)
+	}
+	if _, ok := stepRun(f); ok {
+		t.Error("a step ran for a run id that cannot key an object")
+	}
+	if _, ok := proxyRun(f); ok {
+		t.Error("a proxy ran for a run id that cannot key an object")
 	}
 }
 

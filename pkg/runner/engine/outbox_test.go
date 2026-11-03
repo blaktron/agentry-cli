@@ -131,6 +131,25 @@ func TestOutboxRefusesOverwriteAndLinks(t *testing.T) {
 			t.Errorf("%q was not refused: %+v", name, c)
 		}
 	}
+	// Each is refused for its own reason, which the agent is told.
+	reasons := map[string]string{
+		"link.txt":    "a link: only regular files are copied",
+		"inside.docx": "a link: only regular files are copied",
+		"folder":      "a folder: only files at the top of " + spec.AgentShareOutPath + " are copied",
+		".profile":    "a hidden file: its name starts with a dot",
+		turned:        "its name holds a control or formatting character",
+	}
+	if hard {
+		reasons["hard.txt"] = "a file with another link to it: only a file of its own is copied"
+	}
+	if pipe {
+		reasons["pipe"] = "not a regular file"
+	}
+	for name, want := range reasons {
+		if got[name].Refused != want {
+			t.Errorf("%q: refused for %q, want %q", name, got[name].Refused, want)
+		}
+	}
 	if want := []string{"notes.md", "report (2).docx", "report (3).docx", "report.docx"}; !slices.Equal(entries(t, share), want) {
 		t.Errorf("the share holds %v, want %v", entries(t, share), want)
 	}
@@ -150,12 +169,12 @@ func TestOutboxNamesForTheShare(t *testing.T) {
 			t.Errorf("%s: %s, want %s", name, got, want)
 		}
 	}
-	for _, bad := range []string{".env", "a.", "a ", "a:b", `a\b`, "con.txt", "NUL", "a\x01b", "a" + string(rune(0x200b)) + "b", strings.Repeat("a", shareOutNameMax+1)} {
+	for _, bad := range []string{".env", "a.", "a ", "a:b", `a\b`, "con.txt", "NUL", "NUL .txt", "a\x01b", "a" + string(rune(0x200b)) + "b", "a" + string([]byte{0xff}) + "b", strings.Repeat("a", shareOutNameMax+1)} {
 		if outboxNameError(bad) == nil {
 			t.Errorf("%q was given to the share", bad)
 		}
 	}
-	for _, good := range []string{"report.docx", "Résumé 2026.pdf", "notes (copy).md", "console.log"} {
+	for _, good := range []string{"report.docx", "Résumé 2026.pdf", "notes (copy).md", "console.log", strings.Repeat("a", shareOutNameMax)} {
 		if err := outboxNameError(good); err != nil {
 			t.Errorf("%q: %v", good, err)
 		}
@@ -274,6 +293,35 @@ func TestOutboxKeepsWhatTheMachineCouldNotCopy(t *testing.T) {
 	if left := entries(t, outbox); len(left) != 0 {
 		t.Fatalf("the outbox still holds %d entries", len(left))
 	}
+
+	// Files the person cannot read are given to them by a one-shot of the
+	// runner image that has no network and nothing but the outbox; an outbox
+	// they can read needs none.
+	hand := runDirsAt(t.TempDir())
+	hand.runID, hand.engine = "run1", dockerx.LocalDockerEngine()
+	hand.shareOut, _ = outboxFolders(t)
+	fake := &dockerx.Fake{}
+	if err := shareOutHandOver(context.Background(), fake, Params{Plan: &spec.Plan{}}, hand); err != nil {
+		t.Fatal(err)
+	}
+	if _, ran := fake.FindRun("-share-out"); ran {
+		t.Error("an outbox the person can read was handed over")
+	}
+	locked := filepath.Join(hand.shareOut, "locked")
+	if err := os.Mkdir(locked, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+	if err := shareOutHandOver(context.Background(), fake, Params{Plan: &spec.Plan{}}, hand); err != nil {
+		t.Fatal(err)
+	}
+	one, ran := fake.FindRun("-share-out")
+	if !ran || one.User != "0:0" || one.Network != "none" || len(one.Mounts) != 1 || one.Mounts[0].Source != hand.shareOut || one.Mounts[0].Target != "/share-out" || !slices.Contains(one.CapAdd, "CHOWN") {
+		t.Errorf("the hand-over: %+v (ran %v)", one, ran)
+	}
 }
 
 // TestARefusedNameIsQuotedWhereverItIsShown: a name the outbox refused for
@@ -293,6 +341,24 @@ func TestARefusedNameIsQuotedWhereverItIsShown(t *testing.T) {
 		e := <-s.events
 		if strings.ContainsAny(e.Text, "\x1b\x07\n") {
 			t.Fatalf("a notice carries the raw name: %q", e.Text)
+		}
+	}
+
+	// The next turn is told of twenty refused names, and the rest counted.
+	for _, n := range []int{shareOutListed, shareOutListed + 1} {
+		s, _ := shareSession(t)
+		s.rd.shareOut, _ = outboxFolders(t)
+		for i := range n {
+			writeFile(t, filepath.Join(s.rd.shareOut, fmt.Sprintf(".hidden%02d", i)), "x")
+		}
+		s.copyShareOut(context.Background())
+		if len(s.pendingNotices) != 1 {
+			t.Fatalf("%d refused: the next turn is told %q", n, s.pendingNotices)
+		}
+		notice := s.pendingNotices[0]
+		more := fmt.Sprintf("1 more, named in receipts/%s", ShareChecksLog)
+		if got := strings.Count(notice, ".hidden"); got != shareOutListed || strings.Contains(notice, more) != (n > shareOutListed) {
+			t.Errorf("%d refused: %d names listed, counted-more %v in %q", n, got, strings.Contains(notice, more), notice)
 		}
 	}
 }
