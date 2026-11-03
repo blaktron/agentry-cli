@@ -121,6 +121,9 @@ func TestInstallRepairLaysAChangedInstallDownAgain(t *testing.T) {
 	if err := json.Unmarshal([]byte(stdout), &iplan); err != nil || !strings.Contains(iplan.Refusal, "--repair") {
 		t.Fatalf("install --plan over a changed release: %v %+v", err, iplan)
 	}
+	if iplan.Attestation != "verified" || !iplan.Signed || iplan.KeyID != fr.keyID {
+		t.Fatalf("the plan does not name the key that signed the release: %+v", iplan)
+	}
 
 	stdout, _, err = runCLI(t, nil, "--registry", fr.url(), "--json", "install", "acme/demo@1.0.0", "--yes", "--repair")
 	if err != nil {

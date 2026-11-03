@@ -6,6 +6,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"os"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/knowledge/knowledgetest"
 	"github.com/blaktron/agentry-cli/pkg/knowledge/ship"
+	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 )
 
 // answers makes a terminal that types the given lines one at a time.
@@ -64,6 +66,9 @@ func shippingWorkspace(t *testing.T, packs ...string) (dir string, origins map[s
 func publishSetup(t *testing.T) *fakeRegistry {
 	t.Helper()
 	isolateEnv(t)
+	// The registry the packs' records name is the effective one, and a
+	// --registry left by a command that ran before must not be it.
+	flags.registry = ""
 	t.Setenv(envToken, "agy_testtoken")
 	fr := newFakeRegistry(t)
 	t.Setenv(envRegistry, fr.url())
@@ -148,6 +153,7 @@ func TestPublishUploadsNothingUnlessEveryPackIsConfirmed(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "runbooks was not confirmed") {
 			t.Fatalf("err = %v", err)
 		}
+		wantClassified(t, err, engine.ExitUsage)
 	})
 	t.Run("no terminal and no --yes", func(t *testing.T) {
 		_, _, err := runCLI(t, strings.NewReader(""), "publish", dir)
@@ -159,6 +165,49 @@ func TestPublishUploadsNothingUnlessEveryPackIsConfirmed(t *testing.T) {
 		_, _, err := runCLI(t, answers(t, "y\n"), "publish", dir)
 		if err == nil {
 			t.Fatal("a y was taken for a yes")
+		}
+	})
+	t.Run("an answer without its newline is still an answer", func(t *testing.T) {
+		_, stderr, err := runCLI(t, answers(t, "yes\nyes"), "publish", dir)
+		if err != nil {
+			t.Fatalf("a last yes with no newline: %v (stderr %s)", err, stderr)
+		}
+		fr.submitParts = nil
+	})
+	t.Run("a shipped pack the include leaves out", func(t *testing.T) {
+		raw, _ := os.ReadFile(filepath.Join(dir, "agent.yaml"))
+		narrow := strings.Replace(string(raw), "include: [agent.yaml, SKILL.md, knowledge/**]", "include: [agent.yaml, SKILL.md]", 1)
+		if narrow == string(raw) {
+			t.Fatalf("the include was not narrowed:\n%s", raw)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "agent.yaml"), []byte(narrow), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, _, err := runCLI(t, nil, "publish", dir, "--yes")
+		if err == nil || !strings.Contains(err.Error(), "knowledge.ships names handbook, and publish.include does not put knowledge/handbook/manifest.json in the archive (V11)") {
+			t.Fatalf("err = %v", err)
+		}
+		// The check is the upload's own, whoever asks for it.
+		m, err := readWorkspaceManifest(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		client, err := newAPIClient(fr.url(), "agy_testtoken")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := submitUpload(context.Background(), client, io.Discard, dir, m, nil); err == nil || !strings.Contains(err.Error(), "(V11)") {
+			t.Errorf("submitUpload = %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "agent.yaml"), raw, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		m, err = readWorkspaceManifest(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := submitUpload(context.Background(), client, io.Discard, dir, m, nil); err == nil || !strings.Contains(err.Error(), "ships knowledge packs and no confirmation was asked for them") {
+			t.Errorf("an upload that ships packs with no way to confirm them: %v", err)
 		}
 	})
 	if len(fr.submitParts) != 0 || len(fr.submitTags) != 0 {
@@ -230,6 +279,20 @@ func TestPublishNamesThePackTheRegistryRefused(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "Shipped knowledge is invalid") || !strings.Contains(err.Error(), "knowledge packs: runbooks") {
 		t.Fatalf("err = %v", err)
 	}
+
+	// What the registry names is shown as text, cut to a bound; a refusal
+	// that names none says none.
+	long := strings.Repeat("p", 70)
+	fr.submitProblem.Members = map[string]any{"packs": []string{"run\x1bbooks", long}}
+	_, _, err = runCLI(t, nil, "publish", dir, "--yes")
+	if err == nil || !strings.HasSuffix(err.Error(), " [knowledge packs: runbooks, "+strings.Repeat("p", 64)+"…]") {
+		t.Fatalf("pack names with a control character and past the bound: %v", err)
+	}
+	fr.submitProblem.Members = map[string]any{"packs": []string{}}
+	_, _, err = runCLI(t, nil, "publish", dir, "--yes")
+	if err == nil || !strings.Contains(err.Error(), "Shipped knowledge is invalid") || strings.Contains(err.Error(), "knowledge packs") {
+		t.Fatalf("a refusal naming no pack: %v", err)
+	}
 }
 
 func TestPublishKeepsTheSidecarOutOfTheRelease(t *testing.T) {
@@ -268,6 +331,20 @@ func TestPublishFromATagIsAskedToo(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "records the version as published from a tag") {
 		t.Errorf("stderr %s", stderr)
+	}
+	// The pack's size is said beside its name, or that it is not known.
+	if !strings.Contains(stderr, "runbooks (") || strings.Contains(stderr, "size unknown") {
+		t.Errorf("the pack's size is missing from the question: %s", stderr)
+	}
+	if err := os.RemoveAll(ship.Dir(dir, "runbooks")); err != nil {
+		t.Fatal(err)
+	}
+	_, stderr, err = runCLI(t, nil, "publish", dir, "--tag", "v1.0.1", "--yes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stderr, "runbooks (size unknown)") {
+		t.Errorf("a pack that cannot be measured: %s", stderr)
 	}
 }
 

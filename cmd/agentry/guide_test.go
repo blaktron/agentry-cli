@@ -48,6 +48,17 @@ func TestSayGuide(t *testing.T) {
 	if none.Len() != 0 {
 		t.Errorf("a release without a guide printed %q", none.String())
 	}
+
+	// The guide ends with a blank line, and an overview of nothing but
+	// space is no overview.
+	if !strings.HasSuffix(got, "\n\n") {
+		t.Errorf("the guide does not end with a blank line: %q", got)
+	}
+	var blank bytes.Buffer
+	sayGuide(&blank, &manifest.Manifest{Guide: &manifest.Guide{Overview: " \n ", Files: "The files."}}, runOpts{outputFormat: "text", guideShown: new(bool)})
+	if blank.String() != "Files: The files.\n\n" {
+		t.Errorf("a guide with a blank overview printed %q", blank.String())
+	}
 }
 
 // TestSayGuideSendsNoEscapeSequence: an overview may span lines, so its
@@ -230,6 +241,8 @@ func TestSayGuideNamesTheInputs(t *testing.T) {
 		{"kinds only", &manifest.Manifest{Inputs: &manifest.Inputs{Kinds: []manifest.InputKind{manifest.InputKindDocuments}}},
 			"Files it takes: documents; read as text or as uploaded.", false},
 		{"no block", &manifest.Manifest{Guide: &manifest.Guide{Files: "Anything."}}, "Files it takes", true},
+		{"a kind that is none of the closed set", &manifest.Manifest{Inputs: &manifest.Inputs{Kinds: []manifest.InputKind{"bogus"}}},
+			"Files it takes: any; read as text or as uploaded.", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var out bytes.Buffer

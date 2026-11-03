@@ -113,8 +113,13 @@ func TestInstallRunnerTargetThenRunFetchesNothing(t *testing.T) {
 	fv := fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", "capabilities:\n  network:\n    egress: [api.example.com]\n"))
 	fv.attMode = attSigned
 
-	if _, stderr, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.0.0", "--yes"); err != nil {
-		t.Fatalf("install: %v (stderr %q)", err, stderr)
+	_, installErr, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.0.0", "--yes")
+	if err != nil {
+		t.Fatalf("install: %v (stderr %q)", err, installErr)
+	}
+	// A verified release needs no consent flag to run.
+	if !strings.Contains(installErr, "next steps:\n  1. agentry run acme/demo\n") {
+		t.Errorf("next steps of a verified install:\n%s", installErr)
 	}
 	downloads := len(fr.downloadAuths)
 	if downloads != 1 {
@@ -205,6 +210,13 @@ func TestListCheckMarksUpdates(t *testing.T) {
 	fr := newFakeRegistry(t)
 	fa := fr.addAgent("acme", "demo", "autonomous", "s")
 	fa.addVersion(t, "1.0.0", skillFiles("demo", ""))
+	statePath, err := installed.StatePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stdout, _, err := runCLI(t, nil, "--registry", fr.url(), "list"); err != nil || stdout != "nothing recorded in "+statePath+"\n" {
+		t.Fatalf("list of an empty state: %v\n%q", err, stdout)
+	}
 	if _, stderr, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.0.0", "--allow-unsigned"); err != nil {
 		t.Fatalf("install: %v (stderr %q)", err, stderr)
 	}
@@ -255,6 +267,70 @@ func TestListCheckMarksUpdates(t *testing.T) {
 	}
 	if demo == nil || !demo.UpdateAvailable || gone == nil || gone.CheckError == "" || gone.UpdateAvailable {
 		t.Fatalf("records: %+v", out.Records)
+	}
+
+	// Records are listed by namespace, then name, then directory. One whose
+	// directory is missing, or is a file, says so; a version ahead of the
+	// registry's is no update; one that is not a version cannot be compared.
+	fr.addAgent("acme", "ahead", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("ahead", ""))
+	fr.addAgent("acme", "weird", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("weird", ""))
+	base := t.TempDir()
+	notDir := filepath.Join(base, "b-file")
+	if err := os.WriteFile(notDir, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st, _ = installed.Load()
+	for _, k := range []struct {
+		ns, name, version, dir string
+	}{
+		{"aaa", "zed", "1.0.0", filepath.Join(base, "a-missing")},
+		{"aaa", "zed", "1.0.0", notDir},
+		{"acme", "ahead", "2.0.0", t.TempDir()},
+		{"acme", "weird", "not-a-version", t.TempDir()},
+	} {
+		st.Upsert(installed.Key{Registry: fr.url(), Namespace: k.ns, Name: k.name, Target: "claude-skill", Dir: k.dir}, k.version, installed.CapSnapshot{}, true)
+	}
+	if err := installed.Save(st); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, err = runCLI(t, nil, "--registry", fr.url(), "--json", "list", "--check")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out = listOutput{}
+	if err := json.Unmarshal([]byte(stdout), &out); err != nil {
+		t.Fatal(err)
+	}
+	var order []string
+	byDir := map[string]listedRecord{}
+	for _, r := range out.Records {
+		order = append(order, r.Namespace+"/"+r.Name+" "+filepath.Base(r.Dir))
+		byDir[r.Namespace+"/"+r.Name+" "+filepath.Base(r.Dir)] = r
+	}
+	if len(order) != 6 || order[0] != "aaa/zed a-missing" || order[1] != "aaa/zed b-file" || order[2] != "acme/ahead "+filepath.Base(byDir[order[2]].Dir) ||
+		order[3] != "acme/demo "+filepath.Base(byDir[order[3]].Dir) || order[4] != "acme/gone "+filepath.Base(byDir[order[4]].Dir) || order[5] != "acme/weird "+filepath.Base(byDir[order[5]].Dir) {
+		t.Fatalf("records are listed in the order %q", order)
+	}
+	if byDir["aaa/zed a-missing"].Present || byDir["aaa/zed b-file"].Present || !byDir[order[2]].Present || !byDir[order[3]].Present {
+		t.Errorf("present: %+v", out.Records)
+	}
+	if ahead := byDir[order[2]]; ahead.UpdateAvailable || ahead.Latest != "1.0.0" || ahead.CheckError != "" {
+		t.Errorf("a version ahead of the registry's: %+v", ahead)
+	}
+	if weird := byDir[order[5]]; weird.UpdateAvailable || weird.CheckError != `installed version "not-a-version" and the registry's "1.0.0" are not comparable` {
+		t.Errorf("a version that is not one: %+v", weird)
+	}
+	text, _, err := runCLI(t, nil, "--registry", fr.url(), "list", "--check")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"  (directory missing)", "  (could not check: ", "  up to date"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("text listing lacks %q:\n%s", want, text)
+		}
+	}
+	if n := strings.Count(text, "(directory missing)"); n != 2 {
+		t.Errorf("%d line(s) say the directory is missing, want 2:\n%s", n, text)
 	}
 }
 
@@ -463,5 +539,36 @@ func TestInstallRunnerTargetReplaceFailureIsAWarning(t *testing.T) {
 	removeOtherVersions = func(string, string) error { return fmt.Errorf("%w: refusing to clear x", installdir.ErrNotARelease) }
 	if _, _, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.1.0", "--allow-unsigned"); !errors.Is(err, installdir.ErrNotARelease) {
 		t.Fatalf("a refused replace passed as a warning: %v", err)
+	}
+
+	// Install state that can be neither read nor written costs the install a
+	// warning and the next one a prompt: the install completes, says its
+	// record was not saved, and leaves the older version's files alone,
+	// because nothing yet names the new one.
+	removed := 0
+	removeOtherVersions = func(string, string) error { removed++; return nil }
+	statePath, err := installed.StatePath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(statePath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(statePath, 0o700); err != nil { // a folder where the file belongs
+		t.Fatal(err)
+	}
+	stdout, stderr, err = runCLI(t, nil, "--registry", fr.url(), "--json", "install", "acme/demo@1.1.0", "--allow-unsigned")
+	if err != nil {
+		t.Fatalf("an install whose record cannot be saved failed: %v (stderr %q)", err, stderr)
+	}
+	var unsaved struct{ Recorded bool }
+	if jerr := json.Unmarshal([]byte(stdout), &unsaved); jerr != nil || unsaved.Recorded {
+		t.Fatalf("--json: stdout %q (%v), want recorded false", stdout, jerr)
+	}
+	if !strings.Contains(stderr, "treating this as a first install") || !strings.Contains(stderr, "the next install of this agent will re-ask about capabilities") {
+		t.Errorf("stderr does not say what the state cost: %q", stderr)
+	}
+	if removed != 0 {
+		t.Errorf("an older version was removed though no record names the new one (%d call(s))", removed)
 	}
 }

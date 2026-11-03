@@ -3,6 +3,8 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -24,6 +26,21 @@ func TestYankHappyPathForwardsReason(t *testing.T) {
 	// in the request body, not only in local output.
 	if len(fr.yankBodies) != 1 || !strings.Contains(fr.yankBodies[0], `"CVE-2026-0001"`) {
 		t.Errorf("yank bodies = %v", fr.yankBodies)
+	}
+
+	// It is the version named that is yanked, of the QuickAgent named.
+	var method, path string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method, path = r.Method, r.URL.Path
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	t.Setenv(envRegistry, srv.URL)
+	if _, _, err := runCLI(t, nil, "--registry", srv.URL, "yank", "acme/demo@1.2.3-rc.1", "--reason", "r"); err != nil {
+		t.Fatal(err)
+	}
+	if method != http.MethodPost || path != "/api/v1/agents/acme/demo/versions/1.2.3-rc.1/yank" {
+		t.Errorf("request = %s %s", method, path)
 	}
 }
 

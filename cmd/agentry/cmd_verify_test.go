@@ -6,16 +6,24 @@ package main
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
 
 func TestVerifyRequiresExactPin(t *testing.T) {
 	isolateEnv(t)
-	for _, ref := range []string{"acme/demo", "acme/demo@^1.2"} {
+	for _, ref := range []string{"acme/demo", "acme/demo@^1.2", "acme/demo@1.2", "acme/demo@1.2.3.4", "acme/demo@1.2.3x", "acme/demo@v1.2.3"} {
 		_, _, err := runCLI(t, nil, "--registry", "http://127.0.0.1:1", "verify", ref)
 		if err == nil || !strings.Contains(err.Error(), "exact version pin") {
 			t.Errorf("%s: %v", ref, err)
+		}
+	}
+	// What an exact pin is: three numbers, then a pre-release or build part.
+	for pin, want := range map[string]bool{"1.2.3": true, "10.20.30": true, "1.2.3-rc.1": true, "1.2.3+build5": true, "1.2.3-rc.1+build5": true, "1.2.3x": false, "x1.2.3": false, "1.2": false} {
+		if exactVersionRe.MatchString(pin) != want {
+			t.Errorf("exactVersionRe.MatchString(%q) = %v, want %v", pin, !want, want)
 		}
 	}
 }
@@ -28,6 +36,15 @@ func TestVerifyUnsignedPasses(t *testing.T) {
 	stdout, _, err := runCLI(t, nil, "--registry", fr.url(), "verify", "acme/demo@1.0.0")
 	if err != nil {
 		t.Fatalf("unsigned verify must exit 0 (self-host): %v", err)
+	}
+	fv := fr.agents["acme/demo"].versions["1.0.0"]
+	for _, want := range []string{
+		"acme/demo@1.0.0\n  registry digest: " + fv.digest + "\n  computed digest: " + fv.digest + "\n",
+		"  attestation:     unsigned (no attestation recorded for this version)\n",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("verify output lacks %q:\n%s", want, stdout)
+		}
 	}
 	for _, want := range []string{"digest: PASS", "attestation:     unsigned"} {
 		if !strings.Contains(stdout, want) {
@@ -57,6 +74,11 @@ func TestVerifyVerifiedAttestation(t *testing.T) {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("verified output lacks %q:\n%s", want, stdout)
 		}
+	}
+	// The keys are pinned now, and a second verify does not say so again.
+	stdout, _, err = runCLI(t, nil, "--registry", fr.url(), "verify", "acme/demo@1.0.0")
+	if err != nil || strings.Contains(stdout, "pinned on first use") {
+		t.Errorf("a second verify: %v\n%s", err, stdout)
 	}
 }
 
@@ -153,6 +175,49 @@ func TestVerifyStrictPromotesUnverifiable(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "unverifiable") || !strings.Contains(err.Error(), "--strict") {
 		t.Fatalf("--strict did not promote unverifiable: %v", err)
 	}
+
+	// A registry whose signing keys are not the ones pinned is unverifiable
+	// too, and the output says how the set changed: a key added beside every
+	// pinned one reads as a rotation, any other change as a warning.
+	rot := newFakeRegistry(t)
+	rot.enableSigning(t)
+	rotVersion := rot.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
+	rotVersion.attMode = attSigned
+	both := false
+	var oldKey map[string]string
+	front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/agentry/signing-keys.json" && both {
+			writeJSON(w, http.StatusOK, map[string]any{"keys": []map[string]string{oldKey,
+				{"keyId": rot.keyID, "algorithm": "ecdsa-p256-sha256", "publicKeyPem": rot.pubPEM}}})
+			return
+		}
+		rot.srv.Config.Handler.ServeHTTP(w, r)
+	}))
+	defer front.Close()
+	if _, _, err := runCLI(t, nil, "--registry", front.URL, "verify", "acme/demo@1.0.0"); err != nil {
+		t.Fatalf("the first verify pins the key: %v", err)
+	}
+	oldKey = map[string]string{"keyId": rot.keyID, "algorithm": "ecdsa-p256-sha256", "publicKeyPem": rot.pubPEM}
+	oldID := rot.keyID
+	rot.enableSigning(t) // the registry now signs with another key
+	stdout, _, err = runCLI(t, nil, "--registry", front.URL, "verify", "acme/demo@1.0.0")
+	if err != nil {
+		t.Fatalf("unverifiable must pass by default: %v", err)
+	}
+	if want := "  WARNING:         the registry's signing keys changed since the pin: added key id(s) " + rot.keyID + "; removed key id(s) " + oldID + "\n"; !strings.Contains(stdout, want) || strings.Contains(stdout, "possible key rotation") {
+		t.Errorf("a replaced key set:\n%s", stdout)
+	}
+	both = true // the registry advertises the pinned key and the new one
+	stdout, _, err = runCLI(t, nil, "--registry", front.URL, "verify", "acme/demo@1.0.0")
+	if err != nil {
+		t.Fatalf("unverifiable must pass by default: %v", err)
+	}
+	if want := "  possible key rotation: the registry added key id(s) " + rot.keyID + " since the pin; confirm it with the registry's operator, then re-pin deliberately to trust the new key\n"; !strings.Contains(stdout, want) || strings.Contains(stdout, "WARNING") {
+		t.Errorf("a key added beside the pinned one:\n%s", stdout)
+	}
+	if _, _, err := runCLI(t, nil, "--registry", front.URL, "verify", "acme/demo@1.0.0", "--strict"); err == nil || !strings.Contains(err.Error(), "attestation unverifiable") {
+		t.Errorf("--strict on a rotation: %v", err)
+	}
 }
 
 func TestVerifyJSONReport(t *testing.T) {
@@ -169,6 +234,9 @@ func TestVerifyJSONReport(t *testing.T) {
 		t.Fatalf("--json verify is not JSON: %v\n%s", err, stdout)
 	}
 	if !report.DigestMatch || report.Attestation == nil || report.Attestation.State != "unsigned" {
+		t.Errorf("report = %+v", report)
+	}
+	if fv := fr.agents["acme/demo"].versions["1.0.0"]; report.Ref != "acme/demo@1.0.0" || report.Version != "1.0.0" || report.RegistryDigest != fv.digest || report.Yanked {
 		t.Errorf("report = %+v", report)
 	}
 	if report.ComputedDigest != report.RegistryDigest {

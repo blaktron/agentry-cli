@@ -5,6 +5,7 @@
 package main
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -36,7 +37,7 @@ func TestValidateFlagsS1Findings(t *testing.T) {
 		"include: [agent.yaml, SKILL.md]", "include: [agent.yaml, SKILL.md, helper.md]", 1)
 	dir := writeTree(t, files)
 
-	stdout, _, err := runCLI(t, nil, "validate", dir)
+	stdout, stderr, err := runCLI(t, nil, "validate", dir)
 	if err == nil || !strings.Contains(err.Error(), "inventory finding") {
 		t.Fatalf("ELF in the include set passed: %v", err)
 	}
@@ -44,6 +45,25 @@ func TestValidateFlagsS1Findings(t *testing.T) {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("finding output lacks %q:\n%s", want, stdout)
 		}
+	}
+	// The failure counts what failed, and a failed check points nowhere next.
+	const failed = "validate failed: 2 error(s), 1 warning(s), 1 inventory finding(s), 0 scan finding(s)"
+	if err.Error() != failed || strings.Contains(stderr, "next steps") || strings.Contains(stdout, "validate: PASSED") {
+		t.Errorf("err = %v, stderr %q", err, stderr)
+	}
+
+	// With --json the report is on stdout and the narration on stderr; the
+	// exit still says the check failed.
+	jout, jerr, err := runCLI(t, nil, "--json", "validate", dir)
+	if err == nil || err.Error() != failed {
+		t.Fatalf("--json: err = %v", err)
+	}
+	var rep validateOutput
+	if uerr := json.Unmarshal([]byte(jout), &rep); uerr != nil || rep.Passed || rep.Counts.InventoryFailing != 1 || len(rep.Inventory) != 1 || rep.Inventory[0].FilePath != "helper.md" {
+		t.Fatalf("--json report: %v %+v\n%s", uerr, rep, jout)
+	}
+	if !strings.Contains(jerr, "inventory: 1 finding(s)") || strings.Contains(jout, "inventory:") {
+		t.Errorf("the narration is not on stderr alone:\nstdout %s\nstderr %s", jout, jerr)
 	}
 }
 
@@ -125,6 +145,13 @@ func TestValidateAcceptsDeclaredServerEnv(t *testing.T) {
 	stdout, stderr, err := runCLI(t, nil, "validate", dir)
 	if err != nil || !strings.Contains(stdout, "validate: PASSED") {
 		t.Fatalf("env refused offline: %v\n%s", err, stdout)
+	}
+	// A passing --json check puts the report on stdout and the verdict line
+	// beside the narration.
+	jout, jerr, err := runCLI(t, nil, "--json", "validate", dir)
+	var rep validateOutput
+	if err != nil || json.Unmarshal([]byte(jout), &rep) != nil || !rep.Passed || strings.Contains(jout, "validate: PASSED") || !strings.Contains(jerr, "validate: PASSED") {
+		t.Fatalf("--json of a passing check: %v\nstdout %s\nstderr %s", err, jout, jerr)
 	}
 	// A clean validate ends with what comes next, on stderr, for the
 	// directory as it was given.

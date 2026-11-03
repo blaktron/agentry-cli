@@ -82,6 +82,37 @@ func TestFetchRulesBundleHappyPathAndCache(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, semver, "bundle.yaml")); err != nil {
 		t.Errorf("cache layout missing bundle.yaml: %v", err)
 	}
+	// The cache is the person's alone, and the narration says what was cached,
+	// from where and to where.
+	if di, err := os.Stat(root); err != nil || di.Mode().Perm() != 0o700 {
+		t.Errorf("rules cache folder = (%v, %v), want mode 0700", di, err)
+	}
+	final := filepath.Join(root, semver)
+	if want := "rules: cached bundle " + semver + " (" + normalizeBundleDigest(bundle.Digest()) + ") from " + srv.URL + " at " + final + "\n"; !strings.Contains(out.String(), want) {
+		t.Errorf("narration %q lacks %q", out.String(), want)
+	}
+
+	// Fetching again replaces the version's folder whole: nothing an earlier
+	// fetch or an interrupted one left stays in it.
+	for _, stale := range []string{filepath.Join(final, "stale.yaml"), filepath.Join(final+".incoming", "stale.yaml")} {
+		if err := os.MkdirAll(filepath.Dir(stale), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(stale, []byte("old\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := fetchRulesBundle(context.Background(), &out, srv.URL); err != nil {
+		t.Fatalf("second fetch: %v", err)
+	}
+	for _, gone := range []string{filepath.Join(final, "stale.yaml"), final + ".incoming"} {
+		if _, err := os.Stat(gone); !os.IsNotExist(err) {
+			t.Errorf("%s survived a fetch (stat err %v)", gone, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(final, "bundle.yaml")); err != nil {
+		t.Errorf("second fetch left no bundle: %v", err)
+	}
 
 	// The freshly cached bundle is what newestCachedBundle picks up.
 	got, gotVer := newestCachedBundle()
@@ -97,6 +128,20 @@ func TestFetchRulesBundleHappyPathAndCache(t *testing.T) {
 	if _, gotVer = newestCachedBundle(); gotVer != "999.0.0" {
 		t.Errorf("newest = %q, want 999.0.0", gotVer)
 	}
+	// Versions are compared as numbers, not as text, and only folders named
+	// for a version count.
+	if err := export.CopyTree(filepath.Join(root, semver), filepath.Join(root, "10000.0.0")); err != nil {
+		t.Fatal(err)
+	}
+	if err := export.CopyTree(filepath.Join(root, semver), filepath.Join(root, "latest")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "99999.0.0"), []byte("not a folder"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, gotVer = newestCachedBundle(); gotVer != "10000.0.0" {
+		t.Errorf("newest = %q, want 10000.0.0", gotVer)
+	}
 }
 
 func TestFetchRulesBundleRefusals(t *testing.T) {
@@ -109,6 +154,8 @@ func TestFetchRulesBundleRefusals(t *testing.T) {
 		wantErr        string
 	}{
 		{"missing headers", "", "", "no semver/digest headers"},
+		{"a semver and no digest", bundle.Version(), "", "no semver/digest headers"},
+		{"a digest and no semver", "", bundle.Digest(), "no semver/digest headers"},
 		{"path-bearing semver", "1.0.0/../evil", bundle.Digest(), "not MAJOR.MINOR.PATCH"},
 		{"digest mismatch", bundle.Version(), "sha256:" + strings.Repeat("00", 32), "digest mismatch"},
 		{"version header disagrees with bundle.yaml", "9.9.9", bundle.Digest(), "version mismatch"},
@@ -121,6 +168,20 @@ func TestFetchRulesBundleRefusals(t *testing.T) {
 				t.Errorf("err = %v, want %q", err, tt.wantErr)
 			}
 		})
+	}
+
+	// An archive that is not a bundle does not load, and one past the cap is
+	// refused unread; an archive of exactly the cap is read and fails later.
+	srvBad := bundleServer(t, hostileBundle(t, "x.yaml"), "1.0.0", "sha256:"+strings.Repeat("00", 32))
+	if _, err := fetchRulesBundle(context.Background(), &strings.Builder{}, srvBad.URL); err == nil || !strings.Contains(err.Error(), "the fetched rule bundle does not load") {
+		t.Errorf("a bundle that does not load: %v", err)
+	}
+	for size, wantCap := range map[int]bool{int(maxBundleBytes) + 1: true, int(maxBundleBytes): false} {
+		big := bundleServer(t, bytes.Repeat([]byte("a"), size), "1.0.0", "sha256:"+strings.Repeat("00", 32))
+		_, err := fetchRulesBundle(context.Background(), &strings.Builder{}, big.URL)
+		if err == nil || strings.Contains(err.Error(), "exceeds the 8388608-byte client cap") != wantCap {
+			t.Errorf("a bundle of %d bytes: %v (past the cap: %v)", size, err, wantCap)
+		}
 	}
 
 	// A non-200 renders as an API problem, and nothing is cached on any
@@ -209,6 +270,41 @@ func TestLoadRulesBundlePrecedence(t *testing.T) {
 		t.Fatalf("newer cached source = %q (%v), want cached 999.0.0", source, err)
 	}
 
+	// A rules folder in the working directory beats the cache; a broken one
+	// refuses, and a file of that name is no folder.
+	if err := os.Mkdir("rules", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rules.UntarBundle(tar, func(name string, content []byte) error {
+		return os.WriteFile(filepath.Join("rules", name), content, 0o600)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, source, err := loadRulesBundle(); err != nil || source != "./rules" {
+		t.Fatalf("./rules source = %q, %v", source, err)
+	}
+	if err := os.RemoveAll("rules"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir("rules", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := loadRulesBundle(); err == nil || !strings.Contains(err.Error(), "load rule bundle from ./rules") {
+		t.Fatalf("broken ./rules = %v", err)
+	}
+	if err := os.Remove("rules"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("rules", []byte("a file"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, source, err := loadRulesBundle(); err != nil || source != "cached via --rules-update" {
+		t.Fatalf("a file named rules: source %q, %v", source, err)
+	}
+	if err := os.Remove("rules"); err != nil {
+		t.Fatal(err)
+	}
+
 	// An env override wins over everything…
 	override := t.TempDir()
 	if _, err := rules.UntarBundle(tar, func(name string, content []byte) error {
@@ -245,6 +341,9 @@ func TestFetchRulesBundleVerifiesSignature(t *testing.T) {
 	}
 	if semver != bundle.Version() || !strings.Contains(out.String(), "signature verified") {
 		t.Fatalf("output = %s", out.String())
+	}
+	if !strings.Contains(out.String(), "note: signing keys pinned on first use (TOFU)") {
+		t.Fatalf("a first signed fetch does not disclose the pin: %s", out.String())
 	}
 	if strings.Contains(out.String(), "pinned by digest only") {
 		t.Fatalf("signed bundle reported as unsigned: %s", out.String())
@@ -298,6 +397,21 @@ func TestAnOlderCachedBundleYieldsToTheEmbeddedOne(t *testing.T) {
 	b, source, err := loadRulesBundle()
 	if err != nil || source != "embedded" || b.Version() != emb.Version() {
 		t.Fatalf("with a cached 0.0.1 under an embedded %s: %s %q (%v), want the embedded bundle", emb.Version(), b.Version(), source, err)
+	}
+
+	// Folders not named for a plain version are no cached bundles.
+	root, err := rulesCacheDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(root, "0.0.1"), filepath.Join(root, "latest")); err != nil {
+		t.Fatal(err)
+	}
+	if err := export.CopyTree(filepath.Join(root, "latest"), filepath.Join(root, "v9.0.0")); err != nil {
+		t.Fatal(err)
+	}
+	if got, v := newestCachedBundle(); got != nil {
+		t.Fatalf("a folder not named for a version was taken for the cached bundle %q", v)
 	}
 }
 
