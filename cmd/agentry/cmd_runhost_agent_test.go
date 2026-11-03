@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/blaktron/agentry-cli/pkg/runhost"
+	"github.com/blaktron/agentry-cli/pkg/runhost/remote"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"github.com/blaktron/agentry-cli/pkg/runner/persistent"
@@ -76,7 +77,7 @@ func testCommand(stdin string) (*cobra.Command, *bytes.Buffer, *bytes.Buffer) {
 // none of the flags that name a file or a credential on the device.
 func TestARunhostRunsOnlyTheAgentCommandsADeviceDrives(t *testing.T) {
 	for _, ok := range [][]string{{"start", "assistant"}, {"grant", "assistant", "--yes"}, {"configure", "coder", "--name=Ada"}, {"list", "--json"}, {"secret", "set", "assistant", "X"}, {"configure", "coder", "--no-account=github.com"}, {"configure", "coder", "--account=github.com", "--own"}, {"configure", "assistant", "--microsoft-sign-in=a@b.example"}, {"configure", "assistant", "--fastmail-token=true", "--yes"}, {"configure", "assistant", "--calendar-feed=work"}} {
-		if err := checkRunhostAgentArgs(ok[0], ok[1:]); err != nil {
+		if err := remote.CheckAgentArgs(ok[0], ok[1:]); err != nil {
 			t.Errorf("%v refused: %v", ok, err)
 		}
 	}
@@ -85,7 +86,7 @@ func TestARunhostRunsOnlyTheAgentCommandsADeviceDrives(t *testing.T) {
 		{"start", "assistant", "--policy=/etc/passwd"}, {"configure", "coder", "--share=/srv"}, {"configure", "coder", "--dev-key=/k"},
 		{"configure", "assistant", "--google-sign-in"}, {"configure", "assistant", "--google-client=/c.json"}, {"configure", "assistant", "--calendar-sign-in"},
 	} {
-		if err := checkRunhostAgentArgs(bad[0], bad[1:]); err == nil {
+		if err := remote.CheckAgentArgs(bad[0], bad[1:]); err == nil {
 			t.Errorf("%v was taken", bad)
 		}
 	}
@@ -117,8 +118,13 @@ func TestTheAgentVerbRunsTheRunhostsOwnCommand(t *testing.T) {
 		t.Fatalf("a failing command: %d %v", code, err)
 	}
 	cmd, _, _ = testCommand("")
-	if code, _, _ := runOnRunhostAgent(cmd, verbCaller{}, "install", []string{"acme/helper"}, ""); code != engine.ExitUsage {
-		t.Fatalf("a subcommand a runhost does not run: %d", code)
+	if _, _, err := runOnRunhostAgent(cmd, verbCaller{}, "install", []string{"acme/helper"}, ""); err == nil {
+		t.Fatal("a subcommand a runhost does not run was sent")
+	}
+	// The runhost refuses it too, whoever asks.
+	var frames bytes.Buffer
+	if code, _ := runhostAgentVerb(context.Background(), runhost.Request{Verb: "agent", Args: []string{"run", "install", "acme/helper"}}, strings.NewReader(""), runhost.NewFrameWriter(&frames)); code != engine.ExitUsage {
+		t.Fatalf("the runhost ran a subcommand it does not run: %d", code)
 	}
 }
 
@@ -177,7 +183,7 @@ func TestTheAgentSocketIsRelayedToTheDevice(t *testing.T) {
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	devHome, stop, err := relayAgentSocket(ctx, verbCaller{}, "assistant")
+	devHome, _, stop, err := remote.RelayAgentSocket(ctx, verbCaller{}, "assistant")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,10 +201,10 @@ func TestTheAgentSocketIsRelayedToTheDevice(t *testing.T) {
 	if got != "echo status\n" {
 		t.Fatalf("relayed %q", got)
 	}
-	if _, ok := agentSocketKey("acme/helper"); !ok {
+	if _, ok := remote.AgentSocketKey("acme/helper"); !ok {
 		t.Error("an installed agent's reference has no key")
 	}
-	if _, ok := agentSocketKey("../x"); ok {
+	if _, ok := remote.AgentSocketKey("../x"); ok {
 		t.Error("a path was taken as an agent's name")
 	}
 }

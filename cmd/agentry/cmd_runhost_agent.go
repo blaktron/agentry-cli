@@ -10,10 +10,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -35,38 +33,12 @@ import (
 //
 // run streams the command's stdout, stderr and descriptor 3 back as data
 // frames named for them, and passes the device's input to its stdin. Only
-// the subcommands in runhostAgentCommands run, and none of the flags that
+// the subcommands in remote.AgentCommands run, and none of the flags that
 // would read a file or a credential of the device's.
-
-// runhostAgentCommands are the agent subcommands a device runs on a runhost.
-var runhostAgentCommands = []string{"list", "show", "start", "stop", "attach", "enable", "disable", "reset", "grant", "configure", "tasks", "secret"}
-
-// runhostAgentRefusedFlags name a file, a sign-in or a credential on the
-// device, which the runhost's CLI would look for on the server instead.
-// A sign-in whose browser answer is a callback in a container on the runhost
-// (Google Workspace's, a calendar's) is refused too: nothing relays it yet.
-var runhostAgentRefusedFlags = []string{
-	"policy", "personality-file", "share", "knowledge", "subagent",
-	"calendar-sign-in", "google-client", "google-sign-in",
-	"dev-host", "dev-key", "dev-passphrase", "dev-password",
-}
-
-// The data frames' streams.
-const (
-	agentStreamStdout = "stdout"
-	agentStreamStderr = "stderr"
-	agentStreamEvents = "events"
-)
 
 // runhostAgentExe is the CLI the verb runs: this one (a variable for the
 // tests).
 var runhostAgentExe = os.Executable
-
-// runhostCaller is the runhost connection the device's agent commands go
-// over: a *runhost.Client.
-type runhostCaller interface {
-	Call(ctx context.Context, verb string, args []string, send func(io.Writer) error, each func(runhost.Frame) error) (runhost.Answer, error)
-}
 
 // runhostAgentsDir holds a marker for each agent the service started, which
 // it starts again when it starts (variables for the tests).
@@ -82,29 +54,10 @@ func runhostAgentVerb(ctx context.Context, req runhost.Request, in io.Reader, fw
 	return engine.ExitUsage, errors.New("agent takes run <subcommand> [args…] or socket <name>")
 }
 
-// checkRunhostAgentArgs refuses a subcommand the runhost does not run and a
-// flag that names something on the device.
-func checkRunhostAgentArgs(sub string, args []string) error {
-	if !slices.Contains(runhostAgentCommands, sub) {
-		return fmt.Errorf("agentry agent %s does not run on a runhost (these do: %s)", sub, strings.Join(runhostAgentCommands, ", "))
-	}
-	for _, a := range args {
-		if !strings.HasPrefix(a, "--") {
-			continue
-		}
-		name, _, _ := strings.Cut(strings.TrimPrefix(a, "--"), "=")
-		name = strings.TrimPrefix(name, "no-")
-		if slices.Contains(runhostAgentRefusedFlags, name) {
-			return fmt.Errorf("--%s is not available with --on: it reads a file, a sign-in or a credential from this computer", name)
-		}
-	}
-	return nil
-}
-
 // runhostAgentRun runs the runhost's own `agentry agent sub args…`, as the
 // service's account and under its runner home.
 func runhostAgentRun(ctx context.Context, sub string, args []string, in io.Reader, fw *runhost.FrameWriter) (int, error) {
-	if err := checkRunhostAgentArgs(sub, args); err != nil {
+	if err := remote.CheckAgentArgs(sub, args); err != nil {
 		return engine.ExitUsage, err
 	}
 	exe, err := runhostAgentExe()
@@ -114,8 +67,8 @@ func runhostAgentRun(ctx context.Context, sub string, args []string, in io.Reade
 	argv := append([]string{"agent", sub}, args...)
 	c := exec.CommandContext(ctx, exe, argv...) //nolint:gosec // this binary, with an allowed subcommand
 	c.Env = append(os.Environ(), "AGENTRY_NO_BROWSER=1")
-	c.Stdout = streamWriter{fw: fw, stream: agentStreamStdout}
-	c.Stderr = streamWriter{fw: fw, stream: agentStreamStderr}
+	c.Stdout = streamWriter{fw: fw, stream: remote.AgentStdout}
+	c.Stderr = streamWriter{fw: fw, stream: remote.AgentStderr}
 	// Only attach reads the device's input and writes events on descriptor
 	// 3, and secret and configure the value the device read for them on
 	// stdin. Every other command gets neither: a supervisor that start
@@ -141,7 +94,7 @@ func runhostAgentRun(ctx context.Context, sub string, args []string, in io.Reade
 		copied := make(chan struct{})
 		go func() {
 			defer close(copied)
-			_, _ = io.Copy(streamWriter{fw: fw, stream: agentStreamEvents}, er)
+			_, _ = io.Copy(streamWriter{fw: fw, stream: remote.AgentEvents}, er)
 		}()
 		werr = c.Wait()
 		<-copied
@@ -276,7 +229,7 @@ func runhostAgentSocket(ctx context.Context, name string, in io.Reader, fw *runh
 			_ = cw.CloseWrite()
 		}
 	}()
-	_, _ = io.Copy(streamWriter{fw: fw, stream: agentStreamEvents}, conn)
+	_, _ = io.Copy(streamWriter{fw: fw, stream: remote.AgentEvents}, conn)
 	return 0, nil
 }
 
@@ -289,7 +242,7 @@ func wireAgentOn(cmd *cobra.Command) {
 	cmd.PersistentFlags().StringVar(&on, "on", "", "run the command on the remote runhost named, where the agent runs (agentry runhost list)")
 	for _, sub := range cmd.Commands() {
 		name := sub.Name()
-		if name != "chat" && !slices.Contains(runhostAgentCommands, name) {
+		if name != "chat" && !slices.Contains(remote.AgentCommands, name) {
 			continue
 		}
 		// A command of subcommands (secret) runs each of them there, named
@@ -385,7 +338,7 @@ func dialAgentRunhost(cmd *cobra.Command, name string) (*runhost.Client, *runhos
 // computer, and the command then runs again with --yes.
 func remoteAgentCommand(cmd *cobra.Command, on, sub string, args []string) error {
 	fwd := forwardedArgs(cmd, args)
-	if err := checkRunhostAgentArgs(sub, fwd); err != nil {
+	if err := remote.CheckAgentArgs(sub, fwd); err != nil {
 		return engine.Classify(engine.ExitUsage, err)
 	}
 	c, rec, err := dialAgentRunhost(cmd, on)
@@ -422,57 +375,17 @@ func remoteAgentCommand(cmd *cobra.Command, on, sub string, args []string) error
 // its exit code and what it wrote to stderr. Its stdout and stderr are this
 // command's; its descriptor 3, attach's events, goes to this process's own
 // descriptor 3 when that is open.
-func runOnRunhostAgent(cmd *cobra.Command, c runhostCaller, sub string, fwd []string, value string) (int, string, error) {
-	var (
-		mu     sync.Mutex
-		stderr strings.Builder
-	)
-	var events io.Writer
+func runOnRunhostAgent(cmd *cobra.Command, c remote.Caller, sub string, fwd []string, value string) (int, string, error) {
+	o := remote.AgentIO{Value: value, Stdout: cmd.OutOrStdout(), Stderr: cmd.ErrOrStderr()}
 	if sub == "attach" {
+		o.Stdin = cmd.InOrStdin()
 		if f := os.NewFile(3, "events"); f != nil {
 			if _, err := f.Stat(); err == nil {
-				events = f
+				o.Events = f
 			}
 		}
 	}
-	send := func(w io.Writer) error {
-		switch {
-		case sub == "attach":
-			_, err := io.Copy(w, cmd.InOrStdin())
-			return err
-		case value != "":
-			_, err := io.WriteString(w, value+"\n")
-			return err
-		}
-		return nil
-	}
-	a, err := c.Call(cmd.Context(), "agent", append([]string{"run", sub}, fwd...), send, func(f runhost.Frame) error {
-		if f.Type != runhost.FrameData {
-			return nil
-		}
-		switch f.Text {
-		case agentStreamStdout:
-			_, _ = cmd.OutOrStdout().Write(f.Data)
-		case agentStreamStderr:
-			mu.Lock()
-			if stderr.Len() < 64<<10 {
-				stderr.Write(f.Data)
-			}
-			mu.Unlock()
-			_, _ = cmd.ErrOrStderr().Write(f.Data)
-		case agentStreamEvents:
-			if events != nil {
-				_, _ = events.Write(f.Data)
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return 0, "", err
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	return a.Code, stderr.String(), nil
+	return remote.AgentCommand(cmd.Context(), c, sub, fwd, o)
 }
 
 // remoteAgentChat is agent chat with an agent running on the runhost on:
@@ -485,11 +398,7 @@ func remoteAgentChat(cmd *cobra.Command, on, name string) error {
 		return err
 	}
 	defer func() { _ = c.Close() }()
-	key, ok := agentSocketKey(name)
-	if !ok {
-		return engine.Classify(engine.ExitUsage, fmt.Errorf("%q is not an agent's name or an installed agent's reference (ns/name)", name))
-	}
-	home, stop, err := relayAgentSocket(cmd.Context(), c, name)
+	home, key, stop, err := remote.RelayAgentSocket(cmd.Context(), c, name)
 	if err != nil {
 		return engine.Classify(engine.ExitCLI, err)
 	}
@@ -515,77 +424,6 @@ func remoteAgentChat(cmd *cobra.Command, on, name string) error {
 		return engine.Classify(engine.ExitCLI, uiErr)
 	}
 	return nil
-}
-
-// relayAgentSocket listens on an owner socket of this device's own, in a
-// runner home made for it, and relays each connection to the agent name's
-// owner socket on the runhost c reaches. The home is what persistent's
-// socket calls are given; stop closes the listener and removes it.
-func relayAgentSocket(ctx context.Context, c runhostCaller, name string) (string, func(), error) {
-	key, ok := agentSocketKey(name)
-	if !ok {
-		return "", nil, fmt.Errorf("%q is not an agent's name or an installed agent's reference (ns/name)", name)
-	}
-	home, err := os.MkdirTemp("", "agentry-rh-")
-	if err != nil {
-		return "", nil, err
-	}
-	sock := persistent.SocketPath(home, key)
-	if err := os.MkdirAll(filepath.Dir(sock), 0o700); err != nil {
-		_ = os.RemoveAll(home)
-		return "", nil, err
-	}
-	l, err := net.Listen("unix", sock)
-	if err != nil {
-		_ = os.RemoveAll(home)
-		return "", nil, err
-	}
-	rctx, cancel := context.WithCancel(ctx)
-	go func() {
-		for {
-			conn, err := l.Accept()
-			if err != nil {
-				return
-			}
-			go func() {
-				defer func() { _ = conn.Close() }()
-				_, _ = c.Call(rctx, "agent", []string{"socket", name}, func(w io.Writer) error {
-					_, err := io.Copy(w, conn)
-					return err
-				}, func(f runhost.Frame) error {
-					if f.Type == runhost.FrameData {
-						_, err := conn.Write(f.Data)
-						return err
-					}
-					return nil
-				})
-			}()
-		}
-	}()
-	return home, func() {
-		cancel()
-		_ = l.Close()
-		_ = os.RemoveAll(home)
-	}, nil
-}
-
-// agentNameRE is a built-in agent's name; agentRefRE an installed agent's
-// reference, whose runner home key is ns.name.
-var (
-	agentNameRE = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
-	agentRefRE  = regexp.MustCompile(`^([a-z0-9][a-z0-9-]{0,62})/([a-z0-9][a-z0-9-]{0,62})$`)
-)
-
-// agentSocketKey is the name the runner home keys the agent name or ref
-// names by: a built-in's name, or an installed agent's ns.name.
-func agentSocketKey(name string) (string, bool) {
-	if agentNameRE.MatchString(name) {
-		return name, true
-	}
-	if m := agentRefRE.FindStringSubmatch(name); m != nil {
-		return m[1] + "." + m[2], true
-	}
-	return "", false
 }
 
 // thisMachine is how the agent commands name the machine they run on: a
