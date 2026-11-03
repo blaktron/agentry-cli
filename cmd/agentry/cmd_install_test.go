@@ -5,9 +5,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -30,6 +34,15 @@ func TestResolveInstallPathsManagedFlag(t *testing.T) {
 		}
 		if withDir.managed {
 			t.Errorf("%s: a --dir destination is marked managed and would be cleared", target)
+		}
+		// A claude-skill export goes in a folder of its name under --dir; the
+		// agents-md export goes in --dir itself.
+		wantDest := "/user/chosen/helper"
+		if target == manifest.InterfaceAgentsMD {
+			wantDest = "/user/chosen"
+		}
+		if withDir.dest != wantDest {
+			t.Errorf("%s: --dir resolves to %q, want %q", target, withDir.dest, wantDest)
 		}
 		def, err := resolveInstallPaths(target, "", "helper")
 		if err != nil {
@@ -167,8 +180,9 @@ func TestStdinIsTTY(t *testing.T) {
 	if stdinIsTTY(f) {
 		t.Error("a regular file is not a terminal")
 	}
-	if !stdinIsTTY(devNull(t)) {
-		t.Skip("/dev/null is not a char device on this platform")
+	// A character device is not a terminal either.
+	if stdinIsTTY(devNull(t)) {
+		t.Error("/dev/null taken for a terminal")
 	}
 }
 
@@ -184,14 +198,35 @@ func TestPromptYes(t *testing.T) {
 		t.Errorf("non-TTY promptYes = %v", err)
 	}
 
-	if !stdinIsTTY(devNull(t)) {
-		t.Skip("/dev/null is not a char device on this platform")
-	}
-	cmd = stubCmd(t)
-	cmd.SetIn(devNull(t))
-	err = promptYes(cmd, "continue? ", "not a terminal", "refused")
-	if err == nil || !strings.Contains(err.Error(), "read confirmation") {
-		t.Errorf("EOF on a char device = %v, want a read error", err)
+	// On a terminal the answer is read: "yes", alone on its line or ending
+	// the input, accepts; anything else, including no answer at all, is
+	// refused or an error.
+	prev := stdinIsTTY
+	t.Cleanup(func() { stdinIsTTY = prev })
+	stdinIsTTY = func(io.Reader) bool { return true }
+	for _, tc := range []struct {
+		name, input string
+		want        string // "" = accepted
+	}{
+		{"yes", "yes\n", ""},
+		{"yes ending the input", "yes", ""},
+		{"yes with space around it", "  yes \n", ""},
+		{"no", "no\n", "refused"},
+		{"y", "y\n", "refused"},
+		{"another case", "YES\n", "refused"},
+		{"an empty line", "\n", "refused"},
+		{"no answer at all", "", "read confirmation: EOF"},
+	} {
+		cmd = stubCmd(t)
+		cmd.SetIn(strings.NewReader(tc.input))
+		err = promptYes(cmd, "continue? ", "not a terminal", "refused")
+		switch {
+		case tc.want == "" && err != nil, tc.want != "" && (err == nil || err.Error() != tc.want):
+			t.Errorf("%s: promptYes = %v, want %q", tc.name, err, tc.want)
+		}
+		if got := cmd.ErrOrStderr().(*strings.Builder).String(); got != "continue? " {
+			t.Errorf("%s: the prompt written = %q", tc.name, got)
+		}
 	}
 }
 
@@ -233,6 +268,8 @@ func TestConfirmCapabilitiesNamesWhatIsDeclared(t *testing.T) {
 		"remote":       {parseCaps(t, "capabilities:\n  mcpServers:\n    - url: https://mcp.deepwiki.com/mcp\n      auth: none\n"), "a remote MCP server"},
 		"egress, host": {parseCaps(t, "capabilities:\n  network:\n    egress: [api.example.com]\n  exec:\n    commands: [git]\n  targetHosts: [server]\nintake:\n  - id: server\n    prompt: The server\n    type: host\n"), "network egress, exec and a target host"},
 		"none":         {manifest.Capabilities{}, ""},
+		"browser":      {manifest.Capabilities{Browser: &manifest.Browser{Hosts: []string{"cdn.example.com"}}}, "a web browser"},
+		"egress, exec": {parseCaps(t, "capabilities:\n  network:\n    egress: [api.example.com]\n  exec:\n    commands: [git]\n"), "network egress and exec"},
 		"server egress": {parseCaps(t, "capabilities:\n  mcpServers:\n    - npm: \"@acme/osv-mcp\"\n      version: 1.2.3\n      egress: [api.osv.dev]\n"),
 			"network egress for MCP server npm:@acme/osv-mcp@1.2.3"},
 		"server any host": {parseCaps(t, "capabilities:\n  mcpServers:\n    - npm: \"@acme/osv-mcp\"\n      version: 1.2.3\n      egress: [\"*\"]\n"),
@@ -314,6 +351,9 @@ func TestInstallClaudeSkillEndToEnd(t *testing.T) {
 	stdout, stderr, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.0.0", "--target", "claude-skill", "--allow-unsigned")
 	if err != nil {
 		t.Fatalf("install: %v (stderr %q)", err, stderr)
+	}
+	if strings.Contains(stderr, "next steps") {
+		t.Errorf("a coding-agent install gave the runner's next steps: %q", stderr)
 	}
 	for _, want := range []string{"acme/demo@1.0.0 (autonomous)", "filesystem.read: workspace", "installed acme/demo@1.0.0 as Claude skill"} {
 		if !strings.Contains(stdout, want) {
@@ -499,6 +539,17 @@ func TestInstallAgentsMDTarget(t *testing.T) {
 	if _, err := os.Stat(filepath.Join("agents", "pa", "prompts", "main.md")); err != nil {
 		t.Fatalf("extracted prompt missing: %v", err)
 	}
+
+	// A target the release's runtime.interfaces leaves out is installed to,
+	// with a warning.
+	fr.addAgent("acme", "narrow", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("narrow", "runtime:\n  interfaces: [claude-skill]\n"))
+	_, stderr, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/narrow@1.0.0", "--target", "agents-md", "--allow-unsigned")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stderr, `warning: manifest runtime.interfaces [claude-skill] does not list target "agents-md"`) {
+		t.Errorf("stderr lacks the undeclared-target warning: %q", stderr)
+	}
 }
 
 // TestInstallDigestMismatchAborts: the registry's advertised digest is the
@@ -545,7 +596,7 @@ func TestInstallUnsignedGate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stderr, "warning: unsigned") {
+	if !strings.Contains(stderr, "warning: unsigned") || !strings.Contains(stderr, "installing because --allow-unsigned was given") {
 		t.Errorf("allow-unsigned install must still warn: %q", stderr)
 	}
 }
@@ -560,6 +611,31 @@ func TestInstallVerifiedAttestation(t *testing.T) {
 	fv := fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
 	fv.attMode = attSigned
 
+	// A registry that leaves the attestation's address out of its answer
+	// still has the attestation at the path every registry serves it from.
+	bare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rec := httptest.NewRecorder()
+		fr.srv.Config.Handler.ServeHTTP(rec, r)
+		body := rec.Body.Bytes()
+		if r.URL.Path == "/api/v1/resolve" {
+			var doc map[string]any
+			if err := json.Unmarshal(body, &doc); err != nil {
+				t.Error(err)
+			}
+			delete(doc, "attestationUrl")
+			body, _ = json.Marshal(doc)
+		}
+		for k, v := range rec.Header() {
+			w.Header()[k] = v
+		}
+		w.WriteHeader(rec.Code)
+		_, _ = w.Write(body)
+	}))
+	defer bare.Close()
+	if bareOut, bareErr, err := runCLI(t, nil, "--registry", bare.URL, "install", "acme/demo@1.0.0"); err != nil || !strings.Contains(bareOut, "attestation:   verified (key "+fr.keyID+")") {
+		t.Fatalf("an answer with no attestation address was not verified at the canonical path: %v\n%s%s", err, bareOut, bareErr)
+	}
+
 	stdout, stderr, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.0.0")
 	if err != nil {
 		t.Fatalf("verified install failed: %v (stderr %q)", err, stderr)
@@ -572,6 +648,30 @@ func TestInstallVerifiedAttestation(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "pinned on first use (TOFU)") {
 		t.Errorf("first verified install must disclose the TOFU pin: %q", stderr)
+	}
+
+	// The keys are pinned now: a second install does not say they were pinned
+	// again.
+	_, stderr, err = runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.0.0")
+	if err != nil {
+		t.Fatalf("second verified install failed: %v (stderr %q)", err, stderr)
+	}
+	if strings.Contains(stderr, "pinned on first use") {
+		t.Errorf("a second install disclosed a first-use pin: %q", stderr)
+	}
+
+	// A signature a key the registry has since retired made verifies, and the
+	// install says so.
+	retired := newFakeRegistry(t)
+	retired.enableSigning(t)
+	retired.keyRetiredAt = "2026-09-20T10:00:00Z"
+	retired.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", "")).attMode = attSigned
+	stdout, _, err = runCLI(t, nil, "--registry", retired.url(), "install", "acme/demo@1.0.0")
+	if err != nil {
+		t.Fatalf("install signed by a retired key failed: %v", err)
+	}
+	if !strings.Contains(stdout, "attestation:   verified (key "+retired.keyID+")\n  signed by a retired key (retired 2026-09-20)\n") {
+		t.Errorf("stdout lacks the retired-key note:\n%s", stdout)
 	}
 }
 
@@ -619,7 +719,7 @@ func TestInstallCapabilityDiffOnUpgrade(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stdout, "capability diff vs 1.0.0: WIDENED") {
+	if !strings.Contains(stdout, "capability diff vs 1.0.0: WIDENED") || !strings.Contains(stdout, "\n  + this update adds network egress to api.example.com\n") {
 		t.Errorf("widened diff not shown:\n%s", stdout)
 	}
 
@@ -628,7 +728,7 @@ func TestInstallCapabilityDiffOnUpgrade(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stdout, "capability diff vs 2.0.0: narrowed") {
+	if !strings.Contains(stdout, "capability diff vs 2.0.0: narrowed") || !strings.Contains(stdout, "\n  - this update drops network egress to api.example.com\n") {
 		t.Errorf("narrowed diff not shown:\n%s", stdout)
 	}
 
@@ -700,6 +800,13 @@ func TestInstallYankedWarns(t *testing.T) {
 	if !strings.Contains(stderr, "YANKED") {
 		t.Errorf("yanked install did not warn: %q", stderr)
 	}
+
+	// The plan of a yanked pin says it is one.
+	stdout, _, err := runCLI(t, nil, "--registry", fr.url(), "--json", "install", "acme/demo@1.0.0", "--allow-unsigned", "--plan")
+	var plan installPlan
+	if err != nil || json.Unmarshal([]byte(stdout), &plan) != nil || !plan.Yanked {
+		t.Fatalf("plan of a yanked pin: %v %+v", err, plan)
+	}
 }
 
 // TestInstallProviderPicksTarget: --provider openclaw rides the
@@ -763,7 +870,7 @@ func TestInstallPlanJSONWritesNothing(t *testing.T) {
 	isolateEnv(t)
 	fr := newFakeRegistry(t)
 	caps := "capabilities:\n  network:\n    egress: [api.example.com]\n  filesystem:\n    read: workspace\n"
-	fr.addAgent("acme", "demo", "autonomous", "reads things").addVersion(t, "1.0.0", skillFiles("demo", caps))
+	fv := fr.addAgent("acme", "demo", "autonomous", "reads things").addVersion(t, "1.0.0", skillFiles("demo", caps))
 
 	// Without --allow-unsigned the plan still answers, and names the refusal
 	// an install would meet; it does not fail.
@@ -777,6 +884,16 @@ func TestInstallPlanJSONWritesNothing(t *testing.T) {
 	}
 	if plan.Ref != "acme/demo@1.0.0" || plan.Target != "claude-skill" || plan.Managed != true {
 		t.Fatalf("plan basics: %+v", plan)
+	}
+	if plan.Namespace != "acme" || plan.Name != "demo" || plan.Version != "1.0.0" || plan.Digest != fv.digest ||
+		!slices.Equal(plan.Modes, []string{"autonomous"}) || plan.Summary != "test fixture skill" || plan.Yanked || plan.KeyID != "" ||
+		plan.Installed != nil || !plan.Diff.Empty() {
+		t.Fatalf("plan identity: %+v", plan)
+	}
+	// The contract is the capabilities as canonical JSON: keys sorted, empty
+	// values left out.
+	if want := `{"filesystem":{"read":"workspace"},"network":{"egress":["api.example.com"]}}`; string(plan.Contract) != want {
+		t.Fatalf("contract = %s, want %s", plan.Contract, want)
 	}
 	if plan.Attestation != "unsigned" || plan.Signed || !strings.Contains(plan.Refusal, "--allow-unsigned") {
 		t.Fatalf("plan must name the unsigned refusal: %+v", plan)
@@ -804,9 +921,12 @@ func TestInstallPlanJSONWritesNothing(t *testing.T) {
 	}
 
 	// The digest is stable across runs.
-	stdout2, _, err := runCLI(t, nil, "--registry", fr.url(), "--json", "install", "acme/demo@1.0.0", "--target", "claude-skill", "--plan", "--allow-unsigned")
+	stdout2, stderr2, err := runCLI(t, nil, "--registry", fr.url(), "--json", "install", "acme/demo@1.0.0", "--target", "claude-skill", "--plan", "--allow-unsigned")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !strings.Contains(stderr2, "an install would proceed because --allow-unsigned was given") {
+		t.Errorf("a plan said something else of the consent: %q", stderr2)
 	}
 	var plan2 installPlan
 	if err := json.Unmarshal([]byte(stdout2), &plan2); err != nil {
@@ -832,6 +952,45 @@ func TestInstallPlanJSONWritesNothing(t *testing.T) {
 	if plan3.Installed == nil || plan3.Installed.Version != "1.0.0" || plan3.NeedsConfirmation || !plan3.Diff.Empty() {
 		t.Fatalf("plan after install: %+v", plan3)
 	}
+
+	// An update that widens the contract is planned as one that asks.
+	wide := skillFiles("demo", caps+"  exec:\n    commands: [git]\n")
+	wide["agent.yaml"] = strings.Replace(wide["agent.yaml"], "version: 1.0.0", "version: 2.0.0", 1)
+	fr.agents["acme/demo"].addVersion(t, "2.0.0", wide)
+	stdout4, _, err := runCLI(t, nil, "--registry", fr.url(), "--json", "install", "acme/demo@2.0.0", "--target", "claude-skill", "--plan", "--allow-unsigned")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var plan4 installPlan
+	if err := json.Unmarshal([]byte(stdout4), &plan4); err != nil {
+		t.Fatal(err)
+	}
+	if plan4.Installed == nil || plan4.Installed.Version != "1.0.0" || !plan4.NeedsConfirmation || plan4.Reason != "this update widens the declared capabilities" ||
+		!slices.Equal(plan4.Diff.Widened, []string{"adds subprocess execution: git (previously none)"}) {
+		t.Fatalf("plan of a widening update: %+v", plan4)
+	}
+
+	// The text form says the same in words, ending with what it wrote.
+	text, _, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@2.0.0", "--target", "claude-skill", "--plan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantText := "plan: acme/demo@2.0.0 -> " + plan3.Dir + " (claude-skill)\n" +
+		"installed: 1.0.0 at " + plan3.Dir + "\n" +
+		"  + this update adds subprocess execution: git (previously none)\n" +
+		"would ask: this update widens the declared capabilities\n" +
+		"would refuse: unsigned — registry offers no attestation for acme/demo@2.0.0 (no attestation recorded for this version); re-run with --allow-unsigned to install it anyway\n" +
+		"nothing written (--plan)\n"
+	if !strings.HasSuffix(text, wantText) {
+		t.Fatalf("text plan ends:\n%s\nwant it to end:\n%s", text, wantText)
+	}
+	text, _, err = runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@2.0.0", "--target", "claude-skill", "--plan", "--allow-unsigned")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(text, "would refuse") || !strings.HasSuffix(text, "would ask: this update widens the declared capabilities\nnothing written (--plan)\n") {
+		t.Fatalf("text plan with the consent given:\n%s", text)
+	}
 }
 
 // TestInstallJSONResult: install --json puts the result on stdout — where
@@ -839,7 +998,7 @@ func TestInstallPlanJSONWritesNothing(t *testing.T) {
 func TestInstallJSONResult(t *testing.T) {
 	isolateEnv(t)
 	fr := newFakeRegistry(t)
-	fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
+	fv := fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
 	stdout, stderr, err := runCLI(t, nil, "--registry", fr.url(), "--json", "install", "acme/demo@1.0.0", "--target", "claude-skill", "--allow-unsigned")
 	if err != nil {
 		t.Fatalf("install: %v (%s)", err, stderr)
@@ -850,6 +1009,18 @@ func TestInstallJSONResult(t *testing.T) {
 	}
 	if res.Ref != "acme/demo@1.0.0" || res.Target != "claude-skill" || !res.Recorded || res.Attestation != "unsigned" {
 		t.Fatalf("result: %+v", res)
+	}
+	home, _ := os.UserHomeDir()
+	if res.Namespace != "acme" || res.Name != "demo" || res.Version != "1.0.0" || res.Digest != fv.digest || res.Dir != filepath.Join(home, ".claude", "skills", "demo") ||
+		!res.Managed || res.Signed || res.Repaired {
+		t.Fatalf("result: %+v", res)
+	}
+	sum := sha256.Sum256(res.Contract)
+	if string(res.Contract) != "{}" || res.ContractDigest != "sha256:"+hex.EncodeToString(sum[:]) {
+		t.Fatalf("contract %s digest %s", res.Contract, res.ContractDigest)
+	}
+	if strings.Count(stdout, "\n") != 1 || !strings.HasSuffix(stdout, "\n") {
+		t.Fatalf("the result is not one line: %q", stdout)
 	}
 	if _, err := os.Stat(filepath.Join(res.Dir, "SKILL.md")); err != nil {
 		t.Fatalf("result names a dir without the export: %v", err)
@@ -904,6 +1075,21 @@ func TestInstallRefusesATraversalNameFromTheResolveResponse(t *testing.T) {
 			t.Fatalf("name %q: refused for another reason: %v (stderr %q)", name, err, stderr)
 		}
 	}
+
+	// A name or namespace that is valid but is not the release's own is
+	// refused as well.
+	for _, other := range []struct{ name, namespace, want string }{
+		{"other-skill", "acme", "the registry's manifest names acme/other-skill but the release is acme/demo — refusing to install"},
+		{"demo", "other", "the registry's manifest names other/demo but the release is acme/demo — refusing to install"},
+	} {
+		fr := newFakeRegistry(t)
+		fv := fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
+		fv.manifest.Name, fv.manifest.Namespace = other.name, other.namespace
+		_, _, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.0.0", "--allow-unsigned", "--yes")
+		if err == nil || err.Error() != other.want {
+			t.Fatalf("manifest %s/%s: err = %v, want %q", other.namespace, other.name, err, other.want)
+		}
+	}
 	assertCanaryHomeIntact(t, home)
 }
 
@@ -945,6 +1131,11 @@ func TestPrepareDestRefusesWhatItMustNeverClear(t *testing.T) {
 		if err := prepareDest(installPaths{dest: dest, managed: true, managedRoot: root}); err == nil {
 			t.Fatalf("prepareDest cleared %q", dest)
 		}
+	}
+	// A directory that is directly under the root it is given can still be one
+	// never to clear: the home directory, with its parent taken for the root.
+	if err := prepareDest(installPaths{dest: home, managed: true, managedRoot: filepath.Dir(home)}); err == nil {
+		t.Fatal("prepareDest cleared the home directory")
 	}
 	if err := prepareDest(installPaths{dest: filepath.Join(root, "other-skill"), managed: true}); err == nil {
 		t.Fatal("prepareDest cleared a directory with no managed root")
@@ -997,8 +1188,12 @@ func TestInstallUnscannedGate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("install with the flag: %v (stderr %q)", err, stderr)
 	}
-	if !strings.Contains(stderr, "warning: unscanned") || !strings.Contains(stderr, "because --allow-unscanned was given") {
+	if !strings.Contains(stderr, "warning: unscanned") || !strings.Contains(stderr, "installing because --allow-unscanned was given") {
 		t.Errorf("an allowed unscanned install must still warn: %q", stderr)
+	}
+	// What a run of it needs again is its own flag.
+	if !strings.Contains(stderr, "1. agentry run acme/internal --allow-unscanned\n") {
+		t.Errorf("next steps lack the unscanned consent: %q", stderr)
 	}
 	if strings.Contains(stdout+stderr, "attestation:   verified") {
 		t.Errorf("an unscanned install claims a verified attestation:\n%s%s", stdout, stderr)
@@ -1015,6 +1210,21 @@ func TestInstallUnscannedGate(t *testing.T) {
 	}
 	if plan.Attestation != "unscanned" || plan.Signed || !strings.Contains(plan.Refusal, "--allow-unscanned") {
 		t.Fatalf("plan = %+v, want attestation unscanned, unsigned, a refusal naming --allow-unscanned", plan)
+	}
+	if plan.NeedsConfirmation || plan.Reason != "" || string(plan.Contract) != "{}" {
+		t.Fatalf("plan of a release declaring nothing = %+v", plan)
+	}
+	// With the consent given the plan says an install would proceed.
+	stdout, stderr, err = runCLI(t, nil, "--registry", fr.url(), "install", "acme/internal@1.0.0", "--plan", "--json", "--allow-unscanned")
+	if err != nil {
+		t.Fatalf("plan with the consent: %v", err)
+	}
+	var consented installPlan
+	if err := json.Unmarshal([]byte(stdout), &consented); err != nil || consented.Refusal != "" {
+		t.Fatalf("plan with the consent: %v %+v", err, consented)
+	}
+	if !strings.Contains(stderr, "an install would proceed because --allow-unscanned was given") {
+		t.Errorf("a plan said something else of the consent: %q", stderr)
 	}
 }
 
@@ -1111,4 +1321,88 @@ func TestInstallHoldsTheArchiveToTheConsentedContract(t *testing.T) {
 			t.Errorf("record carries the resolve manifest's egress %v, want the archive's (none)", hosts)
 		}
 	})
+
+	t.Run("narrows the export", func(t *testing.T) {
+		isolateEnv(t)
+		fr := newFakeRegistry(t)
+		fv := fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
+		fv.manifest = resolveManifest(t, skillFiles("demo", "capabilities:\n  filesystem:\n    read: workspace\n"))
+		if _, stderr, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.0.0", "--target", "claude-skill", "--allow-unsigned", "--yes"); err != nil {
+			t.Fatalf("an archive narrower than the consented contract was refused: %v (%s)", err, stderr)
+		}
+		home, _ := os.UserHomeDir()
+		skill, err := os.ReadFile(filepath.Join(home, ".claude", "skills", "demo", "SKILL.md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if a := frontmatterAllowedTools(string(skill)); strings.Contains(a, "Read") {
+			t.Errorf("the export grants %q though the archive declares nothing:\n%s", a, skill)
+		}
+	})
+
+	// The archive's own agent.yaml is held to the publish rules and to the
+	// release's name before anything is written.
+	for _, tc := range []struct{ name, from, to, want string }{
+		{"names another release", "name: demo", "name: other", "the archive's manifest names acme/other but the release is acme/demo — refusing to install"},
+		{"fails validation", "version: 1.0.0", "version: not-semver", "the archive's agent.yaml fails validation — refusing to install"},
+	} {
+		t.Run("an archive that "+tc.name, func(t *testing.T) {
+			isolateEnv(t)
+			home := t.TempDir()
+			t.Setenv("AGENTRY_RUNNER_HOME", home)
+			fr := newFakeRegistry(t)
+			archive := skillFiles("demo", "")
+			archive["agent.yaml"] = strings.Replace(archive["agent.yaml"], tc.from, tc.to, 1)
+			fv := fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", archive)
+			fv.manifest = resolveManifest(t, skillFiles("demo", ""))
+			_, _, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/demo@1.0.0", "--allow-unsigned", "--yes")
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want %q", err, tc.want)
+			}
+			if _, serr := os.Stat(installdir.AgentDir(home, "acme", "demo")); !os.IsNotExist(serr) {
+				t.Errorf("a refused archive was written (stat err %v)", serr)
+			}
+		})
+	}
+}
+
+// TestInstallRefusesAnArchiveBomb: the archive is unpacked under bounds of
+// its own, whatever the registry's pipeline did: a file that compresses past
+// the ratio the extractor allows and an archive of more files than it allows
+// are each refused, and nothing is written.
+func TestInstallRefusesAnArchiveBomb(t *testing.T) {
+	many := skillFiles("bomb", "")
+	for i := 0; i < 20001; i++ {
+		many[fmt.Sprintf("files/%05d.md", i)] = "x"
+	}
+	dense := skillFiles("bomb", "")
+	dense["dense.md"] = strings.Repeat("a", 4<<20)
+	for _, tc := range []struct {
+		name    string
+		files   map[string]string
+		include string
+		want    string
+	}{
+		{"compression ratio", dense, "dense.md", "compression ratio exceeds 500"},
+		{"file count", many, "files/**", "file count exceeds 20000"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateEnv(t)
+			home := t.TempDir()
+			t.Setenv("AGENTRY_RUNNER_HOME", home)
+			fr := newFakeRegistry(t)
+			tc.files["agent.yaml"] = strings.Replace(tc.files["agent.yaml"], "include: [agent.yaml, SKILL.md]", "include: [agent.yaml, SKILL.md, "+tc.include+"]", 1)
+			fr.addAgent("acme", "bomb", "autonomous", "s").addVersion(t, "1.0.0", tc.files)
+			_, _, err := runCLI(t, nil, "--registry", fr.url(), "install", "acme/bomb@1.0.0", "--allow-unsigned", "--yes")
+			if err == nil || !strings.Contains(err.Error(), "extract archive") || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want an extraction refusal: %s", err, tc.want)
+			}
+			if _, serr := os.Stat(installdir.AgentDir(home, "acme", "bomb")); !os.IsNotExist(serr) {
+				t.Errorf("a refused archive was written (stat err %v)", serr)
+			}
+			if st, lerr := installed.Load(); lerr != nil || len(st.Records) != 0 {
+				t.Errorf("a refused archive left a record: %+v (%v)", st.Records, lerr)
+			}
+		})
+	}
 }

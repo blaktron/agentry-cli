@@ -109,6 +109,25 @@ func (s *signer) envelope(t *testing.T, digestHex string) attest.DSSEEnvelope {
 	}
 }
 
+// signPayload signs payload as a DSSE envelope, the way envelope does for a
+// statement of its own making.
+func (s *signer) signPayload(t *testing.T, payload []byte) attest.DSSEEnvelope {
+	t.Helper()
+	sum := sha256.Sum256(attest.PAE(attest.PayloadType, payload))
+	sig, err := ecdsa.SignASN1(rand.Reader, s.priv, sum[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return attest.DSSEEnvelope{
+		PayloadType: attest.PayloadType,
+		Payload:     base64.StdEncoding.EncodeToString(payload),
+		Signatures:  []attest.DSSESignature{{KeyID: s.keyID, Sig: base64.StdEncoding.EncodeToString(sig)}},
+	}
+}
+
+// subjectlessPayload is a well-formed statement that names no subject.
+const subjectlessPayload = `{"_type":"https://in-toto.io/Statement/v1","subject":[],"predicateType":"https://example.test/p","predicate":{}}`
+
 // registryFixture is a fake registry: the well-known key document plus one
 // attestation path, both mutable mid-test so rotation stories can be told.
 type registryFixture struct {
@@ -234,6 +253,8 @@ func TestPinnedKeysPath(t *testing.T) {
 		{"http://registry.example:8443/", "registry.example_8443-"},
 		{"https://reg.example/sub/path/", "reg.example_sub_path-"},
 		{"reg.example", "reg.example-"}, // schemeless stays usable
+		{"https://my-reg.example", "my-reg.example-"},
+		{" https://reg.example/ ", "reg.example-"},
 	}
 	for _, tc := range tests {
 		got, err := PinnedKeysPath(tc.url)
@@ -284,6 +305,7 @@ func TestPinFilesTellRegistryAddressesApart(t *testing.T) {
 	same := [][]string{
 		{"https://Reg.Example", "https://reg.example/"},
 		{"HTTPS://reg.example/a/", "https://reg.example/a"},
+		{" https://reg.example ", "https://reg.example"},
 	}
 	for _, pair := range same {
 		a, _ := PinnedKeysPath(pair[0])
@@ -295,6 +317,22 @@ func TestPinFilesTellRegistryAddressesApart(t *testing.T) {
 	long := "https://reg.example/" + strings.Repeat("a", 300)
 	if name, _ := PinnedKeysPath(long); len(filepath.Base(name)) > 100 {
 		t.Errorf("a long address makes a %d-character file name", len(filepath.Base(name)))
+	}
+	// The readable part is cut at 48 characters: 48, a hyphen, 16 hex digits
+	// of the address's digest and the extension.
+	if name, _ := PinnedKeysPath(long); len(filepath.Base(name)) != 48+1+16+len(".yaml") {
+		t.Errorf("a long address makes a %d-character file name, want %d", len(filepath.Base(name)), 48+1+16+len(".yaml"))
+	}
+	// The legacy name is what older clients wrote: it is found by that
+	// name, so the name itself is fixed.
+	for in, want := range map[string]string{
+		"https://reg.example/api": "reg.example_api.yaml",
+		"http://h:8080/":          "h_8080.yaml",
+		"reg.example":             "reg.example.yaml",
+	} {
+		if got := legacyPinFileName(in); got != want {
+			t.Errorf("legacyPinFileName(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 
@@ -406,6 +444,9 @@ func TestPinRoundTrip(t *testing.T) {
 	if fi, err := os.Stat(path); err != nil || fi.Mode().Perm() != 0o600 {
 		t.Fatalf("pin file stat = (%v, %v), want mode 0600", fi, err)
 	}
+	if di, err := os.Stat(filepath.Dir(path)); err != nil || di.Mode().Perm() != 0o700 {
+		t.Fatalf("pin directory stat = (%v, %v), want mode 0700", di, err)
+	}
 	got, err := LoadPinned(reg)
 	if err != nil {
 		t.Fatalf("LoadPinned: %v", err)
@@ -430,9 +471,13 @@ func TestPinAtLogin(t *testing.T) {
 	t.Run("first use pins", func(t *testing.T) {
 		isolatePins(t)
 		reg := newRegistry(t, s.keySet(), nil)
-		note := PinAtLogin(context.Background(), http.DefaultClient, reg.srv.URL)
-		if !strings.Contains(note, "pinned 1 signing key(s) on first use") {
-			t.Fatalf("note = %q", note)
+		first := PinAtLoginResult(context.Background(), http.DefaultClient, reg.srv.URL)
+		note := first.Note
+		if first.Status != "pinned" || !strings.Contains(note, "pinned 1 signing key(s) on first use") {
+			t.Fatalf("result = %+v", first)
+		}
+		if res := PinAtLoginResult(context.Background(), http.DefaultClient, reg.srv.URL); res.Status != "unchanged" {
+			t.Fatalf("a second login's status = %q, want unchanged", res.Status)
 		}
 		pinned, err := LoadPinned(reg.srv.URL)
 		if err != nil || len(pinned.Keys) != 1 || pinned.Keys[0].KeyID != s.keyID {
@@ -447,14 +492,21 @@ func TestPinAtLogin(t *testing.T) {
 		if !strings.Contains(note, "signing keys unchanged (1 pinned)") {
 			t.Fatalf("note = %q", note)
 		}
+		if res := PinAtLoginResult(context.Background(), http.DefaultClient, reg.srv.URL); res.Status != "unchanged" || res.Note != note {
+			t.Fatalf("result = %+v, want unchanged with the same note", res)
+		}
 	})
 	t.Run("rotation warns and keeps the pin", func(t *testing.T) {
 		isolatePins(t)
 		reg := newRegistry(t, s.keySet(), nil)
 		_ = PinAtLogin(context.Background(), http.DefaultClient, reg.srv.URL)
 		reg.set(func(f *registryFixture) { f.keys = rotated.keySet() })
-		note := PinAtLogin(context.Background(), http.DefaultClient, reg.srv.URL)
+		res := PinAtLoginResult(context.Background(), http.DefaultClient, reg.srv.URL)
+		note := res.Note
 		path, _ := PinnedKeysPath(reg.srv.URL)
+		if res.Status != "mismatch" {
+			t.Fatalf("status = %q, want mismatch", res.Status)
+		}
 		if !strings.Contains(note, "WARNING") || !strings.Contains(note, path) {
 			t.Fatalf("note = %q, want a warning naming %s", note, path)
 		}
@@ -466,14 +518,19 @@ func TestPinAtLogin(t *testing.T) {
 	t.Run("empty key set is legitimate", func(t *testing.T) {
 		isolatePins(t)
 		reg := newRegistry(t, KeySet{}, nil)
-		note := PinAtLogin(context.Background(), http.DefaultClient, reg.srv.URL)
-		if !strings.Contains(note, "publishes no signing keys") {
-			t.Fatalf("note = %q", note)
+		res := PinAtLoginResult(context.Background(), http.DefaultClient, reg.srv.URL)
+		note := res.Note
+		if res.Status != "unsigned" || !strings.Contains(note, "publishes no signing keys") {
+			t.Fatalf("result = %+v", res)
 		}
 	})
 	t.Run("fetch failure defers pinning", func(t *testing.T) {
 		isolatePins(t)
-		note := PinAtLogin(context.Background(), http.DefaultClient, "http://127.0.0.1:1")
+		res := PinAtLoginResult(context.Background(), http.DefaultClient, "http://127.0.0.1:1")
+		note := res.Note
+		if res.Status != "unavailable" {
+			t.Fatalf("status = %q, want unavailable", res.Status)
+		}
 		if !strings.Contains(note, "could not fetch signing keys") || !strings.Contains(note, "pinned on first verify") {
 			t.Fatalf("note = %q", note)
 		}
@@ -488,9 +545,10 @@ func TestPinAtLogin(t *testing.T) {
 		if err := os.WriteFile(path, []byte(":\tnot yaml"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		note := PinAtLogin(context.Background(), http.DefaultClient, reg.srv.URL)
-		if !strings.Contains(note, "could not read pinned signing keys") {
-			t.Fatalf("note = %q", note)
+		res := PinAtLoginResult(context.Background(), http.DefaultClient, reg.srv.URL)
+		note := res.Note
+		if res.Status != "unavailable" || !strings.Contains(note, "could not read pinned signing keys") {
+			t.Fatalf("result = %+v", res)
 		}
 	})
 	t.Run("pin write failure reported", func(t *testing.T) {
@@ -515,6 +573,9 @@ func TestVerifyAttestationVerifiedAndPinning(t *testing.T) {
 	res := VerifyAttestation(ctx, http.DefaultClient, reg.srv.URL, "", "/att", "sha256:"+testDigestHex)
 	if res.State != StateVerified {
 		t.Fatalf("state = %s (%s), want verified", res.State, res.Detail)
+	}
+	if res.KeyRetired || res.RetiredNote() != "" {
+		t.Errorf("an active key was reported retired: %+v", res)
 	}
 	if !res.FirstUse {
 		t.Error("first verification must report FirstUse (TOFU pin)")
@@ -680,9 +741,24 @@ func TestVerifyAttestationMismatchAndRotation(t *testing.T) {
 		if !strings.Contains(res.Detail, "re-pin deliberately") {
 			t.Fatalf("detail = %q", res.Detail)
 		}
+		// The registry dropped the pinned key as it added the new one, which a
+		// rotation does not do: the words are those of a possible compromise.
+		wantChange := "the registry's key set changed (added key id(s) " + otherKey.keyID + "; removed key id(s) " + pinnedKey.keyID + "), which a rotation does not do"
+		if !strings.Contains(res.Detail, wantChange) || !strings.Contains(res.Detail, "possible compromise") || strings.Contains(res.Detail, "consistent with a key rotation") {
+			t.Fatalf("detail = %q, want %q", res.Detail, wantChange)
+		}
 		pinned, _ := LoadPinned(reg.srv.URL)
 		if len(pinned.Keys) != 1 || pinned.Keys[0].KeyID != pinnedKey.keyID {
 			t.Fatal("rotation must not overwrite the pinned set")
+		}
+	})
+	t.Run("a signed statement that names no subject binds to nothing", func(t *testing.T) {
+		isolatePins(t)
+		env := pinnedKey.signPayload(t, []byte(subjectlessPayload))
+		reg := newRegistry(t, pinnedKey.keySet(), &env)
+		res := VerifyAttestation(ctx, http.DefaultClient, reg.srv.URL, "", "/att", "sha256:"+testDigestHex)
+		if res.State != StateMismatch || !strings.Contains(res.Detail, "subject digest") {
+			t.Fatalf("res = %+v, want a mismatch on the subject digest", res)
 		}
 	})
 	t.Run("valid signature over a different digest", func(t *testing.T) {
@@ -961,8 +1037,24 @@ func TestVerifyEnvelopeInHand(t *testing.T) {
 	if res := VerifyEnvelope(raw, other.keySet(), "sha256:"+testDigestHex); res.State != StateMismatch {
 		t.Errorf("another key = %+v", res)
 	}
-	if res := VerifyEnvelope(raw, s.keySet(), "sha256:"+strings.Repeat("0", 64)); res.State != StateMismatch {
+	if res := VerifyEnvelope(raw, s.keySet(), "sha256:"+strings.Repeat("0", 64)); res.State != StateMismatch || res.KeyID != s.keyID || !strings.Contains(res.Detail, "subject digest") {
 		t.Errorf("another digest = %+v", res)
+	}
+	// A key the registry records as retired still verifies, and says so; an
+	// active one does not.
+	if res := VerifyEnvelope(raw, setOfKeys(s.withStatus(KeyStatusRetired, "2026-09-20")), "sha256:"+testDigestHex); res.State != StateVerified || !res.KeyRetired || res.KeyRetiredAt != "2026-09-20" {
+		t.Errorf("a retired key = %+v", res)
+	}
+	if res := VerifyEnvelope(raw, setOfKeys(s.withStatus(KeyStatusActive, "")), "sha256:"+testDigestHex); res.State != StateVerified || res.KeyRetired {
+		t.Errorf("an active key = %+v", res)
+	}
+	// A signed statement that names no subject binds to nothing.
+	none, err := json.Marshal(s.signPayload(t, []byte(subjectlessPayload)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res := VerifyEnvelope(none, s.keySet(), "sha256:"+testDigestHex); res.State != StateMismatch {
+		t.Errorf("a statement with no subject = %+v", res)
 	}
 	env.Payload = base64.StdEncoding.EncodeToString([]byte(`{"subject":[{"digest":{"sha256":"` + testDigestHex + `"}}]}`))
 	changed, _ := json.Marshal(env)
@@ -988,5 +1080,41 @@ func TestFetchEnvelopeReadsItAsItIs(t *testing.T) {
 	}
 	if raw, err := FetchEnvelope(context.Background(), http.DefaultClient, reg.srv.URL, "", ""); raw != nil || err != nil {
 		t.Errorf("no attestation URL = %q, %v", raw, err)
+	}
+
+	// The token goes to the registry's own origin and nowhere else.
+	if _, err := FetchEnvelope(context.Background(), http.DefaultClient, reg.srv.URL, "tok-123", "/att"); err != nil {
+		t.Fatal(err)
+	}
+	cdn := newRegistry(t, KeySet{}, &env)
+	if _, err := FetchEnvelope(context.Background(), http.DefaultClient, reg.srv.URL, "tok-123", cdn.srv.URL+"/att"); err != nil {
+		t.Fatal(err)
+	}
+	if got := reg.auths(); len(got) != 2 || got[1] != "Bearer tok-123" {
+		t.Errorf("the registry saw Authorization %q, want the bearer token on the second request", got)
+	}
+	if got := cdn.auths(); len(got) != 1 || got[0] != "" {
+		t.Errorf("another origin saw Authorization %q, want none", got)
+	}
+
+	// None recorded is not an error; any other status is.
+	reg.set(func(f *registryFixture) { f.envStatus = http.StatusNotFound })
+	if raw, err := FetchEnvelope(context.Background(), http.DefaultClient, reg.srv.URL, "", "/att"); raw != nil || err != nil {
+		t.Errorf("a 404 = %q, %v, want none and no error", raw, err)
+	}
+	reg.set(func(f *registryFixture) { f.envStatus = http.StatusInternalServerError })
+	if raw, err := FetchEnvelope(context.Background(), http.DefaultClient, reg.srv.URL, "", "/att"); raw != nil || err == nil || !strings.Contains(err.Error(), "HTTP 500") {
+		t.Errorf("a 500 = %q, %v, want an error naming the status", raw, err)
+	}
+
+	// At most 4 MiB are read: a body of exactly that is read whole, one of
+	// more is cut.
+	reg.set(func(f *registryFixture) { f.envStatus, f.envBody = 0, strings.Repeat("a", 4<<20) })
+	if raw, err := FetchEnvelope(context.Background(), http.DefaultClient, reg.srv.URL, "", "/att"); err != nil || len(raw) != 4<<20 {
+		t.Errorf("a body of exactly 4 MiB: %d bytes, %v", len(raw), err)
+	}
+	reg.set(func(f *registryFixture) { f.envBody = strings.Repeat("a", 4<<20+10) })
+	if raw, err := FetchEnvelope(context.Background(), http.DefaultClient, reg.srv.URL, "", "/att"); err != nil || len(raw) != 4<<20 {
+		t.Errorf("a body past 4 MiB: %d bytes, %v, want it cut to 4 MiB", len(raw), err)
 	}
 }

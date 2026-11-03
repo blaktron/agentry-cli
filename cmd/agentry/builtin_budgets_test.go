@@ -59,6 +59,10 @@ func TestADraftOnThisComputerGetsThirtyMinutes(t *testing.T) {
 		{"a hosted draft with no --timeout has the policy's", policy.Budgets{TimeoutSeconds: 900, MaxTurns: 60}, true, nil, spec.Budgets{TimeoutSeconds: 900, MaxTurns: 60}},
 		{"a hosted draft runs under its job's caps", policy.Default().Budgets, true, []string{"--timeout", "1200", "--max-turns", "300"},
 			spec.Budgets{TimeoutSeconds: 1200, MaxTurns: 300}},
+		{"a hosted draft has the policy's cost cap", policy.Budgets{TimeoutSeconds: 900, MaxTurns: 60, MaxCostUSD: 2.5}, true, nil,
+			spec.Budgets{TimeoutSeconds: 900, MaxTurns: 60, MaxCostUSD: 2.5}},
+		{"a zero cap on tool calls and cost lifts the policy's", policy.Budgets{TimeoutSeconds: 900, MaxTurns: 60, MaxCostUSD: 3}, false, []string{"--max-turns", "0", "--max-cost", "0"},
+			spec.Budgets{TimeoutSeconds: 1800}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			savePolicyBudgets(t, policyPath, tc.policy)
@@ -92,23 +96,34 @@ func TestTheRepairTurnIsBoundWithinWhatTheDraftHasLeft(t *testing.T) {
 	t.Setenv(policy.DefaultJudgeKeyEnv, testJev)
 	for _, tc := range []struct {
 		name         string
+		args         []string // caps named for the draft
 		firstSeconds int64
+		firstTurns   int
+		firstCost    float64
 		repair       int // the repair run's timeout; 0 = no repair run
+		repairTurns  int // the repair run's cap on tool calls
+		repairCost   float64
 	}{
-		{"past the policy's 900 seconds", 1000, drafter.RepairTimeoutSeconds},
-		{"100 seconds left", 1700, 100},
-		{"nothing left", 1800, 0},
+		{"past the policy's 900 seconds", nil, 1000, 0, 0, drafter.RepairTimeoutSeconds, drafter.RepairMaxTurns, 0},
+		{"100 seconds left", nil, 1700, 0, 0, 100, drafter.RepairMaxTurns, 0},
+		{"nothing left", nil, 1800, 0, 0, 0, 0, 0},
+		{"plenty of tool calls left", []string{"--max-turns", "100"}, 1000, 40, 0, drafter.RepairTimeoutSeconds, drafter.RepairMaxTurns, 0},
+		{"5 tool calls left", []string{"--max-turns", "10"}, 1000, 5, 0, drafter.RepairTimeoutSeconds, 5, 0},
+		{"no tool calls left", []string{"--max-turns", "10"}, 1000, 10, 0, 0, 0, 0},
+		{"cost left", []string{"--max-cost", "2"}, 1000, 0, 0.5, drafter.RepairTimeoutSeconds, drafter.RepairMaxTurns, 1.5},
+		{"no cost left", []string{"--max-cost", "0.5"}, 1000, 0, 0.5, 0, 0, 0},
 	} {
 		_, runs, _ := draftSeamsN(t, webscan.Result{Verdict: webscan.Pass}, []string{refusedChoice, goodDraft}, "")
 		seam := draftRun
 		draftRun = func(cmd *cobra.Command, r localrun.Run) (*receipt.Envelope, error) {
 			env, err := seam(cmd, r)
 			if r.Web != nil {
-				env.Usage.WallMS = tc.firstSeconds * 1000
+				env.Usage.WallMS, env.Usage.Turns, env.Usage.CostUSD = tc.firstSeconds*1000, tc.firstTurns, tc.firstCost
 			}
 			return env, err
 		}
-		if _, stderr, err := runCLI(t, nil, "draft", "Summarize my notes.", "--out", filepath.Join(t.TempDir(), "o"), "--policy", policyPath); err != nil {
+		args := append([]string{"draft", "Summarize my notes.", "--out", filepath.Join(t.TempDir(), "o"), "--policy", policyPath}, tc.args...)
+		if _, stderr, err := runCLI(t, nil, args...); err != nil {
 			t.Fatalf("%s: %v\n%s", tc.name, err, stderr)
 		}
 		if len(*runs) == 0 || (*runs)[0].Budgets == nil || (*runs)[0].Budgets.TimeoutSeconds != drafter.LocalTimeoutFloorSeconds {
@@ -123,8 +138,8 @@ func TestTheRepairTurnIsBoundWithinWhatTheDraftHasLeft(t *testing.T) {
 		if len(*runs) != 2 || (*runs)[1].Budgets == nil {
 			t.Fatalf("%s: %d run(s), want the draft and its repair turn", tc.name, len(*runs))
 		}
-		if b := *(*runs)[1].Budgets; b.TimeoutSeconds != tc.repair || b.MaxTurns > drafter.RepairMaxTurns {
-			t.Errorf("%s: the repair turn ran under %+v, want %d seconds", tc.name, b, tc.repair)
+		if b := *(*runs)[1].Budgets; b.TimeoutSeconds != tc.repair || b.MaxTurns != tc.repairTurns || b.MaxCostUSD != tc.repairCost {
+			t.Errorf("%s: the repair turn ran under %+v, want %d seconds, %d tool calls, cost %v", tc.name, b, tc.repair, tc.repairTurns, tc.repairCost)
 		}
 	}
 }
@@ -178,6 +193,10 @@ func TestAKnowledgeBuildOnThisComputerGetsSixtyMinutes(t *testing.T) {
 		{"a shorter --timeout wins", policy.Default().Budgets, []string{"--timeout", "900"}, spec.Budgets{TimeoutSeconds: 900}},
 		{"a sandbox host's caps for a Standard build", policy.Default().Budgets, []string{"--timeout", "900", "--max-turns", "300", "--output-format", "json"},
 			spec.Budgets{TimeoutSeconds: 900, MaxTurns: 300}},
+		{"a zero cap on tool calls and cost lifts the policy's", policy.Budgets{TimeoutSeconds: 900, MaxTurns: 60, MaxCostUSD: 3}, []string{"--max-turns", "0", "--max-cost", "0"},
+			spec.Budgets{TimeoutSeconds: 3600}},
+		{"a named cost cap wins over the policy's", policy.Budgets{TimeoutSeconds: 900, MaxTurns: 60, MaxCostUSD: 3}, []string{"--max-cost", "1.5"},
+			spec.Budgets{TimeoutSeconds: 3600, MaxTurns: 60, MaxCostUSD: 1.5}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			savePolicyBudgets(t, policyPath, tc.policy)
