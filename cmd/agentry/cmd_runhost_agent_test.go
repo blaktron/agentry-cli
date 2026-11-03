@@ -75,7 +75,7 @@ func testCommand(stdin string) (*cobra.Command, *bytes.Buffer, *bytes.Buffer) {
 // The runhost runs only the agent subcommands a device may drive there, and
 // none of the flags that name a file or a credential on the device.
 func TestARunhostRunsOnlyTheAgentCommandsADeviceDrives(t *testing.T) {
-	for _, ok := range [][]string{{"start", "assistant"}, {"grant", "assistant", "--yes"}, {"configure", "coder", "--name=Ada"}, {"list", "--json"}, {"secret", "set", "assistant", "X"}, {"configure", "coder", "--no-account=github.com"}, {"configure", "coder", "--account=github.com", "--own"}} {
+	for _, ok := range [][]string{{"start", "assistant"}, {"grant", "assistant", "--yes"}, {"configure", "coder", "--name=Ada"}, {"list", "--json"}, {"secret", "set", "assistant", "X"}, {"configure", "coder", "--no-account=github.com"}, {"configure", "coder", "--account=github.com", "--own"}, {"configure", "assistant", "--microsoft-sign-in=a@b.example"}, {"configure", "assistant", "--fastmail-token=true", "--yes"}, {"configure", "assistant", "--calendar-feed=work"}} {
 		if err := checkRunhostAgentArgs(ok[0], ok[1:]); err != nil {
 			t.Errorf("%v refused: %v", ok, err)
 		}
@@ -83,7 +83,7 @@ func TestARunhostRunsOnlyTheAgentCommandsADeviceDrives(t *testing.T) {
 	for _, bad := range [][]string{
 		{"install", "acme/helper"}, {"supervise", "assistant"}, {"skill", "add", "x"}, {"messenger", "add", "assistant"},
 		{"start", "assistant", "--policy=/etc/passwd"}, {"configure", "coder", "--share=/srv"}, {"configure", "coder", "--dev-key=/k"},
-		{"configure", "assistant", "--google-sign-in"},
+		{"configure", "assistant", "--google-sign-in"}, {"configure", "assistant", "--google-client=/c.json"}, {"configure", "assistant", "--calendar-sign-in"},
 	} {
 		if err := checkRunhostAgentArgs(bad[0], bad[1:]); err == nil {
 			t.Errorf("%v was taken", bad)
@@ -243,9 +243,10 @@ func TestARunhostKeepsTheModelItsAgentsRunOn(t *testing.T) {
 // store, each as an entry of its own named for no part of its account; no
 // other kind of account is taken.
 func TestARunhostKeepsItsAgentsSecretsInItsStore(t *testing.T) {
-	for _, ok := range []string{"agent-secret:coder:GITHUB_TOKEN", "agent-secret:acme.helper:API_KEY", "account:github.com:octo-bot"} {
+	for _, ok := range []string{"agent-secret:coder:GITHUB_TOKEN", "agent-secret:acme.helper:API_KEY", "account:github.com:octo-bot",
+		"agent-secret:assistant:ms365-keyring", "calendar-feed:assistant:work", "calendar-session:assistant:work:2"} {
 		name, err := runhostKeychainEntry(ok)
-		if err != nil || !strings.HasPrefix(name, "agent-") || len(name) > 32 || strings.Contains(name, "GITHUB") || strings.Contains(name, "octo") {
+		if err != nil || !strings.HasPrefix(name, "agent-") || len(name) > 32 || strings.Contains(name, "GITHUB") || strings.Contains(name, "octo") || strings.Contains(name, "work") {
 			t.Errorf("%s: %q %v", ok, name, err)
 		}
 	}
@@ -254,7 +255,7 @@ func TestARunhostKeepsItsAgentsSecretsInItsStore(t *testing.T) {
 	if a == b {
 		t.Error("two secrets share an entry")
 	}
-	for _, bad := range []string{"agent-secret:../x:A", "agent-secret:coder:../A", "account:github.com:a/b", "agent-secret:coder:", "other:x"} {
+	for _, bad := range []string{"agent-secret:../x:A", "agent-secret:coder:../A", "account:github.com:a/b", "agent-secret:coder:", "other:x", "calendar-feed:assistant:../x", "calendar-session:assistant:work:x"} {
 		if _, err := runhostKeychainEntry(bad); err == nil {
 			t.Errorf("%s was taken", bad)
 		}
