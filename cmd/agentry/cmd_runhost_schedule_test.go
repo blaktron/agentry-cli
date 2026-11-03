@@ -13,6 +13,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/runhost"
 	"github.com/blaktron/agentry-cli/pkg/runhost/job"
+	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/schedule"
 )
 
@@ -274,5 +275,22 @@ func TestScheduleAddOnARunhostHandsTheScheduleOver(t *testing.T) {
 	}
 	if list, _ := runhostScheduleList(); len(list) != 0 {
 		t.Fatalf("the schedule stayed: %+v", list)
+	}
+}
+
+// A runhost whose systemd seals nothing is refused before the consent is
+// asked, as a policy refusal.
+func TestScheduleAddOnARunhostThatTakesNoScheduleAsksNothing(t *testing.T) {
+	newRunOnLab(t)
+	fr := newFakeRegistry(t)
+	fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
+	_, stderr, err := runCLI(t, nil, "--registry", fr.url(), "schedule", "add", "acme/demo@1.0.0", "--on", "lab",
+		"--daily", "07:00", "--zone", "UTC", "--allow-unsigned", "--yes")
+	var ce *engine.ClassifiedError
+	if err == nil || !errors.As(err, &ce) || ce.Code != engine.ExitPolicy || !strings.Contains(err.Error(), "takes no schedule") {
+		t.Fatalf("schedule add on an unsealed runhost: %v", err)
+	}
+	if strings.Contains(stderr, "Its store keeps") {
+		t.Fatalf("the consent was put before the refusal:\n%s", stderr)
 	}
 }

@@ -143,6 +143,15 @@ func putRunhostSchedule(cmd *cobra.Command, client *runhost.Client, rec *runhost
 	if h.Name == "" {
 		h.Name = meta.Name
 	}
+	// A runhost that cannot keep a schedule says so before anything is
+	// asked of the person.
+	takes, err := remote.TakesSchedules(cmd.Context(), client)
+	if err != nil {
+		return engine.Classify(engine.ExitGateway, err)
+	}
+	if !takes {
+		return engine.Classify(engine.ExitPolicy, fmt.Errorf("runhost %s takes no schedule: its systemd cannot seal its store's key to it (schedules need systemd %d or newer; agentry runhost store %s says so)", rec.Name, schedule.MinSystemd, rec.Name))
+	}
 	h.Entries = remote.Entries(j)
 	if len(j.Run.Connections) > 0 {
 		conns := connection.Open(home, connectionKeys())
@@ -182,7 +191,7 @@ func putRunhostSchedule(cmd *cobra.Command, client *runhost.Client, rec *runhost
 	say := func(line string) { _, _ = fmt.Fprintf(errOut, "%s: %s\n", rec.Name, safeTerminalText(line, 4096)) }
 	info, err := remote.PutSchedule(cmd.Context(), client, h, j, archive, files, say)
 	if err != nil {
-		return engine.Classify(engine.ExitGateway, err)
+		return engine.Classify(remote.SendClass(err), err)
 	}
 	if flags.jsonOut || opts.outputFormat == "json" {
 		return emitJSON(cmd.OutOrStdout(), info)
