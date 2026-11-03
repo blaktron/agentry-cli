@@ -6238,10 +6238,12 @@
             "TestAFailureBeforeTheContainersIsStagePrepare",
             "TestAgentNonZeroExitIsHarnessClass",
             "TestTurnBudgetKillsRun",
+            "TestCostBudgetKillsRun",
             "TestTimeoutKillsRun",
             "TestRunWithoutTimeoutHasNoAgentDeadlineAndRecordsZero",
             "TestJSONResultKindEnforced",
             "TestDeclaredServerThatDidNotStartFailsTheRun",
+            "TestTheToolsServerThatDidNotStartFailsTheRun",
             "TestDeclaredServerStartedRunsTheAgent",
             "TestReceiptNamesResolvedExecPackages",
             "TestRunInterruptedTearsDownAndWritesEnvelope",
@@ -6460,7 +6462,9 @@
             "TestSessionEndIsSafeToCallConcurrently",
             "TestSessionEnvelopeNamesThePolicyFile",
             "TestAnInputAddedAsATurnEndsGetsItsNoticeTurn",
-            "TestANoticeIsCarriedNotPutInThePersonsTurn"
+            "TestANoticeIsCarriedNotPutInThePersonsTurn",
+            "TestASessionOfAJSONPlanAsksForItsResultOnlyWhenFinished",
+            "TestASessionWhoseEventPumpPanicsEndsAndNamesIt"
           ],
           "fuzz": [],
           "benchmarks": [],
