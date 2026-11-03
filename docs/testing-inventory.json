@@ -6081,6 +6081,7 @@
           "tests": [
             "TestAPersistentClaudeSegmentNamesItsConversation",
             "TestAPersistentClaudeSegmentStartsAnewWhenItsConversationIsGone",
+            "TestAPersistentClaudeSegmentRemovesAHarnessThatOutlivesItsInput",
             "TestAPersistentClaudeSegmentTakesOnlyAConversationIDItsHarnessNames"
           ],
           "fuzz": [],
