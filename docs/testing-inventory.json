@@ -8722,7 +8722,8 @@
             "TestReasonCodesAreTheClosedList",
             "TestAnOrgPolicyReasonKeepsOnlyItsWord",
             "TestBlockedReasonsKeepNoText",
-            "TestAHostRefusalKeepsTheQuestionAndItsWord"
+            "TestAHostRefusalKeepsTheQuestionAndItsWord",
+            "TestWithCountCarriesTheCountThroughReasonOf"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -8757,7 +8758,8 @@
         {
           "path": "pkg/runner/receipt/tokens_test.go",
           "tests": [
-            "TestNoReceiptFieldIsNamedInCredits"
+            "TestNoReceiptFieldIsNamedInCredits",
+            "TestUsageTotalIsTheReportedTotalOrTheSum"
           ],
           "fuzz": [],
           "benchmarks": [],
