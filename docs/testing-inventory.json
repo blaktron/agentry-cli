@@ -3377,6 +3377,17 @@
       "disposition": "retain",
       "files": [
         {
+          "path": "pkg/runhost/remote/agents_test.go",
+          "tests": [
+            "TestAnAgentsSocketKey",
+            "TestCheckAgentArgs"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "pkg/runhost/remote/remote_test.go",
           "tests": [
             "TestAClientRunsAJobOnARunhostThroughThePackage",
