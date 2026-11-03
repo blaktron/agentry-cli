@@ -18,6 +18,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/mcpauth"
 	"github.com/blaktron/agentry-cli/pkg/mcpauth/mcpauthtest"
 	"github.com/blaktron/agentry-cli/pkg/runhost"
+	"github.com/blaktron/agentry-cli/pkg/runner/connection"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelsignin"
 )
@@ -82,6 +83,8 @@ func (l local) Call(ctx context.Context, verb string, args []string, send func(i
 			code, err = l.s.Start(context.Background(), args[1], app, inR, fw)
 		case len(args) == 2 && args[0] == "relay":
 			code, err = l.s.Relay(context.Background(), args[1], inR, fw)
+		case len(args) == 1 && args[0] == ConnectionVendor:
+			code, err = l.s.Connect(context.Background(), inR, fw)
 		}
 		_ = fw.Exit(code, err)
 		_ = outW.Close()
@@ -303,5 +306,124 @@ func TestOneSignInAtATime(t *testing.T) {
 	}
 	if _, err := s.Start(context.Background(), "gemini", "", strings.NewReader(""), runhost.NewFrameWriter(io.Discard)); err == nil {
 		t.Fatal("a vendor a runhost does not sign in to was taken")
+	}
+}
+
+// relayBrowser is a Person whose browser approves each consent it is sent
+// to and follows the vendor's redirect to the device's own listener, which
+// relays it to the runhost.
+func relayBrowser(redirect func(string) (string, error), opened *[]string) Person {
+	var deviceAddr string
+	return Person{
+		Listen: func(network, _ string) (net.Listener, error) {
+			l, err := net.Listen(network, "127.0.0.1:0")
+			if err == nil {
+				deviceAddr = l.Addr().String()
+			}
+			return l, err
+		},
+		Open: func(u string) {
+			*opened = append(*opened, u)
+			go func() {
+				to, err := redirect(u)
+				if err != nil {
+					return
+				}
+				loc, err := url.Parse(to)
+				if err != nil {
+					return
+				}
+				loc.Host = deviceAddr
+				if res, err := http.Get(loc.String()); err == nil { //nolint:noctx // a test's browser
+					_ = res.Body.Close()
+				}
+			}()
+		},
+	}
+}
+
+// A connection a runhost's schedule needs is a grant of the runhost's own:
+// the consent is made in the device's browser, the runhost keeps the
+// refresh token it was issued in its store, and the device holds nothing of
+// it. A second request reuses the kept connection without a consent.
+func TestARunhostConnectionIsAGrantOfItsOwn(t *testing.T) {
+	v := mcpauthtest.New(t)
+	v.DCR = true
+	host := t.TempDir()
+	keys := &memKeys{m: map[string]string{}}
+	store, clients := connection.Open(host, keys), connection.OpenClients(host, keys)
+	s := &Server{Home: host, Keys: keys,
+		Connections: func() (*connection.Store, *connection.Clients) { return store, clients },
+		ConnectHTTP: func() *http.Client { return v.Guard().Client() }}
+	d, err := mcpauth.DiscoverRemote(context.Background(), v.Guard().Client(), v.ServerURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := ConnectRequest{Ref: "acme/mail@1.0.0", Digest: "sha256:aaaa", Server: v.ServerURL(), URL: v.ServerURL()}
+	var opened []string
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	k, err := Connect(ctx, local{s}, req, d.Server.AuthorizationEndpoint, relayBrowser(v.Redirect, &opened))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if k.Vendor != ConnectionVendor || k.Kind != req.Server || len(opened) != 1 {
+		t.Fatalf("kept %+v, opened %v", k, opened)
+	}
+	if len(v.Issued) != 1 {
+		t.Fatalf("issued %v", v.Issued)
+	}
+	ck := connection.Key{Ref: req.Ref, Digest: req.Digest, Server: req.Server}
+	a, _, err := store.Use(ctx, ck, v.Guard().Client(), clients)
+	if err != nil || a.Token == "" {
+		t.Fatalf("the runhost's connection does not open: %q %v", a.Token, err)
+	}
+	found := false
+	for _, val := range keys.m {
+		if strings.Contains(val, v.RefreshPrefix) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("the runhost's store holds no refresh token")
+	}
+	_ = filepath.Walk(host, func(path string, info os.FileInfo, err error) error {
+		if err == nil && info.Mode().IsRegular() {
+			if b, _ := os.ReadFile(path); bytes.Contains(b, []byte(v.RefreshPrefix)) {
+				t.Errorf("%s holds the refresh token", path)
+			}
+		}
+		return nil
+	})
+
+	issued := len(v.Issued)
+	again, err := Connect(ctx, local{s}, req, d.Server.AuthorizationEndpoint, relayBrowser(v.Redirect, &opened))
+	if err != nil || again.Kind != req.Server || len(opened) != 1 || len(v.Issued) != issued {
+		t.Fatalf("a kept connection asked again: %+v %v, opened %v, issued %d", again, err, opened, len(v.Issued))
+	}
+}
+
+// The device opens a connection's consent only at the authorization
+// endpoint it discovered itself, with a loopback callback at the relay's
+// port.
+func TestTheDeviceOpensOnlyTheConsentItDiscovered(t *testing.T) {
+	auth := "https://auth.example/authorize"
+	ok := "https://auth.example/authorize?client_id=c&redirect_uri=http%3A%2F%2F127.0.0.1%3A45678%2Fcallback&state=s"
+	relay := runhost.Open{Relay: "id", Port: 45678}
+	if !consentPage(auth, ok, relay) {
+		t.Fatal("the discovered endpoint was refused")
+	}
+	for name, addr := range map[string]string{
+		"another host":      strings.Replace(ok, "auth.example", "evil.example", 1),
+		"another path":      strings.Replace(ok, "/authorize", "/login", 1),
+		"plain http":        strings.Replace(ok, "https://", "http://", 1),
+		"a remote callback": strings.Replace(ok, "127.0.0.1", "evil.example", 1),
+	} {
+		if consentPage(auth, addr, relay) {
+			t.Errorf("%s was opened: %s", name, addr)
+		}
+	}
+	if consentPage(auth, ok, runhost.Open{Relay: "id", Port: 1}) {
+		t.Error("a callback at another port than the relay's was opened")
 	}
 }
