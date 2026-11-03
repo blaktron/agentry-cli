@@ -8405,6 +8405,19 @@
           ]
         },
         {
+          "path": "pkg/runner/persistent/stop_test.go",
+          "tests": [
+            "TestAStopThatClosesWithoutAnAnswerIsJudgedByTheLock"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract",
+            "explicit skip"
+          ]
+        },
+        {
           "path": "pkg/runner/persistent/subagentruns_test.go",
           "tests": [
             "TestSubagentRunsReadsEverySegmentNewestFirst"
