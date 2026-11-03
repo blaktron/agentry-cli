@@ -76,13 +76,17 @@ type rpcError struct {
 // exec shim state, built once so tools/list and tools/call cannot drift
 // from each other mid-run.
 type server struct {
-	spec    *Spec
-	out     io.Writer
-	outMu   sync.Mutex
-	logw    io.Writer
-	tools   map[string]toolDef
-	order   []string
-	shimDir string
+	spec *Spec
+	// workOwner owns the workspace and HOME, and what the server writes
+	// there, where file ownership holds a command's writes in Landlock's
+	// place (confinement.ownsWorkspace); nil otherwise.
+	workOwner *Owner
+	out       io.Writer
+	outMu     sync.Mutex
+	logw      io.Writer
+	tools     map[string]toolDef
+	order     []string
+	shimDir   string
 	// shims maps a declared command to its shim symlink; a declared
 	// command absent from the image is absent here (tools.go).
 	shims map[string]string
@@ -171,9 +175,16 @@ func newServer(spec *Spec, out, logw io.Writer) (*server, error) {
 		s.confine = newConfinement(spec)
 		_, _ = fmt.Fprintln(logw, "agentry-runner tools: run_command: "+s.confine.describe())
 	}
+	if s.confine.ownsWorkspace {
+		s.workOwner = &Owner{UID: unprivilegedID, GID: unprivilegedID}
+	}
 	if spec.Exec.Any {
 		s.makeExecHome()
 		s.writeGitIdentities()
+	}
+	if s.workOwner != nil {
+		s.ownTree(spec.WorkspaceDir)
+		s.ownTree(spec.Exec.Home)
 	}
 	if spec.PDF.Enabled {
 		s.typst, s.render, s.pdfTimeout = defaultTypst(), newRenderConfinement(), PDFRenderTimeout

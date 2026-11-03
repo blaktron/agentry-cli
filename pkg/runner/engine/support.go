@@ -606,6 +606,11 @@ func renderGatewayConfig(p Params, rd *runDirs) error {
 	if err := stampOwner(filepath.Join(dir, "toolspec.json"), rd); err != nil {
 		return Classify(ExitCLI, fmt.Errorf("stamp owner into toolspec: %w", err))
 	}
+	if WorkspaceOwnership {
+		if err := stampWorkspaceOwnership(filepath.Join(dir, "toolspec.json")); err != nil {
+			return Classify(ExitCLI, fmt.Errorf("stamp workspace ownership into toolspec: %w", err))
+		}
+	}
 	if filterSupported {
 		if err := stampBoundedTmpfs(filepath.Join(dir, "toolspec.json")); err != nil {
 			return Classify(ExitCLI, fmt.Errorf("stamp the bounded tmpfs into toolspec: %w", err))
@@ -1641,6 +1646,34 @@ func stampOwner(specPath string, rd *runDirs) error {
 		return err
 	}
 	doc["owner"] = map[string]int{"uid": uid, "gid": gid}
+	out, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(specPath, append(out, '\n'), 0o644)
+}
+
+// WorkspaceOwnership says this engine runs as a remote runhost's service
+// account, where every container runs under gVisor and has no Landlock: a
+// command that may write its workspace is then held by file ownership
+// (toolsrv.Spec.WorkspaceOwnership). The runhost's CLI sets it.
+var WorkspaceOwnership bool
+
+// stampWorkspaceOwnership turns WorkspaceOwnership on in the per-run copy
+// of the tools spec, beside its owner.
+func stampWorkspaceOwnership(specPath string) error {
+	b, err := os.ReadFile(specPath) //nolint:gosec // our own rendered config
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(b, &doc); err != nil {
+		return err
+	}
+	doc["workspaceOwnership"] = true
 	out, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return err

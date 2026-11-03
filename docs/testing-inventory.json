@@ -5624,6 +5624,18 @@
             "source/file contract",
             "explicit skip"
           ]
+        },
+        {
+          "path": "pkg/runner/engine/workspace_ownership_test.go",
+          "tests": [
+            "TestTheRunhostsToolSpecHoldsWritesByOwnership"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
+          ]
         }
       ]
     },
@@ -10643,7 +10655,8 @@
             "TestChooseConfinement",
             "TestRunCommandRefusedWhenItCannotBeConfined",
             "TestRunCommandCannotWriteTheOutputFolder",
-            "TestRunCommandAsNobodyCannotWriteTheOutputFolder"
+            "TestRunCommandAsNobodyCannotWriteTheOutputFolder",
+            "TestWithoutLandlockOwnershipHoldsAWorkspaceWritingCommand"
           ],
           "fuzz": [],
           "benchmarks": [],

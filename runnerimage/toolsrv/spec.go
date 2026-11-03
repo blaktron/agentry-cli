@@ -151,6 +151,12 @@ type Spec struct {
 	// per-run copy of this file, never into the compiled plan; absent on
 	// hosts without POSIX ids.
 	Owner *Owner `json:"owner,omitempty"`
+	// WorkspaceOwnership, where the kernel has no Landlock (gVisor), holds a
+	// command that may write its workspace by file ownership instead: it
+	// runs as nobody, who owns the workspace and HOME alone. The engine
+	// stamps it into the per-run copy of this file on a remote runhost,
+	// where every container runs under gVisor.
+	WorkspaceOwnership bool `json:"workspaceOwnership,omitempty"`
 }
 
 // ShareChecks is Spec.ShareChecks: the folder beneath WorkspaceDir whose

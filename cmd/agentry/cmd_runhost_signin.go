@@ -55,6 +55,8 @@ func init() {
 	// Its model keys too, which its persistent agents' runs read.
 	if onRunhostServer() {
 		_ = modelkey.UseKeychain(runhostModelKeys{})
+		// Every container here runs under gVisor, which has no Landlock.
+		engine.WorkspaceOwnership = true
 	}
 }
 
