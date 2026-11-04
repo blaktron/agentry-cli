@@ -660,6 +660,7 @@
             "TestAgentConfigurePublishesAPort",
             "TestAgentStartPrintsEachStage",
             "TestAgentShowSaysWhyAServerFailed",
+            "TestAgentShowSaysWhatWasNotApplied",
             "TestAgentGrantLetsAServerSeeTheShare",
             "TestAgentShowHelpNamesEachRosterState",
             "TestAgentShowListsTheOffersAndAddsASuggestion",
@@ -8361,6 +8362,21 @@
           "fixtureEntryPoint": false,
           "dependencyHints": [
             "docker interface (real or fake)"
+          ]
+        },
+        {
+          "path": "pkg/runner/persistent/rollback_test.go",
+          "tests": [
+            "TestAChangeThatAddsWhatTheNextSegmentCannotStartWithIsTakenBack",
+            "TestAChangeThatTakesSomethingAwayIsNeverTakenBack",
+            "TestAnAgentStopsWhenItCannotStartWithoutTheChangeEither",
+            "TestAChangeWhoseKeyIsNotInTheKeychainIsRefused"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "real-time wait"
           ]
         },
         {

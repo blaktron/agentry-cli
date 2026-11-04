@@ -246,6 +246,9 @@ type starter struct {
 	// bound ends each segment when the context it was started with is
 	// done, as the engine's session does.
 	bound bool
+	// refuse, when set, refuses a segment it answers an error for, as an
+	// engine that cannot start it does.
+	refuse func(localrun.Segment) error
 }
 
 // renewingSegment is a fakeSegment whose harness can start a new
@@ -270,6 +273,11 @@ func (r *renewingSegment) NewConversation(_ context.Context, reason string) (str
 func (s *starter) start(ctx context.Context, seg localrun.Segment) (engine.PersistentSession, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.refuse != nil {
+		if err := s.refuse(seg); err != nil {
+			return nil, err
+		}
+	}
 	s.segments = append(s.segments, seg)
 	id := "conv-1"
 	if s.noID {
