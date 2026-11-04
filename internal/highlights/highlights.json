@@ -1,6 +1,13 @@
 {
   "versions": [
     {
+      "version": "0.7.16",
+      "highlights": [
+        "A server, pack or secret added to a running persistent agent that keeps it from starting is switched off, not fatal.",
+        "agentry agent show names what a running agent switched off that way, and why."
+      ]
+    },
+    {
       "version": "0.7.15",
       "highlights": [
         "A knowledge pack built again reaches a running persistent agent at its next turn, with no stop and start.",
