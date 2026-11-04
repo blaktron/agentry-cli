@@ -3133,6 +3133,38 @@
           "dependencyHints": []
         },
         {
+          "path": "pkg/mcpauth/idjag_test.go",
+          "tests": [
+            "TestAnIDJAGIsRequestedByTokenExchangeAndRedeemedForAnAccessToken",
+            "TestTheExchangeAuthenticatesWithASecretInTheForm",
+            "TestTheExchangeAuthenticatesWithAPrivateKeyJWT",
+            "TestTheAssertionAudienceCanBeTheIssuer",
+            "TestAPrivateKeyJWTClientWithoutASignerIsRefusedBeforeAnyRequest",
+            "TestTheProvidersPolicyRefusalKeepsItsCodeAndDescription",
+            "TestARefusalNeverEchoesTheSubjectToken",
+            "TestAnAnswerThatIsNotAnIDJAGIsRefused",
+            "TestAnIDJAGRequestNeedsAnHTTPSAudience",
+            "TestAServerWithoutTheIDJAGProfileIsNotRedeemedAt",
+            "TestTheServersMetadataReadsAsAcceptingIDJAGs",
+            "TestARedeemRefusalNeverEchoesTheAssertion",
+            "TestTheGrantsGoThroughTheGuard",
+            "TestTokenIssuerDiscoveryHoldsTheIssuerAndHTTPS",
+            "TestARedeemAnswerThatIsNotATokenIsRefused",
+            "TestTheGrantsRefuseAnHTTPTokenEndpoint",
+            "TestARefusalNeverEchoesTheClientAssertion",
+            "TestASignersErrorNeverReachesTheMessage",
+            "TestAnAssertionIsNeverUnsignedOrSignedWithASharedKey",
+            "TestCredentialsAreNeverSerialised",
+            "TestASignInsDiscoveryStillNeedsAnAuthorizationEndpoint"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "HTTP transport"
+          ]
+        },
+        {
           "path": "pkg/mcpauth/mcpauth_test.go",
           "tests": [
             "TestConsentRegistersDynamicallyAndExchanges",
