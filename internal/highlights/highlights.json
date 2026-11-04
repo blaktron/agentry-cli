@@ -1,6 +1,15 @@
 {
   "versions": [
     {
+      "version": "0.7.22",
+      "highlights": [
+        "PDF reports take a whole brand: a running header, a three-slot footer, your contact lines and a cover in six styles.",
+        "Ten built-in report designs, five of them new: Boardroom, Studio, Field, Civic and Lumen.",
+        "agentry run --report-design picks a library design by name; report-design list, use and delete manage the library.",
+        "An earlier report design file is refused by its version; export it again from your account, which holds them all anew."
+      ]
+    },
+    {
       "version": "0.7.21",
       "highlights": [
         "The Assistant's set-up steps for Google, Microsoft 365, Fastmail and calendar feeds no longer ask you to stop it."
