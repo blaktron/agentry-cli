@@ -1,6 +1,9 @@
 package adapter
 
-import "github.com/blaktron/agentry-cli/runnerimage/toolsrv"
+import (
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
+)
 
 // Budget is the most one tool result may hold for a harness to pass it to
 // the model whole: bytes and lines. The compiler stamps it into the tools
@@ -65,4 +68,40 @@ func tightestBudget() Budget {
 		}
 	}
 	return t
+}
+
+// The page a window holds. A sixteenth of the window keeps a turn's few
+// pages a small part of it, so a run on a small window is compacted before
+// a page can overflow it.
+const (
+	// bytesPerToken is the estimate docker-agent's own caps count by.
+	bytesPerToken = 4
+	windowPages   = 16
+	// minPageBytes is the smallest page: below it a file of short lines
+	// takes more turns than the window it saves.
+	minPageBytes = 16 << 10
+	// unknownWindowPageBytes is the page on an endpoint of the person's
+	// own whose window is not recorded, where nothing else bounds the
+	// conversation: two thirds of docker-agent's page.
+	unknownWindowPageBytes = 32 << 10
+)
+
+// PageBudget is the result budget of a run on model m under the adapter
+// named name: the adapter's own (ResultBudget), held to a sixteenth of the
+// model's window where the policy records one, in whole KiB and never under
+// minPageBytes; on an endpoint of the person's own with no recorded window,
+// to unknownWindowPageBytes. A hosted model with no recorded window keeps
+// the adapter's budget: its harness knows its window, and every hosted
+// window is large enough to hold that page.
+func PageBudget(name string, m policy.Model) Budget {
+	b := ResultBudget(name)
+	page := b.Bytes
+	switch {
+	case m.ContextWindow > 0:
+		page = max(m.ContextWindow*bytesPerToken/windowPages&^1023, minPageBytes)
+	case m.OwnEndpoint():
+		page = unknownWindowPageBytes
+	}
+	b.Bytes = min(b.Bytes, page)
+	return b
 }

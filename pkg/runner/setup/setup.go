@@ -955,7 +955,7 @@ func contextWindowFor(p Prompter, pol *policy.Policy, opts ModelOpts, prov, mode
 	if prov == pol.Model.Provider && model == pol.Model.Name && baseURL == pol.Model.BaseURL {
 		window = pol.Model.ContextWindow
 	}
-	if !OwnEndpoint(policy.Model{Provider: prov, BaseURL: baseURL}) {
+	if !(policy.Model{Provider: prov, BaseURL: baseURL}).OwnEndpoint() {
 		return window, nil
 	}
 	if window == 0 && opts.ProbeContextWindow != nil {
@@ -996,14 +996,6 @@ func contextWindowFor(p Prompter, pol *policy.Policy, opts ModelOpts, prov, mode
 		p.Say(fmt.Sprintf("warning: %s", UnknownWindowSentence(model)))
 	}
 	return window, nil
-}
-
-// OwnEndpoint reports whether m is an OpenAI-compatible endpoint of the
-// operator's own: custom, or openai pointed at a base URL. The harness's
-// catalogue seldom holds such a model, so the policy's window is often the
-// only one the harness has; where both are present, the policy's wins.
-func OwnEndpoint(m policy.Model) bool {
-	return m.Provider == "custom" || (m.Provider == policy.ProviderOpenAI && strings.TrimSpace(m.BaseURL) != "")
 }
 
 // UnknownWindowSentence says what an unset window costs a run on model.

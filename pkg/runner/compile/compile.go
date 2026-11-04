@@ -360,10 +360,10 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	}
 
 	tspec := toolSpec(caps, m.Capabilities.Secrets)
-	// Every tool result fits the harness's own limit: the run's adapter's
-	// budget, stamped for the tools server to page within and stated by the
-	// System Prompt.
-	budget := adapter.ResultBudget(adapterName)
+	// Every tool result fits the harness's own limit and the model's window:
+	// the run's page (adapter.PageBudget), stamped for the tools server to
+	// page within and stated by the System Prompt.
+	budget := adapter.PageBudget(adapterName, in.Policy.Model)
 	tspec.Limits.MaxResultBytes, tspec.Limits.MaxResultLines = budget.Bytes, budget.Lines
 	extraServers, extraEntries, err := dataAccessServers(caps.DataAccess, in.Policy)
 	if err != nil {
@@ -622,7 +622,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	if execImage != nil && execImage.Coder != "" {
 		plan.Enforcement["exec"] = coderExecEnforcement(execImage)
 	}
-	plan.Enforcement["toolResults"] = toolResultsEnforcement(adapterName, budget, caps)
+	plan.Enforcement["toolResults"] = toolResultsEnforcement(adapterName, in.Policy.Model, budget, caps)
 	if a := caps.AgentFiles; a != nil {
 		plan.Enforcement["persistent.files"] = agentFilesEnforcement(a)
 	}
@@ -1249,10 +1249,18 @@ func baseToolSpec(caps spec.CapSummary, secrets []string) *toolsrv.Spec {
 
 // toolResultsEnforcement is the receipt's line for the result budget: every
 // result of the runner's own tools is held to the harness's measured limit,
-// less a margin.
-func toolResultsEnforcement(adapterName string, b adapter.Budget, caps spec.CapSummary) string {
-	line := fmt.Sprintf("every result of the runner's own tools is held to %s, the %s harness's measured tool-result limit less a margin, by the tools server: a file is read a page at a time from the offset asked, each page saying where the next begins; a listing or a search stops at it and says what it left out; any other result is cut at it with a notice saying so; declared MCP servers' results are their own",
-		toolsrv.BudgetWords(b.Bytes, b.Lines), adapterName)
+// less a margin, or to the smaller page of a run on model (adapter.PageBudget).
+func toolResultsEnforcement(adapterName string, model policy.Model, b adapter.Budget, caps spec.CapSummary) string {
+	why := fmt.Sprintf("the %s harness's measured tool-result limit less a margin", adapterName)
+	switch {
+	case b == adapter.ResultBudget(adapterName):
+	case model.ContextWindow > 0:
+		why = fmt.Sprintf("the page the model's context window of %d tokens sets, under the %s harness's measured tool-result limit", model.ContextWindow, adapterName)
+	default:
+		why = fmt.Sprintf("the page for a model server of your own whose context window is not recorded, under the %s harness's measured tool-result limit", adapterName)
+	}
+	line := fmt.Sprintf("every result of the runner's own tools is held to %s, %s, by the tools server: a file is read a page at a time from the offset asked, each page saying where the next begins; a listing or a search stops at it and says what it left out; any other result is cut at it with a notice saying so; declared MCP servers' results are their own",
+		toolsrv.BudgetWords(b.Bytes, b.Lines), why)
 	if caps.Fetches() && caps.Scratch {
 		line += "; a fetch response body larger than one result is saved to " + spec.ScratchMount + "/fetch/ (never executable, refused when it holds a granted secret's value) and answered with its first page"
 	}
