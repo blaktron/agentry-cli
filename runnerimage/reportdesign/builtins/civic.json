@@ -1,0 +1,58 @@
+{
+  "agentryTheme": 3,
+  "name": "Civic",
+  "basedOn": "civic",
+  "version": 1,
+  "paper": "a4",
+  "fonts": {
+    "headings": "Crimson Pro",
+    "body": "Crimson Pro",
+    "code": "IBM Plex Mono"
+  },
+  "accent": "#6e1d2e",
+  "secondary": "#6d675f",
+  "titleBlock": "ruled",
+  "headings": "numbered",
+  "headingScale": "regular",
+  "margins": "wide",
+  "tables": {
+    "tinted": true,
+    "banded": false
+  },
+  "quotes": "callout",
+  "brand": {
+    "name": "",
+    "strapline": "",
+    "contact": [],
+    "website": "",
+    "confidentiality": ""
+  },
+  "header": {
+    "style": "brandLine",
+    "slots": [
+      "{brand}",
+      "",
+      "{date}"
+    ]
+  },
+  "footer": {
+    "pageNumbers": "nOfN",
+    "slots": [
+      "{brand}",
+      "{confidentiality}",
+      ""
+    ]
+  },
+  "cover": {
+    "style": "framed",
+    "shows": [
+      "title",
+      "subtitle",
+      "author",
+      "date",
+      "brand",
+      "confidentiality"
+    ],
+    "when": "always"
+  }
+}

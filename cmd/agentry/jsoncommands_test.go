@@ -161,6 +161,7 @@ func TestEveryJSONCommandEmitsOneObject(t *testing.T) {
 		"model-signins add":    {reason: "signs in through a browser"},
 		"connect":              {reason: "signs in through a browser"},
 		"report-design show":   {reason: "needs a signed-in account with a report design"},
+		"report-design list":   {reason: "needs a signed-in account"},
 		"schedule add":         {reason: "needs an installed release and the machine's scheduler"},
 		"schedule show":        {reason: "needs a schedule"},
 		"knowledge add":        {reason: "builds a pack with a model"},

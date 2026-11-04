@@ -5,9 +5,9 @@ package engine
 // plan cannot hold: the run's report design, the QuickAgent the PDF names
 // as its author, and the ledger each exported PDF is recorded in. After
 // the agent ends, the receipt's pdfs block names the design and every PDF
-// whose bytes are still the ones the ledger recorded, with its form: the
-// record the site and the desktop hold a PDF to before they open it in
-// place.
+// whose bytes are still the ones the ledger recorded, with its form and
+// the cover drawn: the record the site and the desktop hold a PDF to
+// before they open it in place.
 
 import (
 	"bufio"
@@ -36,7 +36,7 @@ import (
 const PDFLedgerFile = "pdfs.ndjson"
 
 // ReportTheme is a run's report design and what chose it: a whole design
-// document (Design, theme document version 2, from the account or a file),
+// document (Design, theme document version 3, from the account or a file),
 // or else a built-in theme's id (Name). Neither is the default, Plain.
 type ReportTheme struct {
 	Name string
@@ -190,7 +190,7 @@ func pdfRecord(rd *runDirs) *receipt.PDFs {
 		if err != nil || sum != e.SHA256 {
 			continue
 		}
-		rec.Files = append(rec.Files, receipt.PDFFile{Path: p, SHA256: sum, Pages: e.Pages, Bytes: size, Form: e.Form, Logo: e.Logo})
+		rec.Files = append(rec.Files, receipt.PDFFile{Path: p, SHA256: sum, Pages: e.Pages, Bytes: size, Form: e.Form, Logo: e.Logo, Cover: e.Cover})
 	}
 	if len(rec.Files) == 0 {
 		return nil

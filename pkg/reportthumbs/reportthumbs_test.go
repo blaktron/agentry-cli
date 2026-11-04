@@ -6,20 +6,31 @@ import (
 	"testing"
 )
 
-// TestEveryBuiltinHasAThumbnail: a PNG for each built-in theme of the core's
-// pkg/reportdesign, and nothing for anything else.
+// TestEveryBuiltinHasAThumbnail: a page PNG and a cover PNG for each of
+// the ten built-in themes of the core's pkg/reportdesign, and nothing for
+// anything else.
 func TestEveryBuiltinHasAThumbnail(t *testing.T) {
+	if len(IDs()) != 10 {
+		t.Fatalf("%d built-ins, want ten", len(IDs()))
+	}
 	for _, id := range IDs() {
-		b, ok := PNG(id)
-		if !ok {
-			t.Fatalf("%s has no thumbnail", id)
-		}
-		img, err := png.Decode(bytes.NewReader(b))
-		if err != nil || img.Bounds().Dx() < 400 {
-			t.Errorf("%s: %v, %v", id, img.Bounds(), err)
+		for name, read := range map[string]func(string) ([]byte, bool){"page": PNG, "cover": CoverPNG} {
+			b, ok := read(id)
+			if !ok {
+				t.Fatalf("%s has no %s thumbnail", id, name)
+			}
+			img, err := png.Decode(bytes.NewReader(b))
+			if err != nil || img.Bounds().Dx() < 400 {
+				t.Errorf("%s %s: %v, %v", id, name, img.Bounds(), err)
+			}
 		}
 	}
-	if _, ok := PNG("../plain"); ok {
-		t.Error("a path was read as a thumbnail")
+	for _, bad := range []string{"../plain", "plain-cover", "formal"} {
+		if _, ok := PNG(bad); ok {
+			t.Errorf("%q was read as a thumbnail", bad)
+		}
+		if _, ok := CoverPNG(bad); ok {
+			t.Errorf("%q was read as a cover thumbnail", bad)
+		}
 	}
 }

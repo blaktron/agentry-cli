@@ -1,5 +1,5 @@
 {
-  "agentryTheme": 2,
+  "agentryTheme": 3,
   "name": "Editorial",
   "basedOn": "editorial",
   "version": 1,
@@ -10,15 +10,47 @@
     "code": "Source Code Pro"
   },
   "accent": "#b3261e",
+  "secondary": "",
   "titleBlock": "bar",
   "headings": "rule",
+  "headingScale": "regular",
+  "margins": "regular",
   "tables": {
     "tinted": true,
     "banded": false
   },
   "quotes": "callout",
+  "brand": {
+    "name": "",
+    "strapline": "",
+    "contact": [],
+    "website": "",
+    "confidentiality": ""
+  },
+  "header": {
+    "style": "brandLine",
+    "slots": [
+      "{brand}",
+      "",
+      "{date}"
+    ]
+  },
   "footer": {
     "pageNumbers": "n",
-    "text": ""
+    "slots": [
+      "",
+      "",
+      ""
+    ]
+  },
+  "cover": {
+    "style": "largeType",
+    "shows": [
+      "title",
+      "subtitle",
+      "author",
+      "date"
+    ],
+    "when": "long"
   }
 }

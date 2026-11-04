@@ -1,0 +1,59 @@
+{
+  "agentryTheme": 3,
+  "name": "Boardroom",
+  "basedOn": "boardroom",
+  "version": 1,
+  "paper": "a4",
+  "fonts": {
+    "headings": "Libre Baskerville",
+    "body": "Source Serif 4",
+    "code": "IBM Plex Mono"
+  },
+  "accent": "#1b2a4a",
+  "secondary": "#8a6a00",
+  "titleBlock": "band",
+  "headings": "rule",
+  "headingScale": "regular",
+  "margins": "wide",
+  "tables": {
+    "tinted": true,
+    "banded": false
+  },
+  "quotes": "callout",
+  "brand": {
+    "name": "",
+    "strapline": "",
+    "contact": [],
+    "website": "",
+    "confidentiality": ""
+  },
+  "header": {
+    "style": "brandLine",
+    "slots": [
+      "{brand}",
+      "",
+      "{date}"
+    ]
+  },
+  "footer": {
+    "pageNumbers": "nOfN",
+    "slots": [
+      "{brand}",
+      "{confidentiality}",
+      ""
+    ]
+  },
+  "cover": {
+    "style": "split",
+    "shows": [
+      "title",
+      "subtitle",
+      "author",
+      "date",
+      "brand",
+      "logo",
+      "confidentiality"
+    ],
+    "when": "always"
+  }
+}
