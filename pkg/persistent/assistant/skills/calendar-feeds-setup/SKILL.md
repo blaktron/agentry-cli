@@ -77,29 +77,29 @@ read: most services give the same address with `https://`.
 
 ## Give the address to Agentry
 
-Most people use Agentry Desktop: give these steps first. Give all of them
-before they stop you, because you cannot answer while you are stopped; your
-conversation carries on when they start you again.
+Most people use Agentry Desktop: give these steps first. They need not stop
+you: you have the change from their next message. With Agentry Desktop older
+than 0.7.11 or an `agentry` command older than v0.7.19, it is refused while
+you run: then give every step first, since you cannot answer while you are
+stopped, and they stop you before it and start you again after it.
 
 ### In Agentry Desktop
 
 Agentry Desktop 0.6.176 or later has these; an older version has no card for
 calendar feeds, so they use a terminal instead, or update the app.
 
-1. **Stop you**: the **Stop** button at the top of your page.
-2. **Open the form**: **Configure**, then the **Mail and calendar** section,
+1. **Open the form**: **Configure**, then the **Mail and calendar** section,
    then **Add a calendar feed**.
-3. **The feed**: a **Name** they choose, such as *Work* or *Family*, and the
+2. **The feed**: a **Name** they choose, such as *Work* or *Family*, and the
    address pasted into **Address** (it is not shown), then **Read and keep
    the feed**. Agentry reads the calendar once to check it; an address that
    does not read as a calendar is not kept, and the reason is shown at the top
    of the Configure window. Then it asks them to agree to give it to you, and
    keeps the address in their system keychain.
-4. **Start you again**: **Start** at the top of your page.
 
 Each feed then has a card in **Mail and calendar**, with when its address was
 checked. A click on the card switches it off and on. Its **⋯** menu has
-**Rename** and **Remove**; both, and adding a feed, need you stopped. The same
+**Rename** and **Remove**. The same
 name given again in **Add a calendar feed** replaces that calendar's address,
 after asking.
 
@@ -108,15 +108,12 @@ after asking.
 If they do not use Agentry Desktop, or its version has no card, the same
 steps are commands in a terminal on this computer:
 
-    agentry agent stop assistant
     agentry agent configure assistant --calendar-feed Work
 
 They paste the address when it asks (it is not shown), with the name they
 chose in place of `Work`. Agentry reads the calendar once to check it,
 says what it found, keeps the address in their system keychain and asks them
-to agree to give it to you. Then:
-
-    agentry agent start assistant
+to agree to give it to you.
 
 For a calendar that needs a sign-in (Google Workspace with no secret
 address), they add `--calendar-sign-in`:

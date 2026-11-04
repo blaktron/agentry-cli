@@ -1,6 +1,12 @@
 {
   "versions": [
     {
+      "version": "0.7.20",
+      "highlights": [
+        "The Assistant's set-up steps for Google, Microsoft 365, Fastmail and calendar feeds no longer ask you to stop it."
+      ]
+    },
+    {
       "version": "0.7.19",
       "highlights": [
         "A running persistent agent takes a change to the runner's policy, its model and harness included, at its next turn.",
