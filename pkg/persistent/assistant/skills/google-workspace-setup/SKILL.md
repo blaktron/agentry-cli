@@ -49,47 +49,45 @@ they need.
    person's own app never reaches.
 ## Give the client to Agentry and sign in
 
-Most people use Agentry Desktop: give these steps first. Give all of them
-before they stop you, because you cannot answer while you are stopped; your
-conversation carries on when they start you again.
+Most people use Agentry Desktop: give these steps first. They need not stop
+you: while the set-up writes your sign-in you wait between turns, and you have
+it from their next message. With Agentry Desktop older than 0.7.11 or an
+`agentry` command older than v0.7.19, the set-up is refused while you run: then
+give every step first, since you cannot answer while you are stopped, and they
+stop you before it and start you again after it.
 
 ### In Agentry Desktop
 
-1. **Stop you**: the **Stop** button at the top of your page. The set-up is
-   refused while you run.
-2. **Switch Google on**: **Configure**, then the **Mail and calendar**
+1. **Switch Google on**: **Configure**, then the **Mail and calendar**
    section. If there is no *Google Workspace (gog)* card there, **Add a
    provider**, then **Add Google**. A click on the card switches it on and
    asks them to agree; it then reads *Needs setting up*.
-3. **Open the set-up**: on the card, the **⋯** menu, then **Set up**. (The
+2. **Open the set-up**: on the card, the **⋯** menu, then **Set up**. (The
    menu offers Set up only once the card is on.)
-4. **The client**: **Choose the client file…** and pick the file they
+3. **The client**: **Choose the client file…** and pick the file they
    downloaded in Google Cloud step 4. Agentry hands it to gog, which keeps its
    secret in an encrypted keyring on its own volume; the keyring's password
    goes into their system keychain. They can delete the downloaded file
    afterwards.
-5. **Sign in**: their Google address in **Your Google account**, then **Sign
+4. **Sign in**: their Google address in **Your Google account**, then **Sign
    in with Google**. Their browser opens Google's consent: they choose the
    account, accept the warning of Google Cloud step 5, and allow access.
    Google sends the browser back to Agentry on their own computer, and the
    panel then says which account is signed in.
-6. **Start you again**: **Start** at the top of your page.
 
 ### In a terminal
 
 If they do not use Agentry Desktop, or its set-up fails, the same steps are
 commands in a terminal on this computer:
 
-    agentry agent stop assistant
     agentry agent configure assistant --google-client <the downloaded file>
     agentry agent configure assistant --google-sign-in <their Google address>
 
-The second command hands the file to gog as the desktop does. The third opens
+The first command hands the file to gog as the desktop does. The second opens
 Google's consent in their browser, and the terminal says which account is
 signed in. Then:
 
     agentry agent grant assistant server:gog on
-    agentry agent start assistant
 
 Either way, the sign-in asks for read-only access unless *Allow changes* is
 on.
@@ -100,8 +98,7 @@ In Agentry Desktop, the cards *Google Workspace: allow changes* and *Google
 Workspace: allow sending mail* (sending only with changes); in a terminal,
 `agentry agent grant assistant server:gog:writes on` and `server:gog:send
 on`. Each switch asks for their agreement. A sign-in made read only does not
-cover changes, so after switching changes on they stop you and sign in
-again.
+cover changes, so after switching changes on they sign in again.
 
 ## When it does not work
 
