@@ -1,6 +1,13 @@
 {
   "versions": [
     {
+      "version": "0.7.19",
+      "highlights": [
+        "A running persistent agent takes a change to the runner's policy, its model and harness included, at its next turn.",
+        "A policy that cannot be read or started on is set aside, and the agent goes on with the one it had."
+      ]
+    },
+    {
       "version": "0.7.18",
       "highlights": [
         "Google Workspace's and Microsoft 365's set-ups and sign-ins work while the Assistant runs.",
