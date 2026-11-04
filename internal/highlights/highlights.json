@@ -1,18 +1,12 @@
 {
   "versions": [
     {
-      "version": "0.7.20",
-      "highlights": [
-        "agentry agent install updates a running persistent agent: it takes the new release at its next turn.",
-        "agentry agent uninstall and reset stop a running agent first, rather than refusing.",
-        "A running agent on an older Agentry is handed over to the new one between turns, its conversation kept."
-      ]
-    },
-    {
       "version": "0.7.19",
       "highlights": [
         "A running persistent agent takes a change to the runner's policy, its model and harness included, at its next turn.",
-        "A policy that cannot be read or started on is set aside, and the agent goes on with the one it had."
+        "agentry agent install updates a running persistent agent: it takes the new release at its next turn.",
+        "agentry agent uninstall and reset stop a running agent first, rather than refusing.",
+        "A running agent on an older Agentry is handed over to the new one between turns, its conversation kept."
       ]
     },
     {
