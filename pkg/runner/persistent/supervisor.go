@@ -284,6 +284,15 @@ func Start(ctx context.Context, opts Options) (*Supervisor, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A disable that took the lock between the check above and this start
+	// is the person's last word: the agent does not start.
+	if now, err := LoadConfig(opts.Home, a.Name); err != nil || !now.Enabled {
+		owner.Release()
+		if err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("the %s agent is not enabled: agentry agent enable %s", a.Name, a.Name)
+	}
 	s := &Supervisor{
 		opts: opts, owner: owner, since: time.Now().UTC(),
 		adapter:   localrun.ImageAdapter(adapter.DefaultFor(opts.Policy)),

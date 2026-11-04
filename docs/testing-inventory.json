@@ -8168,6 +8168,7 @@
             "TestAConfigurationFromBeforeMailProvidersIsMigrated",
             "TestADisabledProviderIsOffTheRosterAndOutOfTheSegment",
             "TestSetMailProviderKeepsTheSignIn",
+            "TestAMailProviderSwitchedWhileRunningReachesTheNextTurn",
             "TestSettingGoogleUpEnablesIt",
             "TestTheSegmentNamesGogsAccount"
           ],
@@ -8401,6 +8402,21 @@
           "fixtureEntryPoint": false,
           "dependencyHints": [
             "source/file contract",
+            "real-time wait"
+          ]
+        },
+        {
+          "path": "pkg/runner/persistent/running_changes_test.go",
+          "tests": [
+            "TestMicrosoftSettingsReachARunningAgent",
+            "TestDisablingARunningAgentStopsIt",
+            "TestAFastmailTokenAndACalendarFeedReachARunningAgent",
+            "TestEnablingAnAgentAnotherHolderHoldsIsRefused"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
             "real-time wait"
           ]
         },

@@ -765,3 +765,72 @@ func keptCredentials(cfg Config) Config {
 // resetSecrets is where Reset removes the stored secrets' values from: the
 // keychain, but in a test.
 var resetSecrets Secrets = KeychainSecrets{}
+
+// SetEnabled enables or disables the agent under its owner lock. A running
+// agent is enabled already; disabling one stops it first, then turns it
+// off, so it is never refused for running.
+func SetEnabled(ctx context.Context, home string, a Agent, client string, on bool) error {
+	owner, err := Acquire(home, a.Name, client)
+	var held *HeldError
+	if errors.As(err, &held) {
+		// A running agent is enabled already; any other holder (a sign-in)
+		// is waited out, not written past.
+		if on {
+			if c, err := LoadConfig(home, a.Name); err == nil && c.Enabled {
+				return nil
+			}
+			return held
+		}
+		if _, err := RequestStop(ctx, home, a.Name); err != nil {
+			// Held by something other than a supervisor (a sign-in), which
+			// no stop reaches: that holder is named instead.
+			return fmt.Errorf("%w: it could not be stopped to disable it (%v)", held, err)
+		}
+		owner, err = acquireWhenStopped(ctx, home, a.Name, client, true)
+	}
+	if err != nil {
+		return err
+	}
+	defer owner.Release()
+	c, err := LoadConfig(home, a.Name)
+	if err != nil {
+		return err
+	}
+	if c.Enabled == on {
+		return nil
+	}
+	c.Enabled = on
+	return SaveConfig(home, a.Name, c)
+}
+
+// disableWait bounds how long a disable waits for a stopped supervisor to
+// let its lock go: a stop ends the segment, which waits for its server
+// installs to cancel (up to 90 s), before the lock is released.
+const disableWait = 2 * time.Minute
+
+// acquireWhenStopped takes the agent's owner lock once the supervisor that
+// was asked to stop has let it go, waiting up to disableWait. With restop,
+// a supervisor that started meanwhile, from another client, is asked to
+// stop too.
+func acquireWhenStopped(ctx context.Context, home, name, client string, restop bool) (*Owner, error) {
+	deadline, asked := time.Now().Add(disableWait), time.Now()
+	for {
+		owner, err := Acquire(home, name, client)
+		var held *HeldError
+		if !errors.As(err, &held) {
+			return owner, err
+		}
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("%w: it was asked to stop and had not within %s", held, disableWait)
+		}
+		if restop && time.Since(asked) > 2*time.Second {
+			_, _ = RequestStop(ctx, home, name)
+			asked = time.Now()
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+}

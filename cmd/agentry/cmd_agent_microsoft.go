@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -37,19 +39,20 @@ const agentMicrosoftLong = "\n\n--microsoft-client gives the Assistant's Microso
 	"where your Agentry registry offers one, and only with Agentry's image of the\n" +
 	"server; your own app, once given, comes first.\n" +
 	"--microsoft-signoff sets a line every mail it sends or drafts ends with, and\n" +
-	"--no-microsoft-signoff clears it. All are refused while the agent runs;\n" +
-	"switch the server on with agentry agent grant assistant server:ms365 on.\n\n" +
+	"--no-microsoft-signoff clears it. A running agent takes the app, the tenant\n" +
+	"and the signoff at its next turn; the sign-in is refused while it runs.\n" +
+	"Switch the server on with agentry agent grant assistant server:ms365 on.\n\n" +
 	"  agentry agent configure assistant --microsoft-client 11111111-2222-3333-4444-555555555555\n" +
 	"  agentry agent configure assistant --microsoft-sign-in you@outlook.com"
 
 // configureMicrosoft runs --microsoft-client (with --microsoft-tenant),
 // --microsoft-signoff and --microsoft-sign-in, in that order.
-func configureMicrosoft(cmd *cobra.Command, a persistent.Agent, home, policyPath, clientID, tenant, email string, signoff *string) error {
+func configureMicrosoft(cmd *cobra.Command, a persistent.Agent, home, policyPath, clientID, tenant, email string, signoff *string, yes bool) error {
 	if !hasImageServer(a, assistant.MS365Key) {
 		return engine.Classify(engine.ExitUsage, fmt.Errorf("the %s agent has no Microsoft 365", a.Name))
 	}
-	if held, _ := persistent.Held(home, a.Name); held {
-		return engine.Classify(engine.ExitUsage, fmt.Errorf("the %s agent is running, and its Microsoft 365 server holds its sign-in: stop it first (agentry agent stop %s)", a.Name, a.Name))
+	if held, _ := persistent.Held(home, a.Name); held && email != "" {
+		return engine.Classify(engine.ExitUsage, fmt.Errorf("the %s agent is running, and its Microsoft 365 server holds its sign-in: stop it first to sign in (agentry agent stop %s)", a.Name, a.Name))
 	}
 	pol, _, _, err := agentPolicy(policyPath)
 	if err != nil {
@@ -61,20 +64,29 @@ func configureMicrosoft(cmd *cobra.Command, a persistent.Agent, home, policyPath
 		},
 	}
 	if clientID != "" {
-		if err := m.SetClient(clientID, tenant); err != nil {
-			return engine.Classify(engine.ExitUsage, fmt.Errorf("--microsoft-client: %w", err))
+		before, err := persistent.LoadConfig(home, a.Name)
+		if err != nil {
+			return engine.Classify(engine.ExitCLI, err)
 		}
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Microsoft 365 has your Entra app. Sign it in with --microsoft-sign-in <email>.")
+		_, running, err := configureAgent(cmd, home, a, persistent.Change{MicrosoftClient: &persistent.MicrosoftClient{ClientID: clientID, Tenant: tenant}}, yes)
+		if err != nil {
+			return fmt.Errorf("--microsoft-client: %w", err)
+		}
+		if !slices.Contains(before.MailProviders, assistant.MailMicrosoft) {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Microsoft is now one of the %s agent's mail providers (agentry agent configure %s --no-mail-provider %s takes it off its roster).\n", a.Name, a.Name, assistant.MailMicrosoft)
+		}
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Microsoft 365 has your Entra app (%s). Sign it in with --microsoft-sign-in <email>.\n", whenTaken(running))
 	}
 	if signoff != nil {
-		if err := m.SetSignoff(*signoff); err != nil {
-			return engine.Classify(engine.ExitUsage, fmt.Errorf("--microsoft-signoff: %w", err))
+		_, running, err := configureAgent(cmd, home, a, persistent.Change{MicrosoftSignoff: signoff}, yes)
+		if err != nil {
+			return fmt.Errorf("--microsoft-signoff: %w", err)
 		}
-		if *signoff == "" {
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Mail Microsoft 365 sends or drafts ends with no signoff.")
-		} else {
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Mail Microsoft 365 sends or drafts ends with your signoff, from its next start.")
+		what := "your signoff"
+		if strings.TrimSpace(*signoff) == "" {
+			what = "no signoff"
 		}
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Mail Microsoft 365 sends or drafts ends with %s (%s).\n", what, whenTaken(running))
 	}
 	if email == "" {
 		return nil

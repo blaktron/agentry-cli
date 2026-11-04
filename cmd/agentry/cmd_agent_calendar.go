@@ -25,9 +25,9 @@ const agentCalendarLong = "\n\n--calendar-feed <name> gives an agent that reads 
 	"the calendar, so it is kept in your system keychain, and the agent is never\n" +
 	"shown it. The address is fetched and read once before it is kept. A feed is\n" +
 	"read only: the agent reads what is on it and never changes it. Giving a\n" +
-	"name again sets its address again; --no-calendar-feed <name> removes it. Both\n" +
-	"are refused while the agent runs. A feed is a roster entry, switched with\n" +
-	"agentry agent grant assistant calendar:<name> on|off.\n\n" +
+	"name again sets its address again; --no-calendar-feed <name> removes it. A\n" +
+	"running agent takes either at its next turn. A feed is a roster entry,\n" +
+	"switched with agentry agent grant assistant calendar:<name> on|off.\n\n" +
 	"Some addresses answer only a signed-in browser: a Google Workspace calendar\n" +
 	"whose administrator turned off secret addresses gives only its \"Public address\n" +
 	"in iCal format\", which sends a fetch to Google's sign-in page. Add\n" +
@@ -53,9 +53,6 @@ var signInCalendarFeed = persistent.SignInCalendarFeed
 func configureCalendarFeed(cmd *cobra.Command, a persistent.Agent, home, name string, on, signIn, yes bool) error {
 	if !a.ReadsCalendars() {
 		return engine.Classify(engine.ExitUsage, fmt.Errorf("the %s agent has no calendar feeds: it does not declare calendars", a.Name))
-	}
-	if held, _ := persistent.Held(home, a.Name); held {
-		return engine.Classify(engine.ExitUsage, fmt.Errorf("the %s agent is running: stop it first (agentry agent stop %s)", a.Name, a.Name))
 	}
 	c, err := persistent.LoadConfig(home, a.Name)
 	if err != nil {
