@@ -1,6 +1,14 @@
 {
   "versions": [
     {
+      "version": "0.7.18",
+      "highlights": [
+        "Google Workspace's and Microsoft 365's set-ups and sign-ins work while the Assistant runs.",
+        "The agent pauses between turns while one is set up, then goes on with it, its conversation kept.",
+        "agentry agent show says what a paused agent is being set up with."
+      ]
+    },
+    {
       "version": "0.7.17",
       "highlights": [
         "Mail providers, Microsoft 365's app and signoff, a Fastmail token and calendar feeds change while an agent runs.",
