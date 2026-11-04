@@ -186,3 +186,9 @@ func switchMailProvider(a Agent, c *Config, key string, on bool) error {
 	c.MailProviders = slices.DeleteFunc(slices.Clone(c.MailProviders), func(k string) bool { return k == key })
 	return nil
 }
+
+// providerOnLine tells the person the provider p is now one of agent a's,
+// and how to take it off.
+func providerOnLine(a Agent, p offer.MailProvider) string {
+	return fmt.Sprintf("%s is now one of the %s agent's mail providers (agentry agent configure %s --no-mail-provider %s takes it off its roster).", p.Name, a.Name, a.Name, p.Key)
+}

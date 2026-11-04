@@ -111,6 +111,10 @@ type Change struct {
 	// MicrosoftSignoff is what mail Microsoft 365 sends or drafts ends
 	// with; empty for nothing.
 	MicrosoftSignoff *string `json:"microsoftSignoff,omitempty"`
+	// SignIn keeps an image server's sign-in record as its set-up left it
+	// (setup.go): never a credential, which stays on the server's volume
+	// and in the keychain.
+	SignIn *SignInRecord `json:"signIn,omitempty"`
 	// Consent says the person consented to what this change turns on, as
 	// the lines a ConsentError listed say it.
 	Consent bool `json:"consent,omitempty"`
@@ -411,6 +415,11 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 	}
 	if f := ch.SetCalendarFeed; f != nil {
 		if err := addCalendarFeed(a, &next, *f); err != nil {
+			return false, err
+		}
+	}
+	if rec := ch.SignIn; rec != nil {
+		if err := recordSignIn(a, &next, *rec); err != nil {
 			return false, err
 		}
 	}

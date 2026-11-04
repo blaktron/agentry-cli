@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 
 	"net"
 	"os"
@@ -61,6 +62,10 @@ type Command struct {
 	// Answer answers a question the agent's runner put to the person
 	// (ask.go), by its id.
 	Answer *protocol.Answer `json:"answer,omitempty"`
+	// Hold lends the agent to this connection for a set-up (hold.go), and
+	// Resume ends it; the connection closing ends it too.
+	Hold   *HoldFor    `json:"hold,omitempty"`
+	Resume *ResumeFrom `json:"resume,omitempty"`
 }
 
 // Reply is one line the supervisor sends.
@@ -77,6 +82,10 @@ type Reply struct {
 	// Consent lists what a refused change would turn on, for the person to
 	// agree to before it is sent again with Consent set.
 	Consent []RosterEntry `json:"consent,omitempty"`
+	// Held answers a hold once the segment has ended, and Resumed a resume
+	// once the next has started.
+	Held    *struct{} `json:"held,omitempty"`
+	Resumed *struct{} `json:"resumed,omitempty"`
 }
 
 // Stopped is the answer to a stop: where the segment's envelope is and how
@@ -102,6 +111,7 @@ const (
 	RefusedTask      protocol.Refusal = "task"
 	RefusedCompact   protocol.Refusal = "compact"
 	RefusedInterrupt protocol.Refusal = "interrupt"
+	RefusedHold      protocol.Refusal = "hold"
 	RefusedAnswer                     = protocol.RefusedAnswer
 )
 
@@ -176,6 +186,14 @@ func (s *Supervisor) serveConn(nc net.Conn) {
 			detach()
 		}
 	}()
+	// A hold this connection took ends with it, as a set-up that did not
+	// finish.
+	holding := 0
+	defer func() {
+		if holding != 0 {
+			_ = s.Resume(context.Background(), holding, false)
+		}
+	}()
 	sc := bufio.NewScanner(nc)
 	sc.Buffer(make([]byte, 64*1024), protocol.MaxLine+1)
 	for sc.Scan() {
@@ -183,7 +201,7 @@ func (s *Supervisor) serveConn(nc net.Conn) {
 		dec := json.NewDecoder(strings.NewReader(sc.Text()))
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&cmd); err != nil || commandsSet(cmd) != 1 {
-			c.refuse(protocol.RefusedMalformed, "a command is one JSON object naming exactly one of attach, send, status, roster, change, stop, tasks, task_change, compact, interrupt or answer")
+			c.refuse(protocol.RefusedMalformed, "a command is one JSON object naming exactly one of attach, send, status, roster, change, stop, tasks, task_change, compact, interrupt, answer, hold or resume")
 			continue
 		}
 		switch {
@@ -220,6 +238,16 @@ func (s *Supervisor) serveConn(nc net.Conn) {
 		case cmd.Roster != nil:
 			c.reply(Reply{Roster: s.Roster()})
 		case cmd.Change != nil:
+			// A sign-in record is a set-up's, made while it holds the
+			// agent, and comes with nothing but its provider.
+			if cmd.Change.SignIn != nil {
+				rest := *cmd.Change
+				rest.SignIn, rest.MailProvider = nil, nil
+				if holding == 0 || !s.holding(holding) || !reflect.ValueOf(rest).IsZero() {
+					c.refuse(RefusedHold, "a sign-in is recorded by the set-up that holds the agent, alone")
+					continue
+				}
+			}
 			r, err := s.Change(*cmd.Change)
 			var ce *ConsentError
 			switch {
@@ -276,6 +304,32 @@ func (s *Supervisor) serveConn(nc net.Conn) {
 				continue
 			}
 			c.reply(Reply{Tasks: taskList(ts)})
+		case cmd.Hold != nil:
+			if holding != 0 {
+				c.refuse(RefusedHold, "this connection holds the agent already")
+				continue
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), holdBound)
+			id, err := s.Hold(ctx, cmd.Hold.What)
+			cancel()
+			if err != nil {
+				c.refuse(RefusedHold, err.Error())
+				continue
+			}
+			holding = id
+			c.reply(Reply{Held: &struct{}{}})
+		case cmd.Resume != nil:
+			if holding == 0 {
+				c.refuse(RefusedHold, "this connection holds no set-up")
+				continue
+			}
+			id := holding
+			holding = 0
+			if err := s.Resume(context.Background(), id, cmd.Resume.Done); err != nil {
+				c.refuse(RefusedHold, err.Error())
+				continue
+			}
+			c.reply(Reply{Resumed: &struct{}{}})
 		case cmd.Stop != nil:
 			env, err := s.Stop(context.Background())
 			c.reply(Reply{Stopped: stoppedOf(env, err)})
@@ -287,7 +341,7 @@ func (s *Supervisor) serveConn(nc net.Conn) {
 // commandsSet is how many commands one line names.
 func commandsSet(c Command) int {
 	n := 0
-	for _, set := range []bool{c.Attach != nil, c.Send != nil, c.Status != nil, c.Roster != nil, c.Change != nil, c.Stop != nil, c.Tasks != nil, c.TaskChange != nil, c.Compact != nil, c.Interrupt != nil, c.Answer != nil} {
+	for _, set := range []bool{c.Attach != nil, c.Send != nil, c.Status != nil, c.Roster != nil, c.Change != nil, c.Stop != nil, c.Tasks != nil, c.TaskChange != nil, c.Compact != nil, c.Interrupt != nil, c.Answer != nil, c.Hold != nil, c.Resume != nil} {
 		if set {
 			n++
 		}

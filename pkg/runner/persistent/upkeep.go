@@ -82,15 +82,22 @@ const keptForCompaction = 4
 // beginUpkeep marks upkeep as running, so a person's message waits for it
 // and is told why, until the returned func ends it.
 func (s *Supervisor) beginUpkeep(wait string) func() {
+	return s.beginWait(wait, upkeepTurnCap+time.Minute)
+}
+
+// beginWait marks the turn as taken by the supervisor's own work, so a
+// person's message waits for it, at most bound, and is told wait, until
+// the returned func ends it.
+func (s *Supervisor) beginWait(wait string, bound time.Duration) func() {
 	s.mu.Lock()
 	s.upkeeping++
-	outer := s.upkeepWait
-	s.upkeepWait = wait
+	outer, outerBound := s.upkeepWait, s.waitBound
+	s.upkeepWait, s.waitBound = wait, bound
 	s.mu.Unlock()
 	return func() {
 		s.mu.Lock()
 		s.upkeeping--
-		s.upkeepWait = outer
+		s.upkeepWait, s.waitBound = outer, outerBound
 		s.mu.Unlock()
 	}
 }
