@@ -292,6 +292,10 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 			return false, err
 		}
 		dh := *d
+		// Saved again, its sign-in in the keychain may be new: the stamp
+		// restarts the segment that holds the old one. A client's own
+		// stamp is never kept.
+		dh.SavedAt = time.Now().UTC()
 		next.DevHost = &dh
 		delete(next.Switches, EntryDevHost)
 	}
@@ -499,6 +503,8 @@ func grantsKeyWith(a Agent, c Config, ready func(manifest.MCPServer) bool) strin
 		Secrets   []string
 		Accounts  []string
 		Calendars []string
+		// Given are the image servers' and the dev server's signatures.
+		Given Signatures
 		// AppLink is the app link's tool set, which a first subagent added,
 		// or the last removed, changes.
 		AppLink string
@@ -515,10 +521,18 @@ func grantsKeyWith(a Agent, c Config, ready func(manifest.MCPServer) bool) strin
 		if readAtUse(e.ID) {
 			continue
 		}
+		// An image server and its switches count as they are given,
+		// below: one on and waiting for its sign-in gives nothing yet.
+		if e.Kind == KindServerSwitch {
+			continue
+		}
 		if e.On && (e.Kind != KindServer || counted[e.ID]) {
 			k.On = append(k.On, e.ID+"="+e.Line)
 		}
 	}
+	// What an image server and the dev server are given beyond being on:
+	// a set-up done or a dev server saved again restarts the segment.
+	k.Given = configSignatures(a, c, r)
 	k.Share, _ = ShareFolder(a, c)
 	// An added skill counts by its files' digest, so one removed and added
 	// again with other files before a turn restarts the segment.

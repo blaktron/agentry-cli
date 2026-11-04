@@ -69,6 +69,10 @@ type Options struct {
 	// DevHost readies the Coding agent's dev server for each segment; nil
 	// readies it under Home and Policy (ReadyDevHost).
 	DevHost HostReady
+	// Contents read the digests of the packs and the voice a segment
+	// attaches, so one changed in its store while the agent runs is a
+	// change the next turn applies; nil fields follow nothing.
+	Contents Contents
 	// Secrets is where the stored secrets' values are read for each
 	// segment; nil is the keychain (KeychainSecrets).
 	Secrets Secrets
@@ -141,7 +145,8 @@ type Supervisor struct {
 	outDir        string
 	segment       int
 	applied       Applied
-	grants        string // grantsKey of the config the segment started with
+	grants        string     // grantsKey of the config the segment started with
+	given         Signatures // what each entry gave the segment, beyond its switch
 	packsDone     func()
 	ending        *atomic.Bool // set for the segment being ended to start the next
 	// segEnded says the segment in sess has ended, with segEnv and segErr
@@ -347,6 +352,10 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 	if keys == nil {
 		keys = KeychainSecrets{}
 	}
+	// Read before Apply opens them, so content changed meanwhile is
+	// applied at the next turn rather than missed.
+	signatures := configSignatures(a, cfg, roster)
+	maps.Copy(signatures, contentSignatures(ctx, a, cfg, roster, s.opts.Contents))
 	grants, applied, packsDone, err := ApplyWith(ctx, home, a, cfg, roster, s.openers(), ready, keys)
 	if err != nil {
 		return err
@@ -507,6 +516,7 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 	s.served = served
 	s.sess, s.runID, s.outDir, s.segment = sess, runID, outDir, segment
 	s.applied, s.grants, s.packsDone, s.ending, s.pumpDone = applied, key, packsDone, ending, pumpDone
+	s.given = signatures
 	s.carry, s.persona, s.resumed, s.resumeReason = carry, persona, resumed, reason
 	s.carryHandoff = handoff
 	if !resumed {
@@ -704,9 +714,7 @@ func (s *Supervisor) sendAs(ctx context.Context, pre, text string, person bool) 
 	if err != nil {
 		return err
 	}
-	s.mu.Lock()
-	stale := grantsKey(s.opts.Home, s.opts.Agent, cfg) != s.grants
-	s.mu.Unlock()
+	stale := s.stale(ctx, cfg)
 	if stale {
 		if err := s.nextSegment(ctx); err != nil {
 			return err
@@ -994,6 +1002,18 @@ func (s *Supervisor) Roster() Roster {
 	// installed, or is installed and joins at the next turn; one that
 	// waits for what the person must set up keeps saying so.
 	installing := s.installing()
+	s.mu.Lock()
+	given := s.given
+	s.mu.Unlock()
+	// An entry still on whose set-up or content changed since the segment
+	// started is given anew at the next turn.
+	for _, id := range given.changed(s.signatures(context.Background(), cfg)) {
+		for i := range r {
+			if r[i].ID == id && r[i].On && r[i].State == StateOn {
+				r[i].State = StatePending
+			}
+		}
+	}
 	byID := map[string]manifest.MCPServer{}
 	for _, as := range agentServers(s.opts.Agent, cfg) {
 		byID[as.ID()] = as.Server
@@ -1003,7 +1023,10 @@ func (s *Supervisor) Roster() Roster {
 			continue
 		}
 		r[i].State = StatePending
-		if installing[e.ID] || !serverReady(s.opts.Home, s.opts.Agent, cfg, byID[e.ID]) {
+		// An image server runs from an image the CLI pins and installs
+		// nothing: on and not given, it joins at the next turn.
+		srv, installs := byID[e.ID]
+		if installs && (installing[e.ID] || !serverReady(s.opts.Home, s.opts.Agent, cfg, srv)) {
 			r[i].State = StateInstalling
 		}
 	}
@@ -1058,10 +1081,29 @@ type Status struct {
 // StateRunning is a running agent's state.
 const StateRunning = "running"
 
+// stale says the running segment is not what config c gives: its grants
+// changed, or an entry's signature did (a pack built again, a voice
+// improved).
+func (s *Supervisor) stale(ctx context.Context, c Config) bool {
+	grants := grantsKey(s.opts.Home, s.opts.Agent, c)
+	now := s.signatures(ctx, c)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return grants != s.grants || len(s.given.changed(now)) > 0
+}
+
+// signatures are what config c's entries give a segment now.
+func (s *Supervisor) signatures(ctx context.Context, c Config) Signatures {
+	r := BuildRoster(s.opts.Agent, c, nil)
+	now := configSignatures(s.opts.Agent, c, r)
+	maps.Copy(now, contentSignatures(ctx, s.opts.Agent, c, r, s.opts.Contents))
+	return now
+}
+
 // Status is the agent's state now.
 func (s *Supervisor) Status() Status {
 	cfg, _ := LoadConfig(s.opts.Home, s.opts.Agent.Name)
-	pending := grantsKey(s.opts.Home, s.opts.Agent, cfg)
+	pending := s.stale(context.Background(), cfg)
 	messengers := s.messengerStates(cfg)
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1069,7 +1111,7 @@ func (s *Supervisor) Status() Status {
 		Agent: s.opts.Agent.Name, State: StateRunning, Client: s.opts.Client, PID: os.Getpid(), Since: s.since,
 		Segment: s.segment, Run: s.runID, SegmentDir: s.outDir, Adapter: s.adapter, Model: s.model,
 		Resumed: s.resumed, ResumeReason: s.resumeReason, Busy: s.busy, Usage: s.usage,
-		Pending: pending != s.grants, Messengers: messengers,
+		Pending: pending, Messengers: messengers,
 	}
 }
 

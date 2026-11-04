@@ -652,6 +652,38 @@ func agentPacks(cmd *cobra.Command) persistent.Packs {
 	}
 }
 
+// agentContents reads the digests of the packs and the voice in the local
+// store from their records alone, never their sealed content, so a running
+// agent follows a pack built again or a voice improved to its next turn.
+func agentContents(cmd *cobra.Command) persistent.Contents {
+	return persistent.Contents{
+		Pack: func(_ context.Context, name string) (string, error) {
+			s, err := knowledgeStore(cmd)
+			if err != nil {
+				return "", err
+			}
+			e, err := s.Find(name)
+			if err != nil {
+				return "", err
+			}
+			return e.Manifest.SHA256, nil
+		},
+		Voice: func(context.Context) (string, error) {
+			s, err := voiceStore(cmd)
+			if err != nil {
+				return "", err
+			}
+			v, err := s.Voice()
+			if err != nil {
+				return "", err
+			}
+			// Updated as well: an edit that lands on the same text is
+			// still a new version the agent is given.
+			return v.Meta.SHA256 + "@" + v.Meta.Updated, nil
+		},
+	}
+}
+
 // readyDevHost readies the Coding agent's dev server at the terminal, as a
 // schedule's target host is readied when it is made: the address under the
 // policy's host lists, the host key shown for the person to accept (and
