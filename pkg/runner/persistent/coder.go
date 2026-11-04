@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"time"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/osvdb"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
@@ -78,6 +79,9 @@ type DevHost struct {
 	// HostKey is the SHA256 fingerprint of the host key the person
 	// trusted: a segment that finds another refuses.
 	HostKey string `yaml:"hostKey" json:"hostKey"`
+	// SavedAt is when the dev server was last saved, its sign-in with it,
+	// as the supervisor recorded it.
+	SavedAt time.Time `yaml:"savedAt,omitempty" json:"savedAt,omitzero"`
 }
 
 var fingerprintRE = regexp.MustCompile(`^SHA256:[A-Za-z0-9+/]{43}$`)
@@ -162,7 +166,10 @@ func coderGrant(ctx context.Context, c Config, on func(string) bool, ready HostR
 	if ready == nil {
 		return nil, nil, errors.New("the Coding agent has a dev server on, and this client cannot ready it")
 	}
-	h, err := ready(ctx, *c.DevHost)
+	// The server is readied as the person saved it; when is the key's.
+	d := *c.DevHost
+	d.SavedAt = time.Time{}
+	h, err := ready(ctx, d)
 	if err != nil {
 		return nil, nil, fmt.Errorf("the dev server %s: %w", c.DevHost.Host, err)
 	}
