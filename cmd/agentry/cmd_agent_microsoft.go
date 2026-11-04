@@ -40,7 +40,8 @@ const agentMicrosoftLong = "\n\n--microsoft-client gives the Assistant's Microso
 	"server; your own app, once given, comes first.\n" +
 	"--microsoft-signoff sets a line every mail it sends or drafts ends with, and\n" +
 	"--no-microsoft-signoff clears it. A running agent takes the app, the tenant\n" +
-	"and the signoff at its next turn; the sign-in is refused while it runs.\n" +
+	"and the signoff at its next turn; the sign-in pauses it between turns while\n" +
+	"the server writes its volume, then the agent goes on with it.\n" +
 	"Switch the server on with agentry agent grant assistant server:ms365 on.\n\n" +
 	"  agentry agent configure assistant --microsoft-client 11111111-2222-3333-4444-555555555555\n" +
 	"  agentry agent configure assistant --microsoft-sign-in you@outlook.com"
@@ -50,9 +51,6 @@ const agentMicrosoftLong = "\n\n--microsoft-client gives the Assistant's Microso
 func configureMicrosoft(cmd *cobra.Command, a persistent.Agent, home, policyPath, clientID, tenant, email string, signoff *string, yes bool) error {
 	if !hasImageServer(a, assistant.MS365Key) {
 		return engine.Classify(engine.ExitUsage, fmt.Errorf("the %s agent has no Microsoft 365", a.Name))
-	}
-	if held, _ := persistent.Held(home, a.Name); held && email != "" {
-		return engine.Classify(engine.ExitUsage, fmt.Errorf("the %s agent is running, and its Microsoft 365 server holds its sign-in: stop it first to sign in (agentry agent stop %s)", a.Name, a.Name))
 	}
 	pol, _, _, err := agentPolicy(policyPath)
 	if err != nil {

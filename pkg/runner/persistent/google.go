@@ -103,15 +103,6 @@ type Google struct {
 	Say io.Writer
 }
 
-// acquire takes the agent's lock in the caller's name.
-func (g Google) acquire() (*Owner, error) {
-	client := g.Client
-	if client == "" {
-		client = ClientCLI
-	}
-	return Acquire(g.Home, g.Agent.Name, client)
-}
-
 func (g Google) say(format string, args ...any) {
 	if g.Say != nil {
 		_, _ = fmt.Fprintf(g.Say, format+"\n", args...)
@@ -212,48 +203,37 @@ func gogMessage(stdout, stderr string) string {
 
 // SetClient hands the person's Google Cloud OAuth client to gog, which
 // keeps its id on the server's volume and its secret in its encrypted
-// keyring; the file is read here and sent on stdin, never mounted. It is
-// refused while the agent runs, since its server holds the volume.
+// keyring; the file is read here and sent on stdin, never mounted. A
+// running agent is held for it (hold.go), since its server holds the volume.
 func (g Google) SetClient(ctx context.Context, client []byte) error {
 	if err := CheckGoogleClient(client); err != nil {
 		return err
 	}
-	owner, err := g.acquire()
-	if err != nil {
-		return err
-	}
-	defer owner.Release()
 	s, err := g.server()
 	if err != nil {
 		return err
 	}
-	volume, env, err := g.prepare(ctx, s)
-	if err != nil {
-		return err
-	}
-	if _, err := g.run(ctx, s, volume, env, []string{"auth", "credentials", "set", "-", "--json", "--no-input"}, strings.NewReader(string(client))); err != nil {
-		return err
-	}
-	c, err := LoadConfig(g.Home, g.Agent.Name)
-	if err != nil {
-		return err
-	}
-	in := c.SignIns[s.Key]
-	in.Client = time.Now().UTC()
-	if c.SignIns == nil {
-		c.SignIns = map[string]ImageSignIn{}
-	}
-	c.SignIns[s.Key] = in
-	g.enableProvider(&c, s.Key)
-	return SaveConfig(g.Home, g.Agent.Name, c)
+	return runServerSetUp(ctx, g.Home, g.Agent, g.client(), s.Name, g.sayProviderOn, func(_ Config, edit signInEdit) error {
+		volume, env, err := g.prepare(ctx, s)
+		if err != nil {
+			return err
+		}
+		if _, err := g.run(ctx, s, volume, env, []string{"auth", "credentials", "set", "-", "--json", "--no-input"}, strings.NewReader(string(client))); err != nil {
+			return err
+		}
+		return edit(s.Key, func(in *ImageSignIn) { in.Client = time.Now().UTC() })
+	})
 }
 
-// enableProvider enables the mail provider of the server key in c, if it
-// is disabled: setting it up is the person's choice of it.
-func (g Google) enableProvider(c *Config, key string) {
-	if p, ok := mailProviderOf(g.Agent, key); ok && enableMailProvider(c, p.Key) {
-		g.say("%s is now one of the %s agent's mail providers (agentry agent configure %s --no-mail-provider %s takes it off its roster).", p.Name, g.Agent.Name, g.Agent.Name, p.Key)
+// sayProviderOn tells the person the provider p is now one of the agent's.
+func (g Google) sayProviderOn(p offer.MailProvider) { g.say("%s", providerOnLine(g.Agent, p)) }
+
+// client is the client the set-up runs in.
+func (g Google) client() string {
+	if g.Client == "" {
+		return ClientCLI
 	}
+	return g.Client
 }
 
 // SignIn signs Google Workspace in to email with gog's two-step remote
@@ -267,19 +247,22 @@ func (g Google) SignIn(ctx context.Context, email string, browse func(string) er
 	if !googleEmailRE.MatchString(email) {
 		return "", fmt.Errorf("%q is not an email address a Google account signs in with", email)
 	}
-	owner, err := g.acquire()
-	if err != nil {
-		return "", err
-	}
-	defer owner.Release()
 	s, err := g.server()
 	if err != nil {
 		return "", err
 	}
-	c, err := LoadConfig(g.Home, g.Agent.Name)
-	if err != nil {
-		return "", err
-	}
+	var account string
+	err = runServerSetUp(ctx, g.Home, g.Agent, g.client(), s.Name, g.sayProviderOn, func(c Config, edit signInEdit) error {
+		var err error
+		account, err = g.signIn(ctx, s, c, email, browse, edit)
+		return err
+	})
+	return account, err
+}
+
+// signIn is SignIn's set-up, with the agent's config c as it was and edit
+// to record the sign-in.
+func (g Google) signIn(ctx context.Context, s offer.ImageServer, c Config, email string, browse func(string) error, edit signInEdit) (string, error) {
 	in := c.SignIns[s.Key]
 	if in.Client.IsZero() {
 		return "", fmt.Errorf("the Google Workspace server has no Google Cloud client yet: agentry agent configure %s --google-client <client file>", g.Agent.Name)
@@ -367,16 +350,9 @@ func (g Google) SignIn(ctx context.Context, email string, browse func(string) er
 	if err != nil {
 		return "", err
 	}
-	c, err = LoadConfig(g.Home, g.Agent.Name)
-	if err != nil {
-		return "", err
-	}
-	if c.SignIns == nil {
-		c.SignIns = map[string]ImageSignIn{}
-	}
-	c.SignIns[s.Key] = ImageSignIn{Client: in.Client, Account: account, At: time.Now().UTC(), Granted: granted}
-	g.enableProvider(&c, s.Key)
-	if err := SaveConfig(g.Home, g.Agent.Name, c); err != nil {
+	if err := edit(s.Key, func(r *ImageSignIn) {
+		*r = ImageSignIn{Client: in.Client, Account: account, At: time.Now().UTC(), Granted: granted}
+	}); err != nil {
 		return "", err
 	}
 	return account, nil

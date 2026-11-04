@@ -8113,6 +8113,23 @@
           ]
         },
         {
+          "path": "pkg/runner/persistent/hold_test.go",
+          "tests": [
+            "TestAHeldAgentTakesItsSetUpAtTheNextSegment",
+            "TestAHoldEndsWhenItsClientGoesAway",
+            "TestAStaleHoldCannotEndANewerOne",
+            "TestASignInIsRecordedByItsHoldAlone",
+            "TestASecondHoldIsRefusedAndAStopEndsAHold",
+            "TestASetUpOnARunningAgentIsHeld"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "real-time wait"
+          ]
+        },
+        {
           "path": "pkg/runner/persistent/images_test.go",
           "tests": [
             "TestTheAssistantOffersGoogleWorkspace",
