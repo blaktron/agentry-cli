@@ -10120,6 +10120,16 @@
           "dependencyHints": []
         },
         {
+          "path": "runnerimage/messenger/httpapi_test.go",
+          "tests": [
+            "TestADirectCallDialsPublicAddressesAlone"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "runnerimage/messenger/matrix_test.go",
           "tests": [
             "TestMatrixPassesThePairedPersonButNotWhatCameBefore",

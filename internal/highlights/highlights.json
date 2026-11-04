@@ -3,7 +3,7 @@
     {
       "version": "0.7.15",
       "highlights": [
-        "A persistent agent on your remote runhost keeps its messengers while your computer is off: agentry agent messenger add and pair take --on."
+        "agentry agent messenger takes --on: an agent on your remote runhost answers its messengers while your computer is off."
       ]
     },
     {

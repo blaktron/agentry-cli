@@ -76,7 +76,7 @@ func runhostAgentRun(ctx context.Context, sub string, args []string, in io.Reade
 	// start detaches would inherit them, and the answer would not end while
 	// it runs.
 	var werr error
-	if sub == "secret" || sub == "configure" || (sub == "messenger" && len(args) > 0 && args[0] == "add") {
+	if sub == "secret" || sub == "configure" || isMessengerAdd(sub, args) {
 		c.Stdin = io.LimitReader(in, persistent.MaxSecretBytes+3)
 	}
 	if sub == "attach" {
@@ -456,6 +456,12 @@ func onThisRunhost() string {
 	return ""
 }
 
+// isMessengerAdd says sub and args are messenger add, the one messenger
+// subcommand that reads a credential.
+func isMessengerAdd(sub string, args []string) bool {
+	return sub == "messenger" && len(args) > 0 && args[0] == "add"
+}
+
 // messengerUser is messenger add's --user among fwd, and fwd without it:
 // any other command's fwd as it is.
 func messengerUser(sub string, fwd []string) (string, []string) {
@@ -495,7 +501,7 @@ func flagValue(fwd []string, name string) string {
 func runhostAgentValue(cmd *cobra.Command, runhostName, sub string, args, fwd []string) (string, []string, error) {
 	var what string
 	switch {
-	case sub == "messenger" && len(args) >= 1 && args[0] == "add":
+	case isMessengerAdd(sub, args):
 		if len(args) < 3 {
 			return "", fwd, nil
 		}
@@ -514,12 +520,14 @@ func runhostAgentValue(cmd *cobra.Command, runhostName, sub string, args, fwd []
 				return "", fwd, engine.Classify(engine.ExitUsage, err)
 			}
 		}
+		// Agreed to first: a Matrix account's sign-in opens a session on
+		// its homeserver, which a refusal would leave behind.
+		if err := agreeToKeepOnRunhost(cmd, runhostName, "the "+k.Title+" "+k.Account+"'s credential", rest); err != nil {
+			return "", fwd, err
+		}
 		v, err := readMessengerCredential(cmd, k, server, user)
 		if err != nil {
 			return "", fwd, engine.Classify(engine.ExitUsage, err)
-		}
-		if err := agreeToKeepOnRunhost(cmd, runhostName, "the "+k.Title+" "+k.Account+"'s credential", rest); err != nil {
-			return "", fwd, err
 		}
 		return v, rest, nil
 	case sub == "secret" && len(args) >= 1 && args[0] == "set":
@@ -546,7 +554,7 @@ func runhostAgentValue(cmd *cobra.Command, runhostName, sub string, args, fwd []
 	return v, fwd, nil
 }
 
-// agreeToKeepOnRunhost asks the person to agree to what being kept on the
+// agreeToKeepOnRunhost asks the person to agree to keeping what on the
 // runhost, encrypted in its store, unless fwd carries --yes.
 func agreeToKeepOnRunhost(cmd *cobra.Command, runhostName, what string, fwd []string) error {
 	if slices.Contains(fwd, "--yes=true") || slices.Contains(fwd, "--yes") {

@@ -395,16 +395,17 @@ func TestARunhostKeepsAMessengersCredentialInItsStore(t *testing.T) {
 	if ents, err := st.Entries(); err != nil || len(ents) != 1 || !strings.HasPrefix(ents[0], "agent-") {
 		t.Fatalf("the store's entries: %q %v", ents, err)
 	}
-	for _, dir := range []string{s.dir} {
-		_ = filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
-			if err != nil || d.IsDir() {
-				return nil
-			}
-			if b, _ := os.ReadFile(p); bytes.Contains(b, []byte(token)) { //nolint:gosec // the test's own files
-				t.Errorf("%s holds the credential in the clear", p)
-			}
-			return nil
-		})
+	if err := filepath.WalkDir(s.dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		b, err := os.ReadFile(p) //nolint:gosec // the test's own files
+		if bytes.Contains(b, []byte(token)) {
+			t.Errorf("%s holds the credential in the clear", p)
+		}
+		return err
+	}); err != nil {
+		t.Fatal(err)
 	}
 	if err := keys.Delete(account); err != nil {
 		t.Fatal(err)
