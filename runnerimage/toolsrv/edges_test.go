@@ -360,6 +360,7 @@ func TestBuildShimEdges(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		cleanUpServer(t, s)
 		if len(s.shims) != 0 {
 			t.Errorf("shims = %v, want none", s.shims)
 		}
