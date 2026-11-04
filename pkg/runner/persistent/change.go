@@ -111,6 +111,10 @@ type Change struct {
 	// MicrosoftSignoff is what mail Microsoft 365 sends or drafts ends
 	// with; empty for nothing.
 	MicrosoftSignoff *string `json:"microsoftSignoff,omitempty"`
+	// Release takes the published agent's release as its install record now
+	// names it: the next segment starts from it, and what it has on that
+	// the person has not agreed to is asked about now.
+	Release bool `json:"release,omitempty"`
 	// SignIn keeps an image server's sign-in record as its set-up left it
 	// (setup.go): never a credential, which stays on the server's volume
 	// and in the keychain.
@@ -494,9 +498,13 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 	// What this change turns on that the person has not agreed to: an entry
 	// that was on and unagreed before, as it read then, is the start's to
 	// ask about, not this change's.
+	// A change that takes a newly installed release asks about everything
+	// the release has on that the person has not agreed to.
 	before := map[string]bool{}
 	for _, e := range Unconsented(BuildRosterUnder(a, *c, nil, malwareCheck), *c) {
-		before[e.ID+"\x00"+e.Line] = true
+		if !ch.Release {
+			before[e.ID+"\x00"+e.Line] = true
+		}
 	}
 	var widened []RosterEntry
 	for _, e := range Unconsented(BuildRosterUnder(a, next, nil, malwareCheck), next) {

@@ -63,7 +63,7 @@ func (s *Supervisor) refuseMeeting(req applink.Request) (applink.Answer, bool) {
 	if err != nil {
 		return applink.Answer{Text: "your configuration could not be read: " + err.Error(), IsError: true}, true
 	}
-	on, beats := meetingsOn(s.opts.Agent, cfg), heartbeatOn(s.opts.Agent, cfg)
+	on, beats := meetingsOn(s.agent(), cfg), heartbeatOn(s.agent(), cfg)
 	switch {
 	case !on && !beats:
 		return applink.Answer{Text: meetingsOffNoBeats, IsError: true}, true

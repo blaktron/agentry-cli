@@ -82,7 +82,7 @@ func heartbeatOn(a Agent, c Config) bool {
 // stopped, then ticks until Stop: tasks for an agent that keeps time, and
 // upkeep for every agent.
 func (s *Supervisor) startHeartbeat() {
-	keepsTime := s.opts.Agent.KeepsTime()
+	keepsTime := s.agent().KeepsTime()
 	if keepsTime {
 		s.noteMissed()
 	}
@@ -150,7 +150,7 @@ func (s *Supervisor) noteMissed() {
 	}
 	var missed []string
 	_ = s.updateTasks(func(ts *Tasks) error {
-		if !ts.Checked.IsZero() && heartbeatOn(s.opts.Agent, cfg) {
+		if !ts.Checked.IsZero() && heartbeatOn(s.agent(), cfg) {
 			due := ts.due(ts.Checked, now)
 			for _, t := range ts.Tasks {
 				d, ok := due[t.ID]
@@ -190,7 +190,7 @@ func (s *Supervisor) beat(ctx context.Context) {
 	if err != nil {
 		return
 	}
-	on := heartbeatOn(s.opts.Agent, cfg)
+	on := heartbeatOn(s.agent(), cfg)
 	var due map[string]dueTimes
 	var tasks []Task
 	_ = s.updateTasks(func(ts *Tasks) error {
@@ -280,7 +280,7 @@ func (s *Supervisor) fireTask(ctx context.Context, t Task, at time.Time) {
 		return
 	}
 	cfg, err := LoadConfig(s.opts.Home, s.opts.Agent.Name)
-	if err != nil || !heartbeatOn(s.opts.Agent, cfg) {
+	if err != nil || !heartbeatOn(s.agent(), cfg) {
 		s.logBeat(beatRecord{task: cur, due: at, outcome: beatSkipped, reason: "the heartbeat was switched off"})
 		return
 	}
@@ -418,7 +418,7 @@ func (s *Supervisor) Tasks() ([]Task, error) {
 // ChangeTask applies a person's pause, resume or remove to the running
 // agent's task.
 func (s *Supervisor) ChangeTask(op TaskOp) ([]Task, error) {
-	if !s.opts.Agent.KeepsTime() {
+	if !s.agent().KeepsTime() {
 		return nil, fmt.Errorf("the %s agent has no tasks", s.opts.Agent.Name)
 	}
 	if err := s.updateTasks(func(ts *Tasks) error { return ts.ApplyOp(op, s.now()) }); err != nil {
@@ -551,7 +551,7 @@ func (s *Supervisor) answerTask(raw json.RawMessage, tool string) applink.Answer
 	if err != nil {
 		return applink.Answer{Text: err.Error(), IsError: true}
 	}
-	on := heartbeatOn(s.opts.Agent, cfg)
+	on := heartbeatOn(s.agent(), cfg)
 	if tool == applink.TaskList {
 		ts, err := s.Tasks()
 		if err != nil {

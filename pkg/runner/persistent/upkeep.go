@@ -425,7 +425,7 @@ const upkeepFrameNoMemory = "(Agentry: upkeep. This conversation is about to be 
 const upkeepTextNoMemory = "Upkeep: compact this conversation."
 
 // keepsMemory says the agent keeps a memory to save its conversation to.
-func (s *Supervisor) keepsMemory() bool { return s.opts.Agent.KeepsMemory() }
+func (s *Supervisor) keepsMemory() bool { return s.agent().KeepsMemory() }
 
 // upkeepWords are what a compaction's upkeep turn says to the agent and what
 // the person is told while it runs.

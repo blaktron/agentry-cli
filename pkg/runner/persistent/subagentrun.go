@@ -206,7 +206,7 @@ func args(raw json.RawMessage, v any) error {
 
 // subagentList lists the agent's subagents and how to run each.
 func (s *Supervisor) subagentList(ctx context.Context, cfg Config) (string, error) {
-	a := s.opts.Agent
+	a := s.agent()
 	subs := Subagents(a, cfg)
 	if len(subs) == 0 {
 		return "You have no subagents.", nil
@@ -263,12 +263,12 @@ func (s *Supervisor) subagentList(ctx context.Context, cfg Config) (string, erro
 // registry is the registry the agent was installed from; "" is this
 // computer's default.
 func (s *Supervisor) registry() string {
-	return s.opts.Agent.Registry
+	return s.agent().Registry
 }
 
 // subagentStart starts a run of the subagent ref and answers its id.
 func (s *Supervisor) subagentStart(ctx context.Context, cfg Config, ref, task string, answers map[string]string, files []string) (string, error) {
-	a := s.opts.Agent
+	a := s.agent()
 	ref, version, _ := strings.Cut(strings.TrimSpace(ref), "@")
 	sa, ok := SubagentNamed(a, cfg, ref)
 	if !ok {
@@ -350,7 +350,7 @@ func shareOn(a Agent, c Config) bool {
 // asker is how a question names the agent asking: its title, and the name
 // it goes by when that differs, quoted, since the agent may set that name.
 func (s *Supervisor) asker(c Config) string {
-	title, name := s.opts.Agent.Title, strings.TrimSpace(c.DisplayName)
+	title, name := s.agent().Title, strings.TrimSpace(c.DisplayName)
 	if name == "" || name == title {
 		return title
 	}
@@ -408,7 +408,7 @@ func (s *Supervisor) stageSubagentFiles(ctx context.Context, cfg Config, in stri
 		}
 	}
 	if len(share) > 0 {
-		folder, err := ShareFolder(s.opts.Agent, cfg)
+		folder, err := ShareFolder(s.agent(), cfg)
 		if err != nil {
 			return nil, err
 		}

@@ -121,7 +121,7 @@ func runServerSetUp(ctx context.Context, home string, a Agent, client, what stri
 		case errors.Is(herr, ErrNotRunning) || errors.Is(herr, ErrNoAnswer):
 			return held
 		case errors.As(herr, &refused) && refused.Class == string(protocol.RefusedMalformed):
-			return fmt.Errorf("%w: its supervisor is an older Agentry, which cannot be held for a set-up; stop the agent, set it up, then start it", held)
+			return fmt.Errorf("%w: %w", held, ErrOlderSupervisor)
 		case herr != nil:
 			return fmt.Errorf("hold the %s agent to set up %s: %w", a.Name, what, herr)
 		}

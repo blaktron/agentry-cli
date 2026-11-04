@@ -52,7 +52,14 @@ func configureGoogle(cmd *cobra.Command, a persistent.Agent, home, policyPath, c
 		if err != nil {
 			return engine.Classify(engine.ExitUsage, fmt.Errorf("--google-client: %w", err))
 		}
-		if err := g.SetClient(cmd.Context(), b); err != nil {
+		err = g.SetClient(cmd.Context(), b)
+		if persistent.OlderSupervisor(err) {
+			if herr := handOver(cmd, home, a, false); herr != nil {
+				return engine.Classify(engine.ExitCLI, herr)
+			}
+			err = g.SetClient(cmd.Context(), b)
+		}
+		if err != nil {
 			return engine.Classify(engine.ExitCLI, fmt.Errorf("--google-client: %w", err))
 		}
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Google Workspace has your Google Cloud client. Sign it in with --google-sign-in <email>.")
@@ -68,6 +75,12 @@ func configureGoogle(cmd *cobra.Command, a persistent.Agent, home, policyPath, c
 		browse = nil
 	}
 	account, err := g.SignIn(cmd.Context(), email, browse)
+	if persistent.OlderSupervisor(err) {
+		if herr := handOver(cmd, home, a, false); herr != nil {
+			return engine.Classify(engine.ExitCLI, herr)
+		}
+		account, err = g.SignIn(cmd.Context(), email, browse)
+	}
 	if err != nil {
 		return engine.Classify(engine.ExitCLI, fmt.Errorf("--google-sign-in: %w", err))
 	}

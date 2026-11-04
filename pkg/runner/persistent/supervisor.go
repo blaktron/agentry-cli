@@ -20,6 +20,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/inference"
+	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
@@ -157,7 +158,12 @@ type Supervisor struct {
 	polRefused    string      // the digest of a policy set aside
 	polTaken      *heldPolicy // the policy held before one taken since the last segment started
 	creditsCl     *inference.Client
-	started       Config // the config the running segment started with
+	agMu          sync.Mutex // guards ag, agTaken and agRefused
+	ag            Agent      // the agent as held now (release.go)
+	agTaken       *Agent     // the agent held before a release taken since the last segment started
+	agRefused     string     // the digest of a release set aside
+	segRelease    string     // the release digest the running segment started from
+	started       Config     // the config the running segment started with
 	hasStarted    bool
 	packsDone     func()
 	ending        *atomic.Bool // set for the segment being ended to start the next
@@ -321,6 +327,7 @@ func Start(ctx context.Context, opts Options) (*Supervisor, error) {
 		done: make(chan struct{}),
 	}
 	s.pol, s.polSHA, s.creditsCl = opts.Policy, opts.PolicySHA, opts.Credits
+	s.ag, s.segRelease = opts.Agent, releaseDigest(opts.Agent)
 	s.bgCtx, s.bgCancel = context.WithCancel(context.Background())
 	if opts.Policy != nil {
 		s.model = opts.Policy.Model.Provider + "/" + opts.Policy.Model.Name
@@ -363,7 +370,8 @@ func Start(ctx context.Context, opts Options) (*Supervisor, error) {
 // records how its conversation began and starts its pump; byChange says a
 // change to the agent started it. The caller holds seg.
 func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
-	a, home := s.opts.Agent, s.opts.Home
+	s.reloadRelease()
+	a, home := s.agent(), s.opts.Home
 	name := a.Name
 	cfg, err := LoadConfig(home, name)
 	if err != nil {
@@ -550,7 +558,11 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 	s.sess, s.runID, s.outDir, s.segment = sess, runID, outDir, segment
 	s.applied, s.grants, s.packsDone, s.ending, s.pumpDone = applied, key, packsDone, ending, pumpDone
 	s.started, s.hasStarted = cfg, true
-	s.polTaken = nil
+	movedOn := releaseDigest(a) != s.segRelease
+	s.polTaken, s.segRelease = nil, releaseDigest(a)
+	s.agMu.Lock()
+	s.agTaken = nil
+	s.agMu.Unlock()
 	s.given = signatures
 	s.carry, s.persona, s.resumed, s.resumeReason = carry, persona, resumed, reason
 	s.carryHandoff = handoff
@@ -574,6 +586,14 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 	_ = appendEntry(home, name, Entry{Segment: segment, Run: runID, Resumed: &resumed,
 		Event: session.Event{Kind: KindSegmentStart, Time: time.Now().UTC(), Text: text}})
 	go s.pump(sess, segment, runID, ending, pumpDone)
+	if movedOn && a.Published() && a.Release != nil {
+		// The release the agent ran before is no segment's now: its folder
+		// goes, as an install of a stopped agent removes it.
+		m := a.Release.Meta
+		if err := installdir.RemoveOtherVersions(installdir.AgentDir(home, m.Namespace, m.Name), installdir.ReleaseDir(home, m.Namespace, m.Name, m.Version, m.Digest)); err != nil {
+			s.logf("the %s agent's older releases stay in the runner home: %v", name, err)
+		}
+	}
 	return nil
 }
 
@@ -758,13 +778,14 @@ func (s *Supervisor) sendAs(ctx context.Context, pre, text string, person bool) 
 			return err
 		}
 	}
+	a := s.agent()
 	s.mu.Lock()
 	sess, carry, given := s.sess, s.carry, s.persona
 	byChange, roster := s.byChange, s.roster
 	joined := maps.Clone(s.joined)
 	missed := s.missed
 	frame := ""
-	if s.opts.Agent.KeepsTime() {
+	if a.KeepsTime() {
 		frame = timeFrame(s.now())
 	}
 	frame += carry
@@ -782,11 +803,11 @@ func (s *Supervisor) sendAs(ctx context.Context, pre, text string, person bool) 
 	handoff := s.carryHandoff
 	s.carryHandoff = ""
 	s.mu.Unlock()
-	failed := failFrame(BuildRoster(s.opts.Agent, cfg, nil), cfg.ServerFailures)
+	failed := failFrame(BuildRoster(a, cfg, nil), cfg.ServerFailures)
 	frame += failed
-	persona := personaKey(s.opts.Agent, cfg)
+	persona := personaKey(a, cfg)
 	if persona != given {
-		frame += personaFrame(s.opts.Agent, cfg)
+		frame += personaFrame(a, cfg)
 	}
 	frame += pre
 	sentAt := s.now()
@@ -884,6 +905,9 @@ func (s *Supervisor) startNext(ctx context.Context) error {
 	// otherwise end the segment the turn restarted, and the agent with it.
 	sctx := context.WithoutCancel(ctx)
 	err := s.startSegment(sctx, true)
+	if err != nil && s.revertRelease(err) {
+		err = s.startSegment(sctx, true)
+	}
 	if err != nil && s.revertPolicy(err) {
 		err = s.startSegment(sctx, true)
 	}
@@ -911,7 +935,7 @@ func (s *Supervisor) startNext(ctx context.Context) error {
 // why, so their failures are taken back and its error is returned. The
 // caller holds seg.
 func (s *Supervisor) withoutNewServers(ctx context.Context, err error) error {
-	a, home := s.opts.Agent, s.opts.Home
+	a, home := s.agent(), s.opts.Home
 	cfg, lerr := LoadConfig(home, a.Name)
 	if lerr != nil {
 		return err
@@ -1019,8 +1043,15 @@ func (s *Supervisor) Change(ch Change) (Roster, error) {
 	if err := s.checkKeys(ch); err != nil {
 		return nil, err
 	}
+	if ch.Release {
+		// Taken under the segment's lock, so a start already under way
+		// does not count it as its own.
+		s.seg.Lock()
+		s.reloadRelease()
+		s.seg.Unlock()
+	}
 	err := s.updateConfig(func(c *Config) error {
-		_, err := applyChange(s.opts.Home, s.opts.Agent, c, ch, s.policy().MalwareCheckOn())
+		_, err := applyChange(s.opts.Home, s.agent(), c, ch, s.policy().MalwareCheckOn())
 		return err
 	})
 	if err != nil {
@@ -1091,7 +1122,8 @@ func (s *Supervisor) Roster() Roster {
 	s.mu.Lock()
 	applied := s.applied
 	s.mu.Unlock()
-	r := BuildRosterUnder(s.opts.Agent, cfg, &applied, s.policy().MalwareCheckOn())
+	a := s.agent()
+	r := BuildRosterUnder(a, cfg, &applied, s.policy().MalwareCheckOn())
 	// A server that is on and that the segment was not given is being
 	// installed, or is installed and joins at the next turn; one that
 	// waits for what the person must set up keeps saying so.
@@ -1109,7 +1141,7 @@ func (s *Supervisor) Roster() Roster {
 		}
 	}
 	byID := map[string]manifest.MCPServer{}
-	for _, as := range agentServers(s.opts.Agent, cfg) {
+	for _, as := range agentServers(a, cfg) {
 		byID[as.ID()] = as.Server
 	}
 	for i, e := range r {
@@ -1120,7 +1152,7 @@ func (s *Supervisor) Roster() Roster {
 		// An image server runs from an image the CLI pins and installs
 		// nothing: on and not given, it joins at the next turn.
 		srv, installs := byID[e.ID]
-		if installs && (installing[e.ID] || !serverReady(s.opts.Home, s.opts.Agent, cfg, srv)) {
+		if installs && (installing[e.ID] || !serverReady(s.opts.Home, a, cfg, srv)) {
 			r[i].State = StateInstalling
 		}
 	}
@@ -1184,9 +1216,10 @@ const StateRunning = "running"
 // changed, or an entry's signature did (a pack built again, a voice
 // improved).
 func (s *Supervisor) stale(ctx context.Context, c Config) bool {
-	grants := grantsKey(s.opts.Home, s.opts.Agent, c)
-	now := s.signatures(ctx, c)
-	moved := s.policyMoved()
+	a := s.agent()
+	grants := grantsKey(s.opts.Home, a, c)
+	now := s.signaturesOf(ctx, a, c)
+	moved := s.policyMoved() || s.releaseMoved()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return grants != s.grants || len(s.given.changed(now)) > 0 || moved
@@ -1194,9 +1227,14 @@ func (s *Supervisor) stale(ctx context.Context, c Config) bool {
 
 // signatures are what config c's entries give a segment now.
 func (s *Supervisor) signatures(ctx context.Context, c Config) Signatures {
-	r := BuildRoster(s.opts.Agent, c, nil)
-	now := configSignatures(s.opts.Agent, c, r)
-	maps.Copy(now, contentSignatures(ctx, s.opts.Agent, c, r, s.opts.Contents))
+	return s.signaturesOf(ctx, s.agent(), c)
+}
+
+// signaturesOf are what config c's entries of agent a give a segment now.
+func (s *Supervisor) signaturesOf(ctx context.Context, a Agent, c Config) Signatures {
+	r := BuildRoster(a, c, nil)
+	now := configSignatures(a, c, r)
+	maps.Copy(now, contentSignatures(ctx, a, c, r, s.opts.Contents))
 	return now
 }
 

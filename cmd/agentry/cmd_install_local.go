@@ -1,7 +1,6 @@
 package main
 
 import (
-	"cmp"
 	"errors"
 	"fmt"
 	"os"
@@ -107,7 +106,7 @@ func runLocalInstall(cmd *cobra.Command, dir string, opts installOpts) error {
 		}
 		var agent *agentPlan
 		if opts.agent != nil {
-			refusal, agent = cmp.Or(refusal, opts.agent.refusal), opts.agent.planOf(m)
+			agent = opts.agent.planOf(m)
 		}
 		res := &apiclient.ResolveResult{Namespace: m.Namespace, Name: m.Name, Version: m.Version}
 		return writeInstallPlan(cmd, res, m, staged.Digest, att, refusal, &state, key, next, installdir.Target,
@@ -122,6 +121,12 @@ func runLocalInstall(cmd *cobra.Command, dir string, opts installOpts) error {
 	style, warning := installdir.StyleForHome(home)
 	if warning != "" {
 		_, _ = fmt.Fprintf(errOut, "warning: %s\n", warning)
+	}
+	// Running is judged now, not at the check: a running agent's segment
+	// still reads its release, which its supervisor removes later.
+	if opts.agent != nil {
+		opts.agent.running, _ = persistent.Held(home, persistent.Key(m.Namespace, m.Name))
+		staged.KeepOtherVersions = opts.agent.running
 	}
 	lay := staged.Install
 	if opts.repair {
