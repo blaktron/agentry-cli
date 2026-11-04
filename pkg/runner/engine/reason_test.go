@@ -90,6 +90,15 @@ func TestARefusalNamesFiveInputsAndCountsTheRest(t *testing.T) {
 	if strings.Join(paths, " ") != "a.com b.com c.com d.com" || env.RefusedInputsMore != 3 {
 		t.Fatalf("named %v and %d more", paths, env.RefusedInputsMore)
 	}
+
+	// When every refused path holds a masked value, none is named and all are counted.
+	masked := &receipt.Envelope{}
+	only := Classify(ExitPolicy, receipt.WithRefusedInputs(inputRefused(receipt.InputMalware, errors.New("refused")),
+		[]receipt.RefusedInput{{Path: token + ".com", By: receipt.RefusedByClamAV, Signature: "Eicar-Test-Signature"}}))
+	_, _ = fail(masked, newRedactor(token, nil, nil), only)
+	if masked.RefusedInputs != nil || masked.RefusedInputsMore != 1 {
+		t.Fatalf("named %v and %d more, want none named and one counted", masked.RefusedInputs, masked.RefusedInputsMore)
+	}
 }
 
 func TestARefusedInputSaysWhyInTheReason(t *testing.T) {

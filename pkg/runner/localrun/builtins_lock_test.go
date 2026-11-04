@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	pkgarchive "github.com/blaktron/agentry/pkg/archive"
 	"github.com/blaktron/agentry/pkg/manifest"
@@ -85,6 +86,31 @@ func TestTheBuiltinsLockHoldsEveryBuiltin(t *testing.T) {
 			t.Errorf("%s: README.md is not both embedded and in publish.include (%v)", b.Ref(), err)
 		}
 	}
+
+	// A package whose publish.include matches no file is not packed, and one
+	// whose include matches is.
+	bare := writeTree(t, map[string]string{
+		"agent.yaml": "schemaVersion: \"2\"\nname: x\nnamespace: acme\nversion: 1.0.0\nsummary: s\n",
+		"README.md":  "r\n",
+	})
+	bm, err := ManifestFrom(bare)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bm.Publish.Include = []string{"nothing-here.md"}
+	if _, err := PackWorkspace(bare, bm, io.Discard); err == nil || !strings.Contains(err.Error(), "publish.include matches no files") {
+		t.Errorf("an include that matches nothing: %v", err)
+	}
+	bm.Publish.Include = []string{"README.md"}
+	if info, err := PackWorkspace(bare, bm, io.Discard); err != nil || len(info.Files) != 1 || info.Files[0].Path != "README.md" {
+		t.Errorf("an include that matches README.md: %+v, %v", info.Files, err)
+	}
+
+	// A built-in is staged into an empty folder; one that holds its files already
+	// is refused, naming the package.
+	if err := Drafter().Stage(bare); err == nil || !strings.Contains(err.Error(), "stage "+Drafter().Ref()) {
+		t.Errorf("staging into a folder that holds the package's files: %v", err)
+	}
 }
 
 func stageBuiltin(t *testing.T, b Builtin) string {
@@ -144,5 +170,33 @@ func TestTheBuiltInSkillsAreSkills(t *testing.T) {
 		if (len(entries) > 0) != (b.Codes() || b.Declared().Declares("memory")) {
 			t.Errorf("%s has %d skills", b.Ref(), len(entries))
 		}
+	}
+
+	// A folder is a skill of its own name: a folder whose skill is named
+	// otherwise, a folder with no skill file and a loose file are left out,
+	// and the skills come in name order.
+	skillFile := func(name string) *fstest.MapFile {
+		return &fstest.MapFile{Data: []byte("---\nname: " + name + "\ndescription: Use it when a test asks.\n---\nBody.\n")}
+	}
+	tree := fstest.MapFS{
+		"skills/beta/SKILL.md":     skillFile("beta"),
+		"skills/alpha/SKILL.md":    skillFile("alpha"),
+		"skills/alpha/notes.md":    {Data: []byte("notes\n")},
+		"skills/misnamed/SKILL.md": skillFile("other"),
+		"skills/empty/notes.md":    {Data: []byte("notes\n")},
+		"skills/loose.md":          {Data: []byte("loose\n")},
+	}
+	var names []string
+	for _, s := range SkillsOf(tree) {
+		names = append(names, s.Name)
+	}
+	if !slices.Equal(names, []string{"alpha", "beta"}) {
+		t.Errorf("the skills of the tree are %v, want alpha and beta", names)
+	}
+	if got := SkillsOf(fstest.MapFS{"agent.yaml": {Data: []byte("x")}}); len(got) != 0 {
+		t.Errorf("a tree with no skills folder has skills %v", got)
+	}
+	if got := (Builtin{}).Skills(); len(got) != 0 {
+		t.Errorf("the zero Builtin has skills %v", got)
 	}
 }

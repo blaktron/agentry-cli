@@ -197,4 +197,7 @@ func TestABuiltinsRunCopyIsHeldToItsEmbeddedTree(t *testing.T) {
 	if err := check(workspace); err == nil || !strings.Contains(err.Error(), "not its embedded tree") {
 		t.Fatalf("a changed pack page: %v", err)
 	}
+	if err := check(filepath.Join(dir, "missing")); err == nil || !strings.Contains(err.Error(), "hash local tree") {
+		t.Fatalf("a copy that cannot be read: %v", err)
+	}
 }

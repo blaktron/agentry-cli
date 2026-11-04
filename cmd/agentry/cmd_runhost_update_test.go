@@ -33,6 +33,9 @@ import (
 type updateServer struct {
 	dir  string
 	priv minisign.PrivateKey
+	// script is the release's CLI for version v: fakeVersionCLI unless a
+	// test says otherwise.
+	script func(v string) string
 }
 
 func newUpdateServer(t *testing.T) *updateServer {
@@ -81,7 +84,7 @@ func newUpdateServer(t *testing.T) *updateServer {
 	}
 	runhostReleaseKeys = func() (*clirelease.KeySet, error) { return keys, nil }
 	runhostRunningVersion = func() string { return "1.2.3" }
-	return &updateServer{dir: dir, priv: priv}
+	return &updateServer{dir: dir, priv: priv, script: fakeVersionCLI}
 }
 
 func fakeVersionCLI(v string) string { return "#!/bin/sh\necho agentry " + v + "\n" }
@@ -92,7 +95,7 @@ func (u *updateServer) release(v, arch string, key minisign.PrivateKey) (runhost
 	var sums bytes.Buffer
 	var bin []byte
 	for _, a := range []string{"amd64", "arm64"} {
-		b := []byte(fakeVersionCLI(v) + "# " + a + "\n")
+		b := []byte(u.script(v) + "# " + a + "\n")
 		sum := sha256.Sum256(b)
 		fmt.Fprintf(&sums, "%s  %s\n", hex.EncodeToString(sum[:]), clirelease.BinaryName(v, a))
 		if a == arch {
@@ -197,6 +200,55 @@ func TestARunhostInstallsOnlyASignedNewerReleaseForItsArchitecture(t *testing.T)
 	sweepOldCLIs()
 	if _, err := os.Stat(filepath.Join(runhostCLIDir, "1.2.3")); !os.IsNotExist(err) {
 		t.Fatalf("the CLI the runhost left is still there: %v", err)
+	}
+}
+
+// An update has the new CLI ready the images its runs need before the
+// runhost switches to it, so its doctor is green after the restart; a new CLI
+// that cannot prepare leaves the runhost on the one it runs.
+func TestAnUpdatePreparesTheNewCLIBeforeSwitchingToIt(t *testing.T) {
+	u := newUpdateServer(t)
+	log := filepath.Join(u.dir, "prepare.log")
+	fail := filepath.Join(u.dir, "prepare-fails")
+	u.script = func(v string) string {
+		return "#!/bin/sh\nif [ \"$1\" = runhost ]; then\n  echo \"$*\" >>" + log + "\n  echo \"stage: the runner image\"\n  [ ! -e " + fail + " ] || { echo 'no space left on device' >&2; exit 1; }\n  exit 0\nfi\necho agentry " + v + "\n"
+	}
+	if err := os.WriteFile(fail, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h, bin := u.release("1.2.4", runtime.GOARCH, u.priv)
+	if a := askUpdate(t, []string{"cli", "1.2.4"}, h, bin); a.Code != engine.ExitCLI || !strings.Contains(a.Error, "ready the images") || !strings.Contains(a.Error, "no space left on device") {
+		t.Fatalf("a new CLI that cannot prepare: code %d %s", a.Code, a.Error)
+	}
+	if got := u.current(t); got != "1.2.3" || runhostRestarting() != "" {
+		t.Fatalf("a failed prepare moved the runhost: CLI %s, restarting %q", got, runhostRestarting())
+	}
+	if _, err := os.Stat(filepath.Join(runhostCLIDir, "1.2.4", "agentry")); !os.IsNotExist(err) {
+		t.Fatalf("the CLI that could not prepare was kept: %v", err)
+	}
+
+	if err := os.Remove(fail); err != nil {
+		t.Fatal(err)
+	}
+	h, bin = u.release("1.2.4", runtime.GOARCH, u.priv)
+	line, _ := json.Marshal(h)
+	var buf bytes.Buffer
+	fw := runhost.NewFrameWriter(&buf)
+	code, err := runhostUpdateVerb(context.Background(), runhost.Request{Verb: "update", Args: []string{"cli", "1.2.4"}}, bytes.NewReader(append(append(line, '\n'), bin...)), fw)
+	_ = fw.Exit(code, err)
+	var said []string
+	a, rerr := runhost.ReadAnswer(&buf, func(line string) { said = append(said, line) })
+	if rerr != nil || a.Code != 0 {
+		t.Fatalf("the update: %v %d %s", rerr, a.Code, a.Error)
+	}
+	if got := u.current(t); got != "1.2.4" {
+		t.Fatalf("the CLI's path points at %s", got)
+	}
+	if b, _ := os.ReadFile(log); strings.Count(string(b), "runhost service prepare") != 2 {
+		t.Fatalf("prepare ran as %q; want once per attempt", b)
+	}
+	if !strings.Contains(strings.Join(said, "\n"), "stage: the runner image") {
+		t.Errorf("the device was not told what prepare did: %q", said)
 	}
 }
 

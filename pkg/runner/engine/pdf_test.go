@@ -30,6 +30,21 @@ func sha(b []byte) string {
 // still the recorded ones with its form, the last record of a path exported
 // twice; a PDF changed after its export, or gone, is not named.
 func TestTheReceiptNamesTheTheme(t *testing.T) {
+	// What chose a design is named only when there is a design and a choice.
+	for name, c := range map[string]struct {
+		theme ReportTheme
+		want  ThemeSource
+	}{
+		"nothing chosen, a source given": {ReportTheme{From: ThemeFromFlag}, ThemeFromDefault},
+		"a name, no source":              {ReportTheme{Name: "plain"}, ThemeFromDefault},
+		"a design, no source":            {ReportTheme{Design: []byte("{}")}, ThemeFromDefault},
+		"a name and its source":          {ReportTheme{Name: "plain", From: ThemeFromAccount}, ThemeFromAccount},
+		"a design and its source":        {ReportTheme{Design: []byte("{}"), From: ThemeFromDesignFlag}, ThemeFromDesignFlag},
+	} {
+		if got := c.theme.from(); got != c.want {
+			t.Errorf("%s: from() = %q, want %q", name, got, c.want)
+		}
+	}
 	p, f := fixture(t)
 	happyFake(f)
 	p.KeepRunDir = true
@@ -103,6 +118,21 @@ func TestNoExportNoPDFsBlock(t *testing.T) {
 	}
 	if fi, err := os.Stat(filepath.Join(p.OutDir, "receipts", PDFLedgerFile)); err != nil || fi.Size() != 0 {
 		t.Errorf("the granted run's ledger: %v", err)
+	}
+	// Only a plan that grants export_pdf names a design in its receipt.
+	if got := withReportTheme(map[string]string{"x": "y"}, []string{toolsrv.ToolFetch}, ReportTheme{}); got["pdf.design"] != "" || got["x"] != "y" || len(got) != 1 {
+		t.Errorf("a plan without export_pdf: %+v", got)
+	}
+	if got := withReportTheme(map[string]string{"x": "y"}, []string{toolsrv.ToolFetch, toolsrv.ToolExportPDF}, ReportTheme{}); !strings.HasPrefix(got["pdf.design"], `"Plain"`) || got["x"] != "y" {
+		t.Errorf("a plan with export_pdf: %+v", got)
+	}
+	// A ledger with no design to name it by lists nothing.
+	ledger := filepath.Join(t.TempDir(), PDFLedgerFile)
+	if err := os.WriteFile(ledger, []byte(`{"path":"reports/a.pdf","sha256":"x","pages":1}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := pdfRecord(&runDirs{pdfLedger: ledger}); got != nil {
+		t.Errorf("a run with no design listed %+v", got)
 	}
 }
 

@@ -94,16 +94,16 @@ func TestAnUnresolvedModelHostIsHandedToTheProxy(t *testing.T) {
 	}
 	t.Cleanup(func() { lookupModelHost = old })
 	p, f, _, _ := hostFixture(t)
-	p.Plan.Proxy.Allow = []string{"gone.local:8000"}
+	p.Plan.Proxy.Allow = []string{"gone.local:8000", "also-gone.local:9000"}
 	env, err := Run(context.Background(), f, p)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	proxy, _ := f.FindRun("-proxy")
-	if i := slices.Index(proxy.Argv, "--unresolved"); i < 0 || i+1 >= len(proxy.Argv) || proxy.Argv[i+1] != "gone.local" {
-		t.Errorf("proxy argv = %q, want --unresolved gone.local", proxy.Argv)
+	if i := slices.Index(proxy.Argv, "--unresolved"); i < 0 || i+1 >= len(proxy.Argv) || proxy.Argv[i+1] != "also-gone.local,gone.local" {
+		t.Errorf("proxy argv = %q, want --unresolved also-gone.local,gone.local", proxy.Argv)
 	}
-	if line := env.CapabilitiesEnforced["llm-proxy.hosts"]; !strings.Contains(line, "gone.local does not resolve on this machine") {
+	if line := env.CapabilitiesEnforced["llm-proxy.hosts"]; line != "also-gone.local, gone.local does not resolve on this machine, and the proxy says so to a request for it" {
 		t.Errorf("receipt llm-proxy.hosts = %q", line)
 	}
 }

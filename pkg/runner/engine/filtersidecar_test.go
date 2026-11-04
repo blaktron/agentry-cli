@@ -44,6 +44,8 @@ func TestDockerDesktopsFilterRunsInAContainerOfTheRuns(t *testing.T) {
 		BindRoots:     []string{"/c/Users/me/.agentry/runs/R", "/c/Users/me/.agentry/runs/R/out"},
 		WritableRoots: []string{"/c/Users/me/.agentry/runs/R/out"},
 		WebSpec:       `C:\Users\me\.agentry\runs\R\cfg\gateway\toolspec.json`,
+		WebResolvConf: `C:\Users\me\.agentry\runs\R\cfg\gateway\resolv.conf`,
+		ToolsShared:   map[string]string{"/scratch/files": `C:\Users\me\.agentry\runs\R\cfg\hostfiles`},
 	}
 	vol, err := startFilterSidecar(context.Background(), d, rd, "R", "agentry-runner:test", DockerSocket, cfg, policy.Limits{Memory: "2g", CPUs: 1, Pids: 512}, td)
 	if err != nil {
@@ -59,7 +61,7 @@ func TestDockerDesktopsFilterRunsInAContainerOfTheRuns(t *testing.T) {
 		}
 	}
 	if run.Image != "agentry-runner:test" || run.Argv[0] != "docker-filter" || run.Network != "none" || run.User != "0" ||
-		!slices.Equal(run.CapDrop, []string{"ALL"}) || len(run.CapAdd) != 0 || !run.ReadOnly || !run.NoNewPrivileges || run.PidsLimit != 512 ||
+		!slices.Equal(run.CapDrop, []string{"ALL"}) || len(run.CapAdd) != 0 || !run.ReadOnly || !run.NoNewPrivileges || run.PidsLimit != 512 || !run.DisableSELinuxLabel ||
 		run.Labels[runLabel] != "R" || run.Labels[gatewayOwnerLabel] != "" {
 		t.Fatalf("the filter container: %+v", run)
 	}
@@ -86,6 +88,10 @@ func TestDockerDesktopsFilterRunsInAContainerOfTheRuns(t *testing.T) {
 	if err != nil || got.WebSpec != "/c/Users/me/.agentry/runs/R/cfg/gateway/toolspec.json" || got.BindRoots[0] != cfg.BindRoots[0] {
 		t.Fatalf("the configuration the container reads: %+v (%v)", got, err)
 	}
+	if got.WebResolvConf != "/c/Users/me/.agentry/runs/R/cfg/gateway/resolv.conf" || got.RelayResolvConf != "" ||
+		got.ToolsShared["/scratch/files"] != "/c/Users/me/.agentry/runs/R/cfg/hostfiles" {
+		t.Fatalf("the paths the container reads: web resolv.conf %q, relay resolv.conf %q, shared %v", got.WebResolvConf, got.RelayResolvConf, got.ToolsShared)
+	}
 	gw := throughFilterVolume([]dockerx.Mount{{Source: DockerSocket, Target: DockerSocket}, {Source: "/x", Target: "/y"}}, vol)
 	if gw[0] != (dockerx.Mount{Source: vol, Target: gatewaySocketDir}) || gw[1].Source != "/x" {
 		t.Fatalf("the gateway's mounts: %+v", gw)
@@ -94,17 +100,44 @@ func TestDockerDesktopsFilterRunsInAContainerOfTheRuns(t *testing.T) {
 	d.Calls = nil
 	td.run()
 	var order []string
+	stopped := false
 	for _, c := range d.Calls {
 		if c.Op == "RemoveForce" || c.Op == "VolumeRemove" {
 			order = append(order, c.Op+" "+c.Arg)
+		}
+		if c.Op == "Stop" && c.Arg == containerName("R", "docker-filter") && len(order) == 0 {
+			stopped = true // before it is removed
 		}
 	}
 	if len(order) < 2 || order[0] != "RemoveForce "+containerName("R", "docker-filter") || !slices.Contains(order, "VolumeRemove "+vol) {
 		t.Fatalf("teardown order %v", order)
 	}
+	if !stopped {
+		t.Fatal("the filter container was not stopped before it was removed")
+	}
 	if rd.filterSidecar == "" {
 		t.Fatal("the decision log was not recorded for the receipt's refusals")
 	}
+	t.Run("the roots the container must see", func(t *testing.T) {
+		for _, c := range []struct {
+			name string
+			cfg  sockfilter.Config
+			want []string
+		}{
+			{"a root with another beneath it", sockfilter.Config{BindRoots: []string{"/a/b", "/a/b/c"}}, []string{"/a/b"}},
+			{"a writable root alone", sockfilter.Config{WritableRoots: []string{"/w/x"}}, []string{"/w/x"}},
+			{"a shared bind", sockfilter.Config{ToolsShared: map[string]string{"/scratch/files": "/s/files"}}, []string{"/s/files"}},
+			{"the run's own files", sockfilter.Config{WebSpec: "/web/spec.json", WebResolvConf: "/web/resolv.conf", RelayResolvConf: "/relay/resolv.conf"}, []string{"/relay/resolv.conf", "/web/resolv.conf", "/web/spec.json"}},
+			{"a path that is not absolute", sockfilter.Config{BindRoots: []string{"rel/path", "/a"}}, []string{"/a"}},
+			{"a root beside another with the same prefix", sockfilter.Config{BindRoots: []string{"/a/b", "/a/bc"}}, []string{"/a/b", "/a/bc"}},
+			{"a root named twice", sockfilter.Config{BindRoots: []string{"/a/b", "/a/b"}, WritableRoots: []string{"/a/b"}}, []string{"/a/b"}},
+			{"a root with a trailing slash covers what is beneath it", sockfilter.Config{BindRoots: []string{"/a/b/", "/a/b/c"}}, []string{"/a/b/"}},
+		} {
+			if got := sidecarRoots(c.cfg); !slices.Equal(got, c.want) {
+				t.Errorf("%s: roots %v, want %v", c.name, got, c.want)
+			}
+		}
+	})
 }
 
 // A filter container that never says it is ready fails the run at the

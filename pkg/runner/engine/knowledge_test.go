@@ -188,6 +188,13 @@ func TestKnowledgeChangedAfterVerificationIsRefused(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(p.RunRoot, "runs", "cafe0000")); !os.IsNotExist(err) {
 		t.Fatalf("the refused run left its directory, and the copy in it, behind: %v", err)
 	}
+	// A pack attached under a name that is not its own is refused too, with its
+	// digest the one the caller verified.
+	renamed := AttachPack(makePack(t, "style-guide"))
+	renamed.Name = "other-name"
+	if err := stageKnowledge([]AttachedPack{renamed}, t.TempDir(), ""); err == nil || !strings.Contains(err.Error(), "knowledge pack other-name changed after it was verified") {
+		t.Fatalf("a pack attached under another name: %v", err)
+	}
 }
 
 func TestKnowledgeLineWithoutExec(t *testing.T) {

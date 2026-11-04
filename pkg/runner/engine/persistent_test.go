@@ -92,7 +92,8 @@ func persistentFixtureWith(t *testing.T, continueID string, files *spec.AgentFil
 	}
 	if files != nil && files.Memory {
 		p.Persistent.Memory = &PersistentMemory{Volume: "agentry-persistent-keeper-memory",
-			Seed:  map[string][]byte{"SCHEMA.md": []byte("# How\n"), "pages/": nil, MemoryCarriedDir + "/log.md": []byte("carried\n")},
+			Seed: map[string][]byte{"SCHEMA.md": []byte("# How\n"), "index.md": []byte("# Index\n"), "pages/": nil, "pages/a.md": []byte("a\n"), "pages/b.md": []byte("b\n"),
+				MemoryCarriedDir + "/log.md": []byte("carried\n")},
 			Carry: "notes", CarryTo: "pages/notes"}
 	}
 	return p, f, h
@@ -127,6 +128,23 @@ func TestPersistentPlanRunsOnlyAsASegment(t *testing.T) {
 	ip.Persistent = p.Persistent
 	if _, err := StartSession(context.Background(), f2, ip); err == nil || !strings.Contains(err.Error(), "persistent agent's segment") {
 		t.Errorf("a segment of an interactive plan: err = %v", err)
+	}
+	// A segment names its agent and both of its volumes.
+	for name, edit := range map[string]func(*PersistentSegment){
+		"no agent":          func(ps *PersistentSegment) { ps.Agent = "" },
+		"no session volume": func(ps *PersistentSegment) { ps.SessionVolume = "" },
+		"no data volume":    func(ps *PersistentSegment) { ps.DataVolume = "" },
+	} {
+		seg := *p.Persistent
+		edit(&seg)
+		half := p
+		half.Persistent = &seg
+		if _, err := StartSession(context.Background(), f, half); err == nil || !strings.Contains(err.Error(), "needs its agent's name and volumes") {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+	if len(f.Calls) != 0 {
+		t.Errorf("a refused segment touched the engine: %v", f.Ops())
 	}
 }
 
@@ -166,6 +184,7 @@ func TestSweepKeepsPersistentVolumes(t *testing.T) {
 	p, f, _ := persistentFixtureWith(t, "", &spec.AgentFiles{Memory: true})
 	var seeds []dockerx.RunSpec
 	var seeded []string
+	var headers []*tar.Header
 	f.Foreground["-memory-seed"] = &dockerx.FakeForeground{Handler: func(_ context.Context, r dockerx.RunSpec, stdin io.Reader, _, _ io.Writer) (int, error) {
 		seeds = append(seeds, r)
 		tr := tar.NewReader(stdin)
@@ -175,6 +194,7 @@ func TestSweepKeepsPersistentVolumes(t *testing.T) {
 				break
 			}
 			seeded = append(seeded, h.Name)
+			headers = append(headers, h)
 		}
 		return 0, nil
 	}}
@@ -225,10 +245,31 @@ func TestSweepKeepsPersistentVolumes(t *testing.T) {
 	if !slices.Equal(seed.Argv[len(seed.Argv)-3:], []string{"notes", "pages/notes", MemoryCarriedDir}) {
 		t.Errorf("the seed's arguments: %v", seed.Argv)
 	}
-	if want := []string{MemoryCarriedDir + "/", MemoryCarriedDir + "/log.md", "SCHEMA.md", "pages/"}; !slices.Equal(seeded, want) {
+	if want := []string{MemoryCarriedDir + "/", MemoryCarriedDir + "/log.md", "SCHEMA.md", "index.md", "pages/", "pages/a.md", "pages/b.md"}; !slices.Equal(seeded, want) {
 		t.Errorf("the seed's archive holds %v, want %v", seeded, want)
 	}
-	if env.Persistent == nil || env.Persistent.Volumes.Memory != p.Persistent.Memory.Volume {
+	// Everything in the archive is root's, folders 0755 and files 0644.
+	for _, h := range headers {
+		wantMode := int64(0o644)
+		if h.Typeflag == tar.TypeDir {
+			wantMode = 0o755
+		}
+		if h.Uid != 0 || h.Gid != 0 || h.Mode != wantMode {
+			t.Errorf("%s is %d:%d mode %o, want root and %o", h.Name, h.Uid, h.Gid, h.Mode, wantMode)
+		}
+	}
+	// The one-shot is the runner image's shell, as root, bounded as every
+	// run container is, labelled with the run, and removed when it is done.
+	lim := p.limits()
+	if seed.Entrypoint != "sh" || seed.User != "0:0" || seed.Image != p.Plan.Proxy.Image || seed.Image == "" || !seed.AutoRemove || seed.Labels[runLabel] != p.RunID ||
+		lim.Memory == "" || seed.Memory != lim.Memory || seed.CPUs != lim.CPUs || seed.PidsLimit != lim.Pids || !seed.NoNewPrivileges || !slices.Equal(seed.CapDrop, []string{"ALL"}) {
+		t.Errorf("the seed's one-shot: %+v", seed)
+	}
+	if !slices.Contains(f.Ops(), "RemoveForce:"+seed.Name) {
+		t.Errorf("the seed's one-shot was not removed: %v", f.Ops())
+	}
+	if env.Persistent == nil || env.Persistent.Volumes.Memory != p.Persistent.Memory.Volume ||
+		env.Persistent.Volumes.Session != p.Persistent.SessionVolume || env.Persistent.Volumes.Data != p.Persistent.DataVolume {
 		t.Errorf("the envelope's volumes: %+v", env.Persistent)
 	}
 
@@ -270,8 +311,14 @@ func TestSweepKeepsPersistentVolumes(t *testing.T) {
 	p3.RunID = "5e9e0003"
 	f.Foreground["-memory-seed"] = &dockerx.FakeForeground{ExitCode: 1, Stderr: "no space left"}
 	before = len(f.Ops())
-	if _, err := StartSession(context.Background(), f, p3); err == nil || !strings.Contains(err.Error(), "seed the memory volume") {
+	if _, err := StartSession(context.Background(), f, p3); err == nil || !strings.Contains(err.Error(), "seed the memory volume") || !strings.Contains(err.Error(), "the seed exited 1: no space left") {
 		t.Fatalf("a failed seed of an existing memory: %v", err)
+	}
+	// A segment that failed before its harness started says so.
+	var failed receipt.Envelope
+	if b, err := os.ReadFile(filepath.Join(p3.OutDir, "result.json")); err != nil || json.Unmarshal(b, &failed) != nil || failed.Persistent == nil ||
+		failed.Persistent.Resumed || failed.Persistent.ResumeReason != notStartedReason || failed.Persistent.Segment != p3.Persistent.Segment {
+		t.Errorf("the failed segment's envelope: %+v (%v)", failed.Persistent, err)
 	}
 	for _, op := range f.Ops()[before:] {
 		if op == "VolumeCreate:"+p3.Persistent.Memory.Volume || op == "VolumeRemove:"+p3.Persistent.Memory.Volume {
@@ -281,6 +328,44 @@ func TestSweepKeepsPersistentVolumes(t *testing.T) {
 	if !slices.ContainsFunc(f.Ops()[before:], func(op string) bool { return strings.Contains(op, "-memory-seed") }) {
 		t.Errorf("the unrecorded memory was not seeded: %v", f.Ops()[before:])
 	}
+
+	// A memory volume made by this start and not seeded is removed, so the
+	// next start makes and seeds it again.
+	p4, _, _ := persistentFixtureWith(t, "", &spec.AgentFiles{Memory: true})
+	p4.RunID = "5e9e0004"
+	p4.Persistent.Memory.Volume = "agentry-persistent-keeper-fresh-memory"
+	before = len(f.Ops())
+	if _, err := StartSession(context.Background(), f, p4); err == nil || !strings.Contains(err.Error(), "seed the memory volume") {
+		t.Fatalf("a failed seed of a new memory: %v", err)
+	}
+	if ops := f.Ops()[before:]; !slices.Contains(ops, "VolumeCreate:"+p4.Persistent.Memory.Volume) || !slices.Contains(ops, "VolumeRemove:"+p4.Persistent.Memory.Volume) {
+		t.Errorf("the new memory volume was not made and removed: %v", ops)
+	}
+
+	// Under the plan's runtime, the seed's one-shot runs under it too.
+	p6, f6, _ := persistentFixtureWith(t, "", &spec.AgentFiles{Memory: true})
+	p6.Plan.Docker = &spec.DockerSpec{Runtime: "runsc"}
+	if err := ensurePersistentVolumes(context.Background(), f6, p6); err != nil {
+		t.Fatal(err)
+	}
+	if r, ok := f6.FindRun("-memory-seed"); !ok || r.Runtime != "runsc" {
+		t.Errorf("the seed's one-shot under the runtime: %+v (found %v)", r, ok)
+	}
+
+	// A seed that names a path outside the memory is refused before any
+	// container runs.
+	for _, bad := range []string{"../escape", "/absolute", "a/../b", "a//b", ".", "./"} {
+		p5, _, _ := persistentFixtureWith(t, "", &spec.AgentFiles{Memory: true})
+		p5.RunID = "5e9e0005"
+		p5.Persistent.Memory.Seed = map[string][]byte{bad: []byte("x")}
+		before = len(f.Ops())
+		if _, err := StartSession(context.Background(), f, p5); err == nil || !strings.Contains(err.Error(), "that is not a clean relative one") {
+			t.Errorf("the seed path %q: %v", bad, err)
+		}
+		if slices.ContainsFunc(f.Ops()[before:], func(op string) bool { return strings.Contains(op, "-memory-seed") }) {
+			t.Errorf("a seed with the path %q ran: %v", bad, f.Ops()[before:])
+		}
+	}
 }
 
 // TestPersistentSegmentContinuesItsConversation: given the conversation the
@@ -288,6 +373,7 @@ func TestSweepKeepsPersistentVolumes(t *testing.T) {
 // history is not this segment's events, and the envelope says it continued.
 func TestPersistentSegmentContinuesItsConversation(t *testing.T) {
 	p, f, h := persistentFixture(t, "s0")
+	p.Persistent.Roster = []receipt.RosterEntry{{ID: "clock", Kind: "server", Name: "Clock", GrantedBy: "the manifest", On: true, Line: "tells the time"}}
 	env, evs, ps := runSegment(t, p, f)
 	h.mu.Lock()
 	methods := strings.Join(h.methods, " ")
@@ -306,6 +392,9 @@ func TestPersistentSegmentContinuesItsConversation(t *testing.T) {
 	}
 	if env.Persistent == nil || !env.Persistent.Resumed || env.Harness.Mode != "persistent" {
 		t.Errorf("envelope persistent = %+v, mode %q", env.Persistent, env.Harness.Mode)
+	}
+	if env.Persistent != nil && !slices.Equal(env.Persistent.Roster, p.Persistent.Roster) {
+		t.Errorf("the envelope's roster = %+v, want %+v", env.Persistent.Roster, p.Persistent.Roster)
 	}
 }
 
@@ -435,7 +524,7 @@ func TestASegmentStartsANewConversationInItsRunningHarness(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	_, done := collect(s)
+	get, done := collect(s)
 	if err := s.Send(context.Background(), "one"); err != nil {
 		t.Fatal(err)
 	}
@@ -484,6 +573,67 @@ func TestASegmentStartsANewConversationInItsRunningHarness(t *testing.T) {
 	if env.Usage.CostUSD != 0.5 {
 		t.Errorf("the segment's cost = %v, want both conversations' 0.5", env.Usage.CostUSD)
 	}
+	said := false
+	for _, ev := range get() {
+		if ev.Kind == session.KindOther && ev.Text == "a new conversation in the running harness: a compaction" {
+			said = true
+		}
+	}
+	if !said {
+		t.Errorf("no event says the segment is in a new conversation: %+v", get())
+	}
+	if _, err := r.NewConversation(context.Background(), "late"); !errors.Is(err, session.ErrEnded) {
+		t.Errorf("NewConversation after the end = %v", err)
+	}
+}
+
+// TestASegmentsConversationNotesAreMasked: the reason a segment gives for a
+// new conversation, and the one the supervisor replaces its resume reason
+// with, are masked in the segment's events, its envelope and what the
+// supervisor reads back.
+func TestASegmentsConversationNotesAreMasked(t *testing.T) {
+	const secret = "sk-test-key-9876"
+	p, f, _ := persistentFixture(t, "s0")
+	p.Policy.Sessions.MaxUserTurns = 0
+	s, err := StartSession(context.Background(), f, p)
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	get, done := collect(s)
+	if err := s.Send(context.Background(), "one"); err != nil {
+		t.Fatal(err)
+	}
+	id, err := s.(ConversationRenewer).NewConversation(context.Background(), "compacting "+secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A new conversation is not the one the segment continued.
+	if got, resumed, reason := s.(PersistentSession).Conversation(); got != id || got == "s0" || resumed || reason != "compacting [redacted]" {
+		t.Errorf("Conversation = %q %v %q", got, resumed, reason)
+	}
+	s.(PersistentSession).SetResumeReason("the supervisor went on with " + secret)
+	if _, resumed, reason := s.(PersistentSession).Conversation(); resumed || reason != "the supervisor went on with [redacted]" {
+		t.Errorf("after SetResumeReason, Conversation = %v %q", resumed, reason)
+	}
+	env, err := s.End(context.Background(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-done
+	if env.Persistent == nil || env.Persistent.ResumeReason != "the supervisor went on with [redacted]" ||
+		len(env.Persistent.NewConversations) != 1 || env.Persistent.NewConversations[0].Reason != "compacting [redacted]" {
+		t.Errorf("the envelope's persistent block: %+v", env.Persistent)
+	}
+	noted := false
+	for _, ev := range get() {
+		if strings.Contains(ev.Text, secret) {
+			t.Errorf("an event holds the secret: %+v", ev)
+		}
+		noted = noted || ev.Text == "a new conversation in the running harness: compacting [redacted]"
+	}
+	if !noted {
+		t.Errorf("no event says why the segment is in a new conversation: %+v", get())
+	}
 }
 
 // TestASegmentWhoseHarnessCannotCompactSaysSo: docker-agent's driver has no
@@ -504,6 +654,9 @@ func TestASegmentWhoseHarnessCannotCompactSaysSo(t *testing.T) {
 	if !ok {
 		t.Fatal("a segment's session has no compaction call")
 	}
+	if c.CanCompact() {
+		t.Error("a segment whose harness cannot compact says it can")
+	}
 	if err := c.CompactConversation(context.Background()); !errors.Is(err, ErrNoCompaction) {
 		t.Fatalf("CompactConversation = %v, want ErrNoCompaction", err)
 	}
@@ -514,6 +667,98 @@ func TestASegmentWhoseHarnessCannotCompactSaysSo(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-done
+	if err := c.CompactConversation(context.Background()); !errors.Is(err, session.ErrEnded) {
+		t.Errorf("CompactConversation after the end = %v, want session.ErrEnded", err)
+	}
+
+	// A compaction between turns is asked of the running harness, moves the turn count on and is
+	// noted in the events; one the harness fails leaves the count and the
+	// events as they were.
+	t.Run("a harness that compacts is asked to, between turns", func(t *testing.T) {
+		for name, failure := range map[string]error{"it compacts": nil, "it fails": errors.New("nothing to compact")} {
+			t.Run(name, func(t *testing.T) {
+				p, f, _ := persistentFixture(t, "")
+				p.Policy.Sessions.MaxUserTurns = 0
+				calls := 0
+				p.Adapter = compactingAdapter{Adapter: p.Adapter, err: failure, calls: &calls}
+				s, err := StartSession(context.Background(), f, p)
+				if err != nil {
+					t.Fatalf("start: %v", err)
+				}
+				get, done := collect(s)
+				if err := s.Send(context.Background(), "one"); err != nil {
+					t.Fatal(err)
+				}
+				c := s.(ConversationCompactor)
+				if !c.CanCompact() {
+					t.Error("a segment whose harness compacts says it cannot")
+				}
+				before, _, _ := s.(PersistentSession).Conversation()
+				turns := func() string {
+					b, err := os.ReadFile(filepath.Join(s.(*liveSession).rd.turns, spec.TurnsFile))
+					if err != nil {
+						t.Fatal(err)
+					}
+					return strings.TrimSpace(string(b))
+				}
+				err = c.CompactConversation(context.Background())
+				if !errors.Is(err, failure) || calls != 1 {
+					t.Fatalf("CompactConversation = %v after %d requests, want %v after one", err, calls, failure)
+				}
+				wantTurns := "2"
+				if failure != nil {
+					wantTurns = "1"
+				}
+				if got := turns(); got != wantTurns {
+					t.Errorf("the turn count after the compaction = %q, want %q", got, wantTurns)
+				}
+				if after, _, _ := s.(PersistentSession).Conversation(); after != before {
+					t.Errorf("conversation %q became %q", before, after)
+				}
+				if _, err := s.End(context.Background(), false); err != nil {
+					t.Fatal(err)
+				}
+				<-done
+				noted := 0
+				for _, ev := range get() {
+					if ev.Kind == session.KindOther && ev.Text == "the running harness compacted the conversation" {
+						noted++
+					}
+				}
+				if want := map[bool]int{true: 1, false: 0}[failure == nil]; noted != want {
+					t.Errorf("the compaction was noted %d times, want %d", noted, want)
+				}
+			})
+		}
+	})
+}
+
+// compactingAdapter is the fixture's adapter whose driver compacts its
+// conversation on request, failing with err when that is set, and counts
+// the requests.
+type compactingAdapter struct {
+	adapter.Adapter
+	err   error
+	calls *int
+}
+
+func (a compactingAdapter) Session(ctx context.Context, rw io.ReadWriteCloser, o adapter.SessionOptions) (adapter.SessionDriver, error) {
+	d, err := a.Adapter.Session(ctx, rw, o)
+	if err != nil {
+		return nil, err
+	}
+	return &compactingDriver{SessionDriver: d, err: a.err, calls: a.calls}, nil
+}
+
+type compactingDriver struct {
+	adapter.SessionDriver
+	err   error
+	calls *int
+}
+
+func (d *compactingDriver) CompactConversation(context.Context) error {
+	*d.calls++
+	return d.err
 }
 
 // TestTheTurnCountMovesAtEachTurnAndNewConversation: the run's turn count,

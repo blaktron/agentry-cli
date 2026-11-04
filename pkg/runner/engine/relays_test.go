@@ -4,6 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -74,6 +78,32 @@ func TestRunRefusesForeignRelays(t *testing.T) {
 	if env, err := Run(context.Background(), f2, p2); err != nil || env.Status != "ok" {
 		t.Fatalf("run without relays refused: %v", err)
 	}
+
+	// A relay listing the daemon cannot answer is no proof the network is
+	// free: the run is refused, not started beside whatever is there.
+	err = refuseForeignRelays(context.Background(), listFails{Fake: &dockerx.Fake{}, label: RelayLabel})
+	if !errors.As(err, &ce) || ce.Code != ExitGateway || !strings.Contains(err.Error(), "list relay sidecars on the shared relay network") {
+		t.Fatalf("want exit %d for an unanswered relay listing, got %v", ExitGateway, err)
+	}
+	// Several relays are named in order, whatever order the daemon listed.
+	err = refuseForeignRelays(context.Background(), &dockerx.Fake{ByLabel: map[string][]string{RelayLabel: {"docker-mcp-l4proxy-b", "docker-mcp-l4proxy-a"}}})
+	if err == nil || !strings.Contains(err.Error(), "docker-mcp-l4proxy-a, docker-mcp-l4proxy-b") {
+		t.Fatalf("the foreign relays are not named in order: %v", err)
+	}
+}
+
+// listFails is a client whose listing of one label fails, as a daemon that
+// cannot answer does.
+type listFails struct {
+	*dockerx.Fake
+	label string
+}
+
+func (l listFails) PSByLabel(ctx context.Context, label string) ([]string, error) {
+	if label == l.label {
+		return nil, errors.New("the daemon cannot list")
+	}
+	return l.Fake.PSByLabel(ctx, label)
 }
 
 // TestTeardownReapsOwnRelaysByName: the relays the gateway's log says it
@@ -166,6 +196,17 @@ func TestTeardownReapsOwnRelaysByName(t *testing.T) {
 			t.Fatal("a server that did not start let the run proceed")
 		}
 		check(t, f)
+	})
+	// What the probe-time snapshot named is reaped though the gateway's log
+	// can no longer be read at teardown.
+	t.Run("relays named by the snapshot, log gone", func(t *testing.T) {
+		f := &dockerx.Fake{ByLabel: map[string][]string{RelayLabel: {"docker-mcp-l4proxy-ours"}, gatewayOwnerLabel + "=cafe0000": {"docker-mcp-l4proxy-ours"}}}
+		r := &relayReaper{runID: "cafe0000"}
+		r.snapshot("starting l4 proxy docker-mcp-l4proxy-ours for api.example, ports 443\n")
+		r.reap(context.Background(), f, "agentry-cafe0000-gateway")
+		if !slices.Contains(f.Ops(), "RemoveForce:docker-mcp-l4proxy-ours") {
+			t.Fatalf("the relay the snapshot named survived: %v", f.Ops())
+		}
 	})
 	t.Run("health probe failed before the snapshot", func(t *testing.T) {
 		p, f := serverFixture(t)
@@ -374,6 +415,40 @@ func TestRelayLockIsHeldForTheWholeRunAndReleasedOnEveryPath(t *testing.T) {
 			if strings.HasPrefix(op, "PSByLabel:"+RelayLabel) || strings.HasPrefix(op, "RunDetached:agentry-cafe0000-gateway") {
 				t.Errorf("a run refused at the lock went on to %s", op)
 			}
+		}
+	})
+	t.Run("a held lock is named as held and the refusal closes its file", func(t *testing.T) {
+		home := t.TempDir()
+		release, err := holdRelayLock(home)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer release()
+		fi, err := os.Stat(filepath.Join(home, RelayLockFile))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if runtime.GOOS != "windows" && fi.Mode().Perm() != 0o600 {
+			t.Errorf("the relay lock file has mode %v, want 0600", fi.Mode().Perm())
+		}
+		open := func() int {
+			fds, err := os.ReadDir("/proc/self/fd")
+			if err != nil {
+				return -1 // no way to count descriptors here
+			}
+			return len(fds)
+		}
+		before := open()
+		const attempts = 20
+		for range attempts {
+			_, err := holdRelayLock(home)
+			var ce *ClassifiedError
+			if !errors.As(err, &ce) || ce.Code != ExitGateway || !strings.Contains(err.Error(), "another run on this host") || strings.Contains(err.Error(), "lock held") {
+				t.Fatalf("want a refusal naming the other run, got %v", err)
+			}
+		}
+		if after := open(); before >= 0 && after > before+attempts/2 {
+			t.Errorf("%d refused attempts left %d more descriptors open", attempts, after-before)
 		}
 	})
 	t.Run("a run without relays takes no lock", func(t *testing.T) {

@@ -4,6 +4,8 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
+	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/runnerimage"
@@ -46,8 +49,15 @@ func TestSegmentLaunchesTheConsoleScriptItsFirstInstallFound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	planned := sp.Plan
 	if err := sp.installServers(context.Background(), fake, store); err != nil {
 		t.Fatalf("install: %v\n%s", err, log.String())
+	}
+	// The install found a command the guess did not name, so the plan is
+	// compiled again from the servers as the store now holds them, and the
+	// log names the command.
+	if sp.Plan == planned || !strings.Contains(log.String(), "the install found the command an MCP server launches (some-word-server@1.1.11 runs "+want+") — compiling the plan again") {
+		t.Fatalf("the plan was not compiled again from the install (%v):\n%s", sp.Plan != planned, log.String())
 	}
 	if builds != 1 {
 		t.Fatalf("the server was built %d times, want once", builds)
@@ -72,10 +82,81 @@ func TestSegmentLaunchesTheConsoleScriptItsFirstInstallFound(t *testing.T) {
 		t.Fatalf("the next start compiled its plan again (%v):\n%s", err, log.String())
 	}
 	segmentLaunches(t, again, want)
+	reused, reusedDir := again.Plan, again.Dir
+	log.Reset()
 	if err := again.installServers(context.Background(), fake, store); err != nil || builds != 1 {
 		t.Fatalf("the next start installed again (%d builds): %v", builds, err)
 	}
+	// An install that changes nothing leaves the plan and its folder as they
+	// were, and says nothing of compiling.
+	if again.Plan != reused || again.Dir != reusedDir || strings.Contains(log.String(), "compiling the plan again") {
+		t.Fatalf("an install that found nothing new moved the plan (%v):\n%s", again.Plan != reused, log.String())
+	}
 	segmentLaunches(t, again, want)
+
+	// A server is installed outside a segment's start the same way, and a
+	// failed install is the gateway's exit, a pin the registry does not hold
+	// the verify exit.
+	pin := manifest.MCPServer{PyPI: "some-word-server", Version: "1.1.11", Tools: []string{"create_document"}}
+	apart := t.TempDir()
+	if err := InstallServer(context.Background(), fake, pol, apart, pin, nil); err != nil || builds != 2 {
+		t.Fatalf("install apart (%d builds): %v", builds, err)
+	}
+	var ce *engine.ClassifiedError
+	broken := &dockerx.Fake{
+		ExistingImages: fake.ExistingImages,
+		Foreground:     map[string]*dockerx.FakeForeground{"agentry-mcpinstall-pypi-some-word-server": {ExitCode: 1}},
+	}
+	if err := InstallServer(context.Background(), broken, pol, t.TempDir(), pin, io.Discard); !errors.As(err, &ce) || ce.Code != engine.ExitGateway {
+		t.Errorf("a failed install apart: %v", err)
+	}
+	missing := pin
+	missing.Version = "9.9.9"
+	if err := InstallServer(context.Background(), fake, pol, t.TempDir(), missing, io.Discard); !errors.As(err, &ce) || ce.Code != engine.ExitVerify {
+		t.Errorf("a pin the registry does not hold, installed apart: %v", err)
+	}
+	failing := seg
+	failing.Grants.ServersDir = t.TempDir()
+	failed, err := failing.Plan(context.Background(), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := failed.installServers(context.Background(), broken, failing.Grants.ServersDir); !errors.As(err, &ce) || ce.Code != engine.ExitGateway {
+		t.Errorf("a failed install in a start: %v", err)
+	}
+
+	// A package server needs the agent's store, and a pin the registry does
+	// not hold is refused as unverifiable.
+	noStore := seg
+	noStore.Grants.ServersDir = ""
+	if _, err := noStore.Plan(context.Background(), io.Discard); !errors.As(err, &ce) || ce.Code != engine.ExitCLI || !strings.Contains(err.Error(), "the agent has a package server on, and no store to install it into") {
+		t.Errorf("a package server with no store: %v", err)
+	}
+	unpinned := seg
+	unpinned.Grants = Grants{ServersDir: t.TempDir(), Servers: []manifest.MCPServer{missing}}
+	if _, err := unpinned.Plan(context.Background(), io.Discard); !errors.As(err, &ce) || ce.Code != engine.ExitVerify {
+		t.Errorf("a pin the registry does not hold: %v", err)
+	}
+
+	// A command that changed is named with its server and version; a server
+	// that was not in the plan is named too.
+	one := spec.MCPServerSpec{Name: "one", Package: "pkg-one", Version: "1.0.0", Command: []string{"one-run"}}
+	two := spec.MCPServerSpec{Name: "two", Package: "pkg-two", Version: "2.0.0", Command: []string{"two-run", "--serve"}}
+	moved := two
+	moved.Command = []string{"two-run", "--stdio"}
+	for _, tc := range []struct {
+		name                string
+		compiled, installed []spec.MCPServerSpec
+		want                string
+	}{
+		{"nothing changed", []spec.MCPServerSpec{one, two}, []spec.MCPServerSpec{one, two}, ""},
+		{"one command changed", []spec.MCPServerSpec{one, two}, []spec.MCPServerSpec{one, moved}, "pkg-two@2.0.0 runs two-run --stdio"},
+		{"servers the plan lacked", nil, []spec.MCPServerSpec{one, two}, "pkg-one@1.0.0 runs one-run, pkg-two@2.0.0 runs two-run --serve"},
+	} {
+		if got := launchChanges(tc.compiled, tc.installed); got != tc.want {
+			t.Errorf("%s: %q, want %q", tc.name, got, tc.want)
+		}
+	}
 }
 
 // wordServerRegistry serves PyPI's metadata of some-word-server 1.1.11 for

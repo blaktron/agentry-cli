@@ -22,6 +22,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
+	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
 // goneConversation is a stored conversation the fake Claude Code cannot find.
@@ -42,8 +43,10 @@ const lingeringConversation = "0e9d0000-0000-4000-8000-0000000011e7"
 func playPersistentClaude(r dockerx.RunSpec, in io.Reader, out io.Writer) int {
 	if i := slices.Index(r.Argv, "--resume"); i >= 0 && i+1 < len(r.Argv) && (r.Argv[i+1] == goneConversation || r.Argv[i+1] == lingeringConversation) {
 		id := r.Argv[i+1]
+		// Its words can quote what the run was given, a feed's address among
+		// it.
 		sayLine(out, map[string]any{"type": "result", "subtype": "error_during_execution", "is_error": true,
-			"session_id": id, "errors": []string{"No conversation found with session ID: " + id}})
+			"session_id": id, "errors": []string{"No conversation found with session ID: " + id + " (calendar " + feedURL + ")"}})
 		if id == lingeringConversation {
 			_, _ = io.Copy(io.Discard, in)
 		}
@@ -185,6 +188,16 @@ func TestAPersistentClaudeSegmentNamesItsConversation(t *testing.T) {
 			}
 		}
 	}
+	// The store is handed to Claude Code's user by a one-shot of the
+	// segment's own: the session volume alone, on no network, with CHOWN
+	// as the one capability.
+	initRun, ok := f.FindRun("-session-init")
+	owner := p.Plan.Harness.Session.StoreOwner
+	if !ok || owner == "" || initRun.Network != "none" || !slices.Equal(initRun.CapAdd, []string{"CHOWN"}) || !slices.Equal(initRun.CapDrop, []string{"ALL"}) ||
+		!slices.Equal(initRun.Mounts, []dockerx.Mount{{Source: "agentry-persistent-keeper-session", Target: spec.SessionMount}}) ||
+		len(initRun.Argv) < 2 || initRun.Argv[len(initRun.Argv)-2] != owner || initRun.Argv[len(initRun.Argv)-1] != spec.SessionMount {
+		t.Errorf("the session store's one-shot: %+v (owner %q)", initRun, owner)
+	}
 	got, resumed, reason := ps.Conversation()
 	if got != id || resumed || reason != noStoredConversation {
 		t.Errorf("conversation = %q %v %q, want %q", got, resumed, reason, id)
@@ -225,6 +238,7 @@ func TestAPersistentClaudeSegmentStartsAnewWhenItsConversationIsGone(t *testing.
 func startsAnewWhenGone(t *testing.T, stored string) {
 	t.Helper()
 	p, f := persistentClaudeFixture(t, stored)
+	withFeed(&p)
 	env, evs, ps := runSegment(t, p, f)
 	calls := agentCalls(f)
 	if len(calls) != 2 {
@@ -243,6 +257,11 @@ func startsAnewWhenGone(t *testing.T, stored string) {
 	}
 	if env.Persistent == nil || env.Persistent.Resumed || !strings.Contains(env.Persistent.ResumeReason, "No conversation found") {
 		t.Errorf("envelope persistent = %+v", env.Persistent)
+	}
+	// The reason quotes Claude Code's words, which are masked like every
+	// receipt.
+	if strings.Contains(reason, "private-3141") || strings.Contains(env.Persistent.ResumeReason, "private-3141") || !strings.Contains(reason, "(calendar [redacted])") {
+		t.Errorf("the reason is not masked: %q, envelope %q", reason, env.Persistent.ResumeReason)
 	}
 	answers := 0
 	for _, ev := range evs {

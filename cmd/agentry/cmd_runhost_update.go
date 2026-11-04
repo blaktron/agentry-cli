@@ -174,7 +174,7 @@ func runhostUpdateCLI(ctx context.Context, to string, br *bufio.Reader, fw *runh
 		return engine.ExitVerify, err
 	}
 	_ = fw.Out("CLI %s: its signature and its SHA-256 for linux/%s verify", to, runtime.GOARCH)
-	if err := installRunhostCLI(ctx, to, bin); err != nil {
+	if err := installRunhostCLI(ctx, to, bin, func(line string) { _ = fw.Out("%s", line) }); err != nil {
 		return engine.ExitCLI, err
 	}
 	waits := runningRunhostJobs()
@@ -188,9 +188,12 @@ func runhostUpdateCLI(ctx context.Context, to string, br *bufio.Reader, fw *runh
 }
 
 // installRunhostCLI puts a verified CLI in its version's directory, checks
-// that it runs and says its version, and points the CLI's path at it. The
-// service goes on running the CLI it started with until it restarts.
-func installRunhostCLI(ctx context.Context, v string, bin []byte) error {
+// that it runs and says its version, has it ready the images its runs need
+// (`runhost service prepare`, the install's last step, whose lines go to
+// say), and only then points the CLI's path at it, so a runhost whose new CLI
+// cannot prepare stays on the one it runs. The service goes on running the
+// CLI it started with until it restarts.
+func installRunhostCLI(ctx context.Context, v string, bin []byte, say func(string)) error {
 	dir := filepath.Join(runhostCLIDir, v)
 	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // the agentry account's own CLI directory, read by sshd's login
 		return err
@@ -206,11 +209,56 @@ func installRunhostCLI(ctx context.Context, v string, bin []byte) error {
 		_ = os.Remove(tmp)
 		return fmt.Errorf("CLI %s does not run on this server: %v %s", v, err, strings.TrimSpace(string(out)))
 	}
+	if err := prepareRunhostCLI(ctx, tmp, say); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("CLI %s could not ready the images its runs need: %w", v, err)
+	}
 	final := filepath.Join(dir, "agentry")
 	if err := os.Rename(tmp, final); err != nil {
 		return err
 	}
 	return pointAt(filepath.Join(runhostBinDir, "agentry"), final)
+}
+
+// prepareTimeout bounds a new CLI's `runhost service prepare`, which builds
+// the runner image and pulls the others.
+var prepareTimeout = 30 * time.Minute
+
+// prepareRunhostCLI runs cli's `runhost service prepare`, passing each line it
+// writes to say; a failure names its last lines.
+func prepareRunhostCLI(ctx context.Context, cli string, say func(string)) error {
+	pctx, cancel := context.WithTimeout(ctx, prepareTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(pctx, cli, "runhost", "service", "prepare") //nolint:gosec // the release just verified
+	pr, pw := io.Pipe()
+	cmd.Stdout, cmd.Stderr = pw, pw
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	var last []string
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		sc := bufio.NewScanner(pr)
+		for sc.Scan() {
+			line := strings.TrimSpace(sc.Text())
+			if line == "" {
+				continue
+			}
+			say(line)
+			if last = append(last, line); len(last) > 3 {
+				last = last[1:]
+			}
+		}
+		_, _ = io.Copy(io.Discard, pr)
+	}()
+	err := cmd.Wait()
+	_ = pw.Close()
+	<-done
+	if err != nil {
+		return fmt.Errorf("%v: %s", err, strings.Join(last, "; "))
+	}
+	return nil
 }
 
 // pointAt makes link a symbolic link to target, relative, in one rename, so

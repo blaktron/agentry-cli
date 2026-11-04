@@ -2,10 +2,13 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -128,6 +131,118 @@ func TestMirrorCopiesOnlyTheCheckedBytes(t *testing.T) {
 	}
 	if got := mirrored(t, dir); got["a.md"] != "checked\n" || len(got) != 1 {
 		t.Fatalf("a copy changed in the mirror was not made again: %v", got)
+	}
+	t.Run("what the mirror refuses", mirrorRefusesWhatIsNotTheShareOrItsBytes)
+}
+
+// mirrorRefusesWhatIsNotTheShareOrItsBytes: the mirror opens only on a clean
+// absolute path without a colon, reads back only an index of its own version,
+// copies only what passed with a plain digest, and refuses a path outside the
+// share and bytes other than the ones checked.
+func mirrorRefusesWhatIsNotTheShareOrItsBytes(t *testing.T) {
+	base := t.TempDir()
+	for name, dir := range map[string]string{
+		"a relative path":   "share-mirror",
+		"an unclean path":   base + "/a/../share-mirror",
+		"a path with colon": filepath.Join(base, "share:mirror"),
+	} {
+		if m, err := openShareMirror(dir); err == nil || m != nil {
+			t.Errorf("%s: the mirror opened", name)
+		}
+	}
+	if _, err := openShareMirror(filepath.Join(base, "a:b")); err == nil || !strings.Contains(err.Error(), "colon") {
+		t.Errorf("a colon in the path: %v", err)
+	}
+
+	// An index of another version is not read back.
+	dir := filepath.Join(base, "mirror-versions")
+	_, index := ShareMirrorBeside(dir)
+	for version, want := range map[int]int{mirrorIndexVersion: 1, mirrorIndexVersion + 1: 0} {
+		b, _ := json.Marshal(mirrorIndex{Version: version, Files: map[string]mirrorFile{"a.md": {SHA256: "x", Size: 1}}})
+		if err := os.MkdirAll(filepath.Dir(index), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(index, b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		m, err := openShareMirror(dir)
+		if err != nil || len(m.files) != want {
+			t.Errorf("an index of version %d read back as %v (%v), want %d file(s)", version, m.files, err, want)
+		}
+	}
+
+	// A verdict passes when it is clean or unchecked and its digest is plain.
+	_, share := shareSession(t)
+	for _, name := range []string{"clean.md", "unchecked.md", "found.md", "nodigest.md", "badcase.md"} {
+		writeShare(t, share, name, name+" bytes\n")
+	}
+	sum := func(name string) string { return sha256Hex([]byte(name + " bytes\n")) }
+	m, err := openShareMirror(filepath.Join(base, "mirror-verdicts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = m.sync(share, map[string]toolsrv.ShareVerdict{
+		"clean.md":     {Verdict: toolsrv.ShareClean, SHA256: sum("clean.md")},
+		"unchecked.md": {Verdict: toolsrv.ShareUnchecked, SHA256: sum("unchecked.md")},
+		"found.md":     {Verdict: toolsrv.ShareFound, SHA256: sum("found.md")},
+		"nodigest.md":  {Verdict: toolsrv.ShareClean, SHA256: "not a digest"},
+		"badcase.md":   {Verdict: toolsrv.ShareClean, SHA256: strings.ToUpper(sum("badcase.md"))},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := mirrored(t, m.dir); !slices.Equal(keys(got), []string{"clean.md", "unchecked.md"}) {
+		t.Errorf("the mirror holds %v", keys(got))
+	}
+
+	// A copy whose size changed, or whose time changed, is made again.
+	for name, tamper := range map[string]func(path string, fi os.FileInfo) error{
+		"a copy of another size": func(path string, fi os.FileInfo) error {
+			if err := os.WriteFile(path, []byte("longer than it was"), 0o644); err != nil {
+				return err
+			}
+			return os.Chtimes(path, fi.ModTime(), fi.ModTime())
+		},
+		"a copy of another time": func(path string, fi os.FileInfo) error {
+			when := fi.ModTime().Add(-time.Hour)
+			return os.Chtimes(path, when, when)
+		},
+	} {
+		path := filepath.Join(m.dir, "clean.md")
+		fi, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := tamper(path, fi); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.sync(share, map[string]toolsrv.ShareVerdict{"clean.md": {Verdict: toolsrv.ShareClean, SHA256: sum("clean.md")}}); err != nil {
+			t.Fatal(err)
+		}
+		if got := mirrored(t, m.dir); got["clean.md"] != "clean.md bytes\n" || len(got) != 1 {
+			t.Errorf("%s was not made again: %v", name, got)
+		}
+	}
+
+	// A run with no mirror has nothing to sync.
+	var none *shareMirror
+	if err := none.sync(share, nil); err != nil || none.folder() != "" {
+		t.Errorf("a nil mirror: %v %q", err, none.folder())
+	}
+
+	// A path outside the share, and bytes other than the ones checked.
+	src := filepath.Join(share, "clean.md")
+	if err := m.put("../escape.md", src, sum("clean.md")); err == nil || !strings.Contains(err.Error(), "is not a path beneath the share") {
+		t.Errorf("a path outside the share: %v", err)
+	}
+	if pathExists(filepath.Join(filepath.Dir(m.dir), "escape.md")) {
+		t.Error("a file was written outside the mirror")
+	}
+	if err := m.put("other.md", src, sum("unchecked.md")); !errors.Is(err, errChangedSinceCheck) {
+		t.Errorf("bytes other than the checked ones: %v", err)
+	}
+	if pathExists(filepath.Join(m.dir, "other.md")) {
+		t.Error("bytes other than the checked ones were mirrored")
 	}
 }
 

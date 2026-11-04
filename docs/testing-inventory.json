@@ -602,7 +602,9 @@
         {
           "path": "cmd/agentry/cmd_agent_messenger_test.go",
           "tests": [
-            "TestAgentMessengerAddPairListRemove"
+            "TestAgentMessengerAddPairListRemove",
+            "TestAgentMessengerAddSlackTakesBothTokens",
+            "TestAgentMessengerAddMatrixSignsInAndKeepsTheTokenAlone"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -1425,6 +1427,25 @@
           ]
         },
         {
+          "path": "cmd/agentry/cmd_runhost_agent_test.go",
+          "tests": [
+            "TestARunhostRunsOnlyTheAgentCommandsADeviceDrives",
+            "TestTheAgentVerbRunsTheRunhostsOwnCommand",
+            "TestTheServiceStartsItsAgentsAgain",
+            "TestTheAgentSocketIsRelayedToTheDevice",
+            "TestARunhostKeepsTheModelItsAgentsRunOn",
+            "TestARunhostKeepsItsAgentsSecretsInItsStore",
+            "TestAStoredSecretsValueTravelsToTheRunhostsSecretSet"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract",
+            "explicit skip"
+          ]
+        },
+        {
           "path": "cmd/agentry/cmd_runhost_credits_test.go",
           "tests": [
             "TestARunhostKeepsItsCreditsTokenAndRevokesIt",
@@ -1469,12 +1490,14 @@
             "TestARunhostScheduleRefusesWhatCannotRunUnattended",
             "TestScheduleAddOnARunhostHandsTheScheduleOver",
             "TestScheduleAddOnARunhostThatTakesNoScheduleAsksNothing",
-            "TestScheduleAddCheckOnARunhostKeepsNothing"
+            "TestScheduleAddCheckOnARunhostKeepsNothing",
+            "TestARunhostScheduleUsesOnlyAConnectionOfTheRunhostsOwn"
           ],
           "fuzz": [],
           "benchmarks": [],
           "fixtureEntryPoint": false,
           "dependencyHints": [
+            "HTTP transport",
             "source/file contract",
             "real-time wait"
           ]
@@ -1516,6 +1539,7 @@
           "path": "cmd/agentry/cmd_runhost_update_test.go",
           "tests": [
             "TestARunhostInstallsOnlyASignedNewerReleaseForItsArchitecture",
+            "TestAnUpdatePreparesTheNewCLIBeforeSwitchingToIt",
             "TestTheServiceRestartsOnlyOnceItsJobsFinish",
             "TestADeviceLeavesWithItsKeysAndTheCreditsItMinted",
             "TestARunKeyCannotSendAJobOrATokenForAnotherDevice",
@@ -3353,6 +3377,17 @@
       "disposition": "retain",
       "files": [
         {
+          "path": "pkg/runhost/remote/agents_test.go",
+          "tests": [
+            "TestAnAgentsSocketKey",
+            "TestCheckAgentArgs"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "pkg/runhost/remote/remote_test.go",
           "tests": [
             "TestAClientRunsAJobOnARunhostThroughThePackage",
@@ -3448,7 +3483,9 @@
             "TestACopilotSignInShowsTheCodeOnTheDevice",
             "TestTheDeviceOpensOnlyTheVendorsOwnPage",
             "TestAClaudeRelayReachesTheLoginContainerAlone",
-            "TestOneSignInAtATime"
+            "TestOneSignInAtATime",
+            "TestARunhostConnectionIsAGrantOfItsOwn",
+            "TestTheDeviceOpensOnlyTheConsentItDiscovered"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -3567,7 +3604,12 @@
             "TestAttackInteractiveCancelCloseAndEOFMidTurn",
             "TestAttackInteractiveCloseBetweenTurnsAnswersAfterTheTeardownUpdates",
             "TestAttackConcurrentPromptsAreOneRun",
-            "TestAttackCancelMidTurnIsAnsweredPromptly"
+            "TestAttackCancelMidTurnIsAnsweredPromptly",
+            "TestTextTheClientDrawsIsCleanedOfWhatCouldMisleadIt",
+            "TestAToolCallIsReportedAsProgressAndItsResultNamesTheCall",
+            "TestProgressIsDroppedBeforeTheAnswersTheClientIsOwed",
+            "TestTheRunsFinalAnswerCarriesItsResultAndHowItEnded",
+            "TestATurnThatEndsTheSessionIsAnsweredWithWhy"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -4544,16 +4586,6 @@
           ]
         },
         {
-          "path": "pkg/runner/connection/handover_test.go",
-          "tests": [
-            "TestAHandedConnectionRefreshesOnTheOtherMachine"
-          ],
-          "fuzz": [],
-          "benchmarks": [],
-          "fixtureEntryPoint": false,
-          "dependencyHints": []
-        },
-        {
           "path": "pkg/runner/connection/publicclients_test.go",
           "tests": [
             "TestAVettedServerGetsTheRegistrysPublicClient",
@@ -5171,6 +5203,8 @@
             "TestMemoryBytesReadsDockersSizes",
             "TestThroughFilterSwapsOnlyTheDaemonSocket",
             "TestRefusalsReachTheOutcome",
+            "TestTheFilterIsGivenTheRunsLimitsNetworksAndRuntime",
+            "TestTheRuntimeVerifierRemovesWhatTheEngineCreatedUnderAnotherRuntime",
             "TestTheSocketIsUnderTheRunnerHome",
             "TestALongRunDirectoryFallsBackToAShortSocket",
             "TestARunWithRelaysHasRelayNetworksOfItsOwn",
@@ -5221,6 +5255,7 @@
           "benchmarks": [],
           "fixtureEntryPoint": false,
           "dependencyHints": [
+            "docker interface (real or fake)",
             "source/file contract"
           ]
         },
@@ -5245,7 +5280,9 @@
           "fuzz": [],
           "benchmarks": [],
           "fixtureEntryPoint": false,
-          "dependencyHints": []
+          "dependencyHints": [
+            "docker interface (real or fake)"
+          ]
         },
         {
           "path": "pkg/runner/engine/heldcfg_test.go",
@@ -5400,7 +5437,8 @@
           "path": "pkg/runner/engine/portrelay_test.go",
           "tests": [
             "TestAPublishedPortIsCarriedIntoTheToolsServer",
-            "TestAConnectionBeforeTheToolsServerIsClosed"
+            "TestAConnectionBeforeTheToolsServerIsClosed",
+            "TestThePortRelayListensOnLoopbackAndBoundsItsConnections"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -5434,6 +5472,7 @@
           "fixtureEntryPoint": false,
           "dependencyHints": [
             "docker interface (real or fake)",
+            "source/file contract",
             "real-time wait"
           ]
         },
@@ -5541,12 +5580,14 @@
           "tests": [
             "TestTeardownThatCannotDeleteSecretsSaysSo",
             "TestTeardownDoesNotReportWhatTheRunDirRemovalTook",
-            "TestTeardownRetriesWhatTheSweepFreed"
+            "TestTeardownRetriesWhatTheSweepFreed",
+            "TestTeardownSweepsWhatTheRunLabelStillFinds"
           ],
           "fuzz": [],
           "benchmarks": [],
           "fixtureEntryPoint": false,
           "dependencyHints": [
+            "docker interface (real or fake)",
             "source/file contract"
           ]
         },
@@ -5600,6 +5641,18 @@
           "dependencyHints": [
             "source/file contract",
             "explicit skip"
+          ]
+        },
+        {
+          "path": "pkg/runner/engine/workspace_ownership_test.go",
+          "tests": [
+            "TestTheRunhostsToolSpecHoldsWritesByOwnership"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
           ]
         }
       ]
@@ -6023,6 +6076,7 @@
           "path": "pkg/runner/engine/applinkrelay_test.go",
           "tests": [
             "TestTheAppLinkRelayCarriesCallsToTheSupervisor",
+            "TestTheAppLinkTransportLineSaysHowTheSupervisorIsReached",
             "TestTheAppLinkRelayCarriesNothingButToolCalls",
             "TestTheAppLinksMountFollowsTheTransport"
           ],
@@ -6087,7 +6141,9 @@
             "TestMessengerTokenReachesTheRoleAlone",
             "TestMessengerRoleEgressIsItsHosts",
             "TestMessengerRoleRunsUnderTheRuntimeWithTheHostsNameServers",
-            "TestARefusedMessengerTokenFailsTheStartAndRemovesEverything"
+            "TestARefusedMessengerTokenFailsTheStartAndRemovesEverything",
+            "TestAMessengerRolesFramesReachTheSupervisor",
+            "TestAMatrixRoleReachesItsHomeserverAlone"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -6095,6 +6151,7 @@
           "dependencyHints": [
             "docker interface (real or fake)",
             "HTTP transport",
+            "source/file contract",
             "real-time wait"
           ]
         },
@@ -6125,6 +6182,7 @@
             "TestPersistentSegmentReceipts",
             "TestACarriedContextReachesTheHarnessAndNotTheUserTurn",
             "TestASegmentStartsANewConversationInItsRunningHarness",
+            "TestASegmentsConversationNotesAreMasked",
             "TestASegmentWhoseHarnessCannotCompactSaysSo",
             "TestTheTurnCountMovesAtEachTurnAndNewConversation"
           ],
@@ -6239,10 +6297,12 @@
             "TestAFailureBeforeTheContainersIsStagePrepare",
             "TestAgentNonZeroExitIsHarnessClass",
             "TestTurnBudgetKillsRun",
+            "TestCostBudgetKillsRun",
             "TestTimeoutKillsRun",
             "TestRunWithoutTimeoutHasNoAgentDeadlineAndRecordsZero",
             "TestJSONResultKindEnforced",
             "TestDeclaredServerThatDidNotStartFailsTheRun",
+            "TestTheToolsServerThatDidNotStartFailsTheRun",
             "TestDeclaredServerStartedRunsTheAgent",
             "TestReceiptNamesResolvedExecPackages",
             "TestRunInterruptedTearsDownAndWritesEnvelope",
@@ -6461,7 +6521,9 @@
             "TestSessionEndIsSafeToCallConcurrently",
             "TestSessionEnvelopeNamesThePolicyFile",
             "TestAnInputAddedAsATurnEndsGetsItsNoticeTurn",
-            "TestANoticeIsCarriedNotPutInThePersonsTurn"
+            "TestANoticeIsCarriedNotPutInThePersonsTurn",
+            "TestASessionOfAJSONPlanAsksForItsResultOnlyWhenFinished",
+            "TestASessionWhoseEventPumpPanicsEndsAndNamesIt"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -6624,7 +6686,8 @@
           "tests": [
             "TestACopilotModelListRunsInARunsContainer",
             "TestACopilotModelListRenewsAShortLivedToken",
-            "TestACopilotModelListRefusesWhatARunWould"
+            "TestACopilotModelListRefusesWhatARunWould",
+            "TestACopilotModelListSignInComesFromThePersonsStore"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -7383,13 +7446,15 @@
         {
           "path": "pkg/runner/localrun/persistent_stages_test.go",
           "tests": [
-            "TestASegmentStartReportsEachStageOnceInOrder"
+            "TestASegmentStartReportsEachStageOnceInOrder",
+            "TestASegmentStartGivesTheEngineWhatItsRosterTurnsOn"
           ],
           "fuzz": [],
           "benchmarks": [],
           "fixtureEntryPoint": false,
           "dependencyHints": [
-            "docker interface (real or fake)"
+            "docker interface (real or fake)",
+            "source/file contract"
           ]
         },
         {
@@ -7421,6 +7486,20 @@
           "fixtureEntryPoint": false,
           "dependencyHints": [
             "docker interface (real or fake)"
+          ]
+        },
+        {
+          "path": "pkg/runner/localrun/skillcheck_test.go",
+          "tests": [
+            "TestAFolderClamAVFoundMalwareInIsRefused"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "docker interface (real or fake)",
+            "real docker daemon",
+            "source/file contract"
           ]
         }
       ]
@@ -8116,7 +8195,8 @@
             "TestAMessengerEntryRendersAgree",
             "TestWrongCodesCloseThePairing",
             "TestAMessagePassedOnTwiceIsOneTurn",
-            "TestSwitchingAMessengerOffDropsItsWaitingMessages"
+            "TestSwitchingAMessengerOffDropsItsWaitingMessages",
+            "TestAMatrixMessengerNamesItsHomeserverAndNeedsOne"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -8338,6 +8418,19 @@
           "fixtureEntryPoint": false,
           "dependencyHints": [
             "docker interface (real or fake)"
+          ]
+        },
+        {
+          "path": "pkg/runner/persistent/stop_test.go",
+          "tests": [
+            "TestAStopThatClosesWithoutAnAnswerIsJudgedByTheLock"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract",
+            "explicit skip"
           ]
         },
         {
@@ -8705,7 +8798,8 @@
             "TestReasonCodesAreTheClosedList",
             "TestAnOrgPolicyReasonKeepsOnlyItsWord",
             "TestBlockedReasonsKeepNoText",
-            "TestAHostRefusalKeepsTheQuestionAndItsWord"
+            "TestAHostRefusalKeepsTheQuestionAndItsWord",
+            "TestWithCountCarriesTheCountThroughReasonOf"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -8740,7 +8834,8 @@
         {
           "path": "pkg/runner/receipt/tokens_test.go",
           "tests": [
-            "TestNoReceiptFieldIsNamedInCredits"
+            "TestNoReceiptFieldIsNamedInCredits",
+            "TestUsageTotalIsTheReportedTotalOrTheSum"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -8762,12 +8857,19 @@
             "TestCommandLines",
             "TestReadLinesBoundsALineAndReadsOn",
             "TestAnEventLineIsTheSessionEventWithoutRaw",
-            "TestASendTheSessionAnswersBusyIsRefusedBusy"
+            "TestASendTheSessionAnswersBusyIsRefusedBusy",
+            "TestAnAddIsHeldToTheInputsDirectory",
+            "TestTheEndCommandAndTheEndOfInputEndTheSession",
+            "TestASendIsRefusedBusyWhileATurnIsOnItsWayOrInFlight",
+            "TestAnAnswerReachesTheSessionThatAsksOrIsRefused",
+            "TestUsageIsMeteredAsTheSessionNarratesIt",
+            "TestAClosedOutputStillWritesWhatIsQueued"
           ],
           "fuzz": [],
           "benchmarks": [],
           "fixtureEntryPoint": false,
           "dependencyHints": [
+            "source/file contract",
             "real-time wait"
           ]
         }
@@ -9373,12 +9475,22 @@
             "TestTaskLine",
             "TestAnUpkeepTurnIsOneLineNotThePersonsMessage",
             "TestTheAgentsOwnTurnIsFaint",
-            "TestUpkeepLine"
+            "TestUpkeepLine",
+            "TestEscAndTheQuitCommandsLeaveTheChatAndOnlyFinishAsksForAResult",
+            "TestTheInputLineSendsOneTurnAtATime",
+            "TestTheSlashCommandsOfTheChat",
+            "TestTheTranscriptShowsWhatTheSessionDoes",
+            "TestTheChatOpensWithTheAgentsOpeningLineAndTheCommands",
+            "TestTheStatusLineShowsTheRunsBudgets",
+            "TestTheChatIsDrawnToTheWindowAndStopsWhenItEnds",
+            "TestRunReturnsHowTheChatWasLeft"
           ],
           "fuzz": [],
           "benchmarks": [],
           "fixtureEntryPoint": false,
-          "dependencyHints": []
+          "dependencyHints": [
+            "explicit skip"
+          ]
         }
       ]
     },
@@ -9958,17 +10070,72 @@
       "disposition": "retain",
       "files": [
         {
-          "path": "runnerimage/messenger/format_test.go",
+          "path": "runnerimage/messenger/check_test.go",
           "tests": [
-            "TestSplitRendersTelegramsHTML",
-            "TestSplitKeepsCodeBlocksAsTheyAre",
-            "TestSplitBoundsEveryPartAndTheirCount",
-            "TestSplitCutsALongLineWithoutLosingIt"
+            "TestCheckCredentialShapeKnowsEveryKind",
+            "TestASlackCredentialIsMaskedTokenByToken",
+            "TestAServersHostIsItsAddressOverTLS"
           ],
           "fuzz": [],
           "benchmarks": [],
           "fixtureEntryPoint": false,
           "dependencyHints": []
+        },
+        {
+          "path": "runnerimage/messenger/discord_test.go",
+          "tests": [
+            "TestDiscordSaysWhoTheBotIsAndAsksForDirectMessagesAlone",
+            "TestDiscordUnpairedSenderNeverReachesTheAgent",
+            "TestDiscordPassesThePairedPersonAndDropsAServerMessage",
+            "TestDiscordSendsMarkdownToThePairedPersonAlonePingingNoOne",
+            "TestDiscordIdentifiesAgainAfterTheGatewayCloses",
+            "TestDiscordRefusedTokenEndsTheRoleWithoutRepeatingIt",
+            "TestDiscordGatewayAuthenticationFailureIsARefusal"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "HTTP transport",
+            "real-time wait"
+          ]
+        },
+        {
+          "path": "runnerimage/messenger/format_test.go",
+          "tests": [
+            "TestSplitRendersTelegramsHTML",
+            "TestSplitKeepsCodeBlocksAsTheyAre",
+            "TestSplitBoundsEveryPartAndTheirCount",
+            "TestSplitCutsALongLineWithoutLosingIt",
+            "TestSplitAsWritesEachServicesFormat",
+            "TestSplitAsBoundsEveryFormatsParts",
+            "TestHTMLLineBreaksLeavesPreformattedBlocks"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
+          "path": "runnerimage/messenger/matrix_test.go",
+          "tests": [
+            "TestMatrixPassesThePairedPersonButNotWhatCameBefore",
+            "TestMatrixDropsAnEncryptedRoomAndAGroup",
+            "TestMatrixJoinsADirectInvitationOnlyWhileUnpaired",
+            "TestMatrixUnpairedSenderNeverReachesTheAgent",
+            "TestMatrixSendsHTMLAndPlainToThePairedRoomAlone",
+            "TestMatrixRefusedTokenEndsTheRoleWithoutRepeatingIt",
+            "TestMatrixStartNeedsTheAccountsServer",
+            "TestMatrixSendsNothingToAPairedRoomSomeoneElseJoined",
+            "TestMatrixBoundsTheRoomsAStrangerBringsItInto"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "HTTP transport",
+            "real-time wait"
+          ]
         },
         {
           "path": "runnerimage/messenger/role_test.go",
@@ -9993,6 +10160,48 @@
             "HTTP transport",
             "real-time wait"
           ]
+        },
+        {
+          "path": "runnerimage/messenger/slack_test.go",
+          "tests": [
+            "TestSlackSaysWhoTheAppIs",
+            "TestSlackPassesThePairedPersonAndAcknowledgesEveryEnvelope",
+            "TestSlackUnpairedSenderNeverReachesTheAgent",
+            "TestSlackSendsMrkdwnToThePairedPersonAlone",
+            "TestSlackConnectsAgainWhenAskedTo",
+            "TestSlackRefusedTokenEndsTheRoleWithoutRepeatingIt",
+            "TestSlackManifestAsksForDirectMessagesOverSocketModeAlone",
+            "TestSlackDialsNoSocketModeAddressOffItsHosts"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "HTTP transport",
+            "real-time wait"
+          ]
+        },
+        {
+          "path": "runnerimage/messenger/websocket_test.go",
+          "tests": [
+            "TestTheWebSocketRefusesWhatRFC6455Forbids",
+            "TestTheWebSocketAnswersAPingAndAPongKeepsItOpen"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "HTTP transport",
+            "real-time wait"
+          ]
+        },
+        {
+          "path": "runnerimage/messenger/wsserver_test.go",
+          "tests": [],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
         }
       ]
     },
@@ -10495,6 +10704,19 @@
             "TestEndBlockedWithoutALedgerSaysSo",
             "TestAFaultIsTheRunsMachinery",
             "TestAnUnreadableChannelIsRecordedAsAFault"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract",
+            "explicit skip"
+          ]
+        },
+        {
+          "path": "runnerimage/toolsrv/confinement_linux_test.go",
+          "tests": [
+            "TestWithoutLandlockOwnershipHoldsAWorkspaceWritingCommand"
           ],
           "fuzz": [],
           "benchmarks": [],

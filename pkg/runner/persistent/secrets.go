@@ -20,8 +20,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/zalando/go-keyring"
-
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
@@ -88,6 +86,11 @@ type Secrets interface {
 	Delete(account string) error
 }
 
+// KeptIn is where the roster's lines say a stored secret's value and an
+// account's token are kept: the person's keychain, or a remote runhost's
+// store, whose CLI says so.
+var KeptIn = "your keychain"
+
 // KeychainSecrets is the system keychain under Agentry's service. A start
 // with a sealed credential (a headless start a client prepared) reads from
 // it alone, as the model key is read.
@@ -103,7 +106,7 @@ func (KeychainSecrets) Set(account, value string) error {
 	if modelkey.Disabled() {
 		return fmt.Errorf("the system keychain is turned off here (%s), and a stored secret is kept there alone", modelkey.EnvNoKeyring)
 	}
-	if err := keyring.Set(modelkey.Service, account, value); err != nil {
+	if err := modelkey.SetAccount(account, value); err != nil {
 		return fmt.Errorf("keep the secret in the system keychain: %w", err)
 	}
 	return nil
@@ -111,10 +114,7 @@ func (KeychainSecrets) Set(account, value string) error {
 
 // Delete implements Secrets. A missing entry is not an error.
 func (KeychainSecrets) Delete(account string) error {
-	if modelkey.Disabled() {
-		return nil
-	}
-	if err := keyring.Delete(modelkey.Service, account); err != nil && !errors.Is(err, keyring.ErrNotFound) {
+	if err := modelkey.DeleteAccount(account); err != nil {
 		return fmt.Errorf("remove the secret from the system keychain: %w", err)
 	}
 	return nil
@@ -152,7 +152,7 @@ func secretLine(a Agent, c Config, name string) string {
 	default:
 		line += " to an MCP server you add that declares it; no server it has declares it now"
 	}
-	return line + "; its value stays in your keychain, and Agentry masks it wherever it shows it whole"
+	return line + "; its value stays in " + KeptIn + ", and Agentry masks it wherever it shows it whole"
 }
 
 // addSecret records a stored secret in c, on: a new one, or one whose

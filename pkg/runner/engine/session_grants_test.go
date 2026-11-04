@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -75,6 +76,15 @@ func TestASessionRefusesTheWebTools(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(p.RunRoot, "runs", "5e5510")); !os.IsNotExist(err) {
 		t.Fatalf("a refused session left a run directory (%v)", err)
 	}
+
+	// The same when the plan carries the web tools and the run brings none.
+	p2, f2 := sessionFixture(t)
+	happyFake(f2)
+	p2.Plan.Capabilities.WebTools = true
+	var ce *ClassifiedError
+	if _, err := StartSession(context.Background(), f2, p2); !errors.As(err, &ce) || ce.Code != ExitPolicy || !strings.Contains(err.Error(), "web tools do not run in an interactive session") {
+		t.Fatalf("a plan with the web tools: %v", err)
+	}
 }
 
 // TestASessionPermitsTheGatewaysDeclaredServers: a declared MCP server's
@@ -142,7 +152,11 @@ func TestTheProbesListingIsReadStrictly(t *testing.T) {
 	if got, err := parseServedTools([]byte(`{"tools":["a","b"]}` + "\n")); err != nil || !slices.Equal(got, []string{"a", "b"}) {
 		t.Fatalf("a listing: %v, %v", got, err)
 	}
-	for _, bad := range []string{"", "gateway ok", `{"tools":["a"]}` + "\n" + `{"tools":["b"]}`, `{"tools":null}`, `{"names":["a"]}`, `{"tools":[""]}`, `{"tools":["` + strings.Repeat("x", 257) + `"]}`} {
+	// A name of exactly the longest length is a name.
+	if got, err := parseServedTools([]byte(`{"tools":["` + strings.Repeat("x", 256) + `"]}`)); err != nil || len(got) != 1 {
+		t.Fatalf("a name of 256 bytes: %v, %v", got, err)
+	}
+	for _, bad := range []string{`{"tools":["a"],"extra":1}`, "", "gateway ok", `{"tools":["a"]}` + "\n" + `{"tools":["b"]}`, `{"tools":null}`, `{"names":["a"]}`, `{"tools":[""]}`, `{"tools":["` + strings.Repeat("x", 257) + `"]}`} {
 		if _, err := parseServedTools([]byte(bad)); err == nil {
 			t.Errorf("%q was read as a listing", bad)
 		}
@@ -154,6 +168,14 @@ func TestTheProbesListingIsReadStrictly(t *testing.T) {
 	}
 	if b.Bytes() != nil {
 		t.Error("a listing past its bound was kept")
+	}
+	if b.buf.Len() > maxProbeListing {
+		t.Errorf("the probe's output was kept past its bound: %d bytes", b.buf.Len())
+	}
+	// A listing that exactly fills the bound is within it.
+	var exact probeOutput
+	if n, err := exact.Write(make([]byte, maxProbeListing)); n != maxProbeListing || err != nil || exact.Bytes() == nil || len(exact.Bytes()) != maxProbeListing {
+		t.Errorf("a listing of exactly the bound: %d, %v, kept %d", n, err, len(exact.Bytes()))
 	}
 	if got := permitted([]string{"write_report"}, []string{"create_entities", "write_report"}); !slices.Equal(got, []string{"write_report", "create_entities"}) {
 		t.Errorf("permitted = %v", got)

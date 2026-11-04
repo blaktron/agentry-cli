@@ -82,7 +82,7 @@ func runhostScheduleVerb(ctx context.Context, req runhost.Request, in io.Reader,
 		}
 		return 0, fw.Result(list)
 	case len(req.Args) == 2 && req.Args[0] == "remove":
-		info, err := runhostScheduleRemove(req.Args[1])
+		info, err := runhostScheduleRemove(ctx, req.Args[1])
 		if err != nil {
 			return engine.ExitUsage, err
 		}
@@ -179,29 +179,15 @@ func runhostSchedulePut(ctx context.Context, req runhost.Request, in io.Reader, 
 		return engine.ExitCLI, err
 	}
 	conns := connection.Open(home, runhostKeychain{})
-	clients := connection.OpenClients(home, runhostKeychain{})
 	sm := runhostScheduleMeta{Device: j.Device, Entries: h.Entries}
-	for _, raw := range h.Connections {
-		var hd connection.Handed
-		if err := json.Unmarshal(raw, &hd); err != nil {
-			return engine.ExitUsage, fmt.Errorf("a handed connection: %w", err)
-		}
-		k := hd.Record.Key()
-		if k.Ref != meta.Ref || k.Digest != j.Release.Digest {
-			return engine.ExitUsage, fmt.Errorf("a handed connection is %s's, not this schedule's release's", k.Ref)
-		}
-		if _, ok := j.Run.Connections[k.Server]; !ok {
-			return engine.ExitUsage, fmt.Errorf("a handed connection is for %s, which the job does not use", k.Server)
-		}
-		if err := conns.Take(&hd, clients); err != nil {
-			return engine.ExitCLI, fmt.Errorf("keep the connection to %s: %w", k.Server, err)
+	// Each connection the job uses is one the runhost made for itself
+	// (signin.Server.Connect) before the schedule was sent.
+	for server := range j.Run.Connections {
+		k := connection.Key{Ref: meta.Ref, Digest: j.Release.Digest, Server: server}
+		if c, err := conns.Get(k); err != nil || c.Broken != "" {
+			return engine.ExitPolicy, fmt.Errorf("the runhost keeps no working connection to %s for %s: make the schedule again from a device, which signs the runhost in", server, meta.Ref)
 		}
 		sm.Connections = append(sm.Connections, k)
-	}
-	for server := range j.Run.Connections {
-		if !slices.ContainsFunc(sm.Connections, func(k connection.Key) bool { return k.Server == server }) {
-			return engine.ExitUsage, fmt.Errorf("the job uses the connection to %s, which was not handed to the runhost", server)
-		}
 	}
 	sc := schedule.Schedule{Name: h.Name, Ref: meta.Namespace + "/" + meta.Name, Version: meta.Version, Digest: j.Release.Digest, When: when, Created: now.UTC()}
 	ss := runhostScheduleStore()
@@ -303,9 +289,9 @@ func runhostScheduleList() ([]runhost.ScheduleInfo, error) {
 }
 
 // runhostScheduleRemove takes a schedule off the runhost: its entry in the
-// store and every connection no other schedule uses, which are forgotten
-// here and not revoked, the grant being the device's too.
-func runhostScheduleRemove(id string) (runhost.ScheduleInfo, error) {
+// store and every connection no other schedule uses, revoked at the vendor
+// where it offers that, the grant being the runhost's own.
+func runhostScheduleRemove(ctx context.Context, id string) (runhost.ScheduleInfo, error) {
 	ss := runhostScheduleStore()
 	sc, err := ss.Get(id)
 	if err != nil {
@@ -335,9 +321,10 @@ func runhostScheduleRemove(id string) (runhost.ScheduleInfo, error) {
 		}
 		if home, err := runnerHome(); err == nil {
 			conns := connection.Open(home, runhostKeychain{})
+			clients := connection.OpenClients(home, runhostKeychain{})
 			for _, k := range sm.Connections {
 				if !inUse[k] {
-					_ = conns.ForgetHanded(k)
+					_, _ = conns.Remove(ctx, k, vendorHTTP(), clients, "its last schedule on the runhost was removed")
 				}
 			}
 		}
@@ -522,13 +509,13 @@ func runhostScheduledJob(ctx context.Context, sc schedule.Schedule) (*job.Job, [
 		for server, c := range j.Run.Connections {
 			i := slices.IndexFunc(sm.Connections, func(k connection.Key) bool { return k.Server == server })
 			if i < 0 {
-				return nil, nil, engine.ExitPolicy, fmt.Errorf("the runhost was handed no connection to %s: make the schedule again from a device", server)
+				return nil, nil, engine.ExitPolicy, fmt.Errorf("the runhost keeps no connection to %s: make the schedule again from a device", server)
 			}
 			a, _, err := conns.Use(ctx, sm.Connections[i], vendorHTTP(), clients)
 			if err != nil {
 				var broken *connection.BrokenError
 				if errors.As(err, &broken) {
-					return nil, nil, engine.ExitPolicy, fmt.Errorf("the connection to %s no longer works (%s): make the schedule again from a device, which connects it again", server, broken.Reason)
+					return nil, nil, engine.ExitPolicy, fmt.Errorf("the runhost's connection to %s no longer works (%s): make the schedule again from a device, which signs the runhost in again", server, broken.Reason)
 				}
 				return nil, nil, engine.ExitGateway, fmt.Errorf("refresh the connection to %s: %w", server, err)
 			}

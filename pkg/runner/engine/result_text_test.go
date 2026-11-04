@@ -32,6 +32,10 @@ func TestCollectorAssemblesStreamedFinalMessage(t *testing.T) {
 		`{"type":"agent_choice","content":"\n}"}`,
 		`{"type":"message_added"}`,
 		`{"type":"token_usage","usage":{"input_tokens":10,"output_tokens":5,"cost":0}}`,
+		// Tokens add up across requests; the cost is the running total, so
+		// the highest one stands.
+		`{"type":"token_usage","usage":{"input_tokens":7,"output_tokens":3,"cost":0.05}}`,
+		`{"type":"token_usage","usage":{"input_tokens":1,"output_tokens":1,"cost":0.03}}`,
 		`{"type":"stream_stopped","reason":"normal"}`,
 	}, "\n") + "\n"))
 	if want := "{\n  \"tickets\": []\n}"; c.lastText != want {
@@ -43,14 +47,43 @@ func TestCollectorAssemblesStreamedFinalMessage(t *testing.T) {
 	if c.answerInReasoning() {
 		t.Fatal("answerInReasoning, though the answer came after the reasoning")
 	}
-	if c.inTok != 10 || c.outTok != 5 {
-		t.Fatalf("usage = %d/%d", c.inTok, c.outTok)
+	if c.inTok != 18 || c.outTok != 9 || c.costUSD != 0.05 {
+		t.Fatalf("usage = %d/%d at $%v", c.inTok, c.outTok, c.costUSD)
 	}
 
 	// A whole-message shape replaces whatever was streamed before it.
 	c.consume(strings.NewReader(`{"type":"assistant_message","message":{"content":"whole"}}` + "\n"))
 	if c.lastText != "whole" {
 		t.Fatalf("whole message: %q", c.lastText)
+	}
+
+	// A whole message ends the one in progress: chunks after it start afresh.
+	c.consume(strings.NewReader(strings.Join([]string{
+		`{"type":"agent_choice","content":"partial "}`,
+		`{"type":"assistant_message","message":{"content":"whole"}}`,
+		`{"type":"agent_choice","content":" more"}`,
+	}, "\n") + "\n"))
+	if c.lastText != " more" {
+		t.Fatalf("chunks after a whole message: %q", c.lastText)
+	}
+
+	// A usage report ends the message in progress: the chunks after it are a
+	// message of their own.
+	c.consume(strings.NewReader(strings.Join([]string{
+		`{"type":"agent_choice","content":"first message"}`,
+		`{"type":"token_usage","usage":{"input_tokens":1,"output_tokens":1,"cost":0}}`,
+		`{"type":"agent_choice","content":"second "}`,
+		`{"type":"agent_choice","content":"message"}`,
+	}, "\n") + "\n"))
+	if c.lastText != "second message" {
+		t.Fatalf("after a usage report: %q", c.lastText)
+	}
+
+	// A run paid by a person's plan counts tokens and never dollars.
+	paid := &eventCollector{adapter: ad, events: io.Discard, signIn: true}
+	paid.consume(strings.NewReader(`{"type":"token_usage","usage":{"input_tokens":4,"output_tokens":2,"cost":0.05}}` + "\n"))
+	if u := paid.usage(); u.CostUSD != 0 || u.InputTokens != 4 || u.OutputTokens != 2 {
+		t.Fatalf("a plan-paid run's usage = %+v", u)
 	}
 }
 
@@ -127,6 +160,15 @@ func TestCollectorTextThenReasoningIsAnAnswer(t *testing.T) {
 	}, "\n") + "\n"))
 	if c.answerInReasoning() {
 		t.Fatal("text then reasoning read as an answer left in the reasoning")
+	}
+	// Whitespace alone is no answer.
+	w := &eventCollector{adapter: ad, events: io.Discard}
+	w.consume(strings.NewReader(strings.Join([]string{
+		`{"type":"agent_choice","content":"\n  "}`,
+		`{"type":"agent_choice_reasoning","content":"{\"answer\":1}"}`,
+	}, "\n") + "\n"))
+	if !w.answerInReasoning() {
+		t.Fatal("whitespace before the reasoning read as an answer")
 	}
 	c.consume(strings.NewReader(strings.Join([]string{
 		`{"type":"tool_call","tool_call":{"id":"c1","function":{"name":"list_inputs","arguments":"{}"}}}`,
