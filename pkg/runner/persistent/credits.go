@@ -22,7 +22,8 @@ import (
 
 // paysWithCredits says the agent's policy pays with Agentry credits.
 func (s *Supervisor) paysWithCredits() bool {
-	return s.opts.Policy != nil && s.opts.Policy.Model.Provider == policy.ProviderAgentry
+	pol := s.policy()
+	return pol != nil && pol.Model.Provider == policy.ProviderAgentry
 }
 
 // openCredits opens the agent's credits session, when it pays with credits.
@@ -30,21 +31,37 @@ func (s *Supervisor) openCredits(ctx context.Context) error {
 	if !s.paysWithCredits() {
 		return nil
 	}
-	if s.opts.Credits == nil {
-		return engine.Classify(engine.ExitPolicy, receipt.WithReason(errors.New("this agent pays for its model with Agentry credits (model provider agentry), and this computer is not signed in to the registry its policy names: agentry login"),
-			receipt.ReasonSignInMissing, ""))
-	}
-	o, err := s.opts.Credits.Open(ctx, inference.PurposeAgent)
+	g, err := openCreditsWith(ctx, s.creditsClient())
 	if err != nil {
-		if errors.Is(err, inference.ErrNoCredits) {
-			return engine.Classify(engine.ExitPolicy, receipt.WithReason(err, receipt.ReasonOutOfCredits, ""))
-		}
-		return engine.Classify(engine.ExitPolicy, err)
+		return err
 	}
 	s.mu.Lock()
-	s.credits = &engine.InferenceGrant{Session: o.Session.ID, Token: o.Token, Model: o.Model, RenewEvery: o.RenewEvery}
+	s.credits = g
 	s.mu.Unlock()
 	return nil
+}
+
+// openCreditsWith opens a credits session with client, for an agent.
+func openCreditsWith(ctx context.Context, client *inference.Client) (*engine.InferenceGrant, error) {
+	if client == nil {
+		return nil, engine.Classify(engine.ExitPolicy, receipt.WithReason(errors.New("this agent pays for its model with Agentry credits (model provider agentry), and this computer is not signed in to the registry its policy names: agentry login"),
+			receipt.ReasonSignInMissing, ""))
+	}
+	o, err := client.Open(ctx, inference.PurposeAgent)
+	if err != nil {
+		if errors.Is(err, inference.ErrNoCredits) {
+			return nil, engine.Classify(engine.ExitPolicy, receipt.WithReason(err, receipt.ReasonOutOfCredits, ""))
+		}
+		return nil, engine.Classify(engine.ExitPolicy, err)
+	}
+	return &engine.InferenceGrant{Session: o.Session.ID, Token: o.Token, Model: o.Model, RenewEvery: o.RenewEvery}, nil
+}
+
+// creditsClient is the client the agent's credits session is kept with.
+func (s *Supervisor) creditsClient() *inference.Client {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.creditsCl
 }
 
 // creditsGrant is the grant a segment is handed: the session's token,
@@ -89,8 +106,11 @@ func (s *Supervisor) startCreditsRenewal() {
 				return
 			case <-t.C:
 			}
-			id := s.creditsGrant().Session
-			_, err := s.opts.Credits.Renew(ctx, id)
+			g := s.creditsGrant()
+			if g == nil {
+				return
+			}
+			_, err := s.creditsClient().Renew(ctx, g.Session)
 			switch {
 			case err == nil:
 				said, wait = false, every
@@ -114,13 +134,19 @@ func (s *Supervisor) startCreditsRenewal() {
 }
 
 // reopenCredits opens a new credits session for the agent and starts the
-// next segment on its token.
+// next segment on its token. It waits for the turn as long as its renewal
+// runs, and does nothing once the agent no longer pays with credits.
 func (s *Supervisor) reopenCredits(ctx context.Context) error {
 	if err := s.openCredits(ctx); err != nil {
 		return err
 	}
-	s.turn.Lock()
+	if !s.waitTurn(ctx) {
+		return ctx.Err()
+	}
 	defer s.turn.Unlock()
+	if !s.paysWithCredits() {
+		return nil
+	}
 	return s.nextSegmentFor(ctx, "The Agentry credits session was opened again: the agent restarts on it, and the conversation continues")
 }
 
@@ -135,19 +161,41 @@ func (s *Supervisor) noteCredits(text string) {
 // its last segment has ended, so every token is in the session's count.
 func (s *Supervisor) stopCredits() {
 	s.mu.Lock()
-	cancel, done, g := s.creditsCancel, s.creditsDone, s.credits
-	s.creditsCancel, s.creditsDone = nil, nil
+	cancel, done, g, client := s.creditsCancel, s.creditsDone, s.credits, s.creditsCl
+	s.creditsCancel, s.creditsDone, s.credits = nil, nil, nil
 	s.mu.Unlock()
 	if cancel != nil {
 		cancel()
 		<-done
 	}
-	if g == nil || s.opts.Credits == nil {
+	s.endCredits(client, g)
+}
+
+// endCreditsLater stops the renewal of a session the agent no longer uses
+// and ends it, without waiting: the caller may hold the turn, which a
+// renewal reopening its session waits for.
+func (s *Supervisor) endCreditsLater(client *inference.Client, g *engine.InferenceGrant) {
+	s.mu.Lock()
+	cancel, done := s.creditsCancel, s.creditsDone
+	s.creditsCancel, s.creditsDone = nil, nil
+	s.mu.Unlock()
+	go func() {
+		if cancel != nil {
+			cancel()
+			<-done
+		}
+		s.endCredits(client, g)
+	}()
+}
+
+// endCredits ends credits session g with client.
+func (s *Supervisor) endCredits(client *inference.Client, g *engine.InferenceGrant) {
+	if g == nil || client == nil {
 		return
 	}
 	ctx, cancelEnd := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancelEnd()
-	if _, err := s.opts.Credits.End(ctx, g.Session); err != nil && s.opts.Stderr != nil {
+	if _, err := client.End(ctx, g.Session); err != nil && s.opts.Stderr != nil {
 		_, _ = fmt.Fprintf(s.opts.Stderr, "agentry: could not end the agent's Agentry credits session (it lapses within the hour): %v\n", err)
 	}
 }

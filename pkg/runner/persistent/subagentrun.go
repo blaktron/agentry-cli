@@ -429,9 +429,10 @@ func (s *Supervisor) stageSubagentFiles(ctx context.Context, cfg Config, in stri
 	}
 	if len(data) > 0 {
 		var buf bytes.Buffer
-		image := s.opts.Policy.RunnerImageTag(runnerimage.ContentVersion())
+		pol := s.policy()
+		image := pol.RunnerImageTag(runnerimage.ContentVersion())
 		vol := DataVolumeIn(s.opts.Home, s.opts.Agent.Name)
-		if err := engine.ExportVolumePaths(ctx, s.opts.Docker, image, vol, data, s.opts.Policy.Docker.Runtime, s.opts.Policy.Docker.Limits, &limitedWriter{w: &buf, n: maxSubagentInputBytes - total}); err != nil {
+		if err := engine.ExportVolumePaths(ctx, s.opts.Docker, image, vol, data, pol.Docker.Runtime, pol.Docker.Limits, &limitedWriter{w: &buf, n: maxSubagentInputBytes - total}); err != nil {
 			return nil, fmt.Errorf("your own files: %w", err)
 		}
 		got, err := untarRegular(&buf, data, name)
@@ -645,9 +646,10 @@ func (s *Supervisor) copyDeliverables(ctx context.Context, id string, env *recei
 	if err := tw.Close(); err != nil || len(names) == 0 {
 		return nil, err
 	}
-	image := s.opts.Policy.RunnerImageTag(runnerimage.ContentVersion())
+	pol := s.policy()
+	image := pol.RunnerImageTag(runnerimage.ContentVersion())
 	vol := DataVolumeIn(s.opts.Home, s.opts.Agent.Name)
-	if err := engine.ImportIntoVolume(ctx, s.opts.Docker, image, vol, subagentsData, id, &buf, s.opts.Policy.Docker.Runtime, s.opts.Policy.Docker.Limits); err != nil {
+	if err := engine.ImportIntoVolume(ctx, s.opts.Docker, image, vol, subagentsData, id, &buf, pol.Docker.Runtime, pol.Docker.Limits); err != nil {
 		return nil, err
 	}
 	return names, nil

@@ -571,14 +571,15 @@ func (s *Supervisor) compactLocked(ctx context.Context, trigger string) (Compact
 // (every one but docker-agent, whose harness clears them itself), once its
 // prompt cache has expired.
 func (s *Supervisor) coldDue() bool {
-	if s.adapter == adapter.DefaultName {
+	harness := s.adapterName()
+	if harness == adapter.DefaultName {
 		return false
 	}
 	provider := ""
-	if s.opts.Policy != nil {
-		provider = s.opts.Policy.Model.Provider
+	if pol := s.policy(); pol != nil {
+		provider = pol.Model.Provider
 	}
-	after := adapter.ColdAfter(s.adapter, provider)
+	after := adapter.ColdAfter(harness, provider)
 	now := s.now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -825,7 +826,7 @@ func (s *Supervisor) swapInSegment(ctx context.Context, handoff string) error {
 	_ = appendEntry(s.opts.Home, s.opts.Agent.Name, Entry{Segment: segment, Run: runID, Resumed: &resumed,
 		Event: session.Event{Kind: KindConversationStart, Time: time.Now().UTC(), Text: compactionReason}})
 	if err := s.updateConfig(func(c *Config) error {
-		c.Conversation = &Conversation{Adapter: s.adapter, ID: id}
+		c.Conversation = &Conversation{Adapter: s.adapterName(), ID: id}
 		// A new conversation has been given nothing yet.
 		c.PersonaGiven = ""
 		return nil
@@ -895,7 +896,8 @@ func (s *Supervisor) memoryStat(ctx context.Context) (int, string) {
 		}
 		return s.opts.CountFacts(ctx), digest
 	}
-	if s.opts.Docker == nil || s.opts.Policy == nil {
+	pol := s.policy()
+	if s.opts.Docker == nil || pol == nil {
 		return -1, ""
 	}
 	volume := MemoryVolumeIn(s.opts.Home, s.opts.Agent.Name)
@@ -904,8 +906,8 @@ func (s *Supervisor) memoryStat(ctx context.Context) (int, string) {
 	cctx, cancel := context.WithTimeout(ctx, factCountWait)
 	defer cancel()
 	go func() {
-		image := s.opts.Policy.RunnerImageTag(runnerimage.ContentVersion())
-		err := engine.ExportVolume(cctx, s.opts.Docker, image, volume, s.opts.Policy.Docker.Runtime, s.opts.Policy.Docker.Limits, pw)
+		image := pol.RunnerImageTag(runnerimage.ContentVersion())
+		err := engine.ExportVolume(cctx, s.opts.Docker, image, volume, pol.Docker.Runtime, pol.Docker.Limits, pw)
 		_ = pw.CloseWithError(err)
 		done <- err
 	}()
