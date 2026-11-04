@@ -5,6 +5,7 @@
 package adapter
 
 import (
+	"bytes"
 	"reflect"
 	"strings"
 	"testing"
@@ -319,6 +320,64 @@ func TestDockerAgentCompileTellsTheHarnessTheContextWindow(t *testing.T) {
 		got, _ := doc.Models["main"]["provider_opts"].(map[string]any)
 		if !reflect.DeepEqual(got, c.want) {
 			t.Errorf("%s: provider_opts %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// docker-agent's own limits that need no window: every result is cut, middle
+// out, past twice the page (so only a result the tools server did not page
+// is ever cut), and on an endpoint of the person's own the older results
+// give way past half the window (64k tokens with none) and the conversation
+// is compacted at 70% of it. A hosted model keeps the harness's own
+// threshold and every older result.
+func TestDockerAgentCompileCapsToolResultsBesideTheWindow(t *testing.T) {
+	ad, err := Get(DefaultName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	own := policy.Model{Provider: "custom", Name: "qwen3.8-flash", APIKeyEnv: "CUSTOM_API_KEY", BaseURL: "http://127.0.0.1:1234/v1", ProxyAllow: []string{"127.0.0.1:1234"}}
+	ownWindow := own
+	ownWindow.ContextWindow = 32768
+	cases := []struct {
+		name  string
+		model policy.Model
+		want  map[string]any
+	}{
+		{"hosted", policy.Model{Provider: "anthropic", Name: "claude-sonnet-5-5", APIKeyEnv: "MODEL_KEY", ProxyAllow: []string{"x:443"}},
+			map[string]any{"max_tool_result_tokens": 24576}},
+		{"own, with a window", ownWindow,
+			map[string]any{"max_tool_result_tokens": 8192, "max_old_tool_call_tokens": 16384, "compaction_threshold": 0.7}},
+		{"own, no window", own,
+			map[string]any{"max_tool_result_tokens": 16384, "max_old_tool_call_tokens": 65536, "compaction_threshold": 0.7}},
+	}
+	for _, c := range cases {
+		in := testInput()
+		in.Model = c.model
+		res, err := ad.Compile(in)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		var doc struct {
+			Agents map[string]map[string]any `yaml:"agents"`
+		}
+		if err := yaml.Unmarshal(res.Files["agent.yaml"], &doc); err != nil {
+			t.Fatal(err)
+		}
+		got := map[string]any{}
+		for _, k := range []string{"max_tool_result_tokens", "max_old_tool_call_tokens", "compaction_threshold"} {
+			if v, ok := doc.Agents["root"][k]; ok {
+				got[k] = v
+			}
+		}
+		if !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: root agent's limits %v, want %v", c.name, got, c.want)
+		}
+		if limit, _ := got["max_tool_result_tokens"].(int); int64(limit)*bytesPerToken < 2*PageBudget(DefaultName, c.model).Bytes {
+			t.Errorf("%s: max_tool_result_tokens %d could cut one of the tools server's pages", c.name, limit)
+		}
+		again, err := ad.Compile(in)
+		if err != nil || !bytes.Equal(again.Files["agent.yaml"], res.Files["agent.yaml"]) {
+			t.Errorf("%s: a second compile renders other bytes (%v)", c.name, err)
 		}
 	}
 }
