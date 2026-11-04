@@ -182,7 +182,7 @@ func messengerLine(k messenger.Kind, m MessengerAccount) string {
 	return "Takes your messages on " + k.Title + ", through " + account + ", as turns of its conversation, and answers you there: " + carried +
 		". Only your own " + k.Title + " account reaches it, once you pair it with a code Agentry shows; anyone else who writes to it is ignored, never answered. " +
 		"Nothing is approved from " + k.Title + ": what the agent asks your agreement to waits for you in Agentry. " +
-		"The " + k.Account + "'s credential stays in your keychain, and Agentry hands it to one container alone, of its own, which reaches " + strings.Join(hostNames(hosts), ", ") + " and nothing else; the agent is never given it"
+		"The " + k.Account + "'s credential stays in " + KeptIn + ", and Agentry hands it to one container alone, of its own, which reaches " + strings.Join(hostNames(hosts), ", ") + " and nothing else; the agent is never given it"
 }
 
 // hostNames are host:port pairs without their ports.

@@ -22,6 +22,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/persistent"
 	"github.com/blaktron/agentry-cli/pkg/tui"
+	"github.com/blaktron/agentry-cli/runnerimage/messenger"
 )
 
 // Persistent agents on a remote runhost. The agents run on the runhost under
@@ -70,12 +71,12 @@ func runhostAgentRun(ctx context.Context, sub string, args []string, in io.Reade
 	c.Stdout = streamWriter{fw: fw, stream: remote.AgentStdout}
 	c.Stderr = streamWriter{fw: fw, stream: remote.AgentStderr}
 	// Only attach reads the device's input and writes events on descriptor
-	// 3, and secret and configure the value the device read for them on
-	// stdin. Every other command gets neither: a supervisor that start
-	// detaches would inherit them, and the answer would not end while it
-	// runs.
+	// 3, and secret, configure and messenger add the value the device read
+	// for them on stdin. Every other command gets neither: a supervisor that
+	// start detaches would inherit them, and the answer would not end while
+	// it runs.
 	var werr error
-	if sub == "secret" || sub == "configure" {
+	if sub == "secret" || sub == "configure" || isMessengerAdd(sub, args) {
 		c.Stdin = io.LimitReader(in, persistent.MaxSecretBytes+3)
 	}
 	if sub == "attach" {
@@ -338,7 +339,9 @@ func dialAgentRunhost(cmd *cobra.Command, name string) (*runhost.Client, *runhos
 // computer, and the command then runs again with --yes.
 func remoteAgentCommand(cmd *cobra.Command, on, sub string, args []string) error {
 	fwd := forwardedArgs(cmd, args)
-	if err := remote.CheckAgentArgs(sub, fwd); err != nil {
+	// A Matrix account's --user stays here: it signs in on this device.
+	_, sent := messengerUser(sub, fwd)
+	if err := remote.CheckAgentArgs(sub, sent); err != nil {
 		return engine.Classify(engine.ExitUsage, err)
 	}
 	c, rec, err := dialAgentRunhost(cmd, on)
@@ -346,7 +349,7 @@ func remoteAgentCommand(cmd *cobra.Command, on, sub string, args []string) error
 		return err
 	}
 	defer func() { _ = c.Close() }()
-	value, err := runhostAgentValue(cmd, rec.Name, sub, args, fwd)
+	value, fwd, err := runhostAgentValue(cmd, rec.Name, sub, args, fwd)
 	if err != nil {
 		return err
 	}
@@ -435,6 +438,15 @@ func thisMachine() string {
 	return "this computer"
 }
 
+// yourMachine is how a message the person reads elsewhere names the
+// machine the CLI runs on.
+func yourMachine() string {
+	if onRunhostServer() {
+		return "your runhost"
+	}
+	return "your computer"
+}
+
 // onThisRunhost is what a hint the agent commands print adds on a runhost:
 // the device runs the next command with --on.
 func onThisRunhost() string {
@@ -444,17 +456,83 @@ func onThisRunhost() string {
 	return ""
 }
 
+// isMessengerAdd says sub and args are messenger add, the one messenger
+// subcommand that reads a credential.
+func isMessengerAdd(sub string, args []string) bool {
+	return sub == "messenger" && len(args) > 0 && args[0] == "add"
+}
+
+// messengerUser is messenger add's --user among fwd, and fwd without it:
+// any other command's fwd as it is.
+func messengerUser(sub string, fwd []string) (string, []string) {
+	if sub != "messenger" {
+		return "", fwd
+	}
+	var user string
+	rest := make([]string, 0, len(fwd))
+	for _, a := range fwd {
+		if v, ok := strings.CutPrefix(a, "--"+remote.MessengerUserFlag+"="); ok {
+			user = v
+			continue
+		}
+		rest = append(rest, a)
+	}
+	return user, rest
+}
+
+// flagValue is the value of --name among fwd, as forwardedArgs writes it.
+func flagValue(fwd []string, name string) string {
+	for _, a := range fwd {
+		if v, ok := strings.CutPrefix(a, "--"+name+"="); ok {
+			return v
+		}
+	}
+	return ""
+}
+
 // runhostAgentValue is what a command that keeps a value on the runhost is
-// sent: a stored secret's (secret set) or a git host account's token
-// (configure --account), read here as the command reads it on a computer,
-// after the person agrees to its being kept on the runhost, encrypted in
-// its store. Any other command is sent nothing.
-func runhostAgentValue(cmd *cobra.Command, runhostName, sub string, args, fwd []string) (string, error) {
+// sent, and the arguments it is sent with: a stored secret's (secret set),
+// a git host account's token (configure --account) or a messenger
+// account's credential (messenger add), read here as the command reads it
+// on a computer, after the person agrees to its being kept on the runhost,
+// encrypted in its store. A Matrix account's password signs in here, and
+// the runhost is sent the session's access token without --user. Any other
+// command is sent nothing.
+func runhostAgentValue(cmd *cobra.Command, runhostName, sub string, args, fwd []string) (string, []string, error) {
 	var what string
 	switch {
+	case isMessengerAdd(sub, args):
+		if len(args) < 3 {
+			return "", fwd, nil
+		}
+		k, ok := messenger.Lookup(args[2])
+		if !ok {
+			return "", fwd, nil
+		}
+		user, rest := messengerUser(sub, fwd)
+		server := flagValue(rest, "homeserver")
+		if user != "" {
+			if !k.NamesServer {
+				return "", fwd, engine.Classify(engine.ExitUsage, fmt.Errorf("--homeserver and --user are for a Matrix account, not %s", k.Title))
+			}
+			var err error
+			if server, err = checkHomeserver(server); err != nil {
+				return "", fwd, engine.Classify(engine.ExitUsage, err)
+			}
+		}
+		// Agreed to first: a Matrix account's sign-in opens a session on
+		// its homeserver, which a refusal would leave behind.
+		if err := agreeToKeepOnRunhost(cmd, runhostName, "the "+k.Title+" "+k.Account+"'s credential", rest); err != nil {
+			return "", fwd, err
+		}
+		v, err := readMessengerCredential(cmd, k, server, user)
+		if err != nil {
+			return "", fwd, engine.Classify(engine.ExitUsage, err)
+		}
+		return v, rest, nil
 	case sub == "secret" && len(args) >= 1 && args[0] == "set":
 		if len(args) < 3 {
-			return "", nil
+			return "", fwd, nil
 		}
 		what = "the secret " + args[2]
 	case sub == "configure" && slices.ContainsFunc(fwd, func(a string) bool { return strings.HasPrefix(a, "--account=") }):
@@ -464,24 +542,34 @@ func runhostAgentValue(cmd *cobra.Command, runhostName, sub string, args, fwd []
 	case sub == "configure" && slices.ContainsFunc(fwd, func(a string) bool { return strings.HasPrefix(a, "--calendar-feed=") }):
 		what = "the calendar's address"
 	default:
-		return "", nil
+		return "", fwd, nil
 	}
 	v, err := readSecretValue(cmd, "Value of "+what, what)
 	if err != nil {
-		return "", engine.Classify(engine.ExitUsage, err)
+		return "", fwd, engine.Classify(engine.ExitUsage, err)
 	}
-	if !slices.Contains(fwd, "--yes=true") && !slices.Contains(fwd, "--yes") {
-		ask := terminalAsker(cmd)
-		if ask == nil {
-			return "", engine.Classify(engine.ExitPolicy, fmt.Errorf("%s would be kept on runhost %s, and no one is at a terminal to agree: pass --yes", what, runhostName))
-		}
-		ok, err := ask.Confirm(fmt.Sprintf("Keep %s on runhost %s, encrypted in its store, for the agent that runs there?", what, runhostName), false)
-		if err != nil {
-			return "", err
-		}
-		if !ok {
-			return "", engine.Classify(engine.ExitPolicy, errors.New("nothing was kept"))
-		}
+	if err := agreeToKeepOnRunhost(cmd, runhostName, what, fwd); err != nil {
+		return "", fwd, err
 	}
-	return v, nil
+	return v, fwd, nil
+}
+
+// agreeToKeepOnRunhost asks the person to agree to keeping what on the
+// runhost, encrypted in its store, unless fwd carries --yes.
+func agreeToKeepOnRunhost(cmd *cobra.Command, runhostName, what string, fwd []string) error {
+	if slices.Contains(fwd, "--yes=true") || slices.Contains(fwd, "--yes") {
+		return nil
+	}
+	ask := terminalAsker(cmd)
+	if ask == nil {
+		return engine.Classify(engine.ExitPolicy, fmt.Errorf("%s would be kept on runhost %s, and no one is at a terminal to agree: pass --yes", what, runhostName))
+	}
+	ok, err := ask.Confirm(fmt.Sprintf("Keep %s on runhost %s, encrypted in its store, for the agent that runs there?", what, runhostName), false)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return engine.Classify(engine.ExitPolicy, errors.New("nothing was kept"))
+	}
+	return nil
 }

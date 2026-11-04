@@ -6,11 +6,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
+
+	"github.com/blaktron/agentry-cli/runnerimage/netaddr"
 )
 
 // The HTTP side every client shares: one transport through the relay, and
@@ -39,6 +44,22 @@ func newHTTPClient(proxy string, header time.Duration) (*http.Client, error) {
 			return nil, fmt.Errorf("the relay's address %q is not an http:// proxy", proxy)
 		}
 		tr.Proxy = http.ProxyURL(u)
+	} else {
+		// Without the relay (the CLI checking a credential, which on a
+		// remote runhost is the server itself), the client dials what the
+		// relay would: public addresses, and loopback for a server on this
+		// machine, whose certificate must still name the host asked for.
+		d := &net.Dialer{Timeout: callTimeout, Control: func(_, address string, _ syscall.RawConn) error {
+			ap, err := netip.ParseAddrPort(address)
+			if err != nil {
+				return err
+			}
+			if a := ap.Addr().Unmap(); !a.IsLoopback() && !netaddr.Public(a) {
+				return fmt.Errorf("%s is not a public address, and a messenger's service is reached on public addresses alone", a)
+			}
+			return nil
+		}}
+		tr.DialContext = d.DialContext
 	}
 	return &http.Client{Transport: tr}, nil
 }

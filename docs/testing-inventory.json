@@ -1435,12 +1435,15 @@
             "TestTheAgentSocketIsRelayedToTheDevice",
             "TestARunhostKeepsTheModelItsAgentsRunOn",
             "TestARunhostKeepsItsAgentsSecretsInItsStore",
-            "TestAStoredSecretsValueTravelsToTheRunhostsSecretSet"
+            "TestAStoredSecretsValueTravelsToTheRunhostsSecretSet",
+            "TestAMessengersCredentialTravelsToTheRunhostsMessengerAdd",
+            "TestARunhostKeepsAMessengersCredentialInItsStore"
           ],
           "fuzz": [],
           "benchmarks": [],
           "fixtureEntryPoint": false,
           "dependencyHints": [
+            "HTTP transport",
             "source/file contract",
             "explicit skip"
           ]
@@ -10126,6 +10129,16 @@
             "TestSplitAsWritesEachServicesFormat",
             "TestSplitAsBoundsEveryFormatsParts",
             "TestHTMLLineBreaksLeavesPreformattedBlocks"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
+          "path": "runnerimage/messenger/httpapi_test.go",
+          "tests": [
+            "TestADirectCallDialsPublicAddressesAlone"
           ],
           "fuzz": [],
           "benchmarks": [],
