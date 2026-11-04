@@ -52,8 +52,9 @@ type ThemeSource string
 // What can choose a run's report design.
 const (
 	ThemeFromFlag         ThemeSource = "the --report-theme flag"
-	ThemeFromDesignFlag   ThemeSource = "the --report-design flag"
-	ThemeFromAccount      ThemeSource = "the account's report design"
+	ThemeFromDesignFlag   ThemeSource = "the --report-design flag, a file"
+	ThemeFromLibraryFlag  ThemeSource = "the --report-design flag, a design of the account's library"
+	ThemeFromAccount      ThemeSource = "the account's default report design"
 	ThemeFromConfig       ThemeSource = "report.theme in the CLI's config"
 	ThemeFromDesignConfig ThemeSource = "report.design in the CLI's config"
 	ThemeFromDefault      ThemeSource = "the default"

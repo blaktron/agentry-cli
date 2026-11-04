@@ -825,7 +825,7 @@ func TestReportDesignImages(t *testing.T) {
 		t.Errorf("a signed-in run's design = %+v (%v), want the default with its images", choice.From, err)
 	}
 	named, err := chooseReportTheme(t.Context(), reportFlags{design: "House"}, cliConfig{}, readAccountTheme(reg.URL), io.Discard)
-	if err != nil || named.From != engine.ThemeFromDesignFlag || !bytes.Equal(named.Design, choice.Design) {
+	if err != nil || named.From != engine.ThemeFromLibraryFlag || !bytes.Equal(named.Design, choice.Design) {
 		t.Errorf("--report-design House = %+v (%v)", named.From, err)
 	}
 

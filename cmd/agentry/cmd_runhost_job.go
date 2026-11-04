@@ -474,10 +474,10 @@ func runhostRunArgs(j *job.Job, st runhostStaged) []string {
 		// The design is the service's, read from the account, not the
 		// person's typing at this host: one this CLI cannot draw (a
 		// theme document of another version) is a warning, and the run
-		// goes on in the default, since how a PDF looks is no reason to
-		// stop a hosted run.
+		// goes on in what this host's own configuration names, else
+		// Plain, since how a PDF looks is no reason to stop a hosted run.
 		if _, err := readDesignFile(file(j.Run.ReportDesign)); err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "agentry: warning: the job's report design is not one this CLI can draw (%v); the run's PDFs take the default\n", err)
+			_, _ = fmt.Fprintf(os.Stderr, "agentry: warning: the job's report design is not one this CLI can draw (%v); the run's PDFs take this host's configured design, or Plain\n", err)
 		} else {
 			args = append(args, "--report-design", file(j.Run.ReportDesign))
 		}

@@ -590,10 +590,11 @@ func inkOutside(img image.Image, w int) (int, int, bool) {
 const thumbnailPPI = 60
 
 // TestThumbnailsAreTheTemplates: each built-in theme's thumbnails in
-// pkg/reportthumbs are the first page of the sample report, and its cover
-// page, as this template and the pinned image draw them, pixel for pixel.
-// The cover is drawn with the design's cover set to always, so a theme
-// whose cover waits for a long report has one too. AGENTRY_UPDATE_THUMBNAILS=1
+// pkg/reportthumbs are the first body page of the sample report (the page
+// after the cover, where the theme draws one for it) and its cover page,
+// as this template and the pinned image draw them, pixel for pixel. The
+// cover is drawn with the design's cover set to always, so a theme whose
+// cover waits for a long report has one too. AGENTRY_UPDATE_THUMBNAILS=1
 // writes them instead.
 func TestThumbnailsAreTheTemplates(t *testing.T) {
 	typst := realTypst(t)
@@ -608,12 +609,15 @@ func TestThumbnailsAreTheTemplates(t *testing.T) {
 			t.Fatal(err)
 		}
 		d, _ := reportdesign.Builtin(id)
-		d.Cover.When = "always"
-		for suffix, render := range map[string][]byte{"": doc, "-cover": d.Canonical()} {
-			page := renderPNGsAt(t, typst, render, FormReport, string(sample), thumbnailPPI, true)[0]
-			file := filepath.Join("..", "..", "pkg", "reportthumbs", id+suffix+".png")
-			thumbnailHeld(t, id+suffix, file, page, update)
+		pages := renderPNGsAt(t, typst, doc, FormReport, string(sample), thumbnailPPI, false)
+		first := pages[0]
+		if coverDrawn(d, FormReport, reportMarkdown(string(sample), FormReport)) {
+			first = pages[1]
 		}
+		thumbnailHeld(t, id, filepath.Join("..", "..", "pkg", "reportthumbs", id+".png"), first, update)
+		d.Cover.When = "always"
+		cover := renderPNGsAt(t, typst, d.Canonical(), FormReport, string(sample), thumbnailPPI, true)[0]
+		thumbnailHeld(t, id+"-cover", filepath.Join("..", "..", "pkg", "reportthumbs", id+"-cover.png"), cover, update)
 	}
 }
 

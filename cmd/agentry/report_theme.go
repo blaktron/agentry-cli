@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -102,7 +103,7 @@ func chooseReportTheme(ctx context.Context, flags reportFlags, cfg cliConfig, ac
 		if _, err := reportdesign.Parse(doc); err != nil {
 			return usage("--report-design %q: your account's design is not one this CLI can draw (%v); update agentry", flags.design, err)
 		}
-		return engine.ReportTheme{Design: doc, From: engine.ThemeFromDesignFlag}, nil
+		return engine.ReportTheme{Design: doc, From: engine.ThemeFromLibraryFlag}, nil
 	case flags.theme != "":
 		if !toolsrv.IsBuiltinTheme(flags.theme) {
 			return usage("--report-theme %q is not a report theme (they are: %s)", flags.theme, themes)
@@ -252,8 +253,8 @@ type libraryRecord struct {
 	Design         json.RawMessage `json:"design"`
 }
 
-// errNoLibrary is a registry from before the library: nothing is chosen
-// there.
+// errNoLibrary is a registry that serves no library route: nothing is
+// chosen there.
 var errNoLibrary = errors.New("this registry keeps no report design library")
 
 // call sends one request and answers the body of a 2xx, or the problem.
@@ -310,7 +311,7 @@ func (l *designLibrary) list(ctx context.Context) (libraryList, error) {
 
 // get is one design by id, with its images when assets is set.
 func (l *designLibrary) get(ctx context.Context, id string, assets bool) (libraryRecord, error) {
-	path := "/" + id
+	path := "/" + url.PathEscape(id)
 	if assets {
 		path += "?include=assets"
 	}
@@ -346,7 +347,7 @@ func (l *designLibrary) create(ctx context.Context, doc []byte, dflt bool) (libr
 // update replaces a design's document; the images stay unless the
 // document carries them.
 func (l *designLibrary) update(ctx context.Context, id string, doc []byte) (libraryRecord, error) {
-	_, out, err := l.call(ctx, http.MethodPut, "/"+id+"?include=assets", map[string]any{"design": json.RawMessage(doc)}, "save your report design")
+	_, out, err := l.call(ctx, http.MethodPut, "/"+url.PathEscape(id)+"?include=assets", map[string]any{"design": json.RawMessage(doc)}, "save your report design")
 	if err != nil {
 		return libraryRecord{}, err
 	}
@@ -359,7 +360,7 @@ func (l *designLibrary) update(ctx context.Context, id string, doc []byte) (libr
 
 // remove deletes a design, its images included.
 func (l *designLibrary) remove(ctx context.Context, id string) error {
-	_, _, err := l.call(ctx, http.MethodDelete, "/"+id, nil, "delete your report design")
+	_, _, err := l.call(ctx, http.MethodDelete, "/"+url.PathEscape(id), nil, "delete your report design")
 	return err
 }
 
@@ -432,7 +433,7 @@ func findDesign(list libraryList, ref string) (librarySummary, error) {
 }
 
 // Default is the account's default design with its images, or nil when
-// the account has none. A registry from before the library is none too.
+// the account has none, or the registry serves no library.
 func (l *designLibrary) Default(ctx context.Context) ([]byte, error) {
 	list, err := l.list(ctx)
 	if errors.Is(err, errNoLibrary) {

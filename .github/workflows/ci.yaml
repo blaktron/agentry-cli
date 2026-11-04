@@ -253,9 +253,11 @@ jobs:
   # pull request; then its renderer, fonts and packages render the tests that
   # need the real Typst (raw Typst is text, links are http or mail, only
   # local images are drawn, the PDF is tagged with every script, every report
-  # design theme renders in every form, the image carries every family
-  # pkg/reportdesign names, and pkg/reportthumbs' thumbnails are this
-  # template's render), which may not skip here.
+  # design theme renders in every form, the header, the slots and the cover
+  # styles draw as the design says, the image carries every family
+  # pkg/reportdesign names, pkg/reportthumbs' thumbnails are this template's
+  # render, and the themes a version-2 document could name keep their look),
+  # which may not skip here.
   typst-image:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, linux, x64]
@@ -276,7 +278,7 @@ jobs:
       - name: export_pdf renders with the real Typst
         env:
           AGENTRY_TYPST_REQUIRED: "1"
-        run: AGENTRY_TYPST_DIR="$RUNNER_TEMP/typst" go test -count=1 ./runnerimage/toolsrv/ -run 'TestRawTypstIsText|TestLinksAreHttpOrMail|TestRealRender|TestTheImageCarriesEveryDesignFamily|TestThumbnailsAreTheTemplates' -v
+        run: AGENTRY_TYPST_DIR="$RUNNER_TEMP/typst" go test -count=1 ./runnerimage/toolsrv/ -run 'TestRawTypstIsText|TestLinksAreHttpOrMail|TestRealRender|TestTheImageCarriesEveryDesignFamily|TestThumbnailsAreTheTemplates|TestTheVersion2LookHolds' -v
 
   # grep and glob's ripgrep: the runner image copies it from agentry-ripgrep
   # by digest, so the pin must

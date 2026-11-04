@@ -79,7 +79,7 @@ func TestChooseReportTheme(t *testing.T) {
 		{"nothing set", reportFlags{}, cliConfig{}, nil, engine.ReportTheme{Name: "plain", From: engine.ThemeFromDefault}, ""},
 		{"the theme flag wins", reportFlags{theme: "classic"}, conf("modern"), account(mine, nil), engine.ReportTheme{Name: "classic", From: engine.ThemeFromFlag}, ""},
 		{"a design file wins", reportFlags{design: houseFile}, conf("modern"), account(mine, nil), engine.ReportTheme{Design: house, From: engine.ThemeFromDesignFlag}, ""},
-		{"a design by name", reportFlags{design: "House"}, conf("modern"), account(mine, nil), engine.ReportTheme{Design: house, From: engine.ThemeFromDesignFlag}, ""},
+		{"a design by name", reportFlags{design: "House"}, conf("modern"), account(mine, nil), engine.ReportTheme{Design: house, From: engine.ThemeFromLibraryFlag}, ""},
 		{"the account's default over the config", reportFlags{}, conf("modern"), account(mine, nil), engine.ReportTheme{Design: mine, From: engine.ThemeFromAccount}, ""},
 		{"no default is not plain", reportFlags{}, conf("technical"), account(nil, nil), engine.ReportTheme{Name: "technical", From: engine.ThemeFromConfig}, ""},
 		{"a design file in the config", reportFlags{}, cliConfig{Report: reportConfig{Design: houseFile}}, nil, engine.ReportTheme{Design: house, From: engine.ThemeFromDesignConfig}, ""},

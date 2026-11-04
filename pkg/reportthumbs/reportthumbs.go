@@ -1,6 +1,7 @@
 // Package reportthumbs holds two thumbnails of each built-in report theme:
-// the first page of one sample report (runnerimage/toolsrv/testdata/pdf/
-// thumbnail.md) and its cover page, rendered by the runner's own template
+// the first body page of one sample report (runnerimage/toolsrv/testdata/pdf/
+// thumbnail.md), the page after the cover where the theme draws one for
+// it, and its cover page, rendered by the runner's own template
 // and the pinned Typst image, as PNGs. The site's and the desktop's Report
 // design pages show them, taking them with the CLI version they pin, so a
 // thumbnail cannot drift from what a run draws: runnerimage/toolsrv's
@@ -25,7 +26,7 @@ var files embed.FS
 // are offered: the core's.
 func IDs() []string { return reportdesign.BuiltinIDs() }
 
-// PNG is a built-in theme's thumbnail: the sample's first page.
+// PNG is a built-in theme's thumbnail: the sample's first body page.
 func PNG(id string) ([]byte, bool) {
 	return read(id, ".png")
 }

@@ -8,6 +8,9 @@ package toolsrv
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -427,5 +430,105 @@ func TestRealRenderTheCoverImage(t *testing.T) {
 	bounds := page.Bounds()
 	if n := inkIn(page, image.Rect(bounds.Min.X, bounds.Min.Y, bounds.Max.X, bounds.Min.Y+bounds.Dy()/4)); n < bounds.Dx()*bounds.Dy()/8 {
 		t.Errorf("the JPEG cover image is not drawn: %d inked pixels at the top", n)
+	}
+}
+
+// markup is Typst code that would run, link or read were it ever
+// evaluated; short is the same within a name's length.
+const (
+	markup = `#panic("ran") #link("https://evil.example")[x] #read("/etc/passwd")`
+	short  = `#panic("ran") #link("https://evil.example")[x]`
+)
+
+// TestRealRenderEveryDesignTextIsText: the brand block's lines, the
+// website, every header and footer slot, the subtitle and a section heading
+// reaching the {section} token, each written as Typst markup, render as
+// text on a cover and in the header: the render succeeds and makes no link
+// but the one the body's Markdown makes itself.
+func TestRealRenderEveryDesignTextIsText(t *testing.T) {
+	typst := realTypst(t)
+	for _, style := range coverStyles {
+		d := branded(t, "boardroom")
+		d.Cover.Style = style
+		d.Cover.When = "always"
+		d.Brand = reportdesign.Brand{Name: short, Strapline: markup, Contact: []string{markup, "$#panic(1)$"}, Website: "https://brand.example/$panic(1)", Confidentiality: markup}
+		d.Header.Style = "brandLine"
+		d.Header.Slots = [3]string{markup + " {brand}", "{section}", markup + " {title}"}
+		d.Footer.Slots = [3]string{"{confidentiality}", markup, "{section} {page}"}
+		if err := d.Validate(); err != nil {
+			t.Fatalf("%s: the test design does not validate: %v", style, err)
+		}
+		stamp, err := StampTheme(d.Canonical())
+		if err != nil {
+			t.Fatal(err)
+		}
+		spec := pdfSpec(t)
+		spec.PDF.Theme = stamp
+		s := pdfServer(t, spec, typst)
+		md := "# " + markup + "\n\n*" + markup + "*\n\n## " + markup + "\n\n" + strings.Repeat("Body text of the report. ", 400) + "\n\n## Second " + markup + "\n\n" + strings.Repeat("More body text. ", 400) + "\n\nA real [link](https://body.example).\n"
+		mustWrite(t, filepath.Join(spec.OutDir, "reports", "t.md"), []byte(md))
+		if got, isErr := exportPDF(t, s, map[string]any{"source": "t.md"}); isErr {
+			t.Fatalf("%s: export = %q", style, got)
+		}
+		if got := uris(readReport(t, spec, "t.pdf")); !slices.Equal(got, []string{"https://body.example"}) {
+			t.Errorf("%s: text in the design or the headings ran as Typst: links %q", style, got)
+		}
+	}
+}
+
+// TestTheRenderRootHoldsOnlyReencodedImages: the render root holds the
+// design's document without its images or custom cover, and the logo and
+// the cover image only as the server's own re-encodings, under their fixed
+// names; a cover image is written only for a plate cover.
+func TestTheRenderRootHoldsOnlyReencodedImages(t *testing.T) {
+	logo := craftedLogo(t, 300, 100)
+	// A cover image with bytes after its end, which a re-encoding drops.
+	cover := append(coverPNG(t), []byte("cover-marker-after-the-end")...)
+	for _, c := range []struct {
+		style string
+		files []string
+	}{
+		{"plate", []string{"cover.png", "design.json", "logo.png", "main.typ", "meta.json", "report.md"}},
+		{"band", []string{"design.json", "logo.png", "main.typ", "meta.json", "report.md"}},
+	} {
+		d := branded(t, "field")
+		d.Cover.Style = c.style
+		d.Cover.When = "always"
+		d.Logo = reportdesign.Logo{PNG: base64.StdEncoding.EncodeToString(logo)}
+		d.CoverImage = reportdesign.ImageOf(cover, "png")
+		d.CustomCover = reportdesign.CustomCover{Source: "#panic(\"custom\")", Images: []reportdesign.Image{reportdesign.ImageOf(cover, "png")}}
+		stamp, err := StampTheme(d.Canonical())
+		if err != nil {
+			t.Fatal(err)
+		}
+		spec := pdfSpec(t)
+		spec.PDF.Theme = stamp
+		s := pdfServer(t, spec, fakeTypst(t, fakePDF+`; (cd "$ROOT" && find . -type f | sort | sed 's/^/FILE:/'; cat design.json; sha256sum cover.png logo.png 2>/dev/null; true)`))
+		mustWrite(t, filepath.Join(spec.OutDir, "reports", "r.md"), []byte("# Title\n\nBody.\n"))
+		if got, isErr := exportPDF(t, s, map[string]any{"source": "r.md"}); isErr {
+			t.Fatalf("%s: export = %q", c.style, got)
+		}
+		out := readReport(t, spec, "r.pdf")
+		var names []string
+		for _, line := range strings.Split(string(out), "\n") {
+			if rest, ok := strings.CutPrefix(line, "FILE:./"); ok {
+				names = append(names, rest)
+			}
+		}
+		if !slices.Equal(names, c.files) {
+			t.Errorf("%s: the render root holds %v, want %v", c.style, names, c.files)
+		}
+		for _, key := range []string{`"logo":`, `"coverImage":`, `"customCover":`, "panic", "iVBOR", "cover-marker-after-the-end"} {
+			if bytes.Contains(out, []byte(key)) {
+				t.Errorf("%s: design.json or the root carries %s:\n%s", c.style, key, out)
+			}
+		}
+		logoSum := sha256.Sum256(logo)
+		coverSum := sha256.Sum256(cover)
+		for _, raw := range []string{hex.EncodeToString(logoSum[:]), hex.EncodeToString(coverSum[:])} {
+			if bytes.Contains(out, []byte(raw)) {
+				t.Errorf("%s: an image reached the root as the bytes the design carried", c.style)
+			}
+		}
 	}
 }
