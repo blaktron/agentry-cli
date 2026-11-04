@@ -10981,7 +10981,9 @@
             "TestRealRenderSlotTokens",
             "TestRealRenderEveryCoverStyle",
             "TestRealRenderCoverWhen",
-            "TestRealRenderTheCoverImage"
+            "TestRealRenderTheCoverImage",
+            "TestRealRenderEveryDesignTextIsText",
+            "TestTheRenderRootHoldsOnlyReencodedImages"
           ],
           "fuzz": [],
           "benchmarks": [],
