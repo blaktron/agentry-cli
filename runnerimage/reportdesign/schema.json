@@ -1,5 +1,5 @@
 {
-  "$id": "https://secureagentry.net/schemas/report-design-2.schema.json",
+  "$id": "https://secureagentry.net/schemas/report-design-3.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
@@ -9,7 +9,7 @@
     },
     "agentryTheme": {
       "enum": [
-        2
+        3
       ],
       "type": "integer"
     },
@@ -19,9 +19,169 @@
         "classic",
         "modern",
         "editorial",
-        "technical"
+        "technical",
+        "boardroom",
+        "studio",
+        "field",
+        "civic",
+        "lumen"
       ],
       "type": "string"
+    },
+    "brand": {
+      "additionalProperties": false,
+      "properties": {
+        "confidentiality": {
+          "maxLength": 120,
+          "type": "string"
+        },
+        "contact": {
+          "items": {
+            "maxLength": 120,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 4,
+          "type": "array"
+        },
+        "name": {
+          "maxLength": 60,
+          "type": "string"
+        },
+        "strapline": {
+          "maxLength": 120,
+          "type": "string"
+        },
+        "website": {
+          "maxLength": 120,
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "strapline",
+        "contact",
+        "website",
+        "confidentiality"
+      ],
+      "type": "object"
+    },
+    "cover": {
+      "additionalProperties": false,
+      "properties": {
+        "shows": {
+          "items": {
+            "enum": [
+              "title",
+              "subtitle",
+              "author",
+              "date",
+              "brand",
+              "logo",
+              "confidentiality"
+            ],
+            "type": "string"
+          },
+          "maxItems": 7,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "style": {
+          "enum": [
+            "band",
+            "split",
+            "geometric",
+            "largeType",
+            "framed",
+            "plate",
+            "custom"
+          ],
+          "type": "string"
+        },
+        "when": {
+          "enum": [
+            "long",
+            "always",
+            "never"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "style",
+        "shows",
+        "when"
+      ],
+      "type": "object"
+    },
+    "coverImage": {
+      "additionalProperties": false,
+      "maxProperties": 1,
+      "minProperties": 1,
+      "properties": {
+        "jpeg": {
+          "maxLength": 2796204,
+          "minLength": 1,
+          "type": "string"
+        },
+        "png": {
+          "maxLength": 2796204,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "customCover": {
+      "additionalProperties": false,
+      "properties": {
+        "images": {
+          "items": {
+            "additionalProperties": false,
+            "maxProperties": 1,
+            "minProperties": 1,
+            "properties": {
+              "jpeg": {
+                "maxLength": 2796204,
+                "minLength": 1,
+                "type": "string"
+              },
+              "png": {
+                "maxLength": 2796204,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "maxItems": 6,
+          "type": "array"
+        },
+        "source": {
+          "maxLength": 32768,
+          "minLength": 1,
+          "type": "string"
+        },
+        "thumbnail": {
+          "additionalProperties": false,
+          "properties": {
+            "png": {
+              "maxLength": 409600,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "png"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "source",
+        "images"
+      ],
+      "type": "object"
     },
     "fonts": {
       "additionalProperties": false,
@@ -32,11 +192,17 @@
             "IBM Plex Sans",
             "Source Sans 3",
             "Work Sans",
+            "DM Sans",
+            "Nunito Sans",
+            "Raleway",
+            "Space Grotesk",
             "Source Serif 4",
             "Lora",
             "Merriweather",
             "IBM Plex Serif",
-            "EB Garamond"
+            "EB Garamond",
+            "Libre Baskerville",
+            "Crimson Pro"
           ],
           "type": "string"
         },
@@ -44,7 +210,8 @@
           "enum": [
             "IBM Plex Mono",
             "JetBrains Mono",
-            "Source Code Pro"
+            "Source Code Pro",
+            "Fira Code"
           ],
           "type": "string"
         },
@@ -54,16 +221,24 @@
             "IBM Plex Sans",
             "Source Sans 3",
             "Work Sans",
+            "DM Sans",
+            "Nunito Sans",
+            "Raleway",
+            "Space Grotesk",
             "Montserrat",
             "Source Serif 4",
             "Lora",
             "Merriweather",
             "IBM Plex Serif",
             "EB Garamond",
+            "Libre Baskerville",
+            "Crimson Pro",
             "Playfair Display",
+            "Fraunces",
             "IBM Plex Mono",
             "JetBrains Mono",
-            "Source Code Pro"
+            "Source Code Pro",
+            "Fira Code"
           ],
           "type": "string"
         }
@@ -86,16 +261,58 @@
           ],
           "type": "string"
         },
-        "text": {
-          "maxLength": 120,
-          "type": "string"
+        "slots": {
+          "items": {
+            "maxLength": 120,
+            "type": "string"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
         }
       },
       "required": [
         "pageNumbers",
-        "text"
+        "slots"
       ],
       "type": "object"
+    },
+    "header": {
+      "additionalProperties": false,
+      "properties": {
+        "slots": {
+          "items": {
+            "maxLength": 120,
+            "type": "string"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "style": {
+          "enum": [
+            "none",
+            "rule",
+            "brandLine",
+            "titleAndPage",
+            "logoLeft"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "style",
+        "slots"
+      ],
+      "type": "object"
+    },
+    "headingScale": {
+      "enum": [
+        "compact",
+        "regular",
+        "generous"
+      ],
+      "type": "string"
     },
     "headings": {
       "enum": [
@@ -121,6 +338,14 @@
       ],
       "type": "object"
     },
+    "margins": {
+      "enum": [
+        "narrow",
+        "regular",
+        "wide"
+      ],
+      "type": "string"
+    },
     "name": {
       "maxLength": 60,
       "minLength": 1,
@@ -138,6 +363,10 @@
         "callout",
         "plain"
       ],
+      "type": "string"
+    },
+    "secondary": {
+      "pattern": "^(#[0-9a-f]{6})?$",
       "type": "string"
     },
     "tables": {
@@ -179,12 +408,18 @@
     "paper",
     "fonts",
     "accent",
+    "secondary",
     "titleBlock",
     "headings",
+    "headingScale",
+    "margins",
     "tables",
     "quotes",
-    "footer"
+    "brand",
+    "header",
+    "footer",
+    "cover"
   ],
-  "title": "Agentry report design (theme document version 2)",
+  "title": "Agentry report design (theme document version 3)",
   "type": "object"
 }

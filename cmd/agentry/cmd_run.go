@@ -277,8 +277,8 @@ func newRunCmd() *cobra.Command {
 	f.StringArrayVar(&opts.knowledge, "knowledge", nil, "knowledge pack to attach read-only at /knowledge/<name>, searched with the knowledge tools: a pack kept on this computer by NAME, or a pack DIRECTORY (repeatable)")
 	f.BoolVar(&opts.voice, "voice", false, "attach the Writing Voice kept on this computer even when it is not set to attach to every run")
 	f.BoolVar(&opts.noVoice, "no-voice", false, "do not attach the Writing Voice to this run")
-	f.StringVar(&opts.reportTheme, "report-theme", "", "the built-in report theme this run's PDFs take: "+strings.Join(toolsrv.BuiltinThemes(), " | ")+" (default: your account's report design when signed in, else report.design or report.theme in the config, else plain)")
-	f.StringVar(&opts.reportDesign, "report-design", "", "the report design this run's PDFs take: a FILE holding a report design (theme document version 2); instead of --report-theme")
+	f.StringVar(&opts.reportTheme, "report-theme", "", "the built-in report theme this run's PDFs take: "+strings.Join(toolsrv.BuiltinThemes(), " | ")+" (default: your account's default report design when signed in, else report.design or report.theme in the config, else plain)")
+	f.StringVar(&opts.reportDesign, "report-design", "", "the report design this run's PDFs take: the NAME or ID of a design of your account's library, or a FILE holding one (theme document version 3); instead of --report-theme")
 	f.StringVar(&opts.deliverTo, "deliver-to", "", "copy the run's deliverables, the files it was for, to FOLDER/<QuickAgent>/<date time> <title>/ once it succeeds (default: deliver.folder in the config, else nowhere); the output folder is left as it is")
 	f.BoolVar(&opts.noDestination, "no-destination", false, "send the run's result to no destination, not even the QuickAgent's default set (a schedule's fire passes it when the schedule names none)")
 	f.StringArrayVar(&opts.destinations, "destination", nil, "send the run's result and deliverables to this saved destination once it succeeds (repeatable; default: the QuickAgent's default set, else nowhere); see agentry destinations")
@@ -346,7 +346,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	if cerr != nil {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "agentry: warning: %v; its report settings are not read\n", cerr)
 	}
-	var account accountTheme
+	var account accountDesigns
 	if !opts.plan && !opts.dryRun && !opts.prepare {
 		account = readAccountTheme(registryURL())
 	}

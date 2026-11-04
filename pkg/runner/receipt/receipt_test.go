@@ -389,6 +389,7 @@ outDir
 pdfs
 pdfs.files
 pdfs.files[].bytes
+pdfs.files[].cover
 pdfs.files[].form
 pdfs.files[].logo
 pdfs.files[].pages
@@ -521,6 +522,7 @@ harness.imagePin
 harness.mode
 inference.model
 installedChanges.record
+pdfs.files[].cover
 pdfs.files[].form
 pdfs.files[].logo
 pdfs.theme.basedOn

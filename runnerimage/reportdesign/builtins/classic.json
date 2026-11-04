@@ -1,5 +1,5 @@
 {
-  "agentryTheme": 2,
+  "agentryTheme": 3,
   "name": "Classic",
   "basedOn": "classic",
   "version": 1,
@@ -10,15 +10,47 @@
     "code": "IBM Plex Mono"
   },
   "accent": "#1f3a5f",
+  "secondary": "",
   "titleBlock": "ruled",
   "headings": "smallcaps",
+  "headingScale": "regular",
+  "margins": "regular",
   "tables": {
     "tinted": true,
     "banded": false
   },
   "quotes": "callout",
+  "brand": {
+    "name": "",
+    "strapline": "",
+    "contact": [],
+    "website": "",
+    "confidentiality": ""
+  },
+  "header": {
+    "style": "rule",
+    "slots": [
+      "",
+      "",
+      ""
+    ]
+  },
   "footer": {
     "pageNumbers": "n",
-    "text": ""
+    "slots": [
+      "",
+      "",
+      ""
+    ]
+  },
+  "cover": {
+    "style": "framed",
+    "shows": [
+      "title",
+      "subtitle",
+      "author",
+      "date"
+    ],
+    "when": "long"
   }
 }

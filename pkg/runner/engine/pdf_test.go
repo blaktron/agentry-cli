@@ -61,7 +61,7 @@ func TestTheReceiptNamesTheTheme(t *testing.T) {
 			`{"path":"reports/sub/a.pdf","sha256":"` + sha(first) + `","pages":1,"bytes":14}`,
 			`{"path":"reports/b.pdf","sha256":"` + sha([]byte("%PDF-1.7 b as exported")) + `","pages":2,"bytes":20}`,
 			`{"path":"reports/gone.pdf","sha256":"` + sha(first) + `","pages":1,"bytes":14}`,
-			`{"path":"reports/sub/a.pdf","sha256":"` + sha(second) + `","pages":4,"bytes":15,"form":"memo","logo":true}`,
+			`{"path":"reports/sub/a.pdf","sha256":"` + sha(second) + `","pages":4,"bytes":15,"form":"memo","logo":true,"cover":"band"}`,
 		}
 		_ = os.WriteFile(filepath.Join(p.OutDir, "receipts", PDFLedgerFile), []byte(strings.Join(lines, "\n")+"\n"), 0o644)
 	}
@@ -82,7 +82,7 @@ func TestTheReceiptNamesTheTheme(t *testing.T) {
 	if len(env.PDFs.Files) != 1 {
 		t.Fatalf("files = %+v, want sub/a.pdf alone", env.PDFs.Files)
 	}
-	if got := env.PDFs.Files[0]; got.Path != "reports/sub/a.pdf" || got.SHA256 != sha(second) || got.Pages != 4 || got.Bytes != int64(len(second)) || got.Form != "memo" || !got.Logo {
+	if got := env.PDFs.Files[0]; got.Path != "reports/sub/a.pdf" || got.SHA256 != sha(second) || got.Pages != 4 || got.Bytes != int64(len(second)) || got.Form != "memo" || !got.Logo || got.Cover != "band" {
 		t.Errorf("file = %+v", got)
 	}
 	result, err := os.ReadFile(filepath.Join(p.OutDir, "result.json"))
@@ -157,7 +157,7 @@ func TestTheRunsReportThemeIsStampedAndNamed(t *testing.T) {
 		from       string
 	}{
 		{ReportTheme{Name: "classic", From: ThemeFromFlag}, "classic", "Classic", "the --report-theme flag"},
-		{ReportTheme{Design: compact.Bytes(), From: ThemeFromAccount}, "modern", "Modern", "the account's report design"},
+		{ReportTheme{Design: compact.Bytes(), From: ThemeFromAccount}, "modern", "Modern", "the account's default report design"},
 		{ReportTheme{}, "plain", "Plain", "the default"},
 	} {
 		p, f := fixture(t)
@@ -218,7 +218,7 @@ func TestTheRunsReportThemeIsStampedAndNamed(t *testing.T) {
 			t.Errorf("the tools spec's theme with a logo = %+v", ts.PDF.Theme)
 		}
 		line := env.CapabilitiesEnforced["pdf.design"]
-		if !strings.Contains(line, "(sha256:"+sha(withLogo)+"), carrying the person's logo for the top of each PDF's first page (each PDF's entry says whether it was drawn), chosen by the account's report design") {
+		if !strings.Contains(line, "(sha256:"+sha(withLogo)+"), carrying the person's logo for the top of each PDF's first page (each PDF's entry says whether it was drawn), chosen by the account's default report design") {
 			t.Errorf("the receipt's pdf.design line with a logo = %q", line)
 		}
 	}

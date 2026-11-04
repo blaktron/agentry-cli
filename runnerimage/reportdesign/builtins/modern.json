@@ -1,5 +1,5 @@
 {
-  "agentryTheme": 2,
+  "agentryTheme": 3,
   "name": "Modern",
   "basedOn": "modern",
   "version": 1,
@@ -10,15 +10,47 @@
     "code": "JetBrains Mono"
   },
   "accent": "#1f6feb",
+  "secondary": "",
   "titleBlock": "band",
   "headings": "bar",
+  "headingScale": "regular",
+  "margins": "regular",
   "tables": {
     "tinted": true,
     "banded": true
   },
   "quotes": "callout",
+  "brand": {
+    "name": "",
+    "strapline": "",
+    "contact": [],
+    "website": "",
+    "confidentiality": ""
+  },
+  "header": {
+    "style": "titleAndPage",
+    "slots": [
+      "{title}",
+      "",
+      "{page} of {pages}"
+    ]
+  },
   "footer": {
     "pageNumbers": "nOfN",
-    "text": ""
+    "slots": [
+      "",
+      "",
+      ""
+    ]
+  },
+  "cover": {
+    "style": "band",
+    "shows": [
+      "title",
+      "subtitle",
+      "author",
+      "date"
+    ],
+    "when": "long"
   }
 }

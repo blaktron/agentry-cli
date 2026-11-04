@@ -1,9 +1,10 @@
-// Package reportthumbs holds a thumbnail of each built-in report theme: the
-// first page of one sample report (runnerimage/toolsrv/testdata/pdf/
-// thumbnail.md) rendered by the runner's own template and the pinned Typst
-// image, as a PNG. The site's and the desktop's Report design pages show
-// them, taking them with the CLI version they pin, so a thumbnail cannot
-// drift from what a run draws: runnerimage/toolsrv's
+// Package reportthumbs holds two thumbnails of each built-in report theme:
+// the first body page of one sample report (runnerimage/toolsrv/testdata/pdf/
+// thumbnail.md), the page after the cover where the theme draws one for
+// it, and its cover page, rendered by the runner's own template
+// and the pinned Typst image, as PNGs. The site's and the desktop's Report
+// design pages show them, taking them with the CLI version they pin, so a
+// thumbnail cannot drift from what a run draws: runnerimage/toolsrv's
 // TestThumbnailsAreTheTemplates renders them again in the typst-image CI
 // job and fails on any pixel that differs (AGENTRY_UPDATE_THUMBNAILS=1
 // rewrites them).
@@ -25,11 +26,21 @@ var files embed.FS
 // are offered: the core's.
 func IDs() []string { return reportdesign.BuiltinIDs() }
 
-// PNG is a built-in theme's thumbnail.
+// PNG is a built-in theme's thumbnail: the sample's first body page.
 func PNG(id string) ([]byte, bool) {
+	return read(id, ".png")
+}
+
+// CoverPNG is a built-in theme's cover thumbnail: the sample's cover page,
+// in the theme's cover style.
+func CoverPNG(id string) ([]byte, bool) {
+	return read(id, "-cover.png")
+}
+
+func read(id, suffix string) ([]byte, bool) {
 	if !slices.Contains(IDs(), id) {
 		return nil, false
 	}
-	b, err := files.ReadFile(id + ".png")
+	b, err := files.ReadFile(id + suffix)
 	return b, err == nil
 }

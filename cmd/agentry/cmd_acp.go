@@ -110,7 +110,7 @@ func newACPCmd() *cobra.Command {
 	f.BoolVar(&opts.voice, "voice", false, "attach the Writing Voice kept on this computer even when it is not set to attach to every run")
 	f.BoolVar(&opts.noVoice, "no-voice", false, "do not attach the Writing Voice to this run")
 	f.StringVar(&opts.reportTheme, "report-theme", "", "the built-in report theme this run's PDFs take")
-	f.StringVar(&opts.reportDesign, "report-design", "", "the report design this run's PDFs take: a FILE holding a report design")
+	f.StringVar(&opts.reportDesign, "report-design", "", "the report design this run's PDFs take: the NAME or ID of a design of your account's library, or a FILE holding one")
 	f.StringVar(&opts.deliverTo, "deliver-to", "", "copy the run's deliverables to FOLDER/<QuickAgent>/<date time> <title>/ once it succeeds (default: deliver.folder in the config, else nowhere)")
 	f.BoolVar(&opts.noDestination, "no-destination", false, "send the run's result to no destination, not even the QuickAgent's default set")
 	f.StringArrayVar(&opts.destinations, "destination", nil, "send the run's result and deliverables to this saved destination once it succeeds (repeatable); see agentry destinations")

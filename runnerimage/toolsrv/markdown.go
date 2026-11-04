@@ -35,6 +35,11 @@ type mdDoc struct {
 	// titleBlock says the opening heading was taken out of text, for the
 	// template to draw as the title block.
 	titleBlock bool
+	// subtitle is the line a report opened with under its title, taken out
+	// of text for the template to draw under the title and on the cover:
+	// the first line after the opening heading, when it is one line of
+	// emphasis on its own (*A subtitle*). Empty when the report has none.
+	subtitle string
 	// memo is a memo's header: the To, From, Cc, Date, Subject and Re
 	// lines it opened with, taken out of text.
 	memo []memoField
@@ -255,6 +260,9 @@ func reportMarkdown(src, form string) mdDoc {
 			lines[i] = ""
 		}
 		doc.titleBlock = true
+		if form == FormReport {
+			doc.subtitle = takeSubtitle(lines, doc.opening[len(doc.opening)-1]+1)
+		}
 	}
 	if form == FormMemo {
 		doc.memo = takeMemoHeader(lines)
@@ -265,6 +273,34 @@ func reportMarkdown(src, form string) mdDoc {
 	}
 	doc.words = len(strings.Fields(doc.text))
 	return doc
+}
+
+// mdSubtitle is a subtitle line: one line of emphasis on its own, with
+// nothing else on it.
+var mdSubtitle = regexp.MustCompile(`^ {0,3}(?:\*([^*\s](?:.*[^\s*])?)\*|_([^_\s](?:.*[^\s_])?)_)[ \t]*$`)
+
+// takeSubtitle reads a report's subtitle from the lines after its opening
+// heading: the first line that is not blank, when it is a subtitle line
+// and the line after it is blank or the end. It is taken out of lines and
+// returned as plain text; anything else is left as the agent wrote it.
+func takeSubtitle(lines []string, from int) string {
+	i := from
+	for i < len(lines) && strings.TrimSpace(lines[i]) == "" {
+		i++
+	}
+	if i >= len(lines) {
+		return ""
+	}
+	m := mdSubtitle.FindStringSubmatch(lines[i])
+	if m == nil || (i+1 < len(lines) && strings.TrimSpace(lines[i+1]) != "") {
+		return ""
+	}
+	text := plainTitle(m[1] + m[2])
+	if text == "" {
+		return ""
+	}
+	lines[i] = ""
+	return text
 }
 
 // mdMemoLine is a line of a memo's header, "To: …" with its label set in

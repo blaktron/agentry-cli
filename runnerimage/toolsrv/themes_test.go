@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"image"
+	"image/color"
 	"image/png"
 	"os"
 	"os/exec"
@@ -22,10 +23,12 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/reportdesign"
 )
 
-// TestTheBuiltinThemes: the five themes are pkg/reportdesign's,
-// Plain first, and each stamps as its canonical document, byte for byte.
+// TestTheBuiltinThemes: the ten themes are pkg/reportdesign's, Plain
+// first, each stamps as its canonical document, byte for byte, and each
+// passes the design's own rules, the contrast rule for every colour that
+// carries text included.
 func TestTheBuiltinThemes(t *testing.T) {
-	if got := BuiltinThemes(); !slices.Equal(got, []string{"plain", "classic", "modern", "editorial", "technical"}) {
+	if got := BuiltinThemes(); !slices.Equal(got, []string{"plain", "classic", "modern", "editorial", "technical", "boardroom", "studio", "field", "civic", "lumen"}) {
 		t.Fatalf("built-in themes = %q", got)
 	}
 	for _, name := range BuiltinThemes() {
@@ -44,6 +47,17 @@ func TestTheBuiltinThemes(t *testing.T) {
 		if st.SHA256 != d.SHA256() {
 			t.Errorf("%s: the stamp's SHA-256 %s is not the design's %s", name, st.SHA256, d.SHA256())
 		}
+		if err := d.Validate(); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+		if ratio, _ := reportdesign.Contrast(d.Accent, reportdesign.White); ratio < d.MinContrast() {
+			t.Errorf("%s: the accent reaches %.2f:1, under the %.1f:1 its text needs", name, ratio, d.MinContrast())
+		}
+		if d.Secondary != "" {
+			if ratio, _ := reportdesign.Contrast(d.Secondary, reportdesign.White); ratio < d.MinSecondaryContrast() {
+				t.Errorf("%s: the secondary reaches %.2f:1, under the %.1f:1 its text needs", name, ratio, d.MinSecondaryContrast())
+			}
+		}
 	}
 	for _, bad := range []string{"Plain", "", "../plain", "formal", "letter", "brief"} {
 		if IsBuiltinTheme(bad) {
@@ -57,7 +71,7 @@ func TestTheBuiltinThemes(t *testing.T) {
 
 // TestAHostileDesignNeverReachesTheTemplate: a design is
 // held to pkg/reportdesign's rules when it is stamped and again when the
-// tools server reads the spec; markup, a path, an unknown key, a version 1
+// tools server reads the spec; markup, a path, an unknown key, a version 2
 // document and an accent that cannot carry its text are refused; a stamp
 // whose document changed, or is not canonical, never serves.
 func TestAHostileDesignNeverReachesTheTemplate(t *testing.T) {
@@ -66,17 +80,35 @@ func TestAHostileDesignNeverReachesTheTemplate(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, change := range map[string][2]string{
-		"unknown key":      {`"quotes": "callout",`, `"quotes": "callout", "script": "#read(\"/etc/passwd\")",`},
-		"version 1":        {`"agentryTheme": 2`, `"agentryTheme": 1`},
-		"a font path":      {`"body": "Inter"`, `"body": "../../etc/passwd"`},
-		"a system font":    {`"body": "Inter"`, `"body": "DejaVu Sans"`},
-		"a mono body":      {`"body": "Inter"`, `"body": "JetBrains Mono"`},
-		"a colour word":    {`"accent": "#1f6feb"`, `"accent": "red"`},
-		"a pale accent":    {`"accent": "#1f6feb"`, `"accent": "#7fb3d5"`},
-		"a title block":    {`"titleBlock": "band"`, `"titleBlock": "#panic()"`},
-		"page numbers":     {`"pageNumbers": "nOfN"`, `"pageNumbers": "n of N"`},
-		"a footer newline": {`"text": ""`, `"text": "line\nbreak"`},
-		"a footer bidi":    {`"text": ""`, `"text": "a\u202eb"`},
+		"unknown key":   {`"quotes": "callout",`, `"quotes": "callout", "script": "#read(\"/etc/passwd\")",`},
+		"version 2":     {`"agentryTheme": 3`, `"agentryTheme": 2`},
+		"a font path":   {`"body": "Inter"`, `"body": "../../etc/passwd"`},
+		"a system font": {`"body": "Inter"`, `"body": "DejaVu Sans"`},
+		"a mono body":   {`"body": "Inter"`, `"body": "JetBrains Mono"`},
+		"a colour word": {`"accent": "#1f6feb"`, `"accent": "red"`},
+		"a pale accent": {`"accent": "#1f6feb"`, `"accent": "#7fb3d5"`},
+		"a title block": {`"titleBlock": "band"`, `"titleBlock": "#panic()"`},
+		"page numbers":  {`"pageNumbers": "nOfN"`, `"pageNumbers": "n of N"`},
+		"a footer newline": {`"pageNumbers": "nOfN",
+    "slots": [
+      "",`, `"pageNumbers": "nOfN",
+    "slots": [
+      "line\nbreak",`},
+		"a footer bidi": {`"pageNumbers": "nOfN",
+    "slots": [
+      "",`, `"pageNumbers": "nOfN",
+    "slots": [
+      "a\u202eb",`},
+		"a header style": {`"style": "titleAndPage"`, `"style": "#panic()"`},
+		"a fourth slot": {`"{page} of {pages}"
+    ]`, `"{page} of {pages}", ""
+    ]`},
+		"a cover style": {`"style": "band"`, `"style": "../cover.typ"`},
+		"a cover fact twice": {`"shows": [
+      "title",`, `"shows": [
+      "title", "title",`},
+		"a website link":   {`"website": ""`, `"website": "javascript:alert(1)"`},
+		"a pale secondary": {`"secondary": ""`, `"secondary": "#c8d8f0"`},
 		"paper":            {`"paper": "a4"`, `"paper": "us-letter"`},
 	} {
 		doc := bytes.Replace(modern, []byte(change[0]), []byte(change[1]), 1)
@@ -175,7 +207,9 @@ func TestExportPDFTakesAFormAndNothingElse(t *testing.T) {
 	if !bytes.Contains(pdf, doc) {
 		t.Errorf("the render did not get the stamped design:\n%s", pdf)
 	}
-	for _, want := range []string{`"form":"memo"`, `"titleBlock":true`, `"memo":[{"label":"To","value":"Dana"},{"label":"From","value":"Sam"}]`, `"tint":"#f6e5e4"`, `"notoHeadings":"Noto Serif"`, `"notoBody":"Noto Sans"`} {
+	for _, want := range []string{`"form":"memo"`, `"titleBlock":true`, `"memo":[{"label":"To","value":"Dana"},{"label":"From","value":"Sam"}]`, `"tint":"#f6e5e4"`, `"notoHeadings":"Noto Serif"`, `"notoBody":"Noto Sans"`,
+		`"cover":false,"coverStyle":"","coverImage":null`, `"fonts":{"headings":"Playfair Display","body":"Source Sans 3","code":"Source Code Pro"}`,
+		`"header":{"slots":[[],[],[{"text":"` + time.Now().UTC().Format(time.DateOnly) + `"}]]}`, `"footer":{"slots":[[],[],[]]}`} {
 		if !bytes.Contains(pdf, []byte(want)) {
 			t.Errorf("meta.json lacks %s:\n%s", want, pdf)
 		}
@@ -235,7 +269,7 @@ func TestRenderMeta(t *testing.T) {
 		{"Preface\n\n" + long, FormReport, false},
 	} {
 		doc := reportMarkdown(c.src, c.form)
-		b, err := renderMeta(reportdesign.Default(), c.form, doc, doc.title, "", map[string]pdfImage{}, nil, fixedNow)
+		b, err := renderMeta(reportdesign.Default(), c.form, doc, doc.title, "", map[string]pdfImage{}, nil, nil, fixedNow)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -248,25 +282,34 @@ func TestRenderMeta(t *testing.T) {
 		}
 	}
 	for _, d := range reportdesign.Builtins() {
-		b, err := renderMeta(d, FormReport, mdDoc{}, "t", "", nil, nil, fixedNow)
+		b, err := renderMeta(d, FormReport, mdDoc{}, "t", "", nil, nil, nil, fixedNow)
 		if err != nil {
 			t.Fatal(err)
 		}
 		var m pdfMeta
 		_ = json.Unmarshal(b, &m)
 		tint, _ := reportdesign.Tint(d.Accent)
-		serif := d.BasedOn == "classic"
-		if m.Tint != tint || (m.NotoBody == "Noto Serif") != serif || (m.NotoHeadings == "Noto Serif") != (serif || d.BasedOn == "editorial") {
+		serif := slices.Contains([]string{"classic", "boardroom", "civic"}, d.BasedOn)
+		serifHeadings := serif || slices.Contains([]string{"editorial", "field"}, d.BasedOn)
+		if m.Tint != tint || (m.NotoBody == "Noto Serif") != serif || (m.NotoHeadings == "Noto Serif") != serifHeadings {
 			t.Errorf("%s: %+v", d.BasedOn, m)
+		}
+		secondaryTint := ""
+		if d.Secondary != "" {
+			secondaryTint, _ = reportdesign.Tint(d.Secondary)
+		}
+		if m.Secondary != d.Secondary || m.SecondaryTint != secondaryTint {
+			t.Errorf("%s: secondary %q, tint %q", d.BasedOn, m.Secondary, m.SecondaryTint)
 		}
 	}
 }
 
 // TestRealRenderEveryThemeAndForm: each built-in theme renders the sample in
 // each form, offline under the render's confinement, every script in it, as a
-// tagged PDF; and drawn as images, no page puts ink in its left or right
-// margin, so a long line, a wide table, a long token or a band stays inside
-// the page's text.
+// tagged PDF; and drawn as images, no body page puts ink in its left or right
+// margin (the design's preset), so a long line, a wide table, a long token or
+// a band stays inside the page's text. A cover page, whose panels bleed to
+// the edge, is not a body page.
 func TestRealRenderEveryThemeAndForm(t *testing.T) {
 	typst := realTypst(t)
 	sample, err := os.ReadFile(filepath.Join("testdata", "pdf", "sample.md"))
@@ -293,9 +336,12 @@ func TestRealRenderEveryThemeAndForm(t *testing.T) {
 					}
 				}
 				pages := renderPNGs(t, typst, doc, form, string(sample))
-				margin := 22.0
+				margin := map[string]float64{"narrow": 16, "regular": 22, "wide": 28}[d.Margins]
 				if form == FormLetter {
-					margin = 25
+					margin += 3
+				}
+				if coverDrawn(d, form, reportMarkdown(string(sample), form)) {
+					pages = pages[1:]
 				}
 				for i, page := range pages {
 					if x, y, ok := inkOutside(page, int(margin/25.4*pngPPI)-2); ok {
@@ -316,7 +362,11 @@ func TestRealRenderTextIsNeverTypst(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	doc := bytes.Replace(modern, []byte(`"text": ""`), []byte(`"text": "#panic(\"footer ran\") #link(\"https://footer.example\")[f] #read(\"/etc/passwd\")"`), 1)
+	doc := bytes.Replace(modern, []byte(`"pageNumbers": "nOfN",
+    "slots": [
+      "",`), []byte(`"pageNumbers": "nOfN",
+    "slots": [
+      "#panic(\"footer ran\") #link(\"https://footer.example\")[f] #read(\"/etc/passwd\") {title} {nope} {{page}}",`), 1)
 	stamp, err := StampTheme(doc)
 	if err != nil {
 		t.Fatal(err)
@@ -375,8 +425,8 @@ func TestTheImageCarriesEveryDesignFamily(t *testing.T) {
 	}
 	listed := strings.Split(strings.TrimSpace(string(out)), "\n")
 	for _, f := range reportdesign.Families() {
-		if !slices.Contains(listed, f.Name) {
-			t.Errorf("the image lacks %s", f.Name)
+		if !slices.Contains(listed, TypstFamily(f.Name)) {
+			t.Errorf("the image lacks %s (%s)", f.Name, TypstFamily(f.Name))
 			continue
 		}
 		d := reportdesign.Default()
@@ -465,7 +515,11 @@ func renderPNGsAt(t *testing.T, typst typstFiles, designDoc []byte, form, src st
 	if err != nil {
 		t.Fatal(err)
 	}
-	meta, err := renderMeta(d, form, doc, doc.title, "acme/demo@1.2.3", map[string]pdfImage{}, logo, fixedNow)
+	coverBytes, coverImage, err := renderCoverImage(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta, err := renderMeta(d, form, doc, doc.title, "acme/demo@1.2.3", map[string]pdfImage{}, logo, coverImage, fixedNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -476,6 +530,9 @@ func renderPNGsAt(t *testing.T, typst typstFiles, designDoc []byte, form, src st
 	files := map[string][]byte{"main.typ": template, "report.md": []byte(doc.text), "design.json": renderDesign(d), "meta.json": meta}
 	if logo != nil {
 		files[logoFile] = logoPNG
+	}
+	if coverImage != nil && coverDrawn(d, form, doc) && coverStyle(d, coverImage) == "plate" {
+		files[coverImage.Path] = coverBytes
 	}
 	for name, b := range files {
 		mustWrite(t, filepath.Join(root, name), b)
@@ -532,10 +589,13 @@ func inkOutside(img image.Image, w int) (int, int, bool) {
 // thumbnailPPI is the thumbnails' resolution: an A4 page is 496 by 702.
 const thumbnailPPI = 60
 
-// TestThumbnailsAreTheTemplates: each built-in
-// theme's thumbnail in pkg/reportthumbs is the first page of the sample
-// report as this template and the pinned image draw it, pixel for pixel.
-// AGENTRY_UPDATE_THUMBNAILS=1 writes them instead.
+// TestThumbnailsAreTheTemplates: each built-in theme's thumbnails in
+// pkg/reportthumbs are the first body page of the sample report (the page
+// after the cover, where the theme draws one for it) and its cover page,
+// as this template and the pinned image draw them, pixel for pixel. The
+// cover is drawn with the design's cover set to always, so a theme whose
+// cover waits for a long report has one too. AGENTRY_UPDATE_THUMBNAILS=1
+// writes them instead.
 func TestThumbnailsAreTheTemplates(t *testing.T) {
 	typst := realTypst(t)
 	sample, err := os.ReadFile(filepath.Join("testdata", "pdf", "thumbnail.md"))
@@ -548,8 +608,23 @@ func TestThumbnailsAreTheTemplates(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		page := renderPNGsAt(t, typst, doc, FormReport, string(sample), thumbnailPPI, true)[0]
-		file := filepath.Join("..", "..", "pkg", "reportthumbs", id+".png")
+		d, _ := reportdesign.Builtin(id)
+		pages := renderPNGsAt(t, typst, doc, FormReport, string(sample), thumbnailPPI, false)
+		first := pages[0]
+		if coverDrawn(d, FormReport, reportMarkdown(string(sample), FormReport)) {
+			first = pages[1]
+		}
+		thumbnailHeld(t, id, filepath.Join("..", "..", "pkg", "reportthumbs", id+".png"), first, update)
+		d.Cover.When = "always"
+		cover := renderPNGsAt(t, typst, d.Canonical(), FormReport, string(sample), thumbnailPPI, true)[0]
+		thumbnailHeld(t, id+"-cover", filepath.Join("..", "..", "pkg", "reportthumbs", id+"-cover.png"), cover, update)
+	}
+}
+
+// thumbnailHeld holds a kept thumbnail to a render, or writes it.
+func thumbnailHeld(t *testing.T, id, file string, page image.Image, update bool) {
+	t.Helper()
+	{
 		if update {
 			var b bytes.Buffer
 			if err := (&png.Encoder{CompressionLevel: png.BestCompression}).Encode(&b, page); err != nil {
@@ -558,14 +633,14 @@ func TestThumbnailsAreTheTemplates(t *testing.T) {
 			if err := os.WriteFile(file, b.Bytes(), 0o644); err != nil { //nolint:gosec // a committed asset
 				t.Fatal(err)
 			}
-			continue
+			return
 		}
 		// Read by path: this file is embedded in the image's build context,
 		// which imports nothing but the standard library.
 		kept, err := os.ReadFile(file) //nolint:gosec // the repository's own asset
 		if err != nil {
 			t.Errorf("%s has no thumbnail (%v): run with AGENTRY_UPDATE_THUMBNAILS=1", id, err)
-			continue
+			return
 		}
 		want, err := png.Decode(bytes.NewReader(kept))
 		if err != nil {
@@ -575,6 +650,61 @@ func TestThumbnailsAreTheTemplates(t *testing.T) {
 			t.Errorf("%s's thumbnail differs from the template's render at (%d, %d): run with AGENTRY_UPDATE_THUMBNAILS=1 and commit it", id, x, y)
 		}
 	}
+}
+
+// version2Tolerance is the share of a page's pixels that may differ from
+// the version-2 thumbnail: anti-aliasing at a moved rule, never a changed
+// layout.
+const version2Tolerance = 0.002
+
+// TestTheVersion2LookHolds: the five themes a version-2 document could name
+// draw the sample's first page as they did before, within the tolerance,
+// against the thumbnails the version-2 template rendered (testdata/pdf/v2).
+func TestTheVersion2LookHolds(t *testing.T) {
+	typst := realTypst(t)
+	sample, err := os.ReadFile(filepath.Join("testdata", "pdf", "thumbnail.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"plain", "classic", "modern", "editorial", "technical"} {
+		doc, err := BuiltinTheme(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		page := renderPNGsAt(t, typst, doc, FormReport, string(sample), thumbnailPPI, true)[0]
+		kept, err := os.ReadFile(filepath.Join("testdata", "pdf", "v2", id+".png")) //nolint:gosec // the test's own asset
+		if err != nil {
+			t.Fatal(err)
+		}
+		want, err := png.Decode(bytes.NewReader(kept))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want.Bounds() != page.Bounds() {
+			t.Errorf("%s: the page is %v, the version-2 thumbnail %v", id, page.Bounds(), want.Bounds())
+			continue
+		}
+		b := page.Bounds()
+		differ := 0
+		for y := b.Min.Y; y < b.Max.Y; y++ {
+			for x := b.Min.X; x < b.Max.X; x++ {
+				if !nearColour(want.At(x, y), page.At(x, y)) {
+					differ++
+				}
+			}
+		}
+		if share := float64(differ) / float64(b.Dx()*b.Dy()); share > version2Tolerance {
+			t.Errorf("%s: %d pixels (%.3f%%) differ from the version-2 thumbnail, over the %.1f%% tolerance", id, differ, share*100, version2Tolerance*100)
+		}
+	}
+}
+
+// nearColour says two pixels are within anti-aliasing of each other.
+func nearColour(a, b color.Color) bool {
+	ar, ag, ab, _ := a.RGBA()
+	br, bg, bb, _ := b.RGBA()
+	within := func(x, y uint32) bool { return x+(12<<8) >= y && y+(12<<8) >= x }
+	return within(ar, br) && within(ag, bg) && within(ab, bb)
 }
 
 // firstDifference is the first pixel where a and b differ, or a difference

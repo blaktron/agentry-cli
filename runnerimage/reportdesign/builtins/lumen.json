@@ -1,0 +1,57 @@
+{
+  "agentryTheme": 3,
+  "name": "Lumen",
+  "basedOn": "lumen",
+  "version": 1,
+  "paper": "a4",
+  "fonts": {
+    "headings": "Raleway",
+    "body": "Raleway",
+    "code": "JetBrains Mono"
+  },
+  "accent": "#5b3fa6",
+  "secondary": "#2d8a6a",
+  "titleBlock": "band",
+  "headings": "plain",
+  "headingScale": "regular",
+  "margins": "regular",
+  "tables": {
+    "tinted": true,
+    "banded": true
+  },
+  "quotes": "callout",
+  "brand": {
+    "name": "",
+    "strapline": "",
+    "contact": [],
+    "website": "",
+    "confidentiality": ""
+  },
+  "header": {
+    "style": "titleAndPage",
+    "slots": [
+      "{title}",
+      "",
+      "{page} of {pages}"
+    ]
+  },
+  "footer": {
+    "pageNumbers": "nOfN",
+    "slots": [
+      "{brand}",
+      "{confidentiality}",
+      ""
+    ]
+  },
+  "cover": {
+    "style": "geometric",
+    "shows": [
+      "title",
+      "subtitle",
+      "author",
+      "date",
+      "logo"
+    ],
+    "when": "always"
+  }
+}
