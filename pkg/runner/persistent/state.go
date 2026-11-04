@@ -319,6 +319,18 @@ type Config struct {
 	// is a roster entry, its credential in the keychain
 	// (MessengerKeychainAccount).
 	Messengers []MessengerAccount `yaml:"messengers,omitempty" json:"messengers,omitempty"`
+	// NotApplied is the last change a running agent could not start a
+	// segment with, which the supervisor took back; the next change the
+	// person makes clears it.
+	NotApplied *NotApplied `yaml:"notApplied,omitempty" json:"notApplied,omitempty"`
+}
+
+// NotApplied is a change the supervisor took back: when, why, and the
+// roster entries it would have changed.
+type NotApplied struct {
+	At      time.Time `yaml:"at" json:"at"`
+	Reason  string    `yaml:"reason" json:"reason"`
+	Entries []string  `yaml:"entries,omitempty" json:"entries,omitempty"`
 }
 
 // ServerFailure is why a server the person added could not be installed.

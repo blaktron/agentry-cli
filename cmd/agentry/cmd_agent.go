@@ -464,6 +464,11 @@ func printAgentState(w io.Writer, st agentState) {
 	if s := st.Status; s != nil && s.Pending {
 		_, _ = fmt.Fprintln(w, "  pending:    a change restarts it at its next turn")
 	}
+	if c := st.Config; c != nil && c.NotApplied != nil {
+		na := c.NotApplied
+		_, _ = fmt.Fprintf(w, "  not applied: %s, at %s: the agent could not start with it, so it is switched off: %s\n",
+			strings.Join(na.Entries, ", "), na.At.Local().Format("2006-01-02 15:04"), safeTerminalText(na.Reason, 300))
+	}
 	printSubagentRuns(w, st.SubagentRuns)
 	if len(st.Roster) > 0 {
 		_, _ = fmt.Fprintln(w, "  roster:")

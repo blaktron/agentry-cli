@@ -194,6 +194,14 @@ func (s *Supervisor) recordFailure(id, reason string) bool {
 
 // notice tells every chat attached something about the agent that is not
 // the agent's own: a session notice, never sent to the harness.
+// logf writes a line to the client's log of the agent (supervisor.log in
+// the CLI), when it keeps one.
+func (s *Supervisor) logf(format string, args ...any) {
+	if s.opts.Stderr != nil {
+		_, _ = fmt.Fprintf(s.opts.Stderr, format+"\n", args...)
+	}
+}
+
 func (s *Supervisor) notice(text string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

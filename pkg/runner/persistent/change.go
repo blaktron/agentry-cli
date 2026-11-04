@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -169,6 +170,14 @@ func ApplyChange(home string, a Agent, c *Config, ch Change) (restart bool, err 
 	return applyChange(home, a, c, ch, false)
 }
 
+// personaOnly says the change sets the name or the personality and
+// nothing else.
+func (ch Change) personaOnly() bool {
+	rest := ch
+	rest.Name, rest.Personality = nil, nil
+	return reflect.ValueOf(rest).IsZero()
+}
+
 // applyChange is ApplyChange for an agent that runs under a policy whose
 // malware check is malwareCheck (BuildRosterUnder).
 func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) (restart bool, err error) {
@@ -176,6 +185,12 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 		return false, fmt.Errorf("%s %w: its configuration is Agentry Desktop's", a.Title, ErrDesktopOnly)
 	}
 	next := *c
+	// A change to what the agent is given is newer than one it took back;
+	// a name or personality, which the agent can set itself, leaves the
+	// record.
+	if !ch.personaOnly() {
+		next.NotApplied = nil
+	}
 	next.Switches = cloneMap(c.Switches)
 	next.Consented = cloneMap(c.Consented)
 	next.Servers = slices.Clone(c.Servers)

@@ -147,6 +147,8 @@ type Supervisor struct {
 	applied       Applied
 	grants        string     // grantsKey of the config the segment started with
 	given         Signatures // what each entry gave the segment, beyond its switch
+	started       Config     // the config the running segment started with
+	hasStarted    bool
 	packsDone     func()
 	ending        *atomic.Bool // set for the segment being ended to start the next
 	// segEnded says the segment in sess has ended, with segEnv and segErr
@@ -416,7 +418,7 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 			Agent: name, Segment: segment,
 			SessionVolume: SessionVolumeIn(home, name), DataVolume: DataVolumeIn(home, name),
 			Home: HomeID(home), LegacySessionVolume: legacySession, LegacyDataVolume: legacyData,
-			ContinueID: continueID, Roster: roster.Receipt(),
+			ContinueID: continueID, Roster: notApplied(roster.Receipt(), cfg),
 			ShareVerdicts: filepath.Join(Dir(home, name), shareVerdictsFile),
 			ShareText:     filepath.Join(Dir(home, name), shareTextDir),
 			ShareMirror:   mirror,
@@ -516,6 +518,7 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 	s.served = served
 	s.sess, s.runID, s.outDir, s.segment = sess, runID, outDir, segment
 	s.applied, s.grants, s.packsDone, s.ending, s.pumpDone = applied, key, packsDone, ending, pumpDone
+	s.started, s.hasStarted = cfg, true
 	s.given = signatures
 	s.carry, s.persona, s.resumed, s.resumeReason = carry, persona, resumed, reason
 	s.carryHandoff = handoff
@@ -845,6 +848,9 @@ func (s *Supervisor) nextSegmentFor(ctx context.Context, notice string) error {
 		err = s.withoutNewServers(sctx, err)
 	}
 	if err != nil {
+		err = s.rollBack(sctx, err)
+	}
+	if err != nil {
 		s.mu.Lock()
 		s.broadcast(session.Event{Kind: session.KindError, Time: time.Now().UTC(), Text: "the change could not be applied, so the agent stopped: " + err.Error()})
 		s.mu.Unlock()
@@ -958,6 +964,12 @@ func (s *Supervisor) endSegment(ctx context.Context, swap bool) (*receipt.Envelo
 // takes effect at the next turn, which starts the next segment; the roster
 // answered shows it pending until then.
 func (s *Supervisor) Change(ch Change) (Roster, error) {
+	// What the next segment reads from the keychain for the change must be
+	// there now: a change it could not start with is refused here, rather
+	// than taken back at the next turn.
+	if err := s.checkKeys(ch); err != nil {
+		return nil, err
+	}
 	err := s.updateConfig(func(c *Config) error {
 		_, err := applyChange(s.opts.Home, s.opts.Agent, c, ch, s.opts.Policy.MalwareCheckOn())
 		return err
@@ -973,6 +985,39 @@ func (s *Supervisor) Change(ch Change) (Roster, error) {
 	// stops or is told now.
 	s.reconcileMessengers()
 	return s.Roster(), nil
+}
+
+// checkKeys says the keychain holds what change ch gives the agent: a
+// stored secret's value, a git host account's token, a calendar feed's
+// address. Each is written there before the change is sent.
+func (s *Supervisor) checkKeys(ch Change) error {
+	keys := s.opts.Secrets
+	if keys == nil {
+		keys = KeychainSecrets{}
+	}
+	a := s.opts.Agent.Name
+	check := func(account, what string) error {
+		if _, err := keys.Get(account); err != nil {
+			return fmt.Errorf("%s is not in the keychain, so the agent could not be given it: %w (store it again)", what, err)
+		}
+		return nil
+	}
+	if sec := ch.SetSecret; sec != nil {
+		if err := check(SecretAccount(a, sec.Name), "the secret "+sec.Name); err != nil {
+			return err
+		}
+	}
+	if g := ch.SetAccount; g != nil {
+		if err := check(AccountKeychainAccount(g.Host, g.User), "the token of "+g.User+"@"+g.Host); err != nil {
+			return err
+		}
+	}
+	if f := ch.SetCalendarFeed; f != nil {
+		if err := check(CalendarKeychainAccount(a, f.Name), "the address of the calendar feed "+f.Name); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // updateConfig reads the agent's config, changes it and writes it, one
@@ -1076,6 +1121,9 @@ type Status struct {
 	Pending bool `json:"pending,omitempty"`
 	// Messengers are the agent's messengers and each one's connection.
 	Messengers []MessengerState `json:"messengers,omitempty"`
+	// NotApplied is the last change the agent could not start with, which
+	// it took back.
+	NotApplied *NotApplied `json:"notApplied,omitempty"`
 }
 
 // StateRunning is a running agent's state.
@@ -1111,7 +1159,7 @@ func (s *Supervisor) Status() Status {
 		Agent: s.opts.Agent.Name, State: StateRunning, Client: s.opts.Client, PID: os.Getpid(), Since: s.since,
 		Segment: s.segment, Run: s.runID, SegmentDir: s.outDir, Adapter: s.adapter, Model: s.model,
 		Resumed: s.resumed, ResumeReason: s.resumeReason, Busy: s.busy, Usage: s.usage,
-		Pending: pending, Messengers: messengers,
+		Pending: pending, Messengers: messengers, NotApplied: cfg.NotApplied,
 	}
 }
 
