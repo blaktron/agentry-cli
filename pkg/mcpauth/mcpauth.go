@@ -7,6 +7,12 @@
 // (RFC 8707), the iss check on the redirect (RFC 9207), the code exchange,
 // refresh and revocation (RFC 7009).
 //
+// It also carries the client half of MCP's Enterprise-Managed Authorization
+// extension (idjag.go): an Identity Assertion JWT Authorization Grant asked of
+// an organization's identity provider by token exchange (RFC 8693) and
+// redeemed at an MCP server's authorization server by the JWT bearer grant
+// (RFC 7523), with no consent screen.
+//
 // Every request to a vendor goes through Guard: https, public addresses
 // only, no redirect, no proxy from the environment. Nothing here logs or
 // returns a vendor's answer: an error carries the OAuth error code and
@@ -58,6 +64,10 @@ type ServerMetadata struct {
 	TokenEndpointAuthMethodsSupported []string `json:"token_endpoint_auth_methods_supported,omitempty"`
 	ISSParameterSupported             bool     `json:"authorization_response_iss_parameter_supported,omitempty"`
 	CIMDSupported                     bool     `json:"client_id_metadata_document_supported,omitempty"`
+	GrantTypesSupported               []string `json:"grant_types_supported,omitempty"`
+	// AuthorizationGrantProfilesSupported names the authorization grant
+	// profiles the server takes, such as the ID-JAG profile.
+	AuthorizationGrantProfilesSupported []string `json:"authorization_grant_profiles_supported,omitempty"`
 }
 
 // Discovery is what a remote server says about how it is signed in to.
@@ -243,8 +253,43 @@ func sameResource(resource string, server *url.URL) error {
 
 // DiscoverIssuer reads an authorization server's metadata from the
 // well-known addresses the specification orders, and holds it to its own
-// issuer and to PKCE with S256.
+// issuer and to what a sign-in in the browser needs: https authorization and
+// token endpoints, and PKCE with S256.
 func DiscoverIssuer(ctx context.Context, c *http.Client, issuer string) (*ServerMetadata, error) {
+	md, err := readIssuerMetadata(ctx, c, issuer)
+	if err != nil {
+		return nil, err
+	}
+	if !strings.HasPrefix(md.AuthorizationEndpoint, "https://") {
+		return nil, fmt.Errorf("authorization server %s names an endpoint that is not https", issuer)
+	}
+	// Entra takes S256 on every authority and advertises it on none.
+	if !slices.Contains(md.CodeChallengeMethodsSupported, "S256") && !IsEntra(issuer) {
+		return nil, fmt.Errorf("authorization server %s does not offer PKCE with S256, which a sign-in needs", issuer)
+	}
+	return md, nil
+}
+
+// DiscoverTokenIssuer reads an authorization server's metadata under the
+// same issuer and https checks as DiscoverIssuer, for a server that is only
+// sent token requests: it needs an https token endpoint, and neither an
+// authorization endpoint nor PKCE. An MCP server's authorization server that
+// redeems ID-JAGs alone is such a server.
+func DiscoverTokenIssuer(ctx context.Context, c *http.Client, issuer string) (*ServerMetadata, error) {
+	md, err := readIssuerMetadata(ctx, c, issuer)
+	if err != nil {
+		return nil, err
+	}
+	if md.AuthorizationEndpoint != "" && !strings.HasPrefix(md.AuthorizationEndpoint, "https://") {
+		return nil, fmt.Errorf("authorization server %s names an endpoint that is not https", issuer)
+	}
+	return md, nil
+}
+
+// readIssuerMetadata fetches the metadata and holds it to its issuer, to
+// https for the token endpoint and every other endpoint it names, and, for a
+// Microsoft Entra authority, to Entra's host.
+func readIssuerMetadata(ctx context.Context, c *http.Client, issuer string) (*ServerMetadata, error) {
 	iu, err := url.Parse(issuer)
 	if err != nil || iu.Scheme != "https" || iu.Host == "" || iu.RawQuery != "" || iu.Fragment != "" {
 		return nil, fmt.Errorf("authorization server %q is not an https issuer", issuer)
@@ -290,19 +335,13 @@ func DiscoverIssuer(ctx context.Context, c *http.Client, issuer string) (*Server
 	if entra && !entraEndpointsOnHost(md) {
 		return nil, fmt.Errorf("authorization server %s names an endpoint off %s: refused", issuer, EntraHost)
 	}
-	for _, e := range []string{md.AuthorizationEndpoint, md.TokenEndpoint} {
-		if !strings.HasPrefix(e, "https://") {
-			return nil, fmt.Errorf("authorization server %s names an endpoint that is not https", issuer)
-		}
+	if !strings.HasPrefix(md.TokenEndpoint, "https://") {
+		return nil, fmt.Errorf("authorization server %s names an endpoint that is not https", issuer)
 	}
 	for _, e := range []string{md.RegistrationEndpoint, md.RevocationEndpoint} {
 		if e != "" && !strings.HasPrefix(e, "https://") {
 			return nil, fmt.Errorf("authorization server %s names an endpoint that is not https", issuer)
 		}
-	}
-	// Entra takes S256 on every authority and advertises it on none.
-	if !slices.Contains(md.CodeChallengeMethodsSupported, "S256") && !entra {
-		return nil, fmt.Errorf("authorization server %s does not offer PKCE with S256, which a sign-in needs", issuer)
 	}
 	return &md, nil
 }
@@ -340,8 +379,15 @@ type Client struct {
 	// ClientAgentry.
 	Kind string `json:"kind"`
 	// AuthMethod is how it authenticates at the token endpoint: AuthNone,
-	// AuthSecretBasic or AuthSecretPost.
+	// AuthSecretBasic, AuthSecretPost or AuthPrivateKeyJWT.
 	AuthMethod string `json:"authMethod"`
+	// Signer signs the client assertion of an AuthPrivateKeyJWT client, so
+	// its key can stay in a key service; it is never serialised.
+	Signer Signer `json:"-"`
+	// AssertionAudience is the aud of an AuthPrivateKeyJWT client's
+	// assertion. Empty is the token endpoint the request is sent to, which
+	// is what most authorization servers ask; some ask for their issuer.
+	AssertionAudience string `json:"-"`
 }
 
 // Token endpoint authentication methods (RFC 7591 §2).
@@ -349,6 +395,9 @@ const (
 	AuthNone        = "none"
 	AuthSecretBasic = "client_secret_basic"
 	AuthSecretPost  = "client_secret_post"
+	// AuthPrivateKeyJWT authenticates with a JWT the client signs (RFC 7523
+	// §2.2), its key held by the Client's Signer.
+	AuthPrivateKeyJWT = "private_key_jwt"
 )
 
 // The kinds of Client.
@@ -586,6 +635,18 @@ func postForm(ctx context.Context, c *http.Client, endpoint string, client Clien
 	case AuthSecretPost:
 		form.Set("client_id", client.ID)
 		form.Set("client_secret", client.Secret)
+	case AuthPrivateKeyJWT:
+		aud := client.AssertionAudience
+		if aud == "" {
+			aud = endpoint
+		}
+		assertion, err := clientAssertion(ctx, client, aud)
+		if err != nil {
+			return nil, err
+		}
+		form.Set("client_id", client.ID)
+		form.Set("client_assertion_type", clientAssertionType)
+		form.Set("client_assertion", assertion)
 	default:
 		form.Set("client_id", client.ID)
 	}
@@ -619,7 +680,7 @@ func oauthError(status int, raw []byte, sent url.Values, also ...string) error {
 	}
 	_ = json.Unmarshal(raw, &body)
 	var mask []string
-	for _, k := range []string{"refresh_token", "client_secret", "code", "code_verifier", "token"} {
+	for _, k := range []string{"refresh_token", "client_secret", "code", "code_verifier", "token", "subject_token", "assertion", "client_assertion"} {
 		if v := sent.Get(k); v != "" {
 			mask = append(mask, v)
 		}
