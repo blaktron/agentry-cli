@@ -316,7 +316,7 @@ func printChangedMessenger(w io.Writer, a persistent.Agent, r persistent.Roster,
 	if running {
 		_, _ = fmt.Fprintf(w, "Saved. The %s agent takes it now.\n", a.Name)
 	} else {
-		_, _ = fmt.Fprintf(w, "Saved. The %s agent takes it when it next starts (agentry agent start %s).\n", a.Name, a.Name)
+		_, _ = fmt.Fprintf(w, "Saved. The %s agent takes it when it next starts (agentry agent start %s%s).\n", a.Name, a.Name, onThisRunhost())
 	}
 	printRoster(w, r)
 }
@@ -432,7 +432,7 @@ func newAgentMessengerListCmd() *cobra.Command {
 // printMessengers prints an agent's messengers, one a line.
 func printMessengers(w io.Writer, a persistent.Agent, ms []persistent.MessengerState) {
 	if len(ms) == 0 {
-		_, _ = fmt.Fprintf(w, "The %s agent has no messenger: agentry agent messenger add %s <%s>\n", a.Name, a.Name, strings.Join(messenger.Names(), "|"))
+		_, _ = fmt.Fprintf(w, "The %s agent has no messenger: agentry agent messenger add %s <%s>%s\n", a.Name, a.Name, strings.Join(messenger.Names(), "|"), onThisRunhost())
 		return
 	}
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
@@ -500,7 +500,7 @@ func newAgentMessengerTestCmd() *cobra.Command {
 			}
 			_, _ = fmt.Fprintf(w, "%s takes the credential of %s.\n", k.Title, safeTerminalText(ready.Name, 80))
 			if acct.Peer == nil {
-				_, _ = fmt.Fprintf(w, "No account is paired, so no test message was sent: agentry agent messenger pair %s %s\n", a.Name, k.Name)
+				_, _ = fmt.Fprintf(w, "No account is paired, so no test message was sent: agentry agent messenger pair %s %s%s\n", a.Name, k.Name, onThisRunhost())
 				return nil
 			}
 			msg := "A test from Agentry on " + yourMachine() + ": this " + k.Account + " reaches you. The agent did not write this."
