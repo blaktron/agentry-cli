@@ -834,3 +834,23 @@ func acquireWhenStopped(ctx context.Context, home, name, client string, restop b
 		}
 	}
 }
+
+// StopForRemoval stops the running agent a so it can be uninstalled or
+// reset: it asks the supervisor to stop and waits for its lock to be let
+// go. It says whether the agent was running; one held by something no stop
+// reaches (a sign-in) is named.
+func StopForRemoval(ctx context.Context, home string, a Agent, client string) (bool, error) {
+	if held, _ := Held(home, a.Name); !held {
+		return false, nil
+	}
+	if _, err := RequestStop(ctx, home, a.Name); err != nil {
+		_, h := Held(home, a.Name)
+		return true, fmt.Errorf("%w: it could not be stopped (%v)", &HeldError{Agent: a.Name, Holder: h}, err)
+	}
+	owner, err := acquireWhenStopped(ctx, home, a.Name, client, true)
+	if err != nil {
+		return true, err
+	}
+	owner.Release()
+	return true, nil
+}

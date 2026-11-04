@@ -9,8 +9,9 @@ package main
 import (
 	"bufio"
 	"fmt"
-	"github.com/blaktron/agentry-cli/runnerimage"
 	"strings"
+
+	"github.com/blaktron/agentry-cli/runnerimage"
 
 	"github.com/spf13/cobra"
 

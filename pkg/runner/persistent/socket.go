@@ -402,7 +402,7 @@ func request(ctx context.Context, home, name string, cmd Command, want func(Repl
 			return &ConsentError{Agent: name, Entries: r.Consent}
 		}
 		if r.Event != nil && r.Event.Refused != "" {
-			return errors.New(r.Event.Text)
+			return &RefusedError{Class: string(r.Event.Refused), Text: r.Event.Text}
 		}
 		if want(r) {
 			return nil

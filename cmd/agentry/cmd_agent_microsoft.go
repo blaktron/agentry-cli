@@ -106,6 +106,12 @@ func configureMicrosoft(cmd *cobra.Command, a persistent.Agent, home, policyPath
 		browse = nil
 	}
 	account, err := m.SignIn(cmd.Context(), email, browse)
+	if persistent.OlderSupervisor(err) {
+		if herr := handOver(cmd, home, a, false); herr != nil {
+			return engine.Classify(engine.ExitCLI, herr)
+		}
+		account, err = m.SignIn(cmd.Context(), email, browse)
+	}
 	if err != nil {
 		return engine.Classify(engine.ExitCLI, fmt.Errorf("--microsoft-sign-in: %w", err))
 	}

@@ -118,8 +118,8 @@ func TestAgentStartRefusesASecondOwner(t *testing.T) {
 		t.Errorf("disable of an agent held by what no stop reaches: err = %v", err)
 	}
 	_, _, err = runCLI(t, nil, "agent", "reset", "assistant", "--confirm", "assistant")
-	if err == nil || !strings.Contains(err.Error(), "stop it first") {
-		t.Errorf("reset of a running agent: err = %v", err)
+	if err == nil || !strings.Contains(err.Error(), "already running under Agentry Desktop") || !strings.Contains(err.Error(), "could not be stopped") {
+		t.Errorf("reset of an agent held by what no stop reaches: err = %v", err)
 	}
 }
 

@@ -8368,6 +8368,25 @@
           "dependencyHints": []
         },
         {
+          "path": "pkg/runner/persistent/release_test.go",
+          "tests": [
+            "TestAnUpdateOfARunningAgentReachesTheNextTurn",
+            "TestAnUpdateAsksForWhatIsNotAgreedTo",
+            "TestAnUpdateNoSegmentCanStartOnIsSetAside",
+            "TestAHandOverMovesTheAgentToANewSupervisor",
+            "TestARefusalOfAnUnknownCommandIsAnOlderSupervisor",
+            "TestAHandOverLeavesAnotherClientsAgent",
+            "TestAnInstallRecordIsHeldToItsForm"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "docker interface (real or fake)",
+            "real-time wait"
+          ]
+        },
+        {
           "path": "pkg/runner/persistent/reset_test.go",
           "tests": [
             "TestResetHistoryKeepsWhatThePersonChose",

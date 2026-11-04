@@ -85,6 +85,15 @@ func configureAgent(cmd *cobra.Command, home string, a persistent.Agent, ch pers
 	ctx, cancel := context.WithTimeout(cmd.Context(), time.Minute)
 	defer cancel()
 	r, running, err := persistent.Configure(ctx, home, a, persistent.ClientCLI, ch)
+	if persistent.OlderSupervisor(err) {
+		if herr := handOver(cmd, home, a, yes); herr != nil {
+			return nil, false, engine.Classify(engine.ExitCLI, herr)
+		}
+		cancel()
+		ctx, cancel = context.WithTimeout(cmd.Context(), time.Minute)
+		defer cancel()
+		r, running, err = persistent.Configure(ctx, home, a, persistent.ClientCLI, ch)
+	}
 	var ce *persistent.ConsentError
 	if errors.As(err, &ce) {
 		if err := agentConsent(cmd, a, ce, yes); err != nil {

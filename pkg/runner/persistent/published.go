@@ -18,6 +18,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -132,8 +133,23 @@ func LoadRelease(home, key string) (Release, error) {
 	if err != nil || Key(ns, name) != key || IsBuiltinRef(r.Ref) {
 		return r, fmt.Errorf("the install record in %s names %q, another agent", Dir(home, key), r.Ref)
 	}
+	// The version and the digest name the release's folder: each is held to
+	// its form, so neither can lead the folder anywhere else.
+	if !releaseVersionRE.MatchString(r.Version) || strings.Contains(r.Version, "..") {
+		return r, fmt.Errorf("the install record in %s names the version %q, which is not one", Dir(home, key), r.Version)
+	}
+	if !releaseDigestRE.MatchString(r.Digest) {
+		return r, fmt.Errorf("the install record in %s names the digest %q, which is not a sha256 digest", Dir(home, key), r.Digest)
+	}
 	return r, nil
 }
+
+// releaseVersionRE and releaseDigestRE are the forms an install record's
+// version and digest take.
+var (
+	releaseVersionRE = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z.+-]{0,63}$`)
+	releaseDigestRE  = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+)
 
 // SaveRelease records a published agent's install in its state folder and
 // enables it: what `agentry agent install` writes once its release is laid
