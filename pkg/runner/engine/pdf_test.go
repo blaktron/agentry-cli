@@ -157,7 +157,7 @@ func TestTheRunsReportThemeIsStampedAndNamed(t *testing.T) {
 		from       string
 	}{
 		{ReportTheme{Name: "classic", From: ThemeFromFlag}, "classic", "Classic", "the --report-theme flag"},
-		{ReportTheme{Design: compact.Bytes(), From: ThemeFromAccount}, "modern", "Modern", "the account's report design"},
+		{ReportTheme{Design: compact.Bytes(), From: ThemeFromAccount}, "modern", "Modern", "the account's default report design"},
 		{ReportTheme{}, "plain", "Plain", "the default"},
 	} {
 		p, f := fixture(t)
@@ -218,7 +218,7 @@ func TestTheRunsReportThemeIsStampedAndNamed(t *testing.T) {
 			t.Errorf("the tools spec's theme with a logo = %+v", ts.PDF.Theme)
 		}
 		line := env.CapabilitiesEnforced["pdf.design"]
-		if !strings.Contains(line, "(sha256:"+sha(withLogo)+"), carrying the person's logo for the top of each PDF's first page (each PDF's entry says whether it was drawn), chosen by the account's report design") {
+		if !strings.Contains(line, "(sha256:"+sha(withLogo)+"), carrying the person's logo for the top of each PDF's first page (each PDF's entry says whether it was drawn), chosen by the account's default report design") {
 			t.Errorf("the receipt's pdf.design line with a logo = %q", line)
 		}
 	}
