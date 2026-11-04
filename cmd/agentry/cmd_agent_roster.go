@@ -103,6 +103,15 @@ func configureAgent(cmd *cobra.Command, home string, a persistent.Agent, ch pers
 	return r, running, nil
 }
 
+// whenTaken says when an agent takes a change: at its next turn while it
+// runs, else at its next start.
+func whenTaken(running bool) string {
+	if running {
+		return "the running agent takes it at its next turn"
+	}
+	return "the agent takes it when it next starts"
+}
+
 // printChanged says what a change did, and when it takes effect.
 func printChanged(w io.Writer, a persistent.Agent, r persistent.Roster, running bool) {
 	pending := false
@@ -285,7 +294,7 @@ func newAgentConfigureCmd() *cobra.Command {
 				if cmd.Flags().NFlag() > countFlags(cmd, "mail-provider", "no-mail-provider") {
 					return engine.Classify(engine.ExitUsage, errors.New("--mail-provider and --no-mail-provider go with each other alone"))
 				}
-				return configureMailProviders(cmd, a, home, mailOn, mailOff)
+				return configureMailProviders(cmd, a, home, mailOn, mailOff, yes)
 			}
 			if fastmailToken || noFastmail {
 				if fastmailToken && noFastmail {
@@ -329,7 +338,7 @@ func newAgentConfigureCmd() *cobra.Command {
 					empty := ""
 					signoff = &empty
 				}
-				return configureMicrosoft(cmd, a, home, policyPath, msClient, msTenant, msSignIn, signoff)
+				return configureMicrosoft(cmd, a, home, policyPath, msClient, msTenant, msSignIn, signoff, yes)
 			}
 			if googleClient != "" || googleSignIn != "" {
 				if cmd.Flags().NFlag() > countFlags(cmd, "google-client", "google-sign-in", "policy") {

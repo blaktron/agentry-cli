@@ -98,9 +98,34 @@ type Change struct {
 	// OpenPairing opens a pairing on a messenger, for the code whose digest
 	// it carries.
 	OpenPairing *PairingChange `json:"openPairing,omitempty"`
+	// MailProvider enables or disables one of the agent's mail providers,
+	// by its key. Disabling keeps the provider's sign-in, its keychain
+	// entries and its volume, and its switches and agreements as they were;
+	// enabling it again puts its servers back on the roster as they were.
+	MailProvider *MailProviderSwitch `json:"mailProvider,omitempty"`
+	// MicrosoftClient records the person's own Entra client for Microsoft
+	// 365, and the tenant to sign in on when it names one; it enables the
+	// Microsoft mail provider. A sign-in made with another client is kept
+	// until the next one.
+	MicrosoftClient *MicrosoftClient `json:"microsoftClient,omitempty"`
+	// MicrosoftSignoff is what mail Microsoft 365 sends or drafts ends
+	// with; empty for nothing.
+	MicrosoftSignoff *string `json:"microsoftSignoff,omitempty"`
 	// Consent says the person consented to what this change turns on, as
 	// the lines a ConsentError listed say it.
 	Consent bool `json:"consent,omitempty"`
+}
+
+// MailProviderSwitch enables (On) or disables a mail provider.
+type MailProviderSwitch struct {
+	Key string `json:"key"`
+	On  bool   `json:"on"`
+}
+
+// MicrosoftClient is an Entra client id and, optionally, a tenant.
+type MicrosoftClient struct {
+	ClientID string `json:"clientID"`
+	Tenant   string `json:"tenant,omitempty"`
 }
 
 // Switch is a roster switch.
@@ -386,6 +411,21 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 	}
 	if f := ch.SetCalendarFeed; f != nil {
 		if err := addCalendarFeed(a, &next, *f); err != nil {
+			return false, err
+		}
+	}
+	if mp := ch.MailProvider; mp != nil {
+		if err := switchMailProvider(a, &next, mp.Key, mp.On); err != nil {
+			return false, err
+		}
+	}
+	if mc := ch.MicrosoftClient; mc != nil {
+		if err := setMicrosoftClient(a, &next, mc.ClientID, mc.Tenant); err != nil {
+			return false, err
+		}
+	}
+	if so := ch.MicrosoftSignoff; so != nil {
+		if err := setMicrosoftSignoff(a, &next, *so); err != nil {
 			return false, err
 		}
 	}

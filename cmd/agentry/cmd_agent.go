@@ -939,7 +939,7 @@ func newAgentAttachCmd() *cobra.Command {
 func newAgentEnableCmd(on bool) *cobra.Command {
 	use, short := "enable <name>", "Enable a persistent agent, so it can be started"
 	if !on {
-		use, short = "disable <name>", "Disable a persistent agent; its conversation and files are kept"
+		use, short = "disable <name>", "Disable a persistent agent, stopping it if it runs; its conversation and files are kept"
 	}
 	return &cobra.Command{
 		Use:   use,
@@ -954,16 +954,16 @@ func newAgentEnableCmd(on bool) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if held, _ := persistent.Held(home, a.Name); held && !on {
-				return engine.Classify(engine.ExitUsage, fmt.Errorf("the %s agent is running: stop it first (agentry agent stop %s)", a.Name, a.Name))
+			held, _ := persistent.Held(home, a.Name)
+			if err := persistent.SetEnabled(cmd.Context(), home, a, persistent.ClientCLI, on); err != nil {
+				return engine.Classify(engine.ExitCLI, err)
 			}
-			cfg, err := persistent.LoadConfig(home, a.Name)
-			if err != nil {
-				return err
+			if held && !on {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "The %s agent was running: it is stopped.\n", a.Name)
 			}
-			cfg.Enabled = on
-			if err := persistent.SaveConfig(home, a.Name, cfg); err != nil {
-				return err
+			if held && on {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "The %s agent is running, and enabled.\n", a.Name)
+				return nil
 			}
 			if on {
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "The %s agent is enabled. Start it: agentry agent start %s%s\n", a.Name, a.Name, onThisRunhost())

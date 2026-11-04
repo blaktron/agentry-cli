@@ -8,7 +8,7 @@ package persistent
 // provider again asks for no new set-up.
 
 import (
-	"errors"
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -160,39 +160,29 @@ func enableMailProvider(c *Config, key string) bool {
 	return true
 }
 
-// SetMailProvider enables or disables one of a stopped agent's mail
-// providers. Disabling keeps the provider's sign-in, its keychain entries
-// and its volume, and its switches and agreements as they were; enabling
-// it again puts its servers back on the roster as they were left. It is
-// refused while the agent runs, whose segment holds the servers' volumes,
-// and holds the agent's lock meanwhile so none starts.
+// SetMailProvider enables or disables one of the agent's mail providers.
+// Disabling keeps the provider's sign-in, its keychain entries and its
+// volume, and its switches and agreements as they were; enabling it again
+// puts its servers back on the roster as they were left. A running agent
+// takes it at its next turn, which starts a segment with or without the
+// provider's servers.
 func SetMailProvider(home string, a Agent, client, key string, on bool) error {
+	_, _, err := Configure(context.Background(), home, a, client, Change{MailProvider: &MailProviderSwitch{Key: key, On: on}})
+	return err
+}
+
+// switchMailProvider enables or disables the mail provider key in c.
+func switchMailProvider(a Agent, c *Config, key string, on bool) error {
 	if len(mailProvidersOf(a)) == 0 {
 		return fmt.Errorf("the %s agent reaches no mail", a.Name)
 	}
 	if !slices.ContainsFunc(mailProvidersOf(a), func(p offer.MailProvider) bool { return p.Key == key }) {
 		return fmt.Errorf("the %s agent has no mail provider %q (its providers are %s)", a.Name, key, mailProviderKeys(a))
 	}
-	owner, err := Acquire(home, a.Name, client)
-	var held *HeldError
-	if errors.As(err, &held) {
-		return fmt.Errorf("%w: stop it first, since its servers hold their sign-ins while it runs", held)
-	}
-	if err != nil {
-		return err
-	}
-	defer owner.Release()
-	c, err := LoadConfig(home, a.Name)
-	if err != nil {
-		return err
-	}
-	switch {
-	case on && !enableMailProvider(&c, key):
+	if on {
+		enableMailProvider(c, key)
 		return nil
-	case !on && !slices.Contains(c.MailProviders, key):
-		return nil
-	case !on:
-		c.MailProviders = slices.DeleteFunc(c.MailProviders, func(k string) bool { return k == key })
 	}
-	return SaveConfig(home, a.Name, c)
+	c.MailProviders = slices.DeleteFunc(slices.Clone(c.MailProviders), func(k string) bool { return k == key })
+	return nil
 }

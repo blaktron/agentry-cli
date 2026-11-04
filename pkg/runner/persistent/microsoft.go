@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -175,11 +176,7 @@ type Microsoft struct {
 }
 
 func (m Microsoft) acquire() (*Owner, error) {
-	client := m.Client
-	if client == "" {
-		client = ClientCLI
-	}
-	return Acquire(m.Home, m.Agent.Name, client)
+	return Acquire(m.Home, m.Agent.Name, m.client())
 }
 
 func (m Microsoft) say(format string, args ...any) {
@@ -209,23 +206,55 @@ func (m Microsoft) record(key string, change func(*ImageSignIn)) error {
 	if err != nil {
 		return err
 	}
-	in := c.SignIns[key]
-	change(&in)
-	if c.SignIns == nil {
-		c.SignIns = map[string]ImageSignIn{}
-	}
-	c.SignIns[key] = in
+	editSignIn(&c, key, change)
 	if p, ok := mailProviderOf(m.Agent, key); ok && enableMailProvider(&c, p.Key) {
-		m.say("%s is now one of the %s agent's mail providers (agentry agent configure %s --no-mail-provider %s takes it off its roster).", p.Name, m.Agent.Name, m.Agent.Name, p.Key)
+		m.sayProviderOn(p)
 	}
 	return SaveConfig(m.Home, m.Agent.Name, c)
 }
 
+// sayProviderOn tells the person the provider p is now one of the agent's.
+func (m Microsoft) sayProviderOn(p offer.MailProvider) {
+	m.say("%s is now one of the %s agent's mail providers (agentry agent configure %s --no-mail-provider %s takes it off its roster).", p.Name, m.Agent.Name, m.Agent.Name, p.Key)
+}
+
 // SetClient records the person's own Entra client, and the tenant to sign
 // in on when they name one ("" asks Microsoft at the sign-in). A sign-in
-// made with another client is kept until the next one. It is refused while
-// the agent runs.
+// made with another client is kept until the next one. A running agent
+// takes it at its next turn.
 func (m Microsoft) SetClient(clientID, tenant string) error {
+	before, err := LoadConfig(m.Home, m.Agent.Name)
+	if err != nil {
+		return err
+	}
+	if _, _, err := Configure(context.Background(), m.Home, m.Agent, m.client(), Change{MicrosoftClient: &MicrosoftClient{ClientID: clientID, Tenant: tenant}}); err != nil {
+		return err
+	}
+	if p, ok := mailProviderOf(m.Agent, assistant.MS365Key); ok && !slices.Contains(before.MailProviders, p.Key) {
+		m.sayProviderOn(p)
+	}
+	return nil
+}
+
+// SetSignoff records what mail the server sends or drafts ends with ("" for
+// nothing): one line of printable text, at most 200 bytes. A running agent
+// takes it at its next turn.
+func (m Microsoft) SetSignoff(text string) error {
+	_, _, err := Configure(context.Background(), m.Home, m.Agent, m.client(), Change{MicrosoftSignoff: &text})
+	return err
+}
+
+// client is the client the set-up runs in.
+func (m Microsoft) client() string {
+	if m.Client == "" {
+		return ClientCLI
+	}
+	return m.Client
+}
+
+// setMicrosoftClient records the Entra client clientID and the tenant, when
+// named, on c's Microsoft 365 sign-in, and enables its mail provider.
+func setMicrosoftClient(a Agent, c *Config, clientID, tenant string) error {
 	clientID = strings.ToLower(strings.TrimSpace(clientID))
 	tenant = strings.ToLower(strings.TrimSpace(tenant))
 	if err := CheckMicrosoftClient(clientID); err != nil {
@@ -236,50 +265,52 @@ func (m Microsoft) SetClient(clientID, tenant string) error {
 			return err
 		}
 	}
-	owner, err := m.acquire()
-	if err != nil {
-		return err
+	if !hasMS365(a) {
+		return fmt.Errorf("the %s agent has no Microsoft 365", a.Name)
 	}
-	defer owner.Release()
-	s, err := m.server()
-	if err != nil {
-		return err
-	}
-	return m.record(s.Key, func(in *ImageSignIn) {
+	editSignIn(c, assistant.MS365Key, func(in *ImageSignIn) {
 		in.ClientID, in.Client = clientID, time.Now().UTC()
 		if tenant != "" {
 			in.Tenant = tenant
 		}
 	})
+	if p, ok := mailProviderOf(a, assistant.MS365Key); ok {
+		enableMailProvider(c, p.Key)
+	}
+	return nil
 }
 
-// SetSignoff records what mail the server sends or drafts ends with ("" for
-// nothing): one line of printable text, at most 200 bytes.
-func (m Microsoft) SetSignoff(text string) error {
+// setMicrosoftSignoff records the signoff text on c's Microsoft 365
+// sign-in.
+func setMicrosoftSignoff(a Agent, c *Config, text string) error {
 	text = strings.TrimSpace(text)
 	if len(text) > maxSignoff || strings.IndexFunc(text, func(r rune) bool { return r < ' ' || r == 0x7f }) >= 0 {
 		return fmt.Errorf("a signoff is one line of at most %d bytes", maxSignoff)
 	}
-	owner, err := m.acquire()
-	if err != nil {
-		return err
+	if !hasMS365(a) {
+		return fmt.Errorf("the %s agent has no Microsoft 365", a.Name)
 	}
-	defer owner.Release()
-	s, err := m.server()
-	if err != nil {
-		return err
+	editSignIn(c, assistant.MS365Key, func(in *ImageSignIn) { in.Signoff = text })
+	return nil
+}
+
+// hasMS365 says the agent offers Microsoft 365, whatever image the policy
+// names.
+func hasMS365(a Agent) bool {
+	return slices.ContainsFunc(a.ImageServers(policy.Images{}), func(s offer.ImageServer) bool { return s.Key == assistant.MS365Key })
+}
+
+// editSignIn changes c's sign-in record of the image server key, copying
+// the map so the config it came from is left as it was.
+func editSignIn(c *Config, key string, change func(*ImageSignIn)) {
+	in := c.SignIns[key]
+	change(&in)
+	signIns := maps.Clone(c.SignIns)
+	if signIns == nil {
+		signIns = map[string]ImageSignIn{}
 	}
-	c, err := LoadConfig(m.Home, m.Agent.Name)
-	if err != nil {
-		return err
-	}
-	in := c.SignIns[s.Key]
-	in.Signoff = text
-	if c.SignIns == nil {
-		c.SignIns = map[string]ImageSignIn{}
-	}
-	c.SignIns[s.Key] = in
-	return SaveConfig(m.Home, m.Agent.Name, c)
+	signIns[key] = in
+	c.SignIns = signIns
 }
 
 // prepare makes the server's volume and its cache key when either is
