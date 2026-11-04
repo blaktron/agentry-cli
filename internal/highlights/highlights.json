@@ -1,6 +1,14 @@
 {
   "versions": [
     {
+      "version": "0.7.20",
+      "highlights": [
+        "A run on a model of your own reads files in pages sized to the model's context window, 16 KiB to 48 KiB.",
+        "On a model of your own, older tool results give way once they pass half the window, or 64k tokens if it is unknown.",
+        "A model of your own compacts its conversation at 70% of its window, not 90%."
+      ]
+    },
+    {
       "version": "0.7.19",
       "highlights": [
         "A running persistent agent takes a change to the runner's policy, its model and harness included, at its next turn.",

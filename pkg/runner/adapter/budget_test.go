@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 )
 
 // TestEveryAdapterHasAMeasuredResultBudget: a registered adapter without a
@@ -78,6 +80,42 @@ func TestTheCodexCatalogKeepsAWholePage(t *testing.T) {
 		item, _ := json.Marshal(map[string]any{"type": "resource", "resource": map[string]any{"uri": "agentry://inputs", "mimeType": "text/plain", "text": page}})
 		if int64(len(item)) > tp.Limit {
 			t.Errorf("a %d-byte page of short lines is %d bytes as codex sends it, past the %d it keeps", b.Bytes, len(item), tp.Limit)
+		}
+	}
+}
+
+// TestTheWindowSizesThePage: a page is a sixteenth of a known window, at
+// four bytes a token, between 16 KiB and the adapter's own budget; an
+// endpoint of the person's own with no window gets 32 KiB, and a hosted
+// model with none keeps the adapter's budget, which its harness sizes from
+// its own catalogue.
+func TestTheWindowSizesThePage(t *testing.T) {
+	own := func(window int64) policy.Model {
+		return policy.Model{Provider: "custom", Name: "m", BaseURL: "http://127.0.0.1:1234/v1", ContextWindow: window}
+	}
+	hosted := policy.Model{Provider: policy.ProviderAnthropic, Name: "claude-sonnet-5-5"}
+	da := ResultBudget(DefaultName)
+	for _, c := range []struct {
+		name    string
+		adapter string
+		model   policy.Model
+		bytes   int64
+	}{
+		{"hosted, no window", DefaultName, hosted, da.Bytes},
+		{"hosted, a small window", DefaultName, policy.Model{Provider: policy.ProviderAnthropic, Name: "m", ContextWindow: 65536}, 16 << 10},
+		{"own, 262k", DefaultName, own(262144), da.Bytes},
+		{"own, 200k", DefaultName, own(200000), da.Bytes},
+		{"own, 128k", DefaultName, own(131072), 32 << 10},
+		{"own, 100k, a whole KiB", DefaultName, own(100000), 24 << 10},
+		{"own, 32k", DefaultName, own(32768), 16 << 10},
+		{"own, the smallest window", DefaultName, own(policy.MinContextWindow), 16 << 10},
+		{"own, no window", DefaultName, own(0), 32 << 10},
+		{"openai at a base URL, no window", DefaultName, policy.Model{Provider: policy.ProviderOpenAI, Name: "m", BaseURL: "http://127.0.0.1:1234/v1"}, 32 << 10},
+		{"never above a tighter adapter's", CopilotImageAdapterName, own(0), ResultBudget(CopilotImageAdapterName).Bytes},
+	} {
+		got := PageBudget(c.adapter, c.model)
+		if got.Bytes != c.bytes || got.Lines != ResultBudget(c.adapter).Lines {
+			t.Errorf("%s: page %+v, want %d bytes and the adapter's %d lines", c.name, got, c.bytes, ResultBudget(c.adapter).Lines)
 		}
 	}
 }

@@ -3737,7 +3737,8 @@
           "path": "pkg/runner/adapter/budget_test.go",
           "tests": [
             "TestEveryAdapterHasAMeasuredResultBudget",
-            "TestTheCodexCatalogKeepsAWholePage"
+            "TestTheCodexCatalogKeepsAWholePage",
+            "TestTheWindowSizesThePage"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -3966,6 +3967,7 @@
             "TestDockerAgentTextDeltas",
             "TestDockerAgentCompileMapsCustomToTheOpenAIClient",
             "TestDockerAgentCompileTellsTheHarnessTheContextWindow",
+            "TestDockerAgentCompileCapsToolResultsBesideTheWindow",
             "TestDockerAgentCompileRefusesCustomWithoutABaseURL",
             "TestDockerAgentCompileNamesTheKeyForTheHarnessClient",
             "TestDockerAgentCompileRefusesASubscriptionToken",
@@ -4184,7 +4186,8 @@
         {
           "path": "pkg/runner/compile/budget_test.go",
           "tests": [
-            "TestThePlanStampsItsHarnessResultBudget"
+            "TestThePlanStampsItsHarnessResultBudget",
+            "TestTheReceiptSaysWhatSetThePage"
           ],
           "fuzz": [],
           "benchmarks": [],
