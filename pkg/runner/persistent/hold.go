@@ -23,6 +23,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/blaktron/agentry-cli/pkg/runner/session/protocol"
 )
 
 // holdBound is the longest a client may hold the agent: a sign-in waits on
@@ -284,3 +286,59 @@ type RefusedError struct {
 }
 
 func (e *RefusedError) Error() string { return e.Text }
+
+// ErrOlderSupervisor is a running agent whose supervisor is an older
+// Agentry's, which refuses a command this client sends as malformed: the
+// client hands the agent over (HandOver) and asks again.
+var ErrOlderSupervisor = errors.New("its supervisor is an older Agentry's, which does not take this")
+
+// OlderSupervisor says err is a running supervisor's refusal of a command it
+// does not know.
+func OlderSupervisor(err error) bool {
+	var refused *RefusedError
+	return errors.Is(err, ErrOlderSupervisor) || errors.As(err, &refused) && refused.Class == string(protocol.RefusedMalformed) && strings.HasPrefix(refused.Text, unknownCommand)
+}
+
+// unknownCommand begins the refusal of a line that names no command the
+// supervisor knows.
+const unknownCommand = "a command is one JSON object naming exactly one of"
+
+// handOverWait bounds how long a hand-over waits for a turn in flight.
+var handOverWait = 10 * time.Minute
+
+// HandOver moves the running agent a onto a supervisor of this binary, for
+// a change an older one cannot take: it waits until no turn is in flight,
+// stops the agent and waits for its lock, then start starts it again, its
+// conversation continuing. The person does nothing.
+func HandOver(ctx context.Context, home string, a Agent, client string, start func(context.Context) error) error {
+	if a.DesktopOnly {
+		return fmt.Errorf("the %s agent runs in Agentry Desktop alone: update Agentry Desktop to change it", a.Name)
+	}
+	deadline := time.Now().Add(handOverWait)
+	for {
+		qctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		st, err := QueryStatus(qctx, home, a.Name)
+		cancel()
+		if errors.Is(err, ErrNotRunning) || errors.Is(err, ErrNoAnswer) {
+			break
+		}
+		if err == nil && st.Client != "" && st.Client != client {
+			return fmt.Errorf("the %s agent runs in %s, whose supervisor is older than this client's: update %s to change it, or stop the agent there", a.Name, Holder{Client: st.Client}.Where(), Holder{Client: st.Client}.Where())
+		}
+		if err == nil && !st.Busy {
+			break
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("the %s agent's turn did not end within %s, so it was not handed over", a.Name, handOverWait)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
+	if _, err := StopForRemoval(ctx, home, a, client); err != nil {
+		return err
+	}
+	return start(ctx)
+}

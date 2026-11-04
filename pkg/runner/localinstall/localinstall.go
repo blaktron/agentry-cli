@@ -49,6 +49,10 @@ type Staged struct {
 	Tree string
 	// Warnings are the manifest rules' warnings, for the caller to show.
 	Warnings []error
+	// KeepOtherVersions leaves the older releases in place: a running
+	// persistent agent still reads its own, which its supervisor removes
+	// once a segment has started from this one.
+	KeepOtherVersions bool
 }
 
 // Stage packs the folder with publish.include, extracts the archive aside
@@ -184,6 +188,9 @@ func (s *Staged) layDown(home, style string, repair bool) (string, error) {
 	st.MarkLocal(key, s.Digest)
 	if err := installed.Save(st); err != nil {
 		return releaseDir, fmt.Errorf("installed into %s, but its record could not be saved: %w", releaseDir, err)
+	}
+	if s.KeepOtherVersions {
+		return releaseDir, nil
 	}
 	if err := installdir.RemoveOtherVersions(installdir.AgentDir(home, m.Namespace, m.Name), releaseDir); err != nil {
 		return releaseDir, fmt.Errorf("installed, but an older release could not be removed: %w", err)

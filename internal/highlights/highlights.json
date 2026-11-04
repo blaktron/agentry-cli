@@ -1,6 +1,15 @@
 {
   "versions": [
     {
+      "version": "0.7.19",
+      "highlights": [
+        "A running persistent agent takes a change to the runner's policy, its model and harness included, at its next turn.",
+        "agentry agent install updates a running persistent agent: it takes the new release at its next turn.",
+        "agentry agent uninstall and reset stop a running agent first, rather than refusing.",
+        "A running agent on an older Agentry is handed over to the new one between turns, its conversation kept."
+      ]
+    },
+    {
       "version": "0.7.18",
       "highlights": [
         "Google Workspace's and Microsoft 365's set-ups and sign-ins work while the Assistant runs.",

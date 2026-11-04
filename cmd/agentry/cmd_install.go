@@ -481,7 +481,18 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 			_, _ = fmt.Fprintf(out, "installed %s/%s@%s into the runner home: %s (export: %s)\n", res.Namespace, m.Name, res.Version, releaseDir, style)
 			return nil
 		}
-		after = func() error { return removeOtherVersions(key.Dir, releaseDir) }
+		after = func() error {
+			// A running agent's segment still reads its release: its
+			// supervisor removes the older versions once a segment has
+			// started from this one. Running is judged now, not at the check.
+			if opts.agent != nil {
+				opts.agent.running, _ = persistent.Held(home, persistent.Key(res.Namespace, m.Name))
+				if opts.agent.running {
+					return nil
+				}
+			}
+			return removeOtherVersions(key.Dir, releaseDir)
+		}
 	case manifest.InterfaceClaudeSkill, manifest.InterfaceAgentsMD:
 		if opts.repair {
 			return fmt.Errorf("--repair is for the runner target, whose installs are recorded under the runner home's integrity key; a %s install is reinstalled by installing it again", target)
@@ -535,7 +546,7 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 		refusal := cmp.Or(attErr, changedRefusal)
 		var agent *agentPlan
 		if opts.agent != nil {
-			refusal, agent = cmp.Or(refusal, opts.agent.refusal), opts.agent.planOf(m)
+			agent = opts.agent.planOf(m)
 		}
 		return writeInstallPlan(cmd, res, m, computed, att, refusal, &state, key, nextCaps, target, paths, agent)
 	}

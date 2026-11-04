@@ -62,7 +62,7 @@ type bgInstall struct {
 // already under way. The installs run until they finish, their server is
 // switched off or removed, or the agent stops.
 func (s *Supervisor) startInstalls() {
-	a, home := s.opts.Agent, s.opts.Home
+	a, home := s.agent(), s.opts.Home
 	cfg, err := LoadConfig(home, a.Name)
 	if err != nil {
 		return
@@ -137,7 +137,7 @@ func (s *Supervisor) install(ctx context.Context, in *bgInstall, srv manifest.MC
 		do := s.opts.InstallServer
 		if do == nil {
 			do = func(ctx context.Context, srv manifest.MCPServer, storeDir string, logw io.Writer) error {
-				return localrun.InstallServer(ctx, s.opts.Docker, s.opts.Policy, storeDir, srv, logw)
+				return localrun.InstallServer(ctx, s.opts.Docker, s.policy(), storeDir, srv, logw)
 			}
 		}
 		err = do(ctx, srv, storeDir, io.MultiWriter(logw, tail))
@@ -174,7 +174,7 @@ func (s *Supervisor) install(ctx context.Context, in *bgInstall, srv manifest.MC
 func (s *Supervisor) recordFailure(id, reason string) bool {
 	recorded := false
 	_ = s.updateConfig(func(c *Config) error {
-		if e, ok := BuildRoster(s.opts.Agent, *c, nil).Entry(id); !ok || !e.On {
+		if e, ok := BuildRoster(s.agent(), *c, nil).Entry(id); !ok || !e.On {
 			return nil
 		}
 		if c.ServerFailures == nil {

@@ -33,17 +33,18 @@ type agentInstall struct {
 	// local says the release is an author's folder, whose subagents are
 	// never run.
 	local bool
-	// plan previews the install (--plan): what check would refuse of the
-	// agent as it is now, a running agent, is held as refused instead.
-	plan    bool
-	refusal error
+	// running says the agent runs: its new release is laid down beside the
+	// running one, which its supervisor removes once a segment started
+	// from the new one, and the agent takes it at its next turn.
+	running bool
+	// yes agrees to what a taken release turns on, without asking.
+	yes bool
 }
 
 // check refuses what cannot be a persistent agent here: a release that does
 // not declare the persistent mode, a built-in's reference, a policy that
 // allows no persistent release, and a release that names an image server or
-// a mail provider this build does not carry. A running agent is refused
-// too: a new version is installed while it is stopped.
+// a mail provider this build does not carry.
 func (a *agentInstall) check(m *manifest.Manifest) error {
 	ref := m.Namespace + "/" + m.Name
 	if !m.IsPersistent() {
@@ -67,13 +68,7 @@ func (a *agentInstall) check(m *manifest.Manifest) error {
 	if err := localrun.CheckPersistentNames(m.Capabilities.Persistent); err != nil {
 		return engine.Classify(engine.ExitPolicy, fmt.Errorf("%s cannot run on this version of Agentry: %w", ref, err))
 	}
-	if held, h := persistent.Held(a.home, persistent.Key(m.Namespace, m.Name)); held {
-		err := engine.Classify(engine.ExitUsage, fmt.Errorf("%w: stop it first (agentry agent stop %s), then install again", &persistent.HeldError{Agent: ref, Holder: h}, ref))
-		if !a.plan {
-			return err
-		}
-		a.refusal = err
-	}
+	a.running, _ = persistent.Held(a.home, persistent.Key(m.Namespace, m.Name))
 	return nil
 }
 
@@ -266,9 +261,22 @@ func (a *agentInstall) record(cmd *cobra.Command, r persistent.Release, m *manif
 	if !a.local {
 		r.Subagents = a.pins
 	}
+	ns, name, _ := strings.Cut(r.Ref, "/")
+	prev, prevErr := persistent.LoadRelease(a.home, persistent.Key(ns, name))
 	ag, err := persistent.SaveRelease(a.home, r)
 	if err != nil {
 		return engine.Classify(engine.ExitCLI, err)
+	}
+	// A running agent takes the release through its supervisor, which asks
+	// for agreement to what the release turns on that was not agreed to; a
+	// release not agreed to leaves the record naming the one the agent runs.
+	if a.running {
+		if _, _, err := configureAgent(cmd, a.home, ag, persistent.Change{Release: true}, a.yes); err != nil {
+			if prevErr == nil {
+				_, _ = persistent.SaveRelease(a.home, prev)
+			}
+			return err
+		}
 	}
 	cfg, err := persistent.LoadConfig(a.home, ag.Name)
 	if err != nil {
@@ -290,6 +298,10 @@ func (a *agentInstall) record(cmd *cobra.Command, r persistent.Release, m *manif
 		state = "disabled, as you left it (agentry agent enable " + ag.Ref + ")"
 	}
 	_, _ = fmt.Fprintf(out, "%s is installed as a persistent agent, %s. It goes by %s.\n", ag.PackageRef(), state, safeTerminalText(ag.DisplayName(cfg), 64))
+	if a.running {
+		_, _ = fmt.Fprintf(out, "The running agent takes %s at its next turn, and its conversation continues.\n", ag.Version)
+		return nil
+	}
 	printNextSteps(cmd.ErrOrStderr(),
 		nextStep{command: "agentry agent start " + ag.Ref},
 		nextStep{command: "agentry agent chat " + ag.Ref},
@@ -306,7 +318,8 @@ const agentInstallLong = "Installs a persistent QuickAgent from the registry, or
 	"The agent is enabled and left stopped. Its conversation, its files and its share\n" +
 	"folder are kept between starts and across updates. Installing it again\n" +
 	"updates it: to the newest version, or the one you name, asking again if the\n" +
-	"new version declares more. Stop it before you update it.\n\n" +
+	"new version declares more. A running agent takes the update at its next turn,\n" +
+	"its conversation continuing.\n\n" +
 	"A folder installed with --local is unsigned, so it needs --allow-unsigned, and\n" +
 	"it runs none of the subagents it declares.\n\n" +
 	"--plan previews an install or an update and writes nothing: the contract and\n" +
@@ -348,7 +361,7 @@ func newAgentInstallCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			opts.agent = &agentInstall{home: home, pol: pol, plan: opts.plan}
+			opts.agent = &agentInstall{home: home, pol: pol, yes: opts.yes}
 			if opts.local != "" {
 				return runLocalInstall(cmd, opts.local, opts)
 			}
@@ -383,7 +396,8 @@ func newAgentUninstallCmd() *cobra.Command {
 			"are removed from this computer. Its conversation, its files and everything\n" +
 			"you chose for it are kept, and installing it again takes them up. With\n" +
 			"--remove-data they go too: its volumes and its folder under the runner home.\n" +
-			"The files in its share folder are yours and are always kept. Stop it first.\n" +
+			"The files in its share folder are yours and are always kept. A running agent\n" +
+			"is stopped first.\n" +
 			"With --remove-data, type its reference when asked, or pass it as --confirm when\n" +
 			"there is no terminal to ask on. The agents built into Agentry are disabled,\n" +
 			"not uninstalled.",
@@ -400,9 +414,6 @@ func newAgentUninstallCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if held, h := persistent.Held(home, a.Name); held {
-				return engine.Classify(engine.ExitUsage, fmt.Errorf("%w: stop it first (agentry agent stop %s)", &persistent.HeldError{Agent: a.Ref, Holder: h}, a.Ref))
-			}
 			if removeData {
 				if confirm == "" {
 					if !stdinIsTTY(cmd.InOrStdin()) {
@@ -415,6 +426,11 @@ func newAgentUninstallCmd() *cobra.Command {
 				if confirm != a.Ref {
 					return engine.Classify(engine.ExitUsage, errors.New("the reference did not match; nothing was uninstalled"))
 				}
+			}
+			if ran, err := persistent.StopForRemoval(cmd.Context(), home, a, persistent.ClientCLI); err != nil {
+				return engine.Classify(engine.ExitUsage, err)
+			} else if ran {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "The %s agent was running: it is stopped.\n", a.Ref)
 			}
 			if err := persistent.Uninstall(cmd.Context(), home, a.Name, agentDocker(), removeData); err != nil {
 				return engine.Classify(engine.ExitCLI, err)

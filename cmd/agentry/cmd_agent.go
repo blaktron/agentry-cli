@@ -610,7 +610,7 @@ func newAgentStartCmd() *cobra.Command {
 			if err := dockerx.New().Available(cmd.Context()); err != nil {
 				return engine.Classify(engine.ExitCLI, fmt.Errorf("a persistent agent runs in containers, and the container engine is not available: %w", err))
 			}
-			return startSupervisor(cmd, home, a, policyPath)
+			return startSupervisor(cmd, home, a, policyPath, true)
 		},
 	}
 	cmd.Flags().StringVar(&policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml, created on first use)")
@@ -620,8 +620,9 @@ func newAgentStartCmd() *cobra.Command {
 
 // startSupervisor launches `agentry agent supervise` detached, its output in
 // the agent's log, and waits until its socket answers, printing the log as
-// it grows.
-func startSupervisor(cmd *cobra.Command, home string, a persistent.Agent, policyPath string) error {
+// it grows; report prints the started agent's status.
+
+func startSupervisor(cmd *cobra.Command, home string, a persistent.Agent, policyPath string, report bool) error {
 	errOut := cmd.ErrOrStderr()
 	exe, err := os.Executable()
 	if err != nil {
@@ -667,6 +668,9 @@ func startSupervisor(cmd *cobra.Command, home string, a persistent.Agent, policy
 		cancel()
 		if qerr == nil {
 			follow.flush()
+			if !report {
+				return nil
+			}
 			if flags.jsonOut {
 				return emitJSON(cmd.OutOrStdout(), st)
 			}
@@ -689,6 +693,25 @@ func startSupervisor(cmd *cobra.Command, home string, a persistent.Agent, policy
 			return engine.Classify(engine.ExitTimeout, fmt.Errorf("the %s agent did not answer within %s; its log is %s", a.Name, agentStartTimeout, logPath))
 		}
 	}
+}
+
+// handOver moves the running agent a onto this binary's supervisor, between
+// turns, for a change its older one does not take. What the agent has on
+// that the person has not agreed to (a release installed for the change)
+// is asked about while it is stopped, as a start asks. The new supervisor
+// reads the runner home's policy: one the older was started on with
+// --policy is not known to this client, and the person is told.
+func handOver(cmd *cobra.Command, home string, a persistent.Agent, yes bool) error {
+	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "The %s agent runs on an older Agentry's supervisor: it is handed over to this one between turns, on the runner home's policy, its conversation continuing.\n", a.Name)
+	return persistent.HandOver(cmd.Context(), home, a, persistent.ClientCLI, func(context.Context) error {
+		if now, err := persistent.LookupIn(home, a.Name); err == nil {
+			a = now
+		}
+		if _, _, err := configureAgent(cmd, home, a, persistent.Change{Release: a.Published()}, yes); err != nil {
+			return err
+		}
+		return startSupervisor(cmd, home, a, "", false)
+	})
 }
 
 func printStarted(w io.Writer, a persistent.Agent, st persistent.Status) {
@@ -772,7 +795,7 @@ func newAgentSuperviseCmd() *cobra.Command {
 				Home: home, Agent: a, Client: persistent.ClientCLI,
 				Policy: pol, PolicySHA: sha, PolicyFile: &file, Build: version.Build(),
 				Docker: dockerx.New(), Stderr: errOut, Packs: agentPacks(cmd), Voice: agentVoice(cmd), Contents: agentContents(cmd),
-				OnStage: stageLines(errOut), Credits: creditsClient(pol),
+				OnStage: stageLines(errOut), Credits: creditsClient(pol), CreditsFor: creditsClient,
 				Subagents: cliSubagents{policyPath: policyPath}, Helper: cliHelper{policyPath: policyPath},
 			})
 			close(starting)
@@ -1066,9 +1089,6 @@ func newAgentResetCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if held, _ := persistent.Held(home, a.Name); held {
-				return engine.Classify(engine.ExitUsage, fmt.Errorf("the %s agent is running: stop it first (agentry agent stop %s)", a.Name, a.Name))
-			}
 			if confirm == "" {
 				if !stdinIsTTY(cmd.InOrStdin()) {
 					return engine.Classify(engine.ExitUsage, fmt.Errorf("reset asks you to type the agent's name, and there is no terminal: pass --confirm %s", a.Name))
@@ -1087,6 +1107,11 @@ func newAgentResetCmd() *cobra.Command {
 			}
 			if confirm != a.Name {
 				return engine.Classify(engine.ExitUsage, errors.New("the name did not match; nothing was reset"))
+			}
+			if ran, err := persistent.StopForRemoval(cmd.Context(), home, a, persistent.ClientCLI); err != nil {
+				return engine.Classify(engine.ExitUsage, err)
+			} else if ran {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "The %s agent was running: it is stopped.\n", a.Name)
 			}
 			d := agentDocker()
 			if err := r.reset(cmd.Context(), home, a.Name, d); err != nil {

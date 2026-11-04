@@ -397,7 +397,7 @@ func (s *Supervisor) helperRun(ctx context.Context, cfg Config, ops HelperOps, r
 		}
 		share = append(share, rel)
 	}
-	if len(share) > 0 && !shareOn(s.opts.Agent, cfg) {
+	if len(share) > 0 && !shareOn(s.agent(), cfg) {
 		return "", errors.New("your share folder is off, so no file in it can be given to a run")
 	}
 	exact := base + "@" + it.Version

@@ -63,7 +63,7 @@ func (s *Supervisor) rollBack(ctx context.Context, cause error) error {
 	if !ok {
 		return cause
 	}
-	a := s.opts.Agent
+	a := s.agent()
 	reason := failureReason(cause.Error())
 	var (
 		added []string
