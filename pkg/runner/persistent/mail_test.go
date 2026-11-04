@@ -204,13 +204,50 @@ func TestSetMailProviderKeepsTheSignIn(t *testing.T) {
 	if err := SetMailProvider(home, coder, ClientCLI, "google", true); err == nil || !strings.Contains(err.Error(), "reaches no mail") {
 		t.Errorf("the Coding agent: %v", err)
 	}
+}
 
-	running := shortHome(t)
-	enable(t, running)
-	sv := startAssistant(t, running, &starter{})
-	defer func() { _, _ = sv.Stop(context.Background()) }()
-	if err := SetMailProvider(running, a, ClientCLI, "google", true); err == nil || !strings.Contains(err.Error(), "stop it first") {
-		t.Errorf("a running Assistant: %v", err)
+// TestAMailProviderSwitchedWhileRunningReachesTheNextTurn: enabling Google
+// on a running Assistant, its gog signed in and on, gives the next turn's
+// segment gog; disabling it takes gog away at the turn after.
+func TestAMailProviderSwitchedWhileRunningReachesTheNextTurn(t *testing.T) {
+	withImageServers(t)
+	home := shortHome(t)
+	enable(t, home)
+	a := assistantAgent(t)
+	c, _ := LoadConfig(home, a.Name)
+	c.SignIns = map[string]ImageSignIn{"gog": {Account: "person@example.com", At: time.Now()}}
+	c.MailProviders = googleOn
+	if _, err := ApplyChange(home, a, &c, Change{Switch: &Switch{ID: "server:gog", On: true}, Consent: true}); err != nil {
+		t.Fatal(err)
+	}
+	c.MailProviders = nil
+	if err := SaveConfig(home, a.Name, c); err != nil {
+		t.Fatal(err)
+	}
+	st := &starter{resumed: true}
+	sv := startKeyed(t, home, st, fakeSecrets{ImageKeyringAccount("assistant", "gog"): gogPassword}, nil, Contents{})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := sv.Send(ctx, "first"); err != nil {
+		t.Fatal(err)
+	}
+	given := func() int { return len(st.segments[len(st.segments)-1].Grants.ImageServers) }
+	if given() != 0 {
+		t.Fatal("gog was given with Google disabled")
+	}
+	for _, on := range []bool{true, false} {
+		if err := SetMailProvider(home, a, ClientCLI, "google", on); err != nil {
+			t.Fatalf("switching Google %v on a running Assistant: %v", on, err)
+		}
+		if !sv.Status().Pending {
+			t.Fatalf("switching Google %v is not pending", on)
+		}
+		if err := sv.Send(ctx, "next"); err != nil {
+			t.Fatal(err)
+		}
+		if want := map[bool]int{true: 1, false: 0}[on]; given() != want {
+			t.Errorf("Google %v: the segment was given %d image servers", on, given())
+		}
 	}
 }
 
