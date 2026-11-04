@@ -240,7 +240,13 @@ type Supervisor struct {
 	upkeeping   int
 	// upkeepWait is what a person's message is told while it waits for
 	// the upkeep; waiting counts the messages waiting.
-	upkeepWait   string
+	upkeepWait string
+	// waitBound is how long a person's message waits for upkeepWait's
+	// work.
+	waitBound    time.Duration
+	hold         *hold // the hold in force (hold.go)
+	holdPending  bool  // a hold waits for the turn
+	holds        int   // numbers the holds
 	waiting      int
 	upkeepTurn   bool
 	upkeepMark   string
@@ -633,7 +639,7 @@ func (s *Supervisor) broadcast(ev session.Event) {
 func (s *Supervisor) Send(ctx context.Context, text string) error {
 	if !s.turn.TryLock() {
 		s.mu.Lock()
-		upkeeping, wait := s.upkeeping > 0, s.upkeepWait
+		upkeeping, wait, bound := s.upkeeping > 0, s.upkeepWait, s.waitBound
 		if upkeeping {
 			s.waiting++
 		}
@@ -645,7 +651,7 @@ func (s *Supervisor) Send(ctx context.Context, text string) error {
 		// most as long as an upkeep turn may run, and goes to the new
 		// conversation; upkeep that has not started yet waits for it.
 		s.notice(wait)
-		wctx, cancel := context.WithTimeout(ctx, upkeepTurnCap+time.Minute)
+		wctx, cancel := context.WithTimeout(ctx, bound)
 		ok := s.waitTurn(wctx)
 		cancel()
 		s.mu.Lock()
@@ -848,6 +854,14 @@ func (s *Supervisor) nextSegmentFor(ctx context.Context, notice string) error {
 	s.broadcast(session.Event{Kind: session.KindNotice, Time: time.Now().UTC(), Text: notice})
 	s.mu.Unlock()
 	_, _ = s.endSegment(ctx, true)
+	return s.startNext(ctx)
+}
+
+// startNext starts the agent's next segment after the last ended, from its
+// config as it is; when it cannot start, the servers newly given are left
+// out, then what the change added is switched off, and only then is the
+// agent stopped. The caller holds seg.
+func (s *Supervisor) startNext(ctx context.Context) error {
 	// The next segment runs until it is ended, not until the caller's
 	// context is done: a turn's own deadline (an upkeep turn's cap) would
 	// otherwise end the segment the turn restarted, and the agent with it.
@@ -973,6 +987,12 @@ func (s *Supervisor) endSegment(ctx context.Context, swap bool) (*receipt.Envelo
 // takes effect at the next turn, which starts the next segment; the roster
 // answered shows it pending until then.
 func (s *Supervisor) Change(ch Change) (Roster, error) {
+	s.mu.Lock()
+	stopping := s.stopped || s.closing
+	s.mu.Unlock()
+	if stopping {
+		return nil, ErrNotRunning
+	}
 	// What the next segment reads from the keychain for the change must be
 	// there now: a change it could not start with is refused here, rather
 	// than taken back at the next turn.
@@ -1133,6 +1153,8 @@ type Status struct {
 	// NotApplied is the last change the agent could not start with, which
 	// it took back.
 	NotApplied *NotApplied `json:"notApplied,omitempty"`
+	// Held names what a client is setting up while it holds the agent.
+	Held string `json:"held,omitempty"`
 }
 
 // StateRunning is a running agent's state.
@@ -1162,13 +1184,14 @@ func (s *Supervisor) Status() Status {
 	cfg, _ := LoadConfig(s.opts.Home, s.opts.Agent.Name)
 	pending := s.stale(context.Background(), cfg)
 	messengers := s.messengerStates(cfg)
+	held := s.heldFor()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return Status{
 		Agent: s.opts.Agent.Name, State: StateRunning, Client: s.opts.Client, PID: os.Getpid(), Since: s.since,
 		Segment: s.segment, Run: s.runID, SegmentDir: s.outDir, Adapter: s.adapter, Model: s.model,
 		Resumed: s.resumed, ResumeReason: s.resumeReason, Busy: s.busy, Usage: s.usage,
-		Pending: pending, Messengers: messengers, NotApplied: cfg.NotApplied,
+		Pending: pending, Messengers: messengers, NotApplied: cfg.NotApplied, Held: held,
 	}
 }
 
@@ -1190,6 +1213,9 @@ func (s *Supervisor) Stop(ctx context.Context) (*receipt.Envelope, error) {
 		s.mu.Lock()
 		s.closing = true
 		s.mu.Unlock()
+		// A set-up's hold ends with the agent: nothing waits on its turn,
+		// and its client's changes are refused from here.
+		s.releaseHold()
 		s.cancelInstalls()
 		s.cancelHeartbeat()
 		// No messenger's message becomes a turn from here.

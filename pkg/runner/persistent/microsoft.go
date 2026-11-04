@@ -175,10 +175,6 @@ type Microsoft struct {
 	AgentryClient func(ctx context.Context) string
 }
 
-func (m Microsoft) acquire() (*Owner, error) {
-	return Acquire(m.Home, m.Agent.Name, m.client())
-}
-
 func (m Microsoft) say(format string, args ...any) {
 	if m.Say != nil {
 		_, _ = fmt.Fprintf(m.Say, format+"\n", args...)
@@ -199,24 +195,8 @@ func (m Microsoft) server() (offer.ImageServer, error) {
 	return offer.ImageServer{}, fmt.Errorf("the %s agent has no Microsoft 365", m.Agent.Name)
 }
 
-// record changes the server's sign-in record in the configuration, enables
-// the Microsoft provider, and saves it.
-func (m Microsoft) record(key string, change func(*ImageSignIn)) error {
-	c, err := LoadConfig(m.Home, m.Agent.Name)
-	if err != nil {
-		return err
-	}
-	editSignIn(&c, key, change)
-	if p, ok := mailProviderOf(m.Agent, key); ok && enableMailProvider(&c, p.Key) {
-		m.sayProviderOn(p)
-	}
-	return SaveConfig(m.Home, m.Agent.Name, c)
-}
-
 // sayProviderOn tells the person the provider p is now one of the agent's.
-func (m Microsoft) sayProviderOn(p offer.MailProvider) {
-	m.say("%s is now one of the %s agent's mail providers (agentry agent configure %s --no-mail-provider %s takes it off its roster).", p.Name, m.Agent.Name, m.Agent.Name, p.Key)
-}
+func (m Microsoft) sayProviderOn(p offer.MailProvider) { m.say("%s", providerOnLine(m.Agent, p)) }
 
 // SetClient records the person's own Entra client, and the tenant to sign
 // in on when they name one ("" asks Microsoft at the sign-in). A sign-in
@@ -363,19 +343,22 @@ func (m Microsoft) SignIn(ctx context.Context, email string, browse func(string)
 	if !microsoftEmailRE.MatchString(email) {
 		return "", fmt.Errorf("%q is not an email address a Microsoft account signs in with", email)
 	}
-	owner, err := m.acquire()
-	if err != nil {
-		return "", err
-	}
-	defer owner.Release()
 	s, err := m.server()
 	if err != nil {
 		return "", err
 	}
-	c, err := LoadConfig(m.Home, m.Agent.Name)
-	if err != nil {
-		return "", err
-	}
+	var account string
+	err = runServerSetUp(ctx, m.Home, m.Agent, m.client(), s.Name, m.sayProviderOn, func(c Config, edit signInEdit) error {
+		var err error
+		account, err = m.signIn(ctx, s, c, email, browse, edit)
+		return err
+	})
+	return account, err
+}
+
+// signIn is SignIn's set-up, with the agent's config c as it was and edit
+// to record the sign-in.
+func (m Microsoft) signIn(ctx context.Context, s offer.ImageServer, c Config, email string, browse func(string) error, edit signInEdit) (string, error) {
 	in := c.SignIns[s.Key]
 	client, agentryApp, err := m.signInClient(ctx, s, in)
 	if err != nil {
@@ -400,7 +383,7 @@ func (m Microsoft) SignIn(ctx context.Context, email string, browse func(string)
 	if agentryApp {
 		// Recorded before the login, so a sign-in that fails after
 		// Microsoft issued its tokens still marks the volume.
-		if err := m.record(s.Key, func(r *ImageSignIn) { r.AgentryApp = true }); err != nil {
+		if err := edit(s.Key, func(r *ImageSignIn) { r.AgentryApp = true }); err != nil {
 			return "", err
 		}
 	}
@@ -448,7 +431,7 @@ func (m Microsoft) SignIn(ctx context.Context, email string, browse func(string)
 	if err != nil {
 		return "", err
 	}
-	if err := m.record(s.Key, func(r *ImageSignIn) {
+	if err := edit(s.Key, func(r *ImageSignIn) {
 		r.Account, r.At, r.Granted, r.Tenant = account, time.Now().UTC(), granted, tenant
 		r.SignedInWith = client
 		r.AgentryApp = r.AgentryApp || agentryApp

@@ -23,8 +23,9 @@ const agentGoogleLong = "\n\n--google-client gives the Assistant's Google Worksp
 	"your browser opens Google's consent, its answer comes back to this computer\n" +
 	"at 127.0.0.1, and gog exchanges it reaching Google's token endpoint alone.\n" +
 	"It asks for read-only access unless the server's \"allow changes\" is on.\n" +
-	"Both are refused while the agent runs; switch the server on with agentry\n" +
-	"agent grant assistant server:gog on.\n\n" +
+	"On a running agent, each pauses it between turns while gog writes its\n" +
+	"volume, then the agent goes on with the server set up and its conversation\n" +
+	"kept. Switch the server on with agentry agent grant assistant server:gog on.\n\n" +
 	"  agentry agent configure assistant --google-client ~/Downloads/client_secret.json\n" +
 	"  agentry agent configure assistant --google-sign-in you@example.com"
 
@@ -32,9 +33,6 @@ const agentGoogleLong = "\n\n--google-client gives the Assistant's Google Worksp
 func configureGoogle(cmd *cobra.Command, a persistent.Agent, home, policyPath, clientFile, email string) error {
 	if len(a.ImageServers(policy.Images{})) == 0 {
 		return engine.Classify(engine.ExitUsage, fmt.Errorf("the %s agent has no Google Workspace", a.Name))
-	}
-	if held, _ := persistent.Held(home, a.Name); held {
-		return engine.Classify(engine.ExitUsage, fmt.Errorf("the %s agent is running, and its Google Workspace server holds its sign-in: stop it first (agentry agent stop %s)", a.Name, a.Name))
 	}
 	pol, _, _, err := agentPolicy(policyPath)
 	if err != nil {
