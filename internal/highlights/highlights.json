@@ -1,6 +1,14 @@
 {
   "versions": [
     {
+      "version": "0.7.15",
+      "highlights": [
+        "A knowledge pack built again reaches a running persistent agent at its next turn, with no stop and start.",
+        "Saving the Coding agent's dev server again, with a new sign-in, applies at its next turn.",
+        "agentry agent show marks a server, pack or dev server pending while a running agent waits to take its change."
+      ]
+    },
+    {
       "version": "0.7.14",
       "highlights": [
         "Talk to a running persistent agent from Discord, Slack or Matrix as well as Telegram: agentry agent messenger add.",
