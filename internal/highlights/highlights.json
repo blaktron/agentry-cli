@@ -1,6 +1,12 @@
 {
   "versions": [
     {
+      "version": "0.7.15",
+      "highlights": [
+        "A persistent agent on your remote runhost keeps its messengers while your computer is off: agentry agent messenger add and pair take --on."
+      ]
+    },
+    {
       "version": "0.7.14",
       "highlights": [
         "Talk to a running persistent agent from Discord, Slack or Matrix as well as Telegram: agentry agent messenger add.",

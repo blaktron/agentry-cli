@@ -66,6 +66,11 @@ const agentMessengerLong = "A messenger lets you talk to a persistent agent from
 	"your agreement to waits for you in Agentry. A message sent while the agent\n" +
 	"answers another waits, and the waiting ones go together as its next turn.\n" +
 	"One account reaches one agent: give each agent its own.\n\n" +
+	"An agent on a remote runhost keeps its messengers connected while this\n" +
+	"computer is off: add, pair, list, test and remove it there with --on\n" +
+	"<runhost>. The credential is read and agreed to here, and kept in the\n" +
+	"runhost's store, encrypted; a Matrix password signs in here, and the\n" +
+	"runhost is given the session's access token alone.\n\n" +
 	"The credential stays in your keychain; Agentry hands it to one container of\n" +
 	"its own alone, which reaches that service's hosts and nothing else, and the\n" +
 	"agent is never given it. A messenger is a roster entry, switched with\n" +
@@ -77,6 +82,7 @@ const agentMessengerLong = "A messenger lets you talk to a persistent agent from
 	"  agentry agent messenger list assistant\n" +
 	"  agentry agent messenger test assistant telegram\n" +
 	"  agentry agent messenger remove assistant telegram\n" +
+	"  agentry agent messenger add assistant telegram --on lab\n" +
 	"  agentry agent messenger manifest slack"
 
 // messengerAPI is the messengers' address for add and test: the service's
@@ -118,6 +124,18 @@ func homeMessengerAllowed(home string) func(string) (bool, string) {
 		return func(string) (bool, string) { return true, "" }
 	}
 	return pol.MessengerAllowed
+}
+
+// checkHomeserver is a Matrix account's homeserver as add keeps it, refused
+// unless it is a public https:// address.
+func checkHomeserver(server string) (string, error) {
+	if _, err := messenger.ServerHost(server); err != nil || !strings.HasPrefix(server, "https://") {
+		if err == nil {
+			err = fmt.Errorf("%q is not https://: a homeserver is reached over TLS", server)
+		}
+		return "", fmt.Errorf("--homeserver: %w", err)
+	}
+	return strings.TrimRight(server, "/"), nil
 }
 
 // readMessengerCredential reads an account's credential the way its kind
@@ -185,13 +203,9 @@ func newAgentMessengerAddCmd() *cobra.Command {
 				return engine.Classify(engine.ExitUsage, fmt.Errorf("%s: %s", k.Title, why))
 			}
 			if k.NamesServer {
-				if _, err := messenger.ServerHost(server); err != nil || !strings.HasPrefix(server, "https://") {
-					if err == nil {
-						err = fmt.Errorf("%q is not https://: a homeserver is reached over TLS", server)
-					}
-					return engine.Classify(engine.ExitUsage, fmt.Errorf("--homeserver: %w", err))
+				if server, err = checkHomeserver(server); err != nil {
+					return engine.Classify(engine.ExitUsage, err)
 				}
-				server = strings.TrimRight(server, "/")
 			} else if server != "" || user != "" {
 				return engine.Classify(engine.ExitUsage, fmt.Errorf("--homeserver and --user are for a Matrix account, not %s", k.Title))
 			}
@@ -236,9 +250,9 @@ func newAgentMessengerAddCmd() *cobra.Command {
 				}{a.Name, m})
 			}
 			w := cmd.OutOrStdout()
-			_, _ = fmt.Fprintf(w, "%s took the credential of %s, now kept in your system keychain.\n", k.Title, safeTerminalText(ready.Name, 80))
+			_, _ = fmt.Fprintf(w, "%s took the credential of %s, now kept in %s.\n", k.Title, safeTerminalText(ready.Name, 80), persistent.KeptIn)
 			printChangedMessenger(w, a, r, running)
-			_, _ = fmt.Fprintf(w, "Next, pair your own %s account: agentry agent messenger pair %s %s\n", k.Title, a.Name, k.Name)
+			_, _ = fmt.Fprintf(w, "Next, pair your own %s account: agentry agent messenger pair %s %s%s\n", k.Title, a.Name, k.Name, onThisRunhost())
 			return nil
 		},
 	}
@@ -328,7 +342,7 @@ func newAgentMessengerPairCmd() *cobra.Command {
 			}
 			acct, ok := persistent.MessengerOf(c, k.Name)
 			if !ok {
-				return engine.Classify(engine.ExitUsage, fmt.Errorf("the %s agent has no %s messenger: agentry agent messenger add %s %s", a.Name, k.Title, a.Name, k.Name))
+				return engine.Classify(engine.ExitUsage, fmt.Errorf("the %s agent has no %s messenger: agentry agent messenger add %s %s%s", a.Name, k.Title, a.Name, k.Name, onThisRunhost()))
 			}
 			since := time.Now().UTC()
 			code, p, err := persistent.NewPairingCode(since)
@@ -352,7 +366,7 @@ func newAgentMessengerPairCmd() *cobra.Command {
 			_, _ = fmt.Fprintf(w, "%s this code before %s:\n\n    %s\n\n",
 				pairHint(k, acct), p.Until.Local().Format("15:04"), persistent.FormatPairingCode(code))
 			if !running {
-				_, _ = fmt.Fprintf(w, "The %s agent is not running, and takes the code only while it runs: start it now (agentry agent start %s).\n", a.Name, a.Name)
+				_, _ = fmt.Fprintf(w, "The %s agent is not running, and takes the code only while it runs: start it now (agentry agent start %s%s).\n", a.Name, a.Name, onThisRunhost())
 			}
 			if acct.Peer != nil {
 				_, _ = fmt.Fprintln(w, "The account paired now stays paired until another sends the code.")
@@ -378,7 +392,7 @@ func newAgentMessengerPairCmd() *cobra.Command {
 					}
 				}
 			}
-			return engine.Classify(engine.ExitUsage, fmt.Errorf("the code expired before %s sent it: run agentry agent messenger pair %s %s again", k.Title, a.Name, k.Name))
+			return engine.Classify(engine.ExitUsage, fmt.Errorf("the code expired before %s sent it: run agentry agent messenger pair %s %s%s again", k.Title, a.Name, k.Name, onThisRunhost()))
 		},
 	}
 	cmd.Flags().BoolVar(&noWait, "no-wait", false, "show the code and return, without waiting for it to be sent")
@@ -471,7 +485,7 @@ func newAgentMessengerTestCmd() *cobra.Command {
 			}
 			token, err := agentSecrets.Get(persistent.MessengerKeychainAccount(a.Name, k.Name))
 			if err != nil {
-				return engine.Classify(engine.ExitUsage, fmt.Errorf("the %s credential is not in your keychain (%v): agentry agent messenger add %s %s", k.Title, err, a.Name, k.Name))
+				return engine.Classify(engine.ExitUsage, fmt.Errorf("the %s credential is not in %s (%v): agentry agent messenger add %s %s%s", k.Title, persistent.KeptIn, err, a.Name, k.Name, onThisRunhost()))
 			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), time.Minute)
 			defer cancel()
@@ -482,14 +496,14 @@ func newAgentMessengerTestCmd() *cobra.Command {
 			}
 			w := cmd.OutOrStdout()
 			if ready.Account != acct.Account {
-				return engine.Classify(engine.ExitUsage, fmt.Errorf("the credential in your keychain is %s's, not %s's: add it again", ready.Name, acct.Name))
+				return engine.Classify(engine.ExitUsage, fmt.Errorf("the credential in %s is %s's, not %s's: add it again", persistent.KeptIn, ready.Name, acct.Name))
 			}
 			_, _ = fmt.Fprintf(w, "%s takes the credential of %s.\n", k.Title, safeTerminalText(ready.Name, 80))
 			if acct.Peer == nil {
 				_, _ = fmt.Fprintf(w, "No account is paired, so no test message was sent: agentry agent messenger pair %s %s\n", a.Name, k.Name)
 				return nil
 			}
-			msg := "A test from Agentry on your computer: this " + k.Account + " reaches you. The agent did not write this."
+			msg := "A test from Agentry on " + yourMachine() + ": this " + k.Account + " reaches you. The agent did not write this."
 			if err := messenger.SendTest(ctx, cred, messengerAPI, acct.Peer.Chat, msg); err != nil {
 				return engine.Classify(engine.ExitUsage, fmt.Errorf("the test message was not sent: %w", err))
 			}
@@ -502,7 +516,7 @@ func newAgentMessengerTestCmd() *cobra.Command {
 func newAgentMessengerRemoveCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "remove <name> <messenger>",
-		Short: "Remove a messenger from a persistent agent, and its credential from your keychain",
+		Short: "Remove a messenger from a persistent agent, and its credential from where it is kept",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, k, err := messengerArgs(args[0], args[1])
@@ -527,7 +541,7 @@ func newAgentMessengerRemoveCmd() *cobra.Command {
 				}{a.Name, k.Name})
 			}
 			w := cmd.OutOrStdout()
-			_, _ = fmt.Fprintf(w, "Removed %s from the %s agent and its credential from your keychain. The %s itself is still yours on %s: delete it there%s if you no longer want it.\n", k.Title, a.Name, k.Account, k.Title, removeHint(k))
+			_, _ = fmt.Fprintf(w, "Removed %s from the %s agent and its credential from %s. The %s itself is still yours on %s: delete it there%s if you no longer want it.\n", k.Title, a.Name, persistent.KeptIn, k.Account, k.Title, removeHint(k))
 			printChangedMessenger(w, a, r, running)
 			return nil
 		},

@@ -104,11 +104,12 @@ const (
 // hexIDRE is a connection's or an issuer's id in its keychain account;
 // providerRE a model provider's name in a model key's;
 // agentAccountRE a persistent agent's: a stored secret's, an image server's
-// key's, a git host account's, a calendar feed's address's or its sign-in's.
+// key's, a git host account's, a calendar feed's address's or its
+// sign-in's, or a messenger account's credential.
 var (
 	hexIDRE        = regexp.MustCompile(`^[0-9a-f]{16,24}$`)
 	providerRE     = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,40}$`)
-	agentAccountRE = regexp.MustCompile(`^(agent-secret:[a-z0-9][a-z0-9.-]{0,127}:[A-Za-z_][A-Za-z0-9_-]{0,127}|account:[a-z0-9][a-z0-9.:-]{0,252}:[A-Za-z0-9][A-Za-z0-9._-]{0,99}|calendar-feed:[a-z0-9][a-z0-9.-]{0,127}:[A-Za-z0-9][A-Za-z0-9._-]{0,63}|calendar-session:[a-z0-9][a-z0-9.-]{0,127}:[A-Za-z0-9][A-Za-z0-9._-]{0,63}:[0-9]{1,3})$`)
+	agentAccountRE = regexp.MustCompile(`^(agent-secret:[a-z0-9][a-z0-9.-]{0,127}:[A-Za-z_][A-Za-z0-9_-]{0,127}|account:[a-z0-9][a-z0-9.:-]{0,252}:[A-Za-z0-9][A-Za-z0-9._-]{0,99}|calendar-feed:[a-z0-9][a-z0-9.-]{0,127}:[A-Za-z0-9][A-Za-z0-9._-]{0,63}|calendar-session:[a-z0-9][a-z0-9.-]{0,127}:[A-Za-z0-9][A-Za-z0-9._-]{0,63}:[0-9]{1,3}|messenger:[a-z0-9][a-z0-9.-]{0,127}:[a-z][a-z0-9-]{0,31})$`)
 )
 
 func runhostKeychainEntry(account string) (string, error) {
@@ -133,7 +134,7 @@ func runhostKeychainEntry(account string) (string, error) {
 		sum := sha256.Sum256([]byte(account))
 		return "agent-" + hex.EncodeToString(sum[:12]), nil
 	}
-	return "", fmt.Errorf("a runhost keeps only its model keys, its agents' stored secrets and git host accounts, its model sign-ins', its schedules' connections' and their OAuth clients' secrets, not %q", account)
+	return "", fmt.Errorf("a runhost keeps only its model keys, its agents' stored secrets, git host accounts and messenger credentials, its model sign-ins', its schedules' connections' and their OAuth clients' secrets, not %q", account)
 }
 
 func (runhostKeychain) Get(account string) (string, error) {

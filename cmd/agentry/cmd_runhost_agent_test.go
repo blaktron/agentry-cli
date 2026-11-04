@@ -4,11 +4,15 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -76,13 +80,15 @@ func testCommand(stdin string) (*cobra.Command, *bytes.Buffer, *bytes.Buffer) {
 // The runhost runs only the agent subcommands a device may drive there, and
 // none of the flags that name a file or a credential on the device.
 func TestARunhostRunsOnlyTheAgentCommandsADeviceDrives(t *testing.T) {
-	for _, ok := range [][]string{{"start", "assistant"}, {"grant", "assistant", "--yes"}, {"configure", "coder", "--name=Ada"}, {"list", "--json"}, {"secret", "set", "assistant", "X"}, {"configure", "coder", "--no-account=github.com"}, {"configure", "coder", "--account=github.com", "--own"}, {"configure", "assistant", "--microsoft-sign-in=a@b.example"}, {"configure", "assistant", "--fastmail-token=true", "--yes"}, {"configure", "assistant", "--calendar-feed=work"}} {
+	for _, ok := range [][]string{{"start", "assistant"}, {"grant", "assistant", "--yes"}, {"configure", "coder", "--name=Ada"}, {"list", "--json"}, {"secret", "set", "assistant", "X"}, {"configure", "coder", "--no-account=github.com"}, {"configure", "coder", "--account=github.com", "--own"}, {"configure", "assistant", "--microsoft-sign-in=a@b.example"}, {"configure", "assistant", "--fastmail-token=true", "--yes"}, {"configure", "assistant", "--calendar-feed=work"},
+		{"messenger", "add", "assistant", "telegram"}, {"messenger", "pair", "assistant", "telegram", "--no-wait=true"}, {"messenger", "list", "assistant"},
+		{"messenger", "test", "assistant", "slack"}, {"messenger", "remove", "acme/helper", "discord"}, {"messenger", "add", "assistant", "matrix", "--homeserver=https://matrix.example.org"}} {
 		if err := remote.CheckAgentArgs(ok[0], ok[1:]); err != nil {
 			t.Errorf("%v refused: %v", ok, err)
 		}
 	}
 	for _, bad := range [][]string{
-		{"install", "acme/helper"}, {"supervise", "assistant"}, {"skill", "add", "x"}, {"messenger", "add", "assistant"},
+		{"install", "acme/helper"}, {"supervise", "assistant"}, {"skill", "add", "x"}, {"messenger", "add", "assistant", "matrix", "--user=@a:example.org"},
 		{"start", "assistant", "--policy=/etc/passwd"}, {"configure", "coder", "--share=/srv"}, {"configure", "coder", "--dev-key=/k"},
 		{"configure", "assistant", "--google-sign-in"}, {"configure", "assistant", "--google-client=/c.json"}, {"configure", "assistant", "--calendar-sign-in"},
 	} {
@@ -250,7 +256,8 @@ func TestARunhostKeepsTheModelItsAgentsRunOn(t *testing.T) {
 // other kind of account is taken.
 func TestARunhostKeepsItsAgentsSecretsInItsStore(t *testing.T) {
 	for _, ok := range []string{"agent-secret:coder:GITHUB_TOKEN", "agent-secret:acme.helper:API_KEY", "account:github.com:octo-bot",
-		"agent-secret:assistant:ms365-keyring", "calendar-feed:assistant:work", "calendar-session:assistant:work:2"} {
+		"agent-secret:assistant:ms365-keyring", "calendar-feed:assistant:work", "calendar-session:assistant:work:2",
+		"messenger:assistant:telegram", "messenger:acme.helper:matrix"} {
 		name, err := runhostKeychainEntry(ok)
 		if err != nil || !strings.HasPrefix(name, "agent-") || len(name) > 32 || strings.Contains(name, "GITHUB") || strings.Contains(name, "octo") || strings.Contains(name, "work") {
 			t.Errorf("%s: %q %v", ok, name, err)
@@ -261,7 +268,8 @@ func TestARunhostKeepsItsAgentsSecretsInItsStore(t *testing.T) {
 	if a == b {
 		t.Error("two secrets share an entry")
 	}
-	for _, bad := range []string{"agent-secret:../x:A", "agent-secret:coder:../A", "account:github.com:a/b", "agent-secret:coder:", "other:x", "calendar-feed:assistant:../x", "calendar-session:assistant:work:x"} {
+	for _, bad := range []string{"agent-secret:../x:A", "agent-secret:coder:../A", "account:github.com:a/b", "agent-secret:coder:", "other:x", "calendar-feed:assistant:../x", "calendar-session:assistant:work:x",
+		"messenger:assistant:../x", "messenger:../x:telegram", "messenger:assistant:", "messenger:assistant:Telegram"} {
 		if _, err := runhostKeychainEntry(bad); err == nil {
 			t.Errorf("%s was taken", bad)
 		}
@@ -275,7 +283,7 @@ func TestAStoredSecretsValueTravelsToTheRunhostsSecretSet(t *testing.T) {
 	newRunhostServer(t)
 	fakeAgentCLI(t, `echo "args: $*"; echo "stdin: $(cat)"`+"\n")
 	cmd, _, _ := testCommand("s3cret-value\n")
-	v, err := runhostAgentValue(cmd, "lab", "secret", []string{"set", "coder", "GITHUB_TOKEN"}, []string{"set", "coder", "GITHUB_TOKEN", "--yes=true"})
+	v, _, err := runhostAgentValue(cmd, "lab", "secret", []string{"set", "coder", "GITHUB_TOKEN"}, []string{"set", "coder", "GITHUB_TOKEN", "--yes=true"})
 	if err != nil || v != "s3cret-value" {
 		t.Fatalf("the value read here: %q %v", v, err)
 	}
@@ -294,7 +302,114 @@ func TestAStoredSecretsValueTravelsToTheRunhostsSecretSet(t *testing.T) {
 		t.Fatalf("show was given stdin: %q", out)
 	}
 	cmd, _, _ = testCommand("s3cret\n")
-	if _, err := runhostAgentValue(cmd, "lab", "secret", []string{"set", "coder", "X"}, []string{"set", "coder", "X"}); err == nil {
+	if _, _, err := runhostAgentValue(cmd, "lab", "secret", []string{"set", "coder", "X"}, []string{"set", "coder", "X"}); err == nil {
 		t.Fatal("a value was kept with nobody at a terminal to agree and no --yes")
+	}
+}
+
+// A messenger's credential is read on the device, the way its kind gives
+// it, agreed to, and reaches the runhost's own messenger add on its stdin.
+// A Matrix account's password signs in from the device, which sends the
+// session's access token alone: the password and --user never travel.
+func TestAMessengersCredentialTravelsToTheRunhostsMessengerAdd(t *testing.T) {
+	newRunhostServer(t)
+	fakeAgentCLI(t, `echo "args: $*"; echo "stdin: $(cat)"`+"\n")
+	cmd, _, _ := testCommand("123456:telegram-bot-token\n")
+	args := []string{"add", "assistant", "telegram"}
+	v, fwd, err := runhostAgentValue(cmd, "lab", "messenger", args, append(args, "--yes=true"))
+	if err != nil || v != "123456:telegram-bot-token" {
+		t.Fatalf("the token read here: %q %v", v, err)
+	}
+	cmd, out, _ := testCommand("")
+	if code, _, err := runOnRunhostAgent(cmd, verbCaller{}, "messenger", fwd, v); err != nil || code != 0 {
+		t.Fatalf("messenger add: %d %v", code, err)
+	}
+	if !strings.Contains(out.String(), "stdin: 123456:telegram-bot-token") || !strings.Contains(out.String(), "args: agent messenger add assistant telegram --yes=true") {
+		t.Fatalf("the runhost got %q", out)
+	}
+
+	// Slack's two tokens, from a pipe, travel as one line.
+	cmd, _, _ = testCommand("xoxb-bot-1\nxapp-app-1\n")
+	args = []string{"add", "assistant", "slack"}
+	if v, _, err := runhostAgentValue(cmd, "lab", "messenger", args, append(args, "--yes=true")); err != nil || v != "xapp-app-1 xoxb-bot-1" {
+		t.Fatalf("Slack's tokens: %q %v", v, err)
+	}
+
+	// Matrix with --user signs in here.
+	var gotPassword string
+	hs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Password string `json:"password"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		gotPassword = body.Password
+		_, _ = io.WriteString(w, `{"access_token":"syt_matrix_access","user_id":"@agent:example.org","device_id":"D1"}`)
+	}))
+	defer hs.Close()
+	prev := messengerAPI
+	messengerAPI = hs.URL
+	t.Cleanup(func() { messengerAPI = prev })
+	cmd, _, _ = testCommand("hunter2-password\n")
+	args = []string{"add", "assistant", "matrix"}
+	v, fwd, err = runhostAgentValue(cmd, "lab", "messenger", args, append(args, "--homeserver=https://matrix.example.org", "--user=@agent:example.org", "--yes=true"))
+	if err != nil || v != "syt_matrix_access" || gotPassword != "hunter2-password" {
+		t.Fatalf("Matrix's sign-in here: %q %v (password %q)", v, err, gotPassword)
+	}
+	if strings.Contains(strings.Join(fwd, " "), "--user") || !slices.Contains(fwd, "--homeserver=https://matrix.example.org") {
+		t.Fatalf("forwarded %q", fwd)
+	}
+
+	// Only add reads a credential; nothing is kept without agreement.
+	cmd, _, _ = testCommand("leaked\n")
+	args = []string{"pair", "assistant", "telegram"}
+	if v, _, err := runhostAgentValue(cmd, "lab", "messenger", args, args); err != nil || v != "" {
+		t.Fatalf("pair read a value: %q %v", v, err)
+	}
+	cmd, _, _ = testCommand("123456:telegram-bot-token\n")
+	args = []string{"add", "assistant", "telegram"}
+	if _, _, err := runhostAgentValue(cmd, "lab", "messenger", args, args); err == nil {
+		t.Fatal("a credential was kept with nobody at a terminal to agree and no --yes")
+	}
+}
+
+// On the runhost a messenger's credential is an entry of its store, which
+// the supervisor reads back through the keychain it is given there: no
+// file under the runhost's directories holds it in the clear, and remove
+// takes it away.
+func TestARunhostKeepsAMessengersCredentialInItsStore(t *testing.T) {
+	s := sealingRunhost(t)
+	t.Cleanup(modelkey.UseKeychain(runhostModelKeys{}))
+	const token = "123456:runhost-messenger-token"
+	account := persistent.MessengerKeychainAccount("assistant", "telegram")
+	keys := persistent.KeychainSecrets{}
+	if err := keys.Set(account, token); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := keys.Get(account); err != nil || got != token {
+		t.Fatalf("read back: %q %v", got, err)
+	}
+	st, err := openRunhostStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ents, err := st.Entries(); err != nil || len(ents) != 1 || !strings.HasPrefix(ents[0], "agent-") {
+		t.Fatalf("the store's entries: %q %v", ents, err)
+	}
+	for _, dir := range []string{s.dir} {
+		_ = filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			if b, _ := os.ReadFile(p); bytes.Contains(b, []byte(token)) { //nolint:gosec // the test's own files
+				t.Errorf("%s holds the credential in the clear", p)
+			}
+			return nil
+		})
+	}
+	if err := keys.Delete(account); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := keys.Get(account); err == nil && got != "" {
+		t.Fatalf("remove left %q", got)
 	}
 }

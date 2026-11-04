@@ -1435,12 +1435,15 @@
             "TestTheAgentSocketIsRelayedToTheDevice",
             "TestARunhostKeepsTheModelItsAgentsRunOn",
             "TestARunhostKeepsItsAgentsSecretsInItsStore",
-            "TestAStoredSecretsValueTravelsToTheRunhostsSecretSet"
+            "TestAStoredSecretsValueTravelsToTheRunhostsSecretSet",
+            "TestAMessengersCredentialTravelsToTheRunhostsMessengerAdd",
+            "TestARunhostKeepsAMessengersCredentialInItsStore"
           ],
           "fuzz": [],
           "benchmarks": [],
           "fixtureEntryPoint": false,
           "dependencyHints": [
+            "HTTP transport",
             "source/file contract",
             "explicit skip"
           ]

@@ -267,7 +267,7 @@ func peerOf(p *MessengerPeer) *messenger.Peer {
 }
 
 // errMessengerCredential says a messenger's credential could not be read.
-var errMessengerCredential = errors.New("its credential could not be read from your keychain")
+var errMessengerCredential = errors.New("its credential could not be read from where it is kept")
 
 // runMessengerRole keeps one account's role running until ctx ends: it
 // starts it, takes its frames, and when it ends starts it again, waiting
@@ -320,7 +320,7 @@ func (s *Supervisor) runMessengerRole(ctx context.Context, hub *messengerHub, r 
 		}
 		if got := conn.Ready().Account; got != m.Account {
 			conn.Close(context.WithoutCancel(ctx))
-			r.setState(fmt.Sprintf("the credential in your keychain is for another %s account (%s, not %s): add it again", r.kind.Account, got, m.Account))
+			r.setState(fmt.Sprintf("the credential kept is for another %s account (%s, not %s): add it again", r.kind.Account, got, m.Account))
 			return
 		}
 		wait = messengerRetryMin
