@@ -303,6 +303,49 @@ type agntYAML struct {
 	// ColdCacheClear clears old tool results after the prompt cache has
 	// expired (coldCacheClear).
 	ColdCacheClear *coldCacheClearYAML `yaml:"cold_cache_clear,omitempty"`
+	ContextLimits  contextLimitsYAML   `yaml:",inline"`
+}
+
+// contextLimitsYAML is docker-agent's context limits that need no window
+// (contextLimits).
+type contextLimitsYAML struct {
+	MaxToolResultTokens  int64    `yaml:"max_tool_result_tokens,omitempty"`
+	MaxOldToolCallTokens int64    `yaml:"max_old_tool_call_tokens,omitempty"`
+	CompactionThreshold  *float64 `yaml:"compaction_threshold,omitempty"`
+}
+
+// ownEndpointCompaction is the share of the window at which docker-agent
+// compacts a conversation on an endpoint of the person's own, against its
+// own 0.9: a model's answers worsen well before its window is full, and a
+// slow local model pays for every token of the conversation it re-reads.
+const ownEndpointCompaction = 0.7
+
+// unknownWindowOldResultTokens is how much of the older tool results a run
+// keeps on an endpoint of the person's own whose window is not recorded.
+const unknownWindowOldResultTokens = 64 << 10
+
+// contextLimits is docker-agent's own context limits for a run on model m
+// under the adapter named name, the ones that work whether or not it knows
+// the model's window. Every tool result is cut, middle out, past twice the
+// run's page (PageBudget), so only a result the tools server did not page
+// is ever cut. On an endpoint of the person's own the older tool results
+// give way to a placeholder once the newer ones pass half the window, and
+// the conversation is compacted at ownEndpointCompaction. The older results
+// are replaced only in the request, never in the stored conversation, and a
+// budget of half the window moves seldom, so a local server's prompt cache
+// is seldom re-read from the start.
+func contextLimits(name string, m policy.Model) contextLimitsYAML {
+	l := contextLimitsYAML{MaxToolResultTokens: 2 * PageBudget(name, m).Bytes / bytesPerToken}
+	if !m.OwnEndpoint() {
+		return l
+	}
+	l.MaxOldToolCallTokens = unknownWindowOldResultTokens
+	if m.ContextWindow > 0 {
+		l.MaxOldToolCallTokens = m.ContextWindow / 2
+	}
+	threshold := ownEndpointCompaction
+	l.CompactionThreshold = &threshold
+	return l
 }
 
 // hooksYAML is the part of docker-agent's hooks block the runner writes.
@@ -495,6 +538,7 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 				RedactSecrets:  &redactFlagOff,
 				Hooks:          redactSecretsHooks(in.UnchangedTools...),
 				ColdCacheClear: coldCacheClear(in.Model.Provider, in.BrowserTools),
+				ContextLimits:  contextLimits(d.Name(), in.Model),
 			},
 		},
 	}

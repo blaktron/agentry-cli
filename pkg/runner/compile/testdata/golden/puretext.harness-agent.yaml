@@ -134,3 +134,4 @@ agents:
       after: 5m
       keep_turns: 2
       keep_browser: 2
+    max_tool_result_tokens: 24576

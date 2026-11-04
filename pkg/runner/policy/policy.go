@@ -796,6 +796,14 @@ func CheckContextWindow(tokens int64) error {
 	return nil
 }
 
+// OwnEndpoint reports whether m is an OpenAI-compatible endpoint of the
+// person's own: custom, or openai pointed at a base URL. The harness's
+// catalogue seldom holds such a model, so the policy's window is often the
+// only one the harness has; where both are present, the policy's wins.
+func (m Model) OwnEndpoint() bool {
+	return m.Provider == "custom" || (m.Provider == ProviderOpenAI && strings.TrimSpace(m.BaseURL) != "")
+}
+
 // JudgeKey is where the person's own Jev key comes from. The value is
 // never in this file: the variable, else, with apiKeySource keyring, the
 // OS keychain entry provider:typesafe (which the desktop writes).
