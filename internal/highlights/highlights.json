@@ -1,6 +1,14 @@
 {
   "versions": [
     {
+      "version": "0.7.17",
+      "highlights": [
+        "Mail providers, Microsoft 365's app and signoff, a Fastmail token and calendar feeds change while an agent runs.",
+        "A running persistent agent takes each of them at its next turn, without a stop and a start.",
+        "agentry agent disable stops a running agent first, rather than refusing."
+      ]
+    },
+    {
       "version": "0.7.16",
       "highlights": [
         "A server, pack or secret added to a running persistent agent that keeps it from starting is switched off, not fatal.",
