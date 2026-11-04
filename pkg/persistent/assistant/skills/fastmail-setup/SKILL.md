@@ -37,36 +37,34 @@ once: they keep it for the next step and nowhere else.
 
 ## Give the token to Agentry
 
-Most people use Agentry Desktop: give these steps first. Give all of them
-before they stop you, because you cannot answer while you are stopped; your
-conversation carries on when they start you again.
+Most people use Agentry Desktop: give these steps first. They need not stop
+you: you have the change from their next message. With Agentry Desktop older
+than 0.7.11 or an `agentry` command older than v0.7.19, it is refused while
+you run: then give every step first, since you cannot answer while you are
+stopped, and they stop you before it and start you again after it.
 
 ### In Agentry Desktop
 
-1. **Stop you**: the **Stop** button at the top of your page.
-2. **Open the set-up**: **Configure**, then the **Mail and calendar**
+1. **Open the set-up**: **Configure**, then the **Mail and calendar**
    section. If there is no *Fastmail* card there, **Add a provider**, then
    **Add Fastmail**. On the card, the **⋯** menu, then **Set up**.
-3. **The token**: they paste it into **Your Fastmail API token**, then **Keep
+2. **The token**: they paste it into **Your Fastmail API token**, then **Keep
    the token**. Fastmail is asked whether it accepts the token before it is
    kept, in their system keychain; a token Fastmail refuses is not kept.
-4. **Switch it on**: a click on the *Fastmail* card, which asks them to
+3. **Switch it on**: a click on the *Fastmail* card, which asks them to
    agree.
-5. **Start you again**: **Start** at the top of your page.
 
 ### In a terminal
 
 If they do not use Agentry Desktop, or its set-up fails, the same steps are
 commands in a terminal on this computer:
 
-    agentry agent stop assistant
     agentry agent configure assistant --fastmail-token
 
 They paste the token when it asks (it is not shown); it is checked with
 Fastmail and kept as in the desktop. Then:
 
     agentry agent grant assistant server:url-api-fastmail-com-mcp on
-    agentry agent start assistant
 
 ## Changing what you can do
 

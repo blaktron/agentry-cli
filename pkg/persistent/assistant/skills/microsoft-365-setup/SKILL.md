@@ -78,43 +78,42 @@ page; they do not need to tell you either.
 
 ## Give the app to Agentry and sign in
 
-Most people use Agentry Desktop: give these steps first. Give all of them
-before they stop you, because you cannot answer while you are stopped; your
-conversation carries on when they start you again.
+Most people use Agentry Desktop: give these steps first. They need not stop
+you: while the set-up writes your sign-in you wait between turns, and you have
+it from their next message. With Agentry Desktop older than 0.7.11 or an
+`agentry` command older than v0.7.19, the set-up is refused while you run: then
+give every step first, since you cannot answer while you are stopped, and they
+stop you before it and start you again after it.
 
 ### In Agentry Desktop
 
-1. **Stop you**: the **Stop** button at the top of your page. The set-up is
-   refused while you run.
-2. **Switch Microsoft on**: **Configure**, then the **Mail and calendar**
+1. **Switch Microsoft on**: **Configure**, then the **Mail and calendar**
    section. If there is no *Microsoft 365 and Outlook.com* card there,
    **Add a provider**, then **Add Microsoft**. A click on the card switches
    it on and asks them to agree; it then reads *Needs setting up*.
-3. **Open the set-up**: on the card, the **⋯** menu, then **Set up**. (The
+2. **Open the set-up**: on the card, the **⋯** menu, then **Set up**. (The
    menu offers Set up only once the card is on.)
-4. **The app**: they paste the Application (client) ID into **Application
+3. **The app**: they paste the Application (client) ID into **Application
    (client) ID**. Under **Account kind** they choose *A personal account*,
    *A work or school account*, or, for an app limited to their organization,
    *One organization (its tenant id)* and paste the Directory (tenant) ID.
    Then **Keep the app**.
-5. **Sign in**: their Microsoft address in **Your Microsoft account**, then
+4. **Sign in**: their Microsoft address in **Your Microsoft account**, then
    **Sign in with Microsoft**. The panel shows a code and their browser opens
    Microsoft's page (https://www.microsoft.com/link). They enter the code
    there, sign in with that account and accept the permissions. Microsoft may
    say the app is unverified: it is their own app, which Microsoft has not
    reviewed. The panel then says which account is signed in.
-6. **Start you again**: **Start** at the top of your page.
 
 ### In a terminal
 
 If they do not use Agentry Desktop, or its set-up fails, the same steps are
 commands in a terminal on this computer:
 
-    agentry agent stop assistant
     agentry agent configure assistant --microsoft-client <the application id>
 
 For an app limited to one organization they add `--microsoft-tenant <the
-directory (tenant) id>` to the second command. Then:
+directory (tenant) id>` to that command. Then:
 
     agentry agent configure assistant --microsoft-sign-in <their Microsoft address>
 
@@ -123,7 +122,6 @@ The terminal shows a code and opens Microsoft's page
 permissions, and the terminal says which account is signed in. Then:
 
     agentry agent grant assistant server:ms365 on
-    agentry agent start assistant
 
 Either way, the sign-in asks only for reading unless *Allow changes* is on.
 
@@ -159,8 +157,8 @@ In Agentry Desktop, the card's switches *Microsoft 365: allow changes* and
 *Microsoft 365: allow sending mail* (sending only with changes); in a
 terminal, `agentry agent grant assistant server:ms365:writes on` and
 `server:ms365:send on`. Each switch asks for their agreement. A sign-in made
-read only does not cover changes, so after switching changes on they stop you
-and sign in again. A work or school account may also need the administrator
+read only does not cover changes, so after switching changes on they sign in
+again. A work or school account may also need the administrator
 to consent to the wider permissions.
 
 ## When it does not work
