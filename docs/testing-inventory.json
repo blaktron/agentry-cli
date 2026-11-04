@@ -1435,12 +1435,15 @@
             "TestTheAgentSocketIsRelayedToTheDevice",
             "TestARunhostKeepsTheModelItsAgentsRunOn",
             "TestARunhostKeepsItsAgentsSecretsInItsStore",
-            "TestAStoredSecretsValueTravelsToTheRunhostsSecretSet"
+            "TestAStoredSecretsValueTravelsToTheRunhostsSecretSet",
+            "TestAMessengersCredentialTravelsToTheRunhostsMessengerAdd",
+            "TestARunhostKeepsAMessengersCredentialInItsStore"
           ],
           "fuzz": [],
           "benchmarks": [],
           "fixtureEntryPoint": false,
           "dependencyHints": [
+            "HTTP transport",
             "source/file contract",
             "explicit skip"
           ]
@@ -8313,6 +8316,22 @@
           ]
         },
         {
+          "path": "pkg/runner/persistent/restart_key_test.go",
+          "tests": [
+            "TestAnImageServerSwitchedOnWhileRunningJoinsAtTheNextTurn",
+            "TestAnImageServersSetUpCountsInTheKey",
+            "TestADevServerSavedAgainRestartsTheSegment",
+            "TestAPackBuiltAgainReachesTheNextTurn",
+            "TestAChangeThroughTheSocketReachesARunningAgent"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "docker interface (real or fake)"
+          ]
+        },
+        {
           "path": "pkg/runner/persistent/roster_test.go",
           "tests": [
             "TestShareFolderRefusesDangerousPaths",
@@ -10110,6 +10129,16 @@
             "TestSplitAsWritesEachServicesFormat",
             "TestSplitAsBoundsEveryFormatsParts",
             "TestHTMLLineBreaksLeavesPreformattedBlocks"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
+          "path": "runnerimage/messenger/httpapi_test.go",
+          "tests": [
+            "TestADirectCallDialsPublicAddressesAlone"
           ],
           "fuzz": [],
           "benchmarks": [],

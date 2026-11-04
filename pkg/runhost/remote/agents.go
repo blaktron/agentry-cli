@@ -23,7 +23,7 @@ import (
 // connection to the agent's owner socket there.
 
 // AgentCommands are the agent subcommands a device runs on a runhost.
-var AgentCommands = []string{"list", "show", "start", "stop", "attach", "enable", "disable", "reset", "grant", "configure", "tasks", "secret"}
+var AgentCommands = []string{"list", "show", "start", "stop", "attach", "enable", "disable", "reset", "grant", "configure", "tasks", "secret", "messenger"}
 
 // AgentRefusedFlags name a file, a sign-in or a credential on the device,
 // which the runhost's CLI would look for on the server instead. A sign-in
@@ -42,6 +42,11 @@ const (
 	AgentEvents = "events"
 )
 
+// MessengerUserFlag is messenger add's Matrix user, whose password signs in
+// on the device: the runhost is sent the session's access token, never the
+// password, so the flag never reaches it.
+const MessengerUserFlag = "user"
+
 // CheckAgentArgs refuses a subcommand the runhost does not run and a flag
 // that names something on the device.
 func CheckAgentArgs(sub string, args []string) error {
@@ -56,6 +61,9 @@ func CheckAgentArgs(sub string, args []string) error {
 		name = strings.TrimPrefix(name, "no-")
 		if slices.Contains(AgentRefusedFlags, name) {
 			return fmt.Errorf("--%s is not available with --on: it reads a file, a sign-in or a credential from this computer", name)
+		}
+		if sub == "messenger" && name == MessengerUserFlag {
+			return fmt.Errorf("--%s is not sent to a runhost: the Matrix account signs in on this computer, and the runhost is given its access token alone", name)
 		}
 	}
 	return nil

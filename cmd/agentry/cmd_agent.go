@@ -763,7 +763,7 @@ func newAgentSuperviseCmd() *cobra.Command {
 			sv, err := persistent.Start(startCtx, persistent.Options{
 				Home: home, Agent: a, Client: persistent.ClientCLI,
 				Policy: pol, PolicySHA: sha, PolicyFile: &file, Build: version.Build(),
-				Docker: dockerx.New(), Stderr: errOut, Packs: agentPacks(cmd), Voice: agentVoice(cmd),
+				Docker: dockerx.New(), Stderr: errOut, Packs: agentPacks(cmd), Voice: agentVoice(cmd), Contents: agentContents(cmd),
 				OnStage: stageLines(errOut), Credits: creditsClient(pol),
 				Subagents: cliSubagents{policyPath: policyPath}, Helper: cliHelper{policyPath: policyPath},
 			})
