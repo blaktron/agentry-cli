@@ -137,7 +137,7 @@ func (s *Supervisor) install(ctx context.Context, in *bgInstall, srv manifest.MC
 		do := s.opts.InstallServer
 		if do == nil {
 			do = func(ctx context.Context, srv manifest.MCPServer, storeDir string, logw io.Writer) error {
-				return localrun.InstallServer(ctx, s.opts.Docker, s.opts.Policy, storeDir, srv, logw)
+				return localrun.InstallServer(ctx, s.opts.Docker, s.policy(), storeDir, srv, logw)
 			}
 		}
 		err = do(ctx, srv, storeDir, io.MultiWriter(logw, tail))

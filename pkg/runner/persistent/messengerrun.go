@@ -181,7 +181,8 @@ func (s *Supervisor) messengerWanted(cfg Config) (map[string]MessengerAccount, m
 	if !a.TakesMessengers() {
 		return want, why
 	}
-	r := BuildRosterUnder(a, cfg, nil, s.opts.Policy.MalwareCheckOn())
+	pol := s.policy()
+	r := BuildRosterUnder(a, cfg, nil, pol.MalwareCheckOn())
 	for _, m := range cfg.Messengers {
 		e, ok := r.Entry(MessengerEntryID(m.Kind))
 		switch {
@@ -193,7 +194,7 @@ func (s *Supervisor) messengerWanted(cfg Config) (map[string]MessengerAccount, m
 			why[m.Kind] = "it is on in config.yaml, and you have not agreed to it on this computer: switch it off and on again"
 			continue
 		}
-		if ok, reason := s.opts.Policy.MessengerAllowed(m.Kind); !ok {
+		if ok, reason := pol.MessengerAllowed(m.Kind); !ok {
 			why[m.Kind] = reason
 			continue
 		}
@@ -356,12 +357,13 @@ func (s *Supervisor) startMessengerConn(ctx context.Context, st MessengerStart) 
 	if s.opts.StartMessenger != nil {
 		return s.opts.StartMessenger(ctx, st)
 	}
-	if s.opts.Docker == nil || s.opts.Policy == nil {
+	pol := s.policy()
+	if s.opts.Docker == nil || pol == nil {
 		return nil, errors.New("this client starts no messenger")
 	}
 	l, err := engine.StartMessenger(ctx, s.opts.Docker, engine.MessengerParams{
 		Kind: st.Kind, Token: st.Token, Server: st.Server, Peer: st.Peer, Dir: st.Dir, Log: st.Log,
-		Image: s.opts.Policy.RunnerImageTag(runnerimage.ContentVersion()), Policy: s.opts.Policy,
+		Image: pol.RunnerImageTag(runnerimage.ContentVersion()), Policy: pol,
 	})
 	if err != nil {
 		return nil, err
@@ -742,7 +744,7 @@ func (s *Supervisor) tellMessengerOfQuestion(title string, asked bool) {
 
 // messengerStates are the agent's messengers with each one's connection.
 func (s *Supervisor) messengerStates(cfg Config) []MessengerState {
-	states := Messengers(s.opts.Agent, cfg, s.opts.Policy.MessengerAllowed)
+	states := Messengers(s.opts.Agent, cfg, s.policy().MessengerAllowed)
 	hub := s.hub()
 	if hub == nil {
 		return states

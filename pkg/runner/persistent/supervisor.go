@@ -91,6 +91,10 @@ type Options struct {
 	// provider agentry): the agent opens one session with it for its whole
 	// life. Nil refuses such an agent as signed out.
 	Credits *inference.Client
+	// CreditsFor is the credits client for a policy the agent takes while it
+	// runs, so a model that comes to pay with credits, or another
+	// registry, has one; nil keeps Credits.
+	CreditsFor func(*policy.Policy) *inference.Client
 	// StartSegment starts a segment; nil starts it with localrun. Tests
 	// put a session of their own here.
 	StartSegment func(ctx context.Context, seg localrun.Segment) (engine.PersistentSession, error)
@@ -145,9 +149,15 @@ type Supervisor struct {
 	outDir        string
 	segment       int
 	applied       Applied
-	grants        string     // grantsKey of the config the segment started with
-	given         Signatures // what each entry gave the segment, beyond its switch
-	started       Config     // the config the running segment started with
+	grants        string         // grantsKey of the config the segment started with
+	given         Signatures     // what each entry gave the segment, beyond its switch
+	pol           *policy.Policy // the policy held now (policynow.go)
+	polSHA        string
+	polSeen       statSeen    // the policy file as last read
+	polRefused    string      // the digest of a policy set aside
+	polTaken      *heldPolicy // the policy held before one taken since the last segment started
+	creditsCl     *inference.Client
+	started       Config // the config the running segment started with
 	hasStarted    bool
 	packsDone     func()
 	ending        *atomic.Bool // set for the segment being ended to start the next
@@ -286,6 +296,9 @@ func Start(ctx context.Context, opts Options) (*Supervisor, error) {
 	if pending := Unconsented(BuildRosterUnder(a, cfg, nil, opts.Policy.MalwareCheckOn()), cfg); len(pending) > 0 {
 		return nil, &ConsentError{Agent: a.Name, Entries: pending}
 	}
+	if err := policyOutsideShare(a, cfg, opts.PolicyFile); err != nil {
+		return nil, err
+	}
 	owner, err := Acquire(opts.Home, a.Name, opts.Client)
 	if err != nil {
 		return nil, err
@@ -307,6 +320,7 @@ func Start(ctx context.Context, opts Options) (*Supervisor, error) {
 		joined:    map[string]bool{}, installs: map[string]*bgInstall{}, ranUntil: map[string]time.Time{},
 		done: make(chan struct{}),
 	}
+	s.pol, s.polSHA, s.creditsCl = opts.Policy, opts.PolicySHA, opts.Credits
 	s.bgCtx, s.bgCancel = context.WithCancel(context.Background())
 	if opts.Policy != nil {
 		s.model = opts.Policy.Model.Provider + "/" + opts.Policy.Model.Name
@@ -355,7 +369,9 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 	if err != nil {
 		return err
 	}
-	roster := BuildRosterUnder(a, cfg, nil, s.opts.Policy.MalwareCheckOn())
+	s.reloadPolicy(ctx)
+	pol, polSHA := s.policy(), s.policySHA()
+	roster := BuildRosterUnder(a, cfg, nil, pol.MalwareCheckOn())
 	// Every segment is held to the person's agreement, not only the first:
 	// a config.yaml changed some other way does not widen the next one.
 	if pending := Unconsented(roster, cfg); len(pending) > 0 {
@@ -363,7 +379,7 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 	}
 	ready := s.opts.DevHost
 	if ready == nil {
-		ready = ReadyDevHost(home, s.opts.Policy)
+		ready = ReadyDevHost(home, pol)
 	}
 	keys := s.opts.Secrets
 	if keys == nil {
@@ -426,7 +442,7 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 		return fmt.Errorf("the segment's folder: %w", err)
 	}
 	seg := localrun.Segment{
-		Builtin: a.Builtin, Release: a.Release, Home: home, Policy: s.opts.Policy, PolicySHA: s.opts.PolicySHA,
+		Builtin: a.Builtin, Release: a.Release, Home: home, Policy: pol, PolicySHA: polSHA,
 		PolicyFile: s.opts.PolicyFile, Build: s.opts.Build, OutDir: outDir, RunID: runID, Stderr: s.opts.Stderr,
 		OnStage: s.opts.OnStage,
 		Persistent: engine.PersistentSegment{
@@ -534,6 +550,7 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 	s.sess, s.runID, s.outDir, s.segment = sess, runID, outDir, segment
 	s.applied, s.grants, s.packsDone, s.ending, s.pumpDone = applied, key, packsDone, ending, pumpDone
 	s.started, s.hasStarted = cfg, true
+	s.polTaken = nil
 	s.given = signatures
 	s.carry, s.persona, s.resumed, s.resumeReason = carry, persona, resumed, reason
 	s.carryHandoff = handoff
@@ -867,6 +884,9 @@ func (s *Supervisor) startNext(ctx context.Context) error {
 	// otherwise end the segment the turn restarted, and the agent with it.
 	sctx := context.WithoutCancel(ctx)
 	err := s.startSegment(sctx, true)
+	if err != nil && s.revertPolicy(err) {
+		err = s.startSegment(sctx, true)
+	}
 	if err != nil {
 		err = s.withoutNewServers(sctx, err)
 	}
@@ -1000,7 +1020,7 @@ func (s *Supervisor) Change(ch Change) (Roster, error) {
 		return nil, err
 	}
 	err := s.updateConfig(func(c *Config) error {
-		_, err := applyChange(s.opts.Home, s.opts.Agent, c, ch, s.opts.Policy.MalwareCheckOn())
+		_, err := applyChange(s.opts.Home, s.opts.Agent, c, ch, s.policy().MalwareCheckOn())
 		return err
 	})
 	if err != nil {
@@ -1071,7 +1091,7 @@ func (s *Supervisor) Roster() Roster {
 	s.mu.Lock()
 	applied := s.applied
 	s.mu.Unlock()
-	r := BuildRosterUnder(s.opts.Agent, cfg, &applied, s.opts.Policy.MalwareCheckOn())
+	r := BuildRosterUnder(s.opts.Agent, cfg, &applied, s.policy().MalwareCheckOn())
 	// A server that is on and that the segment was not given is being
 	// installed, or is installed and joins at the next turn; one that
 	// waits for what the person must set up keeps saying so.
@@ -1166,9 +1186,10 @@ const StateRunning = "running"
 func (s *Supervisor) stale(ctx context.Context, c Config) bool {
 	grants := grantsKey(s.opts.Home, s.opts.Agent, c)
 	now := s.signatures(ctx, c)
+	moved := s.policyMoved()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return grants != s.grants || len(s.given.changed(now)) > 0
+	return grants != s.grants || len(s.given.changed(now)) > 0 || moved
 }
 
 // signatures are what config c's entries give a segment now.
@@ -1253,11 +1274,13 @@ func (s *Supervisor) Stop(ctx context.Context) (*receipt.Envelope, error) {
 // policy when the client gives no opener of its own.
 func (s *Supervisor) openers() Openers {
 	o := Openers{Packs: s.opts.Packs, Voice: s.opts.Voice, Web: s.opts.Web, Review: s.opts.Review}
-	if o.Web == nil && s.opts.Policy != nil {
-		o.Web = LocalWebOpener(s.opts.Policy)
-	}
-	if o.Review == nil && s.opts.Policy != nil {
-		o.Review = LocalReviewOpener(s.opts.Policy)
+	if pol := s.policy(); pol != nil {
+		if o.Web == nil {
+			o.Web = LocalWebOpener(pol)
+		}
+		if o.Review == nil {
+			o.Review = LocalReviewOpener(pol)
+		}
 	}
 	return o
 }
