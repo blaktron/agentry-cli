@@ -585,8 +585,9 @@ func TestNameAndPersonalityReachTheNextTurn(t *testing.T) {
 }
 
 // TestEveryNextSegmentIsHeldToConsent: a config changed some other way, to
-// turn on what the person has not agreed to, is refused at the start and at
-// the next segment alike, and the agent stops saying why.
+// turn on what the person has not agreed to, is refused at the start; at a
+// next segment it is refused too, and the agent goes on as it was, without
+// the unagreed pack, saying why.
 func TestEveryNextSegmentIsHeldToConsent(t *testing.T) {
 	home := shortHome(t)
 	enable(t, home)
@@ -605,21 +606,27 @@ func TestEveryNextSegmentIsHeldToConsent(t *testing.T) {
 	}
 	st := &starter{resumed: true}
 	sv := startAssistant(t, home, st)
+	defer func() { _, _ = sv.Stop(context.Background()) }()
 	c, _ = LoadConfig(home, "assistant")
 	c.Knowledge = []string{"notes"}
 	if err := SaveConfig(home, "assistant", c); err != nil {
 		t.Fatal(err)
 	}
-	if err := sv.Send(context.Background(), "hello"); !errors.As(err, &ce) {
-		t.Fatalf("the next segment with an unagreed pack: %v", err)
+	if err := sv.Send(context.Background(), "hello"); err != nil {
+		t.Fatalf("the turn after an unagreed pack: %v", err)
 	}
-	select {
-	case <-sv.Done():
-	case <-time.After(5 * time.Second):
-		t.Fatal("the agent kept running on a refused segment")
+	for _, seg := range st.segments {
+		if len(seg.Grants.Knowledge) > 0 {
+			t.Fatal("a segment was started with the unagreed pack")
+		}
 	}
-	if len(st.segments) != 1 {
-		t.Errorf("%d segments started", len(st.segments))
+	na := sv.Status().NotApplied
+	if na == nil || !strings.Contains(na.Reason, "agree") || !slices.Contains(na.Entries, KnowledgeEntryID("notes")) {
+		t.Fatalf("what was not applied: %+v", na)
+	}
+	c, _ = LoadConfig(home, "assistant")
+	if e, _ := BuildRoster(assistantAgent(t), c, nil).Entry(KnowledgeEntryID("notes")); e.On {
+		t.Error("the unagreed pack is still on")
 	}
 }
 

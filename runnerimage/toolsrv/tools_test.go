@@ -29,7 +29,22 @@ func newTestServer(t *testing.T, spec *Spec) *server {
 	if err != nil {
 		t.Fatalf("newServer: %v", err)
 	}
+	cleanUpServer(t, s)
 	return s
+}
+
+// cleanUpServer ends, by process group, whatever s's declared commands left
+// running and removes s's shim directory once the test is over, whether it
+// passed or failed.
+func cleanUpServer(t *testing.T, s *server) {
+	t.Helper()
+	t.Cleanup(func() {
+		if s.shimDir == "" {
+			return
+		}
+		endShimGroups(t, s.shimDir)
+		_ = os.RemoveAll(s.shimDir)
+	})
 }
 
 func rawArgs(t *testing.T, v map[string]any) json.RawMessage {
@@ -525,12 +540,15 @@ func TestRunCommand(t *testing.T) {
 
 	t.Run("timeout clamps and kills", func(t *testing.T) {
 		tspec := baseSpec(t)
-		tspec.Exec = Exec{Commands: []string{"sh"}}
+		tspec.Exec = Exec{Commands: []string{"sleep"}}
 		tspec.Limits.ExecTimeoutSeconds = 1
 		ts := newTestServer(t, tspec)
-		// timeoutSeconds far above the server limit: min() must win.
+		// timeoutSeconds far above the server limit: min() must win. The
+		// command idles rather than spins and ends on its own, so one this
+		// process cannot kill (it dies mid-call) costs nothing and is gone
+		// in half a minute.
 		got, isErr := ts.toolRunCommand(rawArgs(t, map[string]any{
-			"command": "sh", "args": []string{"-c", "while :; do :; done"}, "timeoutSeconds": 9999,
+			"command": "sleep", "args": []string{"30"}, "timeoutSeconds": 9999,
 		}))
 		if !isErr || !strings.Contains(got, "timed out after 1s") {
 			t.Fatalf("timeout = %q (isError %v)", got, isErr)

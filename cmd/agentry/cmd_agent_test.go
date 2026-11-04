@@ -415,6 +415,29 @@ func TestAgentShowSaysWhyAServerFailed(t *testing.T) {
 	}
 }
 
+// TestAgentShowSaysWhatWasNotApplied: entries a running agent switched off
+// because it could not start with them are named by `agent show` with why,
+// and in --json.
+func TestAgentShowSaysWhatWasNotApplied(t *testing.T) {
+	home := agentHome(t)
+	if _, _, err := runCLI(t, nil, "agent", "enable", "assistant"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := persistent.LoadConfig(home, "assistant")
+	cfg.NotApplied = &persistent.NotApplied{At: time.Now(), Reason: "the engine could not start it", Entries: []string{"knowledge:handbook"}}
+	if err := persistent.SaveConfig(home, "assistant", cfg); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := runCLI(t, nil, "agent", "show", "assistant")
+	if err != nil || !strings.Contains(out, "not applied: knowledge:handbook, at ") || !strings.Contains(out, "so it is switched off: the engine could not start it") {
+		t.Fatalf("show: %v\n%s", err, out)
+	}
+	js, _, err := runCLI(t, nil, "agent", "show", "assistant", "--json")
+	if err != nil || !strings.Contains(js, `"notApplied":{`) {
+		t.Fatalf("show --json: %v\n%s", err, js)
+	}
+}
+
 // TestAgentGrantLetsAServerSeeTheShare: `agent grant <name> <server>:share on`
 // asks for agreement to the server's new sentence, and `show` then says the
 // server sees the share and names the switch.

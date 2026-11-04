@@ -660,6 +660,7 @@
             "TestAgentConfigurePublishesAPort",
             "TestAgentStartPrintsEachStage",
             "TestAgentShowSaysWhyAServerFailed",
+            "TestAgentShowSaysWhatWasNotApplied",
             "TestAgentGrantLetsAServerSeeTheShare",
             "TestAgentShowHelpNamesEachRosterState",
             "TestAgentShowListsTheOffersAndAddsASuggestion",
@@ -3131,6 +3132,38 @@
           "benchmarks": [],
           "fixtureEntryPoint": false,
           "dependencyHints": []
+        },
+        {
+          "path": "pkg/mcpauth/idjag_test.go",
+          "tests": [
+            "TestAnIDJAGIsRequestedByTokenExchangeAndRedeemedForAnAccessToken",
+            "TestTheExchangeAuthenticatesWithASecretInTheForm",
+            "TestTheExchangeAuthenticatesWithAPrivateKeyJWT",
+            "TestTheAssertionAudienceCanBeTheIssuer",
+            "TestAPrivateKeyJWTClientWithoutASignerIsRefusedBeforeAnyRequest",
+            "TestTheProvidersPolicyRefusalKeepsItsCodeAndDescription",
+            "TestARefusalNeverEchoesTheSubjectToken",
+            "TestAnAnswerThatIsNotAnIDJAGIsRefused",
+            "TestAnIDJAGRequestNeedsAnHTTPSAudience",
+            "TestAServerWithoutTheIDJAGProfileIsNotRedeemedAt",
+            "TestTheServersMetadataReadsAsAcceptingIDJAGs",
+            "TestARedeemRefusalNeverEchoesTheAssertion",
+            "TestTheGrantsGoThroughTheGuard",
+            "TestTokenIssuerDiscoveryHoldsTheIssuerAndHTTPS",
+            "TestARedeemAnswerThatIsNotATokenIsRefused",
+            "TestTheGrantsRefuseAnHTTPTokenEndpoint",
+            "TestARefusalNeverEchoesTheClientAssertion",
+            "TestASignersErrorNeverReachesTheMessage",
+            "TestAnAssertionIsNeverUnsignedOrSignedWithASharedKey",
+            "TestCredentialsAreNeverSerialised",
+            "TestASignInsDiscoveryStillNeedsAnAuthorizationEndpoint"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "HTTP transport"
+          ]
         },
         {
           "path": "pkg/mcpauth/mcpauth_test.go",
@@ -8332,6 +8365,21 @@
           ]
         },
         {
+          "path": "pkg/runner/persistent/rollback_test.go",
+          "tests": [
+            "TestAChangeThatAddsWhatTheNextSegmentCannotStartWithIsTakenBack",
+            "TestAChangeThatTakesSomethingAwayIsNeverTakenBack",
+            "TestAnAgentStopsWhenItCannotStartWithoutTheChangeEither",
+            "TestAChangeWhoseKeyIsNotInTheKeychainIsRefused"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "real-time wait"
+          ]
+        },
+        {
           "path": "pkg/runner/persistent/roster_test.go",
           "tests": [
             "TestShareFolderRefusesDangerousPaths",
@@ -10966,6 +11014,14 @@
             "source/file contract",
             "real-time wait"
           ]
+        },
+        {
+          "path": "runnerimage/toolsrv/group_other_test.go",
+          "tests": [],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
         },
         {
           "path": "runnerimage/toolsrv/html_test.go",

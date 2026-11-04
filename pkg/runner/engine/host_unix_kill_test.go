@@ -41,9 +41,12 @@ func TestConfigProcessEscalatesToTheWholeGroup(t *testing.T) {
 	// The leader answers SIGTERM and dies. The child ignores it, loops, and
 	// keeps the inherited stdout open. A second child answers SIGTERM by
 	// writing a marker: it is told to end by the signal, before the kill.
+	// Both loops stop by themselves after about thirty seconds, so a child
+	// this process cannot end (it dies mid-test) does not stay.
 	marker, ready := filepath.Join(dir, "term.marker"), filepath.Join(dir, "ready")
-	body := "#!/bin/sh\n( trap 'echo term > " + marker + "; exit 0' TERM; : > " + ready + "; while :; do sleep 0.05; done ) &\n" +
-		"( trap '' TERM; while :; do sleep 0.05; done ) &\necho $! > " + pidFile + "\nwait\n"
+	const loop = "i=0; while [ $i -lt 600 ]; do sleep 0.05; i=$((i+1)); done"
+	body := "#!/bin/sh\n( trap 'echo term > " + marker + "; exit 0' TERM; : > " + ready + "; " + loop + " ) &\n" +
+		"( trap '' TERM; " + loop + " ) &\necho $! > " + pidFile + "\nwait\n"
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil { //nolint:gosec // a throwaway test script
 		t.Fatal(err)
 	}
@@ -57,6 +60,8 @@ func TestConfigProcessEscalatesToTheWholeGroup(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
+	group := cmd.Process.Pid
+	t.Cleanup(func() { endGroupRunning(t, group, script) })
 
 	// The child's pid, from the leader's $! — $$ inside a subshell is the
 	// parent's pid in both dash and bash, so it cannot be used here.
@@ -137,6 +142,34 @@ func TestProcStartTimeReadsTheStartField(t *testing.T) {
 	// a flag word instead, and lands outside that bound.
 	if limit := uint64(up*100) + 100; start == 0 || start > limit {
 		t.Fatalf("start time %d ticks is not a plausible tick count (uptime %.0fs, limit %d) — the field is mis-counted", start, up, limit)
+	}
+}
+
+// endGroupRunning kills process group pgid while a live member of it still
+// runs script, whether the test passed or failed. A member found alive keeps
+// the group id from being reused, so the signal reaches only what the test
+// started.
+func endGroupRunning(t *testing.T, pgid int, script string) {
+	t.Helper()
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil || !processAlive(pid) {
+			continue
+		}
+		cmdline, err := os.ReadFile(filepath.Join("/proc", e.Name(), "cmdline"))
+		if err != nil || !strings.Contains(string(cmdline), script) {
+			continue
+		}
+		if g, err := syscall.Getpgid(pid); err == nil && g == pgid {
+			if syscall.Kill(-pgid, syscall.SIGKILL) == nil {
+				t.Logf("ended process group %d, which the harness left running", pgid)
+			}
+			return
+		}
 	}
 }
 
