@@ -48,6 +48,10 @@
 // header. The cover image, when a plate cover draws it, is the server's
 // re-encoding of the design's, from cover.png or cover.jpg.
 //
+// A custom cover is the one piece of the design that is code: cover.typ,
+// drawn by cover-custom below with the images the server re-encoded under
+// cover/.
+//
 // The form is the agent's: report (a title block; a cover page of its own
 // when the design's cover says always, or says long and the report runs
 // past the length the server decides; the header from page 2), letter (the
@@ -588,10 +592,57 @@
   }),
 )
 
+// custom: the design's own cover, Typst code the person kept with the
+// design (cover.typ in the render root). It defines a function
+// cover(facts, design) that this template calls with the facts below and
+// the design document; what it returns is drawn as the cover page, inside
+// a block of the page's size that clips what overflows, so it is one page:
+// a page break or a page setting inside it is a compile error. The code
+// sees the render root and nothing beyond (a package import is refused, as
+// the renderer has no package downloader), and must draw the title with
+// facts.title(), which sets it as the document's level 1 heading; a cover
+// that draws no title is refused below. The server passes a cover that
+// fails over for the design's built-in cover style.
+#let cover-title(size: cover-size, fill: ink, font: none, weight: "bold", tracking: 0pt) = {
+  show heading: set text(fill: fill, weight: weight, tracking: tracking)
+  show heading: set text(font: font) if font != none
+  title-heading(size)
+  [#metadata("title") <agentry-cover-title>]
+}
+#let cover-custom() = {
+  import "cover.typ": cover
+  let facts = (
+    title: cover-title,
+    title-text: meta.title,
+    subtitle: meta.subtitle,
+    author: meta.author,
+    date: meta.date,
+    shows: design.cover.shows,
+    brand: brand,
+    confidentiality: brand.confidentiality,
+    accent: accent,
+    tint: tint,
+    secondary: if has-secondary { secondary } else { none },
+    secondary-tint: if has-secondary { secondary-tint } else { none },
+    ink: ink,
+    muted: muted,
+    fonts: (headings: heading-font, body: body-font, code: code-font),
+    logo: if meta.logo == none { none } else { meta.logo.path },
+    logo-image: logo-image,
+    cover-image: if meta.coverImage == none { none } else { meta.coverImage.path },
+    images: meta.customCover.images.map(i => i.path),
+    page: (width: page-w, height: page-h),
+    margin: margin,
+  )
+  block(width: 100%, height: 100%, clip: true, breakable: false, cover(facts, design))
+}
+
 #if meta.cover {
   page(margin: 0mm, header: none, footer: none, {
     let style = meta.coverStyle
-    if style == "split" {
+    if style == "custom" {
+      cover-custom()
+    } else if style == "split" {
       cover-split()
     } else if style == "geometric" {
       cover-geometric()
@@ -607,6 +658,13 @@
     // Placed, so it takes no room in the page's flow.
     place(counter(page).update(0))
   })
+  // A custom cover must set the document's title as its level 1 heading
+  // (facts.title), which PDF/UA-1 wants before the sections.
+  if meta.coverStyle == "custom" {
+    context if query(<agentry-cover-title>).len() == 0 {
+      panic("agentry: the custom cover drew no title")
+    }
+  }
 } else if meta.titleBlock {
   title-block(title-size)
 } else if meta.logo != none {

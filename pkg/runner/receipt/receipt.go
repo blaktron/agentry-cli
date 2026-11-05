@@ -366,9 +366,17 @@ type PDFFile struct {
 	// the design's SHA-256 covers the logo's bytes.
 	Logo bool `json:"logo,omitempty"`
 	// Cover is the style of the cover page drawn before the report (band,
-	// split, geometric, largeType, framed or plate), or empty when the
-	// PDF has none.
+	// split, geometric, largeType, framed, plate or custom), or empty when
+	// the PDF has none.
 	Cover string `json:"cover,omitempty"`
+	// CustomCover says what became of the design's custom cover, when it
+	// asked for one: "drawn", or "passedOver" when it failed and Cover
+	// names the built-in style drawn in its place.
+	CustomCover string `json:"customCover,omitempty"`
+	// CoverFailure is the kind of failure a passed-over custom cover had
+	// (compile, import, altText, pages, title, time, memory or image),
+	// never the compiler's text.
+	CoverFailure string `json:"coverFailure,omitempty"`
 }
 
 // Web is a run's count of the web tools' reads and AI Review's verdicts.

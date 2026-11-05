@@ -270,6 +270,8 @@ func TestRealRenderEveryCoverStyle(t *testing.T) {
 				d.CoverImage = cover
 			}
 			if style == "custom" {
+				// A custom cover that fails is passed over for the built-in
+				// band (customcover_test.go draws one that works).
 				d.CustomCover = reportdesign.CustomCover{Source: "#panic(\"custom covers are not drawn here\")", Images: []reportdesign.Image{}}
 			}
 			stamp, err := StampTheme(d.Canonical())
@@ -301,8 +303,8 @@ func TestRealRenderEveryCoverStyle(t *testing.T) {
 			if err != nil || !bytes.Contains(ledger, []byte(`"cover":"`+drawn+`"`)) {
 				t.Errorf("%s (image %v): the ledger %s does not name the %s cover (%v)", style, withImage, ledger, drawn, err)
 			}
-			if bytes.Contains(pdf, []byte("custom covers are not drawn here")) {
-				t.Errorf("%s: the custom cover's code reached the render", style)
+			if style == "custom" && (!bytes.Contains(ledger, []byte(`"customCover":"passedOver"`)) || strings.Contains(got, "custom covers are not drawn here")) {
+				t.Errorf("custom: the failing cover was not passed over by kind alone: answer %q, ledger %s", got, ledger)
 			}
 
 			page := renderPNGsAt(t, typst, d.Canonical(), FormReport, longReport, thumbnailPPI, true)[0]
