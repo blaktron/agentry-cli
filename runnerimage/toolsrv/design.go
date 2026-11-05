@@ -538,24 +538,16 @@ func (s *server) renderPreview(d reportdesign.Design, doc mdDoc, author, page st
 		if logo != nil {
 			files[logoFile] = logoPNG
 		}
-		if coverImage != nil {
-			files[coverImage.Path] = coverBytes
+		style := plan.style
+		if style == "" {
+			style = cover
 		}
-		if plan.style == "custom" {
-			if err := root.Mkdir("cover", 0o755); err != nil {
-				return typstResult{}, err
-			}
-			for name, b := range customFiles {
-				files[name] = b
-			}
-		}
+		addCoverFiles(files, style, coverImage, coverBytes, customFiles)
 		if err := root.Mkdir("img", 0o755); err != nil {
 			return typstResult{}, err
 		}
-		for name, b := range files {
-			if err := createIn(root, name, bytes.NewReader(b)); err != nil {
-				return typstResult{}, err
-			}
+		if err := writeRenderRoot(root, files); err != nil {
+			return typstResult{}, err
 		}
 		if format == "pdf" {
 			return s.compileTypst(renderRoot, "pdf", 0, 0), nil

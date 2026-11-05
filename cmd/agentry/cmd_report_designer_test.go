@@ -100,7 +100,7 @@ func TestADesignerRunWithoutSaveLeavesTheLibraryAlone(t *testing.T) {
 	if reg.writes != 0 {
 		t.Errorf("%d writes to the library without --save", reg.writes)
 	}
-	if !strings.HasPrefix(stdout, "The Report Designer could not look at its renders") || !strings.Contains(stdout, "agentry report-design import") {
+	if !strings.HasPrefix(stdout, "The Report Designer says it could not look at its renders") || !strings.Contains(stdout, "agentry report-design import") {
 		t.Errorf("output %q", stdout)
 	}
 }

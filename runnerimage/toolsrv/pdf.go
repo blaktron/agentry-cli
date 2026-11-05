@@ -1053,19 +1053,9 @@ func (s *server) toolExportPDF(raw json.RawMessage) (string, bool) {
 	if logo != nil {
 		files[logoFile] = logoPNG
 	}
-	if (cover == "plate" || cover == "custom") && coverImage != nil {
-		files[coverImage.Path] = coverBytes
-	}
-	if cover == "custom" {
-		if err := root.Mkdir("cover", 0o755); err != nil {
-			return s.renderFailed(err)
-		}
-		maps.Copy(files, customFiles)
-	}
-	for name, b := range files {
-		if err := createIn(root, name, bytes.NewReader(b)); err != nil {
-			return s.renderFailed(err)
-		}
+	addCoverFiles(files, cover, coverImage, coverBytes, customFiles)
+	if err := writeRenderRoot(root, files); err != nil {
+		return s.renderFailed(err)
 	}
 
 	// 3. Typst, which may write nothing: the PDF comes back on its stdout,
@@ -1389,6 +1379,38 @@ func (c renderConfinement) run(cmd *exec.Cmd) (string, error) {
 		return "", cmd.Run()
 	}
 	return runTrampolined(cmd)
+}
+
+// addCoverFiles adds to a render root's files what a cover in style draws:
+// the cover image for a plate or a custom cover, which may draw it, and a
+// custom cover's code and images.
+func addCoverFiles(files map[string][]byte, style string, coverImage *pdfCoverImage, coverBytes []byte, custom map[string][]byte) {
+	if (style == "plate" || style == "custom") && coverImage != nil {
+		files[coverImage.Path] = coverBytes
+	}
+	if style == "custom" {
+		maps.Copy(files, custom)
+	}
+}
+
+// writeRenderRoot makes each file new beneath root, and the cover/ folder
+// first when a custom cover's images go in it; img/ is made before the
+// Markdown's images are copied.
+func writeRenderRoot(root *beneath.Dir, files map[string][]byte) error {
+	for name := range files {
+		if strings.HasPrefix(name, "cover/") {
+			if err := root.Mkdir("cover", 0o755); err != nil {
+				return err
+			}
+			break
+		}
+	}
+	for name, b := range files {
+		if err := createIn(root, name, bytes.NewReader(b)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // createIn makes name new beneath root, readable by anyone, and fills it

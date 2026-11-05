@@ -74,9 +74,13 @@ The inputs are read-only. Start with `list_inputs`.
    contrast, balance. Render again. Stop when it is right or the renders
    are spent; never stop on a render that failed or that an export would
    pass over.
-4. Render the final version last, so the image kept with the design is of
+4. A cover takes every report's own title, from two words to twenty.
+   Before you finish, render it once with a long `title` (twelve words or
+   more) and once with a short one, and fix anything that runs into
+   something else.
+5. Render the final version last, so the image kept with the design is of
    what you wrote.
-5. Write `designer.json` and answer.
+6. Write `designer.json` and answer.
 
 ## The files you write
 

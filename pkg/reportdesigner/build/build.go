@@ -109,8 +109,9 @@ type Result struct {
 	// Design is the design the run made, with its images, valid by the
 	// core's rules: never anyone's default until the person makes it so.
 	Design reportdesign.Design
-	// Looked says the model saw its renders; false when it said it could
-	// not read images.
+	// Looked is what the Designer says of its own work: that it saw its
+	// renders. It is the model's word, never checked; false when it said it
+	// could not read images, or wrote no notes.
 	Looked bool
 	// Thumbnail says a Cover run's cover carries the image of its last
 	// render; false when the last render was not of the cover kept.
@@ -570,7 +571,7 @@ func (o Options) collect(in staged) (made, error) {
 			images = []reportdesign.Image{}
 		}
 		d.CustomCover = reportdesign.CustomCover{Source: string(src), Images: images}
-		if thumb, ok := o.thumbnail(src); ok {
+		if thumb, ok := o.thumbnail(src, in.from.WithoutAssets().Canonical()); ok {
 			d.CustomCover.Thumbnail, out.thumbnail = thumb, true
 		}
 		if err := d.Validate(); err != nil {
@@ -678,19 +679,20 @@ func reencodeCover(c reportdesign.CustomCover) (reportdesign.CustomCover, error)
 }
 
 // thumbnail is the image of the run's last render of the cover page, when
-// that render drew exactly src as a custom cover an export would draw,
+// that render drew exactly src as a custom cover an export would draw, in
+// the design the cover is for (design, its document without images),
 // scaled down to fit the thumbnail's cap.
-func (o Options) thumbnail(src []byte) (reportdesign.Image, bool) {
+func (o Options) thumbnail(src, design []byte) (reportdesign.Image, bool) {
 	entries, err := engine.ReadPreviewLedger(filepath.Join(o.OutDir, "receipts", engine.PreviewLedgerFile))
 	if err != nil || len(entries) == 0 {
 		return reportdesign.Image{}, false
 	}
-	sum := sha256.Sum256(src)
-	want := hex.EncodeToString(sum[:])
+	sum, dsum := sha256.Sum256(src), sha256.Sum256(design)
+	want, wantDesign := hex.EncodeToString(sum[:]), hex.EncodeToString(dsum[:])
 	var last *toolsrv.PreviewEntry
 	for i := range entries {
 		e := entries[i]
-		if e.Page == "cover" && e.Cover == "custom" && e.CoverSHA256 == want && e.CoverFailure == "" && e.PNG != "" {
+		if e.Page == "cover" && e.Cover == "custom" && e.CoverSHA256 == want && e.DesignSHA256 == wantDesign && e.CoverFailure == "" && e.PNG != "" {
 			last = &e
 		}
 	}

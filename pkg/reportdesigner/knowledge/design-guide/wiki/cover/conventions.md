@@ -30,7 +30,7 @@ The cover **must** set the report's title with `facts.title`, a function:
 (facts.title)(size: 34pt, fill: white, font: none, weight: "bold", tracking: 0pt)
 ```
 
-Every argument is optional. It is a block of the width it is given, ending below the title's descenders, so `v(…)` after it spaces what follows. It sets the title as the document's level 1 heading, which a tagged PDF needs before the report's sections. A cover that never calls it fails. Call it once. For the title as a string, to measure or split it, use `facts.title-text`; never draw the title twice.
+Every argument is optional. It is a block of the width it is given, ending below the title's descenders, so `v(…)` after it spaces what follows. It sets the title as the document's level 1 heading, which a tagged PDF needs before the report's sections. A cover that never calls it fails. Call it once. A report's title may be two words or twenty: give the title room to grow and keep it clear of everything else on the page, for instance by placing the facts in a block of their own below it rather than at a fixed distance from the page's foot. For the title as a string, to measure or split it, use `facts.title-text`; never draw the title twice.
 
 ## The facts
 

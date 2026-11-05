@@ -202,11 +202,14 @@ func TestACoverMakesANewDesign(t *testing.T) {
 	}
 	sum := sha256.Sum256(src)
 	other := sha256.Sum256([]byte("an earlier draft"))
+	dsum := sha256.Sum256(from.WithoutAssets().Canonical())
+	elsewhere := sha256.Sum256([]byte("another design"))
 	var ledger bytes.Buffer
 	for _, e := range []toolsrv.PreviewEntry{
-		{N: 1, Page: "cover", Cover: "custom", CoverSHA256: hex.EncodeToString(other[:]), PNG: "preview-1.png"},
-		{N: 2, Page: "cover", Cover: "custom", CoverSHA256: hex.EncodeToString(sum[:]), PNG: "preview-2.png"},
-		{N: 3, Page: "body", Cover: "custom", CoverSHA256: hex.EncodeToString(sum[:]), PNG: "preview-3.png"},
+		{N: 1, Page: "cover", Cover: "custom", CoverSHA256: hex.EncodeToString(other[:]), DesignSHA256: hex.EncodeToString(dsum[:]), PNG: "preview-1.png"},
+		{N: 2, Page: "cover", Cover: "custom", CoverSHA256: hex.EncodeToString(sum[:]), DesignSHA256: hex.EncodeToString(dsum[:]), PNG: "preview-2.png"},
+		{N: 3, Page: "body", Cover: "custom", CoverSHA256: hex.EncodeToString(sum[:]), DesignSHA256: hex.EncodeToString(dsum[:]), PNG: "preview-3.png"},
+		{N: 4, Page: "cover", Cover: "custom", CoverSHA256: hex.EncodeToString(sum[:]), DesignSHA256: hex.EncodeToString(elsewhere[:]), PNG: "preview-4.png"},
 	} {
 		b, _ := json.Marshal(e)
 		ledger.Write(append(b, '\n'))

@@ -22,6 +22,7 @@ Go through this list before your answer [src: web:https://docs.secureagentry.net
 
 - The last `render_preview` was of the final `reports/cover.typ`, and it says an export would draw it.
 - The title is set once, with `facts.title`.
+- You rendered the cover with a long title (twelve words or more) and a short one, and in neither does the title run into the facts, the subtitle or an edge.
 - Every image is from `facts.logo-image`, `facts.cover-image` or `facts.images`, with alt text.
 - The cover draws only the facts `facts.shows` names.
 - Text on a colour is readable in the render.

@@ -335,7 +335,7 @@ func runReportDesigner(cmd *cobra.Command, job build.Job, o *designerOpts) error
 	}
 	out := cmd.OutOrStdout()
 	if !res.Looked {
-		_, _ = fmt.Fprintln(out, "The Report Designer could not look at its renders or your references: this model does not read images, so it designed by the checks alone.")
+		_, _ = fmt.Fprintln(out, "The Report Designer says it could not look at its renders or your references, so it designed by the checks alone: use a model that reads images to have it look.")
 	}
 	what := "design"
 	if job == build.Cover {

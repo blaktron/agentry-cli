@@ -4323,6 +4323,18 @@
           ]
         },
         {
+          "path": "pkg/runner/compile/compile_design_test.go",
+          "tests": [
+            "TestOnlyTheReportDesignerIsGrantedPreviews"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
+          ]
+        },
+        {
           "path": "pkg/runner/compile/compile_hostlink_test.go",
           "tests": [
             "TestCompileRendersTheHostLink",
