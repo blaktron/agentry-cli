@@ -430,6 +430,7 @@ policy
 policy.path
 policy.sha256
 policy.source
+previews
 reason
 reason.code
 reason.count
@@ -536,6 +537,7 @@ persistent.roster[].share
 persistent.roster[].state
 persistent.share
 persistent.volumes.memory
+previews
 reason.count.more
 reason.detail
 refusedInputsMore

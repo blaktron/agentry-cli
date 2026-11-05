@@ -123,6 +123,10 @@ type runDirs struct {
 	pdfTheme  *toolsrv.ThemeStamp
 	// pdfThemeFrom is what chose pdfTheme, for the receipt.
 	pdfThemeFrom ThemeSource
+	// previewLedger is receipts/previews.ndjson and previewsDir
+	// receipts/previews/ for a run granted the Report Designer's tools
+	// (design.go), made as webLedger is.
+	previewLedger, previewsDir string
 	// deliverablesLedger is receipts/deliverables.ndjson for a run granted
 	// write_report (deliverables.go), made as webLedger is.
 	deliverablesLedger string
@@ -485,6 +489,19 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 		}
 		_ = f.Close()
 	}
+	if slices.Contains(p.Plan.Tools, toolsrv.ToolRenderPreview) {
+		rd.previewLedger, rd.previewsDir = filepath.Join(rd.receiptsDir, PreviewLedgerFile), filepath.Join(rd.receiptsDir, PreviewsDir)
+		_ = os.Remove(rd.previewLedger)
+		_ = os.RemoveAll(rd.previewsDir)
+		f, err := os.OpenFile(rd.previewLedger, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644) //nolint:gosec // appended by the tools container
+		if err != nil {
+			return nil, Classify(ExitCLI, fmt.Errorf("create the preview ledger: %w", err))
+		}
+		_ = f.Close()
+		if err := os.Mkdir(rd.previewsDir, 0o755); err != nil {
+			return nil, Classify(ExitCLI, fmt.Errorf("create the previews folder: %w", err))
+		}
+	}
 	if slices.Contains(p.Plan.Tools, toolsrv.ToolWriteReport) {
 		rd.deliverablesLedger = filepath.Join(rd.receiptsDir, DeliverablesLedgerFile)
 		_ = os.Remove(rd.deliverablesLedger)
@@ -635,6 +652,9 @@ func renderGatewayConfig(p Params, rd *runDirs) error {
 	}
 	if err := grantPDF(dir, p.Plan, p.ReportTheme, rd); err != nil {
 		return Classify(ExitCLI, fmt.Errorf("configure export_pdf: %w", err))
+	}
+	if err := grantDesign(dir, rd); err != nil {
+		return Classify(ExitCLI, fmt.Errorf("configure the design tools: %w", err))
 	}
 	if err := grantDeliverables(dir, rd); err != nil {
 		return Classify(ExitCLI, fmt.Errorf("configure the deliverables ledger: %w", err))
@@ -1292,6 +1312,9 @@ func relabelTargetsFor(rd *runDirs) []relabelTarget {
 	}
 	if rd.reviewLedger != "" {
 		t = append(t, relabelTarget{rd.reviewLedger, false})
+	}
+	if rd.previewLedger != "" {
+		t = append(t, relabelTarget{rd.previewLedger, false}, relabelTarget{rd.previewsDir, false})
 	}
 	return t
 }

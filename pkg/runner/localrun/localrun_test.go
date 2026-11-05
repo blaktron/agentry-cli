@@ -43,12 +43,12 @@ import (
 // and the built-in's tree is the embedded one on every run, whatever happened
 // to the installed copy.
 func TestOnlyTheEmbeddedPackagesRunAsBuiltin(t *testing.T) {
-	t.Run("the list is the Creator, the Drafter, the Voice Writer, the Examiner, the Assistant, Main and the Coding agent", func(t *testing.T) {
+	t.Run("the list is the Creator, the Drafter, the Voice Writer, the Examiner, the Report Designer, the Assistant, Main and the Coding agent", func(t *testing.T) {
 		var refs []string
 		for _, b := range Builtins() {
 			refs = append(refs, b.Ref())
 		}
-		if strings.Join(refs, ",") != "agentry/knowledge-creator@1.5.0,agentry/drafter@1.19.0,agentry/voice-writer@1.3.0,agentry/examiner@1.2.2,agentry/assistant@1.18.2,agentry/main@1.2.0,agentry/coder@1.5.0" {
+		if strings.Join(refs, ",") != "agentry/knowledge-creator@1.5.0,agentry/drafter@1.19.0,agentry/voice-writer@1.3.0,agentry/examiner@1.2.2,agentry/report-designer@1.0.0,agentry/assistant@1.18.2,agentry/main@1.2.0,agentry/coder@1.5.0" {
 			t.Fatalf("built-ins %v", refs)
 		}
 	})
@@ -122,11 +122,12 @@ func TestOnlyTheEmbeddedPackagesRunAsBuiltin(t *testing.T) {
 			t.Fatalf("a segment of the Examiner: err = %v", err)
 		}
 	})
-	t.Run("the web tools are the Drafter's, the Creator's and the Voice Writer's, registry_search the Drafter's alone", func(t *testing.T) {
+	t.Run("the web tools are the Drafter's, the Creator's, the Voice Writer's and the Report Designer's, registry_search the Drafter's alone", func(t *testing.T) {
 		// The Knowledge Creator searches and reads the web too, never the
-		// registry; the Voice Writer only reads the pages it is given.
+		// registry; the Voice Writer and the Report Designer only read the
+		// pages they are given.
 		for _, b := range Builtins() {
-			wantWeb := b.Ref() == Drafter().Ref() || b.Ref() == KnowledgeCreator().Ref() || b.Ref() == VoiceWriter().Ref()
+			wantWeb := b.Ref() == Drafter().Ref() || b.Ref() == KnowledgeCreator().Ref() || b.Ref() == VoiceWriter().Ref() || b.Ref() == ReportDesigner().Ref()
 			if b.web != wantWeb {
 				t.Fatalf("%s: web tools %v", b.Ref(), b.web)
 			}
@@ -138,9 +139,10 @@ func TestOnlyTheEmbeddedPackagesRunAsBuiltin(t *testing.T) {
 			if b.searchedOnly != (b.Ref() == KnowledgeCreator().Ref()) {
 				t.Fatalf("%s: searched-only web_read %v", b.Ref(), b.searchedOnly)
 			}
-			// The Voice Writer's model reads a person's pages and nothing
-			// it chooses: its web_read opens only what it was given.
-			if b.givenOnly != (b.Ref() == VoiceWriter().Ref()) {
+			// The Voice Writer's and the Designer's models read a person's
+			// pages and nothing they choose: web_read opens only what they
+			// were given.
+			if b.givenOnly != (b.Ref() == VoiceWriter().Ref() || b.Ref() == ReportDesigner().Ref()) {
 				t.Fatalf("%s: given-only web_read %v", b.Ref(), b.givenOnly)
 			}
 		}
@@ -149,7 +151,7 @@ func TestOnlyTheEmbeddedPackagesRunAsBuiltin(t *testing.T) {
 		}
 		// The Drafter's repair turn, and a build that does not search: the
 		// same package, the grant taken away, registry_search with it.
-		for _, b := range []Builtin{Drafter(), KnowledgeCreator(), VoiceWriter()} {
+		for _, b := range []Builtin{Drafter(), KnowledgeCreator(), VoiceWriter(), ReportDesigner()} {
 			if r := b.WithoutWebTools(); r.web || r.registry || r.searchedOnly || r.givenOnly || r.render || r.Ref() != b.Ref() || !b.web {
 				t.Fatalf("%s without web tools: %+v", b.Ref(), r)
 			}
@@ -1254,7 +1256,7 @@ func TestABuiltinsBudgetsOnThisComputer(t *testing.T) {
 // and WithoutWebTools and WithoutRender take the render away.
 func TestARenderIsTheCreatorsAndTheVoiceWritersAndCanOnlyBeTakenAway(t *testing.T) {
 	for _, b := range Builtins() {
-		if b.render != (b.name == KnowledgeCreator().name || b.name == VoiceWriter().name) {
+		if b.render != (b.name == KnowledgeCreator().name || b.name == VoiceWriter().name || b.name == ReportDesigner().name) {
 			t.Errorf("%s renders %v", b.Ref(), b.render)
 		}
 	}
@@ -1263,6 +1265,34 @@ func TestARenderIsTheCreatorsAndTheVoiceWritersAndCanOnlyBeTakenAway(t *testing.
 	}
 	if c := KnowledgeCreator().WithoutRender(); !c.web || !c.searchedOnly {
 		t.Fatal("WithoutRender took the web tools away")
+	}
+}
+
+// TestTheDesignToolsAreTheReportDesignersAlone: only the Report Designer
+// carries the design grant, no grant taken away gives it back, and a plan
+// compiled with it is a plan of its own.
+func TestTheDesignToolsAreTheReportDesignersAlone(t *testing.T) {
+	for _, b := range Builtins() {
+		if b.design != (b.Ref() == ReportDesigner().Ref()) {
+			t.Errorf("%s: design tools %v", b.Ref(), b.design)
+		}
+	}
+	if (Builtin{}).design {
+		t.Fatal("the zero Builtin carries the design tools")
+	}
+	if !ReportDesigner().WithoutWebTools().design {
+		t.Fatal("taking the web tools away took the design tools too")
+	}
+	in := runPlanInputs(t, ReportDesigner(), io.Discard)
+	if !in.Design {
+		t.Fatal("the Report Designer's plan inputs carry no design grant")
+	}
+	plan, dir, err := EnsurePlan(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.Capabilities.DesignTools || !strings.HasSuffix(dir, "-design") {
+		t.Fatalf("plan %s: design tools %v", dir, plan.Capabilities.DesignTools)
 	}
 }
 
@@ -1285,7 +1315,7 @@ func runPlanInputs(t *testing.T, b Builtin, log io.Writer) PlanInputs {
 	pol.Images.Runner = "agentry-runner:test"
 	return PlanInputs{Home: home, Manifest: m, Meta: meta, InstallDir: dir, WorkspaceDir: ws, Policy: pol, PolicySHA: "sha", Adapter: "docker-agent",
 		Mode: manifest.ModeAutonomous, CompiledBy: "b1", Web: b.web, RegistrySearch: b.registry, WebSearchedOnly: b.searchedOnly,
-		WebGivenOnly: b.givenOnly, WebRender: b.render, Review: b.review, Log: log}
+		WebGivenOnly: b.givenOnly, WebRender: b.render, Review: b.review, Design: b.design, Log: log}
 }
 
 // runPlan is the plan b's run compiles: its inputs and the plan's folder.

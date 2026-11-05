@@ -111,6 +111,13 @@ type Inputs struct {
 	// MCP server; never beside the web tools, whose container reaches any
 	// public address. Anything else asking is refused by policy.
 	Review bool
+	// Design grants a built-in the Report Designer's tools: render_preview,
+	// check_design and view_reference, which render with the tools
+	// container's Typst and read its inputs. Only a built-in package may be
+	// granted them (the Report Designer, by pkg/runner/localrun), and only
+	// one that declares no egress, exec, filesystem write, secret or MCP
+	// server, as for Web; never a persistent agent.
+	Design bool
 	// IntegrityKey is the runner home's plan-integrity key (IntegrityKey).
 	// It is not part of the plan: when set, the compile also writes
 	// plan.json.hmac, so a later run can reuse the plan only as compiled
@@ -320,6 +327,12 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 			return nil, err
 		}
 		caps.ReviewTools = true
+	}
+	if in.Design {
+		if err := checkDesignGrant(in, caps); err != nil {
+			return nil, err
+		}
+		caps.DesignTools = true
 	}
 	// The scratch folder, with grep and glob, is the runner's grant to every
 	// run and session, a built-in's included, never a line of the contract.
@@ -1136,6 +1149,25 @@ func checkReviewGrant(in Inputs, caps spec.CapSummary) error {
 	return nil
 }
 
+// checkDesignGrant is the Report Designer's tools' gate, as checkWebGrant
+// is the web tools': a built-in run that declares nothing beyond its
+// inputs and its output (refused at compile for any release and for a
+// persistent agent).
+func checkDesignGrant(in Inputs, caps spec.CapSummary) error {
+	if in.Source != "builtin" || in.Mode == manifest.ModePersistent {
+		return &PolicyRefusal{Reason: fmt.Sprintf("the design tools (%s, %s, %s) are the Report Designer's alone, a built-in run's; a %s package is never granted them",
+			toolsrv.ToolRenderPreview, toolsrv.ToolCheckDesign, toolsrv.ToolViewReference, cmp.Or(in.Source, "release"))}
+	}
+	if in.Review {
+		return &PolicyRefusal{Reason: "the design tools are never granted beside the review grant"}
+	}
+	c := in.Manifest.Capabilities
+	if caps.EgressMode != "none" || len(caps.ExecCommands) > 0 || caps.FSWriteMode != "none" || len(c.Secrets) > 0 || len(c.MCPServers) > 0 || len(in.MCPServers) > 0 {
+		return &PolicyRefusal{Reason: "the design tools are granted only to a package that declares no egress, exec, filesystem write, secret or MCP server"}
+	}
+	return nil
+}
+
 // toolSpec compiles the capability summary into the tools-server spec — the
 // single choke point deciding which tools exist.
 func toolSpec(caps spec.CapSummary, secrets []string) *toolsrv.Spec {
@@ -1244,6 +1276,7 @@ func baseToolSpec(caps spec.CapSummary, secrets []string) *toolsrv.Spec {
 		// The review grant: the run's ledger is the engine's, stamped per
 		// run.
 		Review: toolsrv.Review{Enabled: caps.ReviewTools, Root: reviewRoot(caps)},
+		Design: toolsrv.Design{Enabled: caps.DesignTools},
 	}
 }
 
@@ -2352,6 +2385,10 @@ func enforcement(caps spec.CapSummary, secrets, optional []string, extraServers 
 	if caps.PDF {
 		e["pdf"] = fmt.Sprintf("the runner's grant, not the contract's: %s renders a Markdown file from reports/ or the scratch folder into a PDF in reports/ with Typst %s in the tools container (built without a package downloader), through the runner's confine role: an empty environment, a fresh render root under %s whose every file the tools server makes new, no write of its own (Landlock; the PDF comes back on its stdout), TCP refused where Landlock is ABI 4 or later, %d GiB of address space and %d seconds; as root it runs as a user of its own that owns nothing, and where there is no Landlock that user is all that holds its writes. Only local PNG and JPEG images from reports/, the scratch folder and the inputs are drawn. The theme is the run's, never the model's, and the receipt's pdfs block names it and each PDF's SHA-256; write_report refuses a PDF",
 			toolsrv.ToolExportPDF, toolsrv.TypstVersion, spec.ToolsTmpMount, toolsrv.PDFRenderMemory>>30, int(toolsrv.PDFRenderTimeout.Seconds()))
+	}
+	if caps.DesignTools {
+		e["design"] = fmt.Sprintf("the Report Designer's grant, a built-in's alone, on the tools container only: %s lays out a fixed sample report in a design from the run's inputs, reports/ or the scratch folder, a custom cover's Typst code included, with the same Typst %s, confinement, memory and time limit as export_pdf, and answers one page as a PNG image; at most %d renders, each kept under receipts/ and recorded there, nothing written under reports/; %s holds a design to the core's rules; %s shows a reference image from the run's inputs, at most %d times",
+			toolsrv.ToolRenderPreview, toolsrv.TypstVersion, toolsrv.MaxPreviews, toolsrv.ToolCheckDesign, toolsrv.ToolViewReference, toolsrv.MaxReferenceViews)
 	}
 	if caps.Scratch {
 		e["scratch"] = fmt.Sprintf("the runner's grant, not the contract's: %s, %s, %s and %s over the scratch folder %s on the tools container only, empty at the start, never copied to the output folder, and removed with the container; a %d MiB tmpfs the run's docker filter mounts (in the CLI on Linux, in a container of the run's own on Docker Desktop), and where no filter runs a folder in the container's own layer, unbounded",

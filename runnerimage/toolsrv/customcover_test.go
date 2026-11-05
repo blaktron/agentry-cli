@@ -283,3 +283,46 @@ func TestCoverStyleDrawsACustomCoverOnlyWithOne(t *testing.T) {
 		t.Errorf("split with a custom cover kept draws %q", got)
 	}
 }
+
+// guideCover is the custom cover the Report Designer's guide teaches from,
+// the Typst block of its worked example.
+func guideCover(t *testing.T) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "..", "pkg", "reportdesigner", "knowledge", "design-guide", "wiki", "cover", "worked-example.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, rest, ok := strings.Cut(string(b), "```typst\n")
+	src, _, ok2 := strings.Cut(rest, "```")
+	if !ok || !ok2 {
+		t.Fatal("the worked example has no typst block")
+	}
+	return src
+}
+
+// TestTheDesignGuidesExampleCoverIsDrawn: the cover the guide teaches from
+// compiles and is drawn, with a photograph and a logo and without either.
+func TestTheDesignGuidesExampleCoverIsDrawn(t *testing.T) {
+	typst := realTypst(t)
+	src := guideCover(t)
+	for _, withImages := range []bool{false, true} {
+		d := customDesign(t, src)
+		if withImages {
+			d = customDesign(t, src, reportdesign.ImageOf(coverPNG(t), "png"))
+			logo, err := reportdesign.NormalizeLogo(coverPNG(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			d.Logo = logo
+		}
+		got, _, e := exportCustom(t, typst, d, 0)
+		if e.CustomCover != CustomCoverDrawn {
+			t.Errorf("images %v: the guide's cover was not drawn: %+v, %q", withImages, e, got)
+		}
+		if !withImages {
+			// The flat field: the title white on the accent. With a
+			// photograph the field is the photograph under the accent.
+			textOn(t, "guide", customCoverPNG(t, typst, d), d.Accent)
+		}
+	}
+}

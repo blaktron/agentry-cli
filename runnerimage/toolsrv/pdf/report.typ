@@ -603,12 +603,16 @@
 // facts.title(), which sets it as the document's level 1 heading; a cover
 // that draws no title is refused below. The server passes a cover that
 // fails over for the design's built-in cover style.
-#let cover-title(size: cover-size, fill: ink, font: none, weight: "bold", tracking: 0pt) = {
+#let cover-title(size: cover-size, fill: ink, font: none, weight: "bold", tracking: 0pt) = block(width: 100%, {
   show heading: set text(fill: fill, weight: weight, tracking: tracking)
   show heading: set text(font: font) if font != none
-  title-heading(size)
+  // A block of its own, ending at the title's descenders, so that what the
+  // cover sets after it is spaced from the title as it asks.
+  set text(bottom-edge: "descender")
+  set par(leading: 0.3em)
   [#metadata("title") <agentry-cover-title>]
-}
+  title-heading(size)
+})
 #let cover-custom() = {
   import "cover.typ": cover
   let facts = (
