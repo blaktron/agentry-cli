@@ -8194,7 +8194,8 @@
             "TestAHeartbeatNotAgreedToFiresNothing",
             "TestATaskStillRunningSkipsItsNextTime",
             "TestOneHeartbeatPerAgent",
-            "TestAFailedTaskTurnIsRecordedAsFailed"
+            "TestAFailedTaskTurnIsRecordedAsFailed",
+            "TestATaskTellsThePersonApartFromItsWork"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -9702,6 +9703,7 @@
             "TestChatEndsWhenTheSessionEnds",
             "TestChatQuitWithoutFinish",
             "TestATaskTurnIsOneLineNotThePersonsMessage",
+            "TestATaskTellsThePersonInAMessageOfItsOwn",
             "TestTaskLine",
             "TestAnUpkeepTurnIsOneLineNotThePersonsMessage",
             "TestTheAgentsOwnTurnIsFaint",

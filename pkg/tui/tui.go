@@ -370,6 +370,10 @@ func (m *model) apply(ev session.Event) {
 		if ev.CostUSD > m.costUSD {
 			m.costUSD = ev.CostUSD
 		}
+	case session.KindTell:
+		// The agent's message to the person from a turn of its own: drawn
+		// as a message to them, never faint like the turn's work.
+		m.appendLine(m.styles.assistant.Render("Agent: ") + strings.TrimSpace(ev.Text))
 	case session.KindNotice:
 		m.appendLine(m.styles.runner.Render("Runner: " + ev.Text))
 	case session.KindQuestion:

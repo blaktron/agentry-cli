@@ -107,6 +107,17 @@ const (
 	TaskList   = "task_list"
 	TaskUpdate = "task_update"
 	TaskRemove = "task_remove"
+	// TellPerson is a task's message to the person: what the task was for
+	// (a reminder, something they asked to be told), shown to them in the
+	// chat apart from the work the task's turn did.
+	TellPerson = "tell_person"
+)
+
+// TellPersonMax bounds one tell_person message, in bytes, and
+// TellPersonPerTurn the messages one task's turn may send.
+const (
+	TellPersonMax     = 4096
+	TellPersonPerTurn = 3
 )
 
 // answersSchema is a run's answers to its QuickAgent's questions, by
@@ -166,6 +177,8 @@ var taskTools = []Tool{
 			"paused":      boolean("true to pause it, false to resume it"),
 		}, "task")},
 	{TaskRemove, "Remove one of your tasks.", obj(map[string]any{"task": str("the task's id, from task_list")}, "task")},
+	{TellPerson, "In a task's turn, send the person a message: the reminder itself, or what they asked to be told. Your task's turn and its answer are folded away in the chat as work you did on your own; this message is shown to them as a message from you, and raises a notification. Write it to the person, complete in itself. Only in a task's turn, at most 3 times a turn, at most 4096 bytes.",
+		obj(map[string]any{"text": str("the message, written to the person")}, "text")},
 }
 
 // recallTool is the search of the agent's earlier conversations.
