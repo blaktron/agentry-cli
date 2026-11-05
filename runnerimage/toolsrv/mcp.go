@@ -13,6 +13,7 @@
 package toolsrv
 
 import (
+	"encoding/base64"
 	"bufio"
 	"bytes"
 	"encoding/json"
@@ -134,6 +135,13 @@ type server struct {
 	typst      typstFiles
 	render     renderConfinement
 	pdfTimeout time.Duration
+	// previews and referenceViews count the Report Designer's renders and
+	// reference views (design.go).
+	previews, referenceViews int
+	// callImage, when a tool sets it, is an image the call's answer carries
+	// beside its text, of callImageType (image/png when empty).
+	callImage     []byte
+	callImageType string
 	// fetchSeq numbers the bodies fetch saves in the scratch folder
 	// unasked, and partSeq the files a saveTo is written to before it is
 	// renamed into place.
@@ -186,9 +194,9 @@ func newServer(spec *Spec, out, logw io.Writer) (*server, error) {
 		s.ownTree(spec.WorkspaceDir)
 		s.ownTree(spec.Exec.Home)
 	}
-	if spec.PDF.Enabled {
+	if spec.PDF.Enabled || spec.Design.Enabled {
 		s.typst, s.render, s.pdfTimeout = defaultTypst(), newRenderConfinement(), PDFRenderTimeout
-		_, _ = fmt.Fprintln(logw, "agentry-runner tools: export_pdf: "+s.render.describe())
+		_, _ = fmt.Fprintln(logw, "agentry-runner tools: the renderer: "+s.render.describe())
 	}
 	s.searchTimeout, s.fsCalls = SearchTimeout, osResolverCalls()
 	if spec.Search.Enabled {
@@ -319,6 +327,9 @@ func validateSpec(spec *Spec) error {
 	if err := validateKnowledge(spec); err != nil {
 		return err
 	}
+	if err := validateDesign(spec); err != nil {
+		return err
+	}
 	if err := validatePDF(spec); err != nil {
 		return err
 	}
@@ -440,13 +451,20 @@ func (s *server) handleToolsCall(req rpcRequest) {
 		}
 	}()
 	s.callPersonsInput = false
+	s.callImage, s.callImageType = nil, ""
 	text, isErr := s.callTool(d, p.Arguments)
 	content := map[string]any{"type": "text", "text": text}
 	if (d.personsInput || s.callPersonsInput) && !isErr && !s.callStubbed {
 		content = inputResult(text)
 	}
+	items := []map[string]any{content}
+	// An image travels as an image item beside the text, which the harness
+	// hands the model as an image (docker-agent's processMCPContent).
+	if s.callImage != nil && !isErr {
+		items = append(items, imageResult(s.callImage, s.callImageType))
+	}
 	s.writeResult(req.ID, map[string]any{
-		"content": []map[string]any{content},
+		"content": items,
 		"isError": isErr,
 	})
 }
@@ -493,6 +511,15 @@ func inputResult(text string) map[string]any {
 			"text":     text,
 		},
 	}
+}
+
+// imageResult is an image item of a tool's result: the bytes in base64,
+// with their media type.
+func imageResult(b []byte, mediaType string) map[string]any {
+	if mediaType == "" {
+		mediaType = "image/png"
+	}
+	return map[string]any{"type": "image", "data": base64.StdEncoding.EncodeToString(b), "mimeType": mediaType}
 }
 
 func (s *server) writeResult(id json.RawMessage, result any) {

@@ -1074,7 +1074,7 @@ func (s *server) toolExportPDF(raw json.RawMessage) (string, bool) {
 	// rendered again with the built-in cover in its place, and the answer
 	// and the ledger name the kind of failure, never the compiler's words.
 	source := from.name + "/" + rel
-	r := s.compileTypst(renderRoot, "pdf", 0)
+	r := s.compileTypst(renderRoot, "pdf", 0, 0)
 	if cover == "custom" {
 		if r.failure == "" {
 			customCover = CustomCoverDrawn
@@ -1091,7 +1091,7 @@ func (s *server) toolExportPDF(raw json.RawMessage) (string, bool) {
 			if err := createIn(root, "meta.json", bytes.NewReader(meta)); err != nil {
 				return s.renderFailed(err)
 			}
-			r = s.compileTypst(renderRoot, "pdf", 0)
+			r = s.compileTypst(renderRoot, "pdf", 0, 0)
 		}
 	}
 	if r.failure != "" {
@@ -1304,9 +1304,9 @@ type typstResult struct {
 }
 
 // compileTypst renders root/main.typ with Typst, held as s.render says, to
-// what format names on its stdout: a tagged PDF ("pdf"), or the first page
-// as a PNG at ppi ("png"). Typst may write no file, so a PNG is one page.
-func (s *server) compileTypst(root, format string, ppi int) typstResult {
+// what format names on its stdout: a tagged PDF ("pdf"), or page as a PNG
+// at ppi ("png"). Typst may write no file, so a PNG is one page.
+func (s *server) compileTypst(root, format string, ppi, page int) typstResult {
 	if _, err := os.Stat(s.typst.bin); err != nil {
 		return typstResult{failure: "fault", fault: fmt.Sprintf("this runner image has no PDF renderer (%v); the runner image must be rebuilt", err)}
 	}
@@ -1314,7 +1314,7 @@ func (s *server) compileTypst(root, format string, ppi int) typstResult {
 		"--package-path", s.typst.packages, "--package-cache-path", filepath.Join(root, ".packages"),
 		"--diagnostic-format", "short"}
 	if format == "png" {
-		args = append(args, "--format", "png", "--ppi", strconv.Itoa(ppi), "--pages", "1")
+		args = append(args, "--format", "png", "--ppi", strconv.Itoa(ppi), "--pages", strconv.Itoa(max(page, 1)))
 	} else {
 		args = append(args, "--pdf-standard", "ua-1")
 	}
@@ -1371,7 +1371,7 @@ func (s *server) typstAnswer(r typstResult, source string) string {
 // runTypst renders renderRoot/main.typ to a PDF on Typst's stdout, or
 // answers the agent why it could not.
 func (s *server) runTypst(root, source string) ([]byte, string, bool) {
-	r := s.compileTypst(root, "pdf", 0)
+	r := s.compileTypst(root, "pdf", 0, 0)
 	if r.failure != "" {
 		return nil, s.typstAnswer(r, source), true
 	}

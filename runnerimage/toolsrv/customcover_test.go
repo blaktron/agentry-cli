@@ -137,7 +137,7 @@ func customCoverPNG(t *testing.T, typst typstFiles, d reportdesign.Design) image
 	if err := os.Chmod(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	r := s.compileTypst(root, "png", thumbnailPPI)
+	r := s.compileTypst(root, "png", thumbnailPPI, 1)
 	if r.failure != "" {
 		t.Fatalf("png render: %s %s %s", r.failure, r.fault, r.diag)
 	}
