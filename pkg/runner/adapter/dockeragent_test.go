@@ -296,12 +296,16 @@ func TestDockerAgentCompileTellsTheHarnessTheContextWindow(t *testing.T) {
 		want  map[string]any
 	}{
 		{"custom", policy.Model{Provider: "custom", Name: "qwen3.8-flash", APIKeyEnv: "CUSTOM_API_KEY", BaseURL: "http://127.0.0.1:1234/v1", ContextWindow: 262144, ProxyAllow: []string{"127.0.0.1:1234"}},
-			map[string]any{"context_size": 262144}},
+			map[string]any{"context_size": 262144, "stream_idle_timeout": "30m"}},
 		{"named provider", policy.Model{Provider: "vultr", Name: "qwen3.8-flash-next", APIKeyEnv: "VULTR_API_KEY", ContextWindow: 131072, ProxyAllow: []string{"api.vultrinference.com:443"}},
 			map[string]any{"context_size": 131072}},
 		{"beside the thinking binding", policy.Model{Provider: "anthropic", Name: "claude-sonnet-5-5", APIKeyEnv: "MODEL_KEY", ContextWindow: 200000, ProxyAllow: []string{"x:443"}},
 			map[string]any{"thinking_prefix_mismatch": "drop_block", "thinking_display": "omitted", "context_size": 200000}},
 		{"unset", policy.Model{Provider: "custom", Name: "m", APIKeyEnv: "CUSTOM_API_KEY", BaseURL: "http://127.0.0.1:1234/v1", ProxyAllow: []string{"127.0.0.1:1234"}},
+			map[string]any{"stream_idle_timeout": "30m"}},
+		{"openai at a base URL", policy.Model{Provider: "openai", Name: "m", APIKeyEnv: "OPENAI_API_KEY", BaseURL: "http://192.168.1.20:8000/v1", ProxyAllow: []string{"192.168.1.20:8000"}},
+			map[string]any{"stream_idle_timeout": "30m"}},
+		{"hosted, no window", policy.Model{Provider: "openai", Name: "gpt-5.5", APIKeyEnv: "OPENAI_API_KEY", ProxyAllow: []string{"api.openai.com:443"}},
 			nil},
 	}
 	for _, c := range cases {

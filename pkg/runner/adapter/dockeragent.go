@@ -29,12 +29,12 @@ func init() { Register(&dockerAgent{}) }
 const harnessSafety = "autonomous"
 
 // acpProtocolVersion is the Agent Client Protocol version negotiated with
-// serve acp (docker-agent 1.128.0, 1.150.0, 1.152.0 and 1.154.0 answer protocolVersion 1).
+// serve acp (docker-agent 1.128.0, 1.150.0, 1.152.0, 1.154.0 and 1.157.2 answer protocolVersion 1).
 const acpProtocolVersion = 1
 
 // HarnessConfigVersion is the docker-agent config schema version the
 // adapter writes (`version:` in agent.yaml). It belongs to the pinned
-// harness image (policy.DefaultHarnessImage, 1.154.0 ships schema 16).
+// harness image (policy.DefaultHarnessImage, 1.157.2 ships schema 16).
 const HarnessConfigVersion = "16"
 
 // dockerAgent implements Adapter for docker/docker-agent.
@@ -99,19 +99,28 @@ type modelYAML struct {
 	// BaseURL points OpenAI-compatible providers at custom endpoints.
 	BaseURL string `yaml:"base_url,omitempty"`
 	// ProviderOpts is set for the Claude models whose thinking blocks are
-	// bound to the conversation (thinkingBinding) and for a model whose
-	// context window the policy names (providerOpts).
+	// bound to the conversation (thinkingBinding), for a model whose context
+	// window the policy names, and for an endpoint of the person's own
+	// (providerOpts).
 	ProviderOpts *providerOptsYAML `yaml:"provider_opts,omitempty"`
 }
 
 // providerOptsYAML is the part of docker-agent's provider_opts the runner
-// writes: the anthropic client's thinking binding, and context_size, the
-// model's window in tokens, which every client reads.
+// writes: the anthropic client's thinking binding; context_size, the model's
+// window in tokens, which every client reads; and stream_idle_timeout, how
+// long the harness waits on a silent model stream before it gives up.
 type providerOptsYAML struct {
 	ThinkingPrefixMismatch string `yaml:"thinking_prefix_mismatch,omitempty"`
 	ThinkingDisplay        string `yaml:"thinking_display,omitempty"`
 	ContextSize            int64  `yaml:"context_size,omitempty"`
+	StreamIdleTimeout      string `yaml:"stream_idle_timeout,omitempty"`
 }
+
+// ownEndpointStreamIdle is the stream idle limit for an endpoint of the
+// person's own. A server on the person's machine reads a long prompt it has
+// not cached before it sends a byte, and on a laptop that can outlast the
+// harness's 5-minute default; a hosted model keeps the default.
+const ownEndpointStreamIdle = "30m"
 
 // providerOpts is the rendered model's provider_opts: thinkingBinding's,
 // with the policy's context window when it names one. docker-agent sizes a
@@ -121,13 +130,16 @@ type providerOptsYAML struct {
 // conversation as too long fails for the same want of a window.
 func providerOpts(provider string, m policy.Model) *providerOptsYAML {
 	opts := thinkingBinding(provider, m.Name)
-	if m.ContextWindow <= 0 {
+	if m.ContextWindow <= 0 && !m.OwnEndpoint() {
 		return opts
 	}
 	if opts == nil {
 		opts = &providerOptsYAML{}
 	}
 	opts.ContextSize = m.ContextWindow
+	if m.OwnEndpoint() {
+		opts.StreamIdleTimeout = ownEndpointStreamIdle
+	}
 	return opts
 }
 
@@ -504,7 +516,7 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 		// parses a document with the strict schema of the version it names
 		// and upgrades afterwards, so an old number selects an old schema —
 		// "2" has no allow_private_ips and the harness refused every plan.
-		// Bump together with policy.DefaultHarnessImage (1.154.0 → 16).
+		// Bump together with policy.DefaultHarnessImage (1.157.2 → 16).
 		Version: HarnessConfigVersion,
 		Models: map[string]modelYAML{
 			"main": {
