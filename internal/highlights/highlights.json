@@ -1,6 +1,13 @@
 {
   "versions": [
     {
+      "version": "0.7.25",
+      "highlights": [
+        "A run on your own model server summarizes and goes on when the server says it is too long, window known or not.",
+        "Your own model server has 30 minutes to start answering a long prompt before a run gives up; hosted models keep 5."
+      ]
+    },
+    {
       "version": "0.7.24",
       "highlights": [
         "A reminder the Assistant's task sends reaches you as a message from it, apart from the task's own work.",

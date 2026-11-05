@@ -27,7 +27,7 @@ cat >"$POLICY" <<'EOF'
 policyVersion: "1"
 images:
   gateway: docker/mcp-gateway:v0.44.3
-  harnessDockerAgent: docker/docker-agent:1.154.0
+  harnessDockerAgent: docker/docker-agent:1.157.2
   goBuilder: golang:1.27-alpine
   runner: agentry-runner:acceptance
 model:
