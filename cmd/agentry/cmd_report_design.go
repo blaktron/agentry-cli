@@ -35,7 +35,7 @@ import (
 func newReportDesignCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "report-design",
-		Short: "List, show, pick, export, import or delete the report designs your PDFs take",
+		Short: "List, show, pick, export, import, delete or design the report designs your PDFs take",
 		Long: "A report design is how a run's PDFs look: the paper, three faces, an accent\n" +
 			"and a secondary colour, a brand block, the title block, the headings, the\n" +
 			"tables, the quotes, a running header, a footer of three slots and a cover\n" +
@@ -44,11 +44,13 @@ func newReportDesignCmd() *cobra.Command {
 			"is set: --report-design NAME|ID|FILE or --report-theme NAME, your account's\n" +
 			"default design when you are signed in, report.design or report.theme in\n" +
 			"the config, then Plain.\n" +
-			"The built-in themes are " + strings.Join(toolsrv.BuiltinThemes(), ", ") + ".",
+			"The built-in themes are " + strings.Join(toolsrv.BuiltinThemes(), ", ") + ".\n" +
+			"`design` and `cover` run the built-in Report Designer, which writes a new design from a brief or a\n" +
+			"custom cover page for one of yours.",
 		Args: cobra.NoArgs,
 	}
 	cmd.AddCommand(newReportDesignListCmd(), newReportDesignShowCmd(), newReportDesignUseCmd(), newReportDesignDeleteCmd(),
-		newReportDesignExportCmd(), newReportDesignImportCmd())
+		newReportDesignExportCmd(), newReportDesignImportCmd(), newReportDesignDesignCmd(), newReportDesignCoverCmd())
 	return cmd
 }
 

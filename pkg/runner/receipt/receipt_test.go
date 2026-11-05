@@ -390,6 +390,8 @@ pdfs
 pdfs.files
 pdfs.files[].bytes
 pdfs.files[].cover
+pdfs.files[].coverFailure
+pdfs.files[].customCover
 pdfs.files[].form
 pdfs.files[].logo
 pdfs.files[].pages
@@ -428,6 +430,7 @@ policy
 policy.path
 policy.sha256
 policy.source
+previews
 reason
 reason.code
 reason.count
@@ -523,6 +526,8 @@ harness.mode
 inference.model
 installedChanges.record
 pdfs.files[].cover
+pdfs.files[].coverFailure
+pdfs.files[].customCover
 pdfs.files[].form
 pdfs.files[].logo
 pdfs.theme.basedOn
@@ -532,6 +537,7 @@ persistent.roster[].share
 persistent.roster[].state
 persistent.share
 persistent.volumes.memory
+previews
 reason.count.more
 reason.detail
 refusedInputsMore

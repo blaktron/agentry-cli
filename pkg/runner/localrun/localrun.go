@@ -27,6 +27,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/drafter"
 	"github.com/blaktron/agentry-cli/pkg/examiner"
 	"github.com/blaktron/agentry-cli/pkg/knowledge/creator"
+	"github.com/blaktron/agentry-cli/pkg/reportdesigner"
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/connection"
@@ -149,6 +150,9 @@ type Builtin struct {
 	// person's own TypeSafe key (compile.Inputs.Review): the Examiner's
 	// alone.
 	review bool
+	// design grants render_preview, check_design and view_reference
+	// (compile.Inputs.Design): the Report Designer's alone.
+	design bool
 	// localTimeoutFloor is the least time, in seconds, a run of the package
 	// on this computer is given (LocalBudgets).
 	localTimeoutFloor int
@@ -201,6 +205,15 @@ func Examiner() Builtin {
 		localTimeoutFloor: examiner.LocalTimeoutFloorSeconds}
 }
 
+// ReportDesigner is the Report Designer (pkg/reportdesigner), the fifth
+// built-in QuickAgent, granted the design tools, and web_read held to the
+// addresses the person gave and rendering a thin page: a run given no
+// address to read runs it WithoutWebTools.
+func ReportDesigner() Builtin {
+	return Builtin{namespace: reportdesigner.Namespace, name: reportdesigner.Name, version: reportdesigner.Version, fsys: reportdesigner.FS(), design: true,
+		web: true, givenOnly: true, render: true, localTimeoutFloor: reportdesigner.LocalTimeoutFloorSeconds}
+}
+
 // WithoutWebTools is the same package with no web tools: the Drafter's repair
 // turn, which reads nothing from the web, and a knowledge build that does not
 // search the web. A grant can only be taken away here, never given.
@@ -232,7 +245,7 @@ func (b Builtin) LocalBudgets(p policy.Budgets) spec.Budgets {
 
 // Builtins is every package that may run as builtin.
 func Builtins() []Builtin {
-	return []Builtin{KnowledgeCreator(), Drafter(), VoiceWriter(), Examiner(), Assistant(), Main(), Coder()}
+	return []Builtin{KnowledgeCreator(), Drafter(), VoiceWriter(), Examiner(), ReportDesigner(), Assistant(), Main(), Coder()}
 }
 
 // Ref is the package's ns/name@version.
@@ -381,6 +394,9 @@ type PlanInputs struct {
 	WebRender bool
 	// Review grants the review grant (compile.Inputs.Review), likewise.
 	Review bool
+	// Design grants the Report Designer's tools (compile.Inputs.Design),
+	// likewise.
+	Design bool
 	// AgentFiles grants a persistent built-in its folders
 	// (compile.Inputs.AgentFiles), and AppLink its app link
 	// (compile.Inputs.AppLink): set by a Segment alone.
@@ -454,6 +470,9 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 	if in.Review {
 		planDir += "-review"
 	}
+	if in.Design {
+		planDir += "-design"
+	}
 	runnerImage := in.Policy.RunnerImageTag(runnerimage.ContentVersion())
 	b, rerr := compile.ReadInstalledPlan(key, planDir)
 	var tampered *compile.TamperedPlanError
@@ -488,6 +507,7 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 			plan.Capabilities.WebGivenOnly == in.WebGivenOnly &&
 			plan.Capabilities.WebRender == in.WebRender &&
 			plan.Capabilities.ReviewTools == in.Review &&
+			plan.Capabilities.DesignTools == in.Design &&
 			reflect.DeepEqual(plan.Capabilities.AgentFiles, in.AgentFiles) &&
 			plan.Capabilities.AppLink == in.AppLink &&
 			reflect.DeepEqual(plan.Capabilities.Coder, in.Coder) &&
@@ -534,6 +554,7 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 		RegistrySearch:  in.RegistrySearch,
 		WebSearchedOnly: in.WebSearchedOnly, WebGivenOnly: in.WebGivenOnly, WebRender: in.WebRender,
 		Review:       in.Review,
+		Design:       in.Design,
 		AgentFiles:   in.AgentFiles,
 		AppLink:      in.AppLink,
 		Subagents:    in.Subagents,
@@ -775,7 +796,7 @@ func (r Run) Execute(ctx context.Context, d dockerx.Client) (*receipt.Envelope, 
 		Home: r.Home, Manifest: m, Meta: meta, InstallDir: installDir, WorkspaceDir: workspace,
 		Policy: r.Policy, PolicySHA: r.PolicySHA, Adapter: adapterName, Mode: manifest.ModeAutonomous,
 		CompiledBy: r.Build, Web: r.Builtin.web, RegistrySearch: r.Builtin.registry,
-		WebSearchedOnly: r.Builtin.searchedOnly, WebGivenOnly: r.Builtin.givenOnly, WebRender: r.Builtin.render, Review: r.Builtin.review, Log: logw,
+		WebSearchedOnly: r.Builtin.searchedOnly, WebGivenOnly: r.Builtin.givenOnly, WebRender: r.Builtin.render, Review: r.Builtin.review, Design: r.Builtin.design, Log: logw,
 	})
 	if err != nil {
 		return nil, err

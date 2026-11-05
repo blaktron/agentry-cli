@@ -504,6 +504,10 @@ type CapSummary struct {
 	// manifest's: the compiler sets it for a built-in package the CLI grants it
 	// to, and refuses it to everything else.
 	ReviewTools bool `json:"reviewTools,omitempty"`
+	// DesignTools is the Report Designer's grant (render_preview,
+	// check_design and view_reference). Like WebTools it is never the
+	// manifest's: the compiler sets it for that built-in alone.
+	DesignTools bool `json:"designTools,omitempty"`
 	// TargetHosts are the release's target hosts, by the id of the host
 	// question that asks for each (capabilities.targetHosts): the host link and
 	// its tools, reached through the gateway.

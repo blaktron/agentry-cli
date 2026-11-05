@@ -191,7 +191,7 @@ func pdfRecord(rd *runDirs) *receipt.PDFs {
 		if err != nil || sum != e.SHA256 {
 			continue
 		}
-		rec.Files = append(rec.Files, receipt.PDFFile{Path: p, SHA256: sum, Pages: e.Pages, Bytes: size, Form: e.Form, Logo: e.Logo, Cover: e.Cover})
+		rec.Files = append(rec.Files, receipt.PDFFile{Path: p, SHA256: sum, Pages: e.Pages, Bytes: size, Form: e.Form, Logo: e.Logo, Cover: e.Cover, CustomCover: e.CustomCover, CoverFailure: e.CoverFailure})
 	}
 	if len(rec.Files) == 0 {
 		return nil

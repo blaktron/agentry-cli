@@ -41,6 +41,8 @@ PURPOSES = {
     "pkg/persistent/offer": "The shape of an MCP server a persistent built-in comes with: an offered server, named in the built-in's",
     "pkg/plainpath": "Checks a path under an os.Root before a tree that a container wrote is read: every part of the path is",
     "pkg/removal": "Deletes what a run or a build leaves that must not stay on disk (a run's secrets file, a knowledge pack's",
+    "pkg/reportdesigner": "The Report Designer: the QuickAgent package that designs a person's report design, the look of their",
+    "pkg/reportdesigner/build": "Runs the Report Designer: it stages what the person gave it (the design to start from without its",
     "pkg/reportthumbs": "A thumbnail of each built-in report theme: the first page of one sample report",
     "pkg/runhost": "What a remote runhost is made of on both sides of the SSH connection that reaches it: where things live on",
     "pkg/runhost/clirelease": "Decides whether a CLI binary is one of Agentry's signed releases: SHA256SUMS signed with an update-signing",
