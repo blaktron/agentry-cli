@@ -116,7 +116,8 @@ func customCoverPNG(t *testing.T, typst typstFiles, d reportdesign.Design) image
 	t.Helper()
 	spec := pdfSpec(t)
 	s := pdfServer(t, spec, typst)
-	root := t.TempDir()
+	// Reachable by the renderer's own user, as a render root under /tmp is.
+	root := openTempDir(t)
 	doc := reportMarkdown(longReport, FormReport)
 	files, custom, err := renderCustomCover(d)
 	if err != nil {
