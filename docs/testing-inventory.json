@@ -367,6 +367,22 @@
           ]
         },
         {
+          "path": "cmd/agentry/cmd_report_designer_test.go",
+          "tests": [
+            "TestADesignerRunNeverChangesTheDefault",
+            "TestADesignerRunWithoutSaveLeavesTheLibraryAlone",
+            "TestTheDesignerCommandsTakeWhatTheyNeed",
+            "TestFreeName"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "docker interface (real or fake)",
+            "source/file contract"
+          ]
+        },
+        {
           "path": "cmd/agentry/cmd_review_test.go",
           "tests": [
             "TestReviewRefusesWithoutAJevKey",
@@ -3288,6 +3304,66 @@
             "TestRemoveRetriesAHeldFileUntilItGoes",
             "TestRemoveGivesUpAfterItsTries",
             "TestRemoveRealFilesAndGone"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "pkg/reportdesigner/build",
+      "behavior": "Runs the Report Designer: it stages what the person gave it (the design to start from without its",
+      "disposition": "retain",
+      "files": [
+        {
+          "path": "pkg/reportdesigner/build/build_test.go",
+          "tests": [
+            "TestTheJobsTakeWhatTheyNeed",
+            "TestTheInputsAreStagedAsTheCoresReEncoding",
+            "TestADesignKeepsOnlyThePersonsImages",
+            "TestACoverMakesANewDesign",
+            "TestTheResultIsWrittenForImport"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "pkg/reportdesigner",
+      "behavior": "The Report Designer: the QuickAgent package that designs a person's report design, the look of their",
+      "disposition": "retain",
+      "files": [
+        {
+          "path": "pkg/reportdesigner/guide_test.go",
+          "tests": [
+            "TestTheDesignGuideIsCurrent",
+            "TestTheDesignGuideLoadsFromTheEmbeddedTree",
+            "TestTheReportDesignerShipsTheGuide",
+            "TestTheInstructionNamesTheGuide",
+            "TestEveryPageIsOnTheMap",
+            "TestTheGuidesDocumentIsAValidDesign"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
+          ]
+        },
+        {
+          "path": "pkg/reportdesigner/reportdesigner_test.go",
+          "tests": [
+            "TestTheReportDesignerDeclaresOnlyFiles",
+            "TestTheInstructionCarriesTheRules"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -7391,7 +7467,8 @@
             "TestEnsurePlanNeverReusesAnUnsafeModePlan",
             "TestARunhostsUnsafeModeCompilesAfreshEveryRun",
             "TestABuiltinsBudgetsOnThisComputer",
-            "TestARenderIsTheCreatorsAndTheVoiceWritersAndCanOnlyBeTakenAway"
+            "TestARenderIsTheCreatorsAndTheVoiceWritersAndCanOnlyBeTakenAway",
+            "TestTheDesignToolsAreTheReportDesignersAlone"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -10895,6 +10972,25 @@
           ]
         },
         {
+          "path": "runnerimage/toolsrv/customcover_test.go",
+          "tests": [
+            "TestRealRenderACustomCover",
+            "TestACustomCoverCannotImportAPackage",
+            "TestACustomCoverWithoutAltTextFallsBack",
+            "TestACustomCoverIsPassedOverForEachKindOfFailure",
+            "TestACustomCoversImagesAreReEncoded",
+            "TestCoverFailureReadsTheDiagnostics",
+            "TestCoverStyleDrawsACustomCoverOnlyWithOne",
+            "TestTheDesignGuidesExampleCoverIsDrawn"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
+          ]
+        },
+        {
           "path": "runnerimage/toolsrv/decoded_test.go",
           "tests": [
             "TestListInputsFromTheIndex",
@@ -10984,6 +11080,24 @@
             "TestRealRenderTheCoverImage",
             "TestRealRenderEveryDesignTextIsText",
             "TestTheRenderRootHoldsOnlyReencodedImages"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
+          ]
+        },
+        {
+          "path": "runnerimage/toolsrv/design_test.go",
+          "tests": [
+            "TestTheDesignToolsAreGrantedWithTheirFlagAlone",
+            "TestRenderPreviewAnswersAnImage",
+            "TestRenderPreviewNamesAFailingCover",
+            "TestRenderPreviewStopsAtItsCap",
+            "TestRenderPreviewTakesItsArgumentsAlone",
+            "TestCheckDesign",
+            "TestViewReference"
           ],
           "fuzz": [],
           "benchmarks": [],

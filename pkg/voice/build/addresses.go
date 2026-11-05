@@ -202,7 +202,7 @@ func reviewPages(ctx context.Context, sc webscan.Scanner, dec *decode.Result, al
 				if strings.Contains(p.src.URL, "?") {
 					// A query can carry a signed download's credential, and
 					// web_read's address is the model's to read.
-					p.Withheld = "its text is drawn by scripts, and an address with a query is never handed to the Voice Writer to read"
+					p.Withheld = "its text is drawn by scripts, and an address with a query is never handed to the model to read"
 					continue
 				}
 				if noRender != "" {
@@ -327,6 +327,12 @@ func dirBytes(dir string) int64 {
 // pageLines are the receipt's lines for the pages, keyed source.<url-n>:
 // the fetch in a run's words, and what AI Review made of its text.
 func pageLines(pages []*Page, files []runnerdecode.File) map[string]string {
+	return PageLines(pages, files, "the Voice Writer")
+}
+
+// PageLines are the receipt's lines for the pages a build read for reader,
+// the built-in that reads them, keyed source.<url-n>.
+func PageLines(pages []*Page, files []runnerdecode.File, reader string) map[string]string {
 	if len(pages) == 0 {
 		return nil
 	}
@@ -335,19 +341,22 @@ func pageLines(pages []*Page, files []runnerdecode.File) map[string]string {
 		line := sources.Line(p.src, p.fetched, sources.ChecksAsUploadNamed(p.fetched.Source.Name, files))
 		switch {
 		case p.Withheld != "":
-			line += "; withheld from the Voice Writer: " + p.Withheld
+			line += "; withheld from " + reader + ": " + p.Withheld
 		case p.Rendered:
-			line += "; its text is drawn by scripts, so the Voice Writer reads it with web_read, rendered, AI Review reading it there first"
+			line += "; its text is drawn by scripts, so " + reader + " reads it with web_read, rendered, AI Review reading it there first"
 		default:
 			line += "; AI Review read its text before the run and passed it"
 		}
 		if len(p.WithheldMembers) > 0 {
-			line += "; withheld from the Voice Writer, of the archive's files: " + strings.Join(p.WithheldMembers, "; ")
+			line += "; withheld from " + reader + ", of the archive's files: " + strings.Join(p.WithheldMembers, "; ")
 		}
 		out["source."+p.src.ID] = line
 	}
 	return out
 }
+
+// Address is the page's address as web_read opens it.
+func (p *Page) Address() string { return p.src.URL }
 
 // pagesTask is the task's paragraph on the pages: those to read with
 // web_read, and those withheld.

@@ -205,3 +205,5 @@ agentry/drafter@1.19.0 sha256:32dd74afe43f5767084815a01fa0578a540bd01c6533a94da8
 agentry/assistant@1.18.1 sha256:d01d167f14a071b3c3f705169d0a2dfa22a2c814dd6ec046ba71950c71a10d9a
 # 1.18.2, over 1.18.1: the google-workspace-setup, microsoft-365-setup, fastmail-setup and calendar-feeds-setup skills give their steps without stopping and starting the agent, which takes each change at its next turn, and keep the stop-and-start for Agentry Desktop before 0.7.11 or a CLI before v0.7.19.
 agentry/assistant@1.18.2 sha256:a5d5ea194c442d30cd2f3cd78b0dafbfec776a465fddae159c54f2be3c2f4ec9
+# The Report Designer, 1.0.0: the fifth built-in QuickAgent. It designs a report design from a brief, a design to start from, a logo, reference images and web pages, and writes a custom cover page in Typst; it ships design-guide, and the application grants it render_preview, check_design and view_reference.
+agentry/report-designer@1.0.0 sha256:2428bec54c4d37cd0a5193668a68d8c27990cc64d9cd62070a210c55875c62c1

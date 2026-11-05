@@ -1368,16 +1368,6 @@ func (s *server) typstAnswer(r typstResult, source string) string {
 	}
 }
 
-// runTypst renders renderRoot/main.typ to a PDF on Typst's stdout, or
-// answers the agent why it could not.
-func (s *server) runTypst(root, source string) ([]byte, string, bool) {
-	r := s.compileTypst(root, "pdf", 0, 0)
-	if r.failure != "" {
-		return nil, s.typstAnswer(r, source), true
-	}
-	return r.out, "", false
-}
-
 // killedBy says whether the process ended on one of sigs.
 func killedBy(e *exec.ExitError, sigs ...syscall.Signal) bool {
 	ws, ok := e.Sys().(syscall.WaitStatus)
