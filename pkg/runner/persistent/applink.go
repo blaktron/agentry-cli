@@ -141,6 +141,8 @@ func (s *Supervisor) answerAppLink(ctx context.Context, req applink.Request) app
 		return s.answerHelper(ctx, cfg, req)
 	case req.Tool == applink.SelfConfigure:
 		return s.selfConfigure(req.Arguments)
+	case req.Tool == applink.TellPerson:
+		return s.answerTell(req.Arguments)
 	case isTaskTool(req.Tool):
 		return s.answerTask(req.Arguments, req.Tool)
 	case req.Tool == applink.Recall:

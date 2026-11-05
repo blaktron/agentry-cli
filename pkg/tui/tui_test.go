@@ -172,6 +172,30 @@ func TestATaskTurnIsOneLineNotThePersonsMessage(t *testing.T) {
 	}
 }
 
+// TestATaskTellsThePersonInAMessageOfItsOwn: what a task's turn sends the
+// person with tell_person is drawn as the agent's message, in the agent's
+// style rather than the faint one of the turn's work.
+func TestATaskTellsThePersonInAMessageOfItsOwn(t *testing.T) {
+	m := newModel(newFakeSession(), testOpts())
+	m.apply(session.Event{Kind: session.KindUserTurn, Task: "t1", Text: "Task: Stretch\n\nRemind the person to stand up."})
+	m.apply(session.Event{Kind: session.KindToolCall, Text: "tell_person"})
+	m.apply(session.Event{Kind: session.KindTell, Task: "t1", Text: "Time to stand up and stretch."})
+	m.apply(session.Event{Kind: session.KindAssistantTurn, Text: "Reminded them."})
+	var told string
+	for _, l := range m.lines {
+		if strings.Contains(l, "Time to stand up and stretch.") {
+			told = l
+		}
+	}
+	want := m.styles.assistant.Render("Agent: ") + "Time to stand up and stretch."
+	if told != want {
+		t.Errorf("the message is drawn %q, want %q", told, want)
+	}
+	if m.userTurns != 0 {
+		t.Errorf("the task's turn counted as the person's: %d", m.userTurns)
+	}
+}
+
 func TestTaskLine(t *testing.T) {
 	for in, want := range map[string]string{
 		"Task: Morning brief\n\nSummarise the share.":  `Task "Morning brief" ran on its own`,

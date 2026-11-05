@@ -122,7 +122,7 @@ func TestAppLinkHasNoGrantTool(t *testing.T) {
 			}
 		}
 	}
-	own := []string{SelfConfigure, TaskAdd, TaskList, TaskUpdate, TaskRemove, Recall}
+	own := []string{SelfConfigure, TaskAdd, TaskList, TaskUpdate, TaskRemove, TellPerson, Recall}
 	meetings := []string{MeetingArm, MeetingList, MeetingCancel}
 	if got := Tools(SetAssistant); !slices.Equal(got, slices.Concat(own, Tools(SetMain), meetings)) {
 		t.Errorf("the Assistant's set is %v", got)
@@ -135,6 +135,7 @@ func TestAppLinkHasNoGrantTool(t *testing.T) {
 		TaskList:      nil,
 		TaskUpdate:    {"cron", "instruction", "name", "paused", "task", "zone"},
 		TaskRemove:    {"task"},
+		TellPerson:    {"text"},
 		Recall:        {"from", "limit", "query", "to"},
 	}
 	for _, tool := range setTools(Compose(PartSelf, PartTasks, PartRecall)) {
@@ -220,7 +221,7 @@ func TestASetIsComposedOfItsParts(t *testing.T) {
 	if got, want := Compose(PartMeetings, PartSelf, "coder", PartSelf), "self,meetings"; got != want {
 		t.Errorf("Compose = %q, want %q", got, want)
 	}
-	if got := Tools(Compose(PartTasks, PartRecall)); !slices.Equal(got, []string{TaskAdd, TaskList, TaskUpdate, TaskRemove, Recall}) {
+	if got := Tools(Compose(PartTasks, PartRecall)); !slices.Equal(got, []string{TaskAdd, TaskList, TaskUpdate, TaskRemove, TellPerson, Recall}) {
 		t.Errorf("tasks and recall list %v", got)
 	}
 	for _, bad := range []string{"", "main", "assistant", "meetings,self", "self,self", "self,"} {

@@ -242,6 +242,11 @@ type Supervisor struct {
 	// ranUntil is when each task's last turn ended: a time of the task's
 	// that came before it is skipped.
 	ranUntil map[string]time.Time
+	// telling is the task whose turn is in flight, from its send to its
+	// answer, the one tell_person speaks for; tellings counts the messages
+	// that turn sent.
+	telling  Task
+	tellings int
 
 	// upkeep is what upkeep decides by (upkeep.json), and
 	// upkeepDirty says it changed since last saved. upkeeping is above

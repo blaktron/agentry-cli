@@ -739,7 +739,7 @@ func HistoryEvents(entries []Entry) []session.Event {
 	var out []session.Event
 	for _, e := range entries {
 		switch e.Kind {
-		case session.KindUserTurn, session.KindAssistantTurn, session.KindToolCall, session.KindError, session.KindNotice:
+		case session.KindUserTurn, session.KindAssistantTurn, session.KindToolCall, session.KindError, session.KindNotice, session.KindTell:
 			out = append(out, e.Event)
 		}
 	}

@@ -199,7 +199,10 @@ assistant` lists what it has:
   run: it is told at its next message. At most 25 tasks, none more often
   than every 15 minutes and 96 fires a day in all. `agentry agent tasks
   assistant` lists them, and pauses, resumes or removes one. A task gives it
-  nothing it does not already have.
+  nothing it does not already have. A chat folds a task's turn into one line;
+  what the task is for (a reminder, something you asked to be told) the
+  Assistant sends with `tell_person`, which the chat shows as a message from
+  it.
 - **Each start is a segment**, with its own receipts and result envelope in
   the agent's folder under the runner home, and the conversation's record
   continues across segments.

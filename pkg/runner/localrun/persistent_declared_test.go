@@ -16,7 +16,7 @@ import (
 func TestBuiltinCatalogsUnchanged(t *testing.T) {
 	helper := []string{"registry_search", "quickagent_show", "quickagent_install", "quickagent_run", "run_result", "installed_list",
 		"schedule_add", "schedule_list", "schedule_pause", "schedule_remove", "settings_open", "docs_read"}
-	assistant := slices.Concat([]string{"self_configure", "task_add", "task_list", "task_update", "task_remove", "recall"}, helper,
+	assistant := slices.Concat([]string{"self_configure", "task_add", "task_list", "task_update", "task_remove", "tell_person", "recall"}, helper,
 		[]string{"meeting_arm", "meeting_list", "meeting_cancel"})
 	for _, c := range []struct {
 		b     Builtin

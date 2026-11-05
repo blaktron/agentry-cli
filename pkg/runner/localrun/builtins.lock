@@ -207,3 +207,5 @@ agentry/assistant@1.18.1 sha256:d01d167f14a071b3c3f705169d0a2dfa22a2c814dd6ec046
 agentry/assistant@1.18.2 sha256:a5d5ea194c442d30cd2f3cd78b0dafbfec776a465fddae159c54f2be3c2f4ec9
 # The Report Designer, 1.0.0: the fifth built-in QuickAgent. It designs a report design from a brief, a design to start from, a logo, reference images and web pages, and writes a custom cover page in Typst; it ships design-guide, and the application grants it render_preview, check_design and view_reference.
 agentry/report-designer@1.0.0 sha256:8d9af35eb4a3ec71ff42f987ad5b79245ab5e9c7bffca23e68d72b6ad8702886
+# 1.19.0, over 1.18.2: a task's turn sends the person what the task is for (a reminder, what they asked to be told) with tell_person, which the chat shows as a message, apart from the task's folded work.
+agentry/assistant@1.19.0 sha256:176c29608c84bcfab259b728f4649897166f8bc54a0fbe072df3e21603761702
