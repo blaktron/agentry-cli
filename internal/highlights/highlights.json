@@ -1,6 +1,13 @@
 {
   "versions": [
     {
+      "version": "0.7.24",
+      "highlights": [
+        "A reminder the Assistant's task sends reaches you as a message from it, apart from the task's own work.",
+        "agentry agent chat shows that message in full, while the task's own work stays faint."
+      ]
+    },
+    {
       "version": "0.7.23",
       "highlights": [
         "agentry report-design design writes a whole report design from your brief, logo, reference images and web pages.",
