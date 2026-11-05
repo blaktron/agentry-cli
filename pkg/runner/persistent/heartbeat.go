@@ -289,13 +289,12 @@ func (s *Supervisor) fireTask(ctx context.Context, t Task, at time.Time) {
 	text := "Task: " + cur.Name + "\n\n" + cur.Instruction
 	s.mu.Lock()
 	s.taskTurn, s.taskText = cur.ID, text
+	s.telling, s.tellings = cur, 0
 	s.mu.Unlock()
-	frame := "(Agentry's heartbeat: your task " + cur.ID + ", " + strconv.Quote(cur.Name) + ", came due at " +
-		at.In(zoneOf(cur)).Format("15:04 Mon 2 Jan") + " " + cur.Zone + ". You registered it; its instruction is the message below. " +
-		"Act on it as you would a request from the person, within your instructions. The person may not be reading: say what you did in your answer.)\n\n"
-	err = s.sendLocked(ctx, frame, text)
+	err = s.sendLocked(ctx, taskFrame(cur, at), text)
 	ended := s.now()
 	s.mu.Lock()
+	s.telling = Task{}
 	s.ranUntil[cur.ID] = ended
 	turn := s.usage.UserTurns
 	if err != nil {
@@ -321,6 +320,59 @@ func (s *Supervisor) fireTask(ctx context.Context, t Task, at time.Time) {
 	}
 	s.logBeat(beatRecord{task: cur, due: at, outcome: beatFired, turn: turn})
 	s.notice("Task " + strconv.Quote(cur.Name) + " ran: " + result)
+}
+
+// taskFrame opens a task's turn: whose task it is, when it came due, and
+// that its work is folded away in the chat, so what the person is to see
+// goes through tell_person.
+func taskFrame(t Task, at time.Time) string {
+	return "(Agentry's heartbeat: your task " + t.ID + ", " + strconv.Quote(t.Name) + ", came due at " +
+		at.In(zoneOf(t)).Format("15:04 Mon 2 Jan") + " " + t.Zone + ". You registered it; its instruction is the message below. " +
+		"Act on it as you would a request from the person, within your instructions. The chat folds this turn and your answer away as work you did on your own, " +
+		"so send the person what the task is for (the reminder itself, or what they asked to be told) with " + applink.TellPerson +
+		", and only that; then say what you did in your answer.)\n\n"
+}
+
+// answerTell answers tell_person: in a task's turn, the message is the
+// agent's word to the person, sent to every chat and kept in the
+// transcript apart from the turn's work. Outside a task's turn the answer
+// already reaches the person, so the call is refused.
+func (s *Supervisor) answerTell(raw json.RawMessage) applink.Answer {
+	var args struct {
+		Text string `json:"text"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if len(bytes.TrimSpace(raw)) == 0 || dec.Decode(&args) != nil {
+		return applink.Answer{Text: applink.TellPerson + " takes a text and nothing else", IsError: true}
+	}
+	text := strings.TrimSpace(args.Text)
+	switch {
+	case text == "":
+		return applink.Answer{Text: applink.TellPerson + " needs a text", IsError: true}
+	case len(text) > applink.TellPersonMax:
+		return applink.Answer{Text: fmt.Sprintf("not sent: the message is %d bytes, more than %d", len(text), applink.TellPersonMax), IsError: true}
+	}
+	s.mu.Lock()
+	t, n := s.telling, s.tellings
+	switch {
+	case s.stopped:
+		s.mu.Unlock()
+		return applink.Answer{Text: "not sent: the agent is stopping", IsError: true}
+	case t.ID == "":
+		s.mu.Unlock()
+		return applink.Answer{Text: "not sent: " + applink.TellPerson + " is for your tasks' turns. In this turn your answer is what the person reads.", IsError: true}
+	case n >= applink.TellPersonPerTurn:
+		s.mu.Unlock()
+		return applink.Answer{Text: fmt.Sprintf("not sent: a task's turn sends at most %d messages", applink.TellPersonPerTurn), IsError: true}
+	}
+	s.tellings++
+	ev := session.Event{Kind: session.KindTell, Time: s.now().UTC(), Text: text, Task: t.ID}
+	s.broadcast(ev)
+	segment, run := s.segment, s.runID
+	s.mu.Unlock()
+	_ = appendEntry(s.opts.Home, s.opts.Agent.Name, Entry{Segment: segment, Run: run, Event: ev})
+	return applink.Answer{Text: "Sent to the person, as a message from you."}
 }
 
 // waitTurn takes the turn lock once the turn in flight ends; false when ctx

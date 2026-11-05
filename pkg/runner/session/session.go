@@ -55,6 +55,11 @@ const (
 	// sends an answer naming the id (protocol.Answer); the first answer is
 	// the one taken.
 	KindQuestion Kind = "question"
+	// KindTell is a persistent agent's message to the person from a turn
+	// of its own: Text is the message, Task the task whose turn sent it. A
+	// chat shows it as the agent's message, apart from the turn's work,
+	// and the harness never sees it as a turn.
+	KindTell Kind = "tell"
 )
 
 // Answerer is a session a client can answer a question of.

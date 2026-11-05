@@ -469,7 +469,7 @@ type Entry struct {
 func kept(k session.Kind) bool {
 	switch k {
 	case session.KindUserTurn, session.KindAssistantTurn, session.KindToolCall, session.KindError,
-		session.KindSessionEnd, session.KindInputAdded, session.KindPermissionDenied, session.KindNotice:
+		session.KindSessionEnd, session.KindInputAdded, session.KindPermissionDenied, session.KindNotice, session.KindTell:
 		return true
 	}
 	return false

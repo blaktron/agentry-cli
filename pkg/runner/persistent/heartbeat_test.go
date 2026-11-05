@@ -537,3 +537,78 @@ func TestAFailedTaskTurnIsRecordedAsFailed(t *testing.T) {
 		t.Errorf("the result: %q", ts[0].LastResult)
 	}
 }
+
+// TestATaskTellsThePersonApartFromItsWork: in a task's turn tell_person sends
+// the person a message, an event of its own marked with the task, handed to
+// every chat and kept in the transcript and its history; outside a task's
+// turn, past the turn's bound, and with anything but a text, it is refused.
+func TestATaskTellsThePersonApartFromItsWork(t *testing.T) {
+	home := shortHome(t)
+	enableHeartbeat(t, home, true)
+	c := &clock{t: time.Date(2026, 10, 21, 14, 3, 0, 0, time.UTC)}
+	hold := make(chan struct{})
+	st := &starter{hold: hold}
+	sv := startTicking(t, home, st, c)
+	if a := callTask(t, sv, applink.TaskAdd, `{"name":"Stretch","cron":"15 14 * * *","instruction":"Remind the person to stand up."}`); a.IsError {
+		t.Fatal(a.Text)
+	}
+	if a := callTask(t, sv, applink.TellPerson, `{"text":"Stand up."}`); !a.IsError || !strings.Contains(a.Text, "for your tasks' turns") {
+		t.Errorf("outside a task's turn: %+v", a)
+	}
+	events, unsubscribe := sv.Subscribe()
+	defer unsubscribe()
+	c.set(time.Date(2026, 10, 21, 14, 15, 10, 0, time.UTC))
+	seg := st.lastSegment()
+	eventually(t, "the task's turn in flight", func() bool { return len(seg.sentTurns()) == 1 })
+	if turn := seg.rawTurns()[0]; !strings.Contains(turn, "with tell_person") {
+		t.Errorf("the task's frame does not name tell_person: %q", turn)
+	}
+	for _, bad := range []string{``, `{}`, `{"text":"  "}`, `{"text":"hi","to":"someone"}`, `{"text":"` + strings.Repeat("a", applink.TellPersonMax+1) + `"}`} {
+		if a := callTask(t, sv, applink.TellPerson, bad); !a.IsError {
+			t.Errorf("tell_person %.40q was sent: %+v", bad, a)
+		}
+	}
+	for i := range applink.TellPersonPerTurn {
+		if a := callTask(t, sv, applink.TellPerson, `{"text":" Time to stand up and stretch. "}`); a.IsError {
+			t.Fatalf("message %d: %+v", i+1, a)
+		}
+	}
+	if a := callTask(t, sv, applink.TellPerson, `{"text":"Once more."}`); !a.IsError || !strings.Contains(a.Text, "at most 3") {
+		t.Errorf("past the turn's bound: %+v", a)
+	}
+	var told *session.Event
+	for told == nil {
+		select {
+		case ev := <-events:
+			if ev.Kind == session.KindTell {
+				told = &ev
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("no tell reached the watcher")
+		}
+	}
+	if told.Task != "t1" || told.Text != "Time to stand up and stretch." || told.Time.IsZero() {
+		t.Errorf("the tell: %+v", *told)
+	}
+	close(hold)
+	eventually(t, "the task's turn answered", func() bool {
+		ts, _ := sv.Tasks()
+		return len(ts) == 1 && !ts[0].LastFire.IsZero()
+	})
+	if a := callTask(t, sv, applink.TellPerson, `{"text":"Late."}`); !a.IsError {
+		t.Errorf("after the task's turn: %+v", a)
+	}
+	entries, _ := Transcript(home, "assistant", 50)
+	n := 0
+	for _, ev := range HistoryEvents(entries) {
+		if ev.Kind == session.KindTell {
+			n++
+			if ev.Task != "t1" || ev.Text != "Time to stand up and stretch." {
+				t.Errorf("the history's tell: %+v", ev)
+			}
+		}
+	}
+	if n != applink.TellPersonPerTurn {
+		t.Errorf("the history holds %d tells", n)
+	}
+}
