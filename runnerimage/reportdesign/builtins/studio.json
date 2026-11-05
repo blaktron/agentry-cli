@@ -1,0 +1,56 @@
+{
+  "agentryTheme": 3,
+  "name": "Studio",
+  "basedOn": "studio",
+  "version": 1,
+  "paper": "a4",
+  "fonts": {
+    "headings": "Space Grotesk",
+    "body": "DM Sans",
+    "code": "Fira Code"
+  },
+  "accent": "#111111",
+  "secondary": "#a07800",
+  "titleBlock": "bar",
+  "headings": "bar",
+  "headingScale": "generous",
+  "margins": "narrow",
+  "tables": {
+    "tinted": true,
+    "banded": true
+  },
+  "quotes": "plain",
+  "brand": {
+    "name": "",
+    "strapline": "",
+    "contact": [],
+    "website": "",
+    "confidentiality": ""
+  },
+  "header": {
+    "style": "logoLeft",
+    "slots": [
+      "",
+      "",
+      "{title}"
+    ]
+  },
+  "footer": {
+    "pageNumbers": "n",
+    "slots": [
+      "{brand}",
+      "{confidentiality}",
+      ""
+    ]
+  },
+  "cover": {
+    "style": "largeType",
+    "shows": [
+      "title",
+      "subtitle",
+      "brand",
+      "logo"
+    ],
+    "when": "always"
+  }
+}

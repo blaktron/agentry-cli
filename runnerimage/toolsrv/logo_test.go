@@ -252,16 +252,46 @@ func TestRealRenderALogoInEveryTitleBlock(t *testing.T) {
 			})
 		}
 	}
+	// A cover draws the logo only when the design's cover facts include it.
 	t.Run("cover", func(t *testing.T) {
-		d := logoDesign(t, "editorial", "", logo)
 		long := "# A long titled report\n\n" + strings.Repeat("word ", coverWords+50) + "\n"
-		pages := renderPNGsAt(t, typst, d.Canonical(), FormReport, long, pngPPI, false)
-		if n := magentaIn(pages[0], pages[0].Bounds()); n < 20 {
-			t.Errorf("the cover has %d logo pixels", n)
+		for _, style := range []string{"band", "split", "geometric", "largeType", "framed"} {
+			d := logoDesign(t, "editorial", "", logo)
+			d.Cover.Style = style
+			d.Cover.Shows = []string{"title", "date"}
+			pages := renderPNGsAt(t, typst, d.Canonical(), FormReport, long, pngPPI, false)
+			if n := magentaIn(pages[0], pages[0].Bounds()); n > 0 {
+				t.Errorf("%s: the cover has %d logo pixels although its facts leave the logo out", style, n)
+			}
+			d.Cover.Shows = []string{"title", "date", "logo"}
+			pages = renderPNGsAt(t, typst, d.Canonical(), FormReport, long, pngPPI, false)
+			if n := magentaIn(pages[0], pages[0].Bounds()); n < 20 {
+				t.Errorf("%s: the cover has %d logo pixels", style, n)
+			}
+			for i, p := range pages[1:] {
+				if n := magentaIn(p, p.Bounds()); n > 0 {
+					t.Errorf("%s: page %d after the cover has %d logo pixels", style, i+2, n)
+				}
+			}
 		}
-		for i, p := range pages[1:] {
-			if n := magentaIn(p, p.Bounds()); n > 0 {
-				t.Errorf("page %d after the cover has %d logo pixels", i+2, n)
+	})
+	// A logoLeft header draws the logo small on every header page, and
+	// nowhere else past the title block.
+	t.Run("logoLeft", func(t *testing.T) {
+		d := logoDesign(t, "modern", "bar", logo)
+		d.Header.Style = "logoLeft"
+		for _, form := range Forms {
+			pages := renderPNGsAt(t, typst, d.Canonical(), form, "# A title with a logo\n\n"+body, pngPPI, false)
+			for i, p := range pages[1:] {
+				b := p.Bounds()
+				header := image.Rect(b.Min.X, b.Min.Y, b.Max.X, b.Min.Y+b.Dy()/8)
+				n := magentaIn(p, header)
+				if (n > 0) != (form != FormLetter) {
+					t.Errorf("%s: page %d's header has %d logo pixels", form, i+2, n)
+				}
+				if n := magentaIn(p, image.Rect(b.Min.X, b.Min.Y+b.Dy()/8, b.Max.X, b.Max.Y)); n > 0 {
+					t.Errorf("%s: page %d has %d logo pixels below its header", form, i+2, n)
+				}
 			}
 		}
 	})

@@ -35,6 +35,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	_ "image/jpeg" // the cover image's format, for its size
 	"image/png"
 	"io"
 	"io/fs"
@@ -114,6 +116,9 @@ type PDFEntry struct {
 	Form string `json:"form,omitempty"`
 	// Logo says the person's logo was drawn in its title block.
 	Logo bool `json:"logo,omitempty"`
+	// Cover is the style of the cover page drawn before it, or empty when
+	// it has none.
+	Cover string `json:"cover,omitempty"`
 }
 
 func validatePDF(spec *Spec) error {
@@ -323,6 +328,9 @@ type pdfImage struct {
 // pdfMeta is meta.json: what the template is told besides the design.
 type pdfMeta struct {
 	Title string `json:"title"`
+	// Subtitle is the line the report opened with under its title, or
+	// empty.
+	Subtitle string `json:"subtitle"`
 	// Author is the QuickAgent's ref, or empty: never the person, nor
 	// Agentry.
 	Author string              `json:"author"`
@@ -340,13 +348,28 @@ type pdfMeta struct {
 	// title-block style.
 	TitleBlock bool `json:"titleBlock"`
 	// Cover puts a page of its own before a report that opens with its
-	// title and runs past coverWords; the pages after it are numbered from
-	// 1. A file name on a title page is worse than none, so an untitled
+	// title, when the design's cover says always, or says long and the
+	// report runs past coverWords; the pages after it are numbered from 1.
+	// A file name on a title page is worse than none, so an untitled
 	// report never has one.
 	Cover bool `json:"cover"`
+	// CoverStyle is the style the cover is drawn in when Cover is set:
+	// the design's, or band where the design's cannot be drawn (plate
+	// without a cover image, custom).
+	CoverStyle string `json:"coverStyle"`
+	// CoverImage is the design's cover image as the server wrote it into
+	// the render root, when a plate cover draws it; nil otherwise.
+	CoverImage *pdfCoverImage `json:"coverImage"`
 	// Tint is the accent's tint, pkg/reportdesign's Tint: the one the
 	// site's editor previews.
 	Tint string `json:"tint"`
+	// Secondary and SecondaryTint are the design's secondary colour and
+	// its tint, or empty when the design has none.
+	Secondary     string `json:"secondary"`
+	SecondaryTint string `json:"secondaryTint"`
+	// Fonts are the family names Typst lists for the design's three faces,
+	// which for a variable font can differ from the design's name.
+	Fonts pdfFonts `json:"fonts"`
 	// Memo is a memo's header, the lines the server took out of report.md.
 	Memo []memoField `json:"memo"`
 	// NotoBody and NotoHeadings are the Noto family behind the body and the
@@ -356,6 +379,114 @@ type pdfMeta struct {
 	// Logo is the person's logo as the server wrote it into the render
 	// root, or nil when the design has none.
 	Logo *pdfLogo `json:"logo"`
+	// Header and Footer are the design's slots, each split into its parts.
+	Header pdfSlots `json:"header"`
+	Footer pdfSlots `json:"footer"`
+}
+
+// pdfFonts names the Typst family for each face.
+type pdfFonts struct {
+	Headings string `json:"headings"`
+	Body     string `json:"body"`
+	Code     string `json:"code"`
+}
+
+// pdfCoverImage is the cover image the template draws: the file the
+// server re-encoded it into, and its size in pixels.
+type pdfCoverImage struct {
+	Path   string `json:"path"`
+	Width  int    `json:"width"`
+	Height int    `json:"height"`
+}
+
+// pdfSlots are a header's or a footer's three slots, each as its parts.
+type pdfSlots struct {
+	Slots [reportdesign.SlotCount][]slotPart `json:"slots"`
+}
+
+// slotPart is one piece of a slot: literal text the template sets as text,
+// or the name of a token the template fills at each page (page, pages,
+// section). Exactly one of the two is set.
+type slotPart struct {
+	Text  string `json:"text,omitempty"`
+	Token string `json:"token,omitempty"`
+}
+
+// pageTokens are the tokens only the template can fill, page by page; the
+// others are facts the server knows and puts in as text.
+var pageTokens = []string{"page", "pages", "section"}
+
+// slotParts splits a slot into its parts by pkg/reportdesign's rule for
+// tokens (a name of its closed set between a brace pair with no brace
+// inside; anything else is literal, the braces included), the static
+// tokens filled from facts as text and the page tokens kept as tokens.
+// An empty slot has no parts.
+func slotParts(slot string, facts map[string]string) []slotPart {
+	var parts []slotPart
+	var text strings.Builder
+	flush := func() {
+		if text.Len() > 0 {
+			parts = append(parts, slotPart{Text: text.String()})
+			text.Reset()
+		}
+	}
+	rest := slot
+	for {
+		open := strings.IndexByte(rest, '{')
+		if open < 0 {
+			text.WriteString(rest)
+			break
+		}
+		closing := strings.IndexByte(rest[open:], '}')
+		if closing < 0 {
+			text.WriteString(rest)
+			break
+		}
+		name := rest[open+1 : open+closing]
+		if !slices.Contains(reportdesign.Tokens, name) {
+			text.WriteString(rest[:open+1])
+			rest = rest[open+1:]
+			continue
+		}
+		text.WriteString(rest[:open])
+		if slices.Contains(pageTokens, name) {
+			flush()
+			parts = append(parts, slotPart{Token: name})
+		} else {
+			text.WriteString(facts[name])
+		}
+		rest = rest[open+closing+1:]
+	}
+	flush()
+	return parts
+}
+
+// slotsOf splits three slots.
+func slotsOf(slots [reportdesign.SlotCount]string, facts map[string]string) pdfSlots {
+	var out pdfSlots
+	for i, slot := range slots {
+		out.Slots[i] = slotParts(slot, facts)
+		if out.Slots[i] == nil {
+			out.Slots[i] = []slotPart{}
+		}
+	}
+	return out
+}
+
+// typstFamilies are the design families whose files Typst lists under
+// another name: a variable font whose family name carries its default
+// optical size. Every other family is listed as the design names it.
+var typstFamilies = map[string]string{
+	"DM Sans":     "DM Sans 9pt",
+	"Nunito Sans": "Nunito Sans 12pt",
+}
+
+// TypstFamily is the family name Typst lists for a design family.
+func TypstFamily(name string) string {
+	if t, ok := typstFamilies[name]; ok {
+		return t
+	}
+	return name
 }
 
 // pdfLogo is the logo the template draws: the file the server re-encoded it
@@ -403,10 +534,78 @@ func renderLogo(d reportdesign.Design) ([]byte, *pdfLogo, error) {
 }
 
 // renderDesign is the design's document as the render root holds it: the
-// canonical form without the logo, which the root holds as logoFile.
+// canonical form without its images, which the root holds as files where
+// they are drawn (logoFile, the cover image), and without a custom cover,
+// which this template does not draw.
 func renderDesign(d reportdesign.Design) []byte {
-	d.Logo = reportdesign.Logo{}
-	return d.Canonical()
+	return d.WithoutAssets().Canonical()
+}
+
+// coverImageFile is the name of the cover image in the render root, with
+// its format's extension.
+func coverImageFile(format string) string {
+	if format == "jpeg" {
+		return "cover.jpg"
+	}
+	return "cover.png"
+}
+
+// renderCoverImage is a design's cover image as the render root gets it:
+// re-encoded from its decoded pixels by reportdesign.NormalizeCoverImage,
+// never the bytes the design carried, so nothing of the upload but its
+// pixels reaches Typst. Nil when the design has none.
+func renderCoverImage(d reportdesign.Design) ([]byte, *pdfCoverImage, error) {
+	if d.CoverImage == (reportdesign.Image{}) {
+		return nil, nil, nil
+	}
+	raw, _, err := d.CoverImage.Decode()
+	if err != nil {
+		return nil, nil, err
+	}
+	n, err := reportdesign.NormalizeCoverImage(raw)
+	if err != nil {
+		return nil, nil, err
+	}
+	b, format, err := n.Decode()
+	if err != nil {
+		return nil, nil, err
+	}
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(b))
+	if err != nil {
+		return nil, nil, err
+	}
+	return b, &pdfCoverImage{Path: coverImageFile(format), Width: cfg.Width, Height: cfg.Height}, nil
+}
+
+// coverDrawn says whether a cover page is drawn: for a report that opens
+// with its title, when the design says always, or says long and the report
+// runs past coverWords.
+func coverDrawn(d reportdesign.Design, form string, doc mdDoc) bool {
+	if form != FormReport || !doc.titleBlock {
+		return false
+	}
+	switch d.Cover.When {
+	case "always":
+		return true
+	case "long":
+		return doc.words >= coverWords
+	}
+	return false
+}
+
+// coverStyle is the style a drawn cover takes: the design's, or band where
+// the design's cannot be drawn: plate without a cover image, and custom,
+// whose code this template does not run.
+func coverStyle(d reportdesign.Design, coverImage *pdfCoverImage) string {
+	switch d.Cover.Style {
+	case "plate":
+		if coverImage == nil {
+			return "band"
+		}
+	case "custom":
+		return "band"
+	}
+	return d.Cover.Style
 }
 
 var (
@@ -676,6 +875,10 @@ func (s *server) toolExportPDF(raw json.RawMessage) (string, bool) {
 	if logoErr != nil {
 		s.logf("export_pdf: the report design's logo was not drawn: %v", logoErr)
 	}
+	coverBytes, coverImage, coverErr := renderCoverImage(design)
+	if coverErr != nil {
+		s.logf("export_pdf: the report design's cover image was not drawn: %v", coverErr)
+	}
 
 	// 2. A fresh render root under /tmp. A declared command may write /tmp
 	// (as root, under Landlock) and may have left a process running there,
@@ -713,7 +916,7 @@ func (s *server) toolExportPDF(raw json.RawMessage) (string, bool) {
 	if title == "" {
 		title = strings.TrimSuffix(path.Base(rel), path.Ext(rel))
 	}
-	meta, err := renderMeta(design, a.Form, doc, title, s.spec.PDF.Author, images, logo, time.Now())
+	meta, err := renderMeta(design, a.Form, doc, title, s.spec.PDF.Author, images, logo, coverImage, time.Now())
 	if err != nil {
 		return s.renderFailed(err)
 	}
@@ -724,6 +927,13 @@ func (s *server) toolExportPDF(raw json.RawMessage) (string, bool) {
 	files := map[string][]byte{"main.typ": template, "report.md": []byte(doc.text), "design.json": renderDesign(design), "meta.json": meta}
 	if logo != nil {
 		files[logoFile] = logoPNG
+	}
+	cover := ""
+	if coverDrawn(design, a.Form, doc) {
+		cover = coverStyle(design, coverImage)
+	}
+	if cover == "plate" {
+		files[coverImage.Path] = coverBytes
 	}
 	for name, b := range files {
 		if err := createIn(root, name, bytes.NewReader(b)); err != nil {
@@ -749,7 +959,7 @@ func (s *server) toolExportPDF(raw json.RawMessage) (string, bool) {
 	}
 	sum := sha256.Sum256(pdf)
 	pages := pdfPages(pdf)
-	if err := s.appendPDF(PDFEntry{Path: "reports/" + out, SHA256: hex.EncodeToString(sum[:]), Pages: pages, Bytes: int64(len(pdf)), Form: a.Form, Logo: logo != nil}); err != nil {
+	if err := s.appendPDF(PDFEntry{Path: "reports/" + out, SHA256: hex.EncodeToString(sum[:]), Pages: pages, Bytes: int64(len(pdf)), Form: a.Form, Logo: logo != nil, Cover: cover}); err != nil {
 		s.logf("pdf ledger: %v", err)
 		return s.failed(ToolExportPDF, fmt.Errorf("the PDF was written to reports/%s, but the run could not record it, so it will not be shown as this run's export: %w", out, err))
 	}
@@ -771,7 +981,14 @@ func (s *server) toolExportPDF(raw json.RawMessage) (string, bool) {
 	case logoErr != nil:
 		withLogo = "; the person's logo could not be drawn, which is their design's to fix, not yours"
 	}
-	answer := fmt.Sprintf("report written: reports/%s (%s, %d KiB; the %s form, in the %s report design%s)%s", out, count, (len(pdf)+1023)/1024, a.Form, design.Name, withLogo, marked)
+	withCover := ""
+	switch {
+	case cover != "":
+		withCover = fmt.Sprintf(", with a %s cover page", cover)
+	case coverErr != nil:
+		withCover = "; the person's cover image could not be drawn, which is their design's to fix, not yours"
+	}
+	answer := fmt.Sprintf("report written: reports/%s (%s, %d KiB; the %s form, in the %s report design%s%s)%s", out, count, (len(pdf)+1023)/1024, a.Form, design.Name, withLogo, withCover, marked)
 	if len(skipped) > 0 {
 		answer += "\nDrawn as their alt text, not as images: " + strings.Join(skipped, "; ")
 	}
@@ -842,20 +1059,44 @@ func (s *server) pdfDesign() (reportdesign.Design, error) {
 }
 
 // renderMeta is meta.json: what the template is told besides the design.
-func renderMeta(d reportdesign.Design, form string, doc mdDoc, title, author string, images map[string]pdfImage, logo *pdfLogo, now time.Time) ([]byte, error) {
+func renderMeta(d reportdesign.Design, form string, doc mdDoc, title, author string, images map[string]pdfImage, logo *pdfLogo, coverImage *pdfCoverImage, now time.Time) ([]byte, error) {
 	tint, err := reportdesign.Tint(d.Accent)
 	if err != nil {
 		return nil, err
+	}
+	secondaryTint := ""
+	if d.Secondary != "" {
+		if secondaryTint, err = reportdesign.Tint(d.Secondary); err != nil {
+			return nil, err
+		}
 	}
 	memo := doc.memo
 	if memo == nil {
 		memo = []memoField{}
 	}
+	if images == nil {
+		images = map[string]pdfImage{}
+	}
+	date := now.UTC().Format(time.DateOnly)
+	cover := coverDrawn(d, form, doc)
+	style := ""
+	if cover {
+		style = coverStyle(d, coverImage)
+	}
+	if style != "plate" {
+		coverImage = nil
+	}
+	// The static tokens, as text: a slot never evaluates anything.
+	facts := map[string]string{"title": title, "author": author, "date": date, "brand": d.Brand.Name, "confidentiality": d.Brand.Confidentiality}
 	return json.Marshal(pdfMeta{
-		Title: title, Author: author, Images: images, Date: now.UTC().Format(time.DateOnly), Titled: doc.title != "",
-		Form: form, TitleBlock: doc.titleBlock, Cover: form == FormReport && doc.titleBlock && doc.words >= coverWords,
-		Tint: tint, Memo: memo, NotoBody: notoFor(d.Fonts.Body), NotoHeadings: notoFor(d.Fonts.Headings),
-		Logo: logo,
+		Title: title, Subtitle: doc.subtitle, Author: author, Images: images, Date: date, Titled: doc.title != "",
+		Form: form, TitleBlock: doc.titleBlock, Cover: cover, CoverStyle: style, CoverImage: coverImage,
+		Tint: tint, Secondary: d.Secondary, SecondaryTint: secondaryTint,
+		Fonts: pdfFonts{Headings: TypstFamily(d.Fonts.Headings), Body: TypstFamily(d.Fonts.Body), Code: TypstFamily(d.Fonts.Code)},
+		Memo:  memo, NotoBody: notoFor(d.Fonts.Body), NotoHeadings: notoFor(d.Fonts.Headings),
+		Logo:   logo,
+		Header: slotsOf(d.Header.Slots, facts),
+		Footer: slotsOf(d.Footer.Slots, facts),
 	})
 }
 

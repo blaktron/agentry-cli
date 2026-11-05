@@ -353,9 +353,10 @@
             "TestReportDesignExportImportRoundTrip",
             "TestReportDesignImportRefusesAnInvalidFile",
             "TestReportDesignShow",
+            "TestReportDesignList",
+            "TestReportDesignUseAndDelete",
             "TestReportDesignExport",
-            "TestReportDesignReset",
-            "TestReportDesignLogo"
+            "TestReportDesignImages"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -418,6 +419,7 @@
           "path": "cmd/agentry/report_theme_test.go",
           "tests": [
             "TestChooseReportTheme",
+            "TestDesignIsFile",
             "TestReadAccountTheme",
             "TestRunRefusesAnUnknownReportTheme",
             "TestReportThemeSurvivesAConfigRewrite",
@@ -427,7 +429,6 @@
           "benchmarks": [],
           "fixtureEntryPoint": false,
           "dependencyHints": [
-            "HTTP transport",
             "source/file contract"
           ]
         }
@@ -10972,6 +10973,26 @@
           ]
         },
         {
+          "path": "runnerimage/toolsrv/design3_test.go",
+          "tests": [
+            "TestSlotParts",
+            "TestASubtitle",
+            "TestRealRenderTheHeaderPages",
+            "TestRealRenderSlotTokens",
+            "TestRealRenderEveryCoverStyle",
+            "TestRealRenderCoverWhen",
+            "TestRealRenderTheCoverImage",
+            "TestRealRenderEveryDesignTextIsText",
+            "TestTheRenderRootHoldsOnlyReencodedImages"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
+          ]
+        },
+        {
           "path": "runnerimage/toolsrv/edges_test.go",
           "tests": [
             "TestToolArgumentDecodeRefusals",
@@ -11438,6 +11459,7 @@
             "TestTheImageCarriesEveryDesignFamily",
             "TestHardLineBreaks",
             "TestThumbnailsAreTheTemplates",
+            "TestTheVersion2LookHolds",
             "TestRealRenderABandTitleIsWhite"
           ],
           "fuzz": [],

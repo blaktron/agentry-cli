@@ -343,9 +343,9 @@ type PDFs struct {
 	Files []PDFFile `json:"files"`
 }
 
-// PDFTheme names a report design (theme document version 2): its name, the
+// PDFTheme names a report design (theme document version 3): its name, the
 // built-in theme it is based on, its version, the SHA-256 of its canonical
-// document (pkg/reportdesign's SHA256), and what chose it.
+// document (pkg/reportdesign's SHA256, images included), and what chose it.
 type PDFTheme struct {
 	Name    string `json:"name"`
 	BasedOn string `json:"basedOn,omitempty"`
@@ -365,6 +365,10 @@ type PDFFile struct {
 	// Logo says the person's logo was drawn in the PDF's title block;
 	// the design's SHA-256 covers the logo's bytes.
 	Logo bool `json:"logo,omitempty"`
+	// Cover is the style of the cover page drawn before the report (band,
+	// split, geometric, largeType, framed or plate), or empty when the
+	// PDF has none.
+	Cover string `json:"cover,omitempty"`
 }
 
 // Web is a run's count of the web tools' reads and AI Review's verdicts.

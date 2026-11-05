@@ -51,7 +51,7 @@ ARG RUNTIME_IMAGE=ghcr.io/blaktron/agentry-alpine:3.24@sha256:be2656061b536c1883
 # (scripts/verify-typst-image.sh holds the pin to that signature). Like
 # RUNTIME_IMAGE it has no policy field: repointing it means building this
 # context yourself.
-ARG TYPST_IMAGE=ghcr.io/blaktron/agentry-typst:2026.10.30.3@sha256:2ab41811f54525a0e29256e3d5fc7a9dee79ff8a5f6e6b45f89f5cebe1c63e42
+ARG TYPST_IMAGE=ghcr.io/blaktron/agentry-typst:2026.11.04.4@sha256:87accffe3133df6e9ee1e53597c7e45548fd1ca3f3766d433f28e87593e04c37
 # grep and glob's search engine: agentry-dockerimages' files-only image of
 # ripgrep 15.2.0 built from pinned source with its default features (no
 # PCRE2), static, signed by its ripgrep workflow on main

@@ -1,0 +1,57 @@
+{
+  "agentryTheme": 3,
+  "name": "Field",
+  "basedOn": "field",
+  "version": 1,
+  "paper": "a4",
+  "fonts": {
+    "headings": "Fraunces",
+    "body": "Nunito Sans",
+    "code": "Source Code Pro"
+  },
+  "accent": "#2f5d2a",
+  "secondary": "#8c7a4f",
+  "titleBlock": "ruled",
+  "headings": "rule",
+  "headingScale": "regular",
+  "margins": "regular",
+  "tables": {
+    "tinted": true,
+    "banded": true
+  },
+  "quotes": "callout",
+  "brand": {
+    "name": "",
+    "strapline": "",
+    "contact": [],
+    "website": "",
+    "confidentiality": ""
+  },
+  "header": {
+    "style": "rule",
+    "slots": [
+      "",
+      "",
+      ""
+    ]
+  },
+  "footer": {
+    "pageNumbers": "nOfN",
+    "slots": [
+      "{brand}",
+      "{confidentiality}",
+      ""
+    ]
+  },
+  "cover": {
+    "style": "plate",
+    "shows": [
+      "title",
+      "subtitle",
+      "author",
+      "date",
+      "brand"
+    ],
+    "when": "always"
+  }
+}
