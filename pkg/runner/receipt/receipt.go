@@ -108,6 +108,9 @@ type Envelope struct {
 	// this names with a matching SHA-256; any other is download-only. Absent
 	// for a run that exported none.
 	PDFs *PDFs `json:"pdfs,omitempty"`
+	// Previews is how many pages the Report Designer's render_preview
+	// rendered in the run; absent for any other run.
+	Previews int `json:"previews,omitempty"`
 	// FetchSaves counts the response bodies fetch saved in the scratch folder:
 	// those the agent asked for with saveTo and those larger than one tool
 	// result. The folder is gone with the run; the ledger it names lists each
@@ -366,9 +369,17 @@ type PDFFile struct {
 	// the design's SHA-256 covers the logo's bytes.
 	Logo bool `json:"logo,omitempty"`
 	// Cover is the style of the cover page drawn before the report (band,
-	// split, geometric, largeType, framed or plate), or empty when the
-	// PDF has none.
+	// split, geometric, largeType, framed, plate or custom), or empty when
+	// the PDF has none.
 	Cover string `json:"cover,omitempty"`
+	// CustomCover says what became of the design's custom cover, when it
+	// asked for one: "drawn", or "passedOver" when it failed and Cover
+	// names the built-in style drawn in its place.
+	CustomCover string `json:"customCover,omitempty"`
+	// CoverFailure is the kind of failure a passed-over custom cover had
+	// (compile, import, altText, pages, title, time, memory or image),
+	// never the compiler's text.
+	CoverFailure string `json:"coverFailure,omitempty"`
 }
 
 // Web is a run's count of the web tools' reads and AI Review's verdicts.

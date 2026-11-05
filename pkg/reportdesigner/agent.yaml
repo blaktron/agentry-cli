@@ -1,0 +1,24 @@
+schemaVersion: "2"
+name: report-designer
+namespace: agentry
+version: 1.0.0
+summary: "Designs a report design from a brief, a logo and references, and writes a custom cover page in Typst, looking at each render."
+license: MIT
+authors:
+  - name: Agentry
+modes: [autonomous]
+entrypoints:
+  instruction: INSTRUCTION.md
+capabilities:
+  network:
+    egress: none
+  filesystem:
+    read: none
+    write: none
+  exec: none
+  dataAccess: [files]
+knowledge:
+  ships:
+    - name: design-guide
+publish:
+  include: [agent.yaml, INSTRUCTION.md, README.md, LICENSE, "knowledge/**"]

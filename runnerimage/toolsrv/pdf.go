@@ -40,6 +40,7 @@ import (
 	"image/png"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path"
@@ -119,6 +120,34 @@ type PDFEntry struct {
 	// Cover is the style of the cover page drawn before it, or empty when
 	// it has none.
 	Cover string `json:"cover,omitempty"`
+	// CustomCover says what became of the design's custom cover when the
+	// design asked for one: CustomCoverDrawn, or CustomCoverPassedOver
+	// when the cover failed and Cover names the built-in style drawn in its
+	// place. Empty when the design has none or no cover was drawn.
+	CustomCover string `json:"customCover,omitempty"`
+	// CoverFailure is the kind of failure a passed-over custom cover had,
+	// one of CoverFailures: never the compiler's text, which could carry
+	// the cover code's own words.
+	CoverFailure string `json:"coverFailure,omitempty"`
+}
+
+// What became of a design's custom cover.
+const (
+	CustomCoverDrawn      = "drawn"
+	CustomCoverPassedOver = "passedOver"
+)
+
+// CoverFailures are the kinds of failure a custom cover is passed over
+// for, each with the words the answer gives it.
+var CoverFailures = map[string]string{
+	"compile": "its code did not compile",
+	"import":  "it imports a package, which the renderer does not have",
+	"altText": "it draws an image without alt text, which a tagged PDF refuses",
+	"pages":   "it tries to draw more than one page",
+	"title":   "it does not set the report's title with facts.title",
+	"time":    "it took longer than the render's time limit",
+	"memory":  "it ran out of the render's memory",
+	"image":   "one of its images could not be re-encoded",
 }
 
 func validatePDF(spec *Spec) error {
@@ -358,8 +387,13 @@ type pdfMeta struct {
 	// without a cover image, custom).
 	CoverStyle string `json:"coverStyle"`
 	// CoverImage is the design's cover image as the server wrote it into
-	// the render root, when a plate cover draws it; nil otherwise.
+	// the render root, when a plate or a custom cover may draw it; nil
+	// otherwise.
 	CoverImage *pdfCoverImage `json:"coverImage"`
+	// CustomCover is the custom cover's images as the server wrote them
+	// into the render root, when the cover is drawn in the custom style;
+	// nil otherwise.
+	CustomCover *pdfCustomCover `json:"customCover"`
 	// Tint is the accent's tint, pkg/reportdesign's Tint: the one the
 	// site's editor previews.
 	Tint string `json:"tint"`
@@ -397,6 +431,12 @@ type pdfCoverImage struct {
 	Path   string `json:"path"`
 	Width  int    `json:"width"`
 	Height int    `json:"height"`
+}
+
+// pdfCustomCover is what the template is told of a custom cover: the
+// paths of its images, in the design's order.
+type pdfCustomCover struct {
+	Images []pdfCoverImage `json:"images"`
 }
 
 // pdfSlots are a header's or a footer's three slots, each as its parts.
@@ -534,9 +574,9 @@ func renderLogo(d reportdesign.Design) ([]byte, *pdfLogo, error) {
 }
 
 // renderDesign is the design's document as the render root holds it: the
-// canonical form without its images, which the root holds as files where
-// they are drawn (logoFile, the cover image), and without a custom cover,
-// which this template does not draw.
+// canonical form without its images or its custom cover, which the root
+// holds as files where they are drawn (logoFile, the cover image,
+// coverSourceFile and the cover's images).
 func renderDesign(d reportdesign.Design) []byte {
 	return d.WithoutAssets().Canonical()
 }
@@ -594,8 +634,8 @@ func coverDrawn(d reportdesign.Design, form string, doc mdDoc) bool {
 }
 
 // coverStyle is the style a drawn cover takes: the design's, or band where
-// the design's cannot be drawn: plate without a cover image, and custom,
-// whose code this template does not run.
+// the design's cannot be drawn: plate without a cover image, and custom
+// without a custom cover.
 func coverStyle(d reportdesign.Design, coverImage *pdfCoverImage) string {
 	switch d.Cover.Style {
 	case "plate":
@@ -603,9 +643,76 @@ func coverStyle(d reportdesign.Design, coverImage *pdfCoverImage) string {
 			return "band"
 		}
 	case "custom":
-		return "band"
+		if d.CustomCover.IsZero() {
+			return "band"
+		}
 	}
 	return d.Cover.Style
+}
+
+// FallbackCoverStyle is the built-in style a custom cover that fails is
+// passed over for. A design whose style is custom names no other, so it is
+// the first of the built-in styles.
+const FallbackCoverStyle = "band"
+
+// coverSourceFile is the custom cover's code in the render root, which the
+// template imports.
+const coverSourceFile = "cover.typ"
+
+// renderCustomCover is a design's custom cover as the render root gets it:
+// its source as coverSourceFile and each image re-encoded from its decoded
+// pixels by reportdesign.NormalizeCustomCoverImage under cover/<n>, so
+// nothing of an upload but its pixels reaches Typst. It returns the files
+// by their names in the root and what meta.json tells the template.
+func renderCustomCover(d reportdesign.Design) (map[string][]byte, *pdfCustomCover, error) {
+	files := map[string][]byte{coverSourceFile: []byte(d.CustomCover.Source)}
+	meta := &pdfCustomCover{Images: []pdfCoverImage{}}
+	for i, img := range d.CustomCover.Images {
+		raw, _, err := img.Decode()
+		if err != nil {
+			return nil, nil, err
+		}
+		n, err := reportdesign.NormalizeCustomCoverImage(raw)
+		if err != nil {
+			return nil, nil, err
+		}
+		b, format, err := n.Decode()
+		if err != nil {
+			return nil, nil, err
+		}
+		cfg, _, err := image.DecodeConfig(bytes.NewReader(b))
+		if err != nil {
+			return nil, nil, err
+		}
+		ext := ".png"
+		if format == "jpeg" {
+			ext = ".jpg"
+		}
+		name := "cover/" + strconv.Itoa(i+1) + ext
+		files[name] = b
+		meta.Images = append(meta.Images, pdfCoverImage{Path: name, Width: cfg.Width, Height: cfg.Height})
+	}
+	return files, meta, nil
+}
+
+// coverFailure is the kind of failure a custom cover's render had, read
+// from Typst's diagnostics, which never leave the server.
+func coverFailure(r typstResult) string {
+	switch r.failure {
+	case "time", "memory":
+		return r.failure
+	}
+	switch d := r.diag; {
+	case strings.Contains(d, "the custom cover drew no title"):
+		return "title"
+	case strings.Contains(d, "missing alt text"):
+		return "altText"
+	case strings.Contains(d, "not allowed inside of containers"):
+		return "pages"
+	case strings.Contains(d, "failed to download package"), strings.Contains(d, "package downloads are disabled"):
+		return "import"
+	}
+	return "compile"
 }
 
 var (
@@ -916,7 +1023,25 @@ func (s *server) toolExportPDF(raw json.RawMessage) (string, bool) {
 	if title == "" {
 		title = strings.TrimSuffix(path.Base(rel), path.Ext(rel))
 	}
-	meta, err := renderMeta(design, a.Form, doc, title, s.spec.PDF.Author, images, logo, coverImage, time.Now())
+	now := time.Now()
+	cover, plan := "", coverPlan{}
+	var customFiles map[string][]byte
+	customCover, coverFailed := "", ""
+	if coverDrawn(design, a.Form, doc) {
+		cover = coverStyle(design, coverImage)
+		if cover == "custom" {
+			// A custom cover whose images will not re-encode is passed over
+			// before the render; one that fails in it, after.
+			var custom *pdfCustomCover
+			if customFiles, custom, err = renderCustomCover(design); err != nil {
+				s.logf("export_pdf: the report design's custom cover was passed over: its images: %v", err)
+				cover, customCover, coverFailed = FallbackCoverStyle, CustomCoverPassedOver, "image"
+			} else {
+				plan = coverPlan{style: "custom", custom: custom}
+			}
+		}
+	}
+	meta, err := renderMetaCover(design, a.Form, doc, title, s.spec.PDF.Author, images, logo, coverImage, plan, now)
 	if err != nil {
 		return s.renderFailed(err)
 	}
@@ -928,26 +1053,41 @@ func (s *server) toolExportPDF(raw json.RawMessage) (string, bool) {
 	if logo != nil {
 		files[logoFile] = logoPNG
 	}
-	cover := ""
-	if coverDrawn(design, a.Form, doc) {
-		cover = coverStyle(design, coverImage)
-	}
-	if cover == "plate" {
-		files[coverImage.Path] = coverBytes
-	}
-	for name, b := range files {
-		if err := createIn(root, name, bytes.NewReader(b)); err != nil {
-			return s.renderFailed(err)
-		}
+	addCoverFiles(files, cover, coverImage, coverBytes, customFiles)
+	if err := writeRenderRoot(root, files); err != nil {
+		return s.renderFailed(err)
 	}
 
 	// 3. Typst, which may write nothing: the PDF comes back on its stdout,
 	// so no file a declared command could swap stands between the render
-	// and reports/.
-	pdf, msg, isErr := s.runTypst(renderRoot, from.name+"/"+rel)
-	if isErr {
-		return msg, true
+	// and reports/. A custom cover that fails is passed over: the report is
+	// rendered again with the built-in cover in its place, and the answer
+	// and the ledger name the kind of failure, never the compiler's words.
+	source := from.name + "/" + rel
+	r := s.compileTypst(renderRoot, "pdf", 0, 0)
+	if cover == "custom" {
+		if r.failure == "" {
+			customCover = CustomCoverDrawn
+		} else if r.failure != "fault" {
+			cover, customCover, coverFailed = FallbackCoverStyle, CustomCoverPassedOver, coverFailure(r)
+			s.logf("export_pdf: the report design's custom cover was passed over (%s)", coverFailed)
+			meta, err := renderMetaCover(design, a.Form, doc, title, s.spec.PDF.Author, images, logo, coverImage, coverPlan{style: cover}, now)
+			if err != nil {
+				return s.renderFailed(err)
+			}
+			if err := root.Remove("meta.json"); err != nil {
+				return s.renderFailed(err)
+			}
+			if err := createIn(root, "meta.json", bytes.NewReader(meta)); err != nil {
+				return s.renderFailed(err)
+			}
+			r = s.compileTypst(renderRoot, "pdf", 0, 0)
+		}
 	}
+	if r.failure != "" {
+		return s.typstAnswer(r, source), true
+	}
+	pdf := r.out
 
 	// 4. The result: a PDF under the cap, copied into reports/ and
 	// recorded.
@@ -959,7 +1099,7 @@ func (s *server) toolExportPDF(raw json.RawMessage) (string, bool) {
 	}
 	sum := sha256.Sum256(pdf)
 	pages := pdfPages(pdf)
-	if err := s.appendPDF(PDFEntry{Path: "reports/" + out, SHA256: hex.EncodeToString(sum[:]), Pages: pages, Bytes: int64(len(pdf)), Form: a.Form, Logo: logo != nil, Cover: cover}); err != nil {
+	if err := s.appendPDF(PDFEntry{Path: "reports/" + out, SHA256: hex.EncodeToString(sum[:]), Pages: pages, Bytes: int64(len(pdf)), Form: a.Form, Logo: logo != nil, Cover: cover, CustomCover: customCover, CoverFailure: coverFailed}); err != nil {
 		s.logf("pdf ledger: %v", err)
 		return s.failed(ToolExportPDF, fmt.Errorf("the PDF was written to reports/%s, but the run could not record it, so it will not be shown as this run's export: %w", out, err))
 	}
@@ -983,6 +1123,8 @@ func (s *server) toolExportPDF(raw json.RawMessage) (string, bool) {
 	}
 	withCover := ""
 	switch {
+	case customCover == CustomCoverPassedOver:
+		withCover = fmt.Sprintf(", with a %s cover page in place of the design's custom cover, which was passed over because %s; that is the person's design to fix, not yours", cover, CoverFailures[coverFailed])
 	case cover != "":
 		withCover = fmt.Sprintf(", with a %s cover page", cover)
 	case coverErr != nil:
@@ -1058,8 +1200,22 @@ func (s *server) pdfDesign() (reportdesign.Design, error) {
 	return reportdesign.Default(), nil
 }
 
-// renderMeta is meta.json: what the template is told besides the design.
+// coverPlan is how one render draws a drawn cover: in style, with the
+// custom cover's images when style is custom. The zero coverPlan draws
+// the design's built-in style, a custom one as FallbackCoverStyle.
+type coverPlan struct {
+	style  string
+	custom *pdfCustomCover
+}
+
+// renderMeta is meta.json: what the template is told besides the design,
+// with a custom cover drawn in its built-in place.
 func renderMeta(d reportdesign.Design, form string, doc mdDoc, title, author string, images map[string]pdfImage, logo *pdfLogo, coverImage *pdfCoverImage, now time.Time) ([]byte, error) {
+	return renderMetaCover(d, form, doc, title, author, images, logo, coverImage, coverPlan{}, now)
+}
+
+// renderMetaCover is meta.json, the cover drawn as plan says.
+func renderMetaCover(d reportdesign.Design, form string, doc mdDoc, title, author string, images map[string]pdfImage, logo *pdfLogo, coverImage *pdfCoverImage, plan coverPlan, now time.Time) ([]byte, error) {
 	tint, err := reportdesign.Tint(d.Accent)
 	if err != nil {
 		return nil, err
@@ -1080,17 +1236,29 @@ func renderMeta(d reportdesign.Design, form string, doc mdDoc, title, author str
 	date := now.UTC().Format(time.DateOnly)
 	cover := coverDrawn(d, form, doc)
 	style := ""
+	var custom *pdfCustomCover
 	if cover {
 		style = coverStyle(d, coverImage)
+		switch {
+		case plan.style != "":
+			style = plan.style
+		case style == "custom":
+			style = FallbackCoverStyle
+		}
+		if style == "custom" {
+			custom = plan.custom
+		}
 	}
-	if style != "plate" {
+	// The cover image is in the render root for a plate cover, which draws
+	// it, and for a custom one, which may.
+	if style != "plate" && style != "custom" {
 		coverImage = nil
 	}
 	// The static tokens, as text: a slot never evaluates anything.
 	facts := map[string]string{"title": title, "author": author, "date": date, "brand": d.Brand.Name, "confidentiality": d.Brand.Confidentiality}
 	return json.Marshal(pdfMeta{
 		Title: title, Subtitle: doc.subtitle, Author: author, Images: images, Date: date, Titled: doc.title != "",
-		Form: form, TitleBlock: doc.titleBlock, Cover: cover, CoverStyle: style, CoverImage: coverImage,
+		Form: form, TitleBlock: doc.titleBlock, Cover: cover, CoverStyle: style, CoverImage: coverImage, CustomCover: custom,
 		Tint: tint, Secondary: d.Secondary, SecondaryTint: secondaryTint,
 		Fonts: pdfFonts{Headings: TypstFamily(d.Fonts.Headings), Body: TypstFamily(d.Fonts.Body), Code: TypstFamily(d.Fonts.Code)},
 		Memo:  memo, NotoBody: notoFor(d.Fonts.Body), NotoHeadings: notoFor(d.Fonts.Headings),
@@ -1109,17 +1277,38 @@ func notoFor(family string) string {
 	return "Noto Sans"
 }
 
-// runTypst renders renderRoot/main.typ to a PDF on Typst's stdout, or
-// answers the agent why it could not.
-func (s *server) runTypst(root, source string) ([]byte, string, bool) {
+// typstResult is one render's outcome: what Typst wrote to its stdout,
+// or why it wrote nothing.
+type typstResult struct {
+	out []byte
+	// failure is empty when the render succeeded; otherwise "time",
+	// "memory" or "compile" when Typst ran and failed, and "fault" when it
+	// could not run or be confined.
+	failure string
+	// diag is the compiler's diagnostics for a failure, with the render
+	// root's path and the run's secrets taken out. It goes to the agent
+	// alone, never into a ledger or the receipt.
+	diag string
+	// fault is the reason for a "fault".
+	fault string
+}
+
+// compileTypst renders root/main.typ with Typst, held as s.render says, to
+// what format names on its stdout: a tagged PDF ("pdf"), or page as a PNG
+// at ppi ("png"). Typst may write no file, so a PNG is one page.
+func (s *server) compileTypst(root, format string, ppi, page int) typstResult {
 	if _, err := os.Stat(s.typst.bin); err != nil {
-		s.callFault = true
-		return nil, fmt.Sprintf("export_pdf: this runner image has no PDF renderer (%v); the runner image must be rebuilt", err), true
+		return typstResult{failure: "fault", fault: fmt.Sprintf("this runner image has no PDF renderer (%v); the runner image must be rebuilt", err)}
 	}
 	args := []string{"compile", "--root", root, "--ignore-system-fonts", "--font-path", s.typst.fonts,
 		"--package-path", s.typst.packages, "--package-cache-path", filepath.Join(root, ".packages"),
-		"--pdf-standard", "ua-1", "--diagnostic-format", "short",
-		filepath.Join(root, "main.typ"), "-"}
+		"--diagnostic-format", "short"}
+	if format == "png" {
+		args = append(args, "--format", "png", "--ppi", strconv.Itoa(ppi), "--pages", strconv.Itoa(max(page, 1)))
+	} else {
+		args = append(args, "--pdf-standard", "ua-1")
+	}
+	args = append(args, filepath.Join(root, "main.typ"), "-")
 	ctx, cancel := context.WithTimeout(context.Background(), s.pdfTimeout)
 	defer cancel()
 	name, argv := s.render.argv(s.typst.bin, args)
@@ -1135,24 +1324,37 @@ func (s *server) runTypst(root, source string) ([]byte, string, bool) {
 	cmd.WaitDelay = 5 * time.Second
 	failed, err := s.render.run(cmd)
 	if failed != "" {
-		s.callFault = true
-		return nil, "export_pdf: the renderer could not be started confined: " + failed, true
+		return typstResult{failure: "fault", fault: "the renderer could not be started confined: " + failed}
 	}
 	if err == nil {
-		return stdout.buf.Bytes(), "", false
+		return typstResult{out: stdout.buf.Bytes()}
 	}
 	diag := s.scrubSecrets(strings.TrimSpace(strings.ReplaceAll(stderr.text(), root+"/", "")))
 	var exitErr *exec.ExitError
 	switch {
 	case ctx.Err() == context.DeadlineExceeded:
-		return nil, fmt.Sprintf("export_pdf: the render took longer than its %s limit; shorten %s or draw fewer, smaller images", s.pdfTimeout, source), true
+		return typstResult{failure: "time", diag: diag}
 	case strings.Contains(diag, "memory allocation of"), errors.As(err, &exitErr) && killedBy(exitErr, syscall.SIGABRT, syscall.SIGKILL, syscall.SIGSEGV):
-		return nil, fmt.Sprintf("export_pdf: the render ran out of its %d MiB memory limit; shorten %s or draw fewer, smaller images", PDFRenderMemory>>20, source), true
+		return typstResult{failure: "memory", diag: diag}
 	case errors.As(err, &exitErr):
-		return nil, fmt.Sprintf("export_pdf: Typst %s could not render %s:\n%s", TypstVersion, source, diag), true
+		return typstResult{failure: "compile", diag: diag}
 	default:
+		return typstResult{failure: "fault", fault: "the renderer did not run: " + err.Error()}
+	}
+}
+
+// typstAnswer is export_pdf's answer for a failed render of source.
+func (s *server) typstAnswer(r typstResult, source string) string {
+	switch r.failure {
+	case "fault":
 		s.callFault = true
-		return nil, "export_pdf: the renderer did not run: " + err.Error(), true
+		return "export_pdf: " + r.fault
+	case "time":
+		return fmt.Sprintf("export_pdf: the render took longer than its %s limit; shorten %s or draw fewer, smaller images", s.pdfTimeout, source)
+	case "memory":
+		return fmt.Sprintf("export_pdf: the render ran out of its %d MiB memory limit; shorten %s or draw fewer, smaller images", PDFRenderMemory>>20, source)
+	default:
+		return fmt.Sprintf("export_pdf: Typst %s could not render %s:\n%s", TypstVersion, source, r.diag)
 	}
 }
 
@@ -1177,6 +1379,38 @@ func (c renderConfinement) run(cmd *exec.Cmd) (string, error) {
 		return "", cmd.Run()
 	}
 	return runTrampolined(cmd)
+}
+
+// addCoverFiles adds to a render root's files what a cover in style draws:
+// the cover image for a plate or a custom cover, which may draw it, and a
+// custom cover's code and images.
+func addCoverFiles(files map[string][]byte, style string, coverImage *pdfCoverImage, coverBytes []byte, custom map[string][]byte) {
+	if (style == "plate" || style == "custom") && coverImage != nil {
+		files[coverImage.Path] = coverBytes
+	}
+	if style == "custom" {
+		maps.Copy(files, custom)
+	}
+}
+
+// writeRenderRoot makes each file new beneath root, and the cover/ folder
+// first when a custom cover's images go in it; img/ is made before the
+// Markdown's images are copied.
+func writeRenderRoot(root *beneath.Dir, files map[string][]byte) error {
+	for name := range files {
+		if strings.HasPrefix(name, "cover/") {
+			if err := root.Mkdir("cover", 0o755); err != nil {
+				return err
+			}
+			break
+		}
+	}
+	for name, b := range files {
+		if err := createIn(root, name, bytes.NewReader(b)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // createIn makes name new beneath root, readable by anyone, and fills it

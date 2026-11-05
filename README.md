@@ -50,7 +50,7 @@ daemon and `ANTHROPIC_API_KEY`, and skips itself without them.
 | `cmd/agentry` | The `agentry` command and its subcommands. |
 | `pkg/runner` | The runner: it compiles a run plan from a release's declared capabilities, drives the Docker engine, hosts the harness adapters and the MCP gateway, decodes input files, applies the operator policy and writes the receipt. |
 | `runnerimage` | The runner image: the in-container tools server, the socket filter, the network proxy, the decoders and the host link. |
-| `pkg/drafter`, `pkg/examiner`, `pkg/knowledge/creator`, `pkg/voice/writer` | The built-in QuickAgents the binary embeds. |
+| `pkg/drafter`, `pkg/examiner`, `pkg/knowledge/creator`, `pkg/voice/writer`, `pkg/reportdesigner` | The built-in QuickAgents the binary embeds. |
 | `pkg/trust`, `pkg/installed`, `pkg/schedule`, `pkg/tui` and the other `pkg/` packages | Key pinning, the local install store, scheduling, the terminal UI and the helpers around them. |
 | `internal/` | Packages private to the CLI. |
 | `scripts/` | Image verification, pin and lock checks, the workflow fork-guard check, and acceptance scripts. |

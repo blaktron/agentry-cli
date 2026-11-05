@@ -20,11 +20,12 @@ package toolsrv
 // deliverable and title; "14" the rendered web_read (Web.Render); "15" the
 // given-only web_read (Web.GivenOnly and Web.Given); "16" a persistent
 // agent's folders (WorkspaceName) and the share's checks (ShareChecks); "17"
-// the calendar feeds (Calendar). The server refuses other versions, so a
+// the calendar feeds (Calendar); "18" the Report Designer's grant (Design)
+// and a custom cover in the report design. The server refuses other versions, so a
 // stale runner image meets a newer compiler loudly — and the image tag
 // derives from the CLI version, so rebuilds happen on their own at upgrade
 // time.
-const SpecVersion = "17"
+const SpecVersion = "18"
 
 // Spec is the compiled configuration the runner's capability compiler hands
 // to the tools server (written to plan/gateway/toolspec.json, bind-mounted
@@ -128,6 +129,9 @@ type Spec struct {
 	// scratch folder, the report design, the author line and the ledger
 	// stamped by the engine.
 	PDF PDF `json:"pdf,omitzero"`
+	// Design is the Report Designer's grant: render_preview, check_design
+	// and view_reference, that built-in's alone.
+	Design Design `json:"design,omitzero"`
 	// Search is grep and glob's grant (search.go): Enabled by the compiler
 	// with the scratch folder; the tools exist only while the run has an
 	// area to search.
@@ -423,6 +427,9 @@ func (s *Spec) GrantedTools() []string {
 	names = append(names, ToolWriteReport)
 	if s.PDF.Enabled {
 		names = append(names, ToolExportPDF)
+	}
+	if s.Design.Enabled {
+		names = append(names, ToolRenderPreview, ToolCheckDesign, ToolViewReference)
 	}
 	if s.Calls.Ledger != "" {
 		names = append(names, ToolEndBlocked)

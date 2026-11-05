@@ -202,6 +202,12 @@ func (s *server) buildTools() {
 				writeReportSchema(), s.toolWriteReport)
 		case ToolExportPDF:
 			add(name, exportPDFDescription, exportPDFSchema(), s.toolExportPDF)
+		case ToolRenderPreview:
+			add(name, renderPreviewDescription, renderPreviewSchema(), s.toolRenderPreview)
+		case ToolCheckDesign:
+			add(name, checkDesignDescription, checkDesignSchema(), s.toolCheckDesign)
+		case ToolViewReference:
+			add(name, viewReferenceDescription, viewReferenceSchema(), s.toolViewReference)
 		case ToolEndBlocked:
 			add(name, endBlockedDescription, endBlockedSchema(), s.toolEndBlocked)
 		}

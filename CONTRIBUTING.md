@@ -64,7 +64,8 @@ signature are checked before a file is written (`pkg/trust`,
 a new refusal gets its own test.
 
 **Built-in QuickAgents are frozen bytes.** The packages the binary embeds
-(the Drafter, the Examiner, the Knowledge Creator and the Voice Writer) are
+(the Drafter, the Examiner, the Knowledge Creator, the Voice Writer and
+the Report Designer) are
 pinned by digest in `pkg/runner/localrun/builtins.lock`. A change to their
 files is a new version of that package: update the lock in the same pull
 request, and `TestTheBuiltinsLockHoldsEveryBuiltin` holds it.
