@@ -1,6 +1,15 @@
 {
   "versions": [
     {
+      "version": "0.7.23",
+      "highlights": [
+        "agentry report-design design writes a whole report design from your brief, logo, reference images and web pages.",
+        "agentry report-design cover writes a custom cover page for one of your designs, looking at each render it makes.",
+        "With --save, what the Report Designer makes joins your account's designs under a new name, never as your default.",
+        "A PDF draws a design's custom cover as its first page, and falls back to the band cover if the cover fails."
+      ]
+    },
+    {
       "version": "0.7.22",
       "highlights": [
         "PDF reports take a whole brand: a running header, a three-slot footer, your contact lines and a cover in six styles.",
