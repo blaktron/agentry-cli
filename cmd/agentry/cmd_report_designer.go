@@ -37,6 +37,7 @@ var designerRun = build.Run
 // designerOpts are the Report Designer commands' flags.
 type designerOpts struct {
 	brief, from, logo string
+	documents         []string
 	images, urls      []string
 	save              bool
 	out               string
@@ -66,14 +67,18 @@ func designerRunFlags(cmd *cobra.Command, o *designerOpts) {
 func newReportDesignDesignCmd() *cobra.Command {
 	var o designerOpts
 	cmd := &cobra.Command{
-		Use:   "design --brief TEXT [--from NAME] [--logo FILE] [--image FILE]… [--url URL]… [--save]",
+		Use:   "design --brief TEXT [--document FILE] [--from NAME] [--logo FILE] [--image FILE]… [--url URL]… [--save]",
 		Short: "Design a report design from a brief, with the built-in Report Designer",
 		Long: "Run the Report Designer on this computer, against the model your runner policy names, to write a whole\n" +
 			"report design from your brief: colours checked for contrast, faces, the title block and headings, a\n" +
 			"header and footer, the brand block and a cover style. --from starts from one of your designs, a built-in\n" +
 			"theme or a design file; --logo gives it your logo; --image gives it up to four reference images it looks\n" +
 			"at and never keeps; --url gives it up to two web pages, such as your own site, read first by AI Review\n" +
-			"with your own TypeSafe key. The design is written to the output folder, and with --save added to your\n" +
+			"with your own TypeSafe key. --document gives it one document of yours, a PDF or a Word document (.docx)\n" +
+			"up to 20 MB, to build the design around: it looks at the first twelve pages of a PDF, reads a Word\n" +
+			"document's theme, header, footer and pictures (no Word layout is rendered), and can take your logo from\n" +
+			"it; the document is checked like any input, read in full and kept only for the run. The design is\n" +
+			"written to the output folder, and with --save added to your\n" +
 			"account's designs under a new name. It is never your default: pick it for a run with --report-design, or\n" +
 			"make it the default with `agentry report-design use`.",
 		Args: cobra.NoArgs,
@@ -82,6 +87,7 @@ func newReportDesignDesignCmd() *cobra.Command {
 	designerRunFlags(cmd, &o)
 	f := cmd.Flags()
 	f.StringVar(&o.from, "from", "", "start from this design: one of your account's (NAME or ID), a built-in theme, or a design FILE")
+	f.StringArrayVar(&o.documents, "document", nil, "a document FILE to build the design around: one PDF or Word document (.docx), up to 20 MB")
 	f.StringVar(&o.logo, "logo", "", "your logo, a PNG or a JPEG FILE")
 	f.StringArrayVar(&o.images, "image", nil, "a reference image FILE, PNG or JPEG, for its look (repeatable, at most 4)")
 	f.StringArrayVar(&o.urls, "url", nil, "the https address of a page about you or your brand, such as your site (repeatable, at most 2)")
@@ -133,16 +139,20 @@ func designerRunE(o *designerOpts, work func(cmd *cobra.Command) error) func(*co
 
 // designerReport is the json report of a Report Designer command.
 type designerReport struct {
-	Job       string             `json:"job"`
-	Name      string             `json:"name"`
-	SHA256    string             `json:"sha256"`
-	Cover     string             `json:"cover"`
-	Looked    bool               `json:"looked"`
-	Thumbnail bool               `json:"thumbnail,omitempty"`
-	Previews  int                `json:"previews"`
-	Dir       string             `json:"dir"`
-	Saved     *savedDesign       `json:"saved,omitempty"`
-	Pages     []*voicebuild.Page `json:"pages,omitempty"`
+	Job       string `json:"job"`
+	Name      string `json:"name"`
+	SHA256    string `json:"sha256"`
+	Cover     string `json:"cover"`
+	Looked    bool   `json:"looked"`
+	Thumbnail bool   `json:"thumbnail,omitempty"`
+	Previews  int    `json:"previews"`
+	// DocumentPages is how many images of --document the Designer looked
+	// at, and LogoFromDocument says its logo is a crop of the document.
+	DocumentPages    int                `json:"documentPages,omitempty"`
+	LogoFromDocument bool               `json:"logoFromDocument,omitempty"`
+	Dir              string             `json:"dir"`
+	Saved            *savedDesign       `json:"saved,omitempty"`
+	Pages            []*voicebuild.Page `json:"pages,omitempty"`
 }
 
 // savedDesign is a design --save added to the library.
@@ -165,6 +175,26 @@ func readImageFile(flag, file string) ([]byte, error) {
 	}
 	if len(b) > maxDesignerImageBytes {
 		return nil, fmt.Errorf("%s %s is over %d MB", flag, file, maxDesignerImageBytes>>20)
+	}
+	return b, nil
+}
+
+// readDocumentFile reads --document within its cap: one regular file.
+func readDocumentFile(file string) ([]byte, error) {
+	f, err := os.Open(file) //nolint:gosec // a file the person named
+	if err != nil {
+		return nil, fmt.Errorf("--document: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	if fi, err := f.Stat(); err != nil || !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("--document %s is not a file", file)
+	}
+	b, err := io.ReadAll(io.LimitReader(f, build.MaxDocumentBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("--document %s: %w", file, err)
+	}
+	if len(b) > build.MaxDocumentBytes {
+		return nil, fmt.Errorf("--document %s is over %d MB", file, build.MaxDocumentBytes>>20)
 	}
 	return b, nil
 }
@@ -234,6 +264,21 @@ func runReportDesigner(cmd *cobra.Command, job build.Job, o *designerOpts) error
 			return engine.Classify(engine.ExitUsage, err)
 		}
 	}
+	var doc *build.Document
+	switch len(o.documents) {
+	case 0:
+	case 1:
+		b, err := readDocumentFile(o.documents[0])
+		if err != nil {
+			return engine.Classify(engine.ExitUsage, err)
+		}
+		doc = &build.Document{Name: filepath.Base(o.documents[0]), Data: b}
+		if _, err := build.DocumentKind(doc.Name, doc.Data); err != nil {
+			return engine.Classify(engine.ExitUsage, fmt.Errorf("--document %s: %w", o.documents[0], err))
+		}
+	default:
+		return engine.Classify(engine.ExitUsage, errors.New("a design is built around one document: give --document once"))
+	}
 	var images [][]byte
 	for _, file := range o.images {
 		b, err := readImageFile("--image", file)
@@ -295,7 +340,7 @@ func runReportDesigner(cmd *cobra.Command, job build.Job, o *designerOpts) error
 	}
 	budgets := o.over(localrun.ReportDesigner().LocalBudgets(pol.Budgets))
 	res, err := designerRun(ctx, knowledgeDocker(), build.Options{
-		Job: job, Brief: o.brief, From: from, Logo: logo, Images: images, URLs: urls, Review: review, Web: web,
+		Job: job, Brief: o.brief, From: from, Logo: logo, Images: images, URLs: urls, Document: doc, Review: review, Web: web,
 		Home: home, Policy: pol, PolicySHA: polSHA, PolicyFile: &policyFile, Build: version.Build(),
 		OutDir: outDir, Budgets: &budgets, RunID: runID, Stderr: errOut, OnUsage: o.onUsage, Credits: creditsClient(pol),
 	})
@@ -317,6 +362,7 @@ func runReportDesigner(cmd *cobra.Command, job build.Job, o *designerOpts) error
 	}
 	d := res.Design
 	report.Name, report.SHA256, report.Cover, report.Looked, report.Thumbnail, report.Previews, report.Dir = d.Name, d.SHA256(), d.Cover.Style, res.Looked, res.Thumbnail, res.Previews, res.Dir
+	report.DocumentPages, report.LogoFromDocument = res.DocumentPages, res.LogoFromDocument
 	if o.save {
 		saved, err := saveDesignerResult(ctx, lib, reg, d)
 		if err != nil {
@@ -342,6 +388,14 @@ func runReportDesigner(cmd *cobra.Command, job build.Job, o *designerOpts) error
 		what = "design with its custom cover"
 	}
 	_, _ = fmt.Fprintf(out, "The Report Designer made the %s %q (sha256 %s, %d renders), written to %s.\n", what, d.Name, report.SHA256, res.Previews, res.Dir)
+	if doc != nil {
+		switch {
+		case res.LogoFromDocument:
+			_, _ = fmt.Fprintf(out, "It looked at %d image(s) of %s and took its logo from it.\n", res.DocumentPages, doc.Name)
+		default:
+			_, _ = fmt.Fprintf(out, "It looked at %d image(s) of %s.\n", res.DocumentPages, doc.Name)
+		}
+	}
 	if job == build.Cover && !res.Thumbnail {
 		_, _ = fmt.Fprintln(out, "Its last render was not of the cover it kept, so the design has no thumbnail of it.")
 	}

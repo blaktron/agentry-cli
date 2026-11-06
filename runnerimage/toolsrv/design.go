@@ -79,9 +79,10 @@ const (
 	DesignCoverFile = "cover.typ"
 )
 
-// Design is the Report Designer's grant: render_preview, check_design and
-// view_reference. The compiler sets Enabled for that built-in alone; the
-// engine stamps the ledger and the folder the previews are kept in.
+// Design is the Report Designer's grant: render_preview, check_design,
+// view_reference, document_pages and crop_logo. The compiler sets Enabled
+// for that built-in alone; the engine stamps the ledgers and the folder
+// the previews are kept in.
 type Design struct {
 	Enabled bool `json:"enabled"`
 	// Ledger is the container path each preview is recorded in, under
@@ -90,6 +91,10 @@ type Design struct {
 	// Previews is the container folder each preview's PNG is kept in, as
 	// preview-<n>.png, under OutDir and outside reports/.
 	Previews string `json:"previews,omitempty"`
+	// DocumentLedger is the container path each image document_pages
+	// shows and each crop crop_logo takes is recorded in, under OutDir and
+	// outside reports/.
+	DocumentLedger string `json:"documentLedger,omitempty"`
 }
 
 // PreviewEntry is one line of the preview ledger: a render render_preview
@@ -117,10 +122,10 @@ type PreviewEntry struct {
 
 func validateDesign(spec *Spec) error {
 	d := spec.Design
-	if !d.Enabled && (d.Ledger != "" || d.Previews != "") {
+	if !d.Enabled && (d.Ledger != "" || d.Previews != "" || d.DocumentLedger != "") {
 		return errors.New("design: a preview ledger without the Report Designer's grant")
 	}
-	for _, p := range []string{d.Ledger, d.Previews} {
+	for _, p := range []string{d.Ledger, d.Previews, d.DocumentLedger} {
 		if p == "" {
 			continue
 		}
@@ -279,6 +284,11 @@ func (s *server) withAssets(d reportdesign.Design) (reportdesign.Design, error) 
 			return d, fmt.Errorf("the logo: %w", err)
 		}
 		d.Logo = logo
+	}
+	// A logo taken from the person's document is drawn in place of the
+	// design's own (crop_logo refuses one while they gave theirs).
+	if s.docLogo != (reportdesign.Logo{}) {
+		d.Logo = s.docLogo
 	}
 	for _, ext := range []string{".png", ".jpg"} {
 		b, err := s.readAsset(DesignCoverImageBase + ext)
@@ -625,11 +635,16 @@ func (s *server) keepPreview(name string, png []byte) error {
 
 // appendPreview records a preview in the ledger, as appendPDF does.
 func (s *server) appendPreview(e PreviewEntry) error {
-	l := s.spec.Design.Ledger
+	return s.appendLedger(s.spec.Design.Ledger, e)
+}
+
+// appendLedger appends v as one JSON line to the ledger at l, which the
+// spec named; none, nothing is recorded.
+func (s *server) appendLedger(l string, v any) error {
 	if l == "" {
 		return nil
 	}
-	b, err := json.Marshal(e)
+	b, err := json.Marshal(v)
 	if err != nil {
 		return err
 	}

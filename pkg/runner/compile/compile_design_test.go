@@ -30,11 +30,12 @@ func compileDesign(t *testing.T, yaml, source string, mode manifest.Mode, review
 	return err
 }
 
-// TestOnlyTheReportDesignerIsGrantedPreviews: render_preview, check_design
-// and view_reference compile for a built-in run alone. A release, a local
-// package, a persistent agent, a built-in beside the review grant and one
-// whose contract would widen what runs beside them are refused by policy;
-// the built-in's plan grants the three tools and says so.
+// TestOnlyTheReportDesignerIsGrantedPreviews: render_preview, check_design,
+// view_reference, document_pages and crop_logo compile for a built-in run
+// alone. A release, a local package, a persistent agent, a built-in beside
+// the review grant and one whose contract would widen what runs beside
+// them are refused by policy; the built-in's plan grants the five tools
+// and says so.
 func TestOnlyTheReportDesignerIsGrantedPreviews(t *testing.T) {
 	refused := func(name string, err error, want string) {
 		t.Helper()
@@ -76,13 +77,16 @@ func TestOnlyTheReportDesignerIsGrantedPreviews(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, tool := range []string{toolsrv.ToolRenderPreview, toolsrv.ToolCheckDesign, toolsrv.ToolViewReference} {
+		for _, tool := range []string{toolsrv.ToolRenderPreview, toolsrv.ToolCheckDesign, toolsrv.ToolViewReference, toolsrv.ToolDocumentPages, toolsrv.ToolCropLogo} {
 			if slices.Contains(plan.Tools, tool) != design {
 				t.Errorf("design %v: %s granted %v", design, tool, !design)
 			}
 		}
 		if _, ok := plan.Enforcement["design"]; ok != design || plan.Capabilities.DesignTools != design {
 			t.Errorf("design %v: enforcement line %v, capability %v", design, ok, plan.Capabilities.DesignTools)
+		}
+		if line := plan.Enforcement["design"]; design && (!strings.Contains(line, toolsrv.ToolDocumentPages) || !strings.Contains(line, "never stages the document itself") || !strings.Contains(line, "when the person gave a document")) {
+			t.Errorf("the design line does not say what the document tools read: %q", line)
 		}
 	}
 }

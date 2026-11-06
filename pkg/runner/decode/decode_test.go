@@ -34,7 +34,7 @@ func TestImageSpecBuildsOnTheFilesImageOffline(t *testing.T) {
 		"FROM " + testFiles + "\n" +
 		"LABEL org.agentry.image=decode\n" +
 		"COPY --from=agentry-runner:abc /usr/local/bin/agentry-runner /usr/local/bin/agentry-runner\n" +
-		"RUN [\"/usr/local/bin/agentry-runner\", \"minimize\", \"bsdcat\", \"bsdtar\", \"clamscan\", \"file\", \"java\", \"pandoc\", \"pdftotext\", \"tesseract\"]\n" +
+		"RUN [\"/usr/local/bin/agentry-runner\", \"minimize\", \"bsdcat\", \"bsdtar\", \"clamscan\", \"file\", \"java\", \"pandoc\", \"pdffonts\", \"pdfinfo\", \"pdftoppm\", \"pdftotext\", \"tesseract\"]\n" +
 		"ENTRYPOINT [\"/usr/local/bin/agentry-runner\"]\n"
 	if got := s.Dockerfile(); got != want {
 		t.Fatalf("Dockerfile =\n%s\nwant\n%s", got, want)

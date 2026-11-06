@@ -3,7 +3,7 @@ title: Start here
 type: guide
 summary: What this guide is (the Report Designer's own reference for writing a report design and a custom cover, shipped with it and attached to every run) and which page to read at each step.
 sources: [web:https://docs.secureagentry.net/runner/]
-updated: 2026-11-05
+updated: 2026-11-06
 ---
 
 # Start here
@@ -17,7 +17,8 @@ Read it at these steps.
 1. [The design document](../design/the-document.md): every field, what it does on the page, and the rules it is held to.
 2. [The closed lists](../design/the-lists.md): the faces, styles and tokens a field may take. A name not on a list is refused.
 3. [Choosing a look](../design/choosing-a-look.md): from a brief, a logo, references and pages to colours, faces and a cover style.
-4. [Before you finish](../review/before-you-finish.md).
+4. [Designing from a document](../design/from-a-document.md), when the person gave a document: what to look at, and how its colours, faces, running text, title page, brand words and logo become the design.
+5. [Before you finish](../review/before-you-finish.md).
 
 **A Cover run:**
 

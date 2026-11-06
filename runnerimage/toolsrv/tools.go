@@ -208,6 +208,10 @@ func (s *server) buildTools() {
 			add(name, checkDesignDescription, checkDesignSchema(), s.toolCheckDesign)
 		case ToolViewReference:
 			add(name, viewReferenceDescription, viewReferenceSchema(), s.toolViewReference)
+		case ToolDocumentPages:
+			add(name, documentPagesDescription, documentPagesSchema(), s.toolDocumentPages)
+		case ToolCropLogo:
+			add(name, cropLogoDescription, cropLogoSchema(), s.toolCropLogo)
 		case ToolEndBlocked:
 			add(name, endBlockedDescription, endBlockedSchema(), s.toolEndBlocked)
 		}

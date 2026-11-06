@@ -1,6 +1,14 @@
 {
   "versions": [
     {
+      "version": "0.7.26",
+      "highlights": [
+        "agentry report-design design --document builds a design around a PDF or Word document of yours.",
+        "The Report Designer looks at a PDF's first twelve pages and reads a Word document's theme, header, footer and pictures.",
+        "It takes your logo from the document when you give none, and the document is kept only for the run."
+      ]
+    },
+    {
       "version": "0.7.25",
       "highlights": [
         "A run on your own model server summarizes and goes on when the server says it is too long, window known or not.",
