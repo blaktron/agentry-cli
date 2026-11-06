@@ -127,6 +127,9 @@ type runDirs struct {
 	// receipts/previews/ for a run granted the Report Designer's tools
 	// (design.go), made as webLedger is.
 	previewLedger, previewsDir string
+	// documentLedger is receipts/document.ndjson, made beside the preview
+	// ledger: the images document_pages showed and the crops crop_logo took.
+	documentLedger string
 	// deliverablesLedger is receipts/deliverables.ndjson for a run granted
 	// write_report (deliverables.go), made as webLedger is.
 	deliverablesLedger string
@@ -501,6 +504,13 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 		if err := os.Mkdir(rd.previewsDir, 0o755); err != nil {
 			return nil, Classify(ExitCLI, fmt.Errorf("create the previews folder: %w", err))
 		}
+		rd.documentLedger = filepath.Join(rd.receiptsDir, DocumentLedgerFile)
+		_ = os.Remove(rd.documentLedger)
+		f, err = os.OpenFile(rd.documentLedger, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644) //nolint:gosec // appended by the tools container
+		if err != nil {
+			return nil, Classify(ExitCLI, fmt.Errorf("create the document ledger: %w", err))
+		}
+		_ = f.Close()
 	}
 	if slices.Contains(p.Plan.Tools, toolsrv.ToolWriteReport) {
 		rd.deliverablesLedger = filepath.Join(rd.receiptsDir, DeliverablesLedgerFile)
@@ -1314,7 +1324,7 @@ func relabelTargetsFor(rd *runDirs) []relabelTarget {
 		t = append(t, relabelTarget{rd.reviewLedger, false})
 	}
 	if rd.previewLedger != "" {
-		t = append(t, relabelTarget{rd.previewLedger, false}, relabelTarget{rd.previewsDir, false})
+		t = append(t, relabelTarget{rd.previewLedger, false}, relabelTarget{rd.previewsDir, false}, relabelTarget{rd.documentLedger, false})
 	}
 	return t
 }

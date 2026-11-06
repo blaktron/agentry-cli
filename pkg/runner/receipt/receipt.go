@@ -111,6 +111,10 @@ type Envelope struct {
 	// Previews is how many pages the Report Designer's render_preview
 	// rendered in the run; absent for any other run.
 	Previews int `json:"previews,omitempty"`
+	// DocumentPages is how many images of the person's document the
+	// Report Designer's document_pages showed the model in the run; absent
+	// for any other run.
+	DocumentPages int `json:"documentPages,omitempty"`
 	// FetchSaves counts the response bodies fetch saved in the scratch folder:
 	// those the agent asked for with saveTo and those larger than one tool
 	// result. The folder is gone with the run; the ledger it names lists each

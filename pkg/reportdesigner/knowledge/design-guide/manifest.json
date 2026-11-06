@@ -1,8 +1,8 @@
 {
   "schema": "knowledge/v1",
   "name": "design-guide",
-  "pages": 8,
-  "bytes": 28727,
-  "sha256": "sha256:e63e1a5167e26cf9b7fa34b637a69fda6160c1e52565d58b0b683b7d78bb0beb",
+  "pages": 9,
+  "bytes": 37348,
+  "sha256": "sha256:50778aed75dea34010c3dd89dcc68eeb42d71bc36cd58b8b7fc55913c67d7eb2",
   "scan": "not scanned"
 }

@@ -209,3 +209,5 @@ agentry/assistant@1.18.2 sha256:a5d5ea194c442d30cd2f3cd78b0dafbfec776a465fddae15
 agentry/report-designer@1.0.0 sha256:8d9af35eb4a3ec71ff42f987ad5b79245ab5e9c7bffca23e68d72b6ad8702886
 # 1.19.0, over 1.18.2: a task's turn sends the person what the task is for (a reminder, what they asked to be told) with tell_person, which the chat shows as a message, apart from the task's folded work.
 agentry/assistant@1.19.0 sha256:176c29608c84bcfab259b728f4649897166f8bc54a0fbe072df3e21603761702
+# 1.1.0, over 1.0.0: a Design run may be given one document, a PDF or a Word document, to build the design around; the guide gains a page on designing from a document, and the application grants document_pages and crop_logo beside the three tools it had.
+agentry/report-designer@1.1.0 sha256:f38ab5c4665871ca58eda21ffe525ac2b77dc3a2c06d0f88d83522c40b14db66

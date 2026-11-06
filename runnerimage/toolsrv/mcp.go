@@ -26,6 +26,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/blaktron/agentry-cli/runnerimage/reportdesign"
 )
 
 const (
@@ -138,6 +140,11 @@ type server struct {
 	// previews and referenceViews count the Report Designer's renders and
 	// reference views (design.go).
 	previews, referenceViews int
+	// documentViews and logoCrops count the document tools' images and
+	// crops, and docLogo is the last crop, drawn as the design's logo
+	// (document.go).
+	documentViews, logoCrops int
+	docLogo                  reportdesign.Logo
 	// callImage, when a tool sets it, is an image the call's answer carries
 	// beside its text, of callImageType (image/png when empty).
 	callImage     []byte

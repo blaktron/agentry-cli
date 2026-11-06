@@ -36,6 +36,7 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/bridge"
 	"github.com/blaktron/agentry-cli/runnerimage/confine"
 	"github.com/blaktron/agentry-cli/runnerimage/decode"
+	"github.com/blaktron/agentry-cli/runnerimage/docpages"
 	"github.com/blaktron/agentry-cli/runnerimage/hostlink"
 	"github.com/blaktron/agentry-cli/runnerimage/messenger"
 	"github.com/blaktron/agentry-cli/runnerimage/minimize"
@@ -130,6 +131,8 @@ func main() {
 		err = runDockerFilter(os.Args[2:])
 	case "decode":
 		err = runDecode(os.Args[2:])
+	case "pages":
+		err = runPages(os.Args[2:])
 	case "bridge":
 		err = runBridge(os.Args[2:])
 	case "applink":
@@ -345,6 +348,31 @@ func runDecode(args []string) error {
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "decode: %d files\n", len(rep.Files))
+	return nil
+}
+
+// runPages reads the one document at --in, a PDF or a Word document
+// (--kind), for the Report Designer: a PDF's first pages rendered as PNG
+// images by poppler, a Word document's theme, running text and pictures,
+// and pages.json beside them under --out. The caller runs it in the decode
+// image after the decode step checked the document: no network, no
+// capabilities, --in read-only, a bounded /tmp the pages are rendered in.
+func runPages(args []string) error {
+	fs := flag.NewFlagSet("pages", flag.ContinueOnError)
+	in := fs.String("in", "", "the document (read-only)")
+	kind := fs.String("kind", "", "pdf or docx")
+	out := fs.String("out", "", "the directory the pages and pages.json are written to")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *in == "" || *out == "" {
+		return errors.New("pages: --in and --out are required")
+	}
+	f, err := docpages.Render(context.Background(), *in, docpages.Kind(*kind), *out, os.TempDir(), docpages.Tools{})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "pages: %d rendered\n", f.Rendered)
 	return nil
 }
 

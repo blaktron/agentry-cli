@@ -52,14 +52,15 @@ func callForItems(t *testing.T, s *server, name string, args map[string]any) ([]
 
 func TestTheDesignToolsAreGrantedWithTheirFlagAlone(t *testing.T) {
 	spec := pdfSpec(t)
-	for _, tool := range []string{ToolRenderPreview, ToolCheckDesign, ToolViewReference} {
+	designTools := []string{ToolRenderPreview, ToolCheckDesign, ToolViewReference, ToolDocumentPages, ToolCropLogo}
+	for _, tool := range designTools {
 		if slices.Contains(spec.GrantedTools(), tool) {
 			t.Errorf("%s granted with export_pdf's grant", tool)
 		}
 	}
 	spec = designSpec(t)
 	granted := spec.GrantedTools()
-	for _, tool := range []string{ToolRenderPreview, ToolCheckDesign, ToolViewReference} {
+	for _, tool := range designTools {
 		if !slices.Contains(granted, tool) {
 			t.Errorf("%s not granted with the Designer's grant", tool)
 		}
@@ -74,6 +75,10 @@ func TestTheDesignToolsAreGrantedWithTheirFlagAlone(t *testing.T) {
 		func(s *Spec) { s.Design.Ledger = filepath.Join(s.OutDir, "reports", "previews.ndjson") },
 		func(s *Spec) { s.Design.Previews = filepath.Join(s.OutDir, "reports") },
 		func(s *Spec) { s.Design.Previews = "/tmp/previews" },
+		func(s *Spec) { s.Design.DocumentLedger = filepath.Join(s.OutDir, "reports", "document.ndjson") },
+		func(s *Spec) {
+			s.Design.Enabled, s.Design.Ledger, s.Design.Previews, s.Design.DocumentLedger = false, "", "", filepath.Join(s.OutDir, "receipts", "d.ndjson")
+		},
 		func(s *Spec) { s.InputsDir = "" },
 	}
 	for i, f := range bad {

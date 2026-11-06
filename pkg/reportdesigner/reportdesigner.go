@@ -3,13 +3,15 @@
 // in the CLI and run by the runner as a built-in package, the fifth beside
 // the Knowledge Creator, the Drafter, the Voice Writer and the Examiner. It
 // has two jobs. Design writes a whole design document from a brief, a
-// design to start from, the logo, reference images and web addresses.
-// Cover writes a custom cover page for a design in Typst code. Its contract
-// declares no egress, no filesystem, no exec and the files data category:
-// the CLI stages what it is given as inputs, the application grants it
-// render_preview, check_design and view_reference (and web_read held to the
-// addresses the person gave, when a page is drawn by scripts), and it writes
-// its work through write_report; pkg/reportdesigner/build keeps it.
+// design to start from, the logo, reference images, web addresses and a
+// document to build the design around. Cover writes a custom cover page
+// for a design in Typst code. Its contract declares no egress, no
+// filesystem, no exec and the files data category: the CLI stages what it
+// is given as inputs, the application grants it render_preview,
+// check_design, view_reference, document_pages and crop_logo (and web_read
+// held to the addresses the person gave, when a page is drawn by scripts),
+// and it writes its work through write_report; pkg/reportdesigner/build
+// keeps it.
 package reportdesigner
 
 import (
@@ -37,7 +39,7 @@ const GuideName = "design-guide"
 const (
 	Namespace = "agentry"
 	Name      = "report-designer"
-	Version   = "1.0.0"
+	Version   = "1.1.0"
 )
 
 // LocalTimeoutFloorSeconds is the least a Report Designer run on this
