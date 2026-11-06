@@ -3334,6 +3334,23 @@
           "dependencyHints": [
             "source/file contract"
           ]
+        },
+        {
+          "path": "pkg/reportdesigner/build/document_test.go",
+          "tests": [
+            "TestADocumentIsCheckedBeforeTheRun",
+            "TestADocumentGoesThroughTheDecodeStep",
+            "TestTheDecodeStepRefusesWhatItWouldRefuseForAnyInput",
+            "TestADocumentTheDecoderCouldNotReadIsStagedAsItsFailure",
+            "TestALogoCroppedFromTheDocumentIsCroppedAgainHere"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "docker interface (real or fake)",
+            "source/file contract"
+          ]
         }
       ]
     },
@@ -4892,6 +4909,20 @@
             "TestAKeptCopyIsARegularFileWithinTheCap",
             "TestMembersBelongToTheArchiveAsStaged",
             "TestMembersThatDifferOnlyInCaseAreRefused"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "docker interface (real or fake)",
+            "source/file contract"
+          ]
+        },
+        {
+          "path": "pkg/runner/decode/pages_test.go",
+          "tests": [
+            "TestThePagesRoleRunsConfined",
+            "TestCheckPagesTrustsNothingTheRoleWrote"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -10162,6 +10193,33 @@
       ]
     },
     {
+      "owner": "runnerimage/docpages",
+      "behavior": "The runner image's `pages` role: a document the Report Designer is given, a PDF's first pages rendered by poppler or a Word document's theme, running text and pictures, and the facts the host and the tools server agree on",
+      "disposition": "retain",
+      "files": [
+        {
+          "path": "runnerimage/docpages/docpages_test.go",
+          "tests": [
+            "TestAWordDocumentYieldsItsThemeAndRunningText",
+            "TestAMalformedDocumentIsAKindOfFailure",
+            "TestAPDFsFirstTwelvePagesAreRendered",
+            "TestParseInfoAndFonts",
+            "TestValidateHoldsWhatTheContainerWrote",
+            "TestCropIsHeldToTheImage",
+            "TestFontName",
+            "TestTextKeepsOnlyWhatAReaderSees"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract",
+            "explicit skip"
+          ]
+        }
+      ]
+    },
+    {
       "owner": "runnerimage/hostlink",
       "behavior": "The runner's host link: the MCP server through which an agent works a target host, a machine the person",
       "disposition": "retain",
@@ -11112,6 +11170,21 @@
             "TestRenderPreviewTakesItsArgumentsAlone",
             "TestCheckDesign",
             "TestViewReference"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
+          ]
+        },
+        {
+          "path": "runnerimage/toolsrv/document_test.go",
+          "tests": [
+            "TestDocumentPagesShowsAPageWithWhatTheDocumentDeclares",
+            "TestADocumentThatCouldNotBeReadIsAKindOfFailure",
+            "TestAWordDocumentAnswersItsTextAndPictures",
+            "TestCropLogoTakesTheBoxFromTheFullPage"
           ],
           "fuzz": [],
           "benchmarks": [],
