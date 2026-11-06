@@ -1,5 +1,5 @@
 {
-  "specVersion": "18",
+  "specVersion": "19",
   "workspaceDir": "/workspace",
   "turnFile": "/run/agentry/turns/turn",
   "outDir": "/out",

@@ -21,11 +21,13 @@ package toolsrv
 // given-only web_read (Web.GivenOnly and Web.Given); "16" a persistent
 // agent's folders (WorkspaceName) and the share's checks (ShareChecks); "17"
 // the calendar feeds (Calendar); "18" the Report Designer's grant (Design)
-// and a custom cover in the report design. The server refuses other versions, so a
-// stale runner image meets a newer compiler loudly — and the image tag
+// and a custom cover in the report design; "19" the Report Designer's
+// document tools and their ledger (Design.DocumentLedger). The server
+// refuses other versions, so a stale runner image meets a newer compiler
+// loudly — and the image tag
 // derives from the CLI version, so rebuilds happen on their own at upgrade
 // time.
-const SpecVersion = "18"
+const SpecVersion = "19"
 
 // Spec is the compiled configuration the runner's capability compiler hands
 // to the tools server (written to plan/gateway/toolspec.json, bind-mounted
@@ -429,7 +431,7 @@ func (s *Spec) GrantedTools() []string {
 		names = append(names, ToolExportPDF)
 	}
 	if s.Design.Enabled {
-		names = append(names, ToolRenderPreview, ToolCheckDesign, ToolViewReference)
+		names = append(names, ToolRenderPreview, ToolCheckDesign, ToolViewReference, ToolDocumentPages, ToolCropLogo)
 	}
 	if s.Calls.Ledger != "" {
 		names = append(names, ToolEndBlocked)

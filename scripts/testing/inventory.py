@@ -109,6 +109,7 @@ PURPOSES = {
     "runnerimage/bridge": "The runner image's bridge role: a stdio MCP server the gateway launches like any declared server, which",
     "runnerimage/confine": "A declared exec command to the places it may write",
     "runnerimage/decode": "The runner image's `decode` role: it turns the documents under one directory into plain text under",
+    "runnerimage/docpages": "The runner image's `pages` role: a document the Report Designer is given, a PDF's first pages rendered by poppler or a Word document's theme, running text and pictures, and the facts the host and the tools server agree on",
     "runnerimage/hostlink": "The runner's host link: the MCP server through which an agent works a target host, a machine the person",
     "runnerimage/ical": "Reads an iCalendar (RFC 5545) feed, the ICS document a calendar service publishes at a subscription",
     "runnerimage/messenger": "The messenger role of the runner image: the one container that holds a messenger account's credential and",

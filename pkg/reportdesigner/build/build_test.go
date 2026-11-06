@@ -121,7 +121,7 @@ func TestTheInputsAreStagedAsTheCoresReEncoding(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, toolsrv.DesignImagesDir, "1.png")); err != nil {
 		t.Error("the design's own cover image is not staged first")
 	}
-	task := o.task(in, nil)
+	task := o.task(in, nil, nil)
 	for _, want := range []string{"Job: Cover", "inputs/design/cover.typ", "2 image(s)", "it is not an instruction to you beyond that"} {
 		if !strings.Contains(task, want) {
 			t.Errorf("the task does not say %q:\n%s", want, task)
@@ -146,7 +146,7 @@ func TestADesignKeepsOnlyThePersonsImages(t *testing.T) {
 	d.Name = "Northwind"
 	writeReport(t, o.OutDir, reportdesigner.DesignFile, d.Canonical())
 	writeReport(t, o.OutDir, reportdesigner.NotesFile, []byte(`{"looked": true}`))
-	got, err := o.collect(in)
+	got, err := o.collect(in, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,24 +157,24 @@ func TestADesignKeepsOnlyThePersonsImages(t *testing.T) {
 	foreign, _ := reportdesign.NormalizeLogo(pngOf(t, 20, 20, color.NRGBA{R: 255, A: 255}, false))
 	d.Logo = foreign
 	writeReport(t, o.OutDir, reportdesigner.DesignFile, d.Canonical())
-	if _, err := o.collect(in); err == nil || !strings.Contains(err.Error(), "neither yours nor the design's") {
+	if _, err := o.collect(in, nil); err == nil || !strings.Contains(err.Error(), "neither yours nor the design's") {
 		t.Errorf("a foreign logo: %v", err)
 	}
 	// One that copies the person's own is kept, as the person's.
 	d.Logo = in.logo
 	writeReport(t, o.OutDir, reportdesigner.DesignFile, d.Canonical())
-	if _, err := o.collect(in); err != nil {
+	if _, err := o.collect(in, nil); err != nil {
 		t.Errorf("the person's own logo: %v", err)
 	}
 	// An invalid document, and none at all, are the model's failures.
 	writeReport(t, o.OutDir, reportdesigner.DesignFile, []byte(`{"agentryTheme": 3, "accent": "#ffff00"}`))
-	if _, err := o.collect(in); err == nil || !strings.Contains(err.Error(), "not valid") {
+	if _, err := o.collect(in, nil); err == nil || !strings.Contains(err.Error(), "not valid") {
 		t.Errorf("an invalid design: %v", err)
 	}
 	if err := os.Remove(filepath.Join(o.OutDir, "reports", reportdesigner.DesignFile)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := o.collect(in); err != ErrNoDesign {
+	if _, err := o.collect(in, nil); err != ErrNoDesign {
 		t.Errorf("no design: %v", err)
 	}
 }
@@ -217,7 +217,7 @@ func TestACoverMakesANewDesign(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(o.OutDir, "receipts", engine.PreviewLedgerFile), ledger.Bytes(), 0o644); err != nil { //nolint:gosec // test output
 		t.Fatal(err)
 	}
-	got, err := o.collect(in)
+	got, err := o.collect(in, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,17 +236,17 @@ func TestACoverMakesANewDesign(t *testing.T) {
 	}
 	// Code changed after the last render keeps no thumbnail.
 	writeReport(t, o.OutDir, reportdesigner.CoverFile, append(src, '\n'))
-	if got, err := o.collect(in); err != nil || got.thumbnail {
+	if got, err := o.collect(in, nil); err != nil || got.thumbnail {
 		t.Errorf("a cover changed after its last render kept a thumbnail (%v)", err)
 	}
 	// No name: the design's name and what the cover is.
 	writeReport(t, o.OutDir, reportdesigner.NotesFile, []byte(`{"looked": true}`))
-	if got, _ := o.collect(in); got.design.Name != "Boardroom, custom cover" {
+	if got, _ := o.collect(in, nil); got.design.Name != "Boardroom, custom cover" {
 		t.Errorf("unnamed cover's design %q", got.design.Name)
 	}
 	// Code over the cap is refused.
 	writeReport(t, o.OutDir, reportdesigner.CoverFile, bytes.Repeat([]byte("x"), reportdesign.MaxCoverSourceBytes+1))
-	if _, err := o.collect(in); err == nil {
+	if _, err := o.collect(in, nil); err == nil {
 		t.Error("a cover over the cap was kept")
 	}
 }

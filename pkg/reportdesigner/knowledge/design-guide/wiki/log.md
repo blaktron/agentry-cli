@@ -7,3 +7,10 @@ Append-only: every change to the design guide, with what it took in. Written by 
 The guide's first pages: where to start, the design document and its closed lists (generated from the design package), choosing a look, a custom cover's conventions, a short course in cover design, a worked example that the test suite compiles, and the checks before finishing.
 
 - wrote: guide/start-here.md, design/the-document.md, design/the-lists.md, design/choosing-a-look.md, cover/conventions.md, cover/a-short-course.md, cover/worked-example.md, review/before-you-finish.md
+
+## [2026-11-06] ingest | designing from a document, document_pages and crop_logo (Report Designer 1.1.0)
+
+A Design run can be given one document, a PDF or a Word document, to build the design around. A new page says what the document tools show, what to look at, and how the palette, faces, header and footer, cover style, brand block and logo come from the document.
+
+- wrote: design/from-a-document.md
+- updated: guide/start-here.md, review/before-you-finish.md

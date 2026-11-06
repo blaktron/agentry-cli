@@ -41,6 +41,9 @@ import (
 // Dockerfile names the Alpine packages); this CLI pins that image by digest.
 type Tool struct {
 	Command string
+	// Pages says the command is the pages role's, which reads the Report
+	// Designer's document, and no decoder: the decode line leaves it out.
+	Pages bool
 }
 
 // Catalogue is every external decoder, named once for every caller. It is
@@ -50,6 +53,11 @@ type Tool struct {
 var Catalogue = []Tool{
 	{Command: "pandoc"},
 	{Command: "pdftotext"},
+	// The Report Designer's document: poppler's page renderer, its page
+	// count and sizes, and the fonts a page uses (the pages role).
+	{Command: "pdftoppm", Pages: true},
+	{Command: "pdfinfo", Pages: true},
+	{Command: "pdffonts", Pages: true},
 	{Command: "tesseract"},
 	{Command: "java"},
 	{Command: "file"},
@@ -1167,6 +1175,9 @@ func (r *Result) LineAs(when string) string {
 	sort.Strings(pkgs)
 	commands := make([]string, 0, len(Catalogue))
 	for _, t := range Catalogue {
+		if t.Pages {
+			continue
+		}
 		commands = append(commands, t.Command)
 	}
 	sort.Strings(commands)

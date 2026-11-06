@@ -704,6 +704,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	env.PDFs = pdfRecord(rd)
 	env.FetchSaves = fetchSavesRecord(rd)
 	env.Previews = previewCount(rd)
+	env.DocumentPages = documentPageCount(rd)
 
 	if outcome.err != nil {
 		env.Result = receipt.TextResult(outcome.lastText)

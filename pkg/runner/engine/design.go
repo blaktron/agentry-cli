@@ -20,6 +20,10 @@ import (
 const (
 	PreviewLedgerFile = "previews.ndjson"
 	PreviewsDir       = "previews"
+	// DocumentLedgerFile records each image document_pages showed of the
+	// person's document and each crop crop_logo took, from which the CLI
+	// takes the logo it keeps.
+	DocumentLedgerFile = "document.ndjson"
 )
 
 // grantDesign stamps the Report Designer's ledger and previews folder into
@@ -47,6 +51,7 @@ func grantDesign(gatewayDir string, rd *runDirs) error {
 	}
 	ts.Design.Ledger = path.Join(spec.OutMount, "receipts", PreviewLedgerFile)
 	ts.Design.Previews = path.Join(spec.OutMount, "receipts", PreviewsDir)
+	ts.Design.DocumentLedger = path.Join(spec.OutMount, "receipts", DocumentLedgerFile)
 	out, err := json.MarshalIndent(&ts, "", "  ")
 	if err != nil {
 		return err
@@ -57,16 +62,22 @@ func grantDesign(gatewayDir string, rd *runDirs) error {
 // ReadPreviewLedger reads a preview ledger, skipping a line that does not
 // decode.
 func ReadPreviewLedger(p string) ([]toolsrv.PreviewEntry, error) {
+	return readLedger[toolsrv.PreviewEntry](p)
+}
+
+// readLedger reads an NDJSON ledger the tools container appended to,
+// skipping a line that does not decode as T.
+func readLedger[T any](p string) ([]T, error) {
 	f, err := os.Open(p) //nolint:gosec // the run's own ledger
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
-	var out []toolsrv.PreviewEntry
+	var out []T
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 64<<10), 1<<20)
 	for sc.Scan() {
-		var e toolsrv.PreviewEntry
+		var e T
 		if json.Unmarshal(sc.Bytes(), &e) == nil {
 			out = append(out, e)
 		}
@@ -84,4 +95,29 @@ func previewCount(rd *runDirs) int {
 		return 0
 	}
 	return min(len(entries), toolsrv.MaxPreviews)
+}
+
+// ReadDocumentLedger reads a document ledger, skipping a line that does
+// not decode.
+func ReadDocumentLedger(p string) ([]toolsrv.DocumentEntry, error) {
+	return readLedger[toolsrv.DocumentEntry](p)
+}
+
+// documentPageCount is the receipt's documentPages: how many images of
+// the person's document document_pages showed the model.
+func documentPageCount(rd *runDirs) int {
+	if rd.documentLedger == "" {
+		return 0
+	}
+	entries, err := ReadDocumentLedger(rd.documentLedger)
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, e := range entries {
+		if e.Tool == toolsrv.ToolDocumentPages {
+			n++
+		}
+	}
+	return min(n, toolsrv.MaxDocumentViews)
 }

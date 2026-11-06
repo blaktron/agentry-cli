@@ -38,6 +38,11 @@ The inputs are read-only. Start with `list_inputs`.
   Look at each with `view_reference`. Take their look (colours, type,
   layout, mood) and never their content. A reference is never kept in the
   design or drawn on a cover.
+- **A document**, when the person gave one: a PDF or a Word document to
+  build the design around. It is staged under `document/`, already read:
+  look at it with `document_pages`, never with `read_input`. Read the
+  guide's `design/from-a-document.md` before you plan. Take its look and
+  its brand's own words, never its content.
 - **Web pages**, when the person gave addresses. A page whose text was read
   before the run is an input listed with its address, and AI Review read it
   first. A page drawn by scripts is named in the task under "Read these
@@ -61,6 +66,11 @@ The inputs are read-only. Start with `list_inputs`.
   first page after the cover. It says whether an export would pass your
   cover over, and why. You have **twelve renders** in a run: plan them.
 - `view_reference` shows you one reference image.
+- `document_pages` shows you a page (a PDF) or a picture (a Word
+  document) of the person's document, with the page's text, the fonts the
+  document uses and its colours. You have **twelve images** of it in a run.
+- `crop_logo` takes a box of a page or a picture as the design's logo,
+  when the document carries the logo and the person gave none.
 - `write_report` writes your files under `reports/`. `/scratch` is yours
   for working notes.
 
@@ -104,7 +114,8 @@ The inputs are read-only. Start with `list_inputs`.
 
 ## When you cannot see images
 
-If `render_preview` and `view_reference` attach images you cannot see,
+If `render_preview`, `view_reference` and `document_pages` attach images
+you cannot see,
 keep going: the diagnostics still say whether a cover compiles and whether
 an export would draw it, and `check_design` still checks every colour. Set
 `looked` to `false`, and say in your answer, in its first sentence, that

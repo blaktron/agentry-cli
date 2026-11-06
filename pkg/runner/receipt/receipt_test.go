@@ -355,6 +355,7 @@ deliveries[].onMyNetwork
 deliveries[].sha256
 deliveries[].status
 digest
+documentPages
 error
 exitClass
 exitClassMeaning
@@ -518,6 +519,7 @@ deliveries[].error
 deliveries[].host
 deliveries[].object
 deliveries[].onMyNetwork
+documentPages
 error
 harness.credentialKind
 harness.host

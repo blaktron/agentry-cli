@@ -19,8 +19,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"image"
-	"image/color"
 	"image/png"
 	"io"
 	"io/fs"
@@ -33,6 +31,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/plainpath"
 	"github.com/blaktron/agentry-cli/pkg/reportdesigner"
+	"github.com/blaktron/agentry-cli/pkg/runner/decode"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/inference"
@@ -42,6 +41,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/sources"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	voicebuild "github.com/blaktron/agentry-cli/pkg/voice/build"
+	"github.com/blaktron/agentry-cli/runnerimage/docpages"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 	"github.com/blaktron/agentry-cli/runnerimage/webscan"
 )
@@ -82,8 +82,12 @@ type Options struct {
 	Images [][]byte
 	// URLs are a Design run's web addresses (voicebuild.ParseURLs), read by
 	// AI Review before the run: they take Review and Web.
-	URLs   []*sources.Source
-	Review webscan.Scanner
+	URLs []*sources.Source
+	// Document is the one document a Design run builds its design
+	// around, a PDF or a Word document; it goes through the decode step as
+	// any input does.
+	Document *Document
+	Review   webscan.Scanner
 	// Web is the web tools' configuration with the same scanner, for a page
 	// whose text is drawn by scripts.
 	Web *engine.WebRun
@@ -120,6 +124,10 @@ type Result struct {
 	Previews int
 	// Dir is the folder the result was written to: design/ under OutDir.
 	Dir string
+	// DocumentPages is how many images of the document the run looked
+	// at; LogoFromDocument says the design's logo is a crop of it.
+	DocumentPages    int
+	LogoFromDocument bool
 	// Pages are the web addresses given, and what became of each.
 	Pages []*voicebuild.Page
 }
@@ -158,6 +166,16 @@ func Run(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 	res := &Result{}
 	pkg, web := localrun.ReportDesigner().WithoutWebTools(), (*engine.WebRun)(nil)
 	var enforced map[string]string
+	var doc *readDocument
+	var decoded *decode.Result
+	if o.Document != nil {
+		if doc, err = o.readTheDocument(ctx, d, work, logw); err != nil {
+			return res, err
+		}
+		inputs = append(inputs, doc.dir)
+		decoded = doc.decoded
+		enforced = map[string]string{"design.document": doc.pages.PagesLine()}
+	}
 	var pages *voicebuild.PagesResult
 	if len(o.URLs) > 0 {
 		pages, err = voicebuild.ReadPages(ctx, d, voicebuild.PagesOptions{
@@ -179,20 +197,27 @@ func Run(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 			pkg, web = localrun.ReportDesigner(), &w
 		}
 		if pages.Decoded != nil {
-			enforced = voicebuild.PageLines(pages.Pages, pages.Decoded.Report.Files, "the Report Designer")
+			lines := voicebuild.PageLines(pages.Pages, pages.Decoded.Report.Files, "the Report Designer")
+			if enforced == nil {
+				enforced = lines
+			} else {
+				for k, v := range lines {
+					enforced[k] = v
+				}
+			}
 		}
 	}
 
 	env, runErr := localrun.Run{
 		Builtin: pkg, Home: o.Home, Policy: o.Policy, PolicySHA: o.PolicySHA, PolicyFile: o.PolicyFile, Build: o.Build,
-		Task: strings.NewReader(o.task(in, pages)), Inputs: inputs, Enforced: enforced, OutDir: o.OutDir, Budgets: o.Budgets,
+		Task: strings.NewReader(o.task(in, pages, doc)), Inputs: inputs, Decoded: decoded, Enforced: enforced, OutDir: o.OutDir, Budgets: o.Budgets,
 		RunID: o.RunID, Stderr: logw, OnUsage: o.OnUsage, Web: web, Credits: o.Credits,
 	}.Execute(ctx, d)
 	res.Envelope = env
 	if env != nil {
-		res.Previews = env.Previews
+		res.Previews, res.DocumentPages = env.Previews, env.DocumentPages
 	}
-	made, err := o.collect(in)
+	made, err := o.collect(in, doc)
 	if err != nil {
 		if runErr != nil {
 			return res, runErr
@@ -202,7 +227,7 @@ func Run(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 	if runErr != nil {
 		_, _ = fmt.Fprintf(logw, "warning: the Report Designer stopped before it finished (%v); it had written its files, which are kept\n", runErr)
 	}
-	res.Design, res.Looked, res.Thumbnail = made.design, made.looked, made.thumbnail
+	res.Design, res.Looked, res.Thumbnail, res.LogoFromDocument = made.design, made.looked, made.thumbnail, made.logoFromDocument
 	if res.Dir, err = writeResult(o.OutDir, made.design); err != nil {
 		return res, engine.Classify(engine.ExitCLI, err)
 	}
@@ -230,12 +255,17 @@ func (o Options) check() error {
 		if len(o.URLs) > 0 && (o.Review == nil || o.Web == nil || (o.Web.JevKey == "" && o.Web.JobToken == "")) {
 			return voicebuild.ErrNoReviewKey
 		}
+		if o.Document != nil {
+			if _, err := DocumentKind(o.Document.Name, o.Document.Data); err != nil {
+				return err
+			}
+		}
 	case Cover:
 		if o.From == nil {
 			return errors.New("a cover is written for one of your designs (--design)")
 		}
-		if o.Logo != nil || len(o.URLs) > 0 {
-			return errors.New("a cover takes the design's own logo and no web addresses")
+		if o.Logo != nil || len(o.URLs) > 0 || o.Document != nil {
+			return errors.New("a cover takes the design's own logo, no web addresses and no document")
 		}
 		if n := len(o.From.CustomCover.Images) + len(o.Images); n > reportdesign.MaxCoverImages {
 			return fmt.Errorf("a cover draws at most %d images, and the design's cover already has %d", reportdesign.MaxCoverImages, len(o.From.CustomCover.Images))
@@ -399,7 +429,7 @@ func (in staged) stage(dir string) ([]string, error) {
 }
 
 // task is the Report Designer's task: the job, what it was given, the brief.
-func (o Options) task(in staged, pages *voicebuild.PagesResult) string {
+func (o Options) task(in staged, pages *voicebuild.PagesResult, doc *readDocument) string {
 	var b strings.Builder
 	switch o.Job {
 	case Design:
@@ -431,6 +461,9 @@ func (o Options) task(in staged, pages *voicebuild.PagesResult) string {
 			b.WriteString(toolsrv.DesignReferencesDir + "/" + imageFile(i+1, img))
 		}
 		b.WriteString("). Take their look, never their content.\n")
+	}
+	if doc != nil {
+		documentTask(&b, doc)
 	}
 	if pages != nil {
 		if len(pages.Docs) > 0 {
@@ -464,9 +497,10 @@ func (o Options) task(in staged, pages *voicebuild.PagesResult) string {
 
 // made is what collect kept.
 type made struct {
-	design    reportdesign.Design
-	looked    bool
-	thumbnail bool
+	design           reportdesign.Design
+	looked           bool
+	thumbnail        bool
+	logoFromDocument bool
 }
 
 // maxPreviewBytes caps a render read for the thumbnail: a page at the
@@ -509,7 +543,7 @@ func readReport(outDir, name string, limit int64) ([]byte, error) {
 
 // collect holds what the run wrote to the core's rules and assembles the
 // design it made, with the images it may carry.
-func (o Options) collect(in staged) (made, error) {
+func (o Options) collect(in staged, doc *readDocument) (made, error) {
 	var out made
 	notesRaw, err := readReport(o.OutDir, reportdesigner.NotesFile, maxNotesBytes)
 	if err != nil {
@@ -538,8 +572,14 @@ func (o Options) collect(in staged) (made, error) {
 		if err := ownImagesOnly(d, in); err != nil {
 			return out, err
 		}
-		// Its images are the person's and the design's, never the model's.
+		// Its images are the person's and the design's, never the model's;
+		// a logo taken from the person's document is cropped again here.
 		d.Logo, d.CoverImage, d.CustomCover = in.logo, in.coverImage, reportdesign.CustomCover{}
+		if logo, ok, err := o.documentLogo(doc); err != nil {
+			return out, err
+		} else if ok {
+			d.Logo, out.logoFromDocument = logo, true
+		}
 		if in.from != nil && d.Cover.Style == "custom" && !in.from.CustomCover.IsZero() {
 			cc, err := reencodeCover(in.from.CustomCover)
 			if err != nil {
@@ -730,29 +770,9 @@ func fitThumbnail(b []byte) (reportdesign.Image, bool) {
 		if t, err := reportdesign.NormalizeThumbnail(buf.Bytes()); err == nil {
 			return t, true
 		}
-		img = half(img)
+		img = docpages.Half(img)
 	}
 	return reportdesign.Image{}, false
-}
-
-// half is img at half its width and height, each pixel the mean of four.
-func half(img image.Image) image.Image {
-	b := img.Bounds()
-	w, h := max(b.Dx()/2, 1), max(b.Dy()/2, 1)
-	out := image.NewNRGBA(image.Rect(0, 0, w, h))
-	for y := range h {
-		for x := range w {
-			var r, g, bl, a uint32
-			for dy := range 2 {
-				for dx := range 2 {
-					cr, cg, cb, ca := img.At(b.Min.X+2*x+dx, b.Min.Y+2*y+dy).RGBA()
-					r, g, bl, a = r+cr, g+cg, bl+cb, a+ca
-				}
-			}
-			out.Set(x, y, color.RGBA64{R: uint16(r / 4), G: uint16(g / 4), B: uint16(bl / 4), A: uint16(a / 4)}) //nolint:gosec // a mean of 16-bit values
-		}
-	}
-	return out
 }
 
 // writeResult writes the design under outDir/design: design.json, the
