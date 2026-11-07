@@ -1,6 +1,12 @@
 {
   "versions": [
     {
+      "version": "0.7.32",
+      "highlights": [
+        "A run that used an application on your computer and then failed still counts, in its receipt, the calls that crossed."
+      ]
+    },
+    {
       "version": "0.7.31",
       "highlights": [
         "A run that does computer use keeps no screenshot in its receipts, its event log included."
