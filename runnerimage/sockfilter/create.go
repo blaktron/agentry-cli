@@ -408,7 +408,16 @@ func (f *Filter) containerCreate(ctx context.Context, body []byte) (any, error) 
 				return nil, err
 			}
 		}
-		if f.cfg.Runtime != "" {
+		switch {
+		case desktopLink:
+			// The desktop link opens the relay's socket in the run's
+			// volume: the registration that opens host sockets, or the
+			// daemon's default, never a sandbox that cannot (desktoplink.go).
+			if f.cfg.DesktopRuntime != "" {
+				hc.Runtime = f.cfg.DesktopRuntime
+				under = f.cfg.DesktopRuntime
+			}
+		case f.cfg.Runtime != "":
 			hc.Runtime = f.cfg.Runtime
 			under = f.cfg.Runtime
 		}

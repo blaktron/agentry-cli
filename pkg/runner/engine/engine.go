@@ -573,9 +573,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	if err := prepareBrowser(ctx, d, p, rd, td, env, secrets); err != nil {
 		return fail(env, redact, err)
 	}
-	if err := prepareDesktop(p, rd, td, env, runID); err != nil {
-		return fail(env, redact, err)
-	}
+	recordDesktop(rd, td, env)
 	if err := prepareRender(ctx, d, p, rd, td, runID, env); err != nil {
 		return fail(env, redact, err)
 	}

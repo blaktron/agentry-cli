@@ -454,6 +454,9 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	if err := preparePersistentFolders(p, rd); err != nil {
 		return nil, err
 	}
+	if err := prepareDesktopLink(p, rd, runID); err != nil {
+		return nil, err
+	}
 	rd.runID, rd.web, rd.anyEgress = runID, p.Plan.Capabilities.WebTools, p.Plan.Capabilities.EgressMode == "all"
 	rd.coderEgress = p.Plan.Capabilities.Coder != nil && p.Plan.Capabilities.Coder.OpenEgress
 	rd.targets = targetHostsOf(p)

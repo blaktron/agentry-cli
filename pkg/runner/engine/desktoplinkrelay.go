@@ -46,6 +46,9 @@ func startDesktopLinkRelay(ctx context.Context, d dockerx.Client, p Params, rd *
 	if r == nil {
 		return nil
 	}
+	if err := desktopRuntimeCheck(p, rd.engine); err != nil {
+		return err
+	}
 	if err := d.VolumeCreate(ctx, r.volume, runLabels(runID)); err != nil {
 		return Classify(ExitGateway, fmt.Errorf("create the desktop link's relay volume: %w", err))
 	}
@@ -80,9 +83,11 @@ func startDesktopLinkRelay(ctx context.Context, d dockerx.Client, p Params, rd *
 	if chown {
 		rs.CapAdd = []string{"CHOWN"}
 	}
-	// Under the policy's runtime like the link entries it serves: the
-	// transport needs no host socket, so a sandboxed runtime carries it.
-	rs.Runtime = p.Plan.Runtime()
+	// On the daemon's default runtime, never the policy's: the relay makes
+	// the socket in the volume, and a socket a gVisor sandbox makes on a
+	// host-backed folder stays inside that sandbox, where no other
+	// container finds it. The entries that open it run under the policy's
+	// gatewayRuntime, the registration that opens host sockets.
 	logf, err := os.OpenFile(filepath.Join(rd.receiptsDir, DesktopLinkRelayLog), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644) //nolint:gosec // a receipt; no secret in it
 	if err != nil {
 		return Classify(ExitCLI, err)
@@ -126,6 +131,26 @@ func startDesktopLinkRelay(ctx context.Context, d dockerx.Client, p Params, rd *
 	if err := b.start(rctx, outR, relayReadyWait); err != nil {
 		logs, _ := d.Logs(ctx, name, 20)
 		return Classify(ExitGateway, fmt.Errorf("the desktop link's relay did not start: %w%s", err, relayLogTail(logs)))
+	}
+	return nil
+}
+
+// desktopRuntimeCheck refuses a run whose policy's runtime would leave the
+// link entries unable to open the relay's socket: the socket lives in a
+// host-backed volume, which gVisor opens only under a registration with
+// --host-uds=open, the policy's gatewayRuntime; and on podman every
+// container the gateway launches takes docker.runtime itself, since podman
+// drops the runtime a create names.
+func desktopRuntimeCheck(p Params, eng dockerx.Engine) error {
+	rt := p.Plan.Runtime()
+	if rt == "" {
+		return nil
+	}
+	if eng.Kind == dockerx.KindPodman {
+		return Classify(ExitPolicy, fmt.Errorf("the desktop link's entries open a socket in the run's volume, which a sandbox under %s cannot, and on podman every container the gateway launches runs under docker.runtime: run this QuickAgent on Docker Engine, or without docker.runtime", rt))
+	}
+	if p.Plan.GatewayRuntime() == "" {
+		return Classify(ExitPolicy, fmt.Errorf("the desktop link's entries open a socket in the run's volume, which a sandbox under %s cannot: set docker.gatewayRuntime (gVisor registered with --host-uds=open) beside docker.runtime, as the gateway needs for the run's docker filter", rt))
 	}
 	return nil
 }

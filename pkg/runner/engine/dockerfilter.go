@@ -268,6 +268,7 @@ func filterConfig(rd *runDirs, runID string, gwEnv map[string]string, lim policy
 		DesktopImage:       desktopImageOf(plan, rd),
 		DesktopCmds:        desktopCmdsOf(plan, rd),
 		DesktopUser:        rd.personUser(),
+		DesktopRuntime:     plan.GatewayRuntime(),
 		BrowserImage:       browserImageOf(plan),
 		BrowserUser:        rd.personUser(),
 		BrowserTmpfs:       browserTmpfsOf(plan),

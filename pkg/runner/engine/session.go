@@ -275,9 +275,7 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	if err := prepareTargetHosts(ctx, d, p, rd, td, env); err != nil {
 		return fail(err)
 	}
-	if err := prepareDesktop(p, rd, td, env, runID); err != nil {
-		return fail(err)
-	}
+	recordDesktop(rd, td, env)
 	// The optional secrets it goes without, before any replacer is built:
 	// the System Prompt names them (spec.PHSecretsAbsent), and so does the
 	// receipt.

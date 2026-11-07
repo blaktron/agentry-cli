@@ -140,22 +140,24 @@ func desktopRig(t *testing.T) (d *dockerx.Fake, p Params, rd *runDirs, td *teard
 	}}
 	td = &teardown{d: d}
 	env = &receipt.Envelope{CapabilitiesEnforced: map[string]string{}}
-	if err := prepareDesktop(p, rd, td, env, "R"); err != nil {
+	if err := prepareDesktopLink(p, rd, "R"); err != nil {
 		t.Fatal(err)
 	}
+	recordDesktop(rd, td, env)
 	return d, p, rd, td, env, s, relaySock
 }
 
 // A bound run's call reaches the stand-in link service and its answer the
 // agent: the relay runs on no network with a read-only root, holding the
-// run's relay volume alone, under the policy's runtime, attached to this
+// run's relay volume alone, on the daemon's default runtime whatever the
+// policy's (the socket it makes must land on the volume), attached to this
 // process by its stdio; the binding it is handed lists the catalogue's tools
 // alone; the call crosses with the run token and is kept as a receipt line
 // with its class; teardown unbinds and removes the container before the
 // volume.
 func TestTheDesktopLinkCarriesACallToTheLinkService(t *testing.T) {
 	d, p, rd, td, env, s, relaySock := desktopRig(t)
-	p.Plan.Docker = &spec.DockerSpec{Runtime: "runsc"}
+	p.Plan.Docker = &spec.DockerSpec{Runtime: "runsc", GatewayRuntime: "runsc-uds"}
 	if err := startDesktopLinkRelay(context.Background(), d, p, rd, td, "R"); err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +170,7 @@ func TestTheDesktopLinkCarriesACallToTheLinkService(t *testing.T) {
 	if rs.Name == "" {
 		t.Fatalf("no relay container: %+v", d.Calls)
 	}
-	if rs.Network != "none" || rs.User != "0" || !rs.ReadOnly || !rs.Interactive || rs.Image != "agentry-runner:test" || rs.Runtime != "runsc" ||
+	if rs.Network != "none" || rs.User != "0" || !rs.ReadOnly || !rs.Interactive || rs.Image != "agentry-runner:test" || rs.Runtime != "" ||
 		!slices.Equal(rs.CapDrop, []string{"ALL"}) || !slices.Equal(rs.CapAdd, []string{"CHOWN"}) {
 		t.Errorf("the relay's posture: %+v", rs)
 	}
@@ -402,12 +404,31 @@ func TestTheDesktopLinkHasNoNetwork(t *testing.T) {
 	if got := (&runDirs{}).replacer().Replace(spec.PHDesktopMount); got != "" {
 		t.Errorf("with no desktop link, the mount is %q", got)
 	}
+	p.Plan.Docker = &spec.DockerSpec{Runtime: "runsc", GatewayRuntime: "runsc-uds"}
 	cfg, err := filterConfig(rd, "R", map[string]string{}, p.limits(), p.Plan, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.DesktopVolume != desktopVolume("R") || cfg.DesktopImage != "agentry-runner:test" || len(cfg.DesktopCmds) != 1 || !slices.Equal(cfg.DesktopCmds[0], []string{"desktoplink", "--server", "blender"}) {
-		t.Errorf("the filter's desktop link: %q %q %v", cfg.DesktopVolume, cfg.DesktopImage, cfg.DesktopCmds)
+	if cfg.DesktopVolume != desktopVolume("R") || cfg.DesktopImage != "agentry-runner:test" || len(cfg.DesktopCmds) != 1 || !slices.Equal(cfg.DesktopCmds[0], []string{"desktoplink", "--server", "blender"}) || cfg.DesktopRuntime != "runsc-uds" {
+		t.Errorf("the filter's desktop link: %q %q %v %q", cfg.DesktopVolume, cfg.DesktopImage, cfg.DesktopCmds, cfg.DesktopRuntime)
+	}
+	// The entries open the relay's socket in the volume, a host socket to a
+	// sandbox: a policy runtime with no gatewayRuntime, or podman under a
+	// runtime, is refused before the relay starts; no runtime at all is fine.
+	if err := desktopRuntimeCheck(Params{Plan: &spec.Plan{Docker: &spec.DockerSpec{Runtime: "runsc"}}}, dockerx.Engine{}); err == nil || !strings.Contains(err.Error(), "docker.gatewayRuntime") {
+		t.Errorf("a runtime without gatewayRuntime: %v", err)
+	}
+	if err := desktopRuntimeCheck(Params{Plan: &spec.Plan{Docker: &spec.DockerSpec{Runtime: "runsc", GatewayRuntime: "runsc-uds"}}}, dockerx.Engine{Kind: dockerx.KindPodman}); err == nil || !strings.Contains(err.Error(), "podman") {
+		t.Errorf("podman under a runtime: %v", err)
+	}
+	if err := desktopRuntimeCheck(Params{Plan: &spec.Plan{Docker: &spec.DockerSpec{Runtime: "runsc", GatewayRuntime: "runsc-uds"}}}, dockerx.Engine{}); err != nil {
+		t.Errorf("docker with both: %v", err)
+	}
+	if err := desktopRuntimeCheck(Params{Plan: &spec.Plan{}}, dockerx.Engine{Kind: dockerx.KindPodman}); err != nil {
+		t.Errorf("no runtime: %v", err)
+	}
+	if line := runtimeLine(p); !strings.Contains(line, "the desktop link's entries") || !strings.Contains(line, "the relay that makes that socket runs on the daemon's default runtime") {
+		t.Errorf("the runtime line: %q", line)
 	}
 	none, err := filterConfig(&runDirs{}, "R", map[string]string{}, p.limits(), &spec.Plan{}, nil)
 	if err != nil || none.DesktopVolume != "" || none.DesktopImage != "" || none.DesktopCmds != nil {

@@ -203,6 +203,12 @@ type Config struct {
 	DesktopImage  string
 	DesktopCmds   [][]string
 	DesktopUser   string
+	// DesktopRuntime is the runtime a desktop link entry is created with
+	// in place of Runtime: the policy's gatewayRuntime, a gVisor
+	// registration with --host-uds=open, since the entry opens the relay's
+	// socket in the run's volume, a host socket to a sandbox. Empty leaves
+	// the entry on the daemon's default, whatever Runtime is.
+	DesktopRuntime string
 	// BrowserImage names the run's browser server: the
 	// image a create must be of, by id (resolved when first needed, as
 	// ToolsImage is), to be held as the browser class: every capability

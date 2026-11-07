@@ -155,12 +155,12 @@ type desktopCounts struct {
 // desktopVolume is the volume the relay serves the link's socket in.
 func desktopVolume(runID string) string { return "agentry-" + runID + "-desktop" }
 
-// prepareDesktop readies the run's desktop link from its binding: the
-// relay volume's name, each server's tools narrowed to the plan's allowlist
-// (a tool the link service listed that the catalogue does not give is left
-// out, so the link lists what the gateway allows), and the receipt's lines
-// before any call. Teardown unbinds and writes the final lines.
-func prepareDesktop(p Params, rd *runDirs, td *teardown, env *receipt.Envelope, runID string) error {
+// prepareDesktopLink readies the run's desktop link from its binding before
+// the gateway's files are rendered, since the link entries' mount names the
+// relay volume: the volume's name, and each server's tools narrowed to the
+// plan's allowlist (a tool the link service listed that the catalogue does
+// not give is left out, so the link lists what the gateway allows).
+func prepareDesktopLink(p Params, rd *runDirs, runID string) error {
 	d := p.Plan.Capabilities.Desktop
 	if d == nil {
 		return nil
@@ -182,10 +182,22 @@ func prepareDesktop(p Params, rd *runDirs, td *teardown, env *receipt.Envelope, 
 		}
 		r.servers = append(r.servers, desktopServer{DesktopServerCap: s, tools: tools})
 		r.calls[s.ID] = &desktopCounts{byClass: map[string]int{}, refused: map[string]int{}}
-		env.CapabilitiesEnforced["desktop."+s.ID] = r.receiptLine(s)
+	}
+	rd.desktop = r
+	return nil
+}
+
+// recordDesktop writes the receipt's desktop lines before any call, and has
+// teardown unbind and write the final lines.
+func recordDesktop(rd *runDirs, td *teardown, env *receipt.Envelope) {
+	r := rd.desktop
+	if r == nil {
+		return
+	}
+	for _, s := range r.servers {
+		env.CapabilitiesEnforced["desktop."+s.ID] = r.receiptLine(s.DesktopServerCap)
 	}
 	env.CapabilitiesEnforced["desktop.transport"] = desktopTransportLine(r)
-	rd.desktop = r
 	td.add(func(c context.Context) {
 		for _, s := range r.servers {
 			env.CapabilitiesEnforced["desktop."+s.ID] = r.receiptLine(s.DesktopServerCap)
@@ -194,7 +206,6 @@ func prepareDesktop(p Params, rd *runDirs, td *teardown, env *receipt.Envelope, 
 			_ = r.link.Unbind(c)
 		}
 	})
-	return nil
 }
 
 // bind is the binding the relay writes for the link entries: the token and

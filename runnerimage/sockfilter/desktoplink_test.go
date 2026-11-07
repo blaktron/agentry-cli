@@ -64,6 +64,38 @@ func TestTheDesktopLinkAloneMountsItsRelayVolume(t *testing.T) {
 	withTmpfs["HostConfig"].(map[string]any)["Tmpfs"] = map[string]any{"/tmp": ""}
 	g.refused(t, "the link with a tmpfs", "POST", "/containers/create", withTmpfs, "no tmpfs")
 
+	// Under a policy runtime the link takes the gateway's registration,
+	// which opens host sockets, never the sandbox that cannot; with no such
+	// registration it stays on the daemon's default.
+	g3 := newRig(t, Limits{}, func(c *Config) {
+		c.Runtime, c.DesktopRuntime = "runsc", "runsc-uds"
+		c.ToolsImage, c.ToolsCmd = "agentry-runner:test", []string{"tools", "--spec", target}
+		c.DesktopVolume, c.DesktopImage, c.DesktopCmds, c.DesktopUser = vol, "agentry-runner:test", [][]string{blender}, "1000:1000"
+	})
+	if code, body := g3.do(t, "POST", "/containers/create", create("agentry-runner:test", blender, "1000:1000", vol+":/run/agentry-desktop:rw")); code != http.StatusCreated {
+		t.Fatalf("the link under a runtime: %d %s", code, body)
+	}
+	if hc := createdHostConfig(t, g3); hc["Runtime"] != "runsc-uds" {
+		t.Errorf("the link's runtime is %v, want the gateway's registration", hc["Runtime"])
+	}
+	if code, body := g3.do(t, "POST", "/containers/create", create("agentry-runner:test", []string{"tools", "--spec", target}, "1000:1000")); code != http.StatusCreated {
+		t.Fatalf("the tools server under a runtime: %d %s", code, body)
+	}
+	if hc := createdHostConfig(t, g3); hc["Runtime"] != "runsc" {
+		t.Errorf("the tools server's runtime is %v, want the policy's", hc["Runtime"])
+	}
+	g4 := newRig(t, Limits{}, func(c *Config) {
+		c.Runtime = "runsc"
+		c.ToolsImage, c.ToolsCmd = "agentry-runner:test", []string{"tools", "--spec", target}
+		c.DesktopVolume, c.DesktopImage, c.DesktopCmds, c.DesktopUser = vol, "agentry-runner:test", [][]string{blender}, "1000:1000"
+	})
+	if code, body := g4.do(t, "POST", "/containers/create", create("agentry-runner:test", blender, "1000:1000", vol+":/run/agentry-desktop:rw")); code != http.StatusCreated {
+		t.Fatalf("the link under a runtime with no gateway registration: %d %s", code, body)
+	}
+	if hc := createdHostConfig(t, g4); hc["Runtime"] != nil && hc["Runtime"] != "" {
+		t.Errorf("the link's runtime is %v, want the daemon's default", hc["Runtime"])
+	}
+
 	// With no desktop link, the volume is nobody's.
 	g2 := newRig(t, Limits{}, func(c *Config) {
 		c.ToolsImage, c.ToolsCmd = "agentry-runner:test", []string{"tools", "--spec", target}
