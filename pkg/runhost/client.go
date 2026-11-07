@@ -110,7 +110,8 @@ func (c *Client) Ask(ctx context.Context, verb string, args []string, out func(s
 // Call asks the service verb with args, gives send the session's input
 // (closed when send returns; nil sends nothing), and hands every frame of
 // the answer to each until the exit frame. An error from send or each ends
-// the session.
+// the session, except send's io.EOF: the service ended the session before
+// taking all of its input, and its answer says why.
 func (c *Client) Call(ctx context.Context, verb string, args []string, send func(io.Writer) error, each func(Frame) error) (Answer, error) {
 	s, err := c.ssh.NewSession()
 	if err != nil {
@@ -152,11 +153,14 @@ func (c *Client) Call(ctx context.Context, verb string, args []string, send func
 			_ = s.Close()
 			return Answer{}, ctx.Err()
 		case err := <-sent:
-			if err != nil {
+			sent = nil
+			// io.EOF is the session closed from the far side: the service
+			// answered without reading all of its input (a verb it does not
+			// know, a refusal), and that answer is still to be read.
+			if err != nil && !errors.Is(err, io.EOF) {
 				_ = s.Close()
 				return Answer{}, err
 			}
-			sent = nil
 		case r := <-done:
 			if r.err != nil {
 				// The reader stopped early (each refused a frame, or the

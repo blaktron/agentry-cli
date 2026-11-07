@@ -39,6 +39,8 @@ func (u *updatingRunhost) handlers() map[string]runhost.Handler {
 			return 0, fw.Result(map[string]any{"gvisor": u.gvisor})
 		},
 		"doctor": func(_ context.Context, _ runhost.Request, _ io.Reader, fw *runhost.FrameWriter) (int, error) {
+			u.mu.Lock()
+			defer u.mu.Unlock()
 			if u.doctor != 0 {
 				return u.doctor, errors.New("docker:runtime: runsc is not registered")
 			}
@@ -108,11 +110,18 @@ func TestUpdateBringsARunhostToThisDevicesVersion(t *testing.T) {
 		t.Fatalf("the runhost was sent %+v", u.got)
 	}
 
-	// A second update has nothing to do.
+	// A second update has nothing to send, and only the doctor's verdict is
+	// left: a failing check is what only the admin sign-in can repair.
+	u.mu.Lock()
+	u.doctor = 1
+	u.mu.Unlock()
 	fetched = nil
 	out, err = Update(context.Background(), &rec, l.keys, updateOptions(&fetched))
 	if err != nil || out.Updated || out.GVisorUpdated || len(fetched) != 0 {
 		t.Fatalf("an up-to-date runhost: %+v %v %v", out, err, fetched)
+	}
+	if len(out.NeedsAttention) != 1 || !strings.Contains(out.NeedsAttention[0], "runsc is not registered") || !strings.Contains(out.NeedsAttention[0], "agentry runhost add lab") {
+		t.Fatalf("a runhost whose doctor fails: %+v", out)
 	}
 }
 
@@ -133,22 +142,21 @@ func TestANewerRunhostIsLeftForThisDeviceToCatchUp(t *testing.T) {
 	}
 }
 
+// A runhost whose CLI predates the update verb answers at once and ends the
+// session while the release is still being sent; the device reports what
+// the admin sign-in must do instead of the broken upload. The release is
+// larger than an SSH channel's window, so the upload is always cut short.
 func TestWhatOnlyTheAdminSignInCanDoNeedsAttention(t *testing.T) {
 	u := &updatingRunhost{version: "1.2.3", noVerb: true}
 	l := newLabWith(t, u.handlers())
-	var fetched []string
+	o := updateOptions(new([]string))
+	o.FetchCLI = func(_ context.Context, v, arch string) (*clirelease.Binary, error) {
+		return &clirelease.Binary{Version: v, Arch: arch, Name: clirelease.BinaryName(v, arch), Bytes: make([]byte, 4<<20), Sums: []byte("sums"), Sig: []byte("sig")}, nil
+	}
 	rec := l.rec
-	out, err := Update(context.Background(), &rec, l.keys, updateOptions(&fetched))
+	out, err := Update(context.Background(), &rec, l.keys, o)
 	if err != nil || out.Updated || len(out.NeedsAttention) != 1 || !strings.Contains(out.NeedsAttention[0], "takes no update over the run key") || !strings.Contains(out.NeedsAttention[0], "agentry runhost add lab") {
 		t.Fatalf("a runhost without the update verb: %+v %v", out, err)
-	}
-
-	u = &updatingRunhost{version: "1.2.4", gvisor: setup.GVisorRelease, doctor: 1}
-	l = newLabWith(t, u.handlers())
-	rec = l.rec
-	out, err = Update(context.Background(), &rec, l.keys, updateOptions(&fetched))
-	if err != nil || len(out.NeedsAttention) != 1 || !strings.Contains(out.NeedsAttention[0], "runsc is not registered") {
-		t.Fatalf("a runhost whose doctor fails: %+v %v", out, err)
 	}
 }
 
