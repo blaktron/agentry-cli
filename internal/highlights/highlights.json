@@ -1,6 +1,12 @@
 {
   "versions": [
     {
+      "version": "0.7.31",
+      "highlights": [
+        "A run that does computer use keeps no screenshot in its receipts, its event log included."
+      ]
+    },
+    {
       "version": "0.7.30",
       "highlights": [
         "A QuickAgent can now see and use the windows of an application on your computer, through Agentry Desktop.",

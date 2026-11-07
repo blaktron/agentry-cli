@@ -285,6 +285,7 @@ func runHostHarness(ctx context.Context, p Params, rd *runDirs, token string, re
 	collector := &eventCollector{
 		adapter:    p.Adapter,
 		events:     eventsFile,
+		dropImages: p.Plan.Capabilities.Desktop.HasComputerUse(),
 		tee:        p.Events,
 		onUsage:    p.OnUsage,
 		onEvent:    p.OnEvent,
