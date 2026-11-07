@@ -69,7 +69,20 @@ type BindRequest struct {
 	// Agent names a persistent agent the binding is for, for the link
 	// service's dialogs; empty for a run.
 	Agent string `json:"agent,omitempty"`
+	// ComputerUse is "app" or "screen" where the release declares computer
+	// use, with the computer-use tools the run has: the link service binds
+	// it in that scope or refuses the bind.
+	ComputerUse   string   `json:"computerUse,omitempty"`
+	ComputerTools []string `json:"computerTools,omitempty"`
+	// Reports is the run's folder on this computer for what the person
+	// keeps of computer use: where "Keep what the agent saw" saves each
+	// screenshot. Empty where the run has no such folder.
+	Reports string `json:"reports,omitempty"`
 }
+
+// ReportsFolder is the folder of a run's output, relative to it, where
+// Agentry Desktop keeps the screenshots the person asked it to keep.
+const ReportsFolder = "reports/desktop"
 
 // BindServer is one application server a run uses: its catalogue id and the
 // tools the release allows, in the catalogue's words.
@@ -83,6 +96,37 @@ type BindServer struct {
 type Bound struct {
 	Token   string                        `json:"token"`
 	Servers map[string][]desktoplink.Tool `json:"servers"`
+	// Computer is the computer use the link service bound, where the run
+	// asked for it.
+	Computer *ComputerBound `json:"computer,omitempty"`
+}
+
+// ComputerBound is what the link service bound of computer use, for the
+// run's receipt: the scope it holds, the windows it holds it to, how large
+// a screenshot is, what of the scope the computer's own system enforces,
+// and whether the person keeps what the agent saw.
+type ComputerBound struct {
+	// Scope is "app" or "screen", as bound.
+	Scope string `json:"scope"`
+	// Windows names what the agent may see and use: the applications whose
+	// windows app scope holds it to, or the display.
+	Windows []string `json:"windows,omitempty"`
+	// MaxEdge is the longest edge of a screenshot, in pixels: a larger
+	// window is scaled down to it and positions are of the scaled image.
+	MaxEdge int `json:"maxEdge,omitempty"`
+	// Enforced says, in the link service's words, which of the scope the
+	// computer's own system holds (the capture of one window, the input
+	// held to it) and which only Agentry Desktop's check before each input.
+	Enforced string `json:"enforced"`
+	// Session is the display the link service works on, for example
+	// "Linux, Wayland (KDE Plasma)".
+	Session string `json:"session,omitempty"`
+	// KeepScreenshots says the person's "Keep what the agent saw" is on:
+	// each screenshot is saved in the run's own folder on their computer.
+	KeepScreenshots bool `json:"keepScreenshots,omitempty"`
+	// StopKey is the key that stops the agent's use of the computer, as the
+	// person is told it.
+	StopKey string `json:"stopKey,omitempty"`
 }
 
 // CallRequest is one tool call for a bound server.

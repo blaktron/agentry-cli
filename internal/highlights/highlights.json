@@ -1,6 +1,14 @@
 {
   "versions": [
     {
+      "version": "0.7.30",
+      "highlights": [
+        "A QuickAgent can now see and use the windows of an application on your computer, through Agentry Desktop.",
+        "It works in the windows you allow and nowhere else; a QuickAgent that asks for your whole screen needs --allow-screen.",
+        "The receipt names the scope and what Agentry Desktop says your computer held; the run keeps no screenshot."
+      ]
+    },
+    {
       "version": "0.7.29",
       "highlights": [
         "A long autonomous run keeps its place and its findings in notes.md in its scratch folder.",

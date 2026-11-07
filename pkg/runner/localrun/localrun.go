@@ -377,6 +377,9 @@ type PlanInputs struct {
 	// never reuses an installed plan: a remote runhost whose own setting is
 	// on, the one client of this path that sets it. Nil is the default.
 	Unsafe *unsafeexec.Data
+	// AllowScreen is the run's --allow-screen (compile.Inputs.AllowScreen):
+	// a plan whose screen scope only the flag allowed is reused only with it.
+	AllowScreen bool
 	// CompiledBy is the build identity of the client compiling: a plan
 	// another build compiled is recompiled.
 	CompiledBy string
@@ -444,6 +447,24 @@ func sameServers(planned, given []spec.MCPServerSpec, shares []string) bool {
 		}
 	}
 	return seen == len(shares)
+}
+
+// screenStillAllowed says a plan's screen scope is allowed for this run: a
+// plan whose screen scope only --allow-screen allowed is not reused by a
+// run without the flag, and one Unsafe Mode allowed is never reused here,
+// since this path does not compile Unsafe Mode; either compiles again and
+// is refused.
+func screenStillAllowed(plan *spec.Plan, allowScreen bool) bool {
+	d := plan.Capabilities.Desktop
+	switch {
+	case d == nil:
+		return true
+	case d.ScreenAllowedBy == spec.ScreenByUnsafe:
+		return false
+	case d.ScreenAllowedBy == spec.ScreenByFlag:
+		return allowScreen
+	}
+	return true
 }
 
 // EnsurePlan reuses the installed plan when nothing it depends on changed,
@@ -517,6 +538,7 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 			plan.Capabilities.AppLink == in.AppLink &&
 			reflect.DeepEqual(plan.Capabilities.Coder, in.Coder) &&
 			reflect.DeepEqual(plan.Capabilities.Calendar, in.Calendar) &&
+			screenStillAllowed(plan, in.AllowScreen) &&
 			reflect.DeepEqual(plan.Harness.ContextWindow, spec.ContextWindowOf(in.Policy.Model.ContextWindow, in.ContextWindowSource)) &&
 			sameServers(plan.MCPServers, in.Servers, in.ShareServers) {
 			switch {
@@ -569,6 +591,7 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 		Calendar:     in.Calendar,
 		ShareServers: in.ShareServers,
 		Unsafe:       in.Unsafe,
+		AllowScreen:  in.AllowScreen,
 		IntegrityKey: key,
 	}, planDir)
 	if err != nil {

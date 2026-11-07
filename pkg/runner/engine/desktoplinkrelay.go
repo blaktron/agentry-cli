@@ -265,9 +265,12 @@ func (b *desktopBridge) call(ctx context.Context, server, tool, class string, ar
 	case a.IsError:
 		outcome = "error"
 	}
+	// The window is the call log's, never the agent's.
+	window := a.Window
+	a.Window = ""
 	b.run.count(server, class, outcome)
 	b.logCall(server, desktopLogLine{
-		Time: start.UTC().Format(time.RFC3339), Tool: tool, Class: class,
+		Time: start.UTC().Format(time.RFC3339), Tool: tool, Class: class, Window: b.loggedWindow(window),
 		Arguments: b.loggedArgs(args), Outcome: outcome, DurationMS: now().Sub(start).Milliseconds(),
 	})
 	return a
@@ -303,6 +306,21 @@ func (b *desktopBridge) loggedArgs(args json.RawMessage) json.RawMessage {
 		return quoted
 	}
 	return json.RawMessage(s)
+}
+
+// loggedWindow is a window's name as the receipt keeps it: masked by the
+// run's redactor, since a title can carry what the window shows, and cut.
+func (b *desktopBridge) loggedWindow(w string) string {
+	if w == "" {
+		return ""
+	}
+	if b.rd != nil && b.rd.redact != nil {
+		w = b.rd.redact.String(w)
+	}
+	if len(w) > 256 {
+		w = strings.ToValidUTF8(w[:256], "") + "… (cut)"
+	}
+	return w
 }
 
 // logCall appends one line to the server's receipt.

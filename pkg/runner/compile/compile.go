@@ -138,6 +138,9 @@ type Inputs struct {
 	// when the person has turned Unsafe Mode on — and no policy key or CLI
 	// flag sets it. Nil compiles without Unsafe Mode.
 	Unsafe *unsafeexec.Data
+	// AllowScreen is the run's --allow-screen: a release's computer use in
+	// screen scope compiles without the policy's desktop.allowScreen.
+	AllowScreen bool
 	// AgentFiles grants a persistent built-in its own folders: its data
 	// volume, and the person's share folder when the agent has it on. The
 	// filesystem tools, grep and glob are rooted at spec.AgentRoot then.
@@ -588,7 +591,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	if caps.AppLink != "" {
 		servers = append(servers, applink.ServerName)
 	}
-	for _, id := range caps.Desktop.IDs() {
+	for _, id := range caps.Desktop.EntryIDs() {
 		servers = append(servers, desktoplink.ServerName(id))
 	}
 	sort.Strings(servers)
@@ -1464,7 +1467,7 @@ func renderGatewayFiles(files map[string][]byte, tspec *toolsrv.Spec, caps spec.
 		catalog.set(applink.ServerName, appLinkEntry(caps.AppLink, runnerImage))
 	}
 	if caps.Desktop != nil {
-		for _, s := range caps.Desktop.Servers {
+		for _, s := range caps.Desktop.Entries() {
 			catalog.set(desktoplink.ServerName(s.ID), desktopLinkEntry(s, runnerImage))
 		}
 	}
@@ -1490,7 +1493,7 @@ func renderGatewayFiles(files map[string][]byte, tspec *toolsrv.Spec, caps spec.
 	if caps.AppLink != "" {
 		names = append(names, applink.ServerName)
 	}
-	for _, id := range caps.Desktop.IDs() {
+	for _, id := range caps.Desktop.EntryIDs() {
 		names = append(names, desktoplink.ServerName(id))
 	}
 	sort.Strings(names)
@@ -1532,10 +1535,11 @@ func renderGatewayFiles(files map[string][]byte, tspec *toolsrv.Spec, caps spec.
 		tools.set(applink.ServerName, strListNode(applink.Tools(caps.AppLink)))
 	}
 	// A desktop link entry's allowlist is the catalogue's tools for its
-	// server, narrowed as the release narrows them: the same set the link
-	// lists, so a tool the catalogue does not give is refused twice.
+	// server, narrowed as the release narrows them, or the computer-use
+	// tools: the same set the link lists, so a tool the run is not given is
+	// refused twice.
 	if caps.Desktop != nil {
-		for _, s := range caps.Desktop.Servers {
+		for _, s := range caps.Desktop.Entries() {
 			tools.set(desktoplink.ServerName(s.ID), strListNode(sortedCopy(s.ToolNames())))
 		}
 	}

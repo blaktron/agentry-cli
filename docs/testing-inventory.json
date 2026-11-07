@@ -4409,7 +4409,9 @@
             "TestCompileRendersTheDesktopLink",
             "TestTheDesktopLinkFollowsTheReleasesNarrowing",
             "TestAReleaseWithoutTheDesktopLineHasNoDesktopLink",
-            "TestTheDesktopLineIsRefusedWhereTheRunCannotHoldIt"
+            "TestTheDesktopLineIsRefusedWhereTheRunCannotHoldIt",
+            "TestCompileRendersComputerUse",
+            "TestScreenScopeNeedsAllowScreen"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -6521,7 +6523,10 @@
             "TestTheDesktopLinkHasNoNetwork",
             "TestARunNeedsAgentryDesktop",
             "TestHostedRunsRefuseTheDesktopLine",
-            "TestADeclinedExecCallIsRecordedAsDeclined"
+            "TestADeclinedExecCallIsRecordedAsDeclined",
+            "TestComputerUseCrossesTheLinkAndIsRecorded",
+            "TestScreenshotsAreNotKeptByDefault",
+            "TestComputerUseNeedsItsBinding"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -7615,6 +7620,16 @@
           "dependencyHints": [
             "source/file contract"
           ]
+        },
+        {
+          "path": "pkg/runner/localrun/localrun_screen_test.go",
+          "tests": [
+            "TestAScreenScopeTheFlagAllowedIsReusedOnlyWithIt"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
         },
         {
           "path": "pkg/runner/localrun/localrun_test.go",
@@ -9519,6 +9534,16 @@
           "dependencyHints": []
         },
         {
+          "path": "pkg/runner/spec/desktop_ids_test.go",
+          "tests": [
+            "TestTheComputerUseNamesAgree"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "pkg/runner/spec/imagepin_test.go",
           "tests": [
             "TestImagePinString"
@@ -10319,6 +10344,16 @@
       "behavior": "The desktop link: the MCP servers through which a run reaches the applications installed on the person's own computer, and the relay that carries each call out of the sandbox to Agentry Desktop",
       "disposition": "retain",
       "files": [
+        {
+          "path": "runnerimage/desktoplink/computer_test.go",
+          "tests": [
+            "TestTheComputerUseToolSet"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
         {
           "path": "runnerimage/desktoplink/desktoplink_test.go",
           "tests": [
