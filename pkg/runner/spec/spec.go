@@ -51,6 +51,15 @@ const (
 	// guides both modes and only the run says which one it is. Text, like
 	// PHSecretsAbsent.
 	PHRunMode = "@@RUN_MODE@@"
+	// PHLongTask is the System Prompt's sentences on keeping notes through
+	// a long task: filled in for an autonomous run, empty for an interactive
+	// one, since a release's two plans carry one instruction. Text, like
+	// PHRunMode.
+	PHLongTask = "@@RUN_LONG_TASK@@"
+	// PHNotesFile is the notes file a harness's compaction summary points the
+	// agent back to (docker-agent's compaction_notes): the long task's notes
+	// file in an autonomous run, empty in an interactive one. Text.
+	PHNotesFile = "@@RUN_NOTES_FILE@@"
 	// PHInputs is the host path of the per-run read-only inputs dir —
 	// operator-provided files, mounted :ro into the tools container, empty when
 	// the run got no --file.
