@@ -1354,6 +1354,7 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	collector := &eventCollector{
 		adapter:    p.Adapter,
 		events:     eventsFile,
+		dropImages: p.Plan.Capabilities.Desktop.HasComputerUse(),
 		tee:        p.Events,
 		onUsage:    p.OnUsage,
 		onEvent:    p.OnEvent,
@@ -1567,6 +1568,9 @@ func stripJSONFences(s string) string {
 type eventCollector struct {
 	adapter adapter.Adapter
 	events  io.Writer
+	// dropImages drops the data of every image in an event line before it
+	// is kept or teed: a run with computer use keeps no screenshot.
+	dropImages bool
 	// redact masks the run's secret values out of each event line before
 	// it reaches the receipt; the line is parsed as the harness sent it.
 	redact     *redactor
@@ -1699,6 +1703,9 @@ func (c *eventCollector) consume(r io.Reader) {
 // recordRaw keeps one harness line in the events receipt, masked, and
 // hands it to the tee.
 func (c *eventCollector) recordRaw(line []byte) {
+	if c.dropImages {
+		line = dropImages(line)
+	}
 	masked := append([]byte(c.redact.String(string(line))), '\n')
 	_, _ = c.events.Write(masked)
 	if c.tee != nil {

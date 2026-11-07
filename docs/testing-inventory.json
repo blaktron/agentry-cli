@@ -6538,6 +6538,16 @@
           ]
         },
         {
+          "path": "pkg/runner/engine/dropimages_test.go",
+          "tests": [
+            "TestDropImagesLeavesNoPictureInAnEventLine"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "pkg/runner/engine/engine_exit_test.go",
           "tests": [
             "TestTheExitClassTableMatchesTheConstants"

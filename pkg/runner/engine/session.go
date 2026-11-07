@@ -1479,7 +1479,11 @@ func (s *liveSession) emit(ev session.Event) {
 	ev.Time = time.Now().UTC()
 	ev.Text = s.redact.String(ev.Text)
 	if len(ev.Raw) > 0 {
-		ev.Raw = json.RawMessage(s.redact.String(string(ev.Raw)))
+		raw := []byte(ev.Raw)
+		if s.p.Plan.Capabilities.Desktop.HasComputerUse() {
+			raw = dropImages(raw)
+		}
+		ev.Raw = json.RawMessage(s.redact.String(string(raw)))
 	}
 	s.mu.Lock()
 	if s.ended && ev.Kind != session.KindSessionEnd {
