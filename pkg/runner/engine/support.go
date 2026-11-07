@@ -145,10 +145,16 @@ type runDirs struct {
 	runID       string
 	// harnessEnds is when the run's timeout ends the harness, set at its
 	// first start; harnessStarts counts its starts and harnessUsage is the
-	// usage of those that failed on a capacity answer (capacity.go).
+	// usage of those that ended failing, on a capacity answer or a passing
+	// model failure (capacity.go). conversation numbers the conversation a
+	// resumable harness keeps (spec.PHConversation): a fresh start takes
+	// the next, a resume the same; resumedAfter is the failure the next
+	// start resumes after, for its receipt.
 	harnessEnds   time.Time
 	harnessStarts int
 	harnessUsage  receipt.Usage
+	conversation  int
+	resumedAfter  string
 	// hostGatewayURL / hostProxyURL are the published 127.0.0.1 addresses
 	// a host-run harness uses; empty for a container harness.
 	hostGatewayURL string

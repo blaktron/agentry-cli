@@ -86,12 +86,12 @@ func TestKnowledgeIsNamedInTheReceipt(t *testing.T) {
 		t.Fatalf("rendered tools.yaml =\n%s\nwant it to end\n%s", tools, wantTools)
 	}
 	// Isolation holds with a pack attached: the agent container mounts /plan
-	// and nothing else.
+	// and its conversation store, nothing else.
 	agent, ok := f.FindRun("-agent")
 	if !ok {
 		t.Fatal("agent run not recorded")
 	}
-	if len(agent.Mounts) != 1 || agent.Mounts[0].Target != "/plan" || !agent.Mounts[0].ReadOnly {
+	if !onlyPlanAndConversation(agent.Mounts) {
 		t.Fatalf("agent mounts = %+v", agent.Mounts)
 	}
 

@@ -147,7 +147,7 @@ func withContainers(enforced map[string]string, p Params) map[string]string {
 		fmt.Sprintf(": all capabilities dropped, no-new-privileges, memory %s, cpus %d, pids %d", lim.Memory, lim.CPUs, lim.Pids) +
 		"; the gateway keeps DAC_READ_SEARCH alone, to read the run's secrets file" +
 		"; read-only root: " + strings.Join(readOnly, ", ")
-	if p.Plan.Conversational() {
+	if p.Plan.Conversational() || p.Plan.Harness.Resume != nil {
 		line += "; the session store's one-shot chown keeps CHOWN alone"
 	}
 	if spec.SharesAny(p.Plan.MCPServers) {
@@ -218,7 +218,7 @@ func runtimeLine(p Params) string {
 	var under []string
 	if p.Plan.Harness.Host == nil {
 		under = append(under, "the agent container (the QuickAgent's code)")
-		if s := p.Plan.Harness.Session; p.Plan.Conversational() && s != nil && s.StoreOwner != "" {
+		if storeOwner(p) != "" {
 			under = append(under, "the session store's one-shot")
 		}
 	}
@@ -331,4 +331,20 @@ func joinAnd(items []string) string {
 		return strings.Join(items, "")
 	}
 	return strings.Join(items[:len(items)-1], ", ") + " and " + items[len(items)-1]
+}
+
+// storeOwner is the user the run's session store is given to before the
+// harness starts: an interactive session's, or a resumable autonomous
+// harness's; empty when the run keeps no store or gives it to no one.
+func storeOwner(p Params) string {
+	if p.Plan.Conversational() {
+		if s := p.Plan.Harness.Session; s != nil {
+			return s.StoreOwner
+		}
+		return ""
+	}
+	if r := p.Plan.Harness.Resume; r != nil {
+		return r.StoreOwner
+	}
+	return ""
 }

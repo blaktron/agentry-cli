@@ -612,6 +612,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 			ResultKind:  res.ResultKind,
 			Session:     res.Session,
 			OneTurn:     res.OneTurn,
+			Resume:      res.Resume,
 			ImagePin:    imagePin(adapterName, res.Agent.Image, harnessImage),
 			ModelSignIn: res.ModelSignIn,
 		},
@@ -637,6 +638,9 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		plan.Enforcement["exec"] = coderExecEnforcement(execImage)
 	}
 	plan.Enforcement["toolResults"] = toolResultsEnforcement(adapterName, in.Policy.Model, budget, caps)
+	if res.Resume != nil {
+		plan.Enforcement["agentContainer"] += resumeEnforcement(res.Resume)
+	}
 	if a := caps.AgentFiles; a != nil {
 		plan.Enforcement["persistent.files"] = agentFilesEnforcement(a)
 	}
@@ -2859,4 +2863,11 @@ func reviewRoot(caps spec.CapSummary) string {
 		return spec.AgentRoot
 	}
 	return ""
+}
+
+// resumeEnforcement is the agent container line's clause for a harness that
+// keeps its conversation in the run's session store (spec.HarnessSpec.Resume).
+func resumeEnforcement(r *spec.ResumeSpec) string {
+	return "; its one writable mount is the harness's conversation store (" + r.SessionDB +
+		"), a volume of the run's own removed at teardown: a run that ends on a passing model failure after its first tool call is started again on that conversation, with a message to carry on in place of the task"
 }

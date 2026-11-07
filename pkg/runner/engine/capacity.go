@@ -15,6 +15,12 @@ package engine
 // Every wait is announced, at most capacityTries of them for one turn or
 // one run, and none that would end past the run's timeout. When the tries
 // run out the run fails with the provider's words, as any harness failure.
+//
+// An autonomous harness that keeps its conversation in the run's session
+// store is also resumed after its first tool call, when it ends on a passing
+// model failure (resume.go): the waits are resumeWaits, announced, none ending
+// past the run's timeout. A start before the first tool call is a fresh
+// conversation with the task, as above.
 
 import (
 	"context"
@@ -38,11 +44,14 @@ const capacityTries = 10
 // canWaitAtCapacity reports whether a wait of capacityWait can end before
 // ctx does: a run whose timeout would pass during the wait fails now, with
 // the provider's words, rather than later as a timeout.
-func canWaitAtCapacity(ctx context.Context) bool {
+func canWaitAtCapacity(ctx context.Context) bool { return canWaitFor(ctx, capacityWait) }
+
+// canWaitFor reports whether a wait of wait can end before ctx does.
+func canWaitFor(ctx context.Context, wait time.Duration) bool {
 	if ctx.Err() != nil {
 		return false
 	}
-	if dl, ok := ctx.Deadline(); ok && time.Until(dl) <= capacityWait {
+	if dl, ok := ctx.Deadline(); ok && time.Until(dl) <= wait {
 		return false
 	}
 	return true
@@ -101,30 +110,51 @@ func (rd *runDirs) harnessReceipt(path string) (*os.File, error) {
 	return os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644) //nolint:gosec // our receipts dir
 }
 
-// retryAtCapacity starts an autonomous harness with run and starts it again
-// after each capacity answer it can wait out, while it has called no tool.
-// Each start's collector begins from the usage of the starts before it, so
-// the run's usage, its live meter and its cost budget count every attempt.
-func retryAtCapacity(ctx context.Context, p Params, rd *runDirs, run func() agentOutcome) agentOutcome {
-	out := run()
-	for n := 1; n <= capacityTries && out.atCapacity && out.usage.Turns == 0 && rd.canRestartAtCapacity(ctx); n++ {
-		noteCapacity(p.Stderr, n)
-		if sleepCtx(ctx, capacityWait) != nil {
-			break
+// restartHarness starts an autonomous harness with run and the task, and
+// starts it again: after each capacity answer it can wait out while it has
+// called no tool, on a fresh conversation with the task; and, for a harness
+// that can be resumed, after each passing model failure once it has called
+// one, on the same conversation with resumeMessage. Each start's collector
+// begins from the usage of the starts before it, so the run's usage, its live
+// meter and its turn and cost budgets count every attempt.
+func restartHarness(ctx context.Context, p Params, rd *runDirs, task []byte, run func(message []byte) agentOutcome) agentOutcome {
+	rd.conversation = 1
+	out := run(task)
+	for capacity, resumes := 0, 0; ; {
+		switch {
+		case out.atCapacity && out.usage.Turns == 0 && capacity < capacityTries && rd.canRestartAfter(ctx, capacityWait):
+			capacity++
+			noteCapacity(p.Stderr, capacity)
+			if sleepCtx(ctx, capacityWait) != nil {
+				return out
+			}
+			rd.harnessUsage = out.usage
+			rd.conversation++
+			out = run(task)
+		case resumable(p, out) && resumes < len(resumeWaits) && rd.canRestartAfter(ctx, resumeWaits[resumes]):
+			wait := resumeWaits[resumes]
+			resumes++
+			noteResume(p.Stderr, out.transient, wait, resumes)
+			if sleepCtx(ctx, wait) != nil {
+				return out
+			}
+			rd.harnessUsage = out.usage
+			rd.resumedAfter = out.transient
+			out = run([]byte(resumeMessage))
+		default:
+			return out
 		}
-		rd.harnessUsage = out.usage
-		out = run()
 	}
-	return out
 }
 
-// canRestartAtCapacity is canWaitAtCapacity for a harness started again:
-// ctx carries no timeout of its own, the run's harness deadline does.
-func (rd *runDirs) canRestartAtCapacity(ctx context.Context) bool {
-	if !canWaitAtCapacity(ctx) {
+// canRestartAfter is canWaitFor for a harness started again after wait: ctx
+// carries no timeout of its own, the run's harness deadline does, and a wait
+// that would end past it is not begun.
+func (rd *runDirs) canRestartAfter(ctx context.Context, wait time.Duration) bool {
+	if !canWaitFor(ctx, wait) {
 		return false
 	}
-	return rd.harnessEnds.IsZero() || time.Until(rd.harnessEnds) > capacityWait
+	return rd.harnessEnds.IsZero() || time.Until(rd.harnessEnds) > wait
 }
 
 // exitedAtCapacity reports whether an autonomous harness that exited

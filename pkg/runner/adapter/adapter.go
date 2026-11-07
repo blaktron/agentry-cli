@@ -89,6 +89,10 @@ type Result struct {
 	// driven by as one turn (spec.HarnessSpec.OneTurn); the adapter's
 	// Session is its driver. Nil when the harness prints its events.
 	OneTurn *spec.SessionSpec
+	// Resume, on an autonomous plan, is the harness's resumable conversation
+	// (spec.HarnessSpec.Resume); the adapter mounts its store in Agent. Nil
+	// for a harness that keeps none.
+	Resume *spec.ResumeSpec
 	// ModelSignIn is how the harness reads the model sign-in the policy
 	// names (policy.IsModelSignIn of its key kind): its kind, its delivery
 	// and the container path the harness reads it at. The compiler adds

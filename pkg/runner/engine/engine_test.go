@@ -259,7 +259,7 @@ func TestRunHappyPath(t *testing.T) {
 	if agent.Network != "agentry-cafe0000-net" {
 		t.Errorf("agent network = %q", agent.Network)
 	}
-	if len(agent.Mounts) != 1 || agent.Mounts[0].Target != "/plan" || !agent.Mounts[0].ReadOnly {
+	if !onlyPlanAndConversation(agent.Mounts) {
 		t.Errorf("agent mounts = %+v", agent.Mounts)
 	}
 	for _, op := range ops {
@@ -1682,7 +1682,8 @@ func TestRunContainersAreHardened(t *testing.T) {
 		{"package servers", "the MCP server installer", withInstaller, true},
 		{"a run with none", "the MCP server installer", plain, false},
 		{"a conversation", "the session store's one-shot chown keeps CHOWN alone", conversation, true},
-		{"a one-shot run", "the session store's one-shot chown keeps CHOWN alone", plain, false},
+		{"a run that can be resumed", "the session store's one-shot chown keeps CHOWN alone", plain, true},
+		{"a one-shot run that keeps no conversation", "the session store's one-shot chown keeps CHOWN alone", withoutResume(plain), false},
 	} {
 		if got := strings.Contains(withContainers(nil, tc.params)["containers"], tc.want); got != tc.has {
 			t.Errorf("%s: the containers line names %q = %v, want %v", tc.name, tc.want, got, tc.has)
@@ -1851,4 +1852,24 @@ func TestReceiptNamesWhatAnUnsafeBuildDidNotInstall(t *testing.T) {
 	if got := env2.CapabilitiesEnforced["exec"]; got != want2 {
 		t.Fatalf("exec line:\n%s\nwant\n%s", got, want2)
 	}
+}
+
+// onlyPlanAndConversation reports whether an autonomous agent container's
+// mounts are the plan, read-only, and the run's own conversation store, the
+// session volume, and nothing else.
+func onlyPlanAndConversation(mounts []dockerx.Mount) bool {
+	if len(mounts) != 2 {
+		return false
+	}
+	plan, store := mounts[0], mounts[1]
+	return plan.Target == "/plan" && plan.ReadOnly &&
+		store.Target == spec.SessionMount && !store.ReadOnly && store.Source == sessionVolumeName("cafe0000")
+}
+
+// withoutResume is p for a plan whose harness keeps no conversation.
+func withoutResume(p Params) Params {
+	plan := *p.Plan
+	plan.Harness.Resume = nil
+	p.Plan = &plan
+	return p
 }
