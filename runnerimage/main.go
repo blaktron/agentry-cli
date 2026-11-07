@@ -36,6 +36,7 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/bridge"
 	"github.com/blaktron/agentry-cli/runnerimage/confine"
 	"github.com/blaktron/agentry-cli/runnerimage/decode"
+	"github.com/blaktron/agentry-cli/runnerimage/desktoplink"
 	"github.com/blaktron/agentry-cli/runnerimage/docpages"
 	"github.com/blaktron/agentry-cli/runnerimage/hostlink"
 	"github.com/blaktron/agentry-cli/runnerimage/messenger"
@@ -70,6 +71,17 @@ const usageText = `usage: agentry-runner <mode> [flags]
         (where the engine's daemon runs in a VM) serve the app link's socket
         at /run/agentry/app.sock and carry each tool call over stdio to the
         CLI, which answers it from the supervisor; it has no network
+  desktoplink --server <id>
+        (the desktop link) serve the tools of the application server <id>
+        on the person's computer, as the run's binding at
+        /run/agentry-desktop/bind.json lists them, forwarding each call
+        with the run token to the relay's socket at
+        /run/agentry-desktop/link.sock; it has no network
+  desktoplink-relay [--owner uid:gid]
+        read the run's binding from stdin and write it beside the socket,
+        then serve the desktop link's socket at /run/agentry-desktop/link.sock
+        and carry each tool call over stdio to the CLI, which answers it
+        from Agentry Desktop; it has no network
   messenger --proxy <url>
         (a persistent agent's messenger role) hold one messenger account's
         connection: the start line on stdin carries its credential, then the
@@ -139,6 +151,10 @@ func main() {
 		err = runAppLink(os.Args[2:])
 	case "applink-relay":
 		err = runAppLinkRelay(os.Args[2:])
+	case "desktoplink":
+		err = runDesktopLink(os.Args[2:])
+	case desktoplink.RelayRole:
+		err = runDesktopLinkRelay(os.Args[2:])
 	case "messenger":
 		err = runMessenger(os.Args[2:])
 	case "hostlink":
@@ -433,6 +449,33 @@ func runAppLinkRelay(args []string) error {
 	}
 	return applink.Relay(context.Background(), applink.RelayConfig{
 		Listen: applink.SocketMount, Owner: *owner, In: os.Stdin, Out: os.Stdout, Log: os.Stderr,
+	})
+}
+
+// runDesktopLink serves one application server's desktop link on stdio:
+// the tools the run's binding lists for --server, each call forwarded with
+// the run token over the relay's socket.
+func runDesktopLink(args []string) error {
+	fs := flag.NewFlagSet("desktoplink", flag.ContinueOnError)
+	id := fs.String("server", "", "the application server's id in the catalogue of application servers")
+	if err := fs.Parse(args); err != nil || *id == "" || fs.NArg() != 0 {
+		fmt.Fprintln(os.Stderr, "agentry-runner desktoplink: --server is required, and nothing else")
+		os.Exit(2)
+	}
+	return desktoplink.Serve(context.Background(), os.Stdin, os.Stdout, os.Stderr, *id, desktoplink.BindFile, desktoplink.SocketMount)
+}
+
+// runDesktopLinkRelay carries the desktop link's calls over stdio: the
+// binding first on stdin, then each call a line out and its answer a line in.
+func runDesktopLinkRelay(args []string) error {
+	fs := flag.NewFlagSet(desktoplink.RelayRole, flag.ContinueOnError)
+	owner := fs.String("owner", "", "the uid:gid the socket and the binding are given (the desktop link's user); unset leaves them the relay's")
+	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
+		fmt.Fprintln(os.Stderr, "agentry-runner "+desktoplink.RelayRole+": takes --owner and nothing else")
+		os.Exit(2)
+	}
+	return desktoplink.Relay(context.Background(), desktoplink.RelayConfig{
+		Listen: desktoplink.SocketMount, Owner: *owner, In: os.Stdin, Out: os.Stdout, Log: os.Stderr,
 	})
 }
 

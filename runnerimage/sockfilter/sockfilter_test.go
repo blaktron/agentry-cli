@@ -188,9 +188,10 @@ func (d *fakeDaemon) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"Name": id, "Labels": map[string]string{"agentry.persistent": "assistant"}})
 			return
 		}
-		if strings.HasSuffix(id, "-applink") {
-			// The app link's relay volume: the run's, made by the CLI, so
-			// it carries the run's label and not the gateway's.
+		if strings.HasSuffix(id, "-applink") || strings.HasSuffix(id, "-desktop") {
+			// The app link's or the desktop link's relay volume: the run's,
+			// made by the CLI, so it carries the run's label and not the
+			// gateway's.
 			_ = json.NewEncoder(w).Encode(map[string]any{"Name": id, "Labels": map[string]string{"agentry.run": "R"}})
 			return
 		}

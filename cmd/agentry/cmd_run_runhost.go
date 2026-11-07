@@ -106,6 +106,11 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	opts.progress.running(meta)
 	opts.progress.at(receipt.StageCompile)
 	m, err := localrun.ManifestFrom(filepath.Join(installDir, "workspace"))
+	if err == nil && m.Capabilities.Desktop != nil {
+		// The applications on this computer are answered by Agentry Desktop
+		// here; a run on a runhost has no channel back to it yet.
+		return engine.Classify(engine.ExitUsage, errors.New("a run on a runhost does not reach the applications on this computer yet: this QuickAgent uses one through Agentry Desktop, so run it on this computer"))
+	}
 	if err != nil {
 		return engine.Classify(engine.ExitCompile, err)
 	}

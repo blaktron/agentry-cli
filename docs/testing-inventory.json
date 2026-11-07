@@ -485,6 +485,21 @@
           ]
         },
         {
+          "path": "cmd/agentry/cmd_desktop_test.go",
+          "tests": [
+            "TestTheConsentNamesTheDesktopLine",
+            "TestARunNeedsAgentryDesktop",
+            "TestHostedRunsRefuseTheDesktopLine",
+            "TestTheRunSummaryNamesTheDesktopLine"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
+          ]
+        },
+        {
           "path": "cmd/agentry/cmd_json_test.go",
           "tests": [
             "TestListJSONMarksMissingDirectories",
@@ -2693,6 +2708,7 @@
             "TestArchiveWideningsHoldTheArchiveToTheConsentedContract",
             "TestShippedKnowledgeIsInTheSnapshot",
             "TestTargetHostsAreInTheSnapshot",
+            "TestTheDesktopLineIsInTheSnapshot",
             "TestArchiveWideningsCatchAShippedPackTheResolveDidNotName",
             "TestReconsentKeepsALocalInstall",
             "TestSnapshotAndDiffOfRemoteServers",
@@ -4359,6 +4375,22 @@
           "fixtureEntryPoint": false,
           "dependencyHints": [
             "source/file contract"
+          ]
+        },
+        {
+          "path": "pkg/runner/compile/compile_desktop_test.go",
+          "tests": [
+            "TestCompileRendersTheDesktopLink",
+            "TestTheDesktopLinkFollowsTheReleasesNarrowing",
+            "TestAReleaseWithoutTheDesktopLineHasNoDesktopLink",
+            "TestTheDesktopLineIsRefusedWhereTheRunCannotHoldIt"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract",
+            "explicit skip"
           ]
         },
         {
@@ -6432,6 +6464,24 @@
             "TestRenewAt",
             "TestTheRedactorLearnsARenewedTokenWhileMasking",
             "TestASessionRenewsItsConnectionUntilItEnds"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "docker interface (real or fake)",
+            "source/file contract",
+            "real-time wait"
+          ]
+        },
+        {
+          "path": "pkg/runner/engine/desktop_test.go",
+          "tests": [
+            "TestTheDesktopLinkCarriesACallToTheLinkService",
+            "TestTheDesktopLinkCarriesNothingButToolCalls",
+            "TestTheDesktopLinkHasNoNetwork",
+            "TestARunNeedsAgentryDesktop",
+            "TestHostedRunsRefuseTheDesktopLine"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -10225,6 +10275,31 @@
       ]
     },
     {
+      "owner": "runnerimage/desktoplink",
+      "behavior": "The desktop link: the MCP servers through which a run reaches the applications installed on the person's own computer, and the relay that carries each call out of the sandbox to Agentry Desktop",
+      "disposition": "retain",
+      "files": [
+        {
+          "path": "runnerimage/desktoplink/desktoplink_test.go",
+          "tests": [
+            "TestTheRelayCarriesABoundServersCall",
+            "TestTheRelayRefusesWhatIsNotABoundCall",
+            "TestTheRelayStartsOnABindingAlone",
+            "TestTheDesktopLinkServesTheBoundServersTools",
+            "TestTheRelayEndsWaitingCallsWhenTheCLILeaves",
+            "TestNamesAndFrames"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract",
+            "real-time wait"
+          ]
+        }
+      ]
+    },
+    {
       "owner": "runnerimage/docpages",
       "behavior": "The runner image's `pages` role: a document the Report Designer is given, a PDF's first pages rendered by poppler or a Word document's theme, running text and pictures, and the facts the host and the tools server agree on",
       "disposition": "retain",
@@ -10790,6 +10865,16 @@
             "TestAnotherImageIsNotTheBrowser",
             "TestTheBrowseProxysRelayResolvesThroughItsPin",
             "TestTheBrowsersNetworkIsItsAndItsRelaysAlone"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
+          "path": "runnerimage/sockfilter/desktoplink_test.go",
+          "tests": [
+            "TestTheDesktopLinkAloneMountsItsRelayVolume"
           ],
           "fuzz": [],
           "benchmarks": [],

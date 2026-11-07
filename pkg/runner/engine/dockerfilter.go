@@ -15,6 +15,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	"github.com/blaktron/agentry-cli/runnerimage/desktoplink"
 	"github.com/blaktron/agentry-cli/runnerimage/hostlink"
 	"github.com/blaktron/agentry-cli/runnerimage/sockfilter"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
@@ -263,6 +264,11 @@ func filterConfig(rd *runDirs, runID string, gwEnv map[string]string, lim policy
 		AppLinkVolume:      rd.appLinkRelay,
 		AppLinkImage:       appLinkImageOf(plan, rd),
 		AppLinkCmd:         appLinkCmdOf(plan, rd),
+		DesktopVolume:      desktopVolumeOf(rd),
+		DesktopImage:       desktopImageOf(plan, rd),
+		DesktopCmds:        desktopCmdsOf(plan, rd),
+		DesktopUser:        rd.personUser(),
+		DesktopRuntime:     plan.GatewayRuntime(),
 		BrowserImage:       browserImageOf(plan),
 		BrowserUser:        rd.personUser(),
 		BrowserTmpfs:       browserTmpfsOf(plan),
@@ -597,6 +603,34 @@ func appLinkCmdOf(plan *spec.Plan, rd *runDirs) []string {
 		return nil
 	}
 	return compile.AppLinkCommand(plan.Capabilities.AppLink)
+}
+
+// desktopVolumeOf, desktopImageOf and desktopCmdsOf name the desktop link's
+// containers for the filter, where the run has one (prepareDesktop): its
+// relay volume, the runner image and each entry's command.
+func desktopVolumeOf(rd *runDirs) string {
+	if rd.desktop == nil {
+		return ""
+	}
+	return rd.desktop.volume
+}
+
+func desktopImageOf(plan *spec.Plan, rd *runDirs) string {
+	if rd.desktop == nil {
+		return ""
+	}
+	return plan.Proxy.Image
+}
+
+func desktopCmdsOf(plan *spec.Plan, rd *runDirs) [][]string {
+	if rd.desktop == nil {
+		return nil
+	}
+	var out [][]string
+	for _, id := range plan.Capabilities.Desktop.IDs() {
+		out = append(out, desktoplink.Command(id))
+	}
+	return out
 }
 
 // toolsVolumes are the volumes not the run's that its tools server may

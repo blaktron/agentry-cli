@@ -292,6 +292,9 @@ func dryRunSummary(plan *spec.Plan, planDir string, opts runOpts) []string {
 	if plan.Capabilities.Browser != nil {
 		add("browser", browserSummary(plan.Capabilities.Browser))
 	}
+	if plan.Capabilities.Desktop != nil {
+		add("desktop", desktopSummary(plan.Capabilities.Desktop))
+	}
 	add("inputs", inputsSummary(opts))
 	budgets := fmt.Sprintf("%s timeout", humanDuration(time.Duration(plan.Budgets.TimeoutSeconds)*time.Second))
 	if plan.Budgets.MaxTurns > 0 {

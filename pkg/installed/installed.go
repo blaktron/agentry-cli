@@ -106,6 +106,11 @@ type CapSnapshot struct {
 	// widening the consent gate re-asks about. Absent in records written
 	// before the browser existed, which reads as "no browser".
 	Browser *manifest.Browser `yaml:"browser,omitempty" json:"browser,omitempty"`
+	// Desktop is the release's desktop line (capabilities.desktop): a new
+	// application on the person's computer, a tool added to one, or
+	// computer use, is a widening the consent gate re-asks about. Absent
+	// in records written before the line existed, which reads as "none".
+	Desktop *manifest.Desktop `yaml:"desktop,omitempty" json:"desktop,omitempty"`
 	// Persistent is a persistent release's capabilities.persistent: a key
 	// newly declared, or a name added to one of its lists, is a widening
 	// the consent gate re-asks about. Absent in records written before the
@@ -201,9 +206,22 @@ func Snapshot(c manifest.Capabilities) CapSnapshot {
 	if b := c.Browser; b != nil {
 		s.Browser = &manifest.Browser{Sites: slices.Clone(b.Sites), Hosts: slices.Clone(b.Hosts), Scope: b.Scope, Secrets: slices.Clone(b.Secrets)}
 	}
+	s.Desktop = cloneDesktop(c.Desktop)
 	s.Persistent = clonePersistent(c.Persistent)
 	s.Subagents = slices.Clone(c.Subagents)
 	return s
+}
+
+// cloneDesktop is a deep copy of a capabilities.desktop line.
+func cloneDesktop(d *manifest.Desktop) *manifest.Desktop {
+	if d == nil {
+		return nil
+	}
+	out := &manifest.Desktop{ComputerUse: d.ComputerUse}
+	for _, s := range d.Servers {
+		out.Servers = append(out.Servers, manifest.DesktopServer{ID: s.ID, Tools: slices.Clone(s.Tools)})
+	}
+	return out
 }
 
 // clonePersistent is a deep copy of a capabilities.persistent block.
@@ -242,6 +260,7 @@ func (s CapSnapshot) capabilities() manifest.Capabilities {
 	if b := s.Browser; b != nil {
 		c.Browser = &manifest.Browser{Sites: slices.Clone(b.Sites), Hosts: slices.Clone(b.Hosts), Scope: b.Scope, Secrets: slices.Clone(b.Secrets)}
 	}
+	c.Desktop = cloneDesktop(s.Desktop)
 	for _, d := range s.DataAccess {
 		c.DataAccess = append(c.DataAccess, manifest.DataAccess(d))
 	}
