@@ -223,29 +223,37 @@ func prepareDesktopLink(p Params, rd *runDirs, runID string) error {
 }
 
 // recordDesktop writes the receipt's desktop lines before any call, and has
-// teardown unbind and write the final lines.
+// teardown unbind and write the final lines. The envelope is written before
+// teardown runs, so the run's end refreshes the lines too (writeLines, once
+// the agent has ended), whatever its outcome.
 func recordDesktop(rd *runDirs, td *teardown, env *receipt.Envelope) {
 	r := rd.desktop
 	if r == nil {
 		return
 	}
-	writeLines := func() {
-		for _, s := range r.servers {
-			if s.ID == spec.DesktopComputerID {
-				env.CapabilitiesEnforced[desktopComputerKey] = r.computerLine(s.DesktopServerCap)
-				continue
-			}
-			env.CapabilitiesEnforced["desktop."+s.ID] = r.receiptLine(s.DesktopServerCap)
-		}
-	}
-	writeLines()
+	r.writeLines(env)
 	env.CapabilitiesEnforced["desktop.transport"] = desktopTransportLine(r)
 	td.add(func(c context.Context) {
-		writeLines()
+		r.writeLines(env)
 		if r.link.Unbind != nil {
 			_ = r.link.Unbind(c)
 		}
 	})
+}
+
+// writeLines writes each desktop line of the receipt with the calls counted
+// so far. A run without the desktop link writes none.
+func (r *desktopRun) writeLines(env *receipt.Envelope) {
+	if r == nil {
+		return
+	}
+	for _, s := range r.servers {
+		if s.ID == spec.DesktopComputerID {
+			env.CapabilitiesEnforced[desktopComputerKey] = r.computerLine(s.DesktopServerCap)
+			continue
+		}
+		env.CapabilitiesEnforced["desktop."+s.ID] = r.receiptLine(s.DesktopServerCap)
+	}
 }
 
 // bind is the binding the relay writes for the link entries: the token and
