@@ -3,8 +3,9 @@
     {
       "version": "0.7.29",
       "highlights": [
-        "A report design built from your document now takes its logo, even one stored in the PDF with a transparent background.",
-        "It can take your cover page's photograph or artwork and build a cover modelled on your cover page.",
+        "A long autonomous run keeps its place and its findings in notes.md in its scratch folder.",
+        "After the harness summarises earlier work, the agent reads its notes first and carries on from where they say.",
+        "A report design built from your document takes its logo, its cover photograph or artwork, and a cover modelled on yours.",
         "No whole page of your document and none of its text is kept in the design."
       ]
     },

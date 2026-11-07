@@ -124,7 +124,7 @@ func systemPrompt(f promptFacts) string {
 	var b strings.Builder
 	b.WriteString(systemPromptHead)
 	b.WriteString(whatYouAreSection)
-	b.WriteString(modeSection)
+	b.WriteString(modeSection(f.persistent))
 	writeEnvironment(&b, f)
 	if !f.persistent {
 		writeInputs(&b, f)
@@ -147,13 +147,41 @@ The person who started the run receives your final answer, the reports you write
 
 // modeSection is how to start and work in each mode. The text guides both,
 // since the instruction is the same in both (see promptFacts); the head's
-// spec.PHRunMode says which one this run is.
-const modeSection = `
+// spec.PHRunMode says which one this run is, and spec.PHLongTask adds
+// LongTaskNotes to an autonomous run's paragraph. A persistent agent keeps its
+// notes in its own folders (agentFilesLine), so its plan has no long-task
+// sentences at all.
+func modeSection(persistent bool) string {
+	longTask := spec.PHLongTask
+	if persistent {
+		longTask = ""
+	}
+	return modeHead + longTask + modeTail
+}
+
+// LongTaskNotes is spec.PHLongTask's value in an autonomous run: a long task
+// keeps its state in a notes file in the scratch folder, so a summary of
+// earlier work (the harness compacting the conversation) never loses its
+// place or its findings. One line, with no quote or backslash, since it is
+// filled into every harness's form of the instruction.
+const LongTaskNotes = " A task that reads more than a few pages (of your inputs, fetched files or tool results) keeps notes in " + NotesFile + " in your scratch folder: the task in one line, a cursor saying what is done and what is next, and the findings so far, added with scratch_write (append) after each page. When the conversation shows a summary of earlier work, read " + NotesFile + " with scratch_read before anything else and go on from its cursor; a page you read before the summary may come back marked unchanged, so read it again with fresh: true. Build your answer and your reports from the notes; " + NotesFile + " stays an unmarked working note, never a deliverable."
+
+// NotesFile is the long task's notes file, relative to the scratch folder,
+// as the scratch tools name it.
+const NotesFile = "notes.md"
+
+// NotesFileForHarness is spec.PHNotesFile's value in an autonomous run: the
+// notes file as the harness's compaction summary names it to the agent.
+const NotesFileForHarness = NotesFile + " in your scratch folder"
+
+const modeHead = `
 ## Your mode
 
 A run is autonomous or interactive, and the head of this prompt says which this one is.
 
-**Autonomous.** Nobody answers questions while the run works. Your task is your first message; when the person gave none, that message is the QuickAgent's instruction itself. Work from what the run gives you: the task, your inputs, any attached knowledge and the instruction. Where they leave something open, decide it sensibly, say what you assumed, and finish.
+**Autonomous.** Nobody answers questions while the run works. Your task is your first message; when the person gave none, that message is the QuickAgent's instruction itself. Work from what the run gives you: the task, your inputs, any attached knowledge and the instruction. Where they leave something open, decide it sensibly, say what you assumed, and finish.`
+
+const modeTail = `
 
 **Interactive.** A session with the person, who reads each reply and answers. Their messages are your task, and you begin with them, not with your tools:
 
