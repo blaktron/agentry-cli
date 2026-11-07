@@ -23,7 +23,7 @@ import (
 // Tools are the absolute paths of poppler's programs Render runs; zero
 // values take the decode image's.
 type Tools struct {
-	PDFToPPM, PDFInfo, PDFFonts string
+	PDFToPPM, PDFInfo, PDFFonts, PDFImages string
 }
 
 func (t Tools) withDefaults() Tools {
@@ -35,6 +35,9 @@ func (t Tools) withDefaults() Tools {
 	}
 	if t.PDFFonts == "" {
 		t.PDFFonts = "/usr/bin/pdffonts"
+	}
+	if t.PDFImages == "" {
+		t.PDFImages = "/usr/bin/pdfimages"
 	}
 	return t
 }
@@ -80,8 +83,9 @@ func Render(ctx context.Context, src string, kind Kind, out, scratch string, t T
 	return f, os.WriteFile(filepath.Join(out, FactsFile), append(b, '\n'), 0o644) //nolint:gosec // read by the host
 }
 
-// renderPDF counts the pages, lists the fonts of the first MaxPages and
-// renders each of them in turn, stopping at the first that fails.
+// renderPDF counts the pages, lists the fonts of the first MaxPages,
+// renders each of them in turn, stopping at the first that fails, and
+// writes the pictures the rendered pages draw.
 func renderPDF(ctx context.Context, src, out, scratch string, t Tools, f *Facts) error {
 	last := strconv.Itoa(MaxPages)
 	info, kind := runPoppler(ctx, t.PDFInfo, "-f", "1", "-l", last, src)
@@ -129,7 +133,10 @@ func renderPDF(ctx context.Context, src, out, scratch string, t Tools, f *Facts)
 		}
 		f.Rendered = n
 	}
-	return nil
+	if f.Rendered == 0 {
+		return nil
+	}
+	return pdfPictures(ctx, src, out, scratch, t, f.Rendered, f)
 }
 
 // copyCapped copies a page from scratch to out within limit; a page

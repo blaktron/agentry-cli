@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"image/draw"
 	"image/png"
 	"regexp"
 	"slices"
@@ -133,11 +134,14 @@ type Facts struct {
 	// part.
 	Headers []string `json:"headers,omitempty"`
 	Footers []string `json:"footers,omitempty"`
-	// Media are a Word document's pictures as written, MediaFile(n, ext);
-	// MediaSkipped counts the pictures it has that were not read: a
-	// drawing in another format (EMF, WMF, SVG), one past MaxMediaBytes,
-	// or one past MaxMedia.
+	// Media are the document's pictures as written, MediaFile(n, ext): a
+	// Word document's, or the pictures a PDF's rendered pages draw, each
+	// once, with MediaPages the page each is first drawn on. MediaSkipped
+	// counts the pictures it has that were not read: a drawing in another
+	// format (EMF, WMF, SVG), one past MaxMediaBytes, or one past
+	// MaxMedia.
 	Media        []string `json:"media,omitempty"`
+	MediaPages   []int    `json:"mediaPages,omitempty"`
 	MediaSkipped int      `json:"mediaSkipped,omitempty"`
 	// Failure is why nothing of the document could be read; Stopped why a
 	// PDF's rendering stopped before its last page to render. Each is a
@@ -176,10 +180,25 @@ func (f Facts) Validate() error {
 	if f.Rendered < 0 || f.Rendered > MaxPages || f.Pages < 0 || (f.Kind == KindPDF && f.Rendered > f.Pages) || (f.Kind == KindDOCX && (f.Rendered != 0 || f.Pages != 0)) {
 		return fmt.Errorf("pages: %d rendered of %d", f.Rendered, f.Pages)
 	}
-	if f.MediaSkipped < 0 || f.MediaSkipped > maxDocxParts || (f.Kind == KindPDF && f.MediaSkipped != 0) {
+	if f.MediaSkipped < 0 || f.MediaSkipped > maxDocxParts {
 		return errors.New("pages: a count of skipped pictures past its bounds")
 	}
-	if f.Failure != "" && (f.Rendered != 0 || len(f.Media) != 0) {
+	switch f.Kind {
+	case KindPDF:
+		if len(f.MediaPages) != len(f.Media) {
+			return errors.New("pages: a PDF's pictures without their pages")
+		}
+		for i, p := range f.MediaPages {
+			if p < 1 || p > f.Rendered || (i > 0 && p < f.MediaPages[i-1]) {
+				return fmt.Errorf("pages: picture %d on page %d", i+1, p)
+			}
+		}
+	default:
+		if len(f.MediaPages) != 0 {
+			return errors.New("pages: a Word document's pictures have no pages")
+		}
+	}
+	if f.Failure != "" && (f.Rendered != 0 || len(f.Media) != 0 || f.MediaSkipped != 0) {
 		return errors.New("pages: a failure with pages")
 	}
 	if len(f.Fonts) > MaxFonts || len(f.Colours) > MaxColours || len(f.Headers) > MaxRunning || len(f.Footers) > MaxRunning || len(f.Media) > MaxMedia {
@@ -320,11 +339,42 @@ func Crop(img image.Image, box Box, scale int) (image.Image, error) {
 const LogoSide = 1024
 
 // CropLogo is the logo a box of src, a PNG, names: the crop (Crop at
-// scale; the whole image when box is nil), halved until no side is over
-// LogoSide, encoded as a PNG at the best compression. crop_logo makes it
-// to show the model and draw in previews; the CLI makes it again from its
-// own copy of the page to keep.
+// scale; the whole image when box is nil), its blank margin trimmed (Trim),
+// halved until no side is over LogoSide, encoded as a PNG at the best
+// compression. crop_logo makes it to show the model and draw in previews;
+// the CLI makes it again from its own copy of the page to keep.
 func CropLogo(src []byte, box *Box, scale int) ([]byte, error) {
+	img, err := cropOf(src, box, scale)
+	if err != nil {
+		return nil, err
+	}
+	img = Trim(img)
+	for img.Bounds().Dx() > LogoSide || img.Bounds().Dy() > LogoSide {
+		img = Half(img)
+	}
+	var b bytes.Buffer
+	if err := (&png.Encoder{CompressionLevel: png.BestCompression}).Encode(&b, img); err != nil {
+		return nil, err
+	}
+	return b.Bytes(), nil
+}
+
+// TakePicture is the picture a box of src, a PNG, names (Crop at scale;
+// the whole image when box is nil), as EncodePicture writes it within
+// maxSide: a PNG when it has transparency, else a JPEG. take_picture makes
+// it to show the model and draw in previews; the CLI makes it again from
+// its own copy of the page to keep.
+func TakePicture(src []byte, box *Box, scale, maxSide int) ([]byte, string, error) {
+	img, err := cropOf(src, box, scale)
+	if err != nil {
+		return nil, "", err
+	}
+	return EncodePicture(img, maxSide)
+}
+
+// cropOf is the box of src, a staged PNG, that box names at scale, or the
+// whole image when box is nil.
+func cropOf(src []byte, box *Box, scale int) (image.Image, error) {
 	cfg, format, err := image.DecodeConfig(bytes.NewReader(src))
 	if err != nil || format != "png" || cfg.Width > MaxPageSide+2 || cfg.Height > MaxPageSide+2 {
 		return nil, errors.New("the image to crop is not a staged PNG")
@@ -334,18 +384,64 @@ func CropLogo(src []byte, box *Box, scale int) ([]byte, error) {
 		return nil, err
 	}
 	if box != nil {
-		if img, err = Crop(img, *box, scale); err != nil {
-			return nil, err
+		return Crop(img, *box, scale)
+	}
+	return img, nil
+}
+
+// blankDistance is how far, summed over the three channels, a pixel may
+// be from a crop's background and still be margin.
+const blankDistance = 48
+
+// Trim is img without the margin around what it shows: the rows and
+// columns at its edges that hold only transparent pixels or the colour of
+// its top left corner (white paper, or the colour of a band a logo sits
+// on), with a little of that margin kept, a twentieth of the longer side
+// that is left and at least two pixels. An image that is all margin is
+// answered as it is.
+func Trim(img image.Image) image.Image {
+	b := img.Bounds()
+	if b.Empty() {
+		return img
+	}
+	br, bg, bb, ba := img.At(b.Min.X, b.Min.Y).RGBA()
+	blank := func(x, y int) bool {
+		r, g, bl, a := img.At(x, y).RGBA()
+		if a < 0x1000 {
+			return true
+		}
+		if ba < 0x1000 {
+			return false
+		}
+		d := absDiff(r, br) + absDiff(g, bg) + absDiff(bl, bb)
+		return d>>8 <= blankDistance
+	}
+	minX, minY, maxX, maxY := b.Max.X, b.Max.Y, b.Min.X-1, b.Min.Y-1
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			if !blank(x, y) {
+				minX, minY, maxX, maxY = min(minX, x), min(minY, y), max(maxX, x), max(maxY, y)
+			}
 		}
 	}
-	for img.Bounds().Dx() > LogoSide || img.Bounds().Dy() > LogoSide {
-		img = Half(img)
+	if maxX < minX {
+		return img
 	}
-	var b bytes.Buffer
-	if err := (&png.Encoder{CompressionLevel: png.BestCompression}).Encode(&b, img); err != nil {
-		return nil, err
+	pad := max(2, max(maxX-minX+1, maxY-minY+1)/20)
+	r := image.Rect(minX-pad, minY-pad, maxX+1+pad, maxY+1+pad).Intersect(b)
+	if r == b {
+		return img
 	}
-	return b.Bytes(), nil
+	out := image.NewNRGBA(image.Rect(0, 0, r.Dx(), r.Dy()))
+	draw.Draw(out, out.Bounds(), img, r.Min, draw.Src)
+	return out
+}
+
+func absDiff(a, b uint32) uint32 {
+	if a > b {
+		return a - b
+	}
+	return b - a
 }
 
 // Half is img at half its width and height, each pixel the mean of four.

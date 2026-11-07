@@ -14,6 +14,7 @@ import (
 
 	"github.com/blaktron/agentry/pkg/reportdesign"
 
+	"github.com/blaktron/agentry-cli/pkg/reportdesigner"
 	"github.com/blaktron/agentry-cli/pkg/runner/clamdb"
 	"github.com/blaktron/agentry-cli/pkg/runner/decode"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
@@ -244,36 +245,52 @@ func pageTexts(f docpages.Facts, text []byte) ([]string, bool) {
 	return out, cut
 }
 
+// sourceOf is the image a document ledger entry took from, this
+// process's own copy of the page or the picture, and the scale of its box
+// to it.
+func (doc *readDocument) sourceOf(e toolsrv.DocumentEntry) ([]byte, int, error) {
+	switch {
+	case e.Page >= 1 && e.Page <= len(doc.pages.Full) && e.Box != nil:
+		return doc.pages.Full[e.Page-1], docpages.RenderPPI / docpages.ViewPPI, nil
+	case e.Page == 0 && e.Media >= 1 && e.Media <= len(doc.pages.Media):
+		return doc.pages.Media[e.Media-1], 1, nil
+	}
+	return nil, 0, errors.New("the document ledger names a crop of no page or picture the run was given")
+}
+
+// documentEntries are the document ledger's lines, none when the run was
+// given no document it could read or recorded nothing.
+func (o Options) documentEntries(doc *readDocument) []toolsrv.DocumentEntry {
+	if doc == nil || doc.staged.Failure != "" {
+		return nil
+	}
+	entries, err := engine.ReadDocumentLedger(filepath.Join(o.OutDir, "receipts", engine.DocumentLedgerFile))
+	if err != nil {
+		return nil
+	}
+	return entries
+}
+
 // documentLogo is the logo the run cropped from the document: the last
 // crop the document ledger records, cropped again here from this
 // process's own copy of the page or the picture and held to the core's
 // rules. None when the person gave a logo, or the run cropped none.
 func (o Options) documentLogo(doc *readDocument) (reportdesign.Logo, bool, error) {
-	if doc == nil || doc.staged.LogoGiven || doc.staged.Failure != "" {
-		return reportdesign.Logo{}, false, nil
-	}
-	entries, err := engine.ReadDocumentLedger(filepath.Join(o.OutDir, "receipts", engine.DocumentLedgerFile))
-	if err != nil {
+	if doc == nil || doc.staged.LogoGiven {
 		return reportdesign.Logo{}, false, nil
 	}
 	var last *toolsrv.DocumentEntry
-	for i := range entries {
-		if entries[i].Tool == toolsrv.ToolCropLogo {
-			last = &entries[i]
+	for _, e := range o.documentEntries(doc) {
+		if e.Tool == toolsrv.ToolCropLogo {
+			last = &e
 		}
 	}
 	if last == nil {
 		return reportdesign.Logo{}, false, nil
 	}
-	var src []byte
-	scale := 1
-	switch {
-	case last.Page >= 1 && last.Page <= len(doc.pages.Full) && last.Box != nil:
-		src, scale = doc.pages.Full[last.Page-1], docpages.RenderPPI/docpages.ViewPPI
-	case last.Media >= 1 && last.Media <= len(doc.pages.Media):
-		src = doc.pages.Media[last.Media-1]
-	default:
-		return reportdesign.Logo{}, false, errors.New("the document ledger names a crop of no page or picture the run was given")
+	src, scale, err := doc.sourceOf(*last)
+	if err != nil {
+		return reportdesign.Logo{}, false, err
 	}
 	b, err := docpages.CropLogo(src, last.Box, scale)
 	if err != nil {
@@ -284,6 +301,62 @@ func (o Options) documentLogo(doc *readDocument) (reportdesign.Logo, bool, error
 		return reportdesign.Logo{}, false, fmt.Errorf("the logo taken from the document: %w", err)
 	}
 	return logo, true, nil
+}
+
+// documentPictures are the pictures the run took from the document with
+// take_picture, each taken again here from this process's own copy of the
+// page or the picture and held to the core's rules: the last taken as the
+// cover image, and the custom cover's images by slot, the last taken for
+// each.
+func (o Options) documentPictures(doc *readDocument) (reportdesign.Image, []reportdesign.Image, error) {
+	var coverImage reportdesign.Image
+	var cover []reportdesign.Image
+	total := 0
+	for _, e := range o.documentEntries(doc) {
+		if e.Tool != toolsrv.ToolTakePicture {
+			continue
+		}
+		src, scale, err := doc.sourceOf(e)
+		if err != nil {
+			return coverImage, nil, err
+		}
+		b, _, err := docpages.TakePicture(src, e.Box, scale, toolsrv.PictureSide(e.As))
+		var img reportdesign.Image
+		if err == nil && e.As == toolsrv.AsCover {
+			img, err = reportdesign.NormalizeCustomCoverImage(b)
+		} else if err == nil {
+			img, err = reportdesign.NormalizeCoverImage(b)
+		}
+		if err != nil {
+			return coverImage, nil, fmt.Errorf("the picture taken from the document: %w", err)
+		}
+		switch {
+		case e.As == toolsrv.AsCoverImage:
+			coverImage = img
+		case e.As == toolsrv.AsCover && e.Slot >= 1 && e.Slot <= len(cover):
+			cover[e.Slot-1] = img
+		case e.As == toolsrv.AsCover && e.Slot == len(cover)+1 && e.Slot <= reportdesign.MaxCoverImages:
+			cover = append(cover, img)
+		default:
+			return coverImage, nil, errors.New("the document ledger names a picture the run could not have taken")
+		}
+	}
+	for _, img := range cover {
+		b, _, _ := img.Decode()
+		total += len(b)
+	}
+	if total > reportdesign.MaxCoverImagesBytes {
+		return coverImage, nil, errors.New("the pictures taken from the document for the custom cover are over their cap together")
+	}
+	return coverImage, cover, nil
+}
+
+// pictureCount is n pictures in words.
+func pictureCount(n int) string {
+	if n == 1 {
+		return "1 picture"
+	}
+	return fmt.Sprintf("%d pictures", n)
 }
 
 // documentTask is the task's account of the document.
@@ -302,4 +375,8 @@ func documentTask(b *strings.Builder, doc *readDocument) {
 	if st.LogoGiven {
 		b.WriteString("They gave their own logo too: keep it, never a crop of the document.\n")
 	}
+	if st.Media > 0 {
+		fmt.Fprintf(b, "It holds %s you can look at with document_pages media.\n", pictureCount(st.Media))
+	}
+	b.WriteString("Use what is the brand's in it: its logo (crop_logo), its cover page's artwork and composition (take_picture, and a custom cover in reports/" + reportdesigner.CoverFile + " when no built-in cover style is near), its header and footer. Never its content.\n")
 }

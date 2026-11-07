@@ -44,10 +44,12 @@ type Staged struct {
 	Colours  []Colour `json:"colours,omitempty"`
 	Headers  []string `json:"headers,omitempty"`
 	Footers  []string `json:"footers,omitempty"`
-	// Media is how many pictures are staged, MediaDir/1.png on, and
+	// Media is how many pictures are staged, MediaDir/1.png on, with
+	// MediaPages the page of a PDF each is first drawn on, and
 	// MediaSkipped how many the document has that were not read.
-	Media        int `json:"media,omitempty"`
-	MediaSkipped int `json:"mediaSkipped,omitempty"`
+	Media        int   `json:"media,omitempty"`
+	MediaPages   []int `json:"mediaPages,omitempty"`
+	MediaSkipped int   `json:"mediaSkipped,omitempty"`
 	// Texts is how many texts are staged, TextDir/1.txt on; TextCut says
 	// one was cut to its cap.
 	Texts   int  `json:"texts,omitempty"`
@@ -64,12 +66,12 @@ type Staged struct {
 // document's name.
 func StagedFrom(f Facts, name string, media, texts int, cut, logoGiven bool) Staged {
 	return Staged{Kind: f.Kind, Name: Line(name, 120), Pages: f.Pages, Rendered: f.Rendered, Fonts: f.Fonts, Colours: f.Colours,
-		Headers: f.Headers, Footers: f.Footers, Media: media, MediaSkipped: f.MediaSkipped, Texts: texts, TextCut: cut, Failure: f.Failure, Stopped: f.Stopped, LogoGiven: logoGiven}
+		Headers: f.Headers, Footers: f.Footers, Media: media, MediaPages: f.MediaPages, MediaSkipped: f.MediaSkipped, Texts: texts, TextCut: cut, Failure: f.Failure, Stopped: f.Stopped, LogoGiven: logoGiven}
 }
 
 // Validate holds a staged record to its bounds.
 func (s Staged) Validate() error {
-	f := Facts{Schema: Schema, Kind: s.Kind, Pages: s.Pages, Rendered: s.Rendered, Fonts: s.Fonts, Colours: s.Colours, Headers: s.Headers, Footers: s.Footers, MediaSkipped: s.MediaSkipped, Failure: s.Failure, Stopped: s.Stopped}
+	f := Facts{Schema: Schema, Kind: s.Kind, Pages: s.Pages, Rendered: s.Rendered, Fonts: s.Fonts, Colours: s.Colours, Headers: s.Headers, Footers: s.Footers, MediaPages: s.MediaPages, MediaSkipped: s.MediaSkipped, Failure: s.Failure, Stopped: s.Stopped}
 	for i := range s.Media {
 		f.Media = append(f.Media, MediaFile(i+1, "png"))
 	}

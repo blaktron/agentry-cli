@@ -140,11 +140,15 @@ type server struct {
 	// previews and referenceViews count the Report Designer's renders and
 	// reference views (design.go).
 	previews, referenceViews int
-	// documentViews and logoCrops count the document tools' images and
-	// crops, and docLogo is the last crop, drawn as the design's logo
-	// (document.go).
-	documentViews, logoCrops int
-	docLogo                  reportdesign.Logo
+	// documentViews, logoCrops and pictureTakes count the document tools'
+	// images, crops and pictures; docLogo is the last crop, drawn as the
+	// design's logo, docCoverImage the last picture taken as its cover
+	// image, and docCoverPictures the pictures taken for its custom cover,
+	// by slot (document.go).
+	documentViews, logoCrops, pictureTakes int
+	docLogo                                reportdesign.Logo
+	docCoverImage                          reportdesign.Image
+	docCoverPictures                       []reportdesign.Image
 	// callImage, when a tool sets it, is an image the call's answer carries
 	// beside its text, of callImageType (image/png when empty).
 	callImage     []byte

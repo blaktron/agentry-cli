@@ -125,9 +125,15 @@ type Result struct {
 	// Dir is the folder the result was written to: design/ under OutDir.
 	Dir string
 	// DocumentPages is how many images of the document the run looked
-	// at; LogoFromDocument says the design's logo is a crop of it.
-	DocumentPages    int
-	LogoFromDocument bool
+	// at; LogoFromDocument says the design's logo is a crop of it,
+	// CoverImageFromDocument that its cover image is a picture of it, and
+	// CoverFromDocument that a Design run wrote a custom cover modelled on
+	// it, drawing CoverPicturesFromDocument pictures of it.
+	DocumentPages             int
+	LogoFromDocument          bool
+	CoverImageFromDocument    bool
+	CoverFromDocument         bool
+	CoverPicturesFromDocument int
 	// Pages are the web addresses given, and what became of each.
 	Pages []*voicebuild.Page
 }
@@ -228,6 +234,7 @@ func Run(ctx context.Context, d dockerx.Client, o Options) (*Result, error) {
 		_, _ = fmt.Fprintf(logw, "warning: the Report Designer stopped before it finished (%v); it had written its files, which are kept\n", runErr)
 	}
 	res.Design, res.Looked, res.Thumbnail, res.LogoFromDocument = made.design, made.looked, made.thumbnail, made.logoFromDocument
+	res.CoverImageFromDocument, res.CoverFromDocument, res.CoverPicturesFromDocument = made.coverImageFromDocument, made.coverFromDocument, made.coverPictures
 	if res.Dir, err = writeResult(o.OutDir, made.design); err != nil {
 		return res, engine.Classify(engine.ExitCLI, err)
 	}
@@ -497,10 +504,13 @@ func (o Options) task(in staged, pages *voicebuild.PagesResult, doc *readDocumen
 
 // made is what collect kept.
 type made struct {
-	design           reportdesign.Design
-	looked           bool
-	thumbnail        bool
-	logoFromDocument bool
+	design                 reportdesign.Design
+	looked                 bool
+	thumbnail              bool
+	logoFromDocument       bool
+	coverImageFromDocument bool
+	coverFromDocument      bool
+	coverPictures          int
 }
 
 // maxPreviewBytes caps a render read for the thumbnail: a page at the
@@ -572,15 +582,42 @@ func (o Options) collect(in staged, doc *readDocument) (made, error) {
 		if err := ownImagesOnly(d, in); err != nil {
 			return out, err
 		}
+		drawn := d.WithoutAssets().Canonical()
 		// Its images are the person's and the design's, never the model's;
-		// a logo taken from the person's document is cropped again here.
+		// a logo or a picture taken from the person's document is taken
+		// again here.
 		d.Logo, d.CoverImage, d.CustomCover = in.logo, in.coverImage, reportdesign.CustomCover{}
 		if logo, ok, err := o.documentLogo(doc); err != nil {
 			return out, err
 		} else if ok {
 			d.Logo, out.logoFromDocument = logo, true
 		}
-		if in.from != nil && d.Cover.Style == "custom" && !in.from.CustomCover.IsZero() {
+		coverImage, pictures, err := o.documentPictures(doc)
+		if err != nil {
+			return out, err
+		}
+		if coverImage != (reportdesign.Image{}) {
+			d.CoverImage, out.coverImageFromDocument = coverImage, true
+		}
+		var src []byte
+		if doc != nil {
+			if src, err = readReport(o.OutDir, reportdesigner.CoverFile, reportdesign.MaxCoverSourceBytes); err != nil {
+				return out, err
+			}
+		}
+		switch {
+		case src != nil:
+			// A custom cover modelled on the person's document, drawing
+			// the pictures taken from it.
+			if pictures == nil {
+				pictures = []reportdesign.Image{}
+			}
+			d.Cover.Style, d.CustomCover = "custom", reportdesign.CustomCover{Source: string(src), Images: pictures}
+			if thumb, ok := o.thumbnail(src, drawn); ok {
+				d.CustomCover.Thumbnail, out.thumbnail = thumb, true
+			}
+			out.coverFromDocument, out.coverPictures = true, len(pictures)
+		case in.from != nil && d.Cover.Style == "custom" && !in.from.CustomCover.IsZero():
 			cc, err := reencodeCover(in.from.CustomCover)
 			if err != nil {
 				return out, err
