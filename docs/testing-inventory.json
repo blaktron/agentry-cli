@@ -475,7 +475,8 @@
             "TestMajorOfUnparseable",
             "TestRegistryURLPrecedence",
             "TestNewRootCmdCommandSet",
-            "TestVersionShowsBakedRegistry"
+            "TestVersionShowsBakedRegistry",
+            "TestAPIProblemNamesAnHTMLRefusalsPage"
           ],
           "fuzz": [],
           "benchmarks": [],
