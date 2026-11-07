@@ -178,6 +178,9 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	if err := checkTargetHosts(p); err != nil {
 		return fail(err)
 	}
+	if err := checkDesktop(p); err != nil {
+		return fail(err)
+	}
 	env.CapabilitiesEnforced = withSignInRenewal(env.CapabilitiesEnforced, p)
 	ReportStage(p.OnStage, Stage{Name: receipt.StagePrepare})
 	rd, err := prepareRunDirs(p, runID, td)
@@ -242,6 +245,7 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	if err := prepareTargetHosts(ctx, d, p, rd, td, env); err != nil {
 		return fail(err)
 	}
+	recordDesktop(rd, td, env)
 	// The optional secrets it goes without, before any replacer is built:
 	// the System Prompt names them (spec.PHSecretsAbsent), and so does the
 	// receipt.

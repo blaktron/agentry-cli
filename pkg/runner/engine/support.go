@@ -101,6 +101,9 @@ type runDirs struct {
 	// browser is the run's browser once readied (browser.go): the
 	// browse proxy's name and address, its sites.
 	browser *browserRun
+	// desktop is the run's desktop link once readied (desktop.go): the
+	// binding, the relay volume and each server's calls.
+	desktop *desktopRun
 	// render is the run's page renderer, once started (render.go).
 	render      *renderRun
 	outDir      string
@@ -320,6 +323,7 @@ func (rd *runDirs) replacerWith(hostPath func(string) string) *strings.Replacer 
 	// ids on this engine, whose files it reads and copies), and each
 	// target host's relay target.
 	pairs = append(pairs, spec.PHHostLinkUser, rd.personUser(), spec.PHAppLinkUser, rd.personUser())
+	pairs = append(pairs, spec.PHDesktopUser, rd.desktopUser(), spec.PHDesktopMount, rd.desktopMount())
 	for _, h := range rd.targets {
 		pairs = append(pairs, spec.PHTargetHost(h.ID), h.RelayHost())
 	}
@@ -454,6 +458,9 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 		return nil, Classify(ExitCLI, err)
 	}
 	if err := preparePersistentFolders(p, rd); err != nil {
+		return nil, err
+	}
+	if err := prepareDesktopLink(p, rd, runID); err != nil {
 		return nil, err
 	}
 	rd.runID, rd.web, rd.anyEgress = runID, p.Plan.Capabilities.WebTools, p.Plan.Capabilities.EgressMode == "all"

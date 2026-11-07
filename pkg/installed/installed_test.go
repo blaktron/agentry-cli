@@ -557,6 +557,43 @@ func TestTargetHostsAreInTheSnapshot(t *testing.T) {
 	}
 }
 
+// TestTheDesktopLineIsInTheSnapshot: the applications a release uses on the
+// person's computer are part of the recorded contract, so an update that
+// adds one, widens one's tools or adds computer use asks again, the record
+// reads back what was consented, and a record from before the line existed
+// asks once more.
+func TestTheDesktopLineIsInTheSnapshot(t *testing.T) {
+	line := manifest.Capabilities{Desktop: &manifest.Desktop{Servers: []manifest.DesktopServer{{ID: "blender", Tools: []string{"get_scene_info"}}}}}
+	before, after := Snapshot(manifest.Capabilities{}), Snapshot(line)
+	if after.Desktop == nil || len(after.Desktop.Servers) != 1 || after.Desktop.Servers[0].ID != "blender" {
+		t.Fatalf("snapshot = %+v", after)
+	}
+	line.Desktop.Servers[0].Tools[0] = "changed"
+	if after.Desktop.Servers[0].Tools[0] != "get_scene_info" {
+		t.Fatalf("the snapshot shares the manifest's tool list: %+v", after.Desktop)
+	}
+	if d := DiffCapabilities(before, after); !d.HasWidened() {
+		t.Fatalf("a new application did not widen: %+v", d)
+	}
+	if d := DiffCapabilities(after, after); !d.Empty() {
+		t.Fatalf("the same line changed the contract: %+v", d)
+	}
+	wider := Snapshot(manifest.Capabilities{Desktop: &manifest.Desktop{Servers: []manifest.DesktopServer{{ID: "blender"}}, ComputerUse: manifest.ComputerUseApp}})
+	if d := DiffCapabilities(after, wider); !d.HasWidened() {
+		t.Fatalf("every tool and computer use did not widen: %+v", d)
+	}
+	if got := Snapshot(wider.capabilities()); !reflect.DeepEqual(got, wider) {
+		t.Fatalf("the line did not survive the way back: %+v, want %+v", got.Desktop, wider.Desktop)
+	}
+	var st State
+	if err := yaml.Unmarshal([]byte("records:\n  - registry: r\n    namespace: n\n    name: a\n    target: runner\n    version: 1.0.0\n    capabilities:\n      egressNone: true\n"), &st); err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Records) != 1 || !DiffCapabilities(st.Records[0].Capabilities, after).HasWidened() {
+		t.Fatalf("a record without the line does not ask again for one: %+v", st)
+	}
+}
+
 // TestArchiveWideningsCatchAShippedPackTheResolveDidNotName: an archive
 // whose own agent.yaml ships a pack the consented contract did not name is
 // a widening the install refuses.

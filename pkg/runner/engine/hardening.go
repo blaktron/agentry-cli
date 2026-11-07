@@ -233,6 +233,9 @@ func runtimeLine(p Params) string {
 		" (each finds the containers it talks to through /etc/hosts, since a sandboxed network stack does not reach the engine's embedded DNS)"
 	if gatewaySandboxed(p.Plan) {
 		line += "; the gateway is created with " + engineCLI + " --runtime " + p.Plan.GatewayRuntime() + " (docker.gatewayRuntime), which opens the bind-mounted socket of the run's docker filter"
+		if p.Plan.Capabilities.Desktop != nil {
+			line += ", and so are the desktop link's entries, which the gateway launches and the filter gives that runtime, since they open the relay's socket in the run's volume, a host socket to a sandbox; the relay that makes that socket runs on the daemon's default runtime, because a socket a sandbox makes on a host-backed folder stays inside it"
+		}
 	}
 	launched, is, takes := "the tools server", "is", "takes"
 	if servers {

@@ -184,6 +184,10 @@ type Policy struct {
 	// Browser governs a release's browser (capabilities.browser):
 	// whether one may reach any public site.
 	Browser BrowserPolicy `yaml:"browser,omitempty"`
+	// Desktop governs a release's use of the person's own computer
+	// (capabilities.desktop): whether at all, whether the whole screen,
+	// and whether a server the person configured themself.
+	Desktop DesktopPolicy `yaml:"desktop,omitempty"`
 	// SecretSource is where declared secret values are resolved from.
 	SecretSource SecretSource `yaml:"secretSource"`
 	// DataAccessServers maps a manifest dataAccess category to operator
@@ -280,6 +284,35 @@ type BrowserPolicy struct {
 	// at compile time, as "*" egress is.
 	AllowPublicWeb bool `yaml:"allowPublicWeb,omitempty"`
 }
+
+// DesktopPolicy is the operator's say over a release's use of the person's
+// own computer through Agentry Desktop (capabilities.desktop). A release
+// that declares the line is refused at compile time where the policy does
+// not allow what it asks, as a public-scope browser is.
+type DesktopPolicy struct {
+	// Allow lets a release use an application on the person's computer
+	// through its installed server. Unset is true; false refuses every
+	// release that declares the line.
+	Allow *bool `yaml:"allow,omitempty"`
+	// AllowScreen lets a release's computer use see and act on the whole
+	// screen (computerUse: screen). Default false: app scope only, the
+	// windows of the applications the run uses.
+	AllowScreen bool `yaml:"allowScreen,omitempty"`
+	// AllowCustomServers lets a release use an application server the
+	// person configured themself, outside the catalogue of application
+	// servers, once the catalogue has such an entry kind. Default false:
+	// catalogue entries only. No catalogue entry of that kind exists yet,
+	// so the key admits nothing until one does.
+	AllowCustomServers bool `yaml:"allowCustomServers,omitempty"`
+}
+
+// Allowed says whether the policy lets a release use the person's computer
+// at all.
+func (d DesktopPolicy) Allowed() bool { return d.Allow == nil || *d.Allow }
+
+// DesktopRefused is the refusal a policy with desktop.allow: false gives a
+// release that declares capabilities.desktop.
+const DesktopRefused = "the release uses an application on your computer through Agentry Desktop (capabilities.desktop), which this machine's policy does not allow: set desktop.allow: true to permit it"
 
 // ExecPolicy is the exec catalog. The manifest keeps declaring bare command
 // names; the operator, not the manifest, says which apk package provides each
@@ -1697,6 +1730,20 @@ mcpRegistries:
   # versions and the install records resolved artifact digests either way.
   npm: https://registry.npmjs.org
   pypi: https://pypi.org
+
+# desktop:
+#   # A release's use of applications on your own computer through Agentry
+#   # Desktop (capabilities.desktop): unset, allowed. false refuses every
+#   # such release at compile time.
+#   allow: true
+#   # Whether its computer use may see and act on the whole screen
+#   # (computerUse: screen); default false, app scope only.
+#   allowScreen: false
+#   # Whether it may use an application server you configured yourself,
+#   # outside Agentry's catalogue of application servers; default false.
+#   # The catalogue has no such entry kind yet, so this admits nothing
+#   # until it does.
+#   allowCustomServers: false
 
 # docker:
 #   # The OCI runtime a run's containers are created with (docker run

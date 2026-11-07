@@ -83,6 +83,9 @@ type promptFacts struct {
 	// browser is the release's browser line (capabilities.browser): the
 	// browser server's tools, held to the browse proxy's scope.
 	browser *spec.BrowserCap
+	// desktop is the release's desktop line (capabilities.desktop): the
+	// applications on the person's computer, through Agentry Desktop.
+	desktop *spec.DesktopCap
 	// inputView is the release's default view of its inputs (inputViewOf),
 	// empty when each input keeps its own.
 	inputView string
@@ -249,6 +252,7 @@ You have no shell, filesystem or network of your own. Your tools come only from 
 		writeTargetHosts(b, f.hosts)
 	}
 	writeBrowser(b, f.browser)
+	writeDesktop(b, f.desktop)
 	writeAppLink(b, c.AppLink)
 	if len(f.servers) > 0 {
 		fmt.Fprintf(b, "- **MCP servers.** Besides the runner's own tools, the tools of these servers: %s. Each reaches only what was declared for it.\n", strings.Join(f.servers, ", "))
