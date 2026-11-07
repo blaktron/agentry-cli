@@ -1,16 +1,11 @@
 {
   "versions": [
     {
-      "version": "0.7.33",
-      "highlights": [
-        "A QuickAgent can use Unreal Engine on your computer through Epic's own Unreal MCP plugin, with Agentry Desktop.",
-        "When something in front of the registry refuses a request with a web page, the error names the page and its ray id."
-      ]
-    },
-    {
       "version": "0.7.32",
       "highlights": [
-        "A run that used an application on your computer and then failed still counts, in its receipt, the calls that crossed."
+        "A run that used an application on your computer and then failed still counts, in its receipt, the calls that crossed.",
+        "A QuickAgent can use Unreal Engine on your computer through Epic's own Unreal MCP plugin, with Agentry Desktop.",
+        "When something in front of the registry refuses a request with a web page, the error names the page and its ray id."
       ]
     },
     {
