@@ -918,6 +918,35 @@ type HarnessSpec struct {
 	// ModelSignIn is set when the run spends a person's plan through a
 	// model sign-in instead of a key; nil for a key.
 	ModelSignIn *ModelSignInSpec `json:"modelSignIn,omitempty"`
+	// ContextWindow is the model's context window the plan was compiled for,
+	// and where it came from; nil when the plan was compiled without one.
+	ContextWindow *ContextWindowSpec `json:"contextWindow,omitempty"`
+}
+
+// ContextWindowSource is ContextWindowSpec.Source for a window the policy
+// file records.
+const ContextWindowSource = "policy"
+
+// ContextWindowSpec is a model's context window as the plan knows it.
+type ContextWindowSpec struct {
+	// Tokens is the window in tokens.
+	Tokens int64 `json:"tokens"`
+	// Source is where it came from: ContextWindowSource for the policy's
+	// model.contextWindow, else the endpoint URL (scheme, host and path) that
+	// reported it when the run asked.
+	Source string `json:"source"`
+}
+
+// ContextWindowOf is the plan's record of a window of tokens that came from
+// source, the policy's when source is empty; nil without a window.
+func ContextWindowOf(tokens int64, source string) *ContextWindowSpec {
+	if tokens <= 0 {
+		return nil
+	}
+	if source == "" {
+		source = ContextWindowSource
+	}
+	return &ContextWindowSpec{Tokens: tokens, Source: source}
 }
 
 // ResumeSpec is an autonomous harness's resumable conversation.

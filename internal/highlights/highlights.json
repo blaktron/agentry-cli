@@ -4,7 +4,9 @@
       "version": "0.7.28",
       "highlights": [
         "A QuickAgent can use Blender on your own computer through its installed MCP server, from inside its sandbox.",
-        "Each call reaches Agentry Desktop, which must be running, and a hosted run never has it."
+        "Each call reaches Agentry Desktop, which must be running, and a hosted run never has it.",
+        "A run on a model server of your own asks the server for the model's context window when the policy records none.",
+        "The run uses the window it finds for that run only, says where it came from, and leaves the policy as it is."
       ]
     },
     {

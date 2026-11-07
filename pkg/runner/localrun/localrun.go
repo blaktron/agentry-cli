@@ -415,7 +415,12 @@ type PlanInputs struct {
 	// agent's share folder (compile.Inputs.ShareServers): set by a Segment
 	// alone.
 	ShareServers []string
-	Log          io.Writer
+	// ContextWindowSource is where Policy.Model.ContextWindow came from when
+	// a run asked the endpoint for it (compile.Inputs.ContextWindowSource); a
+	// plan compiled for another window, or one from another source, is
+	// compiled again.
+	ContextWindowSource string
+	Log                 io.Writer
 }
 
 // sameServers says a plan's servers are the ones given, each seeing the
@@ -512,6 +517,7 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 			plan.Capabilities.AppLink == in.AppLink &&
 			reflect.DeepEqual(plan.Capabilities.Coder, in.Coder) &&
 			reflect.DeepEqual(plan.Capabilities.Calendar, in.Calendar) &&
+			reflect.DeepEqual(plan.Harness.ContextWindow, spec.ContextWindowOf(in.Policy.Model.ContextWindow, in.ContextWindowSource)) &&
 			sameServers(plan.MCPServers, in.Servers, in.ShareServers) {
 			switch {
 			case plan.CompiledBy != in.CompiledBy:
@@ -539,20 +545,21 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 	// first: a removal here could run into another process's compile of
 	// the same plan.
 	plan, err := compile.Compile(compile.Inputs{
-		Manifest:        in.Manifest,
-		Mode:            in.Mode,
-		Digest:          in.Meta.Digest,
-		Source:          in.Meta.Source,
-		WorkspaceDir:    in.WorkspaceDir,
-		Policy:          in.Policy,
-		PolicySHA:       in.PolicySHA,
-		AdapterName:     in.Adapter,
-		RunnerImage:     runnerImage,
-		CompiledBy:      in.CompiledBy,
-		MCPServers:      in.Servers,
-		Web:             in.Web,
-		RegistrySearch:  in.RegistrySearch,
-		WebSearchedOnly: in.WebSearchedOnly, WebGivenOnly: in.WebGivenOnly, WebRender: in.WebRender,
+		Manifest:            in.Manifest,
+		Mode:                in.Mode,
+		Digest:              in.Meta.Digest,
+		Source:              in.Meta.Source,
+		WorkspaceDir:        in.WorkspaceDir,
+		Policy:              in.Policy,
+		PolicySHA:           in.PolicySHA,
+		ContextWindowSource: in.ContextWindowSource,
+		AdapterName:         in.Adapter,
+		RunnerImage:         runnerImage,
+		CompiledBy:          in.CompiledBy,
+		MCPServers:          in.Servers,
+		Web:                 in.Web,
+		RegistrySearch:      in.RegistrySearch,
+		WebSearchedOnly:     in.WebSearchedOnly, WebGivenOnly: in.WebGivenOnly, WebRender: in.WebRender,
 		Review:       in.Review,
 		Design:       in.Design,
 		AgentFiles:   in.AgentFiles,
