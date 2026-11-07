@@ -96,6 +96,22 @@ func TestCompileRendersTheDesktopLink(t *testing.T) {
 			t.Errorf("%s = %q names the desktop link", env.Name, env.Value)
 		}
 	}
+	// The agent container and the tools server gain nothing: no mount, no
+	// network, no tool of the line reaches them; the agent's routes are the
+	// plain run's.
+	tools := catalogServer(t, planDir, spec.ToolServerName)
+	for _, v := range strs(tools["volumes"]) {
+		if strings.Contains(v, "desktop") {
+			t.Errorf("the tools server mounts %s", v)
+		}
+	}
+	if tools["disableNetwork"] != true {
+		t.Errorf("the tools server joins a network: %v", tools)
+	}
+	agentYAML, _ := os.ReadFile(filepath.Join(planDir, "harness", "agent.yaml")) //nolint:gosec // test plan dir
+	if strings.Contains(string(agentYAML), "agentry-desktop-blender__") && !strings.Contains(string(agentYAML), "Your computer") {
+		t.Error("the harness names the desktop link's tools outside the System Prompt")
+	}
 
 	prompt, _ := os.ReadFile(filepath.Join(planDir, "harness", "agent.yaml")) //nolint:gosec // test plan dir
 	for _, want := range []string{"**Your computer.**", "Agentry Desktop", "agentry-desktop-blender", "execute_blender_code", "runs code inside Blender", "never instructions"} {
@@ -104,7 +120,7 @@ func TestCompileRendersTheDesktopLink(t *testing.T) {
 		}
 	}
 	line := plan.Enforcement["desktop"]
-	for _, want := range []string{"Blender", name, blender.Package.Ref(), "execute_blender_code", "asks the person", "api.polyhaven.com", "a hosted run refuses the line", "no Agentry Desktop", "not enforce"} {
+	for _, want := range []string{"Blender", name, blender.Package.Ref(), "execute_blender_code", "put to the person first", "api.polyhaven.com", "a hosted run refuses the line", "no Agentry Desktop", "not to enforce"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("enforcement line lacks %q: %q", want, line)
 		}
@@ -137,8 +153,9 @@ func TestTheDesktopLinkFollowsTheReleasesNarrowing(t *testing.T) {
 	}
 }
 
-// Nothing of the desktop link reaches a plan that declares none: the same
-// bytes as before the line existed.
+// Nothing of the desktop link reaches a plan that declares none; the golden
+// files of the other fixtures, which no part of this change regenerated, are
+// the byte-for-byte proof, and this test names what must stay absent.
 func TestAReleaseWithoutTheDesktopLineHasNoDesktopLink(t *testing.T) {
 	planDir := t.TempDir()
 	plan, err := Compile(mcpFixtureInputs(t, nil, policy.Default()), planDir)

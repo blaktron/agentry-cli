@@ -49,7 +49,9 @@ func (f *Filter) desktopShape(c *containerCreateBody) error {
 	if hc.NetworkMode != "none" || (c.NetworkingConfig != nil && len(c.NetworkingConfig.EndpointsConfig) > 0) {
 		return deny("the desktop link joins no network")
 	}
-	if f.cfg.DesktopUser != "" && c.User != f.cfg.DesktopUser {
+	// The run's user, or none where the run names none (an engine that
+	// reports no ids): never a user of the gateway's choosing.
+	if c.User != f.cfg.DesktopUser {
 		return deny("the desktop link runs as %q, not the run's %q", c.User, f.cfg.DesktopUser)
 	}
 	mounts := 0

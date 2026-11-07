@@ -95,7 +95,7 @@ func desktopEnforcement(d *spec.DesktopCap) string {
 		}
 		part := fmt.Sprintf("%s through %s (its installed server %s), the tools %s", s.Application, desktoplink.ServerName(s.ID), s.Package, strings.Join(s.ToolNames(), ", "))
 		if len(exec) > 0 {
-			part += "; " + strings.Join(exec, ", ") + " runs code inside " + s.Application + " and asks the person before each call"
+			part += "; " + strings.Join(exec, ", ") + " runs code inside " + s.Application + ", a call Agentry Desktop is to put to the person first"
 		}
 		if len(s.Egress) > 0 {
 			part += "; the server reaches " + strings.Join(s.Egress, ", ") + " from the person's computer"
@@ -103,9 +103,9 @@ func desktopEnforcement(d *spec.DesktopCap) string {
 		parts = append(parts, part)
 	}
 	return "the applications on the person's computer are reached only through the desktop link (the runner image, one container an application, no network, one mount: the run's relay volume), " +
-		"which carries each tool call, and nothing else, over a relay of the run's own to Agentry Desktop, which launches each installed server as the person from Agentry's catalogue of application servers, never from anything the agent sends, " +
-		"gates every call by the catalogue's class and logs it; the gateway holds each entry to the catalogue's tools: " + joinAnd(parts) +
-		"; an installed server runs on the person's computer, outside the run's network and filesystem rules, which the run does not enforce; a hosted run refuses the line, and a run with no Agentry Desktop answering is refused before the sandbox starts"
+		"which carries each tool call, and nothing else, over a relay of the run's own to Agentry Desktop; the run holds each entry to the catalogue's tools through the gateway's allowlist and the relay's own check, and logs every call: " + joinAnd(parts) +
+		"; what happens on the person's computer is Agentry Desktop's to do and the run's to record, not to enforce: it is asked to launch each installed server from Agentry's catalogue of application servers, never from anything the agent sends, and to answer each call by the catalogue's class, and the installed server runs there with that computer's network and files; " +
+		"a hosted run refuses the line, and a run with no Agentry Desktop answering is refused before the sandbox starts"
 }
 
 // writeDesktop is the System Prompt's paragraph on the applications the run

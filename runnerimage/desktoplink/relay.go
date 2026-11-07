@@ -15,6 +15,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -256,7 +257,7 @@ func (r *relay) failAll() {
 // accepts says a request is a call this relay carries: the run token, a
 // bound server, and a tool of it.
 func (r *relay) accepts(req Request) bool {
-	if req.Token != r.token || req.Tool == "" {
+	if subtle.ConstantTimeCompare([]byte(req.Token), []byte(r.token)) != 1 || req.Tool == "" {
 		return false
 	}
 	tools, ok := r.bound[req.Server]

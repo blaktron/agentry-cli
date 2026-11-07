@@ -293,7 +293,7 @@ func (r *desktopRun) receiptLine(s spec.DesktopServerCap) string {
 func desktopTransportLine(r *desktopRun) string {
 	return "a relay of the run's own (the runner image, no network, a read-only root) serves the desktop link's socket in the volume " + r.volume +
 		", which the link entries alone mount, and this process carries each tool call from the relay's stdio, over the engine's own attach, to " + r.link.FarEnd +
-		" and the answer back; every frame carries the run token Agentry Desktop issued at bind, and a frame that is not a call, names a server the run did not bind or carries another token is dropped at both ends; no socket of this computer is bound into any container"
+		" and the answer back; every frame carries the run token Agentry Desktop issued at bind, and a frame that is not a call, names a server the run did not bind or carries another token is dropped at both ends; no socket of Agentry Desktop's is bound into any container"
 }
 
 // desktopLogFile is the receipt each server's calls go to.

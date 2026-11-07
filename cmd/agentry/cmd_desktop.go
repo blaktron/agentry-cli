@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"strings"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/desktop"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
@@ -73,22 +74,8 @@ func desktopSummary(d *spec.DesktopCap) string {
 
 // joinAnd lists items for a sentence: "a", "a and b", "a, b and c".
 func joinAnd(items []string) string {
-	switch len(items) {
-	case 0:
-		return ""
-	case 1:
-		return items[0]
+	if len(items) < 2 {
+		return strings.Join(items, "")
 	}
-	out := ""
-	for i, it := range items {
-		switch {
-		case i == 0:
-			out = it
-		case i == len(items)-1:
-			out += " and " + it
-		default:
-			out += ", " + it
-		}
-	}
-	return out
+	return strings.Join(items[:len(items)-1], ", ") + " and " + items[len(items)-1]
 }

@@ -211,7 +211,7 @@ func TestTheDesktopLinkCarriesACallToTheLinkService(t *testing.T) {
 	if err := json.Unmarshal(log, &line); err != nil || line.Tool != "get_scene_info" || line.Class != "read" || line.Outcome != "ok" || string(line.Arguments) != `{"detail":"full"}` {
 		t.Fatalf("the receipt line: %s (%v)", log, err)
 	}
-	if line := env.CapabilitiesEnforced["desktop.transport"]; !strings.Contains(line, desktopVolume("R")) || !strings.Contains(line, s.socket) || !strings.Contains(line, "no socket of this computer") {
+	if line := env.CapabilitiesEnforced["desktop.transport"]; !strings.Contains(line, desktopVolume("R")) || !strings.Contains(line, s.socket) || !strings.Contains(line, "no socket of Agentry Desktop's") {
 		t.Errorf("desktop.transport: %q", line)
 	}
 

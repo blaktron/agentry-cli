@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -216,7 +217,7 @@ func (b *desktopBridge) serve(ctx context.Context, sc *bufio.Scanner) {
 		srv, bound := b.run.server(f.Server)
 		tool, allowed := srv.Tool(f.Request.Tool)
 		switch {
-		case f.Token != b.run.link.Token:
+		case subtle.ConstantTimeCompare([]byte(f.Token), []byte(b.run.link.Token)) != 1:
 			_, _ = fmt.Fprintln(b.log, "a call from the relay with another token than the run's was dropped")
 			continue
 		case !bound:

@@ -300,7 +300,9 @@ type DesktopPolicy struct {
 	AllowScreen bool `yaml:"allowScreen,omitempty"`
 	// AllowCustomServers lets a release use an application server the
 	// person configured themself, outside the catalogue of application
-	// servers. Default false: catalogue entries only.
+	// servers, once the catalogue has such an entry kind. Default false:
+	// catalogue entries only. No catalogue entry of that kind exists yet,
+	// so the key admits nothing until one does.
 	AllowCustomServers bool `yaml:"allowCustomServers,omitempty"`
 }
 
@@ -1739,6 +1741,8 @@ mcpRegistries:
 #   allowScreen: false
 #   # Whether it may use an application server you configured yourself,
 #   # outside Agentry's catalogue of application servers; default false.
+#   # The catalogue has no such entry kind yet, so this admits nothing
+#   # until it does.
 #   allowCustomServers: false
 
 # docker:
