@@ -2,6 +2,7 @@ package engine
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -697,8 +698,22 @@ func TestScreenshotsAreNotKeptByDefault(t *testing.T) {
 			}
 		}
 		td.run()
+		// The harness reports each screenshot in its event stream; the run
+		// keeps that stream as a receipt and tees it, and neither holds the
+		// picture.
+		var tee bytes.Buffer
+		events, err := os.Create(filepath.Join(rd.receiptsDir, "events.ndjson"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		c := &eventCollector{events: events, tee: &tee, redact: rd.redact, dropImages: p.Plan.Capabilities.Desktop.HasComputerUse()}
+		c.recordRaw(screenshotEvent(standInScreenshot + strings.Repeat("A", 400)))
+		_ = events.Close()
+		if bytes.Contains(tee.Bytes(), []byte(standInScreenshot)) {
+			t.Error("the --events tee holds the screenshot")
+		}
 		raw, _ := base64.StdEncoding.DecodeString(standInScreenshot)
-		err := filepath.WalkDir(filepath.Dir(rd.root), func(path string, de os.DirEntry, err error) error {
+		err = filepath.WalkDir(filepath.Dir(rd.root), func(path string, de os.DirEntry, err error) error {
 			if err != nil || de.IsDir() {
 				return err
 			}
