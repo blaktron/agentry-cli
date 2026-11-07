@@ -1,12 +1,17 @@
 {
   "versions": [
     {
+      "version": "0.7.28",
+      "highlights": [
+        "A QuickAgent can use Blender on your own computer through its installed MCP server, from inside its sandbox.",
+        "Each call reaches Agentry Desktop, which must be running, and a hosted run never has it."
+      ]
+    },
+    {
       "version": "0.7.27",
       "highlights": [
         "An autonomous run resumes its conversation when the model server fails after its first tool call.",
-        "It waits 30 seconds to 2 minutes, at most five times, and never past the run's timeout; no tool runs twice.",
-        "A QuickAgent can use Blender on your own computer through its installed MCP server, from inside its sandbox.",
-        "Each call reaches Agentry Desktop, which must be running, and a hosted run never has it."
+        "It waits 30 seconds to 2 minutes, at most five times, and never past the run's timeout; no tool runs twice."
       ]
     },
     {
