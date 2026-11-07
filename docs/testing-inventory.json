@@ -4670,6 +4670,19 @@
           ]
         },
         {
+          "path": "pkg/runner/compile/longtask_test.go",
+          "tests": [
+            "TestTheLongTaskNotesAreAnAutonomousRunsOwn",
+            "TestTheHarnessNamesTheNotesFileExceptForAPersistentAgent"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
+          ]
+        },
+        {
           "path": "pkg/runner/compile/loopback_test.go",
           "tests": [
             "TestAliasURL",
