@@ -29,7 +29,7 @@ func refuseHostedDesktop(plan *spec.Plan, opts runOpts) error {
 	if d == nil || !hostedFor(opts) {
 		return nil
 	}
-	return engine.HostedDesktopRefusal(d.IDs())
+	return engine.HostedDesktopRefusal(d.EntryIDs())
 }
 
 // bindDesktop binds the run to Agentry Desktop over the link socket, for a
@@ -48,6 +48,9 @@ func bindDesktop(ctx context.Context, plan *spec.Plan, home, runID string) (*eng
 	req := desktop.BindRequest{Run: runID, Ref: plan.Ref, Digest: plan.Digest}
 	for _, s := range d.Servers {
 		req.Servers = append(req.Servers, desktop.BindServer{ID: s.ID, Tools: s.ToolNames()})
+	}
+	if c, ok := d.Computer(); ok {
+		req.ComputerUse, req.ComputerTools = d.ComputerUse, c.ToolNames()
 	}
 	bound, err := c.Bind(ctx, req)
 	if err != nil {
@@ -68,6 +71,12 @@ func desktopSummary(d *spec.DesktopCap) string {
 	var apps []string
 	for _, s := range d.Servers {
 		apps = append(apps, fmt.Sprintf("%s (%d tools)", s.Application, len(s.Tools)))
+	}
+	switch d.ComputerUse {
+	case "app":
+		apps = append(apps, "computer use in the windows you allow")
+	case "screen":
+		apps = append(apps, "computer use of your whole screen")
 	}
 	return joinAnd(apps) + " on your computer, through Agentry Desktop"
 }

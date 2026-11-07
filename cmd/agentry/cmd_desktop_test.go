@@ -165,6 +165,22 @@ func TestARunNeedsAgentryDesktop(t *testing.T) {
 	if err := link.Unbind(context.Background()); err != nil || len(s.unbinds) != 1 || s.unbinds[0].Token != "tok-1" {
 		t.Fatalf("unbind: %v, %+v", err, s.unbinds)
 	}
+	if s.binds[0].ComputerUse != "" || len(s.binds[0].ComputerTools) != 0 || link.Computer != nil {
+		t.Fatalf("a run without computer use asked for it: %+v", s.binds[0])
+	}
+
+	// Computer use: the bind asks for it in the release's scope with the
+	// run's computer-use tools, and the run carries what was bound.
+	cu := desktopPlan()
+	cu.Capabilities.Desktop.ComputerUse = "app"
+	cu.Capabilities.Desktop.ComputerTools = []spec.DesktopTool{{Name: "screenshot", Class: "read"}, {Name: "left_click", Class: "act"}}
+	link, err = bindDesktop(context.Background(), cu, dir, "R")
+	if err != nil || link.Computer == nil || link.Computer.Scope != "app" {
+		t.Fatalf("computer use bound: %+v, %v", link, err)
+	}
+	if last := s.binds[len(s.binds)-1]; last.ComputerUse != "app" || !slices.Equal(last.ComputerTools, []string{"screenshot", "left_click"}) {
+		t.Fatalf("the bind sent %+v", last)
+	}
 
 	// The service refusing the bind: its reason and its words reach the
 	// person, exit 11.
@@ -193,7 +209,11 @@ func (s *standInService) Bind(_ context.Context, req desktop.BindRequest) (deskt
 	if s.refuse != nil {
 		return desktop.Bound{}, s.refuse
 	}
-	return desktop.Bound{Token: s.token, Servers: s.tools}, nil
+	b := desktop.Bound{Token: s.token, Servers: s.tools}
+	if req.ComputerUse != "" {
+		b.Computer = &desktop.ComputerBound{Scope: req.ComputerUse, Enforced: "stand-in"}
+	}
+	return b, nil
 }
 
 func (s *standInService) Call(context.Context, desktop.CallRequest) (desktoplink.Answer, *desktop.Refusal) {
@@ -240,6 +260,11 @@ func TestHostedRunsRefuseTheDesktopLine(t *testing.T) {
 
 func TestTheRunSummaryNamesTheDesktopLine(t *testing.T) {
 	if got := desktopSummary(desktopPlan().Capabilities.Desktop); got != "Blender (2 tools) on your computer, through Agentry Desktop" {
+		t.Errorf("summary %q", got)
+	}
+	cu := desktopPlan().Capabilities.Desktop
+	cu.ComputerUse = "app"
+	if got := desktopSummary(cu); got != "Blender (2 tools) and computer use in the windows you allow on your computer, through Agentry Desktop" {
 		t.Errorf("summary %q", got)
 	}
 }

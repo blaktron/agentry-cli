@@ -1,0 +1,333 @@
+{
+  "planVersion": "2",
+  "ref": "acme/scene-helper@1.0.0",
+  "digest": "sha256:beef",
+  "source": "local",
+  "modes": [
+    "autonomous",
+    "interactive"
+  ],
+  "mode": "autonomous",
+  "summary": "desktop link compile fixture",
+  "policySha256": "policysha",
+  "instruction": {
+    "sourcePath": "SKILL.md",
+    "sha256": "200ee994c3f89af52416b933412c2cb4902e13f5a075609e98da5f42f2c4b636",
+    "bodySha256": "96aae5e665f4569785c723babf17f741fce36704cf154e24920ff3a70017910a"
+  },
+  "capabilities": {
+    "egressMode": "none",
+    "fsReadMode": "none",
+    "fsWriteMode": "none",
+    "desktop": {
+      "servers": [
+        {
+          "id": "blender",
+          "application": "Blender",
+          "package": "pypi:mcp-for-blender@2.2.7",
+          "tools": [
+            {
+              "name": "execute_blender_code",
+              "class": "exec"
+            },
+            {
+              "name": "generate_3d",
+              "class": "act",
+              "egress": true
+            },
+            {
+              "name": "import_asset",
+              "class": "act",
+              "egress": true
+            },
+            {
+              "name": "search_assets",
+              "class": "read",
+              "egress": true
+            },
+            {
+              "name": "look",
+              "class": "read"
+            },
+            {
+              "name": "get_scene_info",
+              "class": "read"
+            },
+            {
+              "name": "get_addon_status",
+              "class": "read"
+            }
+          ],
+          "egress": [
+            "api.polyhaven.com",
+            "cdn.polyhaven.com",
+            "api.sketchfab.com",
+            "api.poly.pizza",
+            "hyperhuman.deemos.com",
+            "queue.fal.run",
+            "api.meshy.ai",
+            "openapi.tripo3d.ai",
+            "openapi.tripo3d.com",
+            "ai3d.tencentcloudapi.com",
+            "hunyuan.tencentcloudapi.com",
+            "mcp-for-blender.com"
+          ]
+        }
+      ],
+      "computerUse": "app",
+      "computerTools": [
+        {
+          "name": "screenshot",
+          "class": "read"
+        },
+        {
+          "name": "zoom",
+          "class": "read"
+        },
+        {
+          "name": "left_click",
+          "class": "act"
+        },
+        {
+          "name": "right_click",
+          "class": "act"
+        },
+        {
+          "name": "middle_click",
+          "class": "act"
+        },
+        {
+          "name": "double_click",
+          "class": "act"
+        },
+        {
+          "name": "triple_click",
+          "class": "act"
+        },
+        {
+          "name": "left_click_drag",
+          "class": "act"
+        },
+        {
+          "name": "mouse_move",
+          "class": "act"
+        },
+        {
+          "name": "cursor_position",
+          "class": "read"
+        },
+        {
+          "name": "scroll",
+          "class": "act"
+        },
+        {
+          "name": "type",
+          "class": "act"
+        },
+        {
+          "name": "key",
+          "class": "act"
+        },
+        {
+          "name": "hold_key",
+          "class": "act"
+        },
+        {
+          "name": "wait",
+          "class": "read"
+        },
+        {
+          "name": "windows",
+          "class": "read"
+        },
+        {
+          "name": "focus_window",
+          "class": "act"
+        }
+      ]
+    },
+    "scratch": true,
+    "pdf": true
+  },
+  "tools": [
+    "list_inputs",
+    "read_input",
+    "search_inputs",
+    "scratch_list",
+    "scratch_read",
+    "scratch_write",
+    "scratch_search",
+    "grep",
+    "glob",
+    "write_report",
+    "export_pdf"
+  ],
+  "enforcement": {
+    "agentContainer": "internal-only run network; reachable endpoints: gateway:8811 (Bearer auth) and llm-proxy:3128 (CONNECT allowlist: api.anthropic.com:443); no workspace, output, or docker-socket mounts; model API key present by necessity; its one writable mount is the harness's conversation store (/session/session.db), a volume of the run's own removed at teardown: a run that ends on a passing model failure after its first tool call is started again on that conversation, with a message to carry on in place of the task",
+    "desktop": "the person's computer is reached only through the desktop link (the runner image, one container an entry, no network, one mount: the run's relay volume), which carries each tool call, and nothing else, over a relay of the run's own to Agentry Desktop; the run holds each entry to its tools through the gateway's allowlist and the relay's own check, and logs every call: Blender through agentry-desktop-blender (its installed server pypi:mcp-for-blender@2.2.7), the tools execute_blender_code, generate_3d, import_asset, search_assets, look, get_scene_info, get_addon_status; execute_blender_code runs code inside Blender, a call Agentry Desktop is to put to the person first; the server reaches api.polyhaven.com, cdn.polyhaven.com, api.sketchfab.com, api.poly.pizza, hyperhuman.deemos.com, queue.fal.run, api.meshy.ai, openapi.tripo3d.ai, openapi.tripo3d.com, ai3d.tencentcloudapi.com, hunyuan.tencentcloudapi.com, mcp-for-blender.com from the person's computer and computer use in app scope (the windows of Blender) through agentry-desktop-computer, the tools screenshot, zoom, left_click, right_click, middle_click, double_click, triple_click, left_click_drag, mouse_move, cursor_position, scroll, type, key, hold_key, wait, windows, focus_window; a screenshot is answered as an image the run keeps nowhere, and Agentry Desktop is to hold each input to the scope and say in the receipt what the computer's own system enforced; what happens on the person's computer is Agentry Desktop's to do and the run's to record, not to enforce: it is asked to launch each installed server from Agentry's catalogue of application servers, never from anything the agent sends, and to answer each call by the catalogue's class, and the installed server runs there with that computer's network and files; a hosted run refuses the line, and a run with no Agentry Desktop answering is refused before the sandbox starts",
+    "exec": "no exec: run_command tool not exposed; harness built-in shell toolsets never enabled",
+    "filesystem": "read none; write none — enforced by the tools-container mount table (ro/rw, per-path binds) plus server-side grant checks; the run's docker filter (in the CLI on Linux, in a container of the run's own on Docker Desktop) mounts the tools container's /tmp as a 256 MiB tmpfs and the tools server refuses to serve without it; where no filter runs it is the container's own layer, unbounded",
+    "model.apiKey": "$ANTHROPIC_API_KEY from the host environment, injected into the agent container (or the host harness process) only",
+    "network": "no egress: tools container runs with networking disabled (disableNetwork); no fetch tool exposed",
+    "pdf": "the runner's grant, not the contract's: export_pdf renders a Markdown file from reports/ or the scratch folder into a PDF in reports/ with Typst 0.15.1 in the tools container (built without a package downloader), through the runner's confine role: an empty environment, a fresh render root under /tmp whose every file the tools server makes new, no write of its own (Landlock; the PDF comes back on its stdout), TCP refused where Landlock is ABI 4 or later, 1 GiB of address space and 60 seconds; as root it runs as a user of its own that owns nothing, and where there is no Landlock that user is all that holds its writes. Only local PNG and JPEG images from reports/, the scratch folder and the inputs are drawn. The theme is the run's, never the model's, and the receipt's pdfs block names it and each PDF's SHA-256; write_report refuses a PDF. A design's custom cover is Typst code of the person's design, compiled in the same render under the same confinement, able to read only the render root and import only the vendored Markdown package the template itself uses; one that fails is passed over for the band cover, rendering the report a second time under the same limits, and the pdfs entry names the kind of failure, never the compiler's text",
+    "scratch": "the runner's grant, not the contract's: scratch_list, scratch_read, scratch_write and scratch_search over the scratch folder /scratch on the tools container only, empty at the start, never copied to the output folder, and removed with the container; a 256 MiB tmpfs the run's docker filter mounts (in the CLI on Linux, in a container of the run's own on Docker Desktop), and where no filter runs a folder in the container's own layer, unbounded",
+    "search": "the runner's grant, not the contract's: grep and glob search and list, one area a call, only what the run's other tools read (its inputs unless under the review grant, attached knowledge packs, the scratch folder, the workspace only as filesystem.read grants it), with ripgrep 15.2.0 in the tools container (built from pinned source, no PCRE2), through the runner's confine role: an empty environment, a fixed argument list that never asks it to start another program or follow a link, reads held to the searched area and no write of its own (Landlock), TCP refused where Landlock is ABI 4 or later, 512 MiB of address space and 30 seconds; as root it runs as a user of its own that owns nothing, and where there is no Landlock that user is all that holds it. A search of the inputs answers as the person's own input, as search_inputs does",
+    "secrets": "none declared",
+    "toolResults": "every result of the runner's own tools is held to 48 KiB and 1,900 lines, the docker-agent harness's measured tool-result limit less a margin, by the tools server: a file is read a page at a time from the offset asked, each page saying where the next begins; a listing or a search stops at it and says what it left out; any other result is cut at it with a notice saying so; declared MCP servers' results are their own"
+  },
+  "gateway": {
+    "image": "ghcr.io/blaktron/agentry-mcp-gateway:v0.44.3@sha256:bae58d801fd4b73f6ad91e609b8ce5ec8868713825f33a2bb20a98f956d0bd46",
+    "args": [
+      "--transport",
+      "streaming",
+      "--port",
+      "8811",
+      "--servers",
+      "agentry-desktop-blender,agentry-desktop-computer,agentry-tools",
+      "--catalog",
+      "/root/.docker/mcp/catalogs/catalog.yaml",
+      "--registry",
+      "/root/.docker/mcp/catalogs/registry.yaml",
+      "--config",
+      "/root/.docker/mcp/catalogs/config.yaml",
+      "--tools-config",
+      "/root/.docker/mcp/catalogs/tools.yaml",
+      "--secrets",
+      "/root/.docker/mcp/catalogs/secrets.env",
+      "--block-network",
+      "--verify-signatures",
+      "--log-calls",
+      "--block-secrets"
+    ],
+    "env": [
+      {
+        "name": "MCP_GATEWAY_AUTH_TOKEN",
+        "fromRunToken": true
+      },
+      {
+        "name": "HOME",
+        "value": "/root"
+      },
+      {
+        "name": "MCP_GATEWAY_DOCKER_BIND_ALLOWED_PATHS",
+        "value": "@@RUN_WORKSPACE@@:@@RUN_OUT@@:@@RUN_CFG@@:@@RUN_INPUTS@@:@@RUN_INPUTS_TEXT@@:@@RUN_KNOWLEDGE@@"
+      },
+      {
+        "name": "MCP_GATEWAY_DOCKER_BIND_ALLOW_WRITABLE_PATHS",
+        "value": "@@RUN_OUT@@"
+      }
+    ],
+    "mounts": [
+      {
+        "source": "@@RUN_CFG@@/gateway",
+        "target": "/root/.docker/mcp/catalogs",
+        "readOnly": true
+      },
+      {
+        "source": "/var/run/docker.sock",
+        "target": "/var/run/docker.sock"
+      }
+    ],
+    "servers": [
+      "agentry-desktop-blender",
+      "agentry-desktop-computer",
+      "agentry-tools"
+    ]
+  },
+  "harness": {
+    "adapter": "docker-agent",
+    "model": "anthropic/claude-sonnet-5-5",
+    "agent": {
+      "image": "ghcr.io/blaktron/agentry-docker-agent-src:1.157.2-2026.11.05.9@sha256:cc321e773e6e24e3d61a5285f367ab2596a2e25601d1e93304d342b808465a2b",
+      "argv": [
+        "run",
+        "--exec",
+        "--json",
+        "--safety",
+        "autonomous",
+        "--session",
+        "@@RUN_CONVERSATION@@",
+        "--session-db",
+        "/session/session.db",
+        "/plan/agent.yaml",
+        "-"
+      ],
+      "env": [
+        {
+          "name": "MCP_GATEWAY_TOKEN",
+          "fromRunToken": true
+        },
+        {
+          "name": "ANTHROPIC_API_KEY",
+          "fromHostEnv": "ANTHROPIC_API_KEY",
+          "expectedKind": {
+            "provider": "anthropic",
+            "kind": "api"
+          }
+        },
+        {
+          "name": "HTTPS_PROXY",
+          "value": "http://llm-proxy:3128"
+        },
+        {
+          "name": "HTTP_PROXY",
+          "value": "http://llm-proxy:3128"
+        },
+        {
+          "name": "NO_PROXY",
+          "value": "gateway,localhost,127.0.0.1"
+        },
+        {
+          "name": "TELEMETRY_ENABLED",
+          "value": "false"
+        }
+      ],
+      "mounts": [
+        {
+          "source": "@@RUN_CFG@@/harness",
+          "target": "/plan",
+          "readOnly": true
+        },
+        {
+          "source": "@@RUN_SESSION@@",
+          "target": "/session"
+        }
+      ],
+      "stdinTask": true,
+      "readOnlyRoot": true,
+      "tmpfs": [
+        "/tmp:mode=1777",
+        "/work:mode=1777",
+        "/home/docker-agent:mode=1777"
+      ]
+    },
+    "resultKind": "text",
+    "resume": {
+      "sessionDb": "/session/session.db",
+      "storeOwner": "docker-agent"
+    },
+    "imagePin": {
+      "by": "digest",
+      "value": "sha256:cc321e773e6e24e3d61a5285f367ab2596a2e25601d1e93304d342b808465a2b"
+    }
+  },
+  "proxy": {
+    "image": "agentry-runner:test",
+    "allow": [
+      "api.anthropic.com:443"
+    ]
+  },
+  "budgets": {
+    "timeoutSeconds": 1800,
+    "maxTurns": 0
+  },
+  "output": {},
+  "files": {
+    "gateway/catalog.yaml": "8a88a94bc31d85b50f7103d319eef5d58dc5ba656eb96a572bd242fbe5af3045",
+    "gateway/config.yaml": "6ae322f43ef620e4ad682078c22e8a24b8aa6e96de990ad664a91cc53733197c",
+    "gateway/registry.yaml": "989aed90d48561bcfdb7db36a6fb287fb3dda957d99023641e0bb94af49e75c5",
+    "gateway/tools.yaml": "14f8d1cc683275597ea23381d21139df97dac3d30e11274025eacd51e5924edf",
+    "gateway/toolspec.json": "fd08964e7d9d890649e9caed0a6277bc658e9e905238f7a548efff19ad73e9b5",
+    "harness/agent.yaml": "84e9ce282a9c2bf5af20af4fdae61177887454684beea7d55577b4bfb1f9b7a8"
+  }
+}

@@ -37,7 +37,7 @@ import (
 const ServerPrefix = "agentry-desktop-"
 
 // ComputerID is the id of the computer-use entry, agentry-desktop-computer,
-// which a later version of the runner serves; no run of this version has it.
+// whose tools are ComputerTools.
 const ComputerID = "computer"
 
 // ServerName is the catalog entry's name for an application server.
@@ -85,6 +85,10 @@ type Content struct {
 type Answer struct {
 	Content []Content `json:"content,omitempty"`
 	IsError bool      `json:"isError,omitempty"`
+	// Window names the window a computer-use call saw or acted in, as
+	// Agentry Desktop names it (the application and the title), for the
+	// run's call log; the agent is not sent it.
+	Window string `json:"window,omitempty"`
 }
 
 // TextAnswer is an answer of one text item.

@@ -111,8 +111,11 @@ type runOpts struct {
 	allowUnsigned      bool
 	allowUnscanned     bool
 	allowVulnerableMCP bool
-	prepare            bool
-	dryRun             bool
+	// allowScreen lets a release's computer use in screen scope run
+	// without the policy's desktop.allowScreen.
+	allowScreen bool
+	prepare     bool
+	dryRun      bool
 	// plan is the consent-free preview a client shows a person before they
 	// consent: resolve, verify, compile, and print what a run would
 	// enforce and what it would ask or refuse — asking nothing, recording
@@ -265,6 +268,7 @@ func newRunCmd() *cobra.Command {
 	f.BoolVar(&opts.allowUnsigned, "allow-unsigned", false, "run a release with no registry attestation (required for --local)")
 	f.BoolVar(&opts.allowUnscanned, "allow-unscanned", false, "run a release the registry admitted without a scan (no findings, no report, no attestation)")
 	f.BoolVar(&opts.allowVulnerableMCP, "allow-vulnerable-mcp", false, "run even when the registry's gate rates a declared MCP server's advisory high or critical (recorded in the receipt)")
+	f.BoolVar(&opts.allowScreen, "allow-screen", false, "let a QuickAgent's computer use see and use your whole screen for this run, where it asks for it (capabilities.desktop.computerUse: screen) and the policy's desktop.allowScreen does not allow it (recorded in the receipt)")
 	f.BoolVar(&opts.prepare, "prepare", false, "verify, compile, and install images, then stop without executing")
 	f.BoolVar(&opts.dryRun, "dry-run", false, "say what the compiled run plan would run and exit (no docker required); with --json, print the plan itself")
 	f.BoolVar(&opts.plan, "plan", false, "preview for a client: compile the run plan and report the attestation, the consent a run would ask for and the refusal it would meet; asks nothing, records nothing but a first-use pin of the registry's keys (with --json, the machine-readable shape)")
@@ -608,8 +612,8 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	planIn := localrun.PlanInputs{
 		Home: home, Manifest: m, Meta: meta, InstallDir: installDir, WorkspaceDir: workspaceDir,
 		Policy: pol, PolicySHA: polSHA, Adapter: adapterName, Servers: serverSpecs, Mode: mode,
-		ContextWindowSource: windowSource,
-		CompiledBy:          version.Build(), Log: cmd.ErrOrStderr(),
+		ContextWindowSource: windowSource, AllowScreen: opts.allowScreen,
+		CompiledBy: version.Build(), Log: cmd.ErrOrStderr(),
 	}
 	// On a remote runhost whose own setting is on, the run is an Unsafe Mode
 	// run: set only with the server's admin sign-in, never by a flag here.

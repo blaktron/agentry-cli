@@ -41,17 +41,21 @@ type DesktopLink struct {
 	Unbind func(ctx context.Context) error
 	// FarEnd says how the link service is reached, for the receipt.
 	FarEnd string
+	// Computer is the computer use the link service bound, where the plan
+	// declares it.
+	Computer *desktop.ComputerBound
 }
 
 // BoundDesktopLink is a binding over the link service's socket, as a run
 // from the CLI makes it.
 func BoundDesktopLink(c desktop.Client, run string, b desktop.Bound) *DesktopLink {
 	return &DesktopLink{
-		Token:   b.Token,
-		Servers: b.Servers,
-		Call:    c.Call,
-		Unbind:  func(ctx context.Context) error { return c.Unbind(ctx, desktop.UnbindRequest{Run: run, Token: b.Token}) },
-		FarEnd:  "Agentry Desktop's link socket " + c.Socket,
+		Token:    b.Token,
+		Servers:  b.Servers,
+		Call:     c.Call,
+		Unbind:   func(ctx context.Context) error { return c.Unbind(ctx, desktop.UnbindRequest{Run: run, Token: b.Token}) },
+		FarEnd:   "Agentry Desktop's link socket " + c.Socket,
+		Computer: b.Computer,
 	}
 }
 
@@ -68,13 +72,22 @@ func HostedDesktopRefusal(ids []string) error {
 // computer where no Agentry Desktop answers: exit 11, desktop-refused,
 // desktop-unavailable, naming the applications.
 func NoDesktopRefusal(d *spec.DesktopCap) error {
-	apps := make([]string, 0, len(d.Servers))
-	for _, s := range d.Servers {
-		apps = append(apps, s.Application)
-	}
 	return Classify(ExitPolicy, receipt.WithReason(
-		fmt.Errorf("this QuickAgent uses %s on your computer, which needs Agentry Desktop running on this computer: start Agentry Desktop and run it again", joinAnd(apps)),
-		receipt.ReasonDesktopRefused, receipt.DesktopUnavailable, d.IDs()...))
+		fmt.Errorf("this QuickAgent uses %s on your computer, which needs Agentry Desktop running on this computer: start Agentry Desktop and run it again", desktopUses(d)),
+		receipt.ReasonDesktopRefused, receipt.DesktopUnavailable, d.EntryIDs()...))
+}
+
+// desktopUses names what a line uses on the person's computer: its
+// applications, and computer use.
+func desktopUses(d *spec.DesktopCap) string {
+	uses := make([]string, 0, len(d.Servers)+1)
+	for _, s := range d.Servers {
+		uses = append(uses, s.Application)
+	}
+	if d.HasComputerUse() {
+		uses = append(uses, "computer use")
+	}
+	return joinAnd(uses)
 }
 
 // DesktopBindRefusal is the refusal of a run whose bind the link service
@@ -84,7 +97,7 @@ func DesktopBindRefusal(d *spec.DesktopCap, r *desktop.Refusal) error {
 	if !slices.Contains(receipt.DesktopDetails(), detail) {
 		detail = receipt.DesktopNotInstalled
 	}
-	names := d.IDs()
+	names := d.EntryIDs()
 	if r.Server != "" {
 		names = []string{r.Server}
 	}
@@ -108,7 +121,7 @@ func checkDesktop(p Params) error {
 		return nil
 	}
 	if p.hosted() {
-		return HostedDesktopRefusal(d.IDs())
+		return HostedDesktopRefusal(d.EntryIDs())
 	}
 	if p.Desktop == nil {
 		return NoDesktopRefusal(d)
@@ -122,6 +135,18 @@ func checkDesktop(p Params) error {
 				fmt.Errorf("this QuickAgent uses %s on your computer, and Agentry Desktop did not bind it for the run", s.Application),
 				receipt.ReasonDesktopRefused, receipt.DesktopNotInstalled, s.ID))
 		}
+	}
+	switch c := p.Desktop.Computer; {
+	case d.HasComputerUse() && c == nil:
+		return Classify(ExitPolicy, receipt.WithReason(
+			errors.New("this QuickAgent uses computer use on your computer, and Agentry Desktop did not bind it for the run: turn computer use on in Agentry Desktop's Settings, Your computer, and run it again"),
+			receipt.ReasonDesktopRefused, receipt.DesktopNotGranted, spec.DesktopComputerID))
+	case d.HasComputerUse() && c.Scope != d.ComputerUse:
+		return Classify(ExitPolicy, receipt.WithReason(
+			fmt.Errorf("this QuickAgent's computer use asks for %s scope, and Agentry Desktop bound %s scope", d.ComputerUse, c.Scope),
+			receipt.ReasonDesktopRefused, receipt.DesktopNotGranted, spec.DesktopComputerID))
+	case !d.HasComputerUse() && c != nil:
+		return Classify(ExitCLI, errors.New("the run was bound to computer use by Agentry Desktop, and this QuickAgent declares none"))
 	}
 	return nil
 }
@@ -169,8 +194,16 @@ func prepareDesktopLink(p Params, rd *runDirs, runID string) error {
 		return err
 	}
 	r := &desktopRun{link: p.Desktop, volume: desktopVolume(runID), calls: map[string]*desktopCounts{}}
-	for _, s := range d.Servers {
+	for _, s := range d.Entries() {
 		listed := p.Desktop.Servers[s.ID]
+		if s.ID == spec.DesktopComputerID {
+			// The computer-use tools are the run's own definitions, never
+			// the link service's listing.
+			listed = nil
+			for _, t := range desktoplink.ComputerTools() {
+				listed = append(listed, t.Tool)
+			}
+		}
 		var tools []desktoplink.Tool
 		for _, name := range s.ToolNames() {
 			for _, t := range listed {
@@ -194,14 +227,19 @@ func recordDesktop(rd *runDirs, td *teardown, env *receipt.Envelope) {
 	if r == nil {
 		return
 	}
-	for _, s := range r.servers {
-		env.CapabilitiesEnforced["desktop."+s.ID] = r.receiptLine(s.DesktopServerCap)
-	}
-	env.CapabilitiesEnforced["desktop.transport"] = desktopTransportLine(r)
-	td.add(func(c context.Context) {
+	lines := func() {
 		for _, s := range r.servers {
+			if s.ID == spec.DesktopComputerID {
+				env.CapabilitiesEnforced[desktopComputerKey] = r.computerLine(s.DesktopServerCap)
+				continue
+			}
 			env.CapabilitiesEnforced["desktop."+s.ID] = r.receiptLine(s.DesktopServerCap)
 		}
+	}
+	lines()
+	env.CapabilitiesEnforced["desktop.transport"] = desktopTransportLine(r)
+	td.add(func(c context.Context) {
+		lines()
 		if r.link.Unbind != nil {
 			_ = r.link.Unbind(c)
 		}
@@ -247,11 +285,12 @@ func (r *desktopRun) count(id, class, outcome string) {
 	}
 }
 
-// receiptLine is the receipt's line for one application server: what was
-// reached, what was refused, and what the run could not enforce.
-func (r *desktopRun) receiptLine(s spec.DesktopServerCap) string {
+// callsPhrase is an entry's calls as the receipt counts them: "4 calls (2
+// read, 2 act); refused: 1 outside-window; 1 not answered".
+func (r *desktopRun) callsPhrase(id string) string {
 	r.mu.Lock()
-	c := r.calls[s.ID]
+	defer r.mu.Unlock()
+	c := r.calls[id]
 	var total int
 	var classes, refusals []string
 	if c != nil {
@@ -270,9 +309,7 @@ func (r *desktopRun) receiptLine(s spec.DesktopServerCap) string {
 			refusals = append(refusals, fmt.Sprintf("%d %s", c.refused[reason], reason))
 		}
 	}
-	r.mu.Unlock()
-	line := fmt.Sprintf("%s on the person's computer through its installed server %s, answered through Agentry Desktop (%s); the tools allowed: %s; %d calls",
-		s.Application, s.Package, desktoplink.ServerName(s.ID), strings.Join(s.ToolNames(), ", "), total)
+	line := fmt.Sprintf("%d calls", total)
 	if len(classes) > 0 {
 		line += " (" + strings.Join(classes, ", ") + ")"
 	}
@@ -282,10 +319,61 @@ func (r *desktopRun) receiptLine(s spec.DesktopServerCap) string {
 	if c != nil && c.errors > 0 {
 		line += fmt.Sprintf("; %d not answered", c.errors)
 	}
+	return line
+}
+
+// receiptLine is the receipt's line for one application server: what was
+// reached, what was refused, and what the run could not enforce.
+func (r *desktopRun) receiptLine(s spec.DesktopServerCap) string {
+	line := fmt.Sprintf("%s on the person's computer through its installed server %s, answered through Agentry Desktop (%s); the tools allowed: %s; %s",
+		s.Application, s.Package, desktoplink.ServerName(s.ID), strings.Join(s.ToolNames(), ", "), r.callsPhrase(s.ID))
 	if len(s.Egress) > 0 {
 		line += "; the server reaches " + strings.Join(s.Egress, ", ") + " from the person's computer"
 	}
 	return line + "; the person's computer is outside the run: its installed server ran there, outside the run's network and filesystem rules, not enforced; each call is a line of receipts/" + desktopLogFile(s.ID)
+}
+
+// desktopComputerKey is the receipt's computer-use line.
+const desktopComputerKey = "desktop.computerUse"
+
+// computerLine is the receipt's computer-use line: the scope, what the
+// agent saw and at what size, what the person's computer's own system
+// enforced and what only Agentry Desktop held, whether the person keeps
+// what the agent saw, and the calls.
+func (r *desktopRun) computerLine(s spec.DesktopServerCap) string {
+	c := r.link.Computer
+	if c == nil {
+		c = &desktop.ComputerBound{}
+	}
+	scope := "app scope"
+	if c.Scope == "screen" {
+		scope = "screen scope, the whole display"
+	}
+	line := "computer use on the person's computer, answered through Agentry Desktop (" + desktoplink.ServerName(s.ID) + "), in " + scope
+	if len(c.Windows) > 0 {
+		line += " (" + joinAnd(c.Windows) + ")"
+	}
+	if c.Session != "" {
+		line += ", on " + c.Session
+	}
+	line += "; the tools allowed: " + strings.Join(s.ToolNames(), ", ")
+	if c.MaxEdge > 0 {
+		line += fmt.Sprintf("; screenshots at most %d pixels on their long edge, positions in pixels of that image", c.MaxEdge)
+	}
+	enforced := c.Enforced
+	if enforced == "" {
+		enforced = "not stated by Agentry Desktop"
+	}
+	line += "; what the computer enforced: " + enforced
+	if c.KeepScreenshots {
+		line += "; the person's \"Keep what the agent saw\" is on: Agentry Desktop saves each screenshot in the run's folder on their computer"
+	} else {
+		line += "; no screenshot is kept: the run keeps none, and the person's \"Keep what the agent saw\" is off"
+	}
+	if c.StopKey != "" {
+		line += "; the stop key: " + c.StopKey
+	}
+	return line + "; " + r.callsPhrase(s.ID) + "; each action, with its window, position and typed text masked, is a line of receipts/" + desktopLogFile(s.ID)
 }
 
 // desktopTransportLine is the receipt's line for how the link's calls reach
@@ -301,9 +389,12 @@ func desktopLogFile(id string) string { return "desktop-" + id + ".log" }
 
 // desktopLogLine is one call as the receipt keeps it.
 type desktopLogLine struct {
-	Time       string          `json:"time"`
-	Tool       string          `json:"tool"`
-	Class      string          `json:"class"`
+	Time  string `json:"time"`
+	Tool  string `json:"tool"`
+	Class string `json:"class"`
+	// Window is the window a computer-use call saw or acted in, as Agentry
+	// Desktop named it.
+	Window     string          `json:"window,omitempty"`
 	Arguments  json.RawMessage `json:"arguments,omitempty"`
 	Outcome    string          `json:"outcome"`
 	DurationMS int64           `json:"durationMs"`
