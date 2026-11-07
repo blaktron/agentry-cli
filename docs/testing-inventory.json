@@ -4157,6 +4157,16 @@
           "dependencyHints": []
         },
         {
+          "path": "pkg/runner/adapter/notes_test.go",
+          "tests": [
+            "TestCompactionNotesOnlyForTheDefaultHarness"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "pkg/runner/adapter/persistent_resume_test.go",
           "tests": [
             "TestAPersistentClaudeKeepsItsTranscriptOnTheSessionStore",
