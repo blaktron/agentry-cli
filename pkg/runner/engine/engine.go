@@ -301,6 +301,12 @@ type Params struct {
 	// plan must be persistent, and the session store is the agent's own
 	// volume, which outlives the segment. Nil for every other run.
 	Persistent *PersistentSegment
+	// Desktop is the run's binding to Agentry Desktop, for a plan that
+	// declares the person's computer (spec.CapSummary.Desktop): the caller
+	// binds before the sandbox starts and hands the result in. Nil for
+	// every other run, and for one no Agentry Desktop answered, which the
+	// engine refuses.
+	Desktop *DesktopLink
 }
 
 // PersistentSegment is what a persistent agent's supervisor tells the
@@ -490,6 +496,9 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	if err := checkTargetHosts(p); err != nil {
 		return fail(env, redact, err)
 	}
+	if err := checkDesktop(p); err != nil {
+		return fail(env, redact, err)
+	}
 	// A browser is given only as the plan declares it, and a hosted run's
 	// only to public sites.
 	if err := checkBrowser(ctx, p); err != nil {
@@ -562,6 +571,9 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 		return fail(env, redact, err)
 	}
 	if err := prepareBrowser(ctx, d, p, rd, td, env, secrets); err != nil {
+		return fail(env, redact, err)
+	}
+	if err := prepareDesktop(p, rd, td, env, runID); err != nil {
 		return fail(env, redact, err)
 	}
 	if err := prepareRender(ctx, d, p, rd, td, runID, env); err != nil {
@@ -1000,6 +1012,11 @@ func startInfra(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	// Where the daemon runs in a VM, the app link's relay serves its socket
 	// before the gateway starts the app link.
 	if err := startAppLinkRelay(ctx, d, p, rd, td, runID); err != nil {
+		return err
+	}
+	// The desktop link's relay serves its socket before the gateway starts
+	// the link entries, on every engine.
+	if err := startDesktopLinkRelay(ctx, d, p, rd, td, runID); err != nil {
 		return err
 	}
 	if err := dockerx.RunDetachedUnder(ctx, d, gwSpec, "gateway"); err != nil {

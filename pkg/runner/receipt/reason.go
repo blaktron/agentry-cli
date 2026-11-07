@@ -186,7 +186,34 @@ const (
 	// (prepare or infra). Names: the host questions' ids; Detail: why (Host*).
 	// Never the host's name or address: those are the person's.
 	ReasonHostRefused ReasonCode = "host-refused"
+	// ReasonDesktopRefused: an application on the person's computer the
+	// release declares (capabilities.desktop) was not reached, before the
+	// sandbox or during the run. Names: the application servers' catalogue
+	// ids; Detail: why (Desktop*).
+	ReasonDesktopRefused ReasonCode = "desktop-refused"
 )
+
+// The details of ReasonDesktopRefused.
+const (
+	// DesktopUnavailable: no Agentry Desktop answers on this computer.
+	DesktopUnavailable = "desktop-unavailable"
+	// DesktopNotInstalled: the installed server or its application is not
+	// present or not reachable on the person's computer.
+	DesktopNotInstalled = "desktop-not-installed"
+	// DesktopStopped: the person stopped the agent's use of their computer.
+	DesktopStopped = "desktop-stopped"
+	// DesktopPaused: the person paused it.
+	DesktopPaused = "desktop-paused"
+	// DesktopUnreachable: the computer that answers left the run.
+	DesktopUnreachable = "desktop-unreachable"
+	// DesktopHosted: a hosted run never reaches the person's computer.
+	DesktopHosted = "hosted"
+)
+
+// DesktopDetails are ReasonDesktopRefused's details, in a fixed order.
+func DesktopDetails() []string {
+	return []string{DesktopUnavailable, DesktopNotInstalled, DesktopStopped, DesktopPaused, DesktopUnreachable, DesktopHosted}
+}
 
 // The details of ReasonHostRefused.
 const (
@@ -306,6 +333,7 @@ const (
 	namesServer
 	namesSecret
 	namesQuestion
+	namesApplication
 )
 
 // reasonCodes is the closed list: each code's name grammar and details.
@@ -336,6 +364,7 @@ var reasonCodes = map[ReasonCode]struct {
 	ReasonHostRefused: {names: namesQuestion, details: []string{
 		HostAddress, HostKeyUnknown, HostKeyChanged, HostAuth, HostCredential, HostUnreachable, HostHosted,
 	}},
+	ReasonDesktopRefused: {names: namesApplication, details: DesktopDetails()},
 }
 
 // ReasonCodes returns the closed list of codes, sorted.
@@ -360,6 +389,9 @@ var (
 	secretRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
 	// An intake question's id, in the core's rule.
 	questionRE = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
+	// An application server's id in the catalogue of application servers:
+	// lowercase letters, digits and single hyphens.
+	applicationRE = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 )
 
 // maxServerName bounds a server's id: npm caps a package name at 214
@@ -377,6 +409,8 @@ func (k nameKind) admits(name string) bool {
 		return secretRE.MatchString(name)
 	case namesQuestion:
 		return questionRE.MatchString(name)
+	case namesApplication:
+		return applicationRE.MatchString(name)
 	}
 	return false
 }

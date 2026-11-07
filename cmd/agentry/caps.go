@@ -94,6 +94,9 @@ func capabilityLinesSized(c manifest.Capabilities, sizes map[string]int64) []str
 	if b := c.Browser; b != nil {
 		lines = append(lines, "browser: "+browserLine(b))
 	}
+	// The person's computer: each application, its tool count, its code
+	// tools and its egress hosts, in the catalogue's words; and the screen.
+	lines = append(lines, desktopLines(c.Desktop)...)
 	// Shipped knowledge: packs inside the release the agent
 	// reads, part of what is consented to.
 	if len(c.Knowledge) > 0 {
@@ -185,7 +188,48 @@ func confirmedCapabilities(c manifest.Capabilities) []string {
 	if c.Browser != nil {
 		what = append(what, "a web browser")
 	}
+	// An application on the person's computer, through Agentry Desktop;
+	// computer use is their screen.
+	what = append(what, confirmedDesktop(c.Desktop)...)
 	return what
+}
+
+// confirmedDesktop names what a desktop line asks about: the applications
+// it uses on the person's computer, and their screen where it declares
+// computer use.
+func confirmedDesktop(d *manifest.Desktop) []string {
+	if d == nil {
+		return nil
+	}
+	var what []string
+	switch n := len(d.Servers); {
+	case n == 1:
+		what = append(what, "an application on your computer")
+	case n > 1:
+		what = append(what, "applications on your computer")
+	}
+	if d.HasComputerUse() {
+		what = append(what, "your screen")
+	}
+	return what
+}
+
+// desktopLines are the consent lines for a desktop line: one an application
+// server, in the catalogue's words (the application, its tool count, how
+// many run code inside it, and how many hosts it reaches from the person's
+// computer), and one for computer use.
+func desktopLines(d *manifest.Desktop) []string {
+	if d == nil {
+		return nil
+	}
+	var lines []string
+	for _, srv := range d.Servers {
+		lines = append(lines, "desktop: "+manifest.DescribeDesktopServer(srv))
+	}
+	if words := manifest.DescribeComputerUse(d); words != "" {
+		lines = append(lines, "desktop.computerUse: "+words)
+	}
+	return lines
 }
 
 // confirmedCapabilitiesWords is confirmedCapabilities as one phrase:
@@ -204,7 +248,7 @@ func isZeroCapabilities(c manifest.Capabilities) bool {
 		c.Filesystem.Read.IsZero() && c.Filesystem.Write.IsZero() &&
 		c.Exec.IsZero() &&
 		len(c.Secrets) == 0 && len(c.DataAccess) == 0 &&
-		len(c.MCPServers) == 0 && len(c.Knowledge) == 0 && len(c.TargetHosts) == 0 && c.Browser == nil &&
+		len(c.MCPServers) == 0 && len(c.Knowledge) == 0 && len(c.TargetHosts) == 0 && c.Browser == nil && c.Desktop == nil &&
 		len(c.Persistent.Keys()) == 0 && len(c.Subagents) == 0
 }
 

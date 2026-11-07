@@ -333,9 +333,19 @@ func (f *Filter) containerCreate(ctx context.Context, body []byte) (any, error) 
 	if err != nil {
 		return nil, err
 	}
-	offline := hc.NetworkMode == "none" && (c.NetworkingConfig == nil || len(c.NetworkingConfig.EndpointsConfig) == 0)
-	if err := f.checkStorage(ctx, hc, mounter{tools: tools, appLink: appLink, offline: offline, create: &c, imageID: imageID}); err != nil {
+	desktopLink, err := f.isDesktopLink(ctx, &c, imageID)
+	if err != nil {
 		return nil, err
+	}
+	offline := hc.NetworkMode == "none" && (c.NetworkingConfig == nil || len(c.NetworkingConfig.EndpointsConfig) == 0)
+	if err := f.checkStorage(ctx, hc, mounter{tools: tools, appLink: appLink, desktopLink: desktopLink, offline: offline, create: &c, imageID: imageID}); err != nil {
+		return nil, err
+	}
+	// The desktop link's class (desktoplink.go).
+	if desktopLink {
+		if err := f.desktopShape(&c); err != nil {
+			return nil, err
+		}
 	}
 	web, err := f.webShape(ctx, &c)
 	if err != nil {
@@ -415,7 +425,7 @@ func (f *Filter) containerCreate(ctx context.Context, body []byte) (any, error) 
 		hc.SecurityOpt = append(hc.SecurityOpt, "label=disable")
 	}
 	if m, ok := ctx.Value(createMetaKey{}).(*createMeta); ok {
-		m.class, m.runtime = classOf(web, tools, browser, relay != ""), under
+		m.class, m.runtime = classOf(web, tools, browser, relay != "", desktopLink), under
 	}
 	// The shapes above name their own refusal of a health check; any other
 	// container's is refused here.
@@ -459,12 +469,14 @@ func noHealthcheck(raw json.RawMessage) error {
 }
 
 // classOf is a gateway-launched container's class in the receipt's words.
-func classOf(web, tools, browser, relay bool) string {
+func classOf(web, tools, browser, relay, desktopLink bool) string {
 	switch {
 	case relay:
 		return "relay"
 	case browser:
 		return "browser server"
+	case desktopLink:
+		return "desktop link"
 	case web:
 		return "web tools server"
 	case tools:
@@ -557,7 +569,7 @@ func writesHost(hc *hostConfig) bool {
 // mounter is which of the run's own containers a create is, for the
 // volumes only it may mount.
 type mounter struct {
-	tools, appLink bool
+	tools, appLink, desktopLink bool
 	// offline says the container joins no network.
 	offline bool
 	// create and imageID are the create itself and its image's id, which
@@ -1231,7 +1243,8 @@ func (f *Filter) checkStorage(ctx context.Context, hc *hostConfig, who mounter) 
 
 // volume admits a named volume: the run's own; for the run's tools server
 // alone, one Config.ToolsVolumes names exactly; for the app link's
-// container alone, Config.AppLinkVolume; for the containers a held volume
+// container alone, Config.AppLinkVolume; for the desktop link's entries
+// alone, Config.DesktopVolume; for the containers a held volume
 // names alone, that volume (Config.HeldVolumes). Each must exist (the daemon
 // would make a missing one, unlabelled, at the create).
 func (f *Filter) volume(ctx context.Context, name string, who mounter) error {
@@ -1249,7 +1262,7 @@ func (f *Filter) volume(ctx context.Context, name string, who mounter) error {
 		}
 		held = true
 	}
-	if held || who.tools && slices.Contains(f.cfg.ToolsVolumes, name) || who.appLink && name == f.cfg.AppLinkVolume {
+	if held || who.tools && slices.Contains(f.cfg.ToolsVolumes, name) || who.appLink && name == f.cfg.AppLinkVolume || who.desktopLink && name == f.cfg.DesktopVolume {
 		var v struct{ Name string }
 		code, err := f.inspect(ctx, "/volumes/"+url.PathEscape(name), &v)
 		if err != nil {

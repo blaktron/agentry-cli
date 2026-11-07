@@ -669,8 +669,11 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	if err := refuseSignInRun(plan, opts); err != nil {
 		return err
 	}
-	// And so is a target host.
+	// And so is a target host, and an application on the person's computer.
 	if err := refuseHostedTargetHosts(plan, opts); err != nil {
+		return err
+	}
+	if err := refuseHostedDesktop(plan, opts); err != nil {
 		return err
 	}
 	stages := newStageLog(cmd)
@@ -775,6 +778,12 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	if err != nil {
 		return err
 	}
+	// The applications on the person's computer: bound to Agentry Desktop
+	// before the sandbox, or the run is refused here.
+	desktopLink, err := bindDesktop(cmd.Context(), plan, home, runID)
+	if err != nil {
+		return err
+	}
 	outDir, err := resolveOutDir(opts.out, meta, runID)
 	if err != nil {
 		return err
@@ -841,6 +850,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		DeliverTo:        deliverTo,
 		Destinations:     destinations,
 		Intake:           answers,
+		Desktop:          desktopLink,
 		Adapter:          ad,
 		Policy:           pol,
 		PolicyFile:       &policyFile,

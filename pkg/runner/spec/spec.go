@@ -142,6 +142,15 @@ const (
 	// its secrets file stay the person's own, 0700 and 0600; the image's
 	// own user where the machine has none (Windows).
 	PHBrowserUser = "@@RUN_BROWSER_USER@@"
+	// PHDesktopUser is the user each desktop link entry runs as: the
+	// invoking uid:gid, as the app link runs, whose relay socket it
+	// connects to; "" where the machine has none (Windows).
+	PHDesktopUser = "@@RUN_DESKTOP_USER@@"
+	// PHDesktopMount is a desktop link entry's one mount, source and
+	// target: the run's relay volume at the socket's folder, made at run
+	// time, so the plan carries the placeholder and a release without the
+	// line compiles as before.
+	PHDesktopMount = "@@RUN_DESKTOP_MOUNT@@"
 	// PHBrowseProxy is the browse proxy's run-unique container name:
 	// the browser server's one allowHosts entry and its
 	// --proxy-server, known only to the run.
@@ -515,6 +524,10 @@ type CapSummary struct {
 	// Browser is the release's browser line (capabilities.browser): the browser
 	// server and the browse proxy that holds its scope.
 	Browser *BrowserCap `json:"browser,omitempty"`
+	// Desktop is the release's desktop line (capabilities.desktop): the
+	// applications on the person's computer the run uses through the
+	// desktop link, one gateway entry each, answered by Agentry Desktop.
+	Desktop *DesktopCap `json:"desktop,omitempty"`
 	// Scratch is the runner's grant of the scratch folder (scratch_list,
 	// scratch_read, scratch_write over ScratchMount), and of grep and glob, to
 	// every run and session, a built-in package's included. It is never the
@@ -548,6 +561,85 @@ type CapSummary struct {
 	// feeds' hosts on 443 alone. Never the manifest's: the compiler sets it
 	// for a persistent built-in the CLI grants it to alone.
 	Calendar *CalendarGrant `json:"calendar,omitempty"`
+}
+
+// DesktopCap is the release's desktop line as the plan carries it: each
+// application server by its catalogue id with the tools the release allows
+// it and their classes, and the computer-use scope the release declares.
+type DesktopCap struct {
+	Servers []DesktopServerCap `json:"servers,omitempty"`
+	// ComputerUse is "app" or "screen" where the release declares computer
+	// use; this version of the runner refuses such a release at compile.
+	ComputerUse string `json:"computerUse,omitempty"`
+}
+
+// DesktopServerCap is one application server a run uses on the person's
+// computer, as the catalogue of application servers describes it.
+type DesktopServerCap struct {
+	// ID is the server's catalogue id, and the entry agentry-desktop-<id>.
+	ID string `json:"id"`
+	// Application is the application's name, as people know it.
+	Application string `json:"application"`
+	// Package is the installed server's pin, ecosystem:name@version.
+	Package string `json:"package"`
+	// Tools are the tools the run has, in the catalogue's order, each with
+	// its class and whether it reaches the entry's egress hosts.
+	Tools []DesktopTool `json:"tools"`
+	// Egress are the hosts the installed server is known to reach from the
+	// person's computer.
+	Egress []string `json:"egress,omitempty"`
+}
+
+// DesktopTool is one tool of an application server, with its class: read,
+// act or exec.
+type DesktopTool struct {
+	Name   string `json:"name"`
+	Class  string `json:"class"`
+	Egress bool   `json:"egress,omitempty"`
+}
+
+// ToolNames are the server's tools' names, in the catalogue's order.
+func (s DesktopServerCap) ToolNames() []string {
+	out := make([]string, len(s.Tools))
+	for i, t := range s.Tools {
+		out[i] = t.Name
+	}
+	return out
+}
+
+// Tool is the server's tool of this name.
+func (s DesktopServerCap) Tool(name string) (DesktopTool, bool) {
+	for _, t := range s.Tools {
+		if t.Name == name {
+			return t, true
+		}
+	}
+	return DesktopTool{}, false
+}
+
+// Server is the line's server of this catalogue id.
+func (d *DesktopCap) Server(id string) (DesktopServerCap, bool) {
+	if d == nil {
+		return DesktopServerCap{}, false
+	}
+	for _, s := range d.Servers {
+		if s.ID == id {
+			return s, true
+		}
+	}
+	return DesktopServerCap{}, false
+}
+
+// IDs are the line's catalogue ids, in the release's order.
+func (d *DesktopCap) IDs() []string {
+	if d == nil {
+		return nil
+	}
+	out := make([]string, len(d.Servers))
+	for i, s := range d.Servers {
+		out[i] = s.ID
+	}
+	return out
 }
 
 // CoderGrant is the Coding agent's grant (CapSummary.Coder), each part

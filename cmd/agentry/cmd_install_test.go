@@ -269,6 +269,8 @@ func TestConfirmCapabilitiesNamesWhatIsDeclared(t *testing.T) {
 		"egress, host": {parseCaps(t, "capabilities:\n  network:\n    egress: [api.example.com]\n  exec:\n    commands: [git]\n  targetHosts: [server]\nintake:\n  - id: server\n    prompt: The server\n    type: host\n"), "network egress, exec and a target host"},
 		"none":         {manifest.Capabilities{}, ""},
 		"browser":      {manifest.Capabilities{Browser: &manifest.Browser{Hosts: []string{"cdn.example.com"}}}, "a web browser"},
+		"desktop":      {manifest.Capabilities{Desktop: &manifest.Desktop{Servers: []manifest.DesktopServer{{ID: "blender"}}}}, "an application on your computer"},
+		"desktop, two": {manifest.Capabilities{Desktop: &manifest.Desktop{Servers: []manifest.DesktopServer{{ID: "blender"}, {ID: "unreal"}}, ComputerUse: manifest.ComputerUseScreen}}, "applications on your computer and your screen"},
 		"egress, exec": {parseCaps(t, "capabilities:\n  network:\n    egress: [api.example.com]\n  exec:\n    commands: [git]\n"), "network egress and exec"},
 		"server egress": {parseCaps(t, "capabilities:\n  mcpServers:\n    - npm: \"@acme/osv-mcp\"\n      version: 1.2.3\n      egress: [api.osv.dev]\n"),
 			"network egress for MCP server npm:@acme/osv-mcp@1.2.3"},

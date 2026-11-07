@@ -192,6 +192,17 @@ type Config struct {
 	AppLinkVolume string
 	AppLinkImage  string
 	AppLinkCmd    []string
+	// DesktopVolume is the run's desktop link relay volume, made by the
+	// CLI for a run that uses applications on the person's computer: a
+	// desktop link entry, a container of DesktopImage (by id) that runs one
+	// of DesktopCmds, may mount it by its exact name, and no other
+	// container. Such a container is held to its class (desktoplink.go):
+	// no network, the user DesktopUser, that volume as its one mount, a
+	// read-only root. Empty admits none.
+	DesktopVolume string
+	DesktopImage  string
+	DesktopCmds   [][]string
+	DesktopUser   string
 	// BrowserImage names the run's browser server: the
 	// image a create must be of, by id (resolved when first needed, as
 	// ToolsImage is), to be held as the browser class: every capability
