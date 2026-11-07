@@ -3,6 +3,7 @@ package engine
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -49,6 +50,10 @@ func (s *standInLinkService) Bind(_ context.Context, req desktop.BindRequest) (d
 		}
 		b.Servers[srv.ID] = tools
 	}
+	if req.ComputerUse != "" {
+		b.Computer = &desktop.ComputerBound{Scope: req.ComputerUse, Windows: []string{"Blender"}, MaxEdge: 1280, Session: "Linux, X11",
+			Enforced: "the capture is of Blender's window alone; X11 holds no input to a window, so Agentry Desktop checks the window is focused and the point inside it before each input", StopKey: "Escape held for a second"}
+	}
 	return b, nil
 }
 
@@ -61,6 +66,9 @@ func (s *standInLinkService) Call(_ context.Context, req desktop.CallRequest) (d
 	}
 	if r := s.refuse[req.Tool]; r != nil {
 		return desktoplink.Answer{}, r
+	}
+	if req.Server == "computer" && req.Tool == "screenshot" {
+		return desktoplink.Answer{Content: []desktoplink.Content{{Type: "image", Data: standInScreenshot, MimeType: "image/png"}, {Type: "text", Text: "Blender, 1280x720"}}, Window: "Blender — scene.blend"}, nil
 	}
 	return desktoplink.TextAnswer("answered "+req.Server+"/"+req.Tool, false), nil
 }
@@ -527,5 +535,226 @@ func TestADeclinedExecCallIsRecordedAsDeclined(t *testing.T) {
 	line := rd.desktop.receiptLine(p.Plan.Capabilities.Desktop.Servers[0])
 	if !strings.Contains(line, "refused: 1 desktop-declined") || strings.Contains(line, "not answered") || strings.Contains(line, receipt.DesktopNotInstalled) {
 		t.Errorf("the receipt's line: %q", line)
+	}
+}
+
+// standInScreenshot is the stand-in's screenshot: a PNG's signature and a
+// marker no other byte of the run carries.
+var standInScreenshot = base64.StdEncoding.EncodeToString(append([]byte("\x89PNG\r\n\x1a\n"), []byte("standin-screen-pixels-0123456789")...))
+
+// computerRig is desktopRig for a plan that declares computer use in app
+// scope beside Blender.
+func computerRig(t *testing.T) (d *dockerx.Fake, p Params, rd *runDirs, td *teardown, env *receipt.Envelope, s *standInLinkService, relaySock string) {
+	t.Helper()
+	dir := shortDir(t)
+	s = serveStandIn(t, dir)
+	plan := blenderPlan()
+	plan.Capabilities.Desktop.ComputerUse = "app"
+	for _, tool := range desktoplink.ComputerTools() {
+		plan.Capabilities.Desktop.ComputerTools = append(plan.Capabilities.Desktop.ComputerTools, spec.DesktopTool{Name: tool.Name, Class: tool.Class})
+	}
+	p = Params{Plan: plan}
+	c := desktop.Client{Socket: s.socket}
+	bound, err := c.Bind(context.Background(), desktop.BindRequest{Run: "R", Ref: "acme/scene@1.0.0",
+		Servers:     []desktop.BindServer{{ID: "blender", Tools: []string{"execute_blender_code", "get_scene_info", "look"}}},
+		ComputerUse: "app", ComputerTools: desktoplink.ComputerToolNames()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Desktop = BoundDesktopLink(c, "R", bound)
+	rd = &runDirs{root: filepath.Join(dir, "R"), receiptsDir: filepath.Join(dir, "R", "receipts"), redact: newRedactor("", map[string]string{"K": "hunter2-secret"}, nil)}
+	if err := os.MkdirAll(rd.receiptsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	relaySock = filepath.Join(dir, "link.sock")
+	d = &dockerx.Fake{Foreground: map[string]*dockerx.FakeForeground{
+		"-" + desktoplink.RelayRole: {Handler: func(ctx context.Context, r dockerx.RunSpec, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+			if err := desktoplink.Relay(ctx, desktoplink.RelayConfig{Listen: relaySock, In: stdin, Out: stdout, Log: stderr}); err != nil {
+				return 1, err
+			}
+			return 0, nil
+		}},
+	}}
+	td = &teardown{d: d}
+	env = &receipt.Envelope{CapabilitiesEnforced: map[string]string{}}
+	if err := prepareDesktopLink(p, rd, "R"); err != nil {
+		t.Fatal(err)
+	}
+	recordDesktop(rd, td, env)
+	return d, p, rd, td, env, s, relaySock
+}
+
+// Computer use is one more entry of the link: the binding the relay is
+// handed lists the run's own computer-use tools; a screenshot crosses as an
+// image the agent is given; an input the link service refuses outside the
+// window reaches the agent as that refusal; each call is a line of the
+// computer-use log with its window and its position, typed text masked by
+// the run's redactor; the receipt's computerUse line names the scope, the
+// screenshot's size, what the computer enforced and the counts.
+func TestComputerUseCrossesTheLinkAndIsRecorded(t *testing.T) {
+	d, p, rd, td, env, s, relaySock := computerRig(t)
+	s.refuse["right_click"] = &desktop.Refusal{Reason: receipt.DesktopOutsideWindow, Server: "computer", Message: "the point is outside Blender's window"}
+	if err := startDesktopLinkRelay(context.Background(), d, p, rd, td, "R"); err != nil {
+		t.Fatal(err)
+	}
+	bind, err := desktoplink.ReadBind(filepath.Join(filepath.Dir(relaySock), filepath.Base(desktoplink.BindFile)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, tool := range bind.Servers["computer"] {
+		names = append(names, tool.Name)
+		if len(tool.InputSchema) == 0 {
+			t.Errorf("%s has no input schema", tool.Name)
+		}
+	}
+	if !slices.Equal(names, desktoplink.ComputerToolNames()) {
+		t.Fatalf("the binding lists %v", names)
+	}
+	send := func(tool, args string) desktoplink.Answer {
+		t.Helper()
+		a, err := desktoplink.Send(context.Background(), relaySock, desktoplink.Request{Token: "tok-standin", Server: "computer", Tool: tool, Arguments: json.RawMessage(args)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return a
+	}
+	shot := send("screenshot", `{}`)
+	if shot.IsError || len(shot.Content) != 2 || shot.Content[0].Type != "image" || shot.Content[0].Data != standInScreenshot || shot.Window != "" {
+		t.Fatalf("the screenshot's answer: %+v", shot)
+	}
+	if a := send("left_click", `{"coordinate":[640,360]}`); a.IsError {
+		t.Fatalf("the click: %+v", a)
+	}
+	if a := send("right_click", `{"coordinate":[5000,10]}`); !a.IsError || a.Text() != "the point is outside Blender's window" {
+		t.Fatalf("the refused click: %+v", a)
+	}
+	if a := send("type", `{"text":"the password is hunter2-secret"}`); a.IsError {
+		t.Fatalf("type: %+v", a)
+	}
+	// A tool not in the set never reaches the link service.
+	if a, err := desktoplink.Send(context.Background(), relaySock, desktoplink.Request{Token: "tok-standin", Server: "computer", Tool: "left_mouse_down"}); err != nil || !a.IsError {
+		t.Fatalf("left_mouse_down: %+v, %v", a, err)
+	}
+	_, calls, _ := s.sent()
+	for _, c := range calls {
+		if c.Tool == "left_mouse_down" {
+			t.Fatal("left_mouse_down reached the link service")
+		}
+	}
+
+	log, err := os.ReadFile(filepath.Join(rd.receiptsDir, desktopLogFile("computer")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lines []desktopLogLine
+	for _, l := range strings.Split(strings.TrimSpace(string(log)), "\n") {
+		var line desktopLogLine
+		if err := json.Unmarshal([]byte(l), &line); err != nil {
+			t.Fatalf("%s: %v", l, err)
+		}
+		lines = append(lines, line)
+	}
+	if len(lines) != 4 || lines[0].Tool != "screenshot" || lines[0].Class != "read" || lines[0].Window != "Blender — scene.blend" ||
+		lines[1].Tool != "left_click" || lines[1].Class != "act" || string(lines[1].Arguments) != `{"coordinate":[640,360]}` ||
+		lines[2].Outcome != "refused:outside-window" || lines[3].Tool != "type" {
+		t.Fatalf("the computer-use log: %s", log)
+	}
+	if strings.Contains(string(log), "hunter2-secret") {
+		t.Errorf("typed text is not masked: %s", log)
+	}
+	td.run()
+	line := env.CapabilitiesEnforced["desktop.computerUse"]
+	for _, want := range []string{"app scope (Blender)", "agentry-desktop-computer", "Linux, X11", "at most 1280 pixels", "what the computer's own system enforced, as Agentry Desktop states it: the capture is of Blender's window alone",
+		"the run keeps no screenshot", "Escape held for a second", "4 calls (1 read, 3 act)", "refused: 1 outside-window", "receipts/desktop-computer.log"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("desktop.computerUse lacks %q: %q", want, line)
+		}
+	}
+	if _, ok := env.CapabilitiesEnforced["desktop.computer"]; ok {
+		t.Error("computer use has an application server's line")
+	}
+	if !strings.Contains(env.CapabilitiesEnforced["desktop.blender"], "0 calls") {
+		t.Errorf("desktop.blender: %q", env.CapabilitiesEnforced["desktop.blender"])
+	}
+}
+
+// Nothing of the person's screen rests in the run's folder: a screenshot
+// crosses to the agent and no file the run keeps holds its bytes, whatever
+// the link service says of the person's switch (the app, never the run,
+// keeps what the agent saw).
+func TestScreenshotsAreNotKeptByDefault(t *testing.T) {
+	for _, keep := range []bool{false, true} {
+		d, p, rd, td, env, _, relaySock := computerRig(t)
+		p.Desktop.Computer.KeepScreenshots = keep
+		if err := startDesktopLinkRelay(context.Background(), d, p, rd, td, "R"); err != nil {
+			t.Fatal(err)
+		}
+		for range 3 {
+			a, err := desktoplink.Send(context.Background(), relaySock, desktoplink.Request{Token: "tok-standin", Server: "computer", Tool: "screenshot", Arguments: json.RawMessage(`{}`)})
+			if err != nil || a.Content[0].Data != standInScreenshot {
+				t.Fatalf("screenshot: %+v, %v", a, err)
+			}
+		}
+		td.run()
+		raw, _ := base64.StdEncoding.DecodeString(standInScreenshot)
+		err := filepath.WalkDir(filepath.Dir(rd.root), func(path string, de os.DirEntry, err error) error {
+			if err != nil || de.IsDir() {
+				return err
+			}
+			b, rerr := os.ReadFile(path) //nolint:gosec // the test's own folder
+			if rerr != nil {
+				return nil //nolint:nilerr // a socket or a file gone with teardown
+			}
+			if strings.Contains(string(b), standInScreenshot) || strings.Contains(string(b), string(raw)) || strings.Contains(string(b), "standin-screen-pixels") {
+				t.Errorf("%s holds the screenshot", path)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		line := env.CapabilitiesEnforced["desktop.computerUse"]
+		if !strings.Contains(line, "the run keeps no screenshot") || keep != strings.Contains(line, "\"Keep what the agent saw\" is on") || keep == strings.Contains(line, "\"Keep what the agent saw\" is off") {
+			t.Errorf("keep %v: %q", keep, line)
+		}
+	}
+}
+
+// A run that declares computer use needs the link service to bind it, in
+// the scope declared; a binding of computer use for a run that declares
+// none is refused.
+func TestComputerUseNeedsItsBinding(t *testing.T) {
+	plan := blenderPlan()
+	plan.Capabilities.Desktop.ComputerUse = "app"
+	call := func(context.Context, desktop.CallRequest) (desktoplink.Answer, error) {
+		return desktoplink.Answer{}, nil
+	}
+	for name, tc := range map[string]struct {
+		computer *desktop.ComputerBound
+		detail   string
+	}{
+		"not bound":      {nil, receipt.DesktopNotGranted},
+		"another scope":  {&desktop.ComputerBound{Scope: "screen"}, receipt.DesktopNotGranted},
+		"bound as asked": {&desktop.ComputerBound{Scope: "app"}, ""},
+	} {
+		err := checkDesktop(Params{Plan: plan, Desktop: &DesktopLink{Token: "t", Servers: map[string][]desktoplink.Tool{"blender": nil}, Call: call, Computer: tc.computer}})
+		if tc.detail == "" {
+			if err != nil {
+				t.Errorf("%s: %v", name, err)
+			}
+			continue
+		}
+		if r := receipt.ReasonOf(err); err == nil || r == nil || r.Detail != tc.detail || !slices.Equal(r.Names, []string{"computer"}) {
+			t.Errorf("%s: %v, %+v", name, err, r)
+		}
+	}
+	if err := checkDesktop(Params{Plan: blenderPlan(), Desktop: &DesktopLink{Token: "t", Servers: map[string][]desktoplink.Tool{"blender": nil}, Call: call, Computer: &desktop.ComputerBound{Scope: "app"}}}); err == nil {
+		t.Error("computer use bound for a run that declares none")
+	}
+	// With no Agentry Desktop, the refusal names computer use.
+	alone := &spec.Plan{Capabilities: spec.CapSummary{Desktop: &spec.DesktopCap{ComputerUse: "app"}}}
+	if err := checkDesktop(Params{Plan: alone}); err == nil || !strings.Contains(err.Error(), "uses computer use on your computer") {
+		t.Errorf("computer use alone, no Agentry Desktop: %v", err)
 	}
 }

@@ -121,13 +121,13 @@ func TestARunNeedsAgentryDesktop(t *testing.T) {
 			t.Fatalf("%s: reason %+v", name, r)
 		}
 	}
-	link, err := bindDesktop(context.Background(), plan, dir, "R")
+	link, err := bindDesktop(context.Background(), plan, dir, "R", "")
 	refused(t, "no socket", link, err)
 	sock := desktop.SocketPath(dir)
 	if err := os.WriteFile(sock, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	link, err = bindDesktop(context.Background(), plan, dir, "R")
+	link, err = bindDesktop(context.Background(), plan, dir, "R", "")
 	refused(t, "a file where the socket would be", link, err)
 	_ = os.Remove(sock)
 	ln, err := net.Listen("unix", sock)
@@ -135,12 +135,12 @@ func TestARunNeedsAgentryDesktop(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = ln.Close()
-	link, err = bindDesktop(context.Background(), plan, dir, "R")
+	link, err = bindDesktop(context.Background(), plan, dir, "R", "")
 	refused(t, "a socket nothing listens on", link, err)
 	_ = os.Remove(sock)
 
 	// A plan without the line binds nothing.
-	if link, err := bindDesktop(context.Background(), &spec.Plan{}, dir, "R"); link != nil || err != nil {
+	if link, err := bindDesktop(context.Background(), &spec.Plan{}, dir, "R", ""); link != nil || err != nil {
 		t.Fatalf("a plan without the line: %+v, %v", link, err)
 	}
 
@@ -154,7 +154,7 @@ func TestARunNeedsAgentryDesktop(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { _ = desktop.Serve(ctx, ln, s) }()
-	link, err = bindDesktop(context.Background(), plan, dir, "R")
+	link, err = bindDesktop(context.Background(), plan, dir, "R", "")
 	if err != nil || link == nil || link.Token != "tok-1" || len(link.Servers["blender"]) != 2 || !strings.Contains(link.FarEnd, sock) {
 		t.Fatalf("bound: %+v, %v", link, err)
 	}
@@ -165,11 +165,27 @@ func TestARunNeedsAgentryDesktop(t *testing.T) {
 	if err := link.Unbind(context.Background()); err != nil || len(s.unbinds) != 1 || s.unbinds[0].Token != "tok-1" {
 		t.Fatalf("unbind: %v, %+v", err, s.unbinds)
 	}
+	if s.binds[0].ComputerUse != "" || len(s.binds[0].ComputerTools) != 0 || link.Computer != nil {
+		t.Fatalf("a run without computer use asked for it: %+v", s.binds[0])
+	}
+
+	// Computer use: the bind asks for it in the release's scope with the
+	// run's computer-use tools, and the run carries what was bound.
+	cu := desktopPlan()
+	cu.Capabilities.Desktop.ComputerUse = "app"
+	cu.Capabilities.Desktop.ComputerTools = []spec.DesktopTool{{Name: "screenshot", Class: "read"}, {Name: "left_click", Class: "act"}}
+	link, err = bindDesktop(context.Background(), cu, dir, "R", "/out/R")
+	if err != nil || link.Computer == nil || link.Computer.Scope != "app" {
+		t.Fatalf("computer use bound: %+v, %v", link, err)
+	}
+	if last := s.binds[len(s.binds)-1]; last.ComputerUse != "app" || !slices.Equal(last.ComputerTools, []string{"screenshot", "left_click"}) || last.Reports != filepath.Join("/out/R", "reports", "desktop") {
+		t.Fatalf("the bind sent %+v", last)
+	}
 
 	// The service refusing the bind: its reason and its words reach the
 	// person, exit 11.
 	s.refuse = &desktop.Refusal{Reason: receipt.DesktopNotInstalled, Server: "blender", Message: "Start the MCP server in Blender's sidebar"}
-	link, err = bindDesktop(context.Background(), plan, dir, "R")
+	link, err = bindDesktop(context.Background(), plan, dir, "R", "")
 	var ce *engine.ClassifiedError
 	if link != nil || err == nil || !errors.As(err, &ce) || ce.Code != engine.ExitPolicy || err.Error() != "Start the MCP server in Blender's sidebar" {
 		t.Fatalf("a refused bind: %+v, %v", link, err)
@@ -193,7 +209,11 @@ func (s *standInService) Bind(_ context.Context, req desktop.BindRequest) (deskt
 	if s.refuse != nil {
 		return desktop.Bound{}, s.refuse
 	}
-	return desktop.Bound{Token: s.token, Servers: s.tools}, nil
+	b := desktop.Bound{Token: s.token, Servers: s.tools}
+	if req.ComputerUse != "" {
+		b.Computer = &desktop.ComputerBound{Scope: req.ComputerUse, Enforced: "stand-in"}
+	}
+	return b, nil
 }
 
 func (s *standInService) Call(context.Context, desktop.CallRequest) (desktoplink.Answer, *desktop.Refusal) {
@@ -240,6 +260,11 @@ func TestHostedRunsRefuseTheDesktopLine(t *testing.T) {
 
 func TestTheRunSummaryNamesTheDesktopLine(t *testing.T) {
 	if got := desktopSummary(desktopPlan().Capabilities.Desktop); got != "Blender (2 tools) on your computer, through Agentry Desktop" {
+		t.Errorf("summary %q", got)
+	}
+	cu := desktopPlan().Capabilities.Desktop
+	cu.ComputerUse = "app"
+	if got := desktopSummary(cu); got != "Blender (2 tools) and computer use in the windows you allow on your computer, through Agentry Desktop" {
 		t.Errorf("summary %q", got)
 	}
 }

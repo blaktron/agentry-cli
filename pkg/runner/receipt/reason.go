@@ -211,11 +211,17 @@ const (
 	DesktopUnreachable = "desktop-unreachable"
 	// DesktopHosted: a hosted run never reaches the person's computer.
 	DesktopHosted = "hosted"
+	// DesktopOutsideWindow: a computer-use input aimed outside the windows
+	// the scope allows, or made while none of them was focused.
+	DesktopOutsideWindow = "outside-window"
+	// DesktopNotGranted: the computer's own system has not granted what the
+	// scope needs (a permission, a portal), or cannot.
+	DesktopNotGranted = "desktop-not-granted"
 )
 
 // DesktopDetails are ReasonDesktopRefused's details, in a fixed order.
 func DesktopDetails() []string {
-	return []string{DesktopUnavailable, DesktopNotInstalled, DesktopStopped, DesktopPaused, DesktopDeclined, DesktopUnreachable, DesktopHosted}
+	return []string{DesktopUnavailable, DesktopNotInstalled, DesktopStopped, DesktopPaused, DesktopDeclined, DesktopUnreachable, DesktopHosted, DesktopOutsideWindow, DesktopNotGranted}
 }
 
 // The details of ReasonHostRefused.

@@ -583,8 +583,68 @@ type CapSummary struct {
 type DesktopCap struct {
 	Servers []DesktopServerCap `json:"servers,omitempty"`
 	// ComputerUse is "app" or "screen" where the release declares computer
-	// use; this version of the runner refuses such a release at compile.
+	// use: the agent sees and acts in the bound applications' windows, or
+	// on the whole display.
 	ComputerUse string `json:"computerUse,omitempty"`
+	// ComputerTools are the computer-use entry's tools, with their classes,
+	// where the release declares computer use.
+	ComputerTools []DesktopTool `json:"computerTools,omitempty"`
+	// ScreenAllowedBy says what allowed a screen scope: the policy's
+	// desktop.allowScreen, the run's --allow-screen, or Unsafe Mode.
+	ScreenAllowedBy string `json:"screenAllowedBy,omitempty"`
+}
+
+// The computer-use scopes (DesktopCap.ComputerUse): the bound applications'
+// windows, or the whole display.
+const (
+	ComputerUseApp    = "app"
+	ComputerUseScreen = "screen"
+)
+
+// What allowed a screen scope (DesktopCap.ScreenAllowedBy).
+const (
+	ScreenByPolicy = "policy"
+	ScreenByFlag   = "flag"
+	ScreenByUnsafe = "unsafe"
+)
+
+// DesktopComputerID is the computer-use entry's id in the desktop link: its
+// entry is agentry-desktop-computer.
+const DesktopComputerID = "computer"
+
+// HasComputerUse reports whether the line declares computer use.
+func (d *DesktopCap) HasComputerUse() bool { return d != nil && d.ComputerUse != "" }
+
+// Computer is the computer-use entry as a desktop link entry, and whether
+// the line has one.
+func (d *DesktopCap) Computer() (DesktopServerCap, bool) {
+	if !d.HasComputerUse() {
+		return DesktopServerCap{}, false
+	}
+	return DesktopServerCap{ID: DesktopComputerID, Application: "computer use", Tools: d.ComputerTools}, true
+}
+
+// Entries are the line's desktop link entries: each application server, then
+// the computer-use entry where the release declares computer use.
+func (d *DesktopCap) Entries() []DesktopServerCap {
+	if d == nil {
+		return nil
+	}
+	out := append([]DesktopServerCap(nil), d.Servers...)
+	if c, ok := d.Computer(); ok {
+		out = append(out, c)
+	}
+	return out
+}
+
+// EntryIDs are the ids of the line's desktop link entries, in Entries'
+// order.
+func (d *DesktopCap) EntryIDs() []string {
+	var out []string
+	for _, e := range d.Entries() {
+		out = append(out, e.ID)
+	}
+	return out
 }
 
 // DesktopServerCap is one application server a run uses on the person's
@@ -631,12 +691,13 @@ func (s DesktopServerCap) Tool(name string) (DesktopTool, bool) {
 	return DesktopTool{}, false
 }
 
-// Server is the line's server of this catalogue id.
+// Server is the line's desktop link entry of this id: an application server
+// by its catalogue id, or the computer-use entry.
 func (d *DesktopCap) Server(id string) (DesktopServerCap, bool) {
 	if d == nil {
 		return DesktopServerCap{}, false
 	}
-	for _, s := range d.Servers {
+	for _, s := range d.Entries() {
 		if s.ID == id {
 			return s, true
 		}

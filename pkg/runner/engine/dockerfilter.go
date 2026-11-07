@@ -627,7 +627,7 @@ func desktopCmdsOf(plan *spec.Plan, rd *runDirs) [][]string {
 		return nil
 	}
 	var out [][]string
-	for _, id := range plan.Capabilities.Desktop.IDs() {
+	for _, id := range plan.Capabilities.Desktop.EntryIDs() {
 		out = append(out, desktoplink.Command(id))
 	}
 	return out
