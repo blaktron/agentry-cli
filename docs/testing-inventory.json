@@ -6496,7 +6496,8 @@
             "TestTheDesktopLinkCarriesNothingButToolCalls",
             "TestTheDesktopLinkHasNoNetwork",
             "TestARunNeedsAgentryDesktop",
-            "TestHostedRunsRefuseTheDesktopLine"
+            "TestHostedRunsRefuseTheDesktopLine",
+            "TestADeclinedExecCallIsRecordedAsDeclined"
           ],
           "fuzz": [],
           "benchmarks": [],

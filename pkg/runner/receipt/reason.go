@@ -204,6 +204,9 @@ const (
 	DesktopStopped = "desktop-stopped"
 	// DesktopPaused: the person paused it.
 	DesktopPaused = "desktop-paused"
+	// DesktopDeclined: the person declined a call Agentry Desktop asked
+	// them about, such as one that runs code inside the application.
+	DesktopDeclined = "desktop-declined"
 	// DesktopUnreachable: the computer that answers left the run.
 	DesktopUnreachable = "desktop-unreachable"
 	// DesktopHosted: a hosted run never reaches the person's computer.
@@ -212,7 +215,7 @@ const (
 
 // DesktopDetails are ReasonDesktopRefused's details, in a fixed order.
 func DesktopDetails() []string {
-	return []string{DesktopUnavailable, DesktopNotInstalled, DesktopStopped, DesktopPaused, DesktopUnreachable, DesktopHosted}
+	return []string{DesktopUnavailable, DesktopNotInstalled, DesktopStopped, DesktopPaused, DesktopDeclined, DesktopUnreachable, DesktopHosted}
 }
 
 // The details of ReasonHostRefused.

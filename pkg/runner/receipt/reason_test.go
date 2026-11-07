@@ -109,7 +109,7 @@ func TestReasonCleanKeepsOnlyTheClosedList(t *testing.T) {
 			{"answer-in-reasoning", nil, nil},
 			{"tool-call-as-text", nil, nil},
 			{"host-refused", []string{"host-address", "host-key-unknown", "host-key-changed", "host-auth", "host-credential", "host-unreachable", "hosted"}, []string{question}},
-			{"desktop-refused", []string{"desktop-unavailable", "desktop-not-installed", "desktop-stopped", "desktop-paused", "desktop-unreachable", "hosted"}, []string{"blender", "unreal-engine"}},
+			{"desktop-refused", []string{"desktop-unavailable", "desktop-not-installed", "desktop-stopped", "desktop-paused", "desktop-declined", "desktop-unreachable", "hosted"}, []string{"blender", "unreal-engine"}},
 		}
 		var listed []ReasonCode
 		for _, c := range codes {
