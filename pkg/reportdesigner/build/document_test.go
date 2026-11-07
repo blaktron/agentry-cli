@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
@@ -300,5 +301,91 @@ func TestALogoCroppedFromTheDocumentIsCroppedAgainHere(t *testing.T) {
 	}
 	if got.logoFromDocument || got.design.Logo != in.logo {
 		t.Error("a crop replaced the person's own logo")
+	}
+}
+
+// TestADesignFromADocumentKeepsItsCoverArtwork: the pictures the ledger
+// records are taken again here, the last of each slot, as the cover image
+// and as a custom cover's images; a cover.typ the run wrote becomes the
+// design's custom cover, with the thumbnail of its last render.
+func TestADesignFromADocumentKeepsItsCoverArtwork(t *testing.T) {
+	pages := pdfPages(t)
+	pages.Media = [][]byte{pngOf(t, 120, 60, color.NRGBA{11, 93, 75, 255}, false)}
+	pages.Facts.Media, pages.Facts.MediaPages = []string{"media-1.png"}, []int{1}
+	fakeDecode(t, runnerdecode.File{Path: "document.pdf", Family: runnerdecode.FamilyPDF, Tool: "pdftotext", Outcome: runnerdecode.OutcomeDecoded, Output: "document.pdf.txt", MIME: "application/pdf"}, "Harbour & Vale", pages)
+	o := documentOptions(t, &Document{Name: "review.pdf", Data: docpagestest.PDF(1, "0 0 0")})
+	doc, err := o.readTheDocument(context.Background(), &dockerx.Fake{}, t.TempDir(), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if doc.staged.Media != 1 || fmt.Sprint(doc.staged.MediaPages) != "[1]" {
+		t.Fatalf("staged %+v", doc.staged)
+	}
+	d, _ := reportdesign.Builtin("boardroom")
+	d.Cover.Style = "custom"
+	written := d.WithoutAssets().Canonical()
+	writeReport(t, o.OutDir, reportdesigner.DesignFile, written)
+	src := []byte("#let cover(facts, design) = image(facts.images.at(0), alt: \"The band\")\n")
+	writeReport(t, o.OutDir, reportdesigner.CoverFile, src)
+	band := docpages.Box{X: 0, Y: 0, Width: 200, Height: 60}
+	var lines []byte
+	for _, e := range []toolsrv.DocumentEntry{
+		{Tool: toolsrv.ToolTakePicture, Page: 1, Box: &band, As: toolsrv.AsCoverImage},
+		{Tool: toolsrv.ToolTakePicture, Media: 1, As: toolsrv.AsCover, Slot: 1},
+		{Tool: toolsrv.ToolTakePicture, Page: 1, Box: &band, As: toolsrv.AsCover, Slot: 2},
+		{Tool: toolsrv.ToolTakePicture, Media: 1, As: toolsrv.AsCover, Slot: 2},
+	} {
+		line, _ := json.Marshal(e)
+		lines = append(append(lines, line...), '\n')
+	}
+	ledger := filepath.Join(o.OutDir, "receipts", engine.DocumentLedgerFile)
+	if err := os.MkdirAll(filepath.Dir(ledger), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ledger, lines, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	in, err := o.inputs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := o.collect(in, doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.coverImageFromDocument || !got.coverFromDocument || got.coverPictures != 2 {
+		t.Fatalf("made %+v", got)
+	}
+	b, _, err := docpages.TakePicture(doc.pages.Full[0], &band, 2, reportdesign.MaxCoverImageSide)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := reportdesign.NormalizeCoverImage(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.design.CoverImage != want {
+		t.Error("the cover image is not this process's take of the box")
+	}
+	cc := got.design.CustomCover
+	if got.design.Cover.Style != "custom" || cc.Source != string(src) || len(cc.Images) != 2 || cc.Images[0] != cc.Images[1] {
+		t.Errorf("the custom cover is %q with %d images", got.design.Cover.Style, len(cc.Images))
+	}
+	if err := got.design.Validate(); err != nil {
+		t.Error(err)
+	}
+
+	// Without a cover.typ, the cover's pictures are dropped and the
+	// design keeps its style.
+	if err := os.Remove(filepath.Join(o.OutDir, "reports", reportdesigner.CoverFile)); err != nil {
+		t.Fatal(err)
+	}
+	d.Cover.Style = "plate"
+	writeReport(t, o.OutDir, reportdesigner.DesignFile, d.WithoutAssets().Canonical())
+	if got, err = o.collect(in, doc); err != nil {
+		t.Fatal(err)
+	}
+	if got.coverFromDocument || !got.design.CustomCover.IsZero() || got.design.Cover.Style != "plate" || got.design.CoverImage != want {
+		t.Errorf("without a cover: %+v", got)
 	}
 }

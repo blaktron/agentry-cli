@@ -80,7 +80,7 @@ const (
 )
 
 // Design is the Report Designer's grant: render_preview, check_design,
-// view_reference, document_pages and crop_logo. The compiler sets Enabled
+// view_reference, document_pages, crop_logo and take_picture. The compiler sets Enabled
 // for that built-in alone; the engine stamps the ledgers and the folder
 // the previews are kept in.
 type Design struct {
@@ -92,8 +92,8 @@ type Design struct {
 	// preview-<n>.png, under OutDir and outside reports/.
 	Previews string `json:"previews,omitempty"`
 	// DocumentLedger is the container path each image document_pages
-	// shows and each crop crop_logo takes is recorded in, under OutDir and
-	// outside reports/.
+	// shows, each crop crop_logo takes and each picture take_picture takes
+	// is recorded in, under OutDir and outside reports/.
 	DocumentLedger string `json:"documentLedger,omitempty"`
 }
 
@@ -142,7 +142,7 @@ func validateDesign(spec *Spec) error {
 //go:embed pdf/sample.md
 var sampleReport string
 
-const renderPreviewDescription = "Lay out a fixed sample report in a report design and look at one page of it as a PNG image, with Typst's own diagnostics as text: the renderer, fonts and confinement export_pdf uses. design is the design document (reports/design.json, scratch/<path> or inputs/<path>; default reports/design.json when you wrote one, else the design you were given). cover is a custom cover's Typst source (reports/cover.typ or scratch/<path>): when you give one, the cover is drawn from it, as an export would draw the design with that custom cover. page is cover (the default) or body (the first page after the cover). title, subtitle and author replace the sample's own. The answer says whether an export would pass the custom cover over and why. At most 12 renders a run; each answer says how many are left."
+const renderPreviewDescription = "Lay out a fixed sample report in a report design and look at one page of it as a PNG image, with Typst's own diagnostics as text: the renderer, fonts and confinement export_pdf uses. design is the design document (reports/design.json, scratch/<path> or inputs/<path>; default reports/design.json when you wrote one, else the design you were given). cover is a custom cover's Typst source (reports/cover.typ or scratch/<path>): when you give one, the cover is drawn from it, as an export would draw the design with that custom cover; a design whose cover style is custom draws reports/cover.typ when you wrote one. The logo, cover image and cover pictures you took from the person's document are drawn as the design's. page is cover (the default) or body (the first page after the cover). title, subtitle and author replace the sample's own. The answer says whether an export would pass the custom cover over and why. At most 12 renders a run; each answer says how many are left."
 
 func renderPreviewSchema() map[string]any {
 	return objSchema(map[string]any{
@@ -286,9 +286,14 @@ func (s *server) withAssets(d reportdesign.Design) (reportdesign.Design, error) 
 		d.Logo = logo
 	}
 	// A logo taken from the person's document is drawn in place of the
-	// design's own (crop_logo refuses one while they gave theirs).
+	// design's own (crop_logo refuses one while they gave theirs), and so
+	// is a cover image taken from it.
 	if s.docLogo != (reportdesign.Logo{}) {
 		d.Logo = s.docLogo
+	}
+	if s.docCoverImage != (reportdesign.Image{}) {
+		d.CoverImage = s.docCoverImage
+		return d, nil
 	}
 	for _, ext := range []string{".png", ".jpg"} {
 		b, err := s.readAsset(DesignCoverImageBase + ext)
@@ -307,8 +312,9 @@ func (s *server) withAssets(d reportdesign.Design) (reportdesign.Design, error) 
 	return d, nil
 }
 
-// coverImages are the images a custom cover may draw, as the CLI staged
-// them: the design's own cover images and the ones the person gave.
+// coverImages are the images a custom cover may draw: as the CLI staged
+// them, the design's own cover images and the ones the person gave; then
+// the pictures take_picture took from the person's document for it.
 func (s *server) coverImages() ([]reportdesign.Image, error) {
 	var out []reportdesign.Image
 	for _, name := range s.assetNames(DesignImagesDir) {
@@ -322,6 +328,7 @@ func (s *server) coverImages() ([]reportdesign.Image, error) {
 		}
 		out = append(out, img)
 	}
+	out = append(out, s.docCoverPictures...)
 	if out == nil {
 		out = []reportdesign.Image{}
 	}
@@ -422,6 +429,10 @@ func (s *server) toolRenderPreview(raw json.RawMessage) (string, bool) {
 				return answerFor(err, func(err error) (string, bool) { return s.failed(ToolRenderPreview, err) })
 			}
 			name = from.name + "/" + path.Clean(rel)
+		} else if b, err := os.ReadFile(filepath.Join(s.reportsRoot().dir, DesignCoverFile)); err == nil && len(b) <= reportdesign.MaxCoverSourceBytes { //nolint:gosec // the run's own reports folder
+			// A design whose cover is custom draws the cover this run
+			// wrote, else the one it was given.
+			src, name = string(b), "reports/"+DesignCoverFile
 		} else {
 			b, err := s.readAsset(DesignInputCover)
 			if err != nil {

@@ -110,7 +110,7 @@ func hostTools(t *testing.T, kind Kind) Tools {
 	for _, p := range []struct {
 		name string
 		into *string
-	}{{"pdftoppm", &tools.PDFToPPM}, {"pdfinfo", &tools.PDFInfo}, {"pdffonts", &tools.PDFFonts}} {
+	}{{"pdftoppm", &tools.PDFToPPM}, {"pdfinfo", &tools.PDFInfo}, {"pdffonts", &tools.PDFFonts}, {"pdfimages", &tools.PDFImages}} {
 		path, err := exec.LookPath(p.name)
 		if err != nil {
 			t.Skipf("%s is not on this machine: the decode image's test covers it", p.name)
@@ -238,5 +238,121 @@ func TestTextKeepsOnlyWhatAReaderSees(t *testing.T) {
 	in := "Harbour\u202e & Vale\x1b[31m\r\nline two\ttab\u200b\U000E0041\ufffd"
 	if got, want := Text(in), "Harbour & Vale[31m\nline two\ttab"; got != want {
 		t.Errorf("Text = %q, want %q", got, want)
+	}
+}
+
+// TestAPDFsPicturesAreReadOnceWithTheirMasks: the pictures a PDF's pages
+// draw are written once each with the page they are first drawn on, a
+// soft mask joined to its picture as transparency (a PNG) and an opaque
+// picture written as a JPEG; a bullet under MinPictureSide is left out,
+// and the logo a header draws on every page is written for page 1 alone.
+func TestAPDFsPicturesAreReadOnceWithTheirMasks(t *testing.T) {
+	tools := hostTools(t, KindPDF)
+	src := filepath.Join(t.TempDir(), "document.pdf")
+	if err := os.WriteFile(src, docpagestest.PicturePDF(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := t.TempDir()
+	if _, err := Render(context.Background(), src, KindPDF, out, t.TempDir(), tools); err != nil {
+		t.Fatal(err)
+	}
+	f := readFacts(t, out)
+	if f.Rendered != 3 || fmt.Sprint(f.Media) != "[media-1.png media-2.jpg]" || fmt.Sprint(f.MediaPages) != "[1 1]" || f.MediaSkipped != 0 {
+		t.Fatalf("facts %+v", f)
+	}
+	b, err := os.ReadFile(filepath.Join(out, "media-1.png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	logo, err := png.Decode(bytes.NewReader(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if logo.Bounds().Dx() != 120 || logo.Bounds().Dy() != 60 {
+		t.Fatalf("the logo is %v", logo.Bounds())
+	}
+	if _, _, _, a := logo.At(10, 10).RGBA(); a != 0xffff {
+		t.Errorf("the logo's left half is not opaque (alpha %d)", a)
+	}
+	if _, _, _, a := logo.At(100, 10).RGBA(); a != 0 {
+		t.Errorf("the logo's masked half is not transparent (alpha %d)", a)
+	}
+	if r, g, bl, _ := logo.At(10, 10).RGBA(); r>>8 != 11 || g>>8 != 93 || bl>>8 != 75 {
+		t.Errorf("the logo's colour is %d,%d,%d", r>>8, g>>8, bl>>8)
+	}
+	photo, err := os.ReadFile(filepath.Join(out, "media-2.jpg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg, format, err := image.DecodeConfig(bytes.NewReader(photo)); err != nil || format != "jpeg" || cfg.Width != 300 || cfg.Height != 200 {
+		t.Errorf("the photograph is %v %q %v", cfg, format, err)
+	}
+	entries, _ := os.ReadDir(out)
+	if len(entries) != 3+2+1 {
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Errorf("out holds %v, want three pages, two pictures and the facts", names)
+	}
+}
+
+func TestParseImageList(t *testing.T) {
+	rows := ParseImageList("page   num  type   width height color comp bpc  enc interp  object ID x-ppi y-ppi size ratio\n" +
+		"--------------------------------------------------------------------------------------------\n" +
+		"   1     0 image     120    60  rgb     3   8  image  no         5  0    72    72 21.1K 100%\n" +
+		"   1     1 smask     120    60  gray    1   8  image  no         5  0    72    72 7200B 100%\n" +
+		"   1     2 image   x     60  rgb     3   8  image  no         5  0    72    72 21.1K 100%\n")
+	if fmt.Sprint(rows) != "[{1 0 image 120 60 5 0} {1 1 smask 120 60 5 0}]" {
+		t.Errorf("rows %v", rows)
+	}
+}
+
+func TestEncodePictureKeepsTransparencyAsPNG(t *testing.T) {
+	opaque := image.NewNRGBA(image.Rect(0, 0, 5000, 10))
+	for x := range 5000 {
+		for y := range 10 {
+			opaque.Set(x, y, color.NRGBA{10, 20, 30, 255})
+		}
+	}
+	b, ext, err := EncodePicture(opaque, MaxPictureSide)
+	if err != nil || ext != "jpg" {
+		t.Fatalf("an opaque picture: %q %v", ext, err)
+	}
+	if cfg, _, _ := image.DecodeConfig(bytes.NewReader(b)); cfg.Width > MaxPictureSide {
+		t.Errorf("an opaque picture is %d wide, over %d", cfg.Width, MaxPictureSide)
+	}
+	clear := image.NewNRGBA(image.Rect(0, 0, 40, 40))
+	if _, ext, err := EncodePicture(clear, MaxPictureSide); err != nil || ext != "png" {
+		t.Errorf("a transparent picture: %q %v", ext, err)
+	}
+}
+
+// TestTrimKeepsWhatTheImageShows: the margin of the corner's colour, or
+// transparent, goes, with a twentieth of the rest kept; an image that is
+// all margin stays as it is.
+func TestTrimKeepsWhatTheImageShows(t *testing.T) {
+	paint := func(bg color.NRGBA, r image.Rectangle) *image.NRGBA {
+		img := image.NewNRGBA(image.Rect(0, 0, 200, 100))
+		for y := range 100 {
+			for x := range 200 {
+				c := bg
+				if image.Pt(x, y).In(r) {
+					c = color.NRGBA{11, 93, 75, 255}
+				}
+				img.Set(x, y, c)
+			}
+		}
+		return img
+	}
+	for name, bg := range map[string]color.NRGBA{"white paper": {255, 255, 255, 255}, "a band": {217, 122, 30, 255}, "transparent": {}} {
+		got := Trim(paint(bg, image.Rect(50, 30, 130, 70)))
+		if got.Bounds().Dx() != 88 || got.Bounds().Dy() != 48 {
+			t.Errorf("%s: trimmed to %v, want the 80 by 40 mark with 4 pixels around", name, got.Bounds())
+		}
+	}
+	blank := paint(color.NRGBA{255, 255, 255, 255}, image.Rectangle{})
+	if got := Trim(blank); got.Bounds() != blank.Bounds() {
+		t.Errorf("a blank image was trimmed to %v", got.Bounds())
 	}
 }

@@ -315,7 +315,27 @@ type agntYAML struct {
 	// ColdCacheClear clears old tool results after the prompt cache has
 	// expired (coldCacheClear).
 	ColdCacheClear *coldCacheClearYAML `yaml:"cold_cache_clear,omitempty"`
-	ContextLimits  contextLimitsYAML   `yaml:",inline"`
+	// CompactionNotes names the notes file a compaction summary points the
+	// agent back to: spec.PHNotesFile, which the engine fills in for an
+	// autonomous run and leaves empty for an interactive one, so the two
+	// plans' configs stay the same bytes. Only the default harness build knows
+	// the key, and any other docker-agent refuses the whole config over it, so
+	// it is written for that image alone (compactionNotes).
+	CompactionNotes string            `yaml:"compaction_notes,omitempty"`
+	ContextLimits   contextLimitsYAML `yaml:",inline"`
+}
+
+// compactionNotes is the agent's compaction_notes: the run's notes file,
+// filled in at run time, when the harness is the default build, which reads
+// the key; never for a persistent agent's plan, which keeps its notes in its
+// own folders. Another image (the vendor's, an earlier build a policy pins)
+// fails to parse a config that carries it, so it gets none: the System
+// Prompt still asks for the notes, and only the summary's reminder is lost.
+func compactionNotes(persistent bool, harnessImage string) string {
+	if persistent || harnessImage != policy.DefaultHarnessImage {
+		return ""
+	}
+	return spec.PHNotesFile
 }
 
 // contextLimitsYAML is docker-agent's context limits that need no window
@@ -547,10 +567,11 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 					// without this docker-agent's SSRF guard refuses it.
 					AllowPrivateIPs: true,
 				}},
-				RedactSecrets:  &redactFlagOff,
-				Hooks:          redactSecretsHooks(in.UnchangedTools...),
-				ColdCacheClear: coldCacheClear(in.Model.Provider, in.BrowserTools),
-				ContextLimits:  contextLimits(d.Name(), in.Model),
+				RedactSecrets:   &redactFlagOff,
+				Hooks:           redactSecretsHooks(in.UnchangedTools...),
+				ColdCacheClear:  coldCacheClear(in.Model.Provider, in.BrowserTools),
+				CompactionNotes: compactionNotes(in.Persistent, in.HarnessImage),
+				ContextLimits:   contextLimits(d.Name(), in.Model),
 			},
 		},
 	}

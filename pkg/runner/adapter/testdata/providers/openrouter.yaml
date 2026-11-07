@@ -35,4 +35,5 @@ agents:
       after: 1h
       keep_turns: 2
       keep_browser: 2
+    compaction_notes: '@@RUN_NOTES_FILE@@'
     max_tool_result_tokens: 24576

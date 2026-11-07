@@ -229,3 +229,86 @@ func TestCropLogoTakesTheBoxFromTheFullPage(t *testing.T) {
 		t.Errorf("a crop over the person's logo: %q", got)
 	}
 }
+
+// TestTakePictureTakesArtworkForTheCover: a box of a page becomes the
+// cover image previews draw, and pictures fill the custom cover's slots
+// in order, a slot taken again replaced; each take is recorded with what
+// it was taken as, and what cannot be kept is refused.
+func TestTakePictureTakesArtworkForTheCover(t *testing.T) {
+	spec := documentSpec(t)
+	st := pdfStaged
+	st.Media, st.MediaPages = 2, []int{1, 1}
+	stageDocument(t, spec, st)
+	s := newTestServer(t, spec)
+	items, isErr := callForItems(t, s, ToolTakePicture, map[string]any{"as": AsCoverImage, "page": 1, "x": 0, "y": 0, "width": 200, "height": 100})
+	if isErr || len(items) != 2 || items[1]["type"] != "image" {
+		t.Fatalf("take_picture = %v, %v", items, isErr)
+	}
+	if s.docCoverImage == (reportdesign.Image{}) {
+		t.Fatal("the picture is not the cover image")
+	}
+	raw, _, _ := s.docCoverImage.Decode()
+	if cfg, _, err := image.DecodeConfig(bytes.NewReader(raw)); err != nil || cfg.Width != 400 || cfg.Height != 200 {
+		t.Errorf("the cover image is %+v (%v), want the box at twice the view's pixels", cfg, err)
+	}
+	d, err := s.withAssets(reportdesign.Default())
+	if err != nil || d.CoverImage != s.docCoverImage {
+		t.Errorf("previews do not draw the cover image (%v)", err)
+	}
+	for _, args := range []map[string]any{{"as": AsCover, "media": 1}, {"as": AsCover, "media": 2}, {"as": AsCover, "slot": 1, "media": 2}} {
+		if got, isErr := s.toolTakePicture(rawArgs(t, args)); isErr {
+			t.Fatalf("take_picture(%v) = %q", args, got)
+		}
+	}
+	if len(s.docCoverPictures) != 2 || s.docCoverPictures[0] != s.docCoverPictures[1] {
+		t.Errorf("the cover's pictures are %d, want two, the first replaced by the second", len(s.docCoverPictures))
+	}
+	images, err := s.coverImages()
+	if err != nil || len(images) != 2 {
+		t.Errorf("a custom cover's preview draws %d images (%v)", len(images), err)
+	}
+	e := ledgerEntries(t, spec)
+	if len(e) != 4 || e[0].Tool != ToolTakePicture || e[0].As != AsCoverImage || e[0].Box == nil || e[3].As != AsCover || e[3].Slot != 1 || e[3].Media != 2 || e[3].Box != nil {
+		t.Errorf("ledger %+v", e)
+	}
+	for _, args := range []map[string]any{
+		{"media": 1},
+		{"as": "logo", "media": 1},
+		{"as": AsCoverImage, "slot": 2, "media": 1},
+		{"as": AsCover, "slot": 4, "media": 1},
+		{"as": AsCover, "page": 1},
+		{"as": AsCover, "media": 3},
+		{"as": AsCover, "page": 1, "media": 1},
+	} {
+		if got, isErr := s.toolTakePicture(rawArgs(t, args)); !isErr {
+			t.Errorf("take_picture(%v) = %q", args, got)
+		}
+	}
+}
+
+// TestCropLogoTrimsAndTakesAPDFPicture: a generous box keeps the logo
+// with a small margin, and a PDF's picture is taken whole.
+func TestCropLogoTrimsAndTakesAPDFPicture(t *testing.T) {
+	spec := documentSpec(t)
+	st := pdfStaged
+	st.Media, st.MediaPages = 1, []int{1}
+	stageDocument(t, spec, st)
+	s := newTestServer(t, spec)
+	// The view's logo is at 20,20 40x20; the box takes in 80 by 60.
+	items, isErr := callForItems(t, s, ToolCropLogo, map[string]any{"page": 1, "x": 5, "y": 5, "width": 80, "height": 60})
+	if isErr || len(items) != 2 {
+		t.Fatalf("crop_logo = %v, %v", items, isErr)
+	}
+	b, _ := base64.StdEncoding.DecodeString(items[1]["data"].(string))
+	if cfg, err := png.DecodeConfig(bytes.NewReader(b)); err != nil || cfg.Width != 88 || cfg.Height != 48 {
+		t.Errorf("the crop is %+v (%v), want the 80 by 40 logo with a 4 pixel margin", cfg, err)
+	}
+	if got, isErr := s.toolCropLogo(rawArgs(t, map[string]any{"media": 1})); isErr {
+		t.Errorf("crop_logo of a PDF's picture = %q", got)
+	}
+	items, _ = callForItems(t, s, ToolDocumentPages, map[string]any{"media": 1})
+	text := items[0]["resource"].(map[string]any)["text"].(string)
+	if !strings.Contains(text, "picture 1 of 1 (first drawn on page 1)") || !strings.Contains(text, "Its pages draw 1 picture (1 on page 1)") {
+		t.Errorf("document_pages of a PDF's picture:\n%s", text)
+	}
+}

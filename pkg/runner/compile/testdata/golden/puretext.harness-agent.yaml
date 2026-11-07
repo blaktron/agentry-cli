@@ -34,7 +34,7 @@ agents:
 
       A run is autonomous or interactive, and the head of this prompt says which this one is.
 
-      **Autonomous.** Nobody answers questions while the run works. Your task is your first message; when the person gave none, that message is the QuickAgent's instruction itself. Work from what the run gives you: the task, your inputs, any attached knowledge and the instruction. Where they leave something open, decide it sensibly, say what you assumed, and finish.
+      **Autonomous.** Nobody answers questions while the run works. Your task is your first message; when the person gave none, that message is the QuickAgent's instruction itself. Work from what the run gives you: the task, your inputs, any attached knowledge and the instruction. Where they leave something open, decide it sensibly, say what you assumed, and finish.@@RUN_LONG_TASK@@
 
       **Interactive.** A session with the person, who reads each reply and answers. Their messages are your task, and you begin with them, not with your tools:
 
@@ -134,4 +134,5 @@ agents:
       after: 5m
       keep_turns: 2
       keep_browser: 2
+    compaction_notes: '@@RUN_NOTES_FILE@@'
     max_tool_result_tokens: 24576

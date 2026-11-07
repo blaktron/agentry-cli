@@ -292,6 +292,25 @@ func (rd *runDirs) modeForPrompt() string {
 	return string(manifest.ModeAutonomous)
 }
 
+// longTaskForPrompt is spec.PHLongTask's value: the long-task sentences in an
+// autonomous run, nothing in an interactive one.
+func (rd *runDirs) longTaskForPrompt() string {
+	if rd.interactive {
+		return ""
+	}
+	return compile.LongTaskNotes
+}
+
+// notesFileForHarness is spec.PHNotesFile's value: the notes file the
+// long-task sentences name, in an autonomous run; nothing in an interactive
+// one.
+func (rd *runDirs) notesFileForHarness() string {
+	if rd.interactive {
+		return ""
+	}
+	return compile.NotesFileForHarness
+}
+
 func (rd *runDirs) replacerWith(hostPath func(string) string) *strings.Replacer {
 	pairs := []string{
 		spec.PHWorkspace, hostPath(rd.workspace),
@@ -317,6 +336,8 @@ func (rd *runDirs) replacerWith(hostPath func(string) string) *strings.Replacer 
 		spec.PHRunID, filepath.Base(rd.root),
 		spec.PHSecretsAbsent, rd.absentForPrompt(),
 		spec.PHRunMode, rd.modeForPrompt(),
+		spec.PHLongTask, rd.longTaskForPrompt(),
+		spec.PHNotesFile, rd.notesFileForHarness(),
 		spec.PHModelSignIn, hostPath(rd.modelSignIn),
 	}
 	// The host link's run-time values: the user it runs as (the person's

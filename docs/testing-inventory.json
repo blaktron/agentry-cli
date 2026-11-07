@@ -3373,7 +3373,8 @@
             "TestADocumentGoesThroughTheDecodeStep",
             "TestTheDecodeStepRefusesWhatItWouldRefuseForAnyInput",
             "TestADocumentTheDecoderCouldNotReadIsStagedAsItsFailure",
-            "TestALogoCroppedFromTheDocumentIsCroppedAgainHere"
+            "TestALogoCroppedFromTheDocumentIsCroppedAgainHere",
+            "TestADesignFromADocumentKeepsItsCoverArtwork"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -4156,6 +4157,16 @@
           "dependencyHints": []
         },
         {
+          "path": "pkg/runner/adapter/notes_test.go",
+          "tests": [
+            "TestCompactionNotesOnlyForTheDefaultHarness"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "pkg/runner/adapter/persistent_resume_test.go",
           "tests": [
             "TestAPersistentClaudeKeepsItsTranscriptOnTheSessionStore",
@@ -4661,6 +4672,19 @@
             "TestCompileWritesTheRecordOnlyWithAKey",
             "TestReadInstalledPlanSurvivesAConcurrentRecompile",
             "TestConcurrentCompilesLeaveOneWholePlan"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
+          ]
+        },
+        {
+          "path": "pkg/runner/compile/longtask_test.go",
+          "tests": [
+            "TestTheLongTaskNotesAreAnAutonomousRunsOwn",
+            "TestTheHarnessNamesTheNotesFileExceptForAPersistentAgent"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -10330,7 +10354,11 @@
             "TestValidateHoldsWhatTheContainerWrote",
             "TestCropIsHeldToTheImage",
             "TestFontName",
-            "TestTextKeepsOnlyWhatAReaderSees"
+            "TestTextKeepsOnlyWhatAReaderSees",
+            "TestAPDFsPicturesAreReadOnceWithTheirMasks",
+            "TestParseImageList",
+            "TestEncodePictureKeepsTransparencyAsPNG",
+            "TestTrimKeepsWhatTheImageShows"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -11317,7 +11345,9 @@
             "TestDocumentPagesShowsAPageWithWhatTheDocumentDeclares",
             "TestADocumentThatCouldNotBeReadIsAKindOfFailure",
             "TestAWordDocumentAnswersItsTextAndPictures",
-            "TestCropLogoTakesTheBoxFromTheFullPage"
+            "TestCropLogoTakesTheBoxFromTheFullPage",
+            "TestTakePictureTakesArtworkForTheCover",
+            "TestCropLogoTrimsAndTakesAPDFPicture"
           ],
           "fuzz": [],
           "benchmarks": [],
