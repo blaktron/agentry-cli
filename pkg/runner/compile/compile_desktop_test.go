@@ -373,3 +373,37 @@ func toolsAllowlist(t *testing.T, planDir string) map[string][]string {
 	}
 	return out
 }
+
+// A release that uses Unreal Engine compiles one link entry for Epic's own
+// plugin, held to its three tools, and the plan names the plugin as the
+// application's own; nothing of the editor's loopback address reaches the
+// plan or the gateway's files.
+func TestCompileRendersUnreal(t *testing.T) {
+	doc := strings.Replace(desktopManifest, "      - id: blender\n", "      - id: unreal\n", 1)
+	planDir := t.TempDir()
+	plan, err := Compile(hostInputs(t, doc), planDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := plan.Capabilities.Desktop
+	if d == nil || len(d.Servers) != 1 || d.Servers[0].ID != "unreal" || d.Servers[0].Application != "Unreal Engine" ||
+		d.Servers[0].Package != "application:ModelContextProtocol@5.8.0" ||
+		!slices.Equal(d.Servers[0].ToolNames(), []string{"list_toolsets", "describe_toolset", "call_tool"}) || len(d.Servers[0].Egress) != 0 {
+		t.Fatalf("desktop = %+v", d)
+	}
+	for _, f := range []string{"catalog.yaml", "tools.yaml"} {
+		b, err := os.ReadFile(filepath.Join(planDir, "gateway", f)) //nolint:gosec // test plan dir
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(b), "127.0.0.1") || strings.Contains(string(b), "8000") {
+			t.Errorf("%s carries the editor's address:\n%s", f, b)
+		}
+		if !strings.Contains(string(b), "agentry-desktop-unreal") && f == "catalog.yaml" {
+			t.Errorf("catalog.yaml has no link entry for unreal:\n%s", b)
+		}
+	}
+	if line := plan.Enforcement["desktop"]; !strings.Contains(line, "Unreal Engine") || strings.Contains(line, "runs code inside") {
+		t.Errorf("the enforcement line: %q", line)
+	}
+}
