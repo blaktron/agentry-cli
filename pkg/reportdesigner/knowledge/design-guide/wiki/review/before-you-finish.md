@@ -3,7 +3,7 @@ title: Before you finish
 type: checklist
 summary: The checks to make before writing the last file - check_design passes, the last render is of the final code and shows no failure, the cover follows the facts it is given, nothing invented, designer.json written, and the answer says honestly what was looked at.
 sources: [web:https://docs.secureagentry.net/runner/]
-updated: 2026-11-06
+updated: 2026-11-07
 ---
 
 # Before you finish
@@ -17,7 +17,7 @@ Go through this list before your answer [src: web:https://docs.secureagentry.net
 - The name says what the design is, in at most 60 characters.
 - The brand block holds only what the brief, the given design or a page told you.
 - You rendered the cover page and a body page, and both look as you meant.
-- With a document: its accent, faces and header match what you saw, every colour passes `check_design`, the brand block holds only its own words, and a logo you cropped is the logo alone. Your answer names the faces you matched and says whether you looked at the document's pages.
+- With a document: its accent, faces and header match what you saw, every colour passes `check_design`, the brand block holds only its own words, and a logo you took is the logo alone. The cover's render sits beside page 1 and reads as the same brand: its artwork, its colours, its logo where the document puts it. No picture you took is the document's content. Your answer names the faces you matched, what you took from the document (the logo, the cover's artwork, a custom cover), and says whether you looked at the document's pages.
 
 **A cover:**
 

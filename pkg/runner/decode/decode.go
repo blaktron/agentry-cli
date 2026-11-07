@@ -54,10 +54,12 @@ var Catalogue = []Tool{
 	{Command: "pandoc"},
 	{Command: "pdftotext"},
 	// The Report Designer's document: poppler's page renderer, its page
-	// count and sizes, and the fonts a page uses (the pages role).
+	// count and sizes, the fonts a page uses and the pictures it draws
+	// (the pages role).
 	{Command: "pdftoppm", Pages: true},
 	{Command: "pdfinfo", Pages: true},
 	{Command: "pdffonts", Pages: true},
+	{Command: "pdfimages", Pages: true},
 	{Command: "tesseract"},
 	{Command: "java"},
 	{Command: "file"},

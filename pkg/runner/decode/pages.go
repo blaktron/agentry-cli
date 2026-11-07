@@ -31,7 +31,9 @@ type Pages struct {
 	// Full are the rendered pages at docpages.RenderPPI, page 1 first, and
 	// View the same pages at docpages.ViewPPI, each a PNG.
 	Full, View [][]byte
-	// Media are a Word document's pictures, each a PNG.
+	// Media are the document's pictures, each a PNG within
+	// docpages.MaxPictureSide and docpages.MaxStagedMediaBytes, halved
+	// until it fits: a Word document's, or the pictures a PDF's pages draw.
 	Media [][]byte
 	// Image is the decode image that read it.
 	Image Image
@@ -150,7 +152,14 @@ func CheckPages(out string, kind docpages.Kind) (*Pages, error) {
 		if err != nil {
 			return nil, fmt.Errorf("picture %s: %w", name, err)
 		}
+		for img.Bounds().Dx() > docpages.MaxPictureSide || img.Bounds().Dy() > docpages.MaxPictureSide {
+			img = docpages.Half(img)
+		}
 		b, err := encodePNG(img)
+		for err == nil && len(b) > docpages.MaxStagedMediaBytes {
+			img = docpages.Half(img)
+			b, err = encodePNG(img)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -214,7 +223,7 @@ func (p *Pages) PagesLine() string {
 	case f.Failure != "":
 		return fmt.Sprintf("the document was not read: %s (%s); the run designed from the brief", docpages.Failures[f.Failure], where)
 	case f.Kind == docpages.KindPDF:
-		line := fmt.Sprintf("%d of the PDF's %d pages rendered at %d dpi by pdftoppm (%s) %s, each page encoded again from its pixels by the CLI", f.Rendered, f.Pages, docpages.RenderPPI, poppler, where)
+		line := fmt.Sprintf("%d of the PDF's %d pages rendered at %d dpi by pdftoppm and %d picture(s) they draw read by pdfimages (%s) %s, each page and picture encoded again from its pixels by the CLI", f.Rendered, f.Pages, docpages.RenderPPI, len(f.Media), poppler, where)
 		if f.Stopped != "" {
 			line += fmt.Sprintf("; rendering stopped at page %d because %s", f.Rendered+1, docpages.Failures[f.Stopped])
 		}

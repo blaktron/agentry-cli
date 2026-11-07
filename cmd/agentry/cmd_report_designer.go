@@ -75,10 +75,11 @@ func newReportDesignDesignCmd() *cobra.Command {
 			"theme or a design file; --logo gives it your logo; --image gives it up to four reference images it looks\n" +
 			"at and never keeps; --url gives it up to two web pages, such as your own site, read first by AI Review\n" +
 			"with your own TypeSafe key. --document gives it one document of yours, a PDF or a Word document (.docx)\n" +
-			"up to 20 MB, to build the design around: it looks at the first twelve pages of a PDF, reads a Word\n" +
-			"document's theme, header, footer and pictures (no Word layout is rendered), and can take your logo from\n" +
-			"it; the document is checked like any input, read in full and kept only for the run. The design is\n" +
-			"written to the output folder, and with --save added to your\n" +
+			"up to 20 MB, to build the design around: it looks at the first twelve pages of a PDF and the pictures\n" +
+			"they draw, reads a Word document's theme, header, footer and pictures (no Word layout is rendered), and\n" +
+			"can take your logo and your cover page's artwork from it, with a custom cover modelled on your cover\n" +
+			"page; the document is checked like any input, read in full and kept only for the run, and no whole page\n" +
+			"and none of its text is kept. The design is written to the output folder, and with --save added to your\n" +
 			"account's designs under a new name. It is never your default: pick it for a run with --report-design, or\n" +
 			"make it the default with `agentry report-design use`.",
 		Args: cobra.NoArgs,
@@ -137,6 +138,33 @@ func designerRunE(o *designerOpts, work func(cmd *cobra.Command) error) func(*co
 	}
 }
 
+// documentLine says what a Design run took from the person's document.
+func documentLine(res *build.Result, name string) string {
+	var took []string
+	if res.LogoFromDocument {
+		took = append(took, "its logo")
+	}
+	if res.CoverImageFromDocument {
+		took = append(took, "a cover image")
+	}
+	switch {
+	case res.CoverFromDocument && res.CoverPicturesFromDocument == 1:
+		took = append(took, "a custom cover modelled on its cover page, drawing 1 picture of it")
+	case res.CoverFromDocument && res.CoverPicturesFromDocument > 1:
+		took = append(took, fmt.Sprintf("a custom cover modelled on its cover page, drawing %d pictures of it", res.CoverPicturesFromDocument))
+	case res.CoverFromDocument:
+		took = append(took, "a custom cover modelled on its cover page")
+	}
+	line := fmt.Sprintf("It looked at %d image(s) of %s", res.DocumentPages, name)
+	switch len(took) {
+	case 0:
+		return line + " and took no picture of it."
+	case 1:
+		return line + " and took " + took[0] + " from it."
+	}
+	return line + " and took " + strings.Join(took[:len(took)-1], ", ") + " and " + took[len(took)-1] + " from it."
+}
+
 // designerReport is the json report of a Report Designer command.
 type designerReport struct {
 	Job       string `json:"job"`
@@ -147,12 +175,18 @@ type designerReport struct {
 	Thumbnail bool   `json:"thumbnail,omitempty"`
 	Previews  int    `json:"previews"`
 	// DocumentPages is how many images of --document the Designer looked
-	// at, and LogoFromDocument says its logo is a crop of the document.
-	DocumentPages    int                `json:"documentPages,omitempty"`
-	LogoFromDocument bool               `json:"logoFromDocument,omitempty"`
-	Dir              string             `json:"dir"`
-	Saved            *savedDesign       `json:"saved,omitempty"`
-	Pages            []*voicebuild.Page `json:"pages,omitempty"`
+	// at; LogoFromDocument says its logo is a crop of the document,
+	// CoverImageFromDocument that its cover image is a picture of it, and
+	// CoverFromDocument that its custom cover is modelled on it, drawing
+	// CoverPicturesFromDocument pictures of it.
+	DocumentPages             int                `json:"documentPages,omitempty"`
+	LogoFromDocument          bool               `json:"logoFromDocument,omitempty"`
+	CoverImageFromDocument    bool               `json:"coverImageFromDocument,omitempty"`
+	CoverFromDocument         bool               `json:"coverFromDocument,omitempty"`
+	CoverPicturesFromDocument int                `json:"coverPicturesFromDocument,omitempty"`
+	Dir                       string             `json:"dir"`
+	Saved                     *savedDesign       `json:"saved,omitempty"`
+	Pages                     []*voicebuild.Page `json:"pages,omitempty"`
 }
 
 // savedDesign is a design --save added to the library.
@@ -363,6 +397,7 @@ func runReportDesigner(cmd *cobra.Command, job build.Job, o *designerOpts) error
 	d := res.Design
 	report.Name, report.SHA256, report.Cover, report.Looked, report.Thumbnail, report.Previews, report.Dir = d.Name, d.SHA256(), d.Cover.Style, res.Looked, res.Thumbnail, res.Previews, res.Dir
 	report.DocumentPages, report.LogoFromDocument = res.DocumentPages, res.LogoFromDocument
+	report.CoverImageFromDocument, report.CoverFromDocument, report.CoverPicturesFromDocument = res.CoverImageFromDocument, res.CoverFromDocument, res.CoverPicturesFromDocument
 	if o.save {
 		saved, err := saveDesignerResult(ctx, lib, reg, d)
 		if err != nil {
@@ -389,12 +424,7 @@ func runReportDesigner(cmd *cobra.Command, job build.Job, o *designerOpts) error
 	}
 	_, _ = fmt.Fprintf(out, "The Report Designer made the %s %q (sha256 %s, %d renders), written to %s.\n", what, d.Name, report.SHA256, res.Previews, res.Dir)
 	if doc != nil {
-		switch {
-		case res.LogoFromDocument:
-			_, _ = fmt.Fprintf(out, "It looked at %d image(s) of %s and took its logo from it.\n", res.DocumentPages, doc.Name)
-		default:
-			_, _ = fmt.Fprintf(out, "It looked at %d image(s) of %s.\n", res.DocumentPages, doc.Name)
-		}
+		_, _ = fmt.Fprintf(out, "%s\n", documentLine(res, doc.Name))
 	}
 	if job == build.Cover && !res.Thumbnail {
 		_, _ = fmt.Fprintln(out, "Its last render was not of the cover it kept, so the design has no thumbnail of it.")

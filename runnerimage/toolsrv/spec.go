@@ -431,7 +431,7 @@ func (s *Spec) GrantedTools() []string {
 		names = append(names, ToolExportPDF)
 	}
 	if s.Design.Enabled {
-		names = append(names, ToolRenderPreview, ToolCheckDesign, ToolViewReference, ToolDocumentPages, ToolCropLogo)
+		names = append(names, ToolRenderPreview, ToolCheckDesign, ToolViewReference, ToolDocumentPages, ToolCropLogo, ToolTakePicture)
 	}
 	if s.Calls.Ledger != "" {
 		names = append(names, ToolEndBlocked)

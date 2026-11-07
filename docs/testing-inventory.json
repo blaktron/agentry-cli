@@ -3373,7 +3373,8 @@
             "TestADocumentGoesThroughTheDecodeStep",
             "TestTheDecodeStepRefusesWhatItWouldRefuseForAnyInput",
             "TestADocumentTheDecoderCouldNotReadIsStagedAsItsFailure",
-            "TestALogoCroppedFromTheDocumentIsCroppedAgainHere"
+            "TestALogoCroppedFromTheDocumentIsCroppedAgainHere",
+            "TestADesignFromADocumentKeepsItsCoverArtwork"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -10343,7 +10344,11 @@
             "TestValidateHoldsWhatTheContainerWrote",
             "TestCropIsHeldToTheImage",
             "TestFontName",
-            "TestTextKeepsOnlyWhatAReaderSees"
+            "TestTextKeepsOnlyWhatAReaderSees",
+            "TestAPDFsPicturesAreReadOnceWithTheirMasks",
+            "TestParseImageList",
+            "TestEncodePictureKeepsTransparencyAsPNG",
+            "TestTrimKeepsWhatTheImageShows"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -11330,7 +11335,9 @@
             "TestDocumentPagesShowsAPageWithWhatTheDocumentDeclares",
             "TestADocumentThatCouldNotBeReadIsAKindOfFailure",
             "TestAWordDocumentAnswersItsTextAndPictures",
-            "TestCropLogoTakesTheBoxFromTheFullPage"
+            "TestCropLogoTakesTheBoxFromTheFullPage",
+            "TestTakePictureTakesArtworkForTheCover",
+            "TestCropLogoTrimsAndTakesAPDFPicture"
           ],
           "fuzz": [],
           "benchmarks": [],

@@ -93,3 +93,75 @@ func PNG(t testing.TB, w, h int, c color.Color) []byte {
 	}
 	return b.Bytes()
 }
+
+// PicturePDF is a PDF of three A4 pages that draws pictures, uncompressed:
+// on page 1 a 120 by 60 logo of fill whose left half is opaque and right
+// half transparent (a soft mask), a 300 by 200 opaque photograph of a
+// gradient, and a 12 by 12 bullet; on pages 2 and 3 the same logo again,
+// as a running header draws it; page 3 draws no new picture.
+func PicturePDF() []byte {
+	var objs [][]byte
+	obj := func(body []byte) int {
+		objs = append(objs, body)
+		return len(objs)
+	}
+	stream := func(dict string, data []byte) []byte {
+		return append(append([]byte(fmt.Sprintf("%s /Length %d >>\nstream\n", dict, len(data))), data...), []byte("\nendstream")...)
+	}
+	img := func(w, h int, cs string, data []byte, extra string) []byte {
+		return stream(fmt.Sprintf("<< /Type /XObject /Subtype /Image /Width %d /Height %d /ColorSpace /%s /BitsPerComponent 8%s", w, h, cs, extra), data)
+	}
+	obj([]byte("<< /Type /Catalog /Pages 2 0 R >>"))
+	obj(nil) // the page tree, written once the pages are known
+	var mask, logo, photo, bullet []byte
+	for range 60 {
+		for x := range 120 {
+			a := byte(255)
+			if x >= 60 {
+				a = 0
+			}
+			mask = append(mask, a)
+			logo = append(logo, 11, 93, 75)
+		}
+	}
+	for y := range 200 {
+		for x := range 300 {
+			photo = append(photo, byte(x*255/300), byte(y*255/200), 128)
+		}
+	}
+	for range 12 * 12 {
+		bullet = append(bullet, 200, 30, 30)
+	}
+	smask := obj(img(120, 60, "DeviceGray", mask, ""))
+	logoObj := obj(img(120, 60, "DeviceRGB", logo, fmt.Sprintf(" /SMask %d 0 R", smask)))
+	photoObj := obj(img(300, 200, "DeviceRGB", photo, ""))
+	bulletObj := obj(img(12, 12, "DeviceRGB", bullet, ""))
+	var kids []string
+	for p := 1; p <= 3; p++ {
+		xobjects := fmt.Sprintf("/Logo %d 0 R", logoObj)
+		draw := "q 120 0 0 60 40 760 cm /Logo Do Q"
+		if p == 1 {
+			xobjects += fmt.Sprintf(" /Photo %d 0 R /Bullet %d 0 R", photoObj, bulletObj)
+			draw += " q 515 0 0 343 40 300 cm /Photo Do Q q 12 0 0 12 40 200 cm /Bullet Do Q"
+		}
+		contents := obj(stream("<<", []byte(draw)))
+		kids = append(kids, fmt.Sprintf("%d 0 R", obj([]byte(fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /XObject << %s >> >> /Contents %d 0 R >>", xobjects, contents)))))
+	}
+	objs[1] = []byte(fmt.Sprintf("<< /Type /Pages /Kids [%s] /Count %d >>", strings.Join(kids, " "), len(kids)))
+	var b bytes.Buffer
+	b.WriteString("%PDF-1.4\n")
+	offsets := make([]int, len(objs))
+	for i, body := range objs {
+		offsets[i] = b.Len()
+		fmt.Fprintf(&b, "%d 0 obj\n", i+1)
+		b.Write(body)
+		b.WriteString("\nendobj\n")
+	}
+	xref := b.Len()
+	fmt.Fprintf(&b, "xref\n0 %d\n0000000000 65535 f \n", len(objs)+1)
+	for _, o := range offsets {
+		fmt.Fprintf(&b, "%010d 00000 n \n", o)
+	}
+	fmt.Fprintf(&b, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(objs)+1, xref)
+	return b.Bytes()
+}

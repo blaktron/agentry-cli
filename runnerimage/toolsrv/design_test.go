@@ -52,7 +52,7 @@ func callForItems(t *testing.T, s *server, name string, args map[string]any) ([]
 
 func TestTheDesignToolsAreGrantedWithTheirFlagAlone(t *testing.T) {
 	spec := pdfSpec(t)
-	designTools := []string{ToolRenderPreview, ToolCheckDesign, ToolViewReference, ToolDocumentPages, ToolCropLogo}
+	designTools := []string{ToolRenderPreview, ToolCheckDesign, ToolViewReference, ToolDocumentPages, ToolCropLogo, ToolTakePicture}
 	for _, tool := range designTools {
 		if slices.Contains(spec.GrantedTools(), tool) {
 			t.Errorf("%s granted with export_pdf's grant", tool)

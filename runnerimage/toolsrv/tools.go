@@ -212,6 +212,8 @@ func (s *server) buildTools() {
 			add(name, documentPagesDescription, documentPagesSchema(), s.toolDocumentPages)
 		case ToolCropLogo:
 			add(name, cropLogoDescription, cropLogoSchema(), s.toolCropLogo)
+		case ToolTakePicture:
+			add(name, takePictureDescription, takePictureSchema(), s.toolTakePicture)
 		case ToolEndBlocked:
 			add(name, endBlockedDescription, endBlockedSchema(), s.toolEndBlocked)
 		}

@@ -14,3 +14,9 @@ A Design run can be given one document, a PDF or a Word document, to build the d
 
 - wrote: design/from-a-document.md
 - updated: guide/start-here.md, review/before-you-finish.md
+
+## [2026-11-07] ingest | a document's logo, cover artwork and cover page, take_picture (Report Designer 1.2.0)
+
+A PDF's pictures are read out of it with its pages, the logo with its transparency among them, and a crop is trimmed to what it shows. The Designer takes the document's cover artwork with take_picture, as the design's cover image or as images of a custom cover modelled on the document's cover page, which a Design run may now write.
+
+- updated: design/from-a-document.md, review/before-you-finish.md

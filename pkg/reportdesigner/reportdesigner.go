@@ -8,7 +8,7 @@
 // for a design in Typst code. Its contract declares no egress, no
 // filesystem, no exec and the files data category: the CLI stages what it
 // is given as inputs, the application grants it render_preview,
-// check_design, view_reference, document_pages and crop_logo (and web_read
+// check_design, view_reference, document_pages, crop_logo and take_picture (and web_read
 // held to the addresses the person gave, when a page is drawn by scripts),
 // and it writes its work through write_report; pkg/reportdesigner/build
 // keeps it.
@@ -39,7 +39,7 @@ const GuideName = "design-guide"
 const (
 	Namespace = "agentry"
 	Name      = "report-designer"
-	Version   = "1.1.0"
+	Version   = "1.2.0"
 )
 
 // LocalTimeoutFloorSeconds is the least a Report Designer run on this
