@@ -1,6 +1,13 @@
 {
   "versions": [
     {
+      "version": "0.7.27",
+      "highlights": [
+        "An autonomous run resumes its conversation when the model server fails after its first tool call.",
+        "It waits 30 seconds to 2 minutes, at most five times, and never past the run's timeout; no tool runs twice."
+      ]
+    },
+    {
       "version": "0.7.26",
       "highlights": [
         "agentry report-design design --document builds a design around a PDF or Word document of yours.",

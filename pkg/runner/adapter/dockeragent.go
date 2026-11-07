@@ -578,15 +578,22 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 	}
 	var argv []string
 	var session *spec.SessionSpec
+	var resume *spec.ResumeSpec
 	switch mode {
 	case manifest.ModeAutonomous:
 		// --exec with no unattended policy auto-rejects every tool call.
 		// --safety autonomous is deliberate and safe HERE because
 		// in-harness permission patterns are not the boundary: the tool
 		// surface is gateway-only and the container is on an internal
-		// network — the enforcement lives a layer down.
+		// network — the enforcement lives a layer down. The conversation
+		// is kept in the run's session store, so that a harness that ends
+		// on a passing model failure can be started again on it: a
+		// conversation id that does not exist yet is created, one that
+		// does is loaded, and the message on stdin is added to it.
 		argv = []string{"run", "--exec", "--json", "--safety", harnessSafety,
+			"--session", spec.PHConversation, "--session-db", spec.SessionMount + "/session.db",
 			spec.PlanMount + "/agent.yaml", "-"}
+		resume = &spec.ResumeSpec{SessionDB: spec.SessionMount + "/session.db", StoreOwner: "docker-agent"}
 	case manifest.ModeInteractive:
 		// The ACP server on the container's stdio. Same config, same
 		// toolset, same network; the session store is the one writable
@@ -638,6 +645,11 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 		ReadOnlyRoot: true,
 		Tmpfs:        []string{"/tmp:mode=1777", "/work:mode=1777", "/home/docker-agent:mode=1777"},
 	}
+	if resume != nil {
+		// The conversation store, the autonomous container's one writable
+		// mount: a volume of the run's own, removed with it.
+		agent.Mounts = append(agent.Mounts, spec.Mount{Source: spec.PHSession, Target: spec.SessionMount})
+	}
 
 	return Result{
 		Files:      map[string][]byte{"agent.yaml": buf.Bytes()},
@@ -645,6 +657,7 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 		Model:      in.Model.Provider + "/" + in.Model.Name,
 		ResultKind: resultKind,
 		Session:    session,
+		Resume:     resume,
 	}, nil
 }
 

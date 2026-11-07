@@ -10,6 +10,10 @@
       "--json",
       "--safety",
       "autonomous",
+      "--session",
+      "@@RUN_CONVERSATION@@",
+      "--session-db",
+      "/session/session.db",
       "/plan/agent.yaml",
       "-"
     ],
@@ -44,6 +48,10 @@
         "source": "@@RUN_CFG@@/harness",
         "target": "/plan",
         "readOnly": true
+      },
+      {
+        "source": "@@RUN_SESSION@@",
+        "target": "/session"
       }
     ],
     "stdinTask": true,

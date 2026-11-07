@@ -69,9 +69,14 @@ const (
 	// profile/servers/, one subdirectory per declared server, mounted :ro into
 	// that server's runtime container.
 	PHServers = "@@RUN_SERVERS@@"
-	// PHSession is the per-run named volume an interactive session's harness
-	// store lives in; mounted only by interactive plans.
+	// PHSession is the per-run named volume a harness's session store lives
+	// in: an interactive session's, or an autonomous plan's whose harness
+	// can be resumed (HarnessSpec.Resume).
 	PHSession = "@@RUN_SESSION@@"
+	// PHConversation is the id of the conversation a resumable autonomous
+	// harness keeps in its session store: a new one for each fresh start, the
+	// same one for a start that resumes it.
+	PHConversation = "@@RUN_CONVERSATION@@"
 	// PHShare is the host path of a persistent agent's share folder, the
 	// person's own, mounted read-write and live at AgentRoot/AgentShareDir;
 	// only a persistent plan whose agent has its share names it.
@@ -809,12 +814,28 @@ type HarnessSpec struct {
 	// and not exec's). Nil for a harness whose autonomous run prints its
 	// events.
 	OneTurn *SessionSpec `json:"oneTurn,omitempty"`
+	// Resume, on an autonomous plan, says the harness keeps its conversation
+	// in the run's session store (PHSession, mounted by Agent.Mounts) under
+	// the id the engine puts in place of PHConversation, so that the engine
+	// can start it again on the same conversation after a transient model
+	// failure late in the run. Nil for a harness that keeps none.
+	Resume *ResumeSpec `json:"resume,omitempty"`
 	// ImagePin is how Agent.Image is pinned; nil for a host
 	// harness, which runs no image.
 	ImagePin *ImagePin `json:"imagePin,omitempty"`
 	// ModelSignIn is set when the run spends a person's plan through a
 	// model sign-in instead of a key; nil for a key.
 	ModelSignIn *ModelSignInSpec `json:"modelSignIn,omitempty"`
+}
+
+// ResumeSpec is an autonomous harness's resumable conversation.
+type ResumeSpec struct {
+	// SessionDB is the container path of the harness's conversation store.
+	SessionDB string `json:"sessionDb"`
+	// StoreOwner is the user, as the harness image knows it, that must own
+	// the store, given to it before the harness starts as a session's is
+	// (SessionSpec.StoreOwner). Empty leaves the volume as docker made it.
+	StoreOwner string `json:"storeOwner,omitempty"`
 }
 
 // SessionSpec is the interactive drive of the harness: the runner is the Agent
