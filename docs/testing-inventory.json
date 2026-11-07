@@ -555,6 +555,21 @@
           "dependencyHints": []
         },
         {
+          "path": "cmd/agentry/run_context_window_test.go",
+          "tests": [
+            "TestRunContextWindow",
+            "TestRunContextWindowKeyFromKeychain",
+            "TestRunProbesTheWindowForThisRunOnly"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "HTTP transport",
+            "source/file contract"
+          ]
+        },
+        {
           "path": "cmd/agentry/testsupport_test.go",
           "tests": [],
           "fuzz": [],
