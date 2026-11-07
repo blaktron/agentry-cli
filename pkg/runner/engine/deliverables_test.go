@@ -271,6 +271,7 @@ func TestNothingMarkedTheRunnerPicks(t *testing.T) {
 			"reports/b.md":             "b",
 			"reports/a/first.txt":      "first",
 			"reports/browser/shot.png": "screenshot",
+			"reports/desktop/shot.png": "what the agent saw",
 			"reports/loose.pdf":        "%PDF-1.7 no ledger vouches for it",
 			"reports/LOUD.PDF":         "%PDF-1.7 no ledger vouches for this one either",
 		})
@@ -280,7 +281,7 @@ func TestNothingMarkedTheRunnerPicks(t *testing.T) {
 		}
 		got := paths(env.Deliverables)
 		if len(got) != 2 || got[0] != "reports/a/first.txt" || got[1] != "reports/b.md" {
-			t.Fatalf("deliverables = %v, want a/first.txt and b.md (sorted; the browser's folder and an unvouched PDF aside)", got)
+			t.Fatalf("deliverables = %v, want a/first.txt and b.md (sorted; the browser's and the desktop's folders and an unvouched PDF aside)", got)
 		}
 		for _, d := range env.Deliverables.Files {
 			if d.Marked {

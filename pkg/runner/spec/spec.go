@@ -594,6 +594,13 @@ type DesktopCap struct {
 	ScreenAllowedBy string `json:"screenAllowedBy,omitempty"`
 }
 
+// The computer-use scopes (DesktopCap.ComputerUse): the bound applications'
+// windows, or the whole display.
+const (
+	ComputerUseApp    = "app"
+	ComputerUseScreen = "screen"
+)
+
 // What allowed a screen scope (DesktopCap.ScreenAllowedBy).
 const (
 	ScreenByPolicy = "policy"

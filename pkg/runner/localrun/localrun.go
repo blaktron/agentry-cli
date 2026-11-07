@@ -451,10 +451,20 @@ func sameServers(planned, given []spec.MCPServerSpec, shares []string) bool {
 
 // screenStillAllowed says a plan's screen scope is allowed for this run: a
 // plan whose screen scope only --allow-screen allowed is not reused by a
-// run without the flag, which compiles again and is refused.
+// run without the flag, and one Unsafe Mode allowed is never reused here,
+// since this path does not compile Unsafe Mode; either compiles again and
+// is refused.
 func screenStillAllowed(plan *spec.Plan, allowScreen bool) bool {
 	d := plan.Capabilities.Desktop
-	return d == nil || d.ScreenAllowedBy != spec.ScreenByFlag || allowScreen
+	switch {
+	case d == nil:
+		return true
+	case d.ScreenAllowedBy == spec.ScreenByUnsafe:
+		return false
+	case d.ScreenAllowedBy == spec.ScreenByFlag:
+		return allowScreen
+	}
+	return true
 }
 
 // EnsurePlan reuses the installed plan when nothing it depends on changed,

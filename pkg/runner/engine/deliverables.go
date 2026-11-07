@@ -29,6 +29,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/deliver"
+	"github.com/blaktron/agentry-cli/pkg/runner/desktop"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
@@ -224,7 +225,7 @@ func pickedDeliverables(rd *runDirs, pdfs *receipt.PDFs) []receipt.Deliverable {
 		}
 		rel = filepath.ToSlash(rel)
 		switch {
-		case d.IsDir() && rel == "reports/browser":
+		case d.IsDir() && (rel == "reports/browser" || rel == desktop.ReportsFolder):
 			return fs.SkipDir
 		case d.IsDir() || !d.Type().IsRegular():
 			// A link or a device is never listed, and a link to a

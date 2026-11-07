@@ -121,13 +121,13 @@ func TestARunNeedsAgentryDesktop(t *testing.T) {
 			t.Fatalf("%s: reason %+v", name, r)
 		}
 	}
-	link, err := bindDesktop(context.Background(), plan, dir, "R")
+	link, err := bindDesktop(context.Background(), plan, dir, "R", "")
 	refused(t, "no socket", link, err)
 	sock := desktop.SocketPath(dir)
 	if err := os.WriteFile(sock, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	link, err = bindDesktop(context.Background(), plan, dir, "R")
+	link, err = bindDesktop(context.Background(), plan, dir, "R", "")
 	refused(t, "a file where the socket would be", link, err)
 	_ = os.Remove(sock)
 	ln, err := net.Listen("unix", sock)
@@ -135,12 +135,12 @@ func TestARunNeedsAgentryDesktop(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = ln.Close()
-	link, err = bindDesktop(context.Background(), plan, dir, "R")
+	link, err = bindDesktop(context.Background(), plan, dir, "R", "")
 	refused(t, "a socket nothing listens on", link, err)
 	_ = os.Remove(sock)
 
 	// A plan without the line binds nothing.
-	if link, err := bindDesktop(context.Background(), &spec.Plan{}, dir, "R"); link != nil || err != nil {
+	if link, err := bindDesktop(context.Background(), &spec.Plan{}, dir, "R", ""); link != nil || err != nil {
 		t.Fatalf("a plan without the line: %+v, %v", link, err)
 	}
 
@@ -154,7 +154,7 @@ func TestARunNeedsAgentryDesktop(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { _ = desktop.Serve(ctx, ln, s) }()
-	link, err = bindDesktop(context.Background(), plan, dir, "R")
+	link, err = bindDesktop(context.Background(), plan, dir, "R", "")
 	if err != nil || link == nil || link.Token != "tok-1" || len(link.Servers["blender"]) != 2 || !strings.Contains(link.FarEnd, sock) {
 		t.Fatalf("bound: %+v, %v", link, err)
 	}
@@ -174,18 +174,18 @@ func TestARunNeedsAgentryDesktop(t *testing.T) {
 	cu := desktopPlan()
 	cu.Capabilities.Desktop.ComputerUse = "app"
 	cu.Capabilities.Desktop.ComputerTools = []spec.DesktopTool{{Name: "screenshot", Class: "read"}, {Name: "left_click", Class: "act"}}
-	link, err = bindDesktop(context.Background(), cu, dir, "R")
+	link, err = bindDesktop(context.Background(), cu, dir, "R", "/out/R")
 	if err != nil || link.Computer == nil || link.Computer.Scope != "app" {
 		t.Fatalf("computer use bound: %+v, %v", link, err)
 	}
-	if last := s.binds[len(s.binds)-1]; last.ComputerUse != "app" || !slices.Equal(last.ComputerTools, []string{"screenshot", "left_click"}) {
+	if last := s.binds[len(s.binds)-1]; last.ComputerUse != "app" || !slices.Equal(last.ComputerTools, []string{"screenshot", "left_click"}) || last.Reports != filepath.Join("/out/R", "reports", "desktop") {
 		t.Fatalf("the bind sent %+v", last)
 	}
 
 	// The service refusing the bind: its reason and its words reach the
 	// person, exit 11.
 	s.refuse = &desktop.Refusal{Reason: receipt.DesktopNotInstalled, Server: "blender", Message: "Start the MCP server in Blender's sidebar"}
-	link, err = bindDesktop(context.Background(), plan, dir, "R")
+	link, err = bindDesktop(context.Background(), plan, dir, "R", "")
 	var ce *engine.ClassifiedError
 	if link != nil || err == nil || !errors.As(err, &ce) || ce.Code != engine.ExitPolicy || err.Error() != "Start the MCP server in Blender's sidebar" {
 		t.Fatalf("a refused bind: %+v, %v", link, err)

@@ -836,7 +836,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	// The applications on the person's computer: bound to Agentry Desktop
 	// last before the sandbox, or the run is refused here; the engine
 	// unbinds at teardown.
-	desktopLink, err := bindDesktop(cmd.Context(), plan, home, runID)
+	desktopLink, err := bindDesktop(cmd.Context(), plan, home, runID, outDir)
 	if err != nil {
 		return err
 	}

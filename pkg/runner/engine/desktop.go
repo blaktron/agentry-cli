@@ -154,7 +154,9 @@ func checkDesktop(p Params) error {
 // desktopRun is the run's desktop link once prepared: the binding, the
 // relay volume, and each server's calls as the bridge counts them.
 type desktopRun struct {
-	link   *DesktopLink
+	link *DesktopLink
+	// line is the plan's desktop line.
+	line   *spec.DesktopCap
 	volume string
 	// servers are the bound servers' tools, each narrowed to the plan's
 	// allowlist, in the plan's order.
@@ -193,7 +195,7 @@ func prepareDesktopLink(p Params, rd *runDirs, runID string) error {
 	if err := checkDesktop(p); err != nil {
 		return err
 	}
-	r := &desktopRun{link: p.Desktop, volume: desktopVolume(runID), calls: map[string]*desktopCounts{}}
+	r := &desktopRun{link: p.Desktop, line: d, volume: desktopVolume(runID), calls: map[string]*desktopCounts{}}
 	for _, s := range d.Entries() {
 		listed := p.Desktop.Servers[s.ID]
 		if s.ID == spec.DesktopComputerID {
@@ -227,7 +229,7 @@ func recordDesktop(rd *runDirs, td *teardown, env *receipt.Envelope) {
 	if r == nil {
 		return
 	}
-	lines := func() {
+	writeLines := func() {
 		for _, s := range r.servers {
 			if s.ID == spec.DesktopComputerID {
 				env.CapabilitiesEnforced[desktopComputerKey] = r.computerLine(s.DesktopServerCap)
@@ -236,10 +238,10 @@ func recordDesktop(rd *runDirs, td *teardown, env *receipt.Envelope) {
 			env.CapabilitiesEnforced["desktop."+s.ID] = r.receiptLine(s.DesktopServerCap)
 		}
 	}
-	lines()
+	writeLines()
 	env.CapabilitiesEnforced["desktop.transport"] = desktopTransportLine(r)
 	td.add(func(c context.Context) {
-		lines()
+		writeLines()
 		if r.link.Unbind != nil {
 			_ = r.link.Unbind(c)
 		}
@@ -346,8 +348,8 @@ func (r *desktopRun) computerLine(s spec.DesktopServerCap) string {
 		c = &desktop.ComputerBound{}
 	}
 	scope := "app scope"
-	if c.Scope == "screen" {
-		scope = "screen scope, the whole display"
+	if c.Scope == spec.ComputerUseScreen {
+		scope = "screen scope, the whole display, allowed by " + map[string]string{spec.ScreenByPolicy: "the policy's desktop.allowScreen", spec.ScreenByFlag: "the run's --allow-screen", spec.ScreenByUnsafe: "Unsafe Mode"}[r.line.ScreenAllowedBy]
 	}
 	line := "computer use on the person's computer, answered through Agentry Desktop (" + desktoplink.ServerName(s.ID) + "), in " + scope
 	if len(c.Windows) > 0 {
@@ -358,20 +360,21 @@ func (r *desktopRun) computerLine(s spec.DesktopServerCap) string {
 	}
 	line += "; the tools allowed: " + strings.Join(s.ToolNames(), ", ")
 	if c.MaxEdge > 0 {
-		line += fmt.Sprintf("; screenshots at most %d pixels on their long edge, positions in pixels of that image", c.MaxEdge)
+		line += fmt.Sprintf("; Agentry Desktop scales a screenshot to at most %d pixels on its long edge, and positions are in pixels of that image", c.MaxEdge)
 	}
 	enforced := c.Enforced
 	if enforced == "" {
-		enforced = "not stated by Agentry Desktop"
+		enforced = "nothing stated"
 	}
-	line += "; what the computer enforced: " + enforced
+	line += "; what the computer's own system enforced, as Agentry Desktop states it: " + enforced
+	line += "; the run keeps no screenshot"
 	if c.KeepScreenshots {
-		line += "; the person's \"Keep what the agent saw\" is on: Agentry Desktop saves each screenshot in the run's folder on their computer"
+		line += ", and Agentry Desktop states the person's \"Keep what the agent saw\" is on: it saves each screenshot in the run's folder on their computer"
 	} else {
-		line += "; no screenshot is kept: the run keeps none, and the person's \"Keep what the agent saw\" is off"
+		line += ", and Agentry Desktop states the person's \"Keep what the agent saw\" is off"
 	}
 	if c.StopKey != "" {
-		line += "; the stop key: " + c.StopKey
+		line += "; Agentry Desktop's stop key: " + c.StopKey
 	}
 	return line + "; " + r.callsPhrase(s.ID) + "; each action, with its window, position and typed text masked, is a line of receipts/" + desktopLogFile(s.ID)
 }

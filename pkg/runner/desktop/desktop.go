@@ -74,7 +74,15 @@ type BindRequest struct {
 	// it in that scope or refuses the bind.
 	ComputerUse   string   `json:"computerUse,omitempty"`
 	ComputerTools []string `json:"computerTools,omitempty"`
+	// Reports is the run's folder on this computer for what the person
+	// keeps of computer use: where "Keep what the agent saw" saves each
+	// screenshot. Empty where the run has no such folder.
+	Reports string `json:"reports,omitempty"`
 }
+
+// ReportsFolder is the folder of a run's output, relative to it, where
+// Agentry Desktop keeps the screenshots the person asked it to keep.
+const ReportsFolder = "reports/desktop"
 
 // BindServer is one application server a run uses: its catalogue id and the
 // tools the release allows, in the catalogue's words.

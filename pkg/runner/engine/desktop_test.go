@@ -665,8 +665,8 @@ func TestComputerUseCrossesTheLinkAndIsRecorded(t *testing.T) {
 	}
 	td.run()
 	line := env.CapabilitiesEnforced["desktop.computerUse"]
-	for _, want := range []string{"app scope (Blender)", "agentry-desktop-computer", "Linux, X11", "at most 1280 pixels", "what the computer enforced: the capture is of Blender's window alone",
-		"no screenshot is kept", "Escape held for a second", "4 calls (1 read, 3 act)", "refused: 1 outside-window", "receipts/desktop-computer.log"} {
+	for _, want := range []string{"app scope (Blender)", "agentry-desktop-computer", "Linux, X11", "at most 1280 pixels", "what the computer's own system enforced, as Agentry Desktop states it: the capture is of Blender's window alone",
+		"the run keeps no screenshot", "Escape held for a second", "4 calls (1 read, 3 act)", "refused: 1 outside-window", "receipts/desktop-computer.log"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("desktop.computerUse lacks %q: %q", want, line)
 		}
@@ -715,7 +715,7 @@ func TestScreenshotsAreNotKeptByDefault(t *testing.T) {
 			t.Fatal(err)
 		}
 		line := env.CapabilitiesEnforced["desktop.computerUse"]
-		if keep != strings.Contains(line, "\"Keep what the agent saw\" is on") || keep == strings.Contains(line, "no screenshot is kept") {
+		if !strings.Contains(line, "the run keeps no screenshot") || keep != strings.Contains(line, "\"Keep what the agent saw\" is on") || keep == strings.Contains(line, "\"Keep what the agent saw\" is off") {
 			t.Errorf("keep %v: %q", keep, line)
 		}
 	}

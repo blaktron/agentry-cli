@@ -37,6 +37,9 @@ func TestTheComputerUseToolSet(t *testing.T) {
 			t.Errorf("%s is a computer-use tool", never)
 		}
 	}
+	if ComputerID != "computer" {
+		t.Fatalf("the computer-use entry's id is %q", ComputerID)
+	}
 	// A caller's copy cannot change the set.
 	tools := ComputerTools()
 	tools[0].Name = "changed"

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/desktop"
@@ -36,7 +37,7 @@ func refuseHostedDesktop(plan *spec.Plan, opts runOpts) error {
 // plan that declares the person's computer: nil for one that does not. No
 // socket, or nothing answering on it, is the refusal that names Agentry
 // Desktop; a refusal from the link service carries its reason.
-func bindDesktop(ctx context.Context, plan *spec.Plan, home, runID string) (*engine.DesktopLink, error) {
+func bindDesktop(ctx context.Context, plan *spec.Plan, home, runID, outDir string) (*engine.DesktopLink, error) {
 	d := plan.Capabilities.Desktop
 	if d == nil {
 		return nil, nil
@@ -51,6 +52,9 @@ func bindDesktop(ctx context.Context, plan *spec.Plan, home, runID string) (*eng
 	}
 	if c, ok := d.Computer(); ok {
 		req.ComputerUse, req.ComputerTools = d.ComputerUse, c.ToolNames()
+		if outDir != "" {
+			req.Reports = filepath.Join(outDir, filepath.FromSlash(desktop.ReportsFolder))
+		}
 	}
 	bound, err := c.Bind(ctx, req)
 	if err != nil {
@@ -73,9 +77,9 @@ func desktopSummary(d *spec.DesktopCap) string {
 		apps = append(apps, fmt.Sprintf("%s (%d tools)", s.Application, len(s.Tools)))
 	}
 	switch d.ComputerUse {
-	case "app":
+	case spec.ComputerUseApp:
 		apps = append(apps, "computer use in the windows you allow")
-	case "screen":
+	case spec.ComputerUseScreen:
 		apps = append(apps, "computer use of your whole screen")
 	}
 	return joinAnd(apps) + " on your computer, through Agentry Desktop"
