@@ -9,8 +9,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -111,6 +114,9 @@ func apiProblem(op string, status int, p *apiclient.Problem, body []byte) error 
 		}
 		return fmt.Errorf("%s: %s (HTTP %d)", op, msg, status)
 	}
+	if page, ok := htmlRefusal(body); ok {
+		return fmt.Errorf("%s: HTTP %d: %s", op, status, page)
+	}
 	msg := strings.TrimSpace(string(body))
 	if len(msg) > 300 {
 		msg = msg[:300] + "…"
@@ -119,6 +125,38 @@ func apiProblem(op string, status int, p *apiclient.Problem, body []byte) error 
 		msg = http.StatusText(status)
 	}
 	return fmt.Errorf("%s: HTTP %d: %s", op, status, msg)
+}
+
+var (
+	htmlTitleRE = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
+	htmlRayRE   = regexp.MustCompile(`(?is)Ray ID:?\s*(?:<[^>]*>\s*)*([0-9a-f]{8,32})`)
+	htmlTagRE   = regexp.MustCompile(`(?s)<[^>]*>`)
+)
+
+// htmlRefusal words a body that is a web page: the answer of something in
+// front of the registry (a CDN, a firewall's block page), not the registry,
+// whose errors are problem documents. It names the page's title and, where
+// the page gives one, its Cloudflare Ray ID, so the refusal can be traced
+// to the rule that made it; the page itself is not kept.
+func htmlRefusal(body []byte) (string, bool) {
+	head := strings.ToLower(strings.TrimSpace(string(body[:min(len(body), 1024)])))
+	if !strings.HasPrefix(head, "<!doctype html") && !strings.HasPrefix(head, "<html") && !strings.Contains(head, "<html") {
+		return "", false
+	}
+	msg := "the answer is a web page, not the registry's"
+	if m := htmlTitleRE.FindSubmatch(body); m != nil {
+		title := strings.Join(strings.Fields(html.UnescapeString(htmlTagRE.ReplaceAllString(string(m[1]), " "))), " ")
+		if r := []rune(title); len(r) > 120 {
+			title = string(r[:120]) + "…"
+		}
+		if title != "" {
+			msg += ": " + strconv.Quote(title)
+		}
+	}
+	if m := htmlRayRE.FindSubmatch(body); m != nil {
+		msg += " (Cloudflare Ray ID " + string(m[1]) + ")"
+	}
+	return msg, true
 }
 
 // refusedAccount names the account a payment refusal is about. A member

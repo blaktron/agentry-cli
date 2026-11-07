@@ -53,7 +53,7 @@ func TestTheConsentNamesTheDesktopLine(t *testing.T) {
 	if got := confirmedCapabilities(two); !slices.Equal(got, []string{"applications on your computer", "your screen"}) {
 		t.Errorf("two applications and computer use are asked about as %v", got)
 	}
-	if l := strings.Join(capabilityLines(two), "\n"); !strings.Contains(l, "desktop.computerUse: can see and use the windows of Blender and unreal on your computer") {
+	if l := strings.Join(capabilityLines(two), "\n"); !strings.Contains(l, "desktop.computerUse: can see and use the windows of Blender and Unreal Engine on your computer") {
 		t.Errorf("computer use's consent: %q", l)
 	}
 	screen := manifest.Capabilities{Desktop: &manifest.Desktop{ComputerUse: manifest.ComputerUseScreen}}

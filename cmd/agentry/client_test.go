@@ -424,3 +424,26 @@ func TestVersionShowsBakedRegistry(t *testing.T) {
 		t.Errorf("--version = %q, want 'agentry version …' then 'default registry: https://baked.example.test'", out.String())
 	}
 }
+
+// A refusal answered by a web page in front of the registry names the
+// page's title and its Ray ID, never the page's opening bytes; a problem
+// document and a plain body are worded as before.
+func TestAPIProblemNamesAnHTMLRefusalsPage(t *testing.T) {
+	page := `<!DOCTYPE html>
+<!--[if lt IE 7]> <html class="no-js ie6 oldie" lang="en-US"> <![endif]-->
+<!--[if gt IE 8]><!--> <html class="no-js" lang="en-US"> <!--<![endif]-->
+<head><title>Attention Required! | Cloudflare</title></head>
+<body><div class="cf-error-footer"><span class="cf-footer-item">Cloudflare Ray ID: <strong class="font-semibold">9a1b2c3d4e5f6071</strong></span></div></body></html>`
+	err := apiProblem("look up agentry/assistant", http.StatusForbidden, nil, []byte(page))
+	want := `look up agentry/assistant: HTTP 403: the answer is a web page, not the registry's: "Attention Required! | Cloudflare" (Cloudflare Ray ID 9a1b2c3d4e5f6071)`
+	if err == nil || err.Error() != want {
+		t.Fatalf("got %v\nwant %s", err, want)
+	}
+	err = apiProblem("op", http.StatusBadGateway, nil, []byte("<html><body>bad gateway</body></html>"))
+	if err == nil || err.Error() != "op: HTTP 502: the answer is a web page, not the registry's" {
+		t.Fatalf("a page with no title: %v", err)
+	}
+	if err := apiProblem("op", http.StatusBadGateway, nil, []byte("upstream reset")); err == nil || err.Error() != "op: HTTP 502: upstream reset" {
+		t.Fatalf("a plain body: %v", err)
+	}
+}

@@ -475,7 +475,8 @@
             "TestMajorOfUnparseable",
             "TestRegistryURLPrecedence",
             "TestNewRootCmdCommandSet",
-            "TestVersionShowsBakedRegistry"
+            "TestVersionShowsBakedRegistry",
+            "TestAPIProblemNamesAnHTMLRefusalsPage"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -4411,7 +4412,8 @@
             "TestAReleaseWithoutTheDesktopLineHasNoDesktopLink",
             "TestTheDesktopLineIsRefusedWhereTheRunCannotHoldIt",
             "TestCompileRendersComputerUse",
-            "TestScreenScopeNeedsAllowScreen"
+            "TestScreenScopeNeedsAllowScreen",
+            "TestCompileRendersUnreal"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -6526,7 +6528,9 @@
             "TestADeclinedExecCallIsRecordedAsDeclined",
             "TestComputerUseCrossesTheLinkAndIsRecorded",
             "TestScreenshotsAreNotKeptByDefault",
-            "TestComputerUseNeedsItsBinding"
+            "TestComputerUseNeedsItsBinding",
+            "TestAFailedRunCountsItsDesktopCalls",
+            "TestARefusedRunWritesNoDesktopLine"
           ],
           "fuzz": [],
           "benchmarks": [],

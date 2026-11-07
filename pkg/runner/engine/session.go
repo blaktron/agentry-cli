@@ -1900,6 +1900,7 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 		_ = os.WriteFile(filepath.Join(s.rd.receiptsDir, "proxy.log"), []byte(s.redact.String(logs)), 0o644)
 	}
 	copyHostLogs(s.rd, s.env)
+	s.rd.desktop.writeLines(s.env)
 	collectBrowseProxyLog(ctx, s.d, s.rd, s.env)
 	copyBrowserOut(s.rd, s.p.Stderr)
 	// The harness is gone, so the servers save nothing more.
