@@ -699,6 +699,9 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	}
 	// Each target host's calls, the agent having ended.
 	copyHostLogs(rd, env)
+	// The desktop link's counts, the agent having ended: the envelope is
+	// written before teardown, on a failure as on success.
+	rd.desktop.writeLines(env)
 	// The browse proxy's decisions and what the browser saved.
 	collectBrowseProxyLog(keep, d, rd, env)
 	copyBrowserOut(rd, p.Stderr)

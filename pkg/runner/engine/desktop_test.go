@@ -17,6 +17,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blaktron/agentry/pkg/manifest"
+
 	"github.com/blaktron/agentry-cli/pkg/runner/desktop"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
@@ -771,5 +773,81 @@ func TestComputerUseNeedsItsBinding(t *testing.T) {
 	alone := &spec.Plan{Capabilities: spec.CapSummary{Desktop: &spec.DesktopCap{ComputerUse: "app"}}}
 	if err := checkDesktop(Params{Plan: alone}); err == nil || !strings.Contains(err.Error(), "uses computer use on your computer") {
 		t.Errorf("computer use alone, no Agentry Desktop: %v", err)
+	}
+}
+
+// A run whose harness fails after calls crossed the desktop link still
+// counts them: result.json is written before teardown, and its desktop line
+// carries the calls and refusals as a run that ends well does, never the
+// "0 calls" it was started with.
+func TestAFailedRunCountsItsDesktopCalls(t *testing.T) {
+	p, f := fixtureEdited(t, nil, func(m *manifest.Manifest) {
+		m.Capabilities.Desktop = &manifest.Desktop{Servers: []manifest.DesktopServer{{ID: "blender"}}}
+	})
+	happyFake(f)
+	dir := shortDir(t)
+	s := serveStandIn(t, dir)
+	s.refuse["execute_blender_code"] = &desktop.Refusal{Reason: receipt.DesktopDeclined, Server: "blender", Message: "the person declined"}
+	c := desktop.Client{Socket: s.socket}
+	bound, err := c.Bind(context.Background(), desktop.BindRequest{Run: "R", Servers: []desktop.BindServer{{ID: "blender", Tools: p.Plan.Capabilities.Desktop.Servers[0].ToolNames()}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Desktop = BoundDesktopLink(c, "R", bound)
+	relaySock := filepath.Join(dir, "link.sock")
+	f.Foreground["-"+desktoplink.RelayRole] = &dockerx.FakeForeground{Handler: func(ctx context.Context, _ dockerx.RunSpec, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+		if err := desktoplink.Relay(ctx, desktoplink.RelayConfig{Listen: relaySock, In: stdin, Out: stdout, Log: stderr}); err != nil {
+			return 1, err
+		}
+		return 0, nil
+	}}
+	agent := f.Foreground["-agent"]
+	agent.ExitCode = 3
+	agent.Before = func(dockerx.RunSpec) {
+		for _, tool := range []string{"get_scene_info", "execute_blender_code"} {
+			if _, err := desktoplink.Send(context.Background(), relaySock, desktoplink.Request{Token: "tok-standin", Server: "blender", Tool: tool, Arguments: json.RawMessage(`{}`)}); err != nil {
+				t.Errorf("%s: %v", tool, err)
+			}
+		}
+	}
+	env, err := Run(context.Background(), f, p)
+	var ce *ClassifiedError
+	if !errors.As(err, &ce) || ce.Code != ExitHarness {
+		t.Fatalf("the run ended %v, want the harness's failure", err)
+	}
+	if _, calls, _ := s.sent(); len(calls) != 2 {
+		t.Fatalf("the link service was sent %d calls", len(calls))
+	}
+	b, err := os.ReadFile(filepath.Join(env.OutDir, "result.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var written receipt.Envelope
+	if err := json.Unmarshal(b, &written); err != nil {
+		t.Fatal(err)
+	}
+	line := written.CapabilitiesEnforced["desktop.blender"]
+	if !strings.Contains(line, "2 calls (1 read, 1 exec); refused: 1 desktop-declined") {
+		t.Errorf("result.json's desktop.blender: %q", line)
+	}
+}
+
+// A run refused before the sandbox, for want of Agentry Desktop, writes no
+// line of what crossed the link (desktop.<id>, desktop.computerUse,
+// desktop.transport): no call could have. The plan's own desktop line, what
+// the release declares, stays as every declared capability's does.
+func TestARefusedRunWritesNoDesktopLine(t *testing.T) {
+	p, f := fixtureEdited(t, nil, func(m *manifest.Manifest) {
+		m.Capabilities.Desktop = &manifest.Desktop{Servers: []manifest.DesktopServer{{ID: "blender"}}}
+	})
+	happyFake(f)
+	env, err := Run(context.Background(), f, p)
+	if r := receipt.ReasonOf(err); err == nil || r == nil || r.Detail != receipt.DesktopUnavailable {
+		t.Fatalf("the run ended %v, want desktop-unavailable", err)
+	}
+	for k := range env.CapabilitiesEnforced {
+		if strings.HasPrefix(k, "desktop.") {
+			t.Errorf("a refused run wrote %s: %q", k, env.CapabilitiesEnforced[k])
+		}
 	}
 }

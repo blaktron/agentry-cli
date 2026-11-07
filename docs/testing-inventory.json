@@ -6526,7 +6526,9 @@
             "TestADeclinedExecCallIsRecordedAsDeclined",
             "TestComputerUseCrossesTheLinkAndIsRecorded",
             "TestScreenshotsAreNotKeptByDefault",
-            "TestComputerUseNeedsItsBinding"
+            "TestComputerUseNeedsItsBinding",
+            "TestAFailedRunCountsItsDesktopCalls",
+            "TestARefusedRunWritesNoDesktopLine"
           ],
           "fuzz": [],
           "benchmarks": [],
