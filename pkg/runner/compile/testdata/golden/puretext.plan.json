@@ -35,7 +35,7 @@
     "export_pdf"
   ],
   "enforcement": {
-    "agentContainer": "internal-only run network; reachable endpoints: gateway:8811 (Bearer auth) and llm-proxy:3128 (CONNECT allowlist: api.anthropic.com:443); no workspace, output, or docker-socket mounts; model API key present by necessity",
+    "agentContainer": "internal-only run network; reachable endpoints: gateway:8811 (Bearer auth) and llm-proxy:3128 (CONNECT allowlist: api.anthropic.com:443); no workspace, output, or docker-socket mounts; model API key present by necessity; its one writable mount is the harness's conversation store (/session/session.db), a volume of the run's own removed at teardown: a run that ends on a passing model failure after its first tool call is started again on that conversation, with a message to carry on in place of the task",
     "exec": "no exec: run_command tool not exposed; harness built-in shell toolsets never enabled",
     "filesystem": "read none; write none — enforced by the tools-container mount table (ro/rw, per-path binds) plus server-side grant checks; the run's docker filter (in the CLI on Linux, in a container of the run's own on Docker Desktop) mounts the tools container's /tmp as a 256 MiB tmpfs and the tools server refuses to serve without it; where no filter runs it is the container's own layer, unbounded",
     "model.apiKey": "$ANTHROPIC_API_KEY from the host environment, injected into the agent container (or the host harness process) only",
@@ -114,6 +114,10 @@
         "--json",
         "--safety",
         "autonomous",
+        "--session",
+        "@@RUN_CONVERSATION@@",
+        "--session-db",
+        "/session/session.db",
         "/plan/agent.yaml",
         "-"
       ],
@@ -152,6 +156,10 @@
           "source": "@@RUN_CFG@@/harness",
           "target": "/plan",
           "readOnly": true
+        },
+        {
+          "source": "@@RUN_SESSION@@",
+          "target": "/session"
         }
       ],
       "stdinTask": true,
@@ -163,6 +171,10 @@
       ]
     },
     "resultKind": "text",
+    "resume": {
+      "sessionDb": "/session/session.db",
+      "storeOwner": "docker-agent"
+    },
     "imagePin": {
       "by": "digest",
       "value": "sha256:cc321e773e6e24e3d61a5285f367ab2596a2e25601d1e93304d342b808465a2b"

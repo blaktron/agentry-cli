@@ -82,8 +82,13 @@ func TestDockerAgentCompile(t *testing.T) {
 	if !hasToken || !hasKey || !hasProxy {
 		t.Errorf("agent env incomplete (token=%v key=%v proxy=%v): %+v", hasToken, hasKey, hasProxy, agent.Env)
 	}
-	if len(agent.Mounts) != 1 || agent.Mounts[0].Target != spec.PlanMount || !agent.Mounts[0].ReadOnly {
-		t.Errorf("agent must mount only /plan read-only, got %+v", agent.Mounts)
+	// The plan read-only and the run's conversation store, nothing else.
+	want := []spec.Mount{{Source: spec.PHCfg + "/harness", Target: spec.PlanMount, ReadOnly: true}, {Source: spec.PHSession, Target: spec.SessionMount}}
+	if !reflect.DeepEqual(agent.Mounts, want) {
+		t.Errorf("agent must mount /plan read-only and its conversation store alone, got %+v", agent.Mounts)
+	}
+	if res.Resume == nil || res.Resume.SessionDB != spec.SessionMount+"/session.db" || res.Resume.StoreOwner != "docker-agent" {
+		t.Errorf("resume = %+v", res.Resume)
 	}
 	if res.ResultKind != "text" {
 		t.Errorf("result kind = %q, want text", res.ResultKind)
@@ -219,9 +224,11 @@ func TestDockerAgentCompileInteractive(t *testing.T) {
 	if got := strings.Join(inter.Agent.Argv, " "); got != "serve acp /plan/agent.yaml --session-db /session/session.db" {
 		t.Errorf("argv = %q", got)
 	}
-	// Everything else identical.
+	// Everything else identical but the autonomous plan's conversation
+	// store, which the session mounts for itself.
 	a, b := auto.Agent, inter.Agent
 	a.Argv, b.Argv, a.StdinTask, b.StdinTask = nil, nil, false, false
+	a.Mounts = a.Mounts[:1]
 	if !reflect.DeepEqual(a, b) {
 		t.Errorf("container specs differ beyond argv/stdin:\n%+v\n%+v", a, b)
 	}

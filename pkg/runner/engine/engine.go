@@ -629,12 +629,20 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 
 	oneTurnTools = permitted(oneTurnTools, served)
 
-	env.Stage = receipt.StageAgent
-	outcome := retryAtCapacity(ctx, p, rd, func() agentOutcome {
-		if p.Plan.Harness.Host != nil {
-			return runHostHarness(ctx, p, rd, token, rep, task, oneTurnTools)
+	// A harness that can be resumed keeps its conversation in a store of
+	// the run's own.
+	if r := p.Plan.Harness.Resume; r != nil && p.Plan.Harness.Host == nil {
+		if err := sessionStore(ctx, d, p, rd, td, runID, r.StoreOwner); err != nil {
+			return fail(env, redact, err)
 		}
-		return runAgent(ctx, d, p, rd, runID, token, rep, task, oneTurnTools)
+	}
+
+	env.Stage = receipt.StageAgent
+	outcome := restartHarness(ctx, p, rd, task, func(message []byte) agentOutcome {
+		if p.Plan.Harness.Host != nil {
+			return runHostHarness(ctx, p, rd, token, rep, message, oneTurnTools)
+		}
+		return runAgent(ctx, d, p, rd, runID, token, rep, message, oneTurnTools)
 	})
 	if outcome.hostInfo != "" {
 		env.Harness.Host = outcome.hostInfo
@@ -816,6 +824,9 @@ type agentOutcome struct {
 	// atCapacity: the harness exited failing on a capacity answer
 	// (capacity.go).
 	atCapacity bool
+	// transient names the passing model failure the harness exited on,
+	// a capacity answer included; empty for any other end (capacity.go).
+	transient string
 }
 
 // startInfra creates the run network and starts proxy + gateway, then
@@ -1304,7 +1315,7 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		Name:        name,
 		Image:       p.Plan.Harness.Agent.Image,
 		Entrypoint:  p.Plan.Harness.Agent.Entrypoint,
-		Argv:        substituteAll(p.Plan.Harness.Agent.Argv, rep),
+		Argv:        conversationArgv(substituteAll(p.Plan.Harness.Agent.Argv, rep), rd),
 		Env:         agentEnv,
 		Mounts:      resolveMounts(p.Plan.Harness.Agent.Mounts, rep),
 		Network:     networkName(runID),
@@ -1355,6 +1366,10 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		return agentOutcome{err: Classify(ExitCLI, fmt.Errorf("create stderr receipt: %w", err))}
 	}
 	defer func() { _ = stderrFile.Close() }()
+	if rd.resumedAfter != "" {
+		_, _ = fmt.Fprintf(stderrFile, "agentry: the harness is started again on its conversation (%s), after: %s\n", conversationID(rd), rd.resumedAfter)
+		rd.resumedAfter = ""
+	}
 
 	var exit int
 	var runErr, turnErr error
@@ -1427,6 +1442,7 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		}
 		out.err = Classify(ExitHarness, fmt.Errorf("agent exited %d%s", exit, detail))
 		out.atCapacity = exitedAtCapacity(p, collector.harnessErrReported, stderrPath)
+		out.transient = exitedOnPassingFailure(p, collector.harnessErrReported, stderrPath)
 	}
 	return out
 }
@@ -1688,7 +1704,7 @@ func (c *eventCollector) record(ev adapter.Event) {
 		c.curText.Reset() // text before a tool call is its own message
 		c.reasoned, c.answered = false, false
 		c.turns++
-		if c.maxTurns > 0 && c.turns > c.maxTurns && !c.budgetTripped {
+		if c.maxTurns > 0 && c.base.Turns+c.turns > c.maxTurns && !c.budgetTripped {
 			c.budgetTripped = true
 			c.overBudget()
 		}

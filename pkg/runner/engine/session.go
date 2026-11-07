@@ -207,12 +207,8 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	}
 	s.dec.lines(env.CapabilitiesEnforced)
 	sourceLines(env.CapabilitiesEnforced, srcRuns, s.dec)
-	// The session store: a per-run named volume, labelled like every run
-	// object and removed with it, not a host directory the harness
-	// could write to world-wide. A fresh volume is root-owned
-	// wherever it is mounted and the harness runs unprivileged, so the
-	// volume is given to the harness image's own user first — as root,
-	// in that image, on no network, once.
+	// The session store: the persistent agent's own volume, or one of the
+	// run's (sessionStore).
 	if p.Persistent != nil {
 		// A persistent agent's store is its own volume, made at its first
 		// segment and kept: it carries no run label, so neither this
@@ -221,37 +217,11 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 		if err := ensurePersistentVolumes(ctx, d, p); err != nil {
 			return fail(Classify(ExitCLI, err))
 		}
-	} else {
-		if err := d.VolumeCreate(ctx, rd.session, runLabels(runID)); err != nil {
-			return fail(Classify(ExitCLI, fmt.Errorf("create session volume: %w", err)))
+		if err := giveSessionStore(ctx, d, p, rd, td, runID, p.Plan.Harness.Session.StoreOwner); err != nil {
+			return fail(err)
 		}
-		td.add(func(c context.Context) { _ = d.VolumeRemove(c, rd.session) })
-	}
-	if owner := p.Plan.Harness.Session.StoreOwner; owner != "" {
-		initName := containerName(runID, "session-init")
-		td.add(func(c context.Context) { _ = d.RemoveForce(c, initName) })
-		// The one-shot that hands the store to the harness user keeps
-		// CHOWN, the one capability its chown needs, and nothing else.
-		initSpec := hardened(dockerx.RunSpec{
-			Name:       initName,
-			Image:      p.Plan.Harness.Agent.Image,
-			Entrypoint: "sh",
-			Argv:       []string{"-c", `chown -- "$1" "$2"`, "sh", owner, spec.SessionMount},
-			User:       "0:0",
-			Network:    "none",
-			Mounts:     []dockerx.Mount{{Source: rd.session, Target: spec.SessionMount}},
-			Labels:     runLabels(runID),
-			AutoRemove: true,
-			Runtime:    p.Plan.Runtime(),
-		}, p.limits())
-		initSpec.CapAdd = []string{"CHOWN"}
-		code, err := dockerx.RunForegroundUnder(ctx, d, initSpec, "session store's one-shot", nil, io.Discard, p.Stderr)
-		if err != nil || code != 0 {
-			if err == nil {
-				err = fmt.Errorf("exit %d", code)
-			}
-			return fail(Classify(ExitCLI, fmt.Errorf("give the session store to the harness user %q: %w", owner, err)))
-		}
+	} else if err := sessionStore(ctx, d, p, rd, td, runID, p.Plan.Harness.Session.StoreOwner); err != nil {
+		return fail(err)
 	}
 	secrets, err := secretValues(p)
 	if err != nil {

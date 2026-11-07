@@ -4146,6 +4146,16 @@
           "benchmarks": [],
           "fixtureEntryPoint": false,
           "dependencyHints": []
+        },
+        {
+          "path": "pkg/runner/adapter/transient_test.go",
+          "tests": [
+            "TestTransientModelFailures"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
         }
       ]
     },
@@ -6605,6 +6615,28 @@
           "benchmarks": [],
           "fixtureEntryPoint": false,
           "dependencyHints": []
+        },
+        {
+          "path": "pkg/runner/engine/resume_test.go",
+          "tests": [
+            "TestAHarnessThatFailsAfterAToolCallResumesItsConversation",
+            "TestACapacityAnswerBeforeAToolCallStartsAFreshConversation",
+            "TestOtherFailuresAreNotResumed",
+            "TestResumesEndAfterTheirTries",
+            "TestNoResumeOutlastsTheTimeout",
+            "TestTheTurnBudgetHoldsAcrossResumes",
+            "TestTheConversationStoreIsTheRunsAndGoesWithIt",
+            "TestTheConversationStoreGoesWithAFailedRun",
+            "TestTheTimeoutRunsFromTheFirstStartAcrossResumes",
+            "TestTheCostBudgetHoldsAcrossResumes"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "docker interface (real or fake)",
+            "source/file contract"
+          ]
         },
         {
           "path": "pkg/runner/engine/review_test.go",

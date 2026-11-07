@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -851,6 +852,15 @@ func TestModePlansIdenticalExceptSession(t *testing.T) {
 	na.Harness.Agent.Argv, nb.Harness.Agent.Argv = nil, nil
 	na.Harness.Agent.StdinTask, nb.Harness.Agent.StdinTask = false, false
 	na.Harness.Session, nb.Harness.Session = nil, nil
+	// The autonomous plan keeps its conversation in a store of its own,
+	// which an interactive session mounts through its session.
+	if na.Harness.Resume == nil || len(na.Harness.Agent.Mounts) != 2 || na.Harness.Agent.Mounts[1].Source != spec.PHSession {
+		t.Fatalf("the autonomous plan keeps no conversation store: resume %+v, mounts %+v", na.Harness.Resume, na.Harness.Agent.Mounts)
+	}
+	na.Harness.Resume = nil
+	na.Harness.Agent.Mounts = na.Harness.Agent.Mounts[:1]
+	na.Enforcement = maps.Clone(na.Enforcement)
+	na.Enforcement["agentContainer"] = nb.Enforcement["agentContainer"]
 	na.Files, nb.Files = nil, nil // hashes of identical files, checked above
 	if !reflect.DeepEqual(na, nb) {
 		ja, _ := json.MarshalIndent(na, "", " ")

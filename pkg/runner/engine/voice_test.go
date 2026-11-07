@@ -268,7 +268,7 @@ func TestAFailedRunDropsTheVoiceAndTheAgentSeesOnlyPlan(t *testing.T) {
 	if !ok {
 		t.Fatal("agent run not recorded")
 	}
-	if len(agent.Mounts) != 1 || agent.Mounts[0].Target != "/plan" || !agent.Mounts[0].ReadOnly {
+	if !onlyPlanAndConversation(agent.Mounts) {
 		t.Fatalf("with a voice attached, the agent mounts %+v", agent.Mounts)
 	}
 }
