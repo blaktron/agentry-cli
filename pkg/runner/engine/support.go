@@ -1784,6 +1784,12 @@ func lookupKeyringOnce(account string) (string, error) {
 	return v, nil
 }
 
+// KeyringValue reads a keychain account once for the process, as the run's
+// own resolution does: a caller that needs the model's key before the run
+// (the context-window probe) shares the run's one read, and so its one unlock
+// prompt and its one value.
+func KeyringValue(account string) (string, error) { return lookupKeyringOnce(account) }
+
 // resetKeyringOnce forgets memoised reads (tests).
 func resetKeyringOnce() {
 	keyringOnce.Lock()

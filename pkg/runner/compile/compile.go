@@ -72,6 +72,10 @@ type Inputs struct {
 	// the exact bytes it was loaded from.
 	Policy    *policy.Policy
 	PolicySHA string
+	// ContextWindowSource is where Policy.Model.ContextWindow came from when
+	// it is not the policy file's: the endpoint URL a run asked, for a model
+	// whose policy records no window. Empty for the policy's own (or none).
+	ContextWindowSource string
 	// AdapterName selects the harness adapter ("" = default).
 	AdapterName string
 	// RunnerImage is the local runner image tag.
@@ -615,16 +619,17 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		Render:       renderSpec,
 		Gateway:      gatewaySpec(in.Policy.Images.Gateway, servers, caps, in.MCPServers),
 		Harness: spec.HarnessSpec{
-			Adapter:     adapterName,
-			Model:       res.Model,
-			Agent:       res.Agent,
-			Host:        res.Host,
-			ResultKind:  res.ResultKind,
-			Session:     res.Session,
-			OneTurn:     res.OneTurn,
-			Resume:      res.Resume,
-			ImagePin:    imagePin(adapterName, res.Agent.Image, harnessImage),
-			ModelSignIn: res.ModelSignIn,
+			Adapter:       adapterName,
+			Model:         res.Model,
+			Agent:         res.Agent,
+			Host:          res.Host,
+			ResultKind:    res.ResultKind,
+			Session:       res.Session,
+			OneTurn:       res.OneTurn,
+			Resume:        res.Resume,
+			ImagePin:      imagePin(adapterName, res.Agent.Image, harnessImage),
+			ModelSignIn:   res.ModelSignIn,
+			ContextWindow: spec.ContextWindowOf(in.Policy.Model.ContextWindow, in.ContextWindowSource),
 		},
 		Proxy: spec.ProxySpec{
 			Image:     in.RunnerImage,

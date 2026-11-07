@@ -602,10 +602,14 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		}
 	}
 	opts.progress.at(receipt.StageCompile)
+	// A model of the person's own with no window in the policy is asked for
+	// it now, for this run only.
+	windowSource := runContextWindow(cmd.Context(), cmd.ErrOrStderr(), pol)
 	planIn := localrun.PlanInputs{
 		Home: home, Manifest: m, Meta: meta, InstallDir: installDir, WorkspaceDir: workspaceDir,
 		Policy: pol, PolicySHA: polSHA, Adapter: adapterName, Servers: serverSpecs, Mode: mode,
-		CompiledBy: version.Build(), Log: cmd.ErrOrStderr(),
+		ContextWindowSource: windowSource,
+		CompiledBy:          version.Build(), Log: cmd.ErrOrStderr(),
 	}
 	// On a remote runhost whose own setting is on, the run is an Unsafe Mode
 	// run: set only with the server's admin sign-in, never by a flag here.

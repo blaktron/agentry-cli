@@ -505,3 +505,27 @@ func TestHostedRunsRefuseTheDesktopLine(t *testing.T) {
 		t.Errorf("a hosted run without the line: %v", err)
 	}
 }
+
+// A call the person declined when Agentry Desktop asked them is recorded as
+// declined: the agent is told so, the call's log line and the receipt's line
+// name desktop-declined, never a missing server or a call not answered.
+func TestADeclinedExecCallIsRecordedAsDeclined(t *testing.T) {
+	d, p, rd, td, _, s, relaySock := desktopRig(t)
+	defer td.run()
+	s.refuse["execute_blender_code"] = &desktop.Refusal{Reason: receipt.DesktopDeclined, Server: "blender", Message: "the person declined to run this code inside Blender"}
+	if err := startDesktopLinkRelay(context.Background(), d, p, rd, td, "R"); err != nil {
+		t.Fatal(err)
+	}
+	a, err := desktoplink.Send(context.Background(), relaySock, desktoplink.Request{Token: "tok-standin", Server: "blender", Tool: "execute_blender_code", Arguments: json.RawMessage(`{"code":"import bpy"}`)})
+	if err != nil || !a.IsError || a.Text() != "the person declined to run this code inside Blender" {
+		t.Fatalf("a declined call was answered %+v, %v", a, err)
+	}
+	log, _ := os.ReadFile(filepath.Join(rd.receiptsDir, desktopLogFile("blender")))
+	if !strings.Contains(string(log), `"outcome":"refused:desktop-declined"`) {
+		t.Fatalf("the call's log line: %s", log)
+	}
+	line := rd.desktop.receiptLine(p.Plan.Capabilities.Desktop.Servers[0])
+	if !strings.Contains(line, "refused: 1 desktop-declined") || strings.Contains(line, "not answered") || strings.Contains(line, receipt.DesktopNotInstalled) {
+		t.Errorf("the receipt's line: %q", line)
+	}
+}
