@@ -1,6 +1,13 @@
 {
   "versions": [
     {
+      "version": "0.7.28",
+      "highlights": [
+        "A run on a model server of your own asks the server for the model's context window when the policy records none.",
+        "The run uses the window it finds for that run only, says where it came from, and leaves the policy as it is."
+      ]
+    },
+    {
       "version": "0.7.27",
       "highlights": [
         "An autonomous run resumes its conversation when the model server fails after its first tool call.",

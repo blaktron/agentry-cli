@@ -959,7 +959,7 @@ func contextWindowFor(p Prompter, pol *policy.Policy, opts ModelOpts, prov, mode
 		return window, nil
 	}
 	if window == 0 && opts.ProbeContextWindow != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), contextProbeBudget)
+		ctx, cancel := context.WithTimeout(context.Background(), ContextProbeBudget)
 		found, err := opts.ProbeContextWindow(ctx, baseURL, model, key)
 		cancel()
 		switch {
@@ -1003,8 +1003,9 @@ func UnknownWindowSentence(model string) string {
 	return fmt.Sprintf("%s's context window is unknown: unless the harness knows this model, a run cannot compact its conversation and fails once the endpoint refuses it as too long; set it with --context-window", model)
 }
 
-// contextProbeBudget bounds the whole of a setup's context-window probe.
-const contextProbeBudget = 30 * time.Second
+// ContextProbeBudget bounds the whole of a context-window probe, setup's or
+// a run's.
+const ContextProbeBudget = 30 * time.Second
 
 // hostPortOf derives the proxy allowlist entry from a base URL — the
 // agent container's ONLY egress, so it must be exact.
