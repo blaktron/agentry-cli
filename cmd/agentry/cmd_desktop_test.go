@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
-	"github.com/blaktron/agentry/pkg/appserver"
 	"github.com/blaktron/agentry/pkg/manifest"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/desktop"
@@ -22,19 +21,14 @@ import (
 )
 
 // The install consent names each application the release uses on the
-// person's computer in the catalogue's words: the application, its tool
-// count, how many tools run code inside it and how many hosts it reaches
-// from the computer; a narrowed server counts its narrowed tools; computer
-// use names the screen. The gate asks about an application on the computer,
-// and about the screen, in words the desktop and the site copy.
+// person's computer by its id, how the release uses it (its MCP server,
+// with every tool it lists or the tools it narrows to), and computer use
+// by the windows it sees. The gate asks about an application on the
+// computer, and about the screen, in words the desktop and the site copy.
 func TestTheConsentNamesTheDesktopLine(t *testing.T) {
-	blender, ok := appserver.Builtin().Lookup("blender")
-	if !ok {
-		t.Fatal("the catalogue has no blender entry")
-	}
 	c := manifest.Capabilities{Desktop: &manifest.Desktop{Servers: []manifest.DesktopServer{{ID: "blender"}}}}
 	lines := strings.Join(capabilityLines(c), "\n")
-	want := "desktop: Blender on your computer through its MCP server (" + countWord(len(blender.Tools), "tool") + ", 1 runs code inside Blender; it reaches " + countWord(len(blender.Egress), "host") + " from your computer)"
+	want := "desktop: the application blender on your computer, through its MCP server (every tool it lists)"
 	if !strings.Contains(lines, want) {
 		t.Errorf("consent %q lacks %q", lines, want)
 	}
@@ -46,7 +40,7 @@ func TestTheConsentNamesTheDesktopLine(t *testing.T) {
 	}
 
 	narrowed := manifest.Capabilities{Desktop: &manifest.Desktop{Servers: []manifest.DesktopServer{{ID: "blender", Tools: []string{"get_scene_info", "look"}}}}}
-	if l := strings.Join(capabilityLines(narrowed), "\n"); !strings.Contains(l, "desktop: Blender on your computer through its MCP server (2 tools)") {
+	if l := strings.Join(capabilityLines(narrowed), "\n"); !strings.Contains(l, "desktop: the application blender on your computer, through its MCP server (tools get_scene_info, look)") {
 		t.Errorf("a narrowed server's consent: %q", l)
 	}
 
@@ -54,7 +48,7 @@ func TestTheConsentNamesTheDesktopLine(t *testing.T) {
 	if got := confirmedCapabilities(two); !slices.Equal(got, []string{"applications on your computer", "your screen"}) {
 		t.Errorf("two applications and computer use are asked about as %v", got)
 	}
-	if l := strings.Join(capabilityLines(two), "\n"); !strings.Contains(l, "desktop.computerUse: can see and use the windows of Blender and Unreal Engine on your computer") {
+	if l := strings.Join(capabilityLines(two), "\n"); !strings.Contains(l, "desktop.computerUse: can see and use the windows of blender and unreal on your computer") {
 		t.Errorf("computer use's consent: %q", l)
 	}
 	screen := manifest.Capabilities{Desktop: &manifest.Desktop{ComputerUse: manifest.ComputerUseScreen}}
@@ -67,25 +61,6 @@ func TestTheConsentNamesTheDesktopLine(t *testing.T) {
 	if got := confirmedCapabilitiesWords(manifest.Capabilities{Exec: manifest.ExecCapability{Commands: []string{"git"}}, Desktop: two.Desktop}); got != "exec, applications on your computer and your screen" {
 		t.Errorf("the words: %q", got)
 	}
-}
-
-func countWord(n int, noun string) string {
-	if n == 1 {
-		return "1 " + noun
-	}
-	return strings.Join([]string{itoa(n), noun + "s"}, " ")
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var b []byte
-	for n > 0 {
-		b = append([]byte{byte('0' + n%10)}, b...)
-		n /= 10
-	}
-	return string(b)
 }
 
 func desktopPlan() *spec.Plan {

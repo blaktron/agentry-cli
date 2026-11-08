@@ -32,6 +32,7 @@ import (
 	"github.com/blaktron/agentry/pkg/manifest"
 
 	"github.com/blaktron/agentry-cli/pkg/dirpublish"
+	"github.com/blaktron/agentry-cli/pkg/managed"
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/browser"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
@@ -136,8 +137,15 @@ type Inputs struct {
 	// is not consulted; a command neither places is named, never refused.
 	// Only a client passes it — the desktop, for runs on this computer,
 	// when the person has turned Unsafe Mode on — and no policy key or CLI
-	// flag sets it. Nil compiles without Unsafe Mode.
+	// flag sets it. Nil compiles without Unsafe Mode. A managed settings
+	// document that locks run.unsafeMode to forbidden refuses it, whoever
+	// passes it (managedRefusal).
 	Unsafe *unsafeexec.Data
+	// Sender is the managed settings of the device that sent this run, for
+	// a runhost's run: they can only refuse, so they are applied as sent
+	// beside this computer's own, and the plan records their documents.
+	// Nil for a run started on this computer.
+	Sender *managed.Narrowing
 	// AllowScreen is the run's --allow-screen: a release's computer use in
 	// screen scope compiles without the policy's desktop.allowScreen.
 	AllowScreen bool
@@ -229,6 +237,10 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	}
 	if !mode.Valid() {
 		return nil, fmt.Errorf("unknown run mode %q", mode)
+	}
+	held := currentManaged()
+	if err := managedRefusal(in, held); err != nil {
+		return nil, err
 	}
 	if !m.Supports(mode) {
 		return nil, fmt.Errorf("%s/%s@%s does not declare run mode %s (modes: %s) — not runnable this way",
@@ -646,8 +658,9 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 			MaxTurns:       in.Policy.Budgets.MaxTurns,
 			MaxCostUSD:     in.Policy.Budgets.MaxCostUSD,
 		},
-		Output: output,
-		Files:  map[string]string{},
+		Output:  output,
+		Managed: managedSpecs(held, in.Sender),
+		Files:   map[string]string{},
 	}
 	if execImage != nil && execImage.Unsafe != nil {
 		plan.Enforcement["exec"] = unsafeExecEnforcement(execImage)

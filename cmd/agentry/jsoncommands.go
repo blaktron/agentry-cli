@@ -34,6 +34,7 @@ var jsonCommands = map[string]string{
 	"login":                     "NDJSON: a pending event, then the typed result",
 	"logout":                    "the scoped sign-out",
 	"whoami":                    "the account",
+	"managed show":              "{documents[], problems[]}",
 	"run":                       "the result envelope; the plan with --plan; the plan in words with --dry-run",
 	"runs":                      "{dir, runs[]}",
 	"runhost add":               "{runhost, preflight[], runKeyRefused[], status, doctor}",

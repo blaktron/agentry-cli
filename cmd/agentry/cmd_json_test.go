@@ -132,11 +132,13 @@ func TestValidateJSONReport(t *testing.T) {
 		}
 	}
 
-	// A workspace that passes (V7 wants LICENSE and README.md at the root;
-	// V9 wants the frontmatter description to match the summary).
+	// A workspace that passes (V7 wants LICENSE and README.md at the root
+	// and in what a public publish ships; V9 wants the frontmatter
+	// description to match the summary).
 	files = skillFiles("demo", "")
 	files["LICENSE"] = "Apache-2.0\n"
 	files["README.md"] = "# demo\n"
+	files["agent.yaml"] = strings.Replace(files["agent.yaml"], "include: [agent.yaml, SKILL.md]", "include: [agent.yaml, SKILL.md, LICENSE, README.md]", 1)
 	files["SKILL.md"] = strings.Replace(files["SKILL.md"], "description: test", "description: test fixture skill", 1)
 	clean := writeTree(t, files)
 	stdout, _, err = runCLI(t, nil, "--json", "validate", clean)

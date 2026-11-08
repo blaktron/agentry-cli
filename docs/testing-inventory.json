@@ -518,6 +518,26 @@
           ]
         },
         {
+          "path": "cmd/agentry/cmd_managed_test.go",
+          "tests": [
+            "TestManagedRefreshShowAndWhoami",
+            "TestManagedShowRefusesATamperedCopy",
+            "TestReSigningInKeepsTheLockWhenTheRegistryCannotAnswer",
+            "TestManagedRefreshNeedsASignIn",
+            "TestLogoutDeletesTheManagedSettings",
+            "TestLoginReadsTheManagedSettings",
+            "TestARunSentToARunhostCarriesTheDevicesManagedSettings",
+            "TestAnUnknownLockRefusesARunOnARunhostBeforeSending",
+            "TestARunhostsRunAppliesTheSendingDevicesNarrowing"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
+          ]
+        },
+        {
           "path": "cmd/agentry/errors_test.go",
           "tests": [
             "TestRegistryCommandsOfflineSayCannotReach",
@@ -3147,6 +3167,46 @@
       ]
     },
     {
+      "owner": "pkg/managed",
+      "behavior": "A client's copy of an organization's managed settings: fetched with the account's token, verified against the",
+      "disposition": "retain",
+      "files": [
+        {
+          "path": "pkg/managed/managed_test.go",
+          "tests": [
+            "TestRefreshCachesAVerifiedDocumentAndLoadVerifiesItAgain",
+            "TestADefaultForbiddenDoesNotRefuseUnsafeMode",
+            "TestRefreshRefusesDocumentsItMustNotAccept",
+            "TestTamperedCacheIsRefusedAndHoldsUnsafeModeOff",
+            "TestNoneAppliesClearsTheCache",
+            "TestAnotherAnswerLeavesTheCache",
+            "TestOlderVersionIsRefusedFromTheRegistryAndTheCache",
+            "TestUnknownLockedSettingRefusesEveryRun",
+            "TestSyncAsksOnlyWhenTheAnswerIsOldAndKeepsTheCacheOffline",
+            "TestSyncRemembersThatNoneApply",
+            "TestForgetDeletesTheCache",
+            "TestACacheUnderAnotherRegistrysNameIsRefused",
+            "TestRefreshNeedsASignIn",
+            "TestADeletedDocumentIsNoticedNotReadAsNone",
+            "TestARecordDatedInTheFutureIsRefused",
+            "TestACachedDocumentDatedInTheFutureIsRefused",
+            "TestSignInKeepsTheSameAccountsLockAndDropsAnothers",
+            "TestRefreshAsAnotherAccountDropsTheLastOnesSettings",
+            "TestRollbackIsRefusedAcrossAChangeOfOrganization",
+            "TestDocumentsVerifyWithTheirOwnRegistrysPinsWhateverPinRegistrySays",
+            "TestTheNarrowingASentRunCarries"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "HTTP transport",
+            "source/file contract"
+          ]
+        }
+      ]
+    },
+    {
       "owner": "pkg/mcpauth",
       "behavior": "Signs a person in to a remote MCP server by OAuth, as the MCP authorization specification (2026-07-28)",
       "disposition": "retain",
@@ -4791,6 +4851,21 @@
           "dependencyHints": [
             "source/file contract"
           ]
+        },
+        {
+          "path": "pkg/runner/compile/managed_test.go",
+          "tests": [
+            "TestUnsafeModeForbiddenByAManagedLockIsRefused",
+            "TestUnsafeModeAllowedOrADefaultCompiles",
+            "TestAManagedLockTheClientDoesNotKnowRefusesEveryCompile",
+            "TestThePlanHashTakesTheManagedVersion",
+            "TestTheSendingDevicesManagedSettingsHoldARunhostsRun",
+            "TestManagedSettingsThatCannotBeVerifiedRefuseEveryCompile"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": true,
+          "dependencyHints": []
         },
         {
           "path": "pkg/runner/compile/signin_test.go",
@@ -6699,6 +6774,17 @@
           "dependencyHints": [
             "source/file contract"
           ]
+        },
+        {
+          "path": "pkg/runner/engine/managed_test.go",
+          "tests": [
+            "TestRunRefusesAnUnsafePlanAManagedLockForbids",
+            "TestARunIsHeldToTheManagedSettingsCachedWhenItStarts"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
         },
         {
           "path": "pkg/runner/engine/optional_secrets_test.go",

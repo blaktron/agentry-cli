@@ -470,9 +470,23 @@ type Plan struct {
 	Budgets Budgets `json:"budgets"`
 	// Output describes the optional structured-output convention.
 	Output OutputSpec `json:"output"`
+	// Managed are the organizations' managed settings the plan was
+	// compiled under, one entry a document: a new version is a new plan.
+	// Absent when no document applies, so such a plan carries no trace of
+	// the field.
+	Managed []ManagedSpec `json:"managed,omitempty"`
 	// Files maps plan-dir-relative generated file paths to their sha256,
 	// so a tampered installed plan is detectable before execution.
 	Files map[string]string `json:"files"`
+}
+
+// ManagedSpec is one organization's managed settings document as a plan
+// and a receipt record it: whose, which version, and the ids of the
+// settings that applied. A setting's value is never recorded.
+type ManagedSpec struct {
+	Organization string   `json:"organization"`
+	Version      int64    `json:"version"`
+	Applied      []string `json:"applied,omitempty"`
 }
 
 // InstructionSpec records the instruction's provenance, not its text — the

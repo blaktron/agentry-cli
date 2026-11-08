@@ -444,10 +444,11 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 			ImagePin:       p.Plan.Harness.ImagePin.String(),
 			CredentialKind: credentialKind(p.Plan),
 		},
-		Policy: policyRecord(p),
-		Result: receipt.TextResult(""),
-		OutDir: p.OutDir,
-		Stage:  receipt.StagePrepare,
+		Policy:  policyRecord(p),
+		Result:  receipt.TextResult(""),
+		OutDir:  p.OutDir,
+		Stage:   receipt.StagePrepare,
+		Managed: managedRecord(p.Plan),
 	}
 	// The run's redactor exists once the token and the secrets are known
 	// (rd.redact, from then on); every failure before that has nothing to
@@ -459,6 +460,11 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	}
 	receiptsDir := filepath.Join(p.OutDir, "receipts")
 	env.Receipts = receipt.Receipts{Dir: receiptsDir, RunPlanSHA256: planHash}
+	// The organizations' managed settings, before anything else is looked
+	// at or started.
+	if err := checkManaged(p); err != nil {
+		return fail(env, redact, err)
+	}
 	// A plan with the web tools runs only with its scanner, before
 	// anything touches the daemon.
 	if err := checkWeb(p); err != nil {

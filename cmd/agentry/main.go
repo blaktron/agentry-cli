@@ -130,6 +130,7 @@ func newRootCmd() *cobra.Command {
 		newLoginCmd(),
 		newLogoutCmd(),
 		newWhoamiCmd(),
+		newManagedCmd(),
 		newPublishCmd(),
 		newInstallCmd(),
 		newSetupCmd(),
