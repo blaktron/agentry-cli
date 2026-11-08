@@ -219,3 +219,5 @@ agentry/assistant@1.20.0 sha256:191104697848657401b27fcfbbf145c368228935c711d152
 agentry/drafter@1.20.0 sha256:4f52e6a6c87ee0a5c2632a8205e16c108af1237e3bd0b3aeb431d5ee2bf62ca7
 # 1.20.1, over 1.20.0: the instruction names the tools of an application on the person's computer as the agent sees them.
 agentry/assistant@1.20.1 sha256:a6b94e2b5bb6075434cc40881024115ae19a770a9457733d324ca3458463b84b
+# 1.21.0, over 1.20.0: the drafting guide has a page on the person's computer (capabilities.desktop, the catalogue's applications and computer use), and a draft that declares a server for such an application is refused.
+agentry/drafter@1.21.0 sha256:f814e4eb81d5ca14be3ee248d9596237dcfffb0f535cc4668c15851c5174c94d

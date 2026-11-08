@@ -1829,6 +1829,18 @@
           ]
         },
         {
+          "path": "cmd/agentry/cmd_doctor_desktop_test.go",
+          "tests": [
+            "TestDoctorReportsThePersonsComputer"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
+          ]
+        },
+        {
           "path": "cmd/agentry/cmd_doctor_test.go",
           "tests": [
             "TestDoctorMachineReady",
@@ -2268,6 +2280,16 @@
             "TestADraftShipsOnlyThePacksItsPersonChose",
             "TestKnowledgeUnderCapabilitiesIsLifted",
             "TestTheInputsBlockIsCorrected"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
+          "path": "pkg/drafter/desktop_test.go",
+          "tests": [
+            "TestADraftUsesThePersonsComputerThroughTheDesktopLine"
           ],
           "fuzz": [],
           "benchmarks": [],

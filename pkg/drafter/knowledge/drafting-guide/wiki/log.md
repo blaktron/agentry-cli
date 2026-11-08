@@ -121,3 +121,10 @@ A new page, A persistent agent, says when a description asks for one (an agent t
 
 - wrote: manifest/persistent.md
 - updated: manifest/manifest.md, manifest/run-modes.md, draft/examples.md, draft/review.md, guide/start-here.md
+
+## [2026-11-08] ingest | the person's computer (Drafter 1.21.0)
+
+A new page, The person's computer, says when a description asks for an application on the person's own computer (Blender, Unreal Engine), how `capabilities.desktop` declares it with the catalogue's id and computer use in app scope, the catalogue's tools and their classes, what the person is asked, how to write the instructions, and that such a QuickAgent never runs In Agentry. A server for such an application declared under `capabilities.mcpServers` is refused.
+
+- wrote: manifest/desktop.md
+- updated: index.md
