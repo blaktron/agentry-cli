@@ -297,6 +297,11 @@ func RelayedCallOnly(m Message, run string) bool {
 	return false
 }
 
+// NotRelayed is the refusal of a message a relay does not carry.
+func NotRelayed() *Refusal {
+	return &Refusal{Reason: "not-a-message", Message: "a relayed desktop link carries the bound run's tool calls and its unbind, and this was neither"}
+}
+
 // Handler answers a link service's messages. The link service, or a
 // stand-in for it, implements it; Serve dispatches to it.
 type Handler interface {

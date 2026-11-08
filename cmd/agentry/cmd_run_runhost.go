@@ -205,12 +205,18 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	// sent, or refused here as a local run would be; the binding travels in
 	// the job, and this device unbinds once the job is over.
 	var dl *engine.DesktopLink
+	// ended says the job has ended: only then does this device unbind, since
+	// a job this device lost goes on there and a later attach links it again.
+	ended := false
 	if dcap != nil {
 		dl, err = bindDesktopCap(cmd.Context(), dcap, meta.Ref, meta.Digest, home, id, opts.out)
 		if err != nil {
 			return err
 		}
 		defer func() {
+			if !ended {
+				return
+			}
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			_ = dl.Unbind(ctx)
@@ -280,11 +286,14 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	}
 	say := func(line string) { _, _ = fmt.Fprintf(errOut, "%s: %s\n", rec.Name, safeTerminalText(line, 4096)) }
 	if j.Run.Session {
-		return runOnSession(cmd, client, rec, keys, j, archive, files, lj, m, pol, opts, carried, say)
+		err := runOnSession(cmd, client, rec, keys, j, archive, files, lj, m, pol, opts, carried, say)
+		ended = err == nil
+		return err
 	}
 	res, started, next, err := remote.Start(cmd.Context(), client, j, archive, files, opts.detach, say, nil, nil)
 	switch {
 	case err != nil && !started:
+		ended = true
 		remote.DropJob(home, j.ID)
 		return engine.Classify(remote.SendClass(err), err)
 	case opts.detach:
@@ -300,6 +309,7 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 		defer func() { _ = c2.Close() }()
 		client = c2
 	}
+	ended = true
 	carried.finishProfile(errOut)
 	opts.progress.at(receipt.StageOutput)
 	err = runOnFinish(cmd, client, rec, keys, lj, res.ExitCode, opts.outputFormat)

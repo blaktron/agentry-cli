@@ -41,6 +41,9 @@ const (
 	runhostLinkFile = "desktop.json"
 )
 
+// runhostLinkMaxCalls bounds the calls a job's link carries at once.
+const runhostLinkMaxCalls = 8
+
 // runhostLinkFirstWait bounds how long a call waits for the device's first
 // link session, which the device opens once the runhost says it runs the
 // job. After a session has dropped, a call is refused at once.
@@ -48,8 +51,9 @@ var runhostLinkFirstWait = 2 * time.Minute
 
 // runhostLink is one job's desktop link.
 type runhostLink struct {
-	job, device string
-	ln          net.Listener
+	// run is the run the device bound, which every message names.
+	job, device, run string
+	ln               net.Listener
 
 	mu      sync.Mutex
 	current *runhostLinkSession
@@ -77,7 +81,7 @@ func openRunhostLink(ctx context.Context, j *job.Job, dir string) (*runhostLink,
 	if err != nil {
 		return nil, "", fmt.Errorf("the job's desktop link socket: %w", err)
 	}
-	l := &runhostLink{job: j.ID, device: j.Device, ln: ln, linked: make(chan struct{}), done: make(chan struct{})}
+	l := &runhostLink{job: j.ID, device: j.Device, run: j.Run.Desktop.Run, ln: ln, linked: make(chan struct{}), done: make(chan struct{})}
 	l.wg.Add(1)
 	go func() {
 		defer l.wg.Done()
@@ -98,14 +102,24 @@ func (l *runhostLink) close() {
 }
 
 func (l *runhostLink) serve(ctx context.Context) {
+	// The run's relay carries at most a few calls at once; more connections
+	// than that wait their turn.
+	slots := make(chan struct{}, runhostLinkMaxCalls)
 	for {
 		c, err := l.ln.Accept()
 		if err != nil {
 			return
 		}
+		select {
+		case slots <- struct{}{}:
+		case <-l.done:
+			_ = c.Close()
+			return
+		}
 		l.wg.Add(1)
 		go func() {
 			defer l.wg.Done()
+			defer func() { <-slots }()
 			l.answer(ctx, c)
 		}()
 	}
@@ -125,11 +139,9 @@ func (l *runhostLink) answer(ctx context.Context, c net.Conn) {
 	_ = c.SetReadDeadline(time.Time{})
 	var ans desktop.Message
 	m, err := desktop.ReadMessage(bytes.TrimSpace(sc.Bytes()))
-	switch {
-	case err != nil, m.Bind != nil, m.Bound != nil, m.Answer != nil, m.Refused != nil, m.OK,
-		m.Call == nil && m.Unbind == nil, m.Call != nil && m.Unbind != nil:
-		ans.Refused = &desktop.Refusal{Reason: "not-a-message", Message: "a job's desktop link carries a tool call or the run's unbind, and this was neither"}
-	default:
+	if err != nil || !desktop.RelayedCallOnly(m, l.run) {
+		ans.Refused = desktop.NotRelayed()
+	} else {
 		ans = l.forward(ctx, m)
 	}
 	b, err := json.Marshal(ans)
@@ -215,7 +227,8 @@ func (l *runhostLink) forward(ctx context.Context, m desktop.Message) desktop.Me
 }
 
 // attach holds one link session from the device: it replaces any earlier
-// one (whose calls in flight are refused), says the link is open with a
+// one of the same device (a reconnect; the old session's calls in flight are
+// refused), says the link is open with a
 // started frame, takes the device's answers from in, and returns when the
 // job ends, the device leaves, or the service stops.
 func (l *runhostLink) attach(ctx context.Context, fw *runhost.FrameWriter, in io.Reader) (int, error) {
@@ -251,12 +264,12 @@ func (l *runhostLink) attach(ctx context.Context, fw *runhost.FrameWriter, in io
 	read := make(chan struct{})
 	go func() {
 		defer close(read)
-		br := bufio.NewReaderSize(in, 64<<10)
-		dec := json.NewDecoder(br)
-		for {
+		sc := bufio.NewScanner(in)
+		sc.Buffer(make([]byte, 64<<10), desktop.MaxLine+4096)
+		for sc.Scan() {
 			var a runhost.LinkAnswer
-			if err := dec.Decode(&a); err != nil {
-				return
+			if json.Unmarshal(sc.Bytes(), &a) != nil {
+				continue
 			}
 			m, err := desktop.ReadMessage(a.Message)
 			if err != nil {

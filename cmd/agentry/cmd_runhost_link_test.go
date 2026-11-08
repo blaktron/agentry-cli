@@ -131,7 +131,7 @@ func TestARunhostLinkCarriesOnlyToolCallsToTheDevice(t *testing.T) {
 	// A tool call crosses as a link frame, and the device's answer comes back.
 	got := make(chan desktop.Message, 1)
 	go func() {
-		got <- linkCall(t, sock, desktop.Message{Call: &desktop.CallRequest{Run: "r", Token: "tok-123456", Server: "blender", Tool: "get_scene_info"}})
+		got <- linkCall(t, sock, desktop.Message{Call: &desktop.CallRequest{Run: "0123456789abcdef0123456789abcdef", Token: "tok-123456", Server: "blender", Tool: "get_scene_info"}})
 	}()
 	f := d.next(t)
 	if f.Type != runhost.FrameLink {
@@ -168,7 +168,7 @@ func TestARunhostLinkCarriesOnlyToolCallsToTheDevice(t *testing.T) {
 		t.Fatal("the session did not end when the device left")
 	}
 	start := time.Now()
-	ans := linkCall(t, sock, desktop.Message{Call: &desktop.CallRequest{Run: "r", Token: "tok-123456", Server: "blender", Tool: "get_scene_info"}})
+	ans := linkCall(t, sock, desktop.Message{Call: &desktop.CallRequest{Run: "0123456789abcdef0123456789abcdef", Token: "tok-123456", Server: "blender", Tool: "get_scene_info"}})
 	if ans.Refused == nil || ans.Refused.Reason != receipt.DesktopUnreachable || time.Since(start) > 5*time.Second {
 		t.Fatalf("a call after the device left: %+v after %s", ans, time.Since(start))
 	}
@@ -185,7 +185,7 @@ func TestARunhostLinkWaitsForTheFirstSessionThenRefuses(t *testing.T) {
 	runhostLinkFirstWait = 200 * time.Millisecond
 	t.Cleanup(func() { runhostLinkFirstWait = old })
 	_, sock := linkTestJob(t)
-	ans := linkCall(t, sock, desktop.Message{Call: &desktop.CallRequest{Run: "r", Token: "tok-123456", Server: "blender", Tool: "get_scene_info"}})
+	ans := linkCall(t, sock, desktop.Message{Call: &desktop.CallRequest{Run: "0123456789abcdef0123456789abcdef", Token: "tok-123456", Server: "blender", Tool: "get_scene_info"}})
 	if ans.Refused == nil || ans.Refused.Reason != receipt.DesktopUnreachable {
 		t.Fatalf("a call with no device linked: %+v", ans)
 	}

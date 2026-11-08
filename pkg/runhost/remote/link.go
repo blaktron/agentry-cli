@@ -38,7 +38,7 @@ func SocketForward(socket, run string) LinkForward {
 	c := desktop.Client{Socket: socket}
 	return func(ctx context.Context, m desktop.Message) desktop.Message {
 		if !desktop.RelayedCallOnly(m, run) {
-			return desktop.Message{Refused: &desktop.Refusal{Reason: "not-a-message", Message: "a runhost's desktop link carries the bound run's tool calls and its unbind, and this was neither"}}
+			return desktop.Message{Refused: desktop.NotRelayed()}
 		}
 		ans, err := c.Forward(ctx, m)
 		if err != nil {
@@ -54,9 +54,10 @@ func SocketForward(socket, run string) LinkForward {
 type LinkDialer func(ctx context.Context) (*runhost.Client, func(), error)
 
 // LinkStartWait bounds how long the device waits for the runhost to run the
-// job before its first link session opens, and LinkRetry how often it asks.
+// job before its first link session opens (the release and the run's files
+// may be uploading meanwhile), and LinkRetry how often it asks.
 var (
-	LinkStartWait = 2 * time.Minute
+	LinkStartWait = 15 * time.Minute
 	LinkRetry     = time.Second
 )
 

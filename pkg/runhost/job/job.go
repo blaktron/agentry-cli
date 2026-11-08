@@ -178,12 +178,14 @@ type Desktop struct {
 // MaxDesktopToken bounds the run token a binding carries.
 const MaxDesktopToken = 512
 
-var desktopRunRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+// desktopIDRE is a run's or an application server's id in a binding: one
+// word a file name or an argument may carry.
+var desktopIDRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
 // validate checks that the binding names a run, carries a token one line
 // can hold, and binds at least one server or computer use.
 func (d *Desktop) validate() error {
-	if !desktopRunRE.MatchString(d.Run) {
+	if !desktopIDRE.MatchString(d.Run) {
 		return fmt.Errorf("the desktop binding's run %q is not a run's id", d.Run)
 	}
 	if t := d.Bound.Token; t == "" || len(t) > MaxDesktopToken || !SecretValueOK(t) {
@@ -193,7 +195,7 @@ func (d *Desktop) validate() error {
 		return errors.New("the desktop binding binds no application and no computer use")
 	}
 	for id := range d.Bound.Servers {
-		if !desktopRunRE.MatchString(id) {
+		if !desktopIDRE.MatchString(id) {
 			return fmt.Errorf("the desktop binding names a server %q that cannot be one", id)
 		}
 	}
