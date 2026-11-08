@@ -966,8 +966,12 @@ func TestAnAbsentApplicationRefusesTheCallNotTheSegment(t *testing.T) {
 	away := func(context.Context, desktop.BindRequest) (*DesktopLink, error) {
 		return nil, &desktop.Refusal{Reason: receipt.DesktopUnreachable}
 	}
-	if _, err := PersistentDesktopLink(ctx, away, desktop.BindRequest{Run: "seg-3"}, d); err != nil {
+	awayLink, err := PersistentDesktopLink(ctx, away, desktop.BindRequest{Run: "seg-3"}, d)
+	if err != nil {
 		t.Fatalf("the person's computer away refused the segment: %v", err)
+	}
+	if _, err := awayLink.Call(ctx, call); !errors.As(err, &r) || r.Reason != receipt.DesktopUnreachable {
+		t.Fatalf("a call with the person's computer away is refused as %v, want desktop-unreachable", err)
 	}
 }
 
