@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -14,12 +15,15 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runhost"
 	"github.com/blaktron/agentry-cli/pkg/runhost/job"
 	"github.com/blaktron/agentry-cli/pkg/runhost/remote"
+	"github.com/blaktron/agentry-cli/pkg/runner/compile"
+	"github.com/blaktron/agentry-cli/pkg/runner/desktop"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelsignin"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
+	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/pkg/trust"
 	"github.com/blaktron/agentry/pkg/manifest"
 )
@@ -106,13 +110,14 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	opts.progress.running(meta)
 	opts.progress.at(receipt.StageCompile)
 	m, err := localrun.ManifestFrom(filepath.Join(installDir, "workspace"))
-	if err == nil && m.Capabilities.Desktop != nil {
-		// The applications on this computer are answered by Agentry Desktop
-		// here; a run on a runhost has no channel back to it yet.
-		return engine.Classify(engine.ExitUsage, errors.New("a run on a runhost does not reach the applications on this computer yet: this QuickAgent uses one through Agentry Desktop, so run it on this computer"))
-	}
 	if err != nil {
 		return engine.Classify(engine.ExitCompile, err)
+	}
+	// The applications on this computer are answered by Agentry Desktop
+	// here, over a link session this device keeps open for the job.
+	dcap, err := runOnDesktopCap(m, pol, opts)
+	if err != nil {
+		return err
 	}
 	if blocking := manifest.Blocking(manifest.Validate(m)); len(blocking) > 0 {
 		return engine.Classify(engine.ExitCompile, fmt.Errorf("%s manifest invalid: %v", meta.Ref, blocking[0]))
@@ -196,6 +201,23 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	run.Model, run.ModelKey = job.ModelOf(pol.Model), modelKey
 	run.Adapter = runAdapter
 	run.Session = mode == manifest.ModeInteractive
+	// The run is bound to this computer's Agentry Desktop before anything is
+	// sent, or refused here as a local run would be; the binding travels in
+	// the job, and this device unbinds once the job is over.
+	var dl *engine.DesktopLink
+	if dcap != nil {
+		dl, err = bindDesktopCap(cmd.Context(), dcap, meta.Ref, meta.Digest, home, id, opts.out)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			_ = dl.Unbind(ctx)
+		}()
+		run.Desktop = &job.Desktop{Run: id, Bound: desktop.Bound{Token: dl.Token, Servers: dl.Servers, Computer: dl.Computer}}
+		run.AllowScreen = opts.allowScreen
+	}
 	j := &job.Job{V: job.Version, ID: id, Device: rec.DeviceID, Release: rel, Run: run}
 	if err := j.Validate(); err != nil {
 		return engine.Classify(engine.ExitUsage, err)
@@ -247,8 +269,14 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	if mapped {
 		lj.AdapterAsked = opts.adapterName
 	}
+	if dl != nil {
+		lj.Desktop = id
+	}
 	if err := remote.PutJob(home, lj); err != nil {
 		return err
+	}
+	if dl != nil {
+		defer keepRunhostLink(cmd, client, rec, keys, home, j.ID, id)()
 	}
 	say := func(line string) { _, _ = fmt.Fprintf(errOut, "%s: %s\n", rec.Name, safeTerminalText(line, 4096)) }
 	if j.Run.Session {
@@ -355,4 +383,45 @@ func runOnRelease(cmd *cobra.Command, meta *installdir.Meta) (job.Release, []byt
 		return job.Release{}, nil, fmt.Errorf("%s is %s; a runhost runs a verified, unsigned or unscanned release", meta.Ref, meta.Attestation.State)
 	}
 	return rel, archive, nil
+}
+
+// runOnDesktopCap is the release's desktop line as this device's policy
+// holds it, for a run sent to a runhost; nil for a release that declares
+// none. A run that uses this computer stays attached to it: a detached run
+// and a schedule are refused, since no one here would answer their calls.
+func runOnDesktopCap(m *manifest.Manifest, pol *policy.Policy, opts runOpts) (*spec.DesktopCap, error) {
+	if m.Capabilities.Desktop == nil {
+		return nil, nil
+	}
+	switch {
+	case opts.runhostSchedule != "":
+		return nil, engine.Classify(engine.ExitUsage, errors.New("this QuickAgent uses an application on your computer through Agentry Desktop, and a schedule on a runhost runs while this computer may be away: run it with --on and follow it"))
+	case opts.detach:
+		return nil, engine.Classify(engine.ExitUsage, errors.New("this QuickAgent uses an application on your computer through Agentry Desktop, which answers it only while this computer follows the run: leave out --detach"))
+	}
+	d, err := compile.DesktopCapFor(m.Capabilities.Desktop, pol, opts.allowScreen)
+	if err != nil {
+		return nil, engine.Classify(engine.ExitPolicy, err)
+	}
+	return d, nil
+}
+
+// keepRunhostLink keeps job id's desktop link open while the job runs,
+// answering its calls from this computer's Agentry Desktop for the run it
+// bound, and returns what ends it.
+func keepRunhostLink(cmd *cobra.Command, c *runhost.Client, rec *runhost.Record, keys *runhost.DeviceKeys, home, id, run string) func() {
+	ctx, cancel := context.WithCancel(cmd.Context())
+	done := make(chan struct{})
+	errOut := cmd.ErrOrStderr()
+	go func() {
+		defer close(done)
+		err := remote.KeepLink(ctx, remote.LinkDialerFrom(c, rec, keys), id, remote.SocketForward(desktop.SocketPath(home), run), nil)
+		if err != nil && ctx.Err() == nil {
+			_, _ = fmt.Fprintf(errOut, "the run's use of this computer is no longer linked to %s (%v): its later calls are refused there as desktop-unreachable\n", rec.Name, err)
+		}
+	}()
+	return func() {
+		cancel()
+		<-done
+	}
 }

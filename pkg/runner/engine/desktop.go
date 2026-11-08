@@ -59,6 +59,27 @@ func BoundDesktopLink(c desktop.Client, run string, b desktop.Bound) *DesktopLin
 	}
 }
 
+// RelayedDesktopLink is a binding made on another computer and relayed to
+// this run (a run on a remote runhost, whose device bound it): each call and
+// the unbind name the run the far link service bound, over the relay's
+// socket here.
+func RelayedDesktopLink(r desktop.Relayed) *DesktopLink {
+	c := desktop.Client{Socket: r.Socket}
+	return &DesktopLink{
+		Token:   r.Bound.Token,
+		Servers: r.Bound.Servers,
+		Call: func(ctx context.Context, req desktop.CallRequest) (desktoplink.Answer, error) {
+			req.Run = r.Run
+			return c.Call(ctx, req)
+		},
+		Unbind: func(ctx context.Context) error {
+			return c.Unbind(ctx, desktop.UnbindRequest{Run: r.Run, Token: r.Bound.Token})
+		},
+		FarEnd:   r.Via,
+		Computer: r.Bound.Computer,
+	}
+}
+
 // HostedDesktopRefusal is a hosted run's refusal of a release that declares
 // the person's computer: exit 11, desktop-refused, hosted. The CLI refuses
 // with it before anything is installed, and the engine again.

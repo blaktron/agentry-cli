@@ -127,6 +127,7 @@ func runRunhostService(cmd *cobra.Command) error {
 			},
 			"job":      runhostJobVerb,
 			"attach":   runhostAttachVerb,
+			"link":     runhostLinkVerb,
 			"cancel":   runhostCancelVerb,
 			"collect":  runhostCollectVerb,
 			"store":    runhostStoreVerb,

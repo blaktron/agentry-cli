@@ -261,6 +261,42 @@ func (c Client) Unbind(ctx context.Context, req UnbindRequest) error {
 	return nil
 }
 
+// Forward sends one message as it is and reads the link service's answer,
+// for a relay that carries a run's calls and its unbind from another
+// computer: a call waits as long as a call does, an unbind as an unbind.
+func (c Client) Forward(ctx context.Context, m Message) (Message, error) {
+	timeout := desktoplink.CallTimeout
+	if m.Unbind != nil {
+		timeout = 30 * time.Second
+	}
+	return c.exchange(ctx, m, timeout)
+}
+
+// Relayed is a binding made on another computer, whose link service the run
+// reaches through a relay: the run id the far link service bound and its
+// binding, the socket on this computer that carries each call there, and
+// how the calls get there, for the receipt.
+type Relayed struct {
+	Socket string `json:"socket"`
+	Run    string `json:"run"`
+	Bound  Bound  `json:"bound"`
+	Via    string `json:"via"`
+}
+
+// RelayedCallOnly says whether m is a message a relay carries for run: a
+// tool call or the unbind of that run, and nothing else.
+func RelayedCallOnly(m Message, run string) bool {
+	switch {
+	case m.Bind != nil || m.Bound != nil || m.Answer != nil || m.Refused != nil || m.OK:
+		return false
+	case m.Call != nil && m.Unbind == nil:
+		return m.Call.Run == run && m.Call.Token != ""
+	case m.Unbind != nil && m.Call == nil:
+		return m.Unbind.Run == run && m.Unbind.Token != ""
+	}
+	return false
+}
+
 // Handler answers a link service's messages. The link service, or a
 // stand-in for it, implements it; Serve dispatches to it.
 type Handler interface {
