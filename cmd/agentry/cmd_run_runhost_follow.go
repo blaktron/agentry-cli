@@ -205,6 +205,13 @@ func runhostFollowAndCollect(cmd *cobra.Command, name, id, out string, follow bo
 	if !follow {
 		say = nil
 	}
+	// A job that uses this computer has its desktop link opened again while
+	// it is followed here, answered for the run this device bound.
+	if follow && info.State == "running" {
+		if lj, ok := localRunhostJob(home, id); ok && lj.Desktop != "" {
+			defer keepRunhostLink(cmd, c, rec, keys, home, id, lj.Desktop)()
+		}
+	}
 	res, _, err := remote.Follow(cmd.Context(), c, id, 0, say, nil)
 	if err != nil {
 		var r *remote.Refusal
@@ -264,4 +271,18 @@ func newRunhostCancelCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// localRunhostJob is this device's record of job id.
+func localRunhostJob(home, id string) (remote.LocalJob, bool) {
+	jobs, err := remote.LoadJobs(home)
+	if err != nil {
+		return remote.LocalJob{}, false
+	}
+	for _, j := range jobs {
+		if j.Job == id {
+			return j, true
+		}
+	}
+	return remote.LocalJob{}, false
 }

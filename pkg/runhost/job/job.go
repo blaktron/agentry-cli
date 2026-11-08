@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/desktop"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/trust"
 )
@@ -154,6 +155,51 @@ type Run struct {
 	// Payload is the tar of the run's files that follows the document (and
 	// the release, when the runhost asks for it); nil when there are none.
 	Payload *Payload `json:"payload,omitempty"`
+	// Desktop is the device's binding to its Agentry Desktop, for a release
+	// that declares applications on the person's computer: the device bound
+	// the run before it sent the job, and the runhost's run reaches the
+	// device's link service through the link session the device keeps open
+	// for the job. nil for a release that declares none.
+	Desktop *Desktop `json:"desktop,omitempty"`
+	// AllowScreen is the person's own --allow-screen.
+	AllowScreen bool `json:"allowScreen,omitempty"`
+}
+
+// Desktop is a device's binding to Agentry Desktop, carried to the runhost:
+// the run id the device bound, the run token Agentry Desktop issued, and the
+// bound servers' tools and computer use as Agentry Desktop answered the bind.
+// The token lives in the job's own 0600 file on the runhost while the run
+// lasts, and is deleted with it.
+type Desktop struct {
+	Run   string        `json:"run"`
+	Bound desktop.Bound `json:"bound"`
+}
+
+// MaxDesktopToken bounds the run token a binding carries.
+const MaxDesktopToken = 512
+
+// desktopIDRE is a run's or an application server's id in a binding: one
+// word a file name or an argument may carry.
+var desktopIDRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+
+// validate checks that the binding names a run, carries a token one line
+// can hold, and binds at least one server or computer use.
+func (d *Desktop) validate() error {
+	if !desktopIDRE.MatchString(d.Run) {
+		return fmt.Errorf("the desktop binding's run %q is not a run's id", d.Run)
+	}
+	if t := d.Bound.Token; t == "" || len(t) > MaxDesktopToken || !SecretValueOK(t) {
+		return errors.New("the desktop binding carries no run token a job can hold")
+	}
+	if len(d.Bound.Servers) == 0 && d.Bound.Computer == nil {
+		return errors.New("the desktop binding binds no application and no computer use")
+	}
+	for id := range d.Bound.Servers {
+		if !desktopIDRE.MatchString(id) {
+			return fmt.Errorf("the desktop binding names a server %q that cannot be one", id)
+		}
+	}
+	return nil
 }
 
 // Connection is one OAuth server's access token for the run.
@@ -413,6 +459,11 @@ func SecretValueOK(v string) bool {
 // name is one a file name, a variable or an argument may carry, and every
 // payload member it names is one the payload can hold.
 func (r *Run) validateCarried() error {
+	if r.Desktop != nil {
+		if err := r.Desktop.validate(); err != nil {
+			return err
+		}
+	}
 	if len(r.Secrets) > MaxSecrets {
 		return fmt.Errorf("the job carries %d secrets; a run takes at most %d", len(r.Secrets), MaxSecrets)
 	}

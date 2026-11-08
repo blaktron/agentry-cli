@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry/pkg/appserver"
 	"github.com/blaktron/agentry/pkg/manifest"
 
@@ -121,13 +122,13 @@ func TestARunNeedsAgentryDesktop(t *testing.T) {
 			t.Fatalf("%s: reason %+v", name, r)
 		}
 	}
-	link, err := bindDesktop(context.Background(), plan, dir, "R", "")
+	link, err := bindDesktop(context.Background(), plan, dir, "R", "", runOpts{})
 	refused(t, "no socket", link, err)
 	sock := desktop.SocketPath(dir)
 	if err := os.WriteFile(sock, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	link, err = bindDesktop(context.Background(), plan, dir, "R", "")
+	link, err = bindDesktop(context.Background(), plan, dir, "R", "", runOpts{})
 	refused(t, "a file where the socket would be", link, err)
 	_ = os.Remove(sock)
 	ln, err := net.Listen("unix", sock)
@@ -135,12 +136,12 @@ func TestARunNeedsAgentryDesktop(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = ln.Close()
-	link, err = bindDesktop(context.Background(), plan, dir, "R", "")
+	link, err = bindDesktop(context.Background(), plan, dir, "R", "", runOpts{})
 	refused(t, "a socket nothing listens on", link, err)
 	_ = os.Remove(sock)
 
 	// A plan without the line binds nothing.
-	if link, err := bindDesktop(context.Background(), &spec.Plan{}, dir, "R", ""); link != nil || err != nil {
+	if link, err := bindDesktop(context.Background(), &spec.Plan{}, dir, "R", "", runOpts{}); link != nil || err != nil {
 		t.Fatalf("a plan without the line: %+v, %v", link, err)
 	}
 
@@ -154,7 +155,7 @@ func TestARunNeedsAgentryDesktop(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { _ = desktop.Serve(ctx, ln, s) }()
-	link, err = bindDesktop(context.Background(), plan, dir, "R", "")
+	link, err = bindDesktop(context.Background(), plan, dir, "R", "", runOpts{})
 	if err != nil || link == nil || link.Token != "tok-1" || len(link.Servers["blender"]) != 2 || !strings.Contains(link.FarEnd, sock) {
 		t.Fatalf("bound: %+v, %v", link, err)
 	}
@@ -174,7 +175,7 @@ func TestARunNeedsAgentryDesktop(t *testing.T) {
 	cu := desktopPlan()
 	cu.Capabilities.Desktop.ComputerUse = "app"
 	cu.Capabilities.Desktop.ComputerTools = []spec.DesktopTool{{Name: "screenshot", Class: "read"}, {Name: "left_click", Class: "act"}}
-	link, err = bindDesktop(context.Background(), cu, dir, "R", "/out/R")
+	link, err = bindDesktop(context.Background(), cu, dir, "R", "/out/R", runOpts{})
 	if err != nil || link.Computer == nil || link.Computer.Scope != "app" {
 		t.Fatalf("computer use bound: %+v, %v", link, err)
 	}
@@ -185,7 +186,7 @@ func TestARunNeedsAgentryDesktop(t *testing.T) {
 	// The service refusing the bind: its reason and its words reach the
 	// person, exit 11.
 	s.refuse = &desktop.Refusal{Reason: receipt.DesktopNotInstalled, Server: "blender", Message: "Start the MCP server in Blender's sidebar"}
-	link, err = bindDesktop(context.Background(), plan, dir, "R", "")
+	link, err = bindDesktop(context.Background(), plan, dir, "R", "", runOpts{})
 	var ce *engine.ClassifiedError
 	if link != nil || err == nil || !errors.As(err, &ce) || ce.Code != engine.ExitPolicy || err.Error() != "Start the MCP server in Blender's sidebar" {
 		t.Fatalf("a refused bind: %+v, %v", link, err)
@@ -266,5 +267,32 @@ func TestTheRunSummaryNamesTheDesktopLine(t *testing.T) {
 	cu.ComputerUse = "app"
 	if got := desktopSummary(cu); got != "Blender (2 tools) and computer use in the windows you allow on your computer, through Agentry Desktop" {
 		t.Errorf("summary %q", got)
+	}
+}
+
+// A run on a runhost that uses this computer stays attached to it: a
+// detached run and a schedule are refused before anything is bound, and a
+// whole-screen scope needs what it needs locally.
+func TestARunOnARunhostThatUsesThisComputerStaysAttached(t *testing.T) {
+	m := &manifest.Manifest{Capabilities: manifest.Capabilities{Desktop: &manifest.Desktop{Servers: []manifest.DesktopServer{{ID: "blender"}}}}}
+	pol := policy.Default()
+	for name, opts := range map[string]runOpts{"detach": {detach: true}, "schedule": {runhostSchedule: "{}"}} {
+		if _, err := runOnDesktopCap(m, pol, opts); err == nil {
+			t.Errorf("%s: not refused", name)
+		}
+	}
+	d, err := runOnDesktopCap(m, pol, runOpts{})
+	if err != nil || d == nil || len(d.Servers) != 1 || d.Servers[0].ID != "blender" {
+		t.Fatalf("%+v %v", d, err)
+	}
+	screen := &manifest.Manifest{Capabilities: manifest.Capabilities{Desktop: &manifest.Desktop{ComputerUse: manifest.ComputerUseScreen}}}
+	if _, err := runOnDesktopCap(screen, pol, runOpts{}); err == nil {
+		t.Fatal("a whole-screen scope was allowed without --allow-screen")
+	}
+	if d, err := runOnDesktopCap(screen, pol, runOpts{allowScreen: true}); err != nil || d.ScreenAllowedBy == "" {
+		t.Fatalf("with --allow-screen: %+v %v", d, err)
+	}
+	if d, err := runOnDesktopCap(&manifest.Manifest{}, pol, runOpts{detach: true}); d != nil || err != nil {
+		t.Fatalf("a release with no desktop line: %+v %v", d, err)
 	}
 }

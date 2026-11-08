@@ -1,6 +1,14 @@
 {
   "versions": [
     {
+      "version": "0.7.33",
+      "highlights": [
+        "A QuickAgent that uses an application on your computer can run on your own runhost with --on.",
+        "Agentry Desktop on this computer answers the run's calls while you follow it; if this computer leaves, they are refused.",
+        "agentry runhost attach links the run to this computer again."
+      ]
+    },
+    {
       "version": "0.7.32",
       "highlights": [
         "A run that used an application on your computer and then failed still counts, in its receipt, the calls that crossed.",

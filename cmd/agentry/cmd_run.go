@@ -73,6 +73,10 @@ type runOpts struct {
 	// asks no registry: a remote runhost's service, which has verified and
 	// laid the release down itself.
 	installed bool
+	// runhostDesktop is the relayed binding to the device's Agentry Desktop
+	// a remote runhost's service hands its run (a desktop.Relayed, as
+	// JSON), for a release that uses applications on the person's computer.
+	runhostDesktop string
 	// on is the remote runhost the run goes to; empty runs it here.
 	on string
 	// runhostSchedule, set by `agentry schedule add --on`, sends the run to
@@ -258,6 +262,8 @@ func newRunCmd() *cobra.Command {
 	f.BoolVar(&opts.detach, "detach", false, "with --on: leave the run on the runhost once it has started there, and say its job; agentry runhost attach, collect and cancel reach it later")
 	f.BoolVar(&opts.installed, "installed", false, "run the release already installed in the runner home at --pin, asking no registry, so nothing the registry says of it today (a yank, a quarantine) is heard (a remote runhost's service, which verified it as it arrived)")
 	_ = f.MarkHidden("installed")
+	f.StringVar(&opts.runhostDesktop, "runhost-desktop", "", "with --installed: the binding to the device's Agentry Desktop that a remote runhost's service relays to this run")
+	_ = f.MarkHidden("runhost-desktop")
 	f.StringVar(&opts.runhostSchedule, "runhost-schedule", "", "with --on: keep the run on the runhost as this schedule (agentry schedule add --on)")
 	_ = f.MarkHidden("runhost-schedule")
 	f.StringVar(&opts.policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml, created on first use)")
@@ -836,7 +842,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	// The applications on the person's computer: bound to Agentry Desktop
 	// last before the sandbox, or the run is refused here; the engine
 	// unbinds at teardown.
-	desktopLink, err := bindDesktop(cmd.Context(), plan, home, runID, outDir)
+	desktopLink, err := bindDesktop(cmd.Context(), plan, home, runID, outDir, opts)
 	if err != nil {
 		return err
 	}

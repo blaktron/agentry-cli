@@ -851,3 +851,55 @@ func TestARefusedRunWritesNoDesktopLine(t *testing.T) {
 		}
 	}
 }
+
+// A binding relayed from another computer names the run that computer bound
+// on every call and on the unbind, and the receipt's transport line says how
+// the calls reach it.
+func TestARelayedBindingNamesTheFarRunAndItsWay(t *testing.T) {
+	dir, err := os.MkdirTemp("", "rd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "l.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	got := make(chan desktop.CallRequest, 1)
+	go func() { _ = desktop.Serve(ctx, ln, relayedRecorder{got}) }()
+	link := RelayedDesktopLink(desktop.Relayed{Socket: sock, Run: "far-run", Via: "the device over its link session",
+		Bound: desktop.Bound{Token: "t1", Servers: map[string][]desktoplink.Tool{"blender": nil}}})
+	if _, err := link.Call(ctx, desktop.CallRequest{Run: "local-run", Token: "t1", Server: "blender", Tool: "look"}); err != nil {
+		t.Fatal(err)
+	}
+	if c := <-got; c.Run != "far-run" {
+		t.Fatalf("the call named run %q", c.Run)
+	}
+	if err := link.Unbind(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if line := desktopTransportLine(&desktopRun{link: link, volume: "v"}); !strings.Contains(line, "the device over its link session") {
+		t.Fatalf("the transport line does not say the way: %s", line)
+	}
+}
+
+type relayedRecorder struct{ got chan desktop.CallRequest }
+
+func (r relayedRecorder) Bind(context.Context, desktop.BindRequest) (desktop.Bound, *desktop.Refusal) {
+	return desktop.Bound{}, &desktop.Refusal{Reason: "no"}
+}
+
+func (r relayedRecorder) Call(_ context.Context, req desktop.CallRequest) (desktoplink.Answer, *desktop.Refusal) {
+	r.got <- req
+	return desktoplink.TextAnswer("ok", false), nil
+}
+
+func (r relayedRecorder) Unbind(_ context.Context, req desktop.UnbindRequest) *desktop.Refusal {
+	if req.Run != "far-run" {
+		return &desktop.Refusal{Reason: "wrong run"}
+	}
+	return nil
+}

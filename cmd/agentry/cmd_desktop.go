@@ -2,11 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/desktop"
@@ -37,25 +37,43 @@ func refuseHostedDesktop(plan *spec.Plan, opts runOpts) error {
 // plan that declares the person's computer: nil for one that does not. No
 // socket, or nothing answering on it, is the refusal that names Agentry
 // Desktop; a refusal from the link service carries its reason.
-func bindDesktop(ctx context.Context, plan *spec.Plan, home, runID, outDir string) (*engine.DesktopLink, error) {
+func bindDesktop(ctx context.Context, plan *spec.Plan, home, runID, outDir string, opts runOpts) (*engine.DesktopLink, error) {
 	d := plan.Capabilities.Desktop
 	if d == nil {
 		return nil, nil
 	}
+	if opts.runhostDesktop != "" {
+		return relayedDesktop(opts)
+	}
+	return bindDesktopCap(ctx, d, plan.Ref, plan.Digest, home, runID, outDir)
+}
+
+// relayedDesktop is a runhost's run's binding: the device bound the run to
+// its own Agentry Desktop before it sent the job, and the runhost's service
+// relays the calls to it.
+func relayedDesktop(opts runOpts) (*engine.DesktopLink, error) {
+	if !opts.installed {
+		return nil, engine.Classify(engine.ExitUsage, errors.New("--runhost-desktop is a remote runhost's own, with --installed"))
+	}
+	b, err := os.ReadFile(opts.runhostDesktop)
+	if err != nil {
+		return nil, engine.Classify(engine.ExitCLI, fmt.Errorf("the binding the runhost relays: %w", err))
+	}
+	var r desktop.Relayed
+	if err := json.Unmarshal(b, &r); err != nil || r.Socket == "" || r.Run == "" || r.Bound.Token == "" {
+		return nil, engine.Classify(engine.ExitCLI, errors.New("the binding the runhost relays is not one"))
+	}
+	return engine.RelayedDesktopLink(r), nil
+}
+
+// bindDesktopCap binds a run of ref to Agentry Desktop over the link socket
+// in home, for the desktop line d.
+func bindDesktopCap(ctx context.Context, d *spec.DesktopCap, ref, digest, home, runID, outDir string) (*engine.DesktopLink, error) {
 	c := desktop.Client{Socket: desktop.SocketPath(home)}
 	if fi, err := os.Lstat(c.Socket); err != nil || fi.Mode()&fs.ModeSocket == 0 {
 		return nil, engine.NoDesktopRefusal(d)
 	}
-	req := desktop.BindRequest{Run: runID, Ref: plan.Ref, Digest: plan.Digest}
-	for _, s := range d.Servers {
-		req.Servers = append(req.Servers, desktop.BindServer{ID: s.ID, Tools: s.ToolNames()})
-	}
-	if c, ok := d.Computer(); ok {
-		req.ComputerUse, req.ComputerTools = d.ComputerUse, c.ToolNames()
-		if outDir != "" {
-			req.Reports = filepath.Join(outDir, filepath.FromSlash(desktop.ReportsFolder))
-		}
-	}
+	req := engine.DesktopBindRequest(d, runID, ref, digest, outDir)
 	bound, err := c.Bind(ctx, req)
 	if err != nil {
 		var r *desktop.Refusal

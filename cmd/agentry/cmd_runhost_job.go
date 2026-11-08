@@ -439,6 +439,8 @@ type runhostStaged struct {
 	// each target host's key file, by id.
 	knownHosts string
 	hostKeys   map[string]string
+	// desktop is the relayed binding to the device's Agentry Desktop.
+	desktop string
 }
 
 // runhostRunArgs is the run's argv after the CLI's own path: a typed list,
@@ -517,6 +519,12 @@ func runhostRunArgs(j *job.Job, st runhostStaged) []string {
 			args = append(args, "--host-sudo-password", id+"="+sudo)
 		}
 	}
+	if st.desktop != "" {
+		args = append(args, "--runhost-desktop", st.desktop)
+	}
+	if j.Run.AllowScreen {
+		args = append(args, "--allow-screen")
+	}
 	if j.Run.AllowVulnerableMCP {
 		args = append(args, "--allow-vulnerable-mcp")
 	}
@@ -577,7 +585,7 @@ func runhostRun(ctx context.Context, j *job.Job, dir, home string, devices map[s
 		values = append([]string{creditsToken}, values...)
 	}
 	defer func() {
-		for _, p := range []string{st.secrets, st.intake, st.connections, st.destinations, st.knownHosts, filepath.Join(dir, "hostkeys"), st.files, st.inputs, st.out, st.policy, policy.NewestPathFor(st.policy), st.task} {
+		for _, p := range []string{st.desktop, st.secrets, st.intake, st.connections, st.destinations, st.knownHosts, filepath.Join(dir, "hostkeys"), st.files, st.inputs, st.out, st.policy, policy.NewestPathFor(st.policy), st.task} {
 			if p != "" {
 				_ = os.RemoveAll(p)
 			}
@@ -586,6 +594,22 @@ func runhostRun(ctx context.Context, j *job.Job, dir, home string, devices map[s
 	}()
 	if err := runhostStage(j, &st); err != nil {
 		return engine.ExitUsage, err
+	}
+	// The device's Agentry Desktop is reached through the job's link socket,
+	// over the link session the device opens for the job.
+	if j.Run.Desktop != nil {
+		lk, sock, err := openRunhostLink(ctx, j, dir)
+		if err != nil {
+			return engine.ExitCLI, err
+		}
+		defer lk.close()
+		st.desktop = filepath.Join(dir, runhostLinkFile)
+		if err := writeNewJSON(st.desktop, runhostRelayedDesktop(j, sock)); err != nil {
+			return engine.ExitCLI, err
+		}
+		live.mu.Lock()
+		live.link = lk
+		live.mu.Unlock()
 	}
 	self, err := runhostCLI()
 	if err != nil {
@@ -740,6 +764,9 @@ func runhostJobValues(j *job.Job) []string {
 	}
 	for _, h := range r.TargetHosts {
 		values = append(values, h.Key, h.Password, h.Passphrase, h.Sudo)
+	}
+	if r.Desktop != nil {
+		values = append(values, r.Desktop.Bound.Token)
 	}
 	values = slices.DeleteFunc(values, func(v string) bool { return len(v) < 4 })
 	slices.SortFunc(values, func(a, b string) int { return len(b) - len(a) })

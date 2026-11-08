@@ -39,6 +39,9 @@ type runhostLive struct {
 	stdin io.WriteCloser
 	// inputs is a session's inputs folder, where a device's added files land.
 	inputs string
+	// link is the job's desktop link, for a job that carries a binding to
+	// the device's Agentry Desktop; set under mu once the run is staged.
+	link *runhostLink
 
 	mu      sync.Mutex
 	frames  []runhost.Frame

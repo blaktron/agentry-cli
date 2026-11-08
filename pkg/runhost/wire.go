@@ -46,7 +46,23 @@ const (
 	// FrameOpen asks the device to open an address in the person's browser
 	// during a sign-in: Text is the address, Result an Open.
 	FrameOpen = "open"
+	// FrameLink carries one message of a job's desktop link to the device
+	// that opened the link session: Text is the message's id on the link,
+	// Result the link service's message (a tool call or the run's unbind).
+	// The device answers it on the session's input with a LinkAnswer.
+	FrameLink = "link"
 )
+
+// LinkExitNoJob is the link verb's exit code when the runhost runs no such
+// job with a desktop link: not yet, or no longer.
+const LinkExitNoJob = 4
+
+// LinkAnswer is the device's answer to a link frame, one JSON line on the
+// link session's input: the frame's id and the link service's message.
+type LinkAnswer struct {
+	ID      string          `json:"id"`
+	Message json.RawMessage `json:"message"`
+}
 
 // Open is what a sign-in's open frame asks of the device besides the
 // address: to relay the browser's answer back to the runhost (Relay names
