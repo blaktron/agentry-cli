@@ -198,13 +198,18 @@ func rebindingDesktopLink(bind DesktopBinder, req desktop.BindRequest, d *spec.D
 		}
 		mu.Unlock()
 	}
+	// A refusal is kept as it came: the person's computer away is
+	// desktop-unreachable, Agentry Desktop not running desktop-unavailable.
 	away := func(server string, err error) error {
 		var r *desktop.Refusal
-		if errors.As(err, &r) && !gone(r) {
+		if errors.As(err, &r) {
+			if r.Server == "" {
+				r.Server = server
+			}
 			return r
 		}
 		return &desktop.Refusal{Reason: receipt.DesktopUnavailable, Server: server,
-			Message: "Agentry Desktop is not answering for the person's computer: it is not running there, or the computer is away; your next call reaches it once it does"}
+			Message: "Agentry Desktop is not running on the person's computer: they start it, and your next call reaches it"}
 	}
 	link.Call = func(ctx context.Context, c desktop.CallRequest) (desktoplink.Answer, error) {
 		for attempt := 0; ; attempt++ {
