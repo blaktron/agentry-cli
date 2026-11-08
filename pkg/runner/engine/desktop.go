@@ -101,87 +101,136 @@ func SocketDesktopBinder(socket string) DesktopBinder {
 // applications need not be running. With no Agentry Desktop answering, the
 // segment starts all the same with the catalogue's tools, and binds at its
 // first call; until one answers, each call is refused desktop-unavailable.
-// A refusal of the bind is the segment's refusal.
+// A binding that goes away while the segment runs (Agentry Desktop
+// restarted, a runhost's link given up and taken again) is bound again at
+// the next call. A refusal of the bind is the segment's refusal.
 func PersistentDesktopLink(ctx context.Context, bind DesktopBinder, req desktop.BindRequest, d *spec.DesktopCap) (*DesktopLink, error) {
 	req.Lazy = true
-	link, err := bind(ctx, req)
-	if err == nil {
-		return link, nil
+	first, err := bind(ctx, req)
+	if err != nil {
+		// The person's computer away (a runhost's agent with no device
+		// linked) is no Agentry Desktop answering, for now.
+		var r *desktop.Refusal
+		switch {
+		case errors.As(err, &r) && gone(r):
+		case errors.As(err, &r):
+			return nil, DesktopBindRefusal(d, r)
+		case !errors.Is(err, desktop.ErrNoService):
+			return nil, Classify(ExitCLI, fmt.Errorf("bind the agent to Agentry Desktop: %w", err))
+		}
+		first = nil
 	}
-	// The person's computer away (a runhost's agent with no device linked)
-	// is no Agentry Desktop answering, for now.
-	var r *desktop.Refusal
-	switch {
-	case errors.As(err, &r) && (r.Reason == receipt.DesktopUnreachable || r.Reason == receipt.DesktopUnavailable):
-	case errors.As(err, &r):
-		return nil, DesktopBindRefusal(d, r)
-	case !errors.Is(err, desktop.ErrNoService):
-		return nil, Classify(ExitCLI, fmt.Errorf("bind the agent to Agentry Desktop: %w", err))
-	}
-	return deferredDesktopLink(bind, req, d)
+	return rebindingDesktopLink(bind, req, d, first)
 }
 
-// deferredDesktopLink is a segment's binding while no Agentry Desktop
-// answers: the catalogue's tools, a token of the segment's own between its
-// relay and this process, and a bind at each call until one succeeds.
-func deferredDesktopLink(bind DesktopBinder, req desktop.BindRequest, d *spec.DesktopCap) (*DesktopLink, error) {
+// gone says a refusal is of a binding that is not there: no Agentry
+// Desktop answering, or the person's computer away.
+func gone(r *desktop.Refusal) bool {
+	return r.Reason == receipt.DesktopUnavailable || r.Reason == receipt.DesktopUnreachable
+}
+
+// rebindingDesktopLink is a segment's binding that binds again whenever the
+// one it holds is gone: a token of the segment's own between its relay and
+// this process, the tools of the first binding (or the catalogue's when
+// there was none), and the bound link's token on each call it sends. Once
+// unbound it binds no more.
+func rebindingDesktopLink(bind DesktopBinder, req desktop.BindRequest, d *spec.DesktopCap, first *DesktopLink) (*DesktopLink, error) {
 	var raw [16]byte
 	if _, err := rand.Read(raw[:]); err != nil {
 		return nil, err
 	}
-	servers := map[string][]desktoplink.Tool{}
-	for _, s := range d.Servers {
-		for _, t := range s.Tools {
-			servers[s.ID] = append(servers[s.ID], desktoplink.Tool{Name: t.Name,
-				Description: s.Application + " on the person's computer, through Agentry Desktop",
-				InputSchema: json.RawMessage(`{"type":"object","additionalProperties":true}`)})
+	link := &DesktopLink{Token: hex.EncodeToString(raw[:])}
+	if first != nil {
+		link.Servers, link.Computer, link.FarEnd = first.Servers, first.Computer, first.FarEnd+", bound again if it goes away while the agent runs"
+	} else {
+		link.Servers = map[string][]desktoplink.Tool{}
+		for _, s := range d.Servers {
+			for _, t := range s.Tools {
+				link.Servers[s.ID] = append(link.Servers[s.ID], desktoplink.Tool{Name: t.Name,
+					Description: s.Application + " on the person's computer, through Agentry Desktop",
+					InputSchema: json.RawMessage(`{"type":"object","additionalProperties":true}`)})
+			}
+		}
+		link.FarEnd = "Agentry Desktop, bound at the agent's first call (it was not answering when the segment started)"
+		if d.HasComputerUse() {
+			link.Computer = &desktop.ComputerBound{Scope: d.ComputerUse,
+				Enforced: "not stated: Agentry Desktop was not answering when the segment started, and states what the computer enforces once it binds"}
 		}
 	}
-	var mu sync.Mutex
-	var bound *DesktopLink
-	current := func(ctx context.Context) (*DesktopLink, error) {
+	var mu, binding sync.Mutex
+	bound, closed := first, false
+	held := func() (*DesktopLink, bool) {
 		mu.Lock()
 		defer mu.Unlock()
-		if bound != nil {
-			return bound, nil
+		return bound, closed
+	}
+	current := func(ctx context.Context) (*DesktopLink, error) {
+		if l, done := held(); l != nil || done {
+			if done {
+				return nil, &desktop.Refusal{Reason: receipt.DesktopStopped, Message: "the agent's use of the person's computer has ended for this segment"}
+			}
+			return l, nil
+		}
+		binding.Lock()
+		defer binding.Unlock()
+		if l, done := held(); l != nil || done {
+			return l, nil
 		}
 		l, err := bind(ctx, req)
 		if err != nil {
 			return nil, err
 		}
+		mu.Lock()
+		defer mu.Unlock()
+		if closed {
+			if l.Unbind != nil {
+				_ = l.Unbind(context.WithoutCancel(ctx))
+			}
+			return nil, &desktop.Refusal{Reason: receipt.DesktopStopped, Message: "the agent's use of the person's computer has ended for this segment"}
+		}
 		bound = l
 		return l, nil
 	}
-	link := &DesktopLink{
-		Token:   hex.EncodeToString(raw[:]),
-		Servers: servers,
-		FarEnd:  "Agentry Desktop, bound at the agent's first call (it was not running when the segment started)",
+	drop := func(l *DesktopLink) {
+		mu.Lock()
+		if bound == l {
+			bound = nil
+		}
+		mu.Unlock()
+	}
+	away := func(server string, err error) error {
+		var r *desktop.Refusal
+		if errors.As(err, &r) && !gone(r) {
+			return r
+		}
+		return &desktop.Refusal{Reason: receipt.DesktopUnavailable, Server: server,
+			Message: "Agentry Desktop is not answering for the person's computer: it is not running there, or the computer is away; your next call reaches it once it does"}
 	}
 	link.Call = func(ctx context.Context, c desktop.CallRequest) (desktoplink.Answer, error) {
-		l, err := current(ctx)
-		if err != nil {
-			var r *desktop.Refusal
-			if errors.As(err, &r) {
-				return desktoplink.Answer{}, r
+		for attempt := 0; ; attempt++ {
+			l, err := current(ctx)
+			if err != nil {
+				return desktoplink.Answer{}, away(c.Server, err)
 			}
-			return desktoplink.Answer{}, &desktop.Refusal{Reason: receipt.DesktopUnavailable, Server: c.Server,
-				Message: "Agentry Desktop is not running on the person's computer: they start it, and your next call reaches it"}
+			c.Token = l.Token
+			a, err := l.Call(ctx, c)
+			var r *desktop.Refusal
+			if err == nil || !errors.As(err, &r) || !gone(r) || attempt > 0 {
+				return a, err
+			}
+			// The binding went away: bind again, once.
+			drop(l)
 		}
-		c.Token = l.Token
-		return l.Call(ctx, c)
 	}
 	link.Unbind = func(ctx context.Context) error {
 		mu.Lock()
 		l := bound
+		bound, closed = nil, true
 		mu.Unlock()
 		if l == nil || l.Unbind == nil {
 			return nil
 		}
 		return l.Unbind(ctx)
-	}
-	if d.HasComputerUse() {
-		link.Computer = &desktop.ComputerBound{Scope: d.ComputerUse,
-			Enforced: "not stated: Agentry Desktop was not running when the segment started, and states what the computer enforces once it binds"}
 	}
 	return link, nil
 }

@@ -3574,7 +3574,8 @@
             "TestTheDeviceForwardsOnlyTheBoundRunsCalls",
             "TestACallToAClosedAppIsUnreachable",
             "TestABindingInProcessAnswersOnlyTheBoundRun",
-            "TestTheAgentsLinkBindsAgentsHereAlone"
+            "TestTheAgentsLinkBindsAgentsHereAlone",
+            "TestARunhostsAgentCodeAlwaysAsksHere"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -6565,7 +6566,8 @@
             "TestAFailedRunCountsItsDesktopCalls",
             "TestARefusedRunWritesNoDesktopLine",
             "TestARelayedBindingNamesTheFarRunAndItsWay",
-            "TestAnAbsentApplicationRefusesTheCallNotTheSegment"
+            "TestAnAbsentApplicationRefusesTheCallNotTheSegment",
+            "TestAGoneBindingIsBoundAgainUntilTheSegmentEnds"
           ],
           "fuzz": [],
           "benchmarks": [],

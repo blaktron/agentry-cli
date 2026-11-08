@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sync"
 	"time"
 
@@ -253,9 +254,14 @@ func AgentsForward(bind engine.DesktopBinder) (forward LinkForward, close func()
 			if !req.Lazy || req.Agent == "" || req.Run == "" {
 				return desktop.Message{Refused: desktop.NotRelayed()}
 			}
-			// What the agent's segment keeps on this computer is its own
-			// business here: a runhost names no folder of this computer's.
+			// A runhost names no folder of this computer's, and its word is
+			// not the person's agreement: the agent's code calls always ask
+			// here.
 			req.Reports = ""
+			req.Servers = slices.Clone(req.Servers)
+			for i := range req.Servers {
+				req.Servers[i].ExecAgreed = false
+			}
 			link, err := bind(ctx, req)
 			if err != nil {
 				return desktop.Message{Refused: refusalOf(err)}

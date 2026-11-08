@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -967,5 +968,46 @@ func TestAnAbsentApplicationRefusesTheCallNotTheSegment(t *testing.T) {
 	}
 	if _, err := PersistentDesktopLink(ctx, away, desktop.BindRequest{Run: "seg-3"}, d); err != nil {
 		t.Fatalf("the person's computer away refused the segment: %v", err)
+	}
+}
+
+// A binding that goes away while the segment runs (Agentry Desktop
+// restarted, a runhost's link taken again) is bound again at the next
+// call; once the segment has unbound, nothing binds again.
+func TestAGoneBindingIsBoundAgainUntilTheSegmentEnds(t *testing.T) {
+	d := &spec.DesktopCap{Servers: []spec.DesktopServerCap{{ID: "blender", Application: "Blender",
+		Tools: []spec.DesktopTool{{Name: "look", Class: "read"}}}}}
+	gen := 0
+	bind := func(_ context.Context, req desktop.BindRequest) (*DesktopLink, error) {
+		gen++
+		mine := gen
+		return &DesktopLink{Token: fmt.Sprint("tok-", mine), Servers: map[string][]desktoplink.Tool{"blender": {{Name: "look"}}},
+			Call: func(_ context.Context, c desktop.CallRequest) (desktoplink.Answer, error) {
+				if mine != gen || c.Token != fmt.Sprint("tok-", mine) {
+					return desktoplink.Answer{}, &desktop.Refusal{Reason: receipt.DesktopUnavailable}
+				}
+				return desktoplink.TextAnswer(fmt.Sprint("answered by binding ", mine), false), nil
+			},
+			Unbind: func(context.Context) error { return nil }}, nil
+	}
+	ctx := context.Background()
+	link, err := PersistentDesktopLink(ctx, bind, desktop.BindRequest{Run: "seg"}, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := desktop.CallRequest{Run: "seg", Token: link.Token, Server: "blender", Tool: "look"}
+	if a, err := link.Call(ctx, call); err != nil || a.Content[0].Text != "answered by binding 1" {
+		t.Fatalf("the first call: %+v %v", a, err)
+	}
+	gen++ // Agentry Desktop restarted: the first binding is gone.
+	if a, err := link.Call(ctx, call); err != nil || a.Content[0].Text != "answered by binding 3" {
+		t.Fatalf("the call after the binding went away: %+v %v", a, err)
+	}
+	if err := link.Unbind(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var r *desktop.Refusal
+	if _, err := link.Call(ctx, call); !errors.As(err, &r) || r.Reason != receipt.DesktopStopped {
+		t.Fatalf("a call after the segment unbound: %v", err)
 	}
 }

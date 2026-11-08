@@ -218,3 +218,18 @@ func TestTheAgentsLinkBindsAgentsHereAlone(t *testing.T) {
 		t.Fatalf("giving the link up left %d bindings", 2-unbinds)
 	}
 }
+
+// A runhost's word is not the person's agreement: an agent's bind relayed
+// from a runhost never waives the ask before its code runs here.
+func TestARunhostsAgentCodeAlwaysAsksHere(t *testing.T) {
+	var got desktop.BindRequest
+	fw, _ := AgentsForward(func(_ context.Context, req desktop.BindRequest) (*engine.DesktopLink, error) {
+		got = req
+		return &engine.DesktopLink{Token: "t"}, nil
+	})
+	fw(context.Background(), desktop.Message{Bind: &desktop.BindRequest{Run: "seg", Agent: "Assistant", Lazy: true,
+		Servers: []desktop.BindServer{{ID: "blender", ExecAgreed: true}}}})
+	if len(got.Servers) != 1 || got.Servers[0].ExecAgreed {
+		t.Fatalf("the relayed bind reached the app as %+v", got.Servers)
+	}
+}

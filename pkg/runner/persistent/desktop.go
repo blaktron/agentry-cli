@@ -14,8 +14,10 @@ package persistent
 
 import (
 	"io/fs"
+	"net"
 	"os"
 	"slices"
+	"time"
 
 	"github.com/blaktron/agentry/pkg/appserver"
 	"github.com/blaktron/agentry/pkg/manifest"
@@ -161,8 +163,17 @@ func desktopAnswering() bool {
 	if err != nil {
 		return false
 	}
-	fi, err := os.Lstat(desktop.SocketPath(home))
-	return err == nil && fi.Mode()&fs.ModeSocket != 0
+	sock := desktop.SocketPath(home)
+	if fi, err := os.Lstat(sock); err != nil || fi.Mode()&fs.ModeSocket == 0 {
+		return false
+	}
+	// A socket left by an app that has quit answers no one.
+	c, err := net.DialTimeout("unix", sock, 500*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	_ = c.Close()
+	return true
 }
 
 // desktopNotAnswering is the reason a desktop entry that is on needs

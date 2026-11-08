@@ -234,9 +234,9 @@ func (l *runhostLink) forward(ctx context.Context, m desktop.Message) desktop.Me
 	return unreachable()
 }
 
-// attach holds one link session from the device: it replaces any earlier
-// one of the same device (a reconnect; the old session's calls in flight are
-// refused), says the link is open with a
+// attach holds one link session from a device: it replaces any earlier
+// one (a reconnect, or on the agents link another paired device taking it
+// over; the old session's calls in flight are refused), says the link is open with a
 // started frame, takes the device's answers from in, and returns when the
 // job ends, the device leaves, or the service stops.
 func (l *runhostLink) attach(ctx context.Context, fw *runhost.FrameWriter, in io.Reader) (int, error) {
@@ -410,6 +410,12 @@ func openAgentsLink(ctx context.Context, home string) (*runhostLink, error) {
 	sock := desktop.SocketPath(home)
 	if err := os.MkdirAll(filepath.Dir(sock), 0o700); err != nil {
 		return nil, err
+	}
+	// A socket something answers on is another's (an Agentry Desktop on
+	// this computer): it is left alone. One no one answers is a stale one.
+	if c, err := net.DialTimeout("unix", sock, time.Second); err == nil {
+		_ = c.Close()
+		return nil, fmt.Errorf("%s is served already, by Agentry Desktop on this computer: the runhost's agents reach it directly", sock)
 	}
 	if err := os.Remove(sock); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
