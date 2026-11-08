@@ -903,3 +903,69 @@ func (r relayedRecorder) Unbind(_ context.Context, req desktop.UnbindRequest) *d
 	}
 	return nil
 }
+
+// A persistent agent's segment starts whether or not Agentry Desktop is
+// running, with the catalogue's tools: its call is refused while none
+// answers, and the next call after one does reaches it, with no segment
+// restarted. An application that is not running is the link service's
+// refusal of the call, never the segment's.
+func TestAnAbsentApplicationRefusesTheCallNotTheSegment(t *testing.T) {
+	d := &spec.DesktopCap{Servers: []spec.DesktopServerCap{{ID: "blender", Application: "Blender",
+		Tools: []spec.DesktopTool{{Name: "get_scene_info", Class: "read"}}}}}
+	answering, blenderRunning := false, false
+	var binds []desktop.BindRequest
+	bind := func(_ context.Context, req desktop.BindRequest) (*DesktopLink, error) {
+		binds = append(binds, req)
+		if !answering {
+			return nil, desktop.ErrNoService
+		}
+		return &DesktopLink{Token: "app-token", Servers: map[string][]desktoplink.Tool{"blender": {{Name: "get_scene_info"}}},
+			Call: func(_ context.Context, c desktop.CallRequest) (desktoplink.Answer, error) {
+				if c.Token != "app-token" {
+					return desktoplink.Answer{}, &desktop.Refusal{Reason: "not-a-message"}
+				}
+				if !blenderRunning {
+					return desktoplink.Answer{}, &desktop.Refusal{Reason: receipt.DesktopNotInstalled, Server: "blender", Message: "start Blender"}
+				}
+				return desktoplink.TextAnswer("a cube", false), nil
+			}}, nil
+	}
+	ctx := context.Background()
+	link, err := PersistentDesktopLink(ctx, bind, desktop.BindRequest{Run: "seg-1", Agent: "Assistant"}, d)
+	if err != nil {
+		t.Fatalf("the segment did not start without Agentry Desktop: %v", err)
+	}
+	if !binds[0].Lazy || binds[0].Agent != "Assistant" {
+		t.Fatalf("the bind was not a lazy one for the agent: %+v", binds[0])
+	}
+	if tools := link.Servers["blender"]; len(tools) != 1 || tools[0].Name != "get_scene_info" || len(tools[0].InputSchema) == 0 {
+		t.Fatalf("the segment's tools without Agentry Desktop: %+v", link.Servers)
+	}
+	call := desktop.CallRequest{Run: "seg-1", Token: link.Token, Server: "blender", Tool: "get_scene_info"}
+	var r *desktop.Refusal
+	if _, err := link.Call(ctx, call); !errors.As(err, &r) || r.Reason != receipt.DesktopUnavailable {
+		t.Fatalf("a call with no Agentry Desktop: %v", err)
+	}
+	answering = true
+	if _, err := link.Call(ctx, call); !errors.As(err, &r) || r.Reason != receipt.DesktopNotInstalled {
+		t.Fatalf("a call with Blender closed: %v", err)
+	}
+	blenderRunning = true
+	if a, err := link.Call(ctx, call); err != nil || a.Content[0].Text != "a cube" {
+		t.Fatalf("a call with Blender open: %+v %v", a, err)
+	}
+	// A bind the link service refuses for a reason of its own is the
+	// segment's refusal; the person's computer away is not.
+	refusing := func(context.Context, desktop.BindRequest) (*DesktopLink, error) {
+		return nil, &desktop.Refusal{Reason: receipt.DesktopNotGranted, Message: "computer use is off"}
+	}
+	if _, err := PersistentDesktopLink(ctx, refusing, desktop.BindRequest{Run: "seg-2"}, d); err == nil {
+		t.Fatal("a refused bind started the segment")
+	}
+	away := func(context.Context, desktop.BindRequest) (*DesktopLink, error) {
+		return nil, &desktop.Refusal{Reason: receipt.DesktopUnreachable}
+	}
+	if _, err := PersistentDesktopLink(ctx, away, desktop.BindRequest{Run: "seg-3"}, d); err != nil {
+		t.Fatalf("the person's computer away refused the segment: %v", err)
+	}
+}

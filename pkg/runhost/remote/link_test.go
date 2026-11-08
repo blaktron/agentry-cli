@@ -178,3 +178,43 @@ func TestABindingInProcessAnswersOnlyTheBoundRun(t *testing.T) {
 		t.Fatalf("%d calls and %d unbinds reached the binding", calls, unbinds)
 	}
 }
+
+// The device's agents link binds an agent's segment here, keeps the
+// binding by its run, answers its calls with it and ends it at its unbind
+// or when the link is given up; a run's bind never reaches the app.
+func TestTheAgentsLinkBindsAgentsHereAlone(t *testing.T) {
+	var binds []desktop.BindRequest
+	unbinds := 0
+	bind := func(_ context.Context, req desktop.BindRequest) (*engine.DesktopLink, error) {
+		binds = append(binds, req)
+		return &engine.DesktopLink{Token: "t-" + req.Run,
+			Call: func(context.Context, desktop.CallRequest) (desktoplink.Answer, error) {
+				return desktoplink.TextAnswer("ok", false), nil
+			},
+			Unbind: func(context.Context) error { unbinds++; return nil },
+		}, nil
+	}
+	fw, closeAll := AgentsForward(bind)
+	ctx := context.Background()
+	if a := fw(ctx, desktop.Message{Bind: &desktop.BindRequest{Run: "run-1"}}); a.Refused == nil || len(binds) != 0 {
+		t.Fatalf("a run's bind: %+v, %d binds", a, len(binds))
+	}
+	a := fw(ctx, desktop.Message{Bind: &desktop.BindRequest{Run: "seg-1", Agent: "Assistant", Lazy: true, Reports: "/elsewhere"}})
+	if a.Bound == nil || a.Bound.Token != "t-seg-1" || binds[0].Reports != "" {
+		t.Fatalf("an agent's bind: %+v, %+v", a, binds)
+	}
+	if a := fw(ctx, desktop.Message{Call: &desktop.CallRequest{Run: "seg-1", Token: "t-seg-1", Tool: "look"}}); a.Answer == nil {
+		t.Fatalf("the agent's call: %+v", a)
+	}
+	if a := fw(ctx, desktop.Message{Call: &desktop.CallRequest{Run: "seg-9", Token: "t-seg-1", Tool: "look"}}); a.Refused == nil {
+		t.Fatalf("a call of a run not bound here: %+v", a)
+	}
+	fw(ctx, desktop.Message{Bind: &desktop.BindRequest{Run: "seg-2", Agent: "Assistant", Lazy: true}})
+	if a := fw(ctx, desktop.Message{Unbind: &desktop.UnbindRequest{Run: "seg-1", Token: "t-seg-1"}}); !a.OK || unbinds != 1 {
+		t.Fatalf("the unbind: %+v, %d", a, unbinds)
+	}
+	closeAll()
+	if unbinds != 2 {
+		t.Fatalf("giving the link up left %d bindings", 2-unbinds)
+	}
+}

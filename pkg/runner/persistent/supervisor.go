@@ -37,6 +37,10 @@ var ErrDesktopOnly = errors.New("runs only in Agentry Desktop")
 type Options struct {
 	Home  string
 	Agent Agent
+	// BindDesktop binds a segment the roster gives the person's computer
+	// to Agentry Desktop: the app's own link service, in process, when the
+	// app supervises; nil binds over the link socket in Home.
+	BindDesktop engine.DesktopBinder
 	// Client is who supervises: ClientCLI or ClientDesktop.
 	Client     string
 	Policy     *policy.Policy
@@ -468,8 +472,9 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 			ShareMirror:   mirror,
 			Memory:        memory,
 		},
-		Grants:    grants,
-		Inference: s.creditsGrant(),
+		Grants:      grants,
+		Inference:   s.creditsGrant(),
+		BindDesktop: s.opts.BindDesktop,
 	}
 	if s.appLn != nil && a.AppLinkWith(cfg) != "" {
 		seg.Grants.AppLink = AppSocketPath(home, name)

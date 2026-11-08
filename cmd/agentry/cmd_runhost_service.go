@@ -94,6 +94,13 @@ func runRunhostService(cmd *cobra.Command) error {
 	sweepRunhostJobs(time.Now(), true)
 	if home, err := runnerHome(); err == nil {
 		sweepRunCredentials(home)
+		// The runhost's agents reach the person's computer through the
+		// device that links them.
+		if l, err := openAgentsLink(ctx, home); err != nil {
+			logger.Printf("the agents' desktop link: %v", err)
+		} else {
+			runhostAgents = l
+		}
 	}
 	go func() {
 		t := time.NewTicker(time.Hour)

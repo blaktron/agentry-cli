@@ -115,11 +115,17 @@ func TestRosterRendersAgree(t *testing.T) {
 			t.Errorf("the consent's %s is not the roster's: %+v vs %+v", e.ID, e, got)
 		}
 	}
-	if len(r) != 23 || r[0].ID != EntryShare || r[1].ID != EntryData || !r[1].Fixed || r[2].ID != EntryMemory || !r[2].Fixed || !r[2].On ||
+	if len(r) != 27 || r[0].ID != EntryShare || r[1].ID != EntryData || !r[1].Fixed || r[2].ID != EntryMemory || !r[2].Fixed || !r[2].On ||
 		r[3].ID != EntryHeartbeat || r[3].On || r[4].ID != EntryMeetings || r[4].On {
 		t.Fatalf("the Assistant's own roster: %+v", r)
 	}
-	for _, e := range r[5:] {
+	// Then the person's computer, each entry off, and its skills.
+	for _, e := range r[5:9] {
+		if (e.Kind != KindDesktop && e.Kind != KindDesktopExec) || e.On || e.GrantedBy != GrantedByBuiltin {
+			t.Errorf("the Assistant's desktop entry %+v", e)
+		}
+	}
+	for _, e := range r[9:] {
 		if e.Kind != KindSkill || e.GrantedBy != GrantedByBuiltin {
 			t.Errorf("the Assistant's own roster ends in %+v, want its built-in skills", e)
 		}

@@ -2,6 +2,8 @@ package engine
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -76,6 +78,112 @@ func DesktopBindRequest(d *spec.DesktopCap, run, ref, digest, outDir string) des
 		}
 	}
 	return req
+}
+
+// DesktopBinder binds a run or a segment to Agentry Desktop and hands back
+// the binding. A refusal is returned as a *desktop.Refusal, and no link
+// service as desktop.ErrNoService.
+type DesktopBinder func(ctx context.Context, req desktop.BindRequest) (*DesktopLink, error)
+
+// SocketDesktopBinder binds over the link service's socket.
+func SocketDesktopBinder(socket string) DesktopBinder {
+	c := desktop.Client{Socket: socket}
+	return func(ctx context.Context, req desktop.BindRequest) (*DesktopLink, error) {
+		b, err := c.Bind(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		return BoundDesktopLink(c, req.Run, b), nil
+	}
+}
+
+// PersistentDesktopLink binds a persistent agent's segment, lazily: the
+// applications need not be running. With no Agentry Desktop answering, the
+// segment starts all the same with the catalogue's tools, and binds at its
+// first call; until one answers, each call is refused desktop-unavailable.
+// A refusal of the bind is the segment's refusal.
+func PersistentDesktopLink(ctx context.Context, bind DesktopBinder, req desktop.BindRequest, d *spec.DesktopCap) (*DesktopLink, error) {
+	req.Lazy = true
+	link, err := bind(ctx, req)
+	if err == nil {
+		return link, nil
+	}
+	// The person's computer away (a runhost's agent with no device linked)
+	// is no Agentry Desktop answering, for now.
+	var r *desktop.Refusal
+	switch {
+	case errors.As(err, &r) && (r.Reason == receipt.DesktopUnreachable || r.Reason == receipt.DesktopUnavailable):
+	case errors.As(err, &r):
+		return nil, DesktopBindRefusal(d, r)
+	case !errors.Is(err, desktop.ErrNoService):
+		return nil, Classify(ExitCLI, fmt.Errorf("bind the agent to Agentry Desktop: %w", err))
+	}
+	return deferredDesktopLink(bind, req, d)
+}
+
+// deferredDesktopLink is a segment's binding while no Agentry Desktop
+// answers: the catalogue's tools, a token of the segment's own between its
+// relay and this process, and a bind at each call until one succeeds.
+func deferredDesktopLink(bind DesktopBinder, req desktop.BindRequest, d *spec.DesktopCap) (*DesktopLink, error) {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return nil, err
+	}
+	servers := map[string][]desktoplink.Tool{}
+	for _, s := range d.Servers {
+		for _, t := range s.Tools {
+			servers[s.ID] = append(servers[s.ID], desktoplink.Tool{Name: t.Name,
+				Description: s.Application + " on the person's computer, through Agentry Desktop",
+				InputSchema: json.RawMessage(`{"type":"object","additionalProperties":true}`)})
+		}
+	}
+	var mu sync.Mutex
+	var bound *DesktopLink
+	current := func(ctx context.Context) (*DesktopLink, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if bound != nil {
+			return bound, nil
+		}
+		l, err := bind(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		bound = l
+		return l, nil
+	}
+	link := &DesktopLink{
+		Token:   hex.EncodeToString(raw[:]),
+		Servers: servers,
+		FarEnd:  "Agentry Desktop, bound at the agent's first call (it was not running when the segment started)",
+	}
+	link.Call = func(ctx context.Context, c desktop.CallRequest) (desktoplink.Answer, error) {
+		l, err := current(ctx)
+		if err != nil {
+			var r *desktop.Refusal
+			if errors.As(err, &r) {
+				return desktoplink.Answer{}, r
+			}
+			return desktoplink.Answer{}, &desktop.Refusal{Reason: receipt.DesktopUnavailable, Server: c.Server,
+				Message: "Agentry Desktop is not running on the person's computer: they start it, and your next call reaches it"}
+		}
+		c.Token = l.Token
+		return l.Call(ctx, c)
+	}
+	link.Unbind = func(ctx context.Context) error {
+		mu.Lock()
+		l := bound
+		mu.Unlock()
+		if l == nil || l.Unbind == nil {
+			return nil
+		}
+		return l.Unbind(ctx)
+	}
+	if d.HasComputerUse() {
+		link.Computer = &desktop.ComputerBound{Scope: d.ComputerUse,
+			Enforced: "not stated: Agentry Desktop was not running when the segment started, and states what the computer enforces once it binds"}
+	}
+	return link, nil
 }
 
 // RelayedDesktopLink is a binding made on another computer and relayed to

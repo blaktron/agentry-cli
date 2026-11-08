@@ -42,7 +42,7 @@ func TestBuiltinCatalogsUnchanged(t *testing.T) {
 // toolchain; Agentry Helper the helper tools.
 func TestBuiltinsDeclareTheirOwnCapabilities(t *testing.T) {
 	want := map[string][]string{
-		Assistant().Ref(): {"clock", "memory", "skills", "secrets", "selfConfigure", "meetings", "helper", "calendars", "mail", "imageServers"},
+		Assistant().Ref(): {"clock", "memory", "skills", "secrets", "selfConfigure", "meetings", "desktop", "helper", "calendars", "mail", "imageServers"},
 		Coder().Ref():     {"skills", "secrets", "coder"},
 		Main().Ref():      {"helper"},
 	}
