@@ -572,6 +572,14 @@
           ]
         },
         {
+          "path": "cmd/agentry/scaffold_check_test.go",
+          "tests": [],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "cmd/agentry/testsupport_test.go",
           "tests": [],
           "fuzz": [],
@@ -964,12 +972,15 @@
             "TestPublishPollsToVerdict",
             "TestVerdictTable",
             "TestPublishEmptyIncludeRefused",
-            "TestPublishRetriesUploadWithSameKey"
+            "TestPublishRetriesUploadWithSameKey",
+            "TestPublishRefusesAScaffoldLineBeforeUploading"
           ],
           "fuzz": [],
           "benchmarks": [],
           "fixtureEntryPoint": false,
-          "dependencyHints": []
+          "dependencyHints": [
+            "source/file contract"
+          ]
         },
         {
           "path": "cmd/agentry/cmd_validate_test.go",
@@ -10005,6 +10016,19 @@
           "benchmarks": [],
           "fixtureEntryPoint": false,
           "dependencyHints": []
+        },
+        {
+          "path": "pkg/validate/unfinished_test.go",
+          "tests": [
+            "TestFindUnfinishedNamesEachScaffoldLine",
+            "TestWorkspaceRefusesUnfinishedOnlyWhenAsked"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
+          ]
         },
         {
           "path": "pkg/validate/validate_test.go",
