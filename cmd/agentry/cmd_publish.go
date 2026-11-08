@@ -50,7 +50,14 @@ func newPublishCmd() *cobra.Command {
 			"server re-validates and re-packs — client packing is never trusted.\n\n" +
 			"Progress streams from the registry (stage by stage) until published, rejected,\n" +
 			"or needs_review; registries without the stream are polled every 2s.\n" +
-			"Exits non-zero on rejection.\n\n" +
+			"It ends by saying what happened and where the version's report is: published, held for a human\n" +
+			"reviewer, or rejected with each finding (its rule, severity and location). Exit code: 0 published,\n" +
+			"20 held for review, 21 rejected, 2 refused before upload, 1 anything else. --json prints the same\n" +
+			"as one object on stdout (namespace, name, version, outcome, status, reason, archiveDigest,\n" +
+			"reportUrl, findings, createUrl), the narration on stderr.\n\n" +
+			"Before uploading, publish reads the registry's versions and refuses a version it would refuse:\n" +
+			"one already used, or not above every version on its channel. A first publish to a name with no\n" +
+			"record says where the record is created.\n\n" +
 			"An upload is refused before anything is sent while the package still carries a line a\n" +
 			"scaffold wrote for you to replace (`agentry validate` lists them).\n\n" +
 			"A release that ships knowledge packs (`agentry knowledge ship`) makes them readable by everyone who can\n" +
@@ -102,6 +109,15 @@ func runPublish(cmd *cobra.Command, dir, tag string, yes bool) error {
 		return err
 	}
 	out := cmd.OutOrStdout()
+	if flags.jsonOut {
+		out = cmd.ErrOrStderr() // the result on stdout, the narration on stderr
+	}
+	if err := versionIsNew(cmd.Context(), client, m, tag); err != nil {
+		if flags.jsonOut {
+			_ = emitJSON(cmd.OutOrStdout(), publishResult{Namespace: m.Namespace, Name: m.Name, Version: m.Version, Outcome: "not-newer", Reason: err.Error(), Findings: []publishFinding{}})
+		}
+		return err
+	}
 
 	var resp *apiclient.SubmitVersionResponse
 	if tag != "" {
@@ -118,12 +134,17 @@ func runPublish(cmd *cobra.Command, dir, tag string, yes bool) error {
 		return err
 	}
 	if resp.JSON202 == nil {
-		return namePacks(apiProblem("submit version", resp.StatusCode(), resp.ApplicationproblemJSONDefault, resp.Body), resp.Body)
+		problem := apiProblem("submit version", resp.StatusCode(), resp.ApplicationproblemJSONDefault, resp.Body)
+		if statusNotFound(resp.StatusCode()) {
+			return noRecord(cmd.OutOrStdout(), reg, m.Namespace, m.Name, m.Version, problem)
+		}
+		return namePacks(problem, resp.Body)
 	}
 	v := resp.JSON202
 	_, _ = fmt.Fprintf(out, "version %s accepted (status %s) — waiting for the pipeline verdict\n", v.Version, v.Status)
 
-	return waitVerdict(cmd.Context(), client, httpClient, reg, token, out, m.Namespace, m.Name, v)
+	final, err := waitVerdict(cmd.Context(), client, httpClient, reg, token, out, m.Namespace, m.Name, v)
+	return finishPublish(cmd.Context(), client, out, cmd.OutOrStdout(), reg, m.Namespace, m.Name, final, err)
 }
 
 // refuseUnfinished stops a publish whose shipped files still carry a line
@@ -254,29 +275,29 @@ func newIdempotencyKey() (string, error) {
 
 // pollVerdict polls the version until it reaches a terminal state, printing
 // every status change.
-func pollVerdict(ctx context.Context, client *apiclient.ClientWithResponses, out io.Writer, ns, name string, v *apiclient.AgentVersion) error {
+func pollVerdict(ctx context.Context, client *apiclient.ClientWithResponses, out io.Writer, ns, name string, v *apiclient.AgentVersion) (*apiclient.AgentVersion, error) {
 	deadline := time.Now().Add(publishPollBudget)
 	last := v.Status
 	cur := v
 	for {
 		if done, err := verdict(out, ns, name, cur); done {
-			return err
+			return cur, err
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("version %s still %s after %s — check `agentry info %s/%s` later",
+			return nil, fmt.Errorf("version %s still %s after %s — check `agentry info %s/%s` later",
 				cur.Version, cur.Status, publishPollBudget, ns, name)
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return nil, ctx.Err()
 		case <-time.After(publishPollInterval):
 		}
 		resp, err := client.GetVersionInfoWithResponse(ctx, ns, name, v.Version)
 		if err != nil {
-			return fmt.Errorf("poll version %s: %w", v.Version, err)
+			return nil, fmt.Errorf("poll version %s: %w", v.Version, err)
 		}
 		if resp.JSON200 == nil {
-			return apiProblem("poll version "+v.Version, resp.StatusCode(), resp.ApplicationproblemJSONDefault, resp.Body)
+			return nil, apiProblem("poll version "+v.Version, resp.StatusCode(), resp.ApplicationproblemJSONDefault, resp.Body)
 		}
 		cur = resp.JSON200
 		if cur.Status != last {

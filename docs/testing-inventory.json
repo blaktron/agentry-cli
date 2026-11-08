@@ -557,6 +557,18 @@
           "dependencyHints": []
         },
         {
+          "path": "cmd/agentry/publish_outcome_test.go",
+          "tests": [
+            "TestPublishSaysWhatHappenedAndWhereToLook",
+            "TestPublishRefusesAVersionThatIsNotNewer",
+            "TestPublishJSON"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "cmd/agentry/run_context_window_test.go",
           "tests": [
             "TestRunContextWindow",
