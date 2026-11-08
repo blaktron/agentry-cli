@@ -556,6 +556,21 @@
           ]
         },
         {
+          "path": "cmd/agentry/help_test.go",
+          "tests": [
+            "TestNoFlagUsageCarriesABacktick",
+            "TestRootHelpOpensWithThePurposeAndTheDocs",
+            "TestEveryRootCommandHasAGroup",
+            "TestTheNewcomersCommandsCarryExamples",
+            "TestRunsDriverFlagsAreHiddenAndAccepted",
+            "TestUsageErrorsExitTwoWithAPointer"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "cmd/agentry/jsoncommands_test.go",
           "tests": [
             "TestRootHelpListsEveryJSONCommand",

@@ -109,7 +109,15 @@ func resolveProviderTarget(opts *installOpts) error {
 func newInstallCmd() *cobra.Command {
 	var opts installOpts
 	cmd := &cobra.Command{
-		Use:   "install <ns/name[@range]> | install --local DIR --allow-unsigned",
+		Use: "install <ns/name[@range]> | install --local DIR --allow-unsigned",
+		Example: `  # Install the newest 1.x release for agentry run
+  agentry install acme/pdf-summary@^1
+
+  # See what it would ask for, and install nothing
+  agentry install acme/pdf-summary --plan
+
+  # Install it as a Claude Code skill instead
+  agentry install acme/pdf-summary --provider claude`,
 		Short: "Resolve, download, verify, and install a QuickAgent on this machine",
 		Long: "Resolve ns/name[@range], download the release archive, verify its\n" +
 			"sha256 digest AND its DSSE attestation signature, show the declared\n" +
@@ -166,7 +174,7 @@ func newInstallCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&opts.local, "local", "", "install this QuickAgent folder, never published, into the runner home (unsigned: needs --allow-unsigned)")
-	cmd.Flags().StringVar(&opts.target, "target", "", "install target: runner | claude-skill | agents-md (default runner: the runner home, where `agentry run` reads it)")
+	cmd.Flags().StringVar(&opts.target, "target", "", "install target: runner | claude-skill | agents-md (default runner: the runner home, where agentry run reads it)")
 	cmd.Flags().StringVar(&opts.provider, "provider", "", "install for an agent application: claude | codex | openclaw (picks the target)")
 	cmd.Flags().StringVar(&opts.dir, "dir", "", "override the target directory for claude-skill and agents-md (see help for per-target defaults); the runner target has one home")
 	cmd.Flags().BoolVar(&opts.yes, "yes", false, "skip the capability confirmation prompt (CI)")
