@@ -246,10 +246,10 @@ func newRunCmd() *cobra.Command {
 				return printAdapters(cmd)
 			}
 			if opts.noDestination && len(opts.destinations) > 0 {
-				return engine.Classify(engine.ExitUsage, errors.New("--no-destination and --destination exclude each other"))
+				return usageError(cmd, errors.New("--no-destination and --destination exclude each other"))
 			}
 			if opts.destinationsFile != "" && (opts.noDestination || len(opts.destinations) > 0) {
-				return engine.Classify(engine.ExitUsage, errors.New("--destinations-file excludes --destination and --no-destination: a host hands a run its destinations in the file alone"))
+				return usageError(cmd, errors.New("--destinations-file excludes --destination and --no-destination: a host hands a run its destinations in the file alone"))
 			}
 			ref := ""
 			if len(args) == 1 {

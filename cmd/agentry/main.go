@@ -66,7 +66,7 @@ func main() {
 		os.Exit(1)
 	}
 	root := newRootCmd()
-	if ran, err := root.ExecuteContextC(ctx); err != nil {
+	if _, err := root.ExecuteContextC(ctx); err != nil {
 		err = asUsageError(root, err)
 		// A run failure the run command has already explained is not
 		// printed a second time.
@@ -74,7 +74,7 @@ func main() {
 		if !errors.As(err, &reported) {
 			printCommandError(os.Stderr, err)
 		}
-		printUsagePointer(os.Stderr, err, ran)
+		printUsagePointer(os.Stderr, err)
 		// `agentry run` classifies its failures so pipelines and
 		// cron can branch on the exit code; everything else keeps
 		// the traditional 1.
