@@ -238,6 +238,9 @@ type fakeRegistry struct {
 	advisories      map[string][]map[string]any
 	advisoryStatus  int
 	advisoryQueries []url.Values
+	// managedEnv is the signed managed settings document GET
+	// /user/managed-settings answers; nil answers 204, none apply.
+	managedEnv *attest.DSSEEnvelope
 }
 
 // newFakeRegistry starts the fake and wires every route. Unknown agents and
@@ -539,6 +542,21 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 			digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 		}
 		writeJSON(w, http.StatusOK, fr.signDSSE(attest.BuildRulesetStatement(fr.srv.URL, fr.bundleVer, digest)))
+	})
+
+	mux.HandleFunc("GET /api/v1/user/managed-settings", func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer agy_") {
+			writeProblem(w, http.StatusUnauthorized, "invalid token", "the credential was not accepted")
+			return
+		}
+		fr.mu.Lock()
+		env := fr.managedEnv
+		fr.mu.Unlock()
+		if env == nil {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		writeJSON(w, http.StatusOK, env)
 	})
 
 	mux.HandleFunc("GET /.well-known/agentry/signing-keys.json", func(w http.ResponseWriter, _ *http.Request) {

@@ -97,6 +97,7 @@ PURPOSES = {
     "pkg/runner/unsafeexec": "The data side of Unsafe Mode: the unsafe base image's command index, extras list and ambiguous list, read",
     "pkg/schedule": "The schedules of runs on this computer: when a QuickAgent runs again, the store that is the truth about",
     "pkg/termtext": "Prepares author text (a release guide's overview and key help, the Drafter's narration) for a terminal",
+    "pkg/managed": "A client's copy of an organization's managed settings: fetched with the account's token, verified against the",
     "pkg/trust": "The shared client-side provenance layer: fetch a registry's signing keys, pin them on first use (TOFU)",
     "pkg/tui": "The terminal chat for an interactive run: one full-screen conversation over a session.Session — transcript",
     "pkg/validate": "`agentry validate`'s workspace check: offline parity with the server's submit validation — every manifest",

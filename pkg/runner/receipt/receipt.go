@@ -144,6 +144,19 @@ type Envelope struct {
 	// id there. The rest of the envelope is that CLI's own. Absent for a run
 	// on this computer.
 	Runhost *Runhost `json:"runhost,omitempty"`
+	// Managed are the organizations' managed settings the run's plan was
+	// compiled under, one entry a document: the organization, the version
+	// and the ids of the settings that applied. A setting's value is never
+	// recorded. Absent when none applied.
+	Managed []Managed `json:"managed,omitempty"`
+}
+
+// Managed is one organization's managed settings document as a receipt
+// records it.
+type Managed struct {
+	Organization string   `json:"organization"`
+	Version      int64    `json:"version"`
+	Applied      []string `json:"applied,omitempty"`
 }
 
 // Runhost is the envelope's record of the remote runhost a run ran on.

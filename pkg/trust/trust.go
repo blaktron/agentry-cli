@@ -360,6 +360,19 @@ func normalizeRegistry(registryURL string) string {
 	return n
 }
 
+// NormalizeRegistry is the address every spelling of one registry shares:
+// the scheme and host in lower case and no trailing slash. A client
+// compares a registry it is signed in to with one a signed document names
+// in this form.
+func NormalizeRegistry(registryURL string) string { return normalizeRegistry(registryURL) }
+
+// RegistryFileStem is a file name, without an extension, that is injective
+// in the registry's normalised address: the pin file's name, for files a
+// client keeps per registry beside the pins.
+func RegistryFileStem(registryURL string) string {
+	return strings.TrimSuffix(pinFileName(registryURL), ".yaml")
+}
+
 // pinFileName is the name of registryURL's pin file.
 func pinFileName(registryURL string) string {
 	n := normalizeRegistry(registryURL)
@@ -462,6 +475,17 @@ func writeNewFile(path string, data []byte) error {
 // LoadPinned reads the pinned set (empty when nothing is pinned yet).
 func LoadPinned(registryURL string) (KeySet, error) {
 	path, err := pinnedFile(registryURL)
+	if err != nil {
+		return KeySet{}, err
+	}
+	return loadPinnedFile(path)
+}
+
+// LoadOwnPinned reads registryURL's own pinned set, whatever
+// AGENTRY_PIN_REGISTRY names: for a document a registry signs about its own
+// members, which only that registry's keys may verify.
+func LoadOwnPinned(registryURL string) (KeySet, error) {
+	path, err := pinFile(registryURL)
 	if err != nil {
 		return KeySet{}, err
 	}

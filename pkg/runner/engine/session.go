@@ -80,9 +80,10 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 			ImagePin:       p.Plan.Harness.ImagePin.String(),
 			CredentialKind: credentialKind(p.Plan),
 		},
-		Policy: policyRecord(p),
-		Result: receipt.TextResult(""),
-		OutDir: p.OutDir,
+		Policy:  policyRecord(p),
+		Result:  receipt.TextResult(""),
+		OutDir:  p.OutDir,
+		Managed: managedRecord(p.Plan),
 	}
 	if ps := p.Persistent; ps != nil {
 		env.Persistent = &receipt.Persistent{
@@ -97,6 +98,10 @@ func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	}
 	receiptsDir := filepath.Join(p.OutDir, "receipts")
 	env.Receipts = receipt.Receipts{Dir: receiptsDir, RunPlanSHA256: planHash}
+	if err := checkManaged(p); err != nil {
+		_, cerr := fail(env, nil, err)
+		return nil, cerr
+	}
 
 	// The engine, and where the run's docker filter runs on it, before
 	// anything touches the daemon.

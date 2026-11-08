@@ -612,6 +612,11 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		}
 	}
 	opts.progress.at(receipt.StageCompile)
+	// The organization's managed settings are read again before the
+	// compile, which applies them, unless they were read within the hour.
+	if !hostedFor(opts) {
+		syncManaged(cmd, registryURL())
+	}
 	// A model of the person's own with no window in the policy is asked for
 	// it now, for this run only.
 	windowSource := runContextWindow(cmd.Context(), cmd.ErrOrStderr(), pol)

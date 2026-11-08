@@ -539,6 +539,7 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 			reflect.DeepEqual(plan.Capabilities.Coder, in.Coder) &&
 			reflect.DeepEqual(plan.Capabilities.Calendar, in.Calendar) &&
 			screenStillAllowed(plan, in.AllowScreen) &&
+			reflect.DeepEqual(plan.Managed, compile.CurrentManagedSpecs()) &&
 			reflect.DeepEqual(plan.Harness.ContextWindow, spec.ContextWindowOf(in.Policy.Model.ContextWindow, in.ContextWindowSource)) &&
 			sameServers(plan.MCPServers, in.Servers, in.ShareServers) {
 			switch {

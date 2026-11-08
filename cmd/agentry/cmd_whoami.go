@@ -12,6 +12,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/blaktron/agentry/pkg/apiclient"
+
+	"github.com/blaktron/agentry-cli/pkg/managed"
 )
 
 // newWhoamiCmd builds the whoami command: the registry, the account the
@@ -140,6 +142,9 @@ func runWhoami(cmd *cobra.Command, _ []string) error {
 		if accountErr != nil {
 			doc["accountError"] = accountErr.Error()
 		}
+		if st, err := managed.Load(reg); err == nil && st != nil {
+			doc["managedSettings"] = map[string]any{"organization": st.Document.Org, "version": st.Document.Version}
+		}
 		enc := json.NewEncoder(cmd.OutOrStdout())
 		enc.SetIndent("", "  ")
 		return enc.Encode(doc)
@@ -147,6 +152,9 @@ func runWhoami(cmd *cobra.Command, _ []string) error {
 	out := cmd.OutOrStdout()
 	_, _ = fmt.Fprintf(out, "registry: %s\nhandle:   %s\nemail:    %s\n", reg, u.Handle, u.Email)
 	writeOrgs(out, u)
+	if line := managedLine(reg); line != "" {
+		_, _ = fmt.Fprintln(out, line)
+	}
 	switch {
 	case acct != nil:
 		writeSubscription(out, acct)
