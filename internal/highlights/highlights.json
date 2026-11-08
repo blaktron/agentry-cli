@@ -1,6 +1,15 @@
 {
   "versions": [
     {
+      "version": "0.7.34",
+      "highlights": [
+        "The Assistant can use applications on your computer, such as Blender, once you switch each one on.",
+        "A switch takes effect at the agent's next turn; opening or closing the application restarts nothing.",
+        "Code the agent runs inside an application asks you first, unless you switch on its own agreement.",
+        "An agent on your runhost reaches your computer through Agentry Desktop while it runs."
+      ]
+    },
+    {
       "version": "0.7.33",
       "highlights": [
         "A QuickAgent that uses an application on your computer can run on your own runhost with --on.",

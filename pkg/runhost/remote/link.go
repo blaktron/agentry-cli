@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sync"
 	"time"
 
@@ -230,4 +231,82 @@ func refusalOf(err error) *desktop.Refusal {
 		return r
 	}
 	return &desktop.Refusal{Reason: receipt.DesktopUnreachable, Message: DesktopUnreachableMessage}
+}
+
+// AgentsLinkID is the link verb's argument for a runhost's agents link:
+// KeepLink with it holds the session that carries the runhost's agents'
+// binds and calls to this computer.
+const AgentsLinkID = "agents"
+
+// AgentsForward answers a runhost's agents link with bind, a binder of this
+// computer's Agentry Desktop: an agent's lazy bind binds here and the
+// binding is kept by its run, a call goes to the binding of its run with the
+// token it was given, an unbind ends it. Anything else is refused without
+// reaching Agentry Desktop. close unbinds every binding still held, once
+// the link is given up.
+func AgentsForward(bind engine.DesktopBinder) (forward LinkForward, close func()) {
+	var mu sync.Mutex
+	held := map[string]*engine.DesktopLink{}
+	forward = func(ctx context.Context, m desktop.Message) desktop.Message {
+		switch {
+		case m.Bind != nil && m.Call == nil && m.Unbind == nil && m.Bound == nil && m.Answer == nil && m.Refused == nil && !m.OK:
+			req := *m.Bind
+			if !req.Lazy || req.Agent == "" || req.Run == "" {
+				return desktop.Message{Refused: desktop.NotRelayed()}
+			}
+			// A runhost names no folder of this computer's, and its word is
+			// not the person's agreement: the agent's code calls always ask
+			// here.
+			req.Reports = ""
+			req.Servers = slices.Clone(req.Servers)
+			for i := range req.Servers {
+				req.Servers[i].ExecAgreed = false
+			}
+			link, err := bind(ctx, req)
+			if err != nil {
+				return desktop.Message{Refused: refusalOf(err)}
+			}
+			mu.Lock()
+			if old := held[req.Run]; old != nil && old.Unbind != nil {
+				_ = old.Unbind(ctx)
+			}
+			held[req.Run] = link
+			mu.Unlock()
+			return desktop.Message{Bound: &desktop.Bound{Token: link.Token, Servers: link.Servers, Computer: link.Computer}}
+		case m.Call != nil && m.Bind == nil && m.Unbind == nil:
+			mu.Lock()
+			link := held[m.Call.Run]
+			mu.Unlock()
+			if link == nil {
+				return desktop.Message{Refused: &desktop.Refusal{Reason: receipt.DesktopUnavailable, Message: DesktopUnreachableMessage}}
+			}
+			return BindingForward(link, m.Call.Run)(ctx, m)
+		case m.Unbind != nil && m.Bind == nil && m.Call == nil:
+			mu.Lock()
+			link := held[m.Unbind.Run]
+			if link != nil && link.Token == m.Unbind.Token {
+				delete(held, m.Unbind.Run)
+			}
+			mu.Unlock()
+			if link == nil {
+				return desktop.Message{OK: true}
+			}
+			return BindingForward(link, m.Unbind.Run)(ctx, m)
+		}
+		return desktop.Message{Refused: desktop.NotRelayed()}
+	}
+	close = func() {
+		mu.Lock()
+		links := held
+		held = map[string]*engine.DesktopLink{}
+		mu.Unlock()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		for _, l := range links {
+			if l.Unbind != nil {
+				_ = l.Unbind(ctx)
+			}
+		}
+	}
+	return forward, close
 }

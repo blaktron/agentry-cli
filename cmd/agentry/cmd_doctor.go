@@ -195,6 +195,8 @@ func runDoctor(cmd *cobra.Command, ref string, opts doctorOpts) error {
 	// there unless the install is already cached).
 	doctorRegistry(cmd.Context(), rep)
 	doctorPath(rep)
+	// The person's computer, as a run that uses it finds it.
+	doctorDesktop(rep, home, m)
 
 	// 4. The agent's declared commands against the catalog (a located
 	// manifest is enough), then its store, profile and secrets.

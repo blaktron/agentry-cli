@@ -51,9 +51,15 @@ var runhostLinkFirstWait = 2 * time.Minute
 
 // runhostLink is one job's desktop link.
 type runhostLink struct {
-	// run is the run the device bound, which every message names.
+	// run is the run the device bound, which every message names. A
+	// runhost's agents link has no job, device or run of its own: any
+	// paired device may hold it, and it carries its agents' binds.
 	job, device, run string
-	ln               net.Listener
+	// allow says a message on the socket crosses to the device.
+	allow func(desktop.Message) bool
+	// away is the refusal while no device holds the link.
+	away func() desktop.Message
+	ln   net.Listener
 
 	mu      sync.Mutex
 	current *runhostLinkSession
@@ -81,7 +87,9 @@ func openRunhostLink(ctx context.Context, j *job.Job, dir string) (*runhostLink,
 	if err != nil {
 		return nil, "", fmt.Errorf("the job's desktop link socket: %w", err)
 	}
-	l := &runhostLink{job: j.ID, device: j.Device, run: j.Run.Desktop.Run, ln: ln, linked: make(chan struct{}), done: make(chan struct{})}
+	run := j.Run.Desktop.Run
+	l := &runhostLink{job: j.ID, device: j.Device, run: run, ln: ln, linked: make(chan struct{}), done: make(chan struct{}),
+		allow: func(m desktop.Message) bool { return desktop.RelayedCallOnly(m, run) }, away: unreachable}
 	l.wg.Add(1)
 	go func() {
 		defer l.wg.Done()
@@ -139,7 +147,7 @@ func (l *runhostLink) answer(ctx context.Context, c net.Conn) {
 	_ = c.SetReadDeadline(time.Time{})
 	var ans desktop.Message
 	m, err := desktop.ReadMessage(bytes.TrimSpace(sc.Bytes()))
-	if err != nil || !desktop.RelayedCallOnly(m, l.run) {
+	if err != nil || !l.allow(m) {
 		ans.Refused = desktop.NotRelayed()
 	} else {
 		ans = l.forward(ctx, m)
@@ -186,7 +194,7 @@ func (l *runhostLink) session(ctx context.Context) *runhostLinkSession {
 func (l *runhostLink) forward(ctx context.Context, m desktop.Message) desktop.Message {
 	s := l.session(ctx)
 	if s == nil {
-		return unreachable()
+		return l.away()
 	}
 	b, err := json.Marshal(m)
 	if err != nil {
@@ -226,9 +234,9 @@ func (l *runhostLink) forward(ctx context.Context, m desktop.Message) desktop.Me
 	return unreachable()
 }
 
-// attach holds one link session from the device: it replaces any earlier
-// one of the same device (a reconnect; the old session's calls in flight are
-// refused), says the link is open with a
+// attach holds one link session from a device: it replaces any earlier
+// one (a reconnect, or on the agents link another paired device taking it
+// over; the old session's calls in flight are refused), says the link is open with a
 // started frame, takes the device's answers from in, and returns when the
 // job ends, the device leaves, or the service stops.
 func (l *runhostLink) attach(ctx context.Context, fw *runhost.FrameWriter, in io.Reader) (int, error) {
@@ -275,9 +283,13 @@ func (l *runhostLink) attach(ctx context.Context, fw *runhost.FrameWriter, in io
 			if err != nil {
 				continue
 			}
-			// Only an answer, a refusal or an unbind's ok goes back to the
-			// run.
-			m = desktop.Message{Answer: m.Answer, Refused: m.Refused, OK: m.OK}
+			// Only an answer, a refusal, an unbind's ok and, on the agents
+			// link, an agent's binding go back.
+			bound := m.Bound
+			if l.run != "" {
+				bound = nil
+			}
+			m = desktop.Message{Answer: m.Answer, Refused: m.Refused, OK: m.OK, Bound: bound}
 			s.deliver(a.ID, m)
 		}
 	}()
@@ -317,8 +329,17 @@ func (s *runhostLinkSession) deliver(id string, m desktop.Message) {
 // runhostLinkVerb answers `link <job>`: the device that started the job,
 // and no other, holds the job's desktop link open on this session.
 func runhostLinkVerb(ctx context.Context, req runhost.Request, in io.Reader, fw *runhost.FrameWriter) (int, error) {
+	if len(req.Args) == 1 && req.Args[0] == runhostAgentsLinkArg {
+		if req.Device == "" {
+			return engine.ExitUsage, errors.New("the agents' desktop link is opened by a paired device over its own run key, and this key names no device")
+		}
+		if runhostAgents == nil {
+			return runhost.LinkExitNoJob, errors.New("this runhost's service serves no agents' link")
+		}
+		return runhostAgents.attach(ctx, fw, in)
+	}
 	if len(req.Args) != 1 || !job.ValidID(req.Args[0]) {
-		return engine.ExitUsage, errors.New("link takes a job's id")
+		return engine.ExitUsage, errors.New("link takes a job's id, or agents")
 	}
 	if req.Device == "" {
 		return engine.ExitUsage, errors.New("a job's desktop link is opened by the device that started the job, over its own run key, and this key names no device")
@@ -346,3 +367,76 @@ func runhostRelayedDesktop(j *job.Job, sock string) desktop.Relayed {
 	return desktop.Relayed{Socket: sock, Run: j.Run.Desktop.Run, Bound: j.Run.Desktop.Bound,
 		Via: "Agentry Desktop on the device that started the job (device " + j.Device + "), over the link session that device opened to this runhost with its run key and keeps open while the run lasts, through the runhost service's owner-only socket " + sock + " (the runhost opens no connection towards the device; with no link session open, a call is refused desktop-unreachable)"}
 }
+
+// The runhost's agents link. A persistent agent on a runhost binds its
+// segments to Agentry Desktop over the runner home's link socket, as on a
+// person's computer; on a runhost the service serves that socket, and
+// carries each of its agents' messages (a lazy bind for an agent, a call,
+// an unbind) to the device whose Agentry Desktop holds the link session
+// `link agents` open. With none open, a bind or a call is refused
+// desktop-unreachable: the agent starts with the catalogue's tools, and its
+// calls are refused until a device links it.
+
+// runhostAgentsLinkArg is the link verb's argument for the agents link.
+const runhostAgentsLinkArg = "agents"
+
+// awayFromAgents is the refusal of an agent's bind or call with no device
+// linked.
+func awayFromAgents() desktop.Message {
+	return desktop.Message{Refused: &desktop.Refusal{Reason: receipt.DesktopUnreachable,
+		Message: "the person's computer is away: Agentry Desktop links this runhost's agents while it runs there, and the agent's next call reaches it once it does"}}
+}
+
+// agentMessage says m is one an agents link carries: an agent's lazy bind,
+// or a call or an unbind with a run and a token.
+func agentMessage(m desktop.Message) bool {
+	switch {
+	case m.Bound != nil || m.Answer != nil || m.Refused != nil || m.OK:
+		return false
+	case m.Bind != nil && m.Call == nil && m.Unbind == nil:
+		return m.Bind.Lazy && m.Bind.Agent != "" && m.Bind.Run != ""
+	case m.Call != nil && m.Bind == nil && m.Unbind == nil:
+		return m.Call.Run != "" && m.Call.Token != ""
+	case m.Unbind != nil && m.Bind == nil && m.Call == nil:
+		return m.Unbind.Run != "" && m.Unbind.Token != ""
+	}
+	return false
+}
+
+// openAgentsLink serves the runner home's link socket for the runhost's
+// agents until ctx is done. A socket already there from an earlier start
+// is replaced.
+func openAgentsLink(ctx context.Context, home string) (*runhostLink, error) {
+	sock := desktop.SocketPath(home)
+	if err := os.MkdirAll(filepath.Dir(sock), 0o700); err != nil {
+		return nil, err
+	}
+	// A socket something answers on is another's (an Agentry Desktop on
+	// this computer): it is left alone. One no one answers is a stale one.
+	if c, err := net.DialTimeout("unix", sock, time.Second); err == nil {
+		_ = c.Close()
+		return nil, fmt.Errorf("%s is served already, by Agentry Desktop on this computer: the runhost's agents reach it directly", sock)
+	}
+	if err := os.Remove(sock); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	ln, err := runhost.ListenOwnerOnly(sock)
+	if err != nil {
+		return nil, fmt.Errorf("the agents' desktop link socket: %w", err)
+	}
+	l := &runhostLink{job: runhostAgentsLinkArg, ln: ln, linked: make(chan struct{}), done: make(chan struct{}),
+		allow: agentMessage, away: awayFromAgents, ever: true}
+	l.wg.Add(1)
+	go func() {
+		defer l.wg.Done()
+		l.serve(ctx)
+	}()
+	go func() {
+		<-ctx.Done()
+		l.close()
+	}()
+	return l, nil
+}
+
+// runhostAgents is the service's agents link, set once the service starts.
+var runhostAgents *runhostLink

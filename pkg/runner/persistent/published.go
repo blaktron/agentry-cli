@@ -242,7 +242,7 @@ func agentOf(home, key string, r Release) (Agent, error) {
 	if err != nil {
 		return a, fmt.Errorf("the release of %s@%s: %w", r.Ref, r.Version, err)
 	}
-	a.Packs, a.Caps = m.ShippedPacks(), m.Capabilities.Persistent
+	a.Packs, a.Caps, a.DesktopLine = m.ShippedPacks(), m.Capabilities.Persistent, m.Capabilities.Desktop
 	if m.Persona != nil {
 		p, err := readPersona(filepath.Join(dir, "workspace"), m)
 		if err != nil {

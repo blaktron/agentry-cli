@@ -69,6 +69,13 @@ type BindRequest struct {
 	// Agent names a persistent agent the binding is for, for the link
 	// service's dialogs; empty for a run.
 	Agent string `json:"agent,omitempty"`
+	// Lazy binds a persistent agent's segment: an application need not be
+	// running now, since whether it is is read at each call, which is
+	// refused desktop-not-installed, with the step to take, while it is
+	// not. The link service lists each server's tools as its installed
+	// server lists them when it can start it, else as the catalogue names
+	// them.
+	Lazy bool `json:"lazy,omitempty"`
 	// ComputerUse is "app" or "screen" where the release declares computer
 	// use, with the computer-use tools the run has: the link service binds
 	// it in that scope or refuses the bind.
@@ -89,6 +96,10 @@ const ReportsFolder = "reports/desktop"
 type BindServer struct {
 	ID    string   `json:"id"`
 	Tools []string `json:"tools"`
+	// ExecAgreed says the person agreed that the server's tools that run
+	// code run without asking each time (a persistent agent's switch); a
+	// run's exec calls always ask.
+	ExecAgreed bool `json:"execAgreed,omitempty"`
 }
 
 // Bound is a bind's answer: the run token every call carries, and each

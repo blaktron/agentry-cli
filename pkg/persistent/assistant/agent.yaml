@@ -1,7 +1,7 @@
 schemaVersion: "2"
 name: assistant
 namespace: agentry
-version: 1.19.0
+version: 1.20.1
 summary: "A personal assistant that keeps its conversation with you across sessions, on your computer."
 license: MIT
 authors:
@@ -26,6 +26,7 @@ capabilities:
     selfConfigure: true
     helper: true
     meetings: true
+    desktop: true
     calendars: true
     mail: [google, microsoft, fastmail]
     imageServers: [google-workspace, microsoft-365]

@@ -34,7 +34,12 @@ func desktopCap(d *manifest.Desktop, in Inputs) (*spec.DesktopCap, error) {
 	if d == nil {
 		return nil, nil
 	}
-	if in.Web || in.Review || in.Source == "builtin" {
+	// A persistent agent that declares the person's computer is given what
+	// its roster has on, beside whatever else it declares; any other
+	// built-in, and a run beside the built-ins' web tools or review grant,
+	// never is.
+	persistent := in.Mode == manifest.ModePersistent && in.Manifest != nil && in.Manifest.Capabilities.Persistent.Declares("desktop")
+	if !persistent && (in.Web || in.Review || in.Source == "builtin") {
 		return nil, &PolicyRefusal{Reason: "a built-in is never granted an application on your computer, nor is one granted beside the web tools or the review grant"}
 	}
 	if !in.Policy.Desktop.Allowed() {
