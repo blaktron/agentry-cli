@@ -21,6 +21,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/connection"
+	"github.com/blaktron/agentry-cli/pkg/runner/desktop"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/gateway"
@@ -372,6 +373,12 @@ type Grants struct {
 	// Accounts are the Coding agent's git host accounts the roster has on,
 	// each with its token, given to its programs with its commands on.
 	Accounts []Account
+	// Desktop is the desktop line the roster's entries that are on make:
+	// the application servers on the person's computer and computer use;
+	// nil for none. DesktopExec are the servers whose code tools the person
+	// agreed to without being asked each time.
+	Desktop     *manifest.Desktop
+	DesktopExec []string
 	// ImageServers are the built-in's image servers the roster has on and
 	// the person signed in, each with the switches it has on and its
 	// volume; their secret slots are among ServerSecrets.
@@ -573,6 +580,10 @@ type Segment struct {
 	// once for the agent's life and renews and ends it itself, so the
 	// grant carries no Renew or End.
 	Inference *engine.InferenceGrant
+	// BindDesktop binds a segment the roster gives the person's computer
+	// to Agentry Desktop: in the app's own process for an agent it
+	// supervises; nil binds over the link socket in Home.
+	BindDesktop engine.DesktopBinder
 }
 
 // Start starts the segment: materialize, validate, plan the persistent mode,
@@ -636,6 +647,15 @@ func (s Segment) Start(ctx context.Context, d dockerx.Client) (engine.Persistent
 			return nil, engine.Classify(engine.ExitCLI, fmt.Errorf("the dependency databases' folder: %w", err))
 		}
 	}
+	// The person's computer: bound lazily, so an application that is not
+	// running is read at each call, and a segment starts without Agentry
+	// Desktop answering. The engine unbinds at teardown.
+	var desktopLink *engine.DesktopLink
+	if d := plan.Capabilities.Desktop; d != nil {
+		if desktopLink, err = s.bindDesktop(ctx, plan); err != nil {
+			return nil, err
+		}
+	}
 	var answers *intake.Answers
 	if h := s.Grants.DevHost; h != nil {
 		answers = &intake.Answers{Hosts: map[string]*targethost.Host{spec.DevHostID: h}}
@@ -652,6 +672,7 @@ func (s Segment) Start(ctx context.Context, d dockerx.Client) (engine.Persistent
 		SecretOverrides: s.secretOverrides(), WithheldSecrets: slices.Clone(s.Grants.WithheldSecrets),
 		AccountTokens: s.accountTokens(), CalendarURLs: s.calendarURLs(),
 		Voice: s.Grants.Voice, Web: s.Grants.Web, Review: s.Grants.Review,
+		Desktop:    desktopLink,
 		Persistent: &seg,
 	})
 	if err != nil {
@@ -906,6 +927,31 @@ func (s Segment) shareServers() []string {
 	return slices.Clone(s.Grants.ShareServers)
 }
 
+// bindDesktop binds the segment to Agentry Desktop for its plan's desktop
+// line, each server's exec agreement as the roster has it.
+func (s Segment) bindDesktop(ctx context.Context, plan *spec.Plan) (*engine.DesktopLink, error) {
+	d := plan.Capabilities.Desktop
+	req := engine.DesktopBindRequest(d, s.RunID, plan.Ref, plan.Digest, s.OutDir)
+	req.Agent = s.Persistent.Agent
+	for i := range req.Servers {
+		req.Servers[i].ExecAgreed = slices.Contains(s.Grants.DesktopExec, req.Servers[i].ID)
+	}
+	bind := s.BindDesktop
+	if bind == nil {
+		bind = engine.SocketDesktopBinder(desktop.SocketPath(s.Home))
+	}
+	return engine.PersistentDesktopLink(ctx, bind, req, d)
+}
+
+// withDesktop is the manifest with the desktop line the roster's entries
+// that are on make, in place of its own: the release's line, when it has
+// one, only narrows what the roster offers.
+func (s Segment) withDesktop(m *manifest.Manifest) *manifest.Manifest {
+	out := *m
+	out.Capabilities.Desktop = s.Grants.Desktop
+	return &out
+}
+
 // withServers is the built-in's manifest with the servers the person added
 // and has on declared beside its own, so they compile, are consented and
 // are held as a release's declared servers are. The built-in's own files
@@ -1088,7 +1134,7 @@ func (s Segment) Plan(ctx context.Context, logw io.Writer) (*SegmentPlan, error)
 	if err := s.checkManifest(meta.Ref, m); err != nil {
 		return nil, err
 	}
-	m = s.withServers(m)
+	m = s.withDesktop(s.withServers(m))
 	adapterName := ImageAdapter(adapter.DefaultFor(s.Policy))
 	ad, err := adapter.Get(adapterName)
 	if err != nil {

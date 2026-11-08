@@ -222,3 +222,54 @@ func TestARunhostJobRelaysTheDesktopBindingToItsRun(t *testing.T) {
 		t.Fatalf("relayed %+v", r)
 	}
 }
+
+// A runhost's agents bind over the runner home's link socket, which the
+// service serves: with no device linked a bind is refused as the person's
+// computer away; a device that links carries an agent's lazy bind and its
+// calls; a run's bind (not lazy, no agent) never crosses.
+func TestARunhostsAgentsReachTheLinkedDevice(t *testing.T) {
+	home, err := os.MkdirTemp("", "ah")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	l, err := openAgentsLink(ctx, home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := runhostAgents
+	runhostAgents = l
+	t.Cleanup(func() { runhostAgents = old })
+	sock := desktop.SocketPath(home)
+	lazy := desktop.Message{Bind: &desktop.BindRequest{Run: "seg-1", Agent: "Assistant", Lazy: true, Servers: []desktop.BindServer{{ID: "blender"}}}}
+	if ans := linkCall(t, sock, lazy); ans.Refused == nil || ans.Refused.Reason != receipt.DesktopUnreachable {
+		t.Fatalf("an agent's bind with no device linked: %+v", ans)
+	}
+	if code, err := runhostLinkVerb(ctx, runhost.Request{Verb: "link", Args: []string{"agents"}}, nil, runhost.NewFrameWriter(io.Discard)); code != engine.ExitUsage || err == nil {
+		t.Fatalf("an agents link from a key naming no device: %d %v", code, err)
+	}
+	d := openLinkSession(t, runhost.Request{Verb: "link", Args: []string{"agents"}, Device: "device-a"})
+	if f := d.next(t); f.Type != runhost.FrameStarted || f.Text != "agents" {
+		t.Fatalf("the agents link opened with %+v", f)
+	}
+	if ans := linkCall(t, sock, desktop.Message{Bind: &desktop.BindRequest{Run: "run-1", Servers: []desktop.BindServer{{ID: "blender"}}}}); ans.Refused == nil || ans.Refused.Reason != "not-a-message" {
+		t.Fatalf("a run's bind on the agents link: %+v", ans)
+	}
+	got := make(chan desktop.Message, 1)
+	go func() { got <- linkCall(t, sock, lazy) }()
+	f := d.next(t)
+	m, err := desktop.ReadMessage(f.Result)
+	if f.Type != runhost.FrameLink || err != nil || m.Bind == nil || !m.Bind.Lazy || m.Bind.Agent != "Assistant" {
+		t.Fatalf("the bind crossed as %+v (%v)", f, err)
+	}
+	answer, _ := json.Marshal(desktop.Message{Bound: &desktop.Bound{Token: "t1"}})
+	if err := json.NewEncoder(d.in).Encode(runhost.LinkAnswer{ID: f.Text, Message: answer}); err != nil {
+		t.Fatal(err)
+	}
+	if a := <-got; a.Bound == nil || a.Bound.Token != "t1" {
+		t.Fatalf("the agent got %+v", a)
+	}
+	_ = d.in.Close()
+}

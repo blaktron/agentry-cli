@@ -67,13 +67,17 @@ type Agent struct {
 	// folder, what its release declares under capabilities.persistent
 	// (Declared), the persona and the knowledge packs its release ships,
 	// and the subagents it declares as they were pinned at its install.
-	Version   string
-	Source    string
-	Release   *localrun.Installed
-	Caps      *manifest.Persistent
-	Persona   *Persona
-	Packs     []string
-	Subagents []SubagentPin
+	Version string
+	Source  string
+	Release *localrun.Installed
+	Caps    *manifest.Persistent
+	// DesktopLine is a published agent's capabilities.desktop line, which
+	// narrows the applications and the computer use it is offered; nil
+	// offers the whole catalogue.
+	DesktopLine *manifest.Desktop
+	Persona     *Persona
+	Packs       []string
+	Subagents   []SubagentPin
 	// Registry is the registry a registry release came from, which its
 	// subagents run from; empty is this computer's default.
 	Registry string

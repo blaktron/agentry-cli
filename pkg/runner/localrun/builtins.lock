@@ -213,3 +213,7 @@ agentry/assistant@1.19.0 sha256:176c29608c84bcfab259b728f4649897166f8bc54a0fbe07
 agentry/report-designer@1.1.0 sha256:f38ab5c4665871ca58eda21ffe525ac2b77dc3a2c06d0f88d83522c40b14db66
 # 1.2.0, over 1.1.0: a design built from a document keeps its logo, its cover page's artwork and a custom cover modelled on its cover page; the guide says how, a PDF's pictures are read with its pages, crop_logo trims, and the application grants take_picture beside the five tools it had.
 agentry/report-designer@1.2.0 sha256:3b8a6d0abbcc17a4e9e329acc86d1915d243429c8246b7dd7b4d38649f11e0d4
+# 1.20.0, over 1.19.0: the Assistant declares the persistent capability desktop, so its roster offers the applications on the person's computer and computer use, each off until switched on; its instruction says how to use them.
+agentry/assistant@1.20.0 sha256:191104697848657401b27fcfbbf145c368228935c711d1523b0210be9990a593
+# 1.20.0, over 1.19.0: the drafting guide names the persistent capability desktop, the applications on the person's computer each one the person switches on, and to draft it only when the description asks for it.
+agentry/drafter@1.20.0 sha256:4f52e6a6c87ee0a5c2632a8205e16c108af1237e3bd0b3aeb431d5ee2bf62ca7

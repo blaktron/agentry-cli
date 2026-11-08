@@ -33,6 +33,7 @@ Add `"persistent"` to `modes` when the description asks for an agent that:
 | `secrets` | stored secrets the person keeps for it, a list of environment variable names | none |
 | `selfConfigure` | changing its own name and persona | `self_configure` |
 | `meetings` | notes in the meetings the person arms | `meeting_arm`, `meeting_list`, `meeting_cancel` |
+| `desktop` | the applications on the person's computer, through Agentry Desktop: each one the person switches on, and computer use; a `capabilities.desktop` line narrows which are offered | none of its own: each application the person switches on brings its tools |
 | `helper` | Agentry's helper tools: find, install, run and schedule QuickAgents; each install still asks the person | `registry_search`, `quickagent_show`, `quickagent_install`, `quickagent_run`, `run_result`, `installed_list`, `schedule_add`, `schedule_list`, `schedule_pause`, `schedule_remove`, `settings_open`, `docs_read` |
 | `web` | searching the web and reading pages | `web_search`, `web_read` |
 | `review` | AI Review with the person's own key | `ai_review` |
@@ -46,7 +47,7 @@ Rules the registry holds [src: web:https://docs.secureagentry.net/quickagents/]:
 - A key with a list (`secrets`, `mail`, `imageServers`) is declared by naming something. `secrets` are at most 32 environment variable names, each once, none also a key the release asks for at each run (`capabilities.secrets`). `mail` at `google` needs `imageServers` to name `google-workspace`, and at `microsoft` needs `microsoft-365`.
 - `coder` is never declared beside `web`, `review` or `calendars`.
 - The block declares something or is left out, and it is valid only beside the `persistent` mode.
-- Do not draft `coder`, `mail`, `imageServers`, `calendars`, `secrets` or `meetings` unless the description asks for what they give. A person who says "keeps notes" needs `memory`, not the web or a mail account.
+- Do not draft `coder`, `mail`, `imageServers`, `calendars`, `secrets`, `meetings` or `desktop` unless the description asks for what they give. A person who says "keeps notes" needs `memory`, not the web or a mail account.
 
 ## Writing the instructions
 

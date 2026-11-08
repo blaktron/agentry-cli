@@ -231,6 +231,17 @@ func BuildRosterUnder(a Agent, c Config, applied *Applied, malwareCheck bool) Ro
 	if a.ArmsMeetings() {
 		add(RosterEntry{ID: EntryMeetings, Kind: KindMeetings, Name: meetingsName, GrantedBy: a.grantedBy(), Line: meetingsLine}, false)
 	}
+	// The person's computer: each entry off until switched on. One that is
+	// on reads needs-set-up while no Agentry Desktop answers, and is given
+	// all the same: its calls are refused until one does, and none
+	// restarts the agent.
+	answering := desktopAnswering()
+	for _, e := range desktopEntries(a) {
+		add(e, false)
+		if last := &r[len(r)-1]; last.On && last.State != StatePending && last.Kind == KindDesktop && !answering {
+			last.State, last.Reason = StateNeedsSetUp, desktopNotAnswering
+		}
+	}
 	if a.Codes() {
 		for _, e := range coderEntries(a, c) {
 			add(e, true)
@@ -536,11 +547,15 @@ func ApplyWith(ctx context.Context, home string, a Agent, c Config, r Roster, op
 		left[id] = true
 	}
 	for _, e := range r {
-		// A server's writes are given with the server alone.
+		// A server's writes are given with the server alone, and an
+		// application's exec agreement with the application.
 		if e.Kind == KindServerWrites {
 			if parent := strings.TrimSuffix(e.ID, writesSuffix); !on(parent) || left[parent] {
 				continue
 			}
+		}
+		if e.Kind == KindDesktopExec && !on(strings.TrimSuffix(e.ID, execSuffix)) {
+			continue
 		}
 		if e.On && !left[e.ID] {
 			applied.On = append(applied.On, e.ID)
@@ -631,6 +646,9 @@ func ApplyWith(ctx context.Context, home string, a Agent, c Config, r Roster, op
 			g.ServerSecrets = map[string]string{}
 		}
 		g.ServerSecrets[name] = v
+	}
+	if dg := desktopGrant(a, on); dg != nil {
+		g.Desktop, g.DesktopExec = dg.Line, dg.Exec
 	}
 	if g.Skills, g.SkillsDir, err = stageSkills(home, a, c, on); err != nil {
 		return g, applied, done, err

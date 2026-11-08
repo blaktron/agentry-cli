@@ -1541,7 +1541,8 @@
             "TestTheLinkChannelIsASessionTheDeviceOpened",
             "TestARunhostLinkCarriesOnlyToolCallsToTheDevice",
             "TestARunhostLinkWaitsForTheFirstSessionThenRefuses",
-            "TestARunhostJobRelaysTheDesktopBindingToItsRun"
+            "TestARunhostJobRelaysTheDesktopBindingToItsRun",
+            "TestARunhostsAgentsReachTheLinkedDevice"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -3572,7 +3573,9 @@
           "tests": [
             "TestTheDeviceForwardsOnlyTheBoundRunsCalls",
             "TestACallToAClosedAppIsUnreachable",
-            "TestABindingInProcessAnswersOnlyTheBoundRun"
+            "TestABindingInProcessAnswersOnlyTheBoundRun",
+            "TestTheAgentsLinkBindsAgentsHereAlone",
+            "TestARunhostsAgentCodeAlwaysAsksHere"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -6562,7 +6565,9 @@
             "TestComputerUseNeedsItsBinding",
             "TestAFailedRunCountsItsDesktopCalls",
             "TestARefusedRunWritesNoDesktopLine",
-            "TestARelayedBindingNamesTheFarRunAndItsWay"
+            "TestARelayedBindingNamesTheFarRunAndItsWay",
+            "TestAnAbsentApplicationRefusesTheCallNotTheSegment",
+            "TestAGoneBindingIsBoundAgainUntilTheSegmentEnds"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -8358,6 +8363,19 @@
           "dependencyHints": [
             "source/file contract"
           ]
+        },
+        {
+          "path": "pkg/runner/persistent/desktop_test.go",
+          "tests": [
+            "TestADesktopEntrySwitchesWhileTheAgentRuns",
+            "TestTheExecAgreementIsGivenWithItsApplicationAlone",
+            "TestADesktopEntryNeedsAgentryDesktopAndIsGivenAllTheSame",
+            "TestTheReleaseLineNarrowsTheDesktopEntries"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
         },
         {
           "path": "pkg/runner/persistent/fastmail_test.go",
