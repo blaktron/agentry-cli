@@ -113,10 +113,9 @@ func TestInitFromSkillWithAnswers(t *testing.T) {
 	if !strings.Contains(string(raw), "scripts/**") {
 		t.Errorf("publish.include must carry the imported directory:\n%s", raw)
 	}
-	vout, _, err := runCLI(t, nil, "validate", dir)
-	if err != nil || !strings.Contains(vout, "validate: PASSED") {
-		t.Errorf("imported workspace does not validate: %v\n%s", err, vout)
-	}
+	// Every rule and scan passes; the LICENSE the source lacked is the
+	// placeholder note, refused until the author writes the licence.
+	wantOnlyScaffold(t, dir, "LICENSE:placeholder licence note")
 }
 
 // The wizard asks every question with the source's hints as defaults; an
@@ -190,10 +189,9 @@ func TestInitFromServerJSON(t *testing.T) {
 	if len(m.Capabilities.Secrets) != 0 || m.Version != "1.4.0" {
 		t.Errorf("agent-level secrets=%v version=%s", m.Capabilities.Secrets, m.Version)
 	}
-	vout, _, err := runCLI(t, nil, "validate", dir)
-	if err != nil || !strings.Contains(vout, "validate: PASSED") {
-		t.Errorf("imported workspace does not validate: %v\n%s", err, vout)
-	}
+	// Every rule and scan passes; what the source lacked (the README, the
+	// LICENSE and the instruction) is scaffold, refused until it is written.
+	wantOnlyScaffold(t, dir, "LICENSE:placeholder licence note", "README.md:TODO", "SKILL.md:TODO", "SKILL.md:TODO")
 
 	// Refusals: a range, and nothing installable.
 	bad := filepath.Join(t.TempDir(), "server.json")

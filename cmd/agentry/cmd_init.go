@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/blaktron/agentry-cli/pkg/validate"
 	"github.com/blaktron/agentry/pkg/manifest"
 	"github.com/spf13/cobra"
 )
@@ -131,7 +132,8 @@ func runInit(cmd *cobra.Command, dir, modesFlag, name, namespace string) error {
 var invalidHandleChars = regexp.MustCompile(`[^a-z0-9-]+`)
 
 // defaultNamespace derives a plausible namespace from $USER, falling back to
-// "example". It is a scaffold default only; validate/publish enforce the
+// validate.PlaceholderNamespace, which validate and publish refuse until it is
+// replaced. It is a scaffold default only; validate/publish enforce the
 // real ownership rules.
 func defaultNamespace() string {
 	u := strings.ToLower(os.Getenv("USER"))
@@ -140,7 +142,7 @@ func defaultNamespace() string {
 	if manifest.ValidNamespace(u) {
 		return u
 	}
-	return "example"
+	return validate.PlaceholderNamespace
 }
 
 // scaffoldFile is one file the scaffold writes.

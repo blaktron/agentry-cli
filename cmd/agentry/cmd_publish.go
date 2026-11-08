@@ -20,6 +20,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
+	"github.com/blaktron/agentry-cli/pkg/validate"
 	"github.com/blaktron/agentry/pkg/apiclient"
 	"github.com/blaktron/agentry/pkg/manifest"
 )
@@ -50,6 +51,8 @@ func newPublishCmd() *cobra.Command {
 			"Progress streams from the registry (stage by stage) until published, rejected,\n" +
 			"or needs_review; registries without the stream are polled every 2s.\n" +
 			"Exits non-zero on rejection.\n\n" +
+			"An upload is refused before anything is sent while the package still carries a line a\n" +
+			"scaffold wrote for you to replace (`agentry validate` lists them).\n\n" +
 			"A release that ships knowledge packs (`agentry knowledge ship`) makes them readable by everyone who can\n" +
 			"download it: anyone, when the QuickAgent is public. The pack stays in that version for good, and retiring\n" +
 			"or deleting the QuickAgent later does not recall copies already downloaded. So publish lists each shipped\n" +
@@ -77,6 +80,13 @@ func runPublish(cmd *cobra.Command, dir, tag string, yes bool) error {
 	m, err := readWorkspaceManifest(dir)
 	if err != nil {
 		return err
+	}
+	if tag == "" {
+		// An upload ships the workspace as it is, so a scaffold line the
+		// author never replaced would be published under their name.
+		if err := refuseUnfinished(cmd.ErrOrStderr(), dir); err != nil {
+			return err
+		}
 	}
 
 	reg := registryURL()
@@ -114,6 +124,21 @@ func runPublish(cmd *cobra.Command, dir, tag string, yes bool) error {
 	_, _ = fmt.Fprintf(out, "version %s accepted (status %s) — waiting for the pipeline verdict\n", v.Version, v.Status)
 
 	return waitVerdict(cmd.Context(), client, httpClient, reg, token, out, m.Namespace, m.Name, v)
+}
+
+// refuseUnfinished stops a publish whose shipped files still carry a line
+// a scaffold wrote for the author to replace, naming each file and marker.
+func refuseUnfinished(w io.Writer, dir string) error {
+	us, err := validate.UnfinishedIn(dir)
+	if err != nil {
+		return err
+	}
+	if len(us) == 0 {
+		return nil
+	}
+	_, _ = fmt.Fprintf(w, "publish: %d scaffold line(s) to replace before publishing\n", len(us))
+	validate.PrintUnfinished(w, "ERROR", us)
+	return fmt.Errorf("publish refused: the package still carries %d scaffold line(s); `agentry validate` lists them", len(us))
 }
 
 // submitUpload packs the deterministic archive locally (WalkWorkspace →

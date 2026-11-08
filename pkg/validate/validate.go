@@ -40,8 +40,15 @@ type Report struct {
 	Findings []Finding `json:"findings"`
 	// ReadErrors are include-set files that could not be read.
 	ReadErrors []string `json:"readErrors"`
-	FileCount  int      `json:"fileCount"`
-	Bundle     struct {
+	// Unfinished are scaffold lines the package still ships. They fail the
+	// report only when the check was asked to refuse them
+	// (Options.RefuseUnfinished); a draft's report lists them either way.
+	Unfinished []Unfinished `json:"unfinished"`
+	// Stages names the registry's stages this check ran here and the ones
+	// only the registry runs, so a pass is never read as more than it is.
+	Stages    Stages `json:"stages"`
+	FileCount int    `json:"fileCount"`
+	Bundle    struct {
 		Version string `json:"version"`
 		Source  string `json:"source"`
 	} `json:"bundle"`
@@ -50,8 +57,52 @@ type Report struct {
 		Warnings         int `json:"warnings"`
 		InventoryFailing int `json:"inventoryFailing"`
 		Findings         int `json:"findings"`
+		Unfinished       int `json:"unfinished"`
 	} `json:"counts"`
 	Strict bool `json:"strict"`
+	// RefuseUnfinished says whether Unfinished counted against Passed.
+	RefuseUnfinished bool `json:"refuseUnfinished"`
+}
+
+// Stages are the registry's checks by name: those a validation ran on this
+// computer, and those the registry runs only when the version is submitted.
+type Stages struct {
+	Ran    []string `json:"ran"`
+	NotRun []string `json:"notRun"`
+}
+
+// stagesNotRun are the registry's stages no offline check runs: they need
+// the registry (the previous version, the publisher's record), a model, or
+// tools this binary does not carry.
+var stagesNotRun = []string{
+	"S2 secrets",
+	"S5 AI Review",
+	"S6 support scripts and undeclared tools",
+	"S7 declared MCP servers",
+	"S8 publisher signals",
+	"S9 the diff against the previous version",
+}
+
+// stagesRan names what Workspace runs, under the manifest rules and the
+// signature bundle it used.
+func stagesRan(bundle string) []string {
+	return []string{
+		"manifest rules " + ManifestRules(),
+		"S1 inventory (binaries, nested archives, encoding)",
+		"S3 hidden content",
+		"S4 injection signatures (bundle " + bundle + ")",
+	}
+}
+
+// PrintStages prints the report's closing block: the stages it ran here,
+// the ones only the registry runs, and that the registry's verdict decides.
+func PrintStages(w io.Writer, r Report) {
+	if len(r.Stages.Ran) == 0 {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "ran here:     %s\n", strings.Join(r.Stages.Ran, "; "))
+	_, _ = fmt.Fprintf(w, "not run here: %s\n", strings.Join(r.Stages.NotRun, "; "))
+	_, _ = fmt.Fprintln(w, "The registry runs every stage when the version is submitted, and its verdict decides.")
 }
 
 // Manifest is the report's header: what agent.yaml said about itself.
@@ -107,6 +158,12 @@ type Options struct {
 	// is the bundle embedded in this binary (Embedded). A loader that fails
 	// fails the check: it never passes content S4 did not examine.
 	Rules RulesLoader
+	// RefuseUnfinished fails the check on a scaffold line the package still
+	// ships (a TODO, a placeholder namespace, author or licence, a
+	// scaffold's README). `agentry validate` sets it; a draft's post-step
+	// does not, since a fresh draft carries the Drafter's own README line
+	// and licence note until its author has read it.
+	RefuseUnfinished bool
 }
 
 // Embedded is the S4 bundle embedded in this binary, the floor every client
@@ -136,7 +193,7 @@ func Workspace(dir string, o Options) (Report, error) {
 		loadRules = Embedded
 	}
 	strict := o.Strict
-	report := Report{Strict: strict, Issues: []Issue{}, Inventory: []InventoryFinding{}, Findings: []Finding{}, ReadErrors: []string{}}
+	report := Report{Strict: strict, RefuseUnfinished: o.RefuseUnfinished, Issues: []Issue{}, Inventory: []InventoryFinding{}, Findings: []Finding{}, ReadErrors: []string{}, Unfinished: []Unfinished{}}
 	m, err := ReadManifest(dir)
 	if err != nil {
 		return report, err
@@ -204,7 +261,7 @@ func Workspace(dir string, o Options) (Report, error) {
 		report.Inventory = append(report.Inventory, InventoryFinding(f))
 	}
 	if len(s1) == 0 {
-		_, _ = fmt.Fprintf(out, "inventory: clean — %d file(s), S1 (binaries, nested archives, encoding)\n", len(scanFiles))
+		_, _ = fmt.Fprintf(out, "inventory: no findings — %d file(s), S1 (binaries, nested archives, encoding)\n", len(scanFiles))
 	} else {
 		_, _ = fmt.Fprintf(out, "inventory: %d finding(s) over %d file(s)\n", len(s1), len(scanFiles))
 		printLocalFindings(out, s1)
@@ -235,7 +292,7 @@ func Workspace(dir string, o Options) (Report, error) {
 
 	switch {
 	case len(findings) == 0:
-		_, _ = fmt.Fprintf(out, "scan: clean — %d file(s), S3 + S4 (bundle %s, %s)\n", len(scanFiles), bundle.Version(), source)
+		_, _ = fmt.Fprintf(out, "scan: no findings — %d file(s), S3 + S4 (bundle %s, %s)\n", len(scanFiles), bundle.Version(), source)
 	default:
 		_, _ = fmt.Fprintf(out, "scan: %d finding(s) over %d file(s) (bundle %s, %s)\n",
 			len(findings), len(scanFiles), bundle.Version(), source)
@@ -243,9 +300,21 @@ func Workspace(dir string, o Options) (Report, error) {
 			printFinding(out, f)
 		}
 	}
-	failed := errCount > 0 || len(findings) > 0 || s1Failing > 0 || (strict && warnCount > 0)
+	report.Unfinished = findUnfinished(m, scanFiles)
+	if n := len(report.Unfinished); n > 0 {
+		label := "NOTE "
+		if o.RefuseUnfinished {
+			label = "ERROR"
+		}
+		_, _ = fmt.Fprintf(out, "unfinished: %d scaffold line(s) to replace before publishing\n", n)
+		PrintUnfinished(out, label, report.Unfinished)
+	}
+	report.Stages = Stages{Ran: stagesRan(bundle.Version()), NotRun: append([]string(nil), stagesNotRun...)}
+	failed := errCount > 0 || len(findings) > 0 || s1Failing > 0 || (strict && warnCount > 0) ||
+		(o.RefuseUnfinished && len(report.Unfinished) > 0)
 	report.Passed = !failed
 	report.Counts.Errors, report.Counts.Warnings, report.Counts.InventoryFailing, report.Counts.Findings = errCount, warnCount, s1Failing, len(findings)
+	report.Counts.Unfinished = len(report.Unfinished)
 	return report, nil
 }
 

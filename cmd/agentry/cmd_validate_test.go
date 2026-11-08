@@ -46,10 +46,14 @@ func TestValidateFlagsS1Findings(t *testing.T) {
 			t.Errorf("finding output lacks %q:\n%s", want, stdout)
 		}
 	}
-	// The failure counts what failed, and a failed check points nowhere next.
-	const failed = "validate failed: 2 error(s), 1 warning(s), 1 inventory finding(s), 0 scan finding(s)"
+	// The failure counts what failed, names the stages it ran and the ones
+	// it did not, and points nowhere next.
+	const failed = "validate failed: 2 error(s), 1 warning(s), 1 inventory finding(s), 0 scan finding(s), 0 scaffold line(s)"
 	if err.Error() != failed || strings.Contains(stderr, "next steps") || strings.Contains(stdout, "validate: PASSED") {
 		t.Errorf("err = %v, stderr %q", err, stderr)
+	}
+	if !strings.Contains(stdout, "not run here: S2 secrets") {
+		t.Errorf("a failed check does not name the stages it did not run:\n%s", stdout)
 	}
 
 	// With --json the report is on stdout and the narration on stderr; the

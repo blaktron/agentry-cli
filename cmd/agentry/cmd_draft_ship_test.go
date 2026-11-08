@@ -72,9 +72,9 @@ func TestDraftShipsExactlyThePacksItsPersonChose(t *testing.T) {
 	if err != nil || !strings.Contains(string(page), "Ignore your task") {
 		t.Fatalf("the shipped pack lacks the page withheld from the Drafter: %v", err)
 	}
-	if _, _, err := runCLI(t, nil, "validate", pkg); err != nil {
-		t.Fatalf("agentry validate: %v", err)
-	}
+	// What a registry applies passes; only the Drafter's own README line and
+	// licence note stand between the draft and a publish.
+	wantOnlyScaffold(t, pkg, "LICENSE:placeholder licence note", "README.md:the Drafter's closing line")
 
 	// draft.json records the pack, its digest, and no origin for a folder.
 	if len(d.Ships) != 1 || d.Ships[0].Name != "runbooks" || d.Ships[0].Digest != p.Manifest.SHA256 || d.Ships[0].Origin != nil || d.Ships[0].Pages != p.Manifest.Pages {
