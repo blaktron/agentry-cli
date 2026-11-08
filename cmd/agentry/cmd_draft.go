@@ -573,6 +573,8 @@ func printDraft(w io.Writer, outDir string, d *drafter.Draft) {
 		say("  package:   %s holds the draft, which does not pass yet: %s", pkg, safeTerminalText(d.ManifestError, 400))
 	case d.ManifestError != "":
 		say("  package:   not rendered: %s", safeTerminalText(d.ManifestError, 400))
+	case json.Unmarshal(d.Validation, &v) == nil && v.Passed && v.Counts.Unfinished > 0:
+		say("  package:   %s passes agentry validate's rules and scans; before you publish, replace its %d scaffold line(s) (agentry validate lists them)", pkg, v.Counts.Unfinished)
 	case json.Unmarshal(d.Validation, &v) == nil && v.Passed:
 		say("  package:   %s passes agentry validate", pkg)
 	default:
