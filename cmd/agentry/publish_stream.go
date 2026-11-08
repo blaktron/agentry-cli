@@ -35,15 +35,15 @@ type versionEvent struct {
 var errNoStream = errors.New("no event stream")
 
 // streamVerdict follows the version's event stream. It returns
-// (handled=true, err) when the stream delivered a verdict, and
-// (false, errNoStream) when the caller should poll.
-func streamVerdict(ctx context.Context, httpc *http.Client, reg, token string, out io.Writer, ns, name string, v *apiclient.AgentVersion, lookup func(context.Context) (*apiclient.AgentVersion, error)) (bool, error) {
+// (handled=true, the version it ended on, err) when the stream delivered a
+// verdict, and (false, nil, errNoStream) when the caller should poll.
+func streamVerdict(ctx context.Context, httpc *http.Client, reg, token string, out io.Writer, ns, name string, v *apiclient.AgentVersion, lookup func(context.Context) (*apiclient.AgentVersion, error)) (bool, *apiclient.AgentVersion, error) {
 	ctx, cancel := context.WithTimeout(ctx, publishPollBudget)
 	defer cancel()
 	u := strings.TrimRight(reg, "/") + "/api/v1/agents/" + url.PathEscape(ns) + "/" + url.PathEscape(name) + "/versions/" + url.PathEscape(v.Version) + "/events"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
-		return false, errNoStream
+		return false, nil, errNoStream
 	}
 	req.Header.Set("Accept", "text/event-stream")
 	if token != "" {
@@ -54,11 +54,11 @@ func streamVerdict(ctx context.Context, httpc *http.Client, reg, token string, o
 	c.Timeout = 0
 	res, err := c.Do(req)
 	if err != nil {
-		return false, errNoStream
+		return false, nil, errNoStream
 	}
 	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode != http.StatusOK || !strings.HasPrefix(res.Header.Get("Content-Type"), "text/event-stream") {
-		return false, errNoStream
+		return false, nil, errNoStream
 	}
 
 	seen := map[string]bool{}
@@ -73,7 +73,7 @@ func streamVerdict(ctx context.Context, httpc *http.Client, reg, token string, o
 			event = strings.TrimSpace(strings.TrimPrefix(line, "event: "))
 		case strings.HasPrefix(line, "data: "):
 			if event == "gone" || event == "timeout" {
-				return false, errNoStream
+				return false, nil, errNoStream
 			}
 			var ev versionEvent
 			if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &ev); err != nil {
@@ -93,23 +93,26 @@ func streamVerdict(ctx context.Context, httpc *http.Client, reg, token string, o
 				// The verdict line wants the full version resource (digest etc.).
 				cur, err := lookup(ctx)
 				if err != nil {
-					return false, errNoStream
+					return false, nil, errNoStream
 				}
 				done, verr := verdict(out, ns, name, cur)
 				if !done {
-					return false, errNoStream
+					return false, nil, errNoStream
 				}
-				return true, verr
+				return true, cur, verr
 			}
 		case line == "":
 			event = ""
 		}
 	}
-	return false, errNoStream
+	return false, nil, errNoStream
 }
 
 // waitVerdict prefers the event stream and falls back to polling.
-func waitVerdict(ctx context.Context, client *apiclient.ClientWithResponses, httpc *http.Client, reg, token string, out io.Writer, ns, name string, v *apiclient.AgentVersion) error {
+//
+// It returns the version as it ended, nil when no verdict was reached, so a
+// caller can say more about the outcome than the verdict line does.
+func waitVerdict(ctx context.Context, client *apiclient.ClientWithResponses, httpc *http.Client, reg, token string, out io.Writer, ns, name string, v *apiclient.AgentVersion) (*apiclient.AgentVersion, error) {
 	lookup := func(ctx context.Context) (*apiclient.AgentVersion, error) {
 		resp, err := client.GetVersionInfoWithResponse(ctx, ns, name, v.Version)
 		if err != nil {
@@ -120,13 +123,13 @@ func waitVerdict(ctx context.Context, client *apiclient.ClientWithResponses, htt
 		}
 		return resp.JSON200, nil
 	}
-	if handled, err := streamVerdict(ctx, httpc, reg, token, out, ns, name, v, lookup); handled {
-		return err
+	if handled, final, err := streamVerdict(ctx, httpc, reg, token, out, ns, name, v, lookup); handled {
+		return final, err
 	}
 	// Give a registry that closed the stream early a moment before polling.
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return nil, ctx.Err()
 	case <-time.After(200 * time.Millisecond):
 	}
 	return pollVerdict(ctx, client, out, ns, name, v)

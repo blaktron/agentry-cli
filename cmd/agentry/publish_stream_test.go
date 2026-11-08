@@ -48,7 +48,7 @@ func TestStreamVerdictFollowsEventsThenPolls(t *testing.T) {
 	}
 	var out bytes.Buffer
 	v := &apiclient.AgentVersion{Version: "1.0.0", Status: "scanning"}
-	if err := waitVerdict(context.Background(), client, srv.Client(), srv.URL, "tok", &out, "acme", "hello", v); err != nil {
+	if _, err := waitVerdict(context.Background(), client, srv.Client(), srv.URL, "tok", &out, "acme", "hello", v); err != nil {
 		t.Fatalf("waitVerdict: %v\n%s", err, out.String())
 	}
 	got := out.String()
@@ -87,7 +87,7 @@ func TestWaitVerdictFallsBackToPollingWithoutStream(t *testing.T) {
 	}
 	var out bytes.Buffer
 	v := &apiclient.AgentVersion{Version: "1.0.0", Status: "scanning"}
-	_ = waitVerdict(context.Background(), client, srv.Client(), srv.URL, "tok", &out, "acme", "hello", v)
+	_, _ = waitVerdict(context.Background(), client, srv.Client(), srv.URL, "tok", &out, "acme", "hello", v)
 	if polls == 0 || !strings.Contains(out.String(), "needs_review") {
 		t.Fatalf("polling fallback did not run: polls=%d\n%s", polls, out.String())
 	}
@@ -139,7 +139,7 @@ func TestWaitVerdictFallsBackToPollingWithoutStream(t *testing.T) {
 			var out bytes.Buffer
 			// The version is already in review, so the fallback needs no wait.
 			v := &apiclient.AgentVersion{Version: "1.0.0", Status: "needs_review"}
-			if err := waitVerdict(context.Background(), client, srv.Client(), srv.URL, "tok", &out, "acme", "hello", v); err != nil {
+			if _, err := waitVerdict(context.Background(), client, srv.Client(), srv.URL, "tok", &out, "acme", "hello", v); err != nil {
 				t.Fatalf("waitVerdict: %v\n%s", err, out.String())
 			}
 			got := out.String()
@@ -156,12 +156,12 @@ func TestWaitVerdictFallsBackToPollingWithoutStream(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	out.Reset()
-	if err := waitVerdict(ctx, client, srv.Client(), srv.URL, "tok", &out, "acme", "hello", &apiclient.AgentVersion{Version: "1.0.0", Status: "needs_review"}); !errors.Is(err, context.Canceled) || out.Len() != 0 {
+	if _, err := waitVerdict(ctx, client, srv.Client(), srv.URL, "tok", &out, "acme", "hello", &apiclient.AgentVersion{Version: "1.0.0", Status: "needs_review"}); !errors.Is(err, context.Canceled) || out.Len() != 0 {
 		t.Errorf("a cancelled wait = %v, %q", err, out.String())
 	}
 	// So does a poll, with the context's own error; a poll the registry
 	// fails is its problem.
-	if err := pollVerdict(ctx, client, &out, "acme", "hello", v); err != context.Canceled {
+	if _, err := pollVerdict(ctx, client, &out, "acme", "hello", v); err != context.Canceled {
 		t.Errorf("a cancelled poll = %v", err)
 	}
 	broken := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -172,7 +172,7 @@ func TestWaitVerdictFallsBackToPollingWithoutStream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := pollVerdict(context.Background(), bc, &out, "acme", "hello", v); err == nil || !strings.HasPrefix(err.Error(), "poll version 1.0.0: registry melting (HTTP 500)") {
+	if _, err := pollVerdict(context.Background(), bc, &out, "acme", "hello", v); err == nil || !strings.HasPrefix(err.Error(), "poll version 1.0.0: registry melting (HTTP 500)") {
 		t.Errorf("a failed poll = %v", err)
 	}
 }

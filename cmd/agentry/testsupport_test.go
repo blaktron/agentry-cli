@@ -232,6 +232,10 @@ type fakeRegistry struct {
 	submitStatus string
 	pollStatuses []string
 	pollReason   string
+	// existingVersions answers GET …/versions for every agent (nil: 404);
+	// reportFindings answers GET …/versions/{v}/report.
+	existingVersions []map[string]any
+	reportFindings   []map[string]any
 	// advisories answers GET /advisories by its affecting ns/name (a name
 	// with no entry is 404); advisoryStatus, when set, answers every lookup
 	// with that status instead. advisoryQueries records each query.
@@ -495,6 +499,27 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 			fr.mu.Unlock()
 		}
 		writeJSON(w, http.StatusAccepted, fr.versionDoc("0.1.0", fr.submitStatus))
+	})
+
+	mux.HandleFunc("GET /api/v1/agents/{ns}/{name}/versions", func(w http.ResponseWriter, r *http.Request) {
+		fr.mu.Lock()
+		list := fr.existingVersions
+		fr.mu.Unlock()
+		if list == nil {
+			writeProblem(w, http.StatusNotFound, "Not found", "")
+			return
+		}
+		writeJSON(w, http.StatusOK, list)
+	})
+
+	mux.HandleFunc("GET /api/v1/agents/{ns}/{name}/versions/{v}/report", func(w http.ResponseWriter, r *http.Request) {
+		fr.mu.Lock()
+		findings := fr.reportFindings
+		fr.mu.Unlock()
+		if findings == nil {
+			findings = []map[string]any{}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"versionStatus": "rejected", "findings": findings})
 	})
 
 	mux.HandleFunc("GET /api/v1/agents/{ns}/{name}/versions/{v}", func(w http.ResponseWriter, r *http.Request) {
