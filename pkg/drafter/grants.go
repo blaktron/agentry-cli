@@ -80,6 +80,8 @@ func grantGuide(g toolgrant.Grant) string {
 		return "manifest/target-hosts.md"
 	case toolgrant.GrantMCPServer:
 		return "servers/mcp-servers.md"
+	case toolgrant.GrantDesktop, toolgrant.GrantComputerUse:
+		return "manifest/desktop.md"
 	}
 	if strings.HasPrefix(string(g), "persistent.") || g == toolgrant.GrantSubagents {
 		return "manifest/persistent.md"
