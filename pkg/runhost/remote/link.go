@@ -11,6 +11,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/runhost"
 	"github.com/blaktron/agentry-cli/pkg/runner/desktop"
+	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 )
 
@@ -195,4 +196,38 @@ func LinkDialerFrom(c *runhost.Client, rec *runhost.Record, keys *runhost.Device
 		}
 		return c2, func() { _ = c2.Close() }, nil
 	}
+}
+
+// BindingForward forwards the bound run's tool calls and its unbind to a
+// binding this process holds (Agentry Desktop's own, bound in process), and
+// refuses anything else without sending it.
+func BindingForward(link *engine.DesktopLink, run string) LinkForward {
+	return func(ctx context.Context, m desktop.Message) desktop.Message {
+		if !desktop.RelayedCallOnly(m, run) || m.Call != nil && m.Call.Token != link.Token || m.Unbind != nil && m.Unbind.Token != link.Token {
+			return desktop.Message{Refused: desktop.NotRelayed()}
+		}
+		if m.Unbind != nil {
+			if link.Unbind != nil {
+				if err := link.Unbind(ctx); err != nil {
+					return desktop.Message{Refused: refusalOf(err)}
+				}
+			}
+			return desktop.Message{OK: true}
+		}
+		a, err := link.Call(ctx, *m.Call)
+		if err != nil {
+			return desktop.Message{Refused: refusalOf(err)}
+		}
+		return desktop.Message{Answer: &a}
+	}
+}
+
+// refusalOf is err as the link service's refusal: its own, or this
+// computer's Agentry Desktop not answering.
+func refusalOf(err error) *desktop.Refusal {
+	var r *desktop.Refusal
+	if errors.As(err, &r) {
+		return r
+	}
+	return &desktop.Refusal{Reason: receipt.DesktopUnreachable, Message: DesktopUnreachableMessage}
 }

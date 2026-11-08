@@ -491,7 +491,8 @@
             "TestTheConsentNamesTheDesktopLine",
             "TestARunNeedsAgentryDesktop",
             "TestHostedRunsRefuseTheDesktopLine",
-            "TestTheRunSummaryNamesTheDesktopLine"
+            "TestTheRunSummaryNamesTheDesktopLine",
+            "TestARunOnARunhostThatUsesThisComputerStaysAttached"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -1531,6 +1532,21 @@
           "fixtureEntryPoint": false,
           "dependencyHints": [
             "source/file contract",
+            "real-time wait"
+          ]
+        },
+        {
+          "path": "cmd/agentry/cmd_runhost_link_test.go",
+          "tests": [
+            "TestTheLinkChannelIsASessionTheDeviceOpened",
+            "TestARunhostLinkCarriesOnlyToolCallsToTheDevice",
+            "TestARunhostLinkWaitsForTheFirstSessionThenRefuses",
+            "TestARunhostJobRelaysTheDesktopBindingToItsRun"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
             "real-time wait"
           ]
         },
@@ -3482,7 +3498,8 @@
             "TestAJobRefusesCarriedValuesARunCannotTake",
             "TestACreditsModelCarriesNoKey",
             "TestASignInModelCarriesNoKey",
-            "TestARunhostRunsTheImageOfAHostHarness"
+            "TestARunhostRunsTheImageOfAHostHarness",
+            "TestADesktopBindingIsHeldToWhatAJobCanCarry"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -3549,6 +3566,20 @@
           "benchmarks": [],
           "fixtureEntryPoint": false,
           "dependencyHints": []
+        },
+        {
+          "path": "pkg/runhost/remote/link_test.go",
+          "tests": [
+            "TestTheDeviceForwardsOnlyTheBoundRunsCalls",
+            "TestACallToAClosedAppIsUnreachable",
+            "TestABindingInProcessAnswersOnlyTheBoundRun"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
+          ]
         },
         {
           "path": "pkg/runhost/remote/remote_test.go",
@@ -6530,7 +6561,8 @@
             "TestScreenshotsAreNotKeptByDefault",
             "TestComputerUseNeedsItsBinding",
             "TestAFailedRunCountsItsDesktopCalls",
-            "TestARefusedRunWritesNoDesktopLine"
+            "TestARefusedRunWritesNoDesktopLine",
+            "TestARelayedBindingNamesTheFarRunAndItsWay"
           ],
           "fuzz": [],
           "benchmarks": [],

@@ -14,6 +14,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/runhost"
 	"github.com/blaktron/agentry-cli/pkg/runner/desktop"
+	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/runnerimage/desktoplink"
 )
@@ -142,5 +143,38 @@ func TestACallToAClosedAppIsUnreachable(t *testing.T) {
 		desktop.Message{Call: &desktop.CallRequest{Run: "run-1", Token: "t", Server: "blender", Tool: "look"}})
 	if ans.Refused == nil || ans.Refused.Reason != receipt.DesktopUnreachable {
 		t.Fatalf("answered %+v", ans)
+	}
+}
+
+// A binding held in this process answers the bound run's calls and unbind,
+// and nothing else reaches it.
+func TestABindingInProcessAnswersOnlyTheBoundRun(t *testing.T) {
+	calls, unbinds := 0, 0
+	link := &engine.DesktopLink{Token: "t",
+		Call: func(context.Context, desktop.CallRequest) (desktoplink.Answer, error) {
+			calls++
+			return desktoplink.TextAnswer("ok", false), nil
+		},
+		Unbind: func(context.Context) error { unbinds++; return nil },
+	}
+	fw := BindingForward(link, "run-1")
+	ctx := context.Background()
+	if a := fw(ctx, desktop.Message{Call: &desktop.CallRequest{Run: "run-1", Token: "t", Tool: "look"}}); a.Answer == nil {
+		t.Fatalf("the bound run's call: %+v", a)
+	}
+	for _, m := range []desktop.Message{
+		{Call: &desktop.CallRequest{Run: "run-2", Token: "t"}},
+		{Call: &desktop.CallRequest{Run: "run-1", Token: "other"}},
+		{Bind: &desktop.BindRequest{Run: "run-1"}},
+	} {
+		if a := fw(ctx, m); a.Refused == nil {
+			t.Fatalf("%+v was answered %+v", m, a)
+		}
+	}
+	if a := fw(ctx, desktop.Message{Unbind: &desktop.UnbindRequest{Run: "run-1", Token: "t"}}); !a.OK {
+		t.Fatalf("the unbind: %+v", a)
+	}
+	if calls != 1 || unbinds != 1 {
+		t.Fatalf("%d calls and %d unbinds reached the binding", calls, unbinds)
 	}
 }

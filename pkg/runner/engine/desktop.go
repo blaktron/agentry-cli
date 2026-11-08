@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -57,6 +58,24 @@ func BoundDesktopLink(c desktop.Client, run string, b desktop.Bound) *DesktopLin
 		FarEnd:   "Agentry Desktop's link socket " + c.Socket,
 		Computer: b.Computer,
 	}
+}
+
+// DesktopBindRequest is the bind of run for desktop line d of release ref:
+// each application server with the tools the release gives it, and computer
+// use in its scope with the folder of outDir where the person's kept
+// screenshots go (none when outDir is empty).
+func DesktopBindRequest(d *spec.DesktopCap, run, ref, digest, outDir string) desktop.BindRequest {
+	req := desktop.BindRequest{Run: run, Ref: ref, Digest: digest}
+	for _, s := range d.Servers {
+		req.Servers = append(req.Servers, desktop.BindServer{ID: s.ID, Tools: s.ToolNames()})
+	}
+	if c, ok := d.Computer(); ok {
+		req.ComputerUse, req.ComputerTools = d.ComputerUse, c.ToolNames()
+		if outDir != "" {
+			req.Reports = filepath.Join(outDir, filepath.FromSlash(desktop.ReportsFolder))
+		}
+	}
+	return req
 }
 
 // RelayedDesktopLink is a binding made on another computer and relayed to

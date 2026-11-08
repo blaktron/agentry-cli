@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/desktop"
@@ -74,16 +73,7 @@ func bindDesktopCap(ctx context.Context, d *spec.DesktopCap, ref, digest, home, 
 	if fi, err := os.Lstat(c.Socket); err != nil || fi.Mode()&fs.ModeSocket == 0 {
 		return nil, engine.NoDesktopRefusal(d)
 	}
-	req := desktop.BindRequest{Run: runID, Ref: ref, Digest: digest}
-	for _, s := range d.Servers {
-		req.Servers = append(req.Servers, desktop.BindServer{ID: s.ID, Tools: s.ToolNames()})
-	}
-	if c, ok := d.Computer(); ok {
-		req.ComputerUse, req.ComputerTools = d.ComputerUse, c.ToolNames()
-		if outDir != "" {
-			req.Reports = filepath.Join(outDir, filepath.FromSlash(desktop.ReportsFolder))
-		}
-	}
+	req := engine.DesktopBindRequest(d, runID, ref, digest, outDir)
 	bound, err := c.Bind(ctx, req)
 	if err != nil {
 		var r *desktop.Refusal
