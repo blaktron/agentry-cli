@@ -92,7 +92,15 @@ func bindDesktopCap(ctx context.Context, d *spec.DesktopCap, ref, digest, home, 
 func desktopSummary(d *spec.DesktopCap) string {
 	var apps []string
 	for _, s := range d.Servers {
-		apps = append(apps, fmt.Sprintf("%s (%d tools)", s.Application, len(s.Tools)))
+		if s.Narrowed {
+			noun := "tools"
+			if len(s.Tools) == 1 {
+				noun = "tool"
+			}
+			apps = append(apps, fmt.Sprintf("%s (%d %s)", s.Application, len(s.Tools), noun))
+		} else {
+			apps = append(apps, s.Application+" (every tool its server lists)")
+		}
 	}
 	switch d.ComputerUse {
 	case spec.ComputerUseApp:

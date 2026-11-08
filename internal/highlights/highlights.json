@@ -1,6 +1,15 @@
 {
   "versions": [
     {
+      "version": "0.7.36",
+      "highlights": [
+        "A QuickAgent can name any application on your computer; Agentry Desktop resolves it to one you approved there.",
+        "An application's tools come from Agentry Desktop when the run starts, with the class it gives each tool.",
+        "desktop.allowCustomServers in the policy now defaults to on; Unsafe Mode allows your own applications under false.",
+        "agentry doctor lists the applications you set up in Agentry Desktop, once Agentry Desktop lists them."
+      ]
+    },
+    {
       "version": "0.7.35",
       "highlights": [
         "If your organization manages your settings, the CLI fetches them at sign-in, checks their signature and follows them.",

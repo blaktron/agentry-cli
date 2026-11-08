@@ -298,17 +298,27 @@ type DesktopPolicy struct {
 	// screen (computerUse: screen). Default false: app scope only, the
 	// windows of the applications the run uses.
 	AllowScreen bool `yaml:"allowScreen,omitempty"`
-	// AllowCustomServers lets a release use an application server the
-	// person configured themself, outside the catalogue of application
-	// servers, once the catalogue has such an entry kind. Default false:
-	// catalogue entries only. No catalogue entry of that kind exists yet,
-	// so the key admits nothing until one does.
-	AllowCustomServers bool `yaml:"allowCustomServers,omitempty"`
+	// AllowCustomServers lets a run use an application whose set-up is the
+	// person's own in Agentry Desktop: one they added, or a library preset
+	// they changed. Unset is true; false binds only the library's presets
+	// as they are, unless Unsafe Mode is on.
+	AllowCustomServers *bool `yaml:"allowCustomServers,omitempty"`
 }
 
 // Allowed says whether the policy lets a release use the person's computer
 // at all.
 func (d DesktopPolicy) Allowed() bool { return d.Allow == nil || *d.Allow }
+
+// CustomServersAllowed says whether the policy lets a run use an
+// application the person set up themself.
+func (d DesktopPolicy) CustomServersAllowed() bool {
+	return d.AllowCustomServers == nil || *d.AllowCustomServers
+}
+
+// CustomServersRefused is the refusal of a binding to an application the
+// person set up themself, under a policy with desktop.allowCustomServers:
+// false and no Unsafe Mode.
+const CustomServersRefused = "is set up on your computer by you rather than from Agentry Desktop's library, and this machine's policy allows only the library's applications (desktop.allowCustomServers: false): set it to true, or turn Unsafe Mode on, to permit it"
 
 // DesktopRefused is the refusal a policy with desktop.allow: false gives a
 // release that declares capabilities.desktop.
@@ -1739,11 +1749,11 @@ mcpRegistries:
 #   # Whether its computer use may see and act on the whole screen
 #   # (computerUse: screen); default false, app scope only.
 #   allowScreen: false
-#   # Whether it may use an application server you configured yourself,
-#   # outside Agentry's catalogue of application servers; default false.
-#   # The catalogue has no such entry kind yet, so this admits nothing
-#   # until it does.
-#   allowCustomServers: false
+#   # Whether it may use an application whose set-up in Agentry Desktop is
+#   # your own (one you added, or a library preset you changed); unset,
+#   # allowed. false binds only the library's presets as they are, unless
+#   # Unsafe Mode is on.
+#   allowCustomServers: true
 
 # docker:
 #   # The OCI runtime a run's containers are created with (docker run

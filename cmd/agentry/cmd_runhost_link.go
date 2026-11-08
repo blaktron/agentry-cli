@@ -374,7 +374,7 @@ func runhostRelayedDesktop(j *job.Job, sock string) desktop.Relayed {
 // carries each of its agents' messages (a lazy bind for an agent, a call,
 // an unbind) to the device whose Agentry Desktop holds the link session
 // `link agents` open. With none open, a bind or a call is refused
-// desktop-unreachable: the agent starts with the catalogue's tools, and its
+// desktop-unreachable: the agent starts with its release's narrowing for tools, and its
 // calls are refused until a device links it.
 
 // runhostAgentsLinkArg is the link verb's argument for the agents link.

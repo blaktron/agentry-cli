@@ -32,11 +32,14 @@ import (
 // it knows, answers each call with the tool's name, refuses what it is told
 // to, and records every message it was sent.
 type standInLinkService struct {
-	mu      sync.Mutex
-	socket  string
-	token   string
-	tools   map[string][]desktoplink.Tool
-	refuse  map[string]*desktop.Refusal // by tool
+	mu     sync.Mutex
+	socket string
+	token  string
+	tools  map[string][]desktoplink.Tool
+	refuse map[string]*desktop.Refusal // by tool
+	// from is where each application's set-up came from, as the stand-in
+	// answers it; an application not named is the library's.
+	from    map[string]string
 	binds   []desktop.BindRequest
 	calls   []desktop.CallRequest
 	unbinds []desktop.UnbindRequest
@@ -52,7 +55,26 @@ func (s *standInLinkService) Bind(_ context.Context, req desktop.BindRequest) (d
 		if !ok {
 			return desktop.Bound{}, &desktop.Refusal{Reason: receipt.DesktopNotInstalled, Server: srv.ID, Message: "Start the MCP server in " + srv.ID + "'s sidebar"}
 		}
+		if len(srv.Tools) > 0 {
+			var narrowed []desktoplink.Tool
+			for _, t := range tools {
+				if slices.Contains(srv.Tools, t.Name) {
+					narrowed = append(narrowed, t)
+				}
+			}
+			tools = narrowed
+		}
 		b.Servers[srv.ID] = tools
+		if req.Protocol >= desktop.Protocol {
+			if b.From == nil {
+				b.From = map[string]string{}
+			}
+			from, ok := s.from[srv.ID]
+			if !ok {
+				from = desktop.FromLibrary
+			}
+			b.From[srv.ID] = from
+		}
 	}
 	if req.ComputerUse != "" {
 		b.Computer = &desktop.ComputerBound{Scope: req.ComputerUse, Windows: []string{"Blender"}, MaxEdge: 1280, Session: "Linux, X11",
@@ -90,12 +112,12 @@ func (s *standInLinkService) sent() (binds []desktop.BindRequest, calls []deskto
 	return slices.Clone(s.binds), slices.Clone(s.calls), slices.Clone(s.unbinds)
 }
 
+// standInBlenderTools are the tools Agentry Desktop lists for blender, with
+// the class it gives each: what the person withheld it does not list.
 var standInBlenderTools = []desktoplink.Tool{
-	{Name: "get_scene_info", Description: "the scene", InputSchema: json.RawMessage(`{"type":"object"}`)},
-	{Name: "execute_blender_code", Description: "run code", InputSchema: json.RawMessage(`{"type":"object","properties":{"code":{"type":"string"}}}`)},
-	// A tool the installed server lists that the catalogue withholds: the
-	// run is not given it.
-	{Name: "disable_telemetry", Description: "withheld"},
+	{Name: "get_scene_info", Description: "the scene", InputSchema: json.RawMessage(`{"type":"object"}`), Class: "read"},
+	{Name: "execute_blender_code", Description: "run code", InputSchema: json.RawMessage(`{"type":"object","properties":{"code":{"type":"string"}}}`), Class: "exec"},
+	{Name: "look", Description: "a look at the viewport", InputSchema: json.RawMessage(`{"type":"object"}`), Class: "read"},
 }
 
 func serveStandIn(t *testing.T, dir string) *standInLinkService {
@@ -116,10 +138,8 @@ func blenderPlan() *spec.Plan {
 	return &spec.Plan{
 		Proxy: spec.ProxySpec{Image: "agentry-runner:test"},
 		Capabilities: spec.CapSummary{Desktop: &spec.DesktopCap{Servers: []spec.DesktopServerCap{{
-			ID: "blender", Application: "Blender", Package: "pypi:mcp-for-blender@2.2.7",
-			Tools:  []spec.DesktopTool{{Name: "execute_blender_code", Class: "exec"}, {Name: "get_scene_info", Class: "read"}, {Name: "look", Class: "read"}},
-			Egress: []string{"api.polyhaven.com"},
-		}}}},
+			ID: "blender", Application: "blender",
+		}}, PersonServers: spec.PersonServersAllowed}},
 	}
 }
 
@@ -132,7 +152,7 @@ func desktopRig(t *testing.T) (d *dockerx.Fake, p Params, rd *runDirs, td *teard
 	s = serveStandIn(t, dir)
 	p = Params{Plan: blenderPlan()}
 	c := desktop.Client{Socket: s.socket}
-	bound, err := c.Bind(context.Background(), desktop.BindRequest{Run: "R", Ref: "acme/scene@1.0.0", Servers: []desktop.BindServer{{ID: "blender", Tools: []string{"execute_blender_code", "get_scene_info", "look"}}}})
+	bound, err := c.Bind(context.Background(), DesktopBindRequest(p.Plan.Capabilities.Desktop, "R", "acme/scene@1.0.0", "", ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,8 +212,8 @@ func TestTheDesktopLinkCarriesACallToTheLinkService(t *testing.T) {
 	if len(rs.Mounts) != 1 || rs.Mounts[0] != (dockerx.Mount{Source: desktopVolume("R"), Target: desktoplink.SocketDir}) {
 		t.Errorf("the relay's mounts: %+v", rs.Mounts)
 	}
-	// The binding the link entries read: the token, and the tools the
-	// catalogue gives, in the plan's order; never the withheld tool.
+	// The binding the link entries read: the token, and the tools Agentry
+	// Desktop listed for the application, in its order.
 	bind, err := desktoplink.ReadBind(filepath.Join(filepath.Dir(relaySock), filepath.Base(desktoplink.BindFile)))
 	if err != nil || bind.Token != "tok-standin" {
 		t.Fatalf("the binding: %+v, %v", bind, err)
@@ -202,7 +222,7 @@ func TestTheDesktopLinkCarriesACallToTheLinkService(t *testing.T) {
 	for _, tool := range bind.Servers["blender"] {
 		names = append(names, tool.Name)
 	}
-	if !slices.Equal(names, []string{"execute_blender_code", "get_scene_info"}) {
+	if !slices.Equal(names, []string{"get_scene_info", "execute_blender_code", "look"}) {
 		t.Fatalf("the binding lists %v", names)
 	}
 
@@ -243,7 +263,7 @@ func TestTheDesktopLinkCarriesACallToTheLinkService(t *testing.T) {
 		t.Errorf("unbound %+v", unbinds)
 	}
 	line2 := env.CapabilitiesEnforced["desktop.blender"]
-	for _, want := range []string{"Blender", "pypi:mcp-for-blender@2.2.7", "agentry-desktop-blender", "1 calls (1 read)", "api.polyhaven.com", "not enforced", "receipts/desktop-blender.log"} {
+	for _, want := range []string{"blender on the person's computer", "set up from Agentry Desktop's library", "agentry-desktop-blender", "1 calls (1 read)", "not enforced", "receipts/desktop-blender.log"} {
 		if !strings.Contains(line2, want) {
 			t.Errorf("desktop.blender lacks %q: %q", want, line2)
 		}
@@ -457,7 +477,7 @@ func TestARunNeedsAgentryDesktop(t *testing.T) {
 	plan := blenderPlan()
 	err := checkDesktop(Params{Plan: plan})
 	var ce *ClassifiedError
-	if err == nil || !errors.As(err, &ce) || ce.Code != ExitPolicy || !strings.Contains(err.Error(), "Blender on your computer") || !strings.Contains(err.Error(), "Agentry Desktop running") {
+	if err == nil || !errors.As(err, &ce) || ce.Code != ExitPolicy || !strings.Contains(err.Error(), "blender on your computer") || !strings.Contains(err.Error(), "Agentry Desktop running") {
 		t.Fatalf("no binding: %v", err)
 	}
 	if r := receipt.ReasonOf(err); r == nil || r.Code != receipt.ReasonDesktopRefused || r.Detail != receipt.DesktopUnavailable || !slices.Equal(r.Names, []string{"blender"}) {

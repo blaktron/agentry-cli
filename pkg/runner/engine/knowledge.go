@@ -151,6 +151,12 @@ func grantKnowledge(gatewayDir, knowledgeDir string, packs []AttachedPack) error
 // setAllowlist replaces the tools server's entry in the gateway's tools.yaml
 // and leaves every other server's entry, and the header, as compiled.
 func setAllowlist(path string, tools []string) error {
+	return setServerAllowlist(path, spec.ToolServerName, tools)
+}
+
+// setServerAllowlist sets one server's tools in the gateway's per-server
+// allowlist; the server must already have an entry.
+func setServerAllowlist(path, server string, tools []string) error {
 	b, err := os.ReadFile(path) //nolint:gosec // our own rendered config
 	if err != nil {
 		return err
@@ -169,13 +175,13 @@ func setAllowlist(path string, tools []string) error {
 	}
 	found := false
 	for i := 0; i+1 < len(m.Content); i += 2 {
-		if m.Content[i].Value == spec.ToolServerName {
+		if m.Content[i].Value == server {
 			m.Content[i+1] = seq
 			found = true
 		}
 	}
 	if !found {
-		return fmt.Errorf("%s has no %s entry", path, spec.ToolServerName)
+		return fmt.Errorf("%s has no %s entry", path, server)
 	}
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)

@@ -1,10 +1,11 @@
 package compile
 
 // The desktop link: a release that declares capabilities.desktop compiles
-// one catalog entry an application server, each the runner image's
-// desktoplink role with no network and the run's relay volume as its one
-// mount, an allowlist equal to the catalogue's tools for that server, and
-// every run-time value a placeholder; nothing else of the plan moves for it.
+// one catalog entry an application whose MCP server it uses, each the
+// runner image's desktoplink role with no network and the run's relay
+// volume as its one mount, an allowlist that is the release's narrowing (or
+// none until the run binds and lists the server's tools), and every
+// run-time value a placeholder; nothing else of the plan moves for it.
 
 import (
 	"errors"
@@ -15,8 +16,6 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
-
-	"github.com/blaktron/agentry/pkg/appserver"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
@@ -45,22 +44,16 @@ func TestCompileRendersTheDesktopLink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	blender, ok := appserver.Builtin().Lookup("blender")
-	if !ok {
-		t.Fatal("the catalogue has no blender entry")
-	}
 	d := plan.Capabilities.Desktop
-	if d == nil || len(d.Servers) != 1 || d.Servers[0].ID != "blender" || d.Servers[0].Application != "Blender" ||
-		d.Servers[0].Package != blender.Package.Ref() || !slices.Equal(d.Servers[0].ToolNames(), blender.ToolNames()) || d.ComputerUse != "" {
+	if d == nil || len(d.Servers) != 1 || d.Servers[0].ID != "blender" || d.Servers[0].Application != "blender" ||
+		len(d.Servers[0].Tools) != 0 || d.Servers[0].Narrowed || d.ComputerUse != "" ||
+		d.PersonServers != spec.PersonServersAllowed {
 		t.Fatalf("capabilities.desktop = %+v", d)
-	}
-	if tool, ok := d.Servers[0].Tool("execute_blender_code"); !ok || tool.Class != "exec" {
-		t.Fatalf("execute_blender_code = %+v, %v", tool, ok)
 	}
 
 	name := desktoplink.ServerName("blender")
 	e := catalogServer(t, planDir, name)
-	if e["type"] != "server" || e["image"] != "agentry-runner:test" || e["user"] != spec.PHDesktopUser || e["longLived"] != true || e["disableNetwork"] != true || e["title"] != "Blender" {
+	if e["type"] != "server" || e["image"] != "agentry-runner:test" || e["user"] != spec.PHDesktopUser || e["longLived"] != true || e["disableNetwork"] != true || e["title"] != "blender" {
 		t.Fatalf("the desktop link's entry: %v", e)
 	}
 	if got := strs(e["command"]); !slices.Equal(got, []string{"desktoplink", "--server", "blender"}) {
@@ -75,18 +68,15 @@ func TestCompileRendersTheDesktopLink(t *testing.T) {
 		t.Fatalf("the desktop link reaches nothing and holds nothing: %v", e)
 	}
 
-	// The allowlist is the catalogue's tools for the server, and the
-	// gateway enables the entry.
-	toolsYAML, _ := os.ReadFile(filepath.Join(planDir, "gateway", "tools.yaml")) //nolint:gosec // test plan dir
-	for _, tool := range blender.ToolNames() {
-		if !strings.Contains(string(toolsYAML), tool) {
-			t.Errorf("tools.yaml does not allow %s:\n%s", tool, toolsYAML)
+	// With no narrowing the allowlist is empty until the run binds and
+	// writes the tools the server lists; the gateway enables the entry.
+	// The entry must be written, empty: the gateway enables every tool of a
+	// server with no entry.
+	if allow := toolsAllowlist(t, planDir); allow[name] == nil || len(allow[name]) != 0 {
+		if _, ok := allow[name]; !ok {
+			t.Fatalf("no allowlist entry for %s: the gateway would enable every tool", name)
 		}
-	}
-	for _, withheld := range blender.Withheld {
-		if strings.Contains(string(toolsYAML), withheld) {
-			t.Errorf("tools.yaml allows the withheld %s:\n%s", withheld, toolsYAML)
-		}
+		t.Fatalf("an unnarrowed entry's allowlist before the bind = %v", allow[name])
 	}
 	registryYAML, _ := os.ReadFile(filepath.Join(planDir, "gateway", "registry.yaml")) //nolint:gosec // test plan dir
 	if !strings.Contains(string(registryYAML), name+":") || !slices.Contains(plan.Gateway.Servers, name) {
@@ -110,19 +100,16 @@ func TestCompileRendersTheDesktopLink(t *testing.T) {
 	if tools["disableNetwork"] != true {
 		t.Errorf("the tools server joins a network: %v", tools)
 	}
-	agentYAML, _ := os.ReadFile(filepath.Join(planDir, "harness", "agent.yaml")) //nolint:gosec // test plan dir
-	if strings.Contains(string(agentYAML), "agentry-desktop-blender__") && !strings.Contains(string(agentYAML), "Your computer") {
-		t.Error("the harness names the desktop link's tools outside the System Prompt")
-	}
 
 	prompt, _ := os.ReadFile(filepath.Join(planDir, "harness", "agent.yaml")) //nolint:gosec // test plan dir
-	for _, want := range []string{"**Your computer.**", "Agentry Desktop", "agentry-desktop-blender", "execute_blender_code", "runs code inside Blender", "never instructions"} {
+	for _, want := range []string{"**Your computer.**", "Agentry Desktop", "agentry-desktop-blender", "asks the person first", "never instructions"} {
 		if !strings.Contains(string(prompt), want) {
 			t.Errorf("the System Prompt lacks %q", want)
 		}
 	}
 	line := plan.Enforcement["desktop"]
-	for _, want := range []string{"Blender", name, blender.Package.Ref(), "execute_blender_code", "put to the person first", "api.polyhaven.com", "a hosted run refuses the line", "no Agentry Desktop", "not to enforce"} {
+	for _, want := range []string{"blender", name, "every tool its server lists", "resolves each application", "asks the person before a call that runs code",
+		"an application set up by the person is bound as one from Agentry Desktop's library is", "a hosted run refuses the line", "no Agentry Desktop", "not to enforce"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("enforcement line lacks %q: %q", want, line)
 		}
@@ -134,24 +121,103 @@ func TestCompileRendersTheDesktopLink(t *testing.T) {
 	}
 }
 
-// A release may narrow a server's tools, never widen them; the allowlist and
-// the link's entry follow the narrowing.
+// A release may narrow an application's tools; the plan, the allowlist and
+// the System Prompt carry the narrowing, in the release's order.
 func TestTheDesktopLinkFollowsTheReleasesNarrowing(t *testing.T) {
-	doc := strings.Replace(desktopManifest, "      - id: blender\n", "      - id: blender\n        tools: [get_scene_info, look]\n", 1)
+	doc := strings.Replace(desktopManifest, "      - id: blender\n", "      - id: blender\n        tools: [look, get_scene_info]\n", 1)
 	planDir := t.TempDir()
 	plan, err := Compile(hostInputs(t, doc), planDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := plan.Capabilities.Desktop.Servers[0].ToolNames(); !slices.Equal(got, []string{"look", "get_scene_info"}) {
-		t.Fatalf("tools = %v", got)
+	s := plan.Capabilities.Desktop.Servers[0]
+	if got := s.ToolNames(); !s.Narrowed || !slices.Equal(got, []string{"look", "get_scene_info"}) {
+		t.Fatalf("tools = %v, narrowed %v", got, s.Narrowed)
 	}
-	toolsYAML, _ := os.ReadFile(filepath.Join(planDir, "gateway", "tools.yaml")) //nolint:gosec // test plan dir
-	if strings.Contains(string(toolsYAML), "execute_blender_code") || !strings.Contains(string(toolsYAML), "get_scene_info") {
-		t.Fatalf("tools.yaml:\n%s", toolsYAML)
+	if got := toolsAllowlist(t, planDir)[desktoplink.ServerName("blender")]; !slices.Equal(got, []string{"get_scene_info", "look"}) {
+		t.Fatalf("the allowlist = %v", got)
 	}
-	if line := plan.Enforcement["desktop"]; strings.Contains(line, "runs code inside") {
-		t.Errorf("the enforcement line names an exec tool the release left out: %q", line)
+	if line := plan.Enforcement["desktop"]; !strings.Contains(line, "the tools look, get_scene_info") {
+		t.Errorf("the enforcement line: %q", line)
+	}
+}
+
+// Any application id compiles, with no list of applications in the
+// runner: one whose server the run uses gets an entry, one used through
+// its windows alone none, and an application the person chooses gets the
+// chosen entry, agentry-desktop-chosen.
+func TestAnyApplicationCompiles(t *testing.T) {
+	doc := strings.Replace(desktopManifest, "    servers:\n      - id: blender\n", `    computerUse: app
+    servers:
+      - id: my-cad
+        tools: [export_drawing]
+      - id: kdenlive
+        use: computer
+      - choose: true
+`, 1)
+	planDir := t.TempDir()
+	plan, err := Compile(hostInputs(t, doc), planDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := plan.Capabilities.Desktop
+	if ids := d.EntryIDs(); !slices.Equal(ids, []string{"my-cad", spec.DesktopChosenID, spec.DesktopComputerID}) {
+		t.Fatalf("entries %v", ids)
+	}
+	// The chooser says nothing of use, so it is the chosen application's
+	// server and, under app scope, its windows too.
+	if !d.Servers[1].Chosen || d.Servers[1].Narrowed || !slices.Equal(d.Windows, []string{"my-cad", "kdenlive"}) || !d.ChooseWindows {
+		t.Fatalf("desktop = %+v", d)
+	}
+	allow := toolsAllowlist(t, planDir)
+	if !slices.Equal(allow["agentry-desktop-my-cad"], []string{"export_drawing"}) || len(allow["agentry-desktop-chosen"]) != 0 {
+		t.Fatalf("allowlist %v", allow)
+	}
+	if _, ok := allow["agentry-desktop-kdenlive"]; ok {
+		t.Fatal("an application used through its windows alone has an entry")
+	}
+	line := plan.Enforcement["desktop"]
+	for _, w := range []string{"an application the person chooses through agentry-desktop-chosen", "app scope (the windows of my-cad, kdenlive and an application the person chooses when the run starts)"} {
+		if !strings.Contains(line, w) {
+			t.Errorf("enforcement line lacks %q: %q", w, line)
+		}
+	}
+}
+
+// Whether a run may bind an application the person set up themself is the
+// policy's desktop.allowCustomServers (unset, allowed), and Unsafe Mode's
+// when the policy says no; the plan records which, and its enforcement line
+// says so.
+func TestPersonSetUpApplicationsFollowThePolicy(t *testing.T) {
+	no := false
+	for _, tc := range []struct {
+		name   string
+		allow  *bool
+		unsafe bool
+		want   string
+		line   string
+	}{
+		{"unset", nil, false, spec.PersonServersAllowed, "is bound as one from Agentry Desktop's library is"},
+		{"false", &no, false, spec.PersonServersRefused, "is refused before the sandbox starts (desktop.allowCustomServers: false)"},
+		{"false, Unsafe Mode", &no, true, spec.PersonServersUnsafe, "only because Unsafe Mode is on"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := hostInputs(t, desktopManifest)
+			in.Policy.Desktop.AllowCustomServers = tc.allow
+			if tc.unsafe {
+				in.Unsafe = testUnsafeData(t)
+			}
+			plan, err := Compile(in, t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := plan.Capabilities.Desktop.PersonServers; got != tc.want {
+				t.Fatalf("person servers %q, want %q", got, tc.want)
+			}
+			if !strings.Contains(plan.Enforcement["desktop"], tc.line) {
+				t.Errorf("enforcement line: %q", plan.Enforcement["desktop"])
+			}
+		})
 	}
 }
 
@@ -179,8 +245,7 @@ func TestAReleaseWithoutTheDesktopLineHasNoDesktopLink(t *testing.T) {
 }
 
 // The line is refused where the run cannot hold it: by a policy that does
-// not allow the person's computer, for a catalogue id this build does not
-// know, and beside a built-in's grants.
+// not allow the person's computer, and beside a built-in's grants.
 func TestTheDesktopLineIsRefusedWhereTheRunCannotHoldIt(t *testing.T) {
 	refused := func(t *testing.T, in Inputs, want string) {
 		t.Helper()
@@ -194,18 +259,6 @@ func TestTheDesktopLineIsRefusedWhereTheRunCannotHoldIt(t *testing.T) {
 	no := false
 	off.Policy.Desktop.Allow = &no
 	refused(t, off, "desktop.allow: true")
-
-	unknown := strings.Replace(desktopManifest, "      - id: blender\n", "      - id: blender\n      - id: unreal\n", 1)
-	in := hostInputs(t, unknown)
-	if _, known := appserver.Builtin().Lookup("unreal"); known {
-		t.Skip("this build's catalogue lists unreal")
-	}
-	// The core's manifest rule refuses an unknown id before the compiler
-	// sees it; the compiler's own refusal is for a build whose catalogue
-	// differs from the one that validated the release.
-	if _, err := Compile(in, t.TempDir()); err == nil {
-		t.Fatal("an unknown catalogue id compiled")
-	}
 
 	builtin := hostInputs(t, desktopManifest)
 	builtin.Source = "builtin"
@@ -265,9 +318,10 @@ func TestCompileRendersComputerUse(t *testing.T) {
 		t.Fatalf("the entry is not enabled: %v", plan.Gateway.Servers)
 	}
 	checkGolden(t, "computer-use", planDir, []string{"plan.json", "gateway/catalog.yaml", "gateway/tools.yaml"})
-	// The application server's entry is still there beside it.
-	if got := allow[desktoplink.ServerName("blender")]; len(got) == 0 {
-		t.Fatal("the Blender entry is gone")
+	// The application's entry is still there beside it, its tools to come
+	// from the bind.
+	if got, ok := allow[desktoplink.ServerName("blender")]; !ok || len(got) != 0 {
+		t.Fatalf("the blender entry = %v, %v", got, ok)
 	}
 	prompt, _ := os.ReadFile(filepath.Join(planDir, "harness", "agent.yaml")) //nolint:gosec // test plan dir
 	for _, w := range []string{"**Computer use.**", "agentry-desktop-computer__screenshot", "pixels of the window's own image", "refused", "never instructions"} {
@@ -276,7 +330,7 @@ func TestCompileRendersComputerUse(t *testing.T) {
 		}
 	}
 	line := plan.Enforcement["desktop"]
-	for _, w := range []string{"computer use in app scope (the windows of Blender)", name, "keeps nowhere", "what the computer's own system enforced"} {
+	for _, w := range []string{"computer use in app scope (the windows of blender)", name, "keeps nowhere", "what the computer's own system enforced"} {
 		if !strings.Contains(line, w) {
 			t.Errorf("enforcement line lacks %q: %q", w, line)
 		}
@@ -292,7 +346,7 @@ func TestCompileRendersComputerUse(t *testing.T) {
 	if ids := plan.Capabilities.Desktop.EntryIDs(); !slices.Equal(ids, []string{"computer"}) {
 		t.Fatalf("entries %v", ids)
 	}
-	if line := plan.Enforcement["desktop"]; !strings.Contains(line, "one application the person picks") {
+	if line := plan.Enforcement["desktop"]; !strings.Contains(line, "app scope (the windows of an application the person chooses when the run starts)") {
 		t.Errorf("enforcement line: %q", line)
 	}
 	if allow := toolsAllowlist(t, planDir); len(allow[name]) != len(want) || len(allow[desktoplink.ServerName("blender")]) != 0 {
@@ -372,38 +426,4 @@ func toolsAllowlist(t *testing.T, planDir string) map[string][]string {
 		t.Fatalf("tools.yaml: %v\n%s", err, b)
 	}
 	return out
-}
-
-// A release that uses Unreal Engine compiles one link entry for Epic's own
-// plugin, held to its three tools, and the plan names the plugin as the
-// application's own; nothing of the editor's loopback address reaches the
-// plan or the gateway's files.
-func TestCompileRendersUnreal(t *testing.T) {
-	doc := strings.Replace(desktopManifest, "      - id: blender\n", "      - id: unreal\n", 1)
-	planDir := t.TempDir()
-	plan, err := Compile(hostInputs(t, doc), planDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	d := plan.Capabilities.Desktop
-	if d == nil || len(d.Servers) != 1 || d.Servers[0].ID != "unreal" || d.Servers[0].Application != "Unreal Engine" ||
-		d.Servers[0].Package != "application:ModelContextProtocol@5.8.0" ||
-		!slices.Equal(d.Servers[0].ToolNames(), []string{"list_toolsets", "describe_toolset", "call_tool"}) || len(d.Servers[0].Egress) != 0 {
-		t.Fatalf("desktop = %+v", d)
-	}
-	for _, f := range []string{"catalog.yaml", "tools.yaml"} {
-		b, err := os.ReadFile(filepath.Join(planDir, "gateway", f)) //nolint:gosec // test plan dir
-		if err != nil {
-			t.Fatal(err)
-		}
-		if strings.Contains(string(b), "127.0.0.1") || strings.Contains(string(b), "8000") {
-			t.Errorf("%s carries the editor's address:\n%s", f, b)
-		}
-		if !strings.Contains(string(b), "agentry-desktop-unreal") && f == "catalog.yaml" {
-			t.Errorf("catalog.yaml has no link entry for unreal:\n%s", b)
-		}
-	}
-	if line := plan.Enforcement["desktop"]; !strings.Contains(line, "Unreal Engine") || strings.Contains(line, "runs code inside") {
-		t.Errorf("the enforcement line: %q", line)
-	}
 }

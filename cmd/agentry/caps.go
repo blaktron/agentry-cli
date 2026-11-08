@@ -94,8 +94,8 @@ func capabilityLinesSized(c manifest.Capabilities, sizes map[string]int64) []str
 	if b := c.Browser; b != nil {
 		lines = append(lines, "browser: "+browserLine(b))
 	}
-	// The person's computer: each application, its tool count, its code
-	// tools and its egress hosts, in the catalogue's words; and the screen.
+	// The person's computer: each application by its id and the tools the
+	// release narrows it to; and computer use.
 	lines = append(lines, desktopLines(c.Desktop)...)
 	// Shipped knowledge: packs inside the release the agent
 	// reads, part of what is consented to.
@@ -214,10 +214,9 @@ func confirmedDesktop(d *manifest.Desktop) []string {
 	return what
 }
 
-// desktopLines are the consent lines for a desktop line: one an application
-// server, in the catalogue's words (the application, its tool count, how
-// many run code inside it, and how many hosts it reaches from the person's
-// computer), and one for computer use.
+// desktopLines are the consent lines for a desktop line: one an application,
+// by its id and the tools the release narrows it to (Agentry Desktop, which
+// resolves the id, says the rest), and one for computer use.
 func desktopLines(d *manifest.Desktop) []string {
 	if d == nil {
 		return nil

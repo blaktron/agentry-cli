@@ -65,9 +65,8 @@ func TestTheConsentNamesTheDesktopLine(t *testing.T) {
 
 func desktopPlan() *spec.Plan {
 	return &spec.Plan{Ref: "acme/scene@1.0.0", Digest: "sha256:beef", Capabilities: spec.CapSummary{Desktop: &spec.DesktopCap{Servers: []spec.DesktopServerCap{{
-		ID: "blender", Application: "Blender", Package: "pypi:mcp-for-blender@2.2.7",
-		Tools: []spec.DesktopTool{{Name: "get_scene_info", Class: "read"}, {Name: "execute_blender_code", Class: "exec"}},
-	}}}}}
+		ID: "blender", Application: "blender",
+	}}, PersonServers: spec.PersonServersAllowed}}}
 }
 
 // A run of a release that uses the person's computer is refused before the
@@ -90,7 +89,7 @@ func TestARunNeedsAgentryDesktop(t *testing.T) {
 		t.Helper()
 		var ce *engine.ClassifiedError
 		if link != nil || err == nil || !errors.As(err, &ce) || ce.Code != engine.ExitPolicy ||
-			!strings.Contains(err.Error(), "Blender on your computer") || !strings.Contains(err.Error(), "needs Agentry Desktop running on this computer") {
+			!strings.Contains(err.Error(), "blender on your computer") || !strings.Contains(err.Error(), "needs Agentry Desktop running on this computer") {
 			t.Fatalf("%s: link %+v, err %v", name, link, err)
 		}
 		if r := receipt.ReasonOf(err); r == nil || r.Code != receipt.ReasonDesktopRefused || r.Detail != receipt.DesktopUnavailable || !slices.Equal(r.Names, []string{"blender"}) {
@@ -135,7 +134,7 @@ func TestARunNeedsAgentryDesktop(t *testing.T) {
 		t.Fatalf("bound: %+v, %v", link, err)
 	}
 	if len(s.binds) != 1 || s.binds[0].Run != "R" || s.binds[0].Ref != "acme/scene@1.0.0" || len(s.binds[0].Servers) != 1 ||
-		s.binds[0].Servers[0].ID != "blender" || !slices.Equal(s.binds[0].Servers[0].Tools, []string{"get_scene_info", "execute_blender_code"}) {
+		s.binds[0].Servers[0].ID != "blender" || len(s.binds[0].Servers[0].Tools) != 0 || s.binds[0].Protocol != desktop.Protocol {
 		t.Fatalf("the bind sent %+v", s.binds)
 	}
 	if err := link.Unbind(context.Background()); err != nil || len(s.unbinds) != 1 || s.unbinds[0].Token != "tok-1" {
@@ -235,12 +234,17 @@ func TestHostedRunsRefuseTheDesktopLine(t *testing.T) {
 }
 
 func TestTheRunSummaryNamesTheDesktopLine(t *testing.T) {
-	if got := desktopSummary(desktopPlan().Capabilities.Desktop); got != "Blender (2 tools) on your computer, through Agentry Desktop" {
+	if got := desktopSummary(desktopPlan().Capabilities.Desktop); got != "blender (every tool its server lists) on your computer, through Agentry Desktop" {
+		t.Errorf("summary %q", got)
+	}
+	narrowed := desktopPlan().Capabilities.Desktop
+	narrowed.Servers[0].Narrowed, narrowed.Servers[0].Tools = true, []spec.DesktopTool{{Name: "look"}}
+	if got := desktopSummary(narrowed); got != "blender (1 tool) on your computer, through Agentry Desktop" {
 		t.Errorf("summary %q", got)
 	}
 	cu := desktopPlan().Capabilities.Desktop
 	cu.ComputerUse = "app"
-	if got := desktopSummary(cu); got != "Blender (2 tools) and computer use in the windows you allow on your computer, through Agentry Desktop" {
+	if got := desktopSummary(cu); got != "blender (every tool its server lists) and computer use in the windows you allow on your computer, through Agentry Desktop" {
 		t.Errorf("summary %q", got)
 	}
 }

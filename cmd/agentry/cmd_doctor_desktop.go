@@ -1,13 +1,13 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net"
-	"slices"
-	"strconv"
+	"strings"
 	"time"
 
-	"github.com/blaktron/agentry/pkg/appserver"
 	"github.com/blaktron/agentry/pkg/manifest"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/desktop"
@@ -16,51 +16,110 @@ import (
 // doctorDialTimeout bounds each of the desktop rows' connections.
 var doctorDialTimeout = time.Second
 
+// doctorList lists the person's approved applications from Agentry
+// Desktop; a test replaces it.
+var doctorList = func(ctx context.Context, sock string) (desktop.ApplicationList, error) {
+	return desktop.Client{Socket: sock}.List(ctx)
+}
+
 // doctorDesktop reports the person's computer: whether Agentry Desktop
-// answers on its link socket here, and for each application of the
-// catalogue whether the application's MCP listener answers on its loopback
-// port. A row is a failure only for what the QuickAgent checked declares:
-// any other application, and Agentry Desktop for a QuickAgent that uses
-// none, are said and need nothing.
+// answers on its link socket here, and each application the person set up
+// in it, as it lists them, with what they approved and whether it is ready.
+// A row is a failure only for what the QuickAgent checked uses: an
+// application it names that is not set up, not approved for what it uses,
+// or not ready; any other application, and Agentry Desktop for a
+// QuickAgent that uses none, are said and need nothing.
 func doctorDesktop(rep *doctorReport, home string, m *manifest.Manifest) {
-	var uses []string
-	if m != nil && m.Capabilities.Desktop != nil {
-		for _, s := range m.Capabilities.Desktop.Servers {
-			uses = append(uses, s.ID)
-		}
+	var line *manifest.Desktop
+	if m != nil {
+		line = m.Capabilities.Desktop
 	}
 	sock := desktop.SocketPath(home)
-	if c, err := net.DialTimeout("unix", sock, doctorDialTimeout); err == nil {
+	c, err := net.DialTimeout("unix", sock, doctorDialTimeout)
+	switch {
+	case err == nil:
 		_ = c.Close()
 		rep.ok("desktop link", "Agentry Desktop answers on %s", sock)
-	} else if m != nil && m.Capabilities.Desktop != nil {
+	case line != nil:
 		rep.failFix("desktop link", "start Agentry Desktop on this computer",
 			"Agentry Desktop is not running: this QuickAgent uses your computer through it")
-	} else {
+		return
+	default:
 		rep.ok("desktop link", "Agentry Desktop is not running here; only a QuickAgent that uses an application on your computer needs it")
+		return
 	}
-	for _, e := range appserver.Builtin().All() {
-		name := "desktop: " + e.Application
-		port := e.Listener.Port
-		addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
-		c, err := net.DialTimeout("tcp", addr, doctorDialTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	list, err := doctorList(ctx, sock)
+	switch {
+	case errors.Is(err, desktop.ErrNoListing) && line != nil:
+		rep.failFix("desktop: applications", "update Agentry Desktop", "%v", err)
+		return
+	case err != nil && line != nil:
+		rep.failFix("desktop: applications", "open Agentry Desktop's Settings, Your computer", "Agentry Desktop did not list your applications: %v", err)
+		return
+	case err != nil:
+		rep.ok("desktop: applications", "Agentry Desktop did not list your applications (%v); only a QuickAgent that uses one needs them", err)
+		return
+	case len(list.Applications) == 0 && line == nil:
+		rep.ok("desktop: applications", "none set up in Agentry Desktop's Settings, Your computer")
+	}
+	byID := map[string]desktop.Application{}
+	for _, a := range list.Applications {
+		byID[a.ID] = a
+		rep.ok("desktop: "+a.Name, "%s", applicationState(a))
+	}
+	if line == nil {
+		return
+	}
+	for _, s := range line.Servers {
+		if s.Choose {
+			continue
+		}
+		a, ok := byID[s.ID]
+		name := "desktop: " + s.ID
 		switch {
-		case err == nil:
-			_ = c.Close()
-			rep.ok(name, "%s's MCP listener answers on port %d", e.Application, port)
-		case slices.Contains(uses, e.ID):
-			rep.failFix(name, firstStep(e), "%s does not answer on port %d: this QuickAgent uses it", e.Application, port)
-		default:
-			rep.ok(name, "%s does not answer on port %d (not running, or its MCP add-on is off)", e.Application, port)
+		case !ok:
+			rep.failFix(name, "add it in Agentry Desktop's Settings, Your computer", "this QuickAgent uses an application called %s, which is not set up on this computer", s.ID)
+		case s.UsesServer() && !a.MCP:
+			rep.failFix(name, "approve its MCP server in Agentry Desktop's Settings, Your computer", "this QuickAgent uses %s's MCP server, which you have not approved", a.Name)
+		case line.UsesWindows(s) && !a.Computer:
+			rep.failFix(name, "approve its windows for computer use in Agentry Desktop's Settings, Your computer", "this QuickAgent works %s's windows, which you have not approved", a.Name)
+		case !a.Ready:
+			rep.failFix(name, stepOr(a), "this QuickAgent uses %s, which is not ready", a.Name)
 		}
 	}
 }
 
-// firstStep is the catalogue entry's first install step, or a sentence
-// that says what to open.
-func firstStep(e appserver.Server) string {
-	if len(e.Steps) > 0 {
-		return e.Steps[0]
+// applicationState is a listed application in the row's words.
+func applicationState(a desktop.Application) string {
+	var approved []string
+	if a.MCP {
+		approved = append(approved, "its MCP server")
 	}
-	return fmt.Sprintf("open %s and start its MCP server", e.Application)
+	if a.Computer {
+		approved = append(approved, "its windows")
+	}
+	what := "nothing approved"
+	if len(approved) > 0 {
+		what = strings.Join(approved, " and ") + " approved"
+	}
+	from := "set up by you"
+	if !desktop.SetByPerson(a.From) {
+		from = "from Agentry Desktop's library"
+	}
+	ready := "ready"
+	if !a.Ready {
+		ready = "not ready: " + stepOr(a)
+	}
+	return fmt.Sprintf("%s (%s), %s, %s", a.ID, from, what, ready)
+}
+
+// stepOr is a listed application's step, or a sentence that says what to
+// open.
+func stepOr(a desktop.Application) string {
+	if a.Step != "" {
+		return a.Step
+	}
+	return "open " + a.Name + " and Agentry Desktop's Settings, Your computer"
 }

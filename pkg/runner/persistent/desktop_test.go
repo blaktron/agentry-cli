@@ -8,7 +8,23 @@ import (
 
 	"github.com/blaktron/agentry/pkg/manifest"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/desktop"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
+)
+
+// stubApplications has the roster read these as the person's approved
+// applications, as Agentry Desktop lists them, for the test; none and an
+// error is an Agentry Desktop that does not answer.
+func stubApplications(t *testing.T, err error, apps ...desktop.Application) {
+	t.Helper()
+	prev := listApplications
+	listApplications = func() ([]desktop.Application, error) { return apps, err }
+	t.Cleanup(func() { listApplications = prev })
+}
+
+var (
+	listedBlender = desktop.Application{ID: "blender", Name: "Blender", From: desktop.FromLibrary, MCP: true, Ready: true}
+	listedUnreal  = desktop.Application{ID: "unreal", Name: "Unreal Engine", From: desktop.FromLibrary, MCP: true}
 )
 
 // A running agent's desktop entry switched on reads pending until the next
@@ -18,6 +34,7 @@ func TestADesktopEntrySwitchesWhileTheAgentRuns(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	home := shortHome(t)
 	t.Setenv("AGENTRY_RUNNER_HOME", home)
+	stubApplications(t, nil, listedBlender)
 	a := assistantAgent(t)
 	c := Config{Enabled: true}
 	applied := &Applied{}
@@ -73,6 +90,7 @@ func TestTheExecAgreementIsGivenWithItsApplicationAlone(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	home := shortHome(t)
 	t.Setenv("AGENTRY_RUNNER_HOME", home)
+	stubApplications(t, nil, listedBlender)
 	a := assistantAgent(t)
 	c := Config{Enabled: true, Switches: map[string]bool{DesktopExecID("blender"): true}}
 	g, ap, done, err := Apply(context.Background(), home, a, c, BuildRoster(a, c, nil), nil, nil, nil)
@@ -107,8 +125,11 @@ func TestTheExecAgreementIsGivenWithItsApplicationAlone(t *testing.T) {
 }
 
 // An entry that is on reads needs-set-up while no Agentry Desktop answers,
-// and is given all the same: its calls are refused until one does.
+// and is given all the same: its calls are refused until one does. Agentry
+// Desktop not answering lists nothing, and the application switched on is
+// still offered.
 func TestADesktopEntryNeedsAgentryDesktopAndIsGivenAllTheSame(t *testing.T) {
+	stubApplications(t, desktop.ErrNoService)
 	t.Setenv("HOME", t.TempDir())
 	home := shortHome(t)
 	t.Setenv("AGENTRY_RUNNER_HOME", home)
@@ -134,13 +155,50 @@ func TestTheReleaseLineNarrowsTheDesktopEntries(t *testing.T) {
 	pub := Agent{Name: "acme.helper", Release: &localrun.Installed{}, Caps: &manifest.Persistent{Desktop: true},
 		DesktopLine: &manifest.Desktop{Servers: []manifest.DesktopServer{{ID: "unreal"}}}}
 	var ids []string
-	for _, e := range desktopEntries(pub) {
+	for _, e := range desktopEntries(pub, nil) {
 		ids = append(ids, e.ID)
 	}
-	if !slices.Equal(ids, []string{DesktopEntryID("unreal")}) {
-		t.Fatalf("a release that narrows to Unreal Engine is offered %v", ids)
+	if !slices.Equal(ids, []string{DesktopEntryID("unreal"), DesktopExecID("unreal")}) {
+		t.Fatalf("a release that narrows to unreal is offered %v", ids)
 	}
-	if es := desktopEntries(Agent{Name: "x", Release: &localrun.Installed{}, Caps: &manifest.Persistent{Clock: true}}); len(es) != 0 {
+	if es := desktopEntries(Agent{Name: "x", Release: &localrun.Installed{}, Caps: &manifest.Persistent{Clock: true}}, nil); len(es) != 0 {
 		t.Fatalf("an agent that does not declare the key is offered %+v", es)
+	}
+}
+
+// Without a release line the agent is offered the applications the person
+// approved for their MCP servers, as Agentry Desktop lists them, by their
+// names: one approved for its windows alone is not an MCP entry. An older
+// Agentry Desktop that lists nothing leaves only computer use.
+func TestTheRosterOffersThePersonsApplications(t *testing.T) {
+	a := Agent{Name: "acme.helper", Release: &localrun.Installed{}, Caps: &manifest.Persistent{Desktop: true}}
+	stubApplications(t, nil, listedBlender, desktop.Application{ID: "kdenlive", Name: "Kdenlive", From: desktop.FromPerson, Computer: true},
+		desktop.Application{ID: "my-cad", Name: "My CAD", From: desktop.FromPerson, MCP: true})
+	var got []string
+	for _, e := range desktopEntries(a, nil) {
+		got = append(got, e.ID+"="+e.Name)
+	}
+	want := []string{"desktop:blender=Blender on your computer", "desktop:blender:exec=Blender: code without asking",
+		"desktop:my-cad=My CAD on your computer", "desktop:my-cad:exec=My CAD: code without asking", "desktop:computer=Computer use"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("offered %v, want %v", got, want)
+	}
+	// A switch keeps its application offered while Agentry Desktop lists
+	// nothing; a switch whose id cannot be an application's offers nothing.
+	stubApplications(t, desktop.ErrNoListing)
+	got = nil
+	switches := map[string]bool{DesktopEntryID("my-cad"): true, DesktopEntryID("chosen"): true, DesktopEntryID("Not An ID"): true}
+	for _, e := range desktopEntries(a, switches) {
+		got = append(got, e.ID)
+	}
+	if !slices.Equal(got, []string{DesktopEntryID("my-cad"), DesktopExecID("my-cad"), EntryComputer}) {
+		t.Fatalf("switched on while Agentry Desktop lists nothing: %v", got)
+	}
+	got = nil
+	for _, e := range desktopEntries(a, nil) {
+		got = append(got, e.ID)
+	}
+	if !slices.Equal(got, []string{EntryComputer}) {
+		t.Fatalf("with an Agentry Desktop that lists nothing: %v", got)
 	}
 }

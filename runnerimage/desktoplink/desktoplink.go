@@ -10,8 +10,8 @@
 // it; the answer comes back the same way and is returned as the tool's
 // result. Nothing of the installed server runs in the sandbox, and nothing
 // the agent sends names a command: a call carries a tool's name and its
-// arguments, and the application's server is the catalogue's, chosen by
-// Agentry Desktop from the entry's id.
+// arguments, and the application's server is the one the person approved
+// for it, chosen by Agentry Desktop from the entry's id.
 //
 // This package is part of the embedded runner-image build context and
 // therefore MUST remain stdlib-only.
@@ -113,6 +113,10 @@ type Tool struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description,omitempty"`
 	InputSchema json.RawMessage `json:"inputSchema,omitempty"`
+	// Class is the tool's class as Agentry Desktop gives it (read, act or
+	// exec), for the run's counts and call log; Agentry Desktop sends it
+	// only to a run that names the link protocol's revision.
+	Class string `json:"class,omitempty"`
 }
 
 // Bind is the run's binding, written by the relay for the desktop link

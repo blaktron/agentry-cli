@@ -4563,18 +4563,18 @@
           "tests": [
             "TestCompileRendersTheDesktopLink",
             "TestTheDesktopLinkFollowsTheReleasesNarrowing",
+            "TestAnyApplicationCompiles",
+            "TestPersonSetUpApplicationsFollowThePolicy",
             "TestAReleaseWithoutTheDesktopLineHasNoDesktopLink",
             "TestTheDesktopLineIsRefusedWhereTheRunCannotHoldIt",
             "TestCompileRendersComputerUse",
-            "TestScreenScopeNeedsAllowScreen",
-            "TestCompileRendersUnreal"
+            "TestScreenScopeNeedsAllowScreen"
           ],
           "fuzz": [],
           "benchmarks": [],
           "fixtureEntryPoint": false,
           "dependencyHints": [
-            "source/file contract",
-            "explicit skip"
+            "source/file contract"
           ]
         },
         {
@@ -5323,6 +5323,27 @@
           "dependencyHints": [
             "source/file contract",
             "explicit skip"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "pkg/runner/desktop",
+      "behavior": "How a run reaches Agentry Desktop's link service: the socket, the bind, call and unbind messages, and the server side a stand-in or the app implements",
+      "disposition": "retain",
+      "files": [
+        {
+          "path": "pkg/runner/desktop/desktop_test.go",
+          "tests": [
+            "TestTheListingIsAskedAndAnswered",
+            "TestARelayDoesNotCarryAListing",
+            "TestSetByPersonReadsTheStrictWay"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
           ]
         }
       ]
@@ -6684,6 +6705,23 @@
             "docker interface (real or fake)",
             "source/file contract",
             "real-time wait"
+          ]
+        },
+        {
+          "path": "pkg/runner/engine/desktop_any_test.go",
+          "tests": [
+            "TestTheBindNamesWhatTheRunUses",
+            "TestTheRunTakesItsToolsFromTheBinding",
+            "TestThePolicyHoldsThePersonsOwnSetUps",
+            "TestTheChosenApplicationIsNamed",
+            "TestTheAllowlistIsTheBindingsTools",
+            "TestASegmentsBindingsAreHeldToThePolicy"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
           ]
         },
         {
@@ -8516,7 +8554,8 @@
             "TestADesktopEntrySwitchesWhileTheAgentRuns",
             "TestTheExecAgreementIsGivenWithItsApplicationAlone",
             "TestADesktopEntryNeedsAgentryDesktopAndIsGivenAllTheSame",
-            "TestTheReleaseLineNarrowsTheDesktopEntries"
+            "TestTheReleaseLineNarrowsTheDesktopEntries",
+            "TestTheRosterOffersThePersonsApplications"
           ],
           "fuzz": [],
           "benchmarks": [],
