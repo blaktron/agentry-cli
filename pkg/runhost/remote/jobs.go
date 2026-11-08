@@ -34,6 +34,10 @@ type LocalJob struct {
 	// UnsafeMode is whether the runhost's Unsafe Mode setting was on when
 	// the job was sent.
 	UnsafeMode bool `json:"unsafeMode,omitempty"`
+	// Desktop is the run this device bound on its Agentry Desktop for the
+	// job, whose desktop link a later attach opens again; empty for a job
+	// that uses no application on this computer.
+	Desktop string `json:"desktop,omitempty"`
 }
 
 const JobsFile = "runhost-jobs.json"

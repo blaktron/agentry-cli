@@ -108,3 +108,17 @@ func (s *Service) answer(ctx context.Context, conn net.Conn) {
 		s.logf("%s: the answer did not reach the device: %v", req.Verb, werr)
 	}
 }
+
+// ListenOwnerOnly listens on a Unix socket at path that only this user can
+// connect to, from its first moment.
+func ListenOwnerOnly(path string) (net.Listener, error) {
+	l, err := listenOwnerOnly(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		_ = l.Close()
+		return nil, err
+	}
+	return l, nil
+}

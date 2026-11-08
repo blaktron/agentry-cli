@@ -190,3 +190,10 @@ func writeDesktop(b *strings.Builder, d *spec.DesktopCap) {
 			where, name, strings.Join(c.ToolNames(), ", "), name, name, name)
 	}
 }
+
+// DesktopCapFor is a release's desktop line as a run under pol holds it, for
+// a client that binds it to Agentry Desktop before anything compiles there:
+// a run sent to a remote runhost, bound on the device that sends it.
+func DesktopCapFor(d *manifest.Desktop, pol *policy.Policy, allowScreen bool) (*spec.DesktopCap, error) {
+	return desktopCap(d, Inputs{Policy: pol, AllowScreen: allowScreen})
+}

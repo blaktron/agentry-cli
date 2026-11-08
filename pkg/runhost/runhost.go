@@ -90,7 +90,7 @@ func SocketPath(uid int) string {
 // the service, which answers the ones it knows and refuses the rest.
 func IsVerb(v string) bool {
 	switch v {
-	case "version", "status", "doctor", "job", "attach", "cancel", "collect", "update", "unpair", "store", "schedule", "agent", "sign-in":
+	case "version", "status", "doctor", "job", "attach", "cancel", "collect", "update", "unpair", "store", "schedule", "agent", "sign-in", "link":
 		return true
 	}
 	return false

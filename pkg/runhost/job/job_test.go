@@ -6,7 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/desktop"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/runnerimage/desktoplink"
 )
 
 func validJob() *Job {
@@ -238,6 +240,25 @@ func TestARunhostRunsTheImageOfAHostHarness(t *testing.T) {
 	for _, bad := range []string{"opencode", "copilot", "goose", "claude-image "} {
 		if _, _, err := RunhostAdapter(bad); err == nil {
 			t.Errorf("%q taken", bad)
+		}
+	}
+}
+
+func TestADesktopBindingIsHeldToWhatAJobCanCarry(t *testing.T) {
+	ok := &Desktop{Run: "0123abcd", Bound: desktop.Bound{Token: "tok-1", Servers: map[string][]desktoplink.Tool{"blender": nil}}}
+	if err := ok.validate(); err != nil {
+		t.Fatal(err)
+	}
+	for name, d := range map[string]*Desktop{
+		"no token":     {Run: "r", Bound: desktop.Bound{Servers: map[string][]desktoplink.Tool{"blender": nil}}},
+		"a token line": {Run: "r", Bound: desktop.Bound{Token: "a\nb", Servers: map[string][]desktoplink.Tool{"blender": nil}}},
+		"no run":       {Bound: desktop.Bound{Token: "t", Servers: map[string][]desktoplink.Tool{"blender": nil}}},
+		"a path run":   {Run: "../x", Bound: desktop.Bound{Token: "t", Servers: map[string][]desktoplink.Tool{"blender": nil}}},
+		"nothing":      {Run: "r", Bound: desktop.Bound{Token: "t"}},
+		"bad server":   {Run: "r", Bound: desktop.Bound{Token: "t", Servers: map[string][]desktoplink.Tool{"a b": nil}}},
+	} {
+		if err := d.validate(); err == nil {
+			t.Errorf("%s: accepted", name)
 		}
 	}
 }
