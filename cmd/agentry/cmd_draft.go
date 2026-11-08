@@ -163,7 +163,7 @@ func newDraftCmd() *cobra.Command {
 	f.StringArrayVar(&o.knowledge, "knowledge", nil, "a knowledge pack the Drafter reads first: a pack directory, or the name of a pack kept on this computer (repeatable; at most "+
 		strconv.Itoa(drafter.MaxKnowledgePacks)+" packs and "+knowledge.FormatCap(drafter.MaxKnowledgeBytes)+" in all). A pack not scanned in Agentry is scanned first")
 	f.StringArrayVar(&o.ships, "ship", nil, "a knowledge pack to ship with the QuickAgent, which every run of it then reads at /knowledge/NAME: a pack directory, or the name of one of your own packs kept on this computer (repeatable; at most "+
-		strconv.Itoa(ship.MaxPacks)+" packs, each at most "+knowledge.FormatCap(ship.MaxPackBytes)+" and "+strconv.Itoa(ship.MaxPackFiles)+" files). The Drafter reads it as --knowledge does; `agentry publish` asks you to confirm each shipped pack")
+		strconv.Itoa(ship.MaxPacks)+" packs, each at most "+knowledge.FormatCap(ship.MaxPackBytes)+" and "+strconv.Itoa(ship.MaxPackFiles)+" files). The Drafter reads it as --knowledge does; agentry publish asks you to confirm each shipped pack")
 	f.StringVar(&o.namespace, "namespace", "", "the namespace the QuickAgent will be published in, which a shipped organization pack needs: it ships only with a QuickAgent in its organization's own namespace, from the organization's administrators (the manifest's namespace stays draft)")
 	f.StringArrayVar(&o.hints, "hint", nil, "a hint: the services or sites it works with, whether it runs on its own or in a conversation, an example of the output wanted (repeatable)")
 	f.StringVar(&o.descriptionFile, "description-file", "", "read the description from this file instead of the argument")
@@ -178,7 +178,7 @@ func newDraftCmd() *cobra.Command {
 	f.IntVar(&o.timeout, "timeout", 0, "the Drafter run's wall-clock budget in seconds (default: the policy's or 1800, whichever is longer; with --hosted, the policy's)")
 	f.IntVar(&o.maxTurns, "max-turns", -1, "the Drafter run's tool-call budget, 0 = unlimited (default: the policy's)")
 	f.Float64Var(&o.maxCost, "max-cost", -1, "stop the Drafter run once the harness reports this much cost in USD (default: the policy's)")
-	f.StringVar(&o.outputFormat, "output-format", "text", "stdout format: text | json (json = the Drafter run's result envelope, as `agentry run` writes one, with the draft's report under draft; the harness's usage is narrated on stderr)")
+	f.StringVar(&o.outputFormat, "output-format", "text", "stdout format: text | json (json = the Drafter run's result envelope, as agentry run writes one, with the draft's report under draft; the harness's usage is narrated on stderr)")
 	return cmd
 }
 
@@ -573,6 +573,8 @@ func printDraft(w io.Writer, outDir string, d *drafter.Draft) {
 		say("  package:   %s holds the draft, which does not pass yet: %s", pkg, safeTerminalText(d.ManifestError, 400))
 	case d.ManifestError != "":
 		say("  package:   not rendered: %s", safeTerminalText(d.ManifestError, 400))
+	case json.Unmarshal(d.Validation, &v) == nil && v.Passed && v.Counts.Unfinished > 0:
+		say("  package:   %s passes agentry validate's rules and scans; before you publish, replace its %d scaffold line(s) (agentry validate lists them)", pkg, v.Counts.Unfinished)
 	case json.Unmarshal(d.Validation, &v) == nil && v.Passed:
 		say("  package:   %s passes agentry validate", pkg)
 	default:

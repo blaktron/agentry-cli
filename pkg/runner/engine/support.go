@@ -706,6 +706,9 @@ func renderGatewayConfig(p Params, rd *runDirs) error {
 	if err := grantFetchLedger(dir, rd); err != nil {
 		return Classify(ExitCLI, fmt.Errorf("configure the fetch ledger: %w", err))
 	}
+	if err := grantDesktopTools(dir, rd.desktop); err != nil {
+		return Classify(ExitCLI, fmt.Errorf("give the desktop link's entries their tools: %w", err))
+	}
 	if err := writeResolvConf(dir, p.Plan); err != nil {
 		return Classify(ExitCLI, fmt.Errorf("write the run's resolv.conf: %w", err))
 	}

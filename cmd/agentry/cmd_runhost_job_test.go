@@ -71,6 +71,7 @@ echo leftover > "$out/scratch/x"
 [ -d files ] && (cd files && find . -type f | sort) > "$RUNHOST_TEST_DIR/files.seen"
 [ -f known_hosts ] && cp known_hosts "$RUNHOST_TEST_DIR/known.seen"
 [ -f hostkeys/server ] && cp hostkeys/server "$RUNHOST_TEST_DIR/hostkey.seen"
+[ -f managed.json ] && cp managed.json "$RUNHOST_TEST_DIR/managed.seen"
 if [ -s secrets.env ]; then
   gw="$AGENTRY_RUNNER_HOME/agents/acme/demo/1.0.0-test/runs/r1/cfg/gateway"
   mkdir -p "$gw" && cp secrets.env "$gw/secrets.env"

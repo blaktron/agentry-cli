@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
-	"github.com/blaktron/agentry/pkg/appserver"
 	"github.com/blaktron/agentry/pkg/manifest"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/desktop"
@@ -22,19 +21,14 @@ import (
 )
 
 // The install consent names each application the release uses on the
-// person's computer in the catalogue's words: the application, its tool
-// count, how many tools run code inside it and how many hosts it reaches
-// from the computer; a narrowed server counts its narrowed tools; computer
-// use names the screen. The gate asks about an application on the computer,
-// and about the screen, in words the desktop and the site copy.
+// person's computer by its id, how the release uses it (its MCP server,
+// with every tool it lists or the tools it narrows to), and computer use
+// by the windows it sees. The gate asks about an application on the
+// computer, and about the screen, in words the desktop and the site copy.
 func TestTheConsentNamesTheDesktopLine(t *testing.T) {
-	blender, ok := appserver.Builtin().Lookup("blender")
-	if !ok {
-		t.Fatal("the catalogue has no blender entry")
-	}
 	c := manifest.Capabilities{Desktop: &manifest.Desktop{Servers: []manifest.DesktopServer{{ID: "blender"}}}}
 	lines := strings.Join(capabilityLines(c), "\n")
-	want := "desktop: Blender on your computer through its MCP server (" + countWord(len(blender.Tools), "tool") + ", 1 runs code inside Blender; it reaches " + countWord(len(blender.Egress), "host") + " from your computer)"
+	want := "desktop: the application blender on your computer, through its MCP server (every tool it lists)"
 	if !strings.Contains(lines, want) {
 		t.Errorf("consent %q lacks %q", lines, want)
 	}
@@ -46,7 +40,7 @@ func TestTheConsentNamesTheDesktopLine(t *testing.T) {
 	}
 
 	narrowed := manifest.Capabilities{Desktop: &manifest.Desktop{Servers: []manifest.DesktopServer{{ID: "blender", Tools: []string{"get_scene_info", "look"}}}}}
-	if l := strings.Join(capabilityLines(narrowed), "\n"); !strings.Contains(l, "desktop: Blender on your computer through its MCP server (2 tools)") {
+	if l := strings.Join(capabilityLines(narrowed), "\n"); !strings.Contains(l, "desktop: the application blender on your computer, through its MCP server (tools get_scene_info, look)") {
 		t.Errorf("a narrowed server's consent: %q", l)
 	}
 
@@ -54,7 +48,7 @@ func TestTheConsentNamesTheDesktopLine(t *testing.T) {
 	if got := confirmedCapabilities(two); !slices.Equal(got, []string{"applications on your computer", "your screen"}) {
 		t.Errorf("two applications and computer use are asked about as %v", got)
 	}
-	if l := strings.Join(capabilityLines(two), "\n"); !strings.Contains(l, "desktop.computerUse: can see and use the windows of Blender and Unreal Engine on your computer") {
+	if l := strings.Join(capabilityLines(two), "\n"); !strings.Contains(l, "desktop.computerUse: can see and use the windows of blender and unreal on your computer") {
 		t.Errorf("computer use's consent: %q", l)
 	}
 	screen := manifest.Capabilities{Desktop: &manifest.Desktop{ComputerUse: manifest.ComputerUseScreen}}
@@ -69,30 +63,10 @@ func TestTheConsentNamesTheDesktopLine(t *testing.T) {
 	}
 }
 
-func countWord(n int, noun string) string {
-	if n == 1 {
-		return "1 " + noun
-	}
-	return strings.Join([]string{itoa(n), noun + "s"}, " ")
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var b []byte
-	for n > 0 {
-		b = append([]byte{byte('0' + n%10)}, b...)
-		n /= 10
-	}
-	return string(b)
-}
-
 func desktopPlan() *spec.Plan {
 	return &spec.Plan{Ref: "acme/scene@1.0.0", Digest: "sha256:beef", Capabilities: spec.CapSummary{Desktop: &spec.DesktopCap{Servers: []spec.DesktopServerCap{{
-		ID: "blender", Application: "Blender", Package: "pypi:mcp-for-blender@2.2.7",
-		Tools: []spec.DesktopTool{{Name: "get_scene_info", Class: "read"}, {Name: "execute_blender_code", Class: "exec"}},
-	}}}}}
+		ID: "blender", Application: "blender",
+	}}, PersonServers: spec.PersonServersAllowed}}}
 }
 
 // A run of a release that uses the person's computer is refused before the
@@ -115,7 +89,7 @@ func TestARunNeedsAgentryDesktop(t *testing.T) {
 		t.Helper()
 		var ce *engine.ClassifiedError
 		if link != nil || err == nil || !errors.As(err, &ce) || ce.Code != engine.ExitPolicy ||
-			!strings.Contains(err.Error(), "Blender on your computer") || !strings.Contains(err.Error(), "needs Agentry Desktop running on this computer") {
+			!strings.Contains(err.Error(), "blender on your computer") || !strings.Contains(err.Error(), "needs Agentry Desktop running on this computer") {
 			t.Fatalf("%s: link %+v, err %v", name, link, err)
 		}
 		if r := receipt.ReasonOf(err); r == nil || r.Code != receipt.ReasonDesktopRefused || r.Detail != receipt.DesktopUnavailable || !slices.Equal(r.Names, []string{"blender"}) {
@@ -160,7 +134,7 @@ func TestARunNeedsAgentryDesktop(t *testing.T) {
 		t.Fatalf("bound: %+v, %v", link, err)
 	}
 	if len(s.binds) != 1 || s.binds[0].Run != "R" || s.binds[0].Ref != "acme/scene@1.0.0" || len(s.binds[0].Servers) != 1 ||
-		s.binds[0].Servers[0].ID != "blender" || !slices.Equal(s.binds[0].Servers[0].Tools, []string{"get_scene_info", "execute_blender_code"}) {
+		s.binds[0].Servers[0].ID != "blender" || len(s.binds[0].Servers[0].Tools) != 0 || s.binds[0].Protocol != desktop.Protocol {
 		t.Fatalf("the bind sent %+v", s.binds)
 	}
 	if err := link.Unbind(context.Background()); err != nil || len(s.unbinds) != 1 || s.unbinds[0].Token != "tok-1" {
@@ -260,12 +234,17 @@ func TestHostedRunsRefuseTheDesktopLine(t *testing.T) {
 }
 
 func TestTheRunSummaryNamesTheDesktopLine(t *testing.T) {
-	if got := desktopSummary(desktopPlan().Capabilities.Desktop); got != "Blender (2 tools) on your computer, through Agentry Desktop" {
+	if got := desktopSummary(desktopPlan().Capabilities.Desktop); got != "blender (every tool its server lists) on your computer, through Agentry Desktop" {
+		t.Errorf("summary %q", got)
+	}
+	narrowed := desktopPlan().Capabilities.Desktop
+	narrowed.Servers[0].Narrowed, narrowed.Servers[0].Tools = true, []spec.DesktopTool{{Name: "look"}}
+	if got := desktopSummary(narrowed); got != "blender (1 tool) on your computer, through Agentry Desktop" {
 		t.Errorf("summary %q", got)
 	}
 	cu := desktopPlan().Capabilities.Desktop
 	cu.ComputerUse = "app"
-	if got := desktopSummary(cu); got != "Blender (2 tools) and computer use in the windows you allow on your computer, through Agentry Desktop" {
+	if got := desktopSummary(cu); got != "blender (every tool its server lists) and computer use in the windows you allow on your computer, through Agentry Desktop" {
 		t.Errorf("summary %q", got)
 	}
 }

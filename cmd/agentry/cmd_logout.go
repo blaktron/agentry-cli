@@ -64,8 +64,10 @@ func runLogout(cmd *cobra.Command, _ []string) error {
 	if err := saveCLIConfig(cfg); err != nil {
 		return fail("storage_unavailable")
 	}
-	// The token a signed-out schedule sealed goes with the sign-in.
+	// The token a signed-out schedule sealed goes with the sign-in, and so
+	// do the managed settings read with it.
 	resealSignedOut(cmd.ErrOrStderr())
+	forgetManaged(cmd, reg)
 	overrideName, _, _, _ := envTokenFor(reg)
 	override := overrideName != ""
 	if flags.jsonOut {

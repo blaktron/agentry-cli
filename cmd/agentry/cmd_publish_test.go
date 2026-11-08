@@ -7,6 +7,8 @@ package main
 import (
 	"bytes"
 	"math/rand"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -260,5 +262,42 @@ func TestPublishRetriesUploadWithSameKey(t *testing.T) {
 	refused.mu.Unlock()
 	if err == nil || !strings.Contains(err.Error(), "Unprocessable") || attempts != 1 {
 		t.Errorf("a refused upload: %v after %d attempt(s)", err, attempts)
+	}
+}
+
+// TestPublishRefusesAScaffoldLineBeforeUploading: an upload whose files
+// still carry a line a scaffold wrote for the author is refused by name, and
+// nothing reaches the registry; once the line is written, it uploads.
+func TestPublishRefusesAScaffoldLineBeforeUploading(t *testing.T) {
+	isolateEnv(t)
+	t.Setenv(envToken, "agy_testtoken")
+	fr := newFakeRegistry(t)
+	fr.submitStatus = "published"
+	dir := publishWorkspace(t)
+	raw, err := os.ReadFile(filepath.Join(dir, "agent.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	placeholder := strings.Replace(string(raw), "namespace: acme", "namespace: your-namespace", 1)
+	if placeholder == string(raw) {
+		t.Fatalf("the fixture's namespace moved:\n%s", raw)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "agent.yaml"), []byte(placeholder), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, stderr, err := runCLI(t, nil, "--registry", fr.url(), "publish", dir)
+	if err == nil || !strings.Contains(err.Error(), "publish refused") || !strings.Contains(stderr, "agent.yaml: placeholder namespace") {
+		t.Fatalf("err = %v\nstderr %s", err, stderr)
+	}
+	if fr.submitParts != nil {
+		t.Fatal("a refused publish reached the registry")
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "agent.yaml"), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runCLI(t, nil, "--registry", fr.url(), "publish", dir); err != nil {
+		t.Fatalf("the finished package: %v", err)
 	}
 }

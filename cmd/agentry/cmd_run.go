@@ -77,6 +77,9 @@ type runOpts struct {
 	// a remote runhost's service hands its run (a desktop.Relayed, as
 	// JSON), for a release that uses applications on the person's computer.
 	runhostDesktop string
+	// runhostManaged is what the sending device's managed settings say of
+	// a remote runhost's run (a managed.Narrowing, as JSON).
+	runhostManaged string
 	// on is the remote runhost the run goes to; empty runs it here.
 	on string
 	// runhostSchedule, set by `agentry schedule add --on`, sends the run to
@@ -170,11 +173,27 @@ type runOpts struct {
 	acp *acpRun
 }
 
+// runDriverFlags are run's flags that only a program driving the run
+// passes: hidden from run --help's flag list, named in its text, and
+// accepted as any other flag.
+var runDriverFlags = []string{
+	"--session-protocol", "--session-inputs", "--review-inputs",
+	"--connections-file", "--destinations-file", "--voice-file",
+}
+
 // newRunCmd builds the run command.
 func newRunCmd() *cobra.Command {
 	var opts runOpts
 	cmd := &cobra.Command{
-		Use:   "run [ns/name[@range]]",
+		Use: "run [ns/name[@range]]",
+		Example: `  # Run a QuickAgent on a task file, reports into ./reports
+  agentry run acme/pdf-summary --input task.json --out ./reports
+
+  # Give it a document to read, and print the result envelope
+  agentry run acme/pdf-summary --file ./contract.pdf --output-format json
+
+  # Say what would run, without running anything
+  agentry run acme/pdf-summary --dry-run`,
 		Short: "Verify, install, and execute one QuickAgent in an isolated container",
 		Long: "Run a single-purpose QuickAgent once:\n\n" +
 			"  agentry run ns/name@^1.2 --input task.json --out ./reports\n\n" +
@@ -208,6 +227,9 @@ func newRunCmd() *cobra.Command {
 			"step; --dry-run compiles the plan, says in words what would run and\n" +
 			"touches no docker (--json prints the plan itself). --local DIR runs an unpublished\n" +
 			"QuickAgent directory (treated as unsigned).\n\n" +
+			"Driver flags, for a program that drives runs (a hosted run's host, the\n" +
+			"desktop app), are left out of the flag list below and accepted as ever:\n" +
+			"  " + strings.Join(runDriverFlags, ", ") + ".\n" +
 			"For drivers (a hosted run's worker): AGENTRY_RUN_GRANT is sent as the\n" +
 			"X-Agentry-Run-Grant header on every request to the --registry host and\n" +
 			"nowhere else, for a registry prefix that answers for one run;\n" +
@@ -224,10 +246,10 @@ func newRunCmd() *cobra.Command {
 				return printAdapters(cmd)
 			}
 			if opts.noDestination && len(opts.destinations) > 0 {
-				return engine.Classify(engine.ExitUsage, errors.New("--no-destination and --destination exclude each other"))
+				return usageError(cmd, errors.New("--no-destination and --destination exclude each other"))
 			}
 			if opts.destinationsFile != "" && (opts.noDestination || len(opts.destinations) > 0) {
-				return engine.Classify(engine.ExitUsage, errors.New("--destinations-file excludes --destination and --no-destination: a host hands a run its destinations in the file alone"))
+				return usageError(cmd, errors.New("--destinations-file excludes --destination and --no-destination: a host hands a run its destinations in the file alone"))
 			}
 			ref := ""
 			if len(args) == 1 {
@@ -264,6 +286,8 @@ func newRunCmd() *cobra.Command {
 	_ = f.MarkHidden("installed")
 	f.StringVar(&opts.runhostDesktop, "runhost-desktop", "", "with --installed: the binding to the device's Agentry Desktop that a remote runhost's service relays to this run")
 	_ = f.MarkHidden("runhost-desktop")
+	f.StringVar(&opts.runhostManaged, "runhost-managed", "", "with --installed: what the sending device's managed settings say of the run, which a remote runhost's service hands this run")
+	_ = f.MarkHidden("runhost-managed")
 	f.StringVar(&opts.runhostSchedule, "runhost-schedule", "", "with --on: keep the run on the runhost as this schedule (agentry schedule add --on)")
 	_ = f.MarkHidden("runhost-schedule")
 	f.StringVar(&opts.policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml, created on first use)")
@@ -304,6 +328,9 @@ func newRunCmd() *cobra.Command {
 	f.BoolVar(&opts.reconfigureProfile, "reconfigure-profile", false, "re-run the guided MCP-profile setup even when a profile exists")
 	f.BoolVar(&opts.sessionProtocol, "session-protocol", false, "drive an interactive session from JSON-line commands on stdin, with its events as JSON lines on descriptor 3 and no terminal (for a program such as a hosted run's host)")
 	f.StringVar(&opts.sessionInputs, "session-inputs", "", "with --session-protocol: the DIRECTORY the driver stages files in; an add names a regular file directly in it (without it, the session takes no files)")
+	for _, name := range runDriverFlags {
+		_ = f.MarkHidden(strings.TrimPrefix(name, "--"))
+	}
 	return cmd
 }
 
@@ -332,7 +359,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		return runOnRunhost(cmd, ref, opts)
 	}
 	if (ref == "") == (opts.local == "") {
-		return errors.New("pass exactly one of ns/name[@range] or --local DIR")
+		return usageError(cmd, errors.New("pass exactly one of ns/name[@range] or --local DIR"))
 	}
 	if opts.outputFormat != "text" && opts.outputFormat != "json" {
 		return fmt.Errorf("unknown --output-format %q (want text or json)", opts.outputFormat)
@@ -612,6 +639,11 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		}
 	}
 	opts.progress.at(receipt.StageCompile)
+	// The organization's managed settings are read again before the
+	// compile, which applies them, unless they were read within the hour.
+	if !hostedFor(opts) {
+		syncManaged(cmd, registryURL())
+	}
 	// A model of the person's own with no window in the policy is asked for
 	// it now, for this run only.
 	windowSource := runContextWindow(cmd.Context(), cmd.ErrOrStderr(), pol)
@@ -621,9 +653,19 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		ContextWindowSource: windowSource, AllowScreen: opts.allowScreen,
 		CompiledBy: version.Build(), Log: cmd.ErrOrStderr(),
 	}
+	if opts.runhostManaged != "" {
+		if planIn.Sender, err = senderManaged(opts); err != nil {
+			return err
+		}
+	}
 	// On a remote runhost whose own setting is on, the run is an Unsafe Mode
 	// run: set only with the server's admin sign-in, never by a flag here.
 	if opts.installed && onRunhostServer() && runhost.UnsafeModeOn(runhostUnsafeModeFile) && len(m.Capabilities.Exec.Commands) > 0 {
+		// Refused before the Unsafe Mode image is fetched, when this
+		// runhost's managed settings or the sending device's forbid it.
+		if err := refuseUnsafeMode(planIn.Sender); err != nil {
+			return err
+		}
 		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Unsafe Mode: on, a setting of this runhost: the declared commands come from the Unsafe Mode image, without the command catalogue")
 		data, err := unsafeexec.Load(cmd.Context(), newDockerClient(), pol.Images.UnsafeImage(), cmd.ErrOrStderr())
 		if err != nil {
@@ -1094,6 +1136,12 @@ func (p *runProgress) wrote(dir string) {
 // be parsed, a missing argument) is not a run that failed: it is returned as
 // it is, for main to print the usual way.
 func reportRunFailure(cmd *cobra.Command, p *runProgress, err error) error {
+	// A command-line mistake is not a run that failed: main prints it, with
+	// the pointer to the help.
+	var usage *usageErr
+	if errors.As(err, &usage) {
+		return err
+	}
 	var ce *engine.ClassifiedError
 	classified := errors.As(err, &ce)
 	outDir := ""

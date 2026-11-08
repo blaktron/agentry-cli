@@ -185,7 +185,8 @@ func publishBuiltin(ctx context.Context, client *apiclient.ClientWithResponses, 
 	if v.ArchiveDigest != nil && *v.ArchiveDigest != want {
 		return fmt.Errorf("the registry built %s from the upload, not %s", *v.ArchiveDigest, want)
 	}
-	return waitVerdict(ctx, client, httpClient, reg, token, out, ns, name, v)
+	_, err = waitVerdict(ctx, client, httpClient, reg, token, out, ns, name, v)
+	return err
 }
 
 // ensureBuiltinAgent creates the built-in's agent record, public, when the

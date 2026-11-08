@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/blaktron/agentry/pkg/managedsettings"
 )
 
 // TestRootHelpListsEveryJSONCommand: the help is generated from the marked
@@ -117,6 +119,18 @@ func TestEveryJSONCommandEmitsOneObject(t *testing.T) {
 		}},
 		"setup":  {run: local("setup", "--skip-images", "--yes", "--provider", "openai", "--policy", "POLICY")},
 		"logout": {run: withRegistry("logout")},
+		"managed show": {run: func(t *testing.T) string {
+			fr := managedRegistry(t)
+			fr.serveManaged(2, map[string]managedsettings.Setting{managedsettings.UnsafeMode: managedValue(managedsettings.UnsafeModeForbidden, true)})
+			if _, _, err := runCLI(t, nil, "--registry", fr.url(), "managed", "refresh"); err != nil {
+				t.Fatal(err)
+			}
+			stdout, _, err := runCLI(t, nil, "--registry", fr.url(), "--json", "managed", "show")
+			if err != nil {
+				t.Fatal(err)
+			}
+			return stdout
+		}},
 		"whoami": {run: func(t *testing.T) string {
 			isolateEnv(t)
 			fr := newFakeRegistry(t)

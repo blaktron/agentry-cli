@@ -65,13 +65,16 @@ func main() {
 		_, _ = fmt.Fprintln(os.Stderr, "agentry: "+refusal)
 		os.Exit(1)
 	}
-	if err := newRootCmd().ExecuteContext(ctx); err != nil {
+	root := newRootCmd()
+	if _, err := root.ExecuteContextC(ctx); err != nil {
+		err = asUsageError(root, err)
 		// A run failure the run command has already explained is not
 		// printed a second time.
 		var reported *reportedError
 		if !errors.As(err, &reported) {
 			printCommandError(os.Stderr, err)
 		}
+		printUsagePointer(os.Stderr, err)
 		// `agentry run` classifies its failures so pipelines and
 		// cron can branch on the exit code; everything else keeps
 		// the traditional 1.
@@ -89,25 +92,9 @@ func main() {
 // newRootCmd assembles the CLI command tree.
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:   "agentry",
-		Short: "Agentry CLI — develop, validate, publish, install, and run QuickAgents (single-purpose AI agents)",
-		Long: "Agentry CLI — develop, validate, publish, install, and run QuickAgents (single-purpose AI agents).\n\n" +
-			"Registry and credentials from the environment:\n" +
-			"  " + envRegistry + "         the registry to use when --registry is not passed (ahead\n" +
-			"                           of the config file's defaultRegistry), and the self-hosted\n" +
-			"                           registry " + envToken + " is for.\n" +
-			"  " + envSecureAgentryToken + "      a personal access token sent only to the SecureAgentry\n" +
-			"                           registry this build is for (agentry --version names it);\n" +
-			"                           to any other registry it is not sent, and a build whose\n" +
-			"                           default is not SecureAgentry sends it nowhere.\n" +
-			"  " + envToken + "            a personal access token sent only to the self-hosted\n" +
-			"                           registry " + envRegistry + " names, else the config file's\n" +
-			"                           defaultRegistry. It is never sent to SecureAgentry, even\n" +
-			"                           when --registry names it; set with no self-hosted registry\n" +
-			"                           configured, it is refused.\n" +
-			"An environment token is used in place of the stored sign-in for its own\n" +
-			"registry; for any other, the CLI says why it is not sent and uses that\n" +
-			"registry's stored sign-in, if any. Sign in with `agentry login`.",
+		Use:           "agentry",
+		Short:         "Agentry CLI — develop, validate, publish, install, and run QuickAgents (single-purpose AI agents)",
+		Long:          rootLong,
 		Version:       version.Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -130,6 +117,7 @@ func newRootCmd() *cobra.Command {
 		newLoginCmd(),
 		newLogoutCmd(),
 		newWhoamiCmd(),
+		newManagedCmd(),
 		newPublishCmd(),
 		newInstallCmd(),
 		newSetupCmd(),
@@ -167,6 +155,7 @@ func newRootCmd() *cobra.Command {
 	)
 	markJSONCommands(root)
 	root.PersistentFlags().Lookup("json").Usage = jsonFlagHelp(root)
+	applyHelp(root)
 	return root
 }
 

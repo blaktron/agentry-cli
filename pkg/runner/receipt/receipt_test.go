@@ -386,6 +386,10 @@ installedChanges.changed
 installedChanges.record
 installedChanges.removed
 installedChanges.repair
+managed
+managed[].applied
+managed[].organization
+managed[].version
 outDir
 pdfs
 pdfs.files

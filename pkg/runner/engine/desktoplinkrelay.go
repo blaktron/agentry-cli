@@ -215,7 +215,7 @@ func (b *desktopBridge) serve(ctx context.Context, sc *bufio.Scanner) {
 			continue
 		}
 		srv, bound := b.run.server(f.Server)
-		tool, allowed := srv.Tool(f.Request.Tool)
+		tool, allowed := srv.tool(f.Request.Tool)
 		switch {
 		case subtle.ConstantTimeCompare([]byte(f.Token), []byte(b.run.link.Token)) != 1:
 			_, _ = fmt.Fprintln(b.log, "a call from the relay with another token than the run's was dropped")
@@ -224,7 +224,7 @@ func (b *desktopBridge) serve(ctx context.Context, sc *bufio.Scanner) {
 			_, _ = fmt.Fprintf(b.log, "a call from the relay for %s, which the run did not bind, was dropped\n", f.Server)
 			continue
 		case !allowed:
-			_, _ = fmt.Fprintf(b.log, "a call from the relay for %s's %s, which the catalogue does not give the run, was dropped\n", f.Server, f.Request.Tool)
+			_, _ = fmt.Fprintf(b.log, "a call from the relay for %s's %s, which the run was not given, was dropped\n", f.Server, f.Request.Tool)
 			continue
 		}
 		select {

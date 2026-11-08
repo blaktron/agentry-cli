@@ -27,6 +27,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/drafter"
 	"github.com/blaktron/agentry-cli/pkg/examiner"
 	"github.com/blaktron/agentry-cli/pkg/knowledge/creator"
+	"github.com/blaktron/agentry-cli/pkg/managed"
 	"github.com/blaktron/agentry-cli/pkg/reportdesigner"
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/compile"
@@ -377,6 +378,9 @@ type PlanInputs struct {
 	// never reuses an installed plan: a remote runhost whose own setting is
 	// on, the one client of this path that sets it. Nil is the default.
 	Unsafe *unsafeexec.Data
+	// Sender is the managed settings of the device that sent a remote
+	// runhost's job (compile.Inputs.Sender); nil for a run started here.
+	Sender *managed.Narrowing
 	// AllowScreen is the run's --allow-screen (compile.Inputs.AllowScreen):
 	// a plan whose screen scope only the flag allowed is reused only with it.
 	AllowScreen bool
@@ -539,6 +543,7 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 			reflect.DeepEqual(plan.Capabilities.Coder, in.Coder) &&
 			reflect.DeepEqual(plan.Capabilities.Calendar, in.Calendar) &&
 			screenStillAllowed(plan, in.AllowScreen) &&
+			reflect.DeepEqual(plan.Managed, compile.CurrentManagedSpecs(in.Sender)) &&
 			reflect.DeepEqual(plan.Harness.ContextWindow, spec.ContextWindowOf(in.Policy.Model.ContextWindow, in.ContextWindowSource)) &&
 			sameServers(plan.MCPServers, in.Servers, in.ShareServers) {
 			switch {
@@ -591,6 +596,7 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 		Calendar:     in.Calendar,
 		ShareServers: in.ShareServers,
 		Unsafe:       in.Unsafe,
+		Sender:       in.Sender,
 		AllowScreen:  in.AllowScreen,
 		IntegrityKey: key,
 	}, planDir)

@@ -76,7 +76,7 @@ func newProfilesRemoveCmd() *cobra.Command {
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if all == (len(args) == 1) {
-				return errors.New("pass exactly one of ns/name[@version] or --all")
+				return usageError(cmd, errors.New("pass exactly one of ns/name[@version] or --all"))
 			}
 			home, err := runnerHome()
 			if err != nil {

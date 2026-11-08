@@ -232,12 +232,22 @@ type fakeRegistry struct {
 	submitStatus string
 	pollStatuses []string
 	pollReason   string
+	// existingVersions answers GET …/versions for every agent (nil: 404);
+	// reportFindings answers GET …/versions/{v}/report.
+	existingVersions []map[string]any
+	reportFindings   []map[string]any
 	// advisories answers GET /advisories by its affecting ns/name (a name
 	// with no entry is 404); advisoryStatus, when set, answers every lookup
 	// with that status instead. advisoryQueries records each query.
 	advisories      map[string][]map[string]any
 	advisoryStatus  int
 	advisoryQueries []url.Values
+	// managedEnv is the signed managed settings document GET
+	// /user/managed-settings answers; nil answers 204, none apply.
+	managedEnv *attest.DSSEEnvelope
+	// managedStatus, when set, answers the managed settings route with
+	// that status instead.
+	managedStatus int
 }
 
 // newFakeRegistry starts the fake and wires every route. Unknown agents and
@@ -497,6 +507,27 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 		writeJSON(w, http.StatusAccepted, fr.versionDoc("0.1.0", fr.submitStatus))
 	})
 
+	mux.HandleFunc("GET /api/v1/agents/{ns}/{name}/versions", func(w http.ResponseWriter, r *http.Request) {
+		fr.mu.Lock()
+		list := fr.existingVersions
+		fr.mu.Unlock()
+		if list == nil {
+			writeProblem(w, http.StatusNotFound, "Not found", "")
+			return
+		}
+		writeJSON(w, http.StatusOK, list)
+	})
+
+	mux.HandleFunc("GET /api/v1/agents/{ns}/{name}/versions/{v}/report", func(w http.ResponseWriter, r *http.Request) {
+		fr.mu.Lock()
+		findings := fr.reportFindings
+		fr.mu.Unlock()
+		if findings == nil {
+			findings = []map[string]any{}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"versionStatus": "rejected", "findings": findings})
+	})
+
 	mux.HandleFunc("GET /api/v1/agents/{ns}/{name}/versions/{v}", func(w http.ResponseWriter, r *http.Request) {
 		fr.mu.Lock()
 		status := "published"
@@ -539,6 +570,25 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 			digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 		}
 		writeJSON(w, http.StatusOK, fr.signDSSE(attest.BuildRulesetStatement(fr.srv.URL, fr.bundleVer, digest)))
+	})
+
+	mux.HandleFunc("GET /api/v1/user/managed-settings", func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer agy_") {
+			writeProblem(w, http.StatusUnauthorized, "invalid token", "the credential was not accepted")
+			return
+		}
+		fr.mu.Lock()
+		env, status := fr.managedEnv, fr.managedStatus
+		fr.mu.Unlock()
+		if status != 0 {
+			w.WriteHeader(status)
+			return
+		}
+		if env == nil {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		writeJSON(w, http.StatusOK, env)
 	})
 
 	mux.HandleFunc("GET /.well-known/agentry/signing-keys.json", func(w http.ResponseWriter, _ *http.Request) {

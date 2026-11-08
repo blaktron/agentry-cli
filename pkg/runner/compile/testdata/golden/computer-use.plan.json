@@ -12,7 +12,7 @@
   "policySha256": "policysha",
   "instruction": {
     "sourcePath": "SKILL.md",
-    "sha256": "091d97bdd9f07cde0b8894c155e03e081b420d056fe69415ffefccd1981f45f1",
+    "sha256": "3a4bc9834fd1068cfd73b9ffdf8a72a4572eeb72174eefb6a02f1b921c42ad0b",
     "bodySha256": "96aae5e665f4569785c723babf17f741fce36704cf154e24920ff3a70017910a"
   },
   "capabilities": {
@@ -23,55 +23,8 @@
       "servers": [
         {
           "id": "blender",
-          "application": "Blender",
-          "package": "pypi:mcp-for-blender@2.2.7",
-          "tools": [
-            {
-              "name": "execute_blender_code",
-              "class": "exec"
-            },
-            {
-              "name": "generate_3d",
-              "class": "act",
-              "egress": true
-            },
-            {
-              "name": "import_asset",
-              "class": "act",
-              "egress": true
-            },
-            {
-              "name": "search_assets",
-              "class": "read",
-              "egress": true
-            },
-            {
-              "name": "look",
-              "class": "read"
-            },
-            {
-              "name": "get_scene_info",
-              "class": "read"
-            },
-            {
-              "name": "get_addon_status",
-              "class": "read"
-            }
-          ],
-          "egress": [
-            "api.polyhaven.com",
-            "cdn.polyhaven.com",
-            "api.sketchfab.com",
-            "api.poly.pizza",
-            "hyperhuman.deemos.com",
-            "queue.fal.run",
-            "api.meshy.ai",
-            "openapi.tripo3d.ai",
-            "openapi.tripo3d.com",
-            "ai3d.tencentcloudapi.com",
-            "hunyuan.tencentcloudapi.com",
-            "mcp-for-blender.com"
-          ]
+          "application": "blender",
+          "tools": null
         }
       ],
       "computerUse": "app",
@@ -144,7 +97,11 @@
           "name": "focus_window",
           "class": "act"
         }
-      ]
+      ],
+      "windows": [
+        "blender"
+      ],
+      "personServers": "allowed"
     },
     "scratch": true,
     "pdf": true
@@ -164,7 +121,7 @@
   ],
   "enforcement": {
     "agentContainer": "internal-only run network; reachable endpoints: gateway:8811 (Bearer auth) and llm-proxy:3128 (CONNECT allowlist: api.anthropic.com:443); no workspace, output, or docker-socket mounts; model API key present by necessity; its one writable mount is the harness's conversation store (/session/session.db), a volume of the run's own removed at teardown: a run that ends on a passing model failure after its first tool call is started again on that conversation, with a message to carry on in place of the task",
-    "desktop": "the person's computer is reached only through the desktop link (the runner image, one container an entry, no network, one mount: the run's relay volume), which carries each tool call, and nothing else, over a relay of the run's own to Agentry Desktop; the run holds each entry to its tools through the gateway's allowlist and the relay's own check, and logs every call: Blender through agentry-desktop-blender (its installed server pypi:mcp-for-blender@2.2.7), the tools execute_blender_code, generate_3d, import_asset, search_assets, look, get_scene_info, get_addon_status; execute_blender_code runs code inside Blender, a call Agentry Desktop is to put to the person first; the server reaches api.polyhaven.com, cdn.polyhaven.com, api.sketchfab.com, api.poly.pizza, hyperhuman.deemos.com, queue.fal.run, api.meshy.ai, openapi.tripo3d.ai, openapi.tripo3d.com, ai3d.tencentcloudapi.com, hunyuan.tencentcloudapi.com, mcp-for-blender.com from the person's computer and computer use in app scope (the windows of Blender) through agentry-desktop-computer, the tools screenshot, zoom, left_click, right_click, middle_click, double_click, triple_click, left_click_drag, mouse_move, cursor_position, scroll, type, key, hold_key, wait, windows, focus_window; a screenshot is answered as an image the run keeps nowhere, and Agentry Desktop is to hold each input to the scope and say in the receipt what the computer's own system enforced; what happens on the person's computer is Agentry Desktop's to do and the run's to record, not to enforce: it is asked to launch each installed server from Agentry's catalogue of application servers, never from anything the agent sends, and to answer each call by the catalogue's class, and the installed server runs there with that computer's network and files; a hosted run refuses the line, and a run with no Agentry Desktop answering is refused before the sandbox starts",
+    "desktop": "the person's computer is reached only through the desktop link (the runner image, one container an entry, no network, one mount: the run's relay volume), which carries each tool call, and nothing else, over a relay of the run's own to Agentry Desktop; the run holds each entry to its tools through the gateway's allowlist and the relay's own check, and logs every call: blender through agentry-desktop-blender, every tool its server lists when the run binds it and computer use in app scope (the windows of blender) through agentry-desktop-computer, the tools screenshot, zoom, left_click, right_click, middle_click, double_click, triple_click, left_click_drag, mouse_move, cursor_position, scroll, type, key, hold_key, wait, windows, focus_window; a screenshot is answered as an image the run keeps nowhere, and Agentry Desktop is to hold each input to the scope and say in the receipt what the computer's own system enforced; what happens on the person's computer is Agentry Desktop's to do and the run's to record, not to enforce: it resolves each application to the one the person approved there, launches the server they set up for it, never anything the agent sends, answers each call by the class it gives the tool, and asks the person before a call that runs code; the installed server runs there with that computer's network and files; an application set up by the person is bound as one from Agentry Desktop's library is; a hosted run refuses the line, and a run with no Agentry Desktop answering is refused before the sandbox starts",
     "exec": "no exec: run_command tool not exposed; harness built-in shell toolsets never enabled",
     "filesystem": "read none; write none — enforced by the tools-container mount table (ro/rw, per-path binds) plus server-side grant checks; the run's docker filter (in the CLI on Linux, in a container of the run's own on Docker Desktop) mounts the tools container's /tmp as a 256 MiB tmpfs and the tools server refuses to serve without it; where no filter runs it is the container's own layer, unbounded",
     "model.apiKey": "$ANTHROPIC_API_KEY from the host environment, injected into the agent container (or the host harness process) only",
@@ -323,11 +280,11 @@
   },
   "output": {},
   "files": {
-    "gateway/catalog.yaml": "8a88a94bc31d85b50f7103d319eef5d58dc5ba656eb96a572bd242fbe5af3045",
+    "gateway/catalog.yaml": "8322dbbf701358cbd7ce9a0b516d7fca6279f55fe10a01c346ac48160436a029",
     "gateway/config.yaml": "6ae322f43ef620e4ad682078c22e8a24b8aa6e96de990ad664a91cc53733197c",
     "gateway/registry.yaml": "989aed90d48561bcfdb7db36a6fb287fb3dda957d99023641e0bb94af49e75c5",
-    "gateway/tools.yaml": "14f8d1cc683275597ea23381d21139df97dac3d30e11274025eacd51e5924edf",
+    "gateway/tools.yaml": "45f0f060fede975979dec92a5766526531b6842905659aa25892df23bc58a182",
     "gateway/toolspec.json": "fd08964e7d9d890649e9caed0a6277bc658e9e905238f7a548efff19ad73e9b5",
-    "harness/agent.yaml": "053fd08bc663cb6b3c7e53bbe355c3858b2aa9a737f911b784404035099e23a0"
+    "harness/agent.yaml": "0a7de79bc0bba74d2b5a8a24743a8a7289338ee3853641898316f1244f2775b8"
   }
 }

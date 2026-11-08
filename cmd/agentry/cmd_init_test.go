@@ -1,7 +1,8 @@
-// `agentry init`: every scaffold must be a workspace `agentry validate`
-// PASSES as-is — a template that fails its own toolchain teaches authors
-// to ignore the tool — plus the guard rails: never overwrite an
-// agent.yaml, keep existing files, refuse invalid handles.
+// `agentry init`: every scaffold passes every manifest rule and scan
+// `agentry validate` runs, and validate refuses it only for the lines left
+// for its author to write (the TODOs and the licence note) until they are
+// written; plus the guard rails: never overwrite an agent.yaml, keep
+// existing files, refuse invalid handles.
 package main
 
 import (
@@ -12,8 +13,9 @@ import (
 )
 
 // TestInitScaffoldsValidate: for each mode set, init a workspace and run the
-// REAL validate command over it, expecting a full PASS (every manifest rule, S1
-// inventory, S3/S4 scan with the embedded bundle). The scaffold is schema
+// REAL validate command over it: every manifest rule, the S1 inventory and
+// the S3/S4 scan with the embedded bundle pass, the scaffold's own lines are
+// refused by name, and once they are written the workspace PASSES. The scaffold is schema
 // v2: modes in the manifest, AGENT.md as the instruction file, and an
 // interactive block only when interactive is chosen.
 func TestInitScaffoldsValidate(t *testing.T) {
@@ -48,9 +50,41 @@ func TestInitScaffoldsValidate(t *testing.T) {
 				t.Errorf("interactive block present = %v, want %v:\n%s", got, interactive, yaml)
 			}
 
+			wantOnlyScaffold(t, dir, "agent.yaml:TODO summary", "README.md:TODO", "LICENSE:placeholder licence note", "AGENT.md:TODO", "AGENT.md:TODO")
+
+			// The author writes what the scaffold left them; then it passes.
+			summary := "Reads the notes you give it and lists the decisions in them"
+			finish := map[string]func(string) string{
+				"agent.yaml": func(s string) string { return strings.Replace(s, todoSummary, summary, 1) },
+				"AGENT.md": func(s string) string {
+					s = strings.Replace(s, todoSummary, summary, 1)
+					return strings.Replace(s, "TODO write the instructions the agent follows.", "Read each note and list the decisions it records.", 1)
+				},
+				"README.md": func(s string) string {
+					return strings.Replace(s, "TODO describe this QuickAgent.", "Lists the decisions in the notes you give it.", 1)
+				},
+				"LICENSE": func(string) string { return "Licensed under the Apache License, Version 2.0.\n" },
+			}
+			for f, edit := range finish {
+				raw, err := os.ReadFile(filepath.Join(dir, f))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, f), []byte(edit(string(raw))), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
 			vout, _, err := runCLI(t, nil, "validate", dir)
 			if err != nil || !strings.Contains(vout, "validate: PASSED") {
-				t.Errorf("scaffold does not validate: %v\n%s", err, vout)
+				t.Fatalf("finished scaffold does not validate: %v\n%s", err, vout)
+			}
+			for _, want := range []string{"ran here:", "S4 injection signatures", "not run here:", "S5 AI Review", "S9 the diff against the previous version", "its verdict decides"} {
+				if !strings.Contains(vout, want) {
+					t.Errorf("validate's closing block lacks %q:\n%s", want, vout)
+				}
+			}
+			if strings.Contains(vout, "clean") {
+				t.Errorf("validate says clean:\n%s", vout)
 			}
 		})
 	}
@@ -113,15 +147,15 @@ func TestInitGuards(t *testing.T) {
 }
 
 // TestDefaultNamespace: the $USER-derived scaffold default is sanitized to
-// the handle grammar and falls back to "example" rather than emitting an
+// the handle grammar and falls back to "your-namespace" rather than emitting an
 // invalid manifest.
 func TestDefaultNamespace(t *testing.T) {
 	tests := map[string]string{
 		"chris":         "chris",
 		"Chris.Dupres!": "chrisdupres",
 		"--weird--":     "weird",
-		"":              "example",
-		"!!!":           "example",
+		"":              "your-namespace",
+		"!!!":           "your-namespace",
 	}
 	for user, want := range tests {
 		t.Setenv("USER", user)

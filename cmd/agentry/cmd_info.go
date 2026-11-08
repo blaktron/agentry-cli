@@ -21,7 +21,12 @@ import (
 // newInfoCmd builds the info command.
 func newInfoCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "info <ns/name>",
+		Use: "info <ns/name>",
+		Example: `  # The latest release, what it may do, and how to run it
+  agentry info acme/pdf-summary
+
+  # The same, for a program
+  agentry info acme/pdf-summary --json`,
 		Short: "Show a QuickAgent, its latest published version, its capability contract, and how to run it",
 		Long: "Show a QuickAgent, its latest published version and its capability contract,\n" +
 			"and how to run that version: the questions it asks before a run and how to\n" +
@@ -52,7 +57,12 @@ type searchOpts struct {
 func newSearchCmd() *cobra.Command {
 	var opts searchOpts
 	cmd := &cobra.Command{
-		Use:   "search <query>",
+		Use: "search <query>",
+		Example: `  # QuickAgents about invoices, most installed first
+  agentry search invoices --sort installs
+
+  # Only those that declare file access, as JSON
+  agentry search "pdf summary" --capability filesystem --json`,
 		Short: "Full-text search over public QuickAgents, with facet filters",
 		Long: "Search public QuickAgents via GET /search. A query containing \"/\" is\n" +
 			"treated as ns/name and shows that QuickAgent's info instead.\n\n" +

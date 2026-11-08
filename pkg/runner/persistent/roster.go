@@ -236,7 +236,7 @@ func BuildRosterUnder(a Agent, c Config, applied *Applied, malwareCheck bool) Ro
 	// all the same: its calls are refused until one does, and none
 	// restarts the agent.
 	answering := desktopAnswering()
-	for _, e := range desktopEntries(a) {
+	for _, e := range desktopEntries(a, c.Switches) {
 		add(e, false)
 		if last := &r[len(r)-1]; last.On && last.State != StatePending && last.Kind == KindDesktop && !answering {
 			last.State, last.Reason = StateNeedsSetUp, desktopNotAnswering
@@ -647,7 +647,7 @@ func ApplyWith(ctx context.Context, home string, a Agent, c Config, r Roster, op
 		}
 		g.ServerSecrets[name] = v
 	}
-	if dg := desktopGrant(a, on); dg != nil {
+	if dg := desktopGrant(a, c.Switches, on); dg != nil {
 		g.Desktop, g.DesktopExec = dg.Line, dg.Exec
 	}
 	if g.Skills, g.SkillsDir, err = stageSkills(home, a, c, on); err != nil {

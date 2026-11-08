@@ -255,10 +255,10 @@ func TestDraftWritesTheDraftWithItsRecord(t *testing.T) {
 			t.Errorf("stdout lacks %q:\n%s", want, stdout)
 		}
 	}
-	// The package is what `agentry validate` passes.
-	if _, _, err := runCLI(t, nil, "validate", filepath.Join(out, "package")); err != nil {
-		t.Fatalf("agentry validate: %v", err)
-	}
+	// The package passes every check `agentry validate` runs but the
+	// scaffold's, which waits for its author to replace the Drafter's README
+	// line and licence note.
+	wantOnlyScaffold(t, filepath.Join(out, "package"), "LICENSE:placeholder licence note", "README.md:the Drafter's closing line")
 	// The same folder is not drafted into twice.
 	_, _, err = runCLI(t, nil, "draft", "Again.", "--out", out, "--policy", policyPath)
 	wantClassified(t, err, engine.ExitUsage)
@@ -845,9 +845,7 @@ func TestARefusedDraftGetsOneRepairTurn(t *testing.T) {
 		!strings.Contains(stderr, "The Drafter has one repair turn") {
 		t.Fatalf("stdout:\n%s\nstderr:\n%s", stdout, stderr)
 	}
-	if _, _, err := runCLI(t, nil, "validate", filepath.Join(out, "package")); err != nil {
-		t.Fatalf("agentry validate: %v", err)
-	}
+	wantOnlyScaffold(t, filepath.Join(out, "package"), "LICENSE:placeholder licence note", "README.md:the Drafter's closing line")
 }
 
 // TestADraftStillRefusedAfterItsRepairIsKept: there is one repair turn, never
@@ -1157,9 +1155,9 @@ func TestASecondAnswerThatBreaksTheRulesIsNotKept(t *testing.T) {
 		!strings.Contains(d.Notes, "Its second answer broke rules this one passes") || strings.Contains(d.Notes, "## Repaired once") {
 		t.Fatalf("%d run(s), %d check(s), check %+v, notes:\n%s", len(*runs), len(checks.asked), d.AIReview.Check, d.Notes)
 	}
-	if _, _, err := runCLI(t, nil, "validate", filepath.Join(out, "package")); err != nil {
-		t.Fatalf("the first answer's package was not put back: %v", err)
-	}
+	// The first answer's package is back: it passes every rule and scan, and
+	// only the Drafter's README line and licence note wait for its author.
+	wantOnlyScaffold(t, filepath.Join(out, "package"), "LICENSE:placeholder licence note", "README.md:the Drafter's closing line")
 }
 
 // TestACheckWithNoAnswerIsKeptAndNotRetried: a check the registry refuses

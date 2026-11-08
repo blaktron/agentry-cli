@@ -138,7 +138,7 @@ func knowledgeBuildFlags(cmd *cobra.Command, o *knowledgeBuildOpts) {
 	f.IntVar(&o.maxTurns, "max-turns", -1, "the Creator run's tool-call budget, 0 = unlimited (default: the policy's)")
 	f.Float64Var(&o.maxCost, "max-cost", -1, "stop the Creator run once the harness reports this much cost in USD (default: the policy's)")
 	f.IntVar(&o.maxPackMB, "max-pack-mb", knowledge.MaxLocalBytes>>20, "the pack's cap in MiB, documents included (at most 1024; Agentry keeps packs of at most 10)")
-	f.StringVar(&o.outputFormat, "output-format", "text", "stdout format: text | json (json = the Creator run's result envelope, as `agentry run` writes one, with the build's report under knowledge; the harness's usage is narrated on stderr)")
+	f.StringVar(&o.outputFormat, "output-format", "text", "stdout format: text | json (json = the Creator run's result envelope, as agentry run writes one, with the build's report under knowledge; the harness's usage is narrated on stderr)")
 }
 
 // knowledgeBuildRunE wraps create's and add's work: the output format is

@@ -30,7 +30,16 @@ func newValidateCmd() *cobra.Command {
 			"  S1        content-sniffed executables and nested archives (critical),\n" +
 			"            non-UTF-8 text (low) — the checks that would otherwise reject a\n" +
 			"            workspace at submit after it passed locally\n" +
-			"  S3/S4     hidden-content detectors and the injection-signature engine\n\n" +
+			"  S3/S4     hidden-content detectors and the injection-signature engine\n" +
+			"  scaffold  lines a scaffold wrote for you to replace: a TODO summary or\n" +
+			"            instruction, the namespace your-namespace, an author named\n" +
+			"            Your Name, a placeholder licence note or copyright line, and\n" +
+			"            the template's or the Drafter's README text\n\n" +
+			"It does not run the registry's other stages (S2 secrets, S5 AI Review, S6\n" +
+			"support scripts and undeclared tools, S7 declared MCP servers, S8 publisher\n" +
+			"signals, S9 the diff against the previous version), and its last lines\n" +
+			"say which ran and which did not. A pass here is advisory: the registry runs\n" +
+			"every stage when the version is submitted, and its verdict decides.\n\n" +
 			"The S4 rule bundle is EMBEDDED in this binary, so validation never depends\n" +
 			"on where it runs. `--rules-update` fetches the registry's current bundle and\n" +
 			"caches it under ~/.config/agentry/rules/<semver>/; the newest cached bundle\n" +
@@ -45,8 +54,8 @@ func newValidateCmd() *cobra.Command {
 			"failure mode the server forbids, so it is forbidden here too.\n" +
 			"A cached --rules-update bundle that will not load is skipped for the\n" +
 			"embedded one, which always loads.\n\n" +
-			"Exit code: 0 clean; 1 on manifest errors or scan findings. Manifest warnings\n" +
-			"fail only with --strict.",
+			"Exit code: 0 when every check it ran passed; 1 on manifest errors, scan\n" +
+			"findings or scaffold lines. Manifest warnings fail only with --strict.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir := "."
@@ -91,11 +100,13 @@ func runValidate(cmd *cobra.Command, dir string, strict, rulesUpdate bool) error
 		}
 	}
 	if !report.Passed {
+		validate.PrintStages(out, report)
 		c := report.Counts
-		return fmt.Errorf("validate failed: %d error(s), %d warning(s), %d inventory finding(s), %d scan finding(s)",
-			c.Errors, c.Warnings, c.InventoryFailing, c.Findings)
+		return fmt.Errorf("validate failed: %d error(s), %d warning(s), %d inventory finding(s), %d scan finding(s), %d scaffold line(s)",
+			c.Errors, c.Warnings, c.InventoryFailing, c.Findings, c.Unfinished)
 	}
 	_, _ = fmt.Fprintln(out, "validate: PASSED")
+	validate.PrintStages(out, report)
 	printNextSteps(cmd.ErrOrStderr(), validateNextSteps(dir)...)
 	return nil
 }
@@ -105,7 +116,7 @@ func runValidate(cmd *cobra.Command, dir string, strict, rulesUpdate bool) error
 // report `validate --json` prints. An error is a validation that could not
 // run (no manifest, a rule bundle that will not load), never a failed one.
 func validateWorkspace(out, errOut io.Writer, dir string, strict bool) (validateOutput, error) {
-	return validate.Workspace(dir, validate.Options{Strict: strict, Out: out, ErrOut: errOut, Rules: loadRulesBundle})
+	return validate.Workspace(dir, validate.Options{Strict: strict, Out: out, ErrOut: errOut, Rules: loadRulesBundle, RefuseUnfinished: true})
 }
 
 // readWorkspaceManifest loads and parses dir/agent.yaml.

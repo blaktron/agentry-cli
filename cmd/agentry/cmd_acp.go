@@ -73,7 +73,7 @@ func newACPCmd() *cobra.Command {
 				ref = args[0]
 			}
 			if (ref == "") == (opts.local == "") {
-				return engine.Classify(engine.ExitUsage, errors.New("pass exactly one of ns/name[@range] or --local DIR"))
+				return usageError(cmd, errors.New("pass exactly one of ns/name[@range] or --local DIR"))
 			}
 			if opts.noDestination && len(opts.destinations) > 0 {
 				return engine.Classify(engine.ExitUsage, errors.New("--no-destination and --destination exclude each other"))

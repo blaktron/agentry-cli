@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/blaktron/agentry-cli/pkg/managed"
 )
 
 // The host adapters (claude, codex) run the person's own harness as a
@@ -39,6 +41,9 @@ func TestMain(m *testing.M) {
 	// No test touches DNS: the model hosts resolve nowhere unless a test
 	// says otherwise (modelhosts_test.go).
 	lookupModelHost = func(context.Context, string) ([]net.IP, error) { return nil, errors.New("no DNS in tests") }
+	// No test reads the managed settings cached on the machine running it
+	// (managed_test.go).
+	currentManaged = func() managed.Effective { return managed.Effective{} }
 	os.Exit(m.Run())
 }
 

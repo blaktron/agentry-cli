@@ -518,6 +518,26 @@
           ]
         },
         {
+          "path": "cmd/agentry/cmd_managed_test.go",
+          "tests": [
+            "TestManagedRefreshShowAndWhoami",
+            "TestManagedShowRefusesATamperedCopy",
+            "TestReSigningInKeepsTheLockWhenTheRegistryCannotAnswer",
+            "TestManagedRefreshNeedsASignIn",
+            "TestLogoutDeletesTheManagedSettings",
+            "TestLoginReadsTheManagedSettings",
+            "TestARunSentToARunhostCarriesTheDevicesManagedSettings",
+            "TestAnUnknownLockRefusesARunOnARunhostBeforeSending",
+            "TestARunhostsRunAppliesTheSendingDevicesNarrowing"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
+          ]
+        },
+        {
           "path": "cmd/agentry/errors_test.go",
           "tests": [
             "TestRegistryCommandsOfflineSayCannotReach",
@@ -534,6 +554,21 @@
             "docker interface (real or fake)",
             "source/file contract"
           ]
+        },
+        {
+          "path": "cmd/agentry/help_test.go",
+          "tests": [
+            "TestNoFlagUsageCarriesABacktick",
+            "TestRootHelpOpensWithThePurposeAndTheDocs",
+            "TestEveryRootCommandHasAGroup",
+            "TestTheNewcomersCommandsCarryExamples",
+            "TestRunsDriverFlagsAreHiddenAndAccepted",
+            "TestUsageErrorsExitTwoWithAPointer"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
         },
         {
           "path": "cmd/agentry/jsoncommands_test.go",
@@ -557,6 +592,18 @@
           "dependencyHints": []
         },
         {
+          "path": "cmd/agentry/publish_outcome_test.go",
+          "tests": [
+            "TestPublishSaysWhatHappenedAndWhereToLook",
+            "TestPublishRefusesAVersionThatIsNotNewer",
+            "TestPublishJSON"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "cmd/agentry/run_context_window_test.go",
           "tests": [
             "TestRunContextWindow",
@@ -570,6 +617,14 @@
             "HTTP transport",
             "source/file contract"
           ]
+        },
+        {
+          "path": "cmd/agentry/scaffold_check_test.go",
+          "tests": [],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
         },
         {
           "path": "cmd/agentry/testsupport_test.go",
@@ -964,12 +1019,15 @@
             "TestPublishPollsToVerdict",
             "TestVerdictTable",
             "TestPublishEmptyIncludeRefused",
-            "TestPublishRetriesUploadWithSameKey"
+            "TestPublishRetriesUploadWithSameKey",
+            "TestPublishRefusesAScaffoldLineBeforeUploading"
           ],
           "fuzz": [],
           "benchmarks": [],
           "fixtureEntryPoint": false,
-          "dependencyHints": []
+          "dependencyHints": [
+            "source/file contract"
+          ]
         },
         {
           "path": "cmd/agentry/cmd_validate_test.go",
@@ -3124,6 +3182,46 @@
       ]
     },
     {
+      "owner": "pkg/managed",
+      "behavior": "A client's copy of an organization's managed settings: fetched with the account's token, verified against the",
+      "disposition": "retain",
+      "files": [
+        {
+          "path": "pkg/managed/managed_test.go",
+          "tests": [
+            "TestRefreshCachesAVerifiedDocumentAndLoadVerifiesItAgain",
+            "TestADefaultForbiddenDoesNotRefuseUnsafeMode",
+            "TestRefreshRefusesDocumentsItMustNotAccept",
+            "TestTamperedCacheIsRefusedAndHoldsUnsafeModeOff",
+            "TestNoneAppliesClearsTheCache",
+            "TestAnotherAnswerLeavesTheCache",
+            "TestOlderVersionIsRefusedFromTheRegistryAndTheCache",
+            "TestUnknownLockedSettingRefusesEveryRun",
+            "TestSyncAsksOnlyWhenTheAnswerIsOldAndKeepsTheCacheOffline",
+            "TestSyncRemembersThatNoneApply",
+            "TestForgetDeletesTheCache",
+            "TestACacheUnderAnotherRegistrysNameIsRefused",
+            "TestRefreshNeedsASignIn",
+            "TestADeletedDocumentIsNoticedNotReadAsNone",
+            "TestARecordDatedInTheFutureIsRefused",
+            "TestACachedDocumentDatedInTheFutureIsRefused",
+            "TestSignInKeepsTheSameAccountsLockAndDropsAnothers",
+            "TestRefreshAsAnotherAccountDropsTheLastOnesSettings",
+            "TestRollbackIsRefusedAcrossAChangeOfOrganization",
+            "TestDocumentsVerifyWithTheirOwnRegistrysPinsWhateverPinRegistrySays",
+            "TestTheNarrowingASentRunCarries"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "HTTP transport",
+            "source/file contract"
+          ]
+        }
+      ]
+    },
+    {
       "owner": "pkg/mcpauth",
       "behavior": "Signs a person in to a remote MCP server by OAuth, as the MCP authorization specification (2026-07-28)",
       "disposition": "retain",
@@ -4465,18 +4563,18 @@
           "tests": [
             "TestCompileRendersTheDesktopLink",
             "TestTheDesktopLinkFollowsTheReleasesNarrowing",
+            "TestAnyApplicationCompiles",
+            "TestPersonSetUpApplicationsFollowThePolicy",
             "TestAReleaseWithoutTheDesktopLineHasNoDesktopLink",
             "TestTheDesktopLineIsRefusedWhereTheRunCannotHoldIt",
             "TestCompileRendersComputerUse",
-            "TestScreenScopeNeedsAllowScreen",
-            "TestCompileRendersUnreal"
+            "TestScreenScopeNeedsAllowScreen"
           ],
           "fuzz": [],
           "benchmarks": [],
           "fixtureEntryPoint": false,
           "dependencyHints": [
-            "source/file contract",
-            "explicit skip"
+            "source/file contract"
           ]
         },
         {
@@ -4768,6 +4866,21 @@
           "dependencyHints": [
             "source/file contract"
           ]
+        },
+        {
+          "path": "pkg/runner/compile/managed_test.go",
+          "tests": [
+            "TestUnsafeModeForbiddenByAManagedLockIsRefused",
+            "TestUnsafeModeAllowedOrADefaultCompiles",
+            "TestAManagedLockTheClientDoesNotKnowRefusesEveryCompile",
+            "TestThePlanHashTakesTheManagedVersion",
+            "TestTheSendingDevicesManagedSettingsHoldARunhostsRun",
+            "TestManagedSettingsThatCannotBeVerifiedRefuseEveryCompile"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": true,
+          "dependencyHints": []
         },
         {
           "path": "pkg/runner/compile/signin_test.go",
@@ -5210,6 +5323,27 @@
           "dependencyHints": [
             "source/file contract",
             "explicit skip"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "pkg/runner/desktop",
+      "behavior": "How a run reaches Agentry Desktop's link service: the socket, the bind, call and unbind messages, and the server side a stand-in or the app implements",
+      "disposition": "retain",
+      "files": [
+        {
+          "path": "pkg/runner/desktop/desktop_test.go",
+          "tests": [
+            "TestTheListingIsAskedAndAnswered",
+            "TestARelayDoesNotCarryAListing",
+            "TestSetByPersonReadsTheStrictWay"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
           ]
         }
       ]
@@ -6574,6 +6708,23 @@
           ]
         },
         {
+          "path": "pkg/runner/engine/desktop_any_test.go",
+          "tests": [
+            "TestTheBindNamesWhatTheRunUses",
+            "TestTheRunTakesItsToolsFromTheBinding",
+            "TestThePolicyHoldsThePersonsOwnSetUps",
+            "TestTheChosenApplicationIsNamed",
+            "TestTheAllowlistIsTheBindingsTools",
+            "TestASegmentsBindingsAreHeldToThePolicy"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
+          ]
+        },
+        {
           "path": "pkg/runner/engine/desktop_test.go",
           "tests": [
             "TestTheDesktopLinkCarriesACallToTheLinkService",
@@ -6676,6 +6827,17 @@
           "dependencyHints": [
             "source/file contract"
           ]
+        },
+        {
+          "path": "pkg/runner/engine/managed_test.go",
+          "tests": [
+            "TestRunRefusesAnUnsafePlanAManagedLockForbids",
+            "TestARunIsHeldToTheManagedSettingsCachedWhenItStarts"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
         },
         {
           "path": "pkg/runner/engine/optional_secrets_test.go",
@@ -8392,7 +8554,8 @@
             "TestADesktopEntrySwitchesWhileTheAgentRuns",
             "TestTheExecAgreementIsGivenWithItsApplicationAlone",
             "TestADesktopEntryNeedsAgentryDesktopAndIsGivenAllTheSame",
-            "TestTheReleaseLineNarrowsTheDesktopEntries"
+            "TestTheReleaseLineNarrowsTheDesktopEntries",
+            "TestTheRosterOffersThePersonsApplications"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -10005,6 +10168,19 @@
           "benchmarks": [],
           "fixtureEntryPoint": false,
           "dependencyHints": []
+        },
+        {
+          "path": "pkg/validate/unfinished_test.go",
+          "tests": [
+            "TestFindUnfinishedNamesEachScaffoldLine",
+            "TestWorkspaceRefusesUnfinishedOnlyWhenAsked"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
+          ]
         },
         {
           "path": "pkg/validate/validate_test.go",
