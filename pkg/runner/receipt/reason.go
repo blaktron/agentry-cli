@@ -188,8 +188,9 @@ const (
 	ReasonHostRefused ReasonCode = "host-refused"
 	// ReasonDesktopRefused: an application on the person's computer the
 	// release declares (capabilities.desktop) was not reached, before the
-	// sandbox or during the run. Names: the application servers' catalogue
-	// ids; Detail: why (Desktop*).
+	// sandbox or during the run. Names: the applications' ids (chosen for
+	// one the person chooses, computer for computer use); Detail: why
+	// (Desktop*).
 	ReasonDesktopRefused ReasonCode = "desktop-refused"
 )
 
@@ -398,8 +399,8 @@ var (
 	secretRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)
 	// An intake question's id, in the core's rule.
 	questionRE = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
-	// An application server's id in the catalogue of application servers:
-	// lowercase letters, digits and single hyphens.
+	// An application's id in a release's capabilities.desktop: lowercase
+	// letters, digits and single hyphens.
 	applicationRE = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 )
 

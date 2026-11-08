@@ -592,8 +592,10 @@ type CapSummary struct {
 }
 
 // DesktopCap is the release's desktop line as the plan carries it: each
-// application server by its catalogue id with the tools the release allows
-// it and their classes, and the computer-use scope the release declares.
+// application whose MCP server the run uses, by its id, with the release's
+// narrowing of its tools; the applications whose windows its computer use
+// reaches; the computer-use scope; and whether an application the person
+// set up themself may be bound.
 type DesktopCap struct {
 	Servers []DesktopServerCap `json:"servers,omitempty"`
 	// ComputerUse is "app" or "screen" where the release declares computer
@@ -606,7 +608,26 @@ type DesktopCap struct {
 	// ScreenAllowedBy says what allowed a screen scope: the policy's
 	// desktop.allowScreen, the run's --allow-screen, or Unsafe Mode.
 	ScreenAllowedBy string `json:"screenAllowedBy,omitempty"`
+	// Windows are the applications, by id, whose windows app-scope computer
+	// use reaches, in the release's order.
+	Windows []string `json:"windows,omitempty"`
+	// ChooseWindows says app-scope computer use reaches the windows of an
+	// application the person chooses when the run starts.
+	ChooseWindows bool `json:"chooseWindows,omitempty"`
+	// PersonServers says whether the run may bind an application the person
+	// set up themself, outside Agentry Desktop's library or changed from it:
+	// PersonServersAllowed by the policy, PersonServersUnsafe only because
+	// Unsafe Mode is on, or PersonServersRefused.
+	PersonServers string `json:"personServers,omitempty"`
 }
+
+// What lets a run bind an application the person set up themself
+// (DesktopCap.PersonServers).
+const (
+	PersonServersAllowed = "allowed"
+	PersonServersUnsafe  = "unsafe"
+	PersonServersRefused = "refused"
+)
 
 // The computer-use scopes (DesktopCap.ComputerUse): the bound applications'
 // windows, or the whole display.
@@ -625,6 +646,11 @@ const (
 // DesktopComputerID is the computer-use entry's id in the desktop link: its
 // entry is agentry-desktop-computer.
 const DesktopComputerID = "computer"
+
+// DesktopChosenID is the id of the entry of an application the person
+// chooses when the run starts: its entry is agentry-desktop-chosen. No
+// application id may take it.
+const DesktopChosenID = "chosen"
 
 // HasComputerUse reports whether the line declares computer use.
 func (d *DesktopCap) HasComputerUse() bool { return d != nil && d.ComputerUse != "" }
@@ -661,32 +687,36 @@ func (d *DesktopCap) EntryIDs() []string {
 	return out
 }
 
-// DesktopServerCap is one application server a run uses on the person's
-// computer, as the catalogue of application servers describes it.
+// DesktopServerCap is one application whose MCP server a run uses on the
+// person's computer. Which server answers for it, and which tools that
+// server lists, are known only to Agentry Desktop, which tells the run when
+// it binds.
 type DesktopServerCap struct {
-	// ID is the server's catalogue id, and the entry agentry-desktop-<id>.
+	// ID is the application's id, and the entry agentry-desktop-<id>; for
+	// an application the person chooses it is DesktopChosenID.
 	ID string `json:"id"`
-	// Application is the application's name, as people know it.
+	// Application names it in the plan's and the System Prompt's words.
 	Application string `json:"application"`
-	// Package is the installed server's pin, ecosystem:name@version.
-	Package string `json:"package"`
-	// Tools are the tools the run has, in the catalogue's order, each with
-	// its class and whether it reaches the entry's egress hosts.
+	// Tools are the tools the run has: at compile time the release's
+	// narrowing (Narrowed), or none, meaning every tool the server lists;
+	// at run time each with the class Agentry Desktop gives it.
 	Tools []DesktopTool `json:"tools"`
-	// Egress are the hosts the installed server is known to reach from the
-	// person's computer.
-	Egress []string `json:"egress,omitempty"`
+	// Narrowed says Tools is the release's narrowing of the server's tools.
+	Narrowed bool `json:"narrowed,omitempty"`
+	// Chosen says the entry is an application the person chooses when the
+	// run starts.
+	Chosen bool `json:"chosen,omitempty"`
 }
 
 // DesktopTool is one tool of an application server, with its class: read,
 // act or exec.
 type DesktopTool struct {
-	Name   string `json:"name"`
-	Class  string `json:"class"`
-	Egress bool   `json:"egress,omitempty"`
+	Name  string `json:"name"`
+	Class string `json:"class"`
 }
 
-// ToolNames are the server's tools' names, in the catalogue's order.
+// ToolNames are the server's tools' names: the release's narrowing in its
+// order, or, once the run is bound, Agentry Desktop's list in its order.
 func (s DesktopServerCap) ToolNames() []string {
 	out := make([]string, len(s.Tools))
 	for i, t := range s.Tools {
@@ -705,8 +735,8 @@ func (s DesktopServerCap) Tool(name string) (DesktopTool, bool) {
 	return DesktopTool{}, false
 }
 
-// Server is the line's desktop link entry of this id: an application server
-// by its catalogue id, or the computer-use entry.
+// Server is the line's desktop link entry of this id: an application by its
+// id, the chosen application's entry, or the computer-use entry.
 func (d *DesktopCap) Server(id string) (DesktopServerCap, bool) {
 	if d == nil {
 		return DesktopServerCap{}, false
@@ -719,7 +749,8 @@ func (d *DesktopCap) Server(id string) (DesktopServerCap, bool) {
 	return DesktopServerCap{}, false
 }
 
-// IDs are the line's catalogue ids, in the release's order.
+// IDs are the ids of the line's application entries, in the release's
+// order.
 func (d *DesktopCap) IDs() []string {
 	if d == nil {
 		return nil

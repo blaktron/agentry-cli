@@ -11,14 +11,7 @@ agentry-tools:
   - glob
   - write_report
   - export_pdf
-agentry-desktop-blender:
-  - execute_blender_code
-  - generate_3d
-  - get_addon_status
-  - get_scene_info
-  - import_asset
-  - look
-  - search_assets
+agentry-desktop-blender: []
 agentry-desktop-computer:
   - cursor_position
   - double_click

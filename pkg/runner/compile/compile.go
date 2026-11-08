@@ -1547,10 +1547,14 @@ func renderGatewayFiles(files map[string][]byte, tspec *toolsrv.Spec, caps spec.
 	if caps.AppLink != "" {
 		tools.set(applink.ServerName, strListNode(applink.Tools(caps.AppLink)))
 	}
-	// A desktop link entry's allowlist is the catalogue's tools for its
-	// server, narrowed as the release narrows them, or the computer-use
-	// tools: the same set the link lists, so a tool the run is not given is
-	// refused twice.
+	// A desktop link entry's allowlist is the release's narrowing of its
+	// application's tools, or none until the run binds it, when the run
+	// writes the tools the server lists; the computer-use entry's is its
+	// tools. The entry is always written: docker/mcp-gateway (v0.44.3,
+	// pkg/gateway/capabilitites.go isToolEnabled) enables every tool of a
+	// server with no entry, and none of one whose entry lists none. The
+	// link lists the same set, so a tool the run is not given is refused
+	// twice.
 	if caps.Desktop != nil {
 		for _, s := range caps.Desktop.Entries() {
 			tools.set(desktoplink.ServerName(s.ID), strListNode(sortedCopy(s.ToolNames())))

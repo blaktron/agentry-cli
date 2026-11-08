@@ -53,6 +53,11 @@ type Message struct {
 	Unbind *UnbindRequest      `json:"unbind,omitempty"`
 	Bound  *Bound              `json:"bound,omitempty"`
 	Answer *desktoplink.Answer `json:"answer,omitempty"`
+	// List asks which applications the person approved on this computer,
+	// and Listed answers it. A link service that does not take it answers a
+	// refusal, which the client reads as ErrNoListing.
+	List   *ListRequest     `json:"list,omitempty"`
+	Listed *ApplicationList `json:"listed,omitempty"`
 	// Refused says why the link service did not do what was asked.
 	Refused *Refusal `json:"refused,omitempty"`
 	OK      bool     `json:"ok,omitempty"`
@@ -62,10 +67,15 @@ type Message struct {
 // and the application servers the run uses, each with the tools the release
 // allows it.
 type BindRequest struct {
-	Run     string       `json:"run"`
-	Ref     string       `json:"ref"`
-	Digest  string       `json:"digest,omitempty"`
-	Servers []BindServer `json:"servers"`
+	// Protocol is the revision of this protocol the run speaks. A bind that
+	// names it is answered with From, Chosen and each tool's class; one that
+	// names none is answered without them, since a run of an earlier
+	// revision decodes strictly and would refuse them.
+	Protocol int          `json:"protocol,omitempty"`
+	Run      string       `json:"run"`
+	Ref      string       `json:"ref"`
+	Digest   string       `json:"digest,omitempty"`
+	Servers  []BindServer `json:"servers"`
 	// Agent names a persistent agent the binding is for, for the link
 	// service's dialogs; empty for a run.
 	Agent string `json:"agent,omitempty"`
@@ -73,7 +83,7 @@ type BindRequest struct {
 	// running now, since whether it is is read at each call, which is
 	// refused desktop-not-installed, with the step to take, while it is
 	// not. The link service lists each server's tools as its installed
-	// server lists them when it can start it, else as the catalogue names
+	// server lists them when it can start it, else as the release narrows
 	// them.
 	Lazy bool `json:"lazy,omitempty"`
 	// ComputerUse is "app" or "screen" where the release declares computer
@@ -81,6 +91,11 @@ type BindRequest struct {
 	// it in that scope or refuses the bind.
 	ComputerUse   string   `json:"computerUse,omitempty"`
 	ComputerTools []string `json:"computerTools,omitempty"`
+	// Windows are the applications, by id, whose windows app-scope computer
+	// use reaches, and ChooseWindows adds an application the person chooses
+	// when the run starts.
+	Windows       []string `json:"windows,omitempty"`
+	ChooseWindows bool     `json:"chooseWindows,omitempty"`
 	// Reports is the run's folder on this computer for what the person
 	// keeps of computer use: where "Keep what the agent saw" saves each
 	// screenshot. Empty where the run has no such folder.
@@ -91,11 +106,14 @@ type BindRequest struct {
 // Agentry Desktop keeps the screenshots the person asked it to keep.
 const ReportsFolder = "reports/desktop"
 
-// BindServer is one application server a run uses: its catalogue id and the
-// tools the release allows, in the catalogue's words.
+// BindServer is one application whose MCP server a run uses: its id and
+// the tools the release narrows it to, none for every tool its server
+// lists. For an application the person chooses when the run starts, ID is
+// spec.DesktopChosenID and Chosen is set.
 type BindServer struct {
-	ID    string   `json:"id"`
-	Tools []string `json:"tools"`
+	ID     string   `json:"id"`
+	Tools  []string `json:"tools"`
+	Chosen bool     `json:"chosen,omitempty"`
 	// ExecAgreed says the person agreed that the server's tools that run
 	// code run without asking each time (a persistent agent's switch); a
 	// run's exec calls always ask.
@@ -107,6 +125,13 @@ type BindServer struct {
 type Bound struct {
 	Token   string                        `json:"token"`
 	Servers map[string][]desktoplink.Tool `json:"servers"`
+	// From says, per bound application id, where its set-up came from:
+	// FromLibrary, FromLibraryEdited or FromPerson. Answered only to a
+	// request that names Protocol.
+	From map[string]string `json:"from,omitempty"`
+	// Chosen is the application the person chose for the chosen entry, and
+	// for windows they chose, where the run asked for one.
+	Chosen *ChosenApplication `json:"chosen,omitempty"`
 	// Computer is the computer use the link service bound, where the run
 	// asked for it.
 	Computer *ComputerBound `json:"computer,omitempty"`
@@ -173,6 +198,57 @@ func (r *Refusal) Error() string {
 	}
 	return r.Reason
 }
+
+// Protocol is the revision of the link protocol this build speaks: a bind
+// that names it is answered with From and Chosen.
+const Protocol = 2
+
+// Where a bound application's set-up came from (Bound.From): Agentry
+// Desktop's library as it is, the library's preset the person changed, or
+// the person's own.
+const (
+	FromLibrary       = "library"
+	FromLibraryEdited = "library-edited"
+	FromPerson        = "person"
+)
+
+// SetByPerson says an application's set-up is the person's rather than
+// the library's: one they added, or a preset they changed. An unknown or
+// missing answer reads as the person's, the strict way.
+func SetByPerson(from string) bool { return from != FromLibrary }
+
+// ChosenApplication is the application the person chose when the run
+// started: its id on their computer and its name.
+type ChosenApplication struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// ListRequest asks for the applications the person approved.
+type ListRequest struct{}
+
+// ApplicationList is the person's approved applications on this computer.
+type ApplicationList struct {
+	Applications []Application `json:"applications"`
+}
+
+// Application is one application the person set up in Agentry Desktop:
+// what a release names it by, what it is called, where its set-up came
+// from, what of it the person approved, and whether it is ready now with
+// the step to take when not.
+type Application struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	From     string `json:"from"`
+	MCP      bool   `json:"mcp,omitempty"`
+	Computer bool   `json:"computer,omitempty"`
+	Ready    bool   `json:"ready,omitempty"`
+	Step     string `json:"step,omitempty"`
+}
+
+// ErrNoListing says the link service answers but does not list the person's
+// applications: an Agentry Desktop older than this protocol.
+var ErrNoListing = errors.New("this Agentry Desktop does not list your applications: update it to list them")
 
 // ReadMessage decodes one message strictly: a field it does not know
 // refuses it.
@@ -272,6 +348,24 @@ func (c Client) Unbind(ctx context.Context, req UnbindRequest) error {
 	return nil
 }
 
+// List asks for the person's approved applications. A link service that
+// does not take the message answers ErrNoListing.
+func (c Client) List(ctx context.Context) (ApplicationList, error) {
+	ans, err := c.exchange(ctx, Message{List: &ListRequest{}}, 30*time.Second)
+	if err != nil {
+		return ApplicationList{}, err
+	}
+	switch {
+	case ans.Refused != nil && ans.Refused.Reason == "not-a-message":
+		return ApplicationList{}, ErrNoListing
+	case ans.Refused != nil:
+		return ApplicationList{}, ans.Refused
+	case ans.Listed == nil:
+		return ApplicationList{}, errors.New("the link service answered the listing with neither a list nor a refusal")
+	}
+	return *ans.Listed, nil
+}
+
 // Forward sends one message as it is and reads the link service's answer,
 // for a relay that carries a run's calls and its unbind from another
 // computer: a call waits as long as a call does, an unbind as an unbind.
@@ -298,7 +392,7 @@ type Relayed struct {
 // tool call or the unbind of that run, and nothing else.
 func RelayedCallOnly(m Message, run string) bool {
 	switch {
-	case m.Bind != nil || m.Bound != nil || m.Answer != nil || m.Refused != nil || m.OK:
+	case m.Bind != nil || m.Bound != nil || m.Answer != nil || m.Refused != nil || m.OK || m.List != nil || m.Listed != nil:
 		return false
 	case m.Call != nil && m.Unbind == nil:
 		return m.Call.Run == run && m.Call.Token != ""
@@ -319,6 +413,12 @@ type Handler interface {
 	Bind(ctx context.Context, req BindRequest) (Bound, *Refusal)
 	Call(ctx context.Context, req CallRequest) (desktoplink.Answer, *Refusal)
 	Unbind(ctx context.Context, req UnbindRequest) *Refusal
+}
+
+// Lister is a Handler that also lists the person's approved applications.
+// A Handler that is not one answers a listing as no message it takes.
+type Lister interface {
+	List(ctx context.Context) (ApplicationList, *Refusal)
 }
 
 // Serve answers messages on the listener with h, one connection at a time
@@ -374,6 +474,18 @@ func serveOne(ctx context.Context, c net.Conn, h Handler) {
 			ans.Refused = r
 		} else {
 			ans.OK = true
+		}
+	case m.List != nil:
+		l, ok := h.(Lister)
+		if !ok {
+			ans.Refused = &Refusal{Reason: "not-a-message", Message: "this link service does not list the person's applications"}
+			break
+		}
+		list, r := l.List(ctx)
+		if r != nil {
+			ans.Refused = r
+		} else {
+			ans.Listed = &list
 		}
 	default:
 		ans.Refused = &Refusal{Reason: "not-a-message", Message: "the link service takes a bind, a call or an unbind, and this was none"}

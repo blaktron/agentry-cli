@@ -98,6 +98,7 @@ func TestShareFolderRefusesDangerousPaths(t *testing.T) {
 // roster block and the roster a client lists are the same entries with the
 // same sentences.
 func TestRosterRendersAgree(t *testing.T) {
+	stubApplications(t, nil, listedBlender, listedUnreal)
 	t.Setenv("HOME", t.TempDir())
 	home := shortHome(t)
 	a := assistantAgent(t)
@@ -115,17 +116,17 @@ func TestRosterRendersAgree(t *testing.T) {
 			t.Errorf("the consent's %s is not the roster's: %+v vs %+v", e.ID, e, got)
 		}
 	}
-	if len(r) != 27 || r[0].ID != EntryShare || r[1].ID != EntryData || !r[1].Fixed || r[2].ID != EntryMemory || !r[2].Fixed || !r[2].On ||
+	if len(r) != 28 || r[0].ID != EntryShare || r[1].ID != EntryData || !r[1].Fixed || r[2].ID != EntryMemory || !r[2].Fixed || !r[2].On ||
 		r[3].ID != EntryHeartbeat || r[3].On || r[4].ID != EntryMeetings || r[4].On {
 		t.Fatalf("the Assistant's own roster: %+v", r)
 	}
 	// Then the person's computer, each entry off, and its skills.
-	for _, e := range r[5:9] {
+	for _, e := range r[5:10] {
 		if (e.Kind != KindDesktop && e.Kind != KindDesktopExec) || e.On || e.GrantedBy != GrantedByBuiltin {
 			t.Errorf("the Assistant's desktop entry %+v", e)
 		}
 	}
-	for _, e := range r[9:] {
+	for _, e := range r[10:] {
 		if e.Kind != KindSkill || e.GrantedBy != GrantedByBuiltin {
 			t.Errorf("the Assistant's own roster ends in %+v, want its built-in skills", e)
 		}

@@ -19,8 +19,8 @@ registry:
       - '@@RUN_OUT@@:/out:rw'
     disableNetwork: true
   agentry-desktop-blender:
-    description: 'Agentry''s desktop link: Blender on the person''s computer, through its installed server, answered by Agentry Desktop (generated per run)'
-    title: Blender
+    description: 'Agentry''s desktop link: blender on the person''s computer, through its installed server, answered by Agentry Desktop (generated per run)'
+    title: blender
     type: server
     image: agentry-runner:test
     command:

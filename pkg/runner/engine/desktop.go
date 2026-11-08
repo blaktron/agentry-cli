@@ -14,6 +14,7 @@ import (
 	"sync"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/desktop"
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/runnerimage/desktoplink"
@@ -34,9 +35,15 @@ type DesktopLink struct {
 	// Token is the run token the link service issued at bind; every call
 	// carries it.
 	Token string
-	// Servers are the bound application servers' tools, by catalogue id, as
-	// the link service listed them from each installed server.
+	// Servers are the bound applications' tools, by id, as the link service
+	// listed them from each installed server.
 	Servers map[string][]desktoplink.Tool
+	// From says, per bound application id, where its set-up came from
+	// (desktop.FromLibrary and the others); none from a link service older
+	// than desktop.Protocol, which reads as the person's.
+	From map[string]string
+	// Chosen is the application the person chose for the chosen entry.
+	Chosen *desktop.ChosenApplication
 	// Call sends one tool call to the link service. A refusal is returned
 	// as a *desktop.Refusal.
 	Call func(ctx context.Context, req desktop.CallRequest) (desktoplink.Answer, error)
@@ -55,6 +62,8 @@ func BoundDesktopLink(c desktop.Client, run string, b desktop.Bound) *DesktopLin
 	return &DesktopLink{
 		Token:    b.Token,
 		Servers:  b.Servers,
+		From:     b.From,
+		Chosen:   b.Chosen,
 		Call:     c.Call,
 		Unbind:   func(ctx context.Context) error { return c.Unbind(ctx, desktop.UnbindRequest{Run: run, Token: b.Token}) },
 		FarEnd:   "Agentry Desktop's link socket " + c.Socket,
@@ -63,16 +72,22 @@ func BoundDesktopLink(c desktop.Client, run string, b desktop.Bound) *DesktopLin
 }
 
 // DesktopBindRequest is the bind of run for desktop line d of release ref:
-// each application server with the tools the release gives it, and computer
-// use in its scope with the folder of outDir where the person's kept
-// screenshots go (none when outDir is empty).
+// each application with the release's narrowing of its tools (none for
+// every tool its server lists), and computer use in its scope, with the
+// applications whose windows it reaches and the folder of outDir where the
+// person's kept screenshots go (none when outDir is empty).
 func DesktopBindRequest(d *spec.DesktopCap, run, ref, digest, outDir string) desktop.BindRequest {
-	req := desktop.BindRequest{Run: run, Ref: ref, Digest: digest}
+	req := desktop.BindRequest{Protocol: desktop.Protocol, Run: run, Ref: ref, Digest: digest}
 	for _, s := range d.Servers {
-		req.Servers = append(req.Servers, desktop.BindServer{ID: s.ID, Tools: s.ToolNames()})
+		var tools []string
+		if s.Narrowed {
+			tools = s.ToolNames()
+		}
+		req.Servers = append(req.Servers, desktop.BindServer{ID: s.ID, Tools: tools, Chosen: s.Chosen})
 	}
 	if c, ok := d.Computer(); ok {
 		req.ComputerUse, req.ComputerTools = d.ComputerUse, c.ToolNames()
+		req.Windows, req.ChooseWindows = append([]string(nil), d.Windows...), d.ChooseWindows
 		if outDir != "" {
 			req.Reports = filepath.Join(outDir, filepath.FromSlash(desktop.ReportsFolder))
 		}
@@ -99,7 +114,7 @@ func SocketDesktopBinder(socket string) DesktopBinder {
 
 // PersistentDesktopLink binds a persistent agent's segment, lazily: the
 // applications need not be running. With no Agentry Desktop answering, the
-// segment starts all the same with the catalogue's tools, and binds at its
+// segment starts all the same with the release's narrowing for tools, and binds at its
 // first call; until one answers, each call is refused desktop-unavailable.
 // A binding that goes away while the segment runs (Agentry Desktop
 // restarted, a runhost's link given up and taken again) is bound again at
@@ -131,8 +146,8 @@ func gone(r *desktop.Refusal) bool {
 
 // rebindingDesktopLink is a segment's binding that binds again whenever the
 // one it holds is gone: a token of the segment's own between its relay and
-// this process, the tools of the first binding (or the catalogue's when
-// there was none), and the bound link's token on each call it sends. Once
+// this process, the tools of the first binding (or the release's narrowing
+// when there was none), and the bound link's token on each call it sends. Once
 // unbound it binds no more.
 func rebindingDesktopLink(bind DesktopBinder, req desktop.BindRequest, d *spec.DesktopCap, first *DesktopLink) (*DesktopLink, error) {
 	var raw [16]byte
@@ -142,6 +157,7 @@ func rebindingDesktopLink(bind DesktopBinder, req desktop.BindRequest, d *spec.D
 	link := &DesktopLink{Token: hex.EncodeToString(raw[:])}
 	if first != nil {
 		link.Servers, link.Computer, link.FarEnd = first.Servers, first.Computer, first.FarEnd+", bound again if it goes away while the agent runs"
+		link.From, link.Chosen = first.From, first.Chosen
 	} else {
 		link.Servers = map[string][]desktoplink.Tool{}
 		for _, s := range d.Servers {
@@ -179,6 +195,15 @@ func rebindingDesktopLink(bind DesktopBinder, req desktop.BindRequest, d *spec.D
 		l, err := bind(ctx, req)
 		if err != nil {
 			return nil, err
+		}
+		// A binding made at a call is held to the policy as the first is
+		// before the segment starts.
+		if id, refused := personRefused(d, l); refused {
+			if l.Unbind != nil {
+				_ = l.Unbind(context.WithoutCancel(ctx))
+			}
+			return nil, &desktop.Refusal{Reason: receipt.DesktopNotGranted, Server: id,
+				Message: "this application " + policy.CustomServersRefused}
 		}
 		mu.Lock()
 		defer mu.Unlock()
@@ -249,6 +274,8 @@ func RelayedDesktopLink(r desktop.Relayed) *DesktopLink {
 	return &DesktopLink{
 		Token:   r.Bound.Token,
 		Servers: r.Bound.Servers,
+		From:    r.Bound.From,
+		Chosen:  r.Bound.Chosen,
 		Call: func(ctx context.Context, req desktop.CallRequest) (desktoplink.Answer, error) {
 			req.Run = r.Run
 			return c.Call(ctx, req)
@@ -332,11 +359,25 @@ func checkDesktop(p Params) error {
 		return Classify(ExitCLI, errors.New("the run's binding to Agentry Desktop has no token or no way to call it"))
 	}
 	for _, s := range d.Servers {
-		if _, ok := p.Desktop.Servers[s.ID]; !ok {
+		listed, ok := p.Desktop.Servers[s.ID]
+		if !ok {
 			return Classify(ExitPolicy, receipt.WithReason(
 				fmt.Errorf("this QuickAgent uses %s on your computer, and Agentry Desktop did not bind it for the run", s.Application),
 				receipt.ReasonDesktopRefused, receipt.DesktopNotInstalled, s.ID))
 		}
+		for _, name := range s.ToolNames() {
+			if s.Narrowed && !slices.ContainsFunc(listed, func(t desktoplink.Tool) bool { return t.Name == name }) {
+				return Classify(ExitPolicy, receipt.WithReason(
+					fmt.Errorf("this QuickAgent uses the tool %s of %s on your computer, which the server Agentry Desktop started for it does not list", name, s.Application),
+					receipt.ReasonDesktopRefused, receipt.DesktopNotInstalled, s.ID))
+			}
+		}
+	}
+	if id, refused := personRefused(d, p.Desktop); refused {
+		s, _ := d.Server(id)
+		return Classify(ExitPolicy, receipt.WithReason(
+			fmt.Errorf("this QuickAgent uses %s on your computer, which %s", boundName(p.Desktop, s), policy.CustomServersRefused),
+			receipt.ReasonDesktopRefused, receipt.DesktopNotGranted, id))
 	}
 	switch c := p.Desktop.Computer; {
 	case d.HasComputerUse() && c == nil:
@@ -372,6 +413,45 @@ type desktopRun struct {
 type desktopServer struct {
 	spec.DesktopServerCap
 	tools []desktoplink.Tool
+	// from is where the application's set-up came from, as the link
+	// service said.
+	from string
+}
+
+// personRefused names the first application of the line whose binding in
+// l is set up by the person, where the line's policy refuses that: an
+// application with no answer of where its set-up came from reads as the
+// person's.
+func personRefused(d *spec.DesktopCap, l *DesktopLink) (string, bool) {
+	if d == nil || l == nil || d.PersonServers != spec.PersonServersRefused {
+		return "", false
+	}
+	for _, s := range d.Servers {
+		if desktop.SetByPerson(l.From[s.ID]) {
+			return s.ID, true
+		}
+	}
+	return "", false
+}
+
+// tool is the bound tool of this name: one the binding gives the run, with
+// the class Agentry Desktop gave it.
+func (s desktopServer) tool(name string) (desktoplink.Tool, bool) {
+	for _, t := range s.tools {
+		if t.Name == name {
+			return t, true
+		}
+	}
+	return desktoplink.Tool{}, false
+}
+
+// boundName names a bound application in the run's words: the one the
+// person chose for the chosen entry, else its id.
+func boundName(l *DesktopLink, s spec.DesktopServerCap) string {
+	if s.Chosen && l != nil && l.Chosen != nil && l.Chosen.Name != "" {
+		return l.Chosen.Name + " (the application the person chose)"
+	}
+	return s.Application
 }
 
 type desktopCounts struct {
@@ -386,9 +466,10 @@ func desktopVolume(runID string) string { return "agentry-" + runID + "-desktop"
 
 // prepareDesktopLink readies the run's desktop link from its binding before
 // the gateway's files are rendered, since the link entries' mount names the
-// relay volume: the volume's name, and each server's tools narrowed to the
-// plan's allowlist (a tool the link service listed that the catalogue does
-// not give is left out, so the link lists what the gateway allows).
+// relay volume and their allowlists come from it: the volume's name, and
+// each application's tools as the link service listed them, narrowed to
+// the release's narrowing where it has one, which the gateway's allowlist
+// is then set to.
 func prepareDesktopLink(p Params, rd *runDirs, runID string) error {
 	d := p.Plan.Capabilities.Desktop
 	if d == nil {
@@ -405,22 +486,51 @@ func prepareDesktopLink(p Params, rd *runDirs, runID string) error {
 			// the link service's listing.
 			listed = nil
 			for _, t := range desktoplink.ComputerTools() {
-				listed = append(listed, t.Tool)
+				tool := t.Tool
+				tool.Class = t.Class
+				listed = append(listed, tool)
 			}
 		}
 		var tools []desktoplink.Tool
-		for _, name := range s.ToolNames() {
-			for _, t := range listed {
-				if t.Name == name {
-					tools = append(tools, t)
-					break
-				}
+		for _, t := range listed {
+			if !s.Narrowed || slices.Contains(s.ToolNames(), t.Name) {
+				tools = append(tools, t)
 			}
 		}
-		r.servers = append(r.servers, desktopServer{DesktopServerCap: s, tools: tools})
+		if s.ID != spec.DesktopComputerID {
+			s.Application = boundName(p.Desktop, s)
+			s.Tools = nil
+			for _, t := range tools {
+				s.Tools = append(s.Tools, spec.DesktopTool{Name: t.Name, Class: t.Class})
+			}
+		}
+		r.servers = append(r.servers, desktopServer{DesktopServerCap: s, tools: tools, from: p.Desktop.From[s.ID]})
 		r.calls[s.ID] = &desktopCounts{byClass: map[string]int{}, refused: map[string]int{}}
 	}
 	rd.desktop = r
+	return nil
+}
+
+// grantDesktopTools sets each desktop link entry's allowlist in the
+// gateway's rendered tools.yaml to the tools its binding gives the run, the
+// same set its link lists: the plan holds only the release's narrowing,
+// since which tools an application's server lists is known when the run
+// binds it.
+func grantDesktopTools(gatewayDir string, r *desktopRun) error {
+	if r == nil {
+		return nil
+	}
+	path := filepath.Join(gatewayDir, "tools.yaml")
+	for _, s := range r.servers {
+		names := make([]string, 0, len(s.tools))
+		for _, t := range s.tools {
+			names = append(names, t.Name)
+		}
+		slices.Sort(names)
+		if err := setServerAllowlist(path, desktoplink.ServerName(s.ID), names); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -537,11 +647,21 @@ func (r *desktopRun) callsPhrase(id string) string {
 // receiptLine is the receipt's line for one application server: what was
 // reached, what was refused, and what the run could not enforce.
 func (r *desktopRun) receiptLine(s spec.DesktopServerCap) string {
-	line := fmt.Sprintf("%s on the person's computer through its installed server %s, answered through Agentry Desktop (%s); the tools allowed: %s; %s",
-		s.Application, s.Package, desktoplink.ServerName(s.ID), strings.Join(s.ToolNames(), ", "), r.callsPhrase(s.ID))
-	if len(s.Egress) > 0 {
-		line += "; the server reaches " + strings.Join(s.Egress, ", ") + " from the person's computer"
+	server := "its installed server"
+	from := "set up by the person in Agentry Desktop, not vetted by Agentry"
+	if b, ok := r.server(s.ID); ok {
+		switch b.from {
+		case desktop.FromLibrary:
+			from = "set up from Agentry Desktop's library"
+		case desktop.FromLibraryEdited:
+			from = "set up from Agentry Desktop's library and changed by the person, not vetted by Agentry as changed"
+		}
+		if desktop.SetByPerson(b.from) && r.line != nil && r.line.PersonServers == spec.PersonServersUnsafe {
+			from += ", allowed only because Unsafe Mode is on"
+		}
 	}
+	line := fmt.Sprintf("%s on the person's computer through %s (%s), answered through Agentry Desktop (%s); the tools allowed: %s; %s",
+		s.Application, server, from, desktoplink.ServerName(s.ID), strings.Join(s.ToolNames(), ", "), r.callsPhrase(s.ID))
 	return line + "; the person's computer is outside the run: its installed server ran there, outside the run's network and filesystem rules, not enforced; each call is a line of receipts/" + desktopLogFile(s.ID)
 }
 

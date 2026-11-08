@@ -457,7 +457,7 @@ func runAppLinkRelay(args []string) error {
 // the run token over the relay's socket.
 func runDesktopLink(args []string) error {
 	fs := flag.NewFlagSet("desktoplink", flag.ContinueOnError)
-	id := fs.String("server", "", "the application server's id in the catalogue of application servers")
+	id := fs.String("server", "", "the application's id in the release's capabilities.desktop, or chosen or computer")
 	if err := fs.Parse(args); err != nil || *id == "" || fs.NArg() != 0 {
 		fmt.Fprintln(os.Stderr, "agentry-runner desktoplink: --server is required, and nothing else")
 		os.Exit(2)
