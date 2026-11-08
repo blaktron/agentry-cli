@@ -153,7 +153,7 @@ func TestUsageErrorsExitTwoWithAPointer(t *testing.T) {
 		root.SetErr(&stderr)
 		root.SetOut(&stderr)
 		root.SetArgs(tc.args)
-		ran, err := root.ExecuteC()
+		_, err := root.ExecuteC()
 		err = asUsageError(root, err)
 		var ce *engine.ClassifiedError
 		if !errors.As(err, &ce) || ce.Code != engine.ExitUsage {
@@ -161,15 +161,21 @@ func TestUsageErrorsExitTwoWithAPointer(t *testing.T) {
 			continue
 		}
 		var pointer strings.Builder
-		printUsagePointer(&pointer, err, ran)
+		printUsagePointer(&pointer, err)
 		if want := "Run '" + tc.path + " --help' for usage.\n"; pointer.String() != want {
 			t.Errorf("%v: pointer %q, want %q", tc.args, pointer.String(), want)
 		}
 	}
-	// Any other failure has no pointer.
-	var none strings.Builder
-	printUsagePointer(&none, errors.New("the registry refused"), newRootCmd())
-	if none.Len() != 0 {
-		t.Fatalf("a failure of no class has a pointer: %q", none.String())
+	// Any other failure has no pointer, a usage-class one raised while the
+	// command works included: its line already says what to do.
+	for _, err := range []error{
+		errors.New("the registry refused"),
+		engine.Classify(engine.ExitUsage, errors.New("no Writing Voice is kept on this computer")),
+	} {
+		var none strings.Builder
+		printUsagePointer(&none, err)
+		if none.Len() != 0 {
+			t.Errorf("%v has a pointer: %q", err, none.String())
+		}
 	}
 }

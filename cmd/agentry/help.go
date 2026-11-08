@@ -150,21 +150,15 @@ func asUsageError(root *cobra.Command, err error) error {
 	return err
 }
 
-// printUsagePointer writes the one line after a usage error that says where
-// the command's usage is: for an error usageError marked, the command it
-// named; for any other failure of the usage class, the command that ran.
-// Nothing for any other error.
-func printUsagePointer(w io.Writer, err error, ran *cobra.Command) {
+// printUsagePointer writes the one line after a command-line mistake that
+// says where the command's usage is: a flag the command does not take, the
+// wrong arguments, a command that does not exist, or a missing reference
+// (the errors usageError marks). A failure of the usage class raised while
+// the command works (no Writing Voice kept, say) already says what to do,
+// and gets no pointer.
+func printUsagePointer(w io.Writer, err error) {
 	var u *usageErr
-	var ce *engine.ClassifiedError
-	path := ""
-	switch {
-	case errors.As(err, &u):
-		path = u.path
-	case errors.As(err, &ce) && ce.Code == engine.ExitUsage && ran != nil:
-		path = ran.CommandPath()
-	default:
-		return
+	if errors.As(err, &u) {
+		_, _ = fmt.Fprintf(w, "Run '%s --help' for usage.\n", u.path)
 	}
-	_, _ = fmt.Fprintf(w, "Run '%s --help' for usage.\n", path)
 }
