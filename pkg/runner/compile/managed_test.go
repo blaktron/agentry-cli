@@ -129,3 +129,51 @@ func TestThePlanHashTakesTheManagedVersion(t *testing.T) {
 		t.Errorf("the same document compiled to another hash: %s, %s", v3, again)
 	}
 }
+
+// A runhost's run carries the sending device's managed settings: they
+// refuse Unsafe Mode there as this computer's own would, and the plan
+// records their documents beside this computer's.
+func TestTheSendingDevicesManagedSettingsHoldARunhostsRun(t *testing.T) {
+	holding(t)
+	m := parseManifest(t, fullCapsYAML)
+	sender := &managed.Narrowing{
+		UnsafeModeRefusal: "Unsafe Mode is forbidden by acme's managed settings (run.unsafeMode)",
+		Documents:         []spec.ManagedSpec{{Organization: "acme", Version: 9, Applied: []string{managedsettings.UnsafeMode}}},
+	}
+	in := Inputs{Manifest: m, Digest: "sha256:0123456789abcdef", Source: "local", WorkspaceDir: workspaceFor(t, m, nil),
+		Policy: testPolicy(), PolicySHA: "fixedpolicysha", RunnerImage: "agentry-runner:test", Unsafe: testUnsafeData(t), Sender: sender}
+	_, err := Compile(in, t.TempDir())
+	var refusal *PolicyRefusal
+	if !errors.As(err, &refusal) || !strings.Contains(refusal.Reason, "forbidden by acme") || !strings.Contains(refusal.Reason, "the device that sent this run") {
+		t.Fatalf("Compile = %v, want the sending device's refusal", err)
+	}
+	in.Unsafe = nil
+	plan, err := Compile(in, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Managed) != 1 || plan.Managed[0].Organization != "acme" || plan.Managed[0].Version != 9 {
+		t.Errorf("plan.Managed = %+v", plan.Managed)
+	}
+	if got := CurrentManagedSpecs(sender); len(got) != 1 || got[0].Version != 9 {
+		t.Errorf("CurrentManagedSpecs = %+v", got)
+	}
+	// One that cannot be a narrowing refuses the compile.
+	in.Sender = &managed.Narrowing{UnsafeModeRefusal: "two\nlines"}
+	if _, err := Compile(in, t.TempDir()); !errors.As(err, &refusal) {
+		t.Fatalf("Compile with a malformed narrowing = %v, want a refusal", err)
+	}
+}
+
+func TestManagedSettingsThatCannotBeVerifiedRefuseEveryCompile(t *testing.T) {
+	prev := currentManaged
+	t.Cleanup(func() { currentManaged = prev })
+	currentManaged = func() managed.Effective {
+		return managed.Effective{Problems: []managed.Problem{{Registry: "https://registry.example", Err: errors.New("no signing key pinned verifies the document")}}}
+	}
+	_, err := compileManaged(t, false)
+	var refusal *PolicyRefusal
+	if !errors.As(err, &refusal) || !strings.Contains(refusal.Reason, "cannot be verified") {
+		t.Fatalf("Compile = %v, want a refusal", err)
+	}
+}

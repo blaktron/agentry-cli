@@ -522,9 +522,13 @@
           "tests": [
             "TestManagedRefreshShowAndWhoami",
             "TestManagedShowRefusesATamperedCopy",
+            "TestReSigningInKeepsTheLockWhenTheRegistryCannotAnswer",
             "TestManagedRefreshNeedsASignIn",
             "TestLogoutDeletesTheManagedSettings",
-            "TestLoginReadsTheManagedSettings"
+            "TestLoginReadsTheManagedSettings",
+            "TestARunSentToARunhostCarriesTheDevicesManagedSettings",
+            "TestAnUnknownLockRefusesARunOnARunhostBeforeSending",
+            "TestARunhostsRunAppliesTheSendingDevicesNarrowing"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -3170,7 +3174,15 @@
             "TestSyncRemembersThatNoneApply",
             "TestForgetDeletesTheCache",
             "TestACacheUnderAnotherRegistrysNameIsRefused",
-            "TestRefreshNeedsASignIn"
+            "TestRefreshNeedsASignIn",
+            "TestADeletedDocumentIsNoticedNotReadAsNone",
+            "TestARecordDatedInTheFutureIsRefused",
+            "TestACachedDocumentDatedInTheFutureIsRefused",
+            "TestSignInKeepsTheSameAccountsLockAndDropsAnothers",
+            "TestRefreshAsAnotherAccountDropsTheLastOnesSettings",
+            "TestRollbackIsRefusedAcrossAChangeOfOrganization",
+            "TestDocumentsVerifyWithTheirOwnRegistrysPinsWhateverPinRegistrySays",
+            "TestTheNarrowingASentRunCarries"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -4834,7 +4846,9 @@
             "TestUnsafeModeForbiddenByAManagedLockIsRefused",
             "TestUnsafeModeAllowedOrADefaultCompiles",
             "TestAManagedLockTheClientDoesNotKnowRefusesEveryCompile",
-            "TestThePlanHashTakesTheManagedVersion"
+            "TestThePlanHashTakesTheManagedVersion",
+            "TestTheSendingDevicesManagedSettingsHoldARunhostsRun",
+            "TestManagedSettingsThatCannotBeVerifiedRefuseEveryCompile"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -6753,7 +6767,7 @@
           "path": "pkg/runner/engine/managed_test.go",
           "tests": [
             "TestRunRefusesAnUnsafePlanAManagedLockForbids",
-            "TestCheckManaged"
+            "TestARunIsHeldToTheManagedSettingsCachedWhenItStarts"
           ],
           "fuzz": [],
           "benchmarks": [],

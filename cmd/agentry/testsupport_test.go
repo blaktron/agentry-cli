@@ -241,6 +241,9 @@ type fakeRegistry struct {
 	// managedEnv is the signed managed settings document GET
 	// /user/managed-settings answers; nil answers 204, none apply.
 	managedEnv *attest.DSSEEnvelope
+	// managedStatus, when set, answers the managed settings route with
+	// that status instead.
+	managedStatus int
 }
 
 // newFakeRegistry starts the fake and wires every route. Unknown agents and
@@ -550,8 +553,12 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 			return
 		}
 		fr.mu.Lock()
-		env := fr.managedEnv
+		env, status := fr.managedEnv, fr.managedStatus
 		fr.mu.Unlock()
+		if status != 0 {
+			w.WriteHeader(status)
+			return
+		}
 		if env == nil {
 			w.WriteHeader(http.StatusNoContent)
 			return

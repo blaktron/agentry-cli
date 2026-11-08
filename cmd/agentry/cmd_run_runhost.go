@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/blaktron/agentry-cli/pkg/managed"
 	"github.com/blaktron/agentry-cli/pkg/runhost"
 	"github.com/blaktron/agentry-cli/pkg/runhost/job"
 	"github.com/blaktron/agentry-cli/pkg/runhost/remote"
@@ -97,6 +98,15 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	modelKey, err := remote.ModelKey(pol)
 	if err != nil {
 		return engine.Classify(engine.ExitPolicy, err)
+	}
+
+	// The runhost has its own sign-in and its own managed settings: this
+	// device's are read now, refuse here what they refuse outright, and
+	// travel with the job for the rest.
+	syncManaged(cmd, registryURL())
+	held := managed.Current()
+	if reason := held.RunRefusal(); reason != "" {
+		return engine.Classify(engine.ExitPolicy, &compile.PolicyRefusal{Reason: reason})
 	}
 
 	opts.progress.at(receipt.StageVerify)
@@ -201,6 +211,7 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	run.Model, run.ModelKey = job.ModelOf(pol.Model), modelKey
 	run.Adapter = runAdapter
 	run.Session = mode == manifest.ModeInteractive
+	run.Managed = held.Narrowing()
 	// The run is bound to this computer's Agentry Desktop before anything is
 	// sent, or refused here as a local run would be; the binding travels in
 	// the job, and this device unbinds once the job is over.
@@ -252,6 +263,14 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	}
 	if err != nil {
 		return engine.Classify(engine.ExitGateway, err)
+	}
+	// A runhost whose Unsafe Mode is on runs a release that declares
+	// commands in it, which this device's managed settings may forbid: the
+	// runhost refuses it too, and this device says so before sending it.
+	if rv.UnsafeMode && len(m.Capabilities.Exec.Commands) > 0 {
+		if err := refuseUnsafeMode(run.Managed); err != nil {
+			return err
+		}
 	}
 	errOut := cmd.ErrOrStderr()
 	_, _ = fmt.Fprintf(errOut, "running %s on %s (%s, host key %s)\n", meta.Ref, rec.Name, rec.Host, rec.HostKeyFingerprint)

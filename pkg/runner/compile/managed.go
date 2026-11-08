@@ -10,34 +10,42 @@ import (
 // caller, so that no client compiles past an organization's lock.
 var currentManaged = managed.Current
 
-// ManagedSpecs are the documents as a plan records them: the organization,
-// the version and the ids of the settings this client applies, never a
-// value.
-func ManagedSpecs(e managed.Effective) []spec.ManagedSpec {
-	var out []spec.ManagedSpec
-	for i := range e.Documents {
-		d := &e.Documents[i]
-		out = append(out, spec.ManagedSpec{Organization: d.Document.Org, Version: d.Document.Version, Applied: d.Applied()})
+// managedSpecs are the documents a plan records: this computer's, then
+// those of the device that sent the run.
+func managedSpecs(held managed.Effective, sender *managed.Narrowing) []spec.ManagedSpec {
+	out := held.Specs()
+	if sender != nil {
+		out = append(out, sender.Documents...)
 	}
 	return out
 }
 
-// CurrentManagedSpecs are ManagedSpecs of the documents cached now: what a
-// plan compiled now records, so a caller that reuses a plan can tell one
-// compiled under another version.
-func CurrentManagedSpecs() []spec.ManagedSpec { return ManagedSpecs(currentManaged()) }
+// CurrentManagedSpecs are the documents a plan compiled now records, with
+// sender's (nil for a run started on this computer): a caller that reuses
+// a plan compiled under other documents compiles again.
+func CurrentManagedSpecs(sender *managed.Narrowing) []spec.ManagedSpec {
+	return managedSpecs(currentManaged(), sender)
+}
 
 // managedRefusal refuses a compile that the managed settings forbid: any
-// compile while a document locks a setting this client does not know,
-// and one in Unsafe Mode while a document forbids it.
+// compile while a document locks a setting this client does not know or
+// what is held cannot be verified, and one in Unsafe Mode while this
+// computer's documents, or the sending device's, forbid it.
 func managedRefusal(in Inputs, held managed.Effective) error {
 	if reason := held.RunRefusal(); reason != "" {
 		return &PolicyRefusal{Reason: reason}
 	}
-	if in.Unsafe != nil {
-		if reason := held.UnsafeModeRefusal(); reason != "" {
-			return &PolicyRefusal{Reason: reason}
-		}
+	if err := in.Sender.Validate(); err != nil {
+		return &PolicyRefusal{Reason: err.Error()}
+	}
+	if in.Unsafe == nil {
+		return nil
+	}
+	if reason := held.UnsafeModeRefusal(); reason != "" {
+		return &PolicyRefusal{Reason: reason}
+	}
+	if in.Sender != nil && in.Sender.UnsafeModeRefusal != "" {
+		return &PolicyRefusal{Reason: in.Sender.UnsafeModeRefusal + ", on the device that sent this run"}
 	}
 	return nil
 }

@@ -61,7 +61,10 @@ func TestRunRefusesAnUnsafePlanAManagedLockForbids(t *testing.T) {
 	}
 }
 
-func TestCheckManaged(t *testing.T) {
+// Every run and session is held to the managed settings cached when it
+// starts: Unsafe Mode plans under a forbidding lock, and every plan under a
+// lock this client does not know or a copy it cannot verify.
+func TestARunIsHeldToTheManagedSettingsCachedWhenItStarts(t *testing.T) {
 	unsafePlan := &spec.Plan{ExecImage: &spec.ExecImageSpec{Unsafe: &spec.UnsafeExecSpec{}}}
 	screenPlan := &spec.Plan{Capabilities: spec.CapSummary{Desktop: &spec.DesktopCap{ScreenAllowedBy: spec.ScreenByUnsafe}}}
 	safePlan := &spec.Plan{}
@@ -77,9 +80,15 @@ func TestCheckManaged(t *testing.T) {
 		"allowed":                 {map[string]managedsettings.Setting{managedsettings.UnsafeMode: setting(managedsettings.UnsafeModeAllowed, true)}, unsafePlan, ""},
 		"unknown lock, safe plan": {map[string]managedsettings.Setting{"run.somethingNewer": setting("strict", true)}, safePlan, "update Agentry"},
 		"unknown default, safe":   {map[string]managedsettings.Setting{"run.somethingNewer": setting("strict", false)}, safePlan, ""},
+		"unverified, safe plan":   {nil, safePlan, "cannot be verified"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			holdManaged(t, tc.settings)
+			if tc.settings == nil {
+				currentManaged = func() managed.Effective {
+					return managed.Effective{Problems: []managed.Problem{{Registry: "https://registry.example", Err: errors.New("the document accepted from the registry is no longer on this computer")}}}
+				}
+			}
 			err := checkManaged(Params{Plan: tc.plan})
 			if tc.want == "" {
 				if err != nil {

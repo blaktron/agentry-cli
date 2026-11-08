@@ -441,6 +441,8 @@ type runhostStaged struct {
 	hostKeys   map[string]string
 	// desktop is the relayed binding to the device's Agentry Desktop.
 	desktop string
+	// managed is what the device's managed settings say of the run.
+	managed string
 }
 
 // runhostRunArgs is the run's argv after the CLI's own path: a typed list,
@@ -522,6 +524,9 @@ func runhostRunArgs(j *job.Job, st runhostStaged) []string {
 	if st.desktop != "" {
 		args = append(args, "--runhost-desktop", st.desktop)
 	}
+	if st.managed != "" {
+		args = append(args, "--runhost-managed", st.managed)
+	}
 	if j.Run.AllowScreen {
 		args = append(args, "--allow-screen")
 	}
@@ -594,6 +599,14 @@ func runhostRun(ctx context.Context, j *job.Job, dir, home string, devices map[s
 	}()
 	if err := runhostStage(j, &st); err != nil {
 		return engine.ExitUsage, err
+	}
+	// The device's managed settings travel with the job and hold the run
+	// beside this runhost's own.
+	if j.Run.Managed != nil {
+		st.managed = filepath.Join(dir, runhostManagedFile)
+		if err := writeNewJSON(st.managed, j.Run.Managed); err != nil {
+			return engine.ExitCLI, err
+		}
 	}
 	// The device's Agentry Desktop is reached through the job's link socket,
 	// over the link session the device opens for the job.

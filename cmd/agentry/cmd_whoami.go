@@ -123,6 +123,7 @@ func runWhoami(cmd *cobra.Command, _ []string) error {
 	u := resp.JSON200
 
 	acct, raw, accountErr := fetchBillingAccount(cmd.Context(), client, reg, token)
+	held := managed.Current().Registry(reg)
 
 	if flags.jsonOut {
 		doc := map[string]any{"registry": reg, "handle": u.Handle, "email": u.Email, "displayName": u.DisplayName}
@@ -142,8 +143,8 @@ func runWhoami(cmd *cobra.Command, _ []string) error {
 		if accountErr != nil {
 			doc["accountError"] = accountErr.Error()
 		}
-		if st, err := managed.Load(reg); err == nil && st != nil {
-			doc["managedSettings"] = map[string]any{"organization": st.Document.Org, "version": st.Document.Version}
+		if docs := managedJSON(held); len(docs) > 0 {
+			doc["managedSettings"] = docs
 		}
 		enc := json.NewEncoder(cmd.OutOrStdout())
 		enc.SetIndent("", "  ")
@@ -152,7 +153,7 @@ func runWhoami(cmd *cobra.Command, _ []string) error {
 	out := cmd.OutOrStdout()
 	_, _ = fmt.Fprintf(out, "registry: %s\nhandle:   %s\nemail:    %s\n", reg, u.Handle, u.Email)
 	writeOrgs(out, u)
-	if line := managedLine(reg); line != "" {
+	for _, line := range managedLines(held) {
 		_, _ = fmt.Fprintln(out, line)
 	}
 	switch {

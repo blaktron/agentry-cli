@@ -77,6 +77,9 @@ type runOpts struct {
 	// a remote runhost's service hands its run (a desktop.Relayed, as
 	// JSON), for a release that uses applications on the person's computer.
 	runhostDesktop string
+	// runhostManaged is what the sending device's managed settings say of
+	// a remote runhost's run (a managed.Narrowing, as JSON).
+	runhostManaged string
 	// on is the remote runhost the run goes to; empty runs it here.
 	on string
 	// runhostSchedule, set by `agentry schedule add --on`, sends the run to
@@ -264,6 +267,8 @@ func newRunCmd() *cobra.Command {
 	_ = f.MarkHidden("installed")
 	f.StringVar(&opts.runhostDesktop, "runhost-desktop", "", "with --installed: the binding to the device's Agentry Desktop that a remote runhost's service relays to this run")
 	_ = f.MarkHidden("runhost-desktop")
+	f.StringVar(&opts.runhostManaged, "runhost-managed", "", "with --installed: what the sending device's managed settings say of the run, which a remote runhost's service hands this run")
+	_ = f.MarkHidden("runhost-managed")
 	f.StringVar(&opts.runhostSchedule, "runhost-schedule", "", "with --on: keep the run on the runhost as this schedule (agentry schedule add --on)")
 	_ = f.MarkHidden("runhost-schedule")
 	f.StringVar(&opts.policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml, created on first use)")
@@ -626,9 +631,19 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		ContextWindowSource: windowSource, AllowScreen: opts.allowScreen,
 		CompiledBy: version.Build(), Log: cmd.ErrOrStderr(),
 	}
+	if opts.runhostManaged != "" {
+		if planIn.Sender, err = senderManaged(opts); err != nil {
+			return err
+		}
+	}
 	// On a remote runhost whose own setting is on, the run is an Unsafe Mode
 	// run: set only with the server's admin sign-in, never by a flag here.
 	if opts.installed && onRunhostServer() && runhost.UnsafeModeOn(runhostUnsafeModeFile) && len(m.Capabilities.Exec.Commands) > 0 {
+		// Refused before the Unsafe Mode image is fetched, when this
+		// runhost's managed settings or the sending device's forbid it.
+		if err := refuseUnsafeMode(planIn.Sender); err != nil {
+			return err
+		}
 		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Unsafe Mode: on, a setting of this runhost: the declared commands come from the Unsafe Mode image, without the command catalogue")
 		data, err := unsafeexec.Load(cmd.Context(), newDockerClient(), pol.Images.UnsafeImage(), cmd.ErrOrStderr())
 		if err != nil {

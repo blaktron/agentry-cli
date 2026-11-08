@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blaktron/agentry-cli/pkg/managed"
 	"github.com/blaktron/agentry-cli/pkg/runner/desktop"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/trust"
@@ -163,6 +164,11 @@ type Run struct {
 	Desktop *Desktop `json:"desktop,omitempty"`
 	// AllowScreen is the person's own --allow-screen.
 	AllowScreen bool `json:"allowScreen,omitempty"`
+	// Managed is what the sending device's managed settings say of the run:
+	// the runhost has its own sign-in, so the organization's locks on the
+	// person's device travel with the job, and the runhost applies them
+	// beside its own. They can only refuse. Nil when the device holds none.
+	Managed *managed.Narrowing `json:"managed,omitempty"`
 }
 
 // Desktop is a device's binding to Agentry Desktop, carried to the runhost:
@@ -459,6 +465,9 @@ func SecretValueOK(v string) bool {
 // name is one a file name, a variable or an argument may carry, and every
 // payload member it names is one the payload can hold.
 func (r *Run) validateCarried() error {
+	if err := r.Managed.Validate(); err != nil {
+		return err
+	}
 	if r.Desktop != nil {
 		if err := r.Desktop.validate(); err != nil {
 			return err

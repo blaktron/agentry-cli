@@ -22,6 +22,7 @@ import (
 	"github.com/blaktron/agentry/pkg/managedsettings"
 
 	"github.com/blaktron/agentry-cli/pkg/configdir"
+	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/pkg/trust"
 )
 
@@ -73,14 +74,15 @@ type stubRegistry struct {
 	mu     sync.Mutex
 	status int
 	env    *managedsettings.Envelope
-	// org is the organization the account is a member of, in state.
-	org, state string
-	hits       int
+	// org is the organization the account is a member of, in state;
+	// account is the account's id.
+	org, state, account string
+	hits                int
 }
 
 func newStub(t *testing.T) *stubRegistry {
 	t.Helper()
-	s := &stubRegistry{status: http.StatusNoContent, org: "acme", state: "active"}
+	s := &stubRegistry{status: http.StatusNoContent, org: "acme", state: "active", account: "6f1c2b9e-0000-4000-8000-000000000001"}
 	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer tok" {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -90,9 +92,13 @@ func newStub(t *testing.T) *stubRegistry {
 		defer s.mu.Unlock()
 		switch r.URL.Path {
 		case "/api/v1/user":
-			doc := map[string]any{"id": "6f1c2b9e-0000-4000-8000-000000000001", "handle": "member"}
+			doc := map[string]any{"id": s.account, "handle": "member"}
 			if s.org != "" {
-				doc["orgs"] = []map[string]string{{"handle": s.org, "role": "member", "state": s.state}}
+				o := map[string]string{"handle": s.org, "role": "member"}
+				if s.state != "" {
+					o["state"] = s.state
+				}
+				doc["orgs"] = []map[string]string{o}
 			}
 			_ = json.NewEncoder(w).Encode(doc)
 		case Route:
@@ -232,6 +238,9 @@ func TestRefreshRefusesDocumentsItMustNotAccept(t *testing.T) {
 		"no membership": {env: func(reg string) managedsettings.Envelope {
 			return k.envelope(t, managedsettings.PayloadType, docFor(reg, 1, forbidden()))
 		}, state: "none", want: "member of no organization"},
+		"a membership whose state is not said": {env: func(reg string) managedsettings.Envelope {
+			return k.envelope(t, managedsettings.PayloadType, docFor(reg, 1, forbidden()))
+		}, state: "unsaid", want: "member of no organization"},
 		"attestation payload type": {env: func(reg string) managedsettings.Envelope {
 			return k.envelope(t, attest.PayloadType, docFor(reg, 1, forbidden()))
 		}, want: "payload type"},
@@ -244,6 +253,8 @@ func TestRefreshRefusesDocumentsItMustNotAccept(t *testing.T) {
 			switch tc.state {
 			case "none":
 				s.org = ""
+			case "unsaid":
+				s.state = ""
 			case "":
 			default:
 				s.state = tc.state
@@ -288,7 +299,7 @@ func TestTamperedCacheIsRefusedAndHoldsUnsafeModeOff(t *testing.T) {
 	if len(cur.Documents) != 0 || len(cur.Problems) != 1 {
 		t.Fatalf("Current = %+v", cur)
 	}
-	if got := cur.UnsafeModeRefusal(); !strings.Contains(got, "do not verify") {
+	if got := cur.UnsafeModeRefusal(); !strings.Contains(got, "cannot be verified") {
 		t.Errorf("UnsafeModeRefusal = %q, want a refusal while the cache does not verify", got)
 	}
 }
@@ -471,7 +482,7 @@ func TestACacheUnderAnotherRegistrysNameIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	cur := Current()
-	if len(cur.Documents) != 0 || len(cur.Problems) != 1 {
+	if len(cur.Documents) != 0 || len(cur.Problems) == 0 {
 		t.Fatalf("Current = %+v", cur)
 	}
 }
@@ -484,5 +495,184 @@ func TestRefreshNeedsASignIn(t *testing.T) {
 	}
 	if _, err := Refresh(context.Background(), s.Client(), s.URL, "wrong"); err == nil {
 		t.Fatal("Refresh with a refused token succeeded")
+	}
+}
+
+// accepted caches a forbidding document from a fresh stub and returns it.
+func accepted(t *testing.T) (*stubRegistry, signer) {
+	t.Helper()
+	k := newSigner(t)
+	s := setup(t, k, false)
+	s.serve(k.envelope(t, managedsettings.PayloadType, docFor(s.URL, 2, forbidden())))
+	if _, err := refresh(t, s); err != nil {
+		t.Fatal(err)
+	}
+	return s, k
+}
+
+func holdsEverythingOff(t *testing.T, what string) {
+	t.Helper()
+	cur := Current()
+	if len(cur.Problems) == 0 {
+		t.Fatalf("%s: Current = %+v, want a problem", what, cur)
+	}
+	if cur.UnsafeModeRefusal() == "" || cur.RunRefusal() == "" {
+		t.Errorf("%s: Unsafe Mode %q, runs %q; want both refused", what, cur.UnsafeModeRefusal(), cur.RunRefusal())
+	}
+}
+
+func TestADeletedDocumentIsNoticedNotReadAsNone(t *testing.T) {
+	s, _ := accepted(t)
+	path, _ := CachePath(s.URL)
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	// A stamp that none apply, planted beside it, changes nothing: only the
+	// registry's answer does.
+	if err := os.WriteFile(strings.TrimSuffix(path, ".json")+".none", nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	holdsEverythingOff(t, "deleted document")
+	if _, err := Load(s.URL); err == nil {
+		t.Error("Load read a deleted document as none")
+	}
+	// A run asks the registry again at once, and its answer ends it.
+	if _, err := Sync(context.Background(), s.Client(), s.URL, "tok", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if got := Current(); len(got.Problems) != 0 || len(got.Documents) != 1 {
+		t.Fatalf("after a refresh Current = %+v", got)
+	}
+}
+
+func TestARecordDatedInTheFutureIsRefused(t *testing.T) {
+	s, _ := accepted(t)
+	seen, err := readSeen(normalize(s.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen.Holds, seen.AnsweredAt = holdsNone, time.Now().Add(365*24*time.Hour)
+	if err := writeSeen(normalize(s.URL), seen); err != nil {
+		t.Fatal(err)
+	}
+	path, _ := CachePath(s.URL)
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	holdsEverythingOff(t, "future record")
+	if fresh(normalize(s.URL), time.Hour) {
+		t.Error("a record dated in the future counts as a fresh answer")
+	}
+}
+
+func TestACachedDocumentDatedInTheFutureIsRefused(t *testing.T) {
+	s, _ := accepted(t)
+	path, _ := CachePath(s.URL)
+	raw, _ := os.ReadFile(path)
+	var f cacheFile
+	if err := json.Unmarshal(raw, &f); err != nil {
+		t.Fatal(err)
+	}
+	f.FetchedAt = time.Now().Add(48 * time.Hour)
+	raw, _ = json.Marshal(f)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	holdsEverythingOff(t, "future document")
+}
+
+func TestSignInKeepsTheSameAccountsLockAndDropsAnothers(t *testing.T) {
+	s, _ := accepted(t)
+	// The same account signs in again while the registry cannot answer: the
+	// lock stands.
+	if err := SignedIn(s.URL, s.account); err != nil {
+		t.Fatal(err)
+	}
+	s.answer(http.StatusServiceUnavailable)
+	if _, err := refresh(t, s); err == nil {
+		t.Fatal("a 503 was taken as an answer")
+	}
+	if got := Current().UnsafeModeRefusal(); !strings.Contains(got, "forbidden by acme") {
+		t.Fatalf("after a same-account sign-in UnsafeModeRefusal = %q", got)
+	}
+	// Another account signs in: the first one's settings were never its.
+	if err := SignedIn(s.URL, "6f1c2b9e-0000-4000-8000-000000000009"); err != nil {
+		t.Fatal(err)
+	}
+	if got := Current(); len(got.Documents)+len(got.Problems) != 0 {
+		t.Fatalf("after another account's sign-in Current = %+v", got)
+	}
+}
+
+func TestRefreshAsAnotherAccountDropsTheLastOnesSettings(t *testing.T) {
+	s, _ := accepted(t)
+	s.mu.Lock()
+	s.account = "6f1c2b9e-0000-4000-8000-000000000009"
+	s.mu.Unlock()
+	s.answer(http.StatusServiceUnavailable)
+	if _, err := refresh(t, s); err == nil {
+		t.Fatal("a 503 was taken as an answer")
+	}
+	if got := Current(); len(got.Documents)+len(got.Problems) != 0 {
+		t.Fatalf("another account's refresh kept the last one's settings: %+v", got)
+	}
+}
+
+func TestRollbackIsRefusedAcrossAChangeOfOrganization(t *testing.T) {
+	k := newSigner(t)
+	s := setup(t, k, false)
+	serveOrg := func(org string, version int64) error {
+		d := docFor(s.URL, version, forbidden())
+		d.Org = org
+		s.mu.Lock()
+		s.org = org
+		s.mu.Unlock()
+		s.serve(k.envelope(t, managedsettings.PayloadType, d))
+		_, err := refresh(t, s)
+		return err
+	}
+	if err := serveOrg("acme", 5); err != nil {
+		t.Fatal(err)
+	}
+	if err := serveOrg("globex", 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := serveOrg("acme", 3); err == nil || !strings.Contains(err.Error(), "older than version 5") {
+		t.Fatalf("acme version 3 after version 5 = %v, want a refusal", err)
+	}
+	if err := serveOrg("acme", 6); err != nil {
+		t.Fatalf("acme version 6: %v", err)
+	}
+}
+
+func TestDocumentsVerifyWithTheirOwnRegistrysPinsWhateverPinRegistrySays(t *testing.T) {
+	s, _ := accepted(t)
+	t.Setenv(trust.EnvPinRegistry, "https://other.example")
+	if st, err := Load(s.URL); err != nil || st == nil {
+		t.Fatalf("Load with AGENTRY_PIN_REGISTRY set elsewhere = %+v, %v", st, err)
+	}
+}
+
+func TestTheNarrowingASentRunCarries(t *testing.T) {
+	accepted(t)
+	n := Current().Narrowing()
+	if n == nil || !strings.Contains(n.UnsafeModeRefusal, "forbidden by acme") || len(n.Documents) != 1 || n.Documents[0].Version != 2 {
+		t.Fatalf("Narrowing = %+v", n)
+	}
+	if err := n.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	for name, bad := range map[string]Narrowing{
+		"a refusal of two lines":                   {UnsafeModeRefusal: "one\ntwo"},
+		"an organization's handle that is not one": {Documents: []spec.ManagedSpec{{Organization: "../x", Version: 1}}},
+		"a setting id that is not one":             {Documents: []spec.ManagedSpec{{Organization: "acme", Version: 1, Applied: []string{"rm -rf"}}}},
+		"no version":                               {Documents: []spec.ManagedSpec{{Organization: "acme"}}},
+	} {
+		if err := bad.Validate(); err == nil {
+			t.Errorf("%s: validated", name)
+		}
+	}
+	if got := (Effective{}).Narrowing(); got != nil {
+		t.Errorf("an empty Effective narrows: %+v", got)
 	}
 }

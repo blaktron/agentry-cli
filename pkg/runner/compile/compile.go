@@ -32,6 +32,7 @@ import (
 	"github.com/blaktron/agentry/pkg/manifest"
 
 	"github.com/blaktron/agentry-cli/pkg/dirpublish"
+	"github.com/blaktron/agentry-cli/pkg/managed"
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/browser"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
@@ -140,6 +141,11 @@ type Inputs struct {
 	// document that locks run.unsafeMode to forbidden refuses it, whoever
 	// passes it (managedRefusal).
 	Unsafe *unsafeexec.Data
+	// Sender is the managed settings of the device that sent this run, for
+	// a runhost's run: they can only refuse, so they are applied as sent
+	// beside this computer's own, and the plan records their documents.
+	// Nil for a run started on this computer.
+	Sender *managed.Narrowing
 	// AllowScreen is the run's --allow-screen: a release's computer use in
 	// screen scope compiles without the policy's desktop.allowScreen.
 	AllowScreen bool
@@ -653,7 +659,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 			MaxCostUSD:     in.Policy.Budgets.MaxCostUSD,
 		},
 		Output:  output,
-		Managed: ManagedSpecs(held),
+		Managed: managedSpecs(held, in.Sender),
 		Files:   map[string]string{},
 	}
 	if execImage != nil && execImage.Unsafe != nil {
