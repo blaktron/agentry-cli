@@ -173,11 +173,27 @@ type runOpts struct {
 	acp *acpRun
 }
 
+// runDriverFlags are run's flags that only a program driving the run
+// passes: hidden from run --help's flag list, named in its text, and
+// accepted as any other flag.
+var runDriverFlags = []string{
+	"--session-protocol", "--session-inputs", "--review-inputs",
+	"--connections-file", "--destinations-file", "--voice-file",
+}
+
 // newRunCmd builds the run command.
 func newRunCmd() *cobra.Command {
 	var opts runOpts
 	cmd := &cobra.Command{
-		Use:   "run [ns/name[@range]]",
+		Use: "run [ns/name[@range]]",
+		Example: `  # Run a QuickAgent on a task file, reports into ./reports
+  agentry run acme/pdf-summary --input task.json --out ./reports
+
+  # Give it a document to read, and print the result envelope
+  agentry run acme/pdf-summary --file ./contract.pdf --output-format json
+
+  # Say what would run, without running anything
+  agentry run acme/pdf-summary --dry-run`,
 		Short: "Verify, install, and execute one QuickAgent in an isolated container",
 		Long: "Run a single-purpose QuickAgent once:\n\n" +
 			"  agentry run ns/name@^1.2 --input task.json --out ./reports\n\n" +
@@ -211,6 +227,9 @@ func newRunCmd() *cobra.Command {
 			"step; --dry-run compiles the plan, says in words what would run and\n" +
 			"touches no docker (--json prints the plan itself). --local DIR runs an unpublished\n" +
 			"QuickAgent directory (treated as unsigned).\n\n" +
+			"Driver flags, for a program that drives runs (a hosted run's host, the\n" +
+			"desktop app), are left out of the flag list below and accepted as ever:\n" +
+			"  " + strings.Join(runDriverFlags, ", ") + ".\n" +
 			"For drivers (a hosted run's worker): AGENTRY_RUN_GRANT is sent as the\n" +
 			"X-Agentry-Run-Grant header on every request to the --registry host and\n" +
 			"nowhere else, for a registry prefix that answers for one run;\n" +
@@ -309,6 +328,9 @@ func newRunCmd() *cobra.Command {
 	f.BoolVar(&opts.reconfigureProfile, "reconfigure-profile", false, "re-run the guided MCP-profile setup even when a profile exists")
 	f.BoolVar(&opts.sessionProtocol, "session-protocol", false, "drive an interactive session from JSON-line commands on stdin, with its events as JSON lines on descriptor 3 and no terminal (for a program such as a hosted run's host)")
 	f.StringVar(&opts.sessionInputs, "session-inputs", "", "with --session-protocol: the DIRECTORY the driver stages files in; an add names a regular file directly in it (without it, the session takes no files)")
+	for _, name := range runDriverFlags {
+		_ = f.MarkHidden(strings.TrimPrefix(name, "--"))
+	}
 	return cmd
 }
 
@@ -337,7 +359,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		return runOnRunhost(cmd, ref, opts)
 	}
 	if (ref == "") == (opts.local == "") {
-		return errors.New("pass exactly one of ns/name[@range] or --local DIR")
+		return usageError(cmd, errors.New("pass exactly one of ns/name[@range] or --local DIR"))
 	}
 	if opts.outputFormat != "text" && opts.outputFormat != "json" {
 		return fmt.Errorf("unknown --output-format %q (want text or json)", opts.outputFormat)
@@ -1114,6 +1136,12 @@ func (p *runProgress) wrote(dir string) {
 // be parsed, a missing argument) is not a run that failed: it is returned as
 // it is, for main to print the usual way.
 func reportRunFailure(cmd *cobra.Command, p *runProgress, err error) error {
+	// A command-line mistake is not a run that failed: main prints it, with
+	// the pointer to the help.
+	var usage *usageErr
+	if errors.As(err, &usage) {
+		return err
+	}
 	var ce *engine.ClassifiedError
 	classified := errors.As(err, &ce)
 	outDir := ""

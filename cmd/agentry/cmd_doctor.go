@@ -125,7 +125,12 @@ type doctorOpts struct {
 func newDoctorCmd() *cobra.Command {
 	var opts doctorOpts
 	cmd := &cobra.Command{
-		Use:   "doctor [ns/name[@range]]",
+		Use: "doctor [ns/name[@range]]",
+		Example: `  # Is this computer ready to run QuickAgents?
+  agentry doctor
+
+  # Is it ready for this one, as JSON
+  agentry doctor acme/pdf-summary --json`,
 		Short: "Check that this machine (and optionally one QuickAgent) is ready to run",
 		Long: "Report, without changing anything, whether `agentry run` would get past its\n" +
 			"preflight on this machine: the operator policy and model, the container engine\n" +

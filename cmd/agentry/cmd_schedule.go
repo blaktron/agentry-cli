@@ -54,7 +54,15 @@ var scheduleExecute = executeScheduledRun
 
 func newScheduleCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "schedule",
+		Use: "schedule",
+		Example: `  # Every weekday at 08:30, on this computer
+  agentry schedule add acme/inbox-digest --weekly mon,tue,wed,thu,fri --at 08:30
+
+  # Once, at a set date and time
+  agentry schedule add acme/pdf-summary --once "2026-11-13 18:00" --file ./report.pdf
+
+  # What is scheduled, and what the next runs are
+  agentry schedule list`,
 		Short: "Run a QuickAgent on this computer later, or on repeat like a calendar entry",
 		Long: "Schedules run an installed QuickAgent on this computer at a later time, or on\n" +
 			"repeat: every day, weekdays, chosen days of the week, or a day of the month,\n" +
@@ -257,7 +265,7 @@ func newScheduleAddCmd() *cobra.Command {
 				ref = args[0]
 			}
 			if (ref == "") == (spec.local == "") {
-				return errors.New("pass exactly one of ns/name[@range] or --local DIR")
+				return usageError(cmd, errors.New("pass exactly one of ns/name[@range] or --local DIR"))
 			}
 			if on != "" && check {
 				return scheduleCheck(cmd, ref, name, out, on, spec, when, scheduleNow())
