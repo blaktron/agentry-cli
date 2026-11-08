@@ -1,6 +1,15 @@
 {
   "versions": [
     {
+      "version": "0.7.35",
+      "highlights": [
+        "If your organization manages your settings, the CLI fetches them at sign-in, checks their signature and follows them.",
+        "agentry managed show lists the settings your organization holds you to; agentry managed refresh fetches them again.",
+        "agentry publish says what happened and where to look, with distinct exit codes and a --json answer.",
+        "agentry validate names the stages it did not run, and refuses lines left over from the scaffold."
+      ]
+    },
+    {
       "version": "0.7.34",
       "highlights": [
         "The Assistant can use applications on your computer, such as Blender, once you switch each one on.",
