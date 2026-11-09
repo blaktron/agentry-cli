@@ -3,6 +3,8 @@
     {
       "version": "0.7.44",
       "highlights": [
+        "A run now keeps the steps of its task in a checklist, which it reads again after a summary and before it answers.",
+        "The checklist is a working note in the run's scratch folder and never reaches your reports.",
         "You can move a schedule on a runhost to another saved model it holds, without making the schedule again.",
         "Nothing of this computer's goes with the move: the runhost reads the model and its key from its own store."
       ]
@@ -11,9 +13,7 @@
       "version": "0.7.43",
       "highlights": [
         "The Assistant reads the files of a QuickAgent it fetches in the same reply, without waiting for your next message.",
-        "Those files are still checked first, for malware too when the malware check is on.",
-        "A run now keeps the steps of its task in a checklist, which it reads again after a summary and before it answers.",
-        "The checklist is a working note in the run's scratch folder and never reaches your reports."
+        "Those files are still checked first, for malware too when the malware check is on."
       ]
     },
     {
