@@ -97,9 +97,9 @@ func desktopSummary(d *spec.DesktopCap) string {
 			if len(s.Tools) == 1 {
 				noun = "tool"
 			}
-			apps = append(apps, fmt.Sprintf("%s (%d %s)", s.Application, len(s.Tools), noun))
+			apps = append(apps, fmt.Sprintf("%s (%d %s)", s.ForPerson(), len(s.Tools), noun))
 		} else {
-			apps = append(apps, s.Application+" (every tool its server lists)")
+			apps = append(apps, s.ForPerson()+" (every tool its server lists)")
 		}
 	}
 	switch d.ComputerUse {
