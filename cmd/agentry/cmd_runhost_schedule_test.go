@@ -211,10 +211,15 @@ func TestScheduleAddOnARunhostHandsTheScheduleOver(t *testing.T) {
 	if err != nil {
 		t.Fatalf("schedule add --on: %v\n%s", err, stderr)
 	}
-	for _, want := range []string{"model-key anthropic", "secret API_TOKEN", "runhost lab"} {
+	for _, want := range []string{"secret API_TOKEN", "runhost lab", `lab's default saved model, whichever it is then (now "anthropic"`} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("the consent does not name %q:\n%s", want, stderr)
 		}
+	}
+	// The runhost holds the model's credential itself: the schedule keeps
+	// none of this computer's.
+	if strings.Contains(stderr, "model-key") {
+		t.Errorf("the schedule keeps a model key:\n%s", stderr)
 	}
 	if !strings.Contains(stdout, "is on runhost lab") {
 		t.Fatalf("stdout:\n%s", stdout)
@@ -224,7 +229,7 @@ func TestScheduleAddOnARunhostHandsTheScheduleOver(t *testing.T) {
 		t.Fatalf("the runhost holds %+v (%v)", list, err)
 	}
 	sc := list[0]
-	if sc.Ref != "acme/demo@1.0.0" || sc.Device != testDevice || len(sc.Entries) != 2 {
+	if sc.Ref != "acme/demo@1.0.0" || sc.Device != testDevice || len(sc.Entries) != 1 || sc.Model != job.RunhostDefault {
 		t.Fatalf("schedule %+v", sc)
 	}
 	// Nothing of the task, the secret or the model key is in the clear in
@@ -322,8 +327,11 @@ func TestScheduleAddCheckOnARunhostKeepsNothing(t *testing.T) {
 	for _, e := range res.Runhost.Entries {
 		kinds[e.Kind] = e.Name
 	}
-	if kinds["secret"] != "API_TOKEN" || kinds["model-key"] != "anthropic" {
+	if _, ok := kinds["model-key"]; kinds["secret"] != "API_TOKEN" || ok {
 		t.Fatalf("entries %+v", res.Runhost.Entries)
+	}
+	if res.Runhost.Model == nil || res.Runhost.Model.Name != "anthropic" || !res.Runhost.FollowsDefault {
+		t.Fatalf("the runhost's model %+v", res.Runhost.Model)
 	}
 	if list, _ := runhostScheduleList(); len(list) != 0 {
 		t.Fatalf("a check kept a schedule: %+v", list)

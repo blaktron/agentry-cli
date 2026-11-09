@@ -32,6 +32,11 @@ func creditsClient(pol *policy.Policy) *inference.Client {
 		return inference.New(reg, func() (string, error) { return tok, nil }, httpClient).
 			WithSignInAdvice(runhostCreditsAdvice(runhostOwnName()))
 	}
+	// On a runhost, what runs there under its service (a persistent agent,
+	// the save check) pays with the runhost's own credits token.
+	if onRunhostServer() {
+		return runhostCreditsClient(pol.Model)
+	}
 	if tok, err := credentialFor(reg); err != nil || tok == "" {
 		return nil
 	}
@@ -43,4 +48,18 @@ func creditsClient(pol *policy.Policy) *inference.Client {
 // changes nothing, since the runhost pays with a token of its own.
 func runhostCreditsAdvice(name string) string {
 	return "this runhost's credits token is revoked or expired: agentry runhost model " + name + " --provider agentry gives it a new one"
+}
+
+// runhostCreditsClient is a credits client paying with the runhost's own
+// credits token for m's registry; nil when the runhost keeps none for it.
+func runhostCreditsClient(m policy.Model) *inference.Client {
+	reg, err := policy.AgentryRegistry(m)
+	if err != nil {
+		return nil
+	}
+	if _, err := runhostJobCredits(m); err != nil {
+		return nil
+	}
+	return inference.New(reg, func() (string, error) { return runhostJobCredits(m) }, httpClient).
+		WithSignInAdvice(runhostCreditsAdvice(runhostOwnName()))
 }

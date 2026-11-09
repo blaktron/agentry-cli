@@ -88,6 +88,9 @@ func scheduleOnRunhost(cmd *cobra.Command, ref, name, on string, spec runSpecFla
 	if r.Adapter != "" {
 		args = append(args, "--adapter", r.Adapter)
 	}
+	if spec.model != "" {
+		args = append(args, "--model", spec.model)
+	}
 	if r.AllowUnsigned {
 		args = append(args, "--allow-unsigned")
 	}
@@ -157,6 +160,20 @@ func putRunhostSchedule(cmd *cobra.Command, client *runhost.Client, rec *runhost
 	if !takes {
 		return engine.Classify(engine.ExitPolicy, fmt.Errorf("runhost %s takes no schedule: its systemd cannot seal its store's key to it (schedules need systemd %d or newer; agentry runhost store %s says so)", rec.Name, schedule.MinSystemd, rec.Name))
 	}
+	// The schedule runs on one of the runhost's own saved models, read from
+	// its list at each run: the one --model names, else its default.
+	held, err := runhostScheduleSavedModel(cmd, client, rec.Name, opts.model)
+	if err != nil {
+		return err
+	}
+	if opts.model == "" {
+		j.Run.RunhostModel = job.RunhostDefault
+	} else {
+		j.Run.RunhostModel = held.ID
+	}
+	if err := j.Validate(); err != nil {
+		return engine.Classify(engine.ExitUsage, err)
+	}
 	h.Entries = remote.Entries(j)
 	var servers []manifest.MCPServer
 	for _, srv := range oauthServers(m) {
@@ -167,6 +184,11 @@ func putRunhostSchedule(cmd *cobra.Command, client *runhost.Client, rec *runhost
 	errOut := cmd.ErrOrStderr()
 	what := scheduleEntriesSaid(h.Entries)
 	_, _ = fmt.Fprintf(errOut, "schedule %q runs %s on runhost %s (%s, host key %s) with nobody present.\n", h.Name, meta.Ref, rec.Name, rec.Host, rec.HostKeyFingerprint)
+	if opts.model == "" {
+		_, _ = fmt.Fprintf(errOut, "Each run is on %s's default saved model, whichever it is then (now %q, %s/%s).\n", rec.Name, held.Name, held.Provider, held.Model)
+	} else {
+		_, _ = fmt.Fprintf(errOut, "Each run is on %s's saved model %q (%s/%s), whose credential the runhost holds.\n", rec.Name, held.Name, held.Provider, held.Model)
+	}
 	_, _ = fmt.Fprintf(errOut, "Its store keeps, encrypted under a key systemd seals to that server, for every run of this schedule: %s.\n", what)
 	if len(servers) > 0 {
 		_, _ = fmt.Fprintf(errOut, "Each OAuth connection it signs in to is one of %s's own: you sign in for the runhost once, in your browser here, and it keeps and refreshes that grant itself. This computer's connections are not shared with it.\n", rec.Name)
@@ -354,3 +376,28 @@ func runhostConnect(cmd *cobra.Command, client *runhost.Client, rec *runhost.Rec
 		return engine.Classify(engine.ExitPolicy, fmt.Errorf("connect runhost %s to %s: %w", rec.Name, connectionServer(srv), err))
 	}
 }
+
+// runhostScheduleSavedModel is the runhost's saved model a schedule there runs
+// on: the one ref names, else its default. One the runhost does not hold,
+// or cannot use now, is refused by name.
+func runhostScheduleSavedModel(cmd *cobra.Command, c remote.Caller, name, ref string) (remote.SavedModel, error) {
+	list, err := remote.ListModels(cmd.Context(), c)
+	if err != nil {
+		return remote.SavedModel{}, err
+	}
+	rememberRunhostModels(name, list)
+	var held remote.SavedModel
+	var ok bool
+	if ref == "" || strings.EqualFold(ref, job.RunhostDefault) {
+		if held, ok = list.DefaultModel(); !ok {
+			return held, engine.Classify(engine.ExitPolicy, fmt.Errorf("runhost %s holds no saved model for the schedule to run on: make one of this computer's available there (agentry runhost model %s --add <saved model>)", name, name))
+		}
+	} else if held, ok = list.Find(ref); !ok {
+		return held, engine.Classify(engine.ExitPolicy, fmt.Errorf("--model: runhost %s holds no saved model %q: agentry runhost model %s lists those it holds, and agentry runhost model %s --add <saved model> makes one of this computer's available there", name, ref, name, name))
+	}
+	if held.Refusal != "" {
+		return held, engine.Classify(engine.ExitPolicy, fmt.Errorf("runhost %s cannot run on its saved model %q now: %s: make it available again (agentry runhost model %s --add %q)", name, held.Name, held.Refusal, name, held.Name))
+	}
+	return held, nil
+}
+

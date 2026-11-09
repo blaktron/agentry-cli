@@ -537,6 +537,112 @@ func (p *Policy) AddModel(sm SavedModel) (SavedModel, error) {
 	return sm, nil
 }
 
+// PutModel keeps sm, on the provider id as pr says it, as a copy of a saved
+// model another computer holds: a saved model of sm's id, else of its name
+// (any case), is replaced in place and keeps its own id, so whatever names
+// it stays on it; any other is added under sm's id when that id is free,
+// else under a new one. The provider id becomes pr whether it was there or
+// not. The first saved model is the default. It returns sm as kept.
+func (p *Policy) PutModel(id string, pr Provider, sm SavedModel) (SavedModel, error) {
+	if err := checkProvider(id, pr); err != nil {
+		return SavedModel{}, err
+	}
+	p.materialize()
+	sm.Provider = id
+	at := slices.IndexFunc(p.Models, func(m SavedModel) bool { return sm.ID != "" && m.ID == sm.ID })
+	if at < 0 {
+		at = slices.IndexFunc(p.Models, func(m SavedModel) bool { return strings.EqualFold(m.Name, strings.TrimSpace(sm.Name)) })
+	}
+	others := &Policy{Providers: maps.Clone(p.Providers), Models: p.Models}
+	if others.Providers == nil {
+		others.Providers = map[string]Provider{}
+	}
+	others.Providers[id] = pr
+	switch {
+	case at >= 0:
+		sm.ID = p.Models[at].ID
+		if err := others.checkSavedModel(sm, sm.ID); err != nil {
+			return SavedModel{}, err
+		}
+	case len(p.Models) >= MaxSavedModels:
+		return SavedModel{}, fmt.Errorf("%d saved models are kept here, the most there can be: remove one first", MaxSavedModels)
+	default:
+		if !modelIDRE.MatchString(sm.ID) || slices.ContainsFunc(p.Models, func(m SavedModel) bool { return m.ID == sm.ID }) {
+			nid, err := newModelID(p.Models)
+			if err != nil {
+				return SavedModel{}, err
+			}
+			sm.ID = nid
+		}
+		if err := others.checkSavedModel(sm, ""); err != nil {
+			return SavedModel{}, err
+		}
+	}
+	p.Providers = others.Providers
+	if at >= 0 {
+		p.Models[at] = sm
+		p.setHarnessModel(sm.ID, sm.Model)
+	} else {
+		p.Models = append(p.Models, sm)
+	}
+	if p.Default == "" {
+		p.Default = sm.ID
+	}
+	p.refreshView()
+	return sm, nil
+}
+
+// UnusedProviders are the providers no saved model names, sorted.
+func (p *Policy) UnusedProviders() []string {
+	providers, models, _ := p.SavedModels()
+	var out []string
+	for _, id := range sortedKeys(providers) {
+		if !slices.ContainsFunc(models, func(m SavedModel) bool { return m.Provider == id }) {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// DropProvider removes the provider id, which no saved model may name.
+func (p *Policy) DropProvider(id string) error {
+	p.materialize()
+	if slices.ContainsFunc(p.Models, func(m SavedModel) bool { return m.Provider == id }) {
+		return fmt.Errorf("the provider %s still has saved models", id)
+	}
+	delete(p.Providers, id)
+	return nil
+}
+
+// OnlyModel makes sm, on the provider id as pr says it, the policy's one
+// saved model and its default: the policy a single run compiles from when
+// it carries its model with it.
+func (p *Policy) OnlyModel(id string, pr Provider, sm SavedModel) error {
+	if err := checkProvider(id, pr); err != nil {
+		return err
+	}
+	sm.Provider = id
+	if !modelIDRE.MatchString(sm.ID) {
+		return fmt.Errorf("saved model id %q must be lowercase letters, digits and '-'", sm.ID)
+	}
+	one := &Policy{Providers: map[string]Provider{id: pr}}
+	if err := one.checkSavedModel(sm, ""); err != nil {
+		return err
+	}
+	p.Providers, p.Models, p.Default = one.Providers, []SavedModel{sm}, sm.ID
+	p.refreshView()
+	return nil
+}
+
+// ResetModels leaves the policy with the model block m and no lists, as a
+// version 1 policy holding m reads: what a computer whose last saved model
+// was taken away goes back to.
+func (p *Policy) ResetModels(m Model) {
+	p.PolicyVersion = Version1
+	p.Providers, p.Models, p.Default = nil, nil, ""
+	p.Model, p.view = m, Model{}
+}
+
 // EditModel replaces the saved model ref with sm, keeping its id.
 func (p *Policy) EditModel(ref string, sm SavedModel) (SavedModel, error) {
 	old, ok := p.FindModel(ref)

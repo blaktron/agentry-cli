@@ -545,7 +545,7 @@ func newAgentConfigureCmd() *cobra.Command {
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&model, "model", "", "the saved model it runs on, by name or id (agentry models list); default follows the default")
+	f.StringVar(&model, "model", "", "the saved model it runs on, by name or id (agentry models list); default follows the default; with --on, one the runhost holds (agentry runhost model <runhost>)")
 	f.StringVar(&name, "name", "", "the name the agent goes by (empty clears it)")
 	f.StringVar(&personalityFile, "personality-file", "", fmt.Sprintf("a text file describing the personality you want it to have (at most %d KiB)", persistent.MaxPersonalityBytes>>10))
 	f.StringVar(&share, "share", "", "the folder it shares with you, read and write (empty: ~/agentry/<agent>share)")

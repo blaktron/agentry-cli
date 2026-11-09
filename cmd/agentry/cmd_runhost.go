@@ -387,11 +387,15 @@ func newRunhostListCmd() *cobra.Command {
 				return nil
 			}
 			tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-			_, _ = fmt.Fprintln(tw, "NAME\tADDRESS\tSERVER\tCLI\tOWNER")
+			_, _ = fmt.Fprintln(tw, "NAME\tADDRESS\tSERVER\tCLI\tOWNER\tMODELS")
 			for _, r := range recs.Runhosts {
-				_, _ = fmt.Fprintf(tw, "%s\t%s:%d\t%s (%s)\t%s\t%s\n", r.Name, r.Host, r.Port, r.OS, r.Arch, r.CLIVersion, r.Owner)
+				_, _ = fmt.Fprintf(tw, "%s\t%s:%d\t%s (%s)\t%s\t%s\t%s\n", r.Name, r.Host, r.Port, r.OS, r.Arch, r.CLIVersion, r.Owner, runhostModelsSaid(r))
 			}
-			return tw.Flush()
+			if err := tw.Flush(); err != nil {
+				return err
+			}
+			_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "MODELS are the saved models each runhost held when this computer last asked (* its default): agentry runhost show <name> asks it now")
+			return nil
 		},
 	}
 }
@@ -433,9 +437,10 @@ func askRunhostArgs(cmd *cobra.Command, name, verb string, args []string) (runho
 
 func newRunhostStatusCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "status <name>",
-		Short: "Show a runhost's state, over this computer's run key",
-		Args:  cobra.ExactArgs(1),
+		Use:     "status <name>",
+		Aliases: []string{"show"},
+		Short:   "Show a runhost's state and the saved models it holds, over this computer's run key",
+		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a, _, err := askRunhost(cmd, args[0], "status")
 			if err != nil {
@@ -444,12 +449,15 @@ func newRunhostStatusCmd() *cobra.Command {
 			if a.Code != 0 {
 				return engine.Classify(engine.ExitCLI, fmt.Errorf("%s: %s", args[0], a.Error))
 			}
-			if flags.jsonOut {
-				_, err := fmt.Fprintln(cmd.OutOrStdout(), string(a.Result))
-				return err
-			}
 			var st runhostStatus
 			if err := json.Unmarshal(a.Result, &st); err != nil {
+				return err
+			}
+			if st.Models != nil {
+				rememberRunhostModels(args[0], *st.Models)
+			}
+			if flags.jsonOut {
+				_, err := fmt.Fprintln(cmd.OutOrStdout(), string(a.Result))
 				return err
 			}
 			printRunhostStatus(cmd.OutOrStdout(), st)
@@ -463,6 +471,9 @@ func printRunhostStatus(w io.Writer, st runhostStatus) {
 	_, _ = fmt.Fprintf(w, "runtimes:  runs under %s, the gateway under %s\n", nonEmptyOr(st.Runtime, "(none)"), nonEmptyOr(st.GatewayRuntime, "(none)"))
 	if st.Credits != nil {
 		_, _ = fmt.Fprintf(w, "credits:   %q on %s\n", st.Credits.Name, st.Credits.Registry)
+	}
+	if st.Models != nil {
+		printRunhostModels(w, st.Name, *st.Models)
 	}
 	_, _ = fmt.Fprintf(w, "devices:   %d paired\n", len(st.Devices))
 	for _, d := range st.Devices {

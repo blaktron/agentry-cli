@@ -41,9 +41,15 @@ func readAgentModel(a persistent.Agent, cfg persistent.Config, policyPath string
 		out.Refusal = err.Error()
 		return out
 	}
+	if onRunhostServer() && !runhostHoldsModels(pol) {
+		out.Refusal = fmt.Sprintf("this runhost holds no saved model: make one available from a device (agentry runhost model %s --add <saved model>)", runhostOwnName())
+		return out
+	}
 	rm, err := localrun.ChooseRunModel(pol, cfg.Model, "")
 	if err != nil {
-		if localrun.IsMissingModel(err) {
+		if localrun.IsMissingModel(err) && onRunhostServer() {
+			out.Refusal = fmt.Sprintf("it names the saved model %q, which this runhost no longer holds: move it to one it holds (agentry agent configure %s --on %s --model <name>)", cfg.Model, a.Name, runhostOwnName())
+		} else if localrun.IsMissingModel(err) {
 			out.Refusal = fmt.Sprintf("it names the saved model %q, which this computer does not have: move it to one it has (agentry agent configure %s --model <name>)", cfg.Model, a.Name)
 		} else {
 			out.Refusal = err.Error()
@@ -97,6 +103,12 @@ func agentModelRef(ref, policyPath string) (string, policy.SavedModel, error) {
 		return "", policy.SavedModel{}, err
 	}
 	sm, ok := pol.FindModel(ref)
+	if ok && onRunhostServer() && !runhostHoldsModels(pol) {
+		ok = false
+	}
+	if !ok && onRunhostServer() {
+		return "", sm, engine.Classify(engine.ExitUsage, fmt.Errorf("--model: runhost %s holds no saved model %q (agentry runhost model %s lists those it holds), or default to follow its default", runhostOwnName(), ref, runhostOwnName()))
+	}
 	if !ok {
 		return "", sm, engine.Classify(engine.ExitUsage, fmt.Errorf("--model: no saved model %q on this computer (agentry models list), or default to follow the default", ref))
 	}
@@ -107,6 +119,9 @@ func agentModelRef(ref, policyPath string) (string, policy.SavedModel, error) {
 // on a saved model: its key in its variable or the keychain, its sign-in
 // kept.
 func agentModelUsable(home, agent string) func(localrun.RunModel) error {
+	if onRunhostServer() {
+		return runhostModelUsable(agent)
+	}
 	other := "move the agent to another saved model (agentry agent configure " + agent + " --model <name>; agentry models list)"
 	return func(rm localrun.RunModel) error {
 		return savedModelUsable(home, rm, os.Getenv, other)

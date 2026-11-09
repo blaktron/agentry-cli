@@ -5,8 +5,8 @@
       "highlights": [
         "agentry run --model runs a QuickAgent on any saved model, and a schedule keeps the model you give it with --model.",
         "agentry agent configure --model puts a persistent agent on a saved model, and a running agent takes it at its next turn.",
-        "Receipts name the saved model, and one that is gone or lacks its key or sign-in is refused, never run on the default.",
-        "An endpoint of your own added without a key runs with none, and agent list and show name each agent's model."
+        "agentry runhost model --add makes a saved model available on a runhost, checked there, for its agents and schedules.",
+        "Receipts name the saved model, and one that is gone or lacks its key or sign-in is refused, never run on the default."
       ]
     },
     {

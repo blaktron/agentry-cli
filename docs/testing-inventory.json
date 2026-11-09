@@ -1659,6 +1659,26 @@
           ]
         },
         {
+          "path": "cmd/agentry/cmd_runhost_models_test.go",
+          "tests": [
+            "TestASavedModelIsMadeAvailableOnARunhostAndCheckedThere",
+            "TestARunOnARunhostCarriesOnlyItsSavedModelsKey",
+            "TestAScheduleOnARunhostNamesOneOfItsSavedModels",
+            "TestAJobOnARunhostsSavedModelIsRefusedByNameWhenItIsGone",
+            "TestARunhostTakesNoCredentialThatDoesNotGoWithItsSavedModel",
+            "TestASignInsSavedModelIsSentWithNothingOfTheSignIn",
+            "TestAnAgentOnARunhostNamesOneOfItsSavedModels",
+            "TestRemovingARunhostsSavedModelAnAgentNamesIsRefused",
+            "TestALongProvidersKeyHasAStoreEntry"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
+          ]
+        },
+        {
           "path": "cmd/agentry/cmd_runhost_schedule_test.go",
           "tests": [
             "TestARunhostRunsAScheduleFromItsStore",
@@ -3685,7 +3705,9 @@
             "TestACreditsModelCarriesNoKey",
             "TestASignInModelCarriesNoKey",
             "TestARunhostRunsTheImageOfAHostHarness",
-            "TestADesktopBindingIsHeldToWhatAJobCanCarry"
+            "TestADesktopBindingIsHeldToWhatAJobCanCarry",
+            "TestAJobOnARunhostsSavedModelCarriesNoModelAndNoKey",
+            "TestAnEndpointThatTakesNoKeyTravelsWithNone"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -9468,7 +9490,9 @@
             "TestNoKeyValueIsWrittenToAVersion2Policy",
             "TestCustomProviderIDIsCustomAndASlug",
             "TestAHarnessBlocksSavedModelKeepsTheBlockInStep",
-            "TestAnEndpointOfYourOwnMayTakeNoKey"
+            "TestAnEndpointOfYourOwnMayTakeNoKey",
+            "TestPutModelKeepsACopysIDAndReplacesItsNamesake",
+            "TestOnlyModelIsTheOneSavedModelAndResetTakesTheListsAway"
           ],
           "fuzz": [],
           "benchmarks": [],

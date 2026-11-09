@@ -76,14 +76,14 @@ func TestARunOnAMissingSavedModelIsRefusedByName(t *testing.T) {
 	}
 }
 
-// --model chooses among this computer's saved models: a run elsewhere is
-// refused it.
+// --model chooses among this computer's saved models: a hosted run, and a
+// runhost's own run of a job, are refused it. A run with --on takes it.
 func TestModelIsRefusedForARunElsewhere(t *testing.T) {
-	_, path := labModels(t)
-	_, _, err := runCLI(t, strings.NewReader(""), "run", "acme/demo", "--on", "box", "--policy", path, "--model", "Qwen")
-	wantClassified(t, err, engine.ExitUsage)
-	if !strings.Contains(err.Error(), "remote runhost") {
-		t.Fatalf("refusal: %v", err)
+	if err := refuseModelElsewhere(runOpts{model: "Qwen", on: "box"}); err != nil {
+		t.Fatalf("a run on a runhost: %v", err)
+	}
+	if err := refuseModelElsewhere(runOpts{model: "Qwen", installed: true}); err == nil || !strings.Contains(err.Error(), "its job names") {
+		t.Fatalf("a runhost's own run: %v", err)
 	}
 	t.Setenv(envHosted, "1")
 	if err := refuseModelElsewhere(runOpts{model: "Qwen"}); err == nil || !strings.Contains(err.Error(), "hosted run") {

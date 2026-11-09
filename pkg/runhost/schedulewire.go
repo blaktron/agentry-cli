@@ -45,6 +45,10 @@ type ScheduleInfo struct {
 	Paused  bool            `json:"paused,omitempty"`
 	Created time.Time       `json:"created"`
 	Entries []ScheduleEntry `json:"entries"`
+	// Model is the runhost's saved model the schedule runs on, by id, or
+	// "default" for the runhost's default at each run; empty for one that
+	// carries the model of the device that made it.
+	Model string `json:"model,omitempty"`
 	// Fires are its latest occurrences, newest first: each run's job, which
 	// a device collects as it collects its own.
 	Fires []ScheduleFire `json:"fires,omitempty"`

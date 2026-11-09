@@ -276,9 +276,6 @@ func newScheduleAddCmd() *cobra.Command {
 			if (ref == "") == (spec.local == "") {
 				return usageError(cmd, errors.New("pass exactly one of ns/name[@range] or --local DIR"))
 			}
-			if on != "" && spec.model != "" {
-				return engine.Classify(engine.ExitUsage, errors.New("--model chooses among this computer's saved models, and a schedule on a remote runhost runs on the model the runhost keeps (agentry runhost model)"))
-			}
 			if on != "" && check {
 				return scheduleCheck(cmd, ref, name, out, on, spec, when, scheduleNow())
 			}
@@ -330,7 +327,7 @@ func newScheduleAddCmd() *cobra.Command {
 	f.IntVar(&spec.maxTurns, "max-turns", -1, "override the policy tool-call budget (0 = unlimited)")
 	f.Float64Var(&spec.maxCost, "max-cost", -1, "override the policy cost budget in USD (0 = unlimited)")
 	f.StringVar(&spec.adapter, "adapter", "", "harness adapter (default: the run's)")
-	f.StringVar(&spec.model, "model", "", "the saved model every run of this schedule is on, by name or id (default: this computer's default saved model, whichever it is at each run; see agentry models list)")
+	f.StringVar(&spec.model, "model", "", "the saved model every run of this schedule is on, by name or id (default: this computer's default saved model, whichever it is at each run; see agentry models list); with --on, one the runhost holds (agentry runhost model <runhost>), its default by default")
 	f.StringVar(&spec.policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml)")
 	f.StringVar(&spec.deliverTo, "deliver-to", "", "copy each run's deliverables to FOLDER/<QuickAgent>/<date time> <title>/ (absolute, or beginning with ~; otherwise deliver.folder in the config applies)")
 	f.StringArrayVar(&spec.destinations, "destination", nil, "send each run's result and deliverables to this saved destination (repeatable; see agentry destinations)")

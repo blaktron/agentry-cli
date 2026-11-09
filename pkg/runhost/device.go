@@ -55,6 +55,18 @@ type Record struct {
 	// SignIns are the model sign-ins this device made on the runhost, which
 	// the runhost alone keeps: never a token.
 	SignIns []SignInRecord `yaml:"signIns,omitempty" json:"signIns,omitempty"`
+	// Models are the saved models the runhost holds, as it last said them:
+	// never a credential. Nil until this device first asked.
+	Models []ModelRecord `yaml:"models,omitempty" json:"models,omitempty"`
+}
+
+// ModelRecord names one of a runhost's saved models.
+type ModelRecord struct {
+	ID       string `yaml:"id" json:"id"`
+	Name     string `yaml:"name" json:"name"`
+	Provider string `yaml:"provider" json:"provider"`
+	Model    string `yaml:"model" json:"model"`
+	Default  bool   `yaml:"default,omitempty" json:"default,omitempty"`
 }
 
 // SignInRecord names a model sign-in a runhost keeps: the vendor and the
