@@ -1,5 +1,5 @@
-// Use your Claude subscription (runs Claude Code): `agentry model-signins
-// add claude`, its removal, and the offer in `agentry setup`. The sign-in
+// Use your Claude subscription (runs Claude Code): `agentry providers add
+// anthropic --sign-in`, its removal, and the offer in `agentry setup`. The sign-in
 // and its removal are pkg/runner/claudesignin, which the desktop calls
 // too; this is the terminal around them.
 package main
@@ -60,7 +60,7 @@ func signInClaude(cmd *cobra.Command, in *bufio.Reader, home string, installed b
 	return claudeSignIn(home).Run(cmd.Context(), claudesignin.Person{In: claudeStdin(cmd, in), Out: errOut, Open: open}, installed)
 }
 
-// addClaude is `agentry model-signins add claude [--installed]`.
+// addClaude is the deprecated `agentry model-signins add claude [--installed]`.
 func addClaude(cmd *cobra.Command, in *bufio.Reader, home string, installed bool) error {
 	rec, err := signInClaude(cmd, in, home, installed)
 	if err != nil {

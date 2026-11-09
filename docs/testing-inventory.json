@@ -558,6 +558,22 @@
           ]
         },
         {
+          "path": "cmd/agentry/cmd_providers_signins_test.go",
+          "tests": [
+            "TestProvidersListShowsEachKeptSignInAndTheOnesNoProviderUses",
+            "TestProvidersAddSignsInAgainOnAProviderPaidByASignIn",
+            "TestProvidersAddOpenAISignInTakesNewAccount",
+            "TestProvidersAddConnectsAgainOnAConnectedProvider",
+            "TestProvidersRemoveRemovesAKeptSignInNoProviderUses",
+            "TestProvidersRemoveOfAKeptCopilotSignInNamesGitHubsAuthorizedApps",
+            "TestModelSignInsIsADeprecatedAliasOfProviders"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "cmd/agentry/errors_test.go",
           "tests": [
             "TestRegistryCommandsOfflineSayCannotReach",
@@ -594,6 +610,7 @@
           "path": "cmd/agentry/jsoncommands_test.go",
           "tests": [
             "TestRootHelpListsEveryJSONCommand",
+            "TestADeprecatedAliasStillAnswersJSONButIsLeftOutOfTheHelp",
             "TestEveryJSONCommandEmitsOneObject"
           ],
           "fuzz": [],
@@ -4753,6 +4770,7 @@
             "TestAgentFilesRefusedOutsideAPersistentBuiltin",
             "TestTheAppLinkIsAServerWithNoNetworkAndOneBind",
             "TestPersistentGrantsRefusedOutsideBuiltins",
+            "TestThePublisherToolsAreTheBuiltinsAlone",
             "TestThePersistentWebToolsAndReviewAreDeclared",
             "TestTheWebToolsReviewAndCalendarsCompose",
             "TestAPersistentPlanNamesTheShareFormats",
@@ -8476,7 +8494,9 @@
             "TestAKeyTheKeychainRefusesKeepsNothing",
             "TestConnectedVendorIsTheConnectVendorsOnly",
             "TestAPastedKeyReplacesAConnect",
-            "TestASignedOutRunRefusesAConnectedKeyItCannotReady"
+            "TestASignedOutRunRefusesAConnectedKeyItCannotReady",
+            "TestEachVendorsSignInIsTheProviderCommandThatPaysWithIt",
+            "TestAClaudeRunOnAClaudeCodeNotSignedInNamesTheCommandThatSignsItIn"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -8608,7 +8628,9 @@
           "tests": [
             "TestSelfConfigureWritesNameAndPersonalityOnly",
             "TestMainsToolsAreTheDesktopsToAnswer",
-            "TestTheAssistantsHelperToolsGoToItsClient"
+            "TestTheAssistantsHelperToolsGoToItsClient",
+            "TestThePublisherToolsAreTheAssistantsAlone",
+            "TestAPublishedAgentIsNeverGivenThePublisherTools"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -9789,7 +9811,8 @@
             "TestAScheduleOnAHarnessBlocksHarnessUsesItsSavedModel",
             "TestAProvidersStateSaysWhetherItsCredentialIsHere",
             "TestAnEndpointOfYourOwnIsAProviderNamedForIt",
-            "TestARemovalIsRefusedWhileAgentryHelperNamesTheModelAndMovesIt"
+            "TestARemovalIsRefusedWhileAgentryHelperNamesTheModelAndMovesIt",
+            "TestEachKeptSignInIsMatchedToTheProviderItPays"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -10670,6 +10693,7 @@
           "tests": [
             "TestTheAppLinkListsItsSetAndForwardsEachCall",
             "TestAppLinkHasNoGrantTool",
+            "TestThePublisherToolsTakeTheirOwnFieldsAndAsk",
             "TestTheAssistantHasEveryHelperTool",
             "TestAnUnknownSetIsRefused",
             "TestARunAndAScheduleTakeAnswersByQuestionID",

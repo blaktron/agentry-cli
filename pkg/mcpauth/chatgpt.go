@@ -244,7 +244,7 @@ func (g ChatGPT) SignIn(ctx context.Context, reg ChatGPTRegistration) (*ChatGPTS
 		return refuse(err)
 	}
 	if reg.Subject != "" && claims.Subject != reg.Subject {
-		return refuse(errors.New("you signed in to another ChatGPT account than the one this computer is registered for; to use that account, remove the sign-in and sign in as a new account (agentry model-signins add chatgpt --new-account)"))
+		return refuse(errors.New("you signed in to another ChatGPT account than the one this computer is registered for; to use that account, remove the sign-in and sign in as a new account (agentry providers add openai --sign-in --new-account)"))
 	}
 	models, err := g.Models(ctx, tok.AccessToken)
 	if err != nil {

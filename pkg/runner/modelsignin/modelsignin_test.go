@@ -252,7 +252,7 @@ func TestAClaudeRunIsHandedItsOwnHarnesssDirectory(t *testing.T) {
 	if err != nil || g.ConfigDir != "agentry-claude-signin" || g.Renew != nil || g.Access.Token != "" {
 		t.Fatalf("image: %+v %v", g, err)
 	}
-	if _, err := s.ForRun(ctx, policy.KeyKindClaudeSignIn, spec.ModelSignInConfigDir, true); !errors.Is(err, ErrNoSignIn) || !strings.Contains(err.Error(), "add claude --installed") {
+	if _, err := s.ForRun(ctx, policy.KeyKindClaudeSignIn, spec.ModelSignInConfigDir, true); !errors.Is(err, ErrNoSignIn) || !strings.Contains(err.Error(), "agentry providers add anthropic --sign-in --installed") {
 		t.Fatalf("host, not signed in: %v", err)
 	}
 	if _, err := s.Put(Claude, Record{ConfigDir: "agentry-claude-signin", HostConfigDir: host}, Grant{}); err != nil {

@@ -896,7 +896,7 @@ func ConfigureModel(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 					// is forgotten, so no run renews or refuses this key.
 					if IsConnectProvider(prov) && opts.Connect.Forget != nil {
 						if out, err := opts.Connect.Forget(prov); err != nil {
-							p.Say(fmt.Sprintf("warning: the %s account connected earlier is still marked connected (%v); remove it (agentry model-signins remove %s)", connectNames[prov].name, err, prov))
+							p.Say(fmt.Sprintf("warning: the %s account connected earlier is still marked connected (%v); remove it (agentry providers remove %s --connect)", connectNames[prov].name, err, prov))
 						} else if out != "" {
 							p.Say(fmt.Sprintf("the key you pasted replaces the one your %s account connected: %s", connectNames[prov].name, out))
 						}

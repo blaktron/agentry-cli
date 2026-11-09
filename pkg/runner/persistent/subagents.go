@@ -17,7 +17,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/runnerimage/applink"
 )
 
@@ -95,7 +94,7 @@ func SubagentNamed(a Agent, c Config, ref string) (Subagent, bool) {
 // AppLinkWith is the agent's app link tool set: its declared parts, and the
 // subagent tools when its roster names a subagent.
 func (a Agent) AppLinkWith(c Config) string {
-	set := compile.AppLinkSet(a.Declared())
+	set := a.AppLink()
 	if len(Subagents(a, c)) == 0 {
 		return set
 	}

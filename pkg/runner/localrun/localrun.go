@@ -173,6 +173,11 @@ type Builtin struct {
 	// offers names the package whose MCP servers the persistent built-in
 	// comes with and suggests (pkg/persistent/offer); none for "".
 	offers offerSet
+	// publisher gives the persistent built-in's app link the publisher
+	// tools (applink.PartPublisher), through which it manages the person's
+	// QuickAgents: the Assistant's alone, by name, never by a key a release
+	// can declare.
+	publisher bool
 }
 
 // KnowledgeCreator is the Knowledge Creator (pkg/knowledge/creator),
@@ -412,6 +417,10 @@ type PlanInputs struct {
 	// Subagents lets the app link list the subagent tools
 	// (compile.Inputs.Subagents): set by a Segment alone.
 	Subagents bool
+	// Publisher lets the app link list the publisher tools
+	// (compile.Inputs.Publisher): set by a Segment of a built-in that
+	// carries them alone.
+	Publisher bool
 	// Coder grants the Coding agent what its roster has on
 	// (compile.Inputs.Coder): set by a Segment of the Coding agent alone.
 	Coder *spec.CoderGrant
@@ -620,6 +629,7 @@ func compileInputs(in PlanInputs, runnerImage string, key []byte) compile.Inputs
 		AgentFiles:   in.AgentFiles,
 		AppLink:      in.AppLink,
 		Subagents:    in.Subagents,
+		Publisher:    in.Publisher,
 		Coder:        in.Coder,
 		Calendar:     in.Calendar,
 		ShareServers: in.ShareServers,

@@ -46,13 +46,14 @@ import (
 // that runs as a persistent agent. A file in its share is read only once
 // ClamAV has checked it. Its manifest declares what else it has: the time
 // and its tasks, a memory, skills, stored secrets, its own name and
-// persona, Agentry's helper tools and the meeting tools. It resets in
+// persona, Agentry's helper tools and the meeting tools; it is granted the
+// publisher tools by name (WithGrantedParts). It resets in
 // parts: its history alone, or everything but the credentials it was given.
 // It reads the calendar feeds the person gives it.
 func Assistant() Builtin {
 	return Builtin{namespace: assistant.Namespace, name: assistant.Name, version: assistant.Version, fsys: assistant.FS(),
 		persistent: true, runnable: true, checkShare: true, resetsInParts: true,
-		offers: offersAssistant}
+		offers: offersAssistant, publisher: true}
 }
 
 // Main is Agentry Helper (pkg/persistent/main), the persistent agent of Agentry
@@ -105,7 +106,23 @@ func (b Builtin) KeepsTime() bool    { return b.Declared().Declares("clock") }
 func (b Builtin) KeepsMemory() bool  { return b.Declared().Declares("memory") }
 func (b Builtin) KeepsSecrets() bool { return b.Declared().Declares("secrets") }
 func (b Builtin) ArmsMeetings() bool { return b.Declared().Declares("meetings") }
-func (b Builtin) AppLink() string    { return compile.AppLinkSet(b.Declared()) }
+func (b Builtin) AppLink() string    { return b.WithGrantedParts(compile.AppLinkSet(b.Declared())) }
+
+// ManagesQuickAgents says the built-in's app link has the publisher tools,
+// through which it manages the person's QuickAgents: granted by name, to the
+// Assistant alone.
+func (b Builtin) ManagesQuickAgents() bool { return b.publisher }
+
+// WithGrantedParts is set with the parts the built-in is granted by name
+// rather than by a key it declares: the publisher tools, for the built-in
+// that carries them, on an app link it has. The zero Builtin, which a
+// published agent's segment carries, is granted none.
+func (b Builtin) WithGrantedParts(set string) string {
+	if set == "" || !b.publisher {
+		return set
+	}
+	return applink.Compose(append(applink.SetParts(set), applink.PartPublisher)...)
+}
 
 // PersistentBuiltins are the built-ins that run as persistent agents.
 func PersistentBuiltins() []Builtin { return []Builtin{Main(), Assistant(), Coder()} }
@@ -708,6 +725,16 @@ func (s Segment) declared() *manifest.Persistent {
 	return m.Capabilities.Persistent
 }
 
+// grantedBuiltin is the built-in whose by-name grants the segment's plan
+// may carry: its Builtin when it runs one, and the zero Builtin, granted
+// none, when it runs a release.
+func (s Segment) grantedBuiltin() Builtin {
+	if s.Release != nil {
+		return Builtin{}
+	}
+	return s.Builtin
+}
+
 // ref is the package the segment runs, as ns/name@version.
 func (s Segment) ref() string {
 	if s.Release != nil && s.Release.Meta != nil {
@@ -780,13 +807,14 @@ func ImageAdapter(name string) string {
 }
 
 // appLinkSet is the app link tool set the segment's plan has: the one the
-// package's declared capabilities compose (compile.AppLinkSet), when the
-// segment is given a socket for it.
+// package's declared capabilities compose (compile.AppLinkSet), with the
+// parts a built-in is granted by name, when the segment is given a socket
+// for it. A release's segment carries the zero Builtin, granted none.
 func (s Segment) appLinkSet(m *manifest.Manifest) string {
 	if s.Grants.AppLink == "" {
 		return ""
 	}
-	set := compile.AppLinkSet(m.Capabilities.Persistent)
+	set := s.grantedBuiltin().WithGrantedParts(compile.AppLinkSet(m.Capabilities.Persistent))
 	if s.Grants.Subagents {
 		set = applink.Compose(append(applink.SetParts(set), applink.PartSubagents)...)
 	}
@@ -1159,7 +1187,7 @@ func (s Segment) Plan(ctx context.Context, logw io.Writer) (*SegmentPlan, error)
 	in := PlanInputs{
 		Home: s.Home, Manifest: m, Meta: meta, InstallDir: installDir, WorkspaceDir: workspace,
 		Policy: s.Policy, PolicySHA: s.PolicySHA, Adapter: adapterName, Mode: manifest.ModePersistent,
-		Servers: servers, AgentFiles: s.agentFiles(m), AppLink: s.appLinkSet(m), Subagents: s.Grants.Subagents, Coder: coderGrant, Calendar: calendarGrant, ShareServers: s.shareServers(), CompiledBy: s.Build, Log: logw,
+		Servers: servers, AgentFiles: s.agentFiles(m), AppLink: s.appLinkSet(m), Subagents: s.Grants.Subagents, Publisher: s.grantedBuiltin().ManagesQuickAgents(), Coder: coderGrant, Calendar: calendarGrant, ShareServers: s.shareServers(), CompiledBy: s.Build, Log: logw,
 		Web: s.Grants.Web != nil, Review: s.Grants.Review != nil,
 	}
 	plan, planDir, err := EnsurePlan(in)

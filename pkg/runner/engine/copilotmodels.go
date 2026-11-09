@@ -68,7 +68,7 @@ func ListCopilotModels(ctx context.Context, d dockerx.Client, p CopilotModelsPar
 		return nil, errors.New("copilot models: no policy or runner image")
 	}
 	if p.SignIn == nil || p.SignIn.Kind != policy.KeyKindCopilotSignIn || p.SignIn.Token.AccessToken == "" {
-		return nil, errors.New("copilot models: no Copilot sign-in to list the models of (agentry model-signins add copilot)")
+		return nil, errors.New("copilot models: no Copilot sign-in to list the models of (agentry providers add copilot)")
 	}
 	allow, err := policy.CopilotProxyAllow(p.CopilotPlan)
 	if err != nil {

@@ -290,3 +290,48 @@ func TestARemovalIsRefusedWhileAgentryHelperNamesTheModelAndMovesIt(t *testing.T
 		t.Fatalf("Agentry Helper names %q, want Llama's %q", got, llama.ID)
 	}
 }
+
+// Each kept sign-in and connected account is listed against the provider it
+// pays for: in use when that provider is here and paid by it, kept for
+// nothing when no provider is, or when the provider is paid another way.
+func TestEachKeptSignInIsMatchedToTheProviderItPays(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("AGENTRY_NO_KEYRING", "1")
+	s := modelsignin.Open(home, nil)
+	for _, v := range []string{modelsignin.ChatGPT, modelsignin.Copilot, modelsignin.OpenRouter} {
+		if _, err := s.Put(v, modelsignin.Record{Label: v + "-account"}, modelsignin.Grant{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	providers := map[string]policy.Provider{
+		// openai is paid by a key, so the ChatGPT sign-in is kept for nothing.
+		"openai":     {APIKeyEnv: "OPENAI_API_KEY"},
+		"copilot":    {APIKeyKind: policy.KeyKindCopilotSignIn},
+		"custom-lab": {Name: "Lab", BaseURL: "http://127.0.0.1:9/v1"},
+	}
+	got, err := SignIns(home, providers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]KeptSignIn{
+		modelsignin.ChatGPT:    {Provider: "openai", InUse: false, ProviderHere: true},
+		modelsignin.Copilot:    {Provider: "copilot", InUse: true, ProviderHere: true},
+		modelsignin.OpenRouter: {Provider: "openrouter", InUse: false, ProviderHere: false},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d kept sign-ins, want %d: %+v", len(got), len(want), got)
+	}
+	for _, k := range got {
+		w, ok := want[k.Record.Vendor]
+		if !ok || k.Provider != w.Provider || k.InUse != w.InUse || k.ProviderHere != w.ProviderHere || k.Record.Label != k.Record.Vendor+"-account" {
+			t.Errorf("%s = %+v, want %+v", k.Record.Vendor, k, w)
+		}
+	}
+	providers["openrouter"] = policy.Provider{APIKeyEnv: "OPENROUTER_API_KEY", APIKeySource: "keyring"}
+	got, _ = SignIns(home, providers)
+	for _, k := range got {
+		if k.Record.Vendor == modelsignin.OpenRouter && !k.InUse {
+			t.Errorf("the connected OpenRouter account is not used by the openrouter provider: %+v", k)
+		}
+	}
+}

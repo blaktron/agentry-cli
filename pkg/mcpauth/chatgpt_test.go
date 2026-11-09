@@ -114,7 +114,7 @@ func TestChatGPTSignInRefusesAnotherAccountThanTheRegistrations(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = v.Flow().SignIn(ctx, mcpauth.ChatGPTRegistration{HostID: "urn:uuid:fixture", ClientID: in.ClientID, Subject: "someone-else"})
-	if err == nil || !strings.Contains(err.Error(), "another ChatGPT account") {
+	if err == nil || !strings.Contains(err.Error(), "another ChatGPT account") || !strings.Contains(err.Error(), "agentry providers add openai --sign-in --new-account") {
 		t.Fatalf("err %v", err)
 	}
 	if v.Live(v.Issued[1]) {

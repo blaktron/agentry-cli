@@ -437,7 +437,7 @@ func TestAnOrganizationsPolicyIsNamed(t *testing.T) {
 
 	d = drive(t, &copilottest.Server{CreateError: `GitHub token validation failed: Failed to fetch Copilot user info: 401 Unauthorized: {"message":"Bad credentials"}`},
 		adapter.SessionOptions{ModelSignIn: true, SignInToken: k.get})
-	if err := d.drv.Start(ctx); err == nil || !strings.Contains(err.Error(), "sign in again with agentry model-signins add copilot") || errors.As(err, &refused) {
+	if err := d.drv.Start(ctx); err == nil || !strings.Contains(err.Error(), "sign in again with agentry providers add copilot") || errors.As(err, &refused) {
 		t.Fatalf("a refused token: %v", err)
 	}
 

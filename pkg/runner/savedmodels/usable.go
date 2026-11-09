@@ -75,8 +75,8 @@ func Usable(home string, rm localrun.RunModel, other string, here Here) error {
 	kind := policy.KeyKind(hp, m)
 	if policy.IsModelSignIn(kind) {
 		if !signInKept(home, kind) {
-			return refuse(NeedsSignIn, fmt.Sprintf("%s cannot be used: it spends %s, and none is kept on this computer: sign in with agentry model-signins add %s, or %s",
-				what, policy.SignInSentence(kind), modelsignin.VendorOf(kind), other))
+			return refuse(NeedsSignIn, fmt.Sprintf("%s cannot be used: it spends %s, and none is kept on this computer: sign in with %s, or %s",
+				what, policy.SignInSentence(kind), modelsignin.SignInCommand(modelsignin.VendorOf(kind)), other))
 		}
 		return nil
 	}

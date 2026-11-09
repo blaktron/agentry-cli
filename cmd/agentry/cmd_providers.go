@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/blaktron/agentry-cli/pkg/mcpauth"
 	"github.com/blaktron/agentry-cli/pkg/runner/claudesignin"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
@@ -29,7 +30,9 @@ func newProvidersCmd() *cobra.Command {
 			"(custom). A named vendor has one provider; each endpoint of your own is a provider of its own, named\n" +
 			"custom-<name>. A second saved model on a provider asks for no new key or sign-in. A key is never\n" +
 			"written to the policy: the provider names its variable, and the OS keychain entry provider:<id>.\n" +
-			"agentry model-signins is the sign-in half of this, kept under its own name for now.",
+			"list shows each kept sign-in and connected account beside the provider it pays, and the ones no\n" +
+			"provider uses; add on a provider paid by a sign-in or connected account signs in or connects again;\n" +
+			"remove of a provider that is not here removes a sign-in or connected account still kept for it.",
 	}
 	cmd.AddCommand(newProvidersListCmd(), newProvidersAddCmd(), newProvidersRemoveCmd())
 	return cmd
@@ -47,6 +50,98 @@ type providerOut struct {
 	APIKeySource string   `json:"apiKeySource,omitempty"`
 	State        string   `json:"state"`
 	Models       []string `json:"models"`
+	// The sign-in or connected account that pays the provider, as
+	// model-signins list shows it: never a token.
+	Account      string `json:"account,omitempty"`
+	CreatedAt    string `json:"createdAt,omitempty"`
+	LastUsedAt   string `json:"lastUsedAt,omitempty"`
+	App          string `json:"app,omitempty"`
+	KeyExpiresAt string `json:"keyExpiresAt,omitempty"`
+	// SignedInAgain marks an add that signed in or connected again on a
+	// provider already here, which it left as it was.
+	SignedInAgain bool `json:"signedInAgain,omitempty"`
+}
+
+// keptSignInOut is one kept sign-in or connected account in providers list
+// --json: model-signins list's row, with the provider it pays for and
+// whether a provider here is paid by it.
+type keptSignInOut struct {
+	modelSignInOut
+	Provider string `json:"provider"`
+	InUse    bool   `json:"inUse"`
+}
+
+// providerRow is a provider as listed: its credential's state, the saved
+// models on it, and the kept sign-in or connected account that pays it
+// (rec, nil for none).
+func providerRow(home, id string, pr policy.Provider, models []string, rec *modelsignin.Record) providerOut {
+	kind, state := providerState(home, id, pr)
+	r := providerOut{ID: id, Vendor: policy.ProviderVendor(id), Name: pr.Name, Kind: kind, BaseURL: pr.BaseURL,
+		APIKeyEnv: pr.APIKeyEnv, APIKeySource: pr.APIKeySource, State: state, Models: models}
+	if r.Models == nil {
+		r.Models = []string{}
+	}
+	if rec != nil {
+		r.Account, r.CreatedAt, r.LastUsedAt, r.App, r.KeyExpiresAt = rec.Label, rec.CreatedAt, rec.LastUsedAt, rec.App, rec.KeyExpiresAt
+	}
+	return r
+}
+
+// providerLine is a provider row in words.
+func providerLine(r providerOut) string {
+	name := ""
+	if r.Name != "" {
+		name = " (" + r.Name + ", " + r.BaseURL + ")"
+	}
+	details := ""
+	if r.CreatedAt != "" {
+		if r.Account != "" && !strings.Contains(r.State, r.Account) {
+			details += " · as " + r.Account
+		}
+		if r.App != "" {
+			details += " · through Agentry's " + mcpauth.GitHubAppName(r.App)
+		}
+		if r.KeyExpiresAt != "" {
+			details += " · key expires " + r.KeyExpiresAt
+		}
+		last := r.LastUsedAt
+		if last == "" {
+			last = "never used"
+		}
+		details += " · last used: " + last
+	}
+	return fmt.Sprintf("%s%s · %s · %s%s · models: %s", r.ID, name, r.Kind, r.State, details, strings.Join(r.Models, ", "))
+}
+
+// savedModelsOn names the saved models on provider id.
+func savedModelsOn(models []policy.SavedModel, id string) []string {
+	on := []string{}
+	for _, sm := range models {
+		if sm.Provider == id {
+			on = append(on, sm.Name)
+		}
+	}
+	return on
+}
+
+// removeKeptCommand is the command that removes a kept sign-in or connected
+// account: the provider's own removal when no provider of its id is here,
+// else the removal of the sign-in alone.
+func removeKeptCommand(k savedmodels.KeptSignIn) string {
+	c := "agentry providers remove " + k.Provider
+	if k.ProviderHere {
+		c += " " + signInOnlyFlag(k.Record.Vendor)
+	}
+	return c
+}
+
+// signInOnlyFlag is the providers remove flag that removes vendor's kept
+// credential alone: --connect for a connected account, --sign-in otherwise.
+func signInOnlyFlag(vendor string) string {
+	if modelsignin.IsConnectVendor(vendor) {
+		return "--connect"
+	}
+	return "--sign-in"
 }
 
 // signInVendor is the model sign-in store's vendor a provider's credential
@@ -75,6 +170,21 @@ func newProvidersListCmd() *cobra.Command {
 				return err
 			}
 			providers, models, _ := pol.SavedModels()
+			kept, err := savedmodels.SignIns(home, providers)
+			if err != nil {
+				return err
+			}
+			paying := map[string]*modelsignin.Record{}
+			signIns := make([]keptSignInOut, 0, len(kept))
+			var unused []savedmodels.KeptSignIn
+			for _, k := range kept {
+				if k.InUse {
+					paying[k.Provider] = &k.Record
+				} else {
+					unused = append(unused, k)
+				}
+				signIns = append(signIns, keptSignInOut{modelSignInOut: modelSignInRow(k.Record), Provider: k.Provider, InUse: k.InUse})
+			}
 			ids := make([]string, 0, len(providers))
 			for id := range providers {
 				ids = append(ids, id)
@@ -82,26 +192,20 @@ func newProvidersListCmd() *cobra.Command {
 			sort.Strings(ids)
 			rows := make([]providerOut, 0, len(ids))
 			for _, id := range ids {
-				pr := providers[id]
-				kind, state := providerState(home, id, pr)
-				on := []string{}
-				for _, sm := range models {
-					if sm.Provider == id {
-						on = append(on, sm.Name)
-					}
-				}
-				rows = append(rows, providerOut{ID: id, Vendor: policy.ProviderVendor(id), Name: pr.Name, Kind: kind, BaseURL: pr.BaseURL,
-					APIKeyEnv: pr.APIKeyEnv, APIKeySource: pr.APIKeySource, State: state, Models: on})
+				rows = append(rows, providerRow(home, id, providers[id], savedModelsOn(models, id), paying[id]))
 			}
 			if flags.jsonOut {
-				return emitJSON(cmd.OutOrStdout(), map[string]any{"providers": rows})
+				return emitJSON(cmd.OutOrStdout(), map[string]any{"providers": rows, "signIns": signIns})
 			}
+			out := cmd.OutOrStdout()
 			for _, r := range rows {
-				name := ""
-				if r.Name != "" {
-					name = " (" + r.Name + ", " + r.BaseURL + ")"
+				_, _ = fmt.Fprintln(out, providerLine(r))
+			}
+			if len(unused) > 0 {
+				_, _ = fmt.Fprintln(out, "\nKept sign-ins and connected accounts no provider uses:")
+				for _, k := range unused {
+					_, _ = fmt.Fprintf(out, "  %s · remove: %s\n", signInLine(modelSignInRow(k.Record)), removeKeptCommand(k))
 				}
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s%s · %s · %s · models: %s\n", r.ID, name, r.Kind, r.State, strings.Join(r.Models, ", "))
 			}
 			return nil
 		},
@@ -112,8 +216,105 @@ func newProvidersListCmd() *cobra.Command {
 
 // providerFlags are `providers add`'s.
 type providerFlags struct {
-	name, baseURL, keyEnv, keySource, copilotPlan, policyPath string
-	keyStdin, signIn, connect, installed, oauthApp            bool
+	name, baseURL, keyEnv, keySource, copilotPlan, policyPath  string
+	keyStdin, signIn, connect, installed, oauthApp, newAccount bool
+}
+
+// providerShapingFlags are the add flags that say what a provider is. On a
+// provider already here, add signs in again and changes none of it.
+var providerShapingFlags = []string{"name", "base-url", "api-key-env", "api-key-source", "key-stdin", "copilot-plan"}
+
+// signInFlagsRefusal refuses a sign-in flag on a vendor it is not for.
+func signInFlagsRefusal(vendor string, f providerFlags) error {
+	usage := func(msg string) error { return engine.Classify(engine.ExitUsage, errors.New(msg)) }
+	switch {
+	case f.newAccount && (vendor != policy.ProviderOpenAI || !f.signIn):
+		return usage("--new-account is for openai --sign-in: it signs in to another ChatGPT account than the one this computer is registered for")
+	case f.installed && (vendor != policy.ProviderAnthropic || !f.signIn):
+		return usage("--installed is for anthropic --sign-in")
+	case f.oauthApp && vendor != policy.ProviderCopilot:
+		return usage("--oauth-app is for copilot")
+	}
+	return nil
+}
+
+// signInAgainVendor is the kept sign-in or connected account that add signs
+// in or connects again on pr, a provider already here: the one that pays it,
+// when the request names that way of paying; "" when add is refused.
+// reconnect says a connect may write the provider's keychain entry: it holds
+// a connected account's key, or none. A key the person pasted there is
+// never replaced by a connect.
+func signInAgainVendor(vendor string, f providerFlags, pr policy.Provider, reconnect bool) string {
+	switch {
+	case vendor == policy.ProviderOpenAI && f.signIn && pr.APIKeyKind == policy.KeyKindChatGPTPlan:
+		return modelsignin.ChatGPT
+	case vendor == policy.ProviderAnthropic && f.signIn && pr.APIKeyKind == policy.KeyKindClaudeSignIn:
+		return modelsignin.Claude
+	case vendor == policy.ProviderCopilot && pr.APIKeyKind == policy.KeyKindCopilotSignIn:
+		return modelsignin.Copilot
+	case f.connect && modelsignin.IsConnectVendor(vendor) && pr.APIKeySource == modelkey.SourceKeyring && reconnect:
+		return vendor
+	}
+	return ""
+}
+
+// mayReconnect says a connect may write provider id's keychain entry: a
+// connected account is kept for it, or the entry holds no key.
+func mayReconnect(home, id string) bool {
+	if r, err := modelsignin.Open(home, nil).Get(modelsignin.ConnectedVendor(id)); err == nil && r.Connected {
+		return true
+	}
+	present, err := connectKeyPresent(id)
+	return err == nil && !present
+}
+
+// signInAgain signs in with vendor, or connects its account, again for the
+// provider id already here, replacing the kept credential; the provider and
+// its saved models are left as they are.
+func signInAgain(cmd *cobra.Command, home, id string, pr policy.Provider, vendor string, models []policy.SavedModel, f providerFlags) error {
+	for _, name := range providerShapingFlags {
+		if cmd.Flags().Changed(name) {
+			return engine.Classify(engine.ExitUsage, fmt.Errorf("--%s would change the provider %s, which is here already: add on it signs in or connects again and changes nothing else (agentry providers remove %s first to set it up again)", name, id, id))
+		}
+	}
+	in := bufio.NewReader(cmd.InOrStdin())
+	var err error
+	switch vendor {
+	case modelsignin.ChatGPT:
+		_, err = signInChatGPT(cmd, in, home, f.newAccount)
+		var ne *mcpauth.ChatGPTNotEligibleError
+		if errors.As(err, &ne) || errors.Is(err, mcpauth.ErrChatGPTNoPlanScope) {
+			err = fmt.Errorf("nothing changed: %w", err)
+		}
+	case modelsignin.Claude:
+		_, err = signInClaude(cmd, in, home, f.installed)
+	case modelsignin.Copilot:
+		_, err = signInCopilot(cmd, home, copilotApp(f.oauthApp))
+	default:
+		if _, err = connectAccount(cmd, in, home, vendor); err == nil {
+			// The key in the provider's entry changed: a signed-out
+			// schedule's sealed copy follows it.
+			resealSignedOut(cmd.ErrOrStderr())
+		}
+	}
+	if err != nil {
+		return err
+	}
+	rec, _ := modelsignin.Open(home, nil).Get(vendor)
+	on := savedModelsOn(models, id)
+	row := providerRow(home, id, pr, on, rec)
+	row.SignedInAgain = true
+	if flags.jsonOut {
+		return emitJSON(cmd.OutOrStdout(), row)
+	}
+	out := cmd.OutOrStdout()
+	_, _ = fmt.Fprintf(out, "signed in again for the provider %s · %s · %s\n", id, row.Kind, row.State)
+	if len(on) == 0 {
+		_, _ = fmt.Fprintln(out, "the provider is as it was; it has no saved models")
+	} else {
+		_, _ = fmt.Fprintf(out, "the provider and its saved models (%s) are as they were\n", strings.Join(on, ", "))
+	}
+	return nil
 }
 
 func newProvidersAddCmd() *cobra.Command {
@@ -130,7 +331,11 @@ func newProvidersAddCmd() *cobra.Command {
 			"add custom --name <name> --base-url <url> adds an OpenAI-compatible endpoint of your own, as the\n" +
 			"provider custom-<name>. Without --api-key-env or --key-stdin it is saved as taking no key, and a run on\n" +
 			"it is given none; with one, a run on it is refused while its key is not here. Then save a model on\n" +
-			"the provider: agentry models add.",
+			"the provider: agentry models add.\n\n" +
+			"On a provider already here that your plan's sign-in or a connected account pays, add signs in or\n" +
+			"connects again (openai --sign-in [--new-account], anthropic --sign-in [--installed], copilot,\n" +
+			"openrouter|poe|huggingface --connect) and replaces the kept credential; the provider and its saved\n" +
+			"models are left as they are. A provider paid by a key is set up again by removing it first.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			pol, path, err := modelsPolicy(f.policyPath)
@@ -142,11 +347,20 @@ func newProvidersAddCmd() *cobra.Command {
 				return err
 			}
 			vendor := strings.ToLower(strings.TrimSpace(args[0]))
-			// One provider per vendor, one per endpoint of your own: an id
-			// already here is refused before any sign-in starts or any key
-			// is read, so nothing kept is replaced.
+			if err := signInFlagsRefusal(vendor, f); err != nil {
+				return err
+			}
+			// One provider per vendor, one per endpoint of your own. On a
+			// provider here that a sign-in or connected account pays, add
+			// signs in or connects again; any other id already here is
+			// refused before any sign-in starts or any key is read, so
+			// nothing kept is replaced.
 			if id := providerIDFor(vendor, f.name); id != "" {
-				if providers, _, _ := pol.SavedModels(); hasProvider(providers, id) {
+				providers, models, _ := pol.SavedModels()
+				if pr, ok := providers[id]; ok {
+					if sv := signInAgainVendor(vendor, f, pr, mayReconnect(home, id)); sv != "" {
+						return signInAgain(cmd, home, id, pr, sv, models, f)
+					}
 					return engine.Classify(engine.ExitUsage, fmt.Errorf("this computer already has the provider %s: one provider per vendor (agentry providers remove %s first to set it up again)", id, id))
 				}
 			}
@@ -169,12 +383,15 @@ func newProvidersAddCmd() *cobra.Command {
 				}
 				return engine.Classify(engine.ExitPolicy, err)
 			}
-			kind, state := providerState(home, id, pr)
-			if flags.jsonOut {
-				return emitJSON(cmd.OutOrStdout(), providerOut{ID: id, Vendor: policy.ProviderVendor(id), Name: pr.Name, Kind: kind, BaseURL: pr.BaseURL,
-					APIKeyEnv: pr.APIKeyEnv, APIKeySource: pr.APIKeySource, State: state, Models: []string{}})
+			var rec *modelsignin.Record
+			if sv := signInVendor(id, pr); sv != "" {
+				rec, _ = modelsignin.Open(home, nil).Get(sv)
 			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "added the provider %s · %s · %s\n", id, kind, state)
+			row := providerRow(home, id, pr, nil, rec)
+			if flags.jsonOut {
+				return emitJSON(cmd.OutOrStdout(), row)
+			}
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "added the provider %s · %s · %s\n", id, row.Kind, row.State)
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "save a model on it: agentry models add <name> --provider %s --model <model id>\n", id)
 			return nil
 		},
@@ -186,6 +403,7 @@ func newProvidersAddCmd() *cobra.Command {
 	fl.StringVar(&f.keySource, "api-key-source", "", "where the key comes from when the variable is unset: env | keyring")
 	fl.BoolVar(&f.keyStdin, "key-stdin", false, "read the key from the standard input and keep it in the OS keychain (never in the policy)")
 	fl.BoolVar(&f.signIn, "sign-in", false, "openai or anthropic: pay with your ChatGPT plan or Claude subscription instead of a key")
+	fl.BoolVar(&f.newAccount, "new-account", false, "openai --sign-in: sign in to another ChatGPT account than the one this computer is registered for")
 	fl.BoolVar(&f.installed, "installed", false, "anthropic --sign-in: sign in the Claude Code installed on this computer rather than its image")
 	fl.BoolVar(&f.connect, "connect", false, "openrouter, poe or huggingface: "+setup.ConnectLabel+" instead of a key you paste")
 	fl.StringVar(&f.copilotPlan, "copilot-plan", "", "copilot: individual (the default) | business | enterprise")
@@ -205,11 +423,6 @@ func providerIDFor(vendor, name string) string {
 		return ""
 	}
 	return id
-}
-
-func hasProvider(providers map[string]policy.Provider, id string) bool {
-	_, ok := providers[id]
-	return ok
 }
 
 // buildProvider makes the provider vendor names from the flags, signing in
@@ -245,7 +458,7 @@ func buildProvider(cmd *cobra.Command, home, vendor string, f providerFlags) (id
 			return "", pr, "", usage("--copilot-plan: %v", err)
 		}
 		if kept, _ := modelsignin.Open(home, nil).Get(modelsignin.Copilot); kept == nil || kept.Broken != "" {
-			if err := addCopilot(cmd, home, f.oauthApp); err != nil {
+			if _, err := signInCopilot(cmd, home, copilotApp(f.oauthApp)); err != nil {
 				return "", pr, "", err
 			}
 		}
@@ -349,8 +562,8 @@ func signInProvider(cmd *cobra.Command, in *bufio.Reader, home, vendor string, f
 	store := modelsignin.Open(home, nil)
 	switch vendor {
 	case policy.ProviderOpenAI:
-		if kept, _ := store.Get(modelsignin.ChatGPT); kept == nil || kept.Broken != "" {
-			if _, err := signInChatGPT(cmd, in, home, false); err != nil {
+		if kept, _ := store.Get(modelsignin.ChatGPT); kept == nil || kept.Broken != "" || f.newAccount {
+			if _, err := signInChatGPT(cmd, in, home, f.newAccount); err != nil {
 				return "", policy.Provider{}, err
 			}
 		}
@@ -369,15 +582,20 @@ func signInProvider(cmd *cobra.Command, in *bufio.Reader, home, vendor string, f
 
 func newProvidersRemoveCmd() *cobra.Command {
 	var policyPath, moveTo string
-	var keep bool
+	var keep, signInOnly, connectOnly bool
 	cmd := &cobra.Command{
 		Use:   "remove <id> [--move-to <saved model>]",
 		Short: "Remove a provider and the saved models on it, and forget its credential on this computer",
 		Long: "The saved models on the provider are removed with it. While a schedule or a persistent agent\n" +
 			"names one of them the removal is refused, with them listed, unless --move-to names the saved model\n" +
 			"they move to; it is also the new default when the default is on this provider. The provider's key is\n" +
-			"deleted from the OS keychain and its sign-in or connected account removed as agentry model-signins\n" +
-			"remove does, unless --keep-credential.",
+			"deleted from the OS keychain and its sign-in or connected account removed (revoked at the vendor\n" +
+			"where this build can; for anthropic, Claude Code logs out and its directory is deleted; a connected\n" +
+			"key is forgotten, with where to delete it at the vendor), unless --keep-credential.\n\n" +
+			"When no provider <id> is here but a sign-in or connected account is still kept for it (openai: your\n" +
+			"ChatGPT sign-in; anthropic: Claude; copilot; openrouter, poe, huggingface), remove removes that.\n" +
+			"--sign-in (openai, anthropic, copilot) or --connect (openrouter, poe, huggingface) removes the kept\n" +
+			"sign-in or connected account alone and leaves the provider and its saved models.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			pol, path, err := modelsPolicy(policyPath)
@@ -391,8 +609,8 @@ func newProvidersRemoveCmd() *cobra.Command {
 			id := args[0]
 			providers, models, _ := pol.SavedModels()
 			pr, ok := providers[id]
-			if !ok {
-				return engine.Classify(engine.ExitUsage, fmt.Errorf("no provider %q on this computer (agentry providers list)", id))
+			if !ok || signInOnly || connectOnly {
+				return removeKeptSignIn(cmd, pol, home, id, providers, keptOnly{signIn: signInOnly, connect: connectOnly, moveTo: moveTo, keep: keep})
 			}
 			var on []policy.SavedModel
 			for _, sm := range models {
@@ -407,50 +625,166 @@ func newProvidersRemoveCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			out.Provider, out.Credential = id, "credential kept"
+			out.Provider, out.ProviderRemoved, out.Credential = id, true, "credential kept"
 			if out.Removed == nil {
 				out.Removed = []savedModelOut{}
 			}
 			if !keep {
-				out.Credential = forgetCredential(cmd, home, id, pr)
+				out.Credential, out.SignIn, out.Revocation = forgetCredential(cmd, home, id, pr)
 			}
 			if flags.jsonOut {
-				return emitJSON(cmd.OutOrStdout(), out)
+				if err := emitJSON(cmd.OutOrStdout(), out); err != nil {
+					return err
+				}
+				sayCopilotApps(cmd.ErrOrStderr(), out.SignIn, out.Revocation)
+				return nil
 			}
 			sayRemoved(cmd.OutOrStdout(), pol, out)
+			sayCopilotApps(cmd.OutOrStdout(), out.SignIn, out.Revocation)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&moveTo, "move-to", "", "the saved model what names this provider's models moves to, and the new default when the default is on it")
 	cmd.Flags().BoolVar(&keep, "keep-credential", false, "keep the provider's key, sign-in or connected account on this computer")
+	cmd.Flags().BoolVar(&signInOnly, "sign-in", false, "openai, anthropic or copilot: remove the kept sign-in alone and leave the provider")
+	cmd.Flags().BoolVar(&connectOnly, "connect", false, "openrouter, poe or huggingface: disconnect the kept account alone and leave the provider")
 	cmd.Flags().StringVar(&policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml)")
 	return cmd
 }
 
+// keptOnly is a providers remove of a kept sign-in or connected account,
+// with the flags it was given.
+type keptOnly struct {
+	signIn, connect, keep bool
+	moveTo                string
+}
+
+// removeKeptSignIn removes the sign-in or connected account kept for the
+// provider id: one no provider uses, or, with --sign-in or --connect, the
+// one kept beside a provider here, which is left as it is.
+func removeKeptSignIn(cmd *cobra.Command, pol *policy.Policy, home, id string, providers map[string]policy.Provider, k keptOnly) error {
+	usage := func(format string, a ...any) error {
+		return engine.Classify(engine.ExitUsage, fmt.Errorf(format, a...))
+	}
+	vendor := modelsignin.VendorOfProvider(id)
+	pr, here := providers[id]
+	switch {
+	case k.signIn && k.connect:
+		return usage("--sign-in and --connect: one or the other")
+	case k.signIn && (vendor == "" || modelsignin.IsConnectVendor(vendor)):
+		return usage("--sign-in is for openai, anthropic and copilot, whose sign-ins are kept on this computer")
+	case k.connect && !modelsignin.IsConnectVendor(vendor):
+		return usage("--connect is for openrouter, poe and huggingface, whose connected accounts are kept on this computer")
+	case vendor == "" && modelsignin.ProviderOfVendor(id) != "":
+		p := modelsignin.ProviderOfVendor(id)
+		return usage("no provider %q on this computer: %s is kept as the provider %s's credential (agentry providers remove %s %s)", id, id, p, p, signInOnlyFlag(id))
+	case vendor == "":
+		return usage("no provider %q on this computer (agentry providers list)", id)
+	case k.moveTo != "" || k.keep:
+		return usage("--move-to and --keep-credential are for removing a provider: this removes only the sign-in or connected account kept for %s", id)
+	}
+	outcome, err := removeSignIn(cmd, home, vendor)
+	switch {
+	case errors.Is(err, modelsignin.ErrNone) && here:
+		return usage("no %s sign-in or connected account is kept on this computer", vendor)
+	case errors.Is(err, modelsignin.ErrNone):
+		return usage("no provider %q on this computer, and no sign-in or connected account kept for it (agentry providers list)", id)
+	case err != nil:
+		return err
+	}
+	out := removedOut{Provider: id, SignIn: vendor, Revocation: outcome, Credential: removedWords(vendor, outcome),
+		Removed: []savedModelOut{}, Moved: []modelUser{}, Default: pol.DefaultModel().ID}
+	if flags.jsonOut {
+		if err := emitJSON(cmd.OutOrStdout(), out); err != nil {
+			return err
+		}
+		sayCopilotApps(cmd.ErrOrStderr(), vendor, outcome)
+		return nil
+	}
+	w := cmd.OutOrStdout()
+	sayRemovedSignIn(w, vendor, outcome)
+	if here {
+		next := ""
+		if signInVendor(id, pr) == vendor {
+			again := "a sign-in"
+			if modelsignin.IsConnectVendor(vendor) {
+				again = "connecting"
+			}
+			next = "; it needs " + again + " again before a run can use it (" + modelsignin.SignInCommand(vendor) + ")"
+		}
+		_, _ = fmt.Fprintf(w, "the provider %s is kept%s\n", id, next)
+	}
+	return nil
+}
+
+// removeSignIn removes vendor's kept sign-in or connected account as the
+// person asked: revoked at the vendor where this build can, Claude Code
+// logged out and its directory deleted, a connected key forgotten; the
+// keys of schedules that run signed out are sealed again. ErrNone when
+// none is kept.
+func removeSignIn(cmd *cobra.Command, home, vendor string) (string, error) {
+	s := connectStore(home)
+	// A Claude sign-in is Claude Code's, in its own directories: Claude
+	// Code logs out there, then they are deleted.
+	s.EndClaude = endClaude(cmd.ErrOrStderr(), home)
+	outcome, err := s.Remove(cmd.Context(), vendor, "removed by the person")
+	if err != nil {
+		return "", err
+	}
+	resealSignedOut(cmd.ErrOrStderr())
+	return outcome, nil
+}
+
+// removedWords is a removed sign-in or connected account, in the words
+// providers remove's credential field uses.
+func removedWords(vendor, outcome string) string {
+	if modelsignin.IsConnectVendor(vendor) {
+		return "connected account removed, revocation: " + outcome
+	}
+	return "sign-in removed, revocation: " + outcome
+}
+
+// sayRemovedSignIn says a sign-in or connected account was removed.
+func sayRemovedSignIn(w io.Writer, vendor, outcome string) {
+	if modelsignin.IsConnectVendor(vendor) {
+		_, _ = fmt.Fprintf(w, "disconnected your %s account (revocation: %s)\n", modelsignin.ConnectName(vendor), outcome)
+	} else {
+		_, _ = fmt.Fprintf(w, "removed the %s sign-in (revocation: %s)\n", vendor, outcome)
+	}
+	sayCopilotApps(w, vendor, outcome)
+}
+
+// sayCopilotApps says what GitHub keeps after a Copilot sign-in's removal:
+// GitHub takes the tokens for revocation, and the app's authorization, which
+// only a holder of its client secret could revoke, stays.
+func sayCopilotApps(w io.Writer, vendor, outcome string) {
+	if vendor == modelsignin.Copilot && outcome == modelsignin.RevokeSubmitted {
+		_, _ = fmt.Fprintln(w, "GitHub accepted the sign-in's tokens for revocation; Agentry's app stays in your authorized apps until you remove it there: https://github.com/settings/applications")
+	}
+}
+
 // forgetCredential forgets a removed provider's credential on this
-// computer, and says what became of it.
-func forgetCredential(cmd *cobra.Command, home, id string, pr policy.Provider) string {
+// computer, and says what became of it, with the sign-in or connected
+// account removed and its revocation, if any.
+func forgetCredential(cmd *cobra.Command, home, id string, pr policy.Provider) (credential, signIn, revocation string) {
 	if sv := signInVendor(id, pr); sv != "" {
-		s := connectStore(home)
-		s.EndClaude = endClaude(cmd.ErrOrStderr(), home)
-		outcome, err := s.Remove(cmd.Context(), sv, "removed by the person")
+		outcome, err := removeSignIn(cmd, home, sv)
 		switch {
 		case errors.Is(err, modelsignin.ErrNone):
 		case err != nil:
-			return "its sign-in is still kept: " + err.Error() + " (agentry model-signins remove " + sv + ")"
+			return "its sign-in is still kept: " + err.Error() + " (agentry providers remove " + id + ")", "", ""
 		default:
-			resealSignedOut(cmd.ErrOrStderr())
-			return "sign-in removed, revocation: " + outcome
+			return removedWords(sv, outcome), sv, outcome
 		}
 	}
 	if pr.APIKeySource == modelkey.SourceKeyring {
 		if ok, _ := modelkey.Present(id); ok {
 			if err := modelkey.Delete(id); err != nil {
-				return "its key is still in the OS keychain: " + err.Error()
+				return "its key is still in the OS keychain: " + err.Error(), "", ""
 			}
 			resealSignedOut(cmd.ErrOrStderr())
-			return "key deleted from the OS keychain"
+			return "key deleted from the OS keychain", "", ""
 		}
 	}
-	return "nothing kept on this computer"
+	return "nothing kept on this computer", "", ""
 }

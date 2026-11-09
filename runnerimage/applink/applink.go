@@ -39,8 +39,9 @@ const (
 // The parts a tool set is composed of, each the tools of one capability
 // the agent declares: its own name and persona (PartSelf), its tasks
 // (PartTasks), the search of its earlier conversations (PartRecall),
-// Agentry's helper tools (PartHelper), the meeting tools (PartMeetings)
-// and the subagent tools (PartSubagents, subagents.go). A set is the parts it has, in this order, joined by
+// Agentry's helper tools (PartHelper), the meeting tools (PartMeetings),
+// the publisher tools (PartPublisher, publisher.go) and the subagent tools
+// (PartSubagents, subagents.go). A set is the parts it has, in this order, joined by
 // commas (Compose).
 const (
 	PartSelf     = "self"
@@ -51,10 +52,10 @@ const (
 )
 
 // The built-ins' sets: Agentry Helper's is the helper tools, the
-// Assistant's every part.
+// Assistant's every part but the subagents'.
 var (
 	SetMain      = Compose(PartHelper)
-	SetAssistant = Compose(PartSelf, PartTasks, PartRecall, PartHelper, PartMeetings)
+	SetAssistant = Compose(PartSelf, PartTasks, PartRecall, PartHelper, PartMeetings, PartPublisher)
 )
 
 // Tool is one tool of a set: its name, what it does, and its input schema.
@@ -127,7 +128,8 @@ var answersSchema = strMap("answers to the questions quickagent_show lists, by q
 // helperTools are Agentry Helper's tools, which reach the application's own
 // operations, each under the application's own consent; none changes a
 // setting's value, starts or stops an agent, publishes, signs in or touches
-// a credential.
+// a credential. Submitting and managing the person's QuickAgents is the
+// publisher part's, which Agentry Helper does not have.
 var helperTools = []Tool{
 	{"registry_search", "Search Agentry's registry for QuickAgents by what they do. Returns each match's reference, summary and rating.",
 		obj(map[string]any{"query": str("what the QuickAgent should do, in a few words")}, "query")},
@@ -192,7 +194,9 @@ var recallTool = Tool{Recall, "Search what you and the person said in your earli
 
 // parts are the tools of each part, in the order Compose joins them. None
 // of them changes what an agent is given: the meeting tools are answered
-// only while the person lets the agent set up meeting recordings.
+// only while the person lets the agent set up meeting recordings, and the
+// publisher tools reach the person's QuickAgents, never the agent's own
+// grants.
 var parts = []struct {
 	name  string
 	tools []Tool
@@ -202,6 +206,7 @@ var parts = []struct {
 	{PartRecall, []Tool{recallTool}},
 	{PartHelper, helperTools},
 	{PartMeetings, meetingTools},
+	{PartPublisher, publisherTools},
 	{PartSubagents, subagentTools},
 }
 
