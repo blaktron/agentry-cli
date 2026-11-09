@@ -1286,7 +1286,7 @@ func TestRunPlanAsksNothingRecordsNothing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plan in words: %v", err)
 	}
-	if want := "plan: acme/demo@1.0.0 (autonomous) plan sha256 " + plan.PlanSha256 + "\nattestation: verified\ninstalled: not installed — a run fetches it\n" +
+	if want := "plan: acme/demo@1.0.0 (autonomous) plan sha256 " + plan.PlanSha256 + "\nattestation: verified\nmodel: anthropic (anthropic/claude-sonnet-5-5) on docker-agent\ninstalled: not installed — a run fetches it\n" +
 		"would ask: " + plan.Reason + "\nnothing asked, nothing recorded (--plan)\n"; words != want {
 		t.Fatalf("plan in words:\n%s\nwant:\n%s", words, want)
 	}
@@ -1418,7 +1418,7 @@ func TestRunPlanAsksNothingRecordsNothing(t *testing.T) {
 	}
 	// In words: nothing would be asked of a release that declares nothing.
 	words, _, err = runCLI(t, strings.NewReader(""), "run", "--local", pkg, "--plan", "--policy", policyPath)
-	if want := "plan: fixtures/pure-text@1.0.0 (autonomous) plan sha256 " + local.PlanSha256 + "\nattestation: local\ninstalled: not checked — a local directory is its own source\n" +
+	if want := "plan: fixtures/pure-text@1.0.0 (autonomous) plan sha256 " + local.PlanSha256 + "\nattestation: local\nmodel: anthropic (anthropic/claude-sonnet-5-5) on docker-agent\ninstalled: not checked — a local directory is its own source\n" +
 		"would refuse: a local workspace has no attestation; a run needs --allow-unsigned\nnothing asked, nothing recorded (--plan)\n"; err != nil || words != want {
 		t.Fatalf("plan in words of a local release: %v\n%s\nwant:\n%s", err, words, want)
 	}

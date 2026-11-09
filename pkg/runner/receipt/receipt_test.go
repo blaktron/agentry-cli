@@ -373,6 +373,9 @@ harness.image
 harness.imagePin
 harness.mode
 harness.model
+harness.savedModel
+harness.savedModel.id
+harness.savedModel.name
 inference
 inference.credits
 inference.inputTokens

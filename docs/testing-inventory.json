@@ -1283,6 +1283,23 @@
           "dependencyHints": []
         },
         {
+          "path": "cmd/agentry/cmd_run_model_test.go",
+          "tests": [
+            "TestARunPlanIsOnTheSavedModelItNames",
+            "TestARunOnAMissingSavedModelIsRefusedByName",
+            "TestModelIsRefusedForARunElsewhere",
+            "TestASavedModelWithNoKeyIsRefusedByNameBeforeTheRun",
+            "TestASavedModelWhoseSignInIsGoneIsRefusedByName",
+            "TestThePolicysCostBudgetRefusesARunOnASignInsSavedModel",
+            "TestAScheduleKeepsItsSavedModelWhenTheDefaultChanges",
+            "TestAScheduleOnAHarnessBlocksHarnessIsAssignedItsSavedModel"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "cmd/agentry/cmd_run_protocol_test.go",
           "tests": [
             "TestSessionProtocolGates",
@@ -4934,6 +4951,18 @@
           "dependencyHints": []
         },
         {
+          "path": "pkg/runner/compile/savedmodel_test.go",
+          "tests": [
+            "TestARunOnASavedModelResolvesOnlyItsOwnCredentialAndEndpoint",
+            "TestAHarnessBlocksKeyReachesNoRunOnAnotherProvider",
+            "TestARunOnASignInsSavedModelResolvesNoKey"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "pkg/runner/compile/signin_test.go",
           "tests": [
             "TestATokenFileSignInMountsOneReadOnlyFolderBesideThePlan",
@@ -7366,7 +7395,8 @@
             "TestAnUnrenewedTokenIsSaidSo",
             "TestASignInRunRefusesWhatItWasNotCompiledFor",
             "TestAPlanLimitEndsTheRunWithItsOwnOutcome",
-            "TestAPlanLimitEndsASession"
+            "TestAPlanLimitEndsASession",
+            "TestTheReceiptNamesThePlansSavedModel"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -8054,6 +8084,21 @@
           "fixtureEntryPoint": false,
           "dependencyHints": [
             "docker interface (real or fake)",
+            "source/file contract"
+          ]
+        },
+        {
+          "path": "pkg/runner/localrun/runmodel_test.go",
+          "tests": [
+            "TestTheHarnessFollowsTheSavedModelsCredential",
+            "TestAMissingSavedModelIsAPolicyRefusal",
+            "TestAHarnessBlocksSavedModelRunsOnItsHarness",
+            "TestAPlanIsReusedOnlyForTheSavedModelItWasCompiledOn"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
             "source/file contract"
           ]
         },
@@ -9465,6 +9510,23 @@
           ]
         },
         {
+          "path": "pkg/runner/policy/runmodel_test.go",
+          "tests": [
+            "TestARunIsOnTheSavedModelItNamesOrTheDefault",
+            "TestARunNamingAMissingSavedModelIsRefusedNeverRunOnTheDefault",
+            "TestARunsViewIsItsSavedModelsProviderAlone",
+            "TestAHarnessBlocksSavedModelRunsOnItsBlocksHarness",
+            "TestAHarnessBlockAppliesToItsOwnProviderAlone",
+            "TestTheDefaultMayMoveOffTheProviderTheHarnessBlocksAreFor"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
+          ]
+        },
+        {
           "path": "pkg/runner/policy/signin_test.go",
           "tests": [
             "TestAModelSignInKindIsHeldToItsProvider",
@@ -10120,7 +10182,8 @@
             "TestParseSystemdVersion",
             "TestLingerTurnedOnAndOffOnlyByTheCLI",
             "TestLingerThePersonTurnedOnIsLeftOn",
-            "TestLingerRefusedByPolkitIsNotRecorded"
+            "TestLingerRefusedByPolkitIsNotRecorded",
+            "TestASchedulesSealHoldsOnlyItsSavedModelsKey"
           ],
           "fuzz": [],
           "benchmarks": [],

@@ -40,6 +40,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/profile"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
+	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/pkg/runner/targethost"
 	"github.com/blaktron/agentry-cli/pkg/schedule"
 )
@@ -208,6 +209,9 @@ type runSpecFlags struct {
 	timeout, maxTurns        int
 	maxCost                  float64
 	adapter, policyPath      string
+	// model is --model: the saved model each fire runs on, by name or id;
+	// empty for the default.
+	model string
 	// deliverTo is --deliver-to and destinations --destination: where each
 	// fire sends what it produced.
 	deliverTo                                   string
@@ -272,6 +276,9 @@ func newScheduleAddCmd() *cobra.Command {
 			if (ref == "") == (spec.local == "") {
 				return usageError(cmd, errors.New("pass exactly one of ns/name[@range] or --local DIR"))
 			}
+			if on != "" && spec.model != "" {
+				return engine.Classify(engine.ExitUsage, errors.New("--model chooses among this computer's saved models, and a schedule on a remote runhost runs on the model the runhost keeps (agentry runhost model)"))
+			}
 			if on != "" && check {
 				return scheduleCheck(cmd, ref, name, out, on, spec, when, scheduleNow())
 			}
@@ -323,6 +330,7 @@ func newScheduleAddCmd() *cobra.Command {
 	f.IntVar(&spec.maxTurns, "max-turns", -1, "override the policy tool-call budget (0 = unlimited)")
 	f.Float64Var(&spec.maxCost, "max-cost", -1, "override the policy cost budget in USD (0 = unlimited)")
 	f.StringVar(&spec.adapter, "adapter", "", "harness adapter (default: the run's)")
+	f.StringVar(&spec.model, "model", "", "the saved model every run of this schedule is on, by name or id (default: this computer's default saved model, whichever it is at each run; see agentry models list)")
 	f.StringVar(&spec.policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml)")
 	f.StringVar(&spec.deliverTo, "deliver-to", "", "copy each run's deliverables to FOLDER/<QuickAgent>/<date time> <title>/ (absolute, or beginning with ~; otherwise deliver.folder in the config applies)")
 	f.StringArrayVar(&spec.destinations, "destination", nil, "send each run's result and deliverables to this saved destination (repeatable; see agentry destinations)")
@@ -344,6 +352,9 @@ func newScheduleAddCmd() *cobra.Command {
 func scheduleAdd(cmd *cobra.Command, ref, name, out string, spec runSpecFlags, when schedule.Recurrence, now time.Time, yes bool) error {
 	sc, err := scheduleFromFlags(name, out, spec, when, now)
 	if err != nil {
+		return err
+	}
+	if err := assignScheduleModel(&sc, spec.model); err != nil {
 		return err
 	}
 	errOut := cmd.ErrOrStderr()
@@ -562,6 +573,12 @@ func schedulePreview(cmd *cobra.Command, sc schedule.Schedule, ref string) (*run
 	if sc.Run.Policy != "" {
 		args = append(args, "--policy", sc.Run.Policy)
 	}
+	if sc.Run.Model != "" {
+		args = append(args, "--model", sc.Run.Model)
+	}
+	if sc.Run.Adapter != "" {
+		args = append(args, "--adapter", sc.Run.Adapter)
+	}
 	var stdout bytes.Buffer
 	saved := flags.jsonOut
 	flags.jsonOut = true
@@ -654,6 +671,11 @@ func baseRunArgs(sc schedule.Schedule) []string {
 	if r.Adapter != "" {
 		args = append(args, "--adapter", r.Adapter)
 	}
+	// The saved model the schedule names, by id: a fire runs on it or is
+	// refused, never on the default.
+	if r.Model != "" {
+		args = append(args, "--model", r.Model)
+	}
 	for _, h := range r.Hosts {
 		args = append(args, "--"+hostKeyPinFlag, h.ID+"="+h.HostKey)
 	}
@@ -682,14 +704,11 @@ func fireGaps(sc schedule.Schedule) []string {
 	if err != nil {
 		return []string{err.Error()}
 	}
-	pf, err := policy.Resolve(sc.Run.Policy)
+	rm, err := scheduleRunModel(sc)
 	if err != nil {
 		return []string{err.Error()}
 	}
-	pol, _, err := policy.EnsureDefault(pf.Path)
-	if err != nil {
-		return []string{err.Error()}
-	}
+	pol := rm.Policy
 	m, ns, name, err := scheduledManifest(home, sc)
 	if err != nil {
 		return []string{err.Error()}
@@ -928,6 +947,12 @@ func probeGaps(sc schedule.Schedule, credential string) []string {
 	if sc.Run.Policy != "" {
 		e.Args = append(e.Args, "--policy", sc.Run.Policy)
 	}
+	if sc.Run.Model != "" {
+		e.Args = append(e.Args, "--model", sc.Run.Model)
+	}
+	if sc.Run.Adapter != "" {
+		e.Args = append(e.Args, "--adapter", sc.Run.Adapter)
+	}
 	out, err := alarm.Probe(e)
 	if err == nil {
 		return nil
@@ -947,6 +972,8 @@ func probeGaps(sc schedule.Schedule, credential string) []string {
 func newScheduleProbeCmd() *cobra.Command {
 	var (
 		policyPath string
+		model      string
+		adapter    string
 		report     string
 		env        []string
 	)
@@ -962,7 +989,7 @@ func newScheduleProbeCmd() *cobra.Command {
 			if err := applyAlarmEnv(env); err != nil {
 				gaps = []string{err.Error()}
 			} else {
-				gaps = schedulerContextGaps(cmd, policyPath)
+				gaps = schedulerContextGaps(cmd, schedule.Schedule{Run: schedule.RunSpec{Policy: policyPath, Model: model, Adapter: adapter}})
 			}
 			var b strings.Builder
 			for _, g := range gaps {
@@ -986,6 +1013,8 @@ func newScheduleProbeCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&policyPath, "policy", "", "operator policy file")
+	cmd.Flags().StringVar(&model, "model", "", "the saved model the schedule names")
+	cmd.Flags().StringVar(&adapter, "adapter", "", "the harness adapter the schedule names")
 	cmd.Flags().StringVar(&report, "report", "", "also write the result to FILE")
 	bindAlarmEnv(cmd, &env)
 	return cmd
@@ -1023,8 +1052,8 @@ func writeReport(path, text string) error {
 }
 
 // schedulerContextGaps is the probe's check: the docker daemon answers,
-// and the model key the policy names is in the keychain.
-func schedulerContextGaps(cmd *cobra.Command, policyPath string) []string {
+// and the key of the saved model the schedule runs on is in the keychain.
+func schedulerContextGaps(cmd *cobra.Command, sc schedule.Schedule) []string {
 	var gaps []string
 	if err := dockerx.New().Available(cmd.Context()); err != nil {
 		g := err.Error()
@@ -1033,14 +1062,11 @@ func schedulerContextGaps(cmd *cobra.Command, policyPath string) []string {
 		}
 		gaps = append(gaps, g)
 	}
-	pf, err := policy.Resolve(policyPath)
+	rm, err := scheduleRunModel(sc)
 	if err != nil {
 		return append(gaps, err.Error())
 	}
-	pol, _, err := policy.EnsureDefault(pf.Path)
-	if err != nil {
-		return append(gaps, err.Error())
-	}
+	pol := rm.Policy
 	if pol.Model.APIKeyEnv != "" && pol.Model.APIKeySource == modelkey.SourceKeyring {
 		ok, err := modelkey.Present(pol.Model.KeyProvider())
 		switch {
@@ -1408,6 +1434,13 @@ type scheduleViewJSON struct {
 	// Held is why the schedule does not run now (managed settings that
 	// forbid the Unsafe Mode its consents were given in); "" when it runs.
 	Held string `json:"held,omitempty"`
+	// SavedModel is the saved model its next run is on, and FollowsDefault
+	// whether that is the default's because the schedule names none.
+	// ModelRefusal is why its next run would be refused for its model
+	// instead (a saved model this computer no longer has).
+	SavedModel     *spec.SavedModelRef `json:"savedModel,omitempty"`
+	FollowsDefault bool                `json:"followsDefault,omitempty"`
+	ModelRefusal   string              `json:"modelRefusal,omitempty"`
 }
 
 // installedAlarms is the ids the system's scheduler holds an entry for,
@@ -1445,6 +1478,12 @@ func scheduleView(store schedule.Store, sc schedule.Schedule, now time.Time, ala
 	v.Alarm = alarms[sc.ID]
 	v.AlarmUnknown = alarms == nil
 	v.Held = scheduleHold(sc)
+	if rm, err := scheduleRunModel(sc); err != nil {
+		v.ModelRefusal = err.Error()
+	} else if rm.Saved.ID != "" {
+		v.SavedModel = &spec.SavedModelRef{ID: rm.Saved.ID, Name: rm.Saved.Name}
+		v.FollowsDefault = sc.Run.Model == "" && rm.Policy.HarnessOf(rm.Saved) == ""
+	}
 	return v
 }
 
@@ -1545,6 +1584,14 @@ func newScheduleShowCmd() *cobra.Command {
 			w := cmd.OutOrStdout()
 			_, _ = fmt.Fprintf(w, "%s (%s)\nquickagent: %s@%s %s\nwhen: %s\nnext: %s\noutput folder: %s\n",
 				sc.Name, sc.ID, sc.Ref, sc.Version, sc.Digest, v.Describe, nextLabel(v), sc.Run.OutDir)
+			switch {
+			case v.ModelRefusal != "":
+				_, _ = fmt.Fprintf(w, "model: refused: %s\n", v.ModelRefusal)
+			case v.SavedModel != nil && v.FollowsDefault:
+				_, _ = fmt.Fprintf(w, "model: the default, now %s\n", v.SavedModel.Name)
+			case v.SavedModel != nil:
+				_, _ = fmt.Fprintf(w, "model: %s (%s)\n", v.SavedModel.Name, v.SavedModel.ID)
+			}
 			if sc.SignedOut {
 				_, _ = fmt.Fprintln(w, "runs while signed out: yes (its keys are sealed in an encrypted systemd credential)")
 			}
@@ -1588,14 +1635,16 @@ func newScheduleEditCmd() *cobra.Command {
 		timeout      int
 		maxTurns     int
 		maxCost      float64
+		model        string
 		signedOut    bool
 		yes          bool
 	)
 	cmd := &cobra.Command{
 		Use:   "edit <id>",
-		Short: "Change a schedule's repeat, name, output folder, delivery or limits",
+		Short: "Change a schedule's repeat, name, output folder, delivery, saved model or limits",
 		Long: "Change when a schedule runs, its name, its output folder, where each run's\n" +
-			"deliverables go (--deliver-to, --destination) or its limits. What\n" +
+			"deliverables go (--deliver-to, --destination), the saved model it runs on\n" +
+			"(--model; an empty value names none again) or its limits. What\n" +
 			"it runs and with which inputs is fixed when it is made: for a new version or\n" +
 			"other inputs, remove it and add a new one.\n\n" +
 			"--signed-out (Linux with Docker Engine) makes it also run while you are\n" +
@@ -1673,6 +1722,20 @@ func newScheduleEditCmd() *cobra.Command {
 			if f.Changed("max-cost") {
 				sc.Run.MaxCost = maxCost
 			}
+			modelChanged := false
+			if f.Changed("model") {
+				before := sc.Run.Model
+				if err := assignScheduleModel(&sc, model); err != nil {
+					return err
+				}
+				// A fire on the new model needs that model's key where the
+				// system's scheduler reads it.
+				if modelChanged = sc.Run.Model != before; modelChanged {
+					if gaps := fireGaps(sc); len(gaps) > 0 {
+						return needsErr(sc, gaps, "")
+					}
+				}
+			}
 			turnOn := f.Changed("signed-out") && signedOut && !sc.SignedOut
 			turnOff := f.Changed("signed-out") && !signedOut && sc.SignedOut
 			st, _ := store.State(sc.ID)
@@ -1701,10 +1764,10 @@ func newScheduleEditCmd() *cobra.Command {
 			if turnOff {
 				sc.SignedOut = false
 			}
-			// A signed-out fire reads its destinations' credentials from the
-			// keys sealed beside it, so a changed set seals them again before
-			// the change is kept.
-			if destinationsChanged && sc.SignedOut && !turnOn && !reseal && !st.Ended {
+			// A signed-out fire reads its model key and its destinations'
+			// credentials from the keys sealed beside it, so a changed model
+			// or set seals them again before the change is kept.
+			if (destinationsChanged || modelChanged) && sc.SignedOut && !turnOn && !reseal && !st.Ended {
 				cred, err := store.CredentialPath(sc.ID)
 				if err != nil {
 					return err
@@ -1756,6 +1819,7 @@ func newScheduleEditCmd() *cobra.Command {
 	f.IntVar(&timeout, "timeout", 0, "the policy timeout override (seconds; 0 = the policy's)")
 	f.IntVar(&maxTurns, "max-turns", -1, "the tool-call budget override (-1 = the policy's, 0 = unlimited)")
 	f.Float64Var(&maxCost, "max-cost", -1, "the cost budget override in USD (-1 = the policy's, 0 = unlimited)")
+	f.StringVar(&model, "model", "", "the saved model each run is on, by name or id (agentry models list); an empty value follows this computer's default, or, for a schedule on a harness whose policy block names a model, that block's saved model")
 	f.StringVar(&deliverTo, "deliver-to", "", "the folder each run copies its deliverables to (absolute, or beginning with ~); empty stops it")
 	f.StringArrayVar(&destinations, "destination", nil, "the saved destinations each run sends its result and deliverables to, replacing the set (repeatable); one empty value clears it")
 	f.BoolVar(&signedOut, "signed-out", false, "also run while you are signed out (Linux with Docker Engine); =false to run only while signed in")
@@ -2019,4 +2083,56 @@ func scheduleHold(sc schedule.Schedule) string {
 // heldError is the policy refusal of a schedule held by managed settings.
 func heldError(reason string) error {
 	return engine.Classify(engine.ExitPolicy, &compile.PolicyRefusal{Reason: reason + "; this schedule's consents were given in Unsafe Mode"})
+}
+
+// scheduleRunModel is the saved model a fire of sc runs on and the policy
+// it compiles from: the one its record names, else, for a schedule on a
+// harness whose policy block names a model, that block's saved model, else
+// the default. A record naming a saved model this computer no longer has
+// is refused (exit 11), never run on the default.
+func scheduleRunModel(sc schedule.Schedule) (localrun.RunModel, error) {
+	pol, err := schedulePolicy(sc)
+	if err != nil {
+		return localrun.RunModel{}, err
+	}
+	return localrun.ChooseRunModel(pol, sc.Run.Model, sc.Run.Adapter)
+}
+
+// schedulePolicy is the policy file sc names (the default's when it names
+// none), as it was read.
+func schedulePolicy(sc schedule.Schedule) (*policy.Policy, error) {
+	pf, err := policy.Resolve(sc.Run.Policy)
+	if err != nil {
+		return nil, err
+	}
+	pol, _, err := policy.EnsureDefault(pf.Path)
+	if err != nil {
+		return nil, engine.Classify(engine.ExitPolicy, err)
+	}
+	return pol, nil
+}
+
+// assignScheduleModel records in sc the saved model its fires run on, by
+// id: the one ref names (refused, exit 11, when this computer has none of
+// that name or id), else, for a schedule on a harness whose policy block
+// names a model, that block's saved model, which is what a run on that
+// harness was asked for. An empty record follows the default.
+func assignScheduleModel(sc *schedule.Schedule, ref string) error {
+	pol, err := schedulePolicy(*sc)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(ref) == "" {
+		sc.Run.Model = ""
+		if sm, ok := pol.HarnessModel(sc.Run.Adapter); ok {
+			sc.Run.Model = sm.ID
+		}
+		return nil
+	}
+	sm, err := pol.RunModel(ref, "")
+	if err != nil {
+		return engine.Classify(engine.ExitPolicy, err)
+	}
+	sc.Run.Model = sm.ID
+	return nil
 }

@@ -406,8 +406,9 @@ type modelUser struct {
 }
 
 // modelUsers are the schedules on this computer that name one of the saved
-// models sms, by id or by name.
-func modelUsers(home string, sms []policy.SavedModel) ([]modelUser, []schedule.Schedule, error) {
+// models sms, by id or by name, or that run on the harness whose block in
+// pol one of them was read from and name no saved model, which run on it.
+func modelUsers(home string, pol *policy.Policy, sms []policy.SavedModel) ([]modelUser, []schedule.Schedule, error) {
 	list, _, err := schedule.StoreIn(home).List()
 	if err != nil {
 		return nil, nil, err
@@ -416,6 +417,11 @@ func modelUsers(home string, sms []policy.SavedModel) ([]modelUser, []schedule.S
 	var named []schedule.Schedule
 	for _, sc := range list {
 		ref := strings.TrimSpace(sc.Run.Model)
+		if ref == "" {
+			if sm, ok := pol.HarnessModel(sc.Run.Adapter); ok {
+				ref = sm.ID
+			}
+		}
 		if ref == "" {
 			continue
 		}
@@ -480,7 +486,7 @@ func removeModels(cmd *cobra.Command, pol *policy.Policy, path, what string, sms
 	if err != nil {
 		return removedOut{}, err
 	}
-	users, named, err := modelUsers(home, sms)
+	users, named, err := modelUsers(home, pol, sms)
 	if err != nil {
 		return removedOut{}, err
 	}

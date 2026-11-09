@@ -557,9 +557,19 @@ type Harness struct {
 	// account or a token.
 	CredentialKind string `json:"credentialKind,omitempty"`
 	Model          string `json:"model"`
+	// SavedModel is the saved model the run was on: its id and the
+	// person's name for it, beside the provider and model id Model names.
+	// Empty in envelopes of runs on a policy with no saved model.
+	SavedModel *SavedModel `json:"savedModel,omitempty"`
 	// Mode is the run mode (autonomous or interactive); empty in
 	// envelopes written before run modes existed.
 	Mode string `json:"mode,omitempty"`
+}
+
+// SavedModel names the saved model a run was on. Never a credential.
+type SavedModel struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 // Usage is the measured cost of the run.

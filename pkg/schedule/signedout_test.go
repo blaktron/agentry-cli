@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -281,5 +282,34 @@ func TestLingerRefusedByPolkitIsNotRecorded(t *testing.T) {
 	}
 	if rec, _ := s.lingerRecord(); rec.Ours {
 		t.Fatal("a refused enable-linger was recorded as the CLI's")
+	}
+}
+
+// A schedule on a saved model seals its provider's key alone, never the
+// default's.
+func TestASchedulesSealHoldsOnlyItsSavedModelsKey(t *testing.T) {
+	pol := policy.Default()
+	pol.Model.APIKeySource = modelkey.SourceKeyring
+	if err := pol.AddProvider("custom-lab", policy.Provider{APIKeyEnv: "LAB_API_KEY", APIKeySource: modelkey.SourceKeyring,
+		BaseURL: "https://lab.example/v1", ProxyAllow: []string{"lab.example:443"}}); err != nil {
+		t.Fatal(err)
+	}
+	lab, err := pol.AddModel(policy.SavedModel{Name: "Lab", Provider: "custom-lab", Model: "qwen3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := pol.ForRun(lab)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if required, _ := SealAccounts(view); !slices.Equal(required, []string{"provider:custom-lab"}) {
+		t.Fatalf("a schedule on Lab seals %v", required)
+	}
+	def, err := pol.ForRun(pol.DefaultModel())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if required, _ := SealAccounts(def); !slices.Equal(required, []string{"provider:anthropic"}) {
+		t.Fatalf("a schedule on the default seals %v", required)
 	}
 }
