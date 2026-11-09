@@ -416,6 +416,46 @@ func TestUnknownLockedSettingRefusesEveryRun(t *testing.T) {
 	}
 }
 
+// A row the catalogue knows and this client does not apply is held to as an
+// unknown one is: locked, it refuses every run and names the row; as a
+// default it is passed over. Once the client applies it, it is a row like
+// any other.
+func TestALockedRowThisClientDoesNotApplyRefusesEveryRun(t *testing.T) {
+	was := enforced
+	t.Cleanup(func() { enforced = was })
+	enforced = nil
+
+	k := newSigner(t)
+	s := setup(t, k, false)
+	s.serve(k.envelope(t, managedsettings.PayloadType, docFor(s.URL, 1, forbidden())))
+	if _, err := refresh(t, s); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	got := Current().RunRefusal()
+	if !strings.Contains(got, managedsettings.UnsafeMode) || !strings.Contains(got, "does not apply") || !strings.Contains(got, "acme") {
+		t.Errorf("RunRefusal = %q", got)
+	}
+
+	s.serve(k.envelope(t, managedsettings.PayloadType, docFor(s.URL, 2, map[string]managedsettings.Setting{
+		managedsettings.UnsafeMode: {Value: str(managedsettings.UnsafeModeForbidden), Locked: false},
+	})))
+	if _, err := refresh(t, s); err != nil {
+		t.Fatal(err)
+	}
+	if got := Current().RunRefusal(); got != "" {
+		t.Errorf("a default this client does not apply refused runs: %q", got)
+	}
+
+	enforced = was
+	s.serve(k.envelope(t, managedsettings.PayloadType, docFor(s.URL, 3, forbidden())))
+	if _, err := refresh(t, s); err != nil {
+		t.Fatal(err)
+	}
+	if got := Current().RunRefusal(); got != "" {
+		t.Errorf("a locked row this client applies refused every run: %q", got)
+	}
+}
+
 func TestSyncAsksOnlyWhenTheAnswerIsOldAndKeepsTheCacheOffline(t *testing.T) {
 	k := newSigner(t)
 	s := setup(t, k, false)

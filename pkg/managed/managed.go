@@ -36,9 +36,11 @@ const Route = "/api/v1/user/managed-settings"
 // registry again.
 const FetchInterval = time.Hour
 
-// enforced are the settings this client applies. A document's other known
-// rows are shown but not applied, and rows the catalogue does not know are
-// judged by Document.Unknown.
+// enforced are the settings this client applies: the list is this
+// client's own, not the catalogue's. A registry may sign rows that a newer
+// catalogue holds and this client cannot yet hold a member to; a locked one
+// refuses every run, exactly as a row the catalogue does not know does, and
+// a default one is shown and passed over.
 var enforced = []string{managedsettings.UnsafeMode}
 
 // Applies says this client applies the setting.
@@ -78,6 +80,22 @@ func (s *State) Applied() []string {
 	}
 	slices.Sort(out)
 	return out
+}
+
+// lockedNotApplied is the first locked setting, by id, that the
+// catalogue knows and this client does not apply, or "".
+func (s *State) lockedNotApplied() string {
+	ids := make([]string, 0, len(s.Document.Settings))
+	for id, v := range s.Document.Settings {
+		if _, known := managedsettings.Lookup(id); known && v.Locked && !Applies(id) {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return ""
+	}
+	slices.Sort(ids)
+	return ids[0]
 }
 
 // Summary is how one line names the document: "managed by acme (version
@@ -132,6 +150,9 @@ func (e Effective) RunRefusal() string {
 			if u.Locked {
 				return fmt.Sprintf("%s's managed settings lock %s, which this version of Agentry does not know; update Agentry to run", d.Document.Org, u.ID)
 			}
+		}
+		if id := d.lockedNotApplied(); id != "" {
+			return fmt.Sprintf("%s's managed settings lock %s, which this version of Agentry does not apply; update Agentry to run", d.Document.Org, id)
 		}
 	}
 	if len(e.Problems) > 0 {
