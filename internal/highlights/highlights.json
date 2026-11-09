@@ -1,6 +1,15 @@
 {
   "versions": [
     {
+      "version": "0.7.41",
+      "highlights": [
+        "The Assistant has new tools to list, fetch, revise, fork and submit the QuickAgents you publish.",
+        "Agentry Desktop answers those tools in a coming update, asking you before each change; until then they say so.",
+        "A new QuickAgent the Assistant submits is private, and it cannot delete a QuickAgent or make one public.",
+        "No published persistent agent can be given those tools: they belong to the built-in Assistant alone."
+      ]
+    },
+    {
       "version": "0.7.40",
       "highlights": [
         "When the registry rotates its signing key and the old key hands over to the new one, Agentry trusts the new key itself.",
