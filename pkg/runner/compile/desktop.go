@@ -43,14 +43,17 @@ func desktopCap(d *manifest.Desktop, in Inputs) (*spec.DesktopCap, error) {
 	if !persistent && (in.Web || in.Review || in.Source == "builtin") {
 		return nil, &PolicyRefusal{Reason: "a built-in is never granted an application on your computer, nor is one granted beside the web tools or the review grant"}
 	}
-	if !in.Policy.Desktop.Allowed() {
-		return nil, &PolicyRefusal{Reason: policy.DesktopRefused}
+	if r := in.Policy.DesktopRefusal(); r != "" {
+		return nil, &PolicyRefusal{Reason: r}
 	}
 	c := &spec.DesktopCap{ComputerUse: string(d.ComputerUse)}
 	switch d.ComputerUse {
 	case "":
 	case manifest.ComputerUseApp, manifest.ComputerUseScreen:
 		if d.ComputerUse == manifest.ComputerUseScreen {
+			if r := in.Policy.Refused(policy.HeldScreen); r != "" {
+				return nil, &PolicyRefusal{Reason: r}
+			}
 			switch {
 			case in.Policy.Desktop.AllowScreen:
 				c.ScreenAllowedBy = spec.ScreenByPolicy
@@ -68,7 +71,9 @@ func desktopCap(d *manifest.Desktop, in Inputs) (*spec.DesktopCap, error) {
 	default:
 		return nil, &PolicyRefusal{Reason: fmt.Sprintf("the release's computer use %q is neither app nor screen", d.ComputerUse)}
 	}
-	switch {
+	switch r := in.Policy.CustomServersRefusal(); {
+	case r != "":
+		c.PersonServers, c.PersonServersRefusal = spec.PersonServersRefused, r
 	case in.Policy.Desktop.CustomServersAllowed():
 		c.PersonServers = spec.PersonServersAllowed
 	case in.Unsafe != nil:

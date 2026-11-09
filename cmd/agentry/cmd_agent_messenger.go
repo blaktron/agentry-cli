@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/blaktron/agentry-cli/pkg/managed"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/persistent"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
@@ -121,9 +122,9 @@ func messengerArgs(agent, kind string) (persistent.Agent, messenger.Kind, error)
 func homeMessengerAllowed(home string) func(string) (bool, string) {
 	pol, _, err := policy.Load(policy.PathIn(home))
 	if err != nil {
-		return func(string) (bool, string) { return true, "" }
+		pol = policy.Default()
 	}
-	return pol.MessengerAllowed
+	return managed.Hold(pol).MessengerAllowed
 }
 
 // checkHomeserver is a Matrix account's homeserver as add keeps it, refused

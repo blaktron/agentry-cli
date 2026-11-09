@@ -31,6 +31,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blaktron/agentry-cli/pkg/managed"
 	"github.com/blaktron/agentry-cli/runnerimage/applink"
 )
 
@@ -180,7 +181,7 @@ func (s *Supervisor) selfConfigure(raw json.RawMessage) applink.Answer {
 	var saved Config
 	err := s.updateConfig(func(c *Config) error {
 		a := s.agent()
-		if _, err := applyChange(s.opts.Home, a, c, Change{Name: args.Name, Personality: args.Personality}, s.policy().MalwareCheckOn()); err != nil {
+		if _, err := applyChange(s.opts.Home, a, c, Change{Name: args.Name, Personality: args.Personality}, managed.Hold(s.policy()).MalwareCheckOn()); err != nil {
 			return err
 		}
 		c.PersonaGiven = personaKey(a, *c)

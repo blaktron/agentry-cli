@@ -26,6 +26,7 @@ import (
 	"github.com/blaktron/agentry/pkg/manifest"
 
 	"github.com/blaktron/agentry-cli/pkg/knowledge"
+	"github.com/blaktron/agentry-cli/pkg/managed"
 	"github.com/blaktron/agentry-cli/pkg/runner/mcpinstall"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 )
@@ -881,7 +882,10 @@ func Configure(ctx context.Context, home string, a Agent, client string, ch Chan
 // that policy is missing or unreadable, as a new one has it.
 func HomeMalwareCheck(home string) bool {
 	pol, _, err := policy.Load(policy.PathIn(home))
-	return err == nil && pol.MalwareCheckOn()
+	if err != nil {
+		return managed.Hold(policy.Default()).MalwareCheckOn()
+	}
+	return managed.Hold(pol).MalwareCheckOn()
 }
 
 // AgreeToRoster records the person's agreement to everything the agent's

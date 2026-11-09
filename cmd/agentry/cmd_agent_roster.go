@@ -22,6 +22,7 @@ import (
 
 	"github.com/blaktron/agentry/pkg/manifest"
 
+	"github.com/blaktron/agentry-cli/pkg/managed"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/mcpinstall"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
@@ -660,8 +661,10 @@ func checkAgentServerAdvisories(cmd *cobra.Command, srv manifest.MCPServer, allo
 	statuses := mcpinstall.CheckVulnerabilities(cmd.Context(), nil, registryURL(), []manifest.MCPServer{srv})
 	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "the MCP server, per the registry: %s\n", mcpinstall.Summary(statuses))
 	pol, _, _, err := agentPolicy("")
-	allowPolicy := err == nil && pol.MCPServers.AllowVulnerable
-	if _, err := vulnerabilityVerdict(statuses, registryURL(), allow, allowPolicy); err != nil {
+	if err != nil {
+		pol = policy.Default()
+	}
+	if _, err := heldVulnerabilityVerdict(statuses, registryURL(), allow, managed.Hold(pol)); err != nil {
 		return engine.Classify(engine.ExitPolicy, err)
 	}
 	return nil

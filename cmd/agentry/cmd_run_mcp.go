@@ -66,12 +66,7 @@ func allSecretNames(m *manifest.Manifest) []string {
 // happen.
 func vulnerabilityVerdict(statuses []mcpinstall.VulnStatus, registry string, allowFlag, allowPolicy bool) (string, error) {
 	line := "checked against " + registry + ": " + mcpinstall.Summary(statuses)
-	var refusing []mcpinstall.VulnStatus
-	for _, s := range statuses {
-		if s.Refuses() {
-			refusing = append(refusing, s)
-		}
-	}
+	refusing := refusedServers(statuses)
 	if len(refusing) == 0 {
 		return line, nil
 	}
@@ -93,4 +88,36 @@ func vulnerabilityVerdict(statuses []mcpinstall.VulnStatus, registry string, all
 	}
 	return line, receipt.WithReason(fmt.Errorf("declared MCP server refused by the registry's vulnerability scan: %s — pin a fixed version, or override with --allow-vulnerable-mcp or policy mcpServers.allowVulnerable",
 		strings.Join(parts, "; ")), receipt.ReasonMCPVulnerable, "", names...)
+}
+
+// heldVulnerabilityVerdict is vulnerabilityVerdict under pol, a policy held
+// to the managed settings: where an organization forbids a vulnerable
+// server, neither the flag nor the policy admits one, and the refusal names
+// the organization.
+func heldVulnerabilityVerdict(statuses []mcpinstall.VulnStatus, registry string, allowFlag bool, pol *policy.Policy) (string, error) {
+	held := pol.Refused(policy.HeldVulnerableServers)
+	if held == "" {
+		return vulnerabilityVerdict(statuses, registry, allowFlag, pol != nil && pol.MCPServers.AllowVulnerable)
+	}
+	line, err := vulnerabilityVerdict(statuses, registry, false, false)
+	if err == nil {
+		return line, nil
+	}
+	var names []string
+	for _, s := range refusedServers(statuses) {
+		names = append(names, s.Server)
+	}
+	return line, receipt.WithReason(fmt.Errorf("declared MCP server refused by the registry's vulnerability scan (%s): pin a fixed version; %s", strings.Join(names, ", "), held),
+		receipt.ReasonMCPVulnerable, "", names...)
+}
+
+// refusedServers are the statuses whose advisories the gate refuses.
+func refusedServers(statuses []mcpinstall.VulnStatus) []mcpinstall.VulnStatus {
+	var out []mcpinstall.VulnStatus
+	for _, s := range statuses {
+		if s.Refuses() {
+			out = append(out, s)
+		}
+	}
+	return out
 }

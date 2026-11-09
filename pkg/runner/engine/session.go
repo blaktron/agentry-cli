@@ -110,7 +110,7 @@ func startSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 	}
 	receiptsDir := filepath.Join(p.OutDir, "receipts")
 	env.Receipts = receipt.Receipts{Dir: receiptsDir, RunPlanSHA256: planHash}
-	if err := checkManaged(p); err != nil {
+	if err := applyManaged(&p); err != nil {
 		_, cerr := fail(env, nil, err)
 		return nil, cerr
 	}

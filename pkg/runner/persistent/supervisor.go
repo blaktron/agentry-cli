@@ -16,6 +16,7 @@ import (
 
 	"github.com/blaktron/agentry/pkg/manifest"
 
+	"github.com/blaktron/agentry-cli/pkg/managed"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/inference"
@@ -315,7 +316,7 @@ func Start(ctx context.Context, opts Options) (*Supervisor, error) {
 	if !cfg.Enabled {
 		return nil, fmt.Errorf("the %s agent is not enabled: agentry agent enable %s", a.Name, a.Name)
 	}
-	if pending := Unconsented(BuildRosterUnder(a, cfg, nil, opts.Policy.MalwareCheckOn()), cfg); len(pending) > 0 {
+	if pending := Unconsented(BuildRosterUnder(a, cfg, nil, managed.Hold(opts.Policy).MalwareCheckOn()), cfg); len(pending) > 0 {
 		return nil, &ConsentError{Agent: a.Name, Entries: pending}
 	}
 	// The agent runs on the saved model its configuration names, else the
@@ -405,7 +406,7 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 		return err
 	}
 	pol, polSHA := s.policy(), s.policySHA()
-	roster := BuildRosterUnder(a, cfg, nil, pol.MalwareCheckOn())
+	roster := BuildRosterUnder(a, cfg, nil, managed.Hold(pol).MalwareCheckOn())
 	// Every segment is held to the person's agreement, not only the first:
 	// a config.yaml changed some other way does not widen the next one.
 	if pending := Unconsented(roster, cfg); len(pending) > 0 {
@@ -1098,7 +1099,7 @@ func (s *Supervisor) Change(ch Change) (Roster, error) {
 		s.seg.Unlock()
 	}
 	err := s.updateConfig(func(c *Config) error {
-		_, err := applyChange(s.opts.Home, s.agent(), c, ch, s.policy().MalwareCheckOn())
+		_, err := applyChange(s.opts.Home, s.agent(), c, ch, managed.Hold(s.policy()).MalwareCheckOn())
 		return err
 	})
 	if err != nil {
@@ -1170,7 +1171,7 @@ func (s *Supervisor) Roster() Roster {
 	applied := s.applied
 	s.mu.Unlock()
 	a := s.agent()
-	r := BuildRosterUnder(a, cfg, &applied, s.policy().MalwareCheckOn())
+	r := BuildRosterUnder(a, cfg, &applied, managed.Hold(s.policy()).MalwareCheckOn())
 	// A server that is on and that the segment was not given is being
 	// installed, or is installed and joins at the next turn; one that
 	// waits for what the person must set up keeps saying so.

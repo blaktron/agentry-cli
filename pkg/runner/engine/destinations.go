@@ -39,6 +39,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/deliver"
 	"github.com/blaktron/agentry-cli/pkg/runner/destination"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
@@ -619,6 +620,9 @@ func Redeliver(ctx context.Context, d dockerx.Client, p RedeliverParams) ([]rece
 	}
 	if len(files) == 0 && resultSum(env.Result) == "" {
 		return nil, fmt.Errorf("the run in %s lists no deliverables and has no result", p.RunDir)
+	}
+	if reason := destinationRefusal(currentManaged(), Params{Destinations: p.Destinations}); reason != "" {
+		return nil, Classify(ExitPolicy, &compile.PolicyRefusal{Reason: reason})
 	}
 	e, err := dockerx.DescribeEngine(ctx, d)
 	if err != nil {
