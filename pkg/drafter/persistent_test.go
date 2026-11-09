@@ -289,7 +289,7 @@ func TestAPersistentRepairIsGivenTheRulesReportAndThePersona(t *testing.T) {
 	var task string
 	p := PostStep{
 		OutDir: out, Description: "An assistant named Pip.", Task: "An assistant named Pip.", Scan: webscan.Result{Verdict: webscan.Pass},
-		Ref: "agentry/drafter@1.21.0", Build: "test", Budgets: spec.Budgets{TimeoutSeconds: 900, MaxTurns: 60}, Checker: &postChecker{},
+		Ref: "agentry/drafter@1.22.0", Build: "test", Budgets: spec.Budgets{TimeoutSeconds: 900, MaxTurns: 60}, Checker: &postChecker{},
 		Repair: func(_ context.Context, rt RepairTurn) (*receipt.Envelope, error) {
 			task = rt.Task
 			return &receipt.Envelope{Status: "ok", RunID: rt.RunID, Result: json.RawMessage(`{"manifest": ` + fixed + `}`)}, nil

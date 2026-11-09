@@ -2347,7 +2347,8 @@
         {
           "path": "pkg/drafter/desktop_test.go",
           "tests": [
-            "TestADraftUsesThePersonsComputerThroughTheDesktopLine"
+            "TestADraftUsesThePersonsComputerThroughTheDesktopLine",
+            "TestTheGuidesDesktopLineIsValid"
           ],
           "fuzz": [],
           "benchmarks": [],
