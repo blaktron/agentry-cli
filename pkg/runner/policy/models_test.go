@@ -530,3 +530,103 @@ func TestAnEndpointOfYourOwnMayTakeNoKey(t *testing.T) {
 		t.Fatalf("a keychain source with no variable: %v", err)
 	}
 }
+
+// A saved model copied from another computer keeps its id where it is free,
+// replaces the one of its id or name in place (keeping that one's id, so
+// what names it stays on it), and is the default when it is the first.
+func TestPutModelKeepsACopysIDAndReplacesItsNamesake(t *testing.T) {
+	p := &Policy{}
+	pr := Provider{APIKeyEnv: "OPENAI_API_KEY", APIKeySource: "keyring", ProxyAllow: []string{"api.openai.com:443"}}
+	first, err := p.PutModel("openai", pr, SavedModel{ID: "0a1b2c3d", Name: "GPT", Model: "gpt-5"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ID != "0a1b2c3d" || p.Default != first.ID || p.Model.Name != "gpt-5" || p.Model.KeyProvider() != "openai" {
+		t.Fatalf("first = %+v, default %q, model %+v", first, p.Default, p.Model)
+	}
+	again, err := p.PutModel("openai", pr, SavedModel{ID: "99999999", Name: "gpt", Model: "gpt-5-mini"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.ID != first.ID || len(p.Models) != 1 || p.Models[0].Model != "gpt-5-mini" {
+		t.Fatalf("a namesake did not replace in place: %+v, %+v", again, p.Models)
+	}
+	custom := Provider{Name: "Lab", BaseURL: "http://lab:8000/v1", ProxyAllow: []string{"lab:8000"}}
+	second, err := p.PutModel("custom-lab", custom, SavedModel{ID: first.ID + "", Name: "Lab", Model: "qwen3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.ID != first.ID {
+		t.Fatalf("a copy of the same id is the same saved model: %+v", second)
+	}
+	if p.Models[0].Provider != "custom-lab" || len(p.UnusedProviders()) != 1 || p.UnusedProviders()[0] != "openai" {
+		t.Fatalf("models %+v, unused %v", p.Models, p.UnusedProviders())
+	}
+	if err := p.DropProvider("openai"); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.DropProvider("custom-lab"); err == nil {
+		t.Fatal("a provider a saved model names was dropped")
+	}
+	third, err := p.PutModel("anthropic", Provider{APIKeyEnv: "ANTHROPIC_API_KEY", ProxyAllow: []string{"api.anthropic.com:443"}}, SavedModel{ID: first.ID, Name: "Claude", Model: "claude-x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third.ID != first.ID {
+		t.Fatalf("an id in use is the saved model of that id: %+v", third)
+	}
+	fourth, err := p.PutModel("anthropic", Provider{APIKeyEnv: "ANTHROPIC_API_KEY", ProxyAllow: []string{"api.anthropic.com:443"}}, SavedModel{Name: "Opus", Model: "claude-opus"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fourth.ID == "" || fourth.ID == first.ID || p.Default != first.ID {
+		t.Fatalf("fourth %+v, default %q", fourth, p.Default)
+	}
+	if _, err := p.PutModel("anthropic", Provider{}, SavedModel{Name: "", Model: "m"}); err == nil {
+		t.Fatal("a saved model with no name was kept")
+	}
+	if _, err := p.PutModel("custom-x", Provider{}, SavedModel{Name: "X", Model: "m"}); err == nil {
+		t.Fatal("an endpoint with no address was kept")
+	}
+	path := filepath.Join(t.TempDir(), "policy.yaml")
+	q := Default()
+	q.ResetModels(Model{})
+	for i, sm := range p.Models {
+		providers, _, _ := p.SavedModels()
+		if _, err := q.PutModel(sm.Provider, providers[sm.Provider], sm); err != nil {
+			t.Fatalf("%d: %v", i, err)
+		}
+	}
+	text, back := saveAndRead(t, q, path)
+	if !strings.Contains(text, `policyVersion: "2"`) || len(back.Models) != 2 || back.Default != first.ID {
+		t.Fatalf("written:\n%s", text)
+	}
+}
+
+// The policy a single run carries holds that run's saved model alone, as
+// its default; ResetModels takes every list away again.
+func TestOnlyModelIsTheOneSavedModelAndResetTakesTheListsAway(t *testing.T) {
+	p, path := loadDefault(t)
+	if _, err := p.AddModel(SavedModel{Name: "Second", Provider: "anthropic", Model: "claude-y"}); err != nil {
+		t.Fatal(err)
+	}
+	lab := Provider{Name: "Lab", BaseURL: "http://lab:8000/v1", ProxyAllow: []string{"lab:8000"}}
+	if err := p.OnlyModel("custom-lab", lab, SavedModel{ID: "abcd1234", Name: "Qwen", Model: "qwen3", ContextWindow: 32768}); err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Models) != 1 || p.Default != "abcd1234" || p.Model.KeyProvider() != "custom-lab" || p.Model.Provider != ProviderCustom || p.Model.ContextWindow != 32768 {
+		t.Fatalf("models %+v, model %+v", p.Models, p.Model)
+	}
+	_, back := saveAndRead(t, p, path)
+	if sm := back.DefaultModel(); sm.Name != "Qwen" || len(back.Models) != 1 || len(back.Providers) != 1 {
+		t.Fatalf("read back %+v / %+v", back.Models, back.Providers)
+	}
+	if err := p.OnlyModel("custom-lab", lab, SavedModel{ID: "Not An ID", Name: "Q", Model: "q"}); err == nil {
+		t.Fatal("a saved model id of the wrong shape was taken")
+	}
+	back.ResetModels(Default().Model)
+	text, again := saveAndRead(t, back, path)
+	if !strings.Contains(text, `policyVersion: "1"`) || again.Model.Provider != DefaultModelProvider || again.HasSavedModels() {
+		t.Fatalf("written:\n%s", text)
+	}
+}

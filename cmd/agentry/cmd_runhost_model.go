@@ -52,6 +52,12 @@ func runhostPutModel(in io.Reader, fw *runhost.FrameWriter) (int, error) {
 	if err != nil {
 		return engine.ExitPolicy, err
 	}
+	// A runhost that holds saved models runs each agent on the one it
+	// names: it is given another one as a saved model, never in place of
+	// its default.
+	if pol.HasSavedModels() {
+		return engine.ExitUsage, fmt.Errorf("this runhost holds saved models: make one available with agentry runhost model %s --add <saved model>", runhostOwnName())
+	}
 	if err := modelkey.Store(m.Provider, m.APIKey); err != nil {
 		return engine.ExitCLI, fmt.Errorf("keep the key in the runhost's store: %w", err)
 	}

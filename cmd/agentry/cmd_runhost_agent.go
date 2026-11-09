@@ -353,6 +353,11 @@ func remoteAgentCommand(cmd *cobra.Command, on, sub string, args []string) error
 	if err != nil {
 		return err
 	}
+	if sub == "configure" {
+		if fwd, err = runhostAgentModelArg(cmd.Context(), c, rec.Name, fwd); err != nil {
+			return err
+		}
+	}
 	for attempt := 0; ; attempt++ {
 		code, stderr, err := runOnRunhostAgent(cmd, c, sub, fwd, value)
 		if err != nil {
@@ -572,4 +577,23 @@ func agreeToKeepOnRunhost(cmd *cobra.Command, runhostName, what string, fwd []st
 		return engine.Classify(engine.ExitPolicy, errors.New("nothing was kept"))
 	}
 	return nil
+}
+
+// runhostAgentModelArg is configure's arguments with --model naming the
+// runhost's saved model by its id: the name is looked up in the runhost's
+// own list, and one it does not hold is refused here by name.
+func runhostAgentModelArg(ctx context.Context, c remote.Caller, name string, fwd []string) ([]string, error) {
+	out := slices.Clone(fwd)
+	for i, a := range out {
+		ref, ok := strings.CutPrefix(a, "--model=")
+		if !ok {
+			continue
+		}
+		id, _, err := runhostModelRef(ctx, c, name, ref)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = "--model=" + id
+	}
+	return out, nil
 }

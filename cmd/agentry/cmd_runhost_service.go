@@ -21,6 +21,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/internal/version"
 	"github.com/blaktron/agentry-cli/pkg/runhost"
+	"github.com/blaktron/agentry-cli/pkg/runhost/remote"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/gateway"
@@ -65,7 +66,11 @@ type runhostStatus struct {
 	Runtime        string          `json:"runtime"`
 	GatewayRuntime string          `json:"gatewayRuntime"`
 	Devices        []runhostDevice `json:"devices"`
-	Model          string          `json:"model"`
+	// Model is the default saved model's provider/model, "" when the
+	// runhost holds none.
+	Model string `json:"model"`
+	// Models are the saved models the runhost holds.
+	Models *remote.Models `json:"models,omitempty"`
 	// Credits is the runhost's Agentry credits token, when it has one:
 	// never the token.
 	Credits      *runhostCreditsInfo `json:"credits,omitempty"`
@@ -215,8 +220,10 @@ func readRunhostStatus() (runhostStatus, error) {
 	if path, err := policy.DefaultPath(); err == nil {
 		if pol, _, err := policy.Load(path); err == nil {
 			st.Runtime, st.GatewayRuntime = pol.Docker.Runtime, pol.Docker.GatewayRuntime
-			if pol.Model.Provider != "" {
-				st.Model = pol.Model.Provider + "/" + pol.Model.Name
+			list := runhostListModels(pol)
+			st.Models = &list
+			if def, ok := list.DefaultModel(); ok {
+				st.Model = def.Provider + "/" + def.Model
 			}
 		}
 	}

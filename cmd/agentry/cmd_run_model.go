@@ -14,11 +14,13 @@ import (
 
 // refuseModelElsewhere refuses --model where this computer's saved models
 // do not apply: a hosted run pays with Agentry's own model access, and a
-// remote runhost runs on the model it keeps.
+// runhost's own run of a job takes the model the job names. A one-off run
+// with --on carries the saved model it names; a schedule with --on names
+// one the runhost holds.
 func refuseModelElsewhere(opts runOpts) error {
 	switch {
-	case opts.on != "" || opts.installed:
-		return engine.Classify(engine.ExitUsage, errors.New("--model chooses among this computer's saved models, and a run on a remote runhost uses the model the runhost keeps (agentry runhost model)"))
+	case opts.installed:
+		return engine.Classify(engine.ExitUsage, errors.New("--model chooses among this computer's saved models, and a runhost's own run takes the model its job names"))
 	case hostedFor(opts):
 		return engine.Classify(engine.ExitUsage, errors.New("--model chooses among this computer's saved models, and a hosted run uses Agentry's own model access"))
 	}

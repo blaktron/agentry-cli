@@ -46,6 +46,9 @@ type runhostScheduleMeta struct {
 	Device      string                  `json:"device"`
 	Entries     []runhost.ScheduleEntry `json:"entries"`
 	Connections []connection.Key        `json:"connections,omitempty"`
+	// Model is the runhost's saved model the schedule names, by id, or
+	// job.RunhostDefault; empty for one whose job carries a device's model.
+	Model string `json:"model,omitempty"`
 }
 
 // runhostScheduleTemplate is a schedule's entry in the store: the job each
@@ -137,6 +140,15 @@ func runhostSchedulePut(ctx context.Context, req runhost.Request, in io.Reader, 
 	if req.Device != "" && j.Device != req.Device {
 		return engine.ExitUsage, fmt.Errorf("the schedule names device %s, but device %s's run key sent it", j.Device, req.Device)
 	}
+	// A schedule on one of the runhost's own saved models keeps the job as
+	// sent, naming it; each occurrence reads the model then. It must be one
+	// the runhost can run on now.
+	if j.Run.RunhostModel != "" {
+		probe := *j
+		if code, err := runhostJobModel(&probe); err != nil {
+			return code, err
+		}
+	}
 	if j.Run.Model.PaysWithCredits() {
 		if _, err := runhostJobCredits(j.Run.Model.Policy()); err != nil {
 			return engine.ExitPolicy, err
@@ -179,7 +191,7 @@ func runhostSchedulePut(ctx context.Context, req runhost.Request, in io.Reader, 
 		return engine.ExitCLI, err
 	}
 	conns := connection.Open(home, runhostKeychain{})
-	sm := runhostScheduleMeta{Device: j.Device, Entries: h.Entries}
+	sm := runhostScheduleMeta{Device: j.Device, Entries: h.Entries, Model: j.Run.RunhostModel}
 	// Each connection the job uses is one the runhost made for itself
 	// (signin.Server.Connect) before the schedule was sent.
 	for server := range j.Run.Connections {
@@ -253,7 +265,7 @@ func runhostScheduleInfo(ss schedule.Store, sc schedule.Schedule) (runhost.Sched
 		return runhost.ScheduleInfo{}, err
 	}
 	info := runhost.ScheduleInfo{ID: sc.ID, Name: sc.Name, Ref: sc.Ref + "@" + sc.Version, Device: sm.Device, When: when,
-		Paused: sc.Paused, Created: sc.Created, Entries: sm.Entries}
+		Paused: sc.Paused, Created: sc.Created, Entries: sm.Entries, Model: sm.Model}
 	st, _ := ss.State(sc.ID)
 	info.Ended = st.Ended
 	after := runhostScheduleNow()
@@ -523,6 +535,9 @@ func runhostScheduledJob(ctx context.Context, sc schedule.Schedule) (*job.Job, [
 			fresh[server] = c
 		}
 		j.Run.Connections = fresh
+	}
+	if code, err := runhostJobModel(&j); err != nil {
+		return nil, nil, code, err
 	}
 	if err := j.Validate(); err != nil {
 		return nil, nil, engine.ExitUsage, err

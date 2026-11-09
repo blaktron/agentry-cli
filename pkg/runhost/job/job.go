@@ -102,12 +102,19 @@ type Run struct {
 	MaxTurns int     `json:"maxTurns"`
 	MaxCost  float64 `json:"maxCost"`
 	// Model is the device policy's model, which the run uses in place of
-	// the runhost's.
+	// the runhost's: the saved model the run is on. Empty when RunhostModel
+	// names one of the runhost's own.
 	Model Model `json:"model"`
 	// ModelKey is the model's key, read from the device's environment or
 	// keychain. It lives in the service's memory and the run's environment
 	// only, and never in a file.
 	ModelKey string `json:"modelKey,omitempty"`
+	// RunhostModel names a saved model the runhost itself holds, by its id,
+	// or RunhostDefault for the runhost's default at the time the run
+	// starts: the runhost reads the model and its credential from its own
+	// list, so the job carries neither (Model and ModelKey are empty). A
+	// schedule kept on the runhost names its model this way.
+	RunhostModel string `json:"runhostModel,omitempty"`
 
 	// Secrets are the values of the release's declared secrets and its
 	// servers', by name, resolved on the device as a local run resolves them
@@ -254,10 +261,17 @@ type Payload struct {
 	Digest string `json:"digest"`
 }
 
+// RunhostDefault is RunhostModel's word for the runhost's default saved
+// model, whichever it is when the run starts.
+const RunhostDefault = "default"
+
 // Model is the model a run uses: the device policy's, less where its key
 // comes from, which on the runhost is always the run's environment.
 type Model struct {
-	Provider   string `json:"provider"`
+	Provider string `json:"provider"`
+	// ProviderID is the saved model's provider: the vendor's name, or
+	// custom-<slug> for one of several endpoints of the person's own.
+	ProviderID string `json:"providerId,omitempty"`
 	Name       string `json:"name"`
 	APIKeyEnv  string `json:"apiKeyEnv"`
 	APIKeyKind string `json:"apiKeyKind,omitempty"`
@@ -266,22 +280,60 @@ type Model struct {
 	// model of the operator's own endpoint from it.
 	ContextWindow int64    `json:"contextWindow,omitempty"`
 	ProxyAllow    []string `json:"proxyAllow"`
+	// SavedModelID and SavedModelName are the saved model the run is on, as
+	// the receipt names it; empty for a model with no saved model.
+	SavedModelID   string `json:"savedModelId,omitempty"`
+	SavedModelName string `json:"savedModelName,omitempty"`
 }
 
 // ModelOf is the job's model for the device policy's m.
 func ModelOf(m policy.Model) Model {
-	return Model{Provider: m.Provider, Name: m.Name, APIKeyEnv: m.APIKeyEnv, APIKeyKind: m.APIKeyKind, BaseURL: m.BaseURL, ContextWindow: m.ContextWindow, ProxyAllow: m.ProxyAllow}
+	return Model{Provider: m.Provider, ProviderID: m.ProviderID, Name: m.Name, APIKeyEnv: m.APIKeyEnv, APIKeyKind: m.APIKeyKind, BaseURL: m.BaseURL, ContextWindow: m.ContextWindow, ProxyAllow: m.ProxyAllow}
+}
+
+// ModelOfSaved is the job's model for the saved model sm, which reads as
+// view (policy.Policy.ForRun).
+func ModelOfSaved(view policy.Model, sm policy.SavedModel) Model {
+	m := ModelOf(view)
+	m.SavedModelID, m.SavedModelName = sm.ID, sm.Name
+	return m
 }
 
 // Policy is the model as the runhost's policy takes it: the key from the
-// run's environment, or none for a model paid with Agentry credits or with
-// a plan's sign-in the runhost keeps.
+// run's environment, or none for a model paid with Agentry credits, with a
+// plan's sign-in the runhost keeps, or at an endpoint that takes no key.
 func (m Model) Policy() policy.Model {
 	source := "env"
-	if m.PaysWithCredits() || m.SignIn() {
+	if m.PaysWithCredits() || m.SignIn() || m.TakesNoKey() {
 		source = ""
 	}
-	return policy.Model{Provider: m.Provider, Name: m.Name, APIKeyEnv: m.APIKeyEnv, APIKeySource: source, APIKeyKind: m.APIKeyKind, BaseURL: m.BaseURL, ContextWindow: m.ContextWindow, ProxyAllow: m.ProxyAllow}
+	return policy.Model{Provider: m.Provider, ProviderID: m.ProviderID, Name: m.Name, APIKeyEnv: m.APIKeyEnv, APIKeySource: source, APIKeyKind: m.APIKeyKind, BaseURL: m.BaseURL, ContextWindow: m.ContextWindow, ProxyAllow: m.ProxyAllow}
+}
+
+// Saved is the model as a policy's saved model and its provider: the
+// provider's id, the provider as the runhost's policy takes it, and the
+// saved model. ok is false for a model with no saved model.
+func (m Model) Saved() (id string, pr policy.Provider, sm policy.SavedModel, ok bool) {
+	if m.SavedModelID == "" {
+		return "", policy.Provider{}, policy.SavedModel{}, false
+	}
+	pm := m.Policy()
+	id = pm.KeyProvider()
+	pr = policy.Provider{APIKeyEnv: pm.APIKeyEnv, APIKeySource: pm.APIKeySource, APIKeyKind: pm.APIKeyKind, BaseURL: pm.BaseURL, ProxyAllow: pm.ProxyAllow}
+	if policy.ProviderVendor(id) == policy.ProviderCustom && id != policy.ProviderCustom {
+		pr.Name = m.SavedModelName
+	}
+	name := m.SavedModelName
+	if name == "" {
+		name = m.SavedModelID
+	}
+	return id, pr, policy.SavedModel{ID: m.SavedModelID, Name: name, Provider: id, Model: m.Name, ContextWindow: m.ContextWindow}, true
+}
+
+// TakesNoKey says whether the model is an endpoint of the person's own that
+// takes no key: the job carries none, and the run resolves none.
+func (m Model) TakesNoKey() bool {
+	return m.Provider == policy.ProviderCustom && m.APIKeyEnv == "" && !m.SignIn() && (m.APIKeyKind == "" || m.APIKeyKind == policy.KeyKindAPI)
 }
 
 // SignIn says whether the model is paid by a plan's sign-in (a Claude
@@ -405,33 +457,8 @@ func (j *Job) Validate() error {
 	default:
 		return fmt.Errorf("the release's state %q is not one a run takes", r.State)
 	}
-	if j.Run.Model.Provider == "" || j.Run.Model.Name == "" {
-		return errors.New("the job names no model")
-	}
-	if err := policy.CheckContextWindow(j.Run.Model.ContextWindow); err != nil {
-		return fmt.Errorf("the job's model: %w", err)
-	}
-	if j.Run.Model.PaysWithCredits() {
-		if _, err := policy.AgentryRegistry(j.Run.Model.Policy()); err != nil {
-			return fmt.Errorf("the job's credits model: %w", err)
-		}
-		if j.Run.Model.APIKeyEnv != "" || j.Run.Model.APIKeyKind != "" || j.Run.ModelKey != "" {
-			return errors.New("a model paid with Agentry credits carries no key")
-		}
-	} else if j.Run.Model.SignIn() {
-		if j.Run.Model.APIKeyEnv != "" || j.Run.ModelKey != "" {
-			return errors.New("a model paid by a plan's sign-in carries no key: the runhost keeps the sign-in")
-		}
-		if want := policy.SignInProvider(j.Run.Model.APIKeyKind); j.Run.Model.Provider != want {
-			return fmt.Errorf("a %s model's provider is %s, not %q", j.Run.Model.APIKeyKind, want, j.Run.Model.Provider)
-		}
-	} else {
-		if !ValidKeyEnv(j.Run.Model.APIKeyEnv) {
-			return fmt.Errorf("the model's key variable %q is not one a runhost takes: name it as the provider does, ending in _API_KEY, _KEY or _TOKEN, outside the AGENTRY_, DOCKER_, LD_, SSH_, GIT_ and XDG_ names", j.Run.Model.APIKeyEnv)
-		}
-		if j.Run.ModelKey == "" {
-			return errors.New("the job carries no model key")
-		}
+	if err := j.Run.validateModel(); err != nil {
+		return err
 	}
 	if j.Run.Timeout < 0 {
 		return errors.New("the job's timeout is negative")
@@ -441,6 +468,82 @@ func (j *Job) Validate() error {
 	}
 	return j.Run.validateCarried()
 }
+
+// ValidRunhostModel says whether ref can name a saved model of the
+// runhost's: a saved model's id, or RunhostDefault.
+func ValidRunhostModel(ref string) bool {
+	return ref == RunhostDefault || policy.IsModelID(ref)
+}
+
+// validateModel checks the run's model: one of the runhost's own, which the
+// job then carries nothing of, or one the job carries with its credential
+// as its kind needs.
+func (r *Run) validateModel() error {
+	if r.RunhostModel != "" {
+		if !ValidRunhostModel(r.RunhostModel) {
+			return fmt.Errorf("the job's runhost model %q is not a saved model's id", r.RunhostModel)
+		}
+		if r.ModelKey != "" || r.Model.Provider != "" || r.Model.Name != "" {
+			return errors.New("a job on one of the runhost's own saved models carries no model and no key: the runhost holds them")
+		}
+		return nil
+	}
+	return r.Model.validate(r.ModelKey)
+}
+
+// validate checks a model the job carries, with key, its key.
+func (m Model) validate(key string) error {
+	if m.Provider == "" || m.Name == "" {
+		return errors.New("the job names no model")
+	}
+	if err := policy.CheckContextWindow(m.ContextWindow); err != nil {
+		return fmt.Errorf("the job's model: %w", err)
+	}
+	if m.ProviderID != "" && (policy.ProviderVendor(m.ProviderID) != m.Provider || !providerIDRE.MatchString(m.ProviderID)) {
+		return fmt.Errorf("the job's model names the provider %q, which is not one of %s's", m.ProviderID, m.Provider)
+	}
+	if (m.SavedModelID == "") != (m.SavedModelName == "") || (m.SavedModelID != "" && !policy.IsModelID(m.SavedModelID)) || len(m.SavedModelName) > 256 || strings.ContainsAny(m.SavedModelName, "\r\n\x00") {
+		return errors.New("the job's saved model is not an id and a name")
+	}
+	switch {
+	case m.PaysWithCredits():
+		if _, err := policy.AgentryRegistry(m.Policy()); err != nil {
+			return fmt.Errorf("the job's credits model: %w", err)
+		}
+		if m.APIKeyEnv != "" || m.APIKeyKind != "" || key != "" {
+			return errors.New("a model paid with Agentry credits carries no key")
+		}
+	case m.SignIn():
+		if m.APIKeyEnv != "" || key != "" {
+			return errors.New("a model paid by a plan's sign-in carries no key: the runhost keeps the sign-in")
+		}
+		if want := policy.SignInProvider(m.APIKeyKind); m.Provider != want {
+			return fmt.Errorf("a %s model's provider is %s, not %q", m.APIKeyKind, want, m.Provider)
+		}
+	case m.TakesNoKey():
+		if key != "" {
+			return errors.New("an endpoint that takes no key is sent none")
+		}
+		if strings.TrimSpace(m.BaseURL) == "" {
+			return errors.New("an endpoint of your own is reached at its address, and the job names none")
+		}
+	default:
+		if !ValidKeyEnv(m.APIKeyEnv) {
+			return fmt.Errorf("the model's key variable %q is not one a runhost takes: name it as the provider does, ending in _API_KEY, _KEY or _TOKEN, outside the AGENTRY_, DOCKER_, LD_, SSH_, GIT_ and XDG_ names", m.APIKeyEnv)
+		}
+		if key == "" {
+			return errors.New("the job carries no model key")
+		}
+	}
+	return nil
+}
+
+// providerIDRE is a provider's id as a job may name it.
+var providerIDRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`)
+
+// ValidateCarriedModel checks the model and key a runhost put in place of
+// the runhost model a job named, as it checks a job's own.
+func (r *Run) ValidateCarriedModel() error { return r.Model.validate(r.ModelKey) }
 
 var (
 	secretNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,127}$`)

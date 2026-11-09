@@ -297,7 +297,9 @@ func ModelKey(pol *policy.Policy) (string, error) {
 		// model --sign-in): nothing of this computer's travels.
 		return "", nil
 	case policy.TakesNoKey(policy.HarnessPolicy{}, pol.Model):
-		return "", fmt.Errorf("the model %s/%s is an endpoint of your own that takes no key, and a runhost runs only on a model whose key travels with the run: run it on this computer", pol.Model.Provider, pol.Model.Name)
+		// An endpoint of the person's own that takes no key: nothing
+		// travels but its address, which the runhost must reach itself.
+		return "", nil
 	case pol.Model.APIKeyKind == policy.KeyKindSubscription:
 		return "", errors.New("a Claude subscription token runs only the installed claude, which a runhost does not run: sign the runhost in with agentry runhost model <name> --sign-in claude, and choose your Claude subscription with agentry setup")
 	}

@@ -262,3 +262,68 @@ func TestADesktopBindingIsHeldToWhatAJobCanCarry(t *testing.T) {
 		}
 	}
 }
+
+// A job on one of the runhost's own saved models names it by id, or the
+// runhost's default, and carries no model and no key: the runhost holds
+// them. Anything carried beside it is refused.
+func TestAJobOnARunhostsSavedModelCarriesNoModelAndNoKey(t *testing.T) {
+	for _, ref := range []string{"0a0b0c0d", RunhostDefault} {
+		j := validJob()
+		j.Run.Model, j.Run.ModelKey, j.Run.RunhostModel = Model{}, "", ref
+		if err := j.Validate(); err != nil {
+			t.Errorf("%s: %v", ref, err)
+		}
+	}
+	for name, change := range map[string]func(*Job){
+		"a key":             func(j *Job) { j.Run.ModelKey = "sk-x" },
+		"a model":           func(j *Job) { j.Run.Model = Model{Provider: "anthropic", Name: "m"} },
+		"a name, not an id": func(j *Job) { j.Run.RunhostModel = "My Model" },
+	} {
+		j := validJob()
+		j.Run.Model, j.Run.ModelKey, j.Run.RunhostModel = Model{}, "", "0a0b0c0d"
+		change(j)
+		if err := j.Validate(); err == nil {
+			t.Errorf("%s: validated", name)
+		}
+	}
+}
+
+// An endpoint of the person's own that takes no key travels with its
+// address and no key; one given a key, or no address, is refused.
+func TestAnEndpointThatTakesNoKeyTravelsWithNone(t *testing.T) {
+	j := validJob()
+	j.Run.ModelKey = ""
+	j.Run.Model = Model{Provider: policy.ProviderCustom, ProviderID: "custom-lab", Name: "qwen3", BaseURL: "http://lab:8000/v1", ProxyAllow: []string{"lab:8000"},
+		SavedModelID: "0a0b0c0d", SavedModelName: "Qwen"}
+	if err := j.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if pm := j.Run.Model.Policy(); pm.APIKeySource != "" || pm.APIKeyEnv != "" || !policy.TakesNoKey(policy.HarnessPolicy{}, pm) || pm.KeyProvider() != "custom-lab" {
+		t.Fatalf("the runhost's model %+v", pm)
+	}
+	id, pr, sm, ok := j.Run.Model.Saved()
+	if !ok || id != "custom-lab" || sm.ID != "0a0b0c0d" || sm.Name != "Qwen" || pr.BaseURL != "http://lab:8000/v1" {
+		t.Fatalf("the saved model %s %+v %+v", id, pr, sm)
+	}
+	keyed := *j
+	keyed.Run.ModelKey = "sk-x"
+	if err := keyed.Validate(); err == nil {
+		t.Error("an endpoint that takes no key was sent one")
+	}
+	noAddr := *j
+	noAddr.Run.Model.BaseURL = ""
+	if err := noAddr.Validate(); err == nil {
+		t.Error("an endpoint with no address validated")
+	}
+	for _, bad := range []func(*Model){
+		func(m *Model) { m.ProviderID = "openai" },
+		func(m *Model) { m.SavedModelName = "" },
+		func(m *Model) { m.SavedModelID = "Not An ID" },
+	} {
+		k := *j
+		bad(&k.Run.Model)
+		if err := k.Validate(); err == nil {
+			t.Errorf("%+v validated", k.Run.Model)
+		}
+	}
+}

@@ -95,9 +95,23 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	if err != nil {
 		return engine.Classify(engine.ExitPolicy, err)
 	}
-	modelKey, err := remote.ModelKey(pol)
-	if err != nil {
-		return engine.Classify(engine.ExitPolicy, err)
+	// A one-off run carries the saved model it names, else the default,
+	// with that one's key alone. A schedule names one the runhost holds
+	// instead, and carries no model of this computer's.
+	var runModel job.Model
+	modelKey := ""
+	if opts.runhostSchedule == "" {
+		chosen, err := localrun.ChooseRunModel(pol, opts.model, "")
+		if err != nil {
+			return err
+		}
+		if modelKey, err = remote.ModelKey(chosen.Policy); err != nil {
+			return engine.Classify(engine.ExitPolicy, err)
+		}
+		runModel = job.ModelOf(chosen.Policy.Model)
+		if chosen.Saved.ID != "" {
+			runModel = job.ModelOfSaved(chosen.Policy.Model, chosen.Saved)
+		}
 	}
 
 	// The runhost has its own sign-in and its own managed settings: this
@@ -208,7 +222,13 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	run := carried.run
 	run.Task, run.AllowUnsigned, run.AllowUnscanned = string(task), opts.allowUnsigned, opts.allowUnscanned
 	run.Timeout, run.MaxTurns, run.MaxCost = opts.timeout, opts.maxTurns, opts.maxCost
-	run.Model, run.ModelKey = job.ModelOf(pol.Model), modelKey
+	run.Model, run.ModelKey = runModel, modelKey
+	if opts.runhostSchedule != "" {
+		// The job is valid as it is sent: the schedule names the runhost's
+		// own saved model once it has the runhost's list
+		// (putRunhostSchedule).
+		run.RunhostModel = job.RunhostDefault
+	}
 	run.Adapter = runAdapter
 	run.Session = mode == manifest.ModeInteractive
 	run.Managed = held.Narrowing()
@@ -280,8 +300,11 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	if rv.UnsafeMode {
 		_, _ = fmt.Fprintf(errOut, "Unsafe Mode is on for %s, a setting of the runhost: a release's declared commands come from the Unsafe Mode image there, without the command catalogue (agentry runhost set %s --unsafe-mode off turns it off)\n", rec.Name, rec.Name)
 	}
-	if pol.Model.APIKeyKind != "" && job.ModelOf(pol.Model).SignIn() {
-		_, _ = fmt.Fprintf(errOut, "paying for the model with the %s sign-in %s keeps\n", modelsignin.VendorOf(pol.Model.APIKeyKind), rec.Name)
+	if runModel.SignIn() {
+		_, _ = fmt.Fprintf(errOut, "paying for the model with the %s sign-in %s keeps\n", modelsignin.VendorOf(runModel.APIKeyKind), rec.Name)
+	}
+	if runModel.SavedModelName != "" {
+		_, _ = fmt.Fprintf(errOut, "on this computer's saved model %q (%s/%s), whose credential alone travels with the run\n", runModel.SavedModelName, runModel.ProviderID, runModel.Name)
 	}
 
 	if opts.runhostSchedule != "" {

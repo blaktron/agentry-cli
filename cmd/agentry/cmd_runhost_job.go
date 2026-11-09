@@ -107,6 +107,11 @@ func runhostJobVerb(ctx context.Context, req runhost.Request, in io.Reader, fw *
 	if _, ok := devices[j.Device]; !ok {
 		return engine.ExitUsage, fmt.Errorf("device %s is not paired with this runhost", j.Device)
 	}
+	// A job on one of the runhost's own saved models takes it, and its
+	// credential, from the runhost's list.
+	if code, err := runhostJobModel(j); err != nil {
+		return code, err
+	}
 	// A model paid with Agentry credits needs the runhost's credits token
 	// for its registry, before anything of the job is taken.
 	if j.Run.Model.PaysWithCredits() {
@@ -986,8 +991,9 @@ func sweepRunCredentials(home string) {
 }
 
 // runhostJobPolicy writes the job's policy: the runhost's own, with the
-// device's model, whose key the run reads from its environment, and the
-// job's secrets file as its secret source.
+// job's model (the device's saved model, or one of the runhost's own put in
+// its place), whose key the run reads from its environment, and the job's
+// secrets file as its secret source.
 func runhostJobPolicy(file, secrets string, j *job.Job) error {
 	path, err := policy.DefaultPath()
 	if err != nil {
@@ -1002,7 +1008,17 @@ func runhostJobPolicy(file, secrets string, j *job.Job) error {
 	if pol.Docker.Runtime != runhost.RunscRuntime || pol.Docker.GatewayRuntime != runhost.RunscUDSRuntime {
 		return fmt.Errorf("the runhost's policy runs containers under %q and the gateway under %q, not %s and %s: run agentry runhost add again, which repairs it", pol.Docker.Runtime, pol.Docker.GatewayRuntime, runhost.RunscRuntime, runhost.RunscUDSRuntime)
 	}
-	pol.Model = j.Run.Model.Policy()
+	// The job's policy holds the run's model alone: the saved model it
+	// carries, under its own name and id for the receipt, or the model
+	// block of a job that names none. None of the runhost's own saved
+	// models, and none of their providers, is in it.
+	if id, pr, sm, ok := j.Run.Model.Saved(); ok {
+		if err := pol.OnlyModel(id, pr, sm); err != nil {
+			return fmt.Errorf("the run's model on this runhost: %w", err)
+		}
+	} else {
+		pol.ResetModels(j.Run.Model.Policy())
+	}
 	pol.SecretSource = policy.SecretSource{Mode: "envFile", EnvFile: secrets}
 	// A target host's address is held to the person's own lists.
 	pol.Hosts = policy.HostsPolicy{Allow: j.Run.HostsAllow, Deny: j.Run.HostsDeny}
