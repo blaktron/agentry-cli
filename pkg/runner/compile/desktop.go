@@ -200,6 +200,16 @@ func writeDesktop(b *strings.Builder, d *spec.DesktopCap) {
 	}
 }
 
+// DesktopCapOf is the desktop line in's manifest compiles to, as Compile
+// would put it in the plan: a caller that reuses an installed plan compares
+// it with the plan's.
+func DesktopCapOf(in Inputs) (*spec.DesktopCap, error) {
+	if in.Manifest == nil {
+		return nil, nil
+	}
+	return desktopCap(in.Manifest.Capabilities.Desktop, in)
+}
+
 // DesktopCapFor is a release's desktop line as a run under pol holds it, for
 // a client that binds it to Agentry Desktop before anything compiles there:
 // a run sent to a remote runhost, bound on the device that sends it.
