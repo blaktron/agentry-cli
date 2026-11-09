@@ -463,8 +463,10 @@ type liveSession struct {
 	envelopeErr error
 
 	// shares is a persistent agent's check of its share (share.go), made
-	// at the first turn that has something to check.
-	shares *shareChecker
+	// at the first turn that has something to check; shareMu holds one
+	// check at a time, before a turn or for a tool call within one.
+	shareMu sync.Mutex
+	shares  *shareChecker
 	// conversation, resumed and resumeReason are a persistent agent's
 	// segment's (Conversation), set once its driver has started.
 	conversation string
