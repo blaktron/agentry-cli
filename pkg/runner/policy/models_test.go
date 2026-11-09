@@ -487,3 +487,46 @@ func TestAHarnessBlocksSavedModelKeepsTheBlockInStep(t *testing.T) {
 		t.Fatal("the removed saved model came back from its harness block")
 	}
 }
+
+// An endpoint of the person's own may take no key: its provider names no
+// variable, and it reads back that way. A named vendor still needs one, and
+// a keychain source needs a variable beside it.
+func TestAnEndpointOfYourOwnMayTakeNoKey(t *testing.T) {
+	p, path := loadDefault(t)
+	keyless := customProvider("http://127.0.0.1:11434/v1")
+	keyless.APIKeyEnv = ""
+	if err := p.AddProvider("custom-home-lab", keyless); err != nil {
+		t.Fatalf("an endpoint that takes no key: %v", err)
+	}
+	sm, err := p.AddModel(SavedModel{Name: "Qwen", Provider: "custom-home-lab", Model: "qwen3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text, back := saveAndRead(t, p, path)
+	if strings.Contains(text, "HOME_LAB_API_KEY") || back.Providers["custom-home-lab"].APIKeyEnv != "" {
+		t.Fatalf("written:\n%s", text)
+	}
+	view, err := back.ModelView(sm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !TakesNoKey(HarnessPolicy{}, view) {
+		t.Fatalf("%+v reads as taking a key", view)
+	}
+	if TakesNoKey(HarnessPolicy{}, back.Model) {
+		t.Fatal("the default, a named vendor's key, reads as taking none")
+	}
+	keyed := customProvider("http://127.0.0.1:8001/v1")
+	if TakesNoKey(HarnessPolicy{}, viewOf(SavedModel{Model: "qwen3"}, "custom-lab-one", keyed)) {
+		t.Fatal("an endpoint saved with a key variable reads as taking none")
+	}
+
+	if err := p.AddProvider("openai", Provider{ProxyAllow: []string{"api.openai.com:443"}}); err == nil || !strings.Contains(err.Error(), "apiKeyEnv is required") {
+		t.Fatalf("a named vendor with no key: %v", err)
+	}
+	fromKeychain := customProvider("http://127.0.0.1:8002/v1")
+	fromKeychain.APIKeyEnv, fromKeychain.APIKeySource = "", "keyring"
+	if err := p.AddProvider("custom-lab-two", fromKeychain); err == nil || !strings.Contains(err.Error(), "apiKeyEnv") {
+		t.Fatalf("a keychain source with no variable: %v", err)
+	}
+}

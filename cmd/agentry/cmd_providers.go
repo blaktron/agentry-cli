@@ -87,6 +87,9 @@ func providerState(home, id string, pr policy.Provider) (kind, state string) {
 		}
 		return policy.SignInSentence(pr.APIKeyKind), "signed in"
 	}
+	if pr.APIKeyEnv == "" && vendor == policy.ProviderCustom {
+		return "takes no key", "ready"
+	}
 	kind = "key from $" + pr.APIKeyEnv
 	if pr.APIKeySource == modelkey.SourceKeyring {
 		kind += ", else the OS keychain entry " + modelkey.Account(id)
@@ -101,9 +104,6 @@ func providerState(home, id string, pr policy.Provider) (kind, state string) {
 		if ok, err := modelkey.Present(id); err == nil && ok {
 			return kind, "key in the keychain"
 		}
-	}
-	if vendor == policy.ProviderCustom {
-		return kind, "no key (an endpoint that takes none needs none)"
 	}
 	return kind, "key missing"
 }
@@ -177,7 +177,9 @@ func newProvidersAddCmd() *cobra.Command {
 			"plan. --connect connects your OpenRouter, Poe or Hugging Face account. agentry pays with your\n" +
 			"Agentry credits, through the registry you are signed in to.\n\n" +
 			"add custom --name <name> --base-url <url> adds an OpenAI-compatible endpoint of your own, as the\n" +
-			"provider custom-<name>; it may take no key. Then save a model on the provider: agentry models add.",
+			"provider custom-<name>. Without --api-key-env or --key-stdin it is saved as taking no key, and a run on\n" +
+			"it is given none; with one, a run on it is refused while its key is not here. Then save a model on\n" +
+			"the provider: agentry models add.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			pol, path, err := modelsPolicy(f.policyPath)
@@ -308,7 +310,13 @@ func buildProvider(cmd *cobra.Command, home, vendor string, f providerFlags) (id
 		if err != nil {
 			return "", pr, "", usage("%v", err)
 		}
-		def := strings.ToUpper(strings.ReplaceAll(id, "-", "_")) + "_API_KEY"
+		// With no key flag the endpoint is saved as taking no key, and a
+		// run on it is given none. A key kept in the keychain is read
+		// after a variable of the provider's own name.
+		def := ""
+		if f.keyStdin || strings.TrimSpace(f.keySource) == modelkey.SourceKeyring {
+			def = strings.ToUpper(strings.ReplaceAll(id, "-", "_")) + "_API_KEY"
+		}
 		pr, key, err := keyProvider(cmd, in, id, def, nil, f)
 		pr.Name = strings.TrimSpace(f.name)
 		return id, pr, key, err

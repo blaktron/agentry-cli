@@ -1292,7 +1292,8 @@
             "TestASavedModelWhoseSignInIsGoneIsRefusedByName",
             "TestThePolicysCostBudgetRefusesARunOnASignInsSavedModel",
             "TestAScheduleKeepsItsSavedModelWhenTheDefaultChanges",
-            "TestAScheduleOnAHarnessBlocksHarnessIsAssignedItsSavedModel"
+            "TestAScheduleOnAHarnessBlocksHarnessIsAssignedItsSavedModel",
+            "TestAnEndpointAddedWithNoKeyRunsWithNone"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -4305,7 +4306,8 @@
             "TestDockerAgentCompileRefusesCustomWithoutABaseURL",
             "TestDockerAgentCompileNamesTheKeyForTheHarnessClient",
             "TestDockerAgentCompileRefusesASubscriptionToken",
-            "TestDockerAgentCompileDropsThinkingBoundToAnEarlierPrompt"
+            "TestDockerAgentCompileDropsThinkingBoundToAnEarlierPrompt",
+            "TestAnEndpointThatTakesNoKeyIsGivenNoneToResolve"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -9423,7 +9425,8 @@
             "TestAChangeToTheModelBlockMovesTheDefault",
             "TestNoKeyValueIsWrittenToAVersion2Policy",
             "TestCustomProviderIDIsCustomAndASlug",
-            "TestAHarnessBlocksSavedModelKeepsTheBlockInStep"
+            "TestAHarnessBlocksSavedModelKeepsTheBlockInStep",
+            "TestAnEndpointOfYourOwnMayTakeNoKey"
           ],
           "fuzz": [],
           "benchmarks": [],
