@@ -241,7 +241,10 @@ func signInFlagsRefusal(vendor string, f providerFlags) error {
 // signInAgainVendor is the kept sign-in or connected account that add signs
 // in or connects again on pr, a provider already here: the one that pays it,
 // when the request names that way of paying; "" when add is refused.
-func signInAgainVendor(vendor string, f providerFlags, pr policy.Provider) string {
+// reconnect says a connect may write the provider's keychain entry: it holds
+// a connected account's key, or none. A key the person pasted there is
+// never replaced by a connect.
+func signInAgainVendor(vendor string, f providerFlags, pr policy.Provider, reconnect bool) string {
 	switch {
 	case vendor == policy.ProviderOpenAI && f.signIn && pr.APIKeyKind == policy.KeyKindChatGPTPlan:
 		return modelsignin.ChatGPT
@@ -249,10 +252,20 @@ func signInAgainVendor(vendor string, f providerFlags, pr policy.Provider) strin
 		return modelsignin.Claude
 	case vendor == policy.ProviderCopilot && pr.APIKeyKind == policy.KeyKindCopilotSignIn:
 		return modelsignin.Copilot
-	case f.connect && modelsignin.IsConnectVendor(vendor) && pr.APIKeySource == modelkey.SourceKeyring:
+	case f.connect && modelsignin.IsConnectVendor(vendor) && pr.APIKeySource == modelkey.SourceKeyring && reconnect:
 		return vendor
 	}
 	return ""
+}
+
+// mayReconnect says a connect may write provider id's keychain entry: a
+// connected account is kept for it, or the entry holds no key.
+func mayReconnect(home, id string) bool {
+	if r, err := modelsignin.Open(home, nil).Get(modelsignin.ConnectedVendor(id)); err == nil && r.Connected {
+		return true
+	}
+	present, err := connectKeyPresent(id)
+	return err == nil && !present
 }
 
 // signInAgain signs in with vendor, or connects its account, again for the
@@ -345,7 +358,7 @@ func newProvidersAddCmd() *cobra.Command {
 			if id := providerIDFor(vendor, f.name); id != "" {
 				providers, models, _ := pol.SavedModels()
 				if pr, ok := providers[id]; ok {
-					if sv := signInAgainVendor(vendor, f, pr); sv != "" {
+					if sv := signInAgainVendor(vendor, f, pr, mayReconnect(home, id)); sv != "" {
 						return signInAgain(cmd, home, id, pr, sv, models, f)
 					}
 					return engine.Classify(engine.ExitUsage, fmt.Errorf("this computer already has the provider %s: one provider per vendor (agentry providers remove %s first to set it up again)", id, id))
@@ -693,7 +706,11 @@ func removeKeptSignIn(cmd *cobra.Command, pol *policy.Policy, home, id string, p
 	if here {
 		next := ""
 		if signInVendor(id, pr) == vendor {
-			next = "; it needs " + map[bool]string{true: "connecting", false: "a sign-in"}[modelsignin.IsConnectVendor(vendor)] + " again before a run can use it (" + modelsignin.SignInCommand(vendor) + ")"
+			again := "a sign-in"
+			if modelsignin.IsConnectVendor(vendor) {
+				again = "connecting"
+			}
+			next = "; it needs " + again + " again before a run can use it (" + modelsignin.SignInCommand(vendor) + ")"
 		}
 		_, _ = fmt.Fprintf(w, "the provider %s is kept%s\n", id, next)
 	}

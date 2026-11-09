@@ -29,6 +29,7 @@ var (
 	huggingFaceEndpoints func(*mcpauth.HuggingFace)
 	connectStoreKey      = modelkey.Store
 	connectDeleteKey     = modelkey.Delete
+	connectKeyPresent    = modelkey.Present
 )
 
 // connectStore is the model sign-in store with the model key's keychain

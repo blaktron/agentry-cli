@@ -54,7 +54,7 @@ func newConnectFixture(t *testing.T) *connectFixture {
 	tlsc := &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
 	guard := mcpauth.Guard{AllowLoopback: true, TLS: tlsc}
 	browser := &http.Client{Transport: &http.Transport{TLSClientConfig: tlsc}}
-	prev := []any{vendorHTTP, connectionKeys, openBrowser, openRouterEndpoints, poeEndpoints, huggingFaceEndpoints, connectStoreKey, connectDeleteKey}
+	prev := []any{vendorHTTP, connectionKeys, openBrowser, openRouterEndpoints, poeEndpoints, huggingFaceEndpoints, connectStoreKey, connectDeleteKey, connectKeyPresent}
 	vendorHTTP = guard.Client
 	connectionKeys = func() connection.Keychain { return nil }
 	openBrowser = func(u string) error {
@@ -72,6 +72,7 @@ func newConnectFixture(t *testing.T) *connectFixture {
 	huggingFaceEndpoints = func(h *mcpauth.HuggingFace) { h.Issuer = f.hf.URL }
 	connectStoreKey = func(p, k string) error { f.mu.Lock(); defer f.mu.Unlock(); f.keys[p] = k; return nil }
 	connectDeleteKey = func(p string) error { f.mu.Lock(); defer f.mu.Unlock(); delete(f.keys, p); return nil }
+	connectKeyPresent = func(p string) (bool, error) { return f.key(p) != "", nil }
 	t.Cleanup(func() {
 		vendorHTTP = prev[0].(func() *http.Client)
 		connectionKeys = prev[1].(func() connection.Keychain)
@@ -81,6 +82,7 @@ func newConnectFixture(t *testing.T) *connectFixture {
 		huggingFaceEndpoints = prev[5].(func(*mcpauth.HuggingFace))
 		connectStoreKey = prev[6].(func(string, string) error)
 		connectDeleteKey = prev[7].(func(string) error)
+		connectKeyPresent = prev[8].(func(string) (bool, error))
 	})
 	t.Cleanup(modelsignin.RegisterVendor(modelsignin.HuggingFace, modelsignin.HuggingFaceVendor{Flow: mcpauth.HuggingFace{KeyConnect: mcpauth.KeyConnect{HTTP: guard.Client()}, Issuer: f.hf.URL}}))
 	return f

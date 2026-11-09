@@ -227,6 +227,24 @@ func TestProvidersAddConnectsAgainOnAConnectedProvider(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "already has the provider openrouter") {
 		t.Fatalf("a key on the connected provider: %v", err)
 	}
+
+	// A key the person pasted into a provider's keychain entry is never
+	// replaced by a connect; once the entry is empty, a connect may fill it.
+	cli(t, "providers", "add", "poe", "--connect")
+	cli(t, "providers", "remove", "poe", "--connect")
+	f.mu.Lock()
+	f.keys["poe"] = "pasted-poe-key"
+	f.mu.Unlock()
+	_, _, err = runCLI(t, strings.NewReader(""), "providers", "add", "poe", "--connect")
+	if err == nil || !strings.Contains(err.Error(), "already has the provider poe") || f.key("poe") != "pasted-poe-key" {
+		t.Fatalf("a connect over a pasted key: %v (key replaced: %t)", err, f.key("poe") != "pasted-poe-key")
+	}
+	f.mu.Lock()
+	delete(f.keys, "poe")
+	f.mu.Unlock()
+	if out := cli(t, "providers", "add", "poe", "--connect"); !strings.Contains(out, "signed in again for the provider poe") || f.key("poe") == "" {
+		t.Fatalf("a connect into an empty entry: %s", out)
+	}
 }
 
 // providers remove <id> removes a kept sign-in no provider uses, revoking
