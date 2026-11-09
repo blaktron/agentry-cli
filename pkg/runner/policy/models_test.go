@@ -451,3 +451,39 @@ func TestCustomProviderIDIsCustomAndASlug(t *testing.T) {
 		t.Error("a name with no letter or digit was given an id")
 	}
 }
+
+// A saved model read from a harness block keeps that block in step: a run
+// with that adapter is asked for the block's model, so removing the saved
+// model takes the model out of the block, and the file is version 1 again.
+func TestAHarnessBlocksSavedModelKeepsTheBlockInStep(t *testing.T) {
+	p, path := loadDefault(t)
+	p.Harness = map[string]HarnessPolicy{"claude": {Model: "claude-opus-5-5", Path: "/opt/claude"}}
+	claude, ok := p.FindModel("claude")
+	if !ok {
+		t.Fatal("no saved model for the harness block")
+	}
+	claude.Model = "claude-haiku-5-5"
+	if _, err := p.EditModel("claude", claude); err != nil {
+		t.Fatal(err)
+	}
+	if p.Harness["claude"].Model != "claude-haiku-5-5" {
+		t.Fatalf("harness block after the edit: %+v", p.Harness["claude"])
+	}
+	text, back := saveAndRead(t, p, path)
+	if !strings.Contains(text, `policyVersion: "1"`) {
+		t.Fatalf("an edit version 1 can say wrote:\n%s", text)
+	}
+	if _, err := back.RemoveModel("claude", ""); err != nil {
+		t.Fatal(err)
+	}
+	if hp := back.Harness["claude"]; hp.Model != "" || hp.Path != "/opt/claude" {
+		t.Fatalf("harness block after the removal: %+v", hp)
+	}
+	text, back = saveAndRead(t, back, path)
+	if !strings.Contains(text, `policyVersion: "1"`) {
+		t.Fatalf("written:\n%s", text)
+	}
+	if _, ok := back.FindModel("claude"); ok {
+		t.Fatal("the removed saved model came back from its harness block")
+	}
+}

@@ -54,7 +54,7 @@ func (s SignIn) CheckModel(ctx context.Context, model string) (modelcheck.Claude
 		cctx, cancel := context.WithTimeout(ctx, CheckTimeout)
 		defer cancel()
 		if _, err := runContainer(cctx, d, containerRun(pol, h.Ref, "check", modelcheck.ClaudeArgs(model)...), nil, &out, io.Discard); err != nil {
-			return modelcheck.ClaudeAnswer{}, fmt.Errorf("Claude Code in its image: %w", err)
+			return modelcheck.ClaudeAnswer{}, fmt.Errorf("the Claude Code image: %w", err)
 		}
 	case r.HostConfigDir != "":
 		exe, _, err := harnessprobe.Find(pol, adapter.ClaudeAdapterName)

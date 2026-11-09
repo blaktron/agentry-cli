@@ -546,7 +546,8 @@
             "TestTheEleventhSavedModelIsRefused",
             "TestRemovingASavedModelAScheduleNamesIsRefusedUntilItMoves",
             "TestAVersion1PolicyStaysVersion1UntilASecondModelIsSaved",
-            "TestSetupMakesTheDefaultSavedModel"
+            "TestSetupMakesTheDefaultSavedModel",
+            "TestAProvidersKeyFromTheStandardInputIsKeptInTheKeychainAlone"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -4324,7 +4325,8 @@
           "path": "pkg/runner/adapter/keyring_test.go",
           "tests": [
             "TestKeyringAccountFollowsThePolicy",
-            "TestDockerAgentEmitsTheKeyringAccount"
+            "TestDockerAgentEmitsTheKeyringAccount",
+            "TestKeyringAccountIsTheSavedModelsProvider"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -9360,7 +9362,8 @@
             "TestRemovingAProviderRemovesItsModels",
             "TestAChangeToTheModelBlockMovesTheDefault",
             "TestNoKeyValueIsWrittenToAVersion2Policy",
-            "TestCustomProviderIDIsCustomAndASlug"
+            "TestCustomProviderIDIsCustomAndASlug",
+            "TestAHarnessBlocksSavedModelKeepsTheBlockInStep"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -10118,7 +10121,8 @@
             "TestStoreRefusesPathsThatAreNotIDs",
             "TestClaimIsOncePerOccurrence",
             "TestFiresAndState",
-            "TestDue"
+            "TestDue",
+            "TestAScheduleNamesItsSavedModelByIDAlone"
           ],
           "fuzz": [],
           "benchmarks": [],

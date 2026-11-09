@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -161,5 +162,29 @@ func TestDue(t *testing.T) {
 	r2 := Recurrence{Kind: Daily, Time: "12:00", Zone: "UTC", Start: start}
 	if run, _ := Due(r2, State{}, start); !run.Equal(start) {
 		t.Fatalf("at start: %v", run)
+	}
+}
+
+// A schedule names its saved model by id, a name and never a credential:
+// the record round-trips it, and the file holds nothing else of the model.
+func TestAScheduleNamesItsSavedModelByIDAlone(t *testing.T) {
+	s := Store{Dir: t.TempDir()}
+	sc := sample(t)
+	sc.Run.Model = "3f9a2c10"
+	if err := s.Create(&sc, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Get(sc.ID)
+	if err != nil || got.Run.Model != "3f9a2c10" {
+		t.Fatalf("Get = %+v, %v", got.Run, err)
+	}
+	b, err := os.ReadFile(filepath.Join(s.Dir, sc.ID, "schedule.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, word := range []string{"apiKey", "token", "secret"} {
+		if strings.Contains(string(b), word) {
+			t.Errorf("the record holds %q:\n%s", word, b)
+		}
 	}
 }

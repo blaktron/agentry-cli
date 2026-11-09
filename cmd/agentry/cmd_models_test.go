@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
+	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/setup"
 	"github.com/blaktron/agentry-cli/pkg/schedule"
@@ -271,5 +272,43 @@ func TestSetupMakesTheDefaultSavedModel(t *testing.T) {
 	}
 	if _, ok := pol.FindModel("Qwen"); !ok {
 		t.Fatal("setup lost a saved model")
+	}
+}
+
+// A key read with --key-stdin goes to the OS keychain as provider:<id>
+// alone: never into the policy, the output or the JSON. Adding a provider
+// this computer already has is refused before any key is read, so the key
+// kept is never replaced.
+func TestAProvidersKeyFromTheStandardInputIsKeptInTheKeychainAlone(t *testing.T) {
+	_, path := modelsFixture(t)
+	t.Setenv("AGENTRY_NO_KEYRING", "")
+	keys := fakeKeychain{}
+	t.Cleanup(modelkey.UseKeychain(keys))
+	const key = "sk-lab-kept-value-9876543210"
+	srv := modelEndpoint(t, 8192, "qwen3")
+	out, errOut, err := runCLI(t, strings.NewReader(key+"\n"), "--json", "providers", "add", "custom", "--name", "Lab", "--base-url", srv.URL+"/v1", "--key-stdin")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, errOut)
+	}
+	if keys[modelkey.Account("custom-lab")] != key {
+		t.Fatalf("keychain %v", keys)
+	}
+	text, pol := readPolicy(t, path)
+	if strings.Contains(out+errOut+text, key) {
+		t.Fatal("the key reached the output or the policy")
+	}
+	if pr := pol.Providers["custom-lab"]; pr.APIKeySource != "keyring" || pr.APIKeyEnv != "CUSTOM_LAB_API_KEY" {
+		t.Fatalf("provider %+v", pr)
+	}
+	_, _, err = runCLI(t, strings.NewReader("sk-other\n"), "providers", "add", "custom", "--name", "lab", "--base-url", srv.URL+"/v1", "--key-stdin")
+	if err == nil || !strings.Contains(err.Error(), "already has the provider custom-lab") {
+		t.Fatalf("a second custom-lab: %v", err)
+	}
+	if keys[modelkey.Account("custom-lab")] != key {
+		t.Fatal("the refused add replaced the kept key")
+	}
+	cli(t, "providers", "remove", "custom-lab")
+	if _, ok := keys[modelkey.Account("custom-lab")]; ok {
+		t.Fatal("removing the provider left its key in the keychain")
 	}
 }

@@ -149,7 +149,7 @@ func Check(ctx context.Context, c Checkers, m policy.Model) (Result, error) {
 	return checkListed(ctx, c, m)
 }
 
-var errNoChecker = errors.New("this build cannot ask it")
+var errNoChecker = errors.New("this build has no way to ask it for its models")
 
 func cannot(what string, err error) *Refusal {
 	return &Refusal{Kind: CannotCheck, Reason: fmt.Sprintf("could not check the model: %s: %v", what, err)}
@@ -310,7 +310,7 @@ func ParseClaudeResult(stdout []byte) (ClaudeAnswer, error) {
 		text = text[i+1:]
 	}
 	if err := json.Unmarshal([]byte(text), &r); err != nil {
-		return ClaudeAnswer{}, fmt.Errorf("Claude Code's answer is not its JSON result: %w", err)
+		return ClaudeAnswer{}, fmt.Errorf("the answer is not Claude Code's JSON result: %w", err)
 	}
 	if !r.IsError {
 		used := make([]string, 0, len(r.ModelUsage))

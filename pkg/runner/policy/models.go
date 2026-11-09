@@ -254,6 +254,28 @@ func migrateV1(m Model, harness map[string]HarnessPolicy) (map[string]Provider, 
 	return providers, models, def.ID
 }
 
+// harnessOf is the harness block the saved model id was read from, "" for
+// a saved model that was not. A run with --adapter <name> is still asked
+// for that block's model, so the block follows the saved model.
+func (p *Policy) harnessOf(id string) string {
+	for name := range p.Harness {
+		if migratedID("harness:"+name) == id {
+			return name
+		}
+	}
+	return ""
+}
+
+// setHarnessModel gives the harness block a saved model was read from the
+// model id model ("" when the saved model is removed).
+func (p *Policy) setHarnessModel(id, model string) {
+	if name := p.harnessOf(id); name != "" {
+		hp := p.Harness[name]
+		hp.Model = model
+		p.Harness[name] = hp
+	}
+}
+
 // materialize turns a version 1 policy's blocks into the lists, before a
 // list is changed: the model block keeps reading as the default.
 func (p *Policy) materialize() {
@@ -385,6 +407,7 @@ func (p *Policy) EditModel(ref string, sm SavedModel) (SavedModel, error) {
 			p.Models[i] = sm
 		}
 	}
+	p.setHarnessModel(sm.ID, sm.Model)
 	p.refreshView()
 	return sm, nil
 }
@@ -413,6 +436,7 @@ func (p *Policy) RemoveModel(ref, newDefault string) (SavedModel, error) {
 		return SavedModel{}, err
 	}
 	p.Models = slices.DeleteFunc(p.Models, func(m SavedModel) bool { return m.ID == sm.ID })
+	p.setHarnessModel(sm.ID, "")
 	p.refreshView()
 	return sm, nil
 }
@@ -438,6 +462,9 @@ func (p *Policy) RemoveProvider(id, newDefault string) ([]SavedModel, error) {
 		return nil, err
 	}
 	p.Models = slices.DeleteFunc(p.Models, func(m SavedModel) bool { return slices.Contains(ids, m.ID) })
+	for _, mid := range ids {
+		p.setHarnessModel(mid, "")
+	}
 	delete(p.Providers, id)
 	p.refreshView()
 	return on, nil

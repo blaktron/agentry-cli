@@ -188,14 +188,32 @@ func newProvidersAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			id, pr, err := buildProvider(cmd, home, strings.ToLower(strings.TrimSpace(args[0])), f)
+			vendor := strings.ToLower(strings.TrimSpace(args[0]))
+			// One provider per vendor, one per endpoint of your own: an id
+			// already here is refused before any sign-in starts or any key
+			// is read, so nothing kept is replaced.
+			if id := providerIDFor(vendor, f.name); id != "" {
+				if providers, _, _ := pol.SavedModels(); hasProvider(providers, id) {
+					return engine.Classify(engine.ExitUsage, fmt.Errorf("this computer already has the provider %s: one provider per vendor (agentry providers remove %s first to set it up again)", id, id))
+				}
+			}
+			id, pr, key, err := buildProvider(cmd, home, vendor, f)
 			if err != nil {
 				return err
 			}
 			if err := pol.AddProvider(id, pr); err != nil {
 				return engine.Classify(engine.ExitUsage, err)
 			}
+			if key != "" {
+				if err := modelkey.Store(id, key); err != nil {
+					return engine.Classify(engine.ExitPolicy, fmt.Errorf("keep the key in the OS keychain: %w", err))
+				}
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "kept the key in the OS keychain as %s\n", modelkey.Account(id))
+			}
 			if err := policy.Save(path, pol); err != nil {
+				if key != "" {
+					_ = modelkey.Delete(id)
+				}
 				return engine.Classify(engine.ExitPolicy, err)
 			}
 			kind, state := providerState(home, id, pr)
@@ -223,27 +241,47 @@ func newProvidersAddCmd() *cobra.Command {
 	return cmd
 }
 
+// providerIDFor is the provider id vendor and a custom endpoint's name make,
+// "" when they make none.
+func providerIDFor(vendor, name string) string {
+	if vendor != policy.ProviderCustom {
+		return vendor
+	}
+	id, err := policy.CustomProviderID(name)
+	if err != nil {
+		return ""
+	}
+	return id
+}
+
+func hasProvider(providers map[string]policy.Provider, id string) bool {
+	_, ok := providers[id]
+	return ok
+}
+
 // buildProvider makes the provider vendor names from the flags, signing in
-// or connecting first where it pays that way and nothing is kept yet.
-func buildProvider(cmd *cobra.Command, home, vendor string, f providerFlags) (string, policy.Provider, error) {
+// or connecting first where it pays that way and nothing is kept yet. A key
+// read with --key-stdin is handed back, for the caller to keep once the
+// provider is added.
+func buildProvider(cmd *cobra.Command, home, vendor string, f providerFlags) (id string, pr policy.Provider, key string, err error) {
 	usage := func(format string, a ...any) error {
 		return engine.Classify(engine.ExitUsage, fmt.Errorf(format, a...))
 	}
 	in := bufio.NewReader(cmd.InOrStdin())
 	if f.name != "" && vendor != policy.ProviderCustom {
-		return "", policy.Provider{}, usage("--name is for custom, an endpoint of your own")
+		return "", pr, "", usage("--name is for custom, an endpoint of your own")
 	}
 	switch {
 	case vendor == policy.ProviderAgentry:
 		reg := agentryRegistryFor(vendor)
 		if reg == "" {
-			return "", policy.Provider{}, usage("provider agentry pays with the credits of a SecureAgentry account: sign in first (agentry login)")
+			return "", pr, "", usage("provider agentry pays with the credits of a SecureAgentry account: sign in first (agentry login)")
 		}
 		hp, err := setup.EndpointHostPort(reg)
 		if err != nil {
-			return "", policy.Provider{}, err
+			return "", pr, "", err
 		}
-		return vendor, policy.Provider{BaseURL: strings.TrimRight(reg, "/") + policy.AgentryInferencePath, ProxyAllow: []string{hp}}, nil
+		return vendor, policy.Provider{BaseURL: strings.TrimRight(reg, "/") + policy.AgentryInferencePath, ProxyAllow: []string{hp}}, "", nil
 	case vendor == policy.ProviderCopilot:
 		plan := f.copilotPlan
 		if plan == "" {
@@ -251,55 +289,57 @@ func buildProvider(cmd *cobra.Command, home, vendor string, f providerFlags) (st
 		}
 		allow, err := policy.CopilotProxyAllow(plan)
 		if err != nil {
-			return "", policy.Provider{}, usage("--copilot-plan: %v", err)
+			return "", pr, "", usage("--copilot-plan: %v", err)
 		}
 		if kept, _ := modelsignin.Open(home, nil).Get(modelsignin.Copilot); kept == nil || kept.Broken != "" {
 			if err := addCopilot(cmd, home, f.oauthApp); err != nil {
-				return "", policy.Provider{}, err
+				return "", pr, "", err
 			}
 		}
-		return vendor, policy.Provider{APIKeyKind: policy.KeyKindCopilotSignIn, ProxyAllow: allow}, nil
+		return vendor, policy.Provider{APIKeyKind: policy.KeyKindCopilotSignIn, ProxyAllow: allow}, "", nil
 	case f.signIn:
-		return signInProvider(cmd, in, home, vendor, f)
+		id, pr, err := signInProvider(cmd, in, home, vendor, f)
+		return id, pr, "", err
 	case vendor == policy.ProviderCustom:
 		if strings.TrimSpace(f.name) == "" || strings.TrimSpace(f.baseURL) == "" {
-			return "", policy.Provider{}, usage("custom needs --name and --base-url: an endpoint of your own is a provider of its own, named for it")
+			return "", pr, "", usage("custom needs --name and --base-url: an endpoint of your own is a provider of its own, named for it")
 		}
 		id, err := policy.CustomProviderID(f.name)
 		if err != nil {
-			return "", policy.Provider{}, usage("%v", err)
+			return "", pr, "", usage("%v", err)
 		}
 		def := strings.ToUpper(strings.ReplaceAll(id, "-", "_")) + "_API_KEY"
-		pr, err := keyProvider(cmd, in, id, def, nil, f)
+		pr, key, err := keyProvider(cmd, in, id, def, nil, f)
 		pr.Name = strings.TrimSpace(f.name)
-		return id, pr, err
+		return id, pr, key, err
 	}
 	d := setup.DefaultsFor(vendor)
 	if d == nil && f.baseURL == "" {
-		return "", policy.Provider{}, usage("this build has no endpoint for %q: for an OpenAI-compatible endpoint of your own, add custom --name <name> --base-url <url>", vendor)
+		return "", pr, "", usage("this build has no endpoint for %q: for an OpenAI-compatible endpoint of your own, add custom --name <name> --base-url <url>", vendor)
 	}
 	if f.connect {
 		if !modelsignin.IsConnectVendor(vendor) {
-			return "", policy.Provider{}, usage("--connect is for openrouter, poe and huggingface")
+			return "", pr, "", usage("--connect is for openrouter, poe and huggingface")
 		}
 		if kept, _ := modelsignin.Open(home, nil).Get(vendor); kept == nil || !kept.Connected || kept.Broken != "" {
 			if _, err := connectAccount(cmd, in, home, vendor); err != nil {
-				return "", policy.Provider{}, err
+				return "", pr, "", err
 			}
 		}
-		return vendor, policy.Provider{APIKeyEnv: d.APIKeyEnv, APIKeySource: modelkey.SourceKeyring, ProxyAllow: append([]string(nil), d.ProxyAllow...)}, nil
+		return vendor, policy.Provider{APIKeyEnv: d.APIKeyEnv, APIKeySource: modelkey.SourceKeyring, ProxyAllow: append([]string(nil), d.ProxyAllow...)}, "", nil
 	}
 	def, allow := strings.ToUpper(vendor)+"_API_KEY", []string(nil)
 	if d != nil {
 		def, allow = d.APIKeyEnv, append([]string(nil), d.ProxyAllow...)
 	}
-	pr, err := keyProvider(cmd, in, vendor, def, allow, f)
-	return vendor, pr, err
+	pr, key, err = keyProvider(cmd, in, vendor, def, allow, f)
+	return vendor, pr, key, err
 }
 
-// keyProvider is a provider paid by a key: its variable, the key read from
-// the standard input into the keychain with --key-stdin, and the endpoint.
-func keyProvider(cmd *cobra.Command, in *bufio.Reader, id, defEnv string, allow []string, f providerFlags) (policy.Provider, error) {
+// keyProvider is a provider paid by a key: its variable, and the endpoint.
+// With --key-stdin the key is read from the standard input and handed back
+// to be kept in the keychain, never written to the policy.
+func keyProvider(cmd *cobra.Command, in *bufio.Reader, id, defEnv string, allow []string, f providerFlags) (policy.Provider, string, error) {
 	pr := policy.Provider{APIKeyEnv: f.keyEnv, APIKeySource: f.keySource, BaseURL: strings.TrimSpace(f.baseURL), ProxyAllow: allow}
 	if pr.APIKeyEnv == "" {
 		pr.APIKeyEnv = defEnv
@@ -308,39 +348,40 @@ func keyProvider(cmd *cobra.Command, in *bufio.Reader, id, defEnv string, allow 
 		pr.APIKeySource = ""
 	}
 	if pr.APIKeySource != "" && pr.APIKeySource != modelkey.SourceKeyring {
-		return pr, engine.Classify(engine.ExitUsage, fmt.Errorf("--api-key-source %q must be env or keyring", f.keySource))
+		return pr, "", engine.Classify(engine.ExitUsage, fmt.Errorf("--api-key-source %q must be env or keyring", f.keySource))
 	}
 	if pr.BaseURL != "" {
 		hp, err := setup.EndpointHostPort(pr.BaseURL)
 		if err != nil {
-			return pr, engine.Classify(engine.ExitUsage, err)
+			return pr, "", engine.Classify(engine.ExitUsage, err)
 		}
 		pr.ProxyAllow = []string{hp}
 		if w := setup.PlainHTTPWarning(pr.BaseURL); w != "" {
 			_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "warning: "+w)
 		}
 	}
-	if f.keyStdin {
-		line, err := in.ReadString('\n')
-		key := strings.TrimSpace(line)
-		if key == "" {
-			if err != nil && !errors.Is(err, io.EOF) {
-				return pr, err
-			}
-			return pr, engine.Classify(engine.ExitUsage, errors.New("--key-stdin: the standard input held no key"))
+	if !f.keyStdin {
+		if os.Getenv(pr.APIKeyEnv) == "" && pr.APIKeySource != modelkey.SourceKeyring && policy.ProviderVendor(id) != policy.ProviderCustom {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: $%s is not set here: export it where agentry runs, or add the provider with --key-stdin to keep the key in the OS keychain\n", pr.APIKeyEnv)
 		}
-		if err := modelkey.Store(id, key); err != nil {
-			return pr, engine.Classify(engine.ExitPolicy, fmt.Errorf("keep the key in the OS keychain: %w", err))
-		}
-		pr.APIKeySource = modelkey.SourceKeyring
-		if k := policy.CredentialKindOf(policy.ProviderVendor(id), key); k != policy.KeyKindAPI {
-			pr.APIKeyKind = k
-		}
-		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "kept the key in the OS keychain as %s\n", modelkey.Account(id))
-	} else if os.Getenv(pr.APIKeyEnv) == "" && pr.APIKeySource != modelkey.SourceKeyring && policy.ProviderVendor(id) != policy.ProviderCustom {
-		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: $%s is not set here: export it where agentry runs, or add the provider again with --key-stdin to keep the key in the OS keychain\n", pr.APIKeyEnv)
+		return pr, "", nil
 	}
-	return pr, nil
+	if modelkey.Disabled() {
+		return pr, "", engine.Classify(engine.ExitUsage, fmt.Errorf("--key-stdin keeps the key in the OS keychain, which is disabled here (%s is set): set $%s instead", modelkey.EnvNoKeyring, pr.APIKeyEnv))
+	}
+	line, err := in.ReadString('\n')
+	key := strings.TrimSpace(line)
+	if key == "" {
+		if err != nil && !errors.Is(err, io.EOF) {
+			return pr, "", err
+		}
+		return pr, "", engine.Classify(engine.ExitUsage, errors.New("--key-stdin: the standard input held no key"))
+	}
+	pr.APIKeySource = modelkey.SourceKeyring
+	if k := policy.CredentialKindOf(policy.ProviderVendor(id), key); k != policy.KeyKindAPI {
+		pr.APIKeyKind = k
+	}
+	return pr, key, nil
 }
 
 // signInProvider is a provider paid by the person's plan: the vendor's

@@ -158,7 +158,7 @@ func TestAChatGPTPlanIsCheckedByItsOwnModelList(t *testing.T) {
 		errors.New("dial tcp: no route to host"):                  CannotCheck,
 	} {
 		_, got := Check(context.Background(), Checkers{ChatGPTModels: func(context.Context) ([]string, error) { return nil, err }}, m)
-		refusal(t, got, kind)
+		_ = refusal(t, got, kind)
 	}
 }
 
@@ -179,7 +179,7 @@ func TestACopilotPlanTakesAutoUnlistedAndChecksTheRest(t *testing.T) {
 	}
 	m.Name = "o-disabled"
 	_, err := Check(context.Background(), c, m)
-	refusal(t, err, NotOffered)
+	_ = refusal(t, err, NotOffered)
 }
 
 func TestAClaudeSubscriptionIsCheckedByOneMessage(t *testing.T) {
@@ -202,7 +202,7 @@ func TestAClaudeSubscriptionIsCheckedByOneMessage(t *testing.T) {
 		t.Fatalf("a 404 refuses with %q, not Claude Code's own sentence", r.Reason)
 	}
 	_, err = Check(context.Background(), answer(ClaudeAnswer{NotSignedIn: true}), m)
-	refusal(t, err, NeedsSignIn)
+	_ = refusal(t, err, NeedsSignIn)
 	_, err = Check(context.Background(), answer(ClaudeAnswer{Status: 429, Message: "rate limited"}), m)
 	if r := refusal(t, err, CannotCheck); !strings.Contains(r.Reason, "rate limited") {
 		t.Fatalf("reason = %q", r.Reason)
@@ -256,5 +256,5 @@ func TestAgentryCreditsAreCheckedByOpeningASession(t *testing.T) {
 	}
 	m.Name = "gpt-5.5"
 	_, err = Check(context.Background(), c, m)
-	refusal(t, err, NotOffered)
+	_ = refusal(t, err, NotOffered)
 }
