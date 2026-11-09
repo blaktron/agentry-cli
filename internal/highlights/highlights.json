@@ -1,6 +1,15 @@
 {
   "versions": [
     {
+      "version": "0.7.39",
+      "highlights": [
+        "agentry run --model runs a QuickAgent on any of your saved models; without it, the run uses your default.",
+        "agentry schedule add and edit take --model, and a schedule keeps that model when you change the default.",
+        "The receipt and the result envelope name the saved model a run used, beside its provider and model id.",
+        "A run on a saved model that is gone, or whose key or sign-in is missing, is refused, never run on the default."
+      ]
+    },
+    {
       "version": "0.7.38",
       "highlights": [
         "A schedule made in Agentry Desktop's Unsafe Mode waits while your organization forbids Unsafe Mode, then runs again.",
