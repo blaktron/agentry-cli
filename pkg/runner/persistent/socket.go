@@ -24,7 +24,8 @@ import (
 // exactly one of:
 //
 //	{"attach":{}}             every event of the segment from now on, as {"event":…}
-//	{"send":{"text":"…"}}     one turn; refused as busy while another is in flight
+//	{"send":{"text":"…"}}     one turn; refused as busy while another is in flight,
+//	                          and as model when the agent's saved model cannot be used
 //	{"status":{}}             answered with {"status":…}
 //	{"roster":{}}             answered with {"roster":[…]}
 //	{"change":{…}}            a Change; answered with {"roster":[…]}, or
@@ -112,7 +113,10 @@ const (
 	RefusedCompact   protocol.Refusal = "compact"
 	RefusedInterrupt protocol.Refusal = "interrupt"
 	RefusedHold      protocol.Refusal = "hold"
-	RefusedAnswer                     = protocol.RefusedAnswer
+	// RefusedModel: the turn was not sent, because the saved model the
+	// agent names is not on this computer or cannot be used here.
+	RefusedModel  protocol.Refusal = "model"
+	RefusedAnswer                  = protocol.RefusedAnswer
 )
 
 // maxSocketPath is below the kernel's limit for a socket's name (108 bytes
@@ -230,6 +234,8 @@ func (s *Supervisor) serveConn(nc net.Conn) {
 					c.refuse(RefusedBusy, err.Error())
 				case errors.Is(err, session.ErrEnded):
 					c.refuse(RefusedEnded, "the agent's segment has ended")
+				case isModelError(err):
+					c.refuse(RefusedModel, err.Error())
 				}
 			}()
 		case cmd.Status != nil:
@@ -633,6 +639,12 @@ func (r *remote) read() {
 			// turn in flight goes on.
 			ev.Kind = session.KindNotice
 			r.events <- ev
+			continue
+		}
+		if rep.Event.Refused == RefusedModel {
+			// The turn was not sent: its one error is the send's, which a
+			// program driving the session protocol is refused with.
+			r.finishTurn(&protocol.RefusedError{Class: RefusedModel, Text: ev.Text})
 			continue
 		}
 		if rep.Event.Refused != "" {

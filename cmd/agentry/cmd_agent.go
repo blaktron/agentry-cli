@@ -930,7 +930,9 @@ func newAgentAttachCmd() *cobra.Command {
 			"`agentry run --session-protocol`: one JSON command a line on stdin\n" +
 			"({\"send\":{\"text\":\"…\"}} or {\"end\":{\"finish\":false}}), and the agent's\n" +
 			"events as JSON lines on descriptor 3, which the driver opens. A send while\n" +
-			"another chat's turn is in flight is refused as busy. Ending, or the end of\n" +
+			"another chat's turn is in flight is refused as busy, and one the agent's\n" +
+			"saved model cannot take (gone from this computer, or its key or sign-in\n" +
+			"not here) is refused as model, with the fix. Ending, or the end of\n" +
 			"input, detaches: the agent keeps running. A persistent agent takes no files\n" +
 			"through its chat; put them in its share folder. Descriptor 3 does not exist\n" +
 			"on Windows, so attach is refused there.",

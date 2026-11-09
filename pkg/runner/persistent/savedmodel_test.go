@@ -15,6 +15,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/session/protocol"
 )
 
 // labPolicy writes a policy with a second saved model, Qwen on an endpoint
@@ -444,5 +445,46 @@ func TestAnAgentMovedToAModelNoSegmentStartsOnIsNotPutBack(t *testing.T) {
 	}
 	if _, n := lastSegment(st); n != 1 {
 		t.Fatalf("the agent was put back on the model it was moved from (%d segments)", n)
+	}
+}
+
+// A chat attached through the owner socket is told when its turn fails for
+// the agent's saved model: the send is refused with that one error, of the
+// class a program driving the session protocol is refused with, and the
+// chat's turn ends on it rather than waiting for an answer that never comes.
+func TestAChatIsToldWhenItsTurnFailsForTheSavedModel(t *testing.T) {
+	home := shortHome(t)
+	enable(t, home)
+	path, qwen := labPolicy(t, home)
+	st := &starter{resumed: true}
+	sv, err := startOnModels(t, home, path, st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sv.Change(Change{Model: &qwen.ID}); err != nil {
+		t.Fatal(err)
+	}
+	editPolicy(t, path, func(p *policy.Policy) {
+		if _, err := p.RemoveModel(qwen.ID, ""); err != nil {
+			t.Fatal(err)
+		}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	chat, err := Attach(ctx, home, "assistant", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _, _ = chat.End(context.Background(), false) }()
+	err = chat.Send(ctx, "hello")
+	if err == nil || !strings.Contains(err.Error(), qwen.ID) || !strings.Contains(err.Error(), "agentry agent configure assistant --model") {
+		t.Fatalf("the chat's send on a missing model: %v", err)
+	}
+	var refused *protocol.RefusedError
+	if !errors.As(err, &refused) || refused.Class != RefusedModel {
+		t.Errorf("the send's error is not the model refusal a program is given: %#v", err)
+	}
+	if _, n := lastSegment(st); n != 1 {
+		t.Errorf("a refused send started a segment (%d)", n)
 	}
 }
