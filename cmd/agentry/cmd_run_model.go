@@ -64,7 +64,11 @@ func savedModelUsable(home string, rm localrun.RunModel, getenv func(string) str
 		return nil
 	}
 	if policy.KeySource(hp, m) != modelkey.SourceKeyring {
-		return engine.Classify(engine.ExitPolicy, fmt.Errorf("%s cannot be used: its key comes from $%s, which is not set: set it, or run on another saved model (--model; agentry models list)", what, env))
+		fix := "set it, or run on another saved model (--model; agentry models list)"
+		if m.Provider == policy.ProviderCustom && hp.APIKeyEnv == "" {
+			fix = "set it, or run on another saved model (--model; agentry models list); if the endpoint takes no key, delete the provider's apiKeyEnv from the policy"
+		}
+		return engine.Classify(engine.ExitPolicy, fmt.Errorf("%s cannot be used: its key comes from $%s, which is not set: %s", what, env, fix))
 	}
 	ok, err := keyKept(m.KeyProvider())
 	if err != nil {

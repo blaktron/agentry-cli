@@ -7,6 +7,7 @@ package adapter
 import (
 	"bytes"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -567,6 +568,74 @@ func TestDockerAgentCompileDropsThinkingBoundToAnEarlierPrompt(t *testing.T) {
 			if b, ok := main["thinking_budget"]; ok {
 				t.Errorf("%s %s: thinking_budget %v written; the model's own effort is to hold", c.model, mode, b)
 			}
+		}
+	}
+}
+
+// An endpoint of the person's own that takes no key is given none to
+// resolve: docker-agent's client gets a stand-in it needs to start, and
+// codex a provider with no env_key. An endpoint with a key variable still
+// resolves its key from it.
+func TestAnEndpointThatTakesNoKeyIsGivenNoneToResolve(t *testing.T) {
+	keyless := policy.Model{Provider: "custom", Name: "qwen3", BaseURL: "http://192.0.2.10:8080/v1", ProxyAllow: []string{"192.0.2.10:8080"}}
+	da, err := Get(DefaultName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := testInput()
+	in.Model = keyless
+	res, err := da.Compile(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	given := false
+	for _, e := range res.Agent.Env {
+		if e.FromHostEnv != "" || e.FromKeyring != "" {
+			t.Errorf("docker-agent on an endpoint that takes no key resolves %+v", e)
+		}
+		if e.Name == "OPENAI_API_KEY" && e.Value == NoKeyStandIn {
+			given = true
+		}
+	}
+	if !given {
+		t.Errorf("docker-agent's openai client is given no stand-in key: %+v", res.Agent.Env)
+	}
+
+	for _, name := range []string{CodexAdapterName, CodexImageAdapterName} {
+		ad, err := Get(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		in := codexInput()
+		in.Model = keyless
+		res, err := ad.Compile(in)
+		if err != nil {
+			t.Fatalf("%s on an endpoint that takes no key: %v", name, err)
+		}
+		vars := slices.Clone(res.Agent.Env)
+		if res.Host != nil {
+			vars = append(vars, res.Host.Env...)
+		}
+		for _, e := range vars {
+			if e.FromHostEnv != "" || e.FromKeyring != "" {
+				t.Errorf("%s on an endpoint that takes no key resolves %+v", name, e)
+			}
+		}
+		if cfg := string(res.Files[codexConfigFile]); strings.Contains(cfg, "env_key") {
+			t.Errorf("%s names an env_key for an endpoint that takes no key:\n%s", name, cfg)
+		}
+	}
+
+	in = testInput()
+	in.Model = keyless
+	in.Model.APIKeyEnv = "LAB_API_KEY"
+	res, err = da.Compile(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range res.Agent.Env {
+		if e.Name == "OPENAI_API_KEY" && (e.FromHostEnv != "LAB_API_KEY" || e.Value != "") {
+			t.Errorf("an endpoint with a key variable: %+v", e)
 		}
 	}
 }

@@ -245,13 +245,23 @@ func harnessProvider(m policy.Model) (string, error) {
 	return "openai", nil
 }
 
+// NoKeyStandIn is what the agent container's client is given as its key
+// for an endpoint of the person's own that takes none. docker-agent's
+// openai client refuses to start without a key, and an endpoint that takes
+// none ignores the one it is sent; the value is not a secret.
+const NoKeyStandIn = "no-key"
+
 // modelKeyVar is the agent container's model credential: for provider
 // agentry the run's credits session token, which the host opens for the
-// run; for every other provider the key from the variable the policy names
-// (or the keychain account beside it).
-func modelKeyVar(provider, keyEnv, keyring string, expect *spec.CredentialKind) spec.EnvVar {
+// run; for an endpoint that takes no key a stand-in the harness's client
+// needs; for every other provider the key from the variable the policy
+// names (or the keychain account beside it).
+func modelKeyVar(provider, keyEnv, keyring string, expect *spec.CredentialKind, noKey bool) spec.EnvVar {
 	if provider == policy.ProviderAgentry {
 		return spec.EnvVar{Name: AgentryInferenceTokenEnv, FromInference: true}
+	}
+	if noKey {
+		return spec.EnvVar{Name: harnessKeyVar(provider, ""), Value: NoKeyStandIn}
 	}
 	return spec.EnvVar{Name: harnessKeyVar(provider, keyEnv), FromHostEnv: keyEnv, FromKeyring: keyring, ExpectedKind: expect}
 }
@@ -643,7 +653,7 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 			// The key, under the name the harness's client reads it by,
 			// from the variable the policy names (the harness block's
 			// override first, as the receipt's line says: policy.KeyEnv).
-			modelKeyVar(provider, keyEnv, keyringAccount(in), keyExpect),
+			modelKeyVar(provider, keyEnv, keyringAccount(in), keyExpect, policy.TakesNoKey(in.Harness, in.Model)),
 			// The proxy is the agent container's only route out; NO_PROXY
 			// keeps MCP traffic direct on the run network.
 			{Name: "HTTPS_PROXY", Value: spec.ProxyURL()},

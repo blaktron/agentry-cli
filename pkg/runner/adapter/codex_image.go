@@ -93,11 +93,14 @@ func (c *codexImageAdapter) Compile(in Input) (Result, error) {
 	restart := false
 	if signIn == "" {
 		keyEnv := policy.KeyEnv(in.Harness, in.Model)
-		if keyEnv == "" {
+		noKey := policy.TakesNoKey(in.Harness, in.Model)
+		if keyEnv == "" && !noKey {
 			return Result{}, &Refusal{Reason: "the codex-image adapter runs on an OpenAI API key or your ChatGPT plan, and the policy names neither (set model.apiKeyEnv, or sign in with ChatGPT: agentry setup)"}
 		}
 		r.keyEnv, r.baseURL = keyEnv, codexBaseURL(in)
-		env = append(env, spec.EnvVar{Name: keyEnv, FromHostEnv: keyEnv, FromKeyring: keyringAccount(in)})
+		if !noKey {
+			env = append(env, spec.EnvVar{Name: keyEnv, FromHostEnv: keyEnv, FromKeyring: keyringAccount(in)})
+		}
 	} else {
 		r.baseURL, r.signInRoute = codexDefaultBaseURL, policy.SignInTokenRoute(in.Harness)
 		r.tokenReader, r.tokenPath = "/bin/cat", codexImageTokenPath

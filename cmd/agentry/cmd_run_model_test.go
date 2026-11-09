@@ -253,3 +253,89 @@ func TestAScheduleOnAHarnessBlocksHarnessIsAssignedItsSavedModel(t *testing.T) {
 		t.Fatalf("removal: %v", err)
 	}
 }
+
+// An endpoint of the person's own added with no key is saved as taking
+// none, and a run on it is given none to find: its plan resolves no key and
+// nothing refuses it before the run. An endpoint added with a key variable
+// is still refused by that variable's name while it is unset.
+func TestAnEndpointAddedWithNoKeyRunsWithNone(t *testing.T) {
+	home, path := labModels(t)
+	_, pol := readPolicy(t, path)
+	if pr := pol.Providers["custom-lab"]; pr.APIKeyEnv != "" || pr.APIKeySource != "" {
+		t.Fatalf("the provider added with no key is %+v", pr)
+	}
+	if out := cli(t, "providers", "list"); !strings.Contains(out, "custom-lab") || !strings.Contains(out, "takes no key") {
+		t.Fatalf("providers list:\n%s", out)
+	}
+	pkg := repoPath(t, "testdata/runner/pure-text")
+	var out runPlanOutput
+	if err := json.Unmarshal([]byte(cli(t, "--json", "run", "--local", pkg, "--plan", "--policy", path, "--model", "Qwen")), &out); err != nil {
+		t.Fatal(err)
+	}
+	var plan spec.Plan
+	if err := json.Unmarshal(out.Plan, &plan); err != nil {
+		t.Fatal(err)
+	}
+	if envs, accounts := planKeySources(&plan); len(envs) != 0 || len(accounts) != 0 {
+		t.Fatalf("a run on an endpoint that takes no key resolves %v from %v", envs, accounts)
+	}
+	given := false
+	for _, v := range plan.Harness.Agent.Env {
+		if v.Name == "OPENAI_API_KEY" && v.Value != "" {
+			given = true
+		}
+	}
+	if !given {
+		t.Fatalf("the harness's client is given no stand-in for the key it asks for: %+v", plan.Harness.Agent.Env)
+	}
+	rm, err := localrun.ChooseRunModel(pol, "Qwen", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := savedModelUsable(home, rm, func(string) string { return "" }); err != nil {
+		t.Fatalf("a run on an endpoint that takes no key is refused: %v", err)
+	}
+
+	srv := modelEndpoint(t, 8192, "qwen3")
+	cli(t, "providers", "add", "custom", "--name", "Keyed", "--base-url", srv.URL+"/v1", "--api-key-env", "KEYED_LAB_KEY")
+	cli(t, "models", "add", "Keyed Qwen", "--provider", "custom-keyed", "--model", "qwen3")
+	_, pol = readPolicy(t, path)
+	rm, err = localrun.ChooseRunModel(pol, "Keyed Qwen", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = savedModelUsable(home, rm, func(string) string { return "" })
+	wantClassified(t, err, engine.ExitPolicy)
+	for _, want := range []string{`the saved model "Keyed Qwen" (provider custom-keyed)`, "$KEYED_LAB_KEY"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal %q lacks %q", err, want)
+		}
+	}
+	if err := json.Unmarshal([]byte(cli(t, "--json", "run", "--local", pkg, "--plan", "--policy", path, "--model", "Keyed Qwen")), &out); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(out.Plan, &plan); err != nil {
+		t.Fatal(err)
+	}
+	if envs, _ := planKeySources(&plan); !slices.Equal(envs, []string{"KEYED_LAB_KEY"}) {
+		t.Fatalf("a run on an endpoint with a key variable resolves %v", envs)
+	}
+}
+
+// planKeySources are the plan's host-resolved variables and the keychain
+// accounts they fall back to.
+func planKeySources(plan *spec.Plan) (envs, accounts []string) {
+	vars := slices.Clone(plan.Harness.Agent.Env)
+	if plan.Harness.Host != nil {
+		vars = append(vars, plan.Harness.Host.Env...)
+	}
+	for _, v := range vars {
+		if v.FromHostEnv != "" {
+			envs = append(envs, v.FromHostEnv)
+		}
+		if v.FromKeyring != "" {
+			accounts = append(accounts, v.FromKeyring)
+		}
+	}
+	return envs, accounts
+}
