@@ -55,6 +55,11 @@ const (
 	messengerKindsVersion = 13
 )
 
+// savedModelVersion is the version of config.yaml that added Model: a build
+// that does not know it would drop it at its next save and run the agent on
+// the default, so it refuses the config instead.
+const savedModelVersion = 14
+
 // MessengerAccount is one messenger account the person added to the agent,
 // as config.yaml keeps it: never its credential.
 type MessengerAccount struct {

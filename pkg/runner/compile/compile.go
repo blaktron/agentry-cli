@@ -636,6 +636,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		Harness: spec.HarnessSpec{
 			Adapter:       adapterName,
 			Model:         res.Model,
+			SavedModel:    SavedModelOf(in.Policy),
 			Agent:         res.Agent,
 			Host:          res.Host,
 			ResultKind:    res.ResultKind,
@@ -2759,6 +2760,23 @@ func sortedCopy(in []string) []string {
 	out := append([]string(nil), in...)
 	sort.Strings(out)
 	return out
+}
+
+// SavedModelOf is the plan's record of the saved model a policy compiles
+// on: a run's view's own (policy.ForRun), else the default; nil for a
+// policy with no saved model.
+func SavedModelOf(pol *policy.Policy) *spec.SavedModelRef {
+	if pol == nil {
+		return nil
+	}
+	sm, ok := pol.RunSavedModel()
+	if !ok {
+		sm = pol.DefaultModel()
+	}
+	if sm.ID == "" {
+		return nil
+	}
+	return &spec.SavedModelRef{ID: sm.ID, Name: sm.Name}
 }
 
 // modelKeySource is the variable a run reads the model key from and, when

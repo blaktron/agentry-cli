@@ -222,7 +222,9 @@ func codexConfig(r codexRender) []byte {
 	b.WriteString("name = " + tomlString(codexProviderID) + "\n")
 	b.WriteString("base_url = " + tomlString(r.baseURL) + "\n")
 	if r.signInRoute == "" {
-		b.WriteString("env_key = " + tomlString(r.keyEnv) + "\n")
+		if r.keyEnv != "" {
+			b.WriteString("env_key = " + tomlString(r.keyEnv) + "\n")
+		}
 		b.WriteString("wire_api = \"responses\"\n")
 	} else {
 		// A ChatGPT plan, as OpenAI documents it for Codex's app-server
@@ -481,12 +483,17 @@ func (c *codexAdapter) Compile(in Input) (Result, error) {
 	var msi *spec.ModelSignInSpec
 	if signIn == "" {
 		keyEnv := policy.KeyEnv(in.Harness, in.Model)
-		if keyEnv == "" {
+		noKey := policy.TakesNoKey(in.Harness, in.Model)
+		if keyEnv == "" && !noKey {
 			return Result{}, errors.New("codex adapter: no model key variable (set model.apiKeyEnv, or harness.codex.apiKeyEnv in the policy)")
 		}
 		r.keyEnv, r.baseURL = keyEnv, codexBaseURL(in)
-		// The key under the very name the config's env_key reads.
-		env = append(env, spec.EnvVar{Name: keyEnv, FromHostEnv: keyEnv, FromKeyring: keyringAccount(in)})
+		// The key under the very name the config's env_key reads; an
+		// endpoint that takes no key is given none, and the config names no
+		// env_key.
+		if !noKey {
+			env = append(env, spec.EnvVar{Name: keyEnv, FromHostEnv: keyEnv, FromKeyring: keyringAccount(in)})
+		}
 	} else {
 		// The token file is read with cat, which a Windows host has not
 		// got: there the Codex image runs a ChatGPT plan.

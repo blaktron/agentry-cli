@@ -108,6 +108,10 @@
   "harness": {
     "adapter": "docker-agent",
     "model": "anthropic/claude-sonnet-5-5",
+    "savedModel": {
+      "id": "71903d13",
+      "name": "anthropic"
+    },
     "agent": {
       "image": "ghcr.io/blaktron/agentry-docker-agent-src:1.157.2-2026.11.05.9@sha256:cc321e773e6e24e3d61a5285f367ab2596a2e25601d1e93304d342b808465a2b",
       "argv": [

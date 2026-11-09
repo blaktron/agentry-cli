@@ -296,6 +296,10 @@ func ModelKey(pol *policy.Policy) (string, error) {
 		// The runhost keeps the plan's sign-in itself (agentry runhost
 		// model --sign-in): nothing of this computer's travels.
 		return "", nil
+	case policy.TakesNoKey(policy.HarnessPolicy{}, pol.Model):
+		// An endpoint of the person's own that takes no key: nothing
+		// travels but its address, which the runhost must reach itself.
+		return "", nil
 	case pol.Model.APIKeyKind == policy.KeyKindSubscription:
 		return "", errors.New("a Claude subscription token runs only the installed claude, which a runhost does not run: sign the runhost in with agentry runhost model <name> --sign-in claude, and choose your Claude subscription with agentry setup")
 	}

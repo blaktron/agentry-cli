@@ -1016,6 +1016,10 @@ type HarnessSpec struct {
 	Adapter string `json:"adapter"`
 	// Model is the provider/model string for receipts.
 	Model string `json:"model"`
+	// SavedModel is the saved model the run is on, by its id and the
+	// person's name for it; nil for a plan compiled from a policy with no
+	// saved model.
+	SavedModel *SavedModelRef `json:"savedModel,omitempty"`
 	// Agent is the agent container. Empty (no image) when Host is set.
 	Agent ContainerSpec `json:"agent"`
 	// Host runs the harness as a process on this machine from the person's own
@@ -1050,6 +1054,13 @@ type HarnessSpec struct {
 	// ContextWindow is the model's context window the plan was compiled for,
 	// and where it came from; nil when the plan was compiled without one.
 	ContextWindow *ContextWindowSpec `json:"contextWindow,omitempty"`
+}
+
+// SavedModelRef names a saved model: its id, which never changes, and the
+// person's name for it. Never a credential.
+type SavedModelRef struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 // ContextWindowSource is ContextWindowSpec.Source for a window the policy

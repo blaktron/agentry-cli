@@ -113,7 +113,14 @@ func revokeCredits(ctx context.Context, c runhostCredits) error {
 //	store remove-credits  revokes the credits token and removes it
 //	store remove-signin <vendor>  ends a model sign-in and removes it
 //	store put-model       the runhost's own model and its API key, a JSON document as input
+//	store models, put-saved-model, remove-saved-model, default-model
+//	                      its saved models (runhostModelsVerb)
 func runhostStoreVerb(ctx context.Context, req runhost.Request, in io.Reader, fw *runhost.FrameWriter) (int, error) {
+	if len(req.Args) == 1 {
+		if code, err, ok := runhostModelsVerb(ctx, req.Args[0], in, fw); ok {
+			return code, err
+		}
+	}
 	if len(req.Args) == 2 && req.Args[0] == "remove-signin" {
 		return runhostSignInRemove(ctx, req.Args[1], fw)
 	}
@@ -279,114 +286,153 @@ func runhostOwnName() string {
 
 // newRunhostModelCmd builds `agentry runhost model`.
 func newRunhostModelCmd() *cobra.Command {
-	var provider, signIn, model, keyEnv string
-	var yes, oauthApp bool
+	var provider, signIn, model, keyEnv, add, remove, def, moveTo string
+	var yes, oauthApp, keepCredential bool
 	cmd := &cobra.Command{
-		Use:   "model <name> (--provider agentry | --sign-in claude|chatgpt|copilot)",
-		Short: "Give a runhost your Agentry credits, or sign it in to your Claude, ChatGPT or Copilot plan",
-		Long: "--provider agentry makes a token on your account that can only pay for model\n" +
-			"use with your Agentry credits, named \"Runhost <name> (credits only)\", and keeps\n" +
-			"it in the runhost's store, encrypted. The registry's authorize page opens in your\n" +
-			"browser to approve it; this computer's own sign-in never reaches the server. A run\n" +
-			"on the runhost whose model is Agentry credits (agentry setup) then pays with it.\n" +
-			"Running it again replaces the token and revokes the earlier one.\n\n" +
-			"--sign-in claude|chatgpt|copilot signs the runhost in to your plan from your\n" +
-			"browser on this computer: the vendor's page opens here, and its answer is relayed\n" +
-			"to the runhost over its run key. Claude Code signs in on the runhost itself and\n" +
-			"keeps its sign-in in its docker volume there; ChatGPT's and Copilot's refresh\n" +
-			"tokens are kept in the runhost's store, encrypted. Nothing of the sign-in stays\n" +
-			"on this computer. A run on the runhost whose model is that plan (agentry setup)\n" +
-			"then uses it, in the vendor's image under gVisor.\n\n" +
-			"`agentry runhost store <name> --remove credits|claude|chatgpt|copilot` and\n" +
-			"`agentry runhost remove` end them. A run's own API key needs nothing here: it\n" +
-			"travels with each run.",
+		Use:   "model <name> [--add <saved model> | --remove <saved model> [--move-to <saved model>] | --default <saved model>]",
+		Short: "List the saved models a runhost holds, and make one of this computer's available there or take one away",
+		Long: "A runhost holds some of this computer's saved models (agentry models list), up to\n" +
+			"10. Its persistent agents and its schedules each run on one of them, or on its\n" +
+			"default, the first one made available. With no flag, this lists them.\n\n" +
+			"--add <saved model> makes one available there. A key is read here and kept in\n" +
+			"the runhost's store, encrypted, after you agree. A plan's sign-in (Claude,\n" +
+			"ChatGPT, Copilot) is made on the runhost itself from your browser here, unless it\n" +
+			"keeps one already, and nothing of it stays on this computer. Agentry credits are\n" +
+			"paid with a token of the runhost's own, made on your account. An endpoint of your\n" +
+			"own that takes no key is given its address alone. The runhost then checks the\n" +
+			"model from where it is, as a save is checked here, and refuses it, keeping\n" +
+			"nothing, when it cannot reach it. Adding it again replaces the runhost's copy.\n\n" +
+			"--remove <saved model> takes one away, with its credential when no other saved\n" +
+			"model there uses it (--keep-credential keeps it). It is refused while one of the\n" +
+			"runhost's agents or schedules names it, unless --move-to names the saved model\n" +
+			"they move to; removing the default needs --move-to too. --default <saved model>\n" +
+			"makes one the default.\n\n" +
+			"A one-off run with --on still carries the key of its own saved model with it,\n" +
+			"and nothing of any other.\n\n" +
+			"--provider agentry gives the runhost a credits token alone, --sign-in\n" +
+			"claude|chatgpt|copilot signs it in alone, and --provider <api provider> sets the\n" +
+			"one model a runhost that holds no saved models runs on.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			given := 0
+			for _, v := range []string{provider, signIn, add, remove, def} {
+				if v != "" {
+					given++
+				}
+			}
 			switch {
-			case provider != "" && signIn != "":
-				return engine.Classify(engine.ExitUsage, errors.New("give --provider agentry or --sign-in, not both"))
+			case given > 1:
+				return engine.Classify(engine.ExitUsage, errors.New("give one of --add, --remove, --default, --provider and --sign-in"))
+			case moveTo != "" && remove == "":
+				return engine.Classify(engine.ExitUsage, errors.New("--move-to goes with --remove"))
+			case keepCredential && remove == "":
+				return engine.Classify(engine.ExitUsage, errors.New("--keep-credential goes with --remove"))
+			case add != "":
+				return runRunhostModelAdd(cmd, args[0], add, oauthApp, yes)
+			case remove != "":
+				return runRunhostModelRemove(cmd, args[0], remove, moveTo, keepCredential)
+			case def != "":
+				return runRunhostModelDefault(cmd, args[0], def)
 			case signIn != "":
 				return runRunhostModelSignIn(cmd, args[0], signIn, oauthApp, yes)
-			case provider != policy.ProviderAgentry:
+			case provider == policy.ProviderAgentry:
+				return runRunhostModelCredits(cmd, args[0], yes)
+			case provider != "":
 				return runRunhostModelKey(cmd, args[0], provider, model, keyEnv, yes)
 			}
-			return runRunhostModelCredits(cmd, args[0], yes)
+			return runRunhostModelsList(cmd, args[0])
 		},
 	}
-	cmd.Flags().StringVar(&provider, "provider", "", "the model provider: agentry (Agentry credits), or an API provider whose key the runhost keeps for its persistent agents")
-	cmd.Flags().StringVar(&model, "model", "", "with an API provider: the model the runhost's persistent agents run on (default: the provider's)")
-	cmd.Flags().StringVar(&keyEnv, "api-key-env", "", "with an API provider: the variable holding its key here (default: the provider's, then this computer's keychain)")
-	cmd.Flags().StringVar(&signIn, "sign-in", "", "sign the runhost in to a plan: claude, chatgpt or copilot")
-	cmd.Flags().BoolVar(&oauthApp, "oauth-app", false, "for --sign-in copilot: sign in through Agentry's OAuth App instead of its GitHub App")
-	cmd.Flags().BoolVar(&yes, "yes", false, "make and keep the token, or sign in, without asking")
+	cmd.Flags().StringVar(&add, "add", "", "make this computer's saved model available on the runhost, by name or id (agentry models list)")
+	cmd.Flags().StringVar(&remove, "remove", "", "take one of the runhost's saved models away, by name or id")
+	cmd.Flags().StringVar(&moveTo, "move-to", "", "with --remove: the saved model the runhost's agents and schedules naming it move to, and the new default when it is the default")
+	cmd.Flags().BoolVar(&keepCredential, "keep-credential", false, "with --remove: leave its key, sign-in or credits token on the runhost")
+	cmd.Flags().StringVar(&def, "default", "", "make one of the runhost's saved models its default")
+	cmd.Flags().StringVar(&provider, "provider", "", "agentry (a credits token alone), or an API provider whose key the runhost keeps for a runhost that holds no saved models")
+	cmd.Flags().StringVar(&model, "model", "", "with --provider <api provider>: the model the runhost's persistent agents run on (default: the provider's)")
+	cmd.Flags().StringVar(&keyEnv, "api-key-env", "", "with --provider <api provider>: the variable holding its key here (default: the provider's, then this computer's keychain)")
+	cmd.Flags().StringVar(&signIn, "sign-in", "", "sign the runhost in to a plan alone: claude, chatgpt or copilot")
+	cmd.Flags().BoolVar(&oauthApp, "oauth-app", false, "for a Copilot sign-in: sign in through Agentry's OAuth App instead of its GitHub App")
+	cmd.Flags().BoolVar(&yes, "yes", false, "agree without asking: keep the key, make the token, sign in, and send a Claude subscription's check its one message")
 	return cmd
 }
 
 func runRunhostModelCredits(cmd *cobra.Command, name string, yes bool) error {
-	home, err := runnerHome()
+	cr, err := giveRunhostCredits(cmd, name, yes)
 	if err != nil {
 		return err
+	}
+	if flags.jsonOut {
+		return emitJSON(cmd.OutOrStdout(), map[string]any{"runhost": name, "credits": cr})
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "runhost %s pays for its runs' models with your Agentry credits on %s (token %q)\n", name, cr.Registry, cr.TokenName)
+	if pol, err := devicePolicy(); err == nil && pol.Model.Provider != policy.ProviderAgentry {
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  A run uses this computer's model: choose Agentry credits with agentry setup for runs on it to pay with them.")
+	}
+	return nil
+}
+
+// giveRunhostCredits mints the runhost name a credits token on the signed-in
+// account, after the person agrees (or yes), sends it to the runhost's
+// store and records it.
+func giveRunhostCredits(cmd *cobra.Command, name string, yes bool) (*runhost.CreditsRecord, error) {
+	home, err := runnerHome()
+	if err != nil {
+		return nil, err
 	}
 	recs, err := runhost.LoadRecords(home)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	rec, ok := recs.Find(name)
 	if !ok {
-		return engine.Classify(engine.ExitUsage, fmt.Errorf("no runhost named %s on this computer (`agentry runhost list`)", name))
+		return nil, engine.Classify(engine.ExitUsage, fmt.Errorf("no runhost named %s on this computer (`agentry runhost list`)", name))
 	}
 	reg := strings.TrimRight(registryURL(), "/")
 	owner := runhostOwner(cmd)
 	if owner.Kind != runhost.OwnerAccount {
-		return engine.Classify(engine.ExitPolicy, fmt.Errorf("a runhost's credits token is made on your account: sign in to %s first (agentry login)", reg))
+		return nil, engine.Classify(engine.ExitPolicy, fmt.Errorf("a runhost's credits token is made on your account: sign in to %s first (agentry login)", reg))
 	}
 	if rec.Owner.Kind == runhost.OwnerAccount && (rec.Owner.Handle != owner.Handle || strings.TrimRight(rec.Owner.Registry, "/") != reg) {
-		return engine.Classify(engine.ExitPolicy, fmt.Errorf("runhost %s belongs to %s, and this computer is signed in as %s on %s", name, rec.Owner, owner.Handle, reg))
+		return nil, engine.Classify(engine.ExitPolicy, fmt.Errorf("runhost %s belongs to %s, and this computer is signed in as %s on %s", name, rec.Owner, owner.Handle, reg))
 	}
 	keys, err := runhost.LoadKeys(name)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	tokenName := "Runhost " + name + " (credits only)"
 	if !yes {
 		ask := terminalAsker(cmd)
 		if ask == nil {
-			return engine.Classify(engine.ExitUsage, errors.New("no one is at a terminal to confirm: pass --yes"))
+			return nil, engine.Classify(engine.ExitUsage, errors.New("no one is at a terminal to confirm: pass --yes"))
 		}
 		msg := fmt.Sprintf("Make a token on your account %s that can only pay for model use with your Agentry credits, named %q, and keep it on %s (%s), encrypted?", owner.Handle, tokenName, name, rec.Host)
 		ok, err := ask.Confirm(msg, false)
 		if err != nil || !ok {
-			return errors.Join(err, errors.New("no token made"))
+			return nil, errors.Join(err, errors.New("no token made"))
 		}
 	}
 	say := func(s string) { _, _ = fmt.Fprintln(narration(cmd), s) }
 	pat, err := mintRunhostCreditsToken(cmd, reg, name)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(cmd.Context(), 2*time.Minute)
 	defer cancel()
 	c, err := runhost.DialRunhost(ctx, *rec, keys)
 	if err != nil {
-		return errors.Join(engine.Classify(engine.ExitGateway, err), unsentCreditsToken(cmd.Context(), reg, pat))
+		return nil, errors.Join(engine.Classify(engine.ExitGateway, err), unsentCreditsToken(cmd.Context(), reg, pat))
 	}
 	defer func() { _ = c.Close() }()
 	doc := runhostCredits{Registry: reg, TokenID: pat.ID, Name: pat.Name, Token: pat.Token, Device: rec.DeviceID}
 	if err := remote.PutCredits(ctx, c, doc, say); err != nil {
-		return errors.Join(engine.Classify(engine.ExitGateway, fmt.Errorf("%s: %w", name, err)), unsentCreditsToken(cmd.Context(), reg, pat))
+		return nil, errors.Join(engine.Classify(engine.ExitGateway, fmt.Errorf("%s: %w", name, err)), unsentCreditsToken(cmd.Context(), reg, pat))
 	}
 	rec.Credits = &runhost.CreditsRecord{Registry: reg, TokenID: pat.ID, TokenName: pat.Name, AddedAt: time.Now().UTC().Format(time.RFC3339)}
 	if err := recs.Save(home); err != nil {
-		return err
+		return nil, err
 	}
-	if flags.jsonOut {
-		return emitJSON(cmd.OutOrStdout(), map[string]any{"runhost": name, "credits": rec.Credits})
-	}
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "runhost %s pays for its runs' models with your Agentry credits on %s (token %q)\n", name, reg, pat.Name)
-	if pol, err := devicePolicy(); err == nil && pol.Model.Provider != policy.ProviderAgentry {
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  A run uses this computer's model: choose Agentry credits with agentry setup for runs on it to pay with them.")
-	}
-	return nil
+	return rec.Credits, nil
 }
 
 // mintRunhostCreditsToken has the person approve a runhost's credits token

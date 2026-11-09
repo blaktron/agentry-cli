@@ -87,6 +87,16 @@ const (
 	RefusedAnswer Refusal = "answer_refused"
 )
 
+// RefusedError is a send a session shared through another process refused
+// with a class of its own: the protocol refuses the send with that class and
+// text, so a driver tells it from a turn that failed.
+type RefusedError struct {
+	Class Refusal
+	Text  string
+}
+
+func (e *RefusedError) Error() string { return e.Text }
+
 // Event is one line of output: a session event, or a refusal.
 type Event struct {
 	session.Event
@@ -204,8 +214,12 @@ loop:
 					// session's end is not a failure. A session other
 					// drivers share answers busy for a turn another one has
 					// in flight, which is this protocol's busy refusal.
-					if err := s.Send(context.Background(), text); errors.Is(err, session.ErrBusy) {
+					var refused *RefusedError
+					switch err := s.Send(context.Background(), text); {
+					case errors.Is(err, session.ErrBusy):
 						sv.refuse(RefusedBusy, err.Error())
+					case errors.As(err, &refused):
+						sv.refuse(refused.Class, refused.Text)
 					}
 					sv.settle(seq)
 				}(c.Send.Text)

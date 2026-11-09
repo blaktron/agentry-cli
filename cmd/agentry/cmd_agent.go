@@ -164,13 +164,16 @@ type agentState struct {
 	DesktopOnly bool                     `json:"desktopOnly,omitempty"`
 	Holder      *persistent.Holder       `json:"holder,omitempty"`
 	Status      *persistent.Status       `json:"status,omitempty"`
-	Config      *persistent.Config       `json:"config,omitempty"`
-	Usage       *persistent.Usage        `json:"usage,omitempty"`
-	StateDir    string                   `json:"stateDir,omitempty"`
-	Volumes     *agentVolumes            `json:"volumes,omitempty"`
-	Transcript  []persistent.Entry       `json:"transcript,omitempty"`
-	Share       string                   `json:"share,omitempty"`
-	Roster      persistent.Roster        `json:"roster,omitempty"`
+	// Model is the saved model the agent runs on: the one its configuration
+	// names, or the default it follows.
+	Model      *agentModelOut     `json:"model,omitempty"`
+	Config     *persistent.Config `json:"config,omitempty"`
+	Usage      *persistent.Usage  `json:"usage,omitempty"`
+	StateDir   string             `json:"stateDir,omitempty"`
+	Volumes    *agentVolumes      `json:"volumes,omitempty"`
+	Transcript []persistent.Entry `json:"transcript,omitempty"`
+	Share      string             `json:"share,omitempty"`
+	Roster     persistent.Roster  `json:"roster,omitempty"`
 	// Tasks counts an agent's tasks, for one that keeps time.
 	Tasks *int `json:"tasks,omitempty"`
 	// Suggested are the servers the agent suggests and does not have.
@@ -226,6 +229,7 @@ func readAgentState(ctx context.Context, home string, a persistent.Agent) (agent
 	}
 	st.DisplayName = a.DisplayName(cfg)
 	st.Config = &cfg
+	st.Model = readAgentModel(a, cfg, "")
 	st.Share, _ = persistent.ShareFolder(a, cfg)
 	st.Roster = persistent.BuildRosterUnder(a, cfg, nil, persistent.HomeMalwareCheck(home))
 	st.MailProviders = persistent.MailProviders(a, cfg)
@@ -288,7 +292,7 @@ func newAgentListCmd() *cobra.Command {
 				return emitJSON(cmd.OutOrStdout(), map[string]any{"agents": all})
 			}
 			tw := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-			_, _ = fmt.Fprintln(tw, "NAME\tSTATE\tSINCE\tSEGMENT")
+			_, _ = fmt.Fprintln(tw, "NAME\tSTATE\tSINCE\tSEGMENT\tMODEL")
 			for _, st := range all {
 				since, segment := "-", "-"
 				state := st.State
@@ -303,7 +307,7 @@ func newAgentListCmd() *cobra.Command {
 				if st.DisplayName != "" && !strings.EqualFold(st.DisplayName, name) && !strings.HasSuffix(name, "/"+st.DisplayName) {
 					name += " (" + safeTerminalText(st.DisplayName, 64) + ")"
 				}
-				_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", name, state, since, segment)
+				_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", name, state, since, segment, st.Model.short())
 			}
 			return tw.Flush()
 		},
@@ -312,8 +316,9 @@ func newAgentListCmd() *cobra.Command {
 
 // agentShowLong is `agentry agent show`'s help: what it prints, and what each
 // state of a roster entry means.
-const agentShowLong = "Shows a persistent agent: whether it runs and which client runs it, its\n" +
-	"segment, its share folder, its roster, its usage, its volumes and its folder.\n\n" +
+const agentShowLong = "Shows a persistent agent: whether it runs and which client runs it, the saved\n" +
+	"model it runs on (the one it names, or the default it follows), its segment, its\n" +
+	"share folder, its roster, its usage, its volumes and its folder.\n\n" +
 	"Each roster entry has a state:\n\n" +
 	"  on             the agent has it\n" +
 	"  off            switched off\n" +
@@ -434,8 +439,11 @@ func printAgentState(w io.Writer, st agentState) {
 	if h := st.Holder; h != nil {
 		_, _ = fmt.Fprintf(w, "  run by:     %s (pid %d), since %s\n", h.Where(), h.PID, h.Since.Local().Format("2006-01-02 15:04"))
 	}
+	if m := st.Model; m != nil {
+		_, _ = fmt.Fprintf(w, "  model:      %s\n", m.line())
+	}
 	if s := st.Status; s != nil {
-		_, _ = fmt.Fprintf(w, "  segment:    %d (run %s), on %s with %s\n", s.Segment, s.Run, s.Adapter, s.Model)
+		_, _ = fmt.Fprintf(w, "  segment:    %d (run %s), on %s with %s\n", s.Segment, s.Run, s.Adapter, segmentModel(s))
 		if s.Resumed {
 			_, _ = fmt.Fprintln(w, "  continued:  the conversation of the segment before")
 		} else {
@@ -523,6 +531,15 @@ func printAgentState(w io.Writer, st agentState) {
 		text := strings.TrimSpace(e.Text)
 		_, _ = fmt.Fprintf(w, "  [%d] %s: %s\n", e.Segment, e.Kind, safeTerminalText(text, 400))
 	}
+}
+
+// segmentModel is the model a running segment is on, by its saved model's
+// name when it has one.
+func segmentModel(s *persistent.Status) string {
+	if s.SavedModel != nil && s.SavedModel.Name != "" {
+		return safeTerminalText(s.SavedModel.Name, 64) + " (" + s.Model + ")"
+	}
+	return s.Model
 }
 
 // subagentRunsPrinted is how many of an agent's subagent runs show prints;
@@ -715,7 +732,7 @@ func handOver(cmd *cobra.Command, home string, a persistent.Agent, yes bool) err
 }
 
 func printStarted(w io.Writer, a persistent.Agent, st persistent.Status) {
-	_, _ = fmt.Fprintf(w, "The %s agent is running: segment %d, on %s with %s.\n", a.Name, st.Segment, st.Adapter, st.Model)
+	_, _ = fmt.Fprintf(w, "The %s agent is running: segment %d, on %s with %s.\n", a.Name, st.Segment, st.Adapter, segmentModel(&st))
 	if st.Resumed {
 		_, _ = fmt.Fprintln(w, "Its conversation continues from the segment before.")
 	} else {
@@ -795,7 +812,7 @@ func newAgentSuperviseCmd() *cobra.Command {
 				Home: home, Agent: a, Client: persistent.ClientCLI,
 				Policy: pol, PolicySHA: sha, PolicyFile: &file, Build: version.Build(),
 				Docker: dockerx.New(), Stderr: errOut, Packs: agentPacks(cmd), Voice: agentVoice(cmd), Contents: agentContents(cmd),
-				OnStage: stageLines(errOut), Credits: creditsClient(pol), CreditsFor: creditsClient,
+				OnStage: stageLines(errOut), Credits: creditsClient(pol), CreditsFor: creditsClient, ModelUsable: agentModelUsable(home, a.Name),
 				Subagents: cliSubagents{policyPath: policyPath}, Helper: cliHelper{policyPath: policyPath},
 			})
 			close(starting)
@@ -913,7 +930,9 @@ func newAgentAttachCmd() *cobra.Command {
 			"`agentry run --session-protocol`: one JSON command a line on stdin\n" +
 			"({\"send\":{\"text\":\"…\"}} or {\"end\":{\"finish\":false}}), and the agent's\n" +
 			"events as JSON lines on descriptor 3, which the driver opens. A send while\n" +
-			"another chat's turn is in flight is refused as busy. Ending, or the end of\n" +
+			"another chat's turn is in flight is refused as busy, and one the agent's\n" +
+			"saved model cannot take (gone from this computer, or its key or sign-in\n" +
+			"not here) is refused as model, with the fix. Ending, or the end of\n" +
 			"input, detaches: the agent keeps running. A persistent agent takes no files\n" +
 			"through its chat; put them in its share folder. Descriptor 3 does not exist\n" +
 			"on Windows, so attach is refused there.",

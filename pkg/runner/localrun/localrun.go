@@ -543,6 +543,7 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 			plan.Digest == in.Meta.Digest &&
 			plan.PolicySHA256 == in.PolicySHA &&
 			plan.Harness.Adapter == in.Adapter &&
+			reflect.DeepEqual(plan.Harness.SavedModel, compile.SavedModelOf(in.Policy)) &&
 			plan.Capabilities.WebTools == in.Web &&
 			plan.Capabilities.RegistrySearch == in.RegistrySearch &&
 			plan.Capabilities.WebSearchedOnly == in.WebSearchedOnly &&

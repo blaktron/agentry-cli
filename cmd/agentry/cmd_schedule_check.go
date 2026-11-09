@@ -21,7 +21,6 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runhost/job"
 	"github.com/blaktron/agentry-cli/pkg/runhost/remote"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
-	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/schedule"
 )
 
@@ -66,6 +65,11 @@ type scheduleCheckRunhost struct {
 	Fingerprint    string                  `json:"hostKeyFingerprint"`
 	TakesSchedules bool                    `json:"takesSchedules"`
 	Entries        []runhost.ScheduleEntry `json:"entries"`
+	// Model is the runhost's saved model the schedule would run on: the one
+	// --model names, else its default. Nil when it holds none to run on.
+	Model *remote.SavedModel `json:"model,omitempty"`
+	// FollowsDefault says the schedule would follow the runhost's default.
+	FollowsDefault bool `json:"followsDefault,omitempty"`
 }
 
 // scheduleCheck is add up to the point it would ask, install or keep
@@ -93,6 +97,15 @@ func scheduleCheck(cmd *cobra.Command, ref, name, out, on string, spec runSpecFl
 	if err != nil {
 		gap(err)
 	}
+	if on == "" {
+		if err := assignScheduleModel(&sc, spec.model); err != nil {
+			// A saved model this computer does not have is the person's to
+			// fix: it is a gap, and the rest is checked as the default would
+			// be, so the check still names every other gap.
+			gap(err)
+			sc.Run.Model = ""
+		}
+	}
 	if reason := scheduleHold(sc); reason != "" {
 		gap(heldError(reason))
 	}
@@ -119,7 +132,7 @@ func scheduleCheck(cmd *cobra.Command, ref, name, out, on string, spec runSpecFl
 	res.Ref, res.Version, res.Digest = sc.Ref, sc.Version, sc.Digest
 
 	if on != "" {
-		res.Runhost, err = checkRunhostSchedule(cmd, on, sc, preview, gap)
+		res.Runhost, err = checkRunhostSchedule(cmd, on, sc, spec.model, preview, gap)
 		if err != nil {
 			return err
 		}
@@ -194,7 +207,7 @@ func installedHere(sc schedule.Schedule) bool {
 // schedules, and what a schedule of sc would keep in its store, read from
 // the release's contract, this computer's policy and the flags, with no
 // value read and nothing sent.
-func checkRunhostSchedule(cmd *cobra.Command, on string, sc schedule.Schedule, preview *runPlanOutput, gap func(error)) (*scheduleCheckRunhost, error) {
+func checkRunhostSchedule(cmd *cobra.Command, on string, sc schedule.Schedule, model string, preview *runPlanOutput, gap func(error)) (*scheduleCheckRunhost, error) {
 	switch {
 	case sc.Local != "":
 		gap(errors.New("a runhost runs a published release, not a local folder"))
@@ -220,16 +233,19 @@ func checkRunhostSchedule(cmd *cobra.Command, on string, sc schedule.Schedule, p
 		} else if !out.TakesSchedules {
 			gap(fmt.Errorf("runhost %s takes no schedule: its systemd cannot seal its store's key to it (schedules need systemd %d or newer)", on, schedule.MinSystemd))
 		}
+		// It runs on one of the runhost's own saved models, whose
+		// credential the runhost holds already: the schedule keeps none.
+		held, err := runhostScheduleSavedModel(cmd, c, rec.Name, model)
+		if err != nil {
+			gap(err)
+		}
+		if held.ID != "" {
+			out.Model = &held
+		}
+		out.FollowsDefault = model == "" || strings.EqualFold(model, job.RunhostDefault)
 	}
 	add := func(kind, name string) {
 		out.Entries = append(out.Entries, runhost.ScheduleEntry{Kind: kind, Name: name})
-	}
-	if pf, err := policy.Resolve(sc.Run.Policy); err == nil {
-		if pol, _, err := policy.EnsureDefault(pf.Path); err == nil {
-			if m := job.ModelOf(pol.Model); !m.SignIn() && !m.PaysWithCredits() && pol.Model.Provider != "" {
-				add("model-key", pol.Model.KeyProvider())
-			}
-		}
 	}
 	var caps manifest.Capabilities
 	if len(preview.Contract) > 0 {

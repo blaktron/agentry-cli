@@ -108,9 +108,24 @@ const (
 // sign-in's, or a messenger account's credential.
 var (
 	hexIDRE        = regexp.MustCompile(`^[0-9a-f]{16,24}$`)
-	providerRE     = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,40}$`)
+	providerRE     = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`)
 	agentAccountRE = regexp.MustCompile(`^(agent-secret:[a-z0-9][a-z0-9.-]{0,127}:[A-Za-z_][A-Za-z0-9_-]{0,127}|account:[a-z0-9][a-z0-9.:-]{0,252}:[A-Za-z0-9][A-Za-z0-9._-]{0,99}|calendar-feed:[a-z0-9][a-z0-9.-]{0,127}:[A-Za-z0-9][A-Za-z0-9._-]{0,63}|calendar-session:[a-z0-9][a-z0-9.-]{0,127}:[A-Za-z0-9][A-Za-z0-9._-]{0,63}:[0-9]{1,3}|messenger:[a-z0-9][a-z0-9.-]{0,127}:[a-z][a-z0-9-]{0,31})$`)
 )
+
+// storeEntryRE is a name the runhost's store keeps an entry under.
+var storeEntryRE = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
+
+// modelKeyEntry is the store entry provider p's model key (or its presence
+// marker) is kept under: prefix and the provider's id when that is a name
+// the store takes, as a vendor's is, else short and the id's digest, as a
+// long custom-<slug> provider's is.
+func modelKeyEntry(prefix, short, p string) string {
+	if name := prefix + p; storeEntryRE.MatchString(name) {
+		return name
+	}
+	sum := sha256.Sum256([]byte(p))
+	return short + hex.EncodeToString(sum[:12])
+}
 
 func runhostKeychainEntry(account string) (string, error) {
 	if vendor, ok := strings.CutPrefix(account, signInAccountPrefix); ok && signin.IsVendor(vendor) {
@@ -123,11 +138,11 @@ func runhostKeychainEntry(account string) (string, error) {
 		return "client-" + id, nil
 	}
 	if p := modelkey.ProviderOf(account); p != "" && providerRE.MatchString(p) {
-		return "model-key-" + p, nil
+		return modelKeyEntry("model-key-", "mk-", p), nil
 	}
 	if m, ok := strings.CutPrefix(account, "stored:"); ok {
 		if p := modelkey.ProviderOf(m); p != "" && providerRE.MatchString(p) {
-			return "model-key-stored-" + p, nil
+			return modelKeyEntry("model-key-stored-", "mks-", p), nil
 		}
 	}
 	if agentAccountRE.MatchString(account) {
@@ -311,44 +326,65 @@ func signInConsent(vendor, name, host string) string {
 }
 
 func runRunhostModelSignIn(cmd *cobra.Command, name, vendor string, oauthApp, yes bool) error {
+	kept, err := signInRunhost(cmd, name, vendor, oauthApp, yes)
+	if err != nil {
+		return err
+	}
+	if flags.jsonOut {
+		return emitJSON(cmd.OutOrStdout(), map[string]any{"runhost": name, "signIn": kept})
+	}
+	who := kept.Label
+	if who == "" {
+		who = "an account the vendor did not name"
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "runhost %s is signed in to %s as %s\n", name, signInLabels[vendor], who)
+	if pol, err := devicePolicy(); err == nil && modelsignin.VendorOf(pol.Model.APIKeyKind) != vendor {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  A run uses this computer's model: choose %s with agentry setup for runs on it to use this sign-in.\n", signInLabels[vendor])
+	}
+	return nil
+}
+
+// signInRunhost signs the runhost name in to vendor's plan from this
+// computer's browser, after the person agrees (or yes), and records it.
+func signInRunhost(cmd *cobra.Command, name, vendor string, oauthApp, yes bool) (signin.Kept, error) {
 	if !signin.IsVendor(vendor) {
-		return engine.Classify(engine.ExitUsage, fmt.Errorf("--sign-in %q: a runhost signs in to claude, chatgpt or copilot", vendor))
+		return signin.Kept{}, engine.Classify(engine.ExitUsage, fmt.Errorf("--sign-in %q: a runhost signs in to claude, chatgpt or copilot", vendor))
 	}
 	home, err := runnerHome()
 	if err != nil {
-		return err
+		return signin.Kept{}, err
 	}
 	recs, err := runhost.LoadRecords(home)
 	if err != nil {
-		return err
+		return signin.Kept{}, err
 	}
 	rec, ok := recs.Find(name)
 	if !ok {
-		return engine.Classify(engine.ExitUsage, fmt.Errorf("no runhost named %s on this computer (`agentry runhost list`)", name))
+		return signin.Kept{}, engine.Classify(engine.ExitUsage, fmt.Errorf("no runhost named %s on this computer (`agentry runhost list`)", name))
 	}
 	if !yes {
 		ask := terminalAsker(cmd)
 		if ask == nil {
-			return engine.Classify(engine.ExitUsage, errors.New("no one is at a terminal to confirm: pass --yes"))
+			return signin.Kept{}, engine.Classify(engine.ExitUsage, errors.New("no one is at a terminal to confirm: pass --yes"))
 		}
 		ok, err := ask.Confirm(signInConsent(vendor, name, rec.Host), false)
 		if err != nil || !ok {
-			return errors.Join(err, errors.New("nothing signed in"))
+			return signin.Kept{}, errors.Join(err, errors.New("nothing signed in"))
 		}
 	}
 	keys, err := runhost.LoadKeys(name)
 	if err != nil {
-		return err
+		return signin.Kept{}, err
 	}
 	ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Minute)
 	defer cancel()
 	c, err := runhost.DialRunhost(ctx, *rec, keys)
 	if err != nil {
-		return engine.Classify(engine.ExitGateway, err)
+		return signin.Kept{}, engine.Classify(engine.ExitGateway, err)
 	}
 	defer func() { _ = c.Close() }()
 	if _, err := remote.SameVersion(ctx, c, name); err != nil {
-		return engine.Classify(engine.ExitGateway, err)
+		return signin.Kept{}, engine.Classify(engine.ExitGateway, err)
 	}
 	app := ""
 	if vendor == modelsignin.Copilot && oauthApp {
@@ -372,24 +408,13 @@ func runRunhostModelSignIn(cmd *cobra.Command, name, vendor string, oauthApp, ye
 	}
 	kept, err := signin.Run(ctx, c, vendor, app, p)
 	if err != nil {
-		return engine.Classify(engine.ExitPolicy, err)
+		return signin.Kept{}, engine.Classify(engine.ExitPolicy, err)
 	}
 	rec.SignIns = upsertSignIn(rec.SignIns, runhost.SignInRecord{Vendor: kept.Vendor, Label: kept.Label, AddedAt: time.Now().UTC().Format(time.RFC3339)})
 	if err := recs.Save(home); err != nil {
-		return err
+		return signin.Kept{}, err
 	}
-	if flags.jsonOut {
-		return emitJSON(cmd.OutOrStdout(), map[string]any{"runhost": name, "signIn": kept})
-	}
-	who := kept.Label
-	if who == "" {
-		who = "an account the vendor did not name"
-	}
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "runhost %s is signed in to %s as %s\n", name, signInLabels[vendor], who)
-	if pol, err := devicePolicy(); err == nil && modelsignin.VendorOf(pol.Model.APIKeyKind) != vendor {
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  A run uses this computer's model: choose %s with agentry setup for runs on it to use this sign-in.\n", signInLabels[vendor])
-	}
-	return nil
+	return kept, nil
 }
 
 func upsertSignIn(list []runhost.SignInRecord, r runhost.SignInRecord) []runhost.SignInRecord {

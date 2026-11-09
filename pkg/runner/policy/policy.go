@@ -257,6 +257,9 @@ type Policy struct {
 	// view is Model as the lists last made it, so a change a caller makes to
 	// Model is folded into the default saved model (models.go).
 	view Model
+	// runOn is the saved model a run's view of the policy is on (ForRun);
+	// nil for a policy as it was read.
+	runOn *SavedModel
 }
 
 // PersistentReleasesAllowed says whether the policy lets a persistent
@@ -1068,6 +1071,9 @@ func boolPtr(b bool) *bool { return &b }
 // `agentry setup`; hand-written comments in an existing file are
 // not preserved, and the header says so.
 func Save(path string, p *Policy) error {
+	if p.runOn != nil {
+		return errors.New("a run's view of the policy is never saved: save the policy as it was read")
+	}
 	p.foldModel()
 	if err := p.Validate(); err != nil {
 		return err
@@ -1318,11 +1324,17 @@ func (p *Policy) Validate() error {
 	if p.Sessions.IdleTimeoutSeconds < 0 || p.Sessions.MaxWallSeconds < 0 || p.Sessions.MaxUserTurns < 0 {
 		return errors.New("sessions.idleTimeoutSeconds, sessions.maxWallSeconds and sessions.maxUserTurns must not be negative")
 	}
+	// The harness blocks' kinds belong to their own provider, which need
+	// not be the default's once there are several.
+	harnessVendor := p.Model.Provider
+	if id := p.harnessProvider(); id != "" {
+		harnessVendor = ProviderVendor(id)
+	}
 	for name, hp := range p.Harness {
 		if !validKeySource(hp.APIKeySource) {
 			return fmt.Errorf("harness.%s.apiKeySource %q must be env or keyring", name, hp.APIKeySource)
 		}
-		if err := checkKind("harness."+name+".apiKeyKind", hp.APIKeyKind, p.Model.Provider); err != nil {
+		if err := checkKind("harness."+name+".apiKeyKind", hp.APIKeyKind, harnessVendor); err != nil {
 			return err
 		}
 		if hp.APIKeyKind == KeyKindSubscription && name != "claude" {
@@ -1876,7 +1888,15 @@ func checkModelBlock(field string, m Model) error {
 			return fmt.Errorf("%s.provider agentry is paid with the signed-in account's credits: it takes no apiKeyEnv, apiKeySource or sign-in kind", field)
 		}
 	} else if m.APIKeyEnv == "" && !IsModelSignIn(m.APIKeyKind) {
-		return fmt.Errorf("%s.apiKeyEnv is required (the runner never embeds keys; it names the env var to read)", field)
+		switch {
+		case m.Provider != ProviderCustom:
+			return fmt.Errorf("%s.apiKeyEnv is required (the runner never embeds keys; it names the env var to read)", field)
+		case m.APIKeySource != "" && m.APIKeySource != "env":
+			// An endpoint of the person's own that takes no key names no
+			// variable; one whose key is in the keychain names the variable
+			// read before it.
+			return fmt.Errorf("%s.apiKeySource %s needs %s.apiKeyEnv, the variable read first (leave both out for an endpoint that takes no key)", field, m.APIKeySource, field)
+		}
 	}
 	if !validKeySource(m.APIKeySource) {
 		return fmt.Errorf("%s.apiKeySource %q must be env or keyring", field, m.APIKeySource)
@@ -2000,6 +2020,13 @@ func KeyEnv(hp HarnessPolicy, m Model) string {
 		return hp.APIKeyEnv
 	}
 	return m.APIKeyEnv
+}
+
+// TakesNoKey reports whether a run on m with the harness block hp is
+// given no key: an endpoint of the person's own whose provider names no
+// variable. Every other credential names one, or is a sign-in or credits.
+func TakesNoKey(hp HarnessPolicy, m Model) bool {
+	return m.Provider == ProviderCustom && KeyEnv(hp, m) == "" && !IsModelSignIn(KeyKind(hp, m))
 }
 
 // KeySource is where that key comes from when the variable is unset: the

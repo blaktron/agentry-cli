@@ -334,6 +334,8 @@ func doctorPolicy(rep *doctorReport, path string) *policy.Policy {
 		default:
 			rep.ok("model", "agentry (paid with your Agentry credits at %s; each run opens a credits session with your sign-in)", reg)
 		}
+	case policy.TakesNoKey(policy.HarnessPolicy{}, pol.Model):
+		rep.ok("model", "%s/%s (an endpoint of your own that takes no key)", pol.Model.Provider, pol.Model.Name)
 	case pol.Model.APIKeyEnv == "":
 		rep.failFix("model", remedySetup, "%s/%s: no apiKeyEnv configured", pol.Model.Provider, pol.Model.Name)
 	case os.Getenv(pol.Model.APIKeyEnv) == "" && policy.KeySource(policy.HarnessPolicy{}, pol.Model) == modelkey.SourceKeyring:

@@ -59,6 +59,14 @@ func refuseSignInRun(plan *spec.Plan, opts runOpts) error {
 		return hostedSignInRefusal(msi.Kind)
 	case opts.maxCost > 0:
 		return engine.Classify(engine.ExitUsage, errors.New("--max-cost cannot apply: "+policy.MaxCostSignInSentence))
+	case opts.maxCost < 0 && plan.Budgets.MaxCostUSD > 0:
+		// The policy's cost budget holds for every saved model a run is on,
+		// and a sign-in has no dollars to hold it to.
+		what := "this run's model"
+		if sm := plan.Harness.SavedModel; sm != nil {
+			what = fmt.Sprintf("the saved model %q", sm.Name)
+		}
+		return engine.Classify(engine.ExitPolicy, fmt.Errorf("the policy's budgets.maxCostUsd cannot apply to %s, which spends %s: %s", what, policy.SignInSentence(msi.Kind), policy.MaxCostSignInSentence))
 	}
 	return nil
 }

@@ -40,6 +40,9 @@ type Change struct {
 	Share *string `json:"share,omitempty"`
 	// RunOnStart starts the agent when its client starts.
 	RunOnStart *bool `json:"runOnStart,omitempty"`
+	// Model is the id of the saved model the agent runs on; "" follows the
+	// default. The client resolves a name to its id first.
+	Model *string `json:"model,omitempty"`
 	// AddServer adds an MCP server, on; RemoveServer removes one by its
 	// roster id or its store id.
 	AddServer    *manifest.MCPServer `json:"addServer,omitempty"`
@@ -203,6 +206,13 @@ func ApplyChange(home string, a Agent, c *Config, ch Change) (restart bool, err 
 	return applyChange(home, a, c, ch, false)
 }
 
+// modelOnly says the change sets the saved model and nothing else.
+func (ch Change) modelOnly() bool {
+	rest := ch
+	rest.Model = nil
+	return ch.Model != nil && reflect.ValueOf(rest).IsZero()
+}
+
 // personaOnly says the change sets the name or the personality and
 // nothing else.
 func (ch Change) personaOnly() bool {
@@ -214,7 +224,10 @@ func (ch Change) personaOnly() bool {
 // applyChange is ApplyChange for an agent that runs under a policy whose
 // malware check is malwareCheck (BuildRosterUnder).
 func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) (restart bool, err error) {
-	if a.DesktopOnly {
+	// An agent that runs only in Agentry Desktop keeps its configuration
+	// there, except the saved model it runs on: that is the person's choice
+	// of model on this computer, which a removal of the model moves.
+	if a.DesktopOnly && !ch.modelOnly() {
 		return false, fmt.Errorf("%s %w: its configuration is Agentry Desktop's", a.Title, ErrDesktopOnly)
 	}
 	next := *c
@@ -253,6 +266,13 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 	}
 	if ch.RunOnStart != nil {
 		next.RunOnStart = *ch.RunOnStart
+	}
+	if ch.Model != nil {
+		id := strings.TrimSpace(*ch.Model)
+		if id != "" && !policy.IsModelID(id) {
+			return false, fmt.Errorf("%q is not a saved model's id (agentry models list names each one's)", id)
+		}
+		next.Model = id
 	}
 	if ch.Share != nil {
 		if *ch.Share != "" {

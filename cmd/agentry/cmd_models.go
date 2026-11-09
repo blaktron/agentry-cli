@@ -13,7 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -22,9 +21,10 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/inference"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelcheck"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
+	"github.com/blaktron/agentry-cli/pkg/runner/persistent"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/savedmodels"
 	"github.com/blaktron/agentry-cli/pkg/runner/setup"
-	"github.com/blaktron/agentry-cli/pkg/schedule"
 )
 
 // listModelsToCheck is the save check's models listing; a seam, so tests
@@ -398,34 +398,9 @@ func newModelsCheckCmd() *cobra.Command {
 	return cmd
 }
 
-// modelUser is something on this computer that names a saved model.
-type modelUser struct {
-	Kind string `json:"kind"`
-	ID   string `json:"id"`
-	Name string `json:"name"`
-}
-
-// modelUsers are the schedules on this computer that name one of the saved
-// models sms, by id or by name.
-func modelUsers(home string, sms []policy.SavedModel) ([]modelUser, []schedule.Schedule, error) {
-	list, _, err := schedule.StoreIn(home).List()
-	if err != nil {
-		return nil, nil, err
-	}
-	var users []modelUser
-	var named []schedule.Schedule
-	for _, sc := range list {
-		ref := strings.TrimSpace(sc.Run.Model)
-		if ref == "" {
-			continue
-		}
-		if slices.ContainsFunc(sms, func(sm policy.SavedModel) bool { return sm.ID == ref || strings.EqualFold(sm.Name, ref) }) {
-			users = append(users, modelUser{Kind: "schedule", ID: sc.ID, Name: sc.Name})
-			named = append(named, sc)
-		}
-	}
-	return users, named, nil
-}
+// modelUser is something on this computer that names a saved model, as
+// --json gives it.
+type modelUser = savedmodels.User
 
 // usedRefusal is the refusal of a removal while something names the model:
 // what is the sentence's subject and verb ("the saved model "x" is").
@@ -435,31 +410,6 @@ func usedRefusal(what string, users []modelUser) error {
 		lines = append(lines, fmt.Sprintf("%s %s (%s)", u.Kind, u.Name, u.ID))
 	}
 	return engine.Classify(engine.ExitPolicy, fmt.Errorf("%s named by %s: move them first with --move-to <saved model>", what, strings.Join(lines, ", ")))
-}
-
-// moveUsers points each schedule at the saved model to.
-func moveUsers(home string, named []schedule.Schedule, to policy.SavedModel) error {
-	st := schedule.StoreIn(home)
-	for _, sc := range named {
-		sc.Run.Model = to.ID
-		if err := st.Save(sc); err != nil {
-			return fmt.Errorf("move schedule %s to %s: %w", sc.Name, to.Name, err)
-		}
-	}
-	return nil
-}
-
-// moveTarget is the saved model --move-to names, which must not be among
-// the ones removed.
-func moveTarget(pol *policy.Policy, ref string, removed []policy.SavedModel) (policy.SavedModel, error) {
-	to, ok := pol.FindModel(ref)
-	if !ok {
-		return to, engine.Classify(engine.ExitUsage, fmt.Errorf("--move-to: no saved model %q on this computer", ref))
-	}
-	if slices.ContainsFunc(removed, func(sm policy.SavedModel) bool { return sm.ID == to.ID }) {
-		return to, engine.Classify(engine.ExitUsage, fmt.Errorf("--move-to: %q is removed too", to.Name))
-	}
-	return to, nil
 }
 
 // removedOut is a removal in --json.
@@ -474,41 +424,27 @@ type removedOut struct {
 }
 
 // removeModels removes sms (with provider, when it is a provider's removal),
-// moving what names them to moveTo, and writes the policy.
+// moving what names them to moveTo, and writes the policy
+// (savedmodels.Remove has the rules).
 func removeModels(cmd *cobra.Command, pol *policy.Policy, path, what string, sms []policy.SavedModel, moveTo string, remove func(newDefault string) error) (removedOut, error) {
 	home, err := runnerHome()
 	if err != nil {
 		return removedOut{}, err
 	}
-	users, named, err := modelUsers(home, sms)
+	r, err := savedmodels.Remove(cmd.Context(), home, pol, path, sms, moveTo, persistent.ClientCLI, remove)
+	var used *savedmodels.InUseError
+	if errors.As(err, &used) {
+		return removedOut{}, usedRefusal(what, used.Users)
+	}
 	if err != nil {
 		return removedOut{}, err
 	}
-	var to policy.SavedModel
-	if moveTo != "" {
-		if to, err = moveTarget(pol, moveTo, sms); err != nil {
-			return removedOut{}, err
-		}
-	} else if len(users) > 0 {
-		return removedOut{}, usedRefusal(what, users)
-	}
-	if err := remove(to.ID); err != nil {
-		return removedOut{}, engine.Classify(engine.ExitUsage, err)
-	}
-	// What named the model is moved first: the model it moves to is in the
-	// policy before and after, so no schedule ever names one that is gone.
-	if err := moveUsers(home, named, to); err != nil {
-		return removedOut{}, err
-	}
-	if err := policy.Save(path, pol); err != nil {
-		return removedOut{}, engine.Classify(engine.ExitPolicy, err)
-	}
 	resealSignedOut(cmd.ErrOrStderr())
-	out := removedOut{Moved: users, MovedTo: to.Name, Default: pol.DefaultModel().ID}
+	out := removedOut{Moved: r.Moved, MovedTo: r.MovedTo.Name, Default: pol.DefaultModel().ID}
 	if out.Moved == nil {
 		out.Moved = []modelUser{}
 	}
-	for _, sm := range sms {
+	for _, sm := range r.Removed {
 		out.Removed = append(out.Removed, modelOut(sm, ""))
 	}
 	return out, nil
@@ -532,9 +468,10 @@ func newModelsRemoveCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "remove <name> [--move-to <name>]",
 		Short: "Remove a saved model; what names it, and the default, move to --move-to",
-		Long: "Removing a saved model that a schedule names is refused, with the schedules listed, unless\n" +
-			"--move-to names the saved model they move to. Removing the default needs the new default,\n" +
-			"which --move-to names too. Nothing moves to the default on its own.",
+		Long: "Removing a saved model that a schedule or a persistent agent names is refused, with them listed,\n" +
+			"unless --move-to names the saved model they move to; a running agent takes it at its next turn.\n" +
+			"Removing the default needs the new default, which --move-to names too. Nothing moves to the\n" +
+			"default on its own.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			pol, path, err := modelsPolicy(policyPath)
@@ -559,7 +496,7 @@ func newModelsRemoveCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&moveTo, "move-to", "", "the saved model the schedules naming this one move to, and the new default when this is the default")
+	cmd.Flags().StringVar(&moveTo, "move-to", "", "the saved model the schedules and agents naming this one move to, and the new default when this is the default")
 	cmd.Flags().StringVar(&policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml)")
 	return cmd
 }

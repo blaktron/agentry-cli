@@ -749,6 +749,17 @@
           "dependencyHints": []
         },
         {
+          "path": "cmd/agentry/cmd_agent_model_test.go",
+          "tests": [
+            "TestConfigureNamesTheSavedModelAnAgentRunsOn",
+            "TestRemovingAModelAnAgentNamesIsRefusedUntilItIsMoved"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "cmd/agentry/cmd_agent_secret_test.go",
           "tests": [
             "TestAgentSecretSetListRemove"
@@ -1283,6 +1294,24 @@
           "dependencyHints": []
         },
         {
+          "path": "cmd/agentry/cmd_run_model_test.go",
+          "tests": [
+            "TestARunPlanIsOnTheSavedModelItNames",
+            "TestARunOnAMissingSavedModelIsRefusedByName",
+            "TestModelIsRefusedForARunElsewhere",
+            "TestASavedModelWithNoKeyIsRefusedByNameBeforeTheRun",
+            "TestASavedModelWhoseSignInIsGoneIsRefusedByName",
+            "TestThePolicysCostBudgetRefusesARunOnASignInsSavedModel",
+            "TestAScheduleKeepsItsSavedModelWhenTheDefaultChanges",
+            "TestAScheduleOnAHarnessBlocksHarnessIsAssignedItsSavedModel",
+            "TestAnEndpointAddedWithNoKeyRunsWithNone"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "cmd/agentry/cmd_run_protocol_test.go",
           "tests": [
             "TestSessionProtocolGates",
@@ -1627,6 +1656,29 @@
           "fixtureEntryPoint": false,
           "dependencyHints": [
             "real-time wait"
+          ]
+        },
+        {
+          "path": "cmd/agentry/cmd_runhost_models_test.go",
+          "tests": [
+            "TestASavedModelIsMadeAvailableOnARunhostAndCheckedThere",
+            "TestARunOnARunhostCarriesOnlyItsSavedModelsKey",
+            "TestAScheduleOnARunhostNamesOneOfItsSavedModels",
+            "TestAJobOnARunhostsSavedModelIsRefusedByNameWhenItIsGone",
+            "TestARunhostTakesNoCredentialThatDoesNotGoWithItsSavedModel",
+            "TestASignInsSavedModelIsSentWithNothingOfTheSignIn",
+            "TestAnAgentOnARunhostNamesOneOfItsSavedModels",
+            "TestRemovingARunhostsSavedModelAnAgentNamesIsRefused",
+            "TestALongProvidersKeyHasAStoreEntry",
+            "TestARunhostNeverReadsASavedModelsKeyFromItsOwnEnvironment",
+            "TestDefaultIsNoRunhostSavedModelsName",
+            "TestARunhostsOneModelReadsAsItsDefaultSavedModel"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
           ]
         },
         {
@@ -3656,7 +3708,9 @@
             "TestACreditsModelCarriesNoKey",
             "TestASignInModelCarriesNoKey",
             "TestARunhostRunsTheImageOfAHostHarness",
-            "TestADesktopBindingIsHeldToWhatAJobCanCarry"
+            "TestADesktopBindingIsHeldToWhatAJobCanCarry",
+            "TestAJobOnARunhostsSavedModelCarriesNoModelAndNoKey",
+            "TestAnEndpointThatTakesNoKeyTravelsWithNone"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -3739,6 +3793,16 @@
           "dependencyHints": [
             "source/file contract"
           ]
+        },
+        {
+          "path": "pkg/runhost/remote/put_test.go",
+          "tests": [
+            "TestASavedModelIsPreparedForARunhostWithoutItsKey"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
         },
         {
           "path": "pkg/runhost/remote/remote_test.go",
@@ -4288,7 +4352,8 @@
             "TestDockerAgentCompileRefusesCustomWithoutABaseURL",
             "TestDockerAgentCompileNamesTheKeyForTheHarnessClient",
             "TestDockerAgentCompileRefusesASubscriptionToken",
-            "TestDockerAgentCompileDropsThinkingBoundToAnEarlierPrompt"
+            "TestDockerAgentCompileDropsThinkingBoundToAnEarlierPrompt",
+            "TestAnEndpointThatTakesNoKeyIsGivenNoneToResolve"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -4931,6 +4996,18 @@
           "fuzz": [],
           "benchmarks": [],
           "fixtureEntryPoint": true,
+          "dependencyHints": []
+        },
+        {
+          "path": "pkg/runner/compile/savedmodel_test.go",
+          "tests": [
+            "TestARunOnASavedModelResolvesOnlyItsOwnCredentialAndEndpoint",
+            "TestAHarnessBlocksKeyReachesNoRunOnAnotherProvider",
+            "TestARunOnASignInsSavedModelResolvesNoKey"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
           "dependencyHints": []
         },
         {
@@ -7366,7 +7443,8 @@
             "TestAnUnrenewedTokenIsSaidSo",
             "TestASignInRunRefusesWhatItWasNotCompiledFor",
             "TestAPlanLimitEndsTheRunWithItsOwnOutcome",
-            "TestAPlanLimitEndsASession"
+            "TestAPlanLimitEndsASession",
+            "TestTheReceiptNamesThePlansSavedModel"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -8018,6 +8096,16 @@
           "dependencyHints": []
         },
         {
+          "path": "pkg/runner/localrun/persistent_savedmodel_test.go",
+          "tests": [
+            "TestASegmentsPlanNamesTheSavedModelItRunsOn"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "pkg/runner/localrun/persistent_secrets_test.go",
           "tests": [
             "TestASegmentGivesAStoredSecretToTheRosterServerThatDeclaresIt",
@@ -8054,6 +8142,21 @@
           "fixtureEntryPoint": false,
           "dependencyHints": [
             "docker interface (real or fake)",
+            "source/file contract"
+          ]
+        },
+        {
+          "path": "pkg/runner/localrun/runmodel_test.go",
+          "tests": [
+            "TestTheHarnessFollowsTheSavedModelsCredential",
+            "TestAMissingSavedModelIsAPolicyRefusal",
+            "TestAHarnessBlocksSavedModelRunsOnItsHarness",
+            "TestAPlanIsReusedOnlyForTheSavedModelItWasCompiledOn"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
             "source/file contract"
           ]
         },
@@ -8550,6 +8653,16 @@
             "HTTP transport",
             "source/file contract"
           ]
+        },
+        {
+          "path": "pkg/runner/persistent/change_desktoponly_test.go",
+          "tests": [
+            "TestAgentryHelperTakesAModelChangeAndNothingElse"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
         },
         {
           "path": "pkg/runner/persistent/change_frame_test.go",
@@ -9084,6 +9197,27 @@
           ]
         },
         {
+          "path": "pkg/runner/persistent/savedmodel_test.go",
+          "tests": [
+            "TestAnAgentRunsOnTheSavedModelItNamesAndTakesAChangeAtItsNextTurn",
+            "TestATurnOnAMissingSavedModelFailsAndTheNextTriesAgain",
+            "TestATurnOnAnUnusableSavedModelFailsUntilItCanBeUsed",
+            "TestAnAgentOnAMissingSavedModelDoesNotStart",
+            "TestARunningAgentIsRefusedASavedModelItsPolicyDoesNotHave",
+            "TestAConfigNamingASavedModelIsRefusedByAnOlderBuild",
+            "TestAModelOnAnotherHarnessCarriesTheLastExchange",
+            "TestAnAgentMovedToAModelNoSegmentStartsOnIsNotPutBack",
+            "TestAChatIsToldWhenItsTurnFailsForTheSavedModel"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "docker interface (real or fake)",
+            "source/file contract"
+          ]
+        },
+        {
           "path": "pkg/runner/persistent/searchkey_test.go",
           "tests": [
             "TestTheSearchKeyStandsInForAnOfferedServersSecret",
@@ -9378,7 +9512,10 @@
             "TestAChangeToTheModelBlockMovesTheDefault",
             "TestNoKeyValueIsWrittenToAVersion2Policy",
             "TestCustomProviderIDIsCustomAndASlug",
-            "TestAHarnessBlocksSavedModelKeepsTheBlockInStep"
+            "TestAHarnessBlocksSavedModelKeepsTheBlockInStep",
+            "TestAnEndpointOfYourOwnMayTakeNoKey",
+            "TestPutModelKeepsACopysIDAndReplacesItsNamesake",
+            "TestOnlyModelIsTheOneSavedModelAndResetTakesTheListsAway"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -9462,6 +9599,23 @@
           "dependencyHints": [
             "source/file contract",
             "explicit skip"
+          ]
+        },
+        {
+          "path": "pkg/runner/policy/runmodel_test.go",
+          "tests": [
+            "TestARunIsOnTheSavedModelItNamesOrTheDefault",
+            "TestARunNamingAMissingSavedModelIsRefusedNeverRunOnTheDefault",
+            "TestARunsViewIsItsSavedModelsProviderAlone",
+            "TestAHarnessBlocksSavedModelRunsOnItsBlocksHarness",
+            "TestAHarnessBlockAppliesToItsOwnProviderAlone",
+            "TestTheDefaultMayMoveOffTheProviderTheHarnessBlocksAreFor"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
           ]
         },
         {
@@ -9620,6 +9774,40 @@
       ]
     },
     {
+      "owner": "pkg/runner/savedmodels",
+      "behavior": "The rules a client applies to the saved models and providers: what names a model, a removal refused until",
+      "disposition": "retain",
+      "files": [
+        {
+          "path": "pkg/runner/savedmodels/savedmodels_test.go",
+          "tests": [
+            "TestARemovalOfAModelSomethingNamesIsRefusedUntilItIsMoved",
+            "TestAMoveTargetIsNeitherRemovedNorMissing",
+            "TestRemovingTheDefaultMakesTheMoveTargetTheDefault",
+            "TestAScheduleOnAHarnessBlocksHarnessUsesItsSavedModel",
+            "TestAProvidersStateSaysWhetherItsCredentialIsHere",
+            "TestAnEndpointOfYourOwnIsAProviderNamedForIt",
+            "TestARemovalIsRefusedWhileAgentryHelperNamesTheModelAndMovesIt"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
+          "path": "pkg/runner/savedmodels/usable_test.go",
+          "tests": [
+            "TestASavedModelWhoseKeyIsNotHereIsRefusedByName",
+            "TestASavedModelWhoseSignInIsNotKeptIsRefusedByName"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        }
+      ]
+    },
+    {
       "owner": "pkg/runner/session/protocol",
       "behavior": "The session protocol: an interactive session driven by a program rather than a person, over pipes and with",
       "disposition": "retain",
@@ -9633,6 +9821,7 @@
             "TestReadLinesBoundsALineAndReadsOn",
             "TestAnEventLineIsTheSessionEventWithoutRaw",
             "TestASendTheSessionAnswersBusyIsRefusedBusy",
+            "TestASendTheSessionRefusesByClassIsRefusedByThatClass",
             "TestAnAddIsHeldToTheInputsDirectory",
             "TestTheEndCommandAndTheEndOfInputEndTheSession",
             "TestASendIsRefusedBusyWhileATurnIsOnItsWayOrInFlight",
@@ -10120,7 +10309,8 @@
             "TestParseSystemdVersion",
             "TestLingerTurnedOnAndOffOnlyByTheCLI",
             "TestLingerThePersonTurnedOnIsLeftOn",
-            "TestLingerRefusedByPolkitIsNotRecorded"
+            "TestLingerRefusedByPolkitIsNotRecorded",
+            "TestASchedulesSealHoldsOnlyItsSavedModelsKey"
           ],
           "fuzz": [],
           "benchmarks": [],

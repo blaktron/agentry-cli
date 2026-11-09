@@ -448,6 +448,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 			Model:          p.Plan.Harness.Model,
 			ImagePin:       p.Plan.Harness.ImagePin.String(),
 			CredentialKind: credentialKind(p.Plan),
+			SavedModel:     savedModelRecord(p.Plan),
 		},
 		Policy:  policyRecord(p),
 		Result:  receipt.TextResult(""),
@@ -1943,6 +1944,15 @@ func sandboxHosts(ctx context.Context, d dockerx.Client, plan *spec.Plan, runID 
 		hosts = append(hosts, c.alias+":"+ip)
 	}
 	return hosts, nil
+}
+
+// savedModelRecord is the receipt's record of the saved model the plan was
+// compiled on.
+func savedModelRecord(plan *spec.Plan) *receipt.SavedModel {
+	if sm := plan.Harness.SavedModel; sm != nil {
+		return &receipt.SavedModel{ID: sm.ID, Name: sm.Name}
+	}
+	return nil
 }
 
 // policyRecord is the envelope's policy block: the file and source the
