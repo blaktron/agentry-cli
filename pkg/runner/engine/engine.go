@@ -421,6 +421,11 @@ func (p Params) engine() dockerx.Engine {
 // failure it carries status "error", the exit class, and whatever was
 // known — and the returned error (nil on success) is already classified.
 func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envelope, outErr error) {
+	// The run's binding to Agentry Desktop ends when the run returns,
+	// whichever step refused or ended it: the teardown ends it first where
+	// the run got that far.
+	onceDesktopUnbind(p)
+	defer endDesktopBinding(ctx, p)
 	start := time.Now()
 	runID := p.RunID
 	if runID == "" {

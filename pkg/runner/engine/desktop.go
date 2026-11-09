@@ -49,6 +49,8 @@ type DesktopLink struct {
 	Call func(ctx context.Context, req desktop.CallRequest) (desktoplink.Answer, error)
 	// Unbind ends the binding at teardown.
 	Unbind func(ctx context.Context) error
+	// unbindOnce says Unbind was made to run once.
+	unbindOnce bool
 	// FarEnd says how the link service is reached, for the receipt.
 	FarEnd string
 	// Computer is the computer use the link service bound, where the plan
@@ -560,6 +562,41 @@ func recordDesktop(rd *runDirs, td *teardown, env *receipt.Envelope) {
 			_ = r.link.Unbind(c)
 		}
 	})
+}
+
+// onceDesktopUnbind makes the run's binding to Agentry Desktop end once,
+// however many steps ask: the teardown, and the run's or session's return.
+func onceDesktopUnbind(p Params) {
+	l := p.Desktop
+	if l == nil || l.Unbind == nil || l.unbindOnce {
+		return
+	}
+	var once sync.Once
+	unbind := l.Unbind
+	l.Unbind = func(c context.Context) error {
+		var err error
+		once.Do(func() { err = unbind(c) })
+		return err
+	}
+	l.unbindOnce = true
+}
+
+// endDesktopBinding ends the run's binding to Agentry Desktop now, if it
+// has one and nothing ended it yet.
+func endDesktopBinding(ctx context.Context, p Params) {
+	if l := p.Desktop; l != nil && l.Unbind != nil {
+		_ = l.Unbind(context.WithoutCancel(ctx))
+	}
+}
+
+// unbindDesktopAtTeardown has the teardown end the run's binding to Agentry
+// Desktop, once, even where the run fails before recordDesktop: any later
+// step of the preparation.
+func unbindDesktopAtTeardown(p Params, td *teardown) {
+	onceDesktopUnbind(p)
+	if l := p.Desktop; l != nil && l.Unbind != nil {
+		td.add(func(c context.Context) { _ = l.Unbind(c) })
+	}
 }
 
 // writeLines writes each desktop line of the receipt with the calls counted
