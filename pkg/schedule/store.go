@@ -88,6 +88,10 @@ type RunSpec struct {
 	AllowUnsigned      bool `yaml:"allowUnsigned,omitempty" json:"allowUnsigned,omitempty"`
 	AllowUnscanned     bool `yaml:"allowUnscanned,omitempty" json:"allowUnscanned,omitempty"`
 	AllowVulnerableMCP bool `yaml:"allowVulnerableMcp,omitempty" json:"allowVulnerableMcp,omitempty"`
+	// UnsafeMode: those consents were given in Agentry Desktop's Unsafe
+	// Mode, so the schedule does not run while managed settings on this
+	// computer forbid Unsafe Mode. It sets nothing by itself.
+	UnsafeMode bool `yaml:"unsafeMode,omitempty" json:"unsafeMode,omitempty"`
 }
 
 // Host is a target host a schedule was made for. A fire reaches it only

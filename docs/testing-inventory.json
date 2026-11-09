@@ -1811,6 +1811,21 @@
           "dependencyHints": [
             "source/file contract"
           ]
+        },
+        {
+          "path": "cmd/agentry/cmd_schedule_unsafe_test.go",
+          "tests": [
+            "TestAScheduleMadeInUnsafeModeIsHeldWhileManagedSettingsForbidIt",
+            "TestAScheduleNotMadeInUnsafeModeIsNotHeld",
+            "TestAHeldScheduleIsNotRunByHandOrEdited",
+            "TestListAndShowSayAScheduleIsHeld",
+            "TestAddInUnsafeModeIsRefusedWhileManagedSettingsForbidIt",
+            "TestTheUnsafeModeMarkRoundTrips"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
         }
       ]
     },
