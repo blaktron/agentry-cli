@@ -4181,6 +4181,20 @@
           "dependencyHints": []
         },
         {
+          "path": "pkg/runner/adapter/checkpoint_test.go",
+          "tests": [
+            "TestTheCheckpointHookOnlyForTheDefaultHarness",
+            "TestTheCheckpointHookPrintsItsText"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "child process",
+            "explicit skip"
+          ]
+        },
+        {
           "path": "pkg/runner/adapter/claude_signin_test.go",
           "tests": [
             "TestAClaudeSignInRunIsHeldToClaudeCodesOwnSignIn",
