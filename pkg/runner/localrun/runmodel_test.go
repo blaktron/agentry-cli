@@ -18,7 +18,7 @@ func twoModels(t *testing.T) (*policy.Policy, policy.SavedModel) {
 	t.Helper()
 	pol := policy.Default()
 	pol.Images.Runner = "agentry-runner:test"
-	if err := pol.AddProvider("openai", policy.Provider{APIKeyKind: policy.KeyKindChatGPTPlan, ProxyAllow: []string{"chatgpt.com:443"}}); err != nil {
+	if err := pol.AddProvider("openai", policy.Provider{APIKeyKind: policy.KeyKindChatGPTPlan, ProxyAllow: []string{"api.openai.com:443"}}); err != nil {
 		t.Fatal(err)
 	}
 	plan, err := pol.AddModel(policy.SavedModel{Name: "Plan", Provider: "openai", Model: "gpt-5.5"})
@@ -57,8 +57,8 @@ func TestAMissingSavedModelIsAPolicyRefusal(t *testing.T) {
 	}
 }
 
-// A harness block's saved model runs on that block's harness, as a run with
-// --adapter did before the lists existed.
+// A harness block's saved model runs on that block's harness, and a run on
+// any other harness follows the credential.
 func TestAHarnessBlocksSavedModelRunsOnItsHarness(t *testing.T) {
 	pol := policy.Default()
 	pol.Harness = map[string]policy.HarnessPolicy{adapter.ClaudeAdapterName: {Model: "sonnet"}}
@@ -73,6 +73,11 @@ func TestAHarnessBlocksSavedModelRunsOnItsHarness(t *testing.T) {
 	rm, err = ChooseRunModel(pol, "", "")
 	if err != nil || rm.Adapter != adapter.DefaultName {
 		t.Fatalf("no flags: %+v on %s, %v", rm.Saved, rm.Adapter, err)
+	}
+	// A harness with no block of its own is on the default.
+	rm, err = ChooseRunModel(pol, "", adapter.CodexAdapterName)
+	if err != nil || rm.Saved.ID != pol.DefaultModel().ID || rm.Adapter != adapter.CodexAdapterName {
+		t.Fatalf("--adapter codex: %+v on %s, %v", rm.Saved, rm.Adapter, err)
 	}
 }
 

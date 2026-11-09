@@ -133,7 +133,7 @@ func TestASavedModelWithNoKeyIsRefusedByNameBeforeTheRun(t *testing.T) {
 // A sign-in a saved model spends that is not kept refuses the run by name.
 func TestASavedModelWhoseSignInIsGoneIsRefusedByName(t *testing.T) {
 	pol := policy.Default()
-	if err := pol.AddProvider("openai", policy.Provider{APIKeyKind: policy.KeyKindChatGPTPlan, ProxyAllow: []string{"chatgpt.com:443"}}); err != nil {
+	if err := pol.AddProvider("openai", policy.Provider{APIKeyKind: policy.KeyKindChatGPTPlan, ProxyAllow: []string{"api.openai.com:443"}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pol.AddModel(policy.SavedModel{Name: "Plan", Provider: "openai", Model: "gpt-5.5"}); err != nil {
@@ -218,9 +218,9 @@ func TestAScheduleKeepsItsSavedModelWhenTheDefaultChanges(t *testing.T) {
 	}
 }
 
-// A version 1 policy's harness block that names a model: a schedule on that
-// harness is assigned the block's saved model, and removing it is refused
-// while the schedule runs on it.
+// A harness block that names a model: a schedule on that harness is
+// assigned the block's saved model, one whose record names no model runs on
+// it too, and removing it is refused while a schedule runs on it.
 func TestAScheduleOnAHarnessBlocksHarnessIsAssignedItsSavedModel(t *testing.T) {
 	home, path := modelsFixture(t)
 	pol, _, err := policy.Load(path)
@@ -239,14 +239,13 @@ func TestAScheduleOnAHarnessBlocksHarnessIsAssignedItsSavedModel(t *testing.T) {
 	if err := assignScheduleModel(&sc, ""); err != nil || sc.Run.Model != claude.ID {
 		t.Fatalf("a schedule on --adapter claude names %q, want %q (%v)", sc.Run.Model, claude.ID, err)
 	}
-	// One made before the assignment existed names none, and runs on it too.
-	legacy := sc
-	legacy.Run.Model = ""
-	if err := schedule.StoreIn(home).Create(&legacy, nil); err != nil {
+	unnamed := sc
+	unnamed.Run.Model = ""
+	if err := schedule.StoreIn(home).Create(&unnamed, nil); err != nil {
 		t.Fatal(err)
 	}
-	if rm, err := scheduleRunModel(legacy); err != nil || rm.Saved.ID != claude.ID || rm.Adapter != "claude" {
-		t.Fatalf("the older schedule's fire is on %+v with %s (%v)", rm.Saved, rm.Adapter, err)
+	if rm, err := scheduleRunModel(unnamed); err != nil || rm.Saved.ID != claude.ID || rm.Adapter != "claude" {
+		t.Fatalf("a record naming no model on the claude harness fires on %+v with %s (%v)", rm.Saved, rm.Adapter, err)
 	}
 	_, _, err = runCLI(t, strings.NewReader(""), "models", "remove", "claude", "--policy", path)
 	wantClassified(t, err, engine.ExitPolicy)

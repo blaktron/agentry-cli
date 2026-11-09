@@ -272,8 +272,8 @@ func (p *Policy) harnessOf(id string) string {
 // that was not read from one.
 func (p *Policy) HarnessOf(sm SavedModel) string { return p.harnessOf(sm.ID) }
 
-// HarnessModel is the saved model read from the harness block name, the
-// model a run on that harness was asked for before the lists existed.
+// HarnessModel is the saved model read from the harness block name: the
+// block's model, which a run on that harness is asked for.
 func (p *Policy) HarnessModel(name string) (SavedModel, bool) {
 	if strings.TrimSpace(p.Harness[name].Model) == "" {
 		return SavedModel{}, false
@@ -288,11 +288,10 @@ func (p *Policy) HarnessModel(name string) (SavedModel, bool) {
 	return SavedModel{}, false
 }
 
-// harnessProvider is the provider the harness blocks were written for: the
-// one a version 1 policy's model block named, which the saved models read
-// from the model block and from the harness blocks sit on. A policy whose
-// lists hold none of those has its blocks beside the default's provider,
-// which Validate holds them to.
+// harnessProvider is the provider the harness blocks belong to: the one
+// the saved models read from the model block and from the harness blocks
+// sit on. A policy whose lists hold none of those has its blocks beside the
+// default's provider.
 func (p *Policy) harnessProvider() string {
 	_, models, def := p.SavedModels()
 	find := func(id string) (string, bool) {
@@ -316,10 +315,9 @@ func (p *Policy) harnessProvider() string {
 }
 
 // RunHarness is the harness a run on sm takes when the run names none: the
-// harness block's that sm was read from, while sm stays on the provider the
-// blocks were written for, since that block's harness is the only one a run
-// on its model ever took. "" for every other saved model, whose harness
-// follows its credential.
+// harness of the block sm was read from, while sm stays on the provider the
+// blocks belong to, since the block holds that harness's own model and key.
+// "" for every other saved model, whose harness follows its credential.
 func (p *Policy) RunHarness(sm SavedModel) string {
 	name := p.harnessOf(sm.ID)
 	if name == "" || strings.TrimSpace(p.Harness[name].Model) == "" || sm.Provider != p.harnessProvider() {
@@ -360,7 +358,7 @@ func (e *MissingModelError) Error() string {
 // sm as the compiler reads it, so the run takes sm's provider's credential,
 // endpoint and allowlist and sm's own model id and context window, and no
 // other provider's. A harness block's model, key and endpoint apply only
-// to a run on the provider the blocks were written for, and its model only
+// to a run on the provider the blocks belong to, and its model only
 // to the saved model read from it; its install path and token route apply
 // to every run on that harness. The view is never saved.
 func (p *Policy) ForRun(sm SavedModel) (*Policy, error) {

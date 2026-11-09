@@ -417,7 +417,7 @@ func modelUsers(home string, pol *policy.Policy, sms []policy.SavedModel) ([]mod
 	var named []schedule.Schedule
 	for _, sc := range list {
 		ref := strings.TrimSpace(sc.Run.Model)
-		if ref == "" && sc.Run.Adapter != "" {
+		if ref == "" {
 			if sm, ok := pol.HarnessModel(sc.Run.Adapter); ok {
 				ref = sm.ID
 			}

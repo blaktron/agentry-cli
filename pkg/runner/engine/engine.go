@@ -1946,10 +1946,6 @@ func sandboxHosts(ctx context.Context, d dockerx.Client, plan *spec.Plan, runID 
 	return hosts, nil
 }
 
-// policyRecord is the envelope's policy block: the file and source the
-// caller resolved, with the digest the plan was compiled against — the
-// digest of that same file's bytes, since a plan compiled under another
-// policy is recompiled before it runs.
 // savedModelRecord is the receipt's record of the saved model the plan was
 // compiled on.
 func savedModelRecord(plan *spec.Plan) *receipt.SavedModel {
@@ -1959,6 +1955,10 @@ func savedModelRecord(plan *spec.Plan) *receipt.SavedModel {
 	return nil
 }
 
+// policyRecord is the envelope's policy block: the file and source the
+// caller resolved, with the digest the plan was compiled against — the
+// digest of that same file's bytes, since a plan compiled under another
+// policy is recompiled before it runs.
 func policyRecord(p Params) *receipt.Policy {
 	if p.PolicyFile == nil {
 		return nil

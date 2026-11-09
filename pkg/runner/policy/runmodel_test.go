@@ -77,10 +77,10 @@ func TestARunsViewIsItsSavedModelsProviderAlone(t *testing.T) {
 	}
 }
 
-// A version 1 policy's harness block that names a model is a saved model
-// that runs on that harness, with the block's key, as a run with --adapter
-// did before the lists existed.
-func TestAHarnessBlocksSavedModelRunsAsTheBlockDidBefore(t *testing.T) {
+// A harness block that names a model is a saved model that runs on that
+// harness, with the block's key, as a run with --adapter on that harness
+// does.
+func TestAHarnessBlocksSavedModelRunsOnItsBlocksHarness(t *testing.T) {
 	p := Default()
 	p.Model.ContextWindow = 200000
 	p.Harness = map[string]HarnessPolicy{
@@ -98,7 +98,7 @@ func TestAHarnessBlocksSavedModelRunsAsTheBlockDidBefore(t *testing.T) {
 		t.Fatalf("RunHarness: claude's %q, the default's %q", p.RunHarness(claude), p.RunHarness(p.DefaultModel()))
 	}
 	// A run on the claude harness that names no model is on the block's
-	// saved model, as it was.
+	// saved model.
 	if sm, err := p.RunModel("", "claude"); err != nil || sm.ID != claude.ID {
 		t.Fatalf("a run on --adapter claude is on %+v, %v", sm, err)
 	}
@@ -123,8 +123,8 @@ func TestAHarnessBlocksSavedModelRunsAsTheBlockDidBefore(t *testing.T) {
 	}
 }
 
-// A harness block's model and key are the provider's it was written for: a
-// run on another provider's saved model takes the block's path alone.
+// A harness block's model and key belong to its own provider: a run on
+// another provider's saved model takes the block's path alone.
 func TestAHarnessBlockAppliesToItsOwnProviderAlone(t *testing.T) {
 	p, lab := labPolicy(t)
 	p.Harness = map[string]HarnessPolicy{"codex": {Model: "gpt-5", APIKeyEnv: "OPENAI_TEAM_KEY", BaseURL: "https://proxy.example/v1", Path: "/opt/codex", SignInTokenRoute: TokenRouteRestart}}
@@ -141,7 +141,7 @@ func TestAHarnessBlockAppliesToItsOwnProviderAlone(t *testing.T) {
 }
 
 // Making a saved model on another vendor the default leaves the harness
-// blocks valid: their kinds belong to the provider they were written for.
+// blocks valid: their kinds belong to their own provider.
 func TestTheDefaultMayMoveOffTheProviderTheHarnessBlocksAreFor(t *testing.T) {
 	p, lab := labPolicy(t)
 	p.Harness = map[string]HarnessPolicy{"claude": {APIKeyKind: KeyKindClaudeSignIn}}

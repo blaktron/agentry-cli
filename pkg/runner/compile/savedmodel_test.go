@@ -137,3 +137,43 @@ func TestAHarnessBlocksKeyReachesNoRunOnAnotherProvider(t *testing.T) {
 		t.Fatalf("the default, which the block was written for, resolves %v", envs)
 	}
 }
+
+// A run on a sign-in's saved model spends that sign-in alone: no key of
+// the default provider's is resolved, and the proxy admits the sign-in's
+// endpoint alone.
+func TestARunOnASignInsSavedModelResolvesNoKey(t *testing.T) {
+	m := parseManifest(t, pureTextYAML)
+	ws := workspaceFor(t, m, nil)
+	pol := testPolicy()
+	if err := pol.AddProvider("openai", policy.Provider{APIKeyKind: policy.KeyKindChatGPTPlan, ProxyAllow: []string{"api.openai.com:443"}}); err != nil {
+		t.Fatal(err)
+	}
+	sm, err := pol.AddModel(policy.SavedModel{Name: "Plan", Provider: "openai", Model: "gpt-5.5"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := pol.ForRun(sm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	planDir := t.TempDir()
+	plan, err := Compile(Inputs{
+		Manifest: m, Digest: "sha256:0123456789abcdef", Source: "local", WorkspaceDir: ws,
+		Policy: view, PolicySHA: "fixedpolicysha", RunnerImage: "agentry-runner:test", AdapterName: "codex-image",
+	}, planDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msi := plan.Harness.ModelSignIn; msi == nil || msi.Kind != policy.KeyKindChatGPTPlan {
+		t.Fatalf("the plan spends %+v", plan.Harness.ModelSignIn)
+	}
+	if envs, accounts := keySources(plan); len(envs) != 0 || len(accounts) != 0 {
+		t.Fatalf("a run on the ChatGPT plan resolves %v from %v", envs, accounts)
+	}
+	if !slices.Equal(plan.Proxy.Allow, []string{"api.openai.com:443"}) {
+		t.Fatalf("the proxy admits %v", plan.Proxy.Allow)
+	}
+	if plan.Harness.SavedModel == nil || plan.Harness.SavedModel.Name != "Plan" {
+		t.Fatalf("the plan names %+v", plan.Harness.SavedModel)
+	}
+}

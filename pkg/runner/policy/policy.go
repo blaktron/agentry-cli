@@ -1324,8 +1324,8 @@ func (p *Policy) Validate() error {
 	if p.Sessions.IdleTimeoutSeconds < 0 || p.Sessions.MaxWallSeconds < 0 || p.Sessions.MaxUserTurns < 0 {
 		return errors.New("sessions.idleTimeoutSeconds, sessions.maxWallSeconds and sessions.maxUserTurns must not be negative")
 	}
-	// The harness blocks' kinds belong to the provider they were written
-	// for, which need not be the default's once there are several.
+	// The harness blocks' kinds belong to their own provider, which need
+	// not be the default's once there are several.
 	harnessVendor := p.Model.Provider
 	if id := p.harnessProvider(); id != "" {
 		harnessVendor = ProviderVendor(id)

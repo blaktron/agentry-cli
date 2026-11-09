@@ -1644,7 +1644,7 @@ func newScheduleEditCmd() *cobra.Command {
 		Short: "Change a schedule's repeat, name, output folder, delivery, saved model or limits",
 		Long: "Change when a schedule runs, its name, its output folder, where each run's\n" +
 			"deliverables go (--deliver-to, --destination), the saved model it runs on\n" +
-			"(--model; an empty value follows the default again) or its limits. What\n" +
+			"(--model; an empty value names none again) or its limits. What\n" +
 			"it runs and with which inputs is fixed when it is made: for a new version or\n" +
 			"other inputs, remove it and add a new one.\n\n" +
 			"--signed-out (Linux with Docker Engine) makes it also run while you are\n" +
@@ -1819,7 +1819,7 @@ func newScheduleEditCmd() *cobra.Command {
 	f.IntVar(&timeout, "timeout", 0, "the policy timeout override (seconds; 0 = the policy's)")
 	f.IntVar(&maxTurns, "max-turns", -1, "the tool-call budget override (-1 = the policy's, 0 = unlimited)")
 	f.Float64Var(&maxCost, "max-cost", -1, "the cost budget override in USD (-1 = the policy's, 0 = unlimited)")
-	f.StringVar(&model, "model", "", "the saved model each run is on, by name or id (agentry models list); an empty value follows this computer's default")
+	f.StringVar(&model, "model", "", "the saved model each run is on, by name or id (agentry models list); an empty value follows this computer's default, or, for a schedule on a harness whose policy block names a model, that block's saved model")
 	f.StringVar(&deliverTo, "deliver-to", "", "the folder each run copies its deliverables to (absolute, or beginning with ~); empty stops it")
 	f.StringArrayVar(&destinations, "destination", nil, "the saved destinations each run sends its result and deliverables to, replacing the set (repeatable); one empty value clears it")
 	f.BoolVar(&signedOut, "signed-out", false, "also run while you are signed out (Linux with Docker Engine); =false to run only while signed in")
@@ -2091,15 +2091,25 @@ func heldError(reason string) error {
 // the default. A record naming a saved model this computer no longer has
 // is refused (exit 11), never run on the default.
 func scheduleRunModel(sc schedule.Schedule) (localrun.RunModel, error) {
-	pf, err := policy.Resolve(sc.Run.Policy)
+	pol, err := schedulePolicy(sc)
 	if err != nil {
 		return localrun.RunModel{}, err
 	}
+	return localrun.ChooseRunModel(pol, sc.Run.Model, sc.Run.Adapter)
+}
+
+// schedulePolicy is the policy file sc names (the default's when it names
+// none), as it was read.
+func schedulePolicy(sc schedule.Schedule) (*policy.Policy, error) {
+	pf, err := policy.Resolve(sc.Run.Policy)
+	if err != nil {
+		return nil, err
+	}
 	pol, _, err := policy.EnsureDefault(pf.Path)
 	if err != nil {
-		return localrun.RunModel{}, engine.Classify(engine.ExitPolicy, err)
+		return nil, engine.Classify(engine.ExitPolicy, err)
 	}
-	return localrun.ChooseRunModel(pol, sc.Run.Model, sc.Run.Adapter)
+	return pol, nil
 }
 
 // assignScheduleModel records in sc the saved model its fires run on, by
@@ -2108,17 +2118,13 @@ func scheduleRunModel(sc schedule.Schedule) (localrun.RunModel, error) {
 // names a model, that block's saved model, which is what a run on that
 // harness was asked for. An empty record follows the default.
 func assignScheduleModel(sc *schedule.Schedule, ref string) error {
-	pf, err := policy.Resolve(sc.Run.Policy)
+	pol, err := schedulePolicy(*sc)
 	if err != nil {
 		return err
 	}
-	pol, _, err := policy.EnsureDefault(pf.Path)
-	if err != nil {
-		return engine.Classify(engine.ExitPolicy, err)
-	}
 	if strings.TrimSpace(ref) == "" {
 		sc.Run.Model = ""
-		if sm, ok := pol.HarnessModel(sc.Run.Adapter); ok && sc.Run.Adapter != "" {
+		if sm, ok := pol.HarnessModel(sc.Run.Adapter); ok {
 			sc.Run.Model = sm.ID
 		}
 		return nil

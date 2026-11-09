@@ -4954,7 +4954,8 @@
           "path": "pkg/runner/compile/savedmodel_test.go",
           "tests": [
             "TestARunOnASavedModelResolvesOnlyItsOwnCredentialAndEndpoint",
-            "TestAHarnessBlocksKeyReachesNoRunOnAnotherProvider"
+            "TestAHarnessBlocksKeyReachesNoRunOnAnotherProvider",
+            "TestARunOnASignInsSavedModelResolvesNoKey"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -9514,7 +9515,7 @@
             "TestARunIsOnTheSavedModelItNamesOrTheDefault",
             "TestARunNamingAMissingSavedModelIsRefusedNeverRunOnTheDefault",
             "TestARunsViewIsItsSavedModelsProviderAlone",
-            "TestAHarnessBlocksSavedModelRunsAsTheBlockDidBefore",
+            "TestAHarnessBlocksSavedModelRunsOnItsBlocksHarness",
             "TestAHarnessBlockAppliesToItsOwnProviderAlone",
             "TestTheDefaultMayMoveOffTheProviderTheHarnessBlocksAreFor"
           ],
@@ -10181,7 +10182,8 @@
             "TestParseSystemdVersion",
             "TestLingerTurnedOnAndOffOnlyByTheCLI",
             "TestLingerThePersonTurnedOnIsLeftOn",
-            "TestLingerRefusedByPolkitIsNotRecorded"
+            "TestLingerRefusedByPolkitIsNotRecorded",
+            "TestASchedulesSealHoldsOnlyItsSavedModelsKey"
           ],
           "fuzz": [],
           "benchmarks": [],
