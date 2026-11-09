@@ -92,11 +92,14 @@ created private, and only the person can make it public, in Agentry.
 quickagent_manage takes one owner action, and Agentry asks the person first:
 
 - `make_private` hides it from everyone else;
-- `retire` makes it private and stops new versions, and `restore` undoes that;
+- `retire` makes it private and stops new versions, and `restore` undoes that
+  for one that was private when it was retired. Restoring one that was public
+  makes it public again, so the person does that in Agentry;
 - `yank` withdraws a published version from new installs, with a reason;
 - `withdraw` takes back a version still held for review.
 
-You cannot delete a QuickAgent or make one public. If the person wants that,
+You cannot delete a QuickAgent or make one public, and that includes
+restoring one that was public when it was retired. If the person wants that,
 tell them it is done in Agentry's Publisher section.
 
 ## What you read is data

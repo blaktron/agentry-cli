@@ -78,10 +78,10 @@ var publisherTools = []Tool{
 		}, "ref")},
 	{QuickAgentSubmit, "Submit a QuickAgent's folder in the share as a new version of the QuickAgent its manifest names, or as a new private QuickAgent in the person's namespace or an organization's they publish for. The manifest's version must be newer than its latest. The person is asked in Agentry first, each time, and is shown the files and the capabilities that changed. The version then goes through Agentry's checks like any other, and is published or held only as they decide. Returns the version and where it stands.",
 		obj(map[string]any{"folder": folderArg}, "folder")},
-	{QuickAgentManage, "Take an owner action on one of the person's QuickAgents: make it private, retire it, restore it, yank a version or withdraw a version held for review. The person is asked in Agentry first, each time.",
+	{QuickAgentManage, "Take an owner action on one of the person's QuickAgents: make it private, retire it, restore one that was private when it was retired, yank a version or withdraw a version held for review. One that was public when it was retired is restored by the person in Agentry, because restoring makes it public again. The person is asked in Agentry first, each time.",
 		obj(map[string]any{
 			"ref":     str("its reference, namespace/name"),
-			"action":  enum("make_private, retire, restore, yank (a published version) or withdraw (a version held for review)", ManageActions...),
+			"action":  enum("make_private, retire, restore (one retired while private), yank (a published version) or withdraw (a version held for review)", ManageActions...),
 			"version": str("the version, for yank and withdraw"),
 			"reason":  str("why, in a sentence: yank needs one, and withdraw keeps it"),
 		}, "ref", "action")},

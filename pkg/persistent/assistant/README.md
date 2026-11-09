@@ -189,15 +189,16 @@ assistant` lists what it has:
   `quickagent_submit` submits a folder as a new version, or as a new
   QuickAgent, which is always private. `quickagent_fork` forks a public
   QuickAgent into your namespace so it can be changed. `quickagent_manage`
-  makes one private, retires or restores it, or yanks or withdraws a version.
+  makes one private, retires it or restores one that was private when it was
+  retired, or yanks or withdraws a version.
   The desktop asks you first, in a dialog that names the Assistant, before
   every fork, revision, submission and owner action, every time: no earlier
   answer and no setting skips it. A submission's dialog shows the files and
   the capabilities that changed, and says when the QuickAgent is public that
   everyone who installs or updates it receives the version. Every version
   then goes through Agentry's checks like any other. The Assistant cannot
-  delete a QuickAgent or make one public; you do that in Agentry's Publisher
-  section. These tools reach your QuickAgents with your Agentry sign-in,
+  delete a QuickAgent or make one public, nor restore one that was public when
+  you retired it; you do that in Agentry's Publisher section. These tools reach your QuickAgents with your Agentry sign-in,
   which the Assistant never sees, and none changes what the Assistant itself
   may do. Run from the CLI, they answer that only Agentry Desktop answers
   them.

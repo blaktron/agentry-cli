@@ -224,4 +224,4 @@ agentry/drafter@1.21.0 sha256:f814e4eb81d5ca14be3ee248d9596237dcfffb0f535cc4668c
 # 1.22.0, over 1.21.0: the drafting guide's page on the person's computer names any application by a short id, with use and a choose entry, and the library's presets (Blender, Unreal Engine) as examples.
 agentry/drafter@1.22.0 sha256:4571ce262770b41b50f9001b7a17c2a2ee619a20334bc611a3b45fcdb41ef125
 # 1.21.0, over 1.20.1: the publisher tools (quickagent_mine, quickagent_versions, quickagent_fetch, quickagent_revise, quickagent_fork, quickagent_submit, quickagent_manage) and the quickagent-edit skill, by which it looks after the QuickAgents the person publishes.
-agentry/assistant@1.21.0 sha256:51c811fc8ea2a560ad8695ec826ae6b8103db4e34b05fbcf8c30a8b95fad7a64
+agentry/assistant@1.21.0 sha256:23c97455d7b279de44ef6c60ae9fade7f7730189a23fa945f265335a0ffb4a32
