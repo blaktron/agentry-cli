@@ -340,8 +340,8 @@ func TestDockerAgentCompileTellsTheHarnessTheContextWindow(t *testing.T) {
 // out, past twice the page (so only a result the tools server did not page
 // is ever cut), and on an endpoint of the person's own the older results
 // give way past half the window (64k tokens with none) and the conversation
-// is compacted at 70% of it. A hosted model keeps the harness's own
-// threshold and every older result.
+// is compacted at 70% of it. A hosted model keeps every older result and
+// is compacted at 80%, short of the harness's own 90%.
 func TestDockerAgentCompileCapsToolResultsBesideTheWindow(t *testing.T) {
 	ad, err := Get(DefaultName)
 	if err != nil {
@@ -356,7 +356,7 @@ func TestDockerAgentCompileCapsToolResultsBesideTheWindow(t *testing.T) {
 		want  map[string]any
 	}{
 		{"hosted", policy.Model{Provider: "anthropic", Name: "claude-sonnet-5-5", APIKeyEnv: "MODEL_KEY", ProxyAllow: []string{"x:443"}},
-			map[string]any{"max_tool_result_tokens": 24576}},
+			map[string]any{"max_tool_result_tokens": 24576, "compaction_threshold": 0.8}},
 		{"own, with a window", ownWindow,
 			map[string]any{"max_tool_result_tokens": 8192, "max_old_tool_call_tokens": 16384, "compaction_threshold": 0.7}},
 		{"own, no window", own,
