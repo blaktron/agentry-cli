@@ -206,7 +206,7 @@ func readRunhostStatus() (runhostStatus, error) {
 	st := runhostStatus{
 		Name: cfg.Name, Version: version.Version, Arch: runtime.GOARCH, OS: osPretty(), GVisor: cfg.GVisor,
 		Owner: cfg.Owner, UnsafeMode: runhost.UnsafeModeOn(runhostUnsafeModeFile), Devices: []runhostDevice{},
-		Capabilities: map[string]bool{"runs": true, "secrets": true, "files": true, "connections": true, "destinations": true, "attach": true, "sessions": true, "credits": true, "signIns": true, "schedules": runhostStoreSeals(), "agents": true},
+		Capabilities: runhostCapabilities(),
 		Jobs:         runhostJobs(),
 	}
 	for _, d := range devs.Devices {
@@ -429,4 +429,11 @@ func upstreamResolvers() []string {
 		}
 	}
 	return nil
+}
+
+// runhostCapabilities are what this runhost's CLI does, as its status says
+// them to a device: schedules only when its store's key is sealed.
+func runhostCapabilities() map[string]bool {
+	return map[string]bool{"runs": true, "secrets": true, "files": true, "connections": true, "destinations": true, "attach": true, "sessions": true,
+		"credits": true, "signIns": true, "schedules": runhostStoreSeals(), "scheduleModels": true, "agents": true}
 }

@@ -124,7 +124,7 @@ func systemPrompt(f promptFacts) string {
 	var b strings.Builder
 	b.WriteString(systemPromptHead)
 	b.WriteString(whatYouAreSection)
-	b.WriteString(modeSection(f.persistent))
+	b.WriteString(modeSection(f.caps.Scratch))
 	writeEnvironment(&b, f)
 	if !f.persistent {
 		writeInputs(&b, f)
@@ -145,34 +145,29 @@ A QuickAgent is a small package: a manifest that declares what it may do, and an
 The person who started the run receives your final answer, the reports you write, and a receipt that records what the runner enforced.
 `
 
-// modeSection is how to start and work in each mode. The text guides both,
-// since the instruction is the same in both (see promptFacts); the head's
-// spec.PHRunMode says which one this run is, and spec.PHLongTask adds
-// LongTaskNotes to an autonomous run's paragraph. A persistent agent keeps its
-// notes in its own folders (agentFilesLine), so its plan has no long-task
-// sentences at all.
-func modeSection(persistent bool) string {
-	longTask := spec.PHLongTask
-	if persistent {
-		longTask = ""
+// modeSection is how to start and work in each mode, then the checklist.
+// The text guides both modes, since the instruction is the same in both (see
+// promptFacts); the head's spec.PHRunMode says which one this run is. The
+// checklist paragraph speaks to every mode, a persistent agent's turns
+// included, so a release's two plans stay the same bytes but for the
+// session. The checklist tool goes with the scratch folder, so a plan
+// without one hears of no checklist.
+func modeSection(checklist bool) string {
+	if !checklist {
+		return modeHead + modeTail
 	}
-	return modeHead + longTask + modeTail
+	return modeHead + modeTail + checklistParagraph
 }
 
-// LongTaskNotes is spec.PHLongTask's value in an autonomous run: a long task
-// keeps its state in a notes file in the scratch folder, so a summary of
-// earlier work (the harness compacting the conversation) never loses its
-// place or its findings. One line, with no quote or backslash, since it is
-// filled into every harness's form of the instruction.
-const LongTaskNotes = " A task that reads more than a few pages (of your inputs, fetched files or tool results) keeps notes in " + NotesFile + " in your scratch folder: the task in one line, a cursor saying what is done and what is next, and the findings so far, added with scratch_write (append) after each page. When the conversation shows a summary of earlier work, read " + NotesFile + " with scratch_read before anything else and go on from its cursor; a page you read before the summary may come back marked unchanged, so read it again with fresh: true. Build your answer and your reports from the notes; " + NotesFile + " stays an unmarked working note, never a deliverable."
-
-// NotesFile is the long task's notes file, relative to the scratch folder,
-// as the scratch tools name it.
-const NotesFile = "notes.md"
-
-// NotesFileForHarness is spec.PHNotesFile's value in an autonomous run: the
-// notes file as the harness's compaction summary names it to the agent.
-const NotesFileForHarness = NotesFile + " in your scratch folder"
+// checklistParagraph is how a task keeps its steps: in the checklist tool,
+// whose file (spec.ChecklistFile) outlasts a summary of earlier work, a
+// reload of the harness and a start again on the stored conversation. A
+// page read before a summary may be answered "unchanged since your earlier
+// call in this turn", which the summary no longer holds, so it is read again
+// with fresh: true.
+const checklistParagraph = `
+**Your checklist.** A task of more than a few steps starts with one: checklist with the steps in order, each one you can check, the last your answer. Keep one step in progress, mark each done the moment it is, and change the list as you learn. Write findings into your report as you go. After a summary of earlier work, read the checklist first and go on from the open step; a page read before the summary may come back marked unchanged, so read it again with fresh: true. Before your final answer, read it once more: every step done, or dropped with the reason given in your answer. A task of one or two steps needs none.
+`
 
 const modeHead = `
 ## Your mode

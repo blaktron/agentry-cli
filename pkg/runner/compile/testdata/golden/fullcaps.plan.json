@@ -12,7 +12,7 @@
   "policySha256": "fixedpolicysha",
   "instruction": {
     "sourcePath": "SKILL.md",
-    "sha256": "8bd22692ca958bcee304533c105eb687ebaeafb02a946d763392937bee5e3d18",
+    "sha256": "55fa79a1f6acc0fb87fdf7fdf605e4c75b51204ea3f386b5e9afb3e8357a303f",
     "bodySha256": "8086e9508d39ffb5d93fe51fea7e272784044e1acb1118e77bd9d721441a3723"
   },
   "capabilities": {
@@ -50,6 +50,7 @@
     "scratch_read",
     "scratch_write",
     "scratch_search",
+    "checklist",
     "grep",
     "glob",
     "write_report",
@@ -235,8 +236,8 @@
     "gateway/catalog.yaml": "c6a88536a2db25b7126c4478e03677950617794436dffc65c0e9c3efe99f621e",
     "gateway/config.yaml": "6ae322f43ef620e4ad682078c22e8a24b8aa6e96de990ad664a91cc53733197c",
     "gateway/registry.yaml": "e5062e24456af9287a9376e986c8b29c6bf9f3802904ce0aa9852244b6ebc11d",
-    "gateway/tools.yaml": "255a810dbbe8c2afb8db71aa982c97201466805000241edaf935404dfe1649a9",
-    "gateway/toolspec.json": "4c6ca431ff63511d9d020a9c817f704bc69c8f95424315e7afd38670e2e13d35",
-    "harness/agent.yaml": "da02c1ab4b9d171916f412aa3733ae7fbe12fa8acb9a1fb048c1c7fe689c6809"
+    "gateway/tools.yaml": "674c48ad9bf09113b13392d72171e4c81f2397c4c9df86a7a97ddc2dd7c2485a",
+    "gateway/toolspec.json": "7f6ef3b1a82416465bdf80f7990bb1f500da9c89a0612e4f6ff6803d9f344a95",
+    "harness/agent.yaml": "4310b21d7921517acc9e7bfac7268cc0d12353f425d1b8b1ccfb24e0b95a123f"
   }
 }

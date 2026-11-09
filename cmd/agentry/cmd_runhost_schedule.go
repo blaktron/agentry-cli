@@ -90,6 +90,13 @@ func runhostScheduleVerb(ctx context.Context, req runhost.Request, in io.Reader,
 			return engine.ExitUsage, err
 		}
 		return 0, fw.Result(info)
+	case len(req.Args) == 3 && req.Args[0] == "model":
+		info, code, err := runhostMoveScheduleModel(req.Args[1], req.Args[2])
+		if err != nil {
+			return code, err
+		}
+		_ = fw.Out("schedule %s (%s) runs on %s from its next occurrence", info.ID, info.Name, runhostScheduleModelSaid(info.Model))
+		return 0, fw.Result(info)
 	case len(req.Args) == 2 && req.Args[0] == "run":
 		fire, err := runhostScheduleFire(ctx, req.Args[1], runhostScheduleNow(), true)
 		if err != nil {
@@ -97,7 +104,7 @@ func runhostScheduleVerb(ctx context.Context, req runhost.Request, in io.Reader,
 		}
 		return 0, fw.Result(fire)
 	}
-	return engine.ExitUsage, errors.New("schedule takes put, list, remove <id> or run <id>")
+	return engine.ExitUsage, errors.New("schedule takes put, list, remove <id>, run <id> or model <id> <saved model>")
 }
 
 func runhostSchedulePut(ctx context.Context, req runhost.Request, in io.Reader, fw *runhost.FrameWriter) (int, error) {

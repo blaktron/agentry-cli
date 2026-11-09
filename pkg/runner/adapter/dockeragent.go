@@ -325,9 +325,8 @@ type agntYAML struct {
 	// ColdCacheClear clears old tool results after the prompt cache has
 	// expired (coldCacheClear).
 	ColdCacheClear *coldCacheClearYAML `yaml:"cold_cache_clear,omitempty"`
-	// CompactionNotes names the notes file a compaction summary points the
-	// agent back to: spec.PHNotesFile, which the engine fills in for an
-	// autonomous run and leaves empty for an interactive one, so the two
+	// CompactionNotes names the file a compaction summary points the agent
+	// back to: the checklist, the same in every mode, so a release's two
 	// plans' configs stay the same bytes. Only the default harness build knows
 	// the key, and any other docker-agent refuses the whole config over it, so
 	// it is written for that image alone (compactionNotes).
@@ -335,17 +334,20 @@ type agntYAML struct {
 	ContextLimits   contextLimitsYAML `yaml:",inline"`
 }
 
-// compactionNotes is the agent's compaction_notes: the run's notes file,
-// filled in at run time, when the harness is the default build, which reads
-// the key; never for a persistent agent's plan, which keeps its notes in its
-// own folders. Another image (the vendor's, an earlier build a policy pins)
-// fails to parse a config that carries it, so it gets none: the System
-// Prompt still asks for the notes, and only the summary's reminder is lost.
+// compactionNotes is the agent's compaction_notes: the checklist file, in
+// the scratch folder or, for a persistent agent, in its data folder, when
+// the harness is the default build, which reads the key. Another image (the
+// vendor's, an earlier build a policy pins) fails to parse a config that
+// carries it, so it gets none: the System Prompt still says to read the
+// checklist after a summary, and only the summary's reminder is lost.
 func compactionNotes(persistent bool, harnessImage string) string {
-	if persistent || harnessImage != policy.DefaultHarnessImage {
+	switch {
+	case harnessImage != policy.DefaultHarnessImage:
 		return ""
+	case persistent:
+		return spec.AgentChecklistForHarness
 	}
-	return spec.PHNotesFile
+	return spec.ChecklistForHarness
 }
 
 // contextLimitsYAML is docker-agent's context limits that need no window

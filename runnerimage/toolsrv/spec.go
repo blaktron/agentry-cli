@@ -101,6 +101,13 @@ type Spec struct {
 	// grant of the runner, not a line of the contract, and never aliases the
 	// workspace, which FSRead and FSWrite govern.
 	ScratchDir string `json:"scratchDir,omitempty"`
+	// Checklist is the container path of the file the checklist tool keeps
+	// the run's steps in: checklist.md in the scratch folder, or in a
+	// persistent agent's data folder, since its scratch folder lasts one
+	// segment. The checklist tool is granted whenever it is set. Like the
+	// scratch folder it is a grant of the runner, never a line of the
+	// contract.
+	Checklist string `json:"checklist,omitempty"`
 	// TmpfsBytes, when set, is the size the run's docker filter caps the
 	// tools container's /tmp and ScratchDir at, each a tmpfs (Linux; the
 	// filter runs nowhere else). The engine stamps it into the run's own
@@ -353,6 +360,8 @@ const (
 	ToolScratchRead   = "scratch_read"
 	ToolScratchWrite  = "scratch_write"
 	ToolScratchSearch = "scratch_search"
+	// ToolChecklist keeps the run's checklist, granted with Checklist.
+	ToolChecklist = "checklist"
 	// The knowledge tools, granted only while a
 	// pack is attached.
 	ToolKnowledgeList   = "knowledge_list"
@@ -404,6 +413,9 @@ func (s *Spec) GrantedTools() []string {
 	}
 	if s.ScratchDir != "" {
 		names = append(names, ToolScratchList, ToolScratchRead, ToolScratchWrite, ToolScratchSearch)
+	}
+	if s.Checklist != "" {
+		names = append(names, ToolChecklist)
 	}
 	if s.Search.Enabled && s.searchAreas() {
 		names = append(names, ToolGrep, ToolGlob)
