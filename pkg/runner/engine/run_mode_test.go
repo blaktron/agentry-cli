@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
@@ -26,14 +25,7 @@ func TestARunsSystemPromptSaysItIsAutonomous(t *testing.T) {
 	if !strings.Contains(rendered, "This run's mode is autonomous.") || strings.Contains(rendered, spec.PHRunMode) {
 		t.Fatalf("the run's System Prompt does not name its mode:\n%s", rendered)
 	}
-	// An autonomous run keeps a long task's notes, and its harness's
-	// compaction summary points back to them.
-	if !strings.Contains(rendered, "finish."+compile.LongTaskNotes) || strings.Contains(rendered, spec.PHLongTask) {
-		t.Errorf("the run's System Prompt lacks the long-task sentences:\n%s", rendered)
-	}
-	if !strings.Contains(rendered, "compaction_notes: '"+compile.NotesFileForHarness+"'") || strings.Contains(rendered, spec.PHNotesFile) {
-		t.Errorf("the run's harness config does not name the notes file:\n%s", rendered)
-	}
+	assertTheChecklist(t, "the run", rendered)
 }
 
 // TestASessionsSystemPromptSaysItIsInteractive goes through StartSession:
@@ -49,10 +41,20 @@ func TestASessionsSystemPromptSaysItIsInteractive(t *testing.T) {
 	if !strings.Contains(rendered, "This run's mode is interactive.") || strings.Contains(rendered, spec.PHRunMode) {
 		t.Fatalf("the session's System Prompt does not name its mode:\n%s", rendered)
 	}
-	// A session talks with the person; it has no long-task sentences and no
-	// notes file for its harness.
-	if strings.Contains(rendered, "A task that reads more than a few pages") || strings.Contains(rendered, spec.PHLongTask) ||
-		strings.Contains(rendered, compile.NotesFileForHarness) || strings.Contains(rendered, spec.PHNotesFile) {
-		t.Errorf("the session's harness files carry the long-task notes:\n%s", rendered)
+	assertTheChecklist(t, "the session", rendered)
+}
+
+// assertTheChecklist: a run and a session alike are told of the checklist,
+// their harness's summary points back to it, and no notes file is named.
+func assertTheChecklist(t *testing.T, what, rendered string) {
+	t.Helper()
+	if !strings.Contains(rendered, "**Your checklist.**") {
+		t.Errorf("%s's System Prompt lacks the checklist paragraph:\n%s", what, rendered)
+	}
+	if !strings.Contains(rendered, "compaction_notes: "+spec.ChecklistForHarness+"\n") {
+		t.Errorf("%s's harness config does not point at the checklist:\n%s", what, rendered)
+	}
+	if strings.Contains(rendered, "notes.md") {
+		t.Errorf("%s's harness files still name notes.md:\n%s", what, rendered)
 	}
 }

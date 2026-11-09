@@ -12,6 +12,7 @@ agentry-tools:
   - scratch_read
   - scratch_write
   - scratch_search
+  - checklist
   - grep
   - glob
   - write_report

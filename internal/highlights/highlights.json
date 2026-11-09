@@ -1,6 +1,14 @@
 {
   "versions": [
     {
+      "version": "0.7.43",
+      "highlights": [
+        "A run now keeps the steps of its task in a checklist, a new tool every QuickAgent has.",
+        "The agent reads its checklist again after a summary of earlier work and before its final answer.",
+        "The checklist is a working note in the run's scratch folder and never reaches your reports."
+      ]
+    },
+    {
       "version": "0.7.42",
       "highlights": [
         "Every security setting your organization manages now applies to your runs, not only Unsafe Mode.",

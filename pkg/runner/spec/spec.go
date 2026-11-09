@@ -51,15 +51,6 @@ const (
 	// guides both modes and only the run says which one it is. Text, like
 	// PHSecretsAbsent.
 	PHRunMode = "@@RUN_MODE@@"
-	// PHLongTask is the System Prompt's sentences on keeping notes through
-	// a long task: filled in for an autonomous run, empty for an interactive
-	// one, since a release's two plans carry one instruction. Text, like
-	// PHRunMode.
-	PHLongTask = "@@RUN_LONG_TASK@@"
-	// PHNotesFile is the notes file a harness's compaction summary points the
-	// agent back to (docker-agent's compaction_notes): the long task's notes
-	// file in an autonomous run, empty in an interactive one. Text.
-	PHNotesFile = "@@RUN_NOTES_FILE@@"
 	// PHInputs is the host path of the per-run read-only inputs dir —
 	// operator-provided files, mounted :ro into the tools container, empty when
 	// the run got no --file.
@@ -295,6 +286,17 @@ const (
 	// ScratchMount is the run's scratch folder in the tools container: empty at
 	// the start, a tmpfs of ToolsTmpfsBytes, gone with the container.
 	ScratchMount = "/scratch"
+	// ChecklistFile is the file the checklist tool keeps a run's steps in,
+	// in the scratch folder (a persistent agent's in its data folder, since
+	// its scratch folder lasts one segment).
+	ChecklistFile = "checklist.md"
+	// ChecklistForHarness is the checklist file as a harness's summary of
+	// earlier work names it to the agent (docker-agent's compaction_notes),
+	// and AgentChecklistForHarness is a persistent agent's. One line each,
+	// with no quote or backslash: the harness config takes it as a plain
+	// string, and the harness ends its summary with it.
+	ChecklistForHarness      = ChecklistFile + " in your scratch folder, which the checklist tool reads"
+	AgentChecklistForHarness = ChecklistFile + " in your data folder, which the checklist tool reads"
 	// ToolsTmpMount is the tools container's /tmp, a tmpfs of the same
 	// size: the place a declared command may write.
 	ToolsTmpMount = "/tmp"

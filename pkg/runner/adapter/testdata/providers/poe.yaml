@@ -40,5 +40,5 @@ agents:
       after: 1h
       keep_turns: 2
       keep_browser: 2
-    compaction_notes: '@@RUN_NOTES_FILE@@'
+    compaction_notes: checklist.md in your scratch folder, which the checklist tool reads
     max_tool_result_tokens: 24576
