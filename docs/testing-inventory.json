@@ -492,7 +492,8 @@
             "TestARunNeedsAgentryDesktop",
             "TestHostedRunsRefuseTheDesktopLine",
             "TestTheRunSummaryNamesTheDesktopLine",
-            "TestARunOnARunhostThatUsesThisComputerStaysAttached"
+            "TestARunOnARunhostThatUsesThisComputerStaysAttached",
+            "TestTheRunSummaryNamesTheChosenEntryToThePerson"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -2347,7 +2348,8 @@
         {
           "path": "pkg/drafter/desktop_test.go",
           "tests": [
-            "TestADraftUsesThePersonsComputerThroughTheDesktopLine"
+            "TestADraftUsesThePersonsComputerThroughTheDesktopLine",
+            "TestTheGuidesDesktopLineIsValid"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -6715,7 +6717,8 @@
             "TestThePolicyHoldsThePersonsOwnSetUps",
             "TestTheChosenApplicationIsNamed",
             "TestTheAllowlistIsTheBindingsTools",
-            "TestASegmentsBindingsAreHeldToThePolicy"
+            "TestASegmentsBindingsAreHeldToThePolicy",
+            "TestTheChosenEntryIsNamedToThePerson"
           ],
           "fuzz": [],
           "benchmarks": [],

@@ -708,6 +708,20 @@ type DesktopServerCap struct {
 	Chosen bool `json:"chosen,omitempty"`
 }
 
+// ChosenForPerson is the entry of an application the person chooses, in the
+// words of a message to that person.
+const ChosenForPerson = "an application you choose"
+
+// ForPerson names the application in a message to the person: its id, or
+// "an application you choose" for the entry the person chooses at the start.
+// Application keeps the agent's and the plan's words.
+func (s DesktopServerCap) ForPerson() string {
+	if s.Chosen {
+		return ChosenForPerson
+	}
+	return s.Application
+}
+
 // DesktopTool is one tool of an application server, with its class: read,
 // act or exec.
 type DesktopTool struct {

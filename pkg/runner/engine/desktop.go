@@ -311,7 +311,7 @@ func NoDesktopRefusal(d *spec.DesktopCap) error {
 func desktopUses(d *spec.DesktopCap) string {
 	uses := make([]string, 0, len(d.Servers)+1)
 	for _, s := range d.Servers {
-		uses = append(uses, s.Application)
+		uses = append(uses, s.ForPerson())
 	}
 	if d.HasComputerUse() {
 		uses = append(uses, "computer use")
@@ -362,13 +362,13 @@ func checkDesktop(p Params) error {
 		listed, ok := p.Desktop.Servers[s.ID]
 		if !ok {
 			return Classify(ExitPolicy, receipt.WithReason(
-				fmt.Errorf("this QuickAgent uses %s on your computer, and Agentry Desktop did not bind it for the run", s.Application),
+				fmt.Errorf("this QuickAgent uses %s on your computer, and Agentry Desktop did not bind it for the run", s.ForPerson()),
 				receipt.ReasonDesktopRefused, receipt.DesktopNotInstalled, s.ID))
 		}
 		for _, name := range s.ToolNames() {
 			if s.Narrowed && !slices.ContainsFunc(listed, func(t desktoplink.Tool) bool { return t.Name == name }) {
 				return Classify(ExitPolicy, receipt.WithReason(
-					fmt.Errorf("this QuickAgent uses the tool %s of %s on your computer, which the server Agentry Desktop started for it does not list", name, s.Application),
+					fmt.Errorf("this QuickAgent uses the tool %s of %s on your computer, which the server Agentry Desktop started for it does not list", name, boundNameForPerson(p.Desktop, s)),
 					receipt.ReasonDesktopRefused, receipt.DesktopNotInstalled, s.ID))
 			}
 		}
@@ -376,7 +376,7 @@ func checkDesktop(p Params) error {
 	if id, refused := personRefused(d, p.Desktop); refused {
 		s, _ := d.Server(id)
 		return Classify(ExitPolicy, receipt.WithReason(
-			fmt.Errorf("this QuickAgent uses %s on your computer, which %s", boundName(p.Desktop, s), policy.CustomServersRefused),
+			fmt.Errorf("this QuickAgent uses %s on your computer, which %s", boundNameForPerson(p.Desktop, s), policy.CustomServersRefused),
 			receipt.ReasonDesktopRefused, receipt.DesktopNotGranted, id))
 	}
 	switch c := p.Desktop.Computer; {
@@ -452,6 +452,15 @@ func boundName(l *DesktopLink, s spec.DesktopServerCap) string {
 		return l.Chosen.Name + " (the application the person chose)"
 	}
 	return s.Application
+}
+
+// boundNameForPerson names a bound application in a message to the person:
+// the one they chose for the chosen entry, else its id.
+func boundNameForPerson(l *DesktopLink, s spec.DesktopServerCap) string {
+	if s.Chosen && l != nil && l.Chosen != nil && l.Chosen.Name != "" {
+		return l.Chosen.Name + " (the application you chose)"
+	}
+	return s.ForPerson()
 }
 
 type desktopCounts struct {

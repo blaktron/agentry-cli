@@ -275,3 +275,16 @@ func TestARunOnARunhostThatUsesThisComputerStaysAttached(t *testing.T) {
 		t.Fatalf("a release with no desktop line: %+v %v", d, err)
 	}
 }
+
+// The run's summary names each application by its id, and the chosen entry
+// as "an application you choose".
+func TestTheRunSummaryNamesTheChosenEntryToThePerson(t *testing.T) {
+	d := &spec.DesktopCap{Servers: []spec.DesktopServerCap{
+		{ID: "my-cad", Application: "my-cad", Narrowed: true, Tools: []spec.DesktopTool{{Name: "export_drawing"}}},
+		{ID: spec.DesktopChosenID, Application: "an application the person chooses", Chosen: true},
+	}, ComputerUse: spec.ComputerUseApp}
+	want := "my-cad (1 tool), an application you choose (every tool its server lists) and computer use in the windows you allow on your computer, through Agentry Desktop"
+	if got := desktopSummary(d); got != want {
+		t.Errorf("summary %q, want %q", got, want)
+	}
+}
