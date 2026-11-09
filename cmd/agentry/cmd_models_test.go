@@ -203,7 +203,7 @@ func TestRemovingASavedModelAScheduleNamesIsRefusedUntilItMoves(t *testing.T) {
 
 	_, _, err := runCLI(t, strings.NewReader(""), "models", "remove", "Qwen")
 	wantClassified(t, err, engine.ExitPolicy)
-	if !strings.Contains(err.Error(), "schedule Morning brief ("+sc.ID+")") || !strings.Contains(err.Error(), "--move-to") {
+	if !strings.Contains(err.Error(), `the saved model "Qwen" is named by schedule Morning brief (`+sc.ID+")") || !strings.Contains(err.Error(), "--move-to") {
 		t.Fatalf("refusal: %v", err)
 	}
 	if _, pol = readPolicy(t, path); func() bool { _, ok := pol.FindModel("Qwen"); return !ok }() {
@@ -228,7 +228,7 @@ func TestRemovingASavedModelAScheduleNamesIsRefusedUntilItMoves(t *testing.T) {
 	}
 	// A provider with a model a schedule names is refused the same way.
 	_, _, err = runCLI(t, strings.NewReader(""), "providers", "remove", "custom-lab")
-	if err == nil || !strings.Contains(err.Error(), "Morning brief") {
+	if err == nil || !strings.Contains(err.Error(), "the provider custom-lab has saved models named by schedule Morning brief") {
 		t.Fatalf("removing the schedule's provider: %v", err)
 	}
 }
