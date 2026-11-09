@@ -12,6 +12,7 @@ import (
 	"github.com/blaktron/agentry/pkg/managedsettings"
 
 	"github.com/blaktron/agentry-cli/internal/origin"
+	"github.com/blaktron/agentry-cli/pkg/trust"
 )
 
 // maxEnvelopeBytes bounds what a fetch reads: a document is a few
@@ -64,6 +65,14 @@ func Refresh(ctx context.Context, hc *http.Client, registryURL, token string) (*
 		return nil, fmt.Errorf("managed settings from %s: decode the envelope: %w", reg, err)
 	}
 	doc, err := open(reg, env)
+	if err != nil {
+		// A document signed by a key the registry rotated to after this
+		// computer pinned its keys opens once the pinned key's handover to
+		// it is adopted.
+		if note, aerr := adoptHandovers(ctx, hc, reg); aerr == nil && note != "" {
+			doc, err = open(reg, env)
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("managed settings from %s: %w", reg, err)
 	}
@@ -186,3 +195,7 @@ func whoAmI(ctx context.Context, hc *http.Client, reg, token string) (account, e
 	}
 	return a, nil
 }
+
+// adoptHandovers pins the signing keys the registry's pinned key handed
+// over to; a package variable purely as a test seam.
+var adoptHandovers = trust.AdoptHandedOverKeys

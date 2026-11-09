@@ -2110,6 +2110,9 @@ func verifyRunAttestation(cmd *cobra.Command, reg, token string, res *apiclient.
 		if att.FirstUse {
 			_, _ = fmt.Fprintln(errOut, "note: signing keys pinned on first use (TOFU) — run `agentry login` to pin deliberately")
 		}
+		if att.HandedOver != "" {
+			_, _ = fmt.Fprintln(errOut, "note: "+att.HandedOver)
+		}
 		return receipt.Attestation{State: "verified", KeyID: att.KeyID, Verified: true}, nil
 	case trust.StateUnsigned:
 		if !allowUnsigned {

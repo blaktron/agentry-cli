@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/blaktron/agentry/pkg/attest"
+	"github.com/blaktron/agentry/pkg/keyhandover"
 	"github.com/blaktron/agentry/pkg/managedsettings"
 
 	"github.com/blaktron/agentry-cli/pkg/configdir"
@@ -74,6 +75,8 @@ type stubRegistry struct {
 	mu     sync.Mutex
 	status int
 	env    *managedsettings.Envelope
+	// handovers is the chain served at the well-known handovers path.
+	handovers *keyhandover.Chain
 	// org is the organization the account is a member of, in state;
 	// account is the account's id.
 	org, state, account string
@@ -84,6 +87,16 @@ func newStub(t *testing.T) *stubRegistry {
 	t.Helper()
 	s := &stubRegistry{status: http.StatusNoContent, org: "acme", state: "active", account: "6f1c2b9e-0000-4000-8000-000000000001"}
 	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/agentry/signing-key-handovers.json" {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			if s.handovers == nil {
+				http.NotFound(w, r)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(s.handovers)
+			return
+		}
 		if r.Header.Get("Authorization") != "Bearer tok" {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
@@ -714,5 +727,57 @@ func TestTheNarrowingASentRunCarries(t *testing.T) {
 	}
 	if got := (Effective{}).Narrowing(); got != nil {
 		t.Errorf("an empty Effective narrows: %+v", got)
+	}
+}
+
+// A document signed by a key the registry rotated to after this computer
+// pinned its keys opens once the pinned key's handover to it is adopted,
+// so a member signed in before the rotation receives the newer version;
+// the cached copy verifies again from the pins alone. A rotation with no
+// handover from the pinned key still opens nothing.
+func TestADocumentSignedByAHandedOverKeyReachesAMemberPinnedBefore(t *testing.T) {
+	old, rotated, stranger := newSigner(t), newSigner(t), newSigner(t)
+	s := setup(t, old, false)
+	s.serve(old.envelope(t, managedsettings.PayloadType, docFor(s.URL, 3, forbidden())))
+	if _, err := refresh(t, s); err != nil {
+		t.Fatalf("before the rotation: %v", err)
+	}
+
+	handover := func(from, to signer) keyhandover.Envelope {
+		t.Helper()
+		toID, _ := keyhandover.KeyID(to.pem)
+		fromID, _ := keyhandover.KeyID(from.pem)
+		payload, err := keyhandover.Seal(keyhandover.Handover{Schema: keyhandover.Schema, Registry: s.URL, From: fromID,
+			To: keyhandover.Key{KeyID: toID, Algorithm: keyhandover.Algorithm, PublicKeyPEM: to.pem}, At: time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		digest := sha256.Sum256(attest.PAE(keyhandover.PayloadType, payload))
+		sig, err := ecdsa.SignASN1(rand.Reader, from.priv, digest[:])
+		if err != nil {
+			t.Fatal(err)
+		}
+		return keyhandover.Wrap(payload, attest.DSSESignature{KeyID: fromID, Sig: base64.StdEncoding.EncodeToString(sig)})
+	}
+
+	// No handover from the pinned key: version 4 is refused, 3 stays.
+	s.mu.Lock()
+	s.handovers = &keyhandover.Chain{Registry: s.URL, Handovers: []keyhandover.Envelope{handover(stranger, rotated)}}
+	s.mu.Unlock()
+	s.serve(rotated.envelope(t, managedsettings.PayloadType, docFor(s.URL, 4, forbidden())))
+	if _, err := refresh(t, s); err == nil {
+		t.Fatal("a document signed by a key no pinned key handed over to was accepted")
+	}
+
+	s.mu.Lock()
+	s.handovers = &keyhandover.Chain{Registry: s.URL, Handovers: []keyhandover.Envelope{handover(old, rotated)}}
+	s.mu.Unlock()
+	st, err := refresh(t, s)
+	if err != nil || st == nil || st.Document.Version != 4 {
+		t.Fatalf("after the handover: %+v %v", st, err)
+	}
+	loaded, err := Load(s.URL)
+	if err != nil || loaded == nil || loaded.Document.Version != 4 {
+		t.Fatalf("the cached copy after the handover: %+v %v", loaded, err)
 	}
 }
