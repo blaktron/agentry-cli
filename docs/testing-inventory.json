@@ -3795,6 +3795,16 @@
           ]
         },
         {
+          "path": "pkg/runhost/remote/put_test.go",
+          "tests": [
+            "TestASavedModelIsPreparedForARunhostWithoutItsKey"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "pkg/runhost/remote/remote_test.go",
           "tests": [
             "TestAClientRunsAJobOnARunhostThroughThePackage",
