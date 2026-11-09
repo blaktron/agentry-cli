@@ -260,6 +260,9 @@ type Policy struct {
 	// runOn is the saved model a run's view of the policy is on (ForRun);
 	// nil for a policy as it was read.
 	runOn *SavedModel
+	// held is what an organization's managed settings hold this view to
+	// (WithHeld); never saved.
+	held Held
 }
 
 // PersistentReleasesAllowed says whether the policy lets a persistent
@@ -276,6 +279,9 @@ const PersistentReleasesRefused = "the runner policy sets allowPersistentRelease
 // MessengerAllowed says whether the policy lets a persistent agent be
 // reached on the messenger kind, and why not.
 func (p *Policy) MessengerAllowed(kind string) (bool, string) {
+	if r := p.refusedOrDefaulted(HeldMessengers, p != nil && p.AllowMessengers == nil); r != "" {
+		return false, r
+	}
 	switch {
 	case p == nil:
 		return true, ""
@@ -288,9 +294,19 @@ func (p *Policy) MessengerAllowed(kind string) (bool, string) {
 }
 
 // MalwareCheckOn says whether the policy turns the whole malware check on
-// for this computer's runs (unset → off).
+// for this computer's runs (unset → off, unless an organization's managed
+// settings turn it on).
 func (p *Policy) MalwareCheckOn() bool {
-	return p != nil && p.MalwareCheck != nil && *p.MalwareCheck
+	if p == nil {
+		return false
+	}
+	if p.held.MalwareCheck != "" {
+		return true
+	}
+	if p.MalwareCheck == nil {
+		return p.held.MalwareCheckDefault
+	}
+	return *p.MalwareCheck
 }
 
 // BrowserPolicy is the operator's say over a release's browser. Its own key
@@ -1061,7 +1077,6 @@ func Default() *Policy {
 		Budgets:      DefaultBudgets,
 		Sessions:     Sessions{IdleTimeoutSeconds: 900, MaxWallSeconds: 7200, MaxUserTurns: 200},
 		Profiles:     Profiles{KeepByDefault: boolPtr(true)},
-		MalwareCheck: boolPtr(false),
 	}
 }
 
@@ -1073,6 +1088,9 @@ func boolPtr(b bool) *bool { return &b }
 func Save(path string, p *Policy) error {
 	if p.runOn != nil {
 		return errors.New("a run's view of the policy is never saved: save the policy as it was read")
+	}
+	if p.held.any() {
+		return errors.New("a view of the policy held to managed settings is never saved: save the policy as it was read")
 	}
 	p.foldModel()
 	if err := p.Validate(); err != nil {
@@ -1817,14 +1835,15 @@ mcpRegistries:
 
 # The malware check of this computer's runs: ClamAV against the daily
 # signatures, and the Hybrid Analysis lookup below when a key is set.
-# false (the default): only the executables among a run's inputs are
-# checked, and only when the QuickAgent declares commands that could run
-# them. true: every upload and an input source's executable and binary
+# Unset or false (the default): only the executables among a run's inputs
+# are checked, and only when the QuickAgent declares commands that could
+# run them. true: every upload and an input source's executable and binary
 # risky files are checked, as a hosted run's are. Either way a finding
 # refuses the run only when the QuickAgent declares commands; one that
 # runs none is given the flagged file as uploaded, never decoded, with no
-# execute bit, and the receipt names it.
-malwareCheck: false
+# execute bit, and the receipt names it. Left unset, an organization's
+# managed settings may turn it on as their default.
+# malwareCheck: false
 
 # hybridAnalysis:
 #   # A Hybrid Analysis (CrowdStrike) key, with which the risky files among

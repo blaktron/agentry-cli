@@ -35,6 +35,9 @@ func browserCap(b *manifest.Browser, in Inputs) (*spec.BrowserCap, error) {
 	if in.Web || in.Review || in.Source == "builtin" {
 		return nil, &PolicyRefusal{Reason: "a built-in is never granted a browser, nor is one granted beside the web tools or the review grant"}
 	}
+	if r := in.Policy.Refused(policy.HeldPublicWeb); b.IsPublic() && r != "" {
+		return nil, &PolicyRefusal{Reason: r}
+	}
 	if b.IsPublic() && !in.Policy.Browser.AllowPublicWeb {
 		return nil, &PolicyRefusal{Reason: "the release's browser asks for any public site (capabilities.browser.scope: public), which this machine's policy does not allow: set browser.allowPublicWeb: true to permit it"}
 	}

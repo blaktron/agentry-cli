@@ -619,6 +619,19 @@ type DesktopCap struct {
 	// PersonServersAllowed by the policy, PersonServersUnsafe only because
 	// Unsafe Mode is on, or PersonServersRefused.
 	PersonServers string `json:"personServers,omitempty"`
+	// PersonServersRefusal is the sentence that refuses such an application
+	// when an organization's managed settings, rather than the policy,
+	// refuse it; empty otherwise.
+	PersonServersRefusal string `json:"personServersRefusal,omitempty"`
+}
+
+// PersonServersRefusedBecause is why an application the person set up is
+// refused under d, in the words that follow "this application".
+func (d *DesktopCap) PersonServersRefusedBecause(policyText string) string {
+	if d != nil && d.PersonServersRefusal != "" {
+		return "is set up on your computer by you rather than from Agentry Desktop's library: " + d.PersonServersRefusal
+	}
+	return policyText
 }
 
 // What lets a run bind an application the person set up themself

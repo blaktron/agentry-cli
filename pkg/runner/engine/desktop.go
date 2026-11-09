@@ -205,7 +205,7 @@ func rebindingDesktopLink(bind DesktopBinder, req desktop.BindRequest, d *spec.D
 				_ = l.Unbind(context.WithoutCancel(ctx))
 			}
 			return nil, &desktop.Refusal{Reason: receipt.DesktopNotGranted, Server: id,
-				Message: "this application " + policy.CustomServersRefused}
+				Message: "this application " + d.PersonServersRefusedBecause(policy.CustomServersRefused)}
 		}
 		mu.Lock()
 		defer mu.Unlock()
@@ -378,7 +378,7 @@ func checkDesktop(p Params) error {
 	if id, refused := personRefused(d, p.Desktop); refused {
 		s, _ := d.Server(id)
 		return Classify(ExitPolicy, receipt.WithReason(
-			fmt.Errorf("this QuickAgent uses %s on your computer, which %s", boundNameForPerson(p.Desktop, s), policy.CustomServersRefused),
+			fmt.Errorf("this QuickAgent uses %s on your computer, which %s", boundNameForPerson(p.Desktop, s), d.PersonServersRefusedBecause(policy.CustomServersRefused)),
 			receipt.ReasonDesktopRefused, receipt.DesktopNotGranted, id))
 	}
 	switch c := p.Desktop.Computer; {

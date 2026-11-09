@@ -18,6 +18,7 @@ package managed
 import (
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"slices"
 	"strings"
@@ -26,6 +27,7 @@ import (
 
 	"github.com/blaktron/agentry/pkg/managedsettings"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
@@ -36,12 +38,51 @@ const Route = "/api/v1/user/managed-settings"
 // registry again.
 const FetchInterval = time.Hour
 
-// enforced are the settings this client applies: the list is this
-// client's own, not the catalogue's. A registry may sign rows that a newer
+// enforced are the settings the runner applies: the list is this
+// package's own, not the catalogue's. A registry may sign rows that a newer
 // catalogue holds and this client cannot yet hold a member to; a locked one
 // refuses every run, exactly as a row the catalogue does not know does, and
-// a default one is shown and passed over.
-var enforced = []string{managedsettings.UnsafeMode}
+// a default one is shown and passed over. Rows that a client holds through
+// paths of its own are added by that client (Enforce).
+var enforced = []string{
+	managedsettings.UnsafeMode,
+	managedsettings.InstallSources,
+	managedsettings.InstallAcceptRisk,
+	managedsettings.RunTimeout,
+	managedsettings.RunMaxTurns,
+	managedsettings.RunMaxCost,
+	managedsettings.EgressWildcard,
+	managedsettings.BrowserPublicWeb,
+	managedsettings.MCPAllowVulnerable,
+	managedsettings.DesktopApplications,
+	managedsettings.DesktopScreen,
+	managedsettings.DesktopCustomServers,
+	managedsettings.Messengers,
+	managedsettings.PersistentReleases,
+	managedsettings.AgentsCodingAgent,
+	managedsettings.AgentsAssistant,
+	managedsettings.Schedules,
+	managedsettings.DeliverablesDestinations,
+	managedsettings.MalwareCheck,
+	managedsettings.UpdatesMinimumVersion,
+}
+
+// ClientRows are the rows the runner cannot apply alone, because a client
+// has paths of its own that they govern: where runs may go (the runner
+// holds runs on this computer, on a runhost and to target hosts; a client
+// that starts runs In Agentry holds those) and bug reports, which a client
+// sends. A client adds them with Enforce once every path it has obeys them.
+var ClientRows = []string{managedsettings.RunWhere, managedsettings.BugReports}
+
+// Enforce adds rows this client applies through its own paths beside the
+// runner's. It is called once, as the client starts, before any run.
+func Enforce(ids ...string) {
+	for _, id := range ids {
+		if !slices.Contains(enforced, id) {
+			enforced = append(enforced, id)
+		}
+	}
+}
 
 // Applies says this client applies the setting.
 func Applies(id string) bool { return slices.Contains(enforced, id) }
@@ -158,6 +199,86 @@ func (e Effective) RunRefusal() string {
 	if len(e.Problems) > 0 {
 		return problemRefusal("No run starts", e.Problems[0])
 	}
+	return e.VersionRefusal()
+}
+
+// Run is what the managed settings judge of a run before it starts.
+type Run struct {
+	// Ref is the release's ns/name@version.
+	Ref string
+	// BuiltIn says the release is built into Agentry.
+	BuiltIn bool
+	// Local says the run starts on this computer, rather than arriving
+	// from another device that judged where it goes.
+	Local bool
+	// TargetHosts says the run reaches target hosts.
+	TargetHosts bool
+	// AcceptedRisk is the member's consent that admitted a release with no
+	// attestation or no scan (--allow-unsigned, --allow-unscanned), or "".
+	AcceptedRisk string
+	// Agent is the persistent built-in the run is, by name ("assistant",
+	// "coder"), or "".
+	Agent string
+}
+
+// Persistent built-ins a document may forbid, by name.
+const (
+	AgentAssistant = "assistant"
+	AgentCoder     = "coder"
+)
+
+// AgentOf is the persistent built-in a release is, by its reference
+// (ns/name or ns/name@version), or "": only Agentry's own built-ins, run
+// as persistent agents, are one.
+func AgentOf(ref string, builtIn, persistent bool) string {
+	if !builtIn || !persistent {
+		return ""
+	}
+	ns, rest, ok := strings.Cut(ref, "/")
+	if !ok || ns != BuiltInNamespace {
+		return ""
+	}
+	name, _, _ := strings.Cut(rest, "@")
+	switch name {
+	case AgentAssistant, AgentCoder:
+		return name
+	}
+	return ""
+}
+
+// Refusal is why the run may not start, or "": everything RunRefusal
+// refuses, then where it goes, where its release comes from, a risk the
+// member accepted for it, and the persistent built-in it is.
+func (e Effective) Refusal(r Run) string {
+	if reason := e.RunRefusal(); reason != "" {
+		return reason
+	}
+	if r.Local {
+		if reason := e.WhereRefusal(managedsettings.WhereLocal); reason != "" {
+			return reason
+		}
+	}
+	if r.TargetHosts {
+		if reason := e.WhereRefusal(managedsettings.WhereTargetHost); reason != "" {
+			return reason
+		}
+	}
+	if !r.BuiltIn {
+		if ns, _, ok := strings.Cut(r.Ref, "/"); ok {
+			if reason := e.SourceRefusal(ns); reason != "" {
+				return reason
+			}
+		}
+	}
+	if reason := e.AcceptRiskRefusal(r.AcceptedRisk); reason != "" {
+		return reason
+	}
+	switch r.Agent {
+	case AgentAssistant:
+		return e.Forbidden(managedsettings.AgentsAssistant)
+	case AgentCoder:
+		return e.Forbidden(managedsettings.AgentsCodingAgent)
+	}
 	return ""
 }
 
@@ -207,16 +328,63 @@ type Narrowing struct {
 	// Documents are the device's documents as the run's plan and receipt
 	// record them.
 	Documents []spec.ManagedSpec `json:"documents,omitempty"`
+	// Refused are the device's locks on the runner policy's checks, by
+	// the id the policy knows them by (policy.Held), each with the
+	// sentence that refuses it.
+	Refused map[string]string `json:"refused,omitempty"`
+	// MalwareCheck is the organization whose lock requires the malware
+	// check on the device, or "".
+	MalwareCheck string `json:"malwareCheck,omitempty"`
+	// Caps are the device's locked budget caps; a zero field caps nothing.
+	Caps *spec.Budgets `json:"caps,omitempty"`
 }
 
 // Narrowing is what e says of a run sent to another machine; nil when it
 // says nothing.
 func (e Effective) Narrowing() *Narrowing {
-	n := &Narrowing{UnsafeModeRefusal: e.UnsafeModeRefusal(), Documents: e.Specs()}
-	if n.UnsafeModeRefusal == "" && len(n.Documents) == 0 {
+	held := e.PolicyHeld()
+	n := &Narrowing{UnsafeModeRefusal: e.UnsafeModeRefusal(), Documents: e.Specs(), Refused: held.Refused, MalwareCheck: held.MalwareCheck}
+	if caps := e.Budgets(spec.Budgets{}); caps != (spec.Budgets{}) {
+		n.Caps = &caps
+	}
+	if n.UnsafeModeRefusal == "" && len(n.Documents) == 0 && len(n.Refused) == 0 && n.MalwareCheck == "" && n.Caps == nil {
 		return nil
 	}
 	return n
+}
+
+// Held is held, the receiving machine's own holds, with n's locks added:
+// a refusal of either holds.
+func (n *Narrowing) Held(held policy.Held) policy.Held {
+	if n == nil {
+		return held
+	}
+	sent := policy.Held{MalwareCheck: n.MalwareCheck}
+	for id, r := range n.Refused {
+		if sent.Refused == nil {
+			sent.Refused = map[string]string{}
+		}
+		sent.Refused[id] = r + ", on the device that sent this run"
+	}
+	return held.Merge(sent)
+}
+
+// Budgets are b held to n's caps as well.
+func (n *Narrowing) Budgets(b spec.Budgets) spec.Budgets {
+	if n == nil || n.Caps == nil {
+		return b
+	}
+	c := *n.Caps
+	if c.TimeoutSeconds > 0 && (b.TimeoutSeconds <= 0 || b.TimeoutSeconds > c.TimeoutSeconds) {
+		b.TimeoutSeconds = c.TimeoutSeconds
+	}
+	if c.MaxTurns > 0 && (b.MaxTurns <= 0 || b.MaxTurns > c.MaxTurns) {
+		b.MaxTurns = c.MaxTurns
+	}
+	if c.MaxCostUSD > 0 && (b.MaxCostUSD <= 0 || b.MaxCostUSD > c.MaxCostUSD) {
+		b.MaxCostUSD = c.MaxCostUSD
+	}
+	return b
 }
 
 // Limits of a Narrowing a machine accepts.
@@ -227,8 +395,13 @@ const (
 
 var (
 	orgHandleRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
-	settingIDRE = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]*(\.[A-Za-z][A-Za-z0-9]*)+$`)
+	settingIDRE = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]*(\.[A-Za-z][A-Za-z0-9]*)*$`)
 )
+
+// oneLine says s is at most one short line of text.
+func oneLine(s string) bool {
+	return len(s) <= maxRefusalBytes && !strings.ContainsFunc(s, unicode.IsControl)
+}
 
 // Validate holds a Narrowing that arrived from another machine to what one
 // can carry: a one-line refusal, organizations' handles, setting ids.
@@ -236,8 +409,22 @@ func (n *Narrowing) Validate() error {
 	if n == nil {
 		return nil
 	}
-	if len(n.UnsafeModeRefusal) > maxRefusalBytes || strings.ContainsFunc(n.UnsafeModeRefusal, unicode.IsControl) {
+	if !oneLine(n.UnsafeModeRefusal) {
 		return errors.New("the managed settings' refusal is not one line of text")
+	}
+	if len(n.Refused) > len(policyRows) {
+		return errors.New("the managed settings refuse more than the policy has to refuse")
+	}
+	for id, r := range n.Refused {
+		if !slices.Contains(policyRows, id) || r == "" || !oneLine(r) {
+			return fmt.Errorf("the managed settings refuse %q in a way that cannot be one", id)
+		}
+	}
+	if n.MalwareCheck != "" && !orgHandleRE.MatchString(n.MalwareCheck) {
+		return errors.New("the managed settings name an organization that cannot be one for the malware check")
+	}
+	if c := n.Caps; c != nil && (c.TimeoutSeconds < 0 || c.MaxTurns < 0 || c.MaxCostUSD < 0 || math.IsNaN(c.MaxCostUSD) || math.IsInf(c.MaxCostUSD, 0)) {
+		return errors.New("the managed settings' caps cannot be negative")
 	}
 	if len(n.Documents) > maxNarrowingDocuments {
 		return fmt.Errorf("the managed settings name %d documents, more than %d", len(n.Documents), maxNarrowingDocuments)

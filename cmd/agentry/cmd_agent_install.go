@@ -14,6 +14,7 @@ import (
 	"github.com/blaktron/agentry/pkg/apiclient"
 	"github.com/blaktron/agentry/pkg/manifest"
 
+	"github.com/blaktron/agentry-cli/pkg/managed"
 	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
@@ -53,8 +54,11 @@ func (a *agentInstall) check(m *manifest.Manifest) error {
 	if persistent.IsBuiltinRef(ref) {
 		return engine.Classify(engine.ExitUsage, fmt.Errorf("%s is built into Agentry: enable it with agentry agent enable %s", ref, m.Name))
 	}
-	if !a.pol.PersistentReleasesAllowed() {
-		return engine.Classify(engine.ExitPolicy, &compile.PolicyRefusal{Reason: policy.PersistentReleasesRefused})
+	if r := managed.Hold(a.pol).PersistentReleasesRefusal(); r != "" {
+		return engine.Classify(engine.ExitPolicy, &compile.PolicyRefusal{Reason: r})
+	}
+	if r := managed.Current().SourceRefusal(m.Namespace); r != "" {
+		return engine.Classify(engine.ExitPolicy, &compile.PolicyRefusal{Reason: r})
 	}
 	// What a segment refuses at its start is refused here, before the person
 	// is asked: a persistent agent's files are its share and data folders,

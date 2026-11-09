@@ -106,8 +106,8 @@ func scheduleCheck(cmd *cobra.Command, ref, name, out, on string, spec runSpecFl
 			sc.Run.Model = ""
 		}
 	}
-	if reason := scheduleHold(sc); reason != "" {
-		gap(heldError(reason))
+	if err := holdError(sc); err != nil {
+		gap(err)
 	}
 	preview, err := schedulePreview(cmd, sc, ref)
 	if err != nil {

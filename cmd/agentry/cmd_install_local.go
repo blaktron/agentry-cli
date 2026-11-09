@@ -9,10 +9,13 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/blaktron/agentry-cli/pkg/installed"
+	"github.com/blaktron/agentry-cli/pkg/managed"
+	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
 	"github.com/blaktron/agentry-cli/pkg/runner/localinstall"
 	"github.com/blaktron/agentry-cli/pkg/runner/persistent"
+	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/trust"
 	"github.com/blaktron/agentry/pkg/apiclient"
 )
@@ -40,6 +43,9 @@ func runLocalInstall(cmd *cobra.Command, dir string, opts installOpts) error {
 	}
 	if !opts.allowUnsigned && !opts.plan {
 		return engine.Classify(engine.ExitVerify, errLocalUnsigned)
+	}
+	if r := managed.Current().AcceptRiskRefusal(receipt.ConsentAllowUnsigned); r != "" && !opts.plan {
+		return engine.Classify(engine.ExitPolicy, &compile.PolicyRefusal{Reason: r})
 	}
 	abs, err := filepath.Abs(dir)
 	if err != nil {
@@ -70,6 +76,9 @@ func runLocalInstall(cmd *cobra.Command, dir string, opts installOpts) error {
 		_, _ = fmt.Fprintf(errOut, "warning: %v\n", w)
 	}
 	m := staged.Manifest
+	if r := managed.Current().SourceRefusal(m.Namespace); r != "" && !opts.plan {
+		return engine.Classify(engine.ExitPolicy, &compile.PolicyRefusal{Reason: r})
+	}
 	if opts.agent != nil {
 		if err := opts.agent.check(m); err != nil {
 			return err

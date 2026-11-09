@@ -31,7 +31,9 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/export"
 	"github.com/blaktron/agentry-cli/pkg/installed"
+	"github.com/blaktron/agentry-cli/pkg/managed"
 	"github.com/blaktron/agentry-cli/pkg/pathguard"
+	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
@@ -391,6 +393,11 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 		}
 	}
 
+	held := managed.Current()
+	if r := held.SourceRefusal(res.Namespace); r != "" {
+		return engine.Classify(engine.ExitPolicy, &compile.PolicyRefusal{Reason: r})
+	}
+
 	archive, err := downloadArchive(cmd.Context(), reg, token, res)
 	if err != nil {
 		return err
@@ -408,6 +415,9 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 	attErr := judgeAttestation(out, errOut, att, res, opts.allowUnsigned, opts.allowUnscanned, opts.plan)
 	if attErr != nil && !opts.plan {
 		return attErr
+	}
+	if r := held.AcceptRiskRefusal(riskConsent(att.State)); r != "" && !opts.plan {
+		return engine.Classify(engine.ExitPolicy, &compile.PolicyRefusal{Reason: r})
 	}
 
 	// The one place the target is told apart: where the files go, which
@@ -1093,4 +1103,16 @@ func treeFiles(root string) map[string]bool {
 		return nil
 	})
 	return files
+}
+
+// riskConsent is the consent an install of a release in state needs: the
+// flag that accepts its risk, or "" for a verified one.
+func riskConsent(state string) string {
+	switch state {
+	case trust.StateUnsigned:
+		return receipt.ConsentAllowUnsigned
+	case trust.StateUnscanned:
+		return receipt.ConsentAllowUnscanned
+	}
+	return ""
 }
