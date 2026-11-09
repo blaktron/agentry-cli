@@ -441,7 +441,7 @@ func newProvidersRemoveCmd() *cobra.Command {
 					on = append(on, sm)
 				}
 			}
-			out, err := removeModels(cmd, pol, path, fmt.Sprintf("the provider %s's saved models", id), on, moveTo, func(newDefault string) error {
+			out, err := removeModels(cmd, pol, path, fmt.Sprintf("the provider %s has saved models", id), on, moveTo, func(newDefault string) error {
 				_, err := pol.RemoveProvider(id, newDefault)
 				return err
 			})

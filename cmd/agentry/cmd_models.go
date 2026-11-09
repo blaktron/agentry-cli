@@ -421,13 +421,14 @@ func modelUsers(home string, sms []policy.SavedModel) ([]modelUser, []schedule.S
 	return users, named, nil
 }
 
-// usedRefusal is the refusal of a removal while something names the model.
+// usedRefusal is the refusal of a removal while something names the model:
+// what is the sentence's subject and verb ("the saved model "x" is").
 func usedRefusal(what string, users []modelUser) error {
 	lines := make([]string, 0, len(users))
 	for _, u := range users {
 		lines = append(lines, fmt.Sprintf("%s %s (%s)", u.Kind, u.Name, u.ID))
 	}
-	return engine.Classify(engine.ExitPolicy, fmt.Errorf("%s is named by %s: move them first with --move-to <saved model>", what, strings.Join(lines, ", ")))
+	return engine.Classify(engine.ExitPolicy, fmt.Errorf("%s named by %s: move them first with --move-to <saved model>", what, strings.Join(lines, ", ")))
 }
 
 // moveUsers points each schedule at the saved model to.
@@ -538,7 +539,7 @@ func newModelsRemoveCmd() *cobra.Command {
 			if !ok {
 				return engine.Classify(engine.ExitUsage, fmt.Errorf("no saved model %q on this computer (agentry models list)", args[0]))
 			}
-			out, err := removeModels(cmd, pol, path, fmt.Sprintf("the saved model %q", sm.Name), []policy.SavedModel{sm}, moveTo, func(newDefault string) error {
+			out, err := removeModels(cmd, pol, path, fmt.Sprintf("the saved model %q is", sm.Name), []policy.SavedModel{sm}, moveTo, func(newDefault string) error {
 				_, err := pol.RemoveModel(sm.ID, newDefault)
 				return err
 			})
