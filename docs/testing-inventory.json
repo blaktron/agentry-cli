@@ -6718,7 +6718,8 @@
             "TestTheChosenApplicationIsNamed",
             "TestTheAllowlistIsTheBindingsTools",
             "TestASegmentsBindingsAreHeldToThePolicy",
-            "TestTheChosenEntryIsNamedToThePerson"
+            "TestTheChosenEntryIsNamedToThePerson",
+            "TestARefusedRunUnbinds"
           ],
           "fuzz": [],
           "benchmarks": [],
