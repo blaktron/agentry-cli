@@ -1689,7 +1689,8 @@
             "TestALongProvidersKeyHasAStoreEntry",
             "TestARunhostNeverReadsASavedModelsKeyFromItsOwnEnvironment",
             "TestDefaultIsNoRunhostSavedModelsName",
-            "TestARunhostsOneModelReadsAsItsDefaultSavedModel"
+            "TestARunhostsOneModelReadsAsItsDefaultSavedModel",
+            "TestARunhostScheduleIsMovedToAnotherOfItsSavedModels"
           ],
           "fuzz": [],
           "benchmarks": [],

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/blaktron/agentry-cli/pkg/mcpauth"
 	"github.com/blaktron/agentry-cli/pkg/runhost"
@@ -399,4 +400,73 @@ func runhostScheduleSavedModel(cmd *cobra.Command, c remote.Caller, name, ref st
 		return held, engine.Classify(engine.ExitPolicy, fmt.Errorf("runhost %s cannot run on its saved model %q now: %s: make it available again (agentry runhost model %s --add %q)", name, held.Name, held.Refusal, name, held.Name))
 	}
 	return held, nil
+}
+
+// editRunhostScheduleModel moves schedule id on runhost name to the saved
+// model ref the runhost holds, by name or id, or to its default when ref is
+// empty or "default". It sends nothing of this computer's: the runhost
+// checks the name against its own list, refuses one it does not hold or
+// cannot use now before anything changes, and each occurrence reads the
+// model and its credential from the runhost's store.
+func editRunhostScheduleModel(cmd *cobra.Command, id, name, ref string) error {
+	f := cmd.Flags()
+	if !f.Changed("model") {
+		return engine.Classify(engine.ExitUsage, errors.New("--on moves a runhost's schedule to another saved model: give --model <saved model>, or --model default"))
+	}
+	var other []string
+	own := cmd.LocalNonPersistentFlags()
+	f.Visit(func(fl *pflag.Flag) {
+		if own.Lookup(fl.Name) != nil && fl.Name != "on" && fl.Name != "model" {
+			other = append(other, "--"+fl.Name)
+		}
+	})
+	if len(other) > 0 {
+		return engine.Classify(engine.ExitUsage, fmt.Errorf("with --on only --model changes a runhost's schedule (%s cannot): for anything else, remove it (agentry runhost store %s --remove schedule:%s) and add it again", strings.Join(other, ", "), name, id))
+	}
+	if !schedule.ValidID(id) {
+		return engine.Classify(engine.ExitUsage, fmt.Errorf("%q is not a schedule id: agentry runhost schedules %s lists them", id, name))
+	}
+	if strings.TrimSpace(ref) == "" {
+		ref = job.RunhostDefault
+	}
+	_, _, c, err := dialRunhostNamed(cmd.Context(), name)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = c.Close() }()
+	moves, err := remote.MovesScheduleModels(cmd.Context(), c)
+	if err != nil {
+		return engine.Classify(engine.ExitGateway, err)
+	}
+	if !moves {
+		return engine.Classify(engine.ExitPolicy, fmt.Errorf("runhost %s runs a CLI that cannot move a schedule to another saved model: agentry runhost update %s brings it to this computer's", name, name))
+	}
+	errOut := cmd.ErrOrStderr()
+	say := func(line string) { _, _ = fmt.Fprintf(errOut, "%s: %s\n", name, safeTerminalText(line, 4096)) }
+	info, err := remote.MoveSchedule(cmd.Context(), c, id, ref, say)
+	if err != nil {
+		return fmt.Errorf("runhost %s: %w", name, err)
+	}
+	if list, err := remote.ListModels(cmd.Context(), c); err == nil {
+		rememberRunhostModels(name, list)
+	}
+	if flags.jsonOut {
+		return emitJSON(cmd.OutOrStdout(), info)
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "schedule %s %q on runhost %s runs on %s from its next run\n", info.ID, info.Name, name, runhostScheduleModelOf(cmd, c, info.Model))
+	return nil
+}
+
+// runhostScheduleModelOf names the runhost's saved model ref as a person
+// knows it.
+func runhostScheduleModelOf(cmd *cobra.Command, c remote.Caller, ref string) string {
+	if ref == job.RunhostDefault {
+		return "its default saved model"
+	}
+	if list, err := remote.ListModels(cmd.Context(), c); err == nil {
+		if sm, ok := list.Find(ref); ok {
+			return fmt.Sprintf("its saved model %q", sm.Name)
+		}
+	}
+	return "its saved model " + ref
 }

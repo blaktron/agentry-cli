@@ -632,3 +632,108 @@ func TestARunhostsOneModelReadsAsItsDefaultSavedModel(t *testing.T) {
 		t.Fatalf("after one made available: %+v", list)
 	}
 }
+
+// A schedule on a runhost is moved to another of the saved models the
+// runhost holds, and back to its default, without being made again; a name
+// the runhost does not hold is refused before anything changes, and the
+// kept job never carries a model or a key, even one a job made to carry a
+// device's model held before the move.
+func TestARunhostScheduleIsMovedToAnotherOfItsSavedModels(t *testing.T) {
+	ml := newModelsLab(t)
+	sealLab(t, ml.srv)
+	cli(t, "runhost", "model", "lab", "--add", "Qwen", "--yes")
+	cli(t, "runhost", "model", "lab", "--add", "GPT", "--yes")
+	_, rh := readPolicy(t, ml.rhPolicy)
+	gpt, _ := rh.FindModel("GPT")
+	qwen, _ := rh.FindModel("Qwen")
+	fr := newFakeRegistry(t)
+	fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", ""))
+	if _, stderr, err := runCLI(t, nil, "--registry", fr.url(), "schedule", "add", "acme/demo@1.0.0", "--on", "lab", "--model", "GPT",
+		"--daily", "07:00", "--zone", "UTC", "--allow-unsigned", "--yes"); err != nil {
+		t.Fatalf("schedule add --on --model: %v\n%s", err, stderr)
+	}
+	list, _ := runhostScheduleList()
+	if len(list) != 1 || list[0].Model != gpt.ID {
+		t.Fatalf("the runhost's schedules %+v", list)
+	}
+	id := list[0].ID
+	kept := func() job.Job {
+		t.Helper()
+		st, err := openRunhostStore()
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := st.Entry(scheduleEntryName(id))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var tmpl runhostScheduleTemplate
+		if err := json.Unmarshal(b, &tmpl); err != nil {
+			t.Fatal(err)
+		}
+		return tmpl.Job
+	}
+
+	_, _, err := runCLI(t, nil, "schedule", "edit", id, "--on", "lab", "--model", "Llama")
+	wantClassified(t, err, engine.ExitPolicy)
+	if !strings.Contains(err.Error(), `holds no saved model "Llama"`) {
+		t.Fatalf("a model the runhost does not hold: %v", err)
+	}
+	if list, _ = runhostScheduleList(); list[0].Model != gpt.ID {
+		t.Fatalf("a refused move changed the schedule: %+v", list[0])
+	}
+	_, _, err = runCLI(t, nil, "schedule", "edit", id, "--on", "lab", "--model", "Qwen", "--name", "Other")
+	wantClassified(t, err, engine.ExitUsage)
+	if !strings.Contains(err.Error(), "--name") {
+		t.Fatalf("another change with --on: %v", err)
+	}
+	_, _, err = runCLI(t, nil, "schedule", "edit", id, "--on", "lab")
+	wantClassified(t, err, engine.ExitUsage)
+
+	out := cli(t, "schedule", "edit", id, "--on", "lab", "--model", "qwen")
+	if !strings.Contains(out, `its saved model "Qwen"`) {
+		t.Fatalf("the move says:\n%s", out)
+	}
+	if list, _ = runhostScheduleList(); list[0].Model != qwen.ID {
+		t.Fatalf("the schedule was not moved: %+v", list[0])
+	}
+	if j := kept(); j.Run.ModelKey != "" || j.Run.Model.Provider != "" || j.Run.RunhostModel != qwen.ID {
+		t.Fatalf("the kept job after the move: %+v", j.Run)
+	}
+	j, _, code, err := runhostScheduledJob(context.Background(), schedule.Schedule{ID: id})
+	if err != nil || j.Run.ModelKey != "" || j.Run.Model.SavedModelName != "Qwen" {
+		t.Fatalf("the moved schedule's occurrence: %d %+v %v", code, j.Run.Model, err)
+	}
+
+	// A job made to carry a device's model and key gives them up, and the
+	// schedule's list no longer names the key among what it keeps.
+	st, err := openRunhostStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	carried := kept()
+	carried.Run.RunhostModel, carried.Run.Model, carried.Run.ModelKey = "", job.Model{Provider: "openai", Name: "gpt-5.5", APIKeyEnv: "OPENAI_API_KEY"}, "sk-device-openai"
+	b, _ := json.Marshal(runhostScheduleTemplate{Job: carried})
+	if err := st.PutEntry(scheduleEntryName(id), b); err != nil {
+		t.Fatal(err)
+	}
+	meta, _ := readScheduleMeta(id)
+	meta.Model, meta.Entries = "", append(meta.Entries, runhost.ScheduleEntry{Kind: "model-key", Name: "openai"})
+	if err := writeScheduleMeta(id, meta); err != nil {
+		t.Fatal(err)
+	}
+	cli(t, "schedule", "edit", id, "--on", "lab", "--model", "default")
+	if j := kept(); j.Run.ModelKey != "" || j.Run.Model.Provider != "" || j.Run.RunhostModel != job.RunhostDefault {
+		t.Fatalf("the kept job after a move to the default: %+v", j.Run)
+	}
+	var listed struct {
+		Schedules []runhost.ScheduleInfo `json:"schedules"`
+	}
+	if err := json.Unmarshal([]byte(cli(t, "--json", "runhost", "schedules", "lab")), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Schedules) != 1 || listed.Schedules[0].Model != job.RunhostDefault ||
+		slices.ContainsFunc(listed.Schedules[0].Entries, func(e runhost.ScheduleEntry) bool { return e.Kind == "model-key" }) {
+		t.Fatalf("runhost schedules --json: %+v", listed.Schedules)
+	}
+}

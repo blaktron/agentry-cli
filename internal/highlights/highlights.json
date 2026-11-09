@@ -4,7 +4,9 @@
       "version": "0.7.44",
       "highlights": [
         "A run now keeps the steps of its task in a checklist, which it reads again after a summary and before it answers.",
-        "The checklist is a working note in the run's scratch folder and never reaches your reports."
+        "The checklist is a working note in the run's scratch folder and never reaches your reports.",
+        "You can move a schedule on a runhost to another saved model it holds, without making the schedule again.",
+        "Nothing of this computer's goes with the move: the runhost reads the model and its key from its own store."
       ]
     },
     {

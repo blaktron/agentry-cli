@@ -1639,6 +1639,7 @@ func newScheduleEditCmd() *cobra.Command {
 		maxTurns     int
 		maxCost      float64
 		model        string
+		on           string
 		signedOut    bool
 		yes          bool
 	)
@@ -1653,9 +1654,17 @@ func newScheduleEditCmd() *cobra.Command {
 			"--signed-out (Linux with Docker Engine) makes it also run while you are\n" +
 			"signed out, as `add --signed-out` does; --signed-out=false makes it run\n" +
 			"only while you are signed in again, removes its sealed keys, and turns\n" +
-			"linger off if agentry turned it on and no other schedule needs it.",
+			"linger off if agentry turned it on and no other schedule needs it.\n\n" +
+			"--on <runhost> edits a schedule a runhost runs (agentry runhost schedules\n" +
+			"<runhost> lists them): --model moves it to another of the saved models that\n" +
+			"runhost holds, or to its default with --model default, from its next run.\n" +
+			"Nothing of this computer's is sent: the runhost reads the model and its\n" +
+			"credential from its own store at each run.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if cmd.Flags().Changed("on") {
+				return editRunhostScheduleModel(cmd, args[0], on, model)
+			}
 			store, err := scheduleStore()
 			if err != nil {
 				return err
@@ -1827,6 +1836,7 @@ func newScheduleEditCmd() *cobra.Command {
 	f.StringArrayVar(&destinations, "destination", nil, "the saved destinations each run sends its result and deliverables to, replacing the set (repeatable); one empty value clears it")
 	f.BoolVar(&signedOut, "signed-out", false, "also run while you are signed out (Linux with Docker Engine); =false to run only while signed in")
 	f.BoolVar(&yes, "yes", false, "with --signed-out, confirm turning on linger without the prompt")
+	f.StringVar(&on, "on", "", "edit a schedule the paired runhost NAME runs (with --model only)")
 	return cmd
 }
 
