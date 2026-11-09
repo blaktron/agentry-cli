@@ -6998,6 +6998,29 @@
           ]
         },
         {
+          "path": "pkg/runner/engine/finishcheck_test.go",
+          "tests": [
+            "TestARunThatAnswersWithOpenStepsIsAskedAboutThem",
+            "TestTheThirdEndingStands",
+            "TestARunIsNotAskedWhenNothingIsOpenOrItCannotBe",
+            "TestAFinishCheckCountsInTheTurnBudget",
+            "TestAFinishCheckCountsInTheCostBudget",
+            "TestAChecklistCopyIsReadWithinAListsBounds",
+            "TestOnlyAReleasesOneShotRunIsAsked",
+            "TestAnEarlierRunsChecklistIsNotThisOnes",
+            "TestTheFinishCheckMessage",
+            "TestAChecklistCopyThatIsNoFileIsNone"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "docker interface (real or fake)",
+            "source/file contract",
+            "explicit skip"
+          ]
+        },
+        {
           "path": "pkg/runner/engine/grantpaths_test.go",
           "tests": [
             "TestMakeGrantedPaths"
@@ -11875,13 +11898,17 @@
             "TestAChecklistWrittenByHandReadsAsFarAsItKeepsTheShape",
             "TestTheChecklistNeverFollowsALinkOut",
             "TestTheChecklistIsWrittenOnlyAsAFile",
-            "TestAPersistentAgentKeepsItsChecklistInItsDataFolder"
+            "TestAPersistentAgentKeepsItsChecklistInItsDataFolder",
+            "TestTheRunnerGetsACopyOfEachListSavedOrRead",
+            "TestTheChecklistCopyStaysUnderTheOutputFolder",
+            "TestTheChecklistCopyIsWrittenOnlyAsAFile"
           ],
           "fuzz": [],
           "benchmarks": [],
           "fixtureEntryPoint": false,
           "dependencyHints": [
-            "source/file contract"
+            "source/file contract",
+            "explicit skip"
           ]
         },
         {
