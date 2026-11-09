@@ -9,7 +9,9 @@ import (
 // the job document every occurrence runs a copy of, then the release when the
 // service asks for it (as a job's), then the job's payload. `schedule list`
 // answers a []ScheduleInfo; `schedule remove <id>` and `schedule run <id>`
-// name one.
+// name one. `schedule model <id> <saved model>` moves one to another of the
+// runhost's saved models, by name or id, or to its default ("default"), and
+// answers its ScheduleInfo.
 
 // ScheduleEntry is one thing a schedule keeps in the runhost's store, as
 // the consent named it.

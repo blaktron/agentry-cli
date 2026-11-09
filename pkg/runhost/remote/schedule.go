@@ -11,6 +11,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runhost"
 	"github.com/blaktron/agentry-cli/pkg/runhost/job"
 	"github.com/blaktron/agentry-cli/pkg/runhost/payload"
+	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 )
 
 // A schedule on a runhost is the job every one of its occurrences runs a
@@ -129,6 +130,17 @@ func PutSchedule(ctx context.Context, c *runhost.Client, h runhost.ScheduleHeade
 // TakesSchedules says whether the runhost takes schedules (its store's key
 // sealed by its systemd), as its status says, and why not.
 func TakesSchedules(ctx context.Context, c *runhost.Client) (bool, error) {
+	return capable(ctx, c, "schedules")
+}
+
+// MovesScheduleModels says whether the runhost's CLI moves a schedule to
+// another of its saved models (MoveSchedule); an older one does not.
+func MovesScheduleModels(ctx context.Context, c *runhost.Client) (bool, error) {
+	return capable(ctx, c, "scheduleModels")
+}
+
+// capable says whether the runhost's status names the capability.
+func capable(ctx context.Context, c *runhost.Client, name string) (bool, error) {
 	a, err := c.Ask(ctx, "status", nil, nil)
 	if err != nil {
 		return false, err
@@ -139,7 +151,7 @@ func TakesSchedules(ctx context.Context, c *runhost.Client) (bool, error) {
 	if a.Code != 0 || json.Unmarshal(a.Result, &st) != nil {
 		return false, errors.New(nonEmptyOr(a.Error, "the runhost did not say its status"))
 	}
-	return st.Capabilities["schedules"], nil
+	return st.Capabilities[name], nil
 }
 
 // Schedules lists the runhost's schedules.
@@ -162,6 +174,29 @@ func RunSchedule(ctx context.Context, c *runhost.Client, id string) (runhost.Sch
 	var f runhost.ScheduleFire
 	err := askSchedule(ctx, c, []string{"run", id}, &f)
 	return f, err
+}
+
+// MoveSchedule has schedule id run on the runhost's saved model ref, by
+// name or id, from its next occurrence, or on the runhost's default at each
+// occurrence when ref is "default". It sends no credential: the runhost
+// reads the model and its key from its own list and store at each
+// occurrence. say takes the runhost's narration; a refusal keeps the
+// runhost's exit code.
+func MoveSchedule(ctx context.Context, c Caller, id, ref string, say func(string)) (runhost.ScheduleInfo, error) {
+	var info runhost.ScheduleInfo
+	a, err := c.Call(ctx, "schedule", []string{"model", id, ref}, nil, func(f runhost.Frame) error {
+		if f.Type == runhost.FrameOut && say != nil {
+			say(f.Text)
+		}
+		return nil
+	})
+	if err != nil {
+		return info, engine.Classify(engine.ExitGateway, err)
+	}
+	if a.Code != 0 {
+		return info, engine.Classify(a.Code, errors.New(nonEmptyOr(a.Error, "the runhost did not move the schedule")))
+	}
+	return info, json.Unmarshal(a.Result, &info)
 }
 
 func askSchedule(ctx context.Context, c *runhost.Client, args []string, out any) error {

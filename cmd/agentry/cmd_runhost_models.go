@@ -546,9 +546,11 @@ func moveRunhostModelUsers(ctx context.Context, users []remote.ModelUser, to pol
 	return moved, moveAgents(ctx, home, agents, to)
 }
 
-// moveRunhostSchedule has schedule id run on the runhost's saved model to
-// from its next occurrence.
-func moveRunhostSchedule(id, to string) error {
+// moveRunhostSchedule has schedule id run on the runhost's saved model ref
+// (an id, or job.RunhostDefault) from its next occurrence. A job made to
+// carry a device's model and key gives them up: each occurrence reads the
+// model and its credential from the runhost's own list and store.
+func moveRunhostSchedule(id, ref string) error {
 	st, err := openRunhostStore()
 	if err != nil {
 		return err
@@ -561,7 +563,10 @@ func moveRunhostSchedule(id, to string) error {
 	if err := json.Unmarshal(b, &tmpl); err != nil {
 		return err
 	}
-	tmpl.Job.Run.RunhostModel = to
+	tmpl.Job.Run.Model, tmpl.Job.Run.ModelKey, tmpl.Job.Run.RunhostModel = job.Model{}, "", ref
+	if err := tmpl.Job.Validate(); err != nil {
+		return err
+	}
 	if b, err = json.Marshal(tmpl); err != nil {
 		return err
 	}
@@ -572,8 +577,65 @@ func moveRunhostSchedule(id, to string) error {
 	if err != nil {
 		return err
 	}
-	meta.Model = to
+	meta.Model = ref
+	meta.Entries = slices.DeleteFunc(meta.Entries, func(e runhost.ScheduleEntry) bool { return e.Kind == "model-key" })
 	return writeScheduleMeta(id, meta)
+}
+
+// runhostMoveScheduleModel answers `schedule model <id> <ref>`: schedule id
+// runs on the runhost's saved model ref (a name or an id) from its next
+// occurrence, or on its default at each occurrence for job.RunhostDefault.
+// A saved model the runhost does not hold, or cannot use now, is refused by
+// name before anything changes.
+func runhostMoveScheduleModel(id, ref string) (runhost.ScheduleInfo, int, error) {
+	ss := runhostScheduleStore()
+	sc, err := ss.Get(id)
+	if err != nil {
+		return runhost.ScheduleInfo{}, engine.ExitUsage, err
+	}
+	pol, _, err := runhostModelsPolicy()
+	if err != nil {
+		return runhost.ScheduleInfo{}, engine.ExitPolicy, err
+	}
+	list := runhostListModels(pol)
+	to := job.RunhostDefault
+	var held remote.SavedModel
+	var ok bool
+	if strings.EqualFold(ref, job.RunhostDefault) {
+		if held, ok = list.DefaultModel(); !ok {
+			return runhost.ScheduleInfo{}, engine.ExitPolicy, fmt.Errorf("this runhost holds no saved model for schedule %s to follow as its default: make one available from a device (agentry runhost model %s --add <saved model>)", sc.ID, runhostOwnName())
+		}
+	} else {
+		if held, ok = list.Find(ref); !ok {
+			return runhost.ScheduleInfo{}, engine.ExitPolicy, fmt.Errorf("this runhost holds no saved model %q: agentry runhost model %s lists those it holds", ref, runhostOwnName())
+		}
+		to = held.ID
+	}
+	if held.Refusal != "" {
+		return runhost.ScheduleInfo{}, engine.ExitPolicy, fmt.Errorf("the saved model %q cannot be used on this runhost now: %s: make it available again from a device (agentry runhost model %s --add %s)", held.Name, held.Refusal, runhostOwnName(), held.Name)
+	}
+	if err := moveRunhostSchedule(sc.ID, to); err != nil {
+		return runhost.ScheduleInfo{}, engine.ExitCLI, fmt.Errorf("move schedule %s to %s: %w", sc.ID, held.Name, err)
+	}
+	info, err := runhostScheduleInfo(ss, sc)
+	if err != nil {
+		return runhost.ScheduleInfo{}, engine.ExitCLI, err
+	}
+	return info, 0, nil
+}
+
+// runhostScheduleModelSaid is a schedule's saved model as the runhost's
+// narration names it.
+func runhostScheduleModelSaid(ref string) string {
+	if ref == job.RunhostDefault {
+		return "this runhost's default saved model"
+	}
+	if pol, _, err := runhostModelsPolicy(); err == nil {
+		if sm, ok := pol.FindModel(ref); ok {
+			return fmt.Sprintf("the saved model %q", sm.Name)
+		}
+	}
+	return "the saved model " + ref
 }
 
 // runhostDefaultModel answers default-model.
