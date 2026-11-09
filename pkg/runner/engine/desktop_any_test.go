@@ -232,3 +232,43 @@ func TestASegmentsBindingsAreHeldToThePolicy(t *testing.T) {
 		t.Fatalf("a person's set-up bound at a call: %v", err)
 	}
 }
+
+// A message to the person names the chosen entry "an application you
+// choose", and the application they chose as theirs, while the plan, the
+// System Prompt and the receipt keep the agent's words.
+func TestTheChosenEntryIsNamedToThePerson(t *testing.T) {
+	d := &spec.DesktopCap{
+		Servers: []spec.DesktopServerCap{
+			{ID: "my-cad", Application: "my-cad"},
+			{ID: spec.DesktopChosenID, Application: "an application the person chooses", Chosen: true},
+		},
+		ComputerUse: spec.ComputerUseApp, PersonServers: spec.PersonServersRefused,
+	}
+	if err := NoDesktopRefusal(d); !strings.Contains(err.Error(), "this QuickAgent uses my-cad, an application you choose and computer use on your computer") {
+		t.Errorf("no Agentry Desktop: %v", err)
+	}
+	call := func(context.Context, desktop.CallRequest) (desktoplink.Answer, error) {
+		return desktoplink.Answer{}, nil
+	}
+	plan := &spec.Plan{Capabilities: spec.CapSummary{Desktop: d}}
+
+	unbound := &DesktopLink{Token: "t", Call: call, Servers: map[string][]desktoplink.Tool{"my-cad": standInBlenderTools[:1]}}
+	if err := checkDesktop(Params{Plan: plan, Desktop: unbound}); err == nil || !strings.Contains(err.Error(), "this QuickAgent uses an application you choose on your computer, and Agentry Desktop did not bind it") {
+		t.Errorf("an unbound chosen entry: %v", err)
+	}
+
+	refused := &DesktopLink{Token: "t", Call: call,
+		Servers: map[string][]desktoplink.Tool{"my-cad": standInBlenderTools[:1], spec.DesktopChosenID: standInBlenderTools[:1]},
+		From:    map[string]string{"my-cad": desktop.FromLibrary, spec.DesktopChosenID: desktop.FromPerson},
+		Chosen:  &desktop.ChosenApplication{ID: "kdenlive", Name: "Kdenlive"}}
+	err := checkDesktop(Params{Plan: plan, Desktop: refused})
+	if err == nil || !strings.Contains(err.Error(), "this QuickAgent uses Kdenlive (the application you chose) on your computer") {
+		t.Errorf("a refused chosen application: %v", err)
+	}
+	if err != nil && strings.Contains(err.Error(), "the person") {
+		t.Errorf("a message to the person speaks of them in the third person: %v", err)
+	}
+	if got := boundName(refused, d.Servers[1]); got != "Kdenlive (the application the person chose)" {
+		t.Errorf("the agent's words for the chosen application: %q", got)
+	}
+}
