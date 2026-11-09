@@ -128,25 +128,6 @@ func agentModelUsable(home, agent string) func(localrun.RunModel) error {
 	}
 }
 
-// modelAgents are the persistent agents on this computer that name one of
-// the saved models ids.
-func modelAgents(home string, ids map[string]bool) ([]modelUser, []persistent.Agent) {
-	var users []modelUser
-	var named []persistent.Agent
-	for _, a := range persistent.AgentsIn(home) {
-		if a.DesktopOnly {
-			continue
-		}
-		cfg, err := persistent.LoadConfig(home, a.Name)
-		if err != nil || cfg.Model == "" || !ids[cfg.Model] {
-			continue
-		}
-		users = append(users, modelUser{Kind: "agent", ID: a.Name, Name: a.DisplayName(cfg)})
-		named = append(named, a)
-	}
-	return users, named
-}
-
 // moveAgents points each agent at the saved model to: a stopped one's
 // configuration under its lock, a running one's through its supervisor,
 // which takes it at its next turn.

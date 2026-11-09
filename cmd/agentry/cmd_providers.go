@@ -16,6 +16,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelsignin"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/savedmodels"
 	"github.com/blaktron/agentry-cli/pkg/runner/setup"
 )
 
@@ -50,62 +51,12 @@ type providerOut struct {
 
 // signInVendor is the model sign-in store's vendor a provider's credential
 // is kept under, "" for a key or credits.
-func signInVendor(id string, pr policy.Provider) string {
-	switch pr.APIKeyKind {
-	case policy.KeyKindChatGPTPlan:
-		return modelsignin.ChatGPT
-	case policy.KeyKindClaudeSignIn:
-		return modelsignin.Claude
-	case policy.KeyKindCopilotSignIn:
-		return modelsignin.Copilot
-	}
-	if modelsignin.IsConnectVendor(id) {
-		return id
-	}
-	return ""
-}
+func signInVendor(id string, pr policy.Provider) string { return savedmodels.SignInVendor(id, pr) }
 
 // providerState says whether the provider's credential is here.
 func providerState(home, id string, pr policy.Provider) (kind, state string) {
-	vendor := policy.ProviderVendor(id)
-	if vendor == policy.ProviderAgentry {
-		reg, _ := policy.AgentryRegistry(policy.Model{BaseURL: pr.BaseURL})
-		if tok, err := credentialFor(reg); err != nil || tok == "" {
-			return "Agentry credits", "needs sign-in (agentry login)"
-		}
-		return "Agentry credits", "signed in at " + reg
-	}
-	if sv := signInVendor(id, pr); sv != "" && pr.APIKeyKind != policy.KeyKindAPI && pr.APIKeyKind != "" {
-		r, err := modelsignin.Open(home, nil).Get(sv)
-		switch {
-		case err != nil:
-			return policy.SignInSentence(pr.APIKeyKind), "needs sign-in"
-		case r.Broken != "":
-			return policy.SignInSentence(pr.APIKeyKind), "needs sign-in: " + r.Broken
-		case r.Label != "":
-			return policy.SignInSentence(pr.APIKeyKind), "signed in as " + r.Label
-		}
-		return policy.SignInSentence(pr.APIKeyKind), "signed in"
-	}
-	if pr.APIKeyEnv == "" && vendor == policy.ProviderCustom {
-		return "takes no key", "ready"
-	}
-	kind = "key from $" + pr.APIKeyEnv
-	if pr.APIKeySource == modelkey.SourceKeyring {
-		kind += ", else the OS keychain entry " + modelkey.Account(id)
-	}
-	if r, err := modelsignin.Open(home, nil).Get(id); err == nil && modelsignin.IsConnectVendor(id) && r.Connected {
-		kind = "connected account"
-	}
-	if os.Getenv(pr.APIKeyEnv) != "" {
-		return kind, "key set"
-	}
-	if pr.APIKeySource == modelkey.SourceKeyring {
-		if ok, err := modelkey.Present(id); err == nil && ok {
-			return kind, "key in the keychain"
-		}
-	}
-	return kind, "key missing"
+	s := savedmodels.ProviderState(home, id, pr, credentialFor)
+	return s.Kind, s.Words
 }
 
 func newProvidersListCmd() *cobra.Command {
@@ -315,7 +266,7 @@ func buildProvider(cmd *cobra.Command, home, vendor string, f providerFlags) (id
 		// after a variable of the provider's own name.
 		def := ""
 		if f.keyStdin || strings.TrimSpace(f.keySource) == modelkey.SourceKeyring {
-			def = strings.ToUpper(strings.ReplaceAll(id, "-", "_")) + "_API_KEY"
+			def = savedmodels.CustomKeyEnv(id)
 		}
 		pr, key, err := keyProvider(cmd, in, id, def, nil, f)
 		pr.Name = strings.TrimSpace(f.name)

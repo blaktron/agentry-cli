@@ -13,7 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -24,8 +23,8 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"github.com/blaktron/agentry-cli/pkg/runner/persistent"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/savedmodels"
 	"github.com/blaktron/agentry-cli/pkg/runner/setup"
-	"github.com/blaktron/agentry-cli/pkg/schedule"
 )
 
 // listModelsToCheck is the save check's models listing; a seam, so tests
@@ -399,46 +398,9 @@ func newModelsCheckCmd() *cobra.Command {
 	return cmd
 }
 
-// modelUser is something on this computer that names a saved model.
-type modelUser struct {
-	Kind string `json:"kind"`
-	ID   string `json:"id"`
-	Name string `json:"name"`
-}
-
-// modelUsers are the schedules on this computer that name one of the saved
-// models sms, by id or by name, or that run on the harness whose block in
-// pol one of them was read from and name no saved model, which run on it;
-// then the persistent agents that name one of them.
-func modelUsers(home string, pol *policy.Policy, sms []policy.SavedModel) ([]modelUser, []schedule.Schedule, []persistent.Agent, error) {
-	list, _, err := schedule.StoreIn(home).List()
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	var users []modelUser
-	var named []schedule.Schedule
-	for _, sc := range list {
-		ref := strings.TrimSpace(sc.Run.Model)
-		if ref == "" {
-			if sm, ok := pol.HarnessModel(sc.Run.Adapter); ok {
-				ref = sm.ID
-			}
-		}
-		if ref == "" {
-			continue
-		}
-		if slices.ContainsFunc(sms, func(sm policy.SavedModel) bool { return sm.ID == ref || strings.EqualFold(sm.Name, ref) }) {
-			users = append(users, modelUser{Kind: "schedule", ID: sc.ID, Name: sc.Name})
-			named = append(named, sc)
-		}
-	}
-	ids := map[string]bool{}
-	for _, sm := range sms {
-		ids[sm.ID] = true
-	}
-	agentUsers, agents := modelAgents(home, ids)
-	return append(users, agentUsers...), named, agents, nil
-}
+// modelUser is something on this computer that names a saved model, as
+// --json gives it.
+type modelUser = savedmodels.User
 
 // usedRefusal is the refusal of a removal while something names the model:
 // what is the sentence's subject and verb ("the saved model "x" is").
@@ -448,31 +410,6 @@ func usedRefusal(what string, users []modelUser) error {
 		lines = append(lines, fmt.Sprintf("%s %s (%s)", u.Kind, u.Name, u.ID))
 	}
 	return engine.Classify(engine.ExitPolicy, fmt.Errorf("%s named by %s: move them first with --move-to <saved model>", what, strings.Join(lines, ", ")))
-}
-
-// moveUsers points each schedule at the saved model to.
-func moveUsers(home string, named []schedule.Schedule, to policy.SavedModel) error {
-	st := schedule.StoreIn(home)
-	for _, sc := range named {
-		sc.Run.Model = to.ID
-		if err := st.Save(sc); err != nil {
-			return fmt.Errorf("move schedule %s to %s: %w", sc.Name, to.Name, err)
-		}
-	}
-	return nil
-}
-
-// moveTarget is the saved model --move-to names, which must not be among
-// the ones removed.
-func moveTarget(pol *policy.Policy, ref string, removed []policy.SavedModel) (policy.SavedModel, error) {
-	to, ok := pol.FindModel(ref)
-	if !ok {
-		return to, engine.Classify(engine.ExitUsage, fmt.Errorf("--move-to: no saved model %q on this computer", ref))
-	}
-	if slices.ContainsFunc(removed, func(sm policy.SavedModel) bool { return sm.ID == to.ID }) {
-		return to, engine.Classify(engine.ExitUsage, fmt.Errorf("--move-to: %q is removed too", to.Name))
-	}
-	return to, nil
 }
 
 // removedOut is a removal in --json.
@@ -487,44 +424,27 @@ type removedOut struct {
 }
 
 // removeModels removes sms (with provider, when it is a provider's removal),
-// moving what names them to moveTo, and writes the policy.
+// moving what names them to moveTo, and writes the policy
+// (savedmodels.Remove has the rules).
 func removeModels(cmd *cobra.Command, pol *policy.Policy, path, what string, sms []policy.SavedModel, moveTo string, remove func(newDefault string) error) (removedOut, error) {
 	home, err := runnerHome()
 	if err != nil {
 		return removedOut{}, err
 	}
-	users, named, agents, err := modelUsers(home, pol, sms)
+	r, err := savedmodels.Remove(cmd.Context(), home, pol, path, sms, moveTo, persistent.ClientCLI, remove)
+	var used *savedmodels.InUseError
+	if errors.As(err, &used) {
+		return removedOut{}, usedRefusal(what, used.Users)
+	}
 	if err != nil {
 		return removedOut{}, err
 	}
-	var to policy.SavedModel
-	if moveTo != "" {
-		if to, err = moveTarget(pol, moveTo, sms); err != nil {
-			return removedOut{}, err
-		}
-	} else if len(users) > 0 {
-		return removedOut{}, usedRefusal(what, users)
-	}
-	if err := remove(to.ID); err != nil {
-		return removedOut{}, engine.Classify(engine.ExitUsage, err)
-	}
-	// What named the model is moved first: the model it moves to is in the
-	// policy before and after, so no schedule ever names one that is gone.
-	if err := moveUsers(home, named, to); err != nil {
-		return removedOut{}, err
-	}
-	if err := moveAgents(cmd.Context(), home, agents, to); err != nil {
-		return removedOut{}, engine.Classify(engine.ExitCLI, err)
-	}
-	if err := policy.Save(path, pol); err != nil {
-		return removedOut{}, engine.Classify(engine.ExitPolicy, err)
-	}
 	resealSignedOut(cmd.ErrOrStderr())
-	out := removedOut{Moved: users, MovedTo: to.Name, Default: pol.DefaultModel().ID}
+	out := removedOut{Moved: r.Moved, MovedTo: r.MovedTo.Name, Default: pol.DefaultModel().ID}
 	if out.Moved == nil {
 		out.Moved = []modelUser{}
 	}
-	for _, sm := range sms {
+	for _, sm := range r.Removed {
 		out.Removed = append(out.Removed, modelOut(sm, ""))
 	}
 	return out, nil
