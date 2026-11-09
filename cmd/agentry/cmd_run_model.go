@@ -2,14 +2,12 @@ package main
 
 import (
 	"errors"
-	"fmt"
-	"strings"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelsignin"
-	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/savedmodels"
 )
 
 // refuseModelElsewhere refuses --model where this computer's saved models
@@ -41,56 +39,11 @@ var keyKept = modelkey.Present
 // savedModelUsable refuses a run whose saved model's credential is not on
 // this computer (exit 11), naming the saved model, its provider and the
 // fix, before anything is laid down for it; other is the fix of running on
-// another model instead. What it cannot tell from here (a sign-in that no
-// longer renews, a key the provider revoked) the run refuses when it meets
-// it.
+// another model instead. The rule is savedmodels.Usable, which Agentry
+// Desktop applies too.
 func savedModelUsable(home string, rm localrun.RunModel, getenv func(string) string, other string) error {
-	m := rm.Policy.Model
-	if m.Provider == "" {
-		return nil
-	}
-	hp := rm.Policy.Harness[rm.Adapter]
-	what := fmt.Sprintf("the saved model %q (provider %s)", savedModelName(rm), m.KeyProvider())
-	if rm.Saved.ID == "" {
-		what = fmt.Sprintf("the model (provider %s)", m.KeyProvider())
-	}
-	kind := policy.KeyKind(hp, m)
-	if policy.IsModelSignIn(kind) {
-		if !signInKept(home, kind) {
-			return engine.Classify(engine.ExitPolicy, fmt.Errorf("%s cannot be used: it spends %s, and none is kept on this computer: sign in with agentry model-signins add %s, or %s",
-				what, policy.SignInSentence(kind), modelsignin.VendorOf(kind), other))
-		}
-		return nil
-	}
-	env := policy.KeyEnv(hp, m)
-	if env == "" || strings.TrimSpace(getenv(env)) != "" {
-		return nil
-	}
-	if policy.KeySource(hp, m) != modelkey.SourceKeyring {
-		fix := "set it, or " + other
-		if m.Provider == policy.ProviderCustom && hp.APIKeyEnv == "" {
-			fix += "; if the endpoint takes no key, delete the provider's apiKeyEnv from the policy"
-		}
-		return engine.Classify(engine.ExitPolicy, fmt.Errorf("%s cannot be used: its key comes from $%s, which is not set: %s", what, env, fix))
-	}
-	ok, err := keyKept(m.KeyProvider())
-	if err != nil {
-		return engine.Classify(engine.ExitPolicy, fmt.Errorf("%s: the keychain: %w", what, err))
-	}
-	if !ok {
-		return engine.Classify(engine.ExitPolicy, fmt.Errorf("%s cannot be used: its key is neither in $%s nor in the keychain (account %s): set $%s, keep the key again (agentry providers remove %s, then agentry providers add), or %s",
-			what, env, modelkey.Account(m.KeyProvider()), env, m.KeyProvider(), other))
-	}
-	return nil
+	return savedmodels.Usable(home, rm, other, savedmodels.Here{Getenv: getenv, SignInKept: signInKept, KeyKept: keyKept})
 }
 
 // runOnAnother is a run's fix of running on another saved model.
 const runOnAnother = "run on another saved model (--model; agentry models list)"
-
-// savedModelName is the saved model's name as a person knows it.
-func savedModelName(rm localrun.RunModel) string {
-	if rm.Saved.Name != "" {
-		return rm.Saved.Name
-	}
-	return rm.Saved.ID
-}

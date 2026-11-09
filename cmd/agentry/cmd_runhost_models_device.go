@@ -123,10 +123,6 @@ func runRunhostModelsList(cmd *cobra.Command, name string) error {
 	return nil
 }
 
-// runhostModelSubscriptionRefusal is the refusal of a pasted Claude
-// subscription token on a runhost.
-const runhostModelSubscriptionRefusal = "a pasted Claude subscription token runs only the installed claude, which a runhost does not run: save a model on your Claude subscription through Claude Code's own sign-in (agentry providers add anthropic --sign-in) and make that one available"
-
 // runRunhostModelAdd makes this computer's saved model ref available on the
 // runhost name: its key read here and sent to the runhost's store, its
 // sign-in made on the runhost from the browser here, or its credits token
@@ -137,36 +133,19 @@ func runRunhostModelAdd(cmd *cobra.Command, name, ref string, oauthApp, yes bool
 	if err != nil {
 		return engine.Classify(engine.ExitPolicy, err)
 	}
-	sm, ok := pol.FindModel(ref)
-	if !ok {
-		return engine.Classify(engine.ExitUsage, fmt.Errorf("no saved model %q on this computer (agentry models list)", ref))
-	}
-	view, err := pol.ForRun(sm)
-	if err != nil {
-		return engine.Classify(engine.ExitPolicy, err)
-	}
-	m := view.Model
-	providers, _, _ := pol.SavedModels()
-	pr := providers[sm.Provider]
-	if m.APIKeyKind == policy.KeyKindSubscription {
-		return engine.Classify(engine.ExitPolicy, errors.New(runhostModelSubscriptionRefusal))
-	}
-	kind := runhostModelKind(m)
-	what := fmt.Sprintf("%q (%s/%s)", sm.Name, sm.Provider, sm.Model)
 	home, err := runnerHome()
 	if err != nil {
 		return err
 	}
-	if kind == remote.ModelKindKey {
-		if !job.ValidKeyEnv(m.APIKeyEnv) {
-			return engine.Classify(engine.ExitPolicy, fmt.Errorf("the saved model %s names its key's variable $%s, which a runhost does not take: name it as the provider does, ending in _API_KEY, _KEY or _TOKEN", what, m.APIKeyEnv))
-		}
-		if vendor := modelsignin.ConnectedVendor(sm.Provider); vendor != "" {
-			if r, err := modelsignin.Open(home, connectionKeys()).Get(vendor); err == nil && r.SecretIn != "" {
-				return engine.Classify(engine.ExitPolicy, fmt.Errorf("the %s token Agentry connected for %s is renewed on this computer at each run's start, and a runhost could not renew its copy: paste a %s token that does not expire (agentry providers add %s), then make it available", modelsignin.ConnectName(vendor), what, modelsignin.ConnectName(vendor), sm.Provider))
-			}
-		}
+	prep, err := remote.Prepare(pol, ref, func(vendor string) bool {
+		r, err := modelsignin.Open(home, connectionKeys()).Get(vendor)
+		return err == nil && r.SecretIn != ""
+	})
+	if err != nil {
+		return err
 	}
+	sm, m, kind := prep.Saved, prep.Model, prep.Kind
+	what := fmt.Sprintf("%q (%s/%s)", sm.Name, sm.Provider, sm.Model)
 	ctx, cancel := context.WithTimeout(cmd.Context(), runhostModelTimeout)
 	defer cancel()
 	cmd.SetContext(ctx)
@@ -231,14 +210,11 @@ func runRunhostModelAdd(cmd *cobra.Command, name, ref string, oauthApp, yes bool
 			}
 		}
 	}
-	doc := remote.PutModel{ID: sm.ID, Name: sm.Name, ProviderID: sm.Provider, Model: sm.Model, ContextWindow: sm.ContextWindow, Key: key, Yes: agreed || yes,
-		Provider: remote.ModelProvider{Name: pr.Name, APIKeyEnv: m.APIKeyEnv, APIKeyKind: m.APIKeyKind, BaseURL: m.BaseURL, ProxyAllow: m.ProxyAllow}}
+	doc := prep.Doc
+	doc.Key, doc.Yes = key, agreed || yes
 	if m.APIKeyKind == policy.KeyKindClaudeSignIn {
 		// The person agreed to the check's message above, or with --yes.
 		doc.Yes = true
-	}
-	if doc.Provider.ProxyAllow == nil {
-		doc.Provider.ProxyAllow = []string{}
 	}
 	ans, err := remote.PutSavedModel(ctx, c, doc, runhostSays(cmd, name))
 	if err != nil {
@@ -268,23 +244,13 @@ func runRunhostModelAdd(cmd *cobra.Command, name, ref string, oauthApp, yes bool
 // runhostKeepsSignIn says whether the runhost c reaches keeps a working
 // sign-in to vendor.
 func runhostKeepsSignIn(ctx context.Context, c *runhost.Client, vendor string) bool {
-	list, err := remote.ListStore(ctx, c)
-	if err != nil {
-		return false
-	}
-	for _, k := range list.SignIns {
-		if k.Vendor == vendor && k.Broken == "" {
-			return true
-		}
-	}
-	return false
+	return remote.KeepsSignIn(ctx, c, vendor)
 }
 
 // runhostKeepsCredits says whether the runhost c reaches keeps a credits
 // token for the registry reg.
 func runhostKeepsCredits(ctx context.Context, c *runhost.Client, reg string) bool {
-	list, err := remote.ListStore(ctx, c)
-	return err == nil && list.Credits != nil && strings.TrimRight(list.Credits.Registry, "/") == strings.TrimRight(reg, "/")
+	return remote.KeepsCredits(ctx, c, reg)
 }
 
 func runRunhostModelRemove(cmd *cobra.Command, name, ref, moveTo string, keep bool) error {

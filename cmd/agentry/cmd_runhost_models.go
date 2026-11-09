@@ -96,17 +96,7 @@ func runhostHoldsModels(pol *policy.Policy) bool {
 }
 
 // runhostModelKind is what pays for m on the runhost.
-func runhostModelKind(m policy.Model) string {
-	switch {
-	case m.Provider == policy.ProviderAgentry:
-		return remote.ModelKindCredits
-	case policy.IsModelSignIn(m.APIKeyKind):
-		return remote.ModelKindSignIn
-	case policy.TakesNoKey(policy.HarnessPolicy{}, m):
-		return remote.ModelKindNoKey
-	}
-	return remote.ModelKindKey
-}
+func runhostModelKind(m policy.Model) string { return remote.ModelKind(m) }
 
 // runhostModelRefusal says why a run on m would be refused on this runhost
 // now: its credits token, its sign-in or its key is not here. "" when it can
