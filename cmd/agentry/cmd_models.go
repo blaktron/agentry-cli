@@ -231,6 +231,12 @@ func newModelsAddCmd() *cobra.Command {
 				return err
 			}
 			sm := policy.SavedModel{Name: args[0], Provider: f.provider, Model: f.model}
+			// The cap, the name and the provider are refused before the
+			// provider is asked, so a refused save spends nothing (a Claude
+			// subscription's check is a message on the plan).
+			if err := pol.CanAddModel(sm); err != nil {
+				return engine.Classify(engine.ExitUsage, err)
+			}
 			res, err := checkSavedModel(cmd, pol, path, &sm, f.window, f.yes)
 			if err != nil {
 				return err
