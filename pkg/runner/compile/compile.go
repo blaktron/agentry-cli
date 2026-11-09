@@ -247,6 +247,7 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	if err := managedRefusal(in, held); err != nil {
 		return nil, err
 	}
+	in.Policy = heldPolicy(in.Policy, held, in.Sender)
 	if !m.Supports(mode) {
 		return nil, fmt.Errorf("%s/%s@%s does not declare run mode %s (modes: %s) — not runnable this way",
 			m.Namespace, m.Name, m.Version, mode, strings.Join(modeStrings(m.SupportedModes()), ", "))
@@ -256,8 +257,8 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	// allows it, and is never given a target host, which only a run's
 	// intake names.
 	if mode == manifest.ModePersistent && in.Source != "builtin" {
-		if !in.Policy.PersistentReleasesAllowed() {
-			return nil, &PolicyRefusal{Reason: policy.PersistentReleasesRefused}
+		if r := in.Policy.PersistentReleasesRefusal(); r != "" {
+			return nil, &PolicyRefusal{Reason: r}
 		}
 		if len(m.Capabilities.TargetHosts) > 0 {
 			return nil, &PolicyRefusal{Reason: "a persistent agent is never given a target host: a target host is named in a run's intake, and a persistent agent has none"}
@@ -859,6 +860,9 @@ func summarizeCapabilities(m *manifest.Manifest, pol *policy.Policy) (spec.CapSu
 		// as hosts, it gave a fetch tool and a tools container on no
 		// network the gateway could start it on.
 	case len(eg.Hosts) == 1 && eg.Hosts[0] == "*":
+		if r := pol.Refused(policy.HeldWildcardEgress); r != "" {
+			return caps, &PolicyRefusal{Reason: r}
+		}
 		if !pol.AllowWildcardEgress {
 			return caps, &PolicyRefusal{Reason: `manifest declares network.egress: "*" and this machine's policy has allowWildcardEgress: false`}
 		}
@@ -869,6 +873,9 @@ func summarizeCapabilities(m *manifest.Manifest, pol *policy.Policy) (spec.CapSu
 			if h == "*" {
 				// A list mixing "*" with hosts is a wildcard with extra
 				// steps; hold it to the same gate.
+				if r := pol.Refused(policy.HeldWildcardEgress); r != "" {
+					return caps, &PolicyRefusal{Reason: r}
+				}
 				if !pol.AllowWildcardEgress {
 					return caps, &PolicyRefusal{Reason: `manifest egress list contains "*" and policy has allowWildcardEgress: false`}
 				}

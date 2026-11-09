@@ -20,6 +20,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/blaktron/agentry-cli/internal/version"
+	"github.com/blaktron/agentry-cli/pkg/managed"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/persistent"
@@ -616,7 +617,7 @@ func newAgentStartCmd() *cobra.Command {
 			// What the agent is given that the person has not agreed to on
 			// this computer is asked for here, on the terminal: the
 			// supervisor has none, and refuses to start without it.
-			if pending := persistent.Unconsented(persistent.BuildRosterUnder(a, cfg, nil, pol.MalwareCheckOn()), cfg); len(pending) > 0 {
+			if pending := persistent.Unconsented(persistent.BuildRosterUnder(a, cfg, nil, managed.Hold(pol).MalwareCheckOn()), cfg); len(pending) > 0 {
 				if err := agentConsent(cmd, a, &persistent.ConsentError{Agent: a.Name, Entries: pending}, yes); err != nil {
 					return err
 				}

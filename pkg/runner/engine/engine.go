@@ -468,7 +468,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	env.Receipts = receipt.Receipts{Dir: receiptsDir, RunPlanSHA256: planHash}
 	// The organizations' managed settings, before anything else is looked
 	// at or started.
-	if err := checkManaged(p); err != nil {
+	if err := applyManaged(&p); err != nil {
 		return fail(env, redact, err)
 	}
 	// A plan with the web tools runs only with its scanner, before

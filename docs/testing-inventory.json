@@ -1908,7 +1908,8 @@
             "TestAHeldScheduleIsNotRunByHandOrEdited",
             "TestListAndShowSayAScheduleIsHeld",
             "TestAddInUnsafeModeIsRefusedWhileManagedSettingsForbidIt",
-            "TestTheUnsafeModeMarkRoundTrips"
+            "TestTheUnsafeModeMarkRoundTrips",
+            "TestEveryScheduleIsHeldAndNoneIsAddedWhileSchedulesAreForbidden"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -3325,6 +3326,29 @@
             "HTTP transport",
             "source/file contract"
           ]
+        },
+        {
+          "path": "pkg/managed/rows_test.go",
+          "tests": [
+            "TestEveryCatalogueRowIsAppliedByTheRunnerOrAClient",
+            "TestAForbiddingLockNamesTheOrganizationAndTheSetting",
+            "TestPolicyHeldRefusesLocksAndFillsDefaultsOnlyWhereTheFileIsSilent",
+            "TestAMalwareCheckDefaultAppliesOnlyWhereTheFileIsSilent",
+            "TestALockedClientRowRefusesRunsUntilTheClientHoldsIt",
+            "TestWhereAndDestinationsHoldToTheLockedSet",
+            "TestSourcesAdmitTheOrganizationTheBuiltInsAndTheList",
+            "TestRefusalJudgesTheRunsReleaseRiskAndAgent",
+            "TestACapLowersAndNeverRaises",
+            "TestADefaultBudgetFillsOnlyAnUnchosenOne",
+            "TestAnOlderClientIsRefusedAndNamesTheUpdate",
+            "TestTheMostRestrictiveOfSeveralDocumentsHolds",
+            "TestANarrowingCarriesTheDevicesLocksAndCaps",
+            "TestNoValueLoosensAPolicy"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
         }
       ]
     },
@@ -5011,7 +5035,11 @@
             "TestAManagedLockTheClientDoesNotKnowRefusesEveryCompile",
             "TestThePlanHashTakesTheManagedVersion",
             "TestTheSendingDevicesManagedSettingsHoldARunhostsRun",
-            "TestManagedSettingsThatCannotBeVerifiedRefuseEveryCompile"
+            "TestManagedSettingsThatCannotBeVerifiedRefuseEveryCompile",
+            "TestAnEditedFileCannotLiftALock",
+            "TestALockedCustomServerRefusalHoldsInUnsafeModeAndNamesTheOrganization",
+            "TestBudgetsTakeTheDefaultsAndTheCaps",
+            "TestTheSendingDevicesLocksHoldOnARunhost"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -6982,7 +7010,10 @@
           "path": "pkg/runner/engine/managed_test.go",
           "tests": [
             "TestRunRefusesAnUnsafePlanAManagedLockForbids",
-            "TestARunIsHeldToTheManagedSettingsCachedWhenItStarts"
+            "TestARunIsHeldToTheManagedSettingsCachedWhenItStarts",
+            "TestApplyManagedHoldsBudgetsAndThePolicy",
+            "TestApplyManagedRefusesRiskAgentsAndDestinations",
+            "TestApplyManagedRefusesWhatAnEarlierPlanCarries"
           ],
           "fuzz": [],
           "benchmarks": [],

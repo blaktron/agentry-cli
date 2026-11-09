@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/blaktron/agentry-cli/pkg/managed"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/session"
 	"github.com/blaktron/agentry-cli/runnerimage"
@@ -181,7 +182,7 @@ func (s *Supervisor) messengerWanted(cfg Config) (map[string]MessengerAccount, m
 	if !a.TakesMessengers() {
 		return want, why
 	}
-	pol := s.policy()
+	pol := managed.Hold(s.policy())
 	r := BuildRosterUnder(a, cfg, nil, pol.MalwareCheckOn())
 	for _, m := range cfg.Messengers {
 		e, ok := r.Entry(MessengerEntryID(m.Kind))
@@ -744,7 +745,7 @@ func (s *Supervisor) tellMessengerOfQuestion(title string, asked bool) {
 
 // messengerStates are the agent's messengers with each one's connection.
 func (s *Supervisor) messengerStates(cfg Config) []MessengerState {
-	states := Messengers(s.agent(), cfg, s.policy().MessengerAllowed)
+	states := Messengers(s.agent(), cfg, managed.Hold(s.policy()).MessengerAllowed)
 	hub := s.hub()
 	if hub == nil {
 		return states

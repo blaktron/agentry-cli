@@ -17,6 +17,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/managed"
 	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 )
 
 // runhostManagedFile is the device's managed settings a runhost's job
@@ -46,8 +47,9 @@ func newManagedCmd() *cobra.Command {
 			"each setting's value and whether it is locked (you cannot change it) or the\n" +
 			"organization's default (it applies until you choose otherwise). Every run\n" +
 			"on this computer applies all of them. What cannot be verified is listed\n" +
-			"too. While no run can start (a copy that cannot be verified, or a locked\n" +
-			"setting this version does not know), the command exits 11. --registry\n" +
+			"too. While no run can start (a copy that cannot be verified, a locked\n" +
+			"setting this version does not know, or an organization's minimum version\n" +
+			"newer than this one), the command exits 11. --registry\n" +
 			"shows one registry's alone. Reads the copies on this computer and asks no\n" +
 			"registry. --json prints the same as one document.",
 		Args: cobra.NoArgs,
@@ -321,4 +323,18 @@ func refuseUnsafeMode(sender *managed.Narrowing) error {
 		return nil
 	}
 	return engine.Classify(engine.ExitPolicy, &compile.PolicyRefusal{Reason: reason})
+}
+
+// heldRunPolicy is pol held to this computer's managed settings and, for a
+// remote runhost's run, to those of the device that sent it. A sending
+// device's settings that cannot be read are refused where the run reads
+// them for its compile (senderManaged).
+func heldRunPolicy(pol *policy.Policy, opts runOpts) *policy.Policy {
+	held := managed.Current().PolicyHeld()
+	if opts.runhostManaged != "" {
+		if n, err := senderManaged(opts); err == nil {
+			held = n.Held(held)
+		}
+	}
+	return pol.WithHeld(pol.Held().Merge(held))
 }

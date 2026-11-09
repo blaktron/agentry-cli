@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/blaktron/agentry-cli/pkg/managed"
 	"github.com/blaktron/agentry-cli/pkg/runner/clamdb"
 	"github.com/blaktron/agentry-cli/pkg/runner/decode"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
@@ -29,6 +30,7 @@ func CheckFolder(ctx context.Context, d dockerx.Client, pol *policy.Policy, home
 	if logw == nil {
 		logw = io.Discard
 	}
+	pol = managed.Hold(pol)
 	runnerTag := pol.RunnerImageTag(runnerimage.ContentVersion())
 	ctxDir := filepath.Join(home, "image")
 	if err := gateway.EnsureInstalled(ctx, d, pol, runnerTag, ctxDir, logw, true); err != nil {

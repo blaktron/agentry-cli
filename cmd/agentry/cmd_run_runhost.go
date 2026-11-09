@@ -26,6 +26,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/pkg/trust"
+	"github.com/blaktron/agentry/pkg/managedsettings"
 	"github.com/blaktron/agentry/pkg/manifest"
 )
 
@@ -122,6 +123,9 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	if reason := held.RunRefusal(); reason != "" {
 		return engine.Classify(engine.ExitPolicy, &compile.PolicyRefusal{Reason: reason})
 	}
+	if reason := held.WhereRefusal(managedsettings.WhereRunhost); reason != "" {
+		return engine.Classify(engine.ExitPolicy, &compile.PolicyRefusal{Reason: reason})
+	}
 
 	opts.progress.at(receipt.StageVerify)
 	meta, installDir, err := materializeRegistry(cmd, ref, home, opts)
@@ -136,6 +140,9 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	m, err := localrun.ManifestFrom(filepath.Join(installDir, "workspace"))
 	if err != nil {
 		return engine.Classify(engine.ExitCompile, err)
+	}
+	if reason := held.Refusal(managed.Run{Ref: meta.Ref, TargetHosts: len(m.Capabilities.TargetHosts) > 0, AcceptedRisk: meta.Attestation.Consent}); reason != "" {
+		return engine.Classify(engine.ExitPolicy, &compile.PolicyRefusal{Reason: reason})
 	}
 	// The applications on this computer are answered by Agentry Desktop
 	// here, over a link session this device keeps open for the job.

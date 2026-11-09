@@ -450,7 +450,9 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	if err != nil {
 		return err
 	}
-	pol := chosen.Policy
+	// Held to the organizations' managed settings, this computer's and,
+	// for a remote runhost's run, the sending device's.
+	pol := heldRunPolicy(chosen.Policy, opts)
 	// A saved model the run names is refused here, by name, when its
 	// credential is not on this computer; the default's is refused by the
 	// engine when it reads it.
@@ -637,7 +639,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		statuses := mcpinstall.CheckVulnerabilities(cmd.Context(), nil, registryURL(), m.Capabilities.MCPServers)
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "declared MCP servers, per the registry: %s\n", mcpinstall.Summary(statuses))
 		var refuseErr error
-		vulnLine, refuseErr = vulnerabilityVerdict(statuses, registryURL(), opts.allowVulnerableMCP, pol.MCPServers.AllowVulnerable)
+		vulnLine, refuseErr = heldVulnerabilityVerdict(statuses, registryURL(), opts.allowVulnerableMCP, pol)
 		if refuseErr != nil {
 			if !opts.plan {
 				return engine.Classify(engine.ExitPolicy, refuseErr)
@@ -872,6 +874,9 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	if opts.maxCost >= 0 {
 		budgets.MaxCostUSD = opts.maxCost
 	}
+	// The sending device's caps hold a remote runhost's run; this
+	// computer's own are applied by the engine.
+	budgets = planIn.Sender.Budgets(budgets)
 
 	overrides := secretOverrides(profSecrets, answers)
 	signIn, renewSignIn, err := runModelSignIn(cmd.Context(), home, plan, hostedRun(opts))

@@ -173,3 +173,39 @@ func TestTheUnsafeModeMarkRoundTrips(t *testing.T) {
 		t.Fatalf("--in-unsafe-mode was not recorded: %+v", made.Run)
 	}
 }
+
+const schedulesSentence = "Scheduling runs is forbidden by acme's managed settings (schedules)"
+
+func TestEveryScheduleIsHeldAndNoneIsAddedWhileSchedulesAreForbidden(t *testing.T) {
+	h := newScheduleHarness(t)
+	sc := h.add(t, schedule.Recurrence{Kind: schedule.Daily, Time: "09:00", Zone: "UTC", Start: utc(8, 12)})
+	saved := schedulesRefusal
+	t.Cleanup(func() { schedulesRefusal = saved })
+	reason := schedulesSentence
+	schedulesRefusal = func() string { return reason }
+
+	h.now = utc(9, 9)
+	err := fire(t, sc.ID)
+	wantClassified(t, err, 11)
+	if !strings.Contains(err.Error(), schedulesSentence) || strings.Contains(err.Error(), "Unsafe Mode") {
+		t.Errorf("the hold says %q", err)
+	}
+	if len(h.runs) != 0 {
+		t.Fatalf("a held schedule ran: %v", h.runs)
+	}
+
+	_, _, err = runCLI(t, strings.NewReader(""), "schedule", "add", "acme/triage", "--out", t.TempDir(), "--daily", "09:00")
+	wantClassified(t, err, 11)
+	if err == nil || !strings.Contains(err.Error(), schedulesSentence) {
+		t.Errorf("schedule add = %v", err)
+	}
+
+	reason = ""
+	h.now = utc(10, 9)
+	if err := fire(t, sc.ID); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.runs) != 1 {
+		t.Fatalf("after the lock lifts, runs = %v", h.runs)
+	}
+}

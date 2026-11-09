@@ -26,6 +26,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
 
+	"github.com/blaktron/agentry/pkg/managedsettings"
 	"github.com/blaktron/agentry/pkg/manifest"
 
 	"github.com/blaktron/agentry-cli/pkg/managed"
@@ -279,9 +280,14 @@ func newScheduleAddCmd() *cobra.Command {
 			if on != "" && check {
 				return scheduleCheck(cmd, ref, name, out, on, spec, when, scheduleNow())
 			}
+			if !check {
+				if reason := schedulesRefusal(); reason != "" {
+					return engine.Classify(engine.ExitPolicy, &compile.PolicyRefusal{Reason: reason})
+				}
+			}
 			if spec.inUnsafeMode && !check {
 				if reason := scheduleUnsafeModeRefusal(); reason != "" {
-					return heldError(reason)
+					return heldError(reason, true)
 				}
 			}
 			if on != "" {
@@ -1236,13 +1242,13 @@ func scheduleFire(cmd *cobra.Command, id string) error {
 		return nil
 	}
 	st.Last = run
-	if reason := scheduleHold(sc); reason != "" {
+	if reason, unsafe := scheduleHeld(sc); reason != "" {
 		// Held, not run: the occurrence is used and recorded, and the
 		// schedule's count of runs is not.
 		_ = store.SaveState(id, st)
 		_ = store.AppendFire(id, schedule.Fire{Occurrence: run, Started: now, Ended: now, Outcome: schedule.Failed, ExitCode: engine.ExitPolicy, Message: reason})
 		_ = endIfDone(store, sc, st, run, errOut)
-		return heldError(reason)
+		return heldError(reason, unsafe)
 	}
 	st.Runs++
 	if err := store.SaveState(id, st); err != nil {
@@ -1397,8 +1403,8 @@ func newScheduleRunCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if reason := scheduleHold(sc); reason != "" {
-				return heldError(reason)
+			if err := holdError(sc); err != nil {
+				return err
 			}
 			now := scheduleNow()
 			rec := scheduleExecute(cmd, store, sc, now, true)
@@ -1660,8 +1666,8 @@ func newScheduleEditCmd() *cobra.Command {
 			}
 			// A held schedule keeps what it was given until the hold lifts;
 			// pause and remove still work.
-			if reason := scheduleHold(sc); reason != "" {
-				return heldError(reason)
+			if err := holdError(sc); err != nil {
+				return err
 			}
 			f := cmd.Flags()
 			now := scheduleNow()
@@ -2067,19 +2073,48 @@ func scheduleDestinations(names []string) ([]string, error) {
 // answer for the documents.
 var scheduleUnsafeModeRefusal = func() string { return managed.Current().UnsafeModeRefusal() }
 
-// scheduleHold is why sc does not run now: its consents were given in
-// Unsafe Mode and this computer's managed settings forbid Unsafe Mode.
-// "" when it runs.
+// schedulesRefusal is the managed settings' refusal of scheduling on this
+// computer, "" when they allow it; a variable so a test can answer for the
+// documents.
+var schedulesRefusal = func() string { return managed.Current().Forbidden(managedsettings.Schedules) }
+
+// scheduleHold is why sc does not run now: this computer's managed
+// settings forbid schedules, or its consents were given in Unsafe Mode and
+// they forbid Unsafe Mode. "" when it runs.
 func scheduleHold(sc schedule.Schedule) string {
-	if !sc.Run.UnsafeMode {
-		return ""
-	}
-	return scheduleUnsafeModeRefusal()
+	reason, _ := scheduleHeld(sc)
+	return reason
 }
 
-// heldError is the policy refusal of a schedule held by managed settings.
-func heldError(reason string) error {
-	return engine.Classify(engine.ExitPolicy, &compile.PolicyRefusal{Reason: reason + "; this schedule's consents were given in Unsafe Mode"})
+// scheduleHeld is scheduleHold, and whether the hold is Unsafe Mode's.
+func scheduleHeld(sc schedule.Schedule) (reason string, unsafe bool) {
+	if reason := schedulesRefusal(); reason != "" {
+		return reason, false
+	}
+	if !sc.Run.UnsafeMode {
+		return "", false
+	}
+	reason = scheduleUnsafeModeRefusal()
+	return reason, reason != ""
+}
+
+// holdError is the policy refusal of sc while managed settings hold it, or
+// nil when they do not.
+func holdError(sc schedule.Schedule) error {
+	reason, unsafe := scheduleHeld(sc)
+	if reason == "" {
+		return nil
+	}
+	return heldError(reason, unsafe)
+}
+
+// heldError is the policy refusal of a schedule held for reason, which
+// says so when the hold is Unsafe Mode's.
+func heldError(reason string, unsafe bool) error {
+	if unsafe {
+		reason += "; this schedule's consents were given in Unsafe Mode"
+	}
+	return engine.Classify(engine.ExitPolicy, &compile.PolicyRefusal{Reason: reason})
 }
 
 // scheduleRunModel is the saved model a fire of sc runs on and the policy
