@@ -7,10 +7,10 @@
 #      that tag, resolved now, is still that commit. A tag that has moved is
 #      exactly what a pin protects against, so it is an error, not a note.
 #   2. Each pinned action and each CI tool in ci.yaml's `env:` block
-#      (GOLANGCI_LINT_VERSION, GOVULNCHECK_VERSION, GITLEAKS_VERSION) is
+#      (GOLANGCI_LINT_VERSION, GOVULNCHECK_VERSION, GITLEAKS_VERSION, COSIGN_VERSION) is
 #      compared with the newest release tag upstream. A newer release in the
 #      same major is an error (bump the pin: a new SHA and its tag comment,
-#      or the version in ci.yaml, plus GITLEAKS_SHA256 for gitleaks). A new
+#      or the version in ci.yaml, plus GITLEAKS_SHA256 for gitleaks, COSIGN_SHA256 for cosign). A new
 #      major is a warning: it can change behaviour and gets its own change.
 #
 # Needs only git and the network (tags come from `git ls-remote`, which needs
@@ -87,6 +87,7 @@ check_tool() {
 check_tool GOLANGCI_LINT_VERSION golangci/golangci-lint v
 check_tool GOVULNCHECK_VERSION golang/vuln v
 check_tool GITLEAKS_VERSION gitleaks/gitleaks v
+check_tool COSIGN_VERSION sigstore/cosign v
 
 # Nothing installs at an unpinned version.
 if grep -nE '@latest|version: *latest' "$wf_dir"/*.yaml; then
