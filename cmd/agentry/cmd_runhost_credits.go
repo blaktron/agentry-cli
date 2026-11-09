@@ -309,9 +309,9 @@ func newRunhostModelCmd() *cobra.Command {
 			"makes one the default.\n\n" +
 			"A one-off run with --on still carries the key of its own saved model with it,\n" +
 			"and nothing of any other.\n\n" +
-			"The older forms remain: --provider agentry gives the runhost a credits token\n" +
-			"alone, --sign-in claude|chatgpt|copilot signs it in alone, and --provider <api\n" +
-			"provider> sets the one model a runhost that holds no saved models runs on.",
+			"--provider agentry gives the runhost a credits token alone, --sign-in\n" +
+			"claude|chatgpt|copilot signs it in alone, and --provider <api provider> sets the\n" +
+			"one model a runhost that holds no saved models runs on.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			given := 0
@@ -348,10 +348,10 @@ func newRunhostModelCmd() *cobra.Command {
 	cmd.Flags().StringVar(&moveTo, "move-to", "", "with --remove: the saved model the runhost's agents and schedules naming it move to, and the new default when it is the default")
 	cmd.Flags().BoolVar(&keepCredential, "keep-credential", false, "with --remove: leave its key, sign-in or credits token on the runhost")
 	cmd.Flags().StringVar(&def, "default", "", "make one of the runhost's saved models its default")
-	cmd.Flags().StringVar(&provider, "provider", "", "the older form: agentry (a credits token alone), or an API provider whose key the runhost keeps for a runhost that holds no saved models")
+	cmd.Flags().StringVar(&provider, "provider", "", "agentry (a credits token alone), or an API provider whose key the runhost keeps for a runhost that holds no saved models")
 	cmd.Flags().StringVar(&model, "model", "", "with --provider <api provider>: the model the runhost's persistent agents run on (default: the provider's)")
 	cmd.Flags().StringVar(&keyEnv, "api-key-env", "", "with --provider <api provider>: the variable holding its key here (default: the provider's, then this computer's keychain)")
-	cmd.Flags().StringVar(&signIn, "sign-in", "", "the older form: sign the runhost in to a plan alone: claude, chatgpt or copilot")
+	cmd.Flags().StringVar(&signIn, "sign-in", "", "sign the runhost in to a plan alone: claude, chatgpt or copilot")
 	cmd.Flags().BoolVar(&oauthApp, "oauth-app", false, "for a Copilot sign-in: sign in through Agentry's OAuth App instead of its GitHub App")
 	cmd.Flags().BoolVar(&yes, "yes", false, "agree without asking: keep the key, make the token, sign in, and send a Claude subscription's check its one message")
 	return cmd

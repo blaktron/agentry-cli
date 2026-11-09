@@ -101,7 +101,7 @@ func forgetDeviceKey(t *testing.T) {
 // there, under this computer's id, with only its own credential: an
 // endpoint that takes no key is given its address alone, a key goes to the
 // runhost's store and never into its policy, and nothing of another saved
-// model's is sent (I8). A model the runhost's check refuses, or cannot
+// model's is sent. A model the runhost's check refuses, or cannot
 // reach, is not kept, and what was there before stays.
 func TestASavedModelIsMadeAvailableOnARunhostAndCheckedThere(t *testing.T) {
 	ml := newModelsLab(t)
@@ -204,7 +204,7 @@ func mustDefaultPath(t *testing.T) string {
 }
 
 // A one-off run with --on carries the key of the saved model it names and
-// no other (I8): a run on Qwen carries none, a run on GPT carries GPT's;
+// no other: a run on Qwen carries none, a run on GPT carries GPT's;
 // and its receipt's policy names the saved model.
 func TestARunOnARunhostCarriesOnlyItsSavedModelsKey(t *testing.T) {
 	ml := newModelsLab(t)

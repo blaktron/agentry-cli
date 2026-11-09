@@ -82,8 +82,7 @@ func runhostModelsPolicy() (*policy.Policy, string, error) {
 
 // runhostHoldsModels says whether the runhost's policy holds saved models a
 // device made available: its lists, or a version 1 policy's model block
-// whose credential the runhost keeps (an older device's `runhost model
-// --provider`). The model block setup writes, which nothing pays for, is
+// whose credential the runhost keeps (`runhost model --provider` sets one). The model block setup writes, which nothing pays for, is
 // no saved model of anyone's.
 func runhostHoldsModels(pol *policy.Policy) bool {
 	if pol.HasSavedModels() {
