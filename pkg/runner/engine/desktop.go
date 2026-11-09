@@ -562,6 +562,25 @@ func recordDesktop(rd *runDirs, td *teardown, env *receipt.Envelope) {
 	})
 }
 
+// unbindDesktopAtTeardown makes the run's binding to Agentry Desktop end
+// once, however many steps ask, and has the teardown end it even when the
+// run fails before recordDesktop: a refusal of the binding itself, or any
+// later step of the preparation.
+func unbindDesktopAtTeardown(p Params, td *teardown) {
+	l := p.Desktop
+	if l == nil || l.Unbind == nil {
+		return
+	}
+	var once sync.Once
+	unbind := l.Unbind
+	l.Unbind = func(c context.Context) error {
+		var err error
+		once.Do(func() { err = unbind(c) })
+		return err
+	}
+	td.add(func(c context.Context) { _ = l.Unbind(c) })
+}
+
 // writeLines writes each desktop line of the receipt with the calls counted
 // so far. A run without the desktop link writes none.
 func (r *desktopRun) writeLines(env *receipt.Envelope) {

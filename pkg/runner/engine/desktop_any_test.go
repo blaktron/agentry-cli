@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -270,5 +271,43 @@ func TestTheChosenEntryIsNamedToThePerson(t *testing.T) {
 	}
 	if got := boundName(refused, d.Servers[1]); got != "Kdenlive (the application the person chose)" {
 		t.Errorf("the agent's words for the chosen application: %q", got)
+	}
+}
+
+// A run refused after Agentry Desktop bound it, by the binding itself or by
+// a later step, still ends the binding at teardown, once: the policy's
+// refusal of an application the person set up, and a later step of the
+// preparation that fails, both unbind.
+func TestARefusedRunUnbinds(t *testing.T) {
+	refused := &spec.Plan{Ref: "acme/cad@1.0.0", Capabilities: spec.CapSummary{Desktop: &spec.DesktopCap{
+		Servers: []spec.DesktopServerCap{{ID: "blender", Application: "blender"}}, PersonServers: spec.PersonServersRefused}}}
+	s, link := bindStandIn(t, refused, map[string]string{"blender": desktop.FromPerson})
+	p, _ := fixture(t)
+	p.Plan.Capabilities.Desktop = refused.Capabilities.Desktop
+	p.Desktop = link
+	td := &teardown{stderr: io.Discard}
+	if _, err := prepareRunDirs(p, "cafe0425", td); err == nil || !strings.Contains(err.Error(), "allows only the library's applications") {
+		t.Fatalf("the policy's refusal: %v", err)
+	}
+	td.run()
+	td.run()
+	if _, _, unbinds := s.sent(); len(unbinds) != 1 {
+		t.Fatalf("a refused run unbound %d times, want once", len(unbinds))
+	}
+
+	// A later step fails: the compiled gateway files carry no entry for
+	// the application.
+	allowed := blenderPlan()
+	s2, link2 := bindStandIn(t, allowed, nil)
+	p2, _ := fixture(t)
+	p2.Plan.Capabilities.Desktop = allowed.Capabilities.Desktop
+	p2.Desktop = link2
+	td2 := &teardown{stderr: io.Discard}
+	if _, err := prepareRunDirs(p2, "cafe0426", td2); err == nil {
+		t.Fatal("a run whose gateway files lack the application's entry was prepared")
+	}
+	td2.run()
+	if _, _, unbinds := s2.sent(); len(unbinds) != 1 {
+		t.Fatalf("a run that failed after its bind unbound %d times, want once", len(unbinds))
 	}
 }

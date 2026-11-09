@@ -481,6 +481,11 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	if err := preparePersistentFolders(p, rd); err != nil {
 		return nil, err
 	}
+	// A binding is Agentry Desktop's to end: the teardown unbinds it once,
+	// whatever step of the run fails after the bind, refusals of the
+	// binding itself included, so the application's server is not left
+	// running there.
+	unbindDesktopAtTeardown(p, td)
 	if err := prepareDesktopLink(p, rd, runID); err != nil {
 		return nil, err
 	}
