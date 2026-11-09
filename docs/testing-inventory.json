@@ -6579,7 +6579,9 @@
             "TestShareCheckKeepsEachDocumentsText",
             "TestShareCheckOffDecodesAndMarksUnchecked",
             "TestKeptShareTextFollowsTheNextSegment",
-            "TestTurningTheCheckOnChecksWhatWasReadUnchecked"
+            "TestTurningTheCheckOnChecksWhatWasReadUnchecked",
+            "TestCheckShareFolderChecksThatFolderAlone",
+            "TestCheckShareFolderSaysWhatStaysUnread"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -8661,7 +8663,8 @@
             "TestMainsToolsAreTheDesktopsToAnswer",
             "TestTheAssistantsHelperToolsGoToItsClient",
             "TestThePublisherToolsAreTheAssistantsAlone",
-            "TestAPublishedAgentIsNeverGivenThePublisherTools"
+            "TestAPublishedAgentIsNeverGivenThePublisherTools",
+            "TestAFetchedFolderIsCheckedBeforeTheAnswer"
           ],
           "fuzz": [],
           "benchmarks": [],

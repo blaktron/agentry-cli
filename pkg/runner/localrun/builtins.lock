@@ -225,3 +225,5 @@ agentry/drafter@1.21.0 sha256:f814e4eb81d5ca14be3ee248d9596237dcfffb0f535cc4668c
 agentry/drafter@1.22.0 sha256:4571ce262770b41b50f9001b7a17c2a2ee619a20334bc611a3b45fcdb41ef125
 # 1.21.0, over 1.20.1: the publisher tools (quickagent_mine, quickagent_versions, quickagent_fetch, quickagent_revise, quickagent_fork, quickagent_submit, quickagent_manage) and the quickagent-edit skill, by which it looks after the QuickAgents the person publishes.
 agentry/assistant@1.21.0 sha256:23c97455d7b279de44ef6c60ae9fade7f7730189a23fa945f265335a0ffb4a32
+# 1.21.1, over 1.21.0: the quickagent-edit skill reads fetched and revised files in the same turn, since Agentry checks them before the tool answers.
+agentry/assistant@1.21.1 sha256:b75675dafabf33c7cba728615b066f3e1c49c8bbf2ba7a5fa77fee2f919cd292

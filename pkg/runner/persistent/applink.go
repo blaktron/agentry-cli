@@ -14,7 +14,10 @@ package persistent
 // HelperOps (helper.go) when the client gives them. It hands
 // every other tool to its client's handler (the desktop's, which answers
 // with the application's own operations and consent); without one, the tool
-// is answered as Agentry Desktop's. Every call and its answer are a line of the segment's
+// is answered as Agentry Desktop's. When the handler has written a
+// QuickAgent's files into the share (quickagent_fetch, quickagent_revise),
+// the share's check runs on that folder before the answer goes back, so the
+// agent reads them in the same turn. Every call and its answer are a line of the segment's
 // receipts/applink.log.
 
 import (
@@ -26,12 +29,14 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/blaktron/agentry-cli/pkg/managed"
+	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/runnerimage/applink"
 )
 
@@ -155,10 +160,77 @@ func (s *Supervisor) answerAppLink(ctx context.Context, req applink.Request) app
 		if s.opts.AppLink != nil {
 			return s.opts.AppLink(ctx, req)
 		}
+	case applink.IsPublisherTool(req.Tool) && s.opts.AppLink != nil:
+		return s.checkWritten(ctx, req, s.opts.AppLink(ctx, req))
 	case s.opts.AppLink != nil:
 		return s.opts.AppLink(ctx, req)
 	}
 	return applink.Answer{Text: req.Tool + " is answered by Agentry Desktop, and this agent runs without it", IsError: true}
+}
+
+// writtenShareFolder is the folder of the share a publisher tool's call
+// writes into, quickagents/<namespace>/<name>: quickagent_fetch's ref names
+// it, quickagent_revise's folder is it. It is empty for a tool that writes
+// nothing there and for arguments that name no such folder.
+func writtenShareFolder(req applink.Request) string {
+	var args struct {
+		Ref    string `json:"ref"`
+		Folder string `json:"folder"`
+	}
+	if json.Unmarshal(req.Arguments, &args) != nil {
+		return ""
+	}
+	var ns, name string
+	switch req.Tool {
+	case applink.QuickAgentFetch:
+		ref, _, _ := strings.Cut(strings.TrimSpace(args.Ref), "@")
+		ns, name, _ = strings.Cut(ref, "/")
+	case applink.QuickAgentRevise:
+		f := strings.TrimSuffix(strings.TrimSpace(args.Folder), "/")
+		f = strings.TrimPrefix(strings.TrimPrefix(f, "/agent/"), "share/")
+		parts := strings.Split(f, "/")
+		if len(parts) != 3 || parts[0] != applink.PublisherFolder {
+			return ""
+		}
+		ns, name = parts[1], parts[2]
+	default:
+		return ""
+	}
+	if !refSegment.MatchString(ns) || !refSegment.MatchString(name) {
+		return ""
+	}
+	return applink.PublisherFolder + "/" + ns + "/" + name
+}
+
+// refSegment is a namespace or a name in a QuickAgent's reference.
+var refSegment = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
+
+// checkWritten has the share's check run on the folder a publisher tool's
+// call wrote its files into, once the client's handler answered it without
+// an error and before the answer reaches the agent, so the agent reads
+// those files in the turn that asked for them, under the same check as any
+// file added to the share. Nothing outside that folder is checked early,
+// and a failed call checks nothing. Files the check could not take stay
+// unread until the next turn's check, and the answer says so.
+func (s *Supervisor) checkWritten(ctx context.Context, req applink.Request, a applink.Answer) applink.Answer {
+	if a.IsError {
+		return a
+	}
+	folder := writtenShareFolder(req)
+	if folder == "" {
+		return a
+	}
+	s.mu.Lock()
+	sess := s.sess
+	s.mu.Unlock()
+	c, ok := sess.(engine.ShareFolderChecker)
+	if !ok {
+		return a
+	}
+	if err := c.CheckShareFolder(ctx, folder); err != nil {
+		a.Text += "\n\nSome of these files could not be checked yet, so they can be read only after the check before your next turn: " + err.Error()
+	}
+	return a
 }
 
 // selfConfigure saves the name and the personality the agent was given,
