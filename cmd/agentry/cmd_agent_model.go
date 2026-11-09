@@ -107,7 +107,7 @@ func agentModelRef(ref, policyPath string) (string, policy.SavedModel, error) {
 		ok = false
 	}
 	if !ok && onRunhostServer() {
-		return "", sm, engine.Classify(engine.ExitUsage, fmt.Errorf("--model: runhost %s holds no saved model %q (agentry runhost model %s lists those it holds), or default to follow its default", runhostOwnName(), ref, runhostOwnName()))
+		return "", sm, engine.Classify(engine.ExitUsage, fmt.Errorf("--model: runhost %s holds no saved model %q: name one it holds (agentry runhost model %s lists them), or default for its default", runhostOwnName(), ref, runhostOwnName()))
 	}
 	if !ok {
 		return "", sm, engine.Classify(engine.ExitUsage, fmt.Errorf("--model: no saved model %q on this computer (agentry models list), or default to follow the default", ref))

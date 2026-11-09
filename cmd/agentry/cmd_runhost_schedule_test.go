@@ -18,6 +18,8 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runhost/job"
 	"github.com/blaktron/agentry-cli/pkg/runner/connection"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
+	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/schedule"
 )
 
@@ -185,6 +187,7 @@ func TestARunhostScheduleRefusesWhatCannotRunUnattended(t *testing.T) {
 // as it collects any job's.
 func TestScheduleAddOnARunhostHandsTheScheduleOver(t *testing.T) {
 	srv, _ := newRunOnLab(t)
+	labHoldsItsModel(t)
 	oldEnc, oldDec, oldDir, oldNow := schedule.EncryptCredential, runhostDecryptCredential, runhostSchedulesDir, runhostScheduleNow
 	t.Cleanup(func() {
 		schedule.EncryptCredential, runhostDecryptCredential, runhostSchedulesDir, runhostScheduleNow = oldEnc, oldDec, oldDir, oldNow
@@ -308,6 +311,7 @@ func TestScheduleAddOnARunhostThatTakesNoScheduleAsksNothing(t *testing.T) {
 // the runhost takes schedules, and sends nothing.
 func TestScheduleAddCheckOnARunhostKeepsNothing(t *testing.T) {
 	srv, _ := newRunOnLab(t)
+	labHoldsItsModel(t)
 	runhostSchedulesDir = filepath.Join(srv.dir, "schedules")
 	fr := newFakeRegistry(t)
 	fr.addAgent("acme", "demo", "autonomous", "s").addVersion(t, "1.0.0", skillFiles("demo", "capabilities:\n  secrets: [API_TOKEN]\n"))
@@ -405,5 +409,25 @@ func TestARunhostScheduleUsesOnlyAConnectionOfTheRunhostsOwn(t *testing.T) {
 	}
 	if v.Live(g.Token.RefreshToken) {
 		t.Fatal("the runhost's grant was not revoked")
+	}
+}
+
+// labHoldsItsModel has the lab runhost hold its one model as an older
+// runhost keeps it (agentry runhost model --provider): the policy's model
+// block, its key in the runhost's store.
+func labHoldsItsModel(t *testing.T) {
+	t.Helper()
+	t.Setenv("AGENTRY_NO_KEYRING", "")
+	path := mustDefaultPath(t)
+	pol, _, err := policy.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pol.Model.APIKeySource = modelkey.SourceKeyring
+	if err := policy.Save(path, pol); err != nil {
+		t.Fatal(err)
+	}
+	if err := modelkey.Store("anthropic", "sk-test-model-key"); err != nil {
+		t.Fatal(err)
 	}
 }

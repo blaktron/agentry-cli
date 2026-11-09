@@ -531,3 +531,104 @@ func TestALongProvidersKeyHasAStoreEntry(t *testing.T) {
 		t.Errorf("a vendor's key moved to %q", name)
 	}
 }
+
+// A runhost reads a saved model's key from its store alone: a variable of
+// that name in the runhost's own environment is never read, checked or
+// sent, even when a device names it.
+func TestARunhostNeverReadsASavedModelsKeyFromItsOwnEnvironment(t *testing.T) {
+	newRunhostServer(t)
+	t.Setenv("AGENTRY_NO_KEYRING", "")
+	keyring.MockInit()
+	t.Cleanup(keyring.MockInit)
+	t.Setenv("GITHUB_TOKEN", "ghp-the-runhosts-own")
+	path := mustDefaultPath(t)
+	pol, _, _ := policy.Load(path)
+	pol.ResetModels(policy.Model{})
+	sm, err := pol.PutModel("custom-lab", policy.Provider{Name: "Lab", APIKeyEnv: "GITHUB_TOKEN", APIKeySource: modelkey.SourceKeyring, BaseURL: "http://lab:8000/v1", ProxyAllow: []string{"lab:8000"}},
+		policy.SavedModel{ID: "0a0b0c0d", Name: "Lab", Model: "qwen3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := policy.Save(path, pol); err != nil {
+		t.Fatal(err)
+	}
+	if list := runhostListModels(pol); len(list.Models) != 1 || list.Models[0].Refusal == "" {
+		t.Fatalf("a key found in the runhost's environment: %+v", list)
+	}
+	j, archive := unsignedJob(t, "4444444444444444")
+	j.Run.Model, j.Run.ModelKey, j.Run.RunhostModel = job.Model{}, "", sm.ID
+	if a := sendJob(t, j, archive); a.code != engine.ExitPolicy {
+		t.Fatalf("a job on a key only the environment holds: %d %v", a.code, a.err)
+	}
+	if k, err := runhostStoredKey(policy.Model{Provider: "custom", ProviderID: "custom-lab", APIKeyEnv: "GITHUB_TOKEN"}); k != "" || err != nil {
+		t.Fatalf("the stored key %q %v", k, err)
+	}
+}
+
+// "default" names a runhost's default: no saved model there is named it,
+// and a copy whose id is the word is given one of its own.
+func TestDefaultIsNoRunhostSavedModelsName(t *testing.T) {
+	newRunhostServer(t)
+	t.Setenv("AGENTRY_NO_KEYRING", "")
+	keyring.MockInit()
+	t.Cleanup(keyring.MockInit)
+	lab := modelEndpoint(t, 4096, "qwen3")
+	put := func(doc remote.PutModel) (remote.PutAnswer, int, error) {
+		b, _ := json.Marshal(doc)
+		var out bytes.Buffer
+		fw := runhost.NewFrameWriter(&out)
+		code, err := runhostStoreVerb(context.Background(), runhost.Request{Verb: "store", Args: []string{"put-saved-model"}}, bytes.NewReader(b), fw)
+		_ = fw.Exit(code, err)
+		var ans remote.PutAnswer
+		if a, rerr := runhost.ReadAnswer(&out, nil); rerr == nil && a.Code == 0 {
+			_ = json.Unmarshal(a.Result, &ans)
+		}
+		return ans, code, err
+	}
+	pr := remote.ModelProvider{Name: "Lab", BaseURL: lab.URL + "/v1", ProxyAllow: []string{strings.TrimPrefix(lab.URL, "http://")}}
+	if _, code, _ := put(remote.PutModel{ID: "0a0b0c0d", Name: "Default", ProviderID: "custom-lab", Model: "qwen3", Provider: pr}); code != engine.ExitUsage {
+		t.Fatalf("a saved model named default: %d", code)
+	}
+	ans, code, err := put(remote.PutModel{ID: job.RunhostDefault, Name: "Lab", ProviderID: "custom-lab", Model: "qwen3", Provider: pr})
+	if code != 0 || ans.Model.ID == job.RunhostDefault || !policy.IsModelID(ans.Model.ID) {
+		t.Fatalf("a copy whose id is the word: %d %v %+v", code, err, ans.Model)
+	}
+}
+
+// A runhost's one model from `runhost model --provider` reads as its default
+// saved model, and the first one made available beside it keeps it the
+// default; a runhost's model block that nothing pays for is no saved model.
+func TestARunhostsOneModelReadsAsItsDefaultSavedModel(t *testing.T) {
+	newRunhostServer(t)
+	t.Setenv("AGENTRY_NO_KEYRING", "")
+	keyring.MockInit()
+	t.Cleanup(keyring.MockInit)
+	pol, _, _ := runhostModelsPolicy()
+	if list := runhostListModels(pol); len(list.Models) != 0 {
+		t.Fatalf("a fresh runhost holds %+v", list.Models)
+	}
+	t.Cleanup(modelkey.UseKeychain(runhostModelKeys{}))
+	var out bytes.Buffer
+	if code, err := runhostStoreVerb(context.Background(), runhost.Request{Verb: "store", Args: []string{"put-model"}},
+		strings.NewReader(`{"provider":"anthropic","model":"claude-test-1","apiKey":"sk-ant-older"}`), runhost.NewFrameWriter(&out)); code != 0 {
+		t.Fatalf("put-model: %d %v", code, err)
+	}
+	pol, _, _ = runhostModelsPolicy()
+	list := runhostListModels(pol)
+	def, ok := list.DefaultModel()
+	if !ok || len(list.Models) != 1 || def.Name != "anthropic" || def.Model != "claude-test-1" || def.Refusal != "" {
+		t.Fatalf("the runhost's list %+v", list)
+	}
+	lab := modelEndpoint(t, 4096, "qwen3")
+	b, _ := json.Marshal(remote.PutModel{ID: "0a0b0c0d", Name: "Lab", ProviderID: "custom-lab", Model: "qwen3",
+		Provider: remote.ModelProvider{Name: "Lab", BaseURL: lab.URL + "/v1", ProxyAllow: []string{strings.TrimPrefix(lab.URL, "http://")}}})
+	out.Reset()
+	if code, err := runhostStoreVerb(context.Background(), runhost.Request{Verb: "store", Args: []string{"put-saved-model"}}, bytes.NewReader(b), runhost.NewFrameWriter(&out)); code != 0 {
+		t.Fatalf("put-saved-model: %d %v", code, err)
+	}
+	pol, _, _ = runhostModelsPolicy()
+	list = runhostListModels(pol)
+	if def, _ := list.DefaultModel(); len(list.Models) != 2 || def.ID != list.Models[0].ID || def.Name != "anthropic" {
+		t.Fatalf("after one made available: %+v", list)
+	}
+}

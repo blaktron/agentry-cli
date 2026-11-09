@@ -21,7 +21,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"slices"
 	"strings"
 
@@ -123,11 +122,10 @@ func runhostModelRefusal(m policy.Model) string {
 			return err.Error()
 		}
 	case remote.ModelKindKey:
-		if m.APIKeyEnv != "" && strings.TrimSpace(os.Getenv(m.APIKeyEnv)) != "" {
-			return ""
-		}
+		// A runhost reads a saved model's key from its store alone, never
+		// from its own environment, whose variables a device does not name.
 		if m.APIKeySource != modelkey.SourceKeyring {
-			return fmt.Sprintf("its key comes from $%s, which this runhost does not set", m.APIKeyEnv)
+			return "its key is not in this runhost's store"
 		}
 		ok, err := modelkey.Present(m.KeyProvider())
 		switch {
@@ -267,6 +265,10 @@ func runhostPutSavedModel(ctx context.Context, in io.Reader, fw *runhost.FrameWr
 		return engine.ExitUsage, errors.New("the saved model's name, model id and address are each one line")
 	case doc.ID != "" && !policy.IsModelID(doc.ID):
 		return engine.ExitUsage, fmt.Errorf("%q is not a saved model's id", doc.ID)
+	case strings.EqualFold(strings.TrimSpace(doc.Name), job.RunhostDefault):
+		return engine.ExitUsage, fmt.Errorf("a saved model on a runhost cannot be named %q: the word names the runhost's default", job.RunhostDefault)
+	case kind == remote.ModelKindSignIn && strings.TrimSpace(doc.Provider.BaseURL) != "":
+		return engine.ExitUsage, errors.New("a plan's sign-in is reached at its vendor's own address, and is sent none")
 	case kind == remote.ModelKindKey && (!job.ValidKeyEnv(pr.APIKeyEnv) || doc.Key == "" || !job.SecretValueOK(doc.Key) || strings.ContainsAny(doc.Key, " \t")):
 		return engine.ExitUsage, errors.New("a saved model paid by a key comes with one key, one line, and a variable named as a provider names its key")
 	case kind != remote.ModelKindKey && doc.Key != "":
@@ -289,6 +291,11 @@ func runhostPutSavedModel(ctx context.Context, in io.Reader, fw *runhost.FrameWr
 		pol.ResetModels(policy.Model{})
 	}
 	before, _, _ := pol.SavedModels()
+	if doc.ID == job.RunhostDefault {
+		// The word names the runhost's default: such a copy is given an id
+		// of its own.
+		doc.ID = ""
+	}
 	sm, err := pol.PutModel(doc.ProviderID, pr, policy.SavedModel{ID: doc.ID, Name: doc.Name, Model: doc.Model, ContextWindow: doc.ContextWindow})
 	if err != nil {
 		return engine.ExitUsage, fmt.Errorf("this runhost: %w", err)
@@ -349,6 +356,7 @@ func runhostPutSavedModel(ctx context.Context, in io.Reader, fw *runhost.FrameWr
 // token. A variable, so the tests ask no provider.
 var runhostModelCheckers = func(cmd *cobra.Command, home string, pol *policy.Policy, path string) modelcheck.Checkers {
 	c := modelCheckers(cmd, home, pol, path)
+	c.Key = runhostStoredKey
 	c.Credits = func(ctx context.Context, m policy.Model) error {
 		cl := runhostCreditsClient(m)
 		if cl == nil {
@@ -374,7 +382,7 @@ func runhostCheckModel(ctx context.Context, pol *policy.Policy, path string, sm 
 		return remote.Checked{}, err
 	}
 	if view.APIKeyKind == policy.KeyKindClaudeSignIn && !yes {
-		return remote.Checked{}, engine.Classify(engine.ExitUsage, fmt.Errorf("checking a Claude subscription's model sends it one short message, which counts toward the plan's usage: agree to it on the device (--yes) to check the model here"))
+		return remote.Checked{}, engine.Classify(engine.ExitUsage, errors.New("checking a Claude subscription's model sends it one short message, which counts toward the plan's usage: agree to it on the device (--yes) to check the model here"))
 	}
 	if refusal := runhostModelRefusal(view); refusal != "" && runhostModelKind(view) != remote.ModelKindKey {
 		return remote.Checked{}, errors.New(refusal)
@@ -638,8 +646,7 @@ func runhostJobModel(j *job.Job) (int, error) {
 	}
 	key := ""
 	if held.Kind == remote.ModelKindKey {
-		m := rm.Policy.Model
-		if key, err = modelkey.Personal(m.APIKeyEnv, m.APIKeySource, m.KeyProvider()); err != nil || key == "" {
+		if key, err = runhostStoredKey(rm.Policy.Model); err != nil || key == "" {
 			return engine.ExitPolicy, errors.Join(fmt.Errorf("the saved model %q's key could not be read from this runhost's store", held.Name), err)
 		}
 	}
@@ -667,4 +674,15 @@ func runhostModelUsable(agent string) func(localrun.RunModel) error {
 		}
 		return nil
 	}
+}
+
+// runhostStoredKey is m's key as the runhost's store keeps it: never read
+// from the runhost's own environment. "" when the store holds none.
+func runhostStoredKey(m policy.Model) (string, error) {
+	ok, err := modelkey.Present(m.KeyProvider())
+	if err != nil || !ok {
+		return "", err
+	}
+	v, err := modelkey.Lookup(m.KeyProvider())
+	return strings.TrimSpace(v), err
 }

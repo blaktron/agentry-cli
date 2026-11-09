@@ -635,8 +635,7 @@ func (p *Policy) OnlyModel(id string, pr Provider, sm SavedModel) error {
 }
 
 // ResetModels leaves the policy with the model block m and no lists, as a
-// version 1 policy holding m reads: what a computer whose last saved model
-// was taken away goes back to.
+// version 1 policy holding m reads.
 func (p *Policy) ResetModels(m Model) {
 	p.PolicyVersion = Version1
 	p.Providers, p.Models, p.Default = nil, nil, ""

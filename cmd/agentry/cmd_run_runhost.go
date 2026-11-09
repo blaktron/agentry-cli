@@ -224,8 +224,9 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	run.Timeout, run.MaxTurns, run.MaxCost = opts.timeout, opts.maxTurns, opts.maxCost
 	run.Model, run.ModelKey = runModel, modelKey
 	if opts.runhostSchedule != "" {
-		// Named for now: the schedule resolves --model against the
-		// runhost's own list once it reaches it (putRunhostSchedule).
+		// The job is valid as it is sent: the schedule names the runhost's
+		// own saved model once it has the runhost's list
+		// (putRunhostSchedule).
 		run.RunhostModel = job.RunhostDefault
 	}
 	run.Adapter = runAdapter
