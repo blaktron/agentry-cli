@@ -422,9 +422,9 @@ func newProvidersRemoveCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "remove <id> [--move-to <saved model>]",
 		Short: "Remove a provider and the saved models on it, and forget its credential on this computer",
-		Long: "The saved models on the provider are removed with it. While a schedule names one of them the\n" +
-			"removal is refused, with the schedules listed, unless --move-to names the saved model they move\n" +
-			"to; it is also the new default when the default is on this provider. The provider's key is\n" +
+		Long: "The saved models on the provider are removed with it. While a schedule or a persistent agent\n" +
+			"names one of them the removal is refused, with them listed, unless --move-to names the saved model\n" +
+			"they move to; it is also the new default when the default is on this provider. The provider's key is\n" +
 			"deleted from the OS keychain and its sign-in or connected account removed as agentry model-signins\n" +
 			"remove does, unless --keep-credential.",
 		Args: cobra.ExactArgs(1),

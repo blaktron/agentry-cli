@@ -9,30 +9,85 @@ package persistent
 // that pays with Agentry credits needs is opened first, and a policy that
 // cannot be read, cannot open its session, or cannot start a segment is
 // set aside, the agent going on with the policy it had and saying why.
+//
+// The policy an agent holds is the one its saved model reads
+// (policy.ForRun): the model its configuration names, else the default.
+// A change of that model is taken the same way, at the next segment. A
+// model the computer does not have, or whose credential cannot be used
+// here, is never replaced by the default or by the model the agent had:
+// the turn that would run on it fails, saying so, and the next tries again.
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/inference"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 )
 
-// heldPolicy is a policy the supervisor holds, with what follows from it.
+// heldPolicy is a policy the supervisor holds, with what follows from it:
+// full is the policy as it was read, pol the view of it the agent's saved
+// model reads, and ref the model reference that view was made for.
 type heldPolicy struct {
+	full    *policy.Policy
 	pol     *policy.Policy
 	sha     string
+	ref     string
 	adapter string
 	model   string
 	client  *inference.Client
 	credits *engine.InferenceGrant
+}
+
+// heldKey names a policy file's digest and an agent's model reference
+// together: either changing is a policy the agent has not taken.
+func heldKey(sha, ref string) string { return sha + "\n" + ref }
+
+// ModelError is a start or a turn refused for the saved model the agent
+// names: one the computer does not have, or whose credential cannot be
+// used here. Nothing runs on another model in its place.
+type ModelError struct {
+	Agent string
+	// Ref is the saved model the agent names (an id), empty for the
+	// default.
+	Ref string
+	Err error
+}
+
+func (e *ModelError) Error() string { return e.Err.Error() }
+func (e *ModelError) Unwrap() error { return e.Err }
+
+// isModelError says err refuses the agent's saved model.
+func isModelError(err error) bool {
+	var me *ModelError
+	return errors.As(err, &me)
+}
+
+// agentModel is the saved model agent a, naming ref, runs on under the
+// policy full: its view of the policy and its harness, as an image. A
+// model full does not have, or one usable refuses, is a ModelError.
+func agentModel(a string, full *policy.Policy, ref string, usable func(localrun.RunModel) error) (localrun.RunModel, error) {
+	rm, err := localrun.ChooseRunModel(full, ref, "")
+	if err != nil {
+		if localrun.IsMissingModel(err) {
+			err = fmt.Errorf("the %s agent names the saved model %q, which this computer does not have, and an agent never runs on the default in its place: move it to one it has (agentry agent configure %s --model <name>, or --model default; agentry models list)", a, ref, a)
+		}
+		return rm, engine.Classify(engine.ExitPolicy, &ModelError{Agent: a, Ref: ref, Err: err})
+	}
+	rm.Adapter = localrun.ImageAdapter(rm.Adapter)
+	if usable != nil {
+		if err := usable(rm); err != nil {
+			return rm, engine.Classify(engine.ExitPolicy, &ModelError{Agent: a, Ref: ref, Err: err})
+		}
+	}
+	return rm, nil
 }
 
 // policy is the policy the supervisor holds now.
@@ -66,13 +121,41 @@ func modelLabel(p *policy.Policy) string {
 	return p.Model.Provider + "/" + p.Model.Name
 }
 
-// candidatePolicy is the policy file as it is now, when it differs from the
-// one the supervisor holds and was not set aside; nil otherwise. The file
-// is read again only when its size or time changed since it was last read.
-func (s *Supervisor) candidatePolicy() (*policy.Policy, string, error) {
+// savedModelLabel is how the saved model a policy's view reads is named to
+// the person: its name, then provider/name.
+func savedModelLabel(p *policy.Policy) string {
+	if p == nil {
+		return ""
+	}
+	if sm, ok := p.RunSavedModel(); ok && sm.Name != "" {
+		return sm.Name + " (" + modelLabel(p) + ")"
+	}
+	return modelLabel(p)
+}
+
+// heldModel is the saved model the agent's held policy reads; false for a
+// policy that has none.
+func (s *Supervisor) heldModel() (policy.SavedModel, bool) {
+	p := s.policy()
+	if p == nil {
+		return policy.SavedModel{}, false
+	}
+	return p.RunSavedModel()
+}
+
+// candidatePolicy is the policy file as it is now, when it or the agent's
+// model reference ref differs from what the supervisor holds and was not
+// set aside; nil otherwise. The file is read again only when its size or
+// time changed since it was last read.
+func (s *Supervisor) candidatePolicy(ref string) (*policy.Policy, string, error) {
 	path := s.policyPath()
 	if path == "" {
-		return nil, "", nil
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if ref == s.polRef || s.full == nil || heldKey(s.polSHA, ref) == s.polRefused {
+			return nil, "", nil
+		}
+		return s.full, s.polSHA, nil
 	}
 	fi, err := os.Stat(path)
 	if err != nil {
@@ -93,7 +176,7 @@ func (s *Supervisor) candidatePolicy() (*policy.Policy, string, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if seen.sha == s.polSHA || seen.sha == s.polRefused {
+	if (seen.sha == s.polSHA && ref == s.polRef) || heldKey(seen.sha, ref) == s.polRefused {
 		return nil, "", nil
 	}
 	return seen.pol, seen.sha, nil
@@ -109,11 +192,25 @@ type statSeen struct {
 	err  error
 }
 
-// policyMoved says the policy file holds a policy the supervisor does not
-// and has not set aside. A file that cannot be read has not moved.
-func (s *Supervisor) policyMoved() bool {
-	p, _, err := s.candidatePolicy()
+// policyMoved says the policy file, or the agent's model reference ref,
+// gives a policy the supervisor does not hold and has not set aside. A file
+// that cannot be read has not moved.
+func (s *Supervisor) policyMoved(ref string) bool {
+	p, _, err := s.candidatePolicy(ref)
 	return err == nil && p != nil
+}
+
+// checkModel says whether the next segment could start on the saved model
+// the agent names now (ref): nil when the policy it would take has that
+// model and it can be used, or when there is no policy to take; a
+// ModelError otherwise. Nothing changes.
+func (s *Supervisor) checkModel(ref string) error {
+	p, _, err := s.candidatePolicy(ref)
+	if err != nil || p == nil {
+		return nil
+	}
+	_, err = agentModel(s.opts.Agent.Name, p, ref, s.opts.ModelUsable)
+	return err
 }
 
 // reloadPolicy takes the policy file as it is now, before a segment starts.
@@ -122,30 +219,42 @@ func (s *Supervisor) policyMoved() bool {
 // changes. Only then is it taken, the harness and the model following, the
 // old credits session ended, messengers held to it and the person told what
 // changed. A candidate that cannot be read or prepared is set aside and
-// said, and the agent keeps the policy it has. The caller holds seg.
-func (s *Supervisor) reloadPolicy(ctx context.Context) {
-	p, sha, err := s.candidatePolicy()
+// said, and the agent keeps the policy it has. A saved model it cannot run
+// on is not set aside: the ModelError is returned, for the segment to fail
+// with, and the next segment tries again. The caller holds seg.
+func (s *Supervisor) reloadPolicy(ctx context.Context, ref string) error {
+	p, sha, err := s.candidatePolicy(ref)
 	if err != nil {
 		s.logf("the policy %s cannot be read, so the agent keeps the one it has: %v", s.policyPath(), err)
-		return
+		return nil
 	}
 	if p == nil {
-		return
+		return nil
 	}
-	next, err := s.preparePolicy(ctx, p, sha)
+	next, err := s.preparePolicy(ctx, p, sha, ref)
+	if isModelError(err) {
+		return err
+	}
 	if err != nil {
-		s.refusePolicy(sha, err)
-		return
+		s.refusePolicy(heldKey(sha, ref), err)
+		return nil
 	}
 	s.takePolicy(next, true)
+	return nil
 }
 
-// preparePolicy is what holding p would be: its harness and model, and,
-// for a model that pays with Agentry credits, a client for its registry and
-// a session opened with it (kept from the policy held when the registry and
-// the model are the same).
-func (s *Supervisor) preparePolicy(ctx context.Context, p *policy.Policy, sha string) (heldPolicy, error) {
-	next := heldPolicy{pol: p, sha: sha, adapter: localrun.ImageAdapter(adapter.DefaultFor(p)), model: modelLabel(p)}
+// preparePolicy is what holding full, for the agent's model reference
+// ref, would be: the view of it that saved model reads, its harness and
+// model, and, for a model that pays with Agentry credits, a client for its
+// registry and a session opened with it (kept from the policy held when
+// the registry and the model are the same).
+func (s *Supervisor) preparePolicy(ctx context.Context, full *policy.Policy, sha, ref string) (heldPolicy, error) {
+	rm, err := agentModel(s.opts.Agent.Name, full, ref, s.opts.ModelUsable)
+	if err != nil {
+		return heldPolicy{}, err
+	}
+	p := rm.Policy
+	next := heldPolicy{full: full, pol: p, sha: sha, ref: ref, adapter: rm.Adapter, model: modelLabel(p)}
 	if p.Model.Provider != policy.ProviderAgentry {
 		return next, nil
 	}
@@ -174,8 +283,8 @@ func (s *Supervisor) preparePolicy(ctx context.Context, p *policy.Policy, sha st
 // what changed. It returns the policy held before.
 func (s *Supervisor) takePolicy(next heldPolicy, say bool) heldPolicy {
 	s.mu.Lock()
-	prev := heldPolicy{pol: s.pol, sha: s.polSHA, adapter: s.adapter, model: s.model, client: s.creditsCl, credits: s.credits}
-	s.pol, s.polSHA, s.adapter, s.model = next.pol, next.sha, next.adapter, next.model
+	prev := heldPolicy{full: s.full, pol: s.pol, sha: s.polSHA, ref: s.polRef, adapter: s.adapter, model: s.model, client: s.creditsCl, credits: s.credits}
+	s.full, s.pol, s.polSHA, s.polRef, s.adapter, s.model = next.full, next.pol, next.sha, next.ref, next.adapter, next.model
 	s.creditsCl, s.credits = next.client, next.credits
 	s.polTaken = &prev
 	s.mu.Unlock()
@@ -186,18 +295,18 @@ func (s *Supervisor) takePolicy(next heldPolicy, say bool) heldPolicy {
 		s.startCreditsRenewal()
 	}
 	if say {
-		s.sayPolicyChange(prev.pol, next.pol, prev.adapter, next.adapter)
+		s.sayPolicyChange(prev, next)
 	}
 	go s.reconcileMessengers() // the caller holds seg, which reconciling a messenger's role may wait on
 	return prev
 }
 
-// refusePolicy sets aside the policy file whose digest is sha, which the
-// agent could not take, and says why; the agent keeps the policy it has
-// until the file changes again.
-func (s *Supervisor) refusePolicy(sha string, err error) {
+// refusePolicy sets aside the policy file and model reference key names
+// (heldKey), which the agent could not take, and says why; the agent keeps
+// the policy it has until either changes again.
+func (s *Supervisor) refusePolicy(key string, err error) {
 	s.mu.Lock()
-	s.polRefused = sha
+	s.polRefused = key
 	s.mu.Unlock()
 	s.logf("the policy changed, and the agent could not take it, so it goes on with the one it had: %v", err)
 	s.notice("The runner's policy changed, and the agent could not take it, so it goes on with the one it had: " + err.Error())
@@ -205,13 +314,16 @@ func (s *Supervisor) refusePolicy(sha string, err error) {
 
 // revertPolicy puts back the policy held before the last one taken, when a
 // segment could not start on the new one, and sets the new one aside. It
-// answers false when no policy was taken since the last segment started.
+// answers false when no policy was taken since the last segment started,
+// and when the agent was moved to another saved model since: it never runs
+// on the model it was moved from in its place.
 func (s *Supervisor) revertPolicy(cause error) bool {
 	s.mu.Lock()
-	prev, refused := s.polTaken, s.polSHA
+	prev, refused := s.polTaken, heldKey(s.polSHA, s.polRef)
+	moved := prev != nil && prev.ref != s.polRef
 	s.polTaken = nil
 	s.mu.Unlock()
-	if prev == nil || prev.pol == nil {
+	if prev == nil || prev.pol == nil || moved {
 		return false
 	}
 	s.takePolicy(*prev, false)
@@ -219,14 +331,16 @@ func (s *Supervisor) revertPolicy(cause error) bool {
 	return true
 }
 
-// sayPolicyChange tells the person what a policy change does to the agent.
-func (s *Supervisor) sayPolicyChange(was, now *policy.Policy, wasAdapter, nowAdapter string) {
+// sayPolicyChange tells the person what a change of policy, or of the
+// agent's saved model, does to the agent.
+func (s *Supervisor) sayPolicyChange(prev, next heldPolicy) {
+	was, now, wasAdapter, nowAdapter := prev.pol, next.pol, prev.adapter, next.adapter
 	if was == nil || now == nil {
 		return
 	}
 	var said []string
-	if modelLabel(was) != modelLabel(now) {
-		said = append(said, "its model is now "+modelLabel(now))
+	if savedModelLabel(was) != savedModelLabel(now) {
+		said = append(said, "its model is now "+savedModelLabel(now))
 	}
 	if wasAdapter != nowAdapter {
 		said = append(said, "it runs on "+nowAdapter+" now, in a new conversation that carries the last exchange")
@@ -239,6 +353,9 @@ func (s *Supervisor) sayPolicyChange(was, now *policy.Policy, wasAdapter, nowAda
 		}
 	}
 	text := "The runner's policy changed"
+	if prev.sha == next.sha && prev.ref != next.ref {
+		text = "The agent's model changed"
+	}
 	for i, x := range said {
 		if i == 0 {
 			text += ": " + x

@@ -112,7 +112,7 @@ func TestASavedModelWithNoKeyIsRefusedByNameBeforeTheRun(t *testing.T) {
 	env := map[string]string{}
 	getenv := func(k string) string { return env[k] }
 
-	err = savedModelUsable(t.TempDir(), rm, getenv)
+	err = savedModelUsable(t.TempDir(), rm, getenv, runOnAnother)
 	wantClassified(t, err, engine.ExitPolicy)
 	for _, want := range []string{`the saved model "GPT" (provider openai)`, "$OPENAI_API_KEY", "provider:openai", "--model"} {
 		if !strings.Contains(err.Error(), want) {
@@ -120,12 +120,12 @@ func TestASavedModelWithNoKeyIsRefusedByNameBeforeTheRun(t *testing.T) {
 		}
 	}
 	kept["openai"] = true
-	if err := savedModelUsable(t.TempDir(), rm, getenv); err != nil {
+	if err := savedModelUsable(t.TempDir(), rm, getenv, runOnAnother); err != nil {
 		t.Fatalf("with the key in the keychain: %v", err)
 	}
 	kept["openai"] = false
 	env["OPENAI_API_KEY"] = "sk-test"
-	if err := savedModelUsable(t.TempDir(), rm, getenv); err != nil {
+	if err := savedModelUsable(t.TempDir(), rm, getenv, runOnAnother); err != nil {
 		t.Fatalf("with the key in the environment: %v", err)
 	}
 }
@@ -146,7 +146,7 @@ func TestASavedModelWhoseSignInIsGoneIsRefusedByName(t *testing.T) {
 	prev := signInKept
 	signInKept = func(string, string) bool { return false }
 	t.Cleanup(func() { signInKept = prev })
-	err = savedModelUsable(t.TempDir(), rm, func(string) string { return "" })
+	err = savedModelUsable(t.TempDir(), rm, func(string) string { return "" }, runOnAnother)
 	wantClassified(t, err, engine.ExitPolicy)
 	if !strings.Contains(err.Error(), `the saved model "Plan" (provider openai)`) || !strings.Contains(err.Error(), "model-signins add chatgpt") {
 		t.Fatalf("refusal: %v", err)
@@ -292,7 +292,7 @@ func TestAnEndpointAddedWithNoKeyRunsWithNone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := savedModelUsable(home, rm, func(string) string { return "" }); err != nil {
+	if err := savedModelUsable(home, rm, func(string) string { return "" }, runOnAnother); err != nil {
 		t.Fatalf("a run on an endpoint that takes no key is refused: %v", err)
 	}
 
@@ -304,7 +304,7 @@ func TestAnEndpointAddedWithNoKeyRunsWithNone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = savedModelUsable(home, rm, func(string) string { return "" })
+	err = savedModelUsable(home, rm, func(string) string { return "" }, runOnAnother)
 	wantClassified(t, err, engine.ExitPolicy)
 	for _, want := range []string{`the saved model "Keyed Qwen" (provider custom-keyed)`, "$KEYED_LAB_KEY"} {
 		if !strings.Contains(err.Error(), want) {

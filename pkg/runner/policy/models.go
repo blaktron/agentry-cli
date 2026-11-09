@@ -62,6 +62,10 @@ var customSlugRE = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 // modelIDRE is a saved model's id.
 var modelIDRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
 
+// IsModelID reports whether id has the shape of a saved model's id, as a
+// schedule's record or an agent's configuration names one.
+func IsModelID(id string) bool { return modelIDRE.MatchString(id) }
+
 // Provider is one credential the saved models are paid with. The key, when
 // there is one, is never in the file: ProviderAPIKeyEnv names the variable,
 // and the keychain entry is provider:<id>. A sign-in is kept in the model

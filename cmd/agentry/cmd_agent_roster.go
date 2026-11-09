@@ -26,6 +26,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/mcpinstall"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"github.com/blaktron/agentry-cli/pkg/runner/persistent"
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/setup"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/pkg/runner/targethost"
@@ -249,6 +250,7 @@ func newAgentConfigureCmd() *cobra.Command {
 		noMsSignoff, fastmailToken, noFastmail                                                 bool
 		calendarFeed, noCalendarFeed                                                           string
 		calendarSignIn                                                                         bool
+		model                                                                                  string
 	)
 	cmd := &cobra.Command{
 		Use:   "configure <name>",
@@ -274,6 +276,14 @@ func newAgentConfigureCmd() *cobra.Command {
 			"  agentry agent configure assistant --share ~/Documents/assistant\n" +
 			"  agentry agent configure assistant --knowledge my-notes\n" +
 			"  agentry agent configure assistant --add-server server.yaml\n\n" +
+			"--model names the saved model the agent runs on (agentry models list), by its\n" +
+			"name or id; --model default has it follow the default. A running agent takes\n" +
+			"it at its next turn with no stop, and is told; on another harness its new\n" +
+			"conversation carries the last exchange. Nothing more is asked of you: the\n" +
+			"model's provider was agreed to when it was set up. A turn on a saved model\n" +
+			"this computer no longer has, or cannot use, fails saying so, and never runs\n" +
+			"on the default instead.\n\n" +
+			"  agentry agent configure assistant --model \"Local Qwen\"\n\n" +
 			"--add-suggested adds a server the agent suggests (agentry agent show lists\n" +
 			"them) as one of your own, the same way. The servers an agent comes with\n" +
 			"are entries of its roster from the start, switched with agentry agent\n" +
@@ -376,6 +386,15 @@ func newAgentConfigureCmd() *cobra.Command {
 					}
 				}
 				ch.Share, set = &dir, set+1
+			}
+			var movedTo *policy.SavedModel
+			if cmd.Flags().Changed("model") {
+				id, sm, err := agentModelRef(model, policyPath)
+				if err != nil {
+					return err
+				}
+				ch.Model, set = &id, set+1
+				movedTo = &sm
 			}
 			if runOnStart != "" {
 				v, err := strconv.ParseBool(runOnStart)
@@ -514,11 +533,19 @@ func newAgentConfigureCmd() *cobra.Command {
 			if flags.jsonOut {
 				return emitJSON(cmd.OutOrStdout(), r)
 			}
+			if movedTo != nil {
+				if movedTo.ID == "" {
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "model: the default; %s\n", whenTaken(running))
+				} else {
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "model: %s; %s\n", safeTerminalText(movedTo.Name, 64), whenTaken(running))
+				}
+			}
 			printChanged(cmd.OutOrStdout(), a, r, running)
 			return nil
 		},
 	}
 	f := cmd.Flags()
+	f.StringVar(&model, "model", "", "the saved model it runs on, by name or id (agentry models list); default follows the default")
 	f.StringVar(&name, "name", "", "the name the agent goes by (empty clears it)")
 	f.StringVar(&personalityFile, "personality-file", "", fmt.Sprintf("a text file describing the personality you want it to have (at most %d KiB)", persistent.MaxPersonalityBytes>>10))
 	f.StringVar(&share, "share", "", "the folder it shares with you, read and write (empty: ~/agentry/<agent>share)")
