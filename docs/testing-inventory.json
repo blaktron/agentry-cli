@@ -8645,6 +8645,16 @@
           ]
         },
         {
+          "path": "pkg/runner/persistent/change_desktoponly_test.go",
+          "tests": [
+            "TestAgentryHelperTakesAModelChangeAndNothingElse"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "pkg/runner/persistent/change_frame_test.go",
           "tests": [
             "TestTheAgentIsToldWhatAChangeGaveAndTookAway",
@@ -9766,7 +9776,19 @@
             "TestRemovingTheDefaultMakesTheMoveTargetTheDefault",
             "TestAScheduleOnAHarnessBlocksHarnessUsesItsSavedModel",
             "TestAProvidersStateSaysWhetherItsCredentialIsHere",
-            "TestAnEndpointOfYourOwnIsAProviderNamedForIt"
+            "TestAnEndpointOfYourOwnIsAProviderNamedForIt",
+            "TestARemovalIsRefusedWhileAgentryHelperNamesTheModelAndMovesIt"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
+          "path": "pkg/runner/savedmodels/usable_test.go",
+          "tests": [
+            "TestASavedModelWhoseKeyIsNotHereIsRefusedByName",
+            "TestASavedModelWhoseSignInIsNotKeptIsRefusedByName"
           ],
           "fuzz": [],
           "benchmarks": [],

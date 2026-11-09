@@ -259,3 +259,34 @@ func TestAnEndpointOfYourOwnIsAProviderNamedForIt(t *testing.T) {
 		t.Fatal("an endpoint with no address was taken")
 	}
 }
+
+// Agentry Helper, which runs only in Agentry Desktop, can be put on a saved
+// model: a removal of that model is refused while it names it, and moving
+// it goes through, whichever client asks.
+func TestARemovalIsRefusedWhileAgentryHelperNamesTheModelAndMovesIt(t *testing.T) {
+	home, path, pol := lab(t)
+	qwen, llama := savedModel(t, pol, "Qwen"), savedModel(t, pol, "Llama")
+	helper, err := persistent.Lookup("main")
+	if err != nil || !helper.DesktopOnly {
+		t.Fatalf("Agentry Helper is %+v", helper)
+	}
+	id := qwen.ID
+	if _, _, err := persistent.Configure(context.Background(), home, helper, persistent.ClientDesktop, persistent.Change{Model: &id}); err != nil {
+		t.Fatalf("Agentry Helper put on a saved model: %v", err)
+	}
+	users, err := Users(home, pol, []policy.SavedModel{qwen})
+	if err != nil || len(users) != 1 || users[0].Kind != KindAgent || users[0].ID != "main" || users[0].Name != "Agentry Helper" {
+		t.Fatalf("users %+v (%v)", users, err)
+	}
+	remove := func(newDefault string) error { _, err := pol.RemoveModel(qwen.ID, newDefault); return err }
+	var used *InUseError
+	if _, err := Remove(context.Background(), home, pol, path, []policy.SavedModel{qwen}, "", persistent.ClientCLI, remove); !errors.As(err, &used) {
+		t.Fatalf("the removal was not refused: %v", err)
+	}
+	if _, err := Remove(context.Background(), home, pol, path, []policy.SavedModel{qwen}, "Llama", persistent.ClientCLI, remove); err != nil {
+		t.Fatalf("the move: %v", err)
+	}
+	if got := configured(t, home, "main"); got != llama.ID {
+		t.Fatalf("Agentry Helper names %q, want Llama's %q", got, llama.ID)
+	}
+}

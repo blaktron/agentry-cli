@@ -56,7 +56,7 @@ type named struct {
 // Users are the schedules on this computer that name one of the saved models
 // sms, by id or by name, or that run on the harness whose block in pol one of
 // them was read from and name no saved model, which run on it; then the
-// persistent agents that name one of them.
+// persistent agents that name one of them, Agentry Desktop's own included.
 func Users(home string, pol *policy.Policy, sms []policy.SavedModel) ([]User, error) {
 	n, err := find(home, pol, sms)
 	return n.users, err
@@ -92,9 +92,6 @@ func find(home string, pol *policy.Policy, sms []policy.SavedModel) (named, erro
 		}
 	}
 	for _, a := range persistent.AgentsIn(home) {
-		if a.DesktopOnly {
-			continue
-		}
 		cfg, err := persistent.LoadConfig(home, a.Name)
 		if err != nil || cfg.Model == "" {
 			continue
