@@ -231,20 +231,20 @@ func TestTheThirdEndingStands(t *testing.T) {
 // failed; and none that the harness's time left could not hold.
 func TestARunIsNotAskedWhenNothingIsOpenOrItCannotBe(t *testing.T) {
 	for name, tc := range map[string]struct {
-		h        stepsHarness
+		h        *stepsHarness
 		margin   time.Duration
 		ending   string
 		wantCode int
 	}{
-		"every open step dropped": {h: stepsHarness{perStart: []int{1}, dropRest: true}, ending: endingAllDone},
-		"no checklist":            {h: stepsHarness{perStart: []int{1}, noList: true}, ending: endingNoChecklist},
-		"ended blocked":           {h: stepsHarness{perStart: []int{1}, blocked: true}, wantCode: int(ExitBlocked)},
-		"a harness failure":       {h: stepsHarness{perStart: []int{1}, exitCode: 3}, wantCode: int(ExitHarness)},
-		"no time left":            {h: stepsHarness{perStart: []int{1}}, margin: time.Hour, ending: "finished with 2 open step(s): query each package; write the report"},
+		"every open step dropped": {h: &stepsHarness{perStart: []int{1}, dropRest: true}, ending: endingAllDone},
+		"no checklist":            {h: &stepsHarness{perStart: []int{1}, noList: true}, ending: endingNoChecklist},
+		"ended blocked":           {h: &stepsHarness{perStart: []int{1}, blocked: true}, wantCode: int(ExitBlocked)},
+		"a harness failure":       {h: &stepsHarness{perStart: []int{1}, exitCode: 3}, wantCode: int(ExitHarness)},
+		"no time left":            {h: &stepsHarness{perStart: []int{1}}, margin: time.Hour, ending: "finished with 2 open step(s): query each package; write the report"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := tc.h
-			p, f := stepsFixture(t, &h)
+			p, f := stepsFixture(t, h)
 			if tc.margin > 0 {
 				finishCheckMargin = tc.margin
 			}
