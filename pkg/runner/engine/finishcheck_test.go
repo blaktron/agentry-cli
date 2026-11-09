@@ -13,6 +13,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
@@ -221,7 +222,7 @@ func TestTheThirdEndingStands(t *testing.T) {
 	}
 	c := env.Checklist
 	if env.ExitCode != 0 || c == nil || len(c.FinishChecks) != 2 || c.Steps != 3 || len(c.Open) != 3 ||
-		c.Ending != "finished with 3 open step(s): take the inventory; query each package; write the report" {
+		c.Ending != "finished with 3 open steps: take the inventory; query each package; write the report" {
 		t.Fatalf("exit %d, checklist record %+v", env.ExitCode, c)
 	}
 }
@@ -240,7 +241,7 @@ func TestARunIsNotAskedWhenNothingIsOpenOrItCannotBe(t *testing.T) {
 		"no checklist":            {h: &stepsHarness{perStart: []int{1}, noList: true}, ending: endingNoChecklist},
 		"ended blocked":           {h: &stepsHarness{perStart: []int{1}, blocked: true}, wantCode: int(ExitBlocked)},
 		"a harness failure":       {h: &stepsHarness{perStart: []int{1}, exitCode: 3}, wantCode: int(ExitHarness)},
-		"no time left":            {h: &stepsHarness{perStart: []int{1}}, margin: time.Hour, ending: "finished with 2 open step(s): query each package; write the report"},
+		"no time left":            {h: &stepsHarness{perStart: []int{1}}, margin: time.Hour, ending: "finished with 2 open steps: query each package; write the report"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := tc.h
@@ -282,6 +283,52 @@ func TestAFinishCheckCountsInTheTurnBudget(t *testing.T) {
 	}
 	if starts, _ := h.snapshot(); len(starts) != 2 {
 		t.Fatalf("the harness started %d times, want 2", len(starts))
+	}
+}
+
+// So does the cost budget: each start's cost adds to the starts' before it.
+func TestAFinishCheckCountsInTheCostBudget(t *testing.T) {
+	h := &stepsHarness{perStart: []int{1}}
+	p, f := stepsFixture(t, h)
+	p.Budgets.MaxCostUSD = 0.015
+	_, err := Run(context.Background(), f, p)
+	var ce *ClassifiedError
+	if !errors.As(err, &ce) || ce.Code != ExitBudget || !strings.Contains(err.Error(), "cost budget") {
+		t.Fatalf("err %v, want the cost budget", err)
+	}
+	if starts, _ := h.snapshot(); len(starts) != 2 {
+		t.Fatalf("the harness started %d times, want 2", len(starts))
+	}
+}
+
+// A copy holding more steps than a list may, or a step longer than one may
+// be, is read only as far as a list's bounds; one open step is named as one.
+func TestAChecklistCopyIsReadWithinAListsBounds(t *testing.T) {
+	dir := t.TempDir()
+	var b strings.Builder
+	b.WriteString("# Checklist\n\n")
+	for i := range 150 {
+		fmt.Fprintf(&b, "- [ ] step %d %s\n", i, strings.Repeat("é", 400))
+	}
+	file := filepath.Join(dir, ChecklistCopyFile)
+	if err := os.WriteFile(file, []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	steps, ok := readChecklistCopy(file)
+	if !ok || len(steps) != maxChecklistSteps {
+		t.Fatalf("read %d steps (ok %v), want %d", len(steps), ok, maxChecklistSteps)
+	}
+	for _, st := range steps {
+		if len(st.Text) > maxStepText || !utf8.ValidString(st.Text) {
+			t.Fatalf("a step of %d bytes (valid %v)", len(st.Text), utf8.ValidString(st.Text))
+		}
+	}
+	if err := os.WriteFile(file, []byte("- [x] one\n- [>] two\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rd := &runDirs{checklistCopy: file}
+	if rec := checklistRecord(rd); rec.Ending != "finished with 1 open step: two" {
+		t.Fatalf("ending %q", rec.Ending)
 	}
 }
 

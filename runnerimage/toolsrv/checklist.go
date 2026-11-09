@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -339,20 +338,30 @@ func validateChecklistCopy(spec *Spec) error {
 // copyChecklist replaces the runner's copy of the list with text, the list
 // the tool has just saved or read. The copy is how the runner learns the
 // run's steps; a copy that cannot be written is logged and the agent's call
-// still answers, since the list itself is kept.
+// still answers, since the list itself is kept. It is written only as a
+// regular file, as the list is: a link, a folder or a pipe put in its place
+// is refused, never written through or waited on.
 func (s *server) copyChecklist(text string) {
 	l := s.spec.ChecklistCopy
 	if l == "" {
 		return
 	}
-	f, err := os.OpenFile(l, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644) //nolint:gosec // the spec's own receipt path
+	if err := s.writeChecklistCopy(l, text); err != nil {
+		s.logf("checklist copy: %v", err)
+	}
+}
+
+func (s *server) writeChecklistCopy(l, text string) error {
+	root, err := beneath.Open(filepath.Dir(l))
 	if err != nil {
-		s.logf("checklist copy: %v", err)
-		return
+		return err
 	}
-	s.own(l)
+	defer func() { _ = root.Close() }()
+	f, err := root.CreateRegular(filepath.Base(l), 0o644)
+	if err != nil {
+		return err
+	}
+	s.ownIn(root, filepath.Base(l))
 	_, werr := f.WriteString(text)
-	if err := errors.Join(werr, f.Close()); err != nil {
-		s.logf("checklist copy: %v", err)
-	}
+	return errors.Join(werr, f.Close())
 }

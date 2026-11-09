@@ -10,8 +10,9 @@ package engine
 //
 // The check is made only where a start on the stored conversation is a
 // resume (spec.HarnessSpec.Resume, a container harness, not one driven as a
-// session turn), and only after an ending with no error: the harness ended
-// on a text answer, so no tool call is in flight and none can act twice.
+// session turn), and only after an ending with no error. Such a harness
+// exits 0 only once the model has answered without a tool call, so nothing
+// is in flight that the new start could run again.
 // A run whose agent called end_blocked, or whose runner found it blocked,
 // is not asked. Its starts count in the run's turns, cost and time like a
 // resume's, and none is begun with less than finishCheckMargin of the
@@ -30,9 +31,11 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	"github.com/blaktron/agentry-cli/runnerimage/beneath"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
 
@@ -47,8 +50,14 @@ const finishChecks = 2
 // harness and one answer. A variable so the tests need not wait.
 var finishCheckMargin = 2 * time.Minute
 
-// maxChecklistCopy bounds the copy the engine reads.
-const maxChecklistCopy = 256 << 10
+// maxChecklistCopy bounds the copy the engine reads, and maxChecklistSteps
+// and maxStepText the steps it takes from it: the tool's own bounds on a
+// list, held again here since the copy is a file in the agent's reach.
+const (
+	maxChecklistCopy  = 256 << 10
+	maxChecklistSteps = 100
+	maxStepText       = 500
+)
 
 // The run's endings as its checklist left them, for the receipt.
 const (
@@ -110,27 +119,49 @@ func keepsChecklist(p Params) bool {
 	return p.EndBlocked && slices.Contains(p.Plan.Tools, toolsrv.ToolChecklist)
 }
 
-// readChecklistCopy reads the steps the tools server last copied. ok is
-// false when there is no copy: the agent never saved or read a list. A copy
-// that is not a regular file is read as none.
+// readChecklistCopy reads the steps the tools server last copied, at most
+// maxChecklistSteps of them, each cut to maxStepText. ok is false when there
+// is no copy: the agent never saved or read a list. The tools container is
+// still running when the engine reads, so the copy is opened only as a
+// regular file: a link, a folder or a pipe put in its place reads as none,
+// never followed or waited on.
 func readChecklistCopy(file string) (steps []toolsrv.Step, ok bool) {
 	if file == "" {
 		return nil, false
 	}
-	fi, err := os.Lstat(file)
-	if err != nil || !fi.Mode().IsRegular() || fi.Size() == 0 {
+	root, err := beneath.Open(filepath.Dir(file))
+	if err != nil {
 		return nil, false
 	}
-	f, err := os.Open(file) //nolint:gosec // the run's own receipt
+	defer func() { _ = root.Close() }()
+	f, err := root.OpenRegular(filepath.Base(file))
 	if err != nil {
 		return nil, false
 	}
 	defer func() { _ = f.Close() }()
 	b, err := io.ReadAll(io.LimitReader(f, maxChecklistCopy))
-	if err != nil {
+	if err != nil || len(b) == 0 {
 		return nil, false
 	}
-	return toolsrv.ParseChecklist(string(b)), true
+	steps = toolsrv.ParseChecklist(string(b))
+	if len(steps) > maxChecklistSteps {
+		steps = steps[:maxChecklistSteps]
+	}
+	for i := range steps {
+		steps[i].Text = cutText(steps[i].Text, maxStepText)
+	}
+	return steps, true
+}
+
+// cutText is s cut to at most n bytes on a character boundary.
+func cutText(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // finishCheckable reports whether out, a start of an autonomous harness, may
@@ -184,7 +215,11 @@ func checklistRecord(rd *runDirs) *receipt.Checklist {
 	for _, st := range open {
 		rec.Open = append(rec.Open, rd.redact.String(st.Text))
 	}
-	rec.Ending = fmt.Sprintf("finished with %d open step(s): %s", len(open), strings.Join(rec.Open, "; "))
+	noun := "steps"
+	if len(open) == 1 {
+		noun = "step"
+	}
+	rec.Ending = fmt.Sprintf("finished with %d open %s: %s", len(open), noun, strings.Join(rec.Open, "; "))
 	return rec
 }
 

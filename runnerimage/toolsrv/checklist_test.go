@@ -294,3 +294,28 @@ func TestTheChecklistCopyStaysUnderTheOutputFolder(t *testing.T) {
 		t.Fatal("a copy without a checklist was accepted")
 	}
 }
+
+// TestTheChecklistCopyIsWrittenOnlyAsAFile: a link put where the copy goes
+// is refused and its target left as it was; the agent's call still answers.
+func TestTheChecklistCopyIsWrittenOnlyAsAFile(t *testing.T) {
+	spec := checklistSpec(t)
+	receipts := filepath.Join(spec.OutDir, "receipts")
+	if err := os.MkdirAll(receipts, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	spec.ChecklistCopy = filepath.Join(receipts, ChecklistFile)
+	target := filepath.Join(t.TempDir(), "elsewhere.txt")
+	if err := os.WriteFile(target, []byte("keep me\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, spec.ChecklistCopy); err != nil {
+		t.Skip("no symlinks here")
+	}
+	s := newTestServer(t, spec)
+	if got, isErr := checklistCall(t, s, []Step{{Text: "one", Status: StepInProgress}}); isErr {
+		t.Fatalf("the call failed over the copy: %s", got)
+	}
+	if b, _ := os.ReadFile(target); string(b) != "keep me\n" {
+		t.Fatalf("the copy was written through a link: %q", b)
+	}
+}
