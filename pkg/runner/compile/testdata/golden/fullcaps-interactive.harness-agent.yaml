@@ -132,9 +132,13 @@ agents:
           hooks:
             - type: builtin
               command: redact_secrets
+      pre_compact:
+        - type: command
+          command: 'printf ''%s\n'' ''Keep, under these headings: the task, in the words the person used; the checklist, every step with its status, copied from the latest checklist result above; done, in progress, and blocked with why; the next step; the files, paths and identifiers in play; the constraints the task set and the approaches that failed.'''
     cold_cache_clear:
       after: 5m
       keep_turns: 2
       keep_browser: 2
     compaction_notes: checklist.md in your scratch folder, which the checklist tool reads
     max_tool_result_tokens: 24576
+    compaction_threshold: 0.8
