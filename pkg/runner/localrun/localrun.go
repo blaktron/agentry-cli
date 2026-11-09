@@ -471,6 +471,17 @@ func screenStillAllowed(plan *spec.Plan, allowScreen bool) bool {
 	return true
 }
 
+// sameDesktop says a plan's desktop line is the one the compiler's inputs
+// make now. A persistent agent's segment writes its manifest's line from the
+// switches the person has on, so the line is not part of the release's
+// digest: a plan compiled under other switches is not reused. A line that
+// no longer compiles (a policy that refuses it) is never the plan's, so the
+// run compiles again and is refused.
+func sameDesktop(plan *spec.Plan, in compile.Inputs) bool {
+	want, err := compile.DesktopCapOf(in)
+	return err == nil && reflect.DeepEqual(plan.Capabilities.Desktop, want)
+}
+
 // EnsurePlan reuses the installed plan when nothing it depends on changed,
 // otherwise recompiles. A reused plan.json is first checked against the
 // integrity record its compile wrote under the runner home's key: a plan with
@@ -504,6 +515,7 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 		planDir += "-design"
 	}
 	runnerImage := in.Policy.RunnerImageTag(runnerimage.ContentVersion())
+	cin := compileInputs(in, runnerImage, key)
 	b, rerr := compile.ReadInstalledPlan(key, planDir)
 	var tampered *compile.TamperedPlanError
 	switch {
@@ -543,6 +555,7 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 			reflect.DeepEqual(plan.Capabilities.Coder, in.Coder) &&
 			reflect.DeepEqual(plan.Capabilities.Calendar, in.Calendar) &&
 			screenStillAllowed(plan, in.AllowScreen) &&
+			sameDesktop(plan, cin) &&
 			reflect.DeepEqual(plan.Managed, compile.CurrentManagedSpecs(in.Sender)) &&
 			reflect.DeepEqual(plan.Harness.ContextWindow, spec.ContextWindowOf(in.Policy.Model.ContextWindow, in.ContextWindowSource)) &&
 			sameServers(plan.MCPServers, in.Servers, in.ShareServers) {
@@ -571,7 +584,21 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 	// Compile replaces planDir whole, in one rename, so it is not cleared
 	// first: a removal here could run into another process's compile of
 	// the same plan.
-	plan, err := compile.Compile(compile.Inputs{
+	plan, err := compile.Compile(cin, planDir)
+	if err != nil {
+		var refusal *compile.PolicyRefusal
+		if errors.As(err, &refusal) {
+			return nil, "", engine.Classify(engine.ExitPolicy, err)
+		}
+		return nil, "", engine.Classify(engine.ExitCompile, err)
+	}
+	return plan, planDir, nil
+}
+
+// compileInputs are the compiler's inputs for in, with the runner image the
+// plan names and the runner home's integrity key.
+func compileInputs(in PlanInputs, runnerImage string, key []byte) compile.Inputs {
+	return compile.Inputs{
 		Manifest:            in.Manifest,
 		Mode:                in.Mode,
 		Digest:              in.Meta.Digest,
@@ -599,15 +626,7 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 		Sender:       in.Sender,
 		AllowScreen:  in.AllowScreen,
 		IntegrityKey: key,
-	}, planDir)
-	if err != nil {
-		var refusal *compile.PolicyRefusal
-		if errors.As(err, &refusal) {
-			return nil, "", engine.Classify(engine.ExitPolicy, err)
-		}
-		return nil, "", engine.Classify(engine.ExitCompile, err)
 	}
-	return plan, planDir, nil
 }
 
 // installedSpecs are the plan's servers as the store holds them after an
