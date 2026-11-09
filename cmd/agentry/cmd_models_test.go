@@ -177,9 +177,20 @@ func TestTheEleventhSavedModelIsRefused(t *testing.T) {
 	for i := 2; i <= policy.MaxSavedModels; i++ {
 		cli(t, "models", "add", "m"+string(rune('a'+i)), "--provider", "custom-lab", "--model", "qwen3")
 	}
+	// Refused before the provider is asked: the endpoint is gone, and the
+	// refusal is still the cap's.
+	srv.Close()
 	_, _, err := runCLI(t, strings.NewReader(""), "models", "add", "eleventh", "--provider", "custom-lab", "--model", "qwen3")
 	if err == nil || !strings.Contains(err.Error(), "10 saved models") {
 		t.Fatalf("an eleventh: %v", err)
+	}
+	_, _, err = runCLI(t, strings.NewReader(""), "models", "remove", "mc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = runCLI(t, strings.NewReader(""), "models", "add", "MD", "--provider", "custom-lab", "--model", "qwen3")
+	if err == nil || !strings.Contains(err.Error(), "already a saved model") {
+		t.Fatalf("a taken name with the endpoint gone: %v", err)
 	}
 }
 

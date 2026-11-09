@@ -368,14 +368,21 @@ func (p *Policy) AddProvider(id string, pr Provider) error {
 	return nil
 }
 
+// CanAddModel says why sm could not be saved beside the saved models there
+// are, before anything is asked of its provider: the cap, its name, its
+// provider. Nil when AddModel would take it.
+func (p *Policy) CanAddModel(sm SavedModel) error {
+	p.materialize()
+	if len(p.Models) >= MaxSavedModels {
+		return fmt.Errorf("this computer has %d saved models, the most it keeps: remove one first (agentry models remove)", MaxSavedModels)
+	}
+	return p.checkSavedModel(sm, "")
+}
+
 // AddModel saves sm under a new id and returns it as saved. The first
 // saved model is the default.
 func (p *Policy) AddModel(sm SavedModel) (SavedModel, error) {
-	p.materialize()
-	if len(p.Models) >= MaxSavedModels {
-		return SavedModel{}, fmt.Errorf("this computer has %d saved models, the most it keeps: remove one first (agentry models remove)", MaxSavedModels)
-	}
-	if err := p.checkSavedModel(sm, ""); err != nil {
+	if err := p.CanAddModel(sm); err != nil {
 		return SavedModel{}, err
 	}
 	id, err := newModelID(p.Models)
