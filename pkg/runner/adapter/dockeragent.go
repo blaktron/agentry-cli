@@ -381,10 +381,10 @@ const unknownWindowOldResultTokens = 64 << 10
 // is ever cut. On an endpoint of the person's own the older tool results
 // give way to a placeholder once the newer ones pass half the window, and
 // the conversation is compacted at ownEndpointCompaction; on a hosted model
-// it is compacted at hostedCompaction. The older results
-// are replaced only in the request, never in the stored conversation, and a
-// budget of half the window moves seldom, so a local server's prompt cache
-// is seldom re-read from the start.
+// it is compacted at hostedCompaction. The older results are replaced only
+// in the request, never in the stored conversation, and a budget of half
+// the window moves seldom, so a local server's prompt cache is seldom
+// re-read from the start.
 func contextLimits(name string, m policy.Model) contextLimitsYAML {
 	l := contextLimitsYAML{MaxToolResultTokens: 2 * PageBudget(name, m).Bytes / bytesPerToken}
 	if !m.OwnEndpoint() {

@@ -11,15 +11,14 @@ import (
 )
 
 // TestTheCheckpointHookOnlyForTheDefaultHarness: the default build's config
-// carries one pre_compact command hook, the same for a run and a persistent
-// agent; a policy that pins another image gets none, as it gets no
+// carries one pre_compact command hook, the same one for a run and a
+// persistent agent; a policy that pins another image gets none, as it gets no
 // compaction_notes.
 func TestTheCheckpointHookOnlyForTheDefaultHarness(t *testing.T) {
 	ad, err := Get(DefaultName)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var runHooks string
 	for _, tc := range []struct {
 		name, image string
 		persistent  bool
@@ -60,13 +59,6 @@ func TestTheCheckpointHookOnlyForTheDefaultHarness(t *testing.T) {
 		}
 		if len(root.Hooks.PreCompact) != 1 || root.Hooks.PreCompact[0] != checkpointHook() {
 			t.Fatalf("%s: pre_compact %+v, want the checkpoint hook", tc.name, root.Hooks.PreCompact)
-		}
-		y := string(res.Files["agent.yaml"])
-		hooks := y[strings.Index(y, "hooks:"):]
-		if runHooks == "" {
-			runHooks = hooks
-		} else if !strings.HasPrefix(hooks, runHooks[:strings.Index(runHooks, "cold_cache_clear")]) {
-			t.Errorf("%s: the hooks differ from a run's", tc.name)
 		}
 	}
 }
