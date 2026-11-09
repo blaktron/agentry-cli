@@ -239,12 +239,13 @@ func LogPath(home, name string) string { return filepath.Join(Dir(home, name), l
 // secrets they stored, version 7 the Coding agent's git host accounts and
 // version 8 the sign-ins of the servers it runs from images, version 9
 // the mail providers the person enabled, version 10 the Assistant's
-// calendar feeds, version 11 their browser sign-ins and version 12 the
-// messengers; a build that reads
+// calendar feeds, version 11 their browser sign-ins, version 12 the
+// messengers, version 13 every messenger kind and version 14 the saved
+// model the agent runs on; a build that reads
 // an older
 // version alone refuses a newer one rather than drop what it does not know
 // on its next save.
-const ConfigVersion = messengerKindsVersion
+const ConfigVersion = savedModelVersion
 
 // mailProvidersVersion is the version that added MailProviders: an older
 // configuration with a sign-in is migrated when read (migrateMailProviders).
@@ -262,6 +263,10 @@ type Config struct {
 	// DisplayName and Personality are the person's for the agent.
 	DisplayName string `yaml:"displayName,omitempty" json:"displayName,omitempty"`
 	Personality string `yaml:"personality,omitempty" json:"personality,omitempty"`
+	// Model is the id of the saved model the agent runs on; empty follows
+	// the default. A model the computer no longer has is refused at the
+	// turn that would run on it, never replaced by the default.
+	Model string `yaml:"model,omitempty" json:"model,omitempty"`
 	// Conversation is the harness's conversation the last segment was in.
 	Conversation *Conversation `yaml:"conversation,omitempty" json:"conversation,omitempty"`
 	// Segments counts the segments started.
@@ -420,6 +425,9 @@ func SaveConfig(home, name string, c Config) error {
 	}
 	if slices.ContainsFunc(c.Messengers, func(m MessengerAccount) bool { return m.Kind != messenger.KindTelegram || m.Server != "" }) {
 		c.Version = messengerKindsVersion
+	}
+	if c.Model != "" {
+		c.Version = savedModelVersion
 	}
 	b, err := yaml.Marshal(c)
 	if err != nil {

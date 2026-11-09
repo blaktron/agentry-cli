@@ -22,6 +22,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/inference"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelcheck"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
+	"github.com/blaktron/agentry-cli/pkg/runner/persistent"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/setup"
 	"github.com/blaktron/agentry-cli/pkg/schedule"
@@ -407,11 +408,12 @@ type modelUser struct {
 
 // modelUsers are the schedules on this computer that name one of the saved
 // models sms, by id or by name, or that run on the harness whose block in
-// pol one of them was read from and name no saved model, which run on it.
-func modelUsers(home string, pol *policy.Policy, sms []policy.SavedModel) ([]modelUser, []schedule.Schedule, error) {
+// pol one of them was read from and name no saved model, which run on it;
+// then the persistent agents that name one of them.
+func modelUsers(home string, pol *policy.Policy, sms []policy.SavedModel) ([]modelUser, []schedule.Schedule, []persistent.Agent, error) {
 	list, _, err := schedule.StoreIn(home).List()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	var users []modelUser
 	var named []schedule.Schedule
@@ -430,7 +432,12 @@ func modelUsers(home string, pol *policy.Policy, sms []policy.SavedModel) ([]mod
 			named = append(named, sc)
 		}
 	}
-	return users, named, nil
+	ids := map[string]bool{}
+	for _, sm := range sms {
+		ids[sm.ID] = true
+	}
+	agentUsers, agents := modelAgents(home, ids)
+	return append(users, agentUsers...), named, agents, nil
 }
 
 // usedRefusal is the refusal of a removal while something names the model:
@@ -486,7 +493,7 @@ func removeModels(cmd *cobra.Command, pol *policy.Policy, path, what string, sms
 	if err != nil {
 		return removedOut{}, err
 	}
-	users, named, err := modelUsers(home, pol, sms)
+	users, named, agents, err := modelUsers(home, pol, sms)
 	if err != nil {
 		return removedOut{}, err
 	}
@@ -505,6 +512,9 @@ func removeModels(cmd *cobra.Command, pol *policy.Policy, path, what string, sms
 	// policy before and after, so no schedule ever names one that is gone.
 	if err := moveUsers(home, named, to); err != nil {
 		return removedOut{}, err
+	}
+	if err := moveAgents(cmd.Context(), home, agents, to); err != nil {
+		return removedOut{}, engine.Classify(engine.ExitCLI, err)
 	}
 	if err := policy.Save(path, pol); err != nil {
 		return removedOut{}, engine.Classify(engine.ExitPolicy, err)
@@ -538,9 +548,10 @@ func newModelsRemoveCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "remove <name> [--move-to <name>]",
 		Short: "Remove a saved model; what names it, and the default, move to --move-to",
-		Long: "Removing a saved model that a schedule names is refused, with the schedules listed, unless\n" +
-			"--move-to names the saved model they move to. Removing the default needs the new default,\n" +
-			"which --move-to names too. Nothing moves to the default on its own.",
+		Long: "Removing a saved model that a schedule or a persistent agent names is refused, with them listed,\n" +
+			"unless --move-to names the saved model they move to; a running agent takes it at its next turn.\n" +
+			"Removing the default needs the new default, which --move-to names too. Nothing moves to the\n" +
+			"default on its own.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			pol, path, err := modelsPolicy(policyPath)
@@ -565,7 +576,7 @@ func newModelsRemoveCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&moveTo, "move-to", "", "the saved model the schedules naming this one move to, and the new default when this is the default")
+	cmd.Flags().StringVar(&moveTo, "move-to", "", "the saved model the schedules and agents naming this one move to, and the new default when this is the default")
 	cmd.Flags().StringVar(&policyPath, "policy", "", "operator policy file (default ~/.agentry/runner/policy.yaml)")
 	return cmd
 }

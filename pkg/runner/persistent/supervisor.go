@@ -16,7 +16,6 @@ import (
 
 	"github.com/blaktron/agentry/pkg/manifest"
 
-	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/inference"
@@ -25,6 +24,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/session"
+	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
 // ErrBusy refuses a turn sent while another is in flight.
@@ -100,6 +100,11 @@ type Options struct {
 	// runs, so a model that comes to pay with credits, or another
 	// registry, has one; nil keeps Credits.
 	CreditsFor func(*policy.Policy) *inference.Client
+	// ModelUsable says whether the saved model the agent runs on can be
+	// used on this computer (its key is here, its sign-in kept), before a
+	// segment starts on it: an error refuses the start or the turn, naming
+	// the model and the fix. Nil leaves what it cannot tell to the engine.
+	ModelUsable func(localrun.RunModel) error
 	// StartSegment starts a segment; nil starts it with localrun. Tests
 	// put a session of their own here.
 	StartSegment func(ctx context.Context, seg localrun.Segment) (engine.PersistentSession, error)
@@ -156,8 +161,10 @@ type Supervisor struct {
 	applied       Applied
 	grants        string         // grantsKey of the config the segment started with
 	given         Signatures     // what each entry gave the segment, beyond its switch
-	pol           *policy.Policy // the policy held now (policynow.go)
+	pol           *policy.Policy // the policy held now, as the agent's saved model reads it (policynow.go)
+	full          *policy.Policy // the policy pol is a view of, as it was read
 	polSHA        string
+	polRef        string      // the agent's model reference pol was made for
 	polSeen       statSeen    // the policy file as last read
 	polRefused    string      // the digest of a policy set aside
 	polTaken      *heldPolicy // the policy held before one taken since the last segment started
@@ -311,6 +318,13 @@ func Start(ctx context.Context, opts Options) (*Supervisor, error) {
 	if pending := Unconsented(BuildRosterUnder(a, cfg, nil, opts.Policy.MalwareCheckOn()), cfg); len(pending) > 0 {
 		return nil, &ConsentError{Agent: a.Name, Entries: pending}
 	}
+	// The agent runs on the saved model its configuration names, else the
+	// default; one the computer does not have, or cannot use, does not
+	// start.
+	rm, err := agentModel(a.Name, opts.Policy, cfg.Model, opts.ModelUsable)
+	if err != nil {
+		return nil, err
+	}
 	if err := policyOutsideShare(a, cfg, opts.PolicyFile); err != nil {
 		return nil, err
 	}
@@ -329,18 +343,19 @@ func Start(ctx context.Context, opts Options) (*Supervisor, error) {
 	}
 	s := &Supervisor{
 		opts: opts, owner: owner, since: time.Now().UTC(),
-		adapter:   localrun.ImageAdapter(adapter.DefaultFor(opts.Policy)),
+		adapter:   rm.Adapter,
 		watchers:  map[int]chan session.Event{},
 		subagents: &subagentRuns{},
 		joined:    map[string]bool{}, installs: map[string]*bgInstall{}, ranUntil: map[string]time.Time{},
 		done: make(chan struct{}),
 	}
-	s.pol, s.polSHA, s.creditsCl = opts.Policy, opts.PolicySHA, opts.Credits
+	s.full, s.pol, s.polSHA, s.polRef, s.creditsCl = opts.Policy, rm.Policy, opts.PolicySHA, cfg.Model, opts.Credits
+	if opts.CreditsFor != nil && rm.Policy.Model.Provider == policy.ProviderAgentry {
+		s.creditsCl = opts.CreditsFor(rm.Policy)
+	}
 	s.ag, s.segRelease = opts.Agent, releaseDigest(opts.Agent)
 	s.bgCtx, s.bgCancel = context.WithCancel(context.Background())
-	if opts.Policy != nil {
-		s.model = opts.Policy.Model.Provider + "/" + opts.Policy.Model.Name
-	}
+	s.model = modelLabel(rm.Policy)
 	s.upkeep = loadUpkeep(opts.Home, a.Name)
 	if err := s.listenAppLink(); err != nil {
 		owner.Release()
@@ -386,7 +401,9 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 	if err != nil {
 		return err
 	}
-	s.reloadPolicy(ctx)
+	if err := s.reloadPolicy(ctx, cfg.Model); err != nil {
+		return err
+	}
 	pol, polSHA := s.policy(), s.policySHA()
 	roster := BuildRosterUnder(a, cfg, nil, pol.MalwareCheckOn())
 	// Every segment is held to the person's agreement, not only the first:
@@ -460,7 +477,7 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 	}
 	seg := localrun.Segment{
 		Builtin: a.Builtin, Release: a.Release, Home: home, Policy: pol, PolicySHA: polSHA,
-		PolicyFile: s.opts.PolicyFile, Build: s.opts.Build, OutDir: outDir, RunID: runID, Stderr: s.opts.Stderr,
+		PolicyFile: s.opts.PolicyFile, Adapter: s.adapterName(), Build: s.opts.Build, OutDir: outDir, RunID: runID, Stderr: s.opts.Stderr,
 		OnStage: s.opts.OnStage,
 		Persistent: engine.PersistentSegment{
 			Agent: name, Segment: segment,
@@ -894,6 +911,14 @@ func (s *Supervisor) nextSegment(ctx context.Context) error {
 func (s *Supervisor) nextSegmentFor(ctx context.Context, notice string) error {
 	s.seg.Lock()
 	defer s.seg.Unlock()
+	// A saved model the next segment could not run on fails the turn
+	// here, with the running segment left as it is: nothing runs on the
+	// default, or on the model the agent had, in its place.
+	if cfg, err := LoadConfig(s.opts.Home, s.opts.Agent.Name); err == nil {
+		if err := s.checkModel(cfg.Model); err != nil {
+			return err
+		}
+	}
 	s.mu.Lock()
 	if s.stopped || s.closing {
 		s.mu.Unlock()
@@ -918,7 +943,7 @@ func (s *Supervisor) startNext(ctx context.Context) error {
 	if err != nil && s.revertRelease(err) {
 		err = s.startSegment(sctx, true)
 	}
-	if err != nil && s.revertPolicy(err) {
+	if err != nil && !isModelError(err) && s.revertPolicy(err) {
 		err = s.startSegment(sctx, true)
 	}
 	if err != nil {
@@ -1052,6 +1077,18 @@ func (s *Supervisor) Change(ch Change) (Roster, error) {
 	// than taken back at the next turn.
 	if err := s.checkKeys(ch); err != nil {
 		return nil, err
+	}
+	// A saved model the agent is moved to must be one its policy has: the
+	// next turn would fail on any other.
+	if ch.Model != nil && *ch.Model != "" {
+		s.mu.Lock()
+		full := s.full
+		s.mu.Unlock()
+		if full != nil {
+			if _, ok := full.FindModel(*ch.Model); !ok {
+				return nil, fmt.Errorf("there is no saved model %q on this computer (agentry models list)", *ch.Model)
+			}
+		}
 	}
 	if ch.Release {
 		// Taken under the segment's lock, so a start already under way
@@ -1208,6 +1245,8 @@ type Status struct {
 	ResumeReason string        `json:"resumeReason,omitempty"`
 	Busy         bool          `json:"busy"`
 	Usage        receipt.Usage `json:"usage"`
+	// SavedModel is the saved model the segment runs on.
+	SavedModel *spec.SavedModelRef `json:"savedModel,omitempty"`
 	// Pending says a change waits for the next turn's segment.
 	Pending bool `json:"pending,omitempty"`
 	// Messengers are the agent's messengers and each one's connection.
@@ -1229,7 +1268,7 @@ func (s *Supervisor) stale(ctx context.Context, c Config) bool {
 	a := s.agent()
 	grants := grantsKey(s.opts.Home, a, c)
 	now := s.signaturesOf(ctx, a, c)
-	moved := s.policyMoved() || s.releaseMoved()
+	moved := s.policyMoved(c.Model) || s.releaseMoved()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return grants != s.grants || len(s.given.changed(now)) > 0 || moved
@@ -1254,9 +1293,13 @@ func (s *Supervisor) Status() Status {
 	pending := s.stale(context.Background(), cfg)
 	messengers := s.messengerStates(cfg)
 	held := s.heldFor()
+	var saved *spec.SavedModelRef
+	if sm, ok := s.heldModel(); ok && sm.ID != "" {
+		saved = &spec.SavedModelRef{ID: sm.ID, Name: sm.Name}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return Status{
+	return Status{SavedModel: saved,
 		Agent: s.opts.Agent.Name, State: StateRunning, Client: s.opts.Client, PID: os.Getpid(), Since: s.since,
 		Segment: s.segment, Run: s.runID, SegmentDir: s.outDir, Adapter: s.adapter, Model: s.model,
 		Resumed: s.resumed, ResumeReason: s.resumeReason, Busy: s.busy, Usage: s.usage,

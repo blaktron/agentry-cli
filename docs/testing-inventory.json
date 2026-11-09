@@ -749,6 +749,17 @@
           "dependencyHints": []
         },
         {
+          "path": "cmd/agentry/cmd_agent_model_test.go",
+          "tests": [
+            "TestConfigureNamesTheSavedModelAnAgentRunsOn",
+            "TestRemovingAModelAnAgentNamesIsRefusedUntilItIsMoved"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "cmd/agentry/cmd_agent_secret_test.go",
           "tests": [
             "TestAgentSecretSetListRemove"
@@ -8050,6 +8061,16 @@
           "dependencyHints": []
         },
         {
+          "path": "pkg/runner/localrun/persistent_savedmodel_test.go",
+          "tests": [
+            "TestASegmentsPlanNamesTheSavedModelItRunsOn"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "pkg/runner/localrun/persistent_secrets_test.go",
           "tests": [
             "TestASegmentGivesAStoredSecretToTheRosterServerThatDeclaresIt",
@@ -9128,6 +9149,26 @@
           "fixtureEntryPoint": false,
           "dependencyHints": [
             "real-time wait"
+          ]
+        },
+        {
+          "path": "pkg/runner/persistent/savedmodel_test.go",
+          "tests": [
+            "TestAnAgentRunsOnTheSavedModelItNamesAndTakesAChangeAtItsNextTurn",
+            "TestATurnOnAMissingSavedModelFailsAndTheNextTriesAgain",
+            "TestATurnOnAnUnusableSavedModelFailsUntilItCanBeUsed",
+            "TestAnAgentOnAMissingSavedModelDoesNotStart",
+            "TestARunningAgentIsRefusedASavedModelItsPolicyDoesNotHave",
+            "TestAConfigNamingASavedModelIsRefusedByAnOlderBuild",
+            "TestAModelOnAnotherHarnessCarriesTheLastExchange",
+            "TestAnAgentMovedToAModelNoSegmentStartsOnIsNotPutBack"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "docker interface (real or fake)",
+            "source/file contract"
           ]
         },
         {

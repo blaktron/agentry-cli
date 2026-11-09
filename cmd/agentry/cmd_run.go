@@ -455,7 +455,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	// credential is not on this computer; the default's is refused by the
 	// engine when it reads it.
 	if opts.model != "" && !opts.plan && !opts.dryRun && !opts.prepare {
-		if err := savedModelUsable(home, chosen, os.Getenv); err != nil {
+		if err := savedModelUsable(home, chosen, os.Getenv, runOnAnother); err != nil {
 			return err
 		}
 	}

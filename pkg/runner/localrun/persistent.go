@@ -1,6 +1,7 @@
 package localrun
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -555,11 +556,17 @@ type Segment struct {
 	// Release is the installed release the segment runs in place of a
 	// built-in; nil for a built-in. Builtin is then the zero value, which
 	// carries none of a built-in's grants.
-	Release    *Installed
-	Home       string
+	Release *Installed
+	Home    string
+	// Policy is the policy the segment compiles from: the view of it the
+	// agent's saved model reads (policy.ForRun), whose saved model the
+	// segment's plan and receipt name.
 	Policy     *policy.Policy
 	PolicySHA  string
 	PolicyFile *policy.File
+	// Adapter is the harness the segment runs on, an image's; empty takes
+	// the one Policy's credential takes.
+	Adapter string
 	// Build is the client's build identity, recorded in the receipt's
 	// attestation and the plan.
 	Build string
@@ -1135,7 +1142,7 @@ func (s Segment) Plan(ctx context.Context, logw io.Writer) (*SegmentPlan, error)
 		return nil, err
 	}
 	m = s.withDesktop(s.withServers(m))
-	adapterName := ImageAdapter(adapter.DefaultFor(s.Policy))
+	adapterName := cmp.Or(s.Adapter, ImageAdapter(adapter.DefaultFor(s.Policy)))
 	ad, err := adapter.Get(adapterName)
 	if err != nil {
 		return nil, engine.Classify(engine.ExitCLI, err)

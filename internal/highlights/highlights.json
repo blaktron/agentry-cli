@@ -3,10 +3,10 @@
     {
       "version": "0.7.39",
       "highlights": [
-        "agentry run --model runs a QuickAgent on any of your saved models; without it, the run uses your default.",
-        "agentry schedule add and edit take --model, and a schedule keeps that model when you change the default.",
-        "The receipt and the result envelope name the saved model a run used, beside its provider and model id.",
-        "A run on a saved model that is gone, or whose key or sign-in is missing, is refused, never run on the default."
+        "agentry run --model runs a QuickAgent on any saved model, and a schedule keeps the model you give it with --model.",
+        "agentry agent configure --model puts a persistent agent on a saved model, and a running agent takes it at its next turn.",
+        "Receipts name the saved model, and one that is gone or lacks its key or sign-in is refused, never run on the default.",
+        "An endpoint of your own added without a key runs with none, and agent list and show name each agent's model."
       ]
     },
     {
