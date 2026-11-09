@@ -677,6 +677,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	outcome.lastText = redact.String(outcome.lastText)
 	env.Usage = outcome.usage
 	env.Usage.WallMS = time.Since(start).Milliseconds()
+	env.Checklist = checklistRecord(rd)
 
 	// The gateway's own log (tool-call log included, --log-calls) is
 	// part of the audit trail; collect before teardown kills it.
@@ -1400,6 +1401,10 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	if rd.resumedAfter != "" {
 		_, _ = fmt.Fprintf(stderrFile, "agentry: the harness is started again on its conversation (%s), after: %s\n", conversationID(rd), rd.resumedAfter)
 		rd.resumedAfter = ""
+	}
+	if rd.finishCheck != "" {
+		_, _ = fmt.Fprintf(stderrFile, "agentry: the harness is started again on its conversation (%s) for a finish check (%d of %d): %s\n", conversationID(rd), len(rd.finishChecks), finishChecks, strings.ReplaceAll(rd.redact.String(rd.finishCheck), "\n", " "))
+		rd.finishCheck = ""
 	}
 
 	var exit int

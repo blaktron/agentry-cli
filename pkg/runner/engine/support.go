@@ -139,6 +139,14 @@ type runDirs struct {
 	// fetchLedger is receipts/fetches.ndjson for a run whose fetch can
 	// save into the scratch folder (fetchsave.go), made as webLedger is.
 	fetchLedger string
+	// checklistCopy is receipts/checklist.md for a release's one-shot run
+	// that keeps a checklist (finishcheck.go): the tools server's copy of
+	// the list, made as webLedger is. finishChecks are the finish checks
+	// made, in order, and finishCheck the message the next start was given,
+	// for its receipt.
+	checklistCopy string
+	finishChecks  []receipt.FinishCheck
+	finishCheck   string
 	// web says the run has the web tools, anyEgress that its tools server
 	// has unrestricted egress, and runID names it, for the receipt's
 	// daemon line.
@@ -501,6 +509,11 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 		}
 		_ = f.Close()
 	}
+	if keepsChecklist(p) {
+		if err := makeChecklistCopy(rd); err != nil {
+			return nil, Classify(ExitCLI, err)
+		}
+	}
 	if slices.Contains(p.Plan.Tools, toolsrv.ToolExportPDF) {
 		rd.pdfLedger = filepath.Join(rd.receiptsDir, PDFLedgerFile)
 		_ = os.Remove(rd.pdfLedger)
@@ -689,6 +702,9 @@ func renderGatewayConfig(p Params, rd *runDirs) error {
 	}
 	if err := grantFetchLedger(dir, rd); err != nil {
 		return Classify(ExitCLI, fmt.Errorf("configure the fetch ledger: %w", err))
+	}
+	if err := grantChecklistCopy(dir, rd); err != nil {
+		return Classify(ExitCLI, fmt.Errorf("configure the checklist's copy: %w", err))
 	}
 	if err := grantDesktopTools(dir, rd.desktop); err != nil {
 		return Classify(ExitCLI, fmt.Errorf("give the desktop link's entries their tools: %w", err))
@@ -1334,6 +1350,9 @@ func relabelTargetsFor(rd *runDirs) []relabelTarget {
 	}
 	if rd.fetchLedger != "" {
 		t = append(t, relabelTarget{rd.fetchLedger, false})
+	}
+	if rd.checklistCopy != "" {
+		t = append(t, relabelTarget{rd.checklistCopy, false})
 	}
 	if rd.deliverablesLedger != "" {
 		t = append(t, relabelTarget{rd.deliverablesLedger, false})

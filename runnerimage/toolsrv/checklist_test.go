@@ -238,3 +238,84 @@ func TestAPersistentAgentKeepsItsChecklistInItsDataFolder(t *testing.T) {
 		t.Fatalf("reading it back answered %q (error %v)", got, isErr)
 	}
 }
+
+// TestTheRunnerGetsACopyOfEachListSavedOrRead: with checklistCopy stamped,
+// every list the tool saves, and every list it reads back (one written by
+// hand included), is copied there whole; a refused list is not.
+func TestTheRunnerGetsACopyOfEachListSavedOrRead(t *testing.T) {
+	spec := checklistSpec(t)
+	spec.ChecklistCopy = filepath.Join(spec.OutDir, "receipts", ChecklistFile)
+	if err := os.MkdirAll(filepath.Dir(spec.ChecklistCopy), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	s := newTestServer(t, spec)
+	steps := []Step{{Text: "one", Status: StepDone}, {Text: "two", Status: StepInProgress}}
+	if got, isErr := checklistCall(t, s, steps); isErr {
+		t.Fatal(got)
+	}
+	want := "# Checklist\n\n- [x] one\n- [>] two\n"
+	if b, _ := os.ReadFile(spec.ChecklistCopy); string(b) != want {
+		t.Fatalf("the copy holds %q, want %q", b, want)
+	}
+	if open := OpenSteps(ParseChecklist(want)); len(open) != 1 || open[0].Text != "two" {
+		t.Fatalf("open steps %+v", open)
+	}
+	if got, isErr := checklistCall(t, s, []Step{{Text: "a", Status: StepInProgress}, {Text: "b", Status: StepInProgress}}); !isErr {
+		t.Fatalf("two steps in progress were saved: %s", got)
+	}
+	if b, _ := os.ReadFile(spec.ChecklistCopy); string(b) != want {
+		t.Fatalf("a refused list reached the copy: %q", b)
+	}
+	if err := os.WriteFile(spec.Checklist, []byte("my notes\n- [x] one\n- [x] two\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, isErr := checklistCall(t, s, nil); isErr {
+		t.Fatal(got)
+	}
+	if b, _ := os.ReadFile(spec.ChecklistCopy); string(b) != "# Checklist\n\n- [x] one\n- [x] two\n" {
+		t.Fatalf("the copy of a hand-written list holds %q", b)
+	}
+}
+
+// TestTheChecklistCopyStaysUnderTheOutputFolder: the spec is refused when
+// the copy is outside the output folder or the run keeps no checklist.
+func TestTheChecklistCopyStaysUnderTheOutputFolder(t *testing.T) {
+	spec := checklistSpec(t)
+	spec.ChecklistCopy = filepath.Join(spec.ScratchDir, "copy.md")
+	if err := validateChecklistCopy(spec); err == nil {
+		t.Fatal("a copy outside the output folder was accepted")
+	}
+	spec.ChecklistCopy = filepath.Join(spec.OutDir, "receipts", ChecklistFile)
+	if err := validateChecklistCopy(spec); err != nil {
+		t.Fatal(err)
+	}
+	spec.Checklist = ""
+	if err := validateChecklistCopy(spec); err == nil {
+		t.Fatal("a copy without a checklist was accepted")
+	}
+}
+
+// TestTheChecklistCopyIsWrittenOnlyAsAFile: a link put where the copy goes
+// is refused and its target left as it was; the agent's call still answers.
+func TestTheChecklistCopyIsWrittenOnlyAsAFile(t *testing.T) {
+	spec := checklistSpec(t)
+	receipts := filepath.Join(spec.OutDir, "receipts")
+	if err := os.MkdirAll(receipts, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	spec.ChecklistCopy = filepath.Join(receipts, ChecklistFile)
+	target := filepath.Join(t.TempDir(), "elsewhere.txt")
+	if err := os.WriteFile(target, []byte("keep me\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, spec.ChecklistCopy); err != nil {
+		t.Skip("no symlinks here")
+	}
+	s := newTestServer(t, spec)
+	if got, isErr := checklistCall(t, s, []Step{{Text: "one", Status: StepInProgress}}); isErr {
+		t.Fatalf("the call failed over the copy: %s", got)
+	}
+	if b, _ := os.ReadFile(target); string(b) != "keep me\n" {
+		t.Fatalf("the copy was written through a link: %q", b)
+	}
+}

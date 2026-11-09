@@ -350,6 +350,9 @@ func validateSpec(spec *Spec) error {
 	if err := validateCalls(spec); err != nil {
 		return err
 	}
+	if err := validateChecklistCopy(spec); err != nil {
+		return err
+	}
 	if err := validateFetchLedger(spec); err != nil {
 		return err
 	}

@@ -17,6 +17,7 @@ import (
 	"io"
 	"io/fs"
 	"path"
+	"path/filepath"
 	"strings"
 
 	"github.com/blaktron/agentry-cli/runnerimage/beneath"
@@ -94,6 +95,7 @@ func (s *server) toolChecklist(raw json.RawMessage) (string, bool) {
 		if err != nil {
 			return s.failed(ToolChecklist, err)
 		}
+		s.copyChecklist(renderChecklist(steps))
 		return checklistAnswer(steps, false), false
 	}
 	if msg := checkSteps(a.Steps); msg != "" {
@@ -109,6 +111,7 @@ func (s *server) toolChecklist(raw json.RawMessage) (string, bool) {
 		}
 		return s.failed(ToolChecklist, err)
 	}
+	s.copyChecklist(text)
 	return checklistAnswer(a.Steps, true), false
 }
 
@@ -298,4 +301,67 @@ func (s *server) writeChecklist(text string) error {
 		werr = cerr
 	}
 	return werr
+}
+
+// ParseChecklist reads a checklist's steps from its file's text, as the
+// tool reads its own file back.
+func ParseChecklist(text string) []Step { return parseChecklist(text) }
+
+// OpenSteps are the steps still pending or in progress.
+func OpenSteps(steps []Step) []Step {
+	var open []Step
+	for _, st := range steps {
+		if st.Status == StepPending || st.Status == StepInProgress {
+			open = append(open, st)
+		}
+	}
+	return open
+}
+
+func validateChecklistCopy(spec *Spec) error {
+	l := spec.ChecklistCopy
+	if l == "" {
+		return nil
+	}
+	if spec.Checklist == "" {
+		return errors.New("checklistCopy is set but the run keeps no checklist")
+	}
+	if !filepath.IsAbs(l) {
+		return fmt.Errorf("checklistCopy %q must be an absolute container path", l)
+	}
+	if rel, err := filepath.Rel(spec.OutDir, l); err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+		return fmt.Errorf("checklistCopy %q must be under outDir %q", l, spec.OutDir)
+	}
+	return nil
+}
+
+// copyChecklist replaces the runner's copy of the list with text, the list
+// the tool has just saved or read. The copy is how the runner learns the
+// run's steps; a copy that cannot be written is logged and the agent's call
+// still answers, since the list itself is kept. It is written only as a
+// regular file, as the list is: a link, a folder or a pipe put in its place
+// is refused, never written through or waited on.
+func (s *server) copyChecklist(text string) {
+	l := s.spec.ChecklistCopy
+	if l == "" {
+		return
+	}
+	if err := s.writeChecklistCopy(l, text); err != nil {
+		s.logf("checklist copy: %v", err)
+	}
+}
+
+func (s *server) writeChecklistCopy(l, text string) error {
+	root, err := beneath.Open(filepath.Dir(l))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	f, err := root.CreateRegular(filepath.Base(l), 0o644)
+	if err != nil {
+		return err
+	}
+	s.ownIn(root, filepath.Base(l))
+	_, werr := f.WriteString(text)
+	return errors.Join(werr, f.Close())
 }

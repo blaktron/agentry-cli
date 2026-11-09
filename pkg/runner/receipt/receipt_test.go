@@ -336,6 +336,13 @@ attestation.state
 attestation.verified
 capabilities_enforced
 capabilities_enforced.*
+checklist
+checklist.ending
+checklist.finishChecks
+checklist.finishChecks[].message
+checklist.finishChecks[].open
+checklist.open
+checklist.steps
 deliverables
 deliverables.files
 deliverables.files[].bytes
