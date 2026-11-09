@@ -373,6 +373,44 @@ func TestASendTheSessionAnswersBusyIsRefusedBusy(t *testing.T) {
 	}
 }
 
+// refusingSession is a session shared through another process that
+// refuses every send with a class of its own.
+type refusingSession struct{ *chattySession }
+
+func (s refusingSession) Send(context.Context, string) error {
+	return &RefusedError{Class: "model", Text: "the saved model cannot be used"}
+}
+
+// TestASendTheSessionRefusesByClassIsRefusedByThatClass: a send the session
+// refuses with a class of its own is refused by the protocol with that
+// class and text, so a driver tells it from another chat's failed turn.
+func TestASendTheSessionRefusesByClassIsRefusedByThatClass(t *testing.T) {
+	s := refusingSession{newChatty(0)}
+	r, w := io.Pipe()
+	in := strings.NewReader(`{"send":{"text":"one"}}` + "\n")
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = Serve(context.Background(), s, in, w, Options{})
+		_ = w.Close()
+	}()
+	var refused []string
+	sc := bufio.NewScanner(r)
+	for sc.Scan() {
+		var m map[string]any
+		if err := json.Unmarshal(sc.Bytes(), &m); err != nil {
+			t.Fatal(err)
+		}
+		if c, ok := m["refused"].(string); ok {
+			refused = append(refused, c+": "+m["text"].(string))
+		}
+	}
+	<-done
+	if strings.Join(refused, " | ") != "model: the saved model cannot be used" {
+		t.Errorf("refusals = %v, want the one the session gave", refused)
+	}
+}
+
 // scriptedSession is a session whose turns, files and end are what a test says.
 type scriptedSession struct {
 	events chan session.Event

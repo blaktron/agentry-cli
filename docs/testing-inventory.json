@@ -9161,7 +9161,8 @@
             "TestARunningAgentIsRefusedASavedModelItsPolicyDoesNotHave",
             "TestAConfigNamingASavedModelIsRefusedByAnOlderBuild",
             "TestAModelOnAnotherHarnessCarriesTheLastExchange",
-            "TestAnAgentMovedToAModelNoSegmentStartsOnIsNotPutBack"
+            "TestAnAgentMovedToAModelNoSegmentStartsOnIsNotPutBack",
+            "TestAChatIsToldWhenItsTurnFailsForTheSavedModel"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -9739,6 +9740,7 @@
             "TestReadLinesBoundsALineAndReadsOn",
             "TestAnEventLineIsTheSessionEventWithoutRaw",
             "TestASendTheSessionAnswersBusyIsRefusedBusy",
+            "TestASendTheSessionRefusesByClassIsRefusedByThatClass",
             "TestAnAddIsHeldToTheInputsDirectory",
             "TestTheEndCommandAndTheEndOfInputEndTheSession",
             "TestASendIsRefusedBusyWhileATurnIsOnItsWayOrInFlight",
