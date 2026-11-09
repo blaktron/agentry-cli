@@ -49,18 +49,18 @@ var jsonCommands = map[string]string{
 	"destinations list":         "{destinations[]}",
 	"connections list":          "{connections[]}",
 	"connections remove":        "{removed[]}",
-	"model-signins list":        "{modelSignIns[]}",
-	"model-signins remove":      "the removal",
-	"model-signins add":         "the sign-in",
+	"model-signins list":        "{modelSignIns[]} (deprecated: providers list)",
+	"model-signins remove":      "the removal (deprecated: providers remove --sign-in or --connect)",
+	"model-signins add":         "the sign-in (deprecated: providers add)",
 	"models list":               "{default, max, models[]}",
 	"models add":                "the saved model",
 	"models edit":               "the saved model",
 	"models default":            "the saved model",
 	"models check":              "{model, ok, contextWindow, warning}",
 	"models remove":             "{removed[], moved[], default}",
-	"providers list":            "{providers[]}",
-	"providers add":             "the provider",
-	"providers remove":          "{provider, credential, removed[], moved[], default}",
+	"providers list":            "{providers[], signIns[]}",
+	"providers add":             "the provider, with signedInAgain when it signed in or connected again",
+	"providers remove":          "{provider, providerRemoved, credential, signIn, revocation, removed[], moved[], default}",
 	"voice show":                "the voice's record",
 	"voice upload":              "the account's voice as the registry answers it",
 	"voice status":              "the account's voice and its review",
@@ -130,12 +130,18 @@ func findCommand(root *cobra.Command, path string) *cobra.Command {
 	return c
 }
 
-// jsonCapableCommands lists the marked commands under root by path, sorted.
+// jsonCapableCommands lists the marked commands under root by path, sorted,
+// leaving out hidden ones.
 func jsonCapableCommands(root *cobra.Command) []string {
 	var out []string
 	var walk func(c *cobra.Command, prefix string)
 	walk = func(c *cobra.Command, prefix string) {
 		for _, sub := range c.Commands() {
+			if sub.Hidden {
+				// A hidden command, a deprecated alias say, is left out of
+				// the help, and so is everything under it.
+				continue
+			}
 			path := strings.TrimSpace(prefix + " " + sub.Name())
 			if _, ok := sub.Annotations[jsonAnnotation]; ok {
 				out = append(out, path)

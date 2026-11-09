@@ -51,7 +51,7 @@ func TestLiveCopilotModelList(t *testing.T) {
 		Stderr: &stderr,
 	})
 	t.Logf("after %s: models %v, err %v\nstderr: %s", time.Since(start).Round(time.Millisecond), models, err, stderr.String())
-	if err == nil || !strings.Contains(err.Error(), "sign in again with agentry model-signins add copilot") {
+	if err == nil || !strings.Contains(err.Error(), "sign in again with agentry providers add copilot") {
 		t.Fatalf("want GitHub to refuse the made-up token, got %v", err)
 	}
 	if strings.Contains(err.Error(), fake) {

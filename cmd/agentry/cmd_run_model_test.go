@@ -148,7 +148,7 @@ func TestASavedModelWhoseSignInIsGoneIsRefusedByName(t *testing.T) {
 	t.Cleanup(func() { signInKept = prev })
 	err = savedModelUsable(t.TempDir(), rm, func(string) string { return "" }, runOnAnother)
 	wantClassified(t, err, engine.ExitPolicy)
-	if !strings.Contains(err.Error(), `the saved model "Plan" (provider openai)`) || !strings.Contains(err.Error(), "model-signins add chatgpt") {
+	if !strings.Contains(err.Error(), `the saved model "Plan" (provider openai)`) || !strings.Contains(err.Error(), "agentry providers add openai --sign-in") {
 		t.Fatalf("refusal: %v", err)
 	}
 }

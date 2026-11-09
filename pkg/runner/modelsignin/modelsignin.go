@@ -60,7 +60,7 @@ const Version = 1
 // refreshTimeout bounds one refresh, which no caller's cancellation cuts.
 const refreshTimeout = time.Minute
 
-// The vendors, by the name `agentry model-signins` takes.
+// The vendors, by the name each is kept under in the store.
 const (
 	ChatGPT     = "chatgpt"
 	Claude      = "claude"
@@ -712,7 +712,7 @@ func (s *Store) ForRun(ctx context.Context, kind, delivery string, onHost bool) 
 	g := &RunGrant{Kind: kind}
 	switch delivery {
 	case spec.ModelSignInConfigDir:
-		where, add := "the Claude Code image", "agentry model-signins add "+vendor
+		where, add := "the Claude Code image", SignInCommand(vendor)
 		g.ConfigDir = r.ConfigDir
 		if onHost {
 			g.ConfigDir, where, add = r.HostConfigDir, "the Claude Code installed on this computer", add+" --installed"

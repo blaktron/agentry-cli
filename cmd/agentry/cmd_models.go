@@ -418,9 +418,17 @@ type removedOut struct {
 	Moved   []modelUser     `json:"moved"`
 	MovedTo string          `json:"movedTo,omitempty"`
 	Default string          `json:"default"`
-	// Provider is the provider removed, with what became of its credential.
-	Provider   string `json:"provider,omitempty"`
-	Credential string `json:"credential,omitempty"`
+	// Provider is the provider removed (ProviderRemoved), or the one whose
+	// kept sign-in or connected account alone was removed, with what became
+	// of its credential.
+	Provider        string `json:"provider,omitempty"`
+	ProviderRemoved bool   `json:"providerRemoved,omitempty"`
+	Credential      string `json:"credential,omitempty"`
+	// SignIn is the sign-in or connected account removed, by the name it is
+	// kept under (chatgpt, claude, copilot, openrouter, poe, huggingface),
+	// with its revocation's outcome.
+	SignIn     string `json:"signIn,omitempty"`
+	Revocation string `json:"revocation,omitempty"`
 }
 
 // removeModels removes sms (with provider, when it is a provider's removal),

@@ -1,5 +1,5 @@
-// Sign in with GitHub for a Copilot plan: `agentry model-signins add
-// copilot` and the offer in `agentry setup`. The flow is mcpauth.GitHub,
+// Sign in with GitHub for a Copilot plan: `agentry providers add copilot`
+// and the offer in `agentry setup`. The flow is mcpauth.GitHub,
 // the store modelsignin.SignInCopilot; this is the terminal around them.
 package main
 
@@ -48,10 +48,7 @@ func signInCopilot(cmd *cobra.Command, home, app string) (*modelsignin.CopilotSi
 // copilotOffer is what `agentry setup` offers of the Copilot sign-in, and
 // of its plan's models when pol's images may be built (listing needs them).
 func copilotOffer(cmd *cobra.Command, home string, oauthApp bool, pol *policy.Policy, images bool) setup.CopilotOffer {
-	app := mcpauth.GitHubApp
-	if oauthApp {
-		app = mcpauth.GitHubOAuthApp
-	}
+	app := copilotApp(oauthApp)
 	return setup.CopilotOffer{
 		Kept: func() string {
 			r, err := modelsignin.Open(home, nil).Get(modelsignin.Copilot)
@@ -95,12 +92,18 @@ func copilotModels(cmd *cobra.Command, home string, pol *policy.Policy, images b
 	}
 }
 
-// addCopilot is `agentry model-signins add copilot`.
-func addCopilot(cmd *cobra.Command, home string, oauthApp bool) error {
-	app := mcpauth.GitHubApp
+// copilotApp is the app a Copilot sign-in goes through: Agentry's GitHub
+// App, or with oauthApp its OAuth App.
+func copilotApp(oauthApp bool) string {
 	if oauthApp {
-		app = mcpauth.GitHubOAuthApp
+		return mcpauth.GitHubOAuthApp
 	}
+	return mcpauth.GitHubApp
+}
+
+// addCopilot is the deprecated `agentry model-signins add copilot`.
+func addCopilot(cmd *cobra.Command, home string, oauthApp bool) error {
+	app := copilotApp(oauthApp)
 	got, err := signInCopilot(cmd, home, app)
 	if err != nil {
 		return err

@@ -296,7 +296,7 @@ func (s *copilotSession) startError(err error) error {
 		return &OrgPolicyRefusal{Policy: receipt.OrgPolicyClient, Text: firstLineOf(msg)}
 	}
 	if strings.Contains(low, "401") || strings.Contains(low, "bad credentials") {
-		return fmt.Errorf("%w (GitHub refused the sign-in's token: sign in again with agentry model-signins add copilot)", err)
+		return fmt.Errorf("%w (GitHub refused the sign-in's token: sign in again with agentry providers add copilot)", err)
 	}
 	return err
 }

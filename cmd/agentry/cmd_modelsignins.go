@@ -1,6 +1,7 @@
 // Model sign-ins: a person's own grant that lets their local runs spend a
-// model vendor's plan. `agentry model-signins` lists and removes them,
-// apart from `agentry connections` (MCP servers' grants). A run whose plan
+// model vendor's plan. `agentry providers` lists, adds and removes them,
+// apart from `agentry connections` (MCP servers' grants), and the
+// deprecated `agentry model-signins` still does under its own name. A run whose plan
 // spends one is handed the access token alone, refreshed now and before it
 // expires; a hosted run never spends one.
 package main
@@ -10,8 +11,10 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"github.com/blaktron/agentry-cli/pkg/mcpauth"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
@@ -81,14 +84,26 @@ func runModelSignIn(ctx context.Context, home string, plan *spec.Plan, hosted bo
 	return engine.ModelSignInFor(ctx, modelsignin.Open(home, connectionKeys()), plan, hosted)
 }
 
+// newModelSignInsCmd is the deprecated alias of providers' sign-in half,
+// kept for the scripts that call it. It is hidden from the help, and each
+// use says on stderr which providers command replaces it. Cobra's own
+// Deprecated note is not used: it is written to the command's output
+// writer whenever one is set, which is where --json goes.
 func newModelSignInsCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "model-signins",
+		Use:    "model-signins",
+		Hidden: true,
+		PersistentPreRun: func(c *cobra.Command, args []string) {
+			on := map[string]bool{}
+			c.Flags().Visit(func(f *pflag.Flag) { on[f.Name] = true })
+			_, _ = fmt.Fprintf(c.ErrOrStderr(), "Command \"model-signins\" is deprecated: use %s instead; model-signins will be removed in a later release\n", providersCommandFor(c.Name(), args, on))
+		},
 		Short: "Add, list and remove the model sign-ins your local runs can spend (your own ChatGPT, Claude or Copilot plan, or a connected key)",
 		Long: "A model sign-in lets the runs on this computer spend a plan you hold instead of an API key.\n" +
 			"Any number are kept; model setup (agentry setup) names the one in use, and switching signs\n" +
 			"nothing out. A hosted run never spends one. These are not MCP connections (agentry connections).\n" +
-			"agentry providers add --sign-in and providers remove do the same as the provider of a saved model.",
+			"Deprecated: agentry providers list, add and remove do all of this, and model-signins will be removed\n" +
+			"in a later release.",
 	}
 	cmd.AddCommand(newModelSignInsAddCmd(), newModelSignInsListCmd(), newModelSignInsRemoveCmd())
 	return cmd
@@ -126,15 +141,7 @@ func newModelSignInsListCmd() *cobra.Command {
 			}
 			rows := make([]modelSignInOut, 0, len(list))
 			for _, r := range list {
-				state := "signed in"
-				if r.Connected {
-					state = "connected"
-				}
-				if r.Broken != "" {
-					state = "broken: " + r.Broken
-				}
-				rows = append(rows, modelSignInOut{Vendor: r.Vendor, Kind: r.Kind, Connected: r.Connected, Account: r.Label,
-					State: state, CreatedAt: r.CreatedAt, LastUsed: r.LastUsedAt, KeptIn: r.SecretIn, App: r.App, KeyExpiresAt: r.KeyExpiresAt})
+				rows = append(rows, modelSignInRow(*r))
 			}
 			if flags.jsonOut {
 				return emitJSON(cmd.OutOrStdout(), map[string]any{"modelSignIns": rows})
@@ -145,27 +152,75 @@ func newModelSignInsListCmd() *cobra.Command {
 				return nil
 			}
 			for _, r := range rows {
-				last := r.LastUsed
-				if last == "" {
-					last = "never used"
-				}
-				acct := ""
-				if r.Account != "" {
-					acct = " as " + r.Account
-				}
-				via := ""
-				if r.App != "" {
-					via = " (through Agentry's " + mcpauth.GitHubAppName(r.App) + ")"
-				}
-				expires := ""
-				if r.KeyExpiresAt != "" {
-					expires = " · key expires " + r.KeyExpiresAt
-				}
-				_, _ = fmt.Fprintf(out, "%s%s%s · %s · %s%s · last used: %s\n", r.Vendor, acct, via, r.Kind, r.State, expires, last)
+				_, _ = fmt.Fprintln(out, signInLine(r))
 			}
 			return nil
 		},
 	}
+}
+
+// modelSignInRow is a kept sign-in as listed: never a token.
+func modelSignInRow(r modelsignin.Record) modelSignInOut {
+	state := "signed in"
+	if r.Connected {
+		state = "connected"
+	}
+	if r.Broken != "" {
+		state = "broken: " + r.Broken
+	}
+	return modelSignInOut{Vendor: r.Vendor, Kind: r.Kind, Connected: r.Connected, Account: r.Label,
+		State: state, CreatedAt: r.CreatedAt, LastUsed: r.LastUsedAt, KeptIn: r.SecretIn, App: r.App, KeyExpiresAt: r.KeyExpiresAt}
+}
+
+// signInLine is a kept sign-in in words.
+func signInLine(r modelSignInOut) string {
+	last := r.LastUsed
+	if last == "" {
+		last = "never used"
+	}
+	acct := ""
+	if r.Account != "" {
+		acct = " as " + r.Account
+	}
+	via := ""
+	if r.App != "" {
+		via = " (through Agentry's " + mcpauth.GitHubAppName(r.App) + ")"
+	}
+	expires := ""
+	if r.KeyExpiresAt != "" {
+		expires = " · key expires " + r.KeyExpiresAt
+	}
+	return fmt.Sprintf("%s%s%s · %s · %s%s · last used: %s", r.Vendor, acct, via, r.Kind, r.State, expires, last)
+}
+
+// providersCommandFor is the providers command that does what
+// `model-signins <sub> <args>` does, with on its flags given.
+func providersCommandFor(sub string, args []string, on map[string]bool) string {
+	vendor := ""
+	if len(args) > 0 {
+		vendor = strings.ToLower(args[0])
+	}
+	switch sub {
+	case "list":
+		return "agentry providers list"
+	case "add":
+		if modelsignin.ProviderOfVendor(vendor) == "" {
+			return "agentry providers add"
+		}
+		c := modelsignin.SignInCommand(vendor)
+		for _, f := range []string{"new-account", "installed", "oauth-app"} {
+			if on[f] {
+				c += " --" + f
+			}
+		}
+		return c
+	case "remove":
+		if p := modelsignin.ProviderOfVendor(vendor); p != "" {
+			return "agentry providers remove " + p + " " + signInOnlyFlag(vendor)
+		}
+		return "agentry providers remove <provider id>"
+	}
+	return "agentry providers"
 }
 
 // removedModelSignIn is `model-signins remove --json`.
@@ -184,11 +239,7 @@ func newModelSignInsRemoveCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			s := connectStore(home)
-			// A Claude sign-in is Claude Code's, in its own directories:
-			// Claude Code logs out there, then they are deleted.
-			s.EndClaude = endClaude(cmd.ErrOrStderr(), home)
-			outcome, err := s.Remove(cmd.Context(), args[0], "removed by the person")
+			outcome, err := removeSignIn(cmd, home, args[0])
 			if errors.Is(err, modelsignin.ErrNone) {
 				return fmt.Errorf("no %s sign-in is kept on this computer", args[0])
 			}
@@ -198,18 +249,7 @@ func newModelSignInsRemoveCmd() *cobra.Command {
 			if flags.jsonOut {
 				return emitJSON(cmd.OutOrStdout(), removedModelSignIn{Vendor: args[0], Revocation: outcome})
 			}
-			if modelsignin.IsConnectVendor(args[0]) {
-				// The key is gone from the keychain: no sealed copy outlives it.
-				resealSignedOut(cmd.ErrOrStderr())
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "disconnected your %s account (revocation: %s)\n", modelsignin.ConnectName(args[0]), outcome)
-				return nil
-			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "removed the %s sign-in (revocation: %s)\n", args[0], outcome)
-			if args[0] == modelsignin.Copilot && outcome == modelsignin.RevokeSubmitted {
-				// GitHub takes the tokens for revocation; the app's authorization,
-				// which only a holder of its client secret could revoke, stays.
-				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "GitHub accepted the sign-in's tokens for revocation; Agentry's app stays in your authorized apps until you remove it there: https://github.com/settings/applications")
-			}
+			sayRemovedSignIn(cmd.OutOrStdout(), args[0], outcome)
 			return nil
 		},
 	}

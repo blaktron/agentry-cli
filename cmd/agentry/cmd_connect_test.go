@@ -162,7 +162,7 @@ func TestARunRenewsAConnectedHuggingFaceToken(t *testing.T) {
 		t.Fatalf("the entry holds %q: want a renewed token", now)
 	}
 	f.hf.Refused = true
-	if err := refreshConnectedKey(context.Background(), home, plan, false); err == nil || !strings.Contains(err.Error(), "agentry model-signins add huggingface") {
+	if err := refreshConnectedKey(context.Background(), home, plan, false); err == nil || !strings.Contains(err.Error(), "agentry providers add huggingface --connect") {
 		t.Fatalf("a refused refresh: %v", err)
 	}
 }

@@ -1,4 +1,4 @@
-// Sign in with ChatGPT: `agentry model-signins add chatgpt` and the
+// Sign in with ChatGPT: `agentry providers add openai --sign-in` and the
 // offer in `agentry setup`. The flow is mcpauth.ChatGPT, the store
 // modelsignin.SignInChatGPT; this is the terminal around them.
 package main
@@ -83,7 +83,7 @@ func chatgptOffer(cmd *cobra.Command, in *bufio.Reader, home string) setup.ChatG
 	}
 }
 
-// signedInJSON is `model-signins add --json`: never a token.
+// signedInJSON is the deprecated `model-signins add --json`: never a token.
 type signedInJSON struct {
 	Vendor string `json:"vendor"`
 	Kind   string `json:"kind"`

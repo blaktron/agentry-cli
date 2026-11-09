@@ -234,6 +234,39 @@ func SignInVendor(id string, pr policy.Provider) string {
 	return ""
 }
 
+// KeptSignIn is a model sign-in or connected account kept on this computer,
+// with the provider it pays for and whether that provider is here and paid
+// by it.
+type KeptSignIn struct {
+	Record modelsignin.Record
+	// Provider is the provider id the credential pays for.
+	Provider string
+	// InUse says a provider on this computer is paid by it. One that is
+	// not is kept for nothing, and removing it changes no provider.
+	InUse bool
+	// ProviderHere says a provider of that id is here, paid another way
+	// when InUse is false (an openai key beside a kept ChatGPT sign-in).
+	ProviderHere bool
+}
+
+// SignIns is every sign-in and connected account kept on this computer, by
+// vendor, each against providers (the policy's).
+func SignIns(home string, providers map[string]policy.Provider) ([]KeptSignIn, error) {
+	recs, err := modelsignin.Open(home, nil).List()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]KeptSignIn, 0, len(recs))
+	for _, r := range recs {
+		k := KeptSignIn{Record: *r, Provider: modelsignin.ProviderOfVendor(r.Vendor)}
+		if pr, ok := providers[k.Provider]; ok {
+			k.ProviderHere, k.InUse = true, SignInVendor(k.Provider, pr) == r.Vendor
+		}
+		out = append(out, k)
+	}
+	return out, nil
+}
+
 // ProviderState says whether the provider id's credential is here. token is
 // this computer's sign-in token for a registry ("" when signed out), which
 // Agentry credits are paid through.
