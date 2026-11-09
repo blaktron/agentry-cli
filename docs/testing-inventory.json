@@ -3285,6 +3285,7 @@
             "TestAnotherAnswerLeavesTheCache",
             "TestOlderVersionIsRefusedFromTheRegistryAndTheCache",
             "TestUnknownLockedSettingRefusesEveryRun",
+            "TestALockedRowThisClientDoesNotApplyRefusesEveryRun",
             "TestSyncAsksOnlyWhenTheAnswerIsOldAndKeepsTheCacheOffline",
             "TestSyncRemembersThatNoneApply",
             "TestForgetDeletesTheCache",
