@@ -339,14 +339,14 @@ func doctorPolicy(rep *doctorReport, path string) *policy.Policy {
 	case os.Getenv(pol.Model.APIKeyEnv) == "" && policy.KeySource(policy.HarnessPolicy{}, pol.Model) == modelkey.SourceKeyring:
 		// The variable is unset and the policy names the keychain as the
 		// fallback: a run would read it from there.
-		present, err := modelKeyPresent(pol.Model.Provider)
+		present, err := modelKeyPresent(pol.Model.KeyProvider())
 		switch {
 		case err != nil:
 			rep.failFix("model", "export "+pol.Model.APIKeyEnv+" in the shell that runs agentry, or unlock the keychain and run doctor again", "%s/%s: $%s is not set and the OS keychain could not be asked: %v", pol.Model.Provider, pol.Model.Name, pol.Model.APIKeyEnv, err)
 		case !present:
-			rep.failFix("model", "run `agentry setup` to store the key in the keychain, or export "+pol.Model.APIKeyEnv+" in the shell that runs agentry", "%s/%s: $%s is not set and the OS keychain has no entry %s (apiKeySource keyring)", pol.Model.Provider, pol.Model.Name, pol.Model.APIKeyEnv, modelkey.Account(pol.Model.Provider))
+			rep.failFix("model", "run `agentry setup` to store the key in the keychain, or export "+pol.Model.APIKeyEnv+" in the shell that runs agentry", "%s/%s: $%s is not set and the OS keychain has no entry %s (apiKeySource keyring)", pol.Model.Provider, pol.Model.Name, pol.Model.APIKeyEnv, modelkey.Account(pol.Model.KeyProvider()))
 		default:
-			rep.ok("model", "%s/%s (key from the OS keychain entry %s; $%s unset)", pol.Model.Provider, pol.Model.Name, modelkey.Account(pol.Model.Provider), pol.Model.APIKeyEnv)
+			rep.ok("model", "%s/%s (key from the OS keychain entry %s; $%s unset)", pol.Model.Provider, pol.Model.Name, modelkey.Account(pol.Model.KeyProvider()), pol.Model.APIKeyEnv)
 		}
 	case os.Getenv(pol.Model.APIKeyEnv) == "":
 		rep.failFix("model", "export "+pol.Model.APIKeyEnv+" in the shell that runs agentry, or run `agentry setup` to store the key in the OS keychain", "%s/%s: $%s is not set in this environment", pol.Model.Provider, pol.Model.Name, pol.Model.APIKeyEnv)

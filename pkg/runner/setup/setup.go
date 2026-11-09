@@ -53,6 +53,10 @@ type ProviderDefault struct {
 	// its key rides in (keyHeaderBearer is "Authorization: Bearer").
 	ModelsURL string
 	KeyHeader string
+	// CheckURL is the listing of a big catalogue whose models are typed
+	// rather than picked (no ModelsURL): the save check asks it whether the
+	// id typed is one the provider offers (ListModelsToCheck).
+	CheckURL string
 }
 
 // keyHeaderBearer marks a provider whose key is an Authorization bearer
@@ -77,9 +81,12 @@ var providerDefaults = []ProviderDefault{
 	// model id. The key variables are the ones docker-agent's aliases read
 	// (Poe's is the named provider's token_key), and the endpoints
 	// docker-agent's.
-	{Provider: policy.ProviderOpenRouter, APIKeyEnv: "OPENROUTER_API_KEY", ProxyAllow: []string{"openrouter.ai:443"}},
-	{Provider: policy.ProviderPoe, APIKeyEnv: "POE_API_KEY", ProxyAllow: []string{"api.poe.com:443"}},
-	{Provider: policy.ProviderHuggingFace, APIKeyEnv: "HF_TOKEN", ProxyAllow: []string{"router.huggingface.co:443"}},
+	{Provider: policy.ProviderOpenRouter, APIKeyEnv: "OPENROUTER_API_KEY", ProxyAllow: []string{"openrouter.ai:443"},
+		CheckURL: "https://openrouter.ai/api/v1/models", KeyHeader: keyHeaderBearer},
+	{Provider: policy.ProviderPoe, APIKeyEnv: "POE_API_KEY", ProxyAllow: []string{"api.poe.com:443"},
+		CheckURL: "https://api.poe.com/v1/models", KeyHeader: keyHeaderBearer},
+	{Provider: policy.ProviderHuggingFace, APIKeyEnv: "HF_TOKEN", ProxyAllow: []string{"router.huggingface.co:443"},
+		CheckURL: "https://router.huggingface.co/v1/models", KeyHeader: keyHeaderBearer},
 	// Vultr Serverless Inference: an OpenAI-compatible endpoint paid by a key
 	// from the person's Vultr account. No default model, because Vultr's
 	// catalogue changes; its listing offers the models a run can use.
@@ -581,7 +588,7 @@ func configureChatGPT(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 		return errors.New("no model chosen for the ChatGPT plan (pass --model)")
 	}
 	if len(models) > 0 && !slices.Contains(models, model) {
-		p.Say(fmt.Sprintf("warning: your plan's model list does not name %q; runs will ask for it anyway", model))
+		return NotInPlanError("ChatGPT", model, models)
 	}
 	pol.Model = policy.Model{
 		Provider:   policy.ProviderOpenAI,
@@ -597,6 +604,12 @@ func configureChatGPT(p Prompter, pol *policy.Policy, opts ModelOpts) error {
 	p.Say(fmt.Sprintf("model: openai/%s, paid by your ChatGPT plan (signed in%s; runs use Codex, and the agent container reaches %s alone)",
 		model, who, strings.Join(pol.Model.ProxyAllow, ", ")))
 	return nil
+}
+
+// NotInPlanError is the refusal of a model id a plan's own model list does
+// not name: plan is the plan's name (ChatGPT, Copilot), models its list.
+func NotInPlanError(plan, model string, models []string) error {
+	return fmt.Errorf("your %s plan does not offer %q: its models are %s", plan, model, strings.Join(models, ", "))
 }
 
 func keptChatGPT(opts ModelOpts) string {
@@ -1009,6 +1022,10 @@ const ContextProbeBudget = 30 * time.Second
 
 // hostPortOf derives the proxy allowlist entry from a base URL — the
 // agent container's ONLY egress, so it must be exact.
+// EndpointHostPort is the host:port an endpoint's base URL is reached at,
+// the egress proxy's allowlist entry for it.
+func EndpointHostPort(raw string) (string, error) { return hostPortOf(raw) }
+
 func hostPortOf(raw string) (string, error) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" {

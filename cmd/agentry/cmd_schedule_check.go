@@ -93,6 +93,9 @@ func scheduleCheck(cmd *cobra.Command, ref, name, out, on string, spec runSpecFl
 	if err != nil {
 		gap(err)
 	}
+	if reason := scheduleHold(sc); reason != "" {
+		gap(heldError(reason))
+	}
 	preview, err := schedulePreview(cmd, sc, ref)
 	if err != nil {
 		return err
@@ -224,7 +227,7 @@ func checkRunhostSchedule(cmd *cobra.Command, on string, sc schedule.Schedule, p
 	if pf, err := policy.Resolve(sc.Run.Policy); err == nil {
 		if pol, _, err := policy.EnsureDefault(pf.Path); err == nil {
 			if m := job.ModelOf(pol.Model); !m.SignIn() && !m.PaysWithCredits() && pol.Model.Provider != "" {
-				add("model-key", pol.Model.Provider)
+				add("model-key", pol.Model.KeyProvider())
 			}
 		}
 	}

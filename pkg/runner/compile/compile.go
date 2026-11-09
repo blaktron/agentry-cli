@@ -2768,7 +2768,7 @@ func modelKeySource(pol *policy.Policy, adapterName string) (keyEnv, account str
 	hp := pol.Harness[adapterName]
 	keyEnv = policy.KeyEnv(hp, pol.Model)
 	if policy.KeySource(hp, pol.Model) == modelkey.SourceKeyring {
-		account = modelkey.Account(pol.Model.Provider)
+		account = modelkey.Account(pol.Model.KeyProvider())
 	}
 	return keyEnv, account
 }

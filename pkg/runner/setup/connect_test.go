@@ -118,11 +118,16 @@ func TestSetupPastesAKeyForAConnectProvider(t *testing.T) {
 	}
 }
 
-// The big catalogues are not listed.
-func TestTheConnectProvidersModelsAreNotListed(t *testing.T) {
+// The big catalogues are not listed for a picker, and are asked by the save
+// check, in the OpenAI shape.
+func TestTheConnectProvidersModelsAreNotListedButAreChecked(t *testing.T) {
 	for _, p := range []string{"openrouter", "poe", "huggingface"} {
-		if _, _, err := modelsEndpoint(p, ""); err == nil || !strings.Contains(err.Error(), "type the model id") {
+		if _, _, err := modelsEndpoint(p, "", false); err == nil || !strings.Contains(err.Error(), "type the model id") {
 			t.Errorf("%s: %v", p, err)
+		}
+		endpoint, _, err := modelsEndpoint(p, "", true)
+		if err != nil || !strings.HasPrefix(endpoint, "https://") || !strings.HasSuffix(endpoint, "/models") {
+			t.Errorf("%s to check: %q, %v", p, endpoint, err)
 		}
 	}
 }

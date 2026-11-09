@@ -1,6 +1,15 @@
 {
   "versions": [
     {
+      "version": "0.7.38",
+      "highlights": [
+        "A schedule made in Agentry Desktop's Unsafe Mode waits while your organization forbids Unsafe Mode, then runs again.",
+        "schedule list and schedule show say when your organization's managed settings hold a schedule.",
+        "agentry providers and agentry models keep up to 10 saved models, each a provider and a model id; one is the default.",
+        "A saved model is checked when you save it, and an endpoint of your own fills in its context window."
+      ]
+    },
+    {
       "version": "0.7.37",
       "highlights": [
         "Switching computer use or an application on or off for a persistent agent takes effect at its next turn.",

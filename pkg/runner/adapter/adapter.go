@@ -606,7 +606,7 @@ func keyringAccount(in Input) string {
 	if policy.KeySource(in.Harness, in.Model) != modelkey.SourceKeyring {
 		return ""
 	}
-	return modelkey.Account(in.Model.Provider)
+	return modelkey.Account(in.Model.KeyProvider())
 }
 
 // anthropicKeyExpectation is the credential kind the plan is rendered for,

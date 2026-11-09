@@ -34,8 +34,10 @@ import (
 // runsc, io.containerd.runc.v2): something `--runtime` accepts verbatim.
 var runtimeNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
-// Version is the current policy schema major.
-const Version = "1"
+// Version is the current policy schema major. Save writes version 1
+// (Version1) while the policy holds nothing version 1 cannot say
+// (models.go), and Load reads both.
+const Version = "2"
 
 // Default image pins. These are Agentry's own mirrors and builds, published
 // from blaktron/agentry-dockerimages: each mirror's destination digest was
@@ -159,12 +161,22 @@ const (
 // Policy is the whole operator policy file (closed schema; unknown keys
 // are errors so a typo cannot silently disable a control).
 type Policy struct {
-	// PolicyVersion pins the schema ("1").
+	// PolicyVersion pins the schema ("1" or "2").
 	PolicyVersion string `yaml:"policyVersion"`
 	// Images pins every image the runner may pull or build.
 	Images Images `yaml:"images"`
-	// Model configures the LLM the default adapter drives.
-	Model Model `yaml:"model"`
+	// Model configures the LLM the default adapter drives: in a version 1
+	// file, the one model block; read from a version 2 file, the default
+	// saved model as the compiler reads it (never written there).
+	Model Model `yaml:"model,omitempty"`
+	// Providers are the credentials the saved models are paid with, by
+	// provider id (version 2; models.go).
+	Providers map[string]Provider `yaml:"providers,omitempty"`
+	// Models are the saved models, at most MaxSavedModels (version 2).
+	Models []SavedModel `yaml:"models,omitempty"`
+	// Default is the id of the saved model a run uses unless it names
+	// another (version 2).
+	Default string `yaml:"default,omitempty"`
 	// AllowWildcardEgress gates manifest `network.egress: "*"`.
 	// Default false: a wildcard agent is refused at compile time.
 	AllowWildcardEgress bool `yaml:"allowWildcardEgress"`
@@ -241,6 +253,10 @@ type Policy struct {
 	// only when the QuickAgent declares commands. A sandbox host's runs are
 	// always checked, whatever this says.
 	MalwareCheck *bool `yaml:"malwareCheck,omitempty"`
+
+	// view is Model as the lists last made it, so a change a caller makes to
+	// Model is folded into the default saved model (models.go).
+	view Model
 }
 
 // PersistentReleasesAllowed says whether the policy lets a persistent
@@ -819,6 +835,10 @@ type Model struct {
 	// the ONLY egress the agent container has; it must cover the
 	// model endpoint and nothing else.
 	ProxyAllow []string `yaml:"proxyAllow"`
+	// ProviderID is the saved model's provider when the model was read from
+	// a saved model, whose keychain entry holds the key (KeyProvider); never
+	// written.
+	ProviderID string `yaml:"-" json:"-"`
 }
 
 // MinContextWindow and MaxContextWindow bound model.contextWindow: below the
@@ -1019,7 +1039,7 @@ const (
 
 func Default() *Policy {
 	return &Policy{
-		PolicyVersion: Version,
+		PolicyVersion: Version1,
 		Images: Images{
 			Gateway:            DefaultGatewayImage,
 			HarnessDockerAgent: DefaultHarnessImage,
@@ -1048,15 +1068,17 @@ func boolPtr(b bool) *bool { return &b }
 // `agentry setup`; hand-written comments in an existing file are
 // not preserved, and the header says so.
 func Save(path string, p *Policy) error {
+	p.foldModel()
 	if err := p.Validate(); err != nil {
 		return err
 	}
+	file := p.fileForm()
 	var buf bytes.Buffer
 	buf.WriteString("# Agentry Runner operator policy.\n")
 	buf.WriteString("# Written by `agentry setup` — regenerated as a whole; comments are not preserved.\n")
 	enc := yaml.NewEncoder(&buf)
 	enc.SetIndent(2)
-	if err := enc.Encode(p); err != nil {
+	if err := enc.Encode(file); err != nil {
 		return fmt.Errorf("marshal policy: %w", err)
 	}
 	if err := enc.Close(); err != nil {
@@ -1158,6 +1180,9 @@ func Load(path string) (*Policy, string, error) {
 	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
 		return nil, "", fmt.Errorf("parse %s: trailing YAML document", path)
 	}
+	if err := p.readModels(); err != nil {
+		return nil, "", fmt.Errorf("%s: %w", path, err)
+	}
 	// Fields added after a policy file was written resolve to their defaults
 	// rather than failing validation — additions must not brick existing
 	// machines (the file's sha still changes only when the OPERATOR edits it,
@@ -1231,8 +1256,8 @@ func EnsureDefault(path string) (*Policy, string, error) {
 // (via Load) before every compile, so a hand-edited policy fails before a
 // container starts, with the field named.
 func (p *Policy) Validate() error {
-	if p.PolicyVersion != Version {
-		return fmt.Errorf("policyVersion %q not supported (want %q)", p.PolicyVersion, Version)
+	if p.PolicyVersion != Version1 && p.PolicyVersion != Version {
+		return fmt.Errorf("policyVersion %q not supported (want %q or %q)", p.PolicyVersion, Version1, Version)
 	}
 	if p.Images.Gateway == "" || p.Images.HarnessDockerAgent == "" || p.Images.GoBuilder == "" {
 		return errors.New("images.gateway, images.harnessImages.docker-agent, and images.goBuilder are all required")
@@ -1282,36 +1307,16 @@ func (p *Policy) Validate() error {
 	if c := p.Images.ClamAVSignatures; c != "" && !tagRefRE.MatchString(c) {
 		return fmt.Errorf("images.clamavSignatures %q must be <registry>/<repository>:<tag>: the bundle moves daily and its signature is what is checked", c)
 	}
-	if p.Model.Provider == "" || p.Model.Name == "" {
-		return errors.New("model.provider and model.name are required")
+	if p.HasSavedModels() || p.PolicyVersion == Version {
+		if err := p.validateSavedModels(); err != nil {
+			return err
+		}
 	}
-	if strings.ContainsAny(p.Model.Provider, ": \t\n") {
-		return fmt.Errorf("model.provider %q must not contain ':' or whitespace (it names the keychain account provider:<provider>)", p.Model.Provider)
-	}
-	if err := CheckContextWindow(p.Model.ContextWindow); err != nil {
-		return fmt.Errorf("model.contextWindow: %w (or leave it out, for the harness's own lookup)", err)
+	if err := checkModelBlock("model", p.Model); err != nil {
+		return err
 	}
 	if p.Sessions.IdleTimeoutSeconds < 0 || p.Sessions.MaxWallSeconds < 0 || p.Sessions.MaxUserTurns < 0 {
 		return errors.New("sessions.idleTimeoutSeconds, sessions.maxWallSeconds and sessions.maxUserTurns must not be negative")
-	}
-	if p.Model.Provider == ProviderAgentry {
-		if _, err := AgentryRegistry(p.Model); err != nil {
-			return err
-		}
-		if p.Model.APIKeyEnv != "" || p.Model.APIKeySource != "" || IsModelSignIn(p.Model.APIKeyKind) {
-			return errors.New("model.provider agentry is paid with the signed-in account's credits: it takes no apiKeyEnv, apiKeySource or sign-in kind")
-		}
-	} else if p.Model.APIKeyEnv == "" && !IsModelSignIn(p.Model.APIKeyKind) {
-		return errors.New("model.apiKeyEnv is required (the runner never embeds keys; it names the env var to read)")
-	}
-	if !validKeySource(p.Model.APIKeySource) {
-		return fmt.Errorf("model.apiKeySource %q must be env or keyring", p.Model.APIKeySource)
-	}
-	if err := checkKind("model.apiKeyKind", p.Model.APIKeyKind, p.Model.Provider); err != nil {
-		return err
-	}
-	if p.Model.APIKeyKind == KeyKindSubscription && p.Model.Provider != ProviderAnthropic {
-		return fmt.Errorf("model.apiKeyKind subscription needs model.provider anthropic (it is %q): only Anthropic has such tokens, and only Claude Code may use one", p.Model.Provider)
 	}
 	for name, hp := range p.Harness {
 		if !validKeySource(hp.APIKeySource) {
@@ -1327,14 +1332,6 @@ func (p *Policy) Validate() error {
 		case "", TokenRouteAuthCommand, TokenRouteRestart:
 		default:
 			return fmt.Errorf("harness.%s.signInTokenRoute %q must be %s or %s", name, hp.SignInTokenRoute, TokenRouteAuthCommand, TokenRouteRestart)
-		}
-	}
-	if len(p.Model.ProxyAllow) == 0 {
-		return errors.New("model.proxyAllow must list the model endpoint host:port (it is the agent container's only egress)")
-	}
-	for _, hp := range p.Model.ProxyAllow {
-		if strings.TrimSpace(hp) == "" || strings.ContainsAny(hp, " /") {
-			return fmt.Errorf("model.proxyAllow entry %q must be host or host:port", hp)
 		}
 	}
 	switch p.SecretSource.Mode {
@@ -1858,6 +1855,48 @@ malwareCheck: false
 #   # the runner image's own repositories.
 #   apkMirror: https://dl-cdn.alpinelinux.org/alpine
 `
+
+// checkModelBlock holds a model block, or a provider read as one, to the
+// closed vocabulary; field names it in the errors (model, providers.<id>).
+func checkModelBlock(field string, m Model) error {
+	if m.Provider == "" || m.Name == "" {
+		return fmt.Errorf("%s.provider and %s.name are required", field, field)
+	}
+	if strings.ContainsAny(m.Provider, ": \t\n") {
+		return fmt.Errorf("%s.provider %q must not contain ':' or whitespace (it names the keychain account provider:<provider>)", field, m.Provider)
+	}
+	if err := CheckContextWindow(m.ContextWindow); err != nil {
+		return fmt.Errorf("%s.contextWindow: %w (or leave it out, for the harness's own lookup)", field, err)
+	}
+	if m.Provider == ProviderAgentry {
+		if _, err := AgentryRegistry(m); err != nil {
+			return err
+		}
+		if m.APIKeyEnv != "" || m.APIKeySource != "" || IsModelSignIn(m.APIKeyKind) {
+			return fmt.Errorf("%s.provider agentry is paid with the signed-in account's credits: it takes no apiKeyEnv, apiKeySource or sign-in kind", field)
+		}
+	} else if m.APIKeyEnv == "" && !IsModelSignIn(m.APIKeyKind) {
+		return fmt.Errorf("%s.apiKeyEnv is required (the runner never embeds keys; it names the env var to read)", field)
+	}
+	if !validKeySource(m.APIKeySource) {
+		return fmt.Errorf("%s.apiKeySource %q must be env or keyring", field, m.APIKeySource)
+	}
+	if err := checkKind(field+".apiKeyKind", m.APIKeyKind, m.Provider); err != nil {
+		return err
+	}
+	if m.APIKeyKind == KeyKindSubscription && m.Provider != ProviderAnthropic {
+		return fmt.Errorf("%s.apiKeyKind subscription needs model.provider anthropic (it is %q): only Anthropic has such tokens, and only Claude Code may use one", field, m.Provider)
+	}
+	if len(m.ProxyAllow) == 0 {
+		return fmt.Errorf("%s.proxyAllow must list the model endpoint host:port (it is the agent container's only egress)", field)
+	}
+	for _, hp := range m.ProxyAllow {
+		if strings.TrimSpace(hp) == "" || strings.ContainsAny(hp, " /") {
+			return fmt.Errorf("%s.proxyAllow entry %q must be host or host:port", field, hp)
+		}
+	}
+	return nil
+}
 
 // validKeySource admits the apiKeySource values: unset, env, keyring.
 func validKeySource(v string) bool { return v == "" || v == "env" || v == "keyring" }

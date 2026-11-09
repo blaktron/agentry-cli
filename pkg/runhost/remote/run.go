@@ -299,7 +299,7 @@ func ModelKey(pol *policy.Policy) (string, error) {
 	case pol.Model.APIKeyKind == policy.KeyKindSubscription:
 		return "", errors.New("a Claude subscription token runs only the installed claude, which a runhost does not run: sign the runhost in with agentry runhost model <name> --sign-in claude, and choose your Claude subscription with agentry setup")
 	}
-	key, err := modelkey.Personal(pol.Model.APIKeyEnv, pol.Model.APIKeySource, pol.Model.Provider)
+	key, err := modelkey.Personal(pol.Model.APIKeyEnv, pol.Model.APIKeySource, pol.Model.KeyProvider())
 	if err != nil {
 		return "", err
 	}

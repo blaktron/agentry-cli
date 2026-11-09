@@ -28,6 +28,8 @@ import (
 
 	"github.com/blaktron/agentry/pkg/manifest"
 
+	"github.com/blaktron/agentry-cli/pkg/managed"
+	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/destination"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
@@ -212,6 +214,9 @@ type runSpecFlags struct {
 	destinations                                []string
 	allowUnsigned, allowUnscanned, allowVulnMCP bool
 	signedOut                                   bool
+	// inUnsafeMode is --in-unsafe-mode: the consents above were given in
+	// Agentry Desktop's Unsafe Mode.
+	inUnsafeMode bool
 	// hosts are the target hosts' sign-in flags, read once at add and
 	// kept in the keychain.
 	hosts targetHostFlags
@@ -270,6 +275,11 @@ func newScheduleAddCmd() *cobra.Command {
 			if on != "" && check {
 				return scheduleCheck(cmd, ref, name, out, on, spec, when, scheduleNow())
 			}
+			if spec.inUnsafeMode && !check {
+				if reason := scheduleUnsafeModeRefusal(); reason != "" {
+					return heldError(reason)
+				}
+			}
 			if on != "" {
 				w, err := when.recurrence(scheduleNow())
 				if err != nil {
@@ -319,6 +329,7 @@ func newScheduleAddCmd() *cobra.Command {
 	f.BoolVar(&spec.allowUnsigned, "allow-unsigned", false, "allow a release with no registry attestation, at every run of this schedule")
 	f.BoolVar(&spec.allowUnscanned, "allow-unscanned", false, "allow a release the registry admitted without a scan, at every run of this schedule")
 	f.BoolVar(&spec.allowVulnMCP, "allow-vulnerable-mcp", false, "allow a declared MCP server the gate rates high or critical, at every run of this schedule")
+	f.BoolVar(&spec.inUnsafeMode, "in-unsafe-mode", false, "record that this schedule's consents were given in Agentry Desktop's Unsafe Mode: it does not run while managed settings on this computer forbid Unsafe Mode, and runs again once they stop")
 	addTargetHostFlags(cmd, &spec.hosts)
 	f.BoolVar(&spec.signedOut, "signed-out", false, "also run while you are signed out (Linux with Docker Engine; turns on linger, seals the keys in an encrypted systemd credential)")
 	f.BoolVar(&yes, "yes", false, "consent to the release's capabilities without the prompt (no terminal); with --signed-out, also confirms turning on linger")
@@ -431,7 +442,7 @@ func scheduleFromFlags(name, out string, spec runSpecFlags, when schedule.Recurr
 			OutDir: outAbs, Files: absAll(spec.files), Knowledge: knowledgeRefs(spec.knowledge), Intake: spec.intake,
 			Voice: spec.voice, NoVoice: spec.noVoice, Timeout: spec.timeout, MaxTurns: spec.maxTurns, MaxCost: spec.maxCost,
 			Adapter: spec.adapter, AllowUnsigned: spec.allowUnsigned, AllowUnscanned: spec.allowUnscanned,
-			AllowVulnerableMCP: spec.allowVulnMCP,
+			AllowVulnerableMCP: spec.allowVulnMCP, UnsafeMode: spec.inUnsafeMode,
 		},
 	}
 	if spec.policyPath != "" {
@@ -798,7 +809,7 @@ func checkFireInputs(m *manifest.Manifest, pol *policy.Policy, profSecrets map[s
 	if env := pol.Model.APIKeyEnv; env != "" {
 		inEnv := strings.TrimSpace(getenv(env)) != ""
 		if pol.Model.APIKeySource == modelkey.SourceKeyring {
-			ok, err := keyPresent(pol.Model.Provider)
+			ok, err := keyPresent(pol.Model.KeyProvider())
 			switch {
 			case err != nil:
 				gaps = append(gaps, fmt.Sprintf("the model key: %v", err))
@@ -1031,7 +1042,7 @@ func schedulerContextGaps(cmd *cobra.Command, policyPath string) []string {
 		return append(gaps, err.Error())
 	}
 	if pol.Model.APIKeyEnv != "" && pol.Model.APIKeySource == modelkey.SourceKeyring {
-		ok, err := modelkey.Present(pol.Model.Provider)
+		ok, err := modelkey.Present(pol.Model.KeyProvider())
 		switch {
 		case err != nil:
 			gaps = append(gaps, fmt.Sprintf("the keychain: %v", err))
@@ -1202,6 +1213,14 @@ func scheduleFire(cmd *cobra.Command, id string) error {
 		return nil
 	}
 	st.Last = run
+	if reason := scheduleHold(sc); reason != "" {
+		// Held, not run: the occurrence is used and recorded, and the
+		// schedule's count of runs is not.
+		_ = store.SaveState(id, st)
+		_ = store.AppendFire(id, schedule.Fire{Occurrence: run, Started: now, Ended: now, Outcome: schedule.Failed, ExitCode: engine.ExitPolicy, Message: reason})
+		_ = endIfDone(store, sc, st, run, errOut)
+		return heldError(reason)
+	}
 	st.Runs++
 	if err := store.SaveState(id, st); err != nil {
 		_ = store.AppendFire(id, schedule.Fire{Occurrence: run, Outcome: schedule.Failed, ExitCode: engine.ExitCLI,
@@ -1355,6 +1374,9 @@ func newScheduleRunCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if reason := scheduleHold(sc); reason != "" {
+				return heldError(reason)
+			}
 			now := scheduleNow()
 			rec := scheduleExecute(cmd, store, sc, now, true)
 			if err := store.AppendFire(sc.ID, rec); err != nil {
@@ -1383,6 +1405,9 @@ type scheduleViewJSON struct {
 	Last         *schedule.Fire  `json:"lastFire,omitempty"`
 	Upcoming     []time.Time     `json:"upcoming,omitempty"`
 	Fires        []schedule.Fire `json:"fires,omitempty"`
+	// Held is why the schedule does not run now (managed settings that
+	// forbid the Unsafe Mode its consents were given in); "" when it runs.
+	Held string `json:"held,omitempty"`
 }
 
 // installedAlarms is the ids the system's scheduler holds an entry for,
@@ -1419,6 +1444,7 @@ func scheduleView(store schedule.Store, sc schedule.Schedule, now time.Time, ala
 	}
 	v.Alarm = alarms[sc.ID]
 	v.AlarmUnknown = alarms == nil
+	v.Held = scheduleHold(sc)
 	return v
 }
 
@@ -1466,6 +1492,8 @@ func nextLabel(v scheduleViewJSON) string {
 	switch {
 	case v.Paused:
 		return "paused"
+	case v.Held != "" && !v.Ended && v.Next != nil:
+		return fmtWhen(*v.Next, v.When.Zone) + " (held: Unsafe Mode is forbidden here)"
 	case v.Ended || v.Next == nil:
 		return "ended"
 	case v.AlarmUnknown:
@@ -1519,6 +1547,12 @@ func newScheduleShowCmd() *cobra.Command {
 				sc.Name, sc.ID, sc.Ref, sc.Version, sc.Digest, v.Describe, nextLabel(v), sc.Run.OutDir)
 			if sc.SignedOut {
 				_, _ = fmt.Fprintln(w, "runs while signed out: yes (its keys are sealed in an encrypted systemd credential)")
+			}
+			if sc.Run.UnsafeMode {
+				_, _ = fmt.Fprintln(w, "consents given in Unsafe Mode: yes")
+			}
+			if v.Held != "" {
+				_, _ = fmt.Fprintf(w, "held: %s; this schedule's consents were given in Unsafe Mode, so it does not run until they stop forbidding it\n", v.Held)
 			}
 			for _, h := range sc.Run.Hosts {
 				_, _ = fmt.Fprintf(w, "target host %s: sign-in saved as %s; reached only if it offers the host key %s\n", h.ID, h.Account, h.HostKey)
@@ -1577,6 +1611,11 @@ func newScheduleEditCmd() *cobra.Command {
 			sc, err := store.Get(args[0])
 			if err != nil {
 				return err
+			}
+			// A held schedule keeps what it was given until the hold lifts;
+			// pause and remove still work.
+			if reason := scheduleHold(sc); reason != "" {
+				return heldError(reason)
 			}
 			f := cmd.Flags()
 			now := scheduleNow()
@@ -1960,4 +1999,24 @@ func scheduleDestinations(names []string) ([]string, error) {
 		return nil, fmt.Errorf("--destination: %w", err)
 	}
 	return out, nil
+}
+
+// scheduleUnsafeModeRefusal is the managed settings' refusal of Unsafe
+// Mode on this computer, "" when they allow it; a variable so a test can
+// answer for the documents.
+var scheduleUnsafeModeRefusal = func() string { return managed.Current().UnsafeModeRefusal() }
+
+// scheduleHold is why sc does not run now: its consents were given in
+// Unsafe Mode and this computer's managed settings forbid Unsafe Mode.
+// "" when it runs.
+func scheduleHold(sc schedule.Schedule) string {
+	if !sc.Run.UnsafeMode {
+		return ""
+	}
+	return scheduleUnsafeModeRefusal()
+}
+
+// heldError is the policy refusal of a schedule held by managed settings.
+func heldError(reason string) error {
+	return engine.Classify(engine.ExitPolicy, &compile.PolicyRefusal{Reason: reason + "; this schedule's consents were given in Unsafe Mode"})
 }

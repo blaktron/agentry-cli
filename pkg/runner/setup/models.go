@@ -74,22 +74,35 @@ var httpClient = &http.Client{
 // choice and is carried out with the warning on the Catalog; no redirect is
 // followed; the key is scrubbed from any error, the provider's own message
 // included. An empty listing is an error: a form offering nothing is worse than
-// one saying so.
+// one saying so. Only custom is asked with no key, since a server of the
+// person's own may take none; a table provider is always asked with one.
 func ListModels(ctx context.Context, provider, baseURL, key string) (*Catalog, error) {
+	return listWith(ctx, provider, baseURL, key, false)
+}
+
+// ListModelsToCheck is ListModels for the save check, which must know
+// whether a provider offers a model id: it also asks the big catalogues
+// whose models a person types (OpenRouter, Poe, Hugging Face), by the same
+// rules.
+func ListModelsToCheck(ctx context.Context, provider, baseURL, key string) (*Catalog, error) {
+	return listWith(ctx, provider, baseURL, key, true)
+}
+
+func listWith(ctx context.Context, provider, baseURL, key string, toCheck bool) (*Catalog, error) {
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	key = strings.TrimSpace(key)
-	cat, err := listModels(ctx, provider, baseURL, key)
+	cat, err := listModels(ctx, provider, baseURL, key, toCheck)
 	if err != nil {
 		return nil, fmt.Errorf("%s: list models: %w", provider, withoutKey(err, key))
 	}
 	return cat, nil
 }
 
-func listModels(ctx context.Context, provider, baseURL, key string) (*Catalog, error) {
-	if key == "" {
+func listModels(ctx context.Context, provider, baseURL, key string, toCheck bool) (*Catalog, error) {
+	if key == "" && provider != policy.ProviderCustom {
 		return nil, errors.New("no key to ask with")
 	}
-	endpoint, pg, err := modelsEndpoint(provider, baseURL)
+	endpoint, pg, err := modelsEndpoint(provider, baseURL, toCheck)
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +118,9 @@ func listModels(ctx context.Context, provider, baseURL, key string) (*Catalog, e
 			return nil, err
 		}
 		req.Header.Set("Accept", "application/json")
-		pg.auth(req, key)
+		if key != "" {
+			pg.auth(req, key)
+		}
 		resp, err := httpClient.Do(req)
 		if err != nil {
 			return nil, err
@@ -137,7 +152,7 @@ func listModels(ctx context.Context, provider, baseURL, key string) (*Catalog, e
 // modelsEndpoint is the listing URL and the shape behind it: the table
 // row's for a table provider, <baseURL>/models with the OpenAI shape for
 // custom.
-func modelsEndpoint(provider, baseURL string) (string, *pager, error) {
+func modelsEndpoint(provider, baseURL string, toCheck bool) (string, *pager, error) {
 	if provider == "custom" {
 		base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 		if base == "" {
@@ -148,6 +163,9 @@ func modelsEndpoint(provider, baseURL string) (string, *pager, error) {
 	d := DefaultsFor(provider)
 	if d == nil {
 		return "", nil, fmt.Errorf("no such provider (%s)", strings.Join(Providers(), ", "))
+	}
+	if d.ModelsURL == "" && toCheck && d.CheckURL != "" {
+		return d.CheckURL, openAIPager(d.KeyHeader), nil
 	}
 	if d.ModelsURL == "" {
 		// The big catalogues (OpenRouter, Poe, Hugging Face): the person

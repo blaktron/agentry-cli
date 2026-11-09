@@ -358,3 +358,41 @@ func TestListModelsAnEmptyListingIsAnError(t *testing.T) {
 		t.Fatalf("empty listing: %v", err)
 	}
 }
+
+// A server of the person's own may take no key: it is asked with none, and
+// no Authorization header goes with the request.
+func TestListModelsAsksACustomEndpointWithNoKey(t *testing.T) {
+	f, srv := newFakeModels(t, func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, map[string]any{"data": []map[string]string{{"id": "qwen3"}}})
+	})
+	cat, err := ListModels(context.Background(), "custom", srv.URL+"/v1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ids(cat); len(got) != 1 || got[0] != "qwen3" {
+		t.Fatalf("listed %v", got)
+	}
+	if h := f.headers[0].Get("Authorization"); h != "" {
+		t.Fatalf("Authorization %q sent with no key", h)
+	}
+}
+
+func TestListModelsToCheckAsksATypedCatalogue(t *testing.T) {
+	f, srv := newFakeModels(t, func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, map[string]any{"data": []map[string]string{{"id": "vendor/model-a"}}})
+	})
+	d := DefaultsFor("openrouter")
+	old := d.CheckURL
+	d.CheckURL = srv.URL + "/api/v1/models"
+	t.Cleanup(func() { d.CheckURL = old })
+	cat, err := ListModelsToCheck(context.Background(), "openrouter", "", "or-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ids(cat); len(got) != 1 || got[0] != "vendor/model-a" || f.headers[0].Get("Authorization") != "Bearer or-key" {
+		t.Fatalf("listed %v with %v", got, f.headers[0])
+	}
+	if _, err := ListModels(context.Background(), "openrouter", "", "or-key"); err == nil {
+		t.Fatal("the picker's listing asked a typed catalogue")
+	}
+}
