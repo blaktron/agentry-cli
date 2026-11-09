@@ -118,6 +118,9 @@ func fetchRulesBundle(ctx context.Context, w io.Writer, regURL string) (string, 
 		if att.FirstUse {
 			_, _ = fmt.Fprintln(w, "note: signing keys pinned on first use (TOFU) — run `agentry login` to pin deliberately")
 		}
+		if att.HandedOver != "" {
+			_, _ = fmt.Fprintln(w, "note: "+att.HandedOver)
+		}
 	case trust.StateUnsigned:
 		// Reported below, after the cache write.
 	default:

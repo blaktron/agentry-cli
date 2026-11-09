@@ -125,6 +125,9 @@ type AttestationResult struct {
 	// exactly as before.
 	KeyRetired   bool   `json:"keyRetired,omitempty"`
 	KeyRetiredAt string `json:"keyRetiredAt,omitempty"`
+	// HandedOver says, once, that this verification pinned a key the
+	// registry rotated to, handed over by a pinned key; empty otherwise.
+	HandedOver string `json:"handedOver,omitempty"`
 }
 
 // RetiredNote is the one line a client shows for a signature a retired
@@ -546,7 +549,8 @@ func PinAtLogin(ctx context.Context, hc *http.Client, registryURL string) string
 // LoginPinResult reports pinning without putting remote errors or key material
 // into a machine client's output. Note retains the terminal explanation.
 type LoginPinResult struct {
-	// Status is pinned, unchanged, unsigned, rotation, mismatch or unavailable.
+	// Status is pinned, unchanged, handed-over, unsigned, rotation, mismatch or
+	// unavailable.
 	Status string
 	Note   string
 }
@@ -581,6 +585,21 @@ func PinAtLoginResult(ctx context.Context, hc *http.Client, registryURL string) 
 		return LoginPinResult{"pinned", fmt.Sprintf("pinned %d signing key(s) on first use (TOFU)", len(fetched.Keys))}
 	}
 	change := DiffKeys(existing, fetched)
+	// A key the registry rotated to is adopted when a pinned key handed
+	// over to it: each link of the chain is verified with the key before
+	// it, so the registry's word alone adds nothing.
+	handedOver := ""
+	if !change.Same() {
+		if chain, err := FetchHandovers(ctx, hc, registryURL); err == nil {
+			if adopted, err := adoptHandovers(&existing, registryURL, chain); err == nil && len(adopted) > 0 {
+				if err := savePinnedFile(own, existing); err != nil {
+					return LoginPinResult{"unavailable", "could not pin the handed-over signing key: " + err.Error()}
+				}
+				handedOver = handoverNote(adopted)
+				change = DiffKeys(existing, fetched)
+			}
+		}
+	}
 	// The registry's status record for keys still pinned (a key it has
 	// since retired) is taken when the set is unchanged or looks like a
 	// rotation: it is shown, never used to decide what verifies. A set
@@ -593,6 +612,9 @@ func PinAtLoginResult(ctx context.Context, hc *http.Client, registryURL string) 
 	}
 	if retired := retiredSummary(existing); retired != "" {
 		statusNote = "; " + retired + statusNote
+	}
+	if handedOver != "" && change.Same() {
+		return LoginPinResult{"handed-over", handedOver + statusNote}
 	}
 	if change.Same() {
 		return LoginPinResult{"unchanged", fmt.Sprintf("signing keys unchanged (%d pinned)%s", len(existing.Keys), statusNote)}
@@ -686,6 +708,17 @@ func VerifyAttestation(ctx context.Context, hc *http.Client, registryURL, token,
 	// rotated (a key id we have not pinned) and report that distinctly
 	// rather than silently trusting the new key.
 	stmt, key, ok := tryVerify(env, trusted)
+	if !ok && !out.FirstUse {
+		// Signed by a key the registry rotated to since the pin: adopted
+		// only when a pinned key handed over to it.
+		if note, err := AdoptHandedOverKeys(ctx, hc, registryURL); err == nil && note != "" {
+			out.HandedOver = note
+			if again, err := LoadPinned(registryURL); err == nil {
+				trusted = again
+				stmt, key, ok = tryVerify(env, trusted)
+			}
+		}
+	}
 	if !ok {
 		fetched, ferr := FetchKeys(ctx, hc, registryURL)
 		if ferr == nil && !SameKeyIDs(trusted, fetched) {

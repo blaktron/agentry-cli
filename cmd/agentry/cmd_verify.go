@@ -135,6 +135,9 @@ func runVerify(cmd *cobra.Command, ref string, strict bool) error {
 			if att.FirstUse {
 				_, _ = fmt.Fprintln(out, "  note:            signing keys pinned on first use (TOFU)")
 			}
+			if att.HandedOver != "" {
+				_, _ = fmt.Fprintln(out, "  note:            "+att.HandedOver)
+			}
 		}
 		if att.KeyRotated {
 			if att.KeyChange.Rotation() {
