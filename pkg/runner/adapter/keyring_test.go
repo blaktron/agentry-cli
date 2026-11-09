@@ -54,3 +54,14 @@ func TestDockerAgentEmitsTheKeyringAccount(t *testing.T) {
 		t.Fatalf("no key variable in %+v", res.Agent.Env)
 	}
 }
+
+// An endpoint of the person's own read from a saved model falls back to its
+// own provider's keychain entry, provider:custom-<name>, never another
+// endpoint's or the vendor's shared one.
+func TestKeyringAccountIsTheSavedModelsProvider(t *testing.T) {
+	in := Input{Model: policy.Model{Provider: policy.ProviderCustom, ProviderID: "custom-lab-two", Name: "qwen3",
+		APIKeyEnv: "LAB_TWO_KEY", APIKeySource: "keyring", BaseURL: "http://127.0.0.1:8002/v1", ProxyAllow: []string{"127.0.0.1:8002"}}}
+	if got := keyringAccount(in); got != "provider:custom-lab-two" {
+		t.Fatalf("keyring account %q", got)
+	}
+}

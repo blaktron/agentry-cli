@@ -34,7 +34,7 @@ func runContextWindow(ctx context.Context, w io.Writer, pol *policy.Policy) stri
 	if key == "" && m.APIKeySource == modelkey.SourceKeyring {
 		// A keychain that cannot be read leaves the probe keyless; the run's
 		// own resolution meets the same answer and says so.
-		if v, err := engine.KeyringValue(modelkey.Account(m.Provider)); err == nil {
+		if v, err := engine.KeyringValue(modelkey.Account(m.KeyProvider())); err == nil {
 			key = strings.TrimSpace(v)
 		}
 	}

@@ -79,7 +79,8 @@ func newModelSignInsCmd() *cobra.Command {
 		Short: "Add, list and remove the model sign-ins your local runs can spend (your own ChatGPT, Claude or Copilot plan, or a connected key)",
 		Long: "A model sign-in lets the runs on this computer spend a plan you hold instead of an API key.\n" +
 			"Any number are kept; model setup (agentry setup) names the one in use, and switching signs\n" +
-			"nothing out. A hosted run never spends one. These are not MCP connections (agentry connections).",
+			"nothing out. A hosted run never spends one. These are not MCP connections (agentry connections).\n" +
+			"agentry providers add --sign-in and providers remove do the same as the provider of a saved model.",
 	}
 	cmd.AddCommand(newModelSignInsAddCmd(), newModelSignInsListCmd(), newModelSignInsRemoveCmd())
 	return cmd

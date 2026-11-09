@@ -227,7 +227,7 @@ func checkRunhostSchedule(cmd *cobra.Command, on string, sc schedule.Schedule, p
 	if pf, err := policy.Resolve(sc.Run.Policy); err == nil {
 		if pol, _, err := policy.EnsureDefault(pf.Path); err == nil {
 			if m := job.ModelOf(pol.Model); !m.SignIn() && !m.PaysWithCredits() && pol.Model.Provider != "" {
-				add("model-key", pol.Model.Provider)
+				add("model-key", pol.Model.KeyProvider())
 			}
 		}
 	}

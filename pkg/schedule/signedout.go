@@ -95,7 +95,7 @@ func SealAccounts(pol *policy.Policy) (required, optional []string) {
 		keyring = keyring || policy.KeySource(hp, pol.Model) == modelkey.SourceKeyring
 	}
 	if keyring && pol.Model.Provider != "" {
-		required = append(required, modelkey.Account(pol.Model.Provider))
+		required = append(required, modelkey.Account(pol.Model.KeyProvider()))
 	}
 	if pol.Judge.APIKeySource == modelkey.SourceKeyring {
 		optional = append(optional, modelkey.Account(policy.JudgeKeyProvider))

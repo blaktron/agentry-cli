@@ -539,6 +539,25 @@
           ]
         },
         {
+          "path": "cmd/agentry/cmd_models_test.go",
+          "tests": [
+            "TestProvidersAndSavedModelsFromTheTerminal",
+            "TestTheSaveCheckRefusesAnUnknownIDAndAnUnreachableEndpoint",
+            "TestTheEleventhSavedModelIsRefused",
+            "TestRemovingASavedModelAScheduleNamesIsRefusedUntilItMoves",
+            "TestAVersion1PolicyStaysVersion1UntilASecondModelIsSaved",
+            "TestSetupMakesTheDefaultSavedModel",
+            "TestAProvidersKeyFromTheStandardInputIsKeptInTheKeychainAlone"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "HTTP transport",
+            "source/file contract"
+          ]
+        },
+        {
           "path": "cmd/agentry/errors_test.go",
           "tests": [
             "TestRegistryCommandsOfflineSayCannotReach",
@@ -4321,7 +4340,8 @@
           "path": "pkg/runner/adapter/keyring_test.go",
           "tests": [
             "TestKeyringAccountFollowsThePolicy",
-            "TestDockerAgentEmitsTheKeyringAccount"
+            "TestDockerAgentEmitsTheKeyringAccount",
+            "TestKeyringAccountIsTheSavedModelsProvider"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -4454,6 +4474,20 @@
             "docker interface (real or fake)",
             "HTTP transport",
             "real-time wait"
+          ]
+        },
+        {
+          "path": "pkg/runner/claudesignin/check_test.go",
+          "tests": [
+            "TestTheSaveCheckSendsTheImagesClaudeCodeOneMessage",
+            "TestTheSaveCheckWithNoClaudeSignInIsNotSignedIn",
+            "TestTheInstalledClaudeCodesCheckHoldsNoneOfThePersonsClaudeVariables"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "docker interface (real or fake)"
           ]
         },
         {
@@ -8233,6 +8267,36 @@
       ]
     },
     {
+      "owner": "pkg/runner/modelcheck",
+      "behavior": "A saved model checked before it is saved: its provider reached with the credential it names, and the model",
+      "disposition": "retain",
+      "files": [
+        {
+          "path": "pkg/runner/modelcheck/modelcheck_test.go",
+          "tests": [
+            "TestAnEndpointOfYourOwnIsCheckedByItsListingAndFillsTheContextWindow",
+            "TestAnUnreachableEndpointRefusesTheSaveWithTheReason",
+            "TestTheSaveCheckFollowsNoRedirectAndKeepsTheKeyOutOfItsErrors",
+            "TestPlainHTTPIsWarnedAndNeverBlocked",
+            "TestAKeyProviderWithNoKeyIsKeyMissing",
+            "TestATypedCataloguesIDMayCarryARoutingSuffix",
+            "TestAChatGPTPlanIsCheckedByItsOwnModelList",
+            "TestACopilotPlanTakesAutoUnlistedAndChecksTheRest",
+            "TestAClaudeSubscriptionIsCheckedByOneMessage",
+            "TestClaudeCodesResultIsReadFromIsErrorNeverSubtype",
+            "TestClaudeArgsAreOneTurnWithNoToolsAndAShortSystemPrompt",
+            "TestAgentryCreditsAreCheckedByOpeningASession"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "HTTP transport"
+          ]
+        }
+      ]
+    },
+    {
       "owner": "pkg/runner/modelkey",
       "behavior": "A model provider's API key in the OS keychain — Keychain on macOS, Credential Manager on Windows, the",
       "disposition": "retain",
@@ -9295,6 +9359,35 @@
           "dependencyHints": []
         },
         {
+          "path": "pkg/runner/policy/models_test.go",
+          "tests": [
+            "TestAVersion1PolicyReadsAsOneProviderAndTheDefaultSavedModel",
+            "TestEachHarnessBlockThatNamesAModelIsASavedModelOfItsOwn",
+            "TestAVersion1PolicyStaysVersion1WithOneProviderAndOneUnnamedModel",
+            "TestASecondSavedModelWritesVersion2AndRemovingItWritesVersion1",
+            "TestACustomProviderOfItsOwnNameWritesVersion2",
+            "TestASavedModelsOwnNameWritesVersion2",
+            "TestSeveralCustomProvidersEachHaveTheirOwnKeychainEntry",
+            "TestASecondModelOnAProviderUsesTheProvidersCredential",
+            "TestTheTenthSavedModelIsTheLast",
+            "TestSavingAModelIsRefusedByName",
+            "TestLoadHoldsAVersion2FileToItsRules",
+            "TestAVersion2FileHoldsNoModelBlockAndVersion1NoLists",
+            "TestRemovingTheDefaultNeedsANewDefault",
+            "TestRemovingAProviderRemovesItsModels",
+            "TestAChangeToTheModelBlockMovesTheDefault",
+            "TestNoKeyValueIsWrittenToAVersion2Policy",
+            "TestCustomProviderIDIsCustomAndASlug",
+            "TestAHarnessBlocksSavedModelKeepsTheBlockInStep"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
+          ]
+        },
+        {
           "path": "pkg/runner/policy/newest_test.go",
           "tests": [
             "TestTheRecordGivesOnlyUnpinnedAdaptersTheirNewestImage"
@@ -9581,7 +9674,8 @@
             "TestSetupWithAChatGPTKindAndYesAsksNothing",
             "TestSetupStillTakesAnOpenAIKeyWhenChatGPTIsOffered",
             "TestSetupRefusesAChatGPTKindForAnotherProvider",
-            "TestASignInSetupCouldNotFinishWritesNothing"
+            "TestASignInSetupCouldNotFinishWritesNothing",
+            "TestSetupRefusesAModelTheChatGPTPlanDoesNotList"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -9606,7 +9700,7 @@
             "TestSetupConnectsEachProvidersAccount",
             "TestSetupKeepsAConnectAndRefusesWhatCannotPay",
             "TestSetupPastesAKeyForAConnectProvider",
-            "TestTheConnectProvidersModelsAreNotListed",
+            "TestTheConnectProvidersModelsAreNotListedButAreChecked",
             "TestSetupForgetsAConnectAPastedKeyReplaces"
           ],
           "fuzz": [],
@@ -9663,7 +9757,9 @@
             "TestListModelsStopsAtThePageCap",
             "TestListModelsMakesNoRequestForANonHTTPScheme",
             "TestListModelsRefusesAnUnknownProviderAndAnEmptyKey",
-            "TestListModelsAnEmptyListingIsAnError"
+            "TestListModelsAnEmptyListingIsAnError",
+            "TestListModelsAsksACustomEndpointWithNoKey",
+            "TestListModelsToCheckAsksATypedCatalogue"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -10040,7 +10136,8 @@
             "TestStoreRefusesPathsThatAreNotIDs",
             "TestClaimIsOncePerOccurrence",
             "TestFiresAndState",
-            "TestDue"
+            "TestDue",
+            "TestAScheduleNamesItsSavedModelByIDAlone"
           ],
           "fuzz": [],
           "benchmarks": [],

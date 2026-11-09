@@ -1131,6 +1131,11 @@ func TestModelKeySource(t *testing.T) {
 	if env, acct := modelKeySource(pol, "claude"); env != "CLAUDE_KEY" || acct != "" {
 		t.Fatalf("harness env overrides: %q %q", env, acct)
 	}
+	// A saved model's provider names its own keychain entry.
+	pol.Model.ProviderID = "custom-lab"
+	if _, acct := modelKeySource(pol, "docker-agent"); acct != "provider:custom-lab" {
+		t.Fatalf("a saved model's provider: %q", acct)
+	}
 }
 
 // TestCompileRefusesAPathOutsideTheWorkspace: a filesystem path in the
