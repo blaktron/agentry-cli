@@ -135,6 +135,8 @@ func (s *server) buildTools() {
 		case ToolScratchWrite:
 			add(name, "Write a file in this run's scratch folder, for notes and working files, creating parent directories; set append to extend a file. The folder is private to the run and deleted when it ends: nothing in it reaches the person, so write the result with write_report.",
 				scratchWriteSchema(), s.toolScratchWrite)
+		case ToolChecklist:
+			add(name, checklistDescription, checklistSchema(), s.toolChecklist)
 		case ToolGrep:
 			add(name, s.grepDescription(), grepSchema(), s.toolGrep)
 		case ToolGlob:

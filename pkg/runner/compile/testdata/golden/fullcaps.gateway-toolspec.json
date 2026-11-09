@@ -6,6 +6,7 @@
   "inputsDir": "/inputs",
   "inputsTextDir": "/inputs-text",
   "scratchDir": "/scratch",
+  "checklist": "/scratch/checklist.md",
   "fsRead": {
     "enabled": true
   },

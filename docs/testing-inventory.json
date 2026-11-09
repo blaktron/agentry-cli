@@ -4657,6 +4657,19 @@
           ]
         },
         {
+          "path": "pkg/runner/compile/checklist_test.go",
+          "tests": [
+            "TestEveryModeHearsOfTheChecklist",
+            "TestTheChecklistIsGrantedWhereItsFileLives"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
+          ]
+        },
+        {
           "path": "pkg/runner/compile/compile_browser_test.go",
           "tests": [
             "TestCompileRendersTheBrowserServer",
@@ -4990,19 +5003,6 @@
             "TestCompileWritesTheRecordOnlyWithAKey",
             "TestReadInstalledPlanSurvivesAConcurrentRecompile",
             "TestConcurrentCompilesLeaveOneWholePlan"
-          ],
-          "fuzz": [],
-          "benchmarks": [],
-          "fixtureEntryPoint": false,
-          "dependencyHints": [
-            "source/file contract"
-          ]
-        },
-        {
-          "path": "pkg/runner/compile/longtask_test.go",
-          "tests": [
-            "TestTheLongTaskNotesAreAnAutonomousRunsOwn",
-            "TestTheHarnessNamesTheNotesFileExceptForAPersistentAgent"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -11861,6 +11861,38 @@
           "fixtureEntryPoint": false,
           "dependencyHints": [
             "source/file contract",
+            "explicit skip"
+          ]
+        },
+        {
+          "path": "runnerimage/toolsrv/checklist_test.go",
+          "tests": [
+            "TestTheChecklistFollowsItsGrant",
+            "TestTheChecklistReplacesReadsAndCountsOpenSteps",
+            "TestTheChecklistHoldsItsShape",
+            "TestTheChecklistRefusesARunSecret",
+            "TestAChecklistWrittenByHandReadsAsFarAsItKeepsTheShape",
+            "TestTheChecklistNeverFollowsALinkOut",
+            "TestTheChecklistIsWrittenOnlyAsAFile",
+            "TestAPersistentAgentKeepsItsChecklistInItsDataFolder"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
+          ]
+        },
+        {
+          "path": "runnerimage/toolsrv/checklist_unix_test.go",
+          "tests": [
+            "TestTheChecklistNeverWaitsOnAPipe"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "real-time wait",
             "explicit skip"
           ]
         },

@@ -4,7 +4,9 @@
       "version": "0.7.43",
       "highlights": [
         "The Assistant reads the files of a QuickAgent it fetches in the same reply, without waiting for your next message.",
-        "Those files are still checked first, for malware too when the malware check is on."
+        "Those files are still checked first, for malware too when the malware check is on.",
+        "A run now keeps the steps of its task in a checklist, which it reads again after a summary and before it answers.",
+        "The checklist is a working note in the run's scratch folder and never reaches your reports."
       ]
     },
     {

@@ -1305,6 +1305,7 @@ func baseToolSpec(caps spec.CapSummary, secrets []string) *toolsrv.Spec {
 		// were none.
 		InputsTextDir: spec.InputsTextMount,
 		ScratchDir:    scratchDir(caps),
+		Checklist:     checklistFile(caps),
 		// export_pdf renders from the scratch folder or reports/, for every
 		// release's run and session.
 		PDF: toolsrv.PDF{Enabled: caps.PDF},
@@ -1362,6 +1363,19 @@ func scratchDir(caps spec.CapSummary) string {
 		return spec.ScratchMount
 	}
 	return ""
+}
+
+// checklistFile is the checklist tool's file: in the scratch folder, or for
+// a persistent agent in its data folder, since its scratch folder lasts one
+// segment. The tool goes with the scratch folder.
+func checklistFile(caps spec.CapSummary) string {
+	switch {
+	case !caps.Scratch:
+		return ""
+	case len(caps.AgentFiles.Folders()) > 0:
+		return spec.AgentRoot + "/" + spec.AgentDataDir + "/" + spec.ChecklistFile
+	}
+	return spec.ScratchMount + "/" + spec.ChecklistFile
 }
 
 // GatewayConfigDir is where the rendered gateway files are mounted inside

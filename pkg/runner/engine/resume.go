@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
-	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
@@ -28,7 +27,7 @@ var resumeWaits = []time.Duration{30 * time.Second, 60 * time.Second, 120 * time
 // resumeMessage is the user message a resumed harness is started with, in
 // place of the task its conversation already holds.
 const resumeMessage = "The run stopped on a failure of the model server and has been started again on this conversation. " +
-	"Carry on with the task from where you stopped; if you keep notes (" + compile.NotesFile + " in your scratch folder), read them first. " +
+	"Carry on with the task from where you stopped; if you keep a checklist, read it first with the checklist tool and go on from its open step. " +
 	"A tool call that shows no result may or may not have acted: check before you call it again."
 
 // resumable reports whether out, a start that ended failing, is resumed: the
