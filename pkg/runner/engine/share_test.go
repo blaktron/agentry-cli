@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -561,5 +562,99 @@ func TestTurningTheCheckOnChecksWhatWasReadUnchecked(t *testing.T) {
 	}
 	if kept := readShareCache(cache, share, false); len(kept) != 0 {
 		t.Fatalf("verdicts made with the check on were kept for the check off: %+v", kept)
+	}
+}
+
+// TestCheckShareFolderChecksThatFolderAlone: a check a tool call asks for
+// during a turn gives the files beneath its folder their verdicts, ClamAV's
+// when the malware check is on, so the tools server reads them at once; a
+// file elsewhere in the share waits for the next turn's check, a verdict
+// outside the folder is kept though its file went, and a folder that is not
+// within the share is refused.
+func TestCheckShareFolderChecksThatFolderAlone(t *testing.T) {
+	s, share := shareSession(t)
+	write := func(rel, body string) {
+		t.Helper()
+		p := filepath.Join(share, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("kept.md", "checked before the turn\n")
+	ctx := context.Background()
+	s.checkShare(ctx)
+	if err := os.Remove(filepath.Join(share, "kept.md")); err != nil {
+		t.Fatal(err)
+	}
+	write("quickagents/alice/notes/agent.yaml", "name: notes\n")
+	write("quickagents/alice/notes/docs/eicar.txt", "X5O EICAR\n")
+	write("quickagents/alice/notesbook/agent.yaml", "name: notesbook\n")
+	write("later.md", "added during the turn\n")
+	runs := decodeRuns()
+	if err := s.CheckShareFolder(ctx, "quickagents/alice/notes"); err != nil {
+		t.Fatal(err)
+	}
+	if decodeRuns() != runs+1 {
+		t.Fatalf("the folder's check ran the decode step %d times, want once", decodeRuns()-runs)
+	}
+	v := readVerdicts(t, s)
+	if got := v["quickagents/alice/notes/agent.yaml"]; got.Verdict != toolsrv.ShareClean || got.SHA256 == "" {
+		t.Fatalf("the fetched manifest: %+v", got)
+	}
+	if got := v["quickagents/alice/notes/docs/eicar.txt"]; got.Verdict != toolsrv.ShareFound {
+		t.Fatalf("the fetched file ClamAV finds: %+v", got)
+	}
+	for _, rel := range []string{"later.md", "quickagents/alice/notesbook/agent.yaml"} {
+		if _, ok := v[rel]; ok {
+			t.Errorf("%s, outside the folder, was checked early", rel)
+		}
+	}
+	if _, ok := v["kept.md"]; !ok {
+		t.Error("a verdict outside the folder was dropped by the folder's check")
+	}
+	// The next turn's check takes what the folder's check left, and does
+	// not check the folder's files again.
+	runs = decodeRuns()
+	s.checkShare(ctx)
+	v = readVerdicts(t, s)
+	if decodeRuns() != runs+1 || v["later.md"].Verdict != toolsrv.ShareClean || v["quickagents/alice/notesbook/agent.yaml"].Verdict != toolsrv.ShareClean {
+		t.Fatalf("the next turn's check: %d runs, %+v", decodeRuns()-runs, v)
+	}
+	if _, ok := v["kept.md"]; ok {
+		t.Error("the next turn's check kept a verdict whose file went")
+	}
+	for _, bad := range []string{"", ".", "..", "../x", "/etc", "quickagents/../..", "quickagents/alice/notes/"} {
+		if err := s.CheckShareFolder(ctx, bad); err == nil {
+			t.Errorf("%q was accepted as a folder within the share", bad)
+		}
+	}
+}
+
+// TestCheckShareFolderSaysWhatStaysUnread: a folder's check that cannot run
+// answers why, so the tool's answer can say its files wait for the next
+// turn's check; with the share unchecked, there is nothing to wait for.
+func TestCheckShareFolderSaysWhatStaysUnread(t *testing.T) {
+	s, share := shareSession(t)
+	if err := os.MkdirAll(filepath.Join(share, "quickagents", "alice", "notes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(share, "quickagents", "alice", "notes", "agent.yaml"), []byte("name: notes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	decodeCalls.Lock()
+	decodeCalls.fail = errors.New("the decode image could not be pulled")
+	decodeCalls.Unlock()
+	if err := s.CheckShareFolder(context.Background(), "quickagents/alice/notes"); err == nil || !strings.Contains(err.Error(), "stay unread") {
+		t.Fatalf("a check that could not run: %v", err)
+	}
+	if _, ok := readVerdicts(t, s)["quickagents/alice/notes/agent.yaml"]; ok {
+		t.Fatal("a file the check could not take has a verdict")
+	}
+	s.rd.shareChecks = ""
+	if err := s.CheckShareFolder(context.Background(), "quickagents/alice/notes"); err != nil {
+		t.Fatalf("an unchecked share: %v", err)
 	}
 }

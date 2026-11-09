@@ -3,6 +3,7 @@ package persistent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -252,5 +253,64 @@ func TestAPublishedAgentIsNeverGivenThePublisherTools(t *testing.T) {
 	}
 	if set := assistantAgent(t).AppLinkWith(Config{}); !applink.Has(set, applink.PartPublisher) {
 		t.Errorf("the Assistant's app link is %q", set)
+	}
+}
+
+// TestAFetchedFolderIsCheckedBeforeTheAnswer: once the client's handler has
+// answered quickagent_fetch or quickagent_revise without an error, the
+// supervisor has the share's check run on the folder the call wrote, and on
+// nothing else, before the answer reaches the agent, so the agent reads the
+// files in the same turn. A failed call, a tool that writes nothing into the
+// share, and arguments that name no QuickAgent's folder check nothing; a
+// check that cannot take the files says so in the answer.
+func TestAFetchedFolderIsCheckedBeforeTheAnswer(t *testing.T) {
+	home := shortHome(t)
+	enable(t, home)
+	st := &starter{resumed: true, checksShare: true}
+	sv, err := Start(context.Background(), Options{
+		Home: home, Agent: assistantAgent(t), Client: ClientDesktop, Policy: policy.Default(), Docker: &dockerx.Fake{}, StartSegment: st.start,
+		AppLink: func(_ context.Context, req applink.Request) applink.Answer {
+			if strings.Contains(string(req.Arguments), "refused") {
+				return applink.Answer{Text: "the person said no", IsError: true}
+			}
+			return applink.Answer{Text: "done"}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _, _ = sv.Stop(context.Background()) }()
+	for _, c := range []struct{ tool, args, folder string }{
+		{applink.QuickAgentFetch, `{"ref":"alice/notes@1.2.0"}`, "quickagents/alice/notes"},
+		{applink.QuickAgentFetch, `{"ref":"acme/report-writer"}`, "quickagents/acme/report-writer"},
+		{applink.QuickAgentRevise, `{"folder":"share/quickagents/alice/notes/","instructions":"x","where":"computer"}`, "quickagents/alice/notes"},
+		{applink.QuickAgentRevise, `{"folder":"quickagents/alice/notes","instructions":"x","where":"agentry"}`, "quickagents/alice/notes"},
+		{applink.QuickAgentFetch, `{"ref":"alice/refused"}`, ""},
+		{applink.QuickAgentSubmit, `{"folder":"share/quickagents/alice/notes"}`, ""},
+		{applink.QuickAgentManage, `{"ref":"alice/notes","action":"retire"}`, ""},
+		{applink.QuickAgentFetch, `{"ref":"../etc"}`, ""},
+		{applink.QuickAgentFetch, `{"ref":"alice/../../x"}`, ""},
+		{applink.QuickAgentRevise, `{"folder":"share/quickagents/alice/../../etc","instructions":"x","where":"computer"}`, ""},
+		{applink.QuickAgentRevise, `{"folder":"share/notes","instructions":"x","where":"computer"}`, ""},
+	} {
+		before := len(st.checking.checked())
+		got := call(t, home, "assistant", c.tool, c.args)
+		checked := st.checking.checked()[before:]
+		switch {
+		case c.folder == "" && len(checked) != 0:
+			t.Errorf("%s %s checked %v", c.tool, c.args, checked)
+		case c.folder != "" && (len(checked) != 1 || checked[0] != c.folder):
+			t.Errorf("%s %s checked %v, want %s", c.tool, c.args, checked, c.folder)
+		}
+		if c.folder != "" && (got.IsError || got.Text != "done") {
+			t.Errorf("%s %s answered %+v", c.tool, c.args, got)
+		}
+	}
+	st.checking.mu.Lock()
+	st.checking.err = errors.New("1 more file(s) in the share wait for the next turn's check")
+	st.checking.mu.Unlock()
+	got := call(t, home, "assistant", applink.QuickAgentFetch, `{"ref":"alice/notes"}`)
+	if got.IsError || !strings.HasPrefix(got.Text, "done") || !strings.Contains(got.Text, "next turn") {
+		t.Errorf("a check that could not take every file: %+v", got)
 	}
 }
