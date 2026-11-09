@@ -1,6 +1,15 @@
 {
   "versions": [
     {
+      "version": "0.7.42",
+      "highlights": [
+        "Every security setting your organization manages now applies to your runs, not only Unsafe Mode.",
+        "A lock holds even if you edit your policy file, and a refused run names your organization and the setting.",
+        "Caps on a run's time, turns and cost lower your budgets; your own lower limits stay.",
+        "Your organization can set where runs go, which QuickAgents install, schedules and the oldest Agentry that runs."
+      ]
+    },
+    {
       "version": "0.7.41",
       "highlights": [
         "The Assistant has new tools to list, fetch, revise, fork and submit the QuickAgents you publish.",
