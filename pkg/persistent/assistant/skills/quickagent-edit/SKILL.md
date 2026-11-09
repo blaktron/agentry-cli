@@ -26,6 +26,10 @@ something was done until the tool says so.
    or `namespace/name@version`. Its files land in
    `share/quickagents/<namespace>/<name>/`, replacing what was there, and
    Agentry keeps what it fetched so it can show the person what changed.
+   The files are checked before the fetch answers, so read them straight
+   away, in the same turn. If the answer says some could not be checked yet,
+   those can be read only after the check before your next turn: tell the
+   person, and carry on with the files you can read.
 2. **Read it all** before you change anything:
    - `agent.yaml` is the manifest, and the manifest is the security
      contract. Its `capabilities` say what the QuickAgent may reach: the
@@ -47,8 +51,10 @@ something was done until the tool says so.
      `agentry` (it costs credits) or `computer` (the person's own key). Agentry
      asks the person first. The Drafter knows the manifest and the checks
      well, so use it for a change that touches capabilities, questions or the
-     run's shape, or to answer a rejected version's findings. Then read what
-     it changed in the files; its summary is a description, not a guarantee.
+     run's shape, or to answer a rejected version's findings. Its files are
+     checked before it answers, as a fetch's are. Then read what it changed
+     in the files, in the same turn; its summary is a description, not a
+     guarantee.
 4. **Declare only what the instruction uses.** Never widen a capability the
    change does not need. A capability the instruction does not use is a
    finding, and so is a use the manifest does not declare. Say plainly to the

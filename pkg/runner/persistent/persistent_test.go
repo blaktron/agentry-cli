@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -249,6 +250,33 @@ type starter struct {
 	// refuse, when set, refuses a segment it answers an error for, as an
 	// engine that cannot start it does.
 	refuse func(localrun.Segment) error
+	// checksShare makes each segment one whose share can be checked folder
+	// by folder during a turn, failing with checkErr when set; checking is
+	// the last such segment.
+	checksShare bool
+	checkErr    error
+	checking    *checkingSegment
+}
+
+// checkingSegment is a fakeSegment whose share can be checked folder by
+// folder during a turn (engine.ShareFolderChecker).
+type checkingSegment struct {
+	*fakeSegment
+	err     error
+	folders []string
+}
+
+func (c *checkingSegment) CheckShareFolder(_ context.Context, folder string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.folders = append(c.folders, folder)
+	return c.err
+}
+
+func (c *checkingSegment) checked() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.folders)
 }
 
 // renewingSegment is a fakeSegment whose harness can start a new
@@ -305,6 +333,10 @@ func (s *starter) start(ctx context.Context, seg localrun.Segment) (engine.Persi
 	if s.compactor {
 		s.compacting = &compactingSegment{fakeSegment: s.last, err: s.compactErr}
 		return s.compacting, nil
+	}
+	if s.checksShare {
+		s.checking = &checkingSegment{fakeSegment: s.last, err: s.checkErr}
+		return s.checking, nil
 	}
 	return s.last, nil
 }

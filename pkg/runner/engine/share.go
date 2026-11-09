@@ -388,10 +388,44 @@ func walkShare(share string) ([]shareFile, error) {
 // it was given without a verdict, so they stay unread, and says so in the
 // session. The caller holds turnMu.
 func (s *liveSession) checkShare(ctx context.Context) {
+	_ = s.checkShareUnder(ctx, "")
+}
+
+// ShareFolderChecker is a persistent agent's session whose share can be
+// checked part by part while a turn runs: a tool the client answers that
+// writes files into the share has them checked before its answer reaches
+// the agent, so the agent reads them in the same turn.
+type ShareFolderChecker interface {
+	// CheckShareFolder checks what is new or changed beneath folder, a
+	// slash path within the share, as the check before a turn does, and
+	// nothing outside it. It answers why some of those files stay unread
+	// until the next turn's check, if any do.
+	CheckShareFolder(ctx context.Context, folder string) error
+}
+
+// CheckShareFolder implements ShareFolderChecker.
+func (s *liveSession) CheckShareFolder(ctx context.Context, folder string) error {
+	if s.rd == nil || s.rd.shareChecks == "" {
+		return nil // an unchecked share is read as it is
+	}
+	if folder == "" || path.IsAbs(folder) || path.Clean(folder) != folder || folder == "." || folder == ".." || strings.HasPrefix(folder, "../") {
+		return fmt.Errorf("%q is not a folder within the share", folder)
+	}
+	return s.checkShareUnder(ctx, folder)
+}
+
+// checkShareUnder is checkShare for the files beneath folder, or the whole
+// share when folder is empty. It answers why files it was to check stay
+// unread, if any do. shareMu holds one check at a time, so a tool call's
+// check during a turn and the next turn's never run together.
+func (s *liveSession) checkShareUnder(ctx context.Context, folder string) error {
 	rd := s.rd
 	if rd == nil || rd.shareChecks == "" {
-		return
+		return nil
 	}
+	s.shareMu.Lock()
+	defer s.shareMu.Unlock()
+	within := func(rel string) bool { return folder == "" || strings.HasPrefix(rel, folder+"/") }
 	if s.shares == nil {
 		s.shares = &shareChecker{verdicts: rd.shareKept}
 		if s.shares.verdicts == nil {
@@ -401,8 +435,9 @@ func (s *liveSession) checkShare(ctx context.Context) {
 	sc := s.shares
 	files, err := walkShare(rd.share)
 	if err != nil {
-		s.emit(session.Event{Kind: session.KindNotice, Text: "the share folder could not be read for its check: " + s.redact.String(err.Error())})
-		return
+		msg := "the share folder could not be read for its check: " + s.redact.String(err.Error())
+		s.emit(session.Event{Kind: session.KindNotice, Text: msg})
+		return errors.New(msg)
 	}
 	present := map[string]bool{}
 	var todo []shareFile
@@ -410,6 +445,9 @@ func (s *liveSession) checkShare(ctx context.Context) {
 	left := 0
 	for _, f := range files {
 		present[f.rel] = true
+		if !within(f.rel) {
+			continue
+		}
 		if v, ok := sc.verdicts[f.rel]; ok && v.Size == f.size && v.MTimeNano == f.mtime {
 			continue
 		}
@@ -422,7 +460,7 @@ func (s *liveSession) checkShare(ctx context.Context) {
 	}
 	gone := false
 	for rel := range sc.verdicts {
-		if !present[rel] {
+		if !present[rel] && within(rel) {
 			delete(sc.verdicts, rel)
 			gone = true
 		}
@@ -434,16 +472,19 @@ func (s *liveSession) checkShare(ctx context.Context) {
 			pruneShareText(rd, sc.verdicts)
 			s.syncShareMirror()
 		}
-		return
+		return nil
 	}
 	if s.shareMalwareCheck() {
 		s.emit(session.Event{Kind: session.KindNotice, Text: fmt.Sprintf("checking %d new or changed file(s) in the share for malware", len(todo))})
 	} else {
 		s.emit(session.Event{Kind: session.KindNotice, Text: fmt.Sprintf("reading %d new or changed file(s) in the share; the malware check is off on this computer", len(todo))})
 	}
+	var unread []string
 	checked, err := s.checkShareFiles(ctx, todo)
 	if err != nil {
-		s.emit(session.Event{Kind: session.KindNotice, Text: "the share's new files could not be checked, so they stay unread this turn: " + s.redact.String(err.Error())})
+		msg := "the share's new files could not be checked, so they stay unread this turn: " + s.redact.String(err.Error())
+		s.emit(session.Event{Kind: session.KindNotice, Text: msg})
+		unread = append(unread, msg)
 	}
 	unchecked := 0
 	for rel, v := range checked {
@@ -457,8 +498,9 @@ func (s *liveSession) checkShare(ctx context.Context) {
 		sc.verdicts[rel] = v
 	}
 	if err := writeShareVerdicts(rd.shareChecks, sc.verdicts); err != nil {
-		s.emit(session.Event{Kind: session.KindNotice, Text: "the share's verdicts could not be written: " + s.redact.String(err.Error())})
-		return
+		msg := "the share's verdicts could not be written: " + s.redact.String(err.Error())
+		s.emit(session.Event{Kind: session.KindNotice, Text: msg})
+		return errors.New(msg)
 	}
 	_ = keepShareCache(rd.shareCache, rd.share, s.shareMalwareCheck(), sc.verdicts)
 	pruneShareText(rd, sc.verdicts)
@@ -468,8 +510,14 @@ func (s *liveSession) checkShare(ctx context.Context) {
 		s.emit(session.Event{Kind: session.KindNotice, Text: fmt.Sprintf("%d file(s) in the share could not be checked by ClamAV and are read unchecked; receipts/%s says why", unchecked, ShareChecksLog)})
 	}
 	if left > 0 {
-		s.emit(session.Event{Kind: session.KindNotice, Text: fmt.Sprintf("%d more file(s) in the share wait for the next turn's check", left)})
+		msg := fmt.Sprintf("%d more file(s) in the share wait for the next turn's check", left)
+		s.emit(session.Event{Kind: session.KindNotice, Text: msg})
+		unread = append(unread, msg)
 	}
+	if len(unread) > 0 {
+		return errors.New(strings.Join(unread, "; "))
+	}
+	return nil
 }
 
 // checkShareFiles copies the files into a folder of the run's own, runs the

@@ -21,7 +21,10 @@ import (
 const (
 	botToken    = "4242:AAbot-token-for-tests-only"
 	telegramBot = "4242"
-	you         = "777"
+	// you is the person's id on the messenger: long and unlike any number
+	// a receipt holds (a time, a size, an id), so a test that searches a
+	// receipt's bytes for it finds it only when the receipt records it.
+	you = "50505050505050"
 )
 
 // fakeRole is a messenger role: the frames a test writes, and what the
