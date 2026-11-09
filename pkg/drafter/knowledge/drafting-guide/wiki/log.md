@@ -128,3 +128,9 @@ A new page, The person's computer, says when a description asks for an applicati
 
 - wrote: manifest/desktop.md
 - updated: index.md
+
+## [2026-11-09] ingest | any application on the person's computer (Drafter 1.22.0)
+
+The page The person's computer now says a release names any application by a short id, resolved by Agentry Desktop against the applications the person added and approved there, with `use` (`mcp`, `computer`, `both`) and one `choose` entry for an application the person chooses at the start. Blender and Unreal Engine are the library's presets, examples with known ids and tools rather than a list of what is allowed; a narrowing names only tools the server is known to list. The consent's words follow the CLI's.
+
+- updated: manifest/desktop.md, index.md, guide/start-here.md
