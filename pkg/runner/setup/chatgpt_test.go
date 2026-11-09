@@ -113,3 +113,17 @@ func TestASignInSetupCouldNotFinishWritesNothing(t *testing.T) {
 		t.Fatalf("err %v, model %+v", err, pol.Model)
 	}
 }
+
+// A model the plan's own list does not name is refused, the list named,
+// and the policy is left as it was.
+func TestSetupRefusesAModelTheChatGPTPlanDoesNotList(t *testing.T) {
+	pol := policy.Default()
+	f := &fakeChatGPT{kept: "person@example.com", models: []string{"gpt-fixture", "gpt-fixture-mini"}}
+	err := ConfigureModel(&scriptPrompter{}, pol, ModelOpts{Provider: "openai", APIKeyKind: "chatgpt-plan", Model: "gpt-unlisted", Yes: true, ChatGPT: f.offer()})
+	if err == nil || !strings.Contains(err.Error(), `does not offer "gpt-unlisted"`) || !strings.Contains(err.Error(), "gpt-fixture, gpt-fixture-mini") {
+		t.Fatalf("ConfigureModel = %v", err)
+	}
+	if pol.Model.Provider != policy.DefaultModelProvider {
+		t.Fatalf("the policy changed: %+v", pol.Model)
+	}
+}

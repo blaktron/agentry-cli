@@ -68,6 +68,10 @@ type RunSpec struct {
 	MaxCost  float64 `yaml:"maxCost,omitempty" json:"maxCost,omitempty"`
 	Adapter  string  `yaml:"adapter,omitempty" json:"adapter,omitempty"`
 	Policy   string  `yaml:"policy,omitempty" json:"policy,omitempty"`
+	// Model is the id of the saved model the schedule names, empty for the
+	// computer's default: a name, never a credential. Removing a saved model
+	// a schedule names is refused until the schedule is moved.
+	Model string `yaml:"model,omitempty" json:"model,omitempty"`
 
 	// DeliverTo is the absolute folder each fire copies its deliverables to,
 	// as `agentry run --deliver-to` does; empty copies nowhere (a fire still

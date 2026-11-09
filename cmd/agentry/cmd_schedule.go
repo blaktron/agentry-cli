@@ -798,7 +798,7 @@ func checkFireInputs(m *manifest.Manifest, pol *policy.Policy, profSecrets map[s
 	if env := pol.Model.APIKeyEnv; env != "" {
 		inEnv := strings.TrimSpace(getenv(env)) != ""
 		if pol.Model.APIKeySource == modelkey.SourceKeyring {
-			ok, err := keyPresent(pol.Model.Provider)
+			ok, err := keyPresent(pol.Model.KeyProvider())
 			switch {
 			case err != nil:
 				gaps = append(gaps, fmt.Sprintf("the model key: %v", err))
@@ -1031,7 +1031,7 @@ func schedulerContextGaps(cmd *cobra.Command, policyPath string) []string {
 		return append(gaps, err.Error())
 	}
 	if pol.Model.APIKeyEnv != "" && pol.Model.APIKeySource == modelkey.SourceKeyring {
-		ok, err := modelkey.Present(pol.Model.Provider)
+		ok, err := modelkey.Present(pol.Model.KeyProvider())
 		switch {
 		case err != nil:
 			gaps = append(gaps, fmt.Sprintf("the keychain: %v", err))

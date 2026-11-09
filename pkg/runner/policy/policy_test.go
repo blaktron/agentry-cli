@@ -109,7 +109,7 @@ func TestValidateTable(t *testing.T) {
 		{"zero timeout", func(p *Policy) { p.Budgets.TimeoutSeconds = 0 }, "timeoutSeconds"},
 		{"negative turns", func(p *Policy) { p.Budgets.MaxTurns = -1 }, "maxTurns"},
 		{"missing image", func(p *Policy) { p.Images.Gateway = "" }, "images"},
-		{"wrong version", func(p *Policy) { p.PolicyVersion = "2" }, "policyVersion"},
+		{"wrong version", func(p *Policy) { p.PolicyVersion = "3" }, "policyVersion"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
