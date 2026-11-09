@@ -1,6 +1,13 @@
 {
   "versions": [
     {
+      "version": "0.7.43",
+      "highlights": [
+        "The Assistant reads the files of a QuickAgent it fetches in the same reply, without waiting for your next message.",
+        "Those files are still checked first, for malware too when the malware check is on."
+      ]
+    },
+    {
       "version": "0.7.42",
       "highlights": [
         "Every security setting your organization manages now applies to your runs, not only Unsafe Mode.",
