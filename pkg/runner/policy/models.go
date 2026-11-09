@@ -249,7 +249,9 @@ func migrateV1(m Model, harness map[string]HarnessPolicy) (map[string]Provider, 
 		for i := 2; slices.ContainsFunc(models, func(sm SavedModel) bool { return strings.EqualFold(sm.Name, n) }); i++ {
 			n = fmt.Sprintf("%s-%d", name, i)
 		}
-		models = append(models, SavedModel{ID: migratedID("harness:" + name), Name: n, Provider: id, Model: strings.TrimSpace(harness[name].Model)})
+		// The block's model was compiled with the model block's context
+		// window, so the saved model read from it keeps that window.
+		models = append(models, SavedModel{ID: migratedID("harness:" + name), Name: n, Provider: id, Model: strings.TrimSpace(harness[name].Model), ContextWindow: m.ContextWindow})
 	}
 	return providers, models, def.ID
 }
@@ -264,6 +266,141 @@ func (p *Policy) harnessOf(id string) string {
 		}
 	}
 	return ""
+}
+
+// HarnessOf names the harness block sm was read from, "" for a saved model
+// that was not read from one.
+func (p *Policy) HarnessOf(sm SavedModel) string { return p.harnessOf(sm.ID) }
+
+// HarnessModel is the saved model read from the harness block name, the
+// model a run on that harness was asked for before the lists existed.
+func (p *Policy) HarnessModel(name string) (SavedModel, bool) {
+	if strings.TrimSpace(p.Harness[name].Model) == "" {
+		return SavedModel{}, false
+	}
+	_, models, _ := p.SavedModels()
+	id := migratedID("harness:" + name)
+	for _, sm := range models {
+		if sm.ID == id {
+			return sm, true
+		}
+	}
+	return SavedModel{}, false
+}
+
+// harnessProvider is the provider the harness blocks were written for: the
+// one a version 1 policy's model block named, which the saved models read
+// from the model block and from the harness blocks sit on. A policy whose
+// lists hold none of those has its blocks beside the default's provider,
+// which Validate holds them to.
+func (p *Policy) harnessProvider() string {
+	_, models, def := p.SavedModels()
+	find := func(id string) (string, bool) {
+		for _, sm := range models {
+			if sm.ID == id {
+				return sm.Provider, true
+			}
+		}
+		return "", false
+	}
+	if pr, ok := find(migratedID("model")); ok {
+		return pr
+	}
+	for _, name := range sortedKeys(p.Harness) {
+		if pr, ok := find(migratedID("harness:" + name)); ok {
+			return pr
+		}
+	}
+	pr, _ := find(def)
+	return pr
+}
+
+// RunHarness is the harness a run on sm takes when the run names none: the
+// harness block's that sm was read from, while sm stays on the provider the
+// blocks were written for, since that block's harness is the only one a run
+// on its model ever took. "" for every other saved model, whose harness
+// follows its credential.
+func (p *Policy) RunHarness(sm SavedModel) string {
+	name := p.harnessOf(sm.ID)
+	if name == "" || strings.TrimSpace(p.Harness[name].Model) == "" || sm.Provider != p.harnessProvider() {
+		return ""
+	}
+	return name
+}
+
+// RunModel is the saved model a run is on: the one ref names (by name or
+// id), else, for a run on a harness whose block names a model, the saved
+// model read from that block, else the default. A ref that names no saved
+// model is refused, never replaced by the default.
+func (p *Policy) RunModel(ref, harness string) (SavedModel, error) {
+	if ref = strings.TrimSpace(ref); ref != "" {
+		sm, ok := p.FindModel(ref)
+		if !ok {
+			return SavedModel{}, &MissingModelError{Ref: ref}
+		}
+		return sm, nil
+	}
+	if harness != "" {
+		if sm, ok := p.HarnessModel(harness); ok {
+			return sm, nil
+		}
+	}
+	return p.DefaultModel(), nil
+}
+
+// MissingModelError is a run, or a schedule, naming a saved model this
+// computer does not have.
+type MissingModelError struct{ Ref string }
+
+func (e *MissingModelError) Error() string {
+	return fmt.Sprintf("there is no saved model %q on this computer, and a run never takes the default in its place: name one of them (agentry models list), or save it first (agentry models add)", e.Ref)
+}
+
+// ForRun is the policy a run on the saved model sm compiles from: Model is
+// sm as the compiler reads it, so the run takes sm's provider's credential,
+// endpoint and allowlist and sm's own model id and context window, and no
+// other provider's. A harness block's model, key and endpoint apply only
+// to a run on the provider the blocks were written for, and its model only
+// to the saved model read from it; its install path and token route apply
+// to every run on that harness. The view is never saved.
+func (p *Policy) ForRun(sm SavedModel) (*Policy, error) {
+	q := *p
+	q.runOn = nil
+	if sm.ID == "" {
+		return &q, nil
+	}
+	m, err := p.ModelView(sm)
+	if err != nil {
+		return nil, err
+	}
+	q.Model = m
+	q.view = Model{}
+	q.Providers, q.Models, q.Default = p.SavedModels()
+	credential := sm.Provider == p.harnessProvider()
+	own := p.harnessOf(sm.ID)
+	if p.Harness != nil {
+		q.Harness = make(map[string]HarnessPolicy, len(p.Harness))
+		for name, hp := range p.Harness {
+			if !credential {
+				hp = HarnessPolicy{Path: hp.Path, SignInTokenRoute: hp.SignInTokenRoute}
+			} else if name != own {
+				hp.Model = ""
+			}
+			q.Harness[name] = hp
+		}
+	}
+	run := sm
+	q.runOn = &run
+	return &q, nil
+}
+
+// RunSavedModel is the saved model a ForRun view runs on; false for a
+// policy as it was read.
+func (p *Policy) RunSavedModel() (SavedModel, bool) {
+	if p.runOn == nil {
+		return SavedModel{}, false
+	}
+	return *p.runOn, true
 }
 
 // setHarnessModel gives the harness block a saved model was read from the

@@ -271,7 +271,7 @@ func dryRunSummary(plan *spec.Plan, planDir string, opts runOpts) []string {
 		harness += ", from this machine's own installation"
 	}
 	add("harness", harness)
-	add("model", plan.Harness.Model)
+	add("model", planModelLine(plan))
 	add("tools", strings.Join(plan.Tools, ", "))
 	add("network", egressSummary(plan.Capabilities))
 	add("files", fsSummary(plan.Capabilities))
@@ -381,4 +381,13 @@ func inputsSummary(opts runOpts) string {
 		parts = append(parts, "knowledge "+strings.Join(opts.knowledge, ", "))
 	}
 	return strings.Join(parts, "; ")
+}
+
+// planModelLine is the model a plan runs on as a person reads it: the
+// saved model's name beside the provider and model id.
+func planModelLine(plan *spec.Plan) string {
+	if sm := plan.Harness.SavedModel; sm != nil && plan.Harness.Model != "" {
+		return fmt.Sprintf("%s (saved model %q)", plan.Harness.Model, sm.Name)
+	}
+	return plan.Harness.Model
 }

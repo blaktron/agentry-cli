@@ -93,6 +93,15 @@ func scheduleCheck(cmd *cobra.Command, ref, name, out, on string, spec runSpecFl
 	if err != nil {
 		gap(err)
 	}
+	if on == "" {
+		if err := assignScheduleModel(&sc, spec.model); err != nil {
+			// A saved model this computer does not have is the person's to
+			// fix: it is a gap, and the rest is checked as the default would
+			// be, so the check still names every other gap.
+			gap(err)
+			sc.Run.Model = ""
+		}
+	}
 	if reason := scheduleHold(sc); reason != "" {
 		gap(heldError(reason))
 	}

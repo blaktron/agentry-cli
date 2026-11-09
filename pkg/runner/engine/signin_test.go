@@ -614,3 +614,14 @@ func TestAPlanLimitEndsASession(t *testing.T) {
 		t.Fatalf("the session never said the limit: %+v", get())
 	}
 }
+
+// The receipt names the saved model the plan was compiled on.
+func TestTheReceiptNamesThePlansSavedModel(t *testing.T) {
+	plan := &spec.Plan{Harness: spec.HarnessSpec{SavedModel: &spec.SavedModelRef{ID: "ab12cd34", Name: "Lab"}}}
+	if got := savedModelRecord(plan); got == nil || got.ID != "ab12cd34" || got.Name != "Lab" {
+		t.Fatalf("savedModelRecord = %+v", got)
+	}
+	if got := savedModelRecord(&spec.Plan{}); got != nil {
+		t.Fatalf("a plan with no saved model is recorded as %+v", got)
+	}
+}

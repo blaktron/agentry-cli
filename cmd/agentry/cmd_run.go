@@ -105,9 +105,12 @@ type runOpts struct {
 	guideShown *bool
 	// progress is where the run has got to, for the envelope of a run that
 	// fails before the engine writes one.
-	progress           *runProgress
-	eventsPath         string
-	adapterName        string
+	progress    *runProgress
+	eventsPath  string
+	adapterName string
+	// model is --model: the saved model the run is on, by name or id;
+	// empty for the default.
+	model              string
 	local              string
 	pin                string
 	policyPath         string
@@ -278,6 +281,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&opts.outputFormat, "output-format", "text", "stdout format: text | json (json = the full result envelope; the root --json asks for the same)")
 	f.StringVar(&opts.eventsPath, "events", "", "append the harness event stream to FILE as JSON lines while the run is live (the receipt keeps its own copy either way)")
 	f.StringVar(&opts.adapterName, "adapter", "", "harness adapter (default "+adapter.DefaultName+", or "+adapter.CodexImageAdapterName+" when the model is paid by your ChatGPT plan); see --list-adapters")
+	f.StringVar(&opts.model, "model", "", "run on this saved model, by its name or id (default: this computer's default saved model; see agentry models list); its provider's credential pays, and the harness follows that credential unless --adapter names one")
 	f.StringVar(&opts.local, "local", "", "run an unpublished QuickAgent DIRECTORY instead of a registry ref")
 	f.StringVar(&opts.pin, "pin", "", "require the resolved archive digest to equal this sha256:… value")
 	f.StringVar(&opts.on, "on", "", "run on this remote runhost (see agentry runhost list) instead of this computer, carrying the run's secrets, files and intake, or an interactive session: the release is verified here, sent, verified again there, and its output sealed to this device and opened into the output folder; a run lost mid-way goes on there (agentry runhost attach); a plan's sign-in is the runhost's own (agentry runhost model --sign-in), and claude and codex run as their images there")
@@ -355,6 +359,11 @@ func runnerHome() (string, error) { return policy.Home() }
 
 // runRun executes the whole run lifecycle.
 func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
+	if opts.model != "" {
+		if err := refuseModelElsewhere(opts); err != nil {
+			return err
+		}
+	}
 	if opts.on != "" {
 		return runOnRunhost(cmd, ref, opts)
 	}
@@ -430,9 +439,25 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	if err != nil {
 		return err
 	}
-	pol, polSHA, err := policy.EnsureDefault(policyFile.Path)
+	read, polSHA, err := policy.EnsureDefault(policyFile.Path)
 	if err != nil {
 		return engine.Classify(engine.ExitPolicy, err)
+	}
+	// The saved model the run is on, named or the default: the run
+	// compiles from the policy as that model reads, and from nothing of
+	// another provider's.
+	chosen, err := localrun.ChooseRunModel(read, opts.model, opts.adapterName)
+	if err != nil {
+		return err
+	}
+	pol := chosen.Policy
+	// A saved model the run names is refused here, by name, when its
+	// credential is not on this computer; the default's is refused by the
+	// engine when it reads it.
+	if opts.model != "" && !opts.plan && !opts.dryRun && !opts.prepare {
+		if err := savedModelUsable(home, chosen, os.Getenv); err != nil {
+			return err
+		}
 	}
 
 	opts.progress.at(receipt.StageVerify)
@@ -582,10 +607,7 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	}
 
 	opts.progress.at(receipt.StageCompile)
-	adapterName := opts.adapterName
-	if adapterName == "" {
-		adapterName = adapter.DefaultFor(pol)
-	}
+	adapterName := chosen.Adapter
 	// A runhost's run (--installed) never runs a harness as a host process,
 	// outside gVisor: only the adapters whose harness is a container.
 	if opts.installed && !slices.Contains(job.ImageAdapters, adapterName) {
@@ -988,7 +1010,7 @@ func runInteractive(cmd *cobra.Command, docker dockerx.Client, params engine.Par
 	}
 	topts := tui.Options{
 		Ref:        plan.Ref,
-		Model:      plan.Harness.Model,
+		Model:      planModelLine(plan),
 		Caps:       capabilityLines(m.Contract()),
 		MaxTurns:   params.Budgets.MaxTurns,
 		MaxCostUSD: params.Budgets.MaxCostUSD,
@@ -1419,6 +1441,9 @@ type runPlanOutput struct {
 	// runner home: installIntegrity's values. A changed install is also
 	// the first of Refusals.
 	Integrity installIntegrity `json:"integrity"`
+	// Model is what the run would run on: the saved model, the provider
+	// and model id, and the harness.
+	Model runPlanModel `json:"model"`
 	runPlanConsent
 	// Refusals is every refusal the gates before compile would meet, in
 	// the order a run meets them: the attestation, then a declared server
@@ -1429,6 +1454,31 @@ type runPlanOutput struct {
 	// read one refusal.
 	Refusal  string           `json:"refusal,omitempty"`
 	Refusals []runPlanRefusal `json:"refusals,omitempty"`
+}
+
+// runPlanModel is the model a run's plan was compiled on. Never a
+// credential: the plan says where the key is read from, never its value.
+type runPlanModel struct {
+	// SavedModel is the saved model, by id and name; nil for a policy with
+	// none.
+	SavedModel *spec.SavedModelRef `json:"savedModel,omitempty"`
+	// Model is provider/model id, as the receipt names it.
+	Model string `json:"model"`
+	// Adapter is the harness.
+	Adapter string `json:"adapter"`
+}
+
+// planModel is the plan's runPlanModel.
+func planModel(plan *spec.Plan) runPlanModel {
+	return runPlanModel{SavedModel: plan.Harness.SavedModel, Model: plan.Harness.Model, Adapter: plan.Harness.Adapter}
+}
+
+// String is the model as the plan's text says it.
+func (m runPlanModel) String() string {
+	if m.SavedModel == nil {
+		return m.Model + " on " + m.Adapter
+	}
+	return fmt.Sprintf("%s (%s) on %s", m.SavedModel.Name, m.Model, m.Adapter)
 }
 
 // runPlanRefusal is one refusal a run would meet: Kind is the gate,
@@ -1534,7 +1584,7 @@ func printRunPlan(cmd *cobra.Command, plan *spec.Plan, meta *installdir.Meta, m 
 		Ref: meta.Ref, Version: meta.Version, Digest: meta.Digest, Mode: string(mode), Modes: modeStrings(m.SupportedModes()),
 		Summary: m.Summary, Plan: bytes.TrimSpace(b), PlanSha256: planHash(plan), Contract: contract, ContractDigest: cdigest,
 		Attestation: meta.Attestation.State, KeyID: meta.Attestation.KeyID, Signed: meta.Attestation.Verified,
-		Integrity: integrity, runPlanConsent: consent, Refusals: refusals,
+		Integrity: integrity, Model: planModel(plan), runPlanConsent: consent, Refusals: refusals,
 	}
 	if len(refusals) > 0 {
 		out.Refusal = refusals[0].Message
@@ -1545,6 +1595,7 @@ func printRunPlan(cmd *cobra.Command, plan *spec.Plan, meta *installdir.Meta, m 
 	w := cmd.OutOrStdout()
 	_, _ = fmt.Fprintf(w, "plan: %s (%s) plan sha256 %s\n", out.Ref, out.Mode, out.PlanSha256)
 	_, _ = fmt.Fprintf(w, "attestation: %s\n", out.Attestation)
+	_, _ = fmt.Fprintf(w, "model: %s\n", out.Model)
 	if line := integrityLines[out.Integrity]; line != "" {
 		_, _ = fmt.Fprintf(w, "installed: %s\n", line)
 	}

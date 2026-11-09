@@ -97,15 +97,11 @@ func signedOutGaps(ctx context.Context, sc schedule.Schedule) []string {
 			gaps = append(gaps, fmt.Sprintf("the kept knowledge pack %s opens with a key kept in the keychain, which is locked while you are signed out", k))
 		}
 	}
-	pf, err := policy.Resolve(sc.Run.Policy)
+	rm, err := scheduleRunModel(sc)
 	if err != nil {
 		return append(gaps, err.Error())
 	}
-	pol, _, err := policy.EnsureDefault(pf.Path)
-	if err != nil {
-		return append(gaps, err.Error())
-	}
-	return append(gaps, signedOutKeyGaps(home, pol)...)
+	return append(gaps, signedOutKeyGaps(home, rm.Policy)...)
 }
 
 // signedOutKeyGaps is why a model key pol reads from the keychain cannot
@@ -209,14 +205,11 @@ func releaseLinger(in io.Reader, errOut io.Writer, store schedule.Store) {
 // key saved for each input source's host when there is one (a private
 // source is fetched at every fire).
 func sealScheduleKeys(sc schedule.Schedule, path string) error {
-	pf, err := policy.Resolve(sc.Run.Policy)
+	rm, err := scheduleRunModel(sc)
 	if err != nil {
 		return err
 	}
-	pol, _, err := policy.EnsureDefault(pf.Path)
-	if err != nil {
-		return err
-	}
+	pol := rm.Policy
 	home, err := runnerHome()
 	if err != nil {
 		return err

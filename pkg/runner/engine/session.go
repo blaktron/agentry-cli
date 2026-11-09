@@ -90,6 +90,7 @@ func startSession(ctx context.Context, d dockerx.Client, p Params) (session.Sess
 			// run's does.
 			ImagePin:       p.Plan.Harness.ImagePin.String(),
 			CredentialKind: credentialKind(p.Plan),
+			SavedModel:     savedModelRecord(p.Plan),
 		},
 		Policy:  policyRecord(p),
 		Result:  receipt.TextResult(""),

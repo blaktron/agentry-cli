@@ -448,6 +448,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 			Model:          p.Plan.Harness.Model,
 			ImagePin:       p.Plan.Harness.ImagePin.String(),
 			CredentialKind: credentialKind(p.Plan),
+			SavedModel:     savedModelRecord(p.Plan),
 		},
 		Policy:  policyRecord(p),
 		Result:  receipt.TextResult(""),
@@ -1949,6 +1950,15 @@ func sandboxHosts(ctx context.Context, d dockerx.Client, plan *spec.Plan, runID 
 // caller resolved, with the digest the plan was compiled against — the
 // digest of that same file's bytes, since a plan compiled under another
 // policy is recompiled before it runs.
+// savedModelRecord is the receipt's record of the saved model the plan was
+// compiled on.
+func savedModelRecord(plan *spec.Plan) *receipt.SavedModel {
+	if sm := plan.Harness.SavedModel; sm != nil {
+		return &receipt.SavedModel{ID: sm.ID, Name: sm.Name}
+	}
+	return nil
+}
+
 func policyRecord(p Params) *receipt.Policy {
 	if p.PolicyFile == nil {
 		return nil

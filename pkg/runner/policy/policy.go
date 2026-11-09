@@ -257,6 +257,9 @@ type Policy struct {
 	// view is Model as the lists last made it, so a change a caller makes to
 	// Model is folded into the default saved model (models.go).
 	view Model
+	// runOn is the saved model a run's view of the policy is on (ForRun);
+	// nil for a policy as it was read.
+	runOn *SavedModel
 }
 
 // PersistentReleasesAllowed says whether the policy lets a persistent
@@ -1068,6 +1071,9 @@ func boolPtr(b bool) *bool { return &b }
 // `agentry setup`; hand-written comments in an existing file are
 // not preserved, and the header says so.
 func Save(path string, p *Policy) error {
+	if p.runOn != nil {
+		return errors.New("a run's view of the policy is never saved: save the policy as it was read")
+	}
 	p.foldModel()
 	if err := p.Validate(); err != nil {
 		return err
@@ -1318,11 +1324,17 @@ func (p *Policy) Validate() error {
 	if p.Sessions.IdleTimeoutSeconds < 0 || p.Sessions.MaxWallSeconds < 0 || p.Sessions.MaxUserTurns < 0 {
 		return errors.New("sessions.idleTimeoutSeconds, sessions.maxWallSeconds and sessions.maxUserTurns must not be negative")
 	}
+	// The harness blocks' kinds belong to the provider they were written
+	// for, which need not be the default's once there are several.
+	harnessVendor := p.Model.Provider
+	if id := p.harnessProvider(); id != "" {
+		harnessVendor = ProviderVendor(id)
+	}
 	for name, hp := range p.Harness {
 		if !validKeySource(hp.APIKeySource) {
 			return fmt.Errorf("harness.%s.apiKeySource %q must be env or keyring", name, hp.APIKeySource)
 		}
-		if err := checkKind("harness."+name+".apiKeyKind", hp.APIKeyKind, p.Model.Provider); err != nil {
+		if err := checkKind("harness."+name+".apiKeyKind", hp.APIKeyKind, harnessVendor); err != nil {
 			return err
 		}
 		if hp.APIKeyKind == KeyKindSubscription && name != "claude" {
