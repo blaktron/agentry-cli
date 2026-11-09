@@ -40,6 +40,17 @@ import (
 // sandbox — network, proxy, gateway, mounts, secrets — is exactly the
 // autonomous one. The task text, if any, is the opening user turn.
 func StartSession(ctx context.Context, d dockerx.Client, p Params) (session.Session, error) {
+	onceDesktopUnbind(p)
+	sess, err := startSession(ctx, d, p)
+	if err != nil {
+		// A session that never started ends its binding to Agentry Desktop,
+		// whichever step refused it; a started one ends it at its end.
+		endDesktopBinding(ctx, p)
+	}
+	return sess, err
+}
+
+func startSession(ctx context.Context, d dockerx.Client, p Params) (session.Session, error) {
 	if p.Plan == nil || !p.Plan.Conversational() || p.Plan.Harness.Session == nil {
 		return nil, Classify(ExitCompile, errors.New("not a conversational plan (compile with Mode interactive, or persistent for a persistent agent)"))
 	}
