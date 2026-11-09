@@ -49,9 +49,17 @@ func (a Agent) ConfiguresItself() bool { return a.Declared().Declares("selfConfi
 // switch that lets it (meetings).
 func (a Agent) ArmsMeetings() bool { return a.Declared().Declares("meetings") }
 
-// AppLink is the agent's app link tool set, composed from what it declares;
-// empty for none.
-func (a Agent) AppLink() string { return compile.AppLinkSet(a.Declared()) }
+// AppLink is the agent's app link tool set, composed from what it declares,
+// with the parts a built-in is granted by name (the Assistant's publisher
+// tools); empty for none. A published agent carries the zero Builtin, granted
+// none.
+func (a Agent) AppLink() string {
+	set := compile.AppLinkSet(a.Declared())
+	if a.Release != nil {
+		return set
+	}
+	return a.Builtin.WithGrantedParts(set)
+}
 
 // AgentSkill is one of an agent's own skills and who grants it: the
 // application, for a built-in's and for the memory's own skills, or its

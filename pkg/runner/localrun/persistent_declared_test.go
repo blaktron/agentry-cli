@@ -13,25 +13,33 @@ import (
 // capabilities compose lists exactly the tools it listed when its set was
 // chosen by name: Agentry Helper's helper tools, the Assistant's own tools,
 // the helper tools and the meeting tools, and none for the Coding agent.
+// The Assistant alone is granted the publisher tools beside them, by name.
 func TestBuiltinCatalogsUnchanged(t *testing.T) {
 	helper := []string{"registry_search", "quickagent_show", "quickagent_install", "quickagent_run", "run_result", "installed_list",
 		"schedule_add", "schedule_list", "schedule_pause", "schedule_remove", "settings_open", "docs_read"}
 	assistant := slices.Concat([]string{"self_configure", "task_add", "task_list", "task_update", "task_remove", "tell_person", "recall"}, helper,
 		[]string{"meeting_arm", "meeting_list", "meeting_cancel"})
+	publisher := []string{"quickagent_mine", "quickagent_versions", "quickagent_fetch", "quickagent_revise", "quickagent_fork", "quickagent_submit", "quickagent_manage"}
 	for _, c := range []struct {
-		b     Builtin
-		tools []string
-	}{{Main(), helper}, {Assistant(), assistant}, {Coder(), nil}} {
+		b             Builtin
+		tools, linked []string
+	}{{Main(), helper, helper}, {Assistant(), assistant, slices.Concat(assistant, publisher)}, {Coder(), nil, nil}} {
 		set := compile.AppLinkSet(c.b.Declared())
 		if got := applink.Tools(set); !slices.Equal(got, c.tools) {
-			t.Errorf("%s's app link (%q) lists %v, want %v", c.b.Ref(), set, got, c.tools)
+			t.Errorf("%s's declared app link (%q) lists %v, want %v", c.b.Ref(), set, got, c.tools)
 		}
-		if c.b.AppLink() != set {
-			t.Errorf("%s's AppLink is %q, want %q", c.b.Ref(), c.b.AppLink(), set)
+		if got := applink.Tools(c.b.AppLink()); !slices.Equal(got, c.linked) {
+			t.Errorf("%s's AppLink (%q) lists %v, want %v", c.b.Ref(), c.b.AppLink(), got, c.linked)
+		}
+		if c.b.ManagesQuickAgents() != (c.b.Ref() == Assistant().Ref()) {
+			t.Errorf("%s manages QuickAgents: %v", c.b.Ref(), c.b.ManagesQuickAgents())
 		}
 	}
-	if compile.AppLinkSet(Main().Declared()) != applink.SetMain || compile.AppLinkSet(Assistant().Declared()) != applink.SetAssistant {
-		t.Error("the built-ins' declared sets are not applink's SetMain and SetAssistant")
+	if Main().AppLink() != applink.SetMain || Assistant().AppLink() != applink.SetAssistant {
+		t.Error("the built-ins' sets are not applink's SetMain and SetAssistant")
+	}
+	if (Builtin{}).WithGrantedParts(applink.SetMain) != applink.SetMain {
+		t.Error("the zero Builtin, which a release's segment carries, is granted a part by name")
 	}
 }
 

@@ -625,7 +625,9 @@ func calendarPrompt(g *spec.CalendarGrant) string {
 
 // writeAppLink is the Agentry line, for an agent whose app link has its own
 // name and persona or Agentry's helper tools: what self_configure saves, and
-// what the helper tools reach and who answers them.
+// what the helper tools reach and who answers them; and, for an agent with
+// the publisher tools, what they manage and that the person agrees to each
+// change.
 func writeAppLink(b *strings.Builder, set string) {
 	self, helper := applink.Has(set, applink.PartSelf), applink.Has(set, applink.PartHelper)
 	selfLine := applink.SelfConfigure + " saves the name and the personality the person gives you, and nothing else."
@@ -637,5 +639,8 @@ func writeAppLink(b *strings.Builder, set string) {
 		b.WriteString("- **Agentry.** The " + helperLine + "\n")
 	case self:
 		b.WriteString("- **Agentry.** " + selfLine + "\n")
+	}
+	if applink.Has(set, applink.PartPublisher) {
+		b.WriteString("- **The person's QuickAgents.** The quickagent_mine, quickagent_versions, quickagent_fetch, quickagent_revise, quickagent_fork, quickagent_submit and quickagent_manage tools manage the QuickAgents the person publishes: fetch one into share/quickagents/, change it there yourself or with the Drafter, and submit it as a new version; fork a public one to change it; create a new one, which is private. Agentry asks the person before every fork, revision, submission and owner action, each time, and its checks decide every version like any other. Nothing you create is public, and you cannot delete a QuickAgent or make one public: the person does that in Agentry. Never claim a version is published until quickagent_versions says so.\n")
 	}
 }

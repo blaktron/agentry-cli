@@ -48,7 +48,7 @@ func TestOnlyTheEmbeddedPackagesRunAsBuiltin(t *testing.T) {
 		for _, b := range Builtins() {
 			refs = append(refs, b.Ref())
 		}
-		if strings.Join(refs, ",") != "agentry/knowledge-creator@1.5.0,agentry/drafter@1.22.0,agentry/voice-writer@1.3.0,agentry/examiner@1.2.2,agentry/report-designer@1.2.0,agentry/assistant@1.20.1,agentry/main@1.2.0,agentry/coder@1.5.0" {
+		if strings.Join(refs, ",") != "agentry/knowledge-creator@1.5.0,agentry/drafter@1.22.0,agentry/voice-writer@1.3.0,agentry/examiner@1.2.2,agentry/report-designer@1.2.0,agentry/assistant@1.21.0,agentry/main@1.2.0,agentry/coder@1.5.0" {
 			t.Fatalf("built-ins %v", refs)
 		}
 	})
@@ -642,7 +642,7 @@ func TestEnsurePlan(t *testing.T) {
 			return c.AgentFiles != nil && c.AgentFiles.Share && c.AgentFiles.CheckShare && c.AgentFiles.Memory
 		}, func(p *spec.Plan) { p.Capabilities.AgentFiles.Share = false }},
 		{"the app link", segmentPlan(Assistant(), Grants{AppLink: "/run/app.sock"}), func(c spec.CapSummary, _ *spec.Plan) bool {
-			return c.AppLink == compile.AppLinkSet(Assistant().Declared())
+			return c.AppLink == Assistant().AppLink()
 		},
 			func(p *spec.Plan) { p.Capabilities.AppLink = applink.SetMain }},
 		{"the subagent tools", segmentPlan(Assistant(), Grants{AppLink: "/run/app.sock", Subagents: true}), func(c spec.CapSummary, _ *spec.Plan) bool { return applink.Has(c.AppLink, applink.PartSubagents) },

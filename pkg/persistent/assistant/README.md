@@ -81,7 +81,8 @@ assistant` lists what it has:
   it a calendar by its iCal address and say how it reads one; and
   `quickagent-use`, which says how it works out what a QuickAgent needs
   from what it shows (its questions, files, keys and guide) and runs it for
-  you.
+  you; and `quickagent-edit`, which says how it changes, forks, makes and
+  looks after the QuickAgents you publish.
 - **A share folder** of yours, `~/agentry/assistantshare` unless you choose
   another, is mounted read and write while it runs: you see what it writes
   there as it writes it. A file you add is checked for malware with ClamAV
@@ -178,6 +179,28 @@ assistant` lists what it has:
   None of these tools changes a setting, starts or stops an agent, signs in,
   publishes or touches a key. Run from the CLI, these tools answer that only
   Agentry Desktop answers them.
+- **Your QuickAgents**, in Agentry Desktop, which Agentry Helper does not
+  have. `quickagent_mine` lists the QuickAgents you publish, in your own
+  namespace and in each organization you publish for, private ones included.
+  `quickagent_versions` says where each version stands. `quickagent_fetch`
+  copies a version into `share/quickagents/<namespace>/<name>/` for the
+  Assistant to read and change. `quickagent_revise` has the Drafter revise
+  that folder, in Agentry for credits or on this computer with your own key.
+  `quickagent_submit` submits a folder as a new version, or as a new
+  QuickAgent, which is always private. `quickagent_fork` forks a public
+  QuickAgent into your namespace so it can be changed. `quickagent_manage`
+  makes one private, retires or restores it, or yanks or withdraws a version.
+  The desktop asks you first, in a dialog that names the Assistant, before
+  every fork, revision, submission and owner action, every time: no earlier
+  answer and no setting skips it. A submission's dialog shows the files and
+  the capabilities that changed, and says when the QuickAgent is public that
+  everyone who installs or updates it receives the version. Every version
+  then goes through Agentry's checks like any other. The Assistant cannot
+  delete a QuickAgent or make one public; you do that in Agentry's Publisher
+  section. These tools reach your QuickAgents with your Agentry sign-in,
+  which the Assistant never sees, and none changes what the Assistant itself
+  may do. Run from the CLI, they answer that only Agentry Desktop answers
+  them.
 - **Meeting recordings**, in Agentry Desktop with its Meeting notes on: when
   its roster's meetings entry is on (off until you switch it on, and only
   with its heartbeat on), its Agentry tools `meeting_arm`, `meeting_list` and

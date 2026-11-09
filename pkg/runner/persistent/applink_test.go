@@ -9,8 +9,10 @@ import (
 	"testing"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
+	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/runnerimage/applink"
+	"github.com/blaktron/agentry/pkg/manifest"
 )
 
 func call(t *testing.T, home, name, tool, args string) applink.Answer {
@@ -157,5 +159,98 @@ func TestTheAssistantsHelperToolsGoToItsClient(t *testing.T) {
 	got := call(t, home, "assistant", "registry_search", `{"query":"summarise PDFs"}`)
 	if !got.IsError || !strings.Contains(got.Text, "Agentry Desktop") {
 		t.Errorf("registry_search with no handler: %+v", got)
+	}
+}
+
+// TestThePublisherToolsAreTheAssistantsAlone: the Assistant's supervisor hands
+// each publisher tool to its client's handler, and answers it as Agentry
+// Desktop's when run from the CLI with no handler; Agentry Helper's refuses
+// them without asking its handler.
+func TestThePublisherToolsAreTheAssistantsAlone(t *testing.T) {
+	publisher := applink.Tools(applink.Compose(applink.PartPublisher))
+	home := shortHome(t)
+	enable(t, home)
+	var asked []applink.Request
+	st := &starter{resumed: true}
+	sv, err := Start(context.Background(), Options{
+		Home: home, Agent: assistantAgent(t), Client: ClientDesktop, Policy: policy.Default(), Docker: &dockerx.Fake{}, StartSegment: st.start,
+		AppLink: func(_ context.Context, req applink.Request) applink.Answer {
+			asked = append(asked, req)
+			return applink.Answer{Text: "answered " + req.Tool}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range publisher {
+		if got := call(t, home, "assistant", tool, `{}`); got.IsError || got.Text != "answered "+tool {
+			t.Errorf("%s: %+v", tool, got)
+		}
+	}
+	if len(asked) != len(publisher) {
+		t.Errorf("the handler was asked %d times, want %d", len(asked), len(publisher))
+	}
+	if _, err := sv.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	cli := startAssistant(t, home, &starter{resumed: true})
+	got := call(t, home, "assistant", applink.QuickAgentSubmit, `{"folder":"share/quickagents/alice/x"}`)
+	if !got.IsError || !strings.Contains(got.Text, "Agentry Desktop") {
+		t.Errorf("quickagent_submit with no handler: %+v", got)
+	}
+	if _, err := cli.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	mainHome := shortHome(t)
+	t.Setenv("HOME", t.TempDir())
+	a, err := Lookup("main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := Config{Enabled: true}
+	RecordConsent(BuildRoster(a, c, nil), &c)
+	if err := SaveConfig(mainHome, "main", c); err != nil {
+		t.Fatal(err)
+	}
+	var mainAsked []applink.Request
+	msv, err := Start(context.Background(), Options{
+		Home: mainHome, Agent: a, Client: ClientDesktop, Policy: policy.Default(), Docker: &dockerx.Fake{}, StartSegment: (&starter{}).start,
+		AppLink: func(_ context.Context, req applink.Request) applink.Answer {
+			mainAsked = append(mainAsked, req)
+			return applink.Answer{Text: "answered " + req.Tool}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _, _ = msv.Stop(context.Background()) }()
+	for _, tool := range publisher {
+		if got := call(t, mainHome, "main", tool, `{}`); !got.IsError || !strings.Contains(got.Text, "no such tool") {
+			t.Errorf("Agentry Helper's %s: %+v", tool, got)
+		}
+	}
+	if len(mainAsked) != 0 {
+		t.Errorf("Agentry Helper's handler was asked %v", mainAsked)
+	}
+}
+
+// TestAPublishedAgentIsNeverGivenThePublisherTools: a published agent that
+// declares every key the Assistant does composes its set from them alone,
+// even were it to carry the Assistant's Builtin, so no release lists the
+// publisher tools.
+func TestAPublishedAgentIsNeverGivenThePublisherTools(t *testing.T) {
+	caps := &manifest.Persistent{Clock: true, Memory: true, SelfConfigure: true, Helper: true, Meetings: true}
+	for _, a := range []Agent{
+		{Name: "acme.helper", Release: &localrun.Installed{}, Caps: caps},
+		{Name: "acme.helper", Release: &localrun.Installed{}, Caps: caps, Builtin: localrun.Assistant()},
+	} {
+		if set := a.AppLinkWith(Config{}); applink.Has(set, applink.PartPublisher) || !applink.Has(set, applink.PartHelper) {
+			t.Errorf("a published agent's app link is %q", set)
+		}
+	}
+	if set := assistantAgent(t).AppLinkWith(Config{}); !applink.Has(set, applink.PartPublisher) {
+		t.Errorf("the Assistant's app link is %q", set)
 	}
 }
