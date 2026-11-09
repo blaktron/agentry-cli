@@ -6,7 +6,7 @@
         "The Assistant has new tools to list, fetch, revise, fork and submit the QuickAgents you publish.",
         "Agentry Desktop answers those tools in a coming update, asking you before each change; until then they say so.",
         "A new QuickAgent the Assistant submits is private, and it cannot delete a QuickAgent or make one public.",
-        "No published persistent agent can be given those tools: they belong to the built-in Assistant alone."
+        "agentry providers now lists, signs in again and removes your model sign-ins; agentry model-signins is deprecated."
       ]
     },
     {
