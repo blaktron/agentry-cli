@@ -124,7 +124,8 @@ func TestAppLinkHasNoGrantTool(t *testing.T) {
 	}
 	own := []string{SelfConfigure, TaskAdd, TaskList, TaskUpdate, TaskRemove, TellPerson, Recall}
 	meetings := []string{MeetingArm, MeetingList, MeetingCancel}
-	if got := Tools(SetAssistant); !slices.Equal(got, slices.Concat(own, Tools(SetMain), meetings)) {
+	publisher := []string{QuickAgentMine, QuickAgentVersions, QuickAgentFetch, QuickAgentRevise, QuickAgentFork, QuickAgentSubmit, QuickAgentManage}
+	if got := Tools(SetAssistant); !slices.Equal(got, slices.Concat(own, Tools(SetMain), meetings, publisher)) {
 		t.Errorf("the Assistant's set is %v", got)
 	}
 	// Each of the Assistant's own tools takes its own name and personality,
@@ -144,6 +145,57 @@ func TestAppLinkHasNoGrantTool(t *testing.T) {
 		if !slices.Equal(got, takes[tool.Name]) || tool.Schema["additionalProperties"] != false {
 			t.Errorf("%s takes %v", tool.Name, got)
 		}
+	}
+}
+
+// TestThePublisherToolsTakeTheirOwnFieldsAndAsk: each publisher tool takes
+// its own fields and nothing else, each one that changes something in the
+// registry or runs the Drafter says the person is asked first each time,
+// quickagent_manage offers no action that deletes or makes public, and
+// Agentry Helper's set has none of them.
+func TestThePublisherToolsTakeTheirOwnFieldsAndAsk(t *testing.T) {
+	takes := map[string][]string{
+		QuickAgentMine:     {"namespace", "query"},
+		QuickAgentVersions: {"ref"},
+		QuickAgentFetch:    {"ref"},
+		QuickAgentRevise:   {"folder", "instructions", "where"},
+		QuickAgentFork:     {"into", "name", "ref"},
+		QuickAgentSubmit:   {"folder"},
+		QuickAgentManage:   {"action", "reason", "ref", "version"},
+	}
+	asks := map[string]bool{QuickAgentRevise: true, QuickAgentFork: true, QuickAgentSubmit: true, QuickAgentManage: true}
+	tools := setTools(Compose(PartPublisher))
+	if len(tools) != len(takes) {
+		t.Fatalf("the publisher part lists %d tools, want %d", len(tools), len(takes))
+	}
+	for _, tool := range tools {
+		props := tool.Schema["properties"].(map[string]any)
+		if got := slices.Sorted(maps.Keys(props)); !slices.Equal(got, takes[tool.Name]) || tool.Schema["additionalProperties"] != false {
+			t.Errorf("%s takes %v", tool.Name, got)
+		}
+		if !IsPublisherTool(tool.Name) {
+			t.Errorf("IsPublisherTool(%s) = false", tool.Name)
+		}
+		if said := strings.Contains(tool.Description, "asked in Agentry first, each time"); said != asks[tool.Name] {
+			t.Errorf("%s says it asks the person each time: %v, want %v", tool.Name, said, asks[tool.Name])
+		}
+	}
+	for _, tool := range tools {
+		if tool.Name != QuickAgentManage {
+			continue
+		}
+		action := tool.Schema["properties"].(map[string]any)["action"].(map[string]any)
+		if got := action["enum"].([]string); !slices.Equal(got, []string{"make_private", "retire", "restore", "yank", "withdraw"}) {
+			t.Errorf("quickagent_manage's actions are %v", got)
+		}
+	}
+	for _, name := range Tools(SetMain) {
+		if IsPublisherTool(name) {
+			t.Errorf("Agentry Helper's set lists %s", name)
+		}
+	}
+	if Has(SetMain, PartPublisher) || !Has(SetAssistant, PartPublisher) {
+		t.Error("the publisher part is the Assistant's and not Agentry Helper's")
 	}
 }
 

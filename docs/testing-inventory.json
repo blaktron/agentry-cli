@@ -4753,6 +4753,7 @@
             "TestAgentFilesRefusedOutsideAPersistentBuiltin",
             "TestTheAppLinkIsAServerWithNoNetworkAndOneBind",
             "TestPersistentGrantsRefusedOutsideBuiltins",
+            "TestThePublisherToolsAreTheBuiltinsAlone",
             "TestThePersistentWebToolsAndReviewAreDeclared",
             "TestTheWebToolsReviewAndCalendarsCompose",
             "TestAPersistentPlanNamesTheShareFormats",
@@ -8608,7 +8609,9 @@
           "tests": [
             "TestSelfConfigureWritesNameAndPersonalityOnly",
             "TestMainsToolsAreTheDesktopsToAnswer",
-            "TestTheAssistantsHelperToolsGoToItsClient"
+            "TestTheAssistantsHelperToolsGoToItsClient",
+            "TestThePublisherToolsAreTheAssistantsAlone",
+            "TestAPublishedAgentIsNeverGivenThePublisherTools"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -10670,6 +10673,7 @@
           "tests": [
             "TestTheAppLinkListsItsSetAndForwardsEachCall",
             "TestAppLinkHasNoGrantTool",
+            "TestThePublisherToolsTakeTheirOwnFieldsAndAsk",
             "TestTheAssistantHasEveryHelperTool",
             "TestAnUnknownSetIsRefused",
             "TestARunAndAScheduleTakeAnswersByQuestionID",

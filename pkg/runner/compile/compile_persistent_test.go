@@ -173,7 +173,7 @@ func TestAgentFilesRefusedOutsideAPersistentBuiltin(t *testing.T) {
 // allowlist, and a receipt line.
 func TestTheAppLinkIsAServerWithNoNetworkAndOneBind(t *testing.T) {
 	in := persistentInputs(t, &spec.AgentFiles{Share: true, CheckShare: true})
-	in.AppLink = applink.SetAssistant
+	in.AppLink, in.Publisher = applink.SetAssistant, true
 	planDir := t.TempDir()
 	plan, err := Compile(in, planDir)
 	if err != nil {
@@ -209,7 +209,7 @@ func TestTheAppLinkIsAServerWithNoNetworkAndOneBind(t *testing.T) {
 	if err := yaml.Unmarshal(allow, &tools); err != nil {
 		t.Fatal(err)
 	}
-	if want := slices.Concat([]string{applink.SelfConfigure, applink.TaskAdd, applink.TaskList, applink.TaskUpdate, applink.TaskRemove, applink.TellPerson, applink.Recall}, applink.Tools(applink.SetMain), []string{applink.MeetingArm, applink.MeetingList, applink.MeetingCancel}); !slices.Equal(tools[applink.ServerName], want) {
+	if want := slices.Concat([]string{applink.SelfConfigure, applink.TaskAdd, applink.TaskList, applink.TaskUpdate, applink.TaskRemove, applink.TellPerson, applink.Recall}, applink.Tools(applink.SetMain), []string{applink.MeetingArm, applink.MeetingList, applink.MeetingCancel}, applink.Tools(applink.Compose(applink.PartPublisher))); !slices.Equal(tools[applink.ServerName], want) {
 		t.Errorf("the app link's allowlist: %v", tools[applink.ServerName])
 	}
 	if !strings.Contains(plan.Enforcement["persistent.appLink"], "no network") {
@@ -244,6 +244,45 @@ func TestPersistentGrantsRefusedOutsideBuiltins(t *testing.T) {
 	refused("the review grant undeclared", review)
 }
 
+// declaredAssistantSet is the Assistant's set without the parts it is
+// granted by name: the set a release declaring the same keys composes.
+var declaredAssistantSet = applink.Compose(applink.PartSelf, applink.PartTasks, applink.PartRecall, applink.PartHelper, applink.PartMeetings)
+
+// TestThePublisherToolsAreTheBuiltinsAlone: the publisher tools compile into
+// the app link of the built-in granted them, and are refused to a built-in
+// not granted them, to a release and to an author's folder, whatever the
+// release declares.
+func TestThePublisherToolsAreTheBuiltinsAlone(t *testing.T) {
+	in := persistentInputs(t, &spec.AgentFiles{Share: true})
+	in.AppLink, in.Publisher = applink.SetAssistant, true
+	plan, err := Compile(in, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !applink.Has(plan.Capabilities.AppLink, applink.PartPublisher) {
+		t.Errorf("the granted built-in's app link is %q", plan.Capabilities.AppLink)
+	}
+	if line := plan.Enforcement["persistent.appLink"]; !strings.Contains(line, applink.QuickAgentSubmit) {
+		t.Errorf("the receipt's app link line does not list the publisher tools: %s", line)
+	}
+	for _, c := range []struct {
+		name      string
+		source    string
+		publisher bool
+	}{
+		{"a built-in not granted them", "builtin", false},
+		{"a release", "registry", true},
+		{"an author's folder", "local", true},
+	} {
+		in := persistentInputs(t, &spec.AgentFiles{Share: true})
+		in.Source, in.AppLink, in.Publisher = c.source, applink.SetAssistant, c.publisher
+		var refusal *PolicyRefusal
+		if _, err := Compile(in, t.TempDir()); !errors.As(err, &refusal) || !strings.Contains(err.Error(), "publisher tools") {
+			t.Errorf("%s: %v", c.name, err)
+		}
+	}
+}
+
 // TestThePersistentWebToolsAndReviewAreDeclared: a persistent agent of any
 // source that declares web or review is given it beside its folders, its
 // app link and its MCP servers; ai_review's paths
@@ -256,7 +295,7 @@ func TestThePersistentWebToolsAndReviewAreDeclared(t *testing.T) {
 	for _, source := range []string{"builtin", "registry"} {
 		for _, key := range []string{"web", "review"} {
 			in := persistentInputs(t, &spec.AgentFiles{Share: true})
-			in.Source, in.Manifest, in.AppLink = source, declaring(key), applink.SetAssistant
+			in.Source, in.Manifest, in.AppLink = source, declaring(key), declaredAssistantSet
 			in.WorkspaceDir = workspaceFor(t, in.Manifest, nil)
 			in.Web, in.Review = key == "web", key == "review"
 			planDir := t.TempDir()
@@ -307,7 +346,7 @@ func TestTheWebToolsReviewAndCalendarsCompose(t *testing.T) {
 		for _, k := range c.keys {
 			block += "\n    " + k + ": true"
 		}
-		in.Source, in.Manifest, in.AppLink = "registry", parseManifest(t, strings.Replace(persistentOwnYAML, "    clock: true", block, 1)), applink.SetAssistant
+		in.Source, in.Manifest, in.AppLink = "registry", parseManifest(t, strings.Replace(persistentOwnYAML, "    clock: true", block, 1)), declaredAssistantSet
 		in.WorkspaceDir = workspaceFor(t, in.Manifest, nil)
 		in.Web, in.Review = c.web, c.review
 		if c.cal {

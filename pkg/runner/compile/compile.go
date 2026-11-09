@@ -165,6 +165,11 @@ type Inputs struct {
 	// app link may then list (applink.PartSubagents): the subagents its
 	// release pins or the person added. An author's folder has none.
 	Subagents bool
+	// Publisher says the agent is the built-in granted the publisher tools
+	// (applink.PartPublisher), through which it asks the application to
+	// manage the person's QuickAgents: no key grants them, so a release or
+	// an author's folder is never given them.
+	Publisher bool
 	// Coder grants the Coding agent what its roster has on (spec.CoderGrant):
 	// any program in its own exec image, open egress, the browser on any
 	// public site, the person's dev server. Its gate is the person's
@@ -303,6 +308,9 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		}
 		if applink.Has(in.AppLink, applink.PartSubagents) && (!in.Subagents || in.Source == "local") {
 			return nil, &PolicyRefusal{Reason: "the subagent tools are granted to a persistent agent whose roster names subagents, and never to one run from an author's folder"}
+		}
+		if applink.Has(in.AppLink, applink.PartPublisher) && (!in.Publisher || in.Source != "builtin") {
+			return nil, &PolicyRefusal{Reason: "the publisher tools are granted to the built-in that carries them alone, never to a release or an author's folder"}
 		}
 		caps.AppLink = in.AppLink
 	}
