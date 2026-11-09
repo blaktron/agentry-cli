@@ -90,6 +90,7 @@ PURPOSES = {
     "pkg/runner/profile": "Stores a QuickAgent's MCP profile: the persistent, credentialed half of its gateway configuration, keyed",
     "pkg/runner/receipt": "The run result envelope — the runtime counterpart of the registry's public scan report",
     "pkg/runner/session/protocol": "The session protocol: an interactive session driven by a program rather than a person, over pipes and with",
+    "pkg/runner/savedmodels": "The rules a client applies to the saved models and providers: what names a model, a removal refused until",
     "pkg/runner/setup": "The operator-experience flows: first-run machine setup with LLM-provider configuration, the guided",
     "pkg/runner/skill": "Reads Agent Skills folders: a SKILL.md whose frontmatter names the skill and says when to use it, and the",
     "pkg/runner/sources": "The input-source seam",

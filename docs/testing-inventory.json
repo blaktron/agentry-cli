@@ -9754,6 +9754,28 @@
       ]
     },
     {
+      "owner": "pkg/runner/savedmodels",
+      "behavior": "The rules a client applies to the saved models and providers: what names a model, a removal refused until",
+      "disposition": "retain",
+      "files": [
+        {
+          "path": "pkg/runner/savedmodels/savedmodels_test.go",
+          "tests": [
+            "TestARemovalOfAModelSomethingNamesIsRefusedUntilItIsMoved",
+            "TestAMoveTargetIsNeitherRemovedNorMissing",
+            "TestRemovingTheDefaultMakesTheMoveTargetTheDefault",
+            "TestAScheduleOnAHarnessBlocksHarnessUsesItsSavedModel",
+            "TestAProvidersStateSaysWhetherItsCredentialIsHere",
+            "TestAnEndpointOfYourOwnIsAProviderNamedForIt"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        }
+      ]
+    },
+    {
       "owner": "pkg/runner/session/protocol",
       "behavior": "The session protocol: an interactive session driven by a program rather than a person, over pipes and with",
       "disposition": "retain",
