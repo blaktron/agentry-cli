@@ -114,13 +114,16 @@ func (rd *runDirs) harnessReceipt(path string) (*os.File, error) {
 // starts it again: after each capacity answer it can wait out while it has
 // called no tool, on a fresh conversation with the task; and, for a harness
 // that can be resumed, after each passing model failure once it has called
-// one, on the same conversation with resumeMessage. Each start's collector
+// one, on the same conversation with resumeMessage; and, for such a harness
+// that answered with its checklist's steps still open, on the same
+// conversation with a finish check's message (finishcheck.go). Each start's collector
 // begins from the usage of the starts before it, so the run's usage, its live
 // meter and its turn and cost budgets count every attempt.
 func restartHarness(ctx context.Context, p Params, rd *runDirs, task []byte, run func(message []byte) agentOutcome) agentOutcome {
 	rd.conversation = 1
 	out := run(task)
 	for capacity, resumes := 0, 0; ; {
+		open := rd.finishCheckDue(ctx, p, out)
 		switch {
 		case out.atCapacity && out.usage.Turns == 0 && capacity < capacityTries && rd.canRestartAfter(ctx, capacityWait):
 			capacity++
@@ -141,6 +144,13 @@ func restartHarness(ctx context.Context, p Params, rd *runDirs, task []byte, run
 			rd.harnessUsage = out.usage
 			rd.resumedAfter = out.transient
 			out = run([]byte(resumeMessage))
+		case len(open) > 0:
+			msg := finishCheckMessage(open, len(rd.finishChecks)+1 == finishChecks)
+			rd.finishChecks = append(rd.finishChecks, receipt.FinishCheck{Open: len(open), Message: rd.redact.String(msg)})
+			noteFinishCheck(p.Stderr, len(open), len(rd.finishChecks))
+			rd.harnessUsage = out.usage
+			rd.finishCheck = msg
+			out = run([]byte(msg))
 		default:
 			return out
 		}
