@@ -1,6 +1,15 @@
 {
   "versions": [
     {
+      "version": "0.7.40",
+      "highlights": [
+        "When the registry rotates its signing key and the old key hands over to the new one, Agentry trusts the new key itself.",
+        "A new key with no handover from a key you pinned is still only reported, never trusted on the registry's word.",
+        "Your organization's managed settings keep reaching you after a key rotation, signed by the new key.",
+        "A lock on a managed setting this version does not apply yet stops runs and names the update, never silently ignored."
+      ]
+    },
+    {
       "version": "0.7.39",
       "highlights": [
         "agentry run --model runs a QuickAgent on any saved model, and a schedule keeps the model you give it with --model.",

@@ -786,6 +786,9 @@ func judgeAttestation(out, errOut io.Writer, att trust.AttestationResult, res *a
 		if att.FirstUse {
 			_, _ = fmt.Fprintln(errOut, "note: signing keys pinned on first use (TOFU) — run `agentry login` to pin deliberately")
 		}
+		if att.HandedOver != "" {
+			_, _ = fmt.Fprintln(errOut, "note: "+att.HandedOver)
+		}
 		return nil
 
 	case trust.StateUnsigned:

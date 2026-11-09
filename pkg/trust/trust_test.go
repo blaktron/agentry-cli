@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	"github.com/blaktron/agentry/pkg/attest"
+	"github.com/blaktron/agentry/pkg/keyhandover"
 
 	"github.com/blaktron/agentry-cli/pkg/configdir"
 )
@@ -138,7 +139,8 @@ type registryFixture struct {
 	envelope  *attest.DSSEEnvelope
 	envStatus int // 0 = 200
 	envBody   string
-	authSeen  []string // Authorization header values on /att requests
+	authSeen  []string           // Authorization header values on /att requests
+	handovers *keyhandover.Chain // served at the handovers path; nil is 404
 	srv       *httptest.Server
 }
 
@@ -160,6 +162,12 @@ func newRegistry(t *testing.T, keys KeySet, env *attest.DSSEEnvelope) *registryF
 				return
 			}
 			_ = json.NewEncoder(w).Encode(f.keys)
+		case "/.well-known/agentry/signing-key-handovers.json":
+			if f.handovers == nil {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(f.handovers)
 		case "/att":
 			f.authSeen = append(f.authSeen, r.Header.Get("Authorization"))
 			if f.envStatus != 0 {
