@@ -93,6 +93,9 @@ func scheduleCheck(cmd *cobra.Command, ref, name, out, on string, spec runSpecFl
 	if err != nil {
 		gap(err)
 	}
+	if reason := scheduleHold(sc); reason != "" {
+		gap(heldError(reason))
+	}
 	preview, err := schedulePreview(cmd, sc, ref)
 	if err != nil {
 		return err
