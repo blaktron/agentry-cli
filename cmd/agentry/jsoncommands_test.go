@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"github.com/blaktron/agentry/pkg/managedsettings"
 )
 
@@ -22,7 +24,9 @@ func TestRootHelpListsEveryJSONCommand(t *testing.T) {
 	marked := jsonCapableCommands(root)
 	want := make([]string, 0, len(jsonCommands))
 	for p := range jsonCommands {
-		want = append(want, p)
+		if !underHidden(root, p) {
+			want = append(want, p)
+		}
 	}
 	sort.Strings(want)
 	if strings.Join(marked, ",") != strings.Join(want, ",") {
@@ -36,6 +40,30 @@ func TestRootHelpListsEveryJSONCommand(t *testing.T) {
 	}
 	if findCommand(root, "no such") != nil || findCommand(root, "schedule nothing") != nil {
 		t.Error("findCommand found a command that is not there")
+	}
+}
+
+// underHidden says the command at path is hidden or under a hidden one,
+// which the help leaves out.
+func underHidden(root *cobra.Command, path string) bool {
+	f := strings.Fields(path)
+	for i := range f {
+		if c := findCommand(root, strings.Join(f[:i+1], " ")); c != nil && c.Hidden {
+			return true
+		}
+	}
+	return false
+}
+
+// TestADeprecatedAliasStillAnswersJSONButIsLeftOutOfTheHelp: model-signins
+// keeps its marks, and the --json help names none of it.
+func TestADeprecatedAliasStillAnswersJSONButIsLeftOutOfTheHelp(t *testing.T) {
+	root := newRootCmd()
+	if c := findCommand(root, "model-signins list"); c == nil || c.Annotations[jsonAnnotation] == "" {
+		t.Fatal("model-signins list lost its --json mark")
+	}
+	if help := root.PersistentFlags().Lookup("json").Usage; strings.Contains(help, "model-signins") {
+		t.Fatalf("the --json help names the deprecated alias:\n%s", help)
 	}
 }
 

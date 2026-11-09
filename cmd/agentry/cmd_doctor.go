@@ -318,7 +318,7 @@ func doctorPolicy(rep *doctorReport, path string) *policy.Policy {
 		case vendor == modelsignin.Claude && r.ConfigDir == "":
 			// Each Claude Code signs in where it runs: the image,
 			// the default, is not signed in.
-			rep.ok("model", "%s/%s (spends %s, signed in for the Claude Code installed on this computer only: runs need --adapter claude, or `agentry model-signins add claude` for the image, the default)", pol.Model.Provider, pol.Model.Name, policy.SignInSentence(pol.Model.APIKeyKind))
+			rep.ok("model", "%s/%s (spends %s, signed in for the Claude Code installed on this computer only: runs need --adapter claude, or `agentry providers add anthropic --sign-in` for the image, the default)", pol.Model.Provider, pol.Model.Name, policy.SignInSentence(pol.Model.APIKeyKind))
 		default:
 			rep.ok("model", "%s/%s (spends %s, kept as the model sign-in %s; runs report tokens, not dollars)", pol.Model.Provider, pol.Model.Name, policy.SignInSentence(pol.Model.APIKeyKind), vendor)
 		}

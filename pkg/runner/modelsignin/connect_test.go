@@ -103,7 +103,7 @@ func TestAPoeKeyPastItsExpiryIsRefusedAtRunStart(t *testing.T) {
 	}
 	s.now = func() time.Time { return time.Now().Add(2 * time.Hour) }
 	var ee *ExpiredError
-	if err := s.RefreshConnected(context.Background(), "poe"); !errors.As(err, &ee) || !strings.Contains(err.Error(), "agentry model-signins add poe") {
+	if err := s.RefreshConnected(context.Background(), "poe"); !errors.As(err, &ee) || !strings.Contains(err.Error(), "agentry providers add poe --connect") {
 		t.Fatalf("err %v", err)
 	}
 	if out, err := s.Remove(context.Background(), Poe, "test"); err != nil || !strings.Contains(out, mcpauth.PoeKeysPage) {
@@ -355,5 +355,49 @@ func TestASignedOutRunRefusesAConnectedKeyItCannotReady(t *testing.T) {
 	}
 	if err := s.CheckSealed("poe"); !errors.As(err, &ee) {
 		t.Fatalf("CheckSealed: %v", err)
+	}
+}
+
+// Each kept credential names the provider it pays for, and the command that
+// signs in or connects it again is that provider's.
+func TestEachVendorsSignInIsTheProviderCommandThatPaysWithIt(t *testing.T) {
+	for vendor, want := range map[string]struct{ provider, command string }{
+		ChatGPT:     {policy.ProviderOpenAI, "agentry providers add openai --sign-in"},
+		Claude:      {policy.ProviderAnthropic, "agentry providers add anthropic --sign-in"},
+		Copilot:     {policy.ProviderCopilot, "agentry providers add copilot"},
+		OpenRouter:  {policy.ProviderOpenRouter, "agentry providers add openrouter --connect"},
+		Poe:         {policy.ProviderPoe, "agentry providers add poe --connect"},
+		HuggingFace: {policy.ProviderHuggingFace, "agentry providers add huggingface --connect"},
+	} {
+		if got := SignInCommand(vendor); got != want.command {
+			t.Errorf("SignInCommand(%s) = %q, want %q", vendor, got, want.command)
+		}
+		if got := VendorOfProvider(want.provider); got != vendor {
+			t.Errorf("VendorOfProvider(%s) = %q, want %q", want.provider, got, vendor)
+		}
+	}
+	if VendorOfProvider("google") != "" || VendorOfProvider("custom-lab") != "" {
+		t.Error("a provider paid only by a key names a sign-in vendor")
+	}
+}
+
+// A Claude run on a Claude Code that is not signed in says which provider
+// command signs it in: the image's, or with --installed the one on this
+// computer.
+func TestAClaudeRunOnAClaudeCodeNotSignedInNamesTheCommandThatSignsItIn(t *testing.T) {
+	s := Open(t.TempDir(), nil)
+	if _, err := s.Put(Claude, Record{HostConfigDir: "installed"}, Grant{}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := s.ForRun(context.Background(), policy.KeyKindClaudeSignIn, spec.ModelSignInConfigDir, false)
+	if err == nil || !strings.Contains(err.Error(), "(agentry providers add anthropic --sign-in)") {
+		t.Fatalf("the image: %v", err)
+	}
+	if _, err := s.Put(Claude, Record{ConfigDir: "agentry-claude"}, Grant{}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.ForRun(context.Background(), policy.KeyKindClaudeSignIn, spec.ModelSignInConfigDir, true)
+	if err == nil || !strings.Contains(err.Error(), "(agentry providers add anthropic --sign-in --installed)") {
+		t.Fatalf("the installed Claude Code: %v", err)
 	}
 }

@@ -62,6 +62,31 @@ func IsConnectVendor(vendor string) bool { return vendorKinds[vendor].connected 
 // ProviderOfVendor is the policy provider a vendor's credential pays for.
 func ProviderOfVendor(vendor string) string { return vendorKinds[vendor].provider }
 
+// VendorOfProvider is the vendor whose sign-in or connected account is kept
+// for the policy provider id, "" for a provider none is kept for.
+func VendorOfProvider(provider string) string {
+	for v, k := range vendorKinds {
+		if k.provider == provider {
+			return v
+		}
+	}
+	return ""
+}
+
+// SignInCommand is the command that signs in with vendor, or connects its
+// account, again: the provider command that pays with it.
+func SignInCommand(vendor string) string {
+	switch {
+	case vendor == Copilot:
+		return "agentry providers add copilot"
+	case IsConnectVendor(vendor):
+		return "agentry providers add " + ProviderOfVendor(vendor) + " --connect"
+	case ProviderOfVendor(vendor) != "":
+		return "agentry providers add " + ProviderOfVendor(vendor) + " --sign-in"
+	}
+	return "agentry providers add"
+}
+
 func (s *Store) storeKey(provider, key string) error {
 	if s.StoreKey != nil {
 		return s.StoreKey(provider, key)
@@ -139,7 +164,7 @@ type ExpiredError struct {
 }
 
 func (e *ExpiredError) Error() string {
-	return fmt.Sprintf("the %s key Agentry connected expired at %s; connect again (agentry model-signins add %s), or paste a key (agentry setup)", ConnectName(e.Vendor), e.At, e.Vendor)
+	return fmt.Sprintf("the %s key Agentry connected expired at %s; connect again (%s), or paste a key (agentry setup)", ConnectName(e.Vendor), e.At, SignInCommand(e.Vendor))
 }
 
 // RefreshConnected readies a connected key for a run that reads provider's
@@ -165,7 +190,7 @@ func (s *Store) RefreshConnected(ctx context.Context, provider string) error {
 	a, err := s.Use(ctx, vendor)
 	var be *BrokenError
 	if errors.As(err, &be) {
-		return fmt.Errorf("the %s account Agentry connected no longer works (%s); connect again (agentry model-signins add %s): %w", ConnectName(vendor), be.Reason, vendor, err)
+		return fmt.Errorf("the %s account Agentry connected no longer works (%s); connect again (%s): %w", ConnectName(vendor), be.Reason, SignInCommand(vendor), err)
 	}
 	if err != nil {
 		return err

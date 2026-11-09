@@ -1,7 +1,7 @@
 // Package claudesignin is "Use your Claude subscription (runs Claude Code)":
 // Claude Code's own sign-in into a config directory of Agentry's, and its
-// removal. The CLI (`agentry model-signins add|remove claude`, `agentry setup`)
-// and the desktop's model setup both call it, so there is one implementation
+// removal. The CLI (`agentry providers add|remove anthropic --sign-in`, `agentry
+// setup`) and the desktop's model setup both call it, so there is one implementation
 // per machine.
 //
 // Anthropic forbids a third party to "collect, store, or intermediate

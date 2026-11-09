@@ -558,6 +558,22 @@
           ]
         },
         {
+          "path": "cmd/agentry/cmd_providers_signins_test.go",
+          "tests": [
+            "TestProvidersListShowsEachKeptSignInAndTheOnesNoProviderUses",
+            "TestProvidersAddSignsInAgainOnAProviderPaidByASignIn",
+            "TestProvidersAddOpenAISignInTakesNewAccount",
+            "TestProvidersAddConnectsAgainOnAConnectedProvider",
+            "TestProvidersRemoveRemovesAKeptSignInNoProviderUses",
+            "TestProvidersRemoveOfAKeptCopilotSignInNamesGitHubsAuthorizedApps",
+            "TestModelSignInsIsADeprecatedAliasOfProviders"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "cmd/agentry/errors_test.go",
           "tests": [
             "TestRegistryCommandsOfflineSayCannotReach",
@@ -594,6 +610,7 @@
           "path": "cmd/agentry/jsoncommands_test.go",
           "tests": [
             "TestRootHelpListsEveryJSONCommand",
+            "TestADeprecatedAliasStillAnswersJSONButIsLeftOutOfTheHelp",
             "TestEveryJSONCommandEmitsOneObject"
           ],
           "fuzz": [],
@@ -8477,7 +8494,9 @@
             "TestAKeyTheKeychainRefusesKeepsNothing",
             "TestConnectedVendorIsTheConnectVendorsOnly",
             "TestAPastedKeyReplacesAConnect",
-            "TestASignedOutRunRefusesAConnectedKeyItCannotReady"
+            "TestASignedOutRunRefusesAConnectedKeyItCannotReady",
+            "TestEachVendorsSignInIsTheProviderCommandThatPaysWithIt",
+            "TestAClaudeRunOnAClaudeCodeNotSignedInNamesTheCommandThatSignsItIn"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -9792,7 +9811,8 @@
             "TestAScheduleOnAHarnessBlocksHarnessUsesItsSavedModel",
             "TestAProvidersStateSaysWhetherItsCredentialIsHere",
             "TestAnEndpointOfYourOwnIsAProviderNamedForIt",
-            "TestARemovalIsRefusedWhileAgentryHelperNamesTheModelAndMovesIt"
+            "TestARemovalIsRefusedWhileAgentryHelperNamesTheModelAndMovesIt",
+            "TestEachKeptSignInIsMatchedToTheProviderItPays"
           ],
           "fuzz": [],
           "benchmarks": [],

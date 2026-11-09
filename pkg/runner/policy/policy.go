@@ -1656,13 +1656,13 @@ model:
   # apiKeyKind: chatgpt-plan | claude-signin | copilot-signin
   #   # a model sign-in: your own ChatGPT plan (provider openai), Claude
   #   # subscription through Claude Code (anthropic) or Copilot plan
-  #   # (copilot), kept by "agentry model-signins", never in this file; no
+  #   # (copilot), kept by "agentry providers add", never in this file; no
   #   # apiKeyEnv; runs report tokens, not dollars; never used by a hosted
   #   # run. Only an adapter that can spend one runs it: for a ChatGPT
   #   # plan, codex-image (the default then) or your installed codex; for
   #   # a Claude subscription, claude-image (the default then, built on
   #   # this computer) or your installed claude, each signed in by
-  #   # "agentry model-signins add claude [--installed]".
+  #   # "agentry providers add anthropic --sign-in [--installed]".
   # baseUrl: https://llm.internal:8443/v1   # custom only
   # contextWindow: 262144   # the model's context window in tokens, for a
   #   model the harness cannot look up (custom endpoints): without it a

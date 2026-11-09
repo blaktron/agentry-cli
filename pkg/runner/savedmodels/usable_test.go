@@ -78,7 +78,7 @@ func TestASavedModelWhoseSignInIsNotKeptIsRefusedByName(t *testing.T) {
 	}
 	here := Here{SignInKept: func(string, string) bool { return false }}
 	wantUnusable(t, Usable(t.TempDir(), runModel(t, pol, "Plan"), "pick another", here), NeedsSignIn,
-		`the saved model "Plan" (provider openai)`, "model-signins add chatgpt")
+		`the saved model "Plan" (provider openai)`, "sign in with agentry providers add openai --sign-in")
 	if err := Usable(t.TempDir(), runModel(t, pol, "Qwen"), "pick another", Here{}); err != nil {
 		t.Fatalf("an endpoint that takes no key: %v", err)
 	}

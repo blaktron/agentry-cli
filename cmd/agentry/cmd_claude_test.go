@@ -74,7 +74,7 @@ func claudeFixture(t *testing.T) (*dockerx.Fake, *[]string) {
 	return f, &opened
 }
 
-// `agentry model-signins add claude` runs the unmodified Claude Code's own
+// `agentry model-signins add claude`, the deprecated alias, runs the unmodified Claude Code's own
 // sign-in in the image, on its volume: Agentry opens, in the person's
 // browser, the address Claude Code hands its stand-in opener, whose answer
 // is relayed to Claude Code's callback; the terminal still reaches Claude

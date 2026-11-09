@@ -1,5 +1,5 @@
-// Connect your account: `agentry model-signins add
-// openrouter|poe|huggingface` and the offer in `agentry setup`. The flows
+// Connect your account: `agentry providers add openrouter|poe|huggingface
+// --connect` and the offer in `agentry setup`. The flows
 // are mcpauth's OpenRouter, Poe and HuggingFace; the store is
 // modelsignin.KeepConnected, which keeps the key in the model key's
 // keychain entry; this is the terminal around them. The key is never
@@ -29,6 +29,7 @@ var (
 	huggingFaceEndpoints func(*mcpauth.HuggingFace)
 	connectStoreKey      = modelkey.Store
 	connectDeleteKey     = modelkey.Delete
+	connectKeyPresent    = modelkey.Present
 )
 
 // connectStore is the model sign-in store with the model key's keychain
@@ -114,7 +115,8 @@ func connectOffer(cmd *cobra.Command, in *bufio.Reader, home string) setup.Conne
 	}
 }
 
-// addConnect is `agentry model-signins add openrouter|poe|huggingface`.
+// addConnect is the deprecated `agentry model-signins add
+// openrouter|poe|huggingface`.
 func addConnect(cmd *cobra.Command, in *bufio.Reader, home, vendor string) error {
 	r, err := connectAccount(cmd, in, home, vendor)
 	if err != nil {

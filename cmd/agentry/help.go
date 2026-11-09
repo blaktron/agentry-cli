@@ -39,7 +39,7 @@ var commandGroups = []struct {
 	{"publish", "Publish:", []string{"init", "draft", "validate", "review", "publish", "yank"}},
 	{"knowledge", "Knowledge and voice:", []string{"knowledge", "voice", "report-design"}},
 	{"agents", "Persistent agents:", []string{"agent"}},
-	{"config", "Configuration:", []string{"models", "providers", "model-signins", "logout", "managed", "profiles"}},
+	{"config", "Configuration:", []string{"models", "providers", "logout", "managed", "profiles"}},
 }
 
 // rootEnvHelp is the credential prose, printed after the root help's

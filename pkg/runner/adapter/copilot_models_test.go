@@ -92,7 +92,7 @@ func TestACopilotModelListFailsAsARunWould(t *testing.T) {
 		t.Fatalf("the CLI turned off: %v", err)
 	}
 	_, err = listOn(t, &copilottest.Server{CreateError: `GitHub token validation failed: 401 Unauthorized: {"message":"Bad credentials"}`}, k.get)
-	if err == nil || !strings.Contains(err.Error(), "sign in again with agentry model-signins add copilot") {
+	if err == nil || !strings.Contains(err.Error(), "sign in again with agentry providers add copilot") {
 		t.Fatalf("a refused token: %v", err)
 	}
 	k.err = errors.New("the sign-in was removed")
