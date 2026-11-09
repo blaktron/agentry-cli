@@ -7861,6 +7861,21 @@
           ]
         },
         {
+          "path": "pkg/runner/localrun/localrun_desktop_test.go",
+          "tests": [
+            "TestAPlanIsReusedOnlyWithTheDesktopLineItWasCompiledWith",
+            "TestAnUnchangedDesktopLineReusesThePlan",
+            "TestADesktopLineThePolicyNowRefusesIsNotReused",
+            "TestTheAssistantsNextSegmentDropsComputerUseSwitchedOff"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
+          ]
+        },
+        {
           "path": "pkg/runner/localrun/localrun_screen_test.go",
           "tests": [
             "TestAScreenScopeTheFlagAllowedIsReusedOnlyWithIt"

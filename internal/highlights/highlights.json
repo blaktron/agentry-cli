@@ -1,6 +1,13 @@
 {
   "versions": [
     {
+      "version": "0.7.37",
+      "highlights": [
+        "Switching computer use or an application on or off for a persistent agent takes effect at its next turn.",
+        "An agent no longer fails every start with computer use after you switch computer use off for it."
+      ]
+    },
+    {
       "version": "0.7.36",
       "highlights": [
         "A QuickAgent can name any application on your computer; Agentry Desktop resolves it to one you approved there.",
