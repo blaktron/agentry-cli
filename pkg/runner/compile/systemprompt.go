@@ -269,6 +269,7 @@ You have no shell, filesystem or network of your own. Your tools come only from 
 	} else {
 		b.WriteString("- **Commands.** None: you cannot run a program.\n")
 	}
+	b.WriteString(shippedSkillsLine(c.ShippedSkills, len(c.ExecCommands) > 0))
 	if co := c.Coder; co != nil && co.DevHost {
 		writeDevHost(b)
 	} else {

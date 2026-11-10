@@ -289,6 +289,16 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		}
 		caps.AgentFiles = &spec.AgentFiles{Share: in.AgentFiles.Share, CheckShare: checked, MalwareCheck: checked && in.Policy.MalwareCheckOn(), Skills: skills, Memory: in.AgentFiles.Memory}
 	}
+	// The skills a release ships, read from its verified files, for a run
+	// in any mode but persistent: a persistent agent's skills are its own
+	// (AgentFiles.Skills).
+	if m.Capabilities.Skills && mode != manifest.ModePersistent {
+		skills, err := shippedSkills(in.WorkspaceDir)
+		if err != nil {
+			return nil, err
+		}
+		caps.ShippedSkills = skills
+	}
 	if err := imageServersDeclared(in.MCPServers, mode, m.Capabilities.Persistent); err != nil {
 		return nil, err
 	}
@@ -1306,6 +1316,7 @@ func baseToolSpec(caps spec.CapSummary, secrets []string) *toolsrv.Spec {
 		InputsTextDir: spec.InputsTextMount,
 		ScratchDir:    scratchDir(caps),
 		Checklist:     checklistFile(caps),
+		Skills:        shippedSkillsSpec(caps.ShippedSkills),
 		// export_pdf renders from the scratch folder or reports/, for every
 		// release's run and session.
 		PDF: toolsrv.PDF{Enabled: caps.PDF},
@@ -1363,6 +1374,20 @@ func scratchDir(caps spec.CapSummary) string {
 		return spec.ScratchMount
 	}
 	return ""
+}
+
+// shippedSkillsSpec is the tools server's view of the skills a release
+// ships: their folder and their names, which alone skill_read opens; nil,
+// and no skill_read, for a release that ships none.
+func shippedSkillsSpec(skills []spec.Skill) *toolsrv.Skills {
+	if len(skills) == 0 {
+		return nil
+	}
+	s := &toolsrv.Skills{Dir: spec.SkillsMount}
+	for _, k := range skills {
+		s.Names = append(s.Names, k.Name)
+	}
+	return s
 }
 
 // checklistFile is the checklist tool's file: in the scratch folder, or for
@@ -1716,8 +1741,9 @@ func bindRoots(withServers bool, caps spec.CapSummary, mcpServers []spec.MCPServ
 	if agent := caps.AgentFiles; agent != nil && agent.Share {
 		roots = append(roots, spec.PHShare)
 	}
-	// The agent's skills, read-only, for its tools server alone.
-	if agent := caps.AgentFiles; agent != nil && len(agent.Skills) > 0 {
+	// The agent's skills, or the skills the release ships, read-only, for
+	// its tools server alone.
+	if agent := caps.AgentFiles; (agent != nil && len(agent.Skills) > 0) || len(caps.ShippedSkills) > 0 {
 		roots = append(roots, spec.PHSkills)
 	}
 	// The Coding agent's OSV databases, the same way.
@@ -2122,6 +2148,11 @@ func catalogEntry(tspec *toolsrv.Spec, caps spec.CapSummary, secrets []string, r
 	// attached, so an attachment never moves the plan; the engine grants
 	// the tools only when it attaches one.
 	vols = append(vols, spec.PHKnowledge+":"+spec.KnowledgeMount+":ro")
+	// The skills the release ships, read-only: the tools server reads them
+	// for skill_read, and a declared command may run a script from one.
+	if len(caps.ShippedSkills) > 0 {
+		vols = append(vols, spec.PHSkills+":"+spec.SkillsMount+":ro")
+	}
 	// The run's turn count, a folder the runner rewrites at each turn's
 	// start, so the tools server sees each new file.
 	vols = append(vols, TurnsFolder()+":"+spec.TurnsMount+":ro")

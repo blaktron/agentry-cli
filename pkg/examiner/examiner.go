@@ -40,7 +40,7 @@ const GuideName = "review-guide"
 const (
 	Namespace = "agentry"
 	Name      = "examiner"
-	Version   = "1.2.4"
+	Version   = "1.2.5"
 )
 
 // LocalTimeoutFloorSeconds is the least a review on this computer is given:
