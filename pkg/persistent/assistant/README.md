@@ -96,9 +96,9 @@ assistant` lists what it has:
   agree first. AI Review reads every search result and page with your own
   TypeSafe key before the Assistant sees it, and withholds one it flags; the
   start says so when no key is set. Their container also holds your share,
-  the Assistant's own files and memory and its knowledge packs, so what it
-  reads there could be sent in an address it opens: that is why they are off
-  until you choose them.
+  the Assistant's own files and memory, its knowledge packs and the events of
+  the calendar feeds you add. What it reads there could be sent in an address
+  it opens, which is why the tools are off until you choose them.
 - **MCP servers it comes with**, each an entry of its roster that you switch
   on and off: Wikipedia (`@cyanheads/wikipedia-mcp-server`, English
   Wikipedia alone), on until you switch it off, and web search with Brave

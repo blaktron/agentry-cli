@@ -367,12 +367,12 @@ func TestTheReviewLineSaysWhatItsContainerReaches(t *testing.T) {
 	}
 }
 
-// TestABuiltinsWebToolsStartOffAndAskWhenSwitchedOn: the Assistant declares
+// TestTheAssistantsWebToolsStartOffAndAskWhenSwitchedOn: the Assistant declares
 // the web tools, and they start off, so an update that brings them asks the
 // person nothing and gives the agent nothing. Switching them on asks for
 // agreement to their sentence, and once agreed the segment has them. A
 // published agent's are on, agreed at its install.
-func TestABuiltinsWebToolsStartOffAndAskWhenSwitchedOn(t *testing.T) {
+func TestTheAssistantsWebToolsStartOffAndAskWhenSwitchedOn(t *testing.T) {
 	home := shortHome(t)
 	t.Setenv("HOME", t.TempDir())
 	openers := Openers{Web: func(context.Context) (*engine.WebRun, error) {
@@ -418,8 +418,33 @@ func TestABuiltinsWebToolsStartOffAndAskWhenSwitchedOn(t *testing.T) {
 		t.Fatal("switched on and agreed, the segment has no web tools")
 	}
 
+	// A config.yaml switched on by hand, with no agreement recorded, is
+	// held to consent like any other entry.
+	hand := Config{Enabled: true, Switches: map[string]bool{EntryWeb: true}}
+	if un := Unconsented(BuildRoster(a, hand, nil), hand); !slices.ContainsFunc(un, func(e RosterEntry) bool { return e.ID == EntryWeb }) {
+		t.Fatal("the web tools switched on by hand, with no agreement, are not held to consent")
+	}
+
+	// The Assistant reads calendar feeds in the same container, so its
+	// sentence names their events; agreeing to the sentence without them
+	// still counts, since nothing more is given.
+	r = BuildRoster(a, c, nil)
+	e, _ = r.Entry(EntryWeb)
+	if !strings.Contains(e.Line, "calendar feeds") {
+		t.Fatalf("the Assistant's web sentence does not name its calendar feeds: %q", e.Line)
+	}
+	older := Config{Enabled: true, Switches: map[string]bool{EntryWeb: true}, Consented: map[string]string{}}
+	older.Consented[EntryWeb], _ = reachLines(a, currentManaged())
+	if slices.ContainsFunc(Unconsented(BuildRoster(a, older, nil), older), func(e RosterEntry) bool { return e.ID == EntryWeb }) {
+		t.Fatal("an agreement to the web sentence without the calendars no longer counts")
+	}
+
 	p := installPublished(t, home, "acme", "webby", "1.0.0", publishedRelease{extra: "capabilities:\n  persistent:\n    web: true\n"})
-	if e, ok := BuildRoster(p, Config{Enabled: true}, nil).Entry(EntryWeb); !ok || !e.On || e.GrantedBy != GrantedByRelease {
-		t.Fatalf("a published agent's web entry: %+v (%v)", e, ok)
+	pe, ok := BuildRoster(p, Config{Enabled: true}, nil).Entry(EntryWeb)
+	if !ok || !pe.On || pe.GrantedBy != GrantedByRelease {
+		t.Fatalf("a published agent's web entry: %+v (%v)", pe, ok)
+	}
+	if strings.Contains(pe.Line, "calendar") {
+		t.Fatalf("an agent that reads no calendar feeds is told of them: %q", pe.Line)
 	}
 }
