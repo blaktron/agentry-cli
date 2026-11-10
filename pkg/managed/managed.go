@@ -65,6 +65,19 @@ var enforced = []string{
 	managedsettings.DeliverablesDestinations,
 	managedsettings.MalwareCheck,
 	managedsettings.UpdatesMinimumVersion,
+	// The model rows (models.go): held where every run settles its
+	// model, and pre-filled or locked in setup's model step.
+	managedsettings.ModelProviders,
+	managedsettings.ModelSource,
+	managedsettings.ModelDefault,
+	managedsettings.ModelSignIns,
+	managedsettings.ModelCustomEndpoints,
+	managedsettings.CodingToolsAllowed,
+	// The delivering rows (keys.go): the organization's key delivered to
+	// this computer, off, or the member's own; a lock to a source this
+	// version cannot pay with is refused, never passed over.
+	managedsettings.ReviewSource,
+	managedsettings.WebSearchSource,
 }
 
 // ClientRows are the rows the runner cannot apply alone, because a client
@@ -86,6 +99,16 @@ func Enforce(ids ...string) {
 
 // Applies says this client applies the setting.
 func Applies(id string) bool { return slices.Contains(enforced, id) }
+
+// locksOnly are applied rows whose organization default has nothing to act
+// on: a member has no setting of their own for it, so only a lock holds.
+var locksOnly = []string{managedsettings.ModelCustomEndpoints}
+
+// AppliesSetting says this client applies the setting as a document sets
+// it: a lock of an applied row, or a default this client acts on.
+func AppliesSetting(id string, locked bool) bool {
+	return Applies(id) && (locked || !slices.Contains(locksOnly, id))
+}
 
 // State is one registry's verified managed settings.
 type State struct {

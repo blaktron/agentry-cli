@@ -116,7 +116,7 @@ func viewOf(e managed.Effective) managedView {
 		for _, id := range ids {
 			s := d.Settings[id]
 			_, known := managedsettings.Lookup(id)
-			dv.Settings = append(dv.Settings, managedSettingView{ID: id, Value: s.Value, Locked: s.Locked, Known: known, Applied: managed.Applies(id)})
+			dv.Settings = append(dv.Settings, managedSettingView{ID: id, Value: s.Value, Locked: s.Locked, Known: known, Applied: managed.AppliesSetting(id, s.Locked)})
 		}
 		v.Documents = append(v.Documents, dv)
 	}

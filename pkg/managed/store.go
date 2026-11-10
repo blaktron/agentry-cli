@@ -368,6 +368,10 @@ func removeDocument(reg string) error {
 	if err != nil {
 		return err
 	}
+	// The keys an organization delivered go with its document.
+	if err := removeKeys(reg); err != nil {
+		return err
+	}
 	if err := os.Remove(doc); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("delete the managed settings cached for %s: %w", reg, err)
 	}

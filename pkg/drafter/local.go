@@ -7,6 +7,9 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/blaktron/agentry/pkg/managedsettings"
+
+	"github.com/blaktron/agentry-cli/pkg/managed"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
@@ -56,12 +59,12 @@ func LocalWeb(pol *policy.Policy, registry string) (*engine.WebRun, SearchState,
 		return nil, "", ErrNoJevKey
 	}
 	w := &engine.WebRun{Scan: toolsrv.WebScanJev, JevKey: jev, Registry: registry}
-	key, state, err := SearchKey(pol)
+	provider, key, state, err := SearchAccess(pol)
 	if err != nil {
 		return nil, "", err
 	}
 	if state == SearchOn {
-		w.Search, w.SearchKey = pol.WebSearch.Provider, key
+		w.Search, w.SearchKey = provider, key
 	}
 	return w, state, nil
 }
@@ -70,8 +73,21 @@ func LocalWeb(pol *policy.Policy, registry string) (*engine.WebRun, SearchState,
 // it: the variable the policy's judge block names, else, for a keyring
 // source, the keychain entry provider:typesafe. "" is no key. A draft scans
 // with it (LocalWeb), and the Examiner reviews with it.
+// An organization's managed settings may say otherwise (review.source):
+// its own key, delivered to this computer, or AI Review off.
 func JevKey(pol *policy.Policy) (string, error) {
-	return personalKey(pol.Judge.KeyEnv(), pol.Judge.APIKeySource, policy.JudgeKeyProvider)
+	own, err := personalKey(pol.Judge.KeyEnv(), pol.Judge.APIKeySource, policy.JudgeKeyProvider)
+	if err != nil {
+		return "", err
+	}
+	key, decided, err := managed.Current().ServiceKey(managedsettings.ReviewSource, policy.JudgeKeyProvider, own)
+	if err != nil {
+		return "", engine.Classify(engine.ExitPolicy, err)
+	}
+	if decided {
+		return key, nil
+	}
+	return own, nil
 }
 
 // SearchKey is the person's own search key as a local draft reads it, and
@@ -80,6 +96,45 @@ func JevKey(pol *policy.Policy) (string, error) {
 // keychain entry provider:<provider>. It needs no Jev key, so a client can
 // test the search key alone, and it is the one LocalWeb searches with.
 func SearchKey(pol *policy.Policy) (string, SearchState, error) {
+	_, key, state, err := SearchAccess(pol)
+	return key, state, err
+}
+
+// SearchAccess is SearchKey with the provider the key is for: the policy's,
+// or, when an organization's managed settings pay for web search with its
+// own key (webSearch.source), the provider that key is for, read from the
+// keychain entry it was delivered to. A lock to off, or to a source this
+// version cannot pay with, refuses (exit 11).
+func SearchAccess(pol *policy.Policy) (provider, key string, state SearchState, err error) {
+	own, ownState, err := personalSearchKey(pol)
+	if err != nil {
+		return "", "", "", err
+	}
+	eff := managed.Current()
+	ks := eff.KeySourceOf(managedsettings.WebSearchSource)
+	switch {
+	case !ks.Decided || ks.Source == managedsettings.SourceMember:
+	case !ks.Locked && ownState == SearchOn:
+		// An organization default gives way to the member's own search.
+	case ks.Source == managedsettings.SourceOrganizationKey:
+		v, found, err := eff.DeliveredKey(managedsettings.WebSearchSource, ks.Provider)
+		if err != nil {
+			return "", "", "", engine.Classify(engine.ExitPolicy, err)
+		}
+		if found {
+			return ks.Provider, v, SearchOn, nil
+		}
+	case ks.Locked:
+		// Off, or a source this version cannot pay with: refused.
+		if _, _, err := eff.ServiceKey(managedsettings.WebSearchSource, pol.WebSearch.Provider, own); err != nil {
+			return "", "", "", engine.Classify(engine.ExitPolicy, err)
+		}
+	}
+	return pol.WebSearch.Provider, own, ownState, nil
+}
+
+// personalSearchKey is the member's own search key and whether search is on.
+func personalSearchKey(pol *policy.Policy) (string, SearchState, error) {
 	if !pol.WebSearch.On() {
 		return "", SearchNoProvider, nil
 	}
