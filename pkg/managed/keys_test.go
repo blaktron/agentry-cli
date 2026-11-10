@@ -193,7 +193,19 @@ func TestTheSourceRowsDecideWhichKeyAServiceUses(t *testing.T) {
 	if _, decided, err := held("acme", src("off", false)).ServiceKey(managedsettings.ReviewSource, policy.JudgeKeyProvider, "own"); decided || err != nil {
 		t.Fatal("a default off gives way to the member's own key")
 	}
-	if _, _, err := held("acme", src("agentry-credits", true)).ServiceKey(managedsettings.ReviewSource, policy.JudgeKeyProvider, ""); err == nil || !strings.Contains(err.Error(), "update Agentry") {
-		t.Fatalf("a lock to credits this version cannot pay with: %v", err)
+	for _, c := range []struct {
+		locked bool
+		own    string
+		paid   bool
+	}{{true, "own", true}, {true, "", true}, {false, "", true}, {false, "own", false}} {
+		_, _, err := held("acme", src("agentry-credits", c.locked)).ServiceKey(managedsettings.ReviewSource, policy.JudgeKeyProvider, c.own)
+		p := CreditsPaid(err)
+		if (p != nil) != c.paid {
+			t.Fatalf("credits, locked %v, own key %q: %v", c.locked, c.own, err)
+		}
+		if p != nil && (p.Org != "acme" || p.Setting != managedsettings.ReviewSource || p.Locked != c.locked ||
+			p.Error() != "acme's managed settings pay for AI Review with its credits (review.source)") {
+			t.Fatalf("credits answer %+v: %v", p, p)
+		}
 	}
 }

@@ -574,6 +574,21 @@
           "dependencyHints": []
         },
         {
+          "path": "cmd/agentry/credits_review_test.go",
+          "tests": [
+            "TestADraftOnTheOrganizationsCreditsScansThroughOneOperation",
+            "TestSearchOnTheOrganizationsCreditsIsASearchOperationThroughTheRegistry",
+            "TestAMembersOwnKeySetsACreditsDefaultAside",
+            "TestAVoicesPagesAreReadThroughAnOperationOnTheOrganizationsCredits",
+            "TestAKnowledgeBuildWithNoSearchSpendsNoCredit",
+            "TestAKnowledgeBuildSearchingOnTheOrganizationsCreditsOpensOneOperation"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "cmd/agentry/errors_test.go",
           "tests": [
             "TestRegistryCommandsOfflineSayCannotReach",
@@ -3293,6 +3308,20 @@
       "behavior": "A client's copy of an organization's managed settings: fetched with the account's token, verified against the",
       "disposition": "retain",
       "files": [
+        {
+          "path": "pkg/managed/credits_test.go",
+          "tests": [
+            "TestAnOperationIsOpenedWithTheSignInAndEndedOnce",
+            "TestAnOperationTheRegistryRefusesSaysWhy",
+            "TestCreditsArePaidOnTheRegistryTheDocumentCameFrom"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "HTTP transport"
+          ]
+        },
         {
           "path": "pkg/managed/keys_test.go",
           "tests": [

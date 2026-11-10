@@ -1,6 +1,7 @@
 package drafter
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -49,21 +50,63 @@ const (
 // those it is. Without a Jev key it is ErrNoJevKey and nothing runs. The
 // registry is the one registry_search reads. The Jev key in the answer is
 // exactly the one the draft scans with, so a client that tests a key tests
-// that one.
+// that one. Where an organization's credits pay for AI Review or web
+// search, it refuses (LocalWebPaid with no Pay): work that can pay with
+// them calls LocalWebPaid.
 func LocalWeb(pol *policy.Policy, registry string) (*engine.WebRun, SearchState, error) {
-	jev, err := JevKey(pol)
+	return LocalWebPaid(context.Background(), pol, registry, "", nil)
+}
+
+// Pay opens an operation paid with an organization's credits on registry,
+// for purpose (managed.PurposeSearch when only web search is paid that
+// way). The caller ends it when the work is done.
+type Pay func(ctx context.Context, registry, purpose string) (*managed.Operation, error)
+
+// LocalWebPaid is LocalWeb for work that can pay with an organization's
+// credits: where the managed settings say they pay for AI Review or web
+// search, it opens an operation with pay, for purpose, and the run scans
+// (and, for web search paid that way, searches) through the registry with
+// the operation's token, as a hosted draft does with its job's. Pay keeps
+// the operation for the caller to end. A nil pay refuses such work with the
+// organization's sentence.
+func LocalWebPaid(ctx context.Context, pol *policy.Policy, registry, purpose string, pay Pay) (*engine.WebRun, SearchState, error) {
+	jev, jevErr := JevKey(pol)
+	provider, key, state, searchErr := SearchAccess(pol)
+	review, search := managed.CreditsPaid(jevErr), managed.CreditsPaid(searchErr)
+	switch {
+	case jevErr != nil && review == nil:
+		return nil, "", jevErr
+	case searchErr != nil && search == nil:
+		return nil, "", searchErr
+	case review == nil && search == nil:
+		if jev == "" {
+			return nil, "", ErrNoJevKey
+		}
+		w := &engine.WebRun{Scan: toolsrv.WebScanJev, JevKey: jev, Registry: registry}
+		if state == SearchOn {
+			w.Search, w.SearchKey = provider, key
+		}
+		return w, state, nil
+	}
+	paid, opPurpose := review, purpose
+	if paid == nil {
+		paid, opPurpose = search, managed.PurposeSearch
+	}
+	if pay == nil {
+		return nil, "", engine.Classify(engine.ExitPolicy, fmt.Errorf("%w, and this work on this computer cannot pay with them", paid))
+	}
+	op, err := pay(ctx, paid.Registry, opPurpose)
 	if err != nil {
-		return nil, "", err
+		return nil, "", engine.Classify(engine.ExitPolicy, err)
 	}
-	if jev == "" {
-		return nil, "", ErrNoJevKey
-	}
-	w := &engine.WebRun{Scan: toolsrv.WebScanJev, JevKey: jev, Registry: registry}
-	provider, key, state, err := SearchAccess(pol)
-	if err != nil {
-		return nil, "", err
-	}
-	if state == SearchOn {
+	// The registry scans every result, with the operation's token; its
+	// search, when the credits pay for search, and otherwise the person's
+	// own provider with their own key.
+	w := &engine.WebRun{Scan: toolsrv.WebScanRegistry, Registry: op.Registry, JobToken: op.Token}
+	switch {
+	case search != nil:
+		w.Search, state = toolsrv.WebScanRegistry, SearchOn
+	case state == SearchOn:
 		w.Search, w.SearchKey = provider, key
 	}
 	return w, state, nil
@@ -74,7 +117,9 @@ func LocalWeb(pol *policy.Policy, registry string) (*engine.WebRun, SearchState,
 // source, the keychain entry provider:typesafe. "" is no key. A draft scans
 // with it (LocalWeb), and the Examiner reviews with it.
 // An organization's managed settings may say otherwise (review.source):
-// its own key, delivered to this computer, or AI Review off.
+// its own key, delivered to this computer, AI Review off, or paid with its
+// credits, which is a *managed.PaidWithCredits (exit 11) for the caller to
+// open an operation for, or to refuse with.
 func JevKey(pol *policy.Policy) (string, error) {
 	own, err := personalKey(pol.Judge.KeyEnv(), pol.Judge.APIKeySource, policy.JudgeKeyProvider)
 	if err != nil {
@@ -103,8 +148,8 @@ func SearchKey(pol *policy.Policy) (string, SearchState, error) {
 // SearchAccess is SearchKey with the provider the key is for: the policy's,
 // or, when an organization's managed settings pay for web search with its
 // own key (webSearch.source), the provider that key is for, read from the
-// keychain entry it was delivered to. A lock to off, or to a source this
-// version cannot pay with, refuses (exit 11).
+// keychain entry it was delivered to. A lock to off refuses (exit 11); the
+// organization's credits paying for it is a *managed.PaidWithCredits.
 func SearchAccess(pol *policy.Policy) (provider, key string, state SearchState, err error) {
 	own, ownState, err := personalSearchKey(pol)
 	if err != nil {
@@ -124,8 +169,8 @@ func SearchAccess(pol *policy.Policy) (provider, key string, state SearchState, 
 		if found {
 			return ks.Provider, v, SearchOn, nil
 		}
-	case ks.Locked:
-		// Off, or a source this version cannot pay with: refused.
+	default:
+		// Off by a lock, or paid with the organization's credits.
 		if _, _, err := eff.ServiceKey(managedsettings.WebSearchSource, pol.WebSearch.Provider, own); err != nil {
 			return "", "", "", engine.Classify(engine.ExitPolicy, err)
 		}

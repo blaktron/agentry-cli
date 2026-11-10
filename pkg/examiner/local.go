@@ -1,7 +1,10 @@
 package examiner
 
 import (
+	"fmt"
+
 	"github.com/blaktron/agentry-cli/pkg/drafter"
+	"github.com/blaktron/agentry-cli/pkg/managed"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 )
@@ -15,6 +18,9 @@ var ErrNoJevKey = drafter.ErrNoJevKey
 // a draft reads it (drafter.JevKey). Without one it is ErrNoJevKey.
 func LocalReview(pol *policy.Policy) (*engine.ReviewRun, error) {
 	key, err := drafter.JevKey(pol)
+	if paid := managed.CreditsPaid(err); paid != nil {
+		return nil, engine.Classify(engine.ExitPolicy, fmt.Errorf("%w, and a review on this computer asks AI Review with a TypeSafe key, which this version of Agentry cannot pay for with credits", paid))
+	}
 	if err != nil {
 		return nil, err
 	}

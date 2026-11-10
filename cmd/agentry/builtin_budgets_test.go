@@ -230,12 +230,13 @@ func TestAKnowledgeBuildOnThisComputerGetsSixtyMinutes(t *testing.T) {
 	}
 }
 
-// The two sentences that tell a person a built-in's run on this computer
-// costs no credits: `draft`'s "for no credits" and `knowledge`'s "It costs
-// no credits". They say the run is not metered in credits at all, which is
-// the rule's point, so the narration may carry them; the test below does
-// not require them, and nothing else may use the word.
-var costsNoCredits = regexp.MustCompile(`(?i)\bfor no credits\b|\bit costs no credits\b`)
+// The sentences that tell a person a built-in's run on this computer costs
+// no credits: `draft`'s "whose use costs no credits" and the other
+// built-ins' "The model's use costs no credits". They say the run is not
+// metered in credits at all, which is the rule's point, so the narration may
+// carry them; the test below does not require them, and nothing else may
+// use the word.
+var costsNoCredits = regexp.MustCompile(`(?i)\bwhose use costs no credits\b|\bthe model's use costs no credits\b`)
 
 // plainTemp is a temporary directory whose path does not carry the test's
 // name, for a test that reads its output for a word its own name holds.
