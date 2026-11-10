@@ -31,6 +31,8 @@ import (
 	runnerdecode "github.com/blaktron/agentry-cli/runnerimage/decode"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 
+	"github.com/blaktron/agentry/pkg/manifest"
+
 	"github.com/blaktron/agentry-cli/pkg/runner/clamdb"
 	"github.com/blaktron/agentry-cli/pkg/runner/decode"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
@@ -63,7 +65,10 @@ func preparePersistentFolders(p Params, rd *runDirs) error {
 		if p.Persistent != nil && p.Persistent.Memory != nil {
 			return Classify(ExitCompile, errors.New("the segment was given a memory volume its plan does not mount"))
 		}
-		return nil
+		return prepareShippedSkills(p, rd)
+	}
+	if len(p.Plan.Capabilities.ShippedSkills) > 0 {
+		return Classify(ExitCompile, errors.New("a persistent agent's plan lists skills a release ships: recompile"))
 	}
 	if p.Persistent == nil {
 		return Classify(ExitCompile, errors.New("a plan with a persistent agent's folders runs only as that agent's segment"))
@@ -165,6 +170,39 @@ func prepareSkills(p Params, rd *runDirs) error {
 	fi, err := os.Lstat(dir)
 	if err != nil || !fi.IsDir() {
 		return Classify(ExitCLI, fmt.Errorf("the skills folder %s is not a folder", dir))
+	}
+	if err := gatewayCanMount(dir, gatewayOS); err != nil {
+		return Classify(ExitCLI, fmt.Errorf("the skills folder %s: %w", dir, err))
+	}
+	stderr := p.Stderr
+	if stderr == nil {
+		stderr = io.Discard
+	}
+	relabelShared(context.Background(), stderr, dir)
+	rd.skills = dir
+	return nil
+}
+
+// prepareShippedSkills gives a run of a release that ships skills its
+// skills/ folder: the one in the verified tree the run's workspace is copied
+// from, never the copy, so nothing the run writes changes a skill. It must
+// be a real folder, not reached through a link, and is labelled for the
+// tools server on an SELinux host.
+func prepareShippedSkills(p Params, rd *runDirs) error {
+	if len(p.Plan.Capabilities.ShippedSkills) == 0 {
+		return nil
+	}
+	if p.WorkspaceSrc == "" {
+		return Classify(ExitCompile, errors.New("the plan lists skills the release ships, and the run has no release files to read them from"))
+	}
+	src, err := filepath.Abs(p.WorkspaceSrc)
+	if err != nil {
+		return Classify(ExitCLI, err)
+	}
+	dir := filepath.Join(src, manifest.SkillsDir)
+	fi, err := os.Lstat(dir)
+	if err != nil || !fi.IsDir() {
+		return Classify(ExitVerify, fmt.Errorf("the release's skills folder %s is not a folder", dir))
 	}
 	if err := gatewayCanMount(dir, gatewayOS); err != nil {
 		return Classify(ExitCLI, fmt.Errorf("the skills folder %s: %w", dir, err))

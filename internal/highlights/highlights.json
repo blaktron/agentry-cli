@@ -1,6 +1,13 @@
 {
   "versions": [
     {
+      "version": "0.7.47",
+      "highlights": [
+        "A QuickAgent can ship skills: folders of instructions it reads when a step of its task matches one.",
+        "Installing a QuickAgent that ships skills says so before you agree."
+      ]
+    },
+    {
       "version": "0.7.46",
       "highlights": [
         "Your organization's managed settings can now choose or limit the model provider, the model and the coding tools.",

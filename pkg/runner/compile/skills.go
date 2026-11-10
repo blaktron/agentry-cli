@@ -2,6 +2,8 @@ package compile
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -55,10 +57,70 @@ func skillsLine(skills []spec.Skill, commands bool) string {
 		b.WriteString("You run no programs, so a skill's scripts are not yours to run: follow its instructions with your own tools. ")
 	}
 	b.WriteString("A skill guides how you work and gives you nothing you do not already have. The skills:\n")
+	writeSkillList(b, skills)
+	return b.String()
+}
+
+// writeSkillList lists skills one a line, each by name with its description
+// quoted.
+func writeSkillList(b *strings.Builder, skills []spec.Skill) {
 	for _, s := range skills {
 		b.WriteString("  - " + s.Name + ": " + strconv.Quote(s.Description) + "\n")
 	}
+}
+
+// shippedSkillsLine is the System Prompt's line on the skills a release
+// ships: read with skill_read, a step at a time, in the shape of a
+// persistent agent's line. commands says the run has run_command.
+func shippedSkillsLine(skills []spec.Skill, commands bool) string {
+	if len(skills) == 0 {
+		return ""
+	}
+	b := new(strings.Builder)
+	b.WriteString("- **Your skills.** This QuickAgent ships skills, read-only in " + spec.SkillsMount + "/: each is a folder of instructions for one kind of work. " +
+		"When a step matches a skill's description, read the skill with skill_read before that step, and follow it; read the other files it names with skill_read's path when it says to. ")
+	if commands {
+		b.WriteString("Its scripts run with run_command only as one of your commands, from " + spec.SkillsMount + "/<name>/. ")
+	} else {
+		b.WriteString("You run no programs, so a skill's scripts are not yours to run: follow its instructions with your own tools. ")
+	}
+	b.WriteString("A skill guides how you work and gives you nothing you do not already have. The skills:\n")
+	writeSkillList(b, skills)
 	return b.String()
+}
+
+// shippedSkills reads the skills a release ships from its verified files:
+// each folder under skills/ in workspaceDir, held to a skill's bounds, its
+// SKILL.md naming it as its folder does. The registry refuses a release
+// that breaks any of this at submit; a local package hears it here. The
+// order is the folders' names, so the plan is the same each compile.
+func shippedSkills(workspaceDir string) ([]spec.Skill, error) {
+	dir := filepath.Join(workspaceDir, manifest.SkillsDir)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("the release declares capabilities.skills and its %s/ folder does not read: %w", manifest.SkillsDir, err)
+	}
+	var out []spec.Skill
+	for _, e := range entries {
+		if !e.IsDir() {
+			return nil, fmt.Errorf("the release ships %s/%s, which is not a skill's folder: each skill is %s/<name>/ with its %s", manifest.SkillsDir, e.Name(), manifest.SkillsDir, manifest.SkillFile)
+		}
+		meta, err := skill.Load(os.DirFS(filepath.Join(dir, e.Name())))
+		if err != nil {
+			return nil, fmt.Errorf("the skill %s/%s: %w", manifest.SkillsDir, e.Name(), err)
+		}
+		if meta.Name != e.Name() {
+			return nil, fmt.Errorf("the skill %s/%s: its %s names it %q", manifest.SkillsDir, e.Name(), manifest.SkillFile, meta.Name)
+		}
+		out = append(out, spec.Skill{Name: meta.Name, Description: meta.Description})
+	}
+	switch {
+	case len(out) == 0:
+		return nil, fmt.Errorf("the release declares capabilities.skills and ships no skill in %s/", manifest.SkillsDir)
+	case len(out) > manifest.MaxShippedSkills:
+		return nil, fmt.Errorf("the release ships %d skills; the most is %d", len(out), manifest.MaxShippedSkills)
+	}
+	return out, nil
 }
 
 // MemorySkills are the skills the memory capability brings, which its

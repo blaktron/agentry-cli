@@ -137,6 +137,8 @@ func (s *server) buildTools() {
 				scratchWriteSchema(), s.toolScratchWrite)
 		case ToolChecklist:
 			add(name, checklistDescription, checklistSchema(), s.toolChecklist)
+		case ToolSkillRead:
+			add(name, s.skillReadDescription(), skillReadSchema(), s.toolSkillRead)
 		case ToolGrep:
 			add(name, s.grepDescription(), grepSchema(), s.toolGrep)
 		case ToolGlob:

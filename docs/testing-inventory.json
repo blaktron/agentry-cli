@@ -27,7 +27,8 @@
             "TestParseModes",
             "TestCapabilityLinesDeclaredServerEnv",
             "TestCapabilityLinesRemoteServer",
-            "TestCapabilityLinesDeclaredServerArgs"
+            "TestCapabilityLinesDeclaredServerArgs",
+            "TestCapabilityLinesNameShippedSkills"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -5130,6 +5131,22 @@
           "dependencyHints": []
         },
         {
+          "path": "pkg/runner/compile/shippedskills_test.go",
+          "tests": [
+            "TestARunOfAReleaseThatShipsSkillsHasThem",
+            "TestARunWithoutSkillsHearsOfNone",
+            "TestTheSkillsLineSaysWhoRunsAScript",
+            "TestCompileRefusesSkillsTheRunCouldNotList"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract",
+            "explicit skip"
+          ]
+        },
+        {
           "path": "pkg/runner/compile/signin_test.go",
           "tests": [
             "TestATokenFileSignInMountsOneReadOnlyFolderBesideThePlan",
@@ -7336,6 +7353,18 @@
             "docker interface (real or fake)",
             "source/file contract",
             "real-time wait"
+          ]
+        },
+        {
+          "path": "pkg/runner/engine/shippedskills_test.go",
+          "tests": [
+            "TestARunIsGivenTheReleasesOwnSkillsFolder"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
           ]
         },
         {
@@ -12614,6 +12643,22 @@
             "TestADocumentClamAVFoundIsRefusedWithItsText",
             "TestAnUnreadableDocumentSaysWhy",
             "TestFSReadNamesTheFormatsWhereTheShareIsChecked"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
+          ]
+        },
+        {
+          "path": "runnerimage/toolsrv/skills_test.go",
+          "tests": [
+            "TestSkillReadFollowsItsGrant",
+            "TestSkillReadReadsASkillAndItsFiles",
+            "TestSkillReadRefusesWhatIsNotTheRunsSkill",
+            "TestTheSkillsGrantIsHeldToItsShape",
+            "TestWithoutFrontmatter"
           ],
           "fuzz": [],
           "benchmarks": [],

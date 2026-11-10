@@ -183,3 +183,18 @@ func TestCapabilityLinesDeclaredServerArgs(t *testing.T) {
 		t.Errorf("got  %q\nwant %q", lines[len(lines)-1], want)
 	}
 }
+
+// TestCapabilityLinesNameShippedSkills: a release that ships skills says so
+// in the core's words for the grant, and one that does not says nothing of
+// skills.
+func TestCapabilityLinesNameShippedSkills(t *testing.T) {
+	caps := parseCaps(t, "capabilities:\n  network:\n    egress: none\n  skills: true\n")
+	got := strings.Join(capabilityLines(caps), "\n")
+	if !strings.Contains(got, "skills: "+manifest.ShippedSkillsWords) {
+		t.Errorf("the consent lines do not name the skills:\n%s", got)
+	}
+	caps.Skills = false
+	if got := strings.Join(capabilityLines(caps), "\n"); strings.Contains(got, "skills") {
+		t.Errorf("a release without skills is said to ship them:\n%s", got)
+	}
+}

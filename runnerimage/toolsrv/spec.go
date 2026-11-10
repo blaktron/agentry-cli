@@ -108,6 +108,10 @@ type Spec struct {
 	// scratch folder it is a grant of the runner, never a line of the
 	// contract.
 	Checklist string `json:"checklist,omitempty"`
+	// Skills are the skills the release ships (its manifest's
+	// capabilities.skills), read-only in the tools container; skill_read is
+	// granted with them. Nil for a release that ships none.
+	Skills *Skills `json:"skills,omitempty"`
 	// ChecklistCopy is the container path, under OutDir, where the checklist
 	// tool copies each list it saves or reads back: stamped by the engine
 	// into a release's one-shot run alone, never into the compiled plan. The
@@ -368,6 +372,8 @@ const (
 	ToolScratchSearch = "scratch_search"
 	// ToolChecklist keeps the run's checklist, granted with Checklist.
 	ToolChecklist = "checklist"
+	// ToolSkillRead reads a skill the release ships, granted with Skills.
+	ToolSkillRead = "skill_read"
 	// The knowledge tools, granted only while a
 	// pack is attached.
 	ToolKnowledgeList   = "knowledge_list"
@@ -422,6 +428,9 @@ func (s *Spec) GrantedTools() []string {
 	}
 	if s.Checklist != "" {
 		names = append(names, ToolChecklist)
+	}
+	if s.Skills != nil && len(s.Skills.Names) > 0 {
+		names = append(names, ToolSkillRead)
 	}
 	if s.Search.Enabled && s.searchAreas() {
 		names = append(names, ToolGrep, ToolGlob)

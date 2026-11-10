@@ -109,6 +109,11 @@ func capabilityLinesSized(c manifest.Capabilities, sizes map[string]int64) []str
 		}
 		lines = append(lines, "knowledge: ships "+strings.Join(names, ", "))
 	}
+	// Shipped skills: instructions inside the release the agent reads
+	// a step at a time, part of what is consented to.
+	if c.Skills {
+		lines = append(lines, "skills: "+manifest.ShippedSkillsWords)
+	}
 	lines = append(lines, persistentLines(c)...)
 	return lines
 }
@@ -248,7 +253,7 @@ func isZeroCapabilities(c manifest.Capabilities) bool {
 		c.Exec.IsZero() &&
 		len(c.Secrets) == 0 && len(c.DataAccess) == 0 &&
 		len(c.MCPServers) == 0 && len(c.Knowledge) == 0 && len(c.TargetHosts) == 0 && c.Browser == nil && c.Desktop == nil &&
-		len(c.Persistent.Keys()) == 0 && len(c.Subagents) == 0
+		len(c.Persistent.Keys()) == 0 && len(c.Subagents) == 0 && !c.Skills
 }
 
 // browserLine says what a browser line lets the release do, as the
