@@ -338,6 +338,9 @@ func validateSpec(spec *Spec) error {
 	if err := validateKnowledge(spec); err != nil {
 		return err
 	}
+	if err := validateSkills(spec.Skills); err != nil {
+		return err
+	}
 	if err := validateDesign(spec); err != nil {
 		return err
 	}

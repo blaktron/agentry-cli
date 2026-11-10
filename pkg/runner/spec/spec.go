@@ -94,10 +94,12 @@ const (
 	// share after each turn under new names, never over a file; only such
 	// a plan names it.
 	PHShareOut = "@@RUN_SHARE_OUT@@"
-	// PHSkills is the host path of a persistent agent's skills for one
-	// segment: a folder the supervisor fills with the skills its roster has
-	// on, mounted read-only at AgentRoot/AgentSkillsDir into the tools
-	// server alone; only a persistent plan with a skill on names it.
+	// PHSkills is the host path of the run's skills, mounted read-only into
+	// the tools server alone: for a persistent agent, a folder the
+	// supervisor fills with the skills its roster has on, at
+	// AgentRoot/AgentSkillsDir; for a release that ships skills, its own
+	// verified skills/ folder, at SkillsMount. Only a plan with a skill
+	// names it.
 	PHSkills = "@@RUN_SKILLS@@"
 	// PHDependencyDB is the host path of OSV's databases the Coding agent's
 	// dependency scan reads, kept under the runner home and mounted
@@ -290,6 +292,10 @@ const (
 	// ScratchMount is the run's scratch folder in the tools container: empty at
 	// the start, a tmpfs of ToolsTmpfsBytes, gone with the container.
 	ScratchMount = "/scratch"
+	// SkillsMount is where the skills a release ships (its manifest's
+	// capabilities.skills) are in the tools container, read-only: one
+	// folder a skill, each with its SKILL.md, read with skill_read.
+	SkillsMount = "/skills"
 	// ChecklistFile is the file the checklist tool keeps a run's steps in,
 	// in the scratch folder (a persistent agent's in its data folder, since
 	// its scratch folder lasts one segment).
@@ -578,6 +584,13 @@ type CapSummary struct {
 	// for a persistent built-in alone, and the filesystem tools, grep and
 	// glob are then rooted at AgentRoot in place of the workspace.
 	AgentFiles *AgentFiles `json:"agentFiles,omitempty"`
+	// ShippedSkills are the skills the release ships, for a release that
+	// declares capabilities.skills and runs in any mode but persistent: by
+	// name and description, in the order the System Prompt lists them. Their
+	// folders are mounted read-only at SkillsMount in the tools container,
+	// and skill_read reads them. A persistent agent's skills are
+	// AgentFiles.Skills.
+	ShippedSkills []Skill `json:"shippedSkills,omitempty"`
 	// AppLink is a persistent built-in's app link, by the tool set it lists
 	// (runnerimage/applink): the gateway runs it with no network and the
 	// supervisor's socket alone. Never the manifest's: the compiler sets it
