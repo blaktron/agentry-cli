@@ -25,5 +25,5 @@ func FS() fs.FS { return files }
 const (
 	Namespace = "agentry"
 	Name      = "assistant"
-	Version   = "1.21.1"
+	Version   = "1.22.0"
 )

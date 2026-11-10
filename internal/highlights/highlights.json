@@ -1,6 +1,13 @@
 {
   "versions": [
     {
+      "version": "0.7.52",
+      "highlights": [
+        "Your Assistant can search the web and read pages, once you switch on its web tools.",
+        "AI Review reads each search result and page with your TypeSafe key before the Assistant sees it."
+      ]
+    },
+    {
       "version": "0.7.51",
       "highlights": [
         "A model that keeps repeating the same call is told to reach its goal another way, and the run goes on.",

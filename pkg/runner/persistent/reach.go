@@ -94,17 +94,40 @@ func reachLines(a Agent, held managed.Effective) (web, review string) {
 }
 
 // reachEntries are the web tools' and the review grant's entries, for an
-// agent that declares them: on, granted by what declares them.
+// agent that declares them, granted by what declares them. BuildRoster
+// gives a published agent's on and a built-in's off (reachDefault).
 func reachEntries(a Agent) []RosterEntry {
 	web, review := reachLines(a, currentManaged())
 	var out []RosterEntry
 	if a.Declared().Declares("web") {
-		out = append(out, RosterEntry{ID: EntryWeb, Kind: KindTools, Name: "Web search and pages", GrantedBy: a.grantedBy(), Line: web})
+		e := RosterEntry{ID: EntryWeb, Kind: KindTools, Name: "Web search and pages", GrantedBy: a.grantedBy(), Line: web}
+		if a.ReadsCalendars() {
+			// The container also holds what the calendar feeds give the
+			// agent, so the sentence says so. It gives nothing it did not
+			// give before, so an agreement to the sentence without the
+			// calendars still counts.
+			e.Line, e.alike = withCalendars(web), []string{web}
+		}
+		out = append(out, e)
 	}
 	if a.Declared().Declares("review") {
 		out = append(out, RosterEntry{ID: EntryReview, Kind: KindTools, Name: "AI Review", GrantedBy: a.grantedBy(), Line: review})
 	}
 	return out
+}
+
+// reachDefault is whether an agent's web tools and review grant are on
+// before the person switches them. A published agent's are: the person
+// agrees to them with its release, at the install or at the update that
+// declares them, which asks before it is taken. A built-in's are not: Agentry gives them to an agent the person already
+// has, so reaching the web from a container that holds their share is
+// theirs to choose, and an update asks them nothing.
+func reachDefault(a Agent) bool { return a.Published() }
+
+// withCalendars is the web tools' sentence for an agent that also reads
+// calendar feeds, whose events are read in the same container.
+func withCalendars(web string) string {
+	return strings.Replace(web, ", and the knowledge packs it has, so", ", the knowledge packs it has and the events of the calendar feeds you add, so", 1)
 }
 
 // LocalWebOpener and LocalReviewOpener read the keys from the runner
