@@ -231,3 +231,4 @@ agentry/assistant@1.21.1 sha256:b75675dafabf33c7cba728615b066f3e1c49c8bbf2ba7a5f
 agentry/examiner@1.2.3 sha256:fd0a8e2c20470c404a2bbe1b80fe1b1ecbf325dbb3890a2b4eb40d0a781c3858
 # 1.2.4, over 1.2.3: the README says AI Review may be asked through the registry, where an organization's credits pay for it.
 agentry/examiner@1.2.4 sha256:a986440afc9c74cf80a3bfb7e486fcf52d614f1afd263aab579a6eba4c42d85c
+agentry/examiner@1.2.5 sha256:41c99859d03111069a68c6555fe90b5ee2e91d7b9ce9e5352512fb4427ef68c8
