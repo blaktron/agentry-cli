@@ -142,6 +142,14 @@ func TestAHoldEndsWhenItsClientGoesAway(t *testing.T) {
 	_ = h.Close()
 	eventually(t, "a segment after a dropped hold", func() bool { return segmentsOf(st) == 2 })
 	noticed(t, events, "Setting up Google Workspace (gog) did not finish")
+	// The hold stops holding messages back a moment before it lets go of
+	// the turn, so a turn sent right after the notice can be refused as
+	// busy: wait for the turn to be free, as a client told "send again"
+	// would.
+	if !sv.waitTurn(ctx) {
+		t.Fatal("the turn was not let go after a dropped hold")
+	}
+	sv.turn.Unlock()
 	if err := sv.Send(ctx, "after a dropped hold"); err != nil {
 		t.Fatalf("a turn after a dropped hold: %v", err)
 	}
