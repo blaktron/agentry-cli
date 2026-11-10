@@ -374,3 +374,13 @@ func TestADraftThatReadNoPageIsStillHeld(t *testing.T) {
 		t.Errorf("the summary the repair turn is given: %q", m)
 	}
 }
+
+// Two turns' usage add up field by field, the loop nudges included.
+func TestAddUsageSumsEveryCount(t *testing.T) {
+	a := receipt.Usage{InputTokens: 1, OutputTokens: 2, TotalTokens: 3, CostUSD: 0.5, WallMS: 10, Turns: 4, UserTurns: 1, LoopNudges: 2}
+	b := receipt.Usage{InputTokens: 10, OutputTokens: 20, TotalTokens: 30, CostUSD: 0.25, WallMS: 5, Turns: 6, UserTurns: 2, LoopNudges: 1}
+	want := receipt.Usage{InputTokens: 11, OutputTokens: 22, TotalTokens: 33, CostUSD: 0.75, WallMS: 15, Turns: 10, UserTurns: 3, LoopNudges: 3}
+	if got := addUsage(a, b); got != want {
+		t.Fatalf("addUsage = %+v, want %+v", got, want)
+	}
+}

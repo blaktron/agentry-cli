@@ -155,6 +155,12 @@ const (
 	// that the model's last output was reasoning, to name why a
 	// schema-checked run has no answer.
 	EventReasoning EventKind = "reasoning"
+	// EventLoopNudge says the harness saw the model make the same tool call
+	// with the same arguments several times in a row and told it to reach
+	// its goal another way, instead of ending the run. The run goes on; the
+	// engine counts these in the receipt's usage. Text is the harness's
+	// words, which never quote the call's arguments.
+	EventLoopNudge EventKind = "loop_nudge"
 	// EventOther is an unrecognized-but-valid harness event.
 	EventOther EventKind = "other"
 )

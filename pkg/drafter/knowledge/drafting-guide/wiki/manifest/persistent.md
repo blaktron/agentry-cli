@@ -41,11 +41,14 @@ Add `"persistent"` to `modes` when the description asks for an agent that:
 | `mail` | the person's mail at `google`, `microsoft` or `fastmail` once they sign in | none |
 | `imageServers` | servers the runner runs from its own images, `google-workspace` and `microsoft-365`, once the person signs in | none |
 | `coder` | the coding toolchain: any program, open web access for its commands, a public browser, a development host | none of its own; it also gives the grants `exec`, `fetch`, the browser and target hosts |
+| `browser` | a headless browser to public websites; which sites it opens, and whether AI Review reads its pages first, are the person's settings | none yet: this version of Agentry does not run it |
+| `fetch` | fetching from public addresses; which hosts it reaches, and whether AI Review reads the responses first, are the person's settings | none yet: this version of Agentry does not run it |
 
 Rules the registry holds [src: web:https://docs.secureagentry.net/quickagents/]:
 
 - A key with a list (`secrets`, `mail`, `imageServers`) is declared by naming something. `secrets` are at most 32 environment variable names, each once, none also a key the release asks for at each run (`capabilities.secrets`). `mail` at `google` needs `imageServers` to name `google-workspace`, and at `microsoft` needs `microsoft-365`.
-- `coder` is never declared beside `web`, `review` or `calendars`.
+- `coder` is never declared beside `web`, `review`, `calendars`, `browser` or `fetch`.
+- Do not draft `browser` or `fetch` yet: this version of Agentry does not run them, and an install that declares either is refused. A release that declares either goes to human review.
 - The block declares something or is left out, and it is valid only beside the `persistent` mode.
 - Do not draft `coder`, `mail`, `imageServers`, `calendars`, `secrets`, `meetings` or `desktop` unless the description asks for what they give. A person who says "keeps notes" needs `memory`, not the web or a mail account.
 

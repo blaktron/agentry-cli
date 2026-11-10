@@ -167,14 +167,18 @@ type agentState struct {
 	Status      *persistent.Status       `json:"status,omitempty"`
 	// Model is the saved model the agent runs on: the one its configuration
 	// names, or the default it follows.
-	Model      *agentModelOut     `json:"model,omitempty"`
-	Config     *persistent.Config `json:"config,omitempty"`
-	Usage      *persistent.Usage  `json:"usage,omitempty"`
-	StateDir   string             `json:"stateDir,omitempty"`
-	Volumes    *agentVolumes      `json:"volumes,omitempty"`
-	Transcript []persistent.Entry `json:"transcript,omitempty"`
-	Share      string             `json:"share,omitempty"`
-	Roster     persistent.Roster  `json:"roster,omitempty"`
+	Model  *agentModelOut     `json:"model,omitempty"`
+	Config *persistent.Config `json:"config,omitempty"`
+	// Managed are the fields of its configuration an organization's
+	// managed settings set, locked or as a default; Config is the
+	// person's own.
+	Managed    []persistent.ManagedField `json:"managed,omitempty"`
+	Usage      *persistent.Usage         `json:"usage,omitempty"`
+	StateDir   string                    `json:"stateDir,omitempty"`
+	Volumes    *agentVolumes             `json:"volumes,omitempty"`
+	Transcript []persistent.Entry        `json:"transcript,omitempty"`
+	Share      string                    `json:"share,omitempty"`
+	Roster     persistent.Roster         `json:"roster,omitempty"`
 	// Tasks counts an agent's tasks, for one that keeps time.
 	Tasks *int `json:"tasks,omitempty"`
 	// Suggested are the servers the agent suggests and does not have.
@@ -230,6 +234,7 @@ func readAgentState(ctx context.Context, home string, a persistent.Agent) (agent
 	}
 	st.DisplayName = a.DisplayName(cfg)
 	st.Config = &cfg
+	_, st.Managed = persistent.ManagedConfig(a, cfg, managed.Current())
 	st.Model = readAgentModel(a, cfg, "")
 	st.Share, _ = persistent.ShareFolder(a, cfg)
 	st.Roster = persistent.BuildRosterUnder(a, cfg, nil, persistent.HomeMalwareCheck(home))
@@ -457,6 +462,13 @@ func printAgentState(w io.Writer, st agentState) {
 		if c.Personality != "" {
 			_, _ = fmt.Fprintf(w, "  personality: %d bytes, given at its next turn when changed\n", len(c.Personality))
 		}
+	}
+	for _, f := range st.Managed {
+		strength := "a default you may change"
+		if f.Locked {
+			strength = "locked"
+		}
+		_, _ = fmt.Fprintf(w, "  managed:    %s, set by %s (%s, %s)\n", f.Field, safeTerminalText(f.Org, 64), f.ID, strength)
 	}
 	if st.Share != "" {
 		_, _ = fmt.Fprintf(w, "  share:      %s\n", st.Share)

@@ -155,6 +155,10 @@ func TestDockerAgentEvents(t *testing.T) {
 		{"usage nested", `{"type":"stream_stopped","usage":{"input_tokens":10,"output_tokens":5,"cost":0.01}}`, []EventKind{EventUsage}},
 		{"error", `{"type":"error","message":{"content":"boom"}}`, []EventKind{EventError}},
 		{"unknown", `{"type":"heartbeat"}`, []EventKind{EventOther}},
+		// The harness's loop nudge is counted; any other warning is a
+		// report, never the model's answer.
+		{"loop nudge", `{"type":"warning","message":"Loop nudge 1: 5 consecutive identical calls to read_file; the agent was told to reach its goal another way.","agent_name":"root"}`, []EventKind{EventLoopNudge}},
+		{"other warning", `{"type":"warning","message":"This agent turn did not use the prompt cache.","agent_name":"root"}`, []EventKind{EventOther}},
 		{"not json", `plain text line`, []EventKind{EventAssistantText}},
 		{"empty", ``, nil},
 	}
@@ -176,6 +180,11 @@ func TestDockerAgentEvents(t *testing.T) {
 	evs := ad.Events([]byte(`{"type":"agent_choice","message":{"content":[{"type":"text","text":"a"},{"type":"text","text":"b"}]}}`))
 	if evs[0].Text != "ab" {
 		t.Errorf("joined text = %q, want ab", evs[0].Text)
+	}
+	// The nudge keeps the harness's words.
+	evs = ad.Events([]byte(`{"type":"warning","message":"Loop nudge 2: 5 consecutive identical calls to fetch; the agent was told to reach its goal another way."}`))
+	if !strings.HasPrefix(evs[0].Text, "Loop nudge 2: ") {
+		t.Errorf("nudge text = %q", evs[0].Text)
 	}
 	// Usage numbers survive.
 	evs = ad.Events([]byte(`{"type":"stream_stopped","usage":{"input_tokens":10,"output_tokens":5,"cost":0.01}}`))

@@ -620,5 +620,5 @@ func repairBudgets(b spec.Budgets, spent receipt.Usage) (spec.Budgets, bool) {
 func addUsage(a, b receipt.Usage) receipt.Usage {
 	return receipt.Usage{InputTokens: a.InputTokens + b.InputTokens, OutputTokens: a.OutputTokens + b.OutputTokens,
 		TotalTokens: a.TotalTokens + b.TotalTokens, CostUSD: a.CostUSD + b.CostUSD, WallMS: a.WallMS + b.WallMS,
-		Turns: a.Turns + b.Turns, UserTurns: a.UserTurns + b.UserTurns}
+		Turns: a.Turns + b.Turns, UserTurns: a.UserTurns + b.UserTurns, LoopNudges: a.LoopNudges + b.LoopNudges}
 }

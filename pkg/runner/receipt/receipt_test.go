@@ -500,6 +500,7 @@ status
 usage
 usage.costUsd
 usage.inputTokens
+usage.loopNudges
 usage.outputTokens
 usage.totalTokens
 usage.turns
@@ -568,6 +569,7 @@ runhost.adapter
 runhost.adapterAsked
 runhost.unsafeMode
 stage
+usage.loopNudges
 usage.totalTokens
 usage.userTurns
 web.model

@@ -730,6 +730,9 @@ func (d *dockerAgent) Events(line []byte) []Event {
 	var events []Event
 
 	switch {
+	case typ == "warning" && isLoopNudge(obj):
+		msg, _ := obj["message"].(string)
+		events = append(events, Event{Kind: EventLoopNudge, Text: msg, Raw: raw})
 	case typ == "tool_call_response":
 		events = append(events, dockerAgentToolResult(obj, raw))
 	case isToolCallStart(typ):
@@ -797,6 +800,18 @@ func dockerAgentToolResult(obj map[string]any, raw json.RawMessage) Event {
 		failed, _ = res["isError"].(bool)
 	}
 	return Event{Kind: EventToolResult, Tool: dockerAgentToolName(obj), CallID: id, Failed: failed, Text: out, Raw: raw}
+}
+
+// dockerAgentLoopNudgePrefix starts the message of the warning the default
+// harness build emits when it tells the model to stop repeating a call
+// ("Loop nudge <n>: …"). Any other warning stays an EventOther: a warning's
+// message is the harness's report, never the model's answer.
+const dockerAgentLoopNudgePrefix = "Loop nudge "
+
+// isLoopNudge reports whether a warning event is the harness's loop nudge.
+func isLoopNudge(obj map[string]any) bool {
+	msg, _ := obj["message"].(string)
+	return strings.HasPrefix(msg, dockerAgentLoopNudgePrefix)
 }
 
 // isToolCallStart is true for the one event that marks a tool call: the

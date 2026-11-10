@@ -1,11 +1,14 @@
 package engine
 
 import (
+	"encoding/json"
 	"io"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
+	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 )
 
 // The result is the assistant's LAST MESSAGE in full, assembled from the
@@ -176,5 +179,38 @@ func TestCollectorTextThenReasoningIsAnAnswer(t *testing.T) {
 	}, "\n") + "\n"))
 	if !c.answerInReasoning() {
 		t.Fatal("reasoning after a tool call, with the earlier text, read as answered")
+	}
+}
+
+// A loop nudge is counted in the receipt's usage, the run's text is not
+// touched by it, and the count carries over a restart of the harness.
+func TestCollectorCountsLoopNudges(t *testing.T) {
+	ad, err := adapter.Get("docker-agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	nudge := func(n int) string {
+		return `{"type":"warning","message":"Loop nudge ` + strconv.Itoa(n) + `: 5 consecutive identical calls to read_file; the agent was told to reach its goal another way."}`
+	}
+	c := &eventCollector{adapter: ad, events: io.Discard, base: receipt.Usage{LoopNudges: 1, Turns: 5}}
+	c.consume(strings.NewReader(strings.Join([]string{
+		`{"type":"tool_call","tool_call":{"id":"c1","function":{"name":"read_file","arguments":"{}"}}}`,
+		nudge(1),
+		`{"type":"warning","message":"This agent turn did not use the prompt cache."}`,
+		nudge(2),
+		`{"type":"agent_choice","content":"the file never changes"}`,
+	}, "\n") + "\n"))
+	u := c.usage()
+	if u.LoopNudges != 3 {
+		t.Fatalf("loopNudges = %d, want 3 (two here, one before the restart)", u.LoopNudges)
+	}
+	if u.Turns != 6 {
+		t.Fatalf("turns = %d, want 6", u.Turns)
+	}
+	if c.lastText != "the file never changes" {
+		t.Fatalf("lastText = %q", c.lastText)
+	}
+	if b, _ := json.Marshal(receipt.Usage{}); strings.Contains(string(b), "loopNudges") {
+		t.Fatalf("a run with no nudge records none: %s", b)
 	}
 }

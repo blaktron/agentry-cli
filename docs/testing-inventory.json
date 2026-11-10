@@ -2721,7 +2721,8 @@
             "TestTheRepairTurnHasOnlyWhatTheFirstLeft",
             "TestANoTimeoutDraftKeepsItsRepairTurnAndCostLimits",
             "TestARepairKeepsTheFirstAnswerOnlyForARuleItPassed",
-            "TestADraftThatReadNoPageIsStillHeld"
+            "TestADraftThatReadNoPageIsStillHeld",
+            "TestAddUsageSumsEveryCount"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -3333,6 +3334,18 @@
       "behavior": "A client's copy of an organization's managed settings: fetched with the account's token, verified against the",
       "disposition": "retain",
       "files": [
+        {
+          "path": "pkg/managed/agents_test.go",
+          "tests": [
+            "TestAnAgentConfigurationRowReadsAsAField",
+            "TestACodingToolsModelLockHoldsItsTool",
+            "TestTheUnreviewedRowRefusesOnlyALock"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
         {
           "path": "pkg/managed/credits_test.go",
           "tests": [
@@ -7268,7 +7281,8 @@
           "tests": [
             "TestCollectorAssemblesStreamedFinalMessage",
             "TestCollectorNotesAnswerInReasoning",
-            "TestCollectorTextThenReasoningIsAnAnswer"
+            "TestCollectorTextThenReasoningIsAnAnswer",
+            "TestCollectorCountsLoopNudges"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -8303,7 +8317,8 @@
           "path": "pkg/runner/localrun/persistent_names_test.go",
           "tests": [
             "TestEveryPersistentNameMaps",
-            "TestTheWebToolsAndReviewAreDeclaredAlone"
+            "TestTheWebToolsAndReviewAreDeclaredAlone",
+            "TestAPersistentKeyThisBuildDoesNotRunIsRefused"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -9139,6 +9154,19 @@
           "dependencyHints": [
             "source/file contract"
           ]
+        },
+        {
+          "path": "pkg/runner/persistent/managedconfig_test.go",
+          "tests": [
+            "TestManagedSettingsConfigureTheAssistant",
+            "TestAChangeToALockedFieldIsRefused",
+            "TestManagedServersAndPacksAreOnTheRoster",
+            "TestAManagedOAuthServerSaysItNeedsASignIn"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
         },
         {
           "path": "pkg/runner/persistent/meetings_test.go",

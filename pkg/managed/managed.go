@@ -78,6 +78,19 @@ var enforced = []string{
 	// version cannot pay with is refused, never passed over.
 	managedsettings.ReviewSource,
 	managedsettings.WebSearchSource,
+	// The agent configuration rows (agents.go): applied where a persistent
+	// agent's configuration is read (persistent.ManagedConfig) and refused
+	// where it is written; the coding tools' models where a run settles
+	// its model.
+	managedsettings.AgentsAssistantName,
+	managedsettings.AgentsAssistantPersonality,
+	managedsettings.AgentsAssistantRunOnStart,
+	managedsettings.AgentsAssistantServers,
+	managedsettings.AgentsAssistantKnowledge,
+	managedsettings.AgentsCodingAgentServers,
+	managedsettings.AgentsCodingAgentKnowledge,
+	managedsettings.AgentsUnreviewed,
+	managedsettings.CodingToolsModels,
 }
 
 // ClientRows are the rows the runner cannot apply alone, because a client
@@ -103,7 +116,7 @@ func Applies(id string) bool { return slices.Contains(enforced, id) }
 
 // locksOnly are applied rows whose organization default has nothing to act
 // on: a member has no setting of their own for it, so only a lock holds.
-var locksOnly = []string{managedsettings.ModelCustomEndpoints}
+var locksOnly = []string{managedsettings.ModelCustomEndpoints, managedsettings.CodingToolsModels}
 
 // AppliesSetting says this client applies the setting as a document sets
 // it: a lock of an applied row, or a default this client acts on.
