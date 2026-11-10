@@ -83,9 +83,10 @@ var enforced = []string{
 // ClientRows are the rows the runner cannot apply alone, because a client
 // has paths of its own that they govern: where runs may go (the runner
 // holds runs on this computer, on a runhost and to target hosts; a client
-// that starts runs In Agentry holds those) and bug reports, which a client
-// sends. A client adds them with Enforce once every path it has obeys them.
-var ClientRows = []string{managedsettings.RunWhere, managedsettings.BugReports}
+// that starts runs In Agentry holds those), bug reports, which a client
+// sends, and the QuickAgents an organization assigns, which a client installs,
+// lists and keeps from being uninstalled. A client adds them with Enforce once every path it has obeys them.
+var ClientRows = []string{managedsettings.RunWhere, managedsettings.BugReports, managedsettings.QuickAgents}
 
 // Enforce adds rows this client applies through its own paths beside the
 // runner's. It is called once, as the client starts, before any run.

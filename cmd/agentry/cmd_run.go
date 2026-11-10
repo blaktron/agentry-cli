@@ -41,6 +41,7 @@ import (
 	"github.com/blaktron/agentry/pkg/manifest"
 
 	"github.com/blaktron/agentry-cli/pkg/installed"
+	"github.com/blaktron/agentry-cli/pkg/managed"
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/destination"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
@@ -363,6 +364,11 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		if err := refuseModelElsewhere(opts); err != nil {
 			return err
 		}
+	}
+	// A preset an organization gave the QuickAgent fills the options the
+	// person left unset, before anything reads them.
+	if err := applyPreset(&opts, ref, managed.Current()); err != nil {
+		return err
 	}
 	if opts.on != "" {
 		return runOnRunhost(cmd, ref, opts)
@@ -1342,6 +1348,9 @@ type runPlanConsent struct {
 	Diff              installed.Diff    `json:"diff"`
 	NeedsConfirmation bool              `json:"needsConfirmation"`
 	Reason            string            `json:"reason,omitempty"`
+	// RequiredBy is the organization that installed the release for the
+	// person, while no contract of it has been accepted.
+	RequiredBy string `json:"requiredBy,omitempty"`
 }
 
 // describeRunConsent mirrors confirmRunCapabilities' decision without its
@@ -1354,16 +1363,21 @@ func describeRunConsent(m *manifest.Manifest, meta *installdir.Meta, home string
 		state = installed.State{}
 	}
 	next := installed.Snapshot(m.Contract())
-	if prev := state.Find(key); prev != nil {
+	if prev := state.Find(key); prev != nil && !prev.AwaitsConsent() {
 		c.Installed = &installPlanPrior{Version: prev.Version, Dir: prev.Dir}
 		c.Diff = installed.DiffCapabilities(prev.Capabilities, next)
 		if c.Diff.HasWidened() {
 			c.NeedsConfirmation = true
 			c.Reason = "this version widens the declared capabilities"
 		}
-	} else if capabilityNeedsConfirm(m.Capabilities) {
-		c.NeedsConfirmation = true
-		c.Reason = "a first run of a QuickAgent that declares " + confirmedCapabilitiesWords(m.Capabilities)
+	} else {
+		if prev := state.Find(key); prev != nil {
+			c.RequiredBy = prev.AssignedBy
+		}
+		if capabilityNeedsConfirm(m.Capabilities) {
+			c.NeedsConfirmation = true
+			c.Reason = "a first run of a QuickAgent that declares " + confirmedCapabilitiesWords(m.Capabilities)
+		}
 	}
 	return c
 }
@@ -2208,6 +2222,17 @@ func confirmRunCapabilities(cmd *cobra.Command, m *manifest.Manifest, meta *inst
 	if m.Summary != "" {
 		_, _ = fmt.Fprintf(out, "  %s\n", m.Summary)
 	}
+	key := installdir.ConsentKey(home, meta.Namespace, meta.Name)
+	state, serr := installed.Load()
+	if serr != nil {
+		_, _ = fmt.Fprintf(out, "warning: %v — treating this as a first run\n", serr)
+		state = installed.State{}
+	}
+	if prev := state.Find(key); prev != nil && prev.AwaitsConsent() {
+		// An organization installed this release for the person; the
+		// contract below is still theirs to accept.
+		_, _ = fmt.Fprintf(out, "Required by %s\n", prev.AssignedBy)
+	}
 	_, _ = fmt.Fprintln(out, "capabilities:")
 	for _, line := range capabilityLinesSized(m.Contract(), shippedSizes) {
 		_, _ = fmt.Fprintf(out, "  %s\n", line)
@@ -2215,12 +2240,6 @@ func confirmRunCapabilities(cmd *cobra.Command, m *manifest.Manifest, meta *inst
 	if mode == manifest.ModeInteractive {
 		// The one line the consent screen gains for a session.
 		_, _ = fmt.Fprintln(out, "  interactive: you can talk to this agent and give it files; you cannot give it more access than listed above")
-	}
-	key := installdir.ConsentKey(home, meta.Namespace, meta.Name)
-	state, serr := installed.Load()
-	if serr != nil {
-		_, _ = fmt.Fprintf(out, "warning: %v — treating this as a first run\n", serr)
-		state = installed.State{}
 	}
 	next := installed.Snapshot(m.Contract())
 	if err := confirmCapabilityChange(cmd, out, &state, key, meta.Version, next, m.Contract(), opts.yes); err != nil {

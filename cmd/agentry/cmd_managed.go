@@ -216,6 +216,7 @@ func runManagedRefresh(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 	_, _ = fmt.Fprintln(out, st.Summary())
+	installRequired(cmd, st, token)
 	return nil
 }
 
@@ -261,8 +262,13 @@ func syncManaged(cmd *cobra.Command, reg string) {
 	if token == "" {
 		return
 	}
-	if _, err := managed.Sync(cmd.Context(), httpClient, reg, token, managed.FetchInterval); err != nil {
+	st, fetched, err := managed.SyncFetched(cmd.Context(), httpClient, reg, token, managed.FetchInterval)
+	if err != nil {
 		note(err)
+		return
+	}
+	if fetched {
+		installRequired(cmd, st, token)
 	}
 }
 
@@ -288,6 +294,9 @@ func loginManaged(cmd *cobra.Command, reg, accountID, token string) {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "note: the managed settings could not be read (%v); the next run asks again\n", err)
 	case st != nil && !flags.jsonOut:
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "settings: "+st.Summary())
+	}
+	if err == nil {
+		installRequired(cmd, st, token)
 	}
 }
 

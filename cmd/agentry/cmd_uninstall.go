@@ -30,6 +30,8 @@ import (
 	"github.com/blaktron/agentry/pkg/manifest"
 
 	"github.com/blaktron/agentry-cli/pkg/installed"
+	"github.com/blaktron/agentry-cli/pkg/managed"
+	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/connection"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
@@ -73,7 +75,11 @@ func newUninstallCmd() *cobra.Command {
 		Long: "Remove this machine's runner state for a QuickAgent: the verified install\n" +
 			"cache and, by default, its MCP profile — stored keys and installed MCP\n" +
 			"servers included (remove is the default). --keep-mcp retains the profile,\n" +
-			"which stays locked to the exact release digest it was created for.",
+			"which stays locked to the exact release digest it was created for.\n\n" +
+			"A QuickAgent your organization's managed settings require (see\n" +
+			"`agentry search --org`) is not removed while they do, and the command\n" +
+			"exits 11; once they stop requiring it, it is yours and uninstalls as any\n" +
+			"other.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runUninstall(cmd, args[0], keepMCP, plan)
@@ -89,6 +95,11 @@ func runUninstall(cmd *cobra.Command, sel string, keepMCP, plan bool) error {
 	ref, err := manifest.ParseRef(sel)
 	if err != nil {
 		return err
+	}
+	// A release a held document requires stays; once none does, it is the
+	// person's own install and goes like any other.
+	if reason := managed.Current().UninstallRefusal(ref.Namespace + "/" + ref.Name); reason != "" {
+		return engine.Classify(engine.ExitPolicy, &compile.PolicyRefusal{Reason: reason})
 	}
 	home, err := runnerHome()
 	if err != nil {
