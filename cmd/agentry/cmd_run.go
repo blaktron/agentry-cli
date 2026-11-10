@@ -88,9 +88,13 @@ type runOpts struct {
 	// starting it.
 	runhostSchedule string
 	// detach leaves a run on a runhost to run once it has started there.
-	detach      bool
-	mode        string
-	intake      []string
+	detach bool
+	mode   string
+	intake []string
+	// orgIntake are the answers an organization's preset gives as defaults
+	// (applyPreset): used for the questions the QuickAgent asks and that
+	// the person did not answer; one it does not ask is passed over.
+	orgIntake   []string
 	intakeToken []string
 	// intakeFile is a JSON object of intake answers, id to value, read as
 	// --intake would take each: a remote runhost's service hands them so,
@@ -672,7 +676,9 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	// The organization's managed settings are read again before the
 	// compile, which applies them, unless they were read within the hour.
 	if !hostedFor(opts) {
-		syncManaged(cmd, registryURL())
+		// Nothing is installed for a preview or a dry run, and the release
+		// this run uses is left as it is.
+		syncManaged(cmd, registryURL(), !opts.plan && !opts.dryRun, meta.Namespace+"/"+meta.Name)
 	}
 	// A model of the person's own with no window in the policy is asked for
 	// it now, for this run only.
@@ -1672,6 +1678,32 @@ func collectIntake(cmd *cobra.Command, m *manifest.Manifest, opts runOpts, fromS
 			return nil, err
 		}
 		given = append(slices.Clone(given), fromFile...)
+	}
+	if len(opts.orgIntake) > 0 {
+		asked := map[string]bool{}
+		for _, q := range m.Intake {
+			asked[q.ID] = true
+		}
+		var skipped []string
+		answered := map[string]bool{}
+		for _, kv := range given {
+			id, _, _ := strings.Cut(kv, "=")
+			answered[id] = true
+		}
+		for _, kv := range opts.orgIntake {
+			id, _, _ := strings.Cut(kv, "=")
+			if answered[id] {
+				continue
+			}
+			if asked[id] {
+				given = append(slices.Clone(given), kv)
+			} else {
+				skipped = append(skipped, id)
+			}
+		}
+		if len(skipped) > 0 {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "note: the organization's preset answers %s, which this QuickAgent does not ask; passed over\n", strings.Join(skipped, ", "))
+		}
 	}
 	preset, err := intake.ParsePreset(given)
 	if err != nil {

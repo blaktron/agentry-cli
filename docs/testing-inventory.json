@@ -494,7 +494,9 @@
             "TestARequiredQuickAgentFollowsItsPinOnly",
             "TestARequiredQuickAgentIsNotUninstalledWhileRequired",
             "TestSearchOrgListsTheAssignments",
-            "TestAPresetIsADefaultUnlessLocked"
+            "TestAPresetIsADefaultUnlessLocked",
+            "TestAPresetAnswerToAQuestionNotAskedIsPassedOver",
+            "TestAnAssignedReleaseIsAskedAboutEvenWithANarrowContract"
           ],
           "fuzz": [],
           "benchmarks": [],

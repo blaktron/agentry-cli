@@ -1,12 +1,16 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"github.com/blaktron/agentry/pkg/managedsettings"
+	"github.com/blaktron/agentry/pkg/manifest"
 
 	"github.com/blaktron/agentry-cli/pkg/installed"
 	"github.com/blaktron/agentry-cli/pkg/managed"
@@ -233,7 +237,7 @@ func TestAPresetIsADefaultUnlessLocked(t *testing.T) {
 	if err := applyPreset(&opts, "acme/demo@1.0.0", heldWith(t, a)); err != nil {
 		t.Fatal(err)
 	}
-	if opts.timeout != 300 || opts.maxTurns != 20 || len(opts.intake) != 1 || opts.intake[0] != "topic=tax" {
+	if opts.timeout != 300 || opts.maxTurns != 20 || len(opts.intake) != 0 || len(opts.orgIntake) != 1 || opts.orgIntake[0] != "topic=tax" {
 		t.Fatalf("defaults not applied: %+v", opts)
 	}
 	own := runOpts{timeout: 60, maxTurns: 5, intake: []string{"topic=law"}}
@@ -255,5 +259,48 @@ func TestAPresetIsADefaultUnlessLocked(t *testing.T) {
 	}
 	if err := applyPreset(&runOpts{maxTurns: -1, intake: []string{"topic=law"}}, "acme/demo", heldWith(t, a)); err == nil {
 		t.Fatal("a conflicting answer under a lock was taken")
+	}
+}
+
+// An organization's preset answer is used for a question the QuickAgent
+// asks and the person did not answer; one it does not ask is passed over
+// with a note, never refusing the run.
+func TestAPresetAnswerToAQuestionNotAskedIsPassedOver(t *testing.T) {
+	m := &manifest.Manifest{Intake: []manifest.IntakeQuestion{{ID: "topic", Prompt: "Topic?"}}}
+	cmd := &cobra.Command{}
+	var errOut bytes.Buffer
+	cmd.SetErr(&errOut)
+	cmd.SetIn(strings.NewReader(""))
+	ans, err := collectIntake(cmd, m, runOpts{orgIntake: []string{"topic=tax", "region=emea"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ans == nil || ans.Values["topic"] != "tax" {
+		t.Fatalf("answers %+v", ans)
+	}
+	if !strings.Contains(errOut.String(), "region, which this QuickAgent does not ask; passed over") {
+		t.Fatalf("said %q", errOut.String())
+	}
+}
+
+// A QuickAgent an organization's managed settings installed is asked about
+// on its first run whatever its contract declares: nothing of the person's
+// started the install, so even a contract an ordinary install would not
+// confirm waits for their yes. Off a terminal it is refused without --yes.
+func TestAnAssignedReleaseIsAskedAboutEvenWithANarrowContract(t *testing.T) {
+	isolateEnv(t)
+	var st installed.State
+	key := installed.Key{Registry: "https://r.example", Namespace: "acme", Name: "quiet", Target: installdir.Target}
+	st.UpsertAssigned(key, "1.0.0", true, "acme")
+	cmd := &cobra.Command{}
+	cmd.SetIn(strings.NewReader(""))
+	cmd.SetErr(&bytes.Buffer{})
+	next := installed.Snapshot(manifest.Capabilities{})
+	err := confirmCapabilityChange(cmd, &bytes.Buffer{}, &st, key, "1.0.0", next, manifest.Capabilities{}, false)
+	if err == nil || !strings.Contains(err.Error(), "installed by your organization's managed settings") {
+		t.Fatalf("an assigned release with a narrow contract ran without consent: %v", err)
+	}
+	if err := confirmCapabilityChange(cmd, &bytes.Buffer{}, &st, key, "1.0.0", next, manifest.Capabilities{}, true); err != nil {
+		t.Fatalf("the person's own --yes: %v", err)
 	}
 }

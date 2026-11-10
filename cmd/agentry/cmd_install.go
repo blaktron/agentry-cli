@@ -380,6 +380,9 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 	if err != nil {
 		return err
 	}
+	if res.Yanked && opts.assigned != nil {
+		return fmt.Errorf("%s/%s@%s is yanked; a required install never lays down a yanked version", res.Namespace, res.Name, res.Version)
+	}
 	if res.Yanked {
 		_, _ = fmt.Fprintf(errOut, "warning: %s/%s@%s is YANKED — installing only because the version was pinned exactly\n",
 			res.Namespace, res.Name, res.Version)
@@ -884,9 +887,19 @@ func confirmCapabilityChange(cmd *cobra.Command, out io.Writer, state *installed
 	version string, next installed.CapSnapshot, caps manifest.Capabilities, yes bool,
 ) error {
 	prev := state.Find(key)
-	if prev == nil || prev.AwaitsConsent() {
+	if prev != nil && prev.AwaitsConsent() {
 		// A record an organization's required install left holds no
-		// consent: the contract is asked about as a first one.
+		// consent: the person is asked about the contract, whatever it
+		// declares, since nothing of theirs started the install.
+		if yes {
+			return nil
+		}
+		return promptYes(cmd,
+			fmt.Sprintf("%s/%s was installed by your organization's managed settings; run it with the capabilities above? type \"yes\": ", key.Namespace, key.Name),
+			"this QuickAgent was installed by your organization's managed settings and you have not consented to it yet; re-run with --yes to accept in non-interactive mode",
+			"run aborted (the QuickAgent's capability contract was not accepted)")
+	}
+	if prev == nil {
 		return confirmCapabilities(cmd, caps, yes)
 	}
 

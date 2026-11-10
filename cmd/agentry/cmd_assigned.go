@@ -60,10 +60,19 @@ func (a *assignedInstall) current(res *apiclient.ResolveResult) (bool, error) {
 // document requires. A failure installs nothing for that assignment, is said
 // on one line of stderr, and never fails the command that fetched.
 func installRequired(cmd *cobra.Command, st *managed.State, token string) {
+	installRequiredExcept(cmd, st, token, "")
+}
+
+// installRequiredExcept is installRequired leaving the release skip (ns/name)
+// as it is.
+func installRequiredExcept(cmd *cobra.Command, st *managed.State, token, skip string) {
 	if st == nil {
 		return
 	}
 	for _, a := range (managed.Effective{Documents: []managed.State{*st}}).Required() {
+		if a.Ref == skip {
+			continue
+		}
 		err := runInstall(cmd, a.Selector(), installOpts{assigned: &assignedInstall{organization: a.Organization, registry: st.Registry, token: token}})
 		if err != nil {
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s, required by %s, was not installed: %s\n", a.Ref, a.Organization, oneLineError(err))
@@ -180,7 +189,7 @@ func applyPreset(opts *runOpts, ref string, held managed.Effective) error {
 		v, answered := given[id]
 		switch {
 		case !answered:
-			opts.intake = append(slices.Clone(opts.intake), id+"="+p.Inputs[id])
+			opts.orgIntake = append(slices.Clone(opts.orgIntake), id+"="+p.Inputs[id])
 		case a.PresetLocked && v != p.Inputs[id]:
 			return presetRefusal(a, "--intake "+id, "the answer to "+id)
 		}

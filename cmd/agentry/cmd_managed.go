@@ -247,7 +247,11 @@ func managedJSON(held managed.Effective) []map[string]any {
 // sign-in or an environment token for the registry. Not signed in, it
 // asks nothing. A registry that cannot be asked leaves the last verified
 // copy in force, and says so.
-func syncManaged(cmd *cobra.Command, reg string) {
+//
+// install says whether a fresh copy's required QuickAgents are installed
+// now; skip is a release (ns/name) left as it is, the one a run is about to
+// use.
+func syncManaged(cmd *cobra.Command, reg string, install bool, skip string) {
 	note := func(err error) {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "note: the managed settings could not be read again (%v); the last verified copy applies\n", err)
 	}
@@ -267,8 +271,8 @@ func syncManaged(cmd *cobra.Command, reg string) {
 		note(err)
 		return
 	}
-	if fetched {
-		installRequired(cmd, st, token)
+	if fetched && install {
+		installRequiredExcept(cmd, st, token, skip)
 	}
 }
 
