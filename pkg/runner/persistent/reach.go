@@ -81,7 +81,7 @@ func reachLines(a Agent, held managed.Effective) (web, review string) {
 	reg, org := paidBy(held, managedsettings.ReviewSource)
 	if reg != "" {
 		paid := "through " + reg + ", paid with " + org + "'s credits"
-		web = strings.Replace(web, "with your own TypeSafe key", paid, 1)
+		web = strings.Replace(web, "with your own TypeSafe key", paid+",", 1)
 		review = strings.Replace(review, "sending that package's files to TypeSafe with your own key", "sending that package's files to AI Review "+paid, 1)
 		review = strings.Replace(review, "reaches TypeSafe's API alone", "reaches "+reg+" alone", 1)
 		review = strings.Replace(review, "asks for TypeSafe's API alone", "asks for "+reg+" alone", 1)
