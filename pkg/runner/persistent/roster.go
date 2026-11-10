@@ -69,6 +69,9 @@ const (
 	GrantedByBuiltin = "built-in"
 	GrantedByRelease = "release"
 	GrantedByYou     = "you"
+	// GrantedByOrganization is an entry an organization's managed settings
+	// put on the roster; RosterEntry.Organization names it.
+	GrantedByOrganization = "organization"
 )
 
 // The ids of the folder entries.
@@ -93,6 +96,12 @@ type RosterEntry struct {
 	Line string `json:"line"`
 	// Fixed is an entry no switch changes.
 	Fixed bool `json:"fixed,omitempty"`
+	// Organization is, for an entry an organization's managed settings put
+	// on the roster (GrantedByOrganization), the organization's handle.
+	// Locked says its setting is locked: the entry is on and has no
+	// switch, and the person still agrees to it as to their own.
+	Organization string `json:"organization,omitempty"`
+	Locked       bool   `json:"locked,omitempty"`
 	// Reason is why a failed entry failed.
 	Reason string `json:"reason,omitempty"`
 	// ShareSwitch is, for a server that may see the agent's share folder
@@ -189,7 +198,7 @@ func BuildRosterUnder(a Agent, c Config, applied *Applied, malwareCheck bool) Ro
 	var r Roster
 	add := func(e RosterEntry, def bool) {
 		e.On = def
-		if v, ok := c.Switches[e.ID]; ok && !e.Fixed {
+		if v, ok := c.Switches[e.ID]; ok && !e.Fixed && !e.Locked {
 			e.On = v
 		}
 		e.State = StateOff
@@ -295,6 +304,22 @@ func BuildRosterUnder(a Agent, c Config, applied *Applied, malwareCheck bool) Ro
 		}
 		add(RosterEntry{ID: KnowledgeEntryID(k), Kind: KindKnowledge, Name: k, GrantedBy: GrantedByYou, Line: line}, true)
 	}
+	// The organization's shared packs its managed settings put on the
+	// agent; a pack of the person's of the same name gives way.
+	if packs := managedPacks(a, currentManaged()); packs.Set {
+		for _, k := range packs.Value {
+			if slices.Contains(a.Packs, k) {
+				continue
+			}
+			line := "Searches " + packs.Org + "'s shared knowledge pack " + k + ", read-only, put on it by " + packs.Org + "'s managed settings"
+			if a.Codes() {
+				line += "; the programs it runs can read the pack too, and with open egress on can send it anywhere"
+			}
+			r = slices.DeleteFunc(r, func(e RosterEntry) bool { return e.ID == KnowledgeEntryID(k) })
+			add(RosterEntry{ID: KnowledgeEntryID(k), Kind: KindKnowledge, Name: k + " (from " + packs.Org + ")", GrantedBy: GrantedByOrganization,
+				Organization: packs.Org, Locked: packs.Locked, Line: line}, true)
+		}
+	}
 	for _, as := range agentServers(a, c) {
 		if o := as.Offered; o != nil {
 			es := offeredEntries(a, c, *o)
@@ -315,6 +340,11 @@ func BuildRosterUnder(a Agent, c Config, applied *Applied, malwareCheck bool) Ro
 		}
 		srv := as.Server
 		e := RosterEntry{ID: ServerEntryID(srv), Kind: KindServer, Name: serverName(srv), GrantedBy: GrantedByYou, Line: serverLine(srv)}
+		if as.Org != "" {
+			e.GrantedBy, e.Organization, e.Locked = GrantedByOrganization, as.Org, as.Locked
+			e.Name += " (from " + as.Org + ")"
+			e.Line += ", put on it by " + as.Org + "'s managed settings"
+		}
 		// One the agent suggested says, once added, what its suggestion
 		// says of it.
 		if sg, ok := suggestionFor(a, srv); ok {
@@ -663,6 +693,13 @@ func ApplyWith(ctx context.Context, home string, a Agent, c Config, r Roster, op
 	for _, k := range c.Knowledge {
 		if on(KnowledgeEntryID(k)) && !slices.Contains(a.Packs, k) {
 			names = append(names, k)
+		}
+	}
+	if packs := managedPacks(a, currentManaged()); packs.Set {
+		for _, k := range packs.Value {
+			if on(KnowledgeEntryID(k)) && !slices.Contains(a.Packs, k) && !slices.Contains(names, k) {
+				names = append(names, k)
+			}
 		}
 	}
 	if len(names) > 0 {

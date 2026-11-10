@@ -231,6 +231,9 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 	if a.DesktopOnly && !ch.modelOnly() {
 		return false, fmt.Errorf("%s %w: its configuration is Agentry Desktop's", a.Title, ErrDesktopOnly)
 	}
+	if err := managedChangeRefusal(a, ch, currentManaged()); err != nil {
+		return false, err
+	}
 	next := *c
 	// A change to what the agent is given is newer than one it took back;
 	// a name or personality, which the agent can set itself, leaves the
@@ -502,6 +505,8 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 			return false, fmt.Errorf("the %s agent has no entry %q (agentry agent show %s lists them)", a.Name, sw.ID, a.Name)
 		case e.Fixed:
 			return false, fmt.Errorf("%s is not switched: the %s agent always has it", e.Name, a.Name)
+		case e.Locked && !sw.On:
+			return false, lockedSwitchRefusal(r, sw.ID, sw.On)
 		case e.State == StateNeedsSignIn && sw.On:
 			return false, fmt.Errorf("%s signs in by OAuth, which a persistent agent cannot do in this version", e.Name)
 		case sw.ID == EntryMeetings && sw.On && !hb.On:
@@ -707,11 +712,15 @@ func checkServer(srv manifest.MCPServer) error {
 	return nil
 }
 
-// effectivePersona is the name and the personality the agent goes by: the
-// person's for each, else the persona its release ships. A locked persona's
+// effectivePersona is the name and the personality the agent goes by: an
+// organization's lock, else the person's for each, else an organization's
+// default, else the persona its release ships. A locked persona's
 // text is the release's whatever the person set; its name is still theirs
 // to change.
 func effectivePersona(a Agent, c Config) (name, personality string) {
+	// An organization's managed settings may name the Assistant and give
+	// it a personality, locked or as a default (ManagedConfig).
+	c, _ = ManagedConfig(a, c, currentManaged())
 	name, personality = c.DisplayName, c.Personality
 	if p := a.Persona; p != nil {
 		if name == "" {

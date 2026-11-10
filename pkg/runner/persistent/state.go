@@ -112,6 +112,7 @@ func Lookup(name string) (Agent, error) {
 // DisplayName is the name the agent goes by: the person's for it, else its
 // persona's, else its title.
 func (a Agent) DisplayName(c Config) string {
+	c, _ = ManagedConfig(a, c, currentManaged())
 	if n := strings.TrimSpace(c.DisplayName); n != "" {
 		return n
 	}

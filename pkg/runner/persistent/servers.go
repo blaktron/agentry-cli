@@ -41,6 +41,10 @@ type agentServer struct {
 	// Offered is the built-in's offer, or nil for a server the person
 	// added.
 	Offered *offer.Server
+	// Org is the organization whose managed settings put the server on the
+	// agent, and Locked says they lock it; "" for the person's own.
+	Org    string
+	Locked bool
 }
 
 // ID is the server's roster id.
@@ -82,6 +86,15 @@ func agentServers(a Agent, c Config) []agentServer {
 	for _, o := range offersOf(a, c) {
 		out = append(out, agentServer{Server: o.Server, Offered: &o})
 		offered[ServerEntryID(o.Server)] = true
+	}
+	// The organization's servers come before the person's: one of the
+	// person's at the same address gives way to the organization's.
+	orgs := managedServers(a, currentManaged())
+	for _, as := range orgs {
+		if !offered[ServerEntryID(as.Server)] {
+			out = append(out, as)
+			offered[ServerEntryID(as.Server)] = true
+		}
 	}
 	for _, srv := range c.Servers {
 		if !offered[ServerEntryID(srv)] {

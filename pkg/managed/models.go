@@ -147,6 +147,9 @@ func (e Effective) ModelRefusal(m RunModel) string {
 				return fmt.Sprintf("The %s harness is not allowed by %s's managed settings (codingTools.allowed allows %s)", tool, org, strings.Join(allowed, ", "))
 			}
 		}
+		if f := e.CodingToolModel(tool); f.Locked && m.Model != f.Value {
+			return fmt.Sprintf("%s's managed settings hold the %s harness to the model %s (codingTools.models); this run is on %s", f.Org, tool, f.Value, m.Model)
+		}
 	}
 	return ""
 }

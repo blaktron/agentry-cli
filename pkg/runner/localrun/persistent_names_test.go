@@ -139,3 +139,17 @@ func TestTheWebToolsAndReviewAreDeclaredAlone(t *testing.T) {
 		}
 	}
 }
+
+// A key the manifest knows and this build does not run yet refuses the
+// agent, naming the key, rather than running it without what it asks.
+func TestAPersistentKeyThisBuildDoesNotRunIsRefused(t *testing.T) {
+	for key, p := range map[string]*manifest.Persistent{"browser": {Browser: true}, "fetch": {Fetch: true}} {
+		err := CheckPersistentNames(p)
+		if err == nil || !strings.Contains(err.Error(), "capabilities.persistent."+key) || !strings.Contains(err.Error(), "update Agentry") {
+			t.Errorf("%s: err = %v, want the refusal", key, err)
+		}
+	}
+	if err := CheckPersistentNames(&manifest.Persistent{Web: true}); err != nil {
+		t.Errorf("a key this build runs: %v", err)
+	}
+}
