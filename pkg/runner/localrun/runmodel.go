@@ -3,6 +3,7 @@ package localrun
 import (
 	"errors"
 
+	"github.com/blaktron/agentry-cli/pkg/managed"
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
@@ -42,6 +43,16 @@ func ChooseRunModel(pol *policy.Policy, ref, adapterName string) (RunModel, erro
 	}
 	if name == "" {
 		name = adapter.DefaultFor(view)
+	}
+	// An organization's managed settings hold the model, what pays for it,
+	// the member's own subscriptions and endpoints, and the coding tools.
+	provider, model := sm.Provider, sm.Model
+	if provider == "" {
+		provider, model = view.Model.Provider, view.Model.Name
+	}
+	if r := managed.ModelRefusal(managed.RunModel{Provider: provider, Model: model, KeyKind: view.Model.APIKeyKind,
+		BaseURL: view.Model.BaseURL, Adapter: name}); r != "" {
+		return RunModel{}, engine.Classify(engine.ExitPolicy, errors.New(r))
 	}
 	return RunModel{Policy: view, Saved: sm, Adapter: name}, nil
 }
