@@ -102,6 +102,9 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	var runModel job.Model
 	modelKey := ""
 	if opts.runhostSchedule == "" {
+		if err := applyPresetModel(&opts, ref, managed.Current(), pol, cmd.ErrOrStderr()); err != nil {
+			return err
+		}
 		chosen, err := localrun.ChooseRunModel(pol, opts.model, "")
 		if err != nil {
 			return err

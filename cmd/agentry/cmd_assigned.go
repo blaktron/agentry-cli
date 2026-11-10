@@ -9,7 +9,9 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"slices"
 	"sort"
 	"strings"
@@ -26,6 +28,8 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
+	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 )
 
 // assignedInstall is an install made for an organization's managed settings.
@@ -120,6 +124,46 @@ func runSearchOrg(cmd *cobra.Command, query string, held managed.Effective) erro
 	return tw.Flush()
 }
 
+// assignmentOf is the assignment of the held documents that ref (ns/name,
+// any version) is a release of.
+func assignmentOf(ref string, held managed.Effective) (managed.Assigned, bool) {
+	r, err := manifest.ParseRef(ref)
+	if err != nil {
+		return managed.Assigned{}, false
+	}
+	return held.AssignmentOf(r.Namespace + "/" + r.Name)
+}
+
+// applyPresetModel runs a QuickAgent an organization assigned with a
+// preset model on the saved model of pol that is that model, when the
+// person named none (localrun.PresetModel): a --model a locked preset does
+// not allow is refused in the organization's name, and so is a preset
+// model the managed model rows refuse. A run of a folder, a runhost's own
+// run and a hosted run are left as they are.
+func applyPresetModel(opts *runOpts, ref string, held managed.Effective, pol *policy.Policy, w io.Writer) error {
+	if ref == "" || opts.local != "" || opts.installed || hostedFor(*opts) {
+		return nil
+	}
+	model, warning, err := localrun.PresetModel(pol, held, ref, opts.model, opts.adapterName)
+	var conflict *localrun.PresetModelConflict
+	if errors.As(err, &conflict) {
+		a, _ := assignmentOf(ref, held)
+		return presetRefusal(a, "--model "+opts.model, fmt.Sprintf("its model at %s's %s", conflict.Want.Provider, conflict.Want.Model))
+	}
+	var missing *localrun.PresetModelMissing
+	if errors.As(err, &missing) {
+		return engine.Classify(engine.ExitPolicy, &compile.PolicyRefusal{Reason: missing.Error() + ": save it with agentry models add"})
+	}
+	if err != nil {
+		return engine.Classify(engine.ExitPolicy, &compile.PolicyRefusal{Reason: err.Error()})
+	}
+	if warning != "" {
+		_, _ = fmt.Fprintf(w, "agentry: %s\n", warning)
+	}
+	opts.model = model
+	return nil
+}
+
 // presetRefusal is the refusal of a flag that conflicts with a locked preset.
 func presetRefusal(a managed.Assigned, flag, what string) error {
 	return engine.Classify(engine.ExitPolicy, &compile.PolicyRefusal{Reason: fmt.Sprintf(
@@ -133,16 +177,12 @@ func presetRefusal(a managed.Assigned, flag, what string) error {
 // refused. The result is only the options the run would otherwise take from
 // flags, so every other managed setting (a cap, a lock on where runs go, on
 // the model, on the install sources) still holds the run afterwards. The
-// preset's model is not applied here.
+// preset's model is applied once the policy is read (applyPresetModel).
 func applyPreset(opts *runOpts, ref string, held managed.Effective) error {
 	if ref == "" || opts.local != "" {
 		return nil
 	}
-	r, err := manifest.ParseRef(ref)
-	if err != nil {
-		return nil
-	}
-	a, ok := held.AssignmentOf(r.Namespace + "/" + r.Name)
+	a, ok := assignmentOf(ref, held)
 	if !ok || a.Preset == nil {
 		return nil
 	}

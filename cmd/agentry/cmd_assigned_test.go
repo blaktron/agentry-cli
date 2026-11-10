@@ -15,6 +15,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/installed"
 	"github.com/blaktron/agentry-cli/pkg/managed"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/trust"
 )
 
@@ -303,4 +304,103 @@ func TestAnAssignedReleaseIsAskedAboutEvenWithANarrowContract(t *testing.T) {
 	if err := confirmCapabilityChange(cmd, &bytes.Buffer{}, &st, key, "1.0.0", next, manifest.Capabilities{}, true); err != nil {
 		t.Fatalf("the person's own --yes: %v", err)
 	}
+}
+
+// presetModelPolicy is the default policy with a second saved model, GPT,
+// on openai's gpt-5.5.
+func presetModelPolicy(t *testing.T) (*policy.Policy, policy.SavedModel) {
+	t.Helper()
+	pol := policy.Default()
+	if err := pol.AddProvider("openai", policy.Provider{APIKeyKind: policy.KeyKindAPI, APIKeyEnv: "OPENAI_API_KEY", ProxyAllow: []string{"api.openai.com:443"}}); err != nil {
+		t.Fatal(err)
+	}
+	gpt, err := pol.AddModel(policy.SavedModel{Name: "GPT", Provider: "openai", Model: "gpt-5.5"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pol, gpt
+}
+
+// A preset's model is the run's when the person names none, found among
+// this computer's saved models; locked, a model the person names that is
+// not the preset's is refused in the organization's name.
+func TestAPresetModelIsTheRunsUnlessThePersonNamesOne(t *testing.T) {
+	pol, gpt := presetModelPolicy(t)
+	a := managedsettings.Assignment{Ref: "acme/demo", Version: "1.0.0", Mode: managedsettings.AssignRequired,
+		Preset: &managedsettings.Preset{Model: &managedsettings.Model{Provider: "openai", Model: "gpt-5.5"}}}
+	var warn bytes.Buffer
+	opts := runOpts{}
+	if err := applyPresetModel(&opts, "acme/demo@1.0.0", heldWith(t, a), pol, &warn); err != nil || opts.model != gpt.ID {
+		t.Fatalf("the preset's model was not the run's: %q, %v", opts.model, err)
+	}
+	own := runOpts{model: pol.DefaultModel().Name}
+	if err := applyPresetModel(&own, "acme/demo", heldWith(t, a), pol, &warn); err != nil || own.model != pol.DefaultModel().Name {
+		t.Fatalf("the person's --model did not stand: %q, %v", own.model, err)
+	}
+	other := runOpts{}
+	if err := applyPresetModel(&other, "acme/other", heldWith(t, a), pol, &warn); err != nil || other.model != "" {
+		t.Fatalf("a release with no preset: %q, %v", other.model, err)
+	}
+	local := runOpts{local: "."}
+	if err := applyPresetModel(&local, "", heldWith(t, a), pol, &warn); err != nil || local.model != "" {
+		t.Fatalf("a --local run: %q, %v", local.model, err)
+	}
+
+	a.PresetLocked = true
+	err := applyPresetModel(&runOpts{model: pol.DefaultModel().Name}, "acme/demo", heldWith(t, a), pol, &warn)
+	if err == nil || !strings.Contains(err.Error(), "--model") || !strings.Contains(err.Error(), "acme's managed settings") ||
+		!strings.Contains(err.Error(), "openai's gpt-5.5") || !strings.Contains(err.Error(), "(quickagents)") {
+		t.Fatalf("another model under a locked preset: %v", err)
+	}
+	wantClassified(t, err, 11)
+	same := runOpts{model: "GPT"}
+	if err := applyPresetModel(&same, "acme/demo", heldWith(t, a), pol, &warn); err != nil || same.model != "GPT" {
+		t.Fatalf("the preset's own model named under its lock: %q, %v", same.model, err)
+	}
+	if warn.Len() != 0 {
+		t.Fatalf("warned %q", warn.String())
+	}
+}
+
+// A preset never lifts the managed model rows: a preset model they refuse
+// is refused with their sentence, locked or not.
+func TestAPresetModelTheModelRowsRefuseIsRefused(t *testing.T) {
+	pol, _ := presetModelPolicy(t)
+	a := managedsettings.Assignment{Ref: "acme/demo", Version: "1.0.0", Mode: managedsettings.AssignRequired,
+		Preset: &managedsettings.Preset{Model: &managedsettings.Model{Provider: "openai", Model: "gpt-5.5"}}}
+	held := heldWith(t, a)
+	providers, err := json.Marshal([]string{"anthropic"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	held.Documents[0].Document.Settings[managedsettings.ModelProviders] = managedsettings.Setting{Value: providers, Locked: true}
+	opts := runOpts{}
+	err = applyPresetModel(&opts, "acme/demo", held, pol, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "model.providers allows anthropic") || opts.model != "" {
+		t.Fatalf("a preset model outside model.providers: %q, %v", opts.model, err)
+	}
+	wantClassified(t, err, 11)
+}
+
+// A preset model no saved model on this computer is refuses a locked
+// preset's run, naming the fix, and leaves a default's run on the person's
+// own choice with a warning.
+func TestAPresetModelWithNoSavedModel(t *testing.T) {
+	pol := policy.Default()
+	a := managedsettings.Assignment{Ref: "acme/demo", Version: "1.0.0", Mode: managedsettings.AssignRequired,
+		Preset: &managedsettings.Preset{Model: &managedsettings.Model{Provider: "openai", Model: "gpt-5.5"}}}
+	var warn bytes.Buffer
+	opts := runOpts{}
+	if err := applyPresetModel(&opts, "acme/demo", heldWith(t, a), pol, &warn); err != nil || opts.model != "" {
+		t.Fatalf("a default preset model with no saved model: %q, %v", opts.model, err)
+	}
+	if !strings.Contains(warn.String(), "acme's managed settings suggest openai's gpt-5.5 for acme/demo") {
+		t.Fatalf("warned %q", warn.String())
+	}
+	a.PresetLocked = true
+	err := applyPresetModel(&runOpts{}, "acme/demo", heldWith(t, a), pol, &warn)
+	if err == nil || !strings.Contains(err.Error(), "agentry models add") || !strings.Contains(err.Error(), "(quickagents)") {
+		t.Fatalf("a locked preset model with no saved model: %v", err)
+	}
+	wantClassified(t, err, 11)
 }
