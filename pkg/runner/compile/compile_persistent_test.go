@@ -336,10 +336,10 @@ func TestTheWebToolsReviewAndCalendarsCompose(t *testing.T) {
 		allowHosts         []string
 		lineHas, lineHasnt []string
 	}{
-		{[]string{"web", "review"}, true, true, false, nil, []string{"the web tools reach out", "asks for " + toolsrv.ReviewHost + ":443 alone"}, []string{"alone reach out"}},
+		{[]string{"web", "review"}, true, true, false, nil, []string{"the web tools reach out", "asks for TypeSafe's API (" + toolsrv.ReviewHost + ":443), or the registry when AI Review is paid with credits, alone"}, []string{"alone reach out"}},
 		{[]string{"web", "calendars"}, true, false, true, nil, []string{"fetch each feed from its own host (calendar.google.com)"}, []string{toolsrv.ReviewHost}},
-		{[]string{"review", "calendars"}, false, true, true, []string{toolsrv.ReviewHost + ":443", "calendar.google.com:443"}, []string{"reaches " + toolsrv.ReviewHost + ":443 and calendar.google.com:443 alone"}, nil},
-		{[]string{"web", "review", "calendars"}, true, true, true, nil, []string{"asks for " + toolsrv.ReviewHost + ":443 alone, and the calendar tools fetch"}, nil},
+		{[]string{"review", "calendars"}, false, true, true, []string{spec.PHReviewHost, "calendar.google.com:443"}, []string{"reaches TypeSafe's API (" + toolsrv.ReviewHost + ":443), or the registry when AI Review is paid with credits, and calendar.google.com:443 alone"}, nil},
+		{[]string{"web", "review", "calendars"}, true, true, true, nil, []string{"asks for TypeSafe's API (" + toolsrv.ReviewHost + ":443), or the registry when AI Review is paid with credits, alone, and the calendar tools fetch"}, nil},
 	} {
 		in := persistentInputs(t, &spec.AgentFiles{Share: true})
 		block := "    clock: true"

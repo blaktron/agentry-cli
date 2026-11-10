@@ -1,6 +1,7 @@
 // `agentry review <dir>`: the built-in Examiner, run on this computer over
-// a QuickAgent the person built, with their own TypeSafe key and the model
-// their runner policy names, for no credits. It is the Examiner's first
+// a QuickAgent the person built, with their own TypeSafe key (or AI Review
+// through the registry, where their organization's credits pay for it) and
+// the model their runner policy names. It is the Examiner's first
 // caller; the desktop's Review Your QuickAgents locally is the second, over
 // the same pkg/examiner.
 //
@@ -27,6 +28,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/internal/version"
 	"github.com/blaktron/agentry-cli/pkg/examiner"
+	"github.com/blaktron/agentry-cli/pkg/managed"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
@@ -74,12 +76,14 @@ func newReviewCmd() *cobra.Command {
 			"inventory checks, and the hidden-content and injection rules under the registry's current rule bundle.\n" +
 			"The registry is asked for its baseline publication policy and for its record of each MCP server the\n" +
 			"QuickAgent declares. Then the Examiner runs over a read-only copy of the files a submission would carry:\n" +
-			"it asks AI Review (TypeSafe's Jev) the six questions the registry asks, with your own key, and its model\n" +
+			"it asks AI Review (TypeSafe's Jev) the six questions the registry asks, and its model\n" +
 			"reads the files for secrets, for scripts that reach past the declared capabilities, and for text aimed\n" +
 			"at the review. AI Review reads every file before the model does, and withholds what it flags. Nothing of\n" +
 			"the QuickAgent runs.\n\n" +
-			"The QuickAgent's text goes to TypeSafe with your key and to the model your runner policy names, for no\n" +
-			"credits. A review needs your own TypeSafe Jev key ($TYPESAFE_API_KEY, or the policy's judge block).\n\n" +
+			"The QuickAgent's text goes to AI Review and to the model your runner policy names, whose use costs no\n" +
+			"credits. AI Review is asked with your own TypeSafe Jev key ($TYPESAFE_API_KEY, or the policy's judge\n" +
+			"block), or, where your organization's managed settings pay for it with their credits, through the\n" +
+			"registry for one credit a review. A review does not run without one of them.\n\n" +
 			"The report is written to DIR/report.json, with the run's receipts. Its findings come in three kinds:\n" +
 			"the registry's rules, AI Review, and the Examiner's own reading. The outcome the gate would be expected\n" +
 			"to reach is computed from the first two under the registry's public policy; the Examiner's reading is\n" +
@@ -120,7 +124,13 @@ func runReview(cmd *cobra.Command, args []string, o *reviewOpts) error {
 	if err != nil {
 		return engine.Classify(engine.ExitPolicy, err)
 	}
+	// Paid with credits, the operation is opened just before the run, once
+	// nothing else can refuse it, so a refusal spends no credit.
 	key, err := examiner.LocalReview(pol)
+	paidLater := managed.CreditsPaid(err) != nil
+	if paidLater {
+		err = nil
+	}
 	switch {
 	case errors.Is(err, examiner.ErrNoJevKey):
 		return engine.Classify(engine.ExitPolicy, fmt.Errorf(
@@ -158,10 +168,21 @@ func runReview(cmd *cobra.Command, args []string, o *reviewOpts) error {
 			return engine.Classify(engine.ExitUsage, fmt.Errorf("%s already holds a review or a run's receipts; name another folder with --out", outDir))
 		}
 	}
+	pay, endOps := creditsPay(errOut)
+	defer endOps()
+	if paidLater {
+		if key, err = examiner.LocalReviewPaid(cmd.Context(), pol, pay); err != nil {
+			return err
+		}
+	}
 	model := strings.TrimSpace(pol.Model.Provider + " " + pol.Model.Name)
+	reviewer := "AI Review (TypeSafe's Jev) with your key"
+	if key.Base != "" {
+		reviewer = "AI Review through the registry, on your organization's credits,"
+	}
 	_, _ = fmt.Fprintf(errOut, "The registry's rules ran here. The Examiner runs on this computer against the model your runner policy names\n"+
-		"(%s), for no credits, over a read-only copy of %d file(s). Their text goes to AI Review (TypeSafe's Jev) with your\n"+
-		"key and to that model. Nothing of the QuickAgent runs, and nothing is submitted.\n", model, prep.Files)
+		"(%s), over a read-only copy of %d file(s); the model's use costs no credits. Their text goes to %s\n"+
+		"and to that model. Nothing of the QuickAgent runs, and nothing is submitted.\n", model, prep.Files, reviewer)
 
 	budgets := o.over(localrun.Examiner().LocalBudgets(pol.Budgets))
 	stages := newStageLog(cmd)

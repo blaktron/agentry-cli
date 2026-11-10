@@ -54,6 +54,10 @@ type Review struct {
 	// Root is the folder ai_review's paths are beneath, a persistent
 	// agent's own root; empty is the inputs channel, a run's.
 	Root string `json:"root,omitempty"`
+	// Base is where Jev is asked: empty is TypeSafe's API; the registry's
+	// AI Review route for a run paid with credits, whose key is then the
+	// operation's token. The run sets it.
+	Base string `json:"base,omitempty"`
 }
 
 // EnvReviewJevKey carries the person's own TypeSafe key into this container
@@ -154,10 +158,10 @@ func (s *server) newReviewState() *reviewState {
 		_, _ = fmt.Fprintln(s.logw, "review: no AI Review key: every input file will be withheld")
 		return r
 	}
-	if j, err := webscan.NewJev(key, "", nil); err == nil {
+	if j, err := webscan.NewJev(key, s.spec.Review.Base, nil); err == nil {
 		r.scanner = j.WithMaxText(ReviewFileBytes)
 	}
-	if c, err := judge.New(judge.Config{APIKey: key}); err == nil {
+	if c, err := judge.New(judge.Config{APIKey: key, BaseURL: s.spec.Review.Base}); err == nil {
 		r.asker = c
 	}
 	return r

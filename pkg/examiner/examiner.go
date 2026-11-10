@@ -4,7 +4,8 @@
 // by the runner as the fourth built-in package, the one granted the review
 // grant. Its manifest declares no egress, no filesystem, no exec, no secret
 // and no server; its reach is ai_review and scanned reads of its inputs,
-// with the person's own TypeSafe key.
+// with the person's own TypeSafe key, or through the registry on an
+// operation paid with their organization's credits.
 //
 // Around the run this package holds the host's pre-step (Prepare: the
 // registry's own rules, its baseline policy and its record of each declared
@@ -39,7 +40,7 @@ const GuideName = "review-guide"
 const (
 	Namespace = "agentry"
 	Name      = "examiner"
-	Version   = "1.2.3"
+	Version   = "1.2.4"
 )
 
 // LocalTimeoutFloorSeconds is the least a review on this computer is given:

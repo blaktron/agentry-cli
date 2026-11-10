@@ -10,6 +10,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -455,5 +457,42 @@ func TestAReleaseDefaultViewUnderReview(t *testing.T) {
 	}
 	if want := []string{"site/index.html original", "report.docx original"}; !slices.Equal(views, want) {
 		t.Fatalf("ledger %q, want %q", views, want)
+	}
+}
+
+// TestAReviewWithABaseAsksJevThere: a run whose AI Review is asked through
+// the registry gives the tools server the registry's route as its base, and
+// both the scanner and the asker send there, with the key in the
+// environment as their credential.
+func TestAReviewWithABaseAsksJevThere(t *testing.T) {
+	const key = "agyr_operation-token-0123456789"
+	var mu sync.Mutex
+	var paths, auths []string
+	jev := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths, auths = append(paths, r.URL.Path), append(auths, r.Header.Get("Authorization"))
+		mu.Unlock()
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer jev.Close()
+	t.Setenv(EnvReviewJevKey, key)
+	spec := inputsSpec(t)
+	spec.Review = Review{Enabled: true, Ledger: filepath.Join(spec.OutDir, "receipts", "review.ndjson"), Base: jev.URL + "/api/v1/x/review"}
+	s := newTestServer(t, spec)
+	r := s.review()
+	if r.scanner == nil || r.asker == nil {
+		t.Fatal("no scanner or asker for a base the client accepts")
+	}
+	_, _, _ = r.asker.Ask(context.Background(), map[string]string{"content": "x"}, judge.ModelInputQuestions())
+	_ = r.scanner.Scan(context.Background(), webscan.SourcePage, "x")
+	mu.Lock()
+	defer mu.Unlock()
+	if len(paths) < 2 {
+		t.Fatalf("asked %v", paths)
+	}
+	for i := range paths {
+		if paths[i] != "/api/v1/x/review"+judge.Path || auths[i] != "Bearer "+key {
+			t.Fatalf("asked %s with %q", paths[i], auths[i])
+		}
 	}
 }

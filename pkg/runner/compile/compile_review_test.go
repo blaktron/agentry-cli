@@ -79,8 +79,8 @@ func TestTheReviewGrantCompilesItsContainer(t *testing.T) {
 		t.Fatal(err)
 	}
 	catalog, _ := os.ReadFile(filepath.Join(dir, "gateway", "catalog.yaml"))
-	if !strings.Contains(string(catalog), "allowHosts:\n") || !strings.Contains(string(catalog), toolsrv.ReviewHost+":443") ||
-		strings.Count(string(catalog), ":443") != 1 || strings.Contains(string(catalog), "disableNetwork") {
+	if !strings.Contains(string(catalog), "allowHosts:\n") || !strings.Contains(string(catalog), spec.PHReviewHost) ||
+		strings.Contains(string(catalog), ":443") || strings.Contains(string(catalog), "disableNetwork") {
 		t.Fatalf("the review's container:\n%s", catalog)
 	}
 	if !strings.Contains(string(catalog), "env: "+toolsrv.EnvReviewJevKey) || !strings.Contains(string(catalog), SecretKey(toolsrv.EnvReviewJevKey)) ||
@@ -91,7 +91,7 @@ func TestTheReviewGrantCompilesItsContainer(t *testing.T) {
 		slices.Contains(plan.Tools, toolsrv.ToolFetch) || slices.Contains(plan.Tools, toolsrv.ToolWebRead) {
 		t.Fatalf("caps %+v tools %v", plan.Capabilities, plan.Tools)
 	}
-	if !strings.Contains(plan.Enforcement["network"], toolsrv.ReviewHost+":443 alone") || !strings.Contains(plan.Enforcement["review"], "never the package's text") {
+	if !strings.Contains(plan.Enforcement["network"], toolsrv.ReviewHost+":443), or the registry when AI Review is paid with credits, alone") || !strings.Contains(plan.Enforcement["review"], "never the package's text") {
 		t.Fatalf("%v", plan.Enforcement)
 	}
 	if len(plan.Secrets) != 0 {
