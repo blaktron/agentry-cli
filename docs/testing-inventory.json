@@ -2721,7 +2721,8 @@
             "TestTheRepairTurnHasOnlyWhatTheFirstLeft",
             "TestANoTimeoutDraftKeepsItsRepairTurnAndCostLimits",
             "TestARepairKeepsTheFirstAnswerOnlyForARuleItPassed",
-            "TestADraftThatReadNoPageIsStillHeld"
+            "TestADraftThatReadNoPageIsStillHeld",
+            "TestAddUsageSumsEveryCount"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -7280,7 +7281,8 @@
           "tests": [
             "TestCollectorAssemblesStreamedFinalMessage",
             "TestCollectorNotesAnswerInReasoning",
-            "TestCollectorTextThenReasoningIsAnAnswer"
+            "TestCollectorTextThenReasoningIsAnAnswer",
+            "TestCollectorCountsLoopNudges"
           ],
           "fuzz": [],
           "benchmarks": [],

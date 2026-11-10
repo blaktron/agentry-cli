@@ -943,6 +943,8 @@ func TestLoadMovesAFormerDefaultHarnessImage(t *testing.T) {
 		{"docker-agent: { ref: " + previous + " }", DefaultHarnessImage},
 		{"docker-agent: { ref: ghcr.io/blaktron/agentry-docker-agent:1.150.0@sha256:27b0accfc83a74b03f30ac695a23878f71383106c9dec4d7808c72a4f13d5ee1 }", DefaultHarnessImage},
 		{"docker-agent: { ref: ghcr.io/blaktron/agentry-docker-agent-src:1.152.0-2026.10.27.6@sha256:c6a3c74513b9ff274b3826bd0d673f14879c8ce589f5c7a8b5a9731b02cb56da }", DefaultHarnessImage},
+		{"docker-agent: { ref: ghcr.io/blaktron/agentry-docker-agent-src:1.157.2-2026.11.05.9@sha256:cc321e773e6e24e3d61a5285f367ab2596a2e25601d1e93304d342b808465a2b }", DefaultHarnessImage},
+		{"docker-agent: { ref: ghcr.io/blaktron/agentry-docker-agent-src:1.159.0-2026.11.10.10@sha256:bd587858a505fcb7f3f7eeab254d12fad99596c73a5ce89dcd91932584922128 }", DefaultHarnessImage},
 		{"docker-agent: { ref: " + operators + " }", operators},
 	} {
 		path := filepath.Join(t.TempDir(), "policy.yaml")

@@ -1628,6 +1628,7 @@ type eventCollector struct {
 	onOutOfCredits func()
 
 	turns         int
+	loopNudges    int
 	inTok, outTok int64
 	costUSD       float64
 	// curText accumulates the streamed deltas of the assistant message in
@@ -1770,6 +1771,8 @@ func (c *eventCollector) record(ev adapter.Event) {
 		}
 	case adapter.EventReasoning:
 		c.reasoned = true
+	case adapter.EventLoopNudge:
+		c.loopNudges++
 	case adapter.EventAssistantText:
 		// Whitespace alone is not an answer.
 		if strings.TrimSpace(ev.Text) != "" {
@@ -1940,6 +1943,7 @@ func (c *eventCollector) usage() receipt.Usage {
 		TotalTokens:  c.totTok,
 		CostUSD:      c.ownCost(),
 		Turns:        c.turns,
+		LoopNudges:   c.loopNudges,
 	}, c.base)
 }
 

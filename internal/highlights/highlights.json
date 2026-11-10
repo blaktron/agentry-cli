@@ -1,6 +1,13 @@
 {
   "versions": [
     {
+      "version": "0.7.51",
+      "highlights": [
+        "A model that keeps repeating the same call is told to reach its goal another way, and the run goes on.",
+        "The receipt counts how many times that happened (usage.loopNudges)."
+      ]
+    },
+    {
       "version": "0.7.50",
       "highlights": [
         "A QuickAgent your organization assigns with a model runs on your saved model of it, unless you pick another.",
