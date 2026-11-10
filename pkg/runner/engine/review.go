@@ -13,6 +13,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -20,15 +22,49 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	"github.com/blaktron/agentry-cli/runnerimage/judge"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 	"github.com/blaktron/agentry-cli/runnerimage/webscan"
 )
 
-// ReviewRun is a review-grant run's key: the person's own TypeSafe key. It
-// reaches the tools container alone, through the run's gateway secrets
-// file, which is deleted at teardown; the receipts are masked of it.
+// ReviewRun is a review-grant run's key: the person's own TypeSafe key, or
+// the token of an operation paid with credits, with Base the registry's AI
+// Review route it is asked through. The key reaches the tools container
+// alone, through the run's gateway secrets file, which is deleted at
+// teardown; the receipts are masked of it.
 type ReviewRun struct {
 	JevKey string
+	Base   string
+}
+
+// reviewRelay is the review grant's one host as a relay target, for a plan
+// with the grant.
+func (rd *runDirs) reviewRelay(plan *spec.Plan) []string {
+	if !plan.Capabilities.ReviewTools {
+		return nil
+	}
+	return []string{rd.review.reviewHost()}
+}
+
+// reviewHost is the review grant's one host, host:port: TypeSafe's API, or
+// the host of Base.
+func (r *ReviewRun) reviewHost() string {
+	if r == nil || r.Base == "" {
+		return toolsrv.ReviewHost + ":443"
+	}
+	u, err := url.Parse(r.Base)
+	if err != nil || u.Host == "" {
+		return toolsrv.ReviewHost + ":443"
+	}
+	port := u.Port()
+	switch {
+	case port != "":
+	case u.Scheme == "http":
+		port = "80"
+	default:
+		port = "443"
+	}
+	return net.JoinHostPort(u.Hostname(), port)
 }
 
 // ReviewLedgerFile is the review ledger in the receipts directory.
@@ -49,6 +85,12 @@ func checkReview(p Params) error {
 		return nil
 	case p.Review == nil || p.Review.JevKey == "":
 		return Classify(ExitPolicy, ErrNoReviewKey)
+	}
+	// A base the tools container's own client would refuse (plain http
+	// past this machine, credentials in it) is refused before the run,
+	// rather than a run that withholds every file.
+	if err := judge.CheckBaseURL(p.Review.Base); err != nil {
+		return Classify(ExitPolicy, fmt.Errorf("AI Review cannot be asked at %s: %w", p.Review.Base, err))
 	}
 	return nil
 }
@@ -81,6 +123,7 @@ func grantReview(gatewayDir string, r *ReviewRun) error {
 		return errors.New("this run's rendered tools spec has no review grant; remove the plan directory to recompile it with this CLI")
 	}
 	ts.Review.Ledger = path.Join(spec.OutMount, "receipts", ReviewLedgerFile)
+	ts.Review.Base = r.Base
 	out, err := json.MarshalIndent(&ts, "", "  ")
 	if err != nil {
 		return err
@@ -165,17 +208,21 @@ func reviewRecord(receiptsDir string, r *ReviewRun) *receipt.Review {
 
 // reviewLine is the receipt's enforcement line for the counts and the
 // network, which only the per-run docker filter holds at the daemon too.
-func reviewLine(rec *receipt.Review) string {
-	line := fmt.Sprintf("AI Review read every input file read_input returned before the model, with the person's own TypeSafe key: %d read, %d passed, %d withheld as flagged, %d withheld as not scanned; %d refused before anything was scanned; "+
+func reviewLine(rec *receipt.Review, r *ReviewRun) string {
+	with := "with the person's own TypeSafe key"
+	if r != nil && r.Base != "" {
+		with = "through the registry, on an operation paid with credits"
+	}
+	line := fmt.Sprintf("AI Review read every input file read_input returned before the model, %s: %d read, %d passed, %d withheld as flagged, %d withheld as not scanned; %d refused before anything was scanned; "+
 		"%d rubric review(s) answered with %d finding(s) at score 2 or more, %d did not finish",
-		rec.Read, rec.Passed, rec.Withheld, rec.NotScanned, rec.Refused, rec.Reviews, rec.Findings, rec.Failed)
+		with, rec.Read, rec.Passed, rec.Withheld, rec.NotScanned, rec.Refused, rec.Reviews, rec.Findings, rec.Failed)
 	if rec.Model != "" {
 		line += "; judge " + rec.Model
 	}
 	if rec.RubricHash != "" {
 		line += ", rubric " + rec.RubricHash
 	}
-	line += "; each file and verdict is in receipts/" + ReviewLedgerFile + " and gateway.log. The tools container reaches " + toolsrv.ReviewHost + ":443 alone, through the gateway's proxy"
+	line += "; each file and verdict is in receipts/" + ReviewLedgerFile + " and gateway.log. The tools container reaches " + r.reviewHost() + " alone, through the gateway's proxy"
 	if filterSupported {
 		return line + ", and the run's docker filter admits that proxy toward no other host"
 	}

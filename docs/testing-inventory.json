@@ -581,7 +581,8 @@
             "TestAMembersOwnKeySetsACreditsDefaultAside",
             "TestAVoicesPagesAreReadThroughAnOperationOnTheOrganizationsCredits",
             "TestAKnowledgeBuildWithNoSearchSpendsNoCredit",
-            "TestAKnowledgeBuildSearchingOnTheOrganizationsCreditsOpensOneOperation"
+            "TestAKnowledgeBuildSearchingOnTheOrganizationsCreditsOpensOneOperation",
+            "TestAReviewOnTheOrganizationsCreditsAsksJevThroughTheRegistry"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -7252,7 +7253,10 @@
           "tests": [
             "TestAReviewsKeyReachesTheToolsContainerAlone",
             "TestAReviewPlanRunsOnlyWithItsKey",
-            "TestTheReviewLedgerIsStampedAndCounted"
+            "TestTheReviewLedgerIsStampedAndCounted",
+            "TestAReviewPaidWithCreditsReachesTheRegistryAlone",
+            "TestTheReviewHostOfABase",
+            "TestAReviewBaseItsClientWouldRefuseIsRefusedBeforeTheRun"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -12503,12 +12507,14 @@
             "TestAIReviewRefusesWhatItCannotAnswerFor",
             "TestReviewAnswersAreScrubbedOfTheKey",
             "TestReadInputViewsUnderReview",
-            "TestAReleaseDefaultViewUnderReview"
+            "TestAReleaseDefaultViewUnderReview",
+            "TestAReviewWithABaseAsksJevThere"
           ],
           "fuzz": [],
           "benchmarks": [],
           "fixtureEntryPoint": false,
           "dependencyHints": [
+            "HTTP transport",
             "source/file contract"
           ]
         },

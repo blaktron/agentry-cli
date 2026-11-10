@@ -9,6 +9,7 @@ import (
 
 	"github.com/blaktron/agentry/pkg/managedsettings"
 
+	"github.com/blaktron/agentry-cli/pkg/examiner"
 	"github.com/blaktron/agentry-cli/pkg/managed"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	voicebuild "github.com/blaktron/agentry-cli/pkg/voice/build"
@@ -148,5 +149,24 @@ func TestAKnowledgeBuildSearchingOnTheOrganizationsCreditsOpensOneOperation(t *t
 	}
 	if len(fr.reviewOpened) != 1 || fr.reviewOpened[0] != managed.PurposeKnowledge || !strings.Contains(errOut.String(), "spent whether or not the work finishes") {
 		t.Fatalf("opened %v, said %q", fr.reviewOpened, errOut.String())
+	}
+}
+
+func TestAReviewOnTheOrganizationsCreditsAsksJevThroughTheRegistry(t *testing.T) {
+	fr := creditsRegistry(t, map[string]managedsettings.Setting{managedsettings.ReviewSource: sourceRow(t, managedsettings.SourceAgentryCredits, true)})
+	pay, end := creditsPay(&bytes.Buffer{})
+	r, err := examiner.LocalReviewPaid(context.Background(), &policy.Policy{}, pay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.JevKey != "agyr_op1" || r.Base != fr.url()+"/api/v1/x/review" || len(fr.reviewOpened) != 1 || fr.reviewOpened[0] != managed.PurposeReview {
+		t.Fatalf("review run %+v, opened %v", r, fr.reviewOpened)
+	}
+	end()
+	if len(fr.reviewEnded) != 1 {
+		t.Fatalf("ended %v", fr.reviewEnded)
+	}
+	if _, err := examiner.LocalReview(&policy.Policy{}); err == nil || !strings.Contains(err.Error(), "pay for AI Review with its credits (review.source), and this review on this computer cannot pay with them") {
+		t.Fatalf("no payer: %v", err)
 	}
 }

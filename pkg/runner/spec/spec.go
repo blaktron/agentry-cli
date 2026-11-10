@@ -160,6 +160,10 @@ const (
 	// the browser server's one allowHosts entry and its
 	// --proxy-server, known only to the run.
 	PHBrowseProxy = "@@RUN_BROWSE_PROXY@@"
+	// PHReviewHost is the review grant's one host, host:port: TypeSafe's
+	// API, or the registry when the run asks AI Review through an operation
+	// paid with credits, which only the run knows.
+	PHReviewHost = "@@RUN_REVIEW_HOST@@"
 )
 
 // PHTargetHost is a target host's relay target, address:port, by its question's
