@@ -108,6 +108,12 @@ type Spec struct {
 	// scratch folder it is a grant of the runner, never a line of the
 	// contract.
 	Checklist string `json:"checklist,omitempty"`
+	// ChecklistCopy is the container path, under OutDir, where the checklist
+	// tool copies each list it saves or reads back: stamped by the engine
+	// into a release's one-shot run alone, never into the compiled plan. The
+	// runner reads the run's steps there once the harness has ended, since
+	// the scratch folder is gone with the tools container.
+	ChecklistCopy string `json:"checklistCopy,omitempty"`
 	// TmpfsBytes, when set, is the size the run's docker filter caps the
 	// tools container's /tmp and ScratchDir at, each a tmpfs (Linux; the
 	// filter runs nowhere else). The engine stamps it into the run's own

@@ -50,6 +50,11 @@ func isolateEnv(t *testing.T) {
 // back to os.Stdin, which is not a TTY under `go test`).
 func runCLI(t *testing.T, stdin io.Reader, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
+	// The global flags (--json, --registry, --quiet, --verbose) outlive the
+	// command that parsed them; a test that drives a subcommand directly
+	// afterwards would inherit them, so they go back as they were.
+	saved := flags
+	t.Cleanup(func() { flags = saved })
 	root := newRootCmd()
 	var out, errOut bytes.Buffer
 	root.SetOut(&out)

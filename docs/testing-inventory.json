@@ -4181,6 +4181,20 @@
           "dependencyHints": []
         },
         {
+          "path": "pkg/runner/adapter/checkpoint_test.go",
+          "tests": [
+            "TestTheCheckpointHookOnlyForTheDefaultHarness",
+            "TestTheCheckpointHookPrintsItsText"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "child process",
+            "explicit skip"
+          ]
+        },
+        {
           "path": "pkg/runner/adapter/claude_signin_test.go",
           "tests": [
             "TestAClaudeSignInRunIsHeldToClaudeCodesOwnSignIn",
@@ -6998,6 +7012,31 @@
           ]
         },
         {
+          "path": "pkg/runner/engine/finishcheck_test.go",
+          "tests": [
+            "TestARunThatAnswersWithOpenStepsIsAskedAboutThem",
+            "TestTheThirdEndingStands",
+            "TestARunIsNotAskedWhenNothingIsOpenOrItCannotBe",
+            "TestAFinishCheckCountsInTheTurnBudget",
+            "TestAFinishCheckCountsInTheCostBudget",
+            "TestAChecklistCopyIsReadWithinAListsBounds",
+            "TestOnlyAReleasesOneShotRunIsAsked",
+            "TestAnEarlierRunsChecklistIsNotThisOnes",
+            "TestAFinishCheckCountsTheConversationsCostOnce",
+            "TestTheCostBudgetCountsTheConversationsCostOnce",
+            "TestTheFinishCheckMessage",
+            "TestAChecklistCopyThatIsNoFileIsNone"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "docker interface (real or fake)",
+            "source/file contract",
+            "explicit skip"
+          ]
+        },
+        {
           "path": "pkg/runner/engine/grantpaths_test.go",
           "tests": [
             "TestMakeGrantedPaths"
@@ -7142,7 +7181,8 @@
             "TestTheConversationStoreIsTheRunsAndGoesWithIt",
             "TestTheConversationStoreGoesWithAFailedRun",
             "TestTheTimeoutRunsFromTheFirstStartAcrossResumes",
-            "TestTheCostBudgetHoldsAcrossResumes"
+            "TestTheCostBudgetHoldsAcrossResumes",
+            "TestAResumedConversationsCostIsCountedOnce"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -11875,13 +11915,17 @@
             "TestAChecklistWrittenByHandReadsAsFarAsItKeepsTheShape",
             "TestTheChecklistNeverFollowsALinkOut",
             "TestTheChecklistIsWrittenOnlyAsAFile",
-            "TestAPersistentAgentKeepsItsChecklistInItsDataFolder"
+            "TestAPersistentAgentKeepsItsChecklistInItsDataFolder",
+            "TestTheRunnerGetsACopyOfEachListSavedOrRead",
+            "TestTheChecklistCopyStaysUnderTheOutputFolder",
+            "TestTheChecklistCopyIsWrittenOnlyAsAFile"
           ],
           "fuzz": [],
           "benchmarks": [],
           "fixtureEntryPoint": false,
           "dependencyHints": [
-            "source/file contract"
+            "source/file contract",
+            "explicit skip"
           ]
         },
         {

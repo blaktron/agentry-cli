@@ -149,6 +149,33 @@ type Envelope struct {
 	// and the ids of the settings that applied. A setting's value is never
 	// recorded. Absent when none applied.
 	Managed []Managed `json:"managed,omitempty"`
+	// Checklist is a release's one-shot run's checklist as the agent kept
+	// it, and the finish checks the runner made: each time the harness
+	// answered with steps still open and was started again on its
+	// conversation to ask about them. It records the agent's own list, not
+	// a check of the work. Absent for a run that keeps no checklist.
+	Checklist *Checklist `json:"checklist,omitempty"`
+}
+
+// Checklist is the envelope's record of a run's checklist at its end.
+type Checklist struct {
+	// Ending is "all steps done" (every step the agent listed is marked done
+	// or dropped), "no checklist" (the agent kept none), or "finished with N
+	// open steps: …" naming them.
+	Ending string `json:"ending"`
+	// Steps counts the list's steps; Open names those still pending or in
+	// progress.
+	Steps int      `json:"steps"`
+	Open  []string `json:"open,omitempty"`
+	// FinishChecks are the runner's asks, in order, at most two.
+	FinishChecks []FinishCheck `json:"finishChecks,omitempty"`
+}
+
+// FinishCheck is one start of the harness on its conversation to ask about
+// open steps: how many were open, and the message it was given.
+type FinishCheck struct {
+	Open    int    `json:"open"`
+	Message string `json:"message"`
 }
 
 // Managed is one organization's managed settings document as a receipt
