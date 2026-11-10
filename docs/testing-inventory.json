@@ -3334,6 +3334,18 @@
       "disposition": "retain",
       "files": [
         {
+          "path": "pkg/managed/agents_test.go",
+          "tests": [
+            "TestAnAgentConfigurationRowReadsAsAField",
+            "TestACodingToolsModelLockHoldsItsTool",
+            "TestTheUnreviewedRowRefusesOnlyALock"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "pkg/managed/credits_test.go",
           "tests": [
             "TestAnOperationIsOpenedWithTheSignInAndEndedOnce",
@@ -9139,6 +9151,19 @@
           "dependencyHints": [
             "source/file contract"
           ]
+        },
+        {
+          "path": "pkg/runner/persistent/managedconfig_test.go",
+          "tests": [
+            "TestManagedSettingsConfigureTheAssistant",
+            "TestAChangeToALockedFieldIsRefused",
+            "TestManagedServersAndPacksAreOnTheRoster",
+            "TestAManagedOAuthServerSaysItNeedsASignIn"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
         },
         {
           "path": "pkg/runner/persistent/meetings_test.go",
