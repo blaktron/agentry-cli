@@ -328,6 +328,8 @@ func conformEvents(t *testing.T, ad Adapter) {
 		ToolResults   int  `json:"toolResults"`
 		AssistantText bool `json:"assistantText"`
 		Usage         bool `json:"usage"`
+		// LoopNudges counts the harness's loop nudges in the recording.
+		LoopNudges int `json:"loopNudges"`
 	}
 	eb, err := os.ReadFile(filepath.Join(dir, "expect.json")) //nolint:gosec // testdata
 	if err != nil {
@@ -336,7 +338,7 @@ func conformEvents(t *testing.T, ad Adapter) {
 	if err := json.Unmarshal(eb, &expect); err != nil {
 		t.Fatal(err)
 	}
-	var toolCalls, toolResults int
+	var toolCalls, toolResults, nudges int
 	var text, usage bool
 	// calls is each call's tool by its id: a result must answer a call
 	// already seen, and name the same tool when it names one.
@@ -366,14 +368,16 @@ func conformEvents(t *testing.T, ad Adapter) {
 				text = true
 			case EventUsage:
 				usage = true
+			case EventLoopNudge:
+				nudges++
 			}
 			if len(ev.Raw) == 0 && len(bytes.TrimSpace(line)) > 0 {
 				t.Errorf("event %s dropped its raw line", ev.Kind)
 			}
 		}
 	}
-	if toolCalls != expect.ToolCalls || toolResults != expect.ToolResults || text != expect.AssistantText || usage != expect.Usage {
-		t.Errorf("events: toolCalls=%d toolResults=%d text=%v usage=%v, want %+v", toolCalls, toolResults, text, usage, expect)
+	if toolCalls != expect.ToolCalls || toolResults != expect.ToolResults || text != expect.AssistantText || usage != expect.Usage || nudges != expect.LoopNudges {
+		t.Errorf("events: toolCalls=%d toolResults=%d text=%v usage=%v loopNudges=%d, want %+v", toolCalls, toolResults, text, usage, nudges, expect)
 	}
 }
 

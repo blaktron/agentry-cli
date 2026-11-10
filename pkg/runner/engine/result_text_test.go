@@ -3,6 +3,7 @@ package engine
 import (
 	"encoding/json"
 	"io"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -189,7 +190,7 @@ func TestCollectorCountsLoopNudges(t *testing.T) {
 		t.Fatal(err)
 	}
 	nudge := func(n int) string {
-		return `{"type":"warning","message":"Loop nudge ` + string(rune('0'+n)) + `: 5 consecutive identical calls to read_file; the agent was told to reach its goal another way."}`
+		return `{"type":"warning","message":"Loop nudge ` + strconv.Itoa(n) + `: 5 consecutive identical calls to read_file; the agent was told to reach its goal another way."}`
 	}
 	c := &eventCollector{adapter: ad, events: io.Discard, base: receipt.Usage{LoopNudges: 1, Turns: 5}}
 	c.consume(strings.NewReader(strings.Join([]string{
