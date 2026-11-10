@@ -90,6 +90,15 @@ assistant` lists what it has:
   cannot read (no signatures on your computer, or past its size limits) is
   read unchecked, and the segment's receipts say so. You can switch the share
   off.
+- **The web tools**, `web_search` and `web_read`, off until you switch them
+  on (in Agentry Desktop, the Web search and pages card in its Configuration;
+  in a terminal, `agentry agent grant assistant web on`), which asks you to
+  agree first. AI Review reads every search result and page with your own
+  TypeSafe key before the Assistant sees it, and withholds one it flags; the
+  start says so when no key is set. Their container also holds your share,
+  the Assistant's own files and memory and its knowledge packs, so what it
+  reads there could be sent in an address it opens: that is why they are off
+  until you choose them.
 - **MCP servers it comes with**, each an entry of its roster that you switch
   on and off: Wikipedia (`@cyanheads/wikipedia-mcp-server`, English
   Wikipedia alone), on until you switch it off, and web search with Brave

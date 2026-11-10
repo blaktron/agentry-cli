@@ -2,6 +2,7 @@ package persistent
 
 import (
 	"context"
+	"errors"
 	"maps"
 	"os"
 	"path/filepath"
@@ -363,5 +364,62 @@ func TestTheReviewLineSaysWhatItsContainerReaches(t *testing.T) {
 	}
 	if _, ok := BuildRoster(beside, Config{Enabled: true}, nil).Entry(EntryWeb); !ok {
 		t.Error("the agent beside review has no web entry")
+	}
+}
+
+// TestABuiltinsWebToolsStartOffAndAskWhenSwitchedOn: the Assistant declares
+// the web tools, and they start off, so an update that brings them asks the
+// person nothing and gives the agent nothing. Switching them on asks for
+// agreement to their sentence, and once agreed the segment has them. A
+// published agent's are on, agreed at its install.
+func TestABuiltinsWebToolsStartOffAndAskWhenSwitchedOn(t *testing.T) {
+	home := shortHome(t)
+	t.Setenv("HOME", t.TempDir())
+	openers := Openers{Web: func(context.Context) (*engine.WebRun, error) {
+		return &engine.WebRun{Scan: "jev", JevKey: "jev-test"}, nil
+	}}
+	a := assistantAgent(t)
+	c := Config{Enabled: true}
+	e, ok := BuildRoster(a, c, nil).Entry(EntryWeb)
+	if !ok || e.On || e.State != StateOff || e.GrantedBy != GrantedByBuiltin || e.Line == "" {
+		t.Fatalf("the Assistant's web entry: %+v (%v)", e, ok)
+	}
+	if un := Unconsented(BuildRoster(a, c, nil), c); slices.ContainsFunc(un, func(e RosterEntry) bool { return e.ID == EntryWeb }) {
+		t.Fatal("a web entry the person never switched on asks for agreement")
+	}
+	g, _, done, err := ApplyWith(context.Background(), home, a, c, BuildRoster(a, c, nil), openers, nil, fakeSecrets{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done()
+	if g.Web != nil {
+		t.Fatalf("given the web tools before they were switched on: %+v", g.Web)
+	}
+
+	on := Change{Switch: &Switch{ID: EntryWeb, On: true}}
+	var ce *ConsentError
+	if _, err := ApplyChange(home, a, &c, on); !errors.As(err, &ce) || !slices.ContainsFunc(ce.Entries, func(e RosterEntry) bool { return e.ID == EntryWeb }) {
+		t.Fatalf("switching the web tools on without agreement: %v", err)
+	}
+	on.Consent = true
+	if _, err := ApplyChange(home, a, &c, on); err != nil {
+		t.Fatal(err)
+	}
+	r := BuildRoster(a, c, nil)
+	if e, _ := r.Entry(EntryWeb); !e.On {
+		t.Fatalf("switched on and agreed: %+v", e)
+	}
+	g, _, done, err = ApplyWith(context.Background(), home, a, c, r, openers, nil, fakeSecrets{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done()
+	if g.Web == nil {
+		t.Fatal("switched on and agreed, the segment has no web tools")
+	}
+
+	p := installPublished(t, home, "acme", "webby", "1.0.0", publishedRelease{extra: "capabilities:\n  persistent:\n    web: true\n"})
+	if e, ok := BuildRoster(p, Config{Enabled: true}, nil).Entry(EntryWeb); !ok || !e.On || e.GrantedBy != GrantedByRelease {
+		t.Fatalf("a published agent's web entry: %+v (%v)", e, ok)
 	}
 }

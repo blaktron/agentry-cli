@@ -94,7 +94,9 @@ func reachLines(a Agent, held managed.Effective) (web, review string) {
 }
 
 // reachEntries are the web tools' and the review grant's entries, for an
-// agent that declares them: on, granted by what declares them.
+// agent that declares them, granted by what declares them. BuildRoster
+// gives a published agent's on, agreed at its install with the rest of its
+// release, and a built-in's off (reachDefault).
 func reachEntries(a Agent) []RosterEntry {
 	web, review := reachLines(a, currentManaged())
 	var out []RosterEntry
@@ -106,6 +108,14 @@ func reachEntries(a Agent) []RosterEntry {
 	}
 	return out
 }
+
+// reachDefault is whether an agent's web tools and review grant are on
+// before the person switches them. A published agent's are: the person
+// agreed to its release, these keys included, when they installed it. A
+// built-in's are not: Agentry gives them to an agent the person already
+// has, so reaching the web from a container that holds their share is
+// theirs to choose, and an update asks them nothing.
+func reachDefault(a Agent) bool { return a.Published() }
 
 // LocalWebOpener and LocalReviewOpener read the keys from the runner
 // policy as work on this computer does: the person's TypeSafe key, and for

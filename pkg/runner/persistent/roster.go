@@ -263,7 +263,7 @@ func BuildRosterUnder(a Agent, c Config, applied *Applied, malwareCheck bool) Ro
 		add(e, true)
 	}
 	for _, e := range reachEntries(a) {
-		add(e, true)
+		add(e, reachDefault(a))
 	}
 	if e, ok := voiceEntry(a); ok {
 		add(e, false)
