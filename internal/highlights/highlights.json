@@ -1,6 +1,14 @@
 {
   "versions": [
     {
+      "version": "0.7.46",
+      "highlights": [
+        "Your organization's managed settings can now choose or limit the model provider, the model and the coding tools.",
+        "agentry setup fills in the model your organization sets, and skips that step when the organization locks it.",
+        "An AI Review or web search key your organization provides is kept in your keychain and never shown."
+      ]
+    },
+    {
       "version": "0.7.45",
       "highlights": [
         "When a run answers with steps of its checklist still open, Agentry asks it to finish them or say why not.",
