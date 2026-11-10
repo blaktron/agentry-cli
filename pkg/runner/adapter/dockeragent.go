@@ -358,6 +358,12 @@ type contextLimitsYAML struct {
 	CompactionThreshold  *float64 `yaml:"compaction_threshold,omitempty"`
 }
 
+// hostedCompaction is the share of the window at which docker-agent compacts
+// a conversation on a hosted model, against its own 0.9: answers worsen
+// before the window is full, and the summary and the newest turns it keeps
+// need room beside it.
+const hostedCompaction = 0.8
+
 // ownEndpointCompaction is the share of the window at which docker-agent
 // compacts a conversation on an endpoint of the person's own, against its
 // own 0.9: a model's answers worsen well before its window is full, and a
@@ -374,13 +380,16 @@ const unknownWindowOldResultTokens = 64 << 10
 // run's page (PageBudget), so only a result the tools server did not page
 // is ever cut. On an endpoint of the person's own the older tool results
 // give way to a placeholder once the newer ones pass half the window, and
-// the conversation is compacted at ownEndpointCompaction. The older results
-// are replaced only in the request, never in the stored conversation, and a
-// budget of half the window moves seldom, so a local server's prompt cache
-// is seldom re-read from the start.
+// the conversation is compacted at ownEndpointCompaction; on a hosted model
+// it is compacted at hostedCompaction. The older results are replaced only
+// in the request, never in the stored conversation, and a budget of half
+// the window moves seldom, so a local server's prompt cache is seldom
+// re-read from the start.
 func contextLimits(name string, m policy.Model) contextLimitsYAML {
 	l := contextLimitsYAML{MaxToolResultTokens: 2 * PageBudget(name, m).Bytes / bytesPerToken}
 	if !m.OwnEndpoint() {
+		threshold := hostedCompaction
+		l.CompactionThreshold = &threshold
 		return l
 	}
 	l.MaxOldToolCallTokens = unknownWindowOldResultTokens
@@ -396,6 +405,10 @@ func contextLimits(name string, m policy.Model) contextLimitsYAML {
 type hooksYAML struct {
 	PreToolUse            []hookMatcherYAML `yaml:"pre_tool_use,omitempty"`
 	ToolResponseTransform []hookMatcherYAML `yaml:"tool_response_transform,omitempty"`
+	// PreCompact runs before every compaction; what a command hook prints
+	// is appended to the prompt the summary is written from
+	// (checkpointHook).
+	PreCompact []hookYAML `yaml:"pre_compact,omitempty"`
 }
 
 type hookMatcherYAML struct {
@@ -580,7 +593,7 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 					AllowPrivateIPs: true,
 				}},
 				RedactSecrets:   &redactFlagOff,
-				Hooks:           redactSecretsHooks(in.UnchangedTools...),
+				Hooks:           withCheckpoint(redactSecretsHooks(in.UnchangedTools...), in.HarnessImage),
 				ColdCacheClear:  coldCacheClear(in.Model.Provider, in.BrowserTools),
 				CompactionNotes: compactionNotes(in.Persistent, in.HarnessImage),
 				ContextLimits:   contextLimits(d.Name(), in.Model),
@@ -915,4 +928,32 @@ func rawCopy(b []byte) json.RawMessage {
 	out := make([]byte, len(b))
 	copy(out, b)
 	return out
+}
+
+// checkpointText is what a compaction summary must keep, appended to the
+// harness's own summary prompt, which asks only for what was done, what is
+// being done, the files and what comes next. It names no folder, so a run's
+// and a persistent agent's configs carry the same text; compaction_notes
+// ends the summary with where the checklist is. It holds no single quote,
+// since checkpointHook quotes it for sh.
+const checkpointText = "Keep, under these headings: the task, in the words the person used; " +
+	"the checklist, every step with its status, copied from the latest checklist result above; " +
+	"done, in progress, and blocked with why; the next step; " +
+	"the files, paths and identifiers in play; the constraints the task set and the approaches that failed."
+
+// checkpointHook is the pre_compact hook that appends checkpointText: a
+// command hook whose text is in the command itself, since the harness
+// container holds no file of the runner's to read.
+func checkpointHook() hookYAML {
+	return hookYAML{Type: "command", Command: "printf '%s\\n' '" + checkpointText + "'"}
+}
+
+// withCheckpoint adds the checkpoint hook to h for the default harness
+// build, as compactionNotes adds its key, so a policy that pins another
+// image runs the config it was checked with.
+func withCheckpoint(h *hooksYAML, harnessImage string) *hooksYAML {
+	if harnessImage == policy.DefaultHarnessImage {
+		h.PreCompact = []hookYAML{checkpointHook()}
+	}
+	return h
 }

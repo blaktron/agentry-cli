@@ -4,7 +4,8 @@
       "version": "0.7.45",
       "highlights": [
         "When a run answers with steps of its checklist still open, Agentry asks it to finish them or say why not.",
-        "Agentry asks at most twice, and the run's result records how its checklist ended."
+        "Agentry asks at most twice, and the run's result records how its checklist ended.",
+        "When a long run summarizes earlier work, the summary keeps the task, the checklist and the next step."
       ]
     },
     {
