@@ -1217,9 +1217,15 @@ func PersistentMailProvider(name string) (string, bool) {
 	return "", false
 }
 
+// notRunYet are the capabilities.persistent keys the manifest knows and
+// this build does not run: an agent that declares one is refused rather
+// than run without it.
+var notRunYet = []string{"browser", "fetch"}
+
 // CheckPersistentNames refuses a capabilities.persistent block that names an
-// image server or a mail provider this build does not carry: a release
-// written for a newer Agentry is refused, never run without what it asks.
+// image server or a mail provider this build does not carry, or a key it
+// does not run yet: a release written for a newer Agentry is refused, never
+// run without what it asks.
 func CheckPersistentNames(p *manifest.Persistent) error {
 	if p == nil {
 		return nil
@@ -1232,6 +1238,11 @@ func CheckPersistentNames(p *manifest.Persistent) error {
 	for _, n := range p.Mail {
 		if _, ok := PersistentMailProvider(n); !ok {
 			return fmt.Errorf("it asks for mail at %q, which this version of Agentry does not reach: update Agentry", n)
+		}
+	}
+	for _, k := range notRunYet {
+		if p.Declares(k) {
+			return fmt.Errorf("it asks for capabilities.persistent.%s, which this version of Agentry does not run yet: update Agentry", k)
 		}
 	}
 	return checkNetworkShapes(p)

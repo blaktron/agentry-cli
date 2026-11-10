@@ -8315,7 +8315,8 @@
           "path": "pkg/runner/localrun/persistent_names_test.go",
           "tests": [
             "TestEveryPersistentNameMaps",
-            "TestTheWebToolsAndReviewAreDeclaredAlone"
+            "TestTheWebToolsAndReviewAreDeclaredAlone",
+            "TestAPersistentKeyThisBuildDoesNotRunIsRefused"
           ],
           "fuzz": [],
           "benchmarks": [],
