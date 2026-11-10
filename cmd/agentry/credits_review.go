@@ -19,7 +19,7 @@ import (
 func creditsPay(errOut io.Writer) (pay drafter.Pay, end func()) {
 	var ops []*managed.Operation
 	pay = func(ctx context.Context, reg, purpose string) (*managed.Operation, error) {
-		reg = strings.TrimRight(cmpReg(reg), "/")
+		reg = strings.TrimRight(operationRegistry(reg), "/")
 		signIn, err := credentialFor(reg)
 		if err != nil {
 			return nil, err
@@ -33,7 +33,7 @@ func creditsPay(errOut io.Writer) (pay drafter.Pay, end func()) {
 		if purpose == managed.PurposeSearch {
 			what = "Web search, with AI Review reading every result,"
 		}
-		_, _ = fmt.Fprintf(errOut, "%s is paid with your organization's credits: an operation on %s, %s.\n", what, reg, creditsWord(op.Credits))
+		_, _ = fmt.Fprintf(errOut, "%s is paid with your organization's credits: an operation on %s, %s, spent whether or not the work finishes.\n", what, reg, creditsWord(op.Credits))
 		return op, nil
 	}
 	end = func() {
@@ -50,9 +50,9 @@ func creditsPay(errOut io.Writer) (pay drafter.Pay, end func()) {
 	return pay, end
 }
 
-// cmpReg is the registry an operation is opened on: the managed
+// operationRegistry is the registry an operation is opened on: the managed
 // settings' own, else this client's.
-func cmpReg(reg string) string {
+func operationRegistry(reg string) string {
 	if reg != "" {
 		return reg
 	}

@@ -102,13 +102,14 @@ func newKnowledgeCmd() *cobra.Command {
 			"stays on this computer. Before the Creator reads them, the documents are decoded on this machine, at most\n" +
 			"2,000 files and 30 minutes, and each document's decoded text is cut to 10 MiB.\n" +
 			"`create` and `add` run the built-in Knowledge Creator on this machine, against the model your runner\n" +
-			"policy names: it costs no credits, and neither its documents nor its pack are scanned. A build has 60 minutes, or\n" +
+			"policy names: the model's use costs no credits, and neither its documents nor its pack are scanned. A build has 60 minutes, or\n" +
 			"your policy's run timeout when that is longer (--timeout sets it for one build), and no token limit.\n" +
 			"A build takes documents, a brief (--brief: what the pack should cover and for whom), or both. Specific\n" +
 			"documents make the best knowledge. Without them the Creator researches the web and its own knowledge,\n" +
 			"which can be wrong or out of date. --web lets it search (the default for a new pack with no documents),\n" +
 			"with AI Review reading every result first: that takes your own TypeSafe key and a search key, as\n" +
-			"`agentry draft` does. It reads only pages its searches returned.\n\n" +
+			"`agentry draft` does, or your organization's credits where its managed settings say so (one credit a\n" +
+			"build). It reads only pages its searches returned.\n\n" +
 			"Packs are kept sealed on this computer, each under a key of its own that the registry you are signed in\n" +
 			"to wraps for your account (Agentry holds that key), so the same pack opens on another computer after you\n" +
 			"sign in there. Signed out, this computer's key wraps it instead, until your next sign-in. `upload` keeps a\n" +
@@ -259,7 +260,7 @@ func runKnowledgeBuild(cmd *cobra.Command, dir, name string, o *knowledgeBuildOp
 	// not scanned, and the person hears it first.
 	model := strings.TrimSpace(pol.Model.Provider + " " + pol.Model.Name)
 	_, _ = fmt.Fprintf(errOut, "The Knowledge Creator runs on this machine against the model your runner policy names (%s).\n"+
-		"It costs no credits, and neither the documents nor the pack it makes are scanned: the pack is recorded\n"+
+		"The model's use costs no credits, and neither the documents nor the pack it makes are scanned: the pack is recorded\n"+
 		"as \"not scanned\" until a registry scans it.\n", model)
 	if len(o.files) == 0 && len(srcs) == 0 {
 		_, _ = fmt.Fprintln(errOut, "Warning: no documents. Specific documents make the best knowledge. Without them the Creator researches\n"+
@@ -435,7 +436,19 @@ func knowledgeWeb(ctx context.Context, pol *policy.Policy, o *knowledgeBuildOpts
 	if rt := pol.Docker.Runtime; rt != "" && len(pol.Docker.Resolvers) == 0 {
 		return without(fmt.Sprintf("under the %s runtime the web tools need the host's name servers in your runner policy's docker.resolvers", rt))
 	}
-	w, state, _, err := drafter.LocalWebPaid(ctx, pol, "", managed.PurposeKnowledge, pay)
+	// The Creator's web is its searches: with none, nothing is opened or
+	// paid for.
+	if _, _, s, err := drafter.SearchAccess(pol); managed.CreditsPaid(err) == nil {
+		switch {
+		case err != nil:
+			return nil, err
+		case s == drafter.SearchNoProvider:
+			return without("your runner policy's webSearch block names no search provider")
+		case s == drafter.SearchNoKey:
+			return without(fmt.Sprintf("no %s key in $%s", pol.WebSearch.ProviderName(), pol.WebSearch.KeyEnv()))
+		}
+	}
+	w, state, err := drafter.LocalWebPaid(ctx, pol, "", managed.PurposeKnowledge, pay)
 	switch {
 	case errors.Is(err, drafter.ErrNoJevKey):
 		return without(fmt.Sprintf("AI Review reads every result first, which takes your own TypeSafe Jev key, and none was found ($%s, or the keychain entry %s)",

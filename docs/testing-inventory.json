@@ -579,7 +579,9 @@
             "TestADraftOnTheOrganizationsCreditsScansThroughOneOperation",
             "TestSearchOnTheOrganizationsCreditsIsASearchOperationThroughTheRegistry",
             "TestAMembersOwnKeySetsACreditsDefaultAside",
-            "TestAVoicesPagesAreReadThroughAnOperationOnTheOrganizationsCredits"
+            "TestAVoicesPagesAreReadThroughAnOperationOnTheOrganizationsCredits",
+            "TestAKnowledgeBuildWithNoSearchSpendsNoCredit",
+            "TestAKnowledgeBuildSearchingOnTheOrganizationsCreditsOpensOneOperation"
           ],
           "fuzz": [],
           "benchmarks": [],

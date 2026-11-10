@@ -66,8 +66,9 @@ func newVoiceCmd() *cobra.Command {
 			"you turn that off (`agentry voice attach off`) or say so for one run (--no-voice). It governs how a run\n" +
 			"writes, never what it does.\n\n" +
 			"`create`, `improve` and `edit` run the built-in Voice Writer on this computer, against the model your runner\n" +
-			"policy names: it costs no credits, and nothing it reads or writes is reviewed, but for a page from a web address (--url),\n" +
-			"which AI Review reads first with your own TypeSafe key. `set` keeps your own text.\n" +
+			"policy names: the model's use costs no credits, and nothing it reads or writes is reviewed, but for a page from a web\n" +
+			"address (--url), which AI Review reads first with your own TypeSafe key, or through the registry for one credit where\n" +
+			"your organization's managed settings pay for AI Review with its credits. `set` keeps your own text.\n" +
 			"The voice is kept sealed on this computer, under a key the registry you are signed in to wraps for your\n" +
 			"account (signed out, this computer's key).\n\n" +
 			"Your Agentry account keeps a voice of its own, for runs In Agentry. The two are never synced on their own:\n" +
@@ -250,7 +251,7 @@ func runVoiceBuild(cmd *cobra.Command, job build.Job, o *voiceOpts) error {
 		reviewed = "nothing it reads from files, or writes, is reviewed"
 	}
 	_, _ = fmt.Fprintf(errOut, "The Voice Writer runs on this machine against the model your runner policy names (%s).\n"+
-		"It costs no credits, and %s.\n", model, reviewed)
+		"The model's use costs no credits, and %s.\n", model, reviewed)
 	pay, endOps := creditsPay(errOut)
 	defer endOps()
 	review, web, err := voicePageReview(cmd.Context(), pol, urls, errOut, managed.PurposeVoice, pay)
@@ -364,9 +365,9 @@ func voicePageReview(ctx context.Context, pol *policy.Policy, urls []*sources.So
 	}
 	jev, err := drafter.JevKey(pol)
 	if paid := managed.CreditsPaid(err); paid != nil {
-		op, err := pay(ctx, paid.Registry, purpose)
-		if err != nil {
-			return nil, nil, engine.Classify(engine.ExitPolicy, err)
+		op, payErr := pay(ctx, paid.Registry, purpose)
+		if payErr != nil {
+			return nil, nil, engine.Classify(engine.ExitPolicy, payErr)
 		}
 		_, _ = fmt.Fprintln(errOut, "Each page from a web address is fetched first and read by AI Review through the registry; one it flags is withheld.")
 		return &webscan.Registry{Base: op.Registry, JobToken: op.Token}, &engine.WebRun{Scan: toolsrv.WebScanRegistry, Registry: op.Registry, JobToken: op.Token}, nil

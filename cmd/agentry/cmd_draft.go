@@ -117,10 +117,11 @@ func newDraftCmd() *cobra.Command {
 			"page and registry answer before the Drafter's model does; what it flags, or cannot scan, is withheld,\n" +
 			"and the draft lists it. On this computer that takes your own Jev key ($TYPESAFE_API_KEY, or the\n" +
 			"policy's judge block), and the Drafter does not run without one. It runs against the model your runner\n" +
-			"policy names, for no credits. Web search needs a search provider of your own in the policy's webSearch\n" +
+			"policy names, whose use costs no credits. Web search needs a search provider of your own in the policy's webSearch\n" +
 			"block, each with its own key: brave ($BRAVE_API_KEY), tavily ($TAVILY_API_KEY), exa ($EXA_API_KEY),\n" +
 			"perplexity ($PERPLEXITY_API_KEY) or youcom ($YDC_API_KEY); without one the Drafter reads pages and the\n" +
-			"registry only.\n\n" +
+			"registry only. Where your organization's managed settings pay for AI Review or web search with its\n" +
+			"credits, the registry scans (and searches) instead, for one credit a draft.\n\n" +
 			"The description, the searches and the pages go to the search provider, to TypeSafe and to the sites\n" +
 			"read, so the description should hold no secret.\n\n" +
 			"--knowledge gives the Drafter your knowledge packs, up to " + knowledge.FormatCap(drafter.MaxKnowledgeBytes) + " in all: it reads them before the web, writes\n" +
@@ -320,9 +321,9 @@ func runDraft(cmd *cobra.Command, args []string, o *draftOpts) error {
 			reviewer = "goes to AI Review through the\nregistry, on your organization's credits,"
 		}
 		_, _ = fmt.Fprintf(errOut, "AI Review passed the description. The Drafter runs on this computer against the model your runner policy\n"+
-			"names (%s), for no credits. %s Every result, like the description, "+reviewer+" before the model reads it, and this computer reads each page from its site. Then it reads\n"+
+			"names (%s), whose use costs no credits. %s Every result, like the description, %s before the model reads it, and this computer reads each page from its site. Then it reads\n"+
 			"each MCP server the draft declares from its package registry, to check it runs on the runner's Node or Python.\n"+
-			"It submits nothing.\n", model, searchNote)
+			"It submits nothing.\n", model, searchNote, reviewer)
 	}
 
 	// A pack not scanned is scanned now, after the description and before
@@ -529,7 +530,7 @@ func draftWeb(ctx context.Context, pol *policy.Policy, o draftOpts, packs bool, 
 		}
 		return w, "The registry searches the web.", nil
 	}
-	w, search, _, err := drafter.LocalWebPaid(ctx, pol, reg, managed.PurposeDraft, pay)
+	w, search, err := drafter.LocalWebPaid(ctx, pol, reg, managed.PurposeDraft, pay)
 	switch {
 	case errors.Is(err, drafter.ErrNoJevKey):
 		also := ""

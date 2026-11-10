@@ -354,7 +354,7 @@ func runReportDesigner(cmd *cobra.Command, job build.Job, o *designerOpts) error
 	o.stage = receipt.StagePrepare
 	model := strings.TrimSpace(pol.Model.Provider + " " + pol.Model.Name)
 	_, _ = fmt.Fprintf(errOut, "The Report Designer runs on this machine against the model your runner policy names (%s).\n"+
-		"It costs no credits. It looks at its renders and your references when the model reads images.\n", model)
+		"The model's use costs no credits. It looks at its renders and your references when the model reads images.\n", model)
 	pay, endOps := creditsPay(errOut)
 	defer endOps()
 	review, web, err := voicePageReview(cmd.Context(), pol, urls, errOut, managed.PurposeRun, pay)

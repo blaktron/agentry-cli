@@ -51,11 +51,10 @@ const (
 // registry is the one registry_search reads. The Jev key in the answer is
 // exactly the one the draft scans with, so a client that tests a key tests
 // that one. Where an organization's credits pay for AI Review or web
-// search, it refuses with the organization's sentence: work that can pay
-// with them calls LocalWebPaid.
+// search, it refuses (LocalWebPaid with no Pay): work that can pay with
+// them calls LocalWebPaid.
 func LocalWeb(pol *policy.Policy, registry string) (*engine.WebRun, SearchState, error) {
-	w, state, _, err := LocalWebPaid(context.Background(), pol, registry, "", nil)
-	return w, state, err
+	return LocalWebPaid(context.Background(), pol, registry, "", nil)
 }
 
 // Pay opens an operation paid with an organization's credits on registry,
@@ -67,38 +66,38 @@ type Pay func(ctx context.Context, registry, purpose string) (*managed.Operation
 // credits: where the managed settings say they pay for AI Review or web
 // search, it opens an operation with pay, for purpose, and the run scans
 // (and, for web search paid that way, searches) through the registry with
-// the operation's token, as a hosted draft does with its job's. The
-// operation, nil when none was opened, is the caller's to end. A nil pay
-// refuses such work with the organization's sentence.
-func LocalWebPaid(ctx context.Context, pol *policy.Policy, registry, purpose string, pay Pay) (*engine.WebRun, SearchState, *managed.Operation, error) {
+// the operation's token, as a hosted draft does with its job's. Pay keeps
+// the operation for the caller to end. A nil pay refuses such work with the
+// organization's sentence.
+func LocalWebPaid(ctx context.Context, pol *policy.Policy, registry, purpose string, pay Pay) (*engine.WebRun, SearchState, error) {
 	jev, jevErr := JevKey(pol)
 	provider, key, state, searchErr := SearchAccess(pol)
 	review, search := managed.CreditsPaid(jevErr), managed.CreditsPaid(searchErr)
 	switch {
 	case jevErr != nil && review == nil:
-		return nil, "", nil, jevErr
+		return nil, "", jevErr
 	case searchErr != nil && search == nil:
-		return nil, "", nil, searchErr
+		return nil, "", searchErr
 	case review == nil && search == nil:
 		if jev == "" {
-			return nil, "", nil, ErrNoJevKey
+			return nil, "", ErrNoJevKey
 		}
 		w := &engine.WebRun{Scan: toolsrv.WebScanJev, JevKey: jev, Registry: registry}
 		if state == SearchOn {
 			w.Search, w.SearchKey = provider, key
 		}
-		return w, state, nil, nil
+		return w, state, nil
 	}
-	paid := review
+	paid, opPurpose := review, purpose
 	if paid == nil {
-		paid, purpose = search, managed.PurposeSearch
+		paid, opPurpose = search, managed.PurposeSearch
 	}
 	if pay == nil {
-		return nil, "", nil, engine.Classify(engine.ExitPolicy, fmt.Errorf("%w, and this work on this computer cannot pay with them", paid))
+		return nil, "", engine.Classify(engine.ExitPolicy, fmt.Errorf("%w, and this work on this computer cannot pay with them", paid))
 	}
-	op, err := pay(ctx, paid.Registry, purpose)
+	op, err := pay(ctx, paid.Registry, opPurpose)
 	if err != nil {
-		return nil, "", nil, engine.Classify(engine.ExitPolicy, err)
+		return nil, "", engine.Classify(engine.ExitPolicy, err)
 	}
 	// The registry scans every result, with the operation's token; its
 	// search, when the credits pay for search, and otherwise the person's
@@ -110,7 +109,7 @@ func LocalWebPaid(ctx context.Context, pol *policy.Policy, registry, purpose str
 	case state == SearchOn:
 		w.Search, w.SearchKey = provider, key
 	}
-	return w, state, op, nil
+	return w, state, nil
 }
 
 // JevKey is the person's own TypeSafe key as work on this computer reads

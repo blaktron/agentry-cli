@@ -222,7 +222,7 @@ func TestDraftWritesTheDraftWithItsRecord(t *testing.T) {
 	if sc.read[0] != "description|"+task {
 		t.Fatal("the scan did not read the task the Drafter is given")
 	}
-	if !strings.Contains(stderr, "for no credits") || !strings.Contains(stderr, "It has no web search") || strings.Contains(stderr, testJev) {
+	if !strings.Contains(stderr, "whose use costs no credits") || !strings.Contains(stderr, "It has no web search") || strings.Contains(stderr, testJev) {
 		t.Fatalf("stderr:\n%s", stderr)
 	}
 	var d drafter.Draft

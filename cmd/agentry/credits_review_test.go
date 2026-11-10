@@ -51,7 +51,7 @@ func TestADraftOnTheOrganizationsCreditsScansThroughOneOperation(t *testing.T) {
 	if !strings.Contains(note, "no web search") || len(fr.reviewOpened) != 1 || fr.reviewOpened[0] != managed.PurposeDraft {
 		t.Fatalf("note %q, opened %v", note, fr.reviewOpened)
 	}
-	if !strings.Contains(errOut.String(), "AI Review is paid with your organization's credits: an operation on "+fr.url()+", 1 credit.") {
+	if !strings.Contains(errOut.String(), "AI Review is paid with your organization's credits: an operation on "+fr.url()+", 1 credit, spent whether or not the work finishes.") {
 		t.Fatalf("said %q", errOut.String())
 	}
 	if strings.Contains(errOut.String(), "agyr_") {
@@ -114,5 +114,39 @@ func TestAVoicesPagesAreReadThroughAnOperationOnTheOrganizationsCredits(t *testi
 	}
 	if len(fr.reviewOpened) != 1 || fr.reviewOpened[0] != managed.PurposeVoice {
 		t.Fatalf("opened %v", fr.reviewOpened)
+	}
+}
+
+func TestAKnowledgeBuildWithNoSearchSpendsNoCredit(t *testing.T) {
+	fr := creditsRegistry(t, map[string]managedsettings.Setting{managedsettings.ReviewSource: sourceRow(t, managedsettings.SourceAgentryCredits, true)})
+	var errOut bytes.Buffer
+	pay, end := creditsPay(&errOut)
+	defer end()
+	w, err := knowledgeWeb(context.Background(), &policy.Policy{}, &knowledgeBuildOpts{}, true, &errOut, pay)
+	if err != nil || w != nil {
+		t.Fatalf("web run %+v: %v", w, err)
+	}
+	if len(fr.reviewOpened) != 0 || !strings.Contains(errOut.String(), "builds without the web") {
+		t.Fatalf("opened %v, said %q", fr.reviewOpened, errOut.String())
+	}
+}
+
+func TestAKnowledgeBuildSearchingOnTheOrganizationsCreditsOpensOneOperation(t *testing.T) {
+	fr := creditsRegistry(t, map[string]managedsettings.Setting{
+		managedsettings.ReviewSource:    sourceRow(t, managedsettings.SourceAgentryCredits, true),
+		managedsettings.WebSearchSource: sourceRow(t, managedsettings.SourceAgentryCredits, true),
+	})
+	var errOut bytes.Buffer
+	pay, end := creditsPay(&errOut)
+	defer end()
+	w, err := knowledgeWeb(context.Background(), &policy.Policy{}, &knowledgeBuildOpts{}, true, &errOut, pay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.Scan != toolsrv.WebScanRegistry || w.Search != toolsrv.WebScanRegistry || w.JobToken != "agyr_op1" {
+		t.Fatalf("web run %+v", w)
+	}
+	if len(fr.reviewOpened) != 1 || fr.reviewOpened[0] != managed.PurposeKnowledge || !strings.Contains(errOut.String(), "spent whether or not the work finishes") {
+		t.Fatalf("opened %v, said %q", fr.reviewOpened, errOut.String())
 	}
 }
