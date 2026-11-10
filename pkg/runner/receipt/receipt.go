@@ -614,6 +614,10 @@ type Usage struct {
 	Turns int `json:"turns"`
 	// UserTurns counts the user's messages in an interactive session.
 	UserTurns int `json:"userTurns,omitempty"`
+	// LoopNudges counts the times the harness told the model to stop
+	// repeating the same tool call and reach its goal another way. Each is
+	// a streak of identical calls the run went on from. Absent when none.
+	LoopNudges int `json:"loopNudges,omitempty"`
 }
 
 // Total is the run's token count as a meter should read it: the harness's

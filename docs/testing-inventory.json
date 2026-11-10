@@ -7280,7 +7280,8 @@
           "tests": [
             "TestCollectorAssemblesStreamedFinalMessage",
             "TestCollectorNotesAnswerInReasoning",
-            "TestCollectorTextThenReasoningIsAnAnswer"
+            "TestCollectorTextThenReasoningIsAnAnswer",
+            "TestCollectorCountsLoopNudges"
           ],
           "fuzz": [],
           "benchmarks": [],
