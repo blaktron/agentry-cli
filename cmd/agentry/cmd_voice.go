@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"github.com/blaktron/agentry-cli/internal/version"
 	"github.com/blaktron/agentry-cli/pkg/drafter"
 	"github.com/blaktron/agentry-cli/pkg/knowledge/store"
+	"github.com/blaktron/agentry-cli/pkg/managed"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
@@ -249,7 +251,9 @@ func runVoiceBuild(cmd *cobra.Command, job build.Job, o *voiceOpts) error {
 	}
 	_, _ = fmt.Fprintf(errOut, "The Voice Writer runs on this machine against the model your runner policy names (%s).\n"+
 		"It costs no credits, and %s.\n", model, reviewed)
-	review, web, err := voicePageReview(pol, urls, errOut)
+	pay, endOps := creditsPay(errOut)
+	defer endOps()
+	review, web, err := voicePageReview(cmd.Context(), pol, urls, errOut, managed.PurposeVoice, pay)
 	if err != nil {
 		return err
 	}
@@ -341,8 +345,11 @@ func runVoiceBuild(cmd *cobra.Command, job build.Job, o *voiceOpts) error {
 // of files alone. On this computer it is the person's own TypeSafe key; on a
 // sandbox host, the registry's route with the job's credential. Without one
 // the addresses are refused, and the reason given: every page is read by AI
-// Review before the Voice Writer reads it.
-func voicePageReview(pol *policy.Policy, urls []*sources.Source, errOut io.Writer) (webscan.Scanner, *engine.WebRun, error) {
+// Review before the Voice Writer reads it. Where the person's organization
+// pays for AI Review with its credits, an operation is opened for purpose
+// with pay, and the registry scans with its token as it does a sandbox
+// host's with the job's.
+func voicePageReview(ctx context.Context, pol *policy.Policy, urls []*sources.Source, errOut io.Writer, purpose string, pay drafter.Pay) (webscan.Scanner, *engine.WebRun, error) {
 	if len(urls) == 0 {
 		return nil, nil, nil
 	}
@@ -356,6 +363,14 @@ func voicePageReview(pol *policy.Policy, urls []*sources.Source, errOut io.Write
 		return &webscan.Registry{Base: reg, JobToken: tok}, &engine.WebRun{Scan: toolsrv.WebScanRegistry, Registry: reg, JobToken: tok}, nil
 	}
 	jev, err := drafter.JevKey(pol)
+	if paid := managed.CreditsPaid(err); paid != nil {
+		op, err := pay(ctx, paid.Registry, purpose)
+		if err != nil {
+			return nil, nil, engine.Classify(engine.ExitPolicy, err)
+		}
+		_, _ = fmt.Fprintln(errOut, "Each page from a web address is fetched first and read by AI Review through the registry; one it flags is withheld.")
+		return &webscan.Registry{Base: op.Registry, JobToken: op.Token}, &engine.WebRun{Scan: toolsrv.WebScanRegistry, Registry: op.Registry, JobToken: op.Token}, nil
+	}
 	if err != nil {
 		return nil, nil, err
 	}

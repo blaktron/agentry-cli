@@ -24,6 +24,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/knowledge"
 	"github.com/blaktron/agentry-cli/pkg/knowledge/build"
 	"github.com/blaktron/agentry-cli/pkg/knowledge/store"
+	"github.com/blaktron/agentry-cli/pkg/managed"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
@@ -32,6 +33,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/setup"
 	"github.com/blaktron/agentry-cli/pkg/runner/sources"
+	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
 
 // knowledgeBuildOpts are create's and add's shared flags.
@@ -263,7 +265,9 @@ func runKnowledgeBuild(cmd *cobra.Command, dir, name string, o *knowledgeBuildOp
 		_, _ = fmt.Fprintln(errOut, "Warning: no documents. Specific documents make the best knowledge. Without them the Creator researches\n"+
 			"the web and its own knowledge, which can be wrong or out of date.")
 	}
-	web, err := knowledgeWeb(pol, o, searchWeb, errOut)
+	pay, endOps := creditsPay(errOut)
+	defer endOps()
+	web, err := knowledgeWeb(cmd.Context(), pol, o, searchWeb, errOut, pay)
 	if err != nil {
 		return nil, "", err
 	}
@@ -409,8 +413,11 @@ func (o *knowledgeBuildOpts) searchWeb(creating bool) (bool, error) {
 // On this computer the web takes the person's own Jev key, which every
 // result is scanned with, and a search key, as a draft's does; without
 // either, or under a sandboxed runtime with no name servers for the tools,
-// the build runs without the web and says why, rather than failing.
-func knowledgeWeb(pol *policy.Policy, o *knowledgeBuildOpts, search bool, errOut io.Writer) (*engine.WebRun, error) {
+// the build runs without the web and says why, rather than failing. Where
+// the person's organization pays for AI Review or web search with its
+// credits, an operation is opened with pay and the registry scans (and
+// searches, when the credits pay for search) with its token.
+func knowledgeWeb(ctx context.Context, pol *policy.Policy, o *knowledgeBuildOpts, search bool, errOut io.Writer, pay drafter.Pay) (*engine.WebRun, error) {
 	if !search {
 		return nil, nil
 	}
@@ -428,7 +435,7 @@ func knowledgeWeb(pol *policy.Policy, o *knowledgeBuildOpts, search bool, errOut
 	if rt := pol.Docker.Runtime; rt != "" && len(pol.Docker.Resolvers) == 0 {
 		return without(fmt.Sprintf("under the %s runtime the web tools need the host's name servers in your runner policy's docker.resolvers", rt))
 	}
-	w, state, err := drafter.LocalWeb(pol, "")
+	w, state, _, err := drafter.LocalWebPaid(ctx, pol, "", managed.PurposeKnowledge, pay)
 	switch {
 	case errors.Is(err, drafter.ErrNoJevKey):
 		return without(fmt.Sprintf("AI Review reads every result first, which takes your own TypeSafe Jev key, and none was found ($%s, or the keychain entry %s)",
@@ -440,8 +447,15 @@ func knowledgeWeb(pol *policy.Policy, o *knowledgeBuildOpts, search bool, errOut
 	case state == drafter.SearchNoKey:
 		return without(fmt.Sprintf("no %s key in $%s", pol.WebSearch.ProviderName(), pol.WebSearch.KeyEnv()))
 	}
-	_, _ = fmt.Fprintf(errOut, "The Creator may search the web with %s and your key; AI Review reads every result first, with your Jev key.\n"+
-		"Searching can raise what a build costs. It searches only for what the documents and the pack do not hold.\n", pol.WebSearch.ProviderName())
+	searcher, reviewer := policy.WebSearchKey{Provider: w.Search}.ProviderName()+" and your key", "with your Jev key"
+	if w.Search == toolsrv.WebScanRegistry {
+		searcher = "the registry"
+	}
+	if w.Scan == toolsrv.WebScanRegistry {
+		reviewer = "through the registry"
+	}
+	_, _ = fmt.Fprintf(errOut, "The Creator may search the web with %s; AI Review reads every result first, %s.\n"+
+		"Searching can raise what a build costs. It searches only for what the documents and the pack do not hold.\n", searcher, reviewer)
 	return w, nil
 }
 

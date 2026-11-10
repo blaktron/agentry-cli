@@ -301,13 +301,15 @@ func (e Effective) DeliveredKey(setting, provider string) (value string, found b
 
 // KeySource is what the documents say pays for a service: a delivering
 // row's source, its strength, the provider an organization's key is for,
-// and the organization. Decided is false when no document sets the row.
+// the organization, and the registry its document came from. Decided is
+// false when no document sets the row.
 type KeySource struct {
 	Decided  bool
 	Locked   bool
 	Source   string
 	Provider string
 	Org      string
+	Registry string
 }
 
 // KeySourceOf reads id (review.source or webSearch.source) from the first
@@ -320,7 +322,7 @@ func (e Effective) KeySourceOf(id string) KeySource {
 		}
 		var v managedsettings.Source
 		_ = json.Unmarshal(s.Value, &v)
-		return KeySource{Decided: true, Locked: s.Locked, Source: v.Source, Provider: v.Provider, Org: d.Document.Org}
+		return KeySource{Decided: true, Locked: s.Locked, Source: v.Source, Provider: v.Provider, Org: d.Document.Org, Registry: d.Registry}
 	}
 	return KeySource{}
 }
@@ -333,8 +335,12 @@ var serviceWhat = map[string]string{
 
 // ServiceKey is the key a service runs with on this computer under the
 // documents, given the member's own (own, "" for none): ok false means the
-// member's own key stands. A lock to off, or to a source this version
-// cannot pay with, is a refusal naming the organization and the setting.
+// member's own key stands. A lock to off is a refusal naming the
+// organization and the setting. When the organization's credits pay (a
+// lock to agentry-credits, or that default and no key of the member's), the
+// error is a *PaidWithCredits: the caller opens an operation on the
+// registry (OpenOperation) and works through it, or refuses with the
+// error's sentence.
 func (e Effective) ServiceKey(id, provider, own string) (key string, ok bool, err error) {
 	ks := e.KeySourceOf(id)
 	if !ks.Decided || ks.Source == managedsettings.SourceMember {
@@ -356,8 +362,8 @@ func (e Effective) ServiceKey(id, provider, own string) (key string, ok bool, er
 			return "", true, fmt.Errorf("%s is off by %s's managed settings (%s)", sentenceCase(serviceWhat[id]), ks.Org, id)
 		}
 	case managedsettings.SourceAgentryCredits:
-		if ks.Locked {
-			return "", true, fmt.Errorf("%s's managed settings pay for %s with its credits, which this version of Agentry does not use for work on this computer yet (%s); update Agentry", ks.Org, serviceWhat[id], id)
+		if ks.Locked || own == "" {
+			return "", true, &PaidWithCredits{Setting: id, Org: ks.Org, Registry: ks.Registry, Locked: ks.Locked}
 		}
 	}
 	return "", false, nil

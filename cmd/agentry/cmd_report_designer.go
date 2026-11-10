@@ -22,6 +22,7 @@ import (
 	"github.com/blaktron/agentry/pkg/reportdesign"
 
 	"github.com/blaktron/agentry-cli/internal/version"
+	"github.com/blaktron/agentry-cli/pkg/managed"
 	"github.com/blaktron/agentry-cli/pkg/reportdesigner/build"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
@@ -354,7 +355,9 @@ func runReportDesigner(cmd *cobra.Command, job build.Job, o *designerOpts) error
 	model := strings.TrimSpace(pol.Model.Provider + " " + pol.Model.Name)
 	_, _ = fmt.Fprintf(errOut, "The Report Designer runs on this machine against the model your runner policy names (%s).\n"+
 		"It costs no credits. It looks at its renders and your references when the model reads images.\n", model)
-	review, web, err := voicePageReview(pol, urls, errOut)
+	pay, endOps := creditsPay(errOut)
+	defer endOps()
+	review, web, err := voicePageReview(cmd.Context(), pol, urls, errOut, managed.PurposeRun, pay)
 	if err != nil {
 		return err
 	}

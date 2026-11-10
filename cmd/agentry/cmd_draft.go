@@ -34,6 +34,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/drafter"
 	"github.com/blaktron/agentry-cli/pkg/knowledge"
 	"github.com/blaktron/agentry-cli/pkg/knowledge/ship"
+	"github.com/blaktron/agentry-cli/pkg/managed"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
@@ -283,7 +284,9 @@ func runDraft(cmd *cobra.Command, args []string, o *draftOpts) error {
 	if err != nil {
 		return engine.Classify(engine.ExitPolicy, err)
 	}
-	web, searchNote, err := draftWeb(pol, *o, len(packs) > 0)
+	pay, endOps := creditsPay(errOut)
+	defer endOps()
+	web, searchNote, err := draftWeb(cmd.Context(), pol, *o, len(packs) > 0, pay)
 	if err != nil {
 		return err
 	}
@@ -312,9 +315,12 @@ func runDraft(cmd *cobra.Command, args []string, o *draftOpts) error {
 		_, _ = fmt.Fprintf(errOut, "AI Review passed the description. The Drafter runs as a hosted draft against %s; the registry scans\n"+
 			"every search result, page and registry answer before the model reads it.\n", model)
 	} else {
+		reviewer := "goes to AI Review (TypeSafe's Jev)\nwith your key"
+		if web.Scan == toolsrv.WebScanRegistry {
+			reviewer = "goes to AI Review through the\nregistry, on your organization's credits,"
+		}
 		_, _ = fmt.Fprintf(errOut, "AI Review passed the description. The Drafter runs on this computer against the model your runner policy\n"+
-			"names (%s), for no credits. %s Every result, like the description, goes to AI Review (TypeSafe's Jev)\n"+
-			"with your key before the model reads it, and this computer reads each page from its site. Then it reads\n"+
+			"names (%s), for no credits. %s Every result, like the description, "+reviewer+" before the model reads it, and this computer reads each page from its site. Then it reads\n"+
 			"each MCP server the draft declares from its package registry, to check it runs on the runner's Node or Python.\n"+
 			"It submits nothing.\n", model, searchNote)
 	}
@@ -509,11 +515,12 @@ func hostedWeb(what string) (*engine.WebRun, error) {
 	return &engine.WebRun{Scan: toolsrv.WebScanRegistry, Search: toolsrv.WebScanRegistry, Registry: registryURL(), JobToken: tok}, nil
 }
 
-// draftWeb is the run's web configuration: the person's own keys, or, with
-// --hosted, the job's credential and the registry. It refuses a draft that
-// could not have AI Review read everything first, and says what
-// search the draft has.
-func draftWeb(pol *policy.Policy, o draftOpts, packs bool) (*engine.WebRun, string, error) {
+// draftWeb is the run's web configuration: the person's own keys, an
+// operation paid with their organization's credits (pay) where its managed
+// settings say so, or, with --hosted, the job's credential and the
+// registry. It refuses a draft that could not have AI Review read
+// everything first, and says what search the draft has.
+func draftWeb(ctx context.Context, pol *policy.Policy, o draftOpts, packs bool, pay drafter.Pay) (*engine.WebRun, string, error) {
 	reg := registryURL()
 	if o.hosted {
 		w, err := hostedWeb("draft")
@@ -522,7 +529,7 @@ func draftWeb(pol *policy.Policy, o draftOpts, packs bool) (*engine.WebRun, stri
 		}
 		return w, "The registry searches the web.", nil
 	}
-	w, search, err := drafter.LocalWeb(pol, reg)
+	w, search, _, err := drafter.LocalWebPaid(ctx, pol, reg, managed.PurposeDraft, pay)
 	switch {
 	case errors.Is(err, drafter.ErrNoJevKey):
 		also := ""
@@ -537,10 +544,12 @@ func draftWeb(pol *policy.Policy, o draftOpts, packs bool) (*engine.WebRun, stri
 	case err != nil:
 		return nil, "", err
 	}
-	switch search {
-	case drafter.SearchOn:
-		return w, fmt.Sprintf("Its searches go to %s with your key.", pol.WebSearch.ProviderName()), nil
-	case drafter.SearchNoKey:
+	switch {
+	case w.Search == toolsrv.WebScanRegistry:
+		return w, "The registry searches the web, paid with your organization's credits.", nil
+	case search == drafter.SearchOn:
+		return w, fmt.Sprintf("Its searches go to %s with your key.", policy.WebSearchKey{Provider: w.Search}.ProviderName()), nil
+	case search == drafter.SearchNoKey:
 		return w, fmt.Sprintf("It has no web search: no %s key in $%s.", pol.WebSearch.ProviderName(), pol.WebSearch.KeyEnv()), nil
 	}
 	return w, "It has no web search (name a provider in your runner policy's webSearch block), so it reads the registry and pages it knows.", nil
