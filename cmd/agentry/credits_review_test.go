@@ -11,6 +11,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/examiner"
 	"github.com/blaktron/agentry-cli/pkg/managed"
+	"github.com/blaktron/agentry-cli/pkg/runner/persistent"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	voicebuild "github.com/blaktron/agentry-cli/pkg/voice/build"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
@@ -168,5 +169,42 @@ func TestAReviewOnTheOrganizationsCreditsAsksJevThroughTheRegistry(t *testing.T)
 	}
 	if _, err := examiner.LocalReview(&policy.Policy{}); err == nil || !strings.Contains(err.Error(), "pay for AI Review with its credits (review.source), and this review on this computer cannot pay with them") {
 		t.Fatalf("no payer: %v", err)
+	}
+}
+
+// A persistent agent's segment under the organization's credits opens one
+// operation, for a run, that its web tools and its review grant share, and
+// ends it when the segment ends.
+func TestAPersistentSegmentOnTheOrganizationsCreditsOpensOneOperation(t *testing.T) {
+	fr := creditsRegistry(t, map[string]managedsettings.Setting{managedsettings.ReviewSource: sourceRow(t, managedsettings.SourceAgentryCredits, true)})
+	var errOut bytes.Buffer
+	pay, end := persistent.SegmentPay(creditsOpen(&errOut))
+	pol := &policy.Policy{}
+	w, err := persistent.LocalWebOpenerPaid(pol, pay)(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := persistent.LocalReviewOpenerPaid(pol, pay)(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.Scan != toolsrv.WebScanRegistry || w.JobToken != "agyr_op1" || r.JevKey != "agyr_op1" || !strings.HasPrefix(r.Base, fr.url()) {
+		t.Fatalf("web %+v, review %+v", w, r)
+	}
+	if len(fr.reviewOpened) != 1 || fr.reviewOpened[0] != managed.PurposeRun {
+		t.Fatalf("opened %v", fr.reviewOpened)
+	}
+	if strings.Contains(errOut.String(), "agyr_") {
+		t.Fatal("the operation's token was shown")
+	}
+	end()
+	end()
+	if len(fr.reviewEnded) != 1 || fr.reviewEnded[0] != "op-1" {
+		t.Fatalf("ended %v", fr.reviewEnded)
+	}
+	// Without a way to pay, the segment is refused with the organization's
+	// sentence.
+	if _, err := persistent.LocalWebOpener(pol)(context.Background()); err == nil || !strings.Contains(err.Error(), "acme's managed settings pay for") {
+		t.Fatalf("no pay: %v", err)
 	}
 }

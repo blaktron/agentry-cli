@@ -16,6 +16,7 @@ import (
 
 	"github.com/blaktron/agentry/pkg/manifest"
 
+	"github.com/blaktron/agentry-cli/pkg/drafter"
 	"github.com/blaktron/agentry-cli/pkg/managed"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
@@ -69,9 +70,15 @@ type Options struct {
 	// Web and Review read the keys of the web tools and the review grant
 	// for each segment of an agent that declares them and has them on;
 	// nil reads them from Policy as work on this computer does
-	// (LocalWebOpener, LocalReviewOpener).
+	// (LocalWebOpener, LocalReviewOpener), paying with Pay where an
+	// organization's credits pay for them.
 	Web    WebOpener
 	Review ReviewOpener
+	// Pay opens an operation paid with an organization's credits, where
+	// its managed settings pay for AI Review or web search that way; each
+	// segment opens one and ends it when the segment ends. nil refuses
+	// such a segment with the organization's sentence.
+	Pay drafter.Pay
 	// DevHost readies the Coding agent's dev server for each segment; nil
 	// readies it under Home and Policy (ReadyDevHost).
 	DevHost HostReady
@@ -424,10 +431,14 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 	// applied at the next turn rather than missed.
 	signatures := configSignatures(a, cfg, roster)
 	maps.Copy(signatures, contentSignatures(ctx, a, cfg, roster, s.opts.Contents))
-	grants, applied, packsDone, err := ApplyWith(ctx, home, a, cfg, roster, s.openers(), ready, keys)
+	openers, opsDone := s.openers()
+	grants, applied, applyDone, err := ApplyWith(ctx, home, a, cfg, roster, openers, ready, keys)
 	if err != nil {
+		opsDone()
 		return err
 	}
+	// An operation the segment opened ends with it, as its packs close.
+	packsDone := func() { applyDone(); opsDone() }
 	if c := grants.Coder; c != nil && c.DependencyScan {
 		s.refreshDependencyDB()
 	}
@@ -1361,18 +1372,20 @@ func (s *Supervisor) Stop(ctx context.Context) (*receipt.Envelope, error) {
 	return s.env, s.endErr
 }
 
-// openers are what each segment's Apply opens: the person's packs and
+// openers are what one segment's Apply opens: the person's packs and
 // voice, and the keys of the web tools and the review grant, read from the
-// policy when the client gives no opener of its own.
-func (s *Supervisor) openers() Openers {
+// policy when the client gives no opener of its own, or an operation paid
+// with an organization's credits, which end ends with the segment.
+func (s *Supervisor) openers() (Openers, func()) {
 	o := Openers{Packs: s.opts.Packs, Voice: s.opts.Voice, Web: s.opts.Web, Review: s.opts.Review}
+	pay, end := SegmentPay(s.opts.Pay)
 	if pol := s.policy(); pol != nil {
 		if o.Web == nil {
-			o.Web = LocalWebOpener(pol)
+			o.Web = LocalWebOpenerPaid(pol, pay)
 		}
 		if o.Review == nil {
-			o.Review = LocalReviewOpener(pol)
+			o.Review = LocalReviewOpenerPaid(pol, pay)
 		}
 	}
-	return o
+	return o, end
 }

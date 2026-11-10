@@ -18,22 +18,13 @@ import (
 // defers it.
 func creditsPay(errOut io.Writer) (pay drafter.Pay, end func()) {
 	var ops []*managed.Operation
+	open := creditsOpen(errOut)
 	pay = func(ctx context.Context, reg, purpose string) (*managed.Operation, error) {
-		reg = strings.TrimRight(operationRegistry(reg), "/")
-		signIn, err := credentialFor(reg)
-		if err != nil {
-			return nil, err
-		}
-		op, err := managed.OpenOperation(ctx, httpClient, reg, signIn, purpose)
+		op, err := open(ctx, reg, purpose)
 		if err != nil {
 			return nil, err
 		}
 		ops = append(ops, op)
-		what := "AI Review"
-		if purpose == managed.PurposeSearch {
-			what = "Web search, with AI Review reading every result,"
-		}
-		_, _ = fmt.Fprintf(errOut, "%s is paid with your organization's credits: an operation on %s, %s, spent whether or not the work finishes.\n", what, reg, creditsWord(op.Credits))
 		return op, nil
 	}
 	end = func() {
@@ -48,6 +39,30 @@ func creditsPay(errOut io.Writer) (pay drafter.Pay, end func()) {
 		ops = nil
 	}
 	return pay, end
+}
+
+// creditsOpen opens one operation an organization's credits pay for (a
+// drafter.Pay), with the person's sign-in to the registry the managed
+// settings came from, and says it and what it cost on errOut. The caller
+// ends it.
+func creditsOpen(errOut io.Writer) drafter.Pay {
+	return func(ctx context.Context, reg, purpose string) (*managed.Operation, error) {
+		reg = strings.TrimRight(operationRegistry(reg), "/")
+		signIn, err := credentialFor(reg)
+		if err != nil {
+			return nil, err
+		}
+		op, err := managed.OpenOperation(ctx, httpClient, reg, signIn, purpose)
+		if err != nil {
+			return nil, err
+		}
+		what := "AI Review"
+		if purpose == managed.PurposeSearch {
+			what = "Web search, with AI Review reading every result,"
+		}
+		_, _ = fmt.Fprintf(errOut, "%s is paid with your organization's credits: an operation on %s, %s, spent whether or not the work finishes.\n", what, reg, creditsWord(op.Credits))
+		return op, nil
+	}
 }
 
 // operationRegistry is the registry an operation is opened on: the managed
