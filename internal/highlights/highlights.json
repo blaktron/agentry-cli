@@ -5,7 +5,8 @@
       "highlights": [
         "Your organization's managed settings can now choose or limit the model provider, the model and the coding tools.",
         "agentry setup fills in the model your organization sets, and skips that step when the organization locks it.",
-        "An AI Review or web search key your organization provides is kept in your keychain and never shown."
+        "An AI Review or web search key your organization provides is kept in your keychain and never shown.",
+        "If your organization pays for AI Review or web search with its credits, you need no key of your own for them."
       ]
     },
     {
