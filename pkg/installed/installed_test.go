@@ -987,3 +987,26 @@ func TestAPersistentReleasesBlockAndSubagentsAreInTheSnapshot(t *testing.T) {
 		t.Fatal("the snapshot shares the manifest's lists")
 	}
 }
+
+func TestAnAssignedInstallRecordsNoConsent(t *testing.T) {
+	var st State
+	k := Key{Registry: "runner", Namespace: "acme", Name: "demo", Target: "runner", Dir: "/d"}
+	st.UpsertAssigned(k, "1.0.0", true, "acme")
+	rec := st.Find(k)
+	if rec == nil || rec.AssignedBy != "acme" || !rec.Capabilities.Empty() || !rec.AwaitsConsent() {
+		t.Fatalf("assigned record: %+v", rec)
+	}
+
+	// The person's consent replaces it and clears the assignment mark.
+	caps := CapSnapshot{EgressHosts: []string{"api.example.com"}}
+	st.Reconsent(k, "1.0.0", caps, "")
+	if rec := st.Find(k); rec.AwaitsConsent() || rec.AssignedBy != "" || rec.Capabilities.Empty() {
+		t.Fatalf("after consent: %+v", rec)
+	}
+
+	// A later assigned update keeps what was accepted and adds nothing.
+	st.UpsertAssigned(k, "1.1.0", true, "acme")
+	if rec := st.Find(k); rec.Version != "1.1.0" || len(rec.Capabilities.EgressHosts) != 1 || rec.AwaitsConsent() {
+		t.Fatalf("assigned update: %+v", rec)
+	}
+}

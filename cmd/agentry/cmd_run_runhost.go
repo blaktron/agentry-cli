@@ -118,7 +118,7 @@ func runOnRunhost(cmd *cobra.Command, ref string, opts runOpts) error {
 	// The runhost has its own sign-in and its own managed settings: this
 	// device's are read now, refuse here what they refuse outright, and
 	// travel with the job for the rest.
-	syncManaged(cmd, registryURL())
+	syncManaged(cmd, registryURL(), false, "")
 	held := managed.Current()
 	if reason := held.RunRefusal(); reason != "" {
 		return engine.Classify(engine.ExitPolicy, &compile.PolicyRefusal{Reason: reason})

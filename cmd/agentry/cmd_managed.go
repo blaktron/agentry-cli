@@ -216,6 +216,7 @@ func runManagedRefresh(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 	_, _ = fmt.Fprintln(out, st.Summary())
+	installRequired(cmd, st, token)
 	return nil
 }
 
@@ -246,7 +247,11 @@ func managedJSON(held managed.Effective) []map[string]any {
 // sign-in or an environment token for the registry. Not signed in, it
 // asks nothing. A registry that cannot be asked leaves the last verified
 // copy in force, and says so.
-func syncManaged(cmd *cobra.Command, reg string) {
+//
+// install says whether a fresh copy's required QuickAgents are installed
+// now; skip is a release (ns/name) left as it is, the one a run is about to
+// use.
+func syncManaged(cmd *cobra.Command, reg string, install bool, skip string) {
 	note := func(err error) {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "note: the managed settings could not be read again (%v); the last verified copy applies\n", err)
 	}
@@ -261,8 +266,13 @@ func syncManaged(cmd *cobra.Command, reg string) {
 	if token == "" {
 		return
 	}
-	if _, err := managed.Sync(cmd.Context(), httpClient, reg, token, managed.FetchInterval); err != nil {
+	st, fetched, err := managed.SyncFetched(cmd.Context(), httpClient, reg, token, managed.FetchInterval)
+	if err != nil {
 		note(err)
+		return
+	}
+	if fetched && install {
+		installRequiredExcept(cmd, st, token, skip)
 	}
 }
 
@@ -288,6 +298,9 @@ func loginManaged(cmd *cobra.Command, reg, accountID, token string) {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "note: the managed settings could not be read (%v); the next run asks again\n", err)
 	case st != nil && !flags.jsonOut:
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "settings: "+st.Summary())
+	}
+	if err == nil {
+		installRequired(cmd, st, token)
 	}
 }
 

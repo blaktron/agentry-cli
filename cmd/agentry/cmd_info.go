@@ -51,6 +51,9 @@ type searchOpts struct {
 	verified   bool
 	sort       string
 	limit      int
+	// org lists the QuickAgents the organization's managed settings assign
+	// instead of searching the registry.
+	org bool
 }
 
 // newSearchCmd builds the search command.
@@ -74,9 +77,26 @@ func newSearchCmd() *cobra.Command {
 			"  --license     SPDX identifier from the latest published manifest\n" +
 			"  --verified    only QuickAgents in an org namespace with a verified domain\n" +
 			"  --sort        relevance (default) | installs | newest\n\n" +
-			"With --json the full response, including facet counts, is printed.",
-		Args: cobra.ExactArgs(1),
+			"With --json the full response, including facet counts, is printed.\n\n" +
+			"--org lists the QuickAgents your organization's managed settings give you,\n" +
+			"required and offered, with the version each follows, instead of searching\n" +
+			"the registry: it reads the settings this computer holds and asks no\n" +
+			"registry. The query, if given, narrows the list to references containing\n" +
+			"it; with --json the document is {results, total}.",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if opts.org {
+				return cobra.MaximumNArgs(1)(cmd, args)
+			}
+			return cobra.ExactArgs(1)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if opts.org {
+				query := ""
+				if len(args) > 0 {
+					query = args[0]
+				}
+				return runSearchOrg(cmd, query, heldManaged())
+			}
 			return runSearch(cmd, args[0], opts)
 		},
 	}
@@ -86,6 +106,7 @@ func newSearchCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&opts.verified, "verified", false, "only QuickAgents in orgs with a verified domain")
 	cmd.Flags().StringVar(&opts.sort, "sort", "", "sort order: relevance | installs | newest")
 	cmd.Flags().IntVar(&opts.limit, "limit", 0, "maximum results (server default when unset)")
+	cmd.Flags().BoolVar(&opts.org, "org", false, "list the QuickAgents your organization's managed settings require or offer (reads the settings held on this computer)")
 	return cmd
 }
 

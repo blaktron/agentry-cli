@@ -1,6 +1,14 @@
 {
   "versions": [
     {
+      "version": "0.7.49",
+      "highlights": [
+        "QuickAgents your organization requires are installed for you, and their first run still asks you.",
+        "agentry search --org lists the QuickAgents your organization offers.",
+        "A QuickAgent your organization requires can't be uninstalled while it is required."
+      ]
+    },
+    {
       "version": "0.7.48",
       "highlights": [
         "QuickAgents that ship skills run as in 0.7.47, now on Agentry's v0.7.12 core release."

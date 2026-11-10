@@ -41,6 +41,7 @@ import (
 	"github.com/blaktron/agentry/pkg/manifest"
 
 	"github.com/blaktron/agentry-cli/pkg/installed"
+	"github.com/blaktron/agentry-cli/pkg/managed"
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/destination"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
@@ -87,9 +88,13 @@ type runOpts struct {
 	// starting it.
 	runhostSchedule string
 	// detach leaves a run on a runhost to run once it has started there.
-	detach      bool
-	mode        string
-	intake      []string
+	detach bool
+	mode   string
+	intake []string
+	// orgIntake are the answers an organization's preset gives as defaults
+	// (applyPreset): used for the questions the QuickAgent asks and that
+	// the person did not answer; one it does not ask is passed over.
+	orgIntake   []string
 	intakeToken []string
 	// intakeFile is a JSON object of intake answers, id to value, read as
 	// --intake would take each: a remote runhost's service hands them so,
@@ -363,6 +368,11 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 		if err := refuseModelElsewhere(opts); err != nil {
 			return err
 		}
+	}
+	// A preset an organization gave the QuickAgent fills the options the
+	// person left unset, before anything reads them.
+	if err := applyPreset(&opts, ref, managed.Current()); err != nil {
+		return err
 	}
 	if opts.on != "" {
 		return runOnRunhost(cmd, ref, opts)
@@ -666,7 +676,9 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	// The organization's managed settings are read again before the
 	// compile, which applies them, unless they were read within the hour.
 	if !hostedFor(opts) {
-		syncManaged(cmd, registryURL())
+		// Nothing is installed for a preview or a dry run, and the release
+		// this run uses is left as it is.
+		syncManaged(cmd, registryURL(), !opts.plan && !opts.dryRun, meta.Namespace+"/"+meta.Name)
 	}
 	// A model of the person's own with no window in the policy is asked for
 	// it now, for this run only.
@@ -1342,6 +1354,9 @@ type runPlanConsent struct {
 	Diff              installed.Diff    `json:"diff"`
 	NeedsConfirmation bool              `json:"needsConfirmation"`
 	Reason            string            `json:"reason,omitempty"`
+	// RequiredBy is the organization that installed the release for the
+	// person, while no contract of it has been accepted.
+	RequiredBy string `json:"requiredBy,omitempty"`
 }
 
 // describeRunConsent mirrors confirmRunCapabilities' decision without its
@@ -1354,16 +1369,21 @@ func describeRunConsent(m *manifest.Manifest, meta *installdir.Meta, home string
 		state = installed.State{}
 	}
 	next := installed.Snapshot(m.Contract())
-	if prev := state.Find(key); prev != nil {
+	if prev := state.Find(key); prev != nil && !prev.AwaitsConsent() {
 		c.Installed = &installPlanPrior{Version: prev.Version, Dir: prev.Dir}
 		c.Diff = installed.DiffCapabilities(prev.Capabilities, next)
 		if c.Diff.HasWidened() {
 			c.NeedsConfirmation = true
 			c.Reason = "this version widens the declared capabilities"
 		}
-	} else if capabilityNeedsConfirm(m.Capabilities) {
-		c.NeedsConfirmation = true
-		c.Reason = "a first run of a QuickAgent that declares " + confirmedCapabilitiesWords(m.Capabilities)
+	} else {
+		if prev := state.Find(key); prev != nil {
+			c.RequiredBy = prev.AssignedBy
+		}
+		if capabilityNeedsConfirm(m.Capabilities) {
+			c.NeedsConfirmation = true
+			c.Reason = "a first run of a QuickAgent that declares " + confirmedCapabilitiesWords(m.Capabilities)
+		}
 	}
 	return c
 }
@@ -1658,6 +1678,32 @@ func collectIntake(cmd *cobra.Command, m *manifest.Manifest, opts runOpts, fromS
 			return nil, err
 		}
 		given = append(slices.Clone(given), fromFile...)
+	}
+	if len(opts.orgIntake) > 0 {
+		asked := map[string]bool{}
+		for _, q := range m.Intake {
+			asked[q.ID] = true
+		}
+		var skipped []string
+		answered := map[string]bool{}
+		for _, kv := range given {
+			id, _, _ := strings.Cut(kv, "=")
+			answered[id] = true
+		}
+		for _, kv := range opts.orgIntake {
+			id, _, _ := strings.Cut(kv, "=")
+			if answered[id] {
+				continue
+			}
+			if asked[id] {
+				given = append(slices.Clone(given), kv)
+			} else {
+				skipped = append(skipped, id)
+			}
+		}
+		if len(skipped) > 0 {
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "note: the organization's preset answers %s, which this QuickAgent does not ask; passed over\n", strings.Join(skipped, ", "))
+		}
 	}
 	preset, err := intake.ParsePreset(given)
 	if err != nil {
@@ -2208,6 +2254,17 @@ func confirmRunCapabilities(cmd *cobra.Command, m *manifest.Manifest, meta *inst
 	if m.Summary != "" {
 		_, _ = fmt.Fprintf(out, "  %s\n", m.Summary)
 	}
+	key := installdir.ConsentKey(home, meta.Namespace, meta.Name)
+	state, serr := installed.Load()
+	if serr != nil {
+		_, _ = fmt.Fprintf(out, "warning: %v — treating this as a first run\n", serr)
+		state = installed.State{}
+	}
+	if prev := state.Find(key); prev != nil && prev.AwaitsConsent() {
+		// An organization installed this release for the person; the
+		// contract below is still theirs to accept.
+		_, _ = fmt.Fprintf(out, "Required by %s\n", prev.AssignedBy)
+	}
 	_, _ = fmt.Fprintln(out, "capabilities:")
 	for _, line := range capabilityLinesSized(m.Contract(), shippedSizes) {
 		_, _ = fmt.Fprintf(out, "  %s\n", line)
@@ -2215,12 +2272,6 @@ func confirmRunCapabilities(cmd *cobra.Command, m *manifest.Manifest, meta *inst
 	if mode == manifest.ModeInteractive {
 		// The one line the consent screen gains for a session.
 		_, _ = fmt.Fprintln(out, "  interactive: you can talk to this agent and give it files; you cannot give it more access than listed above")
-	}
-	key := installdir.ConsentKey(home, meta.Namespace, meta.Name)
-	state, serr := installed.Load()
-	if serr != nil {
-		_, _ = fmt.Fprintf(out, "warning: %v — treating this as a first run\n", serr)
-		state = installed.State{}
 	}
 	next := installed.Snapshot(m.Contract())
 	if err := confirmCapabilityChange(cmd, out, &state, key, meta.Version, next, m.Contract(), opts.yes); err != nil {
