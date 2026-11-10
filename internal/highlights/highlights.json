@@ -1,6 +1,12 @@
 {
   "versions": [
     {
+      "version": "0.7.48",
+      "highlights": [
+        "QuickAgents that ship skills run as in 0.7.47, now on Agentry's v0.7.12 core release."
+      ]
+    },
+    {
       "version": "0.7.47",
       "highlights": [
         "A QuickAgent can ship skills: folders of instructions it reads when a step of its task matches one.",
