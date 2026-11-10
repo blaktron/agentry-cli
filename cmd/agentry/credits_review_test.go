@@ -208,3 +208,18 @@ func TestAPersistentSegmentOnTheOrganizationsCreditsOpensOneOperation(t *testing
 		t.Fatalf("no pay: %v", err)
 	}
 }
+
+// An operation an unmetered organization opens is said to cost no credit.
+func TestAnOperationTheOrganizationIsNotChargedForSaysSo(t *testing.T) {
+	fr := creditsRegistry(t, map[string]managedsettings.Setting{managedsettings.ReviewSource: sourceRow(t, managedsettings.SourceAgentryCredits, true)})
+	fr.unmetered = true
+	var errOut bytes.Buffer
+	pay, end := creditsPay(&errOut)
+	defer end()
+	if _, err := pay(context.Background(), fr.url(), managed.PurposeDraft); err != nil {
+		t.Fatal(err)
+	}
+	if got := errOut.String(); !strings.Contains(got, "an operation on "+fr.url()+", with no credit charged.") || strings.Contains(got, "spent whether") {
+		t.Fatalf("said %q", got)
+	}
+}

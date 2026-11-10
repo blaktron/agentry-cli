@@ -604,7 +604,8 @@
             "TestAKnowledgeBuildWithNoSearchSpendsNoCredit",
             "TestAKnowledgeBuildSearchingOnTheOrganizationsCreditsOpensOneOperation",
             "TestAReviewOnTheOrganizationsCreditsAsksJevThroughTheRegistry",
-            "TestAPersistentSegmentOnTheOrganizationsCreditsOpensOneOperation"
+            "TestAPersistentSegmentOnTheOrganizationsCreditsOpensOneOperation",
+            "TestAnOperationTheOrganizationIsNotChargedForSaysSo"
           ],
           "fuzz": [],
           "benchmarks": [],

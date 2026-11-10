@@ -60,7 +60,7 @@ func creditsOpen(errOut io.Writer) drafter.Pay {
 		if purpose == managed.PurposeSearch {
 			what = "Web search, with AI Review reading every result,"
 		}
-		_, _ = fmt.Fprintf(errOut, "%s is paid with your organization's credits: an operation on %s, %s, spent whether or not the work finishes.\n", what, reg, creditsWord(op.Credits))
+		_, _ = fmt.Fprintf(errOut, "%s is paid with your organization's credits: an operation on %s, %s.\n", what, reg, operationCost(op.Credits))
 		return op, nil
 	}
 }
@@ -74,9 +74,15 @@ func operationRegistry(reg string) string {
 	return registryURL()
 }
 
-func creditsWord(n int) string {
-	if n == 1 {
-		return "1 credit"
+// operationCost says what opening an operation cost: no credit for a payer
+// that is not metered, else the credits, which are spent whether or not
+// the work finishes.
+func operationCost(n int) string {
+	switch n {
+	case 0:
+		return "with no credit charged"
+	case 1:
+		return "1 credit, spent whether or not the work finishes"
 	}
-	return fmt.Sprintf("%d credits", n)
+	return fmt.Sprintf("%d credits, spent whether or not the work finishes", n)
 }
