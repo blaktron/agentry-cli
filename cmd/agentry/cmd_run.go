@@ -456,6 +456,9 @@ func runRun(cmd *cobra.Command, ref string, opts runOpts) error {
 	// The saved model the run is on, named or the default: the run
 	// compiles from the policy as that model reads, and from nothing of
 	// another provider's.
+	if err := applyPresetModel(&opts, ref, managed.Current(), read, cmd.ErrOrStderr()); err != nil {
+		return err
+	}
 	chosen, err := localrun.ChooseRunModel(read, opts.model, opts.adapterName)
 	if err != nil {
 		return err

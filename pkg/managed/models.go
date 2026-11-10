@@ -37,6 +37,9 @@ type RunModel struct {
 	Adapter string
 }
 
+// Vendor is the catalogue's name for the run's provider.
+func (m RunModel) Vendor() string { return vendorOf(m.Provider) }
+
 // vendorOf is the catalogue's name for a policy's provider.
 func vendorOf(provider string) string {
 	if provider == policy.ProviderCustom || strings.HasPrefix(provider, policy.ProviderCustom+"-") {

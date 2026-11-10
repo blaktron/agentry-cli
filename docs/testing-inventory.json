@@ -496,7 +496,10 @@
             "TestSearchOrgListsTheAssignments",
             "TestAPresetIsADefaultUnlessLocked",
             "TestAPresetAnswerToAQuestionNotAskedIsPassedOver",
-            "TestAnAssignedReleaseIsAskedAboutEvenWithANarrowContract"
+            "TestAnAssignedReleaseIsAskedAboutEvenWithANarrowContract",
+            "TestAPresetModelIsTheRunsUnlessThePersonNamesOne",
+            "TestAPresetModelTheModelRowsRefuseIsRefused",
+            "TestAPresetModelWithNoSavedModel"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -8361,7 +8364,9 @@
             "TestTheHarnessFollowsTheSavedModelsCredential",
             "TestAMissingSavedModelIsAPolicyRefusal",
             "TestAHarnessBlocksSavedModelRunsOnItsHarness",
-            "TestAPlanIsReusedOnlyForTheSavedModelItWasCompiledOn"
+            "TestAPlanIsReusedOnlyForTheSavedModelItWasCompiledOn",
+            "TestSavedModelForFindsTheModelByProviderAndID",
+            "TestPresetModelChoosesConflictsAndMisses"
           ],
           "fuzz": [],
           "benchmarks": [],
