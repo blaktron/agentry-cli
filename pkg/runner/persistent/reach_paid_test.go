@@ -59,7 +59,7 @@ func TestTheReachLinesNameTheRegistryWhereCreditsPay(t *testing.T) {
 
 	holdCreditsPaid(t, "https://registry.example", managedsettings.ReviewSource)
 	paid := "through registry.example, paid with acme's credits"
-	if got := line(both, EntryWeb); !strings.Contains(got, "read by AI Review "+paid) || strings.Contains(got, "your own") {
+	if got := line(both, EntryWeb); !strings.Contains(got, "read by AI Review "+paid+", before the agent sees it") || strings.Contains(got, "your own") {
 		t.Errorf("web, review paid: %q", got)
 	}
 	if got := line(alone, EntryReview); !strings.Contains(got, "to AI Review "+paid) || !strings.Contains(got, "reaches registry.example alone") || strings.Contains(got, "TypeSafe") {

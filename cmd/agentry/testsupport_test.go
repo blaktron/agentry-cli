@@ -189,9 +189,13 @@ type fakeRegistry struct {
 	// reviewOpened and reviewEnded record the AI Review operations opened
 	// (by purpose) and ended (by id) on the review extension's routes.
 	reviewOpened, reviewEnded []string
-	t                         *testing.T
-	srv                       *httptest.Server
-	agents                    map[string]*fakeAgent
+	// unmetered answers each opened operation with 0 credits, as the
+	// registry does for a payer that is not metered.
+	unmetered bool
+
+	t      *testing.T
+	srv    *httptest.Server
+	agents map[string]*fakeAgent
 
 	signer *ecdsa.PrivateKey
 	keyID  string
@@ -320,10 +324,14 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 		fr.mu.Lock()
 		fr.reviewOpened = append(fr.reviewOpened, body.Purpose)
 		n := len(fr.reviewOpened)
+		credits := 1
+		if fr.unmetered {
+			credits = 0
+		}
 		fr.mu.Unlock()
 		writeJSON(w, http.StatusCreated, map[string]any{
 			"operation": map[string]any{"id": fmt.Sprintf("op-%d", n), "purpose": body.Purpose, "expiresAt": "2030-01-01T00:00:00Z", "maxRequests": 500},
-			"token":     fmt.Sprintf("agyr_op%d", n), "credits": 1,
+			"token":     fmt.Sprintf("agyr_op%d", n), "credits": credits,
 		})
 	})
 	mux.HandleFunc("DELETE /api/v1/x/review/operations/{id}", func(w http.ResponseWriter, r *http.Request) {
