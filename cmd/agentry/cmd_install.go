@@ -69,6 +69,10 @@ type installOpts struct {
 	// agent installs the release as a persistent agent (agentry agent
 	// install): its checks, what it adds to the consent, and its record.
 	agent *agentInstall
+	// assigned installs the release for an organization's managed
+	// settings (cmd_assigned.go): every check of an install holds, nothing
+	// is asked, and the record it leaves holds no consent.
+	assigned *assignedInstall
 }
 
 // providerTargets maps the per-provider install entry points onto the
@@ -351,8 +355,11 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 		return err
 	}
 	reg := registryURL()
-	token, err := credentialFor(reg)
-	if err != nil {
+	var token string
+	var err error
+	if opts.assigned != nil {
+		reg, token = opts.assigned.registry, opts.assigned.token
+	} else if token, err = credentialFor(reg); err != nil {
 		return err
 	}
 	client, err := newAPIClientChecked(cmd, reg, token)
@@ -364,10 +371,17 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 		// stdout carries the result; the narration moves to stderr.
 		out = errOut
 	}
+	if opts.assigned != nil {
+		// One line says the install; the checks' warnings still reach stderr.
+		out = io.Discard
+	}
 
 	res, err := resolveRef(cmd.Context(), client, ref, true)
 	if err != nil {
 		return err
+	}
+	if res.Yanked && opts.assigned != nil {
+		return fmt.Errorf("%s/%s@%s is yanked; a required install never lays down a yanked version", res.Namespace, res.Name, res.Version)
 	}
 	if res.Yanked {
 		_, _ = fmt.Fprintf(errOut, "warning: %s/%s@%s is YANKED — installing only because the version was pinned exactly\n",
@@ -396,6 +410,12 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 	held := managed.Current()
 	if r := held.SourceRefusal(res.Namespace); r != "" {
 		return engine.Classify(engine.ExitPolicy, &compile.PolicyRefusal{Reason: r})
+	}
+
+	if opts.assigned != nil {
+		if current, err := opts.assigned.current(res); err != nil || current {
+			return err
+		}
 	}
 
 	archive, err := downloadArchive(cmd.Context(), reg, token, res)
@@ -568,8 +588,10 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 		}
 		return writeInstallPlan(cmd, res, m, computed, att, refusal, &state, key, nextCaps, target, paths, agent)
 	}
-	if err := confirmCapabilityChange(cmd, out, &state, key, res.Version, nextCaps, m.Contract(), opts.yes); err != nil {
-		return err
+	if opts.assigned == nil {
+		if err := confirmCapabilityChange(cmd, out, &state, key, res.Version, nextCaps, m.Contract(), opts.yes); err != nil {
+			return err
+		}
 	}
 
 	staging, err := os.MkdirTemp("", "agentry-install-*")
@@ -612,7 +634,12 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 
 	// Record only after the files actually landed: a manifest claiming an
 	// install that failed would suppress the next run's capability prompt.
-	state.Upsert(key, res.Version, nextCaps, paths.managed)
+	if opts.assigned != nil {
+		// No consent is recorded: the person's first run asks.
+		state.UpsertAssigned(key, res.Version, paths.managed, opts.assigned.organization)
+	} else {
+		state.Upsert(key, res.Version, nextCaps, paths.managed)
+	}
 	recorded := true
 	if err := installed.Save(state); err != nil {
 		recorded = false
@@ -629,6 +656,10 @@ func runInstall(cmd *cobra.Command, ref string, opts installOpts) error {
 		} else if err != nil {
 			_, _ = fmt.Fprintf(errOut, "warning: %v — the older version's files are still in the runner home; installing this version again retries the removal\n", err)
 		}
+	}
+	if opts.assigned != nil {
+		_, _ = fmt.Fprintf(errOut, "installed %s/%s@%s, required by %s\n", res.Namespace, m.Name, res.Version, opts.assigned.organization)
+		return nil
 	}
 	if opts.agent != nil {
 		return opts.agent.record(cmd, persistent.Release{
@@ -856,6 +887,18 @@ func confirmCapabilityChange(cmd *cobra.Command, out io.Writer, state *installed
 	version string, next installed.CapSnapshot, caps manifest.Capabilities, yes bool,
 ) error {
 	prev := state.Find(key)
+	if prev != nil && prev.AwaitsConsent() {
+		// A record an organization's required install left holds no
+		// consent: the person is asked about the contract, whatever it
+		// declares, since nothing of theirs started the install.
+		if yes {
+			return nil
+		}
+		return promptYes(cmd,
+			fmt.Sprintf("%s/%s was installed by your organization's managed settings; run it with the capabilities above? type \"yes\": ", key.Namespace, key.Name),
+			"this QuickAgent was installed by your organization's managed settings and you have not consented to it yet; re-run with --yes to accept in non-interactive mode",
+			"run aborted (the QuickAgent's capability contract was not accepted)")
+	}
 	if prev == nil {
 		return confirmCapabilities(cmd, caps, yes)
 	}

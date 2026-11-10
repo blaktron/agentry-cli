@@ -164,6 +164,10 @@ func acpConsentText(m *manifest.Manifest, meta *installdir.Meta, home string, op
 		fmt.Fprintf(&b, "%s\n", oneLineText(m.Summary))
 	}
 	fmt.Fprintf(&b, "\nrelease %s, %s\n", meta.Digest, attestationWords(meta))
+	c := describeRunConsent(m, meta, home)
+	if c.RequiredBy != "" {
+		fmt.Fprintf(&b, "\nRequired by %s\n", c.RequiredBy)
+	}
 	b.WriteString("\ncapabilities:\n")
 	for _, line := range capabilityLinesSized(m.Contract(), shippedSizes) {
 		fmt.Fprintf(&b, "  %s\n", line)
@@ -171,7 +175,6 @@ func acpConsentText(m *manifest.Manifest, meta *installdir.Meta, home string, op
 	if mode == manifest.ModeInteractive {
 		b.WriteString("  interactive: you talk to this agent in this session; you cannot give it more access than listed above\n")
 	}
-	c := describeRunConsent(m, meta, home)
 	if c.Installed != nil {
 		fmt.Fprintf(&b, "\nlast accepted at %s", c.Installed.Version)
 		if c.Diff.HasWidened() {

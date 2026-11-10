@@ -23,6 +23,7 @@
 package installed
 
 import (
+	"encoding/json"
 	"fmt"
 	"maps"
 	"os"
@@ -345,7 +346,17 @@ type Record struct {
 	// Digest is a local install's archive digest: which release directory
 	// holds it. Empty for a registry release, which a run resolves.
 	Digest string `yaml:"digest,omitempty" json:"digest,omitempty"`
+	// AssignedBy is the handle of the organization whose managed settings
+	// required this release, set when the client installed it on their
+	// behalf. Such a record carries no capabilities until the person
+	// consents in a run, so it is never a consent; the person's consent
+	// (Upsert, Reconsent) replaces the record and clears the field.
+	AssignedBy string `yaml:"assignedBy,omitempty" json:"assignedBy,omitempty"`
 }
+
+// AwaitsConsent says an organization installed the release for the person
+// and no contract of it has been accepted yet: the next run asks.
+func (r Record) AwaitsConsent() bool { return r.AssignedBy != "" && r.Capabilities.Empty() }
 
 // SourceLocal marks a record installed from a local folder.
 const SourceLocal = "local"
@@ -456,6 +467,22 @@ func (st *State) Upsert(k Key, version string, caps CapSnapshot, managed bool) {
 	st.Records = append(st.Records, rec)
 }
 
+// UpsertAssigned records an install the client made for the organization's
+// managed settings. It never records consent: the capabilities kept are
+// those the person already accepted for an earlier version of this release,
+// and none when there is no earlier record, so the next run asks (and asks
+// again for whatever the new version widens).
+func (st *State) UpsertAssigned(k Key, version string, managed bool, org string) {
+	var caps CapSnapshot
+	if cur := st.Find(k); cur != nil {
+		caps = cur.Capabilities
+	}
+	st.Upsert(k, version, caps, managed)
+	if cur := st.Find(k); cur != nil {
+		cur.AssignedBy = org
+	}
+}
+
 // MarkLocal marks the key's record as a local install of the release with
 // this archive digest. Upsert writes a registry record, as an install from
 // a registry does; a local install calls this after it.
@@ -488,6 +515,12 @@ func (st *State) Reconsent(k Key, version string, caps CapSnapshot, digest strin
 		st.MarkLocal(k, localDigest)
 	}
 	return true
+}
+
+// Empty says the snapshot records no contract at all.
+func (c CapSnapshot) Empty() bool {
+	b, err := json.Marshal(c)
+	return err == nil && string(b) == "{}"
 }
 
 // Remove deletes the record for a key, reporting whether one was present.

@@ -137,19 +137,26 @@ func cleared(reg string) error {
 // stands; otherwise it asks the registry. When the registry cannot be
 // asked, the last verified copy applies and is returned beside the error.
 func Sync(ctx context.Context, hc *http.Client, registryURL, token string, maxAge time.Duration) (*State, error) {
+	st, _, err := SyncFetched(ctx, hc, registryURL, token, maxAge)
+	return st, err
+}
+
+// SyncFetched is Sync, and says whether it read the registry's answer just
+// now (true) or the cached copy stood (false).
+func SyncFetched(ctx context.Context, hc *http.Client, registryURL, token string, maxAge time.Duration) (st *State, fetched bool, err error) {
 	reg := normalize(registryURL)
 	cached, loadErr := Load(reg)
 	if loadErr == nil && fresh(reg, maxAge) {
-		return cached, nil
+		return cached, false, nil
 	}
-	st, err := Refresh(ctx, hc, reg, token)
+	st, err = Refresh(ctx, hc, reg, token)
 	if err != nil {
 		if loadErr != nil {
-			return nil, errors.Join(err, loadErr)
+			return nil, false, errors.Join(err, loadErr)
 		}
-		return cached, err
+		return cached, false, err
 	}
-	return st, nil
+	return st, true, nil
 }
 
 func get(ctx context.Context, hc *http.Client, url, token string) (*http.Response, error) {

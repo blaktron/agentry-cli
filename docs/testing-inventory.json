@@ -487,6 +487,23 @@
           ]
         },
         {
+          "path": "cmd/agentry/cmd_assigned_test.go",
+          "tests": [
+            "TestARequiredQuickAgentIsInstalledWithoutConsent",
+            "TestARequiredQuickAgentThatFailsACheckIsNotInstalled",
+            "TestARequiredQuickAgentFollowsItsPinOnly",
+            "TestARequiredQuickAgentIsNotUninstalledWhileRequired",
+            "TestSearchOrgListsTheAssignments",
+            "TestAPresetIsADefaultUnlessLocked",
+            "TestAPresetAnswerToAQuestionNotAskedIsPassedOver",
+            "TestAnAssignedReleaseIsAskedAboutEvenWithANarrowContract"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "cmd/agentry/cmd_desktop_test.go",
           "tests": [
             "TestTheConsentNamesTheDesktopLine",
@@ -2953,7 +2970,8 @@
             "TestAServersOwnGrantsAreInTheSnapshot",
             "TestARecordWithoutAServersGrantsAsksOnce",
             "TestAServersArgsAreInTheSnapshot",
-            "TestAPersistentReleasesBlockAndSubagentsAreInTheSnapshot"
+            "TestAPersistentReleasesBlockAndSubagentsAreInTheSnapshot",
+            "TestAnAssignedInstallRecordsNoConsent"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -3379,6 +3397,16 @@
             "TestTheModelRowsHoldARunsModel",
             "TestSetupIsPrefilledOrLockedByTheModelRows",
             "TestAnEndpointDefaultIsNotReportedAsApplied"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
+          "path": "pkg/managed/quickagents_test.go",
+          "tests": [
+            "TestAssignmentsReadLockedRowsAndTheFirstDocumentWins"
           ],
           "fuzz": [],
           "benchmarks": [],

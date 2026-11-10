@@ -21,7 +21,7 @@ const jsonAnnotation = "json"
 // jsonCommands is every command path that answers --json, with what it
 // prints. A list prints an object with a named array, never a bare array.
 var jsonCommands = map[string]string{
-	"search":                    "{results, total, facets}",
+	"search":                    "{results, total, facets}; with --org {results, total}",
 	"info":                      "{agent, latest, run}",
 	"verify":                    "the verification report",
 	"doctor":                    "{ref, checks[]}, each check with its name, status, detail and remedy",
