@@ -201,7 +201,10 @@ func prepareShippedSkills(p Params, rd *runDirs) error {
 	}
 	dir := filepath.Join(src, manifest.SkillsDir)
 	fi, err := os.Lstat(dir)
-	if err != nil || !fi.IsDir() {
+	switch {
+	case err != nil:
+		return Classify(ExitVerify, fmt.Errorf("the release's skills folder: %w", err))
+	case !fi.IsDir():
 		return Classify(ExitVerify, fmt.Errorf("the release's skills folder %s is not a folder", dir))
 	}
 	if err := gatewayCanMount(dir, gatewayOS); err != nil {

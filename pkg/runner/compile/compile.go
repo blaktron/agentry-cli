@@ -1743,7 +1743,7 @@ func bindRoots(withServers bool, caps spec.CapSummary, mcpServers []spec.MCPServ
 	}
 	// The agent's skills, or the skills the release ships, read-only, for
 	// its tools server alone.
-	if agent := caps.AgentFiles; agent != nil && len(agent.Skills) > 0 || len(caps.ShippedSkills) > 0 {
+	if agent := caps.AgentFiles; (agent != nil && len(agent.Skills) > 0) || len(caps.ShippedSkills) > 0 {
 		roots = append(roots, spec.PHSkills)
 	}
 	// The Coding agent's OSV databases, the same way.

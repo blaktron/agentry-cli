@@ -48,11 +48,18 @@ func skillsLine(skills []spec.Skill, commands bool) string {
 		return ""
 	}
 	dir := spec.AgentSkillsDir
+	return skillsParagraph("Read-only, in "+dir+"/ among your folders: each is a folder of instructions for one kind of work. "+
+		"When a request matches a skill's description, read "+dir+"/<name>/SKILL.md with fs_read before you start, and follow it; read the other files it names when it says to. ",
+		"Its scripts run with run_command, from where they are. ", commands, skills)
+}
+
+// skillsParagraph is the shape both skills lines share: how to read a
+// skill, who runs its scripts, and the list.
+func skillsParagraph(howToRead, scripts string, commands bool, skills []spec.Skill) string {
 	b := new(strings.Builder)
-	b.WriteString("- **Your skills.** Read-only, in " + dir + "/ among your folders: each is a folder of instructions for one kind of work. " +
-		"When a request matches a skill's description, read " + dir + "/<name>/SKILL.md with fs_read before you start, and follow it; read the other files it names when it says to. ")
+	b.WriteString("- **Your skills.** " + howToRead)
 	if commands {
-		b.WriteString("Its scripts run with run_command, from where they are. ")
+		b.WriteString(scripts)
 	} else {
 		b.WriteString("You run no programs, so a skill's scripts are not yours to run: follow its instructions with your own tools. ")
 	}
@@ -76,17 +83,9 @@ func shippedSkillsLine(skills []spec.Skill, commands bool) string {
 	if len(skills) == 0 {
 		return ""
 	}
-	b := new(strings.Builder)
-	b.WriteString("- **Your skills.** This QuickAgent ships skills, read-only in " + spec.SkillsMount + "/: each is a folder of instructions for one kind of work. " +
-		"When a step matches a skill's description, read the skill with skill_read before that step, and follow it; read the other files it names with skill_read's path when it says to. ")
-	if commands {
-		b.WriteString("Its scripts run with run_command only as one of your commands, from " + spec.SkillsMount + "/<name>/. ")
-	} else {
-		b.WriteString("You run no programs, so a skill's scripts are not yours to run: follow its instructions with your own tools. ")
-	}
-	b.WriteString("A skill guides how you work and gives you nothing you do not already have. The skills:\n")
-	writeSkillList(b, skills)
-	return b.String()
+	return skillsParagraph("This QuickAgent ships skills, read-only in "+spec.SkillsMount+"/: each is a folder of instructions for one kind of work. "+
+		"When a step matches a skill's description, read the skill with skill_read before that step, and follow it; read the other files it names with skill_read's path when it says to. ",
+		"Its scripts run with run_command only as one of your commands, from "+spec.SkillsMount+"/<name>/. ", commands, skills)
 }
 
 // shippedSkills reads the skills a release ships from its verified files:

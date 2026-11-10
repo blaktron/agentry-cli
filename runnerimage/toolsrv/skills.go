@@ -97,7 +97,7 @@ func (s *server) toolSkillRead(raw json.RawMessage) (string, bool) {
 	if err != nil {
 		return ToolSkillRead + ": " + err.Error(), true
 	}
-	if !isErr && a.Path == "" && a.Offset == 0 {
+	if !isErr && path.Clean(rel) == SkillFile && a.Offset == 0 {
 		text = withoutFrontmatter(text)
 	}
 	return text, isErr

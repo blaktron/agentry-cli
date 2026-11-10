@@ -136,20 +136,22 @@ func TestCompileRefusesSkillsTheRunCouldNotList(t *testing.T) {
 	m := parseManifest(t, skillsYAML)
 	for name, c := range map[string]struct {
 		files map[string]string
+		empty bool // skills/ there, with nothing in it
 		says  string
 	}{
-		"no folder":           {map[string]string{}, "skills/ folder does not read"},
-		"a file beside":       {map[string]string{"skills/README.md": "x", "skills/triage/SKILL.md": skillsFiles["skills/triage/SKILL.md"]}, "skills/README.md, which is not a skill's folder"},
-		"a name not its own":  {map[string]string{"skills/triage/SKILL.md": "---\nname: sort\ndescription: Sort\n---\nx"}, `names it "sort"`},
-		"no description":      {map[string]string{"skills/triage/SKILL.md": "---\nname: triage\n---\nx"}, "description"},
-		"no SKILL.md at all":  {map[string]string{"skills/triage/labels.md": "x"}, "SKILL.md"},
-		"an empty skills dir": {map[string]string{"skills/.keep/x": ""}, ""},
+		"no folder":           {files: map[string]string{}, says: "skills/ folder does not read"},
+		"a file beside":       {files: map[string]string{"skills/README.md": "x", "skills/triage/SKILL.md": skillsFiles["skills/triage/SKILL.md"]}, says: "skills/README.md, which is not a skill's folder"},
+		"a name not its own":  {files: map[string]string{"skills/triage/SKILL.md": "---\nname: sort\ndescription: Sort\n---\nx"}, says: `names it "sort"`},
+		"no description":      {files: map[string]string{"skills/triage/SKILL.md": "---\nname: triage\n---\nx"}, says: "description"},
+		"no SKILL.md at all":  {files: map[string]string{"skills/triage/labels.md": "x"}, says: "SKILL.md"},
+		"an empty skills dir": {files: map[string]string{}, empty: true, says: "ships no skill"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ws := workspaceFor(t, m, c.files)
-			if name == "an empty skills dir" {
-				_ = os.RemoveAll(filepath.Join(ws, "skills", ".keep"))
-				c.says = "ships no skill"
+			if c.empty {
+				if err := os.MkdirAll(filepath.Join(ws, "skills"), 0o755); err != nil {
+					t.Fatal(err)
+				}
 			}
 			_, err := Compile(Inputs{Manifest: m, Digest: "sha256:0123456789abcdef", Source: "local", WorkspaceDir: ws,
 				Policy: testPolicy(), PolicySHA: "fixedpolicysha", RunnerImage: "agentry-runner:test"}, t.TempDir())

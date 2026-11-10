@@ -94,6 +94,8 @@ func TestSkillReadRefusesWhatIsNotTheRunsSkill(t *testing.T) {
 	}
 }
 
+// TestTheSkillsGrantIsHeldToItsShape: the grant names a clean absolute
+// folder and skills by name, each once.
 func TestTheSkillsGrantIsHeldToItsShape(t *testing.T) {
 	for _, sk := range []*Skills{
 		{Dir: "skills", Names: []string{"a"}},

@@ -12,6 +12,7 @@ An instruction that calls for one of these needs its line in the manifest; witho
 - `capabilities.targetHosts`: `host_get`, `host_put`, `host_read`, `host_run`, `host_shell_close`, `host_shell_open`, `host_shell_read`, `host_shell_send`, `host_write`.
 - `capabilities.filesystem.read`: `fs_list`, `fs_read`.
 - `capabilities.filesystem.write`: `fs_write`.
+- `capabilities.skills`: `skill_read`.
 - `capabilities.persistent.clock`: `task_add`, `task_list`, `task_remove`, `task_update`.
 - `capabilities.persistent.memory`: `recall`.
 - `capabilities.persistent.selfConfigure`: `self_configure`.
