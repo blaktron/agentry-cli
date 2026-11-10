@@ -4,7 +4,9 @@
       "version": "0.7.51",
       "highlights": [
         "A model that keeps repeating the same call is told to reach its goal another way, and the run goes on.",
-        "The receipt counts how many times that happened (usage.loopNudges)."
+        "The receipt counts how many times that happened (usage.loopNudges).",
+        "Your organization can set your Assistant's name and personality.",
+        "It can also add MCP servers and knowledge packs to your persistent agents."
       ]
     },
     {
