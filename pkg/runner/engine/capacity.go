@@ -131,6 +131,7 @@ func restartHarness(ctx context.Context, p Params, rd *runDirs, task []byte, run
 				return out
 			}
 			rd.harnessUsage = out.usage
+			rd.carriedCost = 0
 			rd.conversation++
 			out = run(task)
 		case resumable(p, out) && resumes < len(resumeWaits) && rd.canRestartAfter(ctx, resumeWaits[resumes]):
@@ -141,6 +142,7 @@ func restartHarness(ctx context.Context, p Params, rd *runDirs, task []byte, run
 				return out
 			}
 			rd.harnessUsage = out.usage
+			rd.carriedCost = out.conversationCost
 			rd.resumedAfter = out.transient
 			out = run([]byte(resumeMessage))
 		default:
@@ -152,6 +154,7 @@ func restartHarness(ctx context.Context, p Params, rd *runDirs, task []byte, run
 			rd.finishChecks = append(rd.finishChecks, receipt.FinishCheck{Open: len(open), Message: rd.redact.String(msg)})
 			noteFinishCheck(p.Stderr, len(open), len(rd.finishChecks))
 			rd.harnessUsage = out.usage
+			rd.carriedCost = out.conversationCost
 			rd.finishCheck = msg
 			out = run([]byte(msg))
 		}

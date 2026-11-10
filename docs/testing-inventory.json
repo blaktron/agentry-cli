@@ -7022,6 +7022,8 @@
             "TestAChecklistCopyIsReadWithinAListsBounds",
             "TestOnlyAReleasesOneShotRunIsAsked",
             "TestAnEarlierRunsChecklistIsNotThisOnes",
+            "TestAFinishCheckCountsTheConversationsCostOnce",
+            "TestTheCostBudgetCountsTheConversationsCostOnce",
             "TestTheFinishCheckMessage",
             "TestAChecklistCopyThatIsNoFileIsNone"
           ],
@@ -7179,7 +7181,8 @@
             "TestTheConversationStoreIsTheRunsAndGoesWithIt",
             "TestTheConversationStoreGoesWithAFailedRun",
             "TestTheTimeoutRunsFromTheFirstStartAcrossResumes",
-            "TestTheCostBudgetHoldsAcrossResumes"
+            "TestTheCostBudgetHoldsAcrossResumes",
+            "TestAResumedConversationsCostIsCountedOnce"
           ],
           "fuzz": [],
           "benchmarks": [],

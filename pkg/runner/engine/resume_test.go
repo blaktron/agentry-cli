@@ -27,7 +27,8 @@ func shortResumeWaits(t *testing.T) {
 
 // pagedHarness plays a docker-agent that reads pages pages of an input, one
 // tool call each, keeping its progress in its session store under the
-// --session id it is started with, as docker-agent keeps its conversation.
+// --session id it is started with, as docker-agent keeps its conversation,
+// and reporting the conversation's running cost, as docker-agent does.
 // A start given the resume message carries on its stored conversation; a
 // start given anything else takes it as the task and begins it from page 1. Each start fails, as the model
 // server does, with failure (a line on stderr) after failAfter[n] pages of
@@ -37,6 +38,7 @@ type pagedHarness struct {
 	pages     int
 	failure   string
 	failAfter []int
+	cost      map[string]float64
 
 	mu        sync.Mutex
 	store     map[string]int // conversation → pages read
@@ -82,7 +84,13 @@ func (h *pagedHarness) handler(_ context.Context, r dockerx.RunSpec, stdin io.Re
 		h.store[conversation] = read
 		_, _ = fmt.Fprintf(stdout, `{"type":"tool_call","tool":"read_input","page":%d}`+"\n", read)
 	}
-	_, _ = fmt.Fprintln(stdout, `{"type":"stream_stopped","usage":{"input_tokens":100,"output_tokens":10,"cost":0.01}}`)
+	// The conversation's running cost, as docker-agent reports it.
+	if h.cost == nil {
+		h.cost = map[string]float64{}
+	}
+	h.cost[conversation] += 0.01
+	cost := h.cost[conversation]
+	_, _ = fmt.Fprintf(stdout, `{"type":"stream_stopped","usage":{"input_tokens":100,"output_tokens":10,"cost":%g}}`+"\n", cost)
 	if read < h.pages {
 		_, _ = fmt.Fprintln(stderr, h.failure)
 		return 1, nil
@@ -333,5 +341,23 @@ func TestTheCostBudgetHoldsAcrossResumes(t *testing.T) {
 	}
 	if starts, _ := h.snapshot(); len(starts) != 3 {
 		t.Fatalf("the harness started %d times, want 3", len(starts))
+	}
+}
+
+// A resume continues the stored conversation, whose running cost the harness
+// reports from where it left off: the run's cost is what the three starts
+// added, not their running totals summed.
+func TestAResumedConversationsCostIsCountedOnce(t *testing.T) {
+	h := &pagedHarness{pages: 6, failure: `Error: model failed: POST "http://192.168.1.20:8080/v1/chat/completions": 502 Bad Gateway`, failAfter: []int{2, 3}}
+	p, f := pagedFixture(t, h)
+	env, err := Run(context.Background(), f, p)
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if starts, _ := h.snapshot(); len(starts) != 3 {
+		t.Fatalf("the harness started %d times, want 3", len(starts))
+	}
+	if env.Usage.CostUSD < 0.0299 || env.Usage.CostUSD > 0.0301 {
+		t.Fatalf("cost %v, want 0.03", env.Usage.CostUSD)
 	}
 }
