@@ -41,6 +41,10 @@ func TestABackgroundProgramOutlivesItsCall(t *testing.T) {
 	}
 
 	t.Run("one that ends at once is answered as in the foreground", func(t *testing.T) {
+		// The call returns as soon as the program ends, so a settle long
+		// enough for a loaded machine costs nothing here.
+		backgroundSettle = time.Minute
+		defer func() { backgroundSettle = 300 * time.Millisecond }()
 		got, isErr := s.toolRunAny(rawArgs(t, map[string]any{"command": "sh", "args": []string{"-c", "echo done; exit 3"}, "background": true}))
 		if isErr || !strings.Contains(got, "ended, exit code 3") || !strings.Contains(got, "nothing runs in the background") || !strings.Contains(got, "done") {
 			t.Fatalf("a program that ends: %q (isError %v)", got, isErr)
