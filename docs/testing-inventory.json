@@ -496,7 +496,10 @@
             "TestSearchOrgListsTheAssignments",
             "TestAPresetIsADefaultUnlessLocked",
             "TestAPresetAnswerToAQuestionNotAskedIsPassedOver",
-            "TestAnAssignedReleaseIsAskedAboutEvenWithANarrowContract"
+            "TestAnAssignedReleaseIsAskedAboutEvenWithANarrowContract",
+            "TestAPresetModelIsTheRunsUnlessThePersonNamesOne",
+            "TestAPresetModelTheModelRowsRefuseIsRefused",
+            "TestAPresetModelWithNoSavedModel"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -600,7 +603,9 @@
             "TestAVoicesPagesAreReadThroughAnOperationOnTheOrganizationsCredits",
             "TestAKnowledgeBuildWithNoSearchSpendsNoCredit",
             "TestAKnowledgeBuildSearchingOnTheOrganizationsCreditsOpensOneOperation",
-            "TestAReviewOnTheOrganizationsCreditsAsksJevThroughTheRegistry"
+            "TestAReviewOnTheOrganizationsCreditsAsksJevThroughTheRegistry",
+            "TestAPersistentSegmentOnTheOrganizationsCreditsOpensOneOperation",
+            "TestAnOperationTheOrganizationIsNotChargedForSaysSo"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -8361,7 +8366,9 @@
             "TestTheHarnessFollowsTheSavedModelsCredential",
             "TestAMissingSavedModelIsAPolicyRefusal",
             "TestAHarnessBlocksSavedModelRunsOnItsHarness",
-            "TestAPlanIsReusedOnlyForTheSavedModelItWasCompiledOn"
+            "TestAPlanIsReusedOnlyForTheSavedModelItWasCompiledOn",
+            "TestSavedModelForFindsTheModelByProviderAndID",
+            "TestPresetModelChoosesConflictsAndMisses"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -9287,6 +9294,19 @@
           "dependencyHints": [
             "docker interface (real or fake)",
             "source/file contract"
+          ]
+        },
+        {
+          "path": "pkg/runner/persistent/reach_paid_test.go",
+          "tests": [
+            "TestTheReachLinesNameTheRegistryWhereCreditsPay",
+            "TestASegmentOpensOneOperationAndEndsIt"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "HTTP transport"
           ]
         },
         {

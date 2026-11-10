@@ -1,14 +1,17 @@
 package localrun
 
 import (
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/blaktron/agentry-cli/pkg/managed"
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry/pkg/managedsettings"
 	"github.com/blaktron/agentry/pkg/manifest"
 )
 
@@ -122,5 +125,76 @@ func TestAPlanIsReusedOnlyForTheSavedModelItWasCompiledOn(t *testing.T) {
 	}
 	if strings.Join(lab.Proxy.Allow, ",") != "lab.example:443" {
 		t.Fatalf("the lab's plan reaches %v", lab.Proxy.Allow)
+	}
+}
+
+// The saved model that runs a provider's model is found by the provider's
+// name and the model id, the default first when two are.
+func TestSavedModelForFindsTheModelByProviderAndID(t *testing.T) {
+	pol, plan := twoModels(t)
+	got, ok := SavedModelFor(pol, "openai", "gpt-5.5")
+	if !ok || got.ID != plan.ID {
+		t.Fatalf("openai's gpt-5.5 = %+v, %v", got, ok)
+	}
+	def := pol.DefaultModel()
+	provider, model, err := RunsOn(pol, def)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := pol.AddModel(policy.SavedModel{Name: "Again", Provider: def.Provider, Model: model})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := SavedModelFor(pol, provider, model); !ok || got.ID != def.ID || got.ID == second.ID {
+		t.Fatalf("two saved models of one model: %+v, %v, want the default %s", got, ok, def.ID)
+	}
+	if _, ok := SavedModelFor(pol, "openai", "gpt-4"); ok {
+		t.Fatal("a model no saved model runs was found")
+	}
+}
+
+// assignedPresetModel holds one document assigning acme/demo with a preset
+// model, locked or not.
+func assignedPresetModel(t *testing.T, provider, model string, locked bool) managed.Effective {
+	t.Helper()
+	raw, err := json.Marshal([]managedsettings.Assignment{{Ref: "acme/demo", Version: "latest", Mode: managedsettings.AssignOffered,
+		Preset: &managedsettings.Preset{Model: &managedsettings.Model{Provider: provider, Model: model}}, PresetLocked: locked}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := managedsettings.Document{Org: "acme", Settings: map[string]managedsettings.Setting{managedsettings.QuickAgents: {Value: raw, Locked: true}}}
+	return managed.Effective{Documents: []managed.State{{Registry: "https://reg.example", Document: d}}}
+}
+
+// A preset model is the run's saved model when none is named; a locked one
+// refuses another by a conflict, and one with no saved model by a missing
+// model, each typed so a client can say it in its own words.
+func TestPresetModelChoosesConflictsAndMisses(t *testing.T) {
+	pol, plan := twoModels(t)
+	got, warn, err := PresetModel(pol, assignedPresetModel(t, "openai", "gpt-5.5", false), "acme/demo@1.0.0", "", "")
+	if err != nil || warn != "" || got != plan.ID {
+		t.Fatalf("a default preset model = %q, %q, %v", got, warn, err)
+	}
+	def := pol.DefaultModel().Name
+	if got, _, err := PresetModel(pol, assignedPresetModel(t, "openai", "gpt-5.5", false), "acme/demo", def, ""); err != nil || got != def {
+		t.Fatalf("a named model under a default preset = %q, %v", got, err)
+	}
+	_, _, err = PresetModel(pol, assignedPresetModel(t, "openai", "gpt-5.5", true), "acme/demo", def, "")
+	var conflict *PresetModelConflict
+	if !errors.As(err, &conflict) || conflict.Organization != "acme" || conflict.Want.Model != "gpt-5.5" {
+		t.Fatalf("another model under a locked preset: %v", err)
+	}
+	got, warn, err = PresetModel(pol, assignedPresetModel(t, "openai", "gpt-4", false), "acme/demo", "", "")
+	if err != nil || got != "" || !strings.Contains(warn, "suggest openai's gpt-4") {
+		t.Fatalf("a default preset model with no saved model = %q, %q, %v", got, warn, err)
+	}
+	_, _, err = PresetModel(pol, assignedPresetModel(t, "openai", "gpt-4", true), "acme/demo", "", "")
+	var missing *PresetModelMissing
+	var ce *engine.ClassifiedError
+	if !errors.As(err, &missing) || !errors.As(err, &ce) || ce.Code != engine.ExitPolicy {
+		t.Fatalf("a locked preset model with no saved model: %v", err)
+	}
+	if got, _, err := PresetModel(pol, assignedPresetModel(t, "openai", "gpt-5.5", true), "acme/other", "", ""); err != nil || got != "" {
+		t.Fatalf("a release with no assignment = %q, %v", got, err)
 	}
 }

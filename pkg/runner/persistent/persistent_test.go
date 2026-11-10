@@ -749,6 +749,10 @@ func TestASecondChatIsAnsweredBusy(t *testing.T) {
 	if err := <-sent; err != nil {
 		t.Errorf("first chat's send = %v", err)
 	}
+	// A chat sees the answer before the supervisor's Send returns and lets
+	// the turn go: wait for that, so the next send finds no turn in flight.
+	sv.turn.Lock()
+	sv.turn.Unlock() //nolint:staticcheck // waits for the turn to be over
 	if err := second.Send(ctx, "three"); err != nil {
 		t.Errorf("second chat's send after the turn = %v", err)
 	}
