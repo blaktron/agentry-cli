@@ -41,6 +41,7 @@ type stepsHarness struct {
 	store    map[string]int
 	starts   []harnessStart
 	executed map[int]int
+	cost     map[string]float64
 }
 
 func (h *stepsHarness) handler(_ context.Context, r dockerx.RunSpec, stdin io.Reader, stdout, _ io.Writer) (int, error) {
@@ -54,7 +55,7 @@ func (h *stepsHarness) handler(_ context.Context, r dockerx.RunSpec, stdin io.Re
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.store == nil {
-		h.store, h.executed = map[string]int{}, map[int]int{}
+		h.store, h.executed, h.cost = map[string]int{}, map[int]int{}, map[string]float64{}
 	}
 	n := len(h.starts)
 	h.starts = append(h.starts, harnessStart{conversation: conversation, message: string(msg)})
@@ -108,7 +109,10 @@ func (h *stepsHarness) handler(_ context.Context, r dockerx.RunSpec, stdin io.Re
 		ledger = append(ledger, `{"tool":"end_blocked","ok":true,"blocked":"the input is missing"}`)
 	}
 	appendLines(filepath.Join(h.receipts, CallsLedgerFile), ledger)
-	_, _ = fmt.Fprintln(stdout, `{"type":"stream_stopped","usage":{"input_tokens":100,"output_tokens":10,"cost":0.01}}`)
+	// The conversation's running cost, as docker-agent reports it.
+	h.cost[conversation] += 0.01
+	cost := h.cost[conversation]
+	_, _ = fmt.Fprintf(stdout, `{"type":"stream_stopped","usage":{"input_tokens":100,"output_tokens":10,"cost":%g}}`+"\n", cost)
 	_, _ = fmt.Fprintf(stdout, `{"type":"agent_choice","message":{"content":"did %d of %d steps"}}`+"\n", done, len(h.steps))
 	return h.exitCode, nil
 }
@@ -373,6 +377,40 @@ func TestAnEarlierRunsChecklistIsNotThisOnes(t *testing.T) {
 	}
 	if starts, _ := h.snapshot(); len(starts) != 1 {
 		t.Fatalf("the harness started %d times, want 1", len(starts))
+	}
+}
+
+// A harness that reports its conversation's running cost, as docker-agent
+// does when it continues a stored conversation, is not charged twice for
+// it: a run asked once costs what its two starts added, and its tokens and
+// tool calls still sum.
+func TestAFinishCheckCountsTheConversationsCostOnce(t *testing.T) {
+	h := &stepsHarness{perStart: []int{1}}
+	p, f := stepsFixture(t, h)
+	env, err := Run(context.Background(), f, p)
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if starts, _ := h.snapshot(); len(starts) != 2 {
+		t.Fatalf("the harness started %d times, want 2", len(starts))
+	}
+	if env.Usage.CostUSD < 0.0199 || env.Usage.CostUSD > 0.0201 {
+		t.Fatalf("cost %v, want 0.02: the conversation's first 0.01 was counted twice", env.Usage.CostUSD)
+	}
+	if env.Usage.InputTokens != 200 || env.Usage.Turns != 3 {
+		t.Fatalf("usage %+v", env.Usage)
+	}
+}
+
+// A cost budget is judged on that same figure: a run whose two starts add
+// up to under the budget is not stopped because its running cost was
+// counted twice.
+func TestTheCostBudgetCountsTheConversationsCostOnce(t *testing.T) {
+	h := &stepsHarness{perStart: []int{1}}
+	p, f := stepsFixture(t, h)
+	p.Budgets.MaxCostUSD = 0.025
+	if _, err := Run(context.Background(), f, p); err != nil {
+		t.Fatalf("run failed: %v", err)
 	}
 }
 

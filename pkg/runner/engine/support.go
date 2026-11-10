@@ -164,8 +164,12 @@ type runDirs struct {
 	harnessEnds   time.Time
 	harnessStarts int
 	harnessUsage  receipt.Usage
-	conversation  int
-	resumedAfter  string
+	// carriedCost is the running cost the stored conversation had reported
+	// when the next start continues it; zero when the next start begins a
+	// new conversation (eventCollector.carriedCost).
+	carriedCost  float64
+	conversation int
+	resumedAfter string
 	// hostGatewayURL / hostProxyURL are the published 127.0.0.1 addresses
 	// a host-run harness uses; empty for a container harness.
 	hostGatewayURL string

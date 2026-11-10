@@ -853,6 +853,9 @@ type agentOutcome struct {
 	// transient names the passing model failure the harness exited on,
 	// a capacity answer included; empty for any other end (capacity.go).
 	transient string
+	// conversationCost is the running cost the harness last reported for
+	// the conversation it kept, earlier starts on it included.
+	conversationCost float64
 }
 
 // startInfra creates the run network and starts proxy + gateway, then
@@ -1391,6 +1394,7 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		onOrgPolicy:    func() { cancelCause(errOrgPolicy) },
 		onOutOfCredits: func() { cancelCause(errOutOfCredits) },
 		base:           rd.harnessUsage,
+		carriedCost:    rd.carriedCost,
 	}
 	stderrPath := filepath.Join(rd.receiptsDir, "agent-stderr.log")
 	stderrFile, err := rd.harnessReceipt(stderrPath)
@@ -1442,7 +1446,8 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 	_ = d.RemoveForce(ctx, name)
 
 	var refused *adapter.OrgPolicyRefusal
-	out := agentOutcome{lastText: collector.lastText, answerInReasoning: collector.answerInReasoning(), usage: collector.usage()}
+	out := agentOutcome{lastText: collector.lastText, answerInReasoning: collector.answerInReasoning(), usage: collector.usage(),
+		conversationCost: max(collector.costUSD, collector.carriedCost)}
 	switch {
 	// First, because a panic that stopped the reader is the reason anything
 	// else downstream looks wrong — the harness blocked on a pipe nobody was
@@ -1666,8 +1671,21 @@ type eventCollector struct {
 	// run learns its meter is dead instead of reading silence as zero.
 	usageErr error
 	// base is the usage of the harness's earlier starts, when it was
-	// started again after a capacity answer (capacity.go).
+	// started again after a capacity answer, a model failure or a finish
+	// check (capacity.go).
 	base receipt.Usage
+	// carriedCost is the cost the stored conversation had reported when
+	// this start began on it. A harness that keeps its conversation in the
+	// run's store (spec.HarnessSpec.Resume; docker-agent) keeps its usage
+	// there too and reports its running cost from where the conversation
+	// left off, so that much is already in base and is not counted again.
+	// Zero for a start on a fresh conversation.
+	carriedCost float64
+}
+
+// ownCost is the cost this start added to the run.
+func (c *eventCollector) ownCost() float64 {
+	return max(0, c.costUSD-c.carriedCost)
 }
 
 // consumeGuarded runs the collector's consume in its own goroutine and returns
@@ -1774,7 +1792,7 @@ func (c *eventCollector) record(ev adapter.Event) {
 		if ev.CostUSD > c.costUSD && !c.signIn {
 			c.costUSD = ev.CostUSD
 		}
-		if c.maxCostUSD > 0 && c.base.CostUSD+c.costUSD > c.maxCostUSD && !c.costTripped && c.overCost != nil {
+		if c.maxCostUSD > 0 && c.base.CostUSD+c.ownCost() > c.maxCostUSD && !c.costTripped && c.overCost != nil {
 			c.costTripped = true
 			c.overCost()
 		}
@@ -1920,7 +1938,7 @@ func (c *eventCollector) usage() receipt.Usage {
 		InputTokens:  c.inTok,
 		OutputTokens: c.outTok,
 		TotalTokens:  c.totTok,
-		CostUSD:      c.costUSD,
+		CostUSD:      c.ownCost(),
 		Turns:        c.turns,
 	}, c.base)
 }
