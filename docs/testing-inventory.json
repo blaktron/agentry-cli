@@ -603,7 +603,8 @@
             "TestAVoicesPagesAreReadThroughAnOperationOnTheOrganizationsCredits",
             "TestAKnowledgeBuildWithNoSearchSpendsNoCredit",
             "TestAKnowledgeBuildSearchingOnTheOrganizationsCreditsOpensOneOperation",
-            "TestAReviewOnTheOrganizationsCreditsAsksJevThroughTheRegistry"
+            "TestAReviewOnTheOrganizationsCreditsAsksJevThroughTheRegistry",
+            "TestAPersistentSegmentOnTheOrganizationsCreditsOpensOneOperation"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -9292,6 +9293,19 @@
           "dependencyHints": [
             "docker interface (real or fake)",
             "source/file contract"
+          ]
+        },
+        {
+          "path": "pkg/runner/persistent/reach_paid_test.go",
+          "tests": [
+            "TestTheReachLinesNameTheRegistryWhereCreditsPay",
+            "TestASegmentOpensOneOperationAndEndsIt"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "HTTP transport"
           ]
         },
         {
