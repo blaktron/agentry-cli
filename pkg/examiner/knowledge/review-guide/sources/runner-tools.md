@@ -27,4 +27,4 @@ An instruction that calls for one of these needs its line in the manifest; witho
 
 The runner gives these without a contract line: the inputs, the report, the scratch folder and its search, and `export_pdf` to every run; the knowledge and voice tools to a run a person attaches a pack or a voice to; the rest to the application's own agents. An instruction that calls for one is never a contract breach.
 
-- `ai_review`, `end_blocked`, `export_pdf`, `glob`, `grep`, `knowledge_list`, `knowledge_read`, `knowledge_search`, `list_inputs`, `read_input`, `registry_search`, `scratch_list`, `scratch_read`, `scratch_search`, `scratch_write`, `search_inputs`, `voice_read`, `web_read`, `web_search`, `write_report`.
+- `ai_review`, `checklist`, `end_blocked`, `export_pdf`, `glob`, `grep`, `knowledge_list`, `knowledge_read`, `knowledge_search`, `list_inputs`, `read_input`, `registry_search`, `scratch_list`, `scratch_read`, `scratch_search`, `scratch_write`, `search_inputs`, `voice_read`, `web_read`, `web_search`, `write_report`.

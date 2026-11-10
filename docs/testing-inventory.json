@@ -574,6 +574,22 @@
           "dependencyHints": []
         },
         {
+          "path": "cmd/agentry/credits_review_test.go",
+          "tests": [
+            "TestADraftOnTheOrganizationsCreditsScansThroughOneOperation",
+            "TestSearchOnTheOrganizationsCreditsIsASearchOperationThroughTheRegistry",
+            "TestAMembersOwnKeySetsACreditsDefaultAside",
+            "TestAVoicesPagesAreReadThroughAnOperationOnTheOrganizationsCredits",
+            "TestAKnowledgeBuildWithNoSearchSpendsNoCredit",
+            "TestAKnowledgeBuildSearchingOnTheOrganizationsCreditsOpensOneOperation",
+            "TestAReviewOnTheOrganizationsCreditsAsksJevThroughTheRegistry"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "cmd/agentry/errors_test.go",
           "tests": [
             "TestRegistryCommandsOfflineSayCannotReach",
@@ -3294,6 +3310,34 @@
       "disposition": "retain",
       "files": [
         {
+          "path": "pkg/managed/credits_test.go",
+          "tests": [
+            "TestAnOperationIsOpenedWithTheSignInAndEndedOnce",
+            "TestAnOperationTheRegistryRefusesSaysWhy",
+            "TestCreditsArePaidOnTheRegistryTheDocumentCameFrom"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "HTTP transport"
+          ]
+        },
+        {
+          "path": "pkg/managed/keys_test.go",
+          "tests": [
+            "TestADeliveredKeyIsFetchedOncePerRevisionAndGoesWithTheDocument",
+            "TestAKeyThatCouldNotBeDeliveredIsRecordedNotFatal",
+            "TestTheSourceRowsDecideWhichKeyAServiceUses"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "HTTP transport"
+          ]
+        },
+        {
           "path": "pkg/managed/managed_test.go",
           "tests": [
             "TestRefreshCachesAVerifiedDocumentAndLoadVerifiesItAgain",
@@ -3327,6 +3371,18 @@
             "HTTP transport",
             "source/file contract"
           ]
+        },
+        {
+          "path": "pkg/managed/models_test.go",
+          "tests": [
+            "TestTheModelRowsHoldARunsModel",
+            "TestSetupIsPrefilledOrLockedByTheModelRows",
+            "TestAnEndpointDefaultIsNotReportedAsApplied"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
         },
         {
           "path": "pkg/managed/rows_test.go",
@@ -7197,7 +7253,10 @@
           "tests": [
             "TestAReviewsKeyReachesTheToolsContainerAlone",
             "TestAReviewPlanRunsOnlyWithItsKey",
-            "TestTheReviewLedgerIsStampedAndCounted"
+            "TestTheReviewLedgerIsStampedAndCounted",
+            "TestAReviewPaidWithCreditsReachesTheRegistryAlone",
+            "TestTheReviewHostOfABase",
+            "TestAReviewBaseItsClientWouldRefuseIsRefusedBeforeTheRun"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -12448,12 +12507,14 @@
             "TestAIReviewRefusesWhatItCannotAnswerFor",
             "TestReviewAnswersAreScrubbedOfTheKey",
             "TestReadInputViewsUnderReview",
-            "TestAReleaseDefaultViewUnderReview"
+            "TestAReleaseDefaultViewUnderReview",
+            "TestAReviewWithABaseAsksJevThere"
           ],
           "fuzz": [],
           "benchmarks": [],
           "fixtureEntryPoint": false,
           "dependencyHints": [
+            "HTTP transport",
             "source/file contract"
           ]
         },

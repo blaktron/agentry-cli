@@ -2,8 +2,9 @@
 
 The Examiner reviews a QuickAgent you have built, before you submit it, and
 reports what Agentry's pipeline would be expected to say about it. It runs
-on your computer, with your own TypeSafe key for AI Review and the model
-your runner policy names, and it submits nothing.
+on your computer, with your own TypeSafe key for AI Review (or, where your
+organization's managed settings pay for AI Review with credits, through
+the registry) and the model your runner policy names, and it submits nothing.
 
 ## This is the package that runs
 

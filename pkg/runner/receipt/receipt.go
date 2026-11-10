@@ -429,7 +429,8 @@ type PDFFile struct {
 // Web is a run's count of the web tools' reads and AI Review's verdicts.
 type Web struct {
 	// Scan is where the texts were scanned: "registry" (the registry's
-	// route, with the job's credential) or "jev" (the person's own key).
+	// route, with a hosted job's credential or the token of an operation
+	// paid with credits) or "jev" (the person's own key).
 	Scan string `json:"scan"`
 	// Search is where web_search went ("registry", a provider, or "" when
 	// it was not granted).

@@ -2221,12 +2221,18 @@ func catalogEntry(tspec *toolsrv.Spec, caps spec.CapSummary, secrets []string, r
 	return e.node()
 }
 
+// reviewReach is the review grant's one host as the plan says it: the run
+// fills in which (spec.PHReviewHost).
+const reviewReach = "TypeSafe's API (" + toolsrv.ReviewHost + ":443), or the registry when AI Review is paid with credits,"
+
 // proxiedHosts are the hosts the review grant and the calendar feeds reach
 // through the gateway's proxy, each on 443.
 func proxiedHosts(caps spec.CapSummary, tspec *toolsrv.Spec) []string {
 	var hosts []string
 	if tspec.Review.Enabled {
-		hosts = append(hosts, toolsrv.ReviewHost+":443")
+		// TypeSafe's API, or the registry for a run whose AI Review is
+		// paid with credits: the run fills it in.
+		hosts = append(hosts, spec.PHReviewHost)
 	}
 	if g := caps.Calendar; g != nil {
 		for _, h := range g.Hosts() {
@@ -2442,18 +2448,18 @@ func enforcement(caps spec.CapSummary, secrets, optional []string, extraServers 
 		}
 	}
 	if caps.ReviewTools && !caps.WebTools {
-		e["network"] = "no declared egress and no fetch tool; the tools container reaches " + toolsrv.ReviewHost + ":443 alone, TypeSafe's API, for the review grant, " +
+		e["network"] = "no declared egress and no fetch tool; the tools container reaches " + reviewReach + " alone, for the review grant, " +
 			"through the gateway's per-server proxy and DNS interception (--block-network)"
 	}
 	if caps.ReviewTools {
 		e["review"] = "the review grant, on the tools container only: " + toolsrv.ToolAIReview + " asks AI Review's release rubric (the six questions stage S5 asks) over the package in the run's inputs and answers with scores and file names, never the package's text; " +
 			toolsrv.ToolReadInput + " answers a file only after AI Review's model-input questions passed it, and one flagged or not scanned is withheld with its path and the reason; " +
-			"the person's own TypeSafe key is injected into the tools container only"
+			"the person's own TypeSafe key, or for AI Review paid with credits an operation's token, is injected into the tools container only"
 	}
 	if g := caps.Calendar; g != nil && !caps.WebTools {
 		reach, also := strings.Join(g.Hosts(), ":443, ")+":443", "the hosts of the person's calendar feeds, for the calendar tools"
 		if caps.ReviewTools {
-			reach, also = toolsrv.ReviewHost+":443 and "+reach, "TypeSafe's API for the review grant and the hosts of the person's calendar feeds for the calendar tools"
+			reach, also = reviewReach+" and "+reach, "the review grant's host and the hosts of the person's calendar feeds for the calendar tools"
 		}
 		e["network"] = "no declared egress and no fetch tool; the tools container reaches " + reach + " alone, " + also + ", " +
 			"through the gateway's per-server proxy and DNS interception (--block-network), the tools server re-checking each feed's fetch and redirect against its feed's host (see persistent.calendar)"
@@ -2461,7 +2467,7 @@ func enforcement(caps spec.CapSummary, secrets, optional []string, extraServers 
 	if caps.WebTools && (caps.ReviewTools || caps.Calendar != nil) {
 		var beside []string
 		if caps.ReviewTools {
-			beside = append(beside, "the review grant's client asks for "+toolsrv.ReviewHost+":443 alone")
+			beside = append(beside, "the review grant's client asks for "+reviewReach+" alone")
 		}
 		if g := caps.Calendar; g != nil {
 			beside = append(beside, "the calendar tools fetch each feed from its own host ("+strings.Join(g.Hosts(), ", ")+") by https, refusing a redirect to any other")

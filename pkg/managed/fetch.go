@@ -109,6 +109,12 @@ func Refresh(ctx context.Context, hc *http.Client, registryURL, token string) (*
 	if err := writeSeen(reg, seen); err != nil {
 		return nil, err
 	}
+	// The keys the document names are exchanged once per revision; a
+	// failed exchange is recorded for the run that needs the key, and the
+	// document applies regardless.
+	if err := syncKeys(ctx, hc, reg, token, me.id, doc); err != nil {
+		return nil, fmt.Errorf("record the keys delivered by %s: %w", reg, err)
+	}
 	return &State{Registry: reg, Document: doc, FetchedAt: now}, nil
 }
 

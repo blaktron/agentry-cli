@@ -235,7 +235,11 @@ func TestTheReviewLedgerIsStampedAndCounted(t *testing.T) {
 	if !strings.Contains(string(tools), toolsrv.ToolAIReview) {
 		t.Fatalf("tools.yaml lacks ai_review:\n%s", tools)
 	}
-	if hosts := relayHosts(p.Plan); !slices.Equal(hosts, []string{toolsrv.ReviewHost + ":443"}) {
+	catalog, _ := os.ReadFile(filepath.Join(gw, "catalog.yaml"))
+	if !strings.Contains(string(catalog), toolsrv.ReviewHost+":443") || strings.Contains(string(catalog), spec.PHReviewHost) {
+		t.Fatalf("the run's catalog:\n%s", catalog)
+	}
+	if hosts := (&runDirs{review: p.Review}).reviewRelay(p.Plan); !slices.Equal(hosts, []string{toolsrv.ReviewHost + ":443"}) {
 		t.Fatalf("relay hosts %v", hosts)
 	}
 
@@ -273,5 +277,67 @@ func TestTheReviewLedgerIsStampedAndCounted(t *testing.T) {
 	}
 	if err := grantReview(dir, &ReviewRun{JevKey: testReviewKey}); err == nil || !strings.Contains(err.Error(), "has no review grant") {
 		t.Fatalf("a tools spec with no review grant: %v", err)
+	}
+}
+
+// TestAReviewPaidWithCreditsReachesTheRegistryAlone: a run asking AI Review
+// through an operation paid with credits gives the tools container the
+// registry's host as its one host, in place of TypeSafe's API, names the
+// registry's route in the tools spec, and says so in the receipt's line.
+func TestAReviewPaidWithCreditsReachesTheRegistryAlone(t *testing.T) {
+	p, f := reviewFixture(t)
+	happyFake(f)
+	p.KeepRunDir = true
+	p.Review = &ReviewRun{JevKey: testReviewKey, Base: "https://registry.example/api/v1/x/review"}
+	env, err := Run(context.Background(), f, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw := filepath.Join(p.RunRoot, "runs", p.RunID, "cfg", "gateway")
+	catalog, _ := os.ReadFile(filepath.Join(gw, "catalog.yaml"))
+	if !strings.Contains(string(catalog), "registry.example:443") || strings.Contains(string(catalog), toolsrv.ReviewHost) || strings.Contains(string(catalog), spec.PHReviewHost) {
+		t.Fatalf("the run's catalog:\n%s", catalog)
+	}
+	b, _ := os.ReadFile(filepath.Join(gw, "toolspec.json"))
+	var ts toolsrv.Spec
+	if err := json.Unmarshal(b, &ts); err != nil || ts.Review.Base != p.Review.Base || strings.Contains(string(b), testReviewKey) {
+		t.Fatalf("review %+v: %v", ts.Review, err)
+	}
+	if hosts := (&runDirs{review: p.Review}).reviewRelay(p.Plan); !slices.Equal(hosts, []string{"registry.example:443"}) {
+		t.Fatalf("relay hosts %v", hosts)
+	}
+	line := env.CapabilitiesEnforced["review.aiReview"]
+	if !strings.Contains(line, "through the registry, on an operation paid with credits") || !strings.Contains(line, "registry.example:443 alone") {
+		t.Fatalf("line: %s", line)
+	}
+}
+
+func TestTheReviewHostOfABase(t *testing.T) {
+	for base, want := range map[string]string{
+		"":                                    toolsrv.ReviewHost + ":443",
+		"https://reg.example/api/v1/x/review": "reg.example:443",
+		"https://reg.example:8443/x":          "reg.example:8443",
+		"http://127.0.0.1/api/v1/x/review":    "127.0.0.1:80",
+		"::not a url":                         toolsrv.ReviewHost + ":443",
+		"https://[2001:db8::1]/x":             "[2001:db8::1]:443",
+	} {
+		if got := (&ReviewRun{Base: base}).reviewHost(); got != want {
+			t.Errorf("%q: %s, want %s", base, got, want)
+		}
+	}
+	var none *ReviewRun
+	if none.reviewHost() != toolsrv.ReviewHost+":443" {
+		t.Error("no review run")
+	}
+}
+
+func TestAReviewBaseItsClientWouldRefuseIsRefusedBeforeTheRun(t *testing.T) {
+	p, f := reviewFixture(t)
+	happyFake(f)
+	p.Review = &ReviewRun{JevKey: testReviewKey, Base: "http://registry.example/api/v1/x/review"}
+	_, err := Run(context.Background(), f, p)
+	var ce *ClassifiedError
+	if !errors.As(err, &ce) || ce.Code != ExitPolicy || !strings.Contains(err.Error(), "AI Review cannot be asked at http://registry.example") {
+		t.Fatalf("err %v", err)
 	}
 }

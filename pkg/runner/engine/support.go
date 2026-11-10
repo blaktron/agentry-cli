@@ -98,6 +98,9 @@ type runDirs struct {
 	// plan's order (targethosts.go): the replacer gives each relay its
 	// address and port, and the host link its user.
 	targets []*targethost.Host
+	// review is the run's review grant, whose host the plan's
+	// PHReviewHost is.
+	review *ReviewRun
 	// browser is the run's browser once readied (browser.go): the
 	// browse proxy's name and address, its sites.
 	browser *browserRun
@@ -330,6 +333,7 @@ func (rd *runDirs) replacerWith(hostPath func(string) string) *strings.Replacer 
 		spec.PHSecretsAbsent, rd.absentForPrompt(),
 		spec.PHRunMode, rd.modeForPrompt(),
 		spec.PHModelSignIn, hostPath(rd.modelSignIn),
+		spec.PHReviewHost, rd.review.reviewHost(),
 	}
 	// The host link's run-time values: the user it runs as (the person's
 	// ids on this engine, whose files it reads and copies), and each
@@ -483,6 +487,7 @@ func prepareRunDirs(p Params, runID string, td *teardown) (*runDirs, error) {
 	rd.runID, rd.web, rd.anyEgress = runID, p.Plan.Capabilities.WebTools, p.Plan.Capabilities.EgressMode == "all"
 	rd.coderEgress = p.Plan.Capabilities.Coder != nil && p.Plan.Capabilities.Coder.OpenEgress
 	rd.targets = targetHostsOf(p)
+	rd.review = p.Review
 	if p.Web != nil {
 		// Made here, and only here, as a new regular file: whatever the
 		// output folder held under the name is removed first, so a link a

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"github.com/blaktron/agentry-cli/internal/version"
 	"github.com/blaktron/agentry-cli/pkg/drafter"
 	"github.com/blaktron/agentry-cli/pkg/knowledge/store"
+	"github.com/blaktron/agentry-cli/pkg/managed"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
 	"github.com/blaktron/agentry-cli/pkg/runner/modelkey"
@@ -64,8 +66,9 @@ func newVoiceCmd() *cobra.Command {
 			"you turn that off (`agentry voice attach off`) or say so for one run (--no-voice). It governs how a run\n" +
 			"writes, never what it does.\n\n" +
 			"`create`, `improve` and `edit` run the built-in Voice Writer on this computer, against the model your runner\n" +
-			"policy names: it costs no credits, and nothing it reads or writes is reviewed, but for a page from a web address (--url),\n" +
-			"which AI Review reads first with your own TypeSafe key. `set` keeps your own text.\n" +
+			"policy names: the model's use costs no credits, and nothing it reads or writes is reviewed, but for a page from a web\n" +
+			"address (--url), which AI Review reads first with your own TypeSafe key, or through the registry for one credit where\n" +
+			"your organization's managed settings pay for AI Review with its credits. `set` keeps your own text.\n" +
 			"The voice is kept sealed on this computer, under a key the registry you are signed in to wraps for your\n" +
 			"account (signed out, this computer's key).\n\n" +
 			"Your Agentry account keeps a voice of its own, for runs In Agentry. The two are never synced on their own:\n" +
@@ -248,8 +251,10 @@ func runVoiceBuild(cmd *cobra.Command, job build.Job, o *voiceOpts) error {
 		reviewed = "nothing it reads from files, or writes, is reviewed"
 	}
 	_, _ = fmt.Fprintf(errOut, "The Voice Writer runs on this machine against the model your runner policy names (%s).\n"+
-		"It costs no credits, and %s.\n", model, reviewed)
-	review, web, err := voicePageReview(pol, urls, errOut)
+		"The model's use costs no credits, and %s.\n", model, reviewed)
+	pay, endOps := creditsPay(errOut)
+	defer endOps()
+	review, web, err := voicePageReview(cmd.Context(), pol, urls, errOut, managed.PurposeVoice, pay)
 	if err != nil {
 		return err
 	}
@@ -341,8 +346,11 @@ func runVoiceBuild(cmd *cobra.Command, job build.Job, o *voiceOpts) error {
 // of files alone. On this computer it is the person's own TypeSafe key; on a
 // sandbox host, the registry's route with the job's credential. Without one
 // the addresses are refused, and the reason given: every page is read by AI
-// Review before the Voice Writer reads it.
-func voicePageReview(pol *policy.Policy, urls []*sources.Source, errOut io.Writer) (webscan.Scanner, *engine.WebRun, error) {
+// Review before the Voice Writer reads it. Where the person's organization
+// pays for AI Review with its credits, an operation is opened for purpose
+// with pay, and the registry scans with its token as it does a sandbox
+// host's with the job's.
+func voicePageReview(ctx context.Context, pol *policy.Policy, urls []*sources.Source, errOut io.Writer, purpose string, pay drafter.Pay) (webscan.Scanner, *engine.WebRun, error) {
 	if len(urls) == 0 {
 		return nil, nil, nil
 	}
@@ -356,6 +364,14 @@ func voicePageReview(pol *policy.Policy, urls []*sources.Source, errOut io.Write
 		return &webscan.Registry{Base: reg, JobToken: tok}, &engine.WebRun{Scan: toolsrv.WebScanRegistry, Registry: reg, JobToken: tok}, nil
 	}
 	jev, err := drafter.JevKey(pol)
+	if paid := managed.CreditsPaid(err); paid != nil {
+		op, payErr := pay(ctx, paid.Registry, purpose)
+		if payErr != nil {
+			return nil, nil, engine.Classify(engine.ExitPolicy, payErr)
+		}
+		_, _ = fmt.Fprintln(errOut, "Each page from a web address is fetched first and read by AI Review through the registry; one it flags is withheld.")
+		return &webscan.Registry{Base: op.Registry, JobToken: op.Token}, &engine.WebRun{Scan: toolsrv.WebScanRegistry, Registry: op.Registry, JobToken: op.Token}, nil
+	}
 	if err != nil {
 		return nil, nil, err
 	}

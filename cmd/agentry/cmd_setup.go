@@ -15,6 +15,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/blaktron/agentry-cli/pkg/managed"
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/gateway"
@@ -126,6 +127,21 @@ func runSetup(cmd *cobra.Command, opts setupOpts) error {
 		return engine.Classify(engine.ExitPolicy, err)
 	}
 
+	// An organization's managed settings pre-fill the model step, or lock
+	// it: a locked step is not asked, and a choice it forbids is refused.
+	if pick := managed.Current().SetupModel(); pick.Provider != "" {
+		switch {
+		case opts.provider == "":
+			opts.provider = pick.Provider
+			if opts.model == "" {
+				opts.model = pick.Model
+			}
+			_, _ = fmt.Fprintln(narration(cmd), pick.Line)
+		case pick.Locked && (opts.provider != pick.Provider || (pick.Model != "" && opts.model != "" && opts.model != pick.Model)):
+			return engine.Classify(engine.ExitPolicy, fmt.Errorf("the model step is locked: %s", pick.Line))
+		}
+	}
+
 	interactive := !opts.yes && stdinIsTTY(cmd.InOrStdin())
 	// One buffered reader for the questions and a ChatGPT sign-in's pasted
 	// redirect: two would each keep what they read ahead of the other.
@@ -153,6 +169,10 @@ func runSetup(cmd *cobra.Command, opts setupOpts) error {
 		Yes:             !interactive,
 	}); err != nil {
 		return engine.Classify(engine.ExitPolicy, err)
+	}
+	if r := managed.ModelRefusal(managed.RunModel{Provider: pol.Model.Provider, Model: pol.Model.Name, KeyKind: pol.Model.APIKeyKind,
+		BaseURL: pol.Model.BaseURL, Adapter: adapter.DefaultFor(pol)}); r != "" {
+		return engine.Classify(engine.ExitPolicy, fmt.Errorf("not saved: %s", r))
 	}
 	if err := policy.Save(policyPath, pol); err != nil {
 		return engine.Classify(engine.ExitPolicy, err)

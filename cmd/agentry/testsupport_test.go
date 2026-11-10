@@ -186,9 +186,12 @@ type fakeRegistry struct {
 	submitTags  []string
 	// agentVisibility is what GET agent answers; "" is public.
 	agentVisibility string
-	t               *testing.T
-	srv             *httptest.Server
-	agents          map[string]*fakeAgent
+	// reviewOpened and reviewEnded record the AI Review operations opened
+	// (by purpose) and ended (by id) on the review extension's routes.
+	reviewOpened, reviewEnded []string
+	t                         *testing.T
+	srv                       *httptest.Server
+	agents                    map[string]*fakeAgent
 
 	signer *ecdsa.PrivateKey
 	keyID  string
@@ -305,6 +308,29 @@ func newFakeRegistry(t *testing.T) *fakeRegistry {
 			"periodStart": "2026-09-11T00:00:00Z", "periodEnd": "2026-10-11T00:00:00Z", "tierSince": "2026-09-11T00:00:00Z",
 			"privateAgents": map[string]any{"max": 10, "used": 4}, "upgrade": map[string]any{"available": false},
 		})
+	})
+
+	mux.HandleFunc("POST /api/v1/x/review/operations", func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer agy_") {
+			writeProblem(w, http.StatusUnauthorized, "Sign in required", "This request carried no valid session or token.")
+			return
+		}
+		var body struct{ Purpose string }
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		fr.mu.Lock()
+		fr.reviewOpened = append(fr.reviewOpened, body.Purpose)
+		n := len(fr.reviewOpened)
+		fr.mu.Unlock()
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"operation": map[string]any{"id": fmt.Sprintf("op-%d", n), "purpose": body.Purpose, "expiresAt": "2030-01-01T00:00:00Z", "maxRequests": 500},
+			"token":     fmt.Sprintf("agyr_op%d", n), "credits": 1,
+		})
+	})
+	mux.HandleFunc("DELETE /api/v1/x/review/operations/{id}", func(w http.ResponseWriter, r *http.Request) {
+		fr.mu.Lock()
+		fr.reviewEnded = append(fr.reviewEnded, r.PathValue("id"))
+		fr.mu.Unlock()
+		writeJSON(w, http.StatusOK, map[string]any{"operation": map[string]any{"id": r.PathValue("id"), "ended": true}})
 	})
 
 	mux.HandleFunc("GET /api/v1/advisories", func(w http.ResponseWriter, r *http.Request) {

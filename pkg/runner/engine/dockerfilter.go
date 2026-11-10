@@ -18,7 +18,6 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/desktoplink"
 	"github.com/blaktron/agentry-cli/runnerimage/hostlink"
 	"github.com/blaktron/agentry-cli/runnerimage/sockfilter"
-	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
 
 // The gateway's daemon socket is a per-run filter. The compiled plan
@@ -247,7 +246,7 @@ func filterConfig(rd *runDirs, runID string, gwEnv map[string]string, lim policy
 		SharedNetworks:     shared,
 		EgressNetworks:     egress,
 		NetworkNames:       names,
-		RelayHosts:         slices.Concat(relayHosts(plan), rd.hostRelays(), rd.browseProxyRelay()),
+		RelayHosts:         slices.Concat(relayHosts(plan), rd.reviewRelay(plan), rd.hostRelays(), rd.browseProxyRelay()),
 		RelayPins:          rd.browseProxyPin(),
 		WebNetwork:         webNet,
 		WebImage:           webImage,
@@ -379,8 +378,8 @@ const gatewayOwnerLabel = "agentry.gateway.run"
 // relayHosts are where a relay may be pointed (sockfilter.Config.
 // RelayHosts): the run's declared servers' egress entries, the agent's own
 // egress hosts on 443, the port the compiler gives the tools server's
-// fetch, the review grant's TypeSafe API on 443, and the calendar feeds'
-// hosts on 443. Empty when nothing declares egress, which admits no relay.
+// fetch, and the calendar feeds' hosts on 443. The review grant's one host
+// is the run's (runDirs.reviewRelay). Empty when nothing declares egress, which admits no relay.
 func relayHosts(plan *spec.Plan) []string {
 	var hosts []string
 	for _, srv := range plan.MCPServers {
@@ -396,11 +395,6 @@ func relayHosts(plan *spec.Plan) []string {
 				hosts = append(hosts, h+":443")
 			}
 		}
-	}
-	// The review grant's one host, which the compiler gives the tools
-	// server as its allowHosts.
-	if plan.Capabilities.ReviewTools {
-		hosts = append(hosts, toolsrv.ReviewHost+":443")
 	}
 	// The calendar feeds' hosts, which the compiler gives the tools server
 	// as its allowHosts.

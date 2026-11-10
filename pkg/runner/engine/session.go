@@ -1967,7 +1967,7 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 		env.CapabilitiesEnforced["web.aiReview"] = webLine(env.Web)
 	}
 	if env.Review = reviewRecord(s.rd.receiptsDir, s.p.Review); env.Review != nil {
-		env.CapabilitiesEnforced["review.aiReview"] = reviewLine(env.Review)
+		env.CapabilitiesEnforced["review.aiReview"] = reviewLine(env.Review, s.p.Review)
 	}
 	env.PDFs = pdfs
 	env.FetchSaves = fetchSaves
