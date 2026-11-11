@@ -1138,6 +1138,7 @@ func (s *liveSession) launch(again bool) (io.ReadWriteCloser, error) {
 			Name:        name,
 			Image:       p.Plan.Harness.Agent.Image,
 			Entrypoint:  p.Plan.Harness.Agent.Entrypoint,
+			User:        p.Plan.Harness.Agent.User,
 			Argv:        append(substituteAll(p.Plan.Harness.Agent.Argv, rep), s.conversationArgs...),
 			Env:         agentEnv,
 			Mounts:      mounts,

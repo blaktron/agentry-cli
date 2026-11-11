@@ -568,6 +568,10 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		return nil, signInRefusal(adapterName, keyKind)
 	}
 	harnessImage, _ := in.Policy.Images.HarnessImageFor(adapterName)
+	if adapterName == adapter.AgentryHarnessAdapterName {
+		// The runner's own harness is a role of the runner image.
+		harnessImage = policy.HarnessImage{Ref: in.RunnerImage}
+	}
 	// A persistent plan's harness half is the interactive one: the same
 	// server on the agent container's stdio and the same session store, which
 	// the runner keeps between starts instead of removing at the end.
@@ -1360,12 +1364,19 @@ func baseToolSpec(caps spec.CapSummary, secrets []string) *toolsrv.Spec {
 // less a margin, or to the smaller page of a run on model (adapter.PageBudget).
 func toolResultsEnforcement(adapterName string, model policy.Model, b adapter.Budget, caps spec.CapSummary) string {
 	why := fmt.Sprintf("the %s harness's measured tool-result limit less a margin", adapterName)
+	limit := fmt.Sprintf("under the %s harness's measured tool-result limit", adapterName)
+	if adapterName == adapter.AgentryHarnessAdapterName {
+		// The runner's own harness passes a result on whole: the page is
+		// the runner's choice, not a limit met.
+		why = "the runner's own page (its harness passes a result on whole)"
+		limit = "under the runner's own page"
+	}
 	switch {
 	case b == adapter.ResultBudget(adapterName):
 	case model.ContextWindow > 0:
-		why = fmt.Sprintf("the page the model's context window of %d tokens sets, under the %s harness's measured tool-result limit", model.ContextWindow, adapterName)
+		why = fmt.Sprintf("the page the model's context window of %d tokens sets, %s", model.ContextWindow, limit)
 	default:
-		why = fmt.Sprintf("the page for a model server of your own whose context window is not recorded, under the %s harness's measured tool-result limit", adapterName)
+		why = fmt.Sprintf("the page for a model server of your own whose context window is not recorded, %s", limit)
 	}
 	line := fmt.Sprintf("every result of the runner's own tools is held to %s, %s, by the tools server: a file is read a page at a time from the offset asked, each page saying where the next begins; a listing or a search stops at it and says what it left out; any other result is cut at it with a notice saying so; declared MCP servers' results are their own",
 		toolsrv.BudgetWords(b.Bytes, b.Lines), why)

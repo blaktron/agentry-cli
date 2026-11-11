@@ -38,6 +38,7 @@ import (
 	"github.com/blaktron/agentry-cli/runnerimage/decode"
 	"github.com/blaktron/agentry-cli/runnerimage/desktoplink"
 	"github.com/blaktron/agentry-cli/runnerimage/docpages"
+	"github.com/blaktron/agentry-cli/runnerimage/harness"
 	"github.com/blaktron/agentry-cli/runnerimage/hostlink"
 	"github.com/blaktron/agentry-cli/runnerimage/messenger"
 	"github.com/blaktron/agentry-cli/runnerimage/minimize"
@@ -104,6 +105,10 @@ const usageText = `usage: agentry-runner <mode> [flags]
         job file in --job, the staged files read-only in --staged, the report
         into --work; the credential is read from stdin as JSON, never from an
         argument or the environment
+  harness run --config <file> --conversation <id>
+        (the agent container) the runner's own harness: run one turn of the
+        conversation on the task read from stdin, with the model and the tool
+        gateway the configuration names, and write its events to stdout
   confine --write <dir> [--write <dir>...] -- <program> [<arg>...]
         (the tools server's) run a declared command, able to write only
         beneath the named directories
@@ -179,6 +184,16 @@ func main() {
 		// run_command's trampoline. It never returns,
 		// and the command never runs unconfined.
 		confine.Trampoline(os.Args[2:])
+	case "harness":
+		// The runner's own harness, in the agent container. It reports how
+		// its turn ended by its exit code, so it exits here.
+		if len(os.Args) < 3 || os.Args[2] != "run" {
+			usageExit()
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+		code := harness.Run(ctx, os.Args[3:], os.Stdin, os.Stdout, os.Stderr, os.Getenv)
+		stop()
+		os.Exit(code)
 	case "minimize":
 		// `docker build` runs this once to strip every
 		// executable but the declared commands from the image.
