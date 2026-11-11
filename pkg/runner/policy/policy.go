@@ -873,11 +873,11 @@ type Model struct {
 // field is not set.
 type Sampling struct {
 	Temperature       *float64 `yaml:"temperature,omitempty"`
-	TopP              *float64 `yaml:"top_p,omitempty"`
-	TopK              *int64   `yaml:"top_k,omitempty"`
-	MinP              *float64 `yaml:"min_p,omitempty"`
-	PresencePenalty   *float64 `yaml:"presence_penalty,omitempty"`
-	RepetitionPenalty *float64 `yaml:"repetition_penalty,omitempty"`
+	TopP              *float64 `yaml:"topP,omitempty"`
+	TopK              *int64   `yaml:"topK,omitempty"`
+	MinP              *float64 `yaml:"minP,omitempty"`
+	PresencePenalty   *float64 `yaml:"presencePenalty,omitempty"`
+	RepetitionPenalty *float64 `yaml:"repetitionPenalty,omitempty"`
 }
 
 // MaxOutputTokensLimit bounds model.maxOutputTokens: no answer is longer
@@ -897,17 +897,17 @@ func (s *Sampling) check() error {
 	}
 	for _, e := range []error{
 		in(s.Temperature, "temperature", 0, 2),
-		in(s.TopP, "top_p", 0, 1),
-		in(s.MinP, "min_p", 0, 1),
-		in(s.PresencePenalty, "presence_penalty", -2, 2),
-		in(s.RepetitionPenalty, "repetition_penalty", 0, 2),
+		in(s.TopP, "topP", 0, 1),
+		in(s.MinP, "minP", 0, 1),
+		in(s.PresencePenalty, "presencePenalty", -2, 2),
+		in(s.RepetitionPenalty, "repetitionPenalty", 0, 2),
 	} {
 		if e != nil {
 			return e
 		}
 	}
 	if s.TopK != nil && (*s.TopK < 0 || *s.TopK > 100000) {
-		return fmt.Errorf("sampling.top_k %d is outside 0 to 100000", *s.TopK)
+		return fmt.Errorf("sampling.topK %d is outside 0 to 100000", *s.TopK)
 	}
 	return nil
 }
