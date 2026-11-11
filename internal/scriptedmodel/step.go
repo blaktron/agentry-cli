@@ -182,9 +182,12 @@ func (s Step) play(x *exchange) {
 	case kindOverflow:
 		s.playOverflow(x)
 	default:
-		if x.req.API == Anthropic {
+		switch x.req.API {
+		case Anthropic:
 			s.playAnthropic(x)
-		} else {
+		case Responses:
+			s.playResponses(x)
+		default:
 			s.playChat(x)
 		}
 	}

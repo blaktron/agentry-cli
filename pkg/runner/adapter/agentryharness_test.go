@@ -106,9 +106,8 @@ func TestAgentryHarnessTakesThePolicysOutputLimitAndASchema(t *testing.T) {
 
 func TestAgentryHarnessRefusesWhatItCannotRun(t *testing.T) {
 	cases := map[string]func(*Input){
-		"interactive":      func(in *Input) { in.Mode = manifest.ModeInteractive },
-		"OpenAI's own API": func(in *Input) { in.Model.Provider = policy.ProviderOpenAI },
-		"Gemini":           func(in *Input) { in.Model.Provider = "google" },
+		"interactive": func(in *Input) { in.Mode = manifest.ModeInteractive },
+		"Gemini":      func(in *Input) { in.Model.Provider = "google" },
 		"a server of the person's own with no address": func(in *Input) { in.Model.Provider = "custom" },
 		"the registry's models with no address":        func(in *Input) { in.Model.Provider = policy.ProviderAgentry },
 		"a subscription token":                         func(in *Input) { in.Model.APIKeyKind = policy.KeyKindSubscription },
@@ -216,6 +215,31 @@ func TestAgentryHarnessRoutersAndCredits(t *testing.T) {
 		if v.Name == "AGENTRY_MODEL_KEY" && !v.FromInference {
 			t.Errorf("the key is not the run's credits session: %+v", v)
 		}
+	}
+}
+
+func TestAgentryHarnessReachesOpenAIsOwnAPI(t *testing.T) {
+	in := agentryHarnessInput()
+	in.Model = policy.Model{Provider: policy.ProviderOpenAI, Name: "gpt-x", APIKeyEnv: "MY_OPENAI_KEY", MaxOutputTokens: 9000}
+	r, err := (&agentryHarnessAdapter{}).Compile(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := proto.DecodeConfig(bytes.NewReader(r.Files["harness.json"]))
+	if err != nil {
+		t.Fatalf("the harness would refuse what the adapter wrote: %v", err)
+	}
+	if m := cfg.Model; m.API != proto.APIResponses || m.BaseURL != "" || m.KeyEnv != "AGENTRY_MODEL_KEY" || m.MaxOutputTokens != 9000 || m.Sampling != nil {
+		t.Errorf("model: %+v", m)
+	}
+	found := false
+	for _, v := range r.Agent.Env {
+		if v.Name == "AGENTRY_MODEL_KEY" && v.FromHostEnv == "MY_OPENAI_KEY" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the key's variable: %+v", r.Agent.Env)
 	}
 }
 

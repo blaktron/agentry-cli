@@ -22,6 +22,10 @@ type Request struct {
 	MaxTokens int
 	// IncludeUsage is Chat Completions' stream_options.include_usage.
 	IncludeUsage bool
+	// Store is the Responses API's store, false when the request set it
+	// so; Include its include list.
+	Store   *bool
+	Include []string
 	// System is the system prompt's text: the Anthropic system field, or
 	// the text of Chat Completions' system and developer messages.
 	System string
@@ -66,6 +70,9 @@ func parseRequest(r *http.Request, body []byte) Request {
 		req.API = ChatCompletions
 	case strings.HasSuffix(r.URL.Path, "/messages"):
 		req.API = Anthropic
+	case strings.HasSuffix(r.URL.Path, "/responses"):
+		req.API = Responses
+		return parseResponsesRequest(req, body)
 	default:
 		return req
 	}
@@ -158,7 +165,7 @@ func blocksText(raw json.RawMessage) string {
 	}
 	var parts []string
 	for _, b := range blocks {
-		if b.Type == "text" || b.Type == "" {
+		if b.Type == "text" || b.Type == "input_text" || b.Type == "output_text" || b.Type == "" {
 			parts = append(parts, b.Text)
 		}
 	}
@@ -269,4 +276,65 @@ func dropCacheControl(v any) any {
 		}
 	}
 	return v
+}
+
+// parseResponsesRequest reads a Responses API request. Its input is a list
+// of items, not of messages: a message, a reasoning item, a function call
+// and a function call's output are each one item, and each becomes one
+// Message here so that a test reads them in the order sent.
+func parseResponsesRequest(req Request, body []byte) Request {
+	var wire struct {
+		Model           string            `json:"model"`
+		Stream          bool              `json:"stream"`
+		MaxOutputTokens int               `json:"max_output_tokens"`
+		Instructions    json.RawMessage   `json:"instructions"`
+		Input           []json.RawMessage `json:"input"`
+		Tools           json.RawMessage   `json:"tools"`
+		Store           *bool             `json:"store"`
+		Include         []string          `json:"include"`
+	}
+	if json.Unmarshal(body, &wire) != nil {
+		return req
+	}
+	req.Model, req.Stream, req.MaxTokens = wire.Model, wire.Stream, wire.MaxOutputTokens
+	req.Store, req.Include = wire.Store, wire.Include
+	req.system, req.tools = wire.Instructions, wire.Tools
+	req.Tools = toolNames(wire.Tools)
+	_ = json.Unmarshal(wire.Instructions, &req.System)
+	for _, raw := range wire.Input {
+		var item struct {
+			Type      string          `json:"type"`
+			Role      string          `json:"role"`
+			Content   json.RawMessage `json:"content"`
+			CallID    string          `json:"call_id"`
+			Name      string          `json:"name"`
+			Arguments string          `json:"arguments"`
+			Output    json.RawMessage `json:"output"`
+			Summary   []struct {
+				Text string `json:"text"`
+			} `json:"summary"`
+		}
+		m := Message{Raw: raw}
+		if json.Unmarshal(raw, &item) != nil {
+			req.Messages = append(req.Messages, m)
+			continue
+		}
+		switch item.Type {
+		case "function_call":
+			m.Role = "assistant"
+			m.Calls = []Call{{ID: item.CallID, Name: item.Name, Arguments: item.Arguments}}
+		case "function_call_output":
+			m.Role = "tool"
+			m.Results = []Result{{CallID: item.CallID, Text: blocksText(item.Output)}}
+		case "reasoning":
+			m.Role = "assistant"
+			for _, part := range item.Summary {
+				m.Reasoning += part.Text
+			}
+		default:
+			m.Role, m.Text = item.Role, blocksText(item.Content)
+		}
+		req.Messages = append(req.Messages, m)
+	}
+	return req
 }

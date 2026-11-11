@@ -701,3 +701,113 @@ func TestARequestPastTheScriptFailsTheTest(t *testing.T) {
 		t.Errorf("the test was failed %d times, want once for the request past the script", len(rec.errors))
 	}
 }
+
+const responsesPath = "/v1/responses"
+
+func TestResponsesStreamsAReply(t *testing.T) {
+	s := New(t,
+		ToolCalls(Call{Name: "fs_read", Arguments: `{"path":"a.txt"}`}).WithText("Reading.").WithReasoning("First the file.").
+			WithUsage(Usage{Input: 120, CacheRead: 900, Output: 33, Reasoning: 12}),
+		CutToolCall("write_report", `{"title":"Fin`),
+		Text("Done.").WithUsage(Usage{Input: 5, Output: 7}),
+	)
+	read := func(evs []event) (types []string, last map[string]any, items []map[string]any) {
+		for _, e := range evs {
+			var d map[string]any
+			if err := json.Unmarshal([]byte(e.data), &d); err != nil {
+				t.Fatalf("event %q is not JSON: %v", e.data, err)
+			}
+			if d["type"] != e.name {
+				t.Errorf("event named %q carries type %v", e.name, d["type"])
+			}
+			types = append(types, e.name)
+			if e.name == "response.output_item.done" {
+				items = append(items, d["item"].(map[string]any))
+			}
+			last = d
+		}
+		return types, last, items
+	}
+
+	_, evs := stream(t, s, responsesPath, `{"model":"m","stream":true,"input":[]}`)
+	types, last, items := read(evs)
+	if types[len(types)-1] != "response.completed" || len(items) != 3 {
+		t.Fatalf("events %v, %d finished items", types, len(items))
+	}
+	if items[0]["type"] != "reasoning" || items[0]["encrypted_content"] == "" || items[1]["type"] != "message" {
+		t.Errorf("reasoning and text items: %v", items[:2])
+	}
+	if c := items[2]; c["type"] != "function_call" || c["name"] != "fs_read" || c["arguments"] != `{"path":"a.txt"}` || c["call_id"] == "" {
+		t.Errorf("call item: %v", c)
+	}
+	usage := last["response"].(map[string]any)["usage"].(map[string]any)
+	if usage["input_tokens"] != float64(1020) || usage["input_tokens_details"].(map[string]any)["cached_tokens"] != float64(900) || usage["output_tokens"] != float64(33) {
+		t.Errorf("usage: %v", usage)
+	}
+
+	// A call the reply stopped inside is started and never done.
+	_, evs = stream(t, s, responsesPath, `{"model":"m","stream":true,"input":[]}`)
+	types, last, items = read(evs)
+	if types[len(types)-1] != "response.incomplete" || len(items) != 0 {
+		t.Errorf("a cut call: events %v, %d finished items", types, len(items))
+	}
+	if r := last["response"].(map[string]any); r["incomplete_details"].(map[string]any)["reason"] != "max_output_tokens" {
+		t.Errorf("why the reply is incomplete: %v", r)
+	}
+
+	// A whole response when no stream is asked for.
+	resp := post(t, context.Background(), s.URL()+responsesPath, `{"model":"m","input":[]}`)
+	var whole struct {
+		Status string
+		Output []struct {
+			Type    string
+			Content []struct{ Text string }
+		}
+		Usage struct {
+			Output int `json:"output_tokens"`
+		}
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&whole); err != nil {
+		t.Fatal(err)
+	}
+	if whole.Status != "completed" || len(whole.Output) != 1 || whole.Output[0].Content[0].Text != "Done." || whole.Usage.Output != 7 {
+		t.Errorf("whole response: %+v", whole)
+	}
+}
+
+func TestResponsesRequestsAreRecorded(t *testing.T) {
+	s := New(t, Text("ok"))
+	post(t, context.Background(), s.URL()+responsesPath, `{
+		"model":"gpt-x","stream":true,"store":false,"include":["reasoning.encrypted_content"],"max_output_tokens":256,
+		"instructions":"Be brief.",
+		"tools":[{"type":"function","name":"fs_read","parameters":{"type":"object"}}],
+		"input":[
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"Read a.txt"}]},
+			{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"The file first."}],"encrypted_content":"opaque"},
+			{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Reading."}]},
+			{"type":"function_call","call_id":"call_1","name":"fs_read","arguments":"{\"path\":\"a.txt\"}"},
+			{"type":"function_call_output","call_id":"call_1","output":"no such file"}
+		]}`)
+	r := s.Requests()[0]
+	if r.API != Responses || r.Model != "gpt-x" || !r.Stream || r.MaxTokens != 256 || r.System != "Be brief." || strings.Join(r.Tools, ",") != "fs_read" {
+		t.Errorf("request: %+v", r)
+	}
+	if r.Store == nil || *r.Store || len(r.Include) != 1 {
+		t.Errorf("store %v, include %v", r.Store, r.Include)
+	}
+	if len(r.Messages) != 5 {
+		t.Fatalf("%d input items, want 5", len(r.Messages))
+	}
+	if m := r.Messages[0]; m.Role != "user" || m.Text != "Read a.txt" {
+		t.Errorf("user message: %+v", m)
+	}
+	if m := r.Messages[1]; m.Reasoning != "The file first." {
+		t.Errorf("reasoning item: %+v", m)
+	}
+	if m := r.Messages[3]; len(m.Calls) != 1 || m.Calls[0].ID != "call_1" || m.Calls[0].Arguments != `{"path":"a.txt"}` {
+		t.Errorf("call item: %+v", m)
+	}
+	if m := r.Messages[4]; m.Role != "tool" || len(m.Results) != 1 || m.Results[0] != (Result{CallID: "call_1", Text: "no such file"}) {
+		t.Errorf("output item: %+v", m)
+	}
+}
