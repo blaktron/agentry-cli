@@ -42,6 +42,9 @@ var resultBudgets = map[string]Budget{
 	// Copilot CLI 1.0.95 saves a tool result over 20,480 bytes to a file and
 	// gives the model its first 500 characters.
 	CopilotImageAdapterName: {Bytes: 19 << 10, Lines: toolsrv.DefaultMaxResultLines},
+	// The runner's own harness passes a result on whole, so the page is
+	// the runner's to choose: the default one.
+	AgentryHarnessAdapterName: {Bytes: toolsrv.DefaultMaxResultBytes, Lines: toolsrv.DefaultMaxResultLines},
 }
 
 var (

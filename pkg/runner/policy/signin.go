@@ -234,6 +234,10 @@ const (
 	// may be, for a policy file written before the default was pinned. The
 	// receipt says so.
 	PinTag = "tag"
+	// PinSource is the runner's own harness: the runner image, built on
+	// the machine from the source the CLI carries. What ran is fixed by
+	// the CLI's version.
+	PinSource = "source"
 )
 
 // artifactRE is a vendor artifact's hash as a pin carries it: sha256 in

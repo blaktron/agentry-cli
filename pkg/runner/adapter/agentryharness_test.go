@@ -1,0 +1,226 @@
+package adapter
+
+import (
+	"bytes"
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/blaktron/agentry/pkg/manifest"
+
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	"github.com/blaktron/agentry-cli/runnerimage/harness/proto"
+)
+
+func agentryHarnessInput() Input {
+	return Input{
+		Mode:         manifest.ModeAutonomous,
+		Instruction:  "You are an agent.",
+		Model:        policy.Model{Provider: policy.ProviderAnthropic, Name: "claude-x", APIKeyEnv: "MY_ANTHROPIC_KEY", ContextWindow: 200000},
+		HarnessImage: "agentry-runner:1.2.3",
+		GatewayURL:   spec.GatewayURL(),
+	}
+}
+
+func TestAgentryHarnessCompilesAConfigurationItsHarnessReads(t *testing.T) {
+	r, err := (&agentryHarnessAdapter{}).Compile(agentryHarnessInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := proto.DecodeConfig(bytes.NewReader(r.Files["harness.json"]))
+	if err != nil {
+		t.Fatalf("the harness would refuse what the adapter wrote: %v", err)
+	}
+	want := proto.Config{
+		Version:    proto.Version,
+		Model:      proto.Model{API: proto.APIAnthropic, Name: "claude-x", KeyEnv: "AGENTRY_MODEL_KEY", MaxOutputTokens: 32000, ContextWindow: 200000},
+		System:     "You are an agent.",
+		Gateway:    proto.Gateway{URL: spec.GatewayURL(), TokenEnv: spec.GatewayTokenEnv},
+		SessionDir: spec.SessionMount,
+	}
+	if cfg != want {
+		t.Errorf("configuration %+v\nwant          %+v", cfg, want)
+	}
+	if len(r.Files) != 1 {
+		t.Errorf("plan files: %d, want the configuration alone", len(r.Files))
+	}
+
+	a := r.Agent
+	if a.Image != "agentry-runner:1.2.3" || a.User != "65534:65534" || !a.ReadOnlyRoot || !a.StdinTask {
+		t.Errorf("agent container: %+v", a)
+	}
+	if got := strings.Join(a.Argv, " "); got != "harness run --config /plan/harness.json --conversation "+spec.PHConversation {
+		t.Errorf("argv: %s", got)
+	}
+	var key spec.EnvVar
+	for _, v := range a.Env {
+		if v.Name == "AGENTRY_MODEL_KEY" {
+			key = v
+		}
+	}
+	if key.FromHostEnv != "MY_ANTHROPIC_KEY" || key.Value != "" || key.ExpectedKind == nil || key.ExpectedKind.Provider != policy.ProviderAnthropic {
+		t.Errorf("the key's variable: %+v", key)
+	}
+	writable := 0
+	for _, m := range a.Mounts {
+		if !m.ReadOnly {
+			writable++
+			if m.Target != spec.SessionMount {
+				t.Errorf("a writable mount at %s", m.Target)
+			}
+		}
+	}
+	if writable != 1 {
+		t.Errorf("%d writable mounts, want the conversation's record alone", writable)
+	}
+	if r.Resume == nil || r.Resume.StoreOwner != a.User {
+		t.Errorf("the record is not given to the user the harness runs as: %+v", r.Resume)
+	}
+	if r.Session != nil || r.ResultKind != "text" || r.Model != "anthropic/claude-x" {
+		t.Errorf("result: session %v, kind %q, model %q", r.Session, r.ResultKind, r.Model)
+	}
+}
+
+func TestAgentryHarnessTakesThePolicysOutputLimitAndASchema(t *testing.T) {
+	in := agentryHarnessInput()
+	in.Model.MaxOutputTokens = 4096
+	in.Model.BaseURL = "https://gateway.example/anthropic/"
+	in.SchemaJSON = []byte(`{"type":"object"}`)
+	r, err := (&agentryHarnessAdapter{}).Compile(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := proto.DecodeConfig(bytes.NewReader(r.Files["harness.json"]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Model.MaxOutputTokens != 4096 || cfg.Model.BaseURL != "https://gateway.example/anthropic" {
+		t.Errorf("model: %+v", cfg.Model)
+	}
+	if r.ResultKind != "json" || !strings.Contains(cfg.System, `{"type":"object"}`) {
+		t.Errorf("a schema: kind %q, system %q", r.ResultKind, cfg.System)
+	}
+}
+
+func TestAgentryHarnessRefusesWhatItCannotRun(t *testing.T) {
+	cases := map[string]func(*Input){
+		"interactive":          func(in *Input) { in.Mode = manifest.ModeInteractive },
+		"another provider":     func(in *Input) { in.Model.Provider = "openai" },
+		"a subscription token": func(in *Input) { in.Model.APIKeyKind = policy.KeyKindSubscription },
+	}
+	for name, edit := range cases {
+		in := agentryHarnessInput()
+		edit(&in)
+		var refusal *Refusal
+		if _, err := (&agentryHarnessAdapter{}).Compile(in); !errors.As(err, &refusal) {
+			t.Errorf("%s: not refused: %v", name, err)
+		}
+	}
+	in := agentryHarnessInput()
+	in.Mode = "sideways"
+	var refusal *Refusal
+	if _, err := (&agentryHarnessAdapter{}).Compile(in); err == nil || errors.As(err, &refusal) {
+		t.Errorf("an unknown mode: %v", err)
+	}
+}
+
+func TestAgentryHarnessEvents(t *testing.T) {
+	a := &agentryHarnessAdapter{}
+	one := func(line string) Event {
+		t.Helper()
+		evs := a.Events([]byte(line))
+		if len(evs) != 1 {
+			t.Fatalf("%s: %d events, want 1", line, len(evs))
+		}
+		if string(evs[0].Raw) != line {
+			t.Errorf("the raw line was not kept: %s", evs[0].Raw)
+		}
+		return evs[0]
+	}
+
+	if ev := one(`{"v":1,"seq":2,"type":"text","text":"Hel"}`); ev.Kind != EventAssistantText || ev.Text != "Hel" || !ev.Delta {
+		t.Errorf("text: %+v", ev)
+	}
+	if ev := one(`{"v":1,"seq":3,"type":"reasoning","text":"private"}`); ev.Kind != EventReasoning || ev.Text != "" {
+		t.Errorf("reasoning carries no text into the run's events: %+v", ev)
+	}
+	if ev := one(`{"v":1,"seq":4,"type":"tool_call","callId":"c1","tool":"fs_read","arguments":{"path":"a"}}`); ev.Kind != EventToolCall || ev.Tool != "fs_read" || ev.Text != "fs_read" || ev.CallID != "c1" {
+		t.Errorf("tool call: %+v", ev)
+	}
+	if ev := one(`{"v":1,"seq":5,"type":"tool_result","callId":"c1","tool":"fs_read","text":"no such file","failed":true}`); ev.Kind != EventToolResult || !ev.Failed || ev.Text != "no such file" || ev.CallID != "c1" || ev.Redacted {
+		t.Errorf("tool result: %+v", ev)
+	}
+	if ev := one(`{"v":1,"seq":6,"type":"tool_result","callId":"c2","tool":"read_input","unchanged":true}`); ev.Kind != EventToolResult || !ev.Redacted || ev.Text != "" {
+		t.Errorf("a result passed on unchanged: %+v", ev)
+	}
+	ev := one(`{"v":1,"seq":7,"type":"usage","usage":{"input":10,"cacheRead":900,"cacheWrite":40,"output":30,"contextTokens":950,"contextLimit":200000}}`)
+	if ev.Kind != EventUsage || ev.InputTokens != 950 || ev.OutputTokens != 30 || ev.ContextTokens != 950 || ev.ContextLimit != 200000 {
+		t.Errorf("usage: %+v", ev)
+	}
+	if ev := one(`{"v":1,"seq":8,"type":"turn_end","reason":"answer_cut"}`); ev.Kind != EventAnswerCut {
+		t.Errorf("a cut answer: %+v", ev)
+	}
+	if ev := one(`{"v":1,"seq":8,"type":"turn_end","reason":"max_steps"}`); ev.Kind != EventError {
+		t.Errorf("the step limit: %+v", ev)
+	}
+	for _, line := range []string{
+		`{"v":1,"seq":1,"type":"ready","tools":["fs_read"]}`,
+		`{"v":1,"seq":9,"type":"turn_end","reason":"answered","text":"Hello"}`,
+		`{"v":1,"seq":9,"type":"warning","code":"something"}`,
+		`{"v":1,"seq":9,"type":"usage"}`,
+		`{"v":2,"seq":9,"type":"a type of a later version"}`,
+		`{"seq":9}`,
+		`not json`,
+	} {
+		if ev := one(line); ev.Kind != EventOther {
+			t.Errorf("%s: %+v, want other", line, ev)
+		}
+	}
+	if evs := a.Events([]byte("  \n")); len(evs) != 0 {
+		t.Errorf("a blank line: %+v", evs)
+	}
+}
+
+// The engine reads an error's words to tell a server at capacity (wait and
+// start again) and a passing failure (carry on from the record) from a
+// failure that ends the run.
+func TestAgentryHarnessErrorsSayWhatTheEngineActsOn(t *testing.T) {
+	a := &agentryHarnessAdapter{}
+	text := func(line string) (Event, string) {
+		evs := a.Events([]byte(line))
+		return evs[0], evs[0].Text
+	}
+
+	ev, s := text(`{"v":1,"seq":1,"type":"error","class":"capacity","status":529,"text":"Overloaded"}`)
+	if ev.Kind != EventError || !AtCapacity(s) || !strings.Contains(s, "Overloaded") {
+		t.Errorf("capacity: %+v", ev)
+	}
+	for _, line := range []string{
+		`{"v":1,"seq":1,"type":"error","class":"rate_limit","status":429,"text":"slow down","retryAfterSeconds":20}`,
+		`{"v":1,"seq":1,"type":"error","class":"server","status":500,"text":"Internal server error"}`,
+		`{"v":1,"seq":1,"type":"error","class":"transport","text":"the reply's stream ended before the reply did"}`,
+	} {
+		ev, s := text(line)
+		if _, ok := TransientModelFailure(s); ev.Kind != EventError || !ok {
+			t.Errorf("%s\nis not read as a passing failure: %q", line, s)
+		}
+	}
+	for _, line := range []string{
+		`{"v":1,"seq":1,"type":"error","class":"auth","status":401,"text":"invalid x-api-key"}`,
+		`{"v":1,"seq":1,"type":"error","class":"request","status":400,"text":"messages: field required"}`,
+		// Nothing shortens the conversation yet, so starting again on it
+		// would only be refused again.
+		`{"v":1,"seq":1,"type":"error","class":"overflow","status":400,"text":"prompt is too long: 250001 tokens > 200000 maximum"}`,
+		`{"v":1,"seq":1,"type":"error","class":"gateway","text":"tool gateway answered HTTP 401: no bearer"}`,
+	} {
+		ev, s := text(line)
+		if _, ok := TransientModelFailure(s); ev.Kind != EventError || ok || AtCapacity(s) {
+			t.Errorf("%s\nis read as a failure to wait out: %q", line, s)
+		}
+	}
+	ev, s = text(`{"v":1,"seq":1,"type":"error","class":"credits","status":400,"text":"Your credit balance is too low to access the Anthropic API."}`)
+	if ev.Kind != EventOutOfCredits || !strings.Contains(s, "credit balance is too low") {
+		t.Errorf("no credits: %+v", ev)
+	}
+}

@@ -166,6 +166,12 @@ func imagePin(adapterName, image string, h policy.HarnessImage) *spec.ImagePin {
 	if image == "" {
 		return nil
 	}
+	if adapterName == adapter.AgentryHarnessAdapterName {
+		// The runner image, whose tag names the build of the CLI's own
+		// source it was made from.
+		_, build, _ := strings.Cut(image, ":")
+		return &spec.ImagePin{By: policy.PinSource, Value: build, Note: "built on this machine from the CLI's own source"}
+	}
 	if image != h.Ref {
 		h = policy.HarnessImage{Ref: image}
 	}

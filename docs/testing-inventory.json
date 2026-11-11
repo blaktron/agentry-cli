@@ -2209,6 +2209,34 @@
       ]
     },
     {
+      "owner": "internal/harnesstest",
+      "behavior": "Runs the runner's own harness end to end against a scripted model and a scripted tool gateway: what the model is sent, what the gateway is sent, the events and the record",
+      "disposition": "retain",
+      "files": [
+        {
+          "path": "internal/harnesstest/harness_test.go",
+          "tests": [
+            "TestOneRunEndToEnd",
+            "TestACutCallIsNeverRun",
+            "TestACallInterruptedMidwayIsNotRunAgain",
+            "TestModelFailuresAreReportedWithTheirClass",
+            "TestToolFailuresAreResultsTheModelReads",
+            "TestAGatewayThatStreamsPagesAndReturnsMoreThanText",
+            "TestTheStepLimitEndsATurn",
+            "TestNothingIsSentOnAConfigurationThatCannotBeUsed",
+            "TestAGatewayThatRefusesTheBearerEndsTheRunBeforeTheModel"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "HTTP transport",
+            "source/file contract"
+          ]
+        }
+      ]
+    },
+    {
       "owner": "internal/highlights",
       "behavior": "What each release of the agentry CLI brings, in a few plain lines for the person using it",
       "disposition": "retain",
@@ -4345,6 +4373,20 @@
           ]
         },
         {
+          "path": "pkg/runner/adapter/agentryharness_test.go",
+          "tests": [
+            "TestAgentryHarnessCompilesAConfigurationItsHarnessReads",
+            "TestAgentryHarnessTakesThePolicysOutputLimitAndASchema",
+            "TestAgentryHarnessRefusesWhatItCannotRun",
+            "TestAgentryHarnessEvents",
+            "TestAgentryHarnessErrorsSayWhatTheEngineActsOn"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "pkg/runner/adapter/budget_test.go",
           "tests": [
             "TestEveryAdapterHasAMeasuredResultBudget",
@@ -4866,6 +4908,17 @@
       "behavior": "The capability compiler: it turns manifest + operator policy into the run plan — generated gateway file",
       "disposition": "retain",
       "files": [
+        {
+          "path": "pkg/runner/compile/agentryharness_test.go",
+          "tests": [
+            "TestTheRunnersOwnHarnessIsPinnedByItsSource",
+            "TestTheRunnersOwnHarnessHasNoResultLimitToName"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
         {
           "path": "pkg/runner/compile/budget_test.go",
           "tests": [
@@ -11449,6 +11502,70 @@
           "dependencyHints": [
             "source/file contract",
             "explicit skip"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "runnerimage/harness/convo",
+      "behavior": "A conversation's append-only record and the messages a model request is built from: a call with no recorded result is answered as failed and never run again",
+      "disposition": "retain",
+      "files": [
+        {
+          "path": "runnerimage/harness/convo/convo_test.go",
+          "tests": [
+            "TestProject",
+            "TestProjectNamesAResultByItsCall",
+            "TestALogIsCarriedOnAcrossProcesses",
+            "TestOpenRefuses"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "runnerimage/harness/llm",
+      "behavior": "The harness's model clients: what a request carries on the wire, what a reply's stream adds up to, and how a failure is classed",
+      "disposition": "retain",
+      "files": [
+        {
+          "path": "runnerimage/harness/llm/anthropic_test.go",
+          "tests": [
+            "TestAnthropicMarksWhatAServerCanReuse",
+            "TestAnthropicReadsAReply",
+            "TestAnthropicFailures"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "HTTP transport"
+          ]
+        }
+      ]
+    },
+    {
+      "owner": "runnerimage/harness/proto",
+      "behavior": "The contract between the runner and its own harness: the configuration, read strictly, and the events",
+      "disposition": "retain",
+      "files": [
+        {
+          "path": "runnerimage/harness/proto/proto_test.go",
+          "tests": [
+            "TestAConfigurationGoesThroughUnchanged",
+            "TestDecodeConfigRefuses",
+            "TestTheContractIsWhatTheSchemaSays"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
           ]
         }
       ]

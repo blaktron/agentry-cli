@@ -21,6 +21,9 @@ func TestEveryAdapterHasAMeasuredResultBudget(t *testing.T) {
 		CodexAdapterName:        codexToolResultBytes / 2,
 		CodexImageAdapterName:   codexToolResultBytes / 2,
 		CopilotImageAdapterName: 20480,
+		// The runner's own harness has no limit of its own: its page is
+		// held to the default harness's.
+		AgentryHarnessAdapterName: 50 << 10,
 	}
 	for _, name := range Names() {
 		b, ok := resultBudgets[name]
