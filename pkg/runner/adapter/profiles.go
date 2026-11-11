@@ -131,10 +131,10 @@ var profileRules = []struct {
 		p.topK = ptrI(64)
 		return p
 	}},
+	// Granite's card gives 8,192 as the length of its thinking, not of an
+	// answer, so it sets no answer cap.
 	{func(n string) bool { return has(n, "granite-4.2") }, func(string) *profile {
-		p := sampled(1.0, 0.95)
-		p.answerCap = 8192
-		return p
+		return sampled(1.0, 0.95)
 	}},
 }
 

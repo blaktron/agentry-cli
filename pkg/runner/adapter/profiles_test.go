@@ -238,7 +238,7 @@ func TestProfileFamilyValues(t *testing.T) {
 		{"Mistral-Large-4", shape{temp: ptrF(1), topP: ptrF(0.95)}},
 		{"Devstral-2-123B-Instruct-2512", shape{temp: ptrF(0.15)}},
 		{"gemma-4-31B-it", shape{temp: ptrF(1), topP: ptrF(0.95), topK: ptrI(64)}},
-		{"granite-4.2-30b", shape{temp: ptrF(1), topP: ptrF(0.95), cap: 8192}},
+		{"granite-4.2-30b", shape{temp: ptrF(1), topP: ptrF(0.95)}},
 	}
 	for _, c := range cases {
 		p := profileFor(c.name)
