@@ -2,10 +2,11 @@
 // local port, gives it a script of replies, points a model client at it and
 // then reads back every request the client made.
 //
-// It answers as three wire APIs, chosen by the request's path: the Anthropic
+// It answers as four wire APIs, chosen by the request's path: the Anthropic
 // Messages API (a path ending in /messages), OpenAI-style Chat Completions
-// (a path ending in /chat/completions) and the OpenAI Responses API (a path
-// ending in /responses). Each request takes the next step of
+// (a path ending in /chat/completions), the OpenAI Responses API (a path
+// ending in /responses) and the Gemini API (a path ending in
+// :generateContent or :streamGenerateContent). Each request takes the next step of
 // the script. A step is a reply (text, tool calls, reasoning, usage) or a
 // failure a real server produces: an answer cut at the output limit, an HTTP
 // error, a refusal of a conversation that is too long worded as a given
@@ -36,6 +37,8 @@ const (
 	ChatCompletions
 	// Responses is the OpenAI Responses API.
 	Responses
+	// Gemini is the Gemini API's generateContent.
+	Gemini
 )
 
 func (a API) String() string {
@@ -46,6 +49,8 @@ func (a API) String() string {
 		return "chat-completions"
 	case Responses:
 		return "responses"
+	case Gemini:
+		return "gemini"
 	}
 	return "unknown"
 }

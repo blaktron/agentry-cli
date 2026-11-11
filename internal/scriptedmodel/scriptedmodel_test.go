@@ -811,3 +811,132 @@ func TestResponsesRequestsAreRecorded(t *testing.T) {
 		t.Errorf("output item: %+v", m)
 	}
 }
+
+const geminiPath = "/v1beta/models/gemini-x:streamGenerateContent"
+
+func TestGeminiStreamsAReply(t *testing.T) {
+	s := New(t,
+		ToolCalls(Call{Name: "fs_read", Arguments: `{"path":"a.txt"}`}, Call{ID: "mine", Name: "fs_list", Arguments: `{}`}).
+			WithText("Reading.").WithReasoning("First the file.").
+			WithUsage(Usage{Input: 120, CacheRead: 900, Output: 33, Reasoning: 12}),
+		CutToolCall("write_report", `{"title":"Fin`),
+		Status(503, "The model is overloaded."),
+		Overflow(GeminiAPI, 4096),
+		Text("Done.").WithUsage(Usage{Input: 5, Output: 7}),
+	)
+	type part struct {
+		Text             string
+		Thought          bool
+		ThoughtSignature string
+		FunctionCall     *struct {
+			ID, Name string
+			Args     map[string]any
+		}
+	}
+	read := func(evs []event) (parts []part, finish string, usage map[string]float64) {
+		for _, e := range evs {
+			var d struct {
+				Candidates []struct {
+					Content      struct{ Parts []part }
+					FinishReason string
+				}
+				UsageMetadata map[string]float64
+			}
+			if err := json.Unmarshal([]byte(e.data), &d); err != nil {
+				t.Fatalf("chunk %q is not JSON: %v", e.data, err)
+			}
+			for _, c := range d.Candidates {
+				parts = append(parts, c.Content.Parts...)
+				if c.FinishReason != "" {
+					finish = c.FinishReason
+				}
+			}
+			if d.UsageMetadata != nil {
+				usage = d.UsageMetadata
+			}
+		}
+		return
+	}
+
+	_, evs := stream(t, s, geminiPath, `{"contents":[]}`)
+	parts, finish, usage := read(evs)
+	var text, thought string
+	var calls []part
+	for _, p := range parts {
+		switch {
+		case p.FunctionCall != nil:
+			calls = append(calls, p)
+		case p.Thought:
+			thought += p.Text
+		default:
+			text += p.Text
+		}
+	}
+	if text != "Reading." || thought != "First the file." || finish != "STOP" {
+		t.Errorf("text %q, thought %q, finish %q", text, thought, finish)
+	}
+	if len(calls) != 2 || calls[0].FunctionCall.Name != "fs_read" || calls[0].FunctionCall.Args["path"] != "a.txt" || calls[0].FunctionCall.ID != "" || calls[0].ThoughtSignature == "" || calls[1].FunctionCall.ID != "mine" {
+		t.Errorf("calls: %+v", calls)
+	}
+	if usage["promptTokenCount"] != 1020 || usage["cachedContentTokenCount"] != 900 || usage["candidatesTokenCount"] != 21 || usage["thoughtsTokenCount"] != 12 {
+		t.Errorf("usage: %v", usage)
+	}
+
+	// The API has no half call: a reply cut at the limit ends before it.
+	_, evs = stream(t, s, geminiPath, `{"contents":[]}`)
+	if parts, finish, _ := read(evs); finish != "MAX_TOKENS" || len(parts) != 0 {
+		t.Errorf("a cut call: finish %q, parts %+v", finish, parts)
+	}
+
+	resp := post(t, context.Background(), s.URL()+geminiPath, `{"contents":[]}`)
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 503 || !strings.Contains(string(body), `"status":"UNAVAILABLE"`) {
+		t.Errorf("an error: %d %s", resp.StatusCode, body)
+	}
+	resp = post(t, context.Background(), s.URL()+geminiPath, `{"contents":[]}`)
+	body, _ = io.ReadAll(resp.Body)
+	if resp.StatusCode != 400 || !strings.Contains(string(body), "exceeds the maximum number of tokens allowed (4096)") {
+		t.Errorf("a refusal: %d %s", resp.StatusCode, body)
+	}
+
+	// The plain method answers with one whole response.
+	resp = post(t, context.Background(), s.URL()+"/v1beta/models/gemini-x:generateContent", `{"contents":[]}`)
+	var whole struct {
+		Candidates []struct {
+			Content      struct{ Parts []part }
+			FinishReason string
+		}
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&whole); err != nil {
+		t.Fatal(err)
+	}
+	if len(whole.Candidates) != 1 || whole.Candidates[0].FinishReason != "STOP" {
+		t.Errorf("whole response: %+v", whole)
+	}
+}
+
+func TestGeminiRequestsAreRecorded(t *testing.T) {
+	s := New(t, Text("ok"))
+	post(t, context.Background(), s.URL()+geminiPath+"?alt=sse", `{
+		"systemInstruction":{"parts":[{"text":"Be brief."}]},
+		"generationConfig":{"maxOutputTokens":256},
+		"tools":[{"functionDeclarations":[{"name":"fs_read","parametersJsonSchema":{"type":"object"}},{"name":"fs_list"}]}],
+		"contents":[
+			{"role":"user","parts":[{"text":"Read a.txt"}]},
+			{"role":"model","parts":[{"text":"The file first.","thought":true},{"text":"Reading."},{"functionCall":{"name":"fs_read","args":{"path":"a.txt"}},"thoughtSignature":"c2ln"}]},
+			{"role":"user","parts":[{"functionResponse":{"name":"fs_read","response":{"error":"no such file"}}},{"text":"carry on"}]}
+		]}`)
+	r := s.Requests()[0]
+	if r.API != Gemini || r.Model != "gemini-x" || !r.Stream || r.MaxTokens != 256 || r.System != "Be brief." || strings.Join(r.Tools, ",") != "fs_read,fs_list" {
+		t.Errorf("request: %+v", r)
+	}
+	if len(r.Messages) != 3 {
+		t.Fatalf("%d messages, want 3", len(r.Messages))
+	}
+	if m := r.Messages[1]; m.Role != "assistant" || m.Text != "Reading." || m.Reasoning != "The file first." || len(m.Calls) != 1 || m.Calls[0].Name != "fs_read" || m.Calls[0].Arguments != `{"path":"a.txt"}` {
+		t.Errorf("model message: %+v", m)
+	}
+	if m := r.Messages[2]; m.Role != "user" || m.Text != "carry on" || len(m.Results) != 1 || m.Results[0] != (Result{CallID: "fs_read", Text: "no such file", IsError: true}) {
+		t.Errorf("result message: %+v", m)
+	}
+}

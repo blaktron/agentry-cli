@@ -107,10 +107,10 @@ func TestAgentryHarnessTakesThePolicysOutputLimitAndASchema(t *testing.T) {
 func TestAgentryHarnessRefusesWhatItCannotRun(t *testing.T) {
 	cases := map[string]func(*Input){
 		"interactive": func(in *Input) { in.Mode = manifest.ModeInteractive },
-		"Gemini":      func(in *Input) { in.Model.Provider = "google" },
 		"a server of the person's own with no address": func(in *Input) { in.Model.Provider = "custom" },
 		"the registry's models with no address":        func(in *Input) { in.Model.Provider = policy.ProviderAgentry },
 		"a subscription token":                         func(in *Input) { in.Model.APIKeyKind = policy.KeyKindSubscription },
+		"a provider it does not reach":                 func(in *Input) { in.Model.Provider = "amazon-bedrock" },
 	}
 	for name, edit := range cases {
 		in := agentryHarnessInput()
@@ -240,6 +240,25 @@ func TestAgentryHarnessReachesOpenAIsOwnAPI(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("the key's variable: %+v", r.Agent.Env)
+	}
+}
+
+func TestAgentryHarnessReachesGemini(t *testing.T) {
+	in := agentryHarnessInput()
+	in.Model = policy.Model{Provider: "google", Name: "gemini-x", APIKeyEnv: "GEMINI_API_KEY"}
+	r, err := (&agentryHarnessAdapter{}).Compile(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := proto.DecodeConfig(bytes.NewReader(r.Files["harness.json"]))
+	if err != nil {
+		t.Fatalf("the harness would refuse what the adapter wrote: %v", err)
+	}
+	if m := cfg.Model; m.API != proto.APIGemini || m.BaseURL != "" || m.KeyEnv != "AGENTRY_MODEL_KEY" || m.Sampling != nil {
+		t.Errorf("model: %+v", m)
+	}
+	if r.Model != "google/gemini-x" {
+		t.Errorf("the receipt's model is %q", r.Model)
 	}
 }
 

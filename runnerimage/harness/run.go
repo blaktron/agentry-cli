@@ -139,6 +139,9 @@ func modelClient(cfg proto.Config, client *http.Client, env Env) llm.Client {
 	if cfg.Model.API == proto.APIResponses {
 		return &llm.Responses{BaseURL: cfg.Model.BaseURL, Model: cfg.Model.Name, Key: key, HTTP: client}
 	}
+	if cfg.Model.API == proto.APIGemini {
+		return &llm.Gemini{BaseURL: cfg.Model.BaseURL, Model: cfg.Model.Name, Key: key, HTTP: client}
+	}
 	return &llm.Anthropic{
 		BaseURL: cfg.Model.BaseURL,
 		Model:   cfg.Model.Name,

@@ -41,6 +41,8 @@ const (
 	APIChat = "chat-completions"
 	// APIResponses is the OpenAI Responses API.
 	APIResponses = "openai-responses"
+	// APIGemini is the Gemini API's generateContent.
+	APIGemini = "gemini"
 )
 
 // Model says how the model is reached.
@@ -106,7 +108,7 @@ func DecodeConfig(r io.Reader) (Config, error) {
 		return Config{}, fmt.Errorf("harness configuration: version %d, this harness reads version %d", c.Version, Version)
 	}
 	switch c.Model.API {
-	case APIAnthropic, APIResponses:
+	case APIAnthropic, APIResponses, APIGemini:
 		switch {
 		case c.Model.KeyEnv == "":
 			return Config{}, fmt.Errorf("harness configuration: model.keyEnv is empty")

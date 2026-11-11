@@ -2230,7 +2230,9 @@
             "TestEachServersTooLongRefusalIsAnOverflow",
             "TestChatCompletionsFailuresAndCutAnswers",
             "TestOneRunOnOpenAIsOwnAPI",
-            "TestOpenAIsOwnAPICutCallsAndRefusals"
+            "TestOpenAIsOwnAPICutCallsAndRefusals",
+            "TestOneRunOnGemini",
+            "TestGeminiCutAnswersAndRefusals"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -2330,7 +2332,9 @@
             "TestPrefixOf",
             "TestARequestPastTheScriptFailsTheTest",
             "TestResponsesStreamsAReply",
-            "TestResponsesRequestsAreRecorded"
+            "TestResponsesRequestsAreRecorded",
+            "TestGeminiStreamsAReply",
+            "TestGeminiRequestsAreRecorded"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -4389,6 +4393,7 @@
             "TestAgentryHarnessReachesAServerOfThePersonsOwn",
             "TestAgentryHarnessRoutersAndCredits",
             "TestAgentryHarnessReachesOpenAIsOwnAPI",
+            "TestAgentryHarnessReachesGemini",
             "TestAgentryHarnessSendsNoKeyToAServerThatTakesNone",
             "TestAgentryHarnessEvents",
             "TestAgentryHarnessErrorsSayWhatTheEngineActsOn"
@@ -11568,6 +11573,20 @@
             "TestChatReadsAReply",
             "TestChatReadsWhatServersDoDifferently",
             "TestChatFailures"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "HTTP transport"
+          ]
+        },
+        {
+          "path": "runnerimage/harness/llm/gemini_test.go",
+          "tests": [
+            "TestGeminiReadsAReplyAndSendsItsPartsBack",
+            "TestGeminiEndingsAndFailures",
+            "TestMadeUpCallIDsDoNotRepeat"
           ],
           "fuzz": [],
           "benchmarks": [],

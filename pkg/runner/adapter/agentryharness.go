@@ -163,6 +163,8 @@ func agentryHarnessEndpoint(m policy.Model) (api, baseURL string, err error) {
 	switch {
 	case m.Provider == policy.ProviderAnthropic:
 		return proto.APIAnthropic, base, nil
+	case m.Provider == "google":
+		return proto.APIGemini, base, nil
 	case m.Provider == policy.ProviderOpenAI && base == "":
 		// OpenAI's own API. The same provider with an address is a server
 		// of the person's own, below.
