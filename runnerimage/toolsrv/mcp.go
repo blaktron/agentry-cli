@@ -110,6 +110,9 @@ type server struct {
 	// says the call being handled was answered with its stub.
 	reads       rereadLog
 	callStubbed bool
+	// repeats is the run's tally of repeated calls and failures
+	// (repeat.go).
+	repeats repeatLog
 	// callFault says the call being handled failed on the run's own
 	// machinery (calls.go): set by failed, read and cleared by recordCall.
 	callFault bool
@@ -496,10 +499,13 @@ func (s *server) callTool(d toolDef, args json.RawMessage) (string, bool) {
 	text, isErr := d.call(args)
 	s.recordCall(d.name, !isErr)
 	text = s.spec.Limits.budget().fitResult(d.name, s.scrubStoredSecrets(text))
+	// The tally reads the tool's own answer, before a stub replaces it; the
+	// notice goes after whatever the call answers.
+	notice := s.noteRepeat(d.name, args, text, isErr)
 	if !isErr {
 		text, s.callStubbed = s.reread(d.name, args, text)
 	}
-	return text, isErr
+	return text + notice, isErr
 }
 
 // InputResourceURI names the embedded resource an input tool's answer
