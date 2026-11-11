@@ -830,7 +830,8 @@
         {
           "path": "cmd/agentry/cmd_agent_subagents_test.go",
           "tests": [
-            "TestASubagentRunIsAnOrdinaryAutonomousRun"
+            "TestASubagentRunIsAnOrdinaryAutonomousRun",
+            "TestDesktopUseIsTheInstallsWords"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -8222,7 +8223,8 @@
             "TestAPlanIsReusedOnlyWithTheDesktopLineItWasCompiledWith",
             "TestAnUnchangedDesktopLineReusesThePlan",
             "TestADesktopLineThePolicyNowRefusesIsNotReused",
-            "TestTheAssistantsNextSegmentDropsComputerUseSwitchedOff"
+            "TestTheAssistantsNextSegmentDropsComputerUseSwitchedOff",
+            "TestTheCodingAgentsSegmentTakesComputerUseBesideItsToolchain"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -9016,7 +9018,8 @@
             "TestTheExecAgreementIsGivenWithItsApplicationAlone",
             "TestADesktopEntryNeedsAgentryDesktopAndIsGivenAllTheSame",
             "TestTheReleaseLineNarrowsTheDesktopEntries",
-            "TestTheRosterOffersThePersonsApplications"
+            "TestTheRosterOffersThePersonsApplications",
+            "TestTheCodingAgentIsOfferedThePersonsComputer"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -9609,6 +9612,7 @@
             "TestSubagentCallNamesOnlyRosterEntries",
             "TestSubagentRefusedWhenQuarantined",
             "TestHelperRunAsksPerNewVersion",
+            "TestHelperRunNamesThePersonsComputer",
             "TestASubagentIsARosterEntry",
             "TestAQuestionIsAskedAndAnsweredOverTheOwnerSocket",
             "TestAQuestionReachesAClientInTheSupervisorsProcess",

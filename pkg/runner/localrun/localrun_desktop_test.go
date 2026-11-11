@@ -170,3 +170,28 @@ func withDesktopLine(m *manifest.Manifest, d *manifest.Desktop) *manifest.Manife
 	out.Capabilities.Desktop = d
 	return &out
 }
+
+// The Coding agent's segment compiles with computer use beside its coding
+// toolchain (its programs, open egress and the browser), with the computer
+// use entry's tools; without the grant it has none.
+func TestTheCodingAgentsSegmentTakesComputerUseBesideItsToolchain(t *testing.T) {
+	home := t.TempDir()
+	pol := policy.Default()
+	pol.Images.Runner = "agentry-runner:test"
+	coder := &spec.CoderGrant{Commands: true, OpenEgress: true, Browser: true}
+	segment := func(d *manifest.Desktop) *spec.Plan {
+		t.Helper()
+		sp, err := Segment{Builtin: Coder(), Home: home, Policy: pol, PolicySHA: "sha", Build: "b1", Grants: Grants{Coder: coder, Desktop: d}}.Plan(context.Background(), io.Discard)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sp.Plan
+	}
+	on := segment(&manifest.Desktop{ComputerUse: manifest.ComputerUseApp})
+	if d := on.Capabilities.Desktop; !d.HasComputerUse() || len(d.ComputerTools) == 0 {
+		t.Fatalf("the Coding agent's segment with computer use on: %+v", d)
+	}
+	if off := segment(nil); off.Capabilities.Desktop != nil {
+		t.Fatalf("the Coding agent's segment without the grant has %+v", off.Capabilities.Desktop)
+	}
+}
