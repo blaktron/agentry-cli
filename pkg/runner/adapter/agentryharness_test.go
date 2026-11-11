@@ -2,6 +2,7 @@ package adapter
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -42,6 +43,14 @@ func TestAgentryHarnessCompilesAConfigurationItsHarnessReads(t *testing.T) {
 		System:     "You are an agent.",
 		Gateway:    proto.Gateway{URL: spec.GatewayURL(), TokenEnv: spec.GatewayTokenEnv},
 		SessionDir: spec.SessionMount,
+		// The page a 200,000-token window is given, the tools server's own.
+		Results:          &proto.Results{MaxBytes: 48 << 10},
+		Scrub:            &proto.Scrub{Unchanged: []string{"read_input", "search_inputs"}},
+		Loop:             &proto.Loop{Repeats: 5, CycleRepeats: 3, MaxPeriod: 4},
+		LengthRecoveries: 2,
+		ColdClear:        &proto.ColdClear{AfterSeconds: 300, KeepTurns: 2, KeepBrowser: 2},
+		Compaction:       &proto.Compaction{Threshold: 0.8, Checkpoint: checkpointText, Notes: spec.ChecklistForHarness},
+		Retry:            &proto.Retry{Attempts: 3, BaseSeconds: 2, MaxSeconds: 60, IdleSeconds: 300},
 	}
 	if !reflect.DeepEqual(cfg, want) {
 		t.Errorf("configuration %+v\nwant          %+v", cfg, want)
@@ -423,8 +432,8 @@ func TestAgentryHarnessErrorsSayWhatTheEngineActsOn(t *testing.T) {
 	for _, line := range []string{
 		`{"v":1,"seq":1,"type":"error","class":"auth","status":401,"text":"invalid x-api-key"}`,
 		`{"v":1,"seq":1,"type":"error","class":"request","status":400,"text":"messages: field required"}`,
-		// Nothing shortens the conversation yet, so starting again on it
-		// would only be refused again.
+		// The harness has already tried a summary of the conversation, so
+		// starting again on it would only be refused again.
 		`{"v":1,"seq":1,"type":"error","class":"overflow","status":400,"text":"prompt is too long: 250001 tokens > 200000 maximum"}`,
 		`{"v":1,"seq":1,"type":"error","class":"overflow","status":400,"text":"This model's maximum context length is 32768 tokens."}`,
 		`{"v":1,"seq":1,"type":"error","class":"gateway","text":"tool gateway answered HTTP 401: no bearer"}`,
@@ -437,6 +446,128 @@ func TestAgentryHarnessErrorsSayWhatTheEngineActsOn(t *testing.T) {
 	ev, s = text(`{"v":1,"seq":1,"type":"error","class":"credits","status":400,"text":"Your credit balance is too low to access the Anthropic API."}`)
 	if ev.Kind != EventOutOfCredits || !strings.Contains(s, "credit balance is too low") {
 		t.Errorf("no credits: %+v", ev)
+	}
+}
+
+// What the harness does on a long run reaches the engine as the events it
+// counts and acts on.
+func TestAgentryHarnessLongRunEvents(t *testing.T) {
+	a := &agentryHarnessAdapter{}
+	one := func(line string) Event {
+		t.Helper()
+		evs := a.Events([]byte(line))
+		if len(evs) != 1 || string(evs[0].Raw) != line {
+			t.Fatalf("%s: %+v", line, evs)
+		}
+		return evs[0]
+	}
+	if ev := one(`{"v":2,"seq":5,"type":"warning","code":"loop_nudge","tool":"fs_read","count":5,"text":"5 identical rounds of calls (fs_read) in a row; the model was told to reach its goal another way."}`); ev.Kind != EventLoopNudge || !strings.Contains(ev.Text, "fs_read") {
+		t.Errorf("a nudge: %+v", ev)
+	}
+	// What was cut is the word the receipt counts by.
+	for reason, want := range map[string]string{"answer": "answer", "reasoning": "reasoning", "tool call": "tool call"} {
+		if ev := one(`{"v":2,"seq":5,"type":"warning","code":"length_recovery","reason":"` + reason + `","count":1,"text":"A reply cut off…"}`); ev.Kind != EventLengthRecovery || ev.Text != want {
+			t.Errorf("a recovery from a cut %s: %+v", reason, ev)
+		}
+	}
+	if ev := one(`{"v":2,"seq":5,"type":"warning","code":"cold_clear","count":7,"reason":"cold cache","text":"7 old tool results…"}`); ev.Kind != EventResultsCleared || ev.Text != "cold cache" {
+		t.Errorf("a clear: %+v", ev)
+	}
+	for _, reason := range []string{"threshold", "overflow"} {
+		if ev := one(`{"v":2,"seq":5,"type":"warning","code":"compaction","reason":"` + reason + `","text":"The conversation was replaced…"}`); ev.Kind != EventCompaction || ev.Text != reason {
+			t.Errorf("a compaction for %s: %+v", reason, ev)
+		}
+	}
+	if ev := one(`{"v":2,"seq":5,"type":"warning","code":"retry","class":"capacity","status":529,"count":1,"text":"The model request failed…"}`); ev.Kind != EventModelRetry {
+		t.Errorf("a retry: %+v", ev)
+	}
+	// A summary that could not be made changed nothing the engine counts.
+	if ev := one(`{"v":2,"seq":5,"type":"warning","code":"compaction_failed","reason":"threshold","text":"…"}`); ev.Kind != EventOther {
+		t.Errorf("a failed compaction: %+v", ev)
+	}
+	// The conversation's size after a summary, with no request's tokens.
+	ev := one(`{"v":2,"seq":6,"type":"usage","usage":{"input":0,"cacheRead":0,"cacheWrite":0,"output":0,"contextTokens":812,"contextLimit":32768,"compacted":true,"costUsd":0.04}}`)
+	if ev.Kind != EventUsage || !ev.ContextCompacted || ev.ContextTokens != 812 || ev.ContextLimit != 32768 || ev.InputTokens != 0 || ev.OutputTokens != 0 || ev.CostUSD != 0.04 {
+		t.Errorf("usage after a compaction: %+v", ev)
+	}
+	if ev := one(`{"v":2,"seq":7,"type":"turn_ending"}`); ev.Kind != EventTurnEnding {
+		t.Errorf("a turn about to end: %+v", ev)
+	}
+}
+
+// The engine writes the harness's stdin through the adapter, and the harness
+// reads what it wrote as the commands they are.
+func TestAgentryHarnessFramesTheRunnersCommands(t *testing.T) {
+	var a Adapter = &agentryHarnessAdapter{}
+	g, ok := a.(Gated)
+	if !ok {
+		t.Fatal("the adapter's harness asks before a turn ends, and the adapter does not say so")
+	}
+	read := func(line []byte) proto.Command {
+		t.Helper()
+		if !bytes.HasSuffix(line, []byte("\n")) || bytes.Count(line, []byte("\n")) != 1 {
+			t.Fatalf("not one line: %q", line)
+		}
+		var c proto.Command
+		dec := json.NewDecoder(bytes.NewReader(line))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&c); err != nil {
+			t.Fatalf("%q: %v", line, err)
+		}
+		return c
+	}
+	task := "Read <a.txt> & say\nwhat it holds.\u2028"
+	if c := read(g.PromptCommand([]byte(task))); c.Type != proto.CmdPrompt || c.Text != task {
+		t.Errorf("the prompt: %+v", c)
+	}
+	if c := read(g.EndingAnswer("Your checklist has open steps:\n- one (pending)")); c.Type != proto.CmdContinue || c.Text != "Your checklist has open steps:\n- one (pending)" {
+		t.Errorf("an answer to go on: %+v", c)
+	}
+	if c := read(g.EndingAnswer("")); c.Type != proto.CmdAccept || c.Text != "" {
+		t.Errorf("an answer to end: %+v", c)
+	}
+}
+
+// The long-run settings follow the model's server and the plan.
+func TestAgentryHarnessLongRunSettings(t *testing.T) {
+	config := func(in Input) proto.Config {
+		t.Helper()
+		r, err := (&agentryHarnessAdapter{}).Compile(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := proto.DecodeConfig(bytes.NewReader(r.Files["harness.json"]))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cfg
+	}
+	// A server of the person's own with a small window: a smaller page, an
+	// earlier summary, a longer wait for a reply, and a cache taken to live
+	// as long as any server's.
+	own := agentryHarnessInput()
+	own.Model = policy.Model{Provider: "custom", Name: "qwen3.6", BaseURL: "http://agentry-host.internal:1234/v1", ContextWindow: 32768}
+	cfg := config(own)
+	if cfg.Results.MaxBytes != int(PageBudget(AgentryHarnessAdapterName, own.Model).Bytes) || cfg.Results.MaxBytes >= 48<<10 {
+		t.Errorf("the result limit: %d", cfg.Results.MaxBytes)
+	}
+	if cfg.Compaction.Threshold != 0.7 || cfg.Retry.IdleSeconds != 1800 || cfg.ColdClear.AfterSeconds != 3600 {
+		t.Errorf("compaction %+v, retry %+v, clear %+v", cfg.Compaction, cfg.Retry, cfg.ColdClear)
+	}
+	// The plan's own tools: the ones whose results are the host's own
+	// output, and the browser's.
+	plan := agentryHarnessInput()
+	plan.UnchangedTools = []string{"host_run"}
+	plan.BrowserTools = []string{"browser_navigate", "browser_snapshot"}
+	cfg = config(plan)
+	if got := strings.Join(cfg.Scrub.Unchanged, ","); got != "read_input,search_inputs,host_run" {
+		t.Errorf("tools passed on unchanged: %s", got)
+	}
+	if got := strings.Join(cfg.ColdClear.BrowserTools, ","); got != "browser_navigate,browser_snapshot" {
+		t.Errorf("browser tools: %s", got)
+	}
+	if strings.Join(InputTools, ",") != "read_input,search_inputs" {
+		t.Errorf("the shared list of input tools was changed: %v", InputTools)
 	}
 }
 

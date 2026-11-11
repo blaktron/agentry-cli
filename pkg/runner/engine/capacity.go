@@ -227,5 +227,7 @@ func withBase(u, base receipt.Usage) receipt.Usage {
 	u.Turns += base.Turns
 	u.LoopNudges += base.LoopNudges
 	u.LengthRecoveries = u.LengthRecoveries.Plus(base.LengthRecoveries)
+	u.ResultClears += base.ResultClears
+	u.Compactions = u.Compactions.Plus(base.Compactions)
 	return u
 }

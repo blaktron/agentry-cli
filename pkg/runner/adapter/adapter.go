@@ -174,6 +174,23 @@ const (
 	// turn ended after its tool calls with no reply, or with reasoning
 	// only. Text is the harness's words.
 	EventEmptyAnswer EventKind = "empty_answer"
+	// EventResultsCleared says the harness replaced old tool results in the
+	// conversation with placeholders, to send the model less. Text is why.
+	// The engine counts these in the receipt's usage.
+	EventResultsCleared EventKind = "results_cleared"
+	// EventCompaction says the harness replaced the conversation with a
+	// summary of it. Text is why: "threshold" when it neared the model's
+	// window, "overflow" when the model's server refused it as too long.
+	// The engine counts these in the receipt's usage, by reason.
+	EventCompaction EventKind = "compaction"
+	// EventModelRetry says a model request failed and the harness is
+	// sending it again. Whatever the failed attempt streamed is part of no
+	// message. Text is the harness's words.
+	EventModelRetry EventKind = "model_retry"
+	// EventTurnEnding says the model answered with no call left to run and
+	// the harness asks, before the turn ends, whether the runner has more
+	// for it (a Gated adapter). The harness waits for the answer.
+	EventTurnEnding EventKind = "turn_ending"
 	// EventOther is an unrecognized-but-valid harness event.
 	EventOther EventKind = "other"
 )
@@ -360,6 +377,19 @@ type NotContinuedError struct {
 
 func (e *NotContinuedError) Error() string {
 	return "the harness could not continue the stored conversation: " + e.Reason
+}
+
+// Gated is an Adapter whose container harness reads the runner's commands
+// on its stdin, one a line, instead of the task alone, and asks before a
+// turn ends on the model's answer (EventTurnEnding). The engine writes the
+// task as PromptCommand frames it and answers each ask with EndingAnswer;
+// a stdin that ends is taken by the harness as "the turn ends".
+type Gated interface {
+	// PromptCommand frames text as the command that starts a turn.
+	PromptCommand(text []byte) []byte
+	// EndingAnswer frames the answer to EventTurnEnding: message is what
+	// the model is told to go on with, and "" lets the turn end.
+	EndingAnswer(message string) []byte
 }
 
 // Continuing is a SessionDriver that can continue a conversation an earlier

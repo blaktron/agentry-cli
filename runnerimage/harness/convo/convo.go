@@ -6,6 +6,17 @@
 // result after, so a process that died in between leaves a call with no
 // result; such a call is shown to the model as failed and is never run
 // again.
+//
+// What the model is sent can still change: a cut-off reply gives way to a
+// stub, old tool results to placeholders, and the whole conversation to a
+// summary of it. Each such change is an entry of its own, an edit, that says
+// what the messages show from then on. The entries it covers stay in the
+// file, and the same file always gives the same messages.
+//
+// A model's reasoning is sent back only while the conversation before it is
+// the one it was written in: a server may bind a reasoning block to what
+// came before it and refuse the block once that has changed. So the replies
+// recorded before a clear or a compaction go back without their reasoning.
 package convo
 
 import (
@@ -40,6 +51,25 @@ const (
 	KindResult = "result"
 	// KindUsage is a model request's token count.
 	KindUsage = "usage"
+	// KindStub replaces the assistant message before it with its text: a
+	// reply the output limit cut off, taken out of what the model is sent.
+	KindStub = "stub"
+	// KindClear replaces the results of the calls it lists with short
+	// placeholders.
+	KindClear = "clear"
+	// KindCompaction replaces everything before it with its text, a summary
+	// of the conversation, but for the entries from KeepFrom on.
+	KindCompaction = "compaction"
+)
+
+// Who wrote a user entry that is not the runner's prompt.
+const (
+	// NoteNudge is the runtime's message after a repeated call.
+	NoteNudge = "nudge"
+	// NoteCut is the runtime's message after a cut-off reply.
+	NoteCut = "cut"
+	// NoteContinue is the runner's answer to a turn that was about to end.
+	NoteContinue = "continue"
 )
 
 // Entry is one line of the file. Kind says which fields are set.
@@ -52,8 +82,12 @@ type Entry struct {
 	Version      int    `json:"version,omitempty"`
 	Conversation string `json:"conversation,omitempty"`
 
-	// Text is a user message's text.
+	// Text is a user message's text, a stub's, or a compaction's summary as
+	// the model is sent it.
 	Text string `json:"text,omitempty"`
+	// Note says a user entry is not the runner's prompt and who wrote it,
+	// one of the Note constants. A prompt has none.
+	Note string `json:"note,omitempty"`
 	// Parts is an assistant message.
 	Parts []llm.Part `json:"parts,omitempty"`
 	// Finish is why the assistant's reply ended.
@@ -66,6 +100,27 @@ type Entry struct {
 
 	// Usage is set on a usage entry.
 	Usage *llm.Usage `json:"usage,omitempty"`
+
+	// Cleared is set on a clear entry: each result it replaces.
+	Cleared []Cleared `json:"cleared,omitempty"`
+
+	// KeepFrom, on a compaction entry, is the index in the file of the first
+	// entry the summary does not replace. Zero keeps none.
+	KeepFrom int `json:"keepFrom,omitempty"`
+	// Reason says why a compaction or a clear was made, what a stub stands
+	// for, and, on a usage entry, what a request was that was not one of
+	// the conversation's own.
+	Reason string `json:"reason,omitempty"`
+	// Window, on a compaction entry, is the model's window in tokens as the
+	// harness had learned it from the server by then, zero when it had not.
+	Window int `json:"window,omitempty"`
+}
+
+// Cleared is one result a clear entry replaces: the call, and the text the
+// model is sent in the result's place.
+type Cleared struct {
+	CallID string `json:"callId"`
+	Text   string `json:"text"`
 }
 
 // Texts the model is shown for a call that has no recorded result.
@@ -208,11 +263,40 @@ func (l *Log) Messages() []llm.Message {
 	return Project(l.entries)
 }
 
+// Len is how many entries the file holds.
+func (l *Log) Len() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.entries)
+}
+
+// Live is the index of the first entry the messages are built from: the one
+// after the last compaction, or the first that compaction kept.
+func Live(entries []Entry) int {
+	for i := len(entries) - 1; i >= 0; i-- {
+		if entries[i].Kind != KindCompaction {
+			continue
+		}
+		if k := entries[i].KeepFrom; k > 0 && k < i {
+			return k
+		}
+		return i + 1
+	}
+	return 0
+}
+
 // Project is Messages for a list of entries.
 func Project(entries []Entry) []llm.Message {
 	started := map[string]bool{}
 	results := map[string]llm.Part{}
-	for _, e := range entries {
+	cleared := map[string]string{}
+	stubs := map[int]string{}
+	lastAssistant := -1
+	summary := -1
+	// edited is the index of the last entry that changed what earlier
+	// messages show. The replies before it are sent without reasoning.
+	edited := -1
+	for i, e := range entries {
 		switch e.Kind {
 		case KindCall:
 			started[e.CallID] = true
@@ -222,13 +306,30 @@ func Project(entries []Entry) []llm.Message {
 					results[e.CallID] = *e.Result
 				}
 			}
+		case KindAssistant:
+			lastAssistant = i
+		case KindStub:
+			if lastAssistant >= 0 {
+				stubs[lastAssistant] = e.Text
+			}
+		case KindClear:
+			edited = i
+			for _, c := range e.Cleared {
+				cleared[c.CallID] = c.Text
+			}
+		case KindCompaction:
+			edited = i
+			summary = i
 		}
 	}
 	answer := func(calls []llm.Part) []llm.Part {
 		var out []llm.Part
 		for _, c := range calls {
 			r, ok := results[c.CallID]
-			if !ok {
+			switch text, gone := cleared[c.CallID]; {
+			case ok && gone:
+				r = llm.Part{Text: text}
+			case !ok:
 				r = llm.Part{Kind: llm.Result, Failed: true, Text: NotRun}
 				if started[c.CallID] {
 					r.Text = Interrupted
@@ -241,29 +342,53 @@ func Project(entries []Entry) []llm.Message {
 	}
 
 	var msgs []llm.Message
+	// user adds parts to the conversation as the user's. Entries that
+	// follow one another without a reply between them are one message.
+	user := func(parts ...llm.Part) {
+		if n := len(msgs); n > 0 && msgs[n-1].Role == llm.User {
+			msgs[n-1].Parts = append(msgs[n-1].Parts, parts...)
+			return
+		}
+		msgs = append(msgs, llm.Message{Role: llm.User, Parts: parts})
+	}
+	if summary >= 0 {
+		user(llm.Part{Kind: llm.Text, Text: entries[summary].Text})
+	}
 	var open []llm.Part // the last assistant message's calls, not yet answered
-	for _, e := range entries {
+	for i := Live(entries); i < len(entries); i++ {
+		e := entries[i]
 		switch e.Kind {
 		case KindUser:
 			parts := answer(open)
 			open = nil
-			parts = append(parts, llm.Part{Kind: llm.Text, Text: e.Text})
-			msgs = append(msgs, llm.Message{Role: llm.User, Parts: parts})
+			user(append(parts, llm.Part{Kind: llm.Text, Text: e.Text})...)
 		case KindAssistant:
 			if len(open) > 0 {
-				msgs = append(msgs, llm.Message{Role: llm.User, Parts: answer(open)})
+				user(answer(open)...)
 				open = nil
 			}
-			msgs = append(msgs, llm.Message{Role: llm.Assistant, Parts: append([]llm.Part(nil), e.Parts...)})
+			if stub, ok := stubs[i]; ok {
+				msgs = append(msgs, llm.Message{Role: llm.Assistant, Parts: []llm.Part{{Kind: llm.Text, Text: stub}}})
+				continue
+			}
+			var parts []llm.Part
 			for _, p := range e.Parts {
+				if p.Kind == llm.Reasoning && i < edited {
+					continue
+				}
+				parts = append(parts, p)
 				if p.Kind == llm.Call {
 					open = append(open, p)
 				}
 			}
+			// A reply that was reasoning alone leaves no message.
+			if len(parts) > 0 {
+				msgs = append(msgs, llm.Message{Role: llm.Assistant, Parts: parts})
+			}
 		}
 	}
 	if len(open) > 0 {
-		msgs = append(msgs, llm.Message{Role: llm.User, Parts: answer(open)})
+		user(answer(open)...)
 	}
 	return msgs
 }

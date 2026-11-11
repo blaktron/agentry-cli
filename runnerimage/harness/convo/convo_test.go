@@ -182,3 +182,87 @@ func TestOpenRefuses(t *testing.T) {
 		}
 	}
 }
+
+// The messages after each kind of edit: a stub in a cut-off reply's place,
+// placeholders for cleared results, a summary for all that came before it
+// but for what it keeps, and no reasoning in a reply recorded before a clear
+// or a compaction.
+func TestProjectAppliesTheRecordsEdits(t *testing.T) {
+	thinks := func(text string, more ...llm.Part) []llm.Part {
+		return append([]llm.Part{{Kind: llm.Reasoning, Text: text}}, more...)
+	}
+	entries := []Entry{
+		{Kind: KindHeader, Version: Version, Conversation: "c"},
+		{Kind: KindUser, Text: "task"},
+		{Kind: KindAssistant, Parts: thinks("r1", call("a", "fs_read"))},
+		{Kind: KindCall, CallID: "a"},
+		{Kind: KindResult, CallID: "a", Result: result("a", "long result")},
+		{Kind: KindAssistant, Parts: thinks("r2", llm.Part{Kind: llm.Text, Text: "cut off te"}, call("b", "fs_write")), Finish: "length"},
+		{Kind: KindStub, Text: "[stub]"},
+		{Kind: KindUser, Text: "note: cut", Note: NoteCut},
+		{Kind: KindAssistant, Parts: thinks("r3", llm.Part{Kind: llm.Text, Text: "done"})},
+	}
+	if got, want := shape(Project(entries)), strings.Join([]string{
+		"user text:task",
+		"assistant reasoning:r1 | call:a",
+		"user result:a=long result",
+		"assistant text:[stub]",
+		"user text:note: cut",
+		"assistant reasoning:r3 | text:done",
+	}, "\n"); got != want {
+		t.Errorf("after a stub:\n%s\nwant:\n%s", got, want)
+	}
+
+	// A new turn opens with a clear of the old result.
+	entries = append(entries,
+		Entry{Kind: KindUser, Text: "next"},
+		Entry{Kind: KindClear, Cleared: []Cleared{{CallID: "a", Text: "[cleared]"}}},
+		Entry{Kind: KindAssistant, Parts: thinks("r4", call("c", "fs_read"))},
+		Entry{Kind: KindCall, CallID: "c"},
+		Entry{Kind: KindResult, CallID: "c", Result: result("c", "new result")},
+	)
+	if got, want := shape(Project(entries)), strings.Join([]string{
+		"user text:task",
+		"assistant call:a",
+		"user result:a=[cleared]",
+		"assistant text:[stub]",
+		"user text:note: cut",
+		"assistant text:done",
+		"user text:next",
+		"assistant reasoning:r4 | call:c",
+		"user result:c=new result",
+	}, "\n"); got != want {
+		t.Errorf("after a clear:\n%s\nwant:\n%s", got, want)
+	}
+
+	// A summary replaces all of it but the last reply's calls and results,
+	// and a note after them; the reply before it is one more of the model's.
+	keep := len(entries) - 3
+	entries = append(entries,
+		Entry{Kind: KindUser, Text: "note: nudge", Note: NoteNudge},
+		Entry{Kind: KindUsage, Reason: "summary"},
+		Entry{Kind: KindCompaction, Text: "SUMMARY", KeepFrom: keep},
+		Entry{Kind: KindAssistant, Parts: thinks("r5", llm.Part{Kind: llm.Text, Text: "after"})},
+	)
+	if Live(entries) != keep {
+		t.Errorf("the live part starts at %d, want %d", Live(entries), keep)
+	}
+	if got, want := shape(Project(entries)), strings.Join([]string{
+		"user text:SUMMARY",
+		"assistant call:c",
+		"user result:c=new result | text:note: nudge",
+		"assistant reasoning:r5 | text:after",
+	}, "\n"); got != want {
+		t.Errorf("after a compaction:\n%s\nwant:\n%s", got, want)
+	}
+	// The same entries, the same messages.
+	if a, b := shape(Project(entries)), shape(Project(append([]Entry(nil), entries...))); a != b {
+		t.Error("two readings of one record differ")
+	}
+
+	// A compaction that keeps nothing, and a prompt after it.
+	entries = append(entries, Entry{Kind: KindCompaction, Text: "SUMMARY 2"}, Entry{Kind: KindUser, Text: "and now"})
+	if got, want := shape(Project(entries)), "user text:SUMMARY 2 | text:and now"; got != want {
+		t.Errorf("after a compaction that keeps nothing:\n%s\nwant:\n%s", got, want)
+	}
+}

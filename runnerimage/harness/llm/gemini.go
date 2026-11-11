@@ -247,7 +247,7 @@ func geminiFailure(status int, raw []byte) *Error {
 	if status == 0 {
 		status = one.Error.Code
 	}
-	return &Error{Status: status, Message: msg, Class: geminiClass(status, one.Error.Status, msg)}
+	return withWindow(&Error{Status: status, Message: msg, Class: geminiClass(status, one.Error.Status, msg)})
 }
 
 // geminiClass sorts a failure by its words, then the API's status name,

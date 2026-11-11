@@ -1440,12 +1440,24 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		turnErr = oneTurn(agentCtx, p, rwPipe{Reader: stdoutR, WriteCloser: stdinW}, task, sessionOptions(p, rd, token, tools), collector, cancelCause)
 		<-ran
 	} else {
-		done := consumeGuarded(collector, pr, cancelCause)
 		var stdin io.Reader
+		var gate *stopGate
 		if runSpec.Interactive {
 			stdin = bytes.NewReader(task)
+			if gated, ok := p.Adapter.(adapter.Gated); ok {
+				// The harness reads commands, and asks before it ends a
+				// turn (stopgate.go).
+				if gate, err = openStopGate(gated, task); err != nil {
+					return agentOutcome{err: Classify(ExitCLI, err)}
+				}
+				defer gate.close()
+				stdin = gate.stdin()
+				collector.onTurnEnding = func() { gate.answer(rd.endingAnswer(agentCtx, p, collector)) }
+			}
 		}
+		done := consumeGuarded(collector, pr, cancelCause)
 		exit, runErr = dockerx.RunForegroundUnder(agentCtx, d, runSpec, "agent container", stdin, pw, stderrFile)
+		gate.close()
 		_ = pw.Close()
 		<-done
 	}
@@ -1659,6 +1671,13 @@ type eventCollector struct {
 	// lengthRecoveries counts the answers the harness took out at the
 	// output limit (adapter.EventLengthRecovery), by what was cut.
 	lengthRecoveries receipt.LengthRecoveries
+	// resultClears and compactions count the harness's own shortenings of
+	// the conversation (adapter.EventResultsCleared, EventCompaction).
+	resultClears int
+	compactions  receipt.Compactions
+	// onTurnEnding answers a harness that asks before it ends a turn
+	// (adapter.EventTurnEnding); nil when the run's harness never asks.
+	onTurnEnding func()
 	// answerCut: the harness's last answer ended at the output limit.
 	answerCut     bool
 	inTok, outTok int64
@@ -1815,11 +1834,21 @@ func (c *eventCollector) record(ev adapter.Event) {
 		// and the conversation no longer holds it: it is neither the
 		// result nor an answer.
 		c.lengthRecoveries.Add(ev.Text)
-		c.curText.Reset()
-		c.lastText = ""
-		c.reasoned, c.answered, c.warnedEmpty = false, false, false
+		c.discardText()
 	case adapter.EventAnswerCut:
 		c.answerCut = true
+	case adapter.EventResultsCleared:
+		c.resultClears++
+	case adapter.EventCompaction:
+		c.compactions.Add(ev.Text)
+	case adapter.EventModelRetry:
+		// What the failed attempt streamed is part of no message: the
+		// request is sent again and its reply starts over.
+		c.discardText()
+	case adapter.EventTurnEnding:
+		if c.onTurnEnding != nil {
+			c.onTurnEnding()
+		}
 	case adapter.EventAssistantText:
 		// Whitespace alone is not an answer.
 		if strings.TrimSpace(ev.Text) != "" {
@@ -1872,6 +1901,15 @@ func (c *eventCollector) record(ev adapter.Event) {
 			}
 		}
 	}
+}
+
+// discardText forgets what the model has written since its last tool call:
+// text that turned out to be part of no answer, so it is neither the run's
+// result nor a sign that the model answered.
+func (c *eventCollector) discardText() {
+	c.curText.Reset()
+	c.lastText = ""
+	c.reasoned, c.answered, c.warnedEmpty = false, false, false
 }
 
 // notifyUsage hands the running totals to the driver's callback without
@@ -2010,6 +2048,8 @@ func (c *eventCollector) usage() receipt.Usage {
 		Turns:            c.turns,
 		LoopNudges:       c.loopNudges,
 		LengthRecoveries: c.lengthRecoveries,
+		ResultClears:     c.resultClears,
+		Compactions:      c.compactions,
 	}, c.base)
 }
 

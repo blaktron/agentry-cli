@@ -272,6 +272,11 @@ func chatHTTPError(res *http.Response) error {
 		msg = res.Status
 	}
 	e := &Error{Status: res.StatusCode, Message: msg, Class: chatClass(res.StatusCode, code, msg)}
+	if e.Class == Overflow {
+		// The whole answer, not its message alone: a server may state its
+		// window in a member of its own.
+		e.Window = StatedWindow(string(raw))
+	}
 	if s := res.Header.Get("Retry-After"); s != "" {
 		if secs, err := strconv.Atoi(strings.TrimSpace(s)); err == nil && secs >= 0 {
 			e.RetryAfter = time.Duration(secs) * time.Second
@@ -399,7 +404,7 @@ func (c *Chat) read(ctx context.Context, r io.Reader, onDelta func(Delta)) (*Res
 			if msg == "" {
 				msg = strings.TrimSpace(string(data))
 			}
-			return nil, &Error{Class: chatClass(0, code, msg), Message: msg}
+			return nil, withWindow(&Error{Class: chatClass(0, code, msg), Message: msg})
 		}
 		if ch.Usage != nil {
 			resp.Usage = Usage{

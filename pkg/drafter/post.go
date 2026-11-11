@@ -621,5 +621,6 @@ func addUsage(a, b receipt.Usage) receipt.Usage {
 	return receipt.Usage{InputTokens: a.InputTokens + b.InputTokens, OutputTokens: a.OutputTokens + b.OutputTokens,
 		TotalTokens: a.TotalTokens + b.TotalTokens, CostUSD: a.CostUSD + b.CostUSD, WallMS: a.WallMS + b.WallMS,
 		Turns: a.Turns + b.Turns, UserTurns: a.UserTurns + b.UserTurns, LoopNudges: a.LoopNudges + b.LoopNudges,
-		LengthRecoveries: a.LengthRecoveries.Plus(b.LengthRecoveries)}
+		LengthRecoveries: a.LengthRecoveries.Plus(b.LengthRecoveries),
+		ResultClears:     a.ResultClears + b.ResultClears, Compactions: a.Compactions.Plus(b.Compactions)}
 }
