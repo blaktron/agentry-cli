@@ -4398,12 +4398,14 @@
             "TestAgentryHarnessFillsWhatTheCatalogueKnows",
             "TestAgentryHarnessSendsNoKeyToAServerThatTakesNone",
             "TestAgentryHarnessEvents",
-            "TestAgentryHarnessErrorsSayWhatTheEngineActsOn"
+            "TestAgentryHarnessErrorsSayWhatTheEngineActsOn",
+            "TestAgentryHarnessProviderGoldens"
           ],
           "fuzz": [],
           "benchmarks": [],
           "fixtureEntryPoint": false,
           "dependencyHints": [
+            "source/file contract",
             "explicit skip"
           ]
         },

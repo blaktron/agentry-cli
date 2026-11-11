@@ -3,6 +3,8 @@ package adapter
 import (
 	"bytes"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -435,5 +437,54 @@ func TestAgentryHarnessErrorsSayWhatTheEngineActsOn(t *testing.T) {
 	ev, s = text(`{"v":1,"seq":1,"type":"error","class":"credits","status":400,"text":"Your credit balance is too low to access the Anthropic API."}`)
 	if ev.Kind != EventOutOfCredits || !strings.Contains(s, "credit balance is too low") {
 		t.Errorf("no credits: %+v", ev)
+	}
+}
+
+// TestAgentryHarnessProviderGoldens holds the configuration the adapter
+// renders for each provider it reaches to a committed file, and each file
+// to what the harness accepts. The models are ones the catalogue does not
+// hold, so a refresh of the catalogue changes none of them.
+func TestAgentryHarnessProviderGoldens(t *testing.T) {
+	cases := map[string]policy.Model{
+		"anthropic":   {Provider: policy.ProviderAnthropic, Name: "fixture-model", APIKeyEnv: "FIXTURE_API_KEY"},
+		"openai":      {Provider: policy.ProviderOpenAI, Name: "fixture-model", APIKeyEnv: "FIXTURE_API_KEY"},
+		"google":      {Provider: "google", Name: "fixture-model", APIKeyEnv: "FIXTURE_API_KEY"},
+		"custom":      {Provider: "custom", Name: "Qwen3.6-35B-A3B", BaseURL: "http://agentry-host.internal:1234/v1", APIKeyEnv: "FIXTURE_API_KEY", ContextWindow: 65536},
+		"openrouter":  {Provider: policy.ProviderOpenRouter, Name: "fixture/model", APIKeyEnv: "OPENROUTER_API_KEY"},
+		"huggingface": {Provider: policy.ProviderHuggingFace, Name: "fixture/model", APIKeyEnv: "HF_TOKEN"},
+		"poe":         {Provider: policy.ProviderPoe, Name: "fixture-model", APIKeyEnv: "POE_API_KEY"},
+		"vultr":       {Provider: policy.ProviderVultr, Name: "fixture-model", APIKeyEnv: "VULTR_INFERENCE_API_KEY"},
+		"agentry":     {Provider: policy.ProviderAgentry, Name: "fixture-model", BaseURL: "https://registry.example/api/v1/x/inference/v1"},
+	}
+	for name, m := range cases {
+		t.Run(name, func(t *testing.T) {
+			in := agentryHarnessInput()
+			in.Model = m
+			r, err := (&agentryHarnessAdapter{}).Compile(in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := r.Files["harness.json"]
+			if _, err := proto.DecodeConfig(bytes.NewReader(got)); err != nil {
+				t.Fatalf("the harness would refuse this configuration: %v", err)
+			}
+			path := filepath.Join("testdata", "agentry-harness", "providers", name+".json")
+			if *update {
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, got, 0o644); err != nil { //nolint:gosec // a test fixture
+					t.Fatal(err)
+				}
+				return
+			}
+			want, err := os.ReadFile(path) //nolint:gosec // testdata
+			if err != nil {
+				t.Fatalf("%v (run with -update to create it)", err)
+			}
+			if !bytes.Equal(got, want) {
+				t.Errorf("%s differs from what the adapter renders (run with -update and read the diff):\n%s", path, got)
+			}
+		})
 	}
 }

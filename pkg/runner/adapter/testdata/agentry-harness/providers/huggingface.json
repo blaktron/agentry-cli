@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "model": {
+    "api": "chat-completions",
+    "name": "fixture/model",
+    "baseUrl": "https://router.huggingface.co/v1",
+    "keyEnv": "AGENTRY_MODEL_KEY"
+  },
+  "system": "You are an agent.",
+  "gateway": {
+    "url": "http://gateway:8811/mcp",
+    "tokenEnv": "MCP_GATEWAY_TOKEN"
+  },
+  "sessionDir": "/session"
+}
