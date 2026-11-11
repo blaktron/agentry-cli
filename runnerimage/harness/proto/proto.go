@@ -73,6 +73,20 @@ type Model struct {
 	// assistant message, for a model whose template expects it. Chat
 	// Completions only; the Anthropic API always takes its own back.
 	ReplayReasoning bool `json:"replayReasoning,omitempty"`
+	// Prices is what the model's provider charges, when the runner knows.
+	// With it the harness reports what the conversation has cost.
+	Prices *Prices `json:"prices,omitempty"`
+}
+
+// Prices is a model's prices in US dollars a million tokens.
+type Prices struct {
+	// Input is input the server reads fresh, CacheRead input it reads
+	// from its cache, CacheWrite input it writes to it.
+	Input      float64 `json:"input"`
+	CacheRead  float64 `json:"cacheRead"`
+	CacheWrite float64 `json:"cacheWrite"`
+	// Output is output, reasoning included.
+	Output float64 `json:"output"`
 }
 
 // Sampling is the sampling a model is asked to use.
@@ -129,6 +143,8 @@ func DecodeConfig(r io.Reader) (Config, error) {
 		return Config{}, fmt.Errorf("harness configuration: model.api %q is not one this harness speaks", c.Model.API)
 	}
 	switch {
+	case c.Model.Prices != nil && (c.Model.Prices.Input < 0 || c.Model.Prices.CacheRead < 0 || c.Model.Prices.CacheWrite < 0 || c.Model.Prices.Output < 0):
+		return Config{}, fmt.Errorf("harness configuration: model.prices holds a negative price")
 	case c.Model.Name == "":
 		return Config{}, fmt.Errorf("harness configuration: model.name is empty")
 	case c.Model.MaxOutputTokens < 0 || c.Model.MaxOutputTokens == 0 && c.Model.API == APIAnthropic:
@@ -276,4 +292,10 @@ type Usage struct {
 	// when the configuration gave none.
 	ContextTokens int64 `json:"contextTokens"`
 	ContextLimit  int64 `json:"contextLimit,omitempty"`
+	// CostUSD is what the whole conversation has cost so far, this request
+	// included, at the configuration's prices; absent when it gave none.
+	// It is a running total of the conversation, not of the process: a
+	// harness started again on a conversation goes on from what the
+	// earlier requests cost.
+	CostUSD float64 `json:"costUsd,omitempty"`
 }

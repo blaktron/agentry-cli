@@ -201,8 +201,28 @@ func (h *Harness) record(reply *llm.Response) error {
 		Input: u.Input, CacheRead: u.CacheRead, CacheWrite: u.CacheWrite, Output: u.Output,
 		ContextTokens: u.Input + u.CacheRead + u.CacheWrite,
 		ContextLimit:  int64(h.cfg.Model.ContextWindow),
+		CostUSD:       h.cost(),
 	}})
 	return nil
+}
+
+// cost is what the conversation's recorded requests have cost at the
+// configuration's prices, zero when it gave none. It is counted from the
+// record, so it is the same after the harness is started again.
+func (h *Harness) cost() float64 {
+	p := h.cfg.Model.Prices
+	if p == nil {
+		return 0
+	}
+	var total float64
+	for _, e := range h.log.Entries() {
+		if e.Kind != convo.KindUsage || e.Usage == nil {
+			continue
+		}
+		u := e.Usage
+		total += float64(u.Input)*p.Input + float64(u.CacheRead)*p.CacheRead + float64(u.CacheWrite)*p.CacheWrite + float64(u.Output)*p.Output
+	}
+	return total / 1e6
 }
 
 // run runs one call through the gateway. The call is recorded before it is

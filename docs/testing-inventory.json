@@ -2232,7 +2232,8 @@
             "TestOneRunOnOpenAIsOwnAPI",
             "TestOpenAIsOwnAPICutCallsAndRefusals",
             "TestOneRunOnGemini",
-            "TestGeminiCutAnswersAndRefusals"
+            "TestGeminiCutAnswersAndRefusals",
+            "TestAConversationsCostIsARunningTotalFromItsRecord"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -4394,6 +4395,7 @@
             "TestAgentryHarnessRoutersAndCredits",
             "TestAgentryHarnessReachesOpenAIsOwnAPI",
             "TestAgentryHarnessReachesGemini",
+            "TestAgentryHarnessFillsWhatTheCatalogueKnows",
             "TestAgentryHarnessSendsNoKeyToAServerThatTakesNone",
             "TestAgentryHarnessEvents",
             "TestAgentryHarnessErrorsSayWhatTheEngineActsOn"
@@ -8839,6 +8841,25 @@
           "dependencyHints": [
             "HTTP transport"
           ]
+        }
+      ]
+    },
+    {
+      "owner": "pkg/runner/modelfacts",
+      "behavior": "What the runner knows about a hosted model without asking at run time: its window, its output limit and its prices, from a snapshot compiled in",
+      "disposition": "retain",
+      "files": [
+        {
+          "path": "pkg/runner/modelfacts/modelfacts_test.go",
+          "tests": [
+            "TestTheCatalogueIsWellFormed",
+            "TestLookup",
+            "TestAPriceNotListedIsNotZero"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
         }
       ]
     },
