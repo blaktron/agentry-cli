@@ -50,9 +50,12 @@ type (
 		Type string `json:"type"`
 		Text string `json:"text,omitempty"`
 
-		Thinking  string `json:"thinking,omitempty"`
-		Signature string `json:"signature,omitempty"`
-		Data      string `json:"data,omitempty"`
+		// Thinking is set, even when it is empty, on a thinking block: the
+		// server returns a block with a signature and no text when it keeps
+		// the reasoning to itself, and takes the block back only whole.
+		Thinking  *string `json:"thinking,omitempty"`
+		Signature string  `json:"signature,omitempty"`
+		Data      string  `json:"data,omitempty"`
 
 		ID    string          `json:"id,omitempty"`
 		Name  string          `json:"name,omitempty"`
@@ -159,7 +162,8 @@ func anthropicBlock(p Part) (aBlock, bool) {
 		case meta.Redacted != "":
 			return aBlock{Type: "redacted_thinking", Data: meta.Redacted}, true
 		case meta.Signature != "":
-			return aBlock{Type: "thinking", Thinking: p.Text, Signature: meta.Signature}, true
+			text := p.Text
+			return aBlock{Type: "thinking", Thinking: &text, Signature: meta.Signature}, true
 		}
 		// Reasoning with no signature is not this server's, and it
 		// refuses a thinking block it did not sign.

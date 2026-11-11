@@ -203,3 +203,51 @@ func TestAnthropicFailures(t *testing.T) {
 		t.Errorf("a cancelled request: %v", err)
 	}
 }
+
+// A server that keeps a model's reasoning to itself returns a thinking block
+// with a signature and no text, and takes it back only with its thinking
+// member present.
+func TestAnthropicSendsBackAThinkingBlockWithNoText(t *testing.T) {
+	a, got := server(t, http.StatusOK, sse(
+		`{"type":"message_start","message":{"usage":{"input_tokens":1}}}`,
+		`{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}`,
+		`{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig-1"}}`,
+		`{"type":"content_block_stop","index":0}`,
+		`{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}`,
+		`{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Hello."}}`,
+		`{"type":"content_block_stop","index":1}`,
+		`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3}}`,
+		`{"type":"message_stop"}`,
+	))
+	first, err := a.Stream(context.Background(), Request{MaxTokens: 100, Messages: []Message{{Role: User, Parts: []Part{{Kind: Text, Text: "Hi."}}}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Parts) != 2 || first.Parts[0].Kind != Reasoning || first.Parts[0].Text != "" || !strings.Contains(string(first.Parts[0].Meta), "sig-1") {
+		t.Fatalf("the reply's parts: %+v", first.Parts)
+	}
+	_, err = a.Stream(context.Background(), Request{MaxTokens: 100, Messages: []Message{
+		{Role: User, Parts: []Part{{Kind: Text, Text: "Hi."}}},
+		{Role: Assistant, Parts: first.Parts},
+		{Role: User, Parts: []Part{{Kind: Text, Text: "And?"}}},
+	}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sent struct {
+		Messages []struct {
+			Content []map[string]any `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(*got, &sent); err != nil {
+		t.Fatal(err)
+	}
+	block := sent.Messages[1].Content[0]
+	if text, has := block["thinking"]; block["type"] != "thinking" || !has || text != "" || block["signature"] != "sig-1" {
+		t.Errorf("the thinking block was sent back as %v", block)
+	}
+	// No other block gains the member.
+	if _, has := sent.Messages[1].Content[1]["thinking"]; has {
+		t.Errorf("a text block carries a thinking member: %v", sent.Messages[1].Content[1])
+	}
+}

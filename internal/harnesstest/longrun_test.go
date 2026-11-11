@@ -432,7 +432,8 @@ func TestOldResultsAreClearedOnlyOnceTheCacheIsCold(t *testing.T) {
 			scriptedmodel.ToolCalls(
 				scriptedmodel.Call{ID: fmt.Sprintf("read-%d", turn), Name: "fs_read", Arguments: `{"path":"a.txt"}`},
 				scriptedmodel.Call{ID: fmt.Sprintf("snap-%d", turn), Name: "browser_snapshot", Arguments: `{}`},
-				scriptedmodel.Call{ID: fmt.Sprintf("none-%d", turn), Name: invented, Arguments: `{}`}),
+				scriptedmodel.Call{ID: fmt.Sprintf("none-%d", turn), Name: invented, Arguments: `{}`}).
+				WithReasoning(fmt.Sprintf("The reasoning of turn %d.", turn)),
 			scriptedmodel.Text(fmt.Sprintf("Turn %d is done.", turn)),
 		)
 		if code, events, stderr := run(t, model, g, runOpts{dir: dir, task: fmt.Sprintf("Do turn %d.", turn), configEdit: cold}); code != harness.ExitAnswered {
@@ -448,7 +449,7 @@ func TestOldResultsAreClearedOnlyOnceTheCacheIsCold(t *testing.T) {
 	age(t, dir, "run-1", time.Hour)
 	turn = 5
 	model = scriptedmodel.New(t,
-		asks("read-5", "fs_read", `{"path":"a.txt"}`),
+		asks("read-5", "fs_read", `{"path":"a.txt"}`).WithReasoning("The reasoning of turn 5."),
 		scriptedmodel.Text("Turn 5 is done."),
 	)
 	code, events, stderr := run(t, model, g, runOpts{dir: dir, task: "Do turn 5.", configEdit: cold})
@@ -490,6 +491,15 @@ func TestOldResultsAreClearedOnlyOnceTheCacheIsCold(t *testing.T) {
 	}
 	if w := warnings(events, proto.WarnColdClear); len(w) != 1 || w[0].Count != 7 {
 		t.Errorf("warnings: %+v", w)
+	}
+	// The replies from before the clear go back without their reasoning,
+	// which was written in the conversation as it was; a reply made after
+	// it keeps its own.
+	if !strings.Contains(string(warm.Body), "The reasoning of turn 4.") || strings.Contains(string(reqs[0].Body), "The reasoning of turn") {
+		t.Error("the first request after the clear carries reasoning from before it, or the one before the clear carried none")
+	}
+	if !strings.Contains(string(reqs[1].Body), "The reasoning of turn 5.") {
+		t.Error("the reply made after the clear lost its reasoning")
 	}
 	// Inside the turn nothing more is cleared: the second request is the
 	// first and more.
@@ -614,10 +624,37 @@ func TestAConversationNearTheWindowIsReplacedByASummary(t *testing.T) {
 	}
 }
 
+// One reply's calls can take a conversation from under the threshold to past
+// the window. Its summary is then asked for of a bounded copy at once, not
+// of a request the server would refuse.
+func TestAConversationAlreadyPastTheWindowIsSummarisedFromABoundedCopy(t *testing.T) {
+	model := scriptedmodel.New(t,
+		asks("c1", "fs_read", `{"path":"big.txt"}`).WithUsage(scriptedmodel.Usage{Input: 300, Output: 20}),
+		scriptedmodel.Text("SUMMARY: big.txt is read."),
+		scriptedmodel.Text("Done."),
+	)
+	g := newGateway(t, "fs_read")
+	g.call = func(context.Context, string, json.RawMessage) (string, string) {
+		return textResult(strings.Repeat("row of big.txt\n", 400)), ""
+	}
+	code, events, stderr := run(t, model, g, runOpts{configEdit: compaction(1000)})
+	if code != harness.ExitAnswered {
+		t.Fatalf("exit %d, stderr: %s", code, stderr)
+	}
+	reqs := model.Requests()
+	r := lastMessage(t, reqs[1]).Results
+	if len(reqs) != 3 || len(r) != 1 || len(r[0].Text) > 2200 || !strings.HasSuffix(r[0].Text, "[The rest of this result is left out of this request.]") {
+		t.Fatalf("%d requests; the summary request carries a result of %d bytes", len(reqs), len(r[0].Text))
+	}
+	if w := warnings(events, proto.WarnCompaction); len(w) != 1 || w[0].Reason != proto.CompactionThreshold {
+		t.Errorf("warnings: %+v", w)
+	}
+}
+
 func TestACompactionKeepsTheCallsTheModelHasNotReadTheResultsOf(t *testing.T) {
 	model := scriptedmodel.New(t,
 		asks("c1", "fs_read", `{"path":"big.txt"}`).WithUsage(scriptedmodel.Usage{Input: 1000, Output: 20}),
-		asks("c2", "fs_read", `{"path":"a.txt"}`).WithUsage(scriptedmodel.Usage{Input: 5200, Output: 20}),
+		asks("c2", "fs_read", `{"path":"a.txt"}`).WithReasoning("Now a.txt, the short one.").WithUsage(scriptedmodel.Usage{Input: 5200, Output: 20}),
 		scriptedmodel.Text("SUMMARY: big.txt is read; reading a.txt."),
 		scriptedmodel.Text("Done."),
 	)
@@ -646,6 +683,16 @@ func TestACompactionKeepsTheCallsTheModelHasNotReadTheResultsOf(t *testing.T) {
 	}
 	if strings.Contains(string(reqs[3].Body), "row of big.txt") {
 		t.Error("what the summary replaced was sent again")
+	}
+	// The kept reply goes back without its reasoning: that was written in
+	// a conversation the summary has since replaced, and a server that
+	// binds reasoning to what came before it would refuse it. The summary
+	// request itself, which only adds to the conversation, still carries it.
+	if kept[1].Reasoning != "" || strings.Contains(string(reqs[3].Body), "Now a.txt, the short one.") {
+		t.Errorf("the kept reply carries its reasoning: %q", kept[1].Reasoning)
+	}
+	if !strings.Contains(string(reqs[2].Body), "Now a.txt, the short one.") {
+		t.Error("the summary request, made of the conversation as it stood, lost the reply's reasoning")
 	}
 }
 
@@ -683,7 +730,9 @@ func TestASummaryCutAtTheOutputLimitIsNotKept(t *testing.T) {
 	})
 	t.Run("with no usable summary the conversation goes on as it was", func(t *testing.T) {
 		steps := []scriptedmodel.Step{asks("c1", "fs_read", `{"path":"big.txt"}`).WithUsage(scriptedmodel.Usage{Input: 300, Output: 20})}
-		steps = append(steps, scriptedmodel.Repeat(4, scriptedmodel.Cut("SUMMARY that never ends"))...)
+		// Past the window already, so the summary is asked for of the
+		// bounded copy and its two smaller forms: three requests.
+		steps = append(steps, scriptedmodel.Repeat(3, scriptedmodel.Cut("SUMMARY that never ends"))...)
 		steps = append(steps,
 			// The turn goes on with the conversation whole, and no summary
 			// is tried again before it has grown.
@@ -706,13 +755,13 @@ func TestASummaryCutAtTheOutputLimitIsNotKept(t *testing.T) {
 			t.Errorf("warnings: %+v", w)
 		}
 		reqs := model.Requests()
-		if len(reqs) != 7 {
-			t.Fatalf("%d requests, want 7: four summary requests and no fifth", len(reqs))
+		if len(reqs) != 6 {
+			t.Fatalf("%d requests, want 6: three summary requests and no fourth", len(reqs))
 		}
-		if err := scriptedmodel.PrefixOf(reqs[0], reqs[5]); err != nil || len(lastMessage(t, reqs[5]).Results[0].Text) < 5000 {
+		if err := scriptedmodel.PrefixOf(reqs[0], reqs[4]); err != nil || len(lastMessage(t, reqs[4]).Results[0].Text) < 5000 {
 			t.Errorf("the request after the failed summaries is not the conversation whole: %v", err)
 		}
-		if strings.Contains(string(reqs[5].Body), "SUMMARY that never ends") {
+		if strings.Contains(string(reqs[4].Body), "SUMMARY that never ends") {
 			t.Error("a cut summary reached the conversation")
 		}
 	})

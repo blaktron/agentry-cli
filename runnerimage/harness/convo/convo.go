@@ -12,6 +12,11 @@
 // summary of it. Each such change is an entry of its own, an edit, that says
 // what the messages show from then on. The entries it covers stay in the
 // file, and the same file always gives the same messages.
+//
+// A model's reasoning is sent back only while the conversation before it is
+// the one it was written in: a server may bind a reasoning block to what
+// came before it and refuse the block once that has changed. So the replies
+// recorded before a clear or a compaction go back without their reasoning.
 package convo
 
 import (
@@ -288,6 +293,9 @@ func Project(entries []Entry) []llm.Message {
 	stubs := map[int]string{}
 	lastAssistant := -1
 	summary := -1
+	// edited is the index of the last entry that changed what earlier
+	// messages show. The replies before it are sent without reasoning.
+	edited := -1
 	for i, e := range entries {
 		switch e.Kind {
 		case KindCall:
@@ -305,10 +313,12 @@ func Project(entries []Entry) []llm.Message {
 				stubs[lastAssistant] = e.Text
 			}
 		case KindClear:
+			edited = i
 			for _, c := range e.Cleared {
 				cleared[c.CallID] = c.Text
 			}
 		case KindCompaction:
+			edited = i
 			summary = i
 		}
 	}
@@ -361,11 +371,19 @@ func Project(entries []Entry) []llm.Message {
 				msgs = append(msgs, llm.Message{Role: llm.Assistant, Parts: []llm.Part{{Kind: llm.Text, Text: stub}}})
 				continue
 			}
-			msgs = append(msgs, llm.Message{Role: llm.Assistant, Parts: append([]llm.Part(nil), e.Parts...)})
+			var parts []llm.Part
 			for _, p := range e.Parts {
+				if p.Kind == llm.Reasoning && i < edited {
+					continue
+				}
+				parts = append(parts, p)
 				if p.Kind == llm.Call {
 					open = append(open, p)
 				}
+			}
+			// A reply that was reasoning alone leaves no message.
+			if len(parts) > 0 {
+				msgs = append(msgs, llm.Message{Role: llm.Assistant, Parts: parts})
 			}
 		}
 	}

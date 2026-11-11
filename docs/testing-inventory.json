@@ -2255,6 +2255,7 @@
             "TestARepeatedSequenceOfCallsAndACallToNoTool",
             "TestOldResultsAreClearedOnlyOnceTheCacheIsCold",
             "TestAConversationNearTheWindowIsReplacedByASummary",
+            "TestAConversationAlreadyPastTheWindowIsSummarisedFromABoundedCopy",
             "TestACompactionKeepsTheCallsTheModelHasNotReadTheResultsOf",
             "TestASummaryCutAtTheOutputLimitIsNotKept",
             "TestNoSummaryIsAskedForThatWouldGainNothing",
@@ -11612,7 +11613,8 @@
             "TestProject",
             "TestProjectNamesAResultByItsCall",
             "TestALogIsCarriedOnAcrossProcesses",
-            "TestOpenRefuses"
+            "TestOpenRefuses",
+            "TestProjectAppliesTheRecordsEdits"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -11633,7 +11635,8 @@
           "tests": [
             "TestAnthropicMarksWhatAServerCanReuse",
             "TestAnthropicReadsAReply",
-            "TestAnthropicFailures"
+            "TestAnthropicFailures",
+            "TestAnthropicSendsBackAThinkingBlockWithNoText"
           ],
           "fuzz": [],
           "benchmarks": [],

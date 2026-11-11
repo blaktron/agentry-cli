@@ -165,8 +165,13 @@ func (h *Harness) Prompt(ctx context.Context, text string) (string, error) {
 			return h.end(proto.EndMaxSteps, ""), nil
 		}
 		if !shortened && h.nearWindow() {
-			size := h.contextTokens()
-			switch err := h.compact(ctx, reasonThreshold, 0); {
+			// A conversation already past the window would be refused
+			// whole, so its summary is asked for of the bounded copy.
+			size, first := h.contextTokens(), 0
+			if size >= h.window() {
+				first = 1
+			}
+			switch err := h.compact(ctx, reasonThreshold, first); {
 			case errors.Is(err, errNoSummary):
 				// The conversation goes on as it is, and is not
 				// tried again until it has grown by a tenth.

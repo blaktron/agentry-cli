@@ -329,17 +329,22 @@ closing:
 
 // summaryInput is the conversation as a summary request at level carries
 // it. Level 0 is all of it. From level 1 every tool result is held to
-// summaryResultBytes and carries no image. Level 2 keeps the newest half of
-// the messages and level 3 the newest quarter, after the summary the
-// conversation opens with, if it opens with one.
+// summaryResultBytes and carries no image, and no reply carries its
+// reasoning: the conversation it was written in is no longer the one sent.
+// Level 2 keeps the newest half of the messages and level 3 the newest
+// quarter, after the summary the conversation opens with, if it opens with
+// one.
 func summaryInput(msgs []llm.Message, level int) []llm.Message {
 	if level <= 0 {
 		return msgs
 	}
-	out := make([]llm.Message, len(msgs))
-	for i, m := range msgs {
-		parts := make([]llm.Part, len(m.Parts))
-		for j, p := range m.Parts {
+	out := make([]llm.Message, 0, len(msgs))
+	for _, m := range msgs {
+		parts := make([]llm.Part, 0, len(m.Parts))
+		for _, p := range m.Parts {
+			if p.Kind == llm.Reasoning {
+				continue
+			}
 			if p.Kind == llm.Result {
 				p.Images = nil
 				if len(p.Text) > summaryResultBytes {
@@ -350,9 +355,11 @@ func summaryInput(msgs []llm.Message, level int) []llm.Message {
 					p.Text = p.Text[:cut] + "\n[The rest of this result is left out of this request.]"
 				}
 			}
-			parts[j] = p
+			parts = append(parts, p)
 		}
-		out[i] = llm.Message{Role: m.Role, Parts: parts}
+		if len(parts) > 0 {
+			out = append(out, llm.Message{Role: m.Role, Parts: parts})
+		}
 	}
 	if level == 1 {
 		return out
