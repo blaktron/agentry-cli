@@ -29,6 +29,15 @@ import (
 	"github.com/blaktron/agentry/pkg/managedsettings"
 )
 
+// machineKey is the Group Policy key Agentry's machine settings are under,
+// below HKLM. HKLM\SOFTWARE\Policies is writable only by administrators by
+// default; the key's own ACL is the administrator's to keep that way.
+const machineKey = `SOFTWARE\Policies\SecureAgentry\Agentry`
+
+// macDomain is the managed preferences domain of Agentry's machine
+// settings on macOS.
+const macDomain = "net.secureagentry.agentry"
+
 // MachineOrg names the machine settings file where a message names whose
 // settings hold: "<MachineOrg>'s managed settings".
 const MachineOrg = "this computer's administrator"

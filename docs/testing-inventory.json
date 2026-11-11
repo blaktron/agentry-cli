@@ -3491,6 +3491,18 @@
           "benchmarks": [],
           "fixtureEntryPoint": false,
           "dependencyHints": []
+        },
+        {
+          "path": "pkg/managed/templates_test.go",
+          "tests": [
+            "TestTheMachineSettingsTemplatesMatchTheReader"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
+          ]
         }
       ]
     },

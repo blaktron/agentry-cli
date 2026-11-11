@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- A sample configuration profile for Agentry's machine settings on macOS.
+     Its payload lands as the managed preferences of the domain
+     net.secureagentry.agentry, which Agentry reads before anything else.
+     Replace the values, give both PayloadUUIDs new UUIDs, and deploy it
+     with your MDM. See https://docs.secureagentry.net/managed-settings/ -->
+<plist version="1.0">
+<dict>
+  <key>PayloadType</key>
+  <string>Configuration</string>
+  <key>PayloadVersion</key>
+  <integer>1</integer>
+  <key>PayloadIdentifier</key>
+  <string>net.secureagentry.agentry.machine-settings</string>
+  <key>PayloadUUID</key>
+  <string>00000000-0000-4000-8000-000000000001</string>
+  <key>PayloadDisplayName</key>
+  <string>Agentry machine settings</string>
+  <key>PayloadScope</key>
+  <string>System</string>
+  <key>PayloadContent</key>
+  <array>
+    <dict>
+      <key>PayloadType</key>
+      <string>net.secureagentry.agentry</string>
+      <key>PayloadVersion</key>
+      <integer>1</integer>
+      <key>PayloadIdentifier</key>
+      <string>net.secureagentry.agentry.machine-settings.payload</string>
+      <key>PayloadUUID</key>
+      <string>00000000-0000-4000-8000-000000000002</string>
+      <key>PayloadDisplayName</key>
+      <string>Agentry</string>
+      <key>registry</key>
+      <string>https://secureagentry.net</string>
+      <key>requireOrg</key>
+      <string>your-organization</string>
+      <key>settings</key>
+      <dict>
+        <key>run.unsafeMode</key>
+        <dict>
+          <key>value</key>
+          <string>forbidden</string>
+          <key>locked</key>
+          <true/>
+        </dict>
+      </dict>
+    </dict>
+  </array>
+</dict>
+</plist>
