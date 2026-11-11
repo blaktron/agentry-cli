@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blaktron/agentry/pkg/manifest"
+
 	"github.com/blaktron/agentry-cli/pkg/runner/persistent"
 )
 
@@ -25,5 +27,22 @@ func TestASubagentRunIsAnOrdinaryAutonomousRun(t *testing.T) {
 	}
 	if j := strings.Join(args, " "); strings.Contains(j, "persistent") || strings.Contains(j, "agent ") {
 		t.Errorf("a subagent's run names a persistent agent: %s", j)
+	}
+}
+
+// TestDesktopUseIsTheInstallsWords: a subagent's usage names each
+// application and computer use as the install's consent does, and a
+// release with no desktop line names nothing.
+func TestDesktopUseIsTheInstallsWords(t *testing.T) {
+	if got := desktopUse(nil); got != nil {
+		t.Errorf("no line: %q", got)
+	}
+	d := &manifest.Desktop{Servers: []manifest.DesktopServer{{ID: "kcalc", Use: manifest.DesktopUseComputer}}, ComputerUse: manifest.ComputerUseApp}
+	want := []string{manifest.DescribeDesktopServer(d.Servers[0]), manifest.DescribeComputerUse(d)}
+	if got := desktopUse(d); !slices.Equal(got, want) {
+		t.Errorf("desktopUse = %q, want %q", got, want)
+	}
+	if !strings.Contains(want[1], "kcalc") {
+		t.Errorf("computer use does not name the window: %q", want[1])
 	}
 }
