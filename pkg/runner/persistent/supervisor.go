@@ -100,6 +100,12 @@ type Options struct {
 	// Helper answers Agentry's helper tools (helper.go), before AppLink;
 	// nil leaves them to AppLink, and with neither they are refused.
 	Helper HelperOps
+	// RunsWithoutAsking reports whether the person lets this agent start
+	// runs with quickagent_run without the question before its first run
+	// of each version: read at each run, so turning it off holds from the
+	// next one. While it reports true nothing is asked or recorded as
+	// agreed; every check before the question still holds. Nil is never.
+	RunsWithoutAsking func() bool
 	// AppLink answers the agent's app link calls other than self_configure,
 	// which the supervisor answers itself: the desktop's. Nil answers them
 	// as Agentry Desktop's.

@@ -9,10 +9,11 @@ package persistent
 // What an agent asks for is a claim, as a page's is. An install, a schedule,
 // a schedule's removal, and the first run of a QuickAgent at a version are
 // each put to the person through the attached clients (Ask), naming the
-// agent asking, and a no does nothing. The runs the person agreed to let an
-// agent start are recorded per agent, by ns/name@version and the addresses
-// the run fetches, so a yes for one agent is never one for another, and a
-// new version asks again. A run is an ordinary autonomous run on this
+// agent asking, and a no does nothing; a client whose person lets the agent
+// run without asking (Options.RunsWithoutAsking) skips the run's question.
+// The runs the person agreed to let an agent start are recorded per agent,
+// by ns/name@version and the addresses the run fetches, so a yes for one
+// agent is never one for another, and a new version asks again. A run is an ordinary autonomous run on this
 // computer of the version installed here; it takes files from the agent's
 // share folder alone. What the registry and the docs say reaches the agent
 // quoted, as data.
@@ -511,8 +512,12 @@ type agreedRuns struct {
 // same addresses asks nothing. desktop is what of the person's computer the
 // release uses, in the install's words: the question names it, because the
 // run reaches outside its sandbox, and Agentry Desktop still holds each
-// call to what the person approved in it.
+// call to what the person approved in it. While the client's
+// RunsWithoutAsking reports true, nothing is asked or recorded.
 func (s *Supervisor) agreeToRun(ctx context.Context, cfg Config, exact, task string, files []string, given *checkedAnswers, desktop []string) error {
+	if s.opts.RunsWithoutAsking != nil && s.opts.RunsWithoutAsking() {
+		return nil
+	}
 	path := filepath.Join(Dir(s.opts.Home, s.opts.Agent.Name), agreedRunsFile)
 	var rec agreedRuns
 	if b, err := os.ReadFile(path); err == nil { //nolint:gosec // the agent's own record
