@@ -468,6 +468,9 @@ refusedInputs[].path
 refusedInputs[].signature
 refusedInputs[].threatScore
 refusedInputs[].verdict
+restarts
+restarts[].message
+restarts[].reason
 result
 resultFile
 retryLikelyHelps

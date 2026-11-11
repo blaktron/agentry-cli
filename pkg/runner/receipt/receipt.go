@@ -155,6 +155,26 @@ type Envelope struct {
 	// conversation to ask about them. It records the agent's own list, not
 	// a check of the work. Absent for a run that keeps no checklist.
 	Checklist *Checklist `json:"checklist,omitempty"`
+	// Restarts are the times the runner started an autonomous harness
+	// again on its stored conversation after its first tool call, in order,
+	// each with its reason and the message the harness was given. At most
+	// two per run, all reasons together. Absent when there were none.
+	Restarts []Restart `json:"restarts,omitempty"`
+}
+
+// The reasons a harness is started again on its conversation.
+const (
+	RestartFinishCheck   = "finish_check"
+	RestartEmptyAnswer   = "empty_answer"
+	RestartReasoningOnly = "reasoning_only_answer"
+	RestartLoopDetected  = "loop_detected"
+)
+
+// Restart is one start of the harness on its conversation to continue a
+// run it ended early: why, and the message it was given.
+type Restart struct {
+	Reason  string `json:"reason"`
+	Message string `json:"message"`
 }
 
 // Checklist is the envelope's record of a run's checklist at its end.

@@ -733,6 +733,9 @@ func (d *dockerAgent) Events(line []byte) []Event {
 	case typ == "warning" && isLoopNudge(obj):
 		msg, _ := obj["message"].(string)
 		events = append(events, Event{Kind: EventLoopNudge, Text: msg, Raw: raw})
+	case typ == "warning" && isEmptyAnswerWarning(obj):
+		msg, _ := obj["message"].(string)
+		events = append(events, Event{Kind: EventEmptyAnswer, Text: msg, Raw: raw})
 	case typ == "tool_call_response":
 		events = append(events, dockerAgentToolResult(obj, raw))
 	case isToolCallStart(typ):
@@ -812,6 +815,15 @@ const dockerAgentLoopNudgePrefix = "Loop nudge "
 func isLoopNudge(obj map[string]any) bool {
 	msg, _ := obj["message"].(string)
 	return strings.HasPrefix(msg, dockerAgentLoopNudgePrefix)
+}
+
+// isEmptyAnswerWarning reports whether a warning event is the harness's
+// report that the model ended its turn with no reply: only reasoning, or
+// nothing after its tool calls.
+func isEmptyAnswerWarning(obj map[string]any) bool {
+	msg, _ := obj["message"].(string)
+	return strings.Contains(msg, "produced only reasoning and no reply") ||
+		strings.Contains(msg, "stopped without a final reply after using tools")
 }
 
 // isToolCallStart is true for the one event that marks a tool call: the

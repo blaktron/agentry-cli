@@ -7277,6 +7277,24 @@
           ]
         },
         {
+          "path": "pkg/runner/engine/restart_test.go",
+          "tests": [
+            "TestAnEarlyEndAfterAToolCallStartsTheHarnessAgain",
+            "TestAnEmptyEndBeforeTheFirstToolCallIsLeftAlone",
+            "TestEarlyEndRestartsShareTheFinishChecksBudget",
+            "TestAFinishCheckAndAnEmptyAnswerSplitTheBudget",
+            "TestEarlyEndRestartsCountInTheBudgets",
+            "TestABlockedRunIsNotStartedAgainOnAnEmptyAnswer"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "docker interface (real or fake)",
+            "source/file contract"
+          ]
+        },
+        {
           "path": "pkg/runner/engine/result_text_test.go",
           "tests": [
             "TestCollectorAssemblesStreamedFinalMessage",
