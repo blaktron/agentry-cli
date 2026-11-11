@@ -734,7 +734,7 @@ func TestClaudeSessionInterruptStopsTheTurnInFlight(t *testing.T) {
 		if !stdio.awaitLine(`"subtype":"interrupt"`, 5*time.Second) {
 			return
 		}
-		// What Claude Code 2.1.296 answers, in order.
+		// What Claude Code 2.1.322 answers, in order.
 		stdio.say(`{"type":"control_response","response":{"subtype":"success","request_id":"agentry-interrupt","response":{"still_queued":[]}}}`)
 		stdio.say(`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]}}`)
 		stdio.say(`{"type":"result","subtype":"error_during_execution","is_error":true,"result":null,"stop_reason":null,"errors":["[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=null"]}`)

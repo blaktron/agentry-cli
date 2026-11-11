@@ -189,7 +189,7 @@ func DefaultPolicy() (*policy.Policy, error) {
 	return SignIn{}.policy()
 }
 
-// status is what `claude auth status` prints (Claude Code 2.1.296).
+// status is what `claude auth status` prints (Claude Code 2.1.322).
 type status struct {
 	LoggedIn   bool   `json:"loggedIn"`
 	AuthMethod string `json:"authMethod"`

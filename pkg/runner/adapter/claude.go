@@ -418,7 +418,7 @@ type claudeMessage struct {
 		Status string `json:"status"`
 		// ResetsAt is in seconds since the epoch: Claude Code rounds
 		// Anthropic's anthropic-ratelimit-unified-reset header into it
-		// (read from 2.1.296's own code).
+		// (read from 2.1.322's own code).
 		ResetsAt      int64  `json:"resetsAt"`
 		RateLimitType string `json:"rateLimitType"`
 		ErrorCode     string `json:"errorCode"`
