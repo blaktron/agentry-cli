@@ -63,7 +63,7 @@ const (
 	// It is pinned by digest: the tag is a label, the digest the bytes, and
 	// the receipt names it.
 	DefaultHarnessImage = "ghcr.io/blaktron/agentry-docker-agent-src:1.159.0-2026.11.10.11@sha256:892427b8d19ef28f0e023a7cb5452c00418e2906ca6fa74bd43ab0e8ae5e71b8"
-	DefaultGoBuilder    = "ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb"
+	DefaultGoBuilder    = "ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:eb61c3873c97416fff0116553fff65d67a3549f72e11d9758849a689cdd8b523"
 	// Runtime images that install and run declared npm/PyPI MCP servers.
 	// Node is 26, the current release: a server whose engines.node needs a
 	// newer major than its runtime's fails every tool call (the OSV advisory
@@ -1623,7 +1623,8 @@ var formerDefaultPythonRuntimes = []string{
 // formerDefaultGoBuilders are the values earlier CLIs wrote into every
 // generated policy file as goBuilder: Docker Hub's golang:1.27-alpine, our
 // 1.27-alpine mirror by tag, and that mirror pinned by digest at go1.27.1,
-// at go1.27.2 and at go1.27.3 on Alpine 3.22. A file still naming one carries
+// at go1.27.2, at go1.27.3 on Alpine 3.22 and at go1.27.3 on Alpine 3.24. A
+// file still naming one carries
 // the builder of the day it was written, not an operator's choice, so it loads
 // as the current default (as for nodeRuntime), or a re-pinned builder would
 // compile no runner image on a machine set up before it. Any other value,
@@ -1636,6 +1637,7 @@ var formerDefaultGoBuilders = []string{
 	"ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:738d1cf061836894ff6bb8c33881080ac66de8cf0586615012a0c8f592649cfa",
 	"ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd",
 	"ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:d530cf60723abf1ffae0cd16bb546b379ec0550d2f3815e5b16ed69dbc00fba4",
+	"ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb",
 }
 
 // defaultFileText is the generated first-use policy. It must parse to
@@ -1671,7 +1673,7 @@ images:
     docker-agent: { ref: ghcr.io/blaktron/agentry-docker-agent-src:1.159.0-2026.11.10.11@sha256:892427b8d19ef28f0e023a7cb5452c00418e2906ca6fa74bd43ab0e8ae5e71b8 }
     # codex-image: { ref: ghcr.io/blaktron/agentry-codex:<tag>@sha256:<digest> }
     # claude-image: { ref: agentry-claude-code:<version>, artifact: sha512-<integrity> }
-  goBuilder: ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb
+  goBuilder: ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:eb61c3873c97416fff0116553fff65d67a3549f72e11d9758849a689cdd8b523
   # Runtimes for MCP servers a QuickAgent declares (capabilities.mcpServers).
   nodeRuntime: ghcr.io/blaktron/agentry-node-alpine:26-alpine@sha256:c6ad9e9c1d80f6eb607c26b4b0a132ff7a2344fad1c78ea3baa2a7d4c8de6d94
   pythonRuntime: ghcr.io/blaktron/agentry-python-slim:3.15-slim-trixie@sha256:94d3426f1def7db4a106a232ac121bfd975393e5dfd40a619b955fae45fe7913
