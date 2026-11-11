@@ -361,6 +361,13 @@ type Grants struct {
 	// ServersDir is the agent's own store a package server is installed
 	// into, as a release's declared server is into its profile's.
 	ServersDir string
+	// Connections are the access tokens of the Servers that sign in by
+	// OAuth, by address, as engine.Params.Connections is keyed; never a
+	// refresh token or a client secret.
+	Connections map[string]engine.ConnectionToken
+	// RenewConnection asks for a new access token for one of them before
+	// the one held expires; nil when the segment is given none.
+	RenewConnection func(ctx context.Context, server string) (engine.ConnectionToken, error)
 	// Skills are the skills the roster has on, by name and description,
 	// and SkillsDir the folder holding exactly them, filled by the caller;
 	// both empty for none.
@@ -694,6 +701,7 @@ func (s Segment) Start(ctx context.Context, d dockerx.Client) (engine.Persistent
 		CheckWorkspace: s.copyCheck(meta),
 		RunID:          s.RunID, Stderr: logw, OnStage: s.OnStage,
 		ModelSignIn: signIn, RenewModelSignIn: renewSignIn, Inference: s.Inference,
+		Connections: s.Grants.Connections, RenewConnection: s.Grants.RenewConnection,
 		SecretOverrides: s.secretOverrides(), WithheldSecrets: slices.Clone(s.Grants.WithheldSecrets),
 		AccountTokens: s.accountTokens(), CalendarURLs: s.calendarURLs(),
 		Voice: s.Grants.Voice, Web: s.Grants.Web, Review: s.Grants.Review,

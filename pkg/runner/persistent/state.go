@@ -608,7 +608,8 @@ func saveUsage(home, name string, u Usage) error {
 // enabled: its volumes, its transcript, its lifetime usage, its share
 // verdicts, its share mirror, its installed servers, its tasks, the skills
 // the person added, the secrets they stored and the git host accounts they
-// gave it, from the keychain too, are removed; its configuration keeps only
+// gave it, from the keychain too, and the connections its servers signed in
+// with, revoked at the vendor, are removed; its configuration keeps only
 // whether it is enabled, so its built-in skills are on again and its next
 // start is a first segment that asks its consents again. The segments'
 // receipts and the files in its share folder, which are the person's, are
@@ -748,6 +749,11 @@ func reset(ctx context.Context, home, name string, d dockerx.Client, kind resetK
 		if _, set := cfg.SignIns[s.Key]; err != nil && set {
 			return fmt.Errorf("remove the %s agent's keyring password for %s: %w", name, s.Name, err)
 		}
+	}
+	// The connections its servers signed in with, each revoked at its
+	// vendor where it can be.
+	if err := resetConnections(ctx, home, name); err != nil {
+		return fmt.Errorf("remove the %s agent's connections: %w", name, err)
 	}
 	return SaveConfig(home, name, Config{Version: ConfigVersion, Enabled: cfg.Enabled})
 }
