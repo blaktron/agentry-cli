@@ -9,9 +9,25 @@
       "api": "string",
       "baseUrl": "string, optional",
       "contextWindow": "int, optional",
-      "keyEnv": "string",
-      "maxOutputTokens": "int",
-      "name": "string"
+      "extraBody": "json, optional",
+      "keyEnv": "string, optional",
+      "maxOutputTokens": "int, optional",
+      "name": "string",
+      "prices": {
+        "cacheRead": "float64",
+        "cacheWrite": "float64",
+        "input": "float64",
+        "output": "float64"
+      },
+      "replayReasoning": "bool, optional",
+      "sampling": {
+        "minP": "float64, optional",
+        "presencePenalty": "float64, optional",
+        "repetitionPenalty": "float64, optional",
+        "temperature": "float64, optional",
+        "topK": "int64, optional",
+        "topP": "float64, optional"
+      }
     },
     "sessionDir": "string",
     "system": "string",
@@ -40,6 +56,7 @@
       "cacheWrite": "int64",
       "contextLimit": "int64, optional",
       "contextTokens": "int64",
+      "costUsd": "float64, optional",
       "input": "int64",
       "output": "int64"
     },
@@ -76,7 +93,10 @@
       "turn_end"
     ],
     "model.api": [
-      "anthropic"
+      "anthropic",
+      "chat-completions",
+      "openai-responses",
+      "gemini"
     ]
   },
   "version": 1

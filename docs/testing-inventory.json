@@ -2224,7 +2224,16 @@
             "TestAGatewayThatStreamsPagesAndReturnsMoreThanText",
             "TestTheStepLimitEndsATurn",
             "TestNothingIsSentOnAConfigurationThatCannotBeUsed",
-            "TestAGatewayThatRefusesTheBearerEndsTheRunBeforeTheModel"
+            "TestAGatewayThatRefusesTheBearerEndsTheRunBeforeTheModel",
+            "TestOneRunOnAChatCompletionsModel",
+            "TestAServerThatTakesNoKeyIsSentNone",
+            "TestEachServersTooLongRefusalIsAnOverflow",
+            "TestChatCompletionsFailuresAndCutAnswers",
+            "TestOneRunOnOpenAIsOwnAPI",
+            "TestOpenAIsOwnAPICutCallsAndRefusals",
+            "TestOneRunOnGemini",
+            "TestGeminiCutAnswersAndRefusals",
+            "TestAConversationsCostIsARunningTotalFromItsRecord"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -2322,7 +2331,11 @@
             "TestAConnectionThatDrops",
             "TestRequestsAreRecordedAsSent",
             "TestPrefixOf",
-            "TestARequestPastTheScriptFailsTheTest"
+            "TestARequestPastTheScriptFailsTheTest",
+            "TestResponsesStreamsAReply",
+            "TestResponsesRequestsAreRecorded",
+            "TestGeminiStreamsAReply",
+            "TestGeminiRequestsAreRecorded"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -4378,13 +4391,23 @@
             "TestAgentryHarnessCompilesAConfigurationItsHarnessReads",
             "TestAgentryHarnessTakesThePolicysOutputLimitAndASchema",
             "TestAgentryHarnessRefusesWhatItCannotRun",
+            "TestAgentryHarnessReachesAServerOfThePersonsOwn",
+            "TestAgentryHarnessRoutersAndCredits",
+            "TestAgentryHarnessReachesOpenAIsOwnAPI",
+            "TestAgentryHarnessReachesGemini",
+            "TestAgentryHarnessFillsWhatTheCatalogueKnows",
+            "TestAgentryHarnessSendsNoKeyToAServerThatTakesNone",
             "TestAgentryHarnessEvents",
-            "TestAgentryHarnessErrorsSayWhatTheEngineActsOn"
+            "TestAgentryHarnessErrorsSayWhatTheEngineActsOn",
+            "TestAgentryHarnessProviderGoldens"
           ],
           "fuzz": [],
           "benchmarks": [],
           "fixtureEntryPoint": false,
-          "dependencyHints": []
+          "dependencyHints": [
+            "source/file contract",
+            "explicit skip"
+          ]
         },
         {
           "path": "pkg/runner/adapter/budget_test.go",
@@ -8824,6 +8847,25 @@
       ]
     },
     {
+      "owner": "pkg/runner/modelfacts",
+      "behavior": "What the runner knows about a hosted model without asking at run time: its window, its output limit and its prices, from a snapshot compiled in",
+      "disposition": "retain",
+      "files": [
+        {
+          "path": "pkg/runner/modelfacts/modelfacts_test.go",
+          "tests": [
+            "TestTheCatalogueIsWellFormed",
+            "TestLookup",
+            "TestAPriceNotListedIsNotZero"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        }
+      ]
+    },
+    {
       "owner": "pkg/runner/modelkey",
       "behavior": "A model provider's API key in the OS keychain — Keychain on macOS, Credential Manager on Windows, the",
       "disposition": "retain",
@@ -11546,6 +11588,49 @@
           "dependencyHints": [
             "HTTP transport"
           ]
+        },
+        {
+          "path": "runnerimage/harness/llm/chat_test.go",
+          "tests": [
+            "TestChatBuildsTheRequest",
+            "TestChatReadsAReply",
+            "TestChatReadsWhatServersDoDifferently",
+            "TestChatFailures"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "HTTP transport"
+          ]
+        },
+        {
+          "path": "runnerimage/harness/llm/gemini_test.go",
+          "tests": [
+            "TestGeminiReadsAReplyAndSendsItsPartsBack",
+            "TestGeminiEndingsAndFailures",
+            "TestMadeUpCallIDsDoNotRepeat"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "HTTP transport"
+          ]
+        },
+        {
+          "path": "runnerimage/harness/llm/responses_test.go",
+          "tests": [
+            "TestResponsesBuildsTheRequest",
+            "TestResponsesReadsAReply",
+            "TestResponsesEndingsAndFailures"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "HTTP transport"
+          ]
         }
       ]
     },
@@ -11558,6 +11643,7 @@
           "path": "runnerimage/harness/proto/proto_test.go",
           "tests": [
             "TestAConfigurationGoesThroughUnchanged",
+            "TestAChatCompletionsConfiguration",
             "TestDecodeConfigRefuses",
             "TestTheContractIsWhatTheSchemaSays"
           ],

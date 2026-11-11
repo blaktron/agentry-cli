@@ -701,3 +701,242 @@ func TestARequestPastTheScriptFailsTheTest(t *testing.T) {
 		t.Errorf("the test was failed %d times, want once for the request past the script", len(rec.errors))
 	}
 }
+
+const responsesPath = "/v1/responses"
+
+func TestResponsesStreamsAReply(t *testing.T) {
+	s := New(t,
+		ToolCalls(Call{Name: "fs_read", Arguments: `{"path":"a.txt"}`}).WithText("Reading.").WithReasoning("First the file.").
+			WithUsage(Usage{Input: 120, CacheRead: 900, Output: 33, Reasoning: 12}),
+		CutToolCall("write_report", `{"title":"Fin`),
+		Text("Done.").WithUsage(Usage{Input: 5, Output: 7}),
+	)
+	read := func(evs []event) (types []string, last map[string]any, items []map[string]any) {
+		for _, e := range evs {
+			var d map[string]any
+			if err := json.Unmarshal([]byte(e.data), &d); err != nil {
+				t.Fatalf("event %q is not JSON: %v", e.data, err)
+			}
+			if d["type"] != e.name {
+				t.Errorf("event named %q carries type %v", e.name, d["type"])
+			}
+			types = append(types, e.name)
+			if e.name == "response.output_item.done" {
+				items = append(items, d["item"].(map[string]any))
+			}
+			last = d
+		}
+		return types, last, items
+	}
+
+	_, evs := stream(t, s, responsesPath, `{"model":"m","stream":true,"input":[]}`)
+	types, last, items := read(evs)
+	if types[len(types)-1] != "response.completed" || len(items) != 3 {
+		t.Fatalf("events %v, %d finished items", types, len(items))
+	}
+	if items[0]["type"] != "reasoning" || items[0]["encrypted_content"] == "" || items[1]["type"] != "message" {
+		t.Errorf("reasoning and text items: %v", items[:2])
+	}
+	if c := items[2]; c["type"] != "function_call" || c["name"] != "fs_read" || c["arguments"] != `{"path":"a.txt"}` || c["call_id"] == "" {
+		t.Errorf("call item: %v", c)
+	}
+	usage := last["response"].(map[string]any)["usage"].(map[string]any)
+	if usage["input_tokens"] != float64(1020) || usage["input_tokens_details"].(map[string]any)["cached_tokens"] != float64(900) || usage["output_tokens"] != float64(33) {
+		t.Errorf("usage: %v", usage)
+	}
+
+	// A call the reply stopped inside is started and never done.
+	_, evs = stream(t, s, responsesPath, `{"model":"m","stream":true,"input":[]}`)
+	types, last, items = read(evs)
+	if types[len(types)-1] != "response.incomplete" || len(items) != 0 {
+		t.Errorf("a cut call: events %v, %d finished items", types, len(items))
+	}
+	if r := last["response"].(map[string]any); r["incomplete_details"].(map[string]any)["reason"] != "max_output_tokens" {
+		t.Errorf("why the reply is incomplete: %v", r)
+	}
+
+	// A whole response when no stream is asked for.
+	resp := post(t, context.Background(), s.URL()+responsesPath, `{"model":"m","input":[]}`)
+	var whole struct {
+		Status string
+		Output []struct {
+			Type    string
+			Content []struct{ Text string }
+		}
+		Usage struct {
+			Output int `json:"output_tokens"`
+		}
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&whole); err != nil {
+		t.Fatal(err)
+	}
+	if whole.Status != "completed" || len(whole.Output) != 1 || whole.Output[0].Content[0].Text != "Done." || whole.Usage.Output != 7 {
+		t.Errorf("whole response: %+v", whole)
+	}
+}
+
+func TestResponsesRequestsAreRecorded(t *testing.T) {
+	s := New(t, Text("ok"))
+	post(t, context.Background(), s.URL()+responsesPath, `{
+		"model":"gpt-x","stream":true,"store":false,"include":["reasoning.encrypted_content"],"max_output_tokens":256,
+		"instructions":"Be brief.",
+		"tools":[{"type":"function","name":"fs_read","parameters":{"type":"object"}}],
+		"input":[
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"Read a.txt"}]},
+			{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"The file first."}],"encrypted_content":"opaque"},
+			{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Reading."}]},
+			{"type":"function_call","call_id":"call_1","name":"fs_read","arguments":"{\"path\":\"a.txt\"}"},
+			{"type":"function_call_output","call_id":"call_1","output":"no such file"}
+		]}`)
+	r := s.Requests()[0]
+	if r.API != Responses || r.Model != "gpt-x" || !r.Stream || r.MaxTokens != 256 || r.System != "Be brief." || strings.Join(r.Tools, ",") != "fs_read" {
+		t.Errorf("request: %+v", r)
+	}
+	if r.Store == nil || *r.Store || len(r.Include) != 1 {
+		t.Errorf("store %v, include %v", r.Store, r.Include)
+	}
+	if len(r.Messages) != 5 {
+		t.Fatalf("%d input items, want 5", len(r.Messages))
+	}
+	if m := r.Messages[0]; m.Role != "user" || m.Text != "Read a.txt" {
+		t.Errorf("user message: %+v", m)
+	}
+	if m := r.Messages[1]; m.Reasoning != "The file first." {
+		t.Errorf("reasoning item: %+v", m)
+	}
+	if m := r.Messages[3]; len(m.Calls) != 1 || m.Calls[0].ID != "call_1" || m.Calls[0].Arguments != `{"path":"a.txt"}` {
+		t.Errorf("call item: %+v", m)
+	}
+	if m := r.Messages[4]; m.Role != "tool" || len(m.Results) != 1 || m.Results[0] != (Result{CallID: "call_1", Text: "no such file"}) {
+		t.Errorf("output item: %+v", m)
+	}
+}
+
+const geminiPath = "/v1beta/models/gemini-x:streamGenerateContent"
+
+func TestGeminiStreamsAReply(t *testing.T) {
+	s := New(t,
+		ToolCalls(Call{Name: "fs_read", Arguments: `{"path":"a.txt"}`}, Call{ID: "mine", Name: "fs_list", Arguments: `{}`}).
+			WithText("Reading.").WithReasoning("First the file.").
+			WithUsage(Usage{Input: 120, CacheRead: 900, Output: 33, Reasoning: 12}),
+		CutToolCall("write_report", `{"title":"Fin`),
+		Status(503, "The model is overloaded."),
+		Overflow(GeminiAPI, 4096),
+		Text("Done.").WithUsage(Usage{Input: 5, Output: 7}),
+	)
+	type part struct {
+		Text             string
+		Thought          bool
+		ThoughtSignature string
+		FunctionCall     *struct {
+			ID, Name string
+			Args     map[string]any
+		}
+	}
+	read := func(evs []event) (parts []part, finish string, usage map[string]float64) {
+		for _, e := range evs {
+			var d struct {
+				Candidates []struct {
+					Content      struct{ Parts []part }
+					FinishReason string
+				}
+				UsageMetadata map[string]float64
+			}
+			if err := json.Unmarshal([]byte(e.data), &d); err != nil {
+				t.Fatalf("chunk %q is not JSON: %v", e.data, err)
+			}
+			for _, c := range d.Candidates {
+				parts = append(parts, c.Content.Parts...)
+				if c.FinishReason != "" {
+					finish = c.FinishReason
+				}
+			}
+			if d.UsageMetadata != nil {
+				usage = d.UsageMetadata
+			}
+		}
+		return
+	}
+
+	_, evs := stream(t, s, geminiPath, `{"contents":[]}`)
+	parts, finish, usage := read(evs)
+	var text, thought string
+	var calls []part
+	for _, p := range parts {
+		switch {
+		case p.FunctionCall != nil:
+			calls = append(calls, p)
+		case p.Thought:
+			thought += p.Text
+		default:
+			text += p.Text
+		}
+	}
+	if text != "Reading." || thought != "First the file." || finish != "STOP" {
+		t.Errorf("text %q, thought %q, finish %q", text, thought, finish)
+	}
+	if len(calls) != 2 || calls[0].FunctionCall.Name != "fs_read" || calls[0].FunctionCall.Args["path"] != "a.txt" || calls[0].FunctionCall.ID != "" || calls[0].ThoughtSignature == "" || calls[1].FunctionCall.ID != "mine" {
+		t.Errorf("calls: %+v", calls)
+	}
+	if usage["promptTokenCount"] != 1020 || usage["cachedContentTokenCount"] != 900 || usage["candidatesTokenCount"] != 21 || usage["thoughtsTokenCount"] != 12 {
+		t.Errorf("usage: %v", usage)
+	}
+
+	// The API has no half call: a reply cut at the limit ends before it.
+	_, evs = stream(t, s, geminiPath, `{"contents":[]}`)
+	if parts, finish, _ := read(evs); finish != "MAX_TOKENS" || len(parts) != 0 {
+		t.Errorf("a cut call: finish %q, parts %+v", finish, parts)
+	}
+
+	resp := post(t, context.Background(), s.URL()+geminiPath, `{"contents":[]}`)
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 503 || !strings.Contains(string(body), `"status":"UNAVAILABLE"`) {
+		t.Errorf("an error: %d %s", resp.StatusCode, body)
+	}
+	resp = post(t, context.Background(), s.URL()+geminiPath, `{"contents":[]}`)
+	body, _ = io.ReadAll(resp.Body)
+	if resp.StatusCode != 400 || !strings.Contains(string(body), "exceeds the maximum number of tokens allowed (4096)") {
+		t.Errorf("a refusal: %d %s", resp.StatusCode, body)
+	}
+
+	// The plain method answers with one whole response.
+	resp = post(t, context.Background(), s.URL()+"/v1beta/models/gemini-x:generateContent", `{"contents":[]}`)
+	var whole struct {
+		Candidates []struct {
+			Content      struct{ Parts []part }
+			FinishReason string
+		}
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&whole); err != nil {
+		t.Fatal(err)
+	}
+	if len(whole.Candidates) != 1 || whole.Candidates[0].FinishReason != "STOP" {
+		t.Errorf("whole response: %+v", whole)
+	}
+}
+
+func TestGeminiRequestsAreRecorded(t *testing.T) {
+	s := New(t, Text("ok"))
+	post(t, context.Background(), s.URL()+geminiPath+"?alt=sse", `{
+		"systemInstruction":{"parts":[{"text":"Be brief."}]},
+		"generationConfig":{"maxOutputTokens":256},
+		"tools":[{"functionDeclarations":[{"name":"fs_read","parametersJsonSchema":{"type":"object"}},{"name":"fs_list"}]}],
+		"contents":[
+			{"role":"user","parts":[{"text":"Read a.txt"}]},
+			{"role":"model","parts":[{"text":"The file first.","thought":true},{"text":"Reading."},{"functionCall":{"name":"fs_read","args":{"path":"a.txt"}},"thoughtSignature":"c2ln"}]},
+			{"role":"user","parts":[{"functionResponse":{"name":"fs_read","response":{"error":"no such file"}}},{"text":"carry on"}]}
+		]}`)
+	r := s.Requests()[0]
+	if r.API != Gemini || r.Model != "gemini-x" || !r.Stream || r.MaxTokens != 256 || r.System != "Be brief." || strings.Join(r.Tools, ",") != "fs_read,fs_list" {
+		t.Errorf("request: %+v", r)
+	}
+	if len(r.Messages) != 3 {
+		t.Fatalf("%d messages, want 3", len(r.Messages))
+	}
+	if m := r.Messages[1]; m.Role != "assistant" || m.Text != "Reading." || m.Reasoning != "The file first." || len(m.Calls) != 1 || m.Calls[0].Name != "fs_read" || m.Calls[0].Arguments != `{"path":"a.txt"}` {
+		t.Errorf("model message: %+v", m)
+	}
+	if m := r.Messages[2]; m.Role != "user" || m.Text != "carry on" || len(m.Results) != 1 || m.Results[0] != (Result{CallID: "fs_read", Text: "no such file", IsError: true}) {
+		t.Errorf("result message: %+v", m)
+	}
+}

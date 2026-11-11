@@ -82,6 +82,7 @@ PURPOSES = {
     "pkg/runner/localrun": "What a run needs besides the registry: the plan's reuse or compile for any run, a release's or not",
     "pkg/runner/mcpinstall": "Resolves and installs the MCP servers a QuickAgent declares: resolution turns each manifest pin into the",
     "pkg/runner/modelcheck": "A saved model checked before it is saved: its provider reached with the credential it names, and the model",
+    "pkg/runner/modelfacts": "What the runner knows about a hosted model without asking at run time: its window, its output limit and its prices, from a snapshot compiled in",
     "pkg/runner/modelkey": "A model provider's API key in the OS keychain — Keychain on macOS, Credential Manager on Windows, the",
     "pkg/runner/modelsignin": "A person's model sign-ins on this machine: the grants that let their local runs spend a model vendor's",
     "pkg/runner/osvdb": "This machine's copy of OSV's vulnerability databases, which the Coding agent's dependency scan reads offline",

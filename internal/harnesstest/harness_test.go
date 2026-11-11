@@ -665,3 +665,408 @@ func TestAGatewayThatRefusesTheBearerEndsTheRunBeforeTheModel(t *testing.T) {
 		t.Error("the model was reached with no tools")
 	}
 }
+
+// chat makes a run's model a Chat Completions one on the scripted server.
+func chat(model *scriptedmodel.Server, edit func(m map[string]any)) func(map[string]any) {
+	return func(c map[string]any) {
+		m := map[string]any{"api": "chat-completions", "name": "local-test", "baseUrl": model.URL() + "/v1", "keyEnv": "MODEL_KEY", "contextWindow": 32768}
+		if edit != nil {
+			edit(m)
+		}
+		c["model"] = m
+	}
+}
+
+func TestOneRunOnAChatCompletionsModel(t *testing.T) {
+	model := scriptedmodel.New(t,
+		scriptedmodel.ToolCalls(scriptedmodel.Call{ID: "call_1", Name: "fs_read", Arguments: `{"path":"a.txt"}`}).
+			WithText("I will read it.").WithReasoning("The file comes first.").
+			WithUsage(scriptedmodel.Usage{Input: 940, Output: 30, Reasoning: 12}),
+		scriptedmodel.Text("It holds one word: hello.").
+			WithUsage(scriptedmodel.Usage{Input: 12, CacheRead: 940, Output: 9}),
+	)
+	g := newGateway(t, "fs_write", "fs_read")
+	g.call = func(context.Context, string, json.RawMessage) (string, string) {
+		return `{"content":[{"type":"text","text":"hello"}]}`, ""
+	}
+
+	code, events, stderr := run(t, model, g, runOpts{configEdit: chat(model, func(m map[string]any) {
+		m["maxOutputTokens"] = 2048
+		m["sampling"] = map[string]any{"temperature": 0.6, "topK": 20}
+		m["extraBody"] = map[string]any{"chat_template_kwargs": map[string]any{"enable_thinking": true}}
+		m["replayReasoning"] = true
+	})})
+	if code != harness.ExitAnswered {
+		t.Fatalf("exit %d, stderr: %s", code, stderr)
+	}
+	if got, want := types(events), "ready reasoning text usage tool_call tool_result text usage turn_end"; got != want {
+		t.Fatalf("events: %s\nwant:   %s", got, want)
+	}
+	var usages []proto.Usage
+	for _, ev := range events {
+		if ev.Type == proto.TypeUsage {
+			usages = append(usages, *ev.Usage)
+		}
+	}
+	want := []proto.Usage{
+		{Input: 940, Output: 30, ContextTokens: 940, ContextLimit: 32768},
+		{Input: 12, CacheRead: 940, Output: 9, ContextTokens: 952, ContextLimit: 32768},
+	}
+	if len(usages) != 2 || usages[0] != want[0] || usages[1] != want[1] {
+		t.Errorf("usage %+v\nwant  %+v", usages, want)
+	}
+	if end := last(t, events, proto.TypeTurnEnd); end.Reason != proto.EndAnswered || end.Text != "It holds one word: hello." {
+		t.Errorf("turn_end: %+v", end)
+	}
+
+	reqs := model.Requests()
+	if len(reqs) != 2 {
+		t.Fatalf("%d model requests, want 2", len(reqs))
+	}
+	first, second := reqs[0], reqs[1]
+	if first.API != scriptedmodel.ChatCompletions || first.Path != "/v1/chat/completions" || first.Header.Get("Authorization") != "Bearer "+modelKey {
+		t.Errorf("request: %s %s, Authorization %q", first.API, first.Path, first.Header.Get("Authorization"))
+	}
+	if first.Model != "local-test" || !first.Stream || !first.IncludeUsage || first.MaxTokens != 2048 || first.System != "You are a careful agent." {
+		t.Errorf("request: %+v", first)
+	}
+	if strings.Join(first.Tools, ",") != "fs_read,fs_write" {
+		t.Errorf("tools offered: %v", first.Tools)
+	}
+	for _, want := range []string{`"temperature":0.6`, `"top_k":20`, `"chat_template_kwargs":{"enable_thinking":true}`} {
+		if !strings.Contains(string(first.Body), want) {
+			t.Errorf("the request lacks %s:\n%s", want, first.Body)
+		}
+	}
+	// system, user, assistant, tool.
+	if len(second.Messages) != 4 {
+		t.Fatalf("second request has %d messages, want 4", len(second.Messages))
+	}
+	if m := second.Messages[2]; m.Role != "assistant" || m.Text != "I will read it." || m.Reasoning != "The file comes first." || len(m.Calls) != 1 || m.Calls[0].ID != "call_1" || m.Calls[0].Arguments != `{"path":"a.txt"}` {
+		t.Errorf("the reply sent back: %+v", m)
+	}
+	if m := second.Messages[3]; m.Role != "tool" || len(m.Results) != 1 || m.Results[0] != (scriptedmodel.Result{CallID: "call_1", Text: "hello"}) {
+		t.Errorf("the result sent back: %+v", m)
+	}
+	if err := scriptedmodel.PrefixOf(first, second); err != nil {
+		t.Errorf("the second request does not continue the first: %v", err)
+	}
+}
+
+func TestAServerThatTakesNoKeyIsSentNone(t *testing.T) {
+	model := scriptedmodel.New(t, scriptedmodel.Text("Done."))
+	g := newGateway(t, "fs_read")
+	code, _, stderr := run(t, model, g, runOpts{configEdit: chat(model, func(m map[string]any) { delete(m, "keyEnv") })})
+	if code != harness.ExitAnswered {
+		t.Fatalf("exit %d, stderr: %s", code, stderr)
+	}
+	req := model.Requests()[0]
+	if _, has := req.Header["Authorization"]; has {
+		t.Errorf("an Authorization header reached a server that takes no key: %v", req.Header["Authorization"])
+	}
+	if req.MaxTokens != 0 || strings.Contains(string(req.Body), "max_tokens") {
+		t.Errorf("a limit was sent though the configuration named none: %s", req.Body)
+	}
+}
+
+func TestEachServersTooLongRefusalIsAnOverflow(t *testing.T) {
+	dialects := map[string]scriptedmodel.Dialect{
+		"OpenAI": scriptedmodel.OpenAI, "vLLM": scriptedmodel.VLLM, "llama.cpp": scriptedmodel.LlamaCpp,
+		"LM Studio": scriptedmodel.LMStudio, "Ollama": scriptedmodel.Ollama,
+	}
+	for name, d := range dialects {
+		t.Run(name, func(t *testing.T) {
+			model := scriptedmodel.New(t, scriptedmodel.Overflow(d, 4096))
+			g := newGateway(t, "fs_read")
+			code, events, _ := run(t, model, g, runOpts{configEdit: chat(model, nil)})
+			if code != harness.ExitFailed {
+				t.Errorf("exit %d, want %d", code, harness.ExitFailed)
+			}
+			if ev := last(t, events, proto.TypeError); ev.Class != proto.ClassOverflow || ev.Text == "" {
+				t.Errorf("error event: %+v", ev)
+			}
+		})
+	}
+}
+
+func TestChatCompletionsFailuresAndCutAnswers(t *testing.T) {
+	model := scriptedmodel.New(t,
+		scriptedmodel.RateLimited(20*time.Second),
+		scriptedmodel.Status(503, "The server is overloaded."),
+		scriptedmodel.Stall("Working"),
+		scriptedmodel.CutToolCall("fs_write", `{"path":"report.md","content":"# Fin`),
+	)
+	g := newGateway(t, "fs_write")
+	edit := chat(model, nil)
+
+	_, events, _ := run(t, model, g, runOpts{configEdit: edit})
+	if ev := last(t, events, proto.TypeError); ev.Class != proto.ClassRateLimit || ev.Status != 429 || ev.RetryAfterSeconds != 20 {
+		t.Errorf("a rate limit: %+v", ev)
+	}
+	_, events, _ = run(t, model, g, runOpts{configEdit: edit})
+	if ev := last(t, events, proto.TypeError); ev.Class != proto.ClassCapacity || ev.Status != 503 {
+		t.Errorf("an overloaded server: %+v", ev)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	code, events, _ := run(t, model, g, runOpts{configEdit: edit, ctx: ctx})
+	if code != harness.ExitFailed || last(t, events, proto.TypeTurnEnd).Reason != proto.EndError {
+		t.Errorf("a stalled stream cut off by the runner: exit %d, %s", code, types(events))
+	}
+
+	code, events, _ = run(t, model, g, runOpts{configEdit: edit})
+	if code != harness.ExitIncomplete || last(t, events, proto.TypeTurnEnd).Reason != proto.EndAnswerCut {
+		t.Errorf("a cut call: exit %d, %s", code, types(events))
+	}
+	if got := g.called(); len(got) != 0 {
+		t.Errorf("a cut call reached the gateway: %v", got)
+	}
+}
+
+// openai makes a run's model one on OpenAI's own API, on the scripted server.
+func openai(model *scriptedmodel.Server) func(map[string]any) {
+	return func(c map[string]any) {
+		c["model"] = map[string]any{"api": "openai-responses", "name": "gpt-test", "baseUrl": model.URL() + "/v1", "keyEnv": "MODEL_KEY", "maxOutputTokens": 4096, "contextWindow": 400000}
+	}
+}
+
+func TestOneRunOnOpenAIsOwnAPI(t *testing.T) {
+	model := scriptedmodel.New(t,
+		scriptedmodel.ToolCalls(scriptedmodel.Call{ID: "call_1", Name: "fs_read", Arguments: `{"path":"a.txt"}`}).
+			WithText("I will read it.").WithReasoning("The file comes first.").
+			WithUsage(scriptedmodel.Usage{Input: 940, Output: 30, Reasoning: 12}),
+		scriptedmodel.Text("It holds one word: hello.").
+			WithUsage(scriptedmodel.Usage{Input: 12, CacheRead: 940, Output: 9}),
+	)
+	g := newGateway(t, "fs_write", "fs_read")
+	g.call = func(context.Context, string, json.RawMessage) (string, string) {
+		return `{"content":[{"type":"text","text":"hello"}]}`, ""
+	}
+
+	code, events, stderr := run(t, model, g, runOpts{configEdit: openai(model)})
+	if code != harness.ExitAnswered {
+		t.Fatalf("exit %d, stderr: %s", code, stderr)
+	}
+	if got, want := types(events), "ready reasoning text usage tool_call tool_result text usage turn_end"; got != want {
+		t.Fatalf("events: %s\nwant:   %s", got, want)
+	}
+	if end := last(t, events, proto.TypeTurnEnd); end.Reason != proto.EndAnswered || end.Text != "It holds one word: hello." {
+		t.Errorf("turn_end: %+v", end)
+	}
+	var usages []proto.Usage
+	for _, ev := range events {
+		if ev.Type == proto.TypeUsage {
+			usages = append(usages, *ev.Usage)
+		}
+	}
+	if len(usages) != 2 || usages[1] != (proto.Usage{Input: 12, CacheRead: 940, Output: 9, ContextTokens: 952, ContextLimit: 400000}) {
+		t.Errorf("usage: %+v", usages)
+	}
+
+	reqs := model.Requests()
+	if len(reqs) != 2 {
+		t.Fatalf("%d model requests, want 2", len(reqs))
+	}
+	first, second := reqs[0], reqs[1]
+	if first.API != scriptedmodel.Responses || first.Path != "/v1/responses" || first.Header.Get("Authorization") != "Bearer "+modelKey {
+		t.Errorf("request: %s %s", first.API, first.Path)
+	}
+	if first.Model != "gpt-test" || !first.Stream || first.MaxTokens != 4096 || first.System != "You are a careful agent." || strings.Join(first.Tools, ",") != "fs_read,fs_write" {
+		t.Errorf("request: %+v", first)
+	}
+	if first.Store == nil || *first.Store || strings.Join(first.Include, ",") != "reasoning.encrypted_content" {
+		t.Errorf("the request keeps state on the server: store %v, include %v", first.Store, first.Include)
+	}
+	// The task, then the reply's items as they came, then the call's output.
+	if len(second.Messages) != 5 {
+		t.Fatalf("second request has %d input items, want 5", len(second.Messages))
+	}
+	if m := second.Messages[1]; m.Reasoning != "The file comes first." || !strings.Contains(string(m.Raw), `"encrypted_content":"encrypted-1"`) {
+		t.Errorf("the reasoning item did not go back with its encrypted content: %s", m.Raw)
+	}
+	if m := second.Messages[2]; m.Role != "assistant" || m.Text != "I will read it." {
+		t.Errorf("the answer's text sent back: %+v", m)
+	}
+	if m := second.Messages[3]; len(m.Calls) != 1 || m.Calls[0] != (scriptedmodel.Call{ID: "call_1", Name: "fs_read", Arguments: `{"path":"a.txt"}`}) {
+		t.Errorf("the call sent back: %+v", m)
+	}
+	if m := second.Messages[4]; len(m.Results) != 1 || m.Results[0] != (scriptedmodel.Result{CallID: "call_1", Text: "hello"}) {
+		t.Errorf("the result sent back: %+v", m)
+	}
+	if err := scriptedmodel.PrefixOf(first, second); err != nil {
+		t.Errorf("the second request does not continue the first: %v", err)
+	}
+}
+
+func TestOpenAIsOwnAPICutCallsAndRefusals(t *testing.T) {
+	model := scriptedmodel.New(t,
+		scriptedmodel.CutToolCall("fs_write", `{"path":"report.md","content":"# Fin`),
+		scriptedmodel.Overflow(scriptedmodel.OpenAI, 400000),
+		scriptedmodel.Status(503, "The server is overloaded."),
+	)
+	g := newGateway(t, "fs_write")
+
+	code, events, _ := run(t, model, g, runOpts{configEdit: openai(model)})
+	if code != harness.ExitIncomplete || last(t, events, proto.TypeTurnEnd).Reason != proto.EndAnswerCut {
+		t.Errorf("a cut call: exit %d, %s", code, types(events))
+	}
+	if got := g.called(); len(got) != 0 {
+		t.Errorf("a cut call reached the gateway: %v", got)
+	}
+	_, events, _ = run(t, model, g, runOpts{configEdit: openai(model)})
+	if ev := last(t, events, proto.TypeError); ev.Class != proto.ClassOverflow || ev.Status != 400 {
+		t.Errorf("a conversation refused as too long: %+v", ev)
+	}
+	_, events, _ = run(t, model, g, runOpts{configEdit: openai(model)})
+	if ev := last(t, events, proto.TypeError); ev.Class != proto.ClassCapacity || ev.Status != 503 {
+		t.Errorf("an overloaded server: %+v", ev)
+	}
+}
+
+// gemini makes a run's model a Gemini one on the scripted server.
+func gemini(model *scriptedmodel.Server) func(map[string]any) {
+	return func(c map[string]any) {
+		c["model"] = map[string]any{"api": "gemini", "name": "gemini-test", "baseUrl": model.URL(), "keyEnv": "MODEL_KEY", "maxOutputTokens": 4096, "contextWindow": 1048576}
+	}
+}
+
+func TestOneRunOnGemini(t *testing.T) {
+	model := scriptedmodel.New(t,
+		scriptedmodel.ToolCalls(
+			scriptedmodel.Call{Name: "fs_read", Arguments: `{"path":"a.txt"}`},
+			scriptedmodel.Call{Name: "fs_read", Arguments: `{"path":"b.txt"}`},
+		).WithText("I will read them.").WithReasoning("Two files.").
+			WithUsage(scriptedmodel.Usage{Input: 940, Output: 30, Reasoning: 12}),
+		scriptedmodel.Text("Both hold one word.").
+			WithUsage(scriptedmodel.Usage{Input: 12, CacheRead: 940, Output: 9}),
+	)
+	g := newGateway(t, "fs_write", "fs_read")
+	g.call = func(_ context.Context, _ string, args json.RawMessage) (string, string) {
+		if strings.Contains(string(args), "b.txt") {
+			return `{"content":[{"type":"text","text":"no such file"}],"isError":true}`, ""
+		}
+		return `{"content":[{"type":"text","text":"hello"}]}`, ""
+	}
+
+	code, events, stderr := run(t, model, g, runOpts{configEdit: gemini(model)})
+	if code != harness.ExitAnswered {
+		t.Fatalf("exit %d, stderr: %s", code, stderr)
+	}
+	if got, want := types(events), "ready reasoning text usage tool_call tool_result tool_call tool_result text usage turn_end"; got != want {
+		t.Fatalf("events: %s\nwant:   %s", got, want)
+	}
+	if end := last(t, events, proto.TypeTurnEnd); end.Reason != proto.EndAnswered || end.Text != "Both hold one word." {
+		t.Errorf("turn_end: %+v", end)
+	}
+	// The server gave the two calls no ids; the harness's must differ, or
+	// one call's result would answer the other.
+	var ids []string
+	for _, ev := range events {
+		if ev.Type == proto.TypeToolCall {
+			ids = append(ids, ev.CallID)
+		}
+	}
+	if len(ids) != 2 || ids[0] == "" || ids[0] == ids[1] {
+		t.Errorf("call ids: %v", ids)
+	}
+
+	reqs := model.Requests()
+	if len(reqs) != 2 {
+		t.Fatalf("%d model requests, want 2", len(reqs))
+	}
+	first, second := reqs[0], reqs[1]
+	if first.API != scriptedmodel.Gemini || first.Model != "gemini-test" || !first.Stream || first.Header.Get("x-goog-api-key") != modelKey {
+		t.Errorf("request: %s %s", first.API, first.Path)
+	}
+	if first.MaxTokens != 4096 || first.System != "You are a careful agent." || strings.Join(first.Tools, ",") != "fs_read,fs_write" {
+		t.Errorf("request: %+v", first)
+	}
+	if len(second.Messages) != 3 {
+		t.Fatalf("second request has %d messages, want 3", len(second.Messages))
+	}
+	m := second.Messages[1]
+	if m.Role != "assistant" || m.Text != "I will read them." || len(m.Calls) != 2 || m.Calls[0].Arguments != `{"path":"a.txt"}` {
+		t.Errorf("the reply sent back: %+v", m)
+	}
+	if !strings.Contains(string(m.Raw), `"thoughtSignature"`) {
+		t.Errorf("the call went back without its thought signature: %s", m.Raw)
+	}
+	res := second.Messages[2].Results
+	if len(res) != 2 || res[0] != (scriptedmodel.Result{CallID: "fs_read", Text: "hello"}) || res[1] != (scriptedmodel.Result{CallID: "fs_read", Text: "no such file", IsError: true}) {
+		t.Errorf("the results sent back, in the calls' order: %+v", res)
+	}
+	if err := scriptedmodel.PrefixOf(first, second); err != nil {
+		t.Errorf("the second request does not continue the first: %v", err)
+	}
+}
+
+func TestGeminiCutAnswersAndRefusals(t *testing.T) {
+	model := scriptedmodel.New(t,
+		scriptedmodel.Cut("The report begins"),
+		scriptedmodel.Overflow(scriptedmodel.GeminiAPI, 1048576),
+		scriptedmodel.Status(503, "The model is overloaded. Please try again later."),
+		scriptedmodel.Status(429, "Resource has been exhausted (e.g. check quota)."),
+	)
+	g := newGateway(t, "fs_write")
+
+	code, events, _ := run(t, model, g, runOpts{configEdit: gemini(model)})
+	if code != harness.ExitIncomplete || last(t, events, proto.TypeTurnEnd).Reason != proto.EndAnswerCut {
+		t.Errorf("a cut answer: exit %d, %s", code, types(events))
+	}
+	for _, want := range []struct {
+		class  string
+		status int
+	}{{proto.ClassOverflow, 400}, {proto.ClassCapacity, 503}, {proto.ClassRateLimit, 429}} {
+		_, events, _ = run(t, model, g, runOpts{configEdit: gemini(model)})
+		if ev := last(t, events, proto.TypeError); ev.Class != want.class || ev.Status != want.status {
+			t.Errorf("error event %+v, want class %s status %d", ev, want.class, want.status)
+		}
+	}
+}
+
+func TestAConversationsCostIsARunningTotalFromItsRecord(t *testing.T) {
+	model := scriptedmodel.New(t,
+		scriptedmodel.ToolCalls(scriptedmodel.Call{ID: "toolu_1", Name: "fs_read", Arguments: `{"path":"a.txt"}`}).
+			WithUsage(scriptedmodel.Usage{Input: 1000, CacheWrite: 2000, Output: 100}),
+		scriptedmodel.Text("Read.").WithUsage(scriptedmodel.Usage{Input: 500, CacheRead: 3000, Output: 200}),
+		scriptedmodel.Text("Again.").WithUsage(scriptedmodel.Usage{Input: 100, CacheRead: 3500, Output: 50}),
+	)
+	g := newGateway(t, "fs_read")
+	dir := t.TempDir()
+	priced := func(c map[string]any) {
+		c["model"].(map[string]any)["prices"] = map[string]any{"input": 2.0, "cacheRead": 0.2, "cacheWrite": 2.5, "output": 10.0}
+	}
+	costs := func(events []proto.Event) []float64 {
+		var out []float64
+		for _, ev := range events {
+			if ev.Type == proto.TypeUsage {
+				out = append(out, ev.Usage.CostUSD)
+			}
+		}
+		return out
+	}
+	near := func(a, b float64) bool { return a-b < 1e-9 && b-a < 1e-9 }
+
+	_, events, _ := run(t, model, g, runOpts{dir: dir, configEdit: priced})
+	// (1000*2 + 2000*2.5 + 100*10) / 1e6, then plus (500*2 + 3000*0.2 + 200*10) / 1e6.
+	first, second := 0.008, 0.008+0.0036
+	if got := costs(events); len(got) != 2 || !near(got[0], first) || !near(got[1], second) {
+		t.Fatalf("costs %v, want %v then %v", got, first, second)
+	}
+
+	// Started again on the conversation, the harness goes on from what the
+	// earlier requests cost.
+	_, events, _ = run(t, model, g, runOpts{dir: dir, configEdit: priced, task: "Once more."})
+	third := second + (100*2+3500*0.2+50*10)/1e6
+	if got := costs(events); len(got) != 1 || !near(got[0], third) {
+		t.Errorf("after a second start: %v, want %v", got, third)
+	}
+
+	// With no prices there is no cost, and none is made up.
+	model2 := scriptedmodel.New(t, scriptedmodel.Text("Done.").WithUsage(scriptedmodel.Usage{Input: 1000, Output: 100}))
+	_, events, _ = run(t, model2, g, runOpts{})
+	if got := costs(events); len(got) != 1 || got[0] != 0 {
+		t.Errorf("with no prices: %v", got)
+	}
+}

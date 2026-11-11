@@ -44,6 +44,32 @@ func TestAConfigurationGoesThroughUnchanged(t *testing.T) {
 	}
 }
 
+func TestAChatCompletionsConfiguration(t *testing.T) {
+	temp, topK := 0.6, int64(20)
+	want := valid()
+	want.Model = Model{
+		API: APIChat, Name: "qwen3.6", BaseURL: "http://agentry-host.internal:1234/v1", MaxOutputTokens: 4096,
+		Sampling:        &Sampling{Temperature: &temp, TopK: &topK},
+		ExtraBody:       json.RawMessage(`{"chat_template_kwargs":{"enable_thinking":true}}`),
+		ReplayReasoning: true,
+	}
+	raw, err := want.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := DecodeConfig(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("a keyless Chat Completions model was refused: %v", err)
+	}
+	if got.Model.KeyEnv != "" || *got.Model.Sampling.Temperature != 0.6 || *got.Model.Sampling.TopK != 20 || !got.Model.ReplayReasoning {
+		t.Errorf("model: %+v", got.Model)
+	}
+	var extra map[string]any
+	if json.Unmarshal(got.Model.ExtraBody, &extra) != nil || extra["chat_template_kwargs"] == nil {
+		t.Errorf("extra body: %s", got.Model.ExtraBody)
+	}
+}
+
 func TestDecodeConfigRefuses(t *testing.T) {
 	edit := func(f func(m map[string]any)) string {
 		raw, _ := valid().Encode()
@@ -54,14 +80,25 @@ func TestDecodeConfigRefuses(t *testing.T) {
 		return string(out)
 	}
 	cases := map[string]string{
-		"an unknown field":          edit(func(m map[string]any) { m["toolsets"] = []string{"shell"} }),
-		"an unknown field inside":   edit(func(m map[string]any) { m["model"].(map[string]any)["apiKey"] = "a value" }),
-		"a second document":         edit(func(map[string]any) {}) + edit(func(map[string]any) {}),
-		"an older version":          edit(func(m map[string]any) { m["version"] = 0 }),
-		"a newer version":           edit(func(m map[string]any) { m["version"] = Version + 1 }),
-		"an API it does not speak":  edit(func(m map[string]any) { m["model"].(map[string]any)["api"] = "other" }),
-		"no model name":             edit(func(m map[string]any) { m["model"].(map[string]any)["name"] = "" }),
-		"no key variable":           edit(func(m map[string]any) { m["model"].(map[string]any)["keyEnv"] = "" }),
+		"an unknown field":         edit(func(m map[string]any) { m["toolsets"] = []string{"shell"} }),
+		"an unknown field inside":  edit(func(m map[string]any) { m["model"].(map[string]any)["apiKey"] = "a value" }),
+		"a second document":        edit(func(map[string]any) {}) + edit(func(map[string]any) {}),
+		"an older version":         edit(func(m map[string]any) { m["version"] = 0 }),
+		"a newer version":          edit(func(m map[string]any) { m["version"] = Version + 1 }),
+		"an API it does not speak": edit(func(m map[string]any) { m["model"].(map[string]any)["api"] = "other" }),
+		"no model name":            edit(func(m map[string]any) { m["model"].(map[string]any)["name"] = "" }),
+		"no key variable":          edit(func(m map[string]any) { m["model"].(map[string]any)["keyEnv"] = "" }),
+		"a negative price": edit(func(m map[string]any) {
+			m["model"].(map[string]any)["prices"] = map[string]any{"input": 2, "cacheRead": -0.1, "cacheWrite": 2.5, "output": 10}
+		}),
+		"sampling for the Anthropic API": edit(func(m map[string]any) {
+			m["model"].(map[string]any)["sampling"] = map[string]any{"temperature": 0.7}
+		}),
+		"Chat Completions with no address": edit(func(m map[string]any) { m["model"].(map[string]any)["api"] = APIChat }),
+		"an extra body that is not an object": edit(func(m map[string]any) {
+			mm := m["model"].(map[string]any)
+			mm["api"], mm["baseUrl"], mm["extraBody"] = APIChat, "http://host/v1", []int{1}
+		}),
 		"no output limit":           edit(func(m map[string]any) { m["model"].(map[string]any)["maxOutputTokens"] = 0 }),
 		"no gateway address":        edit(func(m map[string]any) { m["gateway"].(map[string]any)["url"] = "" }),
 		"no gateway token variable": edit(func(m map[string]any) { m["gateway"].(map[string]any)["tokenEnv"] = "" }),
@@ -90,7 +127,7 @@ func TestTheContractIsWhatTheSchemaSays(t *testing.T) {
 			"event.type":   {TypeReady, TypeText, TypeReasoning, TypeToolCall, TypeToolResult, TypeUsage, TypeWarning, TypeError, TypeTurnEnd},
 			"event.reason": {EndAnswered, EndAnswerCut, EndError, EndMaxSteps},
 			"event.class":  {ClassOverflow, ClassCapacity, ClassRateLimit, ClassCredits, ClassAuth, ClassRequest, ClassTransport, ClassServer, ClassGateway, ClassHarness},
-			"model.api":    {APIAnthropic},
+			"model.api":    {APIAnthropic, APIChat, APIResponses, APIGemini},
 		},
 	}
 	var buf bytes.Buffer

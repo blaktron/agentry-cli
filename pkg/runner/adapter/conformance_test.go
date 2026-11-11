@@ -73,10 +73,6 @@ var signInOnly = map[string]string{ClaudeImageAdapterName: policy.KeyKindClaudeS
 // carries the bearer and nothing is mounted.
 var gatewayBySession = map[string]bool{CopilotImageAdapterName: true}
 
-// anthropicOnly are the adapters that reach Anthropic models only, so their
-// cases name one.
-var anthropicOnly = map[string]bool{AgentryHarnessAdapterName: true}
-
 // oneShotOnly are the adapters that run one-shot runs only: an interactive
 // plan is refused by name, never compiled into something else.
 var oneShotOnly = map[string]bool{AgentryHarnessAdapterName: true}
@@ -122,7 +118,7 @@ func TestConformance(t *testing.T) {
 				if tc.mode == manifest.ModeInteractive && oneShotOnly[name] {
 					t.Run(tc.name, func(t *testing.T) {
 						var refusal *Refusal
-						if _, err := ad.Compile(conformanceInputFor(ad, tc.mode, tc.schema)); !errors.As(err, &refusal) {
+						if _, err := ad.Compile(conformanceInput(tc.mode, tc.schema)); !errors.As(err, &refusal) {
 							t.Fatalf("an interactive plan was not refused: %v", err)
 						}
 					})
@@ -135,18 +131,9 @@ func TestConformance(t *testing.T) {
 	}
 }
 
-// conformanceInputFor is the shared input as ad can take it.
-func conformanceInputFor(ad Adapter, mode manifest.Mode, schema bool) Input {
-	in := conformanceInput(mode, schema)
-	if anthropicOnly[ad.Name()] {
-		in.Model = policy.Model{Provider: policy.ProviderAnthropic, Name: "fixture-model", APIKeyEnv: "FIXTURE_API_KEY"}
-	}
-	return in
-}
-
 func conformCompile(t *testing.T, ad Adapter, tc conformanceCase) {
 	t.Helper()
-	in := conformanceInputFor(ad, tc.mode, tc.schema)
+	in := conformanceInput(tc.mode, tc.schema)
 	if tc.signIn != "" {
 		in.Model = policy.Model{Provider: policy.SignInProvider(tc.signIn), Name: "fixture-model", APIKeyKind: tc.signIn}
 	}
@@ -334,7 +321,7 @@ func conformCompile(t *testing.T, ad Adapter, tc conformanceCase) {
 // and checks the shape the engine relies on.
 func conformEvents(t *testing.T, ad Adapter) {
 	t.Helper()
-	in := conformanceInputFor(ad, manifest.ModeAutonomous, false)
+	in := conformanceInput(manifest.ModeAutonomous, false)
 	if kind := signInOnly[ad.Name()]; kind != "" {
 		in.Model = policy.Model{Provider: policy.SignInProvider(kind), Name: "fixture-model", APIKeyKind: kind}
 	}

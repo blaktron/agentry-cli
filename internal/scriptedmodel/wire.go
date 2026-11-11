@@ -1,6 +1,7 @@
 package scriptedmodel
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -227,4 +228,186 @@ func join(parts []string) string {
 		out += p
 	}
 	return out
+}
+
+// playResponses answers as the OpenAI Responses API: a stream of typed
+// events ended by response.completed, or by response.incomplete when the
+// reply stopped at the output limit; a whole response when the request
+// asked for no stream. Reasoning is a reasoning item with a summary and an
+// encrypted_content a client sends back to continue without stored state.
+func (s Step) playResponses(x *exchange) {
+	id := fmt.Sprintf("resp_%d", x.n)
+	usage := fmt.Sprintf(`{"input_tokens":%d,"input_tokens_details":{"cached_tokens":%d},"output_tokens":%d,"output_tokens_details":{"reasoning_tokens":%d},"total_tokens":%d}`,
+		s.usage.Input+s.usage.CacheRead, s.usage.CacheRead, s.usage.Output, s.usage.Reasoning, s.usage.Input+s.usage.CacheRead+s.usage.Output)
+
+	var items []string
+	reasoningItem := fmt.Sprintf(`{"type":"reasoning","id":"rs_%d","summary":[{"type":"summary_text","text":%s}],"encrypted_content":"encrypted-%d"}`, x.n, q(s.reasoning), x.n)
+	messageItem := fmt.Sprintf(`{"type":"message","id":"msg_%d","role":"assistant","status":"completed","content":[{"type":"output_text","text":%s,"annotations":[]}]}`, x.n, q(s.text))
+	callItem := func(i int, c Call) string {
+		return fmt.Sprintf(`{"type":"function_call","id":"fc_%d_%d","call_id":%s,"name":%s,"arguments":%s,"status":"completed"}`, x.n, i+1, q(callID("call", x, i, c)), q(c.Name), q(c.Arguments))
+	}
+	if s.reasoning != "" {
+		items = append(items, reasoningItem)
+	}
+	if s.text != "" {
+		items = append(items, messageItem)
+	}
+	if !s.cut {
+		for i, c := range s.calls {
+			items = append(items, callItem(i, c))
+		}
+	}
+	status, details := "completed", "null"
+	if s.cut {
+		status, details = "incomplete", `{"reason":"max_output_tokens"}`
+	}
+	response := fmt.Sprintf(`{"id":%s,"object":"response","model":%s,"status":%s,"incomplete_details":%s,"output":[%s],"usage":%s}`,
+		q(id), q(x.req.Model), q(status), details, join(items), usage)
+
+	if !x.req.Stream && s.kind == kindReply {
+		x.json(http.StatusOK, response)
+		return
+	}
+
+	x.sse()
+	send := func(typ, rest string) {
+		x.event(typ, fmt.Sprintf(`{"type":%s,%s}`, q(typ), rest))
+	}
+	send("response.created", fmt.Sprintf(`"response":{"id":%s,"object":"response","model":%s,"status":"in_progress","output":[]}`, q(id), q(x.req.Model)))
+	index := 0
+	if s.reasoning != "" {
+		a, b := halves(s.reasoning)
+		send("response.output_item.added", fmt.Sprintf(`"output_index":%d,"item":{"type":"reasoning","id":"rs_%d","summary":[]}`, index, x.n))
+		send("response.reasoning_summary_text.delta", fmt.Sprintf(`"output_index":%d,"summary_index":0,"delta":%s`, index, q(a)))
+		send("response.reasoning_summary_text.delta", fmt.Sprintf(`"output_index":%d,"summary_index":0,"delta":%s`, index, q(b)))
+		send("response.output_item.done", fmt.Sprintf(`"output_index":%d,"item":%s`, index, reasoningItem))
+		index++
+	}
+	if s.text != "" {
+		a, b := halves(s.text)
+		send("response.output_item.added", fmt.Sprintf(`"output_index":%d,"item":{"type":"message","id":"msg_%d","role":"assistant","status":"in_progress","content":[]}`, index, x.n))
+		send("response.output_text.delta", fmt.Sprintf(`"output_index":%d,"content_index":0,"delta":%s`, index, q(a)))
+		if s.kind == kindStall {
+			x.hold()
+			return
+		}
+		if s.kind == kindDrop {
+			x.drop()
+			return
+		}
+		send("response.output_text.delta", fmt.Sprintf(`"output_index":%d,"content_index":0,"delta":%s`, index, q(b)))
+		send("response.output_item.done", fmt.Sprintf(`"output_index":%d,"item":%s`, index, messageItem))
+		index++
+	} else if s.kind == kindStall {
+		x.hold()
+		return
+	} else if s.kind == kindDrop {
+		x.drop()
+		return
+	}
+	for i, c := range s.calls {
+		a, b := halves(c.Arguments)
+		send("response.output_item.added", fmt.Sprintf(`"output_index":%d,"item":{"type":"function_call","id":"fc_%d_%d","call_id":%s,"name":%s,"arguments":"","status":"in_progress"}`, index, x.n, i+1, q(callID("call", x, i, c)), q(c.Name)))
+		send("response.function_call_arguments.delta", fmt.Sprintf(`"output_index":%d,"delta":%s`, index, q(a)))
+		if s.cut {
+			// The reply stopped inside this call: it is never done.
+			break
+		}
+		send("response.function_call_arguments.delta", fmt.Sprintf(`"output_index":%d,"delta":%s`, index, q(b)))
+		send("response.output_item.done", fmt.Sprintf(`"output_index":%d,"item":%s`, index, callItem(i, c)))
+		index++
+	}
+	if s.cut {
+		send("response.incomplete", `"response":`+response)
+		return
+	}
+	send("response.completed", `"response":`+response)
+}
+
+func geminiError(status int, message string) string {
+	name := "INTERNAL"
+	switch {
+	case status == http.StatusTooManyRequests:
+		name = "RESOURCE_EXHAUSTED"
+	case status == http.StatusServiceUnavailable:
+		name = "UNAVAILABLE"
+	case status == http.StatusUnauthorized:
+		name = "UNAUTHENTICATED"
+	case status == http.StatusForbidden:
+		name = "PERMISSION_DENIED"
+	case status >= 400 && status < 500:
+		name = "INVALID_ARGUMENT"
+	}
+	return fmt.Sprintf(`{"error":{"code":%d,"message":%s,"status":%s}}`, status, q(message), q(name))
+}
+
+// playGemini answers as the Gemini API's generateContent: for the streaming
+// method a stream of chunks, each a whole response object holding the parts
+// that arrived, the last with the finish reason and the token count; for the
+// plain method one response. A call arrives whole in one part, with the
+// thought signature a client sends back with it. The API has no half call:
+// a reply that stops at the output limit ends before the call.
+func (s Step) playGemini(x *exchange) {
+	finish := "STOP"
+	if s.cut {
+		finish = "MAX_TOKENS"
+	}
+	usage := fmt.Sprintf(`{"promptTokenCount":%d,"cachedContentTokenCount":%d,"candidatesTokenCount":%d,"thoughtsTokenCount":%d,"totalTokenCount":%d}`,
+		s.usage.Input+s.usage.CacheRead, s.usage.CacheRead, s.usage.Output-s.usage.Reasoning, s.usage.Reasoning, s.usage.Input+s.usage.CacheRead+s.usage.Output)
+	signature := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("signature-%d", x.n)))
+
+	var parts []string
+	if s.reasoning != "" {
+		a, b := halves(s.reasoning)
+		parts = append(parts, fmt.Sprintf(`{"text":%s,"thought":true}`, q(a)), fmt.Sprintf(`{"text":%s,"thought":true}`, q(b)))
+	}
+	if s.text != "" {
+		a, b := halves(s.text)
+		parts = append(parts, fmt.Sprintf(`{"text":%s}`, q(a)), fmt.Sprintf(`{"text":%s}`, q(b)))
+	}
+	if !s.cut {
+		for i, c := range s.calls {
+			id := ""
+			if c.ID != "" {
+				id = `"id":` + q(c.ID) + `,`
+			}
+			args := c.Arguments
+			if args == "" {
+				args = "{}"
+			}
+			sig := ""
+			if i == 0 {
+				sig = `,"thoughtSignature":` + q(signature)
+			}
+			parts = append(parts, fmt.Sprintf(`{"functionCall":{%s"name":%s,"args":%s}%s}`, id, q(c.Name), args, sig))
+		}
+	}
+	chunk := func(part, tail string) string {
+		content := `{"role":"model","parts":[` + part + `]}`
+		return fmt.Sprintf(`{"candidates":[{"content":%s,"index":0%s}]%s,"modelVersion":%s}`, content, tail, "", q(x.req.Model))
+	}
+	last := fmt.Sprintf(`,"finishReason":%s`, q(finish))
+
+	if !x.req.Stream && s.kind == kindReply {
+		x.json(http.StatusOK, fmt.Sprintf(`{"candidates":[{"content":{"role":"model","parts":[%s]},"index":0%s}],"usageMetadata":%s,"modelVersion":%s}`, join(parts), last, usage, q(x.req.Model)))
+		return
+	}
+
+	x.sse()
+	if s.kind == kindStall || s.kind == kindDrop {
+		// The first part arrives, and then nothing more.
+		if len(parts) > 0 {
+			x.event("", chunk(parts[0], ""))
+		}
+		if s.kind == kindStall {
+			x.hold()
+		} else {
+			x.drop()
+		}
+		return
+	}
+	for _, p := range parts {
+		x.event("", chunk(p, ""))
+	}
+	x.event("", fmt.Sprintf(`{"candidates":[{"content":{"role":"model","parts":[]},"index":0%s}],"usageMetadata":%s,"modelVersion":%s}`, last, usage, q(x.req.Model)))
 }

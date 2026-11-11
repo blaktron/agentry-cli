@@ -3,11 +3,15 @@ package adapter
 import (
 	"bytes"
 	"errors"
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/blaktron/agentry/pkg/manifest"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/modelfacts"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/runnerimage/harness/proto"
@@ -39,7 +43,7 @@ func TestAgentryHarnessCompilesAConfigurationItsHarnessReads(t *testing.T) {
 		Gateway:    proto.Gateway{URL: spec.GatewayURL(), TokenEnv: spec.GatewayTokenEnv},
 		SessionDir: spec.SessionMount,
 	}
-	if cfg != want {
+	if !reflect.DeepEqual(cfg, want) {
 		t.Errorf("configuration %+v\nwant          %+v", cfg, want)
 	}
 	if len(r.Files) != 1 {
@@ -105,9 +109,11 @@ func TestAgentryHarnessTakesThePolicysOutputLimitAndASchema(t *testing.T) {
 
 func TestAgentryHarnessRefusesWhatItCannotRun(t *testing.T) {
 	cases := map[string]func(*Input){
-		"interactive":          func(in *Input) { in.Mode = manifest.ModeInteractive },
-		"another provider":     func(in *Input) { in.Model.Provider = "openai" },
-		"a subscription token": func(in *Input) { in.Model.APIKeyKind = policy.KeyKindSubscription },
+		"interactive": func(in *Input) { in.Mode = manifest.ModeInteractive },
+		"a server of the person's own with no address": func(in *Input) { in.Model.Provider = "custom" },
+		"the registry's models with no address":        func(in *Input) { in.Model.Provider = policy.ProviderAgentry },
+		"a subscription token":                         func(in *Input) { in.Model.APIKeyKind = policy.KeyKindSubscription },
+		"a provider it does not reach":                 func(in *Input) { in.Model.Provider = "amazon-bedrock" },
 	}
 	for name, edit := range cases {
 		in := agentryHarnessInput()
@@ -122,6 +128,214 @@ func TestAgentryHarnessRefusesWhatItCannotRun(t *testing.T) {
 	var refusal *Refusal
 	if _, err := (&agentryHarnessAdapter{}).Compile(in); err == nil || errors.As(err, &refusal) {
 		t.Errorf("an unknown mode: %v", err)
+	}
+}
+
+func TestAgentryHarnessReachesAServerOfThePersonsOwn(t *testing.T) {
+	in := agentryHarnessInput()
+	in.Model = policy.Model{Provider: "custom", Name: "Qwen3.6-35B-A3B", BaseURL: "http://agentry-host.internal:1234/v1/", APIKeyEnv: "LOCAL_KEY", ContextWindow: 65536}
+	r, err := (&agentryHarnessAdapter{}).Compile(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := proto.DecodeConfig(bytes.NewReader(r.Files["harness.json"]))
+	if err != nil {
+		t.Fatalf("the harness would refuse what the adapter wrote: %v", err)
+	}
+	m := cfg.Model
+	if m.API != proto.APIChat || m.BaseURL != "http://agentry-host.internal:1234/v1" || m.KeyEnv != "AGENTRY_MODEL_KEY" || m.ContextWindow != 65536 {
+		t.Errorf("model: %+v", m)
+	}
+	// The family's profile, the one every container harness is given.
+	sampling, opts := modelSettings(in.Model)
+	if m.Sampling == nil || m.Sampling.Temperature == nil || *m.Sampling.Temperature != *sampling.Temperature || int64(m.MaxOutputTokens) != sampling.MaxTokens {
+		t.Errorf("sampling %+v and limit %d, want the profile's %+v", m.Sampling, m.MaxOutputTokens, sampling)
+	}
+	if opts.ReplayReasoning != nil && m.ReplayReasoning != *opts.ReplayReasoning {
+		t.Errorf("replayReasoning %v, want the profile's %v", m.ReplayReasoning, *opts.ReplayReasoning)
+	}
+	if opts.ExtraBody != nil && !strings.Contains(string(m.ExtraBody), "chat_template_kwargs") {
+		t.Errorf("extra body %s, want the profile's template arguments", m.ExtraBody)
+	}
+	var key spec.EnvVar
+	for _, v := range r.Agent.Env {
+		if v.Name == "AGENTRY_MODEL_KEY" {
+			key = v
+		}
+	}
+	if key.FromHostEnv != "LOCAL_KEY" || key.ExpectedKind != nil {
+		t.Errorf("the key's variable: %+v", key)
+	}
+
+	// The person's own keys win over the profile's.
+	temp := 0.11
+	in.Model.Sampling = &policy.Sampling{Temperature: &temp}
+	in.Model.MaxOutputTokens = 1234
+	r, _ = (&agentryHarnessAdapter{}).Compile(in)
+	cfg, _ = proto.DecodeConfig(bytes.NewReader(r.Files["harness.json"]))
+	if *cfg.Model.Sampling.Temperature != 0.11 || cfg.Model.MaxOutputTokens != 1234 {
+		t.Errorf("the policy's own sampling and limit: %+v", cfg.Model)
+	}
+}
+
+func TestAgentryHarnessRoutersAndCredits(t *testing.T) {
+	for provider, want := range map[string]string{
+		policy.ProviderOpenRouter:  "https://openrouter.ai/api/v1",
+		policy.ProviderHuggingFace: "https://router.huggingface.co/v1",
+		policy.ProviderPoe:         "https://api.poe.com/v1",
+		policy.ProviderVultr:       "https://api.vultrinference.com/v1",
+	} {
+		in := agentryHarnessInput()
+		in.Model = policy.Model{Provider: provider, Name: "some/model", APIKeyEnv: "ROUTER_KEY"}
+		r, err := (&agentryHarnessAdapter{}).Compile(in)
+		if err != nil {
+			t.Fatalf("%s: %v", provider, err)
+		}
+		cfg, err := proto.DecodeConfig(bytes.NewReader(r.Files["harness.json"]))
+		if err != nil {
+			t.Fatalf("%s: %v", provider, err)
+		}
+		if cfg.Model.API != proto.APIChat || cfg.Model.BaseURL != want || cfg.Model.Sampling != nil || cfg.Model.MaxOutputTokens != 0 {
+			t.Errorf("%s: %+v", provider, cfg.Model)
+		}
+		if r.Model != provider+"/some/model" {
+			t.Errorf("%s: the receipt's model is %q", provider, r.Model)
+		}
+	}
+
+	// The registry's own models: its address from the policy, the run's
+	// credits session as the key, never a variable of the person's.
+	in := agentryHarnessInput()
+	in.Model = policy.Model{Provider: policy.ProviderAgentry, Name: "a-model", BaseURL: "https://registry.example/api/v1/x/inference/v1", APIKeyEnv: "IGNORED"}
+	r, err := (&agentryHarnessAdapter{}).Compile(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range r.Agent.Env {
+		if v.FromHostEnv != "" || v.FromKeyring != "" {
+			t.Errorf("a credit-paid run is given a variable of the person's: %+v", v)
+		}
+		if v.Name == "AGENTRY_MODEL_KEY" && !v.FromInference {
+			t.Errorf("the key is not the run's credits session: %+v", v)
+		}
+	}
+}
+
+func TestAgentryHarnessReachesOpenAIsOwnAPI(t *testing.T) {
+	in := agentryHarnessInput()
+	in.Model = policy.Model{Provider: policy.ProviderOpenAI, Name: "gpt-x", APIKeyEnv: "MY_OPENAI_KEY", MaxOutputTokens: 9000}
+	r, err := (&agentryHarnessAdapter{}).Compile(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := proto.DecodeConfig(bytes.NewReader(r.Files["harness.json"]))
+	if err != nil {
+		t.Fatalf("the harness would refuse what the adapter wrote: %v", err)
+	}
+	if m := cfg.Model; m.API != proto.APIResponses || m.BaseURL != "" || m.KeyEnv != "AGENTRY_MODEL_KEY" || m.MaxOutputTokens != 9000 || m.Sampling != nil {
+		t.Errorf("model: %+v", m)
+	}
+	found := false
+	for _, v := range r.Agent.Env {
+		if v.Name == "AGENTRY_MODEL_KEY" && v.FromHostEnv == "MY_OPENAI_KEY" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the key's variable: %+v", r.Agent.Env)
+	}
+}
+
+func TestAgentryHarnessReachesGemini(t *testing.T) {
+	in := agentryHarnessInput()
+	in.Model = policy.Model{Provider: "google", Name: "gemini-x", APIKeyEnv: "GEMINI_API_KEY"}
+	r, err := (&agentryHarnessAdapter{}).Compile(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := proto.DecodeConfig(bytes.NewReader(r.Files["harness.json"]))
+	if err != nil {
+		t.Fatalf("the harness would refuse what the adapter wrote: %v", err)
+	}
+	if m := cfg.Model; m.API != proto.APIGemini || m.BaseURL != "" || m.KeyEnv != "AGENTRY_MODEL_KEY" || m.Sampling != nil {
+		t.Errorf("model: %+v", m)
+	}
+	if r.Model != "google/gemini-x" {
+		t.Errorf("the receipt's model is %q", r.Model)
+	}
+}
+
+func TestAgentryHarnessFillsWhatTheCatalogueKnows(t *testing.T) {
+	const id = "claude-sonnet-5-5"
+	facts, ok := modelfacts.Lookup(policy.ProviderAnthropic, id)
+	if !ok || !facts.Priced || facts.ContextWindow <= 0 || facts.MaxOutput <= 0 {
+		t.Fatalf("the catalogue no longer holds %s with a window, an output limit and prices: %+v", id, facts)
+	}
+	compile := func(m policy.Model) proto.Model {
+		t.Helper()
+		in := agentryHarnessInput()
+		in.Model = m
+		r, err := (&agentryHarnessAdapter{}).Compile(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := proto.DecodeConfig(bytes.NewReader(r.Files["harness.json"]))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cfg.Model
+	}
+
+	m := compile(policy.Model{Provider: policy.ProviderAnthropic, Name: id, APIKeyEnv: "K"})
+	if int64(m.ContextWindow) != facts.ContextWindow || int64(m.MaxOutputTokens) != facts.MaxOutput {
+		t.Errorf("window %d and output limit %d, want the catalogue's %d and %d", m.ContextWindow, m.MaxOutputTokens, facts.ContextWindow, facts.MaxOutput)
+	}
+	if m.Prices == nil || *m.Prices != (proto.Prices{Input: facts.Input, CacheRead: facts.CacheRead, CacheWrite: facts.CacheWrite, Output: facts.Output}) {
+		t.Errorf("prices %+v, want the catalogue's %+v", m.Prices, facts)
+	}
+
+	// What the policy says wins over the catalogue.
+	m = compile(policy.Model{Provider: policy.ProviderAnthropic, Name: id, APIKeyEnv: "K", ContextWindow: 200000, MaxOutputTokens: 4096})
+	if m.ContextWindow != 200000 || m.MaxOutputTokens != 4096 || m.Prices == nil {
+		t.Errorf("the policy's own window and limit: %+v", m)
+	}
+
+	// A model the catalogue does not hold has no facts, and none are made
+	// up; neither has a server of the person's own, whatever its model is
+	// called, nor the registry's endpoint.
+	for name, pm := range map[string]policy.Model{
+		"unknown":        {Provider: policy.ProviderAnthropic, Name: "claude-not-yet", APIKeyEnv: "K"},
+		"own server":     {Provider: "custom", Name: id, BaseURL: "http://agentry-host.internal:1234/v1", APIKeyEnv: "K"},
+		"openai at base": {Provider: policy.ProviderOpenAI, Name: "gpt-4o-mini", BaseURL: "http://agentry-host.internal:1234/v1", APIKeyEnv: "K"},
+		"registry":       {Provider: policy.ProviderAgentry, Name: id, BaseURL: "https://registry.example/api/v1/x/inference/v1"},
+	} {
+		if m := compile(pm); m.Prices != nil || m.ContextWindow != 0 {
+			t.Errorf("%s: facts were filled in: %+v", name, m)
+		}
+	}
+}
+
+func TestAgentryHarnessSendsNoKeyToAServerThatTakesNone(t *testing.T) {
+	in := agentryHarnessInput()
+	in.Model = policy.Model{Provider: "custom", Name: "local", BaseURL: "http://agentry-host.internal:11434/v1"}
+	if !policy.TakesNoKey(in.Harness, in.Model) {
+		t.Skip("the policy treats this model as taking a key")
+	}
+	r, err := (&agentryHarnessAdapter{}).Compile(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := proto.DecodeConfig(bytes.NewReader(r.Files["harness.json"]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Model.KeyEnv != "" {
+		t.Errorf("keyEnv %q, want none", cfg.Model.KeyEnv)
+	}
+	for _, v := range r.Agent.Env {
+		if v.Name == "AGENTRY_MODEL_KEY" {
+			t.Errorf("a key variable for a server that takes none: %+v", v)
+		}
 	}
 }
 
@@ -154,8 +368,8 @@ func TestAgentryHarnessEvents(t *testing.T) {
 	if ev := one(`{"v":1,"seq":6,"type":"tool_result","callId":"c2","tool":"read_input","unchanged":true}`); ev.Kind != EventToolResult || !ev.Redacted || ev.Text != "" {
 		t.Errorf("a result passed on unchanged: %+v", ev)
 	}
-	ev := one(`{"v":1,"seq":7,"type":"usage","usage":{"input":10,"cacheRead":900,"cacheWrite":40,"output":30,"contextTokens":950,"contextLimit":200000}}`)
-	if ev.Kind != EventUsage || ev.InputTokens != 950 || ev.OutputTokens != 30 || ev.ContextTokens != 950 || ev.ContextLimit != 200000 {
+	ev := one(`{"v":1,"seq":7,"type":"usage","usage":{"input":10,"cacheRead":900,"cacheWrite":40,"output":30,"contextTokens":950,"contextLimit":200000,"costUsd":0.0123}}`)
+	if ev.Kind != EventUsage || ev.InputTokens != 950 || ev.OutputTokens != 30 || ev.ContextTokens != 950 || ev.ContextLimit != 200000 || ev.CostUSD != 0.0123 {
 		t.Errorf("usage: %+v", ev)
 	}
 	if ev := one(`{"v":1,"seq":8,"type":"turn_end","reason":"answer_cut"}`); ev.Kind != EventAnswerCut {
@@ -212,6 +426,7 @@ func TestAgentryHarnessErrorsSayWhatTheEngineActsOn(t *testing.T) {
 		// Nothing shortens the conversation yet, so starting again on it
 		// would only be refused again.
 		`{"v":1,"seq":1,"type":"error","class":"overflow","status":400,"text":"prompt is too long: 250001 tokens > 200000 maximum"}`,
+		`{"v":1,"seq":1,"type":"error","class":"overflow","status":400,"text":"This model's maximum context length is 32768 tokens."}`,
 		`{"v":1,"seq":1,"type":"error","class":"gateway","text":"tool gateway answered HTTP 401: no bearer"}`,
 	} {
 		ev, s := text(line)
@@ -222,5 +437,54 @@ func TestAgentryHarnessErrorsSayWhatTheEngineActsOn(t *testing.T) {
 	ev, s = text(`{"v":1,"seq":1,"type":"error","class":"credits","status":400,"text":"Your credit balance is too low to access the Anthropic API."}`)
 	if ev.Kind != EventOutOfCredits || !strings.Contains(s, "credit balance is too low") {
 		t.Errorf("no credits: %+v", ev)
+	}
+}
+
+// TestAgentryHarnessProviderGoldens holds the configuration the adapter
+// renders for each provider it reaches to a committed file, and each file
+// to what the harness accepts. The models are ones the catalogue does not
+// hold, so a refresh of the catalogue changes none of them.
+func TestAgentryHarnessProviderGoldens(t *testing.T) {
+	cases := map[string]policy.Model{
+		"anthropic":   {Provider: policy.ProviderAnthropic, Name: "fixture-model", APIKeyEnv: "FIXTURE_API_KEY"},
+		"openai":      {Provider: policy.ProviderOpenAI, Name: "fixture-model", APIKeyEnv: "FIXTURE_API_KEY"},
+		"google":      {Provider: "google", Name: "fixture-model", APIKeyEnv: "FIXTURE_API_KEY"},
+		"custom":      {Provider: "custom", Name: "Qwen3.6-35B-A3B", BaseURL: "http://agentry-host.internal:1234/v1", APIKeyEnv: "FIXTURE_API_KEY", ContextWindow: 65536},
+		"openrouter":  {Provider: policy.ProviderOpenRouter, Name: "fixture/model", APIKeyEnv: "OPENROUTER_API_KEY"},
+		"huggingface": {Provider: policy.ProviderHuggingFace, Name: "fixture/model", APIKeyEnv: "HF_TOKEN"},
+		"poe":         {Provider: policy.ProviderPoe, Name: "fixture-model", APIKeyEnv: "POE_API_KEY"},
+		"vultr":       {Provider: policy.ProviderVultr, Name: "fixture-model", APIKeyEnv: "VULTR_INFERENCE_API_KEY"},
+		"agentry":     {Provider: policy.ProviderAgentry, Name: "fixture-model", BaseURL: "https://registry.example/api/v1/x/inference/v1"},
+	}
+	for name, m := range cases {
+		t.Run(name, func(t *testing.T) {
+			in := agentryHarnessInput()
+			in.Model = m
+			r, err := (&agentryHarnessAdapter{}).Compile(in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := r.Files["harness.json"]
+			if _, err := proto.DecodeConfig(bytes.NewReader(got)); err != nil {
+				t.Fatalf("the harness would refuse this configuration: %v", err)
+			}
+			path := filepath.Join("testdata", "agentry-harness", "providers", name+".json")
+			if *update {
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, got, 0o644); err != nil { //nolint:gosec // a test fixture
+					t.Fatal(err)
+				}
+				return
+			}
+			want, err := os.ReadFile(path) //nolint:gosec // testdata
+			if err != nil {
+				t.Fatalf("%v (run with -update to create it)", err)
+			}
+			if !bytes.Equal(got, want) {
+				t.Errorf("%s differs from what the adapter renders (run with -update and read the diff):\n%s", path, got)
+			}
+		})
 	}
 }
