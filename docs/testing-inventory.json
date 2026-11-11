@@ -4599,6 +4599,27 @@
           "dependencyHints": []
         },
         {
+          "path": "pkg/runner/adapter/profiles_test.go",
+          "tests": [
+            "TestProfileTableValues",
+            "TestProfileFamiliesWithoutOne",
+            "TestProfileRendersOnOwnEndpointOnly",
+            "TestProfileAnswerCapIsAQuarterOfASmallWindow",
+            "TestProfileUnknownFamilyRendersNothingNew",
+            "TestProfilePolicyKeysOverrideKeyByKey",
+            "TestProfilePlanBytesAreDeterministic",
+            "TestProfileFamilyValues",
+            "TestProfileGemmaThinkingStaysAtItsDefault",
+            "TestProfileCardsWithoutSamplingRenderNothing",
+            "TestProfileMoreSpecificNameWins",
+            "TestProfileRepetitionPenaltyRenders"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "pkg/runner/adapter/redacted_test.go",
           "tests": [
             "TestToolResultRedacted"
