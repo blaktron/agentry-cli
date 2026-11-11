@@ -39,6 +39,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/trust"
 	"github.com/blaktron/agentry-cli/runnerimage"
 	"github.com/blaktron/agentry-cli/runnerimage/applink"
+	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 	"github.com/blaktron/agentry/pkg/manifest"
 )
 
@@ -1189,6 +1190,7 @@ func (s Segment) Plan(ctx context.Context, logw io.Writer) (*SegmentPlan, error)
 		Policy: s.Policy, PolicySHA: s.PolicySHA, Adapter: adapterName, Mode: manifest.ModePersistent,
 		Servers: servers, AgentFiles: s.agentFiles(m), AppLink: s.appLinkSet(m), Subagents: s.Grants.Subagents, Publisher: s.grantedBuiltin().ManagesQuickAgents(), Coder: coderGrant, Calendar: calendarGrant, ShareServers: s.shareServers(), CompiledBy: s.Build, Log: logw,
 		Web: s.Grants.Web != nil, Review: s.Grants.Review != nil,
+		WebUnreviewed: s.Grants.Web != nil && s.Grants.Web.Scan == toolsrv.WebScanUnreviewed,
 	}
 	plan, planDir, err := EnsurePlan(in)
 	if err != nil {

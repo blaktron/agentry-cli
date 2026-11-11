@@ -93,6 +93,10 @@ type Inputs struct {
 	// container has no network allowlist of its own, so nothing else may
 	// run beside them. Anything else asking is refused by policy (exit 11).
 	Web bool
+	// WebUnreviewed says the web tools run without AI Review, which only a
+	// persistent agent's person may choose (its roster's unreviewed entry).
+	// Only with Web.
+	WebUnreviewed bool
 	// RegistrySearch adds registry_search to the web tools: the Drafter's
 	// alone. It is compiled, never the run's, so a run that hands the tools
 	// a registry for its scans (a hosted build) does not get the tool with
@@ -354,11 +358,15 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	if in.WebSearchedOnly && in.WebGivenOnly {
 		return nil, &PolicyRefusal{Reason: "web_read is held either to a run's searches or to the addresses it was given, never both"}
 	}
+	if in.WebUnreviewed && (!in.Web || mode != manifest.ModePersistent) {
+		return nil, &PolicyRefusal{Reason: "the web tools run without AI Review only for a persistent agent whose person switched it off, and this is not one"}
+	}
 	if in.Web {
 		if err := checkWebGrant(in, caps); err != nil {
 			return nil, err
 		}
 		caps.WebTools, caps.RegistrySearch, caps.WebSearchedOnly, caps.WebGivenOnly, caps.WebRender = true, in.RegistrySearch, in.WebSearchedOnly, in.WebGivenOnly, in.WebRender
+		caps.WebUnreviewed = in.WebUnreviewed
 	} else if in.WebRender {
 		return nil, &PolicyRefusal{Reason: "a rendered web_read is part of the web tools, and this run has none"}
 	}
@@ -2470,10 +2478,15 @@ func enforcement(caps spec.CapSummary, secrets, optional []string, extraServers 
 		if caps.WebGivenOnly {
 			tools, read = toolsrv.ToolWebRead+" alone, opening only an address the person gave the run (following a redirect that page's own server makes)", "every page"
 		}
+		review := read + " is read by AI Review (Jev) before the model, and one flagged or not scanned is withheld with its address and the reason; " +
+			"the keys (the job's credential, or the person's own Jev and search keys) are injected into the tools container only"
+		if caps.WebUnreviewed {
+			review = read + " reaches the model UNREAD by AI Review: the person switched the review off for this agent (its roster's unreviewed entry, recorded in this receipt's persistent.roster); " +
+				"the search key, when there is one, is injected into the tools container only"
+		}
 		e["web"] = "the web tools " + tools +
 			", on the tools container only: " + toolsrv.ToolWebRead + " is GET only, http and https on ports 80 and 443, public addresses only, checked at every connection and redirect hop, no cookie or credential, at most 32 KiB of text a page; " +
-			read + " is read by AI Review (Jev) before the model, and one flagged or not scanned is withheld with its address and the reason; " +
-			"the keys (the job's credential, or the person's own Jev and search keys) are injected into the tools container only"
+			review
 		if caps.WebRender {
 			e["web.render"] = renderEnforcement
 		}

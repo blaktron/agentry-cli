@@ -4957,7 +4957,8 @@
             "TestCompileRefusesAnImageServerItCannotRender",
             "TestASignedInImageServerIsEnabledByItsCatalogName",
             "TestUndeclaredPersistentCapabilityRefused",
-            "TestSubagentHasNoAppLink"
+            "TestSubagentHasNoAppLink",
+            "TestTheWebToolsWithoutAIReviewArePersistentAlone"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -5269,7 +5270,8 @@
             "TestTheSystemPromptGuidesEachMode",
             "TestTheInputsParagraphSaysTheFilesComeUnchanged",
             "TestARepositoryQuestionIsNamedInTheInputs",
-            "TestAURLQuestionIsNamedInTheInputs"
+            "TestAURLQuestionIsNamedInTheInputs",
+            "TestAnUnreviewedAgentIsToldNothingReadsThePagesFirst"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -6385,7 +6387,8 @@
             "TestAWebPlanRunsOnlyWithItsScanner",
             "TestTheWebLedgerIsCountedIntoTheReceipt",
             "TestTheWebToolsResolvConf",
-            "TestGivenAddressesAreAGivenOnlyPlansAlone"
+            "TestGivenAddressesAreAGivenOnlyPlansAlone",
+            "TestAnUnreviewedWebRunIsHeldToItsPlan"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -9667,6 +9670,18 @@
           ]
         },
         {
+          "path": "pkg/runner/persistent/unreviewed_test.go",
+          "tests": [
+            "TestWithoutAIReviewIsTheAgentsOwnSwitch",
+            "TestAnOrganizationThatLocksAIReviewForbidsTheBypass",
+            "TestTheUnreviewedOpenerNeedsNoTypeSafeKey"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "pkg/runner/persistent/upkeep_line_test.go",
           "tests": [
             "TestTheChatNamesEveryUpkeepTurn"
@@ -12918,7 +12933,8 @@
             "TestTheWebBudgets",
             "TestTheWebToolsAreGrantedOnlyWithWeb",
             "TestASearchedOnlyRunReadsOnlyWhatItsSearchesReturned",
-            "TestAGivenOnlyRunReadsOnlyTheAddressesItWasGiven"
+            "TestAGivenOnlyRunReadsOnlyTheAddressesItWasGiven",
+            "TestAnUnreviewedWebReadPassesThePageMarked"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -12936,6 +12952,16 @@
       "behavior": "AI Review of what the Drafter's web tools bring back, before its model reads any of it",
       "disposition": "retain",
       "files": [
+        {
+          "path": "runnerimage/webscan/unreviewed_test.go",
+          "tests": [
+            "TestUnreviewedPassesEveryTextMarked"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
         {
           "path": "runnerimage/webscan/webscan_test.go",
           "tests": [

@@ -509,6 +509,8 @@ func applyChange(home string, a Agent, c *Config, ch Change, malwareCheck bool) 
 			return false, lockedSwitchRefusal(r, sw.ID, sw.On)
 		case e.State == StateNeedsSignIn && sw.On:
 			return false, fmt.Errorf("%s signs in by OAuth, which a persistent agent cannot do in this version", e.Name)
+		case sw.ID == EntryUnreviewed && sw.On && e.Reason != "":
+			return false, errors.New(e.Reason)
 		case sw.ID == EntryMeetings && sw.On && !hb.On:
 			return false, fmt.Errorf("%s needs the %s agent's heartbeat, which arms each recording close to its meeting: switch it on first (agentry agent grant %s %s on)", e.Name, a.Name, a.Name, EntryHeartbeat)
 		}

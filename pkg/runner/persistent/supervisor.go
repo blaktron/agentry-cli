@@ -1386,6 +1386,9 @@ func (s *Supervisor) openers() (Openers, func()) {
 		if o.Review == nil {
 			o.Review = LocalReviewOpenerPaid(pol, pay)
 		}
+		if o.Unreviewed == nil {
+			o.Unreviewed = LocalUnreviewedWebOpener(pol)
+		}
 	}
 	return o, end
 }

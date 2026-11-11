@@ -116,7 +116,7 @@ func TestRosterRendersAgree(t *testing.T) {
 			t.Errorf("the consent's %s is not the roster's: %+v vs %+v", e.ID, e, got)
 		}
 	}
-	if len(r) != 30 || r[0].ID != EntryShare || r[1].ID != EntryData || !r[1].Fixed || r[2].ID != EntryMemory || !r[2].Fixed || !r[2].On ||
+	if len(r) != 31 || r[0].ID != EntryShare || r[1].ID != EntryData || !r[1].Fixed || r[2].ID != EntryMemory || !r[2].Fixed || !r[2].On ||
 		r[3].ID != EntryHeartbeat || r[3].On || r[4].ID != EntryMeetings || r[4].On {
 		t.Fatalf("the Assistant's own roster: %+v", r)
 	}
@@ -126,14 +126,18 @@ func TestRosterRendersAgree(t *testing.T) {
 			t.Errorf("the Assistant's desktop entry %+v", e)
 		}
 	}
-	for _, e := range r[10 : len(r)-1] {
+	for _, e := range r[10 : len(r)-2] {
 		if e.Kind != KindSkill || e.GrantedBy != GrantedByBuiltin {
 			t.Errorf("the Assistant's own roster ends in %+v, want its built-in skills", e)
 		}
 	}
-	// Then its web tools, off until the person switches them on.
-	if web := r[len(r)-1]; web.ID != EntryWeb || web.Kind != KindTools || web.On || web.GrantedBy != GrantedByBuiltin {
-		t.Errorf("the Assistant's roster ends in %+v, want its web tools, off", web)
+	// Then its web tools and the switch that runs them without AI Review,
+	// both off until the person switches them on.
+	if web := r[len(r)-2]; web.ID != EntryWeb || web.Kind != KindTools || web.On || web.GrantedBy != GrantedByBuiltin {
+		t.Errorf("the Assistant's roster has %+v before its last entry, want its web tools, off", web)
+	}
+	if un := r[len(r)-1]; un.ID != EntryUnreviewed || un.Kind != KindTools || un.On {
+		t.Errorf("the Assistant's roster ends in %+v, want Without AI Review, off", un)
 	}
 	rec := r2.Receipt()
 	if len(rec) != len(r2) {

@@ -524,6 +524,7 @@ web.scanRequests
 web.search
 web.searchResults
 web.searches
+web.unreviewed
 web.withheld
 `
 
@@ -578,6 +579,7 @@ usage.userTurns
 web.model
 web.questionSet
 web.search
+web.unreviewed
 `
 
 // The keys of an envelope that carries no optional block.
