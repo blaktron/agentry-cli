@@ -75,7 +75,7 @@ func SignInTokenRoute(hp HarnessPolicy) string {
 // endpoint, which only the CLI talks to. Claude Code keeps and refreshes
 // its own sign-in in its directory, so a Claude run reaches
 // Anthropic's API and the host its refresh goes to (platform.claude.com,
-// Claude Code's TOKEN_URL in 2.1.296), and nothing of claude.ai.
+// Claude Code's TOKEN_URL in 2.1.322), and nothing of claude.ai.
 var signInEndpoints = map[string][]string{
 	KeyKindChatGPTPlan:  {"api.openai.com:443"},
 	KeyKindClaudeSignIn: {"api.anthropic.com:443", "platform.claude.com:443"},
@@ -309,7 +309,7 @@ func (h HarnessImage) validate(adapterName string) error {
 var DefaultHarnessImages = map[string]HarnessImage{
 	"copilot-image": {Ref: "agentry-copilot:1.0.95", Artifact: "sha256:fd36c0e57ae6285ccd9cff306fbcdf114343c44f968ff2364fa7fd1a4dc4b7bf"},
 	"codex-image":   {Ref: "ghcr.io/blaktron/agentry-codex:0.166.0-2026.10.30.4@sha256:95584d22ed7f426109fa09675c53efe0b311bac1fd582535437d7b4f4e99e06f"},
-	"claude-image":  {Ref: "agentry-claude-code:2.1.296", Artifact: "sha512-OX/k/rpcthMqnFKOWcpNcbiLsMKtAjLOpQNJHlYiDCFUznWCIwdRTyl/p9SdHVrsrzZuPMCNqZjnpakIni6upw=="},
+	"claude-image":  {Ref: "agentry-claude-code:2.1.322", Artifact: "sha512-oP7oW4vM5DREWfL1jn4JSGlmLcrJ5QmppgADrVNJBUPiC1mQ5YvRrke0on+YZ/3QhKIaCJtdr6jPvehcAQIHLQ=="},
 }
 
 // HarnessImageFor is the harness image adapterName runs in, from

@@ -32,7 +32,7 @@ func freePort(t *testing.T) int {
 	return p
 }
 
-// autoURL is the address Claude Code 2.1.296 hands its browser opener: its
+// autoURL is the address Claude Code 2.1.322 hands its browser opener: its
 // own callback on the container's loopback at port.
 func autoURL(port int) string {
 	return "https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code&redirect_uri=http%3A%2F%2Flocalhost%3A" +
@@ -250,7 +250,7 @@ func TestTheSignInSaysEachStepInOrder(t *testing.T) {
 			t.Errorf("step %s has no sentence", st)
 		}
 	}
-	if got := StepBuild.Sentence("2.1.296"); !strings.Contains(got, "Claude Code 2.1.296 image") {
+	if got := StepBuild.Sentence("2.1.322"); !strings.Contains(got, "Claude Code 2.1.322 image") {
 		t.Errorf("the build's sentence %q does not name the version", got)
 	}
 }

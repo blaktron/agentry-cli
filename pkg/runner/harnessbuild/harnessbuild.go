@@ -51,7 +51,7 @@ const (
 const ClaudeRecipe = "2"
 
 // ClaudeOpener is the Claude Code image's browser: the program its BROWSER
-// names for a sign-in. Claude Code (2.1.296) hands its opener the sign-in
+// names for a sign-in. Claude Code (2.1.322) hands its opener the sign-in
 // address whose redirect is its own callback on the container's loopback;
 // the opener writes it to the container's stderr as one line,
 // "agentry-open <address>", for the agentry CLI, which opens it in the
@@ -103,6 +103,13 @@ type claudeRelease struct {
 // moves policy.DefaultHarnessImages["claude-image"], and re-records the
 // adapter's conformance.
 var claudeReleases = []claudeRelease{{
+	version: "2.1.322",
+	wrapper: "sha512-oP7oW4vM5DREWfL1jn4JSGlmLcrJ5QmppgADrVNJBUPiC1mQ5YvRrke0on+YZ/3QhKIaCJtdr6jPvehcAQIHLQ==",
+	native: map[string]string{
+		"amd64": "sha512-Tmb7C0xAFVLe4pWBmIxlAfulysXfdqgAd1GGp0DWrGxY9YZ5uiIaq25GeddBxB9IfNfWrZBcWU2g9Skb4piazQ==",
+		"arm64": "sha512-lcJl5oH4RtUVp7uRSpj/jrXubXDrK1v62lt50lyAaILH5wJM/psaTTlF8E+aFGFd0MT7nGinypjYapgB88Zhvg==",
+	},
+}, {
 	version: "2.1.296",
 	wrapper: "sha512-OX/k/rpcthMqnFKOWcpNcbiLsMKtAjLOpQNJHlYiDCFUznWCIwdRTyl/p9SdHVrsrzZuPMCNqZjnpakIni6upw==",
 	native: map[string]string{
@@ -114,8 +121,8 @@ var claudeReleases = []claudeRelease{{
 // npmCPU is npm's name for a daemon's architecture.
 var npmCPU = map[string]string{"amd64": "x64", "arm64": "arm64"}
 
-// maxPackage bounds one downloaded package (2.1.296's native tarballs are
-// about 110 MB).
+// maxPackage bounds one downloaded package (2.1.322's native tarballs are
+// about 150 MB).
 const maxPackage = 1 << 30
 
 // Builds reports whether this build can make adapterName's image.

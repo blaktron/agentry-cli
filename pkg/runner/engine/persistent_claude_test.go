@@ -36,7 +36,7 @@ const lingeringConversation = "0e9d0000-0000-4000-8000-0000000011e7"
 // playPersistentClaude is Claude Code's stream-json with session
 // persistence on: a --resume of a conversation it cannot find ends the
 // process at once with its error result, before reading anything, as
-// Claude Code 2.1.296 does; otherwise the initialize control request is
+// Claude Code 2.1.322 does; otherwise the initialize control request is
 // answered and each user line gets an answer and a result. A --resume of
 // lingeringConversation prints the same error result and then reads its
 // input until it closes, answering nothing.

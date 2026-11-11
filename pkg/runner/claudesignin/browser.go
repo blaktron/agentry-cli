@@ -3,7 +3,7 @@ package claudesignin
 // The image's sign-in through the browser alone: nobody pastes a code; a
 // browser opens from the container to authorize it.
 //
-// Claude Code's `auth login` (2.1.296) builds two addresses: it prints the
+// Claude Code's `auth login` (2.1.322) builds two addresses: it prints the
 // paste-code one (redirect_uri Anthropic's own code page) and hands the
 // automatic one (redirect_uri http://localhost:<port>/callback, its
 // listener on 127.0.0.1:<port> in the container) to its browser opener,
@@ -41,7 +41,7 @@ const openerPrefix = "agentry-open "
 
 // fallbackWait is how long, after Claude Code prints its paste-code
 // address, the sign-in waits for the automatic one before it falls back.
-// Claude Code hands it to the opener right after printing (2.1.296).
+// Claude Code hands it to the opener right after printing (2.1.322).
 var fallbackWait = 10 * time.Second
 
 // maxRelayed bounds the connections relayed at once: a browser opens one
@@ -177,7 +177,7 @@ type browserSignIn struct {
 	stops   []func()
 }
 
-// pastePrompt is Claude Code's prompt for the pasted code (2.1.296).
+// pastePrompt is Claude Code's prompt for the pasted code (2.1.322).
 const pastePrompt = "Paste code here if prompted"
 
 // stream is one of the container's two output streams, split into lines.
