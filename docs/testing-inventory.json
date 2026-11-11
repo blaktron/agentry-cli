@@ -2274,6 +2274,38 @@
       ]
     },
     {
+      "owner": "internal/scriptedmodel",
+      "behavior": "A model server for tests: it plays a script of replies and failures as the Anthropic Messages API and as OpenAI-style Chat Completions, and records every request it receives",
+      "disposition": "retain",
+      "files": [
+        {
+          "path": "internal/scriptedmodel/scriptedmodel_test.go",
+          "tests": [
+            "TestAnthropicStreamsAReply",
+            "TestChatStreamsAReply",
+            "TestWholeResponsesWhenNoStreamIsAsked",
+            "TestAnAnswerCutAtTheOutputLimit",
+            "TestARepeatedCall",
+            "TestUnavailableThenSuccess",
+            "TestRateLimitedSaysWhenToRetry",
+            "TestOverflowAsEachServerWordsIt",
+            "TestAStreamThatStalls",
+            "TestAStalledStreamEndsWhenTheServerCloses",
+            "TestAConnectionThatDrops",
+            "TestRequestsAreRecordedAsSent",
+            "TestPrefixOf",
+            "TestARequestPastTheScriptFailsTheTest"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "real-time wait"
+          ]
+        }
+      ]
+    },
+    {
       "owner": "internal/storefile",
       "behavior": "The file primitives the stores under the runner home share (the credential stores of pkg/runner/connection",
       "disposition": "retain",

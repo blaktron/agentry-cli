@@ -19,6 +19,7 @@ PURPOSES = {
     "internal/highlights": "What each release of the agentry CLI brings, in a few plain lines for the person using it",
     "internal/origin": "Compares URLs by origin: scheme, host and port",
     "internal/pastruns": "Reads the runs a person has made from their output folders: every folder directly under an output",
+    "internal/scriptedmodel": "A model server for tests: it plays a script of replies and failures as the Anthropic Messages API and as OpenAI-style Chat Completions, and records every request it receives",
     "internal/storefile": "The file primitives the stores under the runner home share (the credential stores of pkg/runner/connection",
     "internal/version": "Carries the CLI's build-stamped version",
     "pkg/authflow": "The client half of browser sign-in: a one-shot loopback listener that receives a single-use CODE from the",
