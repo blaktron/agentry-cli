@@ -9,13 +9,16 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/spf13/cobra"
 
 	"github.com/blaktron/agentry-cli/internal/version"
+	"github.com/blaktron/agentry-cli/pkg/managed"
 	"github.com/blaktron/agentry-cli/pkg/runhost"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
+	"github.com/blaktron/agentry-cli/pkg/trust"
 )
 
 // defaultRegistryURL is the fallback registry when neither --registry nor the
@@ -161,10 +164,27 @@ func newRootCmd() *cobra.Command {
 	return root
 }
 
-// registryURL resolves the effective registry base URL: --registry flag,
-// then AGENTRY_REGISTRY, then the config file's defaultRegistry, then the
-// build's default. The returned URL never has a trailing slash.
+// registryURL resolves the effective registry base URL: the registry this
+// computer's machine settings pin, when they pin one, and otherwise the
+// --registry flag, then AGENTRY_REGISTRY, then the config file's
+// defaultRegistry, then the build's default. The returned URL never has a
+// trailing slash.
 func registryURL() string {
+	pin, err := managed.MachineRegistry()
+	if err != nil {
+		// The administrator's registry is unknown: nothing that picks a
+		// registry goes on.
+		_, _ = fmt.Fprintf(os.Stderr, "agentry: %v; ask this computer's administrator to correct them\n", err)
+		os.Exit(engine.ExitPolicy)
+	}
+	if pin != "" {
+		if asked := askedRegistry(); asked != "" && trust.NormalizeRegistry(asked) != pin {
+			pinNotice.Do(func() {
+				_, _ = fmt.Fprintf(os.Stderr, "agentry: this computer's administrator pins Agentry to %s, so %s is not used\n", pin, asked)
+			})
+		}
+		return pin
+	}
 	if flags.registry != "" {
 		return strings.TrimRight(flags.registry, "/")
 	}
@@ -177,4 +197,23 @@ func registryURL() string {
 		_, _ = fmt.Fprintln(os.Stderr, "agentry: warning: "+err.Error())
 	}
 	return defaultRegistryURL
+}
+
+// pinNotice says once a process that the machine settings' pin replaced
+// the registry asked for.
+var pinNotice sync.Once
+
+// askedRegistry is the registry the person or their configuration asked
+// for, "" when none: the flag, the environment, then the config file.
+func askedRegistry() string {
+	if flags.registry != "" {
+		return strings.TrimRight(flags.registry, "/")
+	}
+	if v := envRegistryURL(); v != "" {
+		return v
+	}
+	if cfg, err := loadCLIConfig(); err == nil && cfg.DefaultRegistry != "" {
+		return strings.TrimRight(cfg.DefaultRegistry, "/")
+	}
+	return ""
 }

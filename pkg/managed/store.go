@@ -106,6 +106,23 @@ func Load(registryURL string) (*State, error) {
 // Current loads every registry's managed settings and verifies each again.
 // It never fails: what cannot be read or verified is a Problem.
 func Current() Effective {
+	e := current()
+	m, err := LoadMachine()
+	switch {
+	case err != nil:
+		e.Problems = append([]Problem{{Err: err, Machine: true}}, e.Problems...)
+	case m != nil:
+		e.Machine = m
+		if len(m.Settings) > 0 {
+			e.Documents = append([]State{m.machineDocument()}, e.Documents...)
+		}
+	}
+	return e
+}
+
+// current is every registry's verified documents and problems, without
+// the machine settings.
+func current() Effective {
 	var e Effective
 	dir, err := Dir()
 	if err != nil {

@@ -95,16 +95,32 @@ type managedDocumentView struct {
 type managedProblemView struct {
 	Registry string `json:"registry"`
 	Error    string `json:"error"`
+	// Machine marks the machine settings.
+	Machine bool `json:"machine,omitempty"`
 }
 
 // managedView is `managed show --json`.
 type managedView struct {
+	// Machine is this computer's machine settings, absent for none.
+	Machine   *machineView          `json:"machine,omitempty"`
 	Documents []managedDocumentView `json:"documents"`
 	Problems  []managedProblemView  `json:"problems"`
 }
 
+// machineView is the machine settings in `managed show --json`: where
+// they were read, the registry they pin and the organization they
+// require. Their settings are the document whose registry is empty.
+type machineView struct {
+	Where      string `json:"where"`
+	Registry   string `json:"registry,omitempty"`
+	RequireOrg string `json:"requireOrg,omitempty"`
+}
+
 func viewOf(e managed.Effective) managedView {
 	v := managedView{Documents: []managedDocumentView{}, Problems: []managedProblemView{}}
+	if m := e.Machine; m != nil {
+		v.Machine = &machineView{Where: m.Where, Registry: m.Registry, RequireOrg: m.RequireOrg}
+	}
 	for _, st := range e.Documents {
 		d := st.Document
 		dv := managedDocumentView{Registry: st.Registry, Organization: d.Org, Version: d.Version, IssuedAt: d.IssuedAt, FetchedAt: st.FetchedAt, Settings: []managedSettingView{}}
@@ -121,7 +137,7 @@ func viewOf(e managed.Effective) managedView {
 		v.Documents = append(v.Documents, dv)
 	}
 	for _, p := range e.Problems {
-		v.Problems = append(v.Problems, managedProblemView{Registry: p.Registry, Error: p.Err.Error()})
+		v.Problems = append(v.Problems, managedProblemView{Registry: p.Registry, Error: p.Err.Error(), Machine: p.Machine})
 	}
 	return v
 }
@@ -156,15 +172,31 @@ func runManagedShow(cmd *cobra.Command, _ []string) error {
 
 // writeManaged renders a managedView for a person.
 func writeManaged(out io.Writer, v managedView) {
-	if len(v.Documents) == 0 && len(v.Problems) == 0 {
+	if len(v.Documents) == 0 && len(v.Problems) == 0 && v.Machine == nil {
 		_, _ = fmt.Fprintln(out, "No managed settings.")
 		return
+	}
+	if m := v.Machine; m != nil {
+		_, _ = fmt.Fprintf(out, "Machine settings, from %s\n", m.Where)
+		if m.Registry != "" {
+			_, _ = fmt.Fprintf(out, "  registry        pinned to %s\n", m.Registry)
+		}
+		if m.RequireOrg != "" {
+			_, _ = fmt.Fprintf(out, "  requireOrg      a signed-in member of %s\n", m.RequireOrg)
+		}
+		if len(v.Documents) > 0 {
+			_, _ = fmt.Fprintln(out)
+		}
 	}
 	for i, d := range v.Documents {
 		if i > 0 {
 			_, _ = fmt.Fprintln(out)
 		}
-		_, _ = fmt.Fprintf(out, "%s, version %d, from %s (issued %s)\n", d.Organization, d.Version, d.Registry, d.IssuedAt.UTC().Format(time.RFC3339))
+		if d.Registry == "" {
+			_, _ = fmt.Fprintf(out, "%s, from the machine settings\n", d.Organization)
+		} else {
+			_, _ = fmt.Fprintf(out, "%s, version %d, from %s (issued %s)\n", d.Organization, d.Version, d.Registry, d.IssuedAt.UTC().Format(time.RFC3339))
+		}
 		width := 0
 		for _, s := range d.Settings {
 			width = max(width, len(s.ID))
@@ -174,6 +206,10 @@ func writeManaged(out io.Writer, v managedView) {
 		}
 	}
 	for _, p := range v.Problems {
+		if p.Machine {
+			_, _ = fmt.Fprintln(out, p.Error)
+			continue
+		}
 		_, _ = fmt.Fprintf(out, "cannot verify the managed settings held for %s: %s\n", cmp.Or(p.Registry, "this computer"), p.Error)
 	}
 }
