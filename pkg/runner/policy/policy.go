@@ -850,6 +850,15 @@ type Model struct {
 	// cannot compact a long conversation before the endpoint refuses it as
 	// too long. 0 = the harness's own lookup.
 	ContextWindow int64 `yaml:"contextWindow,omitempty"`
+	// Sampling replaces, key by key, the sampling a model's family
+	// recommends, for a model on an endpoint of the person's own. A key left
+	// out keeps the family's value; a family with no recommendation keeps the
+	// server's own.
+	Sampling *Sampling `yaml:"sampling,omitempty"`
+	// MaxOutputTokens replaces the cap on one answer for a model on an
+	// endpoint of the person's own: by default the lesser of the family's
+	// output length and a quarter of the window. 0 = that default.
+	MaxOutputTokens int64 `yaml:"maxOutputTokens,omitempty"`
 	// ProxyAllow is the llm-proxy CONNECT allowlist (host:port). This is
 	// the ONLY egress the agent container has; it must cover the
 	// model endpoint and nothing else.
@@ -858,6 +867,49 @@ type Model struct {
 	// a saved model, whose keychain entry holds the key (KeyProvider); never
 	// written.
 	ProviderID string `yaml:"-" json:"-"`
+}
+
+// Sampling is the sampling a person sets for a model of their own. A nil
+// field is not set.
+type Sampling struct {
+	Temperature       *float64 `yaml:"temperature,omitempty"`
+	TopP              *float64 `yaml:"top_p,omitempty"`
+	TopK              *int64   `yaml:"top_k,omitempty"`
+	MinP              *float64 `yaml:"min_p,omitempty"`
+	PresencePenalty   *float64 `yaml:"presence_penalty,omitempty"`
+	RepetitionPenalty *float64 `yaml:"repetition_penalty,omitempty"`
+}
+
+// MaxOutputTokensLimit bounds model.maxOutputTokens: no answer is longer
+// than a window, and a number past it is a mistake.
+const MaxOutputTokensLimit = MaxContextWindow
+
+// check holds the sampling to the ranges the servers accept.
+func (s *Sampling) check() error {
+	if s == nil {
+		return nil
+	}
+	in := func(v *float64, name string, lo, hi float64) error {
+		if v != nil && (*v < lo || *v > hi) {
+			return fmt.Errorf("sampling.%s %v is outside %v to %v", name, *v, lo, hi)
+		}
+		return nil
+	}
+	for _, e := range []error{
+		in(s.Temperature, "temperature", 0, 2),
+		in(s.TopP, "top_p", 0, 1),
+		in(s.MinP, "min_p", 0, 1),
+		in(s.PresencePenalty, "presence_penalty", -2, 2),
+		in(s.RepetitionPenalty, "repetition_penalty", 0, 2),
+	} {
+		if e != nil {
+			return e
+		}
+	}
+	if s.TopK != nil && (*s.TopK < 0 || *s.TopK > 100000) {
+		return fmt.Errorf("sampling.top_k %d is outside 0 to 100000", *s.TopK)
+	}
+	return nil
 }
 
 // MinContextWindow and MaxContextWindow bound model.contextWindow: below the
@@ -1900,6 +1952,12 @@ func checkModelBlock(field string, m Model) error {
 	}
 	if err := CheckContextWindow(m.ContextWindow); err != nil {
 		return fmt.Errorf("%s.contextWindow: %w (or leave it out, for the harness's own lookup)", field, err)
+	}
+	if err := m.Sampling.check(); err != nil {
+		return fmt.Errorf("%s.%w", field, err)
+	}
+	if m.MaxOutputTokens < 0 || m.MaxOutputTokens > MaxOutputTokensLimit {
+		return fmt.Errorf("%s.maxOutputTokens %d is outside 0 to %d", field, m.MaxOutputTokens, MaxOutputTokensLimit)
 	}
 	if m.Provider == ProviderAgentry {
 		if _, err := AgentryRegistry(m); err != nil {

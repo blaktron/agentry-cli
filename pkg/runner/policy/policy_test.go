@@ -93,6 +93,10 @@ func TestValidateTable(t *testing.T) {
 		{"missing api key env", func(p *Policy) { p.Model.APIKeyEnv = "" }, "apiKeyEnv"},
 		{"empty proxy allow", func(p *Policy) { p.Model.ProxyAllow = nil }, "proxyAllow"},
 		{"bad proxy entry", func(p *Policy) { p.Model.ProxyAllow = []string{"http://x"} }, "proxyAllow"},
+		{"temperature past 2", func(p *Policy) { v := 2.5; p.Model.Sampling = &Sampling{Temperature: &v} }, "model.sampling.temperature"},
+		{"top_p past 1", func(p *Policy) { v := 1.5; p.Model.Sampling = &Sampling{TopP: &v} }, "model.sampling.top_p"},
+		{"negative top_k", func(p *Policy) { v := int64(-1); p.Model.Sampling = &Sampling{TopK: &v} }, "model.sampling.top_k"},
+		{"negative answer cap", func(p *Policy) { p.Model.MaxOutputTokens = -1 }, "model.maxOutputTokens"},
 		{"negative context window", func(p *Policy) { p.Model.ContextWindow = -1 }, "model.contextWindow"},
 		{"context window too small to compact in", func(p *Policy) { p.Model.ContextWindow = MinContextWindow - 1 }, "model.contextWindow"},
 		{"context window no model has", func(p *Policy) { p.Model.ContextWindow = MaxContextWindow + 1 }, "model.contextWindow"},
@@ -128,6 +132,9 @@ func TestSaveRoundTrip(t *testing.T) {
 	p := Default()
 	p.Model.Provider, p.Model.Name = "openai", "gpt-5.2"
 	p.Model.ContextWindow = 262144
+	temp, topK := 0.6, int64(20)
+	p.Model.Sampling = &Sampling{Temperature: &temp, TopK: &topK}
+	p.Model.MaxOutputTokens = 8192
 	p.DataAccessServers = map[string][]string{"tickets": {"/etc/agentry/jira.yaml"}}
 	p.Profiles.KeepByDefault = boolPtr(false)
 	if err := Save(path, p); err != nil {
