@@ -116,7 +116,8 @@ func (rd *runDirs) harnessReceipt(path string) (*os.File, error) {
 // that can be resumed, after each passing model failure once it has called
 // one, on the same conversation with resumeMessage; and, for such a harness
 // that answered with its checklist's steps still open, on the same
-// conversation with a finish check's message. Each start's collector begins
+// conversation with a finish check's message; and, for such a harness that
+// ended with no reply or on its loop detector, with restart.go's message. Each start's collector begins
 // from the usage of the starts before it, so the run's usage, its live meter
 // and its turn and cost budgets count every attempt.
 func restartHarness(ctx context.Context, p Params, rd *runDirs, task []byte, run func(message []byte) agentOutcome) agentOutcome {
@@ -146,16 +147,26 @@ func restartHarness(ctx context.Context, p Params, rd *runDirs, task []byte, run
 			rd.resumedAfter = out.transient
 			out = run([]byte(resumeMessage))
 		default:
+			if reason, msg := rd.earlyEndAsk(ctx, p, out); reason != "" {
+				rd.restarts = append(rd.restarts, receipt.Restart{Reason: reason, Message: msg})
+				noteEarlyEnd(p.Stderr, reason, len(rd.restarts))
+				rd.harnessUsage = out.usage
+				rd.carriedCost = out.conversationCost
+				rd.finishCheck, rd.restartReason = msg, reason
+				out = run([]byte(msg))
+				continue
+			}
 			open := rd.finishCheckDue(ctx, p, out)
 			if len(open) == 0 {
 				return out
 			}
-			msg := finishCheckMessage(open, len(rd.finishChecks)+1 == finishChecks)
+			msg := finishCheckMessage(open, len(rd.restarts)+1 == finishChecks)
 			rd.finishChecks = append(rd.finishChecks, receipt.FinishCheck{Open: len(open), Message: rd.redact.String(msg)})
+			rd.restarts = append(rd.restarts, receipt.Restart{Reason: receipt.RestartFinishCheck, Message: rd.redact.String(msg)})
 			noteFinishCheck(p.Stderr, len(open), len(rd.finishChecks))
 			rd.harnessUsage = out.usage
 			rd.carriedCost = out.conversationCost
-			rd.finishCheck = msg
+			rd.finishCheck, rd.restartReason = msg, receipt.RestartFinishCheck
 			out = run([]byte(msg))
 		}
 	}

@@ -21,11 +21,11 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
-// claudeSignInURL is what Claude Code 2.1.296 prints for a sign-in whose
+// claudeSignInURL is what Claude Code 2.1.322 prints for a sign-in whose
 // browser cannot reach its callback (the paste-code page).
 const claudeSignInURL = "https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&state=abc"
 
-// claudeAutoURL is the address Claude Code 2.1.296 hands its browser
+// claudeAutoURL is the address Claude Code 2.1.322 hands its browser
 // opener in the image: its own callback on the container's loopback, which
 // the sign-in relays. claudeFixture sets it.
 var claudeAutoURL string

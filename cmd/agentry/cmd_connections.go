@@ -32,6 +32,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/installdir"
 	"github.com/blaktron/agentry-cli/pkg/runner/localrun"
+	"github.com/blaktron/agentry-cli/pkg/runner/persistent"
 	"github.com/blaktron/agentry-cli/pkg/runner/profile"
 	"github.com/blaktron/agentry-cli/pkg/runner/setup"
 )
@@ -266,8 +267,13 @@ func scopeList(s []string) string {
 // broken one (whose refresh token is revoked where the vendor offers it).
 func consentFor(cmd *cobra.Command, store *connection.Store, clients *connection.Clients, public *connection.PublicClients, httpc *http.Client, k connection.Key, srv manifest.MCPServer, help string) (*mcpauth.Grant, error) {
 	errOut := cmd.ErrOrStderr()
-	_, _ = fmt.Fprintf(errOut, "\n%s needs you to sign in to %s.\n", k.Ref, connectionWhat(srv))
-	_, _ = fmt.Fprintln(errOut, "The connection is kept on this machine for this version alone and reused by its later runs; each run is given an access token, never the refresh token or a client secret.")
+	who, kept := k.Ref, "The connection is kept on this machine for this version alone and reused by its later runs; each run is given an access token, never the refresh token or a client secret."
+	if name, ok := persistent.IsAgentConnection(&connection.Connection{Ref: k.Ref, Digest: k.Digest}); ok {
+		who = "The " + name + " agent"
+		kept = "The connection is kept on this machine for the agent, through its updates, until you remove it or reset the agent; each segment is given an access token, never the refresh token or a client secret."
+	}
+	_, _ = fmt.Fprintf(errOut, "\n%s needs you to sign in to %s.\n", who, connectionWhat(srv))
+	_, _ = fmt.Fprintln(errOut, kept)
 	if scopes := connectionScopes(srv); len(scopes) > 0 {
 		_, _ = fmt.Fprintf(errOut, "It asks for: %s\n", strings.Join(scopes, " "))
 	}
@@ -301,7 +307,7 @@ func consentFor(cmd *cobra.Command, store *connection.Store, clients *connection
 		if _, err := store.Put(k, g, ""); err != nil {
 			return nil, err
 		}
-		_, _ = fmt.Fprintf(errOut, "connected %s for %s\n", connectionServer(srv), k.Ref)
+		_, _ = fmt.Fprintf(errOut, "connected %s for %s\n", connectionServer(srv), who)
 		return g, nil
 	}
 }

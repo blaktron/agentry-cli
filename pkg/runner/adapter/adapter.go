@@ -161,6 +161,10 @@ const (
 	// engine counts these in the receipt's usage. Text is the harness's
 	// words, which never quote the call's arguments.
 	EventLoopNudge EventKind = "loop_nudge"
+	// EventEmptyAnswer says the harness reported that the model's last
+	// turn ended after its tool calls with no reply, or with reasoning
+	// only. Text is the harness's words.
+	EventEmptyAnswer EventKind = "empty_answer"
 	// EventOther is an unrecognized-but-valid harness event.
 	EventOther EventKind = "other"
 )

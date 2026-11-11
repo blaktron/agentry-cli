@@ -155,6 +155,26 @@ type Envelope struct {
 	// conversation to ask about them. It records the agent's own list, not
 	// a check of the work. Absent for a run that keeps no checklist.
 	Checklist *Checklist `json:"checklist,omitempty"`
+	// Restarts are the times the runner started an autonomous harness
+	// again on its stored conversation after its first tool call, in order,
+	// each with its reason and the message the harness was given. At most
+	// two per run, all reasons together. Absent when there were none.
+	Restarts []Restart `json:"restarts,omitempty"`
+}
+
+// The reasons a harness is started again on its conversation.
+const (
+	RestartFinishCheck   = "finish_check"
+	RestartEmptyAnswer   = "empty_answer"
+	RestartReasoningOnly = "reasoning_only_answer"
+	RestartLoopDetected  = "loop_detected"
+)
+
+// Restart is one start of the harness on its conversation to continue a
+// run it ended early: why, and the message it was given.
+type Restart struct {
+	Reason  string `json:"reason"`
+	Message string `json:"message"`
 }
 
 // Checklist is the envelope's record of a run's checklist at its end.
@@ -247,8 +267,9 @@ type RosterEntry struct {
 	// given, and then overrides On: "installing" for a server the agent's
 	// store does not hold yet, "failed" for one that could not be installed
 	// or started, "needs-set-up" for an offered server that waits for a
-	// stored secret or an account. The plan's servers are what the segment
-	// ran.
+	// stored secret or an account, "needs-sign-in" for a server that signs
+	// in by OAuth and had no working connection. The plan's servers are what
+	// the segment ran.
 	State string `json:"state,omitempty"`
 	// Share says a server's switch to see the agent's share folder is on.
 	Share bool `json:"share,omitempty"`
@@ -430,7 +451,8 @@ type PDFFile struct {
 type Web struct {
 	// Scan is where the texts were scanned: "registry" (the registry's
 	// route, with a hosted job's credential or the token of an operation
-	// paid with credits) or "jev" (the person's own key).
+	// paid with credits), "jev" (the person's own key) or "unreviewed" (no
+	// scan: a persistent agent whose person switched AI Review off).
 	Scan string `json:"scan"`
 	// Search is where web_search went ("registry", a provider, or "" when
 	// it was not granted).
@@ -449,6 +471,9 @@ type Web struct {
 	Passed     int `json:"passed"`
 	Withheld   int `json:"withheld"`
 	NotScanned int `json:"notScanned"`
+	// Unreviewed are the passed texts AI Review never read, because the
+	// person switched it off for the agent.
+	Unreviewed int `json:"unreviewed,omitempty"`
 	// Refused are calls the tools refused before reading anything: an
 	// address that is not public, a spent budget, a type that is not text.
 	Refused int `json:"refused"`

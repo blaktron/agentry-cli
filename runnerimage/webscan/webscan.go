@@ -88,6 +88,21 @@ type Result struct {
 	// record. Never a price: AI Review is 1 credit an operation.
 	Requests    int   `json:"requests,omitempty"`
 	InputTokens int64 `json:"inputTokens,omitempty"`
+	// Unreviewed marks a text that reached the model unread by AI Review,
+	// because the person switched the review off for the agent (Unreviewed,
+	// the scanner): its Verdict is Pass and nothing was asked.
+	Unreviewed bool `json:"unreviewed,omitempty"`
+}
+
+// Unreviewed is the scanner of an agent whose person switched AI Review
+// off: it reads nothing and passes every text, marked Unreviewed, so the
+// ledger and the receipt say that no text was read. It is only ever built
+// from a spec whose scan the compiled plan holds to it.
+type Unreviewed struct{}
+
+// Scan passes text unread.
+func (Unreviewed) Scan(context.Context, Source, string) Result {
+	return Result{Verdict: Pass, Unreviewed: true}
 }
 
 // Passed reports whether the text may reach a model.

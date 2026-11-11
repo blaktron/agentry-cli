@@ -297,6 +297,7 @@ func TestAWebPlanRunsOnlyWithItsScanner(t *testing.T) {
 		{"unknown scanner", &WebRun{Scan: "static", JevKey: testJevKey}, `unknown scanner "static"`},
 		{"search, no key", &WebRun{Scan: toolsrv.WebScanJev, JevKey: testJevKey, Search: "youcom"}, "a search through youcom needs your own key"},
 		{"registry search", &WebRun{Scan: toolsrv.WebScanJev, JevKey: testJevKey, Search: toolsrv.WebScanRegistry}, "the registry's search is a hosted draft's"},
+		{"unreviewed, the plan reviews", &WebRun{Scan: toolsrv.WebScanUnreviewed}, "this plan reads every web result through AI Review"},
 	} {
 		p, f := webFixture(t)
 		p.Web = tc.w
@@ -425,5 +426,51 @@ func TestGivenAddressesAreAGivenOnlyPlansAlone(t *testing.T) {
 	p.Web = &WebRun{Scan: toolsrv.WebScanJev, JevKey: testJevKey, Search: "brave", SearchKey: "k", Given: []string{"https://blog.example.com/post"}}
 	if _, err := Run(context.Background(), f, p); err == nil || !strings.Contains(err.Error(), "has no web_search") || len(f.Calls) != 0 {
 		t.Fatalf("a given-only plan with a search: %v", err)
+	}
+}
+
+// TestAnUnreviewedWebRunIsHeldToItsPlan: a plan that says its web tools run
+// without AI Review runs only with the unreviewed scan, its ledger counts
+// the texts that reached the model unread, and the receipt says AI Review
+// read nothing.
+func TestAnUnreviewedWebRunIsHeldToItsPlan(t *testing.T) {
+	p, f := webFixture(t)
+	p.Plan.Capabilities.WebUnreviewed = true
+	p.Web = &WebRun{Scan: toolsrv.WebScanJev, JevKey: testJevKey}
+	var ce *ClassifiedError
+	if _, err := Run(context.Background(), f, p); !errors.As(err, &ce) || ce.Code != ExitCLI || !strings.Contains(err.Error(), "says its web tools run without AI Review") {
+		t.Fatalf("an unreviewed plan run with a scanner: %v", err)
+	}
+
+	p, f = webFixture(t)
+	p.Plan.Capabilities.WebUnreviewed = true
+	p.Web = &WebRun{Scan: toolsrv.WebScanUnreviewed, JevKey: testJevKey}
+	if _, err := Run(context.Background(), f, p); !errors.As(err, &ce) || ce.Code != ExitCLI || !strings.Contains(err.Error(), "given no review key or job credential") {
+		t.Fatalf("an unreviewed run carrying a review key: %v", err)
+	}
+
+	p, f = webFixture(t)
+	happyFake(f)
+	p.Plan.Capabilities.WebUnreviewed = true
+	p.Web = &WebRun{Scan: toolsrv.WebScanUnreviewed}
+	ledger := strings.Join([]string{
+		`{"tool":"web_read","source":"page","url":"https://a.example/","bytes":900,"verdict":"pass","unreviewed":true}`,
+		`{"tool":"web_read","url":"http://10.0.0.1/","refused":"10.0.0.1 is not a public address"}`,
+	}, "\n") + "\n"
+	f.OnForeground = func(r dockerx.RunSpec) {
+		if strings.HasSuffix(r.Name, "-agent") {
+			_ = os.WriteFile(filepath.Join(p.OutDir, "receipts", WebLedgerFile), []byte(ledger), 0o644)
+		}
+	}
+	env, err := Run(context.Background(), f, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := env.Web; w == nil || w.Scan != toolsrv.WebScanUnreviewed || w.Read != 1 || w.Passed != 1 || w.Unreviewed != 1 || w.Refused != 1 || w.ScanRequests != 0 {
+		t.Fatalf("%+v", env.Web)
+	}
+	line := env.CapabilitiesEnforced["web.aiReview"]
+	if !strings.Contains(line, "AI Review read nothing") || !strings.Contains(line, "1 of them unreviewed") || strings.Contains(line, "AI Review read every text") {
+		t.Fatalf("%q", line)
 	}
 }

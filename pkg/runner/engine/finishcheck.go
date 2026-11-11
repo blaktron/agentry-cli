@@ -43,7 +43,8 @@ import (
 // the run's receipts.
 const ChecklistCopyFile = "checklist.md"
 
-// finishChecks is the most times one run is asked about its open steps.
+// finishChecks is the most times one run is asked about its open steps, and
+// the most starts on its conversation after an early end, all reasons together.
 const finishChecks = 2
 
 // finishCheckMargin is the least time a finish check needs: one start of the
@@ -239,7 +240,7 @@ func makeChecklistCopy(rd *runDirs) error {
 // finishCheckDue is restartHarness's test for a finish check: the open steps
 // to ask about, when another ask is allowed and time remains for it.
 func (rd *runDirs) finishCheckDue(ctx context.Context, p Params, out agentOutcome) []toolsrv.Step {
-	if len(rd.finishChecks) >= finishChecks || !rd.canRestartAfter(ctx, finishCheckMargin) {
+	if len(rd.restarts) >= finishChecks || !rd.canRestartAfter(ctx, finishCheckMargin) {
 		return nil
 	}
 	return openStepsAtFinish(p, rd, out)

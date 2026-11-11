@@ -116,7 +116,7 @@ func TestRosterRendersAgree(t *testing.T) {
 			t.Errorf("the consent's %s is not the roster's: %+v vs %+v", e.ID, e, got)
 		}
 	}
-	if len(r) != 30 || r[0].ID != EntryShare || r[1].ID != EntryData || !r[1].Fixed || r[2].ID != EntryMemory || !r[2].Fixed || !r[2].On ||
+	if len(r) != 31 || r[0].ID != EntryShare || r[1].ID != EntryData || !r[1].Fixed || r[2].ID != EntryMemory || !r[2].Fixed || !r[2].On ||
 		r[3].ID != EntryHeartbeat || r[3].On || r[4].ID != EntryMeetings || r[4].On {
 		t.Fatalf("the Assistant's own roster: %+v", r)
 	}
@@ -126,14 +126,18 @@ func TestRosterRendersAgree(t *testing.T) {
 			t.Errorf("the Assistant's desktop entry %+v", e)
 		}
 	}
-	for _, e := range r[10 : len(r)-1] {
+	for _, e := range r[10 : len(r)-2] {
 		if e.Kind != KindSkill || e.GrantedBy != GrantedByBuiltin {
 			t.Errorf("the Assistant's own roster ends in %+v, want its built-in skills", e)
 		}
 	}
-	// Then its web tools, off until the person switches them on.
-	if web := r[len(r)-1]; web.ID != EntryWeb || web.Kind != KindTools || web.On || web.GrantedBy != GrantedByBuiltin {
-		t.Errorf("the Assistant's roster ends in %+v, want its web tools, off", web)
+	// Then its web tools and the switch that runs them without AI Review,
+	// both off until the person switches them on.
+	if web := r[len(r)-2]; web.ID != EntryWeb || web.Kind != KindTools || web.On || web.GrantedBy != GrantedByBuiltin {
+		t.Errorf("the Assistant's roster has %+v before its last entry, want its web tools, off", web)
+	}
+	if un := r[len(r)-1]; un.ID != EntryUnreviewed || un.Kind != KindTools || un.On {
+		t.Errorf("the Assistant's roster ends in %+v, want Without AI Review, off", un)
 	}
 	rec := r2.Receipt()
 	if len(rec) != len(r2) {
@@ -474,11 +478,18 @@ func TestChangeAsksForConsentWhenItWidens(t *testing.T) {
 	if _, err := ApplyChange(home, a, &c, Change{AddServer: &oauth, Consent: true}); err != nil {
 		t.Fatalf("adding an OAuth server: %v", err)
 	}
-	if e, _ := BuildRoster(a, c, nil).Entry(ServerEntryID(oauth)); e.State != StateNeedsSignIn || e.On {
-		t.Errorf("an OAuth server is %+v, want it off and needing a sign-in", e)
+	if e, _ := BuildRoster(a, c, nil).Entry(ServerEntryID(oauth)); !e.On || !strings.Contains(e.Line, "with your own connection") {
+		t.Errorf("a remote OAuth server is %+v, want it on and saying it signs in with the person's connection", e)
 	}
-	if _, err := ApplyChange(home, a, &c, Change{Switch: &Switch{ID: ServerEntryID(oauth), On: true}, Consent: true}); err == nil {
-		t.Error("an OAuth server was switched on")
+	pkg := manifest.MCPServer{PyPI: "drive-mcp", Version: "1.0.0", OAuth: &manifest.MCPOAuth{Issuer: "https://accounts.example.org", Env: map[string]string{"DRIVE_TOKEN": "{access_token}"}}}
+	if _, err := ApplyChange(home, a, &c, Change{AddServer: &pkg, Consent: true}); err != nil {
+		t.Fatalf("adding a package OAuth server: %v", err)
+	}
+	if e, _ := BuildRoster(a, c, nil).Entry(ServerEntryID(pkg)); e.State != StateNeedsSignIn || e.On {
+		t.Errorf("a package OAuth server is %+v, want it off and needing a sign-in", e)
+	}
+	if _, err := ApplyChange(home, a, &c, Change{Switch: &Switch{ID: ServerEntryID(pkg), On: true}, Consent: true}); err == nil {
+		t.Error("a package OAuth server was switched on")
 	}
 }
 

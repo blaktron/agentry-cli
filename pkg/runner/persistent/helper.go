@@ -409,7 +409,7 @@ func (s *Supervisor) helperRun(ctx context.Context, cfg Config, ops HelperOps, r
 	if err != nil {
 		return "", err
 	}
-	if err := s.agreeToRun(ctx, cfg, exact, task, files, given); err != nil {
+	if err := s.agreeToRun(ctx, cfg, exact, task, files, given, usage.Desktop); err != nil {
 		return "", err
 	}
 	id, err := newSubagentRunID()
@@ -508,8 +508,11 @@ type agreedRuns struct {
 
 // agreeToRun asks the person before the agent's first run of a QuickAgent
 // at a version, and records a yes; a later run of the same version on the
-// same addresses asks nothing.
-func (s *Supervisor) agreeToRun(ctx context.Context, cfg Config, exact, task string, files []string, given *checkedAnswers) error {
+// same addresses asks nothing. desktop is what of the person's computer the
+// release uses, in the install's words: the question names it, because the
+// run reaches outside its sandbox, and Agentry Desktop still holds each
+// call to what the person approved in it.
+func (s *Supervisor) agreeToRun(ctx context.Context, cfg Config, exact, task string, files []string, given *checkedAnswers, desktop []string) error {
 	path := filepath.Join(Dir(s.opts.Home, s.opts.Agent.Name), agreedRunsFile)
 	var rec agreedRuns
 	if b, err := os.ReadFile(path); err == nil { //nolint:gosec // the agent's own record
@@ -536,6 +539,9 @@ func (s *Supervisor) agreeToRun(ctx context.Context, cfg Config, exact, task str
 	}
 	if t := strings.TrimSpace(task); t != "" {
 		fmt.Fprintf(&msg, " The task %s wrote for it: %s.", who, quoted(cutText(t, 500)))
+	}
+	if len(desktop) > 0 {
+		fmt.Fprintf(&msg, " It uses your computer through Agentry Desktop, only as far as you approved it there: %s.", strings.Join(desktop, "; "))
 	}
 	msg.WriteString(" It runs as any run of it does, under what it was installed with. " + who + " may run this version again without asking. Run it?")
 	if err := s.Ask(ctx, "Run "+exact+" for "+who+"?", msg.String()); err != nil {

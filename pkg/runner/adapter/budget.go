@@ -25,7 +25,7 @@ var resultBudgets = map[string]Budget{
 	// on 1.150.0, whose history bounding (bound_tool_messages.go) cuts at
 	// the same 50 KiB; 1.159.0 keeps both limits.
 	DefaultName: {Bytes: toolsrv.DefaultMaxResultBytes, Lines: toolsrv.DefaultMaxResultLines},
-	// Claude Code 2.1.296 saves a tool result over 50,000 characters (UTF-16
+	// Claude Code 2.1.322 saves a tool result over 50,000 characters (UTF-16
 	// code units, never more than its UTF-8 bytes) to a file the agent has no
 	// tool to open, and gives the model the path; an input tool's resource
 	// comes with a "[Resource from … at …]" prefix.

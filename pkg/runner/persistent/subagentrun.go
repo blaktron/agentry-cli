@@ -55,9 +55,14 @@ type SubagentHost interface {
 	Run(ctx context.Context, r SubagentRunSpec) (*receipt.Envelope, error)
 }
 
-// SubagentUsage is how a subagent's version is run: its questions.
+// SubagentUsage is how a subagent's version is run: its questions, and
+// what of the person's computer its release uses through Agentry Desktop,
+// each in the install's words ("the application blender on your computer,
+// through its MCP server (every tool it lists)", "can see and use the
+// windows of blender on your computer").
 type SubagentUsage struct {
 	Questions []SubagentQuestion `json:"questions,omitempty"`
+	Desktop   []string           `json:"desktop,omitempty"`
 }
 
 // SubagentQuestion is one of a subagent's questions and how to answer it.

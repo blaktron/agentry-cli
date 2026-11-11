@@ -41,7 +41,7 @@ func skillFolder(t *testing.T, name, md string, extra map[string]string) string 
 // passes is a check that finds nothing and checked every file.
 func passes(context.Context, string) (bool, error) { return true, nil }
 
-// TestTheCodingAgentHasItsBuiltInSkills: four, on by default, asking no
+// TestTheCodingAgentHasItsBuiltInSkills: seven, on by default, asking no
 // agreement; the Assistant has its three memory skills.
 func TestTheCodingAgentHasItsBuiltInSkills(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
@@ -55,7 +55,7 @@ func TestTheCodingAgentHasItsBuiltInSkills(t *testing.T) {
 			}
 		}
 	}
-	if !slices.Equal(names, []string{"dependency-audit", "open-pull-request", "review-change", "test-first"}) {
+	if !slices.Equal(names, []string{"ci-gate", "dependency-audit", "open-pull-request", "review-change", "test-first", "verify-change", "work-change"}) {
 		t.Errorf("the Coding agent's skills: %v", names)
 	}
 	for _, e := range Unconsented(r, Config{}) {
@@ -156,14 +156,14 @@ func TestSkillsAreReadOnlyToTheAgent(t *testing.T) {
 	if _, err := ApplyChange(home, a, &base, Change{AddSkill: &s, Consent: true}); err != nil {
 		t.Fatal(err)
 	}
-	all := []string{"call-notes", "dependency-audit", "open-pull-request", "review-change", "test-first"}
+	all := []string{"call-notes", "ci-gate", "dependency-audit", "open-pull-request", "review-change", "test-first", "verify-change", "work-change"}
 	for _, tc := range []struct {
 		name string
 		off  []string
 		want []string
 	}{
 		{"all on", nil, all},
-		{"the added one off", []string{"call-notes"}, []string{"dependency-audit", "open-pull-request", "review-change", "test-first"}},
+		{"the added one off", []string{"call-notes"}, []string{"ci-gate", "dependency-audit", "open-pull-request", "review-change", "test-first", "verify-change", "work-change"}},
 		{"all off", all, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
