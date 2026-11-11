@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -77,13 +78,17 @@ func installWithSubagent(t *testing.T, home, extra string) Agent {
 	return a
 }
 
-func startPublished(t *testing.T, home string, a Agent, host SubagentHost, helper HelperOps) (*Supervisor, *starter) {
+func startPublished(t *testing.T, home string, a Agent, host SubagentHost, helper HelperOps, with ...func(*Options)) (*Supervisor, *starter) {
 	t.Helper()
 	st := &starter{resumed: true}
-	sv, err := Start(context.Background(), Options{
+	opts := Options{
 		Home: home, Agent: a, Client: ClientCLI, Policy: policy.Default(),
 		Docker: &dockerx.Fake{}, StartSegment: st.start, Subagents: host, Helper: helper,
-	})
+	}
+	for _, f := range with {
+		f(&opts)
+	}
+	sv, err := Start(context.Background(), opts)
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -337,6 +342,56 @@ func TestHelperRunAsksPerNewVersion(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	if got := host.ran(); len(got) != 3 || got[2].Exact != "acme/tool@1.1.0" {
+		t.Errorf("runs: %+v", got)
+	}
+}
+
+// TestHelperRunWithoutAsking: while the client's RunsWithoutAsking reports
+// true, quickagent_run starts a first run of a version with no question to
+// any attached client and records nothing as agreed; once it reports false,
+// the next first run asks again, as it always did.
+func TestHelperRunWithoutAsking(t *testing.T) {
+	home := shortHome(t)
+	a := installPublished(t, home, "acme", "helper", "1.0.0", publishedRelease{extra: "capabilities:\n  persistent:\n    helper: true\n"})
+	enableAgent(t, home, a)
+	host, ops := &fakeHost{}, &fakeHelper{version: "1.0.0"}
+	var unasked atomic.Bool
+	unasked.Store(true)
+	sv, _ := startPublished(t, home, a, host, ops, func(o *Options) { o.RunsWithoutAsking = unasked.Load })
+	var mu sync.Mutex
+	var asked []string
+	stop := sv.addAsker(func(r Reply) {
+		mu.Lock()
+		asked = append(asked, r.Event.Text)
+		mu.Unlock()
+		go func() { _ = sv.answer(r.Event.Question, true) }()
+	})
+	defer stop()
+	askedN := func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(asked)
+	}
+	run := func() applink.Answer {
+		return call(t, home, a.Name, "quickagent_run", `{"ref":"acme/tool","task":"Do it"}`)
+	}
+
+	if ans := run(); ans.IsError || !strings.HasPrefix(ans.Text, "Started run sa-") || askedN() != 0 {
+		t.Fatalf("a run without asking: %+v, asked %d", ans, askedN())
+	}
+	if _, err := os.Stat(filepath.Join(Dir(home, a.Name), agreedRunsFile)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a run without asking recorded an agreement: %v", err)
+	}
+
+	unasked.Store(false)
+	if ans := run(); ans.IsError || askedN() != 1 || !strings.Contains(asked[0], "acme/tool@1.0.0") {
+		t.Fatalf("with the switch off, the first run did not ask: %+v, asked %d", ans, askedN())
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for len(host.ran()) < 2 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if got := host.ran(); len(got) != 2 {
 		t.Errorf("runs: %+v", got)
 	}
 }

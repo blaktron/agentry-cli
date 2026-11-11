@@ -9737,6 +9737,7 @@
             "TestSubagentCallNamesOnlyRosterEntries",
             "TestSubagentRefusedWhenQuarantined",
             "TestHelperRunAsksPerNewVersion",
+            "TestHelperRunWithoutAsking",
             "TestHelperRunNamesThePersonsComputer",
             "TestASubagentIsARosterEntry",
             "TestAQuestionIsAskedAndAnsweredOverTheOwnerSocket",
