@@ -503,6 +503,10 @@ status
 usage
 usage.costUsd
 usage.inputTokens
+usage.lengthRecoveries
+usage.lengthRecoveries.answer
+usage.lengthRecoveries.reasoning
+usage.lengthRecoveries.toolCall
 usage.loopNudges
 usage.outputTokens
 usage.totalTokens
@@ -573,6 +577,10 @@ runhost.adapter
 runhost.adapterAsked
 runhost.unsafeMode
 stage
+usage.lengthRecoveries
+usage.lengthRecoveries.answer
+usage.lengthRecoveries.reasoning
+usage.lengthRecoveries.toolCall
 usage.loopNudges
 usage.totalTokens
 usage.userTurns

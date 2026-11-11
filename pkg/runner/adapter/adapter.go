@@ -161,6 +161,15 @@ const (
 	// engine counts these in the receipt's usage. Text is the harness's
 	// words, which never quote the call's arguments.
 	EventLoopNudge EventKind = "loop_nudge"
+	// EventLengthRecovery says the harness took an answer the output limit
+	// cut off out of the conversation, told the model why, and went on. The
+	// cut text was already streamed as assistant text and is not the
+	// result. Text is what was cut: "answer", "reasoning" or "tool call".
+	EventLengthRecovery EventKind = "length_recovery"
+	// EventAnswerCut says the harness's last answer ended at the output
+	// limit, so the run has no complete answer. The engine ends the run on
+	// it and does not start the harness again.
+	EventAnswerCut EventKind = "answer_cut"
 	// EventEmptyAnswer says the harness reported that the model's last
 	// turn ended after its tool calls with no reply, or with reasoning
 	// only. Text is the harness's words.

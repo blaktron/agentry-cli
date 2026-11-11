@@ -182,6 +182,10 @@ const (
 	// message is never taken as a text result; it stays the run's result
 	// and in the receipts.
 	ReasonToolCallAsText ReasonCode = "tool-call-as-text"
+	// ReasonAnswerCut: the model's last answer stopped at its output limit,
+	// so the run has no complete answer (agent; exit 14). The run is not
+	// started again on its conversation, which would meet the same limit.
+	ReasonAnswerCut ReasonCode = "answer-cut"
 	// ReasonHostRefused: a target host the person named was not reached
 	// (prepare or infra). Names: the host questions' ids; Detail: why (Host*).
 	// Never the host's name or address: those are the person's.
@@ -371,6 +375,7 @@ var reasonCodes = map[ReasonCode]struct {
 	ReasonOutOfCredits:      {},
 	ReasonAnswerInReasoning: {},
 	ReasonToolCallAsText:    {},
+	ReasonAnswerCut:         {},
 	ReasonHostRefused: {names: namesQuestion, details: []string{
 		HostAddress, HostKeyUnknown, HostKeyChanged, HostAuth, HostCredential, HostUnreachable, HostHosted,
 	}},

@@ -145,7 +145,7 @@
       "name": "anthropic"
     },
     "agent": {
-      "image": "ghcr.io/blaktron/agentry-docker-agent-src:1.159.0-2026.11.10.11@sha256:892427b8d19ef28f0e023a7cb5452c00418e2906ca6fa74bd43ab0e8ae5e71b8",
+      "image": "ghcr.io/blaktron/agentry-docker-agent-src:1.160.0-2026.11.11.13@sha256:858b1d8178d7dfb1b49dc2ed764ff98a9c9c5fe763022a97b9b83b1711dd762c",
       "argv": [
         "serve",
         "acp",
@@ -218,7 +218,7 @@
     },
     "imagePin": {
       "by": "digest",
-      "value": "sha256:892427b8d19ef28f0e023a7cb5452c00418e2906ca6fa74bd43ab0e8ae5e71b8"
+      "value": "sha256:858b1d8178d7dfb1b49dc2ed764ff98a9c9c5fe763022a97b9b83b1711dd762c"
     }
   },
   "proxy": {
@@ -241,6 +241,6 @@
     "gateway/registry.yaml": "e5062e24456af9287a9376e986c8b29c6bf9f3802904ce0aa9852244b6ebc11d",
     "gateway/tools.yaml": "674c48ad9bf09113b13392d72171e4c81f2397c4c9df86a7a97ddc2dd7c2485a",
     "gateway/toolspec.json": "7f6ef3b1a82416465bdf80f7990bb1f500da9c89a0612e4f6ff6803d9f344a95",
-    "harness/agent.yaml": "088adabdc54a3ee340a6e69b181b0ed0bedaeae1127de4038cf2cb6ee490c1da"
+    "harness/agent.yaml": "83d9e13d09b3fc5b278ce2759f0a9ed3be2559fb46285e1432bfb54e24fd1ec1"
   }
 }

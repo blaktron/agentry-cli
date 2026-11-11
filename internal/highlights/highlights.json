@@ -4,7 +4,8 @@
       "version": "0.7.55",
       "highlights": [
         "Your IT department can pin Agentry's registry and require your organization's sign-in with a machine settings file.",
-        "agentry managed show lists this computer's machine settings beside your organization's."
+        "agentry managed show lists this computer's machine settings beside your organization's.",
+        "When a model's answer hits its output limit, the run now goes on, and a run that ends on a cut answer is a failure."
       ]
     },
     {
