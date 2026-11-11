@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "model": {
+    "api": "chat-completions",
+    "name": "Qwen3.6-35B-A3B",
+    "baseUrl": "http://agentry-host.internal:1234/v1",
+    "keyEnv": "AGENTRY_MODEL_KEY",
+    "maxOutputTokens": 16384,
+    "contextWindow": 65536,
+    "sampling": {
+      "temperature": 1,
+      "topP": 0.95,
+      "topK": 20,
+      "presencePenalty": 1.5
+    },
+    "extraBody": {
+      "chat_template_kwargs": {
+        "enable_thinking": true,
+        "preserve_thinking": true
+      }
+    },
+    "replayReasoning": true
+  },
+  "system": "You are an agent.",
+  "gateway": {
+    "url": "http://gateway:8811/mcp",
+    "tokenEnv": "MCP_GATEWAY_TOKEN"
+  },
+  "sessionDir": "/session"
+}
