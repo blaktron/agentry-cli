@@ -190,13 +190,19 @@ type Problem struct {
 	// when the file names none.
 	Registry string
 	Err      error
+	// Machine marks the machine settings, which only this computer's
+	// administrator can correct.
+	Machine bool
 }
 
 // Effective is every cached document together, as the engine applies
 // them.
 type Effective struct {
-	// Documents are the verified documents, by registry.
+	// Documents are the verified documents, by registry. The machine
+	// settings, when this computer has any, come first, with no registry.
 	Documents []State
+	// Machine is this computer's machine settings; nil for none.
+	Machine *Machine
 	// Problems are what could not be verified. While there is one, no run
 	// starts: what it held is unknown, and it may lock anything.
 	Problems []Problem
@@ -205,14 +211,14 @@ type Effective struct {
 // Registry is the part of e that is registryURL's.
 func (e Effective) Registry(registryURL string) Effective {
 	reg := normalize(registryURL)
-	var out Effective
+	out := Effective{Machine: e.Machine}
 	for _, d := range e.Documents {
-		if d.Registry == reg {
+		if d.Registry == reg || d.Registry == "" {
 			out.Documents = append(out.Documents, d)
 		}
 	}
 	for _, p := range e.Problems {
-		if p.Registry == reg {
+		if p.Registry == reg || p.Registry == "" {
 			out.Problems = append(out.Problems, p)
 		}
 	}
@@ -235,6 +241,9 @@ func (e Effective) RunRefusal() string {
 	}
 	if len(e.Problems) > 0 {
 		return problemRefusal("No run starts", e.Problems[0])
+	}
+	if r := e.RequireOrgRefusal(); r != "" {
+		return r
 	}
 	return e.VersionRefusal()
 }
@@ -335,6 +344,9 @@ func (e Effective) UnsafeModeRefusal() string {
 }
 
 func problemRefusal(what string, p Problem) string {
+	if p.Machine {
+		return fmt.Sprintf("%s while %v; ask this computer's administrator to correct them", what, p.Err)
+	}
 	where := p.Registry
 	if where == "" {
 		where = "this computer"

@@ -3387,6 +3387,32 @@
           ]
         },
         {
+          "path": "pkg/managed/machine_owner_unix_test.go",
+          "tests": [
+            "TestTheMachineSettingsFileMustBeTheAdministrators"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
+          ]
+        },
+        {
+          "path": "pkg/managed/machine_test.go",
+          "tests": [
+            "TestMachineSettingsAreChecked",
+            "TestMachineSettingsComeFirstAndHoldEveryRegistry",
+            "TestRequireOrgRefusesRunsUntilTheMemberIsSignedIn",
+            "TestUnusableMachineSettingsRefuseEveryRun",
+            "TestMachineRegistryIsThePin"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "pkg/managed/managed_test.go",
           "tests": [
             "TestRefreshCachesAVerifiedDocumentAndLoadVerifiesItAgain",

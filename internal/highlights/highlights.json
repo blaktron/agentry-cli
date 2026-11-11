@@ -1,6 +1,13 @@
 {
   "versions": [
     {
+      "version": "0.7.55",
+      "highlights": [
+        "Your IT department can pin Agentry's registry and require your organization's sign-in with a machine settings file.",
+        "agentry managed show lists this computer's machine settings beside your organization's."
+      ]
+    },
+    {
       "version": "0.7.54",
       "highlights": [
         "Built with Go 1.27.4, which fixes a security issue in Go's HTTP library."
