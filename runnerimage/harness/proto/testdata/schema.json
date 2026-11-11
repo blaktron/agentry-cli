@@ -87,7 +87,8 @@
     ],
     "model.api": [
       "anthropic",
-      "chat-completions"
+      "chat-completions",
+      "openai-responses"
     ]
   },
   "version": 1

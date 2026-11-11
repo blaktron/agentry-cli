@@ -39,6 +39,8 @@ const (
 	// APIChat is OpenAI-style Chat Completions, as OpenAI-compatible
 	// servers speak it.
 	APIChat = "chat-completions"
+	// APIResponses is the OpenAI Responses API.
+	APIResponses = "openai-responses"
 )
 
 // Model says how the model is reached.
@@ -53,8 +55,8 @@ type Model struct {
 	// KeyEnv names the environment variable that holds the key. Empty is
 	// a server that takes none, which only Chat Completions allows.
 	KeyEnv string `json:"keyEnv,omitempty"`
-	// MaxOutputTokens is the most output asked of one request. Zero, which
-	// only Chat Completions allows, leaves the limit to the server.
+	// MaxOutputTokens is the most output asked of one request. Zero leaves
+	// the limit to the server, which the Anthropic API does not allow.
 	MaxOutputTokens int `json:"maxOutputTokens,omitempty"`
 	// ContextWindow is the model's window in tokens, zero when unknown.
 	ContextWindow int `json:"contextWindow,omitempty"`
@@ -104,7 +106,7 @@ func DecodeConfig(r io.Reader) (Config, error) {
 		return Config{}, fmt.Errorf("harness configuration: version %d, this harness reads version %d", c.Version, Version)
 	}
 	switch c.Model.API {
-	case APIAnthropic:
+	case APIAnthropic, APIResponses:
 		switch {
 		case c.Model.KeyEnv == "":
 			return Config{}, fmt.Errorf("harness configuration: model.keyEnv is empty")

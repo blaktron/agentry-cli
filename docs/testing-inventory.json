@@ -2228,7 +2228,9 @@
             "TestOneRunOnAChatCompletionsModel",
             "TestAServerThatTakesNoKeyIsSentNone",
             "TestEachServersTooLongRefusalIsAnOverflow",
-            "TestChatCompletionsFailuresAndCutAnswers"
+            "TestChatCompletionsFailuresAndCutAnswers",
+            "TestOneRunOnOpenAIsOwnAPI",
+            "TestOpenAIsOwnAPICutCallsAndRefusals"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -2326,7 +2328,9 @@
             "TestAConnectionThatDrops",
             "TestRequestsAreRecordedAsSent",
             "TestPrefixOf",
-            "TestARequestPastTheScriptFailsTheTest"
+            "TestARequestPastTheScriptFailsTheTest",
+            "TestResponsesStreamsAReply",
+            "TestResponsesRequestsAreRecorded"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -4384,6 +4388,7 @@
             "TestAgentryHarnessRefusesWhatItCannotRun",
             "TestAgentryHarnessReachesAServerOfThePersonsOwn",
             "TestAgentryHarnessRoutersAndCredits",
+            "TestAgentryHarnessReachesOpenAIsOwnAPI",
             "TestAgentryHarnessSendsNoKeyToAServerThatTakesNone",
             "TestAgentryHarnessEvents",
             "TestAgentryHarnessErrorsSayWhatTheEngineActsOn"
@@ -11563,6 +11568,20 @@
             "TestChatReadsAReply",
             "TestChatReadsWhatServersDoDifferently",
             "TestChatFailures"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "HTTP transport"
+          ]
+        },
+        {
+          "path": "runnerimage/harness/llm/responses_test.go",
+          "tests": [
+            "TestResponsesBuildsTheRequest",
+            "TestResponsesReadsAReply",
+            "TestResponsesEndingsAndFailures"
           ],
           "fuzz": [],
           "benchmarks": [],

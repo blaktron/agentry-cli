@@ -823,3 +823,103 @@ func TestChatCompletionsFailuresAndCutAnswers(t *testing.T) {
 		t.Errorf("a cut call reached the gateway: %v", got)
 	}
 }
+
+// openai makes a run's model one on OpenAI's own API, on the scripted server.
+func openai(model *scriptedmodel.Server) func(map[string]any) {
+	return func(c map[string]any) {
+		c["model"] = map[string]any{"api": "openai-responses", "name": "gpt-test", "baseUrl": model.URL() + "/v1", "keyEnv": "MODEL_KEY", "maxOutputTokens": 4096, "contextWindow": 400000}
+	}
+}
+
+func TestOneRunOnOpenAIsOwnAPI(t *testing.T) {
+	model := scriptedmodel.New(t,
+		scriptedmodel.ToolCalls(scriptedmodel.Call{ID: "call_1", Name: "fs_read", Arguments: `{"path":"a.txt"}`}).
+			WithText("I will read it.").WithReasoning("The file comes first.").
+			WithUsage(scriptedmodel.Usage{Input: 940, Output: 30, Reasoning: 12}),
+		scriptedmodel.Text("It holds one word: hello.").
+			WithUsage(scriptedmodel.Usage{Input: 12, CacheRead: 940, Output: 9}),
+	)
+	g := newGateway(t, "fs_write", "fs_read")
+	g.call = func(context.Context, string, json.RawMessage) (string, string) {
+		return `{"content":[{"type":"text","text":"hello"}]}`, ""
+	}
+
+	code, events, stderr := run(t, model, g, runOpts{configEdit: openai(model)})
+	if code != harness.ExitAnswered {
+		t.Fatalf("exit %d, stderr: %s", code, stderr)
+	}
+	if got, want := types(events), "ready reasoning text usage tool_call tool_result text usage turn_end"; got != want {
+		t.Fatalf("events: %s\nwant:   %s", got, want)
+	}
+	if end := last(t, events, proto.TypeTurnEnd); end.Reason != proto.EndAnswered || end.Text != "It holds one word: hello." {
+		t.Errorf("turn_end: %+v", end)
+	}
+	var usages []proto.Usage
+	for _, ev := range events {
+		if ev.Type == proto.TypeUsage {
+			usages = append(usages, *ev.Usage)
+		}
+	}
+	if len(usages) != 2 || usages[1] != (proto.Usage{Input: 12, CacheRead: 940, Output: 9, ContextTokens: 952, ContextLimit: 400000}) {
+		t.Errorf("usage: %+v", usages)
+	}
+
+	reqs := model.Requests()
+	if len(reqs) != 2 {
+		t.Fatalf("%d model requests, want 2", len(reqs))
+	}
+	first, second := reqs[0], reqs[1]
+	if first.API != scriptedmodel.Responses || first.Path != "/v1/responses" || first.Header.Get("Authorization") != "Bearer "+modelKey {
+		t.Errorf("request: %s %s", first.API, first.Path)
+	}
+	if first.Model != "gpt-test" || !first.Stream || first.MaxTokens != 4096 || first.System != "You are a careful agent." || strings.Join(first.Tools, ",") != "fs_read,fs_write" {
+		t.Errorf("request: %+v", first)
+	}
+	if first.Store == nil || *first.Store || strings.Join(first.Include, ",") != "reasoning.encrypted_content" {
+		t.Errorf("the request keeps state on the server: store %v, include %v", first.Store, first.Include)
+	}
+	// The task, then the reply's items as they came, then the call's output.
+	if len(second.Messages) != 5 {
+		t.Fatalf("second request has %d input items, want 5", len(second.Messages))
+	}
+	if m := second.Messages[1]; m.Reasoning != "The file comes first." || !strings.Contains(string(m.Raw), `"encrypted_content":"encrypted-1"`) {
+		t.Errorf("the reasoning item did not go back with its encrypted content: %s", m.Raw)
+	}
+	if m := second.Messages[2]; m.Role != "assistant" || m.Text != "I will read it." {
+		t.Errorf("the answer's text sent back: %+v", m)
+	}
+	if m := second.Messages[3]; len(m.Calls) != 1 || m.Calls[0] != (scriptedmodel.Call{ID: "call_1", Name: "fs_read", Arguments: `{"path":"a.txt"}`}) {
+		t.Errorf("the call sent back: %+v", m)
+	}
+	if m := second.Messages[4]; len(m.Results) != 1 || m.Results[0] != (scriptedmodel.Result{CallID: "call_1", Text: "hello"}) {
+		t.Errorf("the result sent back: %+v", m)
+	}
+	if err := scriptedmodel.PrefixOf(first, second); err != nil {
+		t.Errorf("the second request does not continue the first: %v", err)
+	}
+}
+
+func TestOpenAIsOwnAPICutCallsAndRefusals(t *testing.T) {
+	model := scriptedmodel.New(t,
+		scriptedmodel.CutToolCall("fs_write", `{"path":"report.md","content":"# Fin`),
+		scriptedmodel.Overflow(scriptedmodel.OpenAI, 400000),
+		scriptedmodel.Status(503, "The server is overloaded."),
+	)
+	g := newGateway(t, "fs_write")
+
+	code, events, _ := run(t, model, g, runOpts{configEdit: openai(model)})
+	if code != harness.ExitIncomplete || last(t, events, proto.TypeTurnEnd).Reason != proto.EndAnswerCut {
+		t.Errorf("a cut call: exit %d, %s", code, types(events))
+	}
+	if got := g.called(); len(got) != 0 {
+		t.Errorf("a cut call reached the gateway: %v", got)
+	}
+	_, events, _ = run(t, model, g, runOpts{configEdit: openai(model)})
+	if ev := last(t, events, proto.TypeError); ev.Class != proto.ClassOverflow || ev.Status != 400 {
+		t.Errorf("a conversation refused as too long: %+v", ev)
+	}
+	_, events, _ = run(t, model, g, runOpts{configEdit: openai(model)})
+	if ev := last(t, events, proto.TypeError); ev.Class != proto.ClassCapacity || ev.Status != 503 {
+		t.Errorf("an overloaded server: %+v", ev)
+	}
+}
