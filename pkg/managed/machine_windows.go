@@ -10,11 +10,6 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-// machineKey is the Group Policy key Agentry's machine settings are under.
-// HKLM\SOFTWARE\Policies is writable only by administrators by default;
-// the key's own ACL is the administrator's to keep that way.
-const machineKey = `SOFTWARE\Policies\SecureAgentry\Agentry`
-
 // platformMachineSource reads the policy key's values Registry,
 // RequireOrg and Settings (a JSON object), as the JSON the file holds on
 // other systems.

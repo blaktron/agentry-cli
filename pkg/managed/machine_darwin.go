@@ -12,7 +12,7 @@ import (
 
 // machinePath is where a configuration profile's managed preferences for
 // Agentry land: the domain net.secureagentry.agentry.
-var machinePath = "/Library/Managed Preferences/net.secureagentry.agentry.plist"
+var machinePath = "/Library/Managed Preferences/" + macDomain + ".plist"
 
 // platformMachineSource reads the managed preferences, held to an
 // administrator's ownership first, as JSON through plutil, which reads

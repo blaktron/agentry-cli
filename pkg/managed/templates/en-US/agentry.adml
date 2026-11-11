@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<policyDefinitionResources xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" revision="1.0" schemaVersion="1.0" xmlns="http://schemas.microsoft.com/GroupPolicy/2006/07/PolicyDefinitions">
+  <displayName>Agentry</displayName>
+  <description>Agentry's machine settings: the registry it uses, the organization a person must be signed in to, and settings held before the organization's.</description>
+  <resources>
+    <stringTable>
+      <string id="Agentry">Agentry</string>
+      <string id="SUPPORTED_Agentry_0_7_55">Agentry CLI 0.7.55 or later</string>
+      <string id="Registry">Pin the registry</string>
+      <string id="Registry_Explain">Agentry uses this registry and offers no other, whatever a person or their configuration names. Give an https address, for example https://secureagentry.net.</string>
+      <string id="RequireOrg">Require an organization</string>
+      <string id="RequireOrg_Explain">No run starts until the person is signed in to the pinned registry as an active member of this organization. Give the organization's handle. The organization must hold at least one managed setting. Needs Pin the registry.</string>
+      <string id="Settings">Managed settings</string>
+      <string id="Settings_Explain">Managed settings as a JSON object, each setting's id mapped to {"value": ..., "locked": true or false}, for example {"run.unsafeMode": {"value": "forbidden", "locked": true}}. They are held before the organization's, so a lock here wins. A source may be member or off.</string>
+    </stringTable>
+    <presentationTable>
+      <presentation id="Registry">
+        <textBox refId="RegistryValue"><label>Registry address</label></textBox>
+      </presentation>
+      <presentation id="RequireOrg">
+        <textBox refId="RequireOrgValue"><label>Organization handle</label></textBox>
+      </presentation>
+      <presentation id="Settings">
+        <textBox refId="SettingsValue"><label>Settings (JSON)</label></textBox>
+      </presentation>
+    </presentationTable>
+  </resources>
+</policyDefinitionResources>
