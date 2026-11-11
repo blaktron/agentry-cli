@@ -34,7 +34,11 @@ type Config struct {
 
 // Wire APIs a model is reached by.
 const (
+	// APIAnthropic is the Anthropic Messages API.
 	APIAnthropic = "anthropic"
+	// APIChat is OpenAI-style Chat Completions, as OpenAI-compatible
+	// servers speak it.
+	APIChat = "chat-completions"
 )
 
 // Model says how the model is reached.
@@ -46,12 +50,35 @@ type Model struct {
 	// BaseURL is the server's address with no trailing slash. Empty is
 	// the API's own.
 	BaseURL string `json:"baseUrl,omitempty"`
-	// KeyEnv names the environment variable that holds the key.
-	KeyEnv string `json:"keyEnv"`
-	// MaxOutputTokens is the most output asked of one request.
-	MaxOutputTokens int `json:"maxOutputTokens"`
+	// KeyEnv names the environment variable that holds the key. Empty is
+	// a server that takes none, which only Chat Completions allows.
+	KeyEnv string `json:"keyEnv,omitempty"`
+	// MaxOutputTokens is the most output asked of one request. Zero, which
+	// only Chat Completions allows, leaves the limit to the server.
+	MaxOutputTokens int `json:"maxOutputTokens,omitempty"`
 	// ContextWindow is the model's window in tokens, zero when unknown.
 	ContextWindow int `json:"contextWindow,omitempty"`
+	// Sampling is sent with every request; a field left out is the
+	// server's own default. Chat Completions only.
+	Sampling *Sampling `json:"sampling,omitempty"`
+	// ExtraBody is a JSON object whose members are added to every
+	// request's body as they are (a server's own switches, such as its
+	// chat template's arguments). Chat Completions only.
+	ExtraBody json.RawMessage `json:"extraBody,omitempty"`
+	// ReplayReasoning sends the model's earlier reasoning back with each
+	// assistant message, for a model whose template expects it. Chat
+	// Completions only; the Anthropic API always takes its own back.
+	ReplayReasoning bool `json:"replayReasoning,omitempty"`
+}
+
+// Sampling is the sampling a model is asked to use.
+type Sampling struct {
+	Temperature       *float64 `json:"temperature,omitempty"`
+	TopP              *float64 `json:"topP,omitempty"`
+	TopK              *int64   `json:"topK,omitempty"`
+	MinP              *float64 `json:"minP,omitempty"`
+	PresencePenalty   *float64 `json:"presencePenalty,omitempty"`
+	RepetitionPenalty *float64 `json:"repetitionPenalty,omitempty"`
 }
 
 // Gateway is the one source of tools: an MCP server over streamable HTTP.
@@ -76,14 +103,31 @@ func DecodeConfig(r io.Reader) (Config, error) {
 	if c.Version != Version {
 		return Config{}, fmt.Errorf("harness configuration: version %d, this harness reads version %d", c.Version, Version)
 	}
-	switch {
-	case c.Model.API != APIAnthropic:
+	switch c.Model.API {
+	case APIAnthropic:
+		switch {
+		case c.Model.KeyEnv == "":
+			return Config{}, fmt.Errorf("harness configuration: model.keyEnv is empty")
+		case c.Model.Sampling != nil || len(c.Model.ExtraBody) > 0 || c.Model.ReplayReasoning:
+			return Config{}, fmt.Errorf("harness configuration: model.sampling, model.extraBody and model.replayReasoning are for model.api %q", APIChat)
+		}
+	case APIChat:
+		if c.Model.BaseURL == "" {
+			return Config{}, fmt.Errorf("harness configuration: model.baseUrl is empty, and model.api %q has no address of its own", APIChat)
+		}
+		if len(c.Model.ExtraBody) > 0 {
+			var obj map[string]json.RawMessage
+			if json.Unmarshal(c.Model.ExtraBody, &obj) != nil || obj == nil {
+				return Config{}, fmt.Errorf("harness configuration: model.extraBody is not a JSON object")
+			}
+		}
+	default:
 		return Config{}, fmt.Errorf("harness configuration: model.api %q is not one this harness speaks", c.Model.API)
+	}
+	switch {
 	case c.Model.Name == "":
 		return Config{}, fmt.Errorf("harness configuration: model.name is empty")
-	case c.Model.KeyEnv == "":
-		return Config{}, fmt.Errorf("harness configuration: model.keyEnv is empty")
-	case c.Model.MaxOutputTokens <= 0:
+	case c.Model.MaxOutputTokens < 0 || c.Model.MaxOutputTokens == 0 && c.Model.API == APIAnthropic:
 		return Config{}, fmt.Errorf("harness configuration: model.maxOutputTokens must be positive")
 	case c.Gateway.URL == "":
 		return Config{}, fmt.Errorf("harness configuration: gateway.url is empty")

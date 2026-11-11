@@ -115,10 +115,31 @@ func say(w io.Writer, a ...any) {
 // modelClient is the client for the configuration's wire API.
 // DecodeConfig has already refused an API this harness does not speak.
 func modelClient(cfg proto.Config, client *http.Client, env Env) llm.Client {
+	key := func() string {
+		if cfg.Model.KeyEnv == "" {
+			return ""
+		}
+		return env(cfg.Model.KeyEnv)
+	}
+	if cfg.Model.API == proto.APIChat {
+		c := &llm.Chat{
+			BaseURL:         cfg.Model.BaseURL,
+			Model:           cfg.Model.Name,
+			Key:             key,
+			HTTP:            client,
+			ExtraBody:       cfg.Model.ExtraBody,
+			ReplayReasoning: cfg.Model.ReplayReasoning,
+		}
+		if s := cfg.Model.Sampling; s != nil {
+			c.Temperature, c.TopP, c.TopK, c.MinP = s.Temperature, s.TopP, s.TopK, s.MinP
+			c.PresencePenalty, c.RepetitionPenalty = s.PresencePenalty, s.RepetitionPenalty
+		}
+		return c
+	}
 	return &llm.Anthropic{
 		BaseURL: cfg.Model.BaseURL,
 		Model:   cfg.Model.Name,
-		Key:     func() string { return env(cfg.Model.KeyEnv) },
+		Key:     key,
 		HTTP:    client,
 	}
 }
