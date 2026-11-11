@@ -1,0 +1,83 @@
+{
+  "config": {
+    "gateway": {
+      "tokenEnv": "string",
+      "url": "string"
+    },
+    "maxSteps": "int, optional",
+    "model": {
+      "api": "string",
+      "baseUrl": "string, optional",
+      "contextWindow": "int, optional",
+      "keyEnv": "string",
+      "maxOutputTokens": "int",
+      "name": "string"
+    },
+    "sessionDir": "string",
+    "system": "string",
+    "version": "int"
+  },
+  "event": {
+    "arguments": "json, optional",
+    "callId": "string, optional",
+    "class": "string, optional",
+    "code": "string, optional",
+    "conversation": "string, optional",
+    "failed": "bool, optional",
+    "reason": "string, optional",
+    "retryAfterSeconds": "int, optional",
+    "seq": "int64",
+    "status": "int, optional",
+    "text": "string, optional",
+    "tool": "string, optional",
+    "tools": [
+      "string"
+    ],
+    "type": "string",
+    "unchanged": "bool, optional",
+    "usage": {
+      "cacheRead": "int64",
+      "cacheWrite": "int64",
+      "contextLimit": "int64, optional",
+      "contextTokens": "int64",
+      "input": "int64",
+      "output": "int64"
+    },
+    "v": "int"
+  },
+  "values": {
+    "event.class": [
+      "overflow",
+      "capacity",
+      "rate_limit",
+      "credits",
+      "auth",
+      "request",
+      "transport",
+      "server",
+      "gateway",
+      "harness"
+    ],
+    "event.reason": [
+      "answered",
+      "answer_cut",
+      "error",
+      "max_steps"
+    ],
+    "event.type": [
+      "ready",
+      "text",
+      "reasoning",
+      "tool_call",
+      "tool_result",
+      "usage",
+      "warning",
+      "error",
+      "turn_end"
+    ],
+    "model.api": [
+      "anthropic"
+    ]
+  },
+  "version": 1
+}

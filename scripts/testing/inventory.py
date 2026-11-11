@@ -16,6 +16,7 @@ OUTPUT = ROOT / "docs/testing-inventory.json"
 # assertions, never inferred from this catalogue.
 PURPOSES = {
     "cmd/agentry": "The agentry command surface: commands, flags, JSON output, exit codes and their wiring to the runner and the registry",
+    "internal/harnesstest": "Runs the runner's own harness end to end against a scripted model and a scripted tool gateway: what the model is sent, what the gateway is sent, the events and the record",
     "internal/highlights": "What each release of the agentry CLI brings, in a few plain lines for the person using it",
     "internal/origin": "Compares URLs by origin: scheme, host and port",
     "internal/pastruns": "Reads the runs a person has made from their output folders: every folder directly under an output",
@@ -116,6 +117,9 @@ PURPOSES = {
     "runnerimage/confine": "A declared exec command to the places it may write",
     "runnerimage/decode": "The runner image's `decode` role: it turns the documents under one directory into plain text under",
     "runnerimage/docpages": "The runner image's `pages` role: a document the Report Designer is given, a PDF's first pages rendered by poppler or a Word document's theme, running text and pictures, and the facts the host and the tools server agree on",
+    "runnerimage/harness/convo": "A conversation's append-only record and the messages a model request is built from: a call with no recorded result is answered as failed and never run again",
+    "runnerimage/harness/llm": "The harness's model clients: what a request carries on the wire, what a reply's stream adds up to, and how a failure is classed",
+    "runnerimage/harness/proto": "The contract between the runner and its own harness: the configuration, read strictly, and the events",
     "runnerimage/hostlink": "The runner's host link: the MCP server through which an agent works a target host, a machine the person",
     "runnerimage/ical": "Reads an iCalendar (RFC 5545) feed, the ICS document a calendar service publishes at a subscription",
     "runnerimage/messenger": "The messenger role of the runner image: the one container that holds a messenger account's credential and",
