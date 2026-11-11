@@ -665,3 +665,161 @@ func TestAGatewayThatRefusesTheBearerEndsTheRunBeforeTheModel(t *testing.T) {
 		t.Error("the model was reached with no tools")
 	}
 }
+
+// chat makes a run's model a Chat Completions one on the scripted server.
+func chat(model *scriptedmodel.Server, edit func(m map[string]any)) func(map[string]any) {
+	return func(c map[string]any) {
+		m := map[string]any{"api": "chat-completions", "name": "local-test", "baseUrl": model.URL() + "/v1", "keyEnv": "MODEL_KEY", "contextWindow": 32768}
+		if edit != nil {
+			edit(m)
+		}
+		c["model"] = m
+	}
+}
+
+func TestOneRunOnAChatCompletionsModel(t *testing.T) {
+	model := scriptedmodel.New(t,
+		scriptedmodel.ToolCalls(scriptedmodel.Call{ID: "call_1", Name: "fs_read", Arguments: `{"path":"a.txt"}`}).
+			WithText("I will read it.").WithReasoning("The file comes first.").
+			WithUsage(scriptedmodel.Usage{Input: 940, Output: 30, Reasoning: 12}),
+		scriptedmodel.Text("It holds one word: hello.").
+			WithUsage(scriptedmodel.Usage{Input: 12, CacheRead: 940, Output: 9}),
+	)
+	g := newGateway(t, "fs_write", "fs_read")
+	g.call = func(context.Context, string, json.RawMessage) (string, string) {
+		return `{"content":[{"type":"text","text":"hello"}]}`, ""
+	}
+
+	code, events, stderr := run(t, model, g, runOpts{configEdit: chat(model, func(m map[string]any) {
+		m["maxOutputTokens"] = 2048
+		m["sampling"] = map[string]any{"temperature": 0.6, "topK": 20}
+		m["extraBody"] = map[string]any{"chat_template_kwargs": map[string]any{"enable_thinking": true}}
+		m["replayReasoning"] = true
+	})})
+	if code != harness.ExitAnswered {
+		t.Fatalf("exit %d, stderr: %s", code, stderr)
+	}
+	if got, want := types(events), "ready reasoning text usage tool_call tool_result text usage turn_end"; got != want {
+		t.Fatalf("events: %s\nwant:   %s", got, want)
+	}
+	var usages []proto.Usage
+	for _, ev := range events {
+		if ev.Type == proto.TypeUsage {
+			usages = append(usages, *ev.Usage)
+		}
+	}
+	want := []proto.Usage{
+		{Input: 940, Output: 30, ContextTokens: 940, ContextLimit: 32768},
+		{Input: 12, CacheRead: 940, Output: 9, ContextTokens: 952, ContextLimit: 32768},
+	}
+	if len(usages) != 2 || usages[0] != want[0] || usages[1] != want[1] {
+		t.Errorf("usage %+v\nwant  %+v", usages, want)
+	}
+	if end := last(t, events, proto.TypeTurnEnd); end.Reason != proto.EndAnswered || end.Text != "It holds one word: hello." {
+		t.Errorf("turn_end: %+v", end)
+	}
+
+	reqs := model.Requests()
+	if len(reqs) != 2 {
+		t.Fatalf("%d model requests, want 2", len(reqs))
+	}
+	first, second := reqs[0], reqs[1]
+	if first.API != scriptedmodel.ChatCompletions || first.Path != "/v1/chat/completions" || first.Header.Get("Authorization") != "Bearer "+modelKey {
+		t.Errorf("request: %s %s, Authorization %q", first.API, first.Path, first.Header.Get("Authorization"))
+	}
+	if first.Model != "local-test" || !first.Stream || !first.IncludeUsage || first.MaxTokens != 2048 || first.System != "You are a careful agent." {
+		t.Errorf("request: %+v", first)
+	}
+	if strings.Join(first.Tools, ",") != "fs_read,fs_write" {
+		t.Errorf("tools offered: %v", first.Tools)
+	}
+	for _, want := range []string{`"temperature":0.6`, `"top_k":20`, `"chat_template_kwargs":{"enable_thinking":true}`} {
+		if !strings.Contains(string(first.Body), want) {
+			t.Errorf("the request lacks %s:\n%s", want, first.Body)
+		}
+	}
+	// system, user, assistant, tool.
+	if len(second.Messages) != 4 {
+		t.Fatalf("second request has %d messages, want 4", len(second.Messages))
+	}
+	if m := second.Messages[2]; m.Role != "assistant" || m.Text != "I will read it." || m.Reasoning != "The file comes first." || len(m.Calls) != 1 || m.Calls[0].ID != "call_1" || m.Calls[0].Arguments != `{"path":"a.txt"}` {
+		t.Errorf("the reply sent back: %+v", m)
+	}
+	if m := second.Messages[3]; m.Role != "tool" || len(m.Results) != 1 || m.Results[0] != (scriptedmodel.Result{CallID: "call_1", Text: "hello"}) {
+		t.Errorf("the result sent back: %+v", m)
+	}
+	if err := scriptedmodel.PrefixOf(first, second); err != nil {
+		t.Errorf("the second request does not continue the first: %v", err)
+	}
+}
+
+func TestAServerThatTakesNoKeyIsSentNone(t *testing.T) {
+	model := scriptedmodel.New(t, scriptedmodel.Text("Done."))
+	g := newGateway(t, "fs_read")
+	code, _, stderr := run(t, model, g, runOpts{configEdit: chat(model, func(m map[string]any) { delete(m, "keyEnv") })})
+	if code != harness.ExitAnswered {
+		t.Fatalf("exit %d, stderr: %s", code, stderr)
+	}
+	req := model.Requests()[0]
+	if _, has := req.Header["Authorization"]; has {
+		t.Errorf("an Authorization header reached a server that takes no key: %v", req.Header["Authorization"])
+	}
+	if req.MaxTokens != 0 || strings.Contains(string(req.Body), "max_tokens") {
+		t.Errorf("a limit was sent though the configuration named none: %s", req.Body)
+	}
+}
+
+func TestEachServersTooLongRefusalIsAnOverflow(t *testing.T) {
+	dialects := map[string]scriptedmodel.Dialect{
+		"OpenAI": scriptedmodel.OpenAI, "vLLM": scriptedmodel.VLLM, "llama.cpp": scriptedmodel.LlamaCpp,
+		"LM Studio": scriptedmodel.LMStudio, "Ollama": scriptedmodel.Ollama,
+	}
+	for name, d := range dialects {
+		t.Run(name, func(t *testing.T) {
+			model := scriptedmodel.New(t, scriptedmodel.Overflow(d, 4096))
+			g := newGateway(t, "fs_read")
+			code, events, _ := run(t, model, g, runOpts{configEdit: chat(model, nil)})
+			if code != harness.ExitFailed {
+				t.Errorf("exit %d, want %d", code, harness.ExitFailed)
+			}
+			if ev := last(t, events, proto.TypeError); ev.Class != proto.ClassOverflow || ev.Text == "" {
+				t.Errorf("error event: %+v", ev)
+			}
+		})
+	}
+}
+
+func TestChatCompletionsFailuresAndCutAnswers(t *testing.T) {
+	model := scriptedmodel.New(t,
+		scriptedmodel.RateLimited(20*time.Second),
+		scriptedmodel.Status(503, "The server is overloaded."),
+		scriptedmodel.Stall("Working"),
+		scriptedmodel.CutToolCall("fs_write", `{"path":"report.md","content":"# Fin`),
+	)
+	g := newGateway(t, "fs_write")
+	edit := chat(model, nil)
+
+	_, events, _ := run(t, model, g, runOpts{configEdit: edit})
+	if ev := last(t, events, proto.TypeError); ev.Class != proto.ClassRateLimit || ev.Status != 429 || ev.RetryAfterSeconds != 20 {
+		t.Errorf("a rate limit: %+v", ev)
+	}
+	_, events, _ = run(t, model, g, runOpts{configEdit: edit})
+	if ev := last(t, events, proto.TypeError); ev.Class != proto.ClassCapacity || ev.Status != 503 {
+		t.Errorf("an overloaded server: %+v", ev)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	code, events, _ := run(t, model, g, runOpts{configEdit: edit, ctx: ctx})
+	if code != harness.ExitFailed || last(t, events, proto.TypeTurnEnd).Reason != proto.EndError {
+		t.Errorf("a stalled stream cut off by the runner: exit %d, %s", code, types(events))
+	}
+
+	code, events, _ = run(t, model, g, runOpts{configEdit: edit})
+	if code != harness.ExitIncomplete || last(t, events, proto.TypeTurnEnd).Reason != proto.EndAnswerCut {
+		t.Errorf("a cut call: exit %d, %s", code, types(events))
+	}
+	if got := g.called(); len(got) != 0 {
+		t.Errorf("a cut call reached the gateway: %v", got)
+	}
+}

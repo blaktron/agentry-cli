@@ -9,9 +9,19 @@
       "api": "string",
       "baseUrl": "string, optional",
       "contextWindow": "int, optional",
-      "keyEnv": "string",
-      "maxOutputTokens": "int",
-      "name": "string"
+      "extraBody": "json, optional",
+      "keyEnv": "string, optional",
+      "maxOutputTokens": "int, optional",
+      "name": "string",
+      "replayReasoning": "bool, optional",
+      "sampling": {
+        "minP": "float64, optional",
+        "presencePenalty": "float64, optional",
+        "repetitionPenalty": "float64, optional",
+        "temperature": "float64, optional",
+        "topK": "int64, optional",
+        "topP": "float64, optional"
+      }
     },
     "sessionDir": "string",
     "system": "string",
@@ -76,7 +86,8 @@
       "turn_end"
     ],
     "model.api": [
-      "anthropic"
+      "anthropic",
+      "chat-completions"
     ]
   },
   "version": 1

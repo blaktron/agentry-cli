@@ -2224,7 +2224,11 @@
             "TestAGatewayThatStreamsPagesAndReturnsMoreThanText",
             "TestTheStepLimitEndsATurn",
             "TestNothingIsSentOnAConfigurationThatCannotBeUsed",
-            "TestAGatewayThatRefusesTheBearerEndsTheRunBeforeTheModel"
+            "TestAGatewayThatRefusesTheBearerEndsTheRunBeforeTheModel",
+            "TestOneRunOnAChatCompletionsModel",
+            "TestAServerThatTakesNoKeyIsSentNone",
+            "TestEachServersTooLongRefusalIsAnOverflow",
+            "TestChatCompletionsFailuresAndCutAnswers"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -4378,13 +4382,18 @@
             "TestAgentryHarnessCompilesAConfigurationItsHarnessReads",
             "TestAgentryHarnessTakesThePolicysOutputLimitAndASchema",
             "TestAgentryHarnessRefusesWhatItCannotRun",
+            "TestAgentryHarnessReachesAServerOfThePersonsOwn",
+            "TestAgentryHarnessRoutersAndCredits",
+            "TestAgentryHarnessSendsNoKeyToAServerThatTakesNone",
             "TestAgentryHarnessEvents",
             "TestAgentryHarnessErrorsSayWhatTheEngineActsOn"
           ],
           "fuzz": [],
           "benchmarks": [],
           "fixtureEntryPoint": false,
-          "dependencyHints": []
+          "dependencyHints": [
+            "explicit skip"
+          ]
         },
         {
           "path": "pkg/runner/adapter/budget_test.go",
@@ -11546,6 +11555,21 @@
           "dependencyHints": [
             "HTTP transport"
           ]
+        },
+        {
+          "path": "runnerimage/harness/llm/chat_test.go",
+          "tests": [
+            "TestChatBuildsTheRequest",
+            "TestChatReadsAReply",
+            "TestChatReadsWhatServersDoDifferently",
+            "TestChatFailures"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "HTTP transport"
+          ]
         }
       ]
     },
@@ -11558,6 +11582,7 @@
           "path": "runnerimage/harness/proto/proto_test.go",
           "tests": [
             "TestAConfigurationGoesThroughUnchanged",
+            "TestAChatCompletionsConfiguration",
             "TestDecodeConfigRefuses",
             "TestTheContractIsWhatTheSchemaSays"
           ],

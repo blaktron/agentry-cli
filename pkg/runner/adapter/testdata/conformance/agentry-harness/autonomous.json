@@ -1,6 +1,6 @@
 {
   "files": {
-    "harness.json": "{\n  \"version\": 1,\n  \"model\": {\n    \"api\": \"anthropic\",\n    \"name\": \"fixture-model\",\n    \"keyEnv\": \"AGENTRY_MODEL_KEY\",\n    \"maxOutputTokens\": 32000\n  },\n  \"system\": \"You are the conformance fixture. Read the inputs, write one report.\",\n  \"gateway\": {\n    \"url\": \"http://gateway:8811/mcp\",\n    \"tokenEnv\": \"MCP_GATEWAY_TOKEN\"\n  },\n  \"sessionDir\": \"/session\"\n}\n"
+    "harness.json": "{\n  \"version\": 1,\n  \"model\": {\n    \"api\": \"chat-completions\",\n    \"name\": \"fixture-model\",\n    \"baseUrl\": \"https://model.example/v1\",\n    \"keyEnv\": \"AGENTRY_MODEL_KEY\"\n  },\n  \"system\": \"You are the conformance fixture. Read the inputs, write one report.\",\n  \"gateway\": {\n    \"url\": \"http://gateway:8811/mcp\",\n    \"tokenEnv\": \"MCP_GATEWAY_TOKEN\"\n  },\n  \"sessionDir\": \"/session\"\n}\n"
   },
   "agent": {
     "image": "harness:fixture",
@@ -19,11 +19,7 @@
       },
       {
         "name": "AGENTRY_MODEL_KEY",
-        "fromHostEnv": "FIXTURE_API_KEY",
-        "expectedKind": {
-          "provider": "anthropic",
-          "kind": "api"
-        }
+        "fromHostEnv": "FIXTURE_API_KEY"
       },
       {
         "name": "HTTPS_PROXY",
@@ -56,6 +52,6 @@
       "/tmp:mode=1777"
     ]
   },
-  "model": "anthropic/fixture-model",
+  "model": "openai/fixture-model",
   "resultKind": "text"
 }

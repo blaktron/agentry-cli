@@ -36,8 +36,8 @@ const (
 	// key from in its container. The policy's variable is where the value
 	// comes from on the host.
 	agentryHarnessKeyEnv = "AGENTRY_MODEL_KEY"
-	// agentryHarnessMaxOutput is the output asked of one request when the
-	// policy names none.
+	// agentryHarnessMaxOutput is the output asked of one Anthropic request
+	// when the policy names none.
 	agentryHarnessMaxOutput = 32000
 )
 
@@ -55,28 +55,49 @@ func (a *agentryHarnessAdapter) Compile(in Input) (Result, error) {
 	default:
 		return Result{}, fmt.Errorf("%s adapter: unknown run mode %q", AgentryHarnessAdapterName, in.Mode)
 	}
-	if in.Model.Provider != policy.ProviderAnthropic {
-		return Result{}, &Refusal{Reason: fmt.Sprintf("the %s adapter reaches Anthropic models only; the policy's model provider is %q", AgentryHarnessAdapterName, in.Model.Provider)}
+	api, baseURL, err := agentryHarnessEndpoint(in.Model)
+	if err != nil {
+		return Result{}, err
 	}
 	if policy.KeyKind(in.Harness, in.Model) == policy.KeyKindSubscription {
 		return Result{}, &Refusal{Reason: "apiKeyKind subscription: " + policy.SubscriptionTokenSentence}
 	}
 
 	instruction, resultKind := schemaInstruction(in.Instruction, in.SchemaJSON)
-	maxOutput := int(in.Model.MaxOutputTokens)
-	if maxOutput <= 0 {
-		maxOutput = agentryHarnessMaxOutput
+	model := proto.Model{
+		API:             api,
+		Name:            in.Model.Name,
+		BaseURL:         baseURL,
+		KeyEnv:          agentryHarnessKeyEnv,
+		MaxOutputTokens: int(in.Model.MaxOutputTokens),
+		ContextWindow:   int(in.Model.ContextWindow),
+	}
+	// The key: the run's credits session for the registry's own endpoint,
+	// none for a server that takes none, else the variable the policy
+	// names (or the keychain account beside it).
+	var key *spec.EnvVar
+	switch {
+	case in.Model.Provider == policy.ProviderAgentry:
+		key = &spec.EnvVar{Name: agentryHarnessKeyEnv, FromInference: true}
+	case policy.TakesNoKey(in.Harness, in.Model):
+		model.KeyEnv = ""
+	default:
+		key = &spec.EnvVar{Name: agentryHarnessKeyEnv, FromHostEnv: policy.KeyEnv(in.Harness, in.Model), FromKeyring: keyringAccount(in)}
+		if in.Model.Provider == policy.ProviderAnthropic {
+			key.ExpectedKind = anthropicKeyExpectation(in)
+		}
+	}
+	if api == proto.APIAnthropic {
+		// The API requires a limit on every request.
+		if model.MaxOutputTokens <= 0 {
+			model.MaxOutputTokens = agentryHarnessMaxOutput
+		}
+	} else {
+		agentryHarnessModelSettings(&model, in.Model)
 	}
 	cfg := proto.Config{
-		Version: proto.Version,
-		Model: proto.Model{
-			API:             proto.APIAnthropic,
-			Name:            in.Model.Name,
-			BaseURL:         strings.TrimRight(in.Model.BaseURL, "/"),
-			KeyEnv:          agentryHarnessKeyEnv,
-			MaxOutputTokens: maxOutput,
-			ContextWindow:   int(in.Model.ContextWindow),
-		},
+		Version:    proto.Version,
+		Model:      model,
 		System:     instruction,
 		Gateway:    proto.Gateway{URL: in.GatewayURL, TokenEnv: spec.GatewayTokenEnv},
 		SessionDir: spec.SessionMount,
@@ -86,26 +107,24 @@ func (a *agentryHarnessAdapter) Compile(in Input) (Result, error) {
 		return Result{}, fmt.Errorf("%s adapter: %w", AgentryHarnessAdapterName, err)
 	}
 
+	env := []spec.EnvVar{{Name: spec.GatewayTokenEnv, FromRunToken: true}}
+	if key != nil {
+		env = append(env, *key)
+	}
+	env = append(env,
+		// The proxy is the agent container's only route out; NO_PROXY
+		// keeps the gateway's traffic direct on the run network.
+		spec.EnvVar{Name: "HTTPS_PROXY", Value: spec.ProxyURL()},
+		spec.EnvVar{Name: "HTTP_PROXY", Value: spec.ProxyURL()},
+		spec.EnvVar{Name: "NO_PROXY", Value: spec.GatewayAlias + ",localhost,127.0.0.1"},
+	)
 	agent := spec.ContainerSpec{
 		Image: in.HarnessImage,
 		Argv: []string{"harness", "run",
 			"--config", spec.PlanMount + "/" + agentryHarnessConfig,
 			"--conversation", spec.PHConversation},
 		User: agentryHarnessUser,
-		Env: []spec.EnvVar{
-			{Name: spec.GatewayTokenEnv, FromRunToken: true},
-			{
-				Name:         agentryHarnessKeyEnv,
-				FromHostEnv:  policy.KeyEnv(in.Harness, in.Model),
-				FromKeyring:  keyringAccount(in),
-				ExpectedKind: anthropicKeyExpectation(in),
-			},
-			// The proxy is the agent container's only route out; NO_PROXY
-			// keeps the gateway's traffic direct on the run network.
-			{Name: "HTTPS_PROXY", Value: spec.ProxyURL()},
-			{Name: "HTTP_PROXY", Value: spec.ProxyURL()},
-			{Name: "NO_PROXY", Value: spec.GatewayAlias + ",localhost,127.0.0.1"},
-		},
+		Env:  env,
 		Mounts: []spec.Mount{
 			{Source: spec.PHCfg + "/harness", Target: spec.PlanMount, ReadOnly: true},
 			// The conversation's record, the container's one writable
@@ -126,6 +145,74 @@ func (a *agentryHarnessAdapter) Compile(in Input) (Result, error) {
 		// on the conversation it recorded.
 		Resume: &spec.ResumeSpec{SessionDB: spec.SessionMount, StoreOwner: agentryHarnessUser},
 	}, nil
+}
+
+// The OpenAI-compatible endpoints of the hosted routers, each the provider's
+// own unless the policy names another.
+var agentryHarnessBaseURLs = map[string]string{
+	policy.ProviderOpenRouter:  "https://openrouter.ai/api/v1",
+	policy.ProviderHuggingFace: "https://router.huggingface.co/v1",
+	policy.ProviderPoe:         poeBaseURL,
+	policy.ProviderVultr:       vultrBaseURL,
+}
+
+// agentryHarnessEndpoint is the wire API and address a policy's model is
+// reached by, or the refusal of a provider the harness does not reach yet.
+func agentryHarnessEndpoint(m policy.Model) (api, baseURL string, err error) {
+	base := strings.TrimRight(strings.TrimSpace(m.BaseURL), "/")
+	switch {
+	case m.Provider == policy.ProviderAnthropic:
+		return proto.APIAnthropic, base, nil
+	case m.OwnEndpoint(), m.Provider == policy.ProviderAgentry:
+		// A server of the person's own, or the registry's model
+		// endpoint: the address is the policy's.
+		if base == "" {
+			return "", "", &Refusal{Reason: fmt.Sprintf("the %s adapter needs model.baseUrl for the model provider %q", AgentryHarnessAdapterName, m.Provider)}
+		}
+		return proto.APIChat, base, nil
+	}
+	if known, ok := agentryHarnessBaseURLs[m.Provider]; ok {
+		if base == "" {
+			base = known
+		}
+		return proto.APIChat, base, nil
+	}
+	return "", "", &Refusal{Reason: fmt.Sprintf("the %s adapter does not reach the model provider %q yet", AgentryHarnessAdapterName, m.Provider)}
+}
+
+// agentryHarnessModelSettings fills a Chat Completions model's sampling,
+// answer limit and reasoning settings from the model family's profile and
+// the policy's own keys, the same ones every container harness is given.
+func agentryHarnessModelSettings(out *proto.Model, m policy.Model) {
+	sampling, opts := modelSettings(m)
+	if sampling.MaxTokens > 0 {
+		out.MaxOutputTokens = int(sampling.MaxTokens)
+	}
+	s := proto.Sampling{
+		Temperature: sampling.Temperature, TopP: sampling.TopP, PresencePenalty: sampling.PresencePenalty,
+		TopK: opts.TopK, MinP: opts.MinP, RepetitionPenalty: opts.RepetitionPenalty,
+	}
+	if s != (proto.Sampling{}) {
+		out.Sampling = &s
+	}
+	if opts.ReplayReasoning != nil {
+		out.ReplayReasoning = *opts.ReplayReasoning
+	}
+	if opts.ExtraBody != nil && opts.ExtraBody.ChatTemplateKwargs != nil {
+		k := opts.ExtraBody.ChatTemplateKwargs
+		kwargs := map[string]bool{}
+		if k.EnableThinking != nil {
+			kwargs["enable_thinking"] = *k.EnableThinking
+		}
+		if k.PreserveThinking != nil {
+			kwargs["preserve_thinking"] = *k.PreserveThinking
+		}
+		if len(kwargs) > 0 {
+			// Map keys are written in order, so the bytes are the same
+			// for the same settings.
+			out.ExtraBody, _ = json.Marshal(map[string]any{"chat_template_kwargs": kwargs})
+		}
+	}
 }
 
 // Events maps one line of the harness's output. The line is a proto.Event;
@@ -191,6 +278,12 @@ func agentryHarnessErrorText(ev proto.Event) string {
 		text = fmt.Sprintf("HTTP %d: %s", ev.Status, text)
 	}
 	switch ev.Class {
+	case proto.ClassOverflow:
+		// Nothing shortens a conversation yet, so one the server refuses
+		// as too long ends the run. The server's own wording is left to
+		// the recorded event: the engine reads it as a failure to carry on
+		// from, and carrying on would only be refused again.
+		return "the model's server refused the conversation as too long for the model; its own words are in the run's recorded events"
 	case proto.ClassCapacity:
 		return "the model's server is overloaded (" + text + ")"
 	case proto.ClassTransport:
