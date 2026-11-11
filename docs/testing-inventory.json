@@ -3437,7 +3437,8 @@
             "TestRollbackIsRefusedAcrossAChangeOfOrganization",
             "TestDocumentsVerifyWithTheirOwnRegistrysPinsWhateverPinRegistrySays",
             "TestTheNarrowingASentRunCarries",
-            "TestADocumentSignedByAHandedOverKeyReachesAMemberPinnedBefore"
+            "TestADocumentSignedByAHandedOverKeyReachesAMemberPinnedBefore",
+            "TestAColleaguesDocumentReplayedIntoTheCacheIsRefused"
           ],
           "fuzz": [],
           "benchmarks": [],

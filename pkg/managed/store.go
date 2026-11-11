@@ -240,6 +240,11 @@ func inspect(reg string) (*State, *Problem) {
 	if err := seen.notOlder(doc); err != nil {
 		return fail(err)
 	}
+	// A document bound to its members is held to the account the answers
+	// were for, so one signed for another member is refused here too.
+	if err := doc.For(seen.Account); err != nil {
+		return fail(err)
+	}
 	return &State{Registry: reg, Document: doc, FetchedAt: f.FetchedAt}, nil
 }
 

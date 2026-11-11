@@ -82,6 +82,9 @@ func Refresh(ctx context.Context, hc *http.Client, registryURL, token string) (*
 	case doc.Org != me.org:
 		return nil, fmt.Errorf("managed settings from %s: the document is %s's, not those of %s, the organization the signed-in account is a member of", reg, doc.Org, me.org)
 	}
+	if err := doc.For(me.id); err != nil {
+		return nil, fmt.Errorf("managed settings from %s: %w", reg, err)
+	}
 	seen, err := readSeen(reg)
 	if err != nil {
 		return nil, fmt.Errorf("managed settings from %s: %w", reg, err)
