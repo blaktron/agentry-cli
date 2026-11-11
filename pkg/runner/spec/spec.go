@@ -1308,6 +1308,10 @@ type ContainerSpec struct {
 	Env  []EnvVar `json:"env,omitempty"`
 	// Mounts are bind mounts (host source may hold placeholders).
 	Mounts []Mount `json:"mounts,omitempty"`
+	// User is the user the container runs as ("uid:gid"); empty keeps the
+	// image's own. An adapter whose image runs as root for its other roles
+	// names an unprivileged one here.
+	User string `json:"user,omitempty"`
 	// StdinTask: the engine pipes the task text into stdin.
 	StdinTask bool `json:"stdinTask,omitempty"`
 	// ReadOnlyRoot runs the container with a read-only root filesystem and

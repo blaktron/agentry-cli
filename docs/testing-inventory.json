@@ -4373,6 +4373,20 @@
           ]
         },
         {
+          "path": "pkg/runner/adapter/agentryharness_test.go",
+          "tests": [
+            "TestAgentryHarnessCompilesAConfigurationItsHarnessReads",
+            "TestAgentryHarnessTakesThePolicysOutputLimitAndASchema",
+            "TestAgentryHarnessRefusesWhatItCannotRun",
+            "TestAgentryHarnessEvents",
+            "TestAgentryHarnessErrorsSayWhatTheEngineActsOn"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "pkg/runner/adapter/budget_test.go",
           "tests": [
             "TestEveryAdapterHasAMeasuredResultBudget",
@@ -4894,6 +4908,17 @@
       "behavior": "The capability compiler: it turns manifest + operator policy into the run plan — generated gateway file",
       "disposition": "retain",
       "files": [
+        {
+          "path": "pkg/runner/compile/agentryharness_test.go",
+          "tests": [
+            "TestTheRunnersOwnHarnessIsPinnedByItsSource",
+            "TestTheRunnersOwnHarnessHasNoResultLimitToName"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
         {
           "path": "pkg/runner/compile/budget_test.go",
           "tests": [
