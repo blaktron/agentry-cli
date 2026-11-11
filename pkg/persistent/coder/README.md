@@ -58,7 +58,9 @@ run secret. Under `capabilities.persistent` it declares skills (`skills`),
 the stored secret it asks for (`secrets`: `BRAVE_API_KEY`; you may store
 others) and the coding toolchain (`coder`: any program in its toolchain
 image, open egress, a public browser, a dev server, ports and git host
-accounts, each a switch you agree to). When the application runs the Coding agent, it gives it what
+accounts, each a switch you agree to) and the applications on your computer
+(`desktop`: the applications you approved in Agentry Desktop, and computer
+use, each a switch you agree to). When the application runs the Coding agent, it gives it what
 follows.
 `agentry agent show coder` lists what it has, and its first start asks you to
 agree to each part:
@@ -128,6 +130,16 @@ agree to each part:
   agent passes to its tools, never its projects. Agentry ships no Semgrep
   rules, and Semgrep's terms apply
   (`agentry agent configure coder --add-suggested semgrep`).
+- **Your computer**, through Agentry Desktop, when you switch it on: each
+  application you approved in Plugins → Your computer for its MCP server,
+  its "code without asking" agreement, and computer use, which lets it see
+  and use the windows of the applications you approved for it (a desktop app
+  it is building, an editor, a browser window). Each is off until you switch
+  it on and agree, a switch takes effect at its next turn, and Agentry
+  Desktop shows when it uses your screen and stops it on your key. It needs
+  Agentry Desktop running on this computer, and on your computer it is
+  outside the sandbox's network and file rules. See
+  https://docs.secureagentry.net/agentry/your-computer/.
 - **What you add**: knowledge packs from your computer and MCP servers.
 
 Each part is an entry of its roster that you can switch off, and switching

@@ -341,6 +341,61 @@ func TestHelperRunAsksPerNewVersion(t *testing.T) {
 	}
 }
 
+// TestHelperRunNamesThePersonsComputer: the agreement before an agent's
+// first run of a release that uses the person's computer says so, in the
+// install's words, and that Agentry Desktop holds it to what the person
+// approved there; a release that does not, says nothing of it.
+func TestHelperRunNamesThePersonsComputer(t *testing.T) {
+	home := shortHome(t)
+	a := installPublished(t, home, "acme", "helper", "1.0.0", publishedRelease{extra: "capabilities:\n  persistent:\n    helper: true\n"})
+	enableAgent(t, home, a)
+	host, ops := &fakeHost{}, &fakeHelper{version: "1.0.0"}
+	sv, _ := startPublished(t, home, a, host, ops)
+	var mu sync.Mutex
+	var asked []string
+	stop := sv.addAsker(func(r Reply) {
+		mu.Lock()
+		asked = append(asked, r.Event.Text)
+		mu.Unlock()
+		go func() { _ = sv.answer(r.Event.Question, true) }()
+	})
+	defer stop()
+	last := func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		if len(asked) == 0 {
+			return ""
+		}
+		return asked[len(asked)-1]
+	}
+
+	if ans := call(t, home, a.Name, "quickagent_run", `{"ref":"acme/tool","task":"Do it"}`); ans.IsError {
+		t.Fatalf("a run without the line: %+v", ans)
+	}
+	if q := last(); strings.Contains(q, "your computer through Agentry Desktop") {
+		t.Errorf("a release that does not use the computer says it does: %q", q)
+	}
+
+	host.mu.Lock()
+	host.usage.Desktop = []string{"the application kcalc on your computer, through its windows only", "can see and use the windows of kcalc on your computer"}
+	host.mu.Unlock()
+	ops.mu.Lock()
+	ops.version = "1.1.0"
+	ops.mu.Unlock()
+	if ans := call(t, home, a.Name, "quickagent_run", `{"ref":"acme/tool","task":"Do it"}`); ans.IsError {
+		t.Fatalf("a run with the line: %+v", ans)
+	}
+	q := last()
+	for _, want := range []string{
+		"It uses your computer through Agentry Desktop, only as far as you approved it there:",
+		"the application kcalc on your computer, through its windows only; can see and use the windows of kcalc on your computer.",
+	} {
+		if !strings.Contains(q, want) {
+			t.Errorf("the question lacks %q: %q", want, q)
+		}
+	}
+}
+
 // TestASubagentIsARosterEntry: a pinned subagent and one the person adds are
 // each an entry, on, granted by the release or by the person, whose sentence
 // names the version and what its contract reaches, beside a switch that asks

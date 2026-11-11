@@ -102,7 +102,7 @@ func (c cliSubagents) Check(ctx context.Context, registry, exact string) (persis
 	if m.IsPersistent() || !m.Supports(manifest.ModeAutonomous) {
 		return none, errors.New("it does not run as an autonomous QuickAgent, so it never runs as a subagent")
 	}
-	var u persistent.SubagentUsage
+	u := persistent.SubagentUsage{Desktop: desktopUse(m.Capabilities.Desktop)}
 	for _, q := range howToRun(&m).Intake {
 		if q.PersonsOwn {
 			continue
@@ -169,6 +169,22 @@ func (c cliSubagents) runArgs(r persistent.SubagentRunSpec, task string) []strin
 		args = append(args, "--intake", id+"="+r.Answers[id])
 	}
 	return args
+}
+
+// desktopUse is what a desktop line uses of the person's computer, in the
+// install's words: each application, then computer use.
+func desktopUse(d *manifest.Desktop) []string {
+	if d == nil {
+		return nil
+	}
+	var use []string
+	for _, srv := range d.Servers {
+		use = append(use, manifest.DescribeDesktopServer(srv))
+	}
+	if words := manifest.DescribeComputerUse(d); words != "" {
+		use = append(use, words)
+	}
+	return use
 }
 
 // splitExact reads ns/name@version.
