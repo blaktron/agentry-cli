@@ -195,3 +195,145 @@ func TestProfilePlanBytesAreDeterministic(t *testing.T) {
 		t.Error("Qwen3.6 does not send preserve_thinking")
 	}
 }
+
+// shape is a profile with its values spelled out, nil for a key not sent.
+type shape struct {
+	temp, topP, presence, rep *float64
+	topK                      *int64
+	cap                       int64
+	enable, preserve, replay  *bool
+}
+
+func shapeOf(p *profile) shape {
+	return shape{p.temperature, p.topP, p.presencePenalty, p.repetitionPenalty, p.topK, p.answerCap,
+		p.enableThinking, p.preserveThinking, p.replayReasoning}
+}
+
+// Each family's values as its card gives them on ProfilesCheckedOn; a family
+// whose card states no output length has no cap, and a family whose template
+// default is right sends no kwarg.
+func TestProfileFamilyValues(t *testing.T) {
+	T := ptrB(true)
+	cases := []struct {
+		name string
+		want shape
+	}{
+		{"Qwen3.8-27B", shape{temp: ptrF(1), topP: ptrF(0.95), topK: ptrI(20), presence: ptrF(0), cap: 393216, enable: T, replay: T}},
+		{"Qwen3.8-Flash-Next", shape{temp: ptrF(1), topP: ptrF(0.95), topK: ptrI(20), presence: ptrF(0), cap: 393216, enable: T, replay: T}},
+		{"Qwen/Qwen3-Coder-480B-A35B-Instruct", shape{temp: ptrF(0.7), topP: ptrF(0.8), topK: ptrI(20), rep: ptrF(1.05), cap: 65536}},
+		{"Qwen3-Coder-Next", shape{temp: ptrF(1), topP: ptrF(0.95), topK: ptrI(40), cap: 65536}},
+		{"DeepSeek-V4.1-Flash-1017", shape{temp: ptrF(1), topP: ptrF(1), cap: 262144, replay: T}},
+		{"DeepSeek-R1-0528", shape{temp: ptrF(0.6), topP: ptrF(0.95)}},
+		{"DeepSeek-V3.2", shape{temp: ptrF(0.6), topP: ptrF(0.95)}},
+		{"GLM-5.3", shape{temp: ptrF(1), topP: ptrF(0.95)}},
+		{"GLM-5.3-Flash", shape{temp: ptrF(1), topP: ptrF(0.95)}},
+		{"GLM-4.7", shape{temp: ptrF(1), topP: ptrF(0.95)}},
+		{"GLM-4.6", shape{temp: ptrF(1), topP: ptrF(0.95)}},
+		{"Kimi-K3.1", shape{temp: ptrF(1), topP: ptrF(0.95), replay: T}},
+		{"Kimi-K2.6", shape{temp: ptrF(1), topP: ptrF(0.95), replay: T}},
+		{"MiniMax-M2.7", shape{temp: ptrF(1), topP: ptrF(0.95), topK: ptrI(40), replay: T}},
+		{"MiniMax-M3.1-Flash", shape{temp: ptrF(1), topP: ptrF(0.95), replay: T}},
+		{"Magistral-Small-2509", shape{temp: ptrF(0.7), topP: ptrF(0.95), cap: 131072}},
+		{"Mistral-Small-4-119B-2603", shape{temp: ptrF(0.7)}},
+		{"Mistral-Large-4", shape{temp: ptrF(1), topP: ptrF(0.95)}},
+		{"Devstral-2-123B-Instruct-2512", shape{temp: ptrF(0.15)}},
+		{"gemma-4-31B-it", shape{temp: ptrF(1), topP: ptrF(0.95), topK: ptrI(64)}},
+		{"granite-4.2-30b", shape{temp: ptrF(1), topP: ptrF(0.95), cap: 8192}},
+	}
+	for _, c := range cases {
+		p := profileFor(c.name)
+		if p == nil {
+			t.Errorf("%s: no profile", c.name)
+			continue
+		}
+		if got := shapeOf(p); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s: %+v, want %+v", c.name, got, c.want)
+		}
+	}
+}
+
+// Gemma 4 ships with thinking off and its profile leaves it off.
+func TestProfileGemmaThinkingStaysAtItsDefault(t *testing.T) {
+	if p := profileFor("gemma-4-31B-it"); p.enableThinking != nil || p.preserveThinking != nil {
+		t.Error("gemma-4 sends a thinking kwarg")
+	}
+}
+
+// Families whose card states no sampling render nothing.
+func TestProfileCardsWithoutSamplingRenderNothing(t *testing.T) {
+	for _, n := range []string{"gpt-oss-120b", "gpt-oss-20b", "Llama-4-Scout-17B-16E-Instruct", "Llama-4-Maverick", "Mistral-7B-Instruct", "DeepSeek-V4-Pro-0813"} {
+		m := renderedModel(t, ownModel(n, 131072))
+		for _, k := range []string{"temperature", "top_p", "max_tokens", "presence_penalty"} {
+			if _, ok := m[k]; ok {
+				t.Errorf("%s renders %s", n, k)
+			}
+		}
+	}
+}
+
+// A name that fits two families takes the more specific one.
+func TestProfileMoreSpecificNameWins(t *testing.T) {
+	cases := []struct {
+		specific, general string
+		topK              int64
+	}{
+		{"Qwen3-Coder-Next-80B-A3B", "Qwen3-Coder-30B-A3B-Instruct", 40},
+		{"Qwen3-Coder-30B-A3B-Instruct", "Qwen3.6-35B-A3B", 20},
+	}
+	for _, c := range cases {
+		s, g := profileFor(c.specific), profileFor(c.general)
+		if s == nil || g == nil || reflect.DeepEqual(shapeOf(s), shapeOf(g)) {
+			t.Errorf("%s and %s share a profile", c.specific, c.general)
+		}
+	}
+	// Coder-Next has no thinking switch; the Qwen3.x models have one.
+	if profileFor("Qwen3-Coder-Next").enableThinking != nil || profileFor("Qwen3.5-35B-A3B").enableThinking == nil {
+		t.Error("Qwen3-Coder-Next took a Qwen3.x profile")
+	}
+	// Mistral Large, Small, Magistral and Devstral each have their own.
+	seen := map[float64]string{}
+	for _, n := range []string{"Mistral-Large-4", "Mistral-Small-4-119B", "Magistral-Small-2509", "Devstral-2-123B"} {
+		p := profileFor(n)
+		if p == nil {
+			t.Fatalf("%s has no profile", n)
+		}
+		key := *p.temperature*1000 + float64(p.answerCap)
+		if prev, dup := seen[key]; dup {
+			t.Errorf("%s and %s share a profile", n, prev)
+		}
+		seen[key] = n
+	}
+	// Nemotron 3 and Llama-Nemotron: the Llama models have none.
+	if profileFor("Llama-3.3-Nemotron-Super-49B-v1.5") != nil || profileFor("NVIDIA-Nemotron-3-Super-120B") == nil {
+		t.Error("Nemotron match crosses into Llama-Nemotron")
+	}
+	// DeepSeek V4.1 against R1 and V3.
+	if a, b := profileFor("DeepSeek-V4.1-Flash"), profileFor("DeepSeek-V3.1"); *a.topP != 1 || *b.topP != 0.95 {
+		t.Error("DeepSeek V4.1 and V3 share a profile")
+	}
+	// MiniMax M2.7 against M3.
+	if profileFor("MiniMax-M2.7").topK == nil || profileFor("MiniMax-M3.1").topK != nil {
+		t.Error("MiniMax M2.7 and M3 share a profile")
+	}
+}
+
+// A repetition penalty from a card reaches provider_opts.
+func TestProfileRepetitionPenaltyRenders(t *testing.T) {
+	m := renderedModel(t, ownModel("Qwen3-Coder-30B-A3B-Instruct", 262144))
+	if o := opts(t, m); o["repetition_penalty"] != 1.05 || o["top_k"] != 20 {
+		t.Errorf("provider_opts %v", o)
+	}
+	if _, ok := m["presence_penalty"]; ok {
+		t.Error("Qwen3-Coder renders a presence penalty")
+	}
+	// A family without a card length has no cap until the person sets one.
+	g := renderedModel(t, ownModel("GLM-5.3", 131072))
+	if _, ok := g["max_tokens"]; ok {
+		t.Error("GLM renders a cap")
+	}
+	pm := ownModel("GLM-5.3", 131072)
+	pm.MaxOutputTokens = 4096
+	if got := renderedModel(t, pm)["max_tokens"]; got != 4096 {
+		t.Errorf("max_tokens = %v", got)
+	}
+}

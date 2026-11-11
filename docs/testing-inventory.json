@@ -4606,7 +4606,12 @@
             "TestProfileAnswerCapIsAQuarterOfASmallWindow",
             "TestProfileUnknownFamilyRendersNothingNew",
             "TestProfilePolicyKeysOverrideKeyByKey",
-            "TestProfilePlanBytesAreDeterministic"
+            "TestProfilePlanBytesAreDeterministic",
+            "TestProfileFamilyValues",
+            "TestProfileGemmaThinkingStaysAtItsDefault",
+            "TestProfileCardsWithoutSamplingRenderNothing",
+            "TestProfileMoreSpecificNameWins",
+            "TestProfileRepetitionPenaltyRenders"
           ],
           "fuzz": [],
           "benchmarks": [],
