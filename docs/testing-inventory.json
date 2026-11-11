@@ -12589,6 +12589,23 @@
           ]
         },
         {
+          "path": "runnerimage/toolsrv/repeat_test.go",
+          "tests": [
+            "TestTheThirdIdenticalCallCarriesTheNoticeAndTheSixthRepeatsIt",
+            "TestArgumentKeyOrderAndSpacingDoNotMakeACallDistinct",
+            "TestAChangedResultIsNotARepeat",
+            "TestTheThirdFailureWithTheSameErrorCarriesTheNotice",
+            "TestADifferentErrorIsNotTheSameFailure",
+            "TestTheNoticeBlocksNothing"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
+          ]
+        },
+        {
           "path": "runnerimage/toolsrv/reread_test.go",
           "tests": [
             "TestAnIdenticalRereadInATurnIsAnsweredUnchanged",
