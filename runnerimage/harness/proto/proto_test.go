@@ -124,7 +124,7 @@ func TestTheContractIsWhatTheSchemaSays(t *testing.T) {
 			"event.type":   {TypeReady, TypeText, TypeReasoning, TypeToolCall, TypeToolResult, TypeUsage, TypeWarning, TypeError, TypeTurnEnd},
 			"event.reason": {EndAnswered, EndAnswerCut, EndError, EndMaxSteps},
 			"event.class":  {ClassOverflow, ClassCapacity, ClassRateLimit, ClassCredits, ClassAuth, ClassRequest, ClassTransport, ClassServer, ClassGateway, ClassHarness},
-			"model.api":    {APIAnthropic, APIChat, APIResponses},
+			"model.api":    {APIAnthropic, APIChat, APIResponses, APIGemini},
 		},
 	}
 	var buf bytes.Buffer

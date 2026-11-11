@@ -73,6 +73,9 @@ func parseRequest(r *http.Request, body []byte) Request {
 	case strings.HasSuffix(r.URL.Path, "/responses"):
 		req.API = Responses
 		return parseResponsesRequest(req, body)
+	case strings.HasSuffix(r.URL.Path, ":generateContent"), strings.HasSuffix(r.URL.Path, ":streamGenerateContent"):
+		req.API = Gemini
+		return parseGeminiRequest(req, body)
 	default:
 		return req
 	}
@@ -333,6 +336,105 @@ func parseResponsesRequest(req Request, body []byte) Request {
 			}
 		default:
 			m.Role, m.Text = item.Role, blocksText(item.Content)
+		}
+		req.Messages = append(req.Messages, m)
+	}
+	return req
+}
+
+// parseGeminiRequest reads a Gemini generateContent request. The model is
+// named in the path (…/models/<model>:streamGenerateContent), and a request
+// to the streaming method is a stream.
+func parseGeminiRequest(req Request, body []byte) Request {
+	if i := strings.LastIndex(req.Path, "/models/"); i >= 0 {
+		req.Model, _, _ = strings.Cut(req.Path[i+len("/models/"):], ":")
+	}
+	req.Stream = strings.HasSuffix(req.Path, ":streamGenerateContent")
+	var wire struct {
+		SystemInstruction json.RawMessage   `json:"systemInstruction"`
+		Contents          []json.RawMessage `json:"contents"`
+		Tools             json.RawMessage   `json:"tools"`
+		GenerationConfig  struct {
+			MaxOutputTokens int `json:"maxOutputTokens"`
+		} `json:"generationConfig"`
+	}
+	if json.Unmarshal(body, &wire) != nil {
+		return req
+	}
+	req.MaxTokens = wire.GenerationConfig.MaxOutputTokens
+	req.system, req.tools = wire.SystemInstruction, wire.Tools
+	var decls []struct {
+		FunctionDeclarations []struct {
+			Name string `json:"name"`
+		} `json:"functionDeclarations"`
+	}
+	if json.Unmarshal(wire.Tools, &decls) == nil {
+		for _, d := range decls {
+			for _, f := range d.FunctionDeclarations {
+				req.Tools = append(req.Tools, f.Name)
+			}
+		}
+	}
+	type part struct {
+		Text         string `json:"text"`
+		Thought      bool   `json:"thought"`
+		FunctionCall *struct {
+			ID   string          `json:"id"`
+			Name string          `json:"name"`
+			Args json.RawMessage `json:"args"`
+		} `json:"functionCall"`
+		FunctionResponse *struct {
+			ID       string `json:"id"`
+			Name     string `json:"name"`
+			Response struct {
+				Output *string `json:"output"`
+				Error  *string `json:"error"`
+			} `json:"response"`
+		} `json:"functionResponse"`
+	}
+	var sys struct {
+		Parts []part `json:"parts"`
+	}
+	if json.Unmarshal(wire.SystemInstruction, &sys) == nil {
+		for _, p := range sys.Parts {
+			req.System += p.Text
+		}
+	}
+	for _, raw := range wire.Contents {
+		var content struct {
+			Role  string `json:"role"`
+			Parts []part `json:"parts"`
+		}
+		m := Message{Raw: raw}
+		if json.Unmarshal(raw, &content) != nil {
+			req.Messages = append(req.Messages, m)
+			continue
+		}
+		m.Role = content.Role
+		if m.Role == "model" {
+			m.Role = "assistant"
+		}
+		for _, p := range content.Parts {
+			switch {
+			case p.FunctionCall != nil:
+				m.Calls = append(m.Calls, Call{ID: p.FunctionCall.ID, Name: p.FunctionCall.Name, Arguments: string(p.FunctionCall.Args)})
+			case p.FunctionResponse != nil:
+				r := Result{CallID: p.FunctionResponse.ID}
+				if r.CallID == "" {
+					r.CallID = p.FunctionResponse.Name
+				}
+				switch {
+				case p.FunctionResponse.Response.Error != nil:
+					r.Text, r.IsError = *p.FunctionResponse.Response.Error, true
+				case p.FunctionResponse.Response.Output != nil:
+					r.Text = *p.FunctionResponse.Response.Output
+				}
+				m.Results = append(m.Results, r)
+			case p.Thought:
+				m.Reasoning += p.Text
+			default:
+				m.Text += p.Text
+			}
 		}
 		req.Messages = append(req.Messages, m)
 	}

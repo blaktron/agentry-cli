@@ -923,3 +923,104 @@ func TestOpenAIsOwnAPICutCallsAndRefusals(t *testing.T) {
 		t.Errorf("an overloaded server: %+v", ev)
 	}
 }
+
+// gemini makes a run's model a Gemini one on the scripted server.
+func gemini(model *scriptedmodel.Server) func(map[string]any) {
+	return func(c map[string]any) {
+		c["model"] = map[string]any{"api": "gemini", "name": "gemini-test", "baseUrl": model.URL(), "keyEnv": "MODEL_KEY", "maxOutputTokens": 4096, "contextWindow": 1048576}
+	}
+}
+
+func TestOneRunOnGemini(t *testing.T) {
+	model := scriptedmodel.New(t,
+		scriptedmodel.ToolCalls(
+			scriptedmodel.Call{Name: "fs_read", Arguments: `{"path":"a.txt"}`},
+			scriptedmodel.Call{Name: "fs_read", Arguments: `{"path":"b.txt"}`},
+		).WithText("I will read them.").WithReasoning("Two files.").
+			WithUsage(scriptedmodel.Usage{Input: 940, Output: 30, Reasoning: 12}),
+		scriptedmodel.Text("Both hold one word.").
+			WithUsage(scriptedmodel.Usage{Input: 12, CacheRead: 940, Output: 9}),
+	)
+	g := newGateway(t, "fs_write", "fs_read")
+	g.call = func(_ context.Context, _ string, args json.RawMessage) (string, string) {
+		if strings.Contains(string(args), "b.txt") {
+			return `{"content":[{"type":"text","text":"no such file"}],"isError":true}`, ""
+		}
+		return `{"content":[{"type":"text","text":"hello"}]}`, ""
+	}
+
+	code, events, stderr := run(t, model, g, runOpts{configEdit: gemini(model)})
+	if code != harness.ExitAnswered {
+		t.Fatalf("exit %d, stderr: %s", code, stderr)
+	}
+	if got, want := types(events), "ready reasoning text usage tool_call tool_result tool_call tool_result text usage turn_end"; got != want {
+		t.Fatalf("events: %s\nwant:   %s", got, want)
+	}
+	if end := last(t, events, proto.TypeTurnEnd); end.Reason != proto.EndAnswered || end.Text != "Both hold one word." {
+		t.Errorf("turn_end: %+v", end)
+	}
+	// The server gave the two calls no ids; the harness's must differ, or
+	// one call's result would answer the other.
+	var ids []string
+	for _, ev := range events {
+		if ev.Type == proto.TypeToolCall {
+			ids = append(ids, ev.CallID)
+		}
+	}
+	if len(ids) != 2 || ids[0] == "" || ids[0] == ids[1] {
+		t.Errorf("call ids: %v", ids)
+	}
+
+	reqs := model.Requests()
+	if len(reqs) != 2 {
+		t.Fatalf("%d model requests, want 2", len(reqs))
+	}
+	first, second := reqs[0], reqs[1]
+	if first.API != scriptedmodel.Gemini || first.Model != "gemini-test" || !first.Stream || first.Header.Get("x-goog-api-key") != modelKey {
+		t.Errorf("request: %s %s", first.API, first.Path)
+	}
+	if first.MaxTokens != 4096 || first.System != "You are a careful agent." || strings.Join(first.Tools, ",") != "fs_read,fs_write" {
+		t.Errorf("request: %+v", first)
+	}
+	if len(second.Messages) != 3 {
+		t.Fatalf("second request has %d messages, want 3", len(second.Messages))
+	}
+	m := second.Messages[1]
+	if m.Role != "assistant" || m.Text != "I will read them." || len(m.Calls) != 2 || m.Calls[0].Arguments != `{"path":"a.txt"}` {
+		t.Errorf("the reply sent back: %+v", m)
+	}
+	if !strings.Contains(string(m.Raw), `"thoughtSignature"`) {
+		t.Errorf("the call went back without its thought signature: %s", m.Raw)
+	}
+	res := second.Messages[2].Results
+	if len(res) != 2 || res[0] != (scriptedmodel.Result{CallID: "fs_read", Text: "hello"}) || res[1] != (scriptedmodel.Result{CallID: "fs_read", Text: "no such file", IsError: true}) {
+		t.Errorf("the results sent back, in the calls' order: %+v", res)
+	}
+	if err := scriptedmodel.PrefixOf(first, second); err != nil {
+		t.Errorf("the second request does not continue the first: %v", err)
+	}
+}
+
+func TestGeminiCutAnswersAndRefusals(t *testing.T) {
+	model := scriptedmodel.New(t,
+		scriptedmodel.Cut("The report begins"),
+		scriptedmodel.Overflow(scriptedmodel.GeminiAPI, 1048576),
+		scriptedmodel.Status(503, "The model is overloaded. Please try again later."),
+		scriptedmodel.Status(429, "Resource has been exhausted (e.g. check quota)."),
+	)
+	g := newGateway(t, "fs_write")
+
+	code, events, _ := run(t, model, g, runOpts{configEdit: gemini(model)})
+	if code != harness.ExitIncomplete || last(t, events, proto.TypeTurnEnd).Reason != proto.EndAnswerCut {
+		t.Errorf("a cut answer: exit %d, %s", code, types(events))
+	}
+	for _, want := range []struct {
+		class  string
+		status int
+	}{{proto.ClassOverflow, 400}, {proto.ClassCapacity, 503}, {proto.ClassRateLimit, 429}} {
+		_, events, _ = run(t, model, g, runOpts{configEdit: gemini(model)})
+		if ev := last(t, events, proto.TypeError); ev.Class != want.class || ev.Status != want.status {
+			t.Errorf("error event %+v, want class %s status %d", ev, want.class, want.status)
+		}
+	}
+}

@@ -155,6 +155,9 @@ const (
 	Ollama
 	// AnthropicAPI refuses with a 400 invalid_request_error.
 	AnthropicAPI
+	// GeminiAPI refuses with a 400 INVALID_ARGUMENT that states both
+	// counts.
+	GeminiAPI
 )
 
 // Overflow is the refusal of a conversation that is too long, as dialect
@@ -170,9 +173,12 @@ func (s Step) play(x *exchange) {
 	}
 	switch s.kind {
 	case kindStatus:
-		if x.req.API == Anthropic {
+		switch x.req.API {
+		case Anthropic:
 			x.json(s.status, anthropicError(s.status, s.message))
-		} else {
+		case Gemini:
+			x.json(s.status, geminiError(s.status, s.message))
+		default:
 			x.json(s.status, chatError(s.status, s.message))
 		}
 	case kindRaw:
@@ -187,6 +193,8 @@ func (s Step) play(x *exchange) {
 			s.playAnthropic(x)
 		case Responses:
 			s.playResponses(x)
+		case Gemini:
+			s.playGemini(x)
 		default:
 			s.playChat(x)
 		}
@@ -195,8 +203,9 @@ func (s Step) play(x *exchange) {
 
 // The refusals below carry each server's own words. The OpenAI, vLLM and
 // llama.cpp bodies and the Anthropic and Ollama messages are the ones those
-// servers send. LM Studio's is the wording and the event shape its users
-// report; it was not captured from a running LM Studio.
+// servers send, and Gemini's is its API's. LM Studio's is the wording and
+// the event shape its users report; it was not captured from a running LM
+// Studio.
 func (s Step) playOverflow(x *exchange) {
 	switch s.dialect {
 	case OpenAI:
@@ -212,6 +221,8 @@ func (s Step) playOverflow(x *exchange) {
 		x.json(http.StatusBadRequest, fmt.Sprintf(`{"error":{"message":"prompt too long; exceeded max context length by %d tokens","type":"invalid_request_error","param":null,"code":null}}`, s.requested-s.window))
 	case AnthropicAPI:
 		x.json(http.StatusBadRequest, fmt.Sprintf(`{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: %d tokens > %d maximum"}}`, s.requested, s.window))
+	case GeminiAPI:
+		x.json(http.StatusBadRequest, fmt.Sprintf(`{"error":{"code":400,"message":"The input token count (%d) exceeds the maximum number of tokens allowed (%d).","status":"INVALID_ARGUMENT"}}`, s.requested, s.window))
 	default:
 		x.json(http.StatusInternalServerError, `{"error":{"message":"scriptedmodel: unknown dialect"}}`)
 	}
