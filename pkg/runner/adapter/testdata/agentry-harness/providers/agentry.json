@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "model": {
     "api": "chat-completions",
     "name": "fixture-model",
@@ -11,5 +11,36 @@
     "url": "http://gateway:8811/mcp",
     "tokenEnv": "MCP_GATEWAY_TOKEN"
   },
-  "sessionDir": "/session"
+  "sessionDir": "/session",
+  "results": {
+    "maxBytes": 49152
+  },
+  "scrub": {
+    "unchanged": [
+      "read_input",
+      "search_inputs"
+    ]
+  },
+  "loop": {
+    "repeats": 5,
+    "cycleRepeats": 3,
+    "maxPeriod": 4
+  },
+  "lengthRecoveries": 2,
+  "coldClear": {
+    "afterSeconds": 3600,
+    "keepTurns": 2,
+    "keepBrowser": 2
+  },
+  "compaction": {
+    "threshold": 0.8,
+    "checkpoint": "Keep, under these headings: the task, in the words the person used; the checklist, every step with its status, copied from the latest checklist result above; done, in progress, and blocked with why; the next step; the files, paths and identifiers in play; the constraints the task set and the approaches that failed.",
+    "notes": "checklist.md in your scratch folder, which the checklist tool reads"
+  },
+  "retry": {
+    "attempts": 3,
+    "baseSeconds": 2,
+    "maxSeconds": 60,
+    "idleSeconds": 300
+  }
 }

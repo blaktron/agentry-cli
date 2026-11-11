@@ -501,6 +501,9 @@ runhost.unsafeMode
 stage
 status
 usage
+usage.compactions
+usage.compactions.overflow
+usage.compactions.threshold
 usage.costUsd
 usage.inputTokens
 usage.lengthRecoveries
@@ -509,6 +512,7 @@ usage.lengthRecoveries.reasoning
 usage.lengthRecoveries.toolCall
 usage.loopNudges
 usage.outputTokens
+usage.resultClears
 usage.totalTokens
 usage.turns
 usage.userTurns
@@ -577,11 +581,15 @@ runhost.adapter
 runhost.adapterAsked
 runhost.unsafeMode
 stage
+usage.compactions
+usage.compactions.overflow
+usage.compactions.threshold
 usage.lengthRecoveries
 usage.lengthRecoveries.answer
 usage.lengthRecoveries.reasoning
 usage.lengthRecoveries.toolCall
 usage.loopNudges
+usage.resultClears
 usage.totalTokens
 usage.userTurns
 web.model

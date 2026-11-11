@@ -155,10 +155,12 @@ type Envelope struct {
 	// conversation to ask about them. It records the agent's own list, not
 	// a check of the work. Absent for a run that keeps no checklist.
 	Checklist *Checklist `json:"checklist,omitempty"`
-	// Restarts are the times the runner started an autonomous harness
-	// again on its stored conversation after its first tool call, in order,
-	// each with its reason and the message the harness was given. At most
-	// two per run, all reasons together. Absent when there were none.
+	// Restarts are the times the runner told an autonomous harness to go on
+	// after its first tool call, in order, each with its reason and the
+	// message the harness was given: a harness that asks before it ends a
+	// turn was told on its running process, and any other was started again
+	// on its stored conversation. At most two per run, all reasons together.
+	// Absent when there were none.
 	Restarts []Restart `json:"restarts,omitempty"`
 }
 
@@ -170,8 +172,10 @@ const (
 	RestartLoopDetected  = "loop_detected"
 )
 
-// Restart is one start of the harness on its conversation to continue a
-// run it ended early: why, and the message it was given.
+// Restart is one time the harness was told to go on with a run it was about
+// to end early: why, and the message it was given. A harness that asks
+// before it ends a turn is told on the running process; any other is started
+// again on its conversation.
 type Restart struct {
 	Reason  string `json:"reason"`
 	Message string `json:"message"`
@@ -647,7 +651,40 @@ type Usage struct {
 	// conversation because the model's output limit cut them off, by what
 	// was cut. The run went on from each. Absent when none.
 	LengthRecoveries LengthRecoveries `json:"lengthRecoveries,omitzero"`
+	// ResultClears counts the times the harness replaced old tool results
+	// in the conversation with placeholders, after the model server's cache
+	// of it had expired. Absent when none.
+	ResultClears int `json:"resultClears,omitempty"`
+	// Compactions counts the times the harness replaced the conversation
+	// with a summary of it, by why. Absent when none.
+	Compactions Compactions `json:"compactions,omitzero"`
 }
+
+// Compactions counts a run's summaries of its conversation by reason: the
+// conversation neared the model's window (Threshold), or the model's server
+// refused it as too long (Overflow).
+type Compactions struct {
+	Threshold int `json:"threshold,omitempty"`
+	Overflow  int `json:"overflow,omitempty"`
+}
+
+// Add counts one compaction made for reason: "overflow", or the threshold
+// for anything else.
+func (c *Compactions) Add(reason string) {
+	if reason == "overflow" {
+		c.Overflow++
+		return
+	}
+	c.Threshold++
+}
+
+// Plus is the two counts together.
+func (c Compactions) Plus(o Compactions) Compactions {
+	return Compactions{Threshold: c.Threshold + o.Threshold, Overflow: c.Overflow + o.Overflow}
+}
+
+// Total is how many compactions there were.
+func (c Compactions) Total() int { return c.Threshold + c.Overflow }
 
 // LengthRecoveries counts cut-off answers by what the output limit cut: an
 // answer's text, reasoning with no reply yet, or a tool call, which was not

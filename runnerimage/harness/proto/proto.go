@@ -11,11 +11,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 )
 
 // Version is the contract's version. A harness refuses a configuration of
 // another version, and stamps its own on every event.
-const Version = 1
+const Version = 2
 
 // Config is everything the harness is told about a run. It names where
 // secrets are found and never holds one.
@@ -30,6 +31,98 @@ type Config struct {
 	// MaxSteps ends a turn after this many model requests. Zero is no
 	// limit of the harness's own; the runner's budgets still apply.
 	MaxSteps int `json:"maxSteps,omitempty"`
+
+	// Each block below switches on one thing the harness does on a long
+	// run. A block left out is a thing it does not do.
+
+	// Results bounds what one tool result may hold.
+	Results *Results `json:"results,omitempty"`
+	// Scrub removes secret-shaped values from tool arguments and results.
+	Scrub *Scrub `json:"scrub,omitempty"`
+	// Loop answers a repeated call with a message to the model.
+	Loop *Loop `json:"loop,omitempty"`
+	// LengthRecoveries is how many replies cut off at the output limit one
+	// turn goes on from. Zero ends the turn at the first.
+	LengthRecoveries int `json:"lengthRecoveries,omitempty"`
+	// ColdClear replaces old tool results once the server's cache of the
+	// conversation has expired.
+	ColdClear *ColdClear `json:"coldClear,omitempty"`
+	// Compaction replaces a conversation that nears the model's window, or
+	// that the server refused as too long, with a summary of it.
+	Compaction *Compaction `json:"compaction,omitempty"`
+	// Retry sends a model request again after a failure that may pass.
+	Retry *Retry `json:"retry,omitempty"`
+}
+
+// Results is the result policy.
+type Results struct {
+	// MaxBytes is the most text one result may hold. A longer one keeps its
+	// start, cut at a line where it can be, and ends with a notice that says
+	// how much was left out.
+	MaxBytes int `json:"maxBytes"`
+}
+
+// Scrub is the secret scrub. Every call's arguments are scrubbed before the
+// tool is given them, and every tool's result before the model is.
+type Scrub struct {
+	// Unchanged names the tools whose results are passed on as they are:
+	// the ones that return the person's own inputs.
+	Unchanged []string `json:"unchanged,omitempty"`
+}
+
+// Loop is when a repeated call is answered with a message.
+type Loop struct {
+	// Repeats is how many times in a row the same call, with the same
+	// arguments, is made before the message.
+	Repeats int `json:"repeats"`
+	// CycleRepeats is how many times in a row the same sequence of two to
+	// MaxPeriod calls is made before the message. Zero looks for no
+	// sequence.
+	CycleRepeats int `json:"cycleRepeats,omitempty"`
+	MaxPeriod    int `json:"maxPeriod,omitempty"`
+}
+
+// ColdClear is the clearing of old tool results. It is done on a turn's
+// first request, and only when the last reply is older than AfterSeconds:
+// the server then reads the whole conversation afresh whatever it holds.
+type ColdClear struct {
+	// AfterSeconds is how long the server's cache of a conversation lives.
+	AfterSeconds int `json:"afterSeconds"`
+	// KeepTurns is how many turns before the current one keep their
+	// results, and KeepBrowser how many of the newest results of
+	// BrowserTools stay wherever they fall.
+	KeepTurns    int      `json:"keepTurns"`
+	KeepBrowser  int      `json:"keepBrowser"`
+	BrowserTools []string `json:"browserTools,omitempty"`
+}
+
+// Compaction is when and how a conversation is replaced by a summary.
+type Compaction struct {
+	// Threshold is the share of the model's window at which the
+	// conversation is summarised, above 0 and below 1. With no window in
+	// the configuration, the one a server's refusal states, or the size it
+	// refused, is used once there has been a refusal.
+	Threshold float64 `json:"threshold"`
+	// Checkpoint is what the summary must keep, in the runner's words.
+	Checkpoint string `json:"checkpoint,omitempty"`
+	// Notes names where the agent keeps its notes, as the summary's last
+	// sentence says it to the agent. One line.
+	Notes string `json:"notes,omitempty"`
+}
+
+// Retry is the retry policy of a model request.
+type Retry struct {
+	// Attempts is how many times a failed request is sent again.
+	Attempts int `json:"attempts"`
+	// BaseSeconds is the wait before the first of them; each later wait is
+	// twice the one before, and none is longer than MaxSeconds. A wait the
+	// server asks for is kept instead when it is no longer than MaxSeconds;
+	// a longer one ends the retries.
+	BaseSeconds int `json:"baseSeconds"`
+	MaxSeconds  int `json:"maxSeconds"`
+	// IdleSeconds ends a request whose reply has sent nothing for this
+	// long, as a failure of the connection. Zero sets no limit.
+	IdleSeconds int `json:"idleSeconds,omitempty"`
 }
 
 // Wire APIs a model is reached by.
@@ -155,9 +248,27 @@ func DecodeConfig(r io.Reader) (Config, error) {
 		return Config{}, fmt.Errorf("harness configuration: gateway.tokenEnv is empty")
 	case c.SessionDir == "":
 		return Config{}, fmt.Errorf("harness configuration: sessionDir is empty")
+	case c.MaxSteps < 0 || c.LengthRecoveries < 0:
+		return Config{}, fmt.Errorf("harness configuration: maxSteps and lengthRecoveries must not be negative")
+	case c.Results != nil && c.Results.MaxBytes < MinResultBytes:
+		return Config{}, fmt.Errorf("harness configuration: results.maxBytes must be at least %d", MinResultBytes)
+	case c.Loop != nil && (c.Loop.Repeats < 2 || c.Loop.CycleRepeats < 0 || c.Loop.CycleRepeats == 1 || c.Loop.MaxPeriod < 0 || c.Loop.CycleRepeats > 0 && c.Loop.MaxPeriod < 2):
+		return Config{}, fmt.Errorf("harness configuration: loop.repeats and loop.cycleRepeats count at least 2 repeats, and loop.maxPeriod at least 2 calls")
+	case c.ColdClear != nil && (c.ColdClear.AfterSeconds <= 0 || c.ColdClear.KeepTurns < 0 || c.ColdClear.KeepBrowser < 0):
+		return Config{}, fmt.Errorf("harness configuration: coldClear.afterSeconds must be positive, and keepTurns and keepBrowser not negative")
+	case c.Compaction != nil && (c.Compaction.Threshold <= 0 || c.Compaction.Threshold >= 1):
+		return Config{}, fmt.Errorf("harness configuration: compaction.threshold must be above 0 and below 1")
+	case c.Compaction != nil && strings.ContainsAny(c.Compaction.Notes, "\r\n"):
+		return Config{}, fmt.Errorf("harness configuration: compaction.notes must be one line")
+	case c.Retry != nil && (c.Retry.Attempts < 0 || c.Retry.BaseSeconds < 0 || c.Retry.MaxSeconds < c.Retry.BaseSeconds || c.Retry.IdleSeconds < 0):
+		return Config{}, fmt.Errorf("harness configuration: retry holds a negative figure, or maxSeconds below baseSeconds")
 	}
 	return c, nil
 }
+
+// MinResultBytes is the least results.maxBytes may be: room for the notice
+// and a useful start of the result.
+const MinResultBytes = 1024
 
 // Encode renders a configuration as the bytes the harness reads. The same
 // configuration always renders to the same bytes.
@@ -191,9 +302,68 @@ const (
 	TypeWarning = "warning"
 	// TypeError is a failure, with its class.
 	TypeError = "error"
+	// TypeTurnEnding says the model answered with no call left to run, and
+	// asks the runner whether the turn ends there. The harness waits for
+	// the runner's accept or continue command.
+	TypeTurnEnding = "turn_ending"
 	// TypeTurnEnd closes a prompt. Every prompt gets exactly one.
 	TypeTurnEnd = "turn_end"
 )
+
+// Codes of warning.
+const (
+	// WarnLoopNudge: the model repeated a call and was told to reach its
+	// goal another way. Tool names the call, Count how often it repeated.
+	WarnLoopNudge = "loop_nudge"
+	// WarnLengthRecovery: a reply cut off at the output limit was taken out
+	// of what the model is sent, and the model was told. Reason is what was
+	// cut, one of the Cut constants.
+	WarnLengthRecovery = "length_recovery"
+	// WarnColdClear: old tool results were replaced by placeholders. Count
+	// is how many.
+	WarnColdClear = "cold_clear"
+	// WarnCompaction: the conversation was replaced by a summary. Reason is
+	// why, one of the Compaction constants.
+	WarnCompaction = "compaction"
+	// WarnCompactionFailed: a summary could not be made, and the
+	// conversation was left as it was. Reason is why one was wanted.
+	WarnCompactionFailed = "compaction_failed"
+	// WarnRetry: a model request failed and is sent again. Class is the
+	// failure's, Count the attempt.
+	WarnRetry = "retry"
+)
+
+// What the output limit cut off (a length_recovery warning's reason).
+const (
+	CutAnswer    = "answer"
+	CutReasoning = "reasoning"
+	CutToolCall  = "tool call"
+)
+
+// Why a conversation was summarised (a compaction warning's reason).
+const (
+	// CompactionThreshold: it reached the configured share of the window.
+	CompactionThreshold = "threshold"
+	// CompactionOverflow: the server refused it as too long.
+	CompactionOverflow = "overflow"
+)
+
+// Commands the runner writes to the harness, one JSON object a line.
+const (
+	// CmdPrompt starts a turn with Text as the runner's message.
+	CmdPrompt = "prompt"
+	// CmdAccept answers turn_ending: the turn ends.
+	CmdAccept = "accept"
+	// CmdContinue answers turn_ending: the turn goes on, with Text as a
+	// message to the model.
+	CmdContinue = "continue"
+)
+
+// Command is one line the runner writes.
+type Command struct {
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
+}
 
 // Why a turn ended.
 const (
@@ -260,8 +430,10 @@ type Event struct {
 	// Usage is set on a usage event.
 	Usage *Usage `json:"usage,omitempty"`
 
-	// Code names a warning.
-	Code string `json:"code,omitempty"`
+	// Code names a warning, one of the Warn constants. Count is the figure
+	// the code's comment gives it.
+	Code  string `json:"code,omitempty"`
+	Count int    `json:"count,omitempty"`
 	// Class is an error's class, one of the Class constants. Status is
 	// the HTTP status the server answered with, zero when there was none.
 	// RetryAfterSeconds is the wait the server asked for.
@@ -269,7 +441,8 @@ type Event struct {
 	Status            int    `json:"status,omitempty"`
 	RetryAfterSeconds int    `json:"retryAfterSeconds,omitempty"`
 
-	// Reason says why a turn ended, one of the End constants.
+	// Reason says why a turn ended, one of the End constants, or what a
+	// warning's code says it is.
 	Reason string `json:"reason,omitempty"`
 	// Conversation is the id of the conversation (ready, turn_end).
 	Conversation string `json:"conversation,omitempty"`
@@ -292,6 +465,10 @@ type Usage struct {
 	// when the configuration gave none.
 	ContextTokens int64 `json:"contextTokens"`
 	ContextLimit  int64 `json:"contextLimit,omitempty"`
+	// Compacted marks the request that wrote a summary the conversation was
+	// then replaced by. ContextTokens is then an estimate of the
+	// conversation's size after it.
+	Compacted bool `json:"compacted,omitempty"`
 	// CostUSD is what the whole conversation has cost so far, this request
 	// included, at the configuration's prices; absent when it gave none.
 	// It is a running total of the conversation, not of the process: a

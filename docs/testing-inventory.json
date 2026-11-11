@@ -2242,6 +2242,35 @@
             "HTTP transport",
             "source/file contract"
           ]
+        },
+        {
+          "path": "internal/harnesstest/longrun_test.go",
+          "tests": [
+            "TestALongResultKeepsItsStartAndSaysHowToReadTheRest",
+            "TestSecretShapedValuesAreScrubbedButForThePersonsOwnInputs",
+            "TestAReplyCutAtTheOutputLimitIsTakenOutAndTheTurnGoesOn",
+            "TestAThirdCutOffReplyEndsTheTurnAndReasoningAloneIsNamed",
+            "TestARepeatedCallIsAnsweredWithAMessageAfterItsResults",
+            "TestARepeatedSequenceOfCallsAndACallToNoTool",
+            "TestOldResultsAreClearedOnlyOnceTheCacheIsCold",
+            "TestAConversationNearTheWindowIsReplacedByASummary",
+            "TestACompactionKeepsTheCallsTheModelHasNotReadTheResultsOf",
+            "TestASummaryCutAtTheOutputLimitIsNotKept",
+            "TestNoSummaryIsAskedForThatWouldGainNothing",
+            "TestAConversationTheServerRefusesAsTooLongIsSummarisedOnce",
+            "TestASecondRefusalEndsTheTurnAsAnOverflow",
+            "TestTheRunnerIsAskedBeforeATurnEnds",
+            "TestAnAnswerThatIsNoAnswerToATurnEndingFailsTheTurn",
+            "TestAFailureThatMayPassIsSentAgain",
+            "TestAReplyThatSendsNothingIsGivenUpAndAskedForAgain",
+            "TestARequestContinuesTheOneBeforeItUnlessTheRecordSaysOtherwise"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
+          ]
         }
       ]
     },
@@ -4399,6 +4428,9 @@
             "TestAgentryHarnessSendsNoKeyToAServerThatTakesNone",
             "TestAgentryHarnessEvents",
             "TestAgentryHarnessErrorsSayWhatTheEngineActsOn",
+            "TestAgentryHarnessLongRunEvents",
+            "TestAgentryHarnessFramesTheRunnersCommands",
+            "TestAgentryHarnessLongRunSettings",
             "TestAgentryHarnessProviderGoldens"
           ],
           "fuzz": [],
@@ -7626,6 +7658,25 @@
           "fixtureEntryPoint": false,
           "dependencyHints": [
             "source/file contract"
+          ]
+        },
+        {
+          "path": "pkg/runner/engine/stopgate_test.go",
+          "tests": [
+            "TestAHarnessThatAsksIsToldOfItsOpenStepsWithoutBeingStartedAgain",
+            "TestAHarnessThatAsksIsAskedTwiceAtMost",
+            "TestAHarnessThatAsksIsToldToGoOnAfterAnEmptyAnswer",
+            "TestAHarnessThatAsksIsLetEnd",
+            "TestAHarnessThatExitsWithItsStdinUnreadEndsTheRun",
+            "TestALongRunsEventsAreCountedInTheReceipt"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "docker interface (real or fake)",
+            "source/file contract",
+            "real-time wait"
           ]
         },
         {
@@ -11631,6 +11682,16 @@
           "dependencyHints": [
             "HTTP transport"
           ]
+        },
+        {
+          "path": "runnerimage/harness/llm/window_test.go",
+          "tests": [
+            "TestStatedWindowReadsEachServersRefusal"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
         }
       ]
     },
@@ -11644,6 +11705,7 @@
           "tests": [
             "TestAConfigurationGoesThroughUnchanged",
             "TestAChatCompletionsConfiguration",
+            "TestAConfigurationForALongRunGoesThroughUnchanged",
             "TestDecodeConfigRefuses",
             "TestTheContractIsWhatTheSchemaSays"
           ],
@@ -11653,6 +11715,30 @@
           "dependencyHints": [
             "source/file contract"
           ]
+        }
+      ]
+    },
+    {
+      "owner": "runnerimage/harness",
+      "behavior": "The harness's own parts of a long run: the secret scrub, the result limit, the repeated-call watch, what a compaction keeps and what a summary request carries",
+      "disposition": "retain",
+      "files": [
+        {
+          "path": "runnerimage/harness/longrun_test.go",
+          "tests": [
+            "TestScrubTextReplacesEachSecretShapeAndNothingElse",
+            "TestScrubArgumentsKeepsWhatHoldsNoSecretByteForByte",
+            "TestCutResultKeepsTheStartAtAWholeLine",
+            "TestLoopWatchSeesTheSameCallAndTheSameSequence",
+            "TestTheNudgeNamesToolsAndCountsAndNeverArguments",
+            "TestACompactionKeepsWhatTheModelHasNotAnswered",
+            "TestASummaryRequestIsMadeSmallerLevelByLevel",
+            "TestWhatStandsForACutOffReplyNeverRepeatsIt"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
         }
       ]
     },

@@ -1,8 +1,31 @@
 {
+  "command": {
+    "text": "string, optional",
+    "type": "string"
+  },
   "config": {
+    "coldClear": {
+      "afterSeconds": "int",
+      "browserTools": [
+        "string"
+      ],
+      "keepBrowser": "int",
+      "keepTurns": "int"
+    },
+    "compaction": {
+      "checkpoint": "string, optional",
+      "notes": "string, optional",
+      "threshold": "float64"
+    },
     "gateway": {
       "tokenEnv": "string",
       "url": "string"
+    },
+    "lengthRecoveries": "int, optional",
+    "loop": {
+      "cycleRepeats": "int, optional",
+      "maxPeriod": "int, optional",
+      "repeats": "int"
     },
     "maxSteps": "int, optional",
     "model": {
@@ -29,6 +52,20 @@
         "topP": "float64, optional"
       }
     },
+    "results": {
+      "maxBytes": "int"
+    },
+    "retry": {
+      "attempts": "int",
+      "baseSeconds": "int",
+      "idleSeconds": "int, optional",
+      "maxSeconds": "int"
+    },
+    "scrub": {
+      "unchanged": [
+        "string"
+      ]
+    },
     "sessionDir": "string",
     "system": "string",
     "version": "int"
@@ -39,6 +76,7 @@
     "class": "string, optional",
     "code": "string, optional",
     "conversation": "string, optional",
+    "count": "int, optional",
     "failed": "bool, optional",
     "reason": "string, optional",
     "retryAfterSeconds": "int, optional",
@@ -54,6 +92,7 @@
     "usage": {
       "cacheRead": "int64",
       "cacheWrite": "int64",
+      "compacted": "bool, optional",
       "contextLimit": "int64, optional",
       "contextTokens": "int64",
       "costUsd": "float64, optional",
@@ -63,6 +102,11 @@
     "v": "int"
   },
   "values": {
+    "command.type": [
+      "prompt",
+      "accept",
+      "continue"
+    ],
     "event.class": [
       "overflow",
       "capacity",
@@ -74,6 +118,14 @@
       "server",
       "gateway",
       "harness"
+    ],
+    "event.code": [
+      "loop_nudge",
+      "length_recovery",
+      "cold_clear",
+      "compaction",
+      "compaction_failed",
+      "retry"
     ],
     "event.reason": [
       "answered",
@@ -90,6 +142,7 @@
       "usage",
       "warning",
       "error",
+      "turn_ending",
       "turn_end"
     ],
     "model.api": [
@@ -97,7 +150,16 @@
       "chat-completions",
       "openai-responses",
       "gemini"
+    ],
+    "warning.reason.compaction": [
+      "threshold",
+      "overflow"
+    ],
+    "warning.reason.length_recovery": [
+      "answer",
+      "reasoning",
+      "tool call"
     ]
   },
-  "version": 1
+  "version": 2
 }

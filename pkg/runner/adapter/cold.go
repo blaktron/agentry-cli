@@ -27,6 +27,10 @@ var coldAfter = map[coldKey]time.Duration{
 	// providers' caches live up to an hour.
 	{CodexImageAdapterName, ""}:   coldAfterLong,
 	{CopilotImageAdapterName, ""}: coldAfterLong,
+	// The runner's own harness marks its cache points for 5 minutes on
+	// Anthropic's API, and leaves every other server's cache to the server.
+	{AgentryHarnessAdapterName, policy.ProviderAnthropic}: 5 * time.Minute,
+	{AgentryHarnessAdapterName, ""}:                       coldAfterLong,
 }
 
 // coldKey is a row of coldAfter: an adapter, and a provider or "" for any.

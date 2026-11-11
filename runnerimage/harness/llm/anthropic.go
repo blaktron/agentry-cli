@@ -243,7 +243,7 @@ func anthropicHTTPError(res *http.Response) error {
 	if msg == "" {
 		msg = res.Status
 	}
-	e := &Error{Status: res.StatusCode, Message: msg, Class: anthropicClass(res.StatusCode, wire.Error.Type, msg)}
+	e := withWindow(&Error{Status: res.StatusCode, Message: msg, Class: anthropicClass(res.StatusCode, wire.Error.Type, msg)})
 	if s := res.Header.Get("Retry-After"); s != "" {
 		if secs, err := strconv.Atoi(strings.TrimSpace(s)); err == nil && secs >= 0 {
 			e.RetryAfter = time.Duration(secs) * time.Second
@@ -387,7 +387,7 @@ func (a *Anthropic) read(ctx context.Context, r io.Reader, onDelta func(Delta)) 
 		case "message_stop":
 			stopped = true
 		case "error":
-			return nil, &Error{Class: anthropicClass(0, ev.Error.Type, ev.Error.Message), Message: ev.Error.Message}
+			return nil, withWindow(&Error{Class: anthropicClass(0, ev.Error.Type, ev.Error.Message), Message: ev.Error.Message})
 		}
 		if stopped {
 			break

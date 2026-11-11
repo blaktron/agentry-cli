@@ -70,6 +70,33 @@ func TestAChatCompletionsConfiguration(t *testing.T) {
 	}
 }
 
+func TestAConfigurationForALongRunGoesThroughUnchanged(t *testing.T) {
+	want := valid()
+	want.Results = &Results{MaxBytes: 48 << 10}
+	want.Scrub = &Scrub{Unchanged: []string{"read_input", "search_inputs"}}
+	want.Loop = &Loop{Repeats: 5, CycleRepeats: 3, MaxPeriod: 4}
+	want.LengthRecoveries = 2
+	want.ColdClear = &ColdClear{AfterSeconds: 300, KeepTurns: 2, KeepBrowser: 2, BrowserTools: []string{"browser_snapshot"}}
+	want.Compaction = &Compaction{Threshold: 0.8, Checkpoint: "Keep the task.", Notes: "checklist.md in your scratch folder"}
+	want.Retry = &Retry{Attempts: 3, BaseSeconds: 2, MaxSeconds: 60, IdleSeconds: 300}
+	raw, err := want.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := DecodeConfig(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("decoded %+v\nwant    %+v", got, want)
+	}
+	// A block left out is a thing the harness does not do, never a default.
+	bare, _ := valid().Encode()
+	if got, _ := DecodeConfig(bytes.NewReader(bare)); got.Results != nil || got.Scrub != nil || got.Loop != nil || got.ColdClear != nil || got.Compaction != nil || got.Retry != nil || got.LengthRecoveries != 0 {
+		t.Errorf("a configuration with no block decoded with one: %+v", got)
+	}
+}
+
 func TestDecodeConfigRefuses(t *testing.T) {
 	edit := func(f func(m map[string]any)) string {
 		raw, _ := valid().Encode()
@@ -104,6 +131,22 @@ func TestDecodeConfigRefuses(t *testing.T) {
 		"no gateway token variable": edit(func(m map[string]any) { m["gateway"].(map[string]any)["tokenEnv"] = "" }),
 		"no session folder":         edit(func(m map[string]any) { m["sessionDir"] = "" }),
 		"not JSON":                  "version: 1",
+		"a result limit with no room for its notice": edit(func(m map[string]any) { m["results"] = map[string]any{"maxBytes": 100} }),
+		"an unknown field in a block":                edit(func(m map[string]any) { m["scrub"] = map[string]any{"off": true} }),
+		"a streak of one call":                       edit(func(m map[string]any) { m["loop"] = map[string]any{"repeats": 1} }),
+		"sequences with no length":                   edit(func(m map[string]any) { m["loop"] = map[string]any{"repeats": 5, "cycleRepeats": 3} }),
+		"negative recoveries":                        edit(func(m map[string]any) { m["lengthRecoveries"] = -1 }),
+		"a clear with no lifetime": edit(func(m map[string]any) {
+			m["coldClear"] = map[string]any{"afterSeconds": 0, "keepTurns": 2, "keepBrowser": 2}
+		}),
+		"a clear that keeps a negative count": edit(func(m map[string]any) {
+			m["coldClear"] = map[string]any{"afterSeconds": 300, "keepTurns": -1, "keepBrowser": 2}
+		}),
+		"a summary at the whole window":  edit(func(m map[string]any) { m["compaction"] = map[string]any{"threshold": 1} }),
+		"a summary at none of it":        edit(func(m map[string]any) { m["compaction"] = map[string]any{"threshold": 0} }),
+		"notes of two lines":             edit(func(m map[string]any) { m["compaction"] = map[string]any{"threshold": 0.8, "notes": "a\nb"} }),
+		"a longest wait below the first": edit(func(m map[string]any) { m["retry"] = map[string]any{"attempts": 3, "baseSeconds": 10, "maxSeconds": 5} }),
+		"negative retries":               edit(func(m map[string]any) { m["retry"] = map[string]any{"attempts": -1, "baseSeconds": 1, "maxSeconds": 5} }),
 	}
 	for name, raw := range cases {
 		if _, err := DecodeConfig(strings.NewReader(raw)); err == nil {
@@ -123,11 +166,16 @@ func TestTheContractIsWhatTheSchemaSays(t *testing.T) {
 		"version": Version,
 		"config":  describe(reflect.TypeOf(Config{})),
 		"event":   describe(reflect.TypeOf(Event{})),
+		"command": describe(reflect.TypeOf(Command{})),
 		"values": map[string][]string{
-			"event.type":   {TypeReady, TypeText, TypeReasoning, TypeToolCall, TypeToolResult, TypeUsage, TypeWarning, TypeError, TypeTurnEnd},
-			"event.reason": {EndAnswered, EndAnswerCut, EndError, EndMaxSteps},
-			"event.class":  {ClassOverflow, ClassCapacity, ClassRateLimit, ClassCredits, ClassAuth, ClassRequest, ClassTransport, ClassServer, ClassGateway, ClassHarness},
-			"model.api":    {APIAnthropic, APIChat, APIResponses, APIGemini},
+			"command.type":                   {CmdPrompt, CmdAccept, CmdContinue},
+			"event.type":                     {TypeReady, TypeText, TypeReasoning, TypeToolCall, TypeToolResult, TypeUsage, TypeWarning, TypeError, TypeTurnEnding, TypeTurnEnd},
+			"event.reason":                   {EndAnswered, EndAnswerCut, EndError, EndMaxSteps},
+			"event.code":                     {WarnLoopNudge, WarnLengthRecovery, WarnColdClear, WarnCompaction, WarnCompactionFailed, WarnRetry},
+			"warning.reason.length_recovery": {CutAnswer, CutReasoning, CutToolCall},
+			"warning.reason.compaction":      {CompactionThreshold, CompactionOverflow},
+			"event.class":                    {ClassOverflow, ClassCapacity, ClassRateLimit, ClassCredits, ClassAuth, ClassRequest, ClassTransport, ClassServer, ClassGateway, ClassHarness},
+			"model.api":                      {APIAnthropic, APIChat, APIResponses, APIGemini},
 		},
 	}
 	var buf bytes.Buffer
