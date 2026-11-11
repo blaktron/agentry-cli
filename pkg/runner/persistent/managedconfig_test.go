@@ -160,14 +160,15 @@ func TestManagedServersAndPacksAreOnTheRoster(t *testing.T) {
 }
 
 // An organization's server that signs in by OAuth is on the roster as the
-// organization's and says it needs a sign-in, as the person's own does.
-func TestAManagedOAuthServerSaysItNeedsASignIn(t *testing.T) {
+// organization's, locked on, and says it signs in with the person's own
+// connection, as the person's own does.
+func TestAManagedOAuthServerSignsInWithThePersonsConnection(t *testing.T) {
 	holdSettings(t, map[string]managedsettings.Setting{
 		managedsettings.AgentsAssistantServers: setting(t, []managedsettings.Server{{Name: "crm", URL: "https://mcp.crm.example", Auth: "oauth"}}, true),
 	})
 	for _, e := range BuildRoster(assistantAgent(t), Config{Enabled: true}, nil) {
 		if e.Organization == "acme" && e.Kind == KindServer {
-			if e.State != StateNeedsSignIn || !e.Locked {
+			if !e.On || !e.Locked || !strings.Contains(e.Line, "agentry agent connect assistant") {
 				t.Fatalf("the OAuth server %+v", e)
 			}
 			return

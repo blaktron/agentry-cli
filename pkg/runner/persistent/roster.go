@@ -50,8 +50,10 @@ const (
 	// StatePending: switched since the running segment started; the next
 	// turn starts the segment that applies it.
 	StatePending EntryState = "pending"
-	// StateNeedsSignIn: a server that signs in by OAuth, which an agent
-	// cannot be given in this version.
+	// StateNeedsSignIn: a server that signs in by OAuth and that the agent
+	// is not given: a remote one with no working connection (Reason says
+	// how to make one), or a package one, which an agent cannot be given
+	// in this version.
 	StateNeedsSignIn EntryState = "needs-sign-in"
 	// StateInstalling: a server that is on and that the agent's store does
 	// not hold yet. It is installed in the background while the agent runs
@@ -141,7 +143,7 @@ func (r Roster) Receipt() []receipt.RosterEntry {
 	out := make([]receipt.RosterEntry, 0, len(r))
 	for _, e := range r {
 		re := receipt.RosterEntry{ID: e.ID, Kind: string(e.Kind), Name: e.Name, GrantedBy: e.GrantedBy, On: e.On, Line: e.Line, Share: e.Share}
-		if e.State == StateInstalling || e.State == StateFailed || e.State == StateNeedsSetUp {
+		if e.State == StateInstalling || e.State == StateFailed || e.State == StateNeedsSetUp || (e.State == StateNeedsSignIn && e.On) {
 			re.State = string(e.State)
 		}
 		out = append(out, re)
@@ -368,11 +370,14 @@ func BuildRosterUnder(a Agent, c Config, applied *Applied, malwareCheck bool) Ro
 				e.alike = []string{seesLine, e.Line + readOnlyShareLine(a)}
 			}
 		}
-		if srv.Auth == manifest.AuthOAuth || srv.OAuth != nil {
-			e.Line += "; it signs in by OAuth, which a persistent agent cannot do in this version"
+		if packageSignsIn(srv) {
+			e.Line += "; it is a package server that signs in by OAuth, which a persistent agent cannot be given in this version"
 			e.On, e.State = false, StateNeedsSignIn
 			r = append(r, e)
 			continue
+		}
+		if SignsIn(srv) {
+			e.Line += "; it signs in by OAuth with your own connection, and the agent is given its access token alone (agentry agent connect " + a.Name + ")"
 		}
 		add(e, true)
 		if f, ok := c.ServerFailures[e.ID]; ok && r[len(r)-1].On {
@@ -407,10 +412,14 @@ func serverReady(home string, a Agent, c Config, srv manifest.MCPServer) bool {
 // leftOut marks each server of r that is on and that a segment was not
 // given (given says which it was): failed with its reason when its install
 // failed, installing otherwise. One that needs set-up keeps saying so.
-func leftOut(r Roster, c Config, given func(id string) bool) Roster {
+func leftOut(r Roster, c Config, applied Applied, given func(id string) bool) Roster {
 	out := slices.Clone(r)
 	for i, e := range out {
 		if e.Kind != KindServer || !e.On || e.State == StateNeedsSetUp || given(e.ID) {
+			continue
+		}
+		if why, ok := applied.NeedsSignIn[e.ID]; ok {
+			out[i].State, out[i].Reason = StateNeedsSignIn, why
 			continue
 		}
 		out[i].State = StateInstalling
@@ -450,7 +459,7 @@ func ServerMaySeeShare(srv manifest.MCPServer) error {
 	case len(srv.Egress) > 0:
 		return fmt.Errorf("%s reaches %s, so it could send your files there: a server that reaches the network is never given your share folder", serverName(srv), strings.Join(srv.Egress, ", "))
 	case srv.Auth == manifest.AuthOAuth || srv.OAuth != nil:
-		return fmt.Errorf("%s signs in by OAuth, which a persistent agent cannot do in this version", serverName(srv))
+		return fmt.Errorf("%s signs in by OAuth: a server that signs in as you is never given your share folder", serverName(srv))
 	}
 	return nil
 }
@@ -526,6 +535,10 @@ func serverLine(srv manifest.MCPServer) string {
 // were on.
 type Applied struct {
 	On []string `json:"on"`
+	// NeedsSignIn are the servers that are on and sign in by OAuth and that
+	// the segment was not given, each with why: no connection, one the
+	// vendor refused, or a refresh that failed.
+	NeedsSignIn map[string]string `json:"needsSignIn,omitempty"`
 }
 
 // Packs opens the knowledge packs a segment searches, by name; done closes
@@ -558,6 +571,9 @@ type Openers struct {
 	// Unreviewed opens the web tools without AI Review, for an agent whose
 	// person switched it off.
 	Unreviewed WebOpener
+	// Connections are the person's connections the servers that sign in
+	// by OAuth are given a token from; nil gives none of those servers.
+	Connections Connections
 }
 
 // ApplyWith is Apply with each of the person's things it opens.
@@ -575,6 +591,12 @@ func ApplyWith(ctx context.Context, home string, a Agent, c Config, r Roster, op
 			left[id] = true
 		}
 	}
+	tokens, renew, signInLeft := signInTokens(ctx, a.Name, servers, c, on, openers.Connections)
+	for id := range signInLeft {
+		left[id] = true
+	}
+	applied.NeedsSignIn = signInLeft
+	g.Connections, g.RenewConnection = tokens, renew
 	images, imagesLeft := imageGrants(home, a, c, on)
 	for id := range imagesLeft {
 		left[id] = true

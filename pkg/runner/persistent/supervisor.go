@@ -18,6 +18,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/drafter"
 	"github.com/blaktron/agentry-cli/pkg/managed"
+	"github.com/blaktron/agentry-cli/pkg/runner/connection"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/inference"
@@ -89,6 +90,10 @@ type Options struct {
 	// Secrets is where the stored secrets' values are read for each
 	// segment; nil is the keychain (KeychainSecrets).
 	Secrets Secrets
+	// Connections are the person's connections the agent's servers that
+	// sign in by OAuth take their token from; nil is the runner home's
+	// store (StoreConnections).
+	Connections Connections
 	// Subagents runs the agent's subagents (subagentrun.go), and the runs
 	// quickagent_run starts; nil refuses both.
 	Subagents SubagentHost
@@ -429,9 +434,10 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 	}
 	// Read before Apply opens them, so content changed meanwhile is
 	// applied at the next turn rather than missed.
+	openers, opsDone := s.openers()
 	signatures := configSignatures(a, cfg, roster)
 	maps.Copy(signatures, contentSignatures(ctx, a, cfg, roster, s.opts.Contents))
-	openers, opsDone := s.openers()
+	maps.Copy(signatures, connectionSignatures(name, a, cfg, roster, openers.Connections))
 	grants, applied, applyDone, err := ApplyWith(ctx, home, a, cfg, roster, openers, ready, keys)
 	if err != nil {
 		opsDone()
@@ -445,7 +451,7 @@ func (s *Supervisor) startSegment(ctx context.Context, byChange bool) error {
 	// A server Apply left out is not given, and the roster this segment's
 	// envelope records and its frames are told from says so.
 	given := func(id string) bool { return slices.Contains(applied.On, id) }
-	roster = leftOut(roster, cfg, given)
+	roster = leftOut(roster, cfg, applied, given)
 	runID, err := engine.NewRunID()
 	if err != nil {
 		packsDone()
@@ -1207,10 +1213,21 @@ func (s *Supervisor) Roster() Roster {
 		if e.Kind != KindServer || !e.On || e.State == StateFailed || e.State == StateNeedsSetUp || slices.Contains(applied.On, e.ID) {
 			continue
 		}
+		srv, installs := byID[e.ID]
+		// One that signs in and has no working connection says how to
+		// make one; one made after the segment started joins at the next
+		// turn.
+		if installs && SignsIn(srv) && !s.connections().Connected(ConnectionKey(a.Name, srv)) {
+			r[i].State, r[i].Reason = StateNeedsSignIn, signInReason(a.Name, connection.ErrNone)
+			continue
+		}
+		if why, ok := applied.NeedsSignIn[e.ID]; ok {
+			r[i].State, r[i].Reason = StateNeedsSignIn, why
+			continue
+		}
 		r[i].State = StatePending
 		// An image server runs from an image the CLI pins and installs
 		// nothing: on and not given, it joins at the next turn.
-		srv, installs := byID[e.ID]
 		if installs && (installing[e.ID] || !serverReady(s.opts.Home, a, cfg, srv)) {
 			r[i].State = StateInstalling
 		}
@@ -1296,6 +1313,7 @@ func (s *Supervisor) signaturesOf(ctx context.Context, a Agent, c Config) Signat
 	r := BuildRoster(a, c, nil)
 	now := configSignatures(a, c, r)
 	maps.Copy(now, contentSignatures(ctx, a, c, r, s.opts.Contents))
+	maps.Copy(now, connectionSignatures(a.Name, a, c, r, s.connections()))
 	return now
 }
 
@@ -1372,12 +1390,22 @@ func (s *Supervisor) Stop(ctx context.Context) (*receipt.Envelope, error) {
 	return s.env, s.endErr
 }
 
+// connections are the person's connections the agent's servers that sign
+// in by OAuth are given a token from: Options.Connections, or the runner
+// home's store.
+func (s *Supervisor) connections() Connections {
+	if s.opts.Connections != nil {
+		return s.opts.Connections
+	}
+	return StoreConnections(s.opts.Home)
+}
+
 // openers are what one segment's Apply opens: the person's packs and
 // voice, and the keys of the web tools and the review grant, read from the
 // policy when the client gives no opener of its own, or an operation paid
 // with an organization's credits, which end ends with the segment.
 func (s *Supervisor) openers() (Openers, func()) {
-	o := Openers{Packs: s.opts.Packs, Voice: s.opts.Voice, Web: s.opts.Web, Review: s.opts.Review}
+	o := Openers{Packs: s.opts.Packs, Voice: s.opts.Voice, Web: s.opts.Web, Review: s.opts.Review, Connections: s.connections()}
 	pay, end := SegmentPay(s.opts.Pay)
 	if pol := s.policy(); pol != nil {
 		if o.Web == nil {

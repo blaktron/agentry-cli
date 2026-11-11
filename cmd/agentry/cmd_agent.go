@@ -108,6 +108,7 @@ func newAgentCmd() *cobra.Command {
 		newAgentEnableCmd(false),
 		newAgentResetCmd(),
 		newAgentGrantCmd(),
+		newAgentConnectCmd(),
 		newAgentConfigureCmd(),
 		newAgentTasksCmd(),
 		newAgentCompactCmd(),
@@ -237,7 +238,7 @@ func readAgentState(ctx context.Context, home string, a persistent.Agent) (agent
 	_, st.Managed = persistent.ManagedConfig(a, cfg, managed.Current())
 	st.Model = readAgentModel(a, cfg, "")
 	st.Share, _ = persistent.ShareFolder(a, cfg)
-	st.Roster = persistent.BuildRosterUnder(a, cfg, nil, persistent.HomeMalwareCheck(home))
+	st.Roster = persistent.WithSignIns(persistent.BuildRosterUnder(a, cfg, nil, persistent.HomeMalwareCheck(home)), a, cfg, persistent.StoreConnections(home))
 	st.MailProviders = persistent.MailProviders(a, cfg)
 	st.CalendarFeeds = persistent.CalendarFeeds(a, cfg)
 	st.Messengers = persistent.Messengers(a, cfg, homeMessengerAllowed(home))

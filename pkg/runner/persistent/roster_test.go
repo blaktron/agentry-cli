@@ -478,11 +478,18 @@ func TestChangeAsksForConsentWhenItWidens(t *testing.T) {
 	if _, err := ApplyChange(home, a, &c, Change{AddServer: &oauth, Consent: true}); err != nil {
 		t.Fatalf("adding an OAuth server: %v", err)
 	}
-	if e, _ := BuildRoster(a, c, nil).Entry(ServerEntryID(oauth)); e.State != StateNeedsSignIn || e.On {
-		t.Errorf("an OAuth server is %+v, want it off and needing a sign-in", e)
+	if e, _ := BuildRoster(a, c, nil).Entry(ServerEntryID(oauth)); !e.On || !strings.Contains(e.Line, "with your own connection") {
+		t.Errorf("a remote OAuth server is %+v, want it on and saying it signs in with the person's connection", e)
 	}
-	if _, err := ApplyChange(home, a, &c, Change{Switch: &Switch{ID: ServerEntryID(oauth), On: true}, Consent: true}); err == nil {
-		t.Error("an OAuth server was switched on")
+	pkg := manifest.MCPServer{PyPI: "drive-mcp", Version: "1.0.0", OAuth: &manifest.MCPOAuth{Issuer: "https://accounts.example.org", Env: map[string]string{"DRIVE_TOKEN": "{access_token}"}}}
+	if _, err := ApplyChange(home, a, &c, Change{AddServer: &pkg, Consent: true}); err != nil {
+		t.Fatalf("adding a package OAuth server: %v", err)
+	}
+	if e, _ := BuildRoster(a, c, nil).Entry(ServerEntryID(pkg)); e.State != StateNeedsSignIn || e.On {
+		t.Errorf("a package OAuth server is %+v, want it off and needing a sign-in", e)
+	}
+	if _, err := ApplyChange(home, a, &c, Change{Switch: &Switch{ID: ServerEntryID(pkg), On: true}, Consent: true}); err == nil {
+		t.Error("a package OAuth server was switched on")
 	}
 }
 

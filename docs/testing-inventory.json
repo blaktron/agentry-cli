@@ -744,6 +744,17 @@
           "dependencyHints": []
         },
         {
+          "path": "cmd/agentry/cmd_agent_connect_test.go",
+          "tests": [
+            "TestAgentConnectKeepsAConnectionForTheAgent",
+            "TestAgentConnectWithNothingToConnect"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "cmd/agentry/cmd_agent_fastmail_test.go",
           "tests": [
             "TestAgentConfigureFastmail"
@@ -8991,6 +9002,27 @@
           ]
         },
         {
+          "path": "pkg/runner/persistent/connections_test.go",
+          "tests": [
+            "TestAnAgentsConnectionIsKeyedToTheAgent",
+            "TestASegmentIsGivenTheServersAccessTokenAlone",
+            "TestAServerWithNoWorkingConnectionIsLeftOut",
+            "TestNoConnectionsGivesNoSignInServer",
+            "TestAConnectionMadeLaterChangesTheSignature",
+            "TestARefreshThatFailsSaysItTriesAgain",
+            "TestAnAgentsConnectionIsItsOwn",
+            "TestAnOAuthServerAsksForAgreementFirst",
+            "TestTheRosterSaysWhichServersNeedASignIn",
+            "TestARunningAgentTakesAConnectionAtItsNextTurn"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "docker interface (real or fake)"
+          ]
+        },
+        {
           "path": "pkg/runner/persistent/consolidate_test.go",
           "tests": [
             "TestTheMemoryIsConsolidatedOnceADayAtIdle",
@@ -9219,7 +9251,7 @@
             "TestManagedSettingsConfigureTheAssistant",
             "TestAChangeToALockedFieldIsRefused",
             "TestManagedServersAndPacksAreOnTheRoster",
-            "TestAManagedOAuthServerSaysItNeedsASignIn"
+            "TestAManagedOAuthServerSignsInWithThePersonsConnection"
           ],
           "fuzz": [],
           "benchmarks": [],
