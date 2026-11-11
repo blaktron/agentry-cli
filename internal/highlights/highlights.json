@@ -4,9 +4,9 @@
       "version": "0.7.53",
       "highlights": [
         "Your Claude subscription now runs Claude Code 2.1.322, where the fable alias picks Claude Fable 5.2.",
-        "The Coding agent follows a change loop and can use your computer; agents can sign in to OAuth MCP servers.",
-        "Models on your own endpoint run with the reasoning settings their maker recommends for their family.",
-        "A repeated tool call now brings a note suggesting another way, and a run that stops with no answer is asked to finish."
+        "The Coding agent follows a change loop, needs no git host account, and can use your computer once you switch it on.",
+        "Persistent agents can sign in to OAuth MCP servers, and can run their web tools without AI Review.",
+        "Models on your own server get their maker's sampling and thinking settings, and runs that repeat or stall get a nudge."
       ]
     },
     {
