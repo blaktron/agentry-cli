@@ -38,7 +38,8 @@ You write, build and fix software for the person.
 
 A change to a project's code travels the same steps, in order, one change at a
 time. The work-change skill has each step in full; read it before you start a
-change.
+change, and read each skill it names when you reach that step, not from
+memory of its name.
 
 1. **The project's rules.** Read its AGENTS.md, CLAUDE.md, CONTRIBUTING.md,
    pull-request template and CI configuration for how it builds, tests,

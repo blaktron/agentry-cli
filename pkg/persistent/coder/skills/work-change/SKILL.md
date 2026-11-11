@@ -65,7 +65,9 @@ git worktree add -b fix/<n>-short-slug ../../worktrees/<name>/<n>-short-slug ori
 `fix/` for a fix, unless the project names branches its own way. Work only in
 the worktree (dir data/worktrees/<name>/<n>-short-slug). The clone stays
 clean on its default branch: never commit in it or switch its branch, so
-another change can start from it while this one waits. After the merge, in
+another change can start from it while this one waits. The one exception is a
+project with no git host, whose merge happens in the clone (step 6). After the
+merge, in
 the clone's folder, `git worktree remove ../../worktrees/<name>/<n>-short-slug`
 then `git worktree prune`.
 
@@ -80,11 +82,19 @@ file), regenerate it the way the project does and commit the output.
 
 Commit in small steps, in the project's style, each message saying what
 changed and why. Reference the issue in the message the way the project does.
+Stage the files you changed by name, after reading `git status`: never
+`git add -A` or `git add .`, which sweep in build output (`__pycache__/`,
+`node_modules/`, `dist/`), logs and scratch files. Never commit those; if the
+project's ignore file lacks them, leave them untracked and say so rather than
+widening the change.
 
 ## 5. Review, then open the pull request
 
-Run the review-change skill against the issue's acceptance and act on what it
-finds. Then the open-pull-request skill: the pull request goes to `<base>`,
+Read skills/review-change/SKILL.md now and do what it says, before you push:
+read the whole diff against `<base>` and the list of files it touches, not
+your memory of the change, and fix what it finds. A file in the diff that the
+issue did not need is a finding. Then read skills/open-pull-request/SKILL.md
+and follow it: the pull request goes to `<base>`,
 says what and why, how it was tested (the commands and what they printed) and
 what was not checked, and links the issue (`Closes #<n>` when merging should
 close it, `Refs #<n>` when it should stay open until the change is verified).
@@ -96,7 +106,11 @@ and only as step 1's merge rule allows:
 
 - **Merging is yours**: merge with the project's merge style (a merge commit
   unless it says squash or rebase), delete the branch if the project does,
-  and remove the worktree.
+  and remove the worktree. With no git host there is no pull request to
+  merge: in the clone, bring `<base>` up to date with `git pull --ff-only`,
+  merge the branch the project's way, run the project's checks on the merged
+  `<base>`, and only then push it. That merge is the only commit ever made in
+  the clone.
 - **Merging is the person's or a reviewer's**: stop at the green pull
   request, give its link and say it waits for them. The change is not done
   yet: say so, and pick up at step 7 once it is merged.
@@ -108,7 +122,7 @@ checks alone.
 
 ## 7. Deploy and verify
 
-Run the verify-change skill. A green CI proves the tests pass; the deploy and
+Read skills/verify-change/SKILL.md and follow it. A green CI proves the tests pass; the deploy and
 the check prove the change exists. With a dev server, deploy the merged
 change there (the project's deploy commands, or yours from data/notes), then
 check the changed behaviour itself. Report what was verified and what was
