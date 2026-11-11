@@ -78,11 +78,14 @@ func checkWeb(p Params) error {
 		if !p.Plan.Capabilities.WebUnreviewed {
 			return Classify(ExitPolicy, errors.New("this plan reads every web result through AI Review, so a run cannot be given the web tools without it"))
 		}
+		if p.Web.JevKey != "" || p.Web.JobToken != "" {
+			return Classify(ExitCLI, errors.New("web tools that run without AI Review are given no review key or job credential, so none reaches their container"))
+		}
 	default:
 		return Classify(ExitPolicy, fmt.Errorf("unknown scanner %q", p.Web.Scan))
 	}
 	if p.Plan.Capabilities.WebUnreviewed && p.Web.Scan != toolsrv.WebScanUnreviewed {
-		return Classify(ExitCLI, errors.New("this plan says its web tools run without AI Review, so a run cannot scan with it"))
+		return Classify(ExitCLI, errors.New("this plan says its web tools run without AI Review, so the run must not scan: its scan is \""+p.Web.Scan+"\""))
 	}
 	if len(p.Web.Given) > 0 && !p.Plan.Capabilities.WebGivenOnly {
 		return Classify(ExitCLI, errors.New("this plan's web_read is not held to the addresses it is given, so it cannot be given any"))

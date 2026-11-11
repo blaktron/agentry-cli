@@ -443,6 +443,13 @@ func TestAnUnreviewedWebRunIsHeldToItsPlan(t *testing.T) {
 	}
 
 	p, f = webFixture(t)
+	p.Plan.Capabilities.WebUnreviewed = true
+	p.Web = &WebRun{Scan: toolsrv.WebScanUnreviewed, JevKey: testJevKey}
+	if _, err := Run(context.Background(), f, p); !errors.As(err, &ce) || ce.Code != ExitCLI || !strings.Contains(err.Error(), "given no review key or job credential") {
+		t.Fatalf("an unreviewed run carrying a review key: %v", err)
+	}
+
+	p, f = webFixture(t)
 	happyFake(f)
 	p.Plan.Capabilities.WebUnreviewed = true
 	p.Web = &WebRun{Scan: toolsrv.WebScanUnreviewed}

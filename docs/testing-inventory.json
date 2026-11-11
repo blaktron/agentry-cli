@@ -5270,7 +5270,8 @@
             "TestTheSystemPromptGuidesEachMode",
             "TestTheInputsParagraphSaysTheFilesComeUnchanged",
             "TestARepositoryQuestionIsNamedInTheInputs",
-            "TestAURLQuestionIsNamedInTheInputs"
+            "TestAURLQuestionIsNamedInTheInputs",
+            "TestAnUnreviewedAgentIsToldNothingReadsThePagesFirst"
           ],
           "fuzz": [],
           "benchmarks": [],

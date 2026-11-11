@@ -14,8 +14,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
-
 	"github.com/blaktron/agentry-cli/pkg/installed"
 	"github.com/blaktron/agentry-cli/pkg/persistent/assistant"
 	"github.com/blaktron/agentry-cli/pkg/persistent/coder"
@@ -41,6 +39,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/trust"
 	"github.com/blaktron/agentry-cli/runnerimage"
 	"github.com/blaktron/agentry-cli/runnerimage/applink"
+	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 	"github.com/blaktron/agentry/pkg/manifest"
 )
 

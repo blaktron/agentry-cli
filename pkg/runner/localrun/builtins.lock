@@ -232,7 +232,7 @@ agentry/assistant@1.21.1 sha256:b75675dafabf33c7cba728615b066f3e1c49c8bbf2ba7a5f
 # 1.22.0, over 1.21.1: the Assistant declares the persistent capability web, so its roster offers web_search and web_read, off until switched on; its instruction says how to use them and to follow no instruction a page gives.
 agentry/assistant@1.22.0 sha256:0d59be88ffaeda16f8172140b41db8dd4b187f5e6de5c6e1ed29bfc0a708fd93
 # 1.22.1, over 1.22.0: the instruction and README say the person may run the web tools without AI Review (the unreviewed switch), and what that gives a page.
-agentry/assistant@1.22.1 sha256:eb4b23accb342d4b9a00dba4941624b572150082edc218be0ea0196fa0db8aca
+agentry/assistant@1.22.1 sha256:a52a93311ef03f1bd5836dc74fe047ac41b5d74a997f92f9c6f741e5101bb43d
 # 1.2.3, over 1.2.2: the review guide's runner tools name the finish check and the run envelope's checklist block.
 agentry/examiner@1.2.3 sha256:fd0a8e2c20470c404a2bbe1b80fe1b1ecbf325dbb3890a2b4eb40d0a781c3858
 # 1.2.4, over 1.2.3: the README says AI Review may be asked through the registry, where an organization's credits pay for it.

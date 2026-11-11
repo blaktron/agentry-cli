@@ -29,7 +29,7 @@ const (
 )
 
 // unreviewedLine is the bypass's consent sentence.
-const unreviewedLine = "Passes every search result and page the web tools bring back to the agent unread: AI Review reads none of them, and no TypeSafe key is needed. " +
+const unreviewedLine = "Passes every search result and page the web tools bring back to the agent unread: AI Review reads none of them, and no TypeSafe key is needed; web search runs only with a search key of your own. " +
 	"A page can tell the agent to act with what it holds, your share, its memory, your mail and calendar, and the QuickAgents it looks after, and nothing checks what it says first"
 
 // operationEndWait bounds ending one operation when a segment ends.
