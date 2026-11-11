@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -779,5 +780,60 @@ func TestADocumentSignedByAHandedOverKeyReachesAMemberPinnedBefore(t *testing.T)
 	loaded, err := Load(s.URL)
 	if err != nil || loaded == nil || loaded.Document.Version != 4 {
 		t.Fatalf("the cached copy after the handover: %+v %v", loaded, err)
+	}
+}
+
+// boundFor is docFor bound to the accounts it is for.
+func boundFor(t *testing.T, reg string, version int64, settings map[string]managedsettings.Setting, accounts ...string) managedsettings.Document {
+	t.Helper()
+	m, err := managedsettings.BindMembers(accounts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := docFor(reg, version, settings)
+	d.Schema, d.Members = managedsettings.SchemaMembers, m
+	return d
+}
+
+// A document signed for another combination of teams at the same version,
+// put in the cache in place of the member's own, verifies with the
+// registry's key and is refused because it does not name the member's
+// account; the member's own bound document applies. The registry's answer
+// is held to the same rule.
+func TestAColleaguesDocumentReplayedIntoTheCacheIsRefused(t *testing.T) {
+	const colleague = "6f1c2b9e-0000-4000-8000-000000000002"
+	k := newSigner(t)
+	s := setup(t, k, false)
+	s.serve(k.envelope(t, managedsettings.PayloadType, boundFor(t, s.URL, 4, forbidden(), s.account)))
+	if _, err := refresh(t, s); err != nil {
+		t.Fatalf("Refresh of the member's own bound document: %v", err)
+	}
+	if st, err := Load(s.URL); err != nil || st == nil || st.Document.Members == nil {
+		t.Fatalf("Load of the member's own = %+v, %v", st, err)
+	}
+
+	looser := map[string]managedsettings.Setting{managedsettings.UnsafeMode: {Value: str(managedsettings.UnsafeModeAllowed), Locked: true}}
+	theirs := k.envelope(t, managedsettings.PayloadType, boundFor(t, s.URL, 4, looser, colleague))
+	path, _ := CachePath(s.URL)
+	raw, _ := os.ReadFile(path)
+	var f cacheFile
+	if err := json.Unmarshal(raw, &f); err != nil {
+		t.Fatal(err)
+	}
+	f.Envelope = theirs
+	raw, _ = json.Marshal(f)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if st, err := Load(s.URL); err == nil || !errors.Is(err, managedsettings.ErrNotForAccount) {
+		t.Fatalf("Load of a colleague's document = %+v, %v; want ErrNotForAccount", st, err)
+	}
+	if got := Current().UnsafeModeRefusal(); got == "" {
+		t.Error("Unsafe Mode is not refused while the cache holds another member's document")
+	}
+
+	s.serve(theirs)
+	if _, err := refresh(t, s); err == nil || !errors.Is(err, managedsettings.ErrNotForAccount) {
+		t.Fatalf("Refresh of a document for another member: %v, want ErrNotForAccount", err)
 	}
 }
