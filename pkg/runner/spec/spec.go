@@ -543,6 +543,11 @@ type CapSummary struct {
 	// WebGivenOnly holds web_read to the addresses the person gave the run,
 	// with no web_search: the Voice Writer's, reading a person's own pages.
 	WebGivenOnly bool `json:"webGivenOnly,omitempty"`
+	// WebUnreviewed says the web tools pass what they bring back to the
+	// model unread by AI Review: a persistent agent's, whose person switched
+	// the review off for it. Only with WebTools, and only in a persistent
+	// plan; the run's scan must be the unreviewed one, and only then.
+	WebUnreviewed bool `json:"webUnreviewed,omitempty"`
 	// WebRender lets web_read render a page in a headless browser the
 	// engine runs once a page, behind a proxy that admits public sites
 	// alone, and read the text the page draws: the Knowledge Creator's.

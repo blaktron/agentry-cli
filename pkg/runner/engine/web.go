@@ -74,8 +74,15 @@ func checkWeb(p Params) error {
 		if p.Web.JevKey == "" {
 			return Classify(ExitPolicy, errors.New("a local draft's scans need your own Jev key"))
 		}
+	case toolsrv.WebScanUnreviewed:
+		if !p.Plan.Capabilities.WebUnreviewed {
+			return Classify(ExitPolicy, errors.New("this plan reads every web result through AI Review, so a run cannot be given the web tools without it"))
+		}
 	default:
 		return Classify(ExitPolicy, fmt.Errorf("unknown scanner %q", p.Web.Scan))
+	}
+	if p.Plan.Capabilities.WebUnreviewed && p.Web.Scan != toolsrv.WebScanUnreviewed {
+		return Classify(ExitCLI, errors.New("this plan says its web tools run without AI Review, so a run cannot scan with it"))
 	}
 	if len(p.Web.Given) > 0 && !p.Plan.Capabilities.WebGivenOnly {
 		return Classify(ExitCLI, errors.New("this plan's web_read is not held to the addresses it is given, so it cannot be given any"))
@@ -199,6 +206,9 @@ func webRecord(receiptsDir string, w *WebRun) *receipt.Web {
 		switch e.Verdict {
 		case webscan.Pass:
 			rec.Passed++
+			if e.Unreviewed {
+				rec.Unreviewed++
+			}
 		case webscan.Withheld:
 			rec.Withheld++
 		default:
@@ -223,6 +233,10 @@ func webRecord(receiptsDir string, w *WebRun) *receipt.Web {
 
 // webLine is the receipt's enforcement line for the counts.
 func webLine(rec *receipt.Web) string {
+	if rec.Scan == toolsrv.WebScanUnreviewed {
+		return fmt.Sprintf("AI Review read nothing: the person switched it off for this agent, so every text the web tools brought back reached the model unread: %d read (%d pages, %d search results of %d searches), %d of them unreviewed; %d calls refused before reading anything; each address is in receipts/"+WebLedgerFile+" and gateway.log",
+			rec.Read, rec.Pages, rec.SearchResults, rec.Searches, rec.Unreviewed, rec.Refused)
+	}
 	where := "the person's own Jev key"
 	if rec.Scan == toolsrv.WebScanRegistry {
 		where = "the registry's model-input route, with the job's credential"

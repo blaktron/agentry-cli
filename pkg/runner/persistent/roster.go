@@ -263,7 +263,7 @@ func BuildRosterUnder(a Agent, c Config, applied *Applied, malwareCheck bool) Ro
 		add(e, true)
 	}
 	for _, e := range reachEntries(a) {
-		add(e, reachDefault(a))
+		add(e, reachEntryDefault(a, e.ID))
 	}
 	if e, ok := voiceEntry(a); ok {
 		add(e, false)
@@ -555,6 +555,9 @@ type Openers struct {
 	Voice  Voice
 	Web    WebOpener
 	Review ReviewOpener
+	// Unreviewed opens the web tools without AI Review, for an agent whose
+	// person switched it off.
+	Unreviewed WebOpener
 }
 
 // ApplyWith is Apply with each of the person's things it opens.

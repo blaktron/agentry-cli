@@ -82,9 +82,10 @@ type Web struct {
 	MaxSearches      int `json:"maxSearches,omitempty"`
 	MaxRegistryCalls int `json:"maxRegistryCalls,omitempty"`
 	// Scan is where texts are scanned: WebScanRegistry (the registry's
-	// route, with the job's credential in EnvWebJobToken) or WebScanJev
-	// (the person's own key in EnvWebJevKey). Anything else scans nothing,
-	// so every result is withheld.
+	// route, with the job's credential in EnvWebJobToken), WebScanJev (the
+	// person's own key in EnvWebJevKey) or WebScanUnreviewed (no review: a
+	// persistent agent whose person switched it off, which the plan
+	// records). Anything else scans nothing, so every result is withheld.
 	Scan string `json:"scan,omitempty"`
 	// Search is where web_search goes: WebScanRegistry, a provider name
 	// the person holds a key for (EnvWebSearchKey), or empty, when
@@ -102,6 +103,8 @@ type Web struct {
 const (
 	WebScanRegistry = "registry"
 	WebScanJev      = "jev"
+	// WebScanUnreviewed passes every text unread by AI Review.
+	WebScanUnreviewed = "unreviewed"
 )
 
 // The environment variables the gateway injects into this container alone,
@@ -290,6 +293,8 @@ func (s *server) newWebState() *webState {
 				w.scanner = j
 			}
 		}
+	case WebScanUnreviewed:
+		w.scanner = webscan.Unreviewed{}
 	}
 	if w.scanner == nil {
 		_, _ = fmt.Fprintf(s.logw, "web: no AI Review scanner (scan %q): every web result will be withheld\n", web.Scan)

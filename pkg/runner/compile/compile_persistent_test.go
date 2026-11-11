@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+
 	"github.com/blaktron/agentry/pkg/manifest"
 	"gopkg.in/yaml.v3"
 
@@ -713,5 +715,50 @@ func TestSubagentHasNoAppLink(t *testing.T) {
 	sub.WorkspaceDir = workspaceFor(t, sub.Manifest, nil)
 	if _, err := Compile(sub, t.TempDir()); !errors.As(err, &refusal) || !strings.Contains(err.Error(), "persistent agent alone") {
 		t.Errorf("an autonomous run with an app link: %v", err)
+	}
+}
+
+// TestTheWebToolsWithoutAIReviewArePersistentAlone: a persistent agent's
+// web tools may run without AI Review, and the plan says so in its flag and
+// in the web line, which then claims no review; any other plan, a
+// built-in's draft among them, is refused the bypass.
+func TestTheWebToolsWithoutAIReviewArePersistentAlone(t *testing.T) {
+	declaring := parseManifest(t, strings.Replace(persistentOwnYAML, "    clock: true", "    clock: true\n    web: true", 1))
+	in := persistentInputs(t, &spec.AgentFiles{Share: true})
+	in.Source, in.Manifest, in.AppLink = "builtin", declaring, declaredAssistantSet
+	in.WorkspaceDir = workspaceFor(t, in.Manifest, nil)
+	in.Web = true
+	reviewed, err := Compile(in, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reviewed.Capabilities.WebUnreviewed || !strings.Contains(reviewed.Enforcement["web"], "is read by AI Review (Jev) before the model") {
+		t.Fatalf("the reviewed plan: flag %v, %q", reviewed.Capabilities.WebUnreviewed, reviewed.Enforcement["web"])
+	}
+	in.WebUnreviewed = true
+	plan, err := Compile(in, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := plan.Enforcement["web"]
+	if !plan.Capabilities.WebUnreviewed || !strings.Contains(line, "UNREAD by AI Review") || strings.Contains(line, "is read by AI Review") || !strings.Contains(line, "public addresses only") {
+		t.Fatalf("the unreviewed plan: flag %v, %q", plan.Capabilities.WebUnreviewed, line)
+	}
+
+	in.Web = false
+	var refusal *PolicyRefusal
+	if _, err := Compile(in, t.TempDir()); !errors.As(err, &refusal) || !strings.Contains(refusal.Reason, "without AI Review only for a persistent agent") {
+		t.Fatalf("the bypass without the web tools: %v", err)
+	}
+	m, err := manifest.Parse([]byte(webTextAgent))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := t.TempDir()
+	if err := os.WriteFile(filepath.Join(ws, "AGENT.md"), []byte("Draft.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Compile(Inputs{Manifest: m, Digest: "sha256:x", Source: "builtin", Web: true, WebUnreviewed: true, WorkspaceDir: ws, Policy: policy.Default(), PolicySHA: "sha", RunnerImage: "agentry-runner:test"}, filepath.Join(t.TempDir(), "plan")); !errors.As(err, &refusal) || !strings.Contains(refusal.Reason, "without AI Review only for a persistent agent") {
+		t.Fatalf("a built-in's draft without AI Review: %v", err)
 	}
 }

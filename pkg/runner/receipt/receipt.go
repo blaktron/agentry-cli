@@ -450,7 +450,8 @@ type PDFFile struct {
 type Web struct {
 	// Scan is where the texts were scanned: "registry" (the registry's
 	// route, with a hosted job's credential or the token of an operation
-	// paid with credits) or "jev" (the person's own key).
+	// paid with credits), "jev" (the person's own key) or "unreviewed" (no
+	// scan: a persistent agent whose person switched AI Review off).
 	Scan string `json:"scan"`
 	// Search is where web_search went ("registry", a provider, or "" when
 	// it was not granted).
@@ -469,6 +470,9 @@ type Web struct {
 	Passed     int `json:"passed"`
 	Withheld   int `json:"withheld"`
 	NotScanned int `json:"notScanned"`
+	// Unreviewed are the passed texts AI Review never read, because the
+	// person switched it off for the agent.
+	Unreviewed int `json:"unreviewed,omitempty"`
 	// Refused are calls the tools refused before reading anything: an
 	// address that is not public, a spent budget, a type that is not text.
 	Refused int `json:"refused"`
