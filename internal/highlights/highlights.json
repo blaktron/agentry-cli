@@ -3,7 +3,10 @@
     {
       "version": "0.7.53",
       "highlights": [
-        "Your Claude subscription now runs Claude Code 2.1.322, where the fable alias picks Claude Fable 5.2."
+        "Your Claude subscription now runs Claude Code 2.1.322, where the fable alias picks Claude Fable 5.2.",
+        "The Coding agent works each change through a loop, and can use your computer once you switch it on.",
+        "Models on your own endpoint run with the reasoning settings their maker recommends for their family.",
+        "A run that repeats the same call or failure a third time is told so, and can try another way."
       ]
     },
     {
