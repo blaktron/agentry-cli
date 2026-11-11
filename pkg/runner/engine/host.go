@@ -386,6 +386,8 @@ func runHostHarness(ctx context.Context, p Params, rd *runDirs, token string, re
 		}
 		out.err = Classify(ExitHarness, fmt.Errorf("harness exited %d%s", exit, detail))
 		out.atCapacity = exitedAtCapacity(p, collector.harnessErrReported, stderrPath)
+	case collector.answerCut:
+		out.err = answerCutError()
 	}
 	return out
 }

@@ -108,6 +108,7 @@ func TestReasonCleanKeepsOnlyTheClosedList(t *testing.T) {
 			{"out-of-credits", nil, nil},
 			{"answer-in-reasoning", nil, nil},
 			{"tool-call-as-text", nil, nil},
+			{"answer-cut", nil, nil},
 			{"host-refused", []string{"host-address", "host-key-unknown", "host-key-changed", "host-auth", "host-credential", "host-unreachable", "hosted"}, []string{question}},
 			{"desktop-refused", []string{"desktop-unavailable", "desktop-not-installed", "desktop-stopped", "desktop-paused", "desktop-declined", "desktop-unreachable", "hosted", "outside-window", "desktop-not-granted"}, []string{"blender", "unreal-engine"}},
 		}
@@ -355,7 +356,7 @@ func TestEnvelopeCarriesTheReason(t *testing.T) {
 
 func TestReasonCodesAreTheClosedList(t *testing.T) {
 	want := []ReasonCode{
-		ReasonAgentBlocked, ReasonAnswerInReasoning, ReasonDesktopRefused, ReasonExecNotProvided, ReasonHostRefused, ReasonInputRefused, ReasonInputsNotDecoded, ReasonMCPInstallFailed,
+		ReasonAgentBlocked, ReasonAnswerCut, ReasonAnswerInReasoning, ReasonDesktopRefused, ReasonExecNotProvided, ReasonHostRefused, ReasonInputRefused, ReasonInputsNotDecoded, ReasonMCPInstallFailed,
 		ReasonMCPNotResolved, ReasonMCPRuntimeExcluded, ReasonMCPStartFailed, ReasonMCPVulnerable,
 		ReasonOrgPolicy, ReasonOutOfCredits, ReasonPlanLimit, ReasonRunnerBlocked, ReasonSecretMissing, ReasonSignInMissing, ReasonToolCallAsText,
 	}

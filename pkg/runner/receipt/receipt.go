@@ -643,7 +643,41 @@ type Usage struct {
 	// repeating the same tool call and reach its goal another way. Each is
 	// a streak of identical calls the run went on from. Absent when none.
 	LoopNudges int `json:"loopNudges,omitempty"`
+	// LengthRecoveries counts the answers the harness took out of the
+	// conversation because the model's output limit cut them off, by what
+	// was cut. The run went on from each. Absent when none.
+	LengthRecoveries LengthRecoveries `json:"lengthRecoveries,omitzero"`
 }
+
+// LengthRecoveries counts cut-off answers by what the output limit cut: an
+// answer's text, reasoning with no reply yet, or a tool call, which was not
+// run.
+type LengthRecoveries struct {
+	Answer    int `json:"answer,omitempty"`
+	Reasoning int `json:"reasoning,omitempty"`
+	ToolCall  int `json:"toolCall,omitempty"`
+}
+
+// Add counts one recovery of what was cut: "reasoning", "tool call", or an
+// answer for anything else.
+func (l *LengthRecoveries) Add(what string) {
+	switch what {
+	case "reasoning":
+		l.Reasoning++
+	case "tool call":
+		l.ToolCall++
+	default:
+		l.Answer++
+	}
+}
+
+// Plus is the two counts together.
+func (l LengthRecoveries) Plus(o LengthRecoveries) LengthRecoveries {
+	return LengthRecoveries{Answer: l.Answer + o.Answer, Reasoning: l.Reasoning + o.Reasoning, ToolCall: l.ToolCall + o.ToolCall}
+}
+
+// Total is how many recoveries there were.
+func (l LengthRecoveries) Total() int { return l.Answer + l.Reasoning + l.ToolCall }
 
 // Total is the run's token count as a meter should read it: the harness's
 // own total where it reports one, otherwise input plus output. The two

@@ -140,5 +140,6 @@ agents:
       keep_turns: 2
       keep_browser: 2
     compaction_notes: checklist.md in your scratch folder, which the checklist tool reads
+    length_recovery: true
     max_tool_result_tokens: 24576
     compaction_threshold: 0.8

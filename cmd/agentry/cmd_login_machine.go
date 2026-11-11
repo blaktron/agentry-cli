@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/blaktron/agentry-cli/pkg/authflow"
+	"github.com/blaktron/agentry-cli/pkg/managed"
 	"github.com/spf13/cobra"
 )
 
@@ -41,6 +42,13 @@ func authFailure(cmd *cobra.Command, reg, status, reason string) error {
 // Resolve without registryURL's diagnostic path: malformed local state must
 // not send its contents into a machine client's stderr/model context.
 func authRegistry() (string, error) {
+	pin, err := managed.MachineRegistry()
+	if err != nil {
+		return "", err
+	}
+	if pin != "" {
+		return pin, nil
+	}
 	reg := flags.registry
 	if reg == "" {
 		reg = envRegistryURL()

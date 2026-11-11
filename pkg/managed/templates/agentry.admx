@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Agentry's machine settings for Group Policy and Intune. Each policy
+     writes one value under HKLM\SOFTWARE\Policies\SecureAgentry\Agentry,
+     which Agentry reads before anything else. See
+     https://docs.secureagentry.net/managed-settings/ -->
+<policyDefinitions xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" revision="1.0" schemaVersion="1.0" xmlns="http://schemas.microsoft.com/GroupPolicy/2006/07/PolicyDefinitions">
+  <policyNamespaces>
+    <target prefix="agentry" namespace="SecureAgentry.Policies.Agentry" />
+    <using prefix="windows" namespace="Microsoft.Policies.Windows" />
+  </policyNamespaces>
+  <resources minRequiredRevision="1.0" />
+  <supportedOn>
+    <definitions>
+      <definition name="SUPPORTED_Agentry_0_7_55" displayName="$(string.SUPPORTED_Agentry_0_7_55)" />
+    </definitions>
+  </supportedOn>
+  <categories>
+    <category name="Agentry" displayName="$(string.Agentry)" />
+  </categories>
+  <policies>
+    <policy name="Registry" class="Machine" displayName="$(string.Registry)" explainText="$(string.Registry_Explain)" presentation="$(presentation.Registry)" key="SOFTWARE\Policies\SecureAgentry\Agentry">
+      <parentCategory ref="Agentry" />
+      <supportedOn ref="SUPPORTED_Agentry_0_7_55" />
+      <elements>
+        <text id="RegistryValue" valueName="Registry" required="true" maxLength="512" />
+      </elements>
+    </policy>
+    <policy name="RequireOrg" class="Machine" displayName="$(string.RequireOrg)" explainText="$(string.RequireOrg_Explain)" presentation="$(presentation.RequireOrg)" key="SOFTWARE\Policies\SecureAgentry\Agentry">
+      <parentCategory ref="Agentry" />
+      <supportedOn ref="SUPPORTED_Agentry_0_7_55" />
+      <elements>
+        <text id="RequireOrgValue" valueName="RequireOrg" required="true" maxLength="39" />
+      </elements>
+    </policy>
+    <policy name="Settings" class="Machine" displayName="$(string.Settings)" explainText="$(string.Settings_Explain)" presentation="$(presentation.Settings)" key="SOFTWARE\Policies\SecureAgentry\Agentry">
+      <parentCategory ref="Agentry" />
+      <supportedOn ref="SUPPORTED_Agentry_0_7_55" />
+      <elements>
+        <text id="SettingsValue" valueName="Settings" required="true" maxLength="32767" />
+      </elements>
+    </policy>
+  </policies>
+</policyDefinitions>
