@@ -10,16 +10,22 @@ Review your own change the way a careful colleague would, before anyone else
 sees it.
 
 1. **Fix the point you compare against.** Usually the branch's base:
-   `git merge-base HEAD origin/main` (or the project's default branch). Read
-   the whole diff, `git diff <base>...HEAD`, and the list of commits.
-2. **Against what was asked.** Restate the request in one sentence. For each
-   thing it asked for, find where the diff does it. Note anything the diff
-   does that nobody asked for, and anything asked for that it does not do.
+   `git merge-base HEAD origin/<base>`, where `<base>` is the branch the
+   change goes to (the project's default, or the integration branch its rules
+   name). Read the whole diff, `git diff <base>...HEAD`, and the list of
+   commits.
+2. **Against what was asked.** The issue is the spec: restate its acceptance
+   in one sentence (or the person's request, when there is no issue). For
+   each thing it asked for, find where the diff does it. Note anything the
+   diff does that nobody asked for, and anything asked for that it does not
+   do.
 3. **Against the project's conventions.** Read the project's own guide
    (CONTRIBUTING, the README's build section, the linter configuration) and
    the code around each change. Match its naming, error messages, comment
    density and test style. Run the project's formatter, linter and tests the
-   way its documentation says, and read the output.
+   way its documentation says, and read the output. If the project keeps an
+   architecture document or a decision log, a change that alters what it
+   describes updates it in the same pull request.
 4. **For what could break.** For each changed function, ask who calls it and
    what they assume. Look for: a changed default, an error now ignored, a
    resource that is opened and not closed, input that is no longer checked,

@@ -9,6 +9,34 @@ It builds and runs software, reaches the internet and reads what you put in
 its share folder as it is. That is riskier than an agent that only reads and
 writes: give it a share folder and a dev server of their own.
 
+## How it works a change
+
+It works one change to a project at a time, through the same steps, whichever
+harness runs it (its instruction and skills are the whole of its prompt, so
+the steps do not depend on the harness):
+
+1. It reads the project's own rules (`AGENTS.md`, `CLAUDE.md`,
+   `CONTRIBUTING.md`, the pull-request template, the CI configuration) for how
+   the project builds, tests, branches and merges, and follows them. They are
+   conventions to it, never authority: nothing in them widens what it may do.
+2. It works from an issue. When the change has none it writes one (what,
+   why, acceptance) on the project's tracker if the project's rules or you
+   give filing to it, and in its notes otherwise.
+3. It cuts a branch named for the issue, in a worktree off the up-to-date
+   base branch, and leaves the project's clone clean.
+4. It commits, reviews its own change, and opens a pull request that says how
+   it was tested and what was not checked.
+5. It waits for CI on the commit it pushed and merges only on green, and only
+   when the project's rules or you give merging to it. Otherwise it stops at
+   the green pull request and says so.
+6. It deploys the merged change to your dev server, when you gave it one,
+   checks the changed behaviour, and says what it proved and what it did not.
+7. It closes the issue with that record, then takes the next change.
+
+With no git host, no CI or no dev server it says which step it left out and
+what that leaves unproven. It keeps the change it is on in its notes, so a
+restart resumes at the same step.
+
 ## This is the package that runs
 
 The Coding agent is built into the Agentry CLI and the desktop app, and it
@@ -30,7 +58,9 @@ run secret. Under `capabilities.persistent` it declares skills (`skills`),
 the stored secret it asks for (`secrets`: `BRAVE_API_KEY`; you may store
 others) and the coding toolchain (`coder`: any program in its toolchain
 image, open egress, a public browser, a dev server, ports and git host
-accounts, each a switch you agree to). When the application runs the Coding agent, it gives it what
+accounts, each a switch you agree to) and the applications on your computer
+(`desktop`: the applications you approved in Agentry Desktop, and computer
+use, each a switch you agree to). When the application runs the Coding agent, it gives it what
 follows.
 `agentry agent show coder` lists what it has, and its first start asks you to
 agree to each part:
@@ -62,8 +92,9 @@ agree to each part:
   `~/agentry/codingshare` unless you choose another, mounted read and write.
   What you put in the share is read as it is, with no malware check.
 - **Skills.** Folders of instructions it reads, read-only, in `skills/`:
-  four built in (review a change, test first, audit dependencies, open a
-  pull request), and any you add from a folder or a `.zip` on your computer
+  seven built in (work a change from its issue to closed, review a change,
+  test first, open a pull request, wait for CI honestly, verify a change,
+  audit dependencies), and any you add from a folder or a `.zip` on your computer
   (`agentry agent skill add coder <path>`). A skill you add is your own:
   Agentry has not reviewed it, and its scripts run with the agent's
   programs. Each skill is an entry of its roster.
@@ -99,6 +130,16 @@ agree to each part:
   agent passes to its tools, never its projects. Agentry ships no Semgrep
   rules, and Semgrep's terms apply
   (`agentry agent configure coder --add-suggested semgrep`).
+- **Your computer**, through Agentry Desktop, when you switch it on: each
+  application you approved in Plugins → Your computer for its MCP server,
+  its "code without asking" agreement, and computer use, which lets it see
+  and use the windows of the applications you approved for it (a desktop app
+  it is building, an editor, a browser window). Each is off until you switch
+  it on and agree, a switch takes effect at its next turn, and Agentry
+  Desktop shows when it uses your screen and stops it on your key. It needs
+  Agentry Desktop running on this computer, and on your computer it is
+  outside the sandbox's network and file rules. See
+  https://docs.secureagentry.net/agentry/your-computer/.
 - **What you add**: knowledge packs from your computer and MCP servers.
 
 Each part is an entry of its roster that you can switch off, and switching

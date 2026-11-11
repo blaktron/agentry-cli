@@ -236,3 +236,7 @@ agentry/examiner@1.2.3 sha256:fd0a8e2c20470c404a2bbe1b80fe1b1ecbf325dbb3890a2b4e
 # 1.2.4, over 1.2.3: the README says AI Review may be asked through the registry, where an organization's credits pay for it.
 agentry/examiner@1.2.4 sha256:a986440afc9c74cf80a3bfb7e486fcf52d614f1afd263aab579a6eba4c42d85c
 agentry/examiner@1.2.5 sha256:41c99859d03111069a68c6555fe90b5ee2e91d7b9ce9e5352512fb4427ef68c8
+# 1.6.0, over 1.5.0: the Coding agent works every change through a loop (the project's rules, an issue, a branch in a worktree, a reviewed pull request, an honest CI gate, a deploy and a verification, a close with the record), in its instruction and three new built-in skills, work-change, ci-gate and verify-change; open-pull-request and review-change follow it.
+agentry/coder@1.6.0 sha256:c19fac37ca848d69c0b83803f7a4e52c1a28550eadb491ca782a954000ec57a7
+# 1.7.0, over 1.6.0: the Coding agent declares the person's computer under capabilities.persistent (desktop), so its roster offers the applications approved in Agentry Desktop and computer use, each off until the person switches it on; its instruction and README say how it uses them.
+agentry/coder@1.7.0 sha256:777345b1854c4468e7b7f1f465af80af8dae0d767cdab1188f5497e6ed11aa66

@@ -86,7 +86,7 @@ func TestAStubNeverCrossesATurn(t *testing.T) {
 	if got, _ := s.callTool(s.tools[ToolFSRead], rawArgs(t, args)); got != first {
 		t.Fatalf("the next turn's read = %q, want the page", got)
 	}
-	if got, _ := s.callTool(s.tools[ToolFSRead], rawArgs(t, args)); got != RereadStub {
+	if got, _ := s.callTool(s.tools[ToolFSRead], rawArgs(t, args)); beforeNotice(got) != RereadStub {
 		t.Fatalf("the new turn's re-read = %q, want the stub", got)
 	}
 }
@@ -119,7 +119,7 @@ func TestAnUnreadableTurnCountServesEveryRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if got, _ := s.callTool(s.tools[ToolFSRead], rawArgs(t, args)); got != first {
+		if got, _ := s.callTool(s.tools[ToolFSRead], rawArgs(t, args)); beforeNotice(got) != first {
 			t.Fatalf("a read with no turn count = %q, want the page", got)
 		}
 	}

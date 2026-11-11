@@ -202,3 +202,44 @@ func TestTheRosterOffersThePersonsApplications(t *testing.T) {
 		t.Fatalf("with an Agentry Desktop that lists nothing: %v", got)
 	}
 }
+
+// TestTheCodingAgentIsOfferedThePersonsComputer: the Coding agent declares
+// the person's computer, so its roster offers each approved application and
+// computer use, all off; computer use switched on asks the person, and once
+// agreed the next segment is given computer use in app scope beside the
+// coding toolchain; switched off, it has none.
+func TestTheCodingAgentIsOfferedThePersonsComputer(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	home := shortHome(t)
+	t.Setenv("AGENTRY_RUNNER_HOME", home)
+	stubApplications(t, nil, listedBlender)
+	a := coderAgent(t)
+	if !a.UsesDesktop() {
+		t.Fatal("the Coding agent does not declare the person's computer")
+	}
+	c := Config{Enabled: true}
+	r := BuildRoster(a, c, nil)
+	for _, id := range []string{DesktopEntryID("blender"), DesktopExecID("blender"), EntryComputer} {
+		if e, ok := r.Entry(id); !ok || e.On {
+			t.Fatalf("%s: %+v offered %v, want offered and off", id, e, ok)
+		}
+	}
+	_, err := ApplyChange(home, a, &c, Change{Switch: &Switch{ID: EntryComputer, On: true}})
+	var ce *ConsentError
+	if !errors.As(err, &ce) || len(ce.Entries) != 1 || ce.Entries[0].ID != EntryComputer {
+		t.Fatalf("switching computer use on without agreeing: %v", err)
+	}
+	if _, err := ApplyChange(home, a, &c, Change{Switch: &Switch{ID: EntryComputer, On: true}, Consent: true}); err != nil {
+		t.Fatal(err)
+	}
+	g := desktopGrant(a, c.Switches, func(id string) bool { return c.Switches[id] })
+	if g == nil || g.Line.ComputerUse != manifest.ComputerUseApp || len(g.Line.Servers) != 0 {
+		t.Fatalf("the next segment's desktop line: %+v", g)
+	}
+	if _, err := ApplyChange(home, a, &c, Change{Switch: &Switch{ID: EntryComputer, On: false}}); err != nil {
+		t.Fatal(err)
+	}
+	if g := desktopGrant(a, c.Switches, func(id string) bool { return c.Switches[id] }); g != nil {
+		t.Fatalf("switched off, the next segment still has %+v", g.Line)
+	}
+}

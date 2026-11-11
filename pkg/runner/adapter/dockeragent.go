@@ -98,6 +98,8 @@ type modelYAML struct {
 	Model    string `yaml:"model"`
 	// BaseURL points OpenAI-compatible providers at custom endpoints.
 	BaseURL string `yaml:"base_url,omitempty"`
+	// modelSampling is the model's sampling and answer cap (modelSettings).
+	modelSampling `yaml:",inline"`
 	// ProviderOpts is set for the Claude models whose thinking blocks are
 	// bound to the conversation (thinkingBinding), for a model whose context
 	// window the policy names, and for an endpoint of the person's own
@@ -114,6 +116,36 @@ type providerOptsYAML struct {
 	ThinkingDisplay        string `yaml:"thinking_display,omitempty"`
 	ContextSize            int64  `yaml:"context_size,omitempty"`
 	StreamIdleTimeout      string `yaml:"stream_idle_timeout,omitempty"`
+	// The sampling keys docker-agent reads from provider_opts, whether
+	// earlier turns' reasoning is sent back, and the free body fields merged
+	// into each request.
+	TopK              *int64         `yaml:"top_k,omitempty"`
+	MinP              *float64       `yaml:"min_p,omitempty"`
+	RepetitionPenalty *float64       `yaml:"repetition_penalty,omitempty"`
+	ReplayReasoning   *bool          `yaml:"replay_reasoning,omitempty"`
+	ExtraBody         *extraBodyYAML `yaml:"extra_body,omitempty"`
+}
+
+// modelSampling is the model-level keys docker-agent reads: the sampling
+// that every OpenAI-compatible server takes, and the cap on one answer.
+type modelSampling struct {
+	Temperature     *float64 `yaml:"temperature,omitempty"`
+	TopP            *float64 `yaml:"top_p,omitempty"`
+	PresencePenalty *float64 `yaml:"presence_penalty,omitempty"`
+	MaxTokens       int64    `yaml:"max_tokens,omitempty"`
+}
+
+// extraBodyYAML is the request fields merged in as they are, a struct so
+// the plan's bytes keep their order.
+type extraBodyYAML struct {
+	ChatTemplateKwargs *chatTemplateKwargsYAML `yaml:"chat_template_kwargs,omitempty"`
+}
+
+// chatTemplateKwargsYAML is the variables the model's chat template reads
+// that switch reasoning on and keep it in the history.
+type chatTemplateKwargsYAML struct {
+	EnableThinking   *bool `yaml:"enable_thinking,omitempty"`
+	PreserveThinking *bool `yaml:"preserve_thinking,omitempty"`
 }
 
 // ownEndpointStreamIdle is the stream idle limit for an endpoint of the
@@ -139,8 +171,17 @@ func providerOpts(provider string, m policy.Model) *providerOptsYAML {
 	opts.ContextSize = m.ContextWindow
 	if m.OwnEndpoint() {
 		opts.StreamIdleTimeout = ownEndpointStreamIdle
+		_, set := modelSettings(m)
+		opts.TopK, opts.MinP, opts.RepetitionPenalty = set.TopK, set.MinP, set.RepetitionPenalty
+		opts.ReplayReasoning, opts.ExtraBody = set.ReplayReasoning, set.ExtraBody
 	}
 	return opts
+}
+
+// samplingOf is the model-level part of modelSettings.
+func samplingOf(m policy.Model) modelSampling {
+	s, _ := modelSettings(m)
+	return s
 }
 
 // thinkingBinding is the provider_opts for a Claude model that signs each
@@ -565,10 +606,11 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 		Version: HarnessConfigVersion,
 		Models: map[string]modelYAML{
 			"main": {
-				Provider:     provider,
-				Model:        in.Model.Name,
-				BaseURL:      in.Model.BaseURL,
-				ProviderOpts: providerOpts(provider, in.Model),
+				Provider:      provider,
+				Model:         in.Model.Name,
+				BaseURL:       in.Model.BaseURL,
+				modelSampling: samplingOf(in.Model),
+				ProviderOpts:  providerOpts(provider, in.Model),
 			},
 		},
 		Agents: map[string]agntYAML{

@@ -830,7 +830,8 @@
         {
           "path": "cmd/agentry/cmd_agent_subagents_test.go",
           "tests": [
-            "TestASubagentRunIsAnOrdinaryAutonomousRun"
+            "TestASubagentRunIsAnOrdinaryAutonomousRun",
+            "TestDesktopUseIsTheInstallsWords"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -4598,6 +4599,27 @@
           "dependencyHints": []
         },
         {
+          "path": "pkg/runner/adapter/profiles_test.go",
+          "tests": [
+            "TestProfileTableValues",
+            "TestProfileFamiliesWithoutOne",
+            "TestProfileRendersOnOwnEndpointOnly",
+            "TestProfileAnswerCapIsAQuarterOfASmallWindow",
+            "TestProfileUnknownFamilyRendersNothingNew",
+            "TestProfilePolicyKeysOverrideKeyByKey",
+            "TestProfilePlanBytesAreDeterministic",
+            "TestProfileFamilyValues",
+            "TestProfileGemmaThinkingStaysAtItsDefault",
+            "TestProfileCardsWithoutSamplingRenderNothing",
+            "TestProfileMoreSpecificNameWins",
+            "TestProfileRepetitionPenaltyRenders"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "pkg/runner/adapter/redacted_test.go",
           "tests": [
             "TestToolResultRedacted"
@@ -8240,7 +8262,8 @@
             "TestAPlanIsReusedOnlyWithTheDesktopLineItWasCompiledWith",
             "TestAnUnchangedDesktopLineReusesThePlan",
             "TestADesktopLineThePolicyNowRefusesIsNotReused",
-            "TestTheAssistantsNextSegmentDropsComputerUseSwitchedOff"
+            "TestTheAssistantsNextSegmentDropsComputerUseSwitchedOff",
+            "TestTheCodingAgentsSegmentTakesComputerUseBesideItsToolchain"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -8937,6 +8960,18 @@
           ]
         },
         {
+          "path": "pkg/runner/persistent/coder_loop_test.go",
+          "tests": [
+            "TestTheCodingAgentWorksTheChangeLoopOnEveryHarness"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
+          ]
+        },
+        {
           "path": "pkg/runner/persistent/coder_test.go",
           "tests": [
             "TestCoderEgressConsentRecorded",
@@ -9022,7 +9057,8 @@
             "TestTheExecAgreementIsGivenWithItsApplicationAlone",
             "TestADesktopEntryNeedsAgentryDesktopAndIsGivenAllTheSame",
             "TestTheReleaseLineNarrowsTheDesktopEntries",
-            "TestTheRosterOffersThePersonsApplications"
+            "TestTheRosterOffersThePersonsApplications",
+            "TestTheCodingAgentIsOfferedThePersonsComputer"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -9615,6 +9651,7 @@
             "TestSubagentCallNamesOnlyRosterEntries",
             "TestSubagentRefusedWhenQuarantined",
             "TestHelperRunAsksPerNewVersion",
+            "TestHelperRunNamesThePersonsComputer",
             "TestASubagentIsARosterEntry",
             "TestAQuestionIsAskedAndAnsweredOverTheOwnerSocket",
             "TestAQuestionReachesAClientInTheSupervisorsProcess",
@@ -12604,6 +12641,24 @@
             "HTTP transport",
             "source/file contract",
             "real-time wait"
+          ]
+        },
+        {
+          "path": "runnerimage/toolsrv/repeat_test.go",
+          "tests": [
+            "TestTheThirdIdenticalCallCarriesTheNoticeAndTheSixthRepeatsIt",
+            "TestArgumentKeyOrderAndSpacingDoNotMakeACallDistinct",
+            "TestAChangedResultIsNotARepeat",
+            "TestTheThirdFailureWithTheSameErrorCarriesTheNotice",
+            "TestADifferentErrorIsNotTheSameFailure",
+            "TestTheNoticeBlocksNothing",
+            "TestTheChecklistIsNeverCounted"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
           ]
         },
         {
