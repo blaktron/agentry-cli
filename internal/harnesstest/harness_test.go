@@ -149,6 +149,11 @@ type runOpts struct {
 	maxSteps     int
 	ctx          context.Context
 	configEdit   func(map[string]any)
+	// answers are the runner's commands after the prompt, in order: one
+	// for each turn_ending. Stdin ends after them.
+	answers []proto.Command
+	// stdin replaces the prompt and the answers with these bytes.
+	stdin *string
 }
 
 func run(t *testing.T, model *scriptedmodel.Server, g *gateway, o runOpts) (int, []proto.Event, string) {
@@ -192,8 +197,17 @@ func run(t *testing.T, model *scriptedmodel.Server, g *gateway, o runOpts) (int,
 	env := func(name string) string {
 		return map[string]string{"MODEL_KEY": modelKey, "MCP_GATEWAY_TOKEN": gatewayToken}[name]
 	}
+	var stdin bytes.Buffer
+	for _, cmd := range append([]proto.Command{{Type: proto.CmdPrompt, Text: o.task}}, o.answers...) {
+		line, _ := json.Marshal(cmd)
+		stdin.Write(append(line, '\n'))
+	}
+	if o.stdin != nil {
+		stdin.Reset()
+		stdin.WriteString(*o.stdin)
+	}
 	var stdout, stderr bytes.Buffer
-	code := harness.Run(o.ctx, []string{"--config", path, "--conversation", o.conversation}, strings.NewReader(o.task), &stdout, &stderr, env)
+	code := harness.Run(o.ctx, []string{"--config", path, "--conversation", o.conversation}, &stdin, &stdout, &stderr, env)
 
 	var events []proto.Event
 	sc := bufio.NewScanner(&stdout)
@@ -264,7 +278,7 @@ func TestOneRunEndToEnd(t *testing.T) {
 	if code != harness.ExitAnswered {
 		t.Fatalf("exit %d, stderr: %s", code, stderr)
 	}
-	if got, want := types(events), "ready reasoning text usage tool_call tool_result text usage turn_end"; got != want {
+	if got, want := types(events), "ready reasoning text usage tool_call tool_result text usage turn_ending turn_end"; got != want {
 		t.Fatalf("events: %s\nwant:   %s", got, want)
 	}
 	if ready := events[0]; strings.Join(ready.Tools, ",") != "fs_read,fs_write" || ready.Conversation != "run-1" {
@@ -639,14 +653,24 @@ func TestNothingIsSentOnAConfigurationThatCannotBeUsed(t *testing.T) {
 		})
 	}
 
-	t.Run("no task", func(t *testing.T) {
-		model := scriptedmodel.New(t)
-		g := newGateway(t, "fs_read")
-		code, _, stderr := run(t, model, g, runOpts{task: " \n"})
-		if code != harness.ExitUsage || !strings.Contains(stderr, "no task") || len(model.Requests()) != 0 {
-			t.Errorf("exit %d, stderr %q, %d requests", code, stderr, len(model.Requests()))
-		}
-	})
+	stdins := map[string]string{
+		"an empty prompt":                      `{"type":"prompt","text":" \n"}` + "\n",
+		"no command":                           "",
+		"a first command that is not a prompt": `{"type":"accept"}` + "\n",
+		"a line that is not a command":         "Read a.txt and say what it holds.\n",
+		"a command with an unknown member":     `{"type":"prompt","text":"Read a.txt.","tools":["shell"]}` + "\n",
+		"two commands on one line":             `{"type":"prompt","text":"Read a.txt."} {"type":"accept"}` + "\n",
+	}
+	for name, stdin := range stdins {
+		t.Run(name, func(t *testing.T) {
+			model := scriptedmodel.New(t)
+			g := newGateway(t, "fs_read")
+			code, events, stderr := run(t, model, g, runOpts{stdin: &stdin})
+			if code != harness.ExitUsage || !strings.Contains(stderr, "harness: ") || len(events) != 0 || len(model.Requests()) != 0 {
+				t.Errorf("exit %d, stderr %q, %d events, %d requests", code, stderr, len(events), len(model.Requests()))
+			}
+		})
+	}
 }
 
 func TestAGatewayThatRefusesTheBearerEndsTheRunBeforeTheModel(t *testing.T) {
@@ -699,7 +723,7 @@ func TestOneRunOnAChatCompletionsModel(t *testing.T) {
 	if code != harness.ExitAnswered {
 		t.Fatalf("exit %d, stderr: %s", code, stderr)
 	}
-	if got, want := types(events), "ready reasoning text usage tool_call tool_result text usage turn_end"; got != want {
+	if got, want := types(events), "ready reasoning text usage tool_call tool_result text usage turn_ending turn_end"; got != want {
 		t.Fatalf("events: %s\nwant:   %s", got, want)
 	}
 	var usages []proto.Usage
@@ -848,7 +872,7 @@ func TestOneRunOnOpenAIsOwnAPI(t *testing.T) {
 	if code != harness.ExitAnswered {
 		t.Fatalf("exit %d, stderr: %s", code, stderr)
 	}
-	if got, want := types(events), "ready reasoning text usage tool_call tool_result text usage turn_end"; got != want {
+	if got, want := types(events), "ready reasoning text usage tool_call tool_result text usage turn_ending turn_end"; got != want {
 		t.Fatalf("events: %s\nwant:   %s", got, want)
 	}
 	if end := last(t, events, proto.TypeTurnEnd); end.Reason != proto.EndAnswered || end.Text != "It holds one word: hello." {
@@ -953,7 +977,7 @@ func TestOneRunOnGemini(t *testing.T) {
 	if code != harness.ExitAnswered {
 		t.Fatalf("exit %d, stderr: %s", code, stderr)
 	}
-	if got, want := types(events), "ready reasoning text usage tool_call tool_result tool_call tool_result text usage turn_end"; got != want {
+	if got, want := types(events), "ready reasoning text usage tool_call tool_result tool_call tool_result text usage turn_ending turn_end"; got != want {
 		t.Fatalf("events: %s\nwant:   %s", got, want)
 	}
 	if end := last(t, events, proto.TypeTurnEnd); end.Reason != proto.EndAnswered || end.Text != "Both hold one word." {

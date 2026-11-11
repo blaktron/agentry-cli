@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/blaktron/agentry-cli/runnerimage/harness/convo"
 	"github.com/blaktron/agentry-cli/runnerimage/harness/llm"
@@ -57,11 +58,31 @@ type Harness struct {
 	conv  string
 	tools []llm.Tool
 	known map[string]bool
+	// toolBytes is the size of the tools as a request carries them.
+	toolBytes int
+	// unchanged are the tools whose results are not scrubbed.
+	unchanged map[string]bool
+
+	// Gate, when set, is asked before a turn ends on the model's answer,
+	// after the turn_ending event. It returns a message to go on with, or
+	// "" to end the turn.
+	Gate func(ctx context.Context) (string, error)
+	// Now is the clock; time.Now unless a test sets another.
+	Now func() time.Time
+
+	// bytesPerToken is what the counted requests have run at, zero before
+	// the first. learnedWindow is the model's window as a server's refusal
+	// stated or implied it, zero when none has. compactPast is the size the
+	// conversation must pass before another summary is tried, after one
+	// that could not be made.
+	bytesPerToken float64
+	learnedWindow int64
+	compactPast   int64
 }
 
 // New makes a harness that writes its events to out.
 func New(cfg proto.Config, model llm.Client, src ToolSource, out io.Writer) *Harness {
-	return &Harness{cfg: cfg, model: model, src: src, out: out}
+	return &Harness{cfg: cfg, model: model, src: src, out: out, Now: time.Now}
 }
 
 // Start opens the conversation, creating it when it does not exist, reads
@@ -95,7 +116,20 @@ func (h *Harness) Start(ctx context.Context, conversation string) error {
 		}
 		h.known[t.Name] = true
 		h.tools = append(h.tools, llm.Tool{Name: t.Name, Description: t.Description, Schema: t.InputSchema})
+		h.toolBytes += len(t.Name) + len(t.Description) + len(t.InputSchema)
 		names = append(names, t.Name)
+	}
+	h.unchanged = map[string]bool{}
+	if h.cfg.Scrub != nil {
+		for _, t := range h.cfg.Scrub.Unchanged {
+			h.unchanged[t] = true
+		}
+	}
+	// What an earlier process learned of the model's window.
+	for _, e := range h.log.Entries() {
+		if e.Kind == convo.KindCompaction && e.Window > 0 {
+			h.learnedWindow = int64(e.Window)
+		}
 	}
 	h.emit(proto.Event{Type: proto.TypeReady, Conversation: conversation, Tools: names})
 	return nil
@@ -117,19 +151,63 @@ func (h *Harness) Prompt(ctx context.Context, text string) (string, error) {
 	if err := h.log.Append(convo.Entry{Kind: convo.KindUser, Text: text}); err != nil {
 		return h.endFailed(proto.ClassHarness, err)
 	}
+	if err := h.coldClear(); err != nil {
+		return h.endFailed(proto.ClassHarness, err)
+	}
+	var watch loopWatch
+	// recoveries counts this turn's replies taken out as cut off.
+	// shortened says the request about to be sent is the one a refusal as
+	// too long was answered with a summary for: a second refusal ends the
+	// turn.
+	recoveries, shortened := 0, false
 	for step := 1; ; step++ {
 		if h.cfg.MaxSteps > 0 && step > h.cfg.MaxSteps {
 			return h.end(proto.EndMaxSteps, ""), nil
 		}
-		reply, err := h.model.Stream(ctx, llm.Request{
+		if !shortened && h.nearWindow() {
+			// A conversation already past the window would be refused
+			// whole, so its summary is asked for of the bounded copy.
+			size, first := h.contextTokens(), 0
+			if size >= h.window() {
+				first = 1
+			}
+			switch err := h.compact(ctx, reasonThreshold, first); {
+			case errors.Is(err, errNoSummary):
+				// The conversation goes on as it is, and is not
+				// tried again until it has grown by a tenth.
+				h.compactPast = size + size/10
+			case err != nil:
+				return h.endModelError(err)
+			}
+		}
+		msgs := h.log.Messages()
+		size := len(h.cfg.System) + h.toolBytes + messagesBytes(msgs)
+		reply, err := h.stream(ctx, llm.Request{
 			System:    h.cfg.System,
-			Messages:  h.log.Messages(),
+			Messages:  msgs,
 			Tools:     h.tools,
 			MaxTokens: h.cfg.Model.MaxOutputTokens,
 		}, h.delta)
 		if err != nil {
-			return h.endModelError(err)
+			if !llm.IsError(err, llm.Overflow) || h.cfg.Compaction == nil || shortened {
+				return h.endModelError(err)
+			}
+			// The server refused the conversation as too long: one
+			// summary, made from a bounded copy of it, and the request
+			// again. The refusal ends the turn when no summary can be had.
+			h.learn(err, msgs)
+			switch cerr := h.compact(ctx, reasonOverflow, 1); {
+			case errors.Is(cerr, errNoSummary):
+				return h.endModelError(err)
+			case cerr != nil:
+				return h.endModelError(cerr)
+			}
+			shortened = true
+			step--
+			continue
 		}
+		shortened = false
+		h.calibrate(size, reply.Usage.Input+reply.Usage.CacheRead+reply.Usage.CacheWrite)
 		if err := h.record(reply); err != nil {
 			return h.endFailed(proto.ClassHarness, err)
 		}
@@ -143,6 +221,17 @@ func (h *Harness) Prompt(ctx context.Context, text string) (string, error) {
 			case llm.Text:
 				answer.WriteString(p.Text)
 			}
+		}
+
+		// A reply the output limit cut off is taken out of what the model
+		// is sent: a stub stands for it, the model is told what happened,
+		// and the turn goes on. Its calls are not run.
+		if reply.Finish == llm.FinishLength && recoveries < h.cfg.LengthRecoveries {
+			recoveries++
+			if err := h.recoverCut(reply, recoveries); err != nil {
+				return h.endFailed(proto.ClassHarness, err)
+			}
+			continue
 		}
 
 		// Calls are run only when the reply ended by asking for them. A
@@ -161,11 +250,26 @@ func (h *Harness) Prompt(ctx context.Context, text string) (string, error) {
 			if reply.Finish == llm.FinishLength {
 				return h.end(proto.EndAnswerCut, answer.String()), nil
 			}
-			return h.end(proto.EndAnswered, answer.String()), nil
+			calls = nil
 		}
 		if len(calls) == 0 {
-			return h.end(proto.EndAnswered, answer.String()), nil
+			// The model answered. The runner may have more for it.
+			more, err := h.ending(ctx)
+			if err != nil {
+				return h.endFailed(proto.ClassHarness, err)
+			}
+			if more == "" {
+				return h.end(proto.EndAnswered, answer.String()), nil
+			}
+			// The message is the runner's, and is said to be: the model
+			// must not take it for the person's.
+			if err := h.log.Append(convo.Entry{Kind: convo.KindUser, Text: runtimeNote + more, Note: convo.NoteContinue}); err != nil {
+				return h.endFailed(proto.ClassHarness, err)
+			}
+			continue
 		}
+		var round []string
+		times := 0
 		for _, c := range calls {
 			if err := h.run(ctx, c); err != nil {
 				if ctx.Err() != nil {
@@ -173,8 +277,88 @@ func (h *Harness) Prompt(ctx context.Context, text string) (string, error) {
 				}
 				return h.endFailed(proto.ClassHarness, err)
 			}
+			watch.add(h.display(c.Name), c.Arguments)
+			// Looked for after every call, so a streak inside one reply's
+			// calls is seen even when a later call of the reply ends it.
+			if r, n := watch.repeating(h.cfg.Loop); n > 0 {
+				round, times = r, n
+				watch.reset()
+			}
+		}
+		// The message follows the results of all the reply's calls.
+		if times > 0 {
+			if err := h.nudge(round, times); err != nil {
+				return h.endFailed(proto.ClassHarness, err)
+			}
 		}
 	}
+}
+
+// nearWindow reports whether the conversation has reached the share of the
+// model's window at which it is summarised.
+func (h *Harness) nearWindow() bool {
+	c, w := h.cfg.Compaction, h.window()
+	if c == nil || w <= 0 {
+		return false
+	}
+	now := h.contextTokens()
+	return float64(now) >= c.Threshold*float64(w) && now > h.compactPast
+}
+
+// ending asks the runner whether the turn ends on the model's answer. With
+// no one to ask it does.
+func (h *Harness) ending(ctx context.Context) (string, error) {
+	if h.Gate == nil {
+		return "", nil
+	}
+	h.emit(proto.Event{Type: proto.TypeTurnEnding})
+	return h.Gate(ctx)
+}
+
+// display is a tool's name as the harness repeats it to the model: the name
+// of a tool the gateway listed, and "a tool" for any other, which is the
+// model's own text.
+func (h *Harness) display(name string) string {
+	if h.known[name] {
+		return name
+	}
+	return "a tool"
+}
+
+// recoverCut takes a reply the output limit cut off out of what the model
+// is sent, and tells the model. n is how many this turn has now had.
+func (h *Harness) recoverCut(reply *llm.Response, n int) error {
+	kind, calls, chars := cutKind(reply)
+	for i := range calls {
+		calls[i] = h.display(calls[i])
+	}
+	if err := h.log.Append(convo.Entry{Kind: convo.KindStub, Text: cutStub(kind, calls, chars), Reason: kind}); err != nil {
+		return err
+	}
+	last := n >= h.cfg.LengthRecoveries
+	if err := h.log.Append(convo.Entry{Kind: convo.KindUser, Note: convo.NoteCut, Text: cutInstruction(kind, calls, chars, last)}); err != nil {
+		return err
+	}
+	h.emit(proto.Event{Type: proto.TypeWarning, Code: proto.WarnLengthRecovery, Reason: kind, Count: n,
+		Text: fmt.Sprintf("A reply cut off at the output limit (%s) was taken out of the conversation and the model was told why (%d of %d).", kind, n, h.cfg.LengthRecoveries)})
+	return nil
+}
+
+// nudge tells the model, after the results of a repeated call, to reach its
+// goal another way. The turn goes on.
+func (h *Harness) nudge(round []string, times int) error {
+	earlier := 0
+	for _, e := range h.log.Entries() {
+		if e.Kind == convo.KindUser && e.Note == convo.NoteNudge {
+			earlier++
+		}
+	}
+	if err := h.log.Append(convo.Entry{Kind: convo.KindUser, Note: convo.NoteNudge, Text: nudgeText(round, times, earlier)}); err != nil {
+		return err
+	}
+	h.emit(proto.Event{Type: proto.TypeWarning, Code: proto.WarnLoopNudge, Tool: round[0], Count: times,
+		Text: fmt.Sprintf("%d identical rounds of calls (%s) in a row; the model was told to reach its goal another way.", times, joinNames(round))})
+	return nil
 }
 
 // delta passes a piece of a streaming reply on as an event.
@@ -193,14 +377,19 @@ func (h *Harness) record(reply *llm.Response) error {
 	if err := h.log.Append(convo.Entry{Kind: convo.KindAssistant, Parts: reply.Parts, Finish: string(reply.Finish)}); err != nil {
 		return err
 	}
-	u := reply.Usage
-	if err := h.log.Append(convo.Entry{Kind: convo.KindUsage, Usage: &u}); err != nil {
+	return h.usage(reply.Usage, "")
+}
+
+// usage records one model request's token count and reports it. what is ""
+// for a request of the conversation, and says what else the request was.
+func (h *Harness) usage(u llm.Usage, what string) error {
+	if err := h.log.Append(convo.Entry{Kind: convo.KindUsage, Usage: &u, Reason: what}); err != nil {
 		return err
 	}
 	h.emit(proto.Event{Type: proto.TypeUsage, Usage: &proto.Usage{
 		Input: u.Input, CacheRead: u.CacheRead, CacheWrite: u.CacheWrite, Output: u.Output,
 		ContextTokens: u.Input + u.CacheRead + u.CacheWrite,
-		ContextLimit:  int64(h.cfg.Model.ContextWindow),
+		ContextLimit:  h.window(),
 		CostUSD:       h.cost(),
 	}})
 	return nil
@@ -232,6 +421,11 @@ func (h *Harness) run(ctx context.Context, c llm.Part) error {
 	args := json.RawMessage(c.Arguments)
 	if strings.TrimSpace(c.Arguments) == "" {
 		args = json.RawMessage(`{}`)
+	}
+	if h.cfg.Scrub != nil {
+		// What the tool is given, and what the event shows, holds no
+		// secret-shaped value. The model's own message keeps its words.
+		args = scrubArguments(args)
 	}
 	h.emit(proto.Event{Type: proto.TypeToolCall, CallID: c.CallID, Tool: c.Name, Arguments: validJSON(args)})
 
@@ -280,16 +474,31 @@ func resultPart(res *mcp.Result) (part llm.Part, unchanged bool) {
 	return part, unchanged
 }
 
-// result records a call's result without reporting it as an event: the
-// result of a call that was never offered to the gateway.
-func (h *Harness) result(c llm.Part, r llm.Part) error {
+// shape is a result as the model is sent it: scrubbed, but for a tool whose
+// results are passed on as they are, and held to the result policy's size.
+func (h *Harness) shape(c llm.Part, r llm.Part) llm.Part {
 	r.Kind, r.CallID, r.Name = llm.Result, c.CallID, c.Name
+	if h.cfg.Scrub != nil && !h.unchanged[c.Name] {
+		r.Text = scrubText(r.Text)
+	}
+	if h.cfg.Results != nil {
+		r.Text, _ = cutResult(r.Text, h.cfg.Results.MaxBytes)
+	}
+	return r
+}
+
+// result records a call's result without reporting it as an event: the
+// result of a call that was never offered to the gateway. The record holds
+// what the model is sent.
+func (h *Harness) result(c llm.Part, r llm.Part) error {
+	r = h.shape(c, r)
 	return h.log.Append(convo.Entry{Kind: convo.KindResult, CallID: c.CallID, Result: &r})
 }
 
 // resultEvent records a call's result and reports it.
 func (h *Harness) resultEvent(c llm.Part, r llm.Part, unchanged bool) error {
-	if err := h.result(c, r); err != nil {
+	r = h.shape(c, r)
+	if err := h.log.Append(convo.Entry{Kind: convo.KindResult, CallID: c.CallID, Result: &r}); err != nil {
 		return err
 	}
 	ev := proto.Event{Type: proto.TypeToolResult, CallID: c.CallID, Tool: c.Name, Failed: r.Failed, Unchanged: unchanged}

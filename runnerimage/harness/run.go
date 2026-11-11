@@ -1,7 +1,10 @@
 package harness
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -37,10 +40,15 @@ const maxTask = 16 << 20
 // supply one.
 type Env func(name string) string
 
-// Run is the harness's one-shot mode: one prompt, read from stdin, on one
-// conversation, with events on stdout and anything else on stderr.
+// Run is the harness's one-shot mode: one prompt on one conversation, with
+// events on stdout and anything else on stderr.
 //
 //	run --config FILE --conversation ID
+//
+// Stdin carries the runner's commands, one JSON object a line: first the
+// prompt, then an accept or a continue for each turn_ending event the
+// harness writes. A stdin that ends is an accept: with no one to ask, a turn
+// ends on the model's answer.
 //
 // A conversation that already exists is carried on: the prompt is added to
 // what was recorded.
@@ -53,7 +61,7 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return ExitUsage
 	}
 	if *configPath == "" || *conversation == "" || fs.NArg() != 0 {
-		say(stderr, "usage: harness run --config FILE --conversation ID  (the task on stdin)")
+		say(stderr, "usage: harness run --config FILE --conversation ID  (the runner's commands on stdin)")
 		return ExitUsage
 	}
 	f, err := os.Open(*configPath)
@@ -67,30 +75,53 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		say(stderr, "harness:", err)
 		return ExitUsage
 	}
-	raw, err := io.ReadAll(io.LimitReader(stdin, maxTask+1))
-	if err != nil {
-		say(stderr, "harness: reading the task:", err)
-		return ExitUsage
-	}
-	task := strings.TrimSpace(string(raw))
+	cmds := readCommands(stdin)
+	first, err := cmds.next(ctx)
+	task := strings.TrimSpace(first.Text)
 	switch {
-	case len(raw) > maxTask:
-		say(stderr, "harness: the task is larger than 16 MiB")
+	case errors.Is(err, io.EOF):
+		say(stderr, "harness: no prompt on stdin")
+		return ExitUsage
+	case err != nil:
+		say(stderr, "harness: reading the prompt:", err)
+		return ExitUsage
+	case first.Type != proto.CmdPrompt:
+		say(stderr, fmt.Sprintf("harness: the first command on stdin is %q, not a prompt", first.Type))
 		return ExitUsage
 	case task == "":
-		say(stderr, "harness: no task on stdin")
+		say(stderr, "harness: the prompt is empty")
 		return ExitUsage
 	}
 
-	client := &http.Client{Transport: transport()}
-	h := New(cfg, modelClient(cfg, client, env), &mcp.Client{
-		URL:     cfg.Gateway.URL,
-		Token:   func() string { return env(cfg.Gateway.TokenEnv) },
-		HTTP:    client,
+	plain := transport()
+	var toModel http.RoundTripper = plain
+	if cfg.Retry != nil && cfg.Retry.IdleSeconds > 0 {
+		toModel = &idleTransport{base: plain, idle: time.Duration(cfg.Retry.IdleSeconds) * time.Second}
+	}
+	h := New(cfg, modelClient(cfg, &http.Client{Transport: toModel}, env), &mcp.Client{
+		URL:   cfg.Gateway.URL,
+		Token: func() string { return env(cfg.Gateway.TokenEnv) },
+		// A tool may take as long as it takes: the idle limit is the
+		// model's alone.
+		HTTP:    &http.Client{Transport: plain},
 		Name:    "agentry-harness",
 		Version: fmt.Sprint(proto.Version),
 	}, stdout)
 	defer func() { _ = h.Close() }()
+	h.Gate = func(ctx context.Context) (string, error) {
+		cmd, err := cmds.next(ctx)
+		switch {
+		case errors.Is(err, io.EOF):
+			return "", nil
+		case err != nil:
+			return "", err
+		case cmd.Type == proto.CmdContinue && strings.TrimSpace(cmd.Text) != "":
+			return cmd.Text, nil
+		case cmd.Type == proto.CmdAccept || cmd.Type == proto.CmdContinue:
+			return "", nil
+		}
+		return "", fmt.Errorf("the runner answered a turn's ending with the command %q", cmd.Type)
+	}
 
 	if err := h.Start(ctx, *conversation); err != nil {
 		say(stderr, "harness:", err)
@@ -105,6 +136,78 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return ExitIncomplete
 	}
 	return ExitAnswered
+}
+
+// commands reads the runner's commands from stdin on a goroutine of its own,
+// so a wait for one can be given up.
+type commands struct {
+	lines chan commandOrError
+}
+
+type commandOrError struct {
+	cmd proto.Command
+	err error
+}
+
+func readCommands(stdin io.Reader) *commands {
+	c := &commands{lines: make(chan commandOrError)}
+	go func() {
+		defer close(c.lines)
+		r := bufio.NewReaderSize(stdin, 64<<10)
+		for {
+			line, err := readLine(r, maxTask+4096)
+			if len(strings.TrimSpace(string(line))) > 0 {
+				var cmd proto.Command
+				dec := json.NewDecoder(strings.NewReader(string(line)))
+				dec.DisallowUnknownFields()
+				if derr := dec.Decode(&cmd); derr != nil {
+					c.lines <- commandOrError{err: fmt.Errorf("a line on stdin is not a command: %w", derr)}
+					return
+				}
+				if dec.More() {
+					c.lines <- commandOrError{err: errors.New("a line on stdin holds more than one command")}
+					return
+				}
+				c.lines <- commandOrError{cmd: cmd}
+			}
+			if err != nil {
+				if !errors.Is(err, io.EOF) {
+					c.lines <- commandOrError{err: err}
+				}
+				return
+			}
+		}
+	}()
+	return c
+}
+
+// next is the next command, io.EOF once stdin has ended.
+func (c *commands) next(ctx context.Context) (proto.Command, error) {
+	select {
+	case <-ctx.Done():
+		return proto.Command{}, ctx.Err()
+	case l, ok := <-c.lines:
+		if !ok {
+			return proto.Command{}, io.EOF
+		}
+		return l.cmd, l.err
+	}
+}
+
+// readLine reads one line of at most limit bytes, without its newline.
+func readLine(r *bufio.Reader, limit int) ([]byte, error) {
+	var line []byte
+	for {
+		chunk, err := r.ReadSlice('\n')
+		line = append(line, chunk...)
+		if len(line) > limit {
+			return nil, fmt.Errorf("a command on stdin is larger than %d bytes", limit)
+		}
+		if errors.Is(err, bufio.ErrBufferFull) {
+			continue
+		}
+		return line, err
+	}
 }
 
 // say writes one line for a person to read.

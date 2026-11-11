@@ -316,5 +316,5 @@ func responsesFailure(code, message string) *Error {
 			message += " (" + code + ")"
 		}
 	}
-	return &Error{Class: chatClass(0, code, message), Message: message}
+	return withWindow(&Error{Class: chatClass(0, code, message), Message: message})
 }

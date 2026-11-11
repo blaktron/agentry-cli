@@ -155,6 +155,9 @@ type Error struct {
 	Message string
 	// RetryAfter is the wait the server asked for, zero when it gave none.
 	RetryAfter time.Duration
+	// Window is the model's window in tokens, when the server stated it in
+	// refusing a conversation as too long; zero when it stated none.
+	Window int64
 }
 
 func (e *Error) Error() string {

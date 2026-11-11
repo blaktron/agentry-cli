@@ -118,6 +118,7 @@ PURPOSES = {
     "runnerimage/confine": "A declared exec command to the places it may write",
     "runnerimage/decode": "The runner image's `decode` role: it turns the documents under one directory into plain text under",
     "runnerimage/docpages": "The runner image's `pages` role: a document the Report Designer is given, a PDF's first pages rendered by poppler or a Word document's theme, running text and pictures, and the facts the host and the tools server agree on",
+    "runnerimage/harness": "The harness's own parts of a long run: the secret scrub, the result limit, the repeated-call watch, what a compaction keeps and what a summary request carries",
     "runnerimage/harness/convo": "A conversation's append-only record and the messages a model request is built from: a call with no recorded result is answered as failed and never run again",
     "runnerimage/harness/llm": "The harness's model clients: what a request carries on the wire, what a reply's stream adds up to, and how a failure is classed",
     "runnerimage/harness/proto": "The contract between the runner and its own harness: the configuration, read strictly, and the events",
