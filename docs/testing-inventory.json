@@ -12596,7 +12596,8 @@
             "TestAChangedResultIsNotARepeat",
             "TestTheThirdFailureWithTheSameErrorCarriesTheNotice",
             "TestADifferentErrorIsNotTheSameFailure",
-            "TestTheNoticeBlocksNothing"
+            "TestTheNoticeBlocksNothing",
+            "TestTheChecklistIsNeverCounted"
           ],
           "fuzz": [],
           "benchmarks": [],

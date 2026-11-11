@@ -67,6 +67,11 @@ func callKey(tool string, args json.RawMessage) string {
 // failed says it is an error. A repeated call's notice wins over the repeated
 // failure's, so a call never carries two.
 func (s *server) noteRepeat(tool string, args json.RawMessage, text string, failed bool) string {
+	// Reading the checklist again is how a run re-orients, and the notice
+	// itself points at it, so the checklist is never counted.
+	if tool == ToolChecklist {
+		return ""
+	}
 	if s.repeats.calls == nil {
 		s.repeats = repeatLog{calls: map[string]*callCount{}, failures: map[string]int{}}
 	}

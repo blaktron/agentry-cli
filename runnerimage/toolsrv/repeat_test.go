@@ -145,3 +145,15 @@ func TestTheNoticeBlocksNothing(t *testing.T) {
 		}
 	}
 }
+
+// TestTheChecklistIsNeverCounted: reading the checklist again is how a run
+// re-orients, and the notice points at it, so no number of identical
+// checklist calls carries a notice.
+func TestTheChecklistIsNeverCounted(t *testing.T) {
+	s := repeatServer(t)
+	for i := 0; i < 7; i++ {
+		if n := s.noteRepeat(ToolChecklist, rawArgs(t, map[string]any{}), "- [ ] read the lockfile", false); n != "" {
+			t.Fatalf("checklist call %d carried a notice: %q", i+1, n)
+		}
+	}
+}
