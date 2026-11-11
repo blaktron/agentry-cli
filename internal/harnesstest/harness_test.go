@@ -1024,3 +1024,49 @@ func TestGeminiCutAnswersAndRefusals(t *testing.T) {
 		}
 	}
 }
+
+func TestAConversationsCostIsARunningTotalFromItsRecord(t *testing.T) {
+	model := scriptedmodel.New(t,
+		scriptedmodel.ToolCalls(scriptedmodel.Call{ID: "toolu_1", Name: "fs_read", Arguments: `{"path":"a.txt"}`}).
+			WithUsage(scriptedmodel.Usage{Input: 1000, CacheWrite: 2000, Output: 100}),
+		scriptedmodel.Text("Read.").WithUsage(scriptedmodel.Usage{Input: 500, CacheRead: 3000, Output: 200}),
+		scriptedmodel.Text("Again.").WithUsage(scriptedmodel.Usage{Input: 100, CacheRead: 3500, Output: 50}),
+	)
+	g := newGateway(t, "fs_read")
+	dir := t.TempDir()
+	priced := func(c map[string]any) {
+		c["model"].(map[string]any)["prices"] = map[string]any{"input": 2.0, "cacheRead": 0.2, "cacheWrite": 2.5, "output": 10.0}
+	}
+	costs := func(events []proto.Event) []float64 {
+		var out []float64
+		for _, ev := range events {
+			if ev.Type == proto.TypeUsage {
+				out = append(out, ev.Usage.CostUSD)
+			}
+		}
+		return out
+	}
+	near := func(a, b float64) bool { return a-b < 1e-9 && b-a < 1e-9 }
+
+	_, events, _ := run(t, model, g, runOpts{dir: dir, configEdit: priced})
+	// (1000*2 + 2000*2.5 + 100*10) / 1e6, then plus (500*2 + 3000*0.2 + 200*10) / 1e6.
+	first, second := 0.008, 0.008+0.0036
+	if got := costs(events); len(got) != 2 || !near(got[0], first) || !near(got[1], second) {
+		t.Fatalf("costs %v, want %v then %v", got, first, second)
+	}
+
+	// Started again on the conversation, the harness goes on from what the
+	// earlier requests cost.
+	_, events, _ = run(t, model, g, runOpts{dir: dir, configEdit: priced, task: "Once more."})
+	third := second + (100*2+3500*0.2+50*10)/1e6
+	if got := costs(events); len(got) != 1 || !near(got[0], third) {
+		t.Errorf("after a second start: %v, want %v", got, third)
+	}
+
+	// With no prices there is no cost, and none is made up.
+	model2 := scriptedmodel.New(t, scriptedmodel.Text("Done.").WithUsage(scriptedmodel.Usage{Input: 1000, Output: 100}))
+	_, events, _ = run(t, model2, g, runOpts{})
+	if got := costs(events); len(got) != 1 || got[0] != 0 {
+		t.Errorf("with no prices: %v", got)
+	}
+}

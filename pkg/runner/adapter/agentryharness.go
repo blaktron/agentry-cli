@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/modelfacts"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/runnerimage/harness/proto"
@@ -37,7 +38,7 @@ const (
 	// comes from on the host.
 	agentryHarnessKeyEnv = "AGENTRY_MODEL_KEY"
 	// agentryHarnessMaxOutput is the output asked of one Anthropic request
-	// when the policy names none.
+	// when neither the policy nor the catalogue names a limit.
 	agentryHarnessMaxOutput = 32000
 )
 
@@ -85,6 +86,23 @@ func (a *agentryHarnessAdapter) Compile(in Input) (Result, error) {
 		key = &spec.EnvVar{Name: agentryHarnessKeyEnv, FromHostEnv: policy.KeyEnv(in.Harness, in.Model), FromKeyring: keyringAccount(in)}
 		if in.Model.Provider == policy.ProviderAnthropic {
 			key.ExpectedKind = anthropicKeyExpectation(in)
+		}
+	}
+	// What the catalogue knows about a hosted model fills what the policy
+	// left out: the window, the output limit, the prices. A server of the
+	// person's own and the registry's endpoint are not in it under the
+	// policy's name, whatever the model is called.
+	if !in.Model.OwnEndpoint() && in.Model.Provider != policy.ProviderAgentry {
+		if facts, ok := modelfacts.Lookup(in.Model.Provider, in.Model.Name); ok {
+			if model.ContextWindow <= 0 {
+				model.ContextWindow = int(facts.ContextWindow)
+			}
+			if model.MaxOutputTokens <= 0 && api == proto.APIAnthropic {
+				model.MaxOutputTokens = int(facts.MaxOutput)
+			}
+			if facts.Priced {
+				model.Prices = &proto.Prices{Input: facts.Input, CacheRead: facts.CacheRead, CacheWrite: facts.CacheWrite, Output: facts.Output}
+			}
 		}
 	}
 	if api == proto.APIAnthropic {
@@ -255,7 +273,10 @@ func (a *agentryHarnessAdapter) Events(line []byte) []Event {
 			OutputTokens:  u.Output,
 			ContextTokens: u.ContextTokens,
 			ContextLimit:  u.ContextLimit,
-			Raw:           raw,
+			// The conversation's running cost, which the engine keeps the
+			// highest of and holds a cost budget to.
+			CostUSD: u.CostUSD,
+			Raw:     raw,
 		}}
 	case proto.TypeError:
 		text := agentryHarnessErrorText(ev)

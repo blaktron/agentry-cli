@@ -88,6 +88,9 @@ func TestDecodeConfigRefuses(t *testing.T) {
 		"an API it does not speak": edit(func(m map[string]any) { m["model"].(map[string]any)["api"] = "other" }),
 		"no model name":            edit(func(m map[string]any) { m["model"].(map[string]any)["name"] = "" }),
 		"no key variable":          edit(func(m map[string]any) { m["model"].(map[string]any)["keyEnv"] = "" }),
+		"a negative price": edit(func(m map[string]any) {
+			m["model"].(map[string]any)["prices"] = map[string]any{"input": 2, "cacheRead": -0.1, "cacheWrite": 2.5, "output": 10}
+		}),
 		"sampling for the Anthropic API": edit(func(m map[string]any) {
 			m["model"].(map[string]any)["sampling"] = map[string]any{"temperature": 0.7}
 		}),

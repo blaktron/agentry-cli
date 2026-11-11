@@ -104,6 +104,13 @@ package also needs a line in the script's `PURPOSES`. The catalogue records
 what evidence is kept. It never decides that two tests are equivalent: that
 takes reading their assertions.
 
+The window, output limit and prices of hosted models come from a snapshot
+compiled into the CLI, `pkg/runner/modelfacts/catalog.json`: a trimmed copy of
+[models.dev](https://models.dev)'s public list (MIT; its licence is beside the
+file). `python3 scripts/modelfacts/update.py` fetches the list and rewrites the
+snapshot, one model a line, so a refresh reads as a diff of the models that
+changed. Nothing fetches it when a QuickAgent runs.
+
 ## Certificate of origin
 
 This project uses the [Developer Certificate of Origin](https://developercertificate.org/)

@@ -9,6 +9,7 @@ import (
 
 	"github.com/blaktron/agentry/pkg/manifest"
 
+	"github.com/blaktron/agentry-cli/pkg/runner/modelfacts"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry-cli/runnerimage/harness/proto"
@@ -262,6 +263,56 @@ func TestAgentryHarnessReachesGemini(t *testing.T) {
 	}
 }
 
+func TestAgentryHarnessFillsWhatTheCatalogueKnows(t *testing.T) {
+	const id = "claude-sonnet-5-5"
+	facts, ok := modelfacts.Lookup(policy.ProviderAnthropic, id)
+	if !ok || !facts.Priced || facts.ContextWindow <= 0 || facts.MaxOutput <= 0 {
+		t.Fatalf("the catalogue no longer holds %s with a window, an output limit and prices: %+v", id, facts)
+	}
+	compile := func(m policy.Model) proto.Model {
+		t.Helper()
+		in := agentryHarnessInput()
+		in.Model = m
+		r, err := (&agentryHarnessAdapter{}).Compile(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := proto.DecodeConfig(bytes.NewReader(r.Files["harness.json"]))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cfg.Model
+	}
+
+	m := compile(policy.Model{Provider: policy.ProviderAnthropic, Name: id, APIKeyEnv: "K"})
+	if int64(m.ContextWindow) != facts.ContextWindow || int64(m.MaxOutputTokens) != facts.MaxOutput {
+		t.Errorf("window %d and output limit %d, want the catalogue's %d and %d", m.ContextWindow, m.MaxOutputTokens, facts.ContextWindow, facts.MaxOutput)
+	}
+	if m.Prices == nil || *m.Prices != (proto.Prices{Input: facts.Input, CacheRead: facts.CacheRead, CacheWrite: facts.CacheWrite, Output: facts.Output}) {
+		t.Errorf("prices %+v, want the catalogue's %+v", m.Prices, facts)
+	}
+
+	// What the policy says wins over the catalogue.
+	m = compile(policy.Model{Provider: policy.ProviderAnthropic, Name: id, APIKeyEnv: "K", ContextWindow: 200000, MaxOutputTokens: 4096})
+	if m.ContextWindow != 200000 || m.MaxOutputTokens != 4096 || m.Prices == nil {
+		t.Errorf("the policy's own window and limit: %+v", m)
+	}
+
+	// A model the catalogue does not hold has no facts, and none are made
+	// up; neither has a server of the person's own, whatever its model is
+	// called, nor the registry's endpoint.
+	for name, pm := range map[string]policy.Model{
+		"unknown":        {Provider: policy.ProviderAnthropic, Name: "claude-not-yet", APIKeyEnv: "K"},
+		"own server":     {Provider: "custom", Name: id, BaseURL: "http://agentry-host.internal:1234/v1", APIKeyEnv: "K"},
+		"openai at base": {Provider: policy.ProviderOpenAI, Name: "gpt-4o-mini", BaseURL: "http://agentry-host.internal:1234/v1", APIKeyEnv: "K"},
+		"registry":       {Provider: policy.ProviderAgentry, Name: id, BaseURL: "https://registry.example/api/v1/x/inference/v1"},
+	} {
+		if m := compile(pm); m.Prices != nil || m.ContextWindow != 0 {
+			t.Errorf("%s: facts were filled in: %+v", name, m)
+		}
+	}
+}
+
 func TestAgentryHarnessSendsNoKeyToAServerThatTakesNone(t *testing.T) {
 	in := agentryHarnessInput()
 	in.Model = policy.Model{Provider: "custom", Name: "local", BaseURL: "http://agentry-host.internal:11434/v1"}
@@ -315,8 +366,8 @@ func TestAgentryHarnessEvents(t *testing.T) {
 	if ev := one(`{"v":1,"seq":6,"type":"tool_result","callId":"c2","tool":"read_input","unchanged":true}`); ev.Kind != EventToolResult || !ev.Redacted || ev.Text != "" {
 		t.Errorf("a result passed on unchanged: %+v", ev)
 	}
-	ev := one(`{"v":1,"seq":7,"type":"usage","usage":{"input":10,"cacheRead":900,"cacheWrite":40,"output":30,"contextTokens":950,"contextLimit":200000}}`)
-	if ev.Kind != EventUsage || ev.InputTokens != 950 || ev.OutputTokens != 30 || ev.ContextTokens != 950 || ev.ContextLimit != 200000 {
+	ev := one(`{"v":1,"seq":7,"type":"usage","usage":{"input":10,"cacheRead":900,"cacheWrite":40,"output":30,"contextTokens":950,"contextLimit":200000,"costUsd":0.0123}}`)
+	if ev.Kind != EventUsage || ev.InputTokens != 950 || ev.OutputTokens != 30 || ev.ContextTokens != 950 || ev.ContextLimit != 200000 || ev.CostUSD != 0.0123 {
 		t.Errorf("usage: %+v", ev)
 	}
 	if ev := one(`{"v":1,"seq":8,"type":"turn_end","reason":"answer_cut"}`); ev.Kind != EventAnswerCut {
