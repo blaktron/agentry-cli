@@ -150,6 +150,12 @@ type runDirs struct {
 	checklistCopy string
 	finishChecks  []receipt.FinishCheck
 	finishCheck   string
+	// restarts are every start on the conversation after an early end
+	// (finish checks, empty and reasoning-only answers, a loop exit), in
+	// order, for the receipt and the shared budget; restartReason is the
+	// reason of the one about to start.
+	restarts      []receipt.Restart
+	restartReason string
 	// web says the run has the web tools, anyEgress that its tools server
 	// has unrestricted egress, and runID names it, for the receipt's
 	// daemon line.
