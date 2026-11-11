@@ -1,0 +1,231 @@
+// Package proto is the contract between the runner and its own harness: the
+// configuration the runner renders for a run, and the events the harness
+// writes back, one JSON object a line.
+//
+// Both sides compile this package, so a field one side writes is a field
+// the other reads. Version moves when a field changes meaning or goes away.
+package proto
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+)
+
+// Version is the contract's version. A harness refuses a configuration of
+// another version, and stamps its own on every event.
+const Version = 1
+
+// Config is everything the harness is told about a run. It names where
+// secrets are found and never holds one.
+type Config struct {
+	Version int   `json:"version"`
+	Model   Model `json:"model"`
+	// System is the system prompt.
+	System  string  `json:"system"`
+	Gateway Gateway `json:"gateway"`
+	// SessionDir is the folder that holds one log file a conversation.
+	SessionDir string `json:"sessionDir"`
+	// MaxSteps ends a turn after this many model requests. Zero is no
+	// limit of the harness's own; the runner's budgets still apply.
+	MaxSteps int `json:"maxSteps,omitempty"`
+}
+
+// Wire APIs a model is reached by.
+const (
+	APIAnthropic = "anthropic"
+)
+
+// Model says how the model is reached.
+type Model struct {
+	// API is the wire API, one of the API constants.
+	API string `json:"api"`
+	// Name is the model's id as its server knows it.
+	Name string `json:"name"`
+	// BaseURL is the server's address with no trailing slash. Empty is
+	// the API's own.
+	BaseURL string `json:"baseUrl,omitempty"`
+	// KeyEnv names the environment variable that holds the key.
+	KeyEnv string `json:"keyEnv"`
+	// MaxOutputTokens is the most output asked of one request.
+	MaxOutputTokens int `json:"maxOutputTokens"`
+	// ContextWindow is the model's window in tokens, zero when unknown.
+	ContextWindow int `json:"contextWindow,omitempty"`
+}
+
+// Gateway is the one source of tools: an MCP server over streamable HTTP.
+type Gateway struct {
+	URL string `json:"url"`
+	// TokenEnv names the environment variable that holds the bearer.
+	TokenEnv string `json:"tokenEnv"`
+}
+
+// DecodeConfig reads a configuration strictly: an unknown field, a second
+// document or another version is an error.
+func DecodeConfig(r io.Reader) (Config, error) {
+	var c Config
+	dec := json.NewDecoder(r)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&c); err != nil {
+		return Config{}, fmt.Errorf("harness configuration: %w", err)
+	}
+	if dec.More() {
+		return Config{}, fmt.Errorf("harness configuration: more than one document")
+	}
+	if c.Version != Version {
+		return Config{}, fmt.Errorf("harness configuration: version %d, this harness reads version %d", c.Version, Version)
+	}
+	switch {
+	case c.Model.API != APIAnthropic:
+		return Config{}, fmt.Errorf("harness configuration: model.api %q is not one this harness speaks", c.Model.API)
+	case c.Model.Name == "":
+		return Config{}, fmt.Errorf("harness configuration: model.name is empty")
+	case c.Model.KeyEnv == "":
+		return Config{}, fmt.Errorf("harness configuration: model.keyEnv is empty")
+	case c.Model.MaxOutputTokens <= 0:
+		return Config{}, fmt.Errorf("harness configuration: model.maxOutputTokens must be positive")
+	case c.Gateway.URL == "":
+		return Config{}, fmt.Errorf("harness configuration: gateway.url is empty")
+	case c.Gateway.TokenEnv == "":
+		return Config{}, fmt.Errorf("harness configuration: gateway.tokenEnv is empty")
+	case c.SessionDir == "":
+		return Config{}, fmt.Errorf("harness configuration: sessionDir is empty")
+	}
+	return c, nil
+}
+
+// Encode renders a configuration as the bytes the harness reads. The same
+// configuration always renders to the same bytes.
+func (c Config) Encode() ([]byte, error) {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(c); err != nil {
+		return nil, err
+	}
+	return b.Bytes(), nil
+}
+
+// Event types.
+const (
+	// TypeReady is the first event: the harness has read its
+	// configuration and the gateway's tools.
+	TypeReady = "ready"
+	// TypeText is a piece of the model's answer.
+	TypeText = "text"
+	// TypeReasoning is a piece of the model's reasoning.
+	TypeReasoning = "reasoning"
+	// TypeToolCall says the harness is about to run a call.
+	TypeToolCall = "tool_call"
+	// TypeToolResult is a call's result.
+	TypeToolResult = "tool_result"
+	// TypeUsage is one model request's token count.
+	TypeUsage = "usage"
+	// TypeWarning is something the harness did that the runner counts.
+	TypeWarning = "warning"
+	// TypeError is a failure, with its class.
+	TypeError = "error"
+	// TypeTurnEnd closes a prompt. Every prompt gets exactly one.
+	TypeTurnEnd = "turn_end"
+)
+
+// Why a turn ended.
+const (
+	// EndAnswered: the model answered with no call left to run.
+	EndAnswered = "answered"
+	// EndAnswerCut: the model's answer stopped at the output limit.
+	EndAnswerCut = "answer_cut"
+	// EndError: a failure ended the turn; an error event precedes it.
+	EndError = "error"
+	// EndMaxSteps: the configuration's step limit was reached.
+	EndMaxSteps = "max_steps"
+)
+
+// Classes of error.
+const (
+	// ClassOverflow: the server refused the conversation as too long.
+	ClassOverflow = "overflow"
+	// ClassCapacity: the server is overloaded or unavailable.
+	ClassCapacity = "capacity"
+	// ClassRateLimit: the server asked the client to slow down.
+	ClassRateLimit = "rate_limit"
+	// ClassCredits: the account that pays has nothing left.
+	ClassCredits = "credits"
+	// ClassAuth: the server refused the key.
+	ClassAuth = "auth"
+	// ClassRequest: the server refused the request as malformed.
+	ClassRequest = "request"
+	// ClassTransport: the connection failed or the stream broke.
+	ClassTransport = "transport"
+	// ClassServer: any other failure of the model's server.
+	ClassServer = "server"
+	// ClassGateway: the tool gateway could not be reached or refused.
+	ClassGateway = "gateway"
+	// ClassHarness: a fault of the harness's own.
+	ClassHarness = "harness"
+)
+
+// Event is one line the harness writes. Type says which fields are set.
+type Event struct {
+	// V is the contract's version.
+	V int `json:"v"`
+	// Seq numbers the events of one process from 1, with no gap.
+	Seq int64 `json:"seq"`
+	// Type is one of the Type constants.
+	Type string `json:"type"`
+
+	// Text is a piece of the answer (text) or of the reasoning
+	// (reasoning), a tool's output (tool_result), the words of a warning
+	// or an error, or the whole final answer (turn_end).
+	Text string `json:"text,omitempty"`
+
+	// CallID, Tool and Arguments describe a call (tool_call); CallID and
+	// Tool name the call a result answers (tool_result).
+	CallID    string          `json:"callId,omitempty"`
+	Tool      string          `json:"tool,omitempty"`
+	Arguments json.RawMessage `json:"arguments,omitempty"`
+	// Failed marks a result whose tool reported an error, or that the
+	// harness wrote because the call was not run.
+	Failed bool `json:"failed,omitempty"`
+	// Unchanged marks a result that held content passed to the model as
+	// the tool sent it and left out of Text.
+	Unchanged bool `json:"unchanged,omitempty"`
+
+	// Usage is set on a usage event.
+	Usage *Usage `json:"usage,omitempty"`
+
+	// Code names a warning.
+	Code string `json:"code,omitempty"`
+	// Class is an error's class, one of the Class constants. Status is
+	// the HTTP status the server answered with, zero when there was none.
+	// RetryAfterSeconds is the wait the server asked for.
+	Class             string `json:"class,omitempty"`
+	Status            int    `json:"status,omitempty"`
+	RetryAfterSeconds int    `json:"retryAfterSeconds,omitempty"`
+
+	// Reason says why a turn ended, one of the End constants.
+	Reason string `json:"reason,omitempty"`
+	// Conversation is the id of the conversation (ready, turn_end).
+	Conversation string `json:"conversation,omitempty"`
+	// Tools is the names of the tools the model is offered (ready).
+	Tools []string `json:"tools,omitempty"`
+}
+
+// Usage is the token count of one model request.
+type Usage struct {
+	// Input is the input the server read fresh, CacheRead what it read
+	// from its cache, CacheWrite what it wrote to it. The three do not
+	// overlap; their sum is the size of the request.
+	Input      int64 `json:"input"`
+	CacheRead  int64 `json:"cacheRead"`
+	CacheWrite int64 `json:"cacheWrite"`
+	// Output is the output, reasoning included.
+	Output int64 `json:"output"`
+	// ContextTokens is the size of the conversation as of this request:
+	// its input, cached or not. ContextLimit is the model's window, zero
+	// when the configuration gave none.
+	ContextTokens int64 `json:"contextTokens"`
+	ContextLimit  int64 `json:"contextLimit,omitempty"`
+}
