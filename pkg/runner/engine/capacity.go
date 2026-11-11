@@ -226,5 +226,6 @@ func withBase(u, base receipt.Usage) receipt.Usage {
 	u.CostUSD += base.CostUSD
 	u.Turns += base.Turns
 	u.LoopNudges += base.LoopNudges
+	u.LengthRecoveries = u.LengthRecoveries.Plus(base.LengthRecoveries)
 	return u
 }

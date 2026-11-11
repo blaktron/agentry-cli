@@ -1496,10 +1496,22 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		out.atCapacity = exitedAtCapacity(p, collector.harnessErrReported, stderrPath)
 		out.transient = exitedOnPassingFailure(p, collector.harnessErrReported, stderrPath)
 		out.loopExit = exitedOnLoop(p, collector.harnessErrReported, stderrPath)
+	case collector.answerCut:
+		out.err = answerCutError()
 	default:
 		out.emptyAnswer = collector.emptyEnd()
 	}
 	return out
+}
+
+// answerCutError ends a run whose last answer stopped at the model's output
+// limit: the answer is incomplete, and starting the harness again would only
+// send the same conversation to the same limit.
+func answerCutError() error {
+	return Classify(ExitHarness, receipt.WithReason(
+		errors.New("the model's last answer was cut off at its output limit, so the run has no complete answer; "+
+			"model.maxOutputTokens in the policy gives it more room"),
+		receipt.ReasonAnswerCut, ""))
 }
 
 // turnFailure is a one-turn run's failed turn, with the harness's own
@@ -1641,8 +1653,13 @@ type eventCollector struct {
 	outOfCredits   *adapter.Event
 	onOutOfCredits func()
 
-	turns         int
-	loopNudges    int
+	turns      int
+	loopNudges int
+	// lengthRecoveries counts the answers the harness took out at the
+	// output limit (adapter.EventLengthRecovery), by what was cut.
+	lengthRecoveries receipt.LengthRecoveries
+	// answerCut: the harness's last answer ended at the output limit.
+	answerCut     bool
 	inTok, outTok int64
 	costUSD       float64
 	// curText accumulates the streamed deltas of the assistant message in
@@ -1792,6 +1809,16 @@ func (c *eventCollector) record(ev adapter.Event) {
 		c.warnedEmpty = true
 	case adapter.EventLoopNudge:
 		c.loopNudges++
+	case adapter.EventLengthRecovery:
+		// The cut text was streamed before the harness knew it was cut,
+		// and the conversation no longer holds it: it is neither the
+		// result nor an answer.
+		c.lengthRecoveries.Add(ev.Text)
+		c.curText.Reset()
+		c.lastText = ""
+		c.reasoned, c.answered, c.warnedEmpty = false, false, false
+	case adapter.EventAnswerCut:
+		c.answerCut = true
 	case adapter.EventAssistantText:
 		// Whitespace alone is not an answer.
 		if strings.TrimSpace(ev.Text) != "" {
@@ -1975,12 +2002,13 @@ func (c *eventCollector) emptyEnd() string {
 
 func (c *eventCollector) usage() receipt.Usage {
 	return withBase(receipt.Usage{
-		InputTokens:  c.inTok,
-		OutputTokens: c.outTok,
-		TotalTokens:  c.totTok,
-		CostUSD:      c.ownCost(),
-		Turns:        c.turns,
-		LoopNudges:   c.loopNudges,
+		InputTokens:      c.inTok,
+		OutputTokens:     c.outTok,
+		TotalTokens:      c.totTok,
+		CostUSD:          c.ownCost(),
+		Turns:            c.turns,
+		LoopNudges:       c.loopNudges,
+		LengthRecoveries: c.lengthRecoveries,
 	}, c.base)
 }
 

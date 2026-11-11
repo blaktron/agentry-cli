@@ -371,8 +371,20 @@ type agntYAML struct {
 	// plans' configs stay the same bytes. Only the default harness build knows
 	// the key, and any other docker-agent refuses the whole config over it, so
 	// it is written for that image alone (compactionNotes).
-	CompactionNotes string            `yaml:"compaction_notes,omitempty"`
-	ContextLimits   contextLimitsYAML `yaml:",inline"`
+	CompactionNotes string `yaml:"compaction_notes,omitempty"`
+	// LengthRecovery keeps the run going after an answer the output limit
+	// cut off, for the default harness build alone (lengthRecovery).
+	LengthRecovery bool              `yaml:"length_recovery,omitempty"`
+	ContextLimits  contextLimitsYAML `yaml:",inline"`
+}
+
+// lengthRecovery is the agent's length_recovery: on for the default harness
+// build, which takes an answer the output limit cut off out of the
+// conversation, tells the model why and goes on, at most twice a run.
+// Another image refuses a config that carries the key, so it gets none, and
+// a cut answer ends its run.
+func lengthRecovery(harnessImage string) bool {
+	return harnessImage == policy.DefaultHarnessImage
 }
 
 // compactionNotes is the agent's compaction_notes: the checklist file, in
@@ -638,6 +650,7 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 				Hooks:           withCheckpoint(redactSecretsHooks(in.UnchangedTools...), in.HarnessImage),
 				ColdCacheClear:  coldCacheClear(in.Model.Provider, in.BrowserTools),
 				CompactionNotes: compactionNotes(in.Persistent, in.HarnessImage),
+				LengthRecovery:  lengthRecovery(in.HarnessImage),
 				ContextLimits:   contextLimits(d.Name(), in.Model),
 			},
 		},
@@ -775,6 +788,10 @@ func (d *dockerAgent) Events(line []byte) []Event {
 	case typ == "warning" && isLoopNudge(obj):
 		msg, _ := obj["message"].(string)
 		events = append(events, Event{Kind: EventLoopNudge, Text: msg, Raw: raw})
+	case typ == "warning" && isLengthRecovery(obj):
+		events = append(events, Event{Kind: EventLengthRecovery, Text: lengthRecoveryCut(obj), Raw: raw})
+	case typ == "stream_stopped" && obj["finish_reason"] == "length":
+		events = append(events, Event{Kind: EventAnswerCut, Raw: raw})
 	case typ == "warning" && isEmptyAnswerWarning(obj):
 		msg, _ := obj["message"].(string)
 		events = append(events, Event{Kind: EventEmptyAnswer, Text: msg, Raw: raw})
@@ -857,6 +874,32 @@ const dockerAgentLoopNudgePrefix = "Loop nudge "
 func isLoopNudge(obj map[string]any) bool {
 	msg, _ := obj["message"].(string)
 	return strings.HasPrefix(msg, dockerAgentLoopNudgePrefix)
+}
+
+// dockerAgentLengthRecoveryPrefix starts the message of the warning the
+// default harness build emits when it takes an answer the output limit cut
+// off out of the conversation ("Length recovery <n>: an answer cut off at
+// the output limit (<what>) was taken out …").
+const dockerAgentLengthRecoveryPrefix = "Length recovery "
+
+// isLengthRecovery reports whether a warning event is the harness's length
+// recovery.
+func isLengthRecovery(obj map[string]any) bool {
+	msg, _ := obj["message"].(string)
+	return strings.HasPrefix(msg, dockerAgentLengthRecoveryPrefix)
+}
+
+// lengthRecoveryCut is what a length recovery's warning says was cut: one of
+// the harness's three words, or "answer" for any other.
+func lengthRecoveryCut(obj map[string]any) string {
+	msg, _ := obj["message"].(string)
+	_, rest, _ := strings.Cut(msg, "output limit (")
+	what, _, _ := strings.Cut(rest, ")")
+	switch what {
+	case "reasoning", "tool call":
+		return what
+	}
+	return "answer"
 }
 
 // isEmptyAnswerWarning reports whether a warning event is the harness's

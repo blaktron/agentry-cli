@@ -4627,7 +4627,8 @@
         {
           "path": "pkg/runner/adapter/notes_test.go",
           "tests": [
-            "TestCompactionNotesOnlyForTheDefaultHarness"
+            "TestCompactionNotesOnlyForTheDefaultHarness",
+            "TestLengthRecoveryOnlyForTheDefaultHarness"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -6170,6 +6171,18 @@
           "tests": [
             "TestTheSweepsNeverSelectByTheImageLabel",
             "TestTheFiltersImageLabelIsTheRunners"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
+          "path": "pkg/runner/engine/length_recovery_test.go",
+          "tests": [
+            "TestCutAnswersTheHarnessRecoveredFromFinishTheRun",
+            "TestARunThatEndsOnACutAnswerFailsAndIsNotStartedAgain",
+            "TestCollectorDropsTheCutTextOnARecovery"
           ],
           "fuzz": [],
           "benchmarks": [],

@@ -21,9 +21,14 @@ import (
 // what its last turn is, and how it exits.
 type endStart struct {
 	tools int
-	// end is the last turn: "answer", "empty", "reasoning" or "warning"
-	// (an empty turn the harness reports with its own warning).
-	end  string
+	// end is the last turn: "answer", "empty", "reasoning", "warning"
+	// (an empty turn the harness reports with its own warning) or "cut"
+	// (an answer the output limit cut off, which the harness ends on).
+	end string
+	// cuts are the answers the harness recovered from before its last
+	// turn, by what was cut: their text streams, then the harness's
+	// warning says it was taken out.
+	cuts []string
 	exit int
 	// errText is the harness's stderr on a failing exit.
 	errText string
@@ -67,6 +72,10 @@ func (h *endHarness) handler(_ context.Context, r dockerx.RunSpec, stdin io.Read
 		h.executed[fmt.Sprintf("%s/%d", conversation, h.done[conversation])]++
 		_, _ = fmt.Fprintf(stdout, `{"type":"tool_call","tool":"read_input","step":%d}`+"\n", h.done[conversation])
 	}
+	for i, what := range sc.cuts {
+		_, _ = fmt.Fprintln(stdout, `{"type":"agent_choice","content":"the same line again, the same line again"}`)
+		_, _ = fmt.Fprintf(stdout, `{"type":"warning","message":"Length recovery %d: an answer cut off at the output limit (%s) was taken out of the conversation and the agent was told why."}`+"\n", i+1, what)
+	}
 	h.cost[conversation] += 0.01
 	_, _ = fmt.Fprintf(stdout, `{"type":"stream_stopped","usage":{"input_tokens":100,"output_tokens":10,"cost":%g}}`+"\n", h.cost[conversation])
 	switch sc.end {
@@ -76,6 +85,9 @@ func (h *endHarness) handler(_ context.Context, r dockerx.RunSpec, stdin io.Read
 		_, _ = fmt.Fprintln(stdout, `{"type":"agent_choice_reasoning","content":"thinking about it"}`)
 	case "warning":
 		_, _ = fmt.Fprintln(stdout, `{"type":"warning","message":"the model stopped without a final reply after using tools"}`)
+	case "cut":
+		_, _ = fmt.Fprintln(stdout, `{"type":"agent_choice","content":"the same line again, the same line again"}`)
+		_, _ = fmt.Fprintln(stdout, `{"type":"stream_stopped","finish_reason":"length"}`)
 	}
 	if sc.errText != "" {
 		_, _ = fmt.Fprintln(stderr, sc.errText)
