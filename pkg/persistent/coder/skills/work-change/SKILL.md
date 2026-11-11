@@ -54,7 +54,31 @@ note it in the pull request.
 
 ## 3. Branch in a worktree
 
-In the clone's folder (dir data/projects/<name>):
+**First, the project needs an origin.** In the clone's folder (dir
+data/projects/<name>), `git remote -v` names it. A project cloned from a
+remote keeps it. A project with no remote (one you start with `git init -b
+main`, or files the person gave you) gets its origin in the share folder, so
+the person has it as a git repository on their computer, with no account on
+any git host:
+
+```bash
+git init --bare -b <default-branch> /agent/share/<name>.git   # only if it does not exist yet
+git remote add origin /agent/share/<name>.git
+git push -u origin <default-branch>
+```
+
+The `-b` matters: the bare repository's HEAD names the branch a clone checks
+out, and a HEAD on a branch that does not exist leaves the person's clone
+empty. Check it with `git clone /agent/share/<name>.git` into a temporary
+folder: the clone must hold the project's files.
+
+If /agent/share/<name>.git already exists, it is the person's: use it as
+origin when it holds this project's history, and otherwise pick another name
+and say so. Never delete, rewrite or force-push an origin in the share. Tell
+the person where it is (their share folder's `<name>.git`) and that they can
+clone it or fetch from it. Write the origin into data/notes/<project>.md.
+
+Then cut the branch, in the clone's folder:
 
 ```bash
 git fetch origin
@@ -65,9 +89,9 @@ git worktree add -b fix/<n>-short-slug ../../worktrees/<name>/<n>-short-slug ori
 `fix/` for a fix, unless the project names branches its own way. Work only in
 the worktree (dir data/worktrees/<name>/<n>-short-slug). The clone stays
 clean on its default branch: never commit in it or switch its branch, so
-another change can start from it while this one waits. The one exception is a
-project with no git host, whose merge happens in the clone (step 6). After the
-merge, in
+another change can start from it while this one waits. The exceptions are a
+new project's first commit and, with the share as origin, the merge (step 6).
+After the merge, in
 the clone's folder, `git worktree remove ../../worktrees/<name>/<n>-short-slug`
 then `git worktree prune`.
 
@@ -106,13 +130,14 @@ and only as step 1's merge rule allows:
 
 - **Merging is yours**: merge with the project's merge style (a merge commit
   unless it says squash or rebase), delete the branch if the project does,
-  and remove the worktree. With no git host there is no pull request to
-  merge: in the clone, bring `<base>` up to date with `git pull --ff-only`,
-  merge the branch the project's way, run the project's checks on the merged
-  `<base>`, and only then push it. That merge is the only commit ever made in
-  the clone.
+  and remove the worktree. With the share as origin there is no pull request
+  to merge: in the clone, bring `<base>` up to date with `git pull
+  --ff-only`, merge the branch the project's way, run the project's checks on
+  the merged `<base>`, and only then push it to origin. Delete the branch
+  there too (`git push origin --delete <branch>`) once it is merged.
 - **Merging is the person's or a reviewer's**: stop at the green pull
-  request, give its link and say it waits for them. The change is not done
+  request (or, with the share as origin, the branch pushed there), give its
+  link or name and say it waits for them. The change is not done
   yet: say so, and pick up at step 7 once it is merged.
 
 Never merge on red, on a gate you did not wait for, or with a check skipped.

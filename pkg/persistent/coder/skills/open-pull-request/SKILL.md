@@ -26,6 +26,9 @@ license: MIT
    - GitLab: `glab mr create --target-branch <base> --title "…" --description "…"`
    - Gitea, Forgejo or Codeberg: `tea pr create --base <base> --title "…" --description "…"`
      (its login as your tools' description says)
+   - with the share as origin (a bare repository in /agent/share, no git
+     host): there is no pull request; the branch pushed there is the request.
+     Give the person its name and the description below in your answer.
    - otherwise, give the person the branch name and the link the push
      printed.
 6. **The description** follows the project's pull-request template when it
