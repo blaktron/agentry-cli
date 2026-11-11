@@ -99,6 +99,12 @@ assistant` lists what it has:
   the Assistant's own files and memory, its knowledge packs and the events of
   the calendar feeds you add. What it reads there could be sent in an address
   it opens, which is why the tools are off until you choose them.
+  **Without AI Review** (`agentry agent grant assistant unreviewed on`) runs
+  them with no TypeSafe key, and nothing reads a page before the Assistant
+  does: a page can then tell it to act with your share, its memory, your
+  mail and calendar and the QuickAgents it looks after. It is off until you
+  switch it on and agree, and refused while your organization's managed
+  settings lock how AI Review is done.
 - **MCP servers it comes with**, each an entry of its roster that you switch
   on and off: Wikipedia (`@cyanheads/wikipedia-mcp-server`, English
   Wikipedia alone), on until you switch it off, and web search with Brave

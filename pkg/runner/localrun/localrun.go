@@ -404,6 +404,9 @@ type PlanInputs struct {
 	WebGivenOnly bool
 	// WebRender lets web_read render a thin page (compile.Inputs.WebRender).
 	WebRender bool
+	// WebUnreviewed runs the web tools without AI Review
+	// (compile.Inputs.WebUnreviewed): a persistent agent's alone.
+	WebUnreviewed bool
 	// Review grants the review grant (compile.Inputs.Review), likewise.
 	Review bool
 	// Design grants the Report Designer's tools (compile.Inputs.Design),
@@ -558,6 +561,7 @@ func EnsurePlan(in PlanInputs) (*spec.Plan, string, error) {
 			plan.Capabilities.WebSearchedOnly == in.WebSearchedOnly &&
 			plan.Capabilities.WebGivenOnly == in.WebGivenOnly &&
 			plan.Capabilities.WebRender == in.WebRender &&
+			plan.Capabilities.WebUnreviewed == in.WebUnreviewed &&
 			plan.Capabilities.ReviewTools == in.Review &&
 			plan.Capabilities.DesignTools == in.Design &&
 			reflect.DeepEqual(plan.Capabilities.AgentFiles, in.AgentFiles) &&
@@ -623,7 +627,7 @@ func compileInputs(in PlanInputs, runnerImage string, key []byte) compile.Inputs
 		MCPServers:          in.Servers,
 		Web:                 in.Web,
 		RegistrySearch:      in.RegistrySearch,
-		WebSearchedOnly:     in.WebSearchedOnly, WebGivenOnly: in.WebGivenOnly, WebRender: in.WebRender,
+		WebSearchedOnly:     in.WebSearchedOnly, WebGivenOnly: in.WebGivenOnly, WebRender: in.WebRender, WebUnreviewed: in.WebUnreviewed,
 		Review:       in.Review,
 		Design:       in.Design,
 		AgentFiles:   in.AgentFiles,

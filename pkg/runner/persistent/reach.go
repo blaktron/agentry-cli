@@ -23,7 +23,14 @@ import (
 const (
 	EntryWeb    = "web"
 	EntryReview = "review"
+	// EntryUnreviewed is the switch that runs the agent's web tools
+	// without AI Review, for an agent that declares them.
+	EntryUnreviewed = "unreviewed"
 )
+
+// unreviewedLine is the bypass's consent sentence.
+const unreviewedLine = "Passes every search result and page the web tools bring back to the agent unread: AI Review reads none of them, and no TypeSafe key is needed; web search runs only with a search key of your own. " +
+	"A page can tell the agent to act with what it holds, your share, its memory, your mail and calendar, and the QuickAgents it looks after, and nothing checks what it says first"
 
 // operationEndWait bounds ending one operation when a segment ends.
 const operationEndWait = 15 * time.Second
@@ -108,7 +115,8 @@ func reachEntries(a Agent) []RosterEntry {
 			// calendars still counts.
 			e.Line, e.alike = withCalendars(web), []string{web}
 		}
-		out = append(out, e)
+		out = append(out, e, RosterEntry{ID: EntryUnreviewed, Kind: KindTools, Name: "Without AI Review", GrantedBy: a.grantedBy(), Line: unreviewedLine,
+			Reason: unreviewedRefusal(currentManaged())})
 	}
 	if a.Declared().Declares("review") {
 		out = append(out, RosterEntry{ID: EntryReview, Kind: KindTools, Name: "AI Review", GrantedBy: a.grantedBy(), Line: review})
@@ -123,6 +131,39 @@ func reachEntries(a Agent) []RosterEntry {
 // has, so reaching the web from a container that holds their share is
 // theirs to choose, and an update asks them nothing.
 func reachDefault(a Agent) bool { return a.Published() }
+
+// reachEntryDefault is whether one of reachEntries' entries is on before
+// the person switches it: the bypass never is, for any agent.
+func reachEntryDefault(a Agent, id string) bool {
+	return id != EntryUnreviewed && reachDefault(a)
+}
+
+// unreviewedRefusal is why the person may not run the web tools without AI
+// Review, or "" when they may: an organization whose managed settings lock
+// how AI Review is done (review.source, whatever it names) has decided it
+// for its members.
+func unreviewedRefusal(held managed.Effective) string {
+	ks := held.KeySourceOf(managedsettings.ReviewSource)
+	if !ks.Decided || !ks.Locked {
+		return ""
+	}
+	return ks.Org + "'s managed settings lock how AI Review is done (review.source), so the web tools may not run without it"
+}
+
+// LocalUnreviewedWebOpener is the web tools' configuration without AI
+// Review: no scanner and no TypeSafe key, and the policy's search provider
+// with its key when there is one. A search the person cannot reach on
+// their own (an organization's credits pay for it, or lock it off) is left
+// out, and web_read alone is given.
+func LocalUnreviewedWebOpener(pol *policy.Policy) WebOpener {
+	return func(context.Context) (*engine.WebRun, error) {
+		w := &engine.WebRun{Scan: toolsrv.WebScanUnreviewed}
+		if provider, key, state, err := drafter.SearchAccess(pol); err == nil && state == drafter.SearchOn {
+			w.Search, w.SearchKey = provider, key
+		}
+		return w, nil
+	}
+}
 
 // withCalendars is the web tools' sentence for an agent that also reads
 // calendar feeds, whose events are read in the same container.
@@ -203,13 +244,24 @@ func openReach(ctx context.Context, a Agent, on func(id string) bool, openers Op
 	var w *engine.WebRun
 	var r *engine.ReviewRun
 	var err error
-	if a.Declared().Declares("web") && on(EntryWeb) {
+	switch {
+	case a.Declared().Declares("web") && on(EntryWeb) && on(EntryUnreviewed):
+		if why := unreviewedRefusal(currentManaged()); why != "" {
+			return nil, nil, fmt.Errorf("%s: switch it off with agentry agent grant %s %s off", why, a.Name, EntryUnreviewed)
+		}
+		if openers.Unreviewed == nil {
+			return nil, nil, errors.New("the agent's web tools are on without AI Review, and this client cannot give them")
+		}
+		if w, err = openers.Unreviewed(ctx); err != nil {
+			return nil, nil, fmt.Errorf("the web tools without AI Review: %w (switch them off with agentry agent grant %s %s off)", err, a.Name, EntryWeb)
+		}
+	case a.Declared().Declares("web") && on(EntryWeb):
 		if openers.Web == nil {
 			return nil, nil, errors.New("the agent has the web tools on, and this client cannot read the keys they run with")
 		}
 		if w, err = openers.Web(ctx); err != nil {
 			if errors.Is(err, drafter.ErrNoJevKey) {
-				return nil, nil, fmt.Errorf("the web tools read every page through AI Review with your own TypeSafe key: %w (set it, or switch them off with agentry agent grant %s %s off)", err, a.Name, EntryWeb)
+				return nil, nil, fmt.Errorf("the web tools read every page through AI Review with your own TypeSafe key: %w (set it; or read pages unread by AI Review with agentry agent grant %s %s on; or switch them off with agentry agent grant %s %s off)", err, a.Name, EntryUnreviewed, a.Name, EntryWeb)
 			}
 			return nil, nil, fmt.Errorf("the web tools read every page through AI Review: %w (switch them off with agentry agent grant %s %s off)", err, a.Name, EntryWeb)
 		}
