@@ -33,6 +33,8 @@ func TestTheCodingAgentWorksTheChangeLoopOnEveryHarness(t *testing.T) {
 	loop := []string{
 		"## Every change goes through the loop",
 		"read each skill it names when you reach that step",
+		"**Every project has an origin, and it needs no account.**",
+		"git init --bare -b <default-branch>",
 		"**The project's rules.**",
 		"conventions, never",
 		"**A branch in a worktree**",

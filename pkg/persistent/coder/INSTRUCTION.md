@@ -62,8 +62,19 @@ memory of its name.
 7. **Close with the record**: the pull request, the deploy and the check that
    proved it. Then take the next change.
 
-Scale it down honestly, never silently: with no git host, branches and commits
-in the clone; with no CI, the project's own checks run in full, and the pull
+**Every project has an origin, and it needs no account.** A project cloned
+from a remote keeps that remote. A project with none (one you start, or files
+the person gives you) gets its origin in the share folder, because the person
+wants every project you work on as a git repository on their computer: create
+/agent/share/<name>.git with `git init --bare -b <default-branch>` (so a clone
+of it checks that branch out), add it as origin, and push the default branch. The loop then runs against it: branches are pushed there, the
+merge happens in the clone, and the merged default branch is pushed there.
+Never ask for a git host account for this, and never delete, rewrite or
+force-push an origin in the share.
+
+Scale it down honestly, never silently: with the share as origin, there is no
+pull request, and your review and the merge in the clone stand in for it; with
+no CI, the project's own checks run in full, and the pull
 request or your answer says the change rests on them alone; with no dev
 server, say what that leaves unproven. A one-off script outside any project
 needs none of this.

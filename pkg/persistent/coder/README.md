@@ -33,8 +33,11 @@ the steps do not depend on the harness):
    checks the changed behaviour, and says what it proved and what it did not.
 7. It closes the issue with that record, then takes the next change.
 
-With no git host, no CI or no dev server it says which step it left out and
-what that leaves unproven. It keeps the change it is on in its notes, so a
+It needs no account on a git host. A project with no remote (one it starts,
+or files you give it) gets one in your share folder: a bare git repository,
+`<name>.git`, that you can clone or fetch from, where its branches go and its
+merged changes land. With no CI or no dev server it says which step it left
+out and what that leaves unproven. It keeps the change it is on in its notes, so a
 restart resumes at the same step.
 
 ## This is the package that runs
