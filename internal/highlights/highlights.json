@@ -3,7 +3,10 @@
     {
       "version": "0.7.53",
       "highlights": [
-        "Your Claude subscription now runs Claude Code 2.1.322, where the fable alias picks Claude Fable 5.2."
+        "Your Claude subscription now runs Claude Code 2.1.322, where the fable alias picks Claude Fable 5.2.",
+        "Models on your own server get their maker's sampling and thinking settings; you can set your own in the policy.",
+        "A run that stops with an empty answer is asked once more to finish, instead of ending with nothing.",
+        "Calling a tool the same way three times now brings a note suggesting another way to the goal."
       ]
     },
     {
