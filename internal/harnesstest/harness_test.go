@@ -659,6 +659,7 @@ func TestNothingIsSentOnAConfigurationThatCannotBeUsed(t *testing.T) {
 		"a first command that is not a prompt": `{"type":"accept"}` + "\n",
 		"a line that is not a command":         "Read a.txt and say what it holds.\n",
 		"a command with an unknown member":     `{"type":"prompt","text":"Read a.txt.","tools":["shell"]}` + "\n",
+		"two commands on one line":             `{"type":"prompt","text":"Read a.txt."} {"type":"accept"}` + "\n",
 	}
 	for name, stdin := range stdins {
 		t.Run(name, func(t *testing.T) {

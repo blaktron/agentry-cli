@@ -85,8 +85,6 @@ func New(cfg proto.Config, model llm.Client, src ToolSource, out io.Writer) *Har
 	return &Harness{cfg: cfg, model: model, src: src, out: out, Now: time.Now}
 }
 
-func (h *Harness) now() time.Time { return h.Now() }
-
 // Start opens the conversation, creating it when it does not exist, reads
 // the gateway's tools and writes the ready event.
 func (h *Harness) Start(ctx context.Context, conversation string) error {
@@ -258,11 +256,15 @@ func (h *Harness) Prompt(ctx context.Context, text string) (string, error) {
 			if more == "" {
 				return h.end(proto.EndAnswered, answer.String()), nil
 			}
-			if err := h.log.Append(convo.Entry{Kind: convo.KindUser, Text: more, Note: convo.NoteContinue}); err != nil {
+			// The message is the runner's, and is said to be: the model
+			// must not take it for the person's.
+			if err := h.log.Append(convo.Entry{Kind: convo.KindUser, Text: runtimeNote + more, Note: convo.NoteContinue}); err != nil {
 				return h.endFailed(proto.ClassHarness, err)
 			}
 			continue
 		}
+		var round []string
+		times := 0
 		for _, c := range calls {
 			if err := h.run(ctx, c); err != nil {
 				if ctx.Err() != nil {
@@ -271,12 +273,18 @@ func (h *Harness) Prompt(ctx context.Context, text string) (string, error) {
 				return h.endFailed(proto.ClassHarness, err)
 			}
 			watch.add(h.display(c.Name), c.Arguments)
+			// Looked for after every call, so a streak inside one reply's
+			// calls is seen even when a later call of the reply ends it.
+			if r, n := watch.repeating(h.cfg.Loop); n > 0 {
+				round, times = r, n
+				watch.reset()
+			}
 		}
-		if round, times := watch.repeating(h.cfg.Loop); times > 0 {
+		// The message follows the results of all the reply's calls.
+		if times > 0 {
 			if err := h.nudge(round, times); err != nil {
 				return h.endFailed(proto.ClassHarness, err)
 			}
-			watch.reset()
 		}
 	}
 }

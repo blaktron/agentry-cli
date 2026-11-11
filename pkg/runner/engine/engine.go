@@ -1450,6 +1450,7 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 				if gate, err = openStopGate(gated, task); err != nil {
 					return agentOutcome{err: Classify(ExitCLI, err)}
 				}
+				defer gate.close()
 				stdin = gate.stdin()
 				collector.onTurnEnding = func() { gate.answer(rd.endingAnswer(agentCtx, p, collector)) }
 			}
@@ -1833,9 +1834,7 @@ func (c *eventCollector) record(ev adapter.Event) {
 		// and the conversation no longer holds it: it is neither the
 		// result nor an answer.
 		c.lengthRecoveries.Add(ev.Text)
-		c.curText.Reset()
-		c.lastText = ""
-		c.reasoned, c.answered, c.warnedEmpty = false, false, false
+		c.discardText()
 	case adapter.EventAnswerCut:
 		c.answerCut = true
 	case adapter.EventResultsCleared:
@@ -1845,9 +1844,7 @@ func (c *eventCollector) record(ev adapter.Event) {
 	case adapter.EventModelRetry:
 		// What the failed attempt streamed is part of no message: the
 		// request is sent again and its reply starts over.
-		c.curText.Reset()
-		c.lastText = ""
-		c.reasoned, c.answered, c.warnedEmpty = false, false, false
+		c.discardText()
 	case adapter.EventTurnEnding:
 		if c.onTurnEnding != nil {
 			c.onTurnEnding()
@@ -1904,6 +1901,15 @@ func (c *eventCollector) record(ev adapter.Event) {
 			}
 		}
 	}
+}
+
+// discardText forgets what the model has written since its last tool call:
+// text that turned out to be part of no answer, so it is neither the run's
+// result nor a sign that the model answered.
+func (c *eventCollector) discardText() {
+	c.curText.Reset()
+	c.lastText = ""
+	c.reasoned, c.answered, c.warnedEmpty = false, false, false
 }
 
 // notifyUsage hands the running totals to the driver's callback without

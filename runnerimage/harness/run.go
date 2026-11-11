@@ -164,6 +164,10 @@ func readCommands(stdin io.Reader) *commands {
 					c.lines <- commandOrError{err: fmt.Errorf("a line on stdin is not a command: %w", derr)}
 					return
 				}
+				if dec.More() {
+					c.lines <- commandOrError{err: errors.New("a line on stdin holds more than one command")}
+					return
+				}
 				c.lines <- commandOrError{cmd: cmd}
 			}
 			if err != nil {

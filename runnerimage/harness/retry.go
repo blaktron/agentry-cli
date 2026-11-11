@@ -40,8 +40,14 @@ func (h *Harness) stream(ctx context.Context, req llm.Request, onDelta func(llm.
 		if policy == nil || attempt > policy.Attempts || !errors.As(err, &me) || !retried(me.Class) || ctx.Err() != nil {
 			return nil, err
 		}
+		// The first wait doubled for each attempt before this one, and
+		// never past the longest.
 		longest := time.Duration(policy.MaxSeconds) * time.Second
-		wait := min(time.Duration(policy.BaseSeconds)*time.Second<<(attempt-1), longest)
+		wait := time.Duration(policy.BaseSeconds) * time.Second
+		for i := 1; i < attempt && wait < longest; i++ {
+			wait *= 2
+		}
+		wait = min(wait, longest)
 		if me.RetryAfter > 0 {
 			if me.RetryAfter > longest {
 				// Longer than the harness waits: the runner decides

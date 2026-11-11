@@ -88,11 +88,9 @@ func (rd *runDirs) endingAnswer(ctx context.Context, p Params, c *eventCollector
 		return ""
 	}
 	c.flushLiveText()
-	var message string
-	if reason := c.emptyEnd(); reason != "" {
-		message = emptyAnswerMessage
-		rd.restarts = append(rd.restarts, receipt.Restart{Reason: reason, Message: message})
-		noteAsked(p.Stderr, "ended its turn with "+restartWhat(reason), len(rd.restarts))
+	reason, message, what := c.emptyEnd(), emptyAnswerMessage, ""
+	if reason != "" {
+		what = "ended its turn with " + restartWhat(reason)
 	} else {
 		var open []toolsrv.Step
 		if rd.checklistCopy != "" {
@@ -102,15 +100,15 @@ func (rd *runDirs) endingAnswer(ctx context.Context, p Params, c *eventCollector
 		if len(open) == 0 {
 			return ""
 		}
+		reason = receipt.RestartFinishCheck
 		message = finishCheckMessage(open, len(rd.restarts)+1 == finishChecks)
+		what = fmt.Sprintf("finished with %d checklist step(s) open", len(open))
 		rd.finishChecks = append(rd.finishChecks, receipt.FinishCheck{Open: len(open), Message: rd.redact.String(message)})
-		rd.restarts = append(rd.restarts, receipt.Restart{Reason: receipt.RestartFinishCheck, Message: rd.redact.String(message)})
-		noteAsked(p.Stderr, fmt.Sprintf("finished with %d checklist step(s) open", len(open)), len(rd.restarts))
 	}
+	rd.restarts = append(rd.restarts, receipt.Restart{Reason: reason, Message: rd.redact.String(message)})
+	noteAsked(p.Stderr, what, len(rd.restarts))
 	// The turn goes on: what the model wrote so far is not its answer.
-	c.curText.Reset()
-	c.lastText = ""
-	c.reasoned, c.answered, c.warnedEmpty = false, false, false
+	c.discardText()
 	return message
 }
 

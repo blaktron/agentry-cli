@@ -110,13 +110,16 @@ func (h *Harness) calibrate(bytes int, tokens int64) {
 	}
 }
 
-// window is the model's window in tokens: the configuration's, else the one
-// a server's refusal has taught the harness, else zero.
+// window is the model's window in tokens: the configuration's, or the one a
+// server's refusal has taught the harness when the configuration gives none
+// or a larger one (the server is the one that refuses); zero when neither
+// is known.
 func (h *Harness) window() int64 {
-	if w := int64(h.cfg.Model.ContextWindow); w > 0 {
-		return w
+	w := int64(h.cfg.Model.ContextWindow)
+	if h.learnedWindow > 0 && (w <= 0 || h.learnedWindow < w) {
+		return h.learnedWindow
 	}
-	return h.learnedWindow
+	return w
 }
 
 // Why a compaction is made (convo.Entry.Reason).
@@ -265,9 +268,10 @@ func (h *Harness) learn(err error, refused []llm.Message) {
 		h.learnedWindow = me.Window
 		return
 	}
-	if h.window() == 0 {
-		size := len(h.cfg.System) + h.toolBytes + messagesBytes(refused)
-		h.learnedWindow = max(int64(float64(size)/h.rate()), 1)
+	// A refusal that states no window still says the request was past it.
+	size := len(h.cfg.System) + h.toolBytes + messagesBytes(refused)
+	if implied := max(int64(float64(size)/h.rate()), 1); h.window() == 0 || implied < h.window() {
+		h.learnedWindow = implied
 	}
 }
 
@@ -410,7 +414,7 @@ func (h *Harness) coldClear() error {
 			last, _ = time.Parse(time.RFC3339Nano, entries[i].At)
 		}
 	}
-	idle := h.now().Sub(last)
+	idle := h.Now().Sub(last)
 	if last.IsZero() || idle <= time.Duration(cfg.AfterSeconds)*time.Second {
 		return nil
 	}
@@ -447,7 +451,7 @@ func (h *Harness) coldClear() error {
 			old = browserSeen > cfg.KeepBrowser
 		}
 		// A result no longer than its placeholder is left alone.
-		text := clearedText(r.Name, len(r.Text))
+		text := clearedText(h.display(r.Name), len(r.Text))
 		if !old || (len(r.Text) <= len(text) && len(r.Images) == 0) {
 			continue
 		}

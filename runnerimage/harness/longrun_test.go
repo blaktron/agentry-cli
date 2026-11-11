@@ -85,6 +85,10 @@ func TestScrubArgumentsKeepsWhatHoldsNoSecretByteForByte(t *testing.T) {
 	if v.N.String() != "12345678901234567890" || v.Headers[0].V != scrubbed || v.Headers[0].K != "x" || v.Note != "<a&b>" || strings.Contains(string(got), secret) {
 		t.Errorf("scrubbed arguments: %s", got)
 	}
+	// A member's name is scrubbed as its value is.
+	if got := scrubArguments(json.RawMessage(`{"` + secret + `":1}`)); string(got) != `{"`+scrubbed+`":1}` {
+		t.Errorf("a secret-shaped member name: %s", got)
+	}
 	if got := scrubArguments(json.RawMessage(`{"cut`)); string(got) != `{"cut` {
 		t.Errorf("arguments that are not JSON: %s", got)
 	}

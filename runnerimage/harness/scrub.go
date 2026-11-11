@@ -113,9 +113,14 @@ func scrubValue(v any, changed *bool) any {
 			t[i] = scrubValue(t[i], changed)
 		}
 	case map[string]any:
-		for k := range t {
-			t[k] = scrubValue(t[k], changed)
+		// A member's name is the model's text as much as its value is.
+		out := make(map[string]any, len(t))
+		for k, member := range t {
+			name := scrubText(k)
+			*changed = *changed || name != k
+			out[name] = scrubValue(member, changed)
 		}
+		return out
 	}
 	return v
 }
