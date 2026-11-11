@@ -1,6 +1,12 @@
 {
   "versions": [
     {
+      "version": "0.7.54",
+      "highlights": [
+        "Built with Go 1.27.4, which fixes a security issue in Go's HTTP library."
+      ]
+    },
+    {
       "version": "0.7.53",
       "highlights": [
         "Your Claude subscription now runs Claude Code 2.1.322, where the fable alias picks Claude Fable 5.2.",
