@@ -8919,6 +8919,18 @@
           ]
         },
         {
+          "path": "pkg/runner/persistent/coder_loop_test.go",
+          "tests": [
+            "TestTheCodingAgentWorksTheChangeLoopOnEveryHarness"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
+          ]
+        },
+        {
           "path": "pkg/runner/persistent/coder_test.go",
           "tests": [
             "TestCoderEgressConsentRecorded",
