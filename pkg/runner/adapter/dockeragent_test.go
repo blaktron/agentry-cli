@@ -157,6 +157,8 @@ func TestDockerAgentEvents(t *testing.T) {
 		{"unknown", `{"type":"heartbeat"}`, []EventKind{EventOther}},
 		// The harness's loop nudge is counted; any other warning is a
 		// report, never the model's answer.
+		{"reasoning-only warning", `{"type":"warning","message":"the model produced only reasoning and no reply","agent_name":"root"}`, []EventKind{EventEmptyAnswer}},
+		{"no final reply warning", `{"type":"warning","message":"the model stopped without a final reply after using tools","agent_name":"root"}`, []EventKind{EventEmptyAnswer}},
 		{"loop nudge", `{"type":"warning","message":"Loop nudge 1: 5 consecutive identical calls to read_file; the agent was told to reach its goal another way.","agent_name":"root"}`, []EventKind{EventLoopNudge}},
 		{"other warning", `{"type":"warning","message":"This agent turn did not use the prompt cache.","agent_name":"root"}`, []EventKind{EventOther}},
 		{"not json", `plain text line`, []EventKind{EventAssistantText}},

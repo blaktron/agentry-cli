@@ -678,6 +678,7 @@ func Run(ctx context.Context, d dockerx.Client, p Params) (outEnv *receipt.Envel
 	env.Usage = outcome.usage
 	env.Usage.WallMS = time.Since(start).Milliseconds()
 	env.Checklist = checklistRecord(rd)
+	env.Restarts = rd.restarts
 
 	// The gateway's own log (tool-call log included, --log-calls) is
 	// part of the audit trail; collect before teardown kills it.
@@ -856,6 +857,11 @@ type agentOutcome struct {
 	// conversationCost is the running cost the harness last reported for
 	// the conversation it kept, earlier starts on it included.
 	conversationCost float64
+	// emptyAnswer: the harness exited cleanly after a tool call with no
+	// reply, or with reasoning only (restart.go); loopExit: it exited
+	// failing on its loop detector.
+	emptyAnswer string
+	loopExit    bool
 }
 
 // startInfra creates the run network and starts proxy + gateway, then
@@ -1407,7 +1413,12 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		rd.resumedAfter = ""
 	}
 	if rd.finishCheck != "" {
-		_, _ = fmt.Fprintf(stderrFile, "agentry: the harness is started again on its conversation (%s) for a finish check (%d of %d): %s\n", conversationID(rd), len(rd.finishChecks), finishChecks, strings.ReplaceAll(rd.redact.String(rd.finishCheck), "\n", " "))
+		what := "for a finish check"
+		n := len(rd.finishChecks)
+		if rd.restartReason != receipt.RestartFinishCheck {
+			what, n = "after "+restartWhat(rd.restartReason), len(rd.restarts)
+		}
+		_, _ = fmt.Fprintf(stderrFile, "agentry: the harness is started again on its conversation (%s) %s (%d of %d): %s\n", conversationID(rd), what, n, finishChecks, strings.ReplaceAll(rd.redact.String(rd.finishCheck), "\n", " "))
 		rd.finishCheck = ""
 	}
 
@@ -1484,6 +1495,9 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		out.err = Classify(ExitHarness, fmt.Errorf("agent exited %d%s", exit, detail))
 		out.atCapacity = exitedAtCapacity(p, collector.harnessErrReported, stderrPath)
 		out.transient = exitedOnPassingFailure(p, collector.harnessErrReported, stderrPath)
+		out.loopExit = exitedOnLoop(p, collector.harnessErrReported, stderrPath)
+	default:
+		out.emptyAnswer = collector.emptyEnd()
 	}
 	return out
 }
@@ -1642,6 +1656,9 @@ type eventCollector struct {
 	// answered put whatever it meant to answer in its reasoning, which is
 	// never the result; text then reasoning is an answer.
 	reasoned, answered bool
+	// warnedEmpty: since the last tool call the harness said the model's
+	// turn ended with no reply.
+	warnedEmpty        bool
 	budgetTripped      bool
 	costTripped        bool
 	harnessErrReported string
@@ -1763,7 +1780,7 @@ func (c *eventCollector) record(ev adapter.Event) {
 	switch ev.Kind {
 	case adapter.EventToolCall:
 		c.curText.Reset() // text before a tool call is its own message
-		c.reasoned, c.answered = false, false
+		c.reasoned, c.answered, c.warnedEmpty = false, false, false
 		c.turns++
 		if c.maxTurns > 0 && c.base.Turns+c.turns > c.maxTurns && !c.budgetTripped {
 			c.budgetTripped = true
@@ -1771,6 +1788,8 @@ func (c *eventCollector) record(ev adapter.Event) {
 		}
 	case adapter.EventReasoning:
 		c.reasoned = true
+	case adapter.EventEmptyAnswer:
+		c.warnedEmpty = true
 	case adapter.EventLoopNudge:
 		c.loopNudges++
 	case adapter.EventAssistantText:
@@ -1935,6 +1954,24 @@ func (c *eventCollector) deliver(ev adapter.Event) {
 // answerInReasoning: since the last tool call the model reasoned and wrote
 // no answer.
 func (c *eventCollector) answerInReasoning() bool { return c.reasoned && !c.answered }
+
+// emptyEnd names how a start that ended cleanly after a tool call ended with
+// no reply: receipt.RestartReasoningOnly when the model reasoned and wrote no
+// answer since its last tool call, receipt.RestartEmptyAnswer when it wrote
+// nothing at all or the harness said so, and "" for an end with an answer or
+// before the run's first tool call (the starts before this one count).
+func (c *eventCollector) emptyEnd() string {
+	if c.base.Turns+c.turns == 0 {
+		return ""
+	}
+	switch {
+	case c.answered && !c.warnedEmpty:
+		return ""
+	case c.reasoned && !c.answered:
+		return receipt.RestartReasoningOnly
+	}
+	return receipt.RestartEmptyAnswer
+}
 
 func (c *eventCollector) usage() receipt.Usage {
 	return withBase(receipt.Usage{
