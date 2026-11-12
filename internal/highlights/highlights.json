@@ -1,6 +1,14 @@
 {
   "versions": [
     {
+      "version": "0.7.56",
+      "highlights": [
+        "A message you send while the agent is still answering stays in the input line instead of being dropped.",
+        "Programs that drive a session can send a message into the turn in flight with the new steer command.",
+        "A session's result now counts the times its conversation was summarised or trimmed to keep it going."
+      ]
+    },
+    {
       "version": "0.7.55",
       "highlights": [
         "Your IT department can pin Agentry's registry and require your organization's sign-in with a machine settings file.",

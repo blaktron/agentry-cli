@@ -371,6 +371,8 @@ func (a *agentryHarnessAdapter) Events(line []byte) []Event {
 		case proto.WarnRetry:
 			return []Event{{Kind: EventModelRetry, Text: ev.Text, Raw: raw}}
 		}
+	case proto.TypeSteered:
+		return []Event{{Kind: EventSteered, Raw: raw}}
 	case proto.TypeTurnEnding:
 		return []Event{{Kind: EventTurnEnding, Raw: raw}}
 	case proto.TypeTurnEnd:

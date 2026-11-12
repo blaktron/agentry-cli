@@ -234,6 +234,11 @@ func TestCommandLines(t *testing.T) {
 		{`{"send":{"text":"  \t"}}`, RefusedMalformed},
 		{`{"answer":{"id":"  ","yes":true}}`, RefusedMalformed},
 		{`{"answer":{"id":"q-1"},"end":{}}`, RefusedMalformed},
+		{`{"steer":{"text":"and the date"}}`, ""},
+		{`{"steer":{"text":" "}}`, RefusedMalformed},
+		{`{"steer":{}}`, RefusedMalformed},
+		{`{"steer":{"text":"a","turn":2}}`, RefusedMalformed},
+		{`{"steer":{"text":"a"},"send":{"text":"b"}}`, RefusedMalformed},
 	}
 	for _, tc := range cases {
 		_, got, why := parse(line{b: []byte(tc.line)})
@@ -252,16 +257,17 @@ func TestCommandLines(t *testing.T) {
 	for text, why := range map[string]string{
 		`null`:                           "a command is one JSON object per line",
 		`nope`:                           "a command is one JSON object per line",
-		`{}`:                             "a line names exactly one command: send, add, end or answer",
-		`{"stop":{}}`:                    `unknown command "stop" (want send, add, end or answer)`,
+		`{}`:                             "a line names exactly one command: send, steer, add, end or answer",
+		`{"stop":{}}`:                    `unknown command "stop" (want send, steer, add, end or answer)`,
 		`{"send":{"text":""}}`:           "send needs a text",
 		`{"send":{"text":"  \t"}}`:       "send needs a text",
 		`{"answer":{"yes":true}}`:        "answer needs the question's id",
 		`{"answer":{"id":" "}}`:          "answer needs the question's id",
 		`{"add":{}}`:                     "add needs a path",
+		`{"steer":{"text":""}}`:          "steer needs a text",
 		`{"end":null}`:                   "end needs its object",
 		`{"send":{"text":"a","x":1}}`:    `send: json: unknown field "x"`,
-		`{"send":{"text":"a"},"end":{}}`: "a line names exactly one command: send, add, end or answer",
+		`{"send":{"text":"a"},"end":{}}`: "a line names exactly one command: send, steer, add, end or answer",
 	} {
 		if _, _, got := parse(line{b: []byte(text)}); got != why {
 			t.Errorf("%s: %q, want %q", text, got, why)
@@ -914,4 +920,107 @@ func TestAClosedOutputStillWritesWhatIsQueued(t *testing.T) {
 	if !slices.Equal(texts, []string{"one", "two", "three"}) {
 		t.Errorf("written %q", texts)
 	}
+}
+
+// steeringSession is a session whose turn in flight takes a message, or
+// refuses it with err.
+type steeringSession struct {
+	*scriptedSession
+	steered []string
+	err     error
+}
+
+func (s *steeringSession) Steer(_ context.Context, text string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.err != nil {
+		return s.err
+	}
+	if s.closed {
+		return session.ErrEnded
+	}
+	s.steered = append(s.steered, text)
+	s.events <- session.Event{Kind: session.KindSteer, Text: text}
+	return nil
+}
+
+// TestASteerReachesTheSessionOrIsRefusedByName: a steer goes to a session that
+// takes one, which answers with its own steer event; any other outcome is a
+// refusal whose class says which it was, and none of them ends the session.
+func TestASteerReachesTheSessionOrIsRefusedByName(t *testing.T) {
+	steer := `{"steer":{"text":"and the date"}}` + "\n"
+
+	// A session with no way to take one.
+	events, _, _ := serveLines(t, newScripted(nil), steer, Options{})
+	if got := refusals(events); strings.Join(got, "\n") != "cannot_steer: this harness takes no message while a turn is in flight" {
+		t.Errorf("a steer to a session that takes none: %q", got)
+	}
+
+	taking := &steeringSession{scriptedSession: newScripted(nil)}
+	l := serveLive(t, taking, Options{})
+	l.cmd(strings.TrimSpace(steer))
+	l.nextOf("steer", "and the date")
+	l.cmd(`{"end":{"finish":false}}`)
+	for range l.events {
+	}
+	<-l.done
+	if !slices.Equal(taking.steered, []string{"and the date"}) {
+		t.Errorf("the session was steered %q", taking.steered)
+	}
+
+	for _, tc := range []struct {
+		err  error
+		want string
+	}{
+		{session.ErrNoTurn, "no_turn: no turn is in flight; send the text as a turn"},
+		{fmt.Errorf("%w: the docker-agent harness takes one only between turns", session.ErrCannotSteer),
+			"cannot_steer: this harness takes no message while a turn is in flight: the docker-agent harness takes one only between turns"},
+		{errors.New("the session's limit of 3 messages is reached"), "steer_refused: the session's limit of 3 messages is reached"},
+	} {
+		refusing := &steeringSession{scriptedSession: newScripted(nil), err: tc.err}
+		events, _, _ = serveLines(t, refusing, steer, Options{})
+		if got := refusals(events); strings.Join(got, "\n") != tc.want {
+			t.Errorf("a steer the session answered with %v: %q", tc.err, got)
+		}
+	}
+
+	// A session that has ended says nothing of a steer that came too late.
+	ended := &steeringSession{scriptedSession: newScripted(nil), err: session.ErrEnded}
+	events, _, _ = serveLines(t, ended, steer, Options{})
+	if got := refusals(events); len(got) != 0 {
+		t.Errorf("a steer after the end was refused: %q", got)
+	}
+}
+
+// TestASteerDoesNotTakeTheTurn: a steer during a turn leaves the turn in
+// flight as it was, so a send is still refused busy until the turn ends, and
+// taken after it.
+func TestASteerDoesNotTakeTheTurn(t *testing.T) {
+	hold := make(chan struct{})
+	fs := &steeringSession{scriptedSession: newScripted(func(f *scriptedSession, text string) error {
+		f.emit(session.Event{Kind: session.KindUserTurn, Text: text})
+		if text == "first" {
+			<-hold
+		}
+		f.emit(session.Event{Kind: session.KindAssistantTurn, Text: "done"})
+		return nil
+	})}
+	l := serveLive(t, fs, Options{})
+	l.cmd(`{"send":{"text":"first"}}`)
+	l.nextOf("user_turn", "first")
+	l.cmd(`{"steer":{"text":"and the date"}}`)
+	l.nextOf("steer", "and the date")
+	l.cmd(`{"send":{"text":"second"}}`)
+	if m := l.next(); m["refused"] != "busy" {
+		t.Fatalf("a send during the steered turn: %v", m)
+	}
+	close(hold)
+	l.nextOf("assistant_turn", "done")
+	l.cmd(`{"send":{"text":"second"}}`)
+	l.nextOf("user_turn", "second")
+	l.nextOf("assistant_turn", "done")
+	l.cmd(`{"end":{"finish":false}}`)
+	for range l.events {
+	}
+	<-l.done
 }

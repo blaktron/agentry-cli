@@ -1259,6 +1259,12 @@ func TestANoticeIsCarriedNotPutInThePersonsTurn(t *testing.T) {
 	if err := os.WriteFile(path, []byte("notes"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// This harness takes a message only between turns: one sent now is
+	// refused by name, counted as no message of the person's, and recorded
+	// as nothing.
+	if err := s.(session.Steerer).Steer(ctx, "while you work"); !errors.Is(err, session.ErrCannotSteer) || !strings.Contains(err.Error(), adapter.DefaultName) {
+		t.Fatalf("a message during a turn on a harness that takes none: %v", err)
+	}
 	// The first turn is in flight, so the notice waits for the next.
 	if err := s.AddInput(ctx, path); err != nil {
 		t.Fatal(err)
@@ -1279,6 +1285,9 @@ func TestANoticeIsCarriedNotPutInThePersonsTurn(t *testing.T) {
 	var turns []string
 	carried := false
 	for _, ev := range get() {
+		if ev.Kind == session.KindSteer || ev.Kind == session.KindSteered {
+			t.Errorf("a harness that takes no message during a turn recorded one: %+v", ev)
+		}
 		if ev.Kind == session.KindUserTurn && !ev.Synthetic {
 			turns = append(turns, ev.Text)
 		}

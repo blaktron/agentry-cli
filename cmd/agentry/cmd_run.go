@@ -216,10 +216,14 @@ func newRunCmd() *cobra.Command {
 			exitClassHelp() + "\n" +
 			"Run modes: --mode autonomous runs from the files and ends; --mode interactive\n" +
 			"opens a chat with the agent in this terminal under exactly the same controls\n" +
-			"(/add a file, /finish for the final result, /quit, /caps). A release that\n" +
-			"declares both modes is asked on a terminal and runs autonomous otherwise.\n" +
+			"(/add a file, /finish for the final result, /quit, /caps). A message sent\n" +
+			"while the agent is answering reaches it during that turn where the harness\n" +
+			"takes one, and otherwise stays in the input line until the turn ends. A\n" +
+			"release that declares both modes is asked on a terminal and runs autonomous\n" +
+			"otherwise.\n" +
 			"--session-protocol drives an interactive session from a program instead,\n" +
 			"with no terminal: JSON-line commands on stdin ({\"send\":{\"text\":…}},\n" +
+			"{\"steer\":{\"text\":…}} for a message into the turn in flight,\n" +
 			"{\"add\":{\"path\":…}}, {\"end\":{\"finish\":true|false}}; end of input ends\n" +
 			"without a result), one JSON line per session event on descriptor 3, the\n" +
 			"result on stdout as for any run (the envelope under --output-format json),\n" +

@@ -332,6 +332,183 @@ func TestASessionsEnvelopeCountsWhatItsHarnessDidToCarryTheConversation(t *testi
 	}
 }
 
+func TestAMessageSentDuringATurnJoinsItAfterTheCallsResult(t *testing.T) {
+	model := scriptedmodel.New(t,
+		scriptedmodel.ToolCalls(scriptedmodel.Call{ID: "c1", Name: "fs_read", Arguments: `{"path":"notes.txt"}`}),
+		scriptedmodel.Text("The note says hello, and today is not in it."),
+		scriptedmodel.Text("Nothing more."),
+	)
+	g := newScriptedGateway(t, "fs_read")
+	inCall, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	g.call = func(context.Context, string) string {
+		once.Do(func() { close(inCall) })
+		<-release
+		return "hello from the workspace"
+	}
+	s, p, _ := startAgentryHarnessSession(t, model, g, "fs_read")
+	get, done := collect(s)
+	ctx := context.Background()
+	st, ok := s.(session.Steerer)
+	if !ok {
+		t.Fatal("the engine's session takes no message during a turn")
+	}
+
+	// Between turns there is no turn to join.
+	if err := st.Steer(ctx, "too early"); !errors.Is(err, session.ErrNoTurn) {
+		t.Fatalf("a message with no turn in flight: %v", err)
+	}
+
+	sent := make(chan error, 1)
+	go func() { sent <- s.Send(ctx, "what does the note say?") }()
+	<-inCall
+	// While the tool runs: the person's message, and a file they add.
+	if err := st.Steer(ctx, "also tell me whether it gives today's date"); err != nil {
+		t.Fatalf("steer: %v", err)
+	}
+	added := filepath.Join(t.TempDir(), "more.txt")
+	if err := os.WriteFile(added, []byte("one more line\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddInput(ctx, added); err != nil {
+		t.Fatalf("add during the turn: %v", err)
+	}
+	if err := st.Steer(ctx, "   "); err == nil {
+		t.Error("a blank message was taken")
+	}
+	close(release)
+	if err := <-sent; err != nil {
+		t.Fatalf("the turn: %v", err)
+	}
+
+	// The next request carries both after the call's result, in the order
+	// they were sent, the person's words unchanged.
+	reqs := model.Requests()
+	if len(reqs) != 2 {
+		t.Fatalf("%d requests, want 2", len(reqs))
+	}
+	msgs := reqs[1].Messages
+	last := msgs[len(msgs)-1]
+	if len(last.Results) != 1 || last.Results[0].Text != "hello from the workspace" {
+		t.Fatalf("the request after the call ends with %+v", last)
+	}
+	said, notice := strings.Index(last.Text, "also tell me whether it gives today's date"), strings.Index(last.Text, "A new input file is available at /inputs/more.txt")
+	if said < 0 || notice < said {
+		t.Errorf("the message and the notice in the request after the call: %q", last.Text)
+	}
+
+	// The cap on the person's messages counts one sent this way: the
+	// fixture allows three, and a turn and a message are two.
+	second := make(chan error, 1)
+	go func() { second <- s.Send(ctx, "anything else?") }()
+	if err := <-second; err != nil {
+		t.Fatalf("the second turn: %v", err)
+	}
+	env, err := s.End(ctx, false)
+	<-done
+	if err != nil {
+		t.Fatalf("end: %v", err)
+	}
+	if env.Usage.UserTurns != 3 {
+		t.Errorf("user messages counted: %d, want a turn, a message during it and a turn", env.Usage.UserTurns)
+	}
+
+	// The session's record: each message as it was sent, then where the
+	// harness put them, before the turn's answer.
+	var order []string
+	for _, ev := range get() {
+		switch ev.Kind {
+		case session.KindUserTurn:
+			order = append(order, "turn")
+		case session.KindToolCall:
+			order = append(order, "call")
+		case session.KindSteer:
+			if ev.Synthetic {
+				order = append(order, "notice")
+			} else {
+				order = append(order, "steer:"+ev.Text)
+			}
+		case session.KindSteered:
+			order = append(order, "steered")
+		case session.KindAssistantTurn:
+			order = append(order, "answer")
+		}
+	}
+	want := "turn call steer:also tell me whether it gives today's date notice steered answer turn answer"
+	if got := strings.Join(order, " "); got != want {
+		t.Errorf("the session's events:\n%s\nwant\n%s", got, want)
+	}
+	raw, err := os.ReadFile(filepath.Join(p.OutDir, "receipts", "transcript.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{"## User, during the turn\n\nalso tell me whether it gives today's date", "## Runner, during the turn\n\nA new input file is available", "- what was sent during the turn joined the conversation here"} {
+		if !strings.Contains(string(raw), line) {
+			t.Errorf("the transcript lacks %q:\n%s", line, raw)
+		}
+	}
+	events, err := os.ReadFile(filepath.Join(p.OutDir, "receipts", "events.ndjson"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(events), `"kind":"steer"`) || !strings.Contains(string(events), `"kind":"steered"`) {
+		t.Error("events.ndjson records no steer or no steered event")
+	}
+}
+
+func TestTheCapOnAPersonsMessagesHoldsForOnesSentDuringATurn(t *testing.T) {
+	model := scriptedmodel.New(t,
+		scriptedmodel.ToolCalls(scriptedmodel.Call{ID: "c1", Name: "fs_read", Arguments: `{"path":"notes.txt"}`}),
+		scriptedmodel.Text("Done."),
+	)
+	g := newScriptedGateway(t, "fs_read")
+	inCall, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	g.call = func(context.Context, string) string {
+		once.Do(func() { close(inCall) })
+		<-release
+		return "ok"
+	}
+	s, _, _ := startAgentryHarnessSession(t, model, g, "fs_read") // three messages at most
+	get, done := collect(s)
+	ctx := context.Background()
+	st := s.(session.Steerer)
+	sent := make(chan error, 1)
+	go func() { sent <- s.Send(ctx, "read the note") }()
+	<-inCall
+	for _, text := range []string{"second", "third"} {
+		if err := st.Steer(ctx, text); err != nil {
+			t.Fatalf("%s: %v", text, err)
+		}
+	}
+	err := st.Steer(ctx, "fourth")
+	if err == nil || !strings.Contains(err.Error(), "limit of 3 messages") || errors.Is(err, session.ErrCannotSteer) {
+		t.Errorf("a message over the cap: %v", err)
+	}
+	// The refusal ends nothing: the turn in flight is answered.
+	close(release)
+	if err := <-sent; err != nil {
+		t.Fatalf("the turn: %v", err)
+	}
+	if ended, _ := s.Ended(); ended {
+		t.Error("the refused message ended the session")
+	}
+	env, _ := s.End(ctx, false)
+	<-done
+	if env.Usage.UserTurns != 3 {
+		t.Errorf("user messages counted: %d", env.Usage.UserTurns)
+	}
+	steers := 0
+	for _, ev := range get() {
+		if ev.Kind == session.KindSteer {
+			steers++
+		}
+	}
+	if steers != 2 {
+		t.Errorf("%d steer events, want the two that were taken", steers)
+	}
+}
+
 func TestAnInterruptStopsATurnOnTheRunnersOwnHarness(t *testing.T) {
 	model := scriptedmodel.New(t,
 		scriptedmodel.ToolCalls(scriptedmodel.Call{ID: "c1", Name: "fs_read", Arguments: `{"path":"big.txt"}`}),
@@ -451,5 +628,52 @@ func TestTheSessionProtocolDrivesTheRunnersOwnHarness(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Errorf("%d tool calls in the protocol's events, want 1: %v", calls, eventKinds(d.seen))
+	}
+}
+
+func TestTheSessionProtocolSteersATurnOnTheRunnersOwnHarness(t *testing.T) {
+	model := scriptedmodel.New(t,
+		scriptedmodel.ToolCalls(scriptedmodel.Call{ID: "c1", Name: "fs_read", Arguments: `{"path":"notes.txt"}`}),
+		scriptedmodel.Text("The note says hello, on no date."),
+	)
+	g := newScriptedGateway(t, "fs_read")
+	release := make(chan struct{})
+	g.call = func(context.Context, string) string {
+		<-release
+		return "hello from the workspace"
+	}
+	s, _, _ := startAgentryHarnessSession(t, model, g, "fs_read")
+	d := serveProtocol(t, context.Background(), s, protocol.Options{})
+
+	// Before any turn there is none to join.
+	d.send(`{"steer":{"text":"too early"}}`)
+	refused := d.until(func(ev protocol.Event) bool { return ev.Refused != "" })
+	if last := refused[len(refused)-1]; last.Refused != protocol.RefusedNoTurn {
+		t.Fatalf("a steer with no turn in flight: %+v", last)
+	}
+
+	d.send(`{"send":{"text":"what does the note say?"}}`)
+	d.until(isKind(session.KindToolCall))
+	d.send(`{"steer":{"text":"and is there a date in it?"}}`)
+	said := d.until(isKind(session.KindSteer))
+	if last := said[len(said)-1]; last.Text != "and is there a date in it?" || last.Synthetic {
+		t.Fatalf("the steer event: %+v", last)
+	}
+	close(release)
+	rest := d.until(isKind(session.KindAssistantTurn))
+	joined := false
+	for _, ev := range rest {
+		joined = joined || ev.Kind == session.KindSteered
+	}
+	if !joined {
+		t.Errorf("no steered event before the turn's answer: %v", eventKinds(rest))
+	}
+	if req := model.Requests()[1]; !strings.Contains(string(req.Body), "and is there a date in it?") {
+		t.Error("the request after the call does not carry the message")
+	}
+	d.send(`{"end":{"finish":false}}`)
+	d.wait()
+	if d.err != nil || d.env == nil || d.env.Usage.UserTurns != 2 {
+		t.Fatalf("env %+v, err %v", d.env, d.err)
 	}
 }
