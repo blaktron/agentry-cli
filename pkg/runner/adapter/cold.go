@@ -60,6 +60,12 @@ const (
 	// coldKeepBrowser is how many of the newest browser results stay,
 	// wherever they fall: a page snapshot is stale at the next navigation.
 	coldKeepBrowser = 2
+	// coldMinBytes is the smallest result the runner's own harness clears.
+	// A shorter one is about a thousand tokens at most, a fortieth of the
+	// smallest conversation worth compacting when cold: clearing it saves
+	// next to nothing of the request, and takes away what the agent's
+	// earlier replies were written from.
+	coldMinBytes = 4 << 10
 )
 
 // ColdAfter is how long after a model response the adapter named name, on

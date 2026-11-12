@@ -48,7 +48,7 @@ func TestAgentryHarnessCompilesAConfigurationItsHarnessReads(t *testing.T) {
 		Scrub:            &proto.Scrub{Unchanged: []string{"read_input", "search_inputs"}},
 		Loop:             &proto.Loop{Repeats: 5, CycleRepeats: 3, MaxPeriod: 4},
 		LengthRecoveries: 2,
-		ColdClear:        &proto.ColdClear{AfterSeconds: 300, KeepTurns: 2, KeepBrowser: 2},
+		ColdClear:        &proto.ColdClear{AfterSeconds: 300, KeepTurns: 2, KeepBrowser: 2, MinBytes: 4096},
 		Compaction:       &proto.Compaction{Threshold: 0.8, Checkpoint: checkpointText, Notes: spec.ChecklistForHarness},
 		Retry:            &proto.Retry{Attempts: 3, BaseSeconds: 2, MaxSeconds: 60, IdleSeconds: 300},
 	}

@@ -29,7 +29,8 @@
   "coldClear": {
     "afterSeconds": 3600,
     "keepTurns": 2,
-    "keepBrowser": 2
+    "keepBrowser": 2,
+    "minBytes": 4096
   },
   "compaction": {
     "threshold": 0.8,
