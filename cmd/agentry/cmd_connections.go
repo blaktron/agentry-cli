@@ -288,6 +288,10 @@ func consentFor(cmd *cobra.Command, store *connection.Store, clients *connection
 			continue
 		}
 		if err != nil {
+			if step := adminStepFor(cmd.Context(), public, srv, err); step != "" {
+				_, _ = fmt.Fprintf(errOut, "\n%s\n", step)
+				return nil, fmt.Errorf("connect %s: an administrator must approve Agentry's app for your organization first", connectionServer(srv))
+			}
 			return nil, fmt.Errorf("connect %s: %w", connectionServer(srv), err)
 		}
 		switch old, gerr := store.Get(k); {
@@ -310,6 +314,20 @@ func consentFor(cmd *cobra.Command, store *connection.Store, clients *connection
 		_, _ = fmt.Fprintf(errOut, "connected %s for %s\n", connectionServer(srv), who)
 		return g, nil
 	}
+}
+
+// adminStepFor is the step to show for a consent to a package server that
+// the vendor refused because an administrator must approve Agentry's app,
+// or "": the server must have signed in with a connector's public client.
+func adminStepFor(ctx context.Context, public *connection.PublicClients, srv manifest.MCPServer, err error) string {
+	if srv.IsRemote() || srv.OAuth == nil {
+		return ""
+	}
+	k, id, ok := public.ConnectorFor(ctx, srv, srv.OAuth.Issuer)
+	if !ok {
+		return ""
+	}
+	return connection.AdminStep(err, k, id, connectionScopes(srv))
 }
 
 // runConsent runs one consent. The redirect comes back to the loopback

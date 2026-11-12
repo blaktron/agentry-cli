@@ -69,14 +69,25 @@ type keptPublicClients struct {
 // for a connector whose app is a public client, and the registry must
 // serve that connector's id.
 func (p *PublicClients) ForServer(ctx context.Context, server manifest.MCPServer, issuer string) string {
+	_, id, _ := p.ConnectorFor(ctx, server, issuer)
+	return id
+}
+
+// ConnectorFor is the connector whose public client a sign-in to server at
+// issuer uses, with the client id the registry serves for it; ok is false
+// where ForServer gives no client.
+func (p *PublicClients) ConnectorFor(ctx context.Context, server manifest.MCPServer, issuer string) (k connector.Connector, id string, ok bool) {
 	if p == nil {
-		return ""
+		return connector.Connector{}, "", false
 	}
-	k, ok := p.catalogue.Match(server, issuer)
+	k, ok = p.catalogue.Match(server, issuer)
 	if !ok || !k.HasPublicClient() {
-		return ""
+		return connector.Connector{}, "", false
 	}
-	return p.ids(ctx)[k.ID]
+	if id = p.ids(ctx)[k.ID]; id == "" {
+		return connector.Connector{}, "", false
+	}
+	return k, id, true
 }
 
 // ForConnector is the client id the registry serves for the connector id,

@@ -5579,6 +5579,17 @@
       "disposition": "retain",
       "files": [
         {
+          "path": "pkg/runner/connection/adminstep_test.go",
+          "tests": [
+            "TestARefusalThatNeedsAnAdminGetsTheAdminLink",
+            "TestConnectorAtIssuer"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "pkg/runner/connection/connection_test.go",
           "tests": [
             "TestAConnectionOpensForItsReleaseAlone",
