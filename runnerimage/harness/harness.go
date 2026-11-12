@@ -469,14 +469,17 @@ func (h *Harness) unanswered(text string) bool {
 }
 
 // nearWindow reports whether the conversation has reached the share of the
-// model's window at which it is summarised.
+// model's window at which it is summarised, or leaves less of the window
+// than a summary of it needs, whichever comes first: a summary asked for
+// later than that would have no room to be written in.
 func (h *Harness) nearWindow() bool {
 	c, w := h.cfg.Compaction, h.window()
 	if c == nil || w <= 0 {
 		return false
 	}
 	now := h.contextTokens()
-	return float64(now) >= c.Threshold*float64(w) && now > h.compactPast
+	at := min(c.Threshold*float64(w), float64(w-int64(h.summaryBudget())-w/20))
+	return float64(now) >= at && now > h.compactPast
 }
 
 // ending asks the runner whether the turn ends on the model's answer. With

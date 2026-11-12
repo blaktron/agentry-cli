@@ -136,8 +136,12 @@ const (
 		"because it is close to the most the model can read at once. " +
 		"Write that summary now, as your whole reply, and call no tool. " +
 		"Whoever carries on will have the summary and the tools and nothing else of this conversation, " +
-		"so the summary must hold everything needed to go on from here. " +
+		"so the summary must hold everything needed to go on from here, and end with the next step to take, " +
+		"said so exactly that it can be taken without reading anything else first. " +
 		"If the conversation opens with an earlier summary, carry over what still matters from it."
+	// summaryLength says how long the summary may be; its argument is a
+	// number of words.
+	summaryLength = " Make it as short as it can be while it holds all of that, at most about %d words."
 	// summaryShort is added when an earlier attempt ran to the output limit.
 	summaryShort = " Keep it short: the last summary was cut off at the output limit and could not be used."
 	// summaryOpen and summaryClose stand before and after a stored summary.
@@ -153,7 +157,70 @@ const (
 	// summaryLevels is how many times a summary request is made smaller
 	// before the harness gives up.
 	summaryLevels = 3
+	// summaryOutputMost is the most output a summary request asks for. A
+	// summary longer than this has stopped summarising, and on a slow
+	// server every token asked for is time the summary may take.
+	summaryOutputMost = 16384
+	// summaryWordsMost is the longest summary asked for, in words.
+	summaryWordsMost = 2000
 )
+
+// summaryBudget is the most output a summary request asks for: the model's
+// output limit, at most summaryOutputMost, and at most a quarter of the
+// window. With no window known it is the output limit alone, held to
+// summaryOutputMost, or zero, which leaves the limit to the server, when
+// the configuration gives none: a server that is not told the window may
+// refuse a request whose input and output together pass it.
+func (h *Harness) summaryBudget() int {
+	n := h.cfg.Model.MaxOutputTokens
+	w := h.window()
+	if n <= 0 {
+		if w <= 0 {
+			return 0
+		}
+		n = summaryOutputMost
+	}
+	n = min(n, summaryOutputMost)
+	if w > 0 {
+		n = min(n, int(max(w/4, 1)))
+	}
+	return n
+}
+
+// summaryOutput is the output a summary request of msgs asks for, and
+// whether that leaves the summary room enough to be of use. A request
+// whose input and output together pass the window is refused by most
+// servers and cut by some, so the output is held to the room the input
+// leaves, less a twentieth of the input for the estimate's error. Room
+// below a quarter of the budget does not fit: the summary would be cut
+// before it was of use.
+func (h *Harness) summaryOutput(msgs []llm.Message) (maxTokens int, fits bool) {
+	budget := h.summaryBudget()
+	w := h.window()
+	if w <= 0 || budget <= 0 {
+		return budget, true
+	}
+	input := int64(float64(len(h.cfg.System)+h.toolBytes+messagesBytes(msgs)) / h.rate())
+	room := w - input - input/20
+	least := max(budget/4, 1)
+	switch {
+	case room >= int64(budget):
+		return budget, true
+	case room >= int64(least):
+		return int(room), true
+	}
+	return least, false
+}
+
+// summaryWords is how long a summary is asked to be at most, in words:
+// half its output budget, which leaves the rest to the words a token
+// holds fewer of and to reasoning, and at most summaryWordsMost.
+func summaryWords(budget int) int {
+	if budget <= 0 {
+		return summaryWordsMost
+	}
+	return max(min(budget/2, summaryWordsMost), 1)
+}
 
 // usageSummary marks the token count of a summary request in the record.
 const usageSummary = "summary"
@@ -237,7 +304,7 @@ func (h *Harness) compact(ctx context.Context, reason string, first int) error {
 	var summary string
 	short := false
 	for level := first; level <= summaryLevels && summary == ""; level++ {
-		ask := summaryAsk
+		ask := summaryAsk + fmt.Sprintf(summaryLength, summaryWords(h.summaryBudget()))
 		if c := h.cfg.Compaction; c != nil && c.Checkpoint != "" {
 			ask += " " + c.Checkpoint
 		}
@@ -246,8 +313,15 @@ func (h *Harness) compact(ctx context.Context, reason string, first int) error {
 		}
 		msgs := summaryInput(live, level)
 		msgs = appendUser(msgs, llm.Part{Kind: llm.Text, Text: ask})
+		// A request that would leave the summary no room is not sent: the
+		// next level is smaller. The last level is sent whatever room it
+		// leaves, since it is the last chance of a summary.
+		maxTokens, fits := h.summaryOutput(msgs)
+		if !fits && level < summaryLevels {
+			continue
+		}
 		reply, err := h.stream(ctx, llm.Request{
-			System: h.cfg.System, Messages: msgs, Tools: h.tools, MaxTokens: h.cfg.Model.MaxOutputTokens,
+			System: h.cfg.System, Messages: msgs, Tools: h.tools, MaxTokens: maxTokens,
 		}, func(llm.Delta) {})
 		if err != nil {
 			if llm.IsError(err, llm.Overflow) {
