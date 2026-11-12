@@ -1,5 +1,7 @@
 {
   "command": {
+    "callId": "string, optional",
+    "conversation": "string, optional",
     "text": "string, optional",
     "type": "string"
   },
@@ -75,6 +77,7 @@
     "callId": "string, optional",
     "class": "string, optional",
     "code": "string, optional",
+    "continued": "bool, optional",
     "conversation": "string, optional",
     "count": "int, optional",
     "failed": "bool, optional",
@@ -105,7 +108,12 @@
     "command.type": [
       "prompt",
       "accept",
-      "continue"
+      "continue",
+      "open",
+      "steer",
+      "interrupt",
+      "permit",
+      "deny"
     ],
     "event.class": [
       "overflow",
@@ -125,13 +133,15 @@
       "cold_clear",
       "compaction",
       "compaction_failed",
-      "retry"
+      "retry",
+      "command_refused"
     ],
     "event.reason": [
       "answered",
       "answer_cut",
       "error",
-      "max_steps"
+      "max_steps",
+      "interrupted"
     ],
     "event.type": [
       "ready",
@@ -143,7 +153,9 @@
       "warning",
       "error",
       "turn_ending",
-      "turn_end"
+      "turn_end",
+      "permission",
+      "steered"
     ],
     "model.api": [
       "anthropic",

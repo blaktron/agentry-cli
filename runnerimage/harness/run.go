@@ -64,17 +64,11 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		say(stderr, "usage: harness run --config FILE --conversation ID  (the runner's commands on stdin)")
 		return ExitUsage
 	}
-	f, err := os.Open(*configPath)
-	if err != nil {
-		say(stderr, "harness:", err)
-		return ExitUsage
+	h, code := build(*configPath, stdout, stderr, env)
+	if h == nil {
+		return code
 	}
-	cfg, err := proto.DecodeConfig(f)
-	_ = f.Close()
-	if err != nil {
-		say(stderr, "harness:", err)
-		return ExitUsage
-	}
+	defer func() { _ = h.Close() }()
 	cmds := readCommands(stdin)
 	first, err := cmds.next(ctx)
 	task := strings.TrimSpace(first.Text)
@@ -92,35 +86,21 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		say(stderr, "harness: the prompt is empty")
 		return ExitUsage
 	}
-
-	plain := transport()
-	var toModel http.RoundTripper = plain
-	if cfg.Retry != nil && cfg.Retry.IdleSeconds > 0 {
-		toModel = &idleTransport{base: plain, idle: time.Duration(cfg.Retry.IdleSeconds) * time.Second}
-	}
-	h := New(cfg, modelClient(cfg, &http.Client{Transport: toModel}, env), &mcp.Client{
-		URL:   cfg.Gateway.URL,
-		Token: func() string { return env(cfg.Gateway.TokenEnv) },
-		// A tool may take as long as it takes: the idle limit is the
-		// model's alone.
-		HTTP:    &http.Client{Transport: plain},
-		Name:    "agentry-harness",
-		Version: fmt.Sprint(proto.Version),
-	}, stdout)
-	defer func() { _ = h.Close() }()
-	h.Gate = func(ctx context.Context) (string, error) {
-		cmd, err := cmds.next(ctx)
-		switch {
-		case errors.Is(err, io.EOF):
-			return "", nil
-		case err != nil:
-			return "", err
-		case cmd.Type == proto.CmdContinue && strings.TrimSpace(cmd.Text) != "":
-			return cmd.Text, nil
-		case cmd.Type == proto.CmdAccept || cmd.Type == proto.CmdContinue:
-			return "", nil
+	h.Gate = func() func(context.Context) (string, error) {
+		return func(ctx context.Context) (string, error) {
+			cmd, err := cmds.next(ctx)
+			switch {
+			case errors.Is(err, io.EOF):
+				return "", nil
+			case err != nil:
+				return "", err
+			case cmd.Type == proto.CmdContinue && strings.TrimSpace(cmd.Text) != "":
+				return cmd.Text, nil
+			case cmd.Type == proto.CmdAccept || cmd.Type == proto.CmdContinue:
+				return "", nil
+			}
+			return "", fmt.Errorf("the runner answered a turn's ending with the command %q", cmd.Type)
 		}
-		return "", fmt.Errorf("the runner answered a turn's ending with the command %q", cmd.Type)
 	}
 
 	if err := h.Start(ctx, *conversation); err != nil {
@@ -136,6 +116,37 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return ExitIncomplete
 	}
 	return ExitAnswered
+}
+
+// build reads the configuration at path and makes the harness it describes,
+// writing its events to stdout. A nil harness comes with the exit code that
+// says why there is none, and stderr has been told.
+func build(path string, stdout, stderr io.Writer, env Env) (*Harness, int) {
+	f, err := os.Open(path) //nolint:gosec // the configuration the runner mounted
+	if err != nil {
+		say(stderr, "harness:", err)
+		return nil, ExitUsage
+	}
+	cfg, err := proto.DecodeConfig(f)
+	_ = f.Close()
+	if err != nil {
+		say(stderr, "harness:", err)
+		return nil, ExitUsage
+	}
+	plain := transport()
+	var toModel http.RoundTripper = plain
+	if cfg.Retry != nil && cfg.Retry.IdleSeconds > 0 {
+		toModel = &idleTransport{base: plain, idle: time.Duration(cfg.Retry.IdleSeconds) * time.Second}
+	}
+	return New(cfg, modelClient(cfg, &http.Client{Transport: toModel}, env), &mcp.Client{
+		URL:   cfg.Gateway.URL,
+		Token: func() string { return env(cfg.Gateway.TokenEnv) },
+		// A tool may take as long as it takes: the idle limit is the
+		// model's alone.
+		HTTP:    &http.Client{Transport: plain},
+		Name:    "agentry-harness",
+		Version: fmt.Sprint(proto.Version),
+	}, stdout), 0
 }
 
 // commands reads the runner's commands from stdin on a goroutine of its own,
