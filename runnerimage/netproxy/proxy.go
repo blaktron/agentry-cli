@@ -131,6 +131,15 @@ func (p *Proxy) serveHTTP(w http.ResponseWriter, r *http.Request) {
 			p.forwardPlain(w, r)
 			return
 		}
+		// A plain request this proxy will not forward is still a refused
+		// request, and the log is the run's record of every refusal.
+		if r.URL.IsAbs() && r.URL.Scheme == "http" {
+			port := r.URL.Port()
+			if port == "" {
+				port = "80"
+			}
+			p.logf("deny http %s:%s (this proxy forwards no plain http)", r.URL.Hostname(), port)
+		}
 		http.Error(w, "method not allowed: this proxy accepts CONNECT tunnels only", http.StatusMethodNotAllowed)
 		return
 	}

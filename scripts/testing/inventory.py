@@ -137,6 +137,7 @@ PURPOSES = {
     "runnerimage/toolsrv": "The Agentry companion tools server: one MCP stdio server whose tool surface is constructed from the",
     "runnerimage/webscan": "AI Review of what the Drafter's web tools bring back, before its model reads any of it",
     "scripts/context-measure": "Reading run and segment receipts to report how a conversation's context grew",
+    "scripts/envelope-shape": "Comparing two adapters' result envelopes for one envelope shape",
     "scripts/mcp-server-survey": "Installing and starting declared MCP servers the way the runner does, and recording what each did",
     "scripts/notices": "Licence classification and the generated third-party notices",
 }

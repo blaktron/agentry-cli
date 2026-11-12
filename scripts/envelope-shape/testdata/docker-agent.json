@@ -1,0 +1,78 @@
+{
+  "agentry": "run/v1",
+  "attestation": {
+    "consent": "--allow-unsigned",
+    "state": "local",
+    "verified": false
+  },
+  "capabilities_enforced": {
+    "agentContainer": "internal-only run network; reachable endpoints: gateway:8811 (Bearer auth) and llm-proxy:3128 (CONNECT allowlist: llm.example:8000; plain http forwarded, unencrypted, to the operator's http model endpoint(s): llm.example:8000); no workspace, output, or docker-socket mounts; model API key present by necessity; its one writable mount is the harness's conversation store (/session/session.db), a volume of the run's own removed at teardown: a run that ends on a passing model failure after its first tool call is started again on that conversation, with a message to carry on in place of the task",
+    "containers": "the llm proxy, the gateway, the probe, the agent: all capabilities dropped, no-new-privileges, memory 2g, cpus 1, pids 512; the gateway keeps DAC_READ_SEARCH alone, to read the run's secrets file; read-only root: the llm proxy, the probe, the agent (tmpfs /tmp, /work, /home/docker-agent); the session store's one-shot chown keeps CHOWN alone; the tool and MCP server containers the gateway launches get the same memory and cpus through its flags and the no-new-privileges its documentation gives them, and through this run's docker filter the run's pids bound and every capability dropped, a class keeping only its own: the runner's tools servers CHOWN, DAC_OVERRIDE, FOWNER, KILL, SETGID, SETUID; a declared MCP server DAC_READ_SEARCH to read its package, and DAC_OVERRIDE too where it writes a folder of the run's; a relay none; their root as their image leaves it",
+    "daemon": "the gateway reaches the docker daemon only through this run's filter: every container, network and volume it creates carries the run's label, it may touch no container, network, volume or exec without it (the pinned gateway's shared relay networks excepted; only its digest-pinned relays join the one that leaves the host), lists and events show only the run's, create bodies are checked as the daemon reads them, and it may not create a privileged, host-namespace, device, port-publishing, runtime-choosing or security-weakened container, bind a host path outside the run's directories or write outside its writable ones, or exceed the run's memory, CPU and process limits; a container that names no network is created on none, never on the daemon's default bridge; every decision is in receipts/docker-filter.log",
+    "engine": "docker 29.7.2, rootful, /var/run/docker.sock, docker filter in-process: the daemon reports this machine's hostname (workstation) and kernel (6.0.0)",
+    "exec": "no exec: run_command tool not exposed; harness built-in shell toolsets never enabled",
+    "filesystem": "read workspace; write none — enforced by the tools-container mount table (ro/rw, per-path binds) plus server-side grant checks; the run's docker filter (in the CLI on Linux, in a container of the run's own on Docker Desktop) mounts the tools container's /tmp as a 256 MiB tmpfs and the tools server refuses to serve without it; where no filter runs it is the container's own layer, unbounded",
+    "model.apiKey": "$LOCAL_MODEL_KEY from the host environment, injected into the agent container (or the host harness process) only",
+    "network": "no egress: tools container runs with networking disabled (disableNetwork); no fetch tool exposed",
+    "pdf": "the runner's grant, not the contract's: export_pdf renders a Markdown file from reports/ or the scratch folder into a PDF in reports/ with Typst 0.15.1 in the tools container (built without a package downloader), through the runner's confine role: an empty environment, a fresh render root under /tmp whose every file the tools server makes new, no write of its own (Landlock; the PDF comes back on its stdout), TCP refused where Landlock is ABI 4 or later, 1 GiB of address space and 60 seconds; as root it runs as a user of its own that owns nothing, and where there is no Landlock that user is all that holds its writes. Only local PNG and JPEG images from reports/, the scratch folder and the inputs are drawn. The theme is the run's, never the model's, and the receipt's pdfs block names it and each PDF's SHA-256; write_report refuses a PDF. A design's custom cover is Typst code of the person's design, compiled in the same render under the same confinement, able to read only the render root and import only the vendored Markdown package the template itself uses; one that fails is passed over for the band cover, rendering the report a second time under the same limits, and the pdfs entry names the kind of failure, never the compiler's text",
+    "pdf.design": "\"Plain\", based on plain, version 1 (sha256:30666213aecdec763ab6fedf3ba42c813f9abeaf31e272e09e5699c88885d255), chosen by the default; the model chooses only each PDF's form (report, letter, memo), never the design",
+    "scratch": "the runner's grant, not the contract's: scratch_list, scratch_read, scratch_write and scratch_search over the scratch folder /scratch on the tools container only, empty at the start, never copied to the output folder, and removed with the container; a 256 MiB tmpfs the run's docker filter mounts (in the CLI on Linux, in a container of the run's own on Docker Desktop), and where no filter runs a folder in the container's own layer, unbounded",
+    "search": "the runner's grant, not the contract's: grep and glob search and list, one area a call, only what the run's other tools read (its inputs unless under the review grant, attached knowledge packs, the scratch folder, the workspace only as filesystem.read grants it), with ripgrep 15.2.0 in the tools container (built from pinned source, no PCRE2), through the runner's confine role: an empty environment, a fixed argument list that never asks it to start another program or follow a link, reads held to the searched area and no write of its own (Landlock), TCP refused where Landlock is ABI 4 or later, 512 MiB of address space and 30 seconds; as root it runs as a user of its own that owns nothing, and where there is no Landlock that user is all that holds it. A search of the inputs answers as the person's own input, as search_inputs does",
+    "secrets": "none declared",
+    "toolResults": "every result of the runner's own tools is held to 48 KiB and 1,900 lines, the docker-agent harness's measured tool-result limit less a margin, by the tools server: a file is read a page at a time from the offset asked, each page saying where the next begins; a listing or a search stops at it and says what it left out; any other result is cut at it with a notice saying so; declared MCP servers' results are their own"
+  },
+  "checklist": {
+    "ending": "no checklist",
+    "steps": 0
+  },
+  "deliverables": {
+    "files": [
+      {
+        "bytes": 108,
+        "marked": true,
+        "path": "reports/hello.md",
+        "sha256": "ecb08079eb003911ae8cb0a80ed273505f10a1793eae75de1f1605fdcbf8c6c9",
+        "title": "Workspace Report",
+        "type": "md"
+      }
+    ]
+  },
+  "digest": "sha256:d38ce87e6c5d9a29a9719803c5f673d0dbf53edd15f26f41f1e927bff0de7778",
+  "exitClass": "ok",
+  "exitClassMeaning": "the run finished and its result was collected",
+  "exitCode": 0,
+  "harness": {
+    "adapter": "docker-agent",
+    "credentialKind": "api",
+    "image": "ghcr.io/blaktron/agentry-docker-agent-src:1.160.0-2026.11.11.13@sha256:858b1d8178d7dfb1b49dc2ed764ff98a9c9c5fe763022a97b9b83b1711dd762c",
+    "imagePin": "digest sha256:858b1d8178d7dfb1b49dc2ed764ff98a9c9c5fe763022a97b9b83b1711dd762c",
+    "model": "custom/local-model",
+    "savedModel": {
+      "id": "71903d13",
+      "name": "custom"
+    }
+  },
+  "outDir": "/work/docker-agent/ok",
+  "policy": {
+    "path": "/work/policy.yaml",
+    "sha256": "be7730a24a4e89ec7822291f7c8ceb4414d8642843e7ede7ff7601ae0f8ce05b",
+    "source": "flag"
+  },
+  "receipts": {
+    "dir": "/work/docker-agent/ok/receipts",
+    "runPlanSha256": "38b5b4380198116f41132da91ae2ebd09422901709834b20f34a73eb0a1dd839"
+  },
+  "ref": "fixtures/hello-report@1.0.0",
+  "result": "\n\nhello from the workspace",
+  "resultFile": "/work/docker-agent/ok/result.json",
+  "retryLikelyHelps": false,
+  "runId": "d8cacce7",
+  "status": "ok",
+  "usage": {
+    "costUsd": 0,
+    "inputTokens": 25179,
+    "outputTokens": 363,
+    "turns": 3,
+    "wallMs": 14541
+  }
+}
