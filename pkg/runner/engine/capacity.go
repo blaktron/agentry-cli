@@ -196,6 +196,23 @@ func exitedAtCapacity(p Params, reported, stderrPath string) bool {
 	return adapter.AtCapacity(reported) || adapter.AtCapacity(lastLines(stderrPath, capacityStderrLines))
 }
 
+// exitedOutOfCredits is the provider's refusal when a harness that exited
+// failing did so because the account that pays has no credits left: the
+// error it reported on its event stream, or the one among the last lines of
+// its stderr, where a harness prints its fatal error (docker-agent's "Error:
+// model failed: … Your credit balance is too low …"). "" for any other exit.
+func exitedOutOfCredits(reported, stderrPath string) string {
+	if adapter.OutOfCredits(reported) {
+		return reported
+	}
+	for _, l := range strings.Split(lastLines(stderrPath, capacityStderrLines), "\n") {
+		if adapter.OutOfCredits(l) {
+			return strings.TrimSpace(l)
+		}
+	}
+	return ""
+}
+
 // capacityStderrLines is how many of a harness's last stderr lines are read
 // for its fatal error: the harness's own last words, not its earlier log.
 const capacityStderrLines = 3
