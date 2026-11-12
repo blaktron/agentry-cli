@@ -1,12 +1,12 @@
-// agentry agent compact: an upkeep turn now, then a new conversation that
-// opens with the agent's handoff (pkg/runner/persistent).
+// agentry agent compact: the conversation compacted now, by the running
+// harness's own summary where it can, else by an upkeep turn and a new
+// conversation that opens with the agent's handoff (pkg/runner/persistent).
 package main
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -15,12 +15,16 @@ import (
 )
 
 const agentCompactLong = "Compacts a running persistent agent's conversation now, whatever its size.\n" +
-	"The agent is sent an upkeep turn: it writes a short handoff, and an agent that\n" +
-	"keeps a memory, the Assistant, first saves what the conversation produced to\n" +
-	"it. Then a new conversation starts that opens with the handoff, so the agent\n" +
-	"goes on with a small context. An upkeep turn uses your model plan and can take\n" +
-	"a few minutes; a message sent meanwhile waits for it. If the upkeep turn\n" +
-	"fails, nothing is swapped and the conversation goes on as it was.\n\n" +
+	"On a harness that can summarise its own conversation (the Agentry harness,\n" +
+	"Codex, Copilot CLI), the harness replaces the conversation with a summary of\n" +
+	"it in one request that calls no tool, and an agent that keeps a memory, the\n" +
+	"Assistant, then saves what the summary holds to it. On any other harness the\n" +
+	"agent is sent an upkeep turn: it writes a short handoff, and an agent that\n" +
+	"keeps a memory first saves what the conversation produced to it; then a new\n" +
+	"conversation starts that opens with the handoff. Either way the agent goes on\n" +
+	"with a small context. Compacting uses your model plan and can take a few\n" +
+	"minutes, up to half an hour on a model server of your own; a message sent\n" +
+	"meanwhile waits for it. If it fails, the conversation goes on as it was.\n\n" +
 	"Every agent also compacts on its own: when you have sent nothing for two\n" +
 	"hours and its conversation holds 100,000 tokens or more, and when a turn has\n" +
 	"filled three quarters of the model's context window. At most 12 upkeep turns\n" +
@@ -49,9 +53,9 @@ func newAgentCompactCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Minute)
+			ctx, cancel := context.WithTimeout(cmd.Context(), persistent.CompactWait)
 			defer cancel()
-			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Compacting the %s agent's conversation: an upkeep turn first, which can take a few minutes\n", a.Name)
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Compacting the %s agent's conversation, which can take a few minutes\n", a.Name)
 			out, err := persistent.RequestCompact(ctx, home, a.Name)
 			if errors.Is(err, persistent.ErrNotRunning) {
 				return engine.Classify(engine.ExitUsage, fmt.Errorf("the %s agent is not running: start it first (agentry agent start %s)", a.Name, a.Name))
@@ -66,25 +70,38 @@ func newAgentCompactCmd() *cobra.Command {
 				}{a.Name, out}); err != nil {
 					return err
 				}
-				if !out.Swapped {
+				if !out.Done() {
 					return engine.Classify(engine.ExitCLI, errors.New("the compaction did not finish: "+out.Reason))
 				}
 				return nil
 			}
-			if !out.Swapped {
+			if !out.Done() {
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Nothing was compacted: %s. The conversation goes on as it was.\n", out.Reason)
 				return engine.Classify(engine.ExitCLI, errors.New("the compaction did not finish"))
 			}
-			if !a.KeepsMemory() {
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Compacted: a fresh conversation opens with a %d-byte handoff.\n", out.HandoffBytes)
-				return nil
-			}
-			facts := "the memory's fact lines could not be counted"
-			if out.FactsBefore >= 0 && out.FactsAfter >= 0 {
-				facts = fmt.Sprintf("the memory went from %d to %d fact lines", out.FactsBefore, out.FactsAfter)
-			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Compacted: %s, and a fresh conversation opens with a %d-byte handoff.\n", facts, out.HandoffBytes)
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), compactedLine(out, a.KeepsMemory()))
 			return nil
 		},
 	}
+}
+
+// compactedLine says what a compaction that finished did; memory says the
+// agent keeps one.
+func compactedLine(out persistent.Compacted, memory bool) string {
+	facts := "the memory's fact lines could not be counted"
+	if out.FactsBefore >= 0 && out.FactsAfter >= 0 {
+		facts = fmt.Sprintf("the memory went from %d to %d fact lines", out.FactsBefore, out.FactsAfter)
+	}
+	switch {
+	case out.Swap == persistent.SwapInPlace && !memory:
+		return "Compacted: the running harness replaced the conversation with a summary of it."
+	case out.Swap == persistent.SwapInPlace && out.SaveFailed != "":
+		return "Compacted: the running harness replaced the conversation with a summary of it, but saving the summary to memory did not finish: " +
+			out.SaveFailed + ". The summary keeps what it was to save."
+	case out.Swap == persistent.SwapInPlace:
+		return fmt.Sprintf("Compacted: the running harness replaced the conversation with a summary of it, and %s.", facts)
+	case !memory:
+		return fmt.Sprintf("Compacted: a fresh conversation opens with a %d-byte handoff.", out.HandoffBytes)
+	}
+	return fmt.Sprintf("Compacted: %s, and a fresh conversation opens with a %d-byte handoff.", facts, out.HandoffBytes)
 }

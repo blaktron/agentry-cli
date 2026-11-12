@@ -66,6 +66,15 @@ const (
 	agentryHarnessIdleOwn    = 30 * 60
 )
 
+// persistentCheckpointText is what a persistent agent's summary keeps beside
+// checkpointText: what the conversation brought of lasting use that the
+// agent's memory does not hold yet. A compaction is one summary request,
+// and the save to memory that follows it reads this list in the small
+// conversation the summary leaves.
+const persistentCheckpointText = " Then, under the heading to save, what the person told you or you found out in this conversation " +
+	"that will still matter later and is not saved in your memory yet, if you keep one: facts about them and the people around them, " +
+	"plans, dates, amounts, preferences, decisions with their reasons, and what you promised to do. Write none if there is nothing."
+
 // agentryHarnessLongRun fills the parts of the configuration that carry a
 // long run: the result policy, the scrub, the answer to a repeated call,
 // the recovery from a cut-off reply, the clearing of old results, the
@@ -89,11 +98,11 @@ func agentryHarnessLongRun(cfg *proto.Config, in Input) {
 	if in.Model.OwnEndpoint() {
 		threshold, idle = ownEndpointCompaction, agentryHarnessIdleOwn
 	}
-	notes := spec.ChecklistForHarness
+	notes, checkpoint := spec.ChecklistForHarness, checkpointText
 	if in.Persistent {
-		notes = spec.AgentChecklistForHarness
+		notes, checkpoint = spec.AgentChecklistForHarness, checkpointText+persistentCheckpointText
 	}
-	cfg.Compaction = &proto.Compaction{Threshold: threshold, Checkpoint: checkpointText, Notes: notes}
+	cfg.Compaction = &proto.Compaction{Threshold: threshold, Checkpoint: checkpoint, Notes: notes}
 	cfg.Retry = &proto.Retry{Attempts: agentryHarnessRetries, BaseSeconds: agentryHarnessRetryBase, MaxSeconds: agentryHarnessRetryMax, IdleSeconds: idle}
 }
 

@@ -361,11 +361,14 @@ func TaskLine(text string) string {
 // UpkeepLine is the one line a chat shows for a persistent agent's upkeep
 // turn, told apart by the message it was sent with: a compaction that saves
 // the conversation to the agent's memory, one that only writes a handoff,
-// or the memory's own tidy.
+// the save to memory that follows a compaction in place, or the memory's
+// own tidy.
 func UpkeepLine(text string) string {
 	switch {
 	case strings.Contains(text, "(memory-consolidate)"):
 		return "Tidying its memory"
+	case strings.Contains(text, "save the compacted conversation"):
+		return "Saving the compacted conversation to memory"
 	case strings.Contains(text, "(memory-compact)"):
 		return "Compacting: saving this conversation to memory first"
 	default:

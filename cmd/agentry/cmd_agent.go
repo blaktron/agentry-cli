@@ -942,8 +942,13 @@ func newAgentAttachCmd() *cobra.Command {
 		Short: "Drive a running persistent agent from a program: JSON-line commands on stdin, its events on descriptor 3",
 		Long: "attach is agent chat for a program. It speaks the session protocol of\n" +
 			"`agentry run --session-protocol`: one JSON command a line on stdin\n" +
-			"({\"send\":{\"text\":\"…\"}} or {\"end\":{\"finish\":false}}), and the agent's\n" +
-			"events as JSON lines on descriptor 3, which the driver opens. A send while\n" +
+			"({\"send\":{\"text\":\"…\"}}, {\"steer\":{\"text\":\"…\"}} or {\"end\":{\"finish\":false}}),\n" +
+			"and the agent's events as JSON lines on descriptor 3, which the driver opens.\n" +
+			"A steer is a message into a chat's turn in flight, this chat's or another's:\n" +
+			"it is taken with a steer event, and refused as no_turn with no turn in\n" +
+			"flight, or as cannot_steer while the agent runs a turn of its own (a task,\n" +
+			"a messenger's message, upkeep) or on a harness that takes a message only\n" +
+			"between turns; the driver then sends the text once the turn ends. A send while\n" +
 			"another chat's turn is in flight is refused as busy, and one the agent's\n" +
 			"saved model cannot take (gone from this computer, or its key or sign-in\n" +
 			"not here) is refused as model, with the fix. Ending, or the end of\n" +
@@ -1174,8 +1179,10 @@ func upkeepLine(r persistent.UpkeepRecord) string {
 	switch {
 	case r.Trigger == persistent.UpkeepConsolidate && r.Reason == "":
 		return at + facts
+	case r.Swap == persistent.SwapInPlace && r.Reason == "" && r.SaveFailed != "":
+		return fmt.Sprintf("%s (%s), compacted in place by the running harness%s; saving it to memory did not finish: %s", at, r.Trigger, facts, r.SaveFailed)
 	case r.Swap == persistent.SwapInPlace && r.Reason == "":
-		return fmt.Sprintf("%s (%s), compacted in place by the running harness", at, r.Trigger)
+		return fmt.Sprintf("%s (%s), compacted in place by the running harness%s", at, r.Trigger, facts)
 	case r.Swapped:
 		how := "a new segment"
 		if r.Swap == persistent.SwapInSegment {

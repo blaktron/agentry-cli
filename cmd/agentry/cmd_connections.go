@@ -25,6 +25,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/blaktron/agentry/pkg/connector"
 	"github.com/blaktron/agentry/pkg/manifest"
 
 	"github.com/blaktron/agentry-cli/pkg/mcpauth"
@@ -279,7 +280,8 @@ func consentFor(cmd *cobra.Command, store *connection.Store, clients *connection
 	}
 	in := bufio.NewReader(cmd.InOrStdin())
 	for attempt := 0; ; attempt++ {
-		g, err := runConsent(cmd, in, httpc, clients, public, srv)
+		var agentryClient string
+		g, err := runConsent(cmd, in, httpc, clients, public, srv, &agentryClient)
 		var own *mcpauth.NeedsOwnClientError
 		if errors.As(err, &own) && attempt == 0 {
 			if aerr := askOwnClient(cmd, in, clients, own.Issuer, connectionServer(srv), help); aerr != nil {
@@ -288,6 +290,10 @@ func consentFor(cmd *cobra.Command, store *connection.Store, clients *connection
 			continue
 		}
 		if err != nil {
+			if step := adminStepFor(srv, agentryClient, err); step != "" {
+				_, _ = fmt.Fprintf(errOut, "\n%s\n", step)
+				return nil, fmt.Errorf("connect %s: an administrator must approve Agentry's app for your organization first: %w", connectionServer(srv), err)
+			}
 			return nil, fmt.Errorf("connect %s: %w", connectionServer(srv), err)
 		}
 		switch old, gerr := store.Get(k); {
@@ -312,16 +318,37 @@ func consentFor(cmd *cobra.Command, store *connection.Store, clients *connection
 	}
 }
 
+// adminStepFor is the step to show for a consent to a package server that
+// the vendor refused because an administrator must approve Agentry's app,
+// or "": agentryClient is the connector's public client the consent used,
+// "" when it used another (the person's own, which no link of Agentry's
+// can approve).
+func adminStepFor(srv manifest.MCPServer, agentryClient string, err error) string {
+	if agentryClient == "" || srv.OAuth == nil {
+		return ""
+	}
+	k, ok := connector.Builtin().Match(srv, srv.OAuth.Issuer)
+	if !ok || !k.HasPublicClient() {
+		return ""
+	}
+	return connection.AdminStep(err, k, agentryClient, connectionScopes(srv))
+}
+
 // runConsent runs one consent. The redirect comes back to the loopback
 // listener, or, where the browser is elsewhere, its address is pasted at
 // the prompt; stdin is read only once the address is shown, and the line
 // being read is finished before returning, so nothing typed later is lost.
-func runConsent(cmd *cobra.Command, in *bufio.Reader, httpc *http.Client, clients *connection.Clients, public *connection.PublicClients, srv manifest.MCPServer) (*mcpauth.Grant, error) {
+// agentryClient is set to the connector's public client id the consent
+// was offered, "" when it was offered none.
+func runConsent(cmd *cobra.Command, in *bufio.Reader, httpc *http.Client, clients *connection.Clients, public *connection.PublicClients, srv manifest.MCPServer, agentryClient *string) (*mcpauth.Grant, error) {
 	bc := newBrowserConsent(cmd, in, "Approve it in your browser:")
 	c := mcpauth.Consent{
 		HTTP: httpc, ServerURL: srv.URL, Scopes: connectionScopes(srv),
-		AgentryClient: func(ctx context.Context, issuer string) string { return public.ForServer(ctx, srv, issuer) },
-		OwnClient:     clients.Get, CIMDURL: nativeCIMD,
+		AgentryClient: func(ctx context.Context, issuer string) string {
+			*agentryClient = public.ForServer(ctx, srv, issuer)
+			return *agentryClient
+		},
+		OwnClient: clients.Get, CIMDURL: nativeCIMD,
 		Pasted: bc.pasted, Say: bc.say, Present: bc.present,
 	}
 	if !srv.IsRemote() {

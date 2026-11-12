@@ -26,6 +26,11 @@ import (
 //	{"attach":{}}             every event of the segment from now on, as {"event":…}
 //	{"send":{"text":"…"}}     one turn; refused as busy while another is in flight,
 //	                          and as model when the agent's saved model cannot be used
+//	{"steer":{"text":"…"}}    a message into a chat's turn in flight, from any chat;
+//	                          taken with a steer event, refused as no_turn with no
+//	                          turn in flight, as cannot_steer while the agent runs a
+//	                          turn of its own or on a harness that takes a message
+//	                          only between turns
 //	{"status":{}}             answered with {"status":…}
 //	{"roster":{}}             answered with {"roster":[…]}
 //	{"change":{…}}            a Change; answered with {"roster":[…]}, or
@@ -49,11 +54,13 @@ import (
 type Command struct {
 	Attach *struct{}      `json:"attach,omitempty"`
 	Send   *protocol.Send `json:"send,omitempty"`
-	Status *struct{}      `json:"status,omitempty"`
-	Roster *struct{}      `json:"roster,omitempty"`
-	Change *Change        `json:"change,omitempty"`
-	Stop   *struct{}      `json:"stop,omitempty"`
-	Tasks  *struct{}      `json:"tasks,omitempty"`
+	// Steer is a message for a chat's turn in flight.
+	Steer  *protocol.Steer `json:"steer,omitempty"`
+	Status *struct{}       `json:"status,omitempty"`
+	Roster *struct{}       `json:"roster,omitempty"`
+	Change *Change         `json:"change,omitempty"`
+	Stop   *struct{}       `json:"stop,omitempty"`
+	Tasks  *struct{}       `json:"tasks,omitempty"`
 	// TaskChange is a person's change to one of the agent's tasks.
 	TaskChange *TaskOp `json:"task_change,omitempty"`
 	// Compact asks for an upkeep turn and a compaction now.
@@ -205,7 +212,7 @@ func (s *Supervisor) serveConn(nc net.Conn) {
 		dec := json.NewDecoder(strings.NewReader(sc.Text()))
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&cmd); err != nil || commandsSet(cmd) != 1 {
-			c.refuse(protocol.RefusedMalformed, "a command is one JSON object naming exactly one of attach, send, status, roster, change, stop, tasks, task_change, compact, interrupt, answer, hold or resume")
+			c.refuse(protocol.RefusedMalformed, "a command is one JSON object naming exactly one of attach, send, steer, status, roster, change, stop, tasks, task_change, compact, interrupt, answer, hold or resume")
 			continue
 		}
 		switch {
@@ -236,6 +243,27 @@ func (s *Supervisor) serveConn(nc net.Conn) {
 					c.refuse(RefusedEnded, "the agent's segment has ended")
 				case isModelError(err):
 					c.refuse(RefusedModel, err.Error())
+				}
+			}()
+		case cmd.Steer != nil:
+			if strings.TrimSpace(cmd.Steer.Text) == "" {
+				c.refuse(protocol.RefusedMalformed, "steer needs a text")
+				continue
+			}
+			// Taken, the steer event reaches every attached chat; only a
+			// refusal is answered here, as the session protocol does.
+			text := cmd.Steer.Text
+			go func() {
+				switch err := s.Steer(context.Background(), text); {
+				case err == nil:
+				case errors.Is(err, session.ErrNoTurn):
+					c.refuse(protocol.RefusedNoTurn, "no turn is in flight; send the text as a turn")
+				case errors.Is(err, session.ErrCannotSteer):
+					c.refuse(protocol.RefusedCannotSteer, err.Error())
+				case errors.Is(err, session.ErrEnded):
+					c.refuse(RefusedEnded, "the agent's segment has ended")
+				default:
+					c.refuse(protocol.RefusedSteer, err.Error())
 				}
 			}()
 		case cmd.Status != nil:
@@ -347,7 +375,7 @@ func (s *Supervisor) serveConn(nc net.Conn) {
 // commandsSet is how many commands one line names.
 func commandsSet(c Command) int {
 	n := 0
-	for _, set := range []bool{c.Attach != nil, c.Send != nil, c.Status != nil, c.Roster != nil, c.Change != nil, c.Stop != nil, c.Tasks != nil, c.TaskChange != nil, c.Compact != nil, c.Interrupt != nil, c.Answer != nil, c.Hold != nil, c.Resume != nil} {
+	for _, set := range []bool{c.Attach != nil, c.Send != nil, c.Steer != nil, c.Status != nil, c.Roster != nil, c.Change != nil, c.Stop != nil, c.Tasks != nil, c.TaskChange != nil, c.Compact != nil, c.Interrupt != nil, c.Answer != nil, c.Hold != nil, c.Resume != nil} {
 		if set {
 			n++
 		}
@@ -598,6 +626,10 @@ type remote struct {
 	// in flight when this one sent.
 	turnText string
 	turnSeen bool
+	// steerText and steerDone are the message this chat is steering, until
+	// its steer event or its refusal comes back.
+	steerText string
+	steerDone chan error
 }
 
 // Answer answers a question the agent's runner put to the person.
@@ -620,6 +652,7 @@ func (r *remote) write(cmd Command) error {
 func (r *remote) read() {
 	defer close(r.events)
 	defer r.finishTurn(session.ErrEnded)
+	defer r.settleSteer(session.ErrEnded)
 	sc := bufio.NewScanner(r.c)
 	sc.Buffer(make([]byte, 64*1024), 16<<20)
 	for sc.Scan() {
@@ -641,6 +674,11 @@ func (r *remote) read() {
 			r.events <- ev
 			continue
 		}
+		if c := rep.Event.Refused; c == protocol.RefusedNoTurn || c == protocol.RefusedCannotSteer || c == protocol.RefusedSteer {
+			// A steer's refusal is the steer's: the turn in flight goes on.
+			r.settleSteer(steerRefusal(c, ev.Text))
+			continue
+		}
 		if rep.Event.Refused == RefusedModel {
 			// The turn was not sent: its one error is the send's, which a
 			// program driving the session protocol is refused with.
@@ -654,6 +692,13 @@ func (r *remote) read() {
 		}
 		r.events <- ev
 		switch ev.Kind {
+		case session.KindSteer:
+			r.mu.Lock()
+			own := r.steerDone != nil && !ev.Synthetic && strings.HasSuffix(ev.Text, r.steerText)
+			r.mu.Unlock()
+			if own {
+				r.settleSteer(nil)
+			}
 		case session.KindUserTurn:
 			r.mu.Lock()
 			if r.inTurn && !ev.Synthetic && strings.HasSuffix(ev.Text, r.turnText) {
@@ -682,6 +727,67 @@ func (r *remote) read() {
 		r.ended, r.reason = true, session.EndCancelled
 	}
 	r.mu.Unlock()
+}
+
+// steerRefusal is the error a steer refused with class c is, as the
+// session's own Steer answers it.
+func steerRefusal(c protocol.Refusal, text string) error {
+	switch c {
+	case protocol.RefusedNoTurn:
+		return session.ErrNoTurn
+	case protocol.RefusedCannotSteer:
+		// The supervisor's words already open with ErrCannotSteer's; the
+		// reason after them is what is added.
+		why := strings.TrimPrefix(strings.TrimPrefix(text, session.ErrCannotSteer.Error()), ": ")
+		if why == "" {
+			return session.ErrCannotSteer
+		}
+		return fmt.Errorf("%w: %s", session.ErrCannotSteer, why)
+	}
+	return errors.New(text)
+}
+
+// settleSteer hands a steer in flight its outcome.
+func (r *remote) settleSteer(err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.steerDone == nil {
+		return
+	}
+	r.steerDone <- err
+	r.steerDone, r.steerText = nil, ""
+}
+
+// Steer implements session.Steerer: the message goes to the supervisor,
+// which hands it to a chat's turn in flight, and Steer returns once its
+// steer event or its refusal comes back.
+func (r *remote) Steer(ctx context.Context, text string) error {
+	r.mu.Lock()
+	if r.ended {
+		r.mu.Unlock()
+		return session.ErrEnded
+	}
+	if r.steerDone != nil {
+		r.mu.Unlock()
+		return fmt.Errorf("%w: a message sent during this turn is still on its way", session.ErrCannotSteer)
+	}
+	done := make(chan error, 1)
+	r.steerDone, r.steerText = done, text
+	r.mu.Unlock()
+	if err := r.write(Command{Steer: &protocol.Steer{Text: text}}); err != nil {
+		r.settleSteer(err)
+	}
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		r.mu.Lock()
+		if r.steerDone == done {
+			r.steerDone, r.steerText = nil, ""
+		}
+		r.mu.Unlock()
+		return ctx.Err()
+	}
 }
 
 // finishTurn hands a turn in flight its outcome.

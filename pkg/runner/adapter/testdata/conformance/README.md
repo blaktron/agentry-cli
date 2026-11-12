@@ -14,3 +14,10 @@ adapter's receipts for exactly this purpose. A recording is what keeps the
 event mapping honest: these schemas are nobody's stable contract, so the
 suite pins them to output a harness actually produced rather than to what
 its documentation says it produces.
+
+`docker-agent-compaction/` is a second recording of the default harness, of a
+hello-report run on a model whose window the policy set small enough
+(`model.contextWindow: 12300`) that the conversation crosses the compaction
+threshold every few turns; the run's time budget ends it. It pins the
+`session_compaction` events, and the reason each completed one carries, to
+what the harness's own build emits.

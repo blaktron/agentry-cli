@@ -66,6 +66,16 @@
           ]
         },
         {
+          "path": "cmd/agentry/cmd_connections_admin_test.go",
+          "tests": [
+            "TestTheAdminStepIsForTheAgentryClientTheConsentUsed"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "cmd/agentry/cmd_connections_test.go",
           "tests": [
             "TestAConnectionIsAskedForOnceAndReusedByTheNextRun",
@@ -882,7 +892,8 @@
             "TestAgentShowListsTheOffersAndAddsASuggestion",
             "TestAgentShowNamesTheLastUpkeep",
             "TestAgentShowListsTheSubagentRuns",
-            "TestUpkeepLineLeavesOutFactsNotCounted"
+            "TestUpkeepLineLeavesOutFactsNotCounted",
+            "TestACompactionInPlaceIsDone"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -2272,6 +2283,8 @@
             "TestACompactionKeepsTheCallsTheModelHasNotReadTheResultsOf",
             "TestASummaryCutAtTheOutputLimitIsNotKept",
             "TestNoSummaryIsAskedForThatWouldGainNothing",
+            "TestASummaryRequestAsksOnlyForTheRoomTheWindowLeaves",
+            "TestASummaryIsAskedForWhileItStillFits",
             "TestAConversationTheServerRefusesAsTooLongIsSummarisedOnce",
             "TestAWindowTheServerStatesIsBelievedOverALargerConfiguredOne",
             "TestASecondRefusalEndsTheTurnAsAnOverflow",
@@ -4668,6 +4681,7 @@
           "path": "pkg/runner/adapter/conformance_test.go",
           "tests": [
             "TestConformance",
+            "TestDockerAgentRecordedCompactions",
             "TestEveryAdapterRefusesAModeItDoesNotKnow"
           ],
           "fuzz": [],
@@ -5578,6 +5592,17 @@
       "behavior": "A person's OAuth connections to remote MCP servers on this machine: one per QuickAgent release (ref plus",
       "disposition": "retain",
       "files": [
+        {
+          "path": "pkg/runner/connection/adminstep_test.go",
+          "tests": [
+            "TestARefusalThatNeedsAnAdminGetsTheAdminLink",
+            "TestConnectorAtIssuer"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
         {
           "path": "pkg/runner/connection/connection_test.go",
           "tests": [
@@ -10015,6 +10040,18 @@
           ]
         },
         {
+          "path": "pkg/runner/persistent/steer_test.go",
+          "tests": [
+            "TestAChatsMessageJoinsAChatsTurnInFlight",
+            "TestAMessageDuringTheAgentsOwnTurnWaits",
+            "TestASteerOnAHarnessThatCannotTakeOne"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "pkg/runner/persistent/stop_test.go",
           "tests": [
             "TestAStopThatClosesWithoutAnAnswerIsJudgedByTheLock"
@@ -10074,6 +10111,24 @@
           "benchmarks": [],
           "fixtureEntryPoint": false,
           "dependencyHints": []
+        },
+        {
+          "path": "pkg/runner/persistent/upkeep_inplace_test.go",
+          "tests": [
+            "TestEveryCompactionIsTheHarnesssSummaryWhereItCanCompact",
+            "TestASummaryThatFailsIsNotSavedAndWaits",
+            "TestASaveThatFailsLeavesTheCompactionStanding",
+            "TestATidyDueInALargeConversationCompactsItFirst",
+            "TestTooLargeToTidy",
+            "TestUpkeepWaitsLongerOnAServerOfThePersonsOwn"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "docker interface (real or fake)",
+            "real-time wait"
+          ]
         },
         {
           "path": "pkg/runner/persistent/upkeep_line_test.go",
@@ -13660,6 +13715,26 @@
           "dependencyHints": [
             "source/file contract"
           ]
+        }
+      ]
+    },
+    {
+      "owner": "scripts/envelope-shape",
+      "behavior": "Comparing two adapters' result envelopes for one envelope shape",
+      "disposition": "retain",
+      "files": [
+        {
+          "path": "scripts/envelope-shape/main_test.go",
+          "tests": [
+            "TestTwoAdaptersWriteOneShape",
+            "TestTheRecordedEnvelopesDifferWhereTheComparisonLooksAway",
+            "TestADifferenceInShapeOrInAnAgreedValueIsFoundAndNoOther",
+            "TestTheFieldsOfOneRunAreLeftOut"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
         }
       ]
     },
