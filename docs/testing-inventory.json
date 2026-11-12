@@ -892,7 +892,8 @@
             "TestAgentShowListsTheOffersAndAddsASuggestion",
             "TestAgentShowNamesTheLastUpkeep",
             "TestAgentShowListsTheSubagentRuns",
-            "TestUpkeepLineLeavesOutFactsNotCounted"
+            "TestUpkeepLineLeavesOutFactsNotCounted",
+            "TestACompactionInPlaceIsDone"
           ],
           "fuzz": [],
           "benchmarks": [],

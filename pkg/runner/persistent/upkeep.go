@@ -322,7 +322,7 @@ func (s *Supervisor) upkeepTick(ctx context.Context) {
 	compacted := false
 	if trigger != "" {
 		out, _ := s.compactLocked(ctx, trigger)
-		compacted = out.Reason == "" && (out.Swapped || out.Swap == SwapInPlace)
+		compacted = out.Done()
 	}
 	if s.consolidationDue() {
 		s.consolidateLocked(ctx, compacted)
@@ -454,6 +454,18 @@ type Compacted struct {
 	// place did not finish; the compaction itself stands.
 	SaveFailed string `json:"saveFailed,omitempty"`
 }
+
+// Done says the conversation was compacted: swapped for a new one that
+// opens with the handoff, or summarised in place by the running harness.
+// A swap whose record for the next start failed still moved the agent.
+func (c Compacted) Done() bool {
+	return c.Swapped || (c.Swap == SwapInPlace && c.Reason == "")
+}
+
+// CompactWait is how long a client waits for a compaction it asked for: the
+// compaction and the save to memory after it, each bounded by the longest
+// upkeep cap, and a minute.
+const CompactWait = 2*upkeepTurnCapOwn + time.Minute
 
 // Compact compacts the conversation now, at the person's asking, whatever
 // its size. It refuses while another turn is in flight.

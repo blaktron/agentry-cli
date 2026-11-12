@@ -647,4 +647,49 @@ func TestUpkeepLineLeavesOutFactsNotCounted(t *testing.T) {
 	if none != "2026-10-27 09:30 (idle), a fresh conversation in a new segment" {
 		t.Errorf("not counted: %q", none)
 	}
+	// A compaction in place names the memory's fact lines around the save
+	// that followed it, and a save that did not finish.
+	inPlace := upkeepLine(persistent.UpkeepRecord{Time: at, Trigger: persistent.UpkeepInUse, Swap: persistent.SwapInPlace, FactsBefore: 3, FactsAfter: 6})
+	if inPlace != "2026-10-27 09:30 (in-use), compacted in place by the running harness; 3 fact lines before, 6 after" {
+		t.Errorf("in place: %q", inPlace)
+	}
+	unsaved := upkeepLine(persistent.UpkeepRecord{Time: at, Trigger: persistent.UpkeepManual, Swap: persistent.SwapInPlace, FactsBefore: -1, FactsAfter: -1, SaveFailed: "prompt: context deadline exceeded"})
+	if unsaved != "2026-10-27 09:30 (manual), compacted in place by the running harness; saving it to memory did not finish: prompt: context deadline exceeded" {
+		t.Errorf("not saved: %q", unsaved)
+	}
+}
+
+// TestACompactionInPlaceIsDone: the command takes a compaction the harness
+// made in place for one that finished, though no new conversation opened,
+// and says what it did.
+func TestACompactionInPlaceIsDone(t *testing.T) {
+	for _, tc := range []struct {
+		out    persistent.Compacted
+		memory bool
+		done   bool
+		line   string
+	}{
+		{persistent.Compacted{Swap: persistent.SwapInPlace, FactsBefore: 3, FactsAfter: 6}, true, true,
+			"Compacted: the running harness replaced the conversation with a summary of it, and the memory went from 3 to 6 fact lines."},
+		{persistent.Compacted{Swap: persistent.SwapInPlace, FactsBefore: -1, FactsAfter: -1}, false, true,
+			"Compacted: the running harness replaced the conversation with a summary of it."},
+		{persistent.Compacted{Swap: persistent.SwapInPlace, SaveFailed: "prompt: context deadline exceeded"}, true, true,
+			"Compacted: the running harness replaced the conversation with a summary of it, but saving the summary to memory did not finish: prompt: context deadline exceeded. The summary keeps what it was to save."},
+		{persistent.Compacted{Swapped: true, Swap: persistent.SwapInSegment, HandoffBytes: 900, FactsBefore: 3, FactsAfter: 5}, true, true,
+			"Compacted: the memory went from 3 to 5 fact lines, and a fresh conversation opens with a 900-byte handoff."},
+		{persistent.Compacted{Swap: persistent.SwapInPlace, Reason: "the harness's own compaction failed: compact: refused"}, true, false, ""},
+		{persistent.Compacted{Reason: "the upkeep turn gave no answer"}, true, false, ""},
+	} {
+		if got := tc.out.Done(); got != tc.done {
+			t.Errorf("%+v: done %v, want %v", tc.out, got, tc.done)
+		}
+		if tc.done {
+			if got := compactedLine(tc.out, tc.memory); got != tc.line {
+				t.Errorf("%+v: %q", tc.out, got)
+			}
+		}
+	}
+	if persistent.CompactWait < time.Hour {
+		t.Errorf("the command waits %v, less than a compaction and its save may take on a server of your own", persistent.CompactWait)
+	}
 }

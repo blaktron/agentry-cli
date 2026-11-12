@@ -1179,8 +1179,10 @@ func upkeepLine(r persistent.UpkeepRecord) string {
 	switch {
 	case r.Trigger == persistent.UpkeepConsolidate && r.Reason == "":
 		return at + facts
+	case r.Swap == persistent.SwapInPlace && r.Reason == "" && r.SaveFailed != "":
+		return fmt.Sprintf("%s (%s), compacted in place by the running harness%s; saving it to memory did not finish: %s", at, r.Trigger, facts, r.SaveFailed)
 	case r.Swap == persistent.SwapInPlace && r.Reason == "":
-		return fmt.Sprintf("%s (%s), compacted in place by the running harness", at, r.Trigger)
+		return fmt.Sprintf("%s (%s), compacted in place by the running harness%s", at, r.Trigger, facts)
 	case r.Swapped:
 		how := "a new segment"
 		if r.Swap == persistent.SwapInSegment {
