@@ -8017,6 +8017,8 @@
           "path": "pkg/runner/engine/outofcredits_test.go",
           "tests": [
             "TestAProviderOutOfCreditsEndsTheRunWithItsReason",
+            "TestAProviderOutOfCreditsOnStderrAloneEndsTheRunWithItsReason",
+            "TestAHarnessFailureOnStderrIsNotOutOfCredits",
             "TestADockerAgentErrorEventsWordsReachTheFailure",
             "TestAProviderOutOfCreditsEndsAHarnessThatKeepsRunning",
             "TestAProviderOutOfCreditsEndsASession"

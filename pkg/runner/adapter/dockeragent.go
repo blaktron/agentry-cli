@@ -957,10 +957,11 @@ func errorText(obj map[string]any) string {
 // outOfCreditsRE matches a provider's answer that the paying account has
 // no credits left: the 402 status as the OpenAI and Anthropic SDKs quote it
 // ("402 Payment Required"), a body's 402 code or status, Poe's
-// insufficient_credits, Hugging Face's words for its included credits, and
-// a SecureAgentry registry's answer when the account's Agentry credits are
-// spent (its credits_exhausted code and its message).
-var outOfCreditsRE = regexp.MustCompile(`(?i)\b402 payment required\b|"(?:code|status)"\s*:\s*"?402\b|insufficient[_ ]credits|out of credits|exceeded your monthly included credits|credits_exhausted|credits are used up`)
+// insufficient_credits, Hugging Face's words for its included credits,
+// Anthropic's for an account with no balance (which it answers with a 400),
+// and a SecureAgentry registry's answer when the account's Agentry credits
+// are spent (its credits_exhausted code and its message).
+var outOfCreditsRE = regexp.MustCompile(`(?i)\b402 payment required\b|"(?:code|status)"\s*:\s*"?402\b|insufficient[_ ]credits|out of credits|exceeded your monthly included credits|credit balance is too low|credits_exhausted|credits are used up`)
 
 // OutOfCredits reports whether a harness's error is a provider saying the
 // account that pays for the model has no credits left.

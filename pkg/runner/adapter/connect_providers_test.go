@@ -107,6 +107,7 @@ func TestDockerAgentErrorEventsCarryTheProvidersWords(t *testing.T) {
 		{`{"type":"error","error":"POST \"https://api.poe.com/v1/chat/completions\": 402 {\"error\":{\"code\":402,\"type\":\"insufficient_credits\",\"message\":\"balance is 0\"}}"}`, EventOutOfCredits, "insufficient_credits"},
 		{`{"type":"error","error":"402 Client Error: You have exceeded your monthly included credits for Inference Providers."}`, EventOutOfCredits, "monthly included credits"},
 		{`{"type":"error","error":"429 Too Many Requests"}`, EventError, "429"},
+		{`{"type":"error","error":"model failed: error receiving from stream: HTTP 400: invalid_request_error: Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.","code":"model_error"}`, EventOutOfCredits, "credit balance is too low"},
 		// A tool's words never end a run as out of credits.
 		{`{"type":"error","error":"the tool said: 402 Payment Required","code":"tool_failed"}`, EventError, "402"},
 		{`{"type":"error","message":{"content":"boom"}}`, EventError, "boom"},

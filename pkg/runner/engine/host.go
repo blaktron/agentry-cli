@@ -379,6 +379,10 @@ func runHostHarness(ctx context.Context, p Params, rd *runDirs, token string, re
 		out.err = Classify(ExitHarness, turnFailure(turnErr, collector.harnessErrReported, stderrPath))
 	case runErr != nil:
 		out.err = Classify(ExitHarness, fmt.Errorf("harness process failed: %w", runErr))
+	// A harness that exited on its provider's refusal for want of credits,
+	// said on its stderr alone: the same outcome as the event's.
+	case exit != 0 && exitedOutOfCredits(collector.harnessErrReported, stderrPath) != "":
+		out.err = outOfCreditsError(p, exitedOutOfCredits(collector.harnessErrReported, stderrPath))
 	case exit != 0:
 		detail := stderrTail(stderrPath)
 		if collector.harnessErrReported != "" {

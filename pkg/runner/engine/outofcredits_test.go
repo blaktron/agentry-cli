@@ -48,6 +48,48 @@ func TestAProviderOutOfCreditsEndsTheRunWithItsReason(t *testing.T) {
 	}
 }
 
+// A harness that says so on its stderr alone and exits failing ends the run
+// the same way: docker-agent prints Anthropic's refusal of an account with
+// no balance as its fatal error, with no error event, and Anthropic answers
+// it with a 400.
+func TestAProviderOutOfCreditsOnStderrAloneEndsTheRunWithItsReason(t *testing.T) {
+	p, f := fixture(t)
+	happyFake(f)
+	f.Foreground["-agent"].Stdout = `{"type":"agent_choice","message":{"content":"working"}}` + "\n"
+	f.Foreground["-agent"].Stderr = "Welcome to docker agent!\n\n" +
+		"Error: model failed: error receiving from stream: HTTP 400: invalid_request_error: Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits. (Request-ID: req_0)\n"
+	f.Foreground["-agent"].ExitCode = 1
+	env, err := Run(context.Background(), f, p)
+	var ce *ClassifiedError
+	if !errors.As(err, &ce) || ce.Code != ExitBudget {
+		t.Fatalf("want exit %d, got %v", ExitBudget, err)
+	}
+	if env.Status != "error" || env.Reason == nil || env.Reason.Code != receipt.ReasonOutOfCredits {
+		t.Fatalf("envelope %s, reason %+v", env.Status, env.Reason)
+	}
+	for _, s := range []string{"out of credits", "the account that pays for them has no credits left", "Your credit balance is too low"} {
+		if !strings.Contains(err.Error(), s) {
+			t.Errorf("the error does not say %q: %v", s, err)
+		}
+	}
+	if len(env.Restarts) != 0 {
+		t.Errorf("the harness was started again %d time(s) on an account with no credits", len(env.Restarts))
+	}
+}
+
+// A failing exit whose stderr says something else stays a harness failure.
+func TestAHarnessFailureOnStderrIsNotOutOfCredits(t *testing.T) {
+	p, f := fixture(t)
+	happyFake(f)
+	f.Foreground["-agent"].Stderr = "Error: model failed: error receiving from stream: HTTP 400: invalid_request_error: messages: text content blocks must be non-empty\n"
+	f.Foreground["-agent"].ExitCode = 1
+	env, err := Run(context.Background(), f, p)
+	var ce *ClassifiedError
+	if !errors.As(err, &ce) || ce.Code != ExitHarness || (env.Reason != nil && env.Reason.Code == receipt.ReasonOutOfCredits) {
+		t.Fatalf("err %v, reason %+v", err, env.Reason)
+	}
+}
+
 // Any other harness error keeps its words in the run's failure: docker-agent
 // puts them in the event's "error" field.
 func TestADockerAgentErrorEventsWordsReachTheFailure(t *testing.T) {

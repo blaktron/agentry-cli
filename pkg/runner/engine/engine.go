@@ -1500,6 +1500,10 @@ func runAgent(ctx context.Context, d dockerx.Client, p Params, rd *runDirs,
 		out.err = Classify(ExitHarness, turnFailure(turnErr, collector.harnessErrReported, stderrPath))
 	case runErr != nil:
 		out.err = Classify(ExitGateway, fmt.Errorf("agent container failed to run: %w", runErr))
+	// A harness that exited on its provider's refusal for want of credits,
+	// said on its stderr alone: the same outcome as the event's.
+	case exit != 0 && exitedOutOfCredits(collector.harnessErrReported, stderrPath) != "":
+		out.err = outOfCreditsError(p, exitedOutOfCredits(collector.harnessErrReported, stderrPath))
 	case exit != 0:
 		detail := stderrTail(stderrPath)
 		if collector.harnessErrReported != "" {
