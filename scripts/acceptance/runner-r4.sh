@@ -6,15 +6,16 @@
 #
 # Per adapter, two runs of one fixture QuickAgent:
 #   1. the policy allowlists the model host — the run succeeds and
-#      receipts/proxy.log shows the CONNECT allowed;
+#      receipts/proxy.log shows the request allowed;
 #   2. the policy does not — the run ends classified (never hangs: the
-#      budgets apply) and proxy.log shows the CONNECT denied and none
+#      budgets apply) and proxy.log shows the request denied and none
 #      allowed. For a harness that runs as a host process this is the run
 #      that matters: it has a direct route to the model, so failing here is
 #      what proves it honours the proxy variables (a harness that ignores
 #      them is not shipped).
-# With more than one adapter it also diffs the result envelopes with the
-# model-dependent fields masked (conformance diffing).
+# With more than one adapter it also compares the result envelopes: the same
+# shape, and the same values wherever a value is not the model's or the
+# harness's own (scripts/envelope-shape says which fields those are).
 #
 # Gates as runner-r2.sh: a docker daemon, the operator policy, and the key
 # the policy names. An adapter whose harness is not installed is skipped.
@@ -81,6 +82,13 @@ except Exception: sys.exit(1)
 sys.exit(0 if any(c["name"].startswith("harness:") and c["status"]=="fail" for c in rep["checks"]) else 1)'
 }
 
+# proxy_saw allow|deny <proxy.log> says the proxy logged that verdict for the
+# model host: a CONNECT ("allow host:port") for an https endpoint, a
+# forwarded request ("allow http host:port") for a plain-http one.
+proxy_saw() {
+  grep -qF -e "$1 $HOSTPORT" -e "$1 http $HOSTPORT" "$2"
+}
+
 RAN=()
 for A in "${ADAPTERS[@]}"; do
   if harness_missing "$A"; then
@@ -97,8 +105,8 @@ for A in "${ADAPTERS[@]}"; do
     --policy "$POLICY" --allow-unsigned --yes --out "$OUT_OK" --output-format json --timeout 300 >"$WORK/$A-ok.json"
   grep -q '"status": "ok"' "$WORK/$A-ok.json" || { echo "FAIL $A: allowed run not ok"; cat "$WORK/$A-ok.json"; exit 1; }
   [ -f "$OUT_OK/receipts/proxy.log" ] || { echo "FAIL $A: proxy.log receipt missing"; exit 1; }
-  grep -q "allow $HOSTPORT" "$OUT_OK/receipts/proxy.log" || {
-    echo "FAIL $A: proxy.log shows no allowed CONNECT to $HOSTPORT"; cat "$OUT_OK/receipts/proxy.log"; exit 1; }
+  proxy_saw allow "$OUT_OK/receipts/proxy.log" || {
+    echo "FAIL $A: proxy.log shows no allowed request to $HOSTPORT"; cat "$OUT_OK/receipts/proxy.log"; exit 1; }
   # A run can exit "ok" having accomplished nothing if its tool calls were
   # refused (a harness whose MCP approval was misconfigured does exactly
   # that). The hello-report agent's whole job is to read notes.txt and
@@ -109,7 +117,7 @@ for A in "${ADAPTERS[@]}"; do
     python3 -c "import json;print(json.load(open('$OUT_OK/result.json'))['result'][:400])" 2>/dev/null
     exit 1
   fi
-  echo "$A allowed run: CONNECT to $HOSTPORT allowed and the agent used the gateway (result names the note); evidence in receipts/proxy.log"
+  echo "$A allowed run: request to $HOSTPORT allowed and the agent used the gateway (result names the note); evidence in receipts/proxy.log"
 
   OUT_DENIED="$WORK/$A/denied"
   set +e
@@ -120,12 +128,12 @@ for A in "${ADAPTERS[@]}"; do
   set -e
   [ "$CODE" -ne 0 ] || { echo "FAIL $A: the run with the model host denied succeeded"; cat "$WORK/$A-denied.json"; exit 1; }
   [ -f "$OUT_DENIED/receipts/proxy.log" ] || { echo "FAIL $A: proxy.log missing on the denied run"; tail -20 "$WORK/$A-denied.err"; exit 1; }
-  grep -q "deny $HOSTPORT" "$OUT_DENIED/receipts/proxy.log" || {
-    echo "FAIL $A: proxy.log shows no denied CONNECT to $HOSTPORT — the harness did not even try the proxy"
+  proxy_saw deny "$OUT_DENIED/receipts/proxy.log" || {
+    echo "FAIL $A: proxy.log shows no denied request to $HOSTPORT — the harness did not even try the proxy"
     cat "$OUT_DENIED/receipts/proxy.log"; tail -20 "$WORK/$A-denied.err"; exit 1; }
-  if grep -q "allow $HOSTPORT" "$OUT_DENIED/receipts/proxy.log"; then
+  if proxy_saw allow "$OUT_DENIED/receipts/proxy.log"; then
     echo "FAIL $A: the denied policy still allowed $HOSTPORT"; exit 1; fi
-  echo "$A denied run: exit $CODE, CONNECT to $HOSTPORT denied; evidence in receipts/proxy.log"
+  echo "$A denied run: exit $CODE, request to $HOSTPORT denied; evidence in receipts/proxy.log"
   # AGENTRY_R4_EVIDENCE keeps the allowed run's receipts, which is how the
   # conformance fixtures under pkg/runner/adapter/testdata are re-recorded
   # when a harness release changes.
@@ -138,33 +146,18 @@ for A in "${ADAPTERS[@]}"; do
   RAN+=("$A")
 done
 
-# Conformance diffing: the same QuickAgent through every adapter must
-# produce the same envelope once the model-dependent parts are masked.
+# Conformance: the same QuickAgent through every adapter must produce one
+# envelope shape, with the same values outside the fields that belong to the
+# run, the model or the harness (scripts/envelope-shape lists them).
 if [ ${#RAN[@]} -gt 1 ]; then
-  for A in "${RAN[@]}"; do
-    python3 - "$WORK/$A/ok/result.json" "$WORK/$A.masked" <<'PY'
-import json, sys
-env = json.load(open(sys.argv[1]))
-# What legitimately differs between harnesses: which model said what, how
-# long it took, and the run's identity. Everything else is the contract.
-for k in ("runId", "usage", "result", "harness", "receipts", "outDir", "startedAt", "endedAt"):
-    env.pop(k, None)
-# One enforcement claim is REQUIRED to differ: a harness that runs as a
-# host process says so, because the run network is not what bounds it. The
-# receipt would be dishonest if it read like a container's. Every other
-# capability claim — egress, filesystem, exec, secrets — must match, which
-# is what this diff is for.
-env.get("capabilities_enforced", {}).pop("harness.isolation", None)
-json.dump(env, open(sys.argv[2], "w"), indent=2, sort_keys=True)
-PY
-  done
+  ${GO:-go} build -o "$WORK/envelope-shape" ./scripts/envelope-shape
   BASE_A=${RAN[0]}
   for A in "${RAN[@]:1}"; do
-    if ! diff -u "$WORK/$BASE_A.masked" "$WORK/$A.masked"; then
-      echo "FAIL: $A's envelope differs from $BASE_A's outside the masked fields"; exit 1
+    if ! "$WORK/envelope-shape" "$WORK/$BASE_A/ok/result.json" "$WORK/$A/ok/result.json"; then
+      echo "FAIL: $A's envelope differs from $BASE_A's"; exit 1
     fi
   done
-  echo "envelope diff: ${RAN[*]} agree once model-dependent fields are masked"
+  echo "envelope comparison: ${RAN[*]} write one envelope shape"
 fi
 
 LEFT=$(docker ps -a --filter label=agentry.run --format '{{.Names}}')

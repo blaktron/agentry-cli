@@ -13697,6 +13697,26 @@
       ]
     },
     {
+      "owner": "scripts/envelope-shape",
+      "behavior": "Comparing two adapters' result envelopes for one envelope shape",
+      "disposition": "retain",
+      "files": [
+        {
+          "path": "scripts/envelope-shape/main_test.go",
+          "tests": [
+            "TestTwoAdaptersWriteOneShape",
+            "TestTheRecordedEnvelopesDifferWhereTheComparisonLooksAway",
+            "TestADifferenceInShapeOrInAnAgreedValueIsFoundAndNoOther",
+            "TestTheFieldsOfOneRunAreLeftOut"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        }
+      ]
+    },
+    {
       "owner": "scripts/mcp-server-survey",
       "behavior": "Installing and starting declared MCP servers the way the runner does, and recording what each did",
       "disposition": "retain",

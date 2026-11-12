@@ -456,7 +456,8 @@ func TestPlainHTTPRefusedOffTheList(t *testing.T) {
 	if !strings.Contains(logs.String(), "deny http") {
 		t.Fatalf("no deny line: %q", logs.String())
 	}
-	addr = startProxy(t, &Proxy{Allow: []string{target}})
+	logs = &lockedBuf{}
+	addr = startProxy(t, &Proxy{Allow: []string{target}, Logw: logs})
 	resp, err = plainClient(t, addr).Get(upstream.URL + "/v1/models")
 	if err != nil {
 		t.Fatal(err)
@@ -464,6 +465,10 @@ func TestPlainHTTPRefusedOffTheList(t *testing.T) {
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusMethodNotAllowed || hit {
 		t.Fatalf("CONNECT-only proxy: status %d, upstream hit=%v", resp.StatusCode, hit)
+	}
+	// A proxy that forwards no plain http still records the refusal.
+	if !strings.Contains(logs.String(), "deny http "+target) {
+		t.Fatalf("CONNECT-only proxy: no deny line for %s: %q", target, logs.String())
 	}
 }
 
