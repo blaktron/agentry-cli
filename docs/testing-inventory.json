@@ -4678,6 +4678,7 @@
           "path": "pkg/runner/adapter/conformance_test.go",
           "tests": [
             "TestConformance",
+            "TestDockerAgentRecordedCompactions",
             "TestEveryAdapterRefusesAModeItDoesNotKnow"
           ],
           "fuzz": [],

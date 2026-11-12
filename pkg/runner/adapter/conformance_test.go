@@ -13,6 +13,7 @@ import (
 	"github.com/blaktron/agentry/pkg/manifest"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 )
 
@@ -318,7 +319,27 @@ func conformEvents(t *testing.T, ad Adapter) {
 	if of, ok := recordingOf[recording]; ok {
 		recording = of
 	}
-	dir := filepath.Join("testdata", "conformance", recording)
+	conformRecording(t, ad, filepath.Join("testdata", "conformance", recording))
+}
+
+// TestDockerAgentRecordedCompactions runs a recording of the default
+// harness compacting its conversation: a hello-report run on a model whose
+// window the policy set small enough that every few turns cross the
+// threshold, ended by the run's time budget. Each compaction that replaced
+// the conversation counts once, with the reason the harness gave.
+func TestDockerAgentRecordedCompactions(t *testing.T) {
+	ad, err := Get(DefaultName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conformRecording(t, ad, filepath.Join("testdata", "conformance", "docker-agent-compaction"))
+}
+
+// conformRecording runs one recording of a harness's output, dir's
+// events.ndjson, through the adapter's Events and checks it against dir's
+// expect.json.
+func conformRecording(t *testing.T, ad Adapter, dir string) {
+	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(dir, "events.ndjson")) //nolint:gosec // testdata
 	if err != nil {
 		t.Fatalf("recorded harness output: %v (capture one with scripts/acceptance/runner-r4.sh)", err)
@@ -330,6 +351,9 @@ func conformEvents(t *testing.T, ad Adapter) {
 		Usage         bool `json:"usage"`
 		// LoopNudges counts the harness's loop nudges in the recording.
 		LoopNudges int `json:"loopNudges"`
+		// Compactions counts the harness's compactions in the recording,
+		// by reason, as the engine counts them into the receipt.
+		Compactions receipt.Compactions `json:"compactions"`
 	}
 	eb, err := os.ReadFile(filepath.Join(dir, "expect.json")) //nolint:gosec // testdata
 	if err != nil {
@@ -340,6 +364,7 @@ func conformEvents(t *testing.T, ad Adapter) {
 	}
 	var toolCalls, toolResults, nudges int
 	var text, usage bool
+	var compactions receipt.Compactions
 	// calls is each call's tool by its id: a result must answer a call
 	// already seen, and name the same tool when it names one.
 	calls := map[string]string{}
@@ -370,14 +395,16 @@ func conformEvents(t *testing.T, ad Adapter) {
 				usage = true
 			case EventLoopNudge:
 				nudges++
+			case EventCompaction:
+				compactions.Add(ev.Text)
 			}
 			if len(ev.Raw) == 0 && len(bytes.TrimSpace(line)) > 0 {
 				t.Errorf("event %s dropped its raw line", ev.Kind)
 			}
 		}
 	}
-	if toolCalls != expect.ToolCalls || toolResults != expect.ToolResults || text != expect.AssistantText || usage != expect.Usage || nudges != expect.LoopNudges {
-		t.Errorf("events: toolCalls=%d toolResults=%d text=%v usage=%v loopNudges=%d, want %+v", toolCalls, toolResults, text, usage, nudges, expect)
+	if toolCalls != expect.ToolCalls || toolResults != expect.ToolResults || text != expect.AssistantText || usage != expect.Usage || nudges != expect.LoopNudges || compactions != expect.Compactions {
+		t.Errorf("events: toolCalls=%d toolResults=%d text=%v usage=%v loopNudges=%d compactions=%+v, want %+v", toolCalls, toolResults, text, usage, nudges, compactions, expect)
 	}
 }
 

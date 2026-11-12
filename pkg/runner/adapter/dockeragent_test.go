@@ -14,6 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
+	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
 	"github.com/blaktron/agentry/pkg/manifest"
 )
@@ -164,6 +165,13 @@ func TestDockerAgentEvents(t *testing.T) {
 		{"a run that ended on a cut answer", `{"type":"stream_stopped","finish_reason":"length","agent_name":"root"}`, []EventKind{EventAnswerCut}},
 		{"a run that ended on its answer", `{"type":"stream_stopped","finish_reason":"stop","agent_name":"root"}`, []EventKind{EventOther}},
 		{"other warning", `{"type":"warning","message":"This agent turn did not use the prompt cache.","agent_name":"root"}`, []EventKind{EventOther}},
+		// A compaction counts once, when it completes having replaced the
+		// conversation; its start and a skipped or failed one do not.
+		{"compaction started", `{"type":"session_compaction","session_id":"s","status":"started","agent_name":"root"}`, []EventKind{EventOther}},
+		{"compaction applied", `{"type":"session_compaction","session_id":"s","status":"completed","outcome":"applied","reason":"threshold","agent_name":"root"}`, []EventKind{EventCompaction}},
+		{"compaction from an older build", `{"type":"session_compaction","session_id":"s","status":"completed","agent_name":"root"}`, []EventKind{EventCompaction}},
+		{"compaction skipped", `{"type":"session_compaction","session_id":"s","status":"completed","outcome":"skipped","reason":"threshold","agent_name":"root"}`, []EventKind{EventOther}},
+		{"compaction failed", `{"type":"session_compaction","session_id":"s","status":"completed","outcome":"failed","reason":"overflow","agent_name":"root"}`, []EventKind{EventOther}},
 		{"not json", `plain text line`, []EventKind{EventAssistantText}},
 		{"empty", ``, nil},
 	}
@@ -190,6 +198,31 @@ func TestDockerAgentEvents(t *testing.T) {
 	evs = ad.Events([]byte(`{"type":"warning","message":"Loop nudge 2: 5 consecutive identical calls to fetch; the agent was told to reach its goal another way."}`))
 	if !strings.HasPrefix(evs[0].Text, "Loop nudge 2: ") {
 		t.Errorf("nudge text = %q", evs[0].Text)
+	}
+	// A compaction says why it ran, in the receipt's words: the harness's
+	// manual compaction can only have been asked for by whoever drives it,
+	// and a build that gives no reason leaves it to the receipt's default.
+	for reason, want := range map[string]string{"threshold": "threshold", "overflow": "overflow", "manual": "request", "": "", "later": ""} {
+		line := `{"type":"session_compaction","status":"completed","outcome":"applied","reason":"` + reason + `"}`
+		evs = ad.Events([]byte(line))
+		if len(evs) != 1 || evs[0].Kind != EventCompaction || evs[0].Text != want {
+			t.Errorf("reason %q: got %+v, want a compaction for %q", reason, evs, want)
+		}
+	}
+	var c receipt.Compactions
+	for _, line := range []string{
+		`{"type":"session_compaction","status":"completed","outcome":"applied","reason":"threshold"}`,
+		`{"type":"session_compaction","status":"completed","outcome":"applied","reason":"overflow"}`,
+		`{"type":"session_compaction","status":"completed","outcome":"applied","reason":"threshold"}`,
+	} {
+		for _, ev := range ad.Events([]byte(line)) {
+			if ev.Kind == EventCompaction {
+				c.Add(ev.Text)
+			}
+		}
+	}
+	if c != (receipt.Compactions{Threshold: 2, Overflow: 1}) {
+		t.Errorf("counted %+v, want two threshold compactions and one overflow", c)
 	}
 	// Usage numbers survive.
 	evs = ad.Events([]byte(`{"type":"stream_stopped","usage":{"input_tokens":10,"output_tokens":5,"cost":0.01}}`))

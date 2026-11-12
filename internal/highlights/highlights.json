@@ -4,7 +4,8 @@
       "version": "0.7.58",
       "highlights": [
         "In agentry agent chat, a message you send while the agent answers you goes into that answer, as in a QuickAgent chat.",
-        "Programs that drive a persistent agent with agentry agent attach can send it a message during a turn with steer."
+        "Programs that drive a persistent agent with agentry agent attach can send it a message during a turn with steer.",
+        "A run on Docker Agent now counts in its receipt the times its conversation was summarised, and why."
       ]
     },
     {
