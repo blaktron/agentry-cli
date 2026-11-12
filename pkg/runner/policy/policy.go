@@ -62,7 +62,7 @@ const (
 	// CI holds this pin to that signature (scripts/verify-docker-agent-image.sh).
 	// It is pinned by digest: the tag is a label, the digest the bytes, and
 	// the receipt names it.
-	DefaultHarnessImage = "ghcr.io/blaktron/agentry-docker-agent-src:1.160.0-2026.11.12.14@sha256:0840d850429bb6a3c7d1afb6a0c951cd0364e365f1fccb8a96a43adee77025c0"
+	DefaultHarnessImage = "ghcr.io/blaktron/agentry-docker-agent-src:1.160.0-2026.11.12.15@sha256:261d215515496934c62246058be085bf23303bd5600c7f78caf5791a3e2cc023"
 	DefaultGoBuilder    = "ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:eb61c3873c97416fff0116553fff65d67a3549f72e11d9758849a689cdd8b523"
 	// Runtime images that install and run declared npm/PyPI MCP servers.
 	// Node is 26, the current release: a server whose engines.node needs a
@@ -1678,7 +1678,7 @@ images:
   # CLI's pinned default. (Older files name docker-agent's image as
   # harnessDockerAgent; that key is still read.)
   harnessImages:
-    docker-agent: { ref: ghcr.io/blaktron/agentry-docker-agent-src:1.160.0-2026.11.12.14@sha256:0840d850429bb6a3c7d1afb6a0c951cd0364e365f1fccb8a96a43adee77025c0 }
+    docker-agent: { ref: ghcr.io/blaktron/agentry-docker-agent-src:1.160.0-2026.11.12.15@sha256:261d215515496934c62246058be085bf23303bd5600c7f78caf5791a3e2cc023 }
     # codex-image: { ref: ghcr.io/blaktron/agentry-codex:<tag>@sha256:<digest> }
     # claude-image: { ref: agentry-claude-code:<version>, artifact: sha512-<integrity> }
   goBuilder: ghcr.io/blaktron/agentry-golang-alpine:1.27-alpine@sha256:eb61c3873c97416fff0116553fff65d67a3549f72e11d9758849a689cdd8b523
