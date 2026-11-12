@@ -234,10 +234,11 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Agentry credits are spent through an OpenAI-compatible endpoint, which
-	// only docker-agent's client is pointed at.
-	if in.Policy != nil && in.Policy.Model.Provider == policy.ProviderAgentry && adapterName != adapter.DefaultName {
-		return nil, &adapter.Refusal{Reason: fmt.Sprintf("model provider agentry (Agentry credits) runs on the %s harness only; %s cannot spend them — drop --adapter, or choose another provider (agentry setup)", adapter.DefaultName, adapterName)}
+	// Agentry credits are spent through the registry's own OpenAI-compatible
+	// endpoint, which only the two container harnesses' clients are pointed
+	// at.
+	if in.Policy != nil && in.Policy.Model.Provider == policy.ProviderAgentry && !adapter.SpendsCredits(adapterName) {
+		return nil, &adapter.Refusal{Reason: fmt.Sprintf("model provider agentry (Agentry credits) runs on the %s and %s harnesses only; %s cannot spend them — drop --adapter, or choose another provider (agentry setup)", adapter.DefaultName, adapter.AgentryHarnessAdapterName, adapterName)}
 	}
 
 	mode := in.Mode
