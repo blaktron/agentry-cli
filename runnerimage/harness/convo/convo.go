@@ -15,8 +15,9 @@
 //
 // A model's reasoning is sent back only while the conversation before it is
 // the one it was written in: a server may bind a reasoning block to what
-// came before it and refuse the block once that has changed. So the replies
-// recorded before a clear or a compaction go back without their reasoning.
+// came before it, the system prompt and the tools included, and refuse the
+// block once that has changed. So the replies recorded before a clear, a
+// compaction or a change of frame go back without their reasoning.
 package convo
 
 import (
@@ -60,6 +61,10 @@ const (
 	// KindCompaction replaces everything before it with its text, a summary
 	// of the conversation, but for the entries from KeepFrom on.
 	KindCompaction = "compaction"
+	// KindFrame says what the conversation is sent with from here on: Frame
+	// is a digest of the model, the system prompt and the tools. A process
+	// that opens the conversation with another writes a new one.
+	KindFrame = "frame"
 )
 
 // Who wrote a user entry that is not the runner's prompt.
@@ -118,6 +123,8 @@ type Entry struct {
 	// Window, on a compaction entry, is the model's window in tokens as the
 	// harness had learned it from the server by then, zero when it had not.
 	Window int `json:"window,omitempty"`
+	// Frame is set on a frame entry.
+	Frame string `json:"frame,omitempty"`
 }
 
 // Cleared is one result a clear entry replaces: the call, and the text the
@@ -267,6 +274,18 @@ func (l *Log) Messages() []llm.Message {
 	return Project(l.entries)
 }
 
+// Frame is the digest of the newest frame entry, "" when there is none.
+func (l *Log) Frame() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for i := len(l.entries) - 1; i >= 0; i-- {
+		if l.entries[i].Kind == KindFrame {
+			return l.entries[i].Frame
+		}
+	}
+	return ""
+}
+
 // Len is how many entries the file holds.
 func (l *Log) Len() int {
 	l.mu.Lock()
@@ -324,6 +343,14 @@ func Project(entries []Entry) []llm.Message {
 		case KindCompaction:
 			edited = i
 			summary = i
+		case KindFrame:
+			// A frame is written only when it differs from the one before
+			// it, or when the record names none. Either way a reply made
+			// before it was made under another, or under one nobody
+			// recorded.
+			if lastAssistant >= 0 {
+				edited = i
+			}
 		}
 	}
 	answer := func(calls []llm.Part) []llm.Part {

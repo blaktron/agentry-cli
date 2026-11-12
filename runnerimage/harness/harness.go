@@ -11,6 +11,8 @@ package harness
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -85,8 +87,9 @@ type Harness struct {
 	// It is called before the permission event is written, and what it
 	// returns waits for the runner's answer: whether the call may run.
 	Permit func(callID string) func(ctx context.Context) (bool, error)
-	// OnTurnEnd, when set, is called just before a turn's turn_end event is
-	// written: from then on the turn does nothing more.
+	// OnTurnEnd, when set, is called just before a turn's turn_end event,
+	// or the warning that ends a compaction the runner asked for, is
+	// written: from then on the turn or the compaction does nothing more.
 	OnTurnEnd func()
 	// Now is the clock; time.Now unless a test sets another.
 	Now func() time.Time
@@ -151,12 +154,45 @@ func (h *Harness) Start(ctx context.Context, conversation string) error {
 			return err
 		}
 	}
+	// A conversation recorded under another model, system prompt or set of
+	// tools is carried on, and the record says from where: the replies
+	// before that point go back without their reasoning.
+	if frame := h.frame(); h.log.Frame() != frame {
+		if err := h.log.Append(convo.Entry{Kind: convo.KindFrame, Frame: frame}); err != nil {
+			h.fail(proto.ClassHarness, err.Error())
+			return err
+		}
+	}
 	names := make([]string, 0, len(h.tools))
 	for _, t := range h.tools {
 		names = append(names, t.Name)
 	}
-	h.emit(proto.Event{Type: proto.TypeReady, Conversation: conversation, Tools: names, Continued: existed})
+	ready := proto.Event{Type: proto.TypeReady, Conversation: conversation, Tools: names, Continued: existed}
+	if existed {
+		// What a process that carries the conversation on starts from.
+		ready.Usage = &proto.Usage{ContextTokens: h.contextTokens(), ContextLimit: h.window(), CostUSD: h.cost()}
+	}
+	h.emit(ready)
 	return nil
+}
+
+// frame is a digest of what every request of the conversation is sent with
+// beside its messages: the model, the system prompt and the tools.
+func (h *Harness) frame() string {
+	sum := sha256.New()
+	part := func(s string) {
+		// Each part with its length, so no two lists of parts read alike.
+		_, _ = fmt.Fprintf(sum, "%d:%s", len(s), s)
+	}
+	part(h.cfg.Model.API)
+	part(h.cfg.Model.Name)
+	part(h.cfg.System)
+	for _, t := range h.tools {
+		part(t.Name)
+		part(t.Description)
+		part(string(t.Schema))
+	}
+	return hex.EncodeToString(sum.Sum(nil))
 }
 
 // connect reads the gateway's tools.
