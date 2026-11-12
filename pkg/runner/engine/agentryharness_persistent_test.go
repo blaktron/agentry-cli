@@ -4,8 +4,10 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/blaktron/agentry/pkg/manifest"
 
@@ -13,6 +15,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/compile"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
+	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 	"github.com/blaktron/agentry-cli/pkg/runner/session"
 )
 
@@ -230,6 +233,11 @@ func TestAPersistentSegmentOnTheRunnersOwnHarnessStartsANewConversationAndCompac
 	if nc := env.Persistent.NewConversations; len(nc) != 1 || nc[0].ID != id || nc[0].Reason != "a compaction" {
 		t.Errorf("the envelope's new conversations: %+v", nc)
 	}
+	// The summary the runner asked for is counted as that, apart from the
+	// harness's own.
+	if c := env.Usage.Compactions; c != (receipt.Compactions{Request: 1}) {
+		t.Errorf("the envelope's compactions: %+v", c)
+	}
 	// The size after the summary is said, for whoever sizes the
 	// conversation by it.
 	compacted := 0
@@ -243,5 +251,63 @@ func TestAPersistentSegmentOnTheRunnersOwnHarnessStartsANewConversationAndCompac
 	}
 	if compacted != 1 {
 		t.Errorf("%d usage events say the conversation was compacted, want 1", compacted)
+	}
+}
+
+func TestASegmentsEnvelopeCountsAClearOfOldResults(t *testing.T) {
+	model := scriptedmodel.New(t,
+		scriptedmodel.ToolCalls(scriptedmodel.Call{ID: "c1", Name: "fs_read", Arguments: `{"path":"notes.txt"}`}),
+		scriptedmodel.Text("The note is long."),
+		scriptedmodel.Text("Yes."),
+		scriptedmodel.Text("Still yes."),
+		scriptedmodel.Text("After the pause."),
+	)
+	g := newScriptedGateway(t, "fs_read")
+	g.call = func(context.Context, string) string { return strings.Repeat("a line of the note\n", 400) }
+	store := t.TempDir()
+	ctx := context.Background()
+
+	first, _, done, _ := startAgentryHarnessSegment(t, model, g, store, "")
+	for _, text := range []string{"read the note", "is it long?", "sure?"} {
+		if err := first.Send(ctx, text); err != nil {
+			t.Fatal(err)
+		}
+	}
+	id, _, _ := first.Conversation()
+	env, err := first.End(ctx, false)
+	<-done
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env.Usage.ResultClears != 0 {
+		t.Errorf("the first segment cleared results: %+v", env.Usage)
+	}
+
+	// The conversation rests for longer than any server keeps it cached.
+	record := filepath.Join(store, id+".jsonl")
+	raw, err := os.ReadFile(record) //nolint:gosec // the test's own folder
+	if err != nil {
+		t.Fatal(err)
+	}
+	then := time.Now().Add(-3 * time.Hour).UTC().Format(time.RFC3339Nano)
+	aged := regexp.MustCompile(`"at":"[^"]*"`).ReplaceAll(raw, []byte(`"at":"`+then+`"`))
+	if err := os.WriteFile(record, aged, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	second, _, done, _ := startAgentryHarnessSegment(t, model, g, store, id)
+	if err := second.Send(ctx, "and after the pause?"); err != nil {
+		t.Fatal(err)
+	}
+	env, err = second.End(ctx, false)
+	<-done
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env.Usage.ResultClears != 1 {
+		t.Errorf("the second segment's usage: %+v", env.Usage)
+	}
+	if req := model.Requests()[4]; !strings.Contains(string(req.Body), "set aside to save space") {
+		t.Error("the request after the pause carries no placeholder")
 	}
 }

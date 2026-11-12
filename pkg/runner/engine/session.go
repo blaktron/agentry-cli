@@ -436,10 +436,16 @@ type liveSession struct {
 	// harness reported over costBase: a new conversation's harness counts
 	// its running cost from nothing, and costBase holds what the
 	// conversations before it spent.
-	costUSD    float64
-	costBase   float64
-	lastText   string
-	harnessErr string
+	costUSD  float64
+	costBase float64
+	// What the harness did to carry the conversation on, counted from its
+	// events as a one-shot run counts them.
+	loopNudges       int
+	lengthRecoveries receipt.LengthRecoveries
+	resultClears     int
+	compactions      receipt.Compactions
+	lastText         string
+	harnessErr       string
 	// planLimit is the harness's first plan-limit event (EndPlanLimit).
 	planLimit *adapter.Event
 	// orgPolicy is the harness's first organization-policy event
@@ -1438,6 +1444,22 @@ func (s *liveSession) handle(ev adapter.Event) {
 		if first {
 			s.endWith(session.EndOrgPolicy)
 		}
+	case adapter.EventLoopNudge, adapter.EventLengthRecovery, adapter.EventResultsCleared, adapter.EventCompaction:
+		// Counted for the envelope, and passed on like any other thing
+		// the harness says of itself.
+		s.mu.Lock()
+		switch ev.Kind {
+		case adapter.EventLoopNudge:
+			s.loopNudges++
+		case adapter.EventLengthRecovery:
+			s.lengthRecoveries.Add(ev.Text)
+		case adapter.EventResultsCleared:
+			s.resultClears++
+		case adapter.EventCompaction:
+			s.compactions.Add(ev.Text)
+		}
+		s.mu.Unlock()
+		s.emit(session.Event{Kind: session.KindOther, Text: ev.Text, Raw: ev.Raw})
 	default:
 		s.emit(session.Event{Kind: session.KindOther, Text: ev.Text, Raw: ev.Raw})
 	}
@@ -1944,7 +1966,8 @@ func (s *liveSession) End(ctx context.Context, finish bool) (*receipt.Envelope, 
 	log := append([]session.Event(nil), s.log...)
 	lastText := s.lastText
 	env := s.env
-	env.Usage = receipt.Usage{InputTokens: s.inTok, OutputTokens: s.outTok, TotalTokens: s.totTok, CostUSD: s.costUSD, Turns: s.toolCalls, UserTurns: s.userTurns}
+	env.Usage = receipt.Usage{InputTokens: s.inTok, OutputTokens: s.outTok, TotalTokens: s.totTok, CostUSD: s.costUSD, Turns: s.toolCalls, UserTurns: s.userTurns,
+		LoopNudges: s.loopNudges, LengthRecoveries: s.lengthRecoveries, ResultClears: s.resultClears, Compactions: s.compactions}
 	tokensUnreported := !s.usageSeen && s.userTurns > 0
 	harnessErr := s.harnessErr
 	panicErr := s.panicErr
