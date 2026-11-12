@@ -26,6 +26,9 @@ func newHarnessCmd() *cobra.Command {
 			"by a model sign-in (a ChatGPT, Claude or Copilot plan) runs on its vendor's harness whatever\n" +
 			"this says, and --adapter still names the harness for one run. A persistent agent moved from\n" +
 			"one harness to the other starts its next segment from its memory and the last exchange.\n\n" +
+			"The policy file holds the choice only while it is not the default. An Agentry CLI or Agentry\n" +
+			"Desktop released before this setting existed refuses a policy that holds it, so update those\n" +
+			"on this computer before choosing agentry-harness; use docker-agent takes the key out again.\n\n" +
 			"With no subcommand, shows the harness chosen.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -132,6 +135,11 @@ func sayHarness(cmd *cobra.Command, pol *policy.Policy, path, was string) error 
 	}
 	if was != "" && was != name {
 		_, _ = fmt.Fprintln(narration(cmd), "runs and sessions use it from their next start, and a persistent agent from its next turn; a run or session under way finishes on the harness it started on")
+		if !out.Default {
+			// The policy's keys are a closed set: a reader that predates
+			// this one refuses the file while it holds the choice.
+			_, _ = fmt.Fprintln(narration(cmd), "note: an Agentry CLI or Agentry Desktop released before this setting existed refuses a policy that holds this choice; update them on this computer, or go back with agentry harness use "+policy.DockerAgentAdapter)
+		}
 	}
 	return nil
 }

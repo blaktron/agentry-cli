@@ -19,7 +19,8 @@ func TestTheContainerHarnessFromTheTerminal(t *testing.T) {
 		t.Fatalf("a policy that never chose: %q", out)
 	}
 	out, errOut, err := runCLI(t, strings.NewReader(""), "harness", "use", "agentry-harness")
-	if err != nil || !strings.Contains(out, "harness: agentry-harness (the harness built into the runner) (was docker-agent)") || !strings.Contains(errOut, "a persistent agent from its next turn") {
+	if err != nil || !strings.Contains(out, "harness: agentry-harness (the harness built into the runner) (was docker-agent)") || !strings.Contains(errOut, "a persistent agent from its next turn") ||
+		!strings.Contains(errOut, "released before this setting existed refuses a policy that holds this choice") {
 		t.Fatalf("use agentry-harness: %q / %q, %v", out, errOut, err)
 	}
 	text, pol := readPolicy(t, path)
@@ -65,6 +66,11 @@ func TestTheContainerHarnessFromTheTerminal(t *testing.T) {
 	}
 	if back.Harness != policy.DockerAgentAdapter || !back.Default || back.Previous != policy.AgentryHarnessAdapter {
 		t.Fatalf("use docker-agent --json: %+v", back)
+	}
+	// Going back to the default says nothing of older readers: the key is gone.
+	cli(t, "harness", "use", "agentry-harness")
+	if _, errOut, err := runCLI(t, strings.NewReader(""), "harness", "use", "docker-agent"); err != nil || strings.Contains(errOut, "refuses a policy") {
+		t.Fatalf("use docker-agent: %q, %v", errOut, err)
 	}
 	if text, pol = readPolicy(t, path); pol.ContainerHarness != "" || strings.Contains(text, "containerHarness") {
 		t.Fatalf("the default is written as a key:\n%s", text)
