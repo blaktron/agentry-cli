@@ -223,6 +223,11 @@ type Policy struct {
 	// Harness holds per-adapter settings for the adapters that run the
 	// person's own installation of a harness, keyed by adapter name.
 	Harness map[string]HarnessPolicy `yaml:"harness,omitempty"`
+	// ContainerHarness is the container harness a run uses when it names
+	// none and its model is paid by a key, a connected account or credits:
+	// docker-agent or agentry-harness. Unset is docker-agent. A model paid
+	// by a model sign-in runs on its vendor's harness whatever this says.
+	ContainerHarness string `yaml:"containerHarness,omitempty"`
 	// Exec is the operator's exec catalog: which binaries this machine
 	// provides to a QuickAgent that declares `exec: {commands}`, and from
 	// where.
@@ -1428,6 +1433,9 @@ func (p *Policy) Validate() error {
 	default:
 		return fmt.Errorf("secretSource.mode %q must be env or envFile", p.SecretSource.Mode)
 	}
+	if err := CheckContainerHarness(p.ContainerHarness); err != nil {
+		return err
+	}
 	if p.Budgets.TimeoutSeconds <= 0 {
 		return errors.New("budgets.timeoutSeconds must be positive")
 	}
@@ -1789,6 +1797,13 @@ sessions:
   idleTimeoutSeconds: 900
   maxWallSeconds: 7200
   maxUserTurns: 200
+
+# The container harness a run uses when it names none (--adapter) and its
+# model is paid by a key, a connected account or your Agentry credits:
+# docker-agent (Docker Agent, the default) or agentry-harness (the harness
+# built into the runner). A model paid by a model sign-in runs on its
+# vendor's harness whatever this says. agentry harness use <name> sets it.
+# containerHarness: docker-agent
 
 # Adapters that drive YOUR installation of a harness (--adapter claude,
 # and codex/goose as they land) rather than an image the runner pins.

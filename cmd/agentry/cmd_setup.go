@@ -9,6 +9,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/blaktron/agentry-cli/runnerimage"
@@ -105,6 +106,10 @@ type setupOutput struct {
 	// ContextWindow is the model's context window in tokens where the
 	// policy names one; absent for the harness's own lookup.
 	ContextWindow int64 `json:"contextWindow,omitempty"`
+	// Harness is the harness a run on this model uses when it names none:
+	// the container harness the policy chooses, or the vendor's for a model
+	// paid by a model sign-in.
+	Harness string `json:"harness"`
 	// Images is "ready" when the gateway, harness and runner images were
 	// pulled or built, "skipped" under --skip-images.
 	Images string `json:"images"`
@@ -182,12 +187,13 @@ func runSetup(cmd *cobra.Command, opts setupOpts) error {
 	// keys: a changed key or provider is sealed again now.
 	resealSignedOut(cmd.ErrOrStderr())
 	result := setupOutput{PolicyPath: policyPath, Provider: pol.Model.Provider, Model: pol.Model.Name,
-		APIKeyEnv: pol.Model.APIKeyEnv, APIKeySource: pol.Model.APIKeySource, APIKeyKind: pol.Model.APIKeyKind, BaseURL: pol.Model.BaseURL, ContextWindow: pol.Model.ContextWindow, Images: "skipped"}
+		APIKeyEnv: pol.Model.APIKeyEnv, APIKeySource: pol.Model.APIKeySource, APIKeyKind: pol.Model.APIKeyKind, BaseURL: pol.Model.BaseURL, ContextWindow: pol.Model.ContextWindow, Harness: adapter.DefaultFor(pol), Images: "skipped"}
 
 	if opts.skipImages {
 		if flags.jsonOut {
 			return emitJSON(cmd.OutOrStdout(), result)
 		}
+		saySetupHarness(cmd.OutOrStdout(), pol)
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "setup complete (policy only; images skipped)")
 		printNextSteps(cmd.ErrOrStderr(), setupNextSteps()...)
 		return nil
@@ -195,9 +201,11 @@ func runSetup(cmd *cobra.Command, opts setupOpts) error {
 	docker := newDockerClient()
 	imageCtx := homeImageDir(home)
 	// The harness image prepared is the default adapter's for this model
-	// setup, and no other: docker-agent for a key, the Codex image for a
-	// ChatGPT plan, the Claude Code image (built here) for a Claude
-	// subscription, the Copilot CLI image (built here) for a Copilot plan.
+	// setup, and no other: the container harness the policy chooses for a
+	// key (docker-agent's image, or none for the runner's own harness,
+	// which is a role of the runner image), the Codex image for a ChatGPT
+	// plan, the Claude Code image (built here) for a Claude subscription,
+	// the Copilot CLI image (built here) for a Copilot plan.
 	runsOn := adapter.DefaultFor(pol)
 	stages := newStageLog(cmd)
 	if err := gateway.EnsureInstalled(cmd.Context(), docker, pol,
@@ -220,10 +228,23 @@ func runSetup(cmd *cobra.Command, opts setupOpts) error {
 	if flags.jsonOut {
 		return emitJSON(cmd.OutOrStdout(), result)
 	}
+	saySetupHarness(cmd.OutOrStdout(), pol)
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(),
 		"setup complete — gateway, harness, and runner images ready; QuickAgents can run")
 	printNextSteps(cmd.ErrOrStderr(), setupNextSteps()...)
 	return nil
+}
+
+// saySetupHarness is the summary's harness line: the one runs on the model
+// just configured use, and how the container harness is chosen.
+func saySetupHarness(w io.Writer, pol *policy.Policy) {
+	runsOn := adapter.DefaultFor(pol)
+	if runsOn != pol.RunContainerHarness() {
+		_, _ = fmt.Fprintf(w, "harness: %s (the model is paid by %s)\n", runsOn,
+			policy.SignInSentence(policy.KeyKind(pol.Harness[adapter.DefaultName], pol.Model)))
+		return
+	}
+	_, _ = fmt.Fprintf(w, "harness: %s (agentry harness use <%s> changes it)\n", runsOn, strings.Join(policy.ContainerHarnesses(), "|"))
 }
 
 // agentryRegistryFor is the registry this computer is signed in to, for

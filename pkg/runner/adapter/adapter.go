@@ -641,11 +641,12 @@ func HarnessTitle(name string) string {
 	return ""
 }
 
-// DefaultFor is the adapter a run uses when none is named, for a model
-// sign-in docker-agent cannot spend: the Codex image for a ChatGPT plan,
-// the Claude Code image for a Claude subscription, the Copilot CLI image
-// for a Copilot plan; else DefaultName. docker-agent stays the default for
-// every key.
+// DefaultFor is the adapter a run uses when none is named. A model sign-in
+// docker-agent cannot spend runs on its vendor's image: the Codex image for
+// a ChatGPT plan, the Claude Code image for a Claude subscription, the
+// Copilot CLI image for a Copilot plan. Every other model runs on the
+// container harness the policy chooses, docker-agent unless it names the
+// runner's own.
 func DefaultFor(pol *policy.Policy) string {
 	if pol == nil {
 		return DefaultName
@@ -658,7 +659,7 @@ func DefaultFor(pol *policy.Policy) string {
 	case policy.KeyKindCopilotSignIn:
 		return CopilotImageAdapterName
 	}
-	return DefaultName
+	return pol.RunContainerHarness()
 }
 
 // keyringAccount is the OS keychain account a run falls back to for the

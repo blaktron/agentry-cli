@@ -24,7 +24,7 @@ import (
 // contract's, so there is nothing a plan could add.
 
 // AgentryHarnessAdapterName is the registry key and --adapter value.
-const AgentryHarnessAdapterName = "agentry-harness"
+const AgentryHarnessAdapterName = policy.AgentryHarnessAdapter
 
 const (
 	// agentryHarnessConfig is the harness's configuration in the plan.
@@ -270,7 +270,15 @@ func agentryHarnessEndpoint(m policy.Model) (api, baseURL string, err error) {
 		}
 		return proto.APIChat, base, nil
 	}
-	return "", "", &Refusal{Reason: fmt.Sprintf("the %s adapter does not reach the model provider %q yet", AgentryHarnessAdapterName, m.Provider)}
+	return "", "", &Refusal{Reason: fmt.Sprintf("the %s adapter does not reach the model provider %q yet: run on %s (--adapter %s for one run, agentry harness use %s from now on)",
+		AgentryHarnessAdapterName, m.Provider, DefaultName, DefaultName, DefaultName)}
+}
+
+// AgentryHarnessReaches is nil when the runner's own harness reaches the
+// policy's model, else the refusal a run on it would get.
+func AgentryHarnessReaches(m policy.Model) error {
+	_, _, err := agentryHarnessEndpoint(m)
+	return err
 }
 
 // agentryHarnessModelSettings fills a Chat Completions model's sampling,

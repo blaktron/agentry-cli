@@ -255,7 +255,7 @@ func newRunCmd() *cobra.Command {
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if opts.listAdapters {
-				return printAdapters(cmd)
+				return printAdapters(cmd, opts.policyPath)
 			}
 			if opts.noDestination && len(opts.destinations) > 0 {
 				return usageError(cmd, errors.New("--no-destination and --destination exclude each other"))
@@ -289,7 +289,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&opts.out, "out", "", "output folder for reports and receipts (default ./agentry-out/<ns>-<name>-<runid>)")
 	f.StringVar(&opts.outputFormat, "output-format", "text", "stdout format: text | json (json = the full result envelope; the root --json asks for the same)")
 	f.StringVar(&opts.eventsPath, "events", "", "append the harness event stream to FILE as JSON lines while the run is live (the receipt keeps its own copy either way)")
-	f.StringVar(&opts.adapterName, "adapter", "", "harness adapter (default "+adapter.DefaultName+", or "+adapter.CodexImageAdapterName+" when the model is paid by your ChatGPT plan); see --list-adapters")
+	f.StringVar(&opts.adapterName, "adapter", "", "harness adapter for this run (default: the container harness agentry harness shows, "+adapter.DefaultName+" unless you chose another, or its vendor's harness when the model is paid by a model sign-in); see --list-adapters")
 	f.StringVar(&opts.model, "model", "", "run on this saved model, by its name or id (default: this computer's default saved model; see agentry models list); its provider's credential pays, and the harness follows that credential unless --adapter names one; with --on, its credential alone travels with the run")
 	f.StringVar(&opts.local, "local", "", "run an unpublished QuickAgent DIRECTORY instead of a registry ref")
 	f.StringVar(&opts.pin, "pin", "", "require the resolved archive digest to equal this sha256:… value")
@@ -347,12 +347,21 @@ func newRunCmd() *cobra.Command {
 	return cmd
 }
 
-// printAdapters lists registered and planned adapters.
-func printAdapters(cmd *cobra.Command) error {
+// printAdapters lists registered and planned adapters, marking the one a
+// run on the default model takes when it names none: the container harness
+// the policy at policyPath chooses, or a model sign-in's. A policy that
+// cannot be read marks docker-agent.
+func printAdapters(cmd *cobra.Command, policyPath string) error {
+	def := adapter.DefaultName
+	if pf, err := policy.Resolve(policyPath); err == nil {
+		if pol, _, err := policy.Load(pf.Path); err == nil {
+			def = adapter.DefaultFor(pol)
+		}
+	}
 	out := cmd.OutOrStdout()
 	for _, n := range adapter.Names() {
 		suffix := ""
-		if n == adapter.DefaultName {
+		if n == def {
 			suffix = " (default)"
 		}
 		_, _ = fmt.Fprintf(out, "%s%s\n", n, suffix)
