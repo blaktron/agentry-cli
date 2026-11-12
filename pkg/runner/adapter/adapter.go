@@ -538,6 +538,16 @@ type Interrupter interface {
 	Interrupt(ctx context.Context) error
 }
 
+// Steerer is a SessionDriver whose harness takes a message while a turn is
+// in flight: Steer hands it over and returns, and the harness adds it to the
+// conversation after the results of the calls it is running, or when the
+// model next answers with no call, so the turn goes on with it. With no
+// turn in flight the harness keeps the message for the next Prompt, ahead
+// of its text.
+type Steerer interface {
+	Steer(ctx context.Context, text string) error
+}
+
 // StopInterrupted and StopCancelled are the stop reasons of a turn its
 // harness was told to stop: codex's and Claude Code's word, and the Agent
 // Client Protocol's and Copilot's.

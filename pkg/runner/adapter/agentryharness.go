@@ -1,10 +1,8 @@
 package adapter
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"slices"
 	"strings"
 
@@ -108,7 +106,9 @@ func (a *agentryHarnessAdapter) Compile(in Input) (Result, error) {
 	switch in.Mode {
 	case manifest.ModeAutonomous:
 	case manifest.ModeInteractive:
-		return Result{}, &Refusal{Reason: "the " + AgentryHarnessAdapterName + " adapter runs one-shot runs only; an interactive session or a persistent agent needs another adapter"}
+		if in.Persistent {
+			return Result{}, &Refusal{Reason: "the " + AgentryHarnessAdapterName + " adapter runs one-shot runs and interactive sessions; a persistent agent needs another adapter"}
+		}
 	default:
 		return Result{}, fmt.Errorf("%s adapter: unknown run mode %q", AgentryHarnessAdapterName, in.Mode)
 	}
@@ -193,33 +193,46 @@ func (a *agentryHarnessAdapter) Compile(in Input) (Result, error) {
 		spec.EnvVar{Name: "HTTP_PROXY", Value: spec.ProxyURL()},
 		spec.EnvVar{Name: "NO_PROXY", Value: spec.GatewayAlias + ",localhost,127.0.0.1"},
 	)
+	// The conversation's record is the container's one writable mount: a
+	// volume of the run's own, removed with it.
+	store := spec.Mount{Source: spec.PHSession, Target: spec.SessionMount}
 	agent := spec.ContainerSpec{
-		Image: in.HarnessImage,
-		Argv: []string{"harness", "run",
-			"--config", spec.PlanMount + "/" + agentryHarnessConfig,
-			"--conversation", spec.PHConversation},
-		User: agentryHarnessUser,
-		Env:  env,
-		Mounts: []spec.Mount{
-			{Source: spec.PHCfg + "/harness", Target: spec.PlanMount, ReadOnly: true},
-			// The conversation's record, the container's one writable
-			// mount: a volume of the run's own, removed with it.
-			{Source: spec.PHSession, Target: spec.SessionMount},
-		},
-		StdinTask: true,
+		Image:  in.HarnessImage,
+		User:   agentryHarnessUser,
+		Env:    env,
+		Mounts: []spec.Mount{{Source: spec.PHCfg + "/harness", Target: spec.PlanMount, ReadOnly: true}},
 		// The harness writes its record and nothing else.
 		ReadOnlyRoot: true,
 		Tmpfs:        []string{"/tmp:mode=1777"},
 	}
-	return Result{
+	res := Result{
 		Files:      map[string][]byte{agentryHarnessConfig: file},
-		Agent:      agent,
 		Model:      in.Model.Provider + "/" + in.Model.Name,
 		ResultKind: resultKind,
+	}
+	config := spec.PlanMount + "/" + agentryHarnessConfig
+	if in.Mode == manifest.ModeInteractive {
+		// The same harness, the same configuration and the same events:
+		// a session names its conversation and sends its turns as commands
+		// on the container's stdin.
+		agent.Argv = []string{"harness", "serve", "--config", config}
+		res.Session = &spec.SessionSpec{
+			Transport:       agentryHarnessTransport,
+			ProtocolVersion: proto.Version,
+			SessionDB:       spec.SessionMount,
+			Mounts:          []spec.Mount{store},
+			StoreOwner:      agentryHarnessUser,
+		}
+	} else {
+		agent.Argv = []string{"harness", "run", "--config", config, "--conversation", spec.PHConversation}
+		agent.Mounts = append(agent.Mounts, store)
+		agent.StdinTask = true
 		// A harness that ends on a passing model failure is started again
 		// on the conversation it recorded.
-		Resume: &spec.ResumeSpec{SessionDB: spec.SessionMount, StoreOwner: agentryHarnessUser},
-	}, nil
+		res.Resume = &spec.ResumeSpec{SessionDB: spec.SessionMount, StoreOwner: agentryHarnessUser}
+	}
+	res.Agent = agent
+	return res, nil
 }
 
 // The OpenAI-compatible endpoints of the hosted routers, each the provider's
@@ -414,8 +427,4 @@ func (a *agentryHarnessAdapter) EndingAnswer(message string) []byte {
 func agentryHarnessCommand(c proto.Command) []byte {
 	line, _ := json.Marshal(c) // a struct of strings always encodes
 	return append(line, '\n')
-}
-
-func (a *agentryHarnessAdapter) Session(context.Context, io.ReadWriteCloser, SessionOptions) (SessionDriver, error) {
-	return nil, ErrNotSupported
 }

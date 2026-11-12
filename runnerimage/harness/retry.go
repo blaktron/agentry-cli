@@ -31,6 +31,8 @@ func retried(class llm.Class) bool {
 // reported as a warning before its wait.
 func (h *Harness) stream(ctx context.Context, req llm.Request, onDelta func(llm.Delta)) (*llm.Response, error) {
 	for attempt := 1; ; attempt++ {
+		// What a failed attempt wrote is part of no reply.
+		h.said.Reset()
 		reply, err := h.model.Stream(ctx, req, onDelta)
 		if err == nil {
 			return reply, nil

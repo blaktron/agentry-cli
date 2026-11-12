@@ -308,6 +308,13 @@ const (
 	TypeTurnEnding = "turn_ending"
 	// TypeTurnEnd closes a prompt. Every prompt gets exactly one.
 	TypeTurnEnd = "turn_end"
+	// TypePermission asks the runner whether a call may run, in a session.
+	// CallID and Tool name the call. The harness waits for the runner's
+	// permit or deny command.
+	TypePermission = "permission"
+	// TypeSteered says messages the runner sent while a turn was under way,
+	// or between turns, are now part of the conversation. Count is how many.
+	TypeSteered = "steered"
 )
 
 // Codes of warning.
@@ -331,6 +338,10 @@ const (
 	// WarnRetry: a model request failed and is sent again. Class is the
 	// failure's, Count the attempt.
 	WarnRetry = "retry"
+	// WarnCommandRefused: a command of the runner's could not be taken as
+	// things stood (a prompt while a turn is under way, an answer to nothing
+	// asked). Reason is the command's type. The session goes on.
+	WarnCommandRefused = "command_refused"
 )
 
 // What the output limit cut off (a length_recovery warning's reason).
@@ -357,12 +368,38 @@ const (
 	// CmdContinue answers turn_ending: the turn goes on, with Text as a
 	// message to the model.
 	CmdContinue = "continue"
+
+	// The commands below are a session's: the serve mode reads them, and
+	// the one-shot mode takes none of them.
+
+	// CmdOpen opens the conversation named Conversation, creating it when
+	// there is none, and is answered with a ready event or an error. It is
+	// taken between turns only. A session's first command is an open.
+	CmdOpen = "open"
+	// CmdSteer adds Text to the conversation as the runner's message while
+	// a turn is under way: after the results of the calls being run, or
+	// when the model next answers with no call. Between turns it is kept
+	// and goes ahead of the next prompt.
+	CmdSteer = "steer"
+	// CmdInterrupt stops the turn under way. Every call left open is given
+	// a result that says so, and the turn ends as interrupted. With no turn
+	// under way it does nothing.
+	CmdInterrupt = "interrupt"
+	// CmdPermit and CmdDeny answer a permission event for the call CallID
+	// names. A denied call is not run: the denial is its result, and the
+	// turn goes on.
+	CmdPermit = "permit"
+	CmdDeny   = "deny"
 )
 
 // Command is one line the runner writes.
 type Command struct {
 	Type string `json:"type"`
 	Text string `json:"text,omitempty"`
+	// Conversation is the id of the conversation to open (open).
+	Conversation string `json:"conversation,omitempty"`
+	// CallID names the call a permit or a deny answers.
+	CallID string `json:"callId,omitempty"`
 }
 
 // Why a turn ended.
@@ -375,6 +412,9 @@ const (
 	EndError = "error"
 	// EndMaxSteps: the configuration's step limit was reached.
 	EndMaxSteps = "max_steps"
+	// EndInterrupted: the runner stopped the turn. Text is what the model
+	// had written of the reply it was stopped in.
+	EndInterrupted = "interrupted"
 )
 
 // Classes of error.
@@ -416,7 +456,8 @@ type Event struct {
 	Text string `json:"text,omitempty"`
 
 	// CallID, Tool and Arguments describe a call (tool_call); CallID and
-	// Tool name the call a result answers (tool_result).
+	// Tool name the call a result answers (tool_result) or the call the
+	// runner is asked about (permission).
 	CallID    string          `json:"callId,omitempty"`
 	Tool      string          `json:"tool,omitempty"`
 	Arguments json.RawMessage `json:"arguments,omitempty"`
@@ -431,7 +472,8 @@ type Event struct {
 	Usage *Usage `json:"usage,omitempty"`
 
 	// Code names a warning, one of the Warn constants. Count is the figure
-	// the code's comment gives it.
+	// the code's comment gives it, or how many messages a steered event
+	// counts.
 	Code  string `json:"code,omitempty"`
 	Count int    `json:"count,omitempty"`
 	// Class is an error's class, one of the Class constants. Status is
@@ -446,6 +488,9 @@ type Event struct {
 	Reason string `json:"reason,omitempty"`
 	// Conversation is the id of the conversation (ready, turn_end).
 	Conversation string `json:"conversation,omitempty"`
+	// Continued says the conversation already held a message when it was
+	// opened (ready).
+	Continued bool `json:"continued,omitempty"`
 	// Tools is the names of the tools the model is offered (ready).
 	Tools []string `json:"tools,omitempty"`
 }
