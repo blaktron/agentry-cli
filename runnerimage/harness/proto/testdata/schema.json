@@ -113,7 +113,8 @@
       "steer",
       "interrupt",
       "permit",
-      "deny"
+      "deny",
+      "compact"
     ],
     "event.class": [
       "overflow",
@@ -165,7 +166,8 @@
     ],
     "warning.reason.compaction": [
       "threshold",
-      "overflow"
+      "overflow",
+      "request"
     ],
     "warning.reason.length_recovery": [
       "answer",

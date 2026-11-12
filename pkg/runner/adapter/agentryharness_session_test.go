@@ -599,3 +599,181 @@ func TestAgentryHarnessCompilesASessionOfTheSameHarness(t *testing.T) {
 		}
 	}
 }
+
+func TestAgentryHarnessSessionStartsANewConversationInTheRunningHarness(t *testing.T) {
+	rw, h := startFakeHarness(t, func(h *fakeHarness) {
+		// The stored conversation had cost 40 cents when the session took
+		// it up.
+		open := h.expect(proto.CmdOpen)
+		h.write(proto.Event{Type: proto.TypeReady, Conversation: open.Conversation, Continued: true,
+			Usage: &proto.Usage{ContextTokens: 9000, ContextLimit: 200000, CostUSD: 0.40}})
+		h.expect(proto.CmdPrompt)
+		h.write(proto.Event{Type: proto.TypeUsage, Usage: &proto.Usage{Input: 9000, Output: 100, ContextTokens: 9000, ContextLimit: 200000, CostUSD: 0.45}})
+		h.write(proto.Event{Type: proto.TypeTurnEnd, Reason: proto.EndAnswered, Text: "one"})
+		// A new conversation counts its cost from nothing.
+		h.opened(false)
+		h.expect(proto.CmdPrompt)
+		h.write(proto.Event{Type: proto.TypeUsage, Usage: &proto.Usage{Input: 500, Output: 10, ContextTokens: 500, ContextLimit: 200000, CostUSD: 0.01}})
+		h.write(proto.Event{Type: proto.TypeTurnEnd, Reason: proto.EndAnswered, Text: "two"})
+		// One the harness cannot open leaves the session where it was.
+		h.expect(proto.CmdOpen)
+		h.write(proto.Event{Type: proto.TypeError, Class: proto.ClassHarness, Text: "conversation x: no space left on device"})
+	})
+	const stored = "0c5d1f6e-58a1-4f0c-9a53-6f6a2f1f4a11"
+	drv, closeAndCollect := driveHarnessSession(t, rw, SessionOptions{ContinueID: stored, Persistent: true})
+	ctx := harnessTestContext(t)
+	if err := drv.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := drv.Prompt(ctx, "one"); err != nil {
+		t.Fatal(err)
+	}
+	r, ok := drv.(Renewing)
+	if !ok {
+		t.Fatal("the driver cannot start a new conversation")
+	}
+	id, err := r.NewConversation(ctx)
+	if err != nil || id == "" || id == stored {
+		t.Fatalf("NewConversation = %q, %v", id, err)
+	}
+	c := drv.(Continuing)
+	if continued, why := c.Continued(); c.ConversationID() != id || continued || why != "" {
+		t.Errorf("after it: id %q continued %v why %q", c.ConversationID(), continued, why)
+	}
+	if _, err := drv.Prompt(ctx, "two"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.NewConversation(ctx); err == nil || !strings.Contains(err.Error(), "no space left") {
+		t.Errorf("a conversation the harness cannot open: %v", err)
+	}
+	if c.ConversationID() != id {
+		t.Errorf("the session left the conversation it was in for %q", c.ConversationID())
+	}
+	var costs []float64
+	for _, ev := range closeAndCollect() {
+		if ev.Kind == EventUsage {
+			costs = append(costs, ev.CostUSD)
+			if !strings.Contains(string(ev.Raw), `"costUsd"`) {
+				t.Errorf("the usage event lost the line the harness wrote: %s", ev.Raw)
+			}
+		}
+		if ev.Kind == EventError {
+			t.Errorf("a refused open became the session's error: %+v", ev)
+		}
+	}
+	// What the session added to the stored conversation, then the new
+	// conversation's own.
+	if len(costs) != 2 || costs[0] < 0.0499 || costs[0] > 0.0501 || costs[1] != 0.01 {
+		t.Errorf("the usage events' costs: %v", costs)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.seen[0].Conversation != stored || h.seen[2].Conversation != id {
+		t.Errorf("the opens: %+v", h.seen)
+	}
+}
+
+func TestAgentryHarnessSessionCompactsTheConversationInPlace(t *testing.T) {
+	rw, _ := startFakeHarness(t, func(h *fakeHarness) {
+		h.opened(false)
+		h.expect(proto.CmdCompact)
+		h.write(proto.Event{Type: proto.TypeUsage, Usage: &proto.Usage{Input: 50000, Output: 900, ContextTokens: 50000}})
+		h.write(proto.Event{Type: proto.TypeUsage, Usage: &proto.Usage{ContextTokens: 1200, ContextLimit: 200000, Compacted: true}})
+		h.write(proto.Event{Type: proto.TypeWarning, Code: proto.WarnCompaction, Reason: proto.CompactionRequest, Text: "The conversation was replaced by a summary of it."})
+		// A summary the model's server would not make.
+		h.expect(proto.CmdCompact)
+		h.write(proto.Event{Type: proto.TypeWarning, Code: proto.WarnCompactionFailed, Reason: proto.CompactionRequest, Text: "The conversation was not summarised and is as it was: Overloaded."})
+		// A compact the harness does not take.
+		refused := h.expect(proto.CmdCompact)
+		h.write(proto.Event{Type: proto.TypeWarning, Code: proto.WarnCommandRefused, Reason: refused.Type, Text: `The command "compact" was not taken: a turn is under way.`})
+		// One nobody waits for any more is given up. The harness answers
+		// it late, and that is no answer to the compact after it.
+		h.expect(proto.CmdCompact)
+		h.expect(proto.CmdInterrupt)
+		h.expect(proto.CmdCompact)
+		h.write(proto.Event{Type: proto.TypeWarning, Code: proto.WarnCompactionFailed, Reason: proto.CompactionRequest, Text: "The conversation was not summarised and is as it was: the summary was given up when the runner stopped it."})
+		h.write(proto.Event{Type: proto.TypeWarning, Code: proto.WarnCompaction, Reason: proto.CompactionRequest, Text: "The conversation was replaced by a summary of it."})
+	})
+	drv, closeAndCollect := driveHarnessSession(t, rw, SessionOptions{Persistent: true})
+	ctx := harnessTestContext(t)
+	if err := drv.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	c, ok := drv.(Compacting)
+	if !ok {
+		t.Fatal("the driver cannot compact a conversation")
+	}
+	if err := c.CompactConversation(ctx); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+	if err := c.CompactConversation(ctx); err == nil || !strings.Contains(err.Error(), "Overloaded") {
+		t.Errorf("a summary that could not be made: %v", err)
+	}
+	if err := c.CompactConversation(ctx); err == nil || !strings.Contains(err.Error(), "was not taken") {
+		t.Errorf("a compact the harness refused: %v", err)
+	}
+	short, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	defer cancel()
+	if err := c.CompactConversation(short); err == nil || !strings.Contains(err.Error(), "deadline") {
+		t.Errorf("a compact nobody waits for: %v", err)
+	}
+	if err := c.CompactConversation(ctx); err != nil {
+		t.Errorf("the compact after one that was given up: %v", err)
+	}
+	var compactions, after int
+	for _, ev := range closeAndCollect() {
+		switch {
+		case ev.Kind == EventCompaction:
+			compactions++
+			if ev.Text != proto.CompactionRequest {
+				t.Errorf("the compaction's reason: %q", ev.Text)
+			}
+		case ev.Kind == EventUsage && ev.ContextCompacted:
+			after++
+			if ev.ContextTokens != 1200 || ev.ContextLimit != 200000 {
+				t.Errorf("the size after the summary: %+v", ev)
+			}
+		}
+	}
+	// The engine counts each summary and reads the size after the one
+	// that said it.
+	if compactions != 2 || after != 1 {
+		t.Errorf("%d compaction events and %d sizes after, want 2 and 1", compactions, after)
+	}
+}
+
+func TestAgentryHarnessCompilesAPersistentAgentsSegment(t *testing.T) {
+	in := agentryHarnessInput()
+	in.Mode = "interactive"
+	session, err := (&agentryHarnessAdapter{}).Compile(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in.Persistent = true
+	res, err := (&agentryHarnessAdapter{}).Compile(in)
+	if err != nil {
+		t.Fatalf("a persistent plan: %v", err)
+	}
+	// The same drive as a session's. The conversation is named over the
+	// session, so nothing of it is on the command line.
+	if strings.Join(res.Agent.Argv, " ") != strings.Join(session.Agent.Argv, " ") || res.Session == nil || res.Session.ConversationArgs != nil {
+		t.Errorf("argv %v, session %+v", res.Agent.Argv, res.Session)
+	}
+	// A summary points the agent at its own notes, which outlive a run's.
+	var cfg, plain proto.Config
+	if err := json.Unmarshal(res.Files[agentryHarnessConfig], &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(session.Files[agentryHarnessConfig], &plain); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Compaction == nil || cfg.Compaction.Notes == "" || cfg.Compaction.Notes == plain.Compaction.Notes {
+		t.Errorf("the notes a persistent agent's summary names: %+v, a session's %+v", cfg.Compaction, plain.Compaction)
+	}
+	if cfg.ColdClear == nil || cfg.ColdClear.KeepTurns != 2 {
+		t.Errorf("cold clear: %+v", cfg.ColdClear)
+	}
+	if !ClearsWhenCold(AgentryHarnessAdapterName) || !ClearsWhenCold(DefaultName) || ClearsWhenCold(CodexImageAdapterName) {
+		t.Error("which harnesses clear old results themselves")
+	}
+}

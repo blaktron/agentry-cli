@@ -502,8 +502,14 @@ func TestASessionLoadsAStoredConversation(t *testing.T) {
 	if w, _ := s.until(proto.TypeWarning); w.Code != proto.WarnCommandRefused {
 		t.Fatalf("a prompt with no conversation open: %+v", w)
 	}
-	if ready := s.open("chat-1"); !ready.Continued {
+	ready := s.open("chat-1")
+	if !ready.Continued {
 		t.Fatalf("ready: %+v", ready)
+	}
+	// It says where the conversation stands: its size, the window and what
+	// it has cost.
+	if u := ready.Usage; u == nil || u.ContextTokens != 55 || u.ContextLimit != 200000 || u.CostUSD < 0.000999 || u.CostUSD > 0.001001 {
+		t.Fatalf("the continued conversation's standing: %+v", u)
 	}
 	events := s.turn("How many people live there?")
 	req := model.Requests()[1]
@@ -597,5 +603,192 @@ func TestTheSessionModeNeedsItsConfiguration(t *testing.T) {
 	var stderr bytes.Buffer
 	if code := harness.Serve(context.Background(), nil, strings.NewReader(""), io.Discard, &stderr, func(string) string { return "" }); code != harness.ExitUsage || !strings.Contains(stderr.String(), "usage: harness serve") {
 		t.Errorf("exit %d, stderr %q", code, stderr.String())
+	}
+}
+
+func TestACompactionTheRunnerAsksFor(t *testing.T) {
+	const summary = "The person asked what a.txt holds; it holds a greeting, and that was said."
+	model := scriptedmodel.New(t,
+		asks("c1", "fs_read", `{"path":"a.txt"}`).WithUsage(scriptedmodel.Usage{Input: 400, Output: 20}),
+		scriptedmodel.Text("It holds a greeting.").WithUsage(scriptedmodel.Usage{Input: 450, Output: 10}),
+		scriptedmodel.Text(summary).WithUsage(scriptedmodel.Usage{Input: 500, Output: 30}),
+		scriptedmodel.Text("Yes, a greeting."),
+	)
+	g := newGateway(t, "fs_read")
+	dir := t.TempDir()
+	s := serve(t, model, g, dir, set("compaction", map[string]any{"threshold": 0.8, "checkpoint": "Keep what the person asked."}))
+	// Nothing is open, and then nothing has been said: there is nothing to
+	// summarise, and the model is asked nothing.
+	s.send(proto.Command{Type: proto.CmdCompact})
+	if w, _ := s.until(proto.TypeWarning); w.Code != proto.WarnCommandRefused {
+		t.Fatalf("a compact with no conversation open: %+v", w)
+	}
+	s.open("chat-1")
+	s.send(proto.Command{Type: proto.CmdCompact})
+	if w, _ := s.until(proto.TypeWarning); w.Code != proto.WarnCompactionFailed || w.Reason != proto.CompactionRequest {
+		t.Fatalf("a compact of an empty conversation: %+v", w)
+	}
+	if n := len(model.Requests()); n != 0 {
+		t.Fatalf("%d requests were made for it", n)
+	}
+
+	s.turn("What does a.txt hold?")
+	s.send(proto.Command{Type: proto.CmdCompact})
+	done, passed := s.until(proto.TypeWarning)
+	if done.Code != proto.WarnCompaction || done.Reason != proto.CompactionRequest {
+		t.Fatalf("the answer to the compact: %+v", done)
+	}
+	// The summary is no answer of the agent's, and the conversation's size
+	// after it is said before the answer.
+	var after *proto.Usage
+	for _, ev := range passed {
+		if ev.Type == proto.TypeText {
+			t.Errorf("the summary was written as answer text: %+v", ev)
+		}
+		if ev.Type == proto.TypeUsage && ev.Usage.Compacted {
+			after = ev.Usage
+		}
+	}
+	if after == nil || after.ContextTokens <= 0 || after.ContextTokens >= 480 {
+		t.Errorf("the size after the summary: %+v", after)
+	}
+	// The next command may come the moment the answer is read.
+	events := s.turn("So it is a greeting?")
+	if end := last(t, events, proto.TypeTurnEnd); end.Reason != proto.EndAnswered {
+		t.Fatalf("the turn after the summary: %+v", end)
+	}
+	reqs := model.Requests()
+	// The summary request is the conversation as it stood with the
+	// instruction last; the next turn's request opens with the summary.
+	if err := scriptedmodel.PrefixOf(reqs[1], reqs[2]); err != nil {
+		t.Errorf("the summary request does not continue the conversation: %v", err)
+	}
+	if got := roles(reqs[3]); got != "user" || !strings.Contains(reqs[3].Messages[0].Text, summary) || !strings.HasSuffix(reqs[3].Messages[0].Text, "So it is a greeting?") {
+		t.Errorf("the request after the summary: %s: %q", got, reqs[3].Messages[0].Text)
+	}
+	var reasons []string
+	for _, e := range entries(t, dir, "chat-1") {
+		if e.Kind == convo.KindCompaction {
+			reasons = append(reasons, e.Reason)
+		}
+	}
+	if strings.Join(reasons, ",") != proto.CompactionRequest {
+		t.Errorf("the record's compactions: %q", reasons)
+	}
+}
+
+func TestAnInterruptGivesUpACompactionTheRunnerAskedFor(t *testing.T) {
+	model := scriptedmodel.New(t,
+		scriptedmodel.Text("It holds a greeting."),
+		scriptedmodel.Stall("The person asked"),
+		scriptedmodel.Text("Still a greeting."),
+	)
+	g := newGateway(t, "fs_read")
+	dir := t.TempDir()
+	s := serve(t, model, g, dir, set("compaction", map[string]any{"threshold": 0.8}))
+	s.open("chat-1")
+	s.turn("What does a.txt hold?")
+	s.send(proto.Command{Type: proto.CmdCompact})
+	// A prompt meanwhile is not taken: the summary has the turn's place.
+	s.send(proto.Command{Type: proto.CmdPrompt, Text: "Hello?"})
+	if w, _ := s.until(proto.TypeWarning); w.Code != proto.WarnCommandRefused || w.Reason != proto.CmdPrompt {
+		t.Fatalf("a prompt during the summary: %+v", w)
+	}
+	// Once the summary request is with the model, it is given up.
+	for deadline := time.Now().Add(10 * time.Second); len(model.Requests()) < 2; {
+		if time.Now().After(deadline) {
+			t.Fatal("the summary request never reached the model")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	s.send(proto.Command{Type: proto.CmdInterrupt})
+	if w, _ := s.until(proto.TypeWarning); w.Code != proto.WarnCompactionFailed || w.Reason != proto.CompactionRequest {
+		t.Fatalf("the answer to the compact: %+v", w)
+	}
+	// The conversation is as it was.
+	s.turn("And now?")
+	if got := roles(model.Requests()[2]); got != "user assistant user" {
+		t.Errorf("the request after the summary was given up: %s", got)
+	}
+	for _, e := range entries(t, dir, "chat-1") {
+		if e.Kind == convo.KindCompaction {
+			t.Errorf("the record holds a compaction: %+v", e)
+		}
+	}
+}
+
+func TestAConversationCarriedOnUnderAnotherFrameLeavesItsOldReasoningBehind(t *testing.T) {
+	script := func() *scriptedmodel.Server {
+		return scriptedmodel.New(t,
+			asks("c1", "fs_read", `{"path":"a.txt"}`).WithReasoning("I should read the file first."),
+			scriptedmodel.Text("It holds a greeting.").WithReasoning("The file is short."),
+		)
+	}
+	replayed := func(r scriptedmodel.Request) int {
+		n := 0
+		for _, m := range r.Messages {
+			if m.Reasoning != "" {
+				n++
+			}
+		}
+		return n
+	}
+	for name, tc := range map[string]struct {
+		edit func(map[string]any)
+		tool string
+		want int // replies of the first process sent back with their reasoning
+	}{
+		"the same frame":        {nil, "", 2},
+		"another system prompt": {set("system", "You are a careful agent. Today is Tuesday."), "", 0},
+		"another model":         {func(c map[string]any) { c["model"].(map[string]any)["name"] = "claude-next" }, "", 0},
+		"another tool":          {nil, "fs_write", 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			first := script()
+			s := serve(t, first, newGateway(t, "fs_read"), dir, nil)
+			s.open("chat-1")
+			s.turn("What does a.txt hold?")
+			// Inside one process every reply goes back whole.
+			if got := replayed(first.Requests()[1]); got != 1 {
+				t.Fatalf("the first process replayed %d replies' reasoning, want 1", got)
+			}
+			s.end()
+
+			tools := []string{"fs_read"}
+			if tc.tool != "" {
+				tools = append(tools, tc.tool)
+			}
+			second := scriptedmodel.New(t,
+				scriptedmodel.Text("Yes.").WithReasoning("Easy."),
+				scriptedmodel.Text("Yes, still."),
+			)
+			s = serve(t, second, newGateway(t, tools...), dir, tc.edit)
+			if ready := s.open("chat-1"); !ready.Continued {
+				t.Fatalf("ready: %+v", ready)
+			}
+			s.turn("A greeting, then?")
+			s.turn("Sure?")
+			reqs := second.Requests()
+			if got := replayed(reqs[0]); got != tc.want {
+				t.Errorf("the first request replayed %d replies' reasoning, want %d", got, tc.want)
+			}
+			// A reply made under the frame the process has goes back whole.
+			if got := replayed(reqs[1]); got != tc.want+1 {
+				t.Errorf("the second request replayed %d replies' reasoning, want %d", got, tc.want+1)
+			}
+			if err := scriptedmodel.PrefixOf(reqs[0], reqs[1]); err != nil {
+				t.Errorf("the second request does not continue the first: %v", err)
+			}
+			frames := 0
+			for _, e := range entries(t, dir, "chat-1") {
+				if e.Kind == convo.KindFrame {
+					frames++
+				}
+			}
+			if want := map[bool]int{true: 1, false: 2}[tc.want == 2]; frames != want {
+				t.Errorf("%d frame entries in the record, want %d", frames, want)
+			}
+		})
 	}
 }

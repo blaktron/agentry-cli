@@ -2286,7 +2286,10 @@
             "TestASessionLoadsAStoredConversation",
             "TestACommandThatCannotBeTakenIsRefusedAndTheSessionGoesOn",
             "TestALineThatIsNoCommandEndsTheSession",
-            "TestTheSessionModeNeedsItsConfiguration"
+            "TestTheSessionModeNeedsItsConfiguration",
+            "TestACompactionTheRunnerAsksFor",
+            "TestAnInterruptGivesUpACompactionTheRunnerAskedFor",
+            "TestAConversationCarriedOnUnderAnotherFrameLeavesItsOldReasoningBehind"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -4449,7 +4452,10 @@
             "TestAgentryHarnessSessionEventsAreCompleteBeforeThePromptReturns",
             "TestAgentryHarnessSessionContinuesAStoredConversation",
             "TestAgentryHarnessSessionSteersAndOutlivesAHarnessThatEnds",
-            "TestAgentryHarnessCompilesASessionOfTheSameHarness"
+            "TestAgentryHarnessCompilesASessionOfTheSameHarness",
+            "TestAgentryHarnessSessionStartsANewConversationInTheRunningHarness",
+            "TestAgentryHarnessSessionCompactsTheConversationInPlace",
+            "TestAgentryHarnessCompilesAPersistentAgentsSegment"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -7079,6 +7085,21 @@
       "disposition": "retain",
       "files": [
         {
+          "path": "pkg/runner/engine/agentryharness_persistent_test.go",
+          "tests": [
+            "TestAPersistentAgentOnTheRunnersOwnHarnessKeepsItsConversationAcrossSegments",
+            "TestAPersistentSegmentOnTheRunnersOwnHarnessStartsAnewWhenTheStoreCannotLoad",
+            "TestAPersistentSegmentOnTheRunnersOwnHarnessStartsANewConversationAndCompacts"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "docker interface (real or fake)",
+            "source/file contract"
+          ]
+        },
+        {
           "path": "pkg/runner/engine/applink_test.go",
           "tests": [
             "TestTheAppLinksSocketIsHeldToThePlan"
@@ -9173,7 +9194,8 @@
         {
           "path": "pkg/runner/persistent/adapter_test.go",
           "tests": [
-            "TestAConversationIsNeverOfferedToAnotherHarness"
+            "TestAConversationIsNeverOfferedToAnotherHarness",
+            "TestAnAgentMovedBetweenTheContainerHarnessesCarriesItsLastExchange"
           ],
           "fuzz": [],
           "benchmarks": [],

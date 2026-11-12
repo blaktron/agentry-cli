@@ -614,7 +614,7 @@ func TestAConversationNearTheWindowIsReplacedByASummary(t *testing.T) {
 	for _, e := range entries(t, dir, "run-1") {
 		kinds = append(kinds, e.Kind)
 	}
-	if got := strings.Join(kinds, " "); got != "header user assistant usage call result usage compaction assistant usage" {
+	if got := strings.Join(kinds, " "); got != "header frame user assistant usage call result usage compaction assistant usage" {
 		t.Errorf("the record: %s", got)
 	}
 	again := scriptedmodel.New(t, scriptedmodel.Text("Still x."))

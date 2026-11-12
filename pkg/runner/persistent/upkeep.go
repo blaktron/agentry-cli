@@ -567,12 +567,11 @@ func (s *Supervisor) compactLocked(ctx context.Context, trigger string) (Compact
 }
 
 // coldDue says a cold-cache compaction is due before the person's next
-// message: on a harness the supervisor cannot clear old tool results on
-// (every one but docker-agent, whose harness clears them itself), once its
-// prompt cache has expired.
+// message: on a harness that does not clear old tool results itself
+// (adapter.ClearsWhenCold), once its prompt cache has expired.
 func (s *Supervisor) coldDue() bool {
 	harness := s.adapterName()
-	if harness == adapter.DefaultName {
+	if adapter.ClearsWhenCold(harness) {
 		return false
 	}
 	provider := ""

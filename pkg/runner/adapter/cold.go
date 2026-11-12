@@ -40,6 +40,13 @@ type coldKey struct{ adapter, provider string }
 // shorter row.
 const coldAfterLong = 60 * time.Minute
 
+// ClearsWhenCold reports whether the adapter named name runs a harness that
+// clears old tool results itself on a turn's first request after its cache
+// has expired. Any other harness leaves that to whoever drives it.
+func ClearsWhenCold(name string) bool {
+	return name == DefaultName || name == AgentryHarnessAdapterName
+}
+
 // ColdCompactionFloor is the smallest conversation, in tokens, a cold-cache
 // compaction compacts: below it the history costs too little to be worth a
 // compaction's own request.
