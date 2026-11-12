@@ -71,14 +71,25 @@ func (s *Session) Frame(f runhost.Frame) {
 	if ev.Refused != "" {
 		// A command the runhost's session protocol refused: the call in
 		// flight that it answers learns why.
-		if ev.Refused == protocol.RefusedInput {
+		switch {
+		case ev.Refused == protocol.RefusedInput:
 			s.settle("input", refusalError(ev))
-		} else {
+		case ev.Refused == protocol.RefusedNoTurn, ev.Refused == protocol.RefusedCannotSteer, ev.Refused == protocol.RefusedSteer:
+			s.settle("steer", refusalError(ev))
+		case ev.Refused == protocol.RefusedUnknown && s.pending["steer"] != nil:
+			// Every runhost knows a send, so the command this one does
+			// not know is the steer: its CLI is older than the command.
+			s.settle("steer", fmt.Errorf("%w: the runhost's CLI is older than the command", session.ErrCannotSteer))
+		default:
 			s.settle("turn", refusalError(ev))
 		}
 		return
 	}
 	switch ev.Kind {
+	case session.KindSteer:
+		if !ev.Synthetic {
+			s.settle("steer", nil)
+		}
 	case session.KindAssistantTurn:
 		if ev.StopReason == session.StopInterrupted {
 			s.settle("turn", session.ErrInterrupted)
@@ -91,6 +102,7 @@ func (s *Session) Frame(f runhost.Frame) {
 		s.ended, s.reason = true, ev.Reason
 		s.settle("turn", session.ErrEnded)
 		s.settle("input", session.ErrEnded)
+		s.settle("steer", session.ErrEnded)
 	}
 	if !s.closed {
 		select {
@@ -105,6 +117,10 @@ func refusalError(ev protocol.Event) error {
 	switch ev.Refused {
 	case protocol.RefusedBusy:
 		return session.ErrBusy
+	case protocol.RefusedNoTurn:
+		return session.ErrNoTurn
+	case protocol.RefusedCannotSteer:
+		return fmt.Errorf("%w: %s", session.ErrCannotSteer, ev.Text)
 	default:
 		return fmt.Errorf("the runhost's session refused it (%s): %s", ev.Refused, ev.Text)
 	}
@@ -130,6 +146,7 @@ func (s *Session) Over(res runhost.JobResult, err error, next int) {
 	}
 	s.settle("turn", session.ErrEnded)
 	s.settle("input", session.ErrEnded)
+	s.settle("steer", session.ErrEnded)
 	s.closed = true
 	close(s.events)
 	s.mu.Unlock()
@@ -186,6 +203,16 @@ func (s *Session) Send(ctx context.Context, text string) error {
 		return err
 	}
 	return s.await(ctx, "turn", ch)
+}
+
+// Steer implements session.Steerer: the message goes to the session on the
+// runhost, and Steer returns once that session has taken or refused it.
+func (s *Session) Steer(ctx context.Context, text string) error {
+	ch, err := s.begin("steer", command(protocol.Command{Steer: &protocol.Steer{Text: text}}))
+	if err != nil {
+		return err
+	}
+	return s.await(ctx, "steer", ch)
 }
 
 // AddInput sends a regular file of this device's to the session's inputs

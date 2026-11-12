@@ -4145,6 +4145,18 @@
           ]
         },
         {
+          "path": "pkg/runhost/remote/session_test.go",
+          "tests": [
+            "TestAMessageDuringATurnOnARunhost"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "real-time wait"
+          ]
+        },
+        {
           "path": "pkg/runhost/remote/update_test.go",
           "tests": [
             "TestUpdateBringsARunhostToThisDevicesVersion",
@@ -7277,9 +7289,12 @@
           "tests": [
             "TestASessionOnTheRunnersOwnHarness",
             "TestASessionsEnvelopeCountsWhatItsHarnessDidToCarryTheConversation",
+            "TestAMessageSentDuringATurnJoinsItAfterTheCallsResult",
+            "TestTheCapOnAPersonsMessagesHoldsForOnesSentDuringATurn",
             "TestAnInterruptStopsATurnOnTheRunnersOwnHarness",
             "TestASessionOnTheRunnersOwnHarnessEndsOutOfCredits",
-            "TestTheSessionProtocolDrivesTheRunnersOwnHarness"
+            "TestTheSessionProtocolDrivesTheRunnersOwnHarness",
+            "TestTheSessionProtocolSteersATurnOnTheRunnersOwnHarness"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -10512,7 +10527,9 @@
             "TestASendIsRefusedBusyWhileATurnIsOnItsWayOrInFlight",
             "TestAnAnswerReachesTheSessionThatAsksOrIsRefused",
             "TestUsageIsMeteredAsTheSessionNarratesIt",
-            "TestAClosedOutputStillWritesWhatIsQueued"
+            "TestAClosedOutputStillWritesWhatIsQueued",
+            "TestASteerReachesTheSessionOrIsRefusedByName",
+            "TestASteerDoesNotTakeTheTurn"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -11160,7 +11177,8 @@
             "TestTheChatOpensWithTheAgentsOpeningLineAndTheCommands",
             "TestTheStatusLineShowsTheRunsBudgets",
             "TestTheChatIsDrawnToTheWindowAndStopsWhenItEnds",
-            "TestRunReturnsHowTheChatWasLeft"
+            "TestRunReturnsHowTheChatWasLeft",
+            "TestAMessageTypedDuringATurnIsSentIntoIt"
           ],
           "fuzz": [],
           "benchmarks": [],

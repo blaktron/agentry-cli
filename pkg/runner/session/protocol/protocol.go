@@ -8,9 +8,16 @@
 // The commands, one JSON object per line, each exactly one of:
 //
 //	{"send":{"text":"…"}}       one user turn
+//	{"steer":{"text":"…"}}      a message into the turn in flight
 //	{"add":{"path":"…"}}        a regular file the driver staged in Options.InputsDir
 //	{"end":{"finish":true}}     ask for the final result, then end (the TUI's /finish)
 //	{"end":{"finish":false}}    end without one (the TUI's /quit)
+//
+// A steer is taken only while a turn is in flight, and only by a session
+// whose harness takes a message during a turn: the session answers it with
+// a steer event, and a steered event marks where the message joined the
+// conversation. Any other steer is refused, and the driver sends the text as
+// a turn once the one in flight has ended.
 //
 // End of input is an end without a result. Every event line is one
 // session.Event exactly as the session emitted it, redacted as it reaches
@@ -41,6 +48,7 @@ import (
 // Command is one line of input: exactly one of its members is set.
 type Command struct {
 	Send   *Send   `json:"send,omitempty"`
+	Steer  *Steer  `json:"steer,omitempty"`
 	Add    *Add    `json:"add,omitempty"`
 	End    *End    `json:"end,omitempty"`
 	Answer *Answer `json:"answer,omitempty"`
@@ -54,6 +62,11 @@ type Answer struct {
 
 // Send is one user turn.
 type Send struct {
+	Text string `json:"text"`
+}
+
+// Steer is a message for the turn in flight.
+type Steer struct {
 	Text string `json:"text"`
 }
 
@@ -85,6 +98,15 @@ const (
 	RefusedInput Refusal = "input_refused"
 	// RefusedAnswer: an answer to no question this session has open.
 	RefusedAnswer Refusal = "answer_refused"
+	// RefusedNoTurn: a steer arrived with no turn in flight. The text is
+	// sent as a turn instead.
+	RefusedNoTurn Refusal = "no_turn"
+	// RefusedCannotSteer: the session's harness takes a message only
+	// between turns.
+	RefusedCannotSteer Refusal = "cannot_steer"
+	// RefusedSteer: the session would not take the steer for a reason of
+	// its own (its limit of messages is reached, the harness has gone).
+	RefusedSteer Refusal = "steer_refused"
 )
 
 // RefusedError is a send a session shared through another process refused
@@ -223,6 +245,27 @@ loop:
 					}
 					sv.settle(seq)
 				}(c.Send.Text)
+			case c.Steer != nil:
+				st, ok := s.(session.Steerer)
+				if !ok {
+					sv.refuse(RefusedCannotSteer, session.ErrCannotSteer.Error())
+					continue
+				}
+				// Beside the command loop, as a send is: a session that
+				// runs elsewhere answers only once it has heard back.
+				turns.Add(1)
+				go func(text string) {
+					defer turns.Done()
+					switch err := st.Steer(context.Background(), text); {
+					case err == nil, errors.Is(err, session.ErrEnded):
+					case errors.Is(err, session.ErrNoTurn):
+						sv.refuse(RefusedNoTurn, "no turn is in flight; send the text as a turn")
+					case errors.Is(err, session.ErrCannotSteer):
+						sv.refuse(RefusedCannotSteer, err.Error())
+					default:
+						sv.refuse(RefusedSteer, err.Error())
+					}
+				}(c.Steer.Text)
 			case c.Answer != nil:
 				a, ok := s.(session.Answerer)
 				if !ok {
@@ -524,14 +567,14 @@ func parse(l line) (Command, Refusal, string) {
 	var names []string
 	for k := range members {
 		switch k {
-		case "send", "add", "end", "answer":
+		case "send", "steer", "add", "end", "answer":
 			names = append(names, k)
 		default:
-			return Command{}, RefusedUnknown, fmt.Sprintf("unknown command %q (want send, add, end or answer)", k)
+			return Command{}, RefusedUnknown, fmt.Sprintf("unknown command %q (want send, steer, add, end or answer)", k)
 		}
 	}
 	if len(names) != 1 {
-		return Command{}, RefusedMalformed, "a line names exactly one command: send, add, end or answer"
+		return Command{}, RefusedMalformed, "a line names exactly one command: send, steer, add, end or answer"
 	}
 	var c Command
 	dec := json.NewDecoder(bytes.NewReader(b))
@@ -542,11 +585,13 @@ func parse(l line) (Command, Refusal, string) {
 	switch {
 	case c.Send != nil && strings.TrimSpace(c.Send.Text) == "":
 		return Command{}, RefusedMalformed, "send needs a text"
+	case c.Steer != nil && strings.TrimSpace(c.Steer.Text) == "":
+		return Command{}, RefusedMalformed, "steer needs a text"
 	case c.Answer != nil && strings.TrimSpace(c.Answer.ID) == "":
 		return Command{}, RefusedMalformed, "answer needs the question's id"
 	case c.Add != nil && c.Add.Path == "":
 		return Command{}, RefusedMalformed, "add needs a path"
-	case c.Send == nil && c.Add == nil && c.End == nil && c.Answer == nil:
+	case c.Send == nil && c.Steer == nil && c.Add == nil && c.End == nil && c.Answer == nil:
 		return Command{}, RefusedMalformed, fmt.Sprintf("%s needs its object", names[0])
 	}
 	return c, "", ""

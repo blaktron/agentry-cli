@@ -8,6 +8,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -217,6 +218,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case steerDoneMsg:
+		return m.steered(msg)
+
 	case inputDoneMsg:
 		if msg.err != nil {
 			m.appendLine(m.styles.warn.Render("could not add " + msg.path + ": " + msg.err.Error()))
@@ -261,6 +265,7 @@ func (m model) submit(text string) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "/help":
 			m.appendLine(m.styles.dim.Render("/add <path> — give the agent a file (read-only under /inputs); /yes, /no — answer what Agentry asks you for the agent; /finish — ask for the final result and end; /quit — end without a result; /caps — the enforced contract"))
+			m.appendLine(m.styles.dim.Render("A message you send while the agent is answering reaches it during that turn, where its harness takes one; otherwise it stays in the input line for you to send when the turn ends."))
 			return m, nil
 		case "/yes", "/no":
 			a, ok := m.s.(session.Answerer)
@@ -286,13 +291,59 @@ func (m model) submit(text string) (tea.Model, tea.Cmd) {
 		}
 	}
 	if m.busy {
-		m.notice = "the agent is still answering — wait for its turn to end"
-		return m, nil
+		// A harness that takes a message during a turn is given it now;
+		// the session says so with an event, or says why not.
+		st, ok := m.s.(session.Steerer)
+		if !ok {
+			return m.steered(steerDoneMsg{text: text, err: session.ErrCannotSteer})
+		}
+		return m, func() tea.Msg { return steerDoneMsg{text: text, err: st.Steer(context.Background(), text)} }
 	}
+	return m.send(text)
+}
+
+// stillAnswering is the status line's word for a message the turn in flight
+// cannot take.
+const stillAnswering = "the agent is still answering — wait for its turn to end"
+
+// send opens a turn with text.
+func (m model) send(text string) (tea.Model, tea.Cmd) {
 	m.busy = true
 	m.notice = ""
 	s := m.s
 	return m, func() tea.Msg { return turnDoneMsg{err: s.Send(context.Background(), text)} }
+}
+
+// steerDoneMsg is a message sent during a turn handed over, or why it was
+// not taken.
+type steerDoneMsg struct {
+	text string
+	err  error
+}
+
+// steered settles a message sent during a turn. One the harness cannot take
+// goes back into the input line for the person to send when the turn ends;
+// one that found the turn already over is sent as a turn of its own.
+func (m model) steered(msg steerDoneMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case msg.err == nil, errors.Is(msg.err, session.ErrEnded):
+		return m, nil
+	case errors.Is(msg.err, session.ErrNoTurn):
+		if m.busy {
+			// Another turn has opened since: the person sends it again.
+			break
+		}
+		return m.send(msg.text)
+	case errors.Is(msg.err, session.ErrCannotSteer):
+		m.notice = stillAnswering
+	default:
+		m.appendLine(m.styles.warn.Render("the message was not taken: " + msg.err.Error()))
+	}
+	if strings.TrimSpace(m.input.Value()) == "" {
+		m.input.SetValue(msg.text)
+		m.input.CursorEnd()
+	}
+	return m, nil
 }
 
 // TaskLine is the one line a chat shows for a turn a persistent agent's
@@ -342,6 +393,17 @@ func (m *model) apply(ev session.Event) {
 		default:
 			m.userTurns++
 			m.appendLine(m.styles.user.Render("You: ") + ev.Text)
+		}
+		m.lastTurn = time.Now()
+	case session.KindSteer:
+		// What was sent into the turn in flight, between whatever the
+		// agent had said by then and what it says next.
+		m.flushStreaming()
+		if ev.Synthetic {
+			m.appendLine(m.styles.runner.Render("Runner, during the turn: " + ev.Text))
+		} else {
+			m.userTurns++
+			m.appendLine(m.styles.user.Render("You, during the turn: ") + ev.Text)
 		}
 		m.lastTurn = time.Now()
 	case session.KindAssistantText:
