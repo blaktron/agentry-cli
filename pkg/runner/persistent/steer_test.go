@@ -145,8 +145,12 @@ func TestASteerOnAHarnessThatCannotTakeOne(t *testing.T) {
 	chat, sess := steerer(t, home)
 	go func() { _ = sess.Send(ctx, "write me an essay") }()
 	waitFor(t, "the turn in flight", func() bool { return sv.Status().Busy })
-	if err := chat.Steer(ctx, "keep it short"); !errors.Is(err, session.ErrCannotSteer) {
+	err := chat.Steer(ctx, "keep it short")
+	if !errors.Is(err, session.ErrCannotSteer) {
 		t.Fatalf("a steer on a harness that cannot take one = %v, want ErrCannotSteer", err)
+	}
+	if n := strings.Count(err.Error(), session.ErrCannotSteer.Error()); n != 1 {
+		t.Fatalf("the refusal says why %d times: %q", n, err)
 	}
 	if err := sv.Steer(ctx, "  "); err == nil {
 		t.Fatal("an empty message was taken")

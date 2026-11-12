@@ -736,7 +736,13 @@ func steerRefusal(c protocol.Refusal, text string) error {
 	case protocol.RefusedNoTurn:
 		return session.ErrNoTurn
 	case protocol.RefusedCannotSteer:
-		return fmt.Errorf("%w: %s", session.ErrCannotSteer, text)
+		// The supervisor's words already open with ErrCannotSteer's; the
+		// reason after them is what is added.
+		why := strings.TrimPrefix(strings.TrimPrefix(text, session.ErrCannotSteer.Error()), ": ")
+		if why == "" {
+			return session.ErrCannotSteer
+		}
+		return fmt.Errorf("%w: %s", session.ErrCannotSteer, why)
 	}
 	return errors.New(text)
 }
