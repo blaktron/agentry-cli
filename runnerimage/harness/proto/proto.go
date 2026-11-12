@@ -94,6 +94,12 @@ type ColdClear struct {
 	KeepTurns    int      `json:"keepTurns"`
 	KeepBrowser  int      `json:"keepBrowser"`
 	BrowserTools []string `json:"browserTools,omitempty"`
+	// MinBytes is the smallest result worth clearing: a shorter one stays
+	// where it is, since its placeholder would save next to nothing and the
+	// replies written with it would be left with no sign of what they rest
+	// on. A result of BrowserTools goes whatever its size, because it is
+	// out of date; so does one that carries an image.
+	MinBytes int `json:"minBytes,omitempty"`
 }
 
 // Compaction is when and how a conversation is replaced by a summary.
@@ -254,8 +260,8 @@ func DecodeConfig(r io.Reader) (Config, error) {
 		return Config{}, fmt.Errorf("harness configuration: results.maxBytes must be at least %d", MinResultBytes)
 	case c.Loop != nil && (c.Loop.Repeats < 2 || c.Loop.CycleRepeats < 0 || c.Loop.CycleRepeats == 1 || c.Loop.MaxPeriod < 0 || c.Loop.CycleRepeats > 0 && c.Loop.MaxPeriod < 2):
 		return Config{}, fmt.Errorf("harness configuration: loop.repeats and loop.cycleRepeats count at least 2 repeats, and loop.maxPeriod at least 2 calls")
-	case c.ColdClear != nil && (c.ColdClear.AfterSeconds <= 0 || c.ColdClear.KeepTurns < 0 || c.ColdClear.KeepBrowser < 0):
-		return Config{}, fmt.Errorf("harness configuration: coldClear.afterSeconds must be positive, and keepTurns and keepBrowser not negative")
+	case c.ColdClear != nil && (c.ColdClear.AfterSeconds <= 0 || c.ColdClear.KeepTurns < 0 || c.ColdClear.KeepBrowser < 0 || c.ColdClear.MinBytes < 0):
+		return Config{}, fmt.Errorf("harness configuration: coldClear.afterSeconds must be positive, and keepTurns, keepBrowser and minBytes not negative")
 	case c.Compaction != nil && (c.Compaction.Threshold <= 0 || c.Compaction.Threshold >= 1):
 		return Config{}, fmt.Errorf("harness configuration: compaction.threshold must be above 0 and below 1")
 	case c.Compaction != nil && strings.ContainsAny(c.Compaction.Notes, "\r\n"):

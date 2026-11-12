@@ -83,6 +83,7 @@ func agentryHarnessLongRun(cfg *proto.Config, in Input) {
 		KeepTurns:    coldKeepTurns,
 		KeepBrowser:  coldKeepBrowser,
 		BrowserTools: in.BrowserTools,
+		MinBytes:     coldMinBytes,
 	}
 	threshold, idle := hostedCompaction, agentryHarnessIdleHosted
 	if in.Model.OwnEndpoint() {
