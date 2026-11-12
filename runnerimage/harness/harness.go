@@ -42,7 +42,20 @@ const (
 	notRunNoAsk = "Not run: the reply did not end by asking for its tool calls to be run."
 	// notRunArguments answers a call whose arguments are not an object.
 	notRunArguments = "Not run: the arguments were not a JSON object. Make the call again with arguments that match the tool's schema."
+	// notRunDenied answers a call the runner did not permit.
+	notRunDenied = "Not run: this call was not permitted."
+	// notRunStopped answers a call the turn was stopped before.
+	notRunStopped = "Not run: the turn was stopped before this call was made."
+	// stoppedDuring answers a call the turn was stopped in the middle of.
+	stoppedDuring = "The turn was stopped before this call returned. It may have run in part. It was not run again."
+	// stoppedNote tells the model, after a stopped turn, what happened.
+	stoppedNote = runtimeNote + "the turn was stopped at this point, before it was finished."
 )
+
+// ErrStopped is the cause a turn's context is cancelled with to stop the
+// turn: the turn then ends as interrupted, with every open call given a
+// result, where any other cancellation ends it as a failure.
+var ErrStopped = errors.New("the turn was stopped")
 
 // Harness runs turns of one conversation.
 type Harness struct {
@@ -63,10 +76,18 @@ type Harness struct {
 	// unchanged are the tools whose results are not scrubbed.
 	unchanged map[string]bool
 
-	// Gate, when set, is asked before a turn ends on the model's answer,
-	// after the turn_ending event. It returns a message to go on with, or
-	// "" to end the turn.
-	Gate func(ctx context.Context) (string, error)
+	// Gate, when set, is asked before a turn ends on the model's answer.
+	// It is called before the turn_ending event is written, and what it
+	// returns waits for the runner's answer: a message to go on with, or ""
+	// to end the turn.
+	Gate func() func(ctx context.Context) (string, error)
+	// Permit, when set, is asked before a call is offered to the gateway.
+	// It is called before the permission event is written, and what it
+	// returns waits for the runner's answer: whether the call may run.
+	Permit func(callID string) func(ctx context.Context) (bool, error)
+	// OnTurnEnd, when set, is called just before a turn's turn_end event is
+	// written: from then on the turn does nothing more.
+	OnTurnEnd func()
 	// Now is the clock; time.Now unless a test sets another.
 	Now func() time.Time
 
@@ -78,6 +99,16 @@ type Harness struct {
 	bytesPerToken float64
 	learnedWindow int64
 	compactPast   int64
+
+	// steers are the runner's messages waiting for a place in the
+	// conversation.
+	steerMu sync.Mutex
+	steers  []string
+	// turn is the context of the turn under way. said is what the reply
+	// being read has written of its answer so far, kept when the turn is
+	// stopped in it.
+	turn context.Context
+	said strings.Builder
 }
 
 // New makes a harness that writes its events to out.
@@ -86,22 +117,55 @@ func New(cfg proto.Config, model llm.Client, src ToolSource, out io.Writer) *Har
 }
 
 // Start opens the conversation, creating it when it does not exist, reads
-// the gateway's tools and writes the ready event.
+// the gateway's tools the first time it is called, and writes the ready
+// event. Called again, between turns, it leaves the conversation it was in
+// for the one named; when that one cannot be opened, it stays where it was.
 func (h *Harness) Start(ctx context.Context, conversation string) error {
-	log, _, err := convo.Open(h.cfg.SessionDir, conversation)
+	log, existed, err := convo.Open(h.cfg.SessionDir, conversation)
 	if err != nil {
 		h.fail(proto.ClassHarness, err.Error())
 		return err
 	}
+	if h.log != nil {
+		_ = h.log.Close()
+	}
+	if h.conv != "" && h.conv != conversation {
+		// A message that was waiting for the conversation left behind is
+		// not said in another.
+		h.steerMu.Lock()
+		h.steers = nil
+		h.steerMu.Unlock()
+	}
 	h.log, h.conv = log, conversation
+	// What was learned of one conversation's size says nothing of another's.
+	h.learnedWindow, h.compactPast = 0, 0
+	// What an earlier process learned of the model's window.
+	for _, e := range h.log.Entries() {
+		if e.Kind == convo.KindCompaction && e.Window > 0 {
+			h.learnedWindow = int64(e.Window)
+		}
+	}
+	if h.known == nil {
+		if err := h.connect(ctx); err != nil {
+			h.fail(proto.ClassGateway, err.Error())
+			return err
+		}
+	}
+	names := make([]string, 0, len(h.tools))
+	for _, t := range h.tools {
+		names = append(names, t.Name)
+	}
+	h.emit(proto.Event{Type: proto.TypeReady, Conversation: conversation, Tools: names, Continued: existed})
+	return nil
+}
 
+// connect reads the gateway's tools.
+func (h *Harness) connect(ctx context.Context) error {
 	if err := h.src.Initialize(ctx); err != nil {
-		h.fail(proto.ClassGateway, err.Error())
 		return err
 	}
 	listed, err := h.src.ListTools(ctx)
 	if err != nil {
-		h.fail(proto.ClassGateway, err.Error())
 		return err
 	}
 	// The same tools in the same order on every request, whatever order
@@ -109,7 +173,6 @@ func (h *Harness) Start(ctx context.Context, conversation string) error {
 	// has read.
 	sort.Slice(listed, func(i, j int) bool { return listed[i].Name < listed[j].Name })
 	h.known = map[string]bool{}
-	names := make([]string, 0, len(listed))
 	for _, t := range listed {
 		if h.known[t.Name] {
 			continue
@@ -117,7 +180,6 @@ func (h *Harness) Start(ctx context.Context, conversation string) error {
 		h.known[t.Name] = true
 		h.tools = append(h.tools, llm.Tool{Name: t.Name, Description: t.Description, Schema: t.InputSchema})
 		h.toolBytes += len(t.Name) + len(t.Description) + len(t.InputSchema)
-		names = append(names, t.Name)
 	}
 	h.unchanged = map[string]bool{}
 	if h.cfg.Scrub != nil {
@@ -125,14 +187,38 @@ func (h *Harness) Start(ctx context.Context, conversation string) error {
 			h.unchanged[t] = true
 		}
 	}
-	// What an earlier process learned of the model's window.
-	for _, e := range h.log.Entries() {
-		if e.Kind == convo.KindCompaction && e.Window > 0 {
-			h.learnedWindow = int64(e.Window)
+	return nil
+}
+
+// Steer hands the harness a message of the runner's for the conversation.
+// A turn under way takes it after the results of the calls it is running,
+// or when the model next answers with no call; with no turn under way it
+// goes ahead of the next prompt. It may be called at any time.
+func (h *Harness) Steer(text string) {
+	if strings.TrimSpace(text) == "" {
+		return
+	}
+	h.steerMu.Lock()
+	h.steers = append(h.steers, text)
+	h.steerMu.Unlock()
+}
+
+// steered puts the messages that are waiting into the conversation, each an
+// entry of its own, and reports how many there were.
+func (h *Harness) steered() (int, error) {
+	h.steerMu.Lock()
+	waiting := h.steers
+	h.steers = nil
+	h.steerMu.Unlock()
+	for _, text := range waiting {
+		if err := h.log.Append(convo.Entry{Kind: convo.KindUser, Text: text, Note: convo.NoteSteer}); err != nil {
+			return 0, err
 		}
 	}
-	h.emit(proto.Event{Type: proto.TypeReady, Conversation: conversation, Tools: names})
-	return nil
+	if len(waiting) > 0 {
+		h.emit(proto.Event{Type: proto.TypeSteered, Count: len(waiting)})
+	}
+	return len(waiting), nil
 }
 
 // Close closes the conversation's log.
@@ -147,9 +233,22 @@ func (h *Harness) Close() error {
 // turn it starts. It returns why the turn ended, one of proto's End
 // constants, having written the turn_end event. The error is non-nil only
 // when the turn ended for a failure, which an error event has reported.
+//
+// A ctx cancelled with ErrStopped as its cause stops the turn: it ends as
+// interrupted, which is no failure.
 func (h *Harness) Prompt(ctx context.Context, text string) (string, error) {
-	if err := h.log.Append(convo.Entry{Kind: convo.KindUser, Text: text}); err != nil {
+	h.turn = ctx
+	h.said.Reset()
+	// What the runner sent between turns goes ahead of the prompt.
+	if _, err := h.steered(); err != nil {
 		return h.endFailed(proto.ClassHarness, err)
+	}
+	// A prompt the conversation already ends with, which no reply followed,
+	// is the same message sent again after a failure: it is there once.
+	if !h.unanswered(text) {
+		if err := h.log.Append(convo.Entry{Kind: convo.KindUser, Text: text}); err != nil {
+			return h.endFailed(proto.ClassHarness, err)
+		}
 	}
 	if err := h.coldClear(); err != nil {
 		return h.endFailed(proto.ClassHarness, err)
@@ -211,6 +310,9 @@ func (h *Harness) Prompt(ctx context.Context, text string) (string, error) {
 		if err := h.record(reply); err != nil {
 			return h.endFailed(proto.ClassHarness, err)
 		}
+		// The reply is whole and recorded: nothing of it is left to keep
+		// should the turn be stopped from here on.
+		h.said.Reset()
 
 		var calls []llm.Part
 		var answer strings.Builder
@@ -253,12 +355,25 @@ func (h *Harness) Prompt(ctx context.Context, text string) (string, error) {
 			calls = nil
 		}
 		if len(calls) == 0 {
-			// The model answered. The runner may have more for it.
+			// The model answered. A message the runner sent while it did
+			// is the conversation's next, and the turn goes on.
+			if n, err := h.steered(); err != nil {
+				return h.endFailed(proto.ClassHarness, err)
+			} else if n > 0 {
+				continue
+			}
+			// The runner may have more for it.
 			more, err := h.ending(ctx)
 			if err != nil {
 				return h.endFailed(proto.ClassHarness, err)
 			}
 			if more == "" {
+				// One that arrived while the runner was asked.
+				if n, err := h.steered(); err != nil {
+					return h.endFailed(proto.ClassHarness, err)
+				} else if n > 0 {
+					continue
+				}
 				return h.end(proto.EndAnswered, answer.String()), nil
 			}
 			// The message is the runner's, and is said to be: the model
@@ -271,6 +386,10 @@ func (h *Harness) Prompt(ctx context.Context, text string) (string, error) {
 		var round []string
 		times := 0
 		for _, c := range calls {
+			if ctx.Err() != nil {
+				// Stopped between two calls: the rest are not made.
+				return h.endFailed(proto.ClassHarness, ctx.Err())
+			}
 			if err := h.run(ctx, c); err != nil {
 				if ctx.Err() != nil {
 					return h.endFailed(proto.ClassHarness, ctx.Err())
@@ -291,7 +410,26 @@ func (h *Harness) Prompt(ctx context.Context, text string) (string, error) {
 				return h.endFailed(proto.ClassHarness, err)
 			}
 		}
+		// So does what the runner sent while they ran.
+		if _, err := h.steered(); err != nil {
+			return h.endFailed(proto.ClassHarness, err)
+		}
 	}
+}
+
+// unanswered reports whether the conversation's last message is the prompt
+// text and nothing of the model's has followed it.
+func (h *Harness) unanswered(text string) bool {
+	entries := h.log.Entries()
+	for i := len(entries) - 1; i >= 0; i-- {
+		switch e := entries[i]; e.Kind {
+		case convo.KindUser:
+			return e.Note == "" && e.Text == text
+		case convo.KindAssistant, convo.KindCall, convo.KindResult, convo.KindStub, convo.KindCompaction:
+			return false
+		}
+	}
+	return false
 }
 
 // nearWindow reports whether the conversation has reached the share of the
@@ -311,8 +449,11 @@ func (h *Harness) ending(ctx context.Context) (string, error) {
 	if h.Gate == nil {
 		return "", nil
 	}
+	// The wait is set up before the event is written, so an answer that
+	// comes at once finds it.
+	answer := h.Gate()
 	h.emit(proto.Event{Type: proto.TypeTurnEnding})
-	return h.Gate(ctx)
+	return answer(ctx)
 }
 
 // display is a tool's name as the harness repeats it to the model: the name
@@ -365,6 +506,7 @@ func (h *Harness) nudge(round []string, times int) error {
 func (h *Harness) delta(d llm.Delta) {
 	switch d.Kind {
 	case llm.Text:
+		h.said.WriteString(d.Text)
 		h.emit(proto.Event{Type: proto.TypeText, Text: d.Text})
 	case llm.Reasoning:
 		h.emit(proto.Event{Type: proto.TypeReasoning, Text: d.Text})
@@ -437,12 +579,36 @@ func (h *Harness) run(ctx context.Context, c llm.Part) error {
 		return h.resultEvent(c, llm.Part{Failed: true, Text: notRunArguments}, false)
 	}
 
+	if h.Permit != nil {
+		answer := h.Permit(c.CallID)
+		h.emit(proto.Event{Type: proto.TypePermission, CallID: c.CallID, Tool: c.Name})
+		switch ok, err := answer(ctx); {
+		case err != nil && h.stopped():
+			if rerr := h.resultEvent(c, llm.Part{Failed: true, Text: notRunStopped}, false); rerr != nil {
+				return rerr
+			}
+			return err
+		case err != nil:
+			return err
+		case !ok:
+			// The denial is the call's result: the model reads it and the
+			// turn goes on.
+			return h.resultEvent(c, llm.Part{Failed: true, Text: notRunDenied}, false)
+		}
+	}
+
 	if err := h.log.Append(convo.Entry{Kind: convo.KindCall, CallID: c.CallID}); err != nil {
 		return err
 	}
 	res, err := h.src.CallTool(ctx, c.Name, args)
 	if err != nil {
 		if ctx.Err() != nil {
+			if h.stopped() {
+				// The call was sent and its answer never read.
+				if rerr := h.resultEvent(c, llm.Part{Failed: true, Text: stoppedDuring}, false); rerr != nil {
+					return rerr
+				}
+			}
 			return ctx.Err()
 		}
 		// The gateway's refusal, or a failure to reach it, is the call's
@@ -510,6 +676,9 @@ func (h *Harness) resultEvent(c llm.Part, r llm.Part, unchanged bool) error {
 }
 
 func (h *Harness) end(reason, text string) string {
+	if h.OnTurnEnd != nil {
+		h.OnTurnEnd()
+	}
 	h.emit(proto.Event{Type: proto.TypeTurnEnd, Reason: reason, Text: text, Conversation: h.conv})
 	return reason
 }
@@ -519,13 +688,60 @@ func (h *Harness) fail(class, text string) {
 }
 
 func (h *Harness) endFailed(class string, err error) (string, error) {
+	if h.stopped() {
+		return h.endStopped(), nil
+	}
 	h.fail(class, err.Error())
 	return h.end(proto.EndError, ""), err
+}
+
+// stopped reports whether the turn under way was told to stop.
+func (h *Harness) stopped() bool {
+	return h.turn != nil && errors.Is(context.Cause(h.turn), ErrStopped)
+}
+
+// endStopped ends a turn the runner stopped. What the model had written of
+// the reply it was stopped in is kept as its message, every call still open
+// is given a result, and the model is told where the turn was stopped, so
+// the conversation can go on from a whole record. Nothing here can undo
+// the stop, so a record that cannot be written is left as it is: a call
+// with no result is shown to the model as not run all the same.
+func (h *Harness) endStopped() string {
+	said := h.said.String()
+	h.said.Reset()
+	if strings.TrimSpace(said) != "" {
+		_ = h.log.Append(convo.Entry{Kind: convo.KindAssistant, Parts: []llm.Part{{Kind: llm.Text, Text: said}}, Finish: string(llm.FinishOther)})
+	}
+	entries := h.log.Entries()
+	last := -1
+	for i, e := range entries {
+		if e.Kind == convo.KindAssistant {
+			last = i
+		}
+	}
+	if last >= 0 {
+		answered := map[string]bool{}
+		for _, e := range entries[last+1:] {
+			if e.Kind == convo.KindResult {
+				answered[e.CallID] = true
+			}
+		}
+		for _, p := range entries[last].Parts {
+			if p.Kind == llm.Call && !answered[p.CallID] {
+				_ = h.result(p, llm.Part{Failed: true, Text: notRunStopped})
+			}
+		}
+	}
+	_ = h.log.Append(convo.Entry{Kind: convo.KindUser, Note: convo.NoteStopped, Text: stoppedNote})
+	return h.end(proto.EndInterrupted, said)
 }
 
 // endModelError reports a failed model request with the class its client
 // gave it and the server's own words.
 func (h *Harness) endModelError(err error) (string, error) {
+	if h.stopped() {
+		return h.endStopped(), nil
+	}
 	var me *llm.Error
 	if !errors.As(err, &me) {
 		return h.endFailed(proto.ClassHarness, err)

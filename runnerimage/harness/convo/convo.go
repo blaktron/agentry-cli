@@ -70,6 +70,10 @@ const (
 	NoteCut = "cut"
 	// NoteContinue is the runner's answer to a turn that was about to end.
 	NoteContinue = "continue"
+	// NoteSteer is a message the runner sent while a turn was under way.
+	NoteSteer = "steer"
+	// NoteStopped is the runtime's message after a turn the runner stopped.
+	NoteStopped = "stopped"
 )
 
 // Entry is one line of the file. Kind says which fields are set.

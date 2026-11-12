@@ -3,7 +3,6 @@ package adapter
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"flag"
 	"os"
 	"path/filepath"
@@ -73,10 +72,6 @@ var signInOnly = map[string]string{ClaudeImageAdapterName: policy.KeyKindClaudeS
 // carries the bearer and nothing is mounted.
 var gatewayBySession = map[string]bool{CopilotImageAdapterName: true}
 
-// oneShotOnly are the adapters that run one-shot runs only: an interactive
-// plan is refused by name, never compiled into something else.
-var oneShotOnly = map[string]bool{AgentryHarnessAdapterName: true}
-
 // recordingOf names the adapter whose recorded harness output an adapter is
 // held to, when it reads the same harness's stream with the same Events:
 // the Claude Code image is Claude Code, read as the host claude adapter
@@ -113,15 +108,6 @@ func TestConformance(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			for _, tc := range conformanceCases {
 				if tc.signIn != "" && !SpendsModelSignIn(ad, tc.signIn) || tc.signIn == "" && signInOnly[name] != "" {
-					continue
-				}
-				if tc.mode == manifest.ModeInteractive && oneShotOnly[name] {
-					t.Run(tc.name, func(t *testing.T) {
-						var refusal *Refusal
-						if _, err := ad.Compile(conformanceInput(tc.mode, tc.schema)); !errors.As(err, &refusal) {
-							t.Fatalf("an interactive plan was not refused: %v", err)
-						}
-					})
 					continue
 				}
 				t.Run(tc.name, func(t *testing.T) { conformCompile(t, ad, tc) })

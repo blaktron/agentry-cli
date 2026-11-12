@@ -2274,6 +2274,27 @@
           "dependencyHints": [
             "source/file contract"
           ]
+        },
+        {
+          "path": "internal/harnesstest/session_test.go",
+          "tests": [
+            "TestASessionRunsEachPromptAsATurnOfOneConversation",
+            "TestADeniedCallIsItsResultAndTheTurnGoesOn",
+            "TestAnInterruptEndsTheTurnWithEveryOpenCallSettled",
+            "TestATurnStoppedInTheMiddleOfAnAnswerKeepsWhatWasWritten",
+            "TestASteerJoinsTheConversationAtTheNextBoundary",
+            "TestASessionLoadsAStoredConversation",
+            "TestACommandThatCannotBeTakenIsRefusedAndTheSessionGoesOn",
+            "TestALineThatIsNoCommandEndsTheSession",
+            "TestTheSessionModeNeedsItsConfiguration"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract",
+            "real-time wait"
+          ]
         }
       ]
     },
@@ -4409,6 +4430,26 @@
             "TestACPSessionAPromptErrorCarriesTheHarnessesWords",
             "TestACPSessionStartsANewConversationInTheRunningHarness",
             "TestACPSessionInterruptCancelsThePromptInFlight"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "real-time wait"
+          ]
+        },
+        {
+          "path": "pkg/runner/adapter/agentryharness_session_test.go",
+          "tests": [
+            "TestAgentryHarnessSessionDrivesOneTurnAndAnswersPermissions",
+            "TestAgentryHarnessSessionKeepsWhatItDoesNotKnowAsAnObservation",
+            "TestAgentryHarnessSessionInterruptStopsThePromptInFlight",
+            "TestAgentryHarnessSessionTurnUsageSumsItsRequests",
+            "TestAgentryHarnessSessionAPromptErrorCarriesTheHarnessesWords",
+            "TestAgentryHarnessSessionEventsAreCompleteBeforeThePromptReturns",
+            "TestAgentryHarnessSessionContinuesAStoredConversation",
+            "TestAgentryHarnessSessionSteersAndOutlivesAHarnessThatEnds",
+            "TestAgentryHarnessCompilesASessionOfTheSameHarness"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -7209,6 +7250,24 @@
       "behavior": "Run execution, protocol and results",
       "disposition": "retain",
       "files": [
+        {
+          "path": "pkg/runner/engine/agentryharness_session_test.go",
+          "tests": [
+            "TestASessionOnTheRunnersOwnHarness",
+            "TestAnInterruptStopsATurnOnTheRunnersOwnHarness",
+            "TestASessionOnTheRunnersOwnHarnessEndsOutOfCredits",
+            "TestTheSessionProtocolDrivesTheRunnersOwnHarness"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "docker interface (real or fake)",
+            "HTTP transport",
+            "source/file contract",
+            "real-time wait"
+          ]
+        },
         {
           "path": "pkg/runner/engine/blocked_test.go",
           "tests": [

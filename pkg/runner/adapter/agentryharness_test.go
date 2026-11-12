@@ -118,7 +118,7 @@ func TestAgentryHarnessTakesThePolicysOutputLimitAndASchema(t *testing.T) {
 
 func TestAgentryHarnessRefusesWhatItCannotRun(t *testing.T) {
 	cases := map[string]func(*Input){
-		"interactive": func(in *Input) { in.Mode = manifest.ModeInteractive },
+		"a persistent agent":                           func(in *Input) { in.Mode, in.Persistent = manifest.ModeInteractive, true },
 		"a server of the person's own with no address": func(in *Input) { in.Model.Provider = "custom" },
 		"the registry's models with no address":        func(in *Input) { in.Model.Provider = policy.ProviderAgentry },
 		"a subscription token":                         func(in *Input) { in.Model.APIKeyKind = policy.KeyKindSubscription },
