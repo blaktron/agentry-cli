@@ -12,7 +12,8 @@
         "string"
       ],
       "keepBrowser": "int",
-      "keepTurns": "int"
+      "keepTurns": "int",
+      "minBytes": "int, optional"
     },
     "compaction": {
       "checkpoint": "string, optional",

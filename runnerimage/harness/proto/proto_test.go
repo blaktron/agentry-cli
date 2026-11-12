@@ -76,7 +76,7 @@ func TestAConfigurationForALongRunGoesThroughUnchanged(t *testing.T) {
 	want.Scrub = &Scrub{Unchanged: []string{"read_input", "search_inputs"}}
 	want.Loop = &Loop{Repeats: 5, CycleRepeats: 3, MaxPeriod: 4}
 	want.LengthRecoveries = 2
-	want.ColdClear = &ColdClear{AfterSeconds: 300, KeepTurns: 2, KeepBrowser: 2, BrowserTools: []string{"browser_snapshot"}}
+	want.ColdClear = &ColdClear{AfterSeconds: 300, KeepTurns: 2, KeepBrowser: 2, BrowserTools: []string{"browser_snapshot"}, MinBytes: 4096}
 	want.Compaction = &Compaction{Threshold: 0.8, Checkpoint: "Keep the task.", Notes: "checklist.md in your scratch folder"}
 	want.Retry = &Retry{Attempts: 3, BaseSeconds: 2, MaxSeconds: 60, IdleSeconds: 300}
 	raw, err := want.Encode()
@@ -141,6 +141,9 @@ func TestDecodeConfigRefuses(t *testing.T) {
 		}),
 		"a clear that keeps a negative count": edit(func(m map[string]any) {
 			m["coldClear"] = map[string]any{"afterSeconds": 300, "keepTurns": -1, "keepBrowser": 2}
+		}),
+		"a clear with a negative smallest size": edit(func(m map[string]any) {
+			m["coldClear"] = map[string]any{"afterSeconds": 300, "keepTurns": 2, "keepBrowser": 2, "minBytes": -1}
 		}),
 		"a summary at the whole window":  edit(func(m map[string]any) { m["compaction"] = map[string]any{"threshold": 1} }),
 		"a summary at none of it":        edit(func(m map[string]any) { m["compaction"] = map[string]any{"threshold": 0} }),

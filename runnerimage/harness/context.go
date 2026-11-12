@@ -435,9 +435,14 @@ func appendUser(msgs []llm.Message, part llm.Part) []llm.Message {
 }
 
 // clearedText is the placeholder a cleared result gives way to. It names the
-// tool and the size and repeats nothing of the call or its result.
+// tool and the size and repeats nothing of the call or its result. It says
+// that the result was read when it arrived: a placeholder that reads as a
+// call that returned nothing leaves the replies written with the result
+// looking as if they rest on nothing.
 func clearedText(tool string, bytes int) string {
-	return fmt.Sprintf("[cleared: this result of %s was %d bytes; make the call again to read it]", tool, bytes)
+	return fmt.Sprintf("[Note from the agent runtime: %s returned %d bytes here. You read them in full at the time, "+
+		"and your later replies were written with them. They were then set aside to save space. "+
+		"Call the tool again if you need the text.]", tool, bytes)
 }
 
 // coldClear replaces old tool results with placeholders when the server's
@@ -448,7 +453,8 @@ func clearedText(tool string, bytes int) string {
 //
 // The results of the newest KeepTurns turns before this one stay, and so do
 // the newest KeepBrowser results of the browser's tools; every other result
-// of a browser tool goes, wherever it falls.
+// of a browser tool goes, wherever it falls. An older result shorter than
+// MinBytes stays too, unless it is a browser tool's or carries an image.
 func (h *Harness) coldClear() error {
 	cfg := h.cfg.ColdClear
 	if cfg == nil {
@@ -496,13 +502,16 @@ func (h *Harness) coldClear() error {
 		}
 		r := e.Result
 		old := prompts > cfg.KeepTurns
+		// small is a result too short to be worth clearing.
+		small := len(r.Text) < cfg.MinBytes
 		if browser[r.Name] {
 			browserSeen++
 			old = browserSeen > cfg.KeepBrowser
+			small = false
 		}
-		// A result no longer than its placeholder is left alone.
+		// A result no longer than its placeholder is left alone too.
 		text := clearedText(h.display(r.Name), len(r.Text))
-		if !old || (len(r.Text) <= len(text) && len(r.Images) == 0) {
+		if !old || ((small || len(r.Text) <= len(text)) && len(r.Images) == 0) {
 			continue
 		}
 		cleared = append(cleared, convo.Cleared{CallID: e.CallID, Text: text})
@@ -517,9 +526,13 @@ func (h *Harness) coldClear() error {
 	if err := h.log.Append(convo.Entry{Kind: convo.KindClear, Cleared: cleared, Reason: "cold cache"}); err != nil {
 		return err
 	}
+	what := fmt.Sprintf("%d old tool results were replaced by placeholders", len(cleared))
+	if len(cleared) == 1 {
+		what = "1 old tool result was replaced by a placeholder"
+	}
 	h.emit(proto.Event{Type: proto.TypeWarning, Code: proto.WarnColdClear, Count: len(cleared), Reason: "cold cache",
-		Text: fmt.Sprintf("%d old tool results were replaced by placeholders: the last reply was %s ago, past the %s the model's server keeps a conversation cached.",
-			len(cleared), idle.Round(time.Second), time.Duration(cfg.AfterSeconds)*time.Second)})
+		Text: fmt.Sprintf("%s: the last reply was %s ago, past the %s the model's server keeps a conversation cached.",
+			what, idle.Round(time.Second), time.Duration(cfg.AfterSeconds)*time.Second)})
 	return nil
 }
 
