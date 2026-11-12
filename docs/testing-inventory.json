@@ -13812,6 +13812,14 @@
       ]
     },
     {
+      "path": ".github/workflows/modelfacts.yaml",
+      "disposition": "retain",
+      "kind": "workflow",
+      "jobs": [
+        "refresh"
+      ]
+    },
+    {
       "path": ".github/workflows/pins.yaml",
       "disposition": "retain",
       "kind": "workflow",

@@ -1,0 +1,78 @@
+name: modelfacts
+
+# Refreshes the model catalogue compiled into the CLI
+# (pkg/runner/modelfacts/catalog.json) from models.dev every week, and opens
+# one pull request into dev when it changed: a model added, removed or
+# re-priced, or an unchanged list fetched three weeks ago or more, which is
+# re-dated so a release does not refuse it as stale. The request is opened
+# with the workflow's own token, so no check runs on it until a maintainer
+# closes and reopens it; it is then merged on a green run as any other.
+#
+#   gh workflow run modelfacts.yaml -R blaktron/agentry-cli
+
+on:
+  schedule:
+    - cron: "41 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: modelfacts
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: [self-hosted, linux, x64]
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      # The token is kept for this job's one push of the refresh branch; the
+      # checkout's post step removes it.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: dev
+      - name: Refresh the catalogue
+        id: refresh
+        run: |
+          set -euo pipefail
+          cp pkg/runner/modelfacts/catalog.json "$RUNNER_TEMP/catalog-old.json"
+          python3 scripts/modelfacts/update.py
+          set +e
+          python3 scripts/modelfacts/diff.py "$RUNNER_TEMP/catalog-old.json" pkg/runner/modelfacts/catalog.json --body "$RUNNER_TEMP/body.md"
+          code=$?
+          set -e
+          case "$code" in
+            0) echo "refresh=true" >> "$GITHUB_OUTPUT"; cat "$RUNNER_TEMP/body.md" >> "$GITHUB_STEP_SUMMARY" ;;
+            3) echo "refresh=false" >> "$GITHUB_OUTPUT"; echo "No model changed and the snapshot is recent: nothing to propose." >> "$GITHUB_STEP_SUMMARY" ;;
+            *) exit "$code" ;;
+          esac
+      - name: Open or update the refresh pull request
+        if: steps.refresh.outputs.refresh == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: chore/modelfacts-refresh
+        run: |
+          set -euo pipefail
+          fetched=$(python3 -c 'import json; print(json.load(open("pkg/runner/modelfacts/catalog.json"))["fetched"])')
+          title="chore(modelfacts): refresh the model catalogue from models.dev ($fetched)"
+          {
+            cat "$RUNNER_TEMP/body.md"
+            echo
+            echo "This pull request was opened by the \`modelfacts\` workflow, so no check has run on it: close and reopen it to start CI, then merge it on a green run."
+          } > "$RUNNER_TEMP/pr.md"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -q -B "$BRANCH"
+          git add pkg/runner/modelfacts/catalog.json
+          git commit -q -m "$title" -m "$(cat "$RUNNER_TEMP/body.md")"
+          git push -q --force origin "HEAD:refs/heads/$BRANCH"
+          n=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --base dev --state open --json number --jq '.[0].number // empty')
+          if [ -n "$n" ]; then
+            gh pr edit "$n" --repo "$GITHUB_REPOSITORY" --title "$title" --body-file "$RUNNER_TEMP/pr.md"
+            echo "Updated #$n." >> "$GITHUB_STEP_SUMMARY"
+          else
+            gh pr create --repo "$GITHUB_REPOSITORY" --base dev --head "$BRANCH" --title "$title" --body-file "$RUNNER_TEMP/pr.md" >> "$GITHUB_STEP_SUMMARY"
+          fi

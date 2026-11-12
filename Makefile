@@ -51,6 +51,7 @@ cross:
 workflows-check:
 	python3 scripts/ci/workflow_guard.py
 	python3 -m unittest discover -s scripts/ci
+	python3 -m unittest discover -s scripts/modelfacts
 
 ## test-inventory-check: docs/testing-inventory.json lists every test file,
 ## named test and fuzz target under its behavior family, and every
