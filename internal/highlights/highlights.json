@@ -1,6 +1,15 @@
 {
   "versions": [
     {
+      "version": "0.7.57",
+      "highlights": [
+        "agentry harness chooses the harness your runs use: Docker Agent, the default, or the one built into Agentry.",
+        "agentry setup and agentry doctor name the harness your runs use.",
+        "A run paid with your Agentry credits now works on the harness built into Agentry.",
+        "A run your model provider refuses for lack of credit now ends as out of credits on Docker Agent too, not as a failure."
+      ]
+    },
+    {
       "version": "0.7.56",
       "highlights": [
         "A message you send while the agent is still answering stays in the input line instead of being dropped.",

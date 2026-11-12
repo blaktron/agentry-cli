@@ -8,6 +8,7 @@ import (
 	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	"github.com/blaktron/agentry/pkg/manifest"
 )
 
 // The runner's own harness is the runner image, which is built on the
@@ -80,5 +81,38 @@ func TestCreditsCompileForTheHarnessesThatCanSpendThem(t *testing.T) {
 	var refusal *adapter.Refusal
 	if !errors.As(err, &refusal) || !strings.Contains(refusal.Reason, "runs on the docker-agent and agentry-harness harnesses only; claude cannot spend them") {
 		t.Errorf("credits on a harness that cannot spend them: %v", err)
+	}
+}
+
+// A plan compiled with no adapter named runs on the container harness the
+// policy chooses, as a run, as a session and as a persistent agent's
+// segment; a named adapter still wins.
+func TestAPlanFollowsThePolicysContainerHarness(t *testing.T) {
+	m := parseManifest(t, strings.Replace(pureTextYAML, "modes: [autonomous]", "modes: [autonomous, interactive, persistent]", 1))
+	ws := workspaceFor(t, m, nil)
+	compileOn := func(mode manifest.Mode, chosen, named string) *spec.Plan {
+		t.Helper()
+		pol := testPolicy()
+		pol.ContainerHarness = chosen
+		plan, err := Compile(Inputs{
+			Manifest: m, Mode: mode, Digest: "sha256:0123456789abcdef", Source: "local", WorkspaceDir: ws, AdapterName: named,
+			Policy: pol, PolicySHA: "fixedpolicysha", RunnerImage: "agentry-runner:test",
+		}, t.TempDir())
+		if err != nil {
+			t.Fatalf("%s, containerHarness %q, adapter %q: %v", mode, chosen, named, err)
+		}
+		return plan
+	}
+	for _, mode := range []manifest.Mode{manifest.ModeAutonomous, manifest.ModeInteractive, manifest.ModePersistent} {
+		if got := compileOn(mode, "", "").Harness.Adapter; got != adapter.DefaultName {
+			t.Errorf("%s with no choice runs on %q", mode, got)
+		}
+		plan := compileOn(mode, adapter.AgentryHarnessAdapterName, "")
+		if plan.Harness.Adapter != adapter.AgentryHarnessAdapterName || plan.Harness.Agent.Image != "agentry-runner:test" {
+			t.Errorf("%s with the runner's own harness chosen runs on %q in %q", mode, plan.Harness.Adapter, plan.Harness.Agent.Image)
+		}
+		if got := compileOn(mode, adapter.AgentryHarnessAdapterName, adapter.DefaultName).Harness.Adapter; got != adapter.DefaultName {
+			t.Errorf("%s with docker-agent named runs on %q", mode, got)
+		}
 	}
 }

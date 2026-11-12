@@ -28,6 +28,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/internal/version"
 	"github.com/blaktron/agentry-cli/pkg/installed"
+	"github.com/blaktron/agentry-cli/pkg/runner/adapter"
 	"github.com/blaktron/agentry-cli/pkg/runner/dockerx"
 	"github.com/blaktron/agentry-cli/pkg/runner/engine"
 	"github.com/blaktron/agentry-cli/pkg/runner/gateway"
@@ -232,6 +233,27 @@ func runDoctor(cmd *cobra.Command, ref string, opts doctorOpts) error {
 	return nil
 }
 
+// doctorRunHarness reports the harness a run takes when it names none: the
+// container harness the policy chooses, or the vendor's for a model paid by
+// a model sign-in. A model the chosen harness does not reach fails here,
+// before a run finds out.
+func doctorRunHarness(rep *doctorReport, pol *policy.Policy) {
+	chosen, runsOn := pol.RunContainerHarness(), adapter.DefaultFor(pol)
+	switch {
+	case runsOn != chosen:
+		rep.ok("harness", "%s (the model is paid by %s, which runs on its vendor's harness; containerHarness is %s)", runsOn,
+			policy.SignInSentence(policy.KeyKind(pol.Harness[adapter.DefaultName], pol.Model)), chosen)
+	case chosen == adapter.AgentryHarnessAdapterName:
+		if err := adapter.AgentryHarnessReaches(pol.Model); err != nil {
+			rep.failFix("harness", "run `agentry harness use "+adapter.DefaultName+"`, or choose another model with `agentry setup`", "%s: %v", chosen, err)
+			return
+		}
+		rep.ok("harness", "%s (the harness built into the runner; `agentry harness use %s` goes back to the default)", chosen, adapter.DefaultName)
+	default:
+		rep.ok("harness", "%s (Docker Agent, the default; `agentry harness use %s` chooses the harness built into the runner)", chosen, adapter.AgentryHarnessAdapterName)
+	}
+}
+
 // doctorHarness reports the installation behind a host-run adapter: whether
 // the executable resolves, which release it is, and whether the endpoint
 // the policy points it at can be reached through the run's proxy at all. A
@@ -372,6 +394,7 @@ func doctorPolicy(rep *doctorReport, path string) *policy.Policy {
 	if policy.KeyKind(policy.HarnessPolicy{}, pol.Model) == policy.KeyKindSubscription {
 		rep.warn("model:kind", "the key is an Anthropic subscription token (apiKeyKind subscription): runs through Claude Code only (`agentry run --adapter claude`); the container harness refuses it — store a Console API key for those")
 	}
+	doctorRunHarness(rep, pol)
 	if pol.SecretSource.Mode == "envFile" {
 		if _, err := os.Stat(pol.SecretSource.EnvFile); err != nil {
 			rep.failFix("secretSource", "create the file, or point secretSource.envFile in the policy at the one you keep", "envFile %s: %v", pol.SecretSource.EnvFile, err)
@@ -562,9 +585,13 @@ func doctorDocker(ctx context.Context, rep *doctorReport, d dockerx.Client, pol 
 	}
 	images := []struct{ name, ref, fix string }{
 		{"image:gateway", pol.Images.Gateway, "run `agentry setup`, which pulls it"},
-		{"image:harness", pol.Images.HarnessDockerAgent, "run `agentry setup`, which pulls it"},
-		{"image:runner", pol.RunnerImageTag(runnerimage.ContentVersion()), "run `agentry setup`, which builds it"},
 	}
+	// The runner's own harness is a role of the runner image: a machine
+	// that runs on it needs no harness image pulled.
+	if adapter.DefaultFor(pol) != adapter.AgentryHarnessAdapterName {
+		images = append(images, struct{ name, ref, fix string }{"image:harness", pol.Images.HarnessDockerAgent, "run `agentry setup`, which pulls it"})
+	}
+	images = append(images, struct{ name, ref, fix string }{"image:runner", pol.RunnerImageTag(runnerimage.ContentVersion()), "run `agentry setup`, which builds it"})
 	if m != nil {
 		needNode, needPython := false, false
 		for _, srv := range m.Capabilities.MCPServers {

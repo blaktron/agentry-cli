@@ -524,6 +524,19 @@
           ]
         },
         {
+          "path": "cmd/agentry/cmd_harness_test.go",
+          "tests": [
+            "TestTheContainerHarnessFromTheTerminal",
+            "TestTheContainerHarnessSaysWhenASignInDecides",
+            "TestSetupSaysTheHarnessAndKeepsTheChoice",
+            "TestDoctorNamesTheContainerHarness"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "cmd/agentry/cmd_json_test.go",
           "tests": [
             "TestListJSONMarksMissingDirectories",
@@ -4683,6 +4696,17 @@
           ]
         },
         {
+          "path": "pkg/runner/adapter/containerharness_test.go",
+          "tests": [
+            "TestTheDefaultAdapterFollowsThePolicysContainerHarness",
+            "TestTheRunnersOwnHarnessRefusalNamesTheWayBack"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "pkg/runner/adapter/copilot_models_test.go",
           "tests": [
             "TestACopilotPlansModelsAreListedThroughCopilotCLI",
@@ -5030,7 +5054,8 @@
           "tests": [
             "TestTheRunnersOwnHarnessIsPinnedByItsSource",
             "TestTheRunnersOwnHarnessHasNoResultLimitToName",
-            "TestCreditsCompileForTheHarnessesThatCanSpendThem"
+            "TestCreditsCompileForTheHarnessesThatCanSpendThem",
+            "TestAPlanFollowsThePolicysContainerHarness"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -8017,6 +8042,8 @@
           "path": "pkg/runner/engine/outofcredits_test.go",
           "tests": [
             "TestAProviderOutOfCreditsEndsTheRunWithItsReason",
+            "TestAProviderOutOfCreditsOnStderrAloneEndsTheRunWithItsReason",
+            "TestAHarnessFailureOnStderrIsNotOutOfCredits",
             "TestADockerAgentErrorEventsWordsReachTheFailure",
             "TestAProviderOutOfCreditsEndsAHarnessThatKeepsRunning",
             "TestAProviderOutOfCreditsEndsASession"
@@ -8746,6 +8773,7 @@
           "path": "pkg/runner/localrun/runmodel_test.go",
           "tests": [
             "TestTheHarnessFollowsTheSavedModelsCredential",
+            "TestTheHarnessFollowsThePolicysContainerHarness",
             "TestAMissingSavedModelIsAPolicyRefusal",
             "TestAHarnessBlocksSavedModelRunsOnItsHarness",
             "TestAPlanIsReusedOnlyForTheSavedModelItWasCompiledOn",
@@ -9715,6 +9743,7 @@
             "TestAPolicyChangeReachesTheNextTurn",
             "TestAPolicyThatCannotBeReadKeepsThePolicyTheAgentHas",
             "TestAHarnessChangeStartsANewConversationCarryingTheLast",
+            "TestAnAgentFollowsThePolicysContainerHarness",
             "TestAModelThatComesToPayWithCreditsOpensItsSession",
             "TestAPolicyNoSegmentCanStartOnIsSetAside",
             "TestAPolicyInTheShareIsRefused"
@@ -10146,6 +10175,20 @@
           "benchmarks": [],
           "fixtureEntryPoint": false,
           "dependencyHints": []
+        },
+        {
+          "path": "pkg/runner/policy/containerharness_test.go",
+          "tests": [
+            "TestTheContainerHarnessIsOneOfTwo",
+            "TestTheContainerHarnessIsKeptInThePolicyFile",
+            "TestTheDefaultFileNamesTheContainerHarnessKey"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "source/file contract"
+          ]
         },
         {
           "path": "pkg/runner/policy/ensure_race_test.go",

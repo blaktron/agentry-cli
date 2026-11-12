@@ -263,6 +263,8 @@ func TestPrintEnvelopeFormats(t *testing.T) {
 }
 
 func TestPrintAdaptersListsDefault(t *testing.T) {
+	isolateEnv(t)
+	isolateRunnerHome(t)
 	stdout, _, err := runCLI(t, nil, "run", "--list-adapters")
 	if err != nil {
 		t.Fatal(err)
