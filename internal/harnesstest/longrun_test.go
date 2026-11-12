@@ -776,7 +776,10 @@ func TestASummaryCutAtTheOutputLimitIsNotKept(t *testing.T) {
 			}
 			return big(nil, "", nil) //nolint:staticcheck // the scripted gateway ignores its context
 		}
-		code, events, stderr := run(t, model, g, runOpts{configEdit: compaction(1000)})
+		// A small output limit, so each of the three requests leaves the
+		// summary room in this small window.
+		smallOutput := func(c map[string]any) { c["model"].(map[string]any)["maxOutputTokens"] = 40 }
+		code, events, stderr := run(t, model, g, runOpts{configEdit: both(compaction(1000), smallOutput)})
 		if code != harness.ExitAnswered {
 			t.Fatalf("exit %d, stderr: %s", code, stderr)
 		}
@@ -826,6 +829,110 @@ func TestNoSummaryIsAskedForThatWouldGainNothing(t *testing.T) {
 			t.Errorf("warnings: %+v", w)
 		}
 	})
+}
+
+// A summary is written into what is left of the window. Its request asks for
+// no more output than that room, and a request that would leave the summary
+// too little room is not sent: the smaller one is.
+func TestASummaryRequestAsksOnlyForTheRoomTheWindowLeaves(t *testing.T) {
+	read := func(context.Context, string, json.RawMessage) (string, string) {
+		return textResult(strings.Repeat("row of big.txt\n", 200)), ""
+	}
+	window := func(w, out int) func(map[string]any) {
+		return both(compaction(w), func(c map[string]any) { c["model"].(map[string]any)["maxOutputTokens"] = out })
+	}
+	t.Run("the output is held to the room left", func(t *testing.T) {
+		model := scriptedmodel.New(t,
+			asks("c1", "fs_read", `{"path":"big.txt"}`).WithUsage(scriptedmodel.Usage{Input: 300, Output: 20}),
+			scriptedmodel.Text("SUMMARY: big.txt is read."),
+			scriptedmodel.Text("Done."),
+		)
+		g := newGateway(t, "fs_read")
+		g.call = read
+		// About 900 tokens of a 1,400-token window leave less room than
+		// the 4,096-token output limit, and less than its quarter of the
+		// window.
+		code, _, stderr := run(t, model, g, runOpts{configEdit: window(1400, 4096)})
+		if code != harness.ExitAnswered {
+			t.Fatalf("exit %d, stderr: %s", code, stderr)
+		}
+		reqs := model.Requests()
+		if len(reqs) != 3 {
+			t.Fatalf("%d requests, want 3", len(reqs))
+		}
+		if err := scriptedmodel.PrefixOf(reqs[0], reqs[1]); err != nil {
+			t.Errorf("the summary request does not continue the conversation: %v", err)
+		}
+		// The summary may take at most a quarter of the window, and no
+		// more than the request leaves of it.
+		input := len(reqs[1].Body) * 2 / 7
+		if got := reqs[1].MaxTokens; got <= 0 || got > 350 || got > 1400-input/2 {
+			t.Errorf("the summary request asks for %d tokens of output", got)
+		}
+		// The normal requests keep the configured limit.
+		if reqs[0].MaxTokens != 4096 || reqs[2].MaxTokens != 4096 {
+			t.Errorf("the turn's requests ask for %d and %d tokens", reqs[0].MaxTokens, reqs[2].MaxTokens)
+		}
+		ask := lastMessage(t, reqs[1]).Text
+		for _, want := range []string{"end with the next step to take", "at most about 175 words"} {
+			if !strings.Contains(ask, want) {
+				t.Errorf("the summary request lacks %q: %s", want, ask)
+			}
+		}
+	})
+	t.Run("a request with no room for a summary is not sent", func(t *testing.T) {
+		model := scriptedmodel.New(t,
+			asks("c1", "fs_read", `{"path":"big.txt"}`).WithUsage(scriptedmodel.Usage{Input: 10, Output: 5}),
+			scriptedmodel.Text("SUMMARY: big.txt is read."),
+			scriptedmodel.Text("Done."),
+		)
+		g := newGateway(t, "fs_read")
+		g.call = read
+		// The conversation is inside this window, but leaves it too little
+		// room for a summary; the bounded copy, with the result held to
+		// 2 KiB, leaves enough.
+		code, events, stderr := run(t, model, g, runOpts{configEdit: window(1000, 4096)})
+		if code != harness.ExitAnswered {
+			t.Fatalf("exit %d, stderr: %s", code, stderr)
+		}
+		reqs := model.Requests()
+		if len(reqs) != 3 {
+			t.Fatalf("%d requests, want 3: one summary request, of the bounded copy", len(reqs))
+		}
+		if r := lastMessage(t, reqs[1]).Results; len(r) != 1 || !strings.HasSuffix(r[0].Text, "[The rest of this result is left out of this request.]") {
+			t.Errorf("the summary request is not the bounded copy: %+v", r)
+		}
+		if w := warnings(events, proto.WarnCompaction); len(w) != 1 {
+			t.Errorf("warnings: %+v", w)
+		}
+	})
+}
+
+// The conversation is summarised while a summary still fits in what is left
+// of the window, even when the configured share would wait longer.
+func TestASummaryIsAskedForWhileItStillFits(t *testing.T) {
+	model := scriptedmodel.New(t,
+		asks("c1", "fs_read", `{"path":"big.txt"}`).WithUsage(scriptedmodel.Usage{Input: 300, Output: 20}),
+		scriptedmodel.Text("SUMMARY: big.txt is read."),
+		scriptedmodel.Text("Done."),
+	)
+	g := newGateway(t, "fs_read")
+	g.call = func(context.Context, string, json.RawMessage) (string, string) {
+		return textResult(strings.Repeat("x", 1400)), ""
+	}
+	// About 520 tokens of 1,000 is short of a 0.95 share, but leaves less
+	// than a quarter of the window, which the summary may need.
+	edit := both(compaction(1000), func(c map[string]any) {
+		c["compaction"].(map[string]any)["threshold"] = 0.95
+		c["model"].(map[string]any)["maxOutputTokens"] = 4096
+	})
+	code, events, stderr := run(t, model, g, runOpts{configEdit: edit})
+	if code != harness.ExitAnswered {
+		t.Fatalf("exit %d, stderr: %s", code, stderr)
+	}
+	if w := warnings(events, proto.WarnCompaction); len(w) != 1 || len(model.Requests()) != 3 {
+		t.Errorf("%d requests, warnings: %+v", len(model.Requests()), w)
+	}
 }
 
 // chatNoWindow is a Chat Completions model whose window the configuration

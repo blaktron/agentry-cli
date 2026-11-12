@@ -13,6 +13,7 @@ func TestTheChatNamesEveryUpkeepTurn(t *testing.T) {
 		upkeepText:         "Compacting: saving this conversation to memory first",
 		upkeepTextNoMemory: "Compacting: writing a handoff",
 		consolidateText:    "Tidying its memory",
+		saveText:           "Saving the compacted conversation to memory",
 	} {
 		if got := tui.UpkeepLine(text); got != want {
 			t.Errorf("tui.UpkeepLine(%q) = %q, want %q", text, got, want)

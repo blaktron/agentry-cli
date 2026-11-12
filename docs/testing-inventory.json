@@ -892,7 +892,8 @@
             "TestAgentShowListsTheOffersAndAddsASuggestion",
             "TestAgentShowNamesTheLastUpkeep",
             "TestAgentShowListsTheSubagentRuns",
-            "TestUpkeepLineLeavesOutFactsNotCounted"
+            "TestUpkeepLineLeavesOutFactsNotCounted",
+            "TestACompactionInPlaceIsDone"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -2282,6 +2283,8 @@
             "TestACompactionKeepsTheCallsTheModelHasNotReadTheResultsOf",
             "TestASummaryCutAtTheOutputLimitIsNotKept",
             "TestNoSummaryIsAskedForThatWouldGainNothing",
+            "TestASummaryRequestAsksOnlyForTheRoomTheWindowLeaves",
+            "TestASummaryIsAskedForWhileItStillFits",
             "TestAConversationTheServerRefusesAsTooLongIsSummarisedOnce",
             "TestAWindowTheServerStatesIsBelievedOverALargerConfiguredOne",
             "TestASecondRefusalEndsTheTurnAsAnOverflow",
@@ -10108,6 +10111,24 @@
           "benchmarks": [],
           "fixtureEntryPoint": false,
           "dependencyHints": []
+        },
+        {
+          "path": "pkg/runner/persistent/upkeep_inplace_test.go",
+          "tests": [
+            "TestEveryCompactionIsTheHarnesssSummaryWhereItCanCompact",
+            "TestASummaryThatFailsIsNotSavedAndWaits",
+            "TestASaveThatFailsLeavesTheCompactionStanding",
+            "TestATidyDueInALargeConversationCompactsItFirst",
+            "TestTooLargeToTidy",
+            "TestUpkeepWaitsLongerOnAServerOfThePersonsOwn"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "docker interface (real or fake)",
+            "real-time wait"
+          ]
         },
         {
           "path": "pkg/runner/persistent/upkeep_line_test.go",

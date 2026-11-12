@@ -3,13 +3,24 @@ package persistent
 // Upkeep: every persistent agent compacts its own conversation. When the
 // person has sent nothing for a while and the conversation is large, or when
 // a turn has filled most of the model's window, or when the person asks, the
-// supervisor sends the agent an upkeep turn: an agent that keeps a memory
-// saves what the conversation produced to it first, and every agent answers
-// with a handoff. The supervisor then starts a new conversation that opens
-// with the handoff, quoted. A failed upkeep turn swaps nothing, and the
-// conversation goes on as it was. Each compaction is a line of the segment's
-// receipts/upkeep.ndjson, with the memory's fact lines counted before and
-// after, where there is a memory, so a line the model lost shows.
+// conversation is compacted.
+//
+// Where the running harness can compact in place, a compaction is its own
+// summary: one request of the conversation as it stands with a short
+// instruction last, which calls no tool and adds nothing before the summary
+// is written, so it works at the fullest point of the window and on a slow
+// server. An agent that keeps a memory then saves what the summary holds of
+// lasting use in an upkeep turn of the small conversation the summary left.
+//
+// Elsewhere the supervisor sends the agent an upkeep turn: an agent that
+// keeps a memory saves what the conversation produced to it first, and
+// every agent answers with a handoff. The supervisor then starts a new
+// conversation that opens with the handoff, quoted.
+//
+// A failed compaction swaps nothing, and the conversation goes on as it was.
+// Each compaction is a line of the segment's receipts/upkeep.ndjson, with
+// the memory's fact lines counted before and after, where there is a memory,
+// so a line the model lost shows.
 
 import (
 	"archive/tar"
@@ -47,9 +58,14 @@ const (
 	upkeepInUseShare = 0.75
 	// maxUpkeepsPerDay bounds the upkeep turns in any 24 hours.
 	maxUpkeepsPerDay = 12
-	// upkeepTurnCap bounds an upkeep turn; a person's message waits for it
-	// at most this long.
+	// upkeepTurnCap bounds an upkeep turn on a hosted model; a person's
+	// message waits for it at most this long.
 	upkeepTurnCap = 5 * time.Minute
+	// upkeepTurnCapOwn bounds an upkeep turn on a model server of the
+	// person's own, which may read a long conversation for minutes before
+	// its first token, and may be answering another request first. The
+	// harness waits as long for a reply from such a server.
+	upkeepTurnCapOwn = 30 * time.Minute
 	// maxHandoff bounds the handoff a new conversation opens with.
 	maxHandoff = 4096
 	// upkeepRetry is how long an idle or in-use compaction that failed
@@ -82,7 +98,15 @@ const keptForCompaction = 4
 // beginUpkeep marks upkeep as running, so a person's message waits for it
 // and is told why, until the returned func ends it.
 func (s *Supervisor) beginUpkeep(wait string) func() {
-	return s.beginWait(wait, upkeepTurnCap+time.Minute)
+	return s.beginWait(wait, s.upkeepCap()+time.Minute)
+}
+
+// upkeepCap bounds one upkeep turn or compaction on the agent's model.
+func (s *Supervisor) upkeepCap() time.Duration {
+	if pol := s.policy(); pol != nil && pol.Model.OwnEndpoint() {
+		return upkeepTurnCapOwn
+	}
+	return upkeepTurnCap
 }
 
 // beginWait marks the turn as taken by the supervisor's own work, so a
@@ -215,6 +239,18 @@ func (u upkeepState) coldDue(now time.Time, after time.Duration) bool {
 		u.ContextTokens >= adapter.ColdCompactionFloor
 }
 
+// tooLargeToTidy says the conversation is too large for the memory's tidy to
+// run in: at least half the model's window, or the idle compaction's floor,
+// whichever is smaller. Every request of the tidy's turn would read all of
+// it, so the conversation is compacted first.
+func (u upkeepState) tooLargeToTidy() bool {
+	ceiling := int64(upkeepIdleFloor)
+	if u.ContextLimit > 0 {
+		ceiling = min(ceiling, u.ContextLimit/2)
+	}
+	return u.ContextTokens >= ceiling
+}
+
 // consolidationDue says the memory's daily consolidation is due at now: the
 // person has sent nothing for upkeepIdle, a day has passed since the last,
 // and a turn since may have changed the memory.
@@ -263,11 +299,17 @@ func (s *Supervisor) noteUpkeepEvent(ev session.Event) {
 
 // upkeepTick, from the heartbeat's ticker, compacts the conversation when an
 // idle or an in-use compaction is due, then consolidates the memory when
-// that is due: after an idle compaction, its turn comes first.
+// that is due: after an idle compaction, its turn comes first. A
+// consolidation due in a conversation too large to tidy in compacts it
+// first, as an idle one, since the person has been away as long.
 func (s *Supervisor) upkeepTick(ctx context.Context) {
 	trigger := s.upkeepDue()
-	if trigger == "" && !s.consolidationDue() {
+	consolidate := s.consolidationDue()
+	if trigger == "" && !consolidate {
 		return
+	}
+	if trigger == "" && s.compactBeforeTidy() {
+		trigger = UpkeepIdle
 	}
 	if !s.turn.TryLock() {
 		// A turn is in flight; the next tick looks again.
@@ -277,12 +319,24 @@ func (s *Supervisor) upkeepTick(ctx context.Context) {
 	// A message that comes between the compaction and the consolidation
 	// waits as for either.
 	defer s.beginUpkeep(s.upkeepWords().wait)()
+	compacted := false
 	if trigger != "" {
-		_, _ = s.compactLocked(ctx, trigger)
+		out, _ := s.compactLocked(ctx, trigger)
+		compacted = out.Done()
 	}
 	if s.consolidationDue() {
-		s.consolidateLocked(ctx)
+		s.consolidateLocked(ctx, compacted)
 	}
+}
+
+// compactBeforeTidy says a consolidation that is due must compact the
+// conversation first: it is too large to tidy in, and no failed compaction
+// is waiting out its hour.
+func (s *Supervisor) compactBeforeTidy() bool {
+	now := s.now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return !now.Before(s.upkeep.RetryAfter) && s.upkeep.tooLargeToTidy()
 }
 
 // consolidationDue says the memory's consolidation is due now; an agent that
@@ -307,9 +361,11 @@ const consolidateText = "Upkeep: consolidate your memory (memory-consolidate)."
 
 // consolidateLocked runs the memory's daily consolidation: an upkeep turn
 // in the conversation as it is, which swaps nothing. A memory unchanged
-// since the last run is left alone, and a person's message waiting puts it
-// off to a later idle. The caller holds turn.
-func (s *Supervisor) consolidateLocked(ctx context.Context) {
+// since the last run is left alone, a person's message waiting puts it off
+// to a later idle, and a conversation too large to tidy in puts it off until
+// a compaction has made it small; compacted says one just did, whose new
+// size may not have been reported yet. The caller holds turn.
+func (s *Supervisor) consolidateLocked(ctx context.Context, compacted bool) {
 	now := s.now()
 	defer s.beginUpkeep("Tidying the memory first; your message follows")()
 	s.mu.Lock()
@@ -330,6 +386,10 @@ func (s *Supervisor) consolidateLocked(ctx context.Context) {
 		holdBack(fmt.Sprintf("%d upkeep turns in the last day, and the last %d of the %d are kept for compactions", u.upkeepsToday(now), keptForCompaction, maxUpkeepsPerDay))
 		return
 	}
+	if !compacted && u.tooLargeToTidy() {
+		holdBack(fmt.Sprintf("the conversation is too large to tidy the memory in (about %d tokens), and waits for a compaction", u.ContextTokens))
+		return
+	}
 	before, digest := s.memoryStat(ctx)
 	if digest != "" && digest == u.MemoryDigest {
 		// Nothing was written since the last run: nothing to tidy.
@@ -344,7 +404,7 @@ func (s *Supervisor) consolidateLocked(ctx context.Context) {
 	})
 	s.notice("Tidying the memory")
 	out.FactsBefore = before
-	tctx, cancel := context.WithTimeout(ctx, upkeepTurnCap)
+	tctx, cancel := context.WithTimeout(ctx, s.upkeepCap())
 	err := s.sendLocked(tctx, consolidateFrame, consolidateText)
 	cancel()
 	s.upkeepSent(err)
@@ -390,7 +450,22 @@ type Compacted struct {
 	// SwapSegment), and SwapMillis how long that took.
 	Swap       string `json:"swap,omitempty"`
 	SwapMillis int64  `json:"swapMillis,omitempty"`
+	// SaveFailed says why the save to memory that follows a compaction in
+	// place did not finish; the compaction itself stands.
+	SaveFailed string `json:"saveFailed,omitempty"`
 }
+
+// Done says the conversation was compacted: swapped for a new one that
+// opens with the handoff, or summarised in place by the running harness.
+// A swap whose record for the next start failed still moved the agent.
+func (c Compacted) Done() bool {
+	return c.Swapped || (c.Swap == SwapInPlace && c.Reason == "")
+}
+
+// CompactWait is how long a client waits for a compaction it asked for: the
+// compaction and the save to memory after it, each bounded by the longest
+// upkeep cap, and a minute.
+const CompactWait = 2*upkeepTurnCapOwn + time.Minute
 
 // Compact compacts the conversation now, at the person's asking, whatever
 // its size. It refuses while another turn is in flight.
@@ -481,6 +556,9 @@ func (s *Supervisor) compactLocked(ctx context.Context, trigger string) (Compact
 		}
 		return out, nil
 	}
+	if c := s.inPlaceCompactor(); c != nil {
+		return s.compactInPlaceLocked(ctx, trigger, c)
+	}
 	memory, words := s.keepsMemory(), s.upkeepWords()
 	_ = s.changeUpkeep(func(st *upkeepState) {
 		st.Upkeeps = append(pruneDay(st.Upkeeps, now), now.UTC())
@@ -495,7 +573,7 @@ func (s *Supervisor) compactLocked(ctx context.Context, trigger string) (Compact
 	}
 
 	events, unsubscribe := s.Subscribe()
-	tctx, cancel := context.WithTimeout(ctx, upkeepTurnCap)
+	tctx, cancel := context.WithTimeout(ctx, s.upkeepCap())
 	err := s.sendLocked(tctx, words.frame, words.text)
 	cancel()
 	s.upkeepSent(err)
@@ -593,27 +671,70 @@ var coldWords = upkeepWords{
 	done:  "Compacted: the harness summarised the conversation in place",
 }
 
+// inPlaceWords are what the person is told while any other compaction the
+// harness runs itself is under way.
+var inPlaceWords = upkeepWords{
+	wait:  "Compacting the conversation first; your message follows",
+	start: "Summarising the conversation in the running harness",
+	done:  "Compacted: the harness summarised the conversation in place",
+}
+
+// saveFrame opens the upkeep turn that follows a compaction in place, for an
+// agent that keeps a memory: the conversation is the summary now, and what
+// it holds of lasting use is saved from it.
+const saveFrame = "(Agentry: memory upkeep. The conversation was just compacted, and the summary above is what is left of it. " +
+	"Save to your memory what the summary holds of lasting use that your memory does not have yet, starting with what it lists " +
+	"under to save: follow steps 2 to 4 of your memory-compact skill, with the summary as the conversation. Answer in one line " +
+	"with what you saved, and write no handoff: the conversation goes on after it. This is not a message from the person.)\n\n"
+
+// saveText is the message of the upkeep turn that follows a compaction in
+// place.
+const saveText = "Upkeep: save the compacted conversation to memory (memory-compact)."
+
 // coldCompactLocked runs a cold-cache compaction: the running harness
 // compacts the conversation in place where it can (codex, Copilot CLI), and
-// otherwise the upkeep turn and a new conversation do. A harness compaction
-// that fails waits an hour, as a failed automatic upkeep does, rather than
-// falling back in the same wait: the person's message waits for one upkeep's
-// bound at most. The caller holds turn.
+// otherwise the upkeep turn and a new conversation do (compactLocked). The
+// caller holds turn.
 func (s *Supervisor) coldCompactLocked(ctx context.Context) (Compacted, error) {
+	return s.compactLocked(ctx, UpkeepCold)
+}
+
+// inPlaceCompactor is the running segment where its harness can compact the
+// conversation in place, and nil otherwise.
+func (s *Supervisor) inPlaceCompactor() engine.ConversationCompactor {
 	s.mu.Lock()
-	sess, u, outDir := s.sess, s.upkeep, s.outDir
+	sess := s.sess
 	s.mu.Unlock()
 	c, ok := sess.(engine.ConversationCompactor)
-	now := s.now()
-	if !ok || !c.CanCompact() || u.upkeepsToday(now) >= maxUpkeepsPerDay {
-		// compactLocked keeps the daily cap and the hour's wait itself.
-		return s.compactLocked(ctx, UpkeepCold)
+	if !ok || !c.CanCompact() {
+		return nil
 	}
-	out := Compacted{Trigger: UpkeepCold, ContextTokens: u.ContextTokens, FactsBefore: -1, FactsAfter: -1, Swap: SwapInPlace}
-	defer s.beginUpkeep(coldWords.wait)()
-	s.notice(coldWords.start)
+	return c
+}
+
+// compactInPlaceLocked runs one compaction in the running harness: its own
+// summary, one request with no tool, after which the conversation is the
+// summary and what it kept. An agent that keeps a memory then saves what the
+// summary holds in an upkeep turn of that small conversation; a save that
+// fails leaves the compaction standing, and the summary keeps what it was to
+// save for the next. A compaction that fails waits an hour, as a failed
+// automatic upkeep does, rather than falling back to the upkeep turn in the
+// same wait: that turn would read the same large conversation many times
+// over. The caller holds turn and has checked the daily cap.
+func (s *Supervisor) compactInPlaceLocked(ctx context.Context, trigger string, c engine.ConversationCompactor) (Compacted, error) {
+	now := s.now()
+	s.mu.Lock()
+	u, outDir := s.upkeep, s.outDir
+	s.mu.Unlock()
+	words := inPlaceWords
+	if trigger == UpkeepCold {
+		words = coldWords
+	}
+	out := Compacted{Trigger: trigger, ContextTokens: u.ContextTokens, FactsBefore: -1, FactsAfter: -1, Swap: SwapInPlace}
+	defer s.beginUpkeep(words.wait)()
+	s.notice(words.start)
 	start := time.Now()
-	tctx, cancel := context.WithTimeout(ctx, upkeepTurnCap)
+	tctx, cancel := context.WithTimeout(ctx, s.upkeepCap())
 	err := c.CompactConversation(tctx)
 	cancel()
 	out.SwapMillis = time.Since(start).Milliseconds()
@@ -621,7 +742,9 @@ func (s *Supervisor) coldCompactLocked(ctx context.Context) (Compacted, error) {
 	_ = s.changeUpkeep(func(st *upkeepState) {
 		st.Upkeeps = append(pruneDay(st.Upkeeps, now), now.UTC())
 		if err != nil {
-			st.RetryAfter = s.now().Add(upkeepRetry).UTC()
+			if trigger != UpkeepManual {
+				st.RetryAfter = s.now().Add(upkeepRetry).UTC()
+			}
 			return
 		}
 		st.LastCompaction = s.now().UTC()
@@ -633,8 +756,29 @@ func (s *Supervisor) coldCompactLocked(ctx context.Context) (Compacted, error) {
 		s.notice("The harness could not compact the conversation, so it goes on as it was: " + err.Error())
 		return out, nil
 	}
+	done := words.done
+	if s.keepsMemory() {
+		out.FactsBefore, _ = s.memoryStat(ctx)
+		_ = s.changeUpkeep(func(*upkeepState) { s.upkeepTurn, s.upkeepMark = true, saveText })
+		tctx, cancel := context.WithTimeout(ctx, s.upkeepCap())
+		serr := s.sendLocked(tctx, saveFrame, saveText)
+		cancel()
+		s.upkeepSent(serr)
+		s.mu.Lock()
+		out.Turn = s.usage.UserTurns
+		s.mu.Unlock()
+		// The save turn wrote the memory, or may have.
+		_ = s.changeUpkeep(func(st *upkeepState) { st.MemoryWrites++ })
+		out.FactsAfter, _ = s.memoryStat(ctx)
+		if serr != nil {
+			out.SaveFailed = serr.Error()
+			done = "Compacted in place, but saving the summary to memory did not finish: " + serr.Error()
+		} else {
+			done += ", and what it holds of lasting use is saved to memory"
+		}
+	}
 	s.logUpkeep(outDir, out, conv, conv)
-	s.notice(coldWords.done)
+	s.notice(done)
 	return out, nil
 }
 
@@ -1000,6 +1144,7 @@ type UpkeepRecord struct {
 	HandoffForm     string    `json:"handoffForm,omitempty"`
 	Swap            string    `json:"swap,omitempty"`
 	SwapMillis      int64     `json:"swapMillis,omitempty"`
+	SaveFailed      string    `json:"saveFailed,omitempty"`
 }
 
 // logUpkeep appends a compaction's line to the receipts of the segment it
@@ -1015,7 +1160,7 @@ func (s *Supervisor) logUpkeep(outDir string, c Compacted, oldConv, newConv stri
 	b, err := json.Marshal(UpkeepRecord{Time: s.now().UTC(), Trigger: c.Trigger, Swapped: c.Swapped, Reason: c.Reason,
 		ContextTokens: c.ContextTokens, OldConversation: oldConv, NewConversation: newConv, Turn: c.Turn,
 		FactsBefore: c.FactsBefore, FactsAfter: c.FactsAfter, HandoffBytes: c.HandoffBytes, HandoffCut: c.HandoffCut,
-		HandoffForm: c.HandoffForm, Swap: c.Swap, SwapMillis: c.SwapMillis})
+		HandoffForm: c.HandoffForm, Swap: c.Swap, SwapMillis: c.SwapMillis, SaveFailed: c.SaveFailed})
 	if err != nil {
 		return
 	}

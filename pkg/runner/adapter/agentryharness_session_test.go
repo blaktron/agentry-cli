@@ -770,6 +770,13 @@ func TestAgentryHarnessCompilesAPersistentAgentsSegment(t *testing.T) {
 	if cfg.Compaction == nil || cfg.Compaction.Notes == "" || cfg.Compaction.Notes == plain.Compaction.Notes {
 		t.Errorf("the notes a persistent agent's summary names: %+v, a session's %+v", cfg.Compaction, plain.Compaction)
 	}
+	// A persistent agent's summary also keeps what its memory does not hold
+	// yet, so the save that follows a compaction has it to save; a
+	// session's has no memory to keep it for.
+	if !strings.HasPrefix(cfg.Compaction.Checkpoint, checkpointText) || !strings.Contains(cfg.Compaction.Checkpoint, "to save") ||
+		plain.Compaction.Checkpoint != checkpointText {
+		t.Errorf("the checkpoint: a persistent agent's %q, a session's %q", cfg.Compaction.Checkpoint, plain.Compaction.Checkpoint)
+	}
 	if cfg.ColdClear == nil || cfg.ColdClear.KeepTurns != 2 {
 		t.Errorf("cold clear: %+v", cfg.ColdClear)
 	}
