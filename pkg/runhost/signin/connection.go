@@ -152,6 +152,12 @@ func (s *Server) Connect(ctx context.Context, in io.Reader, fw *runhost.FrameWri
 		case ctx.Err() != nil && errors.Is(err, context.Canceled):
 			return 1, errors.New("nothing kept: the device left before the consent finished")
 		}
+		if k, ok := connection.ConnectorAtIssuer(req.Issuer); ok && req.AgentryClient != "" {
+			if step := connection.AdminStep(err, k, req.AgentryClient, req.Scopes); step != "" {
+				_ = fw.Out("%s", step)
+				return exitOf(err), fmt.Errorf("an administrator must approve Agentry's app for your organization first: %w", err)
+			}
+		}
 		return exitOf(err), err
 	}
 	if own != nil {

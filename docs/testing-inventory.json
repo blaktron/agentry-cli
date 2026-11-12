@@ -66,6 +66,16 @@
           ]
         },
         {
+          "path": "cmd/agentry/cmd_connections_admin_test.go",
+          "tests": [
+            "TestTheAdminStepIsForTheAgentryClientTheConsentUsed"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "cmd/agentry/cmd_connections_test.go",
           "tests": [
             "TestAConnectionIsAskedForOnceAndReusedByTheNextRun",
@@ -5578,6 +5588,17 @@
       "behavior": "A person's OAuth connections to remote MCP servers on this machine: one per QuickAgent release (ref plus",
       "disposition": "retain",
       "files": [
+        {
+          "path": "pkg/runner/connection/adminstep_test.go",
+          "tests": [
+            "TestARefusalThatNeedsAnAdminGetsTheAdminLink",
+            "TestConnectorAtIssuer"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
         {
           "path": "pkg/runner/connection/connection_test.go",
           "tests": [
