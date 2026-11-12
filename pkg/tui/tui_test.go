@@ -381,8 +381,10 @@ func TestTheInputLineSendsOneTurnAtATime(t *testing.T) {
 		t.Fatalf("sent = %q", fs.sent)
 	}
 	status := m.statusLine()
+	// A session whose turn takes no message keeps what was typed in the
+	// input line, for the person to send when the turn ends.
 	m, cmd = press(m, "while you answer")
-	if cmd != nil || len(fs.sent) != 1 || m.input.Value() != "" {
+	if cmd != nil || len(fs.sent) != 1 || m.input.Value() != "while you answer" {
 		t.Fatalf("a message while busy: cmd=%v sent=%q input=%q", cmd != nil, fs.sent, m.input.Value())
 	}
 	if got := m.statusLine(); got == status || !strings.HasSuffix(got, " · thinking… · the agent is still answering — wait for its turn to end ") {
@@ -440,8 +442,9 @@ func TestTheSlashCommandsOfTheChat(t *testing.T) {
 		t.Errorf("/caps: %q", last(m, 3))
 	}
 	m, cmd = press(m, "/help")
-	if cmd != nil || last(m, 1) != "/add <path> — give the agent a file (read-only under /inputs); /yes, /no — answer what Agentry asks you for the agent; /finish — ask for the final result and end; /quit — end without a result; /caps — the enforced contract" {
-		t.Errorf("/help: %q", last(m, 1))
+	if cmd != nil || last(m, 2) != "/add <path> — give the agent a file (read-only under /inputs); /yes, /no — answer what Agentry asks you for the agent; /finish — ask for the final result and end; /quit — end without a result; /caps — the enforced contract\n"+
+		"A message you send while the agent is answering reaches it during that turn, where its harness takes one; otherwise it stays in the input line for you to send when the turn ends." {
+		t.Errorf("/help: %q", last(m, 2))
 	}
 	m, cmd = press(m, "/add")
 	if cmd != nil || last(m, 1) != "usage: /add <path>" {
@@ -734,4 +737,109 @@ func TestRunReturnsHowTheChatWasLeft(t *testing.T) {
 			t.Errorf("Run = %+v, %v", out, err)
 		}
 	})
+}
+
+// steeringSession is a session whose turn in flight takes a message, or
+// answers it with err.
+type steeringSession struct {
+	*fakeSession
+	steered []string
+	err     error
+}
+
+func (s *steeringSession) Steer(_ context.Context, text string) error {
+	if s.err != nil {
+		return s.err
+	}
+	s.steered = append(s.steered, text)
+	return nil
+}
+
+// TestAMessageTypedDuringATurnIsSentIntoIt: while the agent answers, the
+// input line hands a message to a session that takes one and draws it where
+// the session says it was sent. One the harness cannot take stays in the
+// input line, one that found the turn over opens a turn of its own, and any
+// other refusal is said.
+func TestAMessageTypedDuringATurnIsSentIntoIt(t *testing.T) {
+	busy := func(s session.Session) model {
+		m := newModel(s, testOpts())
+		next, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+		m = next.(model)
+		m.busy = true
+		return m
+	}
+
+	fs := &steeringSession{fakeSession: newFakeSession()}
+	m, cmd := press(busy(fs), "and the date too")
+	if cmd == nil || m.input.Value() != "" || !m.busy {
+		t.Fatalf("a message during a turn: cmd=%v input=%q busy=%v", cmd != nil, m.input.Value(), m.busy)
+	}
+	done := cmd()
+	if done != (steerDoneMsg{text: "and the date too"}) || len(fs.steered) != 1 || fs.steered[0] != "and the date too" || len(fs.sent) != 0 {
+		t.Fatalf("the session was steered %q and sent %q; the chat heard %v", fs.steered, fs.sent, done)
+	}
+	next, after := m.Update(done)
+	m = next.(model)
+	if after != nil || strings.Contains(m.statusLine(), "still answering") {
+		t.Errorf("a message that was taken: cmd=%v status=%q", after != nil, m.statusLine())
+	}
+	// The session's own events draw it: the person's message, and the
+	// runner's notice of a file added during the turn.
+	lines, turns := len(m.lines), m.userTurns
+	m.apply(session.Event{Kind: session.KindAssistantText, Text: "So far the note"})
+	m.apply(session.Event{Kind: session.KindSteer, Text: "and the date too"})
+	m.apply(session.Event{Kind: session.KindSteer, Text: "A new input file is available at /inputs/a.txt", Synthetic: true})
+	m.apply(session.Event{Kind: session.KindSteered})
+	want := "Agent: So far the note\nYou, during the turn: and the date too\nRunner, during the turn: A new input file is available at /inputs/a.txt"
+	if got := last(m, len(m.lines)-lines); got != want || m.userTurns != turns+1 {
+		t.Errorf("the chat drew\n%s\nwant\n%s\n(user messages %d, was %d)", got, want, m.userTurns, turns)
+	}
+
+	// A harness that takes a message only between turns.
+	fs = &steeringSession{fakeSession: newFakeSession(), err: fmt.Errorf("%w: the docker-agent harness takes one only between turns", session.ErrCannotSteer)}
+	m, cmd = press(busy(fs), "wait for me")
+	next, after = m.Update(cmd())
+	m = next.(model)
+	if after != nil || m.input.Value() != "wait for me" || !strings.Contains(m.statusLine(), "the agent is still answering — wait for its turn to end") || len(fs.sent) != 0 {
+		t.Errorf("a message the harness cannot take: cmd=%v input=%q status=%q", after != nil, m.input.Value(), m.statusLine())
+	}
+	// What the person typed since is not overwritten.
+	m, cmd = press(busy(fs), "first thought")
+	m.input.SetValue("second thought")
+	next, _ = m.Update(cmd())
+	if got := next.(model).input.Value(); got != "second thought" {
+		t.Errorf("the input line after a refusal: %q", got)
+	}
+
+	// The turn ended before the message arrived: it opens the next turn.
+	fs = &steeringSession{fakeSession: newFakeSession(), err: session.ErrNoTurn}
+	m, cmd = press(busy(fs), "just too late")
+	m.busy = false // the turn's end reached the chat first
+	next, after = m.Update(cmd())
+	m = next.(model)
+	if after == nil || !m.busy {
+		t.Fatalf("a message that found the turn over: cmd=%v busy=%v", after != nil, m.busy)
+	}
+	if msg := after(); msg != (turnDoneMsg{}) || len(fs.sent) != 1 || fs.sent[0] != "just too late" {
+		t.Errorf("it was sent as %q (%v)", fs.sent, msg)
+	}
+
+	// Any other refusal is said, and the text is kept.
+	fs = &steeringSession{fakeSession: newFakeSession(), err: errors.New("the session's limit of 10 messages is reached")}
+	m, cmd = press(busy(fs), "one more")
+	before := len(m.lines)
+	next, _ = m.Update(cmd())
+	m = next.(model)
+	if len(m.lines) != before+1 || m.lines[before] != "the message was not taken: the session's limit of 10 messages is reached" || m.input.Value() != "one more" {
+		t.Errorf("a refused message: lines %q input %q", m.lines[before:], m.input.Value())
+	}
+
+	// A session that has ended says nothing more.
+	fs = &steeringSession{fakeSession: newFakeSession(), err: session.ErrEnded}
+	m, cmd = press(busy(fs), "goodbye")
+	before = len(m.lines)
+	next, _ = m.Update(cmd())
+	if m = next.(model); len(m.lines) != before || m.input.Value() != "" {
+		t.Errorf("a message after the end: lines %q input %q", m.lines[before:], m.input.Value())
+	}
 }

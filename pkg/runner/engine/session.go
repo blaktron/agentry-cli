@@ -1444,6 +1444,8 @@ func (s *liveSession) handle(ev adapter.Event) {
 		if first {
 			s.endWith(session.EndOrgPolicy)
 		}
+	case adapter.EventSteered:
+		s.emit(session.Event{Kind: session.KindSteered, Raw: ev.Raw})
 	case adapter.EventLoopNudge, adapter.EventLengthRecovery, adapter.EventResultsCleared, adapter.EventCompaction:
 		// Counted for the envelope, and passed on like any other thing
 		// the harness says of itself.
@@ -1822,9 +1824,58 @@ func (s *liveSession) Interrupt(ctx context.Context) error {
 	}
 }
 
+// Steer implements session.Steerer.
+func (s *liveSession) Steer(ctx context.Context, text string) error {
+	return s.steer(ctx, text, false)
+}
+
+// steer hands the turn in flight a message: the person's, or with synthetic
+// the runner's own. It is recorded before the harness has it, so the event
+// that says where it joined the conversation follows it.
+func (s *liveSession) steer(ctx context.Context, text string, synthetic bool) error {
+	if strings.TrimSpace(text) == "" {
+		return errors.New("a message needs a text")
+	}
+	s.mu.Lock()
+	switch {
+	case s.ended || s.ending:
+		s.mu.Unlock()
+		return session.ErrEnded
+	case !s.inTurn:
+		s.mu.Unlock()
+		return session.ErrNoTurn
+	}
+	st, ok := s.drv.(adapter.Steerer)
+	if !ok {
+		s.mu.Unlock()
+		return fmt.Errorf("%w: the %s harness takes one only between turns", session.ErrCannotSteer, s.p.Plan.Harness.Adapter)
+	}
+	if !synthetic {
+		// The person's message is one of the session's, whichever way it
+		// was sent, so the cap on them holds here too. A message over it
+		// is refused and the turn in flight goes on.
+		if limit := s.budgets.MaxUserTurns; limit > 0 && s.userTurns >= limit {
+			s.mu.Unlock()
+			return fmt.Errorf("the session's limit of %d messages is reached", limit)
+		}
+		s.userTurns++
+	}
+	s.lastActivity = time.Now()
+	s.mu.Unlock()
+	s.emit(session.Event{Kind: session.KindSteer, Text: text, Synthetic: synthetic})
+	if err := st.Steer(ctx, text); err != nil {
+		err = fmt.Errorf("the harness was not given the message: %w", err)
+		s.emit(session.Event{Kind: session.KindError, Text: err.Error()})
+		return err
+	}
+	return nil
+}
+
 // AddInput implements session.Session: only a regular host
 // file, only under the staged inputs directory, agent-side mount
-// unchanged (:ro). The agent hears about it as a user turn.
+// unchanged (:ro). The agent hears about it as a user turn, or, when a turn
+// is in flight, as a message into that turn where the harness takes one
+// and ahead of the next turn where it does not.
 func (s *liveSession) AddInput(ctx context.Context, hostPath string) error {
 	if ended, _ := s.Ended(); ended {
 		return session.ErrEnded
@@ -1877,10 +1928,21 @@ func (s *liveSession) AddInput(ctx context.Context, hostPath string) error {
 	}
 	s.mu.Lock()
 	ending, busy := s.ending, s.inTurn
-	if busy && !ending {
-		s.pendingNotices = append(s.pendingNotices, notice)
-	}
 	s.mu.Unlock()
+	if busy && !ending {
+		// A harness that takes a message during a turn is told at once,
+		// so the turn in flight can read the file. Any other hears of it
+		// ahead of the next turn.
+		if s.steer(ctx, notice, true) == nil {
+			return nil
+		}
+		s.mu.Lock()
+		ending, busy = s.ending, s.inTurn
+		if busy && !ending {
+			s.pendingNotices = append(s.pendingNotices, notice)
+		}
+		s.mu.Unlock()
+	}
 	switch {
 	case ending:
 		return session.ErrEnded
@@ -2093,6 +2155,14 @@ func transcript(env *receipt.Envelope, log []session.Event) string {
 				who = "Runner"
 			}
 			fmt.Fprintf(&b, "## %s\n\n%s\n\n", who, strings.TrimSpace(ev.Text))
+		case session.KindSteer:
+			who := "User"
+			if ev.Synthetic {
+				who = "Runner"
+			}
+			fmt.Fprintf(&b, "## %s, during the turn\n\n%s\n\n", who, strings.TrimSpace(ev.Text))
+		case session.KindSteered:
+			b.WriteString("- what was sent during the turn joined the conversation here\n")
 		case session.KindAssistantTurn:
 			fmt.Fprintf(&b, "## Assistant\n\n%s\n\n", strings.TrimSpace(ev.Text))
 		case session.KindToolCall:

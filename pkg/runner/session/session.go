@@ -40,6 +40,15 @@ const (
 	KindInputAdded Kind = "input_added"
 	// KindIntake records the non-secret intake answers the run started with.
 	KindIntake Kind = "intake"
+	// KindSteer is a message handed to the harness while a turn was in
+	// flight: the person's, or with Synthetic the runner's own (a notice of
+	// an added file). The turn goes on; no turn opens or closes with it.
+	KindSteer Kind = "steer"
+	// KindSteered says the harness has put the messages it was handed into
+	// the conversation at this point of the turn: after the results of the
+	// calls it was running, or where the model would otherwise have ended
+	// its answer.
+	KindSteered Kind = "steered"
 	// KindSessionEnd is the last event; Reason says why.
 	KindSessionEnd Kind = "session_end"
 	// KindError is a harness-reported error.
@@ -162,7 +171,7 @@ var ErrBusy = errors.New("a turn is in flight; send again when its answer arrive
 // had said by then, with StopReason StopInterrupted.
 var ErrInterrupted = errors.New("the turn was stopped")
 
-// ErrNoTurn is returned by Interrupt when no turn is in flight.
+// ErrNoTurn is returned by Interrupt and Steer when no turn is in flight.
 var ErrNoTurn = errors.New("no turn is in flight")
 
 // StopInterrupted is the StopReason of a turn Interrupt stopped.
@@ -175,6 +184,24 @@ type Interrupter interface {
 	// Interrupt stops the turn in flight and returns once it has ended,
 	// or with ErrNoTurn when there is none.
 	Interrupt(ctx context.Context) error
+}
+
+// ErrCannotSteer is returned by Steer when the session's harness takes a
+// message only between turns.
+var ErrCannotSteer = errors.New("this harness takes no message while a turn is in flight")
+
+// Steerer is a Session whose turn in flight can be sent a message: the
+// harness adds it to the conversation after the results of the calls it is
+// running, or when the model next answers with no call, and the turn goes
+// on with it. The message is recorded as a steer event, and a steered
+// event marks where it joined.
+type Steerer interface {
+	// Steer hands text to the turn in flight and returns once the harness
+	// has been given it. With no turn in flight it returns ErrNoTurn, and
+	// the caller sends the text as a turn; on a harness that cannot take
+	// one, an error that is ErrCannotSteer. The person's message counts
+	// as one of the session's user messages.
+	Steer(ctx context.Context, text string) error
 }
 
 // Session is one interactive run.

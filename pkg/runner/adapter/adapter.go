@@ -184,6 +184,9 @@ const (
 	// "request" when the runner asked for it. The engine counts these in
 	// the receipt's usage, by reason.
 	EventCompaction EventKind = "compaction"
+	// EventSteered says the harness put the messages it was handed during
+	// a turn into the conversation, at this point of the turn.
+	EventSteered EventKind = "steered"
 	// EventModelRetry says a model request failed and the harness is
 	// sending it again. Whatever the failed attempt streamed is part of no
 	// message. Text is the harness's words.
