@@ -51,6 +51,26 @@ func TestTheHarnessFollowsTheSavedModelsCredential(t *testing.T) {
 	}
 }
 
+// The policy's container harness is the harness of every saved model paid
+// by a key, never of one paid by a model sign-in, and --adapter still names
+// the harness of one run.
+func TestTheHarnessFollowsThePolicysContainerHarness(t *testing.T) {
+	pol, plan := twoModels(t)
+	pol.ContainerHarness = adapter.AgentryHarnessAdapterName
+	rm, err := ChooseRunModel(pol, "", "")
+	if err != nil || rm.Adapter != adapter.AgentryHarnessAdapterName || rm.Saved.ID != pol.DefaultModel().ID {
+		t.Fatalf("a run on the default = %+v on %s, %v", rm.Saved, rm.Adapter, err)
+	}
+	rm, err = ChooseRunModel(pol, "Plan", "")
+	if err != nil || rm.Adapter != adapter.CodexImageAdapterName || rm.Saved.ID != plan.ID {
+		t.Fatalf("a run on the ChatGPT plan's model = %+v on %s, %v", rm.Saved, rm.Adapter, err)
+	}
+	rm, err = ChooseRunModel(pol, "", adapter.DefaultName)
+	if err != nil || rm.Adapter != adapter.DefaultName {
+		t.Fatalf("--adapter docker-agent: %+v on %s, %v", rm.Saved, rm.Adapter, err)
+	}
+}
+
 func TestAMissingSavedModelIsAPolicyRefusal(t *testing.T) {
 	pol, _ := twoModels(t)
 	_, err := ChooseRunModel(pol, "Gone", "")

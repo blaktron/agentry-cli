@@ -180,6 +180,50 @@ func TestAHarnessChangeStartsANewConversationCarryingTheLast(t *testing.T) {
 	}
 }
 
+// TestAnAgentFollowsThePolicysContainerHarness: a running agent whose
+// policy comes to choose the runner's own harness starts its next segment
+// on it, handed the last exchange and not the other harness's conversation,
+// and goes back the same way when the policy does.
+func TestAnAgentFollowsThePolicysContainerHarness(t *testing.T) {
+	home := shortHome(t)
+	enable(t, home)
+	st := &starter{resumed: true}
+	sv, path := startOnPolicy(t, home, st)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := sv.Send(ctx, "first"); err != nil {
+		t.Fatal(err)
+	}
+	if got := sv.Status().Adapter; got != adapter.DefaultName {
+		t.Fatalf("an agent under a policy that never chose runs on %q", got)
+	}
+	st.mu.Lock()
+	st.resumed = false
+	st.mu.Unlock()
+	for i, name := range []string{adapter.AgentryHarnessAdapterName, adapter.DefaultName} {
+		editPolicy(t, path, func(p *policy.Policy) { p.ContainerHarness = name })
+		said := []string{"second", "third"}[i]
+		if err := sv.Send(ctx, said); err != nil {
+			t.Fatal(err)
+		}
+		st.mu.Lock()
+		n, last, raw := len(st.segments), st.segments[len(st.segments)-1], st.last.raw
+		st.mu.Unlock()
+		if n != i+2 || sv.Status().Adapter != name || last.Adapter != name {
+			t.Fatalf("containerHarness %s: %d segments, the agent on %q, its segment on %q", name, n, sv.Status().Adapter, last.Adapter)
+		}
+		if last.Persistent.ContinueID != "" {
+			t.Errorf("containerHarness %s: the other harness's conversation %q was offered", name, last.Persistent.ContinueID)
+		}
+		if len(raw) != 1 || !strings.HasSuffix(raw[0], said) || raw[0] == said {
+			t.Errorf("containerHarness %s: the segment was not handed the last exchange: %q", name, raw)
+		}
+		if c, _ := LoadConfig(home, "assistant"); c.Conversation == nil || c.Conversation.Adapter != name {
+			t.Errorf("containerHarness %s: the stored conversation is %+v", name, c.Conversation)
+		}
+	}
+}
+
 // TestAModelThatComesToPayWithCreditsOpensItsSession: a running agent whose
 // policy moves to Agentry credits opens a session with a client for that
 // policy before it takes it, its next segment paying with it; moving back

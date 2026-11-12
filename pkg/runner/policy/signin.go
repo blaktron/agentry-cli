@@ -54,6 +54,35 @@ const (
 // imports this one).
 const DockerAgentAdapter = "docker-agent"
 
+// AgentryHarnessAdapter is the name of the adapter that runs the runner's
+// own harness (the adapter package names it too).
+const AgentryHarnessAdapter = "agentry-harness"
+
+// ContainerHarnesses are the harnesses containerHarness may name, the
+// default first.
+func ContainerHarnesses() []string {
+	return []string{DockerAgentAdapter, AgentryHarnessAdapter}
+}
+
+// CheckContainerHarness refuses a containerHarness value that names
+// neither container harness. Empty is the default and passes.
+func CheckContainerHarness(name string) error {
+	switch name {
+	case "", DockerAgentAdapter, AgentryHarnessAdapter:
+		return nil
+	}
+	return fmt.Errorf("containerHarness %q is not a container harness: it must be %s or %s", name, DockerAgentAdapter, AgentryHarnessAdapter)
+}
+
+// RunContainerHarness is the container harness the policy chooses:
+// containerHarness, or docker-agent when it is unset.
+func (p *Policy) RunContainerHarness() string {
+	if p == nil || p.ContainerHarness == "" {
+		return DockerAgentAdapter
+	}
+	return p.ContainerHarness
+}
+
 // The token routes of HarnessPolicy.SignInTokenRoute.
 const (
 	TokenRouteAuthCommand = "auth-command"

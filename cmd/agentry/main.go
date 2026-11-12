@@ -147,6 +147,7 @@ func newRootCmd() *cobra.Command {
 		newModelSignInsCmd(),
 		newModelsCmd(),
 		newProvidersCmd(),
+		newHarnessCmd(),
 		newUninstallCmd(),
 		newListCmd(),
 		newVerifyCmd(),
