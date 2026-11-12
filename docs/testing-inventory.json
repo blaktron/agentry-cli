@@ -7089,7 +7089,8 @@
           "tests": [
             "TestAPersistentAgentOnTheRunnersOwnHarnessKeepsItsConversationAcrossSegments",
             "TestAPersistentSegmentOnTheRunnersOwnHarnessStartsAnewWhenTheStoreCannotLoad",
-            "TestAPersistentSegmentOnTheRunnersOwnHarnessStartsANewConversationAndCompacts"
+            "TestAPersistentSegmentOnTheRunnersOwnHarnessStartsANewConversationAndCompacts",
+            "TestASegmentsEnvelopeCountsAClearOfOldResults"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -7275,6 +7276,7 @@
           "path": "pkg/runner/engine/agentryharness_session_test.go",
           "tests": [
             "TestASessionOnTheRunnersOwnHarness",
+            "TestASessionsEnvelopeCountsWhatItsHarnessDidToCarryTheConversation",
             "TestAnInterruptStopsATurnOnTheRunnersOwnHarness",
             "TestASessionOnTheRunnersOwnHarnessEndsOutOfCredits",
             "TestTheSessionProtocolDrivesTheRunnersOwnHarness"
@@ -10421,7 +10423,8 @@
           "tests": [
             "TestTextResult",
             "TestEnvelopeMarshalShape",
-            "TestEnvelopeWrite"
+            "TestEnvelopeWrite",
+            "TestCompactionsAreCountedByWhy"
           ],
           "fuzz": [],
           "benchmarks": [],
