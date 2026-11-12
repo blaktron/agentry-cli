@@ -256,6 +256,10 @@ type starter struct {
 	checksShare bool
 	checkErr    error
 	checking    *checkingSegment
+	// steers makes each segment one whose harness takes a message during a
+	// turn (session.Steerer); steering is the last such segment.
+	steers   bool
+	steering *steeringSegment
 }
 
 // checkingSegment is a fakeSegment whose share can be checked folder by
@@ -337,6 +341,10 @@ func (s *starter) start(ctx context.Context, seg localrun.Segment) (engine.Persi
 	if s.checksShare {
 		s.checking = &checkingSegment{fakeSegment: s.last, err: s.checkErr}
 		return s.checking, nil
+	}
+	if s.steers {
+		s.steering = &steeringSegment{fakeSegment: s.last}
+		return s.steering, nil
 	}
 	return s.last, nil
 }

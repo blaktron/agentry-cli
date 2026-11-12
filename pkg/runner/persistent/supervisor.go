@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -215,7 +216,10 @@ type Supervisor struct {
 	resumed      bool
 	resumeReason string
 	busy         bool
-	usage        receipt.Usage
+	// chatTurn says the turn in flight is one a chat sent (Send), the only
+	// kind a chat's message may join (Steer).
+	chatTurn bool
+	usage    receipt.Usage
 	// askers are the clients the agent's questions go to, and questions the
 	// ones waiting for an answer (ask.go).
 	askers    map[int]asker
@@ -751,7 +755,45 @@ func (s *Supervisor) Send(ctx context.Context, text string) error {
 	}
 	defer s.turn.Unlock()
 	s.compactBeforePerson(ctx)
+	s.mu.Lock()
+	s.chatTurn = true
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.chatTurn = false
+		s.mu.Unlock()
+	}()
 	return s.sendLocked(ctx, "", text)
+}
+
+// Steer hands a chat's message to the turn in flight when that turn is a
+// chat's, whichever chat sent it: the harness adds it to the conversation
+// after the calls it is running, or when the model next answers, and the
+// segment records it as a steer event. With no turn in flight it is
+// session.ErrNoTurn, and the chat sends the text as a turn. A turn the agent
+// runs on its own (a task, a message from a messenger, upkeep) is answered
+// as session.ErrCannotSteer: a task's turn is its own record under its own
+// cap, a messenger's answer goes back to that messenger, and upkeep is not a
+// conversation, so the message waits for the next turn as it did before. A
+// harness that takes a message only between turns is ErrCannotSteer too.
+func (s *Supervisor) Steer(ctx context.Context, text string) error {
+	if strings.TrimSpace(text) == "" {
+		return errors.New("a message needs a text")
+	}
+	s.mu.Lock()
+	sess, chat, busy := s.sess, s.chatTurn, s.busy
+	s.mu.Unlock()
+	switch {
+	case sess == nil || (!chat && !busy):
+		return session.ErrNoTurn
+	case !chat:
+		return fmt.Errorf("%w: the turn in flight is the agent's own; send once it ends", session.ErrCannotSteer)
+	}
+	st, ok := sess.(session.Steerer)
+	if !ok {
+		return fmt.Errorf("%w: this agent's harness takes a message only between turns", session.ErrCannotSteer)
+	}
+	return st.Steer(ctx, text)
 }
 
 // Interrupt stops the turn in flight, the person's or one the runner sent

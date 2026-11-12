@@ -10015,6 +10015,18 @@
           ]
         },
         {
+          "path": "pkg/runner/persistent/steer_test.go",
+          "tests": [
+            "TestAChatsMessageJoinsAChatsTurnInFlight",
+            "TestAMessageDuringTheAgentsOwnTurnWaits",
+            "TestASteerOnAHarnessThatCannotTakeOne"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "pkg/runner/persistent/stop_test.go",
           "tests": [
             "TestAStopThatClosesWithoutAnAnswerIsJudgedByTheLock"
