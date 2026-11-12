@@ -503,6 +503,7 @@ status
 usage
 usage.compactions
 usage.compactions.overflow
+usage.compactions.request
 usage.compactions.threshold
 usage.costUsd
 usage.inputTokens
@@ -583,6 +584,7 @@ runhost.unsafeMode
 stage
 usage.compactions
 usage.compactions.overflow
+usage.compactions.request
 usage.compactions.threshold
 usage.lengthRecoveries
 usage.lengthRecoveries.answer
@@ -617,3 +619,20 @@ runId
 status
 usage
 `
+
+func TestCompactionsAreCountedByWhy(t *testing.T) {
+	var c Compactions
+	for _, reason := range []string{"threshold", "overflow", "request", "request", "a reason of a later harness"} {
+		c.Add(reason)
+	}
+	if c != (Compactions{Threshold: 2, Overflow: 1, Request: 2}) || c.Total() != 5 {
+		t.Errorf("counted %+v, total %d", c, c.Total())
+	}
+	if sum := c.Plus(Compactions{Request: 1, Overflow: 3}); sum != (Compactions{Threshold: 2, Overflow: 4, Request: 3}) {
+		t.Errorf("together %+v", sum)
+	}
+	b, err := json.Marshal(Usage{Compactions: Compactions{Request: 1}})
+	if err != nil || !strings.Contains(string(b), `"compactions":{"request":1}`) {
+		t.Errorf("a requested compaction alone is written as %s (%v)", b, err)
+	}
+}

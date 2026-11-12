@@ -180,8 +180,9 @@ const (
 	EventResultsCleared EventKind = "results_cleared"
 	// EventCompaction says the harness replaced the conversation with a
 	// summary of it. Text is why: "threshold" when it neared the model's
-	// window, "overflow" when the model's server refused it as too long.
-	// The engine counts these in the receipt's usage, by reason.
+	// window, "overflow" when the model's server refused it as too long,
+	// "request" when the runner asked for it. The engine counts these in
+	// the receipt's usage, by reason.
 	EventCompaction EventKind = "compaction"
 	// EventModelRetry says a model request failed and the harness is
 	// sending it again. Whatever the failed attempt streamed is part of no

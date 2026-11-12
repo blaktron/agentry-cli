@@ -643,6 +643,11 @@ type Usage struct {
 	Turns int `json:"turns"`
 	// UserTurns counts the user's messages in an interactive session.
 	UserTurns int `json:"userTurns,omitempty"`
+	// The four counts below say what the harness did to carry the
+	// conversation on, in a one-shot run, an interactive session and a
+	// persistent agent's segment alike. Each is counted from the harness's
+	// own events, so a harness that does not report one leaves it out.
+
 	// LoopNudges counts the times the harness told the model to stop
 	// repeating the same tool call and reach its goal another way. Each is
 	// a streak of identical calls the run went on from. Absent when none.
@@ -653,38 +658,45 @@ type Usage struct {
 	LengthRecoveries LengthRecoveries `json:"lengthRecoveries,omitzero"`
 	// ResultClears counts the times the harness replaced old tool results
 	// in the conversation with placeholders, after the model server's cache
-	// of it had expired. Absent when none.
+	// of it had expired. One clear may replace several results. Absent
+	// when none.
 	ResultClears int `json:"resultClears,omitempty"`
 	// Compactions counts the times the harness replaced the conversation
 	// with a summary of it, by why. Absent when none.
 	Compactions Compactions `json:"compactions,omitzero"`
 }
 
-// Compactions counts a run's summaries of its conversation by reason: the
-// conversation neared the model's window (Threshold), or the model's server
-// refused it as too long (Overflow).
+// Compactions counts the summaries that replaced a conversation, by reason:
+// the conversation neared the model's window (Threshold), the model's
+// server refused it as too long (Overflow), or the runner asked the harness
+// for one (Request), as it does for a persistent agent's conversation. The
+// first two are the harness's own.
 type Compactions struct {
 	Threshold int `json:"threshold,omitempty"`
 	Overflow  int `json:"overflow,omitempty"`
+	Request   int `json:"request,omitempty"`
 }
 
-// Add counts one compaction made for reason: "overflow", or the threshold
-// for anything else.
+// Add counts one compaction made for reason: "overflow", "request", or the
+// threshold for anything else.
 func (c *Compactions) Add(reason string) {
-	if reason == "overflow" {
+	switch reason {
+	case "overflow":
 		c.Overflow++
-		return
+	case "request":
+		c.Request++
+	default:
+		c.Threshold++
 	}
-	c.Threshold++
 }
 
 // Plus is the two counts together.
 func (c Compactions) Plus(o Compactions) Compactions {
-	return Compactions{Threshold: c.Threshold + o.Threshold, Overflow: c.Overflow + o.Overflow}
+	return Compactions{Threshold: c.Threshold + o.Threshold, Overflow: c.Overflow + o.Overflow, Request: c.Request + o.Request}
 }
 
 // Total is how many compactions there were.
-func (c Compactions) Total() int { return c.Threshold + c.Overflow }
+func (c Compactions) Total() int { return c.Threshold + c.Overflow + c.Request }
 
 // LengthRecoveries counts cut-off answers by what the output limit cut: an
 // answer's text, reasoning with no reply yet, or a tool call, which was not

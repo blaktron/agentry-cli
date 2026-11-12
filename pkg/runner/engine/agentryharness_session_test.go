@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -257,6 +258,77 @@ func TestASessionOnTheRunnersOwnHarness(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(p.OutDir, "receipts", name)); err != nil {
 			t.Errorf("receipt %s: %v", name, err)
 		}
+	}
+}
+
+func TestASessionsEnvelopeCountsWhatItsHarnessDidToCarryTheConversation(t *testing.T) {
+	read := scriptedmodel.ToolCalls(scriptedmodel.Call{Name: "fs_read", Arguments: `{"path":"notes.txt"}`})
+	steps := scriptedmodel.Repeat(5, read)
+	steps = append(steps,
+		// The fifth identical call is answered with a message, and the
+		// answer after it is cut off at the output limit.
+		scriptedmodel.Cut("on and on and"),
+		scriptedmodel.Text("The note says hello."),
+		// The second turn's request is refused as too long, and the
+		// conversation is summarised.
+		scriptedmodel.Overflow(scriptedmodel.AnthropicAPI, 4096),
+		scriptedmodel.Text("SUMMARY: the note was read five times and says hello."),
+		scriptedmodel.Text("Still hello."),
+	)
+	model := scriptedmodel.New(t, steps...)
+	g := newScriptedGateway(t, "fs_read")
+	s, p, _ := startAgentryHarnessSession(t, model, g, "fs_read")
+	get, done := collect(s)
+	ctx := context.Background()
+	if err := s.Send(ctx, "what does the note say?"); err != nil {
+		t.Fatalf("first turn: %v", err)
+	}
+	if err := s.Send(ctx, "and now?"); err != nil {
+		t.Fatalf("second turn: %v", err)
+	}
+	env, err := s.End(ctx, true)
+	<-done
+	if err != nil {
+		t.Fatalf("end: %v", err)
+	}
+	u := env.Usage
+	if u.LoopNudges != 1 || u.LengthRecoveries != (receipt.LengthRecoveries{Answer: 1}) || u.ResultClears != 0 || u.Compactions != (receipt.Compactions{Overflow: 1}) {
+		t.Errorf("usage: nudges %d, recoveries %+v, clears %d, compactions %+v", u.LoopNudges, u.LengthRecoveries, u.ResultClears, u.Compactions)
+	}
+	// The envelope on disk says the same, and each count is an event of
+	// the session's too.
+	raw, err := os.ReadFile(filepath.Join(p.OutDir, "result.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var written struct {
+		Usage map[string]json.RawMessage `json:"usage"`
+	}
+	if err := json.Unmarshal(raw, &written); err != nil {
+		t.Fatal(err)
+	}
+	compact := func(member string) string {
+		var b bytes.Buffer
+		_ = json.Compact(&b, written.Usage[member])
+		return b.String()
+	}
+	if compact("loopNudges") != "1" || compact("lengthRecoveries") != `{"answer":1}` || compact("compactions") != `{"overflow":1}` {
+		t.Errorf("result.json usage: %s", raw)
+	}
+	if _, ok := written.Usage["resultClears"]; ok {
+		t.Errorf("a count of nothing is written: %s", raw)
+	}
+	said := map[string]int{}
+	for _, ev := range get() {
+		var line struct {
+			Code string `json:"code"`
+		}
+		if ev.Kind == session.KindOther && json.Unmarshal(ev.Raw, &line) == nil && line.Code != "" {
+			said[line.Code]++
+		}
+	}
+	if said["loop_nudge"] != 1 || said["length_recovery"] != 1 || said["compaction"] != 1 {
+		t.Errorf("the session's events: %v", said)
 	}
 }
 
