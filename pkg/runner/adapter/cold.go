@@ -47,6 +47,14 @@ func ClearsWhenCold(name string) bool {
 	return name == DefaultName || name == AgentryHarnessAdapterName
 }
 
+// SpendsCredits reports whether the adapter named name runs a harness whose
+// client can be pointed at the registry's own model endpoint, where a run is
+// paid for with the account's Agentry credits: the two container harnesses
+// that reach an OpenAI-compatible endpoint with a key the runner hands them.
+func SpendsCredits(name string) bool {
+	return name == DefaultName || name == AgentryHarnessAdapterName
+}
+
 // ColdCompactionFloor is the smallest conversation, in tokens, a cold-cache
 // compaction compacts: below it the history costs too little to be worth a
 // compaction's own request.
