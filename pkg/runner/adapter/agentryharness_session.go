@@ -56,6 +56,16 @@ type harnessSession struct {
 	conversation string
 	continued    bool
 	notContinued string
+	// spent is what the conversation had cost when the session took it up.
+	// The harness reports a conversation's whole cost, and a session's cost
+	// is what the session added to it.
+	spent float64
+	// compacting receives the answer to the compact command in flight.
+	// abandoned counts the compact commands whose answer nobody waits for
+	// any more: each still gets one from the harness, which is then no
+	// answer to a later command.
+	compacting chan proto.Event
+	abandoned  int
 
 	events    chan Event
 	eventGate eventGate
@@ -110,6 +120,9 @@ func (s *harnessSession) Start(ctx context.Context) error {
 			s.conversation, s.continued = id, ready.Continued
 			if !ready.Continued {
 				s.notContinued = "the session store holds no conversation of that id"
+			}
+			if ready.Usage != nil {
+				s.spent = ready.Usage.CostUSD
 			}
 			s.mu.Unlock()
 			return nil
@@ -192,6 +205,94 @@ func (s *harnessSession) Continued() (bool, string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.continued, s.notContinued
+}
+
+// NewConversation implements Renewing: the running harness opens a new
+// conversation, between turns, and the session is in it from then on. The
+// one it leaves stays on the session store.
+func (s *harnessSession) NewConversation(ctx context.Context) (string, error) {
+	if s.ConversationID() == "" {
+		return "", errors.New("session not started")
+	}
+	id := uuid.NewString()
+	if _, err := s.open(ctx, id); err != nil {
+		return "", err
+	}
+	s.mu.Lock()
+	s.conversation, s.continued, s.notContinued, s.spent = id, false, "", 0
+	s.mu.Unlock()
+	return id, nil
+}
+
+// CompactConversation implements Compacting: the harness replaces the
+// conversation with a summary of it, between turns, and says how large it
+// then is in a usage event. A summary that could not be made leaves the
+// conversation as it was and is the error, in the harness's words.
+func (s *harnessSession) CompactConversation(ctx context.Context) error {
+	if s.ConversationID() == "" {
+		return errors.New("session not started")
+	}
+	answer := make(chan proto.Event, 1)
+	s.mu.Lock()
+	s.compacting = answer
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.compacting = nil
+		s.mu.Unlock()
+	}()
+	if err := s.send(proto.Command{Type: proto.CmdCompact}); err != nil {
+		return fmt.Errorf("compact: %w", err)
+	}
+	answered := func(ev proto.Event) error {
+		if ev.Code != proto.WarnCompaction {
+			return errors.New("compact: " + strings.TrimSpace(ev.Text))
+		}
+		return nil
+	}
+	select {
+	case ev := <-answer:
+		return answered(ev)
+	case <-ctx.Done():
+		// The harness is told to give up the summary nobody waits for. It
+		// still answers the command, with a summary it had finished or
+		// with the giving up.
+		s.mu.Lock()
+		select {
+		case ev := <-answer:
+			s.mu.Unlock()
+			return answered(ev)
+		default:
+			s.abandoned++
+		}
+		s.mu.Unlock()
+		_ = s.send(proto.Command{Type: proto.CmdInterrupt})
+		return fmt.Errorf("compact: %w", ctx.Err())
+	case <-s.readDone:
+		select {
+		case ev := <-answer:
+			return answered(ev)
+		default:
+			return errors.New("compact: harness ended the session before answering")
+		}
+	}
+}
+
+// answerCompact hands the answer to a compact command to whoever waits for
+// it, unless it answers a command that was given up.
+func (s *harnessSession) answerCompact(ev proto.Event) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.abandoned > 0 {
+		s.abandoned--
+		return
+	}
+	if s.compacting != nil {
+		select {
+		case s.compacting <- ev:
+		default:
+		}
+	}
 }
 
 // Prompt implements SessionDriver.
@@ -335,7 +436,7 @@ func (s *harnessSession) readLoop() {
 			continue
 		}
 		s.mu.Lock()
-		opening, turn := s.opening, s.turn
+		opening, turn, spent := s.opening, s.turn, s.spent
 		s.mu.Unlock()
 		switch ev.Type {
 		case proto.TypeReady:
@@ -377,8 +478,29 @@ func (s *harnessSession) readLoop() {
 				turn.reported = true
 				s.mu.Unlock()
 			}
+			if spent > 0 && ev.Usage != nil && ev.Usage.CostUSD > 0 {
+				// The cost of a conversation taken up from the store is
+				// reported from where the session took it up.
+				ev.Usage.CostUSD = max(ev.Usage.CostUSD-spent, 0)
+				if rewritten, err := json.Marshal(ev); err == nil {
+					s.forwardAs(rewritten, line)
+					continue
+				}
+			}
 			s.forward(line)
 		case proto.TypeWarning:
+			if ev.Reason == proto.CompactionRequest && (ev.Code == proto.WarnCompaction || ev.Code == proto.WarnCompactionFailed) {
+				// The answer to a compact: forwarded like any warning, so
+				// a summary is counted, then handed to whoever asked.
+				s.forward(line)
+				s.answerCompact(ev)
+				continue
+			}
+			if ev.Code == proto.WarnCommandRefused && ev.Reason == proto.CmdCompact {
+				s.observe(ev.Code, line)
+				s.answerCompact(ev)
+				continue
+			}
 			if ev.Code == proto.WarnCommandRefused && ev.Reason == proto.CmdPrompt && turn != nil {
 				// The harness did not take the prompt, so no turn_end
 				// will come for it.
@@ -425,6 +547,15 @@ func answerOpen(opening chan proto.Event, ev proto.Event) {
 // forward sends a line on as the events the adapter reads it as.
 func (s *harnessSession) forward(line []byte) {
 	for _, ev := range s.adapter.Events(line) {
+		s.emit(ev)
+	}
+}
+
+// forwardAs sends on the events the adapter reads line as, each with raw as
+// the line the harness wrote.
+func (s *harnessSession) forwardAs(line, raw []byte) {
+	for _, ev := range s.adapter.Events(line) {
+		ev.Raw = rawCopy(raw)
 		s.emit(ev)
 	}
 }

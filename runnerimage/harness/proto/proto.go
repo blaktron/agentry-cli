@@ -357,6 +357,8 @@ const (
 	CompactionThreshold = "threshold"
 	// CompactionOverflow: the server refused it as too long.
 	CompactionOverflow = "overflow"
+	// CompactionRequest: the runner asked for it with a compact command.
+	CompactionRequest = "request"
 )
 
 // Commands the runner writes to the harness, one JSON object a line.
@@ -390,6 +392,12 @@ const (
 	// turn goes on.
 	CmdPermit = "permit"
 	CmdDeny   = "deny"
+	// CmdCompact replaces the open conversation with a summary of it,
+	// between turns. It is answered with a compaction warning whose reason
+	// is request, or, when no summary was made and the conversation is as
+	// it was, with a compaction_failed warning of that reason. An interrupt
+	// gives it up.
+	CmdCompact = "compact"
 )
 
 // Command is one line the runner writes.
@@ -468,7 +476,9 @@ type Event struct {
 	// the tool sent it and left out of Text.
 	Unchanged bool `json:"unchanged,omitempty"`
 
-	// Usage is set on a usage event.
+	// Usage is set on a usage event. On the ready event of a conversation
+	// that already held a message it says where the conversation stands:
+	// its size, the model's window and what it has cost.
 	Usage *Usage `json:"usage,omitempty"`
 
 	// Code names a warning, one of the Warn constants. Count is the figure

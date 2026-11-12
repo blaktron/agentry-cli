@@ -382,7 +382,7 @@ func TestOneRunEndToEnd(t *testing.T) {
 		}
 		kinds = append(kinds, e.Kind)
 	}
-	if got, want := strings.Join(kinds, " "), "header user assistant usage call result assistant usage"; got != want {
+	if got, want := strings.Join(kinds, " "), "header frame user assistant usage call result assistant usage"; got != want {
 		t.Errorf("log: %s\nwant: %s", got, want)
 	}
 	if strings.Contains(string(raw), modelKey) || strings.Contains(string(raw), gatewayToken) {

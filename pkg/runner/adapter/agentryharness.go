@@ -106,9 +106,6 @@ func (a *agentryHarnessAdapter) Compile(in Input) (Result, error) {
 	switch in.Mode {
 	case manifest.ModeAutonomous:
 	case manifest.ModeInteractive:
-		if in.Persistent {
-			return Result{}, &Refusal{Reason: "the " + AgentryHarnessAdapterName + " adapter runs one-shot runs and interactive sessions; a persistent agent needs another adapter"}
-		}
 	default:
 		return Result{}, fmt.Errorf("%s adapter: unknown run mode %q", AgentryHarnessAdapterName, in.Mode)
 	}
@@ -214,7 +211,8 @@ func (a *agentryHarnessAdapter) Compile(in Input) (Result, error) {
 	if in.Mode == manifest.ModeInteractive {
 		// The same harness, the same configuration and the same events:
 		// a session names its conversation and sends its turns as commands
-		// on the container's stdin.
+		// on the container's stdin. A persistent agent's segment is such a
+		// session on a store that outlives it.
 		agent.Argv = []string{"harness", "serve", "--config", config}
 		res.Session = &spec.SessionSpec{
 			Transport:       agentryHarnessTransport,

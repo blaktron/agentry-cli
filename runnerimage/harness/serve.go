@@ -20,7 +20,8 @@ import (
 //
 // Stdin carries the runner's commands, one JSON object a line. The first is
 // an open, which names the conversation and is answered with a ready event.
-// Each prompt then runs one turn, which ends with a turn_end event. While a
+// Each prompt then runs one turn, which ends with a turn_end event; between
+// turns a compact replaces the conversation with a summary of it. While a
 // turn is under way the runner may steer it or interrupt it, and answers
 // the harness's questions: a permit or a deny for each permission event,
 // and an accept or a continue for each turn_ending event. A command that
@@ -127,6 +128,28 @@ func Serve(ctx context.Context, args []string, stdin io.Reader, stdout, stderr i
 					defer close(done)
 					// How the turn ended is in its turn_end event.
 					_, _ = h.Prompt(turnCtx, cmd.Text)
+				}()
+			case proto.CmdCompact:
+				switch {
+				case !s.open:
+					s.refuse(cmd, "no conversation is open")
+					continue
+				case !idle():
+					s.refuse(cmd, "a turn is under way")
+					continue
+				}
+				// A summary is a model request, which may take as long as
+				// a turn: it has the turn's place, so an interrupt gives
+				// it up and nothing else starts until it has answered.
+				s.over.Store(false)
+				workCtx, cancel := context.WithCancelCause(ctx)
+				stop = cancel
+				done := make(chan struct{})
+				turnDone = done
+				go func() {
+					defer close(done)
+					// How it went is in the warning it writes.
+					_ = h.Compact(workCtx)
 				}()
 			case proto.CmdSteer:
 				h.Steer(cmd.Text)

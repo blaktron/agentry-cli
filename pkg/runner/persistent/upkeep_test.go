@@ -923,8 +923,8 @@ func TestAColdCacheCompactionRunsInTheHarnessBeforeTheMessage(t *testing.T) {
 }
 
 // TestAColdCacheCompactionWaitsForItsMoment: no compaction while the cache
-// is warm, below the floor, with no turn since the last compaction, or on
-// docker-agent, whose harness clears old results itself.
+// is warm, below the floor, with no turn since the last compaction, or on a
+// harness that clears old results itself.
 func TestAColdCacheCompactionWaitsForItsMoment(t *testing.T) {
 	warm := coldState()
 	warm.LastResponse = time.Now().Add(-50 * time.Minute)
@@ -940,6 +940,7 @@ func TestAColdCacheCompactionWaitsForItsMoment(t *testing.T) {
 		{"below the floor", adapter.CodexImageAdapterName, small},
 		{"no turn since", adapter.CodexImageAdapterName, fresh},
 		{"docker-agent", adapter.DefaultName, coldState()},
+		{"the runner's own harness", adapter.AgentryHarnessAdapterName, coldState()},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st := &starter{answer: aHandoff, compactor: true}

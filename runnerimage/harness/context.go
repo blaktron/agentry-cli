@@ -126,6 +126,7 @@ func (h *Harness) window() int64 {
 const (
 	reasonThreshold = proto.CompactionThreshold
 	reasonOverflow  = proto.CompactionOverflow
+	reasonRequest   = proto.CompactionRequest
 )
 
 // The summary request, and the message a summary reaches the model in.
@@ -160,6 +161,49 @@ const usageSummary = "summary"
 // errNoSummary says no usable summary could be had.
 var errNoSummary = errors.New("no summary of the conversation could be made")
 
+// errNothingToSummarise is errNoSummary for a conversation that holds no
+// reply a summary would stand for. Nothing was asked of the model.
+var errNothingToSummarise = fmt.Errorf("%w: it holds no reply for a summary to replace", errNoSummary)
+
+// Compact replaces the conversation with a summary of it because the runner
+// asked, between turns. It writes exactly one warning that says how it went,
+// compaction or compaction_failed, with the reason request. On an error the
+// conversation is as it was.
+func (h *Harness) Compact(ctx context.Context) error {
+	h.turn = ctx
+	err := h.compact(ctx, reasonRequest, 0)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, errNothingToSummarise):
+		// Nothing was asked of the model and no warning written: the one
+		// below is this command's answer.
+	case errors.Is(err, errNoSummary):
+		// compact wrote the warning when the summary came to nothing.
+		return err
+	}
+	text := err.Error()
+	var me *llm.Error
+	switch {
+	case h.stopped():
+		text = "the summary was given up when the runner stopped it"
+	case errors.As(err, &me):
+		text = me.Message
+	}
+	h.warnCompaction(proto.WarnCompactionFailed, reasonRequest, "The conversation was not summarised and is as it was: "+text+".")
+	return err
+}
+
+// warnCompaction writes the warning that says how a compaction went. For
+// one the runner asked for it is the command's answer, after which the
+// compaction does nothing more.
+func (h *Harness) warnCompaction(code, reason, text string) {
+	if reason == reasonRequest && h.OnTurnEnd != nil {
+		h.OnTurnEnd()
+	}
+	h.emit(proto.Event{Type: proto.TypeWarning, Code: code, Reason: reason, Text: text})
+}
+
 // compact replaces the conversation with a summary of it. The summary is
 // asked for with the conversation as it stands and the instruction last, so
 // the server reads what it has already cached; a request the server refuses
@@ -187,7 +231,7 @@ func (h *Harness) compact(ctx context.Context, reason string, first int) error {
 		replaces = replaces || e.Kind == convo.KindAssistant
 	}
 	if !replaces {
-		return errNoSummary
+		return errNothingToSummarise
 	}
 
 	var summary string
@@ -231,8 +275,7 @@ func (h *Harness) compact(ctx context.Context, reason string, first int) error {
 		summary = strings.TrimSpace(text.String())
 	}
 	if summary == "" {
-		h.emit(proto.Event{Type: proto.TypeWarning, Code: proto.WarnCompactionFailed, Reason: reason,
-			Text: "The conversation could not be summarised, so it was left as it was."})
+		h.warnCompaction(proto.WarnCompactionFailed, reason, "The conversation could not be summarised, so it was left as it was.")
 		return errNoSummary
 	}
 
@@ -251,8 +294,8 @@ func (h *Harness) compact(ctx context.Context, reason string, first int) error {
 	h.emit(proto.Event{Type: proto.TypeUsage, Usage: &proto.Usage{
 		ContextTokens: after, ContextLimit: h.window(), Compacted: true, CostUSD: h.cost(),
 	}})
-	h.emit(proto.Event{Type: proto.TypeWarning, Code: proto.WarnCompaction, Reason: reason,
-		Text: fmt.Sprintf("The conversation was replaced by a summary of it (about %d tokens before, about %d after).", before, after)})
+	h.warnCompaction(proto.WarnCompaction, reason,
+		fmt.Sprintf("The conversation was replaced by a summary of it (about %d tokens before, about %d after).", before, after))
 	return nil
 }
 
