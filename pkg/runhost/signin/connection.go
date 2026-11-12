@@ -155,7 +155,7 @@ func (s *Server) Connect(ctx context.Context, in io.Reader, fw *runhost.FrameWri
 		if k, ok := connection.ConnectorAtIssuer(req.Issuer); ok && req.AgentryClient != "" {
 			if step := connection.AdminStep(err, k, req.AgentryClient, req.Scopes); step != "" {
 				_ = fw.Out("%s", step)
-				return exitOf(err), errors.New("an administrator must approve Agentry's app for your organization first")
+				return exitOf(err), fmt.Errorf("an administrator must approve Agentry's app for your organization first: %w", err)
 			}
 		}
 		return exitOf(err), err

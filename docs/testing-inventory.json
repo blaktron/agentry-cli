@@ -66,6 +66,16 @@
           ]
         },
         {
+          "path": "cmd/agentry/cmd_connections_admin_test.go",
+          "tests": [
+            "TestTheAdminStepIsForTheAgentryClientTheConsentUsed"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "cmd/agentry/cmd_connections_test.go",
           "tests": [
             "TestAConnectionIsAskedForOnceAndReusedByTheNextRun",
