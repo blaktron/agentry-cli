@@ -795,6 +795,8 @@ func (d *dockerAgent) Events(line []byte) []Event {
 	case typ == "warning" && isEmptyAnswerWarning(obj):
 		msg, _ := obj["message"].(string)
 		events = append(events, Event{Kind: EventEmptyAnswer, Text: msg, Raw: raw})
+	case typ == "session_compaction" && dockerAgentCompacted(obj):
+		events = append(events, Event{Kind: EventCompaction, Text: dockerAgentCompactionReason(obj), Raw: raw})
 	case typ == "tool_call_response":
 		events = append(events, dockerAgentToolResult(obj, raw))
 	case isToolCallStart(typ):
@@ -862,6 +864,33 @@ func dockerAgentToolResult(obj map[string]any, raw json.RawMessage) Event {
 		failed, _ = res["isError"].(bool)
 	}
 	return Event{Kind: EventToolResult, Tool: dockerAgentToolName(obj), CallID: id, Failed: failed, Text: out, Raw: raw}
+}
+
+// dockerAgentCompacted reports whether a session_compaction event is the end
+// of a compaction that replaced the conversation with a summary: status
+// "completed" with outcome "applied", or with no outcome, which a build
+// older than the outcome field means the same way. A start, and a
+// compaction that was skipped or failed, change nothing.
+func dockerAgentCompacted(obj map[string]any) bool {
+	status, _ := obj["status"].(string)
+	outcome, _ := obj["outcome"].(string)
+	return status == "completed" && (outcome == "applied" || outcome == "")
+}
+
+// dockerAgentCompactionReason is why a compaction ran, in the receipt's
+// words: "threshold" and "overflow" as the harness says them, "request" for
+// its manual compaction, which in a run only whoever drives the harness can
+// ask for. The default harness build says why on the completed event; a build
+// that does not leaves the reason empty, which the receipt counts as a
+// threshold compaction.
+func dockerAgentCompactionReason(obj map[string]any) string {
+	switch reason, _ := obj["reason"].(string); reason {
+	case "threshold", "overflow":
+		return reason
+	case "manual":
+		return "request"
+	}
+	return ""
 }
 
 // dockerAgentLoopNudgePrefix starts the message of the warning the default
