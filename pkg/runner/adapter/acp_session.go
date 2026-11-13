@@ -447,8 +447,23 @@ func (s *acpSession) readLoop() {
 	}
 }
 
+// The extension notifications the default harness build sends when it
+// changes the conversation's history: an applied compaction, with why it
+// ran, and old tool results replaced with placeholders after the model
+// server's prompt cache expired. They are apart from the agent's messages,
+// so counting them never reads the agent's words.
+const (
+	acpCompactionMethod     = "_agentry/session_compaction"
+	acpResultsClearedMethod = "_agentry/results_cleared"
+)
+
 func (s *acpSession) handleNotification(m rpcMessage, line []byte) {
-	if m.Method != "session/update" {
+	switch m.Method {
+	case "session/update":
+	case acpCompactionMethod, acpResultsClearedMethod:
+		s.handleHistoryChange(m, line)
+		return
+	default:
 		s.emit(Event{Kind: EventOther, Text: m.Method, Raw: rawCopy(line)})
 		return
 	}
@@ -551,6 +566,28 @@ func (s *acpSession) handleNotification(m rpcMessage, line []byte) {
 	default:
 		s.emit(Event{Kind: EventOther, Text: u.SessionUpdate, Raw: rawCopy(line)})
 	}
+}
+
+// handleHistoryChange passes on a compaction (EventCompaction, its reason in
+// the receipt's words) or a results clear (EventResultsCleared). Neither
+// counts while a stored conversation is replayed: the history changes they
+// report belong to the segment that made them.
+func (s *acpSession) handleHistoryChange(m rpcMessage, line []byte) {
+	s.mu.Lock()
+	loading := s.loading
+	s.mu.Unlock()
+	if loading {
+		return
+	}
+	var p struct {
+		Reason string `json:"reason"`
+	}
+	_ = json.Unmarshal(m.Params, &p)
+	if m.Method == acpCompactionMethod {
+		s.emit(Event{Kind: EventCompaction, Text: dockerAgentReasonWords(p.Reason), Raw: rawCopy(line)})
+		return
+	}
+	s.emit(Event{Kind: EventResultsCleared, Text: p.Reason, Raw: rawCopy(line)})
 }
 
 // acpToolContent is the text of a tool call update's content: each

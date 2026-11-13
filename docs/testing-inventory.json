@@ -4467,6 +4467,7 @@
             "TestACPSessionRefusesUnknownRequestsAndReportsProtocolMismatch",
             "TestACPSessionReturnsAnAnswerWrittenBeforeTheStreamEnded",
             "TestACPSessionTurnUsageFromUsageUpdates",
+            "TestACPSessionHistoryChanges",
             "TestACPSessionCostComesFromTheWire",
             "TestACPSessionAPromptErrorCarriesTheHarnessesWords",
             "TestACPSessionStartsANewConversationInTheRunningHarness",

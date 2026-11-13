@@ -7,8 +7,11 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/blaktron/agentry-cli/pkg/runner/receipt"
 )
 
 // pipeRW joins the client's write end and read end into one transport.
@@ -339,6 +342,79 @@ func TestACPSessionTurnUsageFromUsageUpdates(t *testing.T) {
 		t.Errorf("turn usage = %+v, want total 130 with no split", turn.Usage)
 	}
 	_ = drv.Close()
+}
+
+// The default harness build reports an applied compaction and a results
+// clear as extension notifications; the driver passes them on as the
+// receipt's events, with the compaction's reason in the receipt's words,
+// and never counts the agent's words that name them.
+func TestACPSessionHistoryChanges(t *testing.T) {
+	toHarnessR, toHarnessW := io.Pipe()
+	fromHarnessR, fromHarnessW := io.Pipe()
+	go func() {
+		defer func() { _ = fromHarnessW.Close() }()
+		sc := bufio.NewScanner(toHarnessR)
+		write := func(v any) { b, _ := json.Marshal(v); _, _ = fromHarnessW.Write(append(b, '\n')) }
+		for sc.Scan() {
+			var m rpcMessage
+			_ = json.Unmarshal(sc.Bytes(), &m)
+			switch m.Method {
+			case "initialize":
+				write(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": map[string]any{"protocolVersion": 1}})
+			case "session/new":
+				write(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": map[string]any{"sessionId": "sess-3"}})
+			case "session/prompt":
+				write(map[string]any{"jsonrpc": "2.0", "method": "_agentry/results_cleared", "params": map[string]any{"sessionId": "sess-3", "reason": "cold_cache"}})
+				write(map[string]any{"jsonrpc": "2.0", "method": "_agentry/session_compaction", "params": map[string]any{"sessionId": "sess-3", "reason": "overflow"}})
+				write(map[string]any{"jsonrpc": "2.0", "method": "_agentry/session_compaction", "params": map[string]any{"sessionId": "sess-3", "reason": "manual"}})
+				write(map[string]any{"jsonrpc": "2.0", "method": "_agentry/session_compaction", "params": map[string]any{"sessionId": "sess-3"}})
+				write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "sess-3", "update": map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": "_agentry/session_compaction results_cleared"}}}})
+				write(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": map[string]any{"stopReason": "end_turn"}})
+			}
+		}
+	}()
+	drv := newACPSession(pipeRW{Reader: fromHarnessR, WriteCloser: toHarnessW}, 1, nil)
+	var (
+		mu     sync.Mutex
+		counts receipt.Compactions
+		clears []string
+	)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for ev := range drv.Events() {
+			mu.Lock()
+			switch ev.Kind {
+			case EventCompaction:
+				counts.Add(ev.Text)
+			case EventResultsCleared:
+				clears = append(clears, ev.Text)
+			}
+			mu.Unlock()
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := drv.Start(ctx); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	turn, err := drv.Prompt(ctx, "hi")
+	if err != nil {
+		t.Fatalf("prompt: %v", err)
+	}
+	_ = drv.Close()
+	<-done
+	mu.Lock()
+	defer mu.Unlock()
+	if counts != (receipt.Compactions{Threshold: 1, Overflow: 1, Request: 1}) {
+		t.Errorf("compactions = %+v, want one each of overflow, request and threshold (no reason)", counts)
+	}
+	if len(clears) != 1 || clears[0] != "cold_cache" {
+		t.Errorf("clears = %q, want one cold_cache", clears)
+	}
+	if turn.Text != "_agentry/session_compaction results_cleared" {
+		t.Errorf("turn text = %q, want the agent's words unchanged", turn.Text)
+	}
 }
 
 // usageOnlyACP answers the handshake and one prompt, emitting the given

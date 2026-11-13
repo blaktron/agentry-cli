@@ -172,6 +172,9 @@ func TestDockerAgentEvents(t *testing.T) {
 		{"compaction from an older build", `{"type":"session_compaction","session_id":"s","status":"completed","agent_name":"root"}`, []EventKind{EventCompaction}},
 		{"compaction skipped", `{"type":"session_compaction","session_id":"s","status":"completed","outcome":"skipped","reason":"threshold","agent_name":"root"}`, []EventKind{EventOther}},
 		{"compaction failed", `{"type":"session_compaction","session_id":"s","status":"completed","outcome":"failed","reason":"overflow","agent_name":"root"}`, []EventKind{EventOther}},
+		// The default build's clear of old tool results after the prompt
+		// cache expired.
+		{"results cleared", `{"type":"results_cleared","session_id":"s","reason":"cold_cache","agent_name":"root"}`, []EventKind{EventResultsCleared}},
 		{"not json", `plain text line`, []EventKind{EventAssistantText}},
 		{"empty", ``, nil},
 	}
