@@ -4467,6 +4467,7 @@
             "TestACPSessionRefusesUnknownRequestsAndReportsProtocolMismatch",
             "TestACPSessionReturnsAnAnswerWrittenBeforeTheStreamEnded",
             "TestACPSessionTurnUsageFromUsageUpdates",
+            "TestACPSessionHistoryChanges",
             "TestACPSessionCostComesFromTheWire",
             "TestACPSessionAPromptErrorCarriesTheHarnessesWords",
             "TestACPSessionStartsANewConversationInTheRunningHarness",
@@ -13809,6 +13810,14 @@
       "kind": "workflow",
       "jobs": [
         "podman"
+      ]
+    },
+    {
+      "path": ".github/workflows/modelfacts.yaml",
+      "disposition": "retain",
+      "kind": "workflow",
+      "jobs": [
+        "refresh"
       ]
     },
     {

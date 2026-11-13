@@ -797,6 +797,11 @@ func (d *dockerAgent) Events(line []byte) []Event {
 		events = append(events, Event{Kind: EventEmptyAnswer, Text: msg, Raw: raw})
 	case typ == "session_compaction" && dockerAgentCompacted(obj):
 		events = append(events, Event{Kind: EventCompaction, Text: dockerAgentCompactionReason(obj), Raw: raw})
+	case typ == "results_cleared":
+		// The default harness build's clear of old tool results after the
+		// model server's prompt cache expired.
+		reason, _ := obj["reason"].(string)
+		events = append(events, Event{Kind: EventResultsCleared, Text: reason, Raw: raw})
 	case typ == "tool_call_response":
 		events = append(events, dockerAgentToolResult(obj, raw))
 	case isToolCallStart(typ):
@@ -884,7 +889,14 @@ func dockerAgentCompacted(obj map[string]any) bool {
 // that does not leaves the reason empty, which the receipt counts as a
 // threshold compaction.
 func dockerAgentCompactionReason(obj map[string]any) string {
-	switch reason, _ := obj["reason"].(string); reason {
+	reason, _ := obj["reason"].(string)
+	return dockerAgentReasonWords(reason)
+}
+
+// dockerAgentReasonWords is a compaction's reason as the harness says it,
+// in the receipt's words (dockerAgentCompactionReason).
+func dockerAgentReasonWords(reason string) string {
+	switch reason {
 	case "threshold", "overflow":
 		return reason
 	case "manual":

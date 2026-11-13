@@ -146,7 +146,7 @@
       "name": "anthropic"
     },
     "agent": {
-      "image": "ghcr.io/blaktron/agentry-docker-agent-src:1.160.0-2026.11.12.15@sha256:261d215515496934c62246058be085bf23303bd5600c7f78caf5791a3e2cc023",
+      "image": "ghcr.io/blaktron/agentry-docker-agent-src:1.160.0-2026.11.13.16@sha256:ac4b76f368ab8f49fe3077acf0a5bc5710cfff4336b0a61d513864cc4fa09c59",
       "argv": [
         "run",
         "--exec",
@@ -216,7 +216,7 @@
     },
     "imagePin": {
       "by": "digest",
-      "value": "sha256:261d215515496934c62246058be085bf23303bd5600c7f78caf5791a3e2cc023"
+      "value": "sha256:ac4b76f368ab8f49fe3077acf0a5bc5710cfff4336b0a61d513864cc4fa09c59"
     }
   },
   "proxy": {

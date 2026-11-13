@@ -111,6 +111,16 @@ file). `python3 scripts/modelfacts/update.py` fetches the list and rewrites the
 snapshot, one model a line, so a refresh reads as a diff of the models that
 changed. Nothing fetches it when a QuickAgent runs.
 
+The `modelfacts` workflow refreshes it every Monday and opens one pull request
+into `dev`, `chore/modelfacts-refresh`, when a model was added, removed or
+re-priced, or when an unchanged list is three weeks old, so its date moves
+forward. `scripts/modelfacts/diff.py` writes the request's summary. A pull
+request a workflow opens starts no checks: close and reopen it to run CI, then
+merge it as any other. A release refuses a snapshot fetched more than 30 days
+before it. To refresh by hand, run `python3 scripts/modelfacts/update.py`, and
+`python3 scripts/modelfacts/diff.py <the old copy> pkg/runner/modelfacts/catalog.json`
+to see what changed.
+
 ## Certificate of origin
 
 This project uses the [Developer Certificate of Origin](https://developercertificate.org/)
