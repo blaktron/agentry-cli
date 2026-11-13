@@ -1,6 +1,12 @@
 {
   "versions": [
     {
+      "version": "0.7.59",
+      "highlights": [
+        "On Docker Agent, chats and persistent agents count their summaries and their clears of old tool results."
+      ]
+    },
+    {
       "version": "0.7.58",
       "highlights": [
         "In agentry agent chat, a message you send while the agent answers you goes into that answer, as in a QuickAgent chat.",
