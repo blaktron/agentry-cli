@@ -139,7 +139,7 @@ var rgTypeName = regexp.MustCompile(`^[a-z0-9][a-z0-9_+-]{0,31}$`)
 
 func grepSchema() map[string]any {
 	return objSchema(map[string]any{
-		"pattern":      strProp("a regular expression (ripgrep's syntax: Rust's regex, no look-around or back-references); with fixedStrings, the literal text"),
+		"pattern":      strProp(`a regular expression (ripgrep's syntax: Rust's regex, no look-around or back-references), in which { } ( ) [ ] . * + ? | ^ $ \ are syntax and need a backslash to match themselves; with fixedStrings, the literal text, the better way to search for JSON or code as written`),
 		"path":         strProp(`where to search, as this run sees it: "/inputs", "/knowledge/<pack>", "/scratch" or "/workspace" (when it is granted), or a folder or file beneath one`),
 		"glob":         strProp(`search only files whose path matches this glob ("*.md", "wiki/**/*.md"); a leading ! leaves matching files out`),
 		"type":         strProp(`search only files of this ripgrep type ("md", "py", "go", "json", "html")`),
@@ -515,6 +515,9 @@ type rgResult struct {
 	// listingCut says the call's listing of the inputs stopped at its
 	// share of the limit, so ripgrep searched only part of them.
 	listingCut bool
+	// lead is a line the answer opens with: how the call was searched,
+	// where that is not as it asked.
+	lead string
 }
 
 // runRipgrep runs ripgrep with args over sc, as many times as sc's paths
@@ -648,6 +651,21 @@ func (s *server) rgFailed(tool string, r rgResult) string {
 	return tool + ": the search failed: " + first
 }
 
+// rgParseError is why ripgrep could not parse the call's pattern as a
+// regular expression, from the error line its refusal ends with, or ""
+// when r is not that refusal.
+func rgParseError(r rgResult) string {
+	if r.exit != 2 || len(r.stdout) > 0 || r.timedOut || !strings.Contains(r.stderr, "regex parse error") {
+		return ""
+	}
+	for _, line := range strings.Split(r.stderr, "\n") {
+		if why, ok := strings.CutPrefix(strings.TrimSpace(line), "error: "); ok && why != "" {
+			return why
+		}
+	}
+	return "ripgrep could not parse it"
+}
+
 // rgRefusal is ripgrep's own refusal of a call's pattern or option, from
 // its stderr, or "" when it refused nothing.
 func rgRefusal(stderr string) string {
@@ -762,20 +780,22 @@ func (s *server) toolGrep(raw json.RawMessage) (string, bool) {
 		}
 		return "no file in " + sc.area + " to search", false
 	}
-	args := grepFlags(a.Glob, a.Type, a.IgnoreCase, a.FixedStrings)
-	switch a.Output {
-	case "files":
-		args = append(args, "--files-with-matches", "--null")
-	case "count":
-		// --with-filename: given one file, ripgrep counts without its name.
-		args = append(args, "--count", "--with-filename", "--null")
-	case "content":
-		args = append(args, "--json")
-		if a.Context > 0 {
-			args = append(args, "--context="+strconv.Itoa(a.Context))
+	grepArgs := func(fixed bool) []string {
+		args := grepFlags(a.Glob, a.Type, a.IgnoreCase, fixed)
+		switch a.Output {
+		case "files":
+			args = append(args, "--files-with-matches", "--null")
+		case "count":
+			// --with-filename: given one file, ripgrep counts without its name.
+			args = append(args, "--count", "--with-filename", "--null")
+		case "content":
+			args = append(args, "--json")
+			if a.Context > 0 {
+				args = append(args, "--context="+strconv.Itoa(a.Context))
+			}
 		}
+		return append(args, "-e", a.Pattern)
 	}
-	args = append(args, "-e", a.Pattern)
 	if s.spec.ShareChecks != nil && sc.area == "workspace" {
 		// A file in the share is searched only once checked: the rest are
 		// left out of the answer, and the answer says how many.
@@ -786,9 +806,20 @@ func (s *server) toolGrep(raw json.RawMessage) (string, bool) {
 		seen := map[string]bool{}
 		sc.withheld, sc.withheldN = s.shareWithheld(verdicts), &seen
 	}
-	r, failed := s.runRipgrep("grep", args, sc, start.Add(s.searchTimeout))
+	deadline := start.Add(s.searchTimeout)
+	r, failed := s.runRipgrep("grep", grepArgs(a.FixedStrings), sc, deadline)
 	if failed != "" {
 		return failed, true
+	}
+	if why := rgParseError(r); why != "" && !a.FixedStrings {
+		// Text copied from JSON or code holds braces and brackets that
+		// ripgrep's regular expressions refuse where other greps take
+		// them as written: search for it as written, and say so first.
+		if r, failed = s.runRipgrep("grep", grepArgs(true), sc, deadline); failed != "" {
+			return failed, true
+		}
+		r.lead = "(the pattern is not a valid regular expression (" + why + "), so it was searched for as literal text; " +
+			`pass fixedStrings: true to search for text as written, or escape { } ( ) [ ] . * + ? | ^ $ \ with a backslash, as \{, to match them in a regular expression)`
 	}
 	if failed := s.rgFailed("grep", r); failed != "" {
 		return failed, true
@@ -887,8 +918,12 @@ func (s *server) searchAnswer(lines []string, maxResults, offset int, r rgResult
 	if len(notes) > 0 {
 		tail = "\n[" + strings.Join(notes, "; ") + "]"
 	}
+	lead := ""
+	if r.lead != "" {
+		lead = r.lead + "\n"
+	}
 	if len(lines) == 0 {
-		return none + tail
+		return lead + none + tail
 	}
 	if maxResults == 0 {
 		maxResults = defaultGrepResults
@@ -896,9 +931,9 @@ func (s *server) searchAnswer(lines []string, maxResults, offset int, r rgResult
 	maxResults = min(maxResults, maxGrepResults)
 	total := len(lines)
 	if offset >= total {
-		return fmt.Sprintf("(offset %d is past the last of the %d results)", offset, total) + tail
+		return lead + fmt.Sprintf("(offset %d is past the last of the %d results)", offset, total) + tail
 	}
-	room := s.spec.Limits.budget().less(tail).room()
+	room := s.spec.Limits.budget().less(lead + tail).room()
 	var out strings.Builder
 	end := offset
 	for end < total && end-offset < maxResults {
@@ -922,7 +957,7 @@ func (s *server) searchAnswer(lines []string, maxResults, offset int, r rgResult
 		}
 		out.WriteString("]")
 	}
-	return out.String() + tail
+	return lead + out.String() + tail
 }
 
 // show is the path an answer gives for p, a path ripgrep answered with.

@@ -886,6 +886,7 @@
             "TestAgentConfigurePublishesAPort",
             "TestAgentStartPrintsEachStage",
             "TestAgentShowSaysWhyAServerFailed",
+            "TestAgentAddServerNamesAWSsOwnServer",
             "TestAgentShowSaysWhatWasNotApplied",
             "TestAgentGrantLetsAServerSeeTheShare",
             "TestAgentShowHelpNamesEachRosterState",
@@ -9295,6 +9296,17 @@
           ]
         },
         {
+          "path": "pkg/runner/persistent/aws_test.go",
+          "tests": [
+            "TestAWSServerNoteNamesAWSsOwnServerForOtherAWSServers",
+            "TestAWSServerNoteIsSilentForAWSsOwnServerAndOthers"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
+        },
+        {
           "path": "pkg/runner/persistent/calendar_signin_test.go",
           "tests": [
             "TestACalendarSessionIsKeptInPartsAWindowsCredentialHolds",
@@ -13382,6 +13394,8 @@
             "TestRipgrepsArgumentsAreFixed",
             "TestSearchConfinementIsChosenByTheMachine",
             "TestGrepSearchesTheScratchFolder",
+            "TestGrepSearchesAnInvalidPatternAsLiteralText",
+            "TestRgParseErrorReadsOnlyAPatternRefusal",
             "TestGrepNeverFollowsALinkOut",
             "TestGrepSearchesTheInputsAsSearchInputsDoes",
             "TestGrepSearchesAKnowledgePack",

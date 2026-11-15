@@ -415,6 +415,33 @@ func TestAgentShowSaysWhyAServerFailed(t *testing.T) {
 	}
 }
 
+// TestAgentAddServerNamesAWSsOwnServer: adding a server for AWS other than
+// AWS's own says, on stderr, where AWS's own server is, and adds the server
+// all the same; adding any other server says nothing of AWS.
+func TestAgentAddServerNamesAWSsOwnServer(t *testing.T) {
+	agentHome(t)
+	if _, _, err := runCLI(t, nil, "agent", "enable", "assistant"); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	aws := filepath.Join(dir, "aws.yaml")
+	if err := os.WriteFile(aws, []byte("pypi: awslabs-aws-documentation-mcp-server\nversion: 1.2.2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, stderr, err := runCLI(t, nil, "agent", "configure", "assistant", "--add-server", aws, "--yes")
+	if err != nil || !strings.Contains(stderr, persistent.AWSMCPServerURL) {
+		t.Fatalf("an AWS package: %v\n%s", err, stderr)
+	}
+	other := filepath.Join(dir, "other.yaml")
+	if err := os.WriteFile(other, []byte("pypi: office-word-mcp-server\nversion: 1.1.11\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, stderr, err = runCLI(t, nil, "agent", "configure", "assistant", "--add-server", other, "--yes")
+	if err != nil || strings.Contains(stderr, "AWS") {
+		t.Fatalf("another package: %v\n%s", err, stderr)
+	}
+}
+
 // TestAgentShowSaysWhatWasNotApplied: entries a running agent switched off
 // because it could not start with them are named by `agent show` with why,
 // and in --json.

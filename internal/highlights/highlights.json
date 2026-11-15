@@ -1,6 +1,14 @@
 {
   "versions": [
     {
+      "version": "0.7.60",
+      "highlights": [
+        "For a task that works with AWS, the Drafter declares AWS's own AWS MCP Server from the Agent Toolkit for AWS.",
+        "agentry agent configure --add-server names AWS's own server when you add a different server for AWS.",
+        "An agent searching for text with braces or brackets, as in JSON or code, finds it as written instead of being refused."
+      ]
+    },
+    {
       "version": "0.7.59",
       "highlights": [
         "On Docker Agent, chats and persistent agents count their summaries and their clears of old tool results."

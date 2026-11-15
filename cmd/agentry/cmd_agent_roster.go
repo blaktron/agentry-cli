@@ -409,6 +409,9 @@ func newAgentConfigureCmd() *cobra.Command {
 				if err != nil {
 					return engine.Classify(engine.ExitUsage, fmt.Errorf("--add-server: %w", err))
 				}
+				if note := persistent.AWSServerNote(srv); note != "" {
+					_, _ = fmt.Fprintln(cmd.ErrOrStderr(), note)
+				}
 				if err := checkAgentServerAdvisories(cmd, srv, allowVulnerable); err != nil {
 					return err
 				}

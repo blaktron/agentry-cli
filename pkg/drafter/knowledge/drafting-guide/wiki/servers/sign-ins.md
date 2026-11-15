@@ -3,7 +3,7 @@ title: Remote servers and sign-ins
 type: list
 summary: Vendors' own remote MCP servers, by address and how each signs in, and the package servers' OAuth sign-ins seen working, which a draft copies exactly. Generated from servers.yaml; do not edit by hand.
 sources: [doc:servers.yaml]
-updated: 2026-10-09
+updated: 2026-11-15
 ---
 
 # Remote servers and sign-ins
@@ -12,7 +12,22 @@ An entry says what was seen, or what the vendor's own metadata said on its date.
 
 ## Remote servers
 
-8 entries. *Agentry signs in as itself* means the vendor lets Agentry register its own client; *the person brings their own client* means it does not, so whoever runs the QuickAgent makes an OAuth client at the vendor once, and the run setup shows how [src: doc:servers.yaml].
+10 entries. *Agentry signs in as itself* means the vendor lets Agentry register its own client; *the person brings their own client* means it does not, so whoever runs the QuickAgent makes an OAuth client at the vendor once, and the run setup shows how [src: doc:servers.yaml].
+
+### AWS, `https://aws-mcp.us-east-1.api.aws/mcp`
+
+- **Signs in with:** `auth: none`.
+- **Not seen to run here.** The same server with no sign-in. Asked directly, it listed its tools and answered aws___list_regions; aws___search_documentation, aws___read_documentation, aws___retrieve_skill and aws___get_regional_availability need no sign-in either, and aws___run_script, aws___get_presigned_url and aws___get_tasks answer "Authentication failed". [src: doc:servers.yaml]
+- **Evidence:** the server asked anonymously, 2026-11-15.
+
+### AWS, `https://aws-mcp.us-east-1.api.aws/mcp`
+
+- **Signs in with:** `auth: oauth`; Agentry signs in as itself.
+- **Scopes it offers:** `default`.
+- **Not seen to run here.** The AWS MCP Server of the Agent Toolkit for AWS, the server AWS maintains for agents. Its metadata names AWS Sign-in, which offers dynamic registration and one scope, default; the CLI's consent registered its own client there and reached AWS's sign-in page. Signed in, aws___run_script runs Python against AWS's APIs with the IAM permissions of whoever signed in, and nothing more. [src: doc:servers.yaml]
+- **Needs:** The person's IAM user or role needs signin:AuthorizeOAuth2Access and signin:CreateOAuth2Token (AWS's managed policy AWSMCPSignInOAuthAccessPolicy); an administrator has them.
+- **Needs:** Its tools take the AWS Region in each call; the address's Region only chooses the server (also us-west-2, eu-west-1, eu-west-2, eu-central-1, ap-southeast-1, ap-southeast-2, ap-northeast-1).
+- **Evidence:** vendor metadata and the CLI's consent read 2026-11-15.
 
 ### Asana, `https://mcp.asana.com/v2/mcp`
 
