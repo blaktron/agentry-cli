@@ -886,6 +886,7 @@
             "TestAgentConfigurePublishesAPort",
             "TestAgentStartPrintsEachStage",
             "TestAgentShowSaysWhyAServerFailed",
+            "TestAgentAddServerNamesAWSsOwnServer",
             "TestAgentShowSaysWhatWasNotApplied",
             "TestAgentGrantLetsAServerSeeTheShare",
             "TestAgentShowHelpNamesEachRosterState",
@@ -9293,6 +9294,17 @@
             "docker interface (real or fake)",
             "source/file contract"
           ]
+        },
+        {
+          "path": "pkg/runner/persistent/aws_test.go",
+          "tests": [
+            "TestAWSServerNoteNamesAWSsOwnServerForOtherAWSServers",
+            "TestAWSServerNoteIsSilentForAWSsOwnServerAndOthers"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
         },
         {
           "path": "pkg/runner/persistent/calendar_signin_test.go",
