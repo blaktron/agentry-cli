@@ -13382,6 +13382,8 @@
             "TestRipgrepsArgumentsAreFixed",
             "TestSearchConfinementIsChosenByTheMachine",
             "TestGrepSearchesTheScratchFolder",
+            "TestGrepSearchesAnInvalidPatternAsLiteralText",
+            "TestRgParseErrorReadsOnlyAPatternRefusal",
             "TestGrepNeverFollowsALinkOut",
             "TestGrepSearchesTheInputsAsSearchInputsDoes",
             "TestGrepSearchesAKnowledgePack",
