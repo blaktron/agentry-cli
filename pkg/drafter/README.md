@@ -210,6 +210,14 @@ resolves each when the version is published. The checks after a draft send
 instructions that call a tool of an undeclared key, or a subagent tool with
 no subagent, to the repair turn.
 
+Since 1.22.2 the Drafter sends AWS work to AWS's own server. For a task that
+works with AWS it declares the AWS MCP Server of the Agent Toolkit for AWS by
+its address, signed in by OAuth for work in the person's account, or with no
+sign-in when the task only reads AWS's documentation, its skills or which
+Regions offer a service. It prefers that server to an AWS package that takes
+an access key, and never declares it beside the AWS Labs API or
+documentation servers, whose tools overlap it.
+
 The runner attaches the guide to every run of the Drafter, through the same
 knowledge tools, the repair turn included. It is part of this release, so
 the registry scans it with the published release. It is not one of your

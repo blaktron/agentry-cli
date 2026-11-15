@@ -246,3 +246,4 @@ agentry/coder@1.7.0 sha256:777345b1854c4468e7b7f1f465af80af8dae0d767cdab1188f549
 agentry/coder@1.7.1 sha256:b93bde80523930c98fee3b53c1220f18202d90d415b6e1b41d7ffadab409ca26
 # 1.7.2, over 1.7.1: a project with no remote gets its origin in the share folder, a bare repository the person can clone, and the loop runs against it with no git host account.
 agentry/coder@1.7.2 sha256:8bb38d25cf234ac6604beac3dd96f7d9e2982fecf31ea39c5c4ac7121c0d9021
+agentry/drafter@1.22.2 sha256:3b5adcea0cf6481a30d0c95339828a44316fa428b155d7642910ee6ec23c5298
