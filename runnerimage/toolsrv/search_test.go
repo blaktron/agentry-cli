@@ -256,11 +256,81 @@ func TestGrepSearchesTheScratchFolder(t *testing.T) {
 	if got, isErr := grepCall(t, s, map[string]any{"pattern": "zebra", "path": d}); isErr || got != "no file in scratch matches" {
 		t.Errorf("no match: (%q, %v)", got, isErr)
 	}
-	if got, isErr := grepCall(t, s, map[string]any{"pattern": "a(", "path": d}); !isErr || !strings.Contains(got, "regex parse error") {
-		t.Errorf("a bad pattern: (%q, %v)", got, isErr)
+	if got, isErr := grepCall(t, s, map[string]any{"pattern": "a(", "path": d}); isErr || !strings.HasPrefix(got, "(the pattern is not a valid regular expression") || !strings.HasSuffix(got, "no file in scratch matches") {
+		t.Errorf("a pattern that is not a regular expression: (%q, %v)", got, isErr)
+	}
+	if got, isErr := grepCall(t, s, map[string]any{"pattern": "invoice", "path": d, "type": "nosuchtype"}); !isErr || !strings.Contains(got, "ripgrep refused the search: unrecognized file type") {
+		t.Errorf("an unknown file type: (%q, %v)", got, isErr)
 	}
 	if got, isErr := grepCall(t, s, map[string]any{"pattern": "a{1000}{1000}", "path": d}); !isErr || !strings.Contains(got, "size limit") {
 		t.Errorf("a pattern past the size limit: (%q, %v)", got, isErr)
+	}
+}
+
+// TestGrepSearchesAnInvalidPatternAsLiteralText: a pattern ripgrep's
+// regular expressions refuse, such as JSON with a bare brace, is searched
+// for as written, and the answer says so first; a call that asked for
+// literal text, and a refusal of anything but the pattern, are answered
+// as ripgrep answered them.
+func TestGrepSearchesAnInvalidPatternAsLiteralText(t *testing.T) {
+	s := searchServer(t, scratchSpec(t), realRipgrep(t))
+	d := s.spec.ScratchDir
+	mustWrite(t, filepath.Join(d, "osv.json"), []byte("{\"id\": \"GHSA-1\",\n \"severity\": {\"type\": \"CVSS_V3\"},\n \"call\": \"parse(x\"}\n"))
+	mustWrite(t, filepath.Join(d, "other.json"), []byte("{}\n"))
+
+	for _, tc := range []struct{ pattern, want, because string }{
+		{`"severity": {`, d + "/osv.json:2:  \"severity\": {\"type\": \"CVSS_V3\"},", "repetition quantifier expects a valid decimal"},
+		{`{"id"`, d + "/osv.json:1: {\"id\": \"GHSA-1\",", "repetition operator missing expression"},
+		{`parse(x`, d + "/osv.json:3:  \"call\": \"parse(x\"}", "unclosed group"},
+	} {
+		got, isErr := grepCall(t, s, map[string]any{"pattern": tc.pattern, "path": d, "output": "content"})
+		first, rest, _ := strings.Cut(got, "\n")
+		if isErr || rest != tc.want {
+			t.Errorf("%s: (%q, %v), want the line %q", tc.pattern, got, isErr, tc.want)
+		}
+		for _, say := range []string{"not a valid regular expression", tc.because, "literal text", "fixedStrings", `\{`} {
+			if !strings.Contains(first, say) {
+				t.Errorf("%s: the first line %q does not say %q", tc.pattern, first, say)
+			}
+		}
+	}
+
+	if got, isErr := grepCall(t, s, map[string]any{"pattern": `{"id"`, "path": d}); isErr || got != "(the pattern is not a valid regular expression (repetition operator missing expression), so it was searched for as literal text; pass fixedStrings: true to search for text as written, or escape { } ( ) [ ] . * + ? | ^ $ \\ with a backslash, as \\{, to match them in a regular expression)\n"+d+"/osv.json" {
+		t.Errorf("files: (%q, %v)", got, isErr)
+	}
+	if got, isErr := grepCall(t, s, map[string]any{"pattern": `"severity": {`, "path": d, "fixedStrings": true}); isErr || got != d+"/osv.json" {
+		t.Errorf("fixedStrings: (%q, %v)", got, isErr)
+	}
+	if got, isErr := grepCall(t, s, map[string]any{"pattern": `\{"id"`, "path": d}); isErr || got != d+"/osv.json" {
+		t.Errorf("an escaped brace: (%q, %v)", got, isErr)
+	}
+	if got, isErr := grepCall(t, s, map[string]any{"pattern": `{"nowhere"`, "path": d}); isErr || !strings.HasSuffix(got, ")\nno file in scratch matches") {
+		t.Errorf("no literal match: (%q, %v)", got, isErr)
+	}
+	if got, isErr := grepCall(t, s, map[string]any{"pattern": `{"id"`, "path": d, "type": "nosuchtype"}); !isErr || !strings.Contains(got, "unrecognized file type") {
+		t.Errorf("an unknown file type with a bad pattern: (%q, %v)", got, isErr)
+	}
+}
+
+// TestRgParseErrorReadsOnlyAPatternRefusal: the reason a refusal gives,
+// for a pattern ripgrep could not parse, and nothing for any other.
+func TestRgParseErrorReadsOnlyAPatternRefusal(t *testing.T) {
+	refused := func(stderr string) rgResult { return rgResult{exit: 2, stderr: stderr} }
+	for _, tc := range []struct {
+		r    rgResult
+		want string
+	}{
+		{refused("rg: regex parse error:\n    (?:a{)\n         ^\nerror: repetition quantifier expects a valid decimal\n"), "repetition quantifier expects a valid decimal"},
+		{refused("rg: regex parse error:\n    (?:a)\n"), "ripgrep could not parse it"},
+		{refused("rg: compiled regex exceeds size limit of 16777216\n"), ""},
+		{refused("rg: unrecognized file type: nope\n"), ""},
+		{rgResult{exit: 2, stdout: []byte("x"), stderr: "rg: regex parse error:\nerror: x\n"}, ""},
+		{rgResult{exit: 2, timedOut: true, stderr: "rg: regex parse error:\nerror: x\n"}, ""},
+		{rgResult{exit: 1}, ""},
+	} {
+		if got := rgParseError(tc.r); got != tc.want {
+			t.Errorf("rgParseError(%+v) = %q, want %q", tc.r, got, tc.want)
+		}
 	}
 }
 
