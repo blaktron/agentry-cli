@@ -1012,6 +1012,25 @@ remote:
   observed: Google's Gmail server is in its Workspace Developer Preview, which an account must join, and has no tool that sends mail. Google offers neither dynamic registration nor a client metadata document, so the person brings their own Google OAuth client. For Gmail without the preview, the listed sign-in of the PyPI package workspace-mcp is the alternative.
   evidence: vendor metadata read 2026-10-09
   date: 2026-10-09
+- vendor: AWS
+  url: https://aws-mcp.us-east-1.api.aws/mcp
+  auth: oauth
+  scopes: [default]
+  client: agentry
+  seen: false
+  observed: The AWS MCP Server of the Agent Toolkit for AWS, the server AWS maintains for agents. Its metadata names AWS Sign-in, which offers dynamic registration and one scope, default; the CLI's consent registered its own client there and reached AWS's sign-in page. Signed in, aws___run_script runs Python against AWS's APIs with the IAM permissions of whoever signed in, and nothing more.
+  conditions:
+    - "The person's IAM user or role needs signin:AuthorizeOAuth2Access and signin:CreateOAuth2Token (AWS's managed policy AWSMCPSignInOAuthAccessPolicy); an administrator has them."
+    - "Its tools take the AWS Region in each call; the address's Region only chooses the server (also us-west-2, eu-west-1, eu-west-2, eu-central-1, ap-southeast-1, ap-southeast-2, ap-northeast-1)."
+  evidence: vendor metadata and the CLI's consent read 2026-11-15
+  date: 2026-11-15
+- vendor: AWS
+  url: https://aws-mcp.us-east-1.api.aws/mcp
+  auth: none
+  seen: false
+  observed: The same server with no sign-in. Asked directly, it listed its tools and answered aws___list_regions; aws___search_documentation, aws___read_documentation, aws___retrieve_skill and aws___get_regional_availability need no sign-in either, and aws___run_script, aws___get_presigned_url and aws___get_tasks answer "Authentication failed".
+  evidence: the server asked anonymously, 2026-11-15
+  date: 2026-11-15
 # Package servers' OAuth sign-ins seen working. A draft
 # gives a package an oauth block only by copying one of these exactly, with
 # the egress and env it lists: a token file the package does not read fails
