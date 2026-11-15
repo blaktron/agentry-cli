@@ -1,6 +1,12 @@
 {
   "versions": [
     {
+      "version": "0.7.60",
+      "highlights": [
+        "An agent searching for text with braces or brackets, as in JSON or code, finds it as written instead of being refused."
+      ]
+    },
+    {
       "version": "0.7.59",
       "highlights": [
         "On Docker Agent, chats and persistent agents count their summaries and their clears of old tool results."
