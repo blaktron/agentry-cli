@@ -68,7 +68,7 @@ const (
 	// coldKeepBrowser is how many of the newest browser results stay,
 	// wherever they fall: a page snapshot is stale at the next navigation.
 	coldKeepBrowser = 2
-	// coldMinBytes is the smallest result the runner's own harness clears.
+	// coldMinBytes is the smallest result either container harness clears.
 	// A shorter one is about a thousand tokens at most, a fortieth of the
 	// smallest conversation worth compacting when cold: clearing it saves
 	// next to nothing of the request, and takes away what the agent's
@@ -93,24 +93,33 @@ func ColdAfter(name, provider string) time.Duration {
 // since the previous model response,
 // a turn's first request sends the tool results older than the newest
 // keep_turns turns, and the browser results but the newest keep_browser, as a
-// placeholder naming the call.
+// placeholder naming the call. A result shorter than min_bytes stays, unless
+// it is a browser's or carries an attachment.
 type coldCacheClearYAML struct {
 	After        string   `yaml:"after"`
 	KeepTurns    int      `yaml:"keep_turns"`
 	KeepBrowser  int      `yaml:"keep_browser"`
 	BrowserTools []string `yaml:"browser_tools,omitempty"`
+	MinBytes     int      `yaml:"min_bytes,omitempty"`
 }
 
 // coldCacheClear is the block for a plan on provider whose browser server, if
-// it has one, passes browserTools. It is written on every plan: an autonomous
-// run is one turn and never reaches it.
-func coldCacheClear(provider string, browserTools []string) *coldCacheClearYAML {
-	return &coldCacheClearYAML{
+// it has one, passes browserTools, run on harnessImage. It is written on every
+// plan: an autonomous run is one turn and never reaches it. min_bytes goes
+// only to the default harness build, which reads it; an earlier build a
+// policy pins refuses a config that carries a key it does not know, so it
+// gets none and clears every old result.
+func coldCacheClear(provider string, browserTools []string, harnessImage string) *coldCacheClearYAML {
+	c := &coldCacheClearYAML{
 		After:        durationYAML(ColdAfter(DefaultName, provider)),
 		KeepTurns:    coldKeepTurns,
 		KeepBrowser:  coldKeepBrowser,
 		BrowserTools: browserTools,
 	}
+	if harnessImage == policy.DefaultHarnessImage {
+		c.MinBytes = coldMinBytes
+	}
+	return c
 }
 
 // durationYAML writes d in whole hours or minutes where it can, as

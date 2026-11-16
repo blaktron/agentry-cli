@@ -1,6 +1,12 @@
 {
   "versions": [
     {
+      "version": "0.7.61",
+      "highlights": [
+        "On Docker Agent, a chat back from a pause keeps its short tool results and marks the ones set aside as read."
+      ]
+    },
+    {
       "version": "0.7.60",
       "highlights": [
         "For a task that works with AWS, the Drafter declares AWS's own AWS MCP Server from the Agent Toolkit for AWS.",
