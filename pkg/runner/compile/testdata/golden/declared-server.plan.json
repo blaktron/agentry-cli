@@ -114,7 +114,7 @@
       "name": "anthropic"
     },
     "agent": {
-      "image": "ghcr.io/blaktron/agentry-docker-agent-src:1.160.0-2026.11.13.16@sha256:ac4b76f368ab8f49fe3077acf0a5bc5710cfff4336b0a61d513864cc4fa09c59",
+      "image": "ghcr.io/blaktron/agentry-docker-agent-src:1.160.0-2026.11.16.17@sha256:18e70061b13c641aac2c79279ce9af773867fdbdbc3e548b3f149e12b7ae5447",
       "argv": [
         "run",
         "--exec",
@@ -184,7 +184,7 @@
     },
     "imagePin": {
       "by": "digest",
-      "value": "sha256:ac4b76f368ab8f49fe3077acf0a5bc5710cfff4336b0a61d513864cc4fa09c59"
+      "value": "sha256:18e70061b13c641aac2c79279ce9af773867fdbdbc3e548b3f149e12b7ae5447"
     }
   },
   "proxy": {
@@ -230,6 +230,6 @@
     "gateway/registry.yaml": "cc21e4caab49d9b939989a497d4e1bf65dfcb9251550d5d95fd925fa82296a20",
     "gateway/tools.yaml": "e288c9f675710935a44b5d578fa0f724fd3f3e7f638b839598d39ee8c8540a70",
     "gateway/toolspec.json": "9acd2489e22f11b81bb8bb9ae4f624c7250331c99d079a8e6d955121a9515352",
-    "harness/agent.yaml": "8a5e7c9346e27f2a4f7ddb267e03efa86859497e699b2d37d6594897fd5b6848"
+    "harness/agent.yaml": "f6bb0b99c02f551d233579cf24ee241f0ff295b3b336f457c662847a78192c03"
   }
 }
