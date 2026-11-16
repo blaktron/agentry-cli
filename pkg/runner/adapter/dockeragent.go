@@ -648,7 +648,7 @@ func (d *dockerAgent) Compile(in Input) (Result, error) {
 				}},
 				RedactSecrets:   &redactFlagOff,
 				Hooks:           withCheckpoint(redactSecretsHooks(in.UnchangedTools...), in.HarnessImage),
-				ColdCacheClear:  coldCacheClear(in.Model.Provider, in.BrowserTools),
+				ColdCacheClear:  coldCacheClear(in.Model.Provider, in.BrowserTools, in.HarnessImage),
 				CompactionNotes: compactionNotes(in.Persistent, in.HarnessImage),
 				LengthRecovery:  lengthRecovery(in.HarnessImage),
 				ContextLimits:   contextLimits(d.Name(), in.Model),
