@@ -108,7 +108,7 @@ type coldCacheClearYAML struct {
 // plan: an autonomous run is one turn and never reaches it. min_bytes goes
 // only to the default harness build, which reads it; an earlier build a
 // policy pins refuses a config that carries a key it does not know, so it
-// clears every old result as it always has.
+// gets none and clears every old result.
 func coldCacheClear(provider string, browserTools []string, harnessImage string) *coldCacheClearYAML {
 	c := &coldCacheClearYAML{
 		After:        durationYAML(ColdAfter(DefaultName, provider)),

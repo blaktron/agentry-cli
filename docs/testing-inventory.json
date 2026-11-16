@@ -4673,7 +4673,7 @@
             "TestColdAfterTable",
             "TestTheDockerAgentPlanCarriesTheColdCacheClear",
             "TestDurationYAML",
-            "TestTheColdClearKeepsSmallResultsOnTheDefaultBuildAlone"
+            "TestTheColdClearKeepsSmallResultsOnlyOnTheDefaultHarness"
           ],
           "fuzz": [],
           "benchmarks": [],

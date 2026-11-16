@@ -77,11 +77,11 @@ func TestDurationYAML(t *testing.T) {
 	}
 }
 
-// TestTheColdClearKeepsSmallResultsOnTheDefaultBuildAlone: the default
+// TestTheColdClearKeepsSmallResultsOnlyOnTheDefaultHarness: the default
 // harness build reads min_bytes and is given the same floor as the runner's
 // own harness; another image a policy pins refuses an unknown key, so its
 // plan carries none and starts.
-func TestTheColdClearKeepsSmallResultsOnTheDefaultBuildAlone(t *testing.T) {
+func TestTheColdClearKeepsSmallResultsOnlyOnTheDefaultHarness(t *testing.T) {
 	if coldMinBytes != 4096 {
 		t.Fatalf("coldMinBytes = %d, want 4096, the floor both container harnesses share", coldMinBytes)
 	}
