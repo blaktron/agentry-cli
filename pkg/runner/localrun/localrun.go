@@ -178,6 +178,11 @@ type Builtin struct {
 	// QuickAgents: the Assistant's alone, by name, never by a key a release
 	// can declare.
 	publisher bool
+	// settings gives the persistent built-in's app link the settings tools
+	// (applink.PartSettings), through which it reads Agentry's settings and
+	// asks the person to change one: Agentry Helper's and the Assistant's,
+	// by name, never by a key a release can declare.
+	settings bool
 }
 
 // KnowledgeCreator is the Knowledge Creator (pkg/knowledge/creator),
@@ -424,6 +429,10 @@ type PlanInputs struct {
 	// (compile.Inputs.Publisher): set by a Segment of a built-in that
 	// carries them alone.
 	Publisher bool
+	// Settings lets the app link list the settings tools
+	// (compile.Inputs.Settings): set by a Segment of the built-ins that
+	// carry them alone.
+	Settings bool
 	// Coder grants the Coding agent what its roster has on
 	// (compile.Inputs.Coder): set by a Segment of the Coding agent alone.
 	Coder *spec.CoderGrant
@@ -634,6 +643,7 @@ func compileInputs(in PlanInputs, runnerImage string, key []byte) compile.Inputs
 		AppLink:      in.AppLink,
 		Subagents:    in.Subagents,
 		Publisher:    in.Publisher,
+		Settings:     in.Settings,
 		Coder:        in.Coder,
 		Calendar:     in.Calendar,
 		ShareServers: in.ShareServers,

@@ -174,6 +174,12 @@ type Inputs struct {
 	// manage the person's QuickAgents: no key grants them, so a release or
 	// an author's folder is never given them.
 	Publisher bool
+	// Settings says the agent is a built-in granted the settings tools
+	// (applink.PartSettings), through which it reads Agentry's settings and
+	// asks the application to change one, each change on the person's yes:
+	// no key grants them, so a release or an author's folder is never given
+	// them.
+	Settings bool
 	// Coder grants the Coding agent what its roster has on (spec.CoderGrant):
 	// any program in its own exec image, open egress, the browser on any
 	// public site, the person's dev server. Its gate is the person's
@@ -327,6 +333,9 @@ func Compile(in Inputs, planDir string) (*spec.Plan, error) {
 		}
 		if applink.Has(in.AppLink, applink.PartPublisher) && (!in.Publisher || in.Source != "builtin") {
 			return nil, &PolicyRefusal{Reason: "the publisher tools are granted to the built-in that carries them alone, never to a release or an author's folder"}
+		}
+		if applink.Has(in.AppLink, applink.PartSettings) && (!in.Settings || in.Source != "builtin") {
+			return nil, &PolicyRefusal{Reason: "the settings tools are granted to the built-ins that carry them alone, never to a release or an author's folder"}
 		}
 		caps.AppLink = in.AppLink
 	}
