@@ -1,6 +1,13 @@
 {
   "versions": [
     {
+      "version": "0.7.63",
+      "highlights": [
+        "An agent's remote MCP servers, such as Fastmail or the AWS MCP Server, keep working in a chat that stays open for hours.",
+        "When such a server ends its session or drops its connection, Agentry reconnects instead of failing every later call."
+      ]
+    },
+    {
       "version": "0.7.62",
       "highlights": [
         "Asking Agentry Helper or the Assistant to open a section of Settings now opens it in Agentry Desktop.",
