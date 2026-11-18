@@ -102,8 +102,10 @@ func TestTheAppLinkListsItsSetAndForwardsEachCall(t *testing.T) {
 
 // TestAppLinkHasNoGrantTool: no tool of any set changes what an agent is
 // given, signs in, publishes, touches a credential, or starts, stops or
-// resets an agent; the Assistant's set is self_configure, its task tools and
-// recall, each taking its own fields and nothing else.
+// resets an agent, but settings_change, which asks the person each time
+// (TestTheSettingsPartIsBothBuiltinsOwn); the Assistant's
+// own tools are self_configure, its task tools and recall, each taking its
+// own fields and nothing else.
 func TestAppLinkHasNoGrantTool(t *testing.T) {
 	// Each word of a tool's name is held to the words of what no tool may do.
 	forbidden := map[string]bool{"grant": true, "roster": true, "switch": true, "change": true, "configure": true, "config": true,
@@ -112,7 +114,7 @@ func TestAppLinkHasNoGrantTool(t *testing.T) {
 		"unsafe": true, "set": true, "write": true, "delete": true}
 	for _, set := range Parts() {
 		for _, name := range Tools(set) {
-			if name == SelfConfigure {
+			if name == SelfConfigure || name == SettingsChange {
 				continue
 			}
 			for _, w := range strings.Split(name, "_") {

@@ -247,3 +247,7 @@ agentry/coder@1.7.1 sha256:b93bde80523930c98fee3b53c1220f18202d90d415b6e1b41d7ff
 # 1.7.2, over 1.7.1: a project with no remote gets its origin in the share folder, a bare repository the person can clone, and the loop runs against it with no git host account.
 agentry/coder@1.7.2 sha256:8bb38d25cf234ac6604beac3dd96f7d9e2982fecf31ea39c5c4ac7121c0d9021
 agentry/drafter@1.22.2 sha256:3b5adcea0cf6481a30d0c95339828a44316fa428b155d7642910ee6ec23c5298
+# 1.23.0, over 1.22.1: the Assistant reads Agentry's settings with settings_read and asks the person to change one with settings_change, each time; its instruction and README say so, and that a key's value is never seen.
+agentry/assistant@1.23.0 sha256:4a07e3b130e980c56efaa5c7ba0c4cd1c525bfdab73facd84531438f31587bb3
+# 1.3.0, over 1.2.0: Agentry Helper reads Agentry's settings with settings_read and asks the person to change one with settings_change, each time; its instruction and README say so, and that a key's value is never seen.
+agentry/main@1.3.0 sha256:5aa6d7c8d735adfc980ce87f0a837e0fa8cf58e25639be176050a8e790bfb7a3

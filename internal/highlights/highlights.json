@@ -1,6 +1,14 @@
 {
   "versions": [
     {
+      "version": "0.7.62",
+      "highlights": [
+        "Asking Agentry Helper or the Assistant to open a section of Settings now opens it in Agentry Desktop.",
+        "Both have new tools to read your settings and to ask you to change one; a key shows only as set or not set.",
+        "Agentry Desktop answers those tools in a coming update, asking you before each change; until then they say so."
+      ]
+    },
+    {
       "version": "0.7.61",
       "highlights": [
         "On Docker Agent, a chat back from a pause keeps its short tool results and marks the ones set aside as read."

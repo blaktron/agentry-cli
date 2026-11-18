@@ -175,7 +175,7 @@ func TestAgentFilesRefusedOutsideAPersistentBuiltin(t *testing.T) {
 // allowlist, and a receipt line.
 func TestTheAppLinkIsAServerWithNoNetworkAndOneBind(t *testing.T) {
 	in := persistentInputs(t, &spec.AgentFiles{Share: true, CheckShare: true})
-	in.AppLink, in.Publisher = applink.SetAssistant, true
+	in.AppLink, in.Publisher, in.Settings = applink.SetAssistant, true, true
 	planDir := t.TempDir()
 	plan, err := Compile(in, planDir)
 	if err != nil {
@@ -256,7 +256,7 @@ var declaredAssistantSet = applink.Compose(applink.PartSelf, applink.PartTasks, 
 // release declares.
 func TestThePublisherToolsAreTheBuiltinsAlone(t *testing.T) {
 	in := persistentInputs(t, &spec.AgentFiles{Share: true})
-	in.AppLink, in.Publisher = applink.SetAssistant, true
+	in.AppLink, in.Publisher, in.Settings = applink.SetAssistant, true, true
 	plan, err := Compile(in, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -277,9 +277,44 @@ func TestThePublisherToolsAreTheBuiltinsAlone(t *testing.T) {
 		{"an author's folder", "local", true},
 	} {
 		in := persistentInputs(t, &spec.AgentFiles{Share: true})
-		in.Source, in.AppLink, in.Publisher = c.source, applink.SetAssistant, c.publisher
+		in.Source, in.AppLink, in.Publisher, in.Settings = c.source, applink.SetAssistant, c.publisher, true
 		var refusal *PolicyRefusal
 		if _, err := Compile(in, t.TempDir()); !errors.As(err, &refusal) || !strings.Contains(err.Error(), "publisher tools") {
+			t.Errorf("%s: %v", c.name, err)
+		}
+	}
+}
+
+// TestTheSettingsToolsAreTheBuiltinsAlone: the settings tools compile into
+// the app link of a built-in granted them, and are refused to a built-in not
+// granted them, to a release and to an author's folder, whatever the
+// release declares.
+func TestTheSettingsToolsAreTheBuiltinsAlone(t *testing.T) {
+	in := persistentInputs(t, &spec.AgentFiles{Share: true})
+	in.AppLink, in.Settings = applink.SetMain, true
+	plan, err := Compile(in, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !applink.Has(plan.Capabilities.AppLink, applink.PartSettings) {
+		t.Errorf("the granted built-in's app link is %q", plan.Capabilities.AppLink)
+	}
+	if line := plan.Enforcement["persistent.appLink"]; !strings.Contains(line, applink.SettingsChange) {
+		t.Errorf("the receipt's app link line does not list the settings tools: %s", line)
+	}
+	for _, c := range []struct {
+		name     string
+		source   string
+		settings bool
+	}{
+		{"a built-in not granted them", "builtin", false},
+		{"a release", "registry", true},
+		{"an author's folder", "local", true},
+	} {
+		in := persistentInputs(t, &spec.AgentFiles{Share: true})
+		in.Source, in.AppLink, in.Settings = c.source, applink.SetMain, c.settings
+		var refusal *PolicyRefusal
+		if _, err := Compile(in, t.TempDir()); !errors.As(err, &refusal) || !strings.Contains(err.Error(), "settings tools") {
 			t.Errorf("%s: %v", c.name, err)
 		}
 	}

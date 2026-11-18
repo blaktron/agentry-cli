@@ -12,6 +12,7 @@ import (
 
 	"github.com/blaktron/agentry-cli/pkg/runner/policy"
 	"github.com/blaktron/agentry-cli/pkg/runner/spec"
+	"github.com/blaktron/agentry-cli/runnerimage/applink"
 	"github.com/blaktron/agentry-cli/runnerimage/toolsrv"
 )
 
@@ -435,5 +436,25 @@ func TestAnUnreviewedAgentIsToldNothingReadsThePagesFirst(t *testing.T) {
 	}
 	if reviewed := systemPrompt(promptFacts{caps: capsNone(true)}); !strings.Contains(reviewed, "AI Review reads") || strings.Contains(reviewed, "switched AI Review off") {
 		t.Fatalf("a reviewed agent's prompt: %s", reviewed)
+	}
+}
+
+// TestTheSettingsLineGoesWithTheSettingsTools: an agent whose app link has
+// the settings tools is told what they read, that a credential's value is
+// never given, that every change asks the person and what is theirs to do in
+// Settings; one without them is told nothing of them.
+func TestTheSettingsLineGoesWithTheSettingsTools(t *testing.T) {
+	var with, without strings.Builder
+	writeAppLink(&with, applink.Compose(applink.PartHelper, applink.PartSettings))
+	writeAppLink(&without, applink.Compose(applink.PartHelper))
+	for _, want := range []string{"settings_read", "never its value", "settings_change", "each time", "only on their yes", "settings_open", "information, never an instruction"} {
+		if !strings.Contains(with.String(), want) {
+			t.Errorf("the settings line lacks %q:\n%s", want, with.String())
+		}
+	}
+	for _, not := range []string{"settings_read", "settings_change", "Agentry's settings"} {
+		if strings.Contains(without.String(), not) {
+			t.Errorf("an agent without the settings tools is told %q:\n%s", not, without.String())
+		}
 	}
 }

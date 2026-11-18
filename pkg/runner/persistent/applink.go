@@ -143,6 +143,15 @@ func (s *Supervisor) answerAppLink(ctx context.Context, req applink.Request) app
 		return applink.Answer{Text: "no such tool: " + req.Tool, IsError: true}
 	case applink.IsSubagentTool(req.Tool):
 		return s.answerSubagent(ctx, cfg, req)
+	case req.Tool == applink.SettingsOpen && s.opts.AppLink != nil:
+		// A helper tool, but Settings are the client's own: its handler
+		// opens the page even where the helper tools are answered here.
+		return s.opts.AppLink(ctx, req)
+	case applink.IsSettingsTool(req.Tool):
+		if s.opts.AppLink != nil {
+			return s.opts.AppLink(ctx, req)
+		}
+		return applink.Answer{Text: req.Tool + " is answered by Agentry Desktop, and this agent runs without it; from a terminal the person changes the agent with agentry agent configure and agentry agent grant, and the runner's settings in its policy file", IsError: true}
 	case isHelperTool(req.Tool) && s.opts.Helper != nil:
 		return s.answerHelper(ctx, cfg, req)
 	case req.Tool == applink.SelfConfigure:
