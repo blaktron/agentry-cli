@@ -57,6 +57,9 @@ const (
 	// codeRemote is the JSON-RPC error code of a call the remote server or
 	// the way to it refused (the implementation-defined server range).
 	codeRemote = -32001
+	// handshakeWait bounds each step of starting a session: a legacy stream
+	// naming its message address, and an initialize being answered.
+	handshakeWait = 30 * time.Second
 	// protocolHeader and sessionHeader are streamable HTTP's two headers.
 	protocolHeader = "MCP-Protocol-Version"
 	sessionHeader  = "Mcp-Session-Id"
@@ -100,8 +103,8 @@ type Bridge struct {
 	// gen counts the sessions: it moves each time renew starts a new one,
 	// so the calls that met the same lost session start one between them.
 	gen uint64
-	// stream counts the legacy event streams opened, and closed is the
-	// newest one whose reader saw it end.
+	// stream numbers the legacy event streams opened, and closed is the
+	// newest of them whose reader saw it end.
 	stream, closed uint64
 	// pending are the calls sent on the legacy transport whose answer has
 	// not come back on the stream, by their JSON-RPC id.
@@ -111,7 +114,10 @@ type Bridge struct {
 	internal map[string]chan []byte
 	// initMsg is the gateway's initialize, sent again to start a new session.
 	initMsg []byte
-	renews  uint64
+	// renewals numbers the bridge's own initialize calls, for their ids.
+	renewals uint64
+	// handshake is handshakeWait; a test shortens it.
+	handshake time.Duration
 
 	renewMu  sync.Mutex // one new session at a time
 	inFlight sync.WaitGroup
@@ -136,9 +142,10 @@ func New(cfg Config, out io.Writer) (*Bridge, error) {
 	}
 	return &Bridge{
 		cfg: cfg, target: u, host: u.Hostname(), client: client, out: out,
-		slots:    make(chan struct{}, maxInFlight),
-		pending:  map[string]json.RawMessage{},
-		internal: map[string]chan []byte{},
+		slots:     make(chan struct{}, maxInFlight),
+		pending:   map[string]json.RawMessage{},
+		internal:  map[string]chan []byte{},
+		handshake: handshakeWait,
 	}, nil
 }
 
@@ -228,12 +235,12 @@ func (b *Bridge) initialize(ctx context.Context, msg []byte, id json.RawMessage)
 		b.mu.Lock()
 		b.legacy = true
 		b.mu.Unlock()
-		endpoint, n, _, err := b.openLegacy(ctx)
+		stream, err := b.openLegacy(ctx)
 		if err != nil {
 			return err
 		}
-		b.useStream(n, endpoint)
-		b.sendLegacy(ctx, endpoint, msg, id)
+		b.useStream(stream.n, stream.endpoint)
+		b.sendLegacy(ctx, stream.endpoint, msg, id)
 		return nil
 	}
 	if s := res.Header.Get(sessionHeader); s != "" {
@@ -350,53 +357,46 @@ func (b *Bridge) renew(ctx context.Context, gen uint64) error {
 		return nil
 	}
 	initMsg, legacy := b.initMsg, b.legacy
-	b.renews++
-	id := json.RawMessage(fmt.Sprintf(`"agentry-bridge-renew-%d"`, b.renews))
+	b.renewals++
+	id := json.RawMessage(fmt.Sprintf(`"agentry-bridge-renew-%d"`, b.renewals))
 	b.mu.Unlock()
 	msg, err := withID(initMsg, id)
 	if err != nil {
-		return b.failed("lost the session, and the gateway's initialize could not be sent again: %v", err)
+		return b.failed("lost the session, and the bridge has no initialize to start a new one with")
 	}
-	var session, protocol string
-	var stream legacyStream
 	if legacy {
-		stream, protocol, err = b.renewLegacy(ctx, msg, id)
-	} else {
-		session, protocol, err = b.renewStreamable(ctx, msg, id)
+		return b.renewLegacy(ctx, msg, id)
 	}
-	if err != nil {
-		return err
-	}
-	note := []byte(`{"jsonrpc":"2.0","method":"notifications/initialized"}`)
-	address := b.cfg.URL
-	if legacy {
-		address = stream.endpoint
-	}
-	res, err := b.postAs(ctx, address, note, session, protocol)
-	if err != nil {
-		return err
-	}
-	err = b.refusal(res)
-	drain(res)
-	if err != nil {
-		return err
-	}
+	return b.renewStreamable(ctx, msg, id)
+}
+
+// started records the new session, once the server has been told the
+// client is initialized.
+func (b *Bridge) started(session, protocol string) {
 	b.mu.Lock()
 	b.session, b.protocol = session, protocol
 	b.gen++
 	b.mu.Unlock()
-	if legacy {
-		b.useStream(stream.n, stream.endpoint)
-	}
 	b.logf("%s: a new session started", b.host)
-	return nil
 }
 
-// legacyStream is one opened HTTP+SSE event stream: its number and the
-// message address it named.
+// initialized sends notifications/initialized under the new session.
+func (b *Bridge) initialized(ctx context.Context, address, session, protocol string) error {
+	note := []byte(`{"jsonrpc":"2.0","method":"notifications/initialized"}`)
+	res, err := b.postAs(ctx, address, note, session, protocol)
+	if err != nil {
+		return err
+	}
+	defer drain(res)
+	return b.refusal(res)
+}
+
+// legacyStream is one opened HTTP+SSE event stream: its number, the
+// message address it named, and how to close it.
 type legacyStream struct {
 	n        uint64
 	endpoint string
+	stop     func()
 }
 
 // useStream makes stream n's address the one calls are sent to, unless the
@@ -409,15 +409,19 @@ func (b *Bridge) useStream(n uint64, endpoint string) {
 	}
 }
 
-// renewStreamable sends initialize with no session and reads its answer.
-func (b *Bridge) renewStreamable(ctx context.Context, msg []byte, id json.RawMessage) (session, protocol string, err error) {
+// renewStreamable sends initialize with no session, reads its answer and
+// tells the server the client is initialized, all within the handshake's
+// bound: a server that never answers ends the calls waiting on it.
+func (b *Bridge) renewStreamable(ctx context.Context, msg []byte, id json.RawMessage) error {
+	ctx, cancel := context.WithTimeout(ctx, b.handshake)
+	defer cancel()
 	res, err := b.postAs(ctx, b.cfg.URL, msg, "", "")
 	if err != nil {
-		return "", "", err
+		return err
 	}
 	defer drain(res)
 	if err := b.refusal(res); err != nil {
-		return "", "", err
+		return err
 	}
 	var answer []byte
 	if strings.HasPrefix(res.Header.Get("Content-Type"), "text/event-stream") {
@@ -434,26 +438,32 @@ func (b *Bridge) renewStreamable(ctx context.Context, msg []byte, id json.RawMes
 			answer = bytes.TrimSpace(body)
 		}
 	}
-	protocol, err = b.initializeResult(answer, id)
+	protocol, err := b.initializeResult(answer, id)
 	if err != nil {
-		return "", "", err
+		return err
 	}
-	return res.Header.Get(sessionHeader), protocol, nil
+	session := res.Header.Get(sessionHeader)
+	if err := b.initialized(ctx, b.cfg.URL, session, protocol); err != nil {
+		return err
+	}
+	b.started(session, protocol)
+	return nil
 }
 
 // renewLegacy opens a new event stream and initializes on it, the answer
-// arriving on the stream.
-func (b *Bridge) renewLegacy(ctx context.Context, msg []byte, id json.RawMessage) (stream legacyStream, protocol string, err error) {
-	endpoint, n, stop, err := b.openLegacy(ctx)
+// arriving on the stream. The legacy transport carries no session or
+// protocol header, so none is recorded. A stream no session was started on
+// is closed again.
+func (b *Bridge) renewLegacy(ctx context.Context, msg []byte, id json.RawMessage) (err error) {
+	stream, err := b.openLegacy(ctx)
 	if err != nil {
-		return legacyStream{}, "", err
+		return err
 	}
 	defer func() {
 		if err != nil {
-			stop() // a stream no session was started on is not kept open
+			stream.stop()
 		}
 	}()
-	stream = legacyStream{n: n, endpoint: endpoint}
 	key := idKey(id)
 	wait := make(chan []byte, 1)
 	b.mu.Lock()
@@ -464,24 +474,32 @@ func (b *Bridge) renewLegacy(ctx context.Context, msg []byte, id json.RawMessage
 		delete(b.internal, key)
 		b.mu.Unlock()
 	}()
-	res, err := b.postAs(ctx, endpoint, msg, "", "")
+	hctx, cancel := context.WithTimeout(ctx, b.handshake)
+	defer cancel()
+	res, err := b.postAs(hctx, stream.endpoint, msg, "", "")
 	if err != nil {
-		return stream, "", err
+		return err
 	}
 	err = b.refusal(res)
 	drain(res)
 	if err != nil {
-		return stream, "", err
+		return err
 	}
+	var answer []byte
 	select {
-	case answer := <-wait:
-		protocol, err = b.initializeResult(answer, id)
-		return stream, protocol, err
-	case <-time.After(30 * time.Second):
-		return stream, "", b.failed("did not answer a new initialize within 30 seconds")
-	case <-ctx.Done():
-		return stream, "", ctx.Err()
+	case answer = <-wait:
+	case <-hctx.Done():
+		return b.failed("did not answer a new initialize within %s", b.handshake)
 	}
+	if _, err := b.initializeResult(answer, id); err != nil {
+		return err
+	}
+	if err := b.initialized(hctx, stream.endpoint, "", ""); err != nil {
+		return err
+	}
+	b.started("", "")
+	b.useStream(stream.n, stream.endpoint)
+	return nil
 }
 
 // initializeResult checks the answer to the bridge's own initialize and
@@ -493,7 +511,10 @@ func (b *Bridge) initializeResult(answer []byte, id json.RawMessage) (string, er
 			ProtocolVersion string `json:"protocolVersion"`
 		} `json:"result"`
 	}
-	if len(answer) == 0 || json.Unmarshal(answer, &m) != nil || !bytes.Equal(m.ID, id) || m.Result == nil {
+	if len(answer) == 0 {
+		return "", b.failed("lost the session and did not answer a new initialize")
+	}
+	if json.Unmarshal(answer, &m) != nil || !bytes.Equal(m.ID, id) || m.Result == nil {
 		return "", b.failed("lost the session and refused a new one")
 	}
 	return m.Result.ProtocolVersion, nil
@@ -722,7 +743,9 @@ func (b *Bridge) reply(id json.RawMessage, err error) {
 // changes nothing.
 func (b *Bridge) streamClosed(n uint64, err error) {
 	b.mu.Lock()
-	b.closed = n
+	if n > b.closed {
+		b.closed = n
+	}
 	if b.stream != n {
 		b.mu.Unlock()
 		return
@@ -756,7 +779,10 @@ func (b *Bridge) fromStream(data []byte) {
 			delete(b.pending, key)
 			b.mu.Unlock()
 			if mine {
-				wait <- append([]byte(nil), data...)
+				select {
+				case wait <- append([]byte(nil), data...):
+				default: // a repeated answer; the first was taken
+				}
 				return
 			}
 			if !waited {
@@ -820,7 +846,7 @@ func (b *Bridge) endSession() {
 // endpoint event, and passes every later message on to the gateway. The
 // endpoint must be on the server's own origin: the bridge's one relay
 // reaches nothing else, and its bearer goes nowhere else.
-func (b *Bridge) openLegacy(ctx context.Context) (endpoint string, n uint64, stop func(), err error) {
+func (b *Bridge) openLegacy(ctx context.Context) (stream legacyStream, err error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer func() {
 		if err != nil {
@@ -829,27 +855,27 @@ func (b *Bridge) openLegacy(ctx context.Context) (endpoint string, n uint64, sto
 	}()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, b.cfg.URL, nil)
 	if err != nil {
-		return "", 0, nil, b.failed("could not form the request: %v", err)
+		return legacyStream{}, b.failed("could not form the request: %v", err)
 	}
 	req.Header.Set("Accept", "text/event-stream")
 	if err := b.authorize(req); err != nil {
-		return "", 0, nil, err
+		return legacyStream{}, err
 	}
 	res, err := b.client.Do(req)
 	if err != nil {
-		return "", 0, nil, b.failed("could not be reached: %v", scrub(err))
+		return legacyStream{}, b.failed("could not be reached: %v", scrub(err))
 	}
 	if err := b.refusal(res); err != nil {
 		drain(res)
-		return "", 0, nil, err
+		return legacyStream{}, err
 	}
 	if !strings.HasPrefix(res.Header.Get("Content-Type"), "text/event-stream") {
 		drain(res)
-		return "", 0, nil, b.failed("speaks neither MCP transport: its address answered a POST with an error and a GET with %q", res.Header.Get("Content-Type"))
+		return legacyStream{}, b.failed("speaks neither MCP transport: its address answered a POST with an error and a GET with %q", res.Header.Get("Content-Type"))
 	}
 	b.mu.Lock()
 	b.stream++
-	n = b.stream
+	n := b.stream
 	b.mu.Unlock()
 	named := make(chan string, 1)
 	failed := make(chan error, 1)
@@ -882,15 +908,15 @@ func (b *Bridge) openLegacy(ctx context.Context) (endpoint string, n uint64, sto
 	case e := <-named:
 		u, err := b.target.Parse(e)
 		if err != nil || u.Scheme != b.target.Scheme || u.Host != b.target.Host || u.User != nil {
-			return "", 0, nil, b.failed("named a message address on another origin (%q); the bridge sends nothing there", e)
+			return legacyStream{}, b.failed("named a message address on another origin (%q); the bridge sends nothing there", e)
 		}
-		return u.String(), n, cancel, nil
+		return legacyStream{n: n, endpoint: u.String(), stop: cancel}, nil
 	case err := <-failed:
-		return "", 0, nil, err
-	case <-time.After(30 * time.Second):
-		return "", 0, nil, b.failed("named no message address within 30 seconds of opening its event stream")
+		return legacyStream{}, err
+	case <-time.After(b.handshake):
+		return legacyStream{}, b.failed("named no message address within %s of opening its event stream", b.handshake)
 	case <-ctx.Done():
-		return "", 0, nil, ctx.Err()
+		return legacyStream{}, ctx.Err()
 	}
 }
 

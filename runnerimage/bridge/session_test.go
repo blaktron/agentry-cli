@@ -94,8 +94,7 @@ func serveLines(t *testing.T, b *Bridge) (send func(string), stop func()) {
 
 func TestAForgottenSessionIsRenewedAndTheCallSentAgain(t *testing.T) {
 	remote := &forgetful{}
-	srv := httptest.NewTLSServer(remote)
-	defer srv.Close()
+	srv := tlsServer(t, remote)
 	var out lockedBuffer
 	b := newBridge(t, srv, "", &out, io.Discard)
 	send, stop := serveLines(t, b)
@@ -132,8 +131,7 @@ func TestAForgottenSessionIsRenewedAndTheCallSentAgain(t *testing.T) {
 
 func TestCallsThatMeetOneForgottenSessionShareOneRenewal(t *testing.T) {
 	remote := &forgetful{}
-	srv := httptest.NewTLSServer(remote)
-	defer srv.Close()
+	srv := tlsServer(t, remote)
 	var out lockedBuffer
 	b := newBridge(t, srv, "", &out, io.Discard)
 	send, stop := serveLines(t, b)
@@ -162,8 +160,7 @@ func TestCallsThatMeetOneForgottenSessionShareOneRenewal(t *testing.T) {
 
 func TestASessionForgottenAgainEndsTheCallNamingTheServer(t *testing.T) {
 	remote := &forgetful{}
-	srv := httptest.NewTLSServer(remote)
-	defer srv.Close()
+	srv := tlsServer(t, remote)
 	var out lockedBuffer
 	b := newBridge(t, srv, "", &out, io.Discard)
 	send, stop := serveLines(t, b)
@@ -198,6 +195,13 @@ type droppable struct {
 	drop    chan struct{}
 	// refuse answers this many GETs after the first 503.
 	refuse int
+	// initialized counts notifications/initialized per stream; active is
+	// the streams still open.
+	initialized map[string]int
+	active      int
+	// refuseInitialized refuses notifications/initialized after the first
+	// stream's.
+	refuseInitialized bool
 }
 
 func (d *droppable) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -217,7 +221,13 @@ func (d *droppable) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ch := make(chan string, 8)
 		d.streams[key] = ch
 		drop := d.drop
+		d.active++
 		d.mu.Unlock()
+		defer func() {
+			d.mu.Lock()
+			d.active--
+			d.mu.Unlock()
+		}()
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = fmt.Fprintf(w, "event: endpoint\ndata: /messages?stream=%s\n\n", key)
 		w.(http.Flusher).Flush()
@@ -239,14 +249,26 @@ func (d *droppable) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		body, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(body, &msg)
+		stream := r.URL.Query().Get("stream")
 		d.mu.Lock()
-		ch := d.streams[r.URL.Query().Get("stream")]
+		ch := d.streams[stream]
 		if msg.Method == "initialize" {
 			d.inits++
+		}
+		refuse := msg.Method == "notifications/initialized" && d.refuseInitialized && stream != "1"
+		if msg.Method == "notifications/initialized" && !refuse {
+			if d.initialized == nil {
+				d.initialized = map[string]int{}
+			}
+			d.initialized[stream]++
 		}
 		d.mu.Unlock()
 		if ch == nil {
 			http.Error(w, "unknown stream", http.StatusNotFound)
+			return
+		}
+		if refuse {
+			http.Error(w, "not now", http.StatusBadRequest)
 			return
 		}
 		w.WriteHeader(http.StatusAccepted)
@@ -260,8 +282,7 @@ func (d *droppable) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func TestAClosedEventStreamEndsWaitingCallsAndTheNextCallOpensAnother(t *testing.T) {
 	remote := &droppable{streams: map[string]chan string{}, drop: make(chan struct{})}
-	srv := httptest.NewTLSServer(remote)
-	defer srv.Close()
+	srv := tlsServer(t, remote)
 	var out, log lockedBuffer
 	b := newBridge(t, srv, "", &out, &log)
 	send, stop := serveLines(t, b)
@@ -307,12 +328,14 @@ func TestAClosedEventStreamEndsWaitingCallsAndTheNextCallOpensAnother(t *testing
 	if remote.opened != 2 || remote.inits != 2 {
 		t.Fatalf("want a second stream and an initialize on it; streams %d, initializes %d", remote.opened, remote.inits)
 	}
+	if remote.initialized["2"] != 1 {
+		t.Fatalf("the second stream was not told the client is initialized: %v", remote.initialized)
+	}
 }
 
 func TestAStreamThatCannotBeOpenedAgainEndsOneCallNotTheBridge(t *testing.T) {
 	remote := &droppable{streams: map[string]chan string{}, drop: make(chan struct{}), refuse: 1}
-	srv := httptest.NewTLSServer(remote)
-	defer srv.Close()
+	srv := tlsServer(t, remote)
 	var out lockedBuffer
 	b := newBridge(t, srv, "", &out, io.Discard)
 	send, stop := serveLines(t, b)
@@ -348,4 +371,104 @@ func TestAStreamThatCannotBeOpenedAgainEndsOneCallNotTheBridge(t *testing.T) {
 	if m := byID(t, msgs, 3); m["error"] != nil {
 		t.Fatalf("the bridge did not recover once the stream opened again: %v", m)
 	}
+}
+
+func TestAStreamNoSessionStartedOnIsClosedAgain(t *testing.T) {
+	remote := &droppable{streams: map[string]chan string{}, drop: make(chan struct{}), refuseInitialized: true}
+	srv := tlsServer(t, remote)
+	var out lockedBuffer
+	b := newBridge(t, srv, "", &out, io.Discard)
+	send, stop := serveLines(t, b)
+	send(initLine)
+	send(`{"jsonrpc":"2.0","method":"notifications/initialized"}`)
+	waitFor(t, &out, `"id":1`)
+	remote.mu.Lock()
+	close(remote.drop)
+	remote.drop = make(chan struct{})
+	remote.mu.Unlock()
+	eventually(t, func() bool {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		return b.endpoint == ""
+	})
+	send(`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
+	waitFor(t, &out, `"id":2`)
+	e, _ := byID(t, out.messages(t), 2)["error"].(map[string]any)
+	if msg, _ := e["message"].(string); !strings.Contains(msg, "answered 400") {
+		t.Fatalf("a refused notifications/initialized should end the call naming the refusal: %v", e)
+	}
+	eventually(t, func() bool {
+		remote.mu.Lock()
+		defer remote.mu.Unlock()
+		return remote.active == 0 && remote.opened == 2
+	})
+	stop()
+}
+
+func TestARenewalTheServerNeverAnswersEndsTheCall(t *testing.T) {
+	remote := &forgetful{}
+	hang := make(chan struct{})
+	defer close(hang)
+	var mu sync.Mutex
+	inits := 0
+	srv := tlsServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(body), `"initialize"`) {
+			mu.Lock()
+			inits++
+			n := inits
+			mu.Unlock()
+			if n > 1 {
+				// An event stream that never carries the answer.
+				w.Header().Set("Content-Type", "text/event-stream")
+				w.WriteHeader(http.StatusOK)
+				w.(http.Flusher).Flush()
+				select {
+				case <-hang:
+				case <-r.Context().Done():
+				}
+				return
+			}
+		}
+		r.Body = io.NopCloser(strings.NewReader(string(body)))
+		remote.ServeHTTP(w, r)
+	}))
+	var out lockedBuffer
+	b := newBridge(t, srv, "", &out, io.Discard)
+	b.handshake = 200 * time.Millisecond
+	send, stop := serveLines(t, b)
+	send(initLine)
+	waitFor(t, &out, `"id":1`)
+	remote.forget()
+	send(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"x"}}`)
+	waitFor(t, &out, `"id":2`)
+	stop()
+	e, _ := byID(t, out.messages(t), 2)["error"].(map[string]any)
+	if msg, _ := e["message"].(string); !strings.HasPrefix(msg, "the remote MCP server 127.0.0.1 ") {
+		t.Fatalf("a renewal that was never answered should end the call naming the server: %v", e)
+	}
+}
+
+func eventually(t *testing.T, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatal("the condition never held")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// tlsServer is a test server whose cleanup cuts the connections first, so
+// a stream the bridge failed to close fails the test instead of hanging
+// the server's Close.
+func tlsServer(t *testing.T, h http.Handler) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewTLSServer(h)
+	t.Cleanup(func() {
+		srv.CloseClientConnections()
+		srv.Close()
+	})
+	return srv
 }
