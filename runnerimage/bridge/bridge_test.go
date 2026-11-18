@@ -382,7 +382,6 @@ func TestLegacySSETransportFallback(t *testing.T) {
 	writeToken(t, tok, "legacy-token")
 	var out lockedBuffer
 	b := newBridge(t, srv, tok, &out, io.Discard)
-	b.cfg.Lost = func(error) {}
 	inR, inW := io.Pipe()
 	done := make(chan error, 1)
 	go func() { done <- b.Serve(context.Background(), inR) }()
@@ -409,7 +408,6 @@ func TestLegacyEndpointOnAnotherOriginIsRefused(t *testing.T) {
 	defer srv.Close()
 	defer close(remote.stream)
 	b := newBridge(t, srv, "", io.Discard, io.Discard)
-	b.cfg.Lost = func(error) {}
 	err := b.Serve(context.Background(), strings.NewReader(initLine+"\n"))
 	if err == nil || !strings.Contains(err.Error(), "another origin") {
 		t.Fatalf("an endpoint on another origin was not refused: %v", err)

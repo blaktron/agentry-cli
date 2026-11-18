@@ -11638,6 +11638,25 @@
             "source/file contract",
             "real-time wait"
           ]
+        },
+        {
+          "path": "runnerimage/bridge/session_test.go",
+          "tests": [
+            "TestAForgottenSessionIsRenewedAndTheCallSentAgain",
+            "TestCallsThatMeetOneForgottenSessionShareOneRenewal",
+            "TestASessionForgottenAgainEndsTheCallNamingTheServer",
+            "TestAClosedEventStreamEndsWaitingCallsAndTheNextCallOpensAnother",
+            "TestAStreamThatCannotBeOpenedAgainEndsOneCallNotTheBridge",
+            "TestAStreamNoSessionStartedOnIsClosedAgain",
+            "TestARenewalTheServerNeverAnswersEndsTheCall"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": [
+            "HTTP transport",
+            "real-time wait"
+          ]
         }
       ]
     },
