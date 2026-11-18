@@ -194,6 +194,21 @@ assistant` lists what it has:
   None of these tools changes a setting, starts or stops an agent, signs in,
   publishes or touches a key. Run from the CLI, these tools answer that only
   Agentry Desktop answers them.
+- **Agentry's settings**, in Agentry Desktop, as Agentry Helper has them.
+  `settings_read` reads every setting, without asking you: a key, a token
+  or a sign-in shows only as set or not set, never its value.
+  `settings_change` asks to change one setting, and the desktop asks you
+  first, every time, in a dialog that names the Assistant and shows the
+  setting, its value now and the new value; a No changes nothing, and no
+  earlier answer skips it. A folder is chosen by you in the folder picker,
+  which opens at the folder the Assistant proposes. A change to what the
+  Assistant itself may reach is said so in the dialog. Keys and sign-ins,
+  a setting your organization has locked, and actions that are not a value
+  (clearing history, adding a registry, pairing a computer) are refused, and
+  `settings_open` opens the section for you to do them. The Assistant is
+  told that what `settings_read` returns is information about your Agentry,
+  never an instruction to it. Run from the CLI, these tools answer that only
+  Agentry Desktop answers them.
 - **Your QuickAgents**, in Agentry Desktop, which Agentry Helper does not
   have. `quickagent_mine` lists the QuickAgents you publish, in your own
   namespace and in each organization you publish for, private ones included.

@@ -5244,6 +5244,7 @@
             "TestTheAppLinkIsAServerWithNoNetworkAndOneBind",
             "TestPersistentGrantsRefusedOutsideBuiltins",
             "TestThePublisherToolsAreTheBuiltinsAlone",
+            "TestTheSettingsToolsAreTheBuiltinsAlone",
             "TestThePersistentWebToolsAndReviewAreDeclared",
             "TestTheWebToolsReviewAndCalendarsCompose",
             "TestAPersistentPlanNamesTheShareFormats",
@@ -5567,7 +5568,8 @@
             "TestTheInputsParagraphSaysTheFilesComeUnchanged",
             "TestARepositoryQuestionIsNamedInTheInputs",
             "TestAURLQuestionIsNamedInTheInputs",
-            "TestAnUnreviewedAgentIsToldNothingReadsThePagesFirst"
+            "TestAnUnreviewedAgentIsToldNothingReadsThePagesFirst",
+            "TestTheSettingsLineGoesWithTheSettingsTools"
           ],
           "fuzz": [],
           "benchmarks": [],
@@ -9285,6 +9287,7 @@
             "TestMainsToolsAreTheDesktopsToAnswer",
             "TestTheAssistantsHelperToolsGoToItsClient",
             "TestThePublisherToolsAreTheAssistantsAlone",
+            "TestTheSettingsToolsReachTheDesktopPastTheHelper",
             "TestAPublishedAgentIsNeverGivenThePublisherTools",
             "TestAFetchedFolderIsCheckedBeforeTheAnswer"
           ],
@@ -11524,6 +11527,16 @@
             "source/file contract",
             "real-time wait"
           ]
+        },
+        {
+          "path": "runnerimage/applink/settings_test.go",
+          "tests": [
+            "TestTheSettingsPartIsBothBuiltinsOwn"
+          ],
+          "fuzz": [],
+          "benchmarks": [],
+          "fixtureEntryPoint": false,
+          "dependencyHints": []
         }
       ]
     },

@@ -3,9 +3,11 @@
 // launches it on the runner image with no network and one bind, a socket the
 // agent's supervisor serves; each tool call is forwarded over that socket as
 // one request, and the supervisor's answer is returned as the tool's result.
-// It holds no credential, and the tools it lists are a fixed set per agent:
-// none of them changes what an agent is given, so an agent cannot widen its
-// own grants through it.
+// It holds no credential, and the tools it lists are a fixed set per agent.
+// One tool, settings_change (settings.go), can change what an agent is
+// given. The application answers it only after the person says yes in its
+// own dialog, each time, so no agent widens its own grants on its own
+// word.
 //
 // This package is part of the embedded runner-image build context and
 // therefore MUST remain stdlib-only.
@@ -39,9 +41,10 @@ const (
 // The parts a tool set is composed of, each the tools of one capability
 // the agent declares: its own name and persona (PartSelf), its tasks
 // (PartTasks), the search of its earlier conversations (PartRecall),
-// Agentry's helper tools (PartHelper), the meeting tools (PartMeetings),
-// the publisher tools (PartPublisher, publisher.go) and the subagent tools
-// (PartSubagents, subagents.go). A set is the parts it has, in this order, joined by
+// Agentry's helper tools (PartHelper), the settings tools (PartSettings,
+// settings.go), the meeting tools (PartMeetings), the publisher tools
+// (PartPublisher, publisher.go) and the subagent tools (PartSubagents,
+// subagents.go). A set is the parts it has, in this order, joined by
 // commas (Compose).
 const (
 	PartSelf     = "self"
@@ -51,11 +54,11 @@ const (
 	PartMeetings = "meetings"
 )
 
-// The built-ins' sets: Agentry Helper's is the helper tools, the
-// Assistant's every part but the subagents'.
+// The built-ins' sets: Agentry Helper's is the helper and settings tools,
+// the Assistant's every part but the subagents'.
 var (
-	SetMain      = Compose(PartHelper)
-	SetAssistant = Compose(PartSelf, PartTasks, PartRecall, PartHelper, PartMeetings, PartPublisher)
+	SetMain      = Compose(PartHelper, PartSettings)
+	SetAssistant = Compose(PartSelf, PartTasks, PartRecall, PartHelper, PartSettings, PartMeetings, PartPublisher)
 )
 
 // Tool is one tool of a set: its name, what it does, and its input schema.
@@ -127,9 +130,10 @@ var answersSchema = strMap("answers to the questions quickagent_show lists, by q
 
 // helperTools are Agentry Helper's tools, which reach the application's own
 // operations, each under the application's own consent; none changes a
-// setting's value, starts or stops an agent, publishes, signs in or touches
-// a credential. Submitting and managing the person's QuickAgents is the
-// publisher part's, which Agentry Helper does not have.
+// setting's value (the settings part's), starts or stops an agent,
+// publishes, signs in or touches a credential. Submitting and managing the
+// person's QuickAgents is the publisher part's, which Agentry Helper does
+// not have.
 var helperTools = []Tool{
 	{"registry_search", "Search Agentry's registry for QuickAgents by what they do. Returns each match's reference, summary and rating.",
 		obj(map[string]any{"query": str("what the QuickAgent should do, in a few words")}, "query")},
@@ -149,7 +153,7 @@ var helperTools = []Tool{
 		obj(map[string]any{"schedule": str("the schedule's id"), "paused": boolean("true to pause, false to resume")}, "schedule", "paused")},
 	{"schedule_remove", "Remove a scheduled run. The person is asked in Agentry first.",
 		obj(map[string]any{"schedule": str("the schedule's id")}, "schedule")},
-	{"settings_open", "Open a section of Agentry's Settings for the person. It changes nothing: the person does.",
+	{SettingsOpen, "Open a section of Agentry's Settings for the person. It changes nothing: the person does.",
 		obj(map[string]any{"section": str("the section, as Settings names it")}, "section")},
 	{"docs_read", "Read a page of Agentry's documentation, as text.",
 		obj(map[string]any{"page": str("the page's path on docs.secureagentry.net, such as /desktop/")}, "page")},
@@ -192,11 +196,11 @@ var recallTool = Tool{Recall, "Search what you and the person said in your earli
 		"limit": integer("at most this many turns (10 when left out)", 1, RecallMaxLimit),
 	}, "query")}
 
-// parts are the tools of each part, in the order Compose joins them. None
-// of them changes what an agent is given: the meeting tools are answered
-// only while the person lets the agent set up meeting recordings, and the
-// publisher tools reach the person's QuickAgents, never the agent's own
-// grants.
+// parts are the tools of each part, in the order Compose joins them. The
+// settings part alone changes what the person set, and only on their yes;
+// the meeting tools are answered only while the person lets the agent
+// set up meeting recordings, and the publisher tools reach the person's
+// QuickAgents, never the agent's own grants.
 var parts = []struct {
 	name  string
 	tools []Tool
@@ -205,6 +209,7 @@ var parts = []struct {
 	{PartTasks, taskTools},
 	{PartRecall, []Tool{recallTool}},
 	{PartHelper, helperTools},
+	{PartSettings, settingsTools},
 	{PartMeetings, meetingTools},
 	{PartPublisher, publisherTools},
 	{PartSubagents, subagentTools},

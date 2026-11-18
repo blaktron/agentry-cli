@@ -48,21 +48,22 @@ import (
 // ClamAV has checked it. Its manifest declares what else it has: the time
 // and its tasks, a memory, skills, stored secrets, its own name and
 // persona, Agentry's helper tools and the meeting tools; it is granted the
-// publisher tools by name (WithGrantedParts). It resets in
+// settings and publisher tools by name (WithGrantedParts). It resets in
 // parts: its history alone, or everything but the credentials it was given.
 // It reads the calendar feeds the person gives it.
 func Assistant() Builtin {
 	return Builtin{namespace: assistant.Namespace, name: assistant.Name, version: assistant.Version, fsys: assistant.FS(),
 		persistent: true, runnable: true, checkShare: true, resetsInParts: true,
-		offers: offersAssistant, publisher: true}
+		offers: offersAssistant, publisher: true, settings: true}
 }
 
 // Main is Agentry Helper (pkg/persistent/main), the persistent agent of Agentry
 // Desktop's Home: a file in its share is read only once ClamAV has checked
-// it, and its manifest declares Agentry's helper tools and skills.
+// it, and its manifest declares Agentry's helper tools and skills; it is
+// granted the settings tools by name (WithGrantedParts).
 func Main() Builtin {
 	return Builtin{namespace: mainagent.Namespace, name: mainagent.Name, version: mainagent.Version, fsys: mainagent.FS(),
-		persistent: true, runnable: true, checkShare: true}
+		persistent: true, runnable: true, checkShare: true, settings: true}
 }
 
 // Coder is the Coding agent (pkg/persistent/coder): its programs run in its
@@ -114,15 +115,27 @@ func (b Builtin) AppLink() string    { return b.WithGrantedParts(compile.AppLink
 // Assistant alone.
 func (b Builtin) ManagesQuickAgents() bool { return b.publisher }
 
+// ChangesSettings says the built-in's app link has the settings tools,
+// through which it reads Agentry's settings and asks the person to change
+// one: granted by name, to Agentry Helper and the Assistant.
+func (b Builtin) ChangesSettings() bool { return b.settings }
+
 // WithGrantedParts is set with the parts the built-in is granted by name
-// rather than by a key it declares: the publisher tools, for the built-in
-// that carries them, on an app link it has. The zero Builtin, which a
-// published agent's segment carries, is granted none.
+// rather than by a key it declares: the settings and publisher tools, for
+// the built-ins that carry them, on an app link it has. The zero Builtin,
+// which a published agent's segment carries, is granted none.
 func (b Builtin) WithGrantedParts(set string) string {
-	if set == "" || !b.publisher {
+	if set == "" {
 		return set
 	}
-	return applink.Compose(append(applink.SetParts(set), applink.PartPublisher)...)
+	parts := applink.SetParts(set)
+	if b.settings {
+		parts = append(parts, applink.PartSettings)
+	}
+	if b.publisher {
+		parts = append(parts, applink.PartPublisher)
+	}
+	return applink.Compose(parts...)
 }
 
 // PersistentBuiltins are the built-ins that run as persistent agents.
@@ -1196,7 +1209,7 @@ func (s Segment) Plan(ctx context.Context, logw io.Writer) (*SegmentPlan, error)
 	in := PlanInputs{
 		Home: s.Home, Manifest: m, Meta: meta, InstallDir: installDir, WorkspaceDir: workspace,
 		Policy: s.Policy, PolicySHA: s.PolicySHA, Adapter: adapterName, Mode: manifest.ModePersistent,
-		Servers: servers, AgentFiles: s.agentFiles(m), AppLink: s.appLinkSet(m), Subagents: s.Grants.Subagents, Publisher: s.grantedBuiltin().ManagesQuickAgents(), Coder: coderGrant, Calendar: calendarGrant, ShareServers: s.shareServers(), CompiledBy: s.Build, Log: logw,
+		Servers: servers, AgentFiles: s.agentFiles(m), AppLink: s.appLinkSet(m), Subagents: s.Grants.Subagents, Publisher: s.grantedBuiltin().ManagesQuickAgents(), Settings: s.grantedBuiltin().ChangesSettings(), Coder: coderGrant, Calendar: calendarGrant, ShareServers: s.shareServers(), CompiledBy: s.Build, Log: logw,
 		Web: s.Grants.Web != nil, Review: s.Grants.Review != nil,
 		WebUnreviewed: s.Grants.Web != nil && s.Grants.Web.Scan == toolsrv.WebScanUnreviewed,
 	}

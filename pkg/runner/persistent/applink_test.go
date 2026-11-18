@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -237,17 +238,84 @@ func TestThePublisherToolsAreTheAssistantsAlone(t *testing.T) {
 	}
 }
 
+// TestTheSettingsToolsReachTheDesktopPastTheHelper: each settings tool of
+// either built-in, and the helper tool settings_open, goes to its client's
+// handler even where the client also answers the helper tools, which the
+// supervisor would otherwise answer itself; run from the CLI with no
+// handler, each answers that Agentry Desktop answers it and names what the
+// person can do from a terminal (the Assistant's: Agentry Helper runs in
+// Agentry Desktop alone).
+func TestTheSettingsToolsReachTheDesktopPastTheHelper(t *testing.T) {
+	settings := append(applink.Tools(applink.Compose(applink.PartSettings)), applink.SettingsOpen)
+	t.Setenv("HOME", t.TempDir())
+	for _, name := range []string{"assistant", "main"} {
+		home := shortHome(t)
+		a, err := Lookup(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c := Config{Enabled: true}
+		RecordConsent(BuildRoster(a, c, nil), &c)
+		if err := SaveConfig(home, name, c); err != nil {
+			t.Fatal(err)
+		}
+		var asked []string
+		sv, err := Start(context.Background(), Options{
+			Home: home, Agent: a, Client: ClientDesktop, Policy: policy.Default(), Docker: &dockerx.Fake{}, StartSegment: (&starter{resumed: true}).start,
+			Helper: &fakeHelper{version: "1.0.0"},
+			AppLink: func(_ context.Context, req applink.Request) applink.Answer {
+				asked = append(asked, req.Tool)
+				return applink.Answer{Text: "answered " + req.Tool}
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, tool := range settings {
+			if got := call(t, home, name, tool, `{"section":"Runs"}`); got.IsError || got.Text != "answered "+tool {
+				t.Errorf("%s's %s: %+v", name, tool, got)
+			}
+		}
+		if !slices.Equal(asked, settings) {
+			t.Errorf("%s's handler was asked %v", name, asked)
+		}
+		if _, err := sv.Stop(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if name == "main" {
+			continue // Agentry Helper runs in Agentry Desktop alone.
+		}
+
+		cli, err := Start(context.Background(), Options{
+			Home: home, Agent: a, Client: ClientCLI, Policy: policy.Default(), Docker: &dockerx.Fake{}, StartSegment: (&starter{resumed: true}).start,
+			Helper: &fakeHelper{version: "1.0.0"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, tool := range settings {
+			got := call(t, home, name, tool, `{"section":"Runs"}`)
+			if !got.IsError || !strings.Contains(got.Text, "Agentry Desktop") || !strings.Contains(got.Text, "agentry agent configure") {
+				t.Errorf("%s's %s run from the CLI: %+v", name, tool, got)
+			}
+		}
+		if _, err := cli.Stop(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 // TestAPublishedAgentIsNeverGivenThePublisherTools: a published agent that
 // declares every key the Assistant does composes its set from them alone,
 // even were it to carry the Assistant's Builtin, so no release lists the
-// publisher tools.
+// publisher tools or the settings tools.
 func TestAPublishedAgentIsNeverGivenThePublisherTools(t *testing.T) {
 	caps := &manifest.Persistent{Clock: true, Memory: true, SelfConfigure: true, Helper: true, Meetings: true}
 	for _, a := range []Agent{
 		{Name: "acme.helper", Release: &localrun.Installed{}, Caps: caps},
 		{Name: "acme.helper", Release: &localrun.Installed{}, Caps: caps, Builtin: localrun.Assistant()},
 	} {
-		if set := a.AppLinkWith(Config{}); applink.Has(set, applink.PartPublisher) || !applink.Has(set, applink.PartHelper) {
+		if set := a.AppLinkWith(Config{}); applink.Has(set, applink.PartPublisher) || applink.Has(set, applink.PartSettings) || !applink.Has(set, applink.PartHelper) {
 			t.Errorf("a published agent's app link is %q", set)
 		}
 	}
